@@ -74,7 +74,7 @@ export fn mock_net() -> Effect[Net] => effect Net {
 // A single-element loopback "array" (a nova_alloc'd POD) for the mock DNS stub,
 // so `resolve`'s build_addrs copies one image out just like the real path.
 fn mock_lookup() -> Result[(int, int), NetError] {
-    ro base = unsafe { net_addr_loopback(0) }
+    ro base = net_addr_loopback(0)
     lookup_ok(base as int, 1)
 }
 

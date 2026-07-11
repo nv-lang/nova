@@ -118,15 +118,15 @@ fn fill_from_tcp(mut tcp TcpStream, session CTlsHandle) Net -> Result[bool, TlsE
 // Прогнать handshake до завершения (flights в обе стороны). Package-private:
 // зовут connect (client.nv) и accept (server.nv) ДО конструирования TlsStream.
 fn pump_handshake(mut tcp TcpStream, session CTlsHandle) Net -> Result[(), TlsError] {
-    mut handshaking = unsafe { tls_is_handshaking(session) }
+    mut handshaking = tls_is_handshaking(session)
     while handshaking != 0 {
         mut acted = false
-        if unsafe { tls_wants_write(session) } != 0 {
+        if tls_wants_write(session) != 0 {
             match flush_out(tcp, session) {
                 Ok(_)  => { acted = true }
                 Err(e) => { return Err(e) }
             }
-        } else if unsafe { tls_wants_read(session) } != 0 {
+        } else if tls_wants_read(session) != 0 {
             match fill_from_tcp(tcp, session) {
                 Ok(true)  => { acted = true }
                 Ok(false) => { return Err(TlsError.HandshakeFailure("peer closed during handshake")) }
@@ -134,7 +134,7 @@ fn pump_handshake(mut tcp TcpStream, session CTlsHandle) Net -> Result[(), TlsEr
             }
         }
         if !acted { return Err(TlsError.Internal("handshake state machine stalled")) }
-        handshaking = unsafe { tls_is_handshaking(session) }
+        handshaking = tls_is_handshaking(session)
     }
     flush_out(tcp, session)
 }
@@ -151,7 +151,7 @@ fn read_step(mut tcp TcpStream, session CTlsHandle, buf mut []u8) Net -> Result[
         if n == -1 { return Ok(0) }                 // clean close_notify
         if n < -1 { return Err(shim_error(session, "read_plain")) }
         // n == 0: нужен ещё ciphertext; сперва отдать своё (key updates/alerts).
-        if unsafe { tls_wants_write(session) } != 0 {
+        if tls_wants_write(session) != 0 {
             match flush_out(tcp, session) {
                 Ok(_)  => {}
                 Err(e) => { return Err(e) }

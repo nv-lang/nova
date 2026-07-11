@@ -1,0 +1,51 @@
+// unsafe-cluster (Plan 174.5 followup, 2026-07-11, D216 §21) — legal
+// `unsafe { }` blocks that DO perform a D216 §21-map operation must NOT be
+// flagged `E_UNSAFE_UNUSED`. Covers several distinct map entries: `raw &x`,
+// calling `unsafe fn`, raw-pointer intrinsic methods (`.read_at()`/
+// `.write()`), and reading/narrow-casting a `uninit T` binding. Does NOT
+// cover the operator forms (`*p`/`p[i]`/`p<q`) — those are checker-legal
+// but ALWAYS codegen-rejected (`E_POINTER_OP_USE_METHOD`, Plan 174.5 §3/§9)
+// regardless of unsafe-wrap, so no valid Nova program can exercise them —
+// see the D216 §21 map write-up. Companion neg fixture:
+// neg/d216_unused_unsafe_neg.nv.
+module spec_tests.conformance
+
+unsafe fn double_174_5(x i64) -> i64 {
+    x * 2
+}
+
+test "unsafe block calling `.write()` raw-pointer intrinsic — legitimately used" {
+    mut x int = 21
+    unsafe {
+        ro p = (&x) as *mut int
+        p.write(42)
+    }
+    assert(x == 42)
+}
+
+test "unsafe block using `raw &x` — legitimately used" {
+    ro x = 7
+    unsafe {
+        ro p = raw &x
+        assert(p.read() == 7)
+    }
+}
+
+test "unsafe block calling `unsafe fn` — legitimately used" {
+    ro v = unsafe { double_174_5(21) }
+    assert(v == 42)
+}
+
+test "unsafe block calling a raw-pointer intrinsic method — legitimately used" {
+    mut buf []int = [1, 2, 3]
+    unsafe {
+        ro p = buf.ptr()
+        assert(p.read_at(1) == 2)
+    }
+}
+
+test "unsafe block narrow-casting a `uninit T` binding — legitimately used" {
+    mut slot uninit int = 5
+    ro v = unsafe { slot as int }
+    assert(v == 5)
+}

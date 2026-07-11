@@ -29845,6 +29845,27 @@ pub(crate) fn check_ffi_c_abi_signatures(
 // Plan 118 Ф.3.5 — E_UNSAFE_REQUIRED enforcement
 // =============================================================================
 
+/// unsafe-cluster / D216 §21 (2026-07-11): bare method names of the raw-
+/// pointer (`*T` family) intrinsic method set — hardcoded dispatch in
+/// `emit_c.rs` (search `method == "read"` et al.), NOT `Item::Fn` (so they
+/// never populate `unsafe_fns`). Mirrors the D216 §Ф.0 «всё через методы»
+/// table (Plan 174.5) that replaced the retired `*p`/`p[i]`/`p±i`/`p-q`/
+/// `p</<=/>/>=q` operators. Used ONLY by `check_unsafe_context_in_module`'s
+/// E_UNSAFE_UNUSED used-tracking (§21) — matching a name here does NOT
+/// (yet) require an `unsafe {{ }}` wrap at the call site; see the D216 §21
+/// «known gap» note.
+fn is_raw_pointer_intrinsic_method(name: &str) -> bool {
+    matches!(
+        name,
+        "read" | "write" | "read_at" | "write_at"
+            | "read_unaligned" | "write_unaligned"
+            | "read_volatile" | "write_volatile"
+            | "offset" | "dist"
+            | "copy_from" | "copy_from_nonoverlapping"
+            | "copy_to" | "copy_to_nonoverlapping"
+    )
+}
+
 /// Plan 118 D216 §8 (D2 amend): Walk fn bodies, emit E_UNSAFE_REQUIRED
 /// для AddrOf (`&value`) / Deref (`*expr`) used вне `unsafe { ... }` block
 /// или `#unsafe fn` body context.
@@ -29885,11 +29906,23 @@ pub(crate) fn check_unsafe_context_in_module(
     // `E_CALLBACK_THROWS_OVER_C_ABI` path fires for BOTH `*fn` and
     // `*extern "C" fn`, unchanged from Plan 118).
     let mut effect_fns: HashMap<String, String> = HashMap::new();
+    // unsafe-cluster / D216 §21 (2026-07-11): free-fn names of ANY `extern`/
+    // `external` declaration (C-ABI or nova-ABI, unsafe or not). Used ONLY
+    // by the E_UNSAFE_UNUSED used-tracking heuristic (§21 «known convention,
+    // not enforced»): a call to a plain (non-`unsafe`) extern fn with a
+    // raw-pointer-shaped argument matches the widespread std/net + std/tls
+    // FFI convention of defensively wrapping such calls in `unsafe {{ }}`
+    // even though no EXISTING rule requires it. Recognising the convention
+    // here avoids E_UNSAFE_UNUSED flagging ~35 pre-existing, deliberate call
+    // sites; it does NOT newly require `unsafe {{ }}` anywhere (no enforcement
+    // added — see the D216 §21 note).
+    let mut extern_fns: HashSet<String> = HashSet::new();
     let collect_from = |item: &Item,
                         unsafe_fns: &mut HashSet<String>,
                         unsafe_static_methods: &mut HashSet<(String, String)>,
                         fail_fns: &mut HashSet<String>,
-                        effect_fns: &mut HashMap<String, String>| {
+                        effect_fns: &mut HashMap<String, String>,
+                        extern_fns: &mut HashSet<String>| {
         if let Item::Fn(fd) = item {
             if fd.unsafe_attr {
                 match &fd.receiver {
@@ -29901,6 +29934,9 @@ pub(crate) fn check_unsafe_context_in_module(
                         unsafe_fns.insert(fd.name.clone());
                     }
                 }
+            }
+            if (fd.is_external || fd.extern_abi.is_some()) && fd.receiver.is_none() {
+                extern_fns.insert(fd.name.clone());
             }
             // Plan 118 A25: detect Fail effect через TypeRef::Named { path }
             // где last segment == "Fail". Fn с Fail effect = throwable —
@@ -29921,11 +29957,11 @@ pub(crate) fn check_unsafe_context_in_module(
         }
     };
     for item in &module.items {
-        collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns);
+        collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns, &mut extern_fns);
     }
     for pf in &module.peer_files {
         for item in &pf.items_here {
-            collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns);
+            collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns, &mut extern_fns);
         }
     }
     let mut state = UnsafeCtx {
@@ -29934,6 +29970,7 @@ pub(crate) fn check_unsafe_context_in_module(
         unsafe_static_methods,
         fail_fns,
         effect_fns,
+        extern_fns,
         in_realtime: false,
         ptr_vars: vec![HashSet::new()],
         unsafe_t_vars: vec![HashSet::new()],
@@ -29942,6 +29979,7 @@ pub(crate) fn check_unsafe_context_in_module(
         // to fire on indirect call `ufp()` outside `unsafe { }` block.
         unsafe_fn_ptr_vars: vec![HashSet::new()],
         in_call_arg: false,
+        unsafe_block_used: Vec::new(),
     };
     // peer_files mode: walk only entry peers items_here (Plan 62.A pattern)
     let entry_items: Vec<&Item> = if module.peer_files.is_empty() {
@@ -30020,6 +30058,11 @@ struct UnsafeCtx {
     /// `*fn` still carries the handler stack, so non-`Fail` effects are allowed
     /// there (matches the un-retracted Plan 118 `*fn` behaviour).
     effect_fns: HashMap<String, String>,
+    /// unsafe-cluster / D216 §21 (2026-07-11): free-fn names of any
+    /// `extern`/`external` declaration (see collection-site doc). Used-
+    /// tracking ONLY — see the `extern_fns` check at the Call arm
+    /// (`expr_is_typed_pointer` on each argument).
+    extern_fns: HashSet<String>,
     /// Plan 118 A33 enforcement: currently walking body #realtime fn.
     /// Pointer ops (AddrOf, Deref) inside #realtime fn → E_REALTIME_POINTER_OP
     /// — deref может GC trigger (allocation), violates realtime guarantee
@@ -30051,12 +30094,28 @@ struct UnsafeCtx {
     /// precise `check_unsafe_coerce_args` pass which knows callee param
     /// types. Set when walking Call args; cleared при return.
     in_call_arg: bool,
+    /// **unsafe-cluster / E_UNSAFE_UNUSED (2026-07-11, D216 §21):** stack of
+    /// «did this lexical `unsafe {{ }}` block ever gate a real unsafe
+    /// operation» flags, one frame per `Block.is_unsafe == true` currently
+    /// on the walk stack (parallel к `ptr_vars`/`unsafe_t_vars`, but ONLY
+    /// pushed for unsafe blocks — regular blocks don't get a frame, so a
+    /// mark inside a nested non-unsafe control-flow block still lands on
+    /// the nearest ENCLOSING unsafe block, matching Rust `unused_unsafe`
+    /// nearest-scope semantics). Every site that gates an operation behind
+    /// `self.depth == 0` (the D216 §21 map) calls `mark_unsafe_used()` in
+    /// its `depth > 0` (permitted) branch. `unsafe fn` body context (no
+    /// lexical block) never pushes a frame — the fn-attr itself is not
+    /// linted, only explicit `unsafe {{ }}` blocks are (Rust precedent).
+    unsafe_block_used: Vec<bool>,
 }
 
 impl UnsafeCtx {
     fn walk_block(&mut self, b: &crate::ast::Block, errors: &mut Vec<Diagnostic>) {
         // Plan 118 D216 §8: track unsafe context entry/exit.
         if b.is_unsafe { self.depth += 1; }
+        // unsafe-cluster / E_UNSAFE_UNUSED (D216 §21): push a fresh
+        // used-tracking frame ONLY for lexical unsafe blocks — see field doc.
+        if b.is_unsafe { self.unsafe_block_used.push(false); }
         // Plan 118 A28: push fresh ptr-var scope frame.
         self.ptr_vars.push(HashSet::new());
         // Plan 118.5 Ф.4: push fresh unsafe-T scope frame (parallel к ptr_vars).
@@ -30072,7 +30131,43 @@ impl UnsafeCtx {
         self.unsafe_fn_ptr_vars.pop();
         self.unsafe_t_vars.pop();
         self.ptr_vars.pop();
+        if b.is_unsafe {
+            // unsafe-cluster / E_UNSAFE_UNUSED (D216 §21): if no operation in
+            // this map (§21) ever fired its `depth > 0` (permitted) branch
+            // while THIS block was the nearest enclosing unsafe scope, the
+            // wrap is dead weight — hard error (owner decision: Rust's
+            // `unused_unsafe` is a warning, Nova makes it an error).
+            if let Some(used) = self.unsafe_block_used.pop() {
+                if !used {
+                    errors.push(Diagnostic::new(
+                        "[E_UNSAFE_UNUSED] `unsafe {{ }}` block contains no \
+                         operation that requires unsafe context (D216 §21 map: \
+                         `raw &x`, `*p`/`p[i]` deref-family, pointer order-compare, \
+                         calling `unsafe fn`/`*unsafe fn(...)`, reading/narrow-\
+                         casting a `uninit T` binding, or calling a raw-pointer \
+                         intrinsic method — `.read()`/`.write()`/`.read_at()`/\
+                         `.write_at()`/`.offset()`/`.dist()`/etc). Remove the \
+                         `unsafe {{ }}` wrap, or — if this really does perform an \
+                         unsafe operation the checker doesn't yet recognise — that's \
+                         a gap in the D216 §21 map, not a false positive to \
+                         suppress.".to_string(),
+                        b.span,
+                    ));
+                }
+            }
+        }
         if b.is_unsafe { self.depth -= 1; }
+    }
+
+    /// unsafe-cluster / E_UNSAFE_UNUSED (D216 §21): mark the nearest
+    /// enclosing lexical `unsafe {{ }}` block (top of `unsafe_block_used`) as
+    /// having gated a real operation. No-op if there's no enclosing block
+    /// (e.g. permission came purely from an `unsafe fn` body with no nested
+    /// `unsafe {{ }}` wrap — the fn-attr itself isn't linted).
+    fn mark_unsafe_used(&mut self) {
+        if let Some(top) = self.unsafe_block_used.last_mut() {
+            *top = true;
+        }
     }
 
     /// **Plan 118.5 Ф.4 (2026-06-04):** check if `name` ∈ any unsafe-T scope
@@ -30153,6 +30248,26 @@ impl UnsafeCtx {
             // Empty trailing => not a pointer (unit-typed).
             ExprKind::Block(b) => b.trailing.as_ref()
                 .map_or(false, |t| self.expr_is_typed_pointer(t)),
+            // unsafe-cluster / D216 §21 (2026-07-11) — REAL bug found while
+            // building the E_UNSAFE_UNUSED used-tracker (repro:
+            // `unsafe { ro p = buf.ptr(); p[1] }` was flagged unused, and
+            // separately `E_UNSAFE_REQUIRED`/`E_PTR_ORDER_COMPARE_
+            // REQUIRES_UNSAFE`/`E_PTR_NO_DISPLAY_USE_DEBUG_STR` were ALL
+            // silently un-gated for this shape). Root cause: this predicate
+            // never recognised the dominant `x.ptr()`/`x.as_ptr()` zero-arg
+            // getter idiom (`Stmt::Let`'s `is_ptr_rhs` check calls this
+            // too, so `ro p = buf.ptr()` with no type annotation never
+            // registered `p` as a `ptr_vars` member at all) — every one of
+            // the checks above that depend on this predicate silently
+            // no-opped for that idiom, predating this session (only the
+            // LATER, independent codegen-stage `E_POINTER_OP_USE_METHOD`
+            // retraction check happened to still catch `p[i]`/`*p`/`p<q`
+            // through it). Closing the recognition gap here fixes the
+            // whole family in one place rather than re-patching each site.
+            ExprKind::Call { func, args, .. } if args.is_empty() => {
+                matches!(&func.kind, ExprKind::Member { name, .. }
+                    if name == "ptr" || name == "as_ptr")
+            }
             _ => false,
         }
     }
@@ -30309,6 +30424,8 @@ impl UnsafeCtx {
                          или mark enclosing fn `#unsafe`.".to_string(),
                         e.span,
                     ));
+                } else {
+                    self.mark_unsafe_used();
                 }
                 if self.in_realtime {
                     errors.push(Diagnostic::new(
@@ -30328,6 +30445,8 @@ impl UnsafeCtx {
                          enclosing fn `#unsafe`.".to_string(),
                         e.span,
                     ));
+                } else {
+                    self.mark_unsafe_used();
                 }
                 if self.in_realtime {
                     errors.push(Diagnostic::new(
@@ -30358,22 +30477,25 @@ impl UnsafeCtx {
                     | crate::ast::BinOp::Gt | crate::ast::BinOp::Ge
                 );
                 if is_order_cmp
-                    && self.depth == 0
                     && self.expr_is_typed_pointer(left)
                     && self.expr_is_typed_pointer(right)
                 {
-                    errors.push(Diagnostic::new(
-                        "[E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE] pointer-pointer \
-                         order comparison (`<`, `<=`, `>`, `>=`) requires unsafe \
-                         context (Plan 118 D216 §6). Pointer addresses не stable \
-                         ordinals: (1) GC-relocation invalidates ordering invariant; \
-                         (2) OS ASLR randomizes address layout per process — \
-                         comparison results не deterministic across runs. \
-                         Equality `==`/`!=` — safe (identity check). \
-                         Fix: wrap в `unsafe {{ ... }}` block если действительно \
-                         нужно order-compare; rethink если это normal control flow.".to_string(),
-                        e.span,
-                    ));
+                    if self.depth == 0 {
+                        errors.push(Diagnostic::new(
+                            "[E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE] pointer-pointer \
+                             order comparison (`<`, `<=`, `>`, `>=`) requires unsafe \
+                             context (Plan 118 D216 §6). Pointer addresses не stable \
+                             ordinals: (1) GC-relocation invalidates ordering invariant; \
+                             (2) OS ASLR randomizes address layout per process — \
+                             comparison results не deterministic across runs. \
+                             Equality `==`/`!=` — safe (identity check). \
+                             Fix: wrap в `unsafe {{ ... }}` block если действительно \
+                             нужно order-compare; rethink если это normal control flow.".to_string(),
+                            e.span,
+                        ));
+                    } else {
+                        self.mark_unsafe_used();
+                    }
                 }
                 self.walk_expr(left, errors);
                 self.walk_expr(right, errors);
@@ -30391,39 +30513,72 @@ impl UnsafeCtx {
                 //     the V1 bare-name collision (a `Vec[T] @fill`/`@compare`
                 //     instance method no longer collides with `RawMem.fill`/
                 //     `RawMem.compare` static externs).
-                if self.depth == 0 {
-                    let unsafe_callee_name: Option<String> = match &func.kind {
-                        ExprKind::Ident(fname) if self.unsafe_fns.contains(fname) => {
-                            Some(fname.clone())
-                        }
-                        // Static unsafe-method call `Type.m(...)`: receiver is
-                        // the literal type identifier. Match the (type, method)
-                        // pair exactly.
-                        ExprKind::Member { obj, name: mname, .. }
-                            if matches!(&obj.kind, ExprKind::Ident(tn)
-                                if self.unsafe_static_methods
-                                    .contains(&(tn.clone(), mname.clone()))) =>
-                        {
-                            Some(mname.clone())
-                        }
-                        // Instance unsafe-method call (or free-fn used as
-                        // method): bare-name lookup in unsafe_fns. Static
-                        // methods are intentionally excluded here (handled
-                        // above by exact receiver match).
-                        ExprKind::Member { name: mname, .. } if self.unsafe_fns.contains(mname) => {
-                            Some(mname.clone())
-                        }
-                        // Plan 118.1.6 (2026-06-08): indirect call через
-                        // *unsafe fn(...) binding — same gating as direct call.
-                        // Callee shape `Ident(local)` where local ∈
-                        // unsafe_fn_ptr_vars. Indirection adds no safety —
-                        // pointee fn body still has unguarded pointer ops.
-                        ExprKind::Ident(fname) if self.is_unsafe_fn_ptr_var(fname) => {
-                            Some(fname.clone())
-                        }
-                        _ => None,
-                    };
-                    if let Some(fname) = unsafe_callee_name {
+                // unsafe-cluster (2026-07-11): callee classification moved
+                // outside the `depth == 0` gate — needed regardless of depth
+                // so the `depth > 0` (permitted) branch can mark the
+                // enclosing unsafe block used (E_UNSAFE_UNUSED, D216 §21).
+                let unsafe_callee_name: Option<String> = match &func.kind {
+                    ExprKind::Ident(fname) if self.unsafe_fns.contains(fname) => {
+                        Some(fname.clone())
+                    }
+                    // Static unsafe-method call `Type.m(...)`: receiver is
+                    // the literal type identifier. Match the (type, method)
+                    // pair exactly.
+                    ExprKind::Member { obj, name: mname, .. }
+                        if matches!(&obj.kind, ExprKind::Ident(tn)
+                            if self.unsafe_static_methods
+                                .contains(&(tn.clone(), mname.clone()))) =>
+                    {
+                        Some(mname.clone())
+                    }
+                    // unsafe-cluster / D216 §21 (2026-07-11) — REAL bug found
+                    // while building the E_UNSAFE_UNUSED used-tracker (repro:
+                    // `unsafe { RawMem.alloc(n) }` was flagged unused even
+                    // though `RawMem.alloc` IS `unsafe fn`). Root cause:
+                    // `Type.lowercase_method(...)` parses to `ExprKind::Path`
+                    // (2-segment), NOT `ExprKind::Member` — the parser's
+                    // "PascalCase.PascalCase → keep extending Path, else stop
+                    // for Member postfix" comment in `parse_primary`'s
+                    // uppercase-ident arm is stale; the code unconditionally
+                    // extends `Path` past a dot regardless of the next
+                    // segment's case (the `let _ = next_upper;` there
+                    // discards the check the comment describes). So EVERY
+                    // static call `Type.method(...)` — not just `RawMem` —
+                    // reaches here as `Path`, and the `Member` arm above was
+                    // silently dead code for this shape: `E_UNSAFE_CALL_
+                    // REQUIRES_WRAP` never fired for an unwrapped static
+                    // `unsafe fn` call anywhere in the language. Fixed at
+                    // the semantic layer (matching `Path` here) rather than
+                    // the parser (smaller, behavior-preserving diff — the
+                    // Path/Member split still exists for `Module.Sub.name`
+                    // multi-segment paths elsewhere; this only closes the
+                    // 2-segment-static-call gap for unsafe gating).
+                    ExprKind::Path(segs)
+                        if segs.len() == 2
+                            && self.unsafe_static_methods
+                                .contains(&(segs[0].clone(), segs[1].clone())) =>
+                    {
+                        Some(segs[1].clone())
+                    }
+                    // Instance unsafe-method call (or free-fn used as
+                    // method): bare-name lookup in unsafe_fns. Static
+                    // methods are intentionally excluded here (handled
+                    // above by exact receiver match).
+                    ExprKind::Member { name: mname, .. } if self.unsafe_fns.contains(mname) => {
+                        Some(mname.clone())
+                    }
+                    // Plan 118.1.6 (2026-06-08): indirect call через
+                    // *unsafe fn(...) binding — same gating as direct call.
+                    // Callee shape `Ident(local)` where local ∈
+                    // unsafe_fn_ptr_vars. Indirection adds no safety —
+                    // pointee fn body still has unguarded pointer ops.
+                    ExprKind::Ident(fname) if self.is_unsafe_fn_ptr_var(fname) => {
+                        Some(fname.clone())
+                    }
+                    _ => None,
+                };
+                if let Some(fname) = &unsafe_callee_name {
+                    if self.depth == 0 {
                         errors.push(Diagnostic::new(
                             format!(
                                 "[E_UNSAFE_CALL_REQUIRES_WRAP] calling \
@@ -30437,6 +30592,104 @@ impl UnsafeCtx {
                             ),
                             func.span,
                         ));
+                    } else {
+                        self.mark_unsafe_used();
+                    }
+                }
+                // unsafe-cluster / E_UNSAFE_UNUSED (D216 §21 «cross-module
+                // unsafe-fn gap»): `unsafe_fns`/`unsafe_static_methods` are
+                // collected ONLY from `module.items`/`module.peer_files` —
+                // i.e. declarations in the SAME module (same-directory peer
+                // files), never from an `import`ed module. This is a PRE-
+                // EXISTING scope limit of the Plan 118 `E_UNSAFE_CALL_
+                // REQUIRES_WRAP` collector (it silently under-gates cross-
+                // module `unsafe fn` calls — a latent false-negative that
+                // predates this session): `std/runtime/raw_mem.nv` (module
+                // `runtime.raw_mem`) declares `RawMem.*` as `unsafe fn`
+                // static methods, but callers in OTHER modules (e.g.
+                // `std/collections/vec/*.nv`) never see that registration.
+                // `RawMem`'s entire surface is `unsafe fn` by design (no
+                // safe method exists on it — see raw_mem.nv), so a literal
+                // `RawMem.<method>(...)` static call is UNCONDITIONALLY
+                // recognised here for used-tracking, regardless of which
+                // module declared it. Scoped to used-tracking only — does
+                // NOT retroactively add `E_UNSAFE_CALL_REQUIRES_WRAP`
+                // gating for cross-module unsafe fns in general (that's a
+                // separate, larger fix to the collector, out of this
+                // session's scope).
+                if unsafe_callee_name.is_none() && self.depth > 0 {
+                    // `RawMem.method(...)` — bare (`Path(["RawMem","method"])`,
+                    // the common case per the Path-fix above) OR namespace-
+                    // qualified via `import mod as ns` / D289 last-segment
+                    // (`ns.RawMem.method(...)`, which parses as a NESTED
+                    // `Member{ obj: Member{ obj: Ident(ns), name: "RawMem" },
+                    // name: "method" }` since a lowercase first segment never
+                    // enters the parser's uppercase-Path-extension loop —
+                    // repro: `spec_tests/conformance/d289_import_last_segment.nv`).
+                    // Matched by "does the receiver chain literally end in a
+                    // `RawMem` segment", regardless of what qualifies it.
+                    let is_rawmem_static_call = match &func.kind {
+                        ExprKind::Path(segs) => {
+                            segs.len() >= 2 && segs[segs.len() - 2] == "RawMem"
+                        }
+                        ExprKind::Member { obj, .. } => match &obj.kind {
+                            ExprKind::Ident(tn) => tn == "RawMem",
+                            ExprKind::Member { name, .. } => name == "RawMem",
+                            ExprKind::Path(segs) => segs.last().map_or(false, |s| s == "RawMem"),
+                            _ => false,
+                        },
+                        _ => false,
+                    };
+                    if is_rawmem_static_call {
+                        self.mark_unsafe_used();
+                    }
+                }
+                // unsafe-cluster / E_UNSAFE_UNUSED (D216 §21 map addendum):
+                // raw-pointer intrinsic methods (`.read()`/`.write()`/
+                // `.read_at()`/`.write_at()`/`.offset()`/`.dist()`/
+                // `.read_unaligned()`/`.write_unaligned()`/`.read_volatile()`/
+                // `.write_volatile()`/`.copy_from[_nonoverlapping]()`/
+                // `.copy_to[_nonoverlapping]()`) are compiler intrinsics on
+                // the `*T` family (hardcoded dispatch in emit_c.rs, NOT
+                // `Item::Fn` — see D216 §21 «known gap»): they carry the
+                // SAME safety contract as `unsafe fn` calls (D216 §Ф.0 table)
+                // but currently aren't call-site-gated by
+                // `E_UNSAFE_CALL_REQUIRES_WRAP` (no AST FnDecl to register in
+                // `unsafe_fns`). Counted here ONLY for used-tracking — this
+                // does NOT newly require `unsafe {{ }}` at call sites (that
+                // would be a separate, larger enforcement change); it only
+                // stops E_UNUSED_UNSAFE from flagging the existing
+                // `unsafe {{ p.read() }}` convention across std/. Matched by
+                // bare method name (no receiver-type check — the checker has
+                // no type inference at this pass) — deliberately permissive
+                // to avoid false positives on unrelated `.read()`/`.write()`
+                // methods (e.g. `io.Read`/`io.Write`).
+                if unsafe_callee_name.is_none() && self.depth > 0 {
+                    if let ExprKind::Member { name: mname, .. } = &func.kind {
+                        if is_raw_pointer_intrinsic_method(mname) {
+                            self.mark_unsafe_used();
+                        }
+                    }
+                }
+                // unsafe-cluster / E_UNSAFE_UNUSED (D216 §21 «observed
+                // convention, not enforced»): std/net + std/tls uniformly
+                // wrap calls to plain (non-`unsafe`) `extern`/`external` fns
+                // in `unsafe {{ }}` whenever an argument is raw-pointer-
+                // shaped (`.ptr()`/`.as_ptr()` getter, `&x`, cast к `*T`,
+                // an existing `ptr_vars` binding) — crossing into un-audited
+                // C memory with a raw pointer, even though NO rule currently
+                // requires the wrap (the callee isn't `unsafe fn` — see the
+                // D216 §21 write-up of the `net_tcp_listen`/`addr.ptr()`
+                // finding). Recognised here for used-tracking ONLY so
+                // E_UNSAFE_UNUSED doesn't flag this widespread, deliberate
+                // pattern; does NOT newly require the wrap anywhere.
+                if unsafe_callee_name.is_none() && self.depth > 0 {
+                    if let ExprKind::Ident(fname) = &func.kind {
+                        if self.extern_fns.contains(fname)
+                            && args.iter().any(|a| self.expr_is_typed_pointer(a.expr()))
+                        {
+                            self.mark_unsafe_used();
+                        }
                     }
                 }
                 self.walk_expr(func, errors);
@@ -30458,21 +30711,25 @@ impl UnsafeCtx {
                 // value (to evaluate the .field/.method) — this counts as
                 // unsafe read. Conservative scope: only fire if root Ident
                 // is unambiguously в unsafe_t_vars.
-                if self.depth == 0 && !self.in_call_arg {
+                if !self.in_call_arg {
                     if let Some(root) = unsafe_t_root_ident(obj) {
                         if self.is_unsafe_t_var(&root) {
-                            errors.push(Diagnostic::new(
-                                format!(
-                                    "[E_UNSAFE_T_READ_REQUIRES_WRAP] member \
-                                     access reads `unsafe T` binding `{}` — \
-                                     requires unsafe context (Plan 118.5 V2 / \
-                                     D216 V2 §V2.3). Field access evaluates \
-                                     the binding value (possibly uninitialized). \
-                                     Wrap access site в `unsafe {{ ... }}` block.",
-                                    root,
-                                ),
-                                e.span,
-                            ));
+                            if self.depth == 0 {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_UNSAFE_T_READ_REQUIRES_WRAP] member \
+                                         access reads `unsafe T` binding `{}` — \
+                                         requires unsafe context (Plan 118.5 V2 / \
+                                         D216 V2 §V2.3). Field access evaluates \
+                                         the binding value (possibly uninitialized). \
+                                         Wrap access site в `unsafe {{ ... }}` block.",
+                                        root,
+                                    ),
+                                    e.span,
+                                ));
+                            } else {
+                                self.mark_unsafe_used();
+                            }
                         }
                     }
                 }
@@ -30502,6 +30759,8 @@ impl UnsafeCtx {
                              `*(@data + i)`.".to_string(),
                             e.span,
                         ));
+                    } else {
+                        self.mark_unsafe_used();
                     }
                     if self.in_realtime {
                         errors.push(Diagnostic::new(
@@ -30516,21 +30775,25 @@ impl UnsafeCtx {
                 }
                 // Plan 118.5 V2 [M-118.5-member-index-call-broader]: index
                 // access on unsafe-T binding reads the slot — needs unsafe.
-                if self.depth == 0 && !self.in_call_arg {
+                if !self.in_call_arg {
                     if let Some(root) = unsafe_t_root_ident(obj) {
                         if self.is_unsafe_t_var(&root) {
-                            errors.push(Diagnostic::new(
-                                format!(
-                                    "[E_UNSAFE_T_READ_REQUIRES_WRAP] index \
-                                     access reads `unsafe T` binding `{}` — \
-                                     requires unsafe context (Plan 118.5 V2 / \
-                                     D216 V2 §V2.3). Indexing evaluates the \
-                                     binding value (possibly uninitialized). \
-                                     Wrap в `unsafe {{ ... }}` block.",
-                                    root,
-                                ),
-                                e.span,
-                            ));
+                            if self.depth == 0 {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_UNSAFE_T_READ_REQUIRES_WRAP] index \
+                                         access reads `unsafe T` binding `{}` — \
+                                         requires unsafe context (Plan 118.5 V2 / \
+                                         D216 V2 §V2.3). Indexing evaluates the \
+                                         binding value (possibly uninitialized). \
+                                         Wrap в `unsafe {{ ... }}` block.",
+                                        root,
+                                    ),
+                                    e.span,
+                                ));
+                            } else {
+                                self.mark_unsafe_used();
+                            }
                         }
                     }
                 }
@@ -30681,12 +30944,12 @@ impl UnsafeCtx {
                 // narrow-cast error AND skip the inner walk (else generic
                 // E_UNSAFE_T_READ_REQUIRES_WRAP would also fire — double error).
                 let mut narrow_handled = false;
-                if self.depth == 0 {
-                    if let ExprKind::Ident(name) = &inner.kind {
-                        if self.is_unsafe_t_var(name)
-                            && !matches!(ty.strip_modifiers(),
-                                crate::ast::TypeRef::Uninit(_, _))
-                        {
+                if let ExprKind::Ident(name) = &inner.kind {
+                    if self.is_unsafe_t_var(name)
+                        && !matches!(ty.strip_modifiers(),
+                            crate::ast::TypeRef::Uninit(_, _))
+                    {
+                        if self.depth == 0 {
                             errors.push(Diagnostic::new(
                                 format!(
                                     "[E_UNSAFE_T_NARROW_REQUIRES_UNSAFE] narrow \
@@ -30705,6 +30968,8 @@ impl UnsafeCtx {
                                 e.span,
                             ));
                             narrow_handled = true;
+                        } else {
+                            self.mark_unsafe_used();
                         }
                     }
                 }
@@ -30772,21 +31037,25 @@ impl UnsafeCtx {
                 // Call args, defer unsafe-T read check к the precise
                 // ConsumeCtx check_unsafe_coerce_args (which knows callee
                 // param types — matched-param pass should NOT error).
-                if self.depth == 0 && !self.in_call_arg && self.is_unsafe_t_var(name) {
-                    errors.push(Diagnostic::new(
-                        format!(
-                            "[E_UNSAFE_T_READ_REQUIRES_WRAP] reading `unsafe T` \
-                             binding `{}` requires unsafe context (Plan 118.5 \
-                             Ф.4 / D216 V2 §V2.3). `unsafe T` values may be \
-                             uninitialized — read без prior write is UB. Fix: \
-                             wrap read site в `unsafe {{ ... }}` block, или \
-                             use explicit narrow `unsafe {{ {} as T }}` after \
-                             initialization. Write to `unsafe T` slot — safe \
-                             (transitions к valid initialized state).",
-                            name, name,
-                        ),
-                        e.span,
-                    ));
+                if !self.in_call_arg && self.is_unsafe_t_var(name) {
+                    if self.depth == 0 {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_UNSAFE_T_READ_REQUIRES_WRAP] reading `unsafe T` \
+                                 binding `{}` requires unsafe context (Plan 118.5 \
+                                 Ф.4 / D216 V2 §V2.3). `unsafe T` values may be \
+                                 uninitialized — read без prior write is UB. Fix: \
+                                 wrap read site в `unsafe {{ ... }}` block, или \
+                                 use explicit narrow `unsafe {{ {} as T }}` after \
+                                 initialization. Write to `unsafe T` slot — safe \
+                                 (transitions к valid initialized state).",
+                                name, name,
+                            ),
+                            e.span,
+                        ));
+                    } else {
+                        self.mark_unsafe_used();
+                    }
                 }
             }
             // Plan 118 Ф.3.5 leaf nodes (literals, idents, paths) — no children.

@@ -8778,6 +8778,184 @@ sentinel.
 V2 — research `extern "C-unwind"` (Rust 2024 model);
 `[M-118-extern-c-unwind]` followup.
 
+### §21. Операции, требующие `unsafe { }` — авторитетная карта + `E_UNSAFE_UNUSED` (unsafe-cluster, Plan 174.5 followup, 2026-07-11)
+
+> **Status:** ✅ DONE 2026-07-11 (sonnet, worktree `nova-nt` branch `unsafe-cluster`).
+> Owner asked 3× for a precise answer on «does passing a raw `*T` through an
+> `extern` call require `unsafe { }`» — this section is the single
+> authoritative map (source: the actual checker, `types/mod.rs
+> check_unsafe_context_in_module` / `UnsafeCtx::walk_expr`, NOT the older §4-
+> §10 prose above, which predates several retractions — see the discrepancies
+> noted inline below).
+
+#### Карта: что ТРЕБУЕТ `unsafe { }` (checker-enforced, hard error if absent)
+
+| # | Операция | Диагностика | Где в checker |
+|---|---|---|---|
+| 1 | `raw &x` — сырой stack-адрес без escape-анализа | `E_UNSAFE_REQUIRED` | `UnOp::RawAddrOf` arm |
+| 2 | `*expr` pointer dereference (unary) | `E_UNSAFE_REQUIRED` | `UnOp::Deref` arm — **но см. примечание ниже: operator-форма мертва в валидных программах** |
+| 3 | `ptr[i]` index на typed pointer (`*T`/`*mut T`/`*uninit T`) | `E_UNSAFE_REQUIRED` | `Index` arm, `expr_is_typed_pointer(obj)` — **тот же caveat** |
+| 4 | Pointer-pointer order-compare `<`/`<=`/`>`/`>=` (оба операнда typed pointer) | `E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE` | `Binary` arm — **тот же caveat** |
+| 5 | Вызов `unsafe fn` / `external unsafe fn` (free-fn, instance-метод, static-метод `Type.m(...)`, или косвенный вызов через `*unsafe fn(...)`-биндинг) | `E_UNSAFE_CALL_REQUIRES_WRAP` | `Call` arm, `unsafe_fns`/`unsafe_static_methods`/`unsafe_fn_ptr_vars` |
+| 6 | ЧТЕНИЕ (Ident/Member/Index access) локала/параметра типа `uninit T` (value-wrapper) | `E_UNSAFE_T_READ_REQUIRES_WRAP` | `Ident`/`Member`/`Index` arms, `unsafe_t_vars`. **Запись — safe** (переход к valid) |
+| 7 | Narrow-cast `uninit_T_binding as T` (снятие `uninit`-обёртки) | `E_UNSAFE_T_NARROW_REQUIRES_UNSAFE` | `As` arm |
+
+**Caveat к пп. 2-4 (operator-семья мертва, Plan 174.5 §Ф.0 «всё через методы», 2026-07-06):**
+`*p`, `p[i]`, `p+i`/`p-i`, `p-q`, `p</<=/>/>=q` — все РЕТРАКТИРОВАНЫ на уровне
+codegen: `emit_c.rs` безусловно (независимо от unsafe-wrap) отклоняет их с
+`E_POINTER_OP_USE_METHOD`, требуя `.read()`/`.write()`/`.read_at()`/
+`.write_at()`/`.offset()`/`.dist()` вместо них. Типоуровневая проверка
+(пп. 2-4 выше) технически ещё существует в checker'е и всё ещё формально
+входит в карту (нужна для «есть ли операция вообще», см. `E_UNSAFE_UNUSED`
+ниже), но **ни одна валидная Nova-программа не может дойти до неё** — любое
+использование `*p`/`p[i]`/`p<q` падает на codegen-стадии независимо от
+исхода checker-стадии. Живые, реально-используемые эквиваленты — строка 8
+следующей таблицы.
+
+#### Карта продолжение: НЕ enforced checker'ом, но контрактно unsafe (известные gaps)
+
+| # | Операция | Почему не enforced | Что делать |
+|---|---|---|---|
+| 8 | Вызов raw-pointer intrinsic-метода (`p.read()`/`p.write(v)`/`p.read_at(i)`/`p.write_at(i,v)`/`p.offset(n)`/`p.dist(q)`/`p.read_unaligned()`/`p.write_unaligned(v)`/`p.read_volatile()`/`p.write_volatile(v)`/`p.copy_from[_nonoverlapping](...)`/`p.copy_to[_nonoverlapping](...)`) | Эти методы — compiler intrinsics, хардкод-диспатч в `emit_c.rs` (поиск `method == "read"` и т.д.), НЕ `Item::Fn` — `check_unsafe_context_in_module` собирает `unsafe_fns`/`unsafe_static_methods` только из AST `Item::Fn` объявлений, так что для этих методов регистрировать нечего. Документировано ещё в комментарии `emit_c.rs` 2026-06 («Caller wraps in `unsafe { }` — parser не enforces»). | Оставлено как соглашение (caller ответственен). `E_UNSAFE_UNUSED` (ниже) распознаёт вызовы этих методов как «unsafe used» — чтобы существующий `unsafe { p.read() }` код по всему `std/` не считался мёртвым — но НЕ добавляет новый required-wrap gate. Закрытие этого gap (полноценный `E_UNSAFE_CALL_REQUIRES_WRAP`-стиль контроль вызовов) — отдельный, больший followup, вне рамок этой волны. |
+| 9 | Вызов cross-module `unsafe fn` static-метода (напр. `RawMem.alloc(...)` из другого модуля) | `unsafe_fns`/`unsafe_static_methods` собираются ТОЛЬКО из `module.items`/`module.peer_files` — деклараций того же модуля/co-equal-файлов; `import`-нутые модули не просматриваются. Найдено этой волной (repro: `unsafe { RawMem.alloc(n) }` в `std/collections/vec/*.nv`, где `RawMem` объявлен в `runtime.raw_mem`, ложно флагуется `E_UNSAFE_UNUSED` — а до этой волны звонки `RawMem.alloc(...)` ВООБЩЕ БЕЗ unsafe-обёртки нигде не ловились `E_UNSAFE_CALL_REQUIRES_WRAP`). | `E_UNSAFE_UNUSED`-heuristic узко распознаёт `RawMem.*` (единственный известный кросс-модульный unsafe-namespace — весь его surface `unsafe fn`, см. `std/runtime/raw_mem.nv`) как unsafe-used независимо от модуля. Полноценный fix коллектора (собирать `unsafe_fns` по всем импортированным модулям) — отдельный, больший followup. |
+| 10 | Передача raw-pointer-аргумента (`.ptr()`/`.as_ptr()`/`&x`/cast к `*T`) в НЕ-`unsafe`-помеченный `extern`/`external` fn | Ничего не требует этого — extern fn без `unsafe fn` keyword просто безопасен для вызова (см. п.5: gate только по `unsafe_attr`); передача `*T`-значения аргументом НЕ входит в карту вообще. | Наблюдаемое, но НЕ officially required соглашение по всему `std/net`+`std/tls` (см. находку ниже). `E_UNSAFE_UNUSED` распознаёт `extern_fn(...ptr-ish-arg...)` как unsafe-used, чтобы не флагать ~35 существующих сайтов, но НЕ добавляет новый required-wrap gate. |
+
+#### Находка (владелец спрашивал 3×): `net_tcp_listen(addr.ptr(), ...)` — требует ли `unsafe { }`?
+
+```nova
+fn SocketAddr @ptr() -> *()                                        // сырой *(), НЕ *uninit
+extern "C" fn net_tcp_listen(addr *(), backlog int, out_err *mut int) -> *()  // НЕ unsafe-typed
+
+ro h = unsafe { net_tcp_listen(addr.ptr(), 128, &err) }
+```
+
+**Ответ: ПО ФАКТУ (текущие правила п.1-7) — НЕ требует.** Ни одно правило
+карты не задевает этот вызов:
+- `net_tcp_listen` не помечена `unsafe fn` → п.5 не применяется (calling
+  a plain `extern "C" fn` is safe per se — checker gate'ит ТОЛЬКО по
+  `FnDecl.unsafe_attr`, независимо от того, C-ABI это или нет; §8 текста
+  выше буквально говорит «Outside unsafe safe: … external fn declarations»,
+  и это распространяется на ВЫЗОВЫ, не только декларации — CALLS к non-
+  `unsafe` extern fn тоже не gated).
+- `addr.ptr()` — обычный (не `unsafe`) метод, возвращающий bare `*()` (не
+  `uninit`-обёрнутый) → не Ident/Member/Index READ `uninit T`-биндинга → п.6
+  не применяется.
+- `&err` — `AddrOf` всегда safe (Plan 118.6 retraction, §4 amend) → не
+  gated ни при каких условиях.
+- Передача raw `*()` значения АРГУМЕНТОМ (в любую позицию) — не входит НИ
+  в одно правило карты; `E_UNSAFE_ARG_REQUIRES_WRAP` (см. ниже) — про
+  СОВСЕМ другое (передачу `uninit T`-биндинга).
+
+Это **находка**: единственный способ реально потребовать `unsafe { }` на
+таком вызове — объявить сам extern fn как `external unsafe fn` /
+`extern "C" unsafe fn` (п.5). Пока decl не помечена — обёртка в
+`unsafe { }` вокруг подобного вызова **ничего не гейтит и семантически
+не требуется**; она держится ТОЛЬКО соглашением (см. п.9/п.10 выше — это
+ИМЕННО та закономерность, воспроизведённая на ~35 реальных сайтах в
+`std/net`+`std/tls` при тестировании `E_UNSAFE_UNUSED`, ниже). Действительно
+ли extern C-функции, принимающие raw pointers, ДОЛЖНЫ становиться
+`unsafe fn` по умолчанию (Rust-модель: «любой `extern "C"` вызов unsafe»)
+— это language-policy решение владельца, вне рамок этой волны (см. `[M-
+unsafe-cluster-extern-ptr-arg-policy]` followup ниже).
+
+#### `E_UNSAFE_ARG_REQUIRES_WRAP` — отдельно, НЕ про «забыл unsafe»
+
+`E_UNSAFE_ARG_REQUIRES_WRAP` (Plan 118.5 V2, `check_unsafe_coerce_args`)
+срабатывает, когда Ident-аргумент зарегистрирован в `unsafe_t_locals`
+(т.е. его ТИП — `uninit T`, value-wrapper) передаётся в параметр, чей
+задекларированный тип НЕ `uninit`-обёрнут — **безусловно**, вне
+зависимости от `unsafe { }`-контекста самого call-сайта (эта проверка
+живёт в отдельном `ConsumeCtx`-проходе, который не знает про depth/unsafe-
+блоки). Единственный fix — явный narrow-cast (п.7 карты) внутри
+`unsafe { }`: `unsafe { fn_name(x as T, ...) }`. Поэтому это НЕ входит
+в «операции, для которых `unsafe { }`-обёртка сама по себе достаточна» —
+обёртка БЕЗ narrow-cast'а всё равно ошибка.
+
+#### `E_UNSAFE_UNUSED` — hard error на лишний `unsafe { }` (Rust `unused_unsafe`, но error не warning)
+
+**Правило:** `unsafe { ... }` блок, внутри которого НИ ОДНА операция из
+карты (пп. 1-10 выше, включая gap-строки 8-10 — они распознаются для
+used-tracking, даже не будучи formally required) не была фактически
+использована **на уровне этого блока** (не «съедена» вложенным `unsafe { }`
+блоком глубже) → `E_UNSAFE_UNUSED` (hard error; владелец решил — не
+warning, как в Rust). Nested-scope semantics — «ближайший enclosing unsafe
+block» (аналог Rust): операция засчитывается ТОЛЬКО самому внутреннему
+`unsafe { }` блоку, лексически её содержащему; `unsafe fn` body без
+явного блока НЕ линтится (аналог Rust — атрибут функции не проверяется на
+unused).
+
+**Реализация:** `UnsafeCtx::unsafe_block_used: Vec<bool>` — стек флагов,
+кадр пушится ТОЛЬКО для `Block.is_unsafe == true` (parallel к
+`ptr_vars`/`unsafe_t_vars`); каждый существующий gate-сайт (пп. 1-7),
+который раньше делал `if depth == 0 { error }`, теперь делает
+`if depth == 0 { error } else { mark_unsafe_used() }` — так что карта
+используется как ЕДИНЫЙ источник и для error-gating, и для used-tracking
+(нет риска рассинхрона между ними). Gap-строки 8-10 добавляют СВОИ
+used-tracking-условия (без нового error-gating).
+
+**Побочные находки при тестировании** (`nova check std/` + `spec_tests/conformance`),
+**обе устранены той же волной:**
+- **Path vs Member parser bug** (не связано с этой сессией напрямую, но
+  СДЕЛАЛО невозможным корректный used-tracking, поэтому исправлено здесь):
+  `Type.lowercase_method(...)` (двусегментный static-call, напр.
+  `RawMem.alloc(n)`) парсится в `ExprKind::Path(["RawMem","alloc"])`, а НЕ
+  `ExprKind::Member` — комментарий в `parser/mod.rs` про «PascalCase.lowercase
+  → stop for Member» описывает поведение, которого код НЕ реализует
+  (`let _ = next_upper;` отбрасывает именно эту проверку). Из-за этого
+  `unsafe_static_methods`-матчинг в `check_unsafe_context_in_module` (ветка
+  `ExprKind::Member{ obj: Ident(tn), .. }`) была МЁРТВЫМ кодом для ЛЮБОГО
+  static unsafe-метода — `E_UNSAFE_CALL_REQUIRES_WRAP` никогда не срабатывал
+  на незавёрнутый `RawMem.alloc(n)` в ЛЮБОМ месте языка. Исправлено: новая
+  `ExprKind::Path`-ветка в том же match'е.
+  Второй repro — namespace-qualified static-call через `import mod as ns`
+  / D289 last-segment (`ns.RawMem.method(...)`) парсится в ВЛОЖЕННЫЙ
+  `Member{ obj: Member{ obj: Ident(ns), name: "RawMem" }, name: "method" }`
+  (т.к. первый сегмент lowercase не входит в uppercase-Path-loop) — RawMem-
+  used-tracking heuristic расширена, чтобы узнавать «receiver chain
+  заканчивается сегментом RawMem» независимо от квалификации.
+- **`expr_is_typed_pointer` blind spot**: не распознавал `x.ptr()`/
+  `x.as_ptr()` zero-arg getter-вызов как typed-pointer expression (только
+  `&x`/`*p`/`as *T`/Ident-в-ptr_vars). Из-за этого `let p = buf.ptr()`
+  (БЕЗ явной type-аннотации) никогда не регистрировался в `ptr_vars`, что
+  тихо отключало п.2/3/4 карты (и `E_PTR_NO_DISPLAY_USE_DEBUG_STR`) для
+  ЭТОГО распространённого идиома — задолго до этой сессии (репро:
+  `spec_tests/conformance/neg/d216_ptr_index_read_neg.nv`, которая
+  полагалась ИСКЛЮЧИТЕЛЬНО на позднюю codegen-стадию
+  `E_POINTER_OP_USE_METHOD`, а не на checker-стадию). Исправлено: расширен
+  `expr_is_typed_pointer` — распознаёт этот идиом напрямую (единая точка,
+  выгодополучатели — ptr_var-регистрация, Index-gate, order-compare-gate,
+  interpolation-ban, И новый `E_UNSAFE_UNUSED`).
+
+**Разбор std/-флагов этой волной (36 сайтов, все разрешены):**
+- `std/tls/stream.nv` (5 сайтов, напр. `unsafe { tls_wants_write(session) }`)
+  — блок реально лишний (аргументы — только `CTlsHandle`-хендл, ни одного
+  raw pointer) → **unsafe-обёртка убрана** (fix the block).
+- `std/net/mock.nv` (1 сайт, `unsafe { net_addr_loopback(0) }`) — тот же
+  случай (нет pointer-аргумента) → **unsafe-обёртка убрана**.
+- `std/net/addr.nv` (9), `dns.nv` (1), `error.nv` (1), `std/tls/client.nv`
+  (5), `server.nv` (6) (23 сайта) — extern-fn-call с raw-pointer-аргументом
+  (`.ptr()`-идиом) → **карта расширена** (п.10) — обёртки оставлены как есть.
+- `std/collections/vec/{core,mutate,restructure}.nv` (7 сайтов) —
+  cross-module `RawMem.*` вызов → **карта расширена** (п.9) — обёртки
+  оставлены как есть.
+
+**Neg/pos conformance:** `spec_tests/conformance/neg/d216_unused_unsafe_neg.nv`
+(`unsafe { 1 + 1 }` → `E_UNSAFE_UNUSED`), `spec_tests/conformance/d216_unused_unsafe_pos.nv`
+(5 позитивных случаев — `.write()` intrinsic, `raw &x`, `unsafe fn` call,
+`.read_at()` intrinsic, `uninit T` narrow-cast — НЕ флагуются).
+
+**Followups (вне рамок этой волны):**
+- `[M-unsafe-cluster-extern-ptr-arg-policy]` — language-policy: должны ли
+  `extern`/`external` fn, принимающие `*T`-аргумент, становиться `unsafe fn`
+  по умолчанию (Rust-модель) или остаться opt-in (текущая модель)? Решение
+  владельца; при «да» — retrofit ~35+ `std/net`+`std/tls` деклараций.
+- `[M-unsafe-cluster-cross-module-collector]` — расширить `unsafe_fns`/
+  `unsafe_static_methods` collector, чтобы просматривать `import`-нутые
+  модули целиком (закрывает п.9 gap полностью, не только `RawMem`).
+- `[M-unsafe-cluster-intrinsic-method-gate]` — полноценный call-site gate
+  для raw-pointer intrinsic-методов (п.8), требующий type-inference на
+  этом checker-проходе (сейчас чисто syntactic pass).
+
 ### §22. CStr type (Plan 118.1 Ф.4 closeout, 2026-06-05)
 
 `type CStr(*u8)` newtype declared в std/ffi/cstr.nv — FFI-compatible C-string handle.
@@ -8878,6 +9056,10 @@ Closes [M-118.1-cstr-runtime-wiring] (was: «C primitive ABI wiring»; pure-Nova
 - `E_PTR_NO_DISPLAY_USE_DEBUG_STR` — `"${p}"`
 - `E_VARARG_NOT_SUPPORTED` — vararg FFI call
 - `E_CAST_RAW_FN_TO_CLOSURE` — `*fn → fn` cast outside unsafe
+- `E_UNSAFE_UNUSED` — `unsafe { }` block with no operation from the §21 map
+  inside it (unsafe-cluster, Plan 174.5 followup, 2026-07-11). Hard error
+  (owner decision — Rust's `unused_unsafe` is a warning). See §21 for the
+  full map + implementation + std/ triage.
 
 **Warnings:**
 - `W_UNSAFE_GC_TRIGGER` — GC trigger внутри unsafe с pointer in scope

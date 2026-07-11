@@ -1,0 +1,15 @@
+// unsafe-cluster (Plan 174.5 followup, 2026-07-11, D216 §21) — `unsafe { }`
+// block containing NO operation from the D216 §21 map (no deref/index-on-
+// pointer, no `raw &x`, no pointer order-compare, no call to an `unsafe fn`
+// / `*unsafe fn(...)` / raw-pointer intrinsic method, no `uninit T` read or
+// narrow-cast) is dead weight — hard error (owner decision: Rust's
+// `unused_unsafe` is a warning, Nova makes it an error, §4а zero-tolerance).
+//
+// EXPECT_COMPILE_ERROR E_UNSAFE_UNUSED
+
+module neg.d216_unused_unsafe_neg
+
+test "unsafe block wrapping ordinary arithmetic — nothing inside requires it" {
+    ro x = unsafe { 1 + 1 }
+    assert(x == 2)
+}
