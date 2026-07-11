@@ -21,7 +21,10 @@ jobs:
         with:
           submodules: true
       - name: Install system deps
-        run: sudo apt-get install -y libgc-dev
+        # libmbedtls-dev: detect_mbedtls (test_runner.rs) находит /usr/include/mbedtls/
+        # → std/tls-шим собирается с реальным mbedTLS (не stub) → TLS-тесты (cert_modes)
+        # проходят в std-гейте. ubuntu-latest=24.04 → mbedTLS 3.6.x (совместимо с шимом).
+        run: sudo apt-get install -y libgc-dev libmbedtls-dev
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
       # nova_tests/ — НЕ гейт корректности (deprecated per-plan-фикстуры, под
@@ -43,7 +46,10 @@ jobs:
         with:
           submodules: true
       - name: Install system deps
-        run: sudo apt-get install -y libgc-dev
+        # libmbedtls-dev: detect_mbedtls (test_runner.rs) находит /usr/include/mbedtls/
+        # → std/tls-шим собирается с реальным mbedTLS (не stub) → TLS-тесты (cert_modes)
+        # проходят в std-гейте. ubuntu-latest=24.04 → mbedTLS 3.6.x (совместимо с шимом).
+        run: sudo apt-get install -y libgc-dev libmbedtls-dev
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
       # nova_tests/ non-blocking (см. positive-fast) — отчёт для трекинга дрейфа.

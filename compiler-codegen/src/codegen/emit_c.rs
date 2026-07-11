@@ -50183,6 +50183,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 ExprKind::IntLit(_) => "nova_int".into(),
                 ExprKind::BoolLit(_) => "nova_bool".into(),
                 ExprKind::StrLit(_) => "nova_str".into(),
+                // Plan 196 Ф.2 (prove-dead audit, docs/plans/196-audit.md §2 row 10):
+                // trace-instrumented (marker `[PROVE-DEAD-196-F2]`, env-gated
+                // `NOVA_PROVE_DEAD_196_F2`) over spec_tests/conformance + a full std/
+                // compile sweep — NOT dead: 44 hits (conformance, 14 distinct source
+                // spans) / 1147 hits (std/). KEPT. Root cause (checked via an
+                // elems-detail trace, since removed): every observed hit was a tuple
+                // whose element(s) are a plain `Ident` that `infer_expr_type(el, scope)`
+                // fails to resolve (a checker scope-tracking gap — the SAME Ident
+                // resolves fine via legacy `var_types` a few lines below, both elements
+                // inferring concretely to `nova_int`) — NOT a generic / type-arg-mono
+                // gap. This is orthogonal to Ф.2's kind-gate mandate (primitive vs.
+                // concrete-named element TYPE, extended above in the checker's TupleLit
+                // slice, types/mod.rs) — it is an Ident-scope-plumbing gap in the same
+                // family as the existing U.4.5 Ident/Index probes (types/mod.rs
+                // f1_expr_inner), a separate atom. Arm stays.
                 ExprKind::TupleLit(elems) => {
                     // Plan 59: prefer mono'd tuple struct если все element types
                     // concrete. Параллель с emit_expr::TupleLit decision.
@@ -50336,78 +50351,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                 },
-                ExprKind::RecordLit { type_name: Some(name), fields, .. } => {
-                    let raw_name = name.join("_");
-                    let struct_name = if raw_name == "Self" {
-                        self.current_receiver_type.clone().unwrap_or(raw_name)
-                    } else { raw_name };
-                    // D406: qualified `TypeName.Variant { fields }` — path ["TypeName", "Variant"].
-                    // join("_") gives "TypeName_Variant" which find_variant_compat won't find.
-                    // Detect and look up the sum type directly.
-                    if name.len() == 2 {
-                        let (sum_part, _var_part) = (&name[0], &name[1]);
-                        if self.sum_schemas.contains_key(sum_part.as_str())
-                            || self.sum_schema_registry.lookup_sum_schema(sum_part).is_some()
-                        {
-                            return format!("Nova_{}*", sum_part);
-                        }
-                    }
-                    // Check if this is a sum-type record variant.
-                    // Plan 62.A.bis Ф.2.2: registry-driven sum variant lookup.
-                    if let Some((sum_type_name, _)) = self.sum_schema_registry.find_variant_compat(&struct_name) {
-                        format!("Nova_{}*", sum_type_name)
-                    } else if self.generic_types.contains(&struct_name) {
-                        // Generic type: compute concrete mono name from field values.
-                        // Check BEFORE record_schemas because record_schemas has the erased form
-                        // (with void* fields) for generic types — we want the concrete mono form.
-                        if let Some(template) = self.generic_type_templates.get(&struct_name) {
-                            use crate::ast::TypeDeclKind;
-                            let mut type_args_c: Vec<String> = template.generics.iter()
-                                .map(|_| "nova_int".to_string())
-                                .collect();
-                            if let TypeDeclKind::Record(field_decls) = &template.kind {
-                                for (i, g) in template.generics.iter().enumerate() {
-                                    for f_decl in field_decls {
-                                        if let crate::ast::TypeRef::Named { path, generics: fgens, .. } = &f_decl.ty {
-                                            if fgens.is_empty() && path.join("_") == g.name {
-                                                if let Some(field) = fields.iter().find(|f| f.name == f_decl.name) {
-                                                    if let Some(v) = &field.value {
-                                                        let c_ty = self.infer_expr_c_type(v);
-                                                        if !c_ty.is_empty() && c_ty != "void*" {
-                                                            type_args_c[i] = c_ty;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            let mangled = Self::compute_generic_type_c_name(&struct_name, &type_args_c);
-                            // Plan 153.2 Ф.1 (STAGE 1): a `value` generic record
-                            // literal has the by-value C-type `NovaValue_<short>`
-                            // (no `*`), matching what `type_ref_to_c` returns and
-                            // what the record-lit emitter produces.
-                            if self.is_value_generic_template(&struct_name) {
-                                format!("NovaValue_{}", Self::debt_mono_short_name(&mangled))
-                            } else {
-                                format!("{}*", mangled)
-                            }
-                        } else {
-                            "void*".into()
-                        }
-                    } else if self.record_schemas.contains_key(&struct_name) {
-                        // Plan 124.8 V2 / Plan 127: value-records use stack-typedef
-                        // `NovaValue_<X>` (no pointer); heap records use `Nova_<X>*`.
-                        if self.value_record_names.contains(&struct_name) {
-                            format!("NovaValue_{}", struct_name)
-                        } else {
-                            format!("Nova_{}*", struct_name)
-                        }
-                    } else {
-                        "void*".into()
-                    }
-                }
+                // Plan 196 Ф.2 (prove-dead-delete, docs/plans/196-audit.md §2 row 14):
+                // trace-instrumented (marker `[PROVE-DEAD-196-F2]`, env-gated
+                // `NOVA_PROVE_DEAD_196_F2`) over spec_tests/conformance (95/95) + a full
+                // std/ compile sweep (~130 CUs) — 0 hits across BOTH corpora. Deleted.
+                // Root cause (not checker-annotation coverage, but a PRE-EXISTING
+                // unconditional duplicate): Channel 6n (`emit_c.rs` above, "RecordLit —
+                // ДОСЛОВНЫЙ подъём legacy-арма", commit 03f0f9eec, 2026-07-04) already
+                // intercepts EVERY `RecordLit{type_name: Some(name), ..}` node that
+                // reaches `infer_expr_c_type` after Channel 1/2 — byte-identical body,
+                // unconditional `return`, positioned textually BEFORE this match — so
+                // this arm was provably unreachable by construction (Channel 6n's own
+                // commit message already recorded "RecLit:Self/named закрыты" — this
+                // copy was leftover debt from the later "legacy_inner перенесён
+                // ЦЕЛИКОМ" en-masse lift, never pruned). Falls through to the wildcard
+                // `[P67-LEGACY]` panic if ever reached, same as every other
+                // proven-unreachable arm in this match.
                 ExprKind::RecordLit { type_name: None, fields, .. } => {
                     // Anonymous record with spread — infer type from first spread source
                     for f in fields {
@@ -50778,135 +50737,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.debug_if_infer_125("infer_If", then_diverges, &then_ty, &else_ty, &chosen);
                     chosen
                 }
-                ExprKind::Match { scrutinee, arms } => {
-                    // Plan 62.D bis-1 (2026-05-18): infer arm body type WITH pattern
-                    // bindings installed via `pattern_binding_overrides` RefCell.
-                    // Without this, `match opt { Some(r) => r }` would look up `r` in
-                    // `var_types` and pick up stale entry from a different scope
-                    // (e.g. `let r = Range...` in another test file) instead of the
-                    // correct inner type (`nova_str` for `Option[str]`). Mirrors the
-                    // emit_match `infer_arm` closure (line ~14694) which installs into
-                    // `var_types`; here we use RefCell since `&self`.
-                    let scr_ty = self.infer_expr_c_type(scrutinee);
-                    let infer_arm = |this: &Self, arm: &MatchArm| -> String {
-                        let bindings: Vec<(String, String)> =
-                            Self::collect_pattern_inner_bindings(&arm.pattern, &scr_ty, this);
-                        let saved: Vec<(String, Option<String>)> = {
-                            let mut overrides = this.pattern_binding_overrides.borrow_mut();
-                            bindings.iter()
-                                .map(|(n, t)| {
-                                    let prev = overrides.insert(n.clone(), t.clone());
-                                    (n.clone(), prev)
-                                })
-                                .collect()
-                        };
-                        // Seed block-local `let`s (e.g. `{ mut s = 0; …; s }`) into
-                        // the same override map so the trailing Ident infers from the
-                        // local binding, not a stale `var_types[name]` left by an
-                        // unrelated arm/file in the folder-module. Mirrors the
-                        // emit_match `infer_arm` seed; uses pattern_binding_overrides
-                        // because this path is `&self`.
-                        let block_saved: Vec<(String, Option<String>)> = if let MatchArmBody::Block(b) = &arm.body {
-                            let mut bs = Vec::new();
-                            for stmt in &b.stmts {
-                                if let crate::ast::Stmt::Let(decl) = stmt {
-                                    if let crate::ast::Pattern::Ident { name, .. } = &decl.pattern {
-                                        let vt = this.infer_expr_c_type(&decl.value);
-                                        if !vt.is_empty() {
-                                            let prev = this.pattern_binding_overrides.borrow_mut().insert(name.clone(), vt);
-                                            bs.push((name.clone(), prev));
-                                        }
-                                    }
-                                }
-                            }
-                            bs
-                        } else {
-                            Vec::new()
-                        };
-                        let t = match &arm.body {
-                            MatchArmBody::Expr(e) => this.infer_expr_c_type(e),
-                            MatchArmBody::Block(b) => b.trailing.as_ref()
-                                .map(|e| this.infer_expr_c_type(e))
-                                .unwrap_or_else(|| "nova_unit".into()),
-                        };
-                        let mut overrides = this.pattern_binding_overrides.borrow_mut();
-                        for (n, prev) in block_saved {
-                            match prev {
-                                Some(p) => { overrides.insert(n, p); }
-                                None => { overrides.remove(&n); }
-                            }
-                        }
-                        for (n, prev) in saved {
-                            match prev {
-                                Some(p) => { overrides.insert(n, p); }
-                                None => { overrides.remove(&n); }
-                            }
-                        }
-                        t
-                    };
-                    // Plan 125: divergence-aware arm selection. Skip arms whose
-                    // body is provably divergent — symmetric с emit_match's
-                    // first-pass loop (R3 helper extraction principle).
-                    let arm_diverges = |this: &Self, arm: &MatchArm| -> bool {
-                        match &arm.body {
-                            MatchArmBody::Expr(e) => this.expr_diverges_125(e),
-                            MatchArmBody::Block(b) => this.block_trailing_diverges(b),
-                        }
-                    };
-                    // [M-codegen-fluent-tail-if-unify] (2026-06-14): MUST stay
-                    // symmetric with `emit_match`'s `[M-91.13]` unit-domination
-                    // (lines ~27249-27259): if a non-unit arm type is chosen but
-                    // SOME other non-divergent arm yields nova_unit, the arm types
-                    // are incompatible and the match is used in statement position
-                    // → `emit_match` coerces the whole match to nova_unit. If THIS
-                    // inference disagreed (returned the non-unit arm type) the
-                    // result temp would be declared `nova_unit` by emit yet read as
-                    // `Vec*` by an enclosing `if`/assignment → C type mismatch. So
-                    // detect the any-unit-arm case up front and yield nova_unit too.
-                    let any_unit_arm = arms.iter().any(|arm| {
-                        !arm_diverges(self, arm) && infer_arm(self, arm) == "nova_unit"
-                    });
-                    // Plan 180 Ф.6: Result-arm reconciliation (mirror of
-                    // `emit_match`). A `None => Err(<call>)` / `Some(v) => Ok(<call>)`
-                    // match (json.nv `Deserializer` cursor methods) yields the full
-                    // `Result[OK, ERR]` only by combining the concrete OK (from an
-                    // `Ok(..)` arm) with the concrete ERR (from an `Err(..)` arm);
-                    // `Ok`/`Err` alone infer a half-stub. Only fires with BOTH sides.
-                    if !any_unit_arm {
-                        let arm_types: Vec<String> = arms.iter()
-                            .filter(|arm| !arm_diverges(self, arm))
-                            .map(|arm| infer_arm(self, arm))
-                            .collect();
-                        if let Some(rec) = self.combine_result_arm_types(&arm_types) {
-                            return rec;
-                        }
-                    }
-                    // First pass: find a non-unit, non-nova_int, non-divergent type.
-                    // Skip an erased-Ok Result (`NovaRes_nova_int_*`, from an
-                    // `Err`/`None`-first arm) so a sibling concrete-Ok Result wins
-                    // (Plan 180 Ф.6; see emit_match). The second pass still accepts it.
-                    for arm in arms {
-                        if arm_diverges(self, arm) { continue; }
-                        let t = infer_arm(self, arm);
-                        if t != "nova_unit" && t != "nova_int" && !Self::is_stub_ok_result(&t)
-                && !Self::is_default_ambiguous_composite_c(&t) {
-                            return if any_unit_arm { "nova_unit".into() } else { t };
-                        }
-                    }
-                    // Second pass: any non-unit, still skipping divergent arms.
-                    let mut all_unit = true;
-                    for arm in arms {
-                        if arm_diverges(self, arm) { continue; }
-                        let t = infer_arm(self, arm);
-                        if t != "nova_unit" {
-                            all_unit = false;
-                            return if any_unit_arm { "nova_unit".into() } else { t };
-                        }
-                    }
-                    // All non-divergent arms are nova_unit → match is unit (statement-position).
-                    // Fall back to nova_int only if there are NO non-divergent arms at all.
-                    if all_unit { "nova_unit".into() } else { "nova_int".into() }
-                }
+                // Plan 196 Ф.2 (prove-dead-delete, docs/plans/196-audit.md §2 row 24):
+                // trace-instrumented (marker `[PROVE-DEAD-196-F2]`, env-gated
+                // `NOVA_PROVE_DEAD_196_F2`, sub-bucketed by which internal branch would
+                // have returned — combine_result/first_pass/second_pass/all_unit_or_none
+                // — to specifically watch for the "Result-arm reconciliation" generic
+                // residual the audit flagged) over spec_tests/conformance (95/95) + a
+                // full std/ compile sweep (~130 CUs) — 0 hits in EVERY bucket across BOTH
+                // corpora. Deleted. Root cause (not checker-annotation coverage, but a
+                // PRE-EXISTING unconditional duplicate): Channel 6l (`emit_c.rs` above,
+                // "Match — ДОСЛОВНЫЙ подъём legacy-арма", commit f39104aab, 2026-07-04,
+                // tally "Match 23→0") already intercepts EVERY `ExprKind::Match` node
+                // that reaches `infer_expr_c_type` after Channel 1/2 — byte-identical
+                // body (same `pattern_binding_overrides` + divergence + `combine_result
+                // _arm_types` Result-reconciliation + unit-domination logic), unconditional
+                // `return`, positioned textually BEFORE this match — so this arm was
+                // provably unreachable by construction, leftover debt from the later
+                // "legacy_inner перенесён ЦЕЛИКОМ" en-masse lift, never pruned. Falls
+                // through to the wildcard `[P67-LEGACY]` panic if ever reached, same as
+                // every other proven-unreachable arm in this match.
                 ExprKind::Member { obj, name } => {
                     // Plan 11 Ф.4: method value `@`-prefix → closure (void*).
                     if name.starts_with('@') {
@@ -51329,6 +51178,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // can degrade to nova_unit. If the checker was supposed to annotate this,
                     // the missing annotation will surface as a type mismatch at the real emit
                     // site (not here in the pre-scan). Panic kept ONLY in debug-assert context.
+                    //
+                    // §0 close-out Ф.1e (owner Q 2026-07-11): full LOUD-panic hardening
+                    // here is DEFERRED to Ф.6 — empirically the wildcard is still REACHED by
+                    // unannotated value-producing kinds (§0 coverage gaps, `[M-196-wildcard-
+                    // reached-kinds]`); making it panic now breaks conformance. Harden only
+                    // after Ф.4 completes checker-coverage so the wildcard is truly unreachable.
                     #[cfg(debug_assertions)]
                     if std::env::var("NOVA_STRICT_LEGACY").is_ok() {
                         panic!("[P67-LEGACY] infer_expr_c_type_legacy: unhandled ExprKind={:?} — checker must annotate (compiler-conventions.md §0)",

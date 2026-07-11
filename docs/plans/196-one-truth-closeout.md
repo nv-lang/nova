@@ -37,8 +37,13 @@
   (c) аннотация литералов + empty-sum в чекере (`f1_expr_inner`, строго аддитивно);
   (d) prove-dead→delete: trace-инструментация доказывает 0 попаданий в
       литеральные/empty-sum армы → снос.
-- **Ф.2 — checker-extension:** non-primitive Match + non-generic RecordLit/TupleLit
-  (по прецеденту RecordLit-гейта; generic — позже).
+- **Ф.2 — checker-extension:** ✅ ВЫПОЛНЕНО 2026-07-11 (be70b65b2+8a73c6eb8). Match +
+  RecordLit{Some} **удалены** (0 хитов — оказались shadowed БЕЗУСЛОВНЫМИ дубликатами-
+  предшественниками «6n»/«6l», т.е. мёртвые-редундантные — §0-находка про дубль-каналы).
+  TupleLit-элементы аннотированы (concrete_value_named). **TupleLit-арм ОСТАВЛЕН** —
+  корень НЕ generic, а **пробел scope-резолюции чекера** `[M-196-tuplelit-ident-scope]`:
+  Ident-элементы не резолвятся через `infer_expr_type(el, scope)`, хотя резолвятся ниже
+  через legacy `var_types` — отдельный атом (Ident-scope-плюмбинг), не kind-гейт Ф.2.
 - **Ф.3 — non-infer-consumer sweep:** `emit_expr`/`emit_call`/`emit_generic_type_instance`/
   … (12 свежих raw-сайтов в 10 функциях) → `debt_`, восстановить инвариант.
 - **Ф.4 — глубокое ядро (масштаб 172.12):** generic-method-return mono-движок =
@@ -52,12 +57,15 @@
   `resolved_type_to_c(ir.type_of(expr))`, либо call-sites зовут `resolved_type_to_c`
   напрямую и функция сносится. Второго окна не остаётся.
 
-- **Ф.1e — УЖЕСТОЧИТЬ wildcard (РАНО, до новых удалений; owner Q 2026-07-11):** сейчас
-  wildcard `_ =>` в `infer_expr_c_type` в release отдаёт ПУСТУЮ строку → вызывающий код
-  тихо деградирует к `nova_unit` (в debug — panic). Это нарушает §3 (no-silent-fallback,
-  D368) и делает prove-dead-delete НЕЗВУЧНЫМ: ложно-мёртвый арм (пробел покрытия вне
-  корпуса) молча смискомпилит `nova_unit`. Ужесточить wildcard до ГРОМКОГО panic И в
-  release → любой ложно-мёртвый падает громко. Делать ПЕРВЫМ после мержа Ф.2.
+- **Ф.1e — УЖЕСТОЧИТЬ wildcard → ОТЛОЖЕНО НА Ф.6 (эмпирика 2026-07-11).** Wildcard `_ =>`
+  в `infer_expr_c_type` в release отдаёт ПУСТУЮ строку → тихо `nova_unit` (§3-нарушение,
+  D368). ПОПЫТКА ужесточить РАНО ПРОВАЛИЛАСЬ: wildcard **реально достигается**
+  непроаннотированными value-kind'ами (`Discriminant(50)` conformance, `Discriminant(39)`
+  std — `[M-196-wildcard-reached-kinds]`), громкий panic ломает conformance. Это
+  пред-существующие §0-пробелы, НЕ ложно-мёртвые (удаления 196 звучны: 0-hit-kind'ы на
+  prove-dead-прогоне ≠ wildcard-reached-kind'ы). Полный харденинг возможен ТОЛЬКО когда
+  Ф.4 достроит checker-покрытие этих kind'ов → wildcard станет недостижим → тогда panic.
+  Перенесено в Ф.6-приёмку.
 
 ## Гейты (КАЖДАЯ фаза)
 
