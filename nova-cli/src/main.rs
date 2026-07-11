@@ -4656,6 +4656,23 @@ fn cmd_build(
                 // VerificationPipeline (run in check_module above) so Z3/Trivial-
                 // proven requires/ensures are elided at codegen (zero-cost).
                 emitter.set_proven_contracts(&build_env.proven_contracts);
+                // Ф.4c (§0 debt) — feed the checker channels the `nova test`
+                // (test_runner.rs) and standalone-codegen (main.rs) emit paths
+                // already feed, which the `nova build` path had silently omitted:
+                // without them the emitter's `resolved_types` (Channel 2) /
+                // `resolved_callees` (Channel 1) are empty, so any node whose
+                // C-type is knowable ONLY via the checker annotation (e.g. a
+                // `str.ptr` field-read feeding `.offset(n)` in the string runtime)
+                // hit `[P67-LEGACY] method call return type unknown` — a
+                // deterministic ICE on EVERY `nova build`, incl. `fn main(){}`,
+                // that conformance never caught (its reachability slice does not
+                // reach that code, and `nova test` feeds the channel anyway).
+                // Proven index-sites mirror the same paths for bounds-check
+                // elision parity with the verified path.
+                emitter.set_proven_index_sites(&build_env.proven_index_sites);
+                emitter.set_proven_index_sites_contract(&build_env.proven_index_sites_contract);
+                emitter.set_resolved_types(&build_env.resolved_types);
+                emitter.set_resolved_callees(&build_env.resolved_callees);
                 emitter.emit_module(&module)
                     .map_err(|e| anyhow!("codegen error: {}", e))?
             };
