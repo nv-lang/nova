@@ -173,13 +173,31 @@ impl TypeSet {
     }
 }
 
-/// Констрейнт, порождаемый генератором (будущие Ф.2-продюсеры), решаемый
-/// `solve()`. `Eq`/`MemberOf` — равенство и членство type-set (Ф.1). `Join`
-/// (Plan 196 Ф.4a, Binary-арифметика) — слияние двух известных типов в один
-/// результирующий по КАНОНИЧЕСКОЙ семантике `number_exprs::promote_arith_rt`
-/// (§0 — правило живёт в ОДНОМ месте, `Join` его лишь ВЫЗЫВАЕТ, а не
-/// переизобретает). `Project` (Index-проекция-в-элемент — см. Ф.0-инвентарь)
-/// остаётся за следующей волной; решатель расширяем без слома API.
+/// Вид проекции `Constraint::Project` — ЧТО извлекается из контейнера.
+/// Правило «контейнер→элемент» живёт в ОДНОМ месте (`project`, §0), а не
+/// дублируется инлайн по Index/Member-продюсерам (Ф.0-инвентарь: сайты #3
+/// Index-мост и Member tuple-field строили одну и ту же структурную
+/// раскладку руками в каждом месте).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProjectKind {
+    /// Одноэлементный контейнер → тип его элемента. Покрывает
+    /// `Vec[T]`/`Array`/`TypedPtr` → элемент и `Readonly`-обёртку над
+    /// `Vec[T]`/`Array` (снимается ОДИН слой view, затем проекция) —
+    /// ТОЧНО набор Index-моста канала (`resolved_types_buf`), byte-parity.
+    Element,
+    /// Кортеж → элемент по позиции `.i` (`Member` tuple-field). Вне
+    /// диапазона / не-кортеж → недоопределено (`None`).
+    TupleField(usize),
+}
+
+/// Констрейнт, порождаемый генератором (Ф.2+ продюсеры), решаемый `solve()`.
+/// `Eq`/`MemberOf` — равенство и членство type-set (Ф.1). `Join` (Plan 196
+/// Ф.4a, Binary-арифметика) — слияние двух известных типов по КАНОНИЧЕСКОЙ
+/// семантике `number_exprs::promote_arith_rt` (§0 — правило в ОДНОМ месте,
+/// `Join` его лишь ВЫЗЫВАЕТ). `Project` (Plan 196 Ф.4b, Index/Member-tuple
+/// деструктуризация) — извлечение элемента из контейнера по СТРУКТУРНОЙ форме
+/// (`project`, §0-единственный источник правила). Решатель расширяем без
+/// слома API.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Constraint {
     /// Два терма должны унифицироваться в один тип.
@@ -198,6 +216,15 @@ pub enum Constraint {
     /// «операнды numeric / bounded» остаётся у ПРОДЮСЕРА (контекстное знание
     /// чекера), как AST-обход остался у продюсера в Ф.2 literal-coercion.
     Join { out: Ty, left: Ty, right: Ty },
+    /// `out` = проекция `container` по `kind` (`project`, §0-каноническое
+    /// правило контейнер→элемент). Решается ТОЛЬКО когда `container` сводится
+    /// к листу без переменных И проекция определена: `Element` — элемент
+    /// `Vec[T]`/`Array`/`TypedPtr`/`Readonly`-обёртки; `TupleField(i)` —
+    /// i-й элемент кортежа. Иначе `out` остаётся несвязанным (недоопределено
+    /// → продюсер уходит на legacy). Гейт «это индексируемый контейнер /
+    /// tuple-поле `.N`» остаётся у ПРОДЮСЕРА (контекстное AST-знание), как
+    /// numeric-гейт остался у продюсера в `Join`.
+    Project { out: Ty, container: Ty, kind: ProjectKind },
 }
 
 /// Причина отказа решателя.
@@ -248,6 +275,21 @@ impl Solver {
                 {
                     if let Some(joined) = join_arith(&lrt, &rrt) {
                         self.unify(out, &Ty::Concrete(joined))?;
+                    }
+                }
+            }
+        }
+        // Project AFTER Eq (container must be resolved through the substitution)
+        // and BEFORE MemberOf (so a projected `out` is bound for any later
+        // membership check). Only binds `out` when the container collapses to a
+        // variable-free leaf AND `project` yields an element — otherwise `out`
+        // stays free (undetermined, not a conflict), mirroring `Join`.
+        for c in constraints {
+            if let Constraint::Project { out, container, kind } = c {
+                let cont = self.resolve(container);
+                if let Some(crt) = self.as_concrete_leaf(&cont) {
+                    if let Some(elem) = project(&crt, kind) {
+                        self.unify(out, &Ty::Concrete(elem))?;
                     }
                 }
             }
@@ -454,6 +496,46 @@ fn join_arith(l: &ResolvedType, r: &ResolvedType) -> Option<ResolvedType> {
         return Some(crate::number_exprs::promote_arith_rt(l, r));
     }
     None
+}
+
+/// Ядро `Constraint::Project`: спроецировать УЖЕ РЕШЁННЫЙ контейнер-лист в
+/// тип его элемента по СТРУКТУРНОЙ форме. Возвращает `None`, когда проекция
+/// не определена (продюсер тогда не аннотирует → legacy). ЕДИНСТВЕННЫЙ
+/// источник правила «контейнер→элемент» — до Ф.4b оно дублировалось инлайн в
+/// Index-мосте канала и Member tuple-field продюсерах (Ф.0-инвентарь #3/#137).
+///
+/// BYTE-PARITY: набор форм ТОЧНО повторяет инлайн-раскладку тех продюсеров —
+///   `Element`: `Vec[T]`(1 arg)→T, `Array`→inner, `TypedPtr`→inner,
+///     `Readonly` снимает РОВНО один слой и проецирует ТОЛЬКО в `Vec[T]`/
+///     `Array` (не в `TypedPtr`, не вложенный `Readonly`) — как инлайн-`match
+///     inner` моста; `FixedArray`/`Readonly(TypedPtr)` НЕ покрыты здесь
+///     (в канале-мосте их нет: scope-типизированный `[N]T` идёт TypeRef-веткой
+///     Index-арма ДО моста), чтобы не аннотировать больше исходного.
+///   `TupleField(i)`: `Tuple`→элемент по индексу (без снятия `Readonly` —
+///     как инлайн Member tuple-field).
+fn project(container: &ResolvedType, kind: &ProjectKind) -> Option<ResolvedType> {
+    match kind {
+        ProjectKind::Element => match container {
+            ResolvedType::Named { name, args, .. } if name == "Vec" && args.len() == 1 => {
+                Some(args[0].clone())
+            }
+            ResolvedType::Array(inner) | ResolvedType::TypedPtr(_, inner) => {
+                Some((**inner).clone())
+            }
+            ResolvedType::Readonly(inner) => match inner.as_ref() {
+                ResolvedType::Named { name, args, .. } if name == "Vec" && args.len() == 1 => {
+                    Some(args[0].clone())
+                }
+                ResolvedType::Array(i2) => Some((**i2).clone()),
+                _ => None,
+            },
+            _ => None,
+        },
+        ProjectKind::TupleField(i) => match container {
+            ResolvedType::Tuple(items) => items.get(*i).cloned(),
+            _ => None,
+        },
+    }
 }
 
 #[cfg(test)]
@@ -798,5 +880,140 @@ mod tests {
             .unwrap();
         assert_eq!(sol.type_of(out), Some(u16_ty.clone()));
         assert_eq!(sol.type_of(a), Some(u16_ty));
+    }
+
+    // ── Plan 196 Ф.4b — `Constraint::Project` (Index / Member-tuple) ───────
+
+    /// Прогнать один Project и вернуть решённый тип `out` (или `None`, если
+    /// решатель оставил его несвязанным — недоопределённая проекция).
+    fn proj(container: &ResolvedType, kind: ProjectKind) -> Option<ResolvedType> {
+        let mut g = VarGen::new();
+        let out = g.fresh();
+        Solver::new()
+            .solve(&[Constraint::Project {
+                out: Ty::Var(out),
+                container: Ty::from_resolved(container),
+                kind,
+            }])
+            .ok()
+            .and_then(|sol| sol.type_of(out))
+    }
+
+    fn vec_of(elem: ResolvedType) -> ResolvedType {
+        ResolvedType::Named { name: "Vec".into(), module: vec![], args: vec![elem] }
+    }
+
+    #[test]
+    fn project_vec_element() {
+        // Vec[u8] → u8 (Named "Vec" 1-arg — канальный носитель контейнера).
+        let u8_ty = scalar(8, false, false);
+        assert_eq!(proj(&vec_of(u8_ty.clone()), ProjectKind::Element), Some(u8_ty));
+    }
+
+    #[test]
+    fn project_array_element() {
+        // Array(i32) → i32.
+        let i32_ty = scalar(32, true, false);
+        let arr = ResolvedType::Array(Box::new(i32_ty.clone()));
+        assert_eq!(proj(&arr, ProjectKind::Element), Some(i32_ty));
+    }
+
+    #[test]
+    fn project_typed_ptr_element() {
+        // *mut u16 → u16 (raw-buffer @data мост).
+        use crate::ast::PointerModifier;
+        let u16_ty = scalar(16, false, false);
+        let ptr = ResolvedType::TypedPtr(PointerModifier::Mut, Box::new(u16_ty.clone()));
+        assert_eq!(proj(&ptr, ProjectKind::Element), Some(u16_ty));
+    }
+
+    #[test]
+    fn project_readonly_vec_peels_one_layer() {
+        // readonly Vec[str] → str (Readonly снимает один слой, проецирует Vec).
+        let ro_vec = ResolvedType::Readonly(Box::new(vec_of(ResolvedType::Str)));
+        assert_eq!(proj(&ro_vec, ProjectKind::Element), Some(ResolvedType::Str));
+    }
+
+    #[test]
+    fn project_readonly_array_peels_one_layer() {
+        // readonly Array(bool) → bool.
+        let ro_arr = ResolvedType::Readonly(Box::new(
+            ResolvedType::Array(Box::new(ResolvedType::Bool)),
+        ));
+        assert_eq!(proj(&ro_arr, ProjectKind::Element), Some(ResolvedType::Bool));
+    }
+
+    #[test]
+    fn project_readonly_typed_ptr_undetermined_byte_parity() {
+        // readonly (*mut i32) → None: инлайн-мост Readonly проецирует ТОЛЬКО в
+        // Vec/Array, НЕ в TypedPtr — расширять было бы behavior-change.
+        use crate::ast::PointerModifier;
+        let ro_ptr = ResolvedType::Readonly(Box::new(ResolvedType::TypedPtr(
+            PointerModifier::Mut,
+            Box::new(scalar(32, true, false)),
+        )));
+        assert_eq!(proj(&ro_ptr, ProjectKind::Element), None);
+    }
+
+    #[test]
+    fn project_non_container_undetermined() {
+        // Скаляр — не контейнер → None (продюсер уходит на legacy).
+        assert_eq!(proj(&scalar(32, true, false), ProjectKind::Element), None);
+    }
+
+    #[test]
+    fn project_nested_vec_element_is_composite() {
+        // Vec[Vec[u8]] → Vec[u8] (элемент сам композит — проекция один слой).
+        let u8_ty = scalar(8, false, false);
+        let inner = vec_of(u8_ty);
+        assert_eq!(proj(&vec_of(inner.clone()), ProjectKind::Element), Some(inner));
+    }
+
+    #[test]
+    fn project_tuple_field_by_index() {
+        // (bool, i32, str).1 → i32.
+        let i32_ty = scalar(32, true, false);
+        let tup = ResolvedType::Tuple(vec![ResolvedType::Bool, i32_ty.clone(), ResolvedType::Str]);
+        assert_eq!(proj(&tup, ProjectKind::TupleField(1)), Some(i32_ty));
+        assert_eq!(proj(&tup, ProjectKind::TupleField(0)), Some(ResolvedType::Bool));
+    }
+
+    #[test]
+    fn project_tuple_field_out_of_range_undetermined() {
+        // (bool, i32).5 → None (индекс за пределами).
+        let tup = ResolvedType::Tuple(vec![ResolvedType::Bool, scalar(32, true, false)]);
+        assert_eq!(proj(&tup, ProjectKind::TupleField(5)), None);
+    }
+
+    #[test]
+    fn project_tuple_field_on_non_tuple_undetermined() {
+        // Vec[..].0 через TupleField → None (не кортеж; byte-parity — Member
+        // tuple-мост проецирует ТОЛЬКО Tuple).
+        assert_eq!(
+            proj(&vec_of(ResolvedType::Bool), ProjectKind::TupleField(0)),
+            None
+        );
+    }
+
+    #[test]
+    fn project_out_var_is_queryable_through_eq_chain() {
+        // `out` связывается через unify — решение доступно транзитивно
+        // (Eq(a, out) до Project → `a` тоже резолвится в элемент).
+        let mut g = VarGen::new();
+        let out = g.fresh();
+        let a = g.fresh();
+        let u8_ty = scalar(8, false, false);
+        let sol = Solver::new()
+            .solve(&[
+                Constraint::Eq(Ty::Var(a), Ty::Var(out)),
+                Constraint::Project {
+                    out: Ty::Var(out),
+                    container: Ty::from_resolved(&vec_of(u8_ty.clone())),
+                    kind: ProjectKind::Element,
+                },
+            ])
+            .unwrap();
+        assert_eq!(sol.type_of(out), Some(u8_ty.clone()));
+        assert_eq!(sol.type_of(a), Some(u8_ty));
     }
 }
