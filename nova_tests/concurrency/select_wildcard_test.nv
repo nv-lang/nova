@@ -169,7 +169,7 @@ test "Some arm parks and wakes when data arrives from another fiber" {
     ro rx1 = ch1.rx
     ro rx2 = ch2.rx
 
-    mut result = 0
+    mut result = AtomicInt.new(0)
     supervised {
         spawn {
             Time.sleep(20)
@@ -177,10 +177,10 @@ test "Some arm parks and wakes when data arrives from another fiber" {
         }
         spawn {
             select {
-                Some(v) = rx1 => { result = -1 }
-                Some(v) = rx2 => { result = v }
+                Some(v) = rx1 => { result.store(-1) }
+                Some(v) = rx2 => { result.store(v) }
             }
         }
     }
-    assert(result == 88)
+    assert(result.load() == 88)
 }

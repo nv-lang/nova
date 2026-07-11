@@ -267,6 +267,7 @@ impl Collector {
             | ExprKind::UnitLit
             | ExprKind::CharLit(_)
             | ExprKind::NullPtrLit
+            | ExprKind::HexBlobLit(_)
             | ExprKind::Ident(_)
             | ExprKind::Path(_)
             | ExprKind::SelfAccess => {}

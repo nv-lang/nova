@@ -24,27 +24,27 @@ fn busy2(upto int) -> int {
 }
 
 test "blocking: pool saturation — offloads > pool size, graceful queue" {
-    mut total = 0
+    mut total = AtomicInt.new(0)
     supervised {
         // 6 fibers, pool of 2 threads → 4 queued.
-        spawn { ro r = busy2(40000); total = total + r }
-        spawn { ro r = busy2(40000); total = total + r }
-        spawn { ro r = busy2(40000); total = total + r }
-        spawn { ro r = busy2(40000); total = total + r }
-        spawn { ro r = busy2(40000); total = total + r }
-        spawn { ro r = busy2(40000); total = total + r }
+        spawn { ro r = busy2(40000); total.fetch_add(r) }
+        spawn { ro r = busy2(40000); total.fetch_add(r) }
+        spawn { ro r = busy2(40000); total.fetch_add(r) }
+        spawn { ro r = busy2(40000); total.fetch_add(r) }
+        spawn { ro r = busy2(40000); total.fetch_add(r) }
+        spawn { ro r = busy2(40000); total.fetch_add(r) }
     }
-    assert(total == 240000)
+    assert(total.load() == 240000)
 }
 
 test "blocking: saturation with mixed work sizes" {
-    mut total = 0
+    mut total = AtomicInt.new(0)
     supervised {
-        spawn { ro r = busy2(10000); total = total + r }
-        spawn { ro r = busy2(20000); total = total + r }
-        spawn { ro r = busy2(30000); total = total + r }
-        spawn { ro r = busy2(40000); total = total + r }
-        spawn { ro r = busy2(50000); total = total + r }
+        spawn { ro r = busy2(10000); total.fetch_add(r) }
+        spawn { ro r = busy2(20000); total.fetch_add(r) }
+        spawn { ro r = busy2(30000); total.fetch_add(r) }
+        spawn { ro r = busy2(40000); total.fetch_add(r) }
+        spawn { ro r = busy2(50000); total.fetch_add(r) }
     }
-    assert(total == 150000)
+    assert(total.load() == 150000)
 }

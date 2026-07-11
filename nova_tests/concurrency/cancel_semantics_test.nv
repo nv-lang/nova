@@ -159,13 +159,13 @@ test "user-precedence: cancel() + позже throw → наружу летит r
 // ──────────────────────────────────────────────────────────────────────────
 
 test "backward-compat: supervised без cancel — обычный flow" {
-    mut counter = 0
+    mut counter = AtomicInt.new(0)
     supervised {
-        spawn { counter += 1 }
-        spawn { counter += 2 }
-        spawn { counter += 4 }
+        spawn { counter.fetch_add(1) }
+        spawn { counter.fetch_add(2) }
+        spawn { counter.fetch_add(4) }
     }
-    assert(counter == 7)
+    assert(counter.load() == 7)
 }
 
 

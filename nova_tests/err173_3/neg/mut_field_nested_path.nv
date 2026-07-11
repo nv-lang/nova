@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR [E_CONCURRENT_MUT_CAPTURE] outer `mut` binding `o` captured by reference in a `spawn`/`parallel for` body: `Outer` is poisoned at `Outer.inner.buf` (`[]u8`): a writable cell
+// EXPECT_COMPILE_ERROR [E_CONCURRENT_MUT_CAPTURE] outer `mut` binding `o` captured by reference in a `spawn`/`parallel for`/`detach` body: `Outer` is poisoned at `Outer.inner.buf` (`[]u8`): a writable cell
 //
 // Plan 173.3 [M-173.3-share-leakage-explain]: ВЛОЖЕННОЕ ядовитое поле —
 // `mut buf []u8` живёт в Inner, а захватывается Outer (тип-в-типе): путь

@@ -17,30 +17,30 @@ module nova_tests.concurrency
 test "100 idle supervised scopes — no sched_state allocations" {
     // 100 fiber'ов которые spawn'ятся и сразу завершаются.
     // sched_state должен остаться NULL для каждого — никто не park'ится.
-    mut completed = 0
+    mut completed = AtomicInt.new(0)
     supervised {
         for _ in 0..100 {
             spawn {
                 // No sleep, no recv — no park.
-                completed = completed + 1
+                completed.fetch_add(1)
             }
         }
     }
-    assert(completed == 100)
+    assert(completed.load() == 100)
 }
 
 test "1000 idle spawns не allocate sched_state" {
     // Stress 1000 fiber'ов без park'а. SpawnCtx хранится в GC-managed
     // fiber_ctx[] массиве (D97 fix) — Boehm видит все live contexts,
     // GC не собирает их пока fiber не завершится.
-    mut sum = 0
+    mut sum = AtomicInt.new(0)
     supervised {
         for i in 0..1000 {
             spawn {
-                sum = sum + i
+                sum.fetch_add(i)
             }
         }
     }
     // Sum 0..1000 = 499_500.
-    assert(sum == 499_500)
+    assert(sum.load() == 499_500)
 }

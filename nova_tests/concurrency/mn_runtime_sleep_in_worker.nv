@@ -9,11 +9,11 @@ module nova_tests.concurrency
 
 test "M:N: 1 fiber Time.sleep в worker — park/wake" {
     runtime.init(2)
-    mut done = 0
+    mut done = AtomicInt.new(0)
     supervised {
-        spawn { Time.sleep(10); done = 1 }
+        spawn { Time.sleep(10); done.store(1) }
     }
-    assert(done == 1)
+    assert(done.load() == 1)
     runtime.shutdown()
 }
 
@@ -21,11 +21,11 @@ test "M:N: 1 fiber Time.sleep loop (5 iterations)" {
     runtime.init(2)
     mut i = 0
     while i < 5 {
-        mut done = 0
+        mut done = AtomicInt.new(0)
         supervised {
-            spawn { Time.sleep(5); done = 1 }
+            spawn { Time.sleep(5); done.store(1) }
         }
-        assert(done == 1)
+        assert(done.load() == 1)
         i = i + 1
     }
     runtime.shutdown()

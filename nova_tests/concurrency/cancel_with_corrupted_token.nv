@@ -143,7 +143,7 @@ test "fuzz read-after-cancel race: один fiber cancel'ит, остальны�
     // release-fence) — reader может прочитать torn pointer → SEGV при
     // dereference в reason() getter.
     ro tok = CancelToken.new()
-    mut readers_saw_some = 0
+    mut readers_saw_some = AtomicInt.new(0)
     supervised(cancel: tok) {
         spawn { tok.cancel("racey") }
         for _i in 0..10 {
@@ -156,7 +156,7 @@ test "fuzz read-after-cancel race: один fiber cancel'ит, остальны�
                             None    => false
                         }
                         if is_some {
-                            readers_saw_some += 1
+                            readers_saw_some.fetch_add(1)
                         }
                     }
                 }
@@ -165,5 +165,5 @@ test "fuzz read-after-cancel race: один fiber cancel'ит, остальны�
     }
     assert(tok.is_cancelled())
     // Не assert'им readers_saw_some > 0 — race-зависимо. Главное: процесс жив.
-    assert(readers_saw_some >= 0)
+    assert(readers_saw_some.load() >= 0)
 }

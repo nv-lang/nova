@@ -52,14 +52,14 @@ test "repeated scope-create/destroy не растит memory unbounded" {
     // (если park'ался) либо нет. GC должен освобождать unreachable
     // scope.sched_state и dynamic arrays между iteration'ами.
     // Если бы accumulating leak — это были бы +1 GB heap.
-    mut completed = 0
+    mut completed = AtomicInt.new(0)
     for _ in 0..1000 {
         supervised {
             spawn {
                 Time.sleep(0)
-                completed = completed + 1
+                completed.fetch_add(1)
             }
         }
     }
-    assert(completed == 1000)
+    assert(completed.load() == 1000)
 }

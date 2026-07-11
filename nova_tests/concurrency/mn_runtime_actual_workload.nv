@@ -27,6 +27,11 @@
 //       способ проверки вероятностного свойства (ср. Go
 //       `TestGoroutineParallelism`), не упрощение. Early-break держит
 //       стоимость теста на уровне исходного (обычно 1 batch).
+//
+// D415 §2 amendment (2026-07-11): each `wNN` slot is written from its
+// own `spawn` body — migrated to `AtomicInt` (`.store()`/`.load()`
+// replace the bare `=`/read). `attempt`/`distributed` stay plain (never
+// referenced inside a spawn body — only at supervised-body/loop level).
 
 module nova_tests.concurrency
 
@@ -34,38 +39,42 @@ test "M:N: 16 fibers выполняются на worker-пуле + распре�
     runtime.init(4)
 
     // 16 mut slots — each spawn writes own slot's worker_id.
-    mut w00 = -1; mut w01 = -1; mut w02 = -1; mut w03 = -1
-    mut w04 = -1; mut w05 = -1; mut w06 = -1; mut w07 = -1
-    mut w08 = -1; mut w09 = -1; mut w10 = -1; mut w11 = -1
-    mut w12 = -1; mut w13 = -1; mut w14 = -1; mut w15 = -1
+    mut w00 = AtomicInt.new(-1); mut w01 = AtomicInt.new(-1)
+    mut w02 = AtomicInt.new(-1); mut w03 = AtomicInt.new(-1)
+    mut w04 = AtomicInt.new(-1); mut w05 = AtomicInt.new(-1)
+    mut w06 = AtomicInt.new(-1); mut w07 = AtomicInt.new(-1)
+    mut w08 = AtomicInt.new(-1); mut w09 = AtomicInt.new(-1)
+    mut w10 = AtomicInt.new(-1); mut w11 = AtomicInt.new(-1)
+    mut w12 = AtomicInt.new(-1); mut w13 = AtomicInt.new(-1)
+    mut w14 = AtomicInt.new(-1); mut w15 = AtomicInt.new(-1)
 
     mut attempt = 0
     mut distributed = false
 
     while attempt < 20 {
         // Сброс слотов перед каждым независимым batch'ем.
-        w00 = -1; w01 = -1; w02 = -1; w03 = -1
-        w04 = -1; w05 = -1; w06 = -1; w07 = -1
-        w08 = -1; w09 = -1; w10 = -1; w11 = -1
-        w12 = -1; w13 = -1; w14 = -1; w15 = -1
+        w00.store(-1); w01.store(-1); w02.store(-1); w03.store(-1)
+        w04.store(-1); w05.store(-1); w06.store(-1); w07.store(-1)
+        w08.store(-1); w09.store(-1); w10.store(-1); w11.store(-1)
+        w12.store(-1); w13.store(-1); w14.store(-1); w15.store(-1)
 
         supervised {
-            spawn { w00 = runtime.current_worker_id() }
-            spawn { w01 = runtime.current_worker_id() }
-            spawn { w02 = runtime.current_worker_id() }
-            spawn { w03 = runtime.current_worker_id() }
-            spawn { w04 = runtime.current_worker_id() }
-            spawn { w05 = runtime.current_worker_id() }
-            spawn { w06 = runtime.current_worker_id() }
-            spawn { w07 = runtime.current_worker_id() }
-            spawn { w08 = runtime.current_worker_id() }
-            spawn { w09 = runtime.current_worker_id() }
-            spawn { w10 = runtime.current_worker_id() }
-            spawn { w11 = runtime.current_worker_id() }
-            spawn { w12 = runtime.current_worker_id() }
-            spawn { w13 = runtime.current_worker_id() }
-            spawn { w14 = runtime.current_worker_id() }
-            spawn { w15 = runtime.current_worker_id() }
+            spawn { w00.store(runtime.current_worker_id()) }
+            spawn { w01.store(runtime.current_worker_id()) }
+            spawn { w02.store(runtime.current_worker_id()) }
+            spawn { w03.store(runtime.current_worker_id()) }
+            spawn { w04.store(runtime.current_worker_id()) }
+            spawn { w05.store(runtime.current_worker_id()) }
+            spawn { w06.store(runtime.current_worker_id()) }
+            spawn { w07.store(runtime.current_worker_id()) }
+            spawn { w08.store(runtime.current_worker_id()) }
+            spawn { w09.store(runtime.current_worker_id()) }
+            spawn { w10.store(runtime.current_worker_id()) }
+            spawn { w11.store(runtime.current_worker_id()) }
+            spawn { w12.store(runtime.current_worker_id()) }
+            spawn { w13.store(runtime.current_worker_id()) }
+            spawn { w14.store(runtime.current_worker_id()) }
+            spawn { w15.store(runtime.current_worker_id()) }
         }
 
         // (1) КОНТРАКТ (детерминирован): все 16 fibers отработали на
@@ -73,42 +82,42 @@ test "M:N: 16 fibers выполняются на worker-пуле + распре�
         // Проверяется каждую попытку: реальная потеря работы или
         // выполнение на main вместо worker'а — мгновенный fail.
         ro total_ran =
-            (if w00 >= 0 { 1 } else { 0 }) +
-            (if w01 >= 0 { 1 } else { 0 }) +
-            (if w02 >= 0 { 1 } else { 0 }) +
-            (if w03 >= 0 { 1 } else { 0 }) +
-            (if w04 >= 0 { 1 } else { 0 }) +
-            (if w05 >= 0 { 1 } else { 0 }) +
-            (if w06 >= 0 { 1 } else { 0 }) +
-            (if w07 >= 0 { 1 } else { 0 }) +
-            (if w08 >= 0 { 1 } else { 0 }) +
-            (if w09 >= 0 { 1 } else { 0 }) +
-            (if w10 >= 0 { 1 } else { 0 }) +
-            (if w11 >= 0 { 1 } else { 0 }) +
-            (if w12 >= 0 { 1 } else { 0 }) +
-            (if w13 >= 0 { 1 } else { 0 }) +
-            (if w14 >= 0 { 1 } else { 0 }) +
-            (if w15 >= 0 { 1 } else { 0 })
+            (if w00.load() >= 0 { 1 } else { 0 }) +
+            (if w01.load() >= 0 { 1 } else { 0 }) +
+            (if w02.load() >= 0 { 1 } else { 0 }) +
+            (if w03.load() >= 0 { 1 } else { 0 }) +
+            (if w04.load() >= 0 { 1 } else { 0 }) +
+            (if w05.load() >= 0 { 1 } else { 0 }) +
+            (if w06.load() >= 0 { 1 } else { 0 }) +
+            (if w07.load() >= 0 { 1 } else { 0 }) +
+            (if w08.load() >= 0 { 1 } else { 0 }) +
+            (if w09.load() >= 0 { 1 } else { 0 }) +
+            (if w10.load() >= 0 { 1 } else { 0 }) +
+            (if w11.load() >= 0 { 1 } else { 0 }) +
+            (if w12.load() >= 0 { 1 } else { 0 }) +
+            (if w13.load() >= 0 { 1 } else { 0 }) +
+            (if w14.load() >= 0 { 1 } else { 0 }) +
+            (if w15.load() >= 0 { 1 } else { 0 })
         assert(total_ran == 16)
 
         // (2) РАСПРЕДЕЛЕНИЕ (статистически): не все 16 на worker 0.
         ro on_w0 =
-            (if w00 == 0 { 1 } else { 0 }) +
-            (if w01 == 0 { 1 } else { 0 }) +
-            (if w02 == 0 { 1 } else { 0 }) +
-            (if w03 == 0 { 1 } else { 0 }) +
-            (if w04 == 0 { 1 } else { 0 }) +
-            (if w05 == 0 { 1 } else { 0 }) +
-            (if w06 == 0 { 1 } else { 0 }) +
-            (if w07 == 0 { 1 } else { 0 }) +
-            (if w08 == 0 { 1 } else { 0 }) +
-            (if w09 == 0 { 1 } else { 0 }) +
-            (if w10 == 0 { 1 } else { 0 }) +
-            (if w11 == 0 { 1 } else { 0 }) +
-            (if w12 == 0 { 1 } else { 0 }) +
-            (if w13 == 0 { 1 } else { 0 }) +
-            (if w14 == 0 { 1 } else { 0 }) +
-            (if w15 == 0 { 1 } else { 0 })
+            (if w00.load() == 0 { 1 } else { 0 }) +
+            (if w01.load() == 0 { 1 } else { 0 }) +
+            (if w02.load() == 0 { 1 } else { 0 }) +
+            (if w03.load() == 0 { 1 } else { 0 }) +
+            (if w04.load() == 0 { 1 } else { 0 }) +
+            (if w05.load() == 0 { 1 } else { 0 }) +
+            (if w06.load() == 0 { 1 } else { 0 }) +
+            (if w07.load() == 0 { 1 } else { 0 }) +
+            (if w08.load() == 0 { 1 } else { 0 }) +
+            (if w09.load() == 0 { 1 } else { 0 }) +
+            (if w10.load() == 0 { 1 } else { 0 }) +
+            (if w11.load() == 0 { 1 } else { 0 }) +
+            (if w12.load() == 0 { 1 } else { 0 }) +
+            (if w13.load() == 0 { 1 } else { 0 }) +
+            (if w14.load() == 0 { 1 } else { 0 }) +
+            (if w15.load() == 0 { 1 } else { 0 })
         if on_w0 < 16 {
             // Распределение замечено — статистическое свойство доказано,
             // дальше повторять незачем (early-break держит стоимость

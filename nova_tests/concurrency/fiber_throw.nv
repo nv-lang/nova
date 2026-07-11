@@ -25,7 +25,7 @@ fn validated(n int) -> Result {
 // ================================================================
 
 test "fiber: ? on Ok inside spawn body works" {
-    mut got = 0
+    mut got = AtomicInt.new(0)
     supervised {
         spawn {
             // ? на Ok разворачивает значение и продолжает.
@@ -34,15 +34,15 @@ test "fiber: ? on Ok inside spawn body works" {
                 Ok(n) => n
                 Err(_) => -1
             }
-            got = v * v
+            got.store(v * v)
         }
     }
-    assert(got == 49)
+    assert(got.load() == 49)
 }
 
 test "fiber: ? on Err inside spawn body, error path via match" {
-    mut got_ok = false
-    mut got_err = false
+    mut got_ok = AtomicBool.new(false)
+    mut got_err = AtomicBool.new(false)
     supervised {
         spawn {
             ro r = validated(-5)
@@ -50,11 +50,11 @@ test "fiber: ? on Err inside spawn body, error path via match" {
                 Ok(_n)  => 1
                 Err(_e) => 2
             }
-            if tag == 1 { got_ok = true } else { got_err = true }
+            if tag == 1 { got_ok.store(true) } else { got_err.store(true) }
         }
     }
-    assert(!got_ok)
-    assert(got_err)
+    assert(!got_ok.load())
+    assert(got_err.load())
 }
 
 // ================================================================
@@ -62,20 +62,20 @@ test "fiber: ? on Err inside spawn body, error path via match" {
 // ================================================================
 
 test "supervised: many fibers, all succeed, scope completes normally" {
-    mut counter = 0
+    mut counter = AtomicInt.new(0)
     supervised {
         mut i = 0
         while i < 10 {
             ro cur = i
             spawn {
                 if cur >= 0 {
-                    counter += 1
+                    counter.fetch_add(1)
                 }
             }
             i += 1
         }
     }
-    assert(counter == 10)   // none failed → all incremented
+    assert(counter.load() == 10)   // none failed → all incremented
 }
 
 // ================================================================
@@ -83,8 +83,8 @@ test "supervised: many fibers, all succeed, scope completes normally" {
 // ================================================================
 
 test "fiber: error-flag via Result.match (no real throw)" {
-    mut errors = 0
-    mut successes = 0
+    mut errors = AtomicInt.new(0)
+    mut successes = AtomicInt.new(0)
     supervised {
         mut i = -3
         while i <= 3 {
@@ -95,15 +95,15 @@ test "fiber: error-flag via Result.match (no real throw)" {
                     Ok(_n)  => 1
                     Err(_e) => 2
                 }
-                if tag == 1 { successes += 1 } else { errors += 1 }
+                if tag == 1 { successes.fetch_add(1) } else { errors.fetch_add(1) }
             }
             i += 1
         }
     }
     // i = -3, -2, -1, 0 → Err (4 fibers)
     // i = 1, 2, 3       → Ok  (3 fibers)
-    assert(errors == 4)
-    assert(successes == 3)
+    assert(errors.load() == 4)
+    assert(successes.load() == 3)
 }
 
 // ================================================================

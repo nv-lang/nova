@@ -18,19 +18,19 @@ test "WaitGroup: wait on zero-count returns immediately" {
 
 test "WaitGroup: add then done reaches zero" {
     mut wg = WaitGroup.new()
-    mut done_count = 0
+    mut done_count = AtomicInt.new(0)
     wg.add(1)
     supervised {
         spawn {
-            done_count = done_count + 1
+            done_count.fetch_add(1)
             wg.done()
         }
         spawn {
             wg.wait()
-            assert(done_count == 1)
+            assert(done_count.load() == 1)
         }
     }
-    assert(done_count == 1)
+    assert(done_count.load() == 1)
 }
 
 // ─── Multi-task rendezvous ──────────────────────────────────────
@@ -60,8 +60,8 @@ test "WaitGroup: wait blocks until 3 tasks complete" {
 test "WaitGroup: multiple waiters — both wake" {
     mut wg = WaitGroup.new()
     mut counter = AtomicInt.new(0)
-    mut w1_saw = 0
-    mut w2_saw = 0
+    mut w1_saw = AtomicInt.new(0)
+    mut w2_saw = AtomicInt.new(0)
     wg.add(1)
     supervised {
         spawn {
@@ -71,15 +71,15 @@ test "WaitGroup: multiple waiters — both wake" {
         }
         spawn {
             wg.wait()
-            w1_saw = counter.load()
+            w1_saw.store(counter.load())
         }
         spawn {
             wg.wait()
-            w2_saw = counter.load()
+            w2_saw.store(counter.load())
         }
     }
-    assert(w1_saw == 10)
-    assert(w2_saw == 10)
+    assert(w1_saw.load() == 10)
+    assert(w2_saw.load() == 10)
 }
 
 // ─── M:N mode ──────────────────────────────────────────────────

@@ -105,7 +105,7 @@ test "with Time: handler installed on main, supervised inside still works" {
     // если хочешь и yield, и handler — handler должен сам вызвать
     // nova_fiber_yield (через какую-то Nova-API; в bootstrap нет).
     mut sleep_count = 0
-    mut log = 0
+    mut log = AtomicInt.new(0)
     with Time = effect Time {
         sleep(_ms) {
             sleep_count += 1
@@ -115,21 +115,21 @@ test "with Time: handler installed on main, supervised inside still works" {
     } {
         supervised {
             spawn {
-                log = log * 10 + 1
+                log.store(log.load() * 10 + 1)
                 Time.sleep(0)            // → handler (NOT yield)
-                log = log * 10 + 2
+                log.store(log.load() * 10 + 2)
             }
             spawn {
-                log = log * 10 + 3
+                log.store(log.load() * 10 + 3)
                 Time.sleep(0)            // → handler (NOT yield)
-                log = log * 10 + 4
+                log.store(log.load() * 10 + 4)
             }
         }
     }
     // Без yield в Time.sleep: spawn0 завершится first (1, 2), потом spawn1 (3, 4)
     // → 1234 (sequential), не 1324 (interleaved).
-    println("log = ", log, " sleep_count = ", sleep_count)
-    assert(log == 1234)
+    println("log = ", log.load(), " sleep_count = ", sleep_count)
+    assert(log.load() == 1234)
     assert(sleep_count == 2)
 }
 

@@ -3102,6 +3102,34 @@ impl CEmitter {
         Self::debt_contains_mono_sep(inner_name) && inner_name.starts_with("Nova_")
     }
 
+    /// Plan 91.12 V2 / Plan 173.3 (D415 §2 detach-migration fix, 2026-07-11):
+    /// pointer-handle sync primitives whose `type X(*())`/`type X[T](*())`
+    /// declaration is a THIN Nova-level wrapper over a C struct/typedef that
+    /// already lives hand-written in `nova_rt/sync_*.h` (`Condvar`/`OnceCell`/
+    /// `Lazy` since Plan 91.12; the `#share`-carrying `Atomic*`/`Mutex`/…
+    /// family added by 173.3). Codegen must NEVER emit its own competing
+    /// `typedef struct Nova_<X> Nova_<X>;` for these names — not from
+    /// `emit_type_decl`'s own `Newtype` arm (already guarded, see below), and
+    /// NOT as an incidental forward-declare when one of these types is used
+    /// as a FIELD elsewhere (`emit_record_type`'s pointer-field pre-pass) —
+    /// the runtime header's typedef is a different underlying representation
+    /// (found via [M-atomicint-record-field-typedef-collision]: `struct
+    /// Nova_AtomicInt Nova_AtomicInt;` forward-decl collided with the
+    /// existing `#include`d `nova_rt` typedef — "typedef redefinition with
+    /// different types"). Single source of truth for the name list (was
+    /// duplicated inline at two `emit_type_decl` match arms).
+    fn debt_is_runtime_backed_newtype(name: &str) -> bool {
+        const RUNTIME_BACKED_NEWTYPES: &[&str] = &[
+            "OnceCell", "Lazy", "Condvar",
+            "Mutex", "RwLock", "ReentrantMutex", "WaitGroup", "Once",
+            "Barrier", "CountDownLatch", "Semaphore",
+            "AtomicI64", "AtomicI32", "AtomicI16", "AtomicI8",
+            "AtomicU64", "AtomicU32", "AtomicU16", "AtomicU8",
+            "AtomicIsize", "AtomicUsize", "AtomicInt", "AtomicBool", "AtomicPtr",
+        ];
+        RUNTIME_BACKED_NEWTYPES.contains(&name)
+    }
+
     /// Same idiom as `debt_strip_nova_trim_start`, without the extra `.trim()`
     /// (byte-identical here since C-type strings never carry surrounding
     /// whitespace, but kept distinct to avoid ANY behavioral assumption).
@@ -13680,15 +13708,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // conflicting typedef" reasoning as Condvar). Atomics: `.new()`
                 // returns `Nova_AtomicX*` (heap ptr) despite the VALUE struct
                 // typedef in sync_primitives.h — same pointer-handle ABI shape.
-                const RUNTIME_BACKED_NEWTYPES: &[&str] = &[
-                    "OnceCell", "Lazy", "Condvar",
-                    "Mutex", "RwLock", "ReentrantMutex", "WaitGroup", "Once",
-                    "Barrier", "CountDownLatch", "Semaphore",
-                    "AtomicI64", "AtomicI32", "AtomicI16", "AtomicI8",
-                    "AtomicU64", "AtomicU32", "AtomicU16", "AtomicU8",
-                    "AtomicIsize", "AtomicUsize", "AtomicInt", "AtomicBool", "AtomicPtr",
-                ];
-                if !RUNTIME_BACKED_NEWTYPES.contains(&t.name.as_str()) {
+                if !Self::debt_is_runtime_backed_newtype(t.name.as_str()) {
                     // Use type_ref_to_c — для inner = *() это даст "void*";
                     // для других pointer types — "*T" form. Primitives work too.
                     // Generic type params (T) in inner — fail; гард: emit
@@ -13780,15 +13800,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // conflicting typedef" reasoning as Condvar). Atomics: `.new()`
                 // returns `Nova_AtomicX*` (heap ptr) despite the VALUE struct
                 // typedef in sync_primitives.h — same pointer-handle ABI shape.
-                const RUNTIME_BACKED_NEWTYPES: &[&str] = &[
-                    "OnceCell", "Lazy", "Condvar",
-                    "Mutex", "RwLock", "ReentrantMutex", "WaitGroup", "Once",
-                    "Barrier", "CountDownLatch", "Semaphore",
-                    "AtomicI64", "AtomicI32", "AtomicI16", "AtomicI8",
-                    "AtomicU64", "AtomicU32", "AtomicU16", "AtomicU8",
-                    "AtomicIsize", "AtomicUsize", "AtomicInt", "AtomicBool", "AtomicPtr",
-                ];
-                if RUNTIME_BACKED_NEWTYPES.contains(&t.name.as_str()) {
+                if Self::debt_is_runtime_backed_newtype(t.name.as_str()) {
                     // Skip typedef emit — runtime / per-T mono handles it.
                     // Register alias так чтобы type_ref_to_c для bare `OnceCell`
                     // (без mono context) не падал. Generic refs резолвятся
@@ -14328,7 +14340,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if let Ok(tc) = self.type_ref_to_c(&f.ty) {
                     if let Some(base) = tc.strip_suffix('*') {
                         let base = base.trim_end_matches('*').trim();
-                        if base.starts_with("Nova_") && fwd_seen.insert(base.to_string()) {
+                        // [M-atomicint-record-field-typedef-collision] fix
+                        // (2026-07-11): a runtime-backed sync-primitive field
+                        // (`Mutex`/`Atomic*`/…, D415 §2) already has its real
+                        // typedef hand-written + `#include`d from
+                        // `nova_rt/sync_*.h` (a DIFFERENT underlying shape —
+                        // often an anonymous-struct typedef, not `struct
+                        // Nova_<X>`). Forward-declaring `typedef struct
+                        // Nova_<X> Nova_<X>;` here collides with it
+                        // ("typedef redefinition with different types").
+                        // Skip the pre-pass entirely for these names — the
+                        // runtime header's complete typedef is already
+                        // visible by the time this record's fields reference
+                        // it (no forward-decl needed at all).
+                        if base.starts_with("Nova_")
+                            && !Self::debt_is_runtime_backed_newtype(
+                                base.trim_start_matches("Nova_"),
+                            )
+                            && fwd_seen.insert(base.to_string())
+                        {
                             self.line(&format!("typedef struct {0} {0};", base));
                         }
                     }
@@ -14496,7 +14526,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if let Ok(tc) = self.type_ref_to_c(ty) {
                         if let Some(base) = tc.strip_suffix('*') {
                             let base = base.trim_end_matches('*').trim();
-                            if base.starts_with("Nova_") && fwd_seen.insert(base.to_string()) {
+                            // [M-atomicint-record-field-typedef-collision]
+                            // fix (2026-07-11) — same guard as
+                            // `emit_record_type`'s pre-pass: runtime-backed
+                            // sync primitives already have a complete
+                            // `#include`d typedef, forward-declaring here
+                            // collides with it.
+                            if base.starts_with("Nova_")
+                                && !Self::debt_is_runtime_backed_newtype(
+                                    base.trim_start_matches("Nova_"),
+                                )
+                                && fwd_seen.insert(base.to_string())
+                            {
                                 self.line(&format!("typedef struct {0} {0};", base));
                             }
                         }
@@ -20816,7 +20857,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // forward-declare the base struct (`Nova_Pt`), not the
                         // invalid `typedef struct Nova_Pt* Nova_Pt*;`.
                         let base = c_ty.trim_end_matches(|ch| ch == '*' || ch == ' ');
-                        if base.starts_with("Nova_") {
+                        // [M-atomicint-record-field-typedef-collision] fix
+                        // (2026-07-11) — same guard as the non-generic
+                        // `emit_record_type`/`emit_sum_type` pre-passes: a
+                        // generic instance field of a runtime-backed sync
+                        // primitive type must not get a competing forward
+                        // typedef (its real one is already `#include`d).
+                        if base.starts_with("Nova_")
+                            && !Self::debt_is_runtime_backed_newtype(
+                                base.trim_start_matches("Nova_"),
+                            )
+                        {
                             self.line(&format!("typedef struct {0} {0};", base));
                         }
                     }
@@ -38831,7 +38882,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     let block_id = self.enter_defer_scope(&arm.body, false);
                     for stmt in &arm.body.stmts { self.emit_stmt(stmt)?; }
-                    if let Some(tr) = &arm.body.trailing { let _ = self.emit_expr(tr)?; }
+                    // [M-select-arm-trailing-call-dropped] (concurrency-stress-d415):
+                    // discard via `let _ = ...` silently dropped the C text for
+                    // expr kinds that DON'T self-materialize a statement (e.g. a
+                    // bare method call like `branch.store(1)` — only ExprKind::Assign
+                    // self-emits its own line). Match the codegen-wide convention
+                    // (see spawn/orphan body emit, if-let body emit, etc.): a
+                    // discarded trailing value in a void-context block MUST be
+                    // wrapped in `(void)(...)` so it actually lands in the output.
+                    if let Some(tr) = &arm.body.trailing {
+                        let v = self.emit_expr(tr)?;
+                        self.line(&format!("(void)({});", v));
+                    }
                     self.leave_defer_scope(block_id);
                     if arm.guard.is_some() {
                         self.indent -= 1;
@@ -38851,7 +38913,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     let block_id = self.enter_defer_scope(&arm.body, false);
                     for stmt in &arm.body.stmts { self.emit_stmt(stmt)?; }
-                    if let Some(tr) = &arm.body.trailing { let _ = self.emit_expr(tr)?; }
+                    // [M-select-arm-trailing-call-dropped]: see fast-path Recv arm above.
+                    if let Some(tr) = &arm.body.trailing {
+                        let v = self.emit_expr(tr)?;
+                        self.line(&format!("(void)({});", v));
+                    }
                     self.leave_defer_scope(block_id);
                     if arm.guard.is_some() {
                         self.indent -= 1;
@@ -38964,7 +39030,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             let block_id = self.enter_defer_scope(&arm.body, false);
             for stmt in &arm.body.stmts { self.emit_stmt(stmt)?; }
-            if let Some(tr) = &arm.body.trailing { let _ = self.emit_expr(tr)?; }
+            // [M-select-arm-trailing-call-dropped]: see fast-path Recv arm above.
+            if let Some(tr) = &arm.body.trailing {
+                let v = self.emit_expr(tr)?;
+                self.line(&format!("(void)({});", v));
+            }
             self.leave_defer_scope(block_id);
             self.indent -= 1;
         }

@@ -75,7 +75,7 @@ test "select: data wins supervised(cancel:) race" {
     ro ch = Channel.new(1)
     ro tx = ch.tx
     ro rx = ch.rx
-    mut branch = 0
+    mut branch = AtomicInt.new(0)
     mut error_seen = false
 
     ro tok = CancelToken.new()
@@ -93,14 +93,14 @@ test "select: data wins supervised(cancel:) race" {
             }
             spawn {
                 select {
-                    Some(v) = rx              => { branch = v }
-                    Some(_) = ChanReader.close_after(Duration.from_millis(200)) => { branch = -1 }
+                    Some(v) = rx              => { branch.store(v) }
+                    Some(_) = ChanReader.close_after(Duration.from_millis(200)) => { branch.store(-1) }
                 }
             }
         }
     }
     assert(!error_seen)
-    assert(branch == 77)
+    assert(branch.load() == 77)
 }
 
 // ================================================================

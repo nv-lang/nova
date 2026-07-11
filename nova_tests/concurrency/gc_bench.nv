@@ -38,7 +38,7 @@ test "bench: 5k str-аллокаций через interpolation" {
 // ── Bench 3: 100 fiber'ов с аллокациями ─────────────────────────────────────
 
 test "bench: 100 fiber'ов × 10 аллокаций каждый" {
-    mut total = 0
+    mut total = AtomicInt.new(0)
     supervised {
         for i in 0..100 {
             spawn {
@@ -47,13 +47,13 @@ test "bench: 100 fiber'ов × 10 аллокаций каждый" {
                     ro o = make_obj1(i, j, i + j)
                     local = local + o.a + o.c
                 }
-                total = total + local
+                total.fetch_add(local)
             }
         }
     }
     // o.a=i, o.c=i+j; local = sum over j=0..9: (i + i+j) = sum(2i+j) = 20i + 45
     // total = sum over i=0..99: 20i + 45 = 20*4950 + 45*100 = 99_000 + 4_500 = 103_500
-    assert(total == 103_500)
+    assert(total.load() == 103_500)
 }
 
 // ── Bench 4: смешанные аллокации (записи + массивы + строки) ─────────────────

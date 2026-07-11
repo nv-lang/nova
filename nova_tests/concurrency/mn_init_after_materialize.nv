@@ -6,11 +6,11 @@ module nova_tests.concurrency
 
 test "init after first spawn is a diagnosed no-op" {
     runtime.init(2)
-    mut x = 0
+    mut x = AtomicInt.new(0)
     supervised {
-        spawn { x = 1 }
+        spawn { x.store(1) }
     }
-    assert(x == 1)
+    assert(x.load() == 1)
     // Пул материализован — повторный init опоздал, диагностируется.
     runtime.init(8)
     // Пул не пересоздан: worker_count() остаётся 2, не 8.

@@ -26,22 +26,22 @@ fn rec_sum1(n int) -> int {
 }
 
 test "env NOVA_FIBER_STACK=8MB: deep-recursion fiber completes" {
-    mut r = 0
+    mut r = AtomicInt.new(0)
     supervised {
-        spawn { r = rec_sum1(2000) }
+        spawn { r.store(rec_sum1(2000)) }
     }
     // 2000 * 2001 / 2 = 2001000
-    assert(r == 2001000)
+    assert(r.load() == 2001000)
 }
 
 test "env NOVA_FIBER_STACK=8MB: many fibers each recurse" {
-    mut total = 0
+    mut total = AtomicInt.new(0)
     supervised {
         mut i = 0
         while i < 50 {
-            spawn { total += rec_sum1(500) }   // 500*501/2 = 125250 each
+            spawn { total.fetch_add(rec_sum1(500)) }   // 500*501/2 = 125250 each
             i += 1
         }
     }
-    assert(total == 50 * 125250)
+    assert(total.load() == 50 * 125250)
 }

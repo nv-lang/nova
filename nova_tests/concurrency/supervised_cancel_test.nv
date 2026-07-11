@@ -31,26 +31,26 @@ module nova_tests.concurrency
 
 test "supervised(cancel:) без cancel() — все fiber'ы выполняются" {
     ro tok = CancelToken.new()
-    mut sum = 0
+    mut sum = AtomicInt.new(0)
     supervised(cancel: tok) {
-        spawn { sum += 1 }
-        spawn { sum += 2 }
-        spawn { sum += 4 }
+        spawn { sum.fetch_add(1) }
+        spawn { sum.fetch_add(2) }
+        spawn { sum.fetch_add(4) }
     }
-    assert(sum == 7)
+    assert(sum.load() == 7)
 }
 
 test "supervised(cancel:): is_cancelled false по умолчанию" {
     ro tok = CancelToken.new()
-    mut got_false = false
+    mut got_false = AtomicBool.new(false)
     supervised(cancel: tok) {
         spawn {
             if !tok.is_cancelled() {
-                got_false = true
+                got_false.store(true)
             }
         }
     }
-    assert(got_false)
+    assert(got_false.load())
 }
 
 // ================================================================
@@ -71,15 +71,15 @@ test "supervised(cancel:): is_cancelled false по умолчанию" {
 
 test "double cancel() — idempotent, no panic" {
     ro tok = CancelToken.new()
-    mut hits = 0
+    mut hits = AtomicInt.new(0)
     supervised(cancel: tok) {
         spawn {
             tok.cancel()
             tok.cancel()       // второй — no-op
-            hits += 1
+            hits.fetch_add(1)
         }
     }
-    assert(hits == 1)
+    assert(hits.load() == 1)
 }
 
 // ================================================================
@@ -88,17 +88,17 @@ test "double cancel() — idempotent, no panic" {
 
 test "is_cancelled() reflects cancel state within same fiber" {
     ro tok = CancelToken.new()
-    mut before = false
-    mut after = false
+    mut before = AtomicBool.new(false)
+    mut after = AtomicBool.new(false)
     supervised(cancel: tok) {
         spawn {
-            before = tok.is_cancelled()    // false
+            before.store(tok.is_cancelled())    // false
             tok.cancel()
-            after = tok.is_cancelled()     // true
+            after.store(tok.is_cancelled())     // true
         }
     }
-    assert(!before)
-    assert(after)
+    assert(!before.load())
+    assert(after.load())
 }
 
 // ================================================================
@@ -112,7 +112,7 @@ test "cancelled_by: cancel parent — child каскадно отменён" {
     ro parent = CancelToken.new()
     ro child = CancelToken.new()
     child.cancelled_by(parent)
-    mut child_was_cancelled = false
+    mut child_was_cancelled = AtomicBool.new(false)
     supervised(cancel: parent) {
         spawn {
             supervised(cancel: child) {
@@ -120,12 +120,12 @@ test "cancelled_by: cancel parent — child каскадно отменён" {
                     parent.cancel()
                     // Без yield — мы остаёмся на этом fiber'е; каскад уже
                     // сработал синхронно внутри parent.cancel().
-                    child_was_cancelled = child.is_cancelled()
+                    child_was_cancelled.store(child.is_cancelled())
                 }
             }
         }
     }
-    assert(child_was_cancelled)
+    assert(child_was_cancelled.load())
 }
 
 // ================================================================
@@ -136,13 +136,13 @@ test "cancel() на завершённом scope — безвредный no-op"
     // Старая модель: токен dangling после scope-exit. Новая: caller-owned,
     // unbind на выходе, cancel() на отвязанном токене — чистый no-op.
     ro tok = CancelToken.new()
-    mut ran = false
+    mut ran = AtomicBool.new(false)
     supervised(cancel: tok) {
-        spawn { ran = true }
+        spawn { ran.store(true) }
     }
     // scope завершён, токен отвязан — cancel() не паникует и не throws.
     tok.cancel()
-    assert(ran)
+    assert(ran.load())
     // intent записан в сам токен, даже без живого scope'а.
     assert(tok.is_cancelled())
 }
@@ -151,14 +151,14 @@ test "токен переживает scope — повторный bind на с�
     // unbind на выходе освобождает токен; не-отменённый токен можно
     // привязать к новому scope'у заново.
     ro tok = CancelToken.new()
-    mut first = 0
+    mut first = AtomicInt.new(0)
     supervised(cancel: tok) {
-        spawn { first += 1 }
+        spawn { first.fetch_add(1) }
     }
-    mut second = 0
+    mut second = AtomicInt.new(0)
     supervised(cancel: tok) {
-        spawn { second += 1 }
+        spawn { second.fetch_add(1) }
     }
-    assert(first == 1)
-    assert(second == 1)
+    assert(first.load() == 1)
+    assert(second.load() == 1)
 }

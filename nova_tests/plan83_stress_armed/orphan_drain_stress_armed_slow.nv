@@ -14,9 +14,13 @@ module plan83_stress_armed.orphan_drain_stress_armed
 test "100 detach orphans armed M:N — baseline" {
     mut i = 0
     while i < 100 {
+        // D415 §2: snapshot BEFORE detach — `i` itself is a plain `mut int`
+        // (not `#share`), so the orphan body may never alias it by
+        // reference (main thread's `i = i + 1` could race the read).
+        ro cur = i
         detach {
             // Short body — orphan completes async на worker pool.
-            ro _x = i * 2
+            ro _x = cur * 2
         }
         i = i + 1
     }
@@ -27,8 +31,9 @@ test "100 detach orphans armed M:N — baseline" {
 test "1K detach orphans armed M:N — Plan 83.9 §6.4 acceptance" {
     mut i = 0
     while i < 1000 {
+        ro cur = i
         detach {
-            ro _x = i + 1
+            ro _x = cur + 1
         }
         i = i + 1
     }

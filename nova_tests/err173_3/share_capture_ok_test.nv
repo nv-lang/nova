@@ -131,3 +131,17 @@ test "user lock-free type with #share vouch: mut capture allowed" {
     }
     assert(out.load() == 3)
 }
+
+// (6) `detach` — same capture boundary as `spawn` (D415 §2 amendment,
+// 2026-07-11): `ro`/`#share` captures are just as legal inside a detached
+// orphan body as inside a spawn body; only a raw non-`#share` `mut` is
+// rejected (see neg/mut_capture_in_detach.nv).
+test "detach: ro + #share captures allowed (same boundary as spawn)" {
+    ro base = 10
+    mut out = AtomicInt.new(0)
+    detach {
+        out.store(base * 2)
+    }
+    runtime.drain_orphans()
+    assert(out.load() == 20)
+}

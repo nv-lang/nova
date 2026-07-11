@@ -17968,6 +17968,15 @@ impl<'a> CapabilityCtx<'a> {
                         e.span,
                     ));
                 }
+                // Plan 173.3 (D415 §2 amendment, owner P1 2026-07-11): `detach { }`
+                // is JUST as concurrent as `spawn` — an orphan fiber on the worker
+                // pool, fire-and-forget, no join with the parent. The original
+                // Ф.2 sweep only wired the check into `spawn`/`parallel for`;
+                // `detach` capturing an outer `mut` (non-`#share`) by reference
+                // is the identical data race (parent/siblings may run concurrently
+                // with, or migrate across threads from, the orphan) and was a
+                // silent gap. Same capture-check boundary as `spawn`.
+                self.check_capture_boundary(body, state, errors);
                 self.walk_block(body, state, errors);
             }
             ExprKind::Blocking(body) => {
@@ -17977,6 +17986,19 @@ impl<'a> CapabilityCtx<'a> {
                 // AST arm is unreachable in practice. The variant is retained only
                 // to keep the AST enum stable; walk the body defensively without
                 // requiring the removed `Blocking` effect.
+                //
+                // Plan 173.3 (D415 §2 amendment, owner P1 2026-07-11): investigated
+                // and confirmed no capture-check belongs here. The LIVE replacement
+                // (`#blocking fn`, Plan 113) is a top-level `fn`-item attribute
+                // (parser::parse_blocking_attr, gated on a preceding `fn`), never a
+                // closure/lambda literal — Nova `fn` items do not close over the
+                // caller's lexical scope, so a `#blocking fn` body has no capture
+                // surface at all (own fresh parameter scope, not nested in the
+                // caller's `state.scopes`). This dead `ExprKind::Blocking(Block)`
+                // arm is itself a vestige of the incomplete D172 retraction —
+                // tracked for removal under [M-dead-exprkind-blocking-vestigial]
+                // (docs/plans/README.md), not touched here to keep this wave
+                // focused on the `detach` gap.
                 self.walk_block(body, state, errors);
             }
             ExprKind::Supervised { body, cancel, deadline } => {
@@ -18277,6 +18299,10 @@ impl<'a> CapabilityCtx<'a> {
     /// `Stmt::ConsumeScope`. Either way the top-level `body` IS the block to
     /// scan (unwrap `ExprKind::Block`; anything else — e.g. a bare call
     /// expr `spawn foo()` — has no lexical body to scan, skip).
+    ///
+    /// `detach`/`blocking` bodies are already plain `&Block` (no `Expr`
+    /// wrapper) at their call sites, so they call `check_capture_boundary`
+    /// directly instead of going through this `spawn`-specific unwrap.
     fn check_spawn_capture(&self, body: &Expr, state: &CapState, errors: &mut Vec<Diagnostic>) {
         if let ExprKind::Block(b) = &body.kind {
             self.check_capture_boundary(b, state, errors);
@@ -18292,6 +18318,16 @@ impl<'a> CapabilityCtx<'a> {
     /// all (unknown — const/fn-name/closure-or-match-bound name; V1 does not
     /// track those scopes, see module docs) is never flagged — false
     /// negatives are the safe direction here, not false positives.
+    ///
+    /// Boundary = any construct whose `body` may run concurrently with the
+    /// enclosing scope on another OS thread under M:N: `spawn`, `parallel
+    /// for`, `detach` (2026-07-11 amendment — orphan fiber, fire-and-forget,
+    /// never joined, identical race surface to `spawn`), and the retracted-
+    /// but-AST-stable `blocking { }` block-form. `#blocking fn` (the live
+    /// replacement, Plan 113) is NOT a boundary here: it is a top-level `fn`
+    /// item with its own fresh parameter scope, not a lexical closure over
+    /// the caller — see the `ExprKind::Blocking` arm comment for the full
+    /// analysis of why it has no capture surface to check.
     ///
     /// The one sanctioned exception is `consume`-move: `Stmt::ConsumeScope`
     /// inside `body` is the explicit move-capture form (D415 §4,
@@ -18362,7 +18398,8 @@ impl<'a> CapabilityCtx<'a> {
             errors.push(Diagnostic::new(
                 format!(
                     "[E_CONCURRENT_MUT_CAPTURE] outer `mut` binding `{}` \
-                     captured by reference in a `spawn`/`parallel for` body: \
+                     captured by reference in a `spawn`/`parallel for`/`detach` \
+                     body: \
                      {} — under M:N scheduling this alias is a data race (the \
                      child fiber may run concurrently with, or migrate across \
                      threads from, the parent/siblings). Allowed captures \

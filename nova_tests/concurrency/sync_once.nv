@@ -18,16 +18,16 @@ module nova_tests.concurrency
 
 test "Once: single caller runs and completes" {
     mut once = Once.new()
-    mut ran = false
+    mut ran = AtomicBool.new(false)
     supervised {
         spawn {
             if once.run() {
-                ran = true
+                ran.store(true)
                 once.done()
             }
         }
     }
-    assert(ran == true)
+    assert(ran.load() == true)
 }
 
 test "Once: run returns false on second sequential call" {
