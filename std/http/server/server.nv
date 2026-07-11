@@ -237,7 +237,7 @@ export fn ServeMux mut @not_found(handler Handler) -> @ { @not_found = Some(hand
 // param would be by-pointer in-out, so the local copy makes the local-only intent explicit.
 export fn ServeMux @dispatch(req ServerRequest) -> ServerResponse {
     mut rq = req
-    ro reqm = rq.method().as_str()
+    ro reqm = rq.method().str()
     mut path_matched = false
     mut allow = []str.new()
     for r in @routes {

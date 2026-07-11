@@ -224,7 +224,7 @@ export fn SqlValue @as_int() -> Option[i64] => // [M-d410-as-to-migration]
 
 /// Extract str в `Option` (NULL → None).
 #stable(since = "0.1")
-export fn SqlValue @as_str() -> Option[str] => // [M-d410-as-to-migration]
+export fn SqlValue @str() -> Option[str] =>
     match @ {
         S(s) => Some(s)
         _    => None

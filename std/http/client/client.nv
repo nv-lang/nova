@@ -340,7 +340,7 @@ fn run_request(method0 Method, url0 Url, headers0 HeaderMap, body0 []u8, follow 
         ro secure = scheme == "https"
         ro target = request_target(url)
         ro host_header = host_header_of(url)
-        ro req = serialize_request(method.as_str(), target, host_header, headers, body)
+        ro req = serialize_request(method.str(), target, host_header, headers, body)
         ro raw = match http_seam_send(host, port, secure, req) {
             Ok(r)  => r
             Err(e) => return Err(e)

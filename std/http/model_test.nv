@@ -8,7 +8,7 @@ module std.http
 
 test "method: parse round-trip + safety/idempotency" {
     ro g = Method.parse("GET")!!
-    assert(g.as_str() == "GET")
+    assert(g.str() == "GET")
     assert(g.is_safe())
     assert(g.is_idempotent())
     ro pf = Method.parse("PROPFIND")!!
@@ -39,12 +39,12 @@ test "status: class + reason + range guard" {
 
 test "version: as_str + keepalive" {
     ro v11 = Version.Http11
-    assert(v11.as_str() == "HTTP/1.1")
+    assert(v11.str() == "HTTP/1.1")
     assert(v11.supports_keepalive())
     ro v10 = Version.Http10
     assert(!v10.supports_keepalive())
     ro v2 = Version.Http2
-    assert(v2.as_str() == "HTTP/2")
+    assert(v2.str() == "HTTP/2")
 }
 
 fn hm_build() -> Result[HeaderMap, HttpError] {

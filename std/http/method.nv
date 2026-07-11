@@ -51,7 +51,7 @@ export fn Method.parse(s str) -> Result[Method, HttpError] { // [M-lint-findings
 
 /// Токен метода на проводе. `Other` → as-is.
 #stable(since = "0.1")
-export fn Method @as_str() -> str { // [M-d410-as-to-migration]
+export fn Method @str() -> str {
     match @ {
         Get     => "GET"
         Head    => "HEAD"
