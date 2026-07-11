@@ -114,11 +114,11 @@ static inline void* nova_fn_p115_int_to_ptr(nova_int value) {
  *
  *   - p139_cstr_strlen(const char*): receives a CStr (Nova `CStr(*u8)` newtype,
  *     which marshals to `const char*` / `const uint8_t*` at the ABI) and runs
- *     C strlen. Proves str → CStr → C: `s.as_cstr()` (Plan 199 / D418 —
+ *     C strlen. Proves str → CStr → C: `s.to_cstr()` (Plan 199 / D418 —
  *     retracts D26 §Nul-termination) ALWAYS allocates a fresh copy + `\0`
  *     terminator, so a CStr handed here is a valid `const char*` regardless of
  *     whether the source `str` is a literal, a built string, or a slice. The
- *     Nova-side `as_cstr()` scans for embedded NULs first.
+ *     Nova-side `to_cstr()` scans for embedded NULs first.
  *
  *   - p139_make_str(): returns a `nova_str` constructed C-side via
  *     nova_str_from_cstr from a static rodata C-string. Proves C → str
@@ -138,7 +138,7 @@ static inline nova_int nova_fn_p139_str_byte_sum(nova_str s) {
 
 /* CStr (Nova `CStr(*u8)`) marshals to a raw byte pointer at the ABI. We take
  * `const char*` (≡ `const uint8_t*`, same 8-byte ptr) and run libc strlen —
- * valid because as_cstr() ALWAYS copies into a fresh `len+1`-byte buffer and
+ * valid because to_cstr() ALWAYS copies into a fresh `len+1`-byte buffer and
  * appends the NUL terminator itself (Plan 199 / D418), independent of
  * whatever the source `str`'s own backing buffer looks like. */
 static inline nova_int nova_fn_p139_cstr_strlen(const char* c) {

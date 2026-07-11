@@ -1,9 +1,9 @@
 // Plan 139 Ф.4 NEG — a str containing an EMBEDDED NUL has defined behavior at
-// the C-string boundary: as_cstr() PANICS (rather than silently truncating the
+// the C-string boundary: to_cstr() PANICS (rather than silently truncating the
 // C-string at the interior 0x00). Constructed via from_bytes_unchecked so the
 // interior NUL survives verbatim (a source literal "\0" would be truncated by
 // the C compiler). This is the documented contract, not a crash/UB.
-// EXPECT_RUNTIME_PANIC as_cstr: embedded NUL
+// EXPECT_RUNTIME_PANIC to_cstr: embedded NUL
 module neg.plan139_neg_t4_cstr_embedded_nul
 
 import std.ffi.cstr.{CStr}
@@ -11,5 +11,5 @@ import std.ffi.cstr.{CStr}
 fn main() Io -> () {
     ro raw []u8 = [104, 105, 0, 110]
     ro s = unsafe { raw.to_str_unchecked() }              // "hi\0n"
-    ro c = s.as_cstr()                                    // panics on interior NUL
+    ro c = s.to_cstr()                                    // panics on interior NUL
 }
