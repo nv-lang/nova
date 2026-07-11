@@ -19,11 +19,11 @@
 
 /* Все str runtime-функции уже декларированы в nova_rt.h:
  *   nova_str_starts_with, nova_str_ends_with, nova_str_contains,
- *   nova_str_to_upper, nova_str_to_lower, nova_str_trim,
- *   nova_str_slice, nova_str_concat, nova_str_eq,
+ *   nova_str_trim, nova_str_slice, nova_str_concat, nova_str_eq,
  *   nova_str_find, nova_str_rfind, nova_str_char_len,
  *   nova_str_byte_len, nova_str_bytes, nova_str_chars,
  *   nova_str_char_at, nova_str_split, nova_str_is_empty.
+ *   (nova_str_to_upper/to_lower — REMOVED Plan 199 Ф.3, dead primitives.)
  *
  * std/runtime/string.nv (auto-generated) — Nova-side декларации.
  */

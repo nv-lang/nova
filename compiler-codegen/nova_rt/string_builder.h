@@ -90,12 +90,12 @@ static inline nova_str Nova_str_static_from_char(nova_int cp) {
     nova_byte tmp[4];
     int n = _nova_utf8_encode(tmp, cp);
     if (n == 0) {
-        return (nova_str){.ptr = "", .len = 0};
+        return (nova_str){.ptr = (const uint8_t*)"", .len = 0};
     }
-    char* buf = (char*)nova_alloc((size_t)n + 1);
+    /* Plan 199 Ф.3 (D418): EXACTLY n bytes — no trailing NUL. n is 1..4 here. */
+    char* buf = (char*)nova_alloc((size_t)n);
     memcpy(buf, tmp, (size_t)n);
-    buf[n] = '\0';
-    return (nova_str){.ptr = buf, .len = (size_t)n};
+    return (nova_str){.ptr = (const uint8_t*)buf, .len = (size_t)n};
 }
 
 /* Plan 91.13: str.from_codepoint(int) — alias for str.from(char).
@@ -134,7 +134,10 @@ static inline nova_str nova_str_replace(nova_str s, nova_str from, nova_str to) 
     }
     if (count == 0) return s;
     size_t out_len = s.len - count * from.len + count * to.len;
-    char* out = (char*)nova_alloc(out_len + 1);
+    /* Plan 199 Ф.3 (D418): EXACTLY out_len bytes — no trailing NUL. Guard the
+     * all-replaced-with-empty case (out_len == 0) so we never nova_alloc(0). */
+    if (out_len == 0) return (nova_str){.ptr = (const uint8_t*)"", .len = 0};
+    char* out = (char*)nova_alloc(out_len);
     size_t w = 0, src = 0;
     while (src + from.len <= s.len) {
         if (memcmp(s.ptr + src, from.ptr, from.len) == 0) {
@@ -144,8 +147,7 @@ static inline nova_str nova_str_replace(nova_str s, nova_str from, nova_str to) 
         }
     }
     while (src < s.len) out[w++] = s.ptr[src++];
-    out[w] = '\0';
-    return (nova_str){.ptr = out, .len = out_len};
+    return (nova_str){.ptr = (const uint8_t*)out, .len = out_len};
 }
 
 #endif /* NOVA_RT_STRING_BUILDER_H */

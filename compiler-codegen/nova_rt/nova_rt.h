@@ -89,35 +89,12 @@ static inline nova_str nova_str_from_cstr(const char* s) {
     return (nova_str){ (const uint8_t*)s, (int64_t)strlen(s) };
 }
 
-/* Plan 139 Ф.4 — str → C-string pointer per D26 §3 (Nul-termination).
- *
- * Returns a `const char*` guaranteed NUL-terminated at offset `s.len`, suitable
- * for direct use as a C `const char*`:
- *   - Full str / slice ending at parent's len → `s.ptr[s.len] == '\0'` already;
- *     return `s.ptr` ZERO-COPY.
- *   - Mid-buffer slice (`s.ptr[s.len] != '\0'`) → allocate `len + 1` GC-tracked
- *     bytes, copy + write the terminator, return the fresh buffer (copy
- *     fallback, == @to_cstr semantics).
- *
- * Reading `s.ptr[s.len]` is always safe (D26 §2): a full str owns `len + 1`
- * bytes (terminator), and a slice view's parent owns `parent.len + 1` bytes with
- * `view.len <= parent.len`, so the byte at `view.ptr[view.len]` is in-bounds of
- * the parent buffer. Embedded-NUL validation stays Nova-side in @as_cstr().
- *
- * Irreducible C primitive: str owns no allocator in Nova, and the one-past-end
- * terminator peek (`s.ptr[s.len]`) requires raw buffer access not expressible on
- * the `ro []u8` view (cap == len). Recorded in simplifications.md. */
-static inline const uint8_t* nova_fn_nova_str_terminated_ptr(nova_str s) {
-    if (s.ptr[s.len] == 0) {
-        return s.ptr;  /* already NUL-terminated — zero-copy */
-    }
-    uint8_t* buf = (uint8_t*)nova_alloc((size_t)s.len + 1);
-    if (s.len > 0) {
-        memcpy(buf, s.ptr, (size_t)s.len);
-    }
-    buf[s.len] = 0;
-    return buf;
-}
+/* Plan 199 Ф.3 (D418, retracts D26 §Nul-termination): `nova_fn_nova_str_terminated_ptr`
+ * REMOVED. `str` is now a pure `ptr[len]` buffer with NO trailing-NUL guarantee, so
+ * the one-past-end peek (`s.ptr[s.len]`) this primitive relied on is out-of-bounds and
+ * has no meaning. C-FFI goes through the explicit copy-based `str.to_cstr()`
+ * (std/ffi/cstr.nv, Plan 199 Ф.2/Ф.3), which allocates its own len+1 NUL-terminated
+ * copy — it no longer calls this. Verified zero call sites in generated C / std. */
 
 /* Plan 90: O(1) доступ к байту строки. bounds-checked → panic.
  * Неустранимый примитив для str-алгоритмов на Nova (lexer/find/trim). */
@@ -151,26 +128,12 @@ static inline nova_bool nova_str_contains(nova_str s, nova_str needle) {
 
 /* find/rfind defined in array.h after NovaOpt_nova_int is available. */
 
-/* nova_str_to_upper: allocates via nova_alloc, returns new nova_str */
-static inline nova_str nova_str_to_upper(nova_str s) {
-    char* buf = (char*)nova_alloc(s.len + 1);
-    for (size_t i = 0; i < s.len; i++) {
-        unsigned char c = (unsigned char)s.ptr[i];
-        buf[i] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : (char)c;
-    }
-    buf[s.len] = '\0';
-    return (nova_str){ buf, s.len };
-}
-
-static inline nova_str nova_str_to_lower(nova_str s) {
-    char* buf = (char*)nova_alloc(s.len + 1);
-    for (size_t i = 0; i < s.len; i++) {
-        unsigned char c = (unsigned char)s.ptr[i];
-        buf[i] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : (char)c;
-    }
-    buf[s.len] = '\0';
-    return (nova_str){ buf, s.len };
-}
+/* Plan 199 Ф.3: `nova_str_to_upper` / `nova_str_to_lower` REMOVED — DEAD C
+ * primitives (zero call sites in generated C / std; case-folding is the Nova-body
+ * `str @to_ascii_upper()`/`@to_ascii_lower()` in std/runtime/string/transform.nv,
+ * which route through `str.alloc_copy`). Removed here rather than left as unused
+ * `static inline` dead weight while the surrounding string allocators were being
+ * de-NUL-reserved. */
 
 static inline nova_str nova_str_trim(nova_str s) {
     size_t start = 0, end = s.len;
@@ -225,14 +188,15 @@ static inline nova_str nova_str_slice_panic(nova_str s, nova_int from, nova_int 
  * Convergence с Rust/Go/Swift/Python (bracket-only). D9 «один очевидный
  * путь». Closes [P-str-slice-clamp-vs-panic]. */
 
-/* nova_str_concat: concatenate two strings, allocates via nova_alloc */
+/* nova_str_concat: concatenate two strings, allocates via nova_alloc.
+ * Plan 199 Ф.3 (D418): buffer is EXACTLY a.len+b.len bytes — no trailing NUL. */
 static inline nova_str nova_str_concat(nova_str a, nova_str b) {
     size_t total = a.len + b.len;
-    char* buf = (char*)nova_alloc(total + 1);
+    if (total == 0) return (nova_str){ (const uint8_t*)"", 0 };
+    char* buf = (char*)nova_alloc(total);
     memcpy(buf, a.ptr, a.len);
     memcpy(buf + a.len, b.ptr, b.len);
-    buf[total] = '\0';
-    return (nova_str){ buf, total };
+    return (nova_str){ (const uint8_t*)buf, total };
 }
 
 /* Plan 91 Ф.2: repeat / replace / pad_left / pad_right реализованы

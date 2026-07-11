@@ -137,14 +137,13 @@ fn first_invalid_utf8(bytes []u8, n int) -> int {
 fn validate_utf8(bytes []u8, n int) -> bool => first_invalid_utf8(bytes, n) < 0
 
 // Module-private str static method: build a freshly-allocated str by copying
-// `n` bytes from the raw source pointer `src` (`*u8`), NUL-terminating at
-// `data[n]` (D26 §3 — str buffers carry a trailing '\0' for cheap C-interop /
-// `s.ptr[s.len]` peeks). `RawMem.alloc(n+1)` returns GC-tracked ZEROED memory
-// (so the NUL at index n is already 0); the explicit store documents the
-// invariant and matches the retired C `buf[len] = '\0'`. The `*mut u8` buffer
-// is re-labelled to the str field's `*u8` (ro pointee) on construction — L3
-// narrowing, always safe. The returned str OWNS its buffer (no aliasing of the
-// source). Identical bytes to the C nova_str_from_bytes_unchecked.
+// `n` bytes from the raw source pointer `src` (`*u8`). Plan 199 Ф.3 (D418,
+// retracts D26 §Nul-termination): the buffer is EXACTLY `n` bytes — no trailing
+// NUL. `str` is a pure `ptr[len]` view; C-FFI goes through the explicit
+// copy-based `str.to_cstr()` (std/ffi/cstr.nv), so no str buffer reserves a
+// terminator. The `*mut u8` buffer is re-labelled to the str field's `*u8`
+// (ro pointee) on construction — L3 narrowing, always safe. The returned str
+// OWNS its buffer (no aliasing of the source).
 //
 // Declared as a `str.` STATIC method (not a free fn) so its receiver type is
 // `str` → `current_recv_type == "str"` → it may construct the `str{...}`
@@ -155,9 +154,8 @@ fn str.alloc_copy(src *u8, n int) -> Self {
         // Empty string — interned literal, no allocation needed.
         return ""
     }
-    ro buf = unsafe { RawMem.alloc(n + 1) }
+    ro buf = unsafe { RawMem.alloc(n) }
     unsafe { RawMem.copy_nonoverlapping(src, buf, n) }
-    unsafe { buf.write_at(n, 0 as u8) }
     str { ptr: buf, len: n }
 }
 
@@ -240,30 +238,21 @@ export fn []u8 @to_str_lossy() -> str {
     str.alloc_copy(out.ptr(), out.len())
 }
 
-// Steal variant: consume []u8, zero-copy reuse data ptr when cap > len
-// (writes '\0' at data[len] in-place); falls back to alloc+copy if cap == len.
-// `consume` receiver (D131) — the []u8 is unusable after the call. Plan 91.10:
-// D163 `needs <Cap>` retracted, plain fn syntax. Plan 139.2 Ф.2 (original
-// Nova-body): zero-copy reuse — when the source has spare capacity (cap > len)
-// the trailing slot can hold the NUL terminator, so the buffer is reused in
-// place (`data[len] = '\0'`) and wrapped as a str view over the consumed
-// buffer via `@into_raw()` (the consume-method companion of
-// Vec.from_raw_parts — it consumes the Vec wrapper and hands back the
-// writable buffer). Otherwise (cap == len, no room for the NUL) fall back to
-// alloc+copy (into_raw still consumes the buffer so the obligation is
-// discharged on every path). Identical bytes to the retired C nova_str_steal_bytes.
+// Steal variant: consume []u8, zero-copy reuse of the data ptr. `consume`
+// receiver (D131) — the []u8 is unusable after the call. Plan 91.10: D163
+// `needs <Cap>` retracted, plain fn syntax.
+//
+// Plan 199 Ф.3 (D418, retracts D26 §Nul-termination): a `str` no longer
+// reserves a trailing NUL, so there is nothing to write past `len` and no
+// `cap > len` room requirement. The stolen buffer is ALWAYS reused in place
+// (`@into_raw()` + `str.wrap_owned`), regardless of capacity — the former
+// `cap == len` alloc+copy fallback (which existed solely to make room for the
+// terminator) is gone. `str` is a pure `ptr[len]` view over the consumed bytes.
 export unsafe fn []u8 consume @into_str_unchecked() -> str {
     ro n = @len()
-    ro has_room = @cap() > n
-    // Consume self, taking ownership of its raw buffer (writable).
+    // Consume self, taking ownership of its raw buffer, and wrap it directly.
     mut buf = @into_raw()
-    if has_room {
-        // In-place NUL-term at data[n] (D26 §3) + reuse the stolen buffer.
-        unsafe { buf.write_at(n, 0 as u8) }
-        return str.wrap_owned(buf, n)
-    }
-    // No room for the NUL terminator — copy into a fresh owned buffer.
-    str.alloc_copy(buf, n)
+    str.wrap_owned(buf, n)
 }
 
 // Plan 176 Ф.0.5 (D322, D325): fallible byte→str decode.
