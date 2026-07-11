@@ -1182,7 +1182,7 @@ nova-lang/
 Правило `Path / module enforcement` выше определяет именование **модулей**
 (`module path = file path`, `package_name` в `nova.toml`), но не задаёт
 конвенцию для **внешних пакетов-репозиториев** (в т.ч. native-backed —
-несущих `.c`/`.lib`/`cargo`-staticlib). Вводится по традиции Cargo/Go:
+несущих `.c`/`.lib`). Вводится по традиции Cargo/Go:
 
 | Сущность | Конвенция | Пример |
 |---|---|---|
@@ -1197,13 +1197,21 @@ nova-lang/
 `import tls.{…}` — префикс не протекает в код (ср. Go `google.golang.org/grpc`
 → `import "…/grpc"`; Rust crate `serde` в репозитории `serde`).
 
-Native-backed пакет декларирует свои собираемые артефакты через
-`[ffi.staticlib]` (см. [ffi-cookbook](../../docs/ffi-cookbook.md) §staticlib и
+Native-backed пакет декларирует свои C-артефакты через `[ffi]`
+(`c_shims` → компилируются clang'ом из тулчейна, `include_dirs`, `libs` →
+линкуются; см. [ffi-cookbook](../../docs/ffi-cookbook.md) и
 [authoring-a-module](../../docs/guide/authoring-a-module.md)); при импорте
 модуля билд-система компилирует/линкует их автоматически — без правок
 компилятора под каждый пакет. Подключение внешней репы — существующим
 механизмом `[dependencies] { git = "https://…/nova-tls", tag = "…" }` (Plan
 03.1/03.2). Эталонный STANDALONE-образец паттерна — репозиторий `nova-tls`.
+
+> **RETRACTED — `[ffi.staticlib]` (Plan 195, 2026-07-11).** Прежний
+> `[ffi.staticlib] build="cargo"` (Rust-крейт-staticlib как пользовательский
+> паттерн) снят: тулчейн Nova = компилятор + clang, native-модуль обязан
+> собираться БЕЗ Rust/cargo. Единственный native-канон — `[ffi]` (.c+.lib).
+> Механизм удалён из `manifest.rs`/`test_runner.rs` (волна `tls-mbedtls-195`);
+> TLS-бэкенд переведён rustls→mbedTLS (C). Амендирует Plan 192-абзац выше.
 
 #### Lockfile — `nova.lock`
 
