@@ -255,7 +255,9 @@ static inline nova_str nova_str_to_debug_str(nova_str s) {
         else if (c < 0x20) out_len += 4;
         else out_len += 1;
     }
-    char* buf = (char*)nova_alloc(out_len + 1);
+    /* Plan 199 Ф.3 (D418): buffer is EXACTLY out_len bytes — no trailing NUL.
+     * out_len >= 2 always (the two surrounding quotes), so never nova_alloc(0). */
+    char* buf = (char*)nova_alloc(out_len);
     size_t j = 0;
     buf[j++] = '"';
     for (size_t i = 0; i < s.len; i++) {
@@ -281,8 +283,7 @@ static inline nova_str nova_str_to_debug_str(nova_str s) {
         }
     }
     buf[j++] = '"';
-    buf[j] = '\0';
-    return (nova_str){ buf, j };
+    return (nova_str){ (const uint8_t*)buf, j };
 }
 
 /* ptr → debug str: hex address (Plan 91.14 D229 §«Pointer integration»,
@@ -466,14 +467,15 @@ static inline nova_str nova_fmt_pad(
 
     /* Zero-padding: fill is '0', placed between prefix and body, never split. */
     if (zero_pad && pad_total > 0) {
+        /* Plan 199 Ф.3 (D418): buffer is EXACTLY `need` bytes — no trailing NUL.
+         * pad_total > 0 in this branch, so need > 0 — never nova_alloc(0). */
         size_t need = prefix.len + (size_t)pad_total + body.len;
-        char* buf = (char*)nova_alloc(need + 1);
+        char* buf = (char*)nova_alloc(need);
         size_t j = 0;
         memcpy(buf + j, prefix.ptr, prefix.len); j += prefix.len;
         for (int64_t k = 0; k < pad_total; k++) buf[j++] = '0';
         memcpy(buf + j, body.ptr, body.len); j += body.len;
-        buf[j] = '\0';
-        return (nova_str){ buf, j };
+        return (nova_str){ (const uint8_t*)buf, j };
     }
 
     int64_t left_pad = 0, right_pad = 0;
@@ -488,14 +490,16 @@ static inline nova_str nova_fmt_pad(
     size_t fbytes = nova_fmt_encode_fill(fill_cp, fbuf);
     size_t need = prefix.len + body.len
                 + (size_t)(left_pad + right_pad) * fbytes;
-    char* buf = (char*)nova_alloc(need + 1);
+    /* Plan 199 Ф.3 (D418): buffer is EXACTLY `need` bytes — no trailing NUL.
+     * Guard the all-empty/no-pad case so we never nova_alloc(0). */
+    if (need == 0) return (nova_str){ (const uint8_t*)"", 0 };
+    char* buf = (char*)nova_alloc(need);
     size_t j = 0;
     for (int64_t k = 0; k < left_pad; k++) { memcpy(buf + j, fbuf, fbytes); j += fbytes; }
     memcpy(buf + j, prefix.ptr, prefix.len); j += prefix.len;
     memcpy(buf + j, body.ptr, body.len); j += body.len;
     for (int64_t k = 0; k < right_pad; k++) { memcpy(buf + j, fbuf, fbytes); j += fbytes; }
-    buf[j] = '\0';
-    return (nova_str){ buf, j };
+    return (nova_str){ (const uint8_t*)buf, j };
 }
 
 /* int → decimal magnitude digit string. Produces UNSIGNED magnitude only;
@@ -508,10 +512,10 @@ static inline nova_str nova_fmt_int_body(nova_int v, int base, int upper) {
     size_t n = 0;
     if (mag == 0) { tmp[n++] = '0'; }
     while (mag > 0) { tmp[n++] = digits[mag % (uint64_t)base]; mag /= (uint64_t)base; }
-    char* buf = (char*)nova_alloc(n + 1);
+    /* Plan 199 Ф.3 (D418): EXACTLY n bytes — no trailing NUL. n >= 1 always. */
+    char* buf = (char*)nova_alloc(n);
     for (size_t k = 0; k < n; k++) buf[k] = tmp[n - 1 - k];
-    buf[n] = '\0';
-    return (nova_str){ buf, n };
+    return (nova_str){ (const uint8_t*)buf, n };
 }
 
 /* Radix body (`x`/`X`/`b`/`o`): reinterpret the value as an UNSIGNED two's-
@@ -524,10 +528,10 @@ static inline nova_str nova_fmt_int_radix_body(nova_int v, int base, int upper) 
     size_t n = 0;
     if (bits == 0) { tmp[n++] = '0'; }
     while (bits > 0) { tmp[n++] = digits[bits % (uint64_t)base]; bits /= (uint64_t)base; }
-    char* buf = (char*)nova_alloc(n + 1);
+    /* Plan 199 Ф.3 (D418): EXACTLY n bytes — no trailing NUL. n >= 1 always. */
+    char* buf = (char*)nova_alloc(n);
     for (size_t k = 0; k < n; k++) buf[k] = tmp[n - 1 - k];
-    buf[n] = '\0';
-    return (nova_str){ buf, n };
+    return (nova_str){ (const uint8_t*)buf, n };
 }
 
 /* Build the sign + alt-radix prefix string for a DECIMAL integer.
@@ -537,11 +541,11 @@ static inline nova_str nova_fmt_int_prefix(nova_int v, int sign_plus) {
     size_t n = 0;
     if (v < 0) buf[n++] = '-';
     else if (sign_plus) buf[n++] = '+';
-    if (n == 0) return (nova_str){ "", 0 };
-    char* out = (char*)nova_alloc(n + 1);
+    if (n == 0) return (nova_str){ (const uint8_t*)"", 0 };
+    /* Plan 199 Ф.3 (D418): EXACTLY n bytes — no trailing NUL. n >= 1 here. */
+    char* out = (char*)nova_alloc(n);
     memcpy(out, buf, n);
-    out[n] = '\0';
-    return (nova_str){ out, n };
+    return (nova_str){ (const uint8_t*)out, n };
 }
 
 /* Build the alt-radix prefix (`0x`/`0X`/`0o`/`0b`) for a radix integer.
@@ -555,11 +559,11 @@ static inline nova_str nova_fmt_radix_prefix(int alt, int base, int upper) {
     if (base == 16)      { buf[n++] = '0'; buf[n++] = 'x'; }
     else if (base == 8)  { buf[n++] = '0'; buf[n++] = 'o'; }
     else if (base == 2)  { buf[n++] = '0'; buf[n++] = 'b'; }
-    if (n == 0) return (nova_str){ "", 0 };
-    char* out = (char*)nova_alloc(n + 1);
+    if (n == 0) return (nova_str){ (const uint8_t*)"", 0 };
+    /* Plan 199 Ф.3 (D418): EXACTLY n bytes — no trailing NUL. n >= 1 here. */
+    char* out = (char*)nova_alloc(n);
     memcpy(out, buf, n);
-    out[n] = '\0';
-    return (nova_str){ out, n };
+    return (nova_str){ (const uint8_t*)out, n };
 }
 
 /* f64 → fixed-precision magnitude string (no sign), `prec` decimal places. */
@@ -584,10 +588,11 @@ static inline nova_str nova_fmt_f64_prefix(double v, int sign_plus) {
     char buf[2]; size_t n = 0;
     if (neg) buf[n++] = '-';
     else if (sign_plus) buf[n++] = '+';
-    if (n == 0) return (nova_str){ "", 0 };
-    char* out = (char*)nova_alloc(n + 1);
-    memcpy(out, buf, n); out[n] = '\0';
-    return (nova_str){ out, n };
+    if (n == 0) return (nova_str){ (const uint8_t*)"", 0 };
+    /* Plan 199 Ф.3 (D418): EXACTLY n bytes — no trailing NUL. n >= 1 here. */
+    char* out = (char*)nova_alloc(n);
+    memcpy(out, buf, n);
+    return (nova_str){ (const uint8_t*)out, n };
 }
 
 /* Truncate a string to `prec` codepoints (string precision). Returns a view

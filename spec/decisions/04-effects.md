@@ -64,7 +64,7 @@ handler перехватывается в `with`-скоупе. Из этой и�
 > `#unsafe` attribute scope extended от Nova fn declarations к external fn
 > declarations. Same enforcement: call site без `unsafe { }` block →
 > `E_UNSAFE_CALL_REQUIRES_WRAP`. Use case: FFI bindings wrapping C-side
-> unsafe operations (`dlopen`, `memcpy`, `dlerror`, `as_cstr_unchecked` etc.)
+> unsafe operations (`dlopen`, `memcpy`, `dlerror`, `RawMem.copy` etc.)
 > обязывают caller к explicit unsafe context. Closes
 > [M-118.1-unsafe-attr-on-external-fn].
 >

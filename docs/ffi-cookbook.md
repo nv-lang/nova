@@ -426,21 +426,28 @@ external fn c_printf(fmt CStr) -> i32
 CStr backing type: `*u8` (Plan 118 typed pointer). ABI marshals к
 `const char*` / `uint8_t*`.
 
-**Conversion methods (Plan 118.1 closeout amend, 2026-06-06):**
+**Conversion methods (`@to_cstr`, copy-based, Plan 199 / D418, 2026-07-11):**
 
 ```nova
 ro s = "hello"
-ro c = s.as_cstr()              // zero-copy view (panics on embedded NUL)
-ro c3 = unsafe { s.as_cstr_unchecked() }   // scan-free O(1) hatch
-// s.to_cstr() (owning copy) — NOT in V1; deferred to Plan 118.2 (needs allocator)
+ro c = s.to_cstr()              // GC-allocs a fresh byte_len()+1 NUL-terminated copy (panics on embedded NUL)
+
+// Zero-alloc overload — copy into a caller-provided buffer (hot FFI paths):
+ro buf = unsafe { RawMem.alloc(64) }
+ro c2 = s.to_cstr(buf, 64)      // copies ≤63 bytes + '\0'; TRUNCATES if longer, no scan
 
 // Direct usage в FFI call:
-ro n = c_strlen(s.as_cstr())
+ro n = c_strlen(s.to_cstr())
 ```
 
-Pure-Nova реализация через `str.as_bytes().as_ptr()` (D176 + Plan 118.2
-Ф.1 builtin). V1 ships без embedded-NUL runtime scan ([M-118.1-cstr-nul-
-check] followup); caller responsibility per FFI contract.
+Pure-Nova реализация в `std/ffi/cstr.nv`: `str` carries no trailing-NUL
+guarantee (D418 retracts D26 §Nul-termination), so BOTH `to_cstr` overloads
+COPY — there is no zero-copy path. `to_cstr()` allocates a fresh GC-managed
+`byte_len()+1`-byte buffer, copies the bytes, and appends `\0` — after an O(n)
+embedded-NUL scan ([M-118.1-cstr-nul-check]). `to_cstr(buf, buf_size)` copies
+into the caller's buffer, clamping to `buf_size - 1` + terminator (truncating,
+no scan — the explicit "I own the buffer" hot path; `as_cstr`/`as_cstr_unchecked`
+are RETIRED, `to_` names the copy correctly).
 
 ### addr_of / addr_of_mut (Zig-style pointer creation)
 
@@ -491,8 +498,10 @@ unsafe {
 ### Cross-refs
 
 - Spec D216 (typed pointers) + §22 (CStr type) — `spec/decisions/02-types.md`
-- Spec D26 §«Nul-termination» — `spec/decisions/08-runtime.md`
-- Plan-doc — `docs/plans/118.1-ffi-intrinsics-and-cstring.md`
+- Spec D418 §`str` без NUL-терминатора; copy-based `CStr`/`to_cstr`
+  (retracts D26 §«Nul-termination») — `spec/decisions/08-runtime.md`
+- Plan-doc — `docs/plans/118.1-ffi-intrinsics-and-cstring.md`,
+  `docs/plans/199-str-drop-nul-termination.md`
 
 ## unsafe fn — declaring and calling unsafe functions (Plan 118.1.7)
 
@@ -504,10 +513,10 @@ unsafe {
 
 ```nova
 // unsafe fn — body has implicit unsafe context (pointer ops allowed without unsafe {})
-export unsafe fn str @as_cstr_unchecked() -> CStr {
-    ro bytes = @as_bytes()
-    // No `unsafe { }` needed here — body of unsafe fn is implicitly unsafe
-    CStr(bytes.as_ptr())
+export unsafe fn read_first_byte(p *u8) -> u8 {
+    // No `unsafe { }` needed here — the body of an unsafe fn is implicitly
+    // unsafe, so the raw-pointer read below is permitted directly.
+    p.read()
 }
 ```
 
@@ -526,7 +535,7 @@ external unsafe fn RawMem.fill(dst *mut u8, byte_value u8, n int) -> ()
 // Caller MUST wrap in unsafe {}  — E_UNSAFE_CALL_REQUIRES_WRAP otherwise
 unsafe {
     RawMem.copy(src_ptr, dst_ptr, n)
-    ro c = s.as_cstr_unchecked()
+    ro b = read_first_byte(src_ptr)
 }
 ```
 
@@ -571,7 +580,7 @@ FnPtr  ::= *extern "C" fn(C_ABI…) -> C_ABI
 | `i8`..`i64`, `u8`..`u64`, `f32`, `f64`, `bool` | ✅ | fixed-width scalars |
 | `char` | ✅ | `uint32_t` codepoint (validity is a Nova invariant; Rust `improper_ctypes` flags the analogue) |
 | `*T`, `*()`, `CStr` | ✅ | any pointee; recursion stops at the address. `*()` = `void*`, `CStr` = `const char*`/`*u8` |
-| `str` | ✅ | value-record `{ptr,len}` (D139) — POD struct. **NOT NUL-terminated**; use `s.as_ptr()`/`s.byte_len()` or `s.as_cstr()` for C strings |
+| `str` | ✅ | value-record `{ptr,len}` (D139) — POD struct. **NOT NUL-terminated**; use `s.as_ptr()`/`s.byte_len()` or `s.to_cstr()` for C strings |
 | value-record `type X value {…}` | ✅ iff all fields C-ABI | by-value C struct; the `value` keyword is **mandatory** (without it → heap GC-record, by-reference, **not** C-ABI) |
 | named-tuple `type X(a T, b U)` / anon tuple `(T, U)` | ✅ iff all elements C-ABI | by-value; multi-value returns |
 | cyclic value-record `type Node value {val int, next *Node}` | ✅ | `*Node` is a raw pointer → recursion terminates |

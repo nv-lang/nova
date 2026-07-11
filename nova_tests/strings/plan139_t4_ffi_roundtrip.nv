@@ -1,7 +1,8 @@
 // Plan 139 Ф.4 / A4.1 — full str ↔ C round-trip on the value-record ABI.
 //   C → str  : p139_make_str() builds a nova_str via nova_str_from_cstr.
 //   str → C  : p139_str_byte_sum reads .ptr/.len of the str passed by value.
-//   str → CStr → C : as_cstr() + p139_cstr_strlen (NUL-terminated, D26 §3).
+//   str → CStr → C : to_cstr() + p139_cstr_strlen (NUL-terminated via a fresh
+//     copy, Plan 199 / D418 — retracts D26 §Nul-termination).
 // Closes the loop: a C-origin str behaves identically to a literal through
 // every conversion direction.
 module nova_tests.strings
@@ -21,9 +22,9 @@ test "C->str->C byte-sum round-trip" {
 
 test "C-origin str -> CStr -> C strlen" {
     ro s = p139_make_str()
-    ro c = s.as_cstr()
+    ro c = s.to_cstr()
     assert(p139_cstr_strlen(c) == 11)
-    assert(p139_cstr_strlen(c) == s.len())
+    assert(p139_cstr_strlen(c) == s.byte_len())
 }
 
 test "literal and C-origin str are byte-equal and interchangeable" {
@@ -31,5 +32,5 @@ test "literal and C-origin str are byte-equal and interchangeable" {
     ro literal = "hello world"
     assert(from_c == literal)
     assert(p139_str_byte_sum(from_c) == p139_str_byte_sum(literal))
-    assert(p139_cstr_strlen(from_c.as_cstr()) == p139_cstr_strlen(literal.as_cstr()))
+    assert(p139_cstr_strlen(from_c.to_cstr()) == p139_cstr_strlen(literal.to_cstr()))
 }

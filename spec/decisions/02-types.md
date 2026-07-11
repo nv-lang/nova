@@ -8961,44 +8961,63 @@ used-tracking-условия (без нового error-gating).
 `type CStr(*u8)` newtype declared в std/ffi/cstr.nv — FFI-compatible C-string handle.
 ABI: marshals к `const char*` / `uint8_t*` (single positional `*u8` field).
 
-**Invariant**: instances must satisfy `ptr[strlen(ptr)] == '\0'`. Per D26 §«Nul-termination»,
-full Nova `str` already ships с this invariant, enabling zero-copy conversion.
+**Invariant**: instances must satisfy `ptr[strlen(ptr)] == '\0'`.
 
-**Conversion methods (Plan 118.1 closeout amend, 2026-06-06):** str → CStr
-conversions реализованы как pure-Nova methods в `std/ffi/cstr.nv`:
+> **⚠ AMEND Plan 199 (2026-07-11) → [D418](08-runtime.md#d418-new--str-без-nul-терминатора-c-ffi-через-copy-based-cstr-as_cstr-plan-199-retracts-d26-nul-termination).**
+> Nova `str` больше НЕ несёт trailing-NUL инвариант (retracts D26
+> §«Nul-termination» rules 1-3). Conversion API переименован `as_cstr` →
+> **`@to_cstr`** (`to_` correctly names a COPY — a str→CStr conversion под D418
+> ВСЕГДА копирует; `as_` был misnomer): две D84-arity-перегрузки —
+> GC-allocating `@to_cstr()` и zero-alloc caller-buffer `@to_cstr(buf, size)`.
+> CStr's own invariant (satisfied by construction, not inherited from the source
+> `str`) не меняется. «enabling zero-copy conversion» ниже — исторический текст,
+> более не верно.
+
+**Conversion methods (`@to_cstr`, copy-based; Plan 199 Ф.2/Ф.3, owner decision
+2026-07-11):** str → CStr conversions реализованы как pure-Nova methods в
+`std/ffi/cstr.nv`:
 
 ```nova
-export fn str @as_cstr() -> CStr {
-    ro bytes = @as_bytes()
+// GC-allocating copy: fresh byte_len()+1 buffer + '\0'. Scans for an embedded
+// NUL (a classic silent-C-truncation footgun) and panics on the safe path.
+export fn str @to_cstr() -> CStr {
+    ro bytes = @bytes()
     for b in bytes {
-        if b == 0 { panic("as_cstr: embedded NUL byte in str (would truncate C-string)") }
+        if b == 0 { panic("to_cstr: embedded NUL byte in str (would truncate C-string)") }
     }
-    unsafe { CStr(bytes.as_ptr()) }
+    mut buf = Vec[u8].new().cap(@byte_len() + 1)
+    buf.append(bytes)
+    buf.push(0 as u8)
+    unsafe { CStr(buf.ptr()) }
 }
-export unsafe fn str @as_cstr_unchecked() -> CStr {  // scan-free O(1) hatch
-    ro bytes = @as_bytes()
-    unsafe { CStr(bytes.as_ptr()) }
+// Zero-alloc: copy into a caller-provided buffer, clamping to buf_size-1 +
+// terminator (TRUNCATING, no scan — the explicit "I own the buffer" hot path;
+// the `.min(buf_size-1)` clamp keeps the terminator write in-bounds).
+export fn str @to_cstr(buf *mut u8, buf_size int) -> CStr
+    requires buf_size > 0
+{
+    ro n = @byte_len().min(buf_size - 1)
+    unsafe { RawMem.copy(@ptr(), buf, n); buf.write_at(n, 0 as u8) }
+    unsafe { CStr(buf) }
 }
-// @to_cstr() — owning always-copy form; NOT in V1, deferred to Plan 118.2.
 ```
 
-Использует existing builtins: `str.as_bytes()` (D176 zero-copy view) +
-`[]u8.as_ptr()` (Plan 118.2 Ф.1, commit e80a57e54e7). C primitives НЕ
-требуются — D26 ptr[len]=='\0' invariant + Nova-side wrapping достаточно.
+Использует existing builtins: `str.@bytes()`/`@ptr()`/`@byte_len()` +
+`Vec[u8]`/`RawMem`. C primitives НЕ требуются — Nova-side alloc+copy+terminate
+достаточно (no source-`str` invariant to reuse под D418).
 
 **V1 simplifications (explicit followups, not silent):**
 
-- `[M-118.1-cstr-nul-check]` — ✅ CLOSED 2026-06-08. `@as_cstr()` scans the str
+- `[M-118.1-cstr-nul-check]` — ✅ CLOSED 2026-06-08. `@to_cstr()` scans the str
   bytes for an embedded NUL and panics (interior `0x00` would truncate the
-  C-string at that byte); `@as_cstr_unchecked()` is the scan-free `unsafe fn`
-  hatch. `panic` is reachable via a module-private `external fn panic` decl —
-  cstr.nv is ExternalRegistry-loaded and gets no auto-prelude, and a plain
-  `import std.prelude.*` would trip the R27 auto-import opt-out for importers.
-- `[M-118.1-cstr-to-cstr-distinct-copy]` — DEFERRED → Plan 118.2. `@to_cstr()`
-  is NOT shipped in V1: the `as_X`/`to_X` convention makes `to_cstr` an OWNED
-  copy (buffer outliving the source str), which needs an allocator/free API.
-  Rather than ship a misleadingly-named zero-copy alias, the method was removed
-  (2026-06-08); the owning copy lands in Plan 118.2.
+  C-string at that byte); the caller-buffer `@to_cstr(buf, size)` overload
+  truncates by design (no scan — the explicit hot path). `panic` is an
+  always-available compiler intrinsic ([panic-assert-intrinsic] 2026-07-11) —
+  needs no import regardless of cstr.nv's prelude status.
+- `[M-118.1-cstr-to-cstr-distinct-copy]` — SUBSUMED by Plan 199 Ф.3: `@to_cstr()`
+  IS the owning copy now (both overloads copy — the `as_`/`to_` naming tension
+  that deferred a distinct `to_cstr` is resolved: `to_cstr` is the canonical,
+  correctly-named copying conversion; `as_cstr`/`as_cstr_unchecked` retired).
 
 Closes [M-118.1-cstr-literal] (was: «add c"hello" prefix-literal»; superseded by D26 invariant).
 Closes [M-118.1-cstr-runtime-wiring] (was: «C primitive ABI wiring»; pure-Nova approach makes it unnecessary).

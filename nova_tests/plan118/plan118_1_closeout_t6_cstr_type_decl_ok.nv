@@ -1,9 +1,9 @@
 // Plan 118.1 Ф.4 closeout T6 — CStr type declaration accessible from FFI module.
 //
 // V1 ships `type CStr(*u8)` foundation (newtype wrapper for typed-pointer
-// `*u8`). Runtime methods str.as_cstr / as_cstr_unchecked landed via the
-// pure-Nova approach ([M-118.1-cstr-runtime-wiring] closed); the owning copy
-// `to_cstr()` is deferred to Plan 118.2.
+// `*u8`). Runtime conversion methods `str.to_cstr()` / `str.to_cstr(buf, size)`
+// landed via the pure-Nova approach ([M-118.1-cstr-runtime-wiring] closed;
+// copy-based rewrite Plan 199 Ф.2/Ф.3, D418).
 //
 // V1 verified: import resolves, type usable в extern "nova" fn signatures
 // (FFI-compatible — ABI = *u8).

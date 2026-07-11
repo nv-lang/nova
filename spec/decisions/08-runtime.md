@@ -1039,9 +1039,23 @@ fn str @bytes() -> []u8                    // copy (D73 []u8.from(s))
   Result-форма (`str.try_from(b)` → `Result[str, Utf8Error]`)
   доступна через D77 как convenience sugar.
 
-**Nul-termination (C-interop, RESOLVED 2026-06-03 — Plan 118.1 closes Q-cstring):**
+> **⚠ AMEND Plan 199 (2026-07-11): NUL-termination invariant RETRACTED →
+> [D418](#d418-new--str-без-nul-терминатора-c-ffi-через-copy-based-cstr-as_cstr-plan-199-retracts-d26-nul-termination).**
+> Rules 1-3 ниже (full `str` ALWAYS `ptr[len]=='\0'`, `len+1` backing buffer,
+> zero-copy `as_cstr()` fast path через `ptr[len]` peek) **отменены**. `str`
+> теперь чистый `{ptr,len}` UTF-8 **БЕЗ** гарантии trailing NUL — модель
+> Rust/Go, не Zig `[*:0]u8`. `str @as_cstr()`/`@as_cstr_unchecked()`
+> (`std/ffi/cstr.nv`) ALWAYS копируют в свежий `len+1`-байтовый GC-буфер +
+> `\0` — zero-copy fast path и C-примитив `nova_str_terminated_ptr` (Plan 139
+> Ф.4) убраны. Rule 4 (`CStr` type shape, `type CStr(*u8)`) остаётся в силе
+> без изменений. Codegen-часть (снятие `+1` reserve в `emit_c.rs`/`nova_rt`
+> строковом аллокаторе) — Plan 199 Ф.3, отдельная волна после Plan 196.
+> Текст rules 1-3 ниже — **исторический**.
 
-Nova str storage invariant — formal rules:
+**(ИСТОРИЧЕСКОЕ — отвергнуто Plan 199 / D418) Nul-termination (C-interop) —
+прежнее решение (было RESOLVED 2026-06-03 — Plan 118.1 closes Q-cstring):**
+
+Former Nova str storage invariant — formal rules (RETRACTED, kept for archaeology):
 
 1. **Full str** (literal, runtime-allocated through concat/from_X/etc):
    - Backing buffer is **`len + 1` bytes**
@@ -8488,6 +8502,85 @@ ro count = dns_lookup(host.as_ptr(), host.byte_len(), port)
 - Указатель действителен пока строка жива (scope строки не должен завершаться раньше FFI-вызова).
 - GC не перемещает строки (intern table — статический, heap-allocated строки неперемещаемы).
 - Арифметика по указателю в Nova не поддерживается; как сырой адрес используется через `as int`.
+
+
+## D418 (NEW) — `str` без NUL-терминатора; C-FFI через copy-based `CStr`/`as_cstr` (Plan 199, retracts D26 §Nul-termination)
+
+**Source:** Plan 199, 2026-07-11. **Status:** ✅ ACTIVE — retracts D26
+§«Nul-termination» rules 1-3 (§ above, in-place historical note) и
+Q-cstring «Финальное решение (2026-06-03): вариант 1». **Связь:**
+[D26](#d26-базовая-stdlib-и-prelude) (§«Nul-termination», retracted rules
+1-3), [D294](#d294-new--str-as_ptr---u8--bytes-ffi-bridge-plan-9112-ф9-2026-06-16)
+((ptr,len) FFI bridge — unaffected), Q-cstring (open-questions.md),
+`std/ffi/cstr.nv`.
+
+### Мотивация (research 2026-07-11)
+
+D26's "always nul-terminated" invariant (`ptr[len]=='\0'` held for every
+full `str`, `len+1`-byte backing buffer, Plan 139 Ф.4 alloc-fallback via
+`nova_str_terminated_ptr`) окупался только для целых строк — срезы
+(`s[a..b]`) никогда не несли гарантию, так что `as_cstr()` и раньше падал
+в copy-путь для самого частого случая (mid-buffer slice). Цена: +1 байт на
+каждую аллокацию `str`, сложность аллокатора (peek + conditional-copy на
+каждом `as_cstr()`), концептуальная течь на срезах (parent's `\0` — за
+окном view). Rust/Go/Swift держат строковый тип без хвостового NUL и дают
+явный copy-based C-string конвертер (`CString::new`, `C.CString`,
+`String.withCString`) — современный консенсус; Nova следует ему.
+
+### Решение
+
+1. **`str` storage invariant (retracts D26 rule 1-2).** `str` — чистая
+   `{ptr,len}` UTF-8-view/буфер. NUL-байт **НЕ гарантирован НИГДЕ** — ни для
+   литералов, ни для рантайм-строк (`concat`/`to_upper`/…), ни для срезов.
+   Backing-буфер — ровно `len` байт (без `+1` резерва). `ptr[len]` — НЕ
+   обязательно валидный/читаемый байт (может быть one-past-end аллокации);
+   читать его напрямую вне `@to_cstr` — UB.
+2. **C-FFI (retracts D26 rule 3).** Конверсия `str → CStr` — метод
+   **`@to_cstr`** (`std/ffi/cstr.nv`, `to_` correctly names a COPY; старые
+   `as_cstr`/`as_cstr_unchecked` ретайрнуты), две D84-arity-перегрузки, обе
+   **копируют** (zero-copy path убран — инварианта, который он использовал,
+   больше нет):
+   - `@to_cstr() -> CStr` — GC-allocates свежий `byte_len()+1`-байтовый буфер,
+     копирует байты, дописывает `\0`. Скан + `panic` на interior-NUL
+     (`CString::new`-style — NUL внутри данных незаметно обрезал бы C-строку);
+     безопасный путь по умолчанию.
+   - `@to_cstr(buf *mut u8, buf_size int) -> CStr requires buf_size > 0` —
+     zero-alloc: копирует в caller-buffer, клампя до `buf_size-1` + терминатор
+     (TRUNCATING, без скана — явный «я владею буфером» hot-path, замена бывшему
+     unsafe scan-free hatch).
+3. **`CStr` type shape не меняется** (D26 rule 4) — `type CStr(*u8)`,
+   tuple newtype, ABI `const char*`.
+4. **D294 `(ptr, len)` FFI-мост не затронут** — он никогда не полагался
+   на NUL-терминацию.
+
+### Что отвергнуто
+
+D26 rules 1-3 (always-nul-terminated invariant, `len+1` allocator reserve,
+zero-copy `as_cstr` fast path) — исторический текст сохранён in-place
+(§«Nul-termination» внутри D26 выше) с AMEND-пометкой. C-примитив
+`nova_str_terminated_ptr` (`nova_rt.h`, Plan 139 Ф.4) **УДАЛЁН** (Ф.3) —
+был единственным читателем `ptr[len]`, dead после copy-based `@to_cstr` (Ф.2).
+
+### Codegen note (Ф.3 — ВЫПОЛНЕНО 2026-07-11)
+
+Снятие `len+1` allocator reserve — Plan 199 Ф.3, СДЕЛАНО. Каждый динамический
+string-аллокатор теперь занимает РОВНО `len` байт:
+- **C runtime** (`nova_rt.h`/`conv.h`/`string_builder.h`): `nova_str_concat`,
+  `nova_str_to_debug_str`, `nova_fmt_pad`/`_int_body`/`_int_radix_body`/
+  `_int_prefix`/`_radix_prefix`/`_f64_prefix`, `Nova_str_static_from_char`,
+  `nova_str_replace` — `nova_alloc(n+1)`+`buf[n]='\0'` → `nova_alloc(n)`
+  (empty-result пути guard'ятся ранним `{"",0}` — `nova_alloc(0)` избегается).
+  Мёртвые `nova_str_to_upper`/`_to_lower` удалены целиком.
+- **Nova runtime** (`std/runtime/string/core.nv`): `str.alloc_copy` —
+  `RawMem.alloc(n)` без терминатора; `[]u8 @into_str_unchecked` — всегда
+  reuse через `wrap_owned` (fallback alloc+copy для терминатора убран).
+- **String literals** остаются `(nova_str){.ptr="...", .len=N}`: `.len` уже
+  исключает терминатор, а хвостовой `\0` — интринсик C-`"..."` rodata-литерала
+  (shared, program-lifetime, никто не читает после Ф.2) — конверсия в
+  byte-array была бы пессимизацией без выгоды, НЕ делается.
+Все читатели `ptr[len]` — length-bounded (print `fwrite`; panic/contract
+`%.*s`; cmp/eq `memcmp`); единственный терминатор-reader (`terminated_ptr`)
+удалён. Гейт: conformance 95/0.
 
 
 ## D381 — Collision-aware module-qualified nominal-type C-mangling (Plan 178/179 merge, 2026-07-06)

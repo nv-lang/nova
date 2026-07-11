@@ -185,9 +185,9 @@ impl ExternalRegistry {
         //
         // Plan 172.1 U.1.3b СРЕЗ 1 (cstr — наименьший, 2026-06-25): `ffi/cstr.nv` УБРАН
         // из списка. cstr — листовая FFI-библиотека: 0 транзитивных зависимостей в
-        // prelude/core (grep std/ — CStr/as_cstr только в самом cstr.nv), 0 usage без
-        // `import` в корпусе (все 12 cstr-тестов уже `import std.ffi.cstr`), а её
-        // инлайн-путь ЗВУЧЕН (Nova-body `as_cstr` возвращает `CStr`, не self-extern-bool
+        // prelude/core (grep std/ — CStr/to_cstr только в самом cstr.nv), 0 usage без
+        // `import` в корпусе (все cstr-тесты уже `import std.ffi.cstr`), а её
+        // инлайн-путь ЗВУЧЕН (Nova-body `to_cstr` возвращает `CStr`, не self-extern-bool
         // — не требует Gap A/B; recon PASS). Под `import` cstr приходит через
         // import-resolved модуль (`from_module` merge :2157 несёт extern-сигнатуры +
         // `CStr` type_decl, U.1.3a). Предусловие §10 (звучность инлайн-пути ПЕРЕД

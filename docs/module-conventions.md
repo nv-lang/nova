@@ -54,7 +54,7 @@ type Fs effect {
 // 2) ДЕФОЛТНЫЙ handler — тонкая typed-обёртка над extern-примитивами (см. §4).
 export fn real_fs() -> Effect[Fs] {
     effect Fs {
-        open(path, opts) => { … fs_open(path.as_cstr(), opts.flags(), opts.mode()) … }
+        open(path, opts) => { … fs_open(path.to_cstr(), opts.flags(), opts.mode()) … }
         // …
     }
 }
