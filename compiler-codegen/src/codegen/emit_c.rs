@@ -976,6 +976,23 @@ pub struct CEmitter {
     /// устанавливается при эмите function body, когда нужно использовать
     /// declared return type как target для anonymous record (D55).
     expected_record_type: Option<String>,
+    /// [M-178-variant-ctor-target-sum] (D381 gap-close): bare NOVA-level sum-type
+    /// name the current expr subtree is expected to construct — set from a
+    /// FIELD's declared C type (unwrapping one level of `Option[Sum]`) while
+    /// emitting that field's value, so a NESTED bare variant constructor call
+    /// (`Net(e)` inside `Some(Net(e))`) can disambiguate against a colliding
+    /// same-named variant in a DIFFERENT sum. Consulted by
+    /// `debt_find_variant_ctx` as a signal MORE PRECISE than
+    /// `debt_current_fn_return_sum` (the whole enclosing FUNCTION's return
+    /// type, which misses when the variant sits inside an Option-wrapped
+    /// STRUCT FIELD of a fn returning something else entirely — e.g.
+    /// `HttpError.from_net() -> HttpError` building `source: Some(Net(e))`
+    /// where `Net` collides between `std.http.ErrSource` and `std.tls.TlsError`,
+    /// M-178). `None` almost everywhere (only set around field-value emission
+    /// in `emit_record_field_value`) — byte-identical when unset since
+    /// `debt_find_variant_ctx` only consults it among ≥2 already-ambiguous
+    /// plain candidates for the SAME variant name.
+    expected_sum_hint: Option<String>,
     /// D73/D84: When emitting `ro x T = v.into()`, set to T before emitting
     /// the RHS so the .into() resolver can prefer `T.from(v)` over other
     /// targets that also accept v (e.g. StringBuilder.from(str)).
@@ -1879,6 +1896,7 @@ impl CEmitter {
             current_receiver_is_mut: false,
             current_receiver_is_static: false,
             expected_record_type: None,
+            expected_sum_hint: None,
             expected_into_target: None,
             current_array_elem_hint: None,
             current_array_protocol_box: None,
@@ -3497,10 +3515,21 @@ impl CEmitter {
                 if by_arity.len() == 1 {
                     return build(by_arity[0].clone());
                 }
-                // (2) Among the arity-matching subset, prefer the current fn's
-                // return sum (handles `Other(x)` — 1-arg in every ErrorKind — by
-                // the enclosing fn's return category).
+                // (2) Among the arity-matching subset: prefer the field/param-
+                // local `expected_sum_hint` (M-178) — MORE precise than the
+                // whole function's return sum, it survives into a NESTED bare
+                // ctor call (`Net(e)` inside `Some(Net(e))`) that the return-
+                // sum heuristic below can't see (the enclosing fn may return
+                // an unrelated struct that merely CONTAINS an `Option[Sum]`
+                // field). Falls back to the enclosing fn's return sum (handles
+                // `Other(x)` — 1-arg in every ErrorKind — by the enclosing
+                // fn's return category).
                 if by_arity.len() >= 2 {
+                    if let Some(hint) = self.expected_sum_hint.as_ref() {
+                        if by_arity.iter().any(|c| *c == hint) {
+                            return build(hint.clone());
+                        }
+                    }
                     if let Some(base) = self.debt_current_fn_return_sum() {
                         if by_arity.iter().any(|c| **c == base) {
                             return build(base);
@@ -3508,7 +3537,13 @@ impl CEmitter {
                     }
                 }
             }
-            // (3) Arity-agnostic context fallback.
+            // (3) Arity-agnostic context fallback: same priority (hint before
+            // fn-return-sum) as (2) above.
+            if let Some(hint) = self.expected_sum_hint.as_ref() {
+                if plain.iter().any(|c| c == hint) {
+                    return build(hint.clone());
+                }
+            }
             if let Some(base) = self.debt_current_fn_return_sum() {
                 if plain.iter().any(|c| *c == base) {
                     return build(base);
@@ -30168,6 +30203,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let payload_c = if name == "Ok" { &ok_c } else { &err_c };
                         let saved_expected = self.expected_record_type.clone();
                         self.expected_record_type = Self::debt_struct_name_from_c_type(payload_c);
+                        // [M-178-variant-ctor-target-sum] (tried + reverted): setting
+                        // `expected_sum_hint` here too (mirroring
+                        // `emit_record_field_value`) regressed the conformance corpus
+                        // (single-CU RUN-FAIL) — `args[0].expr()` at a bare fn-body
+                        // `Ok(v)`/`Err(e)` can be an ARBITRARILY large/nested
+                        // expression (unlike a record field's usually-direct value),
+                        // so the hint leaked into an UNRELATED bare-variant
+                        // construction buried deeper in that subtree and mis-resolved
+                        // it. Left uncovered — `debt_current_fn_return_sum()` (pre-
+                        // existing) already handles the common direct case
+                        // (`fn f() -> ErrSource { Net(e) }`); the Result-wrapped
+                        // `Err(Net(e))` sibling of THIS wave's fixed Option-wrapped
+                        // case remains a gap for a follow-up (narrower scoping —
+                        // only when `args[0]` is DIRECTLY the bare variant call, not
+                        // recursively — would be needed to close it safely).
                         if name == "Ok" && args.len() == 1 {
                             let arg_v = self.emit_expr(args[0].expr())?;
                             self.expected_record_type = saved_expected;
@@ -39170,8 +39220,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if let Some(field_struct) = Self::debt_struct_name_from_c_type(field_ty_c) {
             self.expected_record_type = Some(field_struct);
         }
+        // [M-178-variant-ctor-target-sum]: also propagate the field's (possibly
+        // Option-wrapped) sum name as `expected_sum_hint` so a nested bare
+        // variant ctor call (`Net(e)` inside `Some(Net(e))`) disambiguates
+        // against a colliding same-named variant in a different sum.
+        let saved_sum_hint = self.expected_sum_hint.clone();
+        if let Some(sum_hint) = Self::debt_sum_hint_from_c_type(field_ty_c) {
+            self.expected_sum_hint = Some(sum_hint);
+        }
         let result = self.emit_expr_with_target_type(value, field_ty_c);
         self.expected_record_type = saved_expected;
+        self.expected_sum_hint = saved_sum_hint;
         result
     }
 
@@ -39829,13 +39888,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     cname = struct_c_name, tmp = tmp));
                 for f in fields {
                     if f.is_spread { continue; }
+                    // [M-178-variant-ctor-target-sum]: compute field_ty FIRST and
+                    // route the value through `emit_record_field_value` (like the
+                    // sibling `expected_record_type`/`NovaValue_` branches above)
+                    // instead of a bare `emit_expr` — this branch (heap record,
+                    // NO explicit type_name, inferred from the fn's return type)
+                    // previously emitted field values with NO struct/sum context
+                    // at all, so a bare variant ctor nested in an Option-wrapped
+                    // field (`source: Some(Net(e))` in a fn returning `HttpError`,
+                    // not `ErrSource`) had no way to disambiguate `Net` against a
+                    // colliding same-named variant in another sum (M-178:
+                    // `ErrSource.Net(NetError)` vs `TlsError.Net(NetError)`).
+                    let field_ty = self.record_schemas.get(&struct_name)
+                        .and_then(|s| s.get(&f.name)).cloned().unwrap_or_default();
                     let val = if let Some(v) = &f.value {
-                        self.emit_expr(v)?
+                        self.emit_record_field_value(v, &field_ty)?
                     } else {
                         f.name.clone()
                     };
-                    let field_ty = self.record_schemas.get(&struct_name)
-                        .and_then(|s| s.get(&f.name)).cloned().unwrap_or_default();
                     let mfn = Self::mangle_field_name(&f.name);
                     if field_ty == "void*" {
                         let val_ty = if let Some(v) = &f.value {
@@ -43265,6 +43335,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             return Some(s.to_string());
         }
         trimmed.strip_prefix("Nova_").map(|s| s.to_string())
+    }
+
+    /// [M-178-variant-ctor-target-sum]: like `debt_struct_name_from_c_type`,
+    /// but additionally unwraps ONE level of `NovaOpt_` (`Option[Sum]`)
+    /// wrapping so a target `NovaOpt_Nova_<Sum>_p` (an `Option[Sum]` field/
+    /// param C type — `sanitize_for_novaopt` turns `Nova_<Sum>*` into
+    /// `Nova_<Sum>_p` before prefixing `NovaOpt_`) yields `<Sum>`. Used to
+    /// populate `expected_sum_hint` — the sum whose bare variant constructors
+    /// should be preferred when a variant name collides across sums.
+    fn debt_sum_hint_from_c_type(c_ty: &str) -> Option<String> {
+        if let Some(inner) = c_ty.strip_prefix("NovaOpt_") {
+            let inner = inner.strip_suffix("_p").unwrap_or(inner);
+            return inner.strip_prefix("Nova_").map(|s| s.to_string());
+        }
+        Self::debt_struct_name_from_c_type(c_ty)
     }
 
     /// Plan 127 Ф.3 helper: resolve the value-record type-name for a
@@ -49063,7 +49148,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // and whose callee span is absent from fn_ret_by_span (generic callee → no concrete span).
         if let ExprKind::Call { func, args, .. } = &expr.kind {
             if let ExprKind::Ident(name) = &func.kind {
-                if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
+                // [M-178-variant-ctor-target-sum]: `debt_find_variant_ctx`
+                // (arity + `expected_sum_hint` + fn-return-sum disambiguated)
+                // instead of the raw first-wins `find_variant_compat` — this
+                // channel feeds the `Some(v)` arg-type-priority wrapper-type
+                // inference (below), so an ambiguous nested bare ctor
+                // (`Net(e)` inside `Some(Net(e))`) must resolve to the SAME
+                // sum here as the emission side does, or the Option/Result
+                // wrapper type and the boxed ctor call end up naming two
+                // DIFFERENT sums (CC-FAIL / silent type confusion, M-178).
+                // Byte-identical for a unique variant (falls straight through
+                // to `find_variant_compat`).
+                if let Some((type_name, _)) = self.debt_find_variant_ctx(name, Some(args.len())) {
                     if type_name == "Option" || type_name == "NovaOpt_nova_int" {
                         if name == "Some" && !args.is_empty() {
                             let arg_ty = self.infer_expr_c_type(args[0].expr());

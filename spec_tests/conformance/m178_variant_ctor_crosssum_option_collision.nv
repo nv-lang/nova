@@ -1,0 +1,65 @@
+// [M-178-errsource-tls] / [M-sync-crossmodule-samename-type-collision] (D381
+// follow-up) — a bare variant constructor call (`Net(e)`) shared by two
+// DIFFERENT non-generic sums with the SAME variant name AND the SAME payload
+// type used to resolve to the WRONG sum whenever the call sat inside an
+// `Option[Sum]`-typed STRUCT FIELD of a function returning something else
+// entirely — the only disambiguation signal codegen had was the whole
+// enclosing FUNCTION's return type (`debt_current_fn_return_sum`), which
+// cannot see a variant buried inside a field.
+//
+// Real-world instance: `std.http.ErrSource.Net(NetError)` vs
+// `std.tls.TlsError.Net(NetError)` — both declare a `Net` variant carrying
+// `NetError`. `HttpError.from_net(kind, e) -> HttpError` builds
+// `{ kind, url: None, source: Some(Net(e)) }`; `source`'s declared type is
+// `Option[ErrSource]`, but `from_net`'s OWN return type is `HttpError` (a
+// record, not a sum) — the old context resolution never saw `ErrSource` at
+// all and fell through to `find_variant_compat`'s first-wins/shorter-name
+// tie-break, silently calling `nova_make_TlsError_Net` where
+// `nova_make_ErrSource_Net` was meant (and, symmetrically, inferring the
+// wrong `NovaOpt_Nova_TlsError_p` wrapper for a `NovaOpt_Nova_ErrSource_p`
+// slot — CC-FAIL "incompatible type", or worse, a silent tag/pointer
+// confusion when both sides happened to typecheck).
+//
+// This fixture reproduces the bug WITHOUT std.tls (mbedtls not required):
+// two same-shaped sums (`M178AlphaSource`/`M178BetaError`), both carrying a
+// `Net(M178Payload)` variant, wrapped by an `Option[M178AlphaSource]` field
+// on a record whose constructing fn returns the RECORD, not the sum.
+// Единица: folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+type M178Payload {
+    ro v int
+}
+
+type M178AlphaSource enum
+    | Net(M178Payload)
+    | Other(str)
+
+// A DIFFERENT sum with the SAME variant name + SAME payload type — the
+// collision partner. Never referenced by `M178Wrap`/`m178_make_wrap`; its
+// mere co-presence in this compile-unit is what makes the bare `Net(p)`
+// constructor call below ambiguous.
+type M178BetaError enum
+    | Net(M178Payload)
+    | Other(str)
+
+type M178Wrap {
+    ro w Option[M178AlphaSource]
+}
+
+// Returns `M178Wrap` (a RECORD), NOT `M178AlphaSource` — so the enclosing
+// fn's return type gives codegen no direct signal about which sum `Net`
+// belongs to. The field's OWN declared type (`Option[M178AlphaSource]`) is
+// the only correct signal (`expected_sum_hint`, propagated from
+// `emit_record_field_value`'s field_ty_c through `debt_find_variant_ctx`).
+fn m178_make_wrap(p M178Payload) -> M178Wrap =>
+    { w: Some(Net(p)) }
+
+test "M-178 bare variant ctor resolves via the FIELD's sum, not the whole fn's return type" {
+    ro wrapped = m178_make_wrap(M178Payload { v: 7 })
+    match wrapped.w {
+        Some(M178AlphaSource.Net(payload)) => assert(payload.v == 7)
+        Some(M178AlphaSource.Other(_))     => assert(false)
+        None                                 => assert(false)
+    }
+}

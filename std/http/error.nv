@@ -12,10 +12,17 @@
 // non-breaking):
 //   - Net(NetError)        ✅ приземлён (Plan 176 Ф.4, Q3): `HttpError.transport`
 //     теперь несёт типизированный `NetError` вместо string-detail.
+//   - Tls(TlsError)        ✅ приземлён (Plan 116 Ф.5.3 / M-178): `HttpError.from_tls`
+//     несёт типизированный `TlsError` из handshake/write/read вместо string-detail
+//     (std/http/transport/real.nv). Разгейчено ПОСЛЕ фикса mono-кэша конструкторов
+//     enum-вариантов (`ErrSource.Net(NetError)` vs `TlsError.Net(NetError)` —
+//     оба несут одноимённый вариант `Net` с одинаковым payload; codegen раньше
+//     резолвил bare `Net(e)` по первому/короче-имени кандидату без учёта
+//     call-сайт контекста, `debt_find_variant_ctx` в compiler-codegen/src/codegen/
+//     emit_c.rs — closes [M-178-errsource-tls]).
 //   - Utf8(Utf8Error)      ← 176 Ф.0.5 (canonical str.from_bytes+Utf8Error) [M-178-errsource-utf8]
 //   - Io(IoError)          ← 176 (fs/io writer в copy_to)                     [M-178-errsource-io]
 //   - Compress(CompressError) ← 179 Ф.1 (decompress)                          [M-178-errsource-compress]
-//   - Tls(TlsError)        ← 116 (std/tls)                                     [M-178-errsource-tls]
 // Остальные ждут своих зависимостей; source-chaining демонстрируется также через
 // `ErrSource.Url(ParseUrlError)`.
 
@@ -23,6 +30,7 @@ module std.http
 
 import std.encoding.compress.{CompressError}
 import std.net.{NetError}
+import std.tls.{TlsError}
 
 /// Категория ошибки http-домена. **OPEN** (D358): `Other(str)` — catch-all,
 /// поэтому `match` ОБЯЗАН нести wildcard-arm; расширение (h2/h3) не ломает
@@ -63,6 +71,13 @@ export type ErrSource enum
     | Compress(CompressError)      // decode Content-Encoding (gzip/deflate) провалился
                                    // (Ф.2, 179; D381 сделал co-presence compress+http
                                    // ErrorKind линкуемой). [M-178-errsource-compress]
+    | Tls(TlsError)                 // TLS handshake / encrypted write / encrypted read
+                                   // провалился (Plan 116 Ф.5.3) — типизированный
+                                   // `std.tls.TlsError`. `TlsError` несёт СВОЙ
+                                   // `Net(NetError)`-вариант (underlying-транспорт) —
+                                   // тот же variant-имя+payload, что и `ErrSource.Net`
+                                   // выше, из ДРУГОГО enum'а; codegen различает их по
+                                   // call-сайт контексту (M-178).
     | OtherSource(str)             // OPEN / placeholder для гейтнутых источников
 
 /// Единственная структурная ошибка домена http (R5/D325).
@@ -115,6 +130,13 @@ export fn HttpError.transport(kind ErrorKind, detail str) -> HttpError =>
 export fn HttpError.from_net(kind ErrorKind, e NetError) -> HttpError =>
     { kind, url: None, source: Some(Net(e)) }
 
+/// Транспортная ошибка с типизированным `source: Tls(TlsError)` (Plan 116 Ф.5.3,
+/// M-178) — handshake/encrypted-write/encrypted-read failure over `TlsStream`
+/// preserves the actual `TlsError` instead of collapsing to a fixed string.
+#stable(since = "0.2")
+export fn HttpError.from_tls(kind ErrorKind, e TlsError) -> HttpError =>
+    { kind, url: None, source: Some(Tls(e)) }
+
 /// `BodyTooLarge` — превышен cap тела/decompress (DoS-guard).
 #stable(since = "0.1")
 export fn HttpError.body_too_large() -> HttpError =>
@@ -163,6 +185,7 @@ export fn HttpError @to_str() -> str {
         Some(UrlParse(e))     => "${base}: ${e.to_str()}"
         Some(Net(e))          => "${base}: ${e.to_str()}"
         Some(Compress(e))     => "${base}: ${e.to_str()}"
+        Some(Tls(e))          => "${base}: ${e.to_str()}"
         Some(OtherSource(m))  => "${base}: ${m}"
         None                  => base
     }

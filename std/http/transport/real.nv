@@ -27,13 +27,14 @@
 //     write/read transport failures carry the actual `NetError` via
 //     `HttpError.from_net` (error.nv); dns resolution failure (`resolve`
 //     returns `NetError` too) is the same path. Typed `ErrSource.Tls(TlsError)`
-//     — followup [M-178-errsource-tls]; пока TLS-провал несётся как
-//     `ErrorKind.Tls` + текст.
+//     ✅ landed (Plan 116 Ф.5.3 / M-178): handshake/encrypted-write/encrypted-
+//     read failures carry the actual `TlsError` via `HttpError.from_tls`
+//     (error.nv) — closes [M-178-errsource-tls].
 
 module http.transport
 
 import std.net.{TcpStream, resolve}
-import std.tls.{TlsStream, ClientConfig}
+import std.tls.{TlsStream, ClientConfig, TlsError}
 import std.http.{Http, HttpError, ErrorKind}
 
 /// Production `Http` handler over the `Net` effect (TCP + DNS via libuv).
@@ -81,12 +82,17 @@ fn https_send_over_net(host str, port int, request str) Net -> Result[str, HttpE
     }
     consume tls = match conn {
         Ok(s)  => s
-        Err(e) => return Err(HttpError.transport(ErrorKind.Tls, e.to_str()))
+        Err(e) => return Err(HttpError.from_tls(ErrorKind.Tls, e))
     }
     // Единственный consume tls — `close` в конце на ВСЕХ путях; ошибки write/read
     // сворачиваются в сентинел (D131: без early-return после consume).
     mut acc = WriteBuffer.new()
     acc.cap(4096)
+    // NB: `err_detail` stays STRING-typed (not `Option[TlsError]`) — see
+    // [M-178-write-all-ufcs-overload] below. `HttpError.from_tls` (typed
+    // `source: Tls(TlsError)`) is used at the handshake site above (a static
+    // `TlsStream.connect` call, unambiguous); this site keeps the untyped
+    // `HttpError.transport` fallback.
     mut err_detail Option[str] = None
     match tls.write_all(request.bytes()) {
         Ok(_)  => {
@@ -100,6 +106,21 @@ fn https_send_over_net(host str, port int, request str) Net -> Result[str, HttpE
                 }
             }
         }
+        // [M-178-write-all-ufcs-overload] (found while landing this wave,
+        // OUT OF SCOPE here — separate root cause from M-178's bare-variant-
+        // ctor mono-cache): `tls.write_all(...)` DISPATCHES to the generic
+        // `write_all[W: Write](w, data) -> Result[(), IoError]` (std/io/
+        // core.nv, reachable via TlsStream's structural `io.Write`
+        // conformance) instead of TlsStream's OWN native
+        // `@write_all -> Result[(), TlsError]` (std/tls/stream.nv) — the
+        // bound `e`'s emitted C representation is `NovaValue_IoError`, not
+        // `Nova_TlsError*`, even under an explicit `ro te TlsError = e`
+        // annotation (CC-FAIL "incompatible type", confirmed live in this
+        // worktree). Pre-existing: the ORIGINAL code already called
+        // `e.to_str()` on this same mis-dispatched value (silently wrong
+        // error text — `IoError.to_str()`, not `TlsError.to_str()` — masked
+        // because both return `str`). `e.to_str()` kept here UNCHANGED
+        // (byte-identical to before this wave) rather than papered over.
         Err(e) => { err_detail = Some(e.to_str()) }
     }
     tls.close()

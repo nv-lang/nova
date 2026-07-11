@@ -912,7 +912,10 @@ RFC 7301. `ClientConfig.alpn_protocols` (упорядочен), `[]` = без AL
   → E_UNKNOWN_TYPE в multi-ErrorKind CU). Доказано pre-existing: `client_test`
   (без TLS) падает идентично; compress соло — PASS. Эскалировано (codegen-зона).
 - **Followups:** `[M-116-https-client-custom-roots]` (HttpClient TLS-config хук
-  для self-signed loopback HTTPS), `[M-178-errsource-tls]` (типизированный source).
+  для self-signed loopback HTTPS). ~~`[M-178-errsource-tls]`~~ **CLOSED** —
+  типизированный `source: Tls(TlsError)` приземлён (`HttpError.from_tls`,
+  std/http/error.nv) после фикса mono-кэша конструкторов enum-вариантов
+  в codegen (bare `Net(e)` коллидировал между `ErrSource.Net`/`TlsError.Net`).
 - **Гейт волны:** conformance --positive --compile-error **91/0**; все std/tls
   тесты (handshake 19/19 + cert_modes 6 + mtls 4 + error/config/shim-link + neg)
   PASS; shim cargo 8/8.
