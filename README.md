@@ -221,8 +221,13 @@ Active development. The specification is stable across core features
   `nova build`, `nova test`, `nova regen-runtime`). The interpreter
   entry point `nova run` is currently **unsupported** — Nova compiles
   to C, so use `nova build` (native binary) or `nova test`.
-  `nova-codegen` остаётся как внутренний инструмент для IDE / CI /
-  отладки.
+  `nova-codegen` — внутренний крейт-компилятор (движок, который `nova`
+  вызывает изнутри) + несколько maintainer-only build-тулов
+  (`unicode`-таблицы UCD, `compile` Nova→C, `dump-runtime`). **Для любой
+  обычной работы — только `nova`** (nova-cli): `nova check / build / test /
+  test-build <file> / lint / regen-runtime`. У `nova` есть свой
+  `test-build` (один файл), так что вызывать `nova-codegen` напрямую не
+  нужно; его `test-build` берёт ОДИН файл (директория → «read: os error 5»).
 
 What works today (bootstrap):
 

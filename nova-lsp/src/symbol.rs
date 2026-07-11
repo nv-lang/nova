@@ -150,6 +150,9 @@ pub fn format_type_ref(ty: &TypeRef) -> String {
         TypeRef::Unsafe(inner, _) => {
             format!("unsafe {}", format_type_ref(inner))
         }
+        TypeRef::Ref(inner, _) => {
+            format!("&{}", format_type_ref(inner))
+        }
         TypeRef::Protocol { methods, .. } => {
             format!("protocol {{ {} method(s) }}", methods.len())
         }
