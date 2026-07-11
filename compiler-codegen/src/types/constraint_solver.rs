@@ -174,10 +174,12 @@ impl TypeSet {
 }
 
 /// Констрейнт, порождаемый генератором (будущие Ф.2-продюсеры), решаемый
-/// `solve()`. Ровно два вида на старте (Ф.1) — покрывают равенство и
-/// членство type-set; `Join`/`Project` (Binary-арифметика,
-/// Index-проекция-в-элемент — см. Ф.0-инвентарь) остаются за следующей
-/// волной, решатель сегодня расширяем без слома API (новый вариант enum).
+/// `solve()`. `Eq`/`MemberOf` — равенство и членство type-set (Ф.1). `Join`
+/// (Plan 196 Ф.4a, Binary-арифметика) — слияние двух известных типов в один
+/// результирующий по КАНОНИЧЕСКОЙ семантике `number_exprs::promote_arith_rt`
+/// (§0 — правило живёт в ОДНОМ месте, `Join` его лишь ВЫЗЫВАЕТ, а не
+/// переизобретает). `Project` (Index-проекция-в-элемент — см. Ф.0-инвентарь)
+/// остаётся за следующей волной; решатель расширяем без слома API.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Constraint {
     /// Два терма должны унифицироваться в один тип.
@@ -185,6 +187,17 @@ pub enum Constraint {
     /// Терм должен принадлежать type-set (соблюдается ТОЛЬКО когда терм
     /// в итоге решается до листа без переменных — см. `member_of`).
     MemberOf(Ty, TypeSet),
+    /// `out` = арифметическое слияние (`⋈`) операндов `left`/`right` по
+    /// §0-каноническому `number_exprs::promote_arith_rt`. Решается ТОЛЬКО
+    /// когда ОБА операнда сводятся к листу без переменных И слияние
+    /// определено (`join_arith`): либо (a) оба numeric-листа → promote, либо
+    /// (b) один и тот же `TypeParam` с обеих сторон → тот же `TypeParam`
+    /// (арифметика сохраняет numeric-bounded generic; D405 запрещает
+    /// mixed-width). Иначе `out` остаётся несвязанным (недоопределено →
+    /// продюсер уходит на legacy — честный «без аннотации», не ложь). Гейт
+    /// «операнды numeric / bounded» остаётся у ПРОДЮСЕРА (контекстное знание
+    /// чекера), как AST-обход остался у продюсера в Ф.2 literal-coercion.
+    Join { out: Ty, left: Ty, right: Ty },
 }
 
 /// Причина отказа решателя.
@@ -219,6 +232,24 @@ impl Solver {
         for c in constraints {
             if let Constraint::Eq(a, b) = c {
                 self.unify(a, b)?;
+            }
+        }
+        // Join AFTER Eq (operands must be resolved through the substitution
+        // built by Eq) and BEFORE MemberOf (so `out` is bound for any later
+        // membership check). Only binds `out` when BOTH operands collapse to
+        // a variable-free leaf AND `join_arith` yields a result — otherwise
+        // `out` stays free (undetermined, not a conflict).
+        for c in constraints {
+            if let Constraint::Join { out, left, right } = c {
+                let l = self.resolve(left);
+                let r = self.resolve(right);
+                if let (Some(lrt), Some(rrt)) =
+                    (self.as_concrete_leaf(&l), self.as_concrete_leaf(&r))
+                {
+                    if let Some(joined) = join_arith(&lrt, &rrt) {
+                        self.unify(out, &Ty::Concrete(joined))?;
+                    }
+                }
             }
         }
         for c in constraints {
@@ -389,6 +420,40 @@ impl Solution {
         let resolved = solver.resolve(&Ty::Var(v));
         solver.as_concrete_leaf(&resolved)
     }
+}
+
+/// Numeric-операнд арифметики — ТОЧНАЯ копия предиката `is_num` продюсера
+/// Binary-арма (`types/mod.rs`): Scalar / Float / голый `char`. Шире, чем
+/// `TypeSet::Numeric` (тот без `char`) — умышленно: `char` арифметически
+/// promotable (`is_typed_int` в `number_exprs` его включает), и byte-parity
+/// Binary-арма требует именно этот набор.
+fn is_numeric_leaf(rt: &ResolvedType) -> bool {
+    matches!(rt, ResolvedType::Scalar { .. } | ResolvedType::Float { .. })
+        || matches!(rt, ResolvedType::Named { name, args, .. }
+            if args.is_empty() && name.as_str() == "char")
+}
+
+/// Ядро `Constraint::Join`: слить два УЖЕ РЕШЁННЫХ листа в результирующий
+/// тип по семантике арифметики Nova. Возвращает `None`, когда слияние не
+/// определено (продюсер тогда не аннотирует → legacy). Правило:
+///   1. один и тот же `TypeParam` с обеих сторон → тот же `TypeParam`
+///      (арифметика сохраняет numeric-bounded generic; проверка bounded —
+///      у продюсера, сюда доходят только уже-гейченные пары);
+///   2. оба numeric-листа → §0-канонический `number_exprs::promote_arith_rt`
+///      (правило НЕ дублируется — единственный источник).
+/// Не-numeric / разные TypeParam / numeric+TypeParam → `None` (никогда не
+/// штампуем ложный тип для operator-overload операндов — анти-POISON-6875).
+fn join_arith(l: &ResolvedType, r: &ResolvedType) -> Option<ResolvedType> {
+    if let (ResolvedType::TypeParam(a), ResolvedType::TypeParam(b)) = (l, r) {
+        if a == b {
+            return Some(ResolvedType::TypeParam(a.clone()));
+        }
+        return None;
+    }
+    if is_numeric_leaf(l) && is_numeric_leaf(r) {
+        return Some(crate::number_exprs::promote_arith_rt(l, r));
+    }
+    None
 }
 
 #[cfg(test)]
@@ -609,5 +674,129 @@ mod tests {
     fn primitive_set_peels_readonly_view() {
         let ro_int = ResolvedType::Readonly(Box::new(scalar(64, true, true)));
         assert!(ts_ok(&ro_int, TypeSet::Primitive));
+    }
+
+    // ── Plan 196 Ф.4a — `Constraint::Join` (Binary-арифметика) ────────────
+
+    /// Прогнать один Join и вернуть решённый тип `out` (или `None`, если
+    /// решатель оставил его несвязанным — недоопределённое слияние).
+    fn join(l: &ResolvedType, r: &ResolvedType) -> Option<ResolvedType> {
+        let mut g = VarGen::new();
+        let out = g.fresh();
+        Solver::new()
+            .solve(&[Constraint::Join {
+                out: Ty::Var(out),
+                left: Ty::from_resolved(l),
+                right: Ty::from_resolved(r),
+            }])
+            .ok()
+            .and_then(|sol| sol.type_of(out))
+    }
+
+    fn char_ty() -> ResolvedType {
+        ResolvedType::Named { name: "char".into(), module: vec![], args: vec![] }
+    }
+
+    #[test]
+    fn join_f64_wins_over_int() {
+        // f64 ⋈ i32 → f64 (float-арифметика доминирует, позиция не важна).
+        let f64_ty = ResolvedType::Float { width: 64 };
+        let i32_ty = scalar(32, true, false);
+        assert_eq!(join(&f64_ty, &i32_ty), Some(f64_ty.clone()));
+        assert_eq!(join(&i32_ty, &f64_ty), Some(f64_ty));
+    }
+
+    #[test]
+    fn join_typed_int_beats_wide_int_position_independent() {
+        // u8 ⋈ int → u8 и int ⋈ u8 → u8 (typed/narrow бьёт wide-default int
+        // НЕЗАВИСИМО от позиции — ключевой RANK-1 инвариант promote_arith_rt).
+        let u8_ty = scalar(8, false, false);
+        let int_ty = scalar(64, true, true);
+        assert_eq!(join(&u8_ty, &int_ty), Some(u8_ty.clone()));
+        assert_eq!(join(&int_ty, &u8_ty), Some(u8_ty));
+    }
+
+    #[test]
+    fn join_uint_beats_wide_int() {
+        // uint (wide-default unsigned) бьёт int в смешанной арифметике
+        // (1 + uint_n → uint) — `is_typed_int` включает uint (Plan 172.1-K2).
+        let uint_ty = scalar(64, false, true);
+        let int_ty = scalar(64, true, true);
+        assert_eq!(join(&uint_ty, &int_ty), Some(uint_ty.clone()));
+        assert_eq!(join(&int_ty, &uint_ty), Some(uint_ty));
+    }
+
+    #[test]
+    fn join_both_wide_int_takes_left() {
+        // int ⋈ int → int (оба wide-default → левый, как promote_arith_rt).
+        let int_ty = scalar(64, true, true);
+        assert_eq!(join(&int_ty, &int_ty), Some(int_ty));
+    }
+
+    #[test]
+    fn join_char_is_typed_int() {
+        // char ⋈ int → char (char — typed int в promote_arith_rt).
+        let int_ty = scalar(64, true, true);
+        assert_eq!(join(&char_ty(), &int_ty), Some(char_ty()));
+    }
+
+    #[test]
+    fn join_same_type_param_preserved() {
+        // T ⋈ T → T (арифметика сохраняет numeric-bounded generic).
+        let t = ResolvedType::TypeParam("T".into());
+        assert_eq!(join(&t, &t), Some(t.clone()));
+    }
+
+    #[test]
+    fn join_different_type_params_undetermined() {
+        // T ⋈ U → None (разные параметры — не сливаем; продюсер уходит на legacy).
+        let t = ResolvedType::TypeParam("T".into());
+        let u = ResolvedType::TypeParam("U".into());
+        assert_eq!(join(&t, &u), None);
+    }
+
+    #[test]
+    fn join_type_param_with_numeric_undetermined() {
+        // T ⋈ i32 → None: TypeParam+конкретный numeric НЕ сливается ядром
+        // (случай «T + литерал» продюсер моделирует как T ⋈ T, коэрсируя
+        // литерал к типу параметра, — а НЕ передаёт сюда смешанную пару).
+        let t = ResolvedType::TypeParam("T".into());
+        let i32_ty = scalar(32, true, false);
+        assert_eq!(join(&t, &i32_ty), None);
+        assert_eq!(join(&i32_ty, &t), None);
+    }
+
+    #[test]
+    fn join_non_numeric_operands_never_promote() {
+        // Record ⋈ Record → None: анти-POISON-6875 — оператор-overload
+        // операнды (`Vec + Vec` → `@plus`) НИКОГДА не получают ложный
+        // promote-штамп (иначе канал лжёт, требуя недоверия потребителя).
+        let rec = ResolvedType::Named { name: "Vector".into(), module: vec![], args: vec![] };
+        assert_eq!(join(&rec, &rec), None);
+        let i32_ty = scalar(32, true, false);
+        assert_eq!(join(&rec, &i32_ty), None);
+    }
+
+    #[test]
+    fn join_out_var_is_queryable_through_eq_chain() {
+        // `out` связывается через unify — доказываем, что решение доступно
+        // и транзитивно (Eq(a, out) до Join → `a` тоже резолвится в результат).
+        let mut g = VarGen::new();
+        let out = g.fresh();
+        let a = g.fresh();
+        let u16_ty = scalar(16, false, false);
+        let int_ty = scalar(64, true, true);
+        let sol = Solver::new()
+            .solve(&[
+                Constraint::Eq(Ty::Var(a), Ty::Var(out)),
+                Constraint::Join {
+                    out: Ty::Var(out),
+                    left: Ty::from_resolved(&u16_ty),
+                    right: Ty::from_resolved(&int_ty),
+                },
+            ])
+            .unwrap();
+        assert_eq!(sol.type_of(out), Some(u16_ty.clone()));
+        assert_eq!(sol.type_of(a), Some(u16_ty));
     }
 }
