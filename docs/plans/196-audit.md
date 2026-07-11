@@ -276,3 +276,82 @@ return, nested-flatten, unbound-method-generic-bail, multi-carrier, receiver-con
 §0-ICE / 1 non-§0 FFI-gap задокументирован и отложен на `[M-115-ffi-build-pipeline]`.
 Гейты захода: conformance 95/0, `constraint_solver --lib` 46/0, smoke `fn main(){}`+`println`
 без P67.
+
+## 5. Ф.4c — попытка authority-flip resolve-канала (2026-07-11, read+verify)
+
+Задача захода: перевести ОДИН Call-подслучай с CO-AUTHORITY на АВТОРИТЕТ и снять
+legacy-строки byte-parity. **Результат: ни один подслучай не переводится byte-parity в
+ОДИН шаг.** Это НЕ тупик, а точный вывод для планирования Ф.5/Ф.6 (ровно тот исход, что
+предусмотрен целью-4 захода: «если НИ ОДИН подслучай не переводится byte-parity — честно
+доложи почему»). Ниже — почему, с двух сторон (checker-рычаг и codegen-жертва).
+
+### 5.1. Канал — строгий ВЕРИФИКАТОР legacy, не расширитель
+
+`resolve_return_channel` (`types/mod.rs:9513`) вызывается ЕДИНСТВЕННЫМ сайтом
+(`types/mod.rs:13761`, в `resolve_instance_method_return_arity`) — ПОСЛЕ того, как legacy
+`build_recv_subst` + `subst_type_ref_pub` уже вычислил `out` и прошёл ВСЕ свои гейты
+(`returns_receiver` early-return :13679, method-generic-в-return bail :13711, container
+`_ => {}` :13743). Co-authority — это `debug_assert!(channel.map_or(true, |s| *s ==
+from_type_ref(out)))` (:13762) + `let _ = channel` (:13768): канал либо **СОГЛАСЕН** с
+legacy (Some ⟹ равен), либо **ВОЗДЕРЖИВАЕТСЯ** (None). Он НИКОГДА не расходится и НИКОГДА
+не резолвит того, чего legacy не резолвит.
+
+**Следствие (ключ захода):** канал покрывает ПОДМНОЖЕСТВО Some-домена legacy. Перевод его в
+авторитет не аннотирует НИЧЕГО нового ⇒ не делает мёртвой НИ ОДНОЙ строки — ни в checker
+(legacy нужен как fallback для None-случаев канала), ни в codegen (см. §5.3). Чтобы ужать
+legacy, чекер должен резолвить то, чего СЕГОДНЯ не может (class-(b)), — это НОВЫЙ движок, а
+не переэкспресс существующих резолвов через solver.
+
+### 5.2. Два структурных блокера авторитета в checker
+
+`resolve_instance_method_return_arity` возвращает `Option<TypeRef>`; канал —
+`Option<ResolvedType>`. Чтобы канал стал авторитетом, ResolvedType надо превратить в TypeRef
+(`resolved_to_typeref_tp`, :14151 — обратная к `from_type_ref`). Блокеры:
+
+- **(P1) `from_type_ref` НЕ-инъективна** — round-trip теряет спеллинг: `TypeRef::Array(T)` →
+  `Named{Vec,[T]}` (:214, slice-сахар канонизируется в Vec), `Mut`/`Ref`/`Uninit` на
+  не-указателе СРЕЗАЮТСЯ (:263/:281/:269). Реальные single-overload concrete-receiver методы
+  бьют ровно в это: `Path @components()→[]str` (`std/fs/path.nv:349`), `Response
+  @cookies()→[]SetCookie` (`std/http/response_ext.nv:37`), `str @encode_utf16()→[]u16`
+  (`std/encoding/utf16.nv:49`), `DeflateEnc mut @take_bytes()→[]u8`
+  (`std/encoding/compress/deflate.nv:152`). У всех return — `Array`; реконструкция даёт
+  `Vec[T]`, а не `[]T`. Возвращаемый TypeRef кормит РЕКУРСИВНЫЙ ресивер цепочки
+  `a.b().c()` (`infer_method_call_channel_type` :13952) — расхождение спеллинга =
+  byte-parity-опасность (та же, что задокументирована на :13749-13760).
+- **(P2) Канал воздерживается (None) там, где legacy резолвит.** `ty_from_resolved_vars`
+  (:9459) отображает module-квалифицированный `Named`, effectful `Func`,
+  `Readonly/Mut/Ptr` в НЕПРОЗРАЧНЫЙ `Ty::Concrete`-лист (:9486) — если несущий generic
+  спрятан под таким листом, unify не свяжет его ⇒ `resolve_return` → None. Legacy
+  name-keyed `subst_type_ref_pub` эти случаи резолвит. ⇒ legacy `build_recv_subst`
+  ОБЯЗАН остаться fallback'ом ⇒ **ноль строк удаляемо**, даже если ограничиться
+  инъективным подмножеством (где P1 безопасен).
+
+### 5.3. Codegen-сторона (`infer_call_ret_c`) — та же преграда
+
+`infer_call_ret_c` (`emit_c.rs:46293`, 2591 стр.) достигается ТОЛЬКО как Channel-6z fallback
+при checker-MISS (§3.I). Так как канал резолвит ПОДМНОЖЕСТВО legacy (который УЖЕ пишет
+аннотацию через site :7809→:7815 `mark_type_params(from_type_ref(tr))`), перевод канала в
+авторитет НЕ добавляет ни одной новой Call-аннотации ⇒ НИ ОДНА ветвь `infer_call_ret_c` не
+становится мёртвой ЭТИМ шагом. Ужать `infer_call_ret_c` можно ТОЛЬКО заставив чекер резолвить
+class-(b), сегодня падающий в fallback: same-arity multi-overload arg-dispatch (:13668 bail),
+generic-instance receiver mono, closure-arg method-generic. Это — genuinely-новый движок
+(Ф.4a `Join`/Ф.4b `Project` построены, но НЕ подключены к этим bail-точкам).
+
+### 5.4. Вывод для Ф.5/Ф.6 + эмпирика
+
+Authority-flip resolve-семьи гейтится на ОДНОМ из (обе — «несколько волн», не один шаг):
+1. **Перевести method-return-канал на ResolvedType-native ОТ и ДО** (включая
+   chained-receiver рекурсию), устранив TypeRef↔Ty round-trip — тогда канал авторитетен для
+   инъективного подмножества, а legacy-TypeRef-продюсер снимается; ЛИБО
+2. **Ф.1d trace-proof** мёртвости per-bucket `infer_call_ret_c` — ортогонально и упирается в
+   ТОТ ЖЕ предикат «чекер резолвит больше».
+
+Co-authority-фундамент ВАЛИДЕН и корректно припаркован как «фундамент, не подключён» —
+зеркало scaffold'а Ф.1. **Эмпирика захода (debug, fires `debug_assert!`):** `constraint_solver
+--lib` 46/0; полный `cargo test --lib` — **969 passed, 0 "resolve_return diverged"** паник по
+всему codegen-корпусу (любое расхождение канал↔legacy зафайрило бы assert); 3 предсуществующих
+FAIL (`chain_norm::v3_local_root_non_fluent_method_not_wrapped`,
+`array_lit_named_tuple_box_tests::{emit_array_lit_int_primitive_unchanged,
+emit_array_lit_named_tuple_heap_box}` — byte-identical на merge-base, НЕ этой волны) +
+`test_runner::p0_erased_now_dispatches_via_vtable` (stack-overflow, unrelated, pre-existing —
+исключён из прогона). Кода не менялось (0 правок в `.rs`) ⇒ 0 регрессий по построению.
