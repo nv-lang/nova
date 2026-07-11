@@ -7340,6 +7340,25 @@ impl<'a> TypeCheckCtx<'a> {
                 );
             }
         }
+        // Plan 196 stage1 (§0 materialize, mirror of the 6z ProtocolLit arm): a protocol
+        // literal `protocol P {…}` has the syntactic fat-pointer type `NovaBox_<P>`. A
+        // literal only COMPILES when its protocol is registered (vtable emission needs it),
+        // so `resolved_type_to_c`'s protocol branch (`protocol_types.contains(name)` →
+        // `NovaBox_<name>`) is guaranteed to fire and yield the SAME string the legacy arm
+        // built (module empty, name == `proto_name.join("_")`; every literal is single-
+        // segment). Materialize so Channel 2 covers it and the legacy 6z arm retires (§0).
+        if let ExprKind::ProtocolLit { proto_name, .. } = &e.kind {
+            if e.id.is_set() {
+                self.resolved_types_buf.borrow_mut().insert(
+                    e.id,
+                    ResolvedType::Named {
+                        name: proto_name.join("_"),
+                        module: vec![],
+                        args: vec![],
+                    },
+                );
+            }
+        }
         // Plan 172.1.1 (U.4.5 — control-flow probe): annotate Block/If/IfLet/Path with the
         // checker's value type (block tail / branch-join / variant). Each propagates an ALREADY-
         // checked inner type — no new re-derive hazard. `infer_expr_type` returns None for

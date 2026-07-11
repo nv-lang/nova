@@ -50637,12 +50637,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     panic!("[P67-LEGACY] Index element type unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0); expr.span={:?} expr.id={:?} src={}", obj_ty_pre, expr.span, expr.id, self.source_file_name)
                 }
-                // Plan 196 stage1: HandlerLit arm RETIRED (checker materializes Effect[<E>] → Channel 2; §0).
-                // Plan 97.1 Ф.3 (D142): protocol-литерал имеет тип
-                // `NovaBox_<Proto>` fat-pointer (см. emit_protocol_lit).
-                ExprKind::ProtocolLit { proto_name, .. } => {
-                    format!("NovaBox_{}", proto_name.join("_"))
-                }
+                // Plan 196 stage1: HandlerLit + ProtocolLit arms RETIRED (checker materializes
+                // Effect[<E>] / NovaBox_<P> → Channel 2 answers first; §0 materialize-not-rederive).
                 // Plan 172.12 §14.19 (коллапс триплификации): тело было
                 // дословной копией channel-6q — теперь единый канал.
                 ExprKind::Call { func, args, .. } =>
