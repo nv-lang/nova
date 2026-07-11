@@ -8096,8 +8096,10 @@ Plan 118 family scope:
 > NovaValue-структуры). Внешние caller'ы по-прежнему ловят `E_PRIV_FIELD_INIT`
 > (priv-поля). Это разблокировало миграцию **producer-форм** external-C →
 > Nova-body:
->   - `@split(sep) -> ro []str` — byte-scan, каждый сегмент = zero-copy sub-view
->     `str{ptr:@ptr+off, len}` (raw-ptr арифметика под `unsafe`), push в `Vec[str]`;
+>   - `@split(sep)` — byte-scan, каждый сегмент = zero-copy sub-view
+>     `str{ptr:@ptr+off, len}` (raw-ptr арифметика под `unsafe`). **Амендмент
+>     2026-07-11:** возврат `ro []str` → ленивый `SplitIter` (Rust-паритет; см.
+>     03-syntax split-семейство); прежний массив — `.collect()`;
 >   - `from_bytes_unchecked` / `from_bytes_lossy` — читают `(ptr,len)` источника
 >     через публичные Vec-геттеры `@as_ptr()`/`@len()`, alloc(`len+1`)+memcpy+NUL
 >     на `data[len]` (D26 §3); lossy валидирует UTF-8 и заменяет невалид на

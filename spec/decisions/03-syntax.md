@@ -10545,6 +10545,15 @@ strip/split возвращают **zero-copy** sub-views (`@[a..b]`).
   `@rsplit_once(sep)` → `Option[(str, str)]`, `@split_terminator(sep)` (без пустого
   хвоста), `@split_whitespace()` (ASCII-WS runs; non-ASCII → `[M-152-ws-unicode]`,
   152.4), `@lines()` (`\n`/`\r\n`, без терминатора).
+
+  > **Амендмент 2026-07-11 (str.split → ленивый):** sep-семейство `@split`/`@splitn`/
+  > `@split_terminator`/`@rsplit`/`@rsplitn` возвращают **ленивый итератор**
+  > `SplitIter`/`RSplitIter` (семья `vec_iter`, zero-cost, паритет с Rust `str::split`)
+  > вместо эагерного `[]str`: сегменты — те же zero-copy str-виды, выдаются по одному;
+  > массив — `.collect()`. `@split_once`/`@rsplit_once` (→ `Option[(str,str)]`) и
+  > `@split_whitespace`/`@lines` (эагерный `[]str`) — без изменений. Попутно исправлены
+  > 2 codegen-бага (non-generic `Next[T]` в `@collect`); открытый хвост —
+  > `[M-splititer-filter-closure-ctx-gap]`.
 - **trim/strip** (transform.nv, **zero-copy** views): `@trim` / `@trim_start` /
   `@trim_end` (ASCII-WS ≤0x20; Unicode-WS — Phase B); `@trim_matches(c char)` /
   `@trim_start_matches` / `@trim_end_matches` (codepoint-pattern, multibyte-safe через
