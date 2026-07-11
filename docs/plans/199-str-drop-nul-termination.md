@@ -25,11 +25,14 @@ D26 §Nul-termination) — ложится В ТОЙ ЖЕ волне что и к
 - **Ф.1 — D-амендмент (спека):** retract D26 §Nul-termination; зафиксировать `str` =
   `ptr[len]` UTF-8 без терминатора; C-FFI = явный `CStr` (copy-based). Обновить §строк
   спеки + cstr-доки.
-- **Ф.2 — `as_cstr` → copy-based:** `std/ffi/cstr.nv` — `as_cstr()` аллоцирует
-  GC-управляемый NUL-терминированный буфер (копия `[len]` + '\0'); политика встроенного
-  NUL — скан → ошибка (как `CString::new`) ЛИБО явный `as_cstr_lossy`. Убрать
-  `as_cstr_unchecked` (O(1)-хатч теряет смысл без инварианта) ИЛИ переопределить как
-  copy. Обновить 3 консьюмера (os/ffi, encoding/toml, fs/fs) — они уже могли копировать.
+- **Ф.2 — `as_cstr` → `@to_cstr` (РЕШЕНО владельцем 2026-07-11):** заменить
+  `as_cstr`/`as_cstr_unchecked` на ДВЕ перегрузки `str @to_cstr` (receiver-form, матчит
+  `@to_char` D54/§22; `to_`=копирующая конверсия правильнее `as_`=borrow, раз zero-copy нет):
+  (a) `@to_cstr() -> CStr` — GC-копия (`[]u8.new().cap(byte_len+1).append(bytes).append(0)`);
+  (b) `@to_cstr(buf *mut u8, buf_size int) -> CStr requires buf_size>0` — zero-alloc,
+  caller-buffer (`RawMem.copy` + NUL на `byte_len().min(buf_size-1)` — .min ОБЯЗАТЕЛЕН, иначе
+  OOB при обрезке). Убрать примитив `nova_fn_nova_str_terminated_ptr`. Обновить всех
+  вызывающих `as_cstr` → `@to_cstr()`. Записать API в D418.
 - **Ф.3 — codegen (ПОСЛЕ 196):** снять резерв `+1` NUL в эмиссии строковых литералов +
   динамической аллокации строк (`emit_c.rs` + `nova_rt` строковый аллокатор). `str` C-repr
   = `ptr[len]` без хвостового байта. ⚠️ emit_c.rs — ждать мержа 196.
