@@ -71,9 +71,12 @@ Load-bearing внутри: SOUNDNESS_REGRESSION + byte-identity-baseline — н�
 
 1. **Куда soundness-regression** — весь блок в `spec_tests/conformance/` (рек.) или
    отдельная `spec_tests/soundness/`?
-2. **newtype↔int-коэрция** (Ф.3b) — implicit или explicit-конверсия? (язык-решение, D-блок.)
-3. **`trivial_string_len`** (Ф.3a) — `byte_len` в trivial allow-list vs z3-only vs
-   переформулировать.
+2. ✅ РЕШЕНО (владелец 2026-07-11): **newtype↔int = ТОЛЬКО явная конверсия** (`int(id)`/
+   `AccountId(42)`) — newtype = отдельный тип (type-safety, как Rust/Haskell). E7301 на
+   неявном — корректно; фикстуру f26_newtype правим на явную конверсию (тест был устаревший).
+   Требует D-блок-амендмент (язык-решение).
+3. ✅ РЕШЕНО (владелец 2026-07-11): **`byte_len()` в TrivialBackend allow-list** (доказать
+   `byte_len() >= 0` тривиально, как было у ретирнутого `len`); фикстура чинится на канон.
 
 ## Границы
 
