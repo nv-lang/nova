@@ -1,7 +1,9 @@
-// Plan 118.1 closeout T11 POS — str.as_cstr() returns CStr (zero-copy).
+// Plan 118.1 closeout T11 POS — str.as_cstr() returns CStr.
 //
-// Per D26 invariant: full Nova str ALWAYS has ptr[len]=='\0'. as_cstr()
-// returns CStr wrapping bytes.ptr() — direct buffer reference.
+// Per D418 (Plan 199, retracts D26 §Nul-termination): `str` carries no
+// trailing-NUL guarantee. as_cstr() ALWAYS copies into a fresh
+// `len+1`-byte GC-managed buffer + `\0` terminator, then wraps that
+// buffer's pointer in a CStr.
 
 module nova_tests.plan118
 

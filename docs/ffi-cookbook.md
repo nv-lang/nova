@@ -426,21 +426,25 @@ external fn c_printf(fmt CStr) -> i32
 CStr backing type: `*u8` (Plan 118 typed pointer). ABI marshals к
 `const char*` / `uint8_t*`.
 
-**Conversion methods (Plan 118.1 closeout amend, 2026-06-06):**
+**Conversion methods (copy-based rewrite, Plan 199 / D418, 2026-07-11):**
 
 ```nova
 ro s = "hello"
-ro c = s.as_cstr()              // zero-copy view (panics on embedded NUL)
-ro c3 = unsafe { s.as_cstr_unchecked() }   // scan-free O(1) hatch
-// s.to_cstr() (owning copy) — NOT in V1; deferred to Plan 118.2 (needs allocator)
+ro c = s.as_cstr()              // copies into a fresh len+1 NUL-terminated buffer (panics on embedded NUL)
+ro c3 = unsafe { s.as_cstr_unchecked() }   // same copy, scan skipped
+// s.to_cstr() (owning copy) — NOT in V1; as_cstr() already returns an owned
+// copy under Plan 199, so to_cstr() would be a redundant alias (deferred
+// pending a naming pass, not a technical gap — see Plan 118.2).
 
 // Direct usage в FFI call:
 ro n = c_strlen(s.as_cstr())
 ```
 
-Pure-Nova реализация через `str.as_bytes().as_ptr()` (D176 + Plan 118.2
-Ф.1 builtin). V1 ships без embedded-NUL runtime scan ([M-118.1-cstr-nul-
-check] followup); caller responsibility per FFI contract.
+Pure-Nova реализация в `std/ffi/cstr.nv`: `str` carries no trailing-NUL
+guarantee (D418 retracts D26 §Nul-termination), so `as_cstr()` ALWAYS
+allocates a fresh GC-managed `len+1`-byte buffer, copies the `len` data
+bytes, and appends `\0` — after an O(n) embedded-NUL scan
+([M-118.1-cstr-nul-check]); `as_cstr_unchecked()` skips only the scan.
 
 ### addr_of / addr_of_mut (Zig-style pointer creation)
 
@@ -491,8 +495,10 @@ unsafe {
 ### Cross-refs
 
 - Spec D216 (typed pointers) + §22 (CStr type) — `spec/decisions/02-types.md`
-- Spec D26 §«Nul-termination» — `spec/decisions/08-runtime.md`
-- Plan-doc — `docs/plans/118.1-ffi-intrinsics-and-cstring.md`
+- Spec D418 §`str` без NUL-терминатора; copy-based `CStr`/`as_cstr`
+  (retracts D26 §«Nul-termination») — `spec/decisions/08-runtime.md`
+- Plan-doc — `docs/plans/118.1-ffi-intrinsics-and-cstring.md`,
+  `docs/plans/199-str-drop-nul-termination.md`
 
 ## unsafe fn — declaring and calling unsafe functions (Plan 118.1.7)
 
@@ -505,9 +511,14 @@ unsafe {
 ```nova
 // unsafe fn — body has implicit unsafe context (pointer ops allowed without unsafe {})
 export unsafe fn str @as_cstr_unchecked() -> CStr {
-    ro bytes = @as_bytes()
-    // No `unsafe { }` needed here — body of unsafe fn is implicitly unsafe
-    CStr(bytes.as_ptr())
+    ro bytes = @bytes()
+    mut buf = Vec[u8].new().cap(bytes.len() + 1)
+    buf.append(bytes)
+    buf.push(0)
+    // No outer `unsafe { }` needed here — body of unsafe fn is implicitly
+    // unsafe, but `unsafe { }` still wraps the raw-pointer construction
+    // below for readability (matches std/ffi/cstr.nv style).
+    unsafe { CStr(buf.ptr()) }
 }
 ```
 

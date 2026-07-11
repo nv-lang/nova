@@ -1,10 +1,11 @@
 // Plan 139 Ф.4 — str → C-string (NUL-terminated) for an FFI call.
 //
-// `s.as_cstr()` wraps the str buffer pointer (zero-copy after an O(n)
-// embedded-NUL scan) into a CStr. The CStr marshals to `const char*` at the
-// ABI; the C fn runs strlen. This works because the D26 null-term invariant
-// guarantees a full (non-sliced) str's buffer is NUL-terminated, so strlen
-// terminates exactly at .len. Shim: nova_fn_p139_cstr_strlen.
+// `s.as_cstr()` (after an O(n) embedded-NUL scan) allocates a fresh
+// `len+1`-byte copy + `\0` terminator into a CStr (Plan 199 / D418 —
+// retracts D26 §Nul-termination; no zero-copy path remains). The CStr
+// marshals to `const char*` at the ABI; the C fn runs strlen, which
+// terminates exactly at .len regardless of the source str's own buffer
+// shape. Shim: nova_fn_p139_cstr_strlen.
 module nova_tests.strings
 
 import std.ffi.cstr.{CStr}

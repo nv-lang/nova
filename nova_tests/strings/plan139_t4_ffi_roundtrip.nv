@@ -1,7 +1,8 @@
 // Plan 139 Ф.4 / A4.1 — full str ↔ C round-trip on the value-record ABI.
 //   C → str  : p139_make_str() builds a nova_str via nova_str_from_cstr.
 //   str → C  : p139_str_byte_sum reads .ptr/.len of the str passed by value.
-//   str → CStr → C : as_cstr() + p139_cstr_strlen (NUL-terminated, D26 §3).
+//   str → CStr → C : as_cstr() + p139_cstr_strlen (NUL-terminated via a fresh
+//     copy, Plan 199 / D418 — retracts D26 §Nul-termination).
 // Closes the loop: a C-origin str behaves identically to a literal through
 // every conversion direction.
 module nova_tests.strings
