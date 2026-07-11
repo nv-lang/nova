@@ -1161,15 +1161,49 @@ failure** → должны возвращать `Result[T, <Timeout/RaceError>]`
   подтверждён закрытым независимо через `client_test` (PASS) — `real_test` падает
   на ЭТОМ, ДРУГОМ дефекте, не на Checksum.
 
-- **[M-tls-cert-modes-test-undefined-helpers]** (обнаружено 2026-07-10 при `nova check
-  std` baseline-сравнении Plan 173 P1-волны, честно зафиксировано — НЕ тронуто, вне
-  scope) — `std/tls/cert_modes_test.nv`: `undefined identifier` для `fixture_cert`/
-  `fixture_key`/`must_tcp`/`must_listener`/`must_tls` (test-хелперы, видимо ожидаемые
-  из peer-файла того же test-модуля, не резолвятся). Присутствует И на baseline
-  `2be6d7064` (PASS 118/FAIL 32), И на этой ветке (PASS 125/FAIL 25) — подтверждённо
-  PRE-EXISTING, не регрессия P1-волны (ветка строго лучше baseline: -7 FAIL, весь
-  выигрыш — снятый `[M-compress-checksum-structvariant-ctor-xmodule]` эффект на
-  других std-файлах через `nova check`). Не расследовано вглубь.
+- **[M-tls-cert-modes-test-undefined-helpers]** — ✅ **ЗАКРЫТ (2026-07-11, ветка
+  `cert-modes-helpers`)**. Root cause найден: НЕ баг test-CU-резолва (эта модель —
+  Plan 81 Ф.10 / Plan 169.1 Ф.8 sibling-merge — работала корректно и уже давала
+  `nova test std/tls` зелёным, 29/29, ДО этой правки). Баг был в `nova check`
+  конкретно — `check_one_file` (`nova-cli/src/main.rs`) резолвил импорты через
+  `resolve_imports_inline` (`include_test_peers=false`, build-режим), тогда как
+  `walk_nv` (test_runner.rs) для folder-модуля С test-блоками уже схлопывает всю
+  папку в ОДИН представительный entry (часто сам `*_test.nv`-пир, напр.
+  `cert_modes_test.nv` для `std/tls` — первый по алфавиту). Build-режим фильтрует
+  `_test.nv`-пиры этого entry → `handshake_test.nv` (хелперы `fixture_cert`/
+  `fixture_key`/`must_tcp`/`must_listener`/`must_tls`) не мержился →
+  undefined identifier. Соседние `cmd_check_explain_cache`/`cmd_check_telemetry_cache`
+  в том же файле УЖЕ звали `resolve_imports_inline_ex(.., true)` с комментарием
+  «mirror test_runner pipeline» — `check_one_file` был единственным нарушителем
+  паритета. **Фикс:** `include_test_peers=true` в `check_one_file` + попутно
+  добавлен sig-table pre-pass (`collect_all_signatures` →
+  `check_module_with_sig_table`, зеркалируя `codegen_to_c`) — без него слияние
+  большего числа test-пиров вскрыло ДРУГОЙ pre-existing паритетный гэп
+  (`std/net/addr.nv`: локальная `ro io = NetError.IoError(..)` мис-резолвилась как
+  вызов модуля `io` без sig-table-канала — тот же класс, что
+  `[M-per-file-check-no-prelude-protocol-scope]`). **Гейты:** `nova test std/tls`
+  PASS 1/1 (29/29 индивидуальных тестов, хелперы резолвятся); `spec_tests`
+  (conformance) PASS 3/3 — δ0 против до-фикса; `nova check std/` — 125 PASS/23 FAIL
+  (было 123/25) — **строго улучшение, 0 новых FAIL**: `cert_modes_test.nv` ушёл
+  из FAIL, и БОНУСОМ `std/http/transport/real.nv` тоже (тот же check_one_file-баг,
+  независимо от `[M-tls-handshake-test-panic-undefined-multifile]`, который остаётся
+  открытым — под `nova test` `real_test.nv` теперь падает на ДРУГОМ, codegen CC-FAIL
+  `NovaOpt_Nova_ErrSource_p`/`NovaOpt_Nova_TlsError_p` несовпадении, вне scope этой
+  правки). Изменение изолировано в `nova-cli/src/main.rs::check_one_file` (только
+  `nova check`) — `nova test`/`nova build` пайплайн (`codegen_to_c`) не тронут.
+
+- **[M-per-file-check-no-prelude-protocol-scope]** — ✅ **ЗАКРЫТ попутно (2026-07-11,
+  ветка `cert-modes-helpers`, побочный эффект фикса `[M-tls-cert-modes-test-undefined-
+  helpers]` выше)**. Root cause совпал: `check_one_file` не строил sig-table pre-pass
+  (`collect_all_signatures`/`check_module_with_sig_table`), которым `codegen_to_c`
+  (test_runner.rs) уже пользовался — per-file `nova check` терял cross-module
+  сигнатуры, отсюда ложные E_BOUND_UNKNOWN/E_IMPL_UNKNOWN_PROTOCOL/E_READONLY_CONTENT
+  на файлах вне полного CU. Проверено ТОЧНО по исходному репро: `nova check
+  std/runtime/string/chars.nv std/runtime/string/core.nv` — было FAIL, теперь PASS/PASS
+  (0 FAIL); `std/collections/vec/{mutate,iter,access}.nv` — все три PASS/PASS/PASS.
+  Родственный `[M-runtime-folder-run-ice-vec-ident]` (`nova test --full std/runtime`
+  ICE) — ДРУГОЙ симптом (folder-run agregation, emit_c.rs ICE), НЕ затронут этой
+  правкой, остаётся открытым.
 - **[M-116-https-client-custom-roots]** (Plan 116 Ф.5.3) — HttpClient не даёт задать TLS-корни/self-signed; `real_http`/`https_send_over_net` хардкодит `ClientConfig.new(host)`=SystemRoots. `Http`-эффект `send(host,port,secure,request)` не несёт TLS-config. Нужен: client-builder TLS-хук (roots/InsecureSkipVerify/client-cert) → проброс через `Http`-эффект. Разблокирует self-signed loopback HTTPS-интеграционный тест через публичный HttpClient. За CORE Ф.5.3.
 - **[M-178-client-policy-surface]** — Proxy/CONNECT-tunnel, SSRF-guard, cookie-jar, idempotent-retry+pool-eviction, 1xx-interim loop, NO_PROXY-матрица, TE:trailers, Expect:100 — за CORE.
 

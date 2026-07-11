@@ -2175,11 +2175,24 @@ fn check_one_file(path: &Path, verbose: bool, conv_lint: bool) -> CheckResult {
     // cmd_build. Закрывает Plan 35 R19 (nova check parity).
     // Plan 35 sub-plan 35.A R27: вызываем безусловно (resolver auto-добавит
     // prelude если std/prelude.nv существует, даже без explicit imports).
+    // [M-tls-cert-modes-test-undefined-helpers] (2026-07-11): `include_test_peers=true`
+    // — `path` came from `walk_nv` (test_runner), which for a folder-module WITH
+    // test-блоки already collapsed the whole folder to ONE representative entry
+    // (often itself a `*_test.nv` peer, e.g. `cert_modes_test.nv` for `std/tls`,
+    // picked as first-alphabetical — see `folder_module_has_tests` in
+    // test_runner.rs). That entry's sibling `*_test.nv` peers (e.g.
+    // `handshake_test.nv`, defining `fixture_cert`/`must_tls`/…) MUST merge into
+    // the same compile unit exactly like `nova test`'s `codegen_to_c` does
+    // (`resolve_imports_inline_ex(.., true)`), or peer-only helpers spuriously
+    // read as `undefined identifier`. `false` (build mode) was a latent parity
+    // bug vs `cmd_check_explain_cache`/`cmd_check_telemetry_cache` below, which
+    // already pass `true` with the same "mirror test_runner pipeline" rationale.
+    let mut sig_table_opt: Option<nova_codegen::imports::ModuleSigTable> = None;
     {
         if let Ok(repo) = find_repo_root() {
             let paths = resolve_paths(&repo);
-            if let Err(e) = nova_codegen::imports::resolve_imports_inline(
-                path, &mut module, &repo, &paths.stdlib_dir,
+            if let Err(e) = nova_codegen::imports::resolve_imports_inline_ex(
+                path, &mut module, &repo, &paths.stdlib_dir, true,
             ) {
                 return CheckResult {
                     file: path.to_path_buf(),
@@ -2188,6 +2201,22 @@ fn check_one_file(path: &Path, verbose: bool, conv_lint: bool) -> CheckResult {
                     elapsed_ms: measure(t0),
                 };
             }
+            // [M-per-file-check-no-prelude-protocol-scope] parity: collect the
+            // same cross-module signature pre-pass `codegen_to_c` (test_runner.rs)
+            // feeds into `check_module_with_sig_table` below. Enabling
+            // `include_test_peers=true` above (this marker) merges MORE
+            // sibling `*_test.nv` peers into the checked CU than before, which
+            // surfaced this pre-existing per-file-check gap on files that
+            // previously never reached it (e.g. `std/net/addr.nv` merging
+            // `error_test.nv`'s `ro io = NetError.IoError(..)` local shadowing
+            // the `io` module name — misresolved as a module-call E7401
+            // without the sig-table channel). Best-effort: a failure here
+            // degrades to `check_module`'s no-sig-table behavior, same as
+            // `codegen_to_c`'s `unwrap_or_else`.
+            sig_table_opt = Some(
+                nova_codegen::imports::collect_all_signatures(path, &module, &repo, &paths.stdlib_dir)
+                    .unwrap_or_else(|_| nova_codegen::imports::ModuleSigTable::new()),
+            );
         }
         // Если find_repo_root() не нашёл nova.toml — silently skip imports
         // (single-file mode без cross-file context).
@@ -2242,8 +2271,14 @@ fn check_one_file(path: &Path, verbose: bool, conv_lint: bool) -> CheckResult {
     // ID-stamping side effect on `module` matters.
     let _ = nova_codegen::number_exprs::number_exprs(&mut module);
 
-    // 3. types::check_module
-    if let Err(errs) = nova_codegen::types::check_module(&module) {
+    // 3. types::check_module — use sig-table variant when the pre-pass above
+    // succeeded (parity with `codegen_to_c`'s `sig_table_opt` dispatch,
+    // [M-per-file-check-no-prelude-protocol-scope]).
+    let check_result = match sig_table_opt {
+        Some(sig_table) => nova_codegen::types::check_module_with_sig_table(&module, sig_table),
+        None => nova_codegen::types::check_module(&module),
+    };
+    if let Err(errs) = check_result {
         // Plan 81 Ф.8.1: cross-file рендер — ошибка из импортированного
         // модуля показывается в правильном файле (через SourceMap по
         // file_id), а не byte-offset'ом в entry-исходнике.
