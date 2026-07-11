@@ -46,9 +46,20 @@
   через legacy `var_types` — отдельный атом (Ident-scope-плюмбинг), не kind-гейт Ф.2.
 - **Ф.3 — non-infer-consumer sweep:** `emit_expr`/`emit_call`/`emit_generic_type_instance`/
   … (12 свежих raw-сайтов в 10 функциях) → `debt_`, восстановить инвариант.
-- **Ф.4 — глубокое ядро (масштаб 172.12):** generic-method-return mono-движок =
-  **172.13 Ф.3** (constraint-inference: Binary-Join/If-Match-Join/resolve-семья) как
-  checker-фундамент + codegen потребляет resolved-тип → снос 6q/6m по мере покрытия.
+- **Ф.4 — глубокое ядро = 172.13 Ф.3 (МНОГОВОЛНОВОЙ, разведка 2026-07-11):** constraint-
+  inference. Фундамент — `constraint_solver.rs` (172.13 Ф.1: `Eq`/`MemberOf`/`Solver::unify`;
+  Ф.2 literal-coercion мигрирован, byte-parity доказан). Разбивка (пакетами, гейты
+  172.1-класса на пакет — как Ф.2):
+  - **Ф.4a — Join-примитив** + мигрировать `Binary`(арифм.promote_arith_rt)/`If`
+    (infer_if_common)/`Match`(infer_match_common) — все Join двух/N типов. Проверенный
+    паттерн (Ф.2), горячий путь (осторожно, POISON-слои).
+  - **Ф.4b — Project-примитив** + `Index`/`Member`(tuple)/`ArrayLit`/`TupleLit`
+    (контейнер→элемент). Закрывает TupleLit-остаток `[M-196-tuplelit-ident-scope]`.
+  - **Ф.4c — Resolve-семья** (`Call`/`infer_call_ret_c` ~2592стр, overload/generic-mono —
+    «несколько волн», самая крупная) + ClosureLight (C6).
+  Каждый пакет: checker мигрирует продюсера → codegen потребляет resolved-тип → снос
+  соответствующего C-арма. **NB:** проверить, что `constraint-core` (Ф.1/Ф.2) в main;
+  если нет — первый шаг Ф.4a = слить/пересобрать solver.
 - **Ф.5 — array-vec-unify:** `[M-array-vec-unify]` (ОСТОРОЖНО — заход 9 172.12 дал
   «Frankenstein» при механическом слиянии; только координированно ctor↔binding).
 - **Ф.6 — финал:** снос `ResolvedType::Raw`, закрытие `[M-172.1-lifted-legacy-arms]`,
