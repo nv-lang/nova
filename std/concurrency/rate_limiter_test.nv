@@ -59,7 +59,7 @@ test "capacity ограничивает refill" {
     }
 }
 
-test "регресс wall-clock назад — refill не крадёт и не портит tokens" {
+test "регресс монотонных часов назад — refill не крадёт и не портит tokens" {
     mut bucket = with Time = th.fixed_ms(10_000) {
         TokenBucket.new(2, 1.0)
     }
@@ -69,9 +69,12 @@ test "регресс wall-clock назад — refill не крадёт и не 
         assert(bucket.acquire())
     }
 
-    // Часы «прыгнули назад» (NTP) на t=5_000ms — elapsed был бы -5s без
-    // clamp'а. С `.max(0)` refill просто не добавляет ничего (пауза),
-    // оставшийся token цел, не отрицателен и не обнулён.
+    // Часы «прыгнули назад» на t=5_000ms — `fixed_ms` мокает И wall, И
+    // monotonic когерентно (Plan 175 D316 mock-coherence), так что этот
+    // сценарий упражняет `Monotonic.@elapsed_since` saturate-to-zero
+    // (D318): elapsed был бы отрицательным без него, refill просто не
+    // добавляет ничего (пауза), оставшийся token цел, не отрицателен и
+    // не обнулён.
     with Time = th.fixed_ms(5_000) {
         assert(bucket.available() == 1.0)
         assert(bucket.acquire())               // последний оставшийся
@@ -79,7 +82,7 @@ test "регресс wall-clock назад — refill не крадёт и не 
     }
 
     // Часы догоняют исходную точку и идут дальше — refill возобновляется
-    // нормально от того момента, где остановился last_refill_ms.
+    // нормально от того момента, где остановился last_refill.
     with Time = th.fixed_ms(11_000) {
         assert(bucket.acquire())
     }
