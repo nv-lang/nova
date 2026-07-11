@@ -40253,3 +40253,118 @@ collections/vec_lazy type-codegen, ffi/cstr D78-mismatch) — pre-existing,
 Коммиты (tls-mbedtls-195): bf8a32073 (Ф.1 C-шим), 18f8f6ee8 (Ф.2 Rust
 removal), c6714e7fa (fix Pinned authmode), 54993ddaa (fix panic extern),
 ba0b0a4e9 (docs [ffi.staticlib] retracted). Ветка запушена в github.
+
+================================================================================
+2026-07-11 — teardown close-путь: ordering-фикс net-runtime + гигиена M-178
+                (ветка teardown-hang-close, от main d640d66ac; модель sonnet)
+================================================================================
+
+КОНТЕКСТ. Разведка вскрыла: репро std/http/servernet/rt/handle_connection_smoke
+.nv якобы иногда ЗАВИСАЕТ (TIMEOUT) ПОСЛЕ печати PASS — в teardown
+(nova_supervised_drain_main_scope → nova_runtime_shutdown → nova_evloop_close).
+Гипотеза #1: TcpListener.close()/TcpStream.close() (net.c) идут через старый
+nova_loop_defer_close; окно cross-thread close мигрировавших work-stealing'ом
+волокон при teardown. Отдельно: оригинальный M-178 segfault уже починен
+Планом 183 (with Net = real_net()).
+
+ШАГ 1 — РЕПРО (плейбук §1/§3.2). Детерминированного hang получить НЕ удалось.
+Прямые прогоны собранного .exe: соло PASS (~116ms); ×300 подряд = 300 PASS;
+6 волн × 24 параллельно (144) = 0 hang; release-сборка ×100 = 0 hang; ×150 под
+насыщением всех 16 ядер (16 фоновых busy-loops) = 0 hang — итерации замедлялись
+до ~11с, но ВСЕ PASS (не hang). Итого 924 прогона / 0 hang / 0 segv. Гипотеза
+о hang эмпирически НЕ подтверждена на этой машине (16 ядер, Windows, clang).
+
+ШАГ 2 — АУДИТ CLOSE-ПУТИ (§4, point-probe заменён статическим аудитом, т.к.
+репро нет). Гипотеза о close-пути ЧАСТИЧНО подтвердилась: в nova_runtime_shutdown
+(compiler-codegen/nova_rt/runtime.c, per-worker cleanup) найден РЕАЛЬНЫЙ
+ordering-дефект ровно в подозреваемой зоне — uv_loop_close(&w->loop) вызывался
+ДО финального nova_loop_drain_closes/nova_loop_drain_calls.
+
+ROOT CAUSE [M-net-close-teardown-hang]. Отложенный close/call-джоб (net.c
+TcpListener/TcpStream.close() через nova_loop_defer_close; cross-thread net-op
+issue через nova_loop_defer_call, Plan 183) обычно обслуживается собственным
+while(!stop)-циклом воркера через _worker_async_cb на очередном uv_run(NOWAIT).
+Если w->stop взводится (сигнал stop в shutdown) в узком окне между постановкой
+джоба в очередь и следующей итерацией воркера — джоб остаётся в очереди на
+момент join. Прежний порядок (drain ПОСЛЕ close) звал close_cb/fn слишком
+поздно: uv_run для этого loop больше никто не крутит → close_cb не срабатывает
+→ живой uv_tcp_t/uv_udp_t (и его сокет-fd) утекает НЕЗАКРЫТЫМ (uv__finish_close
+не выполняется). Это лик; на путях с EBUSY-спином nova_evloop_close (до 100
+попыток walk+uv_run) — правдоподобный источник наблюдённого разведкой TIMEOUT.
+
+ФИКС (коммит 7bd766963, ~36 строк runtime.c). Дренаж call+close очередей и
+bounded-прокачка loop (≤64 тика, uv_run NOWAIT) ДО uv_loop_close, пока loop ещё
+открыт и воркер уже joined (single-thread, гонки нет). Порядок: сначала
+drain_calls (может поставить follow-on close), затем drain_closes; цикл
+повторяет оба внутри прокачки. Ограниченное число тиков — застрявший хендл
+остаётся ликом (best-effort), не превращается в hang shutdown. Структуры
+очередей destroy'атся уже пустыми.
+
+ГЕЙТЫ (на слитом с main). cargo build (compiler-codegen + nova-cli) чисто.
+conformance (spec_tests/conformance --positive --compile-error) = 91/0.
+err173-корпус (err173/_0/_1/_2/_3 --full) = 28/0. std/net + std/http keystone:
+5 PASS, единственный FAIL = pre-existing [M-tls-handshake-test-panic-undefined-
+multifile] (undefined `panic` в std/tls/handshake_test.nv при multi-file CU —
+НЕ связан с этим фиксом, δ0 к baseline). Репро handle_connection_smoke ×30+
+post-fix = 0 hang / 0 segv.
+
+ГИГИЕНА M-178. [M-178-servernet-live-net-substrate-segfault] закрыт по
+ОРИГИНАЛУ (segfault, Планом 183). Заведён и закрыт [M-net-close-teardown-hang]
+(root-cause устранён аудитом; hang-репро НЕ подтверждён — честная оговорка
+плейбук §4а Lesson #9: verified 0 hang для ЭТОЙ машины/сборки, не эмпирически-
+локализованный hang). Ссылка в [M-net-redesign-owner-directive] актуализирована.
+
+ЧЕСТНОСТЬ. Фикс закрывает НАЙДЕННЫЙ ordering-дефект close-пути (реальный
+сокет-fd лик), а не эмпирически воспроизведённый hang. Если hang проявится на
+другом железе — root cause искать заново через state-dump NOVA_WATCHDOG_DUMP_SECS.
+
+--------------------------------------------------------------------------------
+2026-07-11 (ДОПОЛНЕНИЕ — РАЗВОРОТ РАССЛЕДОВАНИЯ) — teardown-hang ОПРОВЕРГНУТ:
+              наблюдавшийся TIMEOUT = COMPILE-фаза, не runtime-teardown
+--------------------------------------------------------------------------------
+
+После checkpoint-фикса ordering'а и первичной гигиены маркеров пересборка на
+слитом с main состоянии дала СТОХАСТИЧЕСКИЙ TIMEOUT через `nova test`
+handle_connection_smoke (1-2 из 3). Первичный вывод («фикс закрыл teardown-hang»)
+был поставлен под сомнение и перепроверен по плейбуку §1-4.
+
+РАССЛЕДОВАНИЕ (что реально показали данные):
+1. Прямой прогон собранного .exe = 0 hang / 924 прогона (соло, ×300, 6×24
+   параллельно, ×150 под насыщением 16 ядер, dev+release; +anonymous-pipe
+   эмуляция test-runner). Run-фаза всегда ~116ms. РАНТАЙМ ЗДОРОВ.
+2. TIMEOUT только через `nova test`, НЕ через прямой exe. Точечная диагностика
+   (различающий eprintln в двух Timeout-ветках test_runner.rs run_with_timeout:
+   compile @2665 vs run @2769) дала: "[tt-diag] TIMEOUT in COMPILE phase after
+   56.9s". Зависает build_command (компиляция C), НЕ exe.
+3. Снимок процессов на 15с зависания: 0 clang / 0 lld / 0 exe — компиляция
+   .c→.o прошла, но полный build тяжёлого CU (net+http+server+весь std prelude,
+   ~16 рантайм-.c + тест) под аномальной фоновой нагрузкой среды (nova-lsp-v14 +
+   пул VS Code, CPU baseline ~76%) не укладывался в EXPECT_TIMEOUT_MS 30000
+   (лимит применяется И к compile И к run).
+4. КОНТРОЛЬ: тот же тест с лимитом 180000 → 5/5 PASS, compile 21-46с (медленно,
+   но успевает), run мгновенный. Под нормальной нагрузкой compile ~10с < 30с →
+   PASS штатно. TIMEOUT = временный артефакт нагрузки среды, НЕ дефект кода.
+
+ВЫВОД: разведочная гипотеза о teardown-hang в net close-пути — МИСДИАГНОЗ.
+Разведка увидела TIMEOUT в `nova test` и приписала его runtime-teardown, но это
+COMPILE-timeout под нагрузкой. Runtime teardown-hang НЕ существует (0/924).
+
+ЧТО С ФИКСОМ runtime.c (7bd766963): ОСТАВЛЕН. Аудит close-пути (шаг 2) вскрыл
+РЕАЛЬНЫЙ, но НЕЗАВИСИМЫЙ от TIMEOUT дефект — сокет-fd лик: drain deferred
+close/call ПОСЛЕ uv_loop_close звал close_cb слишком поздно (uv_run для loop
+уже не крутится) → живой uv_tcp_t/uv_udp_t утекал незакрытым при узком race-
+окне teardown. Фикс (drain + bounded-pump ДО uv_loop_close) устраняет лик;
+defensive, bounded overhead. НЕ связан с наблюдавшимся TIMEOUT.
+
+ДИАГНОСТИКА (вся временная — убрана после локализации): eprintln-маркеры в
+двух Timeout-ветках test_runner.rs; gated NOVA_TEARDOWN_TRACE fprintf в
+eventloop.c. Встроенный NOVA_DEBUG_TIMEOUT_DUMP=1 (уже в раннере) печатает
+captured stdout/stderr для RUN-timeout — при будущем подозрении на runtime-hang:
+пустой dump ⇒ compile-timeout, непустой ⇒ настоящий runtime-hang.
+
+УРОК (для плейбука docs/debugging-races.md, кандидат): «TIMEOUT в `nova test`
+≠ runtime-hang». Раннер применяет EXPECT_TIMEOUT_MS и к COMPILE, и к RUN. Тяжёлый
+co-present CU под фоновой нагрузкой может дать compile-timeout, неотличимый в
+сводке от runtime-hang. ПЕРВЫЙ шаг локализации hang'а в `nova test`: прогнать
+собранный .exe НАПРЯМУЮ. Если exe чист, а `nova test` виснет — различить
+compile-vs-run фазу (маркер/таймер), не приписывать teardown.
