@@ -40,7 +40,7 @@ module text.markdown_minimal
 #stable(since = "0.1")
 export fn Markdown.to_html(md str) -> str {
     consume buf = StringBuilder.new().cap(md.byte_len() * 2)
-    ro lines = md.split("\n")
+    ro lines = md.split("\n").collect()
     mut i = 0
     mut in_code_block = false
     mut in_list = false

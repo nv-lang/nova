@@ -46889,9 +46889,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // name, and use type_ref_to_c on its return type (with T
                             // unresolved → erased to NovaOpt_nova_int via existing erasure
                             // path — consistent with the actual forward-decl signature).
-                            // Only fires for generic-mono receiver types (containing "____")
-                            // so primitive and erased receivers stay on their existing paths.
-                            if Self::debt_contains_mono_sep(&rt) {
+                            // Fires for generic-mono receiver types (containing "____") OR a
+                            // CONCRETE type directly registered in `type_impl_protocols`
+                            // (`SplitIter`/`RSplitIter`/`CharsIter` and friends — a plain
+                            // `value` record with a fixed, non-generic `#impl(Next[<elem>])`,
+                            // no `____` mono args to key off). Primitive/erased receivers
+                            // have neither, so they still fall through to the existing paths.
+                            if Self::debt_contains_mono_sep(&rt)
+                                || self.type_impl_protocols.get(&rt).is_some()
+                            {
                                 let mn_ref: &str = &mn;
                                 let blanket_fd = self.mono_method_decls.iter()
                                     .find(|((tvname, mname), fd)| {
@@ -46942,9 +46948,54 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                     let proto_method = bpath.last()
                                                         .map(|s| s.to_lowercase())
                                                         .unwrap_or_default();
+                                                    let proto_base = bpath.last().cloned()
+                                                        .unwrap_or_default();
                                                     let recv_ptr = format!("Nova_{}*", rt);
-                                                    if let Some(opt_ret) = self.infer_mono_method_ret_with_args(
+                                                    // [M-next-collect-value-record] mirror (see the
+                                                    // sibling dispatch-site fallback ~34565): for a
+                                                    // CONCRETE (non-generic-mono) `Next[T]`
+                                                    // implementor — `SplitIter`/`RSplitIter`/
+                                                    // `CharsIter` and friends, `rt` carries no
+                                                    // `____` mono separator — `infer_mono_method_
+                                                    // ret_with_args` bails immediately (it only
+                                                    // understands `generic_type_templates`-backed
+                                                    // mono types). Without this fallback the
+                                                    // element type `T` is never bound here, so the
+                                                    // LET-BINDING'S declared C type for e.g.
+                                                    // `ro got = "a,b".split(",").collect()` silently
+                                                    // erased to the `nova_int` default while the
+                                                    // callee itself (dispatch-site path, already
+                                                    // fixed) correctly returns `Vec[str]` — a
+                                                    // pointer-type mismatch at the call site
+                                                    // (CC-FAIL, or a silently wrong element type
+                                                    // when the two mono Vecs happen to share layout).
+                                                    // Read the element straight from the receiver's
+                                                    // own `#impl(Next[<elem>])` spec instead.
+                                                    let opt_ret_opt = self.infer_mono_method_ret_with_args(
                                                         &recv_ptr, &proto_method, &[])
+                                                        .or_else(|| {
+                                                            self.type_impl_protocols
+                                                                .get(&rt)
+                                                                .and_then(|specs| specs.iter()
+                                                                    .find(|s| impl_spec_base_name(s)
+                                                                        == proto_base.as_str())
+                                                                    .cloned())
+                                                                .and_then(|s| s.find('[').and_then(
+                                                                    |i| s.rfind(']').map(|j|
+                                                                        s[i + 1..j].to_string())))
+                                                                .map(|inner| inner.split(',').next()
+                                                                    .unwrap_or("").trim().to_string())
+                                                                .filter(|a| !a.is_empty())
+                                                                .and_then(|arg| self.type_ref_to_c(
+                                                                    &crate::ast::TypeRef::Named {
+                                                                        path: vec![arg],
+                                                                        generics: vec![],
+                                                                        span: crate::diag::Span::dummy(),
+                                                                    }).ok())
+                                                                .filter(|c| !c.is_empty()
+                                                                    && c != "void*")
+                                                        });
+                                                    if let Some(opt_ret) = opt_ret_opt
                                                     {
                                                         let elem = opt_ret
                                                             .strip_prefix("NovaOpt_")

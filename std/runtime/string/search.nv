@@ -11,6 +11,15 @@ module runtime.string
 import std.prelude.core.{Option, Some, None}
 import std.collections.vec.{Vec}
 import std.runtime.raw_mem.{RawMem}
+// `SplitIter`/`RSplitIter` (Plan 199): the TYPES + `#impl(Next[str])` live in
+// `std.collections.vec_iter` (a sibling opt-in module), NOT here — this
+// module is `#no_prelude` and links into every compiled program, so it must
+// not drag `Next`/the generic-over-source adapter family (with its closure-
+// carrying siblings `MapIter`/`FilterIter`/…) into every program's merged
+// compilation unit. Cross-module cycles are resolver-legal (D291/Plan 162);
+// this is a plain forward reference to a type name. See vec_iter.nv's header
+// for the full rationale.
+import std.collections.vec_iter.{SplitIter, RSplitIter}
 
 
 // True если строка начинается с prefix. Plan 152.1: byte-compare через
@@ -79,111 +88,35 @@ export fn str @rfind(needle str) -> Option[int] {
 }
 
 
-// Split по separator. Returns zero-copy views (readonly). D178: readonly return.
-// Plan 152.1: per-position RawMem.compare (memcmp) для матча sep; каждый сегмент —
-// byte-range zero-copy view `@[a..b]` (Index[Range,str], bounds-checked) вместо
-// бывшего unsafe-хелпера `@sub_view`. `@push` возвращает `@`, поэтому хвост/пустой
-// случай — `return out.push(...)` без отдельного `out`. Семантика как у retired C
-// nova_str_split: пустой `sep` → один элемент со всей строкой; иначе
-// non-overlapping матчи (N матчей ⇒ N+1 сегментов, хвост всегда push'ится).
-// `[]str.new()` (не `[]str.`) — cross-type producer на `Vec`; `ro []str` = L2 RO.
-export fn str @split(sep str) -> ro []str {
-    mut out = []str.new()
-    ro sep_len = sep.byte_len()
-    ro sn = @byte_len()
-    if sep_len == 0 {
-        // Empty separator — whole string as a single view (`@push` returns `@`).
-        return out.push(@[0..sn])
-    }
-    mut start = 0
-    mut i = 0
-    while i + sep_len <= sn {
-        if unsafe { RawMem.compare(@ptr.offset(i), sep.ptr, sep_len) == 0 } {
-            out.push(@[start..i])   // byte-range zero-copy view (Index[Range,str])
-            i += sep_len
-            start = i
-        } else {
-            i += 1
-        }
-    }
-    // Trailing segment [start, sn) — `@push` returns `@` (the Vec).
-    out.push(@[start..sn])
-}
+// Split по separator — LAZY (Plan 199, Rust `str::split` parity). Returns a
+// `SplitIter` (zero-copy, zero-heap value iterator; see vec_iter.nv) instead
+// of a materialized `Vec[str]` — drive it with `for`/`.next()`, or
+// `.collect()` for the old eager `Vec[str]`. Semantics unchanged from the
+// retired eager body: empty `sep` → one element (the whole string); else
+// non-overlapping matches (N matches ⇒ N+1 segments, trailing segment always
+// yielded — even if empty).
+export fn str @split(sep str) -> SplitIter =>
+    { src: @, sep, start: 0, done: false, limit: -1, splits: 0, terminator: false }
 
 // Module-private: ASCII whitespace (space + \t\n\v\f\r). These bytes are < 0x80,
 // so they never appear as UTF-8 continuation bytes — a byte-scan is codepoint-safe.
 fn is_ascii_ws(b int) -> bool => b == 32 || (b >= 9 && b <= 13)
 
-// Plan 152.2 Ф.1 (D251): split into AT MOST `n` parts; the last part is the
-// unsplit remainder (Rust `splitn`). `n <= 0` → empty; `n == 1` / empty sep →
-// whole string. Byte-scan, zero-copy `@[a..b]` views.
-export fn str @splitn(n int, sep str) -> ro []str {
-    mut out = []str.new()
-    if n <= 0 { return out }
-    ro sep_len = sep.byte_len()
-    ro sn = @byte_len()
-    if sep_len == 0 || n == 1 {
-        return out.push(@[0..sn])
-    }
-    mut start = 0
-    mut i = 0
-    mut splits = 0
-    while i + sep_len <= sn && splits < n - 1 {
-        if unsafe { RawMem.compare(@ptr.offset(i), sep.ptr, sep_len) == 0 } {
-            out.push(@[start..i])
-            i += sep_len
-            start = i
-            splits += 1
-        } else {
-            i += 1
-        }
-    }
-    out.push(@[start..sn])
-}
+// Plan 152.2 Ф.1 (D251), lazy since Plan 199: split into AT MOST `n` parts;
+// the last part is the unsplit remainder (Rust `splitn`). `n <= 0` → empty
+// iterator; `n == 1` / empty sep → whole string (one element).
+export fn str @splitn(n int, sep str) -> SplitIter =>
+    { src: @, sep, start: 0, done: false, limit: if n <= 0 { 0 } else { n }, splits: 0, terminator: false }
 
-// Split from the RIGHT, parts in REVERSE order (Rust `rsplit`). Empty sep → whole.
-export fn str @rsplit(sep str) -> ro []str {
-    mut out = []str.new()
-    ro sep_len = sep.byte_len()
-    ro sn = @byte_len()
-    if sep_len == 0 { return out.push(@[0..sn]) }
-    mut end = sn
-    mut i = sn - sep_len
-    while i >= 0 {
-        if unsafe { RawMem.compare(@ptr.offset(i), sep.ptr, sep_len) == 0 } {
-            out.push(@[i + sep_len .. end])
-            end = i
-            i -= sep_len
-        } else {
-            i -= 1
-        }
-    }
-    out.push(@[0..end])
-}
+// Split from the RIGHT, parts in REVERSE order (Rust `rsplit`), lazy since
+// Plan 199. Empty sep → whole (one element).
+export fn str @rsplit(sep str) -> RSplitIter =>
+    { src: @, sep, end: @byte_len(), done: false, limit: -1, splits: 0 }
 
-// `rsplit` into AT MOST `n` parts (reverse order). `n <= 0` → empty; `n == 1` /
-// empty sep → whole.
-export fn str @rsplitn(n int, sep str) -> ro []str {
-    mut out = []str.new()
-    if n <= 0 { return out }
-    ro sep_len = sep.byte_len()
-    ro sn = @byte_len()
-    if sep_len == 0 || n == 1 { return out.push(@[0..sn]) }
-    mut end = sn
-    mut i = sn - sep_len
-    mut splits = 0
-    while i >= 0 && splits < n - 1 {
-        if unsafe { RawMem.compare(@ptr.offset(i), sep.ptr, sep_len) == 0 } {
-            out.push(@[i + sep_len .. end])
-            end = i
-            i -= sep_len
-            splits += 1
-        } else {
-            i -= 1
-        }
-    }
-    out.push(@[0..end])
-}
+// `rsplit` into AT MOST `n` parts (reverse order), lazy since Plan 199.
+// `n <= 0` → empty iterator; `n == 1` / empty sep → whole.
+export fn str @rsplitn(n int, sep str) -> RSplitIter =>
+    { src: @, sep, end: @byte_len(), done: false, limit: if n <= 0 { 0 } else { n }, splits: 0 }
 
 // Split at the FIRST occurrence of `sep` → `Some((before, after))`, `None` if
 // not found. Byte-offsets, zero-copy views (Rust `split_once`).
@@ -204,26 +137,10 @@ export fn str @rsplit_once(sep str) -> Option[(str, str)] {
 }
 
 // Like `split`, but a trailing empty segment (when the string ends with `sep`)
-// is omitted (Rust `split_terminator`). `"a,b,".split_terminator(",") == ["a","b"]`.
-export fn str @split_terminator(sep str) -> ro []str {
-    mut out = []str.new()
-    ro sep_len = sep.byte_len()
-    ro sn = @byte_len()
-    if sep_len == 0 { return out.push(@[0..sn]) }
-    mut start = 0
-    mut i = 0
-    while i + sep_len <= sn {
-        if unsafe { RawMem.compare(@ptr.offset(i), sep.ptr, sep_len) == 0 } {
-            out.push(@[start..i])
-            i += sep_len
-            start = i
-        } else {
-            i += 1
-        }
-    }
-    if start < sn { out.push(@[start..sn]) }
-    out
-}
+// is omitted (Rust `split_terminator`), lazy since Plan 199.
+// `"a,b,".split_terminator(",").collect() == ["a","b"]`.
+export fn str @split_terminator(sep str) -> SplitIter =>
+    { src: @, sep, start: 0, done: false, limit: -1, splits: 0, terminator: true }
 
 // Split on runs of ASCII whitespace, skipping empty segments (leading/trailing WS
 // ignored). Rust/Go `Fields`/`split_ascii_whitespace`. Non-ASCII Unicode whitespace

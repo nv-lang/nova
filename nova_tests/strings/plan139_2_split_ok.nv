@@ -8,7 +8,7 @@
 module nova_tests.strings
 
 test "split: basic ASCII, 3 parts" {
-    ro parts = "a,b,c".split(",")
+    ro parts = "a,b,c".split(",").collect()
     assert(parts.len() == 3)
     assert(parts[0] == "a")
     assert(parts[1] == "b")
@@ -17,7 +17,7 @@ test "split: basic ASCII, 3 parts" {
 
 test "split: leading + trailing empty segments" {
     // ",x," → ["", "x", ""]  (tail always emitted; empty leading from match at 0).
-    ro parts = ",x,".split(",")
+    ro parts = ",x,".split(",").collect()
     assert(parts.len() == 3)
     assert(parts[0] == "")
     assert(parts[1] == "x")
@@ -25,13 +25,13 @@ test "split: leading + trailing empty segments" {
 }
 
 test "split: no match → single segment (whole string)" {
-    ro parts = "hello".split(",")
+    ro parts = "hello".split(",").collect()
     assert(parts.len() == 1)
     assert(parts[0] == "hello")
 }
 
 test "split: multi-byte separator" {
-    ro parts = "a::b::c".split("::")
+    ro parts = "a::b::c".split("::").collect()
     assert(parts.len() == 3)
     assert(parts[0] == "a")
     assert(parts[1] == "b")
@@ -40,7 +40,7 @@ test "split: multi-byte separator" {
 
 test "split: empty separator → whole string as single view" {
     // Mirrors C nova_str_split: sep.len == 0 ⇒ push the whole string, no scan.
-    ro parts = "abc".split("")
+    ro parts = "abc".split("").collect()
     assert(parts.len() == 1)
     assert(parts[0] == "abc")
 }
@@ -49,7 +49,7 @@ test "split: separator over UTF-8 boundary preserves multi-byte segments" {
     // "héllo" split on "l" — "é" = 0xC3 0xA9 stays intact in the first segment.
     // bytes: h(1) é(2) l l o  → split on "l" yields ["hé", "", "o"].
     ro s = "héllo"
-    ro parts = s.split("l")
+    ro parts = s.split("l").collect()
     assert(parts.len() == 3)
     assert(parts[0] == "hé")
     assert(parts[1] == "")
@@ -62,13 +62,13 @@ test "split: separator over UTF-8 boundary preserves multi-byte segments" {
 }
 
 test "split: empty string, non-empty sep → single empty segment" {
-    ro parts = "".split(",")
+    ro parts = "".split(",").collect()
     assert(parts.len() == 1)
     assert(parts[0] == "")
 }
 
 test "split: adjacent separators yield empty middle segments" {
-    ro parts = "a,,b".split(",")
+    ro parts = "a,,b".split(",").collect()
     assert(parts.len() == 3)
     assert(parts[0] == "a")
     assert(parts[1] == "")

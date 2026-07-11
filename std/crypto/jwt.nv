@@ -64,7 +64,7 @@ fn make_header_hs256() -> HashMap[str, JsonValue] {
 /// делает `validate_hs256`. `Err(JwtError)` (Invalid format/sig/alg).
 #stable(since = "0.1")
 export fn Jwt.decode_hs256(secret []u8, token str) -> Result[JsonValue, JwtError] {
-    ro parts = token.split(".")
+    ro parts = token.split(".").collect()
     if parts.len() != 3 { return Err(InvalidFormat) }
 
     ro header_b64 = parts[0]

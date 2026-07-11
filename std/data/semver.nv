@@ -203,7 +203,7 @@ export fn str @to_version() -> Result[Version, ParseVersionError] {
 // Парсинг "MAJOR.MINOR.PATCH". Все три обязательны, цифры, без leading
 // zero (кроме самого "0").
 fn parse_core(core str) -> Result[(u64, u64, u64), ParseVersionError] {
-    ro parts = core.split(".")
+    ro parts = core.split(".").collect()
     if parts.len() < 2 {
         return Err(MissingMinor)
     }

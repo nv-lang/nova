@@ -13639,6 +13639,68 @@ impl<'a> TypeCheckCtx<'a> {
             let mut subst: HashMap<String, TypeRef> = HashMap::new();
             subst.insert(typevar_name.clone(), t_binding);
             subst.insert("Self".to_string(), peeled.clone());
+            // [M-next-collect-value-record] (checker-side mirror of the codegen
+            // emit_c.rs fallback of the same name): when the receiver typevar
+            // carries a PROTOCOL bound with its OWN inner typevar (`I: Next[T]`
+            // — `T` is the iterator's element type, distinct from `I` itself),
+            // binding only `I -> peeled` above leaves `T` dangling in `ret`
+            // (e.g. blanket `Vec[T]` from `fn[I Next[T]] I mut @collect() ->
+            // Vec[T]`). A GENERIC receiver resolves `T` via the generic-
+            // instance channel elsewhere; a CONCRETE, non-generic `Next[T]`
+            // implementor (`SplitIter`/`RSplitIter`/`CharsIter` — a plain
+            // `value` record whose `@next` carries a fixed method-level
+            // `#impl(Next[<elem>])`) has no generic-instance channel to fall
+            // back on, so `T` stays free and `resolved_type_to_c` later erases
+            // it to `nova_int` downstream (CC-FAIL, or a silently wrong element
+            // type when two mono `Vec`s happen to share layout). Resolve `T`
+            // here from the peeled type's own `#impl(Next[<elem>])` binding.
+            if let TypeRef::Named { path: peeled_path, generics: peeled_gens, .. } = peeled {
+                if peeled_gens.is_empty() {
+                    if let Some(concrete_name) = peeled_path.last() {
+                        if let Some(recv_g) = f.generics.iter().find(|g| &g.name == recv_key) {
+                            for bound in &recv_g.bounds {
+                                let TypeRef::Named { path: bpath, generics: bgens, .. } = bound else { continue };
+                                if bgens.is_empty() { continue; }
+                                let Some(proto_name) = bpath.last() else { continue };
+                                let Some(concrete_methods) = self.sig.method_table.get(concrete_name) else { continue };
+                                let mut elem_arg: Option<String> = None;
+                                'find_elem: for cand_overloads in concrete_methods.values() {
+                                    for cand in cand_overloads {
+                                        for spec in &cand.impl_protocols {
+                                            if impl_spec_base_name(spec) == proto_name.as_str() {
+                                                let inner = impl_spec_args_text(spec)
+                                                    .trim_start_matches('[')
+                                                    .trim_end_matches(']')
+                                                    .split(',')
+                                                    .next()
+                                                    .unwrap_or("")
+                                                    .trim();
+                                                if !inner.is_empty() {
+                                                    elem_arg = Some(inner.to_string());
+                                                }
+                                                break 'find_elem;
+                                            }
+                                        }
+                                    }
+                                }
+                                if let Some(arg) = elem_arg {
+                                    if let Some(TypeRef::Named { path: bp, generics: bg, .. }) = bgens.first() {
+                                        if bg.is_empty() {
+                                            if let Some(tv) = bp.last() {
+                                                subst.insert(tv.clone(), TypeRef::Named {
+                                                    path: vec![arg],
+                                                    generics: vec![],
+                                                    span: Span::dummy(),
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             let out = crate::const_fn_trampoline::subst_type_ref_pub(ret, &subst);
             // Bail if the substituted return still mentions any unbound method-level
             // generic (e.g. `fn[T] []T @map[U](…) -> []U` — U is unresolved here).

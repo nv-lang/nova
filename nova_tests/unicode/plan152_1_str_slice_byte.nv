@@ -35,7 +35,7 @@ test "find composes with byte-slice (non-ASCII)" {
 }
 
 test "non-ASCII split (regression: byte-slice fixes codepoint-index bug)" {
-    ro parts = "a,é,b".split(",")
+    ro parts = "a,é,b".split(",").collect()
     assert(parts.len() == 3)
     assert(parts[0] == "a")
     assert(parts[1] == "é")

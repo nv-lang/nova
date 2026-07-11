@@ -64,7 +64,7 @@ export type SetCookie value {
 /// `SameSite=None ⇒ Secure` (send-инварианты enforce'ятся by construction).
 #stable(since = "0.1")
 export fn SetCookie.parse(s str) -> Result[SetCookie, HttpError] { // [M-lint-findings-static-conversion]
-    ro parts = s.split(";")
+    ro parts = s.split(";").collect()
     ro head = match parts.get(0) { Some(h) => h.trim_ascii(), None => "" }
     ro (name, value) = match head.split_once("=") {
         Some((k, v)) => (k.trim_ascii(), v.trim_ascii())

@@ -53,7 +53,7 @@ fn push_one_ce(mut acc []u32, ce str) -> int {
         }
         None => {}
     }
-    ro parts = body.split(".")
+    ro parts = body.split(".").collect()
     if parts.len() == 3 {
         match hex(parts[0]) {
             Some(p) => match hex(parts[1]) {

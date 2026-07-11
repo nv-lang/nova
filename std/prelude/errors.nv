@@ -140,7 +140,7 @@ export type ReadBufferError enum
 ///
 /// ```nova
 /// fn first_word(s str) Fail[RuntimeNoneError] -> str =>
-///     s.split(" ").first()!!
+///     s.split(" ").next()!!
 /// ```
 #stable(since = "0.1")
 export type RuntimeNoneError

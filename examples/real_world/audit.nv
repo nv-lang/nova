@@ -106,7 +106,11 @@ fn action_from_route(method str, pattern str) -> str {
         .trim_prefix("/")
 
     // Найдём первую сущность и (опциональный) verb — пропускаем {param}.
-    ro segments = p.split("/").filter(|s| s != "" && !s.starts_with("{"))
+    // Явно типизированное closure (`fn(x T) -> R`, не `|x| ...`): unannotated
+    // ClosureLight-closures пока теряют param-контекст при чейне ПРЯМО на
+    // конкретном (non-generic) `SplitIter` [M-splititer-filter-closure-ctx-gap]
+    // (см. std/collections/vec_iter.nv, секция SplitIter/RSplitIter).
+    ro segments = p.split("/").filter(fn(s str) -> bool => s != "" && !s.starts_with("{")).collect()
     ro entity = segments.get(0) ?? ""
     ro verb_explicit = segments.get(1) ?? ""
 
@@ -175,7 +179,7 @@ fn singularize(s str) -> str =>
 // client_ip — IP клиента с учётом X-Forwarded-For (за nginx).
 fn client_ip(headers Headers, remote_addr str) -> str =>
     match headers.get("X-Forwarded-For") {
-        Some(fwd) => fwd.split(",").get(0) ?? fwd.trim_ascii()
+        Some(fwd) => fwd.split(",").next() ?? fwd.trim_ascii()
         None      => match split_host_port(remote_addr) {
             Ok((host, _)) => host
             Err(_)        => remote_addr

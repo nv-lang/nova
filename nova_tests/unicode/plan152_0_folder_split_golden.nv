@@ -17,7 +17,7 @@ test "search submodule: find / contains / starts_with / split" {
     assert("abcabc".find("bc") == Some(1))
     assert("hello".contains("ell"))
     assert("hello".starts_with("he"))
-    ro parts = "a,b,c".split(",")
+    ro parts = "a,b,c".split(",").collect()
     assert(parts.len() == 3)
     assert(parts[0] == "a")
     assert(parts[2] == "c")

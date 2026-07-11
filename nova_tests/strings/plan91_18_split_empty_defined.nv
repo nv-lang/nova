@@ -1,7 +1,7 @@
 module nova_tests.strings
 
 test "split empty sep: whole string in one segment" {
-    ro parts = "hi".split("")
+    ro parts = "hi".split("").collect()
     assert(parts.len() == 1)
     assert(parts[0] == "hi")
 }

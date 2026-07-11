@@ -30,5 +30,5 @@ test "eq_ignore_ascii_case складывает только ASCII A-Z/a-z (D254
 test "пустой паттерн — определённый результат, не паника (D254 V2)" {
     assert("hi".contains(""))                 // пустой паттерн содержится
     assert("hi".find("") == Some(0))          // find("") = Some(0)
-    assert("hi".split("").len() == 1)         // split("") = ["hi"]
+    assert("hi".split("").collect().len() == 1)         // split("") = ["hi"]
 }

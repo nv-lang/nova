@@ -48,6 +48,32 @@
 // terminators: collect / collect_into / fold / sum / count / any / all /
 //              find / for_each / reduce / min / max / nth / last / collect_set
 //
+// ── `SplitIter` / `RSplitIter` — lazy `str.split()` family (Plan 199)
+//
+// `str @split`/`@splitn`/`@split_terminator` (forward) and `@rsplit`/
+// `@rsplitn` (backward) live in `std/runtime/string/search.nv` (their
+// historical home, `runtime.string`) but return `SplitIter`/`RSplitIter`
+// TYPES DECLARED HERE. Why here and not next to the constructors:
+// `runtime.string` is `#no_prelude` and links into EVERY compiled program
+// (str is foundational); if it imported `Next`/this generic-over-source
+// adapter family directly, every program — even ones that never touch
+// `vec_iter` — would drag the closure-carrying adapter bodies into its
+// merged compilation unit (the same risk this file's own header warns
+// about for `map`/`filter`). Putting the TYPE + `#impl(Next[str])` here
+// (an opt-in sibling module that already depends on `Next`) keeps
+// `runtime.string` blissfully unaware of `Next`/`vec_iter`, while
+// `search.nv` only references the `SplitIter`/`RSplitIter` NAMES (an
+// ordinary cross-module type reference — cycles between modules are
+// allowed by the resolver, D291/Plan 162, so this is a plain forward
+// reference, not a hazard). All fields are plain (not `priv`) so the
+// constructor functions in the OTHER module can build the record literal
+// directly. `SplitIter` folds `split`/`splitn`/`split_terminator` into ONE
+// type via a `limit` (`-1` = unlimited, `0` = empty, `n` = Rust `splitn`
+// semantics — last part is the unsplit remainder) and a `terminator` flag
+// (omit an empty trailing segment). `RSplitIter` is the mirror-image
+// backward scanner for `rsplit`/`rsplitn` (no terminator variant — Nova's
+// `str` surface never had `rsplit_terminator`).
+//
 // ── Comparison: iterator entry point
 //
 // Nova  : v.iter().map(…)   — explicit cursor (same as Rust)
@@ -63,6 +89,7 @@ module collections.vec_iter
 import std.collections.vec.{Vec, VecIter}
 import std.collections.set.{Set}
 import std.prelude.collections.{Next}
+import std.runtime.raw_mem.{RawMem}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Adapter types (generic-over-source `value` records — held inline, by value)
@@ -317,6 +344,163 @@ export fn EnumerateIter[I, T] @skip(n int) -> SkipIter[Self, (int, T)]
 export fn EnumerateIter[I, T] @enumerate() -> EnumerateIter[Self, (int, T)] => { src: @, i: 0 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// `SplitIter` / `RSplitIter` — lazy `str.split()` family (Plan 199).
+// See the module-header note above for why these TYPES live here while the
+// `str @split`/`@splitn`/`@split_terminator`/`@rsplit`/`@rsplitn`
+// CONSTRUCTORS stay in `runtime.string` (search.nv).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Lazy forward `str.split()` family. `limit < 0` = unlimited (`split`,
+/// `split_terminator`); `limit == 0` = immediately exhausted (`splitn`/
+/// `rsplitn` clamp `n <= 0` here); `limit == n` = Rust `splitn` semantics —
+/// after `n - 1` separator matches, the REST of the string (not further
+/// split) is yielded as the final part. `terminator` (only ever `true` for
+/// `split_terminator`) drops a trailing EMPTY segment (the string ended
+/// with `sep`) instead of yielding it. Fields are plain (not `priv`) so the
+/// `str @split*` constructors — declared in a different module — can build
+/// the record literal directly.
+export type SplitIter value {
+    src str
+    sep str
+    mut start int
+    mut done bool
+    limit int
+    mut splits int
+    terminator bool
+}
+
+/// Advance the forward splitter by one segment. Byte-scan for the next
+/// non-overlapping `sep` match starting at `start`; `@src[a..b]` views are
+/// zero-copy (no heap). Mirrors the retired eager `str @split`/`@splitn`/
+/// `@split_terminator` bodies byte-for-byte (see search.nv history).
+///
+/// The match PROBE at each candidate `i` uses `RawMem.compare` (memcmp) over
+/// raw pointers, NOT the safe `@src[i..i+sep_len] == @sep` view-comparison —
+/// the latter panics ("slice splits a UTF-8 codepoint") the moment a
+/// multi-byte-codepoint payload puts `i` mid-codepoint, which is a normal,
+/// expected byte-scan position (only ACTUAL match boundaries are guaranteed
+/// codepoint-aligned by R-UTF8, not every probed `i`). Only fully-validated
+/// segment boundaries (`@start`, a confirmed match `i`, or `sn`) are ever
+/// turned into an `@src[a..b]` VIEW.
+#impl(Next[str])
+export fn SplitIter mut @next() -> Option[str] {
+    if @done { return None }
+    if @limit == 0 { @done = true; return None }
+    ro sn = @src.byte_len()
+    ro sep_len = @sep.byte_len()
+    if sep_len == 0 {
+        @done = true
+        return Some(@src[0..sn])
+    }
+    if @limit >= 0 && @splits >= @limit - 1 {
+        @done = true
+        if @terminator && @start >= sn { return None }
+        return Some(@src[@start..sn])
+    }
+    mut i = @start
+    while i + sep_len <= sn {
+        if unsafe { RawMem.compare(@src.ptr().offset(i), @sep.ptr(), sep_len) == 0 } {
+            ro seg = @src[@start..i]
+            @start = i + sep_len
+            @splits += 1
+            return Some(seg)
+        }
+        i += 1
+    }
+    @done = true
+    if @terminator && @start >= sn { return None }
+    Some(@src[@start..sn])
+}
+
+// ── adapters ON a `SplitIter` source (chain entry) ───────────────────────
+//
+// [M-splititer-filter-closure-ctx-gap] (found during Plan 199): an
+// UNANNOTATED closure-light literal (`|s| ...`) chained DIRECTLY on these
+// adapters (`"a,b".split(",").filter(|s| ...)`) currently loses its param-
+// type context in codegen and defaults the param to `nova_int` (CC-FAIL) —
+// a gap in the fn-typed-param context threading for CONCRETE (non-generic)
+// instance methods specifically (the SAME receiver via a GENERIC adapter,
+// e.g. `VecIter[T] @filter`, is unaffected — its context flows through the
+// mono-instance substitution machinery, which a plain concrete method never
+// enters). Workaround until fixed: spell the closure with an explicit
+// signature — `.filter(fn(s str) -> bool => s != "")` instead of
+// `.filter(|s| s != "")`. `.take`/`.skip`/`.step_by`/`.enumerate` are
+// unaffected (no closure param). Separately tracked as a defect, NOT
+// specific to `str.split` — any future concrete (non-generic) `Next[T]`
+// iterator with an adapter entry point would hit the same gap.
+export fn SplitIter @map[U](f fn(str) -> U) -> MapIter[SplitIter, str, U] => { src: @, f }
+export fn SplitIter @filter(pred fn(str) -> bool) -> FilterIter[SplitIter, str] => { src: @, pred }
+export fn SplitIter @filter_map[U](f fn(str) -> Option[U]) -> FilterMapIter[SplitIter, str, U] => { src: @, f }
+export fn SplitIter @take(n int) -> TakeIter[SplitIter, str]
+    requires n >= 0
+    => { src: @, left: n }
+export fn SplitIter @skip(n int) -> SkipIter[SplitIter, str]
+    requires n >= 0
+    => { src: @, to_skip: n }
+export fn SplitIter @enumerate() -> EnumerateIter[SplitIter, str] => { src: @, i: 0 }
+export fn SplitIter @step_by(n int) -> StepByIter[SplitIter, str]
+    requires n > 0
+    => { src: @, step: n, first: true, rem: n - 1 }
+
+/// Lazy backward `str.rsplit()`/`rsplitn()` family — mirror-image of
+/// `SplitIter`: scans from `end` toward 0, segments come out in REVERSE
+/// order (Rust `rsplit`). No `terminator` variant (Nova has no
+/// `rsplit_terminator`).
+export type RSplitIter value {
+    src str
+    sep str
+    mut end int
+    mut done bool
+    limit int
+    mut splits int
+}
+
+/// Advance the backward splitter by one segment (mirrors `str @rsplit`/
+/// `@rsplitn`'s retired eager bodies byte-for-byte).
+#impl(Next[str])
+export fn RSplitIter mut @next() -> Option[str] {
+    if @done { return None }
+    if @limit == 0 { @done = true; return None }
+    ro sep_len = @sep.byte_len()
+    if sep_len == 0 {
+        @done = true
+        return Some(@src[0..@end])
+    }
+    if @limit >= 0 && @splits >= @limit - 1 {
+        @done = true
+        return Some(@src[0..@end])
+    }
+    mut i = @end - sep_len
+    while i >= 0 {
+        if unsafe { RawMem.compare(@src.ptr().offset(i), @sep.ptr(), sep_len) == 0 } {
+            ro seg = @src[i + sep_len..@end]
+            @end = i
+            @splits += 1
+            return Some(seg)
+        }
+        i -= 1
+    }
+    @done = true
+    Some(@src[0..@end])
+}
+
+// ── adapters ON an `RSplitIter` source (chain entry) ─────────────────────
+
+export fn RSplitIter @map[U](f fn(str) -> U) -> MapIter[RSplitIter, str, U] => { src: @, f }
+export fn RSplitIter @filter(pred fn(str) -> bool) -> FilterIter[RSplitIter, str] => { src: @, pred }
+export fn RSplitIter @filter_map[U](f fn(str) -> Option[U]) -> FilterMapIter[RSplitIter, str, U] => { src: @, f }
+export fn RSplitIter @take(n int) -> TakeIter[RSplitIter, str]
+    requires n >= 0
+    => { src: @, left: n }
+export fn RSplitIter @skip(n int) -> SkipIter[RSplitIter, str]
+    requires n >= 0
+    => { src: @, to_skip: n }
+export fn RSplitIter @enumerate() -> EnumerateIter[RSplitIter, str] => { src: @, i: 0 }
+export fn RSplitIter @step_by(n int) -> StepByIter[RSplitIter, str]
+    requires n > 0
+    => { src: @, step: n, first: true, rem: n - 1 }
+
+// ──────────────────────────────────────────────────────────────────────────
 // Terminators — drive the chain.
 //
 // Plan 161 Ф.3 refactor: terminators that return a type with NO unresolved
@@ -568,4 +752,89 @@ test "zc map -> filter -> any / all / find" {
     assert(v.iter().map(|x| x * 2).filter(|x| x > 0).all(|x| x % 2 == 0))
     ro f = v.iter().map(|x| x * 10).filter(|x| x > 25).find(|x| x == 40)
     assert(f ?? 0 == 40)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `SplitIter` / `RSplitIter` — lazy `str.split()` family (Plan 199).
+// `str @split`/`@splitn`/`@split_terminator`/`@rsplit`/`@rsplitn` are
+// declared in `runtime.string` (search.nv) — homed with the rest of `str`,
+// inherent, no import needed at ANY call site — but the TYPES they return
+// live here (see the module-header note + the SplitIter/RSplitIter section
+// above for why). Tested here, beside their type + `Next[str]` impl.
+// ──────────────────────────────────────────────────────────────────────────
+
+test "split: lazy .next() drive, byte-identical to the old eager array" {
+    mut it = "a,b,c".split(",")
+    assert(it.next() == Some("a"))
+    assert(it.next() == Some("b"))
+    assert(it.next() == Some("c"))
+    assert(it.next() == None)
+    assert(it.next() == None)   // idempotent past exhaustion
+}
+
+test "split: for-in drives the SAME lazy iterator (no .collect() needed)" {
+    mut out = []str.new()
+    for x in "x,y,z".split(",") { out.push(x) }
+    assert(out == ["x", "y", "z"])
+}
+
+test "split: .collect() matches the retired eager Vec[str] behavior" {
+    assert("a,b,c".split(",").collect() == ["a", "b", "c"])
+    assert("a,,b".split(",").collect() == ["a", "", "b"])
+    assert("a,b,".split(",").collect() == ["a", "b", ""])   // trailing empty always kept
+    assert("".split(",").collect() == [""])
+    ro empty_sep = "hi".split("").collect()
+    assert(empty_sep == ["hi"])          // empty sep -> whole string, ONE element
+}
+
+test "splitn: lazy, last part is the unsplit remainder" {
+    assert("a,b,c,d".splitn(2, ",").collect() == ["a", "b,c,d"])
+    assert("a,b,c".splitn(1, ",").collect() == ["a,b,c"])   // n==1 -> whole
+    assert("a,b,c".splitn(0, ",").collect().len() == 0)      // n<=0 -> empty iterator
+    assert("a,b,c".splitn(9, ",").collect() == ["a", "b", "c"])   // n > parts
+}
+
+test "rsplit / rsplitn: lazy, backward, reverse order" {
+    assert("a,b,c".rsplit(",").collect() == ["c", "b", "a"])
+    assert("a,b,c,d".rsplitn(2, ",").collect() == ["d", "a,b,c"])
+    assert("x".rsplit(",").collect() == ["x"])
+}
+
+test "split_terminator: lazy, omits ONE trailing empty segment" {
+    assert("a,b,".split_terminator(",").collect() == ["a", "b"])
+    assert("a,b".split_terminator(",").collect() == ["a", "b"])   // no trailing sep — unaffected
+    assert("".split_terminator(",").collect().len() == 0)          // empty string -> no segments
+    assert("".split_terminator("").collect() == [""])              // empty sep still yields whole (even empty) string
+}
+
+test "split family: multi-byte separator + non-ASCII payload, byte-exact" {
+    assert("a::b::c".split("::").collect() == ["a", "b", "c"])
+    ro greek = "α,β,γ".split(",").collect()
+    assert(greek == ["α", "β", "γ"])
+}
+
+test "split: .take(n) chain adapter (no closure — unaffected by [M-splititer-filter-closure-ctx-gap])" {
+    assert("a,b,c,d".split(",").take(2).collect() == ["a", "b"])
+    assert("a,b,c".split(",").skip(1).collect() == ["b", "c"])
+}
+
+test "split: .filter() chain works with an EXPLICITLY typed closure" {
+    // See [M-splititer-filter-closure-ctx-gap] above SplitIter's adapters:
+    // an unannotated `|s| ...` loses its param type on a chain rooted
+    // directly on a concrete (non-generic) SplitIter — spell the closure
+    // with an explicit `fn(x T) -> R` signature as a workaround.
+    ro got = "a,,b,c".split(",").filter(fn(s str) -> bool => s != "").collect()
+    assert(got == ["a", "b", "c"])
+}
+
+test "split: .collect() Vec is a real, reusable, indexable Vec[str]" {
+    ro parts = "k1=v1;k2=v2".split(";").collect()
+    assert(parts.len() == 2)
+    assert(parts[0] == "k1=v1")
+    assert(parts[1] == "k2=v2")
+    // Re-iterate the materialized Vec via the ordinary (generic) VecIter —
+    // confirms .collect() handed back a genuinely independent Vec[str].
+    mut joined = ""
+    for p in parts { joined = joined + p }
+    assert(joined == "k1=v1k2=v2")
 }

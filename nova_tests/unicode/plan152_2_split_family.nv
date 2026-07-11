@@ -2,17 +2,17 @@
 module nova_tests.unicode
 
 test "splitn: at most n parts, last is remainder" {
-    ro p = "a,b,c,d".splitn(2, ",")
+    ro p = "a,b,c,d".splitn(2, ",").collect()
     assert(p.len() == 2)
     assert(p[0] == "a")
     assert(p[1] == "b,c,d")
-    assert("a,b,c".splitn(1, ",").len() == 1)        // whole
-    assert("a,b,c".splitn(0, ",").len() == 0)        // none
-    assert("a,b,c".splitn(9, ",").len() == 3)        // n > parts
+    assert("a,b,c".splitn(1, ",").collect().len() == 1)        // whole
+    assert("a,b,c".splitn(0, ",").collect().len() == 0)        // none
+    assert("a,b,c".splitn(9, ",").collect().len() == 3)        // n > parts
 }
 
 test "rsplit: from right, reversed order" {
-    ro p = "a,b,c".rsplit(",")
+    ro p = "a,b,c".rsplit(",").collect()
     assert(p.len() == 3)
     assert(p[0] == "c")
     assert(p[1] == "b")
@@ -20,7 +20,7 @@ test "rsplit: from right, reversed order" {
 }
 
 test "rsplitn: at most n from right" {
-    ro p = "a,b,c,d".rsplitn(2, ",")
+    ro p = "a,b,c,d".rsplitn(2, ",").collect()
     assert(p.len() == 2)
     assert(p[0] == "d")
     assert(p[1] == "a,b,c")
@@ -42,11 +42,11 @@ test "split_once / rsplit_once" {
 }
 
 test "split_terminator: no trailing empty" {
-    ro p = "a,b,".split_terminator(",")
+    ro p = "a,b,".split_terminator(",").collect()
     assert(p.len() == 2)
     assert(p[0] == "a")
     assert(p[1] == "b")
-    assert("a,b".split_terminator(",").len() == 2)
+    assert("a,b".split_terminator(",").collect().len() == 2)
 }
 
 test "split_whitespace: runs, skip empty, trim ends" {
@@ -69,7 +69,7 @@ test "lines: strip \\n and \\r\\n, final unterminated line kept" {
 }
 
 test "split-family on multibyte (byte-correct)" {
-    ro p = "α,β,γ".split(",")   // each Greek letter = 2 bytes
+    ro p = "α,β,γ".split(",").collect()   // each Greek letter = 2 bytes
     assert(p.len() == 3)
     assert(p[0] == "α")
     assert(p[1] == "β")

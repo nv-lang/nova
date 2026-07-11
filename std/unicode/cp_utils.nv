@@ -32,7 +32,7 @@ fn parse_cp_list(s str) -> []u32 {
 // Covers decomposition tables (NFD/NFKD), collation single/contraction tables —
 // all share this exact semicolon-of-colon text shape.
 fn parse_cp_keyed_table(data str) -> HashMap[u32, str] {
-    ro entries = data.split(";")
+    ro entries = data.split(";").collect()
     mut m = HashMap[u32, str].new().cap(entries.len() + 8)
     for entry in entries {
         // codepoint key is `u32` (D327); `hex` yields `Option[u32]` (D54/D77).
@@ -49,7 +49,7 @@ fn parse_cp_keyed_table(data str) -> HashMap[u32, str] {
 // "cp:int;cp2:int2;.." -> { cp -> int }.
 // Used for CCC table (canonical combining class).
 fn parse_cp_int_table(data str) -> HashMap[u32, int] {
-    ro entries = data.split(";")
+    ro entries = data.split(";").collect()
     mut m = HashMap[u32, int].new().cap(entries.len() + 8)
     for entry in entries {
         // codepoint key `u32` (D327); CCC value `int` (a small class number, NOT a
@@ -70,7 +70,7 @@ fn parse_cp_int_table(data str) -> HashMap[u32, int] {
 // "a,b:cp;..." -> { (a << 21) | b -> cp }. Packed-int key avoids tuple-key
 // HashMap (codepoints fit in 21 bits; see [M-hashmap-tuple-key-mono]).
 fn parse_comp_table(data str) -> HashMap[int, u32] {
-    ro entries = data.split(";")
+    ro entries = data.split(";").collect()
     mut m = HashMap[int, u32].new().cap(entries.len() + 8)
     for entry in entries {
         // Key is a packed pair `(a<<21)|b` (> 32 bits → `int`, D327 §bit-packing);

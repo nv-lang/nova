@@ -294,7 +294,7 @@ fn is_numeric_label(lab str) -> bool {
 // Канонический IPv4: РОВНО 4 dotted-decimal октета, 0..255, БЕЗ leading-zero
 // (octal-ambiguity), БЕЗ hex. Всё иное (2130706433 / 127.1 / 0x7f.. / 0177..) → reject.
 fn validate_ipv4_canonical(host str) -> Result[(), ParseUrlError] {
-    ro parts = host.split(".")
+    ro parts = host.split(".").collect()
     if parts.len() != 4 { return Err(ObfuscatedIp(host)) }
     for p in parts {
         if p.byte_len() == 0 || p.byte_len() > 3 { return Err(ObfuscatedIp(host)) }
@@ -351,7 +351,7 @@ fn is_valid_ipv6(s str) -> bool {
 }
 
 fn is_dotted_quad(s str) -> bool {
-    ro parts = s.split(".")
+    ro parts = s.split(".").collect()
     if parts.len() != 4 { return false }
     for p in parts {
         if p.byte_len() == 0 || p.byte_len() > 3 { return false }
@@ -406,7 +406,7 @@ export fn Url @is_private_target() -> bool {
 }
 
 fn is_private_ipv4(h str) -> bool {
-    ro parts = h.split(".")
+    ro parts = h.split(".").collect()
     if parts.len() != 4 { return false }
     ro o0 = octet(parts.get(0))
     ro o1 = octet(parts.get(1))

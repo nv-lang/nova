@@ -12,24 +12,24 @@
 module spec_tests.conformance
 
 test "split / rsplit: all parts, byte-scan, multibyte-safe (D251)" {
-    ro d251_p = "a,b,c".split(",")
+    ro d251_p = "a,b,c".split(",").collect()
     assert(d251_p.len() == 3)
     assert(d251_p[0] == "a" && d251_p[1] == "b" && d251_p[2] == "c")
-    ro d251_r = "a,b,c".rsplit(",")            // справа, обратный порядок
+    ro d251_r = "a,b,c".rsplit(",").collect()            // справа, обратный порядок
     assert(d251_r.len() == 3)
     assert(d251_r[0] == "c" && d251_r[2] == "a")
-    ro d251_g = "α,β,γ".split(",")             // греческие буквы = 2 байта
+    ro d251_g = "α,β,γ".split(",").collect()             // греческие буквы = 2 байта
     assert(d251_g.len() == 3)
     assert(d251_g[0] == "α" && d251_g[2] == "γ")
 }
 
 test "splitn / rsplitn: <= n частей, последняя = остаток (D251)" {
-    ro d251_sn = "a,b,c,d".splitn(2, ",")
+    ro d251_sn = "a,b,c,d".splitn(2, ",").collect()
     assert(d251_sn.len() == 2)
     assert(d251_sn[0] == "a" && d251_sn[1] == "b,c,d")
-    assert("a,b,c".splitn(0, ",").len() == 0)
-    assert("a,b,c".splitn(9, ",").len() == 3)
-    ro d251_rn = "a,b,c,d".rsplitn(2, ",")
+    assert("a,b,c".splitn(0, ",").collect().len() == 0)
+    assert("a,b,c".splitn(9, ",").collect().len() == 3)
+    ro d251_rn = "a,b,c,d".rsplitn(2, ",").collect()
     assert(d251_rn.len() == 2)
     assert(d251_rn[0] == "d" && d251_rn[1] == "a,b,c")
 }
@@ -50,10 +50,10 @@ test "split_once / rsplit_once -> Option[(str, str)] (D251)" {
 }
 
 test "split_terminator: без пустого хвоста (D251)" {
-    ro d251_t = "a,b,".split_terminator(",")
+    ro d251_t = "a,b,".split_terminator(",").collect()
     assert(d251_t.len() == 2)
     assert(d251_t[0] == "a" && d251_t[1] == "b")
-    assert("a,b".split_terminator(",").len() == 2)
+    assert("a,b".split_terminator(",").collect().len() == 2)
 }
 
 test "split_ascii_whitespace: runs, края отброшены (D251)" {

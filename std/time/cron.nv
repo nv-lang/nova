@@ -116,7 +116,7 @@ fn parse_field(s str, name str, min int, max int) -> Result[CronField, ParseCron
 
     // Step: "*/15", "10-30/5"
     if s.contains("/") {
-        ro parts = s.split("/")
+        ro parts = s.split("/").collect()
         if parts.len() != 2 {
             return Err(InvalidValue { field: name, value: s })
         }
@@ -175,7 +175,7 @@ fn parse_int_in(s str, name str, min int, max int) -> Result[int, ParseCronError
 
 
 fn parse_range(s str, name str, min int, max int) -> Result[(int, int), ParseCronError] {
-    ro parts = s.split("-")
+    ro parts = s.split("-").collect()
     if parts.len() != 2 {
         return Err(InvalidValue { field: name, value: s })
     }

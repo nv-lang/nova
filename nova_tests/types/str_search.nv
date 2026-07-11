@@ -328,12 +328,12 @@ test "chars: emoji decode" {
 // ================================================================
 
 test "split: basic" {
-    ro parts = "a,b,c".split(",")
+    ro parts = "a,b,c".split(",").collect()
     assert(parts.len() == 3)
 }
 
 test "split: no separator → один элемент" {
-    ro parts = "abc".split(",")
+    ro parts = "abc".split(",").collect()
     assert(parts.len() == 1)
 }
 
@@ -347,7 +347,7 @@ test "split: для for-in" {
 }
 
 test "split: trailing separator" {
-    ro parts = "a,b,".split(",")
+    ro parts = "a,b,".split(",").collect()
     // ["a", "b", ""] — empty tail
     assert(parts.len() == 3)
 }

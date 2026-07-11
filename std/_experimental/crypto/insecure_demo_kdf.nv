@@ -112,7 +112,7 @@ export fn InsecureDemoKdf.hash(password str, cost int) Random -> Result[str, Ins
 #experimental(note = "демо-KDF, НЕ настоящий bcrypt; см. Plan 193")
 export fn InsecureDemoKdf.verify(password str, hash_str str) -> bool {
     // Parse format
-    ro parts = hash_str.split("$")
+    ro parts = hash_str.split("$").collect()
     // ["", "ndk1", "<cost>", "<salt><hash>"]
     if parts.len() != 4 { return false }
     if parts[1] != FORMAT_TAG { return false }
