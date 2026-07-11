@@ -7318,6 +7318,28 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // Plan 196 stage1 (§0 materialize, mirror of the 6z HandlerLit arm): a handler
+        // literal `effect E {…}` has a purely SYNTACTIC type — `NovaVtable_<E>*` — modelled
+        // as `Effect[<E>]` (module empty, name == `effect_name.join("_")`), which the SINGLE
+        // canonical lowering `resolved_type_to_c` ("Effect" arm, UNCONDITIONAL — no registry
+        // dependency) turns into the SAME string the legacy arm built. Materialize into the
+        // channel so Channel 2 covers it and the legacy 6z arm retires (§0).
+        if let ExprKind::HandlerLit { effect_name, .. } = &e.kind {
+            if e.id.is_set() {
+                self.resolved_types_buf.borrow_mut().insert(
+                    e.id,
+                    ResolvedType::Named {
+                        name: "Effect".into(),
+                        module: vec![],
+                        args: vec![ResolvedType::Named {
+                            name: effect_name.join("_"),
+                            module: vec![],
+                            args: vec![],
+                        }],
+                    },
+                );
+            }
+        }
         // Plan 172.1.1 (U.4.5 — control-flow probe): annotate Block/If/IfLet/Path with the
         // checker's value type (block tail / branch-join / variant). Each propagates an ALREADY-
         // checked inner type — no new re-derive hazard. `infer_expr_type` returns None for
