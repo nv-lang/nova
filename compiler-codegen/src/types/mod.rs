@@ -7265,28 +7265,13 @@ impl<'a> TypeCheckCtx<'a> {
                     // TypedPtr(T), `@_buckets` Named{Vec,[Slot..]}), но TypeRef-инференс
                     // его не видит. СТРУКТУРНЫЕ формы only (урок POISON 6453 — никакого
                     // user-@index здесь): Vec[E]/[]E → E; *mut E (raw-buffer) → E.
-                    let elem: Option<ResolvedType> = {
-                        let buf = self.resolved_types_buf.borrow();
-                        match buf.get(&ix_obj.id) {
-                            Some(ResolvedType::Named { name, args, .. })
-                                if name == "Vec" && args.len() == 1 =>
-                            {
-                                Some(args[0].clone())
-                            }
-                            Some(ResolvedType::Array(inner)) => Some((**inner).clone()),
-                            Some(ResolvedType::TypedPtr(_, inner)) => Some((**inner).clone()),
-                            Some(ResolvedType::Readonly(inner)) => match inner.as_ref() {
-                                ResolvedType::Named { name, args, .. }
-                                    if name == "Vec" && args.len() == 1 =>
-                                {
-                                    Some(args[0].clone())
-                                }
-                                ResolvedType::Array(i2) => Some((**i2).clone()),
-                                _ => None,
-                            },
-                            _ => None,
-                        }
-                    };
+                    // Plan 196 Ф.4b: правило контейнер→элемент — в решателе
+                    // (`Constraint::Project`, §0-единственный источник); byte-parity
+                    // сохранён (`project` повторяет ТУ ЖЕ структурную раскладку).
+                    let container = self.resolved_types_buf.borrow().get(&ix_obj.id).cloned();
+                    let elem = container.and_then(|c| {
+                        Self::project_channel(&c, constraint_solver::ProjectKind::Element)
+                    });
                     if let Some(rt) = elem {
                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                     }
@@ -8199,13 +8184,17 @@ impl<'a> TypeCheckCtx<'a> {
                     && !self.resolved_types_buf.borrow().contains_key(&e.id)
                 {
                     if let Ok(ix) = name.parse::<usize>() {
-                        let elem: Option<ResolvedType> = {
-                            let buf = self.resolved_types_buf.borrow();
-                            match buf.get(&obj.id) {
-                                Some(ResolvedType::Tuple(items)) => items.get(ix).cloned(),
-                                _ => None,
-                            }
-                        };
+                        // Plan 196 Ф.4b: Tuple→элемент по индексу — через решатель
+                        // (`Constraint::Project` TupleField); byte-parity (`project`
+                        // = `items.get(ix)`, тот же инлайн-`match`).
+                        let container =
+                            self.resolved_types_buf.borrow().get(&obj.id).cloned();
+                        let elem = container.and_then(|c| {
+                            Self::project_channel(
+                                &c,
+                                constraint_solver::ProjectKind::TupleField(ix),
+                            )
+                        });
                         if let Some(rt) = elem {
                             self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                         }
@@ -8336,30 +8325,14 @@ impl<'a> TypeCheckCtx<'a> {
                         // `@_buckets` Named{Vec,[..]}). СТРУКТУРНЫЕ формы only
                         // (урок POISON 6453 — никакого user-@index здесь):
                         // Vec[E]/[]E → E; *mut E (raw-buffer) → E.
-                        let elem: Option<ResolvedType> = {
-                            let buf = self.resolved_types_buf.borrow();
-                            match buf.get(&obj.id) {
-                                Some(ResolvedType::Named { name, args, .. })
-                                    if name == "Vec" && args.len() == 1 =>
-                                {
-                                    Some(args[0].clone())
-                                }
-                                Some(ResolvedType::Array(inner)) => Some((**inner).clone()),
-                                Some(ResolvedType::TypedPtr(_, inner)) => {
-                                    Some((**inner).clone())
-                                }
-                                Some(ResolvedType::Readonly(inner)) => match inner.as_ref() {
-                                    ResolvedType::Named { name, args, .. }
-                                        if name == "Vec" && args.len() == 1 =>
-                                    {
-                                        Some(args[0].clone())
-                                    }
-                                    ResolvedType::Array(i2) => Some((**i2).clone()),
-                                    _ => None,
-                                },
-                                _ => None,
-                            }
-                        };
+                        // Plan 196 Ф.4b: правило контейнер→элемент — в решателе
+                        // (`Constraint::Project`); byte-parity (`project` = та же
+                        // структурная раскладка, что был инлайн-`match`).
+                        let container =
+                            self.resolved_types_buf.borrow().get(&obj.id).cloned();
+                        let elem = container.and_then(|c| {
+                            Self::project_channel(&c, constraint_solver::ProjectKind::Element)
+                        });
                         if let Some(rt) = elem {
                             self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                         }
@@ -9443,6 +9416,34 @@ impl<'a> TypeCheckCtx<'a> {
                 set,
             )])
             .is_ok()
+    }
+
+    /// Plan 196 Ф.4b (constraint-core, Project): project a channel container
+    /// `ResolvedType` (from `resolved_types_buf`) into the type of its element
+    /// via `Constraint::Project`. The §0-canonical container→element rule lives
+    /// in the SOLVER (`constraint_solver::project`), no longer duplicated inline
+    /// across the Index-мост / Member tuple-field producers (Ф.0-инвентарь #3/
+    /// #137). Byte-parity: `project` reproduces EXACTLY the prior inline
+    /// structural `match` of those producers — the gate «this is an indexable
+    /// container / a `.N` tuple-field» stays at the PRODUCER (contextual AST
+    /// knowledge), as the numeric gate stayed at the producer in `Join` (Ф.4a).
+    /// `None` = undetermined projection → producer leaves the node un-annotated
+    /// (honest «no annotation» → legacy navigation).
+    fn project_channel(
+        container: &ResolvedType,
+        kind: constraint_solver::ProjectKind,
+    ) -> Option<ResolvedType> {
+        use crate::types::constraint_solver::{Constraint, Solver, Ty, VarGen};
+        let mut g = VarGen::new();
+        let out = g.fresh();
+        Solver::new()
+            .solve(&[Constraint::Project {
+                out: Ty::Var(out),
+                container: Ty::from_resolved(container),
+                kind,
+            }])
+            .ok()
+            .and_then(|sol| sol.type_of(out))
     }
 
     /// Plan 172.1 U.4.4 (Match-arm half): the COMMON result type of a `match`
