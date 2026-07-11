@@ -27,6 +27,15 @@ jobs:
         run: sudo apt-get install -y libgc-dev libmbedtls-dev
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
+      # Plan 196 Ф.4c — регресс-гард пути `nova build`. Он молча НЕ кормил
+      # checker-каналы (resolved_types/callees), которые `nova test` кормит, →
+      # ЛЮБОЙ `nova build` (вкл. `fn main(){}`) падал в P67-LEGACY ICE в codegen.
+      # conformance/nova test не ловили (иная reachability). Починено febfc83be;
+      # этот хард-фейл шаг держит `nova build` живым (нельзя убрать в continue-on-error).
+      - name: nova build smoke (Plan 196 — nova build ICE regression guard)
+        run: |
+          printf 'fn main() {\n    println("hello, nova build")\n}\n' > /tmp/nova_build_smoke.nv
+          ./nova-cli/target/release/nova build /tmp/nova_build_smoke.nv
       # nova_tests/ — НЕ гейт корректности (deprecated per-plan-фикстуры, под
       # удаление; настоящие гейты — conformance + std/module *_test.nv). Держим
       # как non-blocking сигнал, а не хард-фейл (решение 2026-07-11).
