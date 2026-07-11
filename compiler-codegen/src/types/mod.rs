@@ -7518,13 +7518,22 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
-        // Plan 172.1 U.4.5 (TupleLit slice — ALL-PRIMITIVE elements): materialize a tuple
-        // literal's resolved type into the checker channel (§0/§1). GATE: every element infers
-        // to a PRIMITIVE resolved type (shared `primitive_gate`). For an all-primitive tuple the
-        // legacy `infer_expr_c_type(TupleLit)` (:36273) builds the SAME mono `compute_mono_tuple_c_name`
-        // that `resolved_type_to_c(R::Tuple)` (:1982) builds — byte-identical (primitives lower
-        // context-free, no type-param `is_empty`-vs-`Nova_`-schema divergence — the §9 type-param
-        // gating point). A non-primitive / un-inferrable element → skip → legacy (sound).
+        // Plan 172.1 U.4.5 (TupleLit slice — ALL-PRIMITIVE elements) + Plan 196 Ф.2
+        // (TupleLit slice — NON-GENERIC value-named elements, docs/plans/196-audit.md
+        // §2 row 10): materialize a tuple literal's resolved type into the checker
+        // channel (§0/§1). GATE: every element infers to EITHER a PRIMITIVE resolved
+        // type (shared `primitive_gate`) OR a CONCRETE non-generic declared value type
+        // (record/sum/newtype/named-tuple, no type-args) — the SAME `concrete_value_named`
+        // gate `infer_match_common_primitive` / `f3_check_member` already use (172.1.2,
+        // mirrors the RecordLit-gate precedent at :7413 above). For an all-concrete tuple
+        // the legacy `infer_expr_c_type(TupleLit)` (:36273) builds the SAME mono
+        // `compute_mono_tuple_c_name`/`register_mono_tuple` that `resolved_type_to_c
+        // (R::Tuple)` (:1982) builds — byte-identical: primitives lower context-free, and a
+        // concrete non-generic Named element lowers via `resolved_named_to_c`'s
+        // `type_aliases`/plain-pointer branch, exactly what `infer_expr_c_type` computes
+        // for that same element expression (no type-param `is_empty`-vs-`Nova_`-schema
+        // divergence — the §9 type-param gating point). A generic / un-inferrable element
+        // → skip → legacy (sound; the genuine mono-inference residual stays there).
         if let ExprKind::TupleLit(elems) = &e.kind {
             if e.id.is_set() && !elems.is_empty() {
                 let mut elem_rts: Vec<ResolvedType> = Vec::with_capacity(elems.len());
@@ -7532,7 +7541,13 @@ impl<'a> TypeCheckCtx<'a> {
                     match self.infer_expr_type(el, scope) {
                         Some(tr) => {
                             let rt = ResolvedType::from_type_ref(&tr);
-                            if Self::primitive_gate(&rt) {
+                            let concrete_value_named = matches!(&rt,
+                                ResolvedType::Named { name, args, .. }
+                                    if args.is_empty()
+                                        && self.types.get(name).map_or(false, |td| matches!(&td.kind,
+                                            TypeDeclKind::Record(_) | TypeDeclKind::Sum(_)
+                                            | TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_))));
+                            if Self::primitive_gate(&rt) || concrete_value_named {
                                 elem_rts.push(rt);
                             } else {
                                 break;
