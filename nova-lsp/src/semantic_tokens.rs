@@ -491,7 +491,8 @@ impl Context {
             | TypeRef::Readonly(inner, _)
             | TypeRef::Mut(inner, _)
             | TypeRef::Unsafe(inner, _)
-            | TypeRef::Pointer(inner, _) => self.record_typeref(inner, idents, type_params),
+            | TypeRef::Pointer(inner, _)
+            | TypeRef::Ref(inner, _) => self.record_typeref(inner, idents, type_params),
             TypeRef::Tuple(elems, _) => {
                 for e in elems {
                     self.record_typeref(e, idents, type_params);
