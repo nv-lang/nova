@@ -1,12 +1,15 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# Plan 195 — Native-модули = .nv + .c + .lib (Rust-free); TLS на C-библиотеке
+# Plan 195 — `src/` layout std-миграция (общий native-модуль-паттерн → доки)
 
 **Статус:** 🟢 ПАТТЕРН ДОКАЗАН 2026-07-11 — Ф.1-2 (mbedTLS-своп TLS, Rust удалён) ВЫПОЛНЕНЫ
 (T40, ветка tls-mbedtls-195, в main); mbedTLS-волна = эталонная инстанция паттерна. Ф.3
 (вынос nova-tls) → **[Plan 193](193-nova-tls-repo.md)**. Остаётся: общий native-модуль-паттерн
 (.nv+.c+.lib) + `src/`-раскладка std как норма. **Приоритет:** P2.
 **Зависит:** [03.1](03.1-path-git-dependencies.md) (резолвер внешних зависимостей — путь A) для внешне-репового этапа.
-**Связано:** [192](192-native-backed-module-pattern.md) (исправляет его Rust-паттерн).
+**Общий native-модуль-паттерн** (.nv+.c+.lib, `[ffi]`, `nova-<пакет>`-нейминг D78) —
+живёт в доках: [ffi-cookbook](../ffi-cookbook.md) · [module-conventions](../module-conventions.md) ·
+[authoring-a-module](../guide/authoring-a-module.md). Этот план теперь фокусируется на
+**`src/`-раскладке std-миграции** (остаток; паттерн доказан mbedTLS-волной T40).
 
 ## Архитектурное решение владельца (2026-07-10)
 
@@ -37,7 +40,7 @@
 
 - После миграции TLS `tls_shim`-Rust не нужен → **удалить `[ffi.staticlib]`-cargo**
   (manifest.rs) и `tls_shim/`-crate; `detect_tls` legacy-путь снять.
-- Доки (192): `[ffi]` (.c+.lib) — единственный native-канон; убрать упоминания
+- Доки: `[ffi]` (.c+.lib) — единственный native-канон; убрать упоминания
   cargo/staticlib-Rust как паттерна для пользователя.
 
 ### 3. Настоящий `nova-tls` (после 03.1)

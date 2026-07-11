@@ -11,7 +11,7 @@
 > общий гайд [authoring-a-module](guide/authoring-a-module.md) (native-backed —
 > его §7). Дизайн-конвенции модуля (эффект-плумбинг, типы, ошибки) —
 > [module-conventions](module-conventions.md). Именование внешних пакетов
-> (`nova-<пакет>`) — [D78-амендмент Plan 192](../spec/decisions/07-modules.md#именование-внешних-пакетов-репозиториев-амендмент-plan-192-2026-07-10).
+> (`nova-<пакет>`) — [D78-амендмент Plan 195](../spec/decisions/07-modules.md#именование-внешних-пакетов-репозиториев-амендмент-plan-192-2026-07-10).
 >
 > ⚠️ **Plan 134 (2026-06-09): `ptr` built-in type removed.** Use `*()` (pointer
 > to unit type = `void*` in C) everywhere `ptr` appeared. Compiler emits
@@ -97,7 +97,7 @@ Shipped since V1 (не «future» — уже влито):
   — canonical-форма; single-field-record больше не нужна.
 - **User-shim build pipeline** ✅ — задаётся не CLI-флагом, а декларативно в
   `nova.toml`: `[ffi]` (готовые `.c`-шимы + системные `libs`) и `[ffi.staticlib]`
-  (собираемый staticlib, Plan 192). При `import` модуля артефакты
+  (собираемый staticlib, Plan 195). При `import` модуля артефакты
   компилируются/линкуются автоматически — перекомпилировать Nova-компилятор не
   надо. См. [«Build pipeline»](#build-pipeline--ffi-и-ffistaticlib-манифест) ниже.
 - **Typed-pointer family** ✅ (`*T`/`*mut T`/`Option[*T]`-NPO/`CStr`) — Plan
@@ -688,7 +688,7 @@ compilation unit. Секция `[ffi]` может быть пустой (`FFI-aw
 ### `[ffi.staticlib]` — RETRACTED (Plan 195)
 
 **Ретрактировано владельцем 2026-07-10 (Plan 195).** Секция существовала
-(Plan 192) как обобщение хардкода `detect_tls`/`tls-cache`/`-lbcrypt -lntdll`
+(Plan 195) как обобщение хардкода `detect_tls`/`tls-cache`/`-lbcrypt -lntdll`
 на манифест-механизм, собирающий native-артефакт cargo'ом/make на лету. Она
 позволяла пользовательскому native-модулю требовать Rust/cargo как часть
 своей сборки — противоречит канону тулчейна (**компилятор Nova + clang**,
@@ -718,7 +718,7 @@ brotli), без манифест-декларации в `std/nova.toml` воо�
 | Marker | What | Status |
 |---|---|---|
 | `[M-115-newtype-constructor]` | tuple newtype `type X(ptr)` constructor + `.0` access | ✅ CLOSED 2026-06-01 (canonical syntax shipped) |
-| `[M-115-ffi-build-pipeline]` | user-shim build/link pipeline | ✅ CLOSED — реализован декларативно через `nova.toml` `[ffi]` (готовые шимы/libs, Plan 115). `[ffi.staticlib]` (собираемый staticlib, Plan 192) RETRACTED владельцем (Plan 195) — native-модуль обязан собираться БЕЗ Rust/cargo. См. [«Build pipeline»](#build-pipeline--ffi-и-ffistaticlib-манифест) |
+| `[M-115-ffi-build-pipeline]` | user-shim build/link pipeline | ✅ CLOSED — реализован декларативно через `nova.toml` `[ffi]` (готовые шимы/libs, Plan 115). `[ffi.staticlib]` (собираемый staticlib, Plan 195) RETRACTED владельцем (Plan 195) — native-модуль обязан собираться БЕЗ Rust/cargo. См. [«Build pipeline»](#build-pipeline--ffi-и-ffistaticlib-манифест) |
 | `[M-115-bindgen-tool]` | `nova bindgen header.h` auto-generated bindings | 🟡 deferred (major tooling, separate plan) |
 | `[M-115-d126-deprecation]` | `external type X` D126 migration audit | ✅ CLOSED: Plan 91.12 V2 hard retract — `external type X` теперь жёсткая ошибка E_EXTERNAL_TYPE_RETRACTED (sequence: newtype-constructor ✓ → Plan 91.12 Pattern B → D126 retract выполнен) |
 | `[M-115-tuple-gc-types]` | tuple elements GC-tracked types в external fn returns | 🟢 CLOSED as by-design (extern "C" boundary correctly excludes Nova-typed containers) |
