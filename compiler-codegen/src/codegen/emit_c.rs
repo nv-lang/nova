@@ -51178,6 +51178,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // can degrade to nova_unit. If the checker was supposed to annotate this,
                     // the missing annotation will surface as a type mismatch at the real emit
                     // site (not here in the pre-scan). Panic kept ONLY in debug-assert context.
+                    //
+                    // §0 close-out Ф.1e (owner Q 2026-07-11): full LOUD-panic hardening
+                    // here is DEFERRED to Ф.6 — empirically the wildcard is still REACHED by
+                    // unannotated value-producing kinds (§0 coverage gaps, `[M-196-wildcard-
+                    // reached-kinds]`); making it panic now breaks conformance. Harden only
+                    // after Ф.4 completes checker-coverage so the wildcard is truly unreachable.
                     #[cfg(debug_assertions)]
                     if std::env::var("NOVA_STRICT_LEGACY").is_ok() {
                         panic!("[P67-LEGACY] infer_expr_c_type_legacy: unhandled ExprKind={:?} — checker must annotate (compiler-conventions.md §0)",

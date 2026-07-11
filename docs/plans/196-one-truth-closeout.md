@@ -57,12 +57,15 @@
   `resolved_type_to_c(ir.type_of(expr))`, либо call-sites зовут `resolved_type_to_c`
   напрямую и функция сносится. Второго окна не остаётся.
 
-- **Ф.1e — УЖЕСТОЧИТЬ wildcard (РАНО, до новых удалений; owner Q 2026-07-11):** сейчас
-  wildcard `_ =>` в `infer_expr_c_type` в release отдаёт ПУСТУЮ строку → вызывающий код
-  тихо деградирует к `nova_unit` (в debug — panic). Это нарушает §3 (no-silent-fallback,
-  D368) и делает prove-dead-delete НЕЗВУЧНЫМ: ложно-мёртвый арм (пробел покрытия вне
-  корпуса) молча смискомпилит `nova_unit`. Ужесточить wildcard до ГРОМКОГО panic И в
-  release → любой ложно-мёртвый падает громко. Делать ПЕРВЫМ после мержа Ф.2.
+- **Ф.1e — УЖЕСТОЧИТЬ wildcard → ОТЛОЖЕНО НА Ф.6 (эмпирика 2026-07-11).** Wildcard `_ =>`
+  в `infer_expr_c_type` в release отдаёт ПУСТУЮ строку → тихо `nova_unit` (§3-нарушение,
+  D368). ПОПЫТКА ужесточить РАНО ПРОВАЛИЛАСЬ: wildcard **реально достигается**
+  непроаннотированными value-kind'ами (`Discriminant(50)` conformance, `Discriminant(39)`
+  std — `[M-196-wildcard-reached-kinds]`), громкий panic ломает conformance. Это
+  пред-существующие §0-пробелы, НЕ ложно-мёртвые (удаления 196 звучны: 0-hit-kind'ы на
+  prove-dead-прогоне ≠ wildcard-reached-kind'ы). Полный харденинг возможен ТОЛЬКО когда
+  Ф.4 достроит checker-покрытие этих kind'ов → wildcard станет недостижим → тогда panic.
+  Перенесено в Ф.6-приёмку.
 
 ## Гейты (КАЖДАЯ фаза)
 
