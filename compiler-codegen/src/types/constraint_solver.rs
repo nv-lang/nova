@@ -538,6 +538,50 @@ fn project(container: &ResolvedType, kind: &ProjectKind) -> Option<ResolvedType>
     }
 }
 
+/// §0 Plan 196 Ф.4c — resolve-семья primitive (carrier-binding как унификация).
+///
+/// Дано: DECLARED-receiver-паттерн `recv_pattern` (carrier-генерики как СВЕЖИЕ
+/// `Ty::Var`), КОНКРЕТНЫЙ ресивер `concrete_recv` и DECLARED-return-шаблон
+/// `ret_template` (ссылается на ТЕ ЖЕ `Var`). Связать carrier-генерики
+/// УНИФИКАЦИЕЙ (`recv_pattern` ⩧ `concrete_recv`), затем инстанцировать возврат
+/// через полученную подстановку. Ровно то, что делает пара `build_recv_subst`
+/// (`types/mod.rs`) + `subst_type_ref_pub` для простого (класс-(a)) под-случая
+/// резолв-семьи — но на СВЕЖИХ числовых `Var`, а не именах.
+///
+/// КЛЮЧЕВОЙ ВЫВОД Ф.4c-recon (`docs/plans/196-audit.md` §3): carrier-binding
+/// резолв-семьи — ЧИСТАЯ унификация, УЖЕ покрытая `Constraint::Eq`/`unify`;
+/// НОВЫЙ `Constraint`-вариант тут НЕ нужен (в отличие от Ф.4a `Join` / Ф.4b
+/// `Project`, несущих НЕ-унификационное правило `join_arith`/`project`).
+/// `resolve_return` лишь КОМПОНУЕТ `unify` + инстанциацию — единый §0-вход,
+/// документирующий этот факт и служащий byte-parity-якорем, пока TypeRef-native
+/// обвязка следующей волны не заменит name-keyed `build_recv_subst`.
+///
+/// СВЕЖИЕ `Var` (не имена) → anti-d119 ПО ПОСТРОЕНИЮ (см. doc модуля): два
+/// разных carrier-`T` из двух РАЗНЫХ ресиверов никогда не сливаются по
+/// совпадению написания — вызывающий минтит новые `Var` на КАЖДЫЙ резолв.
+///
+/// `None` ⇔ ЛИБО (a) паттерн НЕ унифицируется с ресивером (несовместимая форма —
+/// продюсер ушёл бы на legacy), ЛИБО (b) возврат остаётся НЕДООПРЕДЕЛЁННЫМ —
+/// в `ret_template` уцелела свободная `Var` (незвязанный method-level generic
+/// `[U]` из аргументов): честное «без аннотации», зеркалит permissive-bail
+/// резолв-продюсеров (`typeref_mentions_any` guard).
+pub fn resolve_return(
+    recv_pattern: &Ty,
+    concrete_recv: &Ty,
+    ret_template: &Ty,
+) -> Option<ResolvedType> {
+    let mut solver = Solver::new();
+    // Связать carrier-генерики: паттерн ⩧ конкретный ресивер. Структурный
+    // `unify` заглядывает на ЛЮБУЮ глубину (`Vec[Vec[T]]` ⩧ `Vec[Vec[str]]`
+    // → `T=str`, не `Vec[str]`) — корректность nested-flatten, которую
+    // `build_recv_subst` добывал спец-фиксом (`[M-153.5-flatten-nested-receiver]`).
+    solver.unify(recv_pattern, concrete_recv).ok()?;
+    // Инстанцировать возврат через подстановку. `as_concrete_leaf` вернёт
+    // `None`, если уцелела свободная `Var` (недоопределено → legacy).
+    let resolved = solver.resolve(ret_template);
+    solver.as_concrete_leaf(&resolved)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1015,5 +1059,177 @@ mod tests {
             .unwrap();
         assert_eq!(sol.type_of(out), Some(u8_ty.clone()));
         assert_eq!(sol.type_of(a), Some(u8_ty));
+    }
+
+    // ── Plan 196 Ф.4c — `resolve_return` (resolve-семья carrier-binding) ───────
+    //
+    // Каждый тест зеркалит ПРОСТОЙ (класс-(a)) под-случай резолв-семьи
+    // (`docs/plans/196-audit.md` §3): `build_recv_subst` + `subst_type_ref_pub`,
+    // но на СВЕЖИХ `Var`. Byte-parity-якорь для будущего живого wiring.
+
+    /// `Ty::Named` без аргументов (конкретное имя-лист) — краткий конструктор.
+    fn named0(name: &str) -> Ty {
+        Ty::Named { name: name.into(), args: vec![] }
+    }
+    fn named(name: &str, args: Vec<Ty>) -> Ty {
+        Ty::Named { name: name.into(), args }
+    }
+    fn ty_vec(elem: Ty) -> Ty {
+        Ty::Named { name: "Vec".into(), args: vec![elem] }
+    }
+
+    #[test]
+    fn resolve_carrier_generic_vec_self_return() {
+        // `Vec[T] @method() -> Vec[T]` на ресивере `Vec[int]` → `Vec[int]`
+        // (carrier T=int связывается унификацией паттерна с ресивером; return =
+        // сам паттерн — fluent/Self-return).
+        let mut g = VarGen::new();
+        let t = g.fresh();
+        let int_ty = scalar(64, true, true);
+        let out = resolve_return(
+            &ty_vec(Ty::Var(t)),                 // declared receiver Vec[T]
+            &ty_vec(Ty::Concrete(int_ty.clone())), // concrete Vec[int]
+            &ty_vec(Ty::Var(t)),                 // declared return Vec[T]
+        );
+        assert_eq!(out, Some(vec_of(int_ty)));
+    }
+
+    #[test]
+    fn resolve_carrier_generic_different_container_return() {
+        // `Vec[T] @first() -> Option[T]` на `Vec[str]` → `Option[str]`
+        // (return — ДРУГОЙ контейнер того же carrier).
+        let mut g = VarGen::new();
+        let t = g.fresh();
+        let out = resolve_return(
+            &ty_vec(Ty::Var(t)),
+            &ty_vec(Ty::Concrete(ResolvedType::Str)),
+            &named("Option", vec![Ty::Var(t)]),
+        );
+        assert_eq!(
+            out,
+            Some(ResolvedType::Named {
+                name: "Option".into(),
+                module: vec![],
+                args: vec![ResolvedType::Str],
+            })
+        );
+    }
+
+    #[test]
+    fn resolve_nested_flatten_binds_innermost() {
+        // `Vec[Vec[T]] @flatten() -> Vec[T]` на `Vec[Vec[str]]` → `Vec[str]`
+        // (НЕ `Vec[Vec[str]]`). Структурный `unify` связывает T на ВЛОЖЕННОЙ
+        // глубине — та корректность, что `build_recv_subst` добывал спец-фиксом
+        // `[M-153.5-flatten-nested-receiver]` (shallow-zip мис-биндил T→Vec[str]).
+        let mut g = VarGen::new();
+        let t = g.fresh();
+        let out = resolve_return(
+            &ty_vec(ty_vec(Ty::Var(t))),                          // Vec[Vec[T]]
+            &ty_vec(ty_vec(Ty::Concrete(ResolvedType::Str))),     // Vec[Vec[str]]
+            &ty_vec(Ty::Var(t)),                                  // -> Vec[T]
+        );
+        assert_eq!(out, Some(vec_of(ResolvedType::Str)));
+    }
+
+    #[test]
+    fn resolve_unbound_method_generic_undetermined() {
+        // `Vec[T] @map[U](f) -> Vec[U]` на `Vec[int]`: `U` — method-level
+        // generic (биндинг из аргумента, arg-inference — класс (b)). В `out`
+        // уцелевает свободная `Var(u)` → `None` (permissive-bail, зеркалит
+        // `typeref_mentions_any(method_names)` guard резолв-продюсеров).
+        let mut g = VarGen::new();
+        let t = g.fresh();
+        let u = g.fresh(); // никогда не встречается в паттерне → не связывается
+        let out = resolve_return(
+            &ty_vec(Ty::Var(t)),
+            &ty_vec(Ty::Concrete(scalar(64, true, true))),
+            &ty_vec(Ty::Var(u)), // -> Vec[U], U свободна
+        );
+        assert_eq!(out, None);
+    }
+
+    #[test]
+    fn resolve_multi_carrier_map_projects_each() {
+        // `Map[K,V] @get(k) -> V` / `-> K` / `-> (K,V)` на `Map[str,int]`:
+        // оба carrier связываются, возврат проецирует нужный.
+        let concrete = named(
+            "Map",
+            vec![Ty::Concrete(ResolvedType::Str), Ty::Concrete(scalar(64, true, true))],
+        );
+        let int_ty = scalar(64, true, true);
+        // -> V
+        {
+            let mut g = VarGen::new();
+            let (k, v) = (g.fresh(), g.fresh());
+            let out = resolve_return(
+                &named("Map", vec![Ty::Var(k), Ty::Var(v)]),
+                &concrete,
+                &Ty::Var(v),
+            );
+            assert_eq!(out, Some(int_ty.clone()));
+        }
+        // -> (K, V)
+        {
+            let mut g = VarGen::new();
+            let (k, v) = (g.fresh(), g.fresh());
+            let out = resolve_return(
+                &named("Map", vec![Ty::Var(k), Ty::Var(v)]),
+                &concrete,
+                &Ty::Tuple(vec![Ty::Var(k), Ty::Var(v)]),
+            );
+            assert_eq!(
+                out,
+                Some(ResolvedType::Tuple(vec![ResolvedType::Str, int_ty]))
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_incompatible_receiver_is_none() {
+        // Паттерн `Vec[T]` vs ресивер `Option[int]` — разные `Named` → unify
+        // конфликтует → `None` (продюсер ушёл бы на legacy, не ложь).
+        let mut g = VarGen::new();
+        let t = g.fresh();
+        let out = resolve_return(
+            &ty_vec(Ty::Var(t)),
+            &named("Option", vec![Ty::Concrete(scalar(64, true, true))]),
+            &ty_vec(Ty::Var(t)),
+        );
+        assert_eq!(out, None);
+    }
+
+    #[test]
+    fn resolve_non_generic_return_passthrough() {
+        // Non-generic метод: паттерн/ресивер без carrier (`Foo` ⩧ `Foo`), return
+        // — конкретный тип напрямую (`-> bool`). Унификация тривиальна, возврат
+        // проходит как есть — base-путь `resolve_instance_method_return` при
+        // пустом `build_recv_subst`.
+        let out = resolve_return(&named0("Foo"), &named0("Foo"), &Ty::Concrete(ResolvedType::Bool));
+        assert_eq!(out, Some(ResolvedType::Bool));
+    }
+
+    #[test]
+    fn resolve_fresh_vars_no_cross_contamination_anti_d119() {
+        // Два РАЗНЫХ резолва «того же» логического `T` на РАЗНЫХ ресиверах:
+        // каждый минтит СВОЙ `Var` → T=int в одном, T=str в другом, без слияния
+        // по имени (anti-d119: solver ключует по числовой идентичности `Var`,
+        // а не по написанию `TypeParam("T")`).
+        let int_ty = scalar(64, true, true);
+        let mut g1 = VarGen::new();
+        let t1 = g1.fresh();
+        let a = resolve_return(
+            &ty_vec(Ty::Var(t1)),
+            &ty_vec(Ty::Concrete(int_ty.clone())),
+            &ty_vec(Ty::Var(t1)),
+        );
+        let mut g2 = VarGen::new();
+        let t2 = g2.fresh(); // независимая идентичность, тот же u32-номер
+        let b = resolve_return(
+            &ty_vec(Ty::Var(t2)),
+            &ty_vec(Ty::Concrete(ResolvedType::Str)),
+            &ty_vec(Ty::Var(t2)),
+        );
+        assert_eq!(a, Some(vec_of(int_ty)));
+        assert_eq!(b, Some(vec_of(ResolvedType::Str)));
     }
 }
