@@ -38882,7 +38882,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     let block_id = self.enter_defer_scope(&arm.body, false);
                     for stmt in &arm.body.stmts { self.emit_stmt(stmt)?; }
-                    if let Some(tr) = &arm.body.trailing { let _ = self.emit_expr(tr)?; }
+                    // [M-select-arm-trailing-call-dropped] (concurrency-stress-d415):
+                    // discard via `let _ = ...` silently dropped the C text for
+                    // expr kinds that DON'T self-materialize a statement (e.g. a
+                    // bare method call like `branch.store(1)` — only ExprKind::Assign
+                    // self-emits its own line). Match the codegen-wide convention
+                    // (see spawn/orphan body emit, if-let body emit, etc.): a
+                    // discarded trailing value in a void-context block MUST be
+                    // wrapped in `(void)(...)` so it actually lands in the output.
+                    if let Some(tr) = &arm.body.trailing {
+                        let v = self.emit_expr(tr)?;
+                        self.line(&format!("(void)({});", v));
+                    }
                     self.leave_defer_scope(block_id);
                     if arm.guard.is_some() {
                         self.indent -= 1;
@@ -38902,7 +38913,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     let block_id = self.enter_defer_scope(&arm.body, false);
                     for stmt in &arm.body.stmts { self.emit_stmt(stmt)?; }
-                    if let Some(tr) = &arm.body.trailing { let _ = self.emit_expr(tr)?; }
+                    // [M-select-arm-trailing-call-dropped]: see fast-path Recv arm above.
+                    if let Some(tr) = &arm.body.trailing {
+                        let v = self.emit_expr(tr)?;
+                        self.line(&format!("(void)({});", v));
+                    }
                     self.leave_defer_scope(block_id);
                     if arm.guard.is_some() {
                         self.indent -= 1;
@@ -39015,7 +39030,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             let block_id = self.enter_defer_scope(&arm.body, false);
             for stmt in &arm.body.stmts { self.emit_stmt(stmt)?; }
-            if let Some(tr) = &arm.body.trailing { let _ = self.emit_expr(tr)?; }
+            // [M-select-arm-trailing-call-dropped]: see fast-path Recv arm above.
+            if let Some(tr) = &arm.body.trailing {
+                let v = self.emit_expr(tr)?;
+                self.line(&format!("(void)({});", v));
+            }
             self.leave_defer_scope(block_id);
             self.indent -= 1;
         }
