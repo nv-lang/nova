@@ -8961,25 +8961,42 @@ used-tracking-условия (без нового error-gating).
 `type CStr(*u8)` newtype declared в std/ffi/cstr.nv — FFI-compatible C-string handle.
 ABI: marshals к `const char*` / `uint8_t*` (single positional `*u8` field).
 
-**Invariant**: instances must satisfy `ptr[strlen(ptr)] == '\0'`. Per D26 §«Nul-termination»,
-full Nova `str` already ships с this invariant, enabling zero-copy conversion.
+**Invariant**: instances must satisfy `ptr[strlen(ptr)] == '\0'`.
 
-**Conversion methods (Plan 118.1 closeout amend, 2026-06-06):** str → CStr
-conversions реализованы как pure-Nova methods в `std/ffi/cstr.nv`:
+> **⚠ AMEND Plan 199 (2026-07-11) → [D418](08-runtime.md#d418-new--str-без-nul-терминатора-c-ffi-через-copy-based-cstr-as_cstr-plan-199-retracts-d26-nul-termination).**
+> Nova `str` больше НЕ несёт trailing-NUL инвариант (retracts D26
+> §«Nul-termination» rules 1-3). `as_cstr()`/`as_cstr_unchecked()` теперь
+> ALWAYS копируют в свежий `len+1`-байтовый буфер — CStr's own invariant
+> (satisfied by construction, not by the source `str`) не меняется, но
+> «enabling zero-copy conversion» ниже — исторический текст, более не
+> верно. Code sample обновлён на актуальную copy-based форму.
+
+**Conversion methods (Plan 118.1 closeout; copy-based rewrite Plan 199 Ф.2,
+2026-07-11):** str → CStr conversions реализованы как pure-Nova methods в
+`std/ffi/cstr.nv`:
 
 ```nova
 export fn str @as_cstr() -> CStr {
-    ro bytes = @as_bytes()
+    ro bytes = @bytes()
     for b in bytes {
         if b == 0 { panic("as_cstr: embedded NUL byte in str (would truncate C-string)") }
     }
-    unsafe { CStr(bytes.as_ptr()) }
+    mut buf = Vec[u8].new().cap(bytes.len() + 1)
+    buf.append(bytes)
+    buf.push(0)
+    unsafe { CStr(buf.ptr()) }
 }
-export unsafe fn str @as_cstr_unchecked() -> CStr {  // scan-free O(1) hatch
-    ro bytes = @as_bytes()
-    unsafe { CStr(bytes.as_ptr()) }
+export unsafe fn str @as_cstr_unchecked() -> CStr {  // same copy, scan skipped
+    ro bytes = @bytes()
+    mut buf = Vec[u8].new().cap(bytes.len() + 1)
+    buf.append(bytes)
+    buf.push(0)
+    unsafe { CStr(buf.ptr()) }
 }
 // @to_cstr() — owning always-copy form; NOT in V1, deferred to Plan 118.2.
+// (as_cstr() is ALREADY an owning copy under Plan 199 — @to_cstr() would be
+// a redundant alias; the V1/V2 gap that motivated deferring it no longer
+// applies, but @to_cstr() itself remains unshipped pending a naming pass.)
 ```
 
 Использует existing builtins: `str.as_bytes()` (D176 zero-copy view) +

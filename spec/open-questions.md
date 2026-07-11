@@ -4248,12 +4248,11 @@ parser char-литералы **не поддерживает** — это бло
 
 ## Q-cstring. Гарантия nul-termination для `nova_str.ptr`
 
-✅ **ЗАКРЫТО 2026-06-03** — Plan 118.1 / D26 amend
-([spec/decisions/08-runtime.md §«Nul-termination»](decisions/08-runtime.md#d26)
-rule 3). **Reversed 2026-05-07 «variant 2».** Canonical: full `str`
-invariant + `str.as_cstr()` method (foundation shipped 2026-06-05
-commit 15abfd7546b; method runtime followup
-[M-118.1-cstr-runtime-wiring]).
+✅ **ЗАКРЫТО 2026-07-11** — Plan 199 /
+[D418](decisions/08-runtime.md#d418-new--str-без-nul-терминатора-c-ffi-через-copy-based-cstr-as_cstr-plan-199-retracts-d26-nul-termination).
+Canonical: `str` без trailing-NUL гарантии + copy-based `str.as_cstr()`
+метод (`std/ffi/cstr.nv`). ~~Было ЗАКРЫТО 2026-06-03 — Plan 118.1 / D26
+amend rule 3, canonical «full `str` invariant», retracted ниже.~~
 
 **Контекст.** Bootstrap-runtime сейчас:
 - `nova_str_concat` — аллоцирует `len + 1`, кладёт `\0` после данных.
@@ -4294,11 +4293,23 @@ defensive copy / panic в debug). Slice копирует с `\0` — O(n) цен
 118 typed pointers / Plan 91.12 std.ffi.cstr — все три зависят от
 этого инварианта). Прецедент: Zig (`[*:0]u8` встроен в язык).
 
+**RE-OPENED и RE-CLOSED 2026-07-11 (Plan 199)** — вариант 1 («always
+nul-terminated») **отменён**. Каноническое решение теперь — вариант 2
+(Rust-style): `str` без гарантии trailing NUL, C-interop через explicit
+copy-based `str.as_cstr() -> CStr` (`std/ffi/cstr.nv`, всегда копирует
+`len+1` байт + `\0`). Формализовано в
+[D418](decisions/08-runtime.md#d418-new--str-без-nul-терминатора-c-ffi-через-copy-based-cstr-as_cstr-plan-199-retracts-d26-nul-termination).
+Обоснование: инвариант окупался только для целых строк (срезы `s[a..b]`
+никогда его не несли → `as_cstr` и так копировал в частом случае), стоил
++1 байт/аллокацию + аллокаторную сложность; Rust/Go/Swift — прецедент
+copy-based конверсии.
+
 **Связь:** [D26 §«Nul-termination»](decisions/08-runtime.md#d26)
-(amended 2026-06-03 rule 3), Plan 118.1
-([project-plan118-status](../../README.md)), [D214](decisions/D214-ptr-and-tuple-ffi.md)
-(Plan 115 ptr), [D216](decisions/D216-typed-pointers.md) (Plan 118
-typed pointers), Q-ffi §22 «CStr / nul-terminated views».
+(rules 1-3 retracted 2026-07-11 → [D418](decisions/08-runtime.md#d418-new--str-без-nul-терминатора-c-ffi-через-copy-based-cstr-as_cstr-plan-199-retracts-d26-nul-termination)),
+Plan 118.1 ([project-plan118-status](../../README.md)),
+[D214](decisions/D214-ptr-and-tuple-ffi.md) (Plan 115 ptr),
+[D216](decisions/D216-typed-pointers.md) (Plan 118 typed pointers),
+Q-ffi §22 «CStr / nul-terminated views».
 
 ---
 
