@@ -50336,68 +50336,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                 },
-                // Plan 08 Ф.4: Block — тип trailing expression.
-                // Plan 52 Ф.16: enhancement — если trailing это Ident, и в
-                // block.stmts есть `let <ident> [: T] = ...`, берём тип из
-                // `ty`-аннотации (если есть) или из value-expression. Это
-                // позволяет desugar'у map-литерала (без аннотации внешнего
-                // let) дать корректный type-hint для outer-let через
-                // typed-rebinding `let _mN_typed HashMap[K,V] = _mN; _mN_typed`.
-                ExprKind::Block(b) => {
-                    if let Some(t) = &b.trailing {
-                        // Если trailing — Ident, ищем последний let с тем же именем.
-                        if let ExprKind::Ident(name) = &t.kind {
-                            for s in b.stmts.iter().rev() {
-                                if let crate::ast::Stmt::Let(d) = s {
-                                    if let crate::ast::Pattern::Ident { name: bn, .. } = &d.pattern {
-                                        if bn == name {
-                                            if let Some(ty) = &d.ty {
-                                                // Используем ty-аннотацию (Plan 52 Ф.16).
-                                                if let Ok(c) = self.type_ref_to_c(ty) {
-                                                    return c;
-                                                }
-                                            }
-                                            // Fallback: infer из value-expr.
-                                            return self.infer_expr_c_type(&d.value);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // Non-Ident trailing (e.g. `a + b`) may reference this
-                        // block's own locals. Register their inferred types in the
-                        // pattern-binding override (checked BEFORE var_types in the
-                        // Ident arm) so they shadow a stale same-named var_types
-                        // entry leaked from a prior function (var_types is not
-                        // per-fn scoped). Same root cause as emit_block_expr: without
-                        // this, `{ ro a=10; ro b=20; a+b }` infers `a+b` against a
-                        // stale `a: Vec____nova_byte*` (a Nova-body str-method local,
-                        // Plan 139.2) → block typed as a Vec view → `v == 30`
-                        // dispatches to Vec____nova_byte_method_equal → SEGV.
-                        let mut saved: Vec<(String, Option<String>)> = Vec::new();
-                        for s in &b.stmts {
-                            if let crate::ast::Stmt::Let(d) = s {
-                                if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
-                                    let ty = d.ty.as_ref()
-                                        .and_then(|tr| self.type_ref_to_c(tr).ok())
-                                        .unwrap_or_else(|| self.infer_expr_c_type(&d.value));
-                                    let old = self.pattern_binding_overrides.borrow_mut().insert(name.clone(), ty);
-                                    saved.push((name.clone(), old));
-                                }
-                            }
-                        }
-                        let result = self.infer_expr_c_type(t);
-                        for (name, old) in saved.into_iter().rev() {
-                            match old {
-                                Some(v) => { self.pattern_binding_overrides.borrow_mut().insert(name, v); }
-                                None => { self.pattern_binding_overrides.borrow_mut().remove(&name); }
-                            }
-                        }
-                        result
-                    } else {
-                        "nova_unit".into()
-                    }
-                }
                 ExprKind::RecordLit { type_name: Some(name), fields, .. } => {
                     let raw_name = name.join("_");
                     let struct_name = if raw_name == "Self" {
@@ -50711,44 +50649,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                     panic!("[P67-LEGACY] Index element type unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0); expr.span={:?} expr.id={:?} src={}", obj_ty_pre, expr.span, expr.id, self.source_file_name)
-                }
-                ExprKind::SelfAccess => {
-                    // Plan 70 Cat B (intentional erasure, session 2 finding):
-                    // SelfAccess вне instance-method context — var_types["nova_self"]
-                    // not registered. Reached в legitimate cases:
-                    // (a) Closures inside instance methods — closure body inherits
-                    //     `self` via capture, но var_types на этом уровне ещё
-                    //     отдельный scope (Plan 8 closure-capture pre-registration
-                    //     не покрывает SelfAccess).
-                    // (b) Generic-fn body emit без receiver — `self` ref'ит type
-                    //     param, который не registered как concrete type yet.
-                    // Pre-strict fallback к "nova_int" работает для int-typed
-                    // self contexts; non-int silent miscompilation possible но
-                    // не observed в test corpus.
-                    // Documented как Cat B13.
-                    let raw = self.var_types.get("nova_self").cloned().unwrap_or_else(|| {
-                        // D215: during fwd-decl scan pass (step 1c), var_types["nova_self"] is
-                        // not yet set but current_receiver_type may name the receiver type.
-                        // If it is a named tuple, return "NovaTuple_X" so downstream
-                        // Member field-type lookup finds the schema correctly.
-                        if let Some(recv_name) = &self.current_receiver_type {
-                            if self.named_tuple_field_defaults.contains_key(recv_name.as_str()) {
-                                return format!("NovaTuple_{recv_name}");
-                            }
-                        }
-                        panic!("[P67-LEGACY] SelfAccess: var_types[\"nova_self\"] not set and no current_receiver_type — unknown type (compiler-conventions.md §0)")
-                    });
-                    // Plan 152.1 Ф.3: a value-record receiver `nova_self` has C-type
-                    // `NovaValue_X*` (by-pointer), but bare `@` denotes the VALUE
-                    // (`emit_expr` yields `(*nova_self)`). Infer the by-value type so
-                    // `@field` accessor selection (`.` vs `->`) stays consistent with
-                    // the deref'd emission. Heap records (`Nova_X*`) and by-value `str`
-                    // (`nova_str`) are unaffected.
-                    if Self::is_value_struct_ptr(&raw) {
-                        raw.trim_end_matches('*').trim().to_string()
-                    } else {
-                        raw
-                    }
                 }
                 ExprKind::HandlerLit { effect_name, .. } => {
                     // handler Switch { ... } has type NovaVtable_Switch*
@@ -51177,40 +51077,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // return empty so callers degrade to nova_unit.
                     String::new()
                 }
-                ExprKind::Is(_, _) => "nova_bool".into(),
-                ExprKind::As(_, ty) => {
-                    // D54: тип `expr as T` — это T, не type-of(expr).
-                    // Без этого `let b = a as byte` infer'ил бы тип b как nova_int
-                    // (тип a) вместо nova_byte. План 05.
-                    // Plan 70 PhaseB1 (session 2): cascade-blocked (infer_expr_c_type returns String).
-                    // Strict mode: E7001 в strict_errors → build fails at emit_module finalization.
-                    self.type_ref_to_c(ty).unwrap_or_else(|e|
-                        self.record_strict_error(
-                            "infer_expr_c_type `as T` annotation",
-                            &e,
-                        ))
-                }
-                // Plan 36 followup: `0..10` literal — Nova_Range* (если type
-                // зарегистрирован). Без этого fallback nova_int ломал
-                // `(0..N).step_by(K)` method-call inference: искал
-                // method_overloads[("nova_int", "step_by")] = miss → nova_int
-                // → for-in unsupported iterator.
-                //
-                // Если Range не зарегистрирован, остаётся nova_int — emit_for
-                // Case 1 (primitive int loop) обрабатывает это через
-                // `ExprKind::Range` pattern до infer call'а.
-                ExprKind::Range { .. } => {
-                    if self.record_schemas.contains_key("Range") {
-                        if self.value_record_names.contains("Range") {
-                            "NovaValue_Range".into()
-                        } else {
-                            "Nova_Range*".into()
-                        }
-                    } else {
-                        "nova_int".into()
-                    }
-                }
-                ExprKind::For { .. } => "nova_unit".into(),
                 ExprKind::ParallelFor { body, .. } => {
                     // D71 / Plan 173.1 Ф.2: array-mode when trailing exists, unit
                     // otherwise. `[]T` for ANY element type T (primitive / heap-record
@@ -51228,9 +51094,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         None => "nova_unit".into(),
                     }
                 }
-                ExprKind::While { .. } => "nova_unit".into(),
-                ExprKind::WhileLet { .. } => "nova_unit".into(),
-                ExprKind::Loop { .. } => "nova_unit".into(),
                 // Plan 173.1 Ф.1: `supervised { … v }` evaluates to `v`'s type
                 // (post-join value-expression); trailing-less form stays unit.
                 // Mirrors `Blocking`'s identical pattern below.
@@ -51244,15 +51107,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // {…} } }` self-heals the same way at every nesting level.
                     if t.is_empty() { "nova_unit".into() } else { t }
                 }
-                ExprKind::Detach(_) => "nova_unit".into(),
-                // Plan 83.3 Ф.4.2: `blocking { }` отдаёт значение trailing
-                // expr тела (как block-expr); без trailing — unit.
-                ExprKind::Blocking(b) => {
-                    b.trailing.as_ref()
-                        .map(|e| self.infer_expr_c_type(e))
-                        .unwrap_or_else(|| "nova_unit".into())
-                }
-                ExprKind::TaggedTemplate { .. } => "nova_str".into(),
                 // `lhs ?? rhs` — type is the unwrapped inner type of lhs (Option[T] → T),
                 // falling back to rhs's type. Fixes `ro body = opt_str ?? str_val` → nova_str.
                 ExprKind::Coalesce(lhs, rhs) => {
@@ -51436,20 +51290,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                     String::new()
-                }
-                // Legacy Lambda (deprecated, Plan 19) — same approach with typed params.
-                ExprKind::Lambda { params, body, return_type, .. } => {
-                    let param_c_tys: Vec<String> = params.iter()
-                        .map(|p| p.ty.as_ref()
-                            .and_then(|t| self.type_ref_to_c(t).ok())
-                            .unwrap_or_else(|| panic!("[P67-LEGACY] lambda param type unknown — checker must annotate (compiler-conventions.md §0)")))
-                        .collect();
-                    let ret_c = match return_type {
-                        Some(rt) => self.type_ref_to_c(rt).unwrap_or_else(|e| panic!("[P67-LEGACY] lambda return type lowering failed: {:?} (compiler-conventions.md §0)", e)),
-                        None => self.infer_expr_c_type(body),
-                    };
-                    let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c);
-                    format!("{}*", clos_struct)
                 }
                 // [P67-LEGACY] финальный wildcard — неизвестный kind выражения.
                 // Checker обязан аннотировать все value-producing expressions.
