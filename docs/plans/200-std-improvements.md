@@ -134,13 +134,17 @@ Set/Queue/StringBuilder/WriteBuffer.
 **Статус:** ⛔ ЗАБЛОКИРОВАН до фикса `[M-vec-new-static-arity-overload]` (отслеживается 196.2/волна-1).
 Зарегистрирован по указанию владельца 2026-07-12.
 
-**Что:**
+**Что** (ТОЧНАЯ форма, владелец 2026-07-12):
 ```nova
 fn Vec[T].from_raw_parts(ptr *T, len int, cap int) -> Self
-⇒ fn Vec[T].new(ptr *mut T, len int, cap int) -> Self require cap >= len
+⇒ export fn Vec[T].new(ptr *mut T, len int, cap int) -> Self
+       requires len >= 0 && cap >= len
+   => { data: ptr, len, cap }
 ```
-3-арг overload конструктора `new` + `*mut T` НАПРЯМУЮ (вместо `unsafe { ptr as *mut T }` reinterpret-cast) +
-контракт `cap >= len`. Тогда `new(cap int = 0)` + `new(ptr, len, cap)` = легальный набор перегрузок.
+3-арг overload `new` + `*mut T` НАПРЯМУЮ: param уже `*mut T` → тело `{ data: ptr, len, cap }` **БЕЗ**
+`unsafe { ptr as *mut T }` reinterpret-cast; контракт `requires len >= 0 && cap >= len`. Тогда
+`new(cap int = 0)` + `new(ptr, len, cap)` = легальный набор перегрузок. (Если к моменту фолда поле уже
+переименовано `data`→`ptr` по П6 — тело станет `{ ptr, len, cap }`.)
 
 **Блокер `[M-vec-new-static-arity-overload]`:** codegen (второе окно) путает 0-арг и 3-арг перегрузки `new`
 при сборке всего vec-folder-модуля одной CU (в C уходит неверный тип/арность; репро — `vec_of_empty_panic`
