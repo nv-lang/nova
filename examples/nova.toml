@@ -6,9 +6,10 @@
 #
 #   basics/         Hello, arithmetic, match, records, strings
 #   effects/        Эффекты и handler'ы (D61, D63, D64)
-#   real_world/     Полноразмерные примеры (audit, orm, oxsar_port)
-#   effect-density/ Микросервис-сценарий для измерения «плотности
-#                   эффектов» в реальном коде
+#   real_world/     Полноразмерные примеры (orm_decorators, orm_demo)
+#   ffi/, net/, typed_pointers/, plan110/ — тематические demo
+#   _wip/           Концепты, требующие переписи начисто (Plan 197 Ф.1/Ф.2,
+#                   не участвуют в CI-гейте компиляции — см. _wip/README.md)
 #
 # Стандартная библиотека (черновики и production-код) живёт в
 # отдельном workspace-member `std/` — см. spec/decisions/07-modules.md

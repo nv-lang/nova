@@ -40,7 +40,7 @@
 
 module real_world.orm_demo
 
-use std.sql                              // Sql, SqlValue, Db, DbRow, SqlBuilder
+import std.data.sql.{Sql, SqlValue, Db, DbRow, SqlBuilder}
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -116,7 +116,7 @@ export type ColumnValue {
 // find_by_id — поиск по PK. NotFound отдельной ошибкой, чтобы caller
 // мог отличить «нет записи» от «БД упала».
 export fn Repo[T] @find_by_id(id u64) Db Fail[RepoError] -> T {
-    ro q = sql`SELECT * FROM ${@table} WHERE id = ${id}`
+    ro q = sql`SELECT * FROM ${S(@table)} WHERE id = ${I(id as i64)}`
     ro rows = Db.query(q)
     match rows {
         []     => throw NotFound
@@ -137,7 +137,7 @@ export fn Repo[T] @find_one(q Sql) Db Fail[RepoError] -> Option[T] {
 // list_all — все записи без фильтра. Для больших таблиц — `query()`
 // builder + pagination (см. ниже).
 export fn Repo[T] @list_all() Db Fail[RepoError] -> []T =>
-    @list_with(sql`SELECT * FROM ${@table}`)
+    @list_with(sql`SELECT * FROM ${S(@table)}`)
 
 // list_with — выполнить произвольный SELECT, парсить каждую строку.
 export fn Repo[T] @list_with(q Sql) Db Fail[RepoError] -> []T {
@@ -197,8 +197,7 @@ export fn Repo[T] @update(value T) Db Fail[RepoError] -> bool {
 //
 // Демонстрирует **прозрачную обработку конкурентного доступа**: caller
 // ловит Conflict через handler-лямбду и решает retry/abort.
-export fn Repo[T] @update_versioned(value T, expected_version i64)
-    Db Fail[RepoError] -> () {
+export fn Repo[T] @update_versioned(value T, expected_version i64) Db Fail[RepoError] -> () {
     ro cols = @to_columns(value)
     ro assigns = cols.map(|c| "${c.name} = ?").join(", ")
     mut args []SqlValue = cols.map(|c| c.value)
@@ -206,8 +205,8 @@ export fn Repo[T] @update_versioned(value T, expected_version i64)
     args.push(I(expected_version))
 
     ro q Sql = {
-        template: "UPDATE ${@table} SET ${assigns}, version = version + 1 "
-                + "WHERE id = ? AND version = ?",
+        template: "UPDATE ${@table} SET ${assigns}, version = version + 1 " +
+                "WHERE id = ? AND version = ?",
         args,
     }
     ro affected = Db.exec(q)
@@ -216,7 +215,7 @@ export fn Repo[T] @update_versioned(value T, expected_version i64)
 
 // delete — по id. true если запись была.
 export fn Repo[T] @delete(id u64) Db Fail[RepoError] -> bool {
-    ro q = sql`DELETE FROM ${@table} WHERE id = ${id}`
+    ro q = sql`DELETE FROM ${S(@table)} WHERE id = ${I(id as i64)}`
     Db.exec(q) > 0
 }
 
@@ -226,12 +225,11 @@ export fn Repo[T] @delete(id u64) Db Fail[RepoError] -> bool {
 //
 // Это **главный анти-N+1 примитив**: в `posts_of(user_ids)` мы делаем
 // один SQL `WHERE user_id IN (...)` вместо N отдельных find_by_id'ов.
-export fn Repo[T] @bulk_load[K](fk_col str, keys []K, key_to_sql fn(K) -> SqlValue)
-    Db Fail[RepoError] -> []T {
+export fn Repo[T] @bulk_load[K](fk_col str, keys []K, key_to_sql fn(K) -> SqlValue) Db Fail[RepoError] -> []T {
     if keys.len() == 0 { return [] }
 
     ro sql_keys []SqlValue = keys.map(key_to_sql)
-    ro q = Sql.builder(sql`SELECT * FROM ${@table} WHERE 1 = 1`)
+    ro q = Sql.builder(sql`SELECT * FROM ${S(@table)} WHERE 1 = 1`)
         .where_in(fk_col, sql_keys)
         .build()
     @list_with(q)
@@ -253,7 +251,7 @@ export type Query[T] {
 export fn Repo[T] @query() -> Query[T] =>
     {
         repo: @,
-        builder: Sql.builder(sql`SELECT * FROM ${@table} WHERE 1 = 1`),
+        builder: Sql.builder(sql`SELECT * FROM ${S(@table)} WHERE 1 = 1`),
     }
 
 // Все where_* методы возвращают `mut self` через D60 spread — но
@@ -284,13 +282,13 @@ export fn Query[T] mut @where_lt(col str, value SqlValue) -> Query[T] {
 // часть. Для простоты demo передаём строку SQL — реальная stdlib дала бы
 // Direction enum.
 export fn Query[T] mut @order_by(expr str) -> Query[T] {
-    @builder.set_suffix(sql`ORDER BY ${expr}`)
+    @builder.set_suffix(sql`ORDER BY ${S(expr)}`)
     @
 }
 
 // limit — LIMIT N. Перетирает любую предыдущую suffix-секцию.
 export fn Query[T] mut @limit(n int) -> Query[T] {
-    @builder.set_suffix(sql`LIMIT ${n}`)
+    @builder.set_suffix(sql`LIMIT ${I(n as i64)}`)
     @
 }
 
@@ -320,15 +318,14 @@ export type Page[T] {
 //
 // Cursor-based pagination > offset-based: устойчив к insertion'ам
 // между страницами (в отличие от LIMIT/OFFSET).
-export fn Repo[T] @fetch_page(after Option[u64], size int)
-    Db Fail[RepoError] -> Page[T] {
+export fn Repo[T] @fetch_page(after Option[u64], size int) Db Fail[RepoError] -> Page[T] {
     ro cursor_predicate Sql = match after {
         Some(id) => { template: "AND id > ?", args: [id as i64] }
         None     => { template: "", args: [] }
     }
     ro q Sql = {
-        template: "SELECT * FROM ${@table} WHERE 1 = 1 ${cursor_predicate.template} "
-                + "ORDER BY id ASC LIMIT ?",
+        template: "SELECT * FROM ${@table} WHERE 1 = 1 ${cursor_predicate.template} " +
+                "ORDER BY id ASC LIMIT ?",
         args: [...cursor_predicate.args, (size + 1) as i64],
     }
     ro items = @list_with(q)
@@ -443,7 +440,7 @@ export fn posts_of_many(user_ids []UserId) Db Fail[RepoError] -> HashMap[UserId,
 
     mut grouped = HashMap[UserId, []Post].new()
     for p in posts {
-        ro bucket = grouped.get_or_insert(p.user_id, [])
+        mut bucket = grouped.get_or_insert(p.user_id, [])
         bucket.push(p)
     }
     grouped
@@ -467,8 +464,7 @@ export fn posts_of_many(user_ids []UserId) Db Fail[RepoError] -> HashMap[UserId,
 //
 // Если внутри transfer что-то throw'нуло — handler автоматически
 // rollback'ит. Бизнес-код не пишет ни BEGIN, ни COMMIT.
-export fn transfer_balance(from_id UserId, to_id UserId, amount i64)
-    Db Fail[RepoError] -> () {
+export fn transfer_balance(from_id UserId, to_id UserId, amount i64) Db Fail[RepoError] -> () {
     if amount <= 0 { throw Inconsistent("amount must be positive") }
 
     Db.in_transaction(|| {
@@ -580,9 +576,9 @@ test "find_by_id returns the user" {
 
     with Db = in_memory_db_handler(storage) {
         ro u = users_repo().find_by_id(1)
-        assert u.name == "alice"
-        assert u.email == "a@example.com"
-        assert u.balance == 100
+        assert(u.name == "alice")
+        assert(u.email == "a@example.com")
+        assert(u.balance == 100)
     }
 }
 
@@ -593,7 +589,7 @@ test "find_by_id throws NotFound for missing id" {
         ro r = users_repo().find_by_id(999)
         match r {
             NotFound => ()                   // ожидаемый исход
-            _        => assert false
+            _        => assert(false)
         }
     }
 }
@@ -610,7 +606,7 @@ test "Query fluent builder — where_eq + limit + fetch_all" {
             .where_eq("name", S("alice"))
             .limit(10)
             .fetch_all()
-        assert active.len() >= 1
+        assert(active.len() >= 1)
     }
 }
 
@@ -620,8 +616,8 @@ test "delete returns true when row existed" {
 
     with Db = in_memory_db_handler(storage) {
         ro repo = users_repo()
-        assert repo.delete(1) == true
-        assert repo.delete(1) == false       // повторно — нечего удалять
+        assert(repo.delete(1) == true)
+        assert(repo.delete(1) == false)       // повторно — нечего удалять
     }
 }
 
@@ -637,7 +633,7 @@ test "bulk_load — anti-N+1 для списка id'ов" {
             [1 as UserId, 2 as UserId, 3 as UserId],
             |uid| I(uid as i64),
         )
-        assert users.len() == 3
+        assert(users.len() == 3)
     }
 }
 
@@ -653,7 +649,7 @@ test "transfer rolls back on throw" {
             // Симулируем postgres-handler: при throw делаем rollback,
             // при успехе — commit. На реальном соединении это были бы
             // BEGIN/COMMIT/ROLLBACK SQL-команды.
-            ro r = try_run(b)
+            ro r = with Fail[RepoError] = |e| interrupt Err(e) { Ok(b()) }
             match r {
                 Ok(v)  => { commits += 1; v }
                 Err(e) => { rollbacks += 1; throw e }
@@ -666,10 +662,10 @@ test "transfer rolls back on throw" {
     }
     match captured {
         Some(NotFound) => ()                  // first find_by_id — NotFound
-        _              => assert false
+        _              => assert(false)
     }
-    assert rollbacks == 1
-    assert commits == 0
+    assert(rollbacks == 1)
+    assert(commits == 0)
 }
 
 // Optimistic locking — Conflict при mismatch версии.
@@ -697,7 +693,7 @@ test "update_versioned throws Conflict on version mismatch" {
     }
     match captured {
         Some(Conflict) => ()                  // ожидаемое
-        _              => assert false
+        _              => assert(false)
     }
 }
 
@@ -715,6 +711,6 @@ test "Page pagination — cursor + has_next" {
         //  LIMIT.) Тест демонстрирует API; точные значения зависят от
         //  handler'а.
         ro page = users_repo().fetch_page(None, 2)
-        assert page.items.len() <= 2 || page.next_cursor != None
+        assert(page.items.len() <= 2 || page.next_cursor != None)
     }
 }
