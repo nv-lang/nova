@@ -722,10 +722,16 @@ pub struct ResolvedFfiConfig {
 
 impl ResolvedFfiConfig {
     /// Plan 115: собрать resolved `[ffi]` из манифеста (paths → абсолютные
-    /// от `source_root`). None — у манифеста нет `[ffi]`.
+    /// от директории `nova.toml`, D214 doc-contract — см.
+    /// `manifest::FfiConfig`). Plan 193 Ф.1 continuation (2026-07-12): было
+    /// `m.source_root`, которая расходится с `nova.toml`-директорией для
+    /// legacy `[lib] src = "<subdir>"` (напр. `nova-tls`'s `src = "src"`),
+    /// ломая `c_shims`/`include_dirs` на любом пакете с non-trivial `[lib]
+    /// src` — `manifest_dir` всегда = директория `nova.toml`.
+    /// None — у манифеста нет `[ffi]`.
     pub fn from_manifest(m: &crate::manifest::Manifest) -> Option<Self> {
         let cfg = m.ffi.as_ref()?;
-        let base = m.source_root.clone();
+        let base = m.manifest_dir.clone();
         Some(ResolvedFfiConfig {
             c_shims: cfg.c_shims.iter().map(|p| base.join(p)).collect(),
             include_dirs: cfg.include_dirs.iter().map(|p| base.join(p)).collect(),
@@ -2882,12 +2888,25 @@ pub fn find_repo_root_from(start: &Path) -> Option<PathBuf> {
             }
             last_toml_dir = Some(dir.clone());
         }
-        let parent = dir.parent()?.to_path_buf();
-        if parent == dir {
-            // Reached filesystem root.
-            return last_toml_dir;
+        // Plan 193 Ф.1 continuation (2026-07-12): `dir.parent()?` used to
+        // `?`-propagate `None` out of the WHOLE function the moment the walk
+        // reached the filesystem root (`Path::parent()` returns `None` at
+        // the root — it never returns `Some(dir)`, so the `parent == dir`
+        // check below was dead code, unreachable). That discarded an
+        // already-found `last_toml_dir` (a leaf/external package's own
+        // non-`[workspace]` `nova.toml`, e.g. `nova-tls/nova.toml`) and
+        // returned `None` — silently skipping `resolve_imports_inline_ex` +
+        // `collect_all_signatures` in `codegen_to_c` for ANY standalone
+        // package with no `[workspace]`-marked ancestor (module stayed at
+        // its raw single-file item count; sibling `.nv` peers in the same
+        // folder never got folded in), causing false `[D133-not-consumed]`
+        // (and other cross-module-blind) diagnostics. Fix: match instead of
+        // `?`, mirroring the already-correct fallback loop in
+        // `nova-cli::find_repo_root`.
+        match dir.parent() {
+            Some(p) => dir = p.to_path_buf(),
+            None => return last_toml_dir,
         }
-        dir = parent;
     }
 }
 

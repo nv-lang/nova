@@ -73,6 +73,24 @@ enum PrimBuiltin { Fn(&'static str), BinOp(&'static str), Identity }
 /// ClosureFull / HandlerLit) и найти первый `interrupt VAL` — вернуть
 /// C-тип VAL. Используется в `infer_expr_c_type` для `With`, когда body
 /// не имеет trailing (тогда тип blocка определяется handler'ом).
+///
+/// Plan 196.3 (мелочь-пакет, one-window inventory) verdict: LEGIT-LOWERING,
+/// не кандидат на прямую миграцию к `resolved_types`/`resolved_callees` —
+/// это структурный AST-walk (найти узел `Interrupt`, не переизобретённая
+/// проверка типа), а фактический C-тип VAL уже читается через
+/// `emitter.infer_expr_c_type(v)`, который сам «channels FIRST, legacy
+/// LAZY» (Plan 172.1 §0/§1, см. :48691) — то есть чтение канала уже
+/// происходит на один уровень ниже. Прямое чтение `resolved_types` ЗДЕСЬ
+/// невозможно by design: оба вызывающих (`probe_handler_ty` / :8883,
+/// `probe_handler_ty_ro` / :8922) намеренно временно переопределяют тип
+/// первого параметра handler'а на РЕАЛЬНЫЙ payload-тип `Fail[E]` ПЕРЕД
+/// вызовом этой функции, потому что чекер типизирует `|e| interrupt
+/// Some(e)` по WIRE-схеме эффекта (hardcoded `nova_str`, effects.h), а не
+/// по конкретной инстанциации `E` — известное ограничение задокументировано
+/// ещё в Plan 120 (`docs/plans/120-named-tuples-and-allocation-contract.md`
+/// `[M-D215-defaults-handler-lambda-type]`) и закрыто этим rebind-приёмом.
+/// Значит `resolved_types[interrupt_val.id]` на момент вызова либо
+/// отсутствует, либо содержит устаревший WIRE-тип — не источник истины.
 pub fn infer_handler_interrupt_ty(emitter: &CEmitter, handler: &Expr) -> Option<String> {
     use crate::ast::{ClosureBody, FnBody, ElseBranch};
     fn walk_expr(emitter: &CEmitter, e: &Expr, out: &mut Option<String>) {
@@ -18418,6 +18436,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Plan 48 Ф.0: resolve concrete type args for a generic fn call.
     /// Returns Vec<(param_name, c_type)> or Err with a helpful message (R5).
     /// Priority: turbofish > arg-type inference > return-type context.
+    ///
+    /// **[Q10, Plan 196.3 wave-2, 2026-07-12] Судьба: ВТОРОЕ ОКНО, Tier-2
+    /// СТРУКТУРНО ЗАБЛОКИРОВАНО (не мигрирована в этом окне).** Это не
+    /// "mono-lowering" (механическая подстановка уже-решённого) — тело
+    /// делает РЕАЛЬНУЮ unification (param `TypeRef` ⋂ arg C-type → T),
+    /// т.е. повторяет инференс, который чекер обязан выполнить для
+    /// type-check'а вызова generic-функции (`f1_check_call`,
+    /// `types/mod.rs` ~10242), но НЕ сохраняет: guard `typeref_mentions_any`
+    /// (`types/mod.rs` ~10478 — ВНУТРИ forbidden-зоны Q10, маркер 10452
+    /// лежит буквально в теле той же `f1_check_call`) явно пропускает
+    /// generic-возврат («they'd need type-subst, not available here»).
+    /// rustc-аналогия «mono = подстановка, не инференс» здесь НЕ применима
+    /// буквально: у rustc typeck уже пишет `node_substs`; у нас channel для
+    /// per-call generic type-args ОТСУТСТВУЕТ — то, что происходит здесь
+    /// СЕЙЧАС, суть повтор инференса под видом «lowering» (ранняя карта
+    /// `196.wave2-progress.md` строка `resolve_mono_type_args` называла это
+    /// «✅ остаётся (lowering-subst)» — уточнено этим заходом: не lowering).
+    /// Подтверждает Tier-2-находку Q5 (`196.3-wave2-d-driven.md` §«СТРУКТУРНАЯ
+    /// НАХОДКА») для «mono-резолверов» конкретным кодовым доказательством.
+    /// Постройка недостающего канала (per-call `ExprId` → `Vec<ResolvedType>`,
+    /// аналог `node_substs`) требует правки `f1_check_call`/instance-method
+    /// сиблинга — запрещённой для Q10 зоны; решение о постройке — за
+    /// владельцем (см. Q5 «Развилка (A)/(B)»). Легаси НЕ трогается. См. также
+    /// `resolve_method_level_subst` (~19355) — идентичный вердикт; три
+    /// независимых hand-duplicated инференс-движка (эта функция +
+    /// `resolve_method_level_subst` + инлайн instance-method dispatch)
+    /// исторически чинились СИНХРОННО вручную (см. Source 4 ниже,
+    /// «[M-exp-promotion-blockers: retry]»), что и есть симптом второго окна.
     fn resolve_mono_type_args(
         &self,
         fn_decl: &crate::ast::FnDecl,
@@ -19352,6 +19398,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// `current_type_subst` save'ится/restore'ится локально (вход с
     /// `receiver_subst`, выход — оригинальное состояние). Возвращает
     /// `Vec<(name, c_ty)>` отфильтрованный (пустые / `void*` отброшены).
+    ///
+    /// **[Q10, Plan 196.3 wave-2, 2026-07-12] Судьба: ВТОРОЕ ОКНО, Tier-2
+    /// СТРУКТУРНО ЗАБЛОКИРОВАНО.** Тот же вердикт и то же обоснование, что у
+    /// twin-функции `resolve_mono_type_args` (~18421, см. её doc-блок для
+    /// полного разбора) — это НЕ mono-lowering (компьютерная подстановка
+    /// уже-решённого чекером факта), а собственный unification-движок
+    /// (Steps 1/2/2f/3 ниже), дублирующий инференс, который `f1_check_call`
+    /// (`types/mod.rs` ~10242, forbidden для Q10) обязан выполнять для
+    /// type-check'а вызова метода с method-level generics, но не
+    /// экспортирует. Migration требует нового канала
+    /// (per-call `ExprId` → substitution, аналог rustc `node_substs`),
+    /// постройка которого трогает forbidden-зону — вне scope Q10; решение
+    /// за владельцем (Q5 «Развилка (A)/(B)», `196.3-wave2-d-driven.md`
+    /// §«СТРУКТУРНАЯ НАХОДКА»). Ранняя карта `196.wave2-progress.md` строка
+    /// `resolve_method_level_subst` уже верно отмечала «➡ чекер» (SEP от
+    /// волны-1) — этот заход уточняет: направление верное, но ПРЕЖДЕВРЕМЕННО
+    /// (тот же канал-гэп блокирует и её). Легаси НЕ трогается.
     fn resolve_method_level_subst(
         &mut self,
         fn_decl: &crate::ast::FnDecl,
@@ -29790,6 +29853,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     /// Infer the C function name for a call expression (without emitting args).
+    ///
+    /// Plan 196.3 (мелочь-пакет, one-window inventory) verdict: LEGIT-LOWERING,
+    /// не кандидат на миграцию к `resolved_callees` — это не пере-резолв
+    /// перегрузки (то, что закрывает канал `resolved_callees`, U.4.3, §0/§7.7),
+    /// а простой dispatch «sum-variant-конструктор vs свободная fn», который
+    /// делегирует фактическое mangling'ование ЕДИНОЙ канонической точке
+    /// `free_fn_c_name` (:16481 «Единая точка построения имени»). Само
+    /// mangling — по дизайну codegen-side lowering (см. коммент поля
+    /// `fn_ret_by_span` :906 «mangling/return are codegen lowering, §0/§7.7»),
+    /// НЕ входит в объём resolved_types/resolved_callees. Единственный
+    /// вызывающий (`emit_call_with_trailing`, :29762) достигает этой ветки
+    /// ТОЛЬКО когда `func_stripped` — свободный вызов по идентификатору
+    /// (Member/Path перехвачены раньше, :29739-29759, и уходят через
+    /// `emit_call`); `_ => free_fn_c_name("unknown")` — defensive fallback
+    /// для прочих `ExprKind`, структурно недостижим на этом пути.
     fn infer_func_c_name(&self, func: &Expr) -> String {
         match &func.kind {
             ExprKind::Ident(name) => {
@@ -32603,9 +32681,52 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     self.generic_type_instance_info.borrow()
                                         .get(&mangled).cloned();
                                 if let Some((base_name, targs)) = instance_opt {
-                                    let method_decl = self.generic_type_methods.get(&base_name)
-                                        .and_then(|ms| ms.iter().find(|m| m.name == *method))
-                                        .cloned();
+                                    // [M-vec-new-static-arity-overload] Overload-aware
+                                    // selection — mirrors the [M-138.2-generic-method-
+                                    // overload-mono] fix on the 5b instance-method
+                                    // dispatch path below (~line 34098). A bare
+                                    // first-wins `.find()` picked overload 0 regardless
+                                    // of arity — e.g. `Vec[T].new(cap int=0)` (0/1-arg)
+                                    // vs `Vec[T].new(ptr,len,cap)` (3-arg) collapsed onto
+                                    // ONE mono C symbol while call-sites still emitted
+                                    // their own (correct) arg count against that single,
+                                    // wrong-arity declaration → arg-count/type CC-FAIL
+                                    // cross-wiring (repro: `nova test --full
+                                    // std/collections/vec`, `vec_of_empty_panic`).
+                                    // Disambiguate by arity, then by param C-type, using
+                                    // the checker's resolved_callees span when available.
+                                    let same_name: Vec<crate::ast::FnDecl> = self.generic_type_methods
+                                        .get(&base_name)
+                                        .map(|ms| ms.iter().filter(|m| m.name == *method).cloned().collect())
+                                        .unwrap_or_default();
+                                    let (method_decl, overload_index): (Option<crate::ast::FnDecl>, usize) =
+                                        if same_name.len() <= 1 {
+                                            (same_name.first().cloned(), 0)
+                                        } else if let Some(idx) = self.resolved_callees.get(&call_id)
+                                            .and_then(|sp| same_name.iter().position(|m| m.span == *sp))
+                                        {
+                                            (Some(same_name[idx].clone()), idx)
+                                        } else {
+                                            let arg_c: Vec<String> = args.iter()
+                                                .map(|a| self.infer_expr_c_type(a.expr())).collect();
+                                            let mut pick: Option<usize> = None;
+                                            for (idx, m) in same_name.iter().enumerate() {
+                                                if m.params.len() != args.len() { continue; }
+                                                let mut ok = true;
+                                                for (p, ac) in m.params.iter().zip(arg_c.iter()) {
+                                                    let pc = self.type_ref_to_c(&p.ty).unwrap_or_default();
+                                                    if !pc.is_empty() && &pc != ac { ok = false; break; }
+                                                }
+                                                if ok { pick = Some(idx); break; }
+                                            }
+                                            if pick.is_none() {
+                                                pick = same_name.iter().position(|m| m.params.len() == args.len());
+                                            }
+                                            match pick {
+                                                Some(idx) => (Some(same_name[idx].clone()), idx),
+                                                None => (same_name.first().cloned(), 0),
+                                            }
+                                        };
                                     if let Some(fn_decl) = method_decl {
                                         let tmpl_opt = self.generic_type_templates.get(&base_name).cloned();
                                         if let Some(tmpl) = tmpl_opt {
@@ -32617,10 +32738,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             let is_inst = matches!(
                                                 fn_decl.receiver.as_ref().map(|r| &r.kind),
                                                 Some(crate::ast::ReceiverKind::Instance));
-                                            let method_c_name = if is_inst {
+                                            let base_method_c_name = if is_inst {
                                                 format!("{}_method_{}", mangled, method)
                                             } else {
                                                 format!("{}_static_{}", mangled, method)
+                                            };
+                                            // [M-vec-new-static-arity-overload] 2nd+
+                                            // overload gets a `__<paramtype>` suffix
+                                            // (mirrors [M-138.2] on the 5b path) so its
+                                            // mono C symbol does NOT collide with
+                                            // overload 0's.
+                                            let method_c_name = if overload_index > 0 {
+                                                let saved_ov = std::mem::replace(
+                                                    &mut self.current_type_subst,
+                                                    Self::subst_map_from_c_pairs(type_subst.iter().cloned()));
+                                                let suffix = fn_decl.params.iter()
+                                                    .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_default()
+                                                        .replace('*', "_p")
+                                                        .replace(' ', "_")
+                                                        .replace('[', "_arr_")
+                                                        .replace(']', ""))
+                                                    .collect::<Vec<_>>()
+                                                    .join("_");
+                                                self.current_type_subst = saved_ov;
+                                                if suffix.is_empty() {
+                                                    format!("{base_method_c_name}__ov{overload_index}")
+                                                } else {
+                                                    format!("{base_method_c_name}__{suffix}")
+                                                }
+                                            } else {
+                                                base_method_c_name
                                             };
                                             let saved_subst = std::mem::replace(
                                                 &mut self.current_type_subst,
@@ -37167,11 +37314,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         let sb = self.fresh_tmp_named("interp_sb");
-        // D372 amend (vec-sweep, 2026-07-07): `StringBuilder.with_capacity`
-        // removed — construct via `new()` and pre-size through the D117
-        // `mut @cap(n) -> @` setter's mono symbol (fluent, returns the sb).
+        // D372 amend2 (Plan 196 Ф.C, 2026-07-12): `StringBuilder.new(cap int =
+        // INITIAL_CAPACITY)` now pre-sizes in one call — synthesize the canonical
+        // `.new(cap: estimate)` directly (was `.new().cap(estimate)` chain, which
+        // now under-supplies the required `cap` arg on the hand-formatted call).
+        // This is the same hand-synth arity class as the Vec `(0)` sites (Plan 200
+        // п.1): no Nova-AST Call node here → callnorm cannot normalize it.
         self.line(&format!(
-            "Nova_StringBuilder* {} = Nova_StringBuilder_method_cap__nova_int(Nova_StringBuilder_static_new(), {});",
+            "Nova_StringBuilder* {} = Nova_StringBuilder_static_new({});",
             sb, estimate
         ));
         for p in parts {
@@ -37672,11 +37822,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 )
             })?;
             // Render into a dedicated builder, then steal to a str.
-            // D372 amend (vec-sweep, 2026-07-07): with_capacity removed —
-            // `new()` already pre-sizes to the same 16-byte default.
+            // D372 amend2 (Plan 196 Ф.C, 2026-07-12): `StringBuilder.new` now
+            // takes `cap int = INITIAL_CAPACITY` — supply the default (16) on this
+            // hand-synth call (same hand-formatted arity class as the Vec `(0)`
+            // sites, Plan 200 п.1: no Nova-AST Call node → callnorm cannot see it).
             let fmt_sb = self.fresh_tmp_named("fmt_sb");
             self.line(&format!(
-                "Nova_StringBuilder* {} = Nova_StringBuilder_static_new();",
+                "Nova_StringBuilder* {} = Nova_StringBuilder_static_new(16);",
                 fmt_sb
             ));
             self.line(&format!("{}({}, {});", fn_name, v, fmt_sb));
@@ -44865,6 +45017,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// ([M-172.1-some-target-coerce] / -tuple-destructure-annot / -default-arg-typed).
     /// `resolved_type_to_c(Scalar)` is pure (no mono side-effects) so calling it on `&self`
     /// from the value-emitter is safe.
+    ///
+    /// Plan 196.3 (мелочь-пакет, one-window inventory) verdict: ALREADY the
+    /// second-window channel reader — не легаси-переизобретение, а сама
+    /// точка чтения `resolved_types` (см. `self.resolved_types.get(&id)`
+    /// ниже). Единственный вызывающий (`emit_expr` IntLit-ветка, :26114)
+    /// уже follows правило «канал первым, legacy-каст lazy fallback».
+    /// Действие по этому пункту инвентаря = нет изменений, только
+    /// подтверждение статуса (не переносить снова).
     fn channel_int_c_type(&self, id: crate::ast::ExprId) -> Option<String> {
         if !id.is_set() {
             return None;

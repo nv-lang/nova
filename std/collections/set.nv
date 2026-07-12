@@ -50,8 +50,8 @@ export type Set[T] {
 
 /// Создать пустое множество.
 #stable(since = "0.1")
-export fn Set[T].new() -> Self =>
-    { map: HashMap[T, ()].new() }
+export fn Set[T].new(cap int = 16) -> Self =>
+    { map: HashMap[T, ()].new(cap: cap) }
 
 /// Построить множество из массива элементов.
 ///
