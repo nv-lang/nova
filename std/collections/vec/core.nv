@@ -94,16 +94,19 @@ export type Vec[T] priv {
 // Constructors
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Create a `Vec[T]` — `cap == 0` (default): empty, no allocation. `cap: n`
-/// (`n > 0`): exactly `n` pre-allocated element slots, `len == 0` — a single
-/// allocation, no rounding (spec D372-amend2). Equivalent to
+/// Create a `Vec[T]` — always a single allocation of `cap.max(1)` element
+/// slots (`len == 0`), no rounding (spec D372-amend2). `cap == 0` (default,
+/// `Vec[T].new()`): logically empty (`@cap() == 0`) but backed by a 1-slot
+/// placeholder buffer — same non-null-pointer-always invariant the old
+/// `null_buf` path gave, just folded into this one expression; the slot is
+/// never read/written until the first `@push`/`@reserve` grows it. `cap: n`
+/// (`n > 0`): exactly `n` pre-allocated element slots. Equivalent to
 /// `Vec[T].new().cap(n)` but one call, one allocation — the canonical
 /// pre-sizing spelling (`Vec[T].new(cap: 1024)`, or positionally
 /// `Vec[T].new(1024)`).
-export fn Vec[T].new(cap int = 0) -> Self {
-    ro buf = if cap == 0 { null_buf[T]() } else { alloc_buf[T](cap) }
-    Self { data: buf, len: 0, cap }
-}
+export fn Vec[T].new(cap int = 0) -> Self
+    requires cap >= 0
+    => { data: alloc_buf[T](cap.max(1)), len: 0, cap }
 
 /// Build a `Vec[T]` directly from its three raw components — the element
 /// buffer pointer, the live-element count, and the allocated capacity.

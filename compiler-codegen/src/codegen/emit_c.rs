@@ -37115,11 +37115,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         let sb = self.fresh_tmp_named("interp_sb");
-        // D372 amend (vec-sweep, 2026-07-07): `StringBuilder.with_capacity`
-        // removed — construct via `new()` and pre-size through the D117
-        // `mut @cap(n) -> @` setter's mono symbol (fluent, returns the sb).
+        // D372 amend2 (Plan 196 Ф.C, 2026-07-12): `StringBuilder.new(cap int =
+        // INITIAL_CAPACITY)` now pre-sizes in one call — synthesize the canonical
+        // `.new(cap: estimate)` directly (was `.new().cap(estimate)` chain, which
+        // now under-supplies the required `cap` arg on the hand-formatted call).
+        // This is the same hand-synth arity class as the Vec `(0)` sites (Plan 200
+        // п.1): no Nova-AST Call node here → callnorm cannot normalize it.
         self.line(&format!(
-            "Nova_StringBuilder* {} = Nova_StringBuilder_method_cap__nova_int(Nova_StringBuilder_static_new(), {});",
+            "Nova_StringBuilder* {} = Nova_StringBuilder_static_new({});",
             sb, estimate
         ));
         for p in parts {
@@ -37620,11 +37623,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 )
             })?;
             // Render into a dedicated builder, then steal to a str.
-            // D372 amend (vec-sweep, 2026-07-07): with_capacity removed —
-            // `new()` already pre-sizes to the same 16-byte default.
+            // D372 amend2 (Plan 196 Ф.C, 2026-07-12): `StringBuilder.new` now
+            // takes `cap int = INITIAL_CAPACITY` — supply the default (16) on this
+            // hand-synth call (same hand-formatted arity class as the Vec `(0)`
+            // sites, Plan 200 п.1: no Nova-AST Call node → callnorm cannot see it).
             let fmt_sb = self.fresh_tmp_named("fmt_sb");
             self.line(&format!(
-                "Nova_StringBuilder* {} = Nova_StringBuilder_static_new();",
+                "Nova_StringBuilder* {} = Nova_StringBuilder_static_new(16);",
                 fmt_sb
             ));
             self.line(&format!("{}({}, {});", fn_name, v, fmt_sb));

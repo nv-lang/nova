@@ -1,0 +1,122 @@
+// D372 amend 2 (Plan 196 Ф.C, 2026-07-12) — generic-static ctor default-arg
+// backfill, cross-TYPE. `Vec[T].new(cap int = 0)` already had a dedicated
+// regression (d372_canonical_new_defaults.nv, [M-vec-new-cap-default-arg-
+// backfill]) — this file pins the SAME `.new(cap: n)` / positional `.new(n)`
+// / bare `.new()` shape for the other five generic-static collection/
+// runtime ctors that adopted it in the same wave: `HashMap[K, V]`,
+// `Queue[T]`, `Set[T]`, `StringBuilder`, `WriteBuffer`.
+//
+// Regression [M-set-from-iter-self-new-default-arg-backfill]: fixing the
+// other five surfaced a SECOND, distinct callnorm gap from the original
+// Vec fix. `Self.new()` written INSIDE a generic-static method body (e.g.
+// `Set[T].from_iter`'s `mut s = Self.new()`) parses to a `Path(["Self",
+// "new"])` AST node — the SAME two-segment shape an ordinary `Type.new()`
+// static call produces, NOT the `Member{obj: TurboFish{..}}` shape the
+// original Vec fix targeted. `try_normalize_call` (callnorm.rs) used
+// `parts[0]` literally as the static_methods lookup key; `"Self"` is never
+// a real entry (methods are keyed by the DECLARED type, e.g. "Set") — so
+// the `.get(...)?` silently bailed the whole normalization, and codegen
+// emitted a call with too few arguments against the mono'd C ctor (which
+// always takes `cap`), same class of failure as [M-vec-new-cap-default-
+// arg-backfill] but at a different call-site shape (caught here by
+// `Set[int].from_iter`, which calls `Self.new()` internally). Fix: resolve
+// `Self` against the enclosing type of the fn being walked (tracked via
+// `Sigs.self_type`, set per-`Item::Fn` from `f.receiver.type_name`) before
+// the `static_methods` probe.
+//
+// Spec: spec/decisions/02-types.md §D372 (canonical `.new()` convention).
+module spec_tests.conformance
+
+test "HashMap[K, V].new() / .new(cap: n) / positional .new(n) (D372 amend 2)" {
+    mut m1 = HashMap[str, int].new()
+    assert(m1.is_empty())
+    assert(m1.cap() >= 16)
+    m1.insert("a", 1)
+    assert(m1.get("a") == Some(1))
+
+    mut m2 = HashMap[str, int].new(cap: 64)
+    assert(m2.is_empty())
+    assert(m2.cap() >= 64)
+
+    // Positional спеллинг — легален (D372 amend 2).
+    mut m3 = HashMap[str, int].new(64)
+    assert(m3.cap() >= 64)
+    m3.insert("b", 2)
+    assert(m3.get("b") == Some(2))
+}
+
+test "Queue[T].new() / .new(cap: n) / positional .new(n) (D372 amend 2)" {
+    mut q1 = Queue[int].new()
+    assert(q1.is_empty())
+    q1.push(1)
+    q1.push(2)
+    assert(q1.pop() == Some(1))
+
+    mut q2 = Queue[int].new(cap: 32)
+    assert(q2.cap() == 32)
+    assert(q2.is_empty())
+
+    // Positional спеллинг — легален (D372 amend 2).
+    mut q3 = Queue[int].new(32)
+    assert(q3.cap() == 32)
+}
+
+// Regression [M-set-from-iter-self-new-default-arg-backfill]: `from_iter`
+// calls `Self.new()` internally (bare `Self`, no explicit `cap`) — this
+// is the exact call-shape that broke.
+test "Set[T].new() / .new(cap: n) / positional .new(n) + from_iter's internal Self.new() (D372 amend 2, regression M-set-from-iter-self-new-default-arg-backfill)" {
+    mut s1 = Set[int].new()
+    assert(s1.is_empty())
+    s1.insert(1)
+    s1.insert(2)
+    assert(s1.contains(1))
+
+    mut s2 = Set[int].new(cap: 64)
+    assert(s2.is_empty())
+
+    // Positional спеллинг — легален (D372 amend 2).
+    mut s3 = Set[int].new(64)
+    assert(s3.is_empty())
+
+    // `from_iter` — the internal `Self.new()` call whose default `cap`
+    // was silently dropped before the callnorm fix (too-few-args C
+    // compile error under the mono'd ctor).
+    ro s4 = Set[int].from_iter([1, 2, 3, 2, 1])
+    assert(s4.len() == 3)
+    assert(s4.contains(2))
+    assert(s4.contains(3))
+}
+
+test "StringBuilder.new() / .new(cap: n) / positional .new(n) (D372 amend 2)" {
+    mut sb1 = StringBuilder.new()
+    assert(sb1.is_empty())
+    sb1.append("hi")
+    assert(sb1.byte_len() == 2)
+
+    mut sb2 = StringBuilder.new(cap: 128)
+    assert(sb2.cap() >= 128)
+    assert(sb2.is_empty())
+
+    // Positional спеллинг — легален (D372 amend 2).
+    mut sb3 = StringBuilder.new(128)
+    assert(sb3.cap() >= 128)
+    sb3.append("ok")
+    assert(sb3.byte_len() == 2)
+}
+
+test "WriteBuffer.new() / .new(cap: n) / positional .new(n) (D372 amend 2)" {
+    mut wb1 = WriteBuffer.new()
+    assert(wb1.len() == 0)
+    wb1.write_byte(42)
+    assert(wb1.len() == 1)
+
+    mut wb2 = WriteBuffer.new(cap: 256)
+    assert(wb2.cap() >= 256)
+    assert(wb2.len() == 0)
+
+    // Positional спеллинг — легален (D372 amend 2).
+    mut wb3 = WriteBuffer.new(256)
+    assert(wb3.cap() >= 256)
+    wb3.write_byte(7)
+    assert(wb3.len() == 1)
+}

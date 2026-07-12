@@ -51,8 +51,8 @@ export type Queue[T] {
 
 /// Создать пустую очередь.
 #stable(since = "0.1")
-export fn Queue[T].new() -> Self =>
-    { inbox: [], outbox: [] }
+export fn Queue[T].new(cap int = 0) -> Self =>
+    { inbox: []T.new(cap: cap), outbox: [] }
 
 
 
