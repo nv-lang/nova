@@ -32603,9 +32603,52 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     self.generic_type_instance_info.borrow()
                                         .get(&mangled).cloned();
                                 if let Some((base_name, targs)) = instance_opt {
-                                    let method_decl = self.generic_type_methods.get(&base_name)
-                                        .and_then(|ms| ms.iter().find(|m| m.name == *method))
-                                        .cloned();
+                                    // [M-vec-new-static-arity-overload] Overload-aware
+                                    // selection — mirrors the [M-138.2-generic-method-
+                                    // overload-mono] fix on the 5b instance-method
+                                    // dispatch path below (~line 34098). A bare
+                                    // first-wins `.find()` picked overload 0 regardless
+                                    // of arity — e.g. `Vec[T].new(cap int=0)` (0/1-arg)
+                                    // vs `Vec[T].new(ptr,len,cap)` (3-arg) collapsed onto
+                                    // ONE mono C symbol while call-sites still emitted
+                                    // their own (correct) arg count against that single,
+                                    // wrong-arity declaration → arg-count/type CC-FAIL
+                                    // cross-wiring (repro: `nova test --full
+                                    // std/collections/vec`, `vec_of_empty_panic`).
+                                    // Disambiguate by arity, then by param C-type, using
+                                    // the checker's resolved_callees span when available.
+                                    let same_name: Vec<crate::ast::FnDecl> = self.generic_type_methods
+                                        .get(&base_name)
+                                        .map(|ms| ms.iter().filter(|m| m.name == *method).cloned().collect())
+                                        .unwrap_or_default();
+                                    let (method_decl, overload_index): (Option<crate::ast::FnDecl>, usize) =
+                                        if same_name.len() <= 1 {
+                                            (same_name.first().cloned(), 0)
+                                        } else if let Some(idx) = self.resolved_callees.get(&call_id)
+                                            .and_then(|sp| same_name.iter().position(|m| m.span == *sp))
+                                        {
+                                            (Some(same_name[idx].clone()), idx)
+                                        } else {
+                                            let arg_c: Vec<String> = args.iter()
+                                                .map(|a| self.infer_expr_c_type(a.expr())).collect();
+                                            let mut pick: Option<usize> = None;
+                                            for (idx, m) in same_name.iter().enumerate() {
+                                                if m.params.len() != args.len() { continue; }
+                                                let mut ok = true;
+                                                for (p, ac) in m.params.iter().zip(arg_c.iter()) {
+                                                    let pc = self.type_ref_to_c(&p.ty).unwrap_or_default();
+                                                    if !pc.is_empty() && &pc != ac { ok = false; break; }
+                                                }
+                                                if ok { pick = Some(idx); break; }
+                                            }
+                                            if pick.is_none() {
+                                                pick = same_name.iter().position(|m| m.params.len() == args.len());
+                                            }
+                                            match pick {
+                                                Some(idx) => (Some(same_name[idx].clone()), idx),
+                                                None => (same_name.first().cloned(), 0),
+                                            }
+                                        };
                                     if let Some(fn_decl) = method_decl {
                                         let tmpl_opt = self.generic_type_templates.get(&base_name).cloned();
                                         if let Some(tmpl) = tmpl_opt {
@@ -32617,10 +32660,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             let is_inst = matches!(
                                                 fn_decl.receiver.as_ref().map(|r| &r.kind),
                                                 Some(crate::ast::ReceiverKind::Instance));
-                                            let method_c_name = if is_inst {
+                                            let base_method_c_name = if is_inst {
                                                 format!("{}_method_{}", mangled, method)
                                             } else {
                                                 format!("{}_static_{}", mangled, method)
+                                            };
+                                            // [M-vec-new-static-arity-overload] 2nd+
+                                            // overload gets a `__<paramtype>` suffix
+                                            // (mirrors [M-138.2] on the 5b path) so its
+                                            // mono C symbol does NOT collide with
+                                            // overload 0's.
+                                            let method_c_name = if overload_index > 0 {
+                                                let saved_ov = std::mem::replace(
+                                                    &mut self.current_type_subst,
+                                                    Self::subst_map_from_c_pairs(type_subst.iter().cloned()));
+                                                let suffix = fn_decl.params.iter()
+                                                    .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_default()
+                                                        .replace('*', "_p")
+                                                        .replace(' ', "_")
+                                                        .replace('[', "_arr_")
+                                                        .replace(']', ""))
+                                                    .collect::<Vec<_>>()
+                                                    .join("_");
+                                                self.current_type_subst = saved_ov;
+                                                if suffix.is_empty() {
+                                                    format!("{base_method_c_name}__ov{overload_index}")
+                                                } else {
+                                                    format!("{base_method_c_name}__{suffix}")
+                                                }
+                                            } else {
+                                                base_method_c_name
                                             };
                                             let saved_subst = std::mem::replace(
                                                 &mut self.current_type_subst,
