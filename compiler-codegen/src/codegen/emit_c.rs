@@ -48116,40 +48116,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     }
                                 }
                             }
-                            // Plan 180 [M-180-static-method-path-ret-infer]: `Type.method(...)`
-                            // where `Type` is a bare type-name Ident (not a value) leaves
-                            // `obj_ty == "void*"`. Record types get annotated via the checker's
-                            // `resolved_types` channel, but PRIMITIVE static methods
-                            // (`str.deserialize` / `int.deserialize` — the serde `Deserialize`
-                            // contract; key `("str","deserialize")` IS in method_overloads)
-                            // are not, so `?`/Try on their `Result[str,_]` return degenerated
-                            // to `void*`. Resolve the receiver (typevar → concrete via
-                            // current_type_subst) and return the static overload's concrete
-                            // `return_c_type`. Only fires in the give-up case below, so it
-                            // strictly improves (never overrides an earlier resolution).
-                            if let ExprKind::Ident(n) = &obj.kind {
-                                if let Some(c) = self.infer_static_method_ret(n, method) {
-                                    self.icr_trace("B11u_voidstar_static_method_ret");
-                                    return c;
-                                }
-                            }
+                            // Plan 196.2 W1 [gate-1]: B11u_voidstar_static_method_ret REMOVED.
+                            // Middle attempt (Plan 180, `Type.method(...)` bare-Ident static
+                            // receiver, serde Deserialize contract) sandwiched between
+                            // self_recursive above and the give-up fallback below —
+                            // checker-materialised, NO-HIT ⟹ structurally unreachable (§5).
+                            // `infer_static_method_ret` itself stays (other call site above
+                            // still uses it). Give-up fallback below is UNCHANGED (still
+                            // fires — receiver==void* is a live, frequently-reached case).
                             self.icr_trace("B11u_voidstar_giveup");
                             return "void*".into();
                         }
-                        // Effect dispatch: TypeName.method() → look up in effect_schemas
-                        let eff_name = match &obj.kind {
-                            ExprKind::Ident(n) => Some(n.clone()),
-                            ExprKind::Path(p) => Some(p.join("_")),
-                            _ => None,
-                        };
-                        if let Some(ref eff) = eff_name {
-                            if let Some(schema) = self.effect_schemas.get(eff.as_str()) {
-                                if let Some((_, ret_ty)) = Self::schema_lookup(schema, method.as_str()) {
-                                    self.icr_trace("B11v_effect_dispatch_member");
-                                    return ret_ty.clone();
-                                }
-                            }
-                        }
+                        // Plan 196.2 W1 [gate-1]: B11v_effect_dispatch_member REMOVED. Static
+                        // `TypeName.method()` effect-op dispatch via effect_schemas lookup —
+                        // the instance/vtable form (B11ac_novavtable_effect) still fires;
+                        // this bare-Ident/Path static form is checker-materialised (Channel-2)
+                        // ahead of this legacy. NO-HIT across conformance+std ⟹ structurally
+                        // unreachable (§5).
                         // [D73/D77 retraction 2026-07-06]: return-type inference for the
                         // now-removed `.into()`/`.try_into()` auto-derive synthesis was
                         // here (T from from_targets/try_from_targets). `.into()`/
