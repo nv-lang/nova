@@ -42714,6 +42714,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let env_name = format!("nova_lambda_{}_env", id);
         let body_name = format!("nova_lambda_{}_body", id);
 
+        // Macro-hygiene (Plan 196 bug-fix, NB in spec_tests/conformance/
+        // d11_with_value_body_nested_in_handler_method.nv / repro pattern
+        // examples/real_world/orm_decorators.nv:145): env-struct FIELD names
+        // must NOT be the bare captured-var name. Handler-lit / protocol-lit
+        // method bodies alias their context captures via textual
+        // `#define name (_c->name)` (emit_handler_lit / emit_protocol_lit),
+        // active for the entire method body INCLUDING any nested closure
+        // literal constructed inside it. The call-site env-populate code
+        // below writes `env_tmp->name = ...;` — the C preprocessor expands
+        // ANY bare-token occurrence of `name`, including the struct-member
+        // token after `->`, with NO awareness of member-access context. If
+        // a nested closure captures a free var whose name collides with an
+        // active outer alias (e.g. `primary` in `with_read_replica`'s
+        // `in_transaction` op, capturing `primary` from the enclosing
+        // factory fn, wrapping `primary.in_transaction(|| with Db = primary
+        // { b() })`), `env_tmp->primary = primary;` becomes invalid C:
+        // `env_tmp->(_c->primary) = (_c->primary);`. Mangling the struct
+        // field to `_nv_fv_<lambda-id>_<name>` — a token no `#define` will
+        // ever spell — sidesteps the whole class of collision without
+        // needing to track/bracket every capture-macro call site. Purely
+        // internal to this fn (struct decl + unpack + populate all agree);
+        // the RAW name stays the LOCAL C variable inside the closure body
+        // (unpack still binds `name`, not the mangled field) and the RHS of
+        // the populate assignment (a value read, not a member token) so
+        // outer aliasing continues to resolve correctly.
+        let mangled_field = |name: &str| format!("_nv_fv_{}_{}", id, name);
+
         // Plan 20 follow-up: mut-captures хранятся как pointer'ы в env,
         // чтобы writes из closure body обновляли original mut local в caller'е
         // (D32-spec mut-capture by-reference). Immutable captures — by value
@@ -42722,16 +42749,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .map(|(n, _)| self.var_mutable.contains(n))
             .collect();
 
-        // Build env struct fields. Mut fields = pointer type.
+        // Build env struct fields. Mut fields = pointer type. Field names are
+        // mangled (see `mangled_field` above) to be immune to any active
+        // outer `#define <name> ...` capture-alias macro.
         let env_fields: String = if free_vars.is_empty() {
             "int _dummy;".to_string() // avoid empty struct (UB in C)
         } else {
             free_vars.iter().zip(&free_var_is_mut)
                 .map(|((n, ty), is_mut)| {
+                    let field = mangled_field(n);
                     if *is_mut {
-                        format!("{}* {};", ty, n)        // pointer for mut
+                        format!("{}* {};", ty, field)        // pointer for mut
                     } else {
-                        format!("{} {};", ty, n)         // value for immutable
+                        format!("{} {};", ty, field)         // value for immutable
                     }
                 })
                 .collect::<Vec<_>>().join(" ")
@@ -42800,17 +42830,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // own C function reachable only via an indirect call; no source FnDecl
         // key, so KEEP conservatively (a re-invoked closure could cycle).
         self.emit_prologue_preempt_check_unconditional();
-        // Unpack env. Mut-captures: register `name → _env->name` in var_boxed
-        // so ExprKind::Ident emits `(*_env->name)` — pointer-safe, no #define.
-        // Immutable captures: local copy (no aliasing needed).
+        // Unpack env. Mut-captures: register `name → _env->_nv_fv_<id>_name` in
+        // var_boxed so ExprKind::Ident emits `(*_env->_nv_fv_<id>_name)` —
+        // pointer-safe, no #define. Immutable captures: local copy under the
+        // RAW name (fresh local in this isolated body-function scope, no
+        // outer macro can be active here — safe to expose as plain `name`).
+        // Field access uses the mangled field name (see `mangled_field`
+        // above) so the READ side of the struct-member token also stays
+        // immune to any macro sharing this closure's env-populate scope.
         if !free_vars.is_empty() {
             self.line(&format!("{}* _env = ({}*)_env_ptr;", env_name, env_name));
             for ((name, ty), is_mut) in free_vars.iter().zip(&free_var_is_mut) {
+                let field = mangled_field(name);
                 if *is_mut {
-                    // Register in var_boxed as "_env->name" so Ident emits (*_env->name).
-                    self.var_boxed.insert(name.clone(), format!("_env->{}", name));
+                    // Register in var_boxed as "_env->field" so Ident emits (*_env->field).
+                    self.var_boxed.insert(name.clone(), format!("_env->{}", field));
                 } else {
-                    self.line(&format!("{} {} = _env->{};", ty, name, name));
+                    self.line(&format!("{} {} = _env->{};", ty, name, field));
                 }
             }
         }
@@ -42907,6 +42943,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let clos_tmp = self.fresh_tmp();
         self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", env_name, env_tmp, env_name, env_name));
         for ((name, ty), is_mut) in free_vars.iter().zip(&free_var_is_mut) {
+            // LHS member-name uses the mangled field (see `mangled_field`
+            // above) — this call-site code is emitted directly into the
+            // CURRENT (possibly macro-active) output buffer, e.g. inside a
+            // handler-method body still under an outer `#define name
+            // (_c->name)` capture alias. The bare struct-member token
+            // `name` would be textually corrupted by that macro; `field`
+            // never collides with any Nova identifier or capture-alias.
+            let field = mangled_field(name);
             if *is_mut {
                 let box_var = if let Some(existing) = self.var_boxed.get(name) {
                     // Already heap-promoted by an earlier closure in this fn — reuse.
@@ -42926,10 +42970,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     bv
                 };
                 // Env stores the box pointer — safe even if closure escapes scope.
-                self.line(&format!("{}->{} = {};", env_tmp, name, box_var));
+                self.line(&format!("{}->{} = {};", env_tmp, field, box_var));
             } else {
-                // Immutable: snapshot value (no escape risk).
-                self.line(&format!("{}->{} = {};", env_tmp, name, name));
+                // Immutable: snapshot value (no escape risk). RHS `name`
+                // stays the bare identifier — a value-read position, where
+                // an active outer capture-alias macro is supposed to (and
+                // correctly does) expand it to `_c->name`.
+                self.line(&format!("{}->{} = {};", env_tmp, field, name));
             }
         }
         self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", clos_struct, clos_tmp, clos_struct, clos_struct));
