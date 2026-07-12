@@ -1,0 +1,39 @@
+// Plan 100.7 (D165): pilot Transaction3 migration — commit on success.
+// Probe 1 of 5: happy-path.
+//
+// Pattern: consume tx + explicit commit на success-path (D162).
+// D157: plain param = view (non-consuming, default).
+
+module spec_tests.conformance
+type Db2 { id int }
+type OrderErr1 { msg str }
+
+type Transaction3 consume {
+    id int,
+}
+
+// Infallible commit/rollback for clarity — avoids ? in defer body.
+fn Transaction3 consume @commit() -> () { () }
+fn Transaction3 consume @rollback() -> () { () }
+
+fn Db2 @begin() -> Transaction3 => { id: 1 }
+
+type Receipt { id int }
+
+// D157: view is default — plain param means view (non-consuming).
+// db_insert1 is infallible here to avoid D162 view-param false-positive.
+fn db_insert1(t Transaction3, data int) -> Receipt
+    => { id: data }
+
+fn process_order(db Db2, data int) -> Receipt {
+    consume tx Transaction3 = db.begin()          // explicit type annotation (D165)
+    // Commit on any exit — for simplicity use explicit consume.
+    ro receipt = db_insert1(tx, data)
+    tx.commit()
+    return receipt
+}
+
+test "Transaction3 commit success path" {
+    ro db = Db2 { id: 1 }
+    process_order(db, 42)
+}

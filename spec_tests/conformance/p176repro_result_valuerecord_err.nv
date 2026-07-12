@@ -1,0 +1,65 @@
+// Regression — value-record error type in `Result[T, <value-record E>]` surfaced
+// out of a protocol-bounded generic helper (the shape of std/io's read_to_end/copy).
+// Closes the codegen keystone `[M-valuerecord-result-vtable-mono]`: before the fix,
+// the protocol vtable referenced the concrete `NovaRes_nova_int_NovaValue_VErr*`
+// before its forward typedef -> CC-FAIL `unknown type name`. The heap-error variant
+// dodged it (erased to `NovaRes_nova_int_nova_str`); the `value` form now compiles
+// because `emit_protocol_box_typedef` forward-declares the referenced NovaRes mono.
+
+module spec_tests.conformance
+
+type VErr value { ro code int, ro op str }
+
+fn VErr.of(code int, op str) -> VErr => { code, op }
+
+type Src protocol {
+    mut @pull(buf mut []u8) -> Result[int, VErr]
+}
+
+type MemSrc { ro data []u8, mut pos int }
+
+fn MemSrc.new(data []u8) -> Self => { data, pos: 0 }
+
+fn MemSrc mut @pull(buf mut []u8) -> Result[int, VErr] {
+    ro cap = buf.len()
+    if cap == 0 { return Ok(0) }
+    ro rem = @data.len() - @pos
+    if rem <= 0 { return Ok(0) }
+    ro n = if cap < rem { cap } else { rem }
+    mut i = 0
+    while i < n {
+        buf[i] = @data[@pos + i]
+        i += 1
+    }
+    @pos = @pos + n
+    Ok(n)
+}
+
+// Generic helper: drives r.pull() (Result[int, VErr]) through a protocol bound and
+// forwards Err(VErr) out — the exact shape of io's read_to_end/copy loops.
+fn drain[R Src](r mut R) -> Result[int, VErr] {
+    mut total = 0
+    mut chunk []u8 = []u8.new()
+    chunk.resize(4, 0 as u8)
+    loop {
+        match r.pull(chunk) {
+            Ok(0)  => return Ok(total)
+            Ok(n)  => { total += n }
+            Err(e) => return Err(e)
+        }
+    }
+}
+
+test "value-record error flows through generic protocol helper" {
+    mut s = MemSrc.new("hello".bytes())
+    match drain(s) {
+        Ok(n)  => assert(n == 5)
+        Err(_) => assert(false)
+    }
+}
+
+test "value-record error is constructible and inspectable" {
+    ro e = VErr.of(28, "write")
+    assert(e.code == 28)
+    assert(e.op == "write")
+}
