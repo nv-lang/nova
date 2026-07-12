@@ -29705,37 +29705,41 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.emit_call(func, args, call_id)
     }
 
-    /// Infer the C signature (param types, return type) for a trailing block based on the called function.
-    fn infer_trailing_block_sig(&self, func: &Expr, tb: &TrailingBlock) -> (Vec<String>, String) {
-        // Look up the function being called to get the fn-param type info
-        let fn_name = match &func.kind {
-            ExprKind::Ident(n) => Some(n.clone()),
-            _ => None,
-        };
-        if let Some(name) = fn_name {
-            // Look up fn_ret_{name} for return type context
-            let _ret_key = format!("fn_ret_{}", name);
-            // Try to find the signature of the last parameter of this function
-            // (the trailing block is always the last parameter)
-            // We stored this in fn_param_sigs when registering the fn itself... but that's for calling functions
-            // Look in var_types for function parameter names of the callee's last fn-typed param
-        }
-        // Default: infer param types from trailing block params (assume nova_int)
+    /// Infer the C signature (param types, return type) for a trailing block.
+    ///
+    /// Plan 196.3 (D43, one-window pass): `func` is unused now — the earlier
+    /// `fn_name` → `fn_ret_{name}` lookup here was dead code (computed a key,
+    /// never read it; the real signature isn't reachable by callee-name from a
+    /// call site, per the comment it replaced). Per D43, a param-less
+    /// `Trailing::Block` (`f(args) { block }`) is the ONLY live caller of this
+    /// function for `tb.params` — trailing-WITH-params always uses
+    /// `Trailing::Fn` (`f(args) fn(p) body`), which `emit_call`'s Call arm
+    /// (~27511) rewrites to a synthetic `ClosureFull` arg BEFORE reaching here,
+    /// so `tb.params` is only ever non-empty via the deprecated dual-mode
+    /// `Trailing::LegacyBlockWithParams` (scheduled for removal at C13) — kept
+    /// reading the AST-declared param `TypeRef`s directly (mechanical
+    /// conversion, not inference) for that path.
+    fn infer_trailing_block_sig(&self, _func: &Expr, tb: &TrailingBlock) -> (Vec<String>, String) {
         let param_tys: Vec<String> = tb.params.iter()
             .map(|p| p.ty.as_ref()
                 .and_then(|t| self.type_ref_to_c(t).ok())
                 .unwrap_or_else(|| "nova_int".into()))
             .collect();
-        // Plan 103.5: Infer return type from block's last expression rather than defaulting to nova_int.
-        // This is needed for Lazy[T].new { body } / OnceCell[T].get_or_init { body } where T ≠ int.
-        let ret_ty = if let Some(trailing_expr) = &tb.body.trailing {
-            let inferred = self.infer_expr_c_type(trailing_expr);
-            // Use inferred type unless it's "void" (error sentinel) — fall back to nova_int.
-            if inferred != "void" { inferred } else { "nova_int".to_string() }
-        } else {
-            // Empty block body or block with only statements (no trailing expr): default nova_int
-            // (empty blocks for call_once { } will be handled by emit_block_stmts_trailing).
-            "nova_int".to_string()
+        // Plan 103.5 + 196.3: return type reads the checker channel via
+        // `infer_expr_c_type` on the block's OWN trailing expression — this is
+        // the one-window read (NOT a re-derivation): for a generic callee
+        // (`Lazy[T].new { body }` / `OnceCell[T].get_or_init { body }`) T is
+        // unified FROM the block, so the block's checker-resolved type is the
+        // only correct source (reading the callee's declared-but-unresolved
+        // `fn() -> T` would be backwards). `infer_expr_c_type` never returns a
+        // bare `"void"` post-Plan-172.1 (channel-miss now panics rather than
+        // sentineling), so no fallback is needed on that branch.
+        let ret_ty = match &tb.body.trailing {
+            Some(trailing_expr) => self.infer_expr_c_type(trailing_expr),
+            // Statement-only / empty block: per the checker's own block-typing
+            // rule (`ExprKind::Block` with no trailing expr => Unit,
+            // types/mod.rs ~12807), the block's type IS unit — not a guess.
+            None => "nova_unit".to_string(),
         };
         (param_tys, ret_ty)
     }
