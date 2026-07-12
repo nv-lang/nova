@@ -223,6 +223,45 @@ symbol-mangling→codegen-читает). Наши отклонения = ТОЛ�
 ЯВНО помеченные «компромисс, не идеал», а не выданные за «нашу норму». Rust — зрелый корректный референс;
 изобретать своё вопреки ему = риск ещё одного «второго окна».
 
+## ★ Волна-2 — встречная, D-driven по инвентарю (директива владельца 2026-07-12)
+
+**Две ВСТРЕЧНЫЕ волны, сходятся в середине:**
+- **Волна-1 (bottom-up):** по 114 веткам `infer_call_ret_c` — удаляет legacy-ветки (gate-1). [opus, nova-p196].
+  Держит ВСЮ `infer_call_ret_c` (46293-48883).
+- **Волна-2 (top-down, D-driven):** по ИНВЕНТАРЮ второго окна (таблица ~30 функций) — каждую функцию → её
+  D-фиче → полный тест-набор → переписать на новый путь → закрыть. [своя worktree]. Держит СИБЛИНГ-функции
+  (ВНЕ 46293-48883) + callnorm/argbind/резолверы.
+
+**Метод волны-2 (как «покрыть полным набором тестов по D»):** идти по таблице-инвентарю; для КАЖДОЙ
+legacy-функции:
+1. Сопоставить её **D-фиче** (языковой фиче, которую она обслуживает).
+2. Покрыть эту фичу **полным conformance-набором** (`d<NNN>_*.nv`; red-до/green-после где применимо).
+3. **Переписать на новый путь** (резолв/инференс → чекер → канал, per целевая архитектура).
+4. **ЗАКРЫТИЕ пункта = D работает через новый компилятор (по архитектуре) + удаление legacy-кода ИЛИ
+   `panic!("[MIGRATED-<D>]")`** (если переплетено монолитно).
+
+**Инвентарь → D-фича (стартовая карта; волна-2 уточняет точные D-номера):**
+| Legacy-функция | D-фича | Тест покрывает |
+|---|---|---|
+| `infer_static_method_ret` | static-методы (D182/D372) | возврат `T.static()` по типам |
+| `infer_generic_static_ctor_ret` | generic-static ctor (D372/D239) | `Vec[T].new()` / `[]T.static()` |
+| `infer_method_level_return_for_sum` | методы sum (Option/Result/enum) | возврат метода sum-типа |
+| `infer_lambda_return_type_with_params` | замыкания (D48) | вывод возврата closure |
+| `infer_trailing_block_sig` | trailing-block | типы хвостового блока |
+| `resolve_result_option_ret`, `resolve_result_te` | Result/Option | распаковка `Result[T,E]`/`Option` |
+| `infer_type_param_binding`×3, `infer_protocol_structural_binding`, `infer_result_type_params` | generics/протоколы (D53) | вывод type-param, protocol-dispatch |
+| `resolve_method_level_subst`, `resolve_mono_type_args` | mono / method-generics | подстановка / mono type-args |
+| `compute_array_elem_type_for_obj` | элемент массива/слайса (D239) | тип элемента |
+| `callnorm`/`argbind` | named-params + defaults (D46/D50) | арг-биндинг + default (generic-static ← Vec-fix ✅) |
+| `primitive_instance_method_known` | методы примитивов | возвраты → из .nv-деклараций (maximize-nv-sourcing) |
+| `type_ref_to_c` | тип→C (D315) | лоуэринг (покрыт всеми) |
+
+**Партиция (без конфликта регионов):** волна-1 = `infer_call_ret_c` (46293-48883); волна-2 = сиблинги ВНЕ
+диапазона + callnorm/argbind/резолверы (разные регионы/файлы → merge-чисто). **SHARED-хелперы** (зовутся из
+`infer_call_ret_c`): волна-2 МИГРИРУЕТ логику в чекер, но УДАЛЯЕТ только когда волна-1 их больше не зовёт (до
+того — detach/panic). **Тесты (независимые файлы) — полностью параллельны обеим волнам.** Встреча волн =
+`infer_call_ret_c` пуст (волна-1) И сиблинги мигрированы (волна-2) → второе окно удалено.
+
 ## Зачем `resolved_types` лучше `infer_call_ret_c` (мотивация — не «оно и так работает»)
 
 **История:** `infer_call_ret_c` (codegen-перевывод) ИСТОРИЧЕСКИ был ЕДИНСТВЕННЫМ окном — до §0/172 не было
