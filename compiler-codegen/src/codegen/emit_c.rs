@@ -16689,7 +16689,53 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     ///   return-type (`typed_closure_c_sig`).
     ///
     /// `None` — тип не выводится (caller фоллбэчится на `(nova_int, nova_str)`).
+    ///
+    /// Plan 196.3 Q9 (D16/D53/D72 inventory; this fn's own D30/D85 Result-channel
+    /// twin): wraps [`Self::infer_result_type_params_legacy`] with a byte-identity
+    /// guarded read of [`Self::infer_result_type_params_channel`] (checker
+    /// `resolved_types[expr.id]`, Stage-1a `resolve_return_channel` 196.4). Legacy
+    /// wins on disagreement (safety — mirrors `subst_map_adopt_rt`'s guard); the
+    /// channel ONLY fills a gap the legacy local-registry inference missed. The
+    /// channel structurally CANNOT cover every case: the checker's per-`Call`
+    /// annotation (`types/mod.rs` `f1_expr_inner`, `ExprKind::Call` arm) writes
+    /// `resolved_types_buf[e.id]` only for method-level-generic method calls
+    /// (`infer_method_call_channel_type`), TurboFish static ctors, `size_of`/
+    /// `align_of`, and `Some(x)` — Result ctors (`Ok`/`Err`) and free-fn generic
+    /// calls with a declared `-> Result[T,E]` are explicitly NOT channeled
+    /// (`Result needs BOTH Ok+Err → contextual`, `types/mod.rs` ~7910) — a real,
+    /// current architectural gap (Tier-2 per the 196.3 Q5 finding), not a bug
+    /// here. So the legacy Ident/Call/`.map`/`.map_err` inference below remains
+    /// load-bearing for the OVERWHELMING majority of call sites.
     fn infer_result_type_params(&self, expr: &crate::ast::Expr) -> Option<(String, String)> {
+        let legacy = self.infer_result_type_params_legacy(expr);
+        match (&legacy, self.infer_result_type_params_channel(expr)) {
+            (Some(_), _) => legacy,
+            (None, Some(c)) => Some(c),
+            (None, None) => None,
+        }
+    }
+
+    /// Plan 196.3 Q9: channel-first half of [`Self::infer_result_type_params`] —
+    /// reads `resolved_types[expr.id]` (checker channel, D315) and, when it
+    /// resolves to a concrete `Result[Ok,Err]` (peeling any view wrapper), lowers
+    /// both arms via [`Self::resolved_type_to_c`]. `None` on channel-miss OR a
+    /// non-`Result`/residual (`TypeParam`/`Any`/`Raw`) shape — the caller then
+    /// relies purely on the legacy local-registry inference.
+    fn infer_result_type_params_channel(&self, expr: &crate::ast::Expr) -> Option<(String, String)> {
+        use crate::types::ResolvedType as R;
+        let rt = self.channel_arg_rt(expr)?;
+        let rt = rt.peel_view();
+        let R::Named { name, args, .. } = &rt else { return None };
+        if name != "Result" || args.len() != 2 { return None; }
+        let ok = self.resolved_type_to_c(&args[0]).ok()?;
+        let err = self.resolved_type_to_c(&args[1]).ok()?;
+        if ok.is_empty() || err.is_empty() || ok == "void*" || err == "void*" {
+            return None;
+        }
+        Some((ok, err))
+    }
+
+    fn infer_result_type_params_legacy(&self, expr: &crate::ast::Expr) -> Option<(String, String)> {
         use crate::ast::ExprKind;
         match &expr.kind {
             ExprKind::TurboFish { base, .. } => self.infer_result_type_params(base),
@@ -32747,9 +32793,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         };
                                                         self.register_mono_method_instance(
                                                             &fn_decl, type_subst.clone(), &mono_name, &recv_c_ident);
+                                                        // Plan 196.3 Q9 (D16/D53/D72): seed with structural RT
+                                                        // from the checker channel where it lowers byte-
+                                                        // identically (else Raw debt) — mirrors the
+                                                        // `try_generic_static_ctor_mono` A1″ adoption (~18238).
+                                                        let slot_names: Vec<String> =
+                                                            fn_decl.generics.iter().map(|g| g.name.clone()).collect();
+                                                        let rt_slots = self.rt_slots_from_args(
+                                                            fn_decl.params.iter().map(|p| &p.ty), args, &slot_names);
+                                                        let seeded = self.subst_map_adopt_rt(&type_subst, &rt_slots);
                                                         let saved = std::mem::replace(
-                                                            &mut self.current_type_subst,
-                                                            Self::subst_map_from_c_pairs(type_subst.iter().cloned()));
+                                                            &mut self.current_type_subst, seeded);
                                                         let mut arg_strs = Vec::new();
                                                         for a in args {
                                                             arg_strs.push(self.emit_expr(a.expr())?);
@@ -33753,6 +33807,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         let type_subst: Vec<(String, String)> = subst_pending.into_iter()
                                             .map(|(n, c)| (n, c.unwrap_or_else(|| "nova_int".to_string())))
                                             .collect();
+                                        // Plan 196.3 Q9 (D16/D53/D72): structural RT slots from the
+                                        // checker channel (`resolved_types[arg.id]`), adopted below at
+                                        // the fn-typed-param inner-subst seed where it lowers byte-
+                                        // identically to the string result (else Raw debt) — mirrors
+                                        // `try_generic_static_ctor_mono`'s A1″ adoption (~18238).
+                                        let recv_slot_names: Vec<String> =
+                                            fn_decl.generics.iter().map(|g| g.name.clone()).collect();
+                                        let recv_rt_slots = self.rt_slots_from_args(
+                                            fn_decl.params.iter().map(|p| &p.ty), args, &recv_slot_names);
                                         let base_c_name = format!("Nova_{}_method_{}", rt, method);
                                         let mono_name = Self::compute_mono_name(&base_c_name, &type_subst);
                                         // Plan 101 [M-fn-prefix-int-only-mono]: register с recv_type
@@ -33777,9 +33840,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         let mut arg_strs = Vec::new();
                                         for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
                                             if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {
+                                                let recv_seeded = self.subst_map_adopt_rt(&type_subst, &recv_rt_slots);
                                                 let saved_inner = std::mem::replace(
                                                     &mut self.current_type_subst,
-                                                    Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
+                                                    recv_seeded,
                                                 );
                                                 // Plan 70 PhaseA2: strict — fn-typed param resolution через mono subst.
                                                 let mut inner_ptys: Vec<String> = fp.iter()
@@ -34336,9 +34400,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     base_method_name
                                 };
                                 // Apply subst to param types for fn_param_sigs (closure params)
+                                // Plan 196.3 Q9 (D16/D53/D72): structural RT slots from the checker
+                                // channel, adopted only where they lower byte-identically to the
+                                // merged string `type_subst` (else Raw debt) — mirrors the
+                                // `try_generic_static_ctor_mono` A1″ adoption (~18238).
+                                let full_slot_names: Vec<String> =
+                                    type_subst.iter().map(|(n, _)| n.clone()).collect();
+                                let full_rt_slots = self.rt_slots_from_args(
+                                    fn_decl.params.iter().map(|p| &p.ty), args, &full_slot_names);
+                                let full_seeded = self.subst_map_adopt_rt(&type_subst, &full_rt_slots);
                                 let saved_subst = std::mem::replace(
                                     &mut self.current_type_subst,
-                                    Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
+                                    full_seeded,
                                 );
                                 let mut arg_strs = Vec::new();
                                 for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
@@ -35041,9 +35114,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     &fn_decl, type_subst.clone(), &mono_name, &recv_type);
                                 // 3. Set current_type_subst для closure-arg type
                                 //    resolution (`pred fn(T) -> bool` → fn(nova_str) -> bool).
+                                // Plan 196.3 Q9 (D16/D53/D72): structural RT slots from the
+                                // checker channel, adopted only where they lower byte-
+                                // identically to the string `type_subst` (else Raw debt) —
+                                // mirrors the `try_generic_static_ctor_mono` A1″ adoption (~18238).
+                                let arrext_slot_names: Vec<String> =
+                                    fn_decl.generics.iter().map(|g| g.name.clone()).collect();
+                                let arrext_rt_slots = self.rt_slots_from_args(
+                                    fn_decl.params.iter().map(|p| &p.ty), args, &arrext_slot_names);
+                                let arrext_seeded = self.subst_map_adopt_rt(&type_subst, &arrext_rt_slots);
                                 let saved_subst = std::mem::replace(
                                     &mut self.current_type_subst,
-                                    Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
+                                    arrext_seeded,
                                 );
                                 // 4. Emit args с closure context. ClosureLight
                                 //    (inline `|x| ...` literal) → call emit_lambda
