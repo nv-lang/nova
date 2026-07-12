@@ -157,7 +157,7 @@ export fn str @pad_start(width int, fill char) -> str {
     ro pad = width - @chars().count()
     if pad <= 0 { return @ }
     ro fill_s = str.from(fill)
-    StringBuilder.new().cap(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).into_str()
+    StringBuilder.new(cap: @byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).into_str()
 }
 
 // Pad строку с конца до width CODEPOINT'ов символом fill. Если width <= длины — s.
@@ -166,7 +166,7 @@ export fn str @pad_end(width int, fill char) -> str {
     ro pad = width - @chars().count()
     if pad <= 0 { return @ }
     ro fill_s = str.from(fill)
-    StringBuilder.new().cap(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).into_str()
+    StringBuilder.new(cap: @byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).into_str()
 }
 
 // Pad с обеих сторон до width CODEPOINT'ов (левый паддинг = floor(pad/2)). Plan 152.2 Ф.3.
@@ -176,13 +176,13 @@ export fn str @pad_center(width int, fill char) -> str {
     ro left = pad / 2
     ro right = pad - left
     ro fill_s = str.from(fill)
-    StringBuilder.new().cap(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, left).append(@).append_repeat(fill_s, right).into_str()
+    StringBuilder.new(cap: @byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, left).append(@).append_repeat(fill_s, right).into_str()
 }
 
 // Повторение строки n раз. n <= 0 → пустая строка.
 export fn str @repeat(n int) -> str {
     if n <= 0 { return "" }
-    StringBuilder.new().cap(@byte_len() * n).append_repeat(@, n).into_str()
+    StringBuilder.new(cap: @byte_len() * n).append_repeat(@, n).into_str()
 }
 
 // Заменить все non-overlapping occurrences `from` на `to`. Empty `from` → s unchanged.

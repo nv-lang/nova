@@ -31,7 +31,7 @@ export fn Hex.encode_upper(data []u8) -> str =>
     encode_with(data, true)
 
 fn encode_with(data []u8, upper bool) -> str {
-    consume buf = StringBuilder.new().cap(data.len() * 2)
+    consume buf = StringBuilder.new(cap: data.len() * 2)
     for b in data {
         ro hi = (b as int) / 16
         ro lo = (b as int) % 16

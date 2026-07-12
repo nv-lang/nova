@@ -147,7 +147,7 @@ export fn HashMap[K, V].new(cap int = 16) -> HashMap[K, V] {
 /// ```
 #stable(since = "0.1")
 export fn HashMap[K, V].from(pairs [](K, V)) -> Self { // [M-lint-findings-static-conversion]
-    mut m = Self.new().cap(pairs.len() * 2)
+    mut m = Self.new(cap: pairs.len() * 2)
     for (k, v) in pairs {
         m.insert(k, v)
     }
@@ -309,7 +309,7 @@ export fn HashMap[K, V] mut @insert_new(key K, value V) {
 /// ```
 #stable(since = "0.1")
 export fn HashMap[K Clone, V Clone] @clone() -> HashMap[K, V] {
-    mut copy = HashMap[K, V].new().cap(@count)
+    mut copy = HashMap[K, V].new(cap: @count)
     for (k, v) in @iter() {
         copy.insert_new(k.clone(), v.clone())
     }
@@ -384,7 +384,7 @@ export fn HashMap[K, V] mut @merge_from(other HashMap[K, V]) {
 /// ```
 #stable(since = "0.1")
 export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> HashMap[K, V] {
-    mut out = HashMap[K, V].new().cap(@count)
+    mut out = HashMap[K, V].new(cap: @count)
     for (k, v) in @iter() {
         if pred(k, v) { out.insert_new(k, v) }
     }
@@ -638,7 +638,7 @@ fn HashMap[K, V] mut @rehash(new_cap int) {
 // [M-153.x-array-new-not-vec] всё ещё жив. ИСКЛЮЧЕНИЕ из []T-канона до фикса
 // static-dispatch разрыва между `[]T`-значением и типизированным `Vec[T]`.
 fn new_buckets[K, V](cap int) -> Vec[Slot[K, V]] { // [M-153.x-array-new-not-vec]
-    mut buckets = Vec[Slot[K, V]].new().cap(cap) // [M-153.x-array-new-not-vec]
+    mut buckets = Vec[Slot[K, V]].new(cap: cap) // [M-153.x-array-new-not-vec]
     for _ in 0..cap {
         buckets.push(Slot.Empty)
     }
@@ -732,7 +732,7 @@ test "from pairs constructor" {
 }
 
 test "rehash on growth" {
-    mut m = HashMap[int, int].new().cap(4)
+    mut m = HashMap[int, int].new(cap: 4)
     // cap(4) → ceil(4*4/3)=6 → next_pow2(6)=8 бакетов.
     // 100 вставок сильно превышают threshold → серия rehash'ей.
     for i in 0..100 {
@@ -751,35 +751,35 @@ test "rehash on growth" {
 // прежняя bucket-count реализация давала threshold < n.
 test "new().cap(n) contract — n inserts without rehash" {
     // n = 4
-    mut m4 = HashMap[int, int].new().cap(4)
+    mut m4 = HashMap[int, int].new(cap: 4)
     ro cap4 = m4.cap()
     for i in 0..4 { m4.insert(i, i) }
     assert(m4.cap() == cap4)
     assert(m4.len() == 4)
 
     // n = 7
-    mut m7 = HashMap[int, int].new().cap(7)
+    mut m7 = HashMap[int, int].new(cap: 7)
     ro cap7 = m7.cap()
     for i in 0..7 { m7.insert(i, i) }
     assert(m7.cap() == cap7)
     assert(m7.len() == 7)
 
     // n = 8
-    mut m8 = HashMap[int, int].new().cap(8)
+    mut m8 = HashMap[int, int].new(cap: 8)
     ro cap8 = m8.cap()
     for i in 0..8 { m8.insert(i, i) }
     assert(m8.cap() == cap8)
     assert(m8.len() == 8)
 
     // n = 13
-    mut m13 = HashMap[int, int].new().cap(13)
+    mut m13 = HashMap[int, int].new(cap: 13)
     ro cap13 = m13.cap()
     for i in 0..13 { m13.insert(i, i) }
     assert(m13.cap() == cap13)
     assert(m13.len() == 13)
 
     // n = 16
-    mut m16 = HashMap[int, int].new().cap(16)
+    mut m16 = HashMap[int, int].new(cap: 16)
     ro cap16 = m16.cap()
     for i in 0..16 { m16.insert(i, i) }
     assert(m16.cap() == cap16)
@@ -787,7 +787,7 @@ test "new().cap(n) contract — n inserts without rehash" {
 }
 
 test "tombstones cleanup on rehash" {
-    mut m = HashMap[int, int].new().cap(16)
+    mut m = HashMap[int, int].new(cap: 16)
     for i in 0..10 { m.insert(i, i) }
     for i in 0..8  { m.remove(i) }
     // Сейчас: 2 occupied + 8 tombstones. Следующий insert → rehash.
