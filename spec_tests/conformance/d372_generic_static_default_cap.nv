@@ -88,20 +88,28 @@ test "Set[T].new() / .new(cap: n) / positional .new(n) + from_iter's internal Se
 }
 
 test "StringBuilder.new() / .new(cap: n) / positional .new(n) (D372 amend 2)" {
-    mut sb1 = StringBuilder.new()
+    // StringBuilder — consume-тип (D180, std/runtime/string_builder.nv:28) —
+    // требует явного `consume`-биндинга (consume имплицирует mut, включая
+    // право мутировать через `@append`, docs/simplifications.md:27930), и
+    // обязательство закрывается ЕДИНСТВЕННЫМ consuming-методом типа —
+    // `consume @into_str()` (string_builder.nv:208) — на каждом биндинге.
+    consume sb1 = StringBuilder.new()
     assert(sb1.is_empty())
     sb1.append("hi")
     assert(sb1.byte_len() == 2)
+    assert(sb1.into_str() == "hi")
 
-    mut sb2 = StringBuilder.new(cap: 128)
+    consume sb2 = StringBuilder.new(cap: 128)
     assert(sb2.cap() >= 128)
     assert(sb2.is_empty())
+    assert(sb2.into_str() == "")
 
     // Positional спеллинг — легален (D372 amend 2).
-    mut sb3 = StringBuilder.new(128)
+    consume sb3 = StringBuilder.new(128)
     assert(sb3.cap() >= 128)
     sb3.append("ok")
     assert(sb3.byte_len() == 2)
+    assert(sb3.into_str() == "ok")
 }
 
 test "WriteBuffer.new() / .new(cap: n) / positional .new(n) (D372 amend 2)" {

@@ -70,27 +70,67 @@ pub fn normalize_module(module: &mut Module) {
 }
 
 fn collect_sigs(module: &Module) -> Sigs {
+    if std::env::var_os("NOVA_DEBUG_196_3").is_some() {
+        eprintln!("[DEBUG-196.3] collect_sigs ENTRY module.items.len()={} module.peer_files.len()={}",
+            module.items.len(), module.peer_files.len());
+        for pf in &module.peer_files {
+            eprintln!("[DEBUG-196.3]   peer path={:?} is_entry_module={} items_here.len()={} module_name={:?}",
+                pf.path, pf.is_entry_module, pf.items_here.len(), pf.module_name);
+        }
+    }
     let mut free: HashMap<String, Vec<Vec<Param>>> = HashMap::new();
     let mut static_methods: HashMap<(String, String), Vec<Vec<Param>>> = HashMap::new();
     // instance: по имени метода → список сигнатур (со всех типов).
     // Уникальное имя (1 запись) → нормализуем; иначе skip.
     let mut instance: HashMap<String, Vec<Vec<Param>>> = HashMap::new();
-    for item in &module.items {
-        if let Item::Fn(f) = item {
-            match &f.receiver {
-                None => free.entry(f.name.clone()).or_default().push(f.params.clone()),
-                Some(recv) if recv.kind == ReceiverKind::Static => {
-                    static_methods
-                        .entry((recv.type_name.clone(), f.name.clone()))
-                        .or_default()
-                        .push(f.params.clone());
-                }
-                // Plan 46 Ф.3: instance-методы — собираем по имени.
-                Some(_) => {
-                    instance.entry(f.name.clone()).or_default().push(f.params.clone());
+    let mut collect_items = |items: &[Item],
+                              free: &mut HashMap<String, Vec<Vec<Param>>>,
+                              static_methods: &mut HashMap<(String, String), Vec<Vec<Param>>>,
+                              instance: &mut HashMap<String, Vec<Vec<Param>>>| {
+        for item in items {
+            if let Item::Fn(f) = item {
+                match &f.receiver {
+                    None => free.entry(f.name.clone()).or_default().push(f.params.clone()),
+                    Some(recv) if recv.kind == ReceiverKind::Static => {
+                        static_methods
+                            .entry((recv.type_name.clone(), f.name.clone()))
+                            .or_default()
+                            .push(f.params.clone());
+                    }
+                    // Plan 46 Ф.3: instance-методы — собираем по имени.
+                    Some(_) => {
+                        instance.entry(f.name.clone()).or_default().push(f.params.clone());
+                    }
                 }
             }
         }
+    };
+    collect_items(&module.items, &mut free, &mut static_methods, &mut instance);
+    // [M-static-generic-ctor-block-wrap-ice] (Plan 196.3): `module.items`
+    // covers ONLY the compiled module's own declarations (entry file +
+    // its folder-module co-equal siblings) — a std-lib ctor like
+    // `Queue[T].new(cap int = 0)`, declared in `std/collections/queue.nv`
+    // and reached via `import`, lives in `module.peer_files`, NOT
+    // `module.items`. Without this, `static_methods`/`instance_by_name`
+    // NEVER contain an entry for ANY imported generic-static ctor
+    // (Vec/HashMap/Set/Queue's `new`), so `try_normalize_call`'s
+    // `is_static_generic_recv` branch silently bails via `?` for every
+    // SUCH call site — default-arg backfill never ran (mono'd C ctor got
+    // called with too few args), and bare/named `.new()` calls fell
+    // through codegen's fallback C-type inference straight into the
+    // `[P67-LEGACY] Ident \`Queue\`/\`Vec\`/... not in var_types` panic
+    // (full-CU ICE, D372-amend2). Mirror the SAME peer_files scan pattern
+    // already used elsewhere for exactly this kind of cross-module gap
+    // (e.g. emit_c.rs generic_type_templates registration). Filtered to
+    // `is_entry_module == false` (imported peers only) — `true` peers are
+    // the compiled module's OWN files, already fully covered by the
+    // `module.items` pass above; scanning them again would double-push
+    // into these `Vec<Vec<Param>>` accumulators and corrupt the
+    // uniqueness filter below (a legitimately-unique sig would count as
+    // 2 overloads and get dropped as "ambiguous").
+    for pf in &module.peer_files {
+        if pf.is_entry_module { continue; }
+        collect_items(&pf.items_here, &mut free, &mut static_methods, &mut instance);
     }
     // Берём только unambiguous (1 запись).
     let free = free.into_iter()
@@ -489,6 +529,11 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
                 }
                 _ => None,
             };
+            if std::env::var_os("NOVA_DEBUG_196_3").is_some() {
+                eprintln!("[DEBUG-196.3] Member-arm static_key={:?} method={} static_methods.len()={} has_key={}",
+                    static_key, name, sigs.static_methods.len(),
+                    static_key.as_ref().map(|tn| sigs.static_methods.contains_key(&(tn.clone(), name.clone()))).unwrap_or(false));
+            }
             match static_key.and_then(|tn| sigs.static_methods.get(&(tn, name.clone()))) {
                 Some(p) => { is_static_generic_recv = true; p }
                 None => sigs.instance_by_name.get(name)?,
@@ -516,6 +561,59 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
     }) || args.iter().any(|a| matches!(a, CallArg::Named { .. }));
     if !needs_norm {
         return None;
+    }
+
+    // [M-static-generic-ctor-block-wrap-ice] (Plan 196.3, D102/D372-fold
+    // follow-up): a static-generic-receiver call (`is_static_generic_recv`
+    // — `Type[Args].method(...)` / `[]T.method(...)`) with EXACTLY ONE
+    // effective param needs no temp-hoisting Block at all — there is only
+    // ONE argument position, so no L-to-R evaluation-order hazard between
+    // MULTIPLE explicit args (the reason the Block/temp machinery below
+    // exists) can arise. Block-wrapping such a call broke downstream
+    // codegen: the synthesized inner `Call` carries `ExprId::UNSET`, and
+    // nesting it inside a `Block` hides the `Member{obj: TurboFish{..}}`
+    // static-generic-ctor shape from the D109 C-type-inference fast path
+    // (`infer_call_ret_c`, emit_c.rs) — inference fell through to a
+    // generic Ident fallback and PANICKED (`[P67-LEGACY] Ident
+    // \`Queue\`/\`Vec\`/\`Set\`/\`HashMap\` not in var_types`), a full-CU
+    // ICE on EVERY bare/named `.new()` call across all four generic-
+    // static D372-amend2 canonical-cap-ctor types. Undetectable until
+    // Plan 196.3: a SEPARATE bug (D102 false-positive on the two
+    // non-generic-static types of the six, `StringBuilder`/`WriteBuffer`)
+    // always aborted compilation before codegen ever reached this shape,
+    // so the gap was never exercised end-to-end. Rewrite directly to a
+    // flat `Call` with the ORIGINAL (unchanged) func expr and exactly one
+    // resolved arg — structurally IDENTICAL to the already-working
+    // un-normalized explicit-positional call shape (`Vec[T].new(1024)`,
+    // which bypasses `try_normalize_call` entirely since it needs no
+    // backfill and `needs_norm` is false). Scoped to `is_static_generic_recv`
+    // ONLY — ordinary instance-method / free-fn single-default-param
+    // normalization keeps the general Block path below unchanged (zero
+    // regression risk to the already-passing corpus).
+    if is_static_generic_recv && effective_params.len() == 1 {
+        if std::env::var_os("NOVA_DEBUG_196_3").is_some() {
+            eprintln!("[DEBUG-196.3] fast-path HIT for id={:?}", e.id);
+        }
+        let resolved_arg: CallArg = match &bindings[0] {
+            ArgBinding::Positional(ai) | ArgBinding::Named(ai) => {
+                CallArg::Item(args[*ai].expr().clone())
+            }
+            ArgBinding::Default => {
+                let def = effective_params[0].default.clone()
+                    .expect("Default binding requires param.default");
+                CallArg::Item(def)
+            }
+            // Variadic: not a canonical single-param ctor shape — leave
+            // untouched, codegen resolves it directly (matches the
+            // `!needs_norm` early-return behavior for pure-positional
+            // calls elsewhere in this fn).
+            ArgBinding::Variadic(_) => return None,
+        };
+        return Some(ExprKind::Call {
+            func: func.clone(),
+            args: vec![resolved_arg],
+            trailing: trailing.clone(),
+        });
     }
 
     // --- Строим двухфазный Block. ---
