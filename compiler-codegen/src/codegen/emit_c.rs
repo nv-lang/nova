@@ -25005,8 +25005,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Propagate array element type so xs[i].field can be correctly typed
                 if let Some(arr_elem_ty) = self.array_element_types.get(&val).cloned() {
                     self.array_element_types.insert(binding.clone(), arr_elem_ty);
-                } else if let Some(arr_elem_ty) = self.channel_array_elem_c(&decl.value)
-                    .or_else(|| self.compute_array_elem_type_for_obj(&decl.value)) {
+                } else if let Some(arr_elem_ty) = self.channel_array_elem_c(&decl.value) {
                     // Plan 123 chain-cache fix: RHS — field/chain access
                     // (`@map._buckets` → `_at_map__buckets_chain`). `val` —
                     // C-строка field-access, не ключ в array_element_types,
@@ -29611,10 +29610,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Fallback: look up by the emitted C expression string (covers @field[idx])
                         .or_else(|| self.array_element_types.get(o.as_str()).cloned())
                         // Plan 196.3 wave-2 (D239 one-window): checker channel first.
-                        .or_else(|| self.channel_array_elem_c(obj))
-                        // Plan 56 followup: deep field-access chain — obj.f1.f2.field[i].
-                        // Compute from record schema / template + subst.
-                        .or_else(|| self.compute_array_elem_type_for_obj(obj));
+                        .or_else(|| self.channel_array_elem_c(obj));
                     if let Some(ref inner_ty) = inner_elem_ty {
                         if inner_ty.starts_with("NovaArray_") {
                             // array-of-arrays: cast the element and get data pointer
@@ -33429,8 +33425,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // unboxing so `arr.get(i)` field-readback works instead
                             // of returning a bare `nova_int`.
                             if elem_ty == "nova_int" {
-                                if let Some(ec) = self.channel_array_elem_c(obj)
-                                    .or_else(|| self.compute_array_elem_type_for_obj(obj)) {
+                                if let Some(ec) = self.channel_array_elem_c(obj) {
                                     if ec.ends_with('*') && ec != "nova_int*" {
                                         let sani = Self::sanitize_for_novaopt(&ec);
                                         self.register_novaopt_decl(&sani, &ec);
@@ -34335,8 +34330,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         // element type of the receiver (e.g. filter on
                                         // []Record) — used to re-type receiver-typevar
                                         // closure params and to propagate the result elem.
-                                        let recv_elem_real = self.channel_array_elem_c(obj)
-                                            .or_else(|| self.compute_array_elem_type_for_obj(obj));
+                                        let recv_elem_real = self.channel_array_elem_c(obj);
                                         let recv_tvar = fn_decl.generics.first().map(|g| g.name.clone());
                                         let mut arg_strs = Vec::new();
                                         for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
@@ -35683,8 +35677,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     arg_strs.push(self.emit_expr(a.expr())?);
                                 }
                                 self.current_type_subst = saved_subst;
-                                let recv_elem = self.channel_array_elem_c(obj)
-                                    .or_else(|| self.compute_array_elem_type_for_obj(obj));
+                                let recv_elem = self.channel_array_elem_c(obj);
                                 let result_str = format!("{}({})", mono_name, arg_strs.join(", "));
                                 // [M-91.1-composite-array-storage] propagate `[]U`/`[]T`
                                 // composite element type to the result var (same
