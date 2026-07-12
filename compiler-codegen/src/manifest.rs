@@ -189,6 +189,20 @@ pub struct FfiConfig {
     /// System library names для clang `-l<name>` linking. Например
     /// `libs = ["sqlite3", "png"]` → `-lsqlite3 -lpng`.
     pub libs: Vec<String>,
+    /// Plan 193 Ф.2 gate-3 (mbedtls-vendored, 2026-07-12): vendored C source
+    /// directories to build-and-cache when a declared `libs` entry is
+    /// missing from `lib_dirs` — generic "195-pattern" extension of the
+    /// monorepo's libuv one-time-build-and-cache precedent
+    /// (`detect_or_build_libuv` in `test_runner.rs`), so ANY native module
+    /// can vendor upstream C sources instead of requiring a prebuilt
+    /// system/vcpkg lib. All `.c` files directly under each declared dir
+    /// (non-recursive — matches typical upstream `library/`-style flat
+    /// layouts, e.g. mbedTLS) are compiled + archived into `lib_dirs[0]`
+    /// under EVERY name declared in `libs` (see
+    /// `test_runner::build_missing_vendor_ffi_libs`). Empty (default) — no
+    /// vendor build attempted, unchanged legacy behaviour (falls through to
+    /// the existing `first_missing_ffi_lib` detect-and-degrade probe).
+    pub vendor_src_dirs: Vec<String>,
 }
 
 /// Plan 03.1 / 03.4: quote- и bracket-aware разбор тела inline-таблицы
@@ -377,6 +391,9 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     let mut ffi_include_dirs: Vec<String> = Vec::new();
     let mut ffi_lib_dirs: Vec<String> = Vec::new();
     let mut ffi_libs: Vec<String> = Vec::new();
+    // Plan 193 Ф.2 gate-3: [ffi] vendor_src_dirs — vendored C sources for
+    // generic build-and-cache (see FfiConfig::vendor_src_dirs doc-comment).
+    let mut ffi_vendor_src_dirs: Vec<String> = Vec::new();
     let mut ffi_section_seen: bool = false;
     // Plan 149 D233: [runtime] config.
     let mut runtime_fiber_stack: Option<String> = None;
@@ -433,6 +450,7 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
                     "include_dirs" => ffi_include_dirs = parse_toml_string_array(raw_val),
                     "lib_dirs"     => ffi_lib_dirs = parse_toml_string_array(raw_val),
                     "libs"         => ffi_libs = parse_toml_string_array(raw_val),
+                    "vendor_src_dirs" => ffi_vendor_src_dirs = parse_toml_string_array(raw_val),
                     _ => {} // ignore unknown keys для forward-compat
                 }
                 continue;
@@ -483,6 +501,7 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
             include_dirs: ffi_include_dirs,
             lib_dirs: ffi_lib_dirs,
             libs: ffi_libs,
+            vendor_src_dirs: ffi_vendor_src_dirs,
         })
     } else {
         None
