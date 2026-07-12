@@ -112,6 +112,67 @@ codegen только лоуэрит через `resolved_type_to_c`; LSP чит�
 (hover/completion). Это НЕ «пара веток», а систематическая переархитектура потока типов/резолва — БЕЗ полного
 MIR (mono остаётся lazy в codegen; каналы лишь дотягиваются до mono-копий, см. Ф.A / A-спайк).
 
+### ★ Целевая архитектура «одного окна» (дизайн 2026-07-12) — куда переезжает каждое место
+
+**Поток фаз:**
+```
+Parse + import-inline → AST + ExprId  (number_exprs + number_unset_exprs ВО ВСЕХ путях, вкл. build)
+      │
+      ▼
+ЧЕКЕР (ОДНО ОКНО, PRE-mono) — резолвит ОДИН раз, наполняет каналы:
+  • Резолв вызова → FnDecl       →  resolved_callees: ExprId → FnDeclRef
+      (method/static/free/generic-static/кросс-модуль — ОДИН резолвер; external_registry + .nv-декларации
+       кормят его; codegen-дубля НЕТ)
+  • Тип выражения → ResolvedType  →  resolved_types: ExprId → ResolvedType (generic, с TypeParam)
+      (возврат вызова, sum/static/ctor/closure/trailing/Result — ВСЁ тут; generic-биндинги записаны В тип)
+  • Нормализация вызова           →  именованные арги по порядку + default'ы (AST-переписывание,
+      ЧИТАЕТ resolved_callees) — callnorm/argbind переезжают в чекер-фазу
+  • Приватность → контроль доступа (остаётся в чекере)
+      │ каналы
+      ├──────────────────────────► LSP/IDE читает resolved_types + resolved_callees (hover/completion не слепые)
+      ▼
+CODEGEN (POST-mono, ЧИСТЫЙ ЛОУЭРИНГ — НИКОГДА не перевыводит):
+  • resolved_type_to_c(resolved_types[id], current_type_subst)  ← ЕДИНСТВЕННЫЙ тип→C
+      (подставляет TypeParam→конкретику на mono; сюда сложена регистрация mono-инстансов)
+  • mono-имена/инстансы: compute_mono_name, compute_generic_type_c_name (законный лоуэринг)
+  • читает resolved_callees — какую функцию эмитить
+```
+
+**Судьба каждого места (из инвентаря):**
+
+| Старое место | Судьба | Куда конкретно |
+|---|---|---|
+| `infer_expr_c_type`, `infer_expr_c_type_str` | 🗑 УДАЛИТЬ | → `resolved_type_to_c(resolved_types[id])` (чтение канала) |
+| `infer_call_ret_c` (114) | 🗑 УДАЛИТЬ | резолв возврата → ЧЕКЕР → `resolved_types` |
+| `infer_mono_method_ret(_with_args)` | ➡ ЧЕКЕР | резолв generic-возврата → `resolved_types`; mono-подстановка остаётся в `resolved_type_to_c` |
+| `infer_method_level_return_for_sum` | ➡ ЧЕКЕР | возврат метода sum → `resolved_types` |
+| `infer_static_method_ret` | ➡ ЧЕКЕР | возврат static → `resolved_types` |
+| `infer_generic_static_ctor_ret` | ➡ ЧЕКЕР | возврат generic-static-ctor → `resolved_types` |
+| `infer_lambda_return_type_with_params` | ➡ ЧЕКЕР | возврат замыкания → `resolved_types` |
+| `infer_trailing_block_sig` | ➡ ЧЕКЕР | типы trailing-блока → `resolved_types` |
+| `resolve_result_option_ret`, `resolve_result_te(_strict)` | ➡ ЧЕКЕР | часть `ResolvedType` (T/E из Result/Option) |
+| 56× `_c_type`/`_to_c` | 🗑 УДАЛИТЬ | → `resolved_type_to_c` (чтение) |
+| `infer_type_param_binding` ×3, `infer_protocol_structural_binding`, `infer_result_type_params` | ➡ ЧЕКЕР | generic-инференс; решение записано В `resolved_types` (TypeParam/конкретика) |
+| `resolve_method_level_subst` | ➡ ЧЕКЕР | subst записан в резолв; на codegen только `current_type_subst` (mono) |
+| `compute_array_elem_type_for_obj` | ➡ ЧЕКЕР | тип элемента = часть `ResolvedType` receiver'а |
+| `resolve_mono_type_args` | ✅ ОСТАЁТСЯ (lowering) | mono, но ЧИТАЕТ резолв + `current_type_subst`, не перевыводит |
+| `compute_mono_name`, `compute_generic_type_c_name` | ✅ ОСТАЁТСЯ (lowering) | mono-именование = законный codegen |
+| `register_generic_instances_in_typeref` | ✅ ОСТАЁТСЯ (сложена) | внутрь `resolved_type_to_c` (P2) — driven лоуэрингом, не резолвом |
+| `callnorm.rs`, `argbind.rs` | ➡ ЧЕКЕР-фаза | нормализация вызова ЧИТАЕТ `resolved_callees` (не ре-резолвит) |
+| method/static-резолверы | ➡ ЧЕКЕР (един) | ОДИН резолвер → `resolved_callees`; codegen-дубль удалить |
+| `external_registry` | ➡ кормит ЧЕКЕР | кросс-модуль/FFI-декларации в резолв чекера (не отдельный codegen-путь) |
+| `primitive_instance_method_known` | 🗑 УДАЛИТЬ (§3) | возвраты → из `.nv`-деклараций примитивов (maximize-nv-sourcing); хардкод-зеркало снести |
+| `type_ref_to_c` | 🗑 УДАЛИТЬ (D315) | → `resolved_type_to_c` |
+
+**Каналы (интерфейс чекер → codegen → LSP):**
+- `resolved_types: ExprId → ResolvedType` — тип каждого выражения (generic, с TypeParam). Уже есть (D315),
+  НЕПОЛОН → 196 (Ф.A) доводит.
+- `resolved_callees: ExprId → FnDeclRef` — к какой декларации привязан вызов. Частично есть → 196 (Ф.B)
+  доводит + унифицирует (generic-static/кросс-модуль; убрать codegen-дубли и `external_registry`-обход).
+- **Нормализованный вызов** (арги по порядку + default'ы) — AST-инвариант после чекер-нормализации (Ф.C).
+Codegen лоуэрит из каналов; LSP читает ТЕ ЖЕ каналы. **Приёмка 196 = ни одна `infer_*`/`resolve_*` в codegen
+не перевыводит; всё из канала; матрица зелёная.**
+
 ## Зачем `resolved_types` лучше `infer_call_ret_c` (мотивация — не «оно и так работает»)
 
 **История:** `infer_call_ret_c` (codegen-перевывод) ИСТОРИЧЕСКИ был ЕДИНСТВЕННЫМ окном — до §0/172 не было
