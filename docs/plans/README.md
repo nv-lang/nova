@@ -8,6 +8,20 @@
 > [backlog-followups.md](backlog-followups.md) (только актуальное). Plan-bound детали — в Followups
 > своего плана; полная история — в [../simplifications.md](../simplifications.md). Конвенция: [AGENTS.md](../../AGENTS.md).
 
+## ⚡ Актуальное состояние (снапшот 2026-07-13)
+
+Быстрый вход для нового агента — [docs/promts/read-project.md](../promts/read-project.md). Сводка:
+
+- **196 (одно окно) — высший приоритет.** Фундамент [196.4] Stage-1a+1b ✅; волна-2 [196.3]: инвентарь
+  12/12 обработан (трекер с доказательствами), D-трекер 13✅/7🔄; волна-1 [196.2]: 26/114, атомарные
+  исчерпаны. Следующий keystone — node_substs-канал (Stage-1c) → Tier-2 + финал `infer_call_ret_c`.
+- **187** MVP ✅ (`examples/flagship/aggregator/`); остаток: SSE-мост, typed-serde, real-cancel (за 173), Live.
+- **173** — срочные хвосты в работе: parfor-record-miscompile + `supervised(deadline:)` (sleep-гонка).
+- **193** ✅ закрыт (std/tls → внешний dep `../nova-tls`, ноль Rust в TLS-пути); хвост — vendored mbedTLS.
+- **198**: DELETE ✅ (1158), MIGRATE финиширует; `nova_tests/` заморожен.
+- **200** — живой реестр: П1/П2/П4/П5 ✅; П6 (Vec.data→ptr) в очереди; П3 (As*) — в Q.
+- Гейт: conformance один-CU **97/0**; язык-меняющее — только со спек-амендментом в том же слиянии.
+
 ## Схема нумерации
 
 - `01-…`, `02-…` — главные планы по порядку создания.

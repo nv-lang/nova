@@ -12,7 +12,7 @@ Nova-файлы, добавлять тесты, работать с nova CLI**. 
    - `find_repo_root()` — ищет `nova.toml` вверх от CWD.
    - `resolve_paths()` — раскладывает пути (`nova_tests/`, `std/`,
      `compiler-codegen/`, `compiler-codegen/nova_rt/`).
-   - Субкоманды: `nova test`, `nova build`, `nova run`, `nova check`,
+   - Субкоманды: `nova test`, `nova build`, `nova check` (`nova run` РЕТРАКТИРОВАН — интерпретатора нет),
      `nova regen-runtime`.
 
 2. **Как запускать тесты:**
@@ -49,7 +49,7 @@ Nova-файлы, добавлять тесты, работать с nova CLI**. 
 5. **Как скомпилировать один .nv файл:**
    ```sh
    nova-cli/target/debug/nova build nova_tests/basics/literals.nv
-   nova-cli/target/debug/nova run   nova_tests/basics/literals.nv
+   # `nova run` ретрактирован — только build/check/test (C-codegen)
    nova-cli/target/debug/nova check nova_tests/basics/literals.nv
    ```
 
