@@ -48007,14 +48007,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 _ => "nova_int".into(),
                             };
                         }
-                        // Plan 06 Ф.3: `coll.iter()` → registered IterT type.
-                        if method == "iter" {
-                            let coll_type = self.debt_strip_nova_trim_start(&obj_ty);
-                            if let Some(iter_t) = self.iter_returns.get(&coll_type) {
-                                self.icr_trace("B11g_iter_registered_type");
-                                return format!("Nova_{}*", iter_t);
-                            }
-                        }
+                        // Plan 196.2 W1 [gate-1]: B11g_iter_registered_type REMOVED. `coll.iter()`
+                        // return (VecIter/HashMapIter/…) is materialised by the checker into
+                        // Channel-2 (esp. after the []T.of materialisation fix); `.iter()` is
+                        // exercised pervasively yet NO-HIT ⟹ Channel-2-covered ⟹ this
+                        // `iter_returns`-keyed legacy fallback is structurally unreachable (§5).
                         // D91 (Plan 21): Channel.new → Nova_ChannelPair.
                         if let ExprKind::Ident(n) = &obj.kind {
                             if n == "Channel" && method == "new" {
@@ -48443,16 +48440,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 };
                             }
                         }
-                        // D109: built-in primitive methods return-type inference.
-                        if let Some(builtin) = Self::prim_builtin_method(&obj_ty, method) {
-                            self.icr_trace("B11z_prim_builtin_method_second");
-                            return match builtin {
-                                PrimBuiltin::Fn(_) => "nova_int".into(), // hash → u64 = nova_int
-                                PrimBuiltin::BinOp(_) => "nova_bool".into(),
-                                // Plan 138.4 Ф.1 G-C: identity clone preserves receiver type.
-                                PrimBuiltin::Identity => obj_ty.clone(),
-                            };
-                        }
+                        // Plan 196.2 W1 [gate-1]: B11z_prim_builtin_method_second REMOVED.
+                        // Duplicate of the FIRST prim-builtin check (B11f, above) — primitive
+                        // builtin methods (hash/comparison/identity-clone) are caught by B11f or
+                        // materialised into Channel-2; this SECOND check is NO-HIT ⟹ structurally
+                        // unreachable (§5).
                         // D74 math methods on int.
                         if obj_ty == "nova_int" {
                             if Self::int_method_to_c(method).is_some() {
