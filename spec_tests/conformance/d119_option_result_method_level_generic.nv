@@ -1,0 +1,103 @@
+// D119/D85 — method-level generic type params (`[U]`/`[E]`/`[F]`) on the
+// BUILTIN sum-type methods (`Option[T] @map[U]`, `Option[T] @ok_or[E]`,
+// `Result[T,E] @map[U]`, `Result[T,E] @map_err[F]`, all declared
+// std/prelude/core.nv). D119 (d119_method_level_type_params.nv) proves the
+// method-level-generic MECHANISM on a user RECORD generic (`D119Box[T] @map[U]`);
+// D408 (d408_option_chain_sized_width.nv) proves IDENTITY-map width preservation
+// specifically on `Option`. Neither exercises a TYPE-CHANGING U/E/F (T≠U, a
+// distinct payload C-type, not just a differently-sized primitive) on the four
+// BUILTIN methods — the exact surface `infer_method_level_return_for_sum`
+// (compiler-codegen/src/codegen/emit_c.rs, Plan 99.1/196.3) computes for codegen
+// return-type inference, independently re-derived by the checker's
+// `resolve_return_channel` (compiler-codegen/src/types/mod.rs:9594, Plan 196.4
+// Stage-1a) via `resolve_instance_method_return`'s method-generic branch
+// (types/mod.rs:13840-13887, propose-then-verify against the legacy
+// `unify_type` binding).
+//
+// «Package A / Package B» mock (single-CU convention, cf. D164
+// d164_cross_module_consume.nv): `D119mB`/`D119mErr` stand in for a type from a
+// SEPARATE module. The closures below convert a PRIMITIVE (package A: int/str)
+// INTO that record type (package B), forcing U/E/F to bind to a non-primitive,
+// cross-boundary C-name (`Nova_D119mB*`, not another primitive) — a collapse to
+// `nova_int`/`void*` or a stale receiver-only C-type is observable at the
+// `.n`/`.msg` field read.
+// Spec: spec/decisions/02-types.md §D119 (Plan 48 Ф.9); spec/decisions/04-effects.md
+// §D85 (Result/Option unified `?`/`!!`). Part of the SINGLE `spec_tests.conformance`
+// folder-module; all top-level names D119m-prefixed to avoid CU collisions.
+module spec_tests.conformance
+
+// «Package B» — payload record the primitive value converts INTO.
+type D119mB { tag str, n int }
+
+// «Package B» — error-info record the primitive error converts INTO.
+type D119mErr { code int, msg str }
+
+fn d119m_wrap(n int) -> D119mB => { tag: "wrapped", n }
+
+fn d119m_wrap_err(msg str) -> D119mErr => { code: 1, msg }
+
+fn d119m_check_positive(n int) -> Result[int, str] {
+    if n > 0 { Ok(n) } else { Err("not positive") }
+}
+
+test "Option.map[U] type-changing int -> record, not collapsed to nova_int (D119/D85)" {
+    ro o = Some(41)
+    ro w = o.map(|x| d119m_wrap(x + 1))
+    assert(w.unwrap().n == 42)
+    assert(w.unwrap().tag == "wrapped")
+}
+
+test "Option.map[U] chain int -> str -> record, no erasure across two hops (D119/D85)" {
+    ro o = Some(9)
+    ro w = o.map(|x| str.from(x)).map(|s| d119m_wrap(s.byte_len()))
+    assert(w.unwrap().n == 1)
+    assert(w.unwrap().tag == "wrapped")
+}
+
+test "Option.ok_or[E] converts Option[int] -> Result[int,str], both Some/None paths (D85)" {
+    ro some_val = Some(7)
+    ro r1 = some_val.ok_or("missing")
+    assert(r1.unwrap() == 7)
+
+    ro none_val = None as Option[int]
+    ro r2 = none_val.ok_or("missing")
+    assert(r2.is_err())
+    assert(r2.err().unwrap() == "missing")
+}
+
+test "Option.ok_or[E] with a RECORD error type, cross-boundary E (D85)" {
+    ro none_val = None as Option[int]
+    ro r = none_val.ok_or(d119m_wrap_err("no value"))
+    assert(r.is_err())
+    assert(r.err().unwrap().msg == "no value")
+    assert(r.err().unwrap().code == 1)
+}
+
+test "Result.map[U] type-changing int -> record on the Ok path (D119/D85)" {
+    ro r = d119m_check_positive(6)
+    ro w = r.map(|x| d119m_wrap(x))
+    assert(w.unwrap().n == 6)
+    assert(w.unwrap().tag == "wrapped")
+}
+
+test "Result.map[U] short-circuits on the Err path, E untouched (D119/D85)" {
+    ro r = d119m_check_positive(-3)
+    ro w = r.map(|x| d119m_wrap(x))
+    assert(w.is_err())
+    assert(w.err().unwrap() == "not positive")
+}
+
+test "Result.map_err[F] type-changing str -> record on the Err path (D119/D85)" {
+    ro r = d119m_check_positive(-5)
+    ro w = r.map_err(|e| d119m_wrap_err(e))
+    assert(w.is_err())
+    ro e = w.err().unwrap()
+    assert(e.msg == "not positive")
+    assert(e.code == 1)
+}
+
+test "Result.map_err[F] short-circuits on the Ok path, T untouched (D119/D85)" {
+    ro r = d119m_check_positive(4)
+    ro w = r.map_err(|e| d119m_wrap_err(e))
+    assert(w.unwrap() == 4)
+}
