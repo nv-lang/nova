@@ -3152,3 +3152,37 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   swallow-match, lint-clean: `flush_out` вне RESULT_CALLEES-списка правила).
   Чинить в чекере (вывод типа `Result[(), E].ok()` → `Option[()]`, не
   `Option[E]`) отдельным заходом compiler-codegen.
+
+## [M-strict-effects-conformance-sweep] — `--strict-effects` debt snapshot: std/ + examples/ ЧИСТЫ (2026-07-13, Plan 197)
+
+Plan 197 добавил экспериментальный флаг `--strict-effects` (`nova check/build/test
+--strict-effects`, off by default — nova-cli/src/main.rs + compiler-codegen/src/
+strict_effects.rs) с двумя opt-in диагностиками поверх обычного чекера:
+`E_UNDECLARED_TRANSITIVE_EFFECT` (D62 §Правило 1 — транзитивный эффект без
+объявления/lexical with-хендлера, сейчас silent, под флагом — hard error) и
+`E_EFFECT_ERASED_IN_FN_TYPE` (присвоение/передача/return fn-значения в более
+узкий по эффектам fn-тип — erasure). Реализация: types/mod.rs::CapabilityCtx::
+check_transitive_effect_strict (диагностика 1, переиспользует существующий
+with_handler_stack/declared_effects walk) + strict_effects.rs::check_effect_erasure
+(диагностика 2, отдельный syntactic pass). См. spec/decisions/04-effects.md D62,
+spec/open-questions.md.
+
+**Снапшот долга (2026-07-13, commit на ветке `strict-effects`, worktree nova-197):**
+`nova --strict-effects check std --format short` → `PASS: 126 FAIL: 21 WARN: 250`
+— **байт-в-байт идентично** прогону БЕЗ флага (diff отсортированных выводов
+пустой); все 21 FAIL — pre-existing негативные фикстуры (`*_neg.nv`/`neg/`:
+serde/consume/D131 и т.п.), НЕ связаны с эффектами. `nova --strict-effects check
+examples --format short` → `PASS: 30 FAIL: 0 WARN: 51` (`examples/_wip/` вне
+скана — pre-existing tooling-skip, не Plan-197-specific). **Итог: ZERO строк
+нарушений** в обоих деревьях — `std/` и `examples/` уже конформны
+`--strict-effects` без единой правки.
+
+Машинно-парсимый список (`docs/plans/strict-effects-debt.txt`,
+`путь:строка:вид:недостающий-эффект`) создан пустым (0 data-строк, только
+header-комментарий с датой/командой) — **следующему haiku-агенту делать
+нечего**: миграция аннотаций std/examples не требуется, флаг можно включать
+в конвенцию сборки std/examples уже сейчас (владелец: «внутренние модули std
+и программы ДОЛЖНЫ собираться с `--strict-effects`» — это условие уже
+выполнено). Если объём кода в std/examples вырастет и появятся нарушения —
+перезапустить `nova --strict-effects check std examples --format short` и
+пополнить `strict-effects-debt.txt` по тому же формату.

@@ -8558,3 +8558,54 @@ U.4.6 — byte-identical зеркало legacy C-имени (**MVP**); резо�
 
 ### Координация
 Plan 173 (umbrella) / 173.0 (рантайм cancel/shield) / 173.1 (parallel/supervised/race) / 173.2 (supervision) / 173.3 (isolation `#share`) / Plan 48 Ф.4 (closures-in-generic-array) / Plan 175 (`Monotonic`/`Duration`; бывш. 179 до renumber std-блока).
+
+---
+
+## Q-strict-effects-flag-flip — `--strict-effects` экспериментальный флаг; флип в дефолт требует D-амендмент — 🟡 OPEN (2026-07-13, Plan 197)
+
+### Контекст
+
+Plan 197 добавил `nova check/build/test --strict-effects` (nova-cli/src/main.rs
+→ `NOVA_STRICT_EFFECTS` env var → compiler-codegen/src/strict_effects.rs +
+`types/mod.rs::CapabilityCtx::check_transitive_effect_strict`) — **чисто
+инструментальный** флаг, **off по умолчанию**. Две новые диагностики:
+
+1. `E_UNDECLARED_TRANSITIVE_EFFECT` — [D62](decisions/04-effects.md#d62)
+   §Правило 1 УЖЕ описывает это как **warning по умолчанию**
+   (suppressible/эскалируемый через `#allow_transit` / гипотетический
+   `Nova.toml`-`transit_effects = "error"`, которого в компиляторе пока нет).
+   Флаг — CLI-заменитель `transit_effects = "error"`, ничего не меняет в
+   самом языке.
+2. `E_EFFECT_ERASED_IN_FN_TYPE` — присвоение/передача/return fn-значения в
+   fn-тип, чей effect-row не покрывает исходный (erasure). Языковой семантики
+   ТОЖЕ не меняет — это дыра в текущей реализации assignability, которую флаг
+   ловит **опционально**; спека нигде не гарантировала erasure-safety без
+   явной строгости.
+
+### Вопрос
+
+Если/когда обе диагностики захочется сделать **дефолтным поведением**
+(не опциональным флагом) — это **язык-меняющее слияние**: переход
+warning→error для транзитивных эффектов **меняет** проходимость
+существующего кода (что сегодня компилируется тихо — перестанет). Это
+ТРЕБУЕТ D-амендмент к [D62](decisions/04-effects.md#d62) (и, возможно,
+отдельный D-блок для fn-type erasure-правила, которое в спеке пока нигде не
+формализовано как отдельное assignability-правило) **в том же
+слиянии/PR**, который переключает дефолт — не после.
+
+Сейчас (2026-07-13) снапшот-долг `std/`+`examples/` под флагом — **0
+нарушений** (см. `docs/plans/backlog-followups.md` →
+`[M-strict-effects-conformance-sweep]`, `docs/plans/strict-effects-debt.txt`),
+так что технически флип возможен без миграции корпуса. Открыто: (а) хочет ли
+владелец вообще делать это дефолтом, или оставить экспериментальным
+навсегда; (б) если да — нужен ли grace-period / отдельный minor-version
+перед hard-cutover; (в) точная формулировка D-амендмента для erasure-правила
+(сейчас нигде не описано в спеке как самостоятельное assignability-правило
+для `fn(...) Effects -> T`, только implicit из `TypeRef::Func` структуры).
+
+### Связь
+- [D62](decisions/04-effects.md#d62) — прямые эффекты + транзитивность (warning).
+- [D28](decisions/04-effects.md#d28) — effect inference (private-выведено,
+  public-явно); транзитивность warning'ом, не error.
+- `docs/plans/backlog-followups.md` → `[M-strict-effects-conformance-sweep]`
+  — снапшот долга (0 нарушений, 2026-07-13).

@@ -1,0 +1,25 @@
+// Plan 197 (--strict-effects fixture, POSITIVE control).
+// Diagnostic: E_UNDECLARED_TRANSITIVE_EFFECT.
+// Must compile CLEAN both with and without --strict-effects: `caller`
+// declares `Counter` directly in its own signature — no transitivity gap.
+
+module strict_effects.pos_transitive_declared
+
+type Counter effect {
+    next() -> int
+}
+
+fn tick() Counter -> int =>
+    Counter.next()
+
+fn caller() Counter -> int =>
+    tick()
+
+fn main() {
+    with Counter = effect Counter {
+        next() => 1
+    } {
+        ro a = caller()
+        println(a)
+    }
+}

@@ -1,0 +1,30 @@
+// Plan 197 (--strict-effects fixture, NEGATIVE — the (a) repro from the
+// Plan 197 brief: `ro f fn() -> int = tick` where `tick` carries `Time`).
+// Diagnostic: E_EFFECT_ERASED_IN_FN_TYPE.
+// Must compile CLEAN without --strict-effects (byte-identical-behavior
+// guarantee — this is the pre-existing, unsound gap: calling through `f`
+// bypasses the `Counter` handler obligation entirely). Must FAIL with
+// --strict-effects.
+
+module strict_effects.neg_erasure_fn_type
+
+type Counter effect {
+    next() -> int
+}
+
+fn tick() Counter -> int =>
+    Counter.next()
+
+fn caller() -> int {
+    ro f fn() -> int = tick
+    f()
+}
+
+fn main() {
+    with Counter = effect Counter {
+        next() => 1
+    } {
+        ro a = caller()
+        println(a)
+    }
+}

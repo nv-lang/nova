@@ -1,0 +1,28 @@
+// Plan 197 (--strict-effects fixture, POSITIVE control).
+// Diagnostic: E_UNDECLARED_TRANSITIVE_EFFECT.
+// Must compile CLEAN both with and without --strict-effects: `caller`
+// installs a lexical `with Counter = ...` handler around the call to
+// `tick`, discharging the obligation locally (D62 "Альтернатива через
+// with") — no `Counter` needed in `caller`'s own signature.
+
+module strict_effects.pos_transitive_handled
+
+type Counter effect {
+    next() -> int
+}
+
+fn tick() Counter -> int =>
+    Counter.next()
+
+fn caller() -> int {
+    with Counter = effect Counter {
+        next() => 42
+    } {
+        tick()
+    }
+}
+
+fn main() {
+    ro a = caller()
+    println(a)
+}

@@ -1572,6 +1572,13 @@ fn check_module_impl(
     let cap_ctx = CapabilityCtx::build(module, &sig);
     cap_ctx.check_module(module, &mut errors);
 
+    // Plan 197 (--strict-effects, experimental, D62): E_EFFECT_ERASED_IN_FN_TYPE.
+    // No-op (byte-identical) unless the CLI flag is set — see
+    // `strict_effects::strict_effects_enabled()`. `E_UNDECLARED_TRANSITIVE_EFFECT`
+    // (the flag's other diagnostic) is driven from inside `CapabilityCtx::
+    // check_callee_effects` just above, reusing its handler-scope tracking.
+    crate::strict_effects::check_effect_erasure(module, &sig, &mut errors);
+
     // D90 Plan 20 Ф.3: defer/errdefer body constraints.
     //
     // Body запрещает:
@@ -19193,6 +19200,64 @@ impl<'a> CapabilityCtx<'a> {
                     span,
                 ));
             }
+        }
+        // Plan 197 (--strict-effects, experimental, D62 §Правило 1): opt-in
+        // promotion of "undeclared transitive effect" from the (currently
+        // unimplemented) default warning to a hard error. No-op unless the
+        // CLI flag is set — see `crate::strict_effects::strict_effects_enabled()`.
+        if crate::strict_effects::strict_effects_enabled() {
+            self.check_transitive_effect_strict(callee, callee_label, state, span, errors);
+        }
+    }
+
+    /// Plan 197 (--strict-effects): `E_UNDECLARED_TRANSITIVE_EFFECT`. Fires
+    /// when `callee` carries a non-`Fail` effect `E` that the ENCLOSING
+    /// function neither declares in its own signature
+    /// (`state.declared_effects`, filled once in `walk_fn_body`) nor handles
+    /// via an enclosing `with E = … { }` block (`state.with_handler_stack`
+    /// — D62 "Альтернатива через with": a locally-installed handler
+    /// discharges the obligation right there, D11 with-semantics
+    /// unchanged). `state.effect_root` (test-block bodies — D414 §2, no
+    /// enclosing signature to declare against) is exempt, mirroring the
+    /// existing `Detach`-effect `effect_root` exemption above (D50).
+    /// `Fail` is excluded — D62 §Правило 2 already makes `Fail`
+    /// transitivity strict and UNCONDITIONAL (a separate, pre-existing
+    /// concern, not gated by this experimental flag).
+    fn check_transitive_effect_strict(
+        &self,
+        callee: &FnDecl,
+        callee_label: &str,
+        state: &CapState,
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        if state.effect_root {
+            return;
+        }
+        for eff in &callee.effects {
+            let TypeRef::Named { path, .. } = eff else { continue; };
+            let Some(name) = path.last() else { continue; };
+            if name == "Fail" {
+                continue;
+            }
+            if state.declared_effects.contains(name) {
+                continue;
+            }
+            if state.with_handler_stack.iter().any(|h| h == name) {
+                continue;
+            }
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_UNDECLARED_TRANSITIVE_EFFECT] call to `{}` requires effect `{}`, \
+                     not declared in the enclosing function's signature and not handled \
+                     by an enclosing `with {} = …` block (--strict-effects; D62 §Правило \
+                     1 — without this flag this is only a warning). Hint: add `{}` to the \
+                     enclosing fn's effect-row, or install `with {} = handler {{ … }}` \
+                     around this call.",
+                    callee_label, name, name, name, name
+                ),
+                span,
+            ));
         }
     }
 
