@@ -42280,12 +42280,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     /// Emit a lambda expression. Returns the C expression (a function pointer or closure pointer).
+    ///
+    /// `closure_id` — 197.3 (Q3 A, channel-first migration): the ORIGINAL
+    /// closure literal's own `ExprId` (`ExprId::UNSET` when the caller has
+    /// none — e.g. a legacy-lowered `Trailing::Fn` with no source closure
+    /// node). Consulted by `closure_channel_ret_c` BEFORE the legacy
+    /// return-type body-walk (`infer_lambda_return_type_with_params`) — see
+    /// that fn's doc for the channel-vs-legacy split.
     fn emit_lambda(
         &mut self,
         params: &[LambdaParam],
         body: &Expr,
         context_param_tys: Option<&[(String, String)]>, // (param_c_ty, ret_c_ty) from outer fn sig context
         return_type_ann: Option<&TypeRef>,
+        closure_id: ExprId,
     ) -> Result<String, String> {
         let id = self.lambda_counter;
         self.lambda_counter += 1;
@@ -42327,12 +42335,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ctx.first().and_then(|(_, ret)| if !ret.is_empty() { Some(ret.clone()) } else { None })
                 .unwrap_or_else(|| {
                     // Context был задан (например HOF), но return-type
-                    // не указан — infer из body.
-                    self.infer_lambda_return_type_with_params(body, params, &param_c_tys)
+                    // не указан — 197.3 (Q3 A) channel-first: сперва
+                    // checker-аннотация closure'а самого себя
+                    // (resolved_types[closure_id] = ResolvedType::Func), и
+                    // только если канал промахнулся — legacy body-walk.
+                    self.closure_channel_ret_c(closure_id)
+                        .unwrap_or_else(|| self.infer_lambda_return_type_with_params(body, params, &param_c_tys))
                 })
         } else {
-            // Ни annotation, ни context — infer из body.
-            self.infer_lambda_return_type_with_params(body, params, &param_c_tys)
+            // Ни annotation, ни context — 197.3 (Q3 A) channel-first, тот
+            // же порядок: канал → legacy infer из body.
+            self.closure_channel_ret_c(closure_id)
+                .unwrap_or_else(|| self.infer_lambda_return_type_with_params(body, params, &param_c_tys))
         };
 
         // Plan 62.D bis-1 (2026-05-18): scope-aware free-var detection.
