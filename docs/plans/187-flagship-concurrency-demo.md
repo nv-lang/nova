@@ -221,7 +221,7 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
    — переделывать свободно** под реальные данные. Смягчение прежнего «вербатим»:
    вербатим = дизайн/вёрстка/стили/механика анимации; синтетический `providers()`
    и data-модель можно заменять целиком на серверные данные. Файл:
-   `examples/flagship/aggregator/ui.html` (копия мокапа с переработанным JS).
+   `examples/flagship/aggregator/frontend/index.html` (копия мокапа с переработанным JS).
 3. **SSE в этом заходе = честный replay** Emit-событий завершённого прогона
    (первая запись — `event: replay_info`); живой per-request стрим — отдельный
    маркер `[M-187-sse-live-stream]` (требует эффект-несущего пути в соединение,
@@ -231,13 +231,32 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
 
 ### 9.4 Ф.MVP-2 — запускаемое веб-приложение (декомпозиция для исполнителя)
 
+**Структура каталога (решение владельца 2026-07-13: полноценное веб-приложение —
+бек и фронт по разным папкам):**
+
+```
+examples/flagship/aggregator/
+  backend/            — весь Nova-код: domain / aggregate / emit / scenarios /
+                        report_json / server / main.nv (+ *_test.nv рядом)
+  frontend/           — index.html (копия мокапа с переработанным JS; при росте —
+                        отдельные .css/.js, но self-contained один файл предпочтителен)
+  README.md           — сборка + запуск (локально; волной 2 — Docker)
+  Dockerfile          — волна 2 (§9.4 п.7)
+```
+
+Миграция существующих `aggregator/*.nv` → `aggregator/backend/` — тем же заходом
+(module-пути выровнять по фактической папке, D78: папка = один модуль из co-equal
+файлов; file+folder одного имени запрещён). `embed()`-путь фронта из backend-кода —
+проверить относительно корня пакета (E_EMBED_OUTSIDE_PROJECT не должен сработать —
+frontend внутри того же примера).
+
 | # | Деливерабл | Детали |
 |---|---|---|
-| 0 | `main.nv` | `fn main`: `real_net()` + real time; цикл `TcpListener.bind(127.0.0.1:8187).accept → spawn servernet.handle_connection(stream, mux)` по образцу `examples/net/echo_server.nv`; порт — const + env-override |
+| 0 | `backend/main.nv` | `fn main`: `real_net()` + real time; цикл `TcpListener.bind(127.0.0.1:8187).accept → spawn servernet.handle_connection(stream, mux)` по образцу `examples/net/echo_server.nv`; порт — const + env-override |
 | 1 | real-cancel | aggregate.nv: self-checked soft-deadline → `supervised(deadline:)`; снять соответствующие `[M-flagship-*]`-обходы; тест «опоздавший отменяется раньше своей латентности» (wall_ms < бюджет+слак). Если гонка воспроизводится — repro + доклад, оставить self-checked |
 | 2 | typed-serde | report_json.nv: JsonValue → `#impl(Serialize)` typed-путь; тесты обновить |
-| 3 | endpoints | `GET /` → ui.html (`embed()`); `GET /api/snapshot` (есть, fallback); `GET /api/run?legend=weather\|health&mode=demo\|chaos&seed=N` → JSON свежего прогона; `GET /api/events` (те же параметры) → SSE-replay |
-| 4 | UI-внутренности | ui.html: Live-сегмент разблокировать → `EventSource` на /api/events + fallback-poll /api/snapshot; Demo/Chaos-кнопки → /api/run; JS-модель — по контракту §9.5 |
+| 3 | endpoints | `GET /` → frontend/index.html (`embed()`); `GET /api/snapshot` (есть, fallback); `GET /api/run?legend=weather\|health&mode=demo\|chaos&seed=N` → JSON свежего прогона; `GET /api/events` (те же параметры) → SSE-replay |
+| 4 | UI-внутренности | frontend/index.html: Live-сегмент разблокировать → `EventSource` на /api/events + fallback-poll /api/snapshot; Demo/Chaos-кнопки → /api/run; JS-модель — по контракту §9.5 |
 | 5 | легенда health | Live health-check = plain TCP/HTTP-замер через `real_net()`; Погода-Live — disabled с подсказкой (ждёт mbedtls-vendored/TLS) |
 | 6 | README.md | сборка + запуск локально (Windows/Unix), порт, env |
 | 7 | Docker (волна 2) | Dockerfile: Linux-сборка компилятора+рантайма+примера. 🔴 ГЕЙТ-РИСК `[M-nova-linux-build]` (Linux-сборка Nova не верифицирована) — при блокере зафиксировать маркер `[M-187-docker-linux-build]`, не обходить молча |
