@@ -5,6 +5,9 @@
 >
 > **New here?** How development actually works — plan-driven dev, the worktree model, the daily loop, and the
 > hard operational rules — is in [docs/dev-workflow.md](docs/dev-workflow.md) (Russian). Read it before picking up work.
+> Full onboarding path (project state, architecture, gates, where to go next):
+> [docs/promts/read-project.md](docs/promts/read-project.md). Claude Code sessions get the same pointers
+> automatically via the root [CLAUDE.md](CLAUDE.md).
 
 ## What is Nova
 
