@@ -7752,15 +7752,25 @@ str-метод НЕ видит priv-поля **Vec** (другой тип) — �
 
 | Метод | Сигнатура | Роль |
 |-------|-----------|------|
-| `from_raw_parts` | `Vec[T].from_raw_parts(ptr *T, len int, cap int) -> Self` | строит `Vec` из сырого `(ptr,len,cap)` триплета; единственный sanctioned вход (priv-поля закрыты для чужих модулей) |
+| `from_raw_parts` (см. поправку ниже) | `Vec[T].from_raw_parts(ptr *T, len int, cap int) -> Self` | строит `Vec` из сырого `(ptr,len,cap)` триплета; единственный sanctioned вход (priv-поля закрыты для чужих модулей) |
 | `as_ptr` | `Vec[T] @as_ptr() -> *T` / `mut @as_ptr() -> *mut T` | публичный data-ptr геттер (recv-mut overload отдаёт writable `*mut T`) |
 | `into_raw` | `Vec[T] consume @into_raw() -> *mut T` | инверс `from_raw_parts`: потребляет Vec-обёртку (D133), отдаёт writable raw-буфер для zero-copy reuse |
 
-Контракт `from_raw_parts`/`into_raw` — `unsafe`-обязательство **на call-site**:
-caller гарантирует liveness/init буфера. Входной `*T` (canonical ro-pointee,
-`*T ≡ *ro T`, D246) реинтерпретируется в `*mut T` поля через `unsafe { ptr as
-*mut T }` (только re-label L3 pointee-mut, без dereference; writable-ность —
-инвариант caller'а, ro-view биндится `ro` для enforce на L2).
+> **ПОПРАВКА (D372-amend1, форс-фикс 2026-07-12, `[M-vec-new-static-arity-overload]` закрыт).**
+> `from_raw_parts` ретрактирован и сложен в 3-арг перегрузку конструктора:
+> `Vec[T].new(ptr *mut T, len int, cap int) -> Self requires len >= 0 && cap >= len
+> => { data: ptr, len, cap }` — рядом с `new(cap int = 0)`. Параметр теперь `*mut T`
+> НАПРЯМУЮ (без внутреннего reinterpret-cast — caller кастует `unsafe { … as *mut T }`
+> на call-site, если у него только `*T`). Строка таблицы выше — исторический снимок
+> Plan 139.2; актуальная сигнатура и контракт — см. `std/collections/vec/core.nv` и
+> [02-types.md D372](02-types.md#d372-canonical-new-constructors-convention) («ПОПРАВКА 2»).
+
+Контракт `from_raw_parts`/`into_raw` (историческое имя первого; см. поправку выше) —
+`unsafe`-обязательство **на call-site**: caller гарантирует liveness/init буфера.
+Входной `*T` (canonical ro-pointee, `*T ≡ *ro T`, D246) реинтерпретируется в `*mut T`
+поля через `unsafe { ptr as *mut T }` (только re-label L3 pointee-mut, без
+dereference; writable-ность — инвариант caller'а, ro-view биндится `ro` для enforce
+на L2).
 
 ### Что разблокировало producer-формы
 

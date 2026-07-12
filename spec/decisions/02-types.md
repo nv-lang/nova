@@ -6848,19 +6848,26 @@ fn User.guest() -> Self => { name: "guest", email: "", is_admin: false }
 > `Type[Args].method(...)`/`[]T.method(...)` call-сайты) — ЗАКРЫТ в `callnorm.rs` (`try_normalize_call`
 > classify-match расширен на turbofish/`__array`-Path static-receiver формы) + 3 hand-formatted ctor-call
 > сайта в `emit_c.rs`. **НЕ тот же класс**, что `[M-vec-new-static-arity-overload]` (arity-overload
-> cross-wiring, ниже) — тот остаётся открытым, отдельно отслеживается Plan 196.2.
+> cross-wiring) — см. поправку ниже: тот дефект ЗАКРЫТ отдельно, вне зоны Plan 196.2.
 >
-> **ПОПРАВКА к Амендменту 1 (from_raw_parts → new-overload): ОТКАЧЕНО, спека была рассинхронена.** Складывание
-> `from_raw_parts` в 3-арг перегрузку `Vec[T].new(ptr,len,cap)` НЕ состоялось в коде — дефект
-> `[M-vec-new-static-arity-overload]` (`std/collections/vec/core.nv:130`): 0-арг и 3-арг `new` перепутываются
-> в codegen при сборке всего vec-folder-модуля (в C уходит неверный тип/арность). `from_raw_parts` остаётся
-> ИМЕНОВАННЫМ конструктором до фикса. Фикс отслеживается в **Plan 196.2 (W2 — class-C static-ctor overload+return
-> в одном чекер-окне)**; снятие маркера = приёмочная веха. `new(cap int = 0)` (одна функция, default-arg)
-> НЕ в конфликте и безопасен уже сейчас; вернуть folded `new`-overload можно ТОЛЬКО после фикса 196.2.
-> Целевая сигнатура (складывается ПОПУТНО с фиксом, W2): `fn Vec[T].from_raw_parts(ptr *T, len, cap) -> Self`
-> ⇒ `fn Vec[T].new(ptr *mut T, len int, cap int) -> Self require cap >= len` (3-арг overload + `*mut T`
-> напрямую вместо `unsafe { ptr as *mut T }` reinterpret-cast + контракт `cap >= len`). Тогда `new(cap int=0)`
-> + `new(ptr *mut T, len, cap)` = легальный набор перегрузок.
+> **ПОПРАВКА 2 к Амендменту 1 (from_raw_parts → new-overload): ЗАКРЫТО 2026-07-12 (форс-фикс, Plan 200 П5).**
+> Складывание `from_raw_parts` в 3-арг перегрузку `Vec[T].new(ptr,len,cap)` **состоялось в коде**
+> (`std/collections/vec/core.nv`): `fn Vec[T].new(ptr *mut T, len int, cap int) -> Self requires len >= 0 &&
+> cap >= len => { data: ptr, len, cap }` — рядом с `new(cap int = 0)`. Дефект `[M-vec-new-static-arity-overload]`
+> — **ЗАКРЫТ, вне 196-зоны** (не `infer_call_ret_c`/W2, как предполагалось ранее — тот план остаётся про
+> ДРУГОЙ баг-класс, PRE-mono class-C резолв). Корень был в ДВУХ co-located name-only (arity-blind) overload-
+> резолвах, оба «первый-по-имени», игнорирующие арность: (1) `compiler-codegen/src/callnorm.rs`
+> (`Sigs::static_methods` — default-arg backfill раньше ФИЛЬТРОВАЛ прочь любой `(type,method)` с >1
+> сигнатурой, т.е. просто НЕ бэкфиллил default для overloaded ctor; фикс — хранить ВСЕ overload'ы +
+> `pick_static_params` дизамбигуирует по `bind_call_args`-совместимости на каждом call-site); (2)
+> `compiler-codegen/src/codegen/emit_c.rs` — ветка «1b» (turbofish static-ctor call, `Type[Args].method(...)`,
+> ~emit_call строка 32577) резолвила `generic_type_methods[base].find(name)` первым совпадением по имени,
+> тогда как соседняя ветка «5b» (instance-method generic dispatch) уже имела арность/param-type дизамбигуацию
+> (`[M-138.2-generic-method-overload-mono]`, 2026-06); фикс — та же схема (арность → param-C-type →
+> `resolved_callees`-span чекера) + per-overload `__<paramtype>` суффикс у mono-имени, портированные в ветку
+> «1b». Гейты: `vec_of_empty_panic` neg-тест зелёный, `nova test --full std/collections/vec` без cross-wiring,
+> `nova test --full std/collections` (14/14) + `std/checksums`+`std/crypto` (используют `str.@bytes()` через
+> folded `new`) зелёные, conformance single-CU 95/0. Целевая сигнатура (сложена): см. выше.
 
 ---
 
