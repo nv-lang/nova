@@ -73,6 +73,24 @@ enum PrimBuiltin { Fn(&'static str), BinOp(&'static str), Identity }
 /// ClosureFull / HandlerLit) и найти первый `interrupt VAL` — вернуть
 /// C-тип VAL. Используется в `infer_expr_c_type` для `With`, когда body
 /// не имеет trailing (тогда тип blocка определяется handler'ом).
+///
+/// Plan 196.3 (мелочь-пакет, one-window inventory) verdict: LEGIT-LOWERING,
+/// не кандидат на прямую миграцию к `resolved_types`/`resolved_callees` —
+/// это структурный AST-walk (найти узел `Interrupt`, не переизобретённая
+/// проверка типа), а фактический C-тип VAL уже читается через
+/// `emitter.infer_expr_c_type(v)`, который сам «channels FIRST, legacy
+/// LAZY» (Plan 172.1 §0/§1, см. :48691) — то есть чтение канала уже
+/// происходит на один уровень ниже. Прямое чтение `resolved_types` ЗДЕСЬ
+/// невозможно by design: оба вызывающих (`probe_handler_ty` / :8883,
+/// `probe_handler_ty_ro` / :8922) намеренно временно переопределяют тип
+/// первого параметра handler'а на РЕАЛЬНЫЙ payload-тип `Fail[E]` ПЕРЕД
+/// вызовом этой функции, потому что чекер типизирует `|e| interrupt
+/// Some(e)` по WIRE-схеме эффекта (hardcoded `nova_str`, effects.h), а не
+/// по конкретной инстанциации `E` — известное ограничение задокументировано
+/// ещё в Plan 120 (`docs/plans/120-named-tuples-and-allocation-contract.md`
+/// `[M-D215-defaults-handler-lambda-type]`) и закрыто этим rebind-приёмом.
+/// Значит `resolved_types[interrupt_val.id]` на момент вызова либо
+/// отсутствует, либо содержит устаревший WIRE-тип — не источник истины.
 pub fn infer_handler_interrupt_ty(emitter: &CEmitter, handler: &Expr) -> Option<String> {
     use crate::ast::{ClosureBody, FnBody, ElseBranch};
     fn walk_expr(emitter: &CEmitter, e: &Expr, out: &mut Option<String>) {
@@ -29835,6 +29853,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     /// Infer the C function name for a call expression (without emitting args).
+    ///
+    /// Plan 196.3 (мелочь-пакет, one-window inventory) verdict: LEGIT-LOWERING,
+    /// не кандидат на миграцию к `resolved_callees` — это не пере-резолв
+    /// перегрузки (то, что закрывает канал `resolved_callees`, U.4.3, §0/§7.7),
+    /// а простой dispatch «sum-variant-конструктор vs свободная fn», который
+    /// делегирует фактическое mangling'ование ЕДИНОЙ канонической точке
+    /// `free_fn_c_name` (:16481 «Единая точка построения имени»). Само
+    /// mangling — по дизайну codegen-side lowering (см. коммент поля
+    /// `fn_ret_by_span` :906 «mangling/return are codegen lowering, §0/§7.7»),
+    /// НЕ входит в объём resolved_types/resolved_callees. Единственный
+    /// вызывающий (`emit_call_with_trailing`, :29762) достигает этой ветки
+    /// ТОЛЬКО когда `func_stripped` — свободный вызов по идентификатору
+    /// (Member/Path перехвачены раньше, :29739-29759, и уходят через
+    /// `emit_call`); `_ => free_fn_c_name("unknown")` — defensive fallback
+    /// для прочих `ExprKind`, структурно недостижим на этом пути.
     fn infer_func_c_name(&self, func: &Expr) -> String {
         match &func.kind {
             ExprKind::Ident(name) => {
@@ -44984,6 +45017,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// ([M-172.1-some-target-coerce] / -tuple-destructure-annot / -default-arg-typed).
     /// `resolved_type_to_c(Scalar)` is pure (no mono side-effects) so calling it on `&self`
     /// from the value-emitter is safe.
+    ///
+    /// Plan 196.3 (мелочь-пакет, one-window inventory) verdict: ALREADY the
+    /// second-window channel reader — не легаси-переизобретение, а сама
+    /// точка чтения `resolved_types` (см. `self.resolved_types.get(&id)`
+    /// ниже). Единственный вызывающий (`emit_expr` IntLit-ветка, :26114)
+    /// уже follows правило «канал первым, legacy-каст lazy fallback».
+    /// Действие по этому пункту инвентаря = нет изменений, только
+    /// подтверждение статуса (не переносить снова).
     fn channel_int_c_type(&self, id: crate::ast::ExprId) -> Option<String> {
         if !id.is_set() {
             return None;
