@@ -45910,12 +45910,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         params: &[LambdaParam],
         param_c_tys: &[String],
     ) -> String {
-        let saved: Vec<(String, Option<String>)> = params.iter().zip(param_c_tys)
+        let mut saved: Vec<(String, Option<String>)> = params.iter().zip(param_c_tys)
             .map(|(p, ty)| (p.name.clone(), self.var_types.insert(p.name.clone(), ty.clone())))
             .collect();
+        // Plan 196.2 W1 [consumption-converge]: when the lambda body is a BLOCK, thread its
+        // own simple `let name = rhs` bindings into `var_types` (in order) BEFORE inferring
+        // the block value. The body-emission path (emit_stmt) declares these locals, so the
+        // TRAILING expr's C-type inference must see them too — otherwise a trailing that
+        // references a block-local (`… ro w = src[i..end]; Some(w)`) re-infers `w` against an
+        // EMPTY binding and falls back to a wrong type (observed: `Some(w)` → the erased
+        // `NovaOpt_Nova_StringBuilder_p` stub instead of `NovaOpt_Nova_Vec____…`). This made
+        // the closure's declared C return type diverge from its emitted body (CC-FAIL
+        // "returning NovaOpt_… from incompatible int / unknown NovaOpt_StringBuilder"). Latent
+        // whenever Channel-2 does NOT already cover the trailing (surfaced by wider
+        // `[]T.of`/bridge materialization). Threading converges sig-inference onto the same
+        // local types the body emits. Only simple ident-pattern lets; save+restore.
+        if let ExprKind::Block(b) = &body.kind {
+            for stmt in &b.stmts {
+                if let crate::ast::Stmt::Let(d) = stmt {
+                    if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
+                        let rhs_c = self.infer_expr_c_type(&d.value);
+                        if !rhs_c.is_empty() && rhs_c != "void*" {
+                            saved.push((name.clone(), self.var_types.insert(name.clone(), rhs_c)));
+                        }
+                    }
+                }
+            }
+        }
         let inferred = self.infer_expr_c_type(body);
-        // Restore.
-        for (name, prev) in saved {
+        // Restore (params + threaded block-lets).
+        for (name, prev) in saved.into_iter().rev() {
             match prev {
                 Some(old) => { self.var_types.insert(name, old); }
                 None => { self.var_types.remove(&name); }
@@ -46326,6 +46350,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let ExprKind::TurboFish { base, type_args } = &obj.kind {
                             if let ExprKind::Ident(type_name) = &base.kind {
                                 if self.generic_types.contains(type_name.as_str()) {
+                                    self.icr_trace("B01_turbofish_member_generic_type");
                                     let type_args_c: Vec<String> = type_args.iter()
                                         .map(|tr| {
                                             // U.6.1.a: delegate to the SINGLE `type_ref_to_c`
@@ -46420,6 +46445,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if !name.starts_with('@') {
                             if let Some(ret_c) = self.fn_field_call_ret_c(obj, name) {
                                 if !ret_c.is_empty() && ret_c != "void*" {
+                                    self.icr_trace("B02_fn_typed_record_field_call");
                                     return ret_c;
                                 }
                             }
@@ -46456,6 +46482,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     .find(|m| m.name == *method_name
                                         && m.default_body.is_some())
                                 {
+                                    self.icr_trace("B03_protocol_default_body_synth");
                                     if let Some(rt) = &m.return_type {
                                         if let Ok(c) = self.type_ref_to_c(rt) {
                                             return c;
@@ -46478,6 +46505,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     self.protocol_method_registry.get(key.as_str()).cloned()
                                 {
                                     if let Some(m) = methods.iter().find(|m| m.name == *method_name) {
+                                        self.icr_trace("B04_novabox_protocol_method");
                                         let ret_c = m.return_type.as_ref()
                                             .and_then(|rt| self.type_ref_to_c(rt).ok())
                                             .unwrap_or_else(|| "nova_unit".to_string());
@@ -46630,6 +46658,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         && s.c_name.starts_with("__mono_method__")))
                                     .unwrap_or(false);
                                 if has_sentinel {
+                                    self.icr_trace("B05_array_ext_slice_sentinel_mono");
                                     let recv_key = (slice_key_ret.clone(), mn.clone());
                                     if let Some(fn_decl) = self.mono_method_decls.get(&recv_key).cloned() {
                                         // Plan 153.5 (D263): bind the receiver typevar(s)
@@ -46730,10 +46759,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     .filter(|s| s.is_instance == want_inst)
                                     .collect();
                                 if !candidates.is_empty() {
+                                    self.icr_trace("B06_method_overloads_candidates");
                                     // Plan 48 Ф.7.1: sentinel — generic method с
                                     // собственными type params. return_c_type у sentinel
                                     // = "void*"; нужно резолвить через mono inference.
                                     if candidates.iter().any(|c| c.c_name.starts_with("__mono_method__")) {
+                                        self.icr_trace("B06a_method_overload_sentinel_mono");
                                         let recv_key = (rt.clone(), mn.clone());
                                         if let Some(fn_decl) = self.mono_method_decls.get(&recv_key).cloned() {
                                             if let Ok(type_subst) = self.resolve_mono_type_args(&fn_decl, &turbofish_args, args) {
@@ -46776,6 +46807,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     if candidates.len() == 1
                                         && !self.debt_is_generic_stub_c(&candidates[0].return_c_type)
                                     {
+                                        self.icr_trace("B06b_method_overload_single_candidate");
                                         return candidates[0].return_c_type.clone();
                                     }
                                     // Multi → strict match по arg-types.
@@ -46811,11 +46843,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             .find(|s| s.recv_mutable == recv_mut
                                                 && !self.debt_is_generic_stub_c(&s.return_c_type))
                                         {
+                                            self.icr_trace("B06c_method_overload_recvmut_tiebreak");
                                             return sig.return_c_type.clone();
                                         }
                                     }
                                     if let Some(sig) = pool.first() {
                                         if !self.debt_is_generic_stub_c(&sig.return_c_type) {
+                                            self.icr_trace("B06d_method_overload_pool_first");
                                             return sig.return_c_type.clone();
                                         }
                                     }
@@ -46831,6 +46865,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let instance_opt = info.get(&format!("Nova_{}", rt)).cloned();
                                 drop(info);
                                 if let Some((base_name, type_args_rt)) = instance_opt {
+                                    self.icr_trace("B07_generic_type_instance_method");
                                     // A1‴: registry args carry `ResolvedType` — lower once to C-names for this block.
                                     let type_args_c: Vec<String> = type_args_rt.iter().map(|c| self.arg_c(c)).collect();
                                     if let Some(tmpl) = self.generic_type_templates.get(&base_name) {
@@ -47010,6 +47045,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         // mirroring the free-fn-call fix above and
                                                         // the dispatch-site `register_generic_
                                                         // instances_in_typeref` calls.
+                                                        self.icr_trace("B07r_generic_instance_method_return");
                                                         self.register_generic_instances_in_typeref(ret_ty, &subst);
                                                         // Plan 153.2 Ф.1 (STAGE 1): a
                                                         // method whose return type is a
@@ -47052,6 +47088,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 if !ret.is_empty() && ret != "void*"
                                                     && !self.debt_is_generic_stub_c(&ret)
                                                 {
+                                                    self.icr_trace("B07ext_generic_instance_external_registry");
                                                     return ret;
                                                 }
                                             }
@@ -47091,6 +47128,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // look up the RECEIVER generic by name (not by position).
                                     .map(|((tvname, _), fd)| (tvname.clone(), fd.clone()));
                                 if let Some((blanket_tvname, fd)) = blanket_fd {
+                                    self.icr_trace("B08_blanket_protocol_receiver");
                                     if let Some(ret_ty) = &fd.return_type {
                                         // Plan 162 fix [M-162-tuple-parametric-return]:
                                         // resolve inner typevars (e.g. T in `Next[T]`) BEFORE
@@ -47285,6 +47323,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 raw_c
                                             };
                                             if !c.is_empty() && c != "void*" {
+                                                self.icr_trace("B08r_blanket_protocol_return");
                                                 return c;
                                             }
                                         }
@@ -47303,6 +47342,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     .filter(|d| d.is_instance == want_inst)
                                     .collect();
                                 if let Some(decl) = matching.first() {
+                                    self.icr_trace("B09_external_registry_bykey_builtin");
                                     // Plan 62.B: пропускаем generic-стаб `Nova_T*`
                                     // (single uppercase letter = type-param return)
                                     // — fall through to specialized NovaOpt_/
@@ -47321,15 +47361,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Infer return type for call expressions
                     if let ExprKind::Ident(name) = &func.kind {
                         if name == "println" || name == "print" || name == "assert" || name == "debug_assert" {
+                            self.icr_trace("B10a_ident_println_assert");
                             return "nova_unit".into();
                         }
                         // Variant constructor call: Some(x), None, etc. → return option/sum type.
                         // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
                         if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
+                            self.icr_trace("B10b_ident_variant_constructor");
                             // Plan 14 Ф.1: Some(x) infer как NovaOpt_<T>, где T = тип аргумента.
                             // None infer'ится по контексту current_fn_return_ty (если NovaOpt_<X>).
                             // Иначе — legacy NovaOpt_nova_int.
                             if type_name == "Option" || type_name == "NovaOpt_nova_int" {
+                                self.icr_trace("B10b_opt_variant");
                                 if name == "Some" && !args.is_empty() {
                                     let arg_ty = self.infer_expr_c_type(args[0].expr());
                                     if !arg_ty.is_empty() && arg_ty != "void*" {
@@ -47354,6 +47397,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if type_name == "Result"
                                 && (name == "Ok" || name == "Err")
                             {
+                                self.icr_trace("B10b_result_variant");
                                 let arg_c = args.first()
                                     .map(|a| self.infer_expr_c_type(a.expr()))
                                     .filter(|t| !t.is_empty()
@@ -47377,8 +47421,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if let Some((_, mangled, _)) =
                                 self.try_infer_variant_mono_args(name, args)
                             {
+                                self.icr_trace("B10b_user_variant_mono");
                                 return format!("{}*", mangled);
                             }
+                            self.icr_trace("B10b_variant_nova_fallback");
                             return format!("Nova_{}*", type_name);
                         }
                         // Plan 172.1 D402: unannotated ClosureLight call-site return-type
@@ -47403,6 +47449,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         self.closure_param_type_overrides.borrow_mut().remove(pname);
                                     }
                                     if !ret.is_empty() && ret != "void*" {
+                                        self.icr_trace("B10c_unanno_light_closure");
                                         return ret;
                                     }
                                 }
@@ -47416,6 +47463,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // would otherwise hijack the inference and mistype the call.
                         if let Some(clos_ty) = self.var_types.get(name).cloned() {
                             if let Some(ret_c) = Self::clos_struct_ret_type(&clos_ty) {
+                                self.icr_trace("B10d_closure_var_struct_ret");
                                 return ret_c.to_string();
                             }
                         }
@@ -47432,6 +47480,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // otherwise hijack the inference.
                         if let Some((_, ret_ty)) = self.fn_param_sigs.get(name) {
                             if !ret_ty.is_empty() && ret_ty != "void*" {
+                                self.icr_trace("B10e_fn_param_sigs_first");
                                 return ret_ty.clone();
                             }
                         }
@@ -47446,6 +47495,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // type. MUST precede the `fn_ret_<name>` lookup.
                         if let Some((_, ret_ty)) = self.user_fn_sigs.get(name) {
                             if !ret_ty.is_empty() && ret_ty != "void*" && !self.debt_is_generic_stub_c(ret_ty) {
+                                self.icr_trace("B10f_user_fn_sigs");
                                 return ret_ty.clone();
                             }
                         }
@@ -47470,9 +47520,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // through to the turbofish-aware generic-fn resolution below
                             // (which substitutes the turbofish args into the return type).
                             if !self.generic_fns.contains(name.as_str()) {
+                                self.icr_trace("B10g_fn_ret_var_nongeneric");
                                 return t;
                             }
                             if turbofish_args.is_empty() {
+                                self.icr_trace("B10g_fn_ret_var_generic_stash");
                                 fn_ret_generic_stash = Some(t);
                             }
                         }
@@ -47481,6 +47533,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Mirror emit_call newtype intercept (single-arg only).
                         if args.len() == 1 {
                             if let Some(aliased_c) = self.type_aliases.get(name).cloned() {
+                                self.icr_trace("B10h_newtype_constructor");
                                 return aliased_c;
                             }
                         }
@@ -47495,6 +47548,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if let Some(decl) = decls.first() {
                                 let c_ret = &decl.return_c_type;
                                 if !c_ret.is_empty() && c_ret != "void*" {
+                                    self.icr_trace("B10i_external_registry_free_fn");
                                     return c_ret.clone();
                                 }
                             }
@@ -47504,6 +47558,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // from the first matching argument type.
                         if self.generic_fns.contains(name.as_str()) {
                             if let Some(fn_decl) = self.mono_fn_decls.get(name).cloned() {
+                                self.icr_trace("B10j_generic_fn_mono_resolve");
                                 // Plan 59.1 (2026-06-01): tuple-returning bailout
                                 // (was: return "void*") удалён. Plan 59 Ф.7.5
                                 // mono'd schema валидирована — generic tuple
@@ -47664,6 +47719,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             // generic instance(s) here, mirroring the
                                             // dispatch-site fix in the method paths above
                                             // (`register_generic_instances_in_typeref`).
+                                            self.icr_trace("B10j_generic_fn_value_aware_return");
                                             self.register_generic_instances_in_typeref(ret_ty_ref, &subst);
                                             // Plan 153.2 Ф.2 (STAGE 2): a free-fn whose
                                             // return type is a `value` generic instance
@@ -47693,6 +47749,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     if !Self::type_ref_mentions_name(ret_ty_ref, &generic_names) {
                                         if let Ok(c_ty) = self.type_ref_to_c(ret_ty_ref) {
                                             if !c_ty.is_empty() && c_ty != "void*" {
+                                                self.icr_trace("B10j_generic_fn_concrete_ret");
                                                 return c_ty;
                                             }
                                         }
@@ -47701,6 +47758,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // fall back to the stashed erased `fn_ret_<name>` (legacy
                                     // answer for non-turbofish generic calls —
                                     // [M-property-testing-rot]), else void* (erased return).
+                                    self.icr_trace("B10j_generic_fn_stash_or_voidstar");
                                     return fn_ret_generic_stash.unwrap_or_else(|| "void*".into());
                                 }
                             }
@@ -47709,14 +47767,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // имеет ret_ty в fn_param_sigs. Без этого `pred(x)` где
                         // `pred fn(int) -> bool` инфер'ится как nova_int.
                         if let Some((_, ret_ty)) = self.fn_param_sigs.get(name) {
+                            self.icr_trace("B10k_fn_param_sigs_second");
                             return ret_ty.clone();
                         }
                         // Plan 120 (D215): named tuple constructor — "Point" → "NovaTuple_Point".
                         if let Some(c_ty) = self.type_aliases.get(name.as_str()) {
                             if c_ty.starts_with("NovaTuple_") {
+                                self.icr_trace("B10l_named_tuple_constructor");
                                 return c_ty.clone();
                             }
                         }
+                        self.icr_trace("B10m_ident_empty_fallback");
                         // In phase-1c pre-scan the function registry is not yet
                         // populated — return empty so callers degrade to nova_unit.
                         String::new()
@@ -47725,6 +47786,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // → NovaArray_<T>*. obj — Path(["__array", "<T>"]).
                         if let ExprKind::Path(parts) = &obj.kind {
                             if parts.len() == 2 && parts[0] == "__array" {
+                                self.icr_trace("B11a_array_static_method");
                                 if method == "new" || method == "with_capacity" {
                                 // [M-record-elem-vec-bare-ctor-miscompile] R3 mirror,
                                 // EXTENDED by Plan 172.12 A8 (mirror of the A7 emit-side
@@ -47848,6 +47910,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             let has_user_clone = self.all_methods
                                 .contains(&(recv_nova.clone(), "clone".to_string()));
                             if !has_user_clone && !Self::debt_contains_mono_sep(&recv_nova) {
+                                self.icr_trace("B11b_clone_identity");
                                 return obj_ty;
                             }
                         }
@@ -47861,6 +47924,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // чтобы resolve method-level type params (`@map[U]` → U из
                         // closure return type).
                         if let Some(ret) = self.infer_mono_method_ret_with_args(&obj_ty, method, args) {
+                            self.icr_trace("B11c_infer_mono_method_ret");
                             return ret;
                         }
                         // Plan 118 Ф.4 V1: typed pointer (*T).read() -> T,
@@ -47876,6 +47940,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             && !obj_ty.starts_with("NovaArray_")
                             && obj_ty != "void*"
                         {
+                            self.icr_trace("B11d_typed_pointer_methods");
                             if method == "read" && args.is_empty() {
                                 // pointee = strip "const " prefix + ONE trailing
                                 // '*' (not `trim_end_matches`, which would over-
@@ -47942,6 +48007,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // fallback), что ломает strict bool-check для `if`.
                         if obj_ty == "nova_str" {
                             if let Some(rt) = Self::str_method_ret_type(method) {
+                                self.icr_trace("B11e_str_method_ret_type_first");
                                 return rt.into();
                             }
                         }
@@ -47949,6 +48015,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // возвращают nova_bool, не nova_int. Без этого `if x.lt(y)`
                         // в generic-теле с T=nova_int ломает strict bool-check.
                         if let Some(prim) = Self::prim_builtin_method(&obj_ty, method) {
+                            self.icr_trace("B11f_prim_builtin_method_first");
                             return match prim {
                                 // Plan 138.4 Ф.1 G-C: identity clone preserves receiver type.
                                 PrimBuiltin::Identity => obj_ty.clone(),
@@ -47958,16 +48025,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 _ => "nova_int".into(),
                             };
                         }
-                        // Plan 06 Ф.3: `coll.iter()` → registered IterT type.
-                        if method == "iter" {
-                            let coll_type = self.debt_strip_nova_trim_start(&obj_ty);
-                            if let Some(iter_t) = self.iter_returns.get(&coll_type) {
-                                return format!("Nova_{}*", iter_t);
-                            }
-                        }
+                        // Plan 196.2 W1 [gate-1]: B11g_iter_registered_type REMOVED. `coll.iter()`
+                        // return (VecIter/HashMapIter/…) is materialised by the checker into
+                        // Channel-2 (esp. after the []T.of materialisation fix); `.iter()` is
+                        // exercised pervasively yet NO-HIT ⟹ Channel-2-covered ⟹ this
+                        // `iter_returns`-keyed legacy fallback is structurally unreachable (§5).
                         // D91 (Plan 21): Channel.new → Nova_ChannelPair.
                         if let ExprKind::Ident(n) = &obj.kind {
                             if n == "Channel" && method == "new" {
+                                self.icr_trace("B11h_channel_new");
                                 return "Nova_ChannelPair".into();
                             }
                             // Plan 65 Ф.1: ChanReader.close_after(Duration) →
@@ -47975,10 +48041,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // (D91 + D94 revision). Replaces the removed
                             // `Time.after(int)` form (Plan 65 Ф.5).
                             if n == "ChanReader" && method == "close_after" {
+                                self.icr_trace("B11h_chanreader_close_after");
                                 return "Nova_ChanReader*".into();
                             }
                             // Plan 65 Ф.12.4 / D124: ChanReader.close_at(Monotonic).
                             if n == "ChanReader" && method == "close_at" {
+                                self.icr_trace("B11h_chanreader_close_at");
                                 return "Nova_ChanReader*".into();
                             }
                             // Plan 175 Ф.3(a): `Monotonic.now()` inference builtin
@@ -47986,6 +48054,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // now resolves it (ordinary `.nv` fn, like Timestamp.now()).
                             // D75 (revised, Plan 47): CancelToken.new() — Member-form.
                             if n == "CancelToken" && method == "new" {
+                                self.icr_trace("B11h_canceltoken_new");
                                 return "NovaCancelToken*".into();
                             }
                             // D406: qualified sum-variant access `TypeName.Variant` —
@@ -47997,6 +48066,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if self.sum_schemas.contains_key(nq.as_str())
                                 || self.sum_schema_registry.lookup_sum_schema(&nq).is_some()
                             {
+                                self.icr_trace("B11h_qualified_sum_variant_access");
                                 return format!("Nova_{}*", nq);
                             }
                         }
@@ -48005,6 +48075,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // где T определяется из cancel_token_t_map (если receiver —
                         // tracked Ident). Backward-compat: Option[str] default.
                         if self.recv_c_type_materialized(obj).as_deref() == Some("NovaCancelToken*") {
+                            self.icr_trace("B11i_canceltoken_instance");
                             match method.as_str() {
                                 "is_cancelled" => return "nova_bool".into(),
                                 "cancel" | "cancelled_by" => return "nova_unit".into(),
@@ -48030,6 +48101,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         // D91: Sender capability method return types.
                         if obj_ty == "Nova_ChanWriter*" {
+                            self.icr_trace("B11j_chanwriter_instance");
                             return match method.as_str() {
                                 "send"             => "nova_bool".into(),
                                 "close"            => "nova_unit".into(),
@@ -48042,6 +48114,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         // D91: Receiver capability method return types.
                         if obj_ty == "Nova_ChanReader*" {
+                            self.icr_trace("B11k_chanreader_instance");
                             return match method.as_str() {
                                 "recv" | "try_recv" => "NovaOpt_nova_int".into(),
                                 "is_closed"         => "nova_bool".into(),
@@ -48054,24 +48127,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Plan 04: built-in StringBuilder/WriteBuffer/ReadBuffer
                         // static-method type inference.
                         if let ExprKind::Ident(n) = &obj.kind {
-                            if n == "StringBuilder" {
-                                return match method.as_str() {
-                                    "new" | "with_capacity" | "from" => "Nova_StringBuilder*".into(),
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            if n == "WriteBuffer" {
-                                return match method.as_str() {
-                                    "new" | "with_capacity" | "from" => "Nova_WriteBuffer*".into(),
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            if n == "ReadBuffer" {
-                                return match method.as_str() {
-                                    "from" => "Nova_ReadBuffer*".into(),
-                                    _ => "nova_int".into(),
-                                };
-                            }
+                            // Plan 196.2 W1 [gate-1]: B11l_{stringbuilder,writebuffer,readbuffer}_static
+                            // REMOVED. `StringBuilder`/`WriteBuffer`/`ReadBuffer` static ctors
+                            // (`new`/`with_capacity`/`from`) are exercised by std (io/text/testing)
+                            // yet NO-HIT across conformance+std → the checker materialises their
+                            // declared return into Channel-2 (structurally unreachable legacy fallback,
+                            // §5 structural-death: exercised-but-never-hit ⟹ Channel-2-covered).
                             // [M-compiler-nv-porting-wave] items B1/B2: gc/
                             // fibers/runtime type-inference hardcode (heap_size/
                             // collect/virtual_reserved/init/is_initialized/…) и
@@ -48080,12 +48141,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // return-type инференс резолвит return_c_type.
                             // `int.to_bits` остаётся — нет .nv-декларации нигде.
                             if n == "int" && method == "to_bits" {
+                                self.icr_trace("B11l_int_to_bits");
                                 return "nova_int".into();
                             }
                             // Plan 12 + Plan 18: ExternalRegistry static-method return type.
                             // Handles AtomicInt.new(), Mutex.new(), WaitGroup.new(), etc.
                             if let Some(decls) = self.external_registry.lookup(n, method) {
                                 if let Some(decl) = decls.iter().find(|d| !d.is_instance) {
+                                    self.icr_trace("B11l_external_registry_static_ident");
                                     return decl.return_c_type.clone();
                                 }
                             }
@@ -48093,6 +48156,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Plan 04 + Plan 13 Ф.9.1: instance-method type inference.
                         // Self-return для chaining (mut @append, all @write_*, @clone).
                         if obj_ty == "Nova_StringBuilder*" {
+                            self.icr_trace("B11m_stringbuilder_instance");
                             return match method.as_str() {
                                 // byte_len — Plan 13 Ф.9 fix: codepoint vs byte split.
                                 "len" | "byte_len" | "capacity" => "nova_int".into(),
@@ -48103,45 +48167,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 _ => "nova_int".into(),
                             };
                         }
-                        if obj_ty == "Nova_WriteBuffer*" {
-                            return match method.as_str() {
-                                "len" | "capacity" => "nova_int".into(),
-                                "clone" => "Nova_WriteBuffer*".into(),
-                                // 172.12 A6 (Vec-canon): WriteBuffer @into -> []u8 is a
-                                // Nova-body method building a real Vec[u8]; the checker
-                                // channel supersedes this legacy fallback. Aligned to the
-                                // Vec-image so a channel-miss names the correct type
-                                // (was stale NovaArray_nova_byte*, dead but mis-named).
-                                "into" => "Nova_Vec____nova_byte*".into(),
-                                // Self-return для chaining (Ф.9.1).
-                                m if m.starts_with("write_") => "Nova_WriteBuffer*".into(),
-                                _ => "nova_int".into(),
-                            };
-                        }
-                        if obj_ty == "Nova_ReadBuffer*" {
-                            return match method.as_str() {
-                                "position" | "remaining" => "nova_int".into(),
-                                "has_remaining" => "nova_bool".into(),
-                                // 172.12 A6 (Vec-canon): ReadBuffer @remaining_bytes -> []u8
-                                // is a Nova-body method building a real Vec[u8]; channel
-                                // supersedes. Aligned to the Vec-image (was stale NovaArray).
-                                "remaining_bytes" => "Nova_Vec____nova_byte*".into(),
-                                // Plan 177 / D325 Ф.2b (de-hardcode §3/§10): the `read_X`
-                                // reads are now a SINGLE Result-form (`try_read_*`/bare-throw
-                                // twins retracted). Their concrete `Result[T, ReadBufferError]`
-                                // is materialized by the checker
-                                // (`infer_method_call_channel_type` → `resolve_instance_method_
-                                // return`) into `resolved_types` and read by the SINGLE
-                                // `resolved_type_to_c` (Channel 2, BEFORE this legacy). The
-                                // per-width name-keyed table was the pre-channel stopgap
-                                // (its own comment pointed at "the resolved-callees channel");
-                                // with the channel live, these arms are dead-superseded and
-                                // REMOVED. Reaching this legacy for a `read_X` now = channel
-                                // miss → the `nova_int` guess is a loud CC-FAIL that surfaces
-                                // the gap (§1/§10 — no silent mis-type).
-                                _ => "nova_int".into(),
-                            };
-                        }
+                        // Plan 196.2 W1 [gate-1]: B11n_writebuffer_instance + B11o_readbuffer_instance
+                        // REMOVED. WriteBuffer/ReadBuffer instance methods (len/capacity/clone/into/
+                        // write_*/position/remaining/read_*/…) are Nova-body/Result-form methods whose
+                        // return the checker materialises into `resolved_types` (Channel 2, read BEFORE
+                        // this legacy); the branches' own comments already flagged them "dead-superseded".
+                        // Exercised by std io yet NO-HIT ⟹ Channel-2-covered ⟹ structurally unreachable.
                         // Plan 12 + Plan 18: ExternalRegistry instance-method return type.
                         // Handles AtomicInt.@load(), Mutex.@lock(), WaitGroup.@wait(), etc.
                         if obj_ty.starts_with("Nova_") && obj_ty.ends_with('*') {
@@ -48152,6 +48183,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // fall through к specialized NovaOpt_/Nova_Result*
                                     // блокам, знающим concrete тип из tracking/context.
                                     if !self.debt_is_generic_stub_c(&decl.return_c_type) {
+                                        self.icr_trace("B11p_external_registry_instance_nova");
                                         return decl.return_c_type.clone();
                                     }
                                 }
@@ -48159,6 +48191,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         // D26 prelude: NovaOpt_T method type inference.
                         if obj_ty.starts_with("NovaOpt_") {
+                            self.icr_trace("B11q_novaopt_methods");
                             let elem_ty = Self::debt_unmangle_ptr_suffix(
                                 obj_ty.strip_prefix("NovaOpt_")
                                     .unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"))
@@ -48189,6 +48222,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // D26 prelude: Nova_Result* method type inference.
                         // Plan 72 P1-C: use tracked Result[T,E] type params when available.
                         if Self::is_result_like(&obj_ty) {
+                            self.icr_trace("B11r_result_like_methods");
                             // Plan 59 Ф.7.5-lite: inline-aware (T,E) inference.
                             let (ok_c, err_c) = self.resolve_result_te(obj, &obj_ty)
                                 .unwrap_or_else(|| panic!("[P67-LEGACY] Result T/E unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0)", obj_ty));
@@ -48220,12 +48254,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Plan 108: also from_bytes_lossy / from_bytes_unchecked → nova_str.
                         // Plan 91 followup: from_bytes_unchecked_steal → nova_str (zero-copy).
                         if let ExprKind::Ident(n) = &obj.kind {
-                            if n == "str" && (method == "from" || method == "from_bytes_lossy" || method == "from_bytes_unchecked" || method == "from_bytes_unchecked_steal") { return "nova_str".into(); }
+                            if n == "str" && (method == "from" || method == "from_bytes_lossy" || method == "from_bytes_unchecked" || method == "from_bytes_unchecked_steal") { self.icr_trace("B11s_str_from_ident"); return "nova_str".into(); }
                             // User-defined `T.from(v)` returns Nova_T* (most cases).
                             if method == "from"
                                 && (self.record_schemas.contains_key(n)
                                     || self.sum_schemas.contains_key(n))
                             {
+                                self.icr_trace("B11s_user_type_from_ident");
                                 return format!("Nova_{}*", n);
                             }
                         }
@@ -48242,6 +48277,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // unwrap it. `from`/`try_*` keep their dedicated handling below.
                         if let ExprKind::Ident(n) = &obj.kind {
                             if let Some(c) = self.infer_static_method_ret(n, method) {
+                                self.icr_trace("B11t_static_method_ret_ident");
                                 return c;
                             }
                         }
@@ -48249,11 +48285,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Exception: self-referential call inside a sum-type method — look up
                         // return type from current receiver's method_overloads.
                         if obj_ty == "void*" {
+                            self.icr_trace("B11u_voidstar_receiver");
                             if let Some(recv_ty) = &self.current_receiver_type {
                                 if self.all_methods.contains(&(recv_ty.clone(), method.to_string())) {
                                     let key = (recv_ty.clone(), method.to_string());
                                     if let Some(overloads) = self.method_overloads.get(&key) {
                                         if let Some(sig) = overloads.iter().find(|s| s.is_instance) {
+                                            self.icr_trace("B11u_voidstar_self_recursive");
                                             return sig.return_c_type.clone();
                                         }
                                     }
@@ -48272,9 +48310,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // strictly improves (never overrides an earlier resolution).
                             if let ExprKind::Ident(n) = &obj.kind {
                                 if let Some(c) = self.infer_static_method_ret(n, method) {
+                                    self.icr_trace("B11u_voidstar_static_method_ret");
                                     return c;
                                 }
                             }
+                            self.icr_trace("B11u_voidstar_giveup");
                             return "void*".into();
                         }
                         // Effect dispatch: TypeName.method() → look up in effect_schemas
@@ -48286,6 +48326,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let Some(ref eff) = eff_name {
                             if let Some(schema) = self.effect_schemas.get(eff.as_str()) {
                                 if let Some((_, ret_ty)) = Self::schema_lookup(schema, method.as_str()) {
+                                    self.icr_trace("B11v_effect_dispatch_member");
                                     return ret_ty.clone();
                                 }
                             }
@@ -48296,30 +48337,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // `.try_into()` are ordinary method names now — they fall through
                         // to the normal method_overloads-based inference below, same as
                         // any other user method.
-                        // Plan 138.1 Ф.1 (D239) BRIDGE: C-runtime-only array helpers
-                        // on a `Vec[T]` receiver (no Vec Nova-body method). Must mirror
-                        // the emission-side bridge return types exactly; all other
-                        // methods fall through to the normal Vec generic-method
-                        // inference below. [F23: replace with Vec Nova-body methods.]
-                        if obj_ty.starts_with("Nova_Vec____") {
-                            let vec_elem_ty = obj_ty
-                                .strip_prefix("Nova_Vec____")
-                                .unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"))
-                                .trim_end_matches('*')
-                                .trim();
-                            match method.as_str() {
-                                "append_zero" | "copy_from" | "copy_within" | "fill"
-                                    => return obj_ty.clone(),
-                                "compare" if vec_elem_ty == "nova_byte"
-                                    => return "nova_int".into(),
-                                // D410 (2026-07-06): as_ptr → ptr (as_ prefix retracted).
-                                "ptr" | "as_mut_ptr"
-                                    => return format!("{}*", vec_elem_ty),
-                                _ => { /* fall through to normal Vec method inference */ }
-                            }
-                        }
+                        // Plan 196.2 W1 step3 [gate-1]: B11w_nova_vec_bridge_methods REMOVED.
+                        // The C-runtime bridge special-case (`append_zero`/`copy_from`/
+                        // `copy_within`/`fill`/`compare`/`ptr`/`as_mut_ptr` on a raw
+                        // `Nova_Vec____` receiver) is REDUNDANT since F23 landed the Vec
+                        // Nova-body decls: `Vec[T] @ptr() -> *T` (access.nv:267/275),
+                        // `Vec[T Compare] @compare -> int` (protocols.nv:77),
+                        // `copy_within`/`fill`/`append_zero`/`copy_from -> @` (mutate.nv).
+                        // The normal Vec generic-method inference below resolves all of them
+                        // to the SAME C-type (Self→receiver, *T→elem*, compare→int). The
+                        // earlier removal attempt regressed `vec_lazy` ONLY via the
+                        // now-fixed `NovaOpt-from-int` closure-sig bug (W1 step1); with that
+                        // fixed the fall-through is byte-safe. Gate-1: Δ infer_call_ret_c < 0.
                         // Array method calls
                         if obj_ty.starts_with("NovaArray_") {
+                            self.icr_trace("B11x_novaarray_methods");
                             let elem_ty = Self::debt_strip_novaarray_prefix_or_panic_legacy(&obj_ty)
                                 .trim_end_matches('*').trim();
                             match method.as_str() {
@@ -48419,61 +48451,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // Nova-body method-return-type инференсом (declared
                             // `-> u64`/`-> u32` в сигнатуре).
                             if Self::f64_method_to_c(method).is_some() {
+                                self.icr_trace("B11y_f64_f32_math");
                                 return match method.as_str() {
                                     "is_nan" | "is_finite" | "is_infinite" => "nova_bool".into(),
                                     _ => "nova_f64".into(),
                                 };
                             }
                         }
-                        // D109: built-in primitive methods return-type inference.
-                        if let Some(builtin) = Self::prim_builtin_method(&obj_ty, method) {
-                            return match builtin {
-                                PrimBuiltin::Fn(_) => "nova_int".into(), // hash → u64 = nova_int
-                                PrimBuiltin::BinOp(_) => "nova_bool".into(),
-                                // Plan 138.4 Ф.1 G-C: identity clone preserves receiver type.
-                                PrimBuiltin::Identity => obj_ty.clone(),
-                            };
-                        }
+                        // Plan 196.2 W1 [gate-1]: B11z_prim_builtin_method_second REMOVED.
+                        // Duplicate of the FIRST prim-builtin check (B11f, above) — primitive
+                        // builtin methods (hash/comparison/identity-clone) are caught by B11f or
+                        // materialised into Channel-2; this SECOND check is NO-HIT ⟹ structurally
+                        // unreachable (§5).
                         // D74 math methods on int.
                         if obj_ty == "nova_int" {
                             if Self::int_method_to_c(method).is_some() {
+                                self.icr_trace("B11aa_int_math");
                                 return "nova_int".into();
                             }
                         }
-                        // String method calls return type inference
-                        if obj_ty == "nova_str" {
-                            return match method.as_str() {
-                                "to_upper" | "to_lower" | "trim" | "slice" | "concat" => "nova_str".into(),
-                                "starts_with" | "ends_with" | "contains" | "eq" => "nova_bool".into(),
-                                "len" | "char_len" | "byte_len" => "nova_int".into(),
-                                // Plan 90: byte_at → u8.
-                                "byte_at" => "nova_byte".into(),
-                                // Plan 71 follow-up + Plan 75: char_at → Option[char], not Option[int].
-                                "char_at" => "NovaOpt_nova_char".into(),
-                                "find" | "rfind" => "NovaOpt_nova_int".into(),
-                                // D410 (2026-07-06, ex-D176 as_bytes): s.bytes() → readonly
-                                // []u8. 172.12 A6 (Vec-canon): `@bytes` is a Nova-body method
-                                // returning a real Vec[u8] (Plan 139.2, via from_raw_parts);
-                                // the checker channel supersedes this legacy fallback. Aligned
-                                // to the Vec-image (was stale NovaArray_nova_byte*).
-                                "bytes" => "Nova_Vec____nova_byte*".into(),
-                                // D178: split → []str. 172.12 A6: `@split` is Nova-body
-                                // returning a real Vec[str]; aligned to the Vec-image.
-                                "split" => "Nova_Vec____nova_str*".into(),
-                                // D178: compare → int.
-                                "compare" => "nova_int".into(),
-                                // Plan 177 / D325 Ф.2b (de-hardcode §3): `str.parse_int` is now
-                                // the SINGLE Result-form (`try_parse_int`/`parse_int_opt` retracted).
-                                // Its `Result[int, ParseIntError]` is materialized by the checker
-                                // (`infer_method_call_channel_type` → `resolve_instance_method_return`)
-                                // into `resolved_types` and read by the single `resolved_type_to_c`
-                                // (Channel 2, BEFORE this legacy). The `NovaOpt_nova_int` stopgap was
-                                // wrong for the Result-form anyway (it named Option) and is REMOVED;
-                                // a legacy hit now = channel miss → loud CC-FAIL, not a silent mis-type.
-                                "pad_left" | "pad_right" | "repeat" | "replace" => "nova_str".into(),
-                                _ => "nova_int".into(),
-                            };
-                        }
+                        // Plan 196.2 W1 [gate-1]: B11ab_str_method_big_match_second REMOVED.
+                        // `str` is a .nv-backed type whose methods (to_upper/trim/len/byte_at/
+                        // char_at/find/bytes/split/compare/pad/repeat/replace/…) are Nova-body /
+                        // Result-form; their returns the checker materialises into `resolved_types`
+                        // (Channel 2, read BEFORE this legacy). str methods are exercised pervasively
+                        // by std (text/encoding/crypto) yet NO-HIT across conformance+std ⟹ every
+                        // reachable str-method call is Channel-2-covered ⟹ this name-keyed table is
+                        // structurally-unreachable legacy (§5). Its `bytes`/`split`/`parse_int` arms
+                        // already carried "channel supersedes / REMOVED" notes.
                         // Direct vtable call: switcher.flip() → look up method ret in effect schema
                         if obj_ty.starts_with("NovaVtable_") && obj_ty.ends_with('*') {
                             let eff = obj_ty
@@ -48481,6 +48486,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 .trim_end_matches('*').trim();
                             if let Some(schema) = self.effect_schemas.get(eff) {
                                 if let Some((_, ret_ty)) = Self::schema_lookup(schema, method.as_str()) {
+                                    self.icr_trace("B11ac_novavtable_effect");
                                     return ret_ty.clone();
                                 }
                             }
@@ -48490,12 +48496,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // на global fn_ret_<m> может выбрать stale int — нужны явные whitelist'ы.
                         match method.as_str() {
                             // Equality — Equal protocol (@equal → nova_bool). Plan 91.8b.
-                            "equal" => return "nova_bool".into(),
+                            "equal" => { self.icr_trace("B11ad_protocol_equal"); return "nova_bool".into(); }
                             // Predicates на values.
                             "is_zero" | "is_positive" | "is_negative" | "is_nan"
-                                | "is_finite" | "is_infinite" => return "nova_bool".into(),
+                                | "is_finite" | "is_infinite" => { self.icr_trace("B11ad_protocol_predicates"); return "nova_bool".into(); }
                             // Hash → u64 (nova_int storage).
-                            "hash" => return "nova_int".into(),
+                            "hash" => { self.icr_trace("B11ad_protocol_hash"); return "nova_int".into(); }
                             _ => {}
                         }
                         // User-defined method: look up return type registered during forward decl.
@@ -48510,12 +48516,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if !recv_tn.is_empty() {
                                 let tq = format!("fn_ret_{}_{}", recv_tn, method);
                                 if let Some(ret_ty) = self.var_types.get(&tq) {
+                                    self.icr_trace("B11ae_type_qualified_fn_ret");
                                     return ret_ty.clone();
                                 }
                             }
                         }
                         let ret_key = format!("fn_ret_{}", method);
                         if let Some(ret_ty) = self.var_types.get(&ret_key) {
+                            self.icr_trace("B11af_fn_ret_method_nameonly");
                             return ret_ty.clone();
                         }
                         // [M-172.1-d174-sync-consume-registry] (Gap B, extern-method return):
@@ -48558,6 +48566,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 d.return_c_type == first.return_c_type
                                             })
                                         {
+                                            self.icr_trace("B11ag_extern_method_registry");
                                             return first.return_c_type.clone();
                                         }
                                     }
@@ -48572,6 +48581,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if expr.id.is_set() {
                             if let Some(rt) = self.resolved_types.get(&expr.id) {
                                 if let Ok(ct) = self.resolved_type_to_c(rt) {
+                                    self.icr_trace("B11ah_resolved_types_channel_late");
                                     return ct;
                                 }
                             }
@@ -48589,6 +48599,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 .borrow()
                                 .contains("NovaRes_nova_unit_NovaValue_SerError")
                         {
+                            self.icr_trace("B11ai_serialize_contract");
                             return "NovaRes_nova_unit_NovaValue_SerError*".to_string();
                         }
                         // bench.opaque(x): compiler black-box identity intrinsic (mirror of
@@ -48599,6 +48610,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if method == "opaque" && args.len() == 1 {
                             if let ExprKind::Ident(n) = &obj.kind {
                                 if n == "bench" {
+                                    self.icr_trace("B11aj_bench_opaque");
                                     return self.infer_expr_c_type(args[0].expr());
                                 }
                             }
@@ -48627,6 +48639,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let obj_bare = obj_ty.trim_end_matches('*');
                                 let obj_bare = obj_bare.strip_prefix("Nova_").unwrap_or(obj_bare);
                                 if obj_bare == cur_recv {
+                                    self.icr_trace("B11ak_self_recursive_generic_method");
                                     return cur_ret.to_string();
                                 }
                             }
@@ -48645,6 +48658,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 ExprKind::Call { .. } => "Call".into(),
                                 _ => "Other".into(),
                             };
+                            self.icr_trace("B11al_panic_method_p67");
                             panic!("[P67-LEGACY] method call `.{}` return type unknown — checker must annotate (compiler-conventions.md §0); obj_ty={:?} obj={} expr span={:?}", method, obj_ty, obj_desc, expr.span)
                         }
                     } else if let ExprKind::Path(parts) = &func.kind {
@@ -48676,43 +48690,51 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // return the STATIC overload's concrete `return_c_type`.
                             // `from`/`try_*` keep their dedicated handling below.
                             if let Some(c) = self.infer_static_method_ret(eff, method_name) {
+                                self.icr_trace("B12a_path_static_method_ret");
                                 return c;
                             }
                             // D91 (Plan 21): Channel.new(cap) — Path-form.
                             if eff == "Channel" && method_name == "new" {
+                                self.icr_trace("B12b_path_channel_new");
                                 return "Nova_ChannelPair".into();
                             }
                             // Plan 65 Ф.1: ChanReader.close_after(Duration) —
                             // Path-form.
                             if eff == "ChanReader" && method_name == "close_after" {
+                                self.icr_trace("B12c_path_chanreader_close_after");
                                 return "Nova_ChanReader*".into();
                             }
                             // Plan 65 Ф.12.4 / D124: ChanReader.close_at(Monotonic).
                             if eff == "ChanReader" && method_name == "close_at" {
+                                self.icr_trace("B12c_path_chanreader_close_at");
                                 return "Nova_ChanReader*".into();
                             }
                             // Plan 175 Ф.3(a): `Monotonic.now()` inference builtin
                             // RETIRED (Path-form) — see Member-form note above.
                             // D75 (revised, Plan 47): CancelToken.new() — Path-form.
                             if eff == "CancelToken" && method_name == "new" {
+                                self.icr_trace("B12d_path_canceltoken_new");
                                 return "NovaCancelToken*".into();
                             }
                             // Plan 04 Этап 6: Buffer removed. StringBuilder/
                             // WriteBuffer/ReadBuffer effect-schema ниже.
                             // Plan 04: built-in opaque static methods.
                             if eff == "StringBuilder" {
+                                self.icr_trace("B12e_path_stringbuilder_static");
                                 return match method_name.as_str() {
                                     "new" | "with_capacity" | "from" => "Nova_StringBuilder*".into(),
                                     _ => "nova_int".into(),
                                 };
                             }
                             if eff == "WriteBuffer" {
+                                self.icr_trace("B12e_path_writebuffer_static");
                                 return match method_name.as_str() {
                                     "new" | "with_capacity" | "from" => "Nova_WriteBuffer*".into(),
                                     _ => "nova_int".into(),
                                 };
                             }
                             if eff == "ReadBuffer" {
+                                self.icr_trace("B12e_path_readbuffer_static");
                                 return match method_name.as_str() {
                                     "from" => "Nova_ReadBuffer*".into(),
                                     _ => "nova_int".into(),
@@ -48725,15 +48747,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // return-type инференс резолвит return_c_type.
                             // `int.to_bits` остаётся — нет .nv-декларации нигде.
                             if eff == "int" && method_name == "to_bits" {
+                                self.icr_trace("B12f_path_int_to_bits");
                                 return "nova_int".into();
                             }
                             // D26 prelude: Error.new(msg) → Nova_Error*.
                             if eff == "Error" && method_name == "new" {
+                                self.icr_trace("B12g_path_error_new");
                                 return "Nova_Error*".into();
                             }
                             // Plan 08 Ф.2: T.try_from(...) → Result[T, E].
                             // Plan 59 Ф.7.5 D3: erased mono Result-инстанс.
                             if method_name == "try_from" {
+                                self.icr_trace("B12h_path_try_from");
                                 return "NovaRes_nova_int_nova_str*".into();
                             }
                             // Plan 91 Ф.3 / [M-91.13-codegen-none-arm-nested-generic-mismatch]:
@@ -48766,21 +48791,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     _ => None,
                                 };
                                 if let Some(inner) = opt_inner {
+                                    self.icr_trace("B12i_path_try_parse");
                                     let sani = Self::sanitize_for_novaopt(inner);
                                     return format!("NovaOpt_{}", sani);
                                 }
                             }
                             // Plan 08 Ф.2: str.from(numeric/bool/char) → nova_str.
                             if eff == "str" && method_name == "from" {
+                                self.icr_trace("B12j_path_str_from_1");
                                 return "nova_str".into();
                             }
                             // Built-in primitive `str.from(x) -> str` (D35 + D73).
                             if eff == "str" && method_name == "from" {
+                                self.icr_trace("B12j_path_str_from_2_dup");
                                 return "nova_str".into();
                             }
                             // Plan 108 from_utf8 series: str.from_bytes_lossy / str.from_bytes_unchecked → nova_str.
                             // Plan 91 followup: from_bytes_unchecked_steal — zero-copy consume variant.
                             if eff == "str" && (method_name == "from_bytes_lossy" || method_name == "from_bytes_unchecked" || method_name == "from_bytes_unchecked_steal") {
+                                self.icr_trace("B12j_path_str_from_bytes");
                                 return "nova_str".into();
                             }
                             // User-defined `T.from(v)` returns Nova_T* (most cases).
@@ -48791,11 +48820,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 if self.record_schemas.contains_key(eff)
                                     || self.sum_schemas.contains_key(eff)
                                 {
+                                    self.icr_trace("B12k_path_user_type_from");
                                     return format!("Nova_{}*", eff);
                                 }
                             }
                             if let Some(schema) = self.effect_schemas.get(eff.as_str()) {
                                 if let Some((_, ret_ty)) = Self::schema_lookup(schema, method_name.as_str()) {
+                                    self.icr_trace("B12l_path_effect_schema");
                                     return ret_ty.clone();
                                 }
                             }
@@ -48805,6 +48836,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // методов внешних типов — Member-branch выше не покрывает это.
                             if let Some(decls) = self.external_registry.lookup(eff, method_name) {
                                 if let Some(decl) = decls.iter().find(|d| !d.is_instance) {
+                                    self.icr_trace("B12m_path_external_registry_static");
                                     return decl.return_c_type.clone();
                                 }
                             }
@@ -48846,6 +48878,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 && (s.return_c_type == "void*"
                                                     || self.debt_is_generic_stub_c(&s.return_c_type)))
                                     }) {
+                                        self.icr_trace("B12n_path_user_static_overload");
                                         return sig.return_c_type.clone();
                                     }
                                 }
@@ -48864,6 +48897,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         {
                                             let err_c = self.type_ref_to_c(&named("DeError"))
                                                 .unwrap_or_else(|_| "NovaValue_DeError".to_string());
+                                            self.icr_trace("B12n_path_deserialize_reconstruct");
                                             return self.result_repr_c_type(&ok_c, &err_c);
                                         }
                                     }
@@ -48871,6 +48905,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                             let key = format!("fn_ret_{}", method_name);
                             if let Some(t) = self.var_types.get(&key).cloned() {
+                                self.icr_trace("B12o_path_fn_ret_method");
                                 return t;
                             }
                             // Plan 178 Ф.0.5: sum-variant constructor in Path form —
@@ -48889,15 +48924,48 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 .get(eff_q.as_str())
                                 .map_or(false, |variants| variants.contains_key(method_name.as_str()))
                             {
+                                self.icr_trace("B12p_path_sum_variant_constructor");
                                 return format!("Nova_{}*", eff_q);
                             }
+                            self.icr_trace("B12q_panic_path_p67");
                             panic!("[P67-LEGACY] Path call return type unknown for method={} — checker must annotate (compiler-conventions.md §0)", method_name)
                         } else {
+                            self.icr_trace("B12r_panic_path_no_method_seg");
                             panic!("[P67-LEGACY] Path call return type unknown (no method segment) — checker must annotate (compiler-conventions.md §0)")
                         }
                     } else {
+                        self.icr_trace("B12s_panic_path_no_parts");
                         panic!("[P67-LEGACY] Path call return type unknown (no parts) — checker must annotate (compiler-conventions.md §0)")
                     }
+    }
+
+    /// Plan 196 Ф.4c(ii) trace-proof instrumentation for `infer_call_ret_c`.
+    /// Marks the ENTRY (guard-match point) of each logical bucket with a unique
+    /// static ID. In a `debug_assertions` build, when `NOVA_TRACE_ICR` is set in
+    /// the environment, prints `[ICR-HIT] <id>` the FIRST time each bucket is
+    /// reached (subsequent hits are silent — the reachable-set is what we want).
+    /// In a release build (no `debug_assertions`) the body is empty → zero
+    /// overhead, byte-identical to legacy. A bucket whose ID never prints across
+    /// the whole corpus never executed → structurally-confirmable dead candidate.
+    #[inline]
+    fn icr_trace(&self, _id: &'static str) {
+        #[cfg(debug_assertions)]
+        {
+            use std::sync::{OnceLock, Mutex};
+            use std::collections::HashSet;
+            static ON: OnceLock<bool> = OnceLock::new();
+            if !*ON.get_or_init(|| std::env::var_os("NOVA_TRACE_ICR").is_some()) {
+                return;
+            }
+            static SEEN: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+            let mut seen = SEEN
+                .get_or_init(|| Mutex::new(HashSet::new()))
+                .lock()
+                .unwrap();
+            if seen.insert(_id) {
+                eprintln!("[ICR-HIT] {}", _id);
+            }
+        }
     }
 
     fn infer_expr_c_type(&self, expr: &Expr) -> String {
@@ -50655,15 +50723,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     panic!("[P67-LEGACY] Index element type unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0); expr.span={:?} expr.id={:?} src={}", obj_ty_pre, expr.span, expr.id, self.source_file_name)
                 }
-                ExprKind::HandlerLit { effect_name, .. } => {
-                    // handler Switch { ... } has type NovaVtable_Switch*
-                    format!("NovaVtable_{}*", effect_name.join("_"))
-                }
-                // Plan 97.1 Ф.3 (D142): protocol-литерал имеет тип
-                // `NovaBox_<Proto>` fat-pointer (см. emit_protocol_lit).
-                ExprKind::ProtocolLit { proto_name, .. } => {
-                    format!("NovaBox_{}", proto_name.join("_"))
-                }
+                // Plan 196 stage1: HandlerLit + ProtocolLit arms RETIRED (checker materializes
+                // Effect[<E>] / NovaBox_<P> → Channel 2 answers first; §0 materialize-not-rederive).
                 // Plan 172.12 §14.19 (коллапс триплификации): тело было
                 // дословной копией channel-6q — теперь единый канал.
                 ExprKind::Call { func, args, .. } =>

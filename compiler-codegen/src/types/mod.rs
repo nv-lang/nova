@@ -6890,7 +6890,30 @@ impl<'a> TypeCheckCtx<'a> {
                 // восстановление TypeRef через resolved_to_typeref_tp (TypeParam(n)
                 // → Named{n} — при потреблении заново пометит mark_type_params).
                 if let Some(name) = pattern_simple_name(&d.pattern) {
+                    // Plan 196.2 CAP-A (a) — chained-receiver scope propagation:
+                    // for a METHOD-CALL RHS (`let m = v.iter().map(f)`), the CHANNEL
+                    // (`infer_method_call_channel_type`, materialized into
+                    // `resolved_types_buf` by `f1_expr(&d.value)` above) threads the FULL
+                    // nested generic (`MapIter[VecIter[T],T,T]`) — while the inline
+                    // `infer_expr_type` TRUNCATES it to `MapIter[VecIter]` (drops T/U), so a
+                    // subsequent `m.next()` resolves against a degenerate receiver → an
+                    // unbound method-generic return erased to `nova_unit` (CC-FAIL). Prefer
+                    // the channel for a method-call RHS (annotation still wins first; the
+                    // channel is conservative — `None` when unsure → falls to `infer_expr_type`).
+                    // Gated to `Call{ Member }` so free-fn / non-call RHS is unchanged.
+                    let chain_ty: Option<TypeRef> = if d.ty.is_none()
+                        && d.value.id.is_set()
+                        && matches!(&d.value.kind,
+                            ExprKind::Call { func, .. }
+                                if matches!(&func.kind, ExprKind::Member { .. }))
+                    {
+                        let rt = self.resolved_types_buf.borrow().get(&d.value.id).cloned();
+                        rt.and_then(|rt| Self::resolved_to_typeref_tp(&rt, d.value.span))
+                    } else {
+                        None
+                    };
                     match d.ty.clone()
+                        .or(chain_ty)
                         .or_else(|| self.infer_expr_type(&d.value, scope))
                         .or_else(|| {
                             if !d.value.id.is_set() { return None; }
@@ -7316,6 +7339,47 @@ impl<'a> TypeCheckCtx<'a> {
                         ResolvedType::Named { name: rl_last.clone(), module: vec![], args: vec![] },
                     );
                 }
+            }
+        }
+        // Plan 196 stage1 (§0 materialize, mirror of the 6z HandlerLit arm): a handler
+        // literal `effect E {…}` has a purely SYNTACTIC type — `NovaVtable_<E>*` — modelled
+        // as `Effect[<E>]` (module empty, name == `effect_name.join("_")`), which the SINGLE
+        // canonical lowering `resolved_type_to_c` ("Effect" arm, UNCONDITIONAL — no registry
+        // dependency) turns into the SAME string the legacy arm built. Materialize into the
+        // channel so Channel 2 covers it and the legacy 6z arm retires (§0).
+        if let ExprKind::HandlerLit { effect_name, .. } = &e.kind {
+            if e.id.is_set() {
+                self.resolved_types_buf.borrow_mut().insert(
+                    e.id,
+                    ResolvedType::Named {
+                        name: "Effect".into(),
+                        module: vec![],
+                        args: vec![ResolvedType::Named {
+                            name: effect_name.join("_"),
+                            module: vec![],
+                            args: vec![],
+                        }],
+                    },
+                );
+            }
+        }
+        // Plan 196 stage1 (§0 materialize, mirror of the 6z ProtocolLit arm): a protocol
+        // literal `protocol P {…}` has the syntactic fat-pointer type `NovaBox_<P>`. A
+        // literal only COMPILES when its protocol is registered (vtable emission needs it),
+        // so `resolved_type_to_c`'s protocol branch (`protocol_types.contains(name)` →
+        // `NovaBox_<name>`) is guaranteed to fire and yield the SAME string the legacy arm
+        // built (module empty, name == `proto_name.join("_")`; every literal is single-
+        // segment). Materialize so Channel 2 covers it and the legacy 6z arm retires (§0).
+        if let ExprKind::ProtocolLit { proto_name, .. } = &e.kind {
+            if e.id.is_set() {
+                self.resolved_types_buf.borrow_mut().insert(
+                    e.id,
+                    ResolvedType::Named {
+                        name: proto_name.join("_"),
+                        module: vec![],
+                        args: vec![],
+                    },
+                );
             }
         }
         // Plan 172.1.1 (U.4.5 — control-flow probe): annotate Block/If/IfLet/Path with the
@@ -13010,7 +13074,14 @@ impl<'a> TypeCheckCtx<'a> {
                         if parts.len() == 2 && parts[0] == "__array"
                             && matches!(
                                 ctor.as_str(),
-                                "new" | "with_capacity" | "from" | "default" | "filled"
+                                // Plan 196.2 W1 step2 [CAP-A enabler]: `of` added. `[]T.of(a,b,…)`
+                                // (variadic slice literal) returns `[]T` just like `from`; its
+                                // omission left `ro sv = []int.of(...)` UNRESOLVED → `sv` absent
+                                // from scope → any method on sv (e.g. `sv.iter()`) could not resolve
+                                // its receiver → NOT materialized into `resolved_types` → codegen
+                                // fell to the legacy `infer_call_ret_c` B07 arm. The TurboFish twin
+                                // `Vec[T].of` already resolved via `resolve_generic_static_return`.
+                                "new" | "with_capacity" | "from" | "default" | "filled" | "of"
                             )
                         {
                             return Some(TypeRef::Array(
