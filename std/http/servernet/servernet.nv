@@ -4,12 +4,23 @@
 // std.net str-carrying effect is deprecated (see std/net/*.nv banners).
 //
 // The thin `Net`-effect runner around the pure server core (std.http.server): read a
-// full request off a socket (Content-Length framed), run it through `serve_once`,
-// write the response, close. The accept loop uses the Plan 173 / 83.x substrate
+// full request off a socket (Content-Length framed), route it (`route_once`, same
+// parse+dispatch `serve_once` uses under the hood), write the response, close. The
+// accept loop uses the Plan 173 / 83.x substrate
 // (supervised / spawn / CancelToken — proven by the net echo tests): each connection
 // is a spawned fiber under a supervised scope; a `CancelToken` stops accept for a
 // cancel-based graceful stop (bounded deadline-drain is gated on `supervised(deadline:)`,
 // unimplemented in main — see server.nv [M-178-server-graceful-deadline]).
+//
+// Streaming responses (`[M-178-server-streaming]`, DONE): `handle_connection`
+// routes via `route_once` (parse + dispatch, no serialize) so it can branch on
+// `resp.is_streaming()`. The fixed path is unchanged (`serialize_response` +
+// one `write_all`). The streaming path writes the head, then writes EACH chunk
+// pulled from the `StreamBody` producer with its OWN `write_all` call — TRUE
+// incremental delivery over the live socket. Write-backpressure (park while the
+// socket's send buffer is full) is not a new mechanism: it is the EXISTING
+// `Net.write` behaviour inside `@write_all` (std/net/tcp.nv) — a slow reader on
+// the other end naturally paces the producer via ordinary fiber parking.
 //
 // WHY A SEPARATE MODULE (net isolation, same as std.http.transport): importing
 // std.net2 brings `NetError` into the namespace, whose `InvalidPort` shadows
@@ -19,19 +30,83 @@
 module http.servernet
 
 import std.net.{TcpListener, TcpStream, NetError}
-import std.http.server.{ServeMux, serve_once}
+import std.http.server.{ServeMux, ServerResponse, StreamBody, route_once, serialize_response}
+import std.http.server.{serialize_response_head, encode_chunk, encode_chunk_end}
 
 /// Read one full HTTP/1.1 request off `stream` (headers + Content-Length body),
-/// route it through `mux`, write the serialized response, and close. One request
-/// per connection (CORE: `Connection: close`; keep-alive is a server marker).
+/// route it through `mux`, write the response, and close. One request per
+/// connection (CORE: `Connection: close`; keep-alive is a server marker).
+/// Fixed-body responses serialize in one shot; streaming responses
+/// (`[M-178-server-streaming]`) write incrementally — see `write_streaming`.
 #stable(since = "0.1")
 export fn handle_connection(consume stream TcpStream, mux ServeMux) Net -> Result[(), NetError] {
     consume s = stream
     ro raw = read_request(s)
-    ro resp = serve_once(mux, raw)
-    match s.write_all(resp) {
-        Ok(_)  => { s.close(); Ok(()) }
+    ro resp = route_once(mux, raw)
+    if resp.is_streaming() {
+        write_streaming(s, resp)
+    } else {
+        match s.write_all(serialize_response(resp)) {
+            Ok(_)  => { s.close(); Ok(()) }
+            Err(e) => { s.close(); Err(e) }
+        }
+    }
+}
+
+// Write a streaming `ServerResponse` to the socket incrementally: head, then
+// each chunk pulled from the producer with its own `write_all`, then the
+// terminator. Stops (and closes) at the first write error. Takes ownership
+// (`consume`) of the stream — same as `handle_connection` itself — because it
+// closes it (`@close()` is a consuming method, D133).
+//
+// Split into two functions (head-write, then chunk loop) so the fallible
+// head-write's `match` is the sole TAIL expression of `write_streaming` — an
+// `Err` arm that closes `s` and returns cannot be conservatively merged with
+// the `Ok` arm by the D131 consume-flow analysis if further statements follow
+// the match (the analysis doesn't special-case `return`-terminated arms, so a
+// stray `s.close()` in a non-tail branch poisons every later use of `s` as
+// "possibly consumed" even though that branch always exits). Delegating the
+// `Ok` arm to `write_stream_chunks(s, resp)` keeps `s`'s ownership flowing in
+// ONE direction (moved into the callee) with no post-match use in this fn.
+fn write_streaming(consume stream TcpStream, resp ServerResponse) Net -> Result[(), NetError] {
+    consume s = stream
+    match s.write_all(serialize_response_head(resp)) {
+        Ok(_)  => write_stream_chunks(s, resp)
         Err(e) => { s.close(); Err(e) }
+    }
+}
+
+// Pull chunks from `resp`'s producer, `write_all` each one, then the
+// terminator; close `s` exactly once when the stream ends (success or write
+// error). See `write_streaming` above for why this is a separate function.
+fn write_stream_chunks(consume stream TcpStream, resp ServerResponse) Net -> Result[(), NetError] {
+    consume s = stream
+    match resp.take_stream() {
+        None => { s.close(); Ok(()) }             // unreachable: caller checked @is_streaming()
+        Some(sb) => {
+            mut producer = sb
+            mut running = true
+            mut result Result[(), NetError] = Ok(())
+            while running {
+                match producer.next_chunk() {
+                    Some(chunk) => {
+                        match s.write_all(encode_chunk(chunk)) {
+                            Ok(_)  => ()
+                            Err(e) => { result = Err(e); running = false }
+                        }
+                    }
+                    None => {
+                        match s.write_all(encode_chunk_end()) {
+                            Ok(_)  => ()
+                            Err(e) => { result = Err(e) }
+                        }
+                        running = false
+                    }
+                }
+            }
+            s.close()
+            result
+        }
     }
 }
 

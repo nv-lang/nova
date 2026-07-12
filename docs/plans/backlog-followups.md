@@ -1226,10 +1226,50 @@ Live-socket runner `std.http.servernet.handle_connection` (read framed request �
   - **Рекомендация владельцу (не сделано в этой ветке — тюнинг-решение за владельцем):** compile-фаза этого CU близка к 30с-лимиту на нагруженной машине; при повторной флаке — поднять `EXPECT_TIMEOUT_MS` (тест несёт live-socket + самый тяжёлый co-present CU) либо разнести compile/run-лимиты в раннере. Диагностический флаг `NOVA_DEBUG_TIMEOUT_DUMP=1` печатает captured stdout/stderr для RUN-timeout — при будущем ПОДОЗРЕНИИ на runtime-hang использовать его: пустой dump ⇒ compile-timeout, непустой ⇒ настоящий runtime-hang.
 
 Server-followups (за CORE, честные маркеры):
-- **[M-178-server-streaming]** — streaming request/response bodies + write-backpressure (park при полном socket-buffer).
+- ~~**[M-178-server-streaming]**~~ ✅ **ЗАКРЫТ (force-impl, Plan 116 worktree, 2026-07-12)** — streaming
+  RESPONSE bodies (`Transfer-Encoding: chunked`/SSE) реализованы: `StreamBody`/`stream_body`
+  (pull-source chunk producer) + `ServerResponse.stream`/`.sse` (server.nv);
+  `serialize_response_head`/`encode_chunk`/`encode_chunk_end` (wire.nv, RFC 9112 §7.1, парный
+  write-side к уже существующему клиентскому `decode_chunked`); `std.http.servernet.handle_connection`
+  пишет каждый chunk отдельным `write_all` — ЖИВАЯ инкрементальная доставка. Write-backpressure
+  (park при полном socket-buffer) — НЕ новый механизм: это уже существующее поведение `Net.write`
+  внутри `@write_all` (std/net/tcp.nv), новый примитив не потребовался. `serve_once` (pure,
+  mock-testable) полностью дренирует producer, так что wire-формат покрыт без сокетов
+  (std/http/server/streaming_test.nv, 7 тестов) + live-socket smoke
+  (std/http/servernet/rt/streaming_smoke.nv, EXPECT_TIMEOUT_MS). Разблокирует Plan 187 Ф.1
+  (SSE-визуализация). Streaming REQUEST bodies (не запрошены гейтом 187) остаются вне объёма —
+  см. `[M-178-server-policy-surface]` ниже (chunked-request decode).
+  **По ходу вскрыты и точечно починены 2 доводки** (обе в std/http .nv, не в компиляторе):
+  `StreamBody` (`value`-тип с closure-полем) была объявлена ПОСЛЕ `ServerResponse`, которая
+  embed-ит её BY VALUE через `Option[StreamBody]` — C-структура требует complete type в месте
+  embedding; переставлена перед `ServerResponse` (см. коммент-разметку в server.nv). И D131
+  false-positive «использование, возможно, потреблённой переменной» в `servernet.nv`
+  `write_streaming`: non-tail `match` со consume+`return` в одной ветке ядовит для ВСЕХ
+  последующих statements (checker не увязывает `return`-terminated ветку с недостижимостью
+  «после»); разбито на `write_streaming`/`write_stream_chunks` так, чтобы фоллибл match был
+  единственным tail-expression.
+  **Отдельно найден (НЕ ЗДЕСЬ почин, вне зоны std/http) реальный компиляторный дефект** —
+  см. `[M-channel-generic-elem-type]` ниже.
 - **[M-178-server-policy-surface]** — middleware onion, 100-continue, keep-alive, chunked-request decode, trailing-slash-301.
 - **[M-178-server-graceful-deadline]** — bounded deadline-drain gated на `supervised(deadline:)` (unimpl в main); cancel-based stop-accept доступен.
 - **[M-178-server-typed-body]** — типизированные `#impl(Deserialize)` request-bodies (serde-в-http-CU codegen-барьер, см. serdejson).
+- **[M-channel-generic-elem-type]** (P1-ish, найден 2026-07-12 при работе над `[M-178-server-streaming]`,
+  isolated-repro подтверждён вне std/http — pre-existing, компиляторный, НЕ мой зона в этой волне):
+  `docs/channels.md` §«element type T is inferred from the first send/recv» **не выполняется** для
+  non-`int` T. Repro: `ro { tx, rx } = Channel.new(4); tx.send("first")` (str) → emit_c.rs типизирует
+  канал-элемент как `nova_int` НЕЗАВИСИМО от первого `send`, эмитит
+  `nova_chan_writer_send(tx, (nova_int)(_nova_strlit_...))` (строка→int cast) → CC-FAIL (`nova_str` не
+  влезает в `nova_int` param, компилятор C ловит). С `[]u8`-пейлоадом та же мистипизация КОМПИЛИРУЕТСЯ
+  (указатель→int неявный C-cast разрешён) — silent semantics bug, не поймано компилятором. Документированный
+  turbofish-эскейп `Channel[str].new(n)` (channels.md:124) **ICE**: `internal error at emit_c.rs:49360:
+  [P67-LEGACY] Ident \`Channel\` not in var_types / not a sum-variant` — воспроизведено МИНИМАЛЬНО (голый
+  `module chan_repro { test {...} }` вне std/, без деструктуризации тоже падает — не про
+  `ro {tx,rx}`-паттерн). `int`-payload работает штатно (baseline sanity PASS). Обход в
+  `std/http/server/streaming_test.nv` (см. коммент там): канал несёт `int`-индексы вместо
+  `[]u8`/`str`-пейлоада напрямую. Нужен владельцу компилятора: (1) реальная T-inference от
+  first-send/recv (docs claim), ИЛИ (2) минимум — turbofish `Channel[T].new` без ICE как рабочий
+  escape hatch, ИЛИ (3) поймать non-int-payload-через-int-канал как ЯВНУЮ typed-error вместо silent
+  pointer/int reinterpret для pointer-sized T (в компиляторе, не здесь).
 
 **NEW codegen-баги (обнаружены при Ф.2-enh + Ф.3, кандидаты на fix, вне .nv):**
 - ~~**[M-codegen-nominal-type-name-collision]**~~ ✅ **CLOSED 2026-07-06 (D381).** Collision-aware module-qualified mangling приземлён (см. `[M-sync-crossmodule-samename-type-collision]` выше). Одноимённые cross-module типы (`ErrorKind` × io/http/compress) сосуществуют в одном CU: `Nova_<modpath>_<Name>` для коллидирующих, byte-identical для прочих. Разблокирует auto-decompress co-presence (http+compress `ErrorKind` в одном CU компилятся/линкуются — conformance PASS 1/0) + `ErrSource.Compress`.
