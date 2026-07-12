@@ -1,7 +1,19 @@
 // D277 — By-value мономорфизация generic value-records: `type X[T] value { ... }` lowered
 // BY VALUE per mono-instance (NovaValue_<short>), no nova_alloc for wrapper record.
 // Spec: spec/decisions/02-types.md D277. Part of the SINGLE `spec_tests.conformance` folder-module.
+//
+// D277 Stage 2 gap-fill (196.3 audit, 2026-07-12): the tests above only exercise a
+// FLAT generic value-record (`D277Pair[T]`, no nested generic-over-source args). The
+// zero-cost adapter model (`std.collections.vec_iter`: `MapIter[I,T,U]`/`FilterIter
+// [I,T]`/…, all `value`) is D277's OTHER half — each adapter nests the UPSTREAM
+// iterator type as a generic arg (`MapIter[VecIter[int],int,int]`), and a 2+-adapter
+// chain mono's to a NESTED concrete instance (`FilterIter[MapIter[VecIter[int],int,
+// int],int]`). That by-value nested-mono surface had no conformance coverage — added
+// below (mirrors the literal example from `emit_c.rs::value_aware_subst_to_ref`'s doc
+// comment).
 module spec_tests.conformance
+
+import std.collections.vec_iter
 
 // Generic value-record
 type D277Pair[T] value { first T, second T }
@@ -35,4 +47,30 @@ test "generic value-record D277Pair[bool] (D277)" {
     ro p D277Pair[bool] = { first: true, second: false }
     assert(p.first)
     assert(!p.second)
+}
+
+test "3-level nested generic-over-source chain: FilterIter[MapIter[VecIter[int],int,int],int] (D277 Stage 2)" {
+    ro v = []int.of(1, 2, 3, 4, 5, 6)
+    // .map(): VecIter[int] -> MapIter[VecIter[int], int, int]
+    // .filter(): MapIter[..] -> FilterIter[MapIter[VecIter[int], int, int], int]
+    ro got = v.iter().map(|x| x * 2).filter(|x| x > 4).collect()
+    assert(got == [6, 8, 10, 12])
+}
+
+test "nested generic-over-source chain through intermediate let-bindings (D277 Stage 2, by-value local var ABI)" {
+    ro v = []int.of(1, 2, 3, 4, 5)
+    // Each intermediate binding's LOCAL VAR C-type must itself be the by-value
+    // NovaValue_<short> mono surface (not the heap Nova_<short>*), or the chained
+    // method call on the next line references an undeclared struct.
+    ro mapped = v.iter().map(|x| x + 1)
+    ro filtered = mapped.filter(|x| x % 2 == 0)
+    assert(filtered.collect() == [2, 4, 6])
+}
+
+test "self-referential nested generic-over-source: double map (D277 Stage 2)" {
+    ro v = []int.of(1, 2, 3)
+    // .map().map(): MapIter[MapIter[VecIter[int],int,int], int, int] — the SECOND
+    // .map() nests the FIRST MapIter instance as its own `Self` type-arg.
+    ro got = v.iter().map(|x| x + 1).map(|x| x * 10).collect()
+    assert(got == [20, 30, 40])
 }
