@@ -45892,12 +45892,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         params: &[LambdaParam],
         param_c_tys: &[String],
     ) -> String {
-        let saved: Vec<(String, Option<String>)> = params.iter().zip(param_c_tys)
+        let mut saved: Vec<(String, Option<String>)> = params.iter().zip(param_c_tys)
             .map(|(p, ty)| (p.name.clone(), self.var_types.insert(p.name.clone(), ty.clone())))
             .collect();
+        // Plan 196.2 W1 [consumption-converge]: when the lambda body is a BLOCK, thread its
+        // own simple `let name = rhs` bindings into `var_types` (in order) BEFORE inferring
+        // the block value. The body-emission path (emit_stmt) declares these locals, so the
+        // TRAILING expr's C-type inference must see them too — otherwise a trailing that
+        // references a block-local (`… ro w = src[i..end]; Some(w)`) re-infers `w` against an
+        // EMPTY binding and falls back to a wrong type (observed: `Some(w)` → the erased
+        // `NovaOpt_Nova_StringBuilder_p` stub instead of `NovaOpt_Nova_Vec____…`). This made
+        // the closure's declared C return type diverge from its emitted body (CC-FAIL
+        // "returning NovaOpt_… from incompatible int / unknown NovaOpt_StringBuilder"). Latent
+        // whenever Channel-2 does NOT already cover the trailing (surfaced by wider
+        // `[]T.of`/bridge materialization). Threading converges sig-inference onto the same
+        // local types the body emits. Only simple ident-pattern lets; save+restore.
+        if let ExprKind::Block(b) = &body.kind {
+            for stmt in &b.stmts {
+                if let crate::ast::Stmt::Let(d) = stmt {
+                    if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
+                        let rhs_c = self.infer_expr_c_type(&d.value);
+                        if !rhs_c.is_empty() && rhs_c != "void*" {
+                            saved.push((name.clone(), self.var_types.insert(name.clone(), rhs_c)));
+                        }
+                    }
+                }
+            }
+        }
         let inferred = self.infer_expr_c_type(body);
-        // Restore.
-        for (name, prev) in saved {
+        // Restore (params + threaded block-lets).
+        for (name, prev) in saved.into_iter().rev() {
             match prev {
                 Some(old) => { self.var_types.insert(name, old); }
                 None => { self.var_types.remove(&name); }
