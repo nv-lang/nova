@@ -7896,6 +7896,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
     /// Plan 72 P1-C: if `ty` is `Result[T, E]`, return (C type of T, C type of E).
     /// Returns `None` for non-Result types.
+    ///
+    /// Plan 196.3 (result-repr triple) verdict: LEGIT-LOWERING, out of
+    /// channel scope. All three call sites feed it a literal `TypeRef` —
+    /// `f.return_type` (declared fn/method return-type AST, `emit_fn`
+    /// registry population for the legacy `fn_result_type_params` fallback,
+    /// :13211), `p.ty` (declared param type, :22413), and `decl.ty` (an
+    /// explicit `let r: Result[T,E] = ...` annotation, :24643) — never an
+    /// inferred call-expression result. There's no checker call to resolve
+    /// against `resolved_types` here: the annotation IS the concrete type,
+    /// written verbatim in source, so `type_ref_to_c` on it is already the
+    /// correct/only path (mirrors the `infer_handler_interrupt_ty` /
+    /// `infer_func_c_name` LEGIT-LOWERING verdicts in the same audit — a
+    /// declared-syntax reader, not a re-derivation of resolved-type info).
     fn extract_result_type_params(&self, ty: &TypeRef) -> Option<(String, String)> {
         if let TypeRef::Named { path, generics, .. } = ty {
             let name = path.last()?;
@@ -16622,6 +16635,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// callee expression. `Ident` → free-fn name; `Path[T, m]` or
     /// `Member{Type, m}` (Type is a known record/sum) → `Type.method` static
     /// form. Returns `None` for forms not tracked (instance-method calls etc.).
+    ///
+    /// Plan 196.3 (result-repr triple) verdict: RETAINED-AS-LEGACY-FALLBACK.
+    /// Both current callers (`infer_result_type_params` Call-arm and the
+    /// `let r = f(...)` decl-arm, both in this file) now try
+    /// `channel_result_type_params_c` FIRST and only reach this name-keyed
+    /// deriver on a channel miss — free-fn/static-method calls whose
+    /// checker-resolved return isn't (yet) a concrete `Named{Result,[T,E]}`
+    /// in `resolved_types` (Stage-1a/1b don't cover every producer). The
+    /// function itself is a pure AST-shape→String mapper with no inferred
+    /// type to migrate — nothing left to convert here; it's the fallback
+    /// key, not a re-derivation of something the channel already knows.
     fn call_result_type_params_key(&self, func: &crate::ast::Expr) -> Option<String> {
         use crate::ast::ExprKind;
         match &func.kind {
@@ -44574,6 +44598,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// функции. До D3 возвращает legacy `Nova_Result*` (mono-typedef всё
     /// равно регистрируется через `register_novares_decl` для готовности).
     /// После D3 — `NovaRes_<n>*`.
+    ///
+    /// Plan 196.3 (result-repr triple) verdict: LEGIT-LOWERING, canonical
+    /// sink — already channel-agnostic by design (its own doc above:
+    /// "единственная точка решения legacy↔mono"). Takes already-resolved
+    /// `(ok_c, err_c)` C-type strings and has no expression/call to look up
+    /// in `resolved_types`; it doesn't care whether its callers derived
+    /// those strings via the new `channel_result_type_params_c` (checker
+    /// channel) or the legacy `fn_result_type_params`/`extract_result_type_
+    /// params` fallback — both funnel into this one mangler. Nothing to
+    /// migrate here; the migration happens one level up, at each call site
+    /// that produces `(ok_c, err_c)` before calling this.
     fn result_repr_c_type(&self, ok_c: &str, err_c: &str) -> String {
         self.register_novares_decl(ok_c, err_c);
         // Plan 59 Ф.7.5 D3: флип на mono — `Result[T,E]` → `NovaRes_<n>*`
