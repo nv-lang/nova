@@ -92,6 +92,26 @@ checker-контроль доступа (D267/D281), не codegen-ветка.
 - **Ф.D — Приватные** (checker-доступ D267/D281) — В SCOPE 196.
 Матрица зелёная (A+B+C+D) = §0 «одно окно» выполнено. 196 — НЕ только «удалить `infer_expr_c_type`», а вся сетка.
 
+### ★ Инвентарь «второго окна» (греп 2026-07-12) — это СЕМЕЙСТВО, не функция
+
+**Корень:** типизированного IR НЕТ (AST единственный) → у чекера нет канала донести резолв/типы до codegen →
+codegen ПЕРЕвыводит, каждый по-своему → дублирование путей + дрейф (§0-баги) + **LSP слеп** (инференс codegen-only).
+В `emit_c.rs`: **~20+ `infer`/`resolve`-функций + 56 `_c_type`/`_to_c`-сайтов.** Цели удаления (логика → ЧЕКЕР;
+codegen только лоуэрит через `resolved_type_to_c`; LSP читает ТЕ ЖЕ каналы → hover/completion получают типы):
+- **Возврат/тип (Ф.A):** `infer_expr_c_type`(48885), `infer_call_ret_c`(46293, 114), `infer_expr_c_type_str`,
+  `infer_mono_method_ret(_with_args)`, `infer_method_level_return_for_sum`, `infer_static_method_ret`,
+  `infer_generic_static_ctor_ret`, `infer_lambda_return_type_with_params`, `infer_trailing_block_sig`,
+  `resolve_result_option_ret`, `resolve_result_te(_strict)` + 56 `_c_type`.
+- **Generic/type-param (Ф.B/C):** `infer_type_param_binding`×3, `infer_protocol_structural_binding`,
+  `infer_result_type_params`, `resolve_method_level_subst`, `resolve_mono_type_args`, `compute_array_elem_type_for_obj`.
+- **Args/default (Ф.C):** `callnorm.rs`, `argbind.rs`.
+- **Резолв/хардкод (Ф.B):** `external_registry`, `primitive_instance_method_known` (§3 хардкод-зеркало), method/static-резолверы.
+- **Legacy-лоуеринг:** `type_ref_to_c` (ретайр D315, дублирует `resolved_type_to_c`).
+
+**Финал 196** = это семейство удалено/сведено к `resolved_type_to_c(resolved_types[id])` + каналы кормят LSP
+(hover/completion). Это НЕ «пара веток», а систематическая переархитектура потока типов/резолва — БЕЗ полного
+MIR (mono остаётся lazy в codegen; каналы лишь дотягиваются до mono-копий, см. Ф.A / A-спайк).
+
 ## Зачем `resolved_types` лучше `infer_call_ret_c` (мотивация — не «оно и так работает»)
 
 **История:** `infer_call_ret_c` (codegen-перевывод) ИСТОРИЧЕСКИ был ЕДИНСТВЕННЫМ окном — до §0/172 не было
