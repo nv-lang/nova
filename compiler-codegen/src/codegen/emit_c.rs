@@ -48112,27 +48112,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Plan 04: built-in StringBuilder/WriteBuffer/ReadBuffer
                         // static-method type inference.
                         if let ExprKind::Ident(n) = &obj.kind {
-                            if n == "StringBuilder" {
-                                self.icr_trace("B11l_stringbuilder_static");
-                                return match method.as_str() {
-                                    "new" | "with_capacity" | "from" => "Nova_StringBuilder*".into(),
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            if n == "WriteBuffer" {
-                                self.icr_trace("B11l_writebuffer_static");
-                                return match method.as_str() {
-                                    "new" | "with_capacity" | "from" => "Nova_WriteBuffer*".into(),
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            if n == "ReadBuffer" {
-                                self.icr_trace("B11l_readbuffer_static");
-                                return match method.as_str() {
-                                    "from" => "Nova_ReadBuffer*".into(),
-                                    _ => "nova_int".into(),
-                                };
-                            }
+                            // Plan 196.2 W1 [gate-1]: B11l_{stringbuilder,writebuffer,readbuffer}_static
+                            // REMOVED. `StringBuilder`/`WriteBuffer`/`ReadBuffer` static ctors
+                            // (`new`/`with_capacity`/`from`) are exercised by std (io/text/testing)
+                            // yet NO-HIT across conformance+std → the checker materialises their
+                            // declared return into Channel-2 (structurally unreachable legacy fallback,
+                            // §5 structural-death: exercised-but-never-hit ⟹ Channel-2-covered).
                             // [M-compiler-nv-porting-wave] items B1/B2: gc/
                             // fibers/runtime type-inference hardcode (heap_size/
                             // collect/virtual_reserved/init/is_initialized/…) и
