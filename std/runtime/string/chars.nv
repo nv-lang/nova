@@ -45,9 +45,13 @@ fn decode_utf8(bytes []u8, i int, n int) -> (int, int) {
 // would invite the `for i in 0..len { at(i) }` = O(n²) footgun that we removed
 // from `str[i]` (invariant I2 "no hidden O(n)"). Mirrors Rust `str::chars()`.
 //
-// `value priv(type)` (D250, Plan 160 D281 amend): the iterator holds `buf` (the source str, an alias of the
-// same UTF-8 buffer — conservative GC sees `ptr` through the str field and keeps
-// the buffer alive) + `pos` (current byte offset). No priv-poking, no `unsafe`:
+// Field-level `priv` (D281 module-boundary; corrected from `value priv(type)` —
+// Plan 200 pt.2, `priv(type)` for iterator fields was over-strict: D267 lets any
+// module write extension-methods for a type, so `priv(type)` fields are
+// obviated anyway; the real external boundary is module-`priv`): the iterator
+// holds `buf` (the source str, an alias of the same UTF-8 buffer —
+// conservative GC sees `ptr` through the str field and keeps the buffer
+// alive) + `pos` (current byte offset). No priv-poking, no `unsafe`:
 // decoding reads bytes via the public zero-copy `buf.bytes()` view.
 //
 // `value` = stack-allocated (no per-iteration heap churn). CharsIter is the first
@@ -55,9 +59,9 @@ fn decode_utf8(bytes []u8, i int, n int) -> (int, int) {
 // needs (for-in `NovaValue_*` iterator-struct derivation + by-pointer `&it` for
 // `mut @next()`; value-record self-return deref for `@iter() => @`, which also
 // fixes `[M-138.2-vec-self-return]`).
-export type CharsIter value priv(type) {
-    buf str    // borrows str (alias of the buffer; GC sees ptr through the field)
-    pos int    // current byte offset into buf
+export type CharsIter value {
+    priv buf str    // borrows str (alias of the buffer; GC sees ptr through the field)
+    priv pos int    // current byte offset into buf
 }
 
 // Module-private constructor. A static method on `CharsIter` has
@@ -151,10 +155,10 @@ export fn str @to_code_points() -> []int {
 // `chars().indices()` adapts CharsIter into a stream of (byte-offset, char)
 // pairs. `off` is the byte index of the *start* of the codepoint — compatible
 // with the byte-range slice `s[off..]` / `s[prev..off]`. Mirrors Rust
-// `str::char_indices()`. Same `value priv(type)` pattern as CharsIter.
-export type CharIndicesIter value priv(type) {
-    buf str
-    pos int
+// `str::char_indices()`. Same field-level `priv` pattern as CharsIter.
+export type CharIndicesIter value {
+    priv buf str
+    priv pos int
 }
 
 // Adapter constructor on CharsIter: captures buf+pos at the point of call, so

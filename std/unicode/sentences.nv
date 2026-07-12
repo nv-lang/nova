@@ -78,16 +78,18 @@ fn sb_sb8_has_lower_buf(buf str, from int, n int) -> bool {
 //   peb       : effective previous base category (skip trailing Extend/Format)
 //   ppeb      : effective base before peb (for SB7)
 //   sb8_lower : cached SB8 forward-scan result for the current context window
-export type SentencesIter value priv(type) {
-    buf str
-    pos int
-    n int
-    prev_imm int
-    term int
-    phase int
-    peb int
-    ppeb int
-    sb8_lower bool
+// Field-level `priv` (D281 module-boundary; Plan 200 pt.2 — corrected from
+// `value priv(type)`, over-strict per D267 extension-methods).
+export type SentencesIter value {
+    priv buf str
+    priv pos int
+    priv n int
+    priv prev_imm int
+    priv term int
+    priv phase int
+    priv peb int
+    priv ppeb int
+    priv sb8_lower bool
 }
 
 fn SentencesIter.new(buf str) -> SentencesIter =>
