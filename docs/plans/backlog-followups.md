@@ -1252,7 +1252,6 @@ Server-followups (за CORE, честные маркеры):
   см. `[M-channel-generic-elem-type]` ниже.
 - **[M-178-server-policy-surface]** — middleware onion, 100-continue, keep-alive, chunked-request decode, trailing-slash-301.
 - **[M-178-server-graceful-deadline]** — bounded deadline-drain gated на `supervised(deadline:)` (unimpl в main); cancel-based stop-accept доступен.
-- **[M-178-server-typed-body]** — типизированные `#impl(Deserialize)` request-bodies (serde-в-http-CU codegen-барьер, см. serdejson).
 - **[M-channel-generic-elem-type]** (P1-ish, найден 2026-07-12 при работе над `[M-178-server-streaming]`,
   isolated-repro подтверждён вне std/http — pre-existing, компиляторный, НЕ мой зона в этой волне):
   `docs/channels.md` §«element type T is inferred from the first send/recv» **не выполняется** для

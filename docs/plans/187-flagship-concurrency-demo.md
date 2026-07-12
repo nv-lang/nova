@@ -112,8 +112,9 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
 бек-звезда, честный нарратив).
 
 **Известные подводные камни (из аудита std/http):**
-- `[M-178-server-typed-body]` — typed body через serdejson имеет codegen-дефект →
-  сериализацию событий делать через dynamic json / ручную, не typed `.json[T]`.
+- `[M-178-server-typed-body]` — ЗАКРЫТ (2026-07-12, баг-фиксер 196): typed body
+  через serdejson теперь компилируется в http-CU — можно использовать typed
+  `json_decode_body[T]`/`.json_as[T]()`, dynamic-JSON workaround больше не нужен.
 - Тесты демо гонять под `NOVA_MAXPROCS=1` до закрытия 173.0 (multi-worker
   drain-гонка субстрата); leaks-инвариант при MAXPROCS>1 — после 173.0.
 - 173 Ф.3 удалит `with_timeout` в пользу `deadline:`/`timeout:`-параметров (после

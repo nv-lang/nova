@@ -31,8 +31,37 @@
 //   · graceful deadline-drain — `supervised(deadline:)` is unimplemented in main
 //     (only `supervised(cancel:)` exists); cancel-based stop-accept lands in
 //     servernet, deadline-bounded drain is gated. [M-178-server-graceful-deadline]
-//   · typed `#impl(Deserialize)` request bodies — serde in the http CU trips a
-//     codegen defect (see std.http.serdejson). [M-178-server-typed-body]
+//
+// Typed `#impl(Deserialize)` request bodies (`[M-178-server-typed-body]`) — DONE:
+// the reported "serde in the http CU trips a codegen defect" was TWO real
+// compiler bugs, both fixed at the root (not worked around):
+//   (1) types/mod.rs chain-receiver mut check: `recv_returning` (fluent `-> @`
+//       registry) was NAME-only, not arity-scoped, so an unrelated same-name
+//       `-> @` method on a DIFFERENT type/arity (`ServeMux mut @post(pattern,
+//       handler) -> @`, arity 2) falsely poisoned an unrelated call
+//       (`HttpClient.post(url).body(b)`, arity 1) → spurious
+//       E_RECEIVER_BINDING_NOT_MUT. Fixed with an arity-aware companion
+//       registry (`recv_returning_arity`), mirroring the existing
+//       `mut_methods_arity`/`ro_methods_arity` precedent.
+//   (2) emit_c.rs free-fn symbol mangling/registration (three call sites —
+//       `fn_module_map`/`file_priv_fn_c_names`, the D84 `method_overloads`
+//       registration pass, and the D29 shadow-skip `should_skip_fn`) assumed
+//       a bare free-fn name is unique across the whole CU; a module-private
+//       (default, no `export`) free fn of the same name in TWO different
+//       modules (`std.http.client`'s private `serialize_response(status,
+//       headers, body) -> str` vs `std.http.server`'s exported
+//       `serialize_response(resp) -> []u8`) — genuinely unrelated functions,
+//       not overloads — collided into one C symbol / got silently dropped.
+//       Fixed by widening the existing cross-module collision detection
+//       (previously identical-signature-only) to also catch this
+//       different-signature-but-not-all-exported case, and threading that
+//       detection through all three sites.
+// Minimal repro: `std/http/serdejson/typed_body_repro_test.nv` (decodes a
+// `json_decode_body[T]` POST body inside a `ServeMux` handler — exercises
+// BOTH bugs at once, since it needs `http.server` + `http.client`
+// (transitively, via `std.http.serdejson`) in the same CU). Lives in
+// serdejson's own folder, NOT here, so `http.server`'s own module surface
+// stays serde-free for OTHER importers (see that file's banner).
 
 module http.server
 
