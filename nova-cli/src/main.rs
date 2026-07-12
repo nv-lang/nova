@@ -1139,12 +1139,31 @@ struct RepoPaths {
     default_results_file: PathBuf,
 }
 
+/// env-override для `cg_include`/`rt_dir` — симметрично `NOVA_STD_PATH`
+/// (`resolve_std_path`) и `NOVA_GC_LIB_DIR` (`detect_boehm`). Standalone
+/// leaf-пакеты (напр. `nova-tls`, Plan 193 Ф.1) не обязаны копировать внутрь
+/// себя весь C-рантайм тулчейна (`compiler-codegen/nova_rt/` + libuv
+/// submodule) только чтобы слинковать тестовый бинарь — можно указать на
+/// монорепу через `NOVA_CG_INCLUDE`/`NOVA_RT_DIR`. Precedence: env → дефолт
+/// `repo`-relative (байт-идентично прежнему хардкоду, 0 регрессий).
+fn env_path_override(var: &str) -> Option<PathBuf> {
+    std::env::var(var)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+}
+
 fn resolve_paths(repo: &Path) -> RepoPaths {
+    let cg_include = env_path_override("NOVA_CG_INCLUDE")
+        .unwrap_or_else(|| repo.join("compiler-codegen"));
+    let rt_dir = env_path_override("NOVA_RT_DIR")
+        .unwrap_or_else(|| repo.join("compiler-codegen").join("nova_rt"));
     RepoPaths {
         tests_dir: repo.join("nova_tests"),
         stdlib_dir: nova_codegen::manifest::resolve_std_path(repo.as_ref()),
-        cg_include: repo.join("compiler-codegen"),
-        rt_dir: repo.join("compiler-codegen").join("nova_rt"),
+        cg_include,
+        rt_dir,
         default_results_file: repo.join("target").join("last-test-results.json"),
     }
 }

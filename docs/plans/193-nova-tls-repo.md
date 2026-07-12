@@ -1,10 +1,12 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 193 — nova-tls: вынос TLS в отдельную репу + examples + доки
 
-**Статус:** 🚧 Ф.1 IN PROGRESS, BLOCKED 2026-07-11 — раскладка `nova-tls` готова и
-закоммичена, standalone `nova test` упирается в архитектурный пробел компилятора
-(rt_dir/cg_include resolver жёстко на repo-root пакета, без env-override — см.
-секцию «Ф.1 блокер» ниже). Ждёт ext-dep/toolchain-runtime-resolver работы.
+**Статус:** 🚧 Ф.1 IN PROGRESS, BLOCKED 2026-07-12 — раскладка `nova-tls` готова и
+закоммичена; rt_dir/cg_include resolver-пробел ЗАКРЫТ env-override'ом
+(`NOVA_CG_INCLUDE`/`NOVA_RT_DIR`, см. «Ф.1 продолжение» ниже) — это НЕ было
+работой ext-dep-resolver-03-1 (проверено, другой домен). За ним вскрылся НОВЫЙ
+блокер: ложный `D133-not-consumed` на consume-param transfer в отдельно-
+пакетном (не `std`) контексте — требует отдельной разведки compiler-checker'а.
 **Приоритет:** P2 (packaging, не функционал). **Консолидирует:** бывш. 116 #5 (вынос
 nova-tls) + 116 #6 (examples/доки) + 195 Ф.3 (та же экстракция) — сведено в ОДИН план,
 чтобы TLS-домен не был размазан по 116/195. Номер 193 заполняет дырку от консолидации
@@ -104,3 +106,57 @@ Standalone-сборка НЕ работает — упирается в архи
 **Дальше (после разблокировки rt_dir-резолвера, вне этого захода):** повторить
 `nova test src/tls` с реальным mbedTLS (`vcpkg install mbedtls:x64-windows-static`
 — отдельная сетевая операция, не запускалась в этой разведке).
+
+## Ф.1 продолжение (2026-07-12): rt_dir/cg_include env-override — СДЕЛАНО, вскрыт новый блокер
+
+**Ветка `ext-dep-resolver-03-1` (nova-abi) проверена — НЕ решает этот пробел.**
+Её коммиты (`a10b2d5e9`, `9cc5472c1`, `c95cf673f`) — `ResolvedFfiConfig::merge()`
++ `resolved_dependency_roots()` в `imports.rs`/`test_runner.rs`: агрегация
+`[ffi]`-секций (c_shims/include_dirs/libs) объявленных path/git-зависимостей
+в бинарь ИМПОРТЁРА (§3.2 explicit dependency graph). Другой домен: там речь о
+том, что native-артефакты ЗАВИСИМОСТИ линкуются в потребителя; здесь —
+о том, где резолвер тулчейна ищет СОБСТВЕННЫЙ C-рантайм компилятора
+(`nova_rt/` + libuv). Пересечений нет, ждать её было не нужно.
+
+**Правка сделана** (`nova-cli/src/main.rs`, `resolve_paths()`): добавлен
+`env_path_override()` + чтение `NOVA_CG_INCLUDE`/`NOVA_RT_DIR`, precedence
+env → `repo`-relative default (byte-идентично прежнему хардкоду при пустом
+env — 0 регрессий), симметрично `NOVA_STD_PATH`/`NOVA_GC_LIB_DIR`. Компактно
+(~15 строк), собрано (`cargo build --release -p nova-cli`), verified:
+- Дефолтный запуск (без env) `nova test std/tls` в монорепо — байт-идентичен
+  прежнему поведению (RUN-FAIL на 4 теста, tls shim not built — паритет).
+- Standalone `nova test src/tls` в `nova-tls` с `NOVA_STD_PATH`+
+  `NOVA_CG_INCLUDE`+`NOVA_RT_DIR` → монорепо: FATAL libuv **ушёл** (libuv
+  собрался one-time из монорепного submodule), Boehm GC **нашёлся** (через
+  `cg_include`→`vcpkg_installed`), mbedTLS detection тоже прошёл без жалоб —
+  дошло до РЕАЛЬНОЙ компиляции/тайпчека. Пункт 3 блокера (rt_dir/cg_include
+  жёсткий resolver) — ЗАКРЫТ.
+
+**Новый блокер (вскрылся ТОЛЬКО теперь, старый его маскировал):**
+`nova test src/tls` → `CODEGEN-FAIL`: ложный `[D133-not-consumed]` на `conn`
+(`TcpStream`) в `cert_modes_test.nv:26/36` — при том что `conn` легитимно
+консьюмится передачей в consume-param: `TlsStream.accept(consume stream
+TcpStream, …)` / `.connect(consume stream TcpStream, …)` (`server.nv:53`,
+`client.nv:75`). Тип у `conn` в диагностике — буквально пустая строка
+(`тип \`\``), т.е. type-inference не резолвит возврат `must_tcp(...)`
+(конкретный non-generic `TcpStream`) в этом контексте — при том что
+СОСЕДНИЙ `must_listener(...)`→`TcpListener` и `must_tls(...)`→`TlsStream`
+(та же файла-CU, тот же паттерн) резолвятся нормально. Два контроля
+исключили ложный след:
+1. Self-pointing override (те же три env-переменные, но указывающие НАЗАД
+   на монорепный `std/tls`, тот же `nova.exe`) — проходит чисто (RUN-FAIL,
+   не CODEGEN-FAIL) → это не побочный эффект самого механизма override.
+2. Удаление закэшированных `.c`-артефактов (`cert_modes_test.c`,
+   `handshake_test.c`, gitignored) из монорепного `std/tls` и чистая
+   пересборка — тоже проходит чисто → это не stale-cache артефакт.
+
+Т.е. дефект специфичен именно separate-package идентичности `nova-tls`
+(`[package] name = "tls"`, `module tls.tls`, `src/`-раскладка) при БАЙТ-
+ИДЕНТИЧНОМ `.nv`-содержимом (не считая комментариев/module-path/`#stable`
+версии) — похоже на пробел в consume-checker'е при резолве
+consume-param'ов через `Type.method(consume x, …)`-синтаксис (не generic:
+`must_tcp` не generic-функция) на границе leaf-пакет↔std-как-внешняя-
+зависимость. НЕ пересекается с `ext-dep-resolver-03-1` (та ветка про
+FFI/native-lib propagation, не про consume-checker/type-identity).
+**Не чинил** — вне мандата этого захода (глубокий compiler-checker гэп,
+не компактная env-правка); нужна отдельная разведка/подпункт.
