@@ -8766,7 +8766,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// stay caller-side: `type_ref_to_c` keeps the removed-type `Err` arms
     /// (usize/isize/ptr) + `never`; `apply_type_subst_to_ref` keeps the `byte` alias.
     /// (§2-sanctioned primitive width/sign table — the only exception, single source.)
-    fn primitive_name_to_c(name: &str) -> Option<&'static str> {
+    ///
+    /// 196.3 D315: `pub(crate)` so `ExternalRegistry::type_ref_to_c` (which runs
+    /// standalone, BEFORE any `CEmitter` exists — registry construction — and so
+    /// cannot use the `&self` canonical `type_ref_to_c`/`resolved_type_to_c` path)
+    /// reuses this same table instead of a 4th hand-copied primitive list.
+    pub(crate) fn primitive_name_to_c(name: &str) -> Option<&'static str> {
         Some(match name {
             "int" => "nova_int",
             "i64" => "int64_t",
