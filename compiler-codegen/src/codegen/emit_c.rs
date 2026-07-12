@@ -47967,46 +47967,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Channel-2 (esp. after the []T.of materialisation fix); `.iter()` is
                         // exercised pervasively yet NO-HIT ⟹ Channel-2-covered ⟹ this
                         // `iter_returns`-keyed legacy fallback is structurally unreachable (§5).
-                        // D91 (Plan 21): Channel.new → Nova_ChannelPair.
-                        if let ExprKind::Ident(n) = &obj.kind {
-                            if n == "Channel" && method == "new" {
-                                self.icr_trace("B11h_channel_new");
-                                return "Nova_ChannelPair".into();
-                            }
-                            // Plan 65 Ф.1: ChanReader.close_after(Duration) →
-                            // Nova_ChanReader*. Capability-split static constructor
-                            // (D91 + D94 revision). Replaces the removed
-                            // `Time.after(int)` form (Plan 65 Ф.5).
-                            if n == "ChanReader" && method == "close_after" {
-                                self.icr_trace("B11h_chanreader_close_after");
-                                return "Nova_ChanReader*".into();
-                            }
-                            // Plan 65 Ф.12.4 / D124: ChanReader.close_at(Monotonic).
-                            if n == "ChanReader" && method == "close_at" {
-                                self.icr_trace("B11h_chanreader_close_at");
-                                return "Nova_ChanReader*".into();
-                            }
-                            // Plan 175 Ф.3(a): `Monotonic.now()` inference builtin
-                            // RETIRED — generic static-fn return-type inference
-                            // now resolves it (ordinary `.nv` fn, like Timestamp.now()).
-                            // D75 (revised, Plan 47): CancelToken.new() — Member-form.
-                            if n == "CancelToken" && method == "new" {
-                                self.icr_trace("B11h_canceltoken_new");
-                                return "NovaCancelToken*".into();
-                            }
-                            // D406: qualified sum-variant access `TypeName.Variant` —
-                            // `n` is the sum-type name, `method` is the variant name.
-                            // Returns `Nova_TypeName*` (same ABI as any heap sum-type pointer).
-                            // [M-sync-crossmodule…] (D381): qualify a colliding sum's
-                            // bare name to its module base (byte-identical otherwise).
-                            let nq = self.ref_type_base(n, &[]);
-                            if self.sum_schemas.contains_key(nq.as_str())
-                                || self.sum_schema_registry.lookup_sum_schema(&nq).is_some()
-                            {
-                                self.icr_trace("B11h_qualified_sum_variant_access");
-                                return format!("Nova_{}*", nq);
-                            }
-                        }
+                        // Plan 196.2 W1 [gate-1]: B11h_{channel_new,chanreader_close_after,
+                        // chanreader_close_at,canceltoken_new,qualified_sum_variant_access}
+                        // REMOVED. Channel.new/ChanReader.close_after/close_at/CancelToken.new
+                        // are Nova-body static constructors whose declared return the checker
+                        // materialises into `resolved_types` (Channel 2, read BEFORE this
+                        // legacy); bare `TypeName.Variant` sum-variant access is likewise
+                        // checker-resolved (a sibling Path-qualified variant-ctor branch,
+                        // B12p_path_sum_variant_constructor, still fires — this bare-Ident-Member
+                        // form does not). Exercised pervasively by std concurrency/runtime yet
+                        // NO-HIT across conformance+std ⟹ structurally unreachable (§5).
                         // D75: instance methods on NovaCancelToken*.
                         // Plan 49 Ф.1 + Ф.6 P0 fix: reason() возвращает Option[T]
                         // где T определяется из cancel_token_t_map (если receiver —
@@ -48110,22 +48080,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // return the checker materialises into `resolved_types` (Channel 2, read BEFORE
                         // this legacy); the branches' own comments already flagged them "dead-superseded".
                         // Exercised by std io yet NO-HIT ⟹ Channel-2-covered ⟹ structurally unreachable.
-                        // Plan 12 + Plan 18: ExternalRegistry instance-method return type.
-                        // Handles AtomicInt.@load(), Mutex.@lock(), WaitGroup.@wait(), etc.
-                        if obj_ty.starts_with("Nova_") && obj_ty.ends_with('*') {
-                            let recv_ty = Self::debt_strip_nova_trim_start_ref(&obj_ty);
-                            if let Some(decls) = self.external_registry.lookup(recv_ty, method) {
-                                if let Some(decl) = decls.iter().find(|d| d.is_instance) {
-                                    // Plan 62.B: пропускаем generic-стаб `Nova_T*` —
-                                    // fall through к specialized NovaOpt_/Nova_Result*
-                                    // блокам, знающим concrete тип из tracking/context.
-                                    if !self.debt_is_generic_stub_c(&decl.return_c_type) {
-                                        self.icr_trace("B11p_external_registry_instance_nova");
-                                        return decl.return_c_type.clone();
-                                    }
-                                }
-                            }
-                        }
+                        // Plan 196.2 W1 [gate-1]: B11p_external_registry_instance_nova REMOVED.
+                        // ExternalRegistry instance-method return type (AtomicInt.@load(),
+                        // Mutex.@lock(), WaitGroup.@wait(), etc.) — the extern declaration's
+                        // return is materialised by the checker into `resolved_types`
+                        // (Channel 2, read BEFORE this legacy). Exercised pervasively by std
+                        // concurrency yet NO-HIT across conformance+std ⟹ structurally
+                        // unreachable (§5).
                         // D26 prelude: NovaOpt_T method type inference.
                         if obj_ty.starts_with("NovaOpt_") {
                             self.icr_trace("B11q_novaopt_methods");
@@ -48428,19 +48389,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                             }
                         }
-                        // Plan 55 Ф.4: well-known protocol-method names — type-stable per protocol.
-                        // Когда receiver — generic-bound (Hashable/Comparable/etc.), fallback
-                        // на global fn_ret_<m> может выбрать stale int — нужны явные whitelist'ы.
-                        match method.as_str() {
-                            // Equality — Equal protocol (@equal → nova_bool). Plan 91.8b.
-                            "equal" => { self.icr_trace("B11ad_protocol_equal"); return "nova_bool".into(); }
-                            // Predicates на values.
-                            "is_zero" | "is_positive" | "is_negative" | "is_nan"
-                                | "is_finite" | "is_infinite" => { self.icr_trace("B11ad_protocol_predicates"); return "nova_bool".into(); }
-                            // Hash → u64 (nova_int storage).
-                            "hash" => { self.icr_trace("B11ad_protocol_hash"); return "nova_int".into(); }
-                            _ => {}
-                        }
+                        // Plan 196.2 W1 [gate-1]: B11ad_{protocol_equal,protocol_predicates,
+                        // protocol_hash} REMOVED. Well-known protocol-method names (equal/
+                        // is_zero/is_positive/is_negative/is_nan/is_finite/is_infinite/hash)
+                        // — a receiver-type-blind name-keyed fallback; protocol dispatch
+                        // (Equal/Hashable/etc.) is materialised by the checker into
+                        // `resolved_types` (Channel 2, read BEFORE this legacy). NO-HIT
+                        // across conformance+std ⟹ structurally unreachable (§5).
                         // User-defined method: look up return type registered during forward decl.
                         // Plan 152.4.3: prefer the TYPE-QUALIFIED key (receiver type + method)
                         // so same-named methods on different types disambiguate (e.g. `next`
