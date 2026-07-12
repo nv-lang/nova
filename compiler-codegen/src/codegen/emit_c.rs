@@ -49009,18 +49009,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // лоуэрится в NovaClos_X* (load-bearing: clos_struct_ret_type на
             // call-site), а НЕ в общий R::Func→void* (тот — для declared-позиций
             // fn-типов). Kind-гейт: только сами closure-выражения.
+            //
+            // 197.3 (Q3 B): `closure_channel_miss` — since the ClosureFull
+            // checker registration (types/mod.rs ~8635) is unconditional
+            // (covers generic params via `mark_type_params`/`TypeParam`,
+            // resolved per mono-instance through `current_type_subst`), a
+            // registered Func CAN legitimately fail to fully resolve in an
+            // erased context (unsubstituted type-param). Without this flag
+            // that miss would fall into the generic `R::Func → "void*"`
+            // block right below — exactly the wrong lowering this comment
+            // already warns against. On a miss, skip straight past BOTH
+            // Channel-2 blocks to the legacy body-walk (subst-aware +
+            // never out-right fails, same as pre-197.3 behavior).
+            let mut closure_channel_miss = false;
             if matches!(&expr.kind, ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_)) {
                 if let Some(crate::types::ResolvedType::Func { params, ret, .. }) =
                     self.resolved_types.get(&expr.id)
                 {
                     let p_c: Result<Vec<String>, String> =
                         params.iter().map(|p| self.resolved_type_to_c(p)).collect();
-                    if let (Ok(p_c), Ok(r_c)) = (p_c, self.resolved_type_to_c(ret)) {
-                        return format!("{}*", Self::clos_struct_name(&p_c[..], &r_c));
+                    match (p_c, self.resolved_type_to_c(ret)) {
+                        (Ok(p_c), Ok(r_c)) => {
+                            return format!("{}*", Self::clos_struct_name(&p_c[..], &r_c));
+                        }
+                        _ => {
+                            closure_channel_miss = true;
+                        }
                     }
                 }
             }
-            if let Some(rt) = self.resolved_types.get(&expr.id) {
+            if !closure_channel_miss { if let Some(rt) = self.resolved_types.get(&expr.id) {
                 if let Ok(ir_c) = self.resolved_type_to_c(rt) {
                     // SelfAccess: prefer var_types["nova_self"] when available (reliable per-scope
                     // codegen state; channel depends on current_type_subst timing — gap #2).
@@ -49075,7 +49093,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         return ir_c;
                     }
                 }
-            }
+            } }
         }
         // Channel 3: var_types for Ident/SelfAccess (reliable per-local codegen state).
         // 172.1.2 (2026-07-04): id-гейт СНЯТ — var_types это codegen-state, id не
@@ -51163,31 +51181,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                     drop(overrides);
-                    let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c);
-                    format!("{}*", clos_struct)
-                }
-                // ClosureFull `fn(x T) -> R => body` / `fn(x T) -> R { block }` —
-                // fully typed already (unlike ClosureLight, no inference needed).
-                // [BUG apply-codegen-fix]: the checker (types/mod.rs ExprKind::
-                // ClosureFull arm) never inserts a `ResolvedType::Func` for the
-                // ClosureFull expr's OWN id — it only annotates zero-param
-                // ClosureLight that way — so Channel 2 above (which keys off
-                // `resolved_types.get(&expr.id)`) never fires for ClosureFull,
-                // and without this arm it fell through to the `_` wildcard and
-                // returned "" (empty C type). A `ro apply = fn(f fn(int)->int,
-                // x int) -> int => f(x)` local then got emitted with NO C type
-                // at all (`apply = (void*)(&...);`) instead of `NovaClos_vii*
-                // apply = ...;`, producing `use of undeclared identifier 'apply'`
-                // at every subsequent use — not name-specific, reproduces with
-                // ANY identifier assigned an anonymous typed-`fn` literal.
-                ExprKind::ClosureFull(sb) => {
-                    let param_c_tys: Vec<String> = sb.params.iter()
-                        .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
-                        .collect();
-                    let ret_c = sb.return_type.as_ref()
-                        .and_then(|rt| self.type_ref_to_c(rt).ok())
-                        .filter(|t| !t.is_empty())
-                        .unwrap_or_else(|| "nova_unit".into());
                     let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c);
                     format!("{}*", clos_struct)
                 }
