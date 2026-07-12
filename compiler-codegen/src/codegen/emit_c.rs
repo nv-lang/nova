@@ -48372,29 +48372,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // `.try_into()` are ordinary method names now — they fall through
                         // to the normal method_overloads-based inference below, same as
                         // any other user method.
-                        // Plan 138.1 Ф.1 (D239) BRIDGE: C-runtime-only array helpers
-                        // on a `Vec[T]` receiver (no Vec Nova-body method). Must mirror
-                        // the emission-side bridge return types exactly; all other
-                        // methods fall through to the normal Vec generic-method
-                        // inference below. [F23: replace with Vec Nova-body methods.]
-                        if obj_ty.starts_with("Nova_Vec____") {
-                            self.icr_trace("B11w_nova_vec_bridge_methods");
-                            let vec_elem_ty = obj_ty
-                                .strip_prefix("Nova_Vec____")
-                                .unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"))
-                                .trim_end_matches('*')
-                                .trim();
-                            match method.as_str() {
-                                "append_zero" | "copy_from" | "copy_within" | "fill"
-                                    => return obj_ty.clone(),
-                                "compare" if vec_elem_ty == "nova_byte"
-                                    => return "nova_int".into(),
-                                // D410 (2026-07-06): as_ptr → ptr (as_ prefix retracted).
-                                "ptr" | "as_mut_ptr"
-                                    => return format!("{}*", vec_elem_ty),
-                                _ => { /* fall through to normal Vec method inference */ }
-                            }
-                        }
+                        // Plan 196.2 W1 step3 [gate-1]: B11w_nova_vec_bridge_methods REMOVED.
+                        // The C-runtime bridge special-case (`append_zero`/`copy_from`/
+                        // `copy_within`/`fill`/`compare`/`ptr`/`as_mut_ptr` on a raw
+                        // `Nova_Vec____` receiver) is REDUNDANT since F23 landed the Vec
+                        // Nova-body decls: `Vec[T] @ptr() -> *T` (access.nv:267/275),
+                        // `Vec[T Compare] @compare -> int` (protocols.nv:77),
+                        // `copy_within`/`fill`/`append_zero`/`copy_from -> @` (mutate.nv).
+                        // The normal Vec generic-method inference below resolves all of them
+                        // to the SAME C-type (Self→receiver, *T→elem*, compare→int). The
+                        // earlier removal attempt regressed `vec_lazy` ONLY via the
+                        // now-fixed `NovaOpt-from-int` closure-sig bug (W1 step1); with that
+                        // fixed the fall-through is byte-safe. Gate-1: Δ infer_call_ret_c < 0.
                         // Array method calls
                         if obj_ty.starts_with("NovaArray_") {
                             self.icr_trace("B11x_novaarray_methods");
