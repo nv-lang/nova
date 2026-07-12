@@ -1253,23 +1253,56 @@ Server-followups (за CORE, честные маркеры):
 - **[M-178-server-policy-surface]** — middleware onion, 100-continue, keep-alive, chunked-request decode, trailing-slash-301.
 - **[M-178-server-graceful-deadline]** — bounded deadline-drain gated на `supervised(deadline:)` (unimpl в main); cancel-based stop-accept доступен.
 - **[M-178-server-typed-body]** — типизированные `#impl(Deserialize)` request-bodies (serde-в-http-CU codegen-барьер, см. serdejson).
-- **[M-channel-generic-elem-type]** (P1-ish, найден 2026-07-12 при работе над `[M-178-server-streaming]`,
-  isolated-repro подтверждён вне std/http — pre-existing, компиляторный, НЕ мой зона в этой волне):
-  `docs/channels.md` §«element type T is inferred from the first send/recv» **не выполняется** для
-  non-`int` T. Repro: `ro { tx, rx } = Channel.new(4); tx.send("first")` (str) → emit_c.rs типизирует
-  канал-элемент как `nova_int` НЕЗАВИСИМО от первого `send`, эмитит
-  `nova_chan_writer_send(tx, (nova_int)(_nova_strlit_...))` (строка→int cast) → CC-FAIL (`nova_str` не
-  влезает в `nova_int` param, компилятор C ловит). С `[]u8`-пейлоадом та же мистипизация КОМПИЛИРУЕТСЯ
-  (указатель→int неявный C-cast разрешён) — silent semantics bug, не поймано компилятором. Документированный
-  turbofish-эскейп `Channel[str].new(n)` (channels.md:124) **ICE**: `internal error at emit_c.rs:49360:
-  [P67-LEGACY] Ident \`Channel\` not in var_types / not a sum-variant` — воспроизведено МИНИМАЛЬНО (голый
-  `module chan_repro { test {...} }` вне std/, без деструктуризации тоже падает — не про
-  `ro {tx,rx}`-паттерн). `int`-payload работает штатно (baseline sanity PASS). Обход в
-  `std/http/server/streaming_test.nv` (см. коммент там): канал несёт `int`-индексы вместо
-  `[]u8`/`str`-пейлоада напрямую. Нужен владельцу компилятора: (1) реальная T-inference от
-  first-send/recv (docs claim), ИЛИ (2) минимум — turbofish `Channel[T].new` без ICE как рабочий
-  escape hatch, ИЛИ (3) поймать non-int-payload-через-int-канал как ЯВНУЮ typed-error вместо silent
-  pointer/int reinterpret для pointer-sized T (в компиляторе, не здесь).
+- ~~**[M-channel-generic-elem-type]**~~ ✅ **(2)+(3) ЗАКРЫТЫ 2026-07-12** (ветка `channel-elem`,
+  worktree `nova-capmig`, коммиты `<см. HEAD channel-elem>`). Найден 2026-07-12 при работе над
+  `[M-178-server-streaming]`; репро было: `docs/channels.md` §«element type T is inferred from the
+  first send/recv» не выполнялось для non-`int` T (`tx.send("first")` → CC-FAIL сырым C-компилятором;
+  `[]u8`-пейлоад мистипизировался silently через pointer→int implicit C-cast; документированный
+  turbofish-эскейп `Channel[str].new(n)` — ICE `[P67-LEGACY] Ident 'Channel' not in var_types`).
+  Из трёх вариантов почина реализованы **два**:
+  - **(a) честный gate** (`channel_payload_c_type_ok`, `emit_c.rs`): `.send`/`.try_send` теперь
+    отвергают компиляцией (`E_CHANNEL_UNSOUND_ELEM_TYPE`) любой payload, чей C-тип не влезает
+    без потерь в word-sized слот рантайма (`nova_str`, `nova_f32`/`nova_f64`, tuples,
+    value-records) — вместо сырого C-cast-краша или silent pointer/int reinterpret. Word-safe
+    типы (`int`, `bool`, `char`, fixed-width ints, любой pointer-sized `T` — `[]T`, records,
+    `HashMap`, суммы) продолжают компилироваться как раньше (backward-compat подтверждена).
+  - **(b) turbofish-ICE фикс**: `Channel[T].new(cap)` (`emit_call` + оба `infer_expr_c_type`-сайта)
+    больше не падает — `Channel` как turbofish-база (`ExprKind::TurboFish{base: Ident("Channel")}`)
+    распознаётся explicitly и эмитится идентично bare/Path-формам (`T` стёрт на рантайм-уровне
+    регардless — `Nova_ChannelPair` нежанрик). `Channel[int]`/`Channel[bool]`/`Channel[str]`
+    (последний — до честного (a)-gate на `.send`) больше не ICE.
+  - **(1) реальная end-to-end T-inference НЕ реализована** — `rx.recv()` остаётся `Option[int]`
+    на уровне codegen C-типа независимо от отправленного T (`infer_call_ret_c`,
+    `"recv" | "try_recv" => "NovaOpt_nova_int"`); попытка реально ПОТРЕБИТЬ полученный `[]u8` как
+    `[]u8` (`.len()`, индексация) даёт отдельный, другой ICE (`Index element type unknown for
+    obj_ty="nova_int"`, `emit_c.rs:49468`) — тот же класс, что и (a)/(b), но НЕ починен этой волной
+    (зона `resolve_return_channel`/`f1_check_call`, ~46293-48883, была явно вне периметра правки).
+    Вынесено в отдельный **`[M-channel-real-elem-type-inference]`** (P2, требует полноценной
+    generic-моно-типизации `Channel[T]` в checker+codegen — заметно больший объём, чем (a)/(b)).
+  - **docs/channels.md**/**channels.ru.md**: убран misleading-пример `Channel[str].new(8)` (заменён
+    на `Channel[int].new(8)`), добавлен явный §«word-safe T only» с перечислением supported/rejected
+    и ссылкой на `E_CHANNEL_UNSOUND_ELEM_TYPE`.
+  - **Регресс-покрытие**: `spec_tests/conformance/channel_elem_type_word_safe.nv` (int/bool/[]u8
+    send, try_send, оба turbofish-варианта — pos) + `spec_tests/conformance/neg/
+    channel_elem_str_payload_neg.nv` + `neg/channel_elem_turbofish_str_payload_neg.nv` (str payload
+    через bare И turbofish `Channel[str].new` — оба ловят `E_CHANNEL_UNSOUND_ELEM_TYPE`).
+  - **Гейты**: `cargo build --release` (nova-cli) чист (только pre-existing warnings). Conformance
+    (`spec_tests/conformance`, один CU, `--positive --compile-error --timeout 300 --jobs 4`) —
+    **97 PASS / 0 FAIL** (95 baseline + 2 новых neg). `std/http` (`--full --jobs 4`) — 9 PASS / 0 FAIL
+    (два `servernet/rt/*smoke*` тайм-аутили ТОЛЬКО под `--jobs 4`-нагрузкой — компайл-фаза congestion,
+    прецедент `[M-net-close-teardown-hang]`; PASS 2/2 при `--jobs 1 --timeout 180`). Точечный регресс
+    по всем существующим Channel-юзерам (`nova_tests/err173_2`, `err173_3`, `negative_capability`,
+    `plan83_10/neg`, `plan83_7`, `expected_runtime`, `std/concurrency`) — все зелёные, включая
+    `err173_3/share_capture_ok_test` (`.try_send(j.payload)`/`.try_send(h.payload)`, int payload)
+    и `std/concurrency/cancellation.nv` `race2[T]` (generic try_send, без каких-либо callers в репо
+    — не задет).
+  - **Побочная находка (НЕ почин, вне зоны этой правки)**: `nova_tests/plan83_10/
+    handler_isolation_per_fiber.nv` падает ICE `[P67-LEGACY] Path call return type unknown for
+    method=now` (`emit_c.rs:48941`) — эффект-хендлер `with Time = effect Time {...} { Time.now() }`,
+    **нулевого отношения к Channel** (подтверждено: код-ревью показал, что диф (a)/(b) не трогает
+    generic Path-call return-type dispatch; сам файл не использует Channel вообще). Pre-existing,
+    независимый баг — не заведён отдельным маркером в рамках этой волны (не моя зона), но стоит
+    завести при следующем заходе в эту область.
 
 **NEW codegen-баги (обнаружены при Ф.2-enh + Ф.3, кандидаты на fix, вне .nv):**
 - ~~**[M-codegen-nominal-type-name-collision]**~~ ✅ **CLOSED 2026-07-06 (D381).** Collision-aware module-qualified mangling приземлён (см. `[M-sync-crossmodule-samename-type-collision]` выше). Одноимённые cross-module типы (`ErrorKind` × io/http/compress) сосуществуют в одном CU: `Nova_<modpath>_<Name>` для коллидирующих, byte-identical для прочих. Разблокирует auto-decompress co-presence (http+compress `ErrorKind` в одном CU компилятся/линкуются — conformance PASS 1/0) + `ErrSource.Compress`.
