@@ -1,0 +1,11 @@
+// Plan 57.C.7: bench.opaque(<literal>) → bench-opaque-literal warning.
+// (no-op: constant folding не происходит на literals — opaque нужен для derived).
+// EXPECT_COMPILE_WARNING barrier no-op
+module spec_tests.conformance
+bench "opaque-on-literal" {
+    measure {
+        bench.opaque(42)
+    }
+}
+
+test "stub" { assert(true) }

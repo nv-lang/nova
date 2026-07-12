@@ -1,0 +1,10 @@
+// Plan 57.D.2: Time.sleep внутри measure → bench-sleep-in-measure warning.
+// EXPECT_COMPILE_WARNING sleep dominates timing noise
+module spec_tests.conformance
+bench "with-sleep" {
+    measure {
+        Time.sleep(1)
+    }
+}
+
+test "stub" { assert(true) }
