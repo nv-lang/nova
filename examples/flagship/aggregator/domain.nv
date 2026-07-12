@@ -1,0 +1,117 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 187 — flagship concurrent aggregator: domain types.
+//
+// Pure data, no effects. Shared by the backend (aggregate.nv), the synthetic
+// scenarios (scenarios.nv), and the JSON snapshot (report_json.nv).
+
+module aggregator.domain
+
+// ── Source ───────────────────────────────────────────────────────────────
+
+/// One fan-out source (a city for the weather legend, a domain for the
+/// health-check legend, ...). `latency_ms`/`should_fail` are the Demo/Chaos
+/// simulation knobs (see aggregate.nv `fetch_one` — plan 187 §7 item 6, this
+/// is the "seeded-latency wrapper" applied at the call-site, not inside a
+/// custom `Net` handler; owner sign-off on the final API shape is pending).
+export type Source value {
+    ro id          str      // display name (city / domain / model)
+    ro detail      str      // secondary info shown in the UI ("7 days" / "3 checks")
+    ro sub_count   int      // sub-request count (waterfall notch count)
+    ro latency_ms  int      // simulated total latency before settling
+    ro should_fail bool     // simulated upstream failure (503/timeout-shaped)
+}
+
+#stable(since = "0.1")
+export fn Source.new(id str, detail str, sub_count int, latency_ms int, should_fail bool) -> Source =>
+    { id, detail, sub_count, latency_ms, should_fail }
+
+// ── Fetch result ─────────────────────────────────────────────────────────
+
+/// Bytes fetched for one source (payload content is not domain-meaningful —
+/// the demo cares about timing/outcome, not the byte content).
+export type SourceData value {
+    ro id      str
+    ro payload []u8
+}
+
+/// Aggregate-domain error surface (`Fail[AggError]` — plan 187 §6.4 signature).
+export type AggError enum
+    | Upstream(str)     // simulated/real upstream failure — carries the source id
+    | Transport(str)    // Net-effect error surfaced as text (NetError.to_str())
+
+#stable(since = "0.1")
+export fn AggError @to_str() -> str {
+    match @ {
+        Upstream(id)  => "upstream failure: " + id
+        Transport(msg) => "transport error: " + msg
+    }
+}
+
+// ── Per-task outcome ─────────────────────────────────────────────────────
+
+/// Mirrors the waterfall UI states (mockup: done / fail / cancel).
+///
+/// **`Cancelled` is a self-checked SOFT deadline, not a killed fiber**
+/// (plan 187, resumption-6, 2026-07-12 simplification — see aggregate.nv's
+/// file header for the full story). `aggregate.nv`'s `fetch_guarded` always
+/// lets the underlying fetch run to real completion, then relabels the
+/// outcome `Cancelled` if it settled after the shared `budget`, discarding
+/// whatever Done/Failed payload the fetch actually produced. No fiber is
+/// interrupted, no work is abandoned mid-flight — this is a REPORTING
+/// simplification (honest about the wall-clock cost: a single very-slow
+/// straggler is not cut short), not a resource-safety one. Real
+/// runtime-cancel (actually interrupting the late lane's `Time.sleep`/`Net`
+/// op so its work stops early) is follow-up work — see plan 173.x.
+export type TaskStatus enum
+    | Done(SourceData)
+    | Failed(str)
+    | Cancelled
+
+/// One settled lane in the waterfall.
+export type TaskResult value {
+    ro id         str
+    ro status     TaskStatus
+    ro elapsed_ms int
+}
+
+#stable(since = "0.1")
+export fn TaskResult @is_done() -> bool =>
+    match @status { Done(_) => true, Failed(_) => false, Cancelled => false }
+#stable(since = "0.1")
+export fn TaskResult @is_failed() -> bool =>
+    match @status { Done(_) => false, Failed(_) => true, Cancelled => false }
+#stable(since = "0.1")
+export fn TaskResult @is_cancelled() -> bool =>
+    match @status { Done(_) => false, Failed(_) => false, Cancelled => true }
+
+// ── Report ───────────────────────────────────────────────────────────────
+
+/// The killer-narrative output: `aggregate(sources, budget) Net Time -> Report`.
+export type Report value {
+    ro results      []TaskResult
+    ro wall_ms       int
+    ro sequential_ms int
+    ro done          int
+    ro failed        int
+    ro cancelled     int
+}
+
+/// Build a `Report` from settled task results + measured wall time. The
+/// sequential estimate is the sum of every lane's own elapsed time (what a
+/// one-source-at-a-time loop would have cost) — the "×N faster" HUD figure.
+#stable(since = "0.1")
+export fn Report.from(results []TaskResult, wall_ms int) -> Report {
+    mut done = 0
+    mut failed = 0
+    mut cancelled = 0
+    mut sequential_ms = 0
+    for r in results {
+        sequential_ms += r.elapsed_ms
+        match r.status {
+            Done(_)    => { done += 1 }
+            Failed(_)  => { failed += 1 }
+            Cancelled  => { cancelled += 1 }
+        }
+    }
+    { results, wall_ms, sequential_ms, done, failed, cancelled }
+}

@@ -1,0 +1,364 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 187 — flagship concurrent aggregator: backend tests.
+//
+// Plan 187 §4/§6: handler substitution (`with Net = mock_net()`, `with Emit =
+// <handler literal>`), NOT a mocking framework — the exact same
+// `aggregate`/`fetch_one` code that would run under `real_net()` (Live,
+// deferred). Budgets here are small (tens of ms) so the suite stays fast;
+// `scenarios.nv`'s demo tables (used by the HTTP endpoint / a manual run) use
+// UI-scale latencies instead.
+//
+// Every test installs `with Emit = null_emit()` alongside `with Net =
+// mock_net()` now that `aggregate`'s real effect row includes `Emit` (emit.nv)
+// — the dedicated "Emit fires the right events" tests near the bottom
+// substitute their OWN inline `effect Emit { ... }` handler literal instead
+// (draining a `Channel[str]` event log — the sanctioned cross-fiber handoff,
+// D415 — since `lane_*` ops fire from worker fibers, not the test's own).
+
+module aggregator.aggregate_test
+
+import ./aggregate.{aggregate}
+import ./domain.{Source, TaskStatus, TaskResult}
+import ./emit.{Emit, null_emit}
+import std.net.{mock_net}
+import std.runtime.fibers
+
+fn tiny_sources() -> []Source {
+    [
+        Source.new("fast-a",     "", 1, 15,  false),
+        Source.new("fast-b",     "", 1, 30,  false),
+        Source.new("slow-late",  "", 1, 500, false),   // > budget → cancelled
+        Source.new("bad-upstream", "", 1, 10, true),   // fails fast
+    ]
+}
+
+fn status_of(results []TaskResult, id str) -> TaskStatus {
+    mut found = TaskStatus.Cancelled
+    mut hit = false
+    for r in results {
+        if r.id == id && !hit {
+            found = r.status
+            hit = true
+        }
+    }
+    found
+}
+
+// ── POS: mixed outcomes settle correctly ────────────────────────────────────
+
+test "aggregate: done/failed/cancelled settle correctly on a mixed fan-out" {
+    with Net = mock_net() {
+        with Emit = null_emit() {
+            ro report = aggregate(tiny_sources(), Duration.from_millis(120))
+            println("DEBUG len=" + str.from(report.results.len()) + " done=" + str.from(report.done) +
+                " failed=" + str.from(report.failed) + " cancelled=" + str.from(report.cancelled) +
+                " wall_ms=" + str.from(report.wall_ms) + " seq_ms=" + str.from(report.sequential_ms))
+            for r in report.results {
+                match r.status {
+                    Done(_)   => println("  " + r.id + " Done elapsed=" + str.from(r.elapsed_ms))
+                    Failed(m) => println("  " + r.id + " Failed(" + m + ") elapsed=" + str.from(r.elapsed_ms))
+                    Cancelled => println("  " + r.id + " Cancelled elapsed=" + str.from(r.elapsed_ms))
+                }
+            }
+            assert(report.results.len() == 4)
+            assert(report.done == 2)
+            assert(report.failed == 1)
+            assert(report.cancelled == 1)
+
+            match status_of(report.results, "fast-a") {
+                Done(_) => assert(true)
+                _       => assert(false)
+            }
+            match status_of(report.results, "bad-upstream") {
+                Failed(_) => assert(true)
+                _         => assert(false)
+            }
+            match status_of(report.results, "slow-late") {
+                Cancelled => assert(true)
+                _         => assert(false)
+            }
+        }
+    }
+}
+
+// ── POS: fan-out is actually concurrent (wall << sequential) ───────────────
+
+test "aggregate: wall time beats sequential sum (speedup > 1)" {
+    with Net = mock_net() {
+        with Emit = null_emit() {
+            ro report = aggregate(tiny_sources(), Duration.from_millis(120))
+            // sequential_ms sums every lane's OWN elapsed time (~15+30+120+10ish);
+            // wall_ms is bounded by the shared budget — must be clearly smaller.
+            assert(report.wall_ms < report.sequential_ms)
+        }
+    }
+}
+
+// ── POS: the SAME code serves a different source list (Weather ↔ Health) ───
+
+test "aggregate: same code, two source lists (handler/source swap only)" {
+    with Net = mock_net() {
+        with Emit = null_emit() {
+            ro a = aggregate(tiny_sources(), Duration.from_millis(120))
+            ro b = aggregate([Source.new("only-one", "", 1, 15, false)], Duration.from_millis(120))
+            assert(a.results.len() == 4)
+            assert(b.results.len() == 1)
+            assert(b.done == 1)
+        }
+    }
+}
+
+// ── NEG: a source that settles past the deadline is RELABELED cancelled ────
+//    (self-checked soft deadline, not a killed fiber — see aggregate.nv's
+//    file-header "Simplification" note). `fetch_one` always runs to real
+//    completion, so `wall_ms` here is bounded by the SOURCE's own latency,
+//    not by `budget_ms` — that is the honest cost of this MVP's
+//    simplification, asserted explicitly below rather than swept under the
+//    rug.
+
+test "aggregate: source past deadline is relabeled cancelled (soft budget, fetch still completes)" {
+    with Net = mock_net() {
+        with Emit = null_emit() {
+            ro srcs []Source = [Source.new("slow", "", 1, 300, false)]
+            ro report = aggregate(srcs, Duration.from_millis(40))
+            assert(report.cancelled == 1)
+            assert(report.done == 0)
+            // Soft budget: the fetch ran to completion (~300ms), it was not cut
+            // short at the ~40ms budget — generous upper bound to absorb CI jitter
+            // without masking a real regression (e.g. an infinite loop/hang).
+            assert(report.wall_ms >= 300)
+            assert(report.wall_ms < 2000)
+        }
+    }
+}
+
+// ── NEG: an upstream failure surfaces as Failed, does not crash the run ────
+
+test "aggregate: upstream failure surfaces as Failed, run completes" {
+    with Net = mock_net() {
+        with Emit = null_emit() {
+            ro srcs []Source = [Source.new("bad", "", 1, 10, true)]
+            ro report = aggregate(srcs, Duration.from_millis(200))
+            assert(report.failed == 1)
+            assert(report.done == 0)
+            assert(report.cancelled == 0)
+        }
+    }
+}
+
+// ── EDGE: every source overruns the budget → all cancelled, 0 leaks-shaped ─
+
+test "aggregate: all sources over budget -> all cancelled" {
+    with Net = mock_net() {
+        with Emit = null_emit() {
+            ro srcs []Source = [
+                Source.new("a", "", 1, 300, false),
+                Source.new("b", "", 1, 400, false),
+                Source.new("c", "", 1, 500, false),
+            ]
+            ro report = aggregate(srcs, Duration.from_millis(30))
+            assert(report.done == 0)
+            assert(report.failed == 0)
+            assert(report.cancelled == 3)
+        }
+    }
+}
+
+// ── EDGE: empty source list → empty report, no panic ────────────────────────
+
+test "aggregate: empty source list -> empty report, no panic" {
+    with Net = mock_net() {
+        with Emit = null_emit() {
+            ro srcs []Source = []
+            ro report = aggregate(srcs, Duration.from_millis(100))
+            assert(report.results.len() == 0)
+            assert(report.done == 0)
+            assert(report.failed == 0)
+            assert(report.cancelled == 0)
+        }
+    }
+}
+
+// ── 0 leaks (fiber arena — Linux/macOS only; honest no-op sentinel on Windows,
+//    see std/runtime/fibers.nv header) ───────────────────────────────────────
+
+test "aggregate: 0 fiber-slot leak after cascading cancellation" {
+    if fibers.slot_count() != 0 {
+        with Net = mock_net() {
+            with Emit = null_emit() {
+                ro before = fibers.slots_active()
+                ro _ = aggregate(tiny_sources(), Duration.from_millis(120))
+                ro after = fibers.slots_active()
+                assert(after == before)
+            }
+        }
+    }
+}
+
+// ── Emit: handler substitution (NOT a mocking library) ──────────────────────
+//
+// Each test below installs its OWN inline `effect Emit { ... }` literal that
+// funnels events into a `Channel[str]` — the same handoff primitive
+// `fetch_guarded` itself uses for its per-lane result (D415). `lane_*` ops
+// fire from whichever fiber is running that lane; draining the channel only
+// AFTER `aggregate()` has returned is race-free because `aggregate` has
+// already joined every spawned lane by then (structured concurrency) — no
+// producer can still be writing while the test drains.
+
+// [M-flagship-channel-str-recv-typaret]: a `Channel[str]` (T inferred from a
+// `str` `try_send`) miscompiles on the RECEIVE side once the received value
+// is actually USED as a `str` (e.g. `==` / a stdlib `str` method) — CC-FAIL
+// "passing 'nova_int' to parameter of incompatible type 'nova_str'"
+// (`Nova_str_method_equal(tag, ...)` called with `tag` typed `nova_int`).
+// `Channel[TaskStatus]` (fetch_guarded, above) and plain `Channel[int]`
+// (docs/channels.md) both round-trip fine — this looks like the generic
+// erasure slot failing to re-tag a raw scalar back to `nova_str`
+// specifically, distinct from the boxed/pointer-represented `TaskStatus`
+// case. Reproduced in isolation (bare `Channel.new(n)` + `str` try_send +
+// `try_recv` + `==` on the received value, no other code). Workaround below:
+// int-coded event tags over the channel instead of `str` tags — the events
+// these tests care about (kind of event, not payload) fit an int code fine,
+// and `Channel[int]` is a well-trodden path elsewhere in the codebase.
+//
+// [M-flagship-handler-lit-const-capture]: a SEPARATE defect from the above —
+// a module-level `const` referenced INSIDE an `effect X { op(...) {...} }`
+// handler-literal body is wrongly treated as a free variable to CAPTURE
+// (context-struct field + `_ctx->EVT_DONE = EVT_DONE;`) instead of resolving
+// to the qualified global (`Nova_const_..._EVT_DONE`) the way it correctly
+// does everywhere else in the same file — "use of undeclared identifier
+// EVT_DONE" (no local of that name exists to capture at the assignment
+// site). Workaround: plain int literals (`1`/`2`/`3`) inside the handler
+// bodies below, not named consts — a literal isn't an identifier to
+// mis-capture. `EVT_*` names live only in this comment now.
+
+// ── POS: a start event fires for every source, exactly once each ──────────
+
+test "aggregate: Emit fires lane_started exactly once per source" {
+    ro { tx, rx } = Channel.new(16)
+    with Net = mock_net() {
+        with Emit = effect Emit {
+            lane_started(_id str, _idx int) { ro _ = tx.try_send(1) }
+            lane_done(_id str, _elapsed_ms int) {}
+            lane_failed(_id str, _err str, _elapsed_ms int) {}
+            lane_cancelled(_id str, _elapsed_ms int) {}
+            swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) {}
+        } {
+            ro _ = aggregate(tiny_sources(), Duration.from_millis(120))
+        }
+    }
+    tx.close()
+    mut count = 0
+    mut going = true
+    while going {
+        match rx.try_recv() {
+            Some(_) => { count += 1 }
+            None    => { going = false }
+        }
+    }
+    assert(count == 4)
+}
+
+// ── POS: per-lane terminal events (done/failed/cancelled) tally exactly like
+//    the settled Report — Emit narration and the Report are the SAME truth,
+//    told twice (event stream vs summary), not two different truths. ───────
+
+test "aggregate: Emit lane outcomes tally exactly like the settled Report" {
+    ro { tx, rx } = Channel.new(16)
+    with Net = mock_net() {
+        with Emit = effect Emit {
+            lane_started(_id str, _idx int) {}
+            lane_done(_id str, _elapsed_ms int)             { ro _ = tx.try_send(1) }   // done
+            lane_failed(_id str, _err str, _elapsed_ms int) { ro _ = tx.try_send(2) }   // failed
+            lane_cancelled(_id str, _elapsed_ms int)        { ro _ = tx.try_send(3) }   // cancelled
+            swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) {}
+        } {
+            ro report = aggregate(tiny_sources(), Duration.from_millis(120))
+            tx.close()
+            mut done = 0
+            mut failed = 0
+            mut cancelled = 0
+            mut going = true
+            while going {
+                match rx.try_recv() {
+                    Some(evt) => {
+                        if evt == 1 { done += 1 }
+                        else if evt == 2 { failed += 1 }
+                        else if evt == 3 { cancelled += 1 }
+                    }
+                    None => { going = false }
+                }
+            }
+            assert(done == report.done)
+            assert(failed == report.failed)
+            assert(cancelled == report.cancelled)
+        }
+    }
+}
+
+// ── POS: swarm_done fires exactly once, with the SAME tallies the caller
+//    reads off the returned Report. `swarm_done` fires from `aggregate`'s
+//    own top-level code on the CALLING fiber (not from inside `spawn`) —
+//    a direct `mut`-capture (no channel) is race-free here, same idiom as
+//    std/concurrency/retry_test.nv's `with Fail[str] = |e| { caught = e; ... }`
+//    (D415's "bare mut from spawn is a race" concerns concurrent WORKER
+//    fibers, not this single-fiber synchronous callback). ──────────────────
+
+test "aggregate: Emit swarm_done matches the returned Report, fires once" {
+    mut fired = 0
+    mut fanout = 0
+    mut done = 0
+    mut failed = 0
+    mut cancelled = 0
+    mut wall_ms = 0
+    mut sequential_ms = 0
+    with Net = mock_net() {
+        with Emit = effect Emit {
+            lane_started(_id str, _idx int) {}
+            lane_done(_id str, _elapsed_ms int) {}
+            lane_failed(_id str, _err str, _elapsed_ms int) {}
+            lane_cancelled(_id str, _elapsed_ms int) {}
+            swarm_done(f int, d int, fl int, c int, w int, s int) {
+                fired += 1
+                fanout = f
+                done = d
+                failed = fl
+                cancelled = c
+                wall_ms = w
+                sequential_ms = s
+            }
+        } {
+            ro report = aggregate(tiny_sources(), Duration.from_millis(120))
+            assert(fired == 1)
+            assert(fanout == report.results.len())
+            assert(done == report.done)
+            assert(failed == report.failed)
+            assert(cancelled == report.cancelled)
+            assert(wall_ms == report.wall_ms)
+            assert(sequential_ms == report.sequential_ms)
+        }
+    }
+}
+
+// ── NEG: a cancelled lane fires lane_cancelled, not lane_done/lane_failed ──
+
+test "aggregate: source past deadline fires lane_cancelled, nothing else" {
+    ro { tx, rx } = Channel.new(4)
+    with Net = mock_net() {
+        with Emit = effect Emit {
+            lane_started(_id str, _idx int) {}
+            lane_done(_id str, _elapsed_ms int)             { ro _ = tx.try_send(1) }   // done
+            lane_failed(_id str, _err str, _elapsed_ms int) { ro _ = tx.try_send(2) }   // failed
+            lane_cancelled(_id str, _elapsed_ms int)        { ro _ = tx.try_send(3) }   // cancelled
+            swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) {}
+        } {
+            ro srcs []Source = [Source.new("slow", "", 1, 300, false)]
+            ro _ = aggregate(srcs, Duration.from_millis(40))
+            tx.close()
+            match rx.try_recv() {
+                Some(evt) => assert(evt == 3)   // cancelled
+                None      => assert(false)
+            }
+            assert(rx.try_recv().is_none())
+        }
+    }
+}
