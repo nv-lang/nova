@@ -9574,6 +9574,23 @@ impl<'a> TypeCheckCtx<'a> {
     /// additionally accepts this result ONLY when it reproduces the legacy binding
     /// as a round-trippable concrete type, so parity holds regardless of the
     /// channel's fidelity (propose-then-verify).
+    ///
+    /// Plan 196.4 Stage-1a: extended so a return mentioning a METHOD-level generic
+    /// (`[U]` — `fn Vec[T] @map[U](f (T)->U) -> Vec[U]`, bound by the CALL'S
+    /// ARGUMENTS, not the receiver) no longer unconditionally bails (the old
+    /// `9624` guard). `method_names` now ALSO mints fresh solver `Var`s (same
+    /// numeric space as the carrier — anti-d119 by construction: a carrier `T`
+    /// and a method `T` sharing a spelling never collide, each is a distinct
+    /// `TypeVar`). When the caller supplies the call's arguments
+    /// (`call_args_scope`), each non-variadic `(declared param, arg)` pair whose
+    /// declared type mentions a method generic contributes a `Constraint::Eq` —
+    /// the SAME structural walk `unify_type` performs for the free-fn
+    /// generic-return arm (`f1_check_call` `10452`-`10492`), expressed on fresh
+    /// `Var`s instead of a name-keyed `HashMap`. A method-generic var left
+    /// unbound (no `call_args_scope`, no matching param, or the arg's type is
+    /// itself unresolved) simply stays a free `Var` — `as_concrete_leaf` then
+    /// honestly reports `None` for the whole return, exactly mirroring the old
+    /// bail's "no annotation" contract for the erased/unresolved case.
     fn resolve_return_channel(
         &self,
         recv: &Receiver,
@@ -9581,8 +9598,10 @@ impl<'a> TypeCheckCtx<'a> {
         peeled: &TypeRef,
         ret: &TypeRef,
         method_names: &HashSet<String>,
+        method_params: &[Param],
+        call_args_scope: Option<(&[CallArg], &HashMap<String, TypeRef>)>,
     ) -> Option<ResolvedType> {
-        use constraint_solver::{TypeVar, VarGen};
+        use constraint_solver::{Solver, Ty, TypeVar, VarGen};
         // Carrier generic names — bare single-segment, no args (same extraction
         // `build_recv_subst` performs). A FRESH var per name (numeric identity).
         let names: Vec<String> = recv
@@ -9602,6 +9621,10 @@ impl<'a> TypeCheckCtx<'a> {
         for n in &names {
             vars.entry(n.clone()).or_insert_with(|| g.fresh());
         }
+        // Stage-1a: method-level generics mint fresh vars TOO — see doc comment.
+        for n in method_names {
+            vars.entry(n.clone()).or_insert_with(|| g.fresh());
+        }
         // Declared receiver pattern: prefer the FULL structured form
         // (`receiver_ty`, the same source `build_recv_subst` unifies), else the
         // flat `Named{type_name, generics}`.
@@ -9615,18 +9638,55 @@ impl<'a> TypeCheckCtx<'a> {
         let concrete_recv =
             Self::ty_from_resolved_vars(&ResolvedType::from_type_ref(peeled), &vars);
         // Return template: pre-bind `Self` to the concrete receiver in TypeRef-land
-        // (byte-parity with legacy), then lift carriers to vars.
+        // (byte-parity with legacy), then lift carriers (+ method generics) to vars.
         let mut self_subst: HashMap<String, TypeRef> = HashMap::new();
         self_subst.insert("Self".to_string(), peeled.clone());
         let ret_self = crate::const_fn_trampoline::subst_type_ref_pub(ret, &self_subst);
-        // Residual method-level generic → the solver would misread the surviving
-        // name as a concrete leaf; bail (mirrors the producer's own guard).
-        if !method_names.is_empty() && typeref_mentions_any(&ret_self, method_names) {
-            return None;
-        }
         let ret_template =
             Self::ty_from_resolved_vars(&ResolvedType::from_type_ref(&ret_self), &vars);
-        constraint_solver::resolve_return(&recv_pattern, &concrete_recv, &ret_template)
+        // Stage-1a: Constraint::Eq param↔arg for METHOD-level generics — see doc
+        // comment. Only the params whose DECLARED type mentions a method
+        // generic are considered (matches the targeted scan `resolve_
+        // method_return_with_closure_args` performs for the closure sub-case).
+        let mut extra_eqs: Vec<(Ty, Ty)> = Vec::new();
+        if !method_names.is_empty() {
+            if let Some((args, scope)) = call_args_scope {
+                for (p, a) in method_params.iter().zip(args.iter()) {
+                    if p.is_variadic {
+                        break;
+                    }
+                    if !typeref_mentions_any(&p.ty, method_names) {
+                        continue;
+                    }
+                    let p_self = crate::const_fn_trampoline::subst_type_ref_pub(&p.ty, &self_subst);
+                    let p_lifted =
+                        Self::ty_from_resolved_vars(&ResolvedType::from_type_ref(&p_self), &vars);
+                    let a_rt = self
+                        .infer_expr_type(a.expr(), scope)
+                        .map(|t| ResolvedType::from_type_ref(&t))
+                        .or_else(|| {
+                            if !a.expr().id.is_set() {
+                                return None;
+                            }
+                            self.resolved_types_buf.borrow().get(&a.expr().id).cloned()
+                        });
+                    if let Some(a_rt) = a_rt {
+                        extra_eqs.push((p_lifted, Ty::from_resolved(&a_rt)));
+                    }
+                }
+            }
+        }
+        let mut solver = Solver::new();
+        solver.unify(&recv_pattern, &concrete_recv).ok()?;
+        for (a, b) in &extra_eqs {
+            // Best-effort per-pair (mirrors `f1_check_call`'s `let _ =
+            // unify_type(..)`, `10477`): one param's structural conflict (an
+            // unrepresentable shape collapsing to a mismatched `Ty::Concrete`
+            // leaf) must not block a DIFFERENT method-generic from binding.
+            let _ = solver.unify(a, b);
+        }
+        let resolved_ret = solver.resolve(&ret_template);
+        solver.as_concrete_leaf(&resolved_ret)
     }
 
     /// Plan 172.1 U.4.4 (Match-arm half): the COMMON result type of a `match`
@@ -13771,16 +13831,60 @@ impl<'a> TypeCheckCtx<'a> {
         // METHOD generics against `subst.keys()`, missing both carrier classes. Carrier names are
         // extracted the SAME way `build_recv_subst` does (bare single-segment, no nested generics).
         // 172.1.2 Шаг 3.2: гейт РАСЩЕПЛЁН. (a) METHOD-level generic (`[U]` — биндинг
-        // из аргументов, arg-inference ещё нет) → bail ОСТАВЛЕН: голый Named{U} в
-        // канале лоуэрился бы через bare-name subst ЧУЖОГО контекста (d119-класс).
-        // (b) RECEIVER-carrier residual (`-> T`, `-> *mut T` при vacuous T→T) →
-        // БОЛЬШЕ НЕ bail: имя ∈ gs объемлющего тела → Call-арм пометит его
-        // mark_type_params → TypeParam(T) → лоуэринг receiver-instance-map/subst
-        // или Err→legacy (Шаг 1/2b инфраструктура).
+        // из аргументов) — Plan 196.4 Stage-1a больше НЕ безусловный bail (см. ветку
+        // ниже): args-driven унификация пробует связать `U` из вызова, прежде чем
+        // сдаться на legacy. (b) RECEIVER-carrier residual (`-> T`, `-> *mut T` при
+        // vacuous T→T) → БОЛЬШЕ НЕ bail: имя ∈ gs объемлющего тела → Call-арм
+        // пометит его mark_type_params → TypeParam(T) → лоуэринг
+        // receiver-instance-map/subst или Err→legacy (Шаг 1/2b инфраструктура).
         let method_names: HashSet<String> =
             f.generics.iter().map(|g| g.name.clone()).collect();
         if !method_names.is_empty() && typeref_mentions_any(&out, &method_names) {
-            return None;
+            // Plan 196.4 Stage-1a: `out` (carrier+`Self` only, `build_recv_subst`)
+            // still carries an unbound METHOD-level generic — bound by the CALL'S
+            // ARGUMENTS, which `build_recv_subst` never sees (the Tier-2 gap
+            // `docs/plans/196.4-call-resolvedtype-channel.md` §1/§8 identifies:
+            // `Result[T,E].map[U](...)`-shaped instance-method returns). Bind it
+            // the SAME way the free-fn generic-return arm does (`f1_check_call`
+            // `10452`-`10492`): structural `unify_type` per non-variadic
+            // (declared param, arg) pair whose declared type mentions a method
+            // generic, seeded with the carrier+`Self` subst already computed
+            // above. Needs the call's arguments — absent (`args_scope: None`,
+            // the 0-arity `resolve_instance_method_return` wrapper) → honest
+            // bail, unchanged legacy behavior.
+            let Some((call_args, call_scope)) = args_scope else { return None };
+            let mut full_subst = subst.clone();
+            for (p, a) in f.params.iter().zip(call_args.iter()) {
+                if p.is_variadic {
+                    break;
+                }
+                if !typeref_mentions_any(&p.ty, &method_names) {
+                    continue;
+                }
+                let p_seeded = crate::const_fn_trampoline::subst_type_ref_pub(&p.ty, &subst);
+                if let Some(a_ty) = self.infer_expr_type(a.expr(), call_scope) {
+                    let _ = crate::const_fn_trampoline::unify_type(
+                        &p_seeded, &a_ty, &method_names, &mut full_subst);
+                }
+            }
+            let out_full = crate::const_fn_trampoline::subst_type_ref_pub(ret, &full_subst);
+            if typeref_mentions_any(&out_full, &method_names) {
+                return None; // still unresolved from the args — honest bail
+            }
+            // Gate: require the constraint-solver channel (`resolve_return_
+            // channel`, Stage-1a-extended with `Constraint::Eq` param↔arg on
+            // fresh vars — anti-d119) to INDEPENDENTLY reproduce this binding
+            // before materializing. This class had NO legacy value before
+            // Stage-1a (this branch previously ALWAYS bailed to `None`) — the
+            // solver's agreement IS the correctness gate (propose-then-verify),
+            // checked in EVERY build (not a debug-only assert): there is
+            // nothing else to trust a release build's materialization against.
+            let channel = self.resolve_return_channel(
+                recv, recv_ty, peeled, ret, &method_names, &f.params, args_scope);
+            return match channel {
+                Some(rt) if rt == ResolvedType::from_type_ref(&out_full) => Some(out_full),
+                _ => None,
+            };
         }
         // Plan 172.1.2 (plan154 / self_nested / flatten fix): bail when the return lowers to a
         // mono-instantiated CONTAINER/slice/tuple (`Array` / `Named`-with-generics / `Tuple`).
@@ -13826,10 +13930,24 @@ impl<'a> TypeCheckCtx<'a> {
         // TypeRef could pick a chain-divergent receiver spelling for an OUTER
         // `a.b().c()` (this fn's result feeds the recursive receiver resolution).
         // Byte-identical BY CONSTRUCTION — `out` is returned unchanged; the solver
-        // is consulted read-only and its agreement asserted. Live-swapping
-        // `build_recv_subst` wholesale is the next wave (recon §III —
-        // TypeRef-native bridge).
-        let channel = self.resolve_return_channel(recv, recv_ty, peeled, ret, &method_names);
+        // is consulted read-only and its agreement asserted.
+        //
+        // Plan 196.4 Stage-1a: this pure-carrier path is DELIBERATELY kept SHADOW
+        // (not flipped to return a solver-reconstructed TypeRef) — `ResolvedType::
+        // from_type_ref` canonicalizes `[]T` to `Named{Vec,[T]}` (D239, `168`-`218`
+        // above), which is NON-invertible: reconstructing a TypeRef from the
+        // channel's `ResolvedType` for a slice-shaped carrier binding would
+        // relabel `[]T` spelling to `Vec[T]`, risking the LITERAL `"[]elem"`-keyed
+        // concrete-slice method lookup a CHAIN receiver resolve can depend on
+        // (`13617`-`13650`, D174.1) — exactly the hazard this comment already
+        // flags. Since `out` and the channel already AGREE here (the assert below
+        // never trips on the corpus), swapping buys no new coverage and only
+        // reintroduces that documented regression class; the flip is applied
+        // instead where it unlocks NEW coverage — the method-generic-residual
+        // branch above, gated on independent solver agreement (not a debug-only
+        // assert), which is Stage-1a's actual Tier-2 deliverable.
+        let channel = self.resolve_return_channel(
+            recv, recv_ty, peeled, ret, &method_names, &f.params, args_scope);
         debug_assert!(
             channel
                 .as_ref()

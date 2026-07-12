@@ -316,7 +316,15 @@ impl Solver {
     }
 
     /// Унифицировать два терма, попутно наполняя подстановку.
-    fn unify(&mut self, a: &Ty, b: &Ty) -> Result<(), Conflict> {
+    ///
+    /// Plan 196.4 Stage-1a: `pub(crate)` (was module-private) — `resolve_
+    /// return_channel` (`types/mod.rs`) now drives the solver with a batch of
+    /// `Eq` pairs it does NOT know in advance (method-generic param↔arg,
+    /// arity-variable per call site) and needs the live `Solver` (not just the
+    /// single-shot `solve()`/`resolve_return()` entry points) so a per-pair
+    /// conflict can be swallowed (best-effort, mirrors `f1_check_call`'s `let _
+    /// = unify_type(..)`) without aborting the WHOLE batch.
+    pub(crate) fn unify(&mut self, a: &Ty, b: &Ty) -> Result<(), Conflict> {
         let a = self.resolve(a);
         let b = self.resolve(b);
         match (&a, &b) {
@@ -383,7 +391,8 @@ impl Solver {
     /// защитой от циклов — occurs-check в `unify` не даёт им возникнуть,
     /// но при обрыве цепочки на неполном решении лучше остановиться, чем
     /// зациклиться).
-    fn resolve(&self, ty: &Ty) -> Ty {
+    /// Plan 196.4 Stage-1a: `pub(crate)` — see `unify`'s doc comment.
+    pub(crate) fn resolve(&self, ty: &Ty) -> Ty {
         self.resolve_depth(ty, 0)
     }
 
@@ -414,7 +423,9 @@ impl Solver {
 
     /// Если полностью решённый терм не содержит переменных, свернуть его
     /// обратно в один `ResolvedType` лист (для `TypeSet` членства).
-    fn as_concrete_leaf(&self, ty: &Ty) -> Option<ResolvedType> {
+    ///
+    /// Plan 196.4 Stage-1a: `pub(crate)` — see `unify`'s doc comment.
+    pub(crate) fn as_concrete_leaf(&self, ty: &Ty) -> Option<ResolvedType> {
         match ty {
             Ty::Concrete(rt) => Some(rt.clone()),
             Ty::Var(_) => None,
