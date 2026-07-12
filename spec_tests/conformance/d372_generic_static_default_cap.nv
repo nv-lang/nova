@@ -27,6 +27,17 @@
 // Spec: spec/decisions/02-types.md §D372 (canonical `.new()` convention).
 module spec_tests.conformance
 
+// `Queue[T]` — в отличие от Vec/StringBuilder/WriteBuffer (re-exported из
+// std/prelude.nv) и HashMap/Set (транзитивно достижимы через prelude-цепочку
+// зависимостей других коллекций), `Queue` НЕ prelude-auto-available —
+// explicit import обязателен. Без него `Queue[int]` в TurboFish static-call
+// позиции не резолвится ни в module.items, ни в module.peer_files → codegen
+// падает ICE `[P67-LEGACY] Ident 'Queue' not in var_types`
+// (compiler-conventions.md §0, emit_c.rs:49576). Не баг default-backfill
+// инфраструктуры (self_type resolution из callnorm.rs работает корректно —
+// verified) — чисто reachability/import gap.
+import std.collections.queue.{Queue}
+
 test "HashMap[K, V].new() / .new(cap: n) / positional .new(n) (D372 amend 2)" {
     mut m1 = HashMap[str, int].new()
     assert(m1.is_empty())
