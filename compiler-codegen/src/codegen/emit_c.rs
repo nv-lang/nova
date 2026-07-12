@@ -7989,6 +7989,45 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
+    /// [M-channel-generic-elem-type] (a, honest-CC-FAIL fallback): can a
+    /// value of C type `ty` be losslessly round-tripped through the
+    /// channel runtime's single-word `nova_int` storage slot (`send_val`/
+    /// `recv_val`, `nova_rt/channels.h`)? `Channel[T]` is NOT actually
+    /// generic at the runtime OR checker layer today — every element is
+    /// stored as a bare `nova_int`, and `Channel.new(n)`'s documented
+    /// "T inferred from first send/recv" (docs/channels.md) does not hold:
+    /// `T` is never tracked past the point of the call, `rx.recv()` is
+    /// always typed `Option[int]` (see `infer_call_ret_c`'s
+    /// `"recv" | "try_recv" => "NovaOpt_nova_int"`, wave-1 region — not
+    /// touched by this fix). `.send(v)`/`.try_send(v)` used to cast `v` to
+    /// `nova_int` UNCONDITIONALLY (`(nova_int)(v)`) regardless of `v`'s
+    /// real type: a 2-word struct like `nova_str` happens to CC-FAIL (C
+    /// forbids struct→int casts — loud, if cryptic), but a pointer-sized
+    /// non-int `T` (`[]u8`, any heap record, `HashMap`, …) "compiles" via
+    /// C's implicit pointer→integer conversion and silently round-trips
+    /// through the same nova_int slot with the WRONG static type (sound in
+    /// practice — the address round-trips exactly, `nova_int` being
+    /// address-sized — but never actually type-checked, silently
+    /// undocumented, and NOT what a user asking for `Channel[[]u8]`
+    /// reasonably expects). `nova_bool`/`nova_char`/`int8_t..int64_t` are
+    /// likewise safe (value-preserving widen-then-narrow through a wider
+    /// `nova_int`). `nova_f32`/`nova_f64` are the one silently-WRONG
+    /// scalar case — a plain `(nova_int)(v)` cast TRUNCATES the float's
+    /// VALUE (real conversion, not the bit-pun `cast_from_nova_int`
+    /// already uses when materializing `nova_int` BACK to `nova_f64` — no
+    /// runtime `nova_bits_f2i` counterpart exists to make this
+    /// symmetric), so they are excluded here too. Structs proper
+    /// (`nova_str`, tuples, value-records — `is_struct_c_type` true and
+    /// not erased to a pointer) can never fit a single word — genuinely
+    /// out of scope for this channel implementation (would need the
+    /// runtime to box non-word payloads, `docs/channels.md`
+    /// [M-channel-generic-elem-type]).
+    fn channel_payload_c_type_ok(ty: &str) -> bool {
+        ty == "nova_int"
+            || ty.ends_with('*')
+            || (!Self::is_struct_c_type(ty) && ty != "nova_f32" && ty != "nova_f64")
+    }
+
     /// Plan 138.1 Ф.3 (D239): is this C type a raw `*mut T` storage pointer —
     /// i.e. a typed pointer that supports direct `ptr[i]` indexing (no `->data`
     /// indirection)? True for `Nova_Point**`, `nova_int*`, `nova_f64*`, `void*`,
@@ -32204,6 +32243,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         match method.as_str() {
                             "send" => {
                                 if let Some(arg) = args.first() {
+                                    // [M-channel-generic-elem-type] (a): honest
+                                    // compile-time gate BEFORE the (nova_int) cast
+                                    // — see `channel_payload_c_type_ok` doc comment.
+                                    let arg_c_ty = self.infer_expr_c_type(arg.expr());
+                                    if !arg_c_ty.is_empty() && !Self::channel_payload_c_type_ok(&arg_c_ty) {
+                                        return Err(format!(
+                                            "[E_CHANNEL_UNSOUND_ELEM_TYPE] `Channel[T].send(v)`: `T` is not \
+                                             word-safe for the current channel implementation (payload C type \
+                                             `{}`) — the runtime stores every element in a single `nova_int`-\
+                                             sized slot (`nova_rt/channels.h`), and Channel[T]'s element type \
+                                             is NOT actually tracked past `Channel.new` (docs/channels.md's \
+                                             \"T inferred from first send/recv\" does not hold end-to-end today \
+                                             — see [M-channel-generic-elem-type]). Supported today: `int`, \
+                                             `bool`, `char`, fixed-width int types, and any pointer-sized type \
+                                             (`[]T`, records, `HashMap`, sums, …). NOT supported: `str`, \
+                                             `f32`/`f64`, tuples, value-records, or any other multi-word type.",
+                                            arg_c_ty));
+                                    }
                                     let v = self.emit_expr(arg.expr())?;
                                     return Ok(format!(
                                         "nova_chan_writer_send({}, (nova_int)({}))",
@@ -32212,6 +32269,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                             "try_send" => {
                                 if let Some(arg) = args.first() {
+                                    // [M-channel-generic-elem-type] (a): same gate as `send` above.
+                                    let arg_c_ty = self.infer_expr_c_type(arg.expr());
+                                    if !arg_c_ty.is_empty() && !Self::channel_payload_c_type_ok(&arg_c_ty) {
+                                        return Err(format!(
+                                            "[E_CHANNEL_UNSOUND_ELEM_TYPE] `Channel[T].try_send(v)`: `T` is not \
+                                             word-safe for the current channel implementation (payload C type \
+                                             `{}`) — the runtime stores every element in a single `nova_int`-\
+                                             sized slot (`nova_rt/channels.h`), and Channel[T]'s element type \
+                                             is NOT actually tracked past `Channel.new` (docs/channels.md's \
+                                             \"T inferred from first send/recv\" does not hold end-to-end today \
+                                             — see [M-channel-generic-elem-type]). Supported today: `int`, \
+                                             `bool`, `char`, fixed-width int types, and any pointer-sized type \
+                                             (`[]T`, records, `HashMap`, sums, …). NOT supported: `str`, \
+                                             `f32`/`f64`, tuples, value-records, or any other multi-word type.",
+                                            arg_c_ty));
+                                    }
                                     let v = self.emit_expr(arg.expr())?;
                                     // NovaChanTryResult → bool: OK=true, EMPTY/CLOSED=false
                                     return Ok(format!(
@@ -32444,6 +32517,38 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Plan 12 Ф.5: hard-coded dispatch для StringBuilder/
                     // WriteBuffer/ReadBuffer удалён. Все вызовы идут через
                     // registry-driven путь выше (Plan 12 Ф.3).
+                }
+                // [M-channel-generic-elem-type] (b): `Channel[T].new(cap)` —
+                // the documented turbofish escape hatch (docs/channels.md
+                // §Channel.new) parses `obj` as `TurboFish{base: Ident
+                // ("Channel"), type_args: [T]}`, NOT the bare `Ident
+                // ("Channel")` the check below matches. `Channel` is a
+                // compiler intrinsic (`lib.rs::is_intrinsic_namespace`) with
+                // no `.nv` type decl — never registered in `generic_types`/
+                // `generic_type_templates`/`record_schemas`/`sum_schemas` —
+                // so the Plan-48-Ф.8 generic-static-turbofish dispatch a few
+                // lines below (`self.generic_types.contains(type_name)`)
+                // silently skips it, and the call fell through the entire
+                // `emit_call` legacy chain into `infer_expr_c_type`'s bare-
+                // Ident fallback trying to type the literal `Channel`
+                // identifier itself → `[P67-LEGACY] Ident \`Channel\` not in
+                // var_types` ICE (isolated repro, `Channel[str].new(n)`,
+                // confirmed pre-existing/independent of the `ro {tx,rx}`
+                // destructure pattern — same class as the Queue reachability
+                // ICE, `efb4bd46e`, but Channel has no import to add since
+                // it is not `.nv`-declared at all). `T` is erased at the
+                // runtime layer regardless (`Nova_ChannelPair` is a fixed,
+                // non-generic C struct — see `nova_channel_new`,
+                // `nova_rt/channels.h`), so the turbofish's `T` carries no
+                // codegen payload beyond parsing; emit identically to the
+                // bare/Path forms below.
+                if let ExprKind::TurboFish { base, .. } = &obj.kind {
+                    if matches!(&base.kind, ExprKind::Ident(n) if n == "Channel") && method == "new" {
+                        if let Some(arg) = args.first() {
+                            let v = self.emit_expr(arg.expr())?;
+                            return Ok(format!("nova_channel_new({})", v));
+                        }
+                    }
                 }
                 // D91 (Plan 21): Channel.new — returns Nova_ChannelPair.
                 // Tuple-destructuring handled in emit_let/emit_assign.
@@ -40164,8 +40269,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ExprKind::Call { func, .. } => {
                 let f = func.unwrap_turbofish();
                 match &f.kind {
+                    // [M-channel-generic-elem-type] (b): turbofish escape
+                    // hatch `Channel[T].new(cap)` — `obj` is `TurboFish
+                    // {base: Ident("Channel"), ..}`, not a bare `Ident`; the
+                    // plain-`Ident` arm below never matches it. Mirror the
+                    // emit_call fix (~32448).
                     ExprKind::Member { obj, name } => {
-                        name == "new" && matches!(&obj.kind, ExprKind::Ident(n) if n == "Channel")
+                        name == "new" && (
+                            matches!(&obj.kind, ExprKind::Ident(n) if n == "Channel")
+                            || matches!(&obj.kind, ExprKind::TurboFish { base, .. }
+                                if matches!(&base.kind, ExprKind::Ident(n) if n == "Channel"))
+                        )
                     }
                     ExprKind::Path(parts) => {
                         parts.len() == 2 && parts[0] == "Channel" && parts[1] == "new"
@@ -49428,6 +49542,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
             };
         }
+        // [M-channel-generic-elem-type] (b): `Channel[T].new(cap)` turbofish
+        // return-type inference. Placed BEFORE `infer_call_ret_c` (46586..,
+        // wave-1 region — not touched by this fix) deliberately: that
+        // legacy dispatcher has no case for a `Member{obj: TurboFish{base:
+        // Ident("Channel"), ..}}` call shape (`Channel` carries no `.nv`
+        // type decl — is_intrinsic_namespace, lib.rs — so it is absent from
+        // every registry the dispatcher's generic-static-ctor arms check),
+        // and falls through into THIS SAME function's bare-`Ident` fallback
+        // trying to type the literal `Channel` identifier → `[P67-LEGACY]
+        // Ident \`Channel\` not in var_types` ICE (isolated repro,
+        // independent of the `ro {tx,rx}` destructure pattern; mirrors the
+        // Queue reachability ICE class, `efb4bd46e`, but Channel has no
+        // import to add — it's not `.nv`-declared at all). `T` is erased at
+        // the runtime layer regardless (`Nova_ChannelPair` — a fixed,
+        // non-generic C struct, `nova_rt/channels.h`), so returning the
+        // same type as the bare/Path forms (`B12b_path_channel_new`,
+        // wave-1, unreachable-for-this-shape) is correct without needing
+        // `T` at all. Intercepting here — never reaching the legacy
+        // dispatcher for this one shape — keeps the wave-1 region untouched.
+        if let ExprKind::Call { func, .. } = &expr.kind {
+            if let ExprKind::Member { obj, name: method } = &func.kind {
+                if method == "new" {
+                    if let ExprKind::TurboFish { base, .. } = &obj.kind {
+                        if matches!(&base.kind, ExprKind::Ident(n) if n == "Channel") {
+                            return "Nova_ChannelPair".into();
+                        }
+                    }
+                }
+            }
+        }
         // Channel 6q (2026-07-04): Call — ДОСЛОВНЫЙ подъём КРУПНЕЙШЕГО
         // legacy-арма (~2200 строк: method-returns, turbofish, интринсики,
         // fn_ret_* реестры). Механический перенос; дети через dispatcher.
@@ -49490,6 +49634,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         || self.sum_schemas.contains_key(name.as_str())
                     {
                         return format!("Nova_{}*", name);
+                    }
+                    // [M-channel-generic-elem-type] (b): `Channel` as a bare
+                    // TurboFish base (`Channel[T]` in `Channel[T].new(cap)`).
+                    // `Channel` is a compiler intrinsic — `lib.rs::
+                    // is_intrinsic_namespace` — with NO `.nv` type decl, so
+                    // it is (correctly) absent from all four registries
+                    // checked just above; the generic TurboFish-delegation
+                    // arm (`ExprKind::TurboFish{base,..} =>
+                    // self.infer_expr_c_type(base)`) recurses into THIS arm
+                    // for the bare `Ident("Channel")` regardless of which
+                    // caller reached it — not only the `Channel[T].new(cap)`
+                    // call-expr itself, but also structurally-unrelated
+                    // walks that call `infer_expr_c_type` on a `Member.obj`
+                    // sub-expression in isolation (e.g. `expr_diverges_125`'s
+                    // never-returning-method scan, which runs a divergence
+                    // pre-pass over EVERY `let`-bound call — including this
+                    // one — before codegen ever reaches `emit_call`'s
+                    // dedicated Channel.new turbofish handling). Both were
+                    // hitting the `[P67-LEGACY] Ident 'Channel' not in
+                    // var_types` ICE here. `T` is erased at the runtime
+                    // layer regardless (`Nova_ChannelPair` is a fixed,
+                    // non-generic C struct — `nova_rt/channels.h`), so the
+                    // real (non-placeholder) return type is correct and
+                    // safe to give unconditionally.
+                    if name == "Channel" {
+                        return "Nova_ChannelPair".into();
                     }
                     // U.1.3b Gap A (infer-половина, 2026-07-02): explicit `self` —
                     // ресивер (parser даёт Ident("self"), не SelfAccess); тип = C-тип
@@ -50450,6 +50620,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         || self.sum_schemas.contains_key(name.as_str())
                     {
                         return format!("Nova_{}*", name);
+                    }
+                    // [M-channel-generic-elem-type] (b): `Channel` as a bare
+                    // TurboFish base (`Channel[T]` in `Channel[T].new(cap)`).
+                    // `Channel` is a compiler intrinsic — `lib.rs::
+                    // is_intrinsic_namespace` — with NO `.nv` type decl, so
+                    // it is (correctly) absent from all four registries
+                    // checked just above; the generic TurboFish-delegation
+                    // arm (`ExprKind::TurboFish{base,..} =>
+                    // self.infer_expr_c_type(base)`) recurses into THIS arm
+                    // for the bare `Ident("Channel")` regardless of which
+                    // caller reached it — not only the `Channel[T].new(cap)`
+                    // call-expr itself, but also structurally-unrelated
+                    // walks that call `infer_expr_c_type` on a `Member.obj`
+                    // sub-expression in isolation (e.g. `expr_diverges_125`'s
+                    // never-returning-method scan, which runs a divergence
+                    // pre-pass over EVERY `let`-bound call — including this
+                    // one — before codegen ever reaches `emit_call`'s
+                    // dedicated Channel.new turbofish handling). Both were
+                    // hitting the `[P67-LEGACY] Ident 'Channel' not in
+                    // var_types` ICE here. `T` is erased at the runtime
+                    // layer regardless (`Nova_ChannelPair` is a fixed,
+                    // non-generic C struct — `nova_rt/channels.h`), so the
+                    // real (non-placeholder) return type is correct and
+                    // safe to give unconditionally.
+                    if name == "Channel" {
+                        return "Nova_ChannelPair".into();
                     }
                     // U.1.3b Gap A (infer-половина, 2026-07-02): explicit `self` —
                     // ресивер (parser даёт Ident("self"), не SelfAccess); тип = C-тип
