@@ -47,6 +47,7 @@
 
 #ifdef NOVA_USE_MBEDTLS
 
+#include "mbedtls/version.h"
 #include "mbedtls/ssl.h"
 #include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
@@ -120,6 +121,61 @@ typedef struct NovaTlsSession {
     int last_err_kind;
     char last_err[256];
 } NovaTlsSession;
+
+/* ── mbedTLS 2.x/3.x compatibility shim (cigreen-fix, CI std-green batch) ───
+ * The vcpkg/CI mbedTLS build has varied between 2.x and 3.x across hosts —
+ * this file previously called several 3.x-only symbols unconditionally
+ * (`#ifdef NOVA_USE_MBEDTLS` guards presence-of-mbedTLS, NOT its major
+ * version), which compiles fine on a 3.x host but fails with "undeclared
+ * identifier" / "too many arguments" on Ubuntu's `libmbedtls-dev` (2.28.x,
+ * the CI package as of noble/24.04). `MBEDTLS_VERSION_NUMBER` (from
+ * mbedtls/version.h, always present) is the correct discriminator — most of
+ * the symbols below are C `enum` members or `static inline` functions added
+ * in 3.0, so `#if defined(SYMBOL)` does NOT reliably detect them (the
+ * preprocessor only sees `#define` macros, not enum constants or inline
+ * function declarations); a version-number gate is required. mirrors
+ * mbedTLS's own 2.x→3.x migration guide. */
+#define NOVA_MBEDTLS_3PLUS (MBEDTLS_VERSION_NUMBER >= 0x03000000)
+
+/* `mbedtls_ssl_is_handshake_over()` — 3.x-only `static inline` helper
+ * (`ssl->state >= MBEDTLS_SSL_HANDSHAKE_OVER`, using the `MBEDTLS_PRIVATE`
+ * field-accessor macro internally). mbedTLS 2.x has no such helper, but its
+ * `mbedtls_ssl_context.state` field is a PLAIN public member (structs were
+ * not yet opacified pre-3.0) — same comparison, no accessor needed. */
+static int nova_tls_handshake_over(mbedtls_ssl_context *ssl) {
+#if NOVA_MBEDTLS_3PLUS
+    return mbedtls_ssl_is_handshake_over(ssl);
+#else
+    return ssl->state >= MBEDTLS_SSL_HANDSHAKE_OVER;
+#endif
+}
+
+/* `mbedtls_pk_parse_key()` gained two trailing RNG params (`f_rng`, `p_rng`)
+ * in 3.0 (PSA-based parsing needs them for blinding); 2.x's 5-arg form has
+ * no such params. Both call sites below always pass the SAME rng pair, so a
+ * variadic-shaped macro keeps call sites uniform across both APIs. */
+#if NOVA_MBEDTLS_3PLUS
+#define NOVA_PK_PARSE_KEY(ctx, key, keylen, pwd, pwdlen, f_rng, p_rng) \
+    mbedtls_pk_parse_key((ctx), (key), (keylen), (pwd), (pwdlen), (f_rng), (p_rng))
+#else
+#define NOVA_PK_PARSE_KEY(ctx, key, keylen, pwd, pwdlen, f_rng, p_rng) \
+    mbedtls_pk_parse_key((ctx), (key), (keylen), (pwd), (pwdlen))
+#endif
+
+/* One-shot SHA-256 helper: `mbedtls_sha256()` is DEPRECATED-but-present in
+ * 2.x (only declared when the DISTRO build has NOT set
+ * MBEDTLS_DEPRECATED_REMOVED — usually true, but not guaranteed) and is the
+ * normal, non-deprecated name in 3.x (where the old `_ret`-suffixed 2.x
+ * rename was dropped entirely). `mbedtls_sha256_ret()` is the guaranteed-
+ * present, never-deprecated 2.x spelling — use it there instead of relying
+ * on deprecated-API availability. */
+#if NOVA_MBEDTLS_3PLUS
+#define NOVA_SHA256(input, ilen, output, is224) \
+    mbedtls_sha256((input), (ilen), (output), (is224))
+#else
+#define NOVA_SHA256(input, ilen, output, is224) \
+    mbedtls_sha256_ret((input), (ilen), (output), (is224))
+#endif
 
 /* ── Small helpers ────────────────────────────────────────────────────────── */
 
@@ -294,8 +350,19 @@ static int nova_tls_classify(int rc, mbedtls_ssl_context *ssl) {
         if (flags & (MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE)) { return TLS_ERR_CERT_EXPIRED; }
         return TLS_ERR_CERT_INVALID;
     }
+#if NOVA_MBEDTLS_3PLUS
     if (rc == MBEDTLS_ERR_SSL_NO_APPLICATION_PROTOCOL) { return TLS_ERR_ALPN; }
     if (rc == MBEDTLS_ERR_SSL_BAD_PROTOCOL_VERSION) { return TLS_ERR_UNSUPPORTED_VERSION; }
+#else
+    /* mbedTLS 2.x has no distinct ALPN-mismatch error code (added in 3.0 as
+     * MBEDTLS_ERR_SSL_NO_APPLICATION_PROTOCOL) — an ALPN mismatch falls
+     * through to the generic TLS_ERR_HANDSHAKE below, same as any other
+     * unclassified handshake failure. The protocol-version-mismatch code
+     * kept its pre-3.0 name (MBEDTLS_ERR_SSL_BAD_HS_PROTOCOL_VERSION),
+     * same numeric value (-0x6E80) as 3.x's renamed
+     * MBEDTLS_ERR_SSL_BAD_PROTOCOL_VERSION. */
+    if (rc == MBEDTLS_ERR_SSL_BAD_HS_PROTOCOL_VERSION) { return TLS_ERR_UNSUPPORTED_VERSION; }
+#endif
     if (rc == MBEDTLS_ERR_SSL_CONN_EOF) { return TLS_ERR_PEER_MISBEHAVED; }
     return TLS_ERR_HANDSHAKE;
 }
@@ -328,7 +395,7 @@ static int nova_tls_verify_pinned_cb(void *ctx, mbedtls_x509_crt *crt, int depth
     unsigned char *spki = nova_spki_der(crt->raw.p, crt->raw.len, &spki_len);
     if (!spki) { return 1; /* can't parse -> fail closed */ }
     unsigned char digest[32];
-    mbedtls_sha256(spki, spki_len, digest, 0);
+    NOVA_SHA256(spki, spki_len, digest, 0);
     free(spki);
     for (size_t i = 0; i < s->pin_count; i++) {
         if (memcmp(digest, s->pins[i], 32) == 0) { return 0; }
@@ -345,7 +412,7 @@ static int nova_tls_verify_pinned_cb(void *ctx, mbedtls_x509_crt *crt, int depth
  * again) or fails outright. WANT_WRITE should never happen (our send
  * callback never blocks) but is looped past defensively. */
 static nova_int nova_tls_step(NovaTlsSession *s) {
-    if (mbedtls_ssl_is_handshake_over(&s->ssl)) { return TLS_ERR_OK; }
+    if (nova_tls_handshake_over(&s->ssl)) { return TLS_ERR_OK; }
     for (;;) {
         int rc = mbedtls_ssl_handshake(&s->ssl);
         if (rc == 0) { return TLS_ERR_OK; }
@@ -380,10 +447,21 @@ static int nova_tls_setup_common(NovaTlsSession *s, int endpoint) {
     if (rc != 0) { return rc; }
     mbedtls_ssl_conf_rng(&s->conf, mbedtls_ctr_drbg_random, &s->ctr_drbg);
     /* D-блок B (plan 116, unchanged): TLS 1.2 accepted, 1.0/1.1 rejected by
-     * design. TLS 1.3 is negotiated when both peers support it (mbedTLS
-     * 3.6's default build here has MBEDTLS_SSL_PROTO_TLS1_3 on) — no max
-     * pinned, so 1.3 is preferred automatically when available. */
+     * design. TLS 1.3 is negotiated when both peers support it AND the
+     * linked mbedTLS build has it compiled in (3.x with
+     * MBEDTLS_SSL_PROTO_TLS1_3) — no max pinned, so 1.3 is preferred
+     * automatically when available. mbedTLS 2.x added TLS 1.3 support
+     * NEVER (it shipped only in 3.0) — the 2.x branch below simply never
+     * negotiates above 1.2, which is exactly the same effective policy,
+     * just expressed through the pre-3.0 two-int min/max-version API
+     * (`mbedtls_ssl_conf_min_tls_version` — single protocol-version-enum
+     * arg — is itself a 3.0 addition; cigreen-fix: version-guard via
+     * MBEDTLS_VERSION_NUMBER, see the compat shim above). */
+#if NOVA_MBEDTLS_3PLUS
     mbedtls_ssl_conf_min_tls_version(&s->conf, MBEDTLS_SSL_VERSION_TLS1_2);
+#else
+    mbedtls_ssl_conf_min_version(&s->conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_3);
+#endif
     return 0;
 }
 
@@ -624,8 +702,8 @@ intptr_t tls_client_new(intptr_t c, const uint8_t *sni, intptr_t sni_len, intptr
         if (rc == 0 && b->cert_pem && b->cert_len > 1) {
             rc = mbedtls_x509_crt_parse(&s->own_cert, b->cert_pem, b->cert_len);
             if (rc == 0) {
-                rc = mbedtls_pk_parse_key(&s->own_key, b->key_pem, b->key_len, NULL, 0,
-                                          mbedtls_ctr_drbg_random, &s->ctr_drbg);
+                rc = NOVA_PK_PARSE_KEY(&s->own_key, b->key_pem, b->key_len, NULL, 0,
+                                       mbedtls_ctr_drbg_random, &s->ctr_drbg);
             }
             if (rc != 0) {
                 err_code = TLS_ERR_INVALID_PEM;
@@ -691,8 +769,8 @@ intptr_t tls_server_new(intptr_t c, intptr_t *out_err) {
     if (rc == 0) {
         rc = mbedtls_x509_crt_parse(&s->own_cert, b->cert_pem, b->cert_len);
         if (rc == 0) {
-            rc = mbedtls_pk_parse_key(&s->own_key, b->key_pem, b->key_len, NULL, 0,
-                                      mbedtls_ctr_drbg_random, &s->ctr_drbg);
+            rc = NOVA_PK_PARSE_KEY(&s->own_key, b->key_pem, b->key_len, NULL, 0,
+                                   mbedtls_ctr_drbg_random, &s->ctr_drbg);
         }
         if (rc != 0) {
             err_code = TLS_ERR_INVALID_PEM;
@@ -750,14 +828,14 @@ intptr_t tls_server_new(intptr_t c, intptr_t *out_err) {
 nova_int tls_is_handshaking(intptr_t h) {
     NovaTlsSession *s = (NovaTlsSession *)(intptr_t)h;
     if (!s) { return 0; }
-    return mbedtls_ssl_is_handshake_over(&s->ssl) ? 0 : 1;
+    return nova_tls_handshake_over(&s->ssl) ? 0 : 1;
 }
 
 nova_int tls_wants_read(intptr_t h) {
     NovaTlsSession *s = (NovaTlsSession *)(intptr_t)h;
     if (!s) { return 0; }
     if (s->out_len > 0) { return 0; }
-    return mbedtls_ssl_is_handshake_over(&s->ssl) ? 0 : 1;
+    return nova_tls_handshake_over(&s->ssl) ? 0 : 1;
 }
 
 nova_int tls_wants_write(intptr_t h) {
@@ -796,7 +874,7 @@ nova_int tls_read_tls(intptr_t h, const uint8_t *p, nova_int len) {
 nova_int tls_process(intptr_t h) {
     NovaTlsSession *s = (NovaTlsSession *)(intptr_t)h;
     if (!s) { return TLS_ERR_BADARG; }
-    if (!mbedtls_ssl_is_handshake_over(&s->ssl)) { return nova_tls_step(s); }
+    if (!nova_tls_handshake_over(&s->ssl)) { return nova_tls_step(s); }
     return TLS_ERR_OK; /* app-data decrypt happens lazily inside tls_read_plain */
 }
 
@@ -878,9 +956,18 @@ nova_int tls_alpn(intptr_t h, uint8_t *out, nova_int cap) {
 nova_int tls_version(intptr_t h) {
     NovaTlsSession *s = (NovaTlsSession *)(intptr_t)h;
     if (!s) { return TLS_ERR_BADARG; }
-    if (!mbedtls_ssl_is_handshake_over(&s->ssl)) { return 0; }
+    if (!nova_tls_handshake_over(&s->ssl)) { return 0; }
     /* MBEDTLS_SSL_VERSION_TLS1_2/1_3 enum values ARE the wire codes 0x0303/0x0304. */
+#if NOVA_MBEDTLS_3PLUS
     return (nova_int)mbedtls_ssl_get_version_number(&s->ssl);
+#else
+    /* mbedTLS 2.x has no unified version-number getter (`_get_version_number`
+     * added in 3.0) and no TLS 1.3 support at all — `(major_ver, minor_ver)`
+     * (both plain public fields pre-3.0) IS the wire-format version pair
+     * (3, 3) for TLS 1.2, reproducing the exact same 0x0303 code the 3.x
+     * getter returns. */
+    return (nova_int)((s->ssl.major_ver << 8) | s->ssl.minor_ver);
+#endif
 }
 
 nova_int tls_cipher_suite(intptr_t h, uint8_t *out, nova_int cap) {

@@ -844,39 +844,95 @@ fn effect_count_define_arg(c_file: &Path, prefix: &str) -> Option<String> {
 /// Unlike libuv (mandatory, built-on-demand from a submodule), brotli is vendored
 /// as headers + a prebuilt lib and linked CONDITIONALLY on use. All paths are
 /// rt_dir-relative (like os_env.h / io_console.h), so no repo_root is threaded in.
+///
+/// [cigreen-fix, CI std-green batch]: `lib_files` (plural) — the vendored
+/// Windows `.lib` is a single FAT archive (`nova_rt/brotli/lib/version.txt`:
+/// "decoder only: common/ + dec/" compiled together into one file), but the
+/// Ubuntu/Debian `libbrotli-dev` SYSTEM package (the CI fallback added below,
+/// since no `.a` was ever vendored for non-Windows — see the old doc comment
+/// this replaces) ships `libbrotlidec.a` and `libbrotlicommon.a` as TWO
+/// separate archives that must both be linked (dec calls into common). One
+/// field, one or two entries, in link order — every call site just iterates.
 pub struct BrotliConfig {
-    pub include_dir: PathBuf, // nova_rt/brotli/include (has brotli/decode.h)
-    pub lib_file: PathBuf,    // libbrotlidec.lib (Windows) / libbrotlidec.a (Unix)
+    pub include_dir: PathBuf,   // has brotli/decode.h
+    pub lib_files: Vec<PathBuf>, // one (vendored fat lib) or two (system dec+common), in link order
 }
 
-/// Resolve the vendored brotli decoder. Prefers the target/brotli-cache build
-/// artifact (rt_dir/../../target — the owner's cache location), else the tracked
-/// vendor copy under nova_rt/brotli/lib. Returns None when no lib is present for
-/// this host (→ Q11 runtime feature-gate: UnsupportedMethod, never a link error).
+/// Resolve the brotli decoder for this host. Order:
+///   1) target/brotli-cache build artifact (rt_dir/../../target — owner's cache).
+///   2) tracked vendor copy under nova_rt/brotli/lib (Windows fat `.lib` today).
+///   3) [cigreen-fix] non-Windows SYSTEM package (`apt install libbrotli-dev` on
+///      CI, mirrors detect_mbedtls's system-package fallback): CI's Linux build
+///      previously had NO brotli source at all (no vendored `.a`, no cache) →
+///      detect_brotli always returned None → the shim silently compiled its
+///      Q11 feature-gate stub path → every brotli_test.nv assertion that
+///      expects a REAL decode got `Err(UnsupportedMethod)` instead — the
+///      actual root cause of the "brotli RFC 7932 vector decode" CI RUN-FAILs
+///      (NOT a decoder logic bug — this reproduced on every single case
+///      including the trivial empty-stream one, which only makes sense if
+///      brotli was never really linked at all).
+/// Returns None when nothing is found for this host (→ Q11 runtime
+/// feature-gate: UnsupportedMethod, never a link error).
 fn detect_brotli(rt_dir: &Path) -> Option<BrotliConfig> {
     let include_dir = rt_dir.join("brotli").join("include");
-    if !include_dir.join("brotli").join("decode.h").is_file() {
-        return None;
-    }
-    let lib_name = if cfg!(target_os = "windows") {
-        "libbrotlidec.lib"
-    } else {
-        "libbrotlidec.a"
-    };
-    // 1) build-cache: <repo>/target/brotli-cache (rt_dir = <repo>/compiler-codegen/nova_rt)
-    let cache_lib = rt_dir
-        .parent()
-        .and_then(|p| p.parent())
-        .map(|repo| repo.join("target").join("brotli-cache").join(lib_name));
-    if let Some(cl) = &cache_lib {
-        if cl.is_file() {
-            return Some(BrotliConfig { include_dir, lib_file: cl.clone() });
+    if include_dir.join("brotli").join("decode.h").is_file() {
+        let lib_name = if cfg!(target_os = "windows") {
+            "libbrotlidec.lib"
+        } else {
+            "libbrotlidec.a"
+        };
+        // 1) build-cache: <repo>/target/brotli-cache (rt_dir = <repo>/compiler-codegen/nova_rt)
+        let cache_lib = rt_dir
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|repo| repo.join("target").join("brotli-cache").join(lib_name));
+        if let Some(cl) = &cache_lib {
+            if cl.is_file() {
+                return Some(BrotliConfig { include_dir, lib_files: vec![cl.clone()] });
+            }
+        }
+        // 2) tracked vendor copy: nova_rt/brotli/lib/<lib>
+        let vendor_lib = rt_dir.join("brotli").join("lib").join(lib_name);
+        if vendor_lib.is_file() {
+            return Some(BrotliConfig { include_dir, lib_files: vec![vendor_lib] });
         }
     }
-    // 2) tracked vendor copy: nova_rt/brotli/lib/<lib>
-    let vendor_lib = rt_dir.join("brotli").join("lib").join(lib_name);
-    if vendor_lib.is_file() {
-        return Some(BrotliConfig { include_dir, lib_file: vendor_lib });
+    // 3) [cigreen-fix] non-Windows system package: Ubuntu/Debian's
+    // `libbrotli-dev` installs headers at /usr/include/brotli/ and static
+    // archives under the multiarch lib dir — `libbrotlidec.a` (decoder,
+    // must come FIRST — single-pass Unix linkers resolve left-to-right) then
+    // `libbrotlicommon.a` (its dependency).
+    #[cfg(not(target_os = "windows"))]
+    {
+        let sys_headers = [
+            Path::new("/usr/include/brotli/decode.h"),
+            Path::new("/usr/local/include/brotli/decode.h"),
+        ];
+        for hp in sys_headers {
+            if !hp.is_file() {
+                continue;
+            }
+            let sys_include = match hp.parent().and_then(|p| p.parent()) {
+                Some(p) => p.to_path_buf(),
+                None => continue,
+            };
+            let lib_dirs = [
+                "/usr/lib/x86_64-linux-gnu",
+                "/usr/lib/aarch64-linux-gnu",
+                "/usr/lib",
+                "/usr/local/lib",
+            ];
+            for ld in lib_dirs {
+                let dec = Path::new(ld).join("libbrotlidec.a");
+                let common = Path::new(ld).join("libbrotlicommon.a");
+                if dec.is_file() && common.is_file() {
+                    return Some(BrotliConfig {
+                        include_dir: sys_include,
+                        lib_files: vec![dec, common],
+                    });
+                }
+            }
+        }
     }
     None
 }
@@ -1065,17 +1121,22 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     // runtime (Q11 feature-gate); we simply do not add brotli to the link line.
     let brotli_cfg = if uses_brotli { detect_brotli(opts.rt_dir) } else { None };
     let brotli_include = brotli_cfg.as_ref().map(|c| c.include_dir.clone());
-    let brotli_lib = brotli_cfg.as_ref().map(|c| c.lib_file.clone());
+    let brotli_libs: Vec<PathBuf> = brotli_cfg.as_ref()
+        .map(|c| c.lib_files.clone())
+        .unwrap_or_default();
     // Diagnostic (NOVA_DEBUG_BROTLI_LINK=1): make the conditional-link decision
     // observable — proves brotli is linked ONLY for a CU that decodes brotli.
     if std::env::var("NOVA_DEBUG_BROTLI_LINK").as_deref() == Ok("1") {
-        match &brotli_lib {
-            Some(lib) => eprintln!(
-                "nova/brotli-link: {} uses_brotli={} → LINK {}",
-                opts.c_file.display(), uses_brotli, lib.display()),
-            None => eprintln!(
+        if brotli_libs.is_empty() {
+            eprintln!(
                 "nova/brotli-link: {} uses_brotli={} → NO brotli lib",
-                opts.c_file.display(), uses_brotli),
+                opts.c_file.display(), uses_brotli);
+        } else {
+            let names: Vec<String> = brotli_libs.iter()
+                .map(|p| p.display().to_string()).collect();
+            eprintln!(
+                "nova/brotli-link: {} uses_brotli={} → LINK {}",
+                opts.c_file.display(), uses_brotli, names.join(", "));
         }
     }
     // Plan 195 Ф.1: TLS shim — CONDITIONAL on USE, mirror of brotli (D337).
@@ -1271,15 +1332,21 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 }
             }
             // Plan 179 Ф.2 (D337): brotli — CONDITIONAL link (only when used). The
-            // shim TU is added only for a CU that decodes brotli; the real decoder +
-            // libbrotlidec.lib are added only when the vendored lib is present (else
-            // the shim compiles as Q11 feature-gate stubs — no link error).
+            // shim TU is added only for a CU that decodes brotli; the real decoder
+            // lib(s) are added only when found for this host — vendored `.lib`
+            // (Windows), the cache, or [cigreen-fix] the non-Windows system
+            // package (else the shim compiles as Q11 feature-gate stubs — no
+            // link error, see detect_brotli doc).
             if uses_brotli {
                 c.arg(&rt_brotli_shim);
-                if let (Some(inc_path), Some(lib_path)) = (&brotli_include, &brotli_lib) {
-                    c.arg("-DNOVA_USE_BROTLI=1");
-                    c.arg("-I").arg(inc_path);
-                    c.arg(lib_path);
+                if let Some(inc_path) = &brotli_include {
+                    if !brotli_libs.is_empty() {
+                        c.arg("-DNOVA_USE_BROTLI=1");
+                        c.arg("-I").arg(inc_path);
+                        for lib_path in &brotli_libs {
+                            c.arg(lib_path);
+                        }
+                    }
                 }
             }
             // Plan 195 Ф.1: TLS shim — CONDITIONAL link (only when used). One
@@ -1489,11 +1556,17 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             // TU only for a brotli-decoding CU; real decoder + libbrotlidec.lib only
             // when the vendored lib is present (else Q11 stubs — no link error).
             if uses_brotli {
-                if let (Some(inc_path), Some(lib_path)) = (&brotli_include, &brotli_lib) {
-                    c.arg("/DNOVA_USE_BROTLI=1");
-                    c.arg(format!("/I{}", inc_path.display()));
-                    c.arg(&rt_brotli_shim);
-                    c.arg(lib_path);
+                if let Some(inc_path) = &brotli_include {
+                    if !brotli_libs.is_empty() {
+                        c.arg("/DNOVA_USE_BROTLI=1");
+                        c.arg(format!("/I{}", inc_path.display()));
+                        c.arg(&rt_brotli_shim);
+                        for lib_path in &brotli_libs {
+                            c.arg(lib_path);
+                        }
+                    } else {
+                        c.arg(&rt_brotli_shim);
+                    }
                 } else {
                     c.arg(&rt_brotli_shim);
                 }
@@ -1598,16 +1671,22 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg(syslib);
                 }
             }
-            // Plan 179 Ф.2 (D337): brotli — CONDITIONAL link (only when used). On a
-            // non-Windows host detect_brotli returns None (no .a vendored) → the shim
-            // compiles as Q11 feature-gate stubs (UnsupportedMethod at runtime), never
-            // a link error; when a .a is vendored the real decoder + lib are linked.
+            // Plan 179 Ф.2 (D337): brotli — CONDITIONAL link (only when used).
+            // [cigreen-fix] detect_brotli now ALSO probes the non-Windows system
+            // package (Ubuntu/Debian `libbrotli-dev`) when no vendored/cached
+            // `.a` is found — on a host with neither, the shim still compiles
+            // as Q11 feature-gate stubs (UnsupportedMethod at runtime), never a
+            // link error.
             if uses_brotli {
                 c.arg(&rt_brotli_shim);
-                if let (Some(inc_path), Some(lib_path)) = (&brotli_include, &brotli_lib) {
-                    c.arg("-DNOVA_USE_BROTLI=1");
-                    c.arg("-I").arg(inc_path);
-                    c.arg(lib_path);
+                if let Some(inc_path) = &brotli_include {
+                    if !brotli_libs.is_empty() {
+                        c.arg("-DNOVA_USE_BROTLI=1");
+                        c.arg("-I").arg(inc_path);
+                        for lib_path in &brotli_libs {
+                            c.arg(lib_path);
+                        }
+                    }
                 }
             }
             // Plan 195 Ф.1: TLS shim — CONDITIONAL link (only when used). On a
