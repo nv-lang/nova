@@ -1,0 +1,56 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module spec_tests.conformance
+
+// Plan 196 wave-2 — matrix gap fill for D22 (closures). Identified gap
+// (196.3 таблица «Пробелы тест-покрытия», D48/D402-строка — фактически D22,
+// см. spec/decisions/03-syntax.md#D22; D48 в спеке = tagged templates,
+// не относится): UNIT-возврат light-closure `|| { side_effect() }`
+// (motivating case — codegen/src/codegen/emit_c.rs, комментарий у
+// `emit_lambda` return-type inference, ~:42255). Без inference из body
+// closure-без-annotation дефолтит к `nova_int`, что ломает компиляцию
+// side-effect-only callback'ов (естественный паттерн для HOF/`defer`).
+// Позитивный файл для этого сценария раньше был только в замороженном
+// `nova_tests/syntax/closure_unit_return_inference.nv` — портируем сюда
+// как conformance (D22 close-loop, не migration).
+
+fn d22u_run_callback(cb fn() -> ()) -> int {
+    cb()
+    42
+}
+
+fn d22u_run_with_int(x int, cb fn(int) -> ()) -> int {
+    cb(x)
+    x * 2
+}
+
+fn d22u_process(cleanup fn() -> ()) -> int {
+    defer { cleanup() }
+    100
+}
+
+test "no-arg light closure с side-effect-only body инферит unit-возврат (D22)" {
+    mut fired = false
+    ro r = d22u_run_callback(|| {
+        fired = true
+    })
+    assert(r == 42)
+    assert(fired)
+}
+
+test "one-arg light closure с side-effect-only body инферит unit-возврат (D22)" {
+    mut got = 0
+    ro r = d22u_run_with_int(21, |v| {
+        got = v
+    })
+    assert(r == 42)
+    assert(got == 21)
+}
+
+test "defer + light closure callback с unit-возвратом (D22)" {
+    mut cleaned = false
+    ro r = d22u_process(|| {
+        cleaned = true
+    })
+    assert(r == 100)
+    assert(cleaned)
+}
