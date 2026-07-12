@@ -1,0 +1,80 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 193 Ф.3: TLS echo server example — nova-tls (external native-module
+// dependency, Plan 195 pattern: `.nv` facade + `.c` shim + prebuilt mbedTLS
+// `.lib`, zero Rust) used exactly like a local `std.*` module once declared
+// in `[dependencies]` (see `../nova.toml` and `README.md` next to this file).
+//
+// Accepts one TCP connection on 127.0.0.1:7778, performs a TLS server
+// handshake using a self-signed `localhost` certificate (test-only fixture,
+// see `certs/README.md`), reads a message, echoes it back over the
+// encrypted stream. Mirrors examples/net/echo_server.nv 1:1 — same
+// TcpListener/spawn/supervised shape — with a `TlsStream.accept` step
+// inserted between `accept()` and the read/write.
+//
+// Usage:
+//   nova build examples/tls/echo_server.nv -o echo_server && ./echo_server
+//   # in another terminal:
+//   nova build examples/tls/echo_client.nv -o echo_client && ./echo_client
+//
+// See also: examples/tls/echo_client.nv, examples/net/echo_server.nv
+
+module tls.echo_server
+
+import std.net.{SocketAddr, TcpListener, real_net}
+import tls.tls.{TlsStream, ServerConfig}
+
+const PORT u16 = 7778
+
+fn server_cert() -> []u8 => embed("certs/localhost_cert.pem")
+fn server_key() -> []u8 => embed("certs/localhost_key.pem")
+
+fn main() {
+    with Net = real_net() {
+        ro addr = SocketAddr.loopback(PORT)
+        ro cfg = ServerConfig.new(server_cert(), server_key())
+
+        supervised {
+            spawn {
+                // Listener + TLS session live entirely in this fiber (same
+                // D415 §2 reasoning as examples/net/echo_server.nv: a
+                // mut-capture of either across the spawn boundary would be
+                // E_CONCURRENT_MUT_CAPTURE).
+                mut lst = match TcpListener.bind(addr) {
+                    Ok(l)  => l
+                    Err(_) => panic("Failed to bind: " + str.from(PORT))
+                }
+                println("Listening on 127.0.0.1:" + str.from(lst.local_port()))
+
+                match lst.accept() {
+                    Err(_) => println("Accept failed")
+                    Ok(tcp) => {
+                        println("Client connected from port " + str.from(tcp.peer_port()))
+                        match TlsStream.accept(tcp, cfg) {
+                            Err(e) => println("TLS handshake failed: " + e.to_str())
+                            Ok(session) => {
+                                // NB: don't name this binding `tls` — it would
+                                // shadow the imported package alias (`tls.tls.*`)
+                                // and turn `stream.read_to_vec(...)` below into
+                                // an (invalid) module-qualified call instead of
+                                // a method call (E7401).
+                                mut stream = session
+                                match stream.read_to_vec(4096) {
+                                    Err(_) => println("Read failed")
+                                    Ok(_data) => {
+                                        match stream.write_all("echo_ok\n".bytes()) {
+                                            Ok(_)  => println("Echo sent")
+                                            Err(_) => println("Write failed")
+                                        }
+                                    }
+                                }
+                                stream.close()
+                            }
+                        }
+                    }
+                }
+                lst.close()
+                println("Done")
+            }
+        }
+    }
+}
