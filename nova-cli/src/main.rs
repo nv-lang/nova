@@ -57,6 +57,20 @@ struct Cli {
           value_parser = ["auto", "always", "never"])]
     color: String,
 
+    /// Plan 197 (EXPERIMENTAL, owner-approved): opt-in strict effect
+    /// checking. Adds two diagnostics on top of the normal checker —
+    /// `E_UNDECLARED_TRANSITIVE_EFFECT` (calling a fn/method whose signature
+    /// carries effect `E` from a fn that neither declares `E` nor handles it
+    /// via an enclosing `with E = …` block — D62 §Правило 1's default
+    /// warning promoted to a hard error) and `E_EFFECT_ERASED_IN_FN_TYPE`
+    /// (assigning/passing/returning a fn VALUE into a narrower fn-type,
+    /// silently dropping an effect obligation). No language-semantics
+    /// change: OFF by default, `nova check`/`build`/`test` behavior is
+    /// byte-identical without this flag. See spec/decisions/04-effects.md
+    /// D62 and spec/open-questions.md.
+    #[arg(long = "strict-effects", global = true)]
+    strict_effects: bool,
+
     // ─────────────────────────────────────────────────────────────────────
     // Plan 123.6.1 (V6.1): field-cache sugar CLI flags — global. Translate
     // to NOVA_FIELD_CACHE_* env vars before subcommand dispatch.
@@ -4584,6 +4598,7 @@ fn cmd_build(
                 mono_depth,
                 contracts_off,
                 &embed_files,
+                nova_codegen::strict_effects::strict_effects_enabled(),
             )
         } else {
             None
@@ -6008,6 +6023,14 @@ fn run() -> ExitCode {
     // so codegen pipeline picks them up. CLI flags override env vars
     // when present.
     apply_field_cache_cli_flags(&cli);
+
+    // Plan 197 (EXPERIMENTAL, --strict-effects): translate to env var, same
+    // idiom as the field-cache flags above — `nova-codegen::strict_effects`
+    // reads it at check-time (no signature threading through the checker's
+    // ~99 `check_module*` call-sites).
+    if cli.strict_effects {
+        std::env::set_var("NOVA_STRICT_EFFECTS", "1");
+    }
 
     let result = match cli.cmd {
         Cmd::Check { paths, jobs, quiet, verbose, list, format, include_runtime, skip, explain_cache, telemetry_cache, telemetry_json, telemetry_baseline, telemetry_gate_affected_drop, telemetry_gate_caches_drop, lint } => cmd_check(

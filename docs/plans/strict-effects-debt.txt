@@ -1,0 +1,20 @@
+# [M-strict-effects-conformance-sweep] machine-parsable debt list.
+# Format (one violation per line, no header/comment lines mixed in):
+#   path:line:kind:missing-effect
+# kind ∈ {transitive, erasure}
+#   transitive -> E_UNDECLARED_TRANSITIVE_EFFECT (call site missing the effect)
+#   erasure    -> E_EFFECT_ERASED_IN_FN_TYPE (fn-type target missing the effect)
+#
+# Snapshot: 2026-07-13, Plan 197, worktree nova-197 (branch strict-effects).
+# Commands run (repo root = worktree root):
+#   nova --strict-effects check std --format short
+#   nova --strict-effects check examples --format short
+# Result: 0 violations in both trees (output byte-identical to the run
+# without --strict-effects; all pre-existing FAILs in std/ are unrelated
+# *_neg.nv / neg/ fixtures — serde/consume/D131, not effects). See
+# docs/plans/backlog-followups.md -> [M-strict-effects-conformance-sweep]
+# for the full snapshot writeup. examples/_wip/ excluded by a pre-existing,
+# unrelated tooling skip (not Plan-197-specific) — not scanned.
+#
+# 0 data rows below. Re-run the two commands above and append rows in the
+# format above if std/ or examples/ grows strict-effects violations later.

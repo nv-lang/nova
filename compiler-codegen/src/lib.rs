@@ -34,6 +34,7 @@ pub mod resolver;
 pub mod self_return_lower;
 pub mod semver;
 pub mod sig_registry;
+pub mod strict_effects;
 pub mod test_runner;
 pub mod types;
 pub mod verify;
