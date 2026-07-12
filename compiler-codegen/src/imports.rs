@@ -2341,18 +2341,31 @@ fn finalize_dep_pkg(dep_dir: &Path, dep_name: &str) -> DepLookup {
     DepLookup::PathDep(dep_manifest.source_root)
 }
 
-/// Plan 03.1 (ext-dep native/FFI propagation): source root'ы ВСЕХ
+/// Plan 03.1 (ext-dep native/FFI propagation): manifest-директории ВСЕХ
 /// объявленных `[dependencies]` пакета `pkg_dir` (директория его
-/// `nova.toml`), резолвнутые тем же кодом что резолвит `.nv`-импорт
-/// (`lookup_dependency`/`finalize_dep_pkg`) — `path`-зависимость на диске,
-/// `git`-зависимость через `git_cache` (offline-aware, с кэшем/lock-пином).
-/// Недоступная/битая зависимость молча пропускается: диагностика уже
-/// даётся на этапе резолва `.nv`-импорта, если зависимость реально
-/// используется модулем; здесь цель иная — собрать `[ffi]`-секции ВСЕХ
-/// объявленных зависимостей для build-пайплайна (§3.2: explicit dependency
-/// graph — зависимость объявлена → её native-артефакты (`.c`/`.lib` из
-/// `[ffi]`/`[ffi.staticlib]`) линкуются в бинарь импортёра, симметрично
-/// тому как её `.nv`-модули резолвятся в компиляцию).
+/// `nova.toml`) — `path`-зависимость на диске, `git`-зависимость через
+/// `git_cache` (offline-aware, с кэшем/lock-пином). Недоступная/битая
+/// зависимость молча пропускается: диагностика уже даётся на этапе резолва
+/// `.nv`-импорта, если зависимость реально используется модулем; здесь цель
+/// иная — собрать `[ffi]`-секции ВСЕХ объявленных зависимостей для
+/// build-пайплайна (§3.2: explicit dependency graph — зависимость
+/// объявлена → её native-артефакты (`.c`/`.lib` из `[ffi]`/
+/// `[ffi.staticlib]`) линкуются в бинарь импортёра, симметрично тому как её
+/// `.nv`-модули резолвятся в компиляцию).
+///
+/// **Plan 193 Ф.2 gate-3 fix (2026-07-12):** НЕ переиспользует
+/// `lookup_dependency`/`finalize_dep_pkg`'s `PathDep(source_root)` — тот
+/// возвращает `[lib] src`-resolved `source_root` (для `.nv` module-path
+/// resolution), которая расходится с `manifest_dir` (nova.toml-директория)
+/// для non-trivial `[lib] src` (напр. nova-tls: `src = "src"` →
+/// `source_root` = `<pkg>/src`, но `nova.toml` живёт в `<pkg>/`). Каждый
+/// caller здесь (`[ffi]`-merge в test_runner.rs) делает
+/// `dep_root.join("nova.toml")` — нужна именно `manifest_dir`, иначе
+/// dep-`[ffi]` молча пропадает (dep_toml не находится → `continue`) и
+/// build падает hard CC/link-FAIL вместо честного merge/detect-and-degrade
+/// SKIP. Резолвит `manifest_dir` независимо (path join / git checkout),
+/// с той же валидацией имени пакета что `finalize_dep_pkg`.
+///
 /// **Честный маркер v1:** только ПРЯМЫЕ зависимости — транзитивные
 /// зависимости зависимостей не обходятся (см. docs/plans/03.1-*.md).
 pub fn resolved_dependency_roots(pkg_dir: &Path) -> Vec<PathBuf> {
@@ -2360,18 +2373,34 @@ pub fn resolved_dependency_roots(pkg_dir: &Path) -> Vec<PathBuf> {
     let Some(manifest) = crate::manifest::parse_manifest(&toml, pkg_dir) else {
         return Vec::new();
     };
-    // Synthetic non-existent file — единственная роль: `package_root_of`
-    // внутри `lookup_dependency` берёт `.parent()` и тут же находит
-    // `pkg_dir` (nova.toml уже подтверждён выше), файл читать не нужно.
-    let probe = pkg_dir.join("__ffi_dep_probe__.nv");
     let mut roots = Vec::new();
     for d in &manifest.dependencies {
         if d.name == "std" {
             continue;
         }
-        if let DepLookup::PathDep(root) = lookup_dependency(&probe, &d.name) {
-            roots.push(root);
+        let dep_dir = match &d.source {
+            crate::manifest::DepSource::Path(rel) => {
+                let dir = pkg_dir.join(rel);
+                if dir.is_dir() { Some(dir) } else { None }
+            }
+            crate::manifest::DepSource::Git { url, pin } => {
+                crate::git_cache::resolve_git_dep(url, pin, None)
+                    .ok()
+                    .map(|r| r.checkout)
+            }
+            crate::manifest::DepSource::Registry(_) | crate::manifest::DepSource::Invalid(_) => {
+                None
+            }
+        };
+        let Some(dep_dir) = dep_dir else { continue };
+        let dep_toml = dep_dir.join("nova.toml");
+        let Some(dep_manifest) = crate::manifest::parse_manifest(&dep_toml, &dep_dir) else {
+            continue;
+        };
+        if dep_manifest.package_name != d.name {
+            continue;
         }
+        roots.push(dep_dir);
     }
     roots
 }
