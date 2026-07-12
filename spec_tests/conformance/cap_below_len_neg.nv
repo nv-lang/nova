@@ -1,6 +1,6 @@
 //
 // Plan 153.1 — негатив: @cap(n) с n < len → контракт `n >= @len` паника.
-module conformance.cap_below_len_neg
+module spec_tests.conformance
 test "cap below len neg" panics "requires failed" {
     mut v = Vec[int].of(1, 2, 3)
     v.cap(1)

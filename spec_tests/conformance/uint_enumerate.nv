@@ -5,7 +5,7 @@
 // SIGNED negative → `pair.1 > 100` is false. A correct width-preserving lower keeps it
 // positive. This is the discriminating reproduction for the by-value-mono element-resolution
 // gap (gap#2 subst-timing; emit_c.rs:1982-2011 tuple all_concrete decision).
-module conformance.uint_enumerate
+module spec_tests.conformance
 import std.collections.vec_lazy
 
 test "lazy enumerate preserves uint element width — no BoxIter int-collapse" {

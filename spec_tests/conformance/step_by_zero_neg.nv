@@ -1,7 +1,7 @@
 //
 // Zero-cost StepByIter: step_by(0) violates `requires n > 0` — runtime panic.
 
-module conformance.step_by_zero_neg
+module spec_tests.conformance
 import std.collections.vec_iter
 
 test "step by zero neg" panics "requires" {

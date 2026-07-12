@@ -1,6 +1,6 @@
 // Plan 123.2 T1.4: `loop { ... break ... }` form.
 
-module conformance.plan123_2_licm_loop_keyword_ok
+module spec_tests.conformance
 type Wrap3_plan1232licmloopkeywordok {
     ro limit int
 }

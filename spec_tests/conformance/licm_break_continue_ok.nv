@@ -1,7 +1,7 @@
 // Plan 123.2 T1.6: break/continue preserve correctness with hoisted
 // cache. Hoisted load is side-effect-free.
 
-module conformance.licm_break_continue_ok
+module spec_tests.conformance
 type UpperBound3 {
     ro hi int
 }

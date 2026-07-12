@@ -1,6 +1,6 @@
 // Probe: record types — multi-line форма работает с commas OR newlines.
 // Baseline для comparison с named tuple parsing asymmetry.
-module conformance.record_multiline_ok
+module spec_tests.conformance
 // Form 1: comma separator
 type Point2 {
     x int,

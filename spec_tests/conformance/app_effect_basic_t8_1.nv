@@ -4,7 +4,7 @@
 // Verifies that declarations type-check; runtime integration с
 // 3-level resolution lands в Plan 110.4.6.
 
-module conformance.app_effect_basic_t8_1
+module spec_tests.conformance
 // Type-check verification: Application effect operations declared.
 // Бойлер consumer fn that references both register_finalizer +
 // default_exit_timeout_ms.

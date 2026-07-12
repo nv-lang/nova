@@ -4,7 +4,7 @@
 // 1000-iteration loop с consume scope — verifies no resource leak,
 // no double-dispatch, cleanup fires exactly once per iteration.
 
-module conformance.stress_high_freq_loop_t11_8_slow
+module spec_tests.conformance
 type LoopRes6 {
     ro id int
 }

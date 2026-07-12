@@ -1,4 +1,4 @@
-module conformance.blanket_dup_neg
+module spec_tests.conformance
 import std.prelude.collections.{Next}
 import std.collections.vec.{Vec}
 

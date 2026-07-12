@@ -10,7 +10,7 @@
 // Plan 182 Ф.3: `str.len()` retired (D249 lens model, E_STR_NO_LEN) — updated
 // to `byte_len()` (only used as a liveness/DCE guard here, not asserted on).
 
-module conformance.bounded_rate
+module spec_tests.conformance
 test "100k string allocs — process does not OOM" {
     Mem.reset()
     ro before = Mem.alloc_count()

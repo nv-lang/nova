@@ -1,7 +1,7 @@
 // Plan 123.4 T-PROP.1: property — chain caching invariant across
 // configurations + various inputs.
 
-module conformance.plan123_4_prop_chain_semantic_ok
+module spec_tests.conformance
 type RegA4 {
     ro field RegA_Sub
 }

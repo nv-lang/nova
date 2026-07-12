@@ -13,7 +13,7 @@
 // This fixture verifies: consume type compiles clean (doc rendering is validated
 // by the doc renderer unit test / integration, not by nova test).
 
-module conformance.nova_doc_consume_badge
+module spec_tests.conformance
 /// A file handle — must be closed before scope exit.
 ///
 /// # Examples

@@ -12,7 +12,7 @@
 // array; codegen's `emit_expr` IntLit reads the channel and self-types the literal. This
 // subsumes the tactical Some-return / tuple-destructure / default-arg codegen coercions.
 // Roadmap: 172.1-p67-phase2-map.md.
-module conformance.d55_sized_literal_contexts
+module spec_tests.conformance
 
 // ── record-field: a field-position literal coerces to the field's declared type ──
 type D55WBox {

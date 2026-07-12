@@ -1,6 +1,6 @@
 // Plan 123.1.2 (V1.2, 2026-06-04): nested-region inside match arm body.
 
-module conformance.plan123_1_2_v1_2_match_arm_nested_ok
+module spec_tests.conformance
 type State {
     mut x int
 }

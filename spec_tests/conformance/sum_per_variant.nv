@@ -25,7 +25,7 @@
 //     [3] Seg   → [8, 24]
 //   Box → size 8, pointer_offsets []
 
-module conformance.sum_per_variant
+module spec_tests.conformance
 
 type Box { a int }
 

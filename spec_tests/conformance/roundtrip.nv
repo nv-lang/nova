@@ -3,7 +3,7 @@
 // Ключевой тест целостности: write_X → into() → ReadBuffer.from() →
 // read_X должен вернуть исходное значение для каждого типа.
 
-module conformance.roundtrip
+module spec_tests.conformance
 // ── целые числа ────────────────────────────────────────────────────
 
 test "round-trip byte" {

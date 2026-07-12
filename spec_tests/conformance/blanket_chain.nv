@@ -1,4 +1,4 @@
-module conformance.blanket_chain
+module spec_tests.conformance
 import std.collections.vec.{Vec}
 import std.collections.vec_iter
 

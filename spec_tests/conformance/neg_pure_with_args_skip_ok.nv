@@ -1,6 +1,6 @@
 // Plan 123.3 T-NEG.3: pure methods with args → V3 skip (V3.1 enhance).
 
-module conformance.neg_pure_with_args_skip_ok
+module spec_tests.conformance
 type Calc {
     ro base int
 }

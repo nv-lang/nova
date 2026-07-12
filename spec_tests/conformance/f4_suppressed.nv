@@ -16,7 +16,7 @@
 // fails while unwinding composes into the pocket (kind=DEFER_SCOPE keeps the
 // in-flight error live). `suppressed()` is read once the block yields.
 
-module conformance.f4_suppressed
+module spec_tests.conformance
 type SupA { code int }
 type SupB { tag int }
 

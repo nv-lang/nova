@@ -3,7 +3,7 @@
 // scan-free `as_cstr_unchecked()` hatch is gone — the copying `to_cstr` family
 // (GC-alloc + caller-buffer overloads) replaces both `as_cstr` and
 // `as_cstr_unchecked`; the caller-buffer overload truncates by design.
-module conformance.t1_pos_as_cstr_no_nul
+module spec_tests.conformance
 import std.ffi.cstr.{CStr}
 
 test "to_cstr on NUL-free strings succeeds (no panic)" {

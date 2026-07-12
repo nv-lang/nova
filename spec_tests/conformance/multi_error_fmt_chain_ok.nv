@@ -2,7 +2,7 @@
 // Bootstrap: returns primary; full chain rendering — production-grade
 // followup ([M-100.4.4-fmt-chain-rich]).
 
-module conformance.multi_error_fmt_chain_ok
+module spec_tests.conformance
 fn empty_multi() -> MultiError =>
     { primary: "single", suppressed: [] }
 

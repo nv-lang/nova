@@ -2,7 +2,7 @@
 // pass. Runtime composite chain — partial в bootstrap (Plan 100.4.4
 // followup для full composite materialize'а).
 
-module conformance.defer_fail_ok_composed_with_primary
+module spec_tests.conformance
 type WorkErr { msg str }
 type CommitErr1 { msg str }
 

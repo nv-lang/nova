@@ -1,6 +1,6 @@
 // Plan 91 Ф.5 conformance: HashSet (Set[T]) realistic use-cases.
 // unique-elements pattern.
-module conformance.hashset_realistic
+module spec_tests.conformance
 import std.collections.set.{Set}
 
 test "deduplicate list via Set" {

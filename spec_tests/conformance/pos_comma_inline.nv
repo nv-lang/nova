@@ -1,5 +1,5 @@
 // POSITIVE: fields on the same line separated by commas — valid.
-module conformance.pos_comma_inline
+module spec_tests.conformance
 type Point value { x int, y int }
 type Color { r int, g int, b int }
 

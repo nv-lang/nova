@@ -3,7 +3,7 @@
 // None) — return-mode. Регресс-гард, что новый чекер E_TRY_IN_FAIL_FN НЕ ломает
 // легитимный return-only `?` (ret_ok=true для Result/Option-возврата).
 
-module conformance.f3_try_return_only
+module spec_tests.conformance
 fn parse_ok(s str) -> Result[int, str] {
     if s == "ok" { return Ok(7) }
     Err("bad input")

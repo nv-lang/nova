@@ -1,4 +1,4 @@
-module conformance.parfor_min
+module spec_tests.conformance
 test "parallel for range int" {
     ro xs = parallel for i in 0..5 {
         i * 2

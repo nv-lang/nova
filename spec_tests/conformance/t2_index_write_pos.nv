@@ -2,7 +2,7 @@
 // Write-путь (C-блок, не stmt-expr) не должен регрессировать после миграции
 // read-индексации. Проверяем write-through на Vec[int]/Vec[str].
 
-module conformance.t2_index_write_pos
+module spec_tests.conformance
 import std.collections.vec.{Vec}
 
 test "v[i] = val writes through on Vec[int]" {

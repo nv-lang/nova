@@ -1,7 +1,7 @@
 // Plan 123.1 T2.1: mut field accessed 2+ times в straight-line region
 // (no writes, no calls в prefix) → first-region cache emitted.
 
-module conformance.plan123_1_mut_field_straight_line_ok
+module spec_tests.conformance
 type Counter3_plan1231mutfieldstraightlineok {
     mut value int
     mut step int

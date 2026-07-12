@@ -5,7 +5,7 @@
 // correct output proves none was wrongly pruned (G0 conservative-correctness).
 // EXPECT_STDOUT full ok
 
-module conformance.pos_full_unicode
+module spec_tests.conformance
 import std.unicode.{general_category, collate_compare, normalize_nfc, WordsIter, to_titlecase, is_uppercase, is_numeric, Lu, Nd}
 
 fn main() {

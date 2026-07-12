@@ -13,7 +13,7 @@
 // над state-record (т.к. handler-codegen для stdlib Time всё равно
 // требует runtime-уровня support).
 
-module conformance.inline_mut_clock_advance
+module spec_tests.conformance
 type Clock { ms u64 }
 
 fn clock_new(start_ms u64) -> Clock => { ms: start_ms }

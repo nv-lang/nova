@@ -5,7 +5,7 @@
 // `TryFrom[int, str]` bound) удалена — протокол `TryFrom` ретрактирован,
 // покрытие generic-bound static-dispatch остаётся через `Buildable` ниже.
 
-module conformance.static_methods
+module spec_tests.conformance
 // --- T.new() — user-defined static-метод через protocol ---
 type Buildable protocol { @new() -> Self }
 

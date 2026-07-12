@@ -1,7 +1,7 @@
 // EXPECT_RUNTIME_PANIC unhandled Fail (D158 composite): bang
 // EXPECT_STDOUT DEFER_FIRED
 
-module conformance.defer_throw_single
+module spec_tests.conformance
 fn main() Io -> () {
     defer { println("DEFER_FIRED") }
     throw "bang"

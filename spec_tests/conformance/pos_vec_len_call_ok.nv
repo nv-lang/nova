@@ -4,7 +4,7 @@
 // regression guard that the fix targets ONLY the non-call (`is_call_func ==
 // false`) same-name-method branch and does not perturb the call form.
 
-module conformance.pos_vec_len_call_ok
+module spec_tests.conformance
 test "Vec[T].len() call works from outside collections.vec (regression guard)" {
     mut v = Vec[int].new()
     v.push(1)

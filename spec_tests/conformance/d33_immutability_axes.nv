@@ -8,7 +8,7 @@
 // (Ось 3 — per-field freeze — отдельно покрыта D36; здесь не дублируется.)
 // Spec: spec/decisions/03-syntax.md:1066 (D33 «Три оси immutability»), §«Правило».
 // Один folder-module `spec_tests.conformance`; D-prefixed имена уникальны.
-module conformance.d33_immutability_axes
+module spec_tests.conformance
 
 // Ось 2 на module-level: literal, constexpr-арифметика, ссылка на другой const.
 const D33_MAX_PAYLOAD = 4096

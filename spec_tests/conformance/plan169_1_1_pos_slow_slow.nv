@@ -1,6 +1,6 @@
 // Plan 169.1.1: slow-lane positive test — excluded from default nova test.
 // Run with: nova test --slow nova_tests/plan169
-module conformance.plan169_1_1_pos_slow_slow
+module spec_tests.conformance
 test "pos slow: large sum 0..100_000" {
     mut sum = 0
     for i in 0..100_000 {

@@ -7,7 +7,7 @@
 // Отличие от EXPECT_RUNTIME_PANIC: не требует ненулевой exit code —
 // проверяется только содержимое stderr.
 
-module conformance.stderr_panic
+module spec_tests.conformance
 fn main() Io -> () {
     panic("custom stderr message")
 }

@@ -14,7 +14,7 @@
 // runtime counter is the last-line defense for escapes the checker cannot
 // see (FFI/reflection — D188 R2 acknowledged residual).
 
-module conformance.f5_consume_exactly_once
+module spec_tests.conformance
 type F5Res { ro id int }
 fn F5Res.new(id int) -> F5Res => { id }
 fn F5Res consume @cleanup(_o ScopeOutcome) -> () => ()

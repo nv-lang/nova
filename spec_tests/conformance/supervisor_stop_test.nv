@@ -12,7 +12,7 @@
 //
 // Бежит ARMED на дефолтном worker-count (M:N — периметр политики).
 
-module conformance.supervisor_stop_test
+module spec_tests.conformance
 import std.concurrency.supervisor as sup
 
 test "Supervisor=stop: один падает — siblings доживают, scope продолжает" {

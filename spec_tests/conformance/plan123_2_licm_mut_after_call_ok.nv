@@ -2,7 +2,7 @@
 // bailed (call before loop invalidates mut prefix region). LICM
 // emits hoisted cache immediately before loop.
 
-module conformance.plan123_2_licm_mut_after_call_ok
+module spec_tests.conformance
 type Counter4_plan1232licmmutaftercallok {
     mut threshold int
 }

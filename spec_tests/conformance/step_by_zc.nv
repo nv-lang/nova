@@ -1,6 +1,6 @@
 // [M-153.2-iter-phase-b] Zero-cost step_by (StepByIter, vec_iter).
 
-module conformance.step_by_zc
+module spec_tests.conformance
 import std.collections.vec_iter
 
 test "zc step_by every 2" {

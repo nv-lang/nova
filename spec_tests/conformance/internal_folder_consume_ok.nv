@@ -4,7 +4,7 @@
 //
 // Simulated mock: internal impl type + public wrapper.
 
-module conformance.internal_folder_consume_ok
+module spec_tests.conformance
 // "internal/cache.nv" — impl-detail consume type:
 type CacheHandle2 consume {
     id int,

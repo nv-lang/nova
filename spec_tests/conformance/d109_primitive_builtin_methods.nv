@@ -9,7 +9,7 @@
 // Покрытие — только пары (тип,метод), которые РЕАЛЬНО резолвятся builtin'ом на текущем
 // компиляторе (int/f64/char: eq+lt/le/gt/ge+hash; bool: eq+hash). u8/str ordering — НЕ здесь
 // (str → @compare/@equal protocol-path; nova_byte НЕ в eq/lt-арме builtin'а).
-module conformance.d109_primitive_builtin_methods
+module spec_tests.conformance
 
 test "int builtin eq/lt/le/gt/ge — сравнение по значению (D109)" {
     ro a int = 5

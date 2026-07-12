@@ -3,7 +3,7 @@
 // Plan 56 Ф.3 — GC stress test для @clone().
 // Fast: 10 clones × 100 entries (reduced from 100 clones).
 
-module conformance.f4_clone_gc_stress
+module spec_tests.conformance
 import std.collections.hashmap.{HashMap}
 
 

@@ -1,4 +1,4 @@
-module conformance.parse_int_binary_ok
+module spec_tests.conformance
 import std.runtime.string.{ParseIntError}
 
 test "binary basic" {

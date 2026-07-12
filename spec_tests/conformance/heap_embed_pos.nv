@@ -19,7 +19,7 @@
 // RUNS, and `size_of`/`align_of` resolve to the reference (pointer) sizes that
 // match the emitted C (`H` holds a `Nova_Tree*`).
 
-module conformance.heap_embed_pos
+module spec_tests.conformance
 // Recursive heap sum (same shape as nova_tests/basics/recursion.nv). Heap-boxed:
 // a `Tree` value is a `Nova_Tree*`; the recursive `Tree` payloads are pointer
 // leaves, so the type is finite.

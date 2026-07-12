@@ -14,7 +14,7 @@
 // fixture only asserts compilation); the actual Panic-classification is verified
 // by adversarial C inspection of the emitted ScopeOutcome path.
 
-module conformance.consume_assert_contract_panic_class
+module spec_tests.conformance
 type ResZ {
     ro id int
 }

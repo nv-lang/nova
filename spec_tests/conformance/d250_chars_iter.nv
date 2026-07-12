@@ -9,7 +9,7 @@
 // `for c in s` через str @iter() => @chars(). Конвенция (D410): голое
 // существительное = вид/линза (заём), `.collect()` на месте вызова = owned
 // копия. Один folder-module `spec_tests.conformance`.
-module conformance.d250_chars_iter
+module spec_tests.conformance
 
 test "as_chars: next декодит codepoint'ы по порядку (D250)" {
     mut d250_it = "abc".chars()

@@ -17,7 +17,7 @@
 //   Vptr   → size 8,  align 8, pointer_offsets [0],  unresolved false
 //   Holder → size 24, align 8, pointer_offsets [8],  unresolved false
 
-module conformance.nested_value_record
+module spec_tests.conformance
 
 type Box { a int }
 

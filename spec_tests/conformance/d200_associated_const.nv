@@ -1,7 +1,7 @@
 // D200 — associated `const` field в `type X`: accessible через namespace `Type.CONST_NAME`,
 // НЕ часть instance layout (type конструируется из instance-полей без const'ов).
 // Spec: spec/decisions/02-types.md:7146 (D200). Норма §«Семантика» п.2-3.
-module conformance.d200_associated_const
+module spec_tests.conformance
 
 type D200Config {
     const VERSION int = 2

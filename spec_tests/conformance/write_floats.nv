@@ -3,7 +3,7 @@
 // write_f32_le/be, write_f64_le/be — 4 метода. Проверка длины
 // записанного и round-trip через ReadBuffer (read_f*()!!).
 
-module conformance.write_floats
+module spec_tests.conformance
 // ── длина записи ───────────────────────────────────────────────────
 
 test "write_f32_le — 4 байта" {

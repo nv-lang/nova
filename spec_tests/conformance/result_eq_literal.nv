@@ -2,7 +2,7 @@
 // `== Err(x)` for a Result with NON-default E (e.g. binary_search -> Result[int,int]).
 // The bare Ok/Err literal is re-emitted against the other operand's concrete type.
 // Covers literal on BOTH sides (the fix is symmetric) + negative (inequality) cases.
-module conformance.result_eq_literal
+module spec_tests.conformance
 test "literal on RHS: binary_search == Ok/Err (non-default E=int)" {
     ro v = Vec[int].of(1, 3, 5, 7)
     assert(v.binary_search(5) == Ok(2))

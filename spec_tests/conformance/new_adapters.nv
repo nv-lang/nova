@@ -1,4 +1,4 @@
-module conformance.new_adapters
+module spec_tests.conformance
 import std.collections.vec_iter
 
 // ── take ─────────────────────────────────────────────────────────────────────

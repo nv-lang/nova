@@ -5,7 +5,7 @@
 // non-Ident leaf), но existing mut-self / mut-field semantics в impl
 // handle correctly.
 
-module conformance.p2_mut_self_field_mut_method_ok
+module spec_tests.conformance
 type Vec34(x int, y int, z int)
 
 fn Vec34 mut @set_x(v int) -> () {

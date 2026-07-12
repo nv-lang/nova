@@ -4,7 +4,7 @@
 // D316-amend Ф.2: «codegen handler-литералов не поддерживает anonymous
 // record-literal»).
 
-module conformance.repro_matrix
+module spec_tests.conformance
 type Point { x int, y int }
 type PointV value { ro x int, ro y int }
 

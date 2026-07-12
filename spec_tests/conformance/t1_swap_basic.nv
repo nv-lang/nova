@@ -2,7 +2,7 @@
 // `(a, b) = (b, a)` — rhs evaluated fully before any assignment.
 // Verifies A1: swap executes correctly.
 
-module conformance.t1_swap_basic
+module spec_tests.conformance
 test "swap two ints" {
     mut a = 10
     mut b = 20

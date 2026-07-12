@@ -2,7 +2,7 @@
 //
 // EXPECT_OUTPUT: ok
 
-module conformance.p3_single_and_ordered
+module spec_tests.conformance
 fn main() -> () {
     assert(3 < 5)
     assert(5 > 3)

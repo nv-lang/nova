@@ -1,6 +1,6 @@
 // Plan 100.3 (D157): view-param передаётся в другую view-fn без consume.
 
-module conformance.view_ok_pass_through
+module spec_tests.conformance
 type Transaction8 consume {
     id int,
 }

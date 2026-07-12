@@ -31,7 +31,7 @@
 // FALSE (RUN-FAIL). The control test pins the genuinely-signed `[N]int` case. Spec:
 // spec/decisions/02-types.md (named-priority, uint≠int) + 03-syntax.md (D27 `[N]T` fixed array).
 // SINGLE `spec_tests.conformance` folder-module; all top-level names `d411w_`-prefixed.
-module conformance.d411_array_sized_elem_width
+module spec_tests.conformance
 
 // Plain runtime source so the high-bit element is a real value, never const-folded away.
 fn d411w_hibit() -> uint => 0x8000000000000000   // 2^63 — high bit set (signed i64 → NEGATIVE)

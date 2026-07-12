@@ -1,4 +1,4 @@
-module conformance.parse_int_signed_ok
+module spec_tests.conformance
 import std.runtime.string.{ParseIntError}
 
 test "positive prefix" {

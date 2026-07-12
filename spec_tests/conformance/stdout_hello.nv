@@ -5,7 +5,7 @@
 //
 // Полезно для golden-file тестов и проверки format/print-логики.
 
-module conformance.stdout_hello
+module spec_tests.conformance
 fn main() Io -> () {
     println("hello world from Nova")
 }

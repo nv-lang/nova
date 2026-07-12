@@ -3,7 +3,7 @@
 // They coexist: no name conflict (disjoint file-scope, checker dedup) and no
 // link collision (codegen file-discriminator). This file's `helper` -> 100.
 
-module conformance.peer_a
+module spec_tests.conformance
 priv(file) fn helper() -> int => 100
 
 priv(file) const LOCAL_TAG = 100

@@ -2,7 +2,7 @@
 // Plan 90.1 — негатив: copy_from — src longer than dst → panic (was already panic).
 // D141 amend: new message "length mismatch" instead of "src longer than dst".
 
-module conformance.copy_from_too_long_neg
+module spec_tests.conformance
 test "copy from too long neg" panics "requires failed" {
     mut dst []int = [0, 0]
     ro src []int = [1, 2, 3]

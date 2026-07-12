@@ -1,7 +1,7 @@
 // Plan 90 followup — []T.append_zero(n): extend by N zero-init elements.
 // Полиморфно по T (memset на любом T, не только single-byte как fill fast-path).
 
-module conformance.append_zero
+module spec_tests.conformance
 test "append_zero — []u8 расширение" {
     mut a []u8 = [1, 2, 3]
     a.append_zero(4)

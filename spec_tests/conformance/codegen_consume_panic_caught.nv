@@ -6,7 +6,7 @@
 // Acceptance:
 // - A110.1.4.g: panic → outcome=Panic(msg), cleanup fires, panic re-raises.
 
-module conformance.codegen_consume_panic_caught
+module spec_tests.conformance
 type ResY3 {
     ro id int
 }

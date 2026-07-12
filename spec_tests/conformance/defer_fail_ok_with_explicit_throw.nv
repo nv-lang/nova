@@ -1,7 +1,7 @@
 // Plan 100.4.1 (D158): explicit `throw` expression в defer body —
 // разрешён если enclosing fn-sig declares Fail[E].
 
-module conformance.defer_fail_ok_with_explicit_throw
+module spec_tests.conformance
 type Err { msg str }
 
 fn cond_cleanup_failed() -> bool => false

@@ -4,7 +4,7 @@
 // Validates: format_array iter+join, parser accepts mixed types в одном
 // массиве, == определён pointwise для Array variant.
 
-module conformance.json_roundtrip_array_primitives
+module spec_tests.conformance
 import std.encoding.json.{JsonValue, Json}
 
 test "encode mixed primitives array" {

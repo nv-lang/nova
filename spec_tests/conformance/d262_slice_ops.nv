@@ -3,7 +3,7 @@
 // split_first/split_last (Option, пусто→None). Все возвращают view ТОГО ЖЕ типа.
 // Behavioral: длины/элементы различают правильное разбиение от неверного; clamp vs panic.
 // Spec: spec/decisions/03-syntax.md (D262). Один folder-module CU.
-module conformance.d262_slice_ops
+module spec_tests.conformance
 
 test "split_at делит на (front, back) с len-инвариантом (D262)" {
     ro v = []int.of(10, 20, 30, 40, 50)

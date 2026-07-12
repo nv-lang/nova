@@ -5,7 +5,7 @@
 // state. Без anonymous protocol-литерала пришлось бы объявлять
 // два отдельных named-типа-обёртки.
 
-module conformance.pos_protocol_lit_capability_split
+module spec_tests.conformance
 export type Reader protocol {
     @read() -> int
 }

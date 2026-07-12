@@ -14,7 +14,7 @@
 //
 // Acceptance: compile-success verifies the codegen wrap pattern.
 
-module conformance.on_exit_throws_handler_catches_v1_1
+module spec_tests.conformance
 type AlwaysThrows3 { ro id int }
 fn AlwaysThrows3.new(id int) -> AlwaysThrows3 => { id }
 fn AlwaysThrows3 consume @cleanup(_outcome ScopeOutcome) Fail[str] -> () {

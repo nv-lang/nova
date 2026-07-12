@@ -7,7 +7,7 @@
 // → identity (returns the stored value). Zero runtime overhead — pure
 // typedef-based wrapping (Plan 70.3 mirror).
 
-module conformance.t3_handle_pattern_ok
+module spec_tests.conformance
 type SqHandle(*())
 type PngHandle(*())
 type CurlHandle(*())

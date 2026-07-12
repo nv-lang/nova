@@ -3,7 +3,7 @@
 // C-string). Constructed via from_bytes_unchecked so the interior 0x00 byte
 // survives verbatim (a string LITERAL with \0 must NOT be used — the C source
 // literal would be truncated, leaving an out-of-bounds read).
-module conformance.t2_neg_as_cstr_embedded_nul
+module spec_tests.conformance
 import std.ffi.cstr.{CStr}
 
 test "t2 neg to_cstr embedded nul" panics "to_cstr: embedded NUL" {

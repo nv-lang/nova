@@ -2,7 +2,7 @@
 // tag(parts []str, args []T) — сегменты и значения раздельно
 // (spec/decisions/03-syntax.md §D48). parts.len() == args.len() + 1.
 // Один folder-module `spec_tests.conformance`.
-module conformance.d48_tagged_template
+module spec_tests.conformance
 
 fn d48_fmt(parts []str, args []int) -> str {
     mut d48_out = parts[0]

@@ -1,7 +1,7 @@
 // [M-125-method-call-never-detection] positive — user-type instance
 // method с `-> never` детектится как divergent в if-expr inference.
 
-module conformance.method_call_never_user_type
+module spec_tests.conformance
 type Logger2 { tag str }
 
 fn Logger2 @fail(msg str) -> never => panic("[${@tag}] FATAL: ${msg}")

@@ -4,7 +4,7 @@
 // intermediate fields `mut`. Chain-walking helper recursively walks
 // РґРѕ root Ident.
 
-module conformance.p4_deep_chain_mut_ok
+module spec_tests.conformance
 type Dv3 {
     mut value int
 }

@@ -15,7 +15,7 @@
 //  - прогон под release `nova test` → PASS.
 
 #no_prelude
-module conformance.compiles_ok
+module spec_tests.conformance
 fn helper(x int) -> int {
     x * 2
 }

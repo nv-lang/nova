@@ -1,7 +1,7 @@
 // Plan 123.4 T1.4: chain inside loop body — composition с D218 LICM
 // (LICM hoists single-field @F, V4 chain caches the deeper path).
 
-module conformance.plan123_4_chain_in_loop_ok
+module spec_tests.conformance
 type Holder3 {
     ro inner Holder_Inner
 }

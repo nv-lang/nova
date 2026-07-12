@@ -4,7 +4,7 @@
 // Inline Transaction19 literals avoid named consume-obligations outside loop.
 // After for-consume: txs is Consumed (pragmatic D156 marking).
 
-module conformance.vec_push_consume_ok
+module spec_tests.conformance
 type Transaction19 consume {
     id int,
 }

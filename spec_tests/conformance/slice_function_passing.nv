@@ -1,7 +1,7 @@
 // Plan 96 Ф.5 — позитив: view передаётся в функцию ждущую []T
 // (single-type design — view это []T).
 
-module conformance.slice_function_passing
+module spec_tests.conformance
 fn sum_array(arr []int) -> int {
     mut total = 0
     for x in arr {

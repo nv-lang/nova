@@ -7,7 +7,7 @@
 // одновременно с EXPECT_RUNTIME_PANIC. До fix'а только первый маркер
 // проверялся. После fix'а все паттерны из Vec<ExpectMarker> проверяются.
 
-module conformance.multi_expect_stdout
+module spec_tests.conformance
 fn main() Io -> () {
     defer { println("FIRST") }
     defer { println("SECOND") }

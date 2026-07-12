@@ -4,7 +4,7 @@
 //
 // Acceptance A6: API surface неизменён — new/notify_one/notify_all/wait_for.
 
-module conformance.v2_condvar_tuple_newtype_ok
+module spec_tests.conformance
 import std.time.duration
 
 test "Condvar: new + notify_one no-op (no waiters)" {

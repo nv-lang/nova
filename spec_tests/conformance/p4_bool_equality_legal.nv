@@ -3,7 +3,7 @@
 //
 // EXPECT_OUTPUT: ok
 
-module conformance.p4_bool_equality_legal
+module spec_tests.conformance
 fn main() -> () {
     assert(true == true)
     assert(true != false)

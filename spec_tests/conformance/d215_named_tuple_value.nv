@@ -3,7 +3,7 @@
 // (D123 codegen → C named struct, no pointer in signature). `@`-method receiver reads fields
 // via `@x`. POS conformance for D215 spec/decisions/02-types.md §3988 (Plan 120/128).
 // Part of the SINGLE `spec_tests.conformance` folder-module; D-prefixed name avoids clashes.
-module conformance.d215_named_tuple_value
+module spec_tests.conformance
 
 type D215Vec3(x f64, y f64, z f64)
 

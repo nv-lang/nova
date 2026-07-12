@@ -3,7 +3,7 @@
 // folder-module. file-private must NOT change module-default visibility.
 // This file declares the shared helpers; `pos_module_priv_peer_b.nv` uses them.
 
-module conformance.pos_module_priv_peer_a
+module spec_tests.conformance
 // Module-default (module-private) free fn — visible to all peers of this module.
 fn shared_module_helper(n int) -> int => n + 7
 

@@ -3,7 +3,7 @@
 // `fn print_id(t Transaction10)` — view-param. Source `tx` остаётся
 // Live после вызова; функция читает поле без consume.
 
-module conformance.view_ok_print_field
+module spec_tests.conformance
 type Transaction10 consume {
     id int,
 }

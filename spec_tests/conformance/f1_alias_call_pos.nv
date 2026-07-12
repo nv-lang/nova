@@ -6,7 +6,7 @@
 // rewrite в bare `add_one(...)` — alias prefix dropped, imported fn
 // доступен через bare name в scope.
 
-module conformance.f1_alias_call_pos
+module spec_tests.conformance
 import spec_tests.conformance.plan70_1.helper_mod as h
 
 test "alias-import: h.add_one(int)" {

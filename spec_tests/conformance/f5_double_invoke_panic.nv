@@ -9,7 +9,7 @@
 // First invocation = the helper's manual call; second = the consume-scope's
 // own scope-exit dispatch → prologue guard panics.
 
-module conformance.f5_double_invoke_panic
+module spec_tests.conformance
 type DblRes { ro id int }
 fn DblRes.new(id int) -> DblRes => { id }
 fn DblRes consume @cleanup(_o ScopeOutcome) -> () => ()

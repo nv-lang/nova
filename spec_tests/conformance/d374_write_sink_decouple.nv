@@ -11,7 +11,7 @@
 // proving the parameter is the protocol, not the concrete sink.
 // Part of the SINGLE `spec_tests.conformance` folder-module; D-prefixed unique type
 // names avoid duplicate-top-level-name clashes.
-module conformance.d374_write_sink_decouple
+module spec_tests.conformance
 
 // User type with a MANUAL @display written against the `Write` sink protocol (D374).
 // The body never names `StringBuilder` — it only calls `w.write(...)`, so it is

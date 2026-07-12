@@ -3,7 +3,7 @@
 // `a <= b && b < c` даёт РЕАЛЬНЫЙ (не вакуумный) bounds-предикат: true строго для in-range, false для
 // out-of-range. (Старая chained `0 <= i < n` парсилась как `(0<=i) < n` = `bool < n` → вакуумно-истинна.)
 // Spec: spec/decisions/02-types.md:12178 (D248). Relational требует ordered-категорию (int/str/char) — §2.
-module conformance.d248_split_bounds_predicate
+module spec_tests.conformance
 
 // Канонический non-vacuous bounds-контракт `0 <= i && i < n` как обычное выражение.
 fn d248_in_bounds(i int, n int) -> bool {

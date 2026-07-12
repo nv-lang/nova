@@ -8,7 +8,7 @@
 // - A110.1.4.e: cleanup called с Failure outcome.
 // - A110.1.4.f: throw re-raised после cleanup completion.
 
-module conformance.codegen_consume_throw_caught
+module spec_tests.conformance
 type ResourceX3 {
     ro id int
 }

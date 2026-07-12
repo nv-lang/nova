@@ -2,7 +2,7 @@
 // Plan 33.1 Ф.4 production-grade: ensures-check срабатывает на early return
 // в block-body когда контракт нарушен.
 
-module conformance.contracts_block_ensures_fail
+module spec_tests.conformance
 fn bad_max(a int, b int) -> int
     requires a >= 0
     requires b >= 0

@@ -2,7 +2,7 @@
 // No `_slow` suffix → runs by default and under --include-slow,
 // but is EXCLUDED under --slow-only.
 
-module conformance.lane_normal
+module spec_tests.conformance
 test "normal test runs by default" {
     assert(1 + 1 == 2)
 }

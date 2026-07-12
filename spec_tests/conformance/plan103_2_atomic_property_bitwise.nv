@@ -6,7 +6,7 @@
 // fetch_max(v) when v <= a.load() is no-op.
 // fetch_min(v) when v >= a.load() is no-op.
 
-module conformance.plan103_2_atomic_property_bitwise
+module spec_tests.conformance
 test "property: fetch_or identity — or with 0" {
     mut a = AtomicI64.new(0xDEADBEEF)
     ro v = a.load()

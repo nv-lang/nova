@@ -8,7 +8,7 @@
 // (5) width-дисциплина: as-cast в u8 внутри const fn. Негативы — neg/d199_*.nv
 // (control-flow / non-const arg / effect-in-body). Шаблоны сверены с
 // nova_tests/plan114. Один folder-module `spec_tests.conformance`.
-module conformance.d199_const_fn_comptime
+module spec_tests.conformance
 
 fn d199_calc(const a int, const b char) -> const int {
     const d199_c = b as int

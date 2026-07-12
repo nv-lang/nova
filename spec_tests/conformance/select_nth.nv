@@ -1,5 +1,5 @@
 // Plan 153.3 — select_nth_unstable (introselect): k-th order statistic.
-module conformance.select_nth
+module spec_tests.conformance
 test "select_nth k-th smallest + partition invariant" {
     mut v = Vec[int].of(7, 3, 9, 1, 5, 2, 8)
     ro m = v.select_nth_unstable(3)

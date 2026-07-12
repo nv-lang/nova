@@ -1,7 +1,7 @@
 // D183 — Canonical comparison protocols: Equal.equals / Compare.compare.
 // `==` на int/str dispatches через builtin; user type implements @equal+@eq (D363 transitional).
 // Spec: spec/decisions/02-types.md D183. Part of the SINGLE `spec_tests.conformance` folder-module.
-module conformance.d183_canonical_comparison_protocols
+module spec_tests.conformance
 
 // int comparison via == / != / < / > (builtin Compare semantics)
 test "int canonical comparison operators (D183)" {

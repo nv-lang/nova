@@ -3,7 +3,7 @@
 // SATURATE-to-ZERO (никогда negative, никогда panic, без global-lock —
 // урок Rust 1.60-saga); checked_duration_since → None. Monotonic never goes
 // backwards by contract; clock-source per-OS документирован в D318/docs.
-module conformance.d318_monotonic_non_regression
+module spec_tests.conformance
 
 import std.time.duration
 

@@ -4,7 +4,7 @@
 // После for — vec considered Consumed (pragmatic: `for consume` marks iter).
 // Uses inline Transaction5 literals (не consume-let) — no loose obligations.
 
-module conformance.for_consume_iter_ok
+module spec_tests.conformance
 type Transaction5 consume {
     id int,
 }

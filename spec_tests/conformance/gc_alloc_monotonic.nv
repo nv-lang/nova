@@ -2,7 +2,7 @@
 // должен расти. Это differential test: показывает что counter реально
 // инкрементируется на real allocation.
 
-module conformance.gc_alloc_monotonic
+module spec_tests.conformance
 type Obj { a int, b int }
 
 

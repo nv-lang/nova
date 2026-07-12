@@ -1,6 +1,6 @@
 // D215 named-tuple × D181 fluent `mut @ -> @` / Plan 172.4 Ф.3 A5:
 // mut-NT метод возвращает receiver-ptr; binding к value-локалу — decay.
-module conformance.d215_named_tuple_fluent
+module spec_tests.conformance
 
 type D215Fl (n int)
 fn D215Fl mut @bump(a int) -> @ { @n += a }

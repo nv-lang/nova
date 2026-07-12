@@ -2,7 +2,7 @@
 // Container type в B содержит consume field типа из A.
 // Оба типа должны быть consume (D4 transitivity).
 
-module conformance.cross_pkg_consume_with_field_ok
+module spec_tests.conformance
 // "Package A" — resource type:
 export type Lock consume {
     id int,

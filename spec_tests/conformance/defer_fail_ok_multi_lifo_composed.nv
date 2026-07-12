@@ -1,7 +1,7 @@
 // Plan 100.4.1 (D158): несколько defers с Fail bodies — compile pass.
 // Runtime LIFO composite chain behavior — Plan 100.4.4 (D161).
 
-module conformance.defer_fail_ok_multi_lifo_composed
+module spec_tests.conformance
 type Err1 { msg str }
 type Err2 { msg str }
 type Err3 { msg str }

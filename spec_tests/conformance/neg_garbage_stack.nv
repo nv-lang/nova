@@ -13,7 +13,7 @@
 // ENV NOVA_MAXPROCS=1
 // EXPECT_STDERR invalid NOVA_FIBER_STACK
 
-module conformance.neg_garbage_stack
+module spec_tests.conformance
 test "garbage NOVA_FIBER_STACK: warn + default, program still runs" {
     // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
     mut total = AtomicInt.new(0)

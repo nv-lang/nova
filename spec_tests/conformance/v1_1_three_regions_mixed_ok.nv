@@ -2,7 +2,7 @@
 // barriers (write + self-mutating call). Each region accumulates
 // 2+ reads → three cache lets emitted.
 
-module conformance.v1_1_three_regions_mixed_ok
+module spec_tests.conformance
 type State4 {
     mut x int
 }

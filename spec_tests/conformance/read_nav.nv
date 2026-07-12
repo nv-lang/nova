@@ -2,7 +2,7 @@
 //
 // from([]u8) / @position / @remaining / @has_remaining / @remaining_bytes.
 
-module conformance.read_nav
+module spec_tests.conformance
 // ── from + начальное состояние ─────────────────────────────────────
 
 test "from([]u8) — начальная позиция 0" {

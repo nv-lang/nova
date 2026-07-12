@@ -13,7 +13,7 @@
 //   4. xoshiro256++ step не возвращает 0 после splitmix64-init (ожидание
 //      от Vigna spec).
 
-module conformance.inline_xoshiro_determinism
+module spec_tests.conformance
 // splitmix64 (Vigna, public domain).
 fn splitmix64_step(seed u64) -> u64 {
     mut z = seed + 0x9E3779B97F4A7C15

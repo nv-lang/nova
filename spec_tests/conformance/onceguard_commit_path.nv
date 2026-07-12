@@ -4,7 +4,7 @@
 // Winning fiber receives guard; guard.commit() → Once → DONE.
 // Subsequent callers: try_start_won() returns false (Once already DONE).
 
-module conformance.onceguard_commit_path
+module spec_tests.conformance
 test "try_start_won returns true for first caller, false after commit" {
     mut once = Once.new()
     mut body_ran = AtomicInt.new(0)

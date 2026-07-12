@@ -4,7 +4,7 @@
 // `u32`; in-range int-literals adapt to a u32-context (Plan 159 / D227 range-check, not
 // narrowing); rule 3: `char` (= u32, D128) is the cp type at the `str` border and delegates
 // via `@ as u32`. POS guard for the u32-codepoint API + literal-coercion + char->u32.
-module conformance.d327_codepoint_u32
+module spec_tests.conformance
 
 // Public cp-predicate takes a `u32` codepoint (D327 rule 4), expression body.
 fn d327_is_ascii_upper(cp u32) -> bool => cp >= 0x41 && cp <= 0x5A

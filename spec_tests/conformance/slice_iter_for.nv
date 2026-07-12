@@ -1,7 +1,7 @@
 // Plan 96 Ф.5 D-iter-snap — позитив: for x in arr[a..b] работает.
 // View это []T → for-in использует view->len как snapshot (Go-style).
 
-module conformance.slice_iter_for
+module spec_tests.conformance
 test "for-in over slice view" {
     mut arr = [10, 20, 30, 40, 50]
     ro view = arr[1..4]

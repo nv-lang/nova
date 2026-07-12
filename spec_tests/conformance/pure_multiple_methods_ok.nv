@@ -1,6 +1,6 @@
 // Plan 123.3 T1.3: multiple pure methods cached independently.
 
-module conformance.pure_multiple_methods_ok
+module spec_tests.conformance
 type Stat {
     ro n int
     ro k int

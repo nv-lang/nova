@@ -6,7 +6,7 @@
 // (`_at_x` first region + `_at_x_r1` second region). Semantic
 // preservation: cached path равняется uncached.
 
-module conformance.plan123_1_1_v1_1_two_regions_write_ok
+module spec_tests.conformance
 type Counter6_plan12311v11tworegionswriteok {
     mut x int
 }

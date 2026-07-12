@@ -3,7 +3,7 @@
 // (В release с full SMT это была бы compile error, но в bootstrap-форме —
 // runtime fallback.)
 
-module conformance.contracts_assume_fail
+module spec_tests.conformance
 fn bad_assume(x int) -> int {
     assume x < 0      // программист утверждает x < 0
     x

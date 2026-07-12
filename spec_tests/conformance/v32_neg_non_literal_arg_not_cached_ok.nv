@@ -4,7 +4,7 @@
 // short-circuits on non-literal nested arg. This is positive
 // behavior — программа компилится и работает идентично без cache.
 
-module conformance.v32_neg_non_literal_arg_not_cached_ok
+module spec_tests.conformance
 type Box4 {
     ro base int
 }

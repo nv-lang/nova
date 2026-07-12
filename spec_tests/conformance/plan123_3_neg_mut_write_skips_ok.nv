@@ -1,7 +1,7 @@
 // Plan 123.3 T-NEG.2: @F = ... anywhere in body → V3 conservative
 // skips all pure-call caching (without frame info).
 
-module conformance.plan123_3_neg_mut_write_skips_ok
+module spec_tests.conformance
 type Cell {
     mut value int
 }

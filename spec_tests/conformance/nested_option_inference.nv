@@ -1,6 +1,6 @@
 // Plan 98 Ф.2.1: вложенный Option[Option[T]] — recursive inference.
 
-module conformance.nested_option_inference
+module spec_tests.conformance
 fn outer_some[T](o Option[Option[T]]) -> bool => o.is_some()
 
 test "Option[Option[int]] — рекурсивная inference" {

@@ -3,7 +3,7 @@
 // replaces_self. V7.6 lookup correctly excludes them — cache survives
 // across in-place mutator calls.
 
-module conformance.m7_v7_6_realloc_non_self_param_neg
+module spec_tests.conformance
 type Acc8 {
     mut total int
 }

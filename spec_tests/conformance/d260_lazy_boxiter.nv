@@ -8,7 +8,7 @@
 // vec_lazy — opt-in FILE-модуль (НЕ prelude vec/), вносится `import std.collections.vec_lazy`.
 // Spec: spec/decisions/02-types.md §D260. Один folder-module inprogress.d260_lazy_boxiter;
 // D-prefixed имена уникальны во избежание duplicate-top-level-name клэша.
-module conformance.d260_lazy_boxiter
+module spec_tests.conformance
 
 import std.collections.vec_lazy
 

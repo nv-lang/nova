@@ -1,5 +1,5 @@
 // Probe: single-line named tuple — known baseline (Plan 120 D215).
-module conformance.named_tuple_singleline_ok
+module spec_tests.conformance
 type Point(x f64, y f64)
 
 type Vec3(x f64, y f64, z f64)

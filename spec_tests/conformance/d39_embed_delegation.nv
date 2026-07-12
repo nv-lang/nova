@@ -8,7 +8,7 @@
 //       `@<alias>.method()`.
 // Spec: spec/decisions/02-types.md:1880 (D39). Part of the single `spec_tests.conformance`
 // folder-module; D-prefixed unique type names avoid cross-file top-level collisions.
-module conformance.d39_embed_delegation
+module spec_tests.conformance
 
 type D39Account {
     bal int

@@ -4,7 +4,7 @@
 // `@F.method()` doesn't invalidate `@F` cache when method mutates *F
 // behind pointer (V7.6 V2 spec-driven, не hardcoded list).
 
-module conformance.plan123_followups_2026_06_05_m1_v7_6_heap_record_field_ok
+module spec_tests.conformance
 type Inner4_plan123followups20260605m1v76heaprecordfieldok {
     mut count int
 }

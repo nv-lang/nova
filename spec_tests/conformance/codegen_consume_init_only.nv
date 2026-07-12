@@ -7,7 +7,7 @@
 // Acceptance A110.1.4.a: init evaluates, binding accessible в body,
 // scope executes без runtime error.
 
-module conformance.codegen_consume_init_only
+module spec_tests.conformance
 type SimpleRes3 {
     ro id int
 }

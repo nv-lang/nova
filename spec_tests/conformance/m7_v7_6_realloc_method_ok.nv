@@ -5,7 +5,7 @@
 // invalidate across `@F.replace_with()` calls. Semantic preservation
 // verified through observed slot replacement.
 
-module conformance.m7_v7_6_realloc_method_ok
+module spec_tests.conformance
 type Slot5 {
     mut count int
 }

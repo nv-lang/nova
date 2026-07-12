@@ -8,7 +8,7 @@
 // never-emitted `NovaRes_NovaArray_nova_int_p_nova_str` / an `fn_ret_partition`
 // hijack → `pr.0` mistyped `int` (E_PRIMITIVE_NO_PROTOCOL_METHOD `int`.len).
 
-module conformance.prelude_collectors
+module spec_tests.conformance
 test "prelude sequence collects all-Ok" {
     ro xs []Result[int, str] = [Ok(1), Ok(2), Ok(3)]
     match sequence(xs) {

@@ -1,6 +1,6 @@
 // Plan 90 Ф.4.4 — []T.copy_within: memmove, overlap-safe.
 
-module conformance.copy_within
+module spec_tests.conformance
 test "copy_within — без перекрытия" {
     mut a []u8 = [1, 2, 3, 4, 5]
     a.copy_within(0, 3, 2)

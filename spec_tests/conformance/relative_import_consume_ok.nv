@@ -4,7 +4,7 @@
 //
 // Simulated single-file mock: `./types.Connection` consume-type.
 
-module conformance.relative_import_consume_ok
+module spec_tests.conformance
 // "./types.nv" (simulated inline):
 export type Connection consume {
     host str,

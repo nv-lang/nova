@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-module conformance.d102_static_generic_static_defaults
+module spec_tests.conformance
 
 // Plan 196 wave-2 — matrix aspect {default value-arg, named arg} × forms
 // {static-method, generic-static-method}. The free-fn form is covered by

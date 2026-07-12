@@ -3,7 +3,7 @@
 // Match-arm исключение: `pattern => expr` или `pattern => { block }`.
 // Closure-light `|x| body` — без `=>` (отдельная грамматика D22).
 // Spec: spec/decisions/03-syntax.md D40. Part of the SINGLE `spec_tests.conformance` folder-module.
-module conformance.d40_function_body_arrow_vs_brace
+module spec_tests.conformance
 
 // --- expression-body: `=> expr` ---
 

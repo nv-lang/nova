@@ -4,7 +4,7 @@
 // `?` больше НЕ задействует Fail (унификация). Behavioral: на Err/None ранний return виден
 // снаружи как Err/None; на Ok/Some — продолжение с разворотом. Извлечение в asserts — через
 // `??` (D86). Spec: spec/decisions/04-effects.md (D85). Один folder-module CU.
-module conformance.d85_question_return
+module spec_tests.conformance
 
 fn d85_ok() -> Result[int, str] => Ok(10)
 fn d85_err() -> Result[int, str] => Err("boom")

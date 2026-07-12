@@ -4,7 +4,7 @@
 // Verifies codegen handles deep nesting + LIFO order correct + no stack
 // exhaustion.
 
-module conformance.stress_nested_10_levels_t11_2
+module spec_tests.conformance
 type StressRes3 {
     ro depth int
 }

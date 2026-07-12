@@ -1,5 +1,5 @@
 // Plan 57.B.5: group/case sub-benchmarks DSL compiles.
-module conformance.p4_bench_groups_compiles
+module spec_tests.conformance
 bench "grouped" {
     group "int" {
         case "add" {

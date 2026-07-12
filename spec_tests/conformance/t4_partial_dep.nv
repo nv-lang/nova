@@ -2,7 +2,7 @@
 // `(a, b) = (b, 1)` — R0=b reads L1, R1=1 is independent.
 // Verifies conservative tmp allocation for the dependent rhs element.
 
-module conformance.t4_partial_dep
+module spec_tests.conformance
 test "partial dependency: a gets old b, b gets constant" {
     mut a = 5
     mut b = 10

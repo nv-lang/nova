@@ -3,7 +3,7 @@
 // внутри `(`, `[`, `{`, перед `.` (method chain), перед `else`/`else if`,
 // перед `||`/`&&` (leading form допустима).
 // Spec: spec/decisions/03-syntax.md D49. Part of the SINGLE `spec_tests.conformance` folder-module.
-module conformance.d49_statement_separator_newlines
+module spec_tests.conformance
 
 test "newline separates statements — no semicolons needed (D49)" {
     ro x = 1

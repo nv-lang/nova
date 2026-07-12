@@ -1,7 +1,7 @@
 // Plan 100.4.4 (D161): backward-compat — infallible defers работают
 // как раньше; D161 wrap не ломает Plan 20 D90 semantics.
 
-module conformance.backward_compat_no_fail_defers
+module spec_tests.conformance
 fn log(_n int) -> () { () }
 
 fn process1() -> () {

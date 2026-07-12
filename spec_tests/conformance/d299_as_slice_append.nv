@@ -11,7 +11,7 @@
 // Spec: spec/decisions/02-types.md:13025 (D299). Depends on D239 (`[]T ≡ Vec[T]`),
 // D144 (sub-slice views), D72 (protocol bound). Part of the SINGLE
 // `spec_tests.conformance` folder-module; D-prefixed names avoid clashes.
-module conformance.d299_as_slice_append
+module spec_tests.conformance
 
 test "append a concrete Vec via the AsSlice bound — bulk-copies the elements (D299)" {
     mut a = []int.of(1, 2, 3)

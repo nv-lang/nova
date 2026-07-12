@@ -1,4 +1,4 @@
-module conformance.value_semantics
+module spec_tests.conformance
 test "copy semantics: assignment copies, not aliases" {
     mut a [3]int = [1, 2, 3]
     mut b = a

@@ -1,6 +1,6 @@
 // Plan 123.4 T1.2: depth-3 chain `@parent.inner.cfg`.
 
-module conformance.plan123_4_chain_three_level_ok
+module spec_tests.conformance
 type Cfg {
     ro limit int
 }

@@ -5,7 +5,7 @@
 // Это explicit negative-guard: EXPECT_STDOUT a — если codegen регрессирует
 // обратно к nova_print_int, output будет "97" и тест FAIL.
 
-module conformance.f13_char_not_97_regression
+module spec_tests.conformance
 // EXPECT_STDOUT a
 // EXPECT_STDOUT z
 // EXPECT_STDOUT я

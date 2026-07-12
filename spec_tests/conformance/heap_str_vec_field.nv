@@ -23,7 +23,7 @@
 //   WithVec → size 16, align 8, pointer_offsets [8]
 //   Both    → size 32, align 8, pointer_offsets [8, 24]
 
-module conformance.heap_str_vec_field
+module spec_tests.conformance
 type WithStr {
     id int
     name str

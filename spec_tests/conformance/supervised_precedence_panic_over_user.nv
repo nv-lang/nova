@@ -14,7 +14,7 @@
 // USER), primary был бы int-тег 50xx → stderr БЕЗ "ZZZ_PANIC_WINS" → FAIL.
 // Детерминированно (не зависит от порядка прибытия): ранг PANIC строго выше.
 
-module conformance.supervised_precedence_panic_over_user
+module spec_tests.conformance
 test "supervised precedence panic over user" panics "ZZZ_PANIC_WINS" {
     println("PRECEDENCE_START")
     supervised {

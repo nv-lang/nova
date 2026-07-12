@@ -1,7 +1,7 @@
 // Plan 123.1 T1.1: ro field accessed 2+ times → cache emitted.
 // Expected: `let _at_x = @x` + `let _at_y = @y` prefix lets injected.
 
-module conformance.ro_field_unconditional_ok
+module spec_tests.conformance
 type Point3 {
     ro x int
     ro y int

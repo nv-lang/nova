@@ -2,7 +2,7 @@
 //
 // write_zero(n) / write_bytes(src) / write_char(c) + Unicode + str.
 
-module conformance.write_misc
+module spec_tests.conformance
 // ── write_zero ─────────────────────────────────────────────────────
 
 test "write_zero — n нулевых байт" {

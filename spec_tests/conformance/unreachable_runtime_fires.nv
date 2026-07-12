@@ -2,7 +2,7 @@
 // триггерим unreachable: должен panic с сообщением "unreachable: ${reason}".
 //
 
-module conformance.unreachable_runtime_fires
+module spec_tests.conformance
 fn force_unreachable() -> int {
     if true {
         unreachable("forced for test")

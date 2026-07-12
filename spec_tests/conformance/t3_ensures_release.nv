@@ -21,7 +21,7 @@
 // `UNREACHABLE` is never printed because the postcondition abort terminates
 // the process first.
 
-module conformance.t3_ensures_release
+module spec_tests.conformance
 fn at_least_ten(x int) -> int
     ensures result >= 10
 => x

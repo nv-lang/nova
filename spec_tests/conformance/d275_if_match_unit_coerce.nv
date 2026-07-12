@@ -7,7 +7,7 @@
 // value-typed `if c {1} else {2}` НЕ трогается (гейт chosen != unit);
 // infer↔emit симметрия для match (unit-арм доминирует). Шаблоны сверены с
 // nova_tests/cgfix_fluent_tail_if. Один folder-module `spec_tests.conformance`.
-module conformance.d275_if_match_unit_coerce
+module spec_tests.conformance
 
 // then = fluent Vec* хвост, else = unit → if-стейтмент коэрсится в unit.
 fn d275_fill(cond bool) -> []int {

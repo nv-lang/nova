@@ -4,7 +4,7 @@
 // type-checker (compute_protocol_satisfaction inline) не требует named-
 // типа в registry; вызов метода через структурную совместимость работает.
 
-module conformance.pos_anon_protocol_param
+module spec_tests.conformance
 type Doc2 {
     title str
 }

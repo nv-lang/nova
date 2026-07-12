@@ -8,7 +8,7 @@
 //
 // Бежит ARMED на дефолтном worker-count (M:N — периметр политики).
 
-module conformance.supervisor_escalate_test
+module spec_tests.conformance
 import std.concurrency.supervisor as sup
 
 test "Supervisor=escalate: падение эскалируется — паритет с дефолтом" {

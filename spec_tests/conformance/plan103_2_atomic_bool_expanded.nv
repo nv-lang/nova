@@ -4,7 +4,7 @@
 // All 2-variant methods now have a _bool (SeqCst default) and a
 // _MemOrdering (explicit) overload.
 
-module conformance.plan103_2_atomic_bool_expanded
+module spec_tests.conformance
 test "AtomicBool load with explicit ordering" {
     mut a = AtomicBool.new(true)
     assert(a.load(Acquire))

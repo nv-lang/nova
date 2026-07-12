@@ -1,4 +1,4 @@
-module conformance.blanket_basic
+module spec_tests.conformance
 import std.collections.vec.{Vec, VecIter}
 import std.prelude.collections.{Next}
 

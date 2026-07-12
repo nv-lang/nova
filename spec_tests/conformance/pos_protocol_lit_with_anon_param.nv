@@ -4,7 +4,7 @@
 // fn принимает анонимный protocol-type `c protocol { @close() -> () }`
 // (Plan 97 Ф.2). Caller передаёт protocol-литерал значение.
 
-module conformance.pos_protocol_lit_with_anon_param
+module spec_tests.conformance
 export type Resource protocol {
     @close() -> ()
 }

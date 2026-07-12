@@ -1,4 +1,4 @@
-module conformance.hash
+module spec_tests.conformance
 test "equal vecs hash equal" {
     ro a = Vec[int].of(1, 2, 3)
     ro b = Vec[int].of(1, 2, 3)

@@ -1,7 +1,7 @@
 // Plan 123.1 T2.9 (negative-style): embed field skipped (use-style
 // embed = D39 auto-proxy, не direct field caching applicable).
 
-module conformance.plan123_1_embed_field_no_cache_ok
+module spec_tests.conformance
 type Inner_plan1231embedfieldnocacheok {
     ro v int
 }

@@ -7,7 +7,7 @@
 // Негативы — neg/d157_*.nv (consume-метод через view-параметр; двойной invoke
 // consume-closure). Шаблоны сверены с nova_tests/plan100_3.
 // Один folder-module `spec_tests.conformance`.
-module conformance.d157_view_default_closures
+module spec_tests.conformance
 
 type D157Tx consume {
     id int,

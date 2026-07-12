@@ -1,6 +1,6 @@
 // Plan 90 Ф.4.5 — []T.fill: заполнение значением.
 
-module conformance.fill
+module spec_tests.conformance
 test "fill — заполнение значением" {
     mut a []u8 = [1, 2, 3, 4]
     a.fill(7)

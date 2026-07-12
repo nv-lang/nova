@@ -1,4 +1,4 @@
-module conformance.core_api
+module spec_tests.conformance
 test "cap setter — exact, round-trip, shrink-to-fit" {
     mut v = Vec[int].of(1, 2, 3)
     v.cap(10)

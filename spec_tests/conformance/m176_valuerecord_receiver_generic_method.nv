@@ -11,7 +11,7 @@
 // `NovaRes_<ok>_NovaValue_<E>*`). Receiver ABI (`&d` for the mut value-record) was
 // already correct.
 
-module conformance.m176_valuerecord_receiver_generic_method
+module spec_tests.conformance
 type DeErr value { ro code int }
 
 type VDec value { mut pos int }

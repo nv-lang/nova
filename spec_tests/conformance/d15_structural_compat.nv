@@ -7,7 +7,7 @@
 // методов, и одна generic-функция диспетчеризует к конкретному методу каждого.
 // (D72 покрывает single-method bound resolution; здесь акцент на declaration-free
 // multi-method структурном соответствии — само ядро D15.)
-module conformance.d15_structural_compat
+module spec_tests.conformance
 
 // Именованный контракт — несколько сигнатур.
 type D15Shape protocol {

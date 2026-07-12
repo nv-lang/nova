@@ -2,7 +2,7 @@
 // expressed across loop forms with various inputs must yield
 // identical results regardless of LICM caching.
 
-module conformance.prop_licm_semantic_equiv_ok
+module spec_tests.conformance
 type Calc5 {
     ro base int
     ro step int

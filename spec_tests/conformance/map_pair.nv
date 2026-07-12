@@ -3,7 +3,7 @@
 // tuple element to `nova_int` (`_NovaTuple2`), the unsigned high-bit element reads SIGNED.
 // Control: an `int` element round-trips even when erased (int IS nova_int), proving the test
 // discriminates width, not just "tuples work".
-module conformance.map_pair
+module spec_tests.conformance
 import std.collections.vec_lazy
 
 test "lazy map to (uint,uint) tuple preserves unsigned width" {

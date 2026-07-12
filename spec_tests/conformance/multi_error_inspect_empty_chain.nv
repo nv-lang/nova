@@ -2,7 +2,7 @@
 // MultiError может представлять single-error case (suppressed = []).
 // Bootstrap caller получает primary как обычно.
 
-module conformance.multi_error_inspect_empty_chain
+module spec_tests.conformance
 fn make_single() -> MultiError =>
     { primary: "single error", suppressed: [] }
 

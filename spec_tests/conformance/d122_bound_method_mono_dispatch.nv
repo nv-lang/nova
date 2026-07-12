@@ -7,7 +7,7 @@
 // bound-method signature substitutes the runtime receiver type). Spec: spec/decisions/02-types.md
 // §D122 (Plan 56 Ф.1, mono path). Part of the SINGLE `spec_tests.conformance` folder-module;
 // D-prefixed names avoid duplicate-top-level-name clashes in the shared module.
-module conformance.d122_bound_method_mono_dispatch
+module spec_tests.conformance
 
 // Protocol used as the K-bound — TWO methods (hash + equal), like HashMap's K bound.
 type D122KeyLike protocol {

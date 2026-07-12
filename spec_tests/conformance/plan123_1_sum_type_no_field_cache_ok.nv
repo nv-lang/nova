@@ -2,7 +2,7 @@
 // record fields → pass adds receiver type to skip_types; methods
 // on sum types unaffected.
 
-module conformance.plan123_1_sum_type_no_field_cache_ok
+module spec_tests.conformance
 type Shape2 | Circle(int) | Square(int) | Rect(int, int)
 
 fn Shape2 @area() -> int {

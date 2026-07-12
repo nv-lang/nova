@@ -1,4 +1,4 @@
-module conformance.str_new_test
+module spec_tests.conformance
 // Plan 91.7 Part D: str.new() canonical default.
 
 test "str.new() == \"\"" {

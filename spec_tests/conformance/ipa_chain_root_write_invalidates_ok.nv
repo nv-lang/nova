@@ -1,7 +1,7 @@
 // Plan 123.7.1 T4.2 (V4.1 negative): writing to chain ROOT field
 // DOES invalidate chain cache.
 
-module conformance.ipa_chain_root_write_invalidates_ok
+module spec_tests.conformance
 type Layer {
     ro v int
 }

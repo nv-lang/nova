@@ -1,7 +1,7 @@
 // Plan 100.4.4 (D161): 3 defers, средний failable (Fail effect). LIFO
 // continues через D161 per-defer NovaFailFrame wrap.
 
-module conformance.multi_defer_partial_fail_ok
+module spec_tests.conformance
 type Err { msg str }
 
 fn cleanup_ok1() -> () { () }

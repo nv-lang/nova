@@ -7,7 +7,7 @@
 // попадают и НЕ должны разбоксовываться. Этот тест ловит ошибочный
 // разбокс genuine-pointer элементов.
 
-module conformance.record_elem_regression
+module spec_tests.conformance
 type Point { x int, y int }
 
 

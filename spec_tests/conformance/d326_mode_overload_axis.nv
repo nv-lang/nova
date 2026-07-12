@@ -5,7 +5,7 @@
 // (последняя точка использования) → consume-версия. Для кучевого T все три
 // имеют одинаковый ABI (Р6: ref H ≡ H) и различаются ТОЛЬКО режимом.
 // Part of the SINGLE `spec_tests.conformance` folder-module.
-module conformance.d326_mode_overload_axis
+module spec_tests.conformance
 
 type D326Box { v int }
 fn D326Box.new(n int) -> D326Box => { v: n }

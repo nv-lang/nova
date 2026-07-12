@@ -1,7 +1,7 @@
 // Plan 90.1 — позитив: reserve + push — preallocate hint.
 // D141 amend: reserve(extra) grows cap to at least len+extra; len unchanged.
 
-module conformance.reserve_then_push
+module spec_tests.conformance
 test "reserve then push 100 elements" {
     mut arr []int = []
     arr.reserve(100)

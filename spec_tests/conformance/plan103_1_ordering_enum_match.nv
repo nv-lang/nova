@@ -4,7 +4,7 @@
 // как patterns в match-выражении и что match exhaustive (wildcard не нужен
 // если все 5 покрыты).
 
-module conformance.plan103_1_ordering_enum_match
+module spec_tests.conformance
 fn ordering_to_int(ord MemOrdering) -> int =>
     match ord {
         Relaxed => 0

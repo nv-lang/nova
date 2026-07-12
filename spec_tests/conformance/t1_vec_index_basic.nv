@@ -1,7 +1,7 @@
 // Plan 138 Ф.4 — t1: v[i] basic indexing on Vec[T]
 // A1: v[i] → T, panics on OOB
 
-module conformance.t1_vec_index_basic
+module spec_tests.conformance
 import std.collections.vec.{Vec}
 
 test "v[0] v[1] v[2] on Vec[int]" {

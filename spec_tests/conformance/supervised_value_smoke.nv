@@ -1,5 +1,5 @@
 // Plan 173.1 Ф.1 smoke: supervised{} — value-expression.
-module conformance.supervised_value_smoke
+module spec_tests.conformance
 test "supervised trailing value propagates" {
     ro v = supervised {
         42

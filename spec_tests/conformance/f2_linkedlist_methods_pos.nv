@@ -9,7 +9,7 @@
 // generic_type_methods lookup + base_method_name construction →
 // emits `Nova_LL____nova_int_method_len(l)` correctly.
 
-module conformance.f2_linkedlist_methods_pos
+module spec_tests.conformance
 type LinkedList3[T]
     | Nil
     | Cons(T, LinkedList3[T])

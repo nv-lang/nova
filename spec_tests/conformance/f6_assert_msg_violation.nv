@@ -5,7 +5,7 @@
 // contracts. The LOC prefix is auto-added by codegen; the user supplies only
 // the message. Combination: assert, with msg.
 
-module conformance.f6_assert_msg_violation
+module spec_tests.conformance
 fn f6_assert_msg_violation_check(a int) -> int {
     assert(a > 0, "a must be positive")
     a

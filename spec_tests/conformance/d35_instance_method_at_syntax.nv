@@ -4,7 +4,7 @@
 // Мутирующий метод — `fn Type mut @method(...)`.
 // `@name` в теле = поле; `@name()` = вызов instance-метода (cross-call).
 // Spec: spec/decisions/03-syntax.md D35. Part of the SINGLE `spec_tests.conformance` folder-module.
-module conformance.d35_instance_method_at_syntax
+module spec_tests.conformance
 
 // --- Базовый тип с полями ---
 

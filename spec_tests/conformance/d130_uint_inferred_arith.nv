@@ -5,7 +5,7 @@
 // Regression guard for the operand/result collapse where `2*a` / `a+b` over `uint` lost
 // their unsigned identity in the resolved-types channel and lowered to `nova_int`.
 // Spec: spec/decisions/02-types.md (D130). Single `spec_tests.conformance` folder-module.
-module conformance.d130_uint_inferred_arith
+module spec_tests.conformance
 
 test "uint arithmetic result keeps unsigned identity through inference (D130, RANK1)" {
     ro hi uint = 0x8000000000000000   // 2^63 — high bit set; as SIGNED int64 this is NEGATIVE

@@ -1,6 +1,6 @@
 // Plan 91 Ф.5 conformance: text/string realistic use-cases.
 // CSV-like parsing with split + parse_int.
-module conformance.text_realistic
+module spec_tests.conformance
 import std.runtime.string.{ParseIntError}
 
 test "csv parsing — count rows" {

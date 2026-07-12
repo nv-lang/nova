@@ -11,7 +11,7 @@
 // высокоиндексного (>32) эффекта не затирается завершившимися дочерними фиберами
 // (аналог concurrency/per_fiber_handlers SECTION 2+4, но для эффекта за слотом 32).
 
-module conformance.registry_size
+module spec_tests.conformance
 type Eff01 effect { get() -> int }
 type Eff02 effect { get() -> int }
 type Eff03 effect { get() -> int }

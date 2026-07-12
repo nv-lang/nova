@@ -1,7 +1,7 @@
 // Plan 90.1 — позитив: append — append with growth.
 // D141 amend: 2x cap growth, memmove, self-extend safe.
 
-module conformance.append_basic
+module spec_tests.conformance
 test "append basic []int" {
     mut dst []int = [1, 2]
     ro src []int = [3, 4, 5]

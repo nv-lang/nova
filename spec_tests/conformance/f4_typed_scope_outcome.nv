@@ -6,7 +6,7 @@
 //   - a bare `throw "msg"` surfaces as `Failure(any = str)`.
 // Runtime-observable: throw caught by `with Fail`, defer(o) inspects the outcome.
 
-module conformance.f4_typed_scope_outcome
+module spec_tests.conformance
 type F4Err { code int }
 
 fn f4_throw_typed() Fail[F4Err] -> () {

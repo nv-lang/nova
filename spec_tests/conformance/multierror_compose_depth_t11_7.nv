@@ -3,7 +3,7 @@
 // Plan 110.6.10 T11.7 (D193): MultiError compose depth verification
 // (cycle-safety + depth-limit 256 stress).
 
-module conformance.multierror_compose_depth_t11_7
+module spec_tests.conformance
 fn make_multi_with_depth(depth int) -> MultiError {
     mut suppressed []str = []str.new()
     suppressed.cap(depth)

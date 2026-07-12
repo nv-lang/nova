@@ -1,7 +1,7 @@
 // Plan 100.1 (D133 / D4): `consume field T` — field-level marker парсируется.
 // Positive parser test.
 
-module conformance.parser_ok_field_consume
+module spec_tests.conformance
 
 // D4: double-marker — и тип, и поле должны быть consume.
 type Inner consume {

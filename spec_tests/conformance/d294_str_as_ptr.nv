@@ -6,7 +6,7 @@
 // Прямой аналог Rust `str::ptr() -> *const u8`. Шаблоны сверены с
 // nova_tests/plan91_12/net_v2_str_as_ptr_ok.nv. Один folder-module
 // `spec_tests.conformance`.
-module conformance.d294_str_as_ptr
+module spec_tests.conformance
 
 test "as_ptr: non-null для непустой строки; *u8 → int каст (D294)" {
     ro d294_s = "hello"

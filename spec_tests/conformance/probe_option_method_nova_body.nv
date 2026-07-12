@@ -9,7 +9,7 @@
 // тестируется ДО переноса самих предикатов (Ф.4 коммитится отдельно
 // и удаляет трамплины).
 
-module conformance.probe_option_method_nova_body
+module spec_tests.conformance
 fn Option[T] @my_present() -> bool => match @ { Some(_) => true, None => false }
 
 test "Option[int] @my_present — Some/None" {

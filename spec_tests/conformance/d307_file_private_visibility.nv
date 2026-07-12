@@ -19,7 +19,7 @@
 //   §«Синтаксис» (lattice priv(file) ⊂ module ⊂ export), §1 (resolve / own-file set),
 //   §5.2 (own-file positive), §5.5 (regression: module-default reach unchanged).
 // Один folder-module `spec_tests.conformance`; D-prefixed имена уникальны.
-module conformance.d307_file_private_visibility
+module spec_tests.conformance
 
 // ── §1 syntax: file-private const / type / free fn (visible only in THIS file) ──────
 priv(file) const D307_K = 42            // file-local константа

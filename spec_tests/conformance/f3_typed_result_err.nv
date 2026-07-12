@@ -1,4 +1,4 @@
-module conformance.f3_typed_result_err
+module spec_tests.conformance
 // Plan 61 followup #3: Result[T, CustomErr] с typed Err payload.
 // Hybrid: Nova_Result extended err_typed_payload + tid; constructor
 // nova_make_Result_Err_typed для custom Err; !! dispatch'тся через

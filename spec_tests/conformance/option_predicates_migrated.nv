@@ -2,7 +2,7 @@
 // (а не C-трамплины). Проверяем через `match @`-эквиваленты и реальные
 // контексты использования: переменные, элементы массива, generic-функция.
 
-module conformance.option_predicates_migrated
+module spec_tests.conformance
 test "Option[int]: is_some/is_none — базовый паритет с match" {
     ro a Option[int] = Some(42)
     ro b Option[int] = None

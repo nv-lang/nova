@@ -3,7 +3,7 @@
 // @a.b.c.x.k (length 5, share length-3 prefix @a.b.c). V4.3 должен
 // обработать обе глубины корректно.
 
-module conformance.v43_mixed_length_chains_ok
+module spec_tests.conformance
 type Bot { ro k int }
 type Mid1 { ro x Bot }
 type Lv2 { ro c int, ro d Mid1 }

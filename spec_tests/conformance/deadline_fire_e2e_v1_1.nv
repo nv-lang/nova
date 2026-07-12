@@ -19,7 +19,7 @@
 //   4. cleanup завершается → nv_cleanup_watchdog_disarm →
 //      exit-событие (duration≈30ms, overrun=true, порог 1ms < 30ms)
 
-module conformance.deadline_fire_e2e_v1_1
+module spec_tests.conformance
 type SlowCleanup4 { ro id int }
 
 fn SlowCleanup4.new(id int) -> SlowCleanup4 => { id }

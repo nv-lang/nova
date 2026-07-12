@@ -2,7 +2,7 @@
 // (umbrella §8.1 verification method #4). Runs same logic через
 // 4 different access patterns; results must match.
 
-module conformance.prop_semantic_equivalence_ok
+module spec_tests.conformance
 type Vl6 {
     ro a int
     ro b int

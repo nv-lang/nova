@@ -1,4 +1,4 @@
-module conformance.blanket_control
+module spec_tests.conformance
 import std.collections.vec.{Vec}
 
 test "vec basics work" {

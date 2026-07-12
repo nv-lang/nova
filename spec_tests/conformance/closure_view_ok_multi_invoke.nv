@@ -1,6 +1,6 @@
 // Plan 100.3 (D157): view-closure (FnMut/Fn analog) — multiple invokes OK.
 
-module conformance.closure_view_ok_multi_invoke
+module spec_tests.conformance
 type Transaction4 consume {
     id int,
 }

@@ -8,7 +8,7 @@
 // const survived alongside the generic instance.
 // EXPECT_STDOUT 4242
 
-module conformance.f3_generic_body_const_kept
+module spec_tests.conformance
 const LOOKUP int = 4242
 
 // Generic free fn whose body is the ONLY reader of LOOKUP.

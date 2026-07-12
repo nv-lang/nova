@@ -3,7 +3,7 @@
 // literal `(1, 2)` and identical int литералом → only ONE evaluation
 // after codegen; cached local reused.
 
-module conformance.v32_tuple_literal_args_ok
+module spec_tests.conformance
 type Box8 {
     ro base int
 }

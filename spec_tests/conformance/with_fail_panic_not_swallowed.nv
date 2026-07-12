@@ -12,7 +12,7 @@
 // БЕЗ panic → test-runner НЕ увидит EXPECT_RUNTIME_PANIC → FAIL.
 // Если fix — panic доходит до runtime → "panic: boom" → PASS.
 
-module conformance.with_fail_panic_not_swallowed
+module spec_tests.conformance
 type WFErr { msg str }
 
 fn wf_panics() Fail[WFErr] -> int {

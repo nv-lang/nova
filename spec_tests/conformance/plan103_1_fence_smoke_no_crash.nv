@@ -4,7 +4,7 @@
 // = 1000 вызовов fence. Проверяет что runtime (nova_fn_fence/atomic_thread_fence)
 // не падает при многократном вызове с разными orderings.
 
-module conformance.plan103_1_fence_smoke_no_crash
+module spec_tests.conformance
 /// 5 fence-вызовов — один полный цикл по всем вариантам ordering.
 fn fence_cycle() {
     fence(Relaxed)

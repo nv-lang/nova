@@ -1,6 +1,6 @@
 // Plan 115 Ф.1 T1.1-T1.2 — `(0 as *())` literal + equality + default value.
 
-module conformance.t1_null_ptr_ok
+module spec_tests.conformance
 test "(0 as *()) literal parses and assigns" {
     ro p *() = (0 as *())
     assert(p == (0 as *()))

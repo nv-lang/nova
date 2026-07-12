@@ -3,7 +3,7 @@
 // D239 ([]T≡Vec): сообщение паники `Vec: slice ... out of bounds for length N`
 // (было `array: slice`). Директива выровнена под новый текст.
 
-module conformance.neg_slice_a_negative
+module spec_tests.conformance
 test "neg slice a negative" panics "Vec: slice" {
     mut arr = [10, 20, 30, 40, 50]
     ro _ = arr[-1..3]

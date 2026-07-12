@@ -2,7 +2,7 @@
 // Hot-path elision: codegen omits Fail-infrastructure for Never.
 // Generic bound `[T Cleanup[Never]]` тоже не требует Fail у caller.
 // Spec: spec/decisions/03-syntax.md D194. Part of the SINGLE `spec_tests.conformance` folder-module.
-module conformance.d194_consumable_never_hot_path
+module spec_tests.conformance
 
 type D194Guard { value int }
 

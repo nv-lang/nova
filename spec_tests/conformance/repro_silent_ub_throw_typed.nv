@@ -1,4 +1,4 @@
-module conformance.repro_silent_ub_throw_typed
+module spec_tests.conformance
 // Plan 61 Ф.0 repro: Silent UB #1 — throw user-error становится garbage.
 //
 // Текущий codegen (emit_c.rs:8503-8517): для не-nova_str value делает

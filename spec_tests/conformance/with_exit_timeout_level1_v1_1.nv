@@ -10,7 +10,7 @@
 //
 // Fires когда method_overloads contains (TypeName, "exit_timeout_ms").
 
-module conformance.with_exit_timeout_level1_v1_1
+module spec_tests.conformance
 type Conn10 { ro h int }
 fn Conn10.new(h int) -> Conn10 => { h }
 

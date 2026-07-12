@@ -4,7 +4,7 @@
 // `@method()` в контракте — внятная ошибка (SMT-путь — corpus contracts/ с
 // REQUIRES_SMT_BACKEND; здесь — runtime-enforcement недоказанного requires,
 // happy-path). Один folder-module `spec_tests.conformance`.
-module conformance.d256_contract_self_field
+module spec_tests.conformance
 
 type D256Counter {
     count int

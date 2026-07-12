@@ -4,7 +4,7 @@
 // (normal end-of-scope И early `return`), сохраняя LIFO. Проверяем оба пути
 // через mut-trail; error-path defer покрыт plan100_4_* (verified green).
 
-module conformance.f1_defer_plain_all_paths
+module spec_tests.conformance
 fn observe_normal() -> str {
     mut trail = ""
     {

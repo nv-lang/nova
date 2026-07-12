@@ -1,7 +1,7 @@
 // D227 — Numeric literal inference: голый литерал без context → int (= i64 per D129).
 // В позиции с явным numeric target: coerce без cast. Range-check compile-time.
 // Spec: spec/decisions/03-syntax.md D227. Part of the SINGLE `spec_tests.conformance` folder-module.
-module conformance.d227_numeric_literal_inference
+module spec_tests.conformance
 
 // Default inference: untyped literal → int
 fn d227_double(x int) -> int => x * 2

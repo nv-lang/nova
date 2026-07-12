@@ -4,7 +4,7 @@
 // ошибка ребёнка → Escalate (acc не возвращается, ошибка ловится) —
 // критерии приёмки №1/№3 плана.
 
-module conformance.parfor_iter_edge
+module spec_tests.conformance
 // Пользовательский итератор без @len() — ленивый источник (Iter protocol).
 type CountUp { mut cur int; limit int }
 

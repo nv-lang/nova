@@ -6,7 +6,7 @@
 // alias. Покрытие: (1) bare import + qualified вызов через last-segment;
 // (2) `as alias` + вызов через alias. Негатив — neg/d289_redundant_alias_neg.nv.
 // Шаблоны сверены с nova_tests/plan163. Один folder-module `spec_tests.conformance`.
-module conformance.d289_import_last_segment
+module spec_tests.conformance
 
 import std.runtime.raw_mem
 import std.runtime.raw_mem as rmem

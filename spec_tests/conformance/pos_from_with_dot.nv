@@ -8,7 +8,7 @@
 // auto-derive ретрактированы; `.from` остаётся просто конвенцией имени
 // конструктора-конверсии (не протокол).
 
-module conformance.pos_from_with_dot
+module spec_tests.conformance
 type Fahrenheit {
     value f64
 }

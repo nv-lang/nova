@@ -1,7 +1,7 @@
 // Plan 123.2 T-PROP.2: LICM composes correctly with Plan 123.1
 // (no double-cache, no shadowing, all reads correctly resolved).
 
-module conformance.plan123_2_prop_licm_composition_ok
+module spec_tests.conformance
 type Mix3 {
     ro factor int
     mut counter int

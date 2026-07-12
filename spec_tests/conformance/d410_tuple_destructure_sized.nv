@@ -19,7 +19,7 @@
 // bare-literal elements under a dropped annotation, not destructuring in general.
 // Spec: spec/decisions/02-types.md (D55 literal coercion / uint≠int). Single `spec_tests.
 // conformance` folder-module; all top-level names D410-prefixed to avoid CU-wide collisions.
-module conformance.d410_tuple_destructure_sized
+module spec_tests.conformance
 
 // ── DISCRIMINATING #1: first-position unsigned high-bit literal under a `(uint, uint)` pattern
 //    annotation. The annotation is dropped → element binds as signed `nova_int` = -2^63. ──

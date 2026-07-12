@@ -3,7 +3,7 @@
 // Tests 3-level deep nested supervised scopes with throw propagation.
 // Verifies cooperative resume works at each nesting depth.
 
-module conformance.triple_nested_throw
+module spec_tests.conformance
 test "triple nested throw — outermost handler catches" {
     mut caught = false
     ro _ = with Fail[int] = |e| {

@@ -1,7 +1,7 @@
 // Plan 123.7.1 T-NEG.1: unknown callee (free fn) — conservative
 // invalidate (IPA can't analyze).
 
-module conformance.neg_ipa_unknown_callee_conservative_ok
+module spec_tests.conformance
 type Bag3 {
     mut value int
 }

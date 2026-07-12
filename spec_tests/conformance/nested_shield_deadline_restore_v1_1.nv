@@ -21,7 +21,7 @@
 // Outer continues body for ~50ms (well over inner budget, well under outer
 // budget). Outer must NOT see a bogus watchdog-варн (ист. throw CleanupTimeoutError) — pre-fix it would.
 
-module conformance.nested_shield_deadline_restore_v1_1
+module spec_tests.conformance
 import std.prelude.errors
 
 type InnerRes4 { ro id int }

@@ -3,7 +3,7 @@
 // (через D88 default); функция, возвращающая `Effect[E]` —
 // корректно типизирована.
 
-module conformance.pos_effect_type_alias
+module spec_tests.conformance
 type Logger2 effect {
     log(msg str) -> ()
 }

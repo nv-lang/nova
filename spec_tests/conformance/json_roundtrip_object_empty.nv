@@ -4,7 +4,7 @@
 // эмитить trailing comma при empty map; parser принимает `{}` как
 // `Object(HashMap.new())` без полей.
 
-module conformance.json_roundtrip_object_empty
+module spec_tests.conformance
 import std.encoding.json.{JsonValue, Json}
 import std.collections.hashmap.{HashMap}
 

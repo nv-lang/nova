@@ -3,7 +3,7 @@
 // из Nova-body (D-R4). `@eq_ignore_ascii_case` складывает ТОЛЬКО ASCII A-Z/a-z. V2: пустой
 // паттерн в split/find/contains — определённый край, НЕ паника. Behavioral: сравнения
 // различают byte-порядок (а не case-folded/locale). Spec: spec/decisions/03-syntax.md (D254).
-module conformance.d254_str_byte_compare
+module spec_tests.conformance
 
 test "str сравнение — byte-lexicographic порядок (D254)" {
     assert("abc" < "abd")          // 'c'(0x63) < 'd'(0x64)

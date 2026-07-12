@@ -4,7 +4,7 @@
 // scope-block parses + type-checks + codegen эмитит init binding +
 // body emit + cleanup placeholder. Acceptance A110.1.1.a / A110.1.4.a.
 
-module conformance.parse_consume_scope_basic
+module spec_tests.conformance
 // Минимальный Cleanup[never] resource type для scope-block init.
 type DummyResource3 {
     ro id int

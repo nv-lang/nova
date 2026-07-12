@@ -10,7 +10,7 @@
 // produced "" видно в output, debuggable. Strict variant добавляет Fail
 // effect indirection для cases где validity уже proven.
 
-module conformance.from_codepoint_invalid_neg
+module spec_tests.conformance
 test "negative codepoint — empty str" {
     ro s = str.from_codepoint(-1)
     assert(s == "")

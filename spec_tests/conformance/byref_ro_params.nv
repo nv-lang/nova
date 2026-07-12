@@ -3,7 +3,7 @@
 // (lvalue / rvalue / mut-локал / сквозная передача / именованный аргумент /
 // fn-как-значение отравляет классификацию).
 
-module conformance.byref_ro_params
+module spec_tests.conformance
 type BigPair value { ro name str, ro value str }
 
 fn bp_name(c BigPair) -> str => c.name

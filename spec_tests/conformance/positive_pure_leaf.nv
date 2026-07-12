@@ -9,7 +9,7 @@
 //   * the body of `pure_leaf` contains `preempt-check elided` (the marker)
 //     and NO `nova_preempt_check();` as its first statement.
 
-module conformance.positive_pure_leaf
+module spec_tests.conformance
 
 // Provably-leaf: only arithmetic, no calls, no loop, not recursive.
 fn pure_leaf(x int) -> int => x * 3 + 7

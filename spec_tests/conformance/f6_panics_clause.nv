@@ -5,7 +5,7 @@
 // Мета-FAIL-кейсы («нет паники → FAIL», «неверный паттерн → FAIL») — НЕ
 // .nv-фикстуры (сделали бы suite красным): Rust-тесты раннера.
 
-module conformance.f6_panics_clause
+module spec_tests.conformance
 fn f6_div(a int, b int) -> int => a / b
 
 test "f6 D348: explicit panic() matched by substring" panics "boom-f6" {

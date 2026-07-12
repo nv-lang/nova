@@ -6,7 +6,7 @@
 // Тесты проверяют что созданный map содержит правильные значения.
 //
 // Spec: spec/decisions/03-syntax.md D108. Единица: folder-module `spec_tests.conformance`.
-module conformance.d108_map_literal
+module spec_tests.conformance
 
 import std.collections.hashmap.{HashMap}
 

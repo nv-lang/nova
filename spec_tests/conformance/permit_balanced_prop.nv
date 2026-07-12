@@ -5,7 +5,7 @@
 //
 // EXPECT_TIMEOUT_MS 30000
 
-module conformance.permit_balanced_prop
+module spec_tests.conformance
 test "Semaphore: acquire M times, release M times — sequential" {
     ro k = 5
     mut sem = Semaphore.new(k)

@@ -3,7 +3,7 @@
 // (and registered in var_types so the interp picks the right converter), so the
 // message renders the offending field value. Violated at construction (balance=-5).
 
-module conformance.invariant_msg_interp_neg
+module spec_tests.conformance
 type invariant_msg_interp_neg_Account {
     balance int
 }

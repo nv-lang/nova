@@ -10,7 +10,7 @@
 //   (4) пользовательский тип с share-полями — авто-#share (memberwise);
 //   (5) пользовательский lock-free тип с авторским `#share`-vouch.
 
-module conformance.share_capture_ok_test
+module spec_tests.conformance
 // (4) авто-#share: все поля — immutable share-типы → тип share без аннотаций.
 type Config {
     threshold int

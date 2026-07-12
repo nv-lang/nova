@@ -12,7 +12,7 @@
 //
 // Renamed semantics (file kept for history): asserts the no-op behaviour.
 
-module conformance.reserve_negative_extra_neg
+module spec_tests.conformance
 test "reserve(-1) is a harmless no-op (Vec lenient contract)" {
     mut arr []int = [1, 2, 3]
     arr.reserve(-1)

@@ -8,7 +8,7 @@
 // Plan 98. Plan 98 закрывает прямой `Option[T]` / `Result[T,E]` param.
 // Простой `[]int` (примитивный element) inference работает.
 
-module conformance.turbofish_still_works
+module spec_tests.conformance
 fn first_or[T](items []T, default_v T) -> T {
     for x in items {
         return x

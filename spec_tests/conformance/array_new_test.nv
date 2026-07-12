@@ -1,4 +1,4 @@
-module conformance.array_new_test
+module spec_tests.conformance
 // Plan 91.7 Part D: []T.new() и []T.with_capacity(n) canonical default.
 
 test "[]int.new() == []" {

@@ -2,7 +2,7 @@
 // User-local `_at_x` exists; pass должен emit `_at_x_1` (or similar
 // suffix) — user-local untouched, semantics preserved.
 
-module conformance.prop_collision_avoidance_ok
+module spec_tests.conformance
 type Bag3 {
     ro x int
     ro y int

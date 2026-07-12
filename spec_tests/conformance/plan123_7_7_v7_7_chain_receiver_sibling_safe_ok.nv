@@ -4,7 +4,7 @@
 // Extends V7.5 sibling-safe rule k chains: `@F0.F1.....Fn.method()`
 // preserves caches of fields outside the chain root.
 
-module conformance.plan123_7_7_v7_7_chain_receiver_sibling_safe_ok
+module spec_tests.conformance
 type Inner2_plan12377v77chainreceiversiblingsafeok {
     mut sub []int
 }

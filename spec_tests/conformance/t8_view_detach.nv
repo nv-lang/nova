@@ -1,7 +1,7 @@
 // Plan 138 Ф.4 — t8: v[1..3].push(99) → silent detach, original unchanged
 // A3: push on view → realloc → silent detach from parent
 
-module conformance.t8_view_detach
+module spec_tests.conformance
 import std.collections.vec.{Vec}
 
 test "push on range view detaches from parent" {

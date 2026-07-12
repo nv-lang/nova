@@ -9,7 +9,7 @@
 // independent gap (`[M-176-generic-wrapper-mono-inference]`) and is intentionally not
 // exercised here.
 
-module conformance.p176repro_generic_wrapper_valuerecord_err
+module spec_tests.conformance
 
 type WErr value { ro code int }
 

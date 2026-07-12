@@ -7,7 +7,7 @@
 // Spec: spec/decisions/02-types.md §D135 (E7310). NEG-кейсы (E7301/E7320/E7330/арность
 // при УКАЗАННЫХ аргах) — диагностика, вне POS-conformance.
 // Прочие кейсы (E73xx-rejection) — отдельный gap-трек, здесь только POS-норма.
-module conformance.d135_bare_generic_inferred
+module spec_tests.conformance
 
 // Bare `Result` — type-args выводятся из Ok/Err в теле (НЕ E7310).
 fn d135_validated(n int) -> Result {

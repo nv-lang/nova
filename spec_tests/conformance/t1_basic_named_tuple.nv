@@ -1,6 +1,6 @@
 // Plan 120 (D215): T1 — basic named tuple declaration, construction, field access.
 
-module conformance.t1_basic_named_tuple
+module spec_tests.conformance
 type Point(x f64, y f64)
 
 test "named tuple: construct and read fields" {

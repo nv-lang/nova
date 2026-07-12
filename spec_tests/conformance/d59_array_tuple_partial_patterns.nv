@@ -7,7 +7,7 @@
 // pattern binding возвращает правильные значения.
 //
 // Spec: spec/decisions/03-syntax.md D59. Единица: folder-module `spec_tests.conformance`.
-module conformance.d59_array_tuple_partial_patterns
+module spec_tests.conformance
 
 fn d59_describe(xs []int) -> str =>
     match xs {

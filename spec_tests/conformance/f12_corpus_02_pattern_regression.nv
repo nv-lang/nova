@@ -3,7 +3,7 @@
 // Проверяет что infer_print_helper → infer_expr_c_type unification
 // корректно резолвит локальные переменные через var_types lookup.
 
-module conformance.f12_corpus_02_pattern_regression
+module spec_tests.conformance
 // EXPECT_STDOUT results
 // EXPECT_STDOUT 100
 // EXPECT_STDOUT 6765

@@ -23,7 +23,7 @@
 // structured stderr message). No stdout assert (`abort()` skips stdout flush).
 // `UNREACHABLE` after the call never prints.
 
-module conformance.t6_no_z3_degrade
+module spec_tests.conformance
 fn requires_even(x int) -> int
     requires x % 2 == 0
 => x / 2

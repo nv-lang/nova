@@ -1,6 +1,6 @@
 // Plan 123.5 T1.1: --explain-cache output verification.
 
-module conformance.test_explain_ok
+module spec_tests.conformance
 type Calc {
     ro a int
     ro b int

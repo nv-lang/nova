@@ -5,7 +5,7 @@
 // for the post-condition kind (not just `requires`). The function deliberately
 // returns a value that breaks its own postcondition.
 
-module conformance.f8_ensures_msg_violation
+module spec_tests.conformance
 fn identity_buggy(x int) -> int
     ensures result == x, "result must equal input"
 => x + 1

@@ -5,7 +5,7 @@
 // Здесь POS-наблюдаемое ядро D23: early-return по guard'у срабатывает И fall-through
 // до последнего выражения даёт результат.
 // Один folder-module `spec_tests.conformance`; имена D23-prefixed.
-module conformance.d23_return_early
+module spec_tests.conformance
 
 // Блок-форма с guard'ами: ранние выходы через return, финал = последнее выражение.
 fn d23_classify(x int) -> str {

@@ -1,7 +1,7 @@
 // d316_time_effect_typed_surface.nv — D316: `Time` плумбинг-эффект, единый
 // источник схемы, TimerMetrics-split, ns-канон, typed user-facing surface
 // (Timestamp.now()/Monotonic.now()/free sleep/sleep_until), мокабельность.
-module conformance.d316_time_effect_typed_surface
+module spec_tests.conformance
 
 import std.time.duration
 import std.testing.handlers as d316_th

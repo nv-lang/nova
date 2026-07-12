@@ -1,4 +1,4 @@
-module conformance.collect_set
+module spec_tests.conformance
 import std.collections.vec_iter
 import std.collections.set.{Set}
 

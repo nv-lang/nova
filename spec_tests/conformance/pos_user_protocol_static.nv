@@ -3,7 +3,7 @@
 // Проверяет: парсер принимает leading-точку в protocol-теле; реализация
 // через D35 static-метод (`fn Type.name(...)`); прямой вызов работает.
 
-module conformance.pos_user_protocol_static
+module spec_tests.conformance
 export type MyBuilder[T] protocol {
     .make(x T) -> Self
 }

@@ -4,7 +4,7 @@
 // references it from both chain lets, reducing total `@<root>` reads.
 // Behavior must remain identical to V4.1.
 
-module conformance.v42_chain_prefix_sharing_ok
+module spec_tests.conformance
 type V42Leaf {
     ro c int
     ro d int

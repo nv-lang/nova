@@ -25,7 +25,7 @@
 // `Net(M178Payload)` variant, wrapped by an `Option[M178AlphaSource]` field
 // on a record whose constructing fn returns the RECORD, not the sum.
 // Единица: folder-module `spec_tests.conformance`.
-module conformance.m178_variant_ctor_crosssum_option_collision
+module spec_tests.conformance
 
 type M178Payload {
     ro v int

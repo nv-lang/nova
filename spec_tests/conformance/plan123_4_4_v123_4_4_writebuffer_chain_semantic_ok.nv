@@ -7,7 +7,7 @@
 // The actual C output should reference `nova_self->buf` only ONCE
 // (in the let-binding) instead of N times.
 
-module conformance.plan123_4_4_v123_4_4_writebuffer_chain_semantic_ok
+module spec_tests.conformance
 type Acc_plan12344v12344writebufferchainsemanticok {
     mut buf []int
 }

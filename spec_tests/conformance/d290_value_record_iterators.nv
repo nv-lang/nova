@@ -25,7 +25,7 @@
 // Distinct facet from D228 (NON-iterator value-record copy contract) and D232
 // (Vec collection ops). Single `spec_tests.conformance` folder-module; D-prefixed
 // names are unique to avoid clashes in the shared compile unit.
-module conformance.d290_value_record_iterators
+module spec_tests.conformance
 
 test "RangeIter value yields each int in order, then a stable None (D290 §2 rule-a)" {
     ro r = 1..4                       // Range value, half-open [1,4)

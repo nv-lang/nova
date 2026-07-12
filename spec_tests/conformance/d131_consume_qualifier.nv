@@ -2,7 +2,7 @@
 // После consume-вызова переменная-источник логически инвалидируется.
 // Compile-time: flow-sensitive анализ. Runtime: метод зануляет внутренний стейт.
 // Spec: spec/decisions/05-memory.md D131. Part of the SINGLE `spec_tests.conformance` folder-module.
-module conformance.d131_consume_qualifier
+module spec_tests.conformance
 
 // Consume receiver: метод забирает значение целиком
 type D131Builder { data str }

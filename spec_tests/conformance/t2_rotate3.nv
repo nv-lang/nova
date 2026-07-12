@@ -2,7 +2,7 @@
 // `(a, b, c) = (b, c, a)` — rotate-left by one position.
 // Verifies that 3-tuple lhs/rhs works correctly.
 
-module conformance.t2_rotate3
+module spec_tests.conformance
 test "rotate three ints left" {
     mut a = 1
     mut b = 2

@@ -1,6 +1,6 @@
 // Plan 123.4 T1.6: chain reads spanning if-else branches.
 
-module conformance.chain_with_conditionals_ok
+module spec_tests.conformance
 type Wrap3 {
     ro inner Wrap_Inner
 }

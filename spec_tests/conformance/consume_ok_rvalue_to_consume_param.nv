@@ -2,7 +2,7 @@
 // промежуточного binding. Ownership передаётся напрямую; callee
 // обязан consumed внутри.
 
-module conformance.consume_ok_rvalue_to_consume_param
+module spec_tests.conformance
 type Transaction6 consume {
     id int,
 }

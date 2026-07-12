@@ -6,7 +6,7 @@
 // потом None). Это механизм, на котором СТОИТ 173.1-десугар `parallel for`
 // (completion-order dense через Option-канал). Тест фиксирует различение.
 
-module conformance.channel_closed_vs_value_test
+module spec_tests.conformance
 test "recv distinguishes value (Some) from open-buffered channel" {
     ro ch = Channel.new(2)
     ro tx = ch.tx

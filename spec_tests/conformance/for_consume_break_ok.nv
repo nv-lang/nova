@@ -2,7 +2,7 @@
 // consume tx (Consumed на любом arm-exit).
 // Uses inline Transaction3 literals to avoid loose consume-obligations.
 
-module conformance.for_consume_break_ok
+module spec_tests.conformance
 type Transaction3 consume {
     id int,
 }

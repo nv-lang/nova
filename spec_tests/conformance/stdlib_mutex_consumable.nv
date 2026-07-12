@@ -4,7 +4,7 @@
 // implement Cleanup[never] — `consume g = mu.acquire() { body }`
 // scope-block работает с auto-release on exit.
 
-module conformance.stdlib_mutex_consumable
+module spec_tests.conformance
 fn use_mutex() -> int {
     mut mu = Mutex.new()
     mut value = 0

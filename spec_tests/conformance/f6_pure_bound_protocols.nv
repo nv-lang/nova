@@ -1,6 +1,6 @@
 // Plan 56 Ф.2.7 — positive: pure bound protocols работают.
 
-module conformance.f6_pure_bound_protocols
+module spec_tests.conformance
 type MyHashable protocol {
     @hash() -> u64
     @equal(other Self) -> bool

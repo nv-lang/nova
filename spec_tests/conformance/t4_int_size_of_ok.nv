@@ -4,7 +4,7 @@
 // Verifies that the result is compatible with int and can be used in
 // multiplication / comparison without usize/isize.
 
-module conformance.t4_int_size_of_ok
+module spec_tests.conformance
 const S_I64 = size_of[i64]()
 const S_I32 = size_of[i32]()
 const S_I8  = size_of[i8]()

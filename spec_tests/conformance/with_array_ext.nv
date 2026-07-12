@@ -1,4 +1,4 @@
-module conformance.with_array_ext
+module spec_tests.conformance
 fn[T] []T @keep_all() -> []T => @
 test "array-ext method coexists" {
     ro v []int = [1, 2, 3]

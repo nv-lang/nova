@@ -2,7 +2,7 @@
 // Plan 145 — негатив: индексация Vec за границей → panic через nova_idx_chk.
 // `fn main` (не test-блок): panic должен дойти до runtime-frame.
 
-module conformance.neg_vec_index_oob
+module spec_tests.conformance
 import std.collections.vec.{Vec}
 
 test "neg vec index oob" panics "out of bounds" {

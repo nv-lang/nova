@@ -4,7 +4,7 @@
 // streams surface a typed CompressError. Vectors are the official google/brotli
 // tests/testdata/*.compressed. Spec: spec/decisions/04-effects.md (D337).
 
-module conformance.d337_brotli_ffi
+module spec_tests.conformance
 
 import std.encoding.compress.{brotli_decode, ErrorKind}
 

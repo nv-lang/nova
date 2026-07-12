@@ -1,7 +1,7 @@
 // Plan 123.7.1 T1.1: mut field cache survives call to method that
 // doesn't write that field per IPA write_set.
 
-module conformance.plan123_7_1_ipa_mut_survives_non_writing_call_ok
+module spec_tests.conformance
 type Box4_plan12371ipamutsurvivesnonwritingcallok {
     mut counter int
     mut other int

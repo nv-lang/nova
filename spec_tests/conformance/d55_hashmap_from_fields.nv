@@ -19,7 +19,7 @@
 // checker-annotation слое.
 //
 // Каждый test ниже — один из ранее падавших контекстов.
-module conformance.d55_hashmap_from_fields
+module spec_tests.conformance
 
 import std.collections.hashmap.{HashMap}
 

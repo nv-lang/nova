@@ -3,7 +3,7 @@
 // caching threshold вЂ” optimizer chooses NOT Рє cache, but observable
 // behavior remains correct.
 
-module conformance.plan123_followups_2026_06_05_m6_v2_1_dyn_small_range_neg
+module spec_tests.conformance
 type Cv13 {
     mut z int
 }

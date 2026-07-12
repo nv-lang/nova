@@ -2,7 +2,7 @@
 // fn_ret_<name> lookup in var_types: returns nova_str → nova_print_str dispatch.
 // Tests that named function return type inference still works after the fix.
 
-module conformance.f10_fn_return_str
+module spec_tests.conformance
 fn greet(name str) -> str {
     str.from("Hello ") // simplified: just return a literal
 }

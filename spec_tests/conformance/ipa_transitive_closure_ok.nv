@@ -1,7 +1,7 @@
 // Plan 123.7.1 T5.1: IPA transitive closure through method calls.
 // If A calls B, A's effective write-set includes B's.
 
-module conformance.ipa_transitive_closure_ok
+module spec_tests.conformance
 type Stack5 {
     mut top int
     mut sum int

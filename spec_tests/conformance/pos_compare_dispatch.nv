@@ -1,4 +1,4 @@
-module conformance.pos_compare_dispatch
+module spec_tests.conformance
 type Score { val int }
 fn Score @compare(other Score) -> int => @val - other.val
 

@@ -2,7 +2,7 @@
 //  - `[]T ≡ Vec[T]` (D239): a Vec[int] flows into a []int param and back.
 //  - same element type is fine.
 //  - scalar int → narrow-int element coercion (push) stays allowed.
-module conformance.vec_elem_type_pos
+module spec_tests.conformance
 fn sum_slice(a []int) -> int {
     mut s = 0
     for x in a { s += x }

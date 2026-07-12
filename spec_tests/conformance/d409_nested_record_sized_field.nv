@@ -17,7 +17,7 @@
 // it positive and round-trips 200 (> i8 max 127). Spec: spec/decisions/02-types.md (D130,
 // named-priority uint≠int / u8≠i8≠int). One folder-module CU; all names D409w-prefixed to
 // avoid duplicate-top-level-name collisions with sibling conformance files.
-module conformance.d409_nested_record_sized_field
+module spec_tests.conformance
 
 type D409wInnerU {
     v uint

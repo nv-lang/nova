@@ -3,7 +3,7 @@
 // receiver) still conservatively invalidates. Semantic preservation
 // РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ.
 
-module conformance.plan123_7_5_v7_5_var_method_invalidates_neg_ok
+module spec_tests.conformance
 type Cv_plan12375v75varmethodinvalidatesnegok {
     mut n int
 }

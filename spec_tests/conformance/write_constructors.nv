@@ -3,7 +3,7 @@
 // new() / new().cap(n) (ex-with_capacity, D372 amend 2026-07-06) /
 // from([]u8) / @len / @cap / @clone.
 
-module conformance.write_constructors
+module spec_tests.conformance
 // ── new ────────────────────────────────────────────────────────────
 
 test "new — пустой, capacity >= 16" {

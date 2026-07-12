@@ -3,7 +3,7 @@
 // as a path argument: `nova test nova_tests/plan36_d1`.
 // folder-module: module nova_tests.plan36_d1
 
-module conformance.multi_path_basic
+module spec_tests.conformance
 test "multi-path discovery: simple assertion" {
     ro x = 1 + 1
     assert(x == 2)

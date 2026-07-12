@@ -8,7 +8,7 @@
 // (6) factory: `return tx` = передача обязательства caller'у.
 // Негативы — spec_tests/conformance/neg/d133_*.nv. Шаблоны сверены с
 // nova_tests/plan100_1/consume_ok_*.nv. Один folder-module `spec_tests.conformance`.
-module conformance.d133_consume_type_must_consume
+module spec_tests.conformance
 
 type D133Tx consume {
     id int,

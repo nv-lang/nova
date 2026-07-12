@@ -16,7 +16,7 @@
 //   Inner  → size 8,  align 8, pointer_offsets [],   variants [], unresolved false
 //   Outer  → size 24, align 8, pointer_offsets [8],  variants [], unresolved false
 
-module conformance.record_mixed_ptr_scalar
+module spec_tests.conformance
 
 type Inner { a int }
 

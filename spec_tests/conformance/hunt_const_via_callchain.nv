@@ -6,7 +6,7 @@
 // is exercised at one hop.)
 // EXPECT_STDOUT 4242
 
-module conformance.hunt_const_via_callchain
+module spec_tests.conformance
 const BASE int = 4242
 
 fn reader() -> int {

@@ -3,7 +3,7 @@
 // Semaphore.acquire() → Permit consume.
 // Permit.release() consumes the permit.
 
-module conformance.permit_release_explicit
+module spec_tests.conformance
 test "Permit explicit release" {
     mut sem = Semaphore.new(2)
     consume p = sem.acquire()

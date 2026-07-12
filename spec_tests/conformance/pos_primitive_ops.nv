@@ -1,4 +1,4 @@
-module conformance.pos_primitive_ops
+module spec_tests.conformance
 test "primitive operators unaffected" {
     assert(1 < 2)
     assert(3 > 2)

@@ -4,7 +4,7 @@
 // на exit'е mut-метода consume-поля обязаны быть Live (invariant).
 // Compiler tracks: close → Consumed → rebind → Live. ✅
 
-module conformance.consume_ok_reopen
+module spec_tests.conformance
 type File consume {
     fd int,
 }

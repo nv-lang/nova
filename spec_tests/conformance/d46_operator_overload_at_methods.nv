@@ -3,7 +3,7 @@
 // `-a` → @neg, `!a` → @not, `a == b` → @equal, `a != b` выводится из @equal.
 // Dispatch по первому операнду. Custom-операторы запрещены.
 // Spec: spec/decisions/03-syntax.md D46. Part of the SINGLE `spec_tests.conformance` folder-module.
-module conformance.d46_operator_overload_at_methods
+module spec_tests.conformance
 
 // --- Vec2: +, -, *, /, unary -, ! на парах f64 ---
 

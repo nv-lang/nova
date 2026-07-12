@@ -22,7 +22,7 @@
 // Spec: spec/decisions/02-types.md:12721 (D281 «Module-level field privacy —
 //   type X priv { … }»), §1 syntax / §3 access rules / §5 acceptance criteria.
 // One folder-module `spec_tests.conformance`; D-prefixed names are unique.
-module conformance.d281_module_priv_field
+module spec_tests.conformance
 
 // ── §5.1 type-level `priv` flip → module-private fields by default ──────────────
 // Plain (non-`value`) record → managed-heap, passed BY REFERENCE (D32): a `mut`

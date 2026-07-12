@@ -6,7 +6,7 @@
 // Проверяем минимальный сценарий: panic("explicit panic") в main →
 // runtime print "panic: explicit panic\n" + abort.
 
-module conformance.panic_main
+module spec_tests.conformance
 test "panic main" panics "explicit panic" {
     panic("explicit panic")
 }

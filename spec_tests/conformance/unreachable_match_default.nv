@@ -1,6 +1,6 @@
 // [M-125-unreachable-builtin] positive — unreachable() в match default arm.
 
-module conformance.unreachable_match_default
+module spec_tests.conformance
 type Color | Red | Green | Blue
 
 fn rgb(c Color) -> int {

@@ -22,7 +22,7 @@
 // Отдельная грань от D290 (value-record iterator copy-contract) и D260 (boxed lazy).
 // Один folder-module inprogress.d284_enumerate_index; D-prefixed имена уникальны во
 // избежание duplicate-top-level-name клэша в общем compile-unit.
-module conformance.d284_enumerate_index
+module spec_tests.conformance
 
 import std.collections.vec_iter
 

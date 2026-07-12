@@ -1,7 +1,7 @@
 // Plan 123.1 T2.3: compound-assign (+=, -=, etc.) treated as write
 // → cache invalidated после compound boundary.
 
-module conformance.plan123_1_mut_field_compound_assign_ok
+module spec_tests.conformance
 type Acc3_plan1231mutfieldcompoundassignok {
     mut total int
 }

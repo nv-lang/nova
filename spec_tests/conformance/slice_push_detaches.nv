@@ -4,7 +4,7 @@
 // чужой backing): у нас `cap == len` гарантирует, что push всегда
 // реаллоцирует и view становится independent.
 
-module conformance.slice_push_detaches
+module spec_tests.conformance
 test "push on view detaches from parent backing" {
     mut parent []int = [1, 2, 3, 4, 5]
     mut view = parent[1..4]

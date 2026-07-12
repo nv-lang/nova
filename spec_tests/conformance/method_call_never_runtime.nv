@@ -2,7 +2,7 @@
 // с `-> never` действительно diverge'ит в runtime.
 //
 
-module conformance.method_call_never_runtime
+module spec_tests.conformance
 type Logger { tag str }
 
 fn Logger @fail(msg str) -> never => panic("[${@tag}] Logger fatal: ${msg}")

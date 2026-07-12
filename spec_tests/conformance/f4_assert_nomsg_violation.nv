@@ -5,7 +5,7 @@
 // now `assertion`->`assert` and the LOC prefix is auto-added by codegen.
 // Combination: assert, no msg.
 
-module conformance.f4_assert_nomsg_violation
+module spec_tests.conformance
 fn check(a int) -> int {
     assert(a > 0)
     a

@@ -21,7 +21,7 @@
 //   1. Compile-success — codegen emits wrap + leave + compose.
 //   2. Runtime: outer body's flow not corrupted by inner cleanup throw.
 
-module conformance.on_exit_throws_shield_restored_v1_1
+module spec_tests.conformance
 import std.prelude.errors
 
 type InnerThrowing3 { ro id int }

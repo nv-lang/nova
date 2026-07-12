@@ -1,7 +1,7 @@
 // Plan 123.4 T1.5: chain caching works even when method body has
 // method calls (V4 conservative just blocks on @F write, not call).
 
-module conformance.chain_with_calls_ok
+module spec_tests.conformance
 type Deep_Cfg {
     ro value int
 }

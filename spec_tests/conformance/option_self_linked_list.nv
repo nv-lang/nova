@@ -36,7 +36,7 @@
 // structural `==` on two separately-allocated-but-equal chains is TRUE
 // (proves the deferred structural-eq fix, not just "doesn't crash").
 
-module conformance.option_self_linked_list
+module spec_tests.conformance
 
 type Node {
     value int

@@ -3,7 +3,7 @@
 // `0 <= i < v.len()` доказывается Z3 ⇒ inline-проверка элидируется (с z3).
 // Корректность не зависит от элизии (тест проходит и на Trivial).
 
-module conformance.b4_elision_pos
+module spec_tests.conformance
 import std.collections.vec.{Vec}
 
 // `v` — read-only параметр, используется только как `v.len()` и `v[i]`-read.

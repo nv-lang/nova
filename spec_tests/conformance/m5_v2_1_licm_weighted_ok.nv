@@ -4,7 +4,7 @@
 // via `count_field_reads_in_block_weighted`. Semantic preservation
 // verified through observed sum.
 
-module conformance.m5_v2_1_licm_weighted_ok
+module spec_tests.conformance
 type Cv6 {
     mut x int
 }

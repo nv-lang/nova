@@ -17,7 +17,7 @@
 // Part of the SINGLE `spec_tests.conformance` folder-module (one CU); all
 // top-level names would be D181-prefixed — this file declares none, so there is
 // nothing to clash with sibling files.
-module conformance.d181_fluent_mut_chain
+module spec_tests.conformance
 
 test "fluent mut chain push(1).push(2).push(3) accumulates on ONE array (D181)" {
     mut a []int = []int.new()

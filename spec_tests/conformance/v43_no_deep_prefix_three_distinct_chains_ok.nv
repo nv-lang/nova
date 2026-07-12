@@ -4,7 +4,7 @@
 // chain через каждый из @a.b.c, @a.b.d, @a.b.e). Поведение
 // идентично V4.2 baseline.
 
-module conformance.v43_no_deep_prefix_three_distinct_chains_ok
+module spec_tests.conformance
 type Lv3 { ro x int, ro y int, ro z int }
 type Mid2 { ro c Lv3, ro d Lv3, ro e Lv3 }
 type Inn { ro b Mid2 }

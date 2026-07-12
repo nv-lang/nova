@@ -2,7 +2,7 @@
 // All V1-V6 layers continue to work; V7 adds write-set inference
 // public API (used by future V7.1 full integration).
 
-module conformance.ipa_no_regression_ok
+module spec_tests.conformance
 type WS {
     ro x int
     mut count int

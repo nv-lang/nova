@@ -3,7 +3,7 @@
 // partial в bootstrap (chain пустой пока emit_defer wrap не done);
 // этот тест verify-it только type-checker level.
 
-module conformance.multi_error_inspect_ok
+module spec_tests.conformance
 // Construct MultiError directly — verify prelude type экспортирован и
 // accessors callable.
 fn make_composite() -> MultiError =>

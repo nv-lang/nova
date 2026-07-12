@@ -7,7 +7,7 @@
 // incomplete pointer; D300 emits the tuple-elem forward-decl so the C compiles (no
 // "unknown type name") and positional `.0`/`.1` access on the Vec-bearing tuple is exact.
 // Part of the SINGLE `spec_tests.conformance` folder-module; D-prefixed names avoid clashes.
-module conformance.d300_vec_body_tuple_fwddecl
+module spec_tests.conformance
 
 test "[]u32 body-only instantiation gets a full struct-def and round-trips (D300)" {
     mut v []u32 = []u32.new(cap: 4)

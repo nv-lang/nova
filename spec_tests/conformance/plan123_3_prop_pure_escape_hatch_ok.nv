@@ -1,7 +1,7 @@
 // Plan 123.3 T-PROP.2: escape hatch — semantic equivalence under
 // NOVA_FIELD_CACHE_PURE=0.
 
-module conformance.plan123_3_prop_pure_escape_hatch_ok
+module spec_tests.conformance
 type Polynomial {
     ro coeff int
     ro power int

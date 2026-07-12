@@ -2,7 +2,7 @@
 // — оба явно consume. Оба обязательства удовлетворяются передачей в
 // consume-param функцию `finish2`.
 
-module conformance.generic_bound_ok_two_args
+module spec_tests.conformance
 type Transaction14 consume {
     id int,
 }

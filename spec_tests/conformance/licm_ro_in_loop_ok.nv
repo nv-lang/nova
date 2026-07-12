@@ -1,7 +1,7 @@
 // Plan 123.2 T1.1: ro field invariant внутри loop → hoist
 // `ro _at_<F>_loop = @<F>` immediately before the loop.
 
-module conformance.licm_ro_in_loop_ok
+module spec_tests.conformance
 type Image3 {
     ro pixels int
     ro width int

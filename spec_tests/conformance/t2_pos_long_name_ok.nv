@@ -2,7 +2,7 @@
 //
 // type MyNode { x int } — name length 6 → no E_TYPE_NAME_TOO_SHORT.
 
-module conformance.t2_pos_long_name_ok
+module spec_tests.conformance
 type MyNode {
     x int
 }

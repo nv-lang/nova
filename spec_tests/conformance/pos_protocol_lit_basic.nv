@@ -5,7 +5,7 @@
 // allocation + NovaBox fat-pointer). Allocation должна работать
 // без CC-FAIL.
 
-module conformance.pos_protocol_lit_basic
+module spec_tests.conformance
 export type Runnable protocol {
     @run() -> ()
 }

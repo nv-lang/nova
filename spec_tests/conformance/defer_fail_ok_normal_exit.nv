@@ -2,7 +2,7 @@
 // propagates как обычный Fail. Compile pass — D158 checker permits
 // Fail-throws когда enclosing fn-sig declares Fail[E].
 
-module conformance.defer_fail_ok_normal_exit
+module spec_tests.conformance
 type CommitErr2 { msg str }
 
 // Failable cleanup function (infallible body, just declares Fail).

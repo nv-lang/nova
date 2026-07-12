@@ -11,7 +11,7 @@
 // survives the interaction with reachability DCE.
 // EXPECT_STDOUT 12
 
-module conformance.f3_generic_mono_on_use
+module spec_tests.conformance
 fn box_it[T](x T) -> T => x
 
 fn main() {

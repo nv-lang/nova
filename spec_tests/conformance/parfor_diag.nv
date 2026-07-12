@@ -1,4 +1,4 @@
-module conformance.parfor_diag
+module spec_tests.conformance
 test "diag parallel for 1000 len" {
     ro xs = parallel for i in 0..1000 { i }
     println("len = ", xs.len())

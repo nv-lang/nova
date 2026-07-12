@@ -2,7 +2,7 @@
 // regardless of individual failure mode (throw / panic / Fail). Compile-pass
 // verify, runtime LIFO sequencing tested через mixed_defer_*.
 
-module conformance.multi_defer_continues_after_panic
+module spec_tests.conformance
 fn step_log(_n int) -> () { () }
 
 fn process4() -> () {

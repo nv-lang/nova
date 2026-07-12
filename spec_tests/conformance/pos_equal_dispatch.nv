@@ -1,4 +1,4 @@
-module conformance.pos_equal_dispatch
+module spec_tests.conformance
 type Tag { name str }
 fn Tag @equal(other Tag) -> bool => @name == other.name
 

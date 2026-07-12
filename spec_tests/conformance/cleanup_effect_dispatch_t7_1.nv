@@ -20,7 +20,7 @@
 //   A110.4.4.b.a — handler.on_resource_exit called с outcome value +
 //                  duration/overrun (fast cleanup → overrun=false).
 
-module conformance.cleanup_effect_dispatch_t7_1
+module spec_tests.conformance
 type TracedRes3 {
     ro id int
 }

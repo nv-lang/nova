@@ -17,7 +17,7 @@
 // (that is the documented gap — would FAIL under the shallow form because the
 // clone shares the element `Point` pointers).
 
-module conformance.t1_vec_clone_deep
+module spec_tests.conformance
 import std.collections.vec.{Vec}
 
 type Point {

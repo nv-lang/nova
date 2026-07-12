@@ -1,7 +1,7 @@
 // Plan 138.1 Ф.4 — t2: []Point (record element type)
 // B3: []Record stores typed; [i] = val → index_set; field access on element.
 
-module conformance.t2_vec_of_record
+module spec_tests.conformance
 type Point { x int, y int }
 
 test "[]Point push and field access via [i]" {

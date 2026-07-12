@@ -6,7 +6,7 @@
 // После Plan 98: T выводится из NovaOpt_<sani> → реальный c_ty
 // через novaopt_value_types.
 
-module conformance.option_param_inference
+module spec_tests.conformance
 type User { id int, name str }
 
 fn check[T](o Option[T]) -> bool => o.is_some()

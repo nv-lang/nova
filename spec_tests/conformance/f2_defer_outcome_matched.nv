@@ -3,7 +3,7 @@
 // пойман with Fail). Panic/Cancel — compile-покрыты (match exhaustive), runtime
 // не наблюдаем чисто (panic убивает процесс; cancel — supervised-сценарий).
 
-module conformance.f2_defer_outcome_matched
+module spec_tests.conformance
 type B2Err { msg str }
 
 fn b2_throws() Fail[B2Err] -> () {

@@ -7,7 +7,7 @@
 // (3) default-ro `@hash()` (без префикса ≡ ro); (4) `#impl` с несколькими методами
 // разных mutability. Негативы (parse + impl-mismatch) — neg/d209_*.nv. Шаблоны
 // сверены с nova_tests/plan108_4. Один folder-module `spec_tests.conformance`.
-module conformance.d209_protocol_method_at_recv_mut
+module spec_tests.conformance
 
 // (1) mut-receiver протокол-метод + итерация.
 type D209CounterIter protocol {

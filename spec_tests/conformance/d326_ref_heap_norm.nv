@@ -4,7 +4,7 @@
 // a pointer-typed sink (Р8 legal-path for FFI).
 // Spec: spec/decisions/02-types.md D326 (Plan 184 Р6, Р8).
 // Part of the SINGLE `spec_tests.conformance` folder-module.
-module conformance.d326_ref_heap_norm
+module spec_tests.conformance
 
 type D326Node {
     v int

@@ -8,7 +8,7 @@
 // { acc.balance += amount }` (visible) and `fn bump(mut x int) { x = 999 }` (NOW visible).
 // Spec: spec/decisions/02-types.md (D32 + D326-ревизия Р10). Single `spec_tests.conformance`
 // folder-module; D-prefixed names avoid clashes.
-module conformance.d32_param_passing_mut_ref_vs_value
+module spec_tests.conformance
 
 // Managed-heap record (reference category): passed by reference.
 type D32Account {

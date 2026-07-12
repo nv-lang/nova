@@ -7,7 +7,7 @@
 // элемент сужается через `is T`; (2) без упавшего cleanup → suppressed() пуст;
 // (3) карман не течёт между несвязанными ловлями (reset-on-throw). Отвергнутая
 // конверт-модель `Err(MultiError{...})` — §«Что отвергнуто». Один folder-module.
-module conformance.d158_suppressed_pocket
+module spec_tests.conformance
 
 type D158PrimErr { code int }
 type D158CleanupErr { tag int }

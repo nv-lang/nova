@@ -4,7 +4,7 @@
 // trailing-fn: `f(args) fn(p) body` — callback с параметрами.
 // `()` всегда обязательны; trailing начинается на той же строке что `)`.
 // Spec: spec/decisions/03-syntax.md D43. Part of the SINGLE `spec_tests.conformance` folder-module.
-module conformance.d43_trailing_block_and_fn
+module spec_tests.conformance
 
 fn d43_run(body fn() -> int) -> int => body()
 fn d43_run_unit(body fn()) { body() }

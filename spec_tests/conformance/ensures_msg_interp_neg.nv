@@ -4,7 +4,7 @@
 // message build (mirror of the condition's substitute_result_var). At -1 the
 // postcondition `result > 0` is violated, so the message renders the value.
 
-module conformance.ensures_msg_interp_neg
+module spec_tests.conformance
 fn must_return_positive() -> int
     ensures result > 0, "result was ${result}"
 => -1

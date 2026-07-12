@@ -13,7 +13,7 @@
 // (L3 pointee — указатели + `unsafe{}` + codegen-граница `[M-138-vec-pointer-element-mono]` — не здесь.)
 // Spec: spec/decisions/02-types.md (D246, §«Таблица мутабельности», P6/R2-split, ORACLE A).
 // Один folder-module `spec_tests.conformance`; D-prefixed имя `D246Point` уникально.
-module conformance.d246_mutability_axes_split
+module spec_tests.conformance
 
 // value-record (by-copy); поля явно `mut` — content-view (L2) дефолт-mutable при mut-binding/ro-mut-split.
 type D246Point value {

@@ -7,7 +7,7 @@
 //
 // Импорт ОБОИХ `make_info`/`make_bad` пуллит ОБЕ Kind-декларации в один
 // merged module.items → воспроизводит коллизию `self.types` HashMap (last-wins).
-module conformance.xmodule_struct_variant_ctor_test
+module spec_tests.conformance
 
 import spec_tests.conformance.xmodule_struct_variant_ctor_a.{make_info}
 import spec_tests.conformance.xmodule_struct_variant_ctor_b.{make_bad}

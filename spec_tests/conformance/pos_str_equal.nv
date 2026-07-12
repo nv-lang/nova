@@ -1,4 +1,4 @@
-module conformance.pos_str_equal
+module spec_tests.conformance
 test "str == dispatches via @equal" {
     ro a = "hello"
     ro b = "hello"

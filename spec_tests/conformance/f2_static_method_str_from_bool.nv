@@ -1,6 +1,6 @@
 // Plan 67 Ф.2 f2 — println(str.from(bool)) → "true"/"false" строкой.
 
-module conformance.f2_static_method_str_from_bool
+module spec_tests.conformance
 // EXPECT_STDOUT true
 // EXPECT_STDOUT false
 

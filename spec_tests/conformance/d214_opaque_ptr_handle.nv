@@ -7,7 +7,7 @@
 //     wrap the same underlying pointer. *() values are obtained purely via
 //     integer casts (no extern fn) so the check is self-contained.
 // Spec: spec/decisions/02-types.md (D214 §1 Casts/Equality, §3 opaque handle).
-module conformance.d214_opaque_ptr_handle
+module spec_tests.conformance
 
 type D214Sq(*())
 type D214Png(*())

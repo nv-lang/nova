@@ -20,7 +20,7 @@
 // `UNREACHABLE` after the call is never printed because the abort terminates
 // the process first.
 
-module conformance.t1_unproven_requires_aborts
+module spec_tests.conformance
 fn needs_positive(x int) -> int
     requires x > 0
 => x * 2

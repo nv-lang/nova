@@ -9,7 +9,7 @@
 // Шаблоны сверены с nova_tests/effects/fail_handler.nv, handler_wrappers.nv,
 // nova_tests/syntax/throw_in_expression.nv. Один folder-module `spec_tests.conformance`;
 // имена D25-prefixed.
-module conformance.d25_throw_fail
+module spec_tests.conformance
 
 fn d25_parse(s str) -> int {
     if s == "ok" { return 42 }

@@ -4,7 +4,7 @@
 // equal strings → 0.
 // EXPECT_STDOUT collate ok
 
-module conformance.e2e_collate
+module spec_tests.conformance
 import std.unicode.{collate_compare}
 
 fn main() {

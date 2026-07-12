@@ -1,4 +1,4 @@
-module conformance.parse_int_consistent_ok
+module spec_tests.conformance
 import std.runtime.string.{ParseIntError}
 
 // For valid inputs: if parse_int returns Some(n), parse_int returns Ok(n).

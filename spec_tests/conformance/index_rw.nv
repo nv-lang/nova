@@ -1,4 +1,4 @@
-module conformance.index_rw
+module spec_tests.conformance
 test "basic [N]u8 index read/write" {
     mut buf [5]u8 = [0, 1, 2, 3, 4]
     buf[2] = 42

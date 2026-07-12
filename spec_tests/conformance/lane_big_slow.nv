@@ -3,7 +3,7 @@
 // included only via --include-slow, and is the sole-class run under
 // --slow-only. (Trivial body here: the suffix, not runtime, classifies it.)
 
-module conformance.lane_big_slow
+module spec_tests.conformance
 test "slow test runs only when opted in" {
     assert(2 + 2 == 4)
 }

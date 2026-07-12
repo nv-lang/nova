@@ -4,7 +4,7 @@
 // → composed как secondary в MultiError chain (primary stays = body's
 // throw). Verifies cleanup-fail-during-propagation flow.
 
-module conformance.codegen_on_exit_throws_t2_1
+module spec_tests.conformance
 type FailingResource3 {
     ro id int
 }

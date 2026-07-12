@@ -17,7 +17,7 @@
 // asserts true. Spec: spec/decisions/02-types.md (§0/§10/D368/D130 named-priority, no
 // int-collapse). SINGLE `spec_tests.conformance` folder-module; all top-level names are
 // `d403w_`-prefixed; depends on D232 (`[]T`), D239 (`[]T ≡ Vec[T]`).
-module conformance.d403_vec_sized_element_read
+module spec_tests.conformance
 
 test "[]uint subscript v[i] keeps the unsigned high-bit; no signed collapse (D403)" {
     ro v = []uint.of(0x8000000000000000)   // 2^63 — high bit set; as signed int64 NEGATIVE

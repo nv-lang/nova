@@ -10,7 +10,7 @@
 // []Option[int], generic []T (free fn + generic array-ext method receiver — D373-style),
 // cross-module (D164-style export/import single-CU package mock). Один folder-module
 // `spec_tests.conformance`.
-module conformance.d239_elem_type
+module spec_tests.conformance
 
 import std.sort
 

@@ -9,7 +9,7 @@
 // INDEPENDENT copy (mutating the source afterwards must not touch the result).
 // Spec: spec/decisions/02-types.md:12292 (D259). Depends on D232 (`[]T`), D239 (`[]T ≡ Vec[T]`).
 // Part of the SINGLE `spec_tests.conformance` folder-module (minimal CU).
-module conformance.d259_vec_of_vs_from
+module spec_tests.conformance
 
 test "of(a, b, c) builds a Vec from a literal element list (D259)" {
     ro v = []int.of(1, 2, 3)

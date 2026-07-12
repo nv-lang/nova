@@ -4,7 +4,7 @@
 // nv_panic fix: defer тоже срабатывает на panic() на
 // main flow. defer срабатывает на любом exit — panic, throw, normal.
 
-module conformance.defer_panic_mainflow
+module spec_tests.conformance
 fn main() Io -> () {
     defer { println("DEFER_RUNS") }
     panic("crash")

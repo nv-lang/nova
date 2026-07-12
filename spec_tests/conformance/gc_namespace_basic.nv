@@ -5,7 +5,7 @@
 // Тесты работают под любым GC backend (malloc/boehm) — используют
 // honest sentinel `heap_size() == 0` для malloc.
 
-module conformance.gc_namespace_basic
+module spec_tests.conformance
 test "gc.heap_size — non-negative (malloc: 0, boehm: > 0)" {
     ro h = gc.heap_size()
     assert(h >= 0)

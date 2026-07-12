@@ -15,7 +15,7 @@
 // spawn выполняется во время nova_supervised_run_cancel внешнего, когда
 // tok уже привязан.
 
-module conformance.supervised_cancel_double_bind
+module spec_tests.conformance
 fn main() {
     ro tok = CancelToken.new()
     // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).

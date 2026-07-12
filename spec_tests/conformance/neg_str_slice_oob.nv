@@ -5,7 +5,7 @@
 // паника `str: slice [a..b] out of bounds for byte-length N` (была общая
 // `array: slice ... length` от Vec-пути). Директива обновлена под новый текст.
 
-module conformance.neg_str_slice_oob
+module spec_tests.conformance
 test "neg str slice oob" panics "str: slice" {
     ro s = "abc"
     ro _ = s[0..100]

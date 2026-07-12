@@ -2,7 +2,7 @@
 // семантика == Rust `char::is_ascii_*`/`to_digit` (codepoint-сравнения, без Unicode-таблиц).
 // Behavioral: предикаты различают класс символа; case-конверсия меняет только буквы;
 // to_digit возвращает значение цифры в radix или None. Spec: spec/decisions/03-syntax.md (D252).
-module conformance.d252_char_ascii_api
+module spec_tests.conformance
 
 test "char ASCII-классификация (D252)" {
     assert('5'.is_ascii_digit())

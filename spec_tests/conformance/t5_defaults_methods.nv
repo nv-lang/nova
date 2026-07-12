@@ -1,6 +1,6 @@
 // Plan 120 D215-amend: T5 — field defaults with methods on the same type.
 
-module conformance.t5_defaults_methods
+module spec_tests.conformance
 type Vec24(x f64 = 0.0, y f64 = 0.0)
 
 fn Vec24 @length() -> f64 {

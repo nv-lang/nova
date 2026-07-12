@@ -2,7 +2,7 @@
 // в другой `-> @` метод. StringBuilder.@append chain — эталонный пример.
 // Plan 91 followup: @plus убран, заменён на explicit .append() chain.
 
-module conformance.fluent_wrapper_ok
+module spec_tests.conformance
 type Buf { mut n int }
 
 fn Buf.new() -> Buf => { n: 0 }

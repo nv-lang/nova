@@ -4,7 +4,7 @@
 // Здесь — позитив recoverable-стороны: USER throw пойман handler'ом, результат
 // из interrupt; выполнение продолжается штатно (регресс-гард к panic-fix).
 // Spec: spec/decisions/08-runtime.md D13. Part of the SINGLE conformance module.
-module conformance.d13_with_fail_recoverable_vs_panic
+module spec_tests.conformance
 
 type D13FailErr { code int }
 

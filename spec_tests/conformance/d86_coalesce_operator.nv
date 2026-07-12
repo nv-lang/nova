@@ -4,7 +4,7 @@
 // произвольное выражение типа внутреннего `T`. Behavioral: каждый assert различает —
 // если бы `??` не разворачивал Some/Ok или не подставлял fallback на None/Err, значение
 // отличалось бы. Spec: spec/decisions/04-effects.md (D86). Один folder-module CU.
-module conformance.d86_coalesce_operator
+module spec_tests.conformance
 
 fn d86_lookup(k int) -> Option[int] {
     if k == 1 { return Some(10) }

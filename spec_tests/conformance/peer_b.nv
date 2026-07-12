@@ -4,7 +4,7 @@
 // private dedup) and no C link collision (file-discriminated mangling). This
 // file's `helper` -> 200.
 
-module conformance.peer_b
+module spec_tests.conformance
 priv(file) fn helper() -> int => 200
 
 priv(file) const LOCAL_TAG = 200

@@ -1,6 +1,6 @@
 // Plan 91 Ф.5 conformance: Vec realistic use-cases.
 // build → filter → accumulate workflow.
-module conformance.vec_realistic
+module spec_tests.conformance
 import std.runtime.string.{ParseIntError}
 
 test "filter positives then sum" {

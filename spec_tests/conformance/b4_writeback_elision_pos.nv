@@ -4,7 +4,7 @@
 // СОХРАНЯЕТ длину) → frame-safe → И write `v[i]=`, И read `v[i]` элидируются.
 // Корректность не зависит от элизии (проходит и на Trivial).
 
-module conformance.b4_writeback_elision_pos
+module spec_tests.conformance
 import std.collections.vec.{Vec}
 
 fn build_doubled() -> int {

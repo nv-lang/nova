@@ -1,5 +1,5 @@
 // Plan 91.15 Ф.2 POS — Result[T,E] @debug impl
-module conformance.pos_result_debug
+module spec_tests.conformance
 test "Ok(int) debug" {
     ro r = Ok(1) as Result[int, str]
     assert("${r:?}" == "Ok(1)")

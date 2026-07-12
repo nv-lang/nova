@@ -1,5 +1,5 @@
 // Plan 154: overload по сигнатуре (разные arg-types) — разрешён (D84), не error.
-module conformance.pos_overload_sig
+module spec_tests.conformance
 
 type Foo { x int }
 

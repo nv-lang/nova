@@ -4,7 +4,7 @@
 // вызовов. Восстановлен явный bounds-panic в теле @index → OOB ловится.
 // (Inline `v[i]` всегда был безопасен своей проверкой; это про `.index()`.)
 
-module conformance.followup_index_direct_oob_neg
+module spec_tests.conformance
 import std.collections.vec.{Vec}
 
 test "direct v.index(OOB) traps" panics "requires failed" {

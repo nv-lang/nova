@@ -6,7 +6,7 @@
 // pruned and TABLE's initializer would reference an undeclared identifier.
 // EXPECT_STDOUT 300
 
-module conformance.hunt_const_to_const
+module spec_tests.conformance
 
 const RAW int = 300
 

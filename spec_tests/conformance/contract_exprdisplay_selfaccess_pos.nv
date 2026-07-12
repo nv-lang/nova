@@ -3,7 +3,7 @@
 // clean (no violation), so the display fix is purely about the message text of
 // the negative path and does not perturb the satisfied path.
 
-module conformance.contract_exprdisplay_selfaccess_pos
+module spec_tests.conformance
 type Counter2 { count int, limit int }
 
 fn Counter2 @step() -> int

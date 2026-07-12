@@ -2,7 +2,7 @@
 // Two separate tuple assigns, each correct independently.
 // Verifies that sequential tuple assigns compose correctly.
 
-module conformance.t8_chain
+module spec_tests.conformance
 test "sequential tuple assigns" {
     mut a = 0
     mut b = 0

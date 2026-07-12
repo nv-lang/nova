@@ -2,7 +2,7 @@
 // Plan 33.3 Ф.9.2: record invariant violation на конструкции →
 // runtime contract violation в debug.
 
-module conformance.contracts_record_invariant_fail
+module spec_tests.conformance
 type Account {
     balance int
 }

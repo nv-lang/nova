@@ -4,7 +4,7 @@
 // Also exercises the args_key sanitizer (record literals contain
 // `{`, `}`, `:`, `;` which must be rewritten в valid C identifier).
 
-module conformance.v32_record_literal_args_ok
+module spec_tests.conformance
 type Color {
     ro r int
     ro g int

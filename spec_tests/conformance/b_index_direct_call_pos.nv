@@ -1,6 +1,6 @@
 // Plan 140.2 Part B: прямой вызов @index (.index(i)) эмитит контракт-enforcement
 // `requires 0 <= i && i < @len` корректно (instance-метод, nova_self в scope).
-module conformance.b_index_direct_call_pos
+module spec_tests.conformance
 import std.collections.vec.{Vec}
 
 test "direct @index call in-bounds" {

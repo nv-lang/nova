@@ -3,7 +3,7 @@
 // User-типы могут реализовать через `fn Type @index(key K) -> V`.
 //
 // Spec: spec/decisions/03-syntax.md D238. Единица: folder-module `spec_tests.conformance`.
-module conformance.d238_index_protocol
+module spec_tests.conformance
 
 type D238Pair { x int, y int }
 fn D238Pair @index(key int) -> int =>

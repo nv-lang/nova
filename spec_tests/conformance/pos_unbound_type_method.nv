@@ -1,7 +1,7 @@
 // Plan 132 Ф.1.7 (POS): unbound method value `Type.@method` still works.
 // `Counter9.@add` takes (Counter9, int) as explicit args (no capture).
 
-module conformance.pos_unbound_type_method
+module spec_tests.conformance
 type Counter9 { value int }
 
 fn Counter9.new() -> Self => { value: 0 }

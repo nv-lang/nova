@@ -1,4 +1,4 @@
-module conformance.repro_silent_ub_result_bang
+module spec_tests.conformance
 // Plan 61 Ф.4 repro: Silent UB #2 — `expr!!` на Err бросает payload.
 //
 // До Plan 61: nova_throw_value placeholder macro в effects.h:140 всегда

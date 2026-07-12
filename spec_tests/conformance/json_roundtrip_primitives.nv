@@ -3,7 +3,7 @@
 // Verifies basic encode-then-decode + decode-then-encode equivalence
 // for null/bool/num/str values.
 
-module conformance.json_roundtrip_primitives
+module spec_tests.conformance
 import std.encoding.json.{JsonValue, Json}
 
 test "encode null" {

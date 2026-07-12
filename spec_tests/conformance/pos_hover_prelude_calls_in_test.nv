@@ -2,7 +2,7 @@
 // compile and run — hover should resolve these to their declarations.
 // This validates that assert/println/etc. are syntactically reachable inside
 // test bodies (the same AST paths the body-walker traverses).
-module conformance.pos_hover_prelude_calls_in_test
+module spec_tests.conformance
 test "assert in test body resolves via body-walk" {
     ro x = 42
     assert(x == 42)

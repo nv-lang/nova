@@ -18,7 +18,7 @@
 // early `return Err(..)` was found (2026-07-08) to mis-resolve the bound
 // variant in this toolchain (pre-existing, separately-tracked; see
 // backlog-followups.md). Flat-matching the payload directly avoids it.
-module conformance.plan174_1_typed_numeric_parse
+module spec_tests.conformance
 
 import std.runtime.string.{ParseIntError, ParseFloatError}
 

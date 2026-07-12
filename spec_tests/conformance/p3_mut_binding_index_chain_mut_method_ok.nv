@@ -4,7 +4,7 @@
 // binding `mut`, chain-walking helper walks `IndexAccess { obj: Ident
 // "arr" }` → root Ident → mut → enforcement пропускает.
 
-module conformance.p3_mut_binding_index_chain_mut_method_ok
+module spec_tests.conformance
 type Vec36(x int, y int, z int)
 
 fn Vec36 mut @set_x(v int) -> () {

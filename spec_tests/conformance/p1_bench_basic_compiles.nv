@@ -1,5 +1,5 @@
 // Plan 57 MVP: bench "name" { measure { ... } } compiles cleanly.
-module conformance.p1_bench_basic_compiles
+module spec_tests.conformance
 bench "smoke-noop" {
     measure {
         bench.opaque(42)

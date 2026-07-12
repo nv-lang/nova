@@ -3,7 +3,7 @@
 // выполняется потому что n=0, но invariant сразу false) → pre-entry
 // runtime panic в debug.
 
-module conformance.contracts_loop_preentry_fail
+module spec_tests.conformance
 fn empty_loop_bad(n int) -> int {
     mut i = 100   // i стартует с 100
     while i < n

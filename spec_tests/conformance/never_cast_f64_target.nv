@@ -1,7 +1,7 @@
 // [M-125-codegen-never-cast] positive — f64 target type.
 // (different scalar — exercises typed_zero_value_125 float branch)
 
-module conformance.never_cast_f64_target
+module spec_tests.conformance
 fn ratio(num f64, denom f64) -> f64 {
     if denom == 0.0 {
         panic("zero denominator")

@@ -4,7 +4,7 @@
 // Attests on C-side function as callable from ConsumeScope cleanup
 // body without firing W_FFI_CANCEL_UNSAFE warning.
 
-module conformance.cancel_safe_attr_parses
+module spec_tests.conformance
 // Production-like usage: `#cancel_safe` attribute attests that a fn
 // is safe to call from inside a ConsumeScope cleanup body (under
 // cancel-shield). Bootstrap: parser recognizes the attribute and

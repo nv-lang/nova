@@ -2,7 +2,7 @@
 // cross-package protocol with consume-typed implementations.
 // The protocol defines a contract; consume types can satisfy it.
 
-module conformance.cross_pkg_consume_via_protocol_ok
+module spec_tests.conformance
 // "Package A" — protocol definition:
 export type Resource_crosspkgconsumeviaprotocolok protocol {
     @cleanup() -> ()

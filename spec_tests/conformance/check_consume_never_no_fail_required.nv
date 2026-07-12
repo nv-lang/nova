@@ -4,7 +4,7 @@
 // `Fail[never]` ≡ «не throws» — caller fn не должна объявлять Fail-effect.
 // Hot-path optimization (D194 §perf) разворачивается в codegen Plan 110.1.7.
 
-module conformance.check_consume_never_no_fail_required
+module spec_tests.conformance
 // MutexGuard-style infallible resource — release не может fail.
 type InfallibleResource3 {
     ro id int

@@ -25,7 +25,7 @@
 // the `static_methods` probe.
 //
 // Spec: spec/decisions/02-types.md §D372 (canonical `.new()` convention).
-module conformance.d372_generic_static_default_cap
+module spec_tests.conformance
 
 // `Queue[T]` — в отличие от Vec/StringBuilder/WriteBuffer (re-exported из
 // std/prelude.nv) и HashMap/Set (транзитивно достижимы через prelude-цепочку

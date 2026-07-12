@@ -4,7 +4,7 @@
 // Acceptance A6 (см. docs/plans/91.12-d126-retract.md): API surface
 // неизменён — get/set/get_or_init/take/is_initialized.
 
-module conformance.v2_oncecell_tuple_newtype_ok
+module spec_tests.conformance
 test "OnceCell[int]: new + set + get round-trip" {
     mut cell = OnceCell[int].new()
     assert(cell.is_initialized() == false)

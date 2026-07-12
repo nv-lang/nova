@@ -3,7 +3,7 @@
 // generic-context: monomorphizer должен раскрыть и Option и метод
 // per-T одинаково.
 
-module conformance.option_in_generic_fn
+module spec_tests.conformance
 fn check_some[T](o Option[T]) -> bool => o.is_some()
 fn check_none[T](o Option[T]) -> bool => o.is_none()
 

@@ -4,7 +4,7 @@
 // Spec: spec/decisions/03-syntax.md D411. Part of the SINGLE
 // `spec_tests.conformance` folder-module (D-prefixed names below are unique:
 // `D411Rec*`).
-module conformance.d411_record_binding_destructure
+module spec_tests.conformance
 
 type D411RecPoint {
     x int

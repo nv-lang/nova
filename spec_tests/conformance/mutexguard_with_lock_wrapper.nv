@@ -3,7 +3,7 @@
 // Explicit guard usage: consume g = mu.lock(); defer g.unlock().
 // Tests the guard-based locking pattern that underpins with_lock.
 
-module conformance.mutexguard_with_lock_wrapper
+module spec_tests.conformance
 test "explicit guard: lock, work, unlock" {
     mut mu = Mutex.new()
     mut shared = AtomicInt.new(0)

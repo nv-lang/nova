@@ -7,7 +7,7 @@
 // and an alias (`int`≡`i64`) canonicalizes so semantically-equal types stay value-equal.
 // Spec: spec/decisions/02-types.md:13215 (D315). Part of the SINGLE `spec_tests.conformance`
 // folder-module (one CU). D-prefixed names avoid clashes across D-files.
-module conformance.d315_resolvedtype_lossless_canon
+module spec_tests.conformance
 
 test "distinct Vec element widths do NOT collapse — u32 and u8 stay lossless (D315)" {
     mut a []u32 = [1, 2, 3]

@@ -3,7 +3,7 @@
 // The safe i-th codepoint is `s.chars().nth(i) -> Option[char]` (O(n)) — also
 // None on OOB / negative, so the semantics carry over exactly.
 
-module conformance.t6_str_get_option
+module spec_tests.conformance
 test "chars().nth in-bounds returns Some" {
     ro s = "abc"
     assert(s.chars().nth(0) == Some('a'))

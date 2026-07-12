@@ -5,7 +5,7 @@
 // корректная вложенность. Негатив — neg/d196_init_not_consumable_neg.nv.
 // Шаблоны сверены с nova_tests/plan110 + d188. Один folder-module
 // `spec_tests.conformance`.
-module conformance.d196_consume_scope_init_forms
+module spec_tests.conformance
 
 type D196Res {
     ro id int

@@ -1,6 +1,6 @@
 // Plan 123.2 T1.8: while-let form — LICM hoists invariant @field.
 
-module conformance.licm_while_let_ok
+module spec_tests.conformance
 type Counter7 {
     ro limit int
 }

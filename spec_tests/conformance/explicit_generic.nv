@@ -11,7 +11,7 @@
 // именно фичу Plan 87 (parse + type-check + итерация аннотированного
 // generic-элемента).
 
-module conformance.explicit_generic
+module spec_tests.conformance
 test "for s str in string array" {
     ro words []str = ["alpha", "beta"]
     mut total_len = 0

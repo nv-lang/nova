@@ -9,7 +9,7 @@
 // Fail в сигнатуре. Негативы — neg/d158_*.nv (Fail в defer без Fail в sig; D90 §6
 // top-level return в defer НЕ снят D158). Шаблоны сверены с nova_tests/plan100_4_1.
 // Один folder-module `spec_tests.conformance`.
-module conformance.d158_failable_defer_body
+module spec_tests.conformance
 
 type D158WorkErr { msg str }
 type D158CommitErr { msg str }

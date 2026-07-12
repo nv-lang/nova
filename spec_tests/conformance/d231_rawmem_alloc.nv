@@ -22,7 +22,7 @@
 // Syntax/behaviour proven by existing compiling tests
 // (nova_tests/plan118/t4_ptr_index_in_unsafe_ok.nv,
 //  nova_tests/strings/neg/plan131_alloc_uncollectable_pos.nv).
-module conformance.d231_rawmem_alloc
+module spec_tests.conformance
 
 import std.runtime.raw_mem.{RawMem}
 

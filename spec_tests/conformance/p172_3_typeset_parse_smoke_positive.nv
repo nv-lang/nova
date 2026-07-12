@@ -1,4 +1,4 @@
-module conformance.p172_3_typeset_parse_smoke_positive
+module spec_tests.conformance
 // Plan 172.3 (D310) Ф.1 — parse smoke: type-set declaration parses + a sum-type
 // `type X | A | B` still parses as sum (no regression from the `set` kind-token).
 // EXPECT_RUN_OK

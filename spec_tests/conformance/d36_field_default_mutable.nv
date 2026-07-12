@@ -4,7 +4,7 @@
 //   (1) поле БЕЗ префикса присваивается через mut-binding (`acc.f = ...`, `acc.f += ...`);
 //   (2) `fn Type mut @method` даёт mutable-self → мутация полей внутри метода видна снаружи.
 // Spec: spec/decisions/02-types.md:2597 (D36). Один folder-module; D-prefixed имена уникальны.
-module conformance.d36_field_default_mutable
+module spec_tests.conformance
 
 // Аккумулятор — все поля mutable, никаких префиксов (D36 default).
 type D36RunAcc {

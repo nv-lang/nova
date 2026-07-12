@@ -1,5 +1,5 @@
 // Plan 165 — Zero-cost iterator chain regression guard.
-module conformance.iter_chain_no_malloc_pos
+module spec_tests.conformance
 import std.collections.vec_iter
 
 test "filter collect" {

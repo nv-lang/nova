@@ -1,7 +1,7 @@
 // Plan 96 Ф.1 — позитив: индексация в границах не падает.
 // arr[0] и arr[len-1] — крайние валидные позиции.
 
-module conformance.boundary_ok
+module spec_tests.conformance
 test "arr[0] and arr[len-1] don't panic" {
     mut arr = [10, 20, 30, 40, 50]
     assert(arr[0] == 10)

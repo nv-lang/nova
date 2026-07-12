@@ -4,7 +4,7 @@
 // AtomicUsize wraps `uint` (uint64_t on 64-bit targets).
 // These are the recommended types for platform-native counters.
 
-module conformance.plan103_2_atomic_isize_usize
+module spec_tests.conformance
 test "AtomicIsize new and load" {
     mut a = AtomicIsize.new(42)
     assert(a.load() == 42)

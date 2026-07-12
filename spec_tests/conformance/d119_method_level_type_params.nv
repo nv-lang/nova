@@ -6,7 +6,7 @@
 // (U=u8 stays u8 — no int-collapse).
 // Spec: spec/decisions/02-types.md §D119 (Plan 48 Ф.9). Part of the SINGLE
 // `spec_tests.conformance` folder-module. D-prefixed type name avoids clashes.
-module conformance.d119_method_level_type_params
+module spec_tests.conformance
 
 type D119Box[T] { inner T }
 

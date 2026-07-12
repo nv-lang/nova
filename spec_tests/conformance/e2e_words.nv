@@ -3,7 +3,7 @@
 // "Hello, world" → Hello | "," | " " | world  (4 tokens).
 // EXPECT_STDOUT words=4 ok
 
-module conformance.e2e_words
+module spec_tests.conformance
 import std.unicode.{WordsIter}
 
 fn main() {

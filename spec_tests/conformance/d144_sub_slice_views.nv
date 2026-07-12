@@ -6,7 +6,7 @@
 // the parent untouched. An empty range `arr[a..a]` is a valid (length-0) view. See
 // spec/decisions/02-types.md:5980 (D144). Part of the SINGLE `spec_tests.conformance`
 // folder-module; D-prefixed names avoid clashes.
-module conformance.d144_sub_slice_views
+module spec_tests.conformance
 
 test "exclusive range arr[a..b] is a [a,b) view with correct len/elements (D144)" {
     mut d144a []int = [10, 20, 30, 40, 50]

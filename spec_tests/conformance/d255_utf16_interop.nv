@@ -5,7 +5,7 @@
 // surrogate-хелперы; roundtrip-инвариант `from_utf16(encode_utf16(s)) == Ok(s)`.
 // Модуль std.encoding.utf16 — ЯВНЫЙ import (не prelude). Шаблоны сверены с
 // nova_tests/unicode/plan152_6. Один folder-module `spec_tests.conformance`.
-module conformance.d255_utf16_interop
+module spec_tests.conformance
 
 import std.encoding.utf16.{is_high_surrogate, is_low_surrogate}
 

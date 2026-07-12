@@ -3,7 +3,7 @@
 // AtomicPtr stores a nova_int (int64_t) as a pointer-address proxy.
 // Generic AtomicPtr[T] deferred to Plan 103.7.
 
-module conformance.plan103_2_atomic_ptr_basic
+module spec_tests.conformance
 test "AtomicPtr null initializes to 0" {
     mut a = AtomicPtr.null()
     assert(a.load() == 0)

@@ -9,7 +9,7 @@
 // post-Plan 100.1. Migrated к plain type since view-iter test focus is on
 // loop-var semantics, not consume-collection semantics.
 
-module conformance.for_view_iter_ok
+module spec_tests.conformance
 type Transaction6 {
     id int,
 }

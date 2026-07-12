@@ -1,7 +1,7 @@
 // Plan 123.1 T2.4: type с both ro и mut fields → ro full-body cache +
 // mut first-region cache в одном теле.
 
-module conformance.plan123_1_mixed_ro_mut_ok
+module spec_tests.conformance
 type Config3 {
     ro factor int
     mut counter int

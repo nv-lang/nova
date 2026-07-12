@@ -3,7 +3,7 @@
 // `@name` — аналогичный доступ внутри инстанс-методов (неявный self).
 // Mutation: `mut p.field = val` работает при mut-binding и mutable поле.
 // Spec: spec/decisions/03-syntax.md D37. Part of the SINGLE `spec_tests.conformance` folder-module.
-module conformance.d37_field_access_dot_syntax
+module spec_tests.conformance
 
 // --- Named record field access ---
 

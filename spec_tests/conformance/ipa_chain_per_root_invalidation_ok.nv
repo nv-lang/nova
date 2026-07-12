@@ -1,7 +1,7 @@
 // Plan 123.7.1 T4.1 (V4.1 per-root): chain cache survives writes
 // to UNRELATED root fields.
 
-module conformance.ipa_chain_per_root_invalidation_ok
+module spec_tests.conformance
 type Inner {
     ro v int
 }

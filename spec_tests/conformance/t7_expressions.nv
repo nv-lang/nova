@@ -2,7 +2,7 @@
 // `(x, y) = (1+2, 3*4)` — rhs contain arithmetic expressions.
 // rhs do not depend on lhs, so no temps are needed.
 
-module conformance.t7_expressions
+module spec_tests.conformance
 test "rhs are arithmetic expressions" {
     mut x = 0
     mut y = 0

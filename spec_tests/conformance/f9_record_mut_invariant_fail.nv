@@ -2,7 +2,7 @@
 // Plan 33.3 Ф.9.2: record invariant check на конструкции через
 // record-литерал. Constructor с invariant-violation → runtime panic.
 
-module conformance.f9_record_mut_invariant_fail
+module spec_tests.conformance
 type Counter {
     value int
 }

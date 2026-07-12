@@ -4,7 +4,7 @@
 // obj is a TurboFish{Vec,[f32]} static-returning `.new()/.from()` did not resolve
 // the return type to `Nova_Vec____nova_f32*` (it worked for int), so `.debug`
 // fell through to the str overload and a Vec[f32]* was passed into a str method.
-module conformance.vec_f32_chained_debug
+module spec_tests.conformance
 import std.collections.vec.{Vec}
 
 test "Vec[f32].new() chained .debug (empty)" {

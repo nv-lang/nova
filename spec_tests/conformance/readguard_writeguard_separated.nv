@@ -4,7 +4,7 @@
 // Guards are distinct types — compile-time enforcement that read guards
 // cannot be used as write guards and vice versa.
 
-module conformance.readguard_writeguard_separated
+module spec_tests.conformance
 test "ReadGuard explicit unlock" {
     mut rw = RwLock.new()
     consume rg = rw.read()

@@ -15,7 +15,7 @@
 // Discriminator: before the fix, this was CC-FAIL (`member reference type
 // 'NovaOpt_uint32_t' is not a pointer; did you mean to use '.'?`).
 // Единица: folder-module `spec_tests.conformance`.
-module conformance.match_tuple_option_value
+module spec_tests.conformance
 
 fn mto_decode4(a Option[u32], b Option[u32], c Option[u32], d Option[u32]) -> Option[u32] {
     match (a, b, c, d) {

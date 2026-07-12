@@ -4,7 +4,7 @@
 // каждом exit-path — B2 (codegen). Здесь тело НЕ ссылается на `o` (ещё не
 // материализован), проверяем только парсинг + что defer(o) не ломает исполнение.
 
-module conformance.f2_defer_outcome_parse
+module spec_tests.conformance
 fn run_defer_outcome() -> str {
     mut trail = ""
     {

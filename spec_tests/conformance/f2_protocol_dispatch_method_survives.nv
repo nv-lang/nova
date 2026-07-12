@@ -11,7 +11,7 @@
 // was kept.
 // EXPECT_STDOUT dispatch ok
 
-module conformance.f2_protocol_dispatch_method_survives
+module spec_tests.conformance
 type Greeter protocol {
     @greet() -> int
 }

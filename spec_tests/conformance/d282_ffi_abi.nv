@@ -23,7 +23,7 @@
 //
 // Spec: spec/decisions/08-runtime.md (D282 rule 2, D353). Neg side:
 // spec_tests/conformance/neg/d282_*_neg.nv + d353_*_neg.nv.
-module conformance.d282_ffi_abi
+module spec_tests.conformance
 
 // C-ABI value-record (all fields C-ABI) — passed by-value as a C struct.
 type D282Rect value { w int, h int }

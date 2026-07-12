@@ -15,7 +15,7 @@
 // а nova_tests НЕ гейт корректности (только byte-identical baseline,
 // см. feedback-nova-tests-not-correctness-gate). conformance-покрытие
 // отсутствовало.
-module conformance.d108_from_pairs_user_type
+module spec_tests.conformance
 
 #from_pairs
 type D108Bag[K, V] {

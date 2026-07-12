@@ -4,7 +4,7 @@
 //
 // Simulated single-file mock: folder-module с consume-types.
 
-module conformance.folder_module_consume_ok
+module spec_tests.conformance
 // "resources/" folder-module — File + Socket consume-types:
 
 export type File consume {

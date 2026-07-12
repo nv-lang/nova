@@ -4,7 +4,7 @@
 // путь: тест проходит (exit 0), ошибка наблюдается через is_err().
 // is_err(). Throw-сторона OOB (read_X()!! на пустом) — см. neg_read_oob.nv.
 
-module conformance.read_oob
+module spec_tests.conformance
 // ── read_byte / bytes OOB ──────────────────────────────────────
 
 test "read_byte Err — пустой буфер" {

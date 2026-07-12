@@ -5,7 +5,7 @@
 // Discriminator: без `-> @` builder pattern требует явно `return self`.
 //
 // Spec: spec/decisions/03-syntax.md D132. Единица: folder-module `spec_tests.conformance`.
-module conformance.d132_fluent_return
+module spec_tests.conformance
 
 type D132Builder { buf str }
 

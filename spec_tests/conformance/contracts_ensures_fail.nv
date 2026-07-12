@@ -4,7 +4,7 @@
 //
 // `ensures_buggy` фейлит ensures result == x * 2, потому что body возвращает x + 1.
 
-module conformance.contracts_ensures_fail
+module spec_tests.conformance
 fn ensures_buggy(x int) -> int
     requires x > 0
     ensures result == x * 2

@@ -2,7 +2,7 @@
 // Plan 33.3 Ф.9.8: loop body не decrement'ит decreases-измеритель →
 // runtime assert_static panic в debug.
 
-module conformance.f9_loop_decreases_fail
+module spec_tests.conformance
 fn f9_loop_decreases_fail_bad_loop(n int) -> int {
     mut i = n
     mut iter = 0

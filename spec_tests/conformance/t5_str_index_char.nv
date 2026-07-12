@@ -4,7 +4,7 @@
 // the `chars()` lens: `s.chars().nth(i) -> Option[char]` (O(n), explicit).
 // The compile-error for `s[i]` lives in plan152_1/n_str_int_index.
 
-module conformance.t5_str_index_char
+module spec_tests.conformance
 test "chars().nth(i): i-th codepoint" {
     ro s = "abc"
     assert(s.chars().nth(0) == Some('a'))

@@ -5,7 +5,7 @@
 // тот же bind-путь падает ICE при `nova test` (репро 2026-07-06); на net2 —
 // компилируется и проходит.
 
-module conformance.net2_bind_used_port_test
+module spec_tests.conformance
 import std.net.{TcpListener, UdpSocket, SocketAddr, real_net}
 
 test "net2: TcpListener bind to already-used port → Err (no P67-LEGACY ICE)" {

@@ -1,6 +1,6 @@
 // Plan 123.2 T1.3: for loop hoisting.
 
-module conformance.licm_for_loop_ok
+module spec_tests.conformance
 type Box4 {
     ro factor int
 }

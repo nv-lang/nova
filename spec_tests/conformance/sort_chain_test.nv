@@ -1,4 +1,4 @@
-module conformance.sort_chain_test
+module spec_tests.conformance
 import std.sort
 
 // Plan 91.7: sort/sort_by возвращают @ (после Part A) — direct call работает.

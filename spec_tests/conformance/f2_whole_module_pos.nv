@@ -2,7 +2,7 @@
 // import без alias). Last-segment `Z` registered как imported_modules
 // entry — same rewrite path как alias case.
 
-module conformance.f2_whole_module_pos
+module spec_tests.conformance
 import spec_tests.conformance.plan70_1.helper_mod
 
 test "whole-module import: helper_mod.add_one(int)" {

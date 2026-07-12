@@ -22,7 +22,7 @@
 // НЕТ // ENV NOVA_AUTOARM=0 и НЕТ NOVA_MAXPROCS=1 — тест обязан бежать
 // ARMED на дефолтном worker-count (весь смысл Ф.2/Ф.3 — M:N без костыля).
 
-module conformance.child_error_retention_test
+module spec_tests.conformance
 test "supervised: N одновременных детей с РАЗНЫМИ ошибками — well-formed retained re-throw" {
     ro n = 40
     for run in 0..5 {

@@ -25,7 +25,7 @@
 // throughput differs. Asserts exit 0 + stdout so it doubles as a correctness
 // regression guard.
 
-module conformance.perf_contract_hot_loop_slow
+module spec_tests.conformance
 fn sq_plus(x int) -> int
     requires x >= 0
     ensures result >= x

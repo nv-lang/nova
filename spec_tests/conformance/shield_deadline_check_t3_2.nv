@@ -22,7 +22,7 @@
 // WithExitTimeout) so a sub-5-second budget can be configured per-scope.
 // See followup marker [M-110-deadline-fire-fixture] in Plan 110.2.6.
 
-module conformance.shield_deadline_check_t3_2
+module spec_tests.conformance
 type ShortLivedRes3 {
     ro id int
 }

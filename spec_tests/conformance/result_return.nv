@@ -5,7 +5,7 @@
 // До Plan 88: `Result[T,E]` в return давал unsubstituted-mangle
 // `Nova_Result____<ok>__<err>` (CC-FAIL «unknown type name»).
 
-module conformance.result_return
+module spec_tests.conformance
 fn ok_of[T](x T) -> Result[T, str] => Ok(x)
 fn some_of[T](x T) -> Option[T] => Some(x)
 

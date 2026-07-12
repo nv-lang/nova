@@ -5,7 +5,7 @@
 // shape `handler.handle(req.params(ps))` from std/http/server.
 // Spec: spec/decisions/02-types.md D326 (Plan 184 Р5, Р7).
 // Part of the SINGLE `spec_tests.conformance` folder-module.
-module conformance.d326_fluent_value_argpos
+module spec_tests.conformance
 
 type D326ArgposRec value {
     ro a int

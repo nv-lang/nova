@@ -1,7 +1,7 @@
 // Plan 90.1 — позитив: copy_from strict equal-length + memmove.
 // D141 amend: src.len != dst.len → panic (breaking change from silent truncation).
 
-module conformance.copy_from_strict_equal
+module spec_tests.conformance
 test "copy_from — equal length []u8" {
     mut dst []u8 = [0, 0, 0]
     ro src []u8 = [7, 8, 9]

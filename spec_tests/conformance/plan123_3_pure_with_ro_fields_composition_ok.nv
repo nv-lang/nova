@@ -1,6 +1,6 @@
 // Plan 123.3 T1.5: pure-call cache composes с D217 ro field cache.
 
-module conformance.plan123_3_pure_with_ro_fields_composition_ok
+module spec_tests.conformance
 type Box_plan1233purewithrofieldscompositionok {
     ro a int
     ro b int

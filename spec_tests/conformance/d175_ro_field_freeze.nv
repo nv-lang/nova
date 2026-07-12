@@ -14,7 +14,7 @@
 // Spec: spec/decisions/02-types.md:2843 (D175 «`ro field` — полный freeze (амендмент D36)»),
 //   §«Что» table + §«Транзитивность» example.
 // One folder-module `spec_tests.conformance`; D-prefixed names are unique.
-module conformance.d175_ro_field_freeze
+module spec_tests.conformance
 
 // Nested data: `items` is a plain `mut`-able field — but it lives behind a `ro` field below,
 // so it is frozen for WRITES, yet remains READABLE (transitivity is a write rule).

@@ -1,7 +1,7 @@
 // Plan 123.1 T2.6: nested if/match blocks — ro caching валиден
 // across nested control-flow.
 
-module conformance.plan123_1_nested_blocks_ok
+module spec_tests.conformance
 type Tally3 {
     ro a int
     ro b int

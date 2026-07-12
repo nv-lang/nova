@@ -11,7 +11,7 @@
 //   другое значение; guard, игнорящий биндинг, не свернул бы в else.
 // Sibling-файлы покрывают другие D; здесь — именно condition-pattern-bind D34.
 // Один folder-module `spec_tests.conformance`; все top-level имена D34-префиксны.
-module conformance.d34_pattern_bind_conditions
+module spec_tests.conformance
 
 // Чистая «cache»-имитация без std-импортов: ключ присутствует → Some(value), иначе None.
 // Проверяет «получить-и-использовать-если-есть» — связывание u ТОЛЬКО в present-ветке.

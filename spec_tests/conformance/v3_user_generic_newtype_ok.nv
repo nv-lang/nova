@@ -20,7 +20,7 @@
 // **Acceptance:** Same как Plan 115 T3.1-T3.2 (non-generic `type SqHandle(ptr)`),
 // но с generic параметром T.
 
-module conformance.v3_user_generic_newtype_ok
+module spec_tests.conformance
 type MyHandle[T](*())
 type MultiParam[T, U](*())
 

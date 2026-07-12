@@ -9,7 +9,7 @@
 // `Self`-типизированный метод), удовлетворяемый структурно ДВУМЯ независимыми record-типами,
 // которые НИГДЕ не называют protocol; все методы контракта (в т.ч. `Self`-equality) реально
 // диспетчеризуются на конкретный тип. D-prefixed уникальные имена — общий folder-module.
-module conformance.d42_structural_protocol
+module spec_tests.conformance
 
 // Behavior-контракт через `protocol` (НЕ data): несколько сигнатур, методы без `fn`,
 // `@`-receiver. `@same(other Self)` — D42-канонический Self-в-сигнатуре (type-safe eq).

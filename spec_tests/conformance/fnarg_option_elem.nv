@@ -1,7 +1,7 @@
 // Plan 89 Ф.2.3 — передача боксированного Option-элемента массива
 // в функцию, ожидающую `Option[T]` по значению.
 
-module conformance.fnarg_option_elem
+module spec_tests.conformance
 fn unwrap_or_zero(o Option[int]) -> int =>
     match o {
         Some(v) => v

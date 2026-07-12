@@ -8,7 +8,7 @@
 // Канон-литерал под `-> Self` — bare `{ field: v }` (return-pinned, без type-prefix).
 // Spec: spec/decisions/02-types.md §D182. Часть folder-module inprogress.d182_self_return_parametric_static;
 // все top-level имена D182-prefixed во избежание duplicate-top-level-name клэша.
-module conformance.d182_self_return_parametric_static
+module spec_tests.conformance
 
 // === 1. Self в static-методе parametric record'а: Self ≡ Box[T] с его моно-инстансом ===
 

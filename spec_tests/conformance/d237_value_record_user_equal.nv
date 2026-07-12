@@ -1,7 +1,7 @@
 // D237 (Equal.equal) × D226 (value-record receiver-ABI) / Plan 172.4 Ф.3 A3:
 // user @equal на value-record зовётся из `==` и из вложенных позиций
 // (Option-payload) через per-type by-value обёртку (receiver NovaValue_X*).
-module conformance.d237_value_record_user_equal
+module spec_tests.conformance
 
 type D237Vp value { a int, b int }
 fn D237Vp @equal(other D237Vp) -> bool => @a == other.a  // b игнорируется намеренно

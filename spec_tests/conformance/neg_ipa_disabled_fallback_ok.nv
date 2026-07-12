@@ -1,7 +1,7 @@
 // Plan 123.7.1 T-NEG.2: V7.1 disabled (NOVA_FIELD_CACHE_IPA=0) →
 // fallback к V1-V6 conservative. Semantic preserved.
 
-module conformance.neg_ipa_disabled_fallback_ok
+module spec_tests.conformance
 type Counter8 {
     mut value int
     mut log int

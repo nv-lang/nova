@@ -4,7 +4,7 @@
 // an inferred expression keeps its precise primitive identity, not the int default, so the
 // engine never produces garbage from a wrong fallback type (D368's silent-miscompilation list).
 // Spec: spec/decisions/02-types.md (D368). Single `spec_tests.conformance` folder-module.
-module conformance.d368_no_int_collapse
+module spec_tests.conformance
 
 test "f64 division result keeps f64 identity, not collapsed to int (D368)" {
     ro a = 7.0

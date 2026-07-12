@@ -2,7 +2,7 @@
 // Проверяет что unreachable интегрирован с divergence-aware inference Plan 125:
 // тип if-expr = тип не-unreachable ветки.
 
-module conformance.unreachable_basic
+module spec_tests.conformance
 fn classify2(n int) -> str {
     if n == 0 {
         "zero"

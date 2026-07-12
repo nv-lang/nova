@@ -5,7 +5,7 @@
 // body через ScopeOutcome match → `if err is T` narrowing на `Failure(any)`.
 // Ранее — bootstrap str-prefix discrimination ("cancel: "); теперь типизированно.
 
-module conformance.codegen_typed_error_dispatch_t2_11
+module spec_tests.conformance
 type TxRes3 {
     ro id int
 }

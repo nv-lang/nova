@@ -7,7 +7,7 @@
 //
 // Acceptance A110.1.8.a: nested consume{} inside cleanup works correctly.
 
-module conformance.codegen_reentrance_d197
+module spec_tests.conformance
 type Lock3 {
     ro id int
 }

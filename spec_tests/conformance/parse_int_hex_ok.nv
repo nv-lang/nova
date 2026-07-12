@@ -1,4 +1,4 @@
-module conformance.parse_int_hex_ok
+module spec_tests.conformance
 import std.runtime.string.{ParseIntError}
 
 test "hex uppercase" {

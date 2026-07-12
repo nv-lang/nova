@@ -11,7 +11,7 @@
 // stays as a plain coverage-fill: exercises the FULL f64/f32 math-method set (not just
 // the D74 subset already covered by `d74_math_methods.nv`), including `f32` — previously
 // UNCOVERED by any conformance fixture. One folder-module CU (`spec_tests.conformance`).
-module conformance.d109_primitive_methods_f64_f32_math
+module spec_tests.conformance
 
 test "f64 full math-intrinsic set resolves + computes (D109/D74 wave-2)" {
     assert((9.0).sqrt() == 3.0)

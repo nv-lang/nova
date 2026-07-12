@@ -10,7 +10,7 @@
 // semantics.
 // Spec: spec/decisions/02-types.md (named-priority, uint≠int, u8≠i8). Single
 // `spec_tests.conformance` folder-module; all top-level names d401w_-prefixed.
-module conformance.d401_match_sized_arm_width
+module spec_tests.conformance
 
 // Plain int source so the match scrutinee is a genuine runtime value (not const-folded away).
 fn d401w_sel(n int) -> int => n

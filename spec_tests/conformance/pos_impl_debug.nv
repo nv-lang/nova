@@ -1,4 +1,4 @@
-module conformance.pos_impl_debug
+module spec_tests.conformance
 #impl(Debug)
 type Point { x int, y int }
 

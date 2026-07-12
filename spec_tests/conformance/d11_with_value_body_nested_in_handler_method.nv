@@ -42,7 +42,7 @@
 // Значит фикс парсера сам по себе НЕ разблокирует orm_decorators.nv —
 // нужен ещё один, независимый codegen-фикс (Plan 197 examples-revision
 // / отдельная задача).
-module conformance.d11_with_value_body_nested_in_handler_method
+module spec_tests.conformance
 
 type D11WithDb effect {
     exec() -> int

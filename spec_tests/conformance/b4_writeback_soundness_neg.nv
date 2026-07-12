@@ -4,7 +4,7 @@
 // OOB (i за усохшей длиной) ловится в runtime. Если бы write-элизия сработала
 // ошибочно — был бы UB-write вместо чистого panic.
 
-module conformance.b4_writeback_soundness_neg
+module spec_tests.conformance
 import std.collections.vec.{Vec}
 
 fn writeback_then_shrink() -> int {

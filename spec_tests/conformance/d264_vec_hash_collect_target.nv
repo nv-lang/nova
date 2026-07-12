@@ -11,7 +11,7 @@
 // Зависит от D260 (lazy-слой / `.lazy()`), D58 (Iter/Next duck-typing), D239 (`[]T ≡ Vec[T]`),
 // D230 amend (conditional-bound протоколы коллекций).
 // Часть единого folder-модуля `spec_tests.conformance` (минимальный CU).
-module conformance.d264_vec_hash_collect_target
+module spec_tests.conformance
 
 import std.collections.vec_lazy
 

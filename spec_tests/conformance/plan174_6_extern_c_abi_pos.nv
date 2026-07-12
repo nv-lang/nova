@@ -10,7 +10,7 @@
 // Declarations only (bodyless extern) — uncalled, so no C shim / linker symbol
 // is required; the point is that the CHECKER accepts every signature.
 
-module conformance.plan174_6_extern_c_abi_pos
+module spec_tests.conformance
 // C-ABI value-record (all fields C-ABI) — passed by-value as a C struct.
 type Rect value { w int, h int }
 

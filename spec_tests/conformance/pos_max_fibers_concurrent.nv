@@ -15,7 +15,7 @@
 // ENV NOVA_MAX_FIBERS=20000
 // ENV NOVA_MAXPROCS=1
 
-module conformance.pos_max_fibers_concurrent
+module spec_tests.conformance
 test "NOVA_MAX_FIBERS=20000: 2000 concurrent fibers all woken by cancel" {
     ro tok = CancelToken.new()
     supervised(cancel: tok) {

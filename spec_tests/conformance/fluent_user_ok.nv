@@ -2,7 +2,7 @@
 // `mut @method() -> @` — возврат receiver'а автоматический (D409); тело
 // просто мутирует, chaining работает без ручного `@`.
 
-module conformance.fluent_user_ok
+module spec_tests.conformance
 type Counter { mut n int }
 
 fn Counter.new() -> Counter => { n: 0 }

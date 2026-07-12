@@ -2,7 +2,7 @@
 // (concurrent body, fiber aliasing safety). Body executes
 // concurrently per element.
 
-module conformance.plan123_2_neg_parallel_for_skip_ok
+module spec_tests.conformance
 type Cfg3 {
     ro factor int
 }

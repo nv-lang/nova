@@ -9,7 +9,7 @@
 // bare names (same syntax as named-impl bodies). Conformance: a protocol-literal is
 // a first-class value, its method-dispatch lowers to the literal's body, and two
 // literals over the same state observe each other's mutations.
-module conformance.d142_protocol_literal_symmetry
+module spec_tests.conformance
 
 // Declaration side of the symmetry: protocol keyword declares the contract.
 // Body methods carry the `@`-receiver per D72/D53.

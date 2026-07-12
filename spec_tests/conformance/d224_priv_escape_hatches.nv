@@ -14,7 +14,7 @@
 // Spec: spec/decisions/02-types.md:9641 (D224 «Escape hatches — #test_access + #visible_to»),
 //   §2 / §3 / §4 (combined access predicate).
 // One folder-module `spec_tests.conformance`; D-prefixed names are unique.
-module conformance.d224_priv_escape_hatches
+module spec_tests.conformance
 
 // ── §2 #test_access target: priv mut field, no public getter ───────────────────
 type D224Account {
