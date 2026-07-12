@@ -80,7 +80,8 @@ cd nova-cli && cargo build --release && cd ..
 nova-cli/target/release/nova test --positive --compile-error --timeout 300 --jobs 4 spec_tests/conformance
 
 # std-тесты (полный прогон долгий — обычно таргетно по папкам)
-nova-cli/target/release/nova test std/collections std/data
+# Plan 195: std на src/ — реальный путь std/src/<домен> (module-path не меняется).
+nova-cli/target/release/nova test std/src/collections std/src/data
 nova-cli/target/release/nova test --filter X ; nova test --rerun-failed ; nova test --jobs 1
 
 # один файл (интерпретатора НЕТ — только build/check)

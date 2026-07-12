@@ -122,21 +122,21 @@ sentences 512, collation 227800). Размер коммит-фикстуры р�
      лишь чтобы прогнать **языковую** норму (map-литерал D108, size-accessors D117, consume-guards
      D174, lazy-iter D260, duration-overflow D317) — остаётся здесь. Негативы — в
      `conformance/neg/` (каждый standalone-CU, `module neg.<имя>`).
-  2. **Тесты std-модуля — РЯДОМ С МОДУЛЕМ**, пир-файлами `std/<модуль>/<имя>_test.nv` (прецедент:
-     `std/runtime/sync_test.nv`). Правила:
+  2. **Тесты std-модуля — РЯДОМ С МОДУЛЕМ**, пир-файлами `std/src/<модуль>/<имя>_test.nv` (прецедент:
+     `std/src/runtime/sync_test.nv`; Plan 195 — std на `src/`, module-path не меняется). Правила:
      - **Позитив** — пир-файл `<имя>_test.nv` с **Тем ЖЕ `module`-декларатором, что у модуля**
        (`module std.fs`, `module encoding.compress`, …), БЕЗ импорта собственного модуля
        (same-module видимость). Суффикс `_test` вырезается из обычной (library) сборки
        (`walk_nv`/`resolve_imports` peel `_test`); в test-режиме пиры включаются, и folder-module
        компилируется **ОДНИМ CU** (модуль + все его `_test`-пиры) — раннер репортит один entry.
        Cross-module импорты в тесте (напр. `std.io.{ErrorKind}` из fs-теста) — обычные.
-     - **Негатив (`EXPECT_COMPILE_ERROR`) — ТОЛЬКО в подпапке `std/<модуль>/neg/`**, каждый файл —
+     - **Негатив (`EXPECT_COMPILE_ERROR`) — ТОЛЬКО в подпапке `std/src/<модуль>/neg/`**, каждый файл —
        standalone-CU со своим `module neg.<имя>` (как в `conformance/neg/`). Пир-файлом класть
        НЕЛЬЗЯ: тип folder-module-entry определяется по алфавитно-первому файлу, а битый пир
        ломает компиляцию ВСЕГО модульного CU. Подпапка `neg/` — отдельные CU, модуль не трогают.
-     - Прогон: `nova test std` (или таргетно `nova test std/<модуль>`); негативы подхватываются
+     - Прогон: `nova test std` (или таргетно `nova test std/src/<модуль>`); негативы подхватываются
        тем же обходом (`--compile-error`).
-     - **Известный гейт (2026-07-06):** whole-module test-CU `std/http` пока НЕ компилируется —
+     - **Известный гейт (2026-07-06):** whole-module test-CU `std/src/http` пока НЕ компилируется —
        cross-module коллизия имён sum-типов (`ErrorKind` есть и в `std.http`, и в
        `encoding.compress`; name-keyed `sum_schema_registry` берёт не ту схему → P67-LEGACY panic
        в `emit_match`). Семейство [M-172.1-var-types-cu-name-leak]. До фикса позитивный
@@ -179,15 +179,15 @@ Nova поддерживает два равноправных места для 
 | Место | Что тестирует | Как запускать |
 |---|---|---|
 | `std/**/*.nv` (inline `test`-блоки) | Внутренние инварианты модуля, приватные детали реализации | `nova test std` (только std) |
-| `std/<модуль>/<имя>_test.nv` (пир-файл) | Публичный контракт модуля (pos); негативы — `std/<модуль>/neg/` | `nova test std` / `nova test std/<модуль>` |
+| `std/src/<модуль>/<имя>_test.nv` (пир-файл) | Публичный контракт модуля (pos); негативы — `std/src/<модуль>/neg/` | `nova test std` / `nova test std/src/<модуль>` |
 | `nova_tests/<тема>/` | ЗАМОРОЖЕН (legacy-корпус, Plan 182) | `nova test` |
 
 `nova test std` и `nova test nova_tests std` — **не одно и то же**: первый запускает только `std/` как tests_dir; второй запускает `nova_tests/` + `std/` вместе (multi-path, Plan 36.D.1). Для проверки inline std-тестов в изоляции используй `nova test std`.
 
-**Inline тесты в std** — предпочтительный способ для unit-тестов самого модуля. `test "..."` блоки живут рядом с реализацией, не дрейфуют, могут тестировать приватные детали. Module path файла не меняется (`module collections.hashmap`). Пример: `std/collections/hashmap.nv`, `std/time/duration.nv`.
+**Inline тесты в std** — предпочтительный способ для unit-тестов самого модуля. `test "..."` блоки живут рядом с реализацией, не дрейфуют, могут тестировать приватные детали. Module path файла не меняется (`module collections.hashmap`). Пример: `std/src/collections/hashmap.nv`, `std/src/time/duration.nv` (Plan 195 — std на `src/`).
 
 ```nova
-// std/collections/hashmap.nv
+// std/src/collections/hashmap.nv
 module collections.hashmap
 
 // ... реализация ...
@@ -334,7 +334,7 @@ Folder-module не применяется если:
 - **Валидация — передавать папки напрямую:** `nova test nova_tests/<тема>` (можно
   несколько папок одной командой: `nova test nova_tests/atomics nova_tests/sync`).
   НЕ `--filter <тема>` — он матчит по подстроке и цепляет лишнее (напр. `--filter sync`
-  тянет `std/runtime/sync*`). Path-invocation работает при ПРАВИЛЬНОЙ форме модуля
+  тянет `std/src/runtime/sync*`). Path-invocation работает при ПРАВИЛЬНОЙ форме модуля
   `module nova_tests.<тема>`; при неверной форме — `E_D78_MODULE_PATH_MISMATCH`.
 - **Починка fallout:** приводя старые тесты к актуальному компилятору, чинить новые
   ошибки enforcement'а (напр. `E_LOCAL_NOT_MUT` → добавить `mut` переприсваиваемым

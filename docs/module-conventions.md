@@ -5,7 +5,7 @@
 > [conventions-governance.md](conventions-governance.md)). Это **дизайн-конвенция** (как устроен модуль и его граница с C),
 > дополняет: [nv-coding-style.md](nv-coding-style.md) (стиль `.nv`-кода), [ffi-cookbook.md](ffi-cookbook.md) (механика FFI:
 > CStr/указатели/`unsafe`/примеры libsqlite3 и т.п.), [compiler-conventions.md](compiler-conventions.md) (§3 «не хардкодить
-> stdlib», §5 spec-first). **Канонический пример** — `std/net/` (TcpNet-семейство); **референс-планы** —
+> stdlib», §5 spec-first). **Канонический пример** — `std/src/net/` (TcpNet-семейство; Plan 195 — std на `src/`); **референс-планы** —
 > [179](plans/179-time-system-rework.md)/[179.1](plans/179.1-civil-time.md)/[180](plans/180-io-fs-os.md).
 
 ## Применимость (scope)
@@ -28,7 +28,7 @@
 I/O-, OS- и ресурсные подсистемы строятся как **семейство эффектов**:
 
 - **Эффект — внутренний dispatch-точка**, юзер его **не вызывает напрямую** (как `TcpNet`/`AddrNet`,
-  [net/effect.nv §21-40](../std/net/effect.nv#L21)). Это даёт **мокабельность**: тест подменяет реальную подсистему
+  [net/effect.nv §21-40](../std/src/net/effect.nv#L21)). Это даёт **мокабельность**: тест подменяет реальную подсистему
   handler'ом (`with Fs = mem_fs() { … }`) → детерминизм без диска/сети/часов и **без DI-плумбинга**. Это сильнее Go (нужен
   `afero`/интерфейс вручную), Rust (trait-abstraction), Java/Node (global monkey-patch).
 - **User-facing API — методы на типах + free-fns** (фасад). `Timestamp.now()` => `Time.timestamp()`; `File.open(path)` =>
@@ -39,7 +39,7 @@ I/O-, OS- и ресурсные подсистемы строятся как **�
 **Платформенные константы бинаря — НЕ эффект** (владелец 2026-07-09): is_windows,
 разрядность, endianness неизменны за время жизни процесса — им место в `#cfg`-функциях
 чистого .nv (D99), не в эффектах и не в FFI-хуках; тестовая вариативность — pin-параметрами
-(образец: PathStyle + Path.posix/Path.windows в std/fs/path.nv).
+(образец: PathStyle + Path.posix/Path.windows в std/src/fs/path.nv).
 
 ## 1. Анатомия модуля (по net-прецеденту)
 
@@ -118,7 +118,7 @@ export fn read_to_string(path Path) Fs -> Result[str, IoError] => …
 
 ### 4.2. Именование extern и расположение
 
-- `extern "C"`-функции — **module-private** (без `export`), в выделенном `ffi.nv`-слое (как [std/net/ffi.nv](../std/net/ffi.nv)).
+- `extern "C"`-функции — **module-private** (без `export`), в выделенном `ffi.nv`-слое (как [std/net/ffi.nv](../std/src/net/ffi.nv)).
 - Имя: **`<resource>_<action>`** snake_case, **без Nova-префикса** (как `tcp_listener_bind`/`socket_addr_loopback`; D282/[02-types.md §FFI](../spec/decisions/02-types.md)).
   Лидирующий `_` у глобального C-символа **нельзя** (зарезервирован C-стандартом).
 
@@ -126,7 +126,7 @@ export fn read_to_string(path Path) Fs -> Result[str, IoError] => …
 
 | Что | Как передавать | Почему |
 |---|---|---|
-| **Путь / C-строка / env-ключ** | **`CStr`** (NUL-terminated; [std/ffi/cstr.nv](../std/ffi/cstr.nv)). Строить из байт через `CStr.from_bytes(...) -> Result` с **reject interior-NUL → ошибка** | OS-API (`open`/`getenv`/`uv_fs_open`) берут `const char*` **без длины**; `str` НЕ годится (UTF-8-only). Ровно `CString::new` (Rust)/`BytePtrFromString` (Go) — NUL-терминация и проверка **в языке**, не в C |
+| **Путь / C-строка / env-ключ** | **`CStr`** (NUL-terminated; [std/ffi/cstr.nv](../std/src/ffi/cstr.nv)). Строить из байт через `CStr.from_bytes(...) -> Result` с **reject interior-NUL → ошибка** | OS-API (`open`/`getenv`/`uv_fs_open`) берут `const char*` **без длины**; `str` НЕ годится (UTF-8-only). Ровно `CString::new` (Rust)/`BytePtrFromString` (Go) — NUL-терминация и проверка **в языке**, не в C |
 | **Байт-данные (read/write payload)** | **`(*u8, int len)`** | Совпадает с syscall `read(fd, buf, count)`/`uv_buf_t{base,len}` (НЕ NUL-terminated, длина явная, NUL внутри допустим) |
 | **`str`** | **НЕ передавать** через границу (кроме genuinely-text, что на syscall-границе ~не бывает) | `str` UTF-8-only; пути/данные — произвольные байты |
 | **Результат-агрегат** (stat, exit-status) | **C-ABI value-record** by-value ([Plan 178](plans/178-ffi-abi-types.md)): `fs_stat(path CStr, follow bool) -> CStatBuf` | value-records/туплы C-ABI-совместимы |
@@ -138,7 +138,7 @@ export fn read_to_string(path Path) Fs -> Result[str, IoError] => …
 непортируемые примитивы** (syscall-обёртки, libuv-park). Вся типизация, парсинг, **кодировки/конверсии — в Nova**:
 
 - `read_to_string` = `read([]u8)` (C) + `str.from_utf8` (Nova), не C-декод.
-- **WTF-8 ↔ UTF-16** (Windows-пути) — в Nova через [std/encoding/utf16.nv](../std/encoding/utf16.nv) (Plan 152.6: `is_high/low_surrogate`/
+- **WTF-8 ↔ UTF-16** (Windows-пути) — в Nova через [std/encoding/utf16.nv](../std/src/encoding/utf16.nv) (Plan 152.6: `is_high/low_surrogate`/
   `decode_surrogate_pair`/`@encode_utf16`), **не** в C-шиме; C получает уже `[]u16`/wide-`CStr`.
 - Календарь, форматирование, нормализация — `.nv`.
 
@@ -174,7 +174,7 @@ extern "C" fn brotli_dec_feed(h CBrotliHandle, p *u8, len int) -> int
 меняется, а по Nova-коду хендл номинален (посторонний int не подсунешь).
 `C`-префикс маркирует происхождение (сишный ресурс). Публичная поверхность
 модуля хендл наружу не выпускает (§1, net-образец `TcpListener { priv handle }`).
-Эталон: std/encoding/compress/ffi.nv. Легальные исключения — комментарием на
+Эталон: std/src/encoding/compress/ffi.nv. Легальные исключения — комментарием на
 месте (хендл через эффект-vtable: fs scandir, [M-ffi-handle-newtype]).
 Проверка: план 185, W_FFI_BARE_HANDLE.
 

@@ -64,7 +64,7 @@ Nova-файлы, добавлять тесты, работать с nova CLI**. 
    compiler-codegen/   ← Rust: компилятор + test runner (nova-codegen binary + nova_codegen lib)
    nova-cli/           ← Rust: пользовательский CLI (nova binary)
    nova_tests/         ← Nova package: тест-корпус (module nova_tests.*)
-   std/                ← Nova package: stdlib (module std.*)
+   std/                ← Nova package: stdlib (module std.*); .nv — в std/src/ (Plan 195, `[lib] src`)
    examples/           ← Nova package: примеры
    spec/               ← спека языка
    docs/               ← планы, conventions, promts
