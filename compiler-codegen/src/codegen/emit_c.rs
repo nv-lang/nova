@@ -48500,11 +48500,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.icr_trace("B12c_path_chanreader_close_after");
                                 return "Nova_ChanReader*".into();
                             }
-                            // Plan 65 Ф.12.4 / D124: ChanReader.close_at(Monotonic).
-                            if eff == "ChanReader" && method_name == "close_at" {
-                                self.icr_trace("B12c_path_chanreader_close_at");
-                                return "Nova_ChanReader*".into();
-                            }
+                            // Plan 196.2 W1 [gate-1]: B12c_path_chanreader_close_at REMOVED.
+                            // ChanReader.close_at(Monotonic) Path-form (sibling close_after
+                            // above still fires) — checker-materialised. NO-HIT (§5).
                             // Plan 175 Ф.3(a): `Monotonic.now()` inference builtin
                             // RETIRED (Path-form) — see Member-form note above.
                             // D75 (revised, Plan 47): CancelToken.new() — Path-form.
