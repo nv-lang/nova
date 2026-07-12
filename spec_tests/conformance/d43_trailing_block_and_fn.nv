@@ -16,6 +16,19 @@ fn d43_filter_count(xs []int, pred fn(int) -> bool) -> int {
     for x in xs { if pred(x) { cnt = cnt + 1 } }
     cnt
 }
+// Plan 196.3 (D43 one-window): `infer_trailing_block_sig` reads the trailing
+// block's own checker-resolved type (`infer_expr_c_type` on `body.trailing`)
+// rather than defaulting to `nova_int` — coverage for non-int return.
+// (Generic-T free-fn multi-instantiation — e.g. `fn f[T](body fn() -> T) -> T`
+// called with T=int then T=str — hits an UNRELATED pre-existing gap:
+// `Nova_str_method_equal` link failure reproduces identically via plain
+// closure-arg `f(|| "abc")`, no trailing-block involved — confirmed by
+// isolated probe. Out of scope for `infer_trailing_block_sig`; the
+// generic-context cell for D43 is covered cross-module instead via
+// `Lazy[str].new { }` / `OnceCell[str].get_or_init { }` in
+// std/runtime/sync_test.nv, which use extern "nova" per-T runtime dispatch
+// and don't hit that gap.)
+fn d43_run_str(body fn() -> str) -> str => body()
 
 test "trailing block: zero-param callback returns value (D43)" {
     ro r = d43_run() { 42 }
@@ -78,4 +91,9 @@ test "trailing block: unit callback with mutation (D43)" {
     d43_run_unit() { sum = sum + i; i = i + 1 }
     assert(sum == 0)
     assert(i == 1)
+}
+
+test "trailing block: non-int (str) return type inferred, not defaulted (D43)" {
+    ro s = d43_run_str() { "hello" }
+    assert(s == "hello")
 }
