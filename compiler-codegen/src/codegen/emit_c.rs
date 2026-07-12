@@ -28700,7 +28700,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
 
             ExprKind::Lambda { params, body, return_type, .. } => {
-                self.emit_lambda(params, body, None, return_type.as_ref())
+                self.emit_lambda(params, body, None, return_type.as_ref(), expr.id)
             }
             // Plan 19, C5: closure-light codegen — конвертируем в
             // legacy `LambdaParam`/`Expr` и переиспользуем
@@ -28727,7 +28727,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         b.span,
                     ),
                 };
-                self.emit_lambda(&legacy_params, &body_expr, None, None)
+                self.emit_lambda(&legacy_params, &body_expr, None, None, expr.id)
             }
             // Plan 19, C5: closure-full codegen — типизированный
             // closure аналогичен named fn без имени. Конвертируем
@@ -28759,6 +28759,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     &body_expr,
                     None,
                     sb.return_type.as_ref(),
+                    expr.id,
                 )
             }
             ExprKind::With { bindings, body } => {
@@ -31872,10 +31873,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                             b.span,
                                                         ),
                                                     };
-                                                    self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?
+                                                    self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None, a.expr().id)?
                                                 }
                                                 crate::ast::ExprKind::Lambda { params, body, return_type: ret, .. } => {
-                                                    self.emit_lambda(params, body, Some(&ctx), ret.as_ref())?
+                                                    self.emit_lambda(params, body, Some(&ctx), ret.as_ref(), a.expr().id)?
                                                 }
                                                 _ => unreachable!(),
                                             }
@@ -32139,10 +32140,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                             b.span,
                                                         ),
                                                     };
-                                                    self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?
+                                                    self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None, a.expr().id)?
                                                 }
                                                 crate::ast::ExprKind::Lambda { params, body, return_type: ret, .. } => {
-                                                    self.emit_lambda(params, body, Some(&ctx), ret.as_ref())?
+                                                    self.emit_lambda(params, body, Some(&ctx), ret.as_ref(), a.expr().id)?
                                                 }
                                                 _ => unreachable!(),
                                             }
@@ -34012,7 +34013,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                     let ctx: Vec<(String, String)> = inner_ptys.iter()
                                                         .map(|t| (t.clone(), String::new()))
                                                         .collect();
-                                                    let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?;
+                                                    let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None, a.expr().id)?;
                                                     arg_strs.push(v);
                                                 } else {
                                                     let prev_sig = self.fn_param_sigs.insert(
@@ -34547,7 +34548,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             let ctx: Vec<(String, String)> = inner_ptys.iter()
                                                 .map(|t| (t.clone(), String::new()))
                                                 .collect();
-                                            self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?
+                                            self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None, a.expr().id)?
                                         } else {
                                             self.emit_expr(a.expr())?
                                         };
@@ -35246,7 +35247,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             let ctx: Vec<(String, String)> = inner_ptys.iter()
                                                 .map(|t| (t.clone(), String::new()))
                                                 .collect();
-                                            let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?;
+                                            let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None, a.expr().id)?;
                                             arg_strs.push(v);
                                         } else {
                                             // Variable closure — fn_param_sigs hook (chained calls).
@@ -36036,7 +36037,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 let ctx: Vec<(String, String)> = inner_ptys.iter()
                                                     .map(|t| (t.clone(), String::new()))
                                                     .collect();
-                                                let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?;
+                                                let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None, a.expr().id)?;
                                                 arg_strs.push(v);
                                             } else {
                                                 let prev_sig = self.fn_param_sigs.insert(
@@ -36328,10 +36329,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 ExprKind::Block(b.clone()), b.span,
                                             ),
                                         };
-                                        self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?
+                                        self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None, a.expr().id)?
                                     }
                                     ExprKind::Lambda { params, body, return_type, .. } => {
-                                        self.emit_lambda(params, body, Some(&ctx), return_type.as_ref())?
+                                        self.emit_lambda(params, body, Some(&ctx), return_type.as_ref(), a.expr().id)?
                                     }
                                     _ => self.emit_expr(a.expr())?,
                                 };
@@ -36419,7 +36420,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let ctx: Vec<(String, String)> = inner_sig.0.iter()
                             .map(|t| (t.clone(), String::new()))
                             .collect();
-                        let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?;
+                        let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None, a.expr().id)?;
                         arg_strs.push(v);
                         continue;
                     }
