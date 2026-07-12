@@ -52299,6 +52299,246 @@ mod named_tuple_mut_recv_abi_tests {
 }
 
 #[cfg(test)]
+mod receiver_c_type_coverage_tests {
+    //! Plan 196.3 wave-2 (recv-ctype window, D-driven): `receiver_c_type` /
+    //! `builtin_sum_receiver_c_type` architecture investigation + coverage
+    //! fill.
+    //!
+    //! Architecture finding (recorded here so it isn't re-litigated per-D):
+    //! both functions take a DECLARATION-side receiver TYPE NAME
+    //! (`Receiver.type_name` — parsed straight from `fn Type @method`
+    //! syntax, see `ast/mod.rs::Receiver`, which carries NO `ExprId`) or a
+    //! monomorphizer-computed type-name string (`register_mono_method_
+    //! instance`/`emit_monomorphized_method`'s `recv_type: &str`) — never an
+    //! `Expr`. Grepped ALL 11 call sites (emit_c.rs:3730/5833/5855/13099/
+    //! 15937/16079/16220/20153/20278/22111/22283): every one passes
+    //! `recv.type_name` (from the parsed `Receiver` AST node — a spelled-out
+    //! declaration, not an inferred expression) or an already-resolved
+    //! `recv_type: &str` threaded in from a caller outside this window. So
+    //! there is no `resolved_types[recv.id]` to read here — that channel is
+    //! for the CALL-SITE receiver EXPRESSION (`obj` in `obj.method()`),
+    //! already handled by `recv_c_type_materialized` (emit_c.rs:46261, keys
+    //! off `obj.id`) which sits at the frozen wave-1 boundary
+    //! (`46293`-`48883`) and is out of this window's region.
+    //!
+    //! What IS the single-window path here is generic SUBSTITUTION
+    //! (`current_type_subst`/`subst_c`), which ALREADY routes through the
+    //! canonical `resolved_type_to_c` printer (`subst_val_c`, ~2697) for
+    //! every branch that resolves a type-param/mono payload (bare typevar,
+    //! Option/Result payload types) — confirmed channel-first, not legacy
+    //! re-derivation. The remaining branches (NamedTuple mut/ro ABI,
+    //! always-pointer struct/value-record receiver ABI, Vec-canon slice
+    //! mangling, cross-module collision qualification via `ref_type_base`)
+    //! are RECEIVER-ABI-SPECIFIC conventions with no `resolved_type_to_c`
+    //! analogue (a plain VALUE of the same type lowers differently — e.g. a
+    //! `ro` NamedTuple FIELD is by-value, but a `ro` NamedTuple RECEIVER is
+    //! always-pointer, D226/A6) — exactly why the function's own doc comment
+    //! (Plan 172.1-K1, ~15667) defers its full retirement into a
+    //! "receiver-aware `resolved_type_to_c`" to the U.4.5/FIN endgame, not
+    //! this wave. These tests pin current behaviour across the receiver
+    //! matrix (примитив/record/sum/generic/кросс-модуль) as the regression
+    //! net for that future retirement.
+
+    use super::CEmitter;
+    use crate::types::ResolvedType;
+
+    // ---- примитив --------------------------------------------------------
+
+    #[test]
+    fn receiver_c_type_primitive_family_matches_primitive_name_to_c() {
+        // The int-family + f32/f64/bool/char/str arms are an UNCONDITIONAL
+        // string match (Plan 172.1-K1) routing through the SAME leaf
+        // (`primitive_name_to_c`) `resolved_type_to_c` uses for a Scalar/
+        // Float/Bool/Str `ResolvedType` — already the single source.
+        let e = CEmitter::new();
+        let cases: &[(&str, &str)] = &[
+            ("int", "nova_int"),
+            ("i64", "int64_t"),
+            ("i32", "int32_t"),
+            ("i16", "int16_t"),
+            ("i8", "int8_t"),
+            ("u64", "uint64_t"),
+            ("uint", "nova_uint"),
+            ("u32", "uint32_t"),
+            ("u16", "uint16_t"),
+            ("u8", "nova_byte"),
+            ("f64", "nova_f64"),
+            ("f32", "nova_f32"),
+            ("bool", "nova_bool"),
+            ("char", "nova_char"),
+            ("str", "nova_str"),
+        ];
+        for (recv, want) in cases {
+            assert_eq!(e.receiver_c_type(recv, false), *want, "receiver_c_type({:?}, false)", recv);
+            // Primitives are by-value receivers (D35 v2) — recv_mutable is a no-op.
+            assert_eq!(e.receiver_c_type(recv, true), *want, "receiver_c_type({:?}, true)", recv);
+        }
+    }
+
+    #[test]
+    fn receiver_c_type_size_stays_nova_int_pending_width_model() {
+        // `size` has no `primitive_name_to_c` entry (unpinned width/sign,
+        // per the doc comment at receiver_c_type's `"size"` arm) — preserved
+        // as `nova_int`.
+        let e = CEmitter::new();
+        assert_eq!(e.receiver_c_type("size", false), "nova_int");
+    }
+
+    // ---- sum (Option/Result) ---------------------------------------------
+
+    #[test]
+    fn builtin_sum_receiver_c_type_option_value_abi_via_subst_channel() {
+        // Option[T] receiver — value ABI `NovaOpt_<T>`; T's C-name comes
+        // from `subst_c` -> `subst_val_c` -> `resolved_type_to_c` (the SAME
+        // canonical printer non-receiver lowering uses).
+        let mut e = CEmitter::new();
+        e.builtin_sum_type_params.insert("Option".to_string(), vec!["T".to_string()]);
+        e.current_type_subst.insert(
+            "T".to_string(),
+            ResolvedType::Scalar { width: 64, signed: true, wide_default: true },
+        );
+        assert_eq!(e.builtin_sum_receiver_c_type("Option"), "NovaOpt_nova_int");
+        // Reached the same way through the receiver_c_type dispatcher.
+        assert_eq!(e.receiver_c_type("Option", false), "NovaOpt_nova_int");
+    }
+
+    #[test]
+    fn builtin_sum_receiver_c_type_result_pointer_abi_via_subst_channel() {
+        // Result[T,E] receiver — pointer ABI `NovaRes_<ok>_<err>*`.
+        let mut e = CEmitter::new();
+        e.builtin_sum_type_params.insert(
+            "Result".to_string(), vec!["T".to_string(), "E".to_string()]);
+        e.current_type_subst.insert(
+            "T".to_string(),
+            ResolvedType::Scalar { width: 64, signed: true, wide_default: true },
+        );
+        e.current_type_subst.insert("E".to_string(), ResolvedType::Str);
+        assert_eq!(e.builtin_sum_receiver_c_type("Result"), "NovaRes_nova_int_nova_str*");
+        assert_eq!(e.receiver_c_type("Result", true), "NovaRes_nova_int_nova_str*");
+    }
+
+    #[test]
+    fn builtin_sum_receiver_c_type_no_params_registered_falls_back_loud() {
+        // Defensive fallback (Plan 95 Ф.2.1 doc): no `builtin_sum_type_params`
+        // entry — should not happen outside a mono-context. Falls back to
+        // the legacy `Nova_<T>*` spelling rather than guessing a concrete
+        // (possibly wrong) instantiation.
+        let e = CEmitter::new();
+        assert_eq!(e.builtin_sum_receiver_c_type("Option"), "Nova_Option*");
+        assert_eq!(e.builtin_sum_receiver_c_type("Result"), "Nova_Result*");
+    }
+
+    // ---- generic -----------------------------------------------------------
+
+    #[test]
+    fn receiver_c_type_bare_typevar_routes_through_subst_channel() {
+        // `fn[T] T @method` — bare typevar receiver, resolved via
+        // `subst_c("T")` (current_type_subst), not a string-shape guess of
+        // the SUBSTITUTED type.
+        let mut e = CEmitter::new();
+        e.current_type_subst.insert(
+            "T".to_string(),
+            ResolvedType::Scalar { width: 32, signed: true, wide_default: false },
+        );
+        assert_eq!(e.receiver_c_type("T", false), "int32_t");
+    }
+
+    #[test]
+    fn receiver_c_type_bare_typevar_heap_struct_gets_pointer() {
+        // Plan 161 (blanket protocol-receiver methods): when the substituted
+        // C type is a heap struct WITHOUT a trailing `*` (the `Raw` debt
+        // carrier — see subst_val_c), receiver_c_type adds the `*` itself —
+        // struct receivers are always by-pointer.
+        let mut e = CEmitter::new();
+        e.current_type_subst.insert(
+            "I".to_string(),
+            ResolvedType::Raw("Nova_Widget".to_string()),
+        );
+        assert_eq!(e.receiver_c_type("I", false), "Nova_Widget*");
+    }
+
+    #[test]
+    fn receiver_c_type_value_generic_mono_returns_novavalue_pointer() {
+        // Plan 153.2 Ф.1: a `value` generic mono receiver (`BoxIter____
+        // nova_int`) is a D226 value-record — pointer to a stack slot
+        // (`NovaValue_<short>*`) so `@field`-mutating `mut` methods
+        // propagate to the caller.
+        let mut e = CEmitter::new();
+        e.generic_type_templates.insert(
+            "BoxIter".to_string(),
+            crate::ast::TypeDecl {
+                name: "BoxIter".to_string(),
+                kind: crate::ast::TypeDeclKind::Record(vec![]),
+                allocation: crate::ast::AllocKind::Value,
+                ..Default::default()
+            },
+        );
+        e.generic_type_instance_info.borrow_mut().insert(
+            "Nova_BoxIter____nova_int".to_string(),
+            (
+                "BoxIter".to_string(),
+                vec![ResolvedType::Scalar { width: 64, signed: true, wide_default: true }],
+            ),
+        );
+        assert_eq!(
+            e.receiver_c_type("BoxIter____nova_int", false),
+            "NovaValue_BoxIter____nova_int*"
+        );
+    }
+
+    #[test]
+    fn receiver_c_type_slice_receiver_vec_canon_mangles_and_is_pointer() {
+        // Plan 172.12 A7 (Vec-canon flip): single-level `[]T` receiver
+        // mirrors `resolved_array_to_c`'s Vec-flip (D239 `[]T ≡ Vec[T]`)
+        // instead of a legacy `NovaArray_<elem>*` name.
+        let e = CEmitter::new();
+        let got = e.receiver_c_type("[]int", false);
+        assert_eq!(got, "Nova_Vec____nova_int*");
+    }
+
+    #[test]
+    fn receiver_c_type_nested_slice_receiver_flattens_and_is_pointer() {
+        // Plan 153.5 (D263): a NESTED slice receiver (`[][]T`, depth >= 2)
+        // reconstructs the structured `Array(Array(Named))` TypeRef and
+        // lowers via `type_ref_to_c` (mono's each level to
+        // `Nova_Vec____<elem>*`) instead of the flat single-level path.
+        let e = CEmitter::new();
+        let got = e.receiver_c_type("[][]int", false);
+        assert!(got.ends_with('*'), "nested slice receiver must be a pointer: {}", got);
+        assert!(got.contains("Vec"), "expected Vec-canon mangled name: {}", got);
+    }
+
+    // ---- кросс-модуль ------------------------------------------------------
+
+    #[test]
+    fn receiver_c_type_cross_module_colliding_record_qualifies_by_defining_module() {
+        // [M-sync-crossmodule…] (D381): a method receiver whose type is a
+        // colliding sum/record resolves to its module-qualified base via
+        // `ref_type_base` (byte-identical for non-colliding — `ref_type_base`
+        // is a no-op then, see the sibling non-colliding test above).
+        let mut e = CEmitter::new();
+        e.colliding_type_names.insert("ErrorKind".to_string());
+        let fid: crate::diag::FileId = 7;
+        e.current_emit_file_id = Some(fid);
+        e.file_type_module.insert(
+            (fid, "ErrorKind".to_string()),
+            vec!["std".to_string(), "io".to_string()],
+        );
+        assert_eq!(e.receiver_c_type("ErrorKind", false), "Nova_std_io_ErrorKind*");
+    }
+
+    #[test]
+    fn receiver_c_type_colliding_name_without_module_context_passes_through() {
+        // No `current_emit_file_id`/`file_type_module` entry available (e.g.
+        // pre-pass) — `ref_type_base` degrades to the bare name rather than
+        // guessing a module, so this stays the legacy `Nova_<name>*` form.
+        let mut e = CEmitter::new();
+        e.colliding_type_names.insert("ErrorKind".to_string());
+        assert_eq!(e.receiver_c_type("ErrorKind", false), "Nova_ErrorKind*");
+    }
+}
+
+#[cfg(test)]
 mod lvalue_receiver_tests {
     //! Plan 128.1 Ф.1: AST-aware `is_lvalue_receiver` + lvalue path в
     //! `prepare_method_recv`. Closes Bug 1 (lvalue-projection mutation
