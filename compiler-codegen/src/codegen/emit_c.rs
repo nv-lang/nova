@@ -48510,40 +48510,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.icr_trace("B12d_path_canceltoken_new");
                                 return "NovaCancelToken*".into();
                             }
-                            // Plan 04 Этап 6: Buffer removed. StringBuilder/
-                            // WriteBuffer/ReadBuffer effect-schema ниже.
-                            // Plan 04: built-in opaque static methods.
-                            if eff == "StringBuilder" {
-                                self.icr_trace("B12e_path_stringbuilder_static");
-                                return match method_name.as_str() {
-                                    "new" | "with_capacity" | "from" => "Nova_StringBuilder*".into(),
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            if eff == "WriteBuffer" {
-                                self.icr_trace("B12e_path_writebuffer_static");
-                                return match method_name.as_str() {
-                                    "new" | "with_capacity" | "from" => "Nova_WriteBuffer*".into(),
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            if eff == "ReadBuffer" {
-                                self.icr_trace("B12e_path_readbuffer_static");
-                                return match method_name.as_str() {
-                                    "from" => "Nova_ReadBuffer*".into(),
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            // [M-compiler-nv-porting-wave] item B2 / [M-ptr-raw-
-                            // access-contract-and-unaligned] item 3: f64/f32.
-                            // from_bits/to_bits hardcode сняты — numeric.nv
-                            // ЧИСТЫЙ .nv (не extern), обычный Nova-body method-
-                            // return-type инференс резолвит return_c_type.
-                            // `int.to_bits` остаётся — нет .nv-декларации нигде.
-                            if eff == "int" && method_name == "to_bits" {
-                                self.icr_trace("B12f_path_int_to_bits");
-                                return "nova_int".into();
-                            }
+                            // Plan 196.2 W1 [gate-1]: B12e_path_{stringbuilder,writebuffer,
+                            // readbuffer}_static REMOVED. Path-form mirror of the already-
+                            // removed B11l_{stringbuilder,writebuffer,readbuffer}_static
+                            // Member-form (same StringBuilder/WriteBuffer/ReadBuffer static
+                            // ctors, exercised pervasively yet NO-HIT) — checker-materialised
+                            // into Channel-2, structurally unreachable (§5).
+                            // Plan 196.2 W1 [gate-1]: B12f_path_int_to_bits REMOVED. Path-form
+                            // mirror of the already-removed B11l_int_to_bits Member-form.
+                            // `int.to_bits` (exercised: d141_ptr_bitcast_roundtrip.nv,
+                            // write_buffer.nv) checker-materialised, NO-HIT ⟹ structurally
+                            // unreachable (§5).
                             // D26 prelude: Error.new(msg) → Nova_Error*.
                             if eff == "Error" && method_name == "new" {
                                 self.icr_trace("B12g_path_error_new");
@@ -48590,50 +48567,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     return format!("NovaOpt_{}", sani);
                                 }
                             }
-                            // Plan 08 Ф.2: str.from(numeric/bool/char) → nova_str.
-                            if eff == "str" && method_name == "from" {
-                                self.icr_trace("B12j_path_str_from_1");
-                                return "nova_str".into();
-                            }
-                            // Built-in primitive `str.from(x) -> str` (D35 + D73).
-                            if eff == "str" && method_name == "from" {
-                                self.icr_trace("B12j_path_str_from_2_dup");
-                                return "nova_str".into();
-                            }
-                            // Plan 108 from_utf8 series: str.from_bytes_lossy / str.from_bytes_unchecked → nova_str.
-                            // Plan 91 followup: from_bytes_unchecked_steal — zero-copy consume variant.
-                            if eff == "str" && (method_name == "from_bytes_lossy" || method_name == "from_bytes_unchecked" || method_name == "from_bytes_unchecked_steal") {
-                                self.icr_trace("B12j_path_str_from_bytes");
-                                return "nova_str".into();
-                            }
-                            // User-defined `T.from(v)` returns Nova_T* (most cases).
-                            // Match by receiver type explicitly — avoids `fn_ret_from`
-                            // collision when multiple types have `from`.
-                            if method_name == "from" {
-                                // Heuristic: if T is a known record/sum, return Nova_T*.
-                                if self.record_schemas.contains_key(eff)
-                                    || self.sum_schemas.contains_key(eff)
-                                {
-                                    self.icr_trace("B12k_path_user_type_from");
-                                    return format!("Nova_{}*", eff);
-                                }
-                            }
+                            // Plan 196.2 W1 [gate-1]: B12j_path_str_from_1 + B12j_path_str_from_2_dup
+                            // + B12j_path_str_from_bytes + B12k_path_user_type_from REMOVED.
+                            // Path-form mirrors of the already-removed B11s_str_from_ident +
+                            // B11s_user_type_from_ident Member-forms: built-in `str.from(x)`/
+                            // from_bytes_lossy/from_bytes_unchecked/from_bytes_unchecked_steal
+                            // → nova_str (D35+D73, Plan 108/91) and user-defined `T.from(v)` →
+                            // `Nova_T*` are both checker-materialised static-ctor returns
+                            // (Channel-2). Exercised pervasively yet NO-HIT ⟹ structurally
+                            // unreachable (§5).
                             if let Some(schema) = self.effect_schemas.get(eff.as_str()) {
                                 if let Some((_, ret_ty)) = Self::schema_lookup(schema, method_name.as_str()) {
                                     self.icr_trace("B12l_path_effect_schema");
                                     return ret_ty.clone();
                                 }
                             }
-                            // Plan 12 + Plan 18: ExternalRegistry static-method lookup
-                            // для Path-form вызовов (Once.new(), AtomicBool.new(), etc.).
-                            // Path-form используется вместо Member-form для статических
-                            // методов внешних типов — Member-branch выше не покрывает это.
-                            if let Some(decls) = self.external_registry.lookup(eff, method_name) {
-                                if let Some(decl) = decls.iter().find(|d| !d.is_instance) {
-                                    self.icr_trace("B12m_path_external_registry_static");
-                                    return decl.return_c_type.clone();
-                                }
-                            }
+                            // Plan 196.2 W1 [gate-1]: B12m_path_external_registry_static REMOVED.
+                            // Path-form mirror of the already-removed B11l_external_registry_
+                            // static_ident Member-form: ExternalRegistry static-ctor lookup
+                            // (AtomicInt.new()/Mutex.new()/WaitGroup.new(), exercised: std/
+                            // concurrency, std/runtime/sync) checker-materialised, NO-HIT ⟹
+                            // structurally unreachable (§5).
                             // Plan 180 [M-180-static-method-path-ret-infer]: general
                             // user static-method return-type inference. The global
                             // `fn_ret_<method>` fallback below CANNOT distinguish
