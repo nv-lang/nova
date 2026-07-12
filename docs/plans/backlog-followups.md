@@ -1251,7 +1251,25 @@ Server-followups (за CORE, честные маркеры):
   **Отдельно найден (НЕ ЗДЕСЬ почин, вне зоны std/http) реальный компиляторный дефект** —
   см. `[M-channel-generic-elem-type]` ниже.
 - **[M-178-server-policy-surface]** — middleware onion, 100-continue, keep-alive, chunked-request decode, trailing-slash-301.
-- **[M-178-server-graceful-deadline]** — bounded deadline-drain gated на `supervised(deadline:)` (unimpl в main); cancel-based stop-accept доступен.
+- **[M-178-server-graceful-deadline]** (PRIMITIVE LANDED+HARDENED 2026-07-06/2026-07-12-13, Plan 174 D408 + Plan 173 Ф.3) —
+  `supervised(deadline:)`/`supervised(timeout:)` больше НЕ блокер: примитив в main
+  с 2026-07-06 (D408); при исполнении 173 Ф.3 найден и починен реальный дефект —
+  спавненный child, запаркованный на `Time.sleep`, будился РАНО отменой области
+  (`nova_scope_deliver_cancel`), но не re-check'ал `cancel_requested` после
+  `park_until`/на pre-arm fast-path'ах → «успешно» досыпал и докручивал тело до
+  конца вместо unwind (leak: outer `supervised` уже вернул/бросил `TimeoutError`
+  вовремя — это НЕЗАВИСИМый gate в `nova_supervised_run_impl` — а ребёнок ещё жил
+  в фоне). Чинено в `fibers.h` (`_nova_sleep_via_libuv`/`_nova_sleep_via_driver`,
+  4 сайта: 2×pre-arm early-exit + 2×post-park, shield-aware
+  `nova_cancel_mask_load`+`nova_throw_cancel_reason`, паритет с
+  `nova_fiber_yield`/channels.h/net.c). Regression: `std/concurrency/
+  supervised_deadline_test.nv` test 8 (8/8 PASS). Спека НЕ менялась — D408 §3
+  УЖЕ обещал «Sleep/сетевой park прерывается РАНО» нормативно; это conformance-
+  фикс, не language-change. **Остаток (НЕ в этой волне, std/http-зона):**
+  `servernet.nv` не имеет reusable multi-connection accept-LOOP вообще (только
+  `handle_connection` + smoke-тесты) — сама проводка bounded-deadline-drain в
+  такой цикл ещё предстоит написать; cancel-based stop-accept (без deadline)
+  доступен уже сейчас на том же примитиве.
 - **[M-channel-generic-elem-type]** (P1-ish, найден 2026-07-12 при работе над `[M-178-server-streaming]`,
   isolated-repro подтверждён вне std/http — pre-existing, компиляторный, НЕ мой зона в этой волне):
   `docs/channels.md` §«element type T is inferred from the first send/recv» **не выполняется** для

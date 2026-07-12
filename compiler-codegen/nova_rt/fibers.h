@@ -3359,9 +3359,22 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
         }
     }
     /* FIX 83.10.2 (Race 2a): Early-exit — parent scope already cancelled
-     * BEFORE we start the timer. Fiber will complete normally (wake early),
-     * parent scope's drain will return promptly. */
+     * BEFORE we start the timer. [M-178-server-graceful-deadline] amend
+     * (Plan 173 Ф.3, 2026-07-12): the original fix just returned here
+     * ("fiber will complete normally") — that is precisely the leak this
+     * amendment closes: returning success lets the fiber run its remaining
+     * body instead of unwinding via cancel-throw, same class of bug as the
+     * post-park gap fixed below. Throw here too (shield-aware, matching
+     * nova_fiber_yield), so a fiber that calls `Time.sleep` AFTER its scope
+     * was already cancelled unwinds immediately instead of skipping the
+     * sleep silently. */
     if (nova_abool_load(&cancel_scope->cancel_requested)) {
+        if (nova_cancel_mask_load(mco_running()) == 0) {
+            nova_throw_cancel_reason(
+                nova_str_from_cstr("scope cancelled"),
+                cancel_scope->cancel_reason_ptr);
+            /* unreachable */
+        }
         return;
     }
     NovaSleepState st = { .scope = scope, .slot = slot };
@@ -3408,6 +3421,21 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
      * Никакого FATAL-check'а больше не нужно — by construction. */
     nova_sched_park_until(scope, slot, _nova_sleep_stage_is_closed, &st);
     nova_sched_unregister_pending(scope, slot);
+
+    /* [M-178-server-graceful-deadline] fix (Plan 173 Ф.3, 2026-07-12): see the
+     * identical comment in _nova_sleep_via_driver above — CLOSED wakes on
+     * BOTH natural timer expiry and a cooperative-cancel early-close, and
+     * this legacy (non-driver) path silently treated both the same,
+     * dropping the cancel-throw a spawned child needs to actually unwind
+     * instead of running its remaining body to completion. */
+    if (nova_abool_load(&cancel_scope->cancel_requested)) {
+        if (nova_cancel_mask_load(mco_running()) == 0) {
+            nova_throw_cancel_reason(
+                nova_str_from_cstr("scope cancelled"),
+                cancel_scope->cancel_reason_ptr);
+            /* unreachable */
+        }
+    }
 }
 
 /* ─── Plan 83.3 Ф.1: `Blocking`-эффект → libuv threadpool offload ───
@@ -3584,8 +3612,17 @@ static inline void _nova_sleep_via_driver(NovaFiberQueue* scope, int slot,
     }
 
     /* Race 2a early-exit — still useful as cheap fast-path. Если cancel уже
-     * fired, even submitting ARM_SLEEP job is wasted work. */
+     * fired, even submitting ARM_SLEEP job is wasted work.
+     * [M-178-server-graceful-deadline] amend (Plan 173 Ф.3, 2026-07-12):
+     * throw here too, shield-aware — same reasoning as the identical
+     * amendment in _nova_sleep_via_libuv above. */
     if (nova_abool_load(&cancel_scope->cancel_requested)) {
+        if (nova_cancel_mask_load(mco_running()) == 0) {
+            nova_throw_cancel_reason(
+                nova_str_from_cstr("scope cancelled"),
+                cancel_scope->cancel_reason_ptr);
+            /* unreachable */
+        }
         return;
     }
 
@@ -3697,7 +3734,34 @@ static inline void _nova_sleep_via_driver(NovaFiberQueue* scope, int slot,
     nova_sched_park_until(scope, slot, _nova_sleep_drv_state_is_closed, &st);
 
     /* After CLOSED: st unlinked from armed_list by close_cb. Fiber safe to
-     * return; coroutine stack может deallocate when fiber dies. */
+     * return; coroutine stack может deallocate when fiber dies.
+     *
+     * [M-178-server-graceful-deadline] fix (Plan 173 Ф.3, 2026-07-12): the
+     * wake above is ambiguous — CLOSED fires both on natural timer expiry
+     * AND on a cooperative-cancel-driven early close (nova_scope_deliver_cancel
+     * → nova_scope_cancel_wake_all → this fiber's stop_cb → close_cb).
+     * Every OTHER park-based suspend site (nova_fiber_yield, channels.h
+     * recv/send, net.c accept/read/write) re-checks cancel_requested after
+     * waking and throws — this one silently returned success either way,
+     * so a spawned child's `Time.sleep` treated a cancel-wake exactly like
+     * a completed sleep and ran its remaining body to completion instead of
+     * unwinding. That is the root cause of the deadline/timeout + spawned-
+     * child leak: `supervised(deadline:)`/`supervised(timeout:)` fires the
+     * TimeoutError on time (the scope's own deadline gate in
+     * nova_supervised_run_impl is independent), but the child fiber that was
+     * sleeping kept running in the background instead of being unwound.
+     * Same shield-aware check as nova_fiber_yield (D188 R3): a cleanup body
+     * running under an active cancel-mask defers the throw (cancel stays
+     * latched on the scope; sleep returns normally so `defer`/cleanup code
+     * completes-by-default). */
+    if (nova_abool_load(&cancel_scope->cancel_requested)) {
+        if (nova_cancel_mask_load(mco_running()) == 0) {
+            nova_throw_cancel_reason(
+                nova_str_from_cstr("scope cancelled"),
+                cancel_scope->cancel_reason_ptr);
+            /* unreachable */
+        }
+    }
 }
 
 /* Plan 83.11 Ф.3: tok.cancel() submits CANCEL_SCOPE job to driver.

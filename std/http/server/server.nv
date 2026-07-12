@@ -28,9 +28,16 @@
 // REQUEST decode remain deferred, unrelated to this Ф.1/187 SSE gate:
 //   · middleware onion, 100-continue, keep-alive, chunked request decode
 //     [M-178-server-policy-surface]
-//   · graceful deadline-drain — `supervised(deadline:)` is unimplemented in main
-//     (only `supervised(cancel:)` exists); cancel-based stop-accept lands in
-//     servernet, deadline-bounded drain is gated. [M-178-server-graceful-deadline]
+//   · graceful deadline-drain — `supervised(deadline:)`/`supervised(timeout:)`
+//     landed (Plan 174, D408, 2026-07-06) and is now hardened (Plan 173 Ф.3,
+//     2026-07-12/13: fixed a real leak where a spawned child parked on
+//     `Time.sleep` did not actually unwind on scope-deadline cancellation —
+//     see `std/concurrency/supervised_deadline_test.nv` test 8, `fibers.h`
+//     `_nova_sleep_via_libuv`/`_nova_sleep_via_driver`). The primitive is no
+//     longer the blocker; `servernet.nv` has no accept-LOOP function yet at
+//     all (only single-shot `handle_connection` + smoke tests) — wiring a
+//     bounded deadline-drain into a real multi-connection accept loop is
+//     std/http-side work, tracked separately. [M-178-server-graceful-deadline]
 //
 // Typed `#impl(Deserialize)` request bodies (`[M-178-server-typed-body]`) — DONE:
 // the reported "serde in the http CU trips a codegen defect" was TWO real
