@@ -236,19 +236,29 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
 
 ```
 examples/flagship/aggregator/
-  backend/            — весь Nova-код: domain / aggregate / emit / scenarios /
-                        report_json / server / main.nv (+ *_test.nv рядом)
-  frontend/           — index.html (копия мокапа с переработанным JS; при росте —
-                        отдельные .css/.js, но self-contained один файл предпочтителен)
+  backend/
+    main.nv           — тонкая точка входа: wiring (real_net, порт+env) + accept-loop
+    app/              — ядро, чистая логика (свой модуль, D78):
+                        domain.nv, aggregate.nv, emit.nv, scenarios.nv
+    api/              — HTTP-слой (свой модуль): server.nv (mux/endpoints),
+                        report_json.nv, sse.nv
+  frontend/
+    index.html        — копия мокапа с переработанным JS; self-contained
+                        (стили+JS внутри) предпочтителен
   README.md           — сборка + запуск (локально; волной 2 — Docker)
   Dockerfile          — волна 2 (§9.4 п.7)
 ```
 
-Миграция существующих `aggregator/*.nv` → `aggregator/backend/` — тем же заходом
-(module-пути выровнять по фактической папке, D78: папка = один модуль из co-equal
-файлов; file+folder одного имени запрещён). `embed()`-путь фронта из backend-кода —
-проверить относительно корня пакета (E_EMBED_OUTSIDE_PROJECT не должен сработать —
-frontend внутри того же примера).
+Обоснование: не сваливать исходники в корень backend/ — конвенция соседей
+(Go `cmd/` + `internal/{domain,api}`, Rust `main.rs` + модули-папки): тонкий
+вход + слои по папкам; флагман — ещё и витрина структуры настоящего
+Nova-приложения, D78 «папка = модуль» ложится на слои напрямую. Глубже двух
+слоёв для 8 файлов не дробить. `*_test.nv` — рядом со своим модулем.
+
+Миграция существующих `aggregator/*.nv` → `backend/{app,api}/` — тем же заходом
+(module-пути выровнять по фактической папке; file+folder одного имени запрещён).
+`embed()`-путь фронта из backend-кода — проверить относительно корня пакета
+(E_EMBED_OUTSIDE_PROJECT не должен сработать — frontend внутри того же примера).
 
 | # | Деливерабл | Детали |
 |---|---|---|
