@@ -12397,7 +12397,74 @@ impl<'a> TypeCheckCtx<'a> {
     /// generic-scope, в котором объявлен `expected` (для arg↔param это
     /// разные scope: caller vs callee). Числовые литералы полиморфны
     /// (D44): целый литерал совместим с любым числовым типом.
+    /// Plan 200 (sql-autoconv) D55 amend entry-point: `assignable_direct`
+    /// (the structural EXACT check, unchanged) PLUS — when direct fails —
+    /// the "obvious single-wrapper coercion" fallback (D55 §Sum/newtype
+    /// auto-wrap): `expected` is a declared sum-with-one-matching-unary-
+    /// variant or a newtype, and `expr`'s own kind unambiguously matches
+    /// exactly ONE candidate's inner type. Exactly one level deep — the
+    /// fallback re-checks candidates via `assignable_direct` only (never
+    /// `assignable` again), so a chain (int→UserId→Wrapper) is NOT
+    /// auto-wrapped; only the single declared wrapper is.
     fn assignable(
+        &self,
+        expr: &Expr,
+        expected: &TypeRef,
+        expr_gs: &HashSet<String>,
+        exp_gs: &HashSet<String>,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Compat {
+        let direct = self.assignable_direct(expr, expected, expr_gs, exp_gs, scope);
+        if let Compat::Bad { .. } = &direct {
+            let lookup = |n: &str| self.types.get(n).map(|td| td.kind.clone());
+            let candidates = single_wrap_candidates(&lookup, expected);
+            if !candidates.is_empty() {
+                let found_kind = self.wrap_kind_of_expr(expr, scope);
+                if let Some(found_kind) = found_kind {
+                    let matches: Vec<&(WrapTarget, TypeRef)> = candidates
+                        .iter()
+                        .filter(|(_, inner_ty)| {
+                            wrap_kind_of(inner_ty, &lookup, 0) == found_kind
+                        })
+                        .collect();
+                    // Ambiguous (≥2 candidates match, e.g. an `int` literal
+                    // would match BOTH an `I(i64)` and — if it existed — a
+                    // second int-family variant) or no match (0) → no
+                    // auto-wrap, fall through to the direct verdict.
+                    if matches.len() == 1 {
+                        let (_, inner_ty) = matches[0];
+                        return self.assignable_direct(expr, inner_ty, expr_gs, exp_gs, scope);
+                    }
+                }
+            }
+        }
+        direct
+    }
+
+    /// Plan 200 (sql-autoconv) D55 amend: best-effort `WrapKind` of `expr` —
+    /// used ONLY to disambiguate wrap candidates in `assignable` (never to
+    /// decide plain assignability, which stays `assignable_direct`'s job).
+    /// Literal kinds are read directly off the AST (cheap, exact); anything
+    /// else falls back to `infer_expr_type` (covers `Ident` var references —
+    /// the `${n}` case — plus any other expr whose type is inferable).
+    fn wrap_kind_of_expr(&self, expr: &Expr, scope: &HashMap<String, TypeRef>) -> Option<WrapKind> {
+        match &expr.kind {
+            ExprKind::IntLit(_) => Some(WrapKind::IntFamily),
+            ExprKind::Unary { op: UnOp::Neg, operand } if matches!(operand.kind, ExprKind::IntLit(_)) => {
+                Some(WrapKind::IntFamily)
+            }
+            ExprKind::FloatLit(_) => Some(WrapKind::Float),
+            ExprKind::BoolLit(_) => Some(WrapKind::Bool),
+            ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => Some(WrapKind::Str),
+            _ => {
+                let tr = self.infer_expr_type(expr, scope)?;
+                let lookup = |n: &str| self.types.get(n).map(|td| td.kind.clone());
+                Some(wrap_kind_of(&tr, &lookup, 0))
+            }
+        }
+    }
+
+    fn assignable_direct(
         &self,
         expr: &Expr,
         expected: &TypeRef,
@@ -12415,6 +12482,35 @@ impl<'a> TypeCheckCtx<'a> {
         }
         // Литералы: тип адаптируется к контексту (D44).
         match &expr.kind {
+            // Plan 200 (sql-autoconv) D55 amend: `[a, b, …]` against `[]T` /
+            // `Vec[T]` — coerce EACH element independently (recursing through
+            // the full `assignable`, so a heterogeneous literal like
+            // `[1, "alice", true]` against `[]SqlValue` wrap-coerces every
+            // element on its own — this is what unblocks bare `${1}`/`${n}`
+            // tag-template interpolation: the parser desugars `${…}` into
+            // exactly this shape, an `ArrayLit` argument at a known `[]T`
+            // call-arg position). Only when every element is a plain `Item`
+            // (no spreads) — a spread's source is itself a whole `[]T`, not
+            // a per-element value, so it stays on the legacy `infer_expr_type`
+            // path below (unaffected by this arm).
+            ExprKind::ArrayLit(items)
+                if !items.is_empty()
+                    && items.iter().all(|it| matches!(it, ArrayElem::Item(_))) =>
+            {
+                if let Some(elem_ty) = array_elem_type(expected) {
+                    for it in items {
+                        let ArrayElem::Item(item_expr) = it else { unreachable!() };
+                        match self.assignable(item_expr, elem_ty, expr_gs, exp_gs, scope) {
+                            Compat::Ok => {}
+                            Compat::Bad { found } => {
+                                return Compat::Bad { found: format!("[]{found}") };
+                            }
+                            other => return other,
+                        }
+                    }
+                    return Compat::Ok;
+                }
+            }
             ExprKind::IntLit(v) => {
                 return match &exp_rt {
                     ResolvedType::Scalar { .. } => {
@@ -14865,6 +14961,129 @@ fn array_elem_type(expected: &TypeRef) -> Option<&TypeRef> {
             generics.first()
         }
         _ => None,
+    }
+}
+
+/// Plan 200 (sql-autoconv) D55 amend — "obvious single-wrapper coercion":
+/// how a bare value at an `expected`-typed position gets wrapped. Exactly
+/// ONE level (the candidate's OWN inner type is never re-unwrapped) — a
+/// chain like `int → UserId → Wrapper` stays rejected, only the single
+/// declared wrapper auto-wraps. See `single_wrap_candidates` / `assignable`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum WrapTarget {
+    /// `type X Y` (D52 newtype) — wrap via `expr as X`. Reuses the existing
+    /// `as`-cast codegen verbatim (incl. numeric width conversion), no new
+    /// codegen needed.
+    Newtype(String),
+    /// `type X enum … | Variant(Y) | …` (D406) with `Variant` the sum's
+    /// ONLY unary (single-payload) constructor accepting `Y` — wrap via
+    /// `X.Variant(expr)`, same shape as the explicit form authors already
+    /// write (`SqlValue.I(1)`) — reuses existing ctor-call codegen.
+    SumVariant(String, String),
+}
+
+/// D55 amend: every syntactically eligible `(wrap_target, required inner
+/// type)` pair for `expected`. Zero candidates ⟹ `expected` isn't a
+/// declared non-generic newtype/sum — no auto-wrap possible. The CALLER
+/// disambiguates by matching the value's own `WrapKind` against each
+/// candidate's inner-type `WrapKind`: exactly one match ⟹ unambiguous
+/// wrap; zero or ≥2 ⟹ no auto-wrap (ambiguous, or plain mismatch — the
+/// existing error stands).
+///
+/// Bootstrap-scoped to NON-GENERIC wrapper types (`generics` must be empty)
+/// — `SqlValue`/`UserId`-shaped declarations; a parameterized wrapper
+/// (`Wrapper[T]`) is out of scope (mirrors D55's existing generic-arg
+/// coercion gaps elsewhere in this checker).
+/// `lookup` — resolve a type NAME to its declared `TypeDeclKind` (owned —
+/// callers hold it either as `&TypeDecl` refs, borrowed-`HashMap<String,
+/// TypeDecl>`, or a fresh scan; a closure decouples this shared rule from
+/// any one context's concrete map shape, so BOTH `assignable` — the
+/// ACCEPT side — and the `annotate_sum_wrap` REWRITE pass — the emit side
+/// — call the exact same decision function).
+fn single_wrap_candidates(
+    lookup: &impl Fn(&str) -> Option<TypeDeclKind>,
+    expected: &TypeRef,
+) -> Vec<(WrapTarget, TypeRef)> {
+    let mut ty = expected;
+    loop {
+        match ty {
+            TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
+                ty = inner;
+            }
+            _ => break,
+        }
+    }
+    let TypeRef::Named { path, generics, .. } = ty else { return Vec::new() };
+    if !generics.is_empty() {
+        return Vec::new();
+    }
+    let Some(name) = path.last() else { return Vec::new() };
+    match lookup(name) {
+        Some(TypeDeclKind::Newtype(inner)) => {
+            vec![(WrapTarget::Newtype(name.clone()), inner)]
+        }
+        Some(TypeDeclKind::Sum(variants)) => variants
+            .iter()
+            .filter_map(|v| match &v.kind {
+                SumVariantKind::Tuple(tys) if tys.len() == 1 => Some((
+                    WrapTarget::SumVariant(name.clone(), v.name.clone()),
+                    tys[0].clone(),
+                )),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// D55 amend: coarse structural "kind" of a type, for wrap-candidate
+/// disambiguation ONLY. Deliberately STRICTER than `cat_compatible_rt`
+/// (which permissively treats int↔float as mutually assignable, D44): an
+/// `int` value must be eligible for an `I(i64)` wrap candidate and NEVER
+/// simultaneously for an `F(f64)` one, or `sql\`${1}\`` would be flagged
+/// ambiguous instead of wrapping to `I(1)`. Aliases transparently resolve
+/// to their underlying kind (depth-guarded).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum WrapKind {
+    IntFamily,
+    Float,
+    Bool,
+    Str,
+    Array(Box<WrapKind>),
+    Named(String),
+    Other,
+}
+
+fn wrap_kind_of(ty: &TypeRef, lookup: &impl Fn(&str) -> Option<TypeDeclKind>, depth: u32) -> WrapKind {
+    if depth > 8 {
+        return WrapKind::Other;
+    }
+    match ty {
+        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
+            wrap_kind_of(inner, lookup, depth + 1)
+        }
+        TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+            WrapKind::Array(Box::new(wrap_kind_of(inner, lookup, depth + 1)))
+        }
+        TypeRef::Named { path, generics, .. } => {
+            let Some(name) = path.last() else { return WrapKind::Other };
+            match name.as_str() {
+                "int" | "uint" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" => {
+                    WrapKind::IntFamily
+                }
+                "f32" | "f64" => WrapKind::Float,
+                "bool" => WrapKind::Bool,
+                "str" => WrapKind::Str,
+                "Vec" if generics.len() == 1 => {
+                    WrapKind::Array(Box::new(wrap_kind_of(&generics[0], lookup, depth + 1)))
+                }
+                _ => match lookup(name) {
+                    Some(TypeDeclKind::Alias(inner)) => wrap_kind_of(&inner, lookup, depth + 1),
+                    _ => WrapKind::Named(name.clone()),
+                },
+            }
+        }
+        _ => WrapKind::Other,
     }
 }
 
@@ -27906,6 +28125,14 @@ struct MapLitCtx {
     /// вложенная типизация не срабатывают. Собирается из `module.items` и
     /// `peer_files` (та же модуль-папка), только `TypeDeclKind::Record`.
     record_field_types: HashMap<String, HashMap<String, TypeRef>>,
+    /// Plan 200 (sql-autoconv) D55 amend: type name → declared `TypeDeclKind`
+    /// (Sum / Newtype, others irrelevant) — feeds `single_wrap_candidates`
+    /// for the SAME "obvious single-wrapper coercion" rewrite `assignable`
+    /// already ACCEPTS at check-time (types/mod.rs `fn assignable`). This
+    /// reuses `MapLitAnnotator`'s existing expected-type-propagated walk
+    /// (let/const/call-arg/array-element/tuple/record-field/…) instead of a
+    /// parallel pass — one walker, one place.
+    wrap_types: HashMap<String, TypeDeclKind>,
 }
 
 impl MapLitCtx {
@@ -28000,10 +28227,23 @@ impl MapLitCtx {
             }
         }
 
+        // Plan 200 (sql-autoconv) D55 amend: type name → kind, for wrap
+        // candidates. Scanned across `module.items` AND `peer_files` (folder
+        // modules — `SqlValue` could in principle live in a peer file, mirrors
+        // `record_field_types`'s own peer coverage above).
+        let mut wrap_types: HashMap<String, TypeDeclKind> = HashMap::new();
+        for pf in &module.peer_files {
+            for it in &pf.items_here {
+                if let Item::Type(t) = it {
+                    wrap_types.entry(t.name.clone()).or_insert_with(|| t.kind.clone());
+                }
+            }
+        }
         for item in &module.items {
             match item {
                 Item::Type(t) => {
                     known_types.insert(t.name.clone());
+                    wrap_types.entry(t.name.clone()).or_insert_with(|| t.kind.clone());
                     collect_record_fields(t, &mut record_field_types);
                     // Plan 52 Ф.19: canonical-identity check. Если у нас
                     // есть peer_files info — добавляем только canonical
@@ -28110,6 +28350,7 @@ impl MapLitCtx {
             fn_generics: HashSet::new(),
             from_pairs_types,
             record_field_types,
+            wrap_types,
         }
     }
 
@@ -28128,6 +28369,7 @@ impl MapLitCtx {
                         fn_generics: f.generics.iter().map(|g| g.name.clone()).collect(),
                         from_pairs_types: self.from_pairs_types.clone(),
                         record_field_types: self.record_field_types.clone(),
+                        wrap_types: self.wrap_types.clone(),
                     };
                     // Generic-параметры receiver-типа тоже видимы.
                     if let Some(recv) = &f.receiver {
@@ -29064,6 +29306,17 @@ impl MapLitAnnotator {
                                 span: d.value.span,
                             },
                         );
+                    } else if let Some(t) = simple_expr_type(&d.value) {
+                        // Plan 200 (sql-autoconv) D55 amend: unannotated
+                        // literal binding (`ro n = 1`) — record its simple
+                        // type too, so a LATER use of `n` at a wrap-eligible
+                        // position (`sql\`${n}\``) can be identified via
+                        // `try_wrap_leaf`'s `Ident` lookup. Was previously
+                        // dropped (fell to the `remove` arm below) — the
+                        // ONLY consumer of `var_types` used to be the
+                        // all-spread map/array disambiguation, which never
+                        // needed a plain scalar's type.
+                        self.var_types.insert(name.clone(), t);
                     } else {
                         // Неизвестный тип — снять устаревший entry (shadowing).
                         self.var_types.remove(name);
@@ -29150,7 +29403,90 @@ impl MapLitAnnotator {
         first
     }
 
+    /// Plan 200 (sql-autoconv) D55 amend: rewrite `e` IN PLACE into
+    /// `Type.Variant(payload)` when `e` is a plain leaf (literal / var
+    /// `Ident`) and `expected` is a declared sum type with EXACTLY ONE
+    /// unary variant whose payload type matches `e`'s own (coarse, D44-
+    /// unaware — see `WrapKind`) kind. No-op for anything else: non-leaf
+    /// exprs, ambiguous (≥2) or unmatched (0) candidates, or a Newtype
+    /// target (accepted at check-time already, nothing to materialize —
+    /// same C representation, D52).
+    fn try_wrap_leaf(&mut self, e: &mut Expr, expected: &TypeRef) {
+        let found_kind = match &e.kind {
+            ExprKind::IntLit(_) => WrapKind::IntFamily,
+            ExprKind::Unary { op: UnOp::Neg, operand }
+                if matches!(operand.kind, ExprKind::IntLit(_)) =>
+            {
+                WrapKind::IntFamily
+            }
+            ExprKind::FloatLit(_) => WrapKind::Float,
+            ExprKind::BoolLit(_) => WrapKind::Bool,
+            ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => WrapKind::Str,
+            ExprKind::Ident(name) => {
+                let Some(ty) = self.var_types.get(name) else { return };
+                let lookup = |n: &str| self.ctx.wrap_types.get(n).cloned();
+                wrap_kind_of(ty, &lookup, 0)
+            }
+            _ => return,
+        };
+        let lookup = |n: &str| self.ctx.wrap_types.get(n).cloned();
+        let candidates = single_wrap_candidates(&lookup, expected);
+        if candidates.is_empty() {
+            return;
+        }
+        let matches: Vec<&(WrapTarget, TypeRef)> = candidates
+            .iter()
+            .filter(|(_, inner)| wrap_kind_of(inner, &lookup, 0) == found_kind)
+            .collect();
+        if matches.len() != 1 {
+            return; // ambiguous or no match — leave as-is (checker's verdict stands).
+        }
+        let (target, inner_ty) = matches[0];
+        let WrapTarget::SumVariant(tname, vname) = target else {
+            return; // Newtype — accept-only, see doc comment above.
+        };
+        let span = e.span;
+        let old = std::mem::replace(e, Expr::new(ExprKind::UnitLit, span));
+        // Numeric candidate payload (e.g. `i64`) — auto-insert `as <inner>`
+        // so a Nova `int` (intptr_t) value widens/narrows to the variant's
+        // OWN declared payload type invisibly (owner directive: "прячь
+        // int→i64 в коэрсии"). Harmless no-op cast when already exact
+        // (`1 as i64` on an already-i64 literal is a legal identity cast).
+        let numeric = matches!(wrap_kind_of(inner_ty, &lookup, 0), WrapKind::IntFamily | WrapKind::Float);
+        let payload = if numeric {
+            Expr::new(ExprKind::As(Box::new(old), inner_ty.clone()), span)
+        } else {
+            old
+        };
+        *e = Expr::new(
+            ExprKind::Call {
+                func: Box::new(Expr::new(ExprKind::Path(vec![tname.clone(), vname.clone()]), span)),
+                args: vec![CallArg::Item(payload)],
+                trailing: None,
+            },
+            span,
+        );
+    }
+
     fn walk_expr(&mut self, e: &mut Expr, expected: Option<&TypeRef>) {
+        // Plan 200 (sql-autoconv) D55 amend: "obvious single-wrapper
+        // coercion" REWRITE — a bare leaf value (literal / var `Ident`) at
+        // a KNOWN sum-typed `expected` position becomes an explicit
+        // `Type.Variant(payload)` constructor call, so downstream codegen
+        // sees the SAME shape it already emits correctly for a hand-written
+        // `SqlValue.I(1)`. `assignable` (types/mod.rs, D55 amend) already
+        // ACCEPTS this at check-time via the identical `single_wrap_
+        // candidates`/`wrap_kind_of` decision rule — this is purely the
+        // materialization half, piggy-backing on the SAME expected-type-
+        // propagated walk already built for map-literal coercion (this
+        // covers let/const/call-arg[free-fn]/array-element/tuple/record-
+        // field/if-else/match-arm positions for free — no separate pass).
+        // Newtype targets are NOT rewritten (`type X Y` = same C repr as
+        // `Y`, D52 — nothing to materialize; `assignable`'s accept alone
+        // is sufficient, confirmed empirically).
+        if let Some(exp) = expected {
+            self.try_wrap_leaf(e, exp);
+        }
         // Plan 52.x: all-spread `[...a, ...b]` без expected-типа —
         // синтезируем map-тип из spread-источников, чтобы конверсия
         // ArrayLit→MapLit ниже и inference K/V сработали (без этого
