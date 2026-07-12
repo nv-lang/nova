@@ -8638,7 +8638,44 @@ impl<'a> TypeCheckCtx<'a> {
                     FnBody::Block(b) => self.check_ref_escape_capture_block(b, errors),
                     FnBody::External => {}
                 }
-                self.f1_fn_sig_body(sb, gs, scope, errors)
+                self.f1_fn_sig_body(sb, gs, scope, errors);
+                // 197.3 (Q3 B, channel-first migration): ClosureFull is fully
+                // typed by grammar — every param carries an explicit `T`,
+                // `return_type` is `-> R` or absent (= Unit) — unlike
+                // ClosureLight, no body-inference is needed. Register
+                // `ResolvedType::Func` for the closure's OWN id, mirroring
+                // the ClosureLight zero-param arm above. Consumed by
+                // emit_c.rs Channel 2 (`infer_expr_c_type`'s dedicated
+                // ClosureLight/ClosureFull block) to type e.g.
+                // `ro apply = fn(f fn(int)->int, x int)->int => f(x)`
+                // without falling to the legacy ClosureFull arm there
+                // (dead once this fires — removed alongside this change).
+                // `mark_type_params` (same helper the HOF closure-arg
+                // channel at ~7797 uses) reclassifies a bare in-scope
+                // generic name (`gs`) as `ResolvedType::TypeParam` instead
+                // of a naive `Named` — `resolved_type_to_c`'s TypeParam arm
+                // consults `current_type_subst`, so a generic ClosureFull
+                // resolves correctly PER mono-instantiation at emit time
+                // (not just the fully-concrete case).
+                if e.id.is_set() {
+                    let params_rt: Vec<ResolvedType> = sb.params.iter()
+                        .map(|p| Self::mark_type_params(ResolvedType::from_type_ref(&p.ty), gs))
+                        .collect();
+                    let ret_rt = Self::mark_type_params(
+                        sb.return_type.as_ref()
+                            .map(ResolvedType::from_type_ref)
+                            .unwrap_or(ResolvedType::Unit),
+                        gs,
+                    );
+                    self.resolved_types_buf.borrow_mut().insert(
+                        e.id,
+                        ResolvedType::Func {
+                            params: params_rt,
+                            ret: Box::new(ret_rt),
+                            effects: vec![],
+                        },
+                    );
+                }
             }
             ExprKind::Spawn(body) => {
                 self.check_ref_escape_capture(body, errors);

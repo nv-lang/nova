@@ -28829,7 +28829,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
 
             ExprKind::Lambda { params, body, return_type, .. } => {
-                self.emit_lambda(params, body, None, return_type.as_ref())
+                self.emit_lambda(params, body, None, return_type.as_ref(), expr.id)
             }
             // Plan 19, C5: closure-light codegen — конвертируем в
             // legacy `LambdaParam`/`Expr` и переиспользуем
@@ -28856,7 +28856,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         b.span,
                     ),
                 };
-                self.emit_lambda(&legacy_params, &body_expr, None, None)
+                self.emit_lambda(&legacy_params, &body_expr, None, None, expr.id)
             }
             // Plan 19, C5: closure-full codegen — типизированный
             // closure аналогичен named fn без имени. Конвертируем
@@ -28888,6 +28888,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     &body_expr,
                     None,
                     sb.return_type.as_ref(),
+                    expr.id,
                 )
             }
             ExprKind::With { bindings, body } => {
@@ -32001,10 +32002,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                             b.span,
                                                         ),
                                                     };
-                                                    self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?
+                                                    self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None, a.expr().id)?
                                                 }
                                                 crate::ast::ExprKind::Lambda { params, body, return_type: ret, .. } => {
-                                                    self.emit_lambda(params, body, Some(&ctx), ret.as_ref())?
+                                                    self.emit_lambda(params, body, Some(&ctx), ret.as_ref(), a.expr().id)?
                                                 }
                                                 _ => unreachable!(),
                                             }
@@ -32268,10 +32269,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                             b.span,
                                                         ),
                                                     };
-                                                    self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?
+                                                    self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None, a.expr().id)?
                                                 }
                                                 crate::ast::ExprKind::Lambda { params, body, return_type: ret, .. } => {
-                                                    self.emit_lambda(params, body, Some(&ctx), ret.as_ref())?
+                                                    self.emit_lambda(params, body, Some(&ctx), ret.as_ref(), a.expr().id)?
                                                 }
                                                 _ => unreachable!(),
                                             }
@@ -34176,7 +34177,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                     let ctx: Vec<(String, String)> = inner_ptys.iter()
                                                         .map(|t| (t.clone(), String::new()))
                                                         .collect();
-                                                    let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?;
+                                                    let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None, a.expr().id)?;
                                                     arg_strs.push(v);
                                                 } else {
                                                     let prev_sig = self.fn_param_sigs.insert(
@@ -34720,7 +34721,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             let ctx: Vec<(String, String)> = inner_ptys.iter()
                                                 .map(|t| (t.clone(), String::new()))
                                                 .collect();
-                                            self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?
+                                            self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None, a.expr().id)?
                                         } else {
                                             self.emit_expr(a.expr())?
                                         };
@@ -35428,7 +35429,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             let ctx: Vec<(String, String)> = inner_ptys.iter()
                                                 .map(|t| (t.clone(), String::new()))
                                                 .collect();
-                                            let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?;
+                                            let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None, a.expr().id)?;
                                             arg_strs.push(v);
                                         } else {
                                             // Variable closure — fn_param_sigs hook (chained calls).
@@ -36218,7 +36219,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 let ctx: Vec<(String, String)> = inner_ptys.iter()
                                                     .map(|t| (t.clone(), String::new()))
                                                     .collect();
-                                                let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?;
+                                                let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None, a.expr().id)?;
                                                 arg_strs.push(v);
                                             } else {
                                                 let prev_sig = self.fn_param_sigs.insert(
@@ -36510,10 +36511,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 ExprKind::Block(b.clone()), b.span,
                                             ),
                                         };
-                                        self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?
+                                        self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None, a.expr().id)?
                                     }
                                     ExprKind::Lambda { params, body, return_type, .. } => {
-                                        self.emit_lambda(params, body, Some(&ctx), return_type.as_ref())?
+                                        self.emit_lambda(params, body, Some(&ctx), return_type.as_ref(), a.expr().id)?
                                     }
                                     _ => self.emit_expr(a.expr())?,
                                 };
@@ -36601,7 +36602,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let ctx: Vec<(String, String)> = inner_sig.0.iter()
                             .map(|t| (t.clone(), String::new()))
                             .collect();
-                        let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?;
+                        let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None, a.expr().id)?;
                         arg_strs.push(v);
                         continue;
                     }
@@ -42630,12 +42631,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     /// Emit a lambda expression. Returns the C expression (a function pointer or closure pointer).
+    ///
+    /// `closure_id` — 197.3 (Q3 A, channel-first migration): the ORIGINAL
+    /// closure literal's own `ExprId` (`ExprId::UNSET` when the caller has
+    /// none — e.g. a legacy-lowered `Trailing::Fn` with no source closure
+    /// node). Consulted by `closure_channel_ret_c` BEFORE the legacy
+    /// return-type body-walk (`infer_lambda_return_type_with_params`) — see
+    /// that fn's doc for the channel-vs-legacy split.
     fn emit_lambda(
         &mut self,
         params: &[LambdaParam],
         body: &Expr,
         context_param_tys: Option<&[(String, String)]>, // (param_c_ty, ret_c_ty) from outer fn sig context
         return_type_ann: Option<&TypeRef>,
+        closure_id: ExprId,
     ) -> Result<String, String> {
         let id = self.lambda_counter;
         self.lambda_counter += 1;
@@ -42677,12 +42686,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ctx.first().and_then(|(_, ret)| if !ret.is_empty() { Some(ret.clone()) } else { None })
                 .unwrap_or_else(|| {
                     // Context был задан (например HOF), но return-type
-                    // не указан — infer из body.
-                    self.infer_lambda_return_type_with_params(body, params, &param_c_tys)
+                    // не указан — 197.3 (Q3 A) channel-first: сперва
+                    // checker-аннотация closure'а самого себя
+                    // (resolved_types[closure_id] = ResolvedType::Func), и
+                    // только если канал промахнулся — legacy body-walk.
+                    self.closure_channel_ret_c(closure_id)
+                        .unwrap_or_else(|| self.infer_lambda_return_type_with_params(body, params, &param_c_tys))
                 })
         } else {
-            // Ни annotation, ни context — infer из body.
-            self.infer_lambda_return_type_with_params(body, params, &param_c_tys)
+            // Ни annotation, ни context — 197.3 (Q3 A) channel-first, тот
+            // же порядок: канал → legacy infer из body.
+            self.closure_channel_ret_c(closure_id)
+                .unwrap_or_else(|| self.infer_lambda_return_type_with_params(body, params, &param_c_tys))
         };
 
         // Plan 62.D bis-1 (2026-05-18): scope-aware free-var detection.
@@ -45365,6 +45380,38 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let rt = self.resolved_types.get(&id)?.clone();
         let ty_c = self.resolved_type_to_c(&rt).ok()?;
         Self::is_typed_integer(&ty_c).then_some(ty_c)
+    }
+
+    /// 197.3 (Q3 A, channel-first migration): the C return-type of the
+    /// underlying `lambda_N` function, read from the checker's OWN
+    /// annotation of the closure literal (`resolved_types[closure_id] =
+    /// ResolvedType::Func { ret, .. }`) instead of the legacy AST body-walk
+    /// (`infer_lambda_return_type_with_params`). `closure_id` is the
+    /// ORIGINAL closure literal's `ExprId` — `ExprId::UNSET` (no source
+    /// closure node, e.g. a legacy-lowered `Trailing::Fn`) always misses.
+    ///
+    /// Mirrors `channel_int_c_type`'s shape: `None` on ANY miss (unset id,
+    /// no channel entry, entry isn't `Func`, or `ret` fails to lower) — the
+    /// caller (`emit_lambda`) falls back to the legacy body-walk exactly as
+    /// before. Pure (no mono side-effects) — `resolved_type_to_c` on a
+    /// `Func.ret` is the same read `channel_int_c_type` already performs.
+    ///
+    /// Populated by the checker's `ExprKind::ClosureFull` arm (types/mod.rs,
+    /// D22/Q3 B) for EVERY closure-full literal (params always typed by
+    /// grammar; `ret` = the `-> R` annotation, or `Unit` when absent —
+    /// mirrors the legacy default). NOT populated for `ClosureLight`/
+    /// `Lambda` beyond the pre-existing zero-param primitive-body gate, so
+    /// those keep falling to the legacy body-walk here (no regression).
+    fn closure_channel_ret_c(&self, closure_id: crate::ast::ExprId) -> Option<String> {
+        if !closure_id.is_set() {
+            return None;
+        }
+        match self.resolved_types.get(&closure_id) {
+            Some(crate::types::ResolvedType::Func { ret, .. }) => {
+                self.resolved_type_to_c(ret).ok()
+            }
+            _ => None,
+        }
     }
 
     /// Plan 38: numeric type constants — `int.MAX` / `f64.NAN` / etc.
@@ -49274,18 +49321,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // лоуэрится в NovaClos_X* (load-bearing: clos_struct_ret_type на
             // call-site), а НЕ в общий R::Func→void* (тот — для declared-позиций
             // fn-типов). Kind-гейт: только сами closure-выражения.
+            //
+            // 197.3 (Q3 B): `closure_channel_miss` — since the ClosureFull
+            // checker registration (types/mod.rs ~8635) is unconditional
+            // (covers generic params via `mark_type_params`/`TypeParam`,
+            // resolved per mono-instance through `current_type_subst`), a
+            // registered Func CAN legitimately fail to fully resolve in an
+            // erased context (unsubstituted type-param). Without this flag
+            // that miss would fall into the generic `R::Func → "void*"`
+            // block right below — exactly the wrong lowering this comment
+            // already warns against. On a miss, skip straight past BOTH
+            // Channel-2 blocks to the legacy body-walk (subst-aware +
+            // never out-right fails, same as pre-197.3 behavior).
+            let mut closure_channel_miss = false;
             if matches!(&expr.kind, ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_)) {
                 if let Some(crate::types::ResolvedType::Func { params, ret, .. }) =
                     self.resolved_types.get(&expr.id)
                 {
                     let p_c: Result<Vec<String>, String> =
                         params.iter().map(|p| self.resolved_type_to_c(p)).collect();
-                    if let (Ok(p_c), Ok(r_c)) = (p_c, self.resolved_type_to_c(ret)) {
-                        return format!("{}*", Self::clos_struct_name(&p_c[..], &r_c));
+                    match (p_c, self.resolved_type_to_c(ret)) {
+                        (Ok(p_c), Ok(r_c)) => {
+                            return format!("{}*", Self::clos_struct_name(&p_c[..], &r_c));
+                        }
+                        _ => {
+                            closure_channel_miss = true;
+                        }
                     }
                 }
             }
-            if let Some(rt) = self.resolved_types.get(&expr.id) {
+            if !closure_channel_miss { if let Some(rt) = self.resolved_types.get(&expr.id) {
                 if let Ok(ir_c) = self.resolved_type_to_c(rt) {
                     // SelfAccess: prefer var_types["nova_self"] when available (reliable per-scope
                     // codegen state; channel depends on current_type_subst timing — gap #2).
@@ -49340,7 +49405,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         return ir_c;
                     }
                 }
-            }
+            } }
         }
         // Channel 3: var_types for Ident/SelfAccess (reliable per-local codegen state).
         // 172.1.2 (2026-07-04): id-гейт СНЯТ — var_types это codegen-state, id не
@@ -51428,31 +51493,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                     drop(overrides);
-                    let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c);
-                    format!("{}*", clos_struct)
-                }
-                // ClosureFull `fn(x T) -> R => body` / `fn(x T) -> R { block }` —
-                // fully typed already (unlike ClosureLight, no inference needed).
-                // [BUG apply-codegen-fix]: the checker (types/mod.rs ExprKind::
-                // ClosureFull arm) never inserts a `ResolvedType::Func` for the
-                // ClosureFull expr's OWN id — it only annotates zero-param
-                // ClosureLight that way — so Channel 2 above (which keys off
-                // `resolved_types.get(&expr.id)`) never fires for ClosureFull,
-                // and without this arm it fell through to the `_` wildcard and
-                // returned "" (empty C type). A `ro apply = fn(f fn(int)->int,
-                // x int) -> int => f(x)` local then got emitted with NO C type
-                // at all (`apply = (void*)(&...);`) instead of `NovaClos_vii*
-                // apply = ...;`, producing `use of undeclared identifier 'apply'`
-                // at every subsequent use — not name-specific, reproduces with
-                // ANY identifier assigned an anonymous typed-`fn` literal.
-                ExprKind::ClosureFull(sb) => {
-                    let param_c_tys: Vec<String> = sb.params.iter()
-                        .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
-                        .collect();
-                    let ret_c = sb.return_type.as_ref()
-                        .and_then(|rt| self.type_ref_to_c(rt).ok())
-                        .filter(|t| !t.is_empty())
-                        .unwrap_or_else(|| "nova_unit".into());
                     let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c);
                     format!("{}*", clos_struct)
                 }
