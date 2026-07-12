@@ -73,6 +73,24 @@ enum PrimBuiltin { Fn(&'static str), BinOp(&'static str), Identity }
 /// ClosureFull / HandlerLit) и найти первый `interrupt VAL` — вернуть
 /// C-тип VAL. Используется в `infer_expr_c_type` для `With`, когда body
 /// не имеет trailing (тогда тип blocка определяется handler'ом).
+///
+/// Plan 196.3 (мелочь-пакет, one-window inventory) verdict: LEGIT-LOWERING,
+/// не кандидат на прямую миграцию к `resolved_types`/`resolved_callees` —
+/// это структурный AST-walk (найти узел `Interrupt`, не переизобретённая
+/// проверка типа), а фактический C-тип VAL уже читается через
+/// `emitter.infer_expr_c_type(v)`, который сам «channels FIRST, legacy
+/// LAZY» (Plan 172.1 §0/§1, см. :48691) — то есть чтение канала уже
+/// происходит на один уровень ниже. Прямое чтение `resolved_types` ЗДЕСЬ
+/// невозможно by design: оба вызывающих (`probe_handler_ty` / :8883,
+/// `probe_handler_ty_ro` / :8922) намеренно временно переопределяют тип
+/// первого параметра handler'а на РЕАЛЬНЫЙ payload-тип `Fail[E]` ПЕРЕД
+/// вызовом этой функции, потому что чекер типизирует `|e| interrupt
+/// Some(e)` по WIRE-схеме эффекта (hardcoded `nova_str`, effects.h), а не
+/// по конкретной инстанциации `E` — известное ограничение задокументировано
+/// ещё в Plan 120 (`docs/plans/120-named-tuples-and-allocation-contract.md`
+/// `[M-D215-defaults-handler-lambda-type]`) и закрыто этим rebind-приёмом.
+/// Значит `resolved_types[interrupt_val.id]` на момент вызова либо
+/// отсутствует, либо содержит устаревший WIRE-тип — не источник истины.
 pub fn infer_handler_interrupt_ty(emitter: &CEmitter, handler: &Expr) -> Option<String> {
     use crate::ast::{ClosureBody, FnBody, ElseBranch};
     fn walk_expr(emitter: &CEmitter, e: &Expr, out: &mut Option<String>) {
