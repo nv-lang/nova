@@ -14,8 +14,18 @@
 
 ## Пункт 1 — `Vec[T].new(cap int = 0)` точный pre-alloc конструктор
 
-**Статус:** ✅ согласовано 2026-07-12. **Спека:** D372-amend2 (`spec/decisions/02-types.md`),
-таблица `03-syntax.md`, пример `syntax.md` — обновлены 2026-07-12.
+**Статус:** 🚧 спека согласована, КОД ЗАБЛОКИРОВАН компиляторным багом (см. ниже). **Спека:** D372-amend2
+(`spec/decisions/02-types.md`), таблица `03-syntax.md`, пример `syntax.md` — обновлены 2026-07-12.
+
+**⛔ БЛОКЕР (plan-200 агент [sonnet], 2026-07-12): `[M-vec-new-cap-default-arg-backfill]`.** Rust-компилятор
+собрался чисто, но `nova test std/collections/vec` дал CC-FAIL: default-arg на generic-static `Vec.new`
+backfill'ится НЕ на всех call-сайтах одного CU — старые 0-арг `Vec[T].new()` в std/runtime/string
+(`str.@to_code_points`/`@to_str_lossy`/`@split_ascii_whitespace`) мономорфизировались с ОБЯЗАТЕЛЬНЫМ `cap`,
+а вызов остался нуль-арным → «too few arguments». **ОТДЕЛЬНЫЙ дефект от `[M-vec-new-static-arity-overload]`**
+(не overload cross-wiring, а default-arg backfill), но ТОТ ЖЕ класс — generic-static-ctor codegen. Откачен
+чисто (коммита нет). **Допущение «default-arg безопасен, т.к. одна функция» ОПРОВЕРГНУТО.** → Пункт 1 ждёт
+компиляторного фикса generic-static-ctor codegen (Plan 196.2 W2 / та же семья). Спека D372-amend2 остаётся
+(временное расхождение спека/код).
 
 **Что:** заменить 0-арг `Vec[T].new()` на `Vec[T].new(cap int = 0) -> Self` (default-аргумент, ОДНА
 функция — не overload). `new()` = пусто (cap 0, без аллокации, как сейчас); `new(cap: 1024)` = ровно 1024
@@ -51,8 +61,9 @@
 
 ## Пункт 2 — `priv(type)` → `priv` для итераторов
 
-**Статус:** ✅ согласовано (владелец: «баг конвенции — ты его нашёл»). **Спека/конвенция:**
-`docs/nv-coding-style.md:221`.
+**Статус:** ✅ СДЕЛАНО 2026-07-12 (в main `c81d28419`). **Спека/конвенция:** `docs/nv-coding-style.md:221`.
+`str` (`std/prelude/core.nv:211`) сознательно НЕ тронут — lang-item (ABI-мост к `nova_str`, bootstrap
+pre-method, Plan 139.1); больший blast-radius, приёмочных тестов нет → **открытый вопрос владельцу.**
 
 **Что:** итераторные типы задают поля через `value priv(type)`; правильно — field-level `priv` (D281
 module-boundary). Мотивация `priv(type)` для полей итератора отсутствует и ложно-строга: по **D267** любой

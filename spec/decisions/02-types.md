@@ -6842,7 +6842,9 @@ fn User.guest() -> Self => { name: "guest", email: "", is_admin: false }
 > - **Почему default-arg, а НЕ overload:** одна функция `new(cap int = 0)` заменяет 0-арг `new()` — НЕ создаёт
 >   набор перегрузок → не триггерит `[M-vec-new-static-arity-overload]` (см. поправку ниже). Применимо к типам
 >   с точной ёмкостью (`Vec`/`[]T`; `HashMap`/`Set`/`WriteBuffer`/`StringBuilder`/`Queue` — по мере миграции,
->   семантика `cap(n)` того типа). План внедрения — **Plan 200 (зонтичный std-improvements)**.
+>   семантика `cap(n)` того типа). План внедрения — **Plan 200 (зонтичный std-improvements)**. ⚠ КОД пока НЕ внедрён: `Vec.new(cap int=0)`
+> упирается в `[M-vec-new-cap-default-arg-backfill]` (default-arg на generic-static ctor; тот же класс, что
+> `[M-vec-new-static-arity-overload]`) → ждёт Plan 196.2 W2; спека опережает код (временно).
 >
 > **ПОПРАВКА к Амендменту 1 (from_raw_parts → new-overload): ОТКАЧЕНО, спека была рассинхронена.** Складывание
 > `from_raw_parts` в 3-арг перегрузку `Vec[T].new(ptr,len,cap)` НЕ состоялось в коде — дефект
