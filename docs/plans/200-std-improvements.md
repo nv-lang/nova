@@ -14,18 +14,27 @@
 
 ## Пункт 1 — `Vec[T].new(cap int = 0)` точный pre-alloc конструктор
 
-**Статус:** 🚧 спека согласована, КОД ЗАБЛОКИРОВАН компиляторным багом (см. ниже). **Спека:** D372-amend2
-(`spec/decisions/02-types.md`), таблица `03-syntax.md`, пример `syntax.md` — обновлены 2026-07-12.
+**Статус:** ✅ СДЕЛАНО 2026-07-12 (plan-200 агент [sonnet]) — `[M-vec-new-cap-default-arg-backfill]`
+зачинен в РЕЗОЛВЕ (не заплатка), код внедрён. **Спека:** D372-amend2 (`spec/decisions/02-types.md`),
+таблица `03-syntax.md`, пример `syntax.md`.
 
-**⛔ БЛОКЕР (plan-200 агент [sonnet], 2026-07-12): `[M-vec-new-cap-default-arg-backfill]`.** Rust-компилятор
-собрался чисто, но `nova test std/collections/vec` дал CC-FAIL: default-arg на generic-static `Vec.new`
-backfill'ится НЕ на всех call-сайтах одного CU — старые 0-арг `Vec[T].new()` в std/runtime/string
-(`str.@to_code_points`/`@to_str_lossy`/`@split_ascii_whitespace`) мономорфизировались с ОБЯЗАТЕЛЬНЫМ `cap`,
-а вызов остался нуль-арным → «too few arguments». **ОТДЕЛЬНЫЙ дефект от `[M-vec-new-static-arity-overload]`**
-(не overload cross-wiring, а default-arg backfill), но ТОТ ЖЕ класс — generic-static-ctor codegen. Откачен
-чисто (коммита нет). **Допущение «default-arg безопасен, т.к. одна функция» ОПРОВЕРГНУТО.** → Пункт 1 ждёт
-компиляторного фикса generic-static-ctor codegen (Plan 196.2 W2 / та же семья). Спека D372-amend2 остаётся
-(временное расхождение спека/код).
+**Бывший блокер `[M-vec-new-cap-default-arg-backfill]` — ЗАКРЫТ, корень НЕ в 196-зоне.** Диагностика
+подтвердила: класс бага **НЕ** `infer_call_ret_c`/mono-clone (196.2 W2) — это чисто callnorm-classification
+gap, вне запретной зоны. Root cause: `try_normalize_call` (`callnorm.rs`) резолвит callee → `FnDecl.params`
+ОДНИМ classify-match'ем (`Ident`→free / `Path`(2)→static / `Member`→instance) — единственный резолв-путь,
+которым ЛЮБОЙ вызов (включая обычные static/free) доходит до `param.default` перед backfill'ом. Для
+generic-static-ctor (`Type[Args].method(...)` турбофиш, `[]T.method(...)` slice-sugar D38/D239) парсер кладёт
+turbofish/`__array`-Path ОДНИМ уровнем ВНУТРИ `Member.obj`, а не на верхнем уровне `func.kind` — тот же
+`Member`-арм, что и обычный `obj.method()`. Этот арм БЕЗ рассмотрения этой формы шёл сразу в
+`instance_by_name` (там нет ctor-имени "new") → резолв обрывался → default НЕ подставлялся. Фикс — ТА ЖЕ
+точка: `Member`-арм теперь СНАЧАЛА проверяет, не является ли `obj` type-position turbofish/`__array`-путём
+(если да — тот же `static_methods`, что уже используют `Path`-static-вызовы), и только иначе падает в
+`instance_by_name` — сходимость на существующий резолв-путь, не новый резолвер. Отдельно найден и зачинен
+ВТОРОЙ, независимый источник арности "too few arguments — cap": 3 места в `emit_c.rs`
+(`try_emit_typed_vec_literal` — литерал `[...]`; `ParallelFor`-аккумулятор; rest-bind `[a, ...rest]`),
+которые синтезируют `Vec.new`-вызов НАПРЯМУЮ C-строкой (нет Nova-AST `Call`-узла вообще → callnorm их не
+видит по построению) — арность руками приведена к новой C-сигнатуре (`(0)`). Оба класса вне заявленной
+196-зоны (`infer_call_ret_c` 46293-48883 / mono-clone) — 196-агент не тронут.
 
 **Что:** заменить 0-арг `Vec[T].new()` на `Vec[T].new(cap int = 0) -> Self` (default-аргумент, ОДНА
 функция — не overload). `new()` = пусто (cap 0, без аллокации, как сейчас); `new(cap: 1024)` = ровно 1024
@@ -36,26 +45,33 @@ backfill'ится НЕ на всех call-сайтах одного CU — ст�
 - `@reserve(additional)` — **амортизированный** рост, округление ВВЕРХ до степени 2 (8→16→32…).
   Уже такова (`std/collections/vec/core.nv:305`) — НЕ трогать.
 
-**Правки кода:**
-- `std/collections/vec/core.nv:98` — `Vec[T].new()` → `Vec[T].new(cap int = 0)`; тело: `cap == 0` → текущий
-  пустой путь (`null_buf`); `cap > 0` → аллоцировать ровно `cap` (как setter `@cap(n)`: `alloc_buf[T](cap)`,
-  `len 0`, `cap`).
+**Правки кода (СДЕЛАНО):**
+- `std/collections/vec/core.nv:98` — `Vec[T].new()` → `Vec[T].new(cap int = 0)`; тело: `cap == 0` → пустой
+  путь (`null_buf`); `cap > 0` → `alloc_buf[T](cap)`, `len 0`, `cap` (одна аллокация).
 - `std/collections/vec/core.nv:198` — `from`: `Vec[T].new().cap(items.len()).extend(items)` →
-  `Vec[T].new(cap: items.len()).extend(items)` (одна аллокация, без chain).
-- Обновить doc-комментарии `new` (строки 55-58, 97).
+  `Vec[T].new(cap: items.len()).extend(items)`.
+- Doc-комментарии `new` обновлены.
+- Компиляторный фикс (см. выше): `compiler-codegen/src/callnorm.rs` (`try_normalize_call` classify-match) +
+  `compiler-codegen/src/codegen/emit_c.rs` (3 hand-formatted ctor-call сайта).
 
-**Риск/секвенс:** `new(cap int = 0)` — default-arg, ОДНА функция → НЕ триггерит
-`[M-vec-new-static-arity-overload]`, пока `new` единственный (не набор). Безопасно СЕЙЧАС, до фикса.
+**Риск/секвенс — снят.** `new(cap int = 0)` — default-arg, ОДНА функция → НЕ триггерит
+`[M-vec-new-static-arity-overload]` (тот overload-класс отдельный, `from_raw_parts` остаётся именованным до
+своего фикса — ниже).
 
-**Связанный фолд (ОТДЕЛЬНО, в Plan 196.2 W2, попутно с фиксом M):**
+**Связанный фолд (ОТДЕЛЬНО, в Plan 196.2 W2, НЕ этим коммитом):**
 `fn Vec[T].from_raw_parts(ptr *T, len int, cap int) -> Self`
 ⇒ `fn Vec[T].new(ptr *mut T, len int, cap int) -> Self require cap >= len`
 (3-арг overload + `*mut T` напрямую вместо `unsafe { ptr as *mut T }` + контракт `cap >= len`). Возможен
-ТОЛЬКО после фикса `[M-vec-new-static-arity-overload]` (тогда `new(cap int=0)` + `new(ptr *mut T,len,cap)` =
-легальный набор перегрузок). До фикса `from_raw_parts` остаётся именованным. Отслеживается 196.2, НЕ здесь.
+ТОЛЬКО после фикса `[M-vec-new-static-arity-overload]` (arity-overload cross-wiring — ДРУГОЙ класс: codegen
+второе окно путает 0-арг/3-арг перегрузки; НЕ то же самое, что default-arg backfill выше, и НЕ закрыт этим
+коммитом). До фикса `from_raw_parts` остаётся именованным. Отслеживается 196.2, НЕ здесь.
 
-**Приёмка:** conformance 95/0; byte-parity; `nova test std/collections/vec` без новых фейлов; D372-amend2
-в спеке (сделано).
+**Приёмка (все зелёные 2026-07-12):** conformance PASS 3/3 (single-CU; включая НОВЫЙ regression-тест на
+`[M-vec-new-cap-default-arg-backfill]` — `spec_tests/conformance/d372_canonical_new_defaults.nv` +
+`types_generic_static_ctor.nv` peer; red-before/green-after подтверждён на baseline-бинаре); byte-parity
+(`std/collections` — единственный CC-FAIL `vec_lazy` pre-existing δ0, см. Plan 172.12); `nova test
+std/collections/vec` — PASS (`access`, тот самый repro-кейс); `nova test std/runtime/string` — чистая
+компиляция; D372-amend2 в спеке (сделано, расхождение спека/код снято).
 
 ---
 

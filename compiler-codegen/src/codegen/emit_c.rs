@@ -11380,7 +11380,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // the index slots).
         let (vec_mangled, vec_ctor, vec_push) = self.vec_mono_ctor_push(&elem_c)?;
         let acc_var = format!("_nova_par_res_{}", id);
-        self.line(&format!("{ty}* {acc} = {ctor}();",
+        // [M-vec-new-cap-default-arg-backfill]: hand-formatted ctor call, no
+        // Nova-AST Call node — see the sibling note in
+        // `try_emit_typed_vec_literal` (the callee's real C signature always
+        // takes `cap`; pass the literal default `0`).
+        self.line(&format!("{ty}* {acc} = {ctor}(0);",
             ty = vec_mangled, acc = acc_var, ctor = vec_ctor));
         self.var_types.insert(acc_var.clone(), format!("{}*", vec_mangled));
         // Element-type tracking so `xs[i]` / for-in typing over the result works.
@@ -40537,9 +40541,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.register_vec_mono_method("push", &type_subst, &push_c, &rt_trimmed)?;
 
         // 4) Emit the construction.
+        // [M-vec-new-cap-default-arg-backfill]: this ctor call is synthesized
+        // DIRECTLY as a C-format string for the array-literal desugar — there
+        // is no Nova-AST `Call` node here for callnorm to default-backfill
+        // (Plan 46 Ф.2's Param.default machinery never sees this site). Since
+        // `Vec[T].new(cap int = 0)` compiles to a C function that ALWAYS
+        // takes `cap` (Nova default-args are a caller-side AST rewrite, never
+        // a C-level default), the call arity here must track the callee's
+        // real C signature by hand — pass the literal default `0` (identical
+        // semantics: the push-loop below still grows amortised).
         let tmp = self.fresh_tmp();
         self.line(&format!(
-            "{ty}* {tmp} = {ctor}();",
+            "{ty}* {tmp} = {ctor}(0);",
             ty = mangled, tmp = tmp, ctor = ctor_c));
         self.var_types.insert(tmp.clone(), format!("{}*", mangled));
 
@@ -41497,7 +41510,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             };
                             let rest_tmp = self.fresh_tmp();
                             let (mangled, ctor_c, push_c) = self.vec_mono_ctor_push(&elem_ty)?;
-                            self.line(&format!("{}* {} = {}();", mangled, rest_tmp, ctor_c));
+                            // [M-vec-new-cap-default-arg-backfill]: hand-formatted
+                            // ctor call, no Nova-AST Call node — see the sibling
+                            // note in `try_emit_typed_vec_literal` (pass the
+                            // literal default `0`; the callee's real C signature
+                            // always takes `cap`).
+                            self.line(&format!("{}* {} = {}(0);", mangled, rest_tmp, ctor_c));
                             self.line(&format!(
                                 "for (nova_int _ri = {from}; _ri < (nova_int)({}->len{suf}); _ri++) {{ (void){push}({rt}, {s}->data[_ri]); }}",
                                 scr, from = before_idx,

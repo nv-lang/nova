@@ -94,9 +94,16 @@ export type Vec[T] priv {
 // Constructors
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Create an empty `Vec[T]` — no allocation, cap = 0.
-export fn Vec[T].new() -> Self =>
-    { data: null_buf[T](), len: 0, cap: 0 }
+/// Create a `Vec[T]` — `cap == 0` (default): empty, no allocation. `cap: n`
+/// (`n > 0`): exactly `n` pre-allocated element slots, `len == 0` — a single
+/// allocation, no rounding (spec D372-amend2). Equivalent to
+/// `Vec[T].new().cap(n)` but one call, one allocation — the canonical
+/// pre-sizing spelling (`Vec[T].new(cap: 1024)`, or positionally
+/// `Vec[T].new(1024)`).
+export fn Vec[T].new(cap int = 0) -> Self {
+    ro buf = if cap == 0 { null_buf[T]() } else { alloc_buf[T](cap) }
+    Self { data: buf, len: 0, cap }
+}
 
 /// Build a `Vec[T]` directly from its three raw components — the element
 /// buffer pointer, the live-element count, and the allocated capacity.
@@ -195,7 +202,7 @@ export fn Vec[T] consume @into_raw() -> *mut T => @data
 /// with method-level generics do not propagate the type-arg substitution into
 /// for-in / inner generic calls (emits an unresolved `____Nova_S_p` symbol).
 /// `@extend` (an instance method) does not hit this gap and IS converted.
-export fn Vec[T].from(items []T) -> Self => Vec[T].new().cap(items.len()).extend(items) // [M-lint-findings-static-conversion]
+export fn Vec[T].from(items []T) -> Self => Vec[T].new(cap: items.len()).extend(items) // [M-lint-findings-static-conversion]
 // NOTE ([M-138-rawmem-bulk-ops], Plan 138.2): `from` is intentionally NOT
 // bulk-copied via `RawMem.copy_nonoverlapping`. The source `items` is supplied
 // by the caller and may carry a *different element C-width* than `T` — e.g.
