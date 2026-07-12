@@ -480,6 +480,27 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
         let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
         nova_codegen::field_cache::cache_module(&mut module, &cfg);
     }
+    // Plan 196.2 P1: post-normalize-annotate — number synthetic post-desugar
+    // nodes (UNSET id, e.g. `?`/operator-lowering Call) and re-check the
+    // normalized tree so the checker channel materializes their resolved_types
+    // (else Channel-2 misses → legacy `infer_call_ret_c` fallback). Mirrors
+    // `test_runner.rs` post-normalize pass. Err → keep old env (degrade).
+    let module_env = {
+        let extra_lits = nova_codegen::number_exprs::number_unset_exprs(&mut module);
+        match nova_codegen::types::check_module(&module) {
+            Ok(mut env2) => {
+                for (k, v) in extra_lits { env2.resolved_types.entry(k).or_insert(v); }
+                for (k, v) in module_env.resolved_types.iter() {
+                    env2.resolved_types.entry(*k).or_insert_with(|| v.clone());
+                }
+                if env2.proven_contracts.is_empty() {
+                    env2.proven_contracts = module_env.proven_contracts.clone();
+                }
+                env2
+            }
+            Err(_) => module_env,
+        }
+    };
 
     let mut emitter = nova_codegen::codegen::CEmitter::new();
     // Plan 14 std-fix: source передаётся всегда — для line:col в

@@ -4643,6 +4643,31 @@ fn cmd_build(
                 nova_codegen::chain_norm::normalize_chains_module(
                     &mut module, &build_env.resolved_types);
             }
+            // Plan 196.2 P1: post-normalize-annotate. desugar/callnorm/chain_norm
+            // synthesize nodes with UNSET ids (e.g. `?`/operator-lowering Call) —
+            // the checker channel cannot key them → their resolved_types are never
+            // materialized → Channel-2 miss → legacy `infer_call_ret_c` fallback.
+            // Number ONLY the new nodes (2^30 offset, existing ids stable) and
+            // re-check the normalized tree that is ACTUALLY emitted (annotate-only:
+            // errors suppressed — semantics preserved by the normalizers). Mirrors
+            // `test_runner.rs` post-normalize pass. Err → keep old env (degrade).
+            let build_env = {
+                let _t = nova_codegen::perf_timer::PerfTimer::new("post-normalize-annotate");
+                let extra_lits = nova_codegen::number_exprs::number_unset_exprs(&mut module);
+                match nova_codegen::types::check_module(&module) {
+                    Ok(mut env2) => {
+                        for (k, v) in extra_lits { env2.resolved_types.entry(k).or_insert(v); }
+                        for (k, v) in build_env.resolved_types.iter() {
+                            env2.resolved_types.entry(*k).or_insert_with(|| v.clone());
+                        }
+                        if env2.proven_contracts.is_empty() {
+                            env2.proven_contracts = build_env.proven_contracts.clone();
+                        }
+                        env2
+                    }
+                    Err(_) => build_env,
+                }
+            };
             let (c_code, warnings) = {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("codegen");
                 let mut emitter = nova_codegen::codegen::CEmitter::new();
