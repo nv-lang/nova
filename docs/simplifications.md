@@ -38199,3 +38199,23 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   (`cargo build --release` nova-cli, ~4м каждый из 6 rebuild-циклов).
 - Branch `typed-body-fix` (worktree `nova-nt`), commit `56b00e808`; НЕ
   смёржен в main.
+
+## [M-d78-duplicate-decl-module-swallow] (2026-07-13)
+
+- Эксперимент (research module-naming, владелец задал вопрос «зачем decl,
+  если роутинг путевой»): два модуля с одинаковой rev-3-декларацией
+  (`src/a/neg/x.nv` + `src/b/neg/x.nv` → оба ПРИНУДИТЕЛЬНО `module neg.x`)
+  в одном пакете. Импорт по пути (`import a.neg.x.{who_a}` /
+  `import b.neg.x.{who_b}`) находит оба файла, НО экспорты второго тихо
+  исчезают: «undefined identifier who_b» с якорем на строку module-decl,
+  без duplicate-диагностики. Контроль: переименование папки (декларации
+  разошлись) → PASS. Вывод: роутинг путевой, но РЕЕСТР модулей керит по
+  декларации — дубль глотается молча.
+- Переинтерпретация rev-3.1 (`internal/` → 3 сегмента): это спековая
+  заплатка вокруг ЭТОГО дефекта, не самостоятельное правило; после фикса
+  keying'а — кандидат на ретракцию.
+- Fix-направления: (1) реестр по каноническому пути, decl = чистая
+  чексумма (класс исчезает); (2) минимум — hard-error на дубль с обоими
+  путями. Проверить ту же ось в C-mangling (`Nova_<modpath>_`).
+- Маркер в backlog-followups.md (P1); детали/варианты —
+  docs/research/2026-07-13-module-naming-two-segment-review.md.
