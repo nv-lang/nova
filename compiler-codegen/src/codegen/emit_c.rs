@@ -1468,6 +1468,22 @@ pub struct CEmitter {
     /// Plan 48: forward declarations for monomorphized functions.
     /// Spliced into output via /*__MONO_FWD_DECLS__*/ marker.
     mono_fwd_decls: String,
+    /// Plan 186 [bug-2 audit-197 fix]: extern C prototypes for user-declared
+    /// FREE external fn (`extern "nova"/"C" fn foo(...) -> (A, B)`) that
+    /// return a TUPLE. Without an explicit prototype the call site is the
+    /// ONLY occurrence of the symbol in the generated `.c` — C falls back to
+    /// an implicit `int foo()` declaration, which cannot initialize the
+    /// `_NovaTupleN_...` struct temp the call is assigned into
+    /// (`initializing '_NovaTuple_2_...' with an expression of incompatible
+    /// type 'int'`, examples/ffi/sqlite_mini.nv `mini_sqlite_open`/
+    /// `mini_sqlite_prepare`). Scalar/pointer-returning extern fns don't hit
+    /// this (implicit-int silently "works" for them), so the fix is scoped
+    /// to the one case that actually breaks: tuple returns. Populated in the
+    /// same `emit_module` pre-pass that already registers the mono tuple
+    /// typedef for these declarations (Plan 115 D214); spliced via
+    /// `/*__EXTERN_FN_PROTOS__*/`, placed AFTER `/*__MONO_TUPLE_TYPEDEFS__*/`
+    /// so the tuple typedef the prototype references is already defined.
+    extern_fn_tuple_protos: String,
     /// Plan 48 Ф.3: template declarations for generic types (record/sum).
     /// Stored here instead of immediately emitting — instantiated lazily per usage.
     generic_type_templates: HashMap<String, crate::ast::TypeDecl>,
@@ -2025,6 +2041,7 @@ impl CEmitter {
             current_method_turbofish: Vec::new(),
             current_fail_e_hint: None,
             mono_fwd_decls: String::new(),
+            extern_fn_tuple_protos: String::new(),
             generic_type_templates: HashMap::new(),
             generic_type_worklist: std::cell::RefCell::new(Vec::new()),
             emitted_generic_type_instances: HashSet::new(),
@@ -4542,6 +4559,57 @@ impl CEmitter {
                     if all_concrete && !elem_cs.is_empty() {
                         self.register_mono_tuple(&elem_cs);
                     }
+                    // Plan 186 [bug-2 audit-197 fix]: without an explicit
+                    // prototype, the call site (buried in some method body
+                    // below) is the ONLY mention of this symbol in the
+                    // generated `.c` — C falls back to an implicit `int
+                    // foo()` declaration and the assignment into the
+                    // `_NovaTupleN_...` temp fails to compile ("incompatible
+                    // type 'int'"). Scoped to FREE fns (no receiver) — the
+                    // shape actually hit by user FFI declarations
+                    // (`extern "nova"/"C" fn foo(...) -> (A, B)`); receiver
+                    // methods resolve through a separate dispatch path.
+                    // Computed SEPARATELY from `elem_cs` above (own loop, own
+                    // `all_concrete_full`): the pre-existing loop deliberately
+                    // excludes bare `void*` elements from ITS registration
+                    // (an unrelated erased-generic guard) — but `*()` (a
+                    // genuinely concrete opaque pointer, sqlite_mini.nv's
+                    // `nova_fn_sqlite3_open`-style handle) also resolves to
+                    // literal `"void*"`, so that guard would silently skip
+                    // the one case this fix targets. The prototype's element
+                    // types must match what the call-site destructure ACTUALLY
+                    // registers (unfiltered `type_ref_to_c`, `void*` allowed)
+                    // — the compiler error confirms the call site itself
+                    // already resolves + registers the real (unfiltered)
+                    // tuple typedef; only the missing prototype is the gap.
+                    if f.receiver.is_none() {
+                        let mut full_elem_cs: Vec<String> = Vec::with_capacity(elems.len());
+                        let mut all_concrete_full = true;
+                        for e in elems {
+                            match self.type_ref_to_c(e) {
+                                Ok(c) if !c.is_empty() => full_elem_cs.push(c),
+                                _ => { all_concrete_full = false; break; }
+                            }
+                        }
+                        if all_concrete_full && !full_elem_cs.is_empty() {
+                            let mut param_cs: Vec<String> = Vec::with_capacity(f.params.len());
+                            let mut params_ok = true;
+                            for p in &f.params {
+                                match self.type_ref_to_c(&p.ty) {
+                                    Ok(c) if !c.is_empty() => param_cs.push(c),
+                                    _ => { params_ok = false; break; }
+                                }
+                            }
+                            if params_ok {
+                                let mangled = self.register_mono_tuple(&full_elem_cs);
+                                let c_name = self.free_fn_c_name(&f.name);
+                                self.extern_fn_tuple_protos.push_str(&format!(
+                                    "extern {} {}({});\n",
+                                    mangled, c_name, param_cs.join(", "),
+                                ));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -6723,6 +6791,21 @@ impl CEmitter {
         }
         self.out = self.out.replace("/*__MONO_TUPLE_TYPEDEFS__*/", &tuple_decls);
 
+        // Plan 186 [bug-2 audit-197 fix]: splice extern prototypes for FREE
+        // external fn returning a tuple (see `extern_fn_tuple_protos` field
+        // doc). Empty/non-empty pattern mirrors __NOVARES_VR_TYPEDEFS__ above.
+        if self.extern_fn_tuple_protos.is_empty() {
+            self.out = self.out.replace("/*__EXTERN_FN_PROTOS__*/\n", "");
+        } else {
+            let replacement = format!(
+                "/* Plan 186 [bug-2 audit-197 fix]: extern prototypes for user-declared \
+                 FREE external fn returning a tuple — without these, C falls back to an \
+                 implicit `int` return declaration, which cannot initialize the tuple-struct \
+                 call-site temp. */\n{}",
+                self.extern_fn_tuple_protos);
+            self.out = self.out.replace("/*__EXTERN_FN_PROTOS__*/", &replacement);
+        }
+
         // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): splice mono'd
         // `[N]T` INLINE struct typedefs. Topo-sort mirrors the tuple splice above —
         // nested fixed arrays (`[N][M]T`) need the inner `_NovaFixArr_<M>_..._<T>` typedef
@@ -7402,6 +7485,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // эмитятся в `user_type_fwd_decls` (предшествующий marker),
         // **до** этого tuple marker — порядок safe.
         self.line("/*__MONO_TUPLE_TYPEDEFS__*/");
+        // Plan 186 [bug-2 audit-197 fix]: extern prototypes for FREE external
+        // fn returning a tuple (see `extern_fn_tuple_protos` field doc).
+        // Placed AFTER the tuple typedefs marker above so the struct type a
+        // prototype returns by value is always already complete.
+        self.line("/*__EXTERN_FN_PROTOS__*/");
         // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): mono'd `[N]T`
         // INLINE-array struct typedefs — splice marker; replaced in finalize. Layout:
         // `typedef struct { T data[N]; } _NovaFixArr_<N>_<L>_<T>;` — value class (no heap
