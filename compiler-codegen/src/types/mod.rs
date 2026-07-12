@@ -11096,7 +11096,32 @@ impl<'a> TypeCheckCtx<'a> {
                     return;
                 }
                 // Метод? Имена операторных методов могут храниться с ведущим `@`.
-                let has_method = self.t_provides_method(tname, name);
+                // Plan 186 [bug-1 audit-197 fix]: `t_provides_method` is a bare
+                // `tname`-keyed lookup — for a slice receiver reconstructed from
+                // the CHANNEL (`obj_tr` round-tripped through `ResolvedType`,
+                // which canonicalizes `[]T` → `Named{Vec,[T]}`, D239/Stage-1a
+                // comment above :14074-14087), `tname` is the bare "Vec" alias
+                // with the element carried separately in `recv_type_args` — a
+                // CONCRETE-slice-receiver method (`fn []str @join(sep) -> str`,
+                // `std/text.nv` — registered under the LITERAL "[]str" key, same
+                // class as the `[]<elem>` `slice_key` fallback already used by
+                // `resolve_instance_method_return_arity`, 13816-13849) is invisible
+                // to a plain "Vec" lookup. Retry with the reconstructed literal
+                // "[]<elem>" key when the receiver carries exactly one concrete
+                // element type-arg.
+                let slice_elem_has_method = if tname == "Vec" {
+                    match recv_type_args.as_slice() {
+                        [TypeRef::Named { path: ep, generics: eg, .. }]
+                            if ep.len() == 1 && eg.is_empty() =>
+                        {
+                            self.t_provides_method(&format!("[]{}", ep[0]), name)
+                        }
+                        _ => false,
+                    }
+                } else {
+                    false
+                };
+                let has_method = self.t_provides_method(tname, name) || slice_elem_has_method;
                 if has_method {
                     // Plan 162 Ф.5: extension method policy.
                     self.check_extension_method_policy(tname, name, span, errors);
@@ -13420,6 +13445,49 @@ impl<'a> TypeCheckCtx<'a> {
                             }
                         }
                     }
+                    // Plan 186 [bug-1 audit-197 fix] field-of-func-type call:
+                    // `obj.field(args)` / `@field(args)` where `field` is a plain
+                    // RECORD FIELD holding a first-class function value (D42 Model-A
+                    // DI-by-field, e.g. `type Repo[T] { ro to_columns fn(T) -> []ColumnValue }`
+                    // then `@to_columns(value)`) — NOT a declared method
+                    // (`method_overloads` has no entry for it). The Member-arm above
+                    // (this same fn, `ExprKind::Member{obj,name}`) already resolves
+                    // such a field's declared `TypeRef` correctly, INCLUDING generic-
+                    // receiver substitution (`subst_receiver_generics`) — recurse into
+                    // it via `func` itself (which IS that Member expr) and, if it
+                    // resolves to `TypeRef::Func`, the call's type is its return type.
+                    // Guarded on NO method of this name existing on the receiver, so
+                    // this can only fire on the field case — it is structurally unable
+                    // to change the outcome of any instance-METHOD call (a name can't
+                    // be both a field and a method on the same type), keeping this
+                    // disjoint from the deliberate method-call decoupling below.
+                    // Without this, the RHS of `ro cols = @to_columns(value)` resolved
+                    // to `None` unconditionally (this whole arm never considered a
+                    // field-call), so `cols` was never registered into `scope`
+                    // (`f1_stmt`'s `Stmt::Let` binding falls to `scope.remove`) —
+                    // every later `cols.<method>(...)` then had an unknown receiver,
+                    // surfacing downstream as the codegen `[P67-LEGACY] method call
+                    // \`.map\` return type unknown` ICE (examples/real_world/orm_demo.nv
+                    // `@insert`/`@update`/`@update_versioned`, Plan 197 audit finding #1).
+                    if let Some(mut peeled) = self.infer_expr_type(obj, scope) {
+                        loop {
+                            match peeled {
+                                TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => peeled = *i,
+                                _ => break,
+                            }
+                        }
+                        if let TypeRef::Named { path, .. } = &peeled {
+                            if path.len() == 1
+                                && self.method_overloads(&path[0], ctor).is_none()
+                            {
+                                if let Some(TypeRef::Func { return_type: Some(rt), .. }) =
+                                    self.infer_expr_type(func, scope)
+                                {
+                                    return Some(*rt);
+                                }
+                            }
+                        }
+                    }
                     // Plan 172.1.2: GENERAL instance method-call return inference is DECOUPLED
                     // from `infer_expr_type` (it must NOT change the inline checks fed by this
                     // function — a resolved method-chain receiver unblocks a false-positive
@@ -14430,8 +14498,42 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _) => "Vec".to_string(),
             _ => return None,
         };
-        let overloads = self.method_overloads(&type_name, method)?;
-        let [f] = overloads.as_slice() else { return None; };
+        let f: &FnDecl = match self.method_overloads(&type_name, method) {
+            Some(overloads) => match overloads.as_slice() {
+                [f] => *f,
+                _ => return None,
+            },
+            // NARROWED (post-bisect, conformance regression on
+            // c_keyword_ident_mangling): the original scan ALSO matched a
+            // "bare typevar receiver" candidate (`fn[T] T @m[U](...)`) for
+            // ANY `TypeRef::Named` `peeled` — far too permissive (`method`
+            // is just a name; an UNRELATED bare-typevar decl sharing the
+            // same method name anywhere in the reachable corpus could match
+            // and feed the closure-binding logic below a WRONG `f`/`recv`,
+            // silently mistyping some OTHER closure-arg call — the observed
+            // regression). Scope this fallback to EXACTLY the slice-sugar
+            // shape this fix targets (`[]T @map[U]`-style, vec_seq.nv):
+            // `peeled` must be a genuine `Array`/`FixedArray`, and the
+            // candidate's recv_key must be the LITERAL "[]<typevar>" form.
+            None if matches!(peeled, TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _)) => {
+                self.sig.method_table.iter().find_map(|(recv_key, methods)| {
+                    let overloads = methods.get(method)?;
+                    let [cand] = overloads.as_slice() else { return None };
+                    let crecv = cand.receiver.as_ref()?;
+                    if !matches!(crecv.kind, ReceiverKind::Instance) {
+                        return None;
+                    }
+                    if recv_key.starts_with("[]")
+                        && cand.generics.iter().any(|g| g.name == recv_key[2..])
+                    {
+                        Some(*cand)
+                    } else {
+                        None
+                    }
+                })?
+            }
+            None => return None,
+        };
         let recv = f.receiver.as_ref()?;
         if !matches!(recv.kind, ReceiverKind::Instance) {
             return None;
@@ -14446,6 +14548,42 @@ impl<'a> TypeCheckCtx<'a> {
             return None; // покрыто базовой resolve_instance_method_return
         }
         let mut subst = build_recv_subst(recv, recv_ty);
+        // Plan 186 [bug-1 audit-197 fix]: `build_recv_subst` extracts the
+        // carrier-binding names ONLY from `recv.generics` (the `Type[T,U]`
+        // bracket-carrier slots) — for a PREFIX-generic `[]T` slice
+        // receiver `recv.generics` is EMPTY (the parser never populates
+        // `generics_first_decl` on the `[]T` fast-path, `parser/mod.rs`
+        // ~3009-3049, so the Receiver's own `.generics` Vec stays empty;
+        // the carrier typevar lives ONLY inside the structured
+        // `recv.receiver_ty` — `Array(Named T)`). `build_recv_subst`
+        // early-returns an EMPTY subst in that case (its `receiver_ty`
+        // structural-unify branch is gated behind `!names.is_empty()`),
+        // leaving `T` unbound — every closure-param seed below then still
+        // mentions `T` (`typeref_mentions_any`) and bails, so `U` never
+        // gets inferred. Retry the structural unify here directly, using
+        // THIS decl's own generics (`f.generics` — receiver-carrier +
+        // method-level names combined, `parser/mod.rs:3169`-3174) as the
+        // bindable set: sound because `f`/`recv` are the SAME decl
+        // `build_recv_subst` was just called for.
+        if recv.generics.is_empty() {
+            if let Some(decl_ty) = &recv.receiver_ty {
+                let mut t = recv_ty;
+                loop {
+                    match t {
+                        TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => t = i,
+                        _ => break,
+                    }
+                }
+                let mut s: HashMap<String, TypeRef> = HashMap::new();
+                if crate::const_fn_trampoline::unify_type(decl_ty, t, &method_names, &mut s)
+                    .is_ok()
+                {
+                    for (k, v) in s {
+                        subst.entry(k).or_insert(v);
+                    }
+                }
+            }
+        }
         subst.insert("Self".to_string(), peeled.clone());
         for (pd, a) in f.params.iter().zip(args.iter()) {
             let arg_expr = a.expr();
