@@ -1,0 +1,29 @@
+// D22 — closure-full `fn(params T) -> R => body` assigned to an
+// UNANNOTATED local (`ro x = fn(...) => ...`, no `x fn(...) -> ...`
+// type annotation) and then called.
+//
+// [BUG apply-codegen-fix] (found via Plan 198 nova_tests/basics/functions.nv
+// "lambda passed as argument"): the peer test in d22_closures.nv only
+// exercises the EXPLICITLY-ANNOTATED form (`ro doubler fn(int) -> int =
+// fn(x int) -> int => x * 2`) — that path reads the declared C type
+// straight off the annotation and never touches type-inference. The
+// UNANNOTATED form goes through `infer_expr_c_type`'s legacy fallback,
+// which had a `ClosureLight` arm but no `ClosureFull` arm — so any
+// unannotated `ro x = fn(...) => ...` local fell through to the wildcard
+// arm, got an EMPTY inferred C type, and codegen emitted the local with
+// NO type at all (`x = (void*)(&nova_lambda_N_clos_singleton);`) instead
+// of `NovaClos_.. * x = ...;`. Every subsequent use of `x` then failed C
+// compilation with "use of undeclared identifier 'x'" — reproduced with
+// ANY identifier (not name-specific to "apply"; confirmed by feeding an
+// unrelated name through the same construct).
+module spec_tests.conformance
+
+test "closure-full unannotated let, higher-order call (D22)" {
+    ro apply = fn(f fn(int) -> int, x int) -> int => f(x)
+    assert(apply(|n| n * 10, 5) == 50)
+}
+
+test "closure-full unannotated let, single-param call (D22)" {
+    ro halve = fn(x int) -> int => x / 2
+    assert(halve(20) == 10)
+}
