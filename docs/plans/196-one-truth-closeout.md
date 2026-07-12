@@ -100,6 +100,21 @@ codegen только лоуэрит через `resolved_type_to_c`; LSP чит�
 - **Резолв/хардкод (Ф.B):** `external_registry`, `primitive_instance_method_known` (§3 хардкод-зеркало), method/static-резолверы.
 - **Legacy-лоуеринг:** `type_ref_to_c` (ретайр D315, дублирует `resolved_type_to_c`).
 
+**★ ДОПОЛНЕНО (полнота, греп 2026-07-12 — БЫЛИ ЗАБЫТЫ, теперь в инвентаре → волна-2):**
+- Возврат/тип: `result_repr_c_type`, `channel_int_c_type`, `infer_func_c_name`, `infer_handler_interrupt_ty`.
+- Receiver/generic: `receiver_c_type`, `builtin_sum_receiver_c_type`, `value_aware_generic_c_type`,
+  `extract_result_type_params`, `call_result_type_params_key`.
+- **Хардкод метод→C (§3 → из .nv-деклараций, как `primitive_instance_method_known`):** `f64_method_to_c`,
+  `int_method_to_c`, `primitive_name_to_c` (+ волне-2 грепнуть str/char/bool-аналоги — вероятно есть ещё).
+- ✅ ОСТАЁТСЯ (лоуеринг, часть `resolved_type_to_c`): `resolved_array_to_c`, `resolved_named_to_c`. Хелперы-
+  предикаты (`is_struct_c_type`, `type_ref_uses_any_type_param`, `debt_*`) — НЕ re-derivation, не мигрируются.
+
+**★★ ГАРАНТИЯ ПОЛНОТЫ (чтобы не «забыть опять»):** определяющий набор второго окна = ПОЛНОЕ дерево вызовов
+`infer_expr_c_type` (вход, 249 консумеров) + `infer_call_ret_c`. Grep-список — стартовый, НЕ доказательство
+полноты. **Финальная СТРУКТУРНАЯ проверка:** когда `infer_expr_c_type` УДАЛЁН и компилятор СОБИРАЕТСЯ — ничего
+не осиротело (что не мигрировано/не-остаётся → dead compile-error). Волна-2 ОБЯЗАНА пройти по всему call-tree
+`infer_expr_c_type`, а не только по grep-списку; любая найденная re-derivation-функция → в инвентарь + мигрируется.
+
 **Финал 196** = это семейство удалено/сведено к `resolved_type_to_c(resolved_types[id])` + каналы кормят LSP
 (hover/completion). Это НЕ «пара веток», а систематическая переархитектура потока типов/резолва — БЕЗ полного
 MIR (mono остаётся lazy в codegen; каналы лишь дотягиваются до mono-копий, см. Ф.A / A-спайк).
