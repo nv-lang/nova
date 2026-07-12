@@ -717,6 +717,10 @@ impl GcKind {
 pub struct ResolvedFfiConfig {
     pub c_shims: Vec<PathBuf>,
     pub include_dirs: Vec<PathBuf>,
+    /// Plan 193 Ф.2 gap-1: linker search directories (`-L`/MSVC
+    /// `/LIBPATH:`) for `libs` below — resolved absolute, same
+    /// manifest-dir-relative contract as `c_shims`/`include_dirs`.
+    pub lib_dirs: Vec<PathBuf>,
     pub libs: Vec<String>,
 }
 
@@ -735,23 +739,73 @@ impl ResolvedFfiConfig {
         Some(ResolvedFfiConfig {
             c_shims: cfg.c_shims.iter().map(|p| base.join(p)).collect(),
             include_dirs: cfg.include_dirs.iter().map(|p| base.join(p)).collect(),
+            lib_dirs: cfg.lib_dirs.iter().map(|p| base.join(p)).collect(),
             libs: cfg.libs.clone(),
         })
     }
 
     /// Plan 03.1 (ext-dep native/FFI propagation): смёржить `[ffi]` внешней
     /// (`path`/`git`) зависимости в СВОЙ resolved config. `c_shims` /
-    /// `include_dirs` / `libs` — конкатенация (свои первыми, `libs`
-    /// дедуплицируются).
+    /// `include_dirs` / `lib_dirs` / `libs` — конкатенация (свои первыми,
+    /// `lib_dirs`/`libs` дедуплицируются).
     pub fn merge(&mut self, other: ResolvedFfiConfig) {
         self.c_shims.extend(other.c_shims);
         self.include_dirs.extend(other.include_dirs);
+        for dir in other.lib_dirs {
+            if !self.lib_dirs.contains(&dir) {
+                self.lib_dirs.push(dir);
+            }
+        }
         for lib in other.libs {
             if !self.libs.contains(&lib) {
                 self.libs.push(lib);
             }
         }
     }
+}
+
+/// Plan 193 Ф.2 gap-1: platform-specific candidate file names for a
+/// declared `[ffi] libs` entry `name` — mirrors what each toolchain branch
+/// in `build_command` actually emits (`<name>.lib` on Windows regardless of
+/// Clang/MSVC — both target the MSVC ABI/lib format; `lib<name>.a` /
+/// `lib<name>.so` on Linux, `lib<name>.a` / `lib<name>.dylib` on macOS).
+fn ffi_lib_candidate_names(lib: &str) -> Vec<String> {
+    if cfg!(target_os = "windows") {
+        vec![format!("{}.lib", lib)]
+    } else if cfg!(target_os = "macos") {
+        vec![format!("lib{}.a", lib), format!("lib{}.dylib", lib)]
+    } else {
+        vec![format!("lib{}.a", lib), format!("lib{}.so", lib)]
+    }
+}
+
+/// Plan 193 Ф.2 gap-1: detect-and-degrade probe for generic `[ffi] libs`.
+/// Mirrors the retired built-in MbedtlsConfig/BrotliConfig contract
+/// (missing native lib → graceful degrade, never a hard link error) —
+/// generalized to ANY user-declared `[ffi] libs` entry that has an
+/// explicit `lib_dirs` search path. Returns the first lib name that could
+/// not be located in any declared `lib_dirs`, plus the dirs searched (for
+/// the SkipReason message).
+///
+/// `lib_dirs` empty (no explicit search path declared) → None: nothing to
+/// verify against, falls back to the toolchain's own default search (system
+/// `-l` resolution) — unchanged legacy behaviour; a hard link error is
+/// still possible there, same as before this fix (no regression for
+/// existing consumers relying on system-installed libs with no
+/// non-default path, e.g. `-lsqlite3` found via the system linker path).
+fn first_missing_ffi_lib(ffi: &ResolvedFfiConfig) -> Option<(String, Vec<PathBuf>)> {
+    if ffi.lib_dirs.is_empty() {
+        return None;
+    }
+    for lib in &ffi.libs {
+        let candidates = ffi_lib_candidate_names(lib);
+        let found = ffi.lib_dirs.iter()
+            .any(|dir| candidates.iter().any(|name| dir.join(name).is_file()));
+        if !found {
+            return Some((lib.clone(), ffi.lib_dirs.clone()));
+        }
+    }
+    None
 }
 
 /// Параметры сборки одного теста.
@@ -1294,7 +1348,13 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
             c.arg(&rt_segv_diag);    /* Plan 83.11 §12.31 */
             // Plan 115 D214 [M-115-ffi-build-pipeline]: system libs (-l) в link phase.
+            // Plan 193 Ф.2 gap-1: lib_dirs (-L) BEFORE -l so the linker's
+            // search path includes non-default-path native libs (mirrors
+            // detect_mbedtls's now-generalized -L <lib_dir> pattern).
             if let Some(ffi) = opts.ffi {
+                for dir in &ffi.lib_dirs {
+                    c.arg("-L").arg(dir);
+                }
                 for lib in &ffi.libs {
                     c.arg(format!("-l{}", lib));
                 }
@@ -1433,8 +1493,12 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_segv_diag);    /* Plan 83.11 §12.31 */
             // Plan 27 Ф.1: Boehm link flags for MSVC (after sources, before /link).
             // Plan 115 D214 [M-115-ffi-build-pipeline]: also pass user FFI libs.
+            // Plan 193 Ф.2 gap-1: also open the /link phase when lib_dirs is
+            // declared alone (e.g. libs list empty but search path wired for
+            // a future c_shim-only consumer — matches `!libs.is_empty()` OR
+            // gate below).
             let has_link_phase = opts.gc_kind == GcKind::Boehm
-                || opts.ffi.map_or(false, |f| !f.libs.is_empty());
+                || opts.ffi.map_or(false, |f| !f.libs.is_empty() || !f.lib_dirs.is_empty());
             if has_link_phase {
                 c.arg("/link");
                 if opts.gc_kind == GcKind::Boehm {
@@ -1444,6 +1508,15 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg(vcpkg_lib.join("atomic_ops.lib"));
                 }
                 if let Some(ffi) = opts.ffi {
+                    // Plan 193 Ф.2 gap-1: /LIBPATH: BEFORE bare <name>.lib
+                    // entries — MSVC's `LIB` env var (vcvars-snapshot,
+                    // env_clear()-isolated above) doesn't see external
+                    // overrides, so a non-default-path native lib is
+                    // otherwise unfindable on Windows (no system default
+                    // search path analogue to /usr/lib).
+                    for dir in &ffi.lib_dirs {
+                        c.arg(format!("/LIBPATH:{}", dir.display()));
+                    }
                     for lib in &ffi.libs {
                         // MSVC: -l<name> не поддерживается, нужен <name>.lib.
                         c.arg(format!("{}.lib", lib));
@@ -1551,7 +1624,11 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
             c.arg(&rt_segv_diag);    /* Plan 83.11 §12.31 */
             // Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI libs (GCC).
+            // Plan 193 Ф.2 gap-1: lib_dirs (-L) BEFORE -l, same as Clang.
             if let Some(ffi) = opts.ffi {
+                for dir in &ffi.lib_dirs {
+                    c.arg("-L").arg(dir);
+                }
                 for lib in &ffi.libs {
                     c.arg(format!("-l{}", lib));
                 }
@@ -1657,6 +1734,13 @@ pub enum SkipReason {
     /// успешно. Компиляция уже проверена — SKIP вместо CC-FAIL, cc/link/run
     /// не выполняются (дешевле оборвать сразу после codegen).
     NoEntryPoint,
+    /// Plan 193 Ф.2 gap-1 (03.1 [ffi] libs detect-and-degrade): a declared
+    /// `[ffi] libs` entry has an explicit `lib_dirs` search path, but the
+    /// platform lib file was not found in any of them. Degrades to SKIP
+    /// instead of a hard CC/link-FAIL — mirrors the retired built-in
+    /// MbedtlsConfig/BrotliConfig graceful-degrade contract (missing native
+    /// lib → never a hard link error), generalized to generic `[ffi] libs`.
+    FfiLibNotFound { lib: String, searched: Vec<PathBuf> },
 }
 
 impl SkipReason {
@@ -1677,6 +1761,12 @@ impl SkipReason {
             ),
             SkipReason::NoEntryPoint =>
                 "no test blocks and no fn main() — nothing to link/run (compiled OK)".to_string(),
+            SkipReason::FfiLibNotFound { lib, searched } => format!(
+                "[ffi] lib `{}` not found in lib_dirs ({})",
+                lib,
+                searched.iter().map(|p| p.display().to_string())
+                    .collect::<Vec<_>>().join(", "),
+            ),
         }
     }
 }
@@ -2375,6 +2465,22 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
                     None => resolved_ffi = Some(dep_ffi),
                 }
             }
+        }
+    }
+
+    // Plan 193 Ф.2 gap-1: detect-and-degrade — если merged [ffi] объявляет
+    // явный lib_dirs search path, но declared libs-файл не найден ни в
+    // одной из директорий, деградируем к SKIP вместо hard CC/link-FAIL
+    // (см. first_missing_ffi_lib doc-comment). Проверяется ПОСЛЕ merge
+    // (own + ext-dep [ffi]), ДО build_command/CC — самая дешёвая точка
+    // обрыва для этого случая (subdir/obj_dir уже созданы выше, но CC ещё
+    // не запущен).
+    if let Some(ffi) = &resolved_ffi {
+        if let Some((lib, searched)) = first_missing_ffi_lib(ffi) {
+            return Outcome::Skipped {
+                reason: SkipReason::FfiLibNotFound { lib, searched },
+                elapsed: start.elapsed(),
+            };
         }
     }
 

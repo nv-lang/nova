@@ -1,0 +1,14 @@
+// [M-channel-generic-elem-type] (a) — a `str` payload is a 2-word struct
+// (`nova_str`) that cannot fit the channel runtime's single-word slot.
+// Before this fix, this hit a raw/cryptic C compiler struct→int-cast error;
+// now it is an explicit, honest Nova-level diagnostic.
+//
+// EXPECT_COMPILE_ERROR E_CHANNEL_UNSOUND_ELEM_TYPE
+
+module neg.channel_elem_str_payload_neg
+
+fn channel_elem_str_payload_neg_use() {
+    ro { tx, rx } = Channel.new(4)
+    tx.send("first")
+    ro _v = rx.recv()
+}
