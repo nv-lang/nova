@@ -48152,47 +48152,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 _ => "nova_int".into(),
                             };
                         }
-                        if obj_ty == "Nova_WriteBuffer*" {
-                            self.icr_trace("B11n_writebuffer_instance");
-                            return match method.as_str() {
-                                "len" | "capacity" => "nova_int".into(),
-                                "clone" => "Nova_WriteBuffer*".into(),
-                                // 172.12 A6 (Vec-canon): WriteBuffer @into -> []u8 is a
-                                // Nova-body method building a real Vec[u8]; the checker
-                                // channel supersedes this legacy fallback. Aligned to the
-                                // Vec-image so a channel-miss names the correct type
-                                // (was stale NovaArray_nova_byte*, dead but mis-named).
-                                "into" => "Nova_Vec____nova_byte*".into(),
-                                // Self-return для chaining (Ф.9.1).
-                                m if m.starts_with("write_") => "Nova_WriteBuffer*".into(),
-                                _ => "nova_int".into(),
-                            };
-                        }
-                        if obj_ty == "Nova_ReadBuffer*" {
-                            self.icr_trace("B11o_readbuffer_instance");
-                            return match method.as_str() {
-                                "position" | "remaining" => "nova_int".into(),
-                                "has_remaining" => "nova_bool".into(),
-                                // 172.12 A6 (Vec-canon): ReadBuffer @remaining_bytes -> []u8
-                                // is a Nova-body method building a real Vec[u8]; channel
-                                // supersedes. Aligned to the Vec-image (was stale NovaArray).
-                                "remaining_bytes" => "Nova_Vec____nova_byte*".into(),
-                                // Plan 177 / D325 Ф.2b (de-hardcode §3/§10): the `read_X`
-                                // reads are now a SINGLE Result-form (`try_read_*`/bare-throw
-                                // twins retracted). Their concrete `Result[T, ReadBufferError]`
-                                // is materialized by the checker
-                                // (`infer_method_call_channel_type` → `resolve_instance_method_
-                                // return`) into `resolved_types` and read by the SINGLE
-                                // `resolved_type_to_c` (Channel 2, BEFORE this legacy). The
-                                // per-width name-keyed table was the pre-channel stopgap
-                                // (its own comment pointed at "the resolved-callees channel");
-                                // with the channel live, these arms are dead-superseded and
-                                // REMOVED. Reaching this legacy for a `read_X` now = channel
-                                // miss → the `nova_int` guess is a loud CC-FAIL that surfaces
-                                // the gap (§1/§10 — no silent mis-type).
-                                _ => "nova_int".into(),
-                            };
-                        }
+                        // Plan 196.2 W1 [gate-1]: B11n_writebuffer_instance + B11o_readbuffer_instance
+                        // REMOVED. WriteBuffer/ReadBuffer instance methods (len/capacity/clone/into/
+                        // write_*/position/remaining/read_*/…) are Nova-body/Result-form methods whose
+                        // return the checker materialises into `resolved_types` (Channel 2, read BEFORE
+                        // this legacy); the branches' own comments already flagged them "dead-superseded".
+                        // Exercised by std io yet NO-HIT ⟹ Channel-2-covered ⟹ structurally unreachable.
                         // Plan 12 + Plan 18: ExternalRegistry instance-method return type.
                         // Handles AtomicInt.@load(), Mutex.@lock(), WaitGroup.@wait(), etc.
                         if obj_ty.starts_with("Nova_") && obj_ty.ends_with('*') {
