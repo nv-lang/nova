@@ -96,9 +96,11 @@ nova-cli/target/release/nova check <file.nv>
 ## 4. Состояние тестов (baseline 2026-07-13)
 
 - `spec_tests/conformance` (один CU): **97 PASS / 0 FAIL** — красный conformance = стоп-сигнал.
-- `nova test std`: ~65 PASS / 1-2 известных FAIL (`std/tls` SKIP-degrade без mbedtls) / много SKIP
-  (библиотечные файлы без test-блоков — норма). TIMEOUT'ы под `--jobs 16` при параллельной нагрузке —
-  известная флака: перепроверяй изолированно `--jobs 1..4` прежде чем считать регрессией.
+- `nova test std` (Plan 195, std на `src/`, path `std/src/<домен>`): **63 PASS / 2 известных FAIL**
+  (`concurrency/retry_test` CC-FAIL — генерик-моно codegen `nova_str`↔`Nova_T*`, не path-related;
+  `time/units_test` — sleep-timing флака, `elapsed.as_millis() >= 50`) / 66 SKIP (библиотечные файлы
+  без test-блоков — норма). TIMEOUT'ы под `--jobs 16` при параллельной нагрузке — известная флака:
+  перепроверяй изолированно `--jobs 1..4` прежде чем считать регрессией.
 - `nova_tests/` — НЕ гейт корректности (заморожен, мигрируется планом 198).
 
 Перед работой сверь baseline; твоя задача не должна добавить FAIL'ов.
