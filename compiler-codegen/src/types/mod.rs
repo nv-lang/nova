@@ -886,6 +886,14 @@ pub struct ModuleEnv {
     /// byte-identical, mirrors U.4.1); U.4.3 wires the codegen consumption + equivalence
     /// assert.
     pub resolved_callees: HashMap<crate::ast::ExprId, Span>,
+    /// Plan 196.5 Stage-A: per-call SUBST-VALUE channel (call-site `ExprId` → ordered
+    /// `(generic-param name → concrete ResolvedType)`, declaration order). Lifted from
+    /// `TypeCheckCtx.node_substs` after the check pass (mirrors `resolved_callees`). ADDITIVE
+    /// substrate — codegen does not read it yet (Stage-B); mono-manging
+    /// (`compute_mono_name`/`register_mono_method_instance`) will read it directly instead of
+    /// re-deriving the subst from C-types (§0 — the "three hand-duplicated inference
+    /// engines"). See `docs/plans/196.5-node-substs-channel.md`.
+    pub node_substs: HashMap<crate::ast::ExprId, Vec<(String, ResolvedType)>>,
     /// Plan 104.10 Ф.2 (D379): OPT-IN per-expression type map for the IDE — expression
     /// source `Span` → its inferred `TypeRef` (the checker's real expression type, e.g.
     /// `int`, `str`, `Named{Rec}`, `Range`, `(int, str)`). Populated ONLY by
@@ -1897,6 +1905,9 @@ fn check_module_impl(
     // hands it to codegen. ADDITIVE substrate — codegen does not read it yet (U.4.3), so
     // byte-identical. Populated even when there are errors (harmless; only read on success).
     env.resolved_callees = type_check_ctx.resolved_callees.take();
+    // Plan 196.5 Stage-A: lift the per-call subst-value channel out of the checker (mirrors
+    // resolved_callees above). ADDITIVE — not read by codegen yet.
+    env.node_substs = type_check_ctx.node_substs.take();
     // Plan 172.1 U.4.4(b): lift the checker-side resolved-type channel; the pipeline merges
     // it OVER the number_exprs seed (main.rs / test_runner).
     env.resolved_types = type_check_ctx.resolved_types_buf.take();
@@ -3337,6 +3348,20 @@ struct TypeCheckCtx<'a> {
     /// check walk is `&self` (mirrors the other `RefCell` side-tables here). ADDITIVE —
     /// not yet consumed by codegen (U.4.3), so byte-identical.
     resolved_callees: std::cell::RefCell<HashMap<crate::ast::ExprId, Span>>,
+    /// Plan 196.5 Stage-A: write-buffer for the per-call SUBST-VALUE channel (call-site
+    /// `ExprId` → ordered `(generic-param name → concrete ResolvedType)`), mirrors
+    /// `resolved_callees`'s plumbing exactly. `f1_check_call` (free-fn/static generic) and
+    /// `resolve_return_channel` (instance-method carrier+method-level) already COMPUTE the
+    /// full subst map for type-checking the call and used to discard it after applying it to
+    /// the return type (196.4); this buffer captures the map itself instead of throwing it
+    /// away. Order = generic-param DECLARATION order (carrier-generics of the receiver, then
+    /// method-level) — mono-manging (`compute_mono_name`) needs positional order, not just
+    /// names. ADDITIVE — not yet consumed by codegen (Stage-B), so byte-identical.
+    /// Gated: only written when ALL of the callee's generic params resolved to a fully-
+    /// concrete type (no residual `TypeParam`) — an erased-body caller leaves the channel
+    /// unwritten for that call-site, exactly like `resolved_types_buf`'s materialize-only-
+    /// when-fully-resolved contract. [M-196.5-node-substs]
+    node_substs: std::cell::RefCell<HashMap<crate::ast::ExprId, Vec<(String, ResolvedType)>>>,
     /// Plan 172.1 U.4.4(b): per-expr resolved-type channel the checker fills during the
     /// scope-aware `f1_expr` walk (expr `ExprId` → its `ResolvedType`), for the structural /
     /// semantic arms the SYNTACTIC `number_exprs` producer cannot reach. FIRST arm: `Ident`
@@ -3930,6 +3955,8 @@ impl<'a> TypeCheckCtx<'a> {
             sig_table: crate::imports::ModuleSigTable::new(),
             // Plan 172.1 U.3.4: empty callee channel; filled during the check walk.
             resolved_callees: std::cell::RefCell::new(HashMap::new()),
+            // Plan 196.5 Stage-A: empty subst-value channel; filled during the check walk.
+            node_substs: std::cell::RefCell::new(HashMap::new()),
             // Plan 172.1 U.4.4(b): empty checker-side resolved-type channel.
             resolved_types_buf: std::cell::RefCell::new(HashMap::new()),
             in_call_func: std::cell::Cell::new(false),
@@ -9635,6 +9662,11 @@ impl<'a> TypeCheckCtx<'a> {
     /// itself unresolved) simply stays a free `Var` — `as_concrete_leaf` then
     /// honestly reports `None` for the whole return, exactly mirroring the old
     /// bail's "no annotation" contract for the erased/unresolved case.
+    /// Plan 196.5 Stage-A: `method_names_ordered` mirrors `method_names` (same set) but
+    /// preserves the DECLARATION order (`FnDecl.generics` order) — the `HashSet` the rest of
+    /// this fn uses has no stable order, but `node_substs` (§6.1) needs positional order for
+    /// mono-manging. Threaded in ADDITIVELY by the two callers below (they already build it
+    /// from `f.generics`, right next to the existing `HashSet` construction).
     fn resolve_return_channel(
         &self,
         recv: &Receiver,
@@ -9642,9 +9674,10 @@ impl<'a> TypeCheckCtx<'a> {
         peeled: &TypeRef,
         ret: &TypeRef,
         method_names: &HashSet<String>,
+        method_names_ordered: &[String],
         method_params: &[Param],
         call_args_scope: Option<(&[CallArg], &HashMap<String, TypeRef>)>,
-    ) -> Option<ResolvedType> {
+    ) -> Option<(ResolvedType, Vec<(String, ResolvedType)>)> {
         use constraint_solver::{Solver, Ty, TypeVar, VarGen};
         // Carrier generic names — bare single-segment, no args (same extraction
         // `build_recv_subst` performs). A FRESH var per name (numeric identity).
@@ -9730,7 +9763,34 @@ impl<'a> TypeCheckCtx<'a> {
             let _ = solver.unify(a, b);
         }
         let resolved_ret = solver.resolve(&ret_template);
-        solver.as_concrete_leaf(&resolved_ret)
+        let rt = solver.as_concrete_leaf(&resolved_ret)?;
+        // [M-196.5-node-substs] Producer B: `solver.subst` (via `solver.resolve`/
+        // `as_concrete_leaf` per-var) already has EVERY carrier + method-level binding —
+        // Stage-1a minted a fresh `Var` for each (`vars`, above) and unified them. Read the
+        // SAME solver, per declared name, instead of discarding the bindings with `solver`
+        // at fn exit. Declaration order = carrier names (`names`, receiver order) then
+        // method-level (`method_names_ordered`, caller-supplied `FnDecl.generics` order) —
+        // mirrors rustc's `SubstsRef` (early carrier params, then late method params).
+        // Same completeness gate as producer A: a residual (unresolved) var anywhere in the
+        // declared set means the WHOLE map stays unwritten for this call-site (caller
+        // decides — this fn only proposes the value, `&self` has no `call_id` here).
+        let decl_order: Vec<&String> = names.iter().chain(method_names_ordered.iter()).collect();
+        let ordered: Vec<(String, ResolvedType)> = decl_order
+            .iter()
+            .filter_map(|n| {
+                vars.get(n.as_str()).and_then(|v| {
+                    solver
+                        .as_concrete_leaf(&solver.resolve(&Ty::Var(*v)))
+                        .map(|prt| ((*n).clone(), prt))
+                })
+            })
+            .collect();
+        let ordered = if !decl_order.is_empty() && ordered.len() == decl_order.len() {
+            ordered
+        } else {
+            Vec::new()
+        };
+        Some((rt, ordered))
     }
 
     /// Plan 172.1 U.4.4 (Match-arm half): the COMMON result type of a `match`
@@ -10620,6 +10680,41 @@ impl<'a> TypeCheckCtx<'a> {
                         {
                             let rt = ResolvedType::from_type_ref(&concrete);
                             self.resolved_types_buf.borrow_mut().insert(call_id, rt);
+                        }
+                        // [M-196.5-node-substs] Producer A: `subst` above is the SAME map
+                        // just applied to the return — capture the VALUES themselves,
+                        // ordered by `callee.generics` declaration order (mono-manging
+                        // needs positional order). Same materialize-only-when-fully-
+                        // resolved gate as the return-channel write above (per-param, via
+                        // `typeref_mentions_any`), plus a whole-map completeness gate
+                        // (`ordered.len() == callee.generics.len()`): a residual (erased-
+                        // body caller leaving some param unbound) means the channel stays
+                        // UNWRITTEN for this call-site — same contract as `resolved_types_buf`.
+                        let ordered: Vec<(String, ResolvedType)> = callee
+                            .generics
+                            .iter()
+                            .filter_map(|g| {
+                                subst.get(&g.name).and_then(|tr| {
+                                    if !typeref_mentions_any(tr, &callee_gs_inner)
+                                        && !typeref_mentions_any(tr, gs)
+                                    {
+                                        Some((g.name.clone(), ResolvedType::from_type_ref(tr)))
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .collect();
+                        if !callee.generics.is_empty() && ordered.len() == callee.generics.len() {
+                            // [M-196.5-node-substs] Stage-A coverage trace (§9 acceptance:
+                            // "канал непуст на generic-формах"). Opt-in, mirrors NOVA_A1PP_TRACE.
+                            if std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some() {
+                                eprintln!(
+                                    "[NODE_SUBSTS] producer=A call_id={:?} callee={} n={}",
+                                    call_id, callee.name, ordered.len()
+                                );
+                            }
+                            self.node_substs.borrow_mut().insert(call_id, ordered);
                         }
                     }
                 }
@@ -13878,7 +13973,7 @@ impl<'a> TypeCheckCtx<'a> {
         recv_ty: &TypeRef,
         method: &str,
     ) -> Option<TypeRef> {
-        self.resolve_instance_method_return_arity(recv_ty, method, None, None)
+        self.resolve_instance_method_return_arity(recv_ty, method, None, None, None)
     }
 
     /// 172.1.2 (2026-07-03): arity-aware вариант — при >1 перегрузке выбирает
@@ -13891,6 +13986,12 @@ impl<'a> TypeCheckCtx<'a> {
         // 172.1.2 arg-type dispatch (2026-07-04): (args, scope) для
         // дизамбигуации same-arity перегрузок по типу первого аргумента.
         args_scope: Option<(&[CallArg], &HashMap<String, TypeRef>)>,
+        // Plan 196.5 Stage-A: call-site `ExprId`, threaded down ONLY so the producer-B
+        // `node_substs` write (inside the method-generic-residual branch AND the pure-carrier
+        // branch below) has a key. `None` from the 0-arity wrapper above (no call-site to key
+        // by — that wrapper has no callers today, kept for API symmetry with
+        // `resolve_generic_static_return`).
+        call_id: Option<crate::ast::ExprId>,
     ) -> Option<TypeRef> {
         // Normalize receiver: peel ro/mut views; `[]T`/`[N]T` → "Vec" (D239 slice alias),
         // so a slice receiver resolves Vec's methods (std's pervasive spelling). Mirror of
@@ -14076,6 +14177,11 @@ impl<'a> TypeCheckCtx<'a> {
         // receiver-instance-map/subst или Err→legacy (Шаг 1/2b инфраструктура).
         let method_names: HashSet<String> =
             f.generics.iter().map(|g| g.name.clone()).collect();
+        // Plan 196.5 Stage-A: declaration-order twin of `method_names` (see
+        // `resolve_return_channel`'s doc comment) — `node_substs` needs positional order,
+        // the `HashSet` above does not preserve it.
+        let method_names_ordered: Vec<String> =
+            f.generics.iter().map(|g| g.name.clone()).collect();
         if !method_names.is_empty() && typeref_mentions_any(&out, &method_names) {
             // Plan 196.4 Stage-1a: `out` (carrier+`Self` only, `build_recv_subst`)
             // still carries an unbound METHOD-level generic — bound by the CALL'S
@@ -14117,9 +14223,28 @@ impl<'a> TypeCheckCtx<'a> {
             // checked in EVERY build (not a debug-only assert): there is
             // nothing else to trust a release build's materialization against.
             let channel = self.resolve_return_channel(
-                recv, recv_ty, peeled, ret, &method_names, &f.params, args_scope);
+                recv, recv_ty, peeled, ret, &method_names, &method_names_ordered, &f.params,
+                args_scope);
             return match channel {
-                Some(rt) if rt == ResolvedType::from_type_ref(&out_full) => Some(out_full),
+                Some((rt, ordered)) if rt == ResolvedType::from_type_ref(&out_full) => {
+                    // [M-196.5-node-substs] SHADOW-adjacent write: the solver
+                    // INDEPENDENTLY re-derived this binding (propose-then-verify gate
+                    // above just confirmed `rt == out_full`) — the per-param `ordered`
+                    // map is the SAME solver's per-var bindings, so it inherits the
+                    // same verified trust. `call_id` absent (0-arity wrapper) → skip.
+                    if let Some(cid) = call_id {
+                        if !ordered.is_empty() {
+                            if std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some() {
+                                eprintln!(
+                                    "[NODE_SUBSTS] producer=B-method-residual call_id={:?} method={} n={}",
+                                    cid, f.name, ordered.len()
+                                );
+                            }
+                            self.node_substs.borrow_mut().insert(cid, ordered);
+                        }
+                    }
+                    Some(out_full)
+                }
                 _ => None,
             };
         }
@@ -14184,13 +14309,30 @@ impl<'a> TypeCheckCtx<'a> {
         // branch above, gated on independent solver agreement (not a debug-only
         // assert), which is Stage-1a's actual Tier-2 deliverable.
         let channel = self.resolve_return_channel(
-            recv, recv_ty, peeled, ret, &method_names, &f.params, args_scope);
+            recv, recv_ty, peeled, ret, &method_names, &method_names_ordered, &f.params,
+            args_scope);
         debug_assert!(
             channel
                 .as_ref()
-                .map_or(true, |s| *s == ResolvedType::from_type_ref(&out)),
+                .map_or(true, |(s, _)| *s == ResolvedType::from_type_ref(&out)),
             "Ф.4c: resolve_return diverged from build_recv_subst binding"
         );
+        // [M-196.5-node-substs] Same channel/solver as the debug_assert above — write
+        // node_substs ONLY when the return independently agrees with legacy `out` (mirrors
+        // the assert's parity contract; checked unconditionally, not debug-only, since this
+        // is a brand-new additive channel nothing reads yet — costs nothing in release and
+        // keeps both channels' trust level identical).
+        if let (Some(cid), Some((rt, ordered))) = (call_id, &channel) {
+            if !ordered.is_empty() && *rt == ResolvedType::from_type_ref(&out) {
+                if std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some() {
+                    eprintln!(
+                        "[NODE_SUBSTS] producer=B-carrier call_id={:?} method={} n={}",
+                        cid, method, ordered.len()
+                    );
+                }
+                self.node_substs.borrow_mut().insert(cid, ordered.clone());
+            }
+        }
         let _ = channel;
         Some(out)
     }
@@ -14392,8 +14534,12 @@ impl<'a> TypeCheckCtx<'a> {
                 Self::resolved_to_typeref_tp(&rt, e.span)
             })?;
         let call_arity = call_args.len();
+        // Plan 196.5 Stage-A: this call-site's `ExprId` is the `node_substs` key producer B
+        // writes under (propagated through `resolve_instance_method_return_arity` →
+        // `resolve_return_channel`'s caller-side insert).
+        let call_id = if e.id.is_set() { Some(e.id) } else { None };
         self.resolve_instance_method_return_arity(
-            &recv_ty, name, Some(call_arity), Some((call_args.as_slice(), scope)))
+            &recv_ty, name, Some(call_arity), Some((call_args.as_slice(), scope)), call_id)
             .or_else(|| {
                 // 172.1.2 arg-binding (2026-07-03): method-level generic (`map[U]`)
                 // выводится из closure-аргумента при известном carrier-subst.

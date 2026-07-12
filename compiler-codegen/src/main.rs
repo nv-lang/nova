@@ -531,6 +531,10 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     // FnDecl.span) the checker populated (U.3.4-prep) so codegen can read its OWN view
     // of the chosen callee instead of re-resolving the overload (§0).
     emitter.set_resolved_callees(&module_env.resolved_callees);
+    // Plan 196.5 Stage-A: feed the per-call subst-value channel (ExprId → ordered
+    // (generic-param name → concrete ResolvedType)) so codegen can, in a later stage, read
+    // it instead of re-deriving mono/method-generic subst from C-types.
+    emitter.set_node_substs(&module_env.node_substs);
     // Plan 140.4 ([M-opt-elide-proven-overflow-checks]): proven `int`-overflow сайты
     // для элизии `nova_int_checked_*`.
     emitter.set_proven_overflow_sites(

@@ -3452,6 +3452,9 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         // FnDecl.span) so codegen reads its OWN view of the chosen callee instead of
         // re-resolving the overload (§0). Stage (a): equivalence-assert (debug).
         emitter.set_resolved_callees(&module_env.resolved_callees);
+        // Plan 196.5 Stage-A: feed the per-call subst-value channel (mirrors
+        // set_resolved_callees above).
+        emitter.set_node_substs(&module_env.node_substs);
         emitter.emit_module(&module)
             .map_err(|e| format!("codegen error: {}", e))?
     };
