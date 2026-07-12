@@ -13,6 +13,21 @@
 //   5. вложенные сроки — внутренний НЕ может продлить внешний;
 //   6. `deadline:`+`cancel:` вместе — раннее из двух;
 //   7. нулевой/отрицательный срок → мгновенный TimeoutError (D349).
+//   8. [M-178-server-graceful-deadline] repro (Plan 173 Ф.3, found 2026-07-12/13):
+//      a SPAWNED child parked on `Time.sleep` did not actually unwind on
+//      scope cancellation — `_nova_sleep_via_libuv`/`_nova_sleep_via_driver`
+//      woke the fiber early (timer cut short by `nova_scope_deliver_cancel`)
+//      but never re-checked `cancel_requested` after the park returned, so
+//      the sleep "succeeded" and the child ran its remaining body to
+//      completion instead of throwing/unwinding. The scope-level
+//      `TimeoutError` still fired on time (that gate is independent, in
+//      `nova_supervised_run_impl`), which is why tests 2/3/5-7 above never
+//      caught it — they only assert on the OUTER elapsed time / catch, not
+//      on whether the child fiber itself was actually cut off. Fixed in
+//      `fibers.h` (re-check `cancel_requested` + shield-aware
+//      `nova_throw_cancel_reason` after every park return AND at both
+//      pre-arm early-exit fast-paths — mirrors `nova_fiber_yield` /
+//      channels.h / net.c, which already did this correctly).
 
 module concurrency.supervised_deadline_test
 
@@ -157,4 +172,39 @@ test "zero timeout: immediate TimeoutError" {
     }
     assert(caught)
     assert(r == 0)
+}
+
+
+// 8. [M-178-server-graceful-deadline]: a cancelled child must actually
+//    unwind at its `Time.sleep`, not run its remaining body to completion.
+//    Repro: the child sends a marker on a channel AFTER `Time.sleep`
+//    returns. If cancellation is genuine, the child's sleep throws and the
+//    marker is NEVER sent — `try_recv()` stays `None` even well past the
+//    child's full (uncancelled) sleep duration. Before the fix, the child
+//    silently "completed" its sleep on the cancel-wake and went on to send
+//    the marker — the outer `supervised` still returned/threw on time
+//    (independent gate), masking the leak unless something specifically
+//    checked what the child did AFTER the sleep call.
+test "deadline cancels a spawned child's in-flight sleep (no leaked marker)" {
+    ro (tx, rx) = Channel.new(1)
+    mut caught = false
+    ro r = with Fail[TimeoutError] = |_e| {
+        caught = true
+        0
+    } {
+        supervised(timeout: Duration.from_millis(100)) {
+            spawn {
+                Time.sleep(3000)
+                // Reachable only if the child was NOT actually cancelled.
+                tx.try_send(true)
+            }
+        }
+        1
+    }
+    assert(r == 0)
+    assert(caught)
+    // Grace window past the child's full (uncancelled) sleep duration.
+    Time.sleep(3200)
+    ro leaked = rx.try_recv()
+    assert(leaked == None)
 }

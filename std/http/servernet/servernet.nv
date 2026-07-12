@@ -5,12 +5,18 @@
 //
 // The thin `Net`-effect runner around the pure server core (std.http.server): read a
 // full request off a socket (Content-Length framed), route it (`route_once`, same
-// parse+dispatch `serve_once` uses under the hood), write the response, close. The
-// accept loop uses the Plan 173 / 83.x substrate
-// (supervised / spawn / CancelToken — proven by the net echo tests): each connection
-// is a spawned fiber under a supervised scope; a `CancelToken` stops accept for a
-// cancel-based graceful stop (bounded deadline-drain is gated on `supervised(deadline:)`,
-// unimplemented in main — see server.nv [M-178-server-graceful-deadline]).
+// parse+dispatch `serve_once` uses under the hood), write the response, close.
+// A multi-connection accept LOOP is planned to use the Plan 173 / 83.x substrate
+// (supervised / spawn / CancelToken — proven by the net echo tests below): each
+// connection a spawned fiber under a supervised scope; a `CancelToken` stops
+// accept for a cancel-based graceful stop; bounded deadline-drain via
+// `supervised(deadline:)`/`supervised(timeout:)` (Plan 174, D408, landed +
+// hardened Plan 173 Ф.3 2026-07-12/13 — see server.nv
+// [M-178-server-graceful-deadline], `std/concurrency/supervised_deadline_test.nv`
+// test 8). NB: as of this writing this module only has `handle_connection`
+// (single connection, driven externally — see `rt/handle_connection_smoke.nv`)
+// — the reusable accept-loop function itself does not exist here yet; the
+// primitive it would be built on is no longer the blocker.
 //
 // Streaming responses (`[M-178-server-streaming]`, DONE): `handle_connection`
 // routes via `route_once` (parse + dispatch, no serialize) so it can branch on
