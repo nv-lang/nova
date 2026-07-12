@@ -903,6 +903,14 @@ pub struct CEmitter {
     /// [M-172.1-U4-typedir-substrate]
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     resolved_callees: std::collections::HashMap<crate::ast::ExprId, crate::diag::Span>,
+    /// Plan 196.5 Stage-A: the subst-value channel (call-site `ExprId` → ordered
+    /// `(generic-param name → concrete ResolvedType)`) the checker populated
+    /// (`ModuleEnv.node_substs`). Mirrors `resolved_callees`'s plumbing. ADDITIVE — not yet
+    /// read by codegen (Stage-B wires the three mono/method-generic engines onto this as a
+    /// channel-first source, replacing their C-type re-inference). Dead-code-allowed in
+    /// release until Stage-B flips a reader onto it. [M-196.5-node-substs]
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    node_substs: std::collections::HashMap<crate::ast::ExprId, Vec<(String, crate::types::ResolvedType)>>,
     /// Plan 172.1 U.4.3 (stages a+b+c1): codegen's OWN view of a callee's return C-type,
     /// keyed by the declaration `Span`. Built from the same `ret` codegen registers as
     /// `fn_ret_<name>` / `fn_ret_<recv>_<name>` (the CONCRETE non-mono forward-decl pass)
@@ -1906,6 +1914,7 @@ impl CEmitter {
             proven_index_sites_contract: std::collections::HashSet::new(),
             resolved_types: std::collections::HashMap::new(),
             resolved_callees: std::collections::HashMap::new(),
+            node_substs: std::collections::HashMap::new(),
             fn_ret_by_span: std::collections::HashMap::new(),
             proven_overflow_sites: std::collections::HashSet::new(),
             proven_overflow_sites_contract: std::collections::HashSet::new(),
@@ -2457,6 +2466,16 @@ impl CEmitter {
         self.resolved_callees = m.clone();
     }
 
+    /// Plan 196.5 Stage-A: feed the subst-value channel (`ExprId` → ordered
+    /// `(generic-param name → concrete ResolvedType)`) the checker populated. Mirrors
+    /// `set_resolved_callees`. ADDITIVE — not yet read by codegen (Stage-B).
+    pub fn set_node_substs(
+        &mut self,
+        m: &std::collections::HashMap<crate::ast::ExprId, Vec<(String, crate::types::ResolvedType)>>,
+    ) {
+        self.node_substs = m.clone();
+    }
+
     /// Plan 172.1 U.4.1: lower a checker `ResolvedType` to its C-type string — the
     /// thin lowering that will replace codegen's re-derivation (`infer_expr_c_type`,
     /// §0/§1). Reuses the single primitive table `primitive_name_to_c` (§0/§2 — no
@@ -2718,6 +2737,37 @@ impl CEmitter {
                 }
             })
             .collect()
+    }
+
+    /// Plan 196.5 Stage-A — SHADOW verification (debug-only, read-only, no effect on emitted
+    /// output): where a legacy engine has ALREADY computed its own per-call subst
+    /// (`pairs: &[(name, C-type-string)]`, the SAME map `subst_map_adopt_rt` above adopts
+    /// structural RT into), cross-check it against `node_substs[call_id]` — the checker
+    /// channel (196.5 §6.2) written by `f1_check_call`/`resolve_return_channel`. For every
+    /// name BOTH sides have an opinion on, the channel's `ResolvedType` must lower
+    /// (`resolved_type_to_c`, D315) to the EXACT same C-string the legacy engine derived —
+    /// byte-identity, mirroring the `subst_map_adopt_rt` guard and the 196.4 Stage-1a
+    /// `resolve_return_channel` SHADOW-assert precedent. A MISS (no `node_substs` entry for
+    /// this call-site, or the entry omits this name) is NOT a divergence: the channel's
+    /// completeness gate (§6.2 `ordered.len()==generics.len()`) can legitimately be
+    /// NARROWER than a legacy per-arg engine that tries harder on partial/erased info — only
+    /// a name-for-name MISMATCH is a bug. Stage-A does not read this channel for codegen
+    /// (Stage-B); this only proves the channel's fidelity against the corpus ahead of that.
+    /// [M-196.5-node-substs]
+    #[cfg(debug_assertions)]
+    fn shadow_check_node_substs(&self, call_id: crate::ast::ExprId, pairs: &[(String, String)]) {
+        let Some(channel) = self.node_substs.get(&call_id) else { return };
+        for (name, legacy_c) in pairs {
+            let Some((_, rt)) = channel.iter().find(|(n, _)| n == name) else { continue };
+            let channel_c = self.resolved_type_to_c(rt).ok();
+            debug_assert_eq!(
+                channel_c.as_deref(),
+                Some(legacy_c.as_str()),
+                "[M-196.5-node-substs] SHADOW mismatch: node_substs[{:?}][{}] lowers to {:?}, \
+                 legacy pairs gave {:?}",
+                call_id, name, channel_c, legacy_c,
+            );
+        }
     }
 
     /// Plan 172.12 A1′ — lower a `current_type_subst` VALUE to its C-name. The debt
@@ -33303,6 +33353,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         let rt_slots = self.rt_slots_from_args(
                                                             fn_decl.params.iter().map(|p| &p.ty), args, &slot_names);
                                                         let seeded = self.subst_map_adopt_rt(&type_subst, &rt_slots);
+                                                        #[cfg(debug_assertions)]
+                                                        self.shadow_check_node_substs(call_id, &type_subst);
                                                         let saved = std::mem::replace(
                                                             &mut self.current_type_subst, seeded);
                                                         let mut arg_strs = Vec::new();
@@ -34342,6 +34394,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
                                             if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {
                                                 let recv_seeded = self.subst_map_adopt_rt(&type_subst, &recv_rt_slots);
+                                                #[cfg(debug_assertions)]
+                                                self.shadow_check_node_substs(call_id, &type_subst);
                                                 let saved_inner = std::mem::replace(
                                                     &mut self.current_type_subst,
                                                     recv_seeded,
@@ -34910,6 +34964,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let full_rt_slots = self.rt_slots_from_args(
                                     fn_decl.params.iter().map(|p| &p.ty), args, &full_slot_names);
                                 let full_seeded = self.subst_map_adopt_rt(&type_subst, &full_rt_slots);
+                                #[cfg(debug_assertions)]
+                                self.shadow_check_node_substs(call_id, &type_subst);
                                 let saved_subst = std::mem::replace(
                                     &mut self.current_type_subst,
                                     full_seeded,
@@ -35624,6 +35680,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let arrext_rt_slots = self.rt_slots_from_args(
                                     fn_decl.params.iter().map(|p| &p.ty), args, &arrext_slot_names);
                                 let arrext_seeded = self.subst_map_adopt_rt(&type_subst, &arrext_rt_slots);
+                                #[cfg(debug_assertions)]
+                                self.shadow_check_node_substs(call_id, &type_subst);
                                 let saved_subst = std::mem::replace(
                                     &mut self.current_type_subst,
                                     arrext_seeded,
@@ -36412,6 +36470,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
                                         if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {
                                             let a1pp_seed = self.subst_map_adopt_rt(&type_subst, &a1pp_slots);
+                                            #[cfg(debug_assertions)]
+                                            self.shadow_check_node_substs(call_id, &type_subst);
                                             let saved_inner = std::mem::replace(
                                                 &mut self.current_type_subst,
                                                 a1pp_seed,
@@ -36695,6 +36755,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {
                                 // Temporarily set type subst for inner type resolution
                                 let a1pp_seed = self.subst_map_adopt_rt(&type_subst, &a1pp_slots);
+                                #[cfg(debug_assertions)]
+                                self.shadow_check_node_substs(call_id, &type_subst);
                                 let saved_inner = std::mem::replace(
                                     &mut self.current_type_subst,
                                     a1pp_seed,
