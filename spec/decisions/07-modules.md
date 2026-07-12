@@ -1072,13 +1072,24 @@ realtime = []
 
 #### Source root — корень пакета
 
-Source root (корень для резолвинга путей module ↔ file) — **сам корень
-пакета** (директория с `nova.toml`). Отдельной директории `src/` и
-настройки `[lib] src` **нет** (2026-05-22: убраны). Это совпадает с
-фактической практикой — `std/`, `examples/`, `nova_tests/` кладут модули
-прямо в корень пакета.
+Source root (корень для резолвинга путей module ↔ file) — директория,
+определяемая ключом `[lib] src` в `nova.toml` пакета; при отсутствии ключа
+(или `src = "."`) — **сам корень пакета** (директория с `nova.toml`).
 
-`module admin.audit` ↔ `<package-root>/admin/audit.nv`.
+> **Амендмент (Plan 195, владелец 2026-07-10) — `src/` канонизирован.**
+> Прежнее решение 2026-05-22 («отдельной `src/` и `[lib] src` нет, убраны»)
+> **отменено**. Канон пакета: `nova.toml` (+ `README`/`LICENSE` + `native/`
+> для native-backed) в корне, весь `.nv` — в `src/` (как Rust/npm/Python/Zig).
+> Механизм `[lib] src = "src"` — не legacy-совместимость, а **стандартная
+> раскладка** для новых пакетов (эталон — `nova-tls`). `std` переведён на
+> этот канон тем же заходом (`std/nova.toml`: `[lib] src = "src"`,
+> `std/src/**` — 314 файлов, module-path НЕ изменился: `std/src/encoding/
+> base64.nv` по-прежнему объявляет `module std.encoding.base64`). Плоская
+> раскладка (`src = "."`) остаётся легальной (мелкие/сгенерированные
+> пакеты), но не рекомендуется для новых пакетов.
+
+`module admin.audit` ↔ `<package-source-root>/admin/audit.nv` (для пакета
+без `[lib] src` это то же самое, что `<package-root>/admin/audit.nv`).
 
 Резолвер сканирует `.nv`-файлы от корня пакета, **исключая** служебные
 директории: `target/`, `.git/`, `.nova-cache/` и скрытые (`.`-префикс).
@@ -1118,19 +1129,21 @@ error: module declaration does not match file path
 ```
 nova-lang/
 ├── compiler-codegen/        Rust компилятор: парсер, type-checker, treewalk-interp + C-codegen
-├── std/                     стандартная библиотека Nova (.nv)
-│   ├── collections/         hashmap, set, deque, vec, queue, ...
-│   ├── crypto/              md5, sha1, sha256, hmac, jwt
-│   ├── encoding/            base64, hex, json, csv, ini, toml, url
-│   ├── identifiers/         uuid, ulid, snowflake
-│   ├── checksums/           crc32, fnv
-│   ├── time/                duration, cron
-│   ├── path/                path, glob
-│   ├── math/                complex, statistics
-│   ├── text/                regex, markdown_minimal, diff
-│   ├── data/                semver, semver_range, sql
-│   ├── concurrency/         rate_limiter, retry
-│   └── (новые домены — net/, io/, testing/, и т.д.)
+├── std/                     стандартная библиотека Nova — package root (nova.toml: [lib] src = "src")
+│   ├── nova.toml
+│   └── src/                 весь `.nv` (Plan 195 — std на src/; module-path НЕ включает "src")
+│       ├── collections/     hashmap, set, deque, vec, queue, ...
+│       ├── crypto/          md5, sha1, sha256, hmac, jwt
+│       ├── encoding/        base64, hex, json, csv, ini, toml, url
+│       ├── identifiers/     uuid, ulid, snowflake
+│       ├── checksums/       crc32, fnv
+│       ├── time/            duration, cron
+│       ├── path/            path, glob
+│       ├── math/            complex, statistics
+│       ├── text/            regex, markdown_minimal, diff
+│       ├── data/            semver, semver_range, sql
+│       ├── concurrency/     rate_limiter, retry
+│       └── (новые домены — net/, io/, testing/, и т.д.)
 ├── examples/                демо-программы и tutorial snippets
 │   └── *.nv                 (НЕ stdlib — это именно examples)
 ├── nova_tests/              .nv-тесты bootstrap'а (package `nova_tests`)
@@ -1145,10 +1158,12 @@ nova-lang/
    которые **используют** stdlib.
 
 2. **Имя папки `std/` = префикс модуля `std.`.** Module path 1:1
-   соответствует file path **без специальных маппингов** (см. правило
-   `Path / module enforcement` выше). Файл `std/encoding/base64.nv`
+   соответствует file path от source root (`std/src/`, см. амендмент
+   Plan 195 выше) **без специальных маппингов** (см. правило
+   `Path / module enforcement` выше). Файл `std/src/encoding/base64.nv`
    объявляет `module std.encoding.base64`; ничего не разворачивается
-   в имени, ничего не подразумевается.
+   в имени, ничего не подразумевается (слово `src` в module-path не
+   участвует).
 
 3. **Группировка по домену, не по типу артефакта.** Каждая папка в
    `std/` — semantic domain (`crypto`, `encoding`, `time`),
@@ -1157,7 +1172,7 @@ nova-lang/
    см. [03-syntax.md → D29](03-syntax.md#d29).
 
 4. **Плоская иерархия внутри домена.** Без подпапок второго уровня
-   (`std/crypto/md5.nv`, не `std/crypto/hash/md5.nv`). Если
+   (`std/src/crypto/md5.nv`, не `std/src/crypto/hash/md5.nv`). Если
    домен растёт до 15+ файлов — рассматривать подкатегорию.
 
 5. **Прецеденты.** Go (`net/http/`, `encoding/json/`), Python
