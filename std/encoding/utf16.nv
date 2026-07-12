@@ -97,7 +97,7 @@ export fn str.from_utf16(units []u16) -> Result[str, Utf16Error] {
     // Все code units валидны → строим str. StringBuilder создаётся ПОСЛЕ всех
     // ранних `return Err`, потребляется один раз через @as_str (D133-safe).
     // Capacity *4: supplementary codepoints encode to 4 UTF-8 bytes.
-    consume sb = StringBuilder.new().cap(cps.len() * 4)
+    consume sb = StringBuilder.new(cap: cps.len() * 4)
     for cp in cps {
         ro c = match cp.to_char() { Ok(c) => c, Err(_) => '\u{FFFD}' }
         sb.append(c)
