@@ -10699,6 +10699,14 @@ impl<'a> TypeCheckCtx<'a> {
                             })
                             .collect();
                         if !callee.generics.is_empty() && ordered.len() == callee.generics.len() {
+                            // [M-196.5-node-substs] Stage-A coverage trace (§9 acceptance:
+                            // "канал непуст на generic-формах"). Opt-in, mirrors NOVA_A1PP_TRACE.
+                            if std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some() {
+                                eprintln!(
+                                    "[NODE_SUBSTS] producer=A call_id={:?} callee={} n={}",
+                                    call_id, callee.name, ordered.len()
+                                );
+                            }
                             self.node_substs.borrow_mut().insert(call_id, ordered);
                         }
                     }
@@ -14151,6 +14159,12 @@ impl<'a> TypeCheckCtx<'a> {
                     // same verified trust. `call_id` absent (0-arity wrapper) → skip.
                     if let Some(cid) = call_id {
                         if !ordered.is_empty() {
+                            if std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some() {
+                                eprintln!(
+                                    "[NODE_SUBSTS] producer=B-method-residual call_id={:?} method={} n={}",
+                                    cid, f.name, ordered.len()
+                                );
+                            }
                             self.node_substs.borrow_mut().insert(cid, ordered);
                         }
                     }
@@ -14235,6 +14249,12 @@ impl<'a> TypeCheckCtx<'a> {
         // keeps both channels' trust level identical).
         if let (Some(cid), Some((rt, ordered))) = (call_id, &channel) {
             if !ordered.is_empty() && *rt == ResolvedType::from_type_ref(&out) {
+                if std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some() {
+                    eprintln!(
+                        "[NODE_SUBSTS] producer=B-carrier call_id={:?} method={} n={}",
+                        cid, method, ordered.len()
+                    );
+                }
                 self.node_substs.borrow_mut().insert(cid, ordered.clone());
             }
         }
