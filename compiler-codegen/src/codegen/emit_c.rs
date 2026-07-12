@@ -50938,6 +50938,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c);
                     format!("{}*", clos_struct)
                 }
+                // ClosureFull `fn(x T) -> R => body` / `fn(x T) -> R { block }` —
+                // fully typed already (unlike ClosureLight, no inference needed).
+                // [BUG apply-codegen-fix]: the checker (types/mod.rs ExprKind::
+                // ClosureFull arm) never inserts a `ResolvedType::Func` for the
+                // ClosureFull expr's OWN id — it only annotates zero-param
+                // ClosureLight that way — so Channel 2 above (which keys off
+                // `resolved_types.get(&expr.id)`) never fires for ClosureFull,
+                // and without this arm it fell through to the `_` wildcard and
+                // returned "" (empty C type). A `ro apply = fn(f fn(int)->int,
+                // x int) -> int => f(x)` local then got emitted with NO C type
+                // at all (`apply = (void*)(&...);`) instead of `NovaClos_vii*
+                // apply = ...;`, producing `use of undeclared identifier 'apply'`
+                // at every subsequent use — not name-specific, reproduces with
+                // ANY identifier assigned an anonymous typed-`fn` literal.
+                ExprKind::ClosureFull(sb) => {
+                    let param_c_tys: Vec<String> = sb.params.iter()
+                        .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
+                        .collect();
+                    let ret_c = sb.return_type.as_ref()
+                        .and_then(|rt| self.type_ref_to_c(rt).ok())
+                        .filter(|t| !t.is_empty())
+                        .unwrap_or_else(|| "nova_unit".into());
+                    let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c);
+                    format!("{}*", clos_struct)
+                }
                 // IfLet: infer from checker annotation on then-trailing (pattern binds
                 // are annotated by the checker but not yet in var_types at inference time,
                 // so recursive legacy re-derive would panic on the bound ident).
