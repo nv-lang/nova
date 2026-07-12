@@ -123,12 +123,24 @@ pub struct Manifest {
     /// [ffi]
     /// c_shims      = ["src/sqlite3_shim.c", "src/libpng_shim.c"]
     /// include_dirs = ["src/", "third_party/sqlite3/"]
+    /// lib_dirs     = ["third_party/sqlite3/lib/"]
     /// libs         = ["sqlite3", "png"]
     /// ```
     ///
     /// Семантика: `c_shims` — дополнительные `.c` или `.h` файлы для
     /// compilation (header-only inline shims OK); `include_dirs` →
-    /// clang `-I` flags; `libs` → clang `-l<name>` flags для linking.
+    /// clang `-I` flags; `lib_dirs` (Plan 193 Ф.2 gap-1) → linker
+    /// search-directory flags (`-L`/MSVC `/LIBPATH:`) для non-default-path
+    /// native libs; `libs` → clang `-l<name>` / MSVC `<name>.lib` flags для
+    /// linking. `lib_dirs` пустой (не задан) → только default toolchain
+    /// search path (как раньше).
+    ///
+    /// Detect-and-degrade (Plan 193 Ф.2 gap-1): когда `lib_dirs` задан явно,
+    /// но объявленный `libs`-файл не найден ни в одной из директорий —
+    /// test_runner деградирует ЭТОТ пакет к SKIP («lib not found»), а не
+    /// hard CC/link-FAIL (мирроринг retired built-in
+    /// MbedtlsConfig/BrotliConfig graceful-degrade контракта, обобщённый
+    /// для generic `[ffi] libs`).
     ///
     /// Пусто (None), если секция отсутствует.
     pub ffi: Option<FfiConfig>,
@@ -168,6 +180,12 @@ pub struct FfiConfig {
     /// Include directories для clang `-I`. Дают доступ к user shim header'ам
     /// и third-party C library headers.
     pub include_dirs: Vec<String>,
+    /// Plan 193 Ф.2 gap-1: library search directories для linker `-L`
+    /// (Clang/GCC) / `/LIBPATH:` (MSVC) — non-default-path native libs
+    /// (напр. vcpkg install без system-wide регистрации). Пусто → только
+    /// toolchain default search path (Windows: нет системного аналога
+    /// `/usr/lib` — без `lib_dirs` non-default `.lib` не найдётся).
+    pub lib_dirs: Vec<String>,
     /// System library names для clang `-l<name>` linking. Например
     /// `libs = ["sqlite3", "png"]` → `-lsqlite3 -lpng`.
     pub libs: Vec<String>,
@@ -357,6 +375,7 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     // Plan 115 D214 [M-115-ffi-build-pipeline]: [ffi] config.
     let mut ffi_c_shims: Vec<String> = Vec::new();
     let mut ffi_include_dirs: Vec<String> = Vec::new();
+    let mut ffi_lib_dirs: Vec<String> = Vec::new();
     let mut ffi_libs: Vec<String> = Vec::new();
     let mut ffi_section_seen: bool = false;
     // Plan 149 D233: [runtime] config.
@@ -412,6 +431,7 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
                 match key {
                     "c_shims"      => ffi_c_shims = parse_toml_string_array(raw_val),
                     "include_dirs" => ffi_include_dirs = parse_toml_string_array(raw_val),
+                    "lib_dirs"     => ffi_lib_dirs = parse_toml_string_array(raw_val),
                     "libs"         => ffi_libs = parse_toml_string_array(raw_val),
                     _ => {} // ignore unknown keys для forward-compat
                 }
@@ -461,6 +481,7 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
         Some(FfiConfig {
             c_shims: ffi_c_shims,
             include_dirs: ffi_include_dirs,
+            lib_dirs: ffi_lib_dirs,
             libs: ffi_libs,
         })
     } else {
