@@ -198,7 +198,7 @@ export fn StrGen.default() -> StrGen =>
 export fn StrGen @generate() Random -> str {
     ro len = (Random.u64() as int).abs() % (@max_len + 1)
     consume buf = StringBuilder.new()
-    for i in 0..len() {
+    for i in 0..len {
         // Печатные ASCII: 32..126 — каждый valid 1-byte UTF-8 char.
         // Plan 34 Ф.5.2: `int as char` запрещён D54.
         ro code = 32 + ((Random.u64() as int).abs() % 95)
@@ -218,8 +218,8 @@ export fn StrGen @shrink(value str) -> []str {
     ro len = value.byte_len()
     if len > 0 {
         steps.push("")                                  // пустая строка
-        if len > 1 { steps.push(value[0..len() / 2]) }    // половина
-        if len > 1 { steps.push(value[0..len() - 1]) }    // на 1 короче
+        if len > 1 { steps.push(value[0..len / 2]) }    // половина
+        if len > 1 { steps.push(value[0..len - 1]) }    // на 1 короче
     }
     steps
 }
@@ -254,7 +254,7 @@ export fn ArrayGen[G, T].default(elem G) -> ArrayGen[G, T] =>
 export fn ArrayGen[G, T] @generate() Random -> []T {
     ro len = (Random.u64() as int).abs() % (@max_len + 1)
     mut result []T = []
-    for i in 0..len() {
+    for i in 0..len {
         result.push(@elem.generate())
     }
     result
@@ -271,13 +271,13 @@ export fn ArrayGen[G, T] @shrink(value []T) -> [][]T {
         // Половина (первая)
         if len > 1 {
             mut half []T = []
-            half.append(value[0..len() / 2])
+            half.append(value[0..len / 2])
             steps.push(half)
         }
         // Без последнего элемента
         if len > 1 {
             mut shorter []T = []
-            shorter.append(value[0..len() - 1])
+            shorter.append(value[0..len - 1])
             steps.push(shorter)
         }
     }

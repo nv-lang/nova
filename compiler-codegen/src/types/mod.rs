@@ -16011,6 +16011,17 @@ impl<'a> BoundCtx<'a> {
         // Plan 97.1 hardening: `box.method()` для protocol-typed var —
         // method обязан быть в protocol_specs[<Proto>].
         self.check_protocol_method_call(e, scope, errors);
+        // [nova_fn_len-local-shadow-fix] (cigreen-fix, CI std-green batch):
+        // call-callee resolution must give a local/param binding PRIORITY
+        // over free-fn resolution (D29-style shadow rule). Without this,
+        // `ro len = value.byte_len(); ...; len()` (bare Ident callee that
+        // shadows a non-function local) fell through undetected to
+        // codegen's free-fn fallback (`free_fn_c_name`), silently emitting
+        // a call to a phantom `nova_fn_len` C symbol — only failing much
+        // later at LINK time ("undefined symbol nova_fn_len"), far from
+        // the root cause. See std/testing/property.nv (the actual typo —
+        // fixed separately) for the triggering pattern.
+        self.check_call_callee_not_local_shadow(e, scope, errors);
         match &e.kind {
             ExprKind::Call { func, args, trailing } => {
                 self.walk_expr(func, scope, errors);
@@ -16435,6 +16446,43 @@ impl<'a> BoundCtx<'a> {
                  (Plan 97.1 hardening — D142 / [M-protocol-method-name-shadowing] enforcement.)",
                 method_name, proto_name, listing, method_name, proto_name),
             member_span,
+        ));
+    }
+
+    /// [nova_fn_len-local-shadow-fix] (cigreen-fix): a bare-`Ident` call
+    /// callee (`name(...)`) must resolve to the in-scope LOCAL/parameter
+    /// binding `name` first (D29-style shadow rule — a local always shadows
+    /// a same-named free function). If that local has a DEFINITIVELY KNOWN,
+    /// non-function type, calling it is a genuine type error — flag it here
+    /// instead of silently falling through to codegen's free-fn fallback
+    /// (which mangles to `nova_fn_<name>` and only fails much later at LINK
+    /// time with a confusing "undefined symbol" error, far from the actual
+    /// mistake). Conservative like the sibling checks in this walker
+    /// (E_MIXED_WIDTH_ARITH above): fires only when the local's type is
+    /// definitively known AND not itself a function type — permissive on
+    /// unknown/generic bindings to avoid false positives.
+    fn check_call_callee_not_local_shadow(
+        &self,
+        e: &Expr,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let ExprKind::Call { func, .. } = &e.kind else { return; };
+        let ExprKind::Ident(name) = &func.kind else { return; };
+        let Some(ty) = scope.get(name) else { return; };
+        if matches!(ty, TypeRef::Func { .. }) {
+            return; // callable local (closure / fn-typed param) — legit call.
+        }
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_CALL_NOT_CALLABLE] `{name}` names a local variable of type `{}` here, \
+                 not a function — `{name}(...)` cannot call it. A local/parameter binding \
+                 always shadows a same-named free function; if you meant to call a free \
+                 function named `{name}`, rename the local. If you just meant to use the \
+                 value, drop the `()`.",
+                typeref_display(ty),
+            ),
+            func.span,
         ));
     }
 
