@@ -10666,13 +10666,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
         // A name is a capture only if: it is in outer var_types AND not bound inside spawn.
         // Each capture is recorded with `by_value` flag:
-        //   - immutable scalar (let, not let mut, type ∈ {nova_int, nova_bool, nova_f64})
-        //     → captured BY VALUE (snapshot at spawn site).
-        //   - everything else (mutable, or non-scalar) → BY POINTER (shared mutation).
+        //   - immutable (let, not let mut) → captured BY VALUE (snapshot at spawn site).
+        //   - mutable → BY POINTER (shared mutation).
         // Rationale: parallel-for / supervised holds spawns until end-of-scope; loop-
-        // variables (`let cur = xs[i]`) are immutable scalars that change ВНЕШНЕ across
-        // iterations. Capturing by value snapshots them; by pointer would let all queued
-        // fibers see the last iteration's value.
+        // variables (`let cur = xs[i]`) are immutable and change ВНЕШНЕ across
+        // iterations (the `for`-loop reuses the same C stack slot each turn).
+        // Capturing by value snapshots them; by pointer would let all queued fibers
+        // see the LAST iteration's value once they finally run.
+        //
+        // [M-parfor-loopvar-nonscalar-byref-capture] (Plan 173.1, 2026-07-13): this
+        // used to additionally require `is_scalar` (type ∈ {nova_int, nova_bool,
+        // nova_f64, nova_f32, nova_byte}) before granting by-value capture — ANY
+        // non-scalar immutable loop variable (str, heap-record pointer, value-record,
+        // tuple, sum) fell through to by-POINTER, aliasing the loop's shared stack
+        // slot. Repro: `parallel for s in ["a","b","c"] { Report{source: s, ...} }`
+        // — every child read the address of the SAME `s`, so all children observed
+        // whatever `s` held once they actually ran (the loop had usually already
+        // advanced past it) → duplicate/missing elements, silently wrong `source`
+        // fields (`[M-parfor-record-result-miscompile]`). For a non-loop, single-
+        // assignment immutable capture, by-value (struct/pointer copy) and by-pointer
+        // (address of a stable slot) are behaviourally IDENTICAL — the value never
+        // changes for the rest of the scope either way — so widening by-value capture
+        // to every immutable type is a pure bugfix, not a behaviour change, outside
+        // the loop-variable-reuse case it fixes. `by_value=true` non-scalar structs
+        // (nova_str, tuples, value-records) get a plain C struct-copy ctx field
+        // (`T cap;`, not `T* cap;`) — safe, GC-scanned via the ctx allocation.
         let mut captures: Vec<(String, String, bool)> = Vec::new();
         for name in refs {
             if bound.contains(&name) {
@@ -10694,10 +10712,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 continue;
             }
             if let Some(ty) = self.var_types.get(&name).cloned() {
-                let is_scalar = matches!(ty.as_str(),
-                    "nova_int" | "nova_bool" | "nova_f64" | "nova_f32" | "nova_byte");
                 let is_mut = self.var_mutable.contains(&name);
-                let by_value = is_scalar && !is_mut;
+                let by_value = !is_mut;
                 captures.push((name, ty, by_value));
             }
         }
@@ -11993,6 +12009,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.detach_counter += 1;
 
         // ── Capture-анализ (по образцу emit_spawn) ──
+        // [M-parfor-loopvar-nonscalar-byref-capture] (2026-07-13): by-value gate
+        // widened to ANY immutable capture (was scalar-only) — see emit_spawn's
+        // capture-analysis comment for the full rationale (loop-variable aliasing
+        // of non-scalar types, e.g. `str`, was captured by-reference and observed
+        // stale/duplicate values).
         let mut refs: Vec<String> = Vec::new();
         Self::collect_idents_block(body, &mut refs);
         refs.sort();
@@ -12011,10 +12032,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 continue;
             }
             if let Some(ty) = self.var_types.get(&name).cloned() {
-                let is_scalar = matches!(ty.as_str(),
-                    "nova_int" | "nova_bool" | "nova_f64" | "nova_f32" | "nova_byte");
                 let is_mut = self.var_mutable.contains(&name);
-                let by_value = is_scalar && !is_mut;
+                let by_value = !is_mut;
                 captures.push((name, ty, by_value));
             }
         }
@@ -12314,8 +12333,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let mut bound: HashSet<String> = HashSet::new();
         Self::collect_bound_names_block(body, &mut bound);
 
-        // Захват: immutable scalar → by-value (snapshot), иначе by-pointer
-        // (shared mutation видна после wake). Тот же критерий, что у spawn.
+        // Захват: immutable → by-value (snapshot), mutable → by-pointer (shared
+        // mutation видна после wake). Тот же критерий, что у spawn.
+        // [M-parfor-loopvar-nonscalar-byref-capture] (2026-07-13): by-value gate
+        // widened to ANY immutable capture (was scalar-only) — see emit_spawn's
+        // capture-analysis comment for the full rationale.
         let mut captures: Vec<(String, String, bool)> = Vec::new();
         for name in refs {
             if bound.contains(&name) { continue; }
@@ -12327,10 +12349,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 continue;
             }
             if let Some(ty) = self.var_types.get(&name).cloned() {
-                let is_scalar = matches!(ty.as_str(),
-                    "nova_int" | "nova_bool" | "nova_f64" | "nova_f32" | "nova_byte");
                 let is_mut = self.var_mutable.contains(&name);
-                let by_value = is_scalar && !is_mut;
+                let by_value = !is_mut;
                 captures.push((name, ty, by_value));
             }
         }
