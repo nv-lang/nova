@@ -1,0 +1,98 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 187 — flagship concurrent aggregator: synthetic Demo/Chaos scenarios.
+//
+// Research 15 §5a/§5b (two legends, same `aggregate` code, different sources):
+// weather (open-meteo, collect-until-deadline) and health-check (SLA-timeout
+// ping). Live sources (real open-meteo / real domains) are BLOCKED on Plan
+// 116 std/tls and out of scope this pass (plan 187 §3 Ф.3b) — everything
+// here is synthetic (`should_fail`/`latency_ms` drive the app-level
+// simulation in aggregate.nv's `fetch_one`, see that file's header comment).
+//
+// "Demo" = fixed table (byte-for-byte reproducible — stronger than a seeded
+// PRNG). "Chaos" = the same table perturbed by a tiny local splitmix64 PRNG
+// (deterministic PER SEED, still reproducible for a given seed, but varied
+// run-to-run when the caller feeds a time-based seed) — intentionally NOT
+// `std.testing.handlers.seeded` (that substitutes the ambient `Random`
+// EFFECT for tests; here we want a plain pure-value generator with no effect
+// dependency, since scenario-building is not itself an I/O concern).
+
+module aggregator.scenarios
+
+import ./domain.{Source}
+
+// ── Weather legend (research 15 §5a) ────────────────────────────────────────
+
+/// Fixed demo table: 4 settle inside the budget (2 fast, 2 slow-but-ok), 1
+/// fails fast (simulated upstream error), 1 overruns the deadline and is
+/// cancelled. Pair with `WEATHER_BUDGET_MS`.
+#stable(since = "0.1")
+export fn weather_demo_sources() -> []Source {
+    [
+        Source.new("Moscow",           "7 days",  7,  520, false),
+        Source.new("Saint-Petersburg", "7 days",  7,  610, false),
+        Source.new("Novosibirsk",      "10 days", 10, 900, false),
+        Source.new("London",           "14 days", 14, 1050, false),
+        Source.new("New-York",         "7 days",  7,  300, true),
+        Source.new("Tokyo",            "16 days", 16, 1900, false),
+    ]
+}
+
+#stable(since = "0.1")
+export const WEATHER_BUDGET_MS int = 1200
+
+// ── Health-check legend (research 15 §5b) ───────────────────────────────────
+
+/// Fixed demo table — same shape as weather (4 ok / 1 fail / 1 cancel),
+/// domains instead of cities, "checks" instead of "days".
+#stable(since = "0.1")
+export fn health_demo_sources() -> []Source {
+    [
+        Source.new("github.com",    "3 checks", 3, 210,  false),
+        Source.new("cloudflare",    "3 checks", 3, 260,  false),
+        Source.new("wikipedia.org", "4 checks", 4, 980,  false),
+        Source.new("npmjs.com",     "3 checks", 3, 1040, false),
+        Source.new("registry-eu",   "3 checks", 3, 340,  true),
+        Source.new("mirror-remote", "5 checks", 5, 2200, false),
+    ]
+}
+
+#stable(since = "0.1")
+export const HEALTH_BUDGET_MS int = 1200
+
+// ── Chaos: perturb a demo table by a seeded PRNG ────────────────────────────
+
+/// Same source identities as `base`, but latency jittered (±200ms, floor
+/// 30ms) and outcome re-rolled (~15% simulated upstream failure) by a tiny
+/// local splitmix64 stream keyed on `seed`. Same `seed` → same chaos run
+/// (still reproducible for regression/screenshots); vary `seed` (e.g. from
+/// `Monotonic.now()`) for a genuinely different run each time — that is the
+/// "Chaos" mode toggle in the mockup (`docs/research/assets/15-showcase-
+/// mockup.html`, "seed = random · каждый забег другой").
+#stable(since = "0.1")
+export fn chaos_variant(base []Source, seed u64) -> []Source {
+    mut state = splitmix64_step(seed)
+    mut out []Source = []
+    for s in base {
+        ro fail_roll = state % 100
+        state = splitmix64_step(state)
+        ro jitter_roll = state % 400
+        state = splitmix64_step(state)
+
+        ro fail = fail_roll < 15
+        ro jitter = (jitter_roll as int) - 200
+        ro latency = s.latency_ms + jitter
+        ro latency_clamped = if latency < 30 { 30 } else { latency }
+        out.push(Source.new(s.id, s.detail, s.sub_count, latency_clamped, fail))
+    }
+    out
+}
+
+// splitmix64 — same algorithm as std.testing.handlers (public-domain PRNG),
+// re-implemented locally (not imported) so scenario-building carries no
+// `Random`-effect dependency — see module header.
+fn splitmix64_step(seed u64) -> u64 {
+    mut z = seed + 0x9E3779B97F4A7C15
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EB
+    z ^ (z >> 31)
+}

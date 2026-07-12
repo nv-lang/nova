@@ -1,0 +1,123 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 187 — flagship concurrent aggregator: HTTP snapshot bridge tests.
+//
+// Mock-driven, no sockets — same `serve_once(mux, raw_bytes)` idiom as
+// std/http/server/mux_test.nv. `Net` is substituted (`mock_net()`); `Time` is
+// left at its real ambient default (same choice aggregate_test.nv makes) —
+// latencies here are small/deadline-bounded, so real sleeps stay fast.
+
+module aggregator.server_test
+
+import ./server.{snapshot_mux, snapshot_for, weather_snapshot_mux, health_snapshot_mux}
+import ./aggregate.{aggregate}
+import ./domain.{Source}
+import ./emit.{null_emit}
+import std.net.{mock_net}
+import std.http.server.{serve_once}
+import std.encoding.json.{Json}
+
+fn status_line(wire []u8) -> str {
+    ro s = unsafe { wire.to_str_unchecked() }
+    match s.find("\r\n") { Some(i) => s[0..i], None => s }
+}
+
+fn resp_contains(wire []u8, needle str) -> bool =>
+    unsafe { wire.to_str_unchecked() }.contains(needle)
+
+fn body_of(wire []u8) -> str {
+    ro s = unsafe { wire.to_str_unchecked() }
+    match s.find("\r\n\r\n") {
+        Some(i) => s[i + 4..s.byte_len()]
+        None    => ""
+    }
+}
+
+const GET_SNAPSHOT = "GET /api/snapshot HTTP/1.1\r\nHost: x\r\n\r\n"
+
+// ── POS: the snapshot endpoint serves the settled Report as JSON ───────────
+
+test "snapshot: GET /api/snapshot serves the report as JSON" {
+    with Net = mock_net() {
+        with Emit = null_emit() {
+            ro mux = snapshot_for([Source.new("only-one", "", 1, 5, false)], Duration.from_millis(100))
+            ro wire = serve_once(mux, GET_SNAPSHOT.bytes())
+            assert(status_line(wire) == "HTTP/1.1 200 OK")
+            assert(resp_contains(wire, "application/json"))
+            ro v = Json.parse(body_of(wire))!!
+            ro obj = v.object()!!
+            assert(obj.get("fanout")!!.num() == Some(1.0))
+            assert(obj.get("done")!!.num() == Some(1.0))
+        }
+    }
+}
+
+// ── POS: `snapshot_mux` (pure) served on top of a Report obtained separately
+//    from `aggregate` (effectful) — the split `snapshot_for` wraps for
+//    convenience, but the two halves compose on their own too. ────────────
+
+test "snapshot: snapshot_mux(report) serves a Report obtained separately" {
+    with Net = mock_net() {
+        with Emit = null_emit() {
+            ro report = aggregate([Source.new("only-one", "", 1, 5, false)], Duration.from_millis(100))
+            ro mux = snapshot_mux(report)   // pure — no Net/Time/Emit needed here
+            ro wire = serve_once(mux, GET_SNAPSHOT.bytes())
+            assert(status_line(wire) == "HTTP/1.1 200 OK")
+            ro v = Json.parse(body_of(wire))!!
+            assert(v.object()!!.get("done")!!.num() == Some(1.0))
+        }
+    }
+}
+
+// ── NEG: unknown path -> 404 (ServeMux default, not wired by this package) ─
+
+test "snapshot: unknown path -> 404" {
+    with Net = mock_net() {
+        with Emit = null_emit() {
+            ro mux = snapshot_for([], Duration.from_millis(50))
+            ro req = "GET /missing HTTP/1.1\r\nHost: x\r\n\r\n".bytes()
+            ro wire = serve_once(mux, req)
+            assert(status_line(wire) == "HTTP/1.1 404 Not Found")
+        }
+    }
+}
+
+// ── EDGE: empty source list -> valid empty-but-well-formed snapshot ────────
+
+test "snapshot: empty source list -> empty results, no panic" {
+    with Net = mock_net() {
+        with Emit = null_emit() {
+            ro mux = snapshot_for([], Duration.from_millis(50))
+            ro wire = serve_once(mux, GET_SNAPSHOT.bytes())
+            assert(status_line(wire) == "HTTP/1.1 200 OK")
+            ro v = Json.parse(body_of(wire))!!
+            assert(v.object()!!.get("fanout")!!.num() == Some(0.0))
+        }
+    }
+}
+
+// ── POS: the two demo legends (research 15 §5a/§5b) both serve fine — the
+//    SAME `aggregate`/bridge code, only the source list changes. ───────────
+
+test "snapshot: weather legend mux serves a 6-source snapshot" {
+    with Net = mock_net() {
+        with Emit = null_emit() {
+            ro mux = weather_snapshot_mux()
+            ro wire = serve_once(mux, GET_SNAPSHOT.bytes())
+            assert(status_line(wire) == "HTTP/1.1 200 OK")
+            ro v = Json.parse(body_of(wire))!!
+            assert(v.object()!!.get("fanout")!!.num() == Some(6.0))
+        }
+    }
+}
+
+test "snapshot: health legend mux serves a 6-source snapshot" {
+    with Net = mock_net() {
+        with Emit = null_emit() {
+            ro mux = health_snapshot_mux()
+            ro wire = serve_once(mux, GET_SNAPSHOT.bytes())
+            assert(status_line(wire) == "HTTP/1.1 200 OK")
+            ro v = Json.parse(body_of(wire))!!
+            assert(v.object()!!.get("fanout")!!.num() == Some(6.0))
+        }
+    }
+}

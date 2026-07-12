@@ -1,0 +1,222 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 187 — flagship concurrent aggregator: the backend.
+//
+// Killer-narrative signature (research 15 §6.4 / plan 187 §0):
+//
+//     fn aggregate(sources []Source, budget Duration) Net Time -> Report
+//
+// (`Emit` is ALSO in the real effect row below — the owner's plan 187 §7
+// item 1 decision, locked for this session: progress events are a real
+// effect, not a channel; see emit.nv. It is left out of the "headline"
+// signature quoted above because that one line is reused verbatim across
+// docs/research 15 and the mockup's on-screen `<code>` line — Emit is an
+// implementation/observability detail of THIS package, not the one-sentence
+// pitch. `null_emit()` is the ambient default, so this is not a breaking
+// addition to the narrative — every existing call site still reads as
+// "Net Time -> Report" unless it opts into watching progress.)
+//
+// Fan-out by N sources with a SHARED deadline, real cooperative cancellation
+// for latecomers (`supervised(deadline:)` — Plan 174 D408, landed in main
+// AFTER the plan-187 draft was written; the draft's "soft budget" fallback
+// (Ф.0) is not needed — this is the real thing from the start), 0 leaks.
+//
+// `fetch_one` performs a REAL `Net` byte-surface round-trip (connect / read /
+// close) — the SAME code runs under `mock_net()` (Demo/Chaos, this package)
+// or `real_net()` (Live, deferred — plan 187 §3 Ф.3a/b). The simulated
+// latency/failure for Demo/Chaos is injected at the call site via `Time.sleep`
+// + an early `Result::Err` return (NOT `throw`/`Fail[AggError]` — see
+// `[M-flagship-spawn-throw-segfault]` below for why — and NOT inside a
+// custom `Net` handler either) — this is this session's answer to plan 187
+// §7 item 6 ("seeded-latency wrapper — form of the API"); the owner may
+// prefer a dedicated `seeded_net(seed, profile)` handler instead (heavier:
+// a full ~20-op `Net` handler literal) — flagged, not decided.
+
+module aggregator.aggregate
+
+import ./domain.{Source, SourceData, AggError, TaskStatus, TaskResult, Report}
+import ./emit.{Emit}
+import std.net.{SocketAddr, TcpStream}
+// Explicit import required for the C runtime to link `Monotonic`/`Duration`
+// support (prelude-visible type alone is not enough — the `.c` companion is
+// only pulled in once the module is actually imported by the CU; observed as
+// `undefined symbol: nova_fn_Monotonic_now` at link time otherwise).
+import std.time.duration
+
+// Loopback port range used for the synthetic fan-out (Demo/Chaos): each
+// source connects to `BASE_PORT + index`, so the (mocked) `Net` handler's
+// per-call identity comes from the address, not from hidden state.
+const BASE_PORT int = 20000
+
+// [M-flagship-spawn-throw-segfault]: **compiler/runtime bug, NOT worked
+// around in-place — the DESIGN below routes around it entirely (Result, no
+// `throw`).** `fetch_one` originally used `Fail[AggError]` + `throw` (the
+// natural shape, matches every other `Fail`-effect fn in std/) and was
+// discharged via `with Fail[AggError] = |e| {...} { fetch_one(...) }` inside
+// `spawn { ... }` (a PLAIN function call from inside spawn — not nested
+// `with`-blocks, so it does NOT hit the EARLIER-tried, separately-broken
+// shape: `with Fail[AggError] {...} { with Fail[TimeoutError] {...} {
+// supervised(deadline:) { spawn { throw AggError... } } } }`, which
+// MISROUTES every throw inside `spawn` — regardless of its static `Fail[E]`
+// type — to the **`Fail[TimeoutError]` handler** instead; verified with a
+// throwaway `MyErr` type wholly unrelated to AggError/TimeoutError, same
+// nesting shape: the `Fail[MyErr]` handler never fires, `Fail[TimeoutError]`'s
+// does, TWICE, even though the deadline never elapses). That EARLIER shape
+// is not used anywhere in this file any more — noted here only so the next
+// person doesn't reintroduce it as an "obvious" fix for what follows.
+//
+// The plain-function-call shape above (no nested nested `with`-blocks)
+// crashed differently: SIGSEGV, no output at all (not even a
+// `println` on the very first line of the surrounding `with Net = ... {`
+// block — this is not a logic bug, it corrupts memory early enough that
+// nothing downstream is trustworthy). Bisected in isolation to "a `throw`
+// of a MULTI-FIELD payload enum (`AggError`/`Source`/`SourceData`-shaped —
+// several `str`/`[]u8` fields in play across the throw) unwinding out of a
+// function called FROM `spawn`": a single-`str`-payload throwaway enum
+// (`MyErr.Bad(str)`) unwinding the SAME way (plain fn, called from `spawn`,
+// `with Fail[MyErr] = ...` around the call) does NOT crash — only the
+// richer real types do. Root cause not identified further (GC-root
+// bookkeeping across the longjmp-based unwind is the leading suspect, but
+// this is a guess, not a diagnosis) — out of this session's remit to fix.
+//
+// WORKAROUND (verified against an isolated probe with the real `Source`/
+// `SourceData`/`AggError`/`TaskStatus` types, both a direct call AND a
+// `spawn`-wrapped call): no `throw`, no `Fail[AggError]` at all. `fetch_one`
+// returns `Result[SourceData, AggError]` directly; `fetch_status` branches
+// on it with a plain `match`. Zero effect-handler unwinding on the
+// simulated-failure path — only `supervised(deadline:)`'s OWN internal
+// `Fail[TimeoutError]` (the well-tested, intended use of that mechanism,
+// per std/concurrency/supervised_deadline_test.nv) still throws/unwinds
+// here, and that one is a SCALAR-shaped payload (`TimeoutError`), not
+// implicated by the bisection above.
+/// Fetch a single source. Demo/Chaos: `Time.sleep(source.latency_ms)` first
+/// (the simulated network wait), then either a simulated-upstream `Err`
+/// (see the marker above for why this is `Result`, not `throw`/`Fail`) or
+/// the real `Net` round-trip against whatever handler is ambient
+/// (`mock_net()` today).
+fn fetch_one(source Source, idx int) Net Time -> Result[SourceData, AggError] {
+    if source.latency_ms > 0 {
+        Time.sleep(source.latency_ms)
+    }
+    if source.should_fail {
+        return Err(AggError.Upstream(source.id))
+    }
+    ro addr = SocketAddr.loopback((BASE_PORT + idx) as u16)
+    ro stream = match TcpStream.connect(addr) {
+        Ok(s)  => s
+        Err(e) => return Err(AggError.Transport(e.to_str()))
+    }
+    mut st = stream
+    ro bytes = match st.read_to_vec(64) {
+        Ok(b) => b
+        Err(e) => {
+            st.close()
+            return Err(AggError.Transport(e.to_str()))
+        }
+    }
+    st.close()
+    Ok(SourceData { id: source.id, payload: bytes })
+}
+
+fn fetch_status(source Source, idx int, sid str, t0 Monotonic) Net Time Emit -> TaskStatus {
+    match fetch_one(source, idx) {
+        Ok(data) => {
+            Emit.lane_done(sid, deadline_elapsed_ms(t0))
+            TaskStatus.Done(data)
+        }
+        Err(e) => {
+            Emit.lane_failed(sid, e.to_str(), deadline_elapsed_ms(t0))
+            TaskStatus.Failed(e.to_str())
+        }
+    }
+}
+
+/// One source, guarded by a SHARED absolute deadline. Real cancellation
+/// (`supervised(deadline:)`, not a self-checked "soft" budget): a source that
+/// has not settled by `deadline` is cooperatively cancelled — its `Time.sleep`
+/// (or the pending `Net` op) is interrupted, cleanup runs, 0 leaks. The
+/// result is threaded out through a 1-slot channel (D415: a bare `mut`
+/// written from inside `spawn` is a data race even for a single writer —
+/// channel is the sanctioned handoff, mirrors the `parallel for` desugar in
+/// 173.1 §2).
+fn fetch_guarded(source Source, deadline Monotonic, idx int) Net Time Emit -> TaskResult {
+    // [M-flagship-monotonic-now-bare-binding-ice]: an un-annotated
+    // `ro t0 = Monotonic.now()` ICEs emit_c.rs ("[P67-LEGACY] Path call
+    // return type unknown for method=now — checker must annotate") — the
+    // checker apparently needs an expected-type hint (a declared LHS type,
+    // or the call used directly as an argument, as in
+    // std/concurrency/supervised_deadline_test.nv's
+    // `Monotonic.now() + Duration.from_millis(100)`) to resolve the return
+    // type of this specific overloaded static-path call. Reproduced in
+    // isolation (bare 5-line probe, no other code). Workaround: explicit
+    // `Monotonic` annotation on every such binding, throughout this file.
+    ro t0 Monotonic = Monotonic.now()
+    // [M-flagship-handler-lit-value-ptr-capture]: a `with Fail[E] = |e| {...}`
+    // handler LITERAL capturing `source` (a heap-backed `value` param —
+    // C-represented as `NovaValue_Source*`) directly into its closure-context
+    // struct miscompiles: CC-FAIL "assigning to 'NovaValue_Source' from
+    // incompatible type 'NovaValue_Source *'; dereference with *" — the
+    // context-struct field is the by-value struct type but the assignment
+    // skips the `*source` deref. Same defect CLASS as
+    // `[M-http-props-mut-chain-argpos-value-ptr-mismatch]` /
+    // `[M-184-mut-chain-return-position]` (std/http/server/server.nv),
+    // different call site. Workaround: pre-extract the one `str` field the
+    // handler needs BEFORE the `with Fail[...]` block, so the closure
+    // captures a plain `str` (no by-value/by-pointer mismatch), not the
+    // whole `Source`.
+    ro sid = source.id
+    Emit.lane_started(sid, idx)
+    // T inferred from the first `try_send` below (channels.md idiom) —
+    // explicit `Channel[TaskStatus].new(1)` turbofish ICEs emit_c.rs here
+    // ("Ident `Channel` not in var_types" — record-destructure position);
+    // plain `Channel.new(1)` sidesteps it.
+    ro { tx, rx } = Channel.new(1)
+    with Fail[TimeoutError] = |_e| {
+        // deadline fired before this source settled — cascading
+        // cancellation; leave the channel empty, Cancelled below.
+        Emit.lane_cancelled(sid, deadline_elapsed_ms(t0))
+    } {
+        ro src = source
+        supervised(deadline: deadline) {
+            spawn {
+                ro status = fetch_status(src, idx, sid, t0)
+                ro _ = tx.try_send(status)
+            }
+        }
+    }
+    tx.close()
+    ro status = match rx.try_recv() {
+        Some(s) => s
+        None    => TaskStatus.Cancelled
+    }
+    ro elapsed_ms = deadline_elapsed_ms(t0)
+    TaskResult { id: source.id, status, elapsed_ms }
+}
+
+// Chain broken into separate bindings ([M-174.1-vec-method-chain-elem-erasure]-
+// shaped gap: a 3-deep method chain used directly can confuse return-type
+// inference in emit_c — split, not a semantics choice).
+fn deadline_elapsed_ms(t0 Monotonic) Time -> int {
+    ro now Monotonic = Monotonic.now()
+    ro elapsed = now.elapsed_since(t0)
+    elapsed.as_millis() as int
+}
+
+/// The killer-narrative entry point: fan-out `sources` with a shared
+/// `budget`, cascading cancellation for latecomers, 0 leaks.
+#stable(since = "0.1")
+export fn aggregate(sources []Source, budget Duration) Net Time Emit -> Report {
+    ro t0 Monotonic = Monotonic.now()
+    ro deadline = t0.plus(budget)
+    // Plan 87: the loop-variable type must be annotated when the checker
+    // can't infer the collected `[]T` element type from the trailing probe
+    // alone (`TaskResult` return of `fetch_guarded` — codegen asked for an
+    // explicit `int` annotation on the index here).
+    ro results = parallel for idx int in 0..sources.len() {
+        fetch_guarded(sources[idx], deadline, idx)
+    }
+    ro wall_ms = deadline_elapsed_ms(t0)
+    ro report = Report.from(results, wall_ms)
+    Emit.swarm_done(report.results.len(), report.done, report.failed, report.cancelled,
+        report.wall_ms, report.sequential_ms)
+    report
+}

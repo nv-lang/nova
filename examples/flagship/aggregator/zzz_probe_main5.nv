@@ -1,0 +1,33 @@
+module aggregator.zzz_probe_main5
+
+import ./aggregate.{aggregate}
+import ./domain.{Source, TaskStatus}
+import ./emit.{null_emit}
+import std.net.{mock_net}
+import std.time.duration
+
+fn main() Net Time {
+    with Net = mock_net() {
+        with Emit = null_emit() {
+            ro srcs []Source = [
+                Source.new("fast-a",       "", 1, 15,  false),
+                Source.new("fast-b",       "", 1, 30,  false),
+                Source.new("slow-late",    "", 1, 500, false),
+                Source.new("bad-upstream", "", 1, 10,  true),
+            ]
+            println("before aggregate")
+            ro report = aggregate(srcs, Duration.from_millis(120))
+            println("after aggregate: len=" + str.from(report.results.len()) +
+                " done=" + str.from(report.done) + " failed=" + str.from(report.failed) +
+                " cancelled=" + str.from(report.cancelled) +
+                " wall_ms=" + str.from(report.wall_ms) + " seq_ms=" + str.from(report.sequential_ms))
+            for r in report.results {
+                match r.status {
+                    Done(_)   => println("  " + r.id + " Done elapsed=" + str.from(r.elapsed_ms))
+                    Failed(m) => println("  " + r.id + " Failed(" + m + ") elapsed=" + str.from(r.elapsed_ms))
+                    Cancelled => println("  " + r.id + " Cancelled elapsed=" + str.from(r.elapsed_ms))
+                }
+            }
+        }
+    }
+}
