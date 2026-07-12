@@ -1957,7 +1957,7 @@ extensions** (методы добавлены через `fn []T @method` по D
 | доступ | `xs[i]`, `xs.get(i)` | `[i]` — panic при out-of-bounds (D13); `get(i)` → `Option[T]` |
 | мутация | `mut xs.push(v)`, `mut xs.pop() -> Option[T]` | `push` grow при `len() == cap()` |
 | итерация | `xs.iter() -> Iter[T]`, `for x in xs { ... }` | `for` — sugar над `.iter().next()` (D58) |
-| создание | `[]T.new()`, `[]T.new().cap(n)`, `[]T.filled(v T, n int)` | static-функции на типе; `with_capacity` удалён (D372) — `.new().cap(n)` |
+| создание | `[]T.new(cap int = 0)`, `[]T.filled(v T, n int)` | static-функции на типе; `with_capacity` удалён (D372); pre-alloc = `.new(cap)` точный (D372-amend2), chain `.new().cap(n)` тоже легален |
 
 `xs.cap()` — присутствует, но **не часть стабильного API** для
 прикладного кода (detail of representation D32). Использование — для
