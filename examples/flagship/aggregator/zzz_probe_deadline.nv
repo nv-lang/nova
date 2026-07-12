@@ -1,0 +1,36 @@
+// TEMP PROBE — not part of the aggregator package, deleted before commit.
+// Does supervised(deadline:) actually interrupt Time.sleep called from a
+// helper fn (not inline in spawn body), with code AFTER the sleep?
+module aggregator.zzz_probe_deadline
+
+import std.time.duration
+
+fn do_sleep_then_send(tx ChanWriter[int], ms int) {
+    Time.sleep(ms)
+    // code AFTER the sleep — does control reach here after a truncated sleep?
+    ro _ = tx.try_send(1)
+}
+
+test "probe: sleep(500) under 100ms deadline, code-after-sleep in a helper fn" {
+    ro { tx, rx } = Channel.new(1)
+    ro t0 = Time.now_unix_ms()
+    mut caught = false
+    ro r = with Fail[TimeoutError] = |_e| {
+        caught = true
+        0
+    } {
+        supervised(timeout: Duration.from_millis(100)) {
+            spawn { do_sleep_then_send(tx, 500) }
+        }
+        99
+    }
+    ro elapsed = Time.now_unix_ms() - t0
+    tx.close()
+    ro got = rx.try_recv()
+    ro msg = "caught=" + str.from(caught) + " r=" + str.from(r) + " elapsed=" + str.from(elapsed) +
+        " got_is_some=" + str.from(got.is_some())
+    assert(caught, msg)
+    assert(elapsed < 2000, msg)
+    assert(got.is_none(), msg)
+    assert(false, msg)
+}
