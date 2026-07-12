@@ -712,7 +712,7 @@ println(pair.0, pair.1)      // кортеж — то же
 // создание массивов (D38)
 ro xs []int = []                          // пустой, тип из annotation
 ro ys = []int.new()                       // через static-метод
-mut buf = []u8.new().cap(1024)            // с pre-allocation (D372)
+mut buf = []u8.new(cap: 1024)             // pre-allocation, ровно 1024 слота (D372-amend2)
 
 // turbofish для дженериков (D38)
 ro n = parse[int]("42")?                  // явный T = int

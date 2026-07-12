@@ -6760,7 +6760,7 @@ enforcement diagnostic — followup `[M-91.7-default-new-enforcement]`):
 ro x = int.new()      // 0
 ro s = str.new()      // ""
 ro a = []int.new()    // []
-ro buf = []u8.with_capacity(1024)
+mut buf = []u8.new(cap: 1024)     // pre-alloc: ровно 1024 слота (D372-amend2)
 
 // User type — explicit:
 type User { name str, email str, is_admin bool }
@@ -6825,6 +6825,36 @@ fn User.guest() -> Self => { name: "guest", email: "", is_admin: false }
 >   Обход (принят): pre-sizing убран из desugar'а полностью — map-литералы
 >   строятся через голый `.new()` + amortized growth в insert_new-цикле
 >   (perf-only регрессия, corretness не затронута).
+
+> **Амендмент 2 — `Vec[T].new(cap int = 0)` точный pre-alloc конструктор (решение владельца 2026-07-12).**
+> Каноничная предвыделяющая форма — **default-аргумент**, НЕ chain и НЕ arity-overload:
+> ```nova
+> mut v = Vec[T].new()           // cap = 0, пусто, без аллокации (default)
+> mut v = Vec[T].new(cap: 1024)  // ТОЧНО 1024 слота, len = 0 (именованно — предпочтительно)
+> mut v = Vec[T].new(1024)       // то же, позиционно (легально)
+> ```
+> - **`new(cap)` и `cap(n)` = ТОЧНАЯ ёмкость** (без округления; `new(cap)` ≡ `new().cap(cap)`, но одной
+>   аллокацией и одним вызовом). Предпочтительное написание pre-alloc; chain `.new().cap(n)` остаётся легальным.
+> - **Контраст с `reserve(n)`:** `@reserve(additional)` — АМОРТИЗИРОВАННЫЙ рост, округляет ёмкость ВВЕРХ до
+>   степени 2 (8→16→32…) ради O(1)-amortized push; `new(cap)`/`cap(n)` — ровно `cap`, без округления. Три
+>   намерения: `new(cap)` = «дай ровно столько с рождения», `cap(n)` = «переустанови ровно на n», `reserve(n)`
+>   = «место ещё под n, можно с запасом».
+> - **Почему default-arg, а НЕ overload:** одна функция `new(cap int = 0)` заменяет 0-арг `new()` — НЕ создаёт
+>   набор перегрузок → не триггерит `[M-vec-new-static-arity-overload]` (см. поправку ниже). Применимо к типам
+>   с точной ёмкостью (`Vec`/`[]T`; `HashMap`/`Set`/`WriteBuffer`/`StringBuilder`/`Queue` — по мере миграции,
+>   семантика `cap(n)` того типа). План внедрения — **Plan 200 (зонтичный std-improvements)**.
+>
+> **ПОПРАВКА к Амендменту 1 (from_raw_parts → new-overload): ОТКАЧЕНО, спека была рассинхронена.** Складывание
+> `from_raw_parts` в 3-арг перегрузку `Vec[T].new(ptr,len,cap)` НЕ состоялось в коде — дефект
+> `[M-vec-new-static-arity-overload]` (`std/collections/vec/core.nv:130`): 0-арг и 3-арг `new` перепутываются
+> в codegen при сборке всего vec-folder-модуля (в C уходит неверный тип/арность). `from_raw_parts` остаётся
+> ИМЕНОВАННЫМ конструктором до фикса. Фикс отслеживается в **Plan 196.2 (W2 — class-C static-ctor overload+return
+> в одном чекер-окне)**; снятие маркера = приёмочная веха. `new(cap int = 0)` (одна функция, default-arg)
+> НЕ в конфликте и безопасен уже сейчас; вернуть folded `new`-overload можно ТОЛЬКО после фикса 196.2.
+> Целевая сигнатура (складывается ПОПУТНО с фиксом, W2): `fn Vec[T].from_raw_parts(ptr *T, len, cap) -> Self`
+> ⇒ `fn Vec[T].new(ptr *mut T, len int, cap int) -> Self require cap >= len` (3-арг overload + `*mut T`
+> напрямую вместо `unsafe { ptr as *mut T }` reinterpret-cast + контракт `cap >= len`). Тогда `new(cap int=0)`
+> + `new(ptr *mut T, len, cap)` = легальный набор перегрузок.
 
 ---
 
