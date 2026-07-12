@@ -4,8 +4,8 @@
 #prelude(core, runtime, collections, protocols)
 module collections.vec
 
-test "new().cap(n) / reserve" {
-    mut v = Vec[int].new().cap(16)
+test "new(cap: n) / reserve" {
+    mut v = Vec[int].new(cap: 16)
     assert(v.cap() >= 16)
     assert(v.len() == 0)
     for i in 0..10 { v.push(i) }

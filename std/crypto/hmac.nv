@@ -49,8 +49,8 @@ export fn HmacSha256.compute(key []u8, message []u8) -> [32]u8 {
     ro key_block = normalize_key_sha256(key)
 
     // Step 2: ipad / opad
-    mut inner_pad []u8 = []u8.new().cap(SHA256_BLOCK_SIZE)
-    mut outer_pad []u8 = []u8.new().cap(SHA256_BLOCK_SIZE)
+    mut inner_pad []u8 = []u8.new(cap: SHA256_BLOCK_SIZE)
+    mut outer_pad []u8 = []u8.new(cap: SHA256_BLOCK_SIZE)
     for i in 0..SHA256_BLOCK_SIZE {
         inner_pad.push(((key_block[i] as int) ^ 0x36) as u8)
         outer_pad.push(((key_block[i] as int) ^ 0x5C) as u8)
@@ -103,7 +103,7 @@ fn constant_time_eq(a [32]u8, b [32]u8) -> bool {
 // Если короче — pad нулями справа до block_size.
 // Если ровно — без изменений.
 fn normalize_key_sha256(key []u8) -> []u8 {
-    mut block []u8 = []u8.new().cap(SHA256_BLOCK_SIZE)
+    mut block []u8 = []u8.new(cap: SHA256_BLOCK_SIZE)
 
     if key.len() > SHA256_BLOCK_SIZE {
         ro hashed = Sha256.hash(key)

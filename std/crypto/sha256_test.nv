@@ -26,7 +26,7 @@ test "SHA-256: 1 миллион 'a' — long input stress" {
     // Известный test vector. Используем incremental чтобы не строить
     // огромный []u8 в памяти.
     mut state = Sha256.new()
-    ro chunk []u8 = []u8.new().cap(1000)
+    ro chunk []u8 = []u8.new(cap: 1000)
     mut tmp = chunk
     for i in 0..1000 { tmp.push('a' as u8) }
     mut k = 0

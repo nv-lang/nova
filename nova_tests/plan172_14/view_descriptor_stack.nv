@@ -24,7 +24,7 @@ test "ro b = s.bytes(): стек-дескриптор, 0 аллокаций, zer
 }
 
 test "ro sl = v[3..5]: стек-дескриптор, 0 аллокаций, zero-copy payload" {
-    mut v = []int.new().cap(16)
+    mut v = []int.new(cap: 16)
     for i in 0..16 { v.push(i * 10) }
     ro before = gc.alloc_count()
     ro sl = v[3..5]

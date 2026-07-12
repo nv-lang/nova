@@ -7,7 +7,7 @@ module encoding.compress
 
 fn d336_hex(s str) -> []u8 {
     ro chars = s.bytes()
-    mut out []u8 = []u8.new().cap(chars.len() / 2)
+    mut out []u8 = []u8.new(cap: chars.len() / 2)
     mut i = 0
     while i + 1 < chars.len() {
         ro hi = d336_hv(chars[i])

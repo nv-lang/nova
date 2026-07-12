@@ -8,7 +8,7 @@ module encoding.compress
 
 fn d335_hex(s str) -> []u8 {
     ro chars = s.bytes()
-    mut out []u8 = []u8.new().cap(chars.len() / 2)
+    mut out []u8 = []u8.new(cap: chars.len() / 2)
     mut i = 0
     while i + 1 < chars.len() {
         ro hi = d335_hv(chars[i])
@@ -30,9 +30,9 @@ test "D335: streaming feed-by-1-byte + bounded read(8) == one-shot" {
     ro comp = d335_hex("2bc94855282ccd4cce56482aca2fcf5348cbaf50c82acd2d2856c82f4b2d5228c94855c849acaa5448c94fd703f346158f2a1e555c4e4dc500")
     ro oneshot = inflate(comp, 4096)!!
     mut inf = Inflater.new(4096)
-    mut out []u8 = []u8.new().cap(900)
+    mut out []u8 = []u8.new(cap: 900)
     for idx in 0..comp.len() {
-        mut one []u8 = []u8.new().cap(1)
+        mut one []u8 = []u8.new(cap: 1)
         one.push(comp[idx])
         inf.feed(one)!!
         loop {
@@ -57,7 +57,7 @@ test "D335: GzipReader streaming framing (feed/read/finish)" {
     mut gr = GzipReader.new(1048576)
     gr.feed(comp)!!
     gr.finish()!!
-    mut out []u8 = []u8.new().cap(16)
+    mut out []u8 = []u8.new(cap: 16)
     loop {
         ro c = gr.read(1024)!!
         if c.len() > 0 { out.append(c) } else { break }

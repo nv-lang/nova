@@ -70,7 +70,7 @@ export fn Hex.decode(s str) -> Result[[]u8, ParseHexError] {
     if s.byte_len() % 2 != 0 {
         return Err(OddLength { actual: s.byte_len() })
     }
-    mut out = []u8.new().cap(s.byte_len() / 2)
+    mut out = []u8.new(cap: s.byte_len() / 2)
     for i in (0..s.byte_len()).step_by(2) {
         ro hi = digit_value(s, i)?
         ro lo = digit_value(s, i + 1)?

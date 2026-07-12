@@ -349,7 +349,7 @@ fn parse_query(q str) -> [](str, str) {
 fn percent_decode(s str) -> str {
     ro b = s.bytes()
     ro n = b.len()
-    mut out []u8 = []u8.new().cap(n)
+    mut out []u8 = []u8.new(cap: n)
     mut i = 0
     while i < n {
         // Per-position transcode (`+`→space, `%XX`→decoded byte, else→pass-

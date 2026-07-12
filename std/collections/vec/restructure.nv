@@ -51,7 +51,7 @@ import std.collections.range.{Range}
 export fn Vec[T] @concat(other Vec[T]) -> Vec[T] {
     ro a = @len
     ro b = other.len()
-    mut out = Vec[T].new().cap(a + b)
+    mut out = Vec[T].new(cap: a + b)
     if a > 0 {
         unsafe {
             RawMem.copy(@data as *u8, out.data as *mut u8, a * size_of[T]())
@@ -118,7 +118,7 @@ export fn Vec[Vec[T]] @flatten() -> Vec[T] {
     for inner in @ {
         total = total + inner.len()
     }
-    mut out = Vec[T].new().cap(total)
+    mut out = Vec[T].new(cap: total)
     // Bulk-copy each inner row onto the end of `out` (the `@append(Vec[T])`
     // fast path, mutate.nv — one `RawMem.copy` per row, COPY not move so the
     // inner rows are left unchanged). Empty rows are no-ops inside `@append`.
@@ -158,7 +158,7 @@ export fn Vec[T] mut @rotate_left(n int) -> @
     }
     // Save the leading `k` elements, shift the suffix `[k, len)` down to the
     // front (overlap-safe memmove), then drop the saved prefix into the tail.
-    mut head = Vec[T].new().cap(k)
+    mut head = Vec[T].new(cap: k)
     unsafe {
         RawMem.copy(@data as *u8, head.data as *mut u8, k * size_of[T]())
     }
@@ -220,7 +220,7 @@ export fn Vec[T] mut @drain(range Range) -> Vec[T]
 {
     ro { start, end } = range
     ro count = end - start
-    mut out = Vec[T].new().cap(count)
+    mut out = Vec[T].new(cap: count)
     if count == 0 {
         return out
     }
