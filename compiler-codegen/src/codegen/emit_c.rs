@@ -46493,27 +46493,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                             }
                         }
-                        if let Some(proto_name) = obj_ty.strip_prefix("NovaBox_") {
-                            // proto_name может быть с args-mangling, e.g.
-                            // "Iter_nova_int". Сначала пробуем full mangle,
-                            // потом base (split on '_').
-                            let candidate_keys: Vec<String> = std::iter::once(proto_name.to_string())
-                                .chain(proto_name.split('_').next().map(String::from).into_iter())
-                                .collect();
-                            for key in &candidate_keys {
-                                if let Some((_type_params, methods)) =
-                                    self.protocol_method_registry.get(key.as_str()).cloned()
-                                {
-                                    if let Some(m) = methods.iter().find(|m| m.name == *method_name) {
-                                        self.icr_trace("B04_novabox_protocol_method");
-                                        let ret_c = m.return_type.as_ref()
-                                            .and_then(|rt| self.type_ref_to_c(rt).ok())
-                                            .unwrap_or_else(|| "nova_unit".to_string());
-                                        return ret_c;
-                                    }
-                                }
-                            }
-                        }
+                        // Plan 196.2 W1 [gate-1]: B04_novabox_protocol_method REMOVED.
+                        // `NovaBox_<proto>`-receiver protocol-method return lookup — a
+                        // dyn-protocol-box dispatch case; the sibling B03 (protocol
+                        // default-body synth, immediately above) still fires, but this
+                        // NovaBox-specific case is checker-covered (resolved_types /
+                        // Channel 2). NO-HIT across conformance+std ⟹ structurally
+                        // unreachable (§5).
                     }
                     // [M-compiler-nv-porting-wave] item B4: dead duplicate
                     // removed here. This handled `char.try_from(int_expr)` —
@@ -47062,37 +47048,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 }
                                             }
                                         }
-                                        // Plan 103.5: ExternalRegistry fallback for instance method
-                                        // return type inference on generic opaque types (OnceCell[T],
-                                        // Lazy[T]). `generic_type_methods.get(&base_name)` is None
-                                        // for external-only types. Substitute generic params in
-                                        // ExternalRegistry return_c_type string.
-                                        if let Some(ext_decls) = self.external_registry
-                                            .by_key.get(&(base_name.clone(), mn.clone()))
-                                        {
-                                            let inst_decls: Vec<_> = ext_decls.iter()
-                                                .filter(|d| d.is_instance == want_inst)
-                                                .collect();
-                                            if let Some(decl) = inst_decls.first() {
-                                                let raw_ret = decl.return_c_type.clone();
-                                                // Substitute generic param names (T→nova_int etc.)
-                                                // in return_c_type string.
-                                                let ret = tmpl.generics.iter()
-                                                    .zip(type_args_c.iter())
-                                                    .fold(raw_ret, |acc, (g, c)| {
-                                                        // Replace "Nova_T*" with concrete type
-                                                        acc.replace(&format!("Nova_{}*", g.name), c)
-                                                            // Also replace bare type param name
-                                                            .replace(&g.name, c)
-                                                    });
-                                                if !ret.is_empty() && ret != "void*"
-                                                    && !self.debt_is_generic_stub_c(&ret)
-                                                {
-                                                    self.icr_trace("B07ext_generic_instance_external_registry");
-                                                    return ret;
-                                                }
-                                            }
-                                        }
+                                        // Plan 196.2 W1 [gate-1]: B07ext_generic_instance_external_registry
+                                        // REMOVED. ExternalRegistry fallback for instance-method return
+                                        // on generic opaque types (OnceCell[T], Lazy[T]) — corpus DOES
+                                        // exercise these (std/runtime/sync.nv, d171_once_family.nv) yet
+                                        // NO-HIT ⟹ Channel-2 (resolved_types) now covers this instance-
+                                        // method-on-generic-opaque-receiver case ahead of this legacy.
                                     }
                                 }
                             }
@@ -47700,13 +47661,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                             }
                         }
-                        // Plan 08 Ф.4 prerequisite: closure-call (fn-параметр)
-                        // имеет ret_ty в fn_param_sigs. Без этого `pred(x)` где
-                        // `pred fn(int) -> bool` инфер'ится как nova_int.
-                        if let Some((_, ret_ty)) = self.fn_param_sigs.get(name) {
-                            self.icr_trace("B10k_fn_param_sigs_second");
-                            return ret_ty.clone();
-                        }
+                        // Plan 196.2 W1 [gate-1]: B10k_fn_param_sigs_second REMOVED. Duplicate
+                        // `fn_param_sigs` lookup (first check = B10e_fn_param_sigs_first, which
+                        // still fires) — this second, later check in the cascade is NO-HIT ⟹
+                        // structurally unreachable (§5), same redundant-second-check pattern as
+                        // the already-removed B11z_prim_builtin_method_second.
                         // Plan 120 (D215): named tuple constructor — "Point" → "NovaTuple_Point".
                         if let Some(c_ty) = self.type_aliases.get(name.as_str()) {
                             if c_ty.starts_with("NovaTuple_") {
