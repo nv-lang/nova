@@ -12,7 +12,7 @@
 // (поменяло бы смысл имени "trivial"), не удалять (единственный тривиальный
 // non-negative-string-length репро). Оставлено RED как было.
 
-module nova_tests.contracts
+module deferred.trivial_string_len_positive
 
 type Wrapper {
     data str,

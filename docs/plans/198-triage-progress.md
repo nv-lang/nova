@@ -2,9 +2,55 @@
 # Plan 198 Ф.1 — census-таблица (read-only, БЕЗ удаления/переноса)
 
 **Статус:** Ф.1 готова (владелец согласен). **Ф.2 волна-1 (DELETE) — ИСПОЛНЕНО**
-(2026-07-12, коммит `011aadde5`): 1158 файлов снесено. MIGRATE (1905) и
-KEEP-SPECIAL-миграция (18) — **отложены**, см. «Ф.2 волна-1 — отчёт исполнения»
-ниже (см. [198-nova-tests-triage.md](198-nova-tests-triage.md)).
+(2026-07-12, коммит `011aadde5`): 1158 файлов снесено. **Ф.2 волна-2
+(KEEP-SPECIAL → `spec_tests/soundness/`) — ИСПОЛНЕНО** (см. «Ф.2 волна-2» ниже).
+MIGRATE (1905) — **в процессе**, см. «Ф.2 волна-2 — MIGRATE» ниже (см.
+[198-nova-tests-triage.md](198-nova-tests-triage.md)).
+
+## Ф.2 волна-2 — KEEP-SPECIAL → `spec_tests/soundness/` (исполнено)
+
+Владелец согласовал (в задании этой волны) `spec_tests/soundness/` как целевую
+директорию (открытый вопрос §1 «Открытые решения» плана 198-nova-tests-triage.md
+закрыт этим выбором). Перенесено все 18 файлов:
+
+- **10 позитивов** → `spec_tests/soundness/*.nv`, `module` переписан на
+  `spec_tests.soundness` (был `nova_tests.contracts`/`nova_tests.doc`/
+  `nova_tests.plan140_4`) — единый folder-module CU.
+- **8 негативов** → `spec_tests/soundness/neg/*.nv`, `module neg.<stem>` НЕ
+  менялся (уже standalone-CU, имена стемов не коллизировали ни друг с другом,
+  ни с существующими 92 стемами `spec_tests/conformance/neg/`).
+- **Находка при верификации:** 2 из 10 позитивов — уже-известные
+  **deferred-red** фикстуры (Ф.3(a) `trivial_string_len_positive` — retired
+  `str.len()`/`E_STR_NO_LEN`, ждёт `byte_len()` allow-list; Ф.3(b)
+  `f26_newtype_positive` — newtype↔int implicit-coercion, ждёт правки под
+  явную-конверсию семантику, решённую владельцем 2026-07-11). Оставленные в
+  общем `module spec_tests.soundness` folder-module, они **валили ВЕСЬ CU**
+  (folder-module = один compile-unit → один битый файл роняет всех соседей,
+  маскируя реальный статус остальных 8 здоровых soundness-guard'ов). **Исправил:**
+  вынес оба в `spec_tests/soundness/deferred/` как standalone-модули
+  (`module deferred.trivial_string_len_positive` /
+  `module deferred.f26_newtype_positive`) — та же эскейп-хетч логика, что у
+  `neg/` (per test-conventions.md «Когда folder-module невозможен» —
+  неразрешимый до Ф.3 конфликт). Их `neg`-пары (`trivial_string_len_fail`,
+  `f26_newtype_negative`) были и остаются standalone в `soundness/neg/`, не
+  трогал.
+- **Верификация (`nova test spec_tests/soundness --full`, trivial-backend):**
+  `PASS: 5  FAIL: 2  SKIP: 4` — ровно ожидаемо: 1 merged-CU PASS (8 файлов,
+  включая `ovf_unbounded_panic_neg` через `panics`-клаузулу), 4 неg PASS
+  (`int_overflow_*` × 3 runtime-panic + `f26_newtype_negative`), 2 deferred
+  CODEGEN-FAIL (**те же самые** ошибки, что были ДО переноса — `E_STR_NO_LEN`
+  и `E7301`, не новые), 4 SKIP (z3-only негативы, ожидаемо под trivial backend).
+  **Статус-кво сохранён, ничего не сломано, ничего не замаскировано.**
+- **⚠️ CI-ratchet НЕ перевешен (по заданию — только доложить):**
+  `.github/workflows/contracts-z3.yml` грепает `SOUNDNESS_REGRESSION` под
+  `nova_tests/` (`grep -rl SOUNDNESS_REGRESSION nova_tests/ | wc -l`, `MIN=12`,
+  строка ~70) — теперь найдёт **1** (случайное совпадение — упоминание строки
+  в `nova_tests/STATUS.md`, не реальный маркер) вместо прежних 13-14. Гейт
+  **сломан** (`1 < MIN=12` → CI зафиксирует ложную regression). Также строка
+  14 (`paths: nova_tests/contracts/**`) — триггер-путь тоже устарел. **Требуется
+  отдельное действие владельца/следующей волны:** перевесить grep-путь на
+  `spec_tests/soundness/` (позитивы + `neg/` + `deferred/`, все несут маркер)
+  и обновить `paths:` триггер на `spec_tests/soundness/**`.
 
 ## Ф.2 волна-1 — отчёт исполнения (2026-07-12)
 
