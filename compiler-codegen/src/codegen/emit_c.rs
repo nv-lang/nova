@@ -32075,14 +32075,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             "unwrap" => {
                                 // Plan 72 P1-C: cast payload.Ok._0 to actual T type.
                                 // Plan 59 Ф.7.5 D4: строгая (T,E)-резолюция.
-                                let (ok_c_ty, _) = self.resolve_result_te_strict(
+                                let (ok_c_ty, err_c_ty) = self.resolve_result_te_strict(
                                     obj, &obj_ty, "unwrap")?;
                                 let tmp = self.fresh_tmp();
                                 // Plan 59 Ф.7.5 D1a: dual-mode var-decl.
                                 self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
                                 self.line(&format!("if ({}->tag == NOVA_TAG_Result_Err) {{", tmp));
                                 self.indent += 1;
-                                self.line(&format!("Nova_Fail_fail({}->payload.Err._0);", tmp));
+                                // Plan 196.3 wave-2 (D52/D407, discovered via a method-level-
+                                // generic Result.map_err[F] matrix test — CC-FAIL "passing
+                                // 'Nova_D119mErr *' to parameter of incompatible type
+                                // 'nova_str'"): mirror the `?`/`!!` `err_is_str` gate
+                                // (28231-28277 / 28341-28390) instead of unconditionally
+                                // feeding `payload.Err._0` to `Nova_Fail_fail(nova_str)`.
+                                // Err._0's C representation is the MONO (T,E) payload type —
+                                // for a non-str Err (e.g. a user record/sum produced by
+                                // `.map_err[F]`) that is a real type mismatch, not just an
+                                // approximation. Only a str Err can feed the payload directly
+                                // as the panic message; a non-str Err panics with a fixed
+                                // message — same convention `Option.unwrap()` already uses
+                                // for "called unwrap on None" (31808 below).
+                                if err_c_ty == "nova_str" {
+                                    self.line(&format!("Nova_Fail_fail({}->payload.Err._0);", tmp));
+                                } else {
+                                    self.line("Nova_Fail_fail((nova_str){.ptr=(const uint8_t*)\"called unwrap on Err\", .len=20});");
+                                }
                                 self.indent -= 1;
                                 self.line("}");
                                 // Plan 91.12 fix: typed Result mono (`NovaRes_<n>*`) stores
@@ -43625,6 +43642,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// registers innermost types раньше outer'а, что даёт правильный
     /// topological order: `NovaOpt_X` стоит до `NovaOpt_NovaOpt_X` в
     /// файле (последний зависит от первого).
+    /// Plan 196.3 wave-2 (D52/D407/D85, one-window) trace-proof instrumentation.
+    /// Mirror of `icr_trace`: `NOVA_TRACE_MLRFS` env-gated (debug_assertions only,
+    /// zero overhead in release), dedups by `(sum_name, method, resolved)` so a
+    /// hot loop only prints once per distinct outcome. Empirically answers
+    /// "does Stage-1a's `resolve_return_channel` intercept BEFORE this legacy
+    /// fallback is even reached, and when reached does it still resolve?"
+    #[inline]
+    fn trace_mlrfs(sum_name: &str, method: &str, resolved: bool) {
+        #[cfg(debug_assertions)]
+        {
+            use std::sync::{OnceLock, Mutex};
+            use std::collections::HashSet;
+            static ON: OnceLock<bool> = OnceLock::new();
+            if !*ON.get_or_init(|| std::env::var_os("NOVA_TRACE_MLRFS").is_some()) {
+                return;
+            }
+            static SEEN: OnceLock<Mutex<HashSet<(String, String, bool)>>> = OnceLock::new();
+            let key = (sum_name.to_string(), method.to_string(), resolved);
+            let mut seen = SEEN.get_or_init(|| Mutex::new(HashSet::new())).lock().unwrap();
+            if seen.insert(key) {
+                eprintln!("[MLRFS-HIT] sum={} method={} resolved={}", sum_name, method, resolved);
+            }
+        }
+    }
+
     /// Plan 99.1 Ф.2/Ф.3: best-effort method-level inference для
     /// `infer_expr_c_type` (`&self`-context — нельзя мутировать
     /// `var_types`). Возвращает Some(resolved_c_ty) для return-типа
@@ -43641,7 +43683,54 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     ///
     /// Для full-precision (с pre-binding) используется `&mut self`
     /// version `resolve_method_level_subst` в DeclaredBody-dispatch.
+    ///
+    /// Plan 196.3 wave-2 (D52/D407/D85, one-window channel-migration audit,
+    /// 2026-07-12): status 🔄 — kept as a LIVE fallback, NOT migrated onto
+    /// `resolve_return_channel` (types/mod.rs:9594, Stage-1a/Stage-1b, frozen
+    /// for this arm). Two reasons, both verified empirically (`NOVA_TRACE_MLRFS`
+    /// + `NOVA_TRACE_ICR=1`, debug build, over conformance + std + the
+    /// `nova_tests/plan99` legacy corpus):
+    /// 1. **Both call sites are inside the wave-1 frozen region**
+    ///    (emit_c.rs 46293-48883 — `infer_call_ret_c`'s `NovaOpt_`/Result-like
+    ///    branches). There is no caller of this fn OUTSIDE that region to
+    ///    convert to channel-first; the region itself is off-limits to this arm.
+    /// 2. **The checker's channel is intentionally conservative here, not
+    ///    incomplete-by-oversight.** `resolve_instance_method_return`
+    ///    (types/mod.rs ~13840-13887) already tries `resolve_return_channel`
+    ///    for a method-level-generic return and materializes into
+    ///    `resolved_types` ONLY when the solver's answer round-trips the
+    ///    legacy `unify_type` binding (propose-then-verify) — else it bails
+    ///    to `None`, i.e. to THIS fn. Trace evidence: `sum=Result method=map
+    ///    resolved=true` AND `sum=Result method=map resolved=false` both fire
+    ///    across the same small corpus (`nova_tests/plan99/result_map_migrated`
+    ///    + `p1c_result_chain_pos`) — this fn is genuinely doing load-bearing
+    ///    work for calls the channel does not (yet) cover, not dead weight.
+    ///
+    /// New conformance coverage for the exact class this fn resolves —
+    /// TYPE-CHANGING `U`/`E`/`F` (not just identity/width-preserving) on all
+    /// four builtin method-level-generic methods — is in
+    /// `spec_tests/conformance/d119_option_result_method_level_generic.nv`.
+    /// That matrix test surfaced a genuine, unrelated pre-existing bug (fixed
+    /// in this same wave, §4а zero-tolerance): `Result.unwrap()`
+    /// (`infer_call_ret_c`'s sibling in `emit_expr`, ~32075 — OUTSIDE the
+    /// frozen region) unconditionally fed `payload.Err._0` to
+    /// `Nova_Fail_fail(nova_str)` regardless of the actual (T,E); a
+    /// `.map_err[F]`-produced non-str `F` payload is a real C type mismatch
+    /// (CC-FAIL), now gated on `err_c_ty == "nova_str"` mirroring the `?`/`!!`
+    /// `err_is_str` pattern (28231-28277 / 28341-28390).
     fn infer_method_level_return_for_sum(
+        &self,
+        sum_name: &str,
+        method: &str,
+        args: &[CallArg],
+        receiver_subst: &[(String, String)],
+    ) -> Option<String> {
+        let result = self.infer_method_level_return_for_sum_inner(sum_name, method, args, receiver_subst);
+        Self::trace_mlrfs(sum_name, method, result.is_some());
+        result
+    }
+
+    fn infer_method_level_return_for_sum_inner(
         &self,
         sum_name: &str,
         method: &str,
