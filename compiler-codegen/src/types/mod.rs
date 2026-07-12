@@ -16801,7 +16801,21 @@ impl<'a> BoundCtx<'a> {
             _ => func.as_ref(),
         };
         // Резолвим callee → список параметров.
-        let callee_params: &[Param] = match &base.kind {
+        // Plan 196.3 (D102/D372-позиционка, one-window fold): резолв теперь
+        // возвращает ТАКЖЕ имя callee (не только params) — `check_keyword_only`
+        // применяет единое, структурное D372-amend2-исключение (canonical
+        // single-default `cap`-ctor позиционно легален) в ОДНОМ месте, вне
+        // зависимости от того, каким из трёх путей ниже резолвился callee.
+        // До этого исключения не было вообще: generic-static (`Vec[T].new(n)`
+        // и т.п.) молча ИЗБЕГАЛ диагностики (Member{obj: TurboFish{..}} не
+        // резолвится через `resolve_instance_method`, obj — не value-типа,
+        // Попытка 1 проваливается, Попытка 2 — arity-neutral name-only —
+        // почти всегда ambiguous среди `new`-методов разных типов → `None`
+        // → ранний `return` до вызова `check_keyword_only`), а non-generic
+        // static (`StringBuilder.new(128)` — `Path`, 2 сегмента, однозначный
+        // `method_table`-lookup) резолвился и ловил D102 по факту случайной
+        // разницы AST-формы, а не по спеке.
+        let (callee_params, callee_name): (&[Param], &str) = match &base.kind {
             ExprKind::Ident(name) => {
                 // Plan 153 fix (regression from vec `resize_with`/`fill_with`,
                 // 2026-06-14): a LOCAL binding named `name` — in particular a
@@ -16816,7 +16830,7 @@ impl<'a> BoundCtx<'a> {
                 if scope.contains_key(name) { return; }
                 let Some(overloads) = self.sig.fn_decls.get(name) else { return; };
                 match overloads.as_slice() {
-                    [single] => &single.params,
+                    [single] => (&single.params, name.as_str()),
                     _ => return, // overload — пропускаем (D102: нет overload,
                                  // но bootstrap fn_decls может иметь несколько).
                 }
@@ -16826,7 +16840,7 @@ impl<'a> BoundCtx<'a> {
                 let Some(methods) = self.sig.method_table.get(&parts[0]) else { return; };
                 let Some(overloads) = methods.get(&parts[1]) else { return; };
                 match overloads.as_slice() {
-                    [single] => &single.params,
+                    [single] => (&single.params, parts[1].as_str()),
                     _ => return,
                 }
             }
@@ -16843,7 +16857,7 @@ impl<'a> BoundCtx<'a> {
             ExprKind::Member { obj, name: method_name } => {
                 let resolved = self.resolve_instance_method(obj, method_name, scope, args.len());
                 match resolved {
-                    Some(f) => &f.params,
+                    Some(f) => (&f.params, method_name.as_str()),
                     None => return,
                 }
             }
@@ -16901,7 +16915,7 @@ impl<'a> BoundCtx<'a> {
                 // Отдельная диагностика на КАЖДЫЙ нарушающий аргумент
                 // (не «первый и стоп») — error recovery без каскада:
                 // просто продолжаем цикл.
-                self.check_keyword_only(effective_params, args, &bindings, errors);
+                self.check_keyword_only(effective_params, args, &bindings, callee_name, errors);
                 // Plan 172.5 (D326): validate `ref` passing-mode — call-site
                 // marker ⟺ `mut ref` param, arg addressability + mutability,
                 // and same-call alias exclusivity (E_REF_ALIAS_OVERLAP).
@@ -17132,15 +17146,43 @@ impl<'a> BoundCtx<'a> {
     /// аргументы, легшие на параметры с дефолтом, и эмитить production-grade
     /// диагностику на каждый (имя параметра, `note: declared here`,
     /// machine-applicable structured suggestion `name: <expr>`).
+    ///
+    /// Plan 196.3 (D102/D372-amend2 fold, one window): единственное
+    /// структурное исключение из keyword-only — canonical single-default
+    /// `cap`-ctor: `fn Type.new(cap int = 0) -> Self`. Спека
+    /// (`spec/decisions/02-types.md` §D372 amend 2) делает `.new(1024)`
+    /// позиционным ЛЕГАЛЬНЫМ наравне с `.new(cap: 1024)` — для ЛЮБОГО типа,
+    /// принявшего конвенцию (`Vec`/`[]T`, `HashMap`, `Set`, `Queue`,
+    /// `StringBuilder`, `WriteBuffer`, и любой будущий), generic-static или
+    /// нет. Раньше это работало ТОЛЬКО для generic-static форм (`Vec[T]
+    /// .new(n)`) — не потому что было спроектировано, а потому что их
+    /// `Member{obj: TurboFish{..}}` call-shape не резолвится через
+    /// `resolve_instance_method` (obj — не value типа) и звонок в
+    /// `check_call_argbind` возвращался РАНО, до вызова этой функции;
+    /// non-generic static (`StringBuilder.new(128)`, `Path`-shape,
+    /// однозначный `method_table`-lookup) резолвился успешно и ловил D102
+    /// по случайности AST-формы. Проверка вынесена сюда — единственная
+    /// точка входа для ВСЕХ трёх путей резолва `check_call_argbind`, так
+    /// что расхождение по AST-форме больше не имеет значения. Заскоуплено
+    /// УЗКО (имя callee буквально `new`, арность ровно 1, единственный
+    /// параметр называется буквально `cap`) — НЕ открывает позиционку для
+    /// произвольных default-параметров других функций/методов.
     fn check_keyword_only(
         &self,
         effective_params: &[Param],
         args: &[CallArg],
         bindings: &[crate::argbind::ArgBinding],
+        callee_name: &str,
         errors: &mut Vec<Diagnostic>,
     ) {
         use crate::argbind::ArgBinding;
         use crate::diag::{Applicability, Span, Suggestion};
+        let is_canonical_cap_ctor = callee_name == "new"
+            && effective_params.len() == 1
+            && effective_params[0].name == "cap";
+        if is_canonical_cap_ctor {
+            return;
+        }
         for (pi, binding) in bindings.iter().enumerate() {
             let ArgBinding::Positional(ai) = binding else { continue; };
             let param = &effective_params[pi];

@@ -62,7 +62,7 @@ fn sb_clone_buf(src []u8) -> []u8 {
 }
 
 // Пустой StringBuilder с pre-allocated capacity 16.
-export fn StringBuilder.new() -> Self => { buf: sb_init_buf(INITIAL_CAPACITY) }
+export fn StringBuilder.new(cap int = INITIAL_CAPACITY) -> Self => { buf: sb_init_buf(cap) }
 
 // StringBuilder из существующей строки (copy UTF-8 bytes).
 export fn StringBuilder.from(s str) -> Self => StringBuilder.new().append(s)
