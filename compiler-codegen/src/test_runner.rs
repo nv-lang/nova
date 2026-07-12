@@ -722,6 +722,32 @@ pub struct ResolvedFfiConfig {
     /// manifest-dir-relative contract as `c_shims`/`include_dirs`.
     pub lib_dirs: Vec<PathBuf>,
     pub libs: Vec<String>,
+    /// Plan 193 Ф.2 gate-3: vendored C source dirs for generic
+    /// build-and-cache (`manifest::FfiConfig::vendor_src_dirs` doc-comment).
+    pub vendor_src_dirs: Vec<PathBuf>,
+}
+
+/// Plan 193 Ф.2 gate-3 (mbedtls-vendored, 2026-07-12): Windows
+/// `std::fs::canonicalize` always returns a `\\?\`-verbatim-prefixed path —
+/// the origin here is `manifest::find_manifest`'s canonicalize call, which
+/// `ResolvedFfiConfig::from_manifest`'s `manifest_dir.join(p)` inherits for
+/// EVERY `[ffi]`-declared path. Empirically confirmed (both cl.exe AND
+/// clang, so not an MSVC-only quirk): a `\\?\`-prefixed path given as a
+/// SOURCE FILE or `-I`/`/I` search directory fails to resolve (`c1: fatal
+/// error C1083` / `fatal error: '...' file not found`) even though the
+/// underlying file/dir exists and the SAME path minus the prefix compiles
+/// clean — this had simply never been exercised end-to-end before
+/// (existing `[ffi]` consumers' shims are either header-free or don't
+/// `#include` anything from their own declared `include_dirs`). Strip the
+/// prefix once, here, at the one place ALL `[ffi]` paths are constructed —
+/// every downstream consumer (`build_command`'s 3 toolchain branches, the
+/// vendor build-and-cache mechanism below) inherits the fix for free.
+/// A no-op on non-Windows (canonicalize there never adds this prefix).
+fn strip_verbatim_prefix(p: &Path) -> PathBuf {
+    match p.to_string_lossy().strip_prefix(r"\\?\") {
+        Some(rest) => PathBuf::from(rest),
+        None => p.to_path_buf(),
+    }
 }
 
 impl ResolvedFfiConfig {
@@ -737,10 +763,11 @@ impl ResolvedFfiConfig {
         let cfg = m.ffi.as_ref()?;
         let base = m.manifest_dir.clone();
         Some(ResolvedFfiConfig {
-            c_shims: cfg.c_shims.iter().map(|p| base.join(p)).collect(),
-            include_dirs: cfg.include_dirs.iter().map(|p| base.join(p)).collect(),
-            lib_dirs: cfg.lib_dirs.iter().map(|p| base.join(p)).collect(),
+            c_shims: cfg.c_shims.iter().map(|p| strip_verbatim_prefix(&base.join(p))).collect(),
+            include_dirs: cfg.include_dirs.iter().map(|p| strip_verbatim_prefix(&base.join(p))).collect(),
+            lib_dirs: cfg.lib_dirs.iter().map(|p| strip_verbatim_prefix(&base.join(p))).collect(),
             libs: cfg.libs.clone(),
+            vendor_src_dirs: cfg.vendor_src_dirs.iter().map(|p| strip_verbatim_prefix(&base.join(p))).collect(),
         })
     }
 
@@ -759,6 +786,11 @@ impl ResolvedFfiConfig {
         for lib in other.libs {
             if !self.libs.contains(&lib) {
                 self.libs.push(lib);
+            }
+        }
+        for dir in other.vendor_src_dirs {
+            if !self.vendor_src_dirs.contains(&dir) {
+                self.vendor_src_dirs.push(dir);
             }
         }
     }
@@ -806,6 +838,240 @@ fn first_missing_ffi_lib(ffi: &ResolvedFfiConfig) -> Option<(String, Vec<PathBuf
         }
     }
     None
+}
+
+/// Plan 193 Ф.2 gate-3 (mbedtls-vendored, 2026-07-12): generic compile-time
+/// feature-gate defines for `[ffi] libs` — `NOVA_FFI_HAVE_<LIB>` (sanitized
+/// uppercase) per lib name, emitted ONLY when `first_missing_ffi_lib`
+/// confirms all declared libs are actually present (never emitted on a path
+/// that's about to SKIP — a shim gated on this define must never reference
+/// symbols the linker won't find). Lets a package's own `.c` shim tell real
+/// backend from feature-gate-stub at compile time WITHOUT the compiler
+/// hardcoding any specific library's name (mirrors the now-guarded-off
+/// built-in `NOVA_USE_MBEDTLS` monorepo special-case one层 up, generalized —
+/// nova-tls's `native/tls_c_shim.c` checks `NOVA_FFI_HAVE_MBEDTLS`).
+/// `lib_dirs` empty (no explicit search path, same precedent as
+/// `first_missing_ffi_lib`) → no defines (can't verify presence, and the
+/// legacy system-`-l`-search consumers predate this mechanism / don't need
+/// it — unchanged behaviour).
+fn ffi_have_defines(ffi: &ResolvedFfiConfig) -> Vec<String> {
+    if ffi.lib_dirs.is_empty() || !ffi.libs.is_empty() && first_missing_ffi_lib(ffi).is_some() {
+        return Vec::new();
+    }
+    ffi.libs.iter().map(|lib| {
+        let sanitized: String = lib.chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
+            .collect();
+        format!("NOVA_FFI_HAVE_{}", sanitized)
+    }).collect()
+}
+
+/// Plan 193 Ф.2 gate-3 (mbedtls-vendored, 2026-07-12): generic
+/// build-and-cache for `[ffi] vendor_src_dirs` — "195-pattern" extension of
+/// the `detect_or_build_libuv` precedent (см. `build_libuv_lib` below, whose
+/// cc-invocation shape this mirrors 1:1) generalized to ANY user-declared
+/// native module. NOT mbedTLS-specific: compiles whatever `.c` files a
+/// package vendors under its declared dirs, no knowledge of what library
+/// it is.
+///
+/// No-op (Ok, nothing built) when `vendor_src_dirs`, `lib_dirs` or `libs`
+/// is empty — unchanged legacy behaviour for every existing `[ffi]`
+/// consumer that doesn't opt in. Cache check: if EVERY name in `libs`
+/// already resolves to a file in `lib_dirs[0]` (via
+/// `ffi_lib_candidate_names`), returns immediately without invoking the
+/// compiler — cheap per-call check, same shape as
+/// `detect_or_build_libuv`'s `lib_file.is_file()` fast path (this function
+/// is called once per test, so the cache check dominates after the first
+/// build in a `nova test` run).
+///
+/// Build: collects all `.c` files directly under each `vendor_src_dirs`
+/// entry (non-recursive — flat `library/`-style upstream layouts), compiles
+/// them with the SAME toolchain flags `build_libuv_lib` uses
+/// (`/MT /O2` MSVC / `-O2 -fPIC` cc — CRT/PIC consistency with the rest of
+/// the nova runtime is required for static linking to succeed), then
+/// archives the resulting objects into `lib_dirs[0]` under EVERY name in
+/// `libs` — identical combined archives (a static-archive linker only pulls
+/// object members needed to resolve outstanding externals, so the same
+/// content appearing under 3 different archive names, as mbedTLS's
+/// `mbedtls`/`mbedx509`/`mbedcrypto` split needs, is harmless: whichever
+/// archive is scanned first when a symbol is still unresolved satisfies it,
+/// the others contribute nothing further). A real per-library object-list
+/// split (matching upstream's own `CMakeLists.txt` `src_crypto`/`src_x509`/
+/// `src_tls` sets) would avoid the redundant duplication but needs
+/// per-package source-list config this generic mechanism intentionally
+/// does not have — "минимально" per Plan 193 Ф.2 gate-3 scope.
+///
+/// Build failures are NOT fatal here — they're logged (eprintln) and
+/// swallowed (Ok(())) so the EXISTING `first_missing_ffi_lib` detect-and-
+/// degrade probe (called right after this, at the call site) still runs
+/// and degrades gracefully to `SkipReason::FfiLibNotFound` instead of a
+/// hard test-runner crash — this function only ever tries to IMPROVE on
+/// that outcome, never regresses it.
+fn build_missing_vendor_ffi_libs(ffi: &ResolvedFfiConfig, vcvars: Option<&Path>) {
+    if ffi.vendor_src_dirs.is_empty() || ffi.lib_dirs.is_empty() || ffi.libs.is_empty() {
+        return;
+    }
+    let target_dir = &ffi.lib_dirs[0];
+    let already_built = ffi.libs.iter().all(|lib| {
+        let candidates = ffi_lib_candidate_names(lib);
+        candidates.iter().any(|name| target_dir.join(name).is_file())
+    });
+    if already_built {
+        return;
+    }
+    let mut srcs: Vec<PathBuf> = Vec::new();
+    for dir in &ffi.vendor_src_dirs {
+        if let Err(e) = collect_c_files(dir, &mut srcs, /*recursive*/ false) {
+            eprintln!("nova: warning: vendor FFI build: read {}: {}", dir.display(), e);
+            return;
+        }
+    }
+    if srcs.is_empty() {
+        eprintln!("nova: warning: vendor FFI build: no .c files found under {:?}", ffi.vendor_src_dirs);
+        return;
+    }
+    eprintln!(
+        "nova: FFI lib(s) {:?} not found in {}, building from vendored source ({} files, one-time)...",
+        ffi.libs, target_dir.display(), srcs.len()
+    );
+    if let Err(e) = std::fs::create_dir_all(target_dir) {
+        eprintln!("nova: warning: vendor FFI build: create lib_dir {}: {}", target_dir.display(), e);
+        return;
+    }
+    if let Err(e) = build_vendor_ffi_lib(&srcs, &ffi.include_dirs, target_dir, &ffi.libs, vcvars) {
+        eprintln!("nova: warning: vendor FFI build failed: {}", e);
+        // Swallowed — caller's first_missing_ffi_lib degrades to SKIP.
+    }
+}
+
+/// Plan 193 Ф.2 gate-3: compile `srcs` + archive into `target_dir` under
+/// every name in `lib_names` (see `build_missing_vendor_ffi_libs` doc).
+/// Object dir: `target_dir/.vendor-obj` (recreated each build attempt,
+/// mirrors `build_libuv_lib`'s `obj_dir` handling).
+fn build_vendor_ffi_lib(srcs: &[PathBuf], include_dirs: &[PathBuf], target_dir: &Path,
+                         lib_names: &[String], vcvars: Option<&Path>) -> Result<()> {
+    let obj_dir = target_dir.join(".vendor-obj");
+    if obj_dir.is_dir() {
+        let _ = std::fs::remove_dir_all(&obj_dir);
+    }
+    std::fs::create_dir_all(&obj_dir)
+        .map_err(|e| anyhow!("create obj_dir: {}", e))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let vcv = vcvars.ok_or_else(|| anyhow!("vcvars required for vendor FFI build on Windows"))?;
+        let rsp = obj_dir.join("compile.rsp");
+        let mut lines: Vec<String> = Vec::new();
+        lines.push("/c /nologo /W0 /MT /O2 /D_WIN32_WINNT=0x0602 /DWIN32_LEAN_AND_MEAN \
+                     /D_CRT_SECURE_NO_WARNINGS /D_CRT_SECURE_NO_DEPRECATE".to_string());
+        for inc in include_dirs {
+            lines.push(format!("/I \"{}\"", strip_verbatim_prefix(inc).display()));
+        }
+        lines.push(format!("/Fo\"{}\\\\\"", strip_verbatim_prefix(&obj_dir).display()));
+        for s in srcs {
+            lines.push(format!("\"{}\"", strip_verbatim_prefix(s).display()));
+        }
+        std::fs::write(&rsp, lines.join("\n"))
+            .map_err(|e| anyhow!("write rsp: {}", e))?;
+        let inner = format!(
+            "\"call \"{}\" >nul 2>&1 && cl.exe @\"{}\"\"",
+            vcv.display(), rsp.display()
+        );
+        let mut cmd = Command::new("cmd");
+        cmd.raw_arg("/c").raw_arg(&inner);
+        let out = cmd.output()
+            .map_err(|e| anyhow!("spawn cl.exe: {}", e))?;
+        if !out.status.success() {
+            let combined = format!("{}{}",
+                bytes_to_string(&out.stdout),
+                bytes_to_string(&out.stderr));
+            return Err(anyhow!("vendor FFI compile failed: {}",
+                combined.lines().take(15).collect::<Vec<_>>().join("\n")));
+        }
+        let mut obj_files: Vec<PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(&obj_dir)? {
+            let p = entry?.path();
+            if p.extension().and_then(|s| s.to_str()) == Some("obj") {
+                obj_files.push(p);
+            }
+        }
+        if obj_files.is_empty() {
+            return Err(anyhow!("vendor FFI compile produced no .obj files"));
+        }
+        for lib in lib_names {
+            let lib_file = target_dir.join(format!("{}.lib", lib));
+            let lib_rsp = obj_dir.join(format!("lib_{}.rsp", lib));
+            let mut lib_lines: Vec<String> = Vec::new();
+            lib_lines.push("/nologo".to_string());
+            lib_lines.push(format!("/OUT:\"{}\"", strip_verbatim_prefix(&lib_file).display()));
+            for o in &obj_files {
+                lib_lines.push(format!("\"{}\"", strip_verbatim_prefix(o).display()));
+            }
+            std::fs::write(&lib_rsp, lib_lines.join("\n"))
+                .map_err(|e| anyhow!("write lib.rsp: {}", e))?;
+            let lib_inner = format!(
+                "\"call \"{}\" >nul 2>&1 && lib.exe @\"{}\"\"",
+                vcv.display(), lib_rsp.display()
+            );
+            let mut lib_cmd = Command::new("cmd");
+            lib_cmd.raw_arg("/c").raw_arg(&lib_inner);
+            let lib_out = lib_cmd.output()
+                .map_err(|e| anyhow!("spawn lib.exe: {}", e))?;
+            if !lib_out.status.success() {
+                return Err(anyhow!("lib.exe failed for {}: {}", lib,
+                    bytes_to_string(&lib_out.stderr)));
+            }
+        }
+        eprintln!("nova: vendor FFI lib(s) {:?} built ({} files)", lib_names, srcs.len());
+        let _ = std::fs::remove_dir_all(&obj_dir);
+        return Ok(());
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
+        let mut obj_files: Vec<PathBuf> = Vec::new();
+        for src in srcs {
+            let obj = obj_dir.join(
+                src.file_name().unwrap().to_string_lossy().replace(".c", ".o")
+            );
+            let mut c = Command::new(&cc);
+            c.args(["-c", "-O2", "-w", "-fPIC"]);
+            for inc in include_dirs {
+                c.arg("-I").arg(inc);
+            }
+            c.arg("-o").arg(&obj);
+            c.arg(src);
+            let out = c.output()
+                .map_err(|e| anyhow!("spawn {}: {}", cc, e))?;
+            if !out.status.success() {
+                return Err(anyhow!("vendor FFI compile failed on {}: {}",
+                    src.display(), bytes_to_string(&out.stderr)));
+            }
+            obj_files.push(obj);
+        }
+        for lib in lib_names {
+            let lib_file = target_dir.join(format!("lib{}.a", lib));
+            let mut ar = Command::new("ar");
+            ar.arg("rcs").arg(&lib_file);
+            for o in &obj_files {
+                ar.arg(o);
+            }
+            let ar_out = ar.output()
+                .map_err(|e| anyhow!("spawn ar: {}", e))?;
+            if !ar_out.status.success() {
+                return Err(anyhow!("ar failed for {}: {}", lib,
+                    bytes_to_string(&ar_out.stderr)));
+            }
+        }
+        eprintln!("nova: vendor FFI lib(s) {:?} built ({} files)", lib_names, srcs.len());
+        let _ = std::fs::remove_dir_all(&obj_dir);
+        return Ok(());
+    }
+    #[allow(unreachable_code)]
+    {
+        let _ = (srcs, include_dirs, target_dir, lib_names, vcvars, &obj_dir);
+        Err(anyhow!("unsupported platform for vendor FFI build"))
+    }
 }
 
 /// Параметры сборки одного теста.
@@ -1326,6 +1592,11 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 for inc in &ffi.include_dirs {
                     c.arg("-I").arg(inc);
                 }
+                // Plan 193 Ф.2 gate-3: generic feature-gate defines — see
+                // `ffi_have_defines` doc-comment.
+                for def in ffi_have_defines(ffi) {
+                    c.arg(format!("-D{}=1", def));
+                }
                 for shim in &ffi.c_shims {
                     let ext = shim.extension().and_then(|s| s.to_str()).unwrap_or("");
                     if ext.eq_ignore_ascii_case("c") {
@@ -1434,6 +1705,11 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             if let Some(ffi) = opts.ffi {
                 for inc in &ffi.include_dirs {
                     c.arg(format!("/I{}", inc.display()));
+                }
+                // Plan 193 Ф.2 gate-3: generic feature-gate defines — see
+                // `ffi_have_defines` doc-comment.
+                for def in ffi_have_defines(ffi) {
+                    c.arg(format!("/D{}=1", def));
                 }
                 for shim in &ffi.c_shims {
                     let ext = shim.extension().and_then(|s| s.to_str()).unwrap_or("");
@@ -1601,6 +1877,11 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             if let Some(ffi) = opts.ffi {
                 for inc in &ffi.include_dirs {
                     c.arg("-I").arg(inc);
+                }
+                // Plan 193 Ф.2 gate-3: generic feature-gate defines — see
+                // `ffi_have_defines` doc-comment.
+                for def in ffi_have_defines(ffi) {
+                    c.arg(format!("-D{}=1", def));
                 }
                 for shim in &ffi.c_shims {
                     let ext = shim.extension().and_then(|s| s.to_str()).unwrap_or("");
@@ -2475,6 +2756,16 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     // (own + ext-dep [ffi]), ДО build_command/CC — самая дешёвая точка
     // обрыва для этого случая (subdir/obj_dir уже созданы выше, но CC ещё
     // не запущен).
+    //
+    // Plan 193 Ф.2 gate-3: если [ffi] declares `vendor_src_dirs`, try to
+    // build-and-cache the missing lib(s) from vendored source FIRST — this
+    // can turn what would've been a SKIP into a real build. No-op (and
+    // never fatal here) when vendor_src_dirs is empty/absent, or when the
+    // libs are already cached from a previous test in this run — see
+    // `build_missing_vendor_ffi_libs` doc-comment.
+    if let Some(ffi) = &resolved_ffi {
+        build_missing_vendor_ffi_libs(ffi, opts.toolchain.vcvars_path());
+    }
     if let Some(ffi) = &resolved_ffi {
         if let Some((lib, searched)) = first_missing_ffi_lib(ffi) {
             return Outcome::Skipped {
