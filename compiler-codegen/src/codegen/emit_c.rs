@@ -47990,19 +47990,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // f64/f32.from_bits/to_bits сняты — numeric.nv теперь
                             // ЧИСТЫЙ .nv (не extern), обычный Nova-body method-
                             // return-type инференс резолвит return_c_type.
-                            // `int.to_bits` остаётся — нет .nv-декларации нигде.
-                            if n == "int" && method == "to_bits" {
-                                self.icr_trace("B11l_int_to_bits");
-                                return "nova_int".into();
-                            }
-                            // Plan 12 + Plan 18: ExternalRegistry static-method return type.
-                            // Handles AtomicInt.new(), Mutex.new(), WaitGroup.new(), etc.
-                            if let Some(decls) = self.external_registry.lookup(n, method) {
-                                if let Some(decl) = decls.iter().find(|d| !d.is_instance) {
-                                    self.icr_trace("B11l_external_registry_static_ident");
-                                    return decl.return_c_type.clone();
-                                }
-                            }
+                            // Plan 196.2 W1 [gate-1]: B11l_int_to_bits +
+                            // B11l_external_registry_static_ident REMOVED. `int.to_bits`
+                            // (exercised: d141_ptr_bitcast_roundtrip.nv, write_buffer.nv)
+                            // and ExternalRegistry static-ctor lookup (AtomicInt.new()/
+                            // Mutex.new()/WaitGroup.new(), exercised: std/concurrency,
+                            // std/runtime/sync) are both checker-materialised into
+                            // Channel-2 ahead of this legacy. NO-HIT across
+                            // conformance+std ⟹ structurally unreachable (§5).
                         }
                         // Plan 04 + Plan 13 Ф.9.1: instance-method type inference.
                         // Self-return для chaining (mut @append, all @write_*, @clone).
@@ -48092,37 +48087,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 _ => "nova_int".into(),
                             };
                         }
-                        // Built-in primitive `str.from(x) -> str` (D35 + D73).
-                        // Plan 108: also from_bytes_lossy / from_bytes_unchecked → nova_str.
-                        // Plan 91 followup: from_bytes_unchecked_steal → nova_str (zero-copy).
-                        if let ExprKind::Ident(n) = &obj.kind {
-                            if n == "str" && (method == "from" || method == "from_bytes_lossy" || method == "from_bytes_unchecked" || method == "from_bytes_unchecked_steal") { self.icr_trace("B11s_str_from_ident"); return "nova_str".into(); }
-                            // User-defined `T.from(v)` returns Nova_T* (most cases).
-                            if method == "from"
-                                && (self.record_schemas.contains_key(n)
-                                    || self.sum_schemas.contains_key(n))
-                            {
-                                self.icr_trace("B11s_user_type_from_ident");
-                                return format!("Nova_{}*", n);
-                            }
-                        }
-                        // Plan 180 [M-180-static-method-path-ret-infer]: general
-                        // user static-method return inference for `Type.method(...)`
-                        // where the receiver is a TYPE-NAME Ident used statically —
-                        // incl. a mono'd typevar (`T.deserialize` inside a container
-                        // body with T=str, obj_ty="nova_str", which would otherwise be
-                        // mis-inferred as a primitive INSTANCE method) and a bare
-                        // primitive type-name (`str.deserialize`). Resolve the receiver
-                        // (typevar → concrete via current_type_subst) and return the
-                        // STATIC overload's concrete `return_c_type` — the serde
-                        // `Deserialize` contract (`Result[T, DeError]`) so `?`/Try can
-                        // unwrap it. `from`/`try_*` keep their dedicated handling below.
-                        if let ExprKind::Ident(n) = &obj.kind {
-                            if let Some(c) = self.infer_static_method_ret(n, method) {
-                                self.icr_trace("B11t_static_method_ret_ident");
-                                return c;
-                            }
-                        }
+                        // Plan 196.2 W1 [gate-1]: B11s_str_from_ident + B11s_user_type_from_ident
+                        // REMOVED. Built-in `str.from(x)`/from_bytes_lossy/from_bytes_unchecked/
+                        // from_bytes_unchecked_steal → nova_str (D35+D73, Plan 108/91) and
+                        // user-defined `T.from(v)` → `Nova_T*` are both checker-materialised
+                        // static-ctor returns (Channel-2). Exercised pervasively (std/
+                        // collections, crypto, ...) yet NO-HIT ⟹ structurally unreachable (§5).
+                        // Plan 196.2 W1 [gate-1]: B11t_static_method_ret_ident REMOVED.
+                        // General user static-method return inference for `Type.method(...)`
+                        // via `infer_static_method_ret` on a bare-Ident receiver (Plan 180,
+                        // serde `Deserialize` contract) — checker-materialised into
+                        // Channel-2 ahead of this legacy. NO-HIT across conformance+std ⟹
+                        // structurally unreachable (§5). `infer_static_method_ret` itself
+                        // stays (other call sites below still use it).
                         // If object is an unknown generic stub (void*), method result is also void*
                         // Exception: self-referential call inside a sum-type method — look up
                         // return type from current receiver's method_overloads.
