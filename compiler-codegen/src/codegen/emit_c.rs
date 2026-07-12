@@ -16696,12 +16696,52 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
+    /// Plan 196.3 wave-2 (D30/D85, one-window): channel-first `(ok_c, err_c)`
+    /// for a Call-expr whose checker-resolved return type is `Result[T,E]`.
+    /// Reads `resolved_types[expr.id]` — 196.4 Stage-1a extended
+    /// `resolve_return_channel` to bind method-level generics from call
+    /// arguments (e.g. `some_option.ok_or(e) -> Result[T,E]` where `T` comes
+    /// from the `Option[T]` receiver), so a call whose Result payload depends
+    /// on generic instantiation now lands in the channel as a CONCRETE
+    /// `Named{Result,[T,E]}` instead of a residual `TypeParam` — and lowers
+    /// both args through the SINGLE checker→C path (`resolved_type_to_c`),
+    /// mirroring the `channel_array_elem_c` (D239) precedent, instead of
+    /// re-deriving `(ok_c, err_c)` from the codegen-local
+    /// `fn_result_type_params` name-keyed registry (populated at `emit_fn`
+    /// from the callee's DECLARED — possibly still-generic — `f.return_type`
+    /// AST, blind to the call site's own generic instantiation). `None` =
+    /// channel miss (call un-annotated, or the resolved type isn't
+    /// `Named{Result,[T,E]}`, or a leg is still an unsubstituted generic stub)
+    /// → caller falls back to `call_result_type_params_key`/
+    /// `fn_result_type_params` (legacy name-keyed path — still needed since
+    /// Stage-1a/1b don't cover every producer yet, e.g. free-fn generic
+    /// returns land here too until Stage-1b).
+    fn channel_result_type_params_c(&self, expr: &crate::ast::Expr) -> Option<(String, String)> {
+        if !expr.id.is_set() {
+            return None;
+        }
+        match self.resolved_types.get(&expr.id) {
+            Some(crate::types::ResolvedType::Named { name, args, .. })
+                if name == "Result" && args.len() == 2 =>
+            {
+                let ok_c = self.resolved_type_to_c(&args[0]).ok()?;
+                let err_c = self.resolved_type_to_c(&args[1]).ok()?;
+                if self.debt_is_generic_stub_c(&ok_c) || self.debt_is_generic_stub_c(&err_c) {
+                    return None;
+                }
+                Some((ok_c, err_c))
+            }
+            _ => None,
+        }
+    }
+
     /// Plan 59 Ф.7.5-lite: выводит `(ok_c, err_c)` для произвольного
     /// Result-выражения, включая **inline** (без let-биндинга) — закрывает
     /// блокер `[M-result-method-named-var-only]`.
     ///
     /// - `Ident` → `result_type_params` (tracked named var);
-    /// - `Call(fn)` где fn объявлена с return `Result[T,E]` →
+    /// - `Call(fn)` → channel-first `channel_result_type_params_c` (196.3
+    ///   wave-2 D30/D85); fallback fn объявлена с return `Result[T,E]` →
     ///   `fn_result_type_params` (инфра Plan 72 P2-A);
     /// - `.map`/`.map_err` цепочка → рекурсия по receiver'у + closure
     ///   return-type (`typed_closure_c_sig`).
@@ -16713,7 +16753,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ExprKind::TurboFish { base, .. } => self.infer_result_type_params(base),
             ExprKind::Ident(v) => self.result_type_params.get(v.as_str()).cloned(),
             ExprKind::Call { func, args, .. } => {
-                // fn-call с declared return `Result[T,E]`.
+                // Channel-first (196.3 wave-2, D30/D85): the checker may have
+                // already materialized this call's CONCRETE Result[T,E]
+                // return — including method-level-generic instantiations
+                // (e.g. `opt.ok_or(e)`) that 196.4 Stage-1a now resolves —
+                // into `resolved_types[expr.id]`. Prefer it over the
+                // name-keyed AST re-derivation below.
+                if let Some(p) = self.channel_result_type_params_c(expr) {
+                    return Some(p);
+                }
+                // fn-call с declared return `Result[T,E]` (legacy name-keyed
+                // fallback — still reached for producers Stage-1a/1b don't
+                // cover yet).
                 if let Some(k) = self.call_result_type_params_key(func) {
                     if let Some(p) = self.fn_result_type_params.get(&k) {
                         return Some(p.clone());
@@ -24601,11 +24652,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.result_type_params.remove(&binding);
                     }
                 } else if let ExprKind::Call { func, .. } = &decl.value.kind {
-                    // Plan 72 P2-A: `let r = f(...)` where f returns Result[T,E]
-                    // — pull (ok_c, err_c) from the callee's registered return
-                    // type so r.unwrap()/.unwrap_or()/.ok()/.err() get T/E.
-                    if let Some(params) = self.call_result_type_params_key(func)
-                        .and_then(|k| self.fn_result_type_params.get(&k).cloned())
+                    // Channel-first (196.3 wave-2, D30/D85): `let r = f(...)`
+                    // — prefer the checker's resolved Result[T,E] for this
+                    // call (`resolved_types[decl.value.id]`; 196.4 Stage-1a
+                    // materializes method-level-generic returns here) over
+                    // the legacy name-keyed re-derivation.
+                    //
+                    // Plan 72 P2-A (legacy fallback): pull (ok_c, err_c) from
+                    // the callee's registered DECLARED return type so
+                    // r.unwrap()/.unwrap_or()/.ok()/.err() get T/E — still
+                    // reached for producers Stage-1a/1b don't cover yet.
+                    if let Some(params) = self.channel_result_type_params_c(&decl.value)
+                        .or_else(|| self.call_result_type_params_key(func)
+                            .and_then(|k| self.fn_result_type_params.get(&k).cloned()))
                     {
                         self.result_type_params.insert(binding.clone(), params);
                     } else {
