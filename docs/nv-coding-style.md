@@ -217,9 +217,12 @@
   random-access окно (Rust никогда не говорит `GraphemeView`). Сегментаторы — это стримы с
   `next()`/`count()`/`is_empty()`, ровно как `CharsIter`.
 - **Все такие типы — `value` записи** (стек, без per-iteration heap-churn), никогда не
-  heap-класс. String/unicode-итераторы (CharsIter, CharIndicesIter, Graphemes/Words/
-  SentencesIter) — `value priv(type)` (курсор закрыт type-privacy); коллекционные (VecIter,
-  RangeIter, Map/Filter/Take/Enumerate/StepByIter) — field-level `priv`/`_`-курсор.
+  heap-класс. **Все — field-level `priv`/`_`-курсор**: String/unicode-итераторы (CharsIter,
+  CharIndicesIter, Graphemes/Words/SentencesIter) наравне с коллекционными (VecIter,
+  RangeIter, Map/Filter/Take/Enumerate/StepByIter). `value priv(type)` (тип-privacy) для
+  итераторов — ИСПРАВЛЕНО (Plan 200 п.2): было излишне строго — по D267 любой модуль может
+  писать extension-методы для типа → `priv(type)`-поля всё равно обходимы; реальная внешняя
+  граница — module-`priv` (D281), не type-privacy.
 - **Каждый такой тип — свой `@iter()` self-iterator** (`CharsIter @iter() => @`), чтобы
   `for x in it` и `it.iter()` шли одним for-in-путём (D58).
 

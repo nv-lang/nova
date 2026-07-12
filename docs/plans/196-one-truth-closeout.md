@@ -8,25 +8,17 @@
 
 ## ⚑ Курс-коррекция (2026-07-12) — читать ПЕРВЫМ
 
-Честная запись, чтобы ошибка не повторилась.
+Направление §0 верно и НЕ менялось: свести всё в `resolved_types` (одно окно, D315) → удалить второе окно.
+**Ф.1/Ф.2 сделали это правильно (21 арм).** Продолжаем ИМ.
 
-**Что пошло не так (~месяц):** заход Ф.4a/4b/4c (**co-authority solver**) — ТУПИК, ретрактирован.
-- Построил `constraint_solver.rs` (Join/Project/Resolve), работающий в режиме
-  **«проверь legacy → выброси свой результат»** (`let _ = channel`).
-- Почему провал: verify-and-discard **ничего не кладёт в `resolved_types` → 0 армов снято**.
-  Solver оказался **подмножеством-верификатором** (Ф.4c negative): резолвит
-  только лёгкое, воздерживается (`None`) на class-C. Флип на авторитет удаляет ~0 (доказано).
-- **Корень ошибки процесса:** гнал byte-parity-зелёные волны как «фундамент», НЕ меряя РЕАЛЬНОЕ
-  удаление legacy. Закрыто амендментом конвенции §0/§7 (**гейт прогресса** + **спайк-на-авторитет**,
-  коммит `b7a45bf7a`).
+**Тупики и промежуточные мисдиагнозы вынесены в [196-retracted](196-retracted.md)** (co-authority solver
+Ф.4a/b/c — ~месяц verify-and-discard, 0 снято; «ExprId-across-mono = блокер»; «B07 = carrier»; опасение
+устаревших координат; др.) — чтобы активный план был чистым и ошибки не повторялись. Ключевой урок
+(verify-and-discard ≠ materialize-and-delete; гейт-прогресса; спайк-на-авторитет) закреплён в конвенции §0/§7
+(`b7a45bf7a`).
 
-**Что было и остаётся ВЕРНЫМ:** направление §0 не менялось — свести всё в `resolved_types`
-(одно окно, D315) → удалить `infer_expr_c_type`. **Ф.1/Ф.2 сделали это правильно (21 арм).**
-Продолжаем ИМ, а не co-authority.
-
-**MIR вынесен из 196.** Полноценный typed-IR/MIR — ОТДЕЛЬНАЯ будущая цель (borrow-check/оптимизации).
-§0 его **НЕ требует**: `ResolvedType` уже C-lossless (см. «Грунтовка» ниже),
-достаточно **полноты** `resolved_types`. MIR = Стадия 2, отдельный план, открывается ПОСЛЕ §0.
+**MIR вынесен из 196** (Стадия-2, отдельный горизонт; borrow-check/оптимизации). §0 его НЕ требует: `ResolvedType`
+уже C-lossless, нужна лишь **полнота** `resolved_types` (см. «Грунтовка» + «MIR и rustc-эталон» ниже).
 
 ---
 
@@ -44,6 +36,221 @@
 
 Расхождение окон → §0-баги (мис-диспатч, `nova_int`-затычка, тот самый nova build ICE). Цель:
 **дополнить `resolved_types` → удалить `infer_expr_c_type`.**
+
+## ★ Матрица «одного окна правды» — полный §0-scope (директива владельца 2026-07-12)
+
+«Одно окно» = для КАЖДОЙ клетки (форма-функции × аспект) ОДИН механизм резолвит в чекере, codegen лоуэрит.
+Второго окна нет, дрейфа нет. **114 веток `infer_call_ret_c` = ТОЛЬКО строка «возврат»; матрица ШИРЕ 196.2.**
+
+**Формы функции (столбцы):** static · generic-static · static+кросс-модуль · generic-static+кросс-модуль ·
+приватные методы · методы+кросс-модуль. (Кросс-модуль и generic — ортогональные усложнители; хардест-клетка
+= **generic-static + кросс-модуль**.)
+
+**Аспекты (строки; каждая = одно окно ПО ВСЕМ формам):**
+
+| # | Аспект | Окно (механизм) | В 114? | Статус |
+|---|---|---|---|---|
+| 1 | Резолв функции → `FnDecl` | чекер-резолверы + `external_registry` (кросс-мод) | нет | ⚠ generic-static+кросс-мод неполон |
+| 2 | Тип ВОЗВРАТА | `resolved_types` ← 114 веток | **ДА = 114 (196.2)** | 🔄 W1 идёт |
+| 3 | Аргументы (arg↔param) | `callnorm`/`argbind` | нет | ⚠ зависит от (1) |
+| 4 | Generic-аргументы (вывод type-arg) | generic-инференс чекера + `callnorm` | нет | ⚠ gaps (generic-static не пробрасывает type-arg; `[M-153-vec-of-variadic]`) |
+| 5 | Default-арги | `callnorm` backfill (`:485`) | нет | 🔴 generic-static+кросс-мод (`[M-vec-new-cap-default-arg-backfill]`, чинится) |
+| 6 | Generic default-арги | пересечение (4)+(5) | нет | 🔴 `Vec.new(cap int=0)` — чинится + регресс-тест на пересечение |
+
+**Строки 3-6 (args/generic-args/defaults/generic-defaults) = сиблинг-окно `callnorm`/`argbind`, НЕ в 114**, и
+ВСЕ зависят от строки 1 (резолв): без `FnDecl` нет ни аргументов, ни default'ов. **Приватные (форма)** —
+checker-контроль доступа (D267/D281), не codegen-ветка.
+
+**Программа «одного окна» = ЧЕТЫРЕ сходимости, не одна:**
+- **A. Возврат** → **196.2** (114 → `resolved_types`). Идёт (W1).
+- **B. Резолв→`FnDecl`** для generic-static/кросс-модуль → сходимость на ОБЩИЙ резолвер (`external_registry`
+  ≠ отдельный путь). Vec.new-баг вскрыл начало: резолв generic-static кросс-мод не доходит до `FnDecl`.
+- **C. Args / default / generic-default** → сходимость `callnorm`/`argbind` по ВСЕМ формам. Vec-фикс = первая
+  клетка (default × generic-static × кросс-мод).
+- **D. Приватные** → checker-доступ (D267/D281), отдельно.
+
+**Приёмка «одного окна» = вся сетка (форма × аспект) зелёная:** каждая клетка резолвится ОДНИМ окном; на
+КАЖДОЕ тяжёлое пересечение — conformance-тест red-до/green-после (особенно generic-static+кросс-модуль ×
+{args, generic-args, default, generic-default}). **196.2 (114) — строка 2 (одна из шести). B/C/D — НЕ отдельные планы, а ФАСЕТЫ 196** (директива владельца
+2026-07-12: **`callnorm.rs`/`argbind.rs` ОБЯЗАНЫ быть частью 196**). 196 = «одно окно» по ВСЕЙ матрице, не
+только возврат:
+- **Ф.A — Возврат** = 196.2 (114 → `resolved_types`). Идёт (W1).
+- **Ф.C — `callnorm`/`argbind`-сходимость** (args / generic-args / default / generic-default по ВСЕМ формам)
+  — В SCOPE 196. Первый экземпляр = generic-static default-backfill фикс (`[M-vec-new-cap-default-arg-backfill]`,
+  идёт [sonnet, nova-p200], root-резолв, не заплатка); `Vec.new(cap)` API (план 200) — лишь ПОТРЕБИТЕЛЬ фикса,
+  сам фикс = 196 Ф.C.
+- **Ф.B — Резолв→`FnDecl`** (generic-static/кросс-модуль на ОБЩИЙ резолвер, `external_registry` ≠ отдельный
+  путь) — В SCOPE 196.
+- **Ф.D — Приватные** (checker-доступ D267/D281) — В SCOPE 196.
+Матрица зелёная (A+B+C+D) = §0 «одно окно» выполнено. 196 — НЕ только «удалить `infer_expr_c_type`», а вся сетка.
+
+### ★ Инвентарь «второго окна» (греп 2026-07-12) — это СЕМЕЙСТВО, не функция
+
+**Корень:** типизированного IR НЕТ (AST единственный) → у чекера нет канала донести резолв/типы до codegen →
+codegen ПЕРЕвыводит, каждый по-своему → дублирование путей + дрейф (§0-баги) + **LSP слеп** (инференс codegen-only).
+В `emit_c.rs`: **~20+ `infer`/`resolve`-функций + 56 `_c_type`/`_to_c`-сайтов.** Цели удаления (логика → ЧЕКЕР;
+codegen только лоуэрит через `resolved_type_to_c`; LSP читает ТЕ ЖЕ каналы → hover/completion получают типы):
+- **Возврат/тип (Ф.A):** `infer_expr_c_type`(48885), `infer_call_ret_c`(46293, 114), `infer_expr_c_type_str`,
+  `infer_mono_method_ret(_with_args)`, `infer_method_level_return_for_sum`, `infer_static_method_ret`,
+  `infer_generic_static_ctor_ret`, `infer_lambda_return_type_with_params`, `infer_trailing_block_sig`,
+  `resolve_result_option_ret`, `resolve_result_te(_strict)` + 56 `_c_type`.
+- **Generic/type-param (Ф.B/C):** `infer_type_param_binding`×3, `infer_protocol_structural_binding`,
+  `infer_result_type_params`, `resolve_method_level_subst`, `resolve_mono_type_args`, `compute_array_elem_type_for_obj`.
+- **Args/default (Ф.C):** `callnorm.rs`, `argbind.rs`.
+- **Резолв/хардкод (Ф.B):** `external_registry`, `primitive_instance_method_known` (§3 хардкод-зеркало), method/static-резолверы.
+- **Legacy-лоуеринг:** `type_ref_to_c` (ретайр D315, дублирует `resolved_type_to_c`).
+
+**★ ДОПОЛНЕНО (полнота, греп 2026-07-12 — БЫЛИ ЗАБЫТЫ, теперь в инвентаре → волна-2):**
+- Возврат/тип: `result_repr_c_type`, `channel_int_c_type`, `infer_func_c_name`, `infer_handler_interrupt_ty`.
+- Receiver/generic: `receiver_c_type`, `builtin_sum_receiver_c_type`, `value_aware_generic_c_type`,
+  `extract_result_type_params`, `call_result_type_params_key`.
+- **Хардкод метод→C (§3 → из .nv-деклараций, как `primitive_instance_method_known`):** `f64_method_to_c`,
+  `int_method_to_c`, `primitive_name_to_c` (+ волне-2 грепнуть str/char/bool-аналоги — вероятно есть ещё).
+- ✅ ОСТАЁТСЯ (лоуеринг, часть `resolved_type_to_c`): `resolved_array_to_c`, `resolved_named_to_c`. Хелперы-
+  предикаты (`is_struct_c_type`, `type_ref_uses_any_type_param`, `debt_*`) — НЕ re-derivation, не мигрируются.
+
+**★★ ГАРАНТИЯ ПОЛНОТЫ (чтобы не «забыть опять»):** определяющий набор второго окна = ПОЛНОЕ дерево вызовов
+`infer_expr_c_type` (вход, 249 консумеров) + `infer_call_ret_c`. Grep-список — стартовый, НЕ доказательство
+полноты. **Финальная СТРУКТУРНАЯ проверка:** когда `infer_expr_c_type` УДАЛЁН и компилятор СОБИРАЕТСЯ — ничего
+не осиротело (что не мигрировано/не-остаётся → dead compile-error). Волна-2 ОБЯЗАНА пройти по всему call-tree
+`infer_expr_c_type`, а не только по grep-списку; любая найденная re-derivation-функция → в инвентарь + мигрируется.
+
+**Финал 196** = это семейство удалено/сведено к `resolved_type_to_c(resolved_types[id])` + каналы кормят LSP
+(hover/completion). Это НЕ «пара веток», а систематическая переархитектура потока типов/резолва — БЕЗ полного
+MIR (mono остаётся lazy в codegen; каналы лишь дотягиваются до mono-копий, см. Ф.A / A-спайк).
+
+### ★ Целевая архитектура «одного окна» (дизайн 2026-07-12) — куда переезжает каждое место
+
+**Поток фаз:**
+```
+Parse + import-inline → AST + ExprId  (number_exprs + number_unset_exprs ВО ВСЕХ путях, вкл. build)
+      │
+      ▼
+ЧЕКЕР (ОДНО ОКНО, PRE-mono) — резолвит ОДИН раз, наполняет каналы:
+  • Резолв вызова → FnDecl       →  resolved_callees: ExprId → FnDeclRef
+      (method/static/free/generic-static/кросс-модуль — ОДИН резолвер; external_registry + .nv-декларации
+       кормят его; codegen-дубля НЕТ)
+  • Тип выражения → ResolvedType  →  resolved_types: ExprId → ResolvedType (generic, с TypeParam)
+      (возврат вызова, sum/static/ctor/closure/trailing/Result — ВСЁ тут; generic-биндинги записаны В тип)
+  • Нормализация вызова           →  именованные арги по порядку + default'ы (AST-переписывание,
+      ЧИТАЕТ resolved_callees) — callnorm/argbind переезжают в чекер-фазу
+  • Приватность → контроль доступа (остаётся в чекере)
+      │ каналы
+      ├──────────────────────────► LSP/IDE читает resolved_types + resolved_callees (hover/completion не слепые)
+      ▼
+CODEGEN (POST-mono, ЧИСТЫЙ ЛОУЭРИНГ — НИКОГДА не перевыводит):
+  • resolved_type_to_c(resolved_types[id], current_type_subst)  ← ЕДИНСТВЕННЫЙ тип→C
+      (подставляет TypeParam→конкретику на mono; сюда сложена регистрация mono-инстансов)
+  • mono-имена/инстансы: compute_mono_name, compute_generic_type_c_name (законный лоуэринг)
+  • читает resolved_callees — какую функцию эмитить
+```
+
+**Судьба каждого места (из инвентаря):**
+
+| Старое место | Судьба | Куда конкретно |
+|---|---|---|
+| `infer_expr_c_type`, `infer_expr_c_type_str` | 🗑 УДАЛИТЬ | → `resolved_type_to_c(resolved_types[id])` (чтение канала) |
+| `infer_call_ret_c` (114) | 🗑 УДАЛИТЬ | резолв возврата → ЧЕКЕР → `resolved_types` |
+| `infer_mono_method_ret(_with_args)` | ➡ ЧЕКЕР | резолв generic-возврата → `resolved_types`; mono-подстановка остаётся в `resolved_type_to_c` |
+| `infer_method_level_return_for_sum` | ➡ ЧЕКЕР | возврат метода sum → `resolved_types` |
+| `infer_static_method_ret` | ➡ ЧЕКЕР | возврат static → `resolved_types` |
+| `infer_generic_static_ctor_ret` | ➡ ЧЕКЕР | возврат generic-static-ctor → `resolved_types` |
+| `infer_lambda_return_type_with_params` | ➡ ЧЕКЕР | возврат замыкания → `resolved_types` |
+| `infer_trailing_block_sig` | ➡ ЧЕКЕР | типы trailing-блока → `resolved_types` |
+| `resolve_result_option_ret`, `resolve_result_te(_strict)` | ➡ ЧЕКЕР | часть `ResolvedType` (T/E из Result/Option) |
+| 56× `_c_type`/`_to_c` | 🗑 УДАЛИТЬ | → `resolved_type_to_c` (чтение) |
+| `infer_type_param_binding` ×3, `infer_protocol_structural_binding`, `infer_result_type_params` | ➡ ЧЕКЕР | generic-инференс; решение записано В `resolved_types` (TypeParam/конкретика) |
+| `resolve_method_level_subst` | ➡ ЧЕКЕР | subst записан в резолв; на codegen только `current_type_subst` (mono) |
+| `compute_array_elem_type_for_obj` | ➡ ЧЕКЕР | тип элемента = часть `ResolvedType` receiver'а |
+| `resolve_mono_type_args` | ✅ ОСТАЁТСЯ (lowering) | mono, но ЧИТАЕТ резолв + `current_type_subst`, не перевыводит |
+| `compute_mono_name`, `compute_generic_type_c_name` | ✅ ОСТАЁТСЯ (lowering) | mono-именование = законный codegen |
+| `register_generic_instances_in_typeref` | ✅ ОСТАЁТСЯ (сложена) | внутрь `resolved_type_to_c` (P2) — driven лоуэрингом, не резолвом |
+| `callnorm.rs`, `argbind.rs` | ➡ ЧЕКЕР-фаза | нормализация вызова ЧИТАЕТ `resolved_callees` (не ре-резолвит) |
+| method/static-резолверы | ➡ ЧЕКЕР (един) | ОДИН резолвер → `resolved_callees`; codegen-дубль удалить |
+| `external_registry` | ➡ кормит ЧЕКЕР | кросс-модуль/FFI-декларации в резолв чекера (не отдельный codegen-путь) |
+| `primitive_instance_method_known` | 🗑 УДАЛИТЬ (§3) | возвраты → из `.nv`-деклараций примитивов (maximize-nv-sourcing); хардкод-зеркало снести |
+| `type_ref_to_c` | 🗑 УДАЛИТЬ (D315) | → `resolved_type_to_c` |
+
+**Каналы (интерфейс чекер → codegen → LSP):**
+- `resolved_types: ExprId → ResolvedType` — тип каждого выражения (generic, с TypeParam). Уже есть (D315),
+  НЕПОЛОН → 196 (Ф.A) доводит.
+- `resolved_callees: ExprId → FnDeclRef` — к какой декларации привязан вызов. Частично есть → 196 (Ф.B)
+  доводит + унифицирует (generic-static/кросс-модуль; убрать codegen-дубли и `external_registry`-обход).
+- **Нормализованный вызов** (арги по порядку + default'ы) — AST-инвариант после чекер-нормализации (Ф.C).
+Codegen лоуэрит из каналов; LSP читает ТЕ ЖЕ каналы. **Приёмка 196 = ни одна `infer_*`/`resolve_*` в codegen
+не перевыводит; всё из канала; матрица зелёная.**
+
+### ★ Сверка с Rust (2026-07-12) — mono = ФАЗА, не codegen-side-effect; поправка к «ОСТАЁТСЯ»
+
+**rustc-эталон:** типы ОДИН раз в typeck (HIR)→`TyCtxt`; HIR→THIR→**MIR**; **мономорфизация — ОТДЕЛЬНАЯ ФАЗА**
+(`rustc_monomorphize::collector`: обход достижимого от корней → worklist `Instance`=def_id+substs, НЕ
+side-effect резолва); манглинг — отдельная фаза (`rustc_symbol_mangling`, чистая fn от `Instance`); codegen
+(`rustc_codegen_ssa/llvm`) берёт МОНОМОРФИЗОВАННЫЙ MIR, подставляет ИЗВЕСТНЫЕ substs, лоуэрит ty→LLVM через
+`tcx`-запросы — **codegen НИКОГДА не инферит.**
+
+**Поправка к строке «✅ ОСТАЁТСЯ в codegen»:**
+- `resolved_type_to_c` (ty→C, читает канал) — **ВЕРНО, совпадает с Rust** (codegen лоуэрит ty→backend).
+- Mono-машинерия — БЫЛО СЛИШКОМ РАЗМЫТО. В Rust это ФАЗА, не ad-hoc:
+  - `register_generic_instances_in_typeref` как **side-effect резолва = АНТИ-паттерн** (Rust: отдельный
+    collector-проход). Stage-1-цель: переструктурировать в **mono-COLLECTOR-проход, читающий каналы**, а не
+    складывать в resolve/лоуэринг.
+  - `resolve_mono_type_args` — обязана быть чистой **ПОДСТАНОВКОЙ** известных substs (Rust `subst`), НЕ
+    инференсом; если инферит — баг.
+  - `compute_mono_name`/`compute_generic_type_c_name` — манглинг = чистая fn от инстанса (ок как функция).
+
+**Итог по mono (честно): наш «без MIR» = сознательный Stage-1-КОМПРОМИСС, не конечная архитектура.**
+- **Stage-1 (196):** mono ОСТАЁТСЯ в codegen, но как **collector-проход + чистая subst/mangle, читающие
+  каналы** (не resolve-side-effect). Тип-лоуэринг уже rustc-образен.
+- **Stage-2 (MIR, будущее):** типизированный IR + отдельная mono-фаза = ровно rustc-модель. Это и есть «полный
+  MIR», отложенный из §0. 196 НЕ обязан его достигать — но и НЕ должен закреплять mono-side-effect как «норму».
+
+### ★ Что такое MIR и почему AST-only хуже; rustc как ЭТАЛОН (директива владельца 2026-07-12)
+
+**MIR (Mid-level IR, rustc):** промежуточное представление между HIR и LLVM — программа, «расплющенная» в
+простые ТИПИЗИРОВАННЫЕ шаги + явный control-flow-граф (базовые блоки + переходы). Свойства: (1) полностью
+типизирован (тип каждого локала/темпа известен из typeck, НЕ перевыводится); (2) явный (drop'ы, временные,
+autoref/deref, перегрузки операторов — всё развёрнуто); (3) ОДИН субстрат для borrow-check, dataflow,
+оптимизаций (const-prop/inline/DCE) и mono/codegen. Короче: **единственный типизированный IR, несущий ВСЕ
+резолвнутые факты; всё ниже ЧИТАЕТ его.**
+
+**Чем у нас ХУЖЕ — типизированного IR НЕТ, AST единственный:**
+- Негде ХРАНИТЬ резолв → codegen ПЕРЕвыводит (всё семейство «второго окна»). Дубли, дрейф, §0-баги.
+- `resolved_types` — **side-table-ЗАПЛАТКА** (ExprId→тип сбоку от AST), симулирующая то, что typed IR даёт
+  НАТИВНО; оттого НЕПОЛНА/протекает (дыры, что 196 латает).
+- Нет CFG → control-flow/concurrency-лоуэринг ad-hoc на AST.
+- Нет чистого разделения фаз → mono = codegen-side-effect (не фаза); borrow-check-подобное трудно; opts ad-hoc.
+- LSP слеп → инференс codegen-only, не в запрашиваемой типизированной форме.
+
+Это НЕ «плохо по глупости» — AST-only проще на старте; цена вылезла сейчас (второе окно). **196 (Stage-1)
+симулирует одно окно side-table'ом БЕЗ полного IR; Stage-2 = ввести MIR = нативная rustc-модель.**
+
+**★ УПРАВЛЯЮЩИЙ ПРИНЦИП (директива владельца): rustc-реализация — ЭТАЛОН.** При ЛЮБОМ архитектурном решении
+по типам/резолву/mono/IR — сверяться с тем, КАК это в rustc (typeck→HIR→THIR→MIR→mono-collector→
+symbol-mangling→codegen-читает). Наши отклонения = ТОЛЬКО осознанные компромиссы (напр. Stage-1 без MIR),
+ЯВНО помеченные «компромисс, не идеал», а не выданные за «нашу норму». Rust — зрелый корректный референс;
+изобретать своё вопреки ему = риск ещё одного «второго окна».
+
+## ★ Две встречные волны миграции — ОТДЕЛЬНЫЕ под-планы (директива владельца 2026-07-12)
+
+Миграция второго окна идёт ДВУМЯ встречными волнами (сходятся в середине), каждая — свой под-план:
+- **Волна-1 (bottom-up) = [196.2 — class-C relocation](196.2-class-c-relocation.md)** — по 114 веткам
+  `infer_call_ret_c`, удаляет legacy-ветки (gate-1); P0-hit-count, атом-чеклист, спайки, протокол
+  materialize→parity→remove/panic. [opus, nova-p196]. Держит `infer_call_ret_c` (46293-48883). **Актуален и
+  активен** (первое gate-1 снятие −17, B11w).
+- **Волна-2 (top-down, D-driven) = [196.3 — wave-2 D-driven](196.3-wave2-d-driven.md)** — по инвентарю
+  сиблинг-функций: каждую → D-фиче → полный тест → переписать на новый путь → закрыть (remove/panic); per-D
+  цикл отчёт/коммит/план/синк-main. [opus, nova-wave2]. Держит сиблинги ВНЕ 46293-48883 + callnorm/argbind/резолверы.
+
+Партиция (разные регионы/файлы → merge-чисто), инвентарь→D-карта, per-D дисциплина — детально в 196.2/196.3.
+Встреча волн = `infer_call_ret_c` пуст (196.2) И сиблинги мигрированы (196.3) → второе окно удалено, матрица
+«одного окна» (выше) зелёная.
+
+**★ ПРИНЦИП ОБЕИХ ВОЛН (+ cap-миграции) — тест АВТОРИТЕТ (директива владельца 2026-07-12):** если при
+добавлении/прогоне теста вскрывается, что компилятор что-то НЕ умеет — **НИКОГДА не убирать/ослаблять тест.**
+Тест = спека. Чинить КОМПИЛЯТОР в **новом ПРАВИЛЬНОМ месте** (чекер / одно окно, per целевая архитектура;
+сходимость на существующий путь; НЕ заплатка, НЕ новый сайт, rustc-эталон). NB: на шаге тест-инвентаризации
+волны-2 фикс НЕ делается сразу (только пишем тесты + пробелы); но принцип «тест не убираем, чиним компилятор
+в правильном месте» незыблем на фазе миграции/проверок. (Нулевая толерантность §4а + «удалить ИЛИ паника».)
 
 ## Зачем `resolved_types` лучше `infer_call_ret_c` (мотивация — не «оно и так работает»)
 

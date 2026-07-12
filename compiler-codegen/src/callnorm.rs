@@ -394,16 +394,56 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
         ExprKind::TurboFish { base, .. } => base,
         _ => func.as_ref(),
     };
+    // [M-vec-new-cap-default-arg-backfill] fix: a GENERIC static-ctor call —
+    // `Type[Args].method(...)` or the D38/D239 slice-sugar `[]T.method(...)`
+    // — parses to `Member{obj, name}` too (the `TurboFish`/`__array`-Path
+    // marker lives one level down in `obj`, NOT at `func.kind` directly —
+    // the unwrap above only strips a TOP-level TurboFish, e.g. a free-fn
+    // turbofish call `f[T](...)`). Previously such calls fell straight into
+    // the instance-method lookup below (`sigs.instance_by_name.get(name)`),
+    // which almost never has an entry for a ctor name like "new" →
+    // `try_normalize_call` silently gave up and NO default-arg backfill
+    // happened for these call-sites. `is_static_generic_recv` records
+    // whether `base` is one of these two static-generic shapes so the
+    // Block-building below (Plan 46 Ф.3 receiver-hoist) does NOT try to
+    // evaluate the TYPE expression `obj` as a VALUE — that hoist is only
+    // correct for genuine instance receivers.
+    let mut is_static_generic_recv = false;
     let params: &[Param] = match &base.kind {
         ExprKind::Ident(name) => sigs.free.get(name)?,
         ExprKind::Path(parts) if parts.len() == 2 => {
             sigs.static_methods.get(&(parts[0].clone(), parts[1].clone()))?
         }
-        // Plan 46 Ф.3: instance-method `obj.method(...)`. Резолв по
-        // уникальному имени метода (без type-inference). Receiver — это
-        // `obj`, он НЕ входит в params (params это явные параметры
-        // метода после receiver).
-        ExprKind::Member { name, .. } => sigs.instance_by_name.get(name)?,
+        // `obj` may itself be the SAME two type-position shapes handled by
+        // the `Path`/`TurboFish` arms above — a generic receiver written
+        // `Type[Args].method(...)` parses to `Member{obj: TurboFish{base:
+        // Ident(Type), ..}, name}` (the TurboFish nests one level INSIDE
+        // `obj` here, so the unwrap at the top of this fn does not see it),
+        // and the D38/D239 slice-sugar `[]T.method(...)` parses to
+        // `Member{obj: Path(["__array", elem]), name}` (`[]T` ≡ `Vec[T]`,
+        // same "Vec" key the checker already normalizes to elsewhere —
+        // `types/mod.rs`, `path[0].starts_with("[]") => "Vec"`). Derive the
+        // SAME `(type_name, method_name)` key the `Path` arm above uses and
+        // probe the SAME `sigs.static_methods` table before falling back to
+        // instance-by-name — preserves every existing (non-generic-static)
+        // case unchanged.
+        ExprKind::Member { obj, name } => {
+            let static_key = match &obj.kind {
+                ExprKind::TurboFish { base, .. } => match &base.kind {
+                    ExprKind::Ident(n) => Some(n.clone()),
+                    ExprKind::Path(parts) if parts.len() == 1 => Some(parts[0].clone()),
+                    _ => None,
+                },
+                ExprKind::Path(parts) if parts.len() == 2 && parts[0] == "__array" => {
+                    Some("Vec".to_string())
+                }
+                _ => None,
+            };
+            match static_key.and_then(|tn| sigs.static_methods.get(&(tn, name.clone()))) {
+                Some(p) => { is_static_generic_recv = true; p }
+                None => sigs.instance_by_name.get(name)?,
+            }
+        }
         _ => return None, // сложный func — codegen сам.
     };
 
@@ -436,7 +476,16 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
     // (source-order: receiver до аргументов). Выносим `obj` в temp,
     // func переписываем на `__nova_recv.method`. Для Ident/Path func —
     // receiver'а нет, func клонируется как есть.
+    // [M-vec-new-cap-default-arg-backfill]: a static-generic receiver
+    // (`is_static_generic_recv`) is a TYPE expression (`TurboFish`/
+    // `Path(["__array", elem])`), not a VALUE — hoisting it into
+    // `let __nova_recv = <type-expr>` is meaningless (and codegen has no
+    // C type for it, [E_UNKNOWN_TYPE_METHOD]). Treat it like the Ident/Path
+    // static-call arms: `func` carries no runtime receiver, clone as-is.
     let final_func: Box<Expr> = if let ExprKind::Member { obj, name } = &func.kind {
+        if is_static_generic_recv {
+            func.clone()
+        } else {
         let recv_name = "__nova_recv";
         stmts.push(let_stmt(recv_name, (**obj).clone(), sp));
         Box::new(Expr {
@@ -446,6 +495,7 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
             },
             span: func.span, id: crate::ast::ExprId::UNSET,
         })
+        }
     } else {
         func.clone()
     };

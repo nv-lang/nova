@@ -81,9 +81,11 @@ fn is_grapheme_break(prev int, cur int, gb11 bool, cur_ep bool, ri_count int, in
 }
 
 // ─── GraphemesIter — the third lens ───
-export type GraphemesIter value priv(type) {
-    buf str    // borrows str (alias of the buffer; GC sees ptr through the field)
-    pos int    // current byte offset into buf
+// Field-level `priv` (D281 module-boundary; Plan 200 pt.2 — corrected from
+// `value priv(type)`, over-strict per D267 extension-methods).
+export type GraphemesIter value {
+    priv buf str    // borrows str (alias of the buffer; GC sees ptr through the field)
+    priv pos int    // current byte offset into buf
 }
 
 fn GraphemesIter.new(buf str) -> GraphemesIter => { buf, pos: 0 }

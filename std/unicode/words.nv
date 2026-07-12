@@ -216,14 +216,16 @@ fn scan_next_eff_cat(buf str, from int, n int) -> int {
 }
 
 // ─── WordsIter — UAX #29 word-segment lazy iterator ───
-export type WordsIter value priv(type) {
-    buf str
-    pos int
-    n int
-    prev_imm_cat int
-    prev_eff_cat int
-    prev_prev_eff_cat int
-    ri_run int
+// Field-level `priv` (D281 module-boundary; Plan 200 pt.2 — corrected from
+// `value priv(type)`, over-strict per D267 extension-methods).
+export type WordsIter value {
+    priv buf str
+    priv pos int
+    priv n int
+    priv prev_imm_cat int
+    priv prev_eff_cat int
+    priv prev_prev_eff_cat int
+    priv ri_run int
 }
 
 fn WordsIter.new(buf str) -> WordsIter =>

@@ -6842,7 +6842,13 @@ fn User.guest() -> Self => { name: "guest", email: "", is_admin: false }
 > - **Почему default-arg, а НЕ overload:** одна функция `new(cap int = 0)` заменяет 0-арг `new()` — НЕ создаёт
 >   набор перегрузок → не триггерит `[M-vec-new-static-arity-overload]` (см. поправку ниже). Применимо к типам
 >   с точной ёмкостью (`Vec`/`[]T`; `HashMap`/`Set`/`WriteBuffer`/`StringBuilder`/`Queue` — по мере миграции,
->   семантика `cap(n)` того типа). План внедрения — **Plan 200 (зонтичный std-improvements)**.
+>   семантика `cap(n)` того типа). План внедрения — **Plan 200 (зонтичный std-improvements)**. **КОД внедрён
+> 2026-07-12** (`std/collections/vec/core.nv`, `Vec.new(cap int = 0)`). Компиляторный дефект
+> `[M-vec-new-cap-default-arg-backfill]` (default-arg backfill на generic-static ctor не покрывал
+> `Type[Args].method(...)`/`[]T.method(...)` call-сайты) — ЗАКРЫТ в `callnorm.rs` (`try_normalize_call`
+> classify-match расширен на turbofish/`__array`-Path static-receiver формы) + 3 hand-formatted ctor-call
+> сайта в `emit_c.rs`. **НЕ тот же класс**, что `[M-vec-new-static-arity-overload]` (arity-overload
+> cross-wiring, ниже) — тот остаётся открытым, отдельно отслеживается Plan 196.2.
 >
 > **ПОПРАВКА к Амендменту 1 (from_raw_parts → new-overload): ОТКАЧЕНО, спека была рассинхронена.** Складывание
 > `from_raw_parts` в 3-арг перегрузку `Vec[T].new(ptr,len,cap)` НЕ состоялось в коде — дефект

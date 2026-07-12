@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module spec_tests.conformance
+
+// Plan 196 wave-2 — matrix aspect {default value-arg, named arg} × forms
+// {static-method, generic-static-method}. The free-fn form is covered by
+// d102_named_args_default_params; d182 covers static return-type; d372 covers
+// generic-static ctor return + cross-module (std) Vec[T].new()/new(cap:).
+// GAP filled here: USER-type static + generic-static methods called with a
+// backfilled default and with named-arg overrides AT THE CALL SITE (the
+// callnorm/argbind default-backfill cell — [M-vec-new-cap-default-arg-backfill]
+// analogue for user types), which types_generic_static_ctor.nv only DECLARES
+// (no test blocks) and thus never exercises at runtime.
+
+type D102Config {
+    host str
+    port int
+    retries int
+}
+fn D102Config.make(host str, port int = 8080, retries int = 3) -> D102Config =>
+    { host, port, retries }
+
+type D102GBox[T] {
+    slot T
+    cap int
+}
+fn D102GBox[T].make(slot T, cap int = 42) -> D102GBox[T] => { slot, cap }
+
+test "static method: all defaults backfilled at call site (D102/D372)" {
+    ro c = D102Config.make("localhost")
+    assert(c.host == "localhost")
+    assert(c.port == 8080)
+    assert(c.retries == 3)
+}
+
+test "static method: named arg overrides one default, other backfilled (D102)" {
+    ro c = D102Config.make("h", retries: 9)
+    assert(c.port == 8080)
+    assert(c.retries == 9)
+}
+
+test "static method: both defaults named out-of-order (D102)" {
+    ro c = D102Config.make("h", retries: 1, port: 70)
+    assert(c.port == 70)
+    assert(c.retries == 1)
+}
+
+test "generic-static method: default backfilled per element type (D372/D102)" {
+    ro bi = D102GBox[int].make(7)
+    assert(bi.slot == 7)
+    assert(bi.cap == 42)
+    ro bs = D102GBox[str].make("x")
+    assert(bs.slot == "x")
+    assert(bs.cap == 42)
+}
+
+test "generic-static method: named arg overrides default (D372/D102)" {
+    ro b = D102GBox[int].make(5, cap: 99)
+    assert(b.slot == 5)
+    assert(b.cap == 99)
+}
