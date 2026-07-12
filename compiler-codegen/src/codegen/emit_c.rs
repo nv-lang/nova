@@ -18418,6 +18418,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Plan 48 Ф.0: resolve concrete type args for a generic fn call.
     /// Returns Vec<(param_name, c_type)> or Err with a helpful message (R5).
     /// Priority: turbofish > arg-type inference > return-type context.
+    ///
+    /// **[Q10, Plan 196.3 wave-2, 2026-07-12] Судьба: ВТОРОЕ ОКНО, Tier-2
+    /// СТРУКТУРНО ЗАБЛОКИРОВАНО (не мигрирована в этом окне).** Это не
+    /// "mono-lowering" (механическая подстановка уже-решённого) — тело
+    /// делает РЕАЛЬНУЮ unification (param `TypeRef` ⋂ arg C-type → T),
+    /// т.е. повторяет инференс, который чекер обязан выполнить для
+    /// type-check'а вызова generic-функции (`f1_check_call`,
+    /// `types/mod.rs` ~10242), но НЕ сохраняет: guard `typeref_mentions_any`
+    /// (`types/mod.rs` ~10478 — ВНУТРИ forbidden-зоны Q10, маркер 10452
+    /// лежит буквально в теле той же `f1_check_call`) явно пропускает
+    /// generic-возврат («they'd need type-subst, not available here»).
+    /// rustc-аналогия «mono = подстановка, не инференс» здесь НЕ применима
+    /// буквально: у rustc typeck уже пишет `node_substs`; у нас channel для
+    /// per-call generic type-args ОТСУТСТВУЕТ — то, что происходит здесь
+    /// СЕЙЧАС, суть повтор инференса под видом «lowering» (ранняя карта
+    /// `196.wave2-progress.md` строка `resolve_mono_type_args` называла это
+    /// «✅ остаётся (lowering-subst)» — уточнено этим заходом: не lowering).
+    /// Подтверждает Tier-2-находку Q5 (`196.3-wave2-d-driven.md` §«СТРУКТУРНАЯ
+    /// НАХОДКА») для «mono-резолверов» конкретным кодовым доказательством.
+    /// Постройка недостающего канала (per-call `ExprId` → `Vec<ResolvedType>`,
+    /// аналог `node_substs`) требует правки `f1_check_call`/instance-method
+    /// сиблинга — запрещённой для Q10 зоны; решение о постройке — за
+    /// владельцем (см. Q5 «Развилка (A)/(B)»). Легаси НЕ трогается. См. также
+    /// `resolve_method_level_subst` (~19355) — идентичный вердикт; три
+    /// независимых hand-duplicated инференс-движка (эта функция +
+    /// `resolve_method_level_subst` + инлайн instance-method dispatch)
+    /// исторически чинились СИНХРОННО вручную (см. Source 4 ниже,
+    /// «[M-exp-promotion-blockers: retry]»), что и есть симптом второго окна.
     fn resolve_mono_type_args(
         &self,
         fn_decl: &crate::ast::FnDecl,
@@ -19352,6 +19380,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// `current_type_subst` save'ится/restore'ится локально (вход с
     /// `receiver_subst`, выход — оригинальное состояние). Возвращает
     /// `Vec<(name, c_ty)>` отфильтрованный (пустые / `void*` отброшены).
+    ///
+    /// **[Q10, Plan 196.3 wave-2, 2026-07-12] Судьба: ВТОРОЕ ОКНО, Tier-2
+    /// СТРУКТУРНО ЗАБЛОКИРОВАНО.** Тот же вердикт и то же обоснование, что у
+    /// twin-функции `resolve_mono_type_args` (~18421, см. её doc-блок для
+    /// полного разбора) — это НЕ mono-lowering (компьютерная подстановка
+    /// уже-решённого чекером факта), а собственный unification-движок
+    /// (Steps 1/2/2f/3 ниже), дублирующий инференс, который `f1_check_call`
+    /// (`types/mod.rs` ~10242, forbidden для Q10) обязан выполнять для
+    /// type-check'а вызова метода с method-level generics, но не
+    /// экспортирует. Migration требует нового канала
+    /// (per-call `ExprId` → substitution, аналог rustc `node_substs`),
+    /// постройка которого трогает forbidden-зону — вне scope Q10; решение
+    /// за владельцем (Q5 «Развилка (A)/(B)», `196.3-wave2-d-driven.md`
+    /// §«СТРУКТУРНАЯ НАХОДКА»). Ранняя карта `196.wave2-progress.md` строка
+    /// `resolve_method_level_subst` уже верно отмечала «➡ чекер» (SEP от
+    /// волны-1) — этот заход уточняет: направление верное, но ПРЕЖДЕВРЕМЕННО
+    /// (тот же канал-гэп блокирует и её). Легаси НЕ трогается.
     fn resolve_method_level_subst(
         &mut self,
         fn_decl: &crate::ast::FnDecl,
