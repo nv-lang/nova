@@ -9,7 +9,9 @@
 //!    Прозрачный проброс `Fail[E]` из `fn(...) … Fail[E]`-параметра (R5
 //!    effect-polymorphic forwarding) — ЛЕГАЛЕН. Явный exempt-list (§2 D325):
 //!    `Option@unwrap`/`Result@unwrap` (мост D85 `!!`), `on_exit` (R5 protocol-
-//!    member), весь `std/testing/property.nv` (Q5 — assert/test-DSL).
+//!    member), весь `testing/property.nv` (Q5 — assert/test-DSL). Пути здесь
+//!    и далее — std-source-root-relative (манифест `[lib] src`, Plan 195),
+//!    без "std/" префикса.
 //!
 //! 2. `naming_lint_no_opt_suffix_or_orphan_try_prefix` (A2 = R3/R4 negative) —
 //!    ни один публичный API не имеет суффикса `_opt` (fallibility ≠ absence,
@@ -39,6 +41,13 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
+/// std SOURCE root — манифест-derived (`resolve_std_path` уважает `[lib]
+/// src` из `std/nova.toml`; Plan 195). НЕ хардкодим `std/` или `std/src/`
+/// напрямую — источник истины — манифест, как для любого другого пакета.
+fn std_root() -> PathBuf {
+    nova_codegen::manifest::resolve_std_path(&repo_root())
+}
+
 fn collect_nv(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = fs::read_dir(dir) else { return };
     for e in rd.flatten() {
@@ -51,10 +60,11 @@ fn collect_nv(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Все `.nv` под `std/`, КРОМЕ `std/_experimental/**` (отложенный TODO, §9 Q3).
+/// Все `.nv` под std source root'ом, КРОМЕ `_experimental/**` (отложенный
+/// TODO, §9 Q3).
 fn stable_std_files() -> Vec<PathBuf> {
     let mut all = Vec::new();
-    collect_nv(&repo_root().join("std"), &mut all);
+    collect_nv(&std_root(), &mut all);
     all.retain(|p| {
         !p.components()
             .any(|c| c.as_os_str() == "_experimental")
@@ -62,15 +72,17 @@ fn stable_std_files() -> Vec<PathBuf> {
     all.sort();
     assert!(
         !all.is_empty(),
-        "no std/*.nv found — repo_root() = {:?}",
-        repo_root()
+        "no std/*.nv found — std_root() = {:?}",
+        std_root()
     );
     all
 }
 
-/// Repo-relative, forward-slash path (стабильно для exempt-матчинга на Windows).
+/// std-source-root-relative, forward-slash path (стабильно для
+/// exempt-матчинга на Windows И независимо от расположения std-корня —
+/// манифест решает, живёт ли std плоско или на `src/`).
 fn rel(p: &Path) -> String {
-    p.strip_prefix(repo_root())
+    p.strip_prefix(std_root())
         .unwrap_or(p)
         .to_string_lossy()
         .replace('\\', "/")
@@ -288,12 +300,14 @@ fn split_param_return(header: &str) -> (String, String) {
 
 /// Явный exempt-list из D325 §2 (иначе false-positive) — по (rel-path, name).
 fn is_fail_exempt(d: &Decl) -> bool {
-    // Q5: весь testing/property — assert/test-DSL семантика.
-    if d.rel == "std/testing/property.nv" {
+    // Q5: весь testing/property — assert/test-DSL семантика. `d.rel` —
+    // std-source-root-relative (манифест-derived, Plan 195), без "std/"
+    // префикса и независимо от src/-раскладки.
+    if d.rel == "testing/property.nv" {
         return true;
     }
     // Мост D85 `!!`: Option@unwrap / Result@unwrap (core.nv).
-    if d.rel == "std/prelude/core.nv" && d.name == "unwrap" {
+    if d.rel == "prelude/core.nv" && d.name == "unwrap" {
         return true;
     }
     // R5 protocol-member (user-E forwarding). Обычно не сканируется (нет `fn`),
@@ -445,9 +459,11 @@ fn naming_lint_no_opt_suffix_or_orphan_try_prefix() {
 #[test]
 fn net_family_has_zero_fail() {
     // std/net — эталон Result-everywhere (0 Fail[ в публичных сигнатурах).
+    // `d.rel` — std-source-root-relative (манифест-derived), поэтому
+    // префикс — просто `net/`, без "std/" и без src/-раскладки.
     let mut offenders: Vec<String> = Vec::new();
     for d in all_decls() {
-        if !d.rel.starts_with("std/net/") {
+        if !d.rel.starts_with("net/") {
             continue;
         }
         let (_params, ret) = split_param_return(&d.header);

@@ -575,6 +575,13 @@ fn cmd_test(_path: &PathBuf) -> Result<()> {
 /// fail'ит при diff'е.
 fn cmd_emit_runtime_stubs(root: &PathBuf, check: bool) -> Result<()> {
     use nova_codegen::codegen::runtime_registry;
+    // Plan 195: `module_to_path` возвращает module-name-derived путь ВКЛЮЧАЯ
+    // package-префикс (`"std/runtime/math.nv"` для module `std.runtime.math`)
+    // — не repo-relative filesystem путь. Реальный файл живёт под
+    // std-source-root'ом (манифест `[lib] src`, resolve_std_path); снимаем
+    // package-префикс `std/` и джойним остаток на манифест-derived root
+    // вместо хардкода `root.join("std/...")`.
+    let std_src = nova_codegen::manifest::resolve_std_path(root);
     let registry = runtime_registry::all();
     let groups = runtime_registry::group_by_module(&registry);
     let mut total_files = 0;
@@ -587,7 +594,7 @@ fn cmd_emit_runtime_stubs(root: &PathBuf, check: bool) -> Result<()> {
             continue;
         }
         let rel_path = runtime_registry::module_to_path(module);
-        let abs_path = root.join(&rel_path);
+        let abs_path = std_src.join(rel_path.strip_prefix("std/").unwrap_or(&rel_path));
         let content = runtime_registry::render_nv(module, fns);
         if check {
             let existing = std::fs::read_to_string(&abs_path)
@@ -656,10 +663,16 @@ fn cmd_unicode(
     check: bool,
 ) -> Result<()> {
     use nova_codegen::codegen::unicode_data;
+    // Plan 195: std на `src/` — корень std-исходников читается из манифеста
+    // (`[lib] src`), а не хардкодится как `std/` (см. resolve_std_path).
+    let std_src = nova_codegen::manifest::resolve_std_path(root);
+    let display_rel = |abs: &Path| -> String {
+        abs.strip_prefix(root).unwrap_or(abs).to_string_lossy().replace('\\', "/")
+    };
     let tables = unicode_data::parse_ucd(ucd_dir)?;
     let content = unicode_data::render_norm_data_nv(&tables, version);
-    let rel = "std/unicode/norm_data.nv";
-    let abs = root.join(rel);
+    let abs = std_src.join("unicode/norm_data.nv");
+    let rel = display_rel(&abs);
     let stats = format!(
         "{} nfd / {} nfkd / {} ccc / {} comp",
         tables.nfd.len(),
@@ -670,8 +683,8 @@ fn cmd_unicode(
     // Plan 152.4.3: grapheme-break tables (UAX #29).
     let gtables = unicode_data::parse_grapheme_tables(ucd_dir)?;
     let gcontent = unicode_data::render_grapheme_data_nv(&gtables, version);
-    let grel = "std/unicode/grapheme_data.nv";
-    let gabs = root.join(grel);
+    let gabs = std_src.join("unicode/grapheme_data.nv");
+    let grel = display_rel(&gabs);
     let gstats = format!(
         "{} gcb / {} extpict / {} incb ranges",
         gtables.gcb.len(),
@@ -681,8 +694,8 @@ fn cmd_unicode(
     // Plan 152.4.4: case folding + Unicode case mapping (UAX, SpecialCasing).
     let ctables = unicode_data::parse_case_tables(ucd_dir)?;
     let ccontent = unicode_data::render_case_data_nv(&ctables, version);
-    let crel = "std/unicode/case_data.nv";
-    let cabs = root.join(crel);
+    let cabs = std_src.join("unicode/case_data.nv");
+    let crel = display_rel(&cabs);
     let cstats = format!(
         "{} fold / {} lower / {} upper / {} title / {} cased / {} case-ign ranges",
         ctables.fold.len(),
@@ -695,20 +708,20 @@ fn cmd_unicode(
     // Plan 152.4.5: word-boundary tables (UAX #29).
     let wtables = unicode_data::parse_word_tables(ucd_dir)?;
     let wcontent = unicode_data::render_word_data_nv(&wtables, version);
-    let wrel = "std/unicode/word_data.nv";
-    let wabs = root.join(wrel);
+    let wabs = std_src.join("unicode/word_data.nv");
+    let wrel = display_rel(&wabs);
     let wstats = format!("{} wb ranges", wtables.len());
     // Plan 152.4.6: sentence-boundary tables (UAX #29).
     let stables = unicode_data::parse_sentence_tables(ucd_dir)?;
     let scontent = unicode_data::render_sentence_data_nv(&stables, version);
-    let srel = "std/unicode/sentence_data.nv";
-    let sabs = root.join(srel);
+    let sabs = std_src.join("unicode/sentence_data.nv");
+    let srel = display_rel(&sabs);
     let sstats = format!("{} sb ranges", stables.len());
     // Plan 152.3b: General_Category + Alphabetic/White_Space tables (UCD).
     let cattables = unicode_data::parse_category_tables(ucd_dir)?;
     let catcontent = unicode_data::render_category_data_nv(&cattables, version);
-    let catrel = "std/unicode/category_data.nv";
-    let catabs = root.join(catrel);
+    let catabs = std_src.join("unicode/category_data.nv");
+    let catrel = display_rel(&catabs);
     let catstats = format!(
         "{} gc / {} alpha / {} white-space ranges",
         cattables.gc.len(),
@@ -718,18 +731,19 @@ fn cmd_unicode(
     // Plan 152.5b: collation (UCA / DUCET, UTS #10). Needs allkeys.txt (UCA).
     // Skipped gracefully if allkeys.txt is absent so the 152.4 UCD-only flow
     // still works in dirs without the UCA data.
-    let coll_data: Option<(String, String, std::path::PathBuf, &str)> =
+    let coll_data: Option<(String, String, std::path::PathBuf, String)> =
         if ucd_dir.join("allkeys.txt").exists() {
             let coll = unicode_data::parse_collation_tables(ucd_dir)?;
             let content = unicode_data::render_collate_data_nv(&coll, version);
-            let rel = "std/unicode/collate_data.nv";
+            let abs = std_src.join("unicode/collate_data.nv");
+            let rel = display_rel(&abs);
             let stats = format!(
                 "{} single / {} contraction-keys / {} implicit ranges",
                 coll.single.len(),
                 coll.contractions.len(),
                 coll.implicit.len()
             );
-            Some((content, stats, root.join(rel), rel))
+            Some((content, stats, abs, rel))
         } else {
             None
         };

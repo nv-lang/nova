@@ -38,10 +38,11 @@
 # (см. should_skip_path_full в nova-cli). Это даёт `nova check std/`
 # → 0 FAIL для shipping CI gate без необходимости `--skip` flag.
 #
-# Module path 1:1 = file path: файл `std/encoding/base64.nv`
+# Module path 1:1 = file path ОТ `src/`: файл `std/src/encoding/base64.nv`
 # объявляет `module std.encoding.base64` (или `encoding.base64`
 # для sub-dir form). Имя папки `std/` ↔ префикс модуля `std.` без
-# специальных маппингов (см. D78 «Path / module enforcement»).
+# специальных маппингов (см. D78 «Path / module enforcement»); слово
+# `src` в module-path НЕ входит.
 
 [package]
 name = "std"
@@ -51,10 +52,13 @@ license = "MIT OR Apache-2.0"
 description = "Стандартная библиотека Nova"
 repository = "https://github.com/nv-lang/nova.git"
 
-# Корень — текущий каталог `.`. Файлы лежат в подкаталогах прямо
-# в std/<домен>/, не в std/src/.
+# Plan 195 (2026-07-13): std переведён на канон `src/` (как остальные
+# пакеты — Rust/npm/Python/Zig-паттерн; nova-tls уже так живёт). Файлы
+# лежат в подкаталогах `std/src/<домен>/`, корень пакета (`nova.toml`,
+# `README`, `native/`) остаётся плоским. Module-path резолвится ОТ
+# `src/` и не включает слово `src` (D78).
 [lib]
-src = "."
+src = "src"
 
 # Plan 71 / D127: opt-in строгий enforcement правила
 # `public-missing-stability` (Plan 45 §11.5 №7). Severity →
