@@ -1,0 +1,25 @@
+// D109/D74 (Plan 196.3, checker-visibility migration) — before this migration,
+// `std/runtime/math.nv`'s `extern "nova" fn f64 @pow(exp f64)` declaration was never
+// `import`-ed anywhere, so the checker's `method_table` had NO entry for `f64.pow` and
+// arg-type checking was skipped entirely — a call like `x.pow("bad")` would leak past
+// the checker and hit codegen, which blindly emits `pow(x_c, "bad"_c)` (a real C
+// type error: `nova_str` passed where `<math.h>`'s `pow` expects `double`) — an
+// uncontrolled CC-FAIL instead of a clean diagnostic. Now that `std/prelude.nv`
+// plain-imports `std.runtime.math` (same fix as `char.nv`), the checker resolves
+// `f64.pow`'s ONE declared overload via `method_table` and rejects a
+// category-mismatched argument with a clean `[E_NO_MATCHING_OVERLOAD]` — proving the
+// migration is not just cosmetic dead-code removal, it closes a real CC-FAIL leak.
+//
+// EXPECT_COMPILE_ERROR E_NO_MATCHING_OVERLOAD
+
+module neg.d109_f64_pow_wrong_arg_type_neg
+
+fn d109_bad_pow() -> f64 {
+    ro x f64 = 2.0
+    // ✗ E_NO_MATCHING_OVERLOAD — `pow` wants an `f64` exponent, not a `str`.
+    x.pow("bad")
+}
+
+test "D109: f64.pow with a wrong-category argument is rejected by the checker" {
+    ro _ = d109_bad_pow()
+}

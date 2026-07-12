@@ -4823,9 +4823,11 @@ impl CEmitter {
         // std/runtime/builtins.nv). Hard-coded таблицы для StringBuilder/
         // WriteBuffer/ReadBuffer удалены.
         for recv_ty in self.external_registry.receiver_types.clone() {
-            // primitive str — не record, не нужен schema. Только
-            // user-defined opaque types (StringBuilder/WriteBuffer/...).
-            if recv_ty == "str" { continue; }
+            // primitive receivers (str; Plan 196.3 added f64/f32/int via
+            // std/runtime/math.nv's now-imported extern decls) — не record,
+            // не нужен schema. Только user-defined opaque types
+            // (StringBuilder/WriteBuffer/...).
+            if matches!(recv_ty.as_str(), "str" | "f64" | "f32" | "int") { continue; }
             self.record_schemas.entry(recv_ty.clone())
                 .or_insert_with(HashMap::new);
         }
@@ -10664,13 +10666,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
         // A name is a capture only if: it is in outer var_types AND not bound inside spawn.
         // Each capture is recorded with `by_value` flag:
-        //   - immutable scalar (let, not let mut, type ∈ {nova_int, nova_bool, nova_f64})
-        //     → captured BY VALUE (snapshot at spawn site).
-        //   - everything else (mutable, or non-scalar) → BY POINTER (shared mutation).
+        //   - immutable (let, not let mut) → captured BY VALUE (snapshot at spawn site).
+        //   - mutable → BY POINTER (shared mutation).
         // Rationale: parallel-for / supervised holds spawns until end-of-scope; loop-
-        // variables (`let cur = xs[i]`) are immutable scalars that change ВНЕШНЕ across
-        // iterations. Capturing by value snapshots them; by pointer would let all queued
-        // fibers see the last iteration's value.
+        // variables (`let cur = xs[i]`) are immutable and change ВНЕШНЕ across
+        // iterations (the `for`-loop reuses the same C stack slot each turn).
+        // Capturing by value snapshots them; by pointer would let all queued fibers
+        // see the LAST iteration's value once they finally run.
+        //
+        // [M-parfor-loopvar-nonscalar-byref-capture] (Plan 173.1, 2026-07-13): this
+        // used to additionally require `is_scalar` (type ∈ {nova_int, nova_bool,
+        // nova_f64, nova_f32, nova_byte}) before granting by-value capture — ANY
+        // non-scalar immutable loop variable (str, heap-record pointer, value-record,
+        // tuple, sum) fell through to by-POINTER, aliasing the loop's shared stack
+        // slot. Repro: `parallel for s in ["a","b","c"] { Report{source: s, ...} }`
+        // — every child read the address of the SAME `s`, so all children observed
+        // whatever `s` held once they actually ran (the loop had usually already
+        // advanced past it) → duplicate/missing elements, silently wrong `source`
+        // fields (`[M-parfor-record-result-miscompile]`). For a non-loop, single-
+        // assignment immutable capture, by-value (struct/pointer copy) and by-pointer
+        // (address of a stable slot) are behaviourally IDENTICAL — the value never
+        // changes for the rest of the scope either way — so widening by-value capture
+        // to every immutable type is a pure bugfix, not a behaviour change, outside
+        // the loop-variable-reuse case it fixes. `by_value=true` non-scalar structs
+        // (nova_str, tuples, value-records) get a plain C struct-copy ctx field
+        // (`T cap;`, not `T* cap;`) — safe, GC-scanned via the ctx allocation.
         let mut captures: Vec<(String, String, bool)> = Vec::new();
         for name in refs {
             if bound.contains(&name) {
@@ -10692,10 +10712,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 continue;
             }
             if let Some(ty) = self.var_types.get(&name).cloned() {
-                let is_scalar = matches!(ty.as_str(),
-                    "nova_int" | "nova_bool" | "nova_f64" | "nova_f32" | "nova_byte");
                 let is_mut = self.var_mutable.contains(&name);
-                let by_value = is_scalar && !is_mut;
+                let by_value = !is_mut;
                 captures.push((name, ty, by_value));
             }
         }
@@ -11991,6 +12009,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.detach_counter += 1;
 
         // ── Capture-анализ (по образцу emit_spawn) ──
+        // [M-parfor-loopvar-nonscalar-byref-capture] (2026-07-13): by-value gate
+        // widened to ANY immutable capture (was scalar-only) — see emit_spawn's
+        // capture-analysis comment for the full rationale (loop-variable aliasing
+        // of non-scalar types, e.g. `str`, was captured by-reference and observed
+        // stale/duplicate values).
         let mut refs: Vec<String> = Vec::new();
         Self::collect_idents_block(body, &mut refs);
         refs.sort();
@@ -12009,10 +12032,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 continue;
             }
             if let Some(ty) = self.var_types.get(&name).cloned() {
-                let is_scalar = matches!(ty.as_str(),
-                    "nova_int" | "nova_bool" | "nova_f64" | "nova_f32" | "nova_byte");
                 let is_mut = self.var_mutable.contains(&name);
-                let by_value = is_scalar && !is_mut;
+                let by_value = !is_mut;
                 captures.push((name, ty, by_value));
             }
         }
@@ -12312,8 +12333,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let mut bound: HashSet<String> = HashSet::new();
         Self::collect_bound_names_block(body, &mut bound);
 
-        // Захват: immutable scalar → by-value (snapshot), иначе by-pointer
-        // (shared mutation видна после wake). Тот же критерий, что у spawn.
+        // Захват: immutable → by-value (snapshot), mutable → by-pointer (shared
+        // mutation видна после wake). Тот же критерий, что у spawn.
+        // [M-parfor-loopvar-nonscalar-byref-capture] (2026-07-13): by-value gate
+        // widened to ANY immutable capture (was scalar-only) — see emit_spawn's
+        // capture-analysis comment for the full rationale.
         let mut captures: Vec<(String, String, bool)> = Vec::new();
         for name in refs {
             if bound.contains(&name) { continue; }
@@ -12325,10 +12349,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 continue;
             }
             if let Some(ty) = self.var_types.get(&name).cloned() {
-                let is_scalar = matches!(ty.as_str(),
-                    "nova_int" | "nova_bool" | "nova_f64" | "nova_f32" | "nova_byte");
                 let is_mut = self.var_mutable.contains(&name);
-                let by_value = is_scalar && !is_mut;
+                let by_value = !is_mut;
                 captures.push((name, ty, by_value));
             }
         }
@@ -43723,13 +43745,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Plan 177 Ф.3 [E_UNKNOWN_METHOD] — checker-side EXISTENCE oracle for INSTANCE
     /// methods on a PRIMITIVE receiver (`is_primitive_recv_name`) whose method set is
     /// (partly) HARDCODED in codegen — the D109 `prim_builtin_method` (hash/eq/ord/clone),
-    /// D74 `int_method_to_c` (abs), `f64_method_to_c` (math), the `nova_str` intrinsic
-    /// list, and the Plan 55 Ф.4 protocol-name whitelist — rather than living in the
-    /// checker's `method_table`. Returns `true` when `method` IS a known builtin instance
-    /// method on the Nova primitive `prim`. The checker consults this (in addition to
-    /// `method_table` user/prelude methods + prefix-generic/blanket resolution) BEFORE
-    /// rejecting a primitive method-call as unknown, so a legitimate `x.abs()` /
-    /// `s.to_upper()` / `v.hash()` is never flagged.
+    /// the `nova_str` intrinsic list, and the Plan 55 Ф.4 protocol-name whitelist —
+    /// rather than living in the checker's `method_table`. Returns `true` when `method`
+    /// IS a known builtin instance method on the Nova primitive `prim`. The checker
+    /// consults this (in addition to `method_table` user/prelude methods + prefix-
+    /// generic/blanket resolution) BEFORE rejecting a primitive method-call as unknown,
+    /// so a legitimate `s.to_upper()` / `v.hash()` is never flagged.
+    ///
+    /// Plan 196.3 (D109/D74 checker-visibility migration): `int.abs()` and the f64/f32
+    /// math intrinsics (`sqrt`/`cbrt`/trig/exp/log/`pow`/`hypot`/`is_nan`/…) USED to have
+    /// arms here too (`int_method_to_c`/`f64_method_to_c` existence checks) — they were
+    /// the checker's ONLY channel because the `extern "nova"` declarations in
+    /// `std/runtime/math.nv` were never `import`-ed anywhere (auto-generated, dead
+    /// weight). Fixed the same way `char.nv` was fixed
+    /// (`[M-compiler-nv-porting-wave]` item A): `std/prelude.nv` now plain-`import`s
+    /// `std.runtime.math`, so its extern decls are inlined into every module's
+    /// `module.items` like any other prelude method — `method_table["f64"]["sqrt"]` /
+    /// `method_table["int"]["abs"]` are populated the NORMAL way and `method_overloads`
+    /// (consulted by the caller BEFORE this fn) resolves them directly, with real
+    /// arg-type checking. Those two arms are therefore unreachable now (removed, not
+    /// dead-but-kept) — codegen EMISSION is untouched, `f64_method_to_c`/
+    /// `int_method_to_c` remain the sole Nova-method → C-function mapping (called
+    /// directly from `emit_call`, not through this existence oracle).
     ///
     /// Deliberately GENEROUS (existence, not exact dispatch): the SAFE direction is
     /// "known" — a false "known" merely defers a genuinely-broken call to codegen
@@ -43740,8 +43777,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// SINGLE SOURCE for the primitive-intrinsic NAME set. The two return-TYPE copies in
     /// `infer_expr_c_type` (the `nova_str` block + the protocol-whitelist `match`, near
     /// this file's ~39670 / ~43063) map the SAME names to C-types; the `prim_builtin_method`
-    /// / `int_method_to_c` / `f64_method_to_c` families are reused directly. If a primitive
-    /// intrinsic NAME is added in codegen, add it here (existence) too.
+    /// family is reused directly. If a primitive intrinsic NAME is added in codegen, add
+    /// it here (existence) too.
     pub(crate) fn primitive_instance_method_known(prim: &str, method: &str) -> bool {
         // Plan 55 Ф.4 protocol-name whitelist — matched for ANY receiver in codegen
         // (after the prim/str blocks), so it applies to every primitive here.
@@ -43779,35 +43816,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if !c_ty.is_empty() && Self::prim_builtin_method(c_ty, method).is_some() {
             return true;
         }
-        // D74 math on integer receivers (`int_method_to_c`: abs).
-        if matches!(
-            prim,
-            "int" | "uint" | "i8" | "i16" | "i32" | "i64"
-                | "u8" | "u16" | "u32" | "u64" | "byte"
-        ) && Self::int_method_to_c(method).is_some()
-        {
-            return true;
-        }
-        // [196.3 D109 wave-2 investigated, KEPT]: `f64_method_to_c` (math) looked like a
-        // one-window-redundant duplicate of the `extern "nova" fn f64 @sqrt()`-style
-        // declarations in `std/runtime/math.nv` (auto-generated from `runtime_registry.rs`)
-        // — but it is NOT: `extern` method declarations register into codegen's
-        // `ExternalRegistry` (see `external_registry.rs`), NOT the checker's
-        // `self.sig.method_table` that `method_overloads` reads (confirmed empirically:
-        // removing this arm broke `(9.0).sqrt()` with a clean `[E_UNKNOWN_METHOD]` —
-        // `method_overloads("f64","sqrt")` really does return `None`). So for `extern`-
-        // declared primitive methods this arm is the ONLY existence channel the checker
-        // has; genuinely not migratable to "read .nv via method_overloads" without first
-        // teaching the checker to consult `ExternalRegistry` too (out of scope here — a
-        // separate, larger migration). Float math intrinsics (`f64_method_to_c`).
-        // `to_bits`/`from_bits` removed [M-ptr-raw-access-contract-and-unaligned] item 3 —
-        // those are ordinary (non-extern) .nv methods (numeric.nv), resolved via
+        // Plan 196.3: `int.abs()` / f64+f32 math-intrinsic arms REMOVED — those methods
+        // now reach here only after `method_overloads(prim, method)` already returned
+        // `Some` (see this fn's doc comment), so the arms were unreachable dead code.
+        // `to_bits`/`from_bits` similarly removed [M-ptr-raw-access-contract-and-unaligned]
+        // item 3 — those are ordinary (non-extern) .nv methods (numeric.nv), resolved via
         // `method_overloads` like any user method, not a codegen-hardcoded intrinsic.
-        if matches!(prim, "f64" | "f32")
-            && Self::f64_method_to_c(method).is_some()
-        {
-            return true;
-        }
         // `nova_str` intrinsic instance methods (mirror the `obj_ty == "nova_str"` block).
         if prim == "str" {
             // [196.3 D109 wave-2 one-window prune]: `to_upper`/`to_lower`/`trim`/`concat`/
