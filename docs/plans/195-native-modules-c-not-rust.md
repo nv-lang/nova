@@ -1,10 +1,10 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 195 — `src/` layout std-миграция (общий native-модуль-паттерн → доки)
 
-**Статус:** 🟢 ПАТТЕРН ДОКАЗАН 2026-07-11 — Ф.1-2 (mbedTLS-своп TLS, Rust удалён) ВЫПОЛНЕНЫ
-(T40, ветка tls-mbedtls-195, в main); mbedTLS-волна = эталонная инстанция паттерна. Ф.3
-(вынос nova-tls) → **[Plan 193](193-nova-tls-repo.md)**. Остаётся: общий native-модуль-паттерн
-(.nv+.c+.lib) + `src/`-раскладка std как норма. **Приоритет:** P2.
+**Статус:** 🟢 ЗАВЕРШЁН 2026-07-13 — Ф.1-2 (mbedTLS-своп TLS, Rust удалён, T40) И
+`src/`-раскладка std (git mv 314 файлов, компилятор переведён на манифест-derived
+резолв, доки поправлены) ВЫПОЛНЕНЫ. Ф.3 (вынос nova-tls) → **[Plan 193](193-nova-tls-repo.md)**
+(уже эталонная инстанция паттерна). Общий native-модуль-паттерн (.nv+.c+.lib) — в доках.
 **Зависит:** [03.1](03.1-path-git-dependencies.md) (резолвер внешних зависимостей — путь A) для внешне-репового этапа.
 **Общий native-модуль-паттерн** (.nv+.c+.lib, `[ffi]`, `nova-<пакет>`-нейминг D78) —
 живёт в доках: [ffi-cookbook](../ffi-cookbook.md) · [module-conventions](../module-conventions.md) ·
@@ -65,13 +65,28 @@ Module-path — относительно `src/` (D78, не включает `src
 - **Ф.1** ✅ .c-шим к C-TLS + .nv-фасад std/tls (T40, mbedTLS 3.6.2, поверхность сохранена, 29/29).
 - **Ф.2** ✅ удалён Rust tls_shim + `[ffi.staticlib]`-cargo + legacy detect_tls; доки на `[ffi]` (T40).
 - **Ф.3** (вынос nova-tls) — **ВЫНЕСЕНА в [Plan 193](193-nova-tls-repo.md)** (2026-07-11, чтобы TLS-домен не дублировался с 116). Здесь остаётся ОБЩИЙ паттерн; nova-tls (193) = его эталонная инстанция.
+- **Ф.4** ✅ (2026-07-13) `src/`-раскладка std: `git mv` всего содержимого `std/` (314 файлов,
+  кроме `nova.toml`) → `std/src/**`, module-path не изменился. `std/nova.toml`: `[lib] src = "src"`.
+  Компилятор: `resolve_std_path` (`manifest.rs`) теперь читает `[lib] src` найденного std-корня и
+  возвращает SOURCE ROOT (не package root) — покрывает ~20 call-сайтов (imports.rs, nova-cli,
+  nova-lsp) без правки каждого. `cmd_unicode`/`cmd_emit_runtime_stubs`/`cmd_regen_runtime`/
+  `should_skip_path_full` переведены на манифест-derived путь вместо хардкода `std/...`.
+  `include_str!` в `external_registry.rs` (компилятор собирает СЕБЯ — манифест читать некогда) —
+  единственный легальный литеральный хардкод `std/src/...`, помечен doc-комментарием. Доки
+  (`docs/promts/*`, `test-conventions.md`, `module-conventions.md`, `ffi-cookbook.md`) и спека
+  (D78-амендмент, `spec/decisions/07-modules.md`) поправлены. Новая форма команды: `nova test
+  std/src/<домен>` (старая `std/<домен>` больше не существует на диске).
 
 ## Гейты
 
-std/tls тесты зелёные на C-backend (cert-modes/mTLS/Pinned/https); conformance δ0;
-grep-инвариант «нет Rust-crate в native-пути модулей»; nova-tls собирается standalone
-БЕЗ Rust (только clang + .lib).
+- ✅ `cargo build` (compiler-codegen + nova-cli + nova-lsp) — чист (0 errors, только pre-existing warnings).
+- ✅ `spec_tests/conformance` (один CU, `--jobs 4`) — **97 PASS / 0 FAIL**.
+- ✅ Таргетные std-тесты (`nova test std/src/collections std/src/data`) — **16 PASS / 0 FAIL** (9 SKIP — lib-файлы без test-блоков, норма).
+- ✅ `nova check std` — работает (126 PASS type-check; 21 FAIL — ВСЕ под `neg/`/`*_neg` — by-design invalid fixtures, ожидаемо не проходят `check` вне test-harness).
+- std/tls тесты зелёные на C-backend (cert-modes/mTLS/Pinned/https) — из Ф.1/Ф.2 (T40); grep-инвариант
+  «нет Rust-crate в native-пути модулей»; nova-tls собирается standalone БЕЗ Rust (только clang + .lib).
 
 ## Границы
 
-Не меняет публичный API tls (backend-своп). http — тем же паттерном после tls.
+Не меняет публичный API tls (backend-своп) и std (module-path 1:1 сохранён). http — тем же
+паттерном после tls.
