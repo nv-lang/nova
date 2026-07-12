@@ -947,15 +947,42 @@ pub fn is_prelude_self_module(name: &[String]) -> bool {
 /// CLI `--std-path` (ещё одна config-поверхность поверх env) — followup
 /// `[M-172.1-U1-cli-stdpath]`; env+manifest уже делают расположение std
 /// настраиваемым, что и требует §2.
+///
+/// **Plan 195 (2026-07-13):** возвращаемое значение исторически трактовалось
+/// вызывающим кодом как каталог, где `.nv`-файлы лежат НЕПОСРЕДСТВЕННО
+/// (`stdlib_dir.join("prelude.nv")` и т.п.) — то есть как **source root**, а
+/// не просто корень пакета. После перевода `std` на канон `src/`
+/// (`std/nova.toml`: `[lib] src = "src"`) корень пакета (`repo/std`) и
+/// source root (`repo/std/src`) разошлись. Чтобы не трогать ~20 call-сайтов
+/// в compiler-codegen/nova-cli/nova-lsp, шаг (4) читает `[lib] src` из
+/// `nova.toml` найденного std-корня (через тот же `parse_manifest`, что и
+/// для обычных пакетов) и возвращает `source_root`, если манифест валиден.
+/// Std без `nova.toml` (тестовые фикстуры) или без `[lib] src` — не
+/// меняется (fallback на сам `std_root`, byte-identical прежнему поведению).
 pub fn resolve_std_path(repo: &Path) -> PathBuf {
     // (1) env override.
-    if let Ok(v) = std::env::var("NOVA_STD_PATH") {
+    let std_root = if let Ok(v) = std::env::var("NOVA_STD_PATH") {
         let v = v.trim();
         if !v.is_empty() {
             let p = PathBuf::from(v);
-            return if p.is_absolute() { p } else { repo.join(p) };
+            if p.is_absolute() { p } else { repo.join(p) }
+        } else {
+            resolve_std_root_no_env(repo)
         }
-    }
+    } else {
+        resolve_std_root_no_env(repo)
+    };
+    // (4) уважать `[lib] src` внутри найденного std-пакета — source root,
+    // а не просто package root (Plan 195).
+    parse_manifest(&std_root.join("nova.toml"), &std_root)
+        .map(|m| m.source_root)
+        .unwrap_or(std_root)
+}
+
+/// Шаги (2)-(3) `resolve_std_path` (без env override) — вынесены в helper,
+/// чтобы (4) `[lib] src` применялся единообразно независимо от того, откуда
+/// взялся package root.
+fn resolve_std_root_no_env(repo: &Path) -> PathBuf {
     // (2) manifest `[workspace]/[package].std`.
     if let Some(rel) = read_std_key(&repo.join("nova.toml")) {
         let p = PathBuf::from(&rel);
@@ -1184,6 +1211,42 @@ mod parse_tests {
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("nova.toml"), "[workspace]\nstd = \"vendored/std\"\n").unwrap();
         assert_eq!(resolve_std_path(&dir), dir.join("vendored/std"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Plan 195 (2026-07-13): найденный std-корень с собственным `nova.toml`
+    /// объявляющим `[lib] src = "src"` — `resolve_std_path` возвращает
+    /// SOURCE ROOT (`<std_root>/src`), а не package root, чтобы ~20
+    /// call-сайтов, трактующих результат как «где лежат .nv напрямую»,
+    /// продолжали работать без изменений.
+    #[test]
+    fn resolve_std_path_respects_lib_src_in_std_manifest() {
+        if std::env::var_os("NOVA_STD_PATH").is_some() {
+            return; // env override wins — skip in that environment.
+        }
+        let dir = std::env::temp_dir().join(format!("nova_p195_libsrc_{}", std::process::id()));
+        let std_dir = dir.join("std");
+        let _ = std::fs::create_dir_all(&std_dir);
+        std::fs::write(
+            std_dir.join("nova.toml"),
+            "[package]\nname = \"std\"\n[lib]\nsrc = \"src\"\n",
+        ).unwrap();
+        assert_eq!(resolve_std_path(&dir), std_dir.join("src"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// std-корень с `nova.toml`, но БЕЗ `[lib] src` (или `src = "."`) —
+    /// source root == package root, byte-identical прежнему поведению.
+    #[test]
+    fn resolve_std_path_std_manifest_without_lib_src_is_unchanged() {
+        if std::env::var_os("NOVA_STD_PATH").is_some() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("nova_p195_nolibsrc_{}", std::process::id()));
+        let std_dir = dir.join("std");
+        let _ = std::fs::create_dir_all(&std_dir);
+        std::fs::write(std_dir.join("nova.toml"), "[package]\nname = \"std\"\n").unwrap();
+        assert_eq!(resolve_std_path(&dir), std_dir);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
