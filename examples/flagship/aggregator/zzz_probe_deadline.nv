@@ -27,10 +27,28 @@ test "probe: sleep(500) under 100ms deadline, code-after-sleep in a helper fn" {
     ro elapsed = Time.now_unix_ms() - t0
     tx.close()
     ro got = rx.try_recv()
-    ro msg = "caught=" + str.from(caught) + " r=" + str.from(r) + " elapsed=" + str.from(elapsed) +
-        " got_is_some=" + str.from(got.is_some())
-    assert(caught, msg)
-    assert(elapsed < 2000, msg)
-    assert(got.is_none(), msg)
-    assert(false, msg)
+    // [M-flagship-assert-dynamic-msg-dropped]: `assert(cond, msg)` only bakes
+    // in the message when `msg` is a STRING LITERAL at the call site
+    // (compiler-codegen/src/codegen/emit_c.rs ~30690: a non-literal 2nd arg
+    // silently falls back to the no-message format, NULL) — a runtime-built
+    // `str` (as `msg` was here) type-checks fine (the prelude 2-arg overload
+    // doesn't require a literal) but produces NO output on failure, which
+    // makes "assert with a computed debug message" a dead end for probing.
+    // Documented, not fixed this session (task instruction: route around
+    // compiler bugs, report). WORKAROUND: `println` the diagnostic BEFORE
+    // the assert — println output IS captured by the test runner's RUN-FAIL
+    // summary line (verified elsewhere in this package, e.g. aggregate_test's
+    // "DEBUG len=..." line).
+    // "assert" substring below is load-bearing: the test-runner's RUN-FAIL
+    // summary line only surfaces stdout lines containing fail/assert/panic
+    // (compiler-codegen/src/test_runner.rs ~2796) — a plain "DEBUG ..." line
+    // with none of those substrings is silently dropped from the summary
+    // even though it printed fine (verified: `nova test-build` on this same
+    // file shows only the assert-failure line, no DEBUG line, even though
+    // stdout was flushed — confirmed by cross-checking the filter logic).
+    println("assert-probe-info caught=" + str.from(caught) + " r=" + str.from(r) +
+        " elapsed=" + str.from(elapsed) + " got_is_some=" + str.from(got.is_some()))
+    assert(caught)
+    assert(elapsed < 2000)
+    assert(got.is_none())
 }
