@@ -1,0 +1,89 @@
+// [bug-1 audit-197 fix] (Plan 186) — `.map()` on a `[]T` value produced by
+// CALLING A RECORD FIELD that holds a first-class fn (D42 Model-A
+// DI-by-field, e.g. `ro to_columns fn(T) -> []ColumnValue` then
+// `@to_columns(value)`) used to hit `nova: internal error at emit_c.rs:...:
+// [P67-LEGACY] method call `.map` return type unknown — checker must
+// annotate`. This whole compile unit ICE'd before the fix — real-world
+// instance: `examples/real_world/orm_demo.nv`'s `cols.map(|c| c.name)` where
+// `cols = @to_columns(value)`.
+//
+// Three independent checker gaps (all `compiler-codegen/src/types/mod.rs`),
+// all needed to reach a correct return type here:
+//   1. `infer_expr_type`'s Call arm never considered a callee that's a plain
+//      RECORD FIELD holding a fn value (only real methods) — `@to_widgets(n)`
+//      resolved to `None`, so `widgets` below never entered scope; every
+//      later `widgets.<method>(...)` then had an unknown receiver.
+//   2. `resolve_method_return_with_closure_args` (the `.map(|x| ...)`
+//      closure-arg U-inference engine) only looked up the callee under the
+//      "Vec" alias or a concrete "[]<elem>" key — but vec_seq.nv's dominant
+//      HOF spelling (`fn[T] []T @map[U](...)`) registers under the LITERAL
+//      "[]T" prefix-generic key, invisible to that lookup.
+//   3. `build_recv_subst` bound the receiver carrier ONLY from
+//      `recv.generics` (bracket-carrier `Type[T,U]` slots) — empty for a
+//      `[]T` prefix-generic receiver, so `T` stayed unbound and closure-param
+//      seeding bailed.
+//
+// KNOWN SEPARATE GAP (NOT covered by this fixture / NOT fixed by bug-1):
+// `.map(|w| w.<str-field>)` on a `[]<UserRecord>` produced by this exact
+// field-call path — i.e. the SAME shape as `cols.map(|c| c.name)`, U=str
+// instead of U=int — SEGFAULTS at runtime (verified via a standalone
+// synthetic repro during this fixture's own write-up, 2026-07-13). Root
+// cause (codegen, NOT the checker fix above): `emit_c.rs::emit_call`'s
+// closure-arg U-inference for this call shape
+// (~line 33918, `let closure_ret_c = ... self.infer_expr_c_type(e) ...`)
+// evaluates the closure body BEFORE the closure's own param (`w`) has any
+// type binding visible to `infer_expr_c_type` — so the Member expr `w.name`
+// can't resolve and the lookup silently comes back empty. The unresolved
+// generic then defaults to `nova_int` (line ~34010,
+// `c.unwrap_or_else(|| "nova_int".to_string())`) — which happens to be the
+// CORRECT concrete type for an int-valued field (masking the bug for
+// `w.qty`-shaped closures, which is why this fixture below only exercises
+// int-returning closures) but silently wrong — and unsafe — for any other
+// concrete type (`str`, a heap pointer, ...). This is a genuinely SEPARATE,
+// deeper codegen defect from the three checker gaps above (it can only be
+// reached AFTER the checker stops ICE'ing — i.e. it was unreachable/dormant
+// before this very fix) — flagged here for a follow-up wave, intentionally
+// NOT fixed in this pass (out of bug-1's diagnosed scope; needs its own
+// investigation into propagating the receiver-element C-type into
+// `infer_expr_c_type`'s view of the closure's own params before that call).
+//
+// Единица: folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+import std.collections.vec_seq.{map}
+
+type M186Widget {
+    ro name str
+    ro qty int
+}
+
+type M186Repo {
+    ro to_widgets fn(int) -> []M186Widget
+}
+
+test "map() on a []T from a field-held fn call — checker annotates the return type (used to ICE)" {
+    ro repo = M186Repo { to_widgets: |n| [
+        M186Widget { name: "a", qty: n },
+        M186Widget { name: "b", qty: n * 2 },
+    ] }
+
+    // Gap 1: `@to_widgets(n)` — calling a FIELD holding a fn value, not a method.
+    ro widgets = repo.to_widgets(5)
+    assert(widgets.len() == 2)
+
+    // Gap 2 + 3: `.map()` on the resulting `[]M186Widget` — vec_seq.nv's
+    // prefix-generic `[]T @map[U]`, U inferred from the closure's return.
+    // Int-returning closures only (see header comment re: the separate,
+    // NOT-yet-fixed str-return codegen gap this fixture deliberately avoids).
+    ro qtys = widgets.map(|w| w.qty)
+    assert(qtys.len() == 2)
+    assert(qtys[0] == 5)
+    assert(qtys[1] == 10)
+
+    // A second, independently-shaped `.map()` call on the SAME receiver
+    // (different closure) — orm_demo.nv's real usage calls `.map()` more
+    // than once per `[]T`; this reproduces that without the str gap above.
+    ro doubled = widgets.map(|w| w.qty * 2)
+    assert(doubled[0] == 10)
+    assert(doubled[1] == 20)
+}
