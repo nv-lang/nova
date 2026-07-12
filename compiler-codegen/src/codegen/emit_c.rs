@@ -17678,6 +17678,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// already-NovaValue forms) pass through unchanged. Apply this on any
     /// return-type / let-binding inference that may produce a generic instance,
     /// so the local-var type matches the by-value method ABI.
+    ///
+    /// [196.3 audit, 2026-07-12] NOT a redundant re-derivation of the
+    /// checker-resolved-type channel: `resolved_named_to_c`'s parallel
+    /// `is_value_generic_template(&full)` check (`Ok(format!("NovaValue_{}",
+    /// ..))` arm, ~line 3807) makes this SAME value-vs-heap decision for
+    /// `ResolvedType`-typed inputs inside `resolved_type_to_c` — the
+    /// checker-first channel. This function's callers instead all sit on
+    /// the SEPARATE, still-legacy `TypeRef` + string-subst inference path
+    /// (`apply_type_subst_to_ref`, `value_aware_subst_to_ref`,
+    /// `register_generic_instances_in_typeref`, `debt_bind_self_for_mono_
+    /// recv`, `infer_mono_method_ret_with_args`), which `infer_expr_c_type`
+    /// falls back to only AFTER Channel 1/2 (`resolved_callees`/
+    /// `resolved_types` → `resolved_type_to_c`) have already missed or
+    /// yielded an erased/generic stub (see the `// Channel N:` cascade at
+    /// ~48751). Since no `ResolvedType` is available at those call sites,
+    /// there is no checker-resolved value to duplicate — this is the
+    /// legitimate value-category → C-representation lowering step for that
+    /// fallback path and stays as-is. It should be retired only when the
+    /// `apply_type_subst_to_ref`/`infer_mono_method_ret_with_args` family
+    /// itself migrates from `TypeRef` onto `ResolvedType` (out of scope
+    /// here — that is the broader 172.x/196.4 channel migration).
     fn value_aware_generic_c_type(&self, c_ty: &str) -> String {
         if let Some(short) = self.debt_value_generic_mono_short(c_ty) {
             format!("NovaValue_{}", short)
