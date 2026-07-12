@@ -1213,6 +1213,23 @@ Native-backed пакет декларирует свои C-артефакты ч
 > Механизм удалён из `manifest.rs`/`test_runner.rs` (волна `tls-mbedtls-195`);
 > TLS-бэкенд переведён rustls→mbedTLS (C). Амендирует Plan 192-абзац выше.
 
+> **Амендмент (Plan 193 Ф.2 / 195 vendored, 2026-07-13) — расширение `[ffi]`:**
+> - **`lib_dirs = ["..."]`** — каталоги поиска `libs` (`-L`-propagation во все три
+>   тулчейна); пути относительно каталога `nova.toml` пакета. При объявленном
+>   `lib_dirs` включается **detect-and-degrade**: отсутствующая либа даёт тестам
+>   честный `SKIP «[ffi] lib <name> not found in lib_dirs»` вместо link-FAIL.
+> - **`vendor_src_dirs = ["..."]`** — каталоги vendored C-исходников; если либа из
+>   `libs` не найдена в `lib_dirs`, тулчейн ОДИН раз компилирует все `.c` из этих
+>   каталогов (clang/cl, калька libuv build-and-cache) и архивирует в
+>   `lib_dirs[0]` под ожидаемым именем — далее кэш по наличию файла. Generic:
+>   тулчейн не знает имён библиотек (эталон — mbedTLS в `nova-tls`).
+> - Каждой найденной/собранной либе шим-код получает define
+>   **`NOVA_FFI_HAVE_<LIB>`** (uppercase имя) — для условной компиляции реального
+>   пути против stub'а.
+> - `[ffi]`-конфиг **зависимости** резолвится от каталога ЕЁ `nova.toml`
+>   (manifest_dir), не от source_root — dep-пакеты с `[lib] src = "src"`
+>   линкуются корректно.
+
 #### Lockfile — `nova.lock`
 
 TOML-формат, имя lowercase, единообразно с `nova.toml`. Auto-generated,
