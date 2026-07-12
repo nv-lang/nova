@@ -50,6 +50,18 @@ export fn AggError @to_str() -> str {
 // ── Per-task outcome ─────────────────────────────────────────────────────
 
 /// Mirrors the waterfall UI states (mockup: done / fail / cancel).
+///
+/// **`Cancelled` is a self-checked SOFT deadline, not a killed fiber**
+/// (plan 187, resumption-6, 2026-07-12 simplification — see aggregate.nv's
+/// file header for the full story). `aggregate.nv`'s `fetch_guarded` always
+/// lets the underlying fetch run to real completion, then relabels the
+/// outcome `Cancelled` if it settled after the shared `budget`, discarding
+/// whatever Done/Failed payload the fetch actually produced. No fiber is
+/// interrupted, no work is abandoned mid-flight — this is a REPORTING
+/// simplification (honest about the wall-clock cost: a single very-slow
+/// straggler is not cut short), not a resource-safety one. Real
+/// runtime-cancel (actually interrupting the late lane's `Time.sleep`/`Net`
+/// op so its work stops early) is follow-up work — see plan 173.x.
 export type TaskStatus enum
     | Done(SourceData)
     | Failed(str)

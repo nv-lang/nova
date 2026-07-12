@@ -15,10 +15,35 @@
 // addition to the narrative — every existing call site still reads as
 // "Net Time -> Report" unless it opts into watching progress.)
 //
-// Fan-out by N sources with a SHARED deadline, real cooperative cancellation
-// for latecomers (`supervised(deadline:)` — Plan 174 D408, landed in main
-// AFTER the plan-187 draft was written; the draft's "soft budget" fallback
-// (Ф.0) is not needed — this is the real thing from the start), 0 leaks.
+// Fan-out by N sources with a SHARED budget, concurrent (`parallel for`),
+// 0 leaks.
+//
+// **Simplification — self-checked soft deadline, NOT real fiber
+// cancellation (plan 187, resumption-6, 2026-07-12):** `supervised
+// (deadline:)` (D408) was the FIRST design (see git history up to commit
+// a8f6da81c for three probing sessions' worth of detail) and was dropped
+// after direct reproduction showed it does not interrupt a `Time.sleep` in
+// flight here: the deadline's `Fail[TimeoutError]` fires close to on-time,
+// but the sleeping child fiber keeps running to completion regardless — a
+// straight race between "cancellation observed" and "the child's result
+// lands in the handoff channel", flaky in both directions (confirmed: the
+// SAME source settles `Done` in one run and `Cancelled` in the next, no
+// code change). The owner's call for this MVP: don't fight that race.
+// `fetch_guarded` lets `fetch_one` run for real to completion (no
+// mid-flight abandonment, no unwind edge cases, no leaks-by-construction),
+// then — in the `parallel for` loop that assembles `results`, i.e. right
+// after each lane's own elapsed time is known — compares that elapsed time
+// against the shared `budget` and RELABELS the outcome `TaskStatus.
+// Cancelled` when it arrives late, discarding whatever real Done/Failed
+// payload `fetch_one` produced. This is a REPORTING simplification, not a
+// resource one: it is honest that `wall_ms` ends up bounded by the SLOWEST
+// source in the batch, not by `budget` (a single very-slow straggler is not
+// cut short) — the "×N faster than sequential" narrative still holds
+// because the fan-out itself is genuinely concurrent (`parallel for`
+// below), just not early-exiting. Real runtime-cancel (fixing `supervised
+// (deadline:)`/`Time.sleep` interrupt semantics so a late lane's work is
+// actually abandoned, not just relabeled) is follow-up work — see plan
+// 173.x. See also `domain.nv`'s `TaskStatus.Cancelled` doc comment.
 //
 // `fetch_one` performs a REAL `Net` byte-surface round-trip (connect / read /
 // close) — the SAME code runs under `mock_net()` (Demo/Chaos, this package)
@@ -81,13 +106,9 @@ const BASE_PORT int = 20000
 // WORKAROUND (verified against an isolated probe with the real `Source`/
 // `SourceData`/`AggError`/`TaskStatus` types, both a direct call AND a
 // `spawn`-wrapped call): no `throw`, no `Fail[AggError]` at all. `fetch_one`
-// returns `Result[SourceData, AggError]` directly; `fetch_status` branches
+// returns `Result[SourceData, AggError]` directly; `fetch_guarded` branches
 // on it with a plain `match`. Zero effect-handler unwinding on the
-// simulated-failure path — only `supervised(deadline:)`'s OWN internal
-// `Fail[TimeoutError]` (the well-tested, intended use of that mechanism,
-// per std/concurrency/supervised_deadline_test.nv) still throws/unwinds
-// here, and that one is a SCALAR-shaped payload (`TimeoutError`), not
-// implicated by the bisection above.
+// simulated-failure path.
 /// Fetch a single source. Demo/Chaos: `Time.sleep(source.latency_ms)` first
 /// (the simulated network wait), then either a simulated-upstream `Err`
 /// (see the marker above for why this is `Result`, not `throw`/`Fail`) or
@@ -117,28 +138,25 @@ fn fetch_one(source Source, idx int) Net Time -> Result[SourceData, AggError] {
     Ok(SourceData { id: source.id, payload: bytes })
 }
 
-fn fetch_status(source Source, idx int, sid str, t0 Monotonic) Net Time Emit -> TaskStatus {
-    match fetch_one(source, idx) {
-        Ok(data) => {
-            Emit.lane_done(sid, deadline_elapsed_ms(t0))
-            TaskStatus.Done(data)
-        }
-        Err(e) => {
-            Emit.lane_failed(sid, e.to_str(), deadline_elapsed_ms(t0))
-            TaskStatus.Failed(e.to_str())
-        }
-    }
+// Chain broken into separate bindings ([M-174.1-vec-method-chain-elem-erasure]-
+// shaped gap: a 3-deep method chain used directly can confuse return-type
+// inference in emit_c — split, not a semantics choice).
+fn deadline_elapsed_ms(t0 Monotonic) Time -> int {
+    ro now Monotonic = Monotonic.now()
+    ro elapsed = now.elapsed_since(t0)
+    elapsed.as_millis() as int
 }
 
-/// One source, guarded by a SHARED absolute deadline. Real cancellation
-/// (`supervised(deadline:)`, not a self-checked "soft" budget): a source that
-/// has not settled by `deadline` is cooperatively cancelled — its `Time.sleep`
-/// (or the pending `Net` op) is interrupted, cleanup runs, 0 leaks. The
-/// result is threaded out through a 1-slot channel (D415: a bare `mut`
-/// written from inside `spawn` is a data race even for a single writer —
-/// channel is the sanctioned handoff, mirrors the `parallel for` desugar in
-/// 173.1 §2).
-fn fetch_guarded(source Source, deadline Monotonic, idx int) Net Time Emit -> TaskResult {
+/// One source, checked against the SHARED soft budget (`budget_ms`). See the
+/// file-header "Simplification" note: `fetch_one` always runs to real
+/// completion — there is no fiber interruption here. Once it settles, this
+/// fn compares ITS OWN measured elapsed time against `budget_ms` and
+/// relabels the outcome `TaskStatus.Cancelled` when it arrives late,
+/// discarding the real Done/Failed payload. Exactly one `Emit` terminal
+/// event fires per source, matching whatever status ends up in the
+/// returned `TaskResult` — Report and Emit are the same truth, by
+/// construction (no separate race to keep in sync).
+fn fetch_guarded(source Source, budget_ms int, idx int) Net Time Emit -> TaskResult {
     // [M-flagship-monotonic-now-bare-binding-ice]: an un-annotated
     // `ro t0 = Monotonic.now()` ICEs emit_c.rs ("[P67-LEGACY] Path call
     // return type unknown for method=now — checker must annotate") — the
@@ -150,69 +168,40 @@ fn fetch_guarded(source Source, deadline Monotonic, idx int) Net Time Emit -> Ta
     // isolation (bare 5-line probe, no other code). Workaround: explicit
     // `Monotonic` annotation on every such binding, throughout this file.
     ro t0 Monotonic = Monotonic.now()
-    // [M-flagship-handler-lit-value-ptr-capture]: a `with Fail[E] = |e| {...}`
-    // handler LITERAL capturing `source` (a heap-backed `value` param —
-    // C-represented as `NovaValue_Source*`) directly into its closure-context
-    // struct miscompiles: CC-FAIL "assigning to 'NovaValue_Source' from
-    // incompatible type 'NovaValue_Source *'; dereference with *" — the
-    // context-struct field is the by-value struct type but the assignment
-    // skips the `*source` deref. Same defect CLASS as
-    // `[M-http-props-mut-chain-argpos-value-ptr-mismatch]` /
-    // `[M-184-mut-chain-return-position]` (std/http/server/server.nv),
-    // different call site. Workaround: pre-extract the one `str` field the
-    // handler needs BEFORE the `with Fail[...]` block, so the closure
-    // captures a plain `str` (no by-value/by-pointer mismatch), not the
-    // whole `Source`.
     ro sid = source.id
     Emit.lane_started(sid, idx)
-    // T inferred from the first `try_send` below (channels.md idiom) —
-    // explicit `Channel[TaskStatus].new(1)` turbofish ICEs emit_c.rs here
-    // ("Ident `Channel` not in var_types" — record-destructure position);
-    // plain `Channel.new(1)` sidesteps it.
-    ro { tx, rx } = Channel.new(1)
-    with Fail[TimeoutError] = |_e| {
-        // deadline fired before this source settled — cascading
-        // cancellation; leave the channel empty, Cancelled below.
-        Emit.lane_cancelled(sid, deadline_elapsed_ms(t0))
-    } {
-        ro src = source
-        supervised(deadline: deadline) {
-            spawn {
-                ro status = fetch_status(src, idx, sid, t0)
-                ro _ = tx.try_send(status)
-            }
+    ro outcome = fetch_one(source, idx)
+    ro elapsed_ms = deadline_elapsed_ms(t0)
+    ro status = if elapsed_ms > budget_ms {
+        TaskStatus.Cancelled
+    } else {
+        match outcome {
+            Ok(data) => TaskStatus.Done(data)
+            Err(e)   => TaskStatus.Failed(e.to_str())
         }
     }
-    tx.close()
-    ro status = match rx.try_recv() {
-        Some(s) => s
-        None    => TaskStatus.Cancelled
+    match status {
+        Done(_)   => Emit.lane_done(sid, elapsed_ms)
+        Failed(m) => Emit.lane_failed(sid, m, elapsed_ms)
+        Cancelled => Emit.lane_cancelled(sid, elapsed_ms)
     }
-    ro elapsed_ms = deadline_elapsed_ms(t0)
     TaskResult { id: source.id, status, elapsed_ms }
 }
 
-// Chain broken into separate bindings ([M-174.1-vec-method-chain-elem-erasure]-
-// shaped gap: a 3-deep method chain used directly can confuse return-type
-// inference in emit_c — split, not a semantics choice).
-fn deadline_elapsed_ms(t0 Monotonic) Time -> int {
-    ro now Monotonic = Monotonic.now()
-    ro elapsed = now.elapsed_since(t0)
-    elapsed.as_millis() as int
-}
-
 /// The killer-narrative entry point: fan-out `sources` with a shared
-/// `budget`, cascading cancellation for latecomers, 0 leaks.
+/// `budget`, 0 leaks. See the file-header "Simplification" note — the
+/// budget is enforced as a soft, self-checked deadline (relabel-after-
+/// settle), not real fiber cancellation.
 #stable(since = "0.1")
 export fn aggregate(sources []Source, budget Duration) Net Time Emit -> Report {
     ro t0 Monotonic = Monotonic.now()
-    ro deadline = t0.plus(budget)
+    ro budget_ms = budget.as_millis() as int
     // Plan 87: the loop-variable type must be annotated when the checker
     // can't infer the collected `[]T` element type from the trailing probe
     // alone (`TaskResult` return of `fetch_guarded` — codegen asked for an
     // explicit `int` annotation on the index here).
     ro results = parallel for idx int in 0..sources.len() {
-        fetch_guarded(sources[idx], deadline, idx)
+        fetch_guarded(sources[idx], budget_ms, idx)
     }
     ro wall_ms = deadline_elapsed_ms(t0)
     ro report = Report.from(results, wall_ms)
