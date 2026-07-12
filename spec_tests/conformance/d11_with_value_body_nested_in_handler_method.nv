@@ -3,56 +3,78 @@
 // 197-audit-progress.md, «Системные находки» #2): `with EFFECT = value
 // { ... }`, где `value` — bare-identifier (уже связанный handler,
 // НЕ inline handler-литерал), не парсился, когда вложен ВНУТРИ тела
-// handler-метода (nested в closure-аргументе вызова).
+// handler-метода.
 //
 // Root cause: `parse_expr_or_handler_lit` (compiler-codegen/src/parser/
 // mod.rs) держал obsolete pre-D61 эвристику «bare Path + `{` + первый
 // токен внутри `Ident (` ⇒ трактовать как bare-form handler-литерал без
 // keyword `effect`» (форма, retracted самим D11 §«Слово `handler` —
-// keyword (D61)»). Эвристика ложно триггерилась на `primary { b() }` —
-// `b()` внутри with-тела выглядит как `Ident (` (сигнатура handler-
-// метода), парсер уходил в handler-литерал-ветку и падал на `expected
-// `=>` or `{` for handler-method body`, встретив закрывающую `}`
-// with-тела. Fix: эвристика удалена (dead code post-D61 — inline
-// handler-литерал теперь ВСЕГДА требует `effect Name { ops }`), handler-
-// value в `with`-биндинге парсится обычным `parse_expr()` (guarded
-// `no_trailing_block`, как и раньше для non-Ident веток).
+// keyword (D61)»). Эвристика ложно триггерилась на `alt { d11_helper() }`
+// — вызов `d11_helper()` внутри with-тела выглядит как `Ident (`
+// (сигнатура handler-метода), парсер уходил в handler-литерал-ветку и
+// падал на `expected `=>` or `{` for handler-method body`, встретив
+// закрывающую `}` with-тела. Fix: эвристика удалена (dead code post-D61
+// — inline handler-литерал теперь ВСЕГДА требует `effect Name { ops }`),
+// handler-value в `with`-биндинге парсится обычным `parse_expr()`
+// (guarded `no_trailing_block`, как и раньше для non-Ident веток).
+//
+// Repro намеренно упрощён относительно оригинальной находки
+// (orm_decorators.nv:145 — `primary.in_transaction(|| with Db = primary
+// { b() })`): там `with` сидит ВНУТРИ closure-литерала, переданного
+// HOF-аргументом — предметный паттерн, не существенный для самого
+// парсер-бага. `parse_with`/`parse_expr_or_handler_lit` вызываются
+// идентично независимо от того, обёрнут ли `with` ещё и в closure —
+// существенно ТОЛЬКО «`with EFFECT = bare_ident { bare_ident2(...) }`
+// внутри тела handler-метода», это и воспроизводит тест ниже
+// (`alt` — bare-ident locally bound ВНУТРИ `exec()`, не захвачен из
+// closure).
+//
+// NB (найдено при отладке этого фикса, НЕ чинится здесь — region этой
+// задачи = parser/mod.rs): closure-обёрнутый вариант «один-в-один» с
+// orm_decorators.nv (nested closure, захватывающая ИМЕННО ТО ЖЕ имя,
+// что уже #define-алиасится как context-field энклоузящего handler-
+// литерала) упирается в ОТДЕЛЬНЫЙ codegen-дефект — macro-hygiene
+// коллизия в emit_c.rs: `#define X (_c->X)`-алиасинг контекстного поля
+// текстово подставляется и в member-access вида `env_ptr->X = X;`
+// (генерируется при инициализации env-структуры вложенного closure-
+// литерала, если тот захватывает переменную с ТЕМ ЖЕ именем X) →
+// `env_ptr->(_c->X) = ...` — невалидный C, `error: expected identifier`.
+// Значит фикс парсера сам по себе НЕ разблокирует orm_decorators.nv —
+// нужен ещё один, независимый codegen-фикс (Plan 197 examples-revision
+// / отдельная задача).
 module spec_tests.conformance
 
 type D11WithDb effect {
     exec() -> int
-    in_transaction(b Effect[D11WithDb]) -> int
 }
 
-// Handler, чей `in_transaction` устанавливает ВЛОЖЕННЫЙ `with` внутри
-// closure-аргумента, переданного в другой handler-метод (`primary.
-// in_transaction(|| with D11WithDb = primary { b() })`) — ТОЧНО
-// репродуцирующая форма из orm_decorators.nv:145 (Plan 197 audit).
-fn d11_with_read_replica(primary Effect[D11WithDb]) -> Effect[D11WithDb] => effect D11WithDb {
-    exec() => primary.exec()
-    in_transaction(b) {
-        primary.in_transaction(|| with D11WithDb = primary { b() })
-    }
-}
-
-fn d11_make_primary(tag int) -> Effect[D11WithDb] => effect D11WithDb {
+fn d11_leaf(tag int) -> Effect[D11WithDb] => effect D11WithDb {
     exec() => tag
-    in_transaction(b) => b()
+}
+
+fn d11_helper() -> int => 99
+
+// Handler, чей `exec()` устанавливает ВЛОЖЕННЫЙ `with` внутри
+// собственного тела handler-метода (block-форма) — репродуцирует форму,
+// диагностированную Plan 197 audit: `with EFFECT = value { ... }`,
+// `value` — bare identifier, with-тело начинается с bare-call.
+fn d11_wrapper() -> Effect[D11WithDb] => effect D11WithDb {
+    exec() {
+        ro alt = d11_leaf(42)
+        with D11WithDb = alt { d11_helper() }
+    }
 }
 
 test "D11: `with EFFECT = value { ... }` парсится вложенным в тело handler-метода" {
-    ro primary = d11_make_primary(42)
-    ro routed = d11_with_read_replica(primary)
-    ro result = with D11WithDb = routed {
-        D11WithDb.in_transaction(|| D11WithDb.exec())
-    }
-    assert(result == 42)
+    ro routed = d11_wrapper()
+    ro result = with D11WithDb = routed { D11WithDb.exec() }
+    assert(result == 99)
 }
 
 // Более простой (не-nested) вариант той же формы напрямую в обычном
 // теле функции — регресс-гард, что фикс не сломал baseline-случай.
 test "D11: `with EFFECT = value { ... }` — baseline (не вложенный) вариант" {
-    ro primary = d11_make_primary(7)
+    ro primary = d11_leaf(7)
     ro result = with D11WithDb = primary { D11WithDb.exec() }
     assert(result == 7)
 }
