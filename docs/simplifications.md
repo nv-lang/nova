@@ -38155,3 +38155,45 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
 
 - `forbid Detach` заявлен дизайном (D63×D50), механика в check_callee_effects есть,
   но тестов 0. Добавить pos/neg; после транзитивности — глубокий кейс.
+
+## [M-178-server-typed-body] ЗАКРЫТ (2026-07-12, баг-фиксер Plan 196, sonnet)
+
+- Заявленный «serde-в-http-CU codegen-дефект» (typed `#impl(Deserialize)` request-
+  bodies на сервере) оказался ДВУМЯ реальными компиляторными багами, оба
+  проявляются только когда `std.http.server` и `std.http.client` (транзитивно
+  через `std.http.serdejson`'s `json_decode_body[T]`) попадают в ОДИН CU:
+  1. **types/mod.rs** — chain-receiver mut-check: реестр `recv_returning`
+     (fluent `-> @`, Plan 77/D132) был name-only, БЕЗ arity. Одноимённый `-> @`
+     метод другого типа/арности (`ServeMux mut @post(pattern, handler) -> @`,
+     arity 2) ложно поражал НЕСВЯЗАННЫЙ вызов `HttpClient.new().post(url).body(b)`
+     (arity 1) → ложный `E_RECEIVER_BINDING_NOT_MUT`. Фикс: arity-aware компаньон
+     `recv_returning_arity`, зеркалит существующий `mut_methods_arity`/
+     `ro_methods_arity` прецедент (`[M-172.5-chain-gating-ro-at]`).
+  2. **emit_c.rs** (3 места) — mangling/registration свободных функций считали
+     голое имя уникальным по ВСЕЙ CU: `fn_module_map`/`file_priv_fn_c_names`,
+     D84 `method_overloads`-регистрация, D29 shadow-skip `should_skip_fn`.
+     Module-private (без `export`) одноимённая fn в ДВУХ разных модулях
+     (`std.http.client`'s private `serialize_response(status, headers, body)
+     -> str` vs `std.http.server`'s exported `serialize_response(resp) ->
+     []u8`) — НЕСВЯЗАННЫЕ функции, не overload-пара — либо коллизировали в один
+     C-символ, либо (после первого фикса) тихо ВЫПАДАЛИ из вывода вообще
+     (implicit-decl CC-FAIL). Расширил существующую cross-module collision-
+     detection (была только identical-signature, прецедент uuid_namespace
+     duplicate-symbol) на different-signature-но-не-все-exported случай,
+     прокинул через все 3 места.
+- Repro: `std/http/serdejson/typed_body_repro_test.nv` — сознательно в папке
+  serdejson, НЕ в `std/http/server/`: черновик внутри `std/http/server/`
+  тянул serde в модуль `http.server` целиком и ломал `nova test
+  std/http/servernet` (`E_EXTENSION_METHOD_NEEDS_IMPORT` на
+  `HashMap.serialize()`) — тот же leanness-принцип, что и у самого
+  serdejson.nv (см. его баннер).
+- Маркер снят из `server.nv` (заменён на DONE-описание) и из
+  `backlog-followups.md`; `187-flagship-concurrency-demo.md` обновлён —
+  typed `.json[T]` теперь доступен, dynamic-JSON workaround не нужен.
+- **Гейты:** `nova test std/http std/encoding` 14/0 (+8 SKIP, ожидаемо —
+  no-test-block модули); `nova test std/crypto` 5/0 (rotl32 identical-sig
+  прецедент не сломан); `nova test --positive --compile-error
+  spec_tests/conformance --timeout 300 --jobs 4` 95/0. Rust rebuild clean
+  (`cargo build --release` nova-cli, ~4м каждый из 6 rebuild-циклов).
+- Branch `typed-body-fix` (worktree `nova-nt`), commit `56b00e808`; НЕ
+  смёржен в main.
