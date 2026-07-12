@@ -47398,17 +47398,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                         let key = format!("fn_ret_{}", name);
-                        // [M-property-testing-rot] (Plan 172.13 батч 3): the erased
-                        // `fn_ret_<name>` fallback for a NON-turbofish GENERIC fn call
-                        // is stashed (not returned) so the mono-aware inference below
-                        // gets its shot — a nested generic call inside a mono'd body
-                        // (`shrink_loop(gen, body, value, ...)` returning `(T, E)`)
-                        // otherwise short-circuits to the erased `_NovaTupleN` while
-                        // the emit side resolves the mono tuple → C init-type clash.
-                        // The stash is returned by that block's final fallback (was a
-                        // hard `void*`), preserving the legacy answer when the mono
-                        // inference cannot bind.
-                        let mut fn_ret_generic_stash: Option<String> = None;
+                        // Plan 196.2 W1 [gate-1]: B10g_fn_ret_var_generic_stash REMOVED
+                        // (paired with its sole consumer B10j_generic_fn_stash_or_voidstar,
+                        // removed below — the `fn_ret_generic_stash` mechanism is dead as a
+                        // unit). It used to stash the erased `fn_ret_<name>` answer for a
+                        // non-turbofish generic fn call ([M-property-testing-rot], Plan
+                        // 172.13) so a later fallback could return it when mono-aware
+                        // inference failed to bind. NO-HIT on either end across
+                        // conformance+std ⟹ mono-aware inference now always binds when this
+                        // cascade is reached (Channel-2-covered otherwise).
                         if let Some(t) = self.var_types.get(&key).cloned() {
                             // Plan 180 [M-180-namespace-static-generic-mono followup]:
                             // for a TURBOFISH generic free-fn call (`json_decode[User](..)`
@@ -47420,10 +47418,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if !self.generic_fns.contains(name.as_str()) {
                                 self.icr_trace("B10g_fn_ret_var_nongeneric");
                                 return t;
-                            }
-                            if turbofish_args.is_empty() {
-                                self.icr_trace("B10g_fn_ret_var_generic_stash");
-                                fn_ret_generic_stash = Some(t);
                             }
                         }
                         // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)`
@@ -47636,28 +47630,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             return self.value_aware_generic_c_type(&c_ty);
                                         }
                                     }
-                                    // Plan 85.4: `apply_type_subst_to_ref` резолвит
-                                    // только type-params + примитивы. Если return-тип
-                                    // — concrete user-тип БЕЗ неразрешённых type-params
-                                    // (напр. `-> Ordering`), резолвим через
-                                    // `type_ref_to_c` (вместо void*-эрейжера, который
-                                    // ломал call-site mis-typing'ом).
-                                    let generic_names: Vec<String> =
-                                        subst.iter().map(|(n, _)| n.clone()).collect();
-                                    if !Self::type_ref_mentions_name(ret_ty_ref, &generic_names) {
-                                        if let Ok(c_ty) = self.type_ref_to_c(ret_ty_ref) {
-                                            if !c_ty.is_empty() && c_ty != "void*" {
-                                                self.icr_trace("B10j_generic_fn_concrete_ret");
-                                                return c_ty;
-                                            }
-                                        }
-                                    }
-                                    // If return type resolution failed (e.g. generic record T),
-                                    // fall back to the stashed erased `fn_ret_<name>` (legacy
-                                    // answer for non-turbofish generic calls —
-                                    // [M-property-testing-rot]), else void* (erased return).
-                                    self.icr_trace("B10j_generic_fn_stash_or_voidstar");
-                                    return fn_ret_generic_stash.unwrap_or_else(|| "void*".into());
+                                    // Plan 196.2 W1 [gate-1]: B10j_generic_fn_concrete_ret +
+                                    // B10j_generic_fn_stash_or_voidstar REMOVED. Former:
+                                    // concrete-return special case (return type mentions no
+                                    // unresolved generic param, e.g. `-> Ordering`) via
+                                    // `type_ref_to_c` (Plan 85.4). Latter: fallback to the
+                                    // (now-removed, see B10g above) `fn_ret_generic_stash`,
+                                    // else erased `void*`. Both NO-HIT across conformance+std
+                                    // ⟹ whenever this cascade is reached, the `resolved`
+                                    // three-way chain above (value_aware_subst_to_ref /
+                                    // resolve_result_option_ret / full-subst type_ref_to_c)
+                                    // already produced a usable concrete type ⟹ this tail is
+                                    // structurally unreachable (§5); falls through to the rest
+                                    // of the legacy cascade below.
                                 }
                             }
                         }
