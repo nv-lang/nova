@@ -44903,6 +44903,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// ([M-172.1-some-target-coerce] / -tuple-destructure-annot / -default-arg-typed).
     /// `resolved_type_to_c(Scalar)` is pure (no mono side-effects) so calling it on `&self`
     /// from the value-emitter is safe.
+    ///
+    /// Plan 196.3 (мелочь-пакет, one-window inventory) verdict: ALREADY the
+    /// second-window channel reader — не легаси-переизобретение, а сама
+    /// точка чтения `resolved_types` (см. `self.resolved_types.get(&id)`
+    /// ниже). Единственный вызывающий (`emit_expr` IntLit-ветка, :26114)
+    /// уже follows правило «канал первым, legacy-каст lazy fallback».
+    /// Действие по этому пункту инвентаря = нет изменений, только
+    /// подтверждение статуса (не переносить снова).
     fn channel_int_c_type(&self, id: crate::ast::ExprId) -> Option<String> {
         if !id.is_set() {
             return None;
