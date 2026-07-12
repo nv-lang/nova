@@ -13074,7 +13074,14 @@ impl<'a> TypeCheckCtx<'a> {
                         if parts.len() == 2 && parts[0] == "__array"
                             && matches!(
                                 ctor.as_str(),
-                                "new" | "with_capacity" | "from" | "default" | "filled"
+                                // Plan 196.2 W1 step2 [CAP-A enabler]: `of` added. `[]T.of(a,b,…)`
+                                // (variadic slice literal) returns `[]T` just like `from`; its
+                                // omission left `ro sv = []int.of(...)` UNRESOLVED → `sv` absent
+                                // from scope → any method on sv (e.g. `sv.iter()`) could not resolve
+                                // its receiver → NOT materialized into `resolved_types` → codegen
+                                // fell to the legacy `infer_call_ret_c` B07 arm. The TurboFish twin
+                                // `Vec[T].of` already resolved via `resolve_generic_static_return`.
+                                "new" | "with_capacity" | "from" | "default" | "filled" | "of"
                             )
                         {
                             return Some(TypeRef::Array(
