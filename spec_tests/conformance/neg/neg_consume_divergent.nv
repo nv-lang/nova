@@ -5,7 +5,6 @@
 // Cleanup types → D196-divergent-consumable error.
 
 module neg.neg_consume_divergent
-
 type ResA {
     ro id int
 }

@@ -8,7 +8,6 @@
 // `ok`, confirming the new grammar is accepted (no parse error, no regression).
 
 module neg.f1_parse_message_positive
-
 type Counter {
     n int
 }

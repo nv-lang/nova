@@ -9,8 +9,7 @@
 // Acceptance A110.1.9 / T2.2: init throw → cleanup skipped + throw
 // propagates correctly.
 
-module nova_tests.plan110
-
+module conformance.codegen_partial_construction_d188_r1
 type FailableInit3 {
     ro id int
 }

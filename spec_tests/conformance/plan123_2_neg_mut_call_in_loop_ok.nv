@@ -1,8 +1,7 @@
 // Plan 123.2 T-NEG.2: Call inside loop body — for mut fields, V2
 // conservative skip hoisting (call could mutate @F via alias).
 
-module nova_tests.plan123
-
+module conformance.plan123_2_neg_mut_call_in_loop_ok
 type Acc4_plan1232negmutcallinloopok {
     mut total int
 }

@@ -1,8 +1,7 @@
 // Plan 123.7.1 T4.1 (V4.1 per-root): chain cache survives writes
 // to UNRELATED root fields.
 
-module nova_tests.plan123
-
+module conformance.plan123_7_1_ipa_chain_per_root_invalidation_ok
 type Inner_plan12371ipachainperrootinvalidationok {
     ro v int
 }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-module spec_tests.conformance
+module conformance.d22_closure_unit_return
 
 // Plan 196 wave-2 — matrix gap fill for D22 (closures). Identified gap
 // (196.3 таблица «Пробелы тест-покрытия», D48/D402-строка — фактически D22,

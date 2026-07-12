@@ -10,7 +10,6 @@
 // Acceptance: E_EXTERNAL_TYPE_RETRACTED fires for the consume form.
 
 module neg.v2_external_type_consume_d163_ok
-
 external type FileResource consume
 
 fn dummy() -> int => 42

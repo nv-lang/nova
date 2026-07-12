@@ -1,6 +1,6 @@
 // Probe fixture for [M-161-parametric-return]:
 // blanket method with Vec[T] return type (T must be substituted at mono).
-module spec_tests.conformance
+module conformance.blanket_collect
 import std.collections.vec.{Vec, VecIter}
 import std.prelude.collections.{Next}
 

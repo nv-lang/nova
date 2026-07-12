@@ -9,7 +9,7 @@
 //   R4-capture вернул бы новое значение вместо старого.
 // Негатив (R2 hard-error E_REBIND_LIVE_CONSUME) — nova_tests/rebind/neg/.
 // Один folder-module `spec_tests.conformance`; все top-level имена D347-префиксны.
-module spec_tests.conformance
+module conformance.d347_same_scope_rebinding
 
 // R6: затенение параметра телом функции (`ro x = x + 1` над параметром `x`).
 fn d347_param_shadow(x int) -> int {

@@ -11,7 +11,7 @@
 // int],int]`). That by-value nested-mono surface had no conformance coverage — added
 // below (mirrors the literal example from `emit_c.rs::value_aware_subst_to_ref`'s doc
 // comment).
-module spec_tests.conformance
+module conformance.d277_generic_value_record_mono
 
 import std.collections.vec_iter
 

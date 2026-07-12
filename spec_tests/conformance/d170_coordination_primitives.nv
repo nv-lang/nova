@@ -5,7 +5,7 @@
 // await на завершённом — мгновенный). Single-fiber-safe подмножество
 // (parking Barrier/Condvar-rendezvous — runtime-корпус plan103_4).
 // Шаблоны сверены с nova_tests/plan103_4. Один folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d170_coordination_primitives
 
 test "Semaphore: try_acquire/release, счётчик разрешений (D170)" {
     mut d170_sem = Semaphore.new(2)

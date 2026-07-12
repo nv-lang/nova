@@ -4,7 +4,6 @@
 // callee обязан что-то сделать с x. Просто принять и забыть → error.
 
 module neg.generic_bound_err_forget
-
 type Transaction consume {
     id int,
 }

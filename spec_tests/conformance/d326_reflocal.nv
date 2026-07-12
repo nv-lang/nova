@@ -3,7 +3,7 @@
 // reach the target storage, like C++ `T& y`).
 // Spec: spec/decisions/02-types.md D326 (Plan 184 Р1).
 // Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d326_reflocal
 
 type D326RefLocalVec3 value {
     x f64

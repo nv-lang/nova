@@ -6,8 +6,7 @@
 // the nested-region rewrite doesn't change behavior — V5.4 only
 // affects the EXPLAIN REPORT (not the runtime path).
 
-module plan123_5_4.v5_4_explain_surfaces_nested_ok
-
+module conformance.v5_4_explain_surfaces_nested_ok
 type Counter {
     mut x int
 }

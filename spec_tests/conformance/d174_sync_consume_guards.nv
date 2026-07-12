@@ -6,7 +6,7 @@
 // `with_lock(fn)` — thin-wrapper (backward compat). Негативы (guard-leak /
 // double-unlock) — neg/d174_*.nv (класс D133/D131 на guard-типах). Шаблоны сверены
 // с nova_tests/plan103_9. Один folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d174_sync_consume_guards
 
 // Явный import — Nova-body методы sync (with_lock/try_start) инлайнятся
 // в CU (D289 inline-merge); §3: sync — библиотека, требует import.

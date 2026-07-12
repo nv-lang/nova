@@ -4,8 +4,7 @@
 // arm-binding'и Live linear, обязан consumed в arm. D157 решает через
 // view-match: arm-binding'и — view, source остаётся Live.
 
-module nova_tests.plan100_3
-
+module conformance.match_view_ok_option
 type File2 consume {
     fd int,
 }

@@ -1,8 +1,7 @@
 // Plan 123.1 T2.11 positive: ro caching combined с method arguments.
 // @field reads cached, args не affected.
 
-module nova_tests.plan123_1
-
+module conformance.method_with_args_ok
 type Bounded4 {
     ro lo int
     ro hi int

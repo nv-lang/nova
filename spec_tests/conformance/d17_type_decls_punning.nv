@@ -16,7 +16,7 @@
 // Spec: spec/decisions/02-types.md:115 «Field punning», :129 «Partial pattern matching — две
 //   эквивалентные формы», :419-426 «Shorthand обязателен … избыточная форма ОШИБКА» (D52 §2),
 //   :1122 (D17). Один folder-module `spec_tests.conformance`; D-prefixed имена уникальны.
-module spec_tests.conformance
+module conformance.d17_type_decls_punning
 
 // §1/§2 — record с именованными полями (D17 record-форма `type X { ... }`).
 type D17Entry {

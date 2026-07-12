@@ -2,8 +2,7 @@
 // All V1-V6 layers continue to work; V7 adds write-set inference
 // public API (used by future V7.1 full integration).
 
-module nova_tests.plan123
-
+module conformance.plan123_7_ipa_no_regression_ok
 type WS {
     ro x int
     mut count int

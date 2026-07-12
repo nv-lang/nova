@@ -2,8 +2,7 @@
 // Uses 1 tmp variable in the cycle-decomp codegen (cycle length 2).
 // A1: single 2-cycle swap.
 
-module nova_tests.plan136_1
-
+module conformance.t1_swap_1tmp
 test "swap 10 and 20" {
     mut a = 10
     mut b = 20

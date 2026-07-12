@@ -5,7 +5,7 @@
 // Tuple also rides inside a variant payload (`Option[(K, V)]`). Part of the SINGLE
 // `spec_tests.conformance` folder-module; helpers are D123-prefixed to avoid clashes.
 // Spec: spec/decisions/02-types.md §D123. Norm rule: `ro p = ("a", 1)`.
-module spec_tests.conformance
+module conformance.d123_tuple_mono
 
 // Tuple as a function PARAMETER — field access on the param must use real (str/int) types.
 fn d123_first(p (str, int)) -> str => p.0

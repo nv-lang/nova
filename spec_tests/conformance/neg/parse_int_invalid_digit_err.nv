@@ -1,5 +1,4 @@
 module neg.parse_int_invalid_digit_err
-
 import std.runtime.string.{ParseIntError}
 
 fn assert_invalid_digit(s str, radix int) {

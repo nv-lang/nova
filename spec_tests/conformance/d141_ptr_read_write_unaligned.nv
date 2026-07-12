@@ -10,7 +10,7 @@
 //   pointer) — address-of-then-cast associates as `(&expr) as *T`, not
 //   `&(expr as *T)` (D54/L3 unsafe boundary).
 // Единица: folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d141_ptr_read_write_unaligned
 
 test "ptr read()/write() bare deref round-trip" {
     ro x int = 42

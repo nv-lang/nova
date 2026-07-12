@@ -3,8 +3,7 @@
 // `@len` in method body (no parens) = field access.
 // `@len()` in method body (with parens) = method call.
 
-module nova_tests.plan132
-
+module conformance.pos_field_method_same_name
 type Buf4 { priv mut data int, priv mut len int }
 
 fn Buf4.new() -> Self => { data: 0, len: 0 }

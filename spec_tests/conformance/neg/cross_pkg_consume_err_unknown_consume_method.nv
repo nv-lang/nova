@@ -6,7 +6,6 @@
 // Ошибка D133-not-consumed: после вызова non-consume метода tx всё ещё Live.
 
 module neg.cross_pkg_consume_err_unknown_consume_method
-
 // "Package A" — exports consume-type с consume-методами:
 export type Token consume {
     value int,

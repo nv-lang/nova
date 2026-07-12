@@ -1,5 +1,5 @@
 // Test: blanket @bcount terminator — return type is just `int` (no T/U)
-module spec_tests.conformance
+module conformance.blanket_count
 import std.collections.vec.{Vec, VecIter}
 import std.prelude.collections.{Next}
 import std.collections.vec_iter.{MapIter, FilterIter}

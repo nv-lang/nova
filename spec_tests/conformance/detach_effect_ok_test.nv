@@ -12,8 +12,7 @@
 // Изолированная папка (module nova_tests.err173_2) — НЕ concurrency-folder
 // (у того pre-existing Duration-`-` codegen-баг в чужом файле CU).
 
-module nova_tests.err173_2
-
+module conformance.detach_effect_ok_test
 // D415 §2 amendment (2026-07-11): detach is now a capture-check boundary,
 // same as spawn/parallel for. `n` is `AtomicInt` (audited `#share`, D415
 // §1) so `Ctr` is auto-#share (memberwise) — capturing `c` by reference

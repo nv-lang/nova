@@ -11,7 +11,7 @@
 //   проверяется спот-грепом .c (гейт плана 186), тут — только семантика.
 // См. spec/decisions/03-syntax.md D412. Часть ЕДИНОГО folder-module
 // spec_tests.conformance; имена D-префиксованы.
-module spec_tests.conformance
+module conformance.d412_hex_blob_embed
 
 test "x\"…\" ro view: len / element reads / leading zero significant (D412)" {
     ro d412_blob = x"48 65 6C 6C 6F"

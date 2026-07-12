@@ -6,8 +6,7 @@
 // Acceptance:
 // - A110.1.4.g: panic → outcome=Panic(msg), cleanup fires, panic re-raises.
 
-module nova_tests.plan110
-
+module conformance.codegen_consume_panic_caught
 type ResY3 {
     ro id int
 }

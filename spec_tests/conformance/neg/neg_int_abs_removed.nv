@@ -2,7 +2,6 @@
 // nova-lsp completion correctly does NOT suggest `usize` — use `int` instead.
 // EXPECT_COMPILE_ERROR usize
 module neg.neg_int_abs_removed
-
 test "usize type does not exist" {
     ro x usize = 42
     assert(x > 0)

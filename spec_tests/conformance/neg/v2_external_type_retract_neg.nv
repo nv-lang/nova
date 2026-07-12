@@ -10,5 +10,4 @@
 // Acceptance A7: D126 retract effective; new declarations rejected.
 
 module neg.v2_external_type_retract_neg
-
 external type UserOpaque

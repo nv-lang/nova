@@ -1,7 +1,7 @@
 // D104 — Doc-comment outer/inner syntax: `///` привязывается к следующей декларации,
 // `//!` к модулю. Doc-comments не влияют на runtime поведение — erased в codegen.
 // Spec: spec/decisions/03-syntax.md D104. Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d104_doc_comment_syntax
 
 /// Returns double the value of x.
 ///

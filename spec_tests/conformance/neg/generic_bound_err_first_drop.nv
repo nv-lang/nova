@@ -9,7 +9,6 @@
 // compiler ловит реальный leak.
 
 module neg.generic_bound_err_first_drop
-
 // ❌ strict mode: pair.1 не consumed → error.
 fn first[T consume](pair (T, T)) -> T => pair.0
 //                                       ↑ pair.1 силен потерян

@@ -2,7 +2,6 @@
 // nova-lsp completion correctly does NOT suggest `let`.
 // EXPECT_COMPILE_ERROR [E_KW_REMOVED_LET]
 module neg.neg_let_keyword_removed
-
 test "let is not a keyword" {
     let x = 42
     assert(x == 42)

@@ -2,9 +2,7 @@
 //
 // write_zero(n) / write_bytes(src) / write_char(c) + Unicode + str.
 
-module nova_tests.buffers
-
-
+module conformance.write_misc
 // ── write_zero ─────────────────────────────────────────────────────
 
 test "write_zero — n нулевых байт" {

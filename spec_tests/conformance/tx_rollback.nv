@@ -3,7 +3,7 @@
 // Pattern: consume tx + explicit rollback/commit по путям (D162).
 // D157: plain param = view (non-consuming, default).
 
-module spec_tests.conformance
+module conformance.tx_rollback
 type Db4 { id int }
 type OrderErr2 { msg str }
 

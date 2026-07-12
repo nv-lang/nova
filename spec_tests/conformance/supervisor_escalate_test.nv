@@ -8,8 +8,7 @@
 //
 // Бежит ARMED на дефолтном worker-count (M:N — периметр политики).
 
-module nova_tests.err173_2
-
+module conformance.supervisor_escalate_test
 import std.concurrency.supervisor as sup
 
 test "Supervisor=escalate: падение эскалируется — паритет с дефолтом" {

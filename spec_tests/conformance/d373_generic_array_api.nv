@@ -6,7 +6,7 @@
 // backward compat, overload по exact-receiver); user-тип с `@compare` (D183) sortable
 // generic-путём; §amend-2: `@sort_unstable` = pdqsort. Шаблоны сверены с
 // nova_tests/plan91_8c. Один folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d373_generic_array_api
 
 import std.sort
 

@@ -4,8 +4,7 @@
 // Empty-array edge: format_array должен не оставить trailing comma,
 // parser должен принять `[]` как `Array([])` (не throw).
 
-module nova_tests.plan91_13
-
+module conformance.json_roundtrip_array_empty
 import std.encoding.json.{JsonValue, Json}
 
 test "encode empty array" {

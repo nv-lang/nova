@@ -9,7 +9,6 @@
 // (per D166 §D3 context format).
 
 module neg.diag_D153_cross_pkg_with_source_pkg
-
 // Connection type — declared consume in this same file (simulates cross-pkg pattern).
 type Connection consume { id int; addr str }
 

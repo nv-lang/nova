@@ -19,7 +19,7 @@
 // Stress-side coverage — empirically через `bench/m_n/parallel_speedup.nv`
 // (см. Plan 82.2 §7 Linux Docker verification).
 
-module spec_tests.conformance
+module conformance.cross_thread_dealloc
 test "10 fibers cross-thread spawn/dealloc cycle completes correctly" {
     // Spawn 10 fibers из main supervised scope — под armed M:N (default)
     // каждый spawn идёт через nova_runtime_spawn_global → mco_create

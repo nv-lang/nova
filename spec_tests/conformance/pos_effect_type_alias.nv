@@ -3,9 +3,7 @@
 // (через D88 default); функция, возвращающая `Effect[E]` —
 // корректно типизирована.
 
-module nova_tests.plan97
-
-
+module conformance.pos_effect_type_alias
 type Logger2 effect {
     log(msg str) -> ()
 }

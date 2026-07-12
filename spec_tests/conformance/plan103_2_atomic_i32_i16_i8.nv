@@ -3,8 +3,7 @@
 // Verifies that 32-, 16-, and 8-bit signed integer atomics compile,
 // initialize, and perform basic load/store/fetch_add correctly.
 
-module nova_tests.atomics
-
+module conformance.plan103_2_atomic_i32_i16_i8
 test "AtomicI32 new load store" {
     mut a = AtomicI32.new(10)
     assert(a.load() == 10)

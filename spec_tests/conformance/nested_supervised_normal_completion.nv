@@ -4,8 +4,7 @@
 // completes correctly without TIMEOUT when cooperative resume is active.
 // All fibers run and accumulate into total via spawn captures.
 
-module nova_tests.plan83_10_3
-
+module conformance.nested_supervised_normal_completion
 test "nested supervised completes without errors" {
     // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
     mut total = AtomicInt.new(0)

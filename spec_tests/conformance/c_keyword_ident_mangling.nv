@@ -12,7 +12,7 @@
 // before the fix — a Nova program should never need to avoid the target
 // C compiler's reserved words.
 // Единица: folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.c_keyword_ident_mangling
 
 // Position 1: local var (`let`/`ro`/`mut`) declared, mutated in a
 // for-loop, and read — keyword `long`. Numeric accumulator (not string

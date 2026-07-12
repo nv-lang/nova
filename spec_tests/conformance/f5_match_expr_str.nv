@@ -1,8 +1,7 @@
 // Plan 67 Ф.2 f5 — println(match expr returning str).
 // infer_expr_c_type для match-expr должен вернуть nova_str из arm type.
 
-module plan67.f5_match_expr_str
-
+module conformance.f5_match_expr_str
 // EXPECT_STDOUT one
 // EXPECT_STDOUT other
 

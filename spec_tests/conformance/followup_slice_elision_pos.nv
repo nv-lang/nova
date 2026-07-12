@@ -3,7 +3,7 @@
 // `v` не мутируется → fn-frame-safe → slice bounds-check элидируется (always-safe,
 // из CODE — без requires). Корректность не зависит от элизии.
 
-module spec_tests.conformance
+module conformance.followup_slice_elision_pos
 import std.collections.vec.{Vec}
 
 fn slice_whole(v Vec[int]) -> int {

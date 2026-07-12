@@ -18,8 +18,7 @@
 //   - вложенность порогов не перетекает (D196-shadow restore держится:
 //     duration inner-cleanup сравнивается с inner-порогом, outer — с outer).
 
-module nova_tests.plan110
-
+module conformance.nested_shield_deadline_outer_fire_neg_v1_1
 type InnerRes24 { ro id int }
 fn InnerRes24.new(id int) -> InnerRes24 => { id }
 fn InnerRes24 @exit_timeout_ms() -> int => 100

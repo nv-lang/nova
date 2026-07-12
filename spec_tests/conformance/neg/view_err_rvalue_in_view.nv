@@ -7,7 +7,6 @@
 // безопасное правило.
 
 module neg.view_err_rvalue_in_view
-
 type Transaction consume {
     id int,
 }

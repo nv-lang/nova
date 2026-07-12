@@ -19,8 +19,7 @@
 //
 // `UNREACHABLE` is never printed because the abort terminates the process.
 
-module plan140.gtr_method_contract_neg
-
+module conformance.gtr_method_contract_neg
 type Bag[T] { priv n int }
 
 fn Bag[T].mk(n int) -> Self => { n }

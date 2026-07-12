@@ -13,7 +13,7 @@
 // `forward_once`, `forward_chain` carry `preempt-check elided` and have NO
 // leading `nova_preempt_check();`.
 
-module spec_tests.conformance
+module conformance.positive_leaf_forwarder
 fn leaf_callee(x int) -> int => x * 2
 
 fn forward_once(x int) -> int => leaf_callee(x) + 1

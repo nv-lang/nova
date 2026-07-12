@@ -8,7 +8,7 @@
 // Verify in negative_mutual_recursion.c: bodies of BOTH `is_even` and
 // `is_odd` contain `nova_preempt_check();` (NOT the elided marker).
 
-module spec_tests.conformance
+module conformance.negative_mutual_recursion
 fn is_even(n int) -> bool {
     if n == 0 { true } else { is_odd(n - 1) }
 }

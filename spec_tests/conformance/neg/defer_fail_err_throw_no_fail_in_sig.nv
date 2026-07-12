@@ -4,7 +4,6 @@
 // — compile error.
 
 module neg.defer_fail_err_throw_no_fail_in_sig
-
 type Err { msg str }
 
 // ❌ fn-sig без Fail.

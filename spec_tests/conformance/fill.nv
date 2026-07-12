@@ -1,8 +1,6 @@
 // Plan 90 Ф.4.5 — []T.fill: заполнение значением.
 
-module nova_tests.plan90
-
-
+module conformance.fill
 test "fill — заполнение значением" {
     mut a []u8 = [1, 2, 3, 4]
     a.fill(7)

@@ -19,7 +19,7 @@
 // (`cap() == 0` before first push), and its un-annotated binding breaks
 // method dispatch (`v.cap()` name-keyed onto a foreign type). `.of(...)`
 // spellings ARE the `[]T` canon — they route to the typed Vec mono path.
-module spec_tests.conformance
+module conformance.d232_vec_growable
 
 // Heap record element — proves typed pointer-in-slot storage (no int64-erasure) for record T.
 type D232Pt {

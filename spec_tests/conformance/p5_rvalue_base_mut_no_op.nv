@@ -6,8 +6,7 @@
 // mutation lands on temp slot then discarded (semantically no-op,
 // but the code must compile cleanly).
 
-module nova_tests.plan128_2
-
+module conformance.p5_rvalue_base_mut_no_op
 type Vec38(x int, y int, z int)
 
 fn Vec38 mut @set_x(v int) -> () {

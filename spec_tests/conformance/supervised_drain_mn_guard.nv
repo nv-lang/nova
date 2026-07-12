@@ -13,7 +13,7 @@
 // Pre-fix профиль: torn-base потерянный wake → supervised-блок не завершался
 // → TIMEOUT. Post-fix: все блоки завершаются, elapsed мал.
 
-module spec_tests.conformance
+module conformance.supervised_drain_mn_guard
 test "supervised drain: 6 armed M:N блоков с растущими sched-state завершаются" {
     ro t0 = Time.now_unix_ms()
 

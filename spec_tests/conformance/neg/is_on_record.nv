@@ -5,7 +5,6 @@
 // EXPECT_COMPILE_ERROR E_IS_NON_ANY
 
 module neg.is_on_record
-
 type User { id int }
 
 fn bad(u User) -> bool => u is int

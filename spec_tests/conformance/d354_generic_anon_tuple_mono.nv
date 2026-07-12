@@ -3,7 +3,7 @@
 // length-prefixed typedef, the tuple is a value-type (no heap-box), positional `.0`/`.1`
 // access and destructure work after mono, and heterogeneous element types (str + int) hold.
 // Extends D123 (positional tuple codegen) with the generic-aware substitution path.
-module spec_tests.conformance
+module conformance.d354_generic_anon_tuple_mono
 
 // Single type-param: (T, T) — same element type, two distinct call-site instantiations.
 fn[T] d354_dup(v T) -> (T, T) => (v, v)

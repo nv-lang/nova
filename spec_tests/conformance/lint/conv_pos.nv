@@ -13,7 +13,6 @@
 // Для `nova test` файл — обычный компилируемый unit (main + вызовы).
 
 module lint.conv_pos
-
 type Widget { ro kind int, mut label str }
 
 // W_NONVARIADIC_OF: не-вариадик of.

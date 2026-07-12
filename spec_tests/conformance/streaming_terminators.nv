@@ -6,7 +6,7 @@
 // itself allocates nothing. This file both (a) confirms correctness and (b) is
 // the fixture whose generated C (streaming_terminators.c) is grepped for
 // `nova_alloc` to prove the fold/sum/... terminator bodies are alloc-free.
-module spec_tests.conformance
+module conformance.streaming_terminators
 import std.collections.vec_iter
 
 test "fold is an alloc-free scalar terminator" {

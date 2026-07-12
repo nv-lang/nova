@@ -25,7 +25,7 @@
 // 0xC000000000000000 (≈3·2^62) — `got == 0x4000000000000000` is then false (RUN-FAIL).
 // Spec: spec/decisions/02-types.md (uint is UNSIGNED, ≠ int; D130/D368 family).
 // Single `spec_tests.conformance` folder-module; all top-level names D412W-prefixed.
-module spec_tests.conformance
+module conformance.d412_default_const_sized_width
 
 // default-arg surface: unsigned-sensitive operator inside the default expression.
 fn d412w_def_shr(x uint = 0x8000000000000000 >> 1) -> uint => x   // unsigned: 0x4000000000000000

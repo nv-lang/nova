@@ -1,7 +1,6 @@
 // Plan 100.3 (D157): view-param передаётся в другую view-fn без consume.
 
-module nova_tests.plan100_3
-
+module conformance.view_ok_pass_through
 type Transaction8 consume {
     id int,
 }

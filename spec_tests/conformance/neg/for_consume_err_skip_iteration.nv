@@ -4,7 +4,6 @@
 // Accessing a field without calling a consume method → tx stays Live → error.
 
 module neg.for_consume_err_skip_iteration
-
 type Transaction consume {
     id int,
 }

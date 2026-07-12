@@ -1,5 +1,5 @@
 // Plan 154: extension-метод с НОВЫМ именем на str — разрешён (нет orphan rule).
-module spec_tests.conformance
+module conformance.pos_extension_new_name
 import std.unicode
 
 fn str @shout() -> str => @to_upper()

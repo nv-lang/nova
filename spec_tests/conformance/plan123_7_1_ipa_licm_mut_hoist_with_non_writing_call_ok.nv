@@ -1,8 +1,7 @@
 // Plan 123.7.1 T2.1: LICM hoists mut @field inside loop even when
 // loop body has self-method calls that don't write that field.
 
-module nova_tests.plan123
-
+module conformance.plan123_7_1_ipa_licm_mut_hoist_with_non_writing_call_ok
 type Worker4 {
     mut total int
     mut log int

@@ -8,7 +8,6 @@
 // EXPECT_COMPILE_ERROR E_REBIND_LIVE_CONSUME
 
 module neg.rebind_double_consume_neg
-
 type NRbTx consume {
     id int,
 }

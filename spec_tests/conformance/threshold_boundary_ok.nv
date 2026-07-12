@@ -1,8 +1,7 @@
 // Plan 123.1 T2.8 (negative-style): single-access field NOT cached;
 // 2-access field IS cached. Confirms threshold N=2 default boundary.
 
-module nova_tests.plan123_1
-
+module conformance.threshold_boundary_ok
 type Both3 {
     ro single_read int
     ro double_read int

@@ -4,7 +4,7 @@
 // идентична named-fn без имени, тело `=> expr` или `{ block }`. Здесь POS-наблюдаемое
 // ядро D22: оба вида closure реально вызываются и дают конкретные значения; light
 // валиден из контекста параметра fn-call'а (sig выводится).
-module spec_tests.conformance
+module conformance.d22_closures
 
 // Higher-order: принимает closure как параметр (sig задаёт контекст для light-формы).
 fn d22_apply(x int, f fn(int) -> int) -> int => f(x)

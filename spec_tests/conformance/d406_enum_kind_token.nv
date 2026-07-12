@@ -1,7 +1,7 @@
 // D406 — `enum` маркер в type-declaration. Spec: spec/decisions/02-types.md (D406).
 // Inline: первый вариант без `|`. Многострочный: `|` обязателен у каждого включая первый.
 // Unit / tuple / record варианты; один вариант; discriminants.
-module spec_tests.conformance
+module conformance.d406_enum_kind_token
 
 // ── Объявления ────────────────────────────────────────────────────────────────
 

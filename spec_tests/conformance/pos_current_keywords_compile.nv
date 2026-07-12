@@ -2,8 +2,7 @@
 // prove via the compiler that they are real by compiling and running a program
 // that uses them. Negatives for the REMOVED keywords (let/readonly/safe) live in
 // plan114/ and plan138_5/.
-module nova_tests.plan104_9
-
+module conformance.pos_current_keywords_compile
 const LIMIT = 3
 
 fn sum_to(n int) -> int {

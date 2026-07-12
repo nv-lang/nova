@@ -4,7 +4,6 @@
 // Both branches must consume the guard — missing unlock on false branch → D133.
 
 module neg.mutexguard_branch_forget_neg
-
 fn check_flag() -> bool => true
 
 test "guard consumed only on one branch → compile error" {

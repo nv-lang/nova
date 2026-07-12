@@ -6,7 +6,6 @@
 // (Spec/decisions/03-syntax.md line ~1461.)
 
 module neg.neg_self_dot_invalid
-
 type Box {
     ro id int
 }

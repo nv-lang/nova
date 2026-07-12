@@ -7,7 +7,6 @@
 // behaviour). Here every contract/assert holds, so we reach the `ok` print.
 
 module neg.f7_backcompat_no_message
-
 type Box {
     n int
 }

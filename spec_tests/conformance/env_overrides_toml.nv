@@ -12,7 +12,7 @@
 // ENV NOVA_FIBER_STACK=8MB
 // ENV NOVA_MAXPROCS=1
 
-module plan149_toml.env_overrides_toml
+module conformance.env_overrides_toml
 
 fn rec_sum(n int) -> int {
     if n <= 0 {

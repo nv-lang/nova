@@ -13,7 +13,6 @@
 // а не процесс-panic — escape до runtime требует main-flow.
 
 module neg.neg_read_oob
-
 fn main() Io Fail[ReadBufferError] -> () {
     ro bytes []u8 = []
     mut rb = ReadBuffer.from(bytes)

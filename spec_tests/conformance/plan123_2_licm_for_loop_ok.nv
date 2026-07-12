@@ -1,7 +1,6 @@
 // Plan 123.2 T1.3: for loop hoisting.
 
-module nova_tests.plan123
-
+module conformance.plan123_2_licm_for_loop_ok
 type Box4_plan1232licmforloopok {
     ro factor int
 }

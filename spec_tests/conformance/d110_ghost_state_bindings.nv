@@ -1,7 +1,7 @@
 // D110 — Ghost state: spec-only bindings (`ghost ro`/`ghost mut`) visible in
 // requires/ensures/invariant but NEVER emitted to C. Runtime behaviour is unaffected.
 // Spec: spec/decisions/02-types.md D110. Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d110_ghost_state_bindings
 
 // Function that declares a ghost binding (erased in codegen, runtime unaffected)
 fn d110_fill_zeros(mut xs []int) {

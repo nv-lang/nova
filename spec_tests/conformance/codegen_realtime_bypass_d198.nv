@@ -4,8 +4,7 @@
 // Codegen emits hardcoded 0 instead of nv_resolve_exit_timeout_ms()
 // call. Verifies compile path для realtime cleanup contexts.
 
-module nova_tests.plan110
-
+module conformance.codegen_realtime_bypass_d198
 type RtRes3 {
     ro id int
 }

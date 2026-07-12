@@ -9,7 +9,7 @@
 // behaviour is preserved.
 // EXPECT_STDOUT partial ok
 
-module spec_tests.conformance
+module conformance.pos_partial_unicode
 import std.unicode.{is_alphabetic}
 
 fn main() {

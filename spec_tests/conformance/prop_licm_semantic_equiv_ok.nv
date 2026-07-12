@@ -2,8 +2,7 @@
 // expressed across loop forms with various inputs must yield
 // identical results regardless of LICM caching.
 
-module nova_tests.plan123_2
-
+module conformance.prop_licm_semantic_equiv_ok
 type Calc5 {
     ro base int
     ro step int

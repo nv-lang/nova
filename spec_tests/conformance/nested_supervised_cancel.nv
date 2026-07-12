@@ -3,8 +3,7 @@
 // Tests that cancel token is properly visible inside nested supervised scopes
 // when cooperative resume is used on worker thread.
 
-module nova_tests.plan83_10_3
-
+module conformance.nested_supervised_cancel
 test "nested supervised with cancel token — cancel propagates" {
     ro tok = CancelToken.new()
     // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).

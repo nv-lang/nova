@@ -2,7 +2,7 @@
 // cleanup() вызывается exactly-once при выходе из body (success/throw/panic/cancel).
 // E = Never для infallible cleanup (нет Fail[E] в сигнатуре).
 // Spec: spec/decisions/03-syntax.md D188. Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d188_consumable_scope_block
 
 type D188Log { label str }
 

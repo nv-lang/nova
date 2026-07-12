@@ -4,7 +4,7 @@
 // f5_uncaught_trace_throw.nv для throw-пути). Panic-путь идёт через
 // nv_panic (comma-expr стемп в интринсике).
 
-module rt.f5_uncaught_trace_panic
+module neg.f5_uncaught_trace_panic
 
 fn main() Io -> () {
     panic("trace-me")

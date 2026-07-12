@@ -3,7 +3,6 @@
 // EXPECT_COMPILE_ERROR E_TUPLE_NAMED_ACCESS_ON_POSITIONAL
 
 module neg.neg_t6_named_access_on_positional
-
 type Pos2(f64, f64)
 
 test "should not compile: .x on positional tuple" {

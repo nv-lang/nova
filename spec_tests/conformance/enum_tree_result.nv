@@ -31,7 +31,7 @@
 // self-recursive variants (bare, nested, and inside a `Result`) is CORRECT —
 // not just "doesn't hang".
 
-module pos.enum_tree_result
+module conformance.enum_tree_result
 
 export type BTree enum
     | BLeaf(int)

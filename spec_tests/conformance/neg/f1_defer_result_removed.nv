@@ -7,7 +7,6 @@
 // `consume X = e { body }` с `match outcome` (D188).
 
 module neg.f1_defer_result_removed
-
 fn cleanup_with_reason() -> () {
     defer |result| { () }                        // ❌ [D189-removed-defer-result]
 }

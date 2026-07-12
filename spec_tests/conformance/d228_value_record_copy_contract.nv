@@ -10,7 +10,7 @@
 //       (copy-on-ASSIGN is unchanged; only parameter passing became in-out for `mut`).
 // Spec: spec/decisions/02-types.md (D228 + D326-ревизия Р10). Single `spec_tests.conformance`
 // folder-module; D-prefixed names are unique to avoid clashes in the shared compile unit.
-module spec_tests.conformance
+module conformance.d228_value_record_copy_contract
 
 // Value-record: stack value. Fields are ordinary mutable fields (D36 default).
 type D228Vec3 value {

@@ -5,7 +5,6 @@
 // EXPECT_COMPILE_ERROR E7301
 
 module neg.rebind_type_change_stale_neg
-
 test "should not compile" {
     ro v = 42
     ro v = "changed"

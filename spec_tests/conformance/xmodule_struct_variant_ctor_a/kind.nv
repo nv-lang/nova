@@ -13,7 +13,7 @@
 //
 // Этот файл — mod_a: сумма `Kind` со struct-payload вариантом `Info`, сконструированным
 // bare (без квалификации) внутри своего модуля — зеркало `CompressError.checksum_err`.
-module xmodule_struct_variant_ctor_a
+module conformance.xmodule_struct_variant_ctor_a
 
 export type Kind enum
     | Info { ro code int, ro msg str }

@@ -5,7 +5,6 @@
 // monomorphizations → must be rejected. Proves the check covers record-typed
 // generic arguments, not only int-width primitives.
 module neg.n_user_generic_record_mismatch
-
 type Dog { name str }
 type Cat { name str }
 type Box[T] { item T }

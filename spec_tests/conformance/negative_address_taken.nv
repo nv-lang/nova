@@ -12,7 +12,7 @@
 // Verify in negative_address_taken.c: bodies of `callback_target` and
 // `dispatch` contain `nova_preempt_check();` (NOT elided).
 
-module spec_tests.conformance
+module conformance.negative_address_taken
 // Pure leaf — but address-taken in make_handler below, so KEPT.
 fn callback_target(x int) -> int => x + 100
 

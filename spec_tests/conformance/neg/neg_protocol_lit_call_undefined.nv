@@ -6,8 +6,6 @@
 // сейчас ловится на Nova-этапе с readable hint.
 
 module neg.neg_protocol_lit_call_undefined
-
-
 type Single protocol {
     @only() -> int
 }

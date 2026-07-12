@@ -2,7 +2,7 @@
 // `grid[r][c]` упражняет двойную индексацию; `grid[i].push(..)` проверяет, что
 // результат `v[i]` остаётся lvalue (метод-ресивер) после миграции на хелпер.
 
-module spec_tests.conformance
+module conformance.t3_nested_grid_pos
 import std.collections.vec.{Vec}
 
 test "grid[r][c] read" {

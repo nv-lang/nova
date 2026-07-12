@@ -9,7 +9,7 @@
 // the real deliverable is the `resp.json_as[T]()` method form in
 // std/http/serdejson (nova_tests/http_typed/typed_json_test.nv).
 
-module spec_tests.conformance
+module conformance.m176_method_return_turbofish
 type Reg { ro n int }
 
 // T appears ONLY in return position (not in any param).

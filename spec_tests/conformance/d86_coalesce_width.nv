@@ -4,7 +4,7 @@
 // `Option[uint]`'s inner as signed `nova_int`, the unsigned `2^63` reads NEGATIVE and
 // `got > 100` is false. A width-preserving unwrap keeps it positive. Sibling to
 // `d86_coalesce_operator.nv` (int-level). Spec: spec/decisions/04-effects.md (D86).
-module spec_tests.conformance
+module conformance.d86_coalesce_width
 
 fn d86w_huge() -> Option[uint] => Some(0x8000000000000000)   // 2^63 — high bit set
 fn d86w_none() -> Option[uint] => None

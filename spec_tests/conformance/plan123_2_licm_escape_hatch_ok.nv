@@ -1,8 +1,7 @@
 // Plan 123.2 T1.9: semantic equivalence — runtime result identical
 // regardless of LICM ON/OFF. Verified by test runner under env vars.
 
-module nova_tests.plan123
-
+module conformance.plan123_2_licm_escape_hatch_ok
 type Inv3 {
     ro x int
     ro y int

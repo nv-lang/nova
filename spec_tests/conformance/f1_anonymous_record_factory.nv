@@ -1,4 +1,4 @@
-module spec_tests.conformance
+module conformance.f1_anonymous_record_factory
 // Plan 63 Fix C: regression guard для anonymous record literal в generic
 // fn return position. Coverage:
 //   - single-field Box[T].of

@@ -5,8 +5,7 @@
 // (`f2_contract_nomsg_violation.nv:12:`) is auto-added by codegen from the
 // span — the user never writes the location. Combination: contract, no msg.
 
-module nova_tests.plan140_1
-
+module conformance.f2_contract_nomsg_violation
 fn nomsg_must_be_positive(x int) -> int
     requires x > 0
 => x * 2

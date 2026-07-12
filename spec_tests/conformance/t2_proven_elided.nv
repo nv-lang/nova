@@ -22,8 +22,7 @@
 // behavioural assertion is exit 0 + stdout. The STATIC assertion (proven ⟹
 // elided) is verified by inspecting the emitted `.c`.
 
-module plan140.t2_proven_elided
-
+module conformance.t2_proven_elided
 fn inc_nonneg(x int) -> int
     requires x >= 0
     ensures result >= 1

@@ -15,7 +15,7 @@
 // `nova_fn_<CONST>_chars()` path instead of the instance method on the
 // const's string VALUE.
 // Единица: folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.module_const_instance_method
 
 const MC_ALPHABET str = "abcdef"
 

@@ -4,7 +4,6 @@
 // g.unlock() consumes g; second g.unlock() → E_CONSUMED_AFTER_USE (D131).
 
 module neg.mutexguard_double_unlock_neg
-
 test "double unlock via guard → compile error" {
     mut mu = Mutex.new()
     consume g = mu.lock()

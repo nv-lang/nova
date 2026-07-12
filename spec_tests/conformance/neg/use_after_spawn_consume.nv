@@ -6,7 +6,6 @@
 // Это и есть закрытие V1/V2-граблей 173.1 (use-after-consume клона).
 
 module neg.use_after_spawn_consume
-
 type Job consume {
     payload int
 }

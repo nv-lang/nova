@@ -3,8 +3,7 @@
 // Positive: literal `0..N` exclusive range gives precise iter weight
 // (vs env default 8). Semantic preservation verified through known sum.
 
-module nova_tests.plan123_followups_2026_06_05
-
+module conformance.m6_v2_1_dyn_range_ok
 type Cv10 {
     mut y int
 }

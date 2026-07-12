@@ -8,7 +8,6 @@
 // цепочка `RawCell.p` называет ядовитое поле и причину («raw pointer»).
 
 module neg.pointer_cell_not_share
-
 type RawCell {
     p *int
 }

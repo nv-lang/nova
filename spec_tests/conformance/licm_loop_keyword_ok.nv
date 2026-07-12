@@ -1,7 +1,6 @@
 // Plan 123.2 T1.4: `loop { ... break ... }` form.
 
-module nova_tests.plan123_2
-
+module conformance.licm_loop_keyword_ok
 type Wrap3 {
     ro limit int
 }

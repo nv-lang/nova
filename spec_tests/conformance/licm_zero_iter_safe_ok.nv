@@ -1,8 +1,7 @@
 // Plan 123.2 T1.7: zero-iteration loop — hoisted load executed in
 // vain (side-effect-free for record-field). Semantics preserved.
 
-module nova_tests.plan123_2
-
+module conformance.licm_zero_iter_safe_ok
 type Container3 {
     ro value int
 }

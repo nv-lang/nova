@@ -4,7 +4,7 @@
 //
 // EXPECT_OUTPUT: ok
 
-module spec_tests.conformance
+module conformance.p5_paren_not_chain
 fn main() -> () {
     assert((3 < 5) == true)
     assert((5 < 3) == false)

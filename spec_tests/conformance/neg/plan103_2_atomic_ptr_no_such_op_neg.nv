@@ -9,7 +9,6 @@
 // Uses static path-form to get a predictable C name for pattern matching.
 
 module neg.plan103_2_atomic_ptr_no_such_op_neg
-
 fn bad() -> AtomicPtr => AtomicPtr.from_raw_addr(0)
 
 test "should not compile" {

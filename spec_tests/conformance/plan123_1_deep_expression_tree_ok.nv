@@ -1,8 +1,7 @@
 // Plan 123.1 T2.12 positive: deeply nested arithmetic — cache spans
 // across binary/ternary tree shapes.
 
-module nova_tests.plan123
-
+module conformance.plan123_1_deep_expression_tree_ok
 type Mat4 {
     ro m11 int
     ro m12 int

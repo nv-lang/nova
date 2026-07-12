@@ -5,8 +5,7 @@
 // field checks (JsonValue без structural ==, nested match триггерит
 // codegen edge case).
 
-module nova_tests.plan91_13
-
+module conformance.json_roundtrip_object_flat
 import std.encoding.json.{JsonValue, Json}
 import std.collections.hashmap.{HashMap}
 

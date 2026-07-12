@@ -7,8 +7,7 @@
 // Порядок элементов = completion order (D71-amend) — проверки set-equality /
 // поиск по значению, НЕ индексные.
 
-module nova_tests.err173_1
-
+module conformance.parfor_elem_matrix
 // ── виды элементов ──────────────────────────────────────────────
 
 type Health { name str; code int }              // heap-record

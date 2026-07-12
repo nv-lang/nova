@@ -5,8 +5,7 @@
 // `insert(i, array)` op is the Vec `@splice(i, other)` method; single-element
 // `@insert(i, v)` is a distinct overload. Migrated accordingly.
 
-module nova_tests.plan90_1
-
+module conformance.insert_oob_above_len_neg
 test "insert oob above len neg" panics "requires failed" {
     mut dst []int = [1, 2, 3]
     ro src []int = [10, 20]

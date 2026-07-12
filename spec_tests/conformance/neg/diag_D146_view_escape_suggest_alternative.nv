@@ -9,7 +9,6 @@
 // This validates the single-method fallback suggestion path.
 
 module neg.diag_D146_view_escape_suggest_alternative
-
 // Consume type with single consume method.
 type Opaque consume { handle int }
 

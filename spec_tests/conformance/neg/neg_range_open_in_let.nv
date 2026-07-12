@@ -5,7 +5,6 @@
 // допустим только при немедленном использовании в slice-index.
 
 module neg.neg_range_open_in_let
-
 fn main() -> () {
     ro r = 1..
     ro _ = r

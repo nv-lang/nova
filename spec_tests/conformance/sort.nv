@@ -1,5 +1,5 @@
 // Plan 153.3 — sort family: sort/sort_by/sort_by_key + unstable variants.
-module spec_tests.conformance
+module conformance.sort
 test "sort ascending + larger" {
     mut v = Vec[int].of(3, 1, 2, 5, 4)
     v.sort()

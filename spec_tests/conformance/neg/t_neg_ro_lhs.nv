@@ -5,7 +5,6 @@
 // because x and y are readonly locals (D36: locals readonly by default).
 
 module neg.t_neg_ro_lhs
-
 fn main() {
     ro x = 1
     ro y = 2

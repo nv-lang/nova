@@ -12,7 +12,7 @@
 // Spec: spec/decisions/02-types.md:9305 (D221), §2 «Pattern sites», §3 «Rest `..`», §4 «Nested»,
 //   §5 «Record literal spread» («type без priv fields → spread OK везде»).
 // Один folder-module `spec_tests.conformance`; D-prefixed имена уникальны.
-module spec_tests.conformance
+module conformance.d221_pattern_destructure_spread
 
 // Public-only record — нет priv → ВСЕ pattern/spread формы разрешены везде (§5 note).
 type D221XPoint {

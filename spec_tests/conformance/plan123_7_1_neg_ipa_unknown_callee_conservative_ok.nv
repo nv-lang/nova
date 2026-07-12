@@ -1,8 +1,7 @@
 // Plan 123.7.1 T-NEG.1: unknown callee (free fn) — conservative
 // invalidate (IPA can't analyze).
 
-module nova_tests.plan123
-
+module conformance.plan123_7_1_neg_ipa_unknown_callee_conservative_ok
 type Bag3_plan12371negipaunknowncalleeconservativeok {
     mut value int
 }

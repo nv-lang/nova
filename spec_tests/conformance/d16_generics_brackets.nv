@@ -6,7 +6,7 @@
 // Discriminator: без `[T]` нет полиморфизма без дублирования.
 //
 // Spec: spec/decisions/03-syntax.md D16. Единица: folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d16_generics_brackets
 
 type D16Box[T] { val T }
 

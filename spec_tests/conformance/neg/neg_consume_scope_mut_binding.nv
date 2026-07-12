@@ -11,7 +11,6 @@
 // fixture verifies продолжение работы после Plan 110.1.1 рефакторинга.
 
 module neg.neg_consume_scope_mut_binding
-
 type DummyRes {
     ro id int
 }

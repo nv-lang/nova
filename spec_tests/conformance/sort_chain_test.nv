@@ -1,5 +1,4 @@
-module nova_tests.plan91_7
-
+module conformance.sort_chain_test
 import std.sort
 
 // Plan 91.7: sort/sort_by возвращают @ (после Part A) — direct call работает.

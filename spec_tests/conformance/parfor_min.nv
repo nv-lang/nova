@@ -1,5 +1,4 @@
-module nova_tests.err173_1
-
+module conformance.parfor_min
 test "parallel for range int" {
     ro xs = parallel for i in 0..5 {
         i * 2

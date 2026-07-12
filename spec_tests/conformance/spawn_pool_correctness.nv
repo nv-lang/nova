@@ -9,8 +9,7 @@
 //
 // ALLOC_REQUIRES boehm
 
-module nova_tests.plan83_6
-
+module conformance.spawn_pool_correctness
 test "parallel for 100 — per-element values correct (pool exercised)" {
     // Plan 173.1 (D71-amend): completion order → sort восстанавливает
     // соответствие «i-й = i*2»; проверка полной силы (no ctx corruption).

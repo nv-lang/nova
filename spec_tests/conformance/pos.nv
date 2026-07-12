@@ -1,7 +1,6 @@
 // Non-literal int narrowing requires `as` (D54). These are the cases that must
 // stay legal: value-range-preserving widening, explicit `as`, and literals.
-module narrowing.pos
-
+module conformance.pos
 fn take_int(x int) -> int => x
 
 test "widening u8 -> int is implicit" {

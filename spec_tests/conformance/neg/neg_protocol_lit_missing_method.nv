@@ -4,8 +4,6 @@
 // → type-checker diagnostic «missing required instance methods».
 
 module neg.neg_protocol_lit_missing_method
-
-
 type TwoMethod protocol {
     @foo() -> ()
     @bar() -> ()

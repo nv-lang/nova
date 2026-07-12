@@ -4,7 +4,6 @@
 // Branch только на одной ветке (no else) → MaybeConsumed на arm exit → error.
 
 module neg.for_consume_err_branch_forget
-
 type Transaction consume {
     id int,
 }

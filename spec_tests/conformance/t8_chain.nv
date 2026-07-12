@@ -2,8 +2,7 @@
 // Two separate tuple assigns, each correct independently.
 // Verifies that sequential tuple assigns compose correctly.
 
-module nova_tests.plan136
-
+module conformance.t8_chain
 test "sequential tuple assigns" {
     mut a = 0
     mut b = 0

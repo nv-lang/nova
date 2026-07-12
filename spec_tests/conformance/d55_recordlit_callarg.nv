@@ -13,7 +13,7 @@
 // в `user_fn_sigs` (non-generic free fn) → анонимный RecordLit-аргумент
 // переписывается с явным `type_name`, реиспользуя существующий
 // полнофункциональный `type_name: Some(...)` codegen-путь.
-module spec_tests.conformance
+module conformance.d55_recordlit_callarg
 
 type D55CaPoint { x int, y int }
 

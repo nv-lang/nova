@@ -2,7 +2,7 @@
 // (Timestamp) и monotonic (Monotonic); арифметика не смешивается между
 // доменами (compile-time separation) — allowed combos здесь; forbidden
 // combos → spec_tests/conformance/neg/d124_*_neg.nv.
-module spec_tests.conformance
+module conformance.d124_wall_monotonic_separation
 
 import std.time.duration
 import std.testing.handlers as d124_th

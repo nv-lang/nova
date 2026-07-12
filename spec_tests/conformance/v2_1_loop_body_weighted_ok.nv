@@ -5,7 +5,7 @@
 // by NOVA_FC_LOOP_ITERS (default 8). Semantic preservation
 // проверяется: cached path equals uncached.
 
-module spec_tests.conformance
+module conformance.v2_1_loop_body_weighted_ok
 type Counter {
     mut x int
 }

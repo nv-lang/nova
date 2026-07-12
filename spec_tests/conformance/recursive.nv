@@ -11,7 +11,7 @@
 // boxing-aware type-SIZE walk + recursion guards ([M-checker-recursive-type-
 // overflow]); the `type H { t Tree }` embed now `nova check`-passes and RUNS —
 // see nova_tests/plan144_checker/heap_embed_pos.nv.
-module plan144_1.recursive
+module conformance.recursive
 
 type Tree
     | Leaf

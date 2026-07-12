@@ -3,8 +3,7 @@
 // проверка через nova_fixarr_idx_chk (чтение) / инлайн-гард (запись).
 // Panics-клаузула — D348.
 
-module fixed_array.oob_panics
-
+module conformance.oob_panics
 test "read oob panics" panics "array: index 5 out of bounds for length 5" {
     mut a [5]int = [1, 2, 3, 4, 5]
     ro i = 5

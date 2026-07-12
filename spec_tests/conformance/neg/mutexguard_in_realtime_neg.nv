@@ -7,7 +7,6 @@
 // EXPECT_COMPILE_ERROR D133
 
 module neg.mutexguard_in_realtime_neg
-
 #realtime fn _rt_check_guard_unconsumed(mu mut Mutex) {
     consume _g = mu.lock()   // D133: _g not consumed at scope exit
 }

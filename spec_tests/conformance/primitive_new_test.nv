@@ -1,5 +1,4 @@
-module nova_tests.plan91_7
-
+module conformance.primitive_new_test
 // Plan 91.7 Part D: canonical .new() для primitive types (D180).
 
 test "int.new() == 0" {

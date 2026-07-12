@@ -5,7 +5,7 @@
 // collapsed to the signed-int default the legacy `numeric_type_constant` table emitted).
 // Regression guard for the `i64.MAX→nova_int` / `char.MAX→nova_int` legacy collapse.
 // Spec: spec/decisions/02-types.md (D129/D128, D368). Single `spec_tests.conformance` CU.
-module spec_tests.conformance
+module conformance.d129_assoc_const_width
 
 test "integer MAX/MIN associated constants round-trip their values (D129/D44)" {
     assert(u8.MAX == 255)

@@ -3,7 +3,7 @@
 // because they are module-private (not file-private). Proves file-private is
 // additive and does not regress module-default peer visibility.
 
-module spec_tests.conformance
+module conformance.pos_module_priv_peer_b
 test "module-default fn from peer is visible" {
     assert(shared_module_helper(13) == 20)
 }

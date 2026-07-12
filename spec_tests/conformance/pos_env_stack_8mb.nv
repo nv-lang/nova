@@ -14,7 +14,7 @@
 // ENV NOVA_FIBER_STACK=8MB
 // ENV NOVA_MAXPROCS=1
 
-module spec_tests.conformance
+module conformance.pos_env_stack_8mb
 fn rec_sum3(n int) -> int {
     if n <= 0 {
         0

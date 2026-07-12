@@ -19,7 +19,7 @@
 // ENV NOVA_MAXPROCS=1
 // EXPECT_STDERR exceeds max
 
-module spec_tests.conformance
+module conformance.neg_stack_clamp
 test "stack above max: clamped to 256MB, fiber still runs" {
     // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
     mut total = AtomicInt.new(0)

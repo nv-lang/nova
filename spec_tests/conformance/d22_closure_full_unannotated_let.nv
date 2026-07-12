@@ -16,7 +16,7 @@
 // compilation with "use of undeclared identifier 'x'" — reproduced with
 // ANY identifier (not name-specific to "apply"; confirmed by feeding an
 // unrelated name through the same construct).
-module spec_tests.conformance
+module conformance.d22_closure_full_unannotated_let
 
 test "closure-full unannotated let, higher-order call (D22)" {
     ro apply = fn(f fn(int) -> int, x int) -> int => f(x)

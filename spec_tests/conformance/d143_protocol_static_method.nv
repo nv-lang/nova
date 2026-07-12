@@ -5,7 +5,7 @@
 // Discriminator: без D143 нельзя различить static/instance в protocol syntax.
 //
 // Spec: spec/decisions/03-syntax.md D143. Единица: folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d143_protocol_static_method
 
 type D143Maker[T] protocol {
     .make() -> T

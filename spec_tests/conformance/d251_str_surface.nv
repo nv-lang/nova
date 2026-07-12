@@ -9,7 +9,7 @@
 // pad_left→pad_start, pad_right→pad_end, split_whitespace→split_ascii_whitespace,
 // trim/trim_start/trim_end→trim_ascii* (unicode-aware trim — opt-in std.unicode).
 // Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d251_str_surface
 
 test "split / rsplit: all parts, byte-scan, multibyte-safe (D251)" {
     ro d251_p = "a,b,c".split(",").collect()

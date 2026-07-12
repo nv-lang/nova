@@ -5,8 +5,7 @@
 // `MapIt[I, T, U]`. The Self-version currently CC-FAILs because the temp
 // declared at the call-site and the method's return mono diverge in the
 // mangled Self-substitution.
-module nova_tests.self_nested
-
+module conformance.self_nested_repro
 import std.collections.vec.{Vec, VecIter}
 
 type MapIt[I, T, U] value { mut src I, priv f fn(T) -> U }

@@ -7,7 +7,7 @@
 // nova_int». clamp на int работает (Nova_int_method_clamp). Остаётся §1-finding: чекер
 // ПРИНИМАЕТ genuinely-undefined int-метод (напр. `pow` пока нет .nv-тела) → CC-FAIL leak
 // вместо чистой диагностики (анти-паттерн §0/§1 «категориальное несовпадение ловит C»).
-module spec_tests.conformance
+module conformance.d74_math_methods
 
 test "int math-методы — abs/min/max (D74)" {
     ro a int = -5

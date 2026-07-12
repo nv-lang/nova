@@ -6,8 +6,7 @@
 // StringBuilder.@append and the cross-language convention
 // (Python extend / Swift append(contentsOf:) / Java addAll).
 
-module nova_tests.plan90_1
-
+module conformance.append_copy_source_intact
 import std.collections.vec.{Vec}
 
 test "append copies — source left fully intact" {

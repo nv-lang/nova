@@ -3,7 +3,6 @@
 // EXPECT_COMPILE_ERROR E_PTR_ARITHMETIC_BANNED
 
 module neg.t1_ptr_arithmetic_neg
-
 test "*() + int is banned" {
     ro p *() = (0 as *())
     ro q *() = (p as u64 + 1) as *()   // OK через cast

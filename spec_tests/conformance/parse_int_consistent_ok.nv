@@ -1,5 +1,4 @@
-module nova_tests.plan91_fe2
-
+module conformance.parse_int_consistent_ok
 import std.runtime.string.{ParseIntError}
 
 // For valid inputs: if parse_int returns Some(n), parse_int returns Ok(n).

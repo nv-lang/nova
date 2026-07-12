@@ -6,7 +6,7 @@
 // Discriminator: без spread нельзя кратко «клонировать-с-поправкой».
 //
 // Spec: spec/decisions/03-syntax.md D60. Единица: folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d60_spread_literals
 
 type D60User { id int, name str, role str }
 

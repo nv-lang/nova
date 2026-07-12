@@ -9,8 +9,7 @@
 // wrapper-тип в codegen (Option/Result) — PRE-EXISTING дефект 172.1-канала,
 // подтверждён идентично на baseline d97c0dbe для distinct-имени И для rebind
 // (см. docs/simplifications.md). Дефект rebind-независим и вне scope Plan 181.
-module nova_tests.rebind
-
+module conformance.rebind_pos
 // consume-тип с into-методом (потребляет receiver, возвращает значение).
 type RbBox consume {
     v int,

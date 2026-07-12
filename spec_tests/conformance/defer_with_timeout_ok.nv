@@ -1,7 +1,6 @@
 // Plan 100.4.2 (D159): Time.timeout-обёрнутый bounded cleanup.
 
-module nova_tests.plan100_4_2
-
+module conformance.defer_with_timeout_ok
 fn graceful_close() Time -> () {
     Time.sleep(10)   // simulate I/O cleanup
 }

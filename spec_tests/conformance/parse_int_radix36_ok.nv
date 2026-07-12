@@ -1,5 +1,4 @@
-module nova_tests.plan91_fe2
-
+module conformance.parse_int_radix36_ok
 import std.runtime.string.{ParseIntError}
 
 test "radix 36 single chars" {

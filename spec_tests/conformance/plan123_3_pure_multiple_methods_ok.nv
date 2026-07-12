@@ -1,7 +1,6 @@
 // Plan 123.3 T1.3: multiple pure methods cached independently.
 
-module nova_tests.plan123
-
+module conformance.plan123_3_pure_multiple_methods_ok
 type Stat {
     ro n int
     ro k int

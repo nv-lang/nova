@@ -4,7 +4,7 @@
 // that round-trips its value and compares as an unsigned 8-bit width.
 // Spec: spec/decisions/02-types.md (D367). Part of the SINGLE `spec_tests.conformance`
 // folder-module (one CU). D-prefixed receiver name avoids clashes across D-files.
-module spec_tests.conformance
+module conformance.d367_u8_canonical
 
 // Method-receiver on `u8` (mirrors d130's scalar-receiver pattern) — proves the engine
 // routes the `u8` receiver through its precise unsigned C-type, not a signed collapse.

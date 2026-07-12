@@ -8,8 +8,7 @@
 // triggering rvalue-in-view. Result-Ok propagation pattern documented as
 // [M-100.6-consume-rvalue-in-result-ok] followup для future Plan 100 work.
 
-module nova_tests.plan100_6
-
+module conformance.cross_pkg_generic_consume_ok
 // "Package A":
 export type Transaction_crosspkggenericconsumeok consume { id int }
 export fn Transaction_crosspkggenericconsumeok consume @commit() -> () { () }

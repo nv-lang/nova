@@ -5,7 +5,7 @@
 // happy path: one set, several distinct members, explicit type-args. (Mixed-signedness /
 // non-member / multiple-sets are NEG cases in separate diag-files.)
 // D-prefixed set name avoids clashing with prelude `SignedInt`/`UnsignedInt` in the shared module.
-module spec_tests.conformance
+module conformance.d310_type_set_bound
 
 // Type-set bound: named set of concrete signed-int members (no mixed signedness).
 type D310Ints set i32 | i64 | int

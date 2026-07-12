@@ -3,7 +3,6 @@
 // EXPECT_COMPILE_ERROR isize` is removed
 
 module neg.t2_isize_removed_neg
-
 fn main() -> () {
     ro offset isize = -3
     println(offset)

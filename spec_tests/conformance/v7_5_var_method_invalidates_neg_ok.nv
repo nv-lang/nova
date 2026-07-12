@@ -3,8 +3,7 @@
 // receiver) still conservatively invalidates. Semantic preservation
 // РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ.
 
-module nova_tests.plan123_7_5
-
+module conformance.v7_5_var_method_invalidates_neg_ok
 type Cv {
     mut n int
 }

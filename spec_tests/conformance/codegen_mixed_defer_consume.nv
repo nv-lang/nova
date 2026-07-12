@@ -3,8 +3,7 @@
 // Plan 110.1.9 T2.5 (D188 R5 LIFO): defer inside consume body fires
 // BEFORE cleanup. LIFO exit order verification.
 
-module nova_tests.plan110
-
+module conformance.codegen_mixed_defer_consume
 type ResZ3 {
     ro id int
 }

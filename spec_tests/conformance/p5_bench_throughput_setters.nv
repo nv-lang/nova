@@ -1,5 +1,5 @@
 // Plan 57 MVP: bench.bytes / bench.elements setters callable.
-module spec_tests.conformance
+module conformance.p5_bench_throughput_setters
 bench "bytes-throughput" {
     measure {
         bench.bytes(4096)

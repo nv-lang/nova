@@ -1,6 +1,5 @@
 // Plan 91.15 Ф.2 POS — Option[T] @debug impl
-module plan91_15.pos_option_debug
-
+module conformance.pos_option_debug
 test "Some(int) debug" {
     ro s = Some(42)
     assert("${s:?}" == "Some(42)")

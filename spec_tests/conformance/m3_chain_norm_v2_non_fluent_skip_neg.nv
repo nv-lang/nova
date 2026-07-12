@@ -3,8 +3,7 @@
 // chain-norm doesn't hoist, but call expression still produces correct
 // runtime behavior. Verifies V2 registry's positive discrimination.
 
-module nova_tests.plan123_followups_2026_06_05
-
+module conformance.m3_chain_norm_v2_non_fluent_skip_neg
 type Acc3 {
     mut total int
 }

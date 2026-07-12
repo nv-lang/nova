@@ -4,8 +4,7 @@
 // → composed как secondary в MultiError chain (primary stays = body's
 // throw). Verifies cleanup-fail-during-propagation flow.
 
-module nova_tests.plan110
-
+module conformance.codegen_on_exit_throws_t2_1
 type FailingResource3 {
     ro id int
 }

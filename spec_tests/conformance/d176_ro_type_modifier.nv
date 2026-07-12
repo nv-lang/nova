@@ -14,7 +14,7 @@
 //  are negative diagnostics, not POS-observable, so they are out of scope for this POS test.)
 // Spec: spec/decisions/02-types.md:2888 (D176 «`ro T` — тип-модификатор»), §«Семантика» / §«Параметры».
 // One folder-module `spec_tests.conformance`; D-prefixed names are unique.
-module spec_tests.conformance
+module conformance.d176_ro_type_modifier
 
 // (2) Default-ro `[]u8` parameter (bare spelling — the D246-amendment canon). The body only
 //     READS (sum), proving the ro-by-default content view is fully readable.

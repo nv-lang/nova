@@ -8,7 +8,7 @@
 // bindings (`Nova_T*`/`Nova_E*`). Fixed in value_aware_subst_to_ref (Vec-flip
 // with the same generic-stub → nova_int erasure resolved_array_to_c uses).
 
-module spec_tests.conformance
+module conformance.result_over_array
 // Two-generic collector: Result over a generic-array Ok payload.
 fn[T, E] err177_sequence(items []Result[T, E]) -> Result[[]T, E] {
     mut out []T = []

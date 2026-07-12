@@ -5,8 +5,6 @@
 // с указанием миграционного пути.
 
 module neg.neg_old_handler_keyword
-
-
 type Logger effect {
     log(msg str) -> ()
 }

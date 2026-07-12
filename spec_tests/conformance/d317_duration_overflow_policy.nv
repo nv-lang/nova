@@ -3,7 +3,7 @@
 //   (1) операторы траппят (rt-фикстуры nova_tests/time/rt/); (2) checked_* → Option;
 //   (3) saturating_* → clamp к ±MAX. Плюс @abs(i64::MIN), @div(0), f64-NaN/inf,
 //   boundary-saturate инстантов, Timestamp-окно 1677..2262 (Q16).
-module spec_tests.conformance
+module conformance.d317_duration_overflow_policy
 
 import std.time.duration
 

@@ -8,7 +8,7 @@
 // НЕ из hardcode. Негативы (E_REALTIME_SYNC_PARK / E_BLOCKING_SYNC_PARK /
 // E_REALTIME_NESTED_SYNC_VIA_FN) — neg/d172_*.nv. Шаблоны сверены с
 // nova_tests/plan103_6. Один folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d172_realtime_blocking_attrs
 
 // ── #realtime: только leaf-операции без scheduler-взаимодействия ──
 

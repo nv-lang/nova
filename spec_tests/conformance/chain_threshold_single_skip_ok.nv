@@ -1,7 +1,6 @@
 // Plan 123.4 T1.7: single chain access — below threshold, not cached.
 
-module nova_tests.plan123_4
-
+module conformance.chain_threshold_single_skip_ok
 type Layer3 {
     ro inner Layer_Inner
 }

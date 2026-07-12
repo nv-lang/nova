@@ -7,7 +7,6 @@
 // share-ность молча (D415 §7 Q8).
 
 module neg.mut_field_nested_path
-
 type Inner {
     mut buf []u8
 }

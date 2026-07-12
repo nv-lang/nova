@@ -4,7 +4,6 @@
 // невозможен. Первый invoke = consume; closure становится Consumed.
 
 module neg.closure_consume_err_double_invoke
-
 type Transaction consume {
     id int,
 }

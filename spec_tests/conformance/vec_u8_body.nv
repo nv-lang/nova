@@ -1,4 +1,4 @@
-module spec_tests.conformance
+module conformance.vec_u8_body
 test "Vec[u8] local var — body-only instantiation" {
     mut v Vec[u8] = Vec[u8].new()
     v.cap(4)

@@ -10,7 +10,7 @@
 // interpolation, and a genuine int method (`.abs()`) all resolve on the effect-op
 // result even though a foreign `to_str` exists in the SAME module.
 
-module plan183_f4.effect_op_int_result
+module conformance.effect_op_int_result
 type NetErr enum
     | Eof
     | Closed

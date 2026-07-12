@@ -1,5 +1,4 @@
 module neg.parse_int_overflow_err
-
 import std.runtime.string.{ParseIntError}
 
 // NB: flat (single-level) match on `Err(Overflow)`/`Err(_)` — a NESTED match

@@ -7,8 +7,6 @@
 // останавливается с понятной ошибкой «expected type».
 
 module neg.neg_bad_syntax
-
-
 test "garbage between loop pattern and in" {
     for x 123 in [1, 2, 3] {
         ro _ = x

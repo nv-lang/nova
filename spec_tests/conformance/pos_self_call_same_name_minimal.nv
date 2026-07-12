@@ -1,6 +1,5 @@
 // Plan 132.1 regression guard: minimal repro for @name() self-call when field/method share name
-module nova_tests.plan132
-
+module conformance.pos_self_call_same_name_minimal
 type MyObj5 { priv mut x int }
 
 fn MyObj5.new() -> Self => { x: 0 }

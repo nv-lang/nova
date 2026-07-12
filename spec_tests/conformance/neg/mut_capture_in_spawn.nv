@@ -8,7 +8,6 @@
 // сообщение называет ТИП и причину («writable cell») сразу после биндинга.
 
 module neg.mut_capture_in_spawn
-
 fn racy_sum() -> int {
     mut acc = 0
     supervised {

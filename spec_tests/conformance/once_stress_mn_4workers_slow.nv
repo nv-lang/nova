@@ -6,7 +6,7 @@
 //
 // EXPECT_TIMEOUT_MS 150000
 
-module spec_tests.conformance
+module conformance.once_stress_mn_4workers_slow
 test "Once.call_once stress: 16 fibers × 100 calls, init executes exactly once" {
     mut once = Once.new()
     mut init_count = AtomicInt.new(0)

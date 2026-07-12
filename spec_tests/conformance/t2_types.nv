@@ -1,7 +1,6 @@
 // Plan 120 (D215): T2 — various named tuple types.
 
-module nova_tests.plan120
-
+module conformance.t2_types
 type Vec31(x f64, y f64, z f64)
 type Color(r u8, g u8, b u8, a u8)
 

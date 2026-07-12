@@ -1,8 +1,7 @@
 // Plan 138 Ф.4 — t4: v[i..j] range slices + view semantics
 // Extended range slice tests
 
-module nova_tests.plan138
-
+module conformance.t4_vec_range_get
 import std.collections.vec.{Vec}
 
 test "inclusive range v[1..=3]" {

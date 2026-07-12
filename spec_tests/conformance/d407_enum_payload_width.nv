@@ -15,7 +15,7 @@
 // 8-bit unsigned field likewise. Each assert distinguishes collapse from correctness.
 // Spec: spec/decisions/02-types.md (named-priority uint≠int, u8≠i8≠int). One folder-module
 // `spec_tests.conformance`; all top-level names D407-prefixed to avoid CU collisions.
-module spec_tests.conformance
+module conformance.d407_enum_payload_width
 
 type d407T enum
     | d407V(uint)

@@ -3,9 +3,7 @@
 // Ключевой тест целостности: write_X → into() → ReadBuffer.from() →
 // read_X должен вернуть исходное значение для каждого типа.
 
-module nova_tests.buffers
-
-
+module conformance.roundtrip
 // ── целые числа ────────────────────────────────────────────────────
 
 test "round-trip byte" {

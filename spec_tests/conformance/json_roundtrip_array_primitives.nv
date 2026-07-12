@@ -4,8 +4,7 @@
 // Validates: format_array iter+join, parser accepts mixed types в одном
 // массиве, == определён pointwise для Array variant.
 
-module nova_tests.plan91_13
-
+module conformance.json_roundtrip_array_primitives
 import std.encoding.json.{JsonValue, Json}
 
 test "encode mixed primitives array" {

@@ -5,8 +5,7 @@
 // non-Ident leaf), но existing mut-self / mut-field semantics в impl
 // handle correctly.
 
-module nova_tests.plan128_2
-
+module conformance.p2_mut_self_field_mut_method_ok
 type Vec34(x int, y int, z int)
 
 fn Vec34 mut @set_x(v int) -> () {

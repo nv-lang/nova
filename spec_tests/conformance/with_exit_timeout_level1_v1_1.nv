@@ -10,8 +10,7 @@
 //
 // Fires когда method_overloads contains (TypeName, "exit_timeout_ms").
 
-module nova_tests.plan110
-
+module conformance.with_exit_timeout_level1_v1_1
 type Conn10 { ro h int }
 fn Conn10.new(h int) -> Conn10 => { h }
 

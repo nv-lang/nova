@@ -6,7 +6,6 @@
 // by the push call. At scope exit: tx is still Live → D133-not-consumed.
 
 module neg.vec_push_err_non_consume_param
-
 type Transaction consume {
     id int,
 }

@@ -2,7 +2,7 @@
 // Spec: spec/decisions/03-syntax.md (D27). Regression-guard: канонизация Plan 172.1 роутит
 // `[]T`→`Vec[T]`, но `[N]T` ОСТАЁТСЯ отдельным fixed-array built-in (НЕ конфлейтится с Vec).
 // Behavioral: индексация + мутация по фиксированному индексу. Один folder-module CU.
-module spec_tests.conformance
+module conformance.d27_fixed_array
 
 test "[N]T фиксированный массив — индексация + мутация (D27)" {
     mut a [4]int = [10, 20, 30, 40]

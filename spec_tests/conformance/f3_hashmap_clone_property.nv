@@ -3,7 +3,7 @@
 // independence (mutation copy не влияет original), iteration order
 // stability.
 
-module spec_tests.conformance
+module conformance.f3_hashmap_clone_property
 import std.collections.hashmap.{HashMap}
 
 

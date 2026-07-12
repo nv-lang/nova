@@ -7,7 +7,6 @@
 // implement Cleanup.
 
 module neg.neg_consume_not_consumable
-
 // NotConsumable — record без cleanup method.
 type NotConsumable {
     ro value int

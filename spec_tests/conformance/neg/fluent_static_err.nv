@@ -4,7 +4,6 @@
 // instance-метода. У static-метода нет `@`-receiver'а → parse error.
 
 module neg.fluent_static_err
-
 type Gizmo { v int }
 
 // ОШИБКА D132: `-> @` на static-методе (нет receiver'а).

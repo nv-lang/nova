@@ -5,8 +5,6 @@
 // implemented in protocol-literal».
 
 module neg.neg_protocol_lit_static_method
-
-
 type WithStatic protocol {
     .make(x int) -> Self
     @run() -> ()

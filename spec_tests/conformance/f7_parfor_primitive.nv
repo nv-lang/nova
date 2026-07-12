@@ -3,8 +3,7 @@
 // interim-guard [E_PARFOR_RESULT_UNSUPPORTED] УДАЛЁН волной 173.1 (канальный
 // сбор поддерживает []T для любого T; value-mode покрыт err173_1/parfor_elem_matrix).
 
-module nova_tests.err173
-
+module conformance.f7_parfor_primitive
 type Ev { n int }
 
 fn emit(i int) -> Ev => { n: i }

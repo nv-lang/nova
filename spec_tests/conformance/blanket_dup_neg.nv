@@ -1,4 +1,4 @@
-module plan161.blanket_dup_neg
+module conformance.blanket_dup_neg
 import std.prelude.collections.{Next}
 import std.collections.vec.{Vec}
 

@@ -1,7 +1,7 @@
 //
 // Plan 153.3 — negative: select_nth_unstable(k) with k >= len violates the
 // `k < @len` contract → runtime panic.
-module spec_tests.conformance
+module conformance.select_nth_oob_neg
 test "select nth oob neg" panics "requires" {
     mut v = Vec[int].of(1, 2, 3)
     ro _ = v.select_nth_unstable(3)

@@ -4,7 +4,7 @@
 // `fn d72_render[T D72Show](x T) -> str`. Spec: spec/decisions/02-types.md §D72.
 // Conformance: the bound resolves to the protocol (D53) and `x.show()` lowers to
 // the concrete implementor's method — structural conformance of the type-arg.
-module spec_tests.conformance
+module conformance.d72_generic_bound_protocol
 
 // Protocol used as the bound. Method decl in protocol body: no `fn`, `@`-receiver.
 type D72Show protocol {

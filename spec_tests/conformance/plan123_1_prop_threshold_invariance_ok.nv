@@ -2,8 +2,7 @@
 // Same method evaluated repeatedly через различные dispatches must
 // give same answer regardless of caching.
 
-module nova_tests.plan123
-
+module conformance.plan123_1_prop_threshold_invariance_ok
 type Counter9 {
     ro init int
 }

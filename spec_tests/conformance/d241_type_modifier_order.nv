@@ -6,7 +6,7 @@
 // E_MODIFIER_ORDER + machine-applicable fix-it; 0/1 модификатор — всегда канон.
 // Позитив: value priv / consume priv / одиночные. Негативы — neg/d241_*.nv.
 // Шаблоны сверены с nova_tests/plan148/mo_*. Один folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d241_type_modifier_order
 
 // Канон: value (rank 0) → priv (rank 2).
 type D241Point value priv {

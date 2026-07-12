@@ -1,6 +1,6 @@
 // D328 — value-record `==` is STRUCTURAL (Plan 172.4 Ф.2). Value (no heap identity) →
 // field-by-field, via the single `emit_field_eq` dispatcher (§0).
-module spec_tests.conformance
+module conformance.d328_value_record_eq
 
 type D328Point value { x int, y int }
 

@@ -5,7 +5,6 @@
 // EXPECT_COMPILE_ERROR E_CALLBACK_THROWS_OVER_C_ABI
 
 module neg.plan174_6_neg_callback_fail
-
 fn throwing_cb(x i64) Fail -> i64 {
     x
 }

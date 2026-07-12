@@ -1,9 +1,9 @@
-module spec_tests.conformance
+module conformance.cm_box_use
 // Plan 63 Fix C cross-module: import generic factory из folder-module,
 // call с typeargs. Tests на anonymous record return mono enrollment
 // при cross-module call site.
 
-import cm_box.{Box}
+import spec_tests.conformance.cm_box.{Box}
 
 test "cross-module Box[int].of" {
     ro m = Box[int].of(42)

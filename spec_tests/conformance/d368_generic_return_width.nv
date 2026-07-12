@@ -7,7 +7,7 @@
 // NEGATIVE → `got > 100` is false (RUN-FAIL); a correct `uint` return keeps it positive.
 // Spec: spec/decisions/02-types.md (D368). Single `spec_tests.conformance` folder-module;
 // D368-prefixed names avoid top-level collisions with the sibling `d126_no_int_collapse.nv`.
-module spec_tests.conformance
+module conformance.d368_generic_return_width
 
 type D368GBox[T] {
     gv T

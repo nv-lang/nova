@@ -3,9 +3,7 @@
 // read_char / read_str(n) — D325 Result-form (throw via !!, или Result-инспекция).
 // n у read_str — количество codepoint'ов. Невалидный UTF-8 → Err.
 
-module nova_tests.buffers
-
-
+module conformance.read_char_str
 // ── read_char через !! (throw-on-error) ───────────────────────────────────────────
 
 test "read_char ASCII" {

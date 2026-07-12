@@ -15,8 +15,7 @@
 // Plan 91.12 V2 followup (2026-06-02) — generic ptr-newtype работал;
 // non-ptr inner следующий шаг для production-grade coverage.
 
-module plan91_12.v3_generic_newtype_non_ptr_inner_ok
-
+module conformance.v3_generic_newtype_non_ptr_inner_ok
 // ─── Phantom T markers (unit types) ────────────────────────────────
 
 type Persistent

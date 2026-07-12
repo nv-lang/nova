@@ -4,9 +4,7 @@
 // `mut` помечает loop-переменную мутабельной (D32/D33); комбинируется
 // с аннотацией типа по правилу «name type».
 
-module nova_tests.plan87
-
-
+module conformance.explicit_mut
 test "for mut x int — мутация loop-переменной" {
     mut sum = 0
     for mut x int in [1, 2, 3] {

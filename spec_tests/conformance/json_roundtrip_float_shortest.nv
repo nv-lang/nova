@@ -11,8 +11,7 @@
 // numeric-extraction path — the parser reads via nova_str_to_f64 and stores a
 // true f64 in JsonValue.Num).
 
-module nova_tests.plan91_13
-
+module conformance.json_roundtrip_float_shortest
 import std.encoding.json.{JsonValue, Json}
 
 // str.from(v) directly → parse the emitted JSON number back → identity.

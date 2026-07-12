@@ -1,5 +1,4 @@
-module plan91_8b.pos_compare_dispatch
-
+module conformance.pos_compare_dispatch
 type Score { val int }
 fn Score @compare(other Score) -> int => @val - other.val
 

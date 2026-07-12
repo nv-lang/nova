@@ -25,7 +25,7 @@
 //   (п.1 type-method impl ✅ Allowed); §2 access rules (uniform with D220); §6 cross-ref
 //   D186 (protocol satisfaction: type-method primary).
 // Один folder-module `spec_tests.conformance`; D-prefixed имена уникальны.
-module spec_tests.conformance
+module conformance.d222_priv_record_protocol
 
 // Record с priv-полями. Encapsulation boundary активен → priv доступен ТОЛЬКО из
 // type-method scope (D222 §2/§3, mirror D220).

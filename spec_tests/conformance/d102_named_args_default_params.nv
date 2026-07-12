@@ -7,7 +7,7 @@
 // и именованные аргументы переставимы.
 //
 // Spec: spec/decisions/03-syntax.md D102. Единица: folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d102_named_args_default_params
 
 fn d102_port(host str, port int = 8080) -> int => port
 

@@ -24,8 +24,7 @@
 // truly deferred) lives в Plan 110.6.5 «Racing cancels stress» which
 // is gated on this sub-sub-sub being live.
 
-module nova_tests.plan110
-
+module conformance.shield_basic_mask_t3_1
 type Counter3 {
     ro id int
 }

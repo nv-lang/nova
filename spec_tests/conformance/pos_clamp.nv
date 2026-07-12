@@ -1,6 +1,5 @@
 // Plan 91.15 Ф.4 POS — int.clamp / f64.clamp
-module plan91_15.pos_clamp
-
+module conformance.pos_clamp
 test "int.clamp below" { assert((-5).clamp(0, 10) == 0) }
 test "int.clamp above" { assert(15.clamp(0, 10) == 10) }
 test "int.clamp within" { assert(5.clamp(0, 10) == 5) }

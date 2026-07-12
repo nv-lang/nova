@@ -6,7 +6,7 @@
 // Теперь метод-call обязателен — единый стиль.
 //
 // Spec: spec/decisions/03-syntax.md D117. Единица: folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d117_size_accessors_call
 
 import std.collections.hashmap.{HashMap}
 

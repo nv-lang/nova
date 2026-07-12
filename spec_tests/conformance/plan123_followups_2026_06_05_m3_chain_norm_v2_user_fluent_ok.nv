@@ -4,8 +4,7 @@
 // hoisting via FnDecl.returns_receiver discovery (V1 hardcoded list
 // would skip).
 
-module nova_tests.plan123
-
+module conformance.plan123_followups_2026_06_05_m3_chain_norm_v2_user_fluent_ok
 type Counter4_plan123followups20260605m3chainnormv2userfluentok {
     mut n int
 }

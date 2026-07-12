@@ -1,7 +1,7 @@
 // D45 — Inferred return type для expression-body (=> expr); block-body требует -> T явно.
 // Inference локальный: литерал → его тип; @field → тип поля; вызов → тип возврата.
 // Spec: spec/decisions/03-syntax.md D45. Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d45_inferred_return_type
 
 // --- expression-body: -> T выводится из выражения ---
 

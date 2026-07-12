@@ -3,8 +3,7 @@
 // Plan 110.1.1 (D188) + Plan 110.1.4.a: `consume X TYPE = init() { body }`
 // scope-block с явной type annotation. Acceptance A110.1.1.a.
 
-module nova_tests.plan110
-
+module conformance.parse_consume_scope_with_type_annot
 type DummyRes3 {
     ro id int
 }

@@ -2,8 +2,7 @@
 // User-local `_at_x` exists; pass должен emit `_at_x_1` (or similar
 // suffix) — user-local untouched, semantics preserved.
 
-module nova_tests.plan123_1
-
+module conformance.prop_collision_avoidance_ok
 type Bag3 {
     ro x int
     ro y int

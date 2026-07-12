@@ -2,8 +2,7 @@
 // barriers (write + self-mutating call). Each region accumulates
 // 2+ reads → three cache lets emitted.
 
-module nova_tests.plan123
-
+module conformance.plan123_1_1_v1_1_three_regions_mixed_ok
 type State4 {
     mut x int
 }

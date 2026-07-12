@@ -3,8 +3,7 @@
 // fns, so IPA is correctly skipped (no panic, falls back to V1
 // conservative). Must compile + run identically to V7.1 behavior.
 
-module nova_tests.plan123
-
+module conformance.plan123_7_2_v72_no_recv_skips_ipa_ok
 type Counter_plan12372v72norecvskipsipaok {
     mut n int
 }

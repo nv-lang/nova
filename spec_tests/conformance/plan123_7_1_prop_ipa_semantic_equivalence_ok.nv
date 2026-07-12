@@ -1,8 +1,7 @@
 // Plan 123.7.1 T-PROP.1: semantic equivalence — V7.1 caching
 // behavior identical to baseline across various input data.
 
-module nova_tests.plan123
-
+module conformance.plan123_7_1_prop_ipa_semantic_equivalence_ok
 type Acc4_plan12371propipasemanticequivalenceok {
     mut count int
     ro factor int

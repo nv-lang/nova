@@ -15,8 +15,7 @@
 // ВАЖНО: без `// CONTRACTS off` (т.е. под default enforce) этот контракт
 // ОБЯЗАН abort'ить — это acceptance F1 (см. expected_runtime/contracts_*).
 
-module plan140.t5_build_policy_off
-
+module conformance.t5_build_policy_off
 fn must_be_positive(x int) -> int
     requires x > 0   // нарушается: must_be_positive(-7); снимается --contracts=off
 => x * 2

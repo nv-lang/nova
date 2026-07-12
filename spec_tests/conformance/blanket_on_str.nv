@@ -1,6 +1,6 @@
 // [M-blanket-method-resolve] regression: blanket `fn[T] T @m` резолвится на
 // str/user-типах (не только на примитивах) даже рядом с `[]T @m2` в folder-module.
-module spec_tests.conformance
+module conformance.blanket_on_str
 fn[T] T @blanket_ident() -> T => @
 test "blanket method on int" { assert(42.blanket_ident() == 42) }
 test "blanket method on str" { assert("hi".blanket_ident() == "hi") }

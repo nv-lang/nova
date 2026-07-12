@@ -6,7 +6,6 @@
 // армит воркеров до конца инициализации констант.
 
 module neg.const_init_detach_fn
-
 fn bg_task() Detach -> int {
     detach {
         ro _x = 1

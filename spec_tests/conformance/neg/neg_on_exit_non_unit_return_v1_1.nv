@@ -6,7 +6,6 @@
 // EXPECT_COMPILE_ERROR D188-malformed-on-exit
 
 module neg.neg_on_exit_non_unit_return_v1_1
-
 type Conn { ro h int }
 fn Conn.new(h int) -> Conn => { h }
 

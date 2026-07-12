@@ -4,8 +4,7 @@
 // — Result-unwrap form. type-checker infer'ит inner type через recursive
 // ?-peel (110.1.2 heuristic). Codegen эмитит init + body (110.1.4.a).
 
-module nova_tests.plan110
-
+module conformance.check_consume_unwrap_form
 type FailableResource4 {
     ro id int
 }

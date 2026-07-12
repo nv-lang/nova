@@ -6,7 +6,7 @@
 // Discriminator: без default generic нужно всегда писать [T] явно.
 //
 // Spec: spec/decisions/03-syntax.md D88. Единица: folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d88_default_generic_params
 
 type D88Pair[A = int, B = str] { first A, second B }
 

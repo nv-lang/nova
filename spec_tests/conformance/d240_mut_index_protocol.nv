@@ -2,7 +2,7 @@
 // []T implements MutIndex[int, T]; `v[i] = val` dispatches via builtin path.
 //
 // Spec: spec/decisions/03-syntax.md D240. Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d240_mut_index_protocol
 
 fn d240_set_first(mut xs []int, val int) {
     xs[0] = val

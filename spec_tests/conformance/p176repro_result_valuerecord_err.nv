@@ -6,7 +6,7 @@
 // dodged it (erased to `NovaRes_nova_int_nova_str`); the `value` form now compiles
 // because `emit_protocol_box_typedef` forward-declares the referenced NovaRes mono.
 
-module spec_tests.conformance
+module conformance.p176repro_result_valuerecord_err
 
 type VErr value { ro code int, ro op str }
 

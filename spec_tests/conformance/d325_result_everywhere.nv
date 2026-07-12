@@ -22,7 +22,7 @@
 // std/runtime/string/parse.nv, just renamed with a narrower Int-only
 // surface), which is the SAME Result-everywhere idiom (R1/R2/D85)
 // `str.parse_int` used to demonstrate.
-module spec_tests.conformance
+module conformance.d325_result_everywhere
 
 import std.runtime.string.{ParseIntError}
 

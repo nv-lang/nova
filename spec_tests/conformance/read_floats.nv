@@ -4,9 +4,7 @@
 // (is_ok на достаточных данных, is_err на коротком буфере) для
 // f32/f64 LE+BE.
 
-module nova_tests.buffers
-
-
+module conformance.read_floats
 // ── round-trip значения (read_f*()!!): bit-perfect ──────────────────────────
 
 test "read_f32_le — точное значение" {

@@ -6,8 +6,7 @@
 //
 // EXPECT_TIMEOUT_MS 30000
 
-module nova_tests.plan103_9
-
+module conformance.mutexguard_invariant_balanced
 test "N fibers × K iters explicit guard: counter balanced, mutex exclusive" {
     mut mu = Mutex.new()
     mut counter = AtomicInt.new(0)

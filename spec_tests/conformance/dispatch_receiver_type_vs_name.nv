@@ -9,7 +9,7 @@
 // type, wrong arity). The fix remaps a `NovaArray_<elem>` receiver to its
 // layout-identical `Vec[<elem>]` mono so the overload-resolving
 // generic-instance dispatch fires and picks the array's own `cap` setter.
-module spec_tests.conformance
+module conformance.dispatch_receiver_type_vs_name
 
 // A co-compiled type carrying its own `cap` getter AND `cap(n)` setter — the
 // name+arity twins that used to win the last-registered dispatch race.

@@ -4,7 +4,6 @@
 // view = read-only borrow; consume нарушит invariant ownership'а.
 
 module neg.view_err_consume_call
-
 type Transaction consume {
     id int,
 }

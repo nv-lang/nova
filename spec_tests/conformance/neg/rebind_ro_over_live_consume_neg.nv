@@ -6,7 +6,6 @@
 // EXPECT_COMPILE_ERROR E_REBIND_LIVE_CONSUME
 
 module neg.rebind_ro_over_live_consume_neg
-
 type NRbBox consume {
     v int,
 }

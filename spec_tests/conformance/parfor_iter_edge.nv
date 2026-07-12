@@ -4,8 +4,7 @@
 // ошибка ребёнка → Escalate (acc не возвращается, ошибка ловится) —
 // критерии приёмки №1/№3 плана.
 
-module nova_tests.err173_1
-
+module conformance.parfor_iter_edge
 // Пользовательский итератор без @len() — ленивый источник (Iter protocol).
 type CountUp { mut cur int; limit int }
 

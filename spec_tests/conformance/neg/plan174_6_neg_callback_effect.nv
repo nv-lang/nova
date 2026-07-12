@@ -7,7 +7,6 @@
 // EXPECT_COMPILE_ERROR E_CALLBACK_THROWS_OVER_C_ABI
 
 module neg.plan174_6_neg_callback_effect
-
 type Logger effect {
     log(msg str) -> ()
 }

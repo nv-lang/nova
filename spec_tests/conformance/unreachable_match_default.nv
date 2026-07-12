@@ -1,7 +1,6 @@
 // [M-125-unreachable-builtin] positive — unreachable() в match default arm.
 
-module nova_tests.plan125_followups
-
+module conformance.unreachable_match_default
 type Color | Red | Green | Blue
 
 fn rgb(c Color) -> int {

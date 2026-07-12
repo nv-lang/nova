@@ -1,5 +1,4 @@
-module plan91_8b.pos_equal_dispatch
-
+module conformance.pos_equal_dispatch
 type Tag { name str }
 fn Tag @equal(other Tag) -> bool => @name == other.name
 

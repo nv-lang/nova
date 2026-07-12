@@ -4,7 +4,6 @@
 // independently of D161 wrap. Hijack scope-exit ≠ failable cleanup.
 
 module neg.neg_multi_defer_interrupt_in_body
-
 fn process() -> int {
     ro x = with Time = effect Time {
         sleep(_ms) { () }

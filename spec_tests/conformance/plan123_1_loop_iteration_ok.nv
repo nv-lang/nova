@@ -1,8 +1,7 @@
 // Plan 123.1 T2.7: while/for loops СЃ ro @field reads вЂ” cache valid
 // РїРѕСЃРєРѕР»СЊРєСѓ ro fields immutable.
 
-module nova_tests.plan123
-
+module conformance.plan123_1_loop_iteration_ok
 type IterData3 {
     ro start int
     ro count int

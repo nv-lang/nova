@@ -9,8 +9,7 @@
 // гарантирует что unification infer_print_helper → infer_expr_c_type
 // НЕ сломала старую (legitimate) форму записи.
 
-module plan67.f14_legacy_workaround_still_works
-
+module conformance.f14_legacy_workaround_still_works
 // EXPECT_STDOUT 42
 // EXPECT_STDOUT true
 // EXPECT_STDOUT hello

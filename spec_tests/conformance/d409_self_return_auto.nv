@@ -8,7 +8,7 @@
 //       затем неявный `return @`.
 // Spec: spec/decisions/03-syntax.md D409. Часть ЕДИНОГО conformance
 // folder-module (одна CU) — все имена ниже D409-префиксованы.
-module spec_tests.conformance
+module conformance.d409_self_return_auto
 
 type D409Widget { mut n int, mut cap int }
 

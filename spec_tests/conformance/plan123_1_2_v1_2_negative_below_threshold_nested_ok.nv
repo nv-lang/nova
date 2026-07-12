@@ -1,8 +1,7 @@
 // Plan 123.1.2 (V1.2, 2026-06-04): NEGATIVE вЂ” nested region СЃ reads <
 // threshold РЅРµ cached. Semantic preservation РїСЂРѕРІРµСЂРµРЅР° РґР»СЏ cold path.
 
-module nova_tests.plan123
-
+module conformance.plan123_1_2_v1_2_negative_below_threshold_nested_ok
 type Cv_plan12312v12negativebelowthresholdnestedok { mut x int }
 
 fn Cv_plan12312v12negativebelowthresholdnestedok.new() -> Cv_plan12312v12negativebelowthresholdnestedok => { x: 1 }

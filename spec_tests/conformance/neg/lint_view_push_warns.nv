@@ -5,7 +5,6 @@
 // предупреждает программиста, что parent НЕ модифицируется.
 
 module neg.lint_view_push_warns
-
 fn main() -> () {
     mut parent []int = [1, 2, 3, 4, 5]
     mut view = parent[1..4]

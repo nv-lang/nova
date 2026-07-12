@@ -2,8 +2,7 @@
 // Outer while-stmt is a barrier (write @x = ... inside loop body).
 // V1.2 descends into the body's stmts and caches the pre-write region.
 
-module nova_tests.plan123
-
+module conformance.plan123_1_2_v1_2_nested_while_body_ok
 type Acc_plan12312v12nestedwhilebodyok {
     mut x int
 }

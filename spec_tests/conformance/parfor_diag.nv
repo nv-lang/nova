@@ -1,5 +1,4 @@
-module nova_tests.err173_1
-
+module conformance.parfor_diag
 test "diag parallel for 1000 len" {
     ro xs = parallel for i in 0..1000 { i }
     println("len = ", xs.len())

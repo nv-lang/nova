@@ -2,7 +2,7 @@
 // Nova не имеет orphan rule: метод на любом типе можно объявить из любого модуля.
 // Но переопределение существующего метода (та же сигнатура) → E_METHOD_REDEFINITION.
 // Spec: spec/decisions/10-overloading.md D267. Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d267_method_coherence_extension
 
 // 1. Extension method на built-in type с новым именем — нет orphan rule
 fn str @d267_exclaim() -> str => @ + "!"

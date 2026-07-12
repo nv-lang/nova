@@ -13,7 +13,7 @@
 //     `Equal` default-body form `@equal => @compare(other) == 0`, drives ==/!= too.
 // Part of the SINGLE `spec_tests.conformance` folder-module; D-prefixed unique type names
 // avoid duplicate-top-level-name clashes.
-module spec_tests.conformance
+module conformance.d237_protocol_method_naming
 
 // (1) Renamed method `@equal` (the `Equal` protocol method per D237's table).
 // Implementing it directly synthesizes the ==/!= operators. `@equal` deliberately

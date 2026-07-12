@@ -5,8 +5,7 @@
 // Реализация: SelectSlot.want_none (channels.h) — None-арм fires ТОЛЬКО на
 // closed+empty; Some-арм — только на value; `_`-арм — на любой результат.
 
-module nova_tests.err173_2
-
+module conformance.select_none_arm_test
 test "select None-arm fires on closed channel, Some-arm on value" {
     // Канал с значением → Some-арм.
     ro ch = Channel.new(1)

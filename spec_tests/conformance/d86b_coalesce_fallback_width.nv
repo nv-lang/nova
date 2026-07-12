@@ -5,7 +5,7 @@
 // Unsigned 2^63; `> 100` discriminates. Spec: 02-types.md (D55/D86).
 // NOTE: the Option[(uint,uint)] ?? form has a separate NovaOpt-tuple-payload-naming gap
 // (result-type strip) — tracked, not yet locked here.
-module spec_tests.conformance
+module conformance.d86b_coalesce_fallback_width
 
 fn d86b_res() -> Result[(uint, uint), str] => Ok((0x8000000000000000, 5))
 

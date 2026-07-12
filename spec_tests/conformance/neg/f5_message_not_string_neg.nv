@@ -7,7 +7,6 @@
 // the wrong contract clause or an expression where a literal message is meant).
 
 module neg.f5_message_not_string_neg
-
 fn needs_positive(x int) -> int
     requires x > 0, 42
 => x * 2

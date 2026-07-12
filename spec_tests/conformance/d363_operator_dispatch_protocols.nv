@@ -2,7 +2,7 @@
 // Primitives (int/bool/f64/char) use built-in C dispatch without method call.
 // User types dispatch == via @equal and </<=/>/>=  via @compare (returns int sign).
 // Spec: spec/decisions/03-syntax.md D363. Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d363_operator_dispatch_protocols
 
 type D363Item { value int }
 

@@ -4,7 +4,6 @@
 // (hijack enclosing loop), unchanged by D161.
 
 module neg.neg_multi_defer_break_in_body
-
 fn process() -> () {
     for _i in 0..3 {
         defer { break }   // ❌ D90 §6

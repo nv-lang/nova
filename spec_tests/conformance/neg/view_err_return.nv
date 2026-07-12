@@ -4,7 +4,6 @@
 // Identity-функция требует явного consume, не view.
 
 module neg.view_err_return
-
 type Transaction consume {
     id int,
 }

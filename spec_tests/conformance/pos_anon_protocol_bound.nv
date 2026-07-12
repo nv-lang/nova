@@ -3,9 +3,7 @@
 // Закрывает Plan 15 [P-15-anon-protocol-bound]: bound `[T protocol { ... }]`
 // без отдельного `type X protocol {...}`-объявления.
 
-module nova_tests.plan97
-
-
+module conformance.pos_anon_protocol_bound
 type Box2 {
     value int
 }

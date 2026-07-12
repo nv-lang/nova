@@ -8,7 +8,6 @@
 // CC-стадия «too few arguments»). Замысел неизменен: вызов отвергнут.
 
 module neg.plan103_2_atomic_u64_no_such_op_neg
-
 fn bad(a AtomicU64) => a.rotate_left()
 
 test "should not compile" {

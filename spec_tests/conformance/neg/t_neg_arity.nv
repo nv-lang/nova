@@ -4,7 +4,6 @@
 // `(a, b) = (1, 2, 3)` must produce E_TUPLE_ASSIGN_ARITY_MISMATCH.
 
 module neg.t_neg_arity
-
 fn main() {
     mut a = 0
     mut b = 0

@@ -23,8 +23,7 @@
 // **Acceptance:** compile + functional test exits cleanly через caller's
 // Fail signature.
 
-module nova_tests.plan110
-
+module conformance.on_exit_throws_nested_deadline_restored_v1_1
 import std.prelude.errors
 
 type InnerThrowingFast4 { ro id int }

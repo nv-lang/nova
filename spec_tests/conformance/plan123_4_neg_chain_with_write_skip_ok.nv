@@ -1,8 +1,7 @@
 // Plan 123.4 T-NEG.1: @F = ... in body → V4 conservative skips
 // all chain caching. Correctness preserved.
 
-module nova_tests.plan123
-
+module conformance.plan123_4_neg_chain_with_write_skip_ok
 type Box_C3 {
     ro inner Box_C_Inner
     mut count int

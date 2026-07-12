@@ -8,8 +8,7 @@
 // verbatim (no value capture). The interpolation is built lazily — only on the
 // failing path, inside the emitted `if (!(cond)) { ... }` block.
 
-module nova_tests.plan140_1
-
+module conformance.contract_msg_interp_neg
 fn msg_interp_neg_must_be_positive(x int) -> int
     requires x > 0, "got ${x}"
 => x

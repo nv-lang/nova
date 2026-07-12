@@ -2,7 +2,7 @@
 // Покрывает Vec inline-путь индексации (emit_c.rs ~19929) после миграции
 // со stmt-expr на portable `nova_idx_chk`.
 
-module spec_tests.conformance
+module conformance.t1_index_read_pos
 import std.collections.vec.{Vec}
 
 test "v[i] read on Vec[int] literal" {

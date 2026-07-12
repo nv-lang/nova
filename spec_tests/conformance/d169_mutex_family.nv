@@ -5,7 +5,7 @@
 // того же fiber'а, lock_count-инвариант). Single-fiber-safe подмножество
 // (parking-семантика между fiber'ами — runtime-корпус plan103_3).
 // Шаблоны сверены с nova_tests/sync. Один folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d169_mutex_family
 
 test "Mutex: try_lock двоичная семантика (D169)" {
     mut d169_m = Mutex.new()

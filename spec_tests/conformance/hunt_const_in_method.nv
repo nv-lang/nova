@@ -3,7 +3,7 @@
 // `value` are both reachable), so its callee const SCALE must be kept.
 // EXPECT_STDOUT 150
 
-module plan159.hunt_const_in_method
+module conformance.hunt_const_in_method
 
 const SCALE int = 50
 

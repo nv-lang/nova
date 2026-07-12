@@ -1,7 +1,7 @@
 // D44 — числовые литералы: decimal, hex, binary, octal, float; разделитель `_`;
 // default int/f64; NO type-suffixes — тип через annotation или `as`-cast.
 // Spec: spec/decisions/03-syntax.md D44. Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d44_numeric_literals
 
 test "decimal integer literals default to int (D44)" {
     ro x = 42

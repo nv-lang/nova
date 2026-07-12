@@ -12,8 +12,7 @@
 //
 // ALLOC_REQUIRES boehm
 
-module nova_tests.plan83_6
-
+module conformance.spawn_pool_size_class_variation
 test "varied ctx sizes — small ctx routing correct" {
     // Small: 1 capture → 64B class.
     // Plan 173.1 (D71-amend): completion order → sort перед index-asserts.

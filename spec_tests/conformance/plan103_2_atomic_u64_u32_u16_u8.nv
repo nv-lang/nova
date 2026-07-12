@@ -4,8 +4,7 @@
 // and compare_exchange. Tests wrap-around not included here (handled in
 // property tests).
 
-module nova_tests.atomics
-
+module conformance.plan103_2_atomic_u64_u32_u16_u8
 test "AtomicU64 new load store" {
     mut a = AtomicU64.new(1000)
     assert(a.load() == 1000)

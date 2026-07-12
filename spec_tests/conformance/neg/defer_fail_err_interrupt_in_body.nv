@@ -5,7 +5,6 @@
 // failable cleanup.
 
 module neg.defer_fail_err_interrupt_in_body
-
 fn process() -> int {
     ro x = with Time = effect Time {
         sleep(_ms) { () }

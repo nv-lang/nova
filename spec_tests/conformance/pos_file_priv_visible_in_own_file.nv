@@ -2,7 +2,7 @@
 // own file (free fn / type / const). File-private narrows below module-default;
 // the declaring file resolves the symbol normally.
 
-module spec_tests.conformance
+module conformance.pos_file_priv_visible_in_own_file
 priv(file) const SELF_K = 42
 
 priv(file) type SelfAcc {

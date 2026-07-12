@@ -1,4 +1,4 @@
-module spec_tests.conformance
+module conformance.append_as_slice
 test "append vec to vec" {
     mut a = Vec[int].of(1, 2, 3)
     ro b = Vec[int].of(4, 5)

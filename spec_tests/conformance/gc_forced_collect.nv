@@ -1,5 +1,4 @@
-module fixed_array.gc_forced_collect
-
+module conformance.gc_forced_collect
 // [M-fixed-array-value-semantics] GC-проверка: value-массив УКАЗАТЕЛЕЙ
 // ([N]str — nova_str содержит ptr на heap-пейлоад) живёт в стек-кадре
 // (inline struct { nova_str data[N]; }). Boehm сканирует стек консервативно —

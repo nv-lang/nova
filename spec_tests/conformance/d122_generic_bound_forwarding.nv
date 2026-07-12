@@ -16,7 +16,7 @@
 // forwarding (`outer → mid → leaf`) pin the transitive case too. Part of the
 // SINGLE `spec_tests.conformance` folder-module; D122F-prefixed names avoid
 // duplicate-top-level-name clashes in the shared module.
-module spec_tests.conformance
+module conformance.d122_generic_bound_forwarding
 
 // Single-method protocol bound (mirror of io.Read's shape, self-contained).
 type D122FSource protocol {

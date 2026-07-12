@@ -3,8 +3,7 @@
 // literal `(1, 2)` and identical int литералом → only ONE evaluation
 // after codegen; cached local reused.
 
-module nova_tests.plan123_3_2
-
+module conformance.v32_tuple_literal_args_ok
 type Box8 {
     ro base int
 }

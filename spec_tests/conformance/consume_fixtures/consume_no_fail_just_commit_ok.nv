@@ -1,0 +1,21 @@
+// Plan 100.4.5 (D162): infallible function + consume binding + explicit
+// commit. D162 не fires когда нет Fail в sig (только failable functions
+// требуют defer cover error-path).
+
+module consume_fixtures.consume_no_fail_just_commit_ok
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+
+fn begin() -> Transaction => { id: 1 }
+
+fn process() -> () {
+    consume tx = begin()
+    tx.commit()   // no Fail in sig, no D162 enforcement
+}
+
+test "infallible fn + consume — D162 не fires" {
+    process()
+}

@@ -4,8 +4,7 @@
 // Splits into focused tests — deep if-let chains триггерят codegen
 // edge case (inconsistent arm types).
 
-module nova_tests.plan91_13
-
+module conformance.json_roundtrip_nested
 import std.encoding.json.{JsonValue, Json}
 import std.collections.hashmap.{HashMap}
 

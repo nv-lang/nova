@@ -25,7 +25,7 @@
 //     [3] Seg   → [8, 24]
 //   Box → size 8, pointer_offsets []
 
-module plan144_1.sum_per_variant
+module conformance.sum_per_variant
 
 type Box { a int }
 

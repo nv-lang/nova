@@ -6,7 +6,6 @@
 // `get()?` — свободный `?` → `[E_TRY_IN_FAIL_FN]`. Замена: `!!` или `throw`.
 
 module neg.f3_try_in_fail_fn
-
 type WErr { msg str }
 
 fn get() -> Result {

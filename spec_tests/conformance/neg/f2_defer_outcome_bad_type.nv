@@ -4,7 +4,6 @@
 // (единственный поддерживаемый тип исхода). Иной тип → `[E_DEFER_OUTCOME_TYPE]`.
 
 module neg.f2_defer_outcome_bad_type
-
 fn bad_defer_type() -> () {
     defer(o NotScopeOutcome) { () }              // ❌ [E_DEFER_OUTCOME_TYPE]
 }

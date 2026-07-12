@@ -1,8 +1,7 @@
 // Plan 100.4.2 (D159): multiple LIFO defers с suspend bodies.
 // D161 (Plan 100.4.4) wrap гарантирует LIFO continues.
 
-module nova_tests.plan100_4_2
-
+module conformance.defer_multiple_suspend_ok
 fn cleanup_a() Time -> () { Time.sleep(3) }
 fn cleanup_b() Time -> () { Time.sleep(3) }
 fn cleanup_c() Time -> () { Time.sleep(3) }

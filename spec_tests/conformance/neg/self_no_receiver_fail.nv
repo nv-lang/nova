@@ -8,7 +8,6 @@
 // has nothing to resolve to and MUST be rejected — the fix did NOT make `Self`
 // universally injectable. Error: [E7001] "Self type used outside receiver".
 module neg.self_no_receiver_fail
-
 // No receiver → `Self` is meaningless here. Must be a compile error, not silently
 // resolved to some default C type.
 fn standalone() -> Self => standalone()

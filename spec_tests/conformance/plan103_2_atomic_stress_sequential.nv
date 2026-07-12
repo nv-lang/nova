@@ -8,8 +8,7 @@
 // site here, the ordering parameter has no observable effect beyond ensuring
 // the correct C code path is exercised.
 
-module nova_tests.atomics
-
+module conformance.plan103_2_atomic_stress_sequential
 test "stress: AtomicI64 10000 fetch_add/sub — net zero" {
     mut a = AtomicI64.new(0)
     mut i = 0

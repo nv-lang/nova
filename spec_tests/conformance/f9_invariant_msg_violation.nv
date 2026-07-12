@@ -4,8 +4,7 @@
 // `<file>:<line>: invariant failed: <msg> (<expr>)`. Exercises the message path
 // for the invariant kind. The LOC points at the invariant clause's source line.
 
-module nova_tests.plan140_1
-
+module conformance.f9_invariant_msg_violation
 type Account {
     balance int
 }

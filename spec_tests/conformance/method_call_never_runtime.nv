@@ -2,8 +2,7 @@
 // с `-> never` действительно diverge'ит в runtime.
 //
 
-module nova_tests.plan125_followups
-
+module conformance.method_call_never_runtime
 type Logger { tag str }
 
 fn Logger @fail(msg str) -> never => panic("[${@tag}] Logger fatal: ${msg}")

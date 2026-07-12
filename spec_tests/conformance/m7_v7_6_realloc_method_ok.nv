@@ -5,8 +5,7 @@
 // invalidate across `@F.replace_with()` calls. Semantic preservation
 // verified through observed slot replacement.
 
-module nova_tests.plan123_followups_2026_06_05
-
+module conformance.m7_v7_6_realloc_method_ok
 type Slot5 {
     mut count int
 }

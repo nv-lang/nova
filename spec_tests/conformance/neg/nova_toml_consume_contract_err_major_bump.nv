@@ -9,7 +9,6 @@
 // Без major-bump consumer не знает что контракт изменился → leaks.
 
 module neg.nova_toml_consume_contract_err_major_bump
-
 // Package A — [exports.consume_types] Transaction = "1.0"
 // Контракт: Transaction IS consume и ОСТАЁТСЯ таким в v1.x.
 export type Transaction consume {

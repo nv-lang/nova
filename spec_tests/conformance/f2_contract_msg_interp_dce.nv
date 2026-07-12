@@ -17,7 +17,7 @@
 // plain literal. So if the converter is wrongly pruned this CC-FAILs; if kept it
 // compiles and the contract fires, rendering the captured value -7.
 
-module plan159.f2_contract_msg_interp_dce
+module conformance.f2_contract_msg_interp_dce
 
 fn withdraw(amount int) -> int
     requires amount >= 0, "balance got ${amount}"

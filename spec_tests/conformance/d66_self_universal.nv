@@ -7,7 +7,7 @@
 // redundant-type-prefix lint при return-pinned типе, поэтому return-pinned literals — bare.)
 // Spec: spec/decisions/02-types.md §D66. Часть единого folder-module inprogress.d66_self_universal;
 // типы D66-prefixed уникальные во избежание duplicate-top-level-name клэша.
-module spec_tests.conformance
+module conformance.d66_self_universal
 
 // === 1. Self в static-методе concrete-record'а: -> Self ≡ D66Box ===
 

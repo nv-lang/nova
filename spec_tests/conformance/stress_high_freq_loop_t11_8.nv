@@ -4,8 +4,7 @@
 // 100-iteration loop с consume scope (fast: reduced from 1000).
 // Verifies no resource leak, no double-dispatch, cleanup fires exactly once per iteration.
 
-module nova_tests.plan110
-
+module conformance.stress_high_freq_loop_t11_8
 type LoopRes3 {
     ro id int
 }

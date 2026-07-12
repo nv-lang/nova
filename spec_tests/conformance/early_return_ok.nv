@@ -1,8 +1,7 @@
 // Plan 123.1 T2.5: early return preserves cache semantics —
 // `return` inside conditional doesn't invalidate ro-cache.
 
-module nova_tests.plan123_1
-
+module conformance.early_return_ok
 type Rect3 {
     ro w int
     ro h int

@@ -6,7 +6,6 @@
 // Замена: `defer` (D162 all-path cover) или `consume X = e { body }` (D188).
 
 module neg.f1_errdefer_removed
-
 fn cleanup_on_err() -> () {
     errdefer { () }                              // ❌ [D189-removed-errdefer]
 }

@@ -20,7 +20,6 @@
 //            + tx.commit()?
 
 module neg.diag_d133_not_consumed_format
-
 type Transaction consume {
     id int,
 }

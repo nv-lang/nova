@@ -2,8 +2,7 @@
 // Plan 90 followup — негатив: append_zero(n) с n < 0 → panic.
 // D141 amend (2026-06-01): отрицательный n — bug, panic с diagnostic.
 
-module nova_tests.plan90
-
+module conformance.append_zero_negative_n_neg
 test "append zero negative n neg" panics "requires failed" {
     mut arr []u8 = [1, 2, 3]
     arr.append_zero(-1)

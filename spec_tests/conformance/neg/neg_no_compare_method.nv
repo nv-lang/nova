@@ -1,6 +1,5 @@
 // EXPECT_COMPILE_ERROR no field or method `compare`
 module neg.neg_no_compare_method
-
 type Weight { kg int }
 fn Weight @equal(other Weight) -> bool => @kg == other.kg
 

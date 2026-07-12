@@ -1,8 +1,7 @@
 // Plan 123.2 T-NEG.1: @F = ... inside loop body → no hoist (LICM
 // correctness preserved). Semantic equivalence verified.
 
-module nova_tests.plan123
-
+module conformance.plan123_2_neg_mut_write_in_loop_ok
 type Counter10 {
     mut value int
 }

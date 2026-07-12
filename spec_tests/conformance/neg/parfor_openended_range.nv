@@ -7,7 +7,6 @@
 // Обход: `.take(n)` / закрытый диапазон.
 
 module neg.parfor_openended_range
-
 test "parallel for над open-ended range отвергается" {
     ro xs = parallel for i in 0.. {
         i

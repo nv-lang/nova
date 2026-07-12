@@ -1,6 +1,6 @@
 //
 // Plan 153.1 — негатив: @swap(i,j) с OOB-индексом → контракт паника.
-module spec_tests.conformance
+module conformance.swap_oob_neg
 test "swap oob neg" panics "requires failed" {
     mut v = Vec[int].of(1, 2, 3)
     v.swap(0, 5)

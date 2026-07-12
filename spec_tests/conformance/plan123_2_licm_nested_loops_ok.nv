@@ -1,8 +1,7 @@
 // Plan 123.2 T1.5: nested loops — LICM hoists at each loop boundary
 // where field is invariant.
 
-module nova_tests.plan123
-
+module conformance.plan123_2_licm_nested_loops_ok
 type Matrix3 {
     ro rows int
     ro cols int

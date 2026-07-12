@@ -1,5 +1,4 @@
 module neg.parse_int_invalid_radix_err
-
 import std.runtime.string.{ParseIntError}
 
 fn assert_invalid_radix(radix int) {

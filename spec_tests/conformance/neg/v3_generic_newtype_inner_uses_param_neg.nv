@@ -20,5 +20,4 @@
 //   type Counter[T](int)  ← works
 
 module neg.v3_generic_newtype_inner_uses_param_neg
-
 type Wrap[T](T)

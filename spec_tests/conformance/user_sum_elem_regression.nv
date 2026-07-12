@@ -4,9 +4,7 @@
 // (`Nova_Shape*`), codegen pattern-match использует `->`. Фикс Plan 89
 // деболксит только value-семантику (Option) — user-sum не трогается.
 
-module nova_tests.plan89
-
-
+module conformance.user_sum_elem_regression
 type Shape
     | Circle(int)
     | Square(int)

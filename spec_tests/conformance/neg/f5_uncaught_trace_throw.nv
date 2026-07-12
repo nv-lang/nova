@@ -6,7 +6,7 @@
 // abort-ветки effects.h печатают дамп). Полный propagation-trace —
 // [M-173-error-return-trace].
 
-module rt.f5_uncaught_trace_throw
+module neg.f5_uncaught_trace_throw
 
 fn boom() Fail -> () {
     throw "uncaught-from-main"

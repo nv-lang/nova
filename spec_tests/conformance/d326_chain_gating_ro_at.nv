@@ -11,7 +11,7 @@
 // binding through a ro link, so none should trip `E_RECEIVER_BINDING_NOT_MUT`.
 //
 // Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d326_chain_gating_ro_at
 
 type D326ChainVal value { x int }
 

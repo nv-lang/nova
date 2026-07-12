@@ -20,7 +20,7 @@
 // unchanged.
 //
 // Единица: folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.static_ctor_instance_method_named_tuple
 
 export type SctPt(x f64 = 0.0, y f64 = 0.0)
 

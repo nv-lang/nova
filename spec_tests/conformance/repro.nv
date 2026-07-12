@@ -8,7 +8,7 @@
 // unit/value statement-position selections to unit; `emit_if_expr` now does
 // the same. These tests would not COMPILE before the fix.
 
-module spec_tests.conformance
+module conformance.repro
 import std.collections.vec.{Vec}
 
 // ── POSITIVE: fluent `-> @` push tail in if-branch, unit sibling ──

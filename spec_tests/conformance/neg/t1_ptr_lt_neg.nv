@@ -3,7 +3,6 @@
 // EXPECT_COMPILE_ERROR E_PTR_ARITHMETIC_BANNED
 
 module neg.t1_ptr_lt_neg
-
 test "*() < *() is banned" {
     ro p *() = (0 as *())
     ro q *() = (0 as *())

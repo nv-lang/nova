@@ -2,8 +2,7 @@
 // V1 first-region: reads BEFORE write — eligible for cache;
 // reads AFTER write — stay as direct @F access.
 
-module nova_tests.plan123
-
+module conformance.plan123_1_mut_field_write_boundary_ok
 type Counter6_plan1231mutfieldwriteboundaryok {
     mut value int
 }

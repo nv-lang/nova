@@ -3,7 +3,7 @@
 // ex-`with_capacity(n)`, D372 amend 2026-07-06).
 // Turbofish: `[T]` после имени без `::`.
 // Spec: spec/decisions/03-syntax.md D38. Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d38_array_creation
 
 // inference: пустой `[]` выводится из параметра `[]int`.
 fn d38_len(xs []int) -> int => xs.len()

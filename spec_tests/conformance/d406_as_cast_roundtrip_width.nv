@@ -17,7 +17,7 @@
 // `as` биндит ТУЖЕ унарного минуса (см. d54_as_cast_conversions) ⇒ явные скобки.
 // Spec: spec/decisions/02-types.md (D54). Один folder-module inprogress.d406_as_cast_roundtrip_width;
 // все имена D406w-префиксные во избежание top-level-коллизий с соседними файлами CU.
-module spec_tests.conformance
+module conformance.d406_as_cast_roundtrip_width
 
 test "u8-roundtrip: (200 as u8) as int сохраняет zero-extend (200, не -56) (D406)" {
     ro got = (200 as u8) as int   // UNANNOTATED: наследует inferred тип каста (int)

@@ -11,7 +11,7 @@
 //    резолвится через template+subst в кэш-temp binding);
 //  - агрегаты по итерации дают верный результат под release nova.
 
-module spec_tests.conformance
+module conformance.p2_hashmap_iter_ok
 import std.collections.hashmap.{HashMap}
 
 test "for (k, v) in HashMap[str, int] — chain-cache iter" {

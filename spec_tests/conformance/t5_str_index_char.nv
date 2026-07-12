@@ -4,8 +4,7 @@
 // the `chars()` lens: `s.chars().nth(i) -> Option[char]` (O(n), explicit).
 // The compile-error for `s[i]` lives in plan152_1/n_str_int_index.
 
-module nova_tests.plan138
-
+module conformance.t5_str_index_char
 test "chars().nth(i): i-th codepoint" {
     ro s = "abc"
     assert(s.chars().nth(0) == Some('a'))

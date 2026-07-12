@@ -2,7 +2,7 @@
 // «Sum → int — безопасный, всегда работает». ACCEPTANCE для sum→int codegen-фикса
 // (emit_c.rs As-cast: pointer-sum `Nova_X*` → `(v)->tag`, не `(nova_int)(pointer)`).
 // МЕРЖИТСЯ В conformance ТОЛЬКО ПОСЛЕ commit фикса d52 (на clean без фикса — fail).
-module spec_tests.conformance
+module conformance.d52_sumint
 
 type D52IntCast | D52Red | D52Green | D52Blue
 

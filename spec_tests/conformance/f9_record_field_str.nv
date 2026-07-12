@@ -2,8 +2,7 @@
 // record_schemas path: field type nova_str → nova_print_str.
 // Tests that existing record field printing still works after the fix.
 
-module plan67.f9_record_field_str
-
+module conformance.f9_record_field_str
 type Person {
     name str
     age int

@@ -13,7 +13,7 @@
 // correctly derive U=nova_uint and propagate `NovaOpt_nova_uint` through the chain.
 // Spec: spec/decisions/02-types.md (D368 named-priority: uint≠int, u8≠i8≠int). Single
 // `spec_tests.conformance` folder-module; all top-level names D408w-prefixed to avoid CU clashes.
-module spec_tests.conformance
+module conformance.d408_option_chain_sized_width
 
 // CONTROL — no adapter: `Some(uint) ?? _`. The receiver is the literal `Some(..)` call,
 // whose `obj_ty` infers `NovaOpt_nova_uint` directly (emit_c.rs:38178-38183), so `.unwrap_or`

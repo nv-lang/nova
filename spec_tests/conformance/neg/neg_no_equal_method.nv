@@ -1,6 +1,5 @@
 // EXPECT_COMPILE_ERROR no field or method `equal`
 module neg.neg_no_equal_method
-
 type Opaque { x int }
 
 test "type without @equal: .equal() is error" {

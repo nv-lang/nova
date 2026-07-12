@@ -1,8 +1,7 @@
 // Plan 96 Ф.4 — позитив: open-ended slice (a../..b/..).
 // D-open-ended: 5 форм Range (Rust RangeBounds parity).
 
-module nova_tests.plan96
-
+module conformance.slice_open_ended
 test "open-end arr[a..]" {
     mut arr = [10, 20, 30, 40, 50]
     ro suffix = arr[2..]

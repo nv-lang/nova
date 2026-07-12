@@ -6,8 +6,7 @@
 //
 // Acceptance A110.1.6.a: LIFO order correct для 3+ levels.
 
-module nova_tests.plan110
-
+module conformance.codegen_nested_lifo
 type LayerRes3 {
     ro depth int
 }

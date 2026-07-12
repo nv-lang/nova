@@ -3,7 +3,6 @@
 // Plan 100.4.2 (D159): supervised{} в defer body — error.
 
 module neg.defer_err_supervised_in_body
-
 fn process() -> () {
     defer {
         supervised {   // ❌ D159

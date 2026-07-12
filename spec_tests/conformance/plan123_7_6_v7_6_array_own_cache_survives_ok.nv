@@ -5,8 +5,7 @@
 // own `@arr` cache (the slot's header pointer is unchanged; only the
 // referenced array's internals change). Semantic preservation verified.
 
-module nova_tests.plan123
-
+module conformance.plan123_7_6_v7_6_array_own_cache_survives_ok
 type Buf_plan12376v76arrayowncachesurvivesok {
     mut arr []int
 }

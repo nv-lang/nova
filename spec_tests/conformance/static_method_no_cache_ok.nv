@@ -1,8 +1,7 @@
 // Plan 123.1 T2.10 (negative-style): static method `Type.method`
 // — no @self/@field access → no caching attempted, no panic.
 
-module nova_tests.plan123_1
-
+module conformance.static_method_no_cache_ok
 type Calc3 {
     ro factor int
 }

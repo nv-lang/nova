@@ -11,7 +11,7 @@
 // branch TYPE is what is under test here.
 // Spec: spec/decisions/02-types.md (uint≠int, D413/D130).
 // Single `spec_tests.conformance` folder-module; all top-level names d413w_-prefixed.
-module spec_tests.conformance
+module conformance.d413_if_expr_sized_branch_width
 
 // Plain bool source so the `if`-condition is a genuine runtime branch (not const-folded away).
 fn d413w_pick(b bool) -> bool => b

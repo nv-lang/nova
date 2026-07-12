@@ -2,7 +2,7 @@
 // NOT uint. Differences are naturally signed: `len() - 1` on an empty collection
 // yields -1 with NO underflow-trap (Rule 4). `usize`/`isize` retired. Part of the
 // SINGLE `spec_tests.conformance` folder-module. D-prefixed names avoid clashes.
-module spec_tests.conformance
+module conformance.d226_signed_len_arith
 
 test "len() is signed int and basic arithmetic holds (D226 Rule 1+4)" {
     mut d226v []int = [10, 20, 30]

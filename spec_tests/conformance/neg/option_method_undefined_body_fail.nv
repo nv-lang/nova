@@ -9,7 +9,6 @@
 // undefined symbol будет проигнорирован → silent miscompilation.
 
 module neg.option_method_undefined_body_fail
-
 fn Option[T] @whoops() -> bool => not_a_real_function_xyz()
 
 test "compile-error не достигнет рантайма" {

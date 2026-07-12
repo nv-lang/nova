@@ -10,8 +10,7 @@
 // produced "" видно в output, debuggable. Strict variant добавляет Fail
 // effect indirection для cases где validity уже proven.
 
-module nova_tests.plan91_13
-
+module conformance.from_codepoint_invalid_neg
 test "negative codepoint — empty str" {
     ro s = str.from_codepoint(-1)
     assert(s == "")

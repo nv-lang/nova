@@ -1,7 +1,6 @@
 // Plan 123.4 T1.3: multiple distinct chains, each independently cached.
 
-module nova_tests.plan123
-
+module conformance.plan123_4_chain_multiple_paths_ok
 type Bottom {
     ro x int
 }

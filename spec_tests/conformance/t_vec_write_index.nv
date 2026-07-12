@@ -1,8 +1,7 @@
 // Plan 138 Ф.4 — t_vec_write_index: v[i] = val on Vec[T]
 // A1b: v[i] = val → write, panic on OOB
 
-module nova_tests.plan138
-
+module conformance.t_vec_write_index
 import std.collections.vec.{Vec}
 
 test "v[i] = val writes through" {

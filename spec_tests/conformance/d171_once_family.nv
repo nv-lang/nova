@@ -5,7 +5,7 @@
 // побеждает, get→Some после); Lazy — отложенная инициализация (is_forced).
 // Single-fiber-safe подмножество. Шаблоны сверены с nova_tests/plan103_5 и
 // plan103_6. Один folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d171_once_family
 
 test "OnceCell: get None → set → get Some; повторный set не перезаписывает (D171)" {
     mut d171_c = OnceCell[int].new()

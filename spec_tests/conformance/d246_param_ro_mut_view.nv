@@ -8,7 +8,7 @@
 // Discriminator: если бы E_REDUNDANT_PARAM_RO стрелял и по `ro x mut T`,
 // этот файл перестал бы компилироваться. Часть единого folder-module
 // `spec_tests.conformance` (D246-префиксные имена от коллизий).
-module spec_tests.conformance
+module conformance.d246_param_ro_mut_view
 
 // `ro buf mut []int` — ro-binding (no-rebind) + mut content-view: легально.
 fn d246_sum_via_ro_mut_view(ro buf mut []int) -> int {

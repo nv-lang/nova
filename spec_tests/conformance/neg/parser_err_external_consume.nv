@@ -7,7 +7,7 @@
 // Now D163 is retracted: `external type X consume` gives E_EXTERNAL_TYPE_RETRACTED.
 // Migration: `type X value { priv handle int }` + consume @close().
 
-module parser.parser_err_external_consume
+module neg.parser_err_external_consume
 
 external type OpaqueHandle consume
 

@@ -2,7 +2,7 @@
 // `a..b` → Range{start,end} half-open; `a..=b` нормализован к end+1.
 // `for x in c` десугарит в iter() → next() loop.
 // Spec: spec/decisions/03-syntax.md D58. Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d58_range_for_iter
 
 test "range half-open literal: a..b (D58)" {
     ro r = 1..4

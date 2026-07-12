@@ -1,6 +1,5 @@
 // Plan 173.1 Ф.1 smoke: supervised{} — value-expression.
-module nova_tests.err173_1
-
+module conformance.supervised_value_smoke
 test "supervised trailing value propagates" {
     ro v = supervised {
         42

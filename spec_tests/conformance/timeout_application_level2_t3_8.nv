@@ -15,8 +15,7 @@
 //   - Без Application-хендлера порог = Level 3 (5000ms); тот же 30ms-cleanup
 //     → overrun=false. Cleanup в ОБОИХ случаях ДОБЕГАЕТ (D192-ретракт).
 
-module nova_tests.plan110
-
+module conformance.timeout_application_level2_t3_8
 type Res6 {
     ro id int
 }

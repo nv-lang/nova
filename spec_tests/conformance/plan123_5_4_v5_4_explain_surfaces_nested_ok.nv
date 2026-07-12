@@ -6,8 +6,7 @@
 // the nested-region rewrite doesn't change behavior — V5.4 only
 // affects the EXPLAIN REPORT (not the runtime path).
 
-module nova_tests.plan123
-
+module conformance.plan123_5_4_v5_4_explain_surfaces_nested_ok
 type Counter_plan12354v54explainsurfacesnestedok {
     mut x int
 }

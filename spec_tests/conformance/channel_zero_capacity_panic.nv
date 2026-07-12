@@ -5,8 +5,7 @@
 // so the buffer leaked through GC pressure until the next collect.
 // Functional behaviour is identical; this test pins the contract.
 
-module expected_runtime.channel_zero_capacity_panic
-
+module conformance.channel_zero_capacity_panic
 fn main() {
     ro _ = Channel.new(0)
 }

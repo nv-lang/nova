@@ -6,7 +6,7 @@
 // mut = mutable borrow без ownership.
 // Совмещение обоих в одном параметре — семантически противоречиво.
 
-module parser.parser_err_consume_mut_param
+module neg.parser_err_consume_mut_param
 
 type Token consume {
     id int,

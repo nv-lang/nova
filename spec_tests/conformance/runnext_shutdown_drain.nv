@@ -7,7 +7,7 @@
 //
 // ALLOC_REQUIRES boehm
 
-module spec_tests.conformance
+module conformance.runnext_shutdown_drain
 test "spawn 500 — all fibers complete (runnext drain on shutdown)" {
     // Plan 173.1 (D71-amend): completion order → sort перед index-asserts.
     mut xs = parallel for i in 0..500 { i }

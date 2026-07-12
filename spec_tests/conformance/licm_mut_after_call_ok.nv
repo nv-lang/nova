@@ -2,8 +2,7 @@
 // bailed (call before loop invalidates mut prefix region). LICM
 // emits hoisted cache immediately before loop.
 
-module nova_tests.plan123_2
-
+module conformance.licm_mut_after_call_ok
 type Counter4 {
     mut threshold int
 }

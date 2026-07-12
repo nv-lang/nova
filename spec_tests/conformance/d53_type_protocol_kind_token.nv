@@ -1,7 +1,7 @@
 // D53 — `protocol` как kind-токен в системе D52: `type X protocol { ... }` вместо отдельного keyword.
 // Structural typing: тип автоматически satisfies protocol если @-методы совпадают.
 // Spec: spec/decisions/02-types.md D53. Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d53_type_protocol_kind_token
 
 // Named protocol declared via `type X protocol { ... }` (D53 kind-token syntax)
 type D53Sized protocol {

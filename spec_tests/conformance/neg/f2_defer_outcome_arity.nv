@@ -4,7 +4,6 @@
 // outcome-биндинг. Лишние токены после типа → `[E_DEFER_OUTCOME_ARITY]`.
 
 module neg.f2_defer_outcome_arity
-
 fn bad_defer_arity() -> () {
     defer(o ScopeOutcome extra) { () }           // ❌ [E_DEFER_OUTCOME_ARITY]
 }

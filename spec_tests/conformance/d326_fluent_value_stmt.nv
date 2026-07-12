@@ -8,7 +8,7 @@
 // function body (test blocks use a different lowering path).
 // Spec: spec/decisions/02-types.md D326 (Plan 184 Р7).
 // Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d326_fluent_value_stmt
 
 type D326StmtRec value {
     ro a int

@@ -6,8 +6,7 @@
 // `if x is T { use x-as-T }`; identity (`v as any is <type-of-v>`); heterogeneous
 // element types (int / str / record) through the same erased `any`.
 
-module nova_tests.any_is
-
+module any_is.box_is_downcast
 type Point { x int, y int }
 
 test "int: box → is → narrowing → try_as" {

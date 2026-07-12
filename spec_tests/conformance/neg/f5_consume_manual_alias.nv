@@ -10,7 +10,6 @@
 // runtime (genuine D188 R2 violation).
 
 module neg.f5_consume_manual_alias
-
 type F5AliasRes { ro id int }
 fn F5AliasRes.new(id int) -> F5AliasRes => { id }
 fn F5AliasRes consume @cleanup(_o ScopeOutcome) -> () => ()

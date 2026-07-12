@@ -8,9 +8,7 @@
 // auto-derive ретрактированы; `.from` остаётся просто конвенцией имени
 // конструктора-конверсии (не протокол).
 
-module nova_tests.plan97
-
-
+module conformance.pos_from_with_dot
 type Fahrenheit {
     value f64
 }

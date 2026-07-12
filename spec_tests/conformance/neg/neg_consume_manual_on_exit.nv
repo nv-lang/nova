@@ -6,7 +6,6 @@
 // rejection чтобы prevent runtime double-dispatch panic.
 
 module neg.neg_consume_manual_on_exit
-
 type ManualResource {
     ro id int
 }

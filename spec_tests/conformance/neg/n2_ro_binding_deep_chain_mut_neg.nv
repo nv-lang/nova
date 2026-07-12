@@ -6,7 +6,6 @@
 // walks Рє root Ident `av`, РІРёРґРёС‚ ro binding, fires E_LOCAL_NOT_MUT.
 
 module neg.n2_ro_binding_deep_chain_mut_neg
-
 type Cv {
     mut value int
 }

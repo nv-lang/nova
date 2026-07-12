@@ -2,7 +2,7 @@
 // `nova_int` (typedef int64_t). The absence of codegen distinction is INTENTIONAL — a
 // bootstrap-invariant, NOT a collapse-bug (contrast D128 char/int, where distinction IS
 // needed). This test pins the SIGNED arithmetic semantics and the int ≡ i64 value-equivalence.
-module spec_tests.conformance
+module conformance.d129_int_i64_alias
 
 test "int is SIGNED: negative literals compare and add as signed (D129)" {
     ro a int = -5

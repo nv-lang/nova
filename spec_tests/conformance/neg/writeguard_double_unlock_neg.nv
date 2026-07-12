@@ -4,7 +4,6 @@
 // wg.unlock() consumes wg; second unlock → E_CONSUMED_AFTER_USE (D131).
 
 module neg.writeguard_double_unlock_neg
-
 test "WriteGuard double unlock → compile error" {
     mut rw = RwLock.new()
     consume wg = rw.write()

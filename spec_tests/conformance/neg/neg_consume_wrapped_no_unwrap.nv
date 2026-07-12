@@ -6,7 +6,6 @@
 // D196-wrapped-init-needs-unwrap (specific hint suggest ?/!!).
 
 module neg.neg_consume_wrapped_no_unwrap
-
 type WrappedResource {
     ro id int
 }

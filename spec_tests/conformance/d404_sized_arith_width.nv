@@ -20,7 +20,7 @@
 // по ширине целевого слота (`nova_byte got = (a+b)` усекает), unsigned `+` определён.
 // Spec: spec/decisions/02-types.md (sized/unsigned ≠ int). Один folder-module CU
 // spec_tests.conformance; все top-level имена D404-префиксны (тут только тесты).
-module spec_tests.conformance
+module conformance.d404_sized_arith_width
 
 test "uint+uint сохраняет беззнаковость: high-bit сумма читается ПОЗИТИВОМ (D404)" {
     ro d404w_a uint = 0x4000000000000000   // 2^62

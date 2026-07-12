@@ -13,8 +13,7 @@
 //   4. nv_compose_suppressed(&body_frame, cleanup error) appends к chain.
 //   5. nova_rethrow_with_suppressed(&body_frame) — body remains primary.
 
-module nova_tests.plan110
-
+module conformance.on_exit_throws_compose_v1_1
 import std.prelude.errors
 
 type ComposingResource3 { ro id int }

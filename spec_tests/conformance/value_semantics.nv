@@ -1,5 +1,4 @@
-module fixed_array.value_semantics
-
+module conformance.value_semantics
 test "copy semantics: assignment copies, not aliases" {
     mut a [3]int = [1, 2, 3]
     mut b = a

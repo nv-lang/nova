@@ -7,7 +7,7 @@
 //   - RUN under --slow-only.
 // On non-Windows targets the OS-suffix would exclude it even with slow enabled.
 
-module spec_tests.conformance
+module conformance.combo_windows_slow
 test "windows slow combo" {
     assert(4 + 4 == 8)
 }

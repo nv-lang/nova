@@ -10,7 +10,7 @@
 // loop-var; (5) for consume — inline-литералы, каждый элемент потреблён.
 // Негативы — neg/d156_*.nv. Шаблоны сверены с nova_tests/plan100_2.
 // Один folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d156_generic_consume_bound
 
 type D156Tx consume {
     id int,

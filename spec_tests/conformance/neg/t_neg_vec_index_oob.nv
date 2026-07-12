@@ -2,7 +2,6 @@
 // EXPECT_RUNTIME_PANIC array: index
 
 module neg.t_neg_vec_index_oob
-
 import std.collections.vec.{Vec}
 
 test "v[3] on length-3 vec panics" {

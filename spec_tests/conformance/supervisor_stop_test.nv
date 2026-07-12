@@ -12,8 +12,7 @@
 //
 // Бежит ARMED на дефолтном worker-count (M:N — периметр политики).
 
-module nova_tests.err173_2
-
+module conformance.supervisor_stop_test
 import std.concurrency.supervisor as sup
 
 test "Supervisor=stop: один падает — siblings доживают, scope продолжает" {

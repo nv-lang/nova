@@ -7,8 +7,7 @@
 // here is conservative (cache invalidate) — observable behavior is
 // that mutations propagate. This test asserts that.
 
-module nova_tests.plan123
-
+module conformance.plan123_followups_2026_06_05_m1_v7_6_value_record_field_neg
 type Pt2 value {
     x int
     y int

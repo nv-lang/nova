@@ -6,7 +6,6 @@
 // grow-метод на parent (append / insert / reserve / append_zero)».
 
 module neg.append_zero_view_detach_warn
-
 fn main() -> () {
     mut parent []int = [1, 2, 3, 4, 5]
     ro view = parent[1..4]

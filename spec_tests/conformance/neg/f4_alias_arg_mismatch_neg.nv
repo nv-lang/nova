@@ -6,8 +6,7 @@
 // now reached through an alias).
 
 module neg.f4_alias_arg_mismatch_neg
-
-import nova_tests.plan70_1.helper_mod as h
+import spec_tests.conformance.plan70_1.helper_mod as h
 
 test "alias call with a wrong argument type is rejected" {
     ro _r = h.add_one("not an int")

@@ -3,7 +3,7 @@
 // `at(v,i) requires 0<=i<v.len()` → внутри `v[i]` провабелен ИЗ requires →
 // contract-based элизия (codegen элидит ТОЛЬКО при включённых контрактах).
 
-module spec_tests.conformance
+module conformance.followup_crossfn_elision_pos
 import std.collections.vec.{Vec}
 
 fn at(v Vec[int], i int) -> int

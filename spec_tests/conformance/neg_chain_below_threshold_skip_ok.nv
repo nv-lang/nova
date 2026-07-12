@@ -1,8 +1,7 @@
 // Plan 123.4 T-NEG.2: chain accessed only once → not cached
 // (threshold not met). Multi single-occurrence chains coexist.
 
-module nova_tests.plan123_4
-
+module conformance.neg_chain_below_threshold_skip_ok
 type Pair_C3 {
     ro a Pair_C_Sub
     ro b Pair_C_Sub

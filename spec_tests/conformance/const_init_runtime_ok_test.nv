@@ -5,8 +5,7 @@
 // конкуренцию (spawn/supervised/detach/parallel for/select/каналы/Detach-fn).
 // Neg-twins: neg/const_init_{spawn,supervised,detach_fn}.nv.
 
-module nova_tests.err173_3
-
+module conformance.const_init_runtime_ok_test
 fn compute_dim() -> int {
     mut acc = 0
     for i in 1..4 {

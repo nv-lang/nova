@@ -3,8 +3,7 @@
 // D141 amend: old behavior was silent truncation; new behavior = panic.
 // Migration: use dst[..src.len()].copy_from(src) for partial copy intent.
 
-module nova_tests.plan90_1
-
+module conformance.copy_from_too_short_neg
 test "copy from too short neg" panics "requires failed" {
     mut dst []int = [0, 0, 0, 0]
     ro src []int = [1, 2]

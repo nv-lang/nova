@@ -4,8 +4,7 @@
 // Verifies positive path: chain-walking enforcement allows mutation
 // когда root binding `mut` и intermediate field `mut`.
 
-module nova_tests.plan128_2
-
+module conformance.p1_mut_binding_member_chain_mut_method_ok
 type Vec32(x int, y int, z int)
 
 fn Vec32 mut @set_x(v int) -> () {

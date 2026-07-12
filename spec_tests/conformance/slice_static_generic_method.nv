@@ -9,7 +9,7 @@
 // `.len()`) or a param type-mismatch CC-FAIL. Additionally, `?` on a TurboFish
 // receiver (`Vec[str].method(..)?`) degraded to a `/* ? */` no-op that assigned
 // the raw `NovaRes_*` straight into the `Vec` local (garbage `.len()`).
-module spec_tests.conformance
+module conformance.slice_static_generic_method
 
 type DeError value {
     code int

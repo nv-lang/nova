@@ -6,8 +6,6 @@
 // compile error от check_satisfaction_against_methods.
 
 module neg.neg_anon_protocol_missing_method
-
-
 type WithoutClose {
     name str
 }

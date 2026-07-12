@@ -21,7 +21,6 @@
 // EXPECT_COMPILE_ERROR E_INFINITE_TYPE
 
 module neg.value_record_self_include
-
 type Node value {
     next Node
 }

@@ -1,7 +1,6 @@
 // Plan 123.3 T1.1: @<pure_method>() called 2+ times → cached.
 
-module nova_tests.plan123_3
-
+module conformance.pure_self_method_ok
 type Vec3 {
     ro x int
     ro y int

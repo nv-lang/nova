@@ -2,7 +2,6 @@
 // EXPECT_COMPILE_ERROR E_TUPLE_CONSTRUCT_ARITY_MISMATCH
 
 module neg.neg_t4_missing_required
-
 type Rect(x f64, y f64, width f64 = 100.0, height f64 = 50.0)
 
 test "missing required field is a compile error" {

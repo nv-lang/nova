@@ -4,9 +4,7 @@
 // byte/u8/i8 + u16/i16/u32/i32/u64/i64 LE+BE.
 // Источник байт — WriteBuffer round-trip.
 
-module nova_tests.buffers
-
-
+module conformance.read_integers
 // ── byte / u8 / i8 ─────────────────────────────────────────────────
 
 test "read_byte — !! + Result" {

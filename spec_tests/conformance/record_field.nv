@@ -1,5 +1,4 @@
-module fixed_array.record_field
-
+module conformance.record_field
 // [M-fixed-array-value-semantics]: [N]T как поле record'а — inline-хранение
 // по месту (C: `T name[N];` внутри struct), включая GC-скан для str-элементов.
 

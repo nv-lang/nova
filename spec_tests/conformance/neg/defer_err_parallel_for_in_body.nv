@@ -3,7 +3,6 @@
 // Plan 100.4.2 (D159): parallel for в defer body — error.
 
 module neg.defer_err_parallel_for_in_body
-
 fn process() -> () {
     mut arr = [1, 2, 3]
     defer {

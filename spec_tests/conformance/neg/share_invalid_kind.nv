@@ -5,7 +5,6 @@
 // На protocol — нет storage, нечего ручаться → E_SHARE_INVALID_KIND.
 
 module neg.share_invalid_kind
-
 #share
 type NotShareable protocol {
     @poke() -> int

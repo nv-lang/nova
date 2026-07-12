@@ -4,8 +4,7 @@
 // via `count_field_reads_in_block_weighted`. Semantic preservation
 // verified through observed sum.
 
-module nova_tests.plan123_followups_2026_06_05
-
+module conformance.m5_v2_1_licm_weighted_ok
 type Cv6 {
     mut x int
 }

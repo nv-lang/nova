@@ -1,8 +1,7 @@
 // Plan 100.6 (D164): re-export consume через `export import` (Plan 42.09).
 // Marker сохраняется через chain A → B → C.
 
-module nova_tests.plan100_6
-
+module conformance.cross_pkg_consume_reexport_ok
 // "Package A":
 export type Transaction_crosspkgconsumereexportok consume { id int }
 export fn Transaction_crosspkgconsumereexportok consume @commit() -> () { () }

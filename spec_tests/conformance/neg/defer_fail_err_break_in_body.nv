@@ -4,7 +4,6 @@
 // unchanged by D158).
 
 module neg.defer_fail_err_break_in_body
-
 fn process() -> () {
     for i in 0..10 {
         defer {

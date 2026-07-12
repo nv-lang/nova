@@ -3,8 +3,7 @@
 // A MutexGuard can be held across multiple statements in the same fiber
 // before being consumed. Tests that the consume obligation tracks correctly.
 
-module nova_tests.plan103_9
-
+module conformance.guard_cross_scope_transfer
 fn do_work_under_lock(consume g MutexGuard, mut counter AtomicInt) -> () {
     counter.fetch_add(1)
     g.unlock()  // consumed here

@@ -4,7 +4,7 @@
 //
 // EXPECT_OUTPUT: ok
 
-module spec_tests.conformance
+module conformance.p2_contract_real_bounds
 fn offset(i int, lo int, hi int) -> int
     requires lo <= i && i < hi
 => i - lo

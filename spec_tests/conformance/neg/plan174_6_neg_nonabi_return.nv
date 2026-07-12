@@ -4,7 +4,6 @@
 // EXPECT_COMPILE_ERROR E_FFI_NON_C_ABI_TYPE
 
 module neg.plan174_6_neg_nonabi_return
-
 extern "C" fn c_return_vec(n int) -> Vec[int]
 
 test "rejects non-C-ABI return over C ABI" {

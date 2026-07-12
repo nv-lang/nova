@@ -2,8 +2,7 @@
 // `(x, y) = (100, 200)` — rhs elements are literals, no dependency on lhs.
 // No temps needed (A4: independent rhs → 0 tmp in C).
 
-module nova_tests.plan136
-
+module conformance.t3_independent_rhs
 test "assign independent values" {
     mut x = 0
     mut y = 0

@@ -7,7 +7,6 @@
 // видит ro binding, fires E_LOCAL_NOT_MUT.
 
 module neg.n3_ro_binding_index_chain_mut_neg
-
 type Vec3(x int, y int, z int)
 
 fn Vec3 mut @set_x(v int) -> () {

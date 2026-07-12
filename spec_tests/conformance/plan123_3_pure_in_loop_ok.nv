@@ -1,8 +1,7 @@
 // Plan 123.3 T1.2: pure method called inside loop — cached at body
 // prefix (since no @F write).
 
-module nova_tests.plan123
-
+module conformance.plan123_3_pure_in_loop_ok
 type Buf_plan1233pureinloopok {
     ro data int
 }

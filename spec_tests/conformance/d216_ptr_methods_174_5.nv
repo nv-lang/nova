@@ -4,7 +4,7 @@
 // `.copy_from`/`.copy_from_nonoverlapping`/`.copy_to`/`.copy_to_nonoverlapping`.
 // `read_at` spot-check: must emit bare `*(p+i)` (D141 contract, no memcpy) —
 // verified against the generated C separately (gate, not in this file).
-module spec_tests.conformance
+module conformance.d216_ptr_methods_174_5
 
 test "read_at/write_at — single-call index sugar" {
     mut buf []int = [10, 20, 30, 40]

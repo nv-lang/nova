@@ -4,8 +4,7 @@
 // каждом exit-path — B2 (codegen). Здесь тело НЕ ссылается на `o` (ещё не
 // материализован), проверяем только парсинг + что defer(o) не ломает исполнение.
 
-module nova_tests.err173
-
+module conformance.f2_defer_outcome_parse
 fn run_defer_outcome() -> str {
     mut trail = ""
     {

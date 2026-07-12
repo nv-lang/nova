@@ -1,8 +1,7 @@
 // Plan 123.7.1 T1.1: mut field cache survives call to method that
 // doesn't write that field per IPA write_set.
 
-module nova_tests.plan123_7_1
-
+module conformance.ipa_mut_survives_non_writing_call_ok
 type Box4 {
     mut counter int
     mut other int

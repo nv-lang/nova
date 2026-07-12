@@ -4,8 +4,7 @@
 // Both forms are unambiguous and work correctly even when field and method share a name.
 // Plan 132.1 fix: @name() self-call now generates correct Nova_T_method_name(nova_self, ...).
 
-module nova_tests.plan132
-
+module conformance.pos_at_name_disambiguation
 type Counter6 { priv mut n int, priv mut len int }
 
 fn Counter6.new() -> Self => { n: 0, len: 0 }

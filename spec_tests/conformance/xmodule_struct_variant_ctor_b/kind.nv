@@ -3,7 +3,7 @@
 // `xmodule_struct_variant_ctor_a` (зеркалит co-presence `ErrorKind` из std/io И
 // std/encoding/compress в одном http-CU). Ни один вариант здесь НЕ struct-payload —
 // коллизия важна только на уровне ИМЕНИ СУММЫ (`Kind`), не вариантов.
-module xmodule_struct_variant_ctor_b
+module conformance.xmodule_struct_variant_ctor_b
 
 export type Kind enum
     | Bad(str)

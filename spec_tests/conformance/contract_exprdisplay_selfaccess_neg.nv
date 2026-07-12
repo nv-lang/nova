@@ -13,7 +13,7 @@
 //
 // Pre-fix this message read "requires failed: assert > 0 && assert <= assert".
 
-module plan140_2.contract_exprdisplay_selfaccess_neg
+module conformance.contract_exprdisplay_selfaccess_neg
 type Counter { count int, limit int }
 
 fn Counter @step() -> int

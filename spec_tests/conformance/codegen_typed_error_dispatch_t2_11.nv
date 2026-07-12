@@ -5,8 +5,7 @@
 // body через ScopeOutcome match → `if err is T` narrowing на `Failure(any)`.
 // Ранее — bootstrap str-prefix discrimination ("cancel: "); теперь типизированно.
 
-module nova_tests.plan110
-
+module conformance.codegen_typed_error_dispatch_t2_11
 type TxRes3 {
     ro id int
 }

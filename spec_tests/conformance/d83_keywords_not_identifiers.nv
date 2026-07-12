@@ -2,7 +2,7 @@
 // Positive-сторона: prelude names (int/str/bool/Option) — это IDENTIFIER'ы, не keywords,
 // и identifier'ы содержащие keyword-подстроки работают нормально.
 // Spec: spec/decisions/03-syntax.md D83. Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d83_keywords_not_identifiers
 
 // Prelude names в сигнатурах — это identifier'ы, а не keywords
 fn d83_returns_int() -> int => 42

@@ -7,7 +7,7 @@
 // in plan131/vec_iter_pos). `str.concat` must stay reachable.
 // EXPECT_STDOUT a+b+c
 
-module spec_tests.conformance
+module conformance.hunt_str_concat_operator
 fn main() {
     ro s = "a" + "+" + "b" + "+" + "c"
     println(s)

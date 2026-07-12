@@ -8,7 +8,6 @@
 // transfer destructure → используйте raw `consume X = expr` (D180).
 
 module neg.neg_consume_scope_destructure_binding
-
 type Pair {
     ro a int
     ro b int

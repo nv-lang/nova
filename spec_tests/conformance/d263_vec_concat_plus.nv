@@ -2,7 +2,7 @@
 // `@concat(other []T) -> []T` = one alloc of `a+b` + two bulk-copies.
 // rotate_left / rotate_right.
 // Spec: spec/decisions/10-overloading.md D263. Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d263_vec_concat_plus
 
 test "[]int + []int creates new Vec; operands unchanged (D263)" {
     ro a = [1, 2, 3]

@@ -5,8 +5,7 @@
 //
 // D174 M-D174-7: abort() → POISONED (not back to NEW).
 
-module nova_tests.plan103_9
-
+module conformance.onceguard_abort_path
 test "abort transitions Once to Poisoned state" {
     mut once = Once.new()
 

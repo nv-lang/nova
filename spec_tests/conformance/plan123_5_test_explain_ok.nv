@@ -1,7 +1,6 @@
 // Plan 123.5 T1.1: --explain-cache output verification.
 
-module nova_tests.plan123
-
+module conformance.plan123_5_test_explain_ok
 type Calc_plan1235testexplainok {
     ro a int
     ro b int

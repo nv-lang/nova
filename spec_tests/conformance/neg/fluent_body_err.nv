@@ -6,7 +6,6 @@
 // requirement retracted).
 
 module neg.fluent_body_err
-
 type Bldr { mut k int }
 
 fn Bldr.new() -> Bldr => { k: 0 }

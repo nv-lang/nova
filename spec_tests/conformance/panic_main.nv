@@ -6,9 +6,7 @@
 // Проверяем минимальный сценарий: panic("explicit panic") в main →
 // runtime print "panic: explicit panic\n" + abort.
 
-module nova_tests.runtime_panics
-
-
+module conformance.panic_main
 test "panic main" panics "explicit panic" {
     panic("explicit panic")
 }

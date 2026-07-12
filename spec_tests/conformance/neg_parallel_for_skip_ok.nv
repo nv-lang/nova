@@ -2,8 +2,7 @@
 // (concurrent body, fiber aliasing safety). Body executes
 // concurrently per element.
 
-module nova_tests.plan123_2
-
+module conformance.neg_parallel_for_skip_ok
 type Cfg3 {
     ro factor int
 }

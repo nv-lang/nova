@@ -1,5 +1,4 @@
-module plan91_15.pos_impl_debug
-
+module conformance.pos_impl_debug
 #impl(Debug)
 type Point { x int, y int }
 

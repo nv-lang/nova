@@ -4,8 +4,7 @@
 // Semantic preservation: код работает correctly, даже если cache
 // эмитится только для региона A.
 
-module nova_tests.plan123
-
+module conformance.plan123_1_1_v1_1_single_read_region_no_cache_ok
 type Counter3_plan12311v11singlereadregionnocacheok {
     mut x int
 }

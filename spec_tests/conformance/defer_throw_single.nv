@@ -1,9 +1,7 @@
 // EXPECT_RUNTIME_PANIC unhandled Fail (D158 composite): bang
 // EXPECT_STDOUT DEFER_FIRED
 
-module expected_runtime.defer_throw_single
-
-
+module conformance.defer_throw_single
 fn main() Io -> () {
     defer { println("DEFER_FIRED") }
     throw "bang"

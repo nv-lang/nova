@@ -1,8 +1,7 @@
 // Plan 123.7.1 T-NEG.1: mut field cache invalidated by self-method
 // call that writes the field per IPA write_set.
 
-module nova_tests.plan123
-
+module conformance.plan123_7_1_ipa_mut_invalidates_on_writing_call_ok
 type Counter4_plan12371ipamutinvalidatesonwritingcallok {
     mut value int
 }

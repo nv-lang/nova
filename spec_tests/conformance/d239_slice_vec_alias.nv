@@ -4,7 +4,7 @@
 // and `Vec[T]` are interchangeable as parameter types (Plan 138, spec/decisions/02-types.md:12027).
 // Confirmed direction (Plan 153.0): a `[]T`/inferred value flows into a `Vec[T]` parameter.
 // Part of the SINGLE `spec_tests.conformance` folder-module (minimal CU).
-module spec_tests.conformance
+module conformance.d239_slice_vec_alias
 
 // `[]int` parameter — indexing works through @index inside the body.
 fn d239_first_slice(xs []int) -> int => xs[0]

@@ -3,7 +3,7 @@
 // Тестируем через мутацию shared record (heap-allocated — изменения видны caller).
 //
 // Spec: spec/decisions/03-syntax.md D90. Единица: folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d90_defer_cleanup
 
 type D90Cnt { val int }
 fn D90Cnt.zero() -> D90Cnt => { val: 0 }

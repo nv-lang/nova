@@ -4,7 +4,6 @@
 // if any defer body throws. D158 enforcement carries through D161 wrap.
 
 module neg.neg_multi_defer_throw_no_fail
-
 type Err { msg str }
 
 fn cleanup() Fail[Err] -> () { throw Err { msg: "fail" } }

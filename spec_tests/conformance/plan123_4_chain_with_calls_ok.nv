@@ -1,8 +1,7 @@
 // Plan 123.4 T1.5: chain caching works even when method body has
 // method calls (V4 conservative just blocks on @F write, not call).
 
-module nova_tests.plan123
-
+module conformance.plan123_4_chain_with_calls_ok
 type Deep_Cfg {
     ro value int
 }

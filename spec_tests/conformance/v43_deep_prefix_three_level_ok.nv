@@ -4,8 +4,7 @@
 // `_at_a_b_c_pre = _at_a_b_pre.c` + per-chain lets reference longest
 // covering prefix. Поведение должно остаться semantic-identical V4/V4.2.
 
-module nova_tests.plan123_4_3
-
+module conformance.v43_deep_prefix_three_level_ok
 type Lv1 { ro x int, ro y int }
 type Mv1 { ro c Lv1 }
 type Nv1 { ro b Mv1 }

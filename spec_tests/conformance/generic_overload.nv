@@ -1,7 +1,7 @@
 // Plan 153.1 / [M-138.2-generic-method-overload-mono]: generic-type method
 // overloads (arity + param-type) resolve correctly in monomorphization —
 // dispatch (call) + return-type inference (chained receiver).
-module spec_tests.conformance
+module conformance.generic_overload
 type Box6[T] priv { mut inner T }
 fn Box6[T].of(x T) -> Self => { inner: x }
 fn Box6[T] @slot() -> T => @inner                 // getter (0-arg)

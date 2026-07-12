@@ -6,7 +6,7 @@
 // Больше НЕ compiler-hardcoded intrinsic (extern-запись, registry-override и
 // C-обёртки nova_rt/numeric.h сняты) — resolved как обычный Nova-body method.
 // Единица: folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d141_ptr_bitcast_roundtrip
 
 test "f64 to_bits/from_bits round-trip — 1.5" {
     ro a = 1.5

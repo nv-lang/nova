@@ -3,8 +3,7 @@
 // Positive: V1.2 nested-region caching inside if-then with internal
 // write вЂ” semantic preservation through region-aware caching.
 
-module nova_tests.plan123_followups_2026_06_05
-
+module conformance.m2_v5_4_1_nested_region_ok
 type Cv3 {
     mut x int
 }

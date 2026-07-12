@@ -5,7 +5,6 @@
 // но consume-метод не вызван → D133-not-consumed на scope-exit.
 
 module neg.cross_pkg_consume_err_missing_marker_in_b
-
 // "Package A" — exports consume-type:
 export type Session consume {
     token str,

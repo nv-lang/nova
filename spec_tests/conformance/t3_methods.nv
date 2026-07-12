@@ -1,7 +1,6 @@
 // Plan 120 (D215): T3 — methods on named tuples.
 
-module nova_tests.plan120
-
+module conformance.t3_methods
 type Vec35(x f64, y f64, z f64)
 
 fn Vec35 @dot(other Vec35) -> f64 =>

@@ -1,6 +1,6 @@
 // D84 — Перегрузка функций и методов: 4 оси резолва (receiver-type, arg-types, arity, return-type).
 // Spec: spec/decisions/10-overloading.md D84. Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d84_function_overloading_axes
 
 // Ось 1 — по receiver-типу
 fn int @d84_double() -> int => @ * 2

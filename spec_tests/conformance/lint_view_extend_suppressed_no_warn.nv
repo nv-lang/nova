@@ -2,8 +2,7 @@
 // Module-level allow suppresses the warning even when pattern is present.
 
 #allow(view_extend_detach)
-module nova_tests.plan90_1
-
+module conformance.lint_view_extend_suppressed_no_warn
 fn extend_with_view() -> () {
     mut parent []int = [1, 2, 3, 4, 5]
     ro view = parent[1..4]

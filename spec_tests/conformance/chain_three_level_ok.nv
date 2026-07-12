@@ -1,7 +1,6 @@
 // Plan 123.4 T1.2: depth-3 chain `@parent.inner.cfg`.
 
-module nova_tests.plan123_4
-
+module conformance.chain_three_level_ok
 type Cfg {
     ro limit int
 }

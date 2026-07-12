@@ -5,7 +5,6 @@
 // M:N-воркеров (см. const_init_spawn.nv).
 
 module neg.const_init_supervised
-
 ro eager_scope = {
     supervised {
     }

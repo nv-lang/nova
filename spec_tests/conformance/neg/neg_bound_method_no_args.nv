@@ -5,7 +5,6 @@
 // E_BOUND_METHOD_REMOVED.
 
 module neg.neg_bound_method_no_args
-
 type Counter { value int }
 
 fn Counter.new() -> Self => { value: 0 }

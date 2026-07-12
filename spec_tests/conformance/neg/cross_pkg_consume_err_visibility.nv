@@ -5,7 +5,6 @@
 // Cross-package: private type не leak'ает; но внутри пакета consume обязателен.
 
 module neg.cross_pkg_consume_err_visibility
-
 // "Package A" — type БЕЗ `export` (private):
 type InternalTransaction consume { id int }
 fn InternalTransaction consume @commit() -> () { () }

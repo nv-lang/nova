@@ -3,7 +3,7 @@
 // (`balance = -5` vs `invariant balance >= 0`) therefore does NOT panic.
 
 #unchecked(invariant)
-module plan140_3.unchecked_invariant_pos
+module conformance.unchecked_invariant_pos
 type Account {
     balance int
 }

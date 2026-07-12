@@ -1,7 +1,7 @@
 // Plan 100.1 (D133 / D9): `consume tx = expr` — ownership binding парсируется.
 // Positive parser test.
 
-module parser.parser_ok_consume_binding
+module conformance.parser_ok_consume_binding
 
 type Lock consume {
     id int,

@@ -15,7 +15,7 @@
 // Spec: spec/decisions/02-types.md:9167 (D220 «Per-field visibility — priv keyword +
 //   type-level default flip»), §1 syntax / §2 effective visibility / §3 access rules.
 // One folder-module `spec_tests.conformance`; D-prefixed names are unique.
-module spec_tests.conformance
+module conformance.d220_priv_field_visibility
 
 // ── §1 field-level `priv` modifier: priv mut + priv (ro/mut/name ordering) ──────
 type D220Account {

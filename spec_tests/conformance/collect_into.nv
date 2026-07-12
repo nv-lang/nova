@@ -8,7 +8,7 @@
 //     (len = 0, backing buffer retained) before passing it in.
 //   * Returns `()`; the filled buffer is observed through the caller's own
 //     `out` binding (`Vec[T]` is a heap reference type).
-module spec_tests.conformance
+module conformance.collect_into
 import std.collections.vec_iter
 
 test "collect_into appends MapIter->FilterIter chain into a fresh buffer" {

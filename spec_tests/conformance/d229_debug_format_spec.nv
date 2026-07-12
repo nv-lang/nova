@@ -5,7 +5,7 @@
 //   • `#impl(Debug)` на record → memberwise `TypeName { f1: v1, f2: v2 }` (str-поля quoted);
 //   • Option/Result debug → `Some(v)`/`None`/`Ok(v)`/`Err(e)` (inner через @debug → str quoted).
 // Spec: spec/decisions/02-types.md:11435 (D229).
-module spec_tests.conformance
+module conformance.d229_debug_format_spec
 
 #impl(Debug)
 type D229Point { x int, y int }

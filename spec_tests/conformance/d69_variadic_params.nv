@@ -5,7 +5,7 @@
 // Discriminator: без variadic нужно явно передавать `f([a, b, c])`.
 //
 // Spec: spec/decisions/03-syntax.md D69. Единица: folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d69_variadic_params
 
 fn d69_first(...items []int) -> int =>
     match items {

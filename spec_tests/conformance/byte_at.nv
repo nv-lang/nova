@@ -1,8 +1,6 @@
 // Plan 90 Ф.4.1 — str.byte_at: O(1) доступ к байту строки.
 
-module nova_tests.plan90
-
-
+module conformance.byte_at
 test "byte_at — ASCII байты" {
     ro s = "ABC"
     assert(s.bytes()[0] as int == 65)

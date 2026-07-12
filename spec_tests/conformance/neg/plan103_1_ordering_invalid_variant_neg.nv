@@ -7,7 +7,6 @@
 // при C-compile. Аналогично numeric_constant_unknown.nv (Plan 38 pattern).
 
 module neg.plan103_1_ordering_invalid_variant_neg
-
 fn bad() -> MemOrdering => MemOrdering.NoSuchVariant
 
 test "should not compile" {

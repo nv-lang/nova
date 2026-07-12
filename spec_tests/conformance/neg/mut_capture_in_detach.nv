@@ -8,7 +8,6 @@
 // inside `detach { }` must be rejected exactly like inside `spawn { }`.
 
 module neg.mut_capture_in_detach
-
 fn racy_detach() Detach -> () {
     mut flag = 0
     detach {

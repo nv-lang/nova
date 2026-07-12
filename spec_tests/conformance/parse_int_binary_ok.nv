@@ -1,5 +1,4 @@
-module nova_tests.plan91_fe2
-
+module conformance.parse_int_binary_ok
 import std.runtime.string.{ParseIntError}
 
 test "binary basic" {

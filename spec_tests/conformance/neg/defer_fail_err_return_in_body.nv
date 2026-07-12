@@ -4,7 +4,6 @@
 // unchanged by D158).
 
 module neg.defer_fail_err_return_in_body
-
 fn process() -> int {
     defer {
         return 42                               // ❌ D90 §6 — top-level return hijacks scope exit

@@ -6,7 +6,7 @@
 // signed I8/I16/I32/I64, unsigned U8/U64, AtomicBool; ширины НЕ схлопываются
 // (u8-атомик держит 255, i8 — 127). Шаблоны сверены с nova_tests/atomics.
 // Один folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d168_sized_atomics
 
 test "AtomicI32/I16/I8: new/load/store/fetch_add (D168)" {
     mut d168_a32 = AtomicI32.new(10)

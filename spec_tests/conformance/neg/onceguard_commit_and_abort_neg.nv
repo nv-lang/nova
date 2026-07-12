@@ -6,7 +6,6 @@
 // Uses Once.make_guard() (internal external fn) to create a guard directly.
 
 module neg.onceguard_commit_and_abort_neg
-
 test "commit then abort → D131 compile error" {
     mut once = Once.new()
     consume g = once.make_guard()

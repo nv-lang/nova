@@ -16,7 +16,7 @@
 //   public value-record; §Инварианты `_from_raw(h CX)` factory). Field-priv = type-private:
 //   02-types.md:9169 (D220 amend: «Field-level explicit `priv` остаётся type-private»).
 // One folder-module `spec_tests.conformance`; D-prefixed names are unique.
-module spec_tests.conformance
+module conformance.d364_value_record_handle_wrap
 
 // Шаг 1 — opaque handle: newtype over `*()` (void*); typed FFI boundary (D214).
 type D364CTcpListener(*())

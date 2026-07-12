@@ -2,7 +2,7 @@
 // `#impl(P)` — необязательная пометка: проверяет подпись метода против P + привязывает P к T.
 // Структурная конформность по-прежнему работает без #impl; #impl только ДОБАВЛЯЕТ проверку.
 // Spec: spec/decisions/10-overloading.md D268. Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d268_opt_in_conformance_impl
 
 type D268Describe protocol { @describe() -> str }
 type D268Measure protocol { @measure() -> int }

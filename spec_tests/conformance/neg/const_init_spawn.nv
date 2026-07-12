@@ -7,7 +7,6 @@
 // исполняться multi-threaded → возврат убитой гонки. Запрещено чекером.
 
 module neg.const_init_spawn
-
 ro racy_init = {
     supervised {
         spawn { ro _x = 1 }

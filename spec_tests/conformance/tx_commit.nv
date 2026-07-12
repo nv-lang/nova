@@ -4,7 +4,7 @@
 // Pattern: consume tx + explicit commit на success-path (D162).
 // D157: plain param = view (non-consuming, default).
 
-module spec_tests.conformance
+module conformance.tx_commit
 type Db2 { id int }
 type OrderErr1 { msg str }
 

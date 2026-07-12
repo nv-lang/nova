@@ -2,9 +2,7 @@
 //
 // from([]u8) / @position / @remaining / @has_remaining / @remaining_bytes.
 
-module nova_tests.buffers
-
-
+module conformance.read_nav
 // ── from + начальное состояние ─────────────────────────────────────
 
 test "from([]u8) — начальная позиция 0" {

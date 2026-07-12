@@ -4,8 +4,6 @@
 // протокол → diagnostic.
 
 module neg.neg_protocol_lit_unknown
-
-
 test "unknown protocol" {
     ro l = protocol NotDeclared {
         foo() => ()

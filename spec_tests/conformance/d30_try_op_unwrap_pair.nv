@@ -9,7 +9,7 @@
 // Сами правила именования (PascalCase/snake_case) — compile-time convention, вне POS-runtime;
 // здесь тестируется try_*/* unwrap-семантика, дающая наблюдаемое значение.
 // Один folder-module `spec_tests.conformance`; имена D30-prefixed.
-module spec_tests.conformance
+module conformance.d30_try_op_unwrap_pair
 
 // Доменная ошибка чтения — sum-type с typed payload.
 type D30ReadError | Empty | BadByte(u8)

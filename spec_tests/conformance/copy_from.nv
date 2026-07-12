@@ -1,8 +1,6 @@
 // Plan 90 Ф.4.3 — []T.copy_from: memcpy distinct-срезов.
 
-module nova_tests.plan90
-
-
+module conformance.copy_from
 test "copy_from — полное копирование" {
     mut dst []u8 = [0, 0, 0]
     ro src []u8 = [7, 8, 9]

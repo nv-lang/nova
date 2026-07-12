@@ -4,7 +4,6 @@
 // `consume p = sem.acquire()` without p.release() → D133.
 
 module neg.permit_leak_neg
-
 test "forget Permit release → compile error" {
     mut sem = Semaphore.new(2)
     consume p = sem.acquire()

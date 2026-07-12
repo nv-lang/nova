@@ -5,9 +5,7 @@
 // state. Без anonymous protocol-литерала пришлось бы объявлять
 // два отдельных named-типа-обёртки.
 
-module nova_tests.plan97
-
-
+module conformance.pos_protocol_lit_capability_split
 export type Reader protocol {
     @read() -> int
 }

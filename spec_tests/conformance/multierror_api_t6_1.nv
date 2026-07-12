@@ -3,8 +3,7 @@
 // Plan 110.4.1 T6.1 (D193): MultiError @walk + @find_first_panic API
 // type-check + compile verification.
 
-module nova_tests.plan110
-
+module conformance.multierror_api_t6_1
 fn make_multi_error() -> MultiError {
     MultiError {
         primary: "primary-error",

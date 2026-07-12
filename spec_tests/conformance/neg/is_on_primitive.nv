@@ -5,5 +5,4 @@
 // EXPECT_COMPILE_ERROR E_IS_NON_ANY
 
 module neg.is_on_primitive
-
 fn bad(n int) -> bool => n is str

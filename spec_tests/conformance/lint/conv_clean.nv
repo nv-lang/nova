@@ -3,7 +3,6 @@
 // Прогон: nova lint nova_tests/lint/conv_clean.nv → exit 0, 0 finding(s).
 
 module lint.conv_clean
-
 type Widget { ro kind int, mut label str }
 
 // Канон §21б: new + дефолт-параметры (не `of`).

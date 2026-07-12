@@ -7,7 +7,6 @@
 // Nova-неймспейсе (нет decl в std) — ссылка = ошибка компиляции.
 
 module neg.f5_runtime_reset_unavailable
-
 fn try_reset() -> () {
     nova_runtime_reset()
 }

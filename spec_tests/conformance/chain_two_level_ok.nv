@@ -1,7 +1,6 @@
 // Plan 123.4 T1.1: @parent.inner accessed 2+ times → chain cached.
 
-module nova_tests.plan123_4
-
+module conformance.chain_two_level_ok
 type Inner2 {
     ro value int
 }

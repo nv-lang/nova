@@ -6,7 +6,6 @@
 // EXPECT_COMPILE_ERROR E_NULL_PTR_RETRACTED_USE_OPTION
 
 module neg.t1_null_non_ptr_neg
-
 test "null int is rejected (post-retraction)" {
     ro bad = null int
     assert(bad == 0)

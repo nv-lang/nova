@@ -13,7 +13,7 @@
 // is only reachable from a real function body.
 // Spec: spec/decisions/02-types.md D326 (Plan 184 Р7).
 // Part of the SINGLE `spec_tests.conformance` folder-module.
-module spec_tests.conformance
+module conformance.d326_fluent_value_return
 
 type D326RetRec value {
     a int

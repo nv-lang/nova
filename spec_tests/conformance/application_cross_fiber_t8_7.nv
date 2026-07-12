@@ -16,8 +16,7 @@
 //                Application handler → threshold resolves via
 //                inherited handler, not Level 3 fallback.
 
-module nova_tests.plan110
-
+module conformance.application_cross_fiber_t8_7
 type Res3 {
     ro id int
 }

@@ -5,7 +5,6 @@
 // E_CONSUME_NOT_CONSUMED (D133).
 
 module neg.mutexguard_leak_neg
-
 test "forget to unlock guard → compile error" {
     mut mu = Mutex.new()
     consume g = mu.lock()

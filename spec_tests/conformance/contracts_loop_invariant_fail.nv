@@ -1,8 +1,7 @@
 //
 // Plan 33.3 Ф.9.3: loop invariant violated → runtime panic в debug.
 
-module nova_tests.runtime_panics
-
+module conformance.contracts_loop_invariant_fail
 fn bad_loop(n int) -> int {
     mut i = 0
     while i < n

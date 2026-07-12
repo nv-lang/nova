@@ -9,7 +9,6 @@
 // Любая ссылка на тип — ошибка компиляции (символ не существует).
 
 module neg.f5_cleanup_timeout_error_removed
-
 fn make_removed_error() -> () {
     ro _e = CleanupTimeoutError { duration_ms: 100 }
 }

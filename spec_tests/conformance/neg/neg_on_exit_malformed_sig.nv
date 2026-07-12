@@ -7,7 +7,6 @@
 // resolved).
 
 module neg.neg_on_exit_malformed_sig
-
 type BadResource {
     ro id int
 }

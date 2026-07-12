@@ -3,8 +3,7 @@
 // Verifies that *() replaces the removed `ptr` builtin as the canonical
 // opaque pointer type: usable in type declarations, structs, and assignments.
 
-module nova_tests.plan134
-
+module conformance.t2_unit_ptr_type_ok
 type Handle { ro value *() }
 
 fn make_handle(raw int) -> Handle {

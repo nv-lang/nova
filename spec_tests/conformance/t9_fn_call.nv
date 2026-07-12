@@ -2,8 +2,7 @@
 // `(x, y) = (get_ten(), get_twenty())` — each rhs is a function call.
 // Function calls are not lhs identifiers, so no temps needed.
 
-module nova_tests.plan136
-
+module conformance.t9_fn_call
 fn get_ten() -> int => 10
 fn get_twenty() -> int => 20
 fn add_one(n int) -> int => n + 1

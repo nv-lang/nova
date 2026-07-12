@@ -5,7 +5,7 @@
 // (and vice-versa). POS conformance for spec/decisions/02-types.md §D230 (Plan 126 /
 // 126.2 / 138.3). Part of the SINGLE `spec_tests.conformance` folder-module;
 // D-prefixed type names avoid duplicate-top-level-name clashes.
-module spec_tests.conformance
+module conformance.d230_clone_deep_autoderive
 
 #impl(Clone + Equal)
 type D230Point {

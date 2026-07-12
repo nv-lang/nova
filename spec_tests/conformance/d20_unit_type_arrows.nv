@@ -7,7 +7,7 @@
 // без чёткого разделения стрелок - синтаксис неоднозначен.
 //
 // Spec: spec/decisions/03-syntax.md D20. Единица: folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d20_unit_type_arrows
 
 fn d20_noop() -> () { }
 

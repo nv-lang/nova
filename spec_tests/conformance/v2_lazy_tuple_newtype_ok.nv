@@ -3,8 +3,7 @@
 //
 // Acceptance A6: API surface неизменён — force/is_forced + poison-on-panic.
 
-module plan91_12.v2_lazy_tuple_newtype_ok
-
+module conformance.v2_lazy_tuple_newtype_ok
 test "Lazy[int]: force returns init value" {
     ro lazy = Lazy[int].new() { 42 }
     assert(lazy.is_forced() == false)

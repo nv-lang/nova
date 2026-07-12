@@ -5,7 +5,6 @@
 // Ловится check_fluent_return (инверсная проверка).
 
 module neg.fluent_self_instead_of_at_err
-
 type Bldr { mut k int }
 
 fn Bldr.new() -> Bldr => { k: 0 }

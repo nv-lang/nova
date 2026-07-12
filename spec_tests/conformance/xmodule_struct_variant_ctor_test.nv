@@ -7,10 +7,10 @@
 //
 // Импорт ОБОИХ `make_info`/`make_bad` пуллит ОБЕ Kind-декларации в один
 // merged module.items → воспроизводит коллизию `self.types` HashMap (last-wins).
-module nova_tests.xmodule_struct_variant_ctor_test
+module conformance.xmodule_struct_variant_ctor_test
 
-import nova_tests.xmodule_struct_variant_ctor_a.{make_info}
-import nova_tests.xmodule_struct_variant_ctor_b.{make_bad}
+import spec_tests.conformance.xmodule_struct_variant_ctor_a.{make_info}
+import spec_tests.conformance.xmodule_struct_variant_ctor_b.{make_bad}
 
 test "[M-compress-checksum-structvariant-ctor-xmodule]: struct-payload variant-ctor через границу модуля с co-present одноимённой суммой" {
     ro k = make_info(42, "boom")

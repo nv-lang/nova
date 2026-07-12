@@ -13,8 +13,7 @@
 // No EXPECT_RUNTIME_PANIC: this fixture must PASS cleanly (all asserts hold,
 // no contract violation).
 
-module plan140.gtr_method_contract_pos
-
+module conformance.gtr_method_contract_pos
 type Bag[T] { priv n int }
 
 fn Bag[T].mk(n int) -> Self => { n }

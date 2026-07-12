@@ -7,8 +7,7 @@
 // compiler-codegen/src/lints.rs (extern "nova" fn restricted to std.runtime.*
 // per D82 — cannot be used in user fixtures).
 
-module nova_tests.plan110
-
+module conformance.ffi_cancel_safe_no_warning_v1_1
 // Plain Nova fns с #cancel_safe — attribute parses but lint scope is
 // FFI-only. Call from cleanup must be silent.
 #cancel_safe

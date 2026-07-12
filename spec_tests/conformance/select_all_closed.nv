@@ -8,8 +8,7 @@
 // Используем Some(v) = rx (не wildcard _ = rx), потому что wildcard
 // срабатывает немедленно на закрытый канал — это штатное поведение.
 
-module expected_runtime.select_all_closed
-
+module conformance.select_all_closed
 fn main() Io -> () {
     ro ch1 = Channel.new(1)
     ro tx1 = ch1.tx

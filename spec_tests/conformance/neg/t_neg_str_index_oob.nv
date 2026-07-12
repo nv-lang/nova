@@ -5,7 +5,6 @@
 // EXPECT_RUNTIME_PANIC index
 
 module neg.t_neg_str_index_oob
-
 test "bytes()[5] on length-3 string panics" {
     ro s = "abc"
     ro _ = s.bytes()[5]

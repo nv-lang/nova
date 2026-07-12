@@ -15,8 +15,7 @@
 //                from sibling. All fibers complete without crash;
 //                cancel observed AFTER scope completion на each.
 
-module nova_tests.plan110
-
+module conformance.racing_cancels_stress_t11_3
 type Worker3 {
     ro id int
 }

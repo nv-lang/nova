@@ -8,7 +8,6 @@
 // so `MapIt[Self]` (one arg) MUST be rejected — the Self-substitution does not
 // bypass arity checking. Error: [E7310] type `MapIt` expects 3 type arguments.
 module neg.self_nested_arity_fail
-
 type MapIt[I, T, U] value { mut src I, priv f fn(T) -> U }
 
 // `MapIt[Self]` — Self is fine, but MapIt needs 3 type args, given 1.

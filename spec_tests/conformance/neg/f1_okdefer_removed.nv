@@ -6,7 +6,6 @@
 // Замена: `consume X = e { body }` с `match outcome { Success => ... }` (D188).
 
 module neg.f1_okdefer_removed
-
 fn cleanup_on_ok() -> () {
     okdefer { () }                               // ❌ [D189-removed-okdefer]
 }

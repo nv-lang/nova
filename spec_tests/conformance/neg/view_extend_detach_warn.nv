@@ -5,7 +5,6 @@
 // View may become dangling if append triggers realloc.
 
 module neg.view_extend_detach_warn
-
 fn main() -> () {
     mut parent []int = [1, 2, 3, 4, 5]
     ro view = parent[1..4]

@@ -1,5 +1,4 @@
-module nova_tests.plan91_7
-
+module conformance.array_mut_chain_test
 // Plan 91.7 Part A (D181): mut методы возвращают @ → fluent chain.
 
 test "arr.push(1).push(2).push(3) chain" {

@@ -11,7 +11,6 @@
 // потому что "думает что v2 убрал consume-require".
 
 module neg.cross_pkg_consume_err_mangling_mismatch
-
 // Package A v1.0 — Transaction IS consume:
 export type Transaction consume {
     id int,

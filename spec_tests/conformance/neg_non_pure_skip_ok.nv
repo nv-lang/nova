@@ -1,8 +1,7 @@
 // Plan 123.3 T-NEG.1: non-pure method (no #pure annotation) →
 // V3 doesn't cache. Result preserved.
 
-module nova_tests.plan123_3
-
+module conformance.neg_non_pure_skip_ok
 type Cnt {
     ro v int
 }

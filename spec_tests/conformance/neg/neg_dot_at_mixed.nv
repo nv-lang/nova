@@ -6,8 +6,6 @@
 // static-маркера (точка) и instance-маркера (`@`) недопустимо.
 
 module neg.neg_dot_at_mixed
-
-
 type Bad protocol {
     .@method() -> int
 }

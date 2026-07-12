@@ -4,7 +4,6 @@
 // p.release() consumes p; any subsequent use of p → E_CONSUMED_AFTER_USE (D131).
 
 module neg.permit_release_then_use_neg
-
 test "use permit after release → compile error" {
     mut sem = Semaphore.new(2)
     consume p = sem.acquire()

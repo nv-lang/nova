@@ -1,5 +1,4 @@
 module neg.parse_int_empty_err
-
 import std.runtime.string.{ParseIntError}
 
 test "empty string is Err" {

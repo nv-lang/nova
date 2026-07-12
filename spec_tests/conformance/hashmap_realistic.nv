@@ -1,7 +1,6 @@
 // Plan 91 Ф.5 conformance: HashMap realistic use-cases.
 // word-frequency counter pattern.
-module nova_tests.plan91_fe5
-
+module conformance.hashmap_realistic
 import std.collections.hashmap.{HashMap}
 
 fn count_words(words []str) -> HashMap[str, int] {

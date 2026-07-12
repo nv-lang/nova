@@ -8,7 +8,7 @@
 // (D285) не мис-роутит; (3) use-site opt-in через generic bound `[T P]` работает
 // без `#impl` (симметрия). Шаблоны сверены с nova_tests/plan164 + plan108_4.
 // Один folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d186_impl_annotation
 
 import std.collections.vec_iter
 

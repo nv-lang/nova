@@ -1,7 +1,6 @@
 // Plan 104.2 (body-walk hover): prelude functions called inside fn bodies
 // compile and run — hover walks fn bodies to resolve identifiers.
-module nova_tests.plan104_9
-
+module conformance.pos_hover_prelude_calls_in_fn
 fn check_range(lo int, hi int, val int) -> bool {
     ro r = lo..hi
     // assert is called inside a fn body — body-walker must find it

@@ -21,8 +21,7 @@
 // `UNREACHABLE` is never printed because the postcondition abort terminates
 // the process first.
 
-module plan140.t3_ensures_release
-
+module conformance.t3_ensures_release
 fn at_least_ten(x int) -> int
     ensures result >= 10
 => x

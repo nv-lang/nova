@@ -8,7 +8,6 @@
 // → clang error: "no member named 'count_ones' in 'Nova_AtomicIsize'".
 
 module neg.plan103_2_atomic_isize_no_such_method_neg
-
 fn bad(a AtomicIsize) -> int => a.count_ones()
 
 test "should not compile" {

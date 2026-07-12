@@ -5,7 +5,7 @@
 // `-> @` = fluent-return (возвращает тот же объект).
 // consume-метод уничтожает receiver, fluent-return хочет его вернуть — несовместимо.
 
-module parser.parser_err_consume_at_return
+module neg.parser_err_consume_at_return
 
 type Builder consume {
     data int,

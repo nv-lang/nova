@@ -1,5 +1,5 @@
 // Plan 153.3 — dedup (consecutive) + partition (in-place reorder).
-module spec_tests.conformance
+module conformance.dedup_partition
 test "dedup consecutive only" {
     mut v = Vec[int].of(1, 1, 2, 3, 3, 3, 1)
     v.dedup()

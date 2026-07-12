@@ -8,7 +8,7 @@
 // (3) export record с consume-полем (двойной маркер) через границу; (4) прямой
 // cross-package dispatch в helper-fn. Негативы D164 в корпусе — класс
 // D133-not-consumed (покрыт neg/d133_*). Один folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module conformance.d164_cross_module_consume
 
 // «Package A» — экспортирует consume-тип: маркер = часть контракта.
 export type D164Session consume {

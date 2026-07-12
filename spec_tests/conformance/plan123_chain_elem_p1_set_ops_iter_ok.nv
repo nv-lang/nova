@@ -12,8 +12,7 @@
 //  - `.contains()` / `.len()` на результате компилируются и дают верный ответ;
 //  - всё проходит через release `nova test` (codegen → clang → run).
 
-module nova_tests.plan123
-
+module conformance.plan123_chain_elem_p1_set_ops_iter_ok
 import std.collections.set.{Set}
 
 test "Set union — chain-cache element type resolves" {

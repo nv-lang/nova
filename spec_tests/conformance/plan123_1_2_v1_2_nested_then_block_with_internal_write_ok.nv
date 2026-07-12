@@ -6,8 +6,7 @@
 // then-block: 2 reads pre-write + 2 reads post-write. Semantic
 // preservation: cached path == uncached.
 
-module nova_tests.plan123
-
+module conformance.plan123_1_2_v1_2_nested_then_block_with_internal_write_ok
 type Counter_plan12312v12nestedthenblockwithinternalwriteok {
     mut x int
 }

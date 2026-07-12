@@ -5,7 +5,6 @@
 // EXPECT_COMPILE_ERROR E_FFI_NON_C_ABI_TYPE
 
 module neg.plan174_6_neg_option_nonptr
-
 extern "C" fn c_take_opt_int(x Option[int]) -> int
 
 test "rejects Option[non-ptr] param over C ABI" {

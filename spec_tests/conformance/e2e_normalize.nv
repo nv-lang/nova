@@ -3,7 +3,7 @@
 // e + COMBINING ACUTE (U+0065 U+0301) composes to é (U+00E9).
 // EXPECT_STDOUT é
 
-module spec_tests.conformance
+module conformance.e2e_normalize
 import std.unicode.{normalize_nfc}
 
 fn main() {

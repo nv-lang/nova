@@ -3,8 +3,7 @@
 // inline bounds-check остаётся ⇒ OOB (i вышел за усохшую длину) ловится в
 // runtime. Если бы элизия сработала ошибочно — был бы UB вместо чистого panic.
 
-module nova_tests.plan140_2
-
+module conformance.b4_soundness_neg
 import std.collections.vec.{Vec}
 
 fn drain_while_indexing() -> int {

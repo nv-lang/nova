@@ -4,7 +4,6 @@
 // A `ro` binding of VecIter[T] cannot be reassigned (E_LOCAL_NOT_MUT).
 // This confirms VecIter is a first-class value type with binding-level protection.
 module neg.vec_iter_ro_mut_neg
-
 fn neg_ro_veciter_reassign() {
     ro v = Vec[int].of(1, 2, 3)
     ro it = v.iter()

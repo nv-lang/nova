@@ -8,5 +8,4 @@
 // in user code → E_EXTERNAL_TYPE_RETRACTED. Users must use `type X(*())`.
 
 module neg.net_v2_ffi_type_direct_neg
-
 external type RawHandle

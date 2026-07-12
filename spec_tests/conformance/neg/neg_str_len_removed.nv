@@ -2,7 +2,6 @@
 // nova-lsp completion now surfaces byte_len(), not len.
 // EXPECT_COMPILE_ERROR [E_STR_NO_LEN]
 module neg.neg_str_len_removed
-
 test "str does not have .len field" {
     ro s = "hello"
     ro n = s.len
