@@ -62,6 +62,17 @@ pub struct Dependency {
 pub struct Manifest {
     pub package_name: String,
     pub source_root: PathBuf,
+    /// Directory containing `nova.toml` itself (the package root). Usually
+    /// identical to `source_root` — they diverge only for a legacy `[lib]
+    /// src = "<subdir>"` manifest (D78 back-compat; e.g. `nova-tls`'s
+    /// `src = "src"`). `[ffi]` paths are documented (see [`FfiConfig`]) as
+    /// relative to **this** directory, not `source_root` — found 2026-07-12
+    /// while fixing the `nova-tls` standalone-package D133 regression:
+    /// `ResolvedFfiConfig::from_manifest` previously joined against
+    /// `source_root`, so `c_shims = ["native/tls_c_shim.c"]` resolved to
+    /// `<pkg>/src/native/...` instead of `<pkg>/native/...` for any package
+    /// using a non-trivial `[lib] src`.
+    pub manifest_dir: PathBuf,
     /// **Plan 62.F.bis Ф.1 (edition versioning, 2026-05-18):**
     /// `[package].edition = "2026.05"` — pin для prelude content. None →
     /// rolling (uses `std/prelude.nv` facade). Some("X.Y") → resolver
@@ -469,6 +480,7 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     Some(Manifest {
         package_name: pkg,
         source_root,
+        manifest_dir: dir.to_path_buf(),
         edition,
         enforce_stability,
         dependencies,

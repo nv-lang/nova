@@ -44,7 +44,7 @@ const INITIAL_CAPACITY = 16
 // a private helper returning plain `[]u8` (no consume concerns there) so the
 // constructor itself stays the single-expression `=> { buf: … }` bare-literal
 // arrow-body shape the consume-checker expects.
-fn sb_init_buf(cap int) -> []u8 => []u8.new().cap(cap)
+fn sb_init_buf(cap int) -> []u8 => []u8.new(cap: cap)
 
 // Deep-copy helper for `@clone`: fresh exact-capacity buffer + one bulk
 // `append` (RawMem.copy). Free fn on `[]u8` (NOT a StringBuilder method) so
@@ -62,7 +62,7 @@ fn sb_clone_buf(src []u8) -> []u8 {
 }
 
 // Пустой StringBuilder с pre-allocated capacity 16.
-export fn StringBuilder.new() -> Self => { buf: sb_init_buf(INITIAL_CAPACITY) }
+export fn StringBuilder.new(cap int = INITIAL_CAPACITY) -> Self => { buf: sb_init_buf(cap) }
 
 // StringBuilder из существующей строки (copy UTF-8 bytes).
 export fn StringBuilder.from(s str) -> Self => StringBuilder.new().append(s)

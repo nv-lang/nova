@@ -3,10 +3,12 @@
 //
 // Parse a raw request (request-line + headers + Content-Length body) into a
 // `ServerRequest`, and serialize a `ServerResponse` to wire bytes. Pure Nova over
-// `[]u8` (byte-correct incl. non-UTF-8 bodies). CORE framing: Content-Length
-// (identity); chunked request decode + streaming are deferred (server.nv markers).
-// Header name/value validation (CR/LF/NUL, tchar) is enforced by HeaderMap/
-// HeaderValue (anti-injection, shared with the client).
+// `[]u8` (byte-correct incl. non-UTF-8 bodies). CORE request framing: Content-
+// Length (identity); chunked REQUEST decode is deferred (server.nv markers).
+// Streaming RESPONSE bodies (`Transfer-Encoding: chunked`) are DONE — see
+// `serialize_response_head`/`encode_chunk`/`encode_chunk_end` below
+// (`[M-178-server-streaming]`). Header name/value validation (CR/LF/NUL, tchar)
+// is enforced by HeaderMap/HeaderValue (anti-injection, shared with the client).
 
 module http.server
 
@@ -117,10 +119,18 @@ fn parse_header_line(hm mut HeaderMap, line []u8) -> Result[(), HttpError] {
 
 // ── Response serialization ─────────────────────────────────────────────────────
 
-// Serialize a ServerResponse to wire bytes. Adds Content-Length + Connection:close
-// when absent. HEAD/204/304 body suppression is applied by the caller (driver).
-fn serialize_response(resp ServerResponse) -> []u8 {
-    ro { status, headers, body } = resp
+/// Serialize a ServerResponse to wire bytes. Adds Content-Length + Connection:close
+/// when absent. HEAD/204/304 body suppression is applied by the caller (driver).
+/// Fixed-body path only — streaming responses (`@is_streaming()`) go through
+/// `serialize_response_head` + `encode_chunk`/`encode_chunk_end` instead (see
+/// `drain_stream_to_bytes` below / servernet.nv's live incremental writer).
+/// Exported (`[M-178-server-streaming]`) so `std.http.servernet.handle_connection`
+/// can reuse the SAME fixed-body serializer for the non-streaming path instead of
+/// duplicating it — net isolation keeps `Net`/`TcpStream` out of this module (see
+/// servernet.nv banner).
+#stable(since = "0.1")
+export fn serialize_response(resp ServerResponse) -> []u8 {
+    ro { status, headers, body, .. } = resp
     mut buf = WriteBuffer.new()
     buf.cap(128 + body.len())
     buf.write_str("HTTP/1.1 ")
@@ -149,6 +159,110 @@ fn serialize_response(resp ServerResponse) -> []u8 {
         buf.write_bytes(body)
     }
     buf.into() // [M-lint-findings-writebuffer-into]
+}
+
+// ── Streaming response wire format (`[M-178-server-streaming]`) ───────────────
+//
+// RFC 9112 §7.1 chunked transfer-coding, write side. Pairs with the DECODER
+// already landed on the client (`decode_chunked`, std.http.client.wire) — same
+// wire format, opposite direction.
+
+/// Serialize a streaming response's status-line + headers ONLY (no body — the
+/// body is written separately, chunk by chunk, by the caller). Forces
+/// `Transfer-Encoding: chunked` (RFC 9112 §7.1) and omits `Content-Length`
+/// (length unknown ahead of time for a pulled stream). Exported for
+/// `std.http.servernet`'s live incremental socket writer — net isolation keeps
+/// `Net`/`TcpStream` out of this module (see servernet.nv banner);
+/// `encode_chunk`/`encode_chunk_end` frame each subsequent chunk.
+#stable(since = "0.1")
+export fn serialize_response_head(resp ServerResponse) -> []u8 {
+    ro { status, headers, .. } = resp
+    mut buf = WriteBuffer.new()
+    buf.cap(160)
+    buf.write_str("HTTP/1.1 ")
+    buf.write_str(str.from(status))
+    buf.write_str(" ")
+    buf.write_str(reason_of(status))
+    buf.write_str("\r\n")
+
+    for (nm, v) in headers {
+        buf.write_str(nm.str())
+        buf.write_str(": ")
+        buf.write_bytes(v.bytes())
+        buf.write_str("\r\n")
+    }
+
+    if !headers.contains("transfer-encoding") {
+        buf.write_str("Transfer-Encoding: chunked\r\n")
+    }
+    if !headers.contains("connection") {
+        buf.write_str("Connection: close\r\n")
+    }
+    buf.write_str("\r\n")
+    buf.into() // [M-lint-findings-writebuffer-into]
+}
+
+/// Frame one chunk per RFC 9112 §7.1: `<hex-size>\r\n<data>\r\n`.
+#stable(since = "0.1")
+export fn encode_chunk(data []u8) -> []u8 {
+    mut buf = WriteBuffer.new()
+    buf.cap(data.len() + 16)
+    buf.write_str(to_hex_lower(data.len()))
+    buf.write_str("\r\n")
+    if data.len() > 0 { buf.write_bytes(data) }
+    buf.write_str("\r\n")
+    buf.into() // [M-lint-findings-writebuffer-into]
+}
+
+/// Terminating zero-length chunk + empty trailer section (RFC 9112 §7.1.2):
+/// `0\r\n\r\n`.
+#stable(since = "0.1")
+export fn encode_chunk_end() -> []u8 => "0\r\n\r\n".bytes()
+
+// Fully drain a streaming response's producer into ONE byte buffer (head +
+// every chunk + terminator) — the pure/mock-test path (`serve_once`). The live
+// socket runner (servernet.nv `handle_connection`) does NOT use this: it writes
+// each chunk to the socket as it is pulled, for TRUE incremental delivery.
+fn drain_stream_to_bytes(resp ServerResponse) -> []u8 {
+    mut buf = WriteBuffer.new()
+    buf.write_bytes(serialize_response_head(resp))
+    match resp.take_stream() {
+        Some(sb) => {
+            mut producer = sb
+            mut running = true
+            while running {
+                match producer.next_chunk() {
+                    Some(chunk) => buf.write_bytes(encode_chunk(chunk))
+                    None        => { buf.write_bytes(encode_chunk_end()); running = false }
+                }
+            }
+        }
+        None => ()
+    }
+    buf.into() // [M-lint-findings-writebuffer-into]
+}
+
+// Lowercase-hex render of a non-negative int (chunk size). "0" for zero.
+fn to_hex_lower(n int) -> str {
+    if n == 0 { return "0" }
+    mut digits []u8 = []u8.new()
+    mut v = n
+    while v > 0 {
+        digits.push(hex_char_lower(v % 16))
+        v = v / 16
+    }
+    // `digits` accumulated least-significant-first — reverse for MSB-first text.
+    mut out []u8 = []u8.new(cap: digits.len())
+    mut i = digits.len() - 1
+    while i >= 0 {
+        out.push(digits[i])
+        i -= 1
+    }
+    unsafe { out.to_str_unchecked() }
+}
+
+fn hex_char_lower(d int) -> u8 {
+    if d < 10 { (0x30 + d) as u8 } else { (0x61 + d - 10) as u8 }
 }
 
 fn reason_of(status int) -> str {

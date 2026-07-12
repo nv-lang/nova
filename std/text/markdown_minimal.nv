@@ -39,7 +39,7 @@ module text.markdown_minimal
 /// ```
 #stable(since = "0.1")
 export fn Markdown.to_html(md str) -> str {
-    consume buf = StringBuilder.new().cap(md.byte_len() * 2)
+    consume buf = StringBuilder.new(cap: md.byte_len() * 2)
     ro lines = md.split("\n").collect()
     mut i = 0
     mut in_code_block = false
@@ -152,7 +152,7 @@ fn flush_paragraph(mut buf StringBuilder, consume paragraph StringBuilder) -> ()
 // [M-d73-d77-retraction-migration] Block 2 precedent) и далее — O(1)
 // `Vec[char] @get(i)`.
 fn render_inline(s str) -> str {
-    consume buf = StringBuilder.new().cap(s.byte_len())
+    consume buf = StringBuilder.new(cap: s.byte_len())
     ro sc = to_chars(s)
     ro n = sc.len()
     mut i = 0
@@ -267,7 +267,7 @@ fn find_in(sc []char, target char, start int) -> Option[int] {
 
 
 fn escape_html(s str) -> str {
-    consume buf = StringBuilder.new().cap(s.byte_len())
+    consume buf = StringBuilder.new(cap: s.byte_len())
     for c in s.chars() {
         match c {
             '<' => buf.append("&lt;")

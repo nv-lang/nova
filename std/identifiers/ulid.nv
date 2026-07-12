@@ -216,7 +216,7 @@ export fn Ulid @compare(other Ulid) -> int {
 /// ```
 #stable(since = "0.1")
 export fn Ulid @to_str() -> str {
-    consume buf = StringBuilder.new().cap(26)
+    consume buf = StringBuilder.new(cap: 26)
 
     // 48-бит timestamp → 10 chars (10 × 5 = 50 бит, padding 2 нулевых
     // в старших). Т.е. для timestamp нужно value < 2^48 — гарантировано

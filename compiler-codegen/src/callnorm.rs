@@ -41,13 +41,28 @@ struct Sigs {
     /// при overload нормализация пропускается (D102: overload нет, но
     /// bootstrap fn_decls может иметь несколько).
     free: HashMap<String, Vec<Param>>,
-    /// Static-методы по `(type, method)`.
-    static_methods: HashMap<(String, String), Vec<Param>>,
+    /// Static-методы по `(type, method)`. [M-vec-new-static-arity-overload]
+    /// fix: carries ALL overload signatures (was: filtered to unambiguous
+    /// `v.len() == 1` and skipped otherwise) — `pick_static_params` below
+    /// disambiguates by arity/bind-success at each call-site, so a genuine
+    /// arity-overload (`Vec[T].new(cap int=0)` 0/1-arg vs
+    /// `Vec[T].new(ptr,len,cap)` 3-arg) still gets its DEFAULT backfilled
+    /// instead of unconditionally bailing out of normalization.
+    static_methods: HashMap<(String, String), Vec<Vec<Param>>>,
     /// Plan 46 Ф.3: instance-методы по имени метода. Резолв `obj.method`
     /// без type-inference: если имя метода уникально (один тип, один
     /// overload) — нормализуем. Иначе — пропускаем (codegen резолвит
     /// через type-info).
     instance_by_name: HashMap<String, Vec<Param>>,
+    /// [M-set-from-iter-self-new-default-arg-backfill] (Plan 196 Ф.C):
+    /// enclosing-type имя текущего `Item::Fn`, для резолва bare `Self` как
+    /// receiver'а (`Self.new()` внутри тела generic-static/instance метода
+    /// — например `Set[T].from_iter`'s `Self.new()`). Обновляется
+    /// `normalize_item` ПЕРЕД walk тела; `RefCell` — дешевле, чем протаскивать
+    /// `self_type: Option<&str>` параметром через все ~30 normalize_* функций
+    /// (Sigs уже общий `&Sigs` на весь module-pass, items обрабатываются
+    /// строго последовательно, так что интерьерная мутация безопасна).
+    self_type: std::cell::RefCell<Option<String>>,
 }
 
 /// Plan 46 Ф.2: нормализовать все call-site в модуле.
@@ -87,18 +102,26 @@ fn collect_sigs(module: &Module) -> Sigs {
     let free = free.into_iter()
         .filter_map(|(k, mut v)| if v.len() == 1 { Some((k, v.remove(0))) } else { None })
         .collect();
-    let static_methods = static_methods.into_iter()
-        .filter_map(|(k, mut v)| if v.len() == 1 { Some((k, v.remove(0))) } else { None })
-        .collect();
+    // [M-vec-new-static-arity-overload] fix: keep ALL overload signatures
+    // (was: `filter_map` dropping any (type, method) with >1 registered
+    // signature) — the ambiguity is now resolved per call-site by arity in
+    // `pick_static_params`, not by refusing to normalize at all.
+    let static_methods = static_methods;
     let instance_by_name = instance.into_iter()
         .filter_map(|(k, mut v)| if v.len() == 1 { Some((k, v.remove(0))) } else { None })
         .collect();
-    Sigs { free, static_methods, instance_by_name }
+    Sigs { free, static_methods, instance_by_name, self_type: std::cell::RefCell::new(None) }
 }
 
 fn normalize_item(item: &mut Item, sigs: &Sigs) {
     match item {
         Item::Fn(f) => {
+            // [M-set-from-iter-self-new-default-arg-backfill]: bare `Self`
+            // resolves against the ENCLOSING type of this fn (None for a
+            // free fn — `Self` isn't legal there anyway). Must be set
+            // before walking params/body below.
+            *sigs.self_type.borrow_mut() =
+                f.receiver.as_ref().map(|r| r.type_name.clone());
             // Default-выражения параметров тоже могут содержать вызовы.
             for p in &mut f.params {
                 if let Some(d) = &mut p.default {
@@ -111,11 +134,18 @@ fn normalize_item(item: &mut Item, sigs: &Sigs) {
                 FnBody::External => {}
             }
         }
-        Item::Test(t) => normalize_block(&mut t.body, sigs),
+        Item::Test(t) => {
+            // Top-level items — `Self` isn't legal outside a type method
+            // body; reset so a stale enclosing-type from a PRIOR Item::Fn
+            // (module.items is a flat, sequential list) can't leak in.
+            *sigs.self_type.borrow_mut() = None;
+            normalize_block(&mut t.body, sigs)
+        }
         // Plan 57: bench setup/measure_body/teardown — все три раздела
         // обычные блоки statement'ов, требуют такой же нормализации
         // вызовов, как test body.
         Item::Bench(b) => {
+            *sigs.self_type.borrow_mut() = None;
             for s in &mut b.setup {
                 normalize_stmt(s, sigs);
             }
@@ -124,8 +154,14 @@ fn normalize_item(item: &mut Item, sigs: &Sigs) {
                 normalize_stmt(s, sigs);
             }
         }
-        Item::Const(c) => normalize_expr(&mut c.value, sigs),
-        Item::Let(l) => normalize_expr(&mut l.value, sigs),
+        Item::Const(c) => {
+            *sigs.self_type.borrow_mut() = None;
+            normalize_expr(&mut c.value, sigs)
+        }
+        Item::Let(l) => {
+            *sigs.self_type.borrow_mut() = None;
+            normalize_expr(&mut l.value, sigs)
+        }
         Item::Type(_) => {}
         // Ф.4.1: lemma не emit'ится в runtime — нормализацию пропускаем.
         Item::Lemma(_) => {}
@@ -384,6 +420,43 @@ fn normalize_trailing(t: &mut Trailing, sigs: &Sigs) {
     }
 }
 
+/// [M-vec-new-static-arity-overload] fix: pick the ONE overload signature
+/// (from `candidates`, all `(type, method)` overloads collected by
+/// `collect_sigs`) that this call-site's `args` can bind against —
+/// disambiguates arity-overloaded static ctors (e.g. `Vec[T].new(cap
+/// int=0)` 0/1-arg vs `Vec[T].new(ptr,len,cap)` 3-arg) so default-arg
+/// backfill still fires for the correct candidate instead of bailing out
+/// whenever a static method has more than one registered signature.
+/// Fast path (`candidates.len() == 1`) is BYTE-IDENTICAL to the prior
+/// unconditional lookup. `None` (no candidate binds, or ≥2 candidates
+/// bind — genuinely ambiguous) leaves the call untouched, same as before
+/// — codegen resolves it via full type-info (arity + param-C-type +
+/// checker's `resolved_callees`).
+fn pick_static_params<'a>(
+    candidates: &'a [Vec<Param>],
+    args: &[CallArg],
+    trailing_present: bool,
+) -> Option<&'a [Param]> {
+    if candidates.len() == 1 {
+        return Some(&candidates[0]);
+    }
+    let mut matched: Option<&'a [Param]> = None;
+    for cand in candidates {
+        let effective: &[Param] = if trailing_present && !cand.is_empty() {
+            &cand[..cand.len() - 1]
+        } else {
+            cand
+        };
+        if bind_call_args(effective, args).is_ok() {
+            if matched.is_some() {
+                return None; // ≥2 candidates bind — genuinely ambiguous, skip.
+            }
+            matched = Some(cand.as_slice());
+        }
+    }
+    matched
+}
+
 /// Попытаться нормализовать `Call`. Возвращает `Some(new_kind)` если
 /// переписали (в Block-expr), `None` если оставили как есть.
 fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
@@ -411,8 +484,33 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
     let mut is_static_generic_recv = false;
     let params: &[Param] = match &base.kind {
         ExprKind::Ident(name) => sigs.free.get(name)?,
+        // [M-set-from-iter-self-new-default-arg-backfill] (Plan 196 Ф.C):
+        // `Self.new()` written INSIDE a generic-static/instance method body
+        // (e.g. `Set[T].from_iter`'s `mut s = Self.new()`) parses to this
+        // SAME `Path(parts.len()==2)` shape as an ordinary `Type.method()`
+        // static call (confirmed empirically — a capitalized-leading dotted
+        // 2-segment chain collapses to `Path`, never `Member{obj: Ident}`,
+        // so `Self` is just `parts[0]` here). The bug: `parts[0]` was used
+        // LITERALLY as the type-name lookup key, but `"Self"` is never a
+        // real entry in `static_methods` (keyed by the true declared type,
+        // e.g. "Set") → the `?` on the `.get()` bailed the WHOLE function,
+        // silently skipping default-arg backfill for every `Self.method()`
+        // 0-arg/omitted-default call site. Fix: resolve `Self` against
+        // `sigs.self_type` (the ENCLOSING type of the fn being walked, set
+        // by `normalize_item` from `f.receiver.type_name`) before the
+        // `static_methods` probe — same table, same non-generic-static path
+        // used for every other `Type.method()` call, just with `Self`
+        // substituted to its real name first.
         ExprKind::Path(parts) if parts.len() == 2 => {
-            sigs.static_methods.get(&(parts[0].clone(), parts[1].clone()))?
+            // [merge Ф.C + П5]: Self-резолв (enclosing type) И overload-aware
+            // дизамбигуация — обе способности нужны.
+            let type_name = if parts[0] == "Self" {
+                sigs.self_type.borrow().clone()?
+            } else {
+                parts[0].clone()
+            };
+            let cands = sigs.static_methods.get(&(type_name, parts[1].clone()))?;
+            pick_static_params(cands, args, trailing.is_some())?
         }
         // `obj` may itself be the SAME two type-position shapes handled by
         // the `Path`/`TurboFish` arms above — a generic receiver written
@@ -439,7 +537,10 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
                 }
                 _ => None,
             };
-            match static_key.and_then(|tn| sigs.static_methods.get(&(tn, name.clone()))) {
+            match static_key
+                .and_then(|tn| sigs.static_methods.get(&(tn, name.clone())))
+                .and_then(|cands| pick_static_params(cands, args, trailing.is_some()))
+            {
                 Some(p) => { is_static_generic_recv = true; p }
                 None => sigs.instance_by_name.get(name)?,
             }

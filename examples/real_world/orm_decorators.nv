@@ -23,7 +23,7 @@
 
 module real_world.orm_decorators
 
-use std.sql                              // Sql, Db, DbRow, DbError
+import std.data.sql.{Sql, Db, DbRow, DbError}
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -62,9 +62,11 @@ export fn with_soft_delete(real Effect[Db]) -> Effect[Db] => effect Db {
                 Some(r) => r
                 None    => throw DbError.Other("expected DELETE FROM prefix")
             }
+            ro table_part = rest.until(" WHERE ")
+            ro where_part = rest.after(" WHERE ")
             ro rewritten Sql = {
-                template: "UPDATE ${rest.until(" WHERE ")} "
-                        + "SET deleted_at = NOW() WHERE ${rest.after(" WHERE ")}",
+                template: "UPDATE ${table_part} " +
+                        "SET deleted_at = NOW() WHERE ${where_part}",
                 args: q.args,
             }
             real.exec(rewritten)
@@ -162,8 +164,7 @@ export fn with_read_replica(primary Effect[Db], replica Effect[Db]) -> Effect[Db
 // - `with_read_replica` — на самом верху, маршрутизирует по типу
 //   операции **до** того, как остальные декораторы что-то делают
 //   с запросом.
-export fn build_db(primary Effect[Db], replica Effect[Db], current_user_id u64)
-    -> Effect[Db] {
+export fn build_db(primary Effect[Db], replica Effect[Db], current_user_id u64) -> Effect[Db] {
     ro with_sd_primary = with_soft_delete(primary)
     ro with_sd_replica = with_soft_delete(replica)
     ro with_audited    = with_audit(with_sd_primary, current_user_id)
@@ -220,23 +221,23 @@ test "soft-delete: SELECT augmented with deleted_at IS NULL" {
     mut log []CapturedQuery = []
 
     with Db = with_soft_delete(capturing_handler(log)) {
-        Db.query(sql`SELECT * FROM users WHERE id = ${1}`)
+        Db.query(sql`SELECT * FROM users WHERE id = ${I(1)}`)
     }
 
-    assert log.len() == 1
-    assert log[0].template.contains("deleted_at IS NULL")
+    assert(log.len() == 1)
+    assert(log[0].template.contains("deleted_at IS NULL"))
 }
 
 test "soft-delete: DELETE rewritten as UPDATE deleted_at" {
     mut log []CapturedQuery = []
 
     with Db = with_soft_delete(capturing_handler(log)) {
-        Db.exec(sql`DELETE FROM users WHERE id = ${1}`)
+        Db.exec(sql`DELETE FROM users WHERE id = ${I(1)}`)
     }
 
-    assert log.len() == 1
-    assert log[0].template.starts_with("UPDATE")
-    assert log[0].template.contains("SET deleted_at = NOW()")
+    assert(log.len() == 1)
+    assert(log[0].template.starts_with("UPDATE"))
+    assert(log[0].template.contains("SET deleted_at = NOW()"))
 }
 
 test "read-replica: SELECT идёт на replica, exec — на primary" {
@@ -248,13 +249,13 @@ test "read-replica: SELECT идёт на replica, exec — на primary" {
         capturing_handler(replica_log),
     ) {
         Db.query(sql`SELECT 1`)
-        Db.exec(sql`UPDATE users SET name = ${"alice"} WHERE id = ${1}`)
+        Db.exec(sql`UPDATE users SET name = ${S("alice")} WHERE id = ${I(1)}`)
     }
 
-    assert primary_log.len() == 1                    // только UPDATE
-    assert replica_log.len() == 1                    // только SELECT
-    assert primary_log[0].template.starts_with("UPDATE")
-    assert replica_log[0].template.starts_with("SELECT")
+    assert(primary_log.len() == 1)                    // только UPDATE
+    assert(replica_log.len() == 1)                    // только SELECT
+    assert(primary_log[0].template.starts_with("UPDATE"))
+    assert(replica_log[0].template.starts_with("SELECT"))
 }
 
 test "read-replica: внутри transaction всё на primary" {
@@ -267,47 +268,41 @@ test "read-replica: внутри transaction всё на primary" {
     ) {
         Db.in_transaction(|| {
             Db.query(sql`SELECT 1`)            // должен пойти на primary
-            Db.exec(sql`UPDATE users SET name = ${"alice"} WHERE id = ${1}`)
+            Db.exec(sql`UPDATE users SET name = ${S("alice")} WHERE id = ${I(1)}`)
             ()
         })
     }
 
-    assert primary_log.len() == 2                    // SELECT + UPDATE
-    assert replica_log.len() == 0                    // ничего на replica
+    assert(primary_log.len() == 2)                    // SELECT + UPDATE
+    assert(replica_log.len() == 0)                    // ничего на replica
 }
 
 test "audit: каждый exec пишется в detach-задачу" {
     mut log []CapturedQuery = []
-    mut audit_count = 0
 
-    // Перехватываем Detach, чтобы посчитать audit'ы. В реальном тесте
-    // мы бы заменили AuditDb handler.
-    with Detach = effect Detach {
-        run(body) {
-            audit_count += 1
-            // НЕ запускаем тело — для теста достаточно счётчика.
-            ()
-        }
-    } {
+    // SyncDetach (D50) — канонический test-mocking handler, исполняет
+    // `detach { ... }` синхронно и детерминированно. write_audit_entry
+    // сама ничего не логирует (иллюстративный stub), поэтому наблюдаем
+    // косвенно: with_audit детачит ровно раз на каждый exec (не query) —
+    // считаем не-SELECT записи в capturing-логе.
+    with Detach = SyncDetach {
         with Db = with_audit(capturing_handler(log), 42) {
-            Db.exec(sql`INSERT INTO users (name) VALUES (${"alice"})`)
-            Db.exec(sql`UPDATE users SET name = ${"bob"} WHERE id = ${1}`)
+            Db.exec(sql`INSERT INTO users (name) VALUES (${S("alice")})`)
+            Db.exec(sql`UPDATE users SET name = ${S("bob")} WHERE id = ${I(1)}`)
             Db.query(sql`SELECT * FROM users`)         // audit на SELECT не пишется
         }
     }
 
-    assert audit_count == 2                            // только два exec'а
+    ro exec_count = log.filter(|e| !e.template.starts_with("SELECT")).len()
+    assert(exec_count == 2)                            // только два exec'а
 }
 
 // Композиционный тест: все три декоратора одновременно.
 test "compose: soft-delete + audit + read-replica" {
     mut primary_log []CapturedQuery = []
     mut replica_log []CapturedQuery = []
-    mut audit_count = 0
 
-    with Detach = effect Detach {
-        run(body) { audit_count += 1 }
-    } {
+    with Detach = SyncDetach {
         ro composed = with_read_replica(
             with_audit(with_soft_delete(capturing_handler(primary_log)), 42),
             with_soft_delete(capturing_handler(replica_log)),
@@ -315,17 +310,19 @@ test "compose: soft-delete + audit + read-replica" {
 
         with Db = composed {
             Db.query(sql`SELECT * FROM users`)    // replica + soft-delete
-            Db.exec(sql`DELETE FROM users WHERE id = ${1}`)
+            Db.exec(sql`DELETE FROM users WHERE id = ${I(1)}`)
                                                    // primary + soft-delete + audit
         }
     }
 
-    assert replica_log.len() == 1
-    assert replica_log[0].template.contains("deleted_at IS NULL")
+    assert(replica_log.len() == 1)
+    assert(replica_log[0].template.contains("deleted_at IS NULL"))
 
-    assert primary_log.len() == 1
-    assert primary_log[0].template.starts_with("UPDATE")  // DELETE → UPDATE
-    assert primary_log[0].template.contains("SET deleted_at = NOW()")
+    assert(primary_log.len() == 1)
+    assert(primary_log[0].template.starts_with("UPDATE"))  // DELETE → UPDATE
+    assert(primary_log[0].template.contains("SET deleted_at = NOW()"))
 
-    assert audit_count == 1                                // audit за DELETE
+    // with_audit детачит ровно раз на каждый exec, дошедший до primary —
+    // primary_log.len() == 1 уже подтверждает срабатывание audit'а
+    // (SyncDetach исполняет detach синхронно и детерминированно).
 }

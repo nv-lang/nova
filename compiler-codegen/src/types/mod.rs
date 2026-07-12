@@ -8638,7 +8638,44 @@ impl<'a> TypeCheckCtx<'a> {
                     FnBody::Block(b) => self.check_ref_escape_capture_block(b, errors),
                     FnBody::External => {}
                 }
-                self.f1_fn_sig_body(sb, gs, scope, errors)
+                self.f1_fn_sig_body(sb, gs, scope, errors);
+                // 197.3 (Q3 B, channel-first migration): ClosureFull is fully
+                // typed by grammar — every param carries an explicit `T`,
+                // `return_type` is `-> R` or absent (= Unit) — unlike
+                // ClosureLight, no body-inference is needed. Register
+                // `ResolvedType::Func` for the closure's OWN id, mirroring
+                // the ClosureLight zero-param arm above. Consumed by
+                // emit_c.rs Channel 2 (`infer_expr_c_type`'s dedicated
+                // ClosureLight/ClosureFull block) to type e.g.
+                // `ro apply = fn(f fn(int)->int, x int)->int => f(x)`
+                // without falling to the legacy ClosureFull arm there
+                // (dead once this fires — removed alongside this change).
+                // `mark_type_params` (same helper the HOF closure-arg
+                // channel at ~7797 uses) reclassifies a bare in-scope
+                // generic name (`gs`) as `ResolvedType::TypeParam` instead
+                // of a naive `Named` — `resolved_type_to_c`'s TypeParam arm
+                // consults `current_type_subst`, so a generic ClosureFull
+                // resolves correctly PER mono-instantiation at emit time
+                // (not just the fully-concrete case).
+                if e.id.is_set() {
+                    let params_rt: Vec<ResolvedType> = sb.params.iter()
+                        .map(|p| Self::mark_type_params(ResolvedType::from_type_ref(&p.ty), gs))
+                        .collect();
+                    let ret_rt = Self::mark_type_params(
+                        sb.return_type.as_ref()
+                            .map(ResolvedType::from_type_ref)
+                            .unwrap_or(ResolvedType::Unit),
+                        gs,
+                    );
+                    self.resolved_types_buf.borrow_mut().insert(
+                        e.id,
+                        ResolvedType::Func {
+                            params: params_rt,
+                            ret: Box::new(ret_rt),
+                            effects: vec![],
+                        },
+                    );
+                }
             }
             ExprKind::Spawn(body) => {
                 self.check_ref_escape_capture(body, errors);
@@ -9574,6 +9611,23 @@ impl<'a> TypeCheckCtx<'a> {
     /// additionally accepts this result ONLY when it reproduces the legacy binding
     /// as a round-trippable concrete type, so parity holds regardless of the
     /// channel's fidelity (propose-then-verify).
+    ///
+    /// Plan 196.4 Stage-1a: extended so a return mentioning a METHOD-level generic
+    /// (`[U]` — `fn Vec[T] @map[U](f (T)->U) -> Vec[U]`, bound by the CALL'S
+    /// ARGUMENTS, not the receiver) no longer unconditionally bails (the old
+    /// `9624` guard). `method_names` now ALSO mints fresh solver `Var`s (same
+    /// numeric space as the carrier — anti-d119 by construction: a carrier `T`
+    /// and a method `T` sharing a spelling never collide, each is a distinct
+    /// `TypeVar`). When the caller supplies the call's arguments
+    /// (`call_args_scope`), each non-variadic `(declared param, arg)` pair whose
+    /// declared type mentions a method generic contributes a `Constraint::Eq` —
+    /// the SAME structural walk `unify_type` performs for the free-fn
+    /// generic-return arm (`f1_check_call` `10452`-`10492`), expressed on fresh
+    /// `Var`s instead of a name-keyed `HashMap`. A method-generic var left
+    /// unbound (no `call_args_scope`, no matching param, or the arg's type is
+    /// itself unresolved) simply stays a free `Var` — `as_concrete_leaf` then
+    /// honestly reports `None` for the whole return, exactly mirroring the old
+    /// bail's "no annotation" contract for the erased/unresolved case.
     fn resolve_return_channel(
         &self,
         recv: &Receiver,
@@ -9581,8 +9635,10 @@ impl<'a> TypeCheckCtx<'a> {
         peeled: &TypeRef,
         ret: &TypeRef,
         method_names: &HashSet<String>,
+        method_params: &[Param],
+        call_args_scope: Option<(&[CallArg], &HashMap<String, TypeRef>)>,
     ) -> Option<ResolvedType> {
-        use constraint_solver::{TypeVar, VarGen};
+        use constraint_solver::{Solver, Ty, TypeVar, VarGen};
         // Carrier generic names — bare single-segment, no args (same extraction
         // `build_recv_subst` performs). A FRESH var per name (numeric identity).
         let names: Vec<String> = recv
@@ -9602,6 +9658,10 @@ impl<'a> TypeCheckCtx<'a> {
         for n in &names {
             vars.entry(n.clone()).or_insert_with(|| g.fresh());
         }
+        // Stage-1a: method-level generics mint fresh vars TOO — see doc comment.
+        for n in method_names {
+            vars.entry(n.clone()).or_insert_with(|| g.fresh());
+        }
         // Declared receiver pattern: prefer the FULL structured form
         // (`receiver_ty`, the same source `build_recv_subst` unifies), else the
         // flat `Named{type_name, generics}`.
@@ -9615,18 +9675,55 @@ impl<'a> TypeCheckCtx<'a> {
         let concrete_recv =
             Self::ty_from_resolved_vars(&ResolvedType::from_type_ref(peeled), &vars);
         // Return template: pre-bind `Self` to the concrete receiver in TypeRef-land
-        // (byte-parity with legacy), then lift carriers to vars.
+        // (byte-parity with legacy), then lift carriers (+ method generics) to vars.
         let mut self_subst: HashMap<String, TypeRef> = HashMap::new();
         self_subst.insert("Self".to_string(), peeled.clone());
         let ret_self = crate::const_fn_trampoline::subst_type_ref_pub(ret, &self_subst);
-        // Residual method-level generic → the solver would misread the surviving
-        // name as a concrete leaf; bail (mirrors the producer's own guard).
-        if !method_names.is_empty() && typeref_mentions_any(&ret_self, method_names) {
-            return None;
-        }
         let ret_template =
             Self::ty_from_resolved_vars(&ResolvedType::from_type_ref(&ret_self), &vars);
-        constraint_solver::resolve_return(&recv_pattern, &concrete_recv, &ret_template)
+        // Stage-1a: Constraint::Eq param↔arg for METHOD-level generics — see doc
+        // comment. Only the params whose DECLARED type mentions a method
+        // generic are considered (matches the targeted scan `resolve_
+        // method_return_with_closure_args` performs for the closure sub-case).
+        let mut extra_eqs: Vec<(Ty, Ty)> = Vec::new();
+        if !method_names.is_empty() {
+            if let Some((args, scope)) = call_args_scope {
+                for (p, a) in method_params.iter().zip(args.iter()) {
+                    if p.is_variadic {
+                        break;
+                    }
+                    if !typeref_mentions_any(&p.ty, method_names) {
+                        continue;
+                    }
+                    let p_self = crate::const_fn_trampoline::subst_type_ref_pub(&p.ty, &self_subst);
+                    let p_lifted =
+                        Self::ty_from_resolved_vars(&ResolvedType::from_type_ref(&p_self), &vars);
+                    let a_rt = self
+                        .infer_expr_type(a.expr(), scope)
+                        .map(|t| ResolvedType::from_type_ref(&t))
+                        .or_else(|| {
+                            if !a.expr().id.is_set() {
+                                return None;
+                            }
+                            self.resolved_types_buf.borrow().get(&a.expr().id).cloned()
+                        });
+                    if let Some(a_rt) = a_rt {
+                        extra_eqs.push((p_lifted, Ty::from_resolved(&a_rt)));
+                    }
+                }
+            }
+        }
+        let mut solver = Solver::new();
+        solver.unify(&recv_pattern, &concrete_recv).ok()?;
+        for (a, b) in &extra_eqs {
+            // Best-effort per-pair (mirrors `f1_check_call`'s `let _ =
+            // unify_type(..)`, `10477`): one param's structural conflict (an
+            // unrepresentable shape collapsing to a mismatched `Ty::Concrete`
+            // leaf) must not block a DIFFERENT method-generic from binding.
+            let _ = solver.unify(a, b);
+        }
+        let resolved_ret = solver.resolve(&ret_template);
+        solver.as_concrete_leaf(&resolved_ret)
     }
 
     /// Plan 172.1 U.4.4 (Match-arm half): the COMMON result type of a `match`
@@ -10449,7 +10546,33 @@ impl<'a> TypeCheckCtx<'a> {
                     };
                     let rt = ResolvedType::from_type_ref(ret_ty);
                     self.resolved_types_buf.borrow_mut().insert(call_id, rt);
-                } else if callee.receiver.is_none() && !callee_gs_inner.is_empty() {
+                } else if (callee.receiver.is_none()
+                    // Plan 196.4 Stage-1b: a STATIC method (`fn Type[T].method(...)`,
+                    // called bare — `Type.method(args)`, no turbofish on `Type`) has NO
+                    // receiver VALUE to carrier-subst from (unlike an instance method —
+                    // that's `resolve_return_channel`'s job, 9594) and no explicit
+                    // type-args either (a turbofish call — `Type[T].method(args)` — is a
+                    // DIFFERENT AST shape, `Member{obj:TurboFish{..}}`, that never reaches
+                    // `f1_check_call`'s callee-resolution arms at all — see
+                    // `resolve_generic_static_return`, 13567, the Tier-1 channel for
+                    // THAT shape, D372). The only source of concrete type for the
+                    // receiver's carrier generics AND the method's own generics is the
+                    // SAME one a free fn has: the call's ARGUMENTS. Extend this arm to a
+                    // static receiver too — the `unify_type` walk below is receiver-
+                    // agnostic (`callee.params`/`args` line up 1:1 for a static call
+                    // exactly like a free fn, no implicit receiver param) and the
+                    // materialize-only-when-FULLY-resolved gate two lines down already
+                    // guards a `-> Self`-adjacent bounded-generic residual (e.g.
+                    // `ArrayGen[G Generator[T], T].default(elem G) -> ArrayGen[G, T]` —
+                    // `T` is not itself a param, only reachable through `G`'s bound;
+                    // structural `unify_type` leaves it unbound → residual → skip,
+                    // unchanged legacy fallback, exactly the erased-body contract below).
+                    || matches!(
+                        callee.receiver.as_ref().map(|r| &r.kind),
+                        Some(ReceiverKind::Static)
+                    ))
+                    && !callee_gs_inner.is_empty()
+                {
                     // [M-172.1-U4-freefn-generic-return] (Plan 177 Ф.2c): the callee's
                     // return MENTIONS its own type-params — e.g. `sequence(items
                     // []Result[T,E]) -> Result[[]T,E]`, `partition(...) -> ([]T,[]E)`.
@@ -10462,12 +10585,15 @@ impl<'a> TypeCheckCtx<'a> {
                     // the SAME unifier `build_recv_subst` uses for receivers) and
                     // SUBSTITUTE, so the CONCRETE return (`Result[[]int,str]` /
                     // `([]int,[]str)`) is materialized and codegen lowers it through the
-                    // SINGLE `resolved_type_to_c` (D315), not a subst-mirror. Only for a
-                    // FREE fn (no receiver — receiver-carrier generics are the method
-                    // channel's job, 7202) and only when FULLY resolved for THIS caller
-                    // (no residual type-param after subst): an erased generic body caller
-                    // (unbound `T` in scope) leaves a residual → skip → legacy (mirrors
-                    // the concrete-caller invariant of the method-channel gs-gate).
+                    // SINGLE `resolved_type_to_c` (D315), not a subst-mirror. For a FREE
+                    // fn OR a STATIC method (Plan 196.4 Stage-1b — receiver-VALUE carrier
+                    // generics are the instance-method channel's job, 7202; a static
+                    // receiver has no value, only its declared carrier names, which this
+                    // arm now solves from args the same as a method-own generic) and only
+                    // when FULLY resolved for THIS caller (no residual type-param after
+                    // subst): an erased generic body caller (unbound `T` in scope) leaves
+                    // a residual → skip → legacy (mirrors the concrete-caller invariant
+                    // of the method-channel gs-gate).
                     let mut subst: HashMap<String, TypeRef> = HashMap::new();
                     for (p, a) in callee.params.iter().zip(args.iter()) {
                         if p.is_variadic {
@@ -12397,7 +12523,74 @@ impl<'a> TypeCheckCtx<'a> {
     /// generic-scope, в котором объявлен `expected` (для arg↔param это
     /// разные scope: caller vs callee). Числовые литералы полиморфны
     /// (D44): целый литерал совместим с любым числовым типом.
+    /// Plan 200 (sql-autoconv) D55 amend entry-point: `assignable_direct`
+    /// (the structural EXACT check, unchanged) PLUS — when direct fails —
+    /// the "obvious single-wrapper coercion" fallback (D55 §Sum/newtype
+    /// auto-wrap): `expected` is a declared sum-with-one-matching-unary-
+    /// variant or a newtype, and `expr`'s own kind unambiguously matches
+    /// exactly ONE candidate's inner type. Exactly one level deep — the
+    /// fallback re-checks candidates via `assignable_direct` only (never
+    /// `assignable` again), so a chain (int→UserId→Wrapper) is NOT
+    /// auto-wrapped; only the single declared wrapper is.
     fn assignable(
+        &self,
+        expr: &Expr,
+        expected: &TypeRef,
+        expr_gs: &HashSet<String>,
+        exp_gs: &HashSet<String>,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Compat {
+        let direct = self.assignable_direct(expr, expected, expr_gs, exp_gs, scope);
+        if let Compat::Bad { .. } = &direct {
+            let lookup = |n: &str| self.types.get(n).map(|td| td.kind.clone());
+            let candidates = single_wrap_candidates(&lookup, expected);
+            if !candidates.is_empty() {
+                let found_kind = self.wrap_kind_of_expr(expr, scope);
+                if let Some(found_kind) = found_kind {
+                    let matches: Vec<&(WrapTarget, TypeRef)> = candidates
+                        .iter()
+                        .filter(|(_, inner_ty)| {
+                            wrap_kind_of(inner_ty, &lookup, 0) == found_kind
+                        })
+                        .collect();
+                    // Ambiguous (≥2 candidates match, e.g. an `int` literal
+                    // would match BOTH an `I(i64)` and — if it existed — a
+                    // second int-family variant) or no match (0) → no
+                    // auto-wrap, fall through to the direct verdict.
+                    if matches.len() == 1 {
+                        let (_, inner_ty) = matches[0];
+                        return self.assignable_direct(expr, inner_ty, expr_gs, exp_gs, scope);
+                    }
+                }
+            }
+        }
+        direct
+    }
+
+    /// Plan 200 (sql-autoconv) D55 amend: best-effort `WrapKind` of `expr` —
+    /// used ONLY to disambiguate wrap candidates in `assignable` (never to
+    /// decide plain assignability, which stays `assignable_direct`'s job).
+    /// Literal kinds are read directly off the AST (cheap, exact); anything
+    /// else falls back to `infer_expr_type` (covers `Ident` var references —
+    /// the `${n}` case — plus any other expr whose type is inferable).
+    fn wrap_kind_of_expr(&self, expr: &Expr, scope: &HashMap<String, TypeRef>) -> Option<WrapKind> {
+        match &expr.kind {
+            ExprKind::IntLit(_) => Some(WrapKind::IntFamily),
+            ExprKind::Unary { op: UnOp::Neg, operand } if matches!(operand.kind, ExprKind::IntLit(_)) => {
+                Some(WrapKind::IntFamily)
+            }
+            ExprKind::FloatLit(_) => Some(WrapKind::Float),
+            ExprKind::BoolLit(_) => Some(WrapKind::Bool),
+            ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => Some(WrapKind::Str),
+            _ => {
+                let tr = self.infer_expr_type(expr, scope)?;
+                let lookup = |n: &str| self.types.get(n).map(|td| td.kind.clone());
+                Some(wrap_kind_of(&tr, &lookup, 0))
+            }
+        }
+    }
+
+    fn assignable_direct(
         &self,
         expr: &Expr,
         expected: &TypeRef,
@@ -12415,6 +12608,35 @@ impl<'a> TypeCheckCtx<'a> {
         }
         // Литералы: тип адаптируется к контексту (D44).
         match &expr.kind {
+            // Plan 200 (sql-autoconv) D55 amend: `[a, b, …]` against `[]T` /
+            // `Vec[T]` — coerce EACH element independently (recursing through
+            // the full `assignable`, so a heterogeneous literal like
+            // `[1, "alice", true]` against `[]SqlValue` wrap-coerces every
+            // element on its own — this is what unblocks bare `${1}`/`${n}`
+            // tag-template interpolation: the parser desugars `${…}` into
+            // exactly this shape, an `ArrayLit` argument at a known `[]T`
+            // call-arg position). Only when every element is a plain `Item`
+            // (no spreads) — a spread's source is itself a whole `[]T`, not
+            // a per-element value, so it stays on the legacy `infer_expr_type`
+            // path below (unaffected by this arm).
+            ExprKind::ArrayLit(items)
+                if !items.is_empty()
+                    && items.iter().all(|it| matches!(it, ArrayElem::Item(_))) =>
+            {
+                if let Some(elem_ty) = array_elem_type(expected) {
+                    for it in items {
+                        let ArrayElem::Item(item_expr) = it else { unreachable!() };
+                        match self.assignable(item_expr, elem_ty, expr_gs, exp_gs, scope) {
+                            Compat::Ok => {}
+                            Compat::Bad { found } => {
+                                return Compat::Bad { found: format!("[]{found}") };
+                            }
+                            other => return other,
+                        }
+                    }
+                    return Compat::Ok;
+                }
+            }
             ExprKind::IntLit(v) => {
                 return match &exp_rt {
                     ResolvedType::Scalar { .. } => {
@@ -13771,16 +13993,60 @@ impl<'a> TypeCheckCtx<'a> {
         // METHOD generics against `subst.keys()`, missing both carrier classes. Carrier names are
         // extracted the SAME way `build_recv_subst` does (bare single-segment, no nested generics).
         // 172.1.2 Шаг 3.2: гейт РАСЩЕПЛЁН. (a) METHOD-level generic (`[U]` — биндинг
-        // из аргументов, arg-inference ещё нет) → bail ОСТАВЛЕН: голый Named{U} в
-        // канале лоуэрился бы через bare-name subst ЧУЖОГО контекста (d119-класс).
-        // (b) RECEIVER-carrier residual (`-> T`, `-> *mut T` при vacuous T→T) →
-        // БОЛЬШЕ НЕ bail: имя ∈ gs объемлющего тела → Call-арм пометит его
-        // mark_type_params → TypeParam(T) → лоуэринг receiver-instance-map/subst
-        // или Err→legacy (Шаг 1/2b инфраструктура).
+        // из аргументов) — Plan 196.4 Stage-1a больше НЕ безусловный bail (см. ветку
+        // ниже): args-driven унификация пробует связать `U` из вызова, прежде чем
+        // сдаться на legacy. (b) RECEIVER-carrier residual (`-> T`, `-> *mut T` при
+        // vacuous T→T) → БОЛЬШЕ НЕ bail: имя ∈ gs объемлющего тела → Call-арм
+        // пометит его mark_type_params → TypeParam(T) → лоуэринг
+        // receiver-instance-map/subst или Err→legacy (Шаг 1/2b инфраструктура).
         let method_names: HashSet<String> =
             f.generics.iter().map(|g| g.name.clone()).collect();
         if !method_names.is_empty() && typeref_mentions_any(&out, &method_names) {
-            return None;
+            // Plan 196.4 Stage-1a: `out` (carrier+`Self` only, `build_recv_subst`)
+            // still carries an unbound METHOD-level generic — bound by the CALL'S
+            // ARGUMENTS, which `build_recv_subst` never sees (the Tier-2 gap
+            // `docs/plans/196.4-call-resolvedtype-channel.md` §1/§8 identifies:
+            // `Result[T,E].map[U](...)`-shaped instance-method returns). Bind it
+            // the SAME way the free-fn generic-return arm does (`f1_check_call`
+            // `10452`-`10492`): structural `unify_type` per non-variadic
+            // (declared param, arg) pair whose declared type mentions a method
+            // generic, seeded with the carrier+`Self` subst already computed
+            // above. Needs the call's arguments — absent (`args_scope: None`,
+            // the 0-arity `resolve_instance_method_return` wrapper) → honest
+            // bail, unchanged legacy behavior.
+            let Some((call_args, call_scope)) = args_scope else { return None };
+            let mut full_subst = subst.clone();
+            for (p, a) in f.params.iter().zip(call_args.iter()) {
+                if p.is_variadic {
+                    break;
+                }
+                if !typeref_mentions_any(&p.ty, &method_names) {
+                    continue;
+                }
+                let p_seeded = crate::const_fn_trampoline::subst_type_ref_pub(&p.ty, &subst);
+                if let Some(a_ty) = self.infer_expr_type(a.expr(), call_scope) {
+                    let _ = crate::const_fn_trampoline::unify_type(
+                        &p_seeded, &a_ty, &method_names, &mut full_subst);
+                }
+            }
+            let out_full = crate::const_fn_trampoline::subst_type_ref_pub(ret, &full_subst);
+            if typeref_mentions_any(&out_full, &method_names) {
+                return None; // still unresolved from the args — honest bail
+            }
+            // Gate: require the constraint-solver channel (`resolve_return_
+            // channel`, Stage-1a-extended with `Constraint::Eq` param↔arg on
+            // fresh vars — anti-d119) to INDEPENDENTLY reproduce this binding
+            // before materializing. This class had NO legacy value before
+            // Stage-1a (this branch previously ALWAYS bailed to `None`) — the
+            // solver's agreement IS the correctness gate (propose-then-verify),
+            // checked in EVERY build (not a debug-only assert): there is
+            // nothing else to trust a release build's materialization against.
+            let channel = self.resolve_return_channel(
+                recv, recv_ty, peeled, ret, &method_names, &f.params, args_scope);
+            return match channel {
+                Some(rt) if rt == ResolvedType::from_type_ref(&out_full) => Some(out_full),
+                _ => None,
+            };
         }
         // Plan 172.1.2 (plan154 / self_nested / flatten fix): bail when the return lowers to a
         // mono-instantiated CONTAINER/slice/tuple (`Array` / `Named`-with-generics / `Tuple`).
@@ -13826,10 +14092,24 @@ impl<'a> TypeCheckCtx<'a> {
         // TypeRef could pick a chain-divergent receiver spelling for an OUTER
         // `a.b().c()` (this fn's result feeds the recursive receiver resolution).
         // Byte-identical BY CONSTRUCTION — `out` is returned unchanged; the solver
-        // is consulted read-only and its agreement asserted. Live-swapping
-        // `build_recv_subst` wholesale is the next wave (recon §III —
-        // TypeRef-native bridge).
-        let channel = self.resolve_return_channel(recv, recv_ty, peeled, ret, &method_names);
+        // is consulted read-only and its agreement asserted.
+        //
+        // Plan 196.4 Stage-1a: this pure-carrier path is DELIBERATELY kept SHADOW
+        // (not flipped to return a solver-reconstructed TypeRef) — `ResolvedType::
+        // from_type_ref` canonicalizes `[]T` to `Named{Vec,[T]}` (D239, `168`-`218`
+        // above), which is NON-invertible: reconstructing a TypeRef from the
+        // channel's `ResolvedType` for a slice-shaped carrier binding would
+        // relabel `[]T` spelling to `Vec[T]`, risking the LITERAL `"[]elem"`-keyed
+        // concrete-slice method lookup a CHAIN receiver resolve can depend on
+        // (`13617`-`13650`, D174.1) — exactly the hazard this comment already
+        // flags. Since `out` and the channel already AGREE here (the assert below
+        // never trips on the corpus), swapping buys no new coverage and only
+        // reintroduces that documented regression class; the flip is applied
+        // instead where it unlocks NEW coverage — the method-generic-residual
+        // branch above, gated on independent solver agreement (not a debug-only
+        // assert), which is Stage-1a's actual Tier-2 deliverable.
+        let channel = self.resolve_return_channel(
+            recv, recv_ty, peeled, ret, &method_names, &f.params, args_scope);
         debug_assert!(
             channel
                 .as_ref()
@@ -14865,6 +15145,129 @@ fn array_elem_type(expected: &TypeRef) -> Option<&TypeRef> {
             generics.first()
         }
         _ => None,
+    }
+}
+
+/// Plan 200 (sql-autoconv) D55 amend — "obvious single-wrapper coercion":
+/// how a bare value at an `expected`-typed position gets wrapped. Exactly
+/// ONE level (the candidate's OWN inner type is never re-unwrapped) — a
+/// chain like `int → UserId → Wrapper` stays rejected, only the single
+/// declared wrapper auto-wraps. See `single_wrap_candidates` / `assignable`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum WrapTarget {
+    /// `type X Y` (D52 newtype) — wrap via `expr as X`. Reuses the existing
+    /// `as`-cast codegen verbatim (incl. numeric width conversion), no new
+    /// codegen needed.
+    Newtype(String),
+    /// `type X enum … | Variant(Y) | …` (D406) with `Variant` the sum's
+    /// ONLY unary (single-payload) constructor accepting `Y` — wrap via
+    /// `X.Variant(expr)`, same shape as the explicit form authors already
+    /// write (`SqlValue.I(1)`) — reuses existing ctor-call codegen.
+    SumVariant(String, String),
+}
+
+/// D55 amend: every syntactically eligible `(wrap_target, required inner
+/// type)` pair for `expected`. Zero candidates ⟹ `expected` isn't a
+/// declared non-generic newtype/sum — no auto-wrap possible. The CALLER
+/// disambiguates by matching the value's own `WrapKind` against each
+/// candidate's inner-type `WrapKind`: exactly one match ⟹ unambiguous
+/// wrap; zero or ≥2 ⟹ no auto-wrap (ambiguous, or plain mismatch — the
+/// existing error stands).
+///
+/// Bootstrap-scoped to NON-GENERIC wrapper types (`generics` must be empty)
+/// — `SqlValue`/`UserId`-shaped declarations; a parameterized wrapper
+/// (`Wrapper[T]`) is out of scope (mirrors D55's existing generic-arg
+/// coercion gaps elsewhere in this checker).
+/// `lookup` — resolve a type NAME to its declared `TypeDeclKind` (owned —
+/// callers hold it either as `&TypeDecl` refs, borrowed-`HashMap<String,
+/// TypeDecl>`, or a fresh scan; a closure decouples this shared rule from
+/// any one context's concrete map shape, so BOTH `assignable` — the
+/// ACCEPT side — and the `annotate_sum_wrap` REWRITE pass — the emit side
+/// — call the exact same decision function).
+fn single_wrap_candidates(
+    lookup: &impl Fn(&str) -> Option<TypeDeclKind>,
+    expected: &TypeRef,
+) -> Vec<(WrapTarget, TypeRef)> {
+    let mut ty = expected;
+    loop {
+        match ty {
+            TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
+                ty = inner;
+            }
+            _ => break,
+        }
+    }
+    let TypeRef::Named { path, generics, .. } = ty else { return Vec::new() };
+    if !generics.is_empty() {
+        return Vec::new();
+    }
+    let Some(name) = path.last() else { return Vec::new() };
+    match lookup(name) {
+        Some(TypeDeclKind::Newtype(inner)) => {
+            vec![(WrapTarget::Newtype(name.clone()), inner)]
+        }
+        Some(TypeDeclKind::Sum(variants)) => variants
+            .iter()
+            .filter_map(|v| match &v.kind {
+                SumVariantKind::Tuple(tys) if tys.len() == 1 => Some((
+                    WrapTarget::SumVariant(name.clone(), v.name.clone()),
+                    tys[0].clone(),
+                )),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// D55 amend: coarse structural "kind" of a type, for wrap-candidate
+/// disambiguation ONLY. Deliberately STRICTER than `cat_compatible_rt`
+/// (which permissively treats int↔float as mutually assignable, D44): an
+/// `int` value must be eligible for an `I(i64)` wrap candidate and NEVER
+/// simultaneously for an `F(f64)` one, or `sql\`${1}\`` would be flagged
+/// ambiguous instead of wrapping to `I(1)`. Aliases transparently resolve
+/// to their underlying kind (depth-guarded).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum WrapKind {
+    IntFamily,
+    Float,
+    Bool,
+    Str,
+    Array(Box<WrapKind>),
+    Named(String),
+    Other,
+}
+
+fn wrap_kind_of(ty: &TypeRef, lookup: &impl Fn(&str) -> Option<TypeDeclKind>, depth: u32) -> WrapKind {
+    if depth > 8 {
+        return WrapKind::Other;
+    }
+    match ty {
+        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
+            wrap_kind_of(inner, lookup, depth + 1)
+        }
+        TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+            WrapKind::Array(Box::new(wrap_kind_of(inner, lookup, depth + 1)))
+        }
+        TypeRef::Named { path, generics, .. } => {
+            let Some(name) = path.last() else { return WrapKind::Other };
+            match name.as_str() {
+                "int" | "uint" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" => {
+                    WrapKind::IntFamily
+                }
+                "f32" | "f64" => WrapKind::Float,
+                "bool" => WrapKind::Bool,
+                "str" => WrapKind::Str,
+                "Vec" if generics.len() == 1 => {
+                    WrapKind::Array(Box::new(wrap_kind_of(&generics[0], lookup, depth + 1)))
+                }
+                _ => match lookup(name) {
+                    Some(TypeDeclKind::Alias(inner)) => wrap_kind_of(&inner, lookup, depth + 1),
+                    _ => WrapKind::Named(name.clone()),
+                },
+            }
+        }
+        _ => WrapKind::Other,
     }
 }
 
@@ -16683,7 +17086,21 @@ impl<'a> BoundCtx<'a> {
             _ => func.as_ref(),
         };
         // Резолвим callee → список параметров.
-        let callee_params: &[Param] = match &base.kind {
+        // Plan 196.3 (D102/D372-позиционка, one-window fold): резолв теперь
+        // возвращает ТАКЖЕ имя callee (не только params) — `check_keyword_only`
+        // применяет единое, структурное D372-amend2-исключение (canonical
+        // single-default `cap`-ctor позиционно легален) в ОДНОМ месте, вне
+        // зависимости от того, каким из трёх путей ниже резолвился callee.
+        // До этого исключения не было вообще: generic-static (`Vec[T].new(n)`
+        // и т.п.) молча ИЗБЕГАЛ диагностики (Member{obj: TurboFish{..}} не
+        // резолвится через `resolve_instance_method`, obj — не value-типа,
+        // Попытка 1 проваливается, Попытка 2 — arity-neutral name-only —
+        // почти всегда ambiguous среди `new`-методов разных типов → `None`
+        // → ранний `return` до вызова `check_keyword_only`), а non-generic
+        // static (`StringBuilder.new(128)` — `Path`, 2 сегмента, однозначный
+        // `method_table`-lookup) резолвился и ловил D102 по факту случайной
+        // разницы AST-формы, а не по спеке.
+        let (callee_params, callee_name): (&[Param], &str) = match &base.kind {
             ExprKind::Ident(name) => {
                 // Plan 153 fix (regression from vec `resize_with`/`fill_with`,
                 // 2026-06-14): a LOCAL binding named `name` — in particular a
@@ -16698,7 +17115,7 @@ impl<'a> BoundCtx<'a> {
                 if scope.contains_key(name) { return; }
                 let Some(overloads) = self.sig.fn_decls.get(name) else { return; };
                 match overloads.as_slice() {
-                    [single] => &single.params,
+                    [single] => (&single.params, name.as_str()),
                     _ => return, // overload — пропускаем (D102: нет overload,
                                  // но bootstrap fn_decls может иметь несколько).
                 }
@@ -16708,7 +17125,7 @@ impl<'a> BoundCtx<'a> {
                 let Some(methods) = self.sig.method_table.get(&parts[0]) else { return; };
                 let Some(overloads) = methods.get(&parts[1]) else { return; };
                 match overloads.as_slice() {
-                    [single] => &single.params,
+                    [single] => (&single.params, parts[1].as_str()),
                     _ => return,
                 }
             }
@@ -16725,7 +17142,7 @@ impl<'a> BoundCtx<'a> {
             ExprKind::Member { obj, name: method_name } => {
                 let resolved = self.resolve_instance_method(obj, method_name, scope, args.len());
                 match resolved {
-                    Some(f) => &f.params,
+                    Some(f) => (&f.params, method_name.as_str()),
                     None => return,
                 }
             }
@@ -16783,7 +17200,7 @@ impl<'a> BoundCtx<'a> {
                 // Отдельная диагностика на КАЖДЫЙ нарушающий аргумент
                 // (не «первый и стоп») — error recovery без каскада:
                 // просто продолжаем цикл.
-                self.check_keyword_only(effective_params, args, &bindings, errors);
+                self.check_keyword_only(effective_params, args, &bindings, callee_name, errors);
                 // Plan 172.5 (D326): validate `ref` passing-mode — call-site
                 // marker ⟺ `mut ref` param, arg addressability + mutability,
                 // and same-call alias exclusivity (E_REF_ALIAS_OVERLAP).
@@ -17014,15 +17431,43 @@ impl<'a> BoundCtx<'a> {
     /// аргументы, легшие на параметры с дефолтом, и эмитить production-grade
     /// диагностику на каждый (имя параметра, `note: declared here`,
     /// machine-applicable structured suggestion `name: <expr>`).
+    ///
+    /// Plan 196.3 (D102/D372-amend2 fold, one window): единственное
+    /// структурное исключение из keyword-only — canonical single-default
+    /// `cap`-ctor: `fn Type.new(cap int = 0) -> Self`. Спека
+    /// (`spec/decisions/02-types.md` §D372 amend 2) делает `.new(1024)`
+    /// позиционным ЛЕГАЛЬНЫМ наравне с `.new(cap: 1024)` — для ЛЮБОГО типа,
+    /// принявшего конвенцию (`Vec`/`[]T`, `HashMap`, `Set`, `Queue`,
+    /// `StringBuilder`, `WriteBuffer`, и любой будущий), generic-static или
+    /// нет. Раньше это работало ТОЛЬКО для generic-static форм (`Vec[T]
+    /// .new(n)`) — не потому что было спроектировано, а потому что их
+    /// `Member{obj: TurboFish{..}}` call-shape не резолвится через
+    /// `resolve_instance_method` (obj — не value типа) и звонок в
+    /// `check_call_argbind` возвращался РАНО, до вызова этой функции;
+    /// non-generic static (`StringBuilder.new(128)`, `Path`-shape,
+    /// однозначный `method_table`-lookup) резолвился успешно и ловил D102
+    /// по случайности AST-формы. Проверка вынесена сюда — единственная
+    /// точка входа для ВСЕХ трёх путей резолва `check_call_argbind`, так
+    /// что расхождение по AST-форме больше не имеет значения. Заскоуплено
+    /// УЗКО (имя callee буквально `new`, арность ровно 1, единственный
+    /// параметр называется буквально `cap`) — НЕ открывает позиционку для
+    /// произвольных default-параметров других функций/методов.
     fn check_keyword_only(
         &self,
         effective_params: &[Param],
         args: &[CallArg],
         bindings: &[crate::argbind::ArgBinding],
+        callee_name: &str,
         errors: &mut Vec<Diagnostic>,
     ) {
         use crate::argbind::ArgBinding;
         use crate::diag::{Applicability, Span, Suggestion};
+        let is_canonical_cap_ctor = callee_name == "new"
+            && effective_params.len() == 1
+            && effective_params[0].name == "cap";
+        if is_canonical_cap_ctor {
+            return;
+        }
         for (pi, binding) in bindings.iter().enumerate() {
             let ArgBinding::Positional(ai) = binding else { continue; };
             let param = &effective_params[pi];
@@ -27906,6 +28351,14 @@ struct MapLitCtx {
     /// вложенная типизация не срабатывают. Собирается из `module.items` и
     /// `peer_files` (та же модуль-папка), только `TypeDeclKind::Record`.
     record_field_types: HashMap<String, HashMap<String, TypeRef>>,
+    /// Plan 200 (sql-autoconv) D55 amend: type name → declared `TypeDeclKind`
+    /// (Sum / Newtype, others irrelevant) — feeds `single_wrap_candidates`
+    /// for the SAME "obvious single-wrapper coercion" rewrite `assignable`
+    /// already ACCEPTS at check-time (types/mod.rs `fn assignable`). This
+    /// reuses `MapLitAnnotator`'s existing expected-type-propagated walk
+    /// (let/const/call-arg/array-element/tuple/record-field/…) instead of a
+    /// parallel pass — one walker, one place.
+    wrap_types: HashMap<String, TypeDeclKind>,
 }
 
 impl MapLitCtx {
@@ -28000,10 +28453,23 @@ impl MapLitCtx {
             }
         }
 
+        // Plan 200 (sql-autoconv) D55 amend: type name → kind, for wrap
+        // candidates. Scanned across `module.items` AND `peer_files` (folder
+        // modules — `SqlValue` could in principle live in a peer file, mirrors
+        // `record_field_types`'s own peer coverage above).
+        let mut wrap_types: HashMap<String, TypeDeclKind> = HashMap::new();
+        for pf in &module.peer_files {
+            for it in &pf.items_here {
+                if let Item::Type(t) = it {
+                    wrap_types.entry(t.name.clone()).or_insert_with(|| t.kind.clone());
+                }
+            }
+        }
         for item in &module.items {
             match item {
                 Item::Type(t) => {
                     known_types.insert(t.name.clone());
+                    wrap_types.entry(t.name.clone()).or_insert_with(|| t.kind.clone());
                     collect_record_fields(t, &mut record_field_types);
                     // Plan 52 Ф.19: canonical-identity check. Если у нас
                     // есть peer_files info — добавляем только canonical
@@ -28110,6 +28576,7 @@ impl MapLitCtx {
             fn_generics: HashSet::new(),
             from_pairs_types,
             record_field_types,
+            wrap_types,
         }
     }
 
@@ -28128,6 +28595,7 @@ impl MapLitCtx {
                         fn_generics: f.generics.iter().map(|g| g.name.clone()).collect(),
                         from_pairs_types: self.from_pairs_types.clone(),
                         record_field_types: self.record_field_types.clone(),
+                        wrap_types: self.wrap_types.clone(),
                     };
                     // Generic-параметры receiver-типа тоже видимы.
                     if let Some(recv) = &f.receiver {
@@ -29064,6 +29532,17 @@ impl MapLitAnnotator {
                                 span: d.value.span,
                             },
                         );
+                    } else if let Some(t) = simple_expr_type(&d.value) {
+                        // Plan 200 (sql-autoconv) D55 amend: unannotated
+                        // literal binding (`ro n = 1`) — record its simple
+                        // type too, so a LATER use of `n` at a wrap-eligible
+                        // position (`sql\`${n}\``) can be identified via
+                        // `try_wrap_leaf`'s `Ident` lookup. Was previously
+                        // dropped (fell to the `remove` arm below) — the
+                        // ONLY consumer of `var_types` used to be the
+                        // all-spread map/array disambiguation, which never
+                        // needed a plain scalar's type.
+                        self.var_types.insert(name.clone(), t);
                     } else {
                         // Неизвестный тип — снять устаревший entry (shadowing).
                         self.var_types.remove(name);
@@ -29150,7 +29629,90 @@ impl MapLitAnnotator {
         first
     }
 
+    /// Plan 200 (sql-autoconv) D55 amend: rewrite `e` IN PLACE into
+    /// `Type.Variant(payload)` when `e` is a plain leaf (literal / var
+    /// `Ident`) and `expected` is a declared sum type with EXACTLY ONE
+    /// unary variant whose payload type matches `e`'s own (coarse, D44-
+    /// unaware — see `WrapKind`) kind. No-op for anything else: non-leaf
+    /// exprs, ambiguous (≥2) or unmatched (0) candidates, or a Newtype
+    /// target (accepted at check-time already, nothing to materialize —
+    /// same C representation, D52).
+    fn try_wrap_leaf(&mut self, e: &mut Expr, expected: &TypeRef) {
+        let found_kind = match &e.kind {
+            ExprKind::IntLit(_) => WrapKind::IntFamily,
+            ExprKind::Unary { op: UnOp::Neg, operand }
+                if matches!(operand.kind, ExprKind::IntLit(_)) =>
+            {
+                WrapKind::IntFamily
+            }
+            ExprKind::FloatLit(_) => WrapKind::Float,
+            ExprKind::BoolLit(_) => WrapKind::Bool,
+            ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => WrapKind::Str,
+            ExprKind::Ident(name) => {
+                let Some(ty) = self.var_types.get(name) else { return };
+                let lookup = |n: &str| self.ctx.wrap_types.get(n).cloned();
+                wrap_kind_of(ty, &lookup, 0)
+            }
+            _ => return,
+        };
+        let lookup = |n: &str| self.ctx.wrap_types.get(n).cloned();
+        let candidates = single_wrap_candidates(&lookup, expected);
+        if candidates.is_empty() {
+            return;
+        }
+        let matches: Vec<&(WrapTarget, TypeRef)> = candidates
+            .iter()
+            .filter(|(_, inner)| wrap_kind_of(inner, &lookup, 0) == found_kind)
+            .collect();
+        if matches.len() != 1 {
+            return; // ambiguous or no match — leave as-is (checker's verdict stands).
+        }
+        let (target, inner_ty) = matches[0];
+        let WrapTarget::SumVariant(tname, vname) = target else {
+            return; // Newtype — accept-only, see doc comment above.
+        };
+        let span = e.span;
+        let old = std::mem::replace(e, Expr::new(ExprKind::UnitLit, span));
+        // Numeric candidate payload (e.g. `i64`) — auto-insert `as <inner>`
+        // so a Nova `int` (intptr_t) value widens/narrows to the variant's
+        // OWN declared payload type invisibly (owner directive: "прячь
+        // int→i64 в коэрсии"). Harmless no-op cast when already exact
+        // (`1 as i64` on an already-i64 literal is a legal identity cast).
+        let numeric = matches!(wrap_kind_of(inner_ty, &lookup, 0), WrapKind::IntFamily | WrapKind::Float);
+        let payload = if numeric {
+            Expr::new(ExprKind::As(Box::new(old), inner_ty.clone()), span)
+        } else {
+            old
+        };
+        *e = Expr::new(
+            ExprKind::Call {
+                func: Box::new(Expr::new(ExprKind::Path(vec![tname.clone(), vname.clone()]), span)),
+                args: vec![CallArg::Item(payload)],
+                trailing: None,
+            },
+            span,
+        );
+    }
+
     fn walk_expr(&mut self, e: &mut Expr, expected: Option<&TypeRef>) {
+        // Plan 200 (sql-autoconv) D55 amend: "obvious single-wrapper
+        // coercion" REWRITE — a bare leaf value (literal / var `Ident`) at
+        // a KNOWN sum-typed `expected` position becomes an explicit
+        // `Type.Variant(payload)` constructor call, so downstream codegen
+        // sees the SAME shape it already emits correctly for a hand-written
+        // `SqlValue.I(1)`. `assignable` (types/mod.rs, D55 amend) already
+        // ACCEPTS this at check-time via the identical `single_wrap_
+        // candidates`/`wrap_kind_of` decision rule — this is purely the
+        // materialization half, piggy-backing on the SAME expected-type-
+        // propagated walk already built for map-literal coercion (this
+        // covers let/const/call-arg[free-fn]/array-element/tuple/record-
+        // field/if-else/match-arm positions for free — no separate pass).
+        // Newtype targets are NOT rewritten (`type X Y` = same C repr as
+        // `Y`, D52 — nothing to materialize; `assignable`'s accept alone
+        // is sufficient, confirmed empirically).
+        if let Some(exp) = expected {
+            self.try_wrap_leaf(e, exp);
+        }
         // Plan 52.x: all-spread `[...a, ...b]` без expected-типа —
         // синтезируем map-тип из spread-источников, чтобы конверсия
         // ArrayLit→MapLit ниже и inference K/V сработали (без этого

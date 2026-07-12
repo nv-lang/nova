@@ -131,26 +131,67 @@ Set/Queue/StringBuilder/WriteBuffer.
 
 ## Пункт 5 — фолд `from_raw_parts` → `new(ptr, len, cap)` overload (D372-amend1)
 
-**Статус:** ⛔ ЗАБЛОКИРОВАН до фикса `[M-vec-new-static-arity-overload]` (отслеживается 196.2/волна-1).
-Зарегистрирован по указанию владельца 2026-07-12.
+**Статус:** ✅ СДЕЛАНО 2026-07-12 (форс-фикс, sonnet, worktree `nova-capmig`) — `[M-vec-new-static-arity-overload]`
+ЗАКРЫТ. Разблокирован по указанию владельца 2026-07-12.
 
-**Что:**
+**Что сделано:**
 ```nova
-fn Vec[T].from_raw_parts(ptr *T, len int, cap int) -> Self
-⇒ fn Vec[T].new(ptr *mut T, len int, cap int) -> Self require cap >= len
+export fn Vec[T].new(ptr *mut T, len int, cap int) -> Self
+    requires len >= 0 && cap >= len
+=> { data: ptr, len, cap }
 ```
-3-арг overload конструктора `new` + `*mut T` НАПРЯМУЮ (вместо `unsafe { ptr as *mut T }` reinterpret-cast) +
-контракт `cap >= len`. Тогда `new(cap int = 0)` + `new(ptr, len, cap)` = легальный набор перегрузок.
+3-арг overload конструктора `new` рядом с `new(cap int = 0)`, `*mut T` НАПРЯМУЮ (без reinterpret-cast в теле —
+кастует теперь caller, см. `str.@bytes()`). `from_raw_parts` удалён; единственный call-сайт
+(`std/runtime/string/core.nv` `str @bytes()`) переведён на `Vec[u8].new(unsafe { @ptr as *mut u8 },
+@byte_len(), @byte_len())`.
 
-**Блокер `[M-vec-new-static-arity-overload]`:** codegen (второе окно) путает 0-арг и 3-арг перегрузки `new`
-при сборке всего vec-folder-модуля одной CU (в C уходит неверный тип/арность; репро — `vec_of_empty_panic`
-neg-тест ломается). ДРУГОЙ класс, чем default-arg backfill Пункта 1 (тот закрыт). Пока не зачинен —
-`from_raw_parts` остаётся ИМЕНОВАННЫМ. Фикс = часть class-C static-ctor overload+return «одного окна»
-(196.2/волна-1); снятие маркера = разблокировка этого пункта.
+**Бывший блокер `[M-vec-new-static-arity-overload]` — ЗАКРЫТ, ВНЕ зоны 196.2/W2** (не `infer_call_ret_c`,
+а два co-located name-only arity-blind overload-резолва):
+1. `compiler-codegen/src/callnorm.rs` — `Sigs::static_methods` раньше ФИЛЬТРОВАЛ прочь любой `(type,method)`
+   c >1 сигнатурой (default-arg backfill просто пропускался для overloaded ctor → 0-арг `new()`-вызовы
+   доходили до codegen БЕЗ backfill'а `cap=0`). Фикс: хранить ВСЕ overload'ы + новая `pick_static_params`
+   дизамбигуирует по `bind_call_args`-совместимости на каждом call-site (fast-path `candidates.len()==1`
+   byte-identical со старым поведением).
+2. `compiler-codegen/src/codegen/emit_c.rs` — ветка «1b» (`Type[Args].method(...)` turbofish static-ctor
+   call, ~emit_call 32577) резолвила `generic_type_methods[base].find(name)` первым совпадением ПО ИМЕНИ
+   (детерминированно — первый `new` в файле, т.е. 0-арг), тогда как соседняя ветка «5b» (instance-method
+   generic dispatch) уже имела арность+param-type дизамбигуацию (`[M-138.2-generic-method-overload-mono]`).
+   Фикс: та же схема портирована в «1b» (арность → param-C-type → `resolved_callees`-span чекера) +
+   per-overload `__<paramtype>` суффикс у mono C-имени (иначе оба overload'а всё равно схлопнулись бы в
+   ОДИН C-символ даже при правильном выборе `FnDecl`).
 
-**Приёмка (после разблокировки):** `nova test --full std/collections/vec` — vec-folder без cross-wiring;
-`vec_of_empty_panic` neg-тест зелёный; conformance 95/0; red→green тест на 3-арг `new` overload; все
-call-сайты `from_raw_parts` → `new(ptr, len, cap)`; спека D372-amend1 (снять пометку «ОТКАЧЕНО»).
+**Приёмка (все зелёные 2026-07-12):** `nova test --full std/collections/vec` — vec-folder без cross-wiring
+(PASS 2/2); `vec_of_empty_panic` neg-тест зелёный; `nova test --full std/collections` — PASS 14/14, SKIP 6
+(compile-only, без регресса); `nova test --full std/checksums std/crypto` (упражняют `str.@bytes()` через
+folded `new`) — PASS 7/7; conformance single-CU (`--positive --compile-error spec_tests/conformance`) —
+PASS 95/0; спека D372-amend1 обновлена (`spec/decisions/02-types.md`, «ПОПРАВКА 2» — снята пометка
+«ОТКАЧЕНО»).
+
+---
+
+## Пункт 6 — переименование поля `Vec.data` → `Vec.ptr` (консистентность имени)
+
+**Статус:** 📋 СОГЛАСОВАНО 2026-07-12 (владелец). **Приоритет:** ниже 196; чистый механический рефактор.
+
+**Что:** поле `mut data *mut T` → `mut ptr *mut T` в `Vec[T]` (и одноимённое поле `data` в `VecIter`,
+`std/collections/vec/iter.nv:19`).
+
+**Мотивация — унификация термина.** Сейчас рассинхрон: поле = `data`, аксессор = `@ptr()` (AsSlice/D299),
+параметр конструктора = `ptr`, rustc-эталон = `RawVec.ptr`. Переименование поля в `ptr` сводит всё к одному
+слову.
+
+**НЕТ коллизии со слотом `@ptr()` (уточнено владельцем):** по property-модели (D84/D409) `@ptr()` (ro-чтение,
+`-> *T`), `mut @ptr()` (mut-чтение, `-> *mut T`) и `@ptr` (bare-чтение в теле) — это ВСЕ валидные чтения
+свойства поля `ptr` с pointer-вариантностью, как и задумано. Явные аксессоры `@ptr()`/`mut @ptr()`
+(access.nv:267/275, тело `=> @data` → станет `=> @ptr`) — это и есть property-read поля, определённый явно ради
+D299-вариантности `*T`/`*mut T`.
+
+**Объём (внутренний, поле `priv` → API не меняется):** `@data` → `@ptr` в `access.nv`/`mutate.nv`/`iter.nv`/
+`core.nv` (десятки сайтов: `read_at`/`write_at`/`offset`), `other.data` → `other.ptr` (или `other.ptr()`),
+поле `VecIter.data`. Явные `@ptr()`/`mut @ptr()` аксессоры остаются (D299 AsSlice).
+
+**Приёмка:** `nova test std/collections/vec` без регресса; conformance δ0; греп `\bdata\b` в vec-модуле = 0
+(кроме комментариев/строк). Механика — можно дешёвым агентом.
 
 ---
 

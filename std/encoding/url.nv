@@ -239,7 +239,7 @@ fn is_scheme_char(c char) -> bool =>
 /// `to_str()` — serialize Url обратно в string. Round-trip с `Url.from`.
 #stable(since = "0.1")
 export fn Url @to_str() -> str {
-    consume buf = StringBuilder.new().cap(64)
+    consume buf = StringBuilder.new(cap: 64)
     buf.append(@scheme)
     buf.append(":")
 
@@ -314,7 +314,7 @@ export fn Url @to_str() -> str {
 /// ```
 #stable(since = "0.1")
 export fn Url.encode_query(s str) -> str {
-    consume buf = StringBuilder.new().cap(s.byte_len() * 2)    // worst case
+    consume buf = StringBuilder.new(cap: s.byte_len() * 2)    // worst case
     for c in s.chars() {
         if is_unreserved(c) {
             buf.append(c)
@@ -354,7 +354,7 @@ export fn Url.encode_query(s str) -> str {
 /// Percent-decode query string. `Err(InvalidPercentEncoding)` если `%XX` malformed.
 #stable(since = "0.1")
 export fn Url.decode_query(s str) -> Result[str, ParseUrlError] {
-    mut buf = WriteBuffer.new().cap(s.byte_len())
+    mut buf = WriteBuffer.new(cap: s.byte_len())
     // Литеральные (не `%XX`) символы проходят через as-is (`write_char(c)`) —
     // могут быть произвольным Unicode, поэтому нужны реальные char-значения,
     // не только ASCII-детект. Материализуем `[]char` ОДИН раз (push-loop, не
