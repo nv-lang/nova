@@ -1,0 +1,32 @@
+// D109 wave-2 (196.3, Q7) — regression net for the `primitive_instance_method_known`
+// (compiler-codegen/src/codegen/emit_c.rs) `str`-list prune: `to_upper`/`to_lower`/`trim`/
+// `concat`/`starts_with`/`ends_with`/`contains`/`find`/`rfind`/`bytes`/`split`/`compare`/
+// `repeat`/`replace`/`byte_len` were removed from the checker's hardcoded existence-fallback
+// because each is a REAL `.nv` function (`std/unicode/case.nv`, `std/runtime/string/
+// {search,transform,core}.nv`, `std/runtime/defaults.nv`) already resolved by
+// `method_overloads` (the .nv-sourced channel, consulted BEFORE the fallback) — the hardcode
+// entry was dead duplication (one-window). `to_upper`/`to_lower`/`trim`/`concat`/`rfind` had
+// NO prior conformance coverage at all; this file closes that gap so a future regression in
+// either the checker's existence gate or the `.nv` bodies themselves is caught. One
+// folder-module CU (`spec_tests.conformance`).
+module spec_tests.conformance
+import std.unicode
+
+test "str .nv-sourced instance methods — existence + behavior (D109 wave-2)" {
+    ro s str = "Hello, World"
+    assert(s.to_upper() == "HELLO, WORLD")
+    assert(s.to_lower() == "hello, world")
+    assert("  padded  ".trim() == "padded")
+    assert(s.concat("!") == "Hello, World!")
+    assert(s.starts_with("Hello"))
+    assert(s.ends_with("World"))
+    assert(s.contains("lo, W"))
+    assert(s.find("World") == Some(7))
+    assert(s.rfind("o") == Some(8))
+    assert(s.bytes().len() == s.byte_len())
+    assert(s.split(", ").collect().len() == 2)
+    assert(s.compare(s) == 0)
+    assert("ab".repeat(3) == "ababab")
+    assert(s.replace("World", "Nova") == "Hello, Nova")
+    assert(s.byte_len() == 12)
+}

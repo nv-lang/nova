@@ -43044,10 +43044,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         {
             return true;
         }
-        // Float math intrinsics (`f64_method_to_c`). `to_bits`/`from_bits` removed
-        // [M-ptr-raw-access-contract-and-unaligned] item 3 — now pure .nv methods
-        // (numeric.nv), resolved via `method_overloads` like any user method, not
-        // a codegen-hardcoded intrinsic anymore.
+        // [196.3 D109 wave-2 investigated, KEPT]: `f64_method_to_c` (math) looked like a
+        // one-window-redundant duplicate of the `extern "nova" fn f64 @sqrt()`-style
+        // declarations in `std/runtime/math.nv` (auto-generated from `runtime_registry.rs`)
+        // — but it is NOT: `extern` method declarations register into codegen's
+        // `ExternalRegistry` (see `external_registry.rs`), NOT the checker's
+        // `self.sig.method_table` that `method_overloads` reads (confirmed empirically:
+        // removing this arm broke `(9.0).sqrt()` with a clean `[E_UNKNOWN_METHOD]` —
+        // `method_overloads("f64","sqrt")` really does return `None`). So for `extern`-
+        // declared primitive methods this arm is the ONLY existence channel the checker
+        // has; genuinely not migratable to "read .nv via method_overloads" without first
+        // teaching the checker to consult `ExternalRegistry` too (out of scope here — a
+        // separate, larger migration). Float math intrinsics (`f64_method_to_c`).
+        // `to_bits`/`from_bits` removed [M-ptr-raw-access-contract-and-unaligned] item 3 —
+        // those are ordinary (non-extern) .nv methods (numeric.nv), resolved via
+        // `method_overloads` like any user method, not a codegen-hardcoded intrinsic.
         if matches!(prim, "f64" | "f32")
             && Self::f64_method_to_c(method).is_some()
         {
@@ -43055,14 +43066,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         // `nova_str` intrinsic instance methods (mirror the `obj_ty == "nova_str"` block).
         if prim == "str" {
+            // [196.3 D109 wave-2 one-window prune]: `to_upper`/`to_lower`/`trim`/`concat`/
+            // `starts_with`/`ends_with`/`contains`/`find`/`rfind`/`bytes`/`split`/`compare`/
+            // `repeat`/`replace`/`byte_len` were REMOVED from this list — each is a REAL
+            // `.nv` function (`std/unicode/case.nv`, `std/runtime/string/{search,transform,
+            // core}.nv`, `std/runtime/defaults.nv` for `compare`), so `method_overloads`
+            // (consulted by the caller first) already resolves them; listing them here too
+            // was dead duplicate existence-checking. What remains genuinely has NO `.nv`
+            // declaration — `slice`/`eq`/`len`/`char_len`/`byte_at`/`char_at`/`pad_left`/
+            // `pad_right` are lang-item/bare-field intrinsics (D117/D249: bare `@len` /
+            // `@char_len` / `@byte_at` retired-field-read model, `std/runtime/string/core.nv`
+            // ~L20-31) with no ordinary callable `.nv` counterpart to source from.
             return matches!(
                 method,
-                "to_upper" | "to_lower" | "trim" | "slice" | "concat"
-                    | "starts_with" | "ends_with" | "contains" | "eq"
-                    | "len" | "char_len" | "byte_len" | "byte_at" | "char_at"
-                    | "find" | "rfind" | "bytes"  // D410 (ex-to_bytes/as_bytes/to_chars)
-                    | "split" | "compare" | "pad_left" | "pad_right"
-                    | "repeat" | "replace"
+                "slice" | "eq" | "len" | "char_len" | "byte_at" | "char_at"
+                    | "pad_left" | "pad_right"
             );
         }
         false
