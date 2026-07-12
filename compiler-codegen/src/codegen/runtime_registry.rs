@@ -343,6 +343,28 @@ fn math_runtime() -> Vec<RuntimeFn> {
         doc: "True если ±∞ (single precision).",
     nova_body: None,
 });
+
+    // ─── int — Plan 196.3 (D109/D74 checker-visibility migration) ───
+    // `int.abs()` migrated from an emit_c.rs-only hardcoded existence-check
+    // (`int_method_to_c`, D74) into a real `extern "nova"` declaration so the
+    // CHECKER resolves it через `method_table` (normal import-resolve path,
+    // same precedent as `char.nv`'s `str.from`/`str.from_codepoint` — see
+    // `[M-compiler-nv-porting-wave]` item A). Codegen EMISSION is unaffected —
+    // `int_method_to_c` (emit_c.rs) remains the single source for the actual
+    // C-function mapping (`llabs`); this decl only makes the method's
+    // EXISTENCE + signature visible to the checker.
+    v.push(RuntimeFn {
+        module: "std.runtime.math",
+        receiver: Some("int"),
+        is_static: false, is_mut: false, is_consume: false,
+        name: "abs",
+        params: &[],
+        return_ty: "int",
+        effects: &[],
+        c_name: "llabs",
+        doc: "Модуль (|x|) — 64-битный целочисленный abs (long long abs).",
+    nova_body: None,
+});
     v
 }
 
