@@ -2656,6 +2656,22 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
         }
     }
 
+    // Plan 193 Ф.2 gap-1: detect-and-degrade — если merged [ffi] объявляет
+    // явный lib_dirs search path, но declared libs-файл не найден ни в
+    // одной из директорий, деградируем к SKIP вместо hard CC/link-FAIL
+    // (см. first_missing_ffi_lib doc-comment). Проверяется ПОСЛЕ merge
+    // (own + ext-dep [ffi]), ДО build_command/CC — самая дешёвая точка
+    // обрыва для этого случая (subdir/obj_dir уже созданы выше, но CC ещё
+    // не запущен).
+    if let Some(ffi) = &resolved_ffi {
+        if let Some((lib, searched)) = first_missing_ffi_lib(ffi) {
+            return Outcome::Skipped {
+                reason: SkipReason::FfiLibNotFound { lib, searched },
+                elapsed: start.elapsed(),
+            };
+        }
+    }
+
     // Plan 149 D233: resolve [runtime] section в package nova.toml для
     // test_file. Plain strings (no path resolution) — baked as -D...DEFAULT.
     let resolved_runtime: Option<crate::manifest::RuntimeConfig> =
