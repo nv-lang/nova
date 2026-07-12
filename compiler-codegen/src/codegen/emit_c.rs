@@ -19717,6 +19717,35 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
+    /// Plan 196.3 wave-2 (D239, one-window): channel-first element type for a
+    /// `[]T`/`Vec[T]`-typed `obj` expression. Reads the checker's resolved type
+    /// for `obj` (`resolved_types[obj.id]`, populated by `f1_expr_inner`'s
+    /// Ident/Member/SelfAccess probes — types/mod.rs ~7249-7325, D239/D315 §0:
+    /// `[]T`/`Vec[T]` canonicalize to `Named{Vec,[elem]}` in the channel) and
+    /// lowers the Vec element arg through the SINGLE checker→C path
+    /// (`resolved_type_to_c`) — mirrors the precedent at `emit_parallel_for`
+    /// (~11289-11300) — instead of re-deriving it from the codegen-local
+    /// `array_element_types` side-table / `debt_compute_field_array_elem_type`
+    /// AST-walk that `compute_array_elem_type_for_obj` performs. `None` = channel
+    /// miss (obj un-annotated, or its resolved type isn't a `Named{Vec,[elem]}` —
+    /// e.g. a bare unsubstituted generic-level `T`) → caller falls back to
+    /// `compute_array_elem_type_for_obj` (legacy).
+    fn channel_array_elem_c(&self, obj: &Expr) -> Option<String> {
+        if !obj.id.is_set() {
+            return None;
+        }
+        match self.resolved_types.get(&obj.id) {
+            Some(crate::types::ResolvedType::Named { name, args, .. })
+                if name == "Vec" && args.len() == 1 =>
+            {
+                self.resolved_type_to_c(&args[0])
+                    .ok()
+                    .filter(|c| !c.is_empty() && !self.debt_is_generic_stub_c(c))
+            }
+            _ => None,
+        }
+    }
+
     /// [M-91.1-composite-array-storage] Plan 91 Ф.1: if a generic array-ext
     /// method (`fn[T] []T @map[U](...) -> []U`) returns `[]U` and U substitutes
     /// to a COMPOSITE pointer C-type (record/sum `Nova_<Name>*`, mono'd
@@ -24584,7 +24613,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Propagate array element type so xs[i].field can be correctly typed
                 if let Some(arr_elem_ty) = self.array_element_types.get(&val).cloned() {
                     self.array_element_types.insert(binding.clone(), arr_elem_ty);
-                } else if let Some(arr_elem_ty) = self.compute_array_elem_type_for_obj(&decl.value) {
+                } else if let Some(arr_elem_ty) = self.channel_array_elem_c(&decl.value)
+                    .or_else(|| self.compute_array_elem_type_for_obj(&decl.value)) {
                     // Plan 123 chain-cache fix: RHS — field/chain access
                     // (`@map._buckets` → `_at_map__buckets_chain`). `val` —
                     // C-строка field-access, не ключ в array_element_types,
@@ -29187,6 +29217,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         .and_then(|n| self.array_element_types.get(n).cloned())
                         // Fallback: look up by the emitted C expression string (covers @field[idx])
                         .or_else(|| self.array_element_types.get(o.as_str()).cloned())
+                        // Plan 196.3 wave-2 (D239 one-window): checker channel first.
+                        .or_else(|| self.channel_array_elem_c(obj))
                         // Plan 56 followup: deep field-access chain — obj.f1.f2.field[i].
                         // Compute from record schema / template + subst.
                         .or_else(|| self.compute_array_elem_type_for_obj(obj));
@@ -32825,7 +32857,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // unboxing so `arr.get(i)` field-readback works instead
                             // of returning a bare `nova_int`.
                             if elem_ty == "nova_int" {
-                                if let Some(ec) = self.compute_array_elem_type_for_obj(obj) {
+                                if let Some(ec) = self.channel_array_elem_c(obj)
+                                    .or_else(|| self.compute_array_elem_type_for_obj(obj)) {
                                     if ec.ends_with('*') && ec != "nova_int*" {
                                         let sani = Self::sanitize_for_novaopt(&ec);
                                         self.register_novaopt_decl(&sani, &ec);
@@ -33721,7 +33754,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         // element type of the receiver (e.g. filter on
                                         // []Record) — used to re-type receiver-typevar
                                         // closure params and to propagate the result elem.
-                                        let recv_elem_real = self.compute_array_elem_type_for_obj(obj);
+                                        let recv_elem_real = self.channel_array_elem_c(obj)
+                                            .or_else(|| self.compute_array_elem_type_for_obj(obj));
                                         let recv_tvar = fn_decl.generics.first().map(|g| g.name.clone());
                                         let mut arg_strs = Vec::new();
                                         for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
@@ -35049,7 +35083,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     arg_strs.push(self.emit_expr(a.expr())?);
                                 }
                                 self.current_type_subst = saved_subst;
-                                let recv_elem = self.compute_array_elem_type_for_obj(obj);
+                                let recv_elem = self.channel_array_elem_c(obj)
+                                    .or_else(|| self.compute_array_elem_type_for_obj(obj));
                                 let result_str = format!("{}({})", mono_name, arg_strs.join(", "));
                                 // [M-91.1-composite-array-storage] propagate `[]U`/`[]T`
                                 // composite element type to the result var (same
@@ -49387,6 +49422,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                     }
+                    // Plan 196.3 wave-2 (D239 one-window): checker channel first.
+                    if let Some(elem) = self.channel_array_elem_c(obj) {
+                        if !elem.is_empty() && elem != "nova_int" {
+                            return elem;
+                        }
+                    }
                     // Plan 56 followup: deep field-access chain — obj.f1.f2.field[i].
                     // Compute real element type from record schema / template + subst.
                     if let Some(elem) = self.compute_array_elem_type_for_obj(obj) {
@@ -50657,6 +50698,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if let Some(et) = self.array_element_types.get(&key) {
                                 return et.clone();
                             }
+                        }
+                    }
+                    // Plan 196.3 wave-2 (D239 one-window): checker channel first.
+                    if let Some(elem) = self.channel_array_elem_c(obj) {
+                        if !elem.is_empty() && elem != "nova_int" {
+                            return elem;
                         }
                     }
                     // Plan 56 followup: deep field-access chain — obj.f1.f2.field[i].
