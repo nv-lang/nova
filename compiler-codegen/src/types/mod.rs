@@ -6890,7 +6890,30 @@ impl<'a> TypeCheckCtx<'a> {
                 // восстановление TypeRef через resolved_to_typeref_tp (TypeParam(n)
                 // → Named{n} — при потреблении заново пометит mark_type_params).
                 if let Some(name) = pattern_simple_name(&d.pattern) {
+                    // Plan 196.2 CAP-A (a) — chained-receiver scope propagation:
+                    // for a METHOD-CALL RHS (`let m = v.iter().map(f)`), the CHANNEL
+                    // (`infer_method_call_channel_type`, materialized into
+                    // `resolved_types_buf` by `f1_expr(&d.value)` above) threads the FULL
+                    // nested generic (`MapIter[VecIter[T],T,T]`) — while the inline
+                    // `infer_expr_type` TRUNCATES it to `MapIter[VecIter]` (drops T/U), so a
+                    // subsequent `m.next()` resolves against a degenerate receiver → an
+                    // unbound method-generic return erased to `nova_unit` (CC-FAIL). Prefer
+                    // the channel for a method-call RHS (annotation still wins first; the
+                    // channel is conservative — `None` when unsure → falls to `infer_expr_type`).
+                    // Gated to `Call{ Member }` so free-fn / non-call RHS is unchanged.
+                    let chain_ty: Option<TypeRef> = if d.ty.is_none()
+                        && d.value.id.is_set()
+                        && matches!(&d.value.kind,
+                            ExprKind::Call { func, .. }
+                                if matches!(&func.kind, ExprKind::Member { .. }))
+                    {
+                        let rt = self.resolved_types_buf.borrow().get(&d.value.id).cloned();
+                        rt.and_then(|rt| Self::resolved_to_typeref_tp(&rt, d.value.span))
+                    } else {
+                        None
+                    };
                     match d.ty.clone()
+                        .or(chain_ty)
                         .or_else(|| self.infer_expr_type(&d.value, scope))
                         .or_else(|| {
                             if !d.value.id.is_set() { return None; }
