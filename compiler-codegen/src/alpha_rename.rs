@@ -374,7 +374,7 @@ impl<'t> Renamer<'t> {
             Stmt::Throw { value, .. } => self.expr(value),
             Stmt::Break(_) | Stmt::Continue(_) => {}
             Stmt::Defer { body, .. } => self.expr(body),
-            Stmt::ConsumeScope { binding, init, body, .. } => {
+            Stmt::ConsumeScope { binding, init, body, result, .. } => {
                 // init evaluated in the enclosing scope (R3 order).
                 self.expr(init);
                 // `binding` is scoped to `body` (D188) → fresh child scope.
@@ -382,6 +382,11 @@ impl<'t> Renamer<'t> {
                 *binding = self.declare(&binding.clone(), false);
                 self.block_in_current_scope(body);
                 self.pop_scope();
+                // Plan 201: result-приёмник блока-выражения — объявляется
+                // в ОБЪЕМЛЮЩЕМ scope ПОСЛЕ блока (как обычный let).
+                if let Some(r) = result {
+                    r.name = self.declare(&r.name.clone(), false);
+                }
             }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.expr(expr),
             Stmt::Apply { args, .. } => {
@@ -842,8 +847,11 @@ fn collect_names_stmt(s: &Stmt, out: &mut HashSet<String>) {
         Stmt::Throw { value, .. } => collect_names_expr(value, out),
         Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. } => {}
         Stmt::Defer { body, .. } => collect_names_expr(body, out),
-        Stmt::ConsumeScope { binding, init, body, .. } => {
+        Stmt::ConsumeScope { binding, init, body, result, .. } => {
             out.insert(binding.clone());
+            if let Some(r) = result {
+                out.insert(r.name.clone());
+            }
             collect_names_expr(init, out);
             collect_names_block(body, out);
         }
