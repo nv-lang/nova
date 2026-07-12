@@ -8441,13 +8441,15 @@ checker-overflow), см. `[M-181-pattern-var-rebind]`. Nested-scope double-consu
 > 🎯 **Plan 110 family полностью завершена.** 9 sub-plans + 12 D-blocks
 > ACTIVE + 76 fixtures PASS (74 baseline + 2 new V1.1.a closures).
 >
-> **Амендмент 2026-07-13 (решение владельца, ветка d188-consume-block):**
-> вторая форма scope-block'а — **re-consume block** `consume X { body }`
-> (без `= expr`) — re-consume СУЩЕСТВУЮЩЕГО owned-биндинга. Внутри блока
-> `X` — только ro-view; любая consume-операция →
-> `E_CONSUME_BLOCK_MOVE_OUT`; escape — ТОЛЬКО явной копией
-> (`stream.share()`); give/release-дизарм ОТВЕРГНУТ. См. §«Re-consume
-> форма `consume X { body }`» ниже.
+> **Амендмент 2026-07-13 (решение владельца, Plan 201, ветка
+> d188-consume-block):** вторая форма scope-block'а — **re-consume block**
+> `consume X { body }` (без `= expr`) — re-consume СУЩЕСТВУЮЩЕГО
+> owned-биндинга; блок — ВЫРАЖЕНИЕ. Внутри блока `X` — ro-view + методы;
+> единственная легальная форма выноса владения — tail-значение `X` или
+> `return X` (голый `X`; на этом пути cleanup ДИЗАРМИТСЯ); прочие формы
+> выноса → `E_CONSUME_BLOCK_MOVE_OUT`; alias-копия — `stream.share()`;
+> give/release-дизарм-примитив ОТВЕРГНУТ. См. §«Re-consume форма
+> `consume X { body }`» ниже.
 
 ### Что
 
@@ -8525,14 +8527,18 @@ consume IDENT { BODY }             // re-consume форма (амендмент 
 - `panic(m)` → `Panic(m)`
 - `exit(code)` — НЕ captures; process exit'ы напрямую (handler.cleanup не runs).
 
-### Re-consume форма `consume X { body }` (амендмент 2026-07-13)
+### Re-consume форма `consume X { body }` (амендмент 2026-07-13, Plan 201)
 
 Вторая форма scope-block'а — БЕЗ инициализатора: re-consume уже
 существующего owned-биндинга (consume-параметра функции или owned-локала
 `consume X = …`, [D180](05-memory.md#d180-consume-binding-syntax-plan-731)).
-Даёт те же гарантии, что и binding-форма: `cleanup` exactly-once на ВСЕХ
-путях выхода (R2), cancel-shield (R3), LIFO-композиция (R5); после блока
-`X` недоступен (consumed, D131).
+Даёт те же гарантии, что и binding-форма: `cleanup` exactly-once на всех
+cleanup-путях выхода (R2), cancel-shield (R3), LIFO-композиция (R5);
+после блока `X` недоступен (consumed, D131).
+
+**Блок — ВЫРАЖЕНИЕ**: `ro s = consume X { …; <tail> }` — значение блока
+= tail-выражение. Приёмник (`ro`/`mut`/`consume s = …`) объявляется в
+объемлющем scope после блока.
 
 ```nova
 fn serve(consume stream TcpStream) Net Fail[NetError] -> () {
@@ -8553,36 +8559,60 @@ fn serve(consume stream TcpStream) Net Fail[NetError] -> () {
    реализовывать `Cleanup[E]`; нет `cleanup`-метода →
    **`E_D188_NOT_CLEANUP`** (у binding-формы исторический код той же
    ошибки — `D188-not-consumable`).
-3. **Внутри блока `X` — только ro-view / вызовы методов.** ЛЮБАЯ
-   consume-операция над `X` — вызов consume-метода (включая `X.close()`),
-   передача в consume-параметр, `return X`, повторный `consume X { }`,
-   реассайн `X = …` — ошибка компиляции **`E_CONSUME_BLOCK_MOVE_OUT`**.
-   Дизарм-примитива НЕТ намеренно: cleanup блока безусловно владеет `X`.
-   Ручной `X.cleanup(...)` — по-прежнему `D188-r2-manual-on-exit`.
-4. **Escape-канон — ЯВНАЯ КОПИЯ.** Наружу блока значение «уезжает» только
-   явной копией/алиасом, у которого СВОЁ consume-обязательство:
+3. **Вынос владения — ТОЛЬКО tail/return самого `X`.** Единственная
+   легальная форма выноса — tail-значение `X` (при биндинге-приёмнике)
+   или `return X` (ГОЛЫЙ `X`, не `f(X)`): на этом пути cleanup блока
+   **дизармится**, владение уходит результату блока / из функции —
+   приёмник получает обязательство (D133). Все ОСТАЛЬНЫЕ пути выхода
+   (конец тела, throw, panic, cancel, break/continue, `return <не-X>`) —
+   cleanup exactly-once (R2 как есть).
+4. **Внутри блока `X` — ro-view + вызовы методов.** Прочие формы выноса —
+   передача `X` в consume-параметр, вызов consume-метода (включая
+   `X.close()`), присваивание `X` в consume-поле / любое место
+   (`place = X`, `T { field: X }`), повторный `consume X { }`, реассайн
+   `X = …` — ошибка компиляции **`E_CONSUME_BLOCK_MOVE_OUT`** с текстом:
+   «вынос владения из consume-блока — только tail/return самого `X`;
+   либо возьмите `@share()`-копию». Ручной `X.cleanup(...)` —
+   по-прежнему `D188-r2-manual-on-exit`.
+5. **Alias-копия — `@share()`.** Второй владелец того же ресурса — только
+   явной share-копией со СВОИМ consume-обязательством: `TcpStream
+   @share()` — alias одного TCP-потока с refcount-close («закрывает
+   последний»; НЕ независимая копия — см. std/src/net/tcp.nv и
+   переименование `ChanWriter.clone()` → `share()`).
+
+#### Канонический TLS-паттерн (заменяет ручные `stream.close()`)
 
 ```nova
-consume stream {
-    // … handshake по ro-view `stream` …
-    ro tls = TlsStream.wrap(stream.share(), session)   // копия-алиас уезжает;
-    // …                                               // оригинал закроет cleanup блока
-}
+ro s = consume stream {
+    // … handshake по ro-view `stream`; любая ошибка/throw →
+    // cleanup(Failure) закрывает stream exactly-once …
+    pump_handshake(stream, session)?
+    stream                                  // tail-вынос: cleanup дизармлен,
+}                                           // владение уехало в `s`
+Ok(TlsStream.wrap(s, session))              // s → consume-параметр wrap
 ```
 
-   `TcpStream @share()` — alias одного TCP-потока с refcount-close
-   («закрывает последний»; НЕ независимая копия — см. std/net/tcp.nv).
+#### Взаимодействие с `spawn` / `parallel for` (173.1 by-value капчур)
+
+Захват owned linear-значения (consume-типа) в тело
+`spawn`/`parallel for`/`detach` — ошибка
+**`E_LINEAR_CAPTURE_IN_FIBER`**: by-value копия обёртки в N файберов =
+N алиасов одного ресурса БЕЗ учёта владения → double-close/интерференция.
+Канон многофиберного доступа — `@share()`-копия per-fiber
+(`ro w = tx.share(); spawn { …w… }`) либо явный move
+`spawn consume c { … }` (D415 §4). `consume X { … }`-блок ЦЕЛИКОМ внутри
+тела итерации (свой ресурс на итерацию) — легален, без особенностей.
 
 #### Desugaring / реализация
 
 Тот же D188-механизм, что и у binding-формы, с init = сам биндинг `X`
 (эквивалент `consume X = X { body }` с уже готовым ресурсом). R1
-(partial-construction) тривиален — init не может throw. Compile-time
-ловля move-out — расширение D131 flow-анализа; формы, которые D131 не
-распознаёт (move в consume-поле конструктора,
-[M-178-consume-field-ctor-from-var]) — bootstrap-граница: compile-time
-ловля расширится вместе с D131 (double-close на TcpStream смягчён
-rc-close механикой `@share()`).
+(partial-construction) тривиален — init не может throw. Tail/return-вынос
+= сброс arm-флага cleanup'а НА ЭТОМ пути непосредственно перед выносом
+(все прочие пути видят флаг взведённым). Compile-time ловля move-out —
+расширение D131 flow-анализа; формы, которые D131 не распознаёт —
+bootstrap-граница: ловля расширится вместе с D131 (double-close на
+TcpStream дополнительно смягчён rc-close механикой `@share()`).
 
 Cross-ref: `spawn consume c { body }` (D415 §4 already-bound form) — тот
 же re-consume-синтаксис, но cleanup привязан к выходу ДОЧЕРНЕГО фибра,
@@ -8591,13 +8621,16 @@ Cross-ref: `spawn consume c { body }` (D415 §4 already-bound form) — тот
 
 #### Rejected — `give X` / `release X` (дизарм-примитив)
 
-Рассматривался вариант «отдать `X` наружу, отключив cleanup блока»
-(give / release / disarm). **ОТВЕРГНУТО** (решение владельца 2026-07-13):
-дизарм ослабляет главную гарантию формы — безусловный exactly-once
-cleanup — и возвращает класс багов «забыл закрыть на одном из путей»,
-ради устранения которых D188 и вводился. Escape — только явной копией
-(`X.share()` / `X.clone()`), у которой собственное consume-обязательство,
-видимое checker'у.
+Рассматривался вариант «отдать `X` наружу произвольным путём, отключив
+cleanup блока явным примитивом» (give / release / disarm; обсуждены Rust
+`ScopeGuard::into_inner`, Swift `consume`, Zig `errdefer` — последний у
+нас ретрактирован D189). **ОТВЕРГНУТО** (решение владельца 2026-07-13):
+свободный дизарм ослабляет главную гарантию формы — безусловный
+exactly-once cleanup — и возвращает класс багов «забыл закрыть на одном
+из путей». Вынос владения разрешён ровно в двух СИНТАКСИЧЕСКИ видимых
+формах (tail `X` / `return X` — п.3 выше), где приёмник обязательства
+очевиден checker'у; всё прочее — `@share()`-копия со своим
+обязательством.
 
 ### Правила (R1-R6)
 
