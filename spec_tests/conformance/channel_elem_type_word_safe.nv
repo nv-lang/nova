@@ -1,0 +1,85 @@
+// [M-channel-generic-elem-type] (docs/plans/backlog-followups.md) — two
+// point-fixes for `Channel[T]`, which is a compiler intrinsic (no `.nv`
+// type decl; `Channel.new`'s runtime pair `Nova_ChannelPair` stores every
+// element in a single word-sized `nova_int` slot, `nova_rt/channels.h`):
+//
+// (a) honest-fail gate — `.send`/`.try_send` now reject (compile error
+//     `E_CHANNEL_UNSOUND_ELEM_TYPE`, see neg/channel_elem_str_payload_neg.nv)
+//     any payload whose C type does not losslessly round-trip through that
+//     single word, instead of silently reinterpreting a pointer as an int or
+//     (for `str`) hitting a cryptic raw C struct→int cast error. Word-safe
+//     types — `int`, `bool`, `char`, fixed-width ints, and any pointer-sized
+//     type (`[]T`, records, `HashMap`, sums, …) — still compile exactly as
+//     before (backward compat, this file).
+// (b) `Channel[T].new(cap)` turbofish — the documented escape hatch
+//     (docs/channels.md §Channel.new) used to ICE (`[P67-LEGACY] Ident
+//     'Channel' not in var_types`) because `Channel` carries no `.nv` type
+//     decl and is absent from every generic-dispatch registry. Now emits
+//     identically to the bare/Path forms (`T` is erased at the runtime
+//     layer regardless — `Nova_ChannelPair` is a fixed, non-generic struct).
+//
+// NOT fixed here (still open, tracked by the same marker): real per-channel
+// T-inference — `rx.recv()` remains typed `Option[int]` at the codegen
+// C-type layer regardless of what was sent, so consuming a received `[]u8`
+// payload through its real methods (`.len()`, indexing, …) is a known,
+// pre-existing, separate gap — out of scope for (a)/(b).
+
+module spec_tests.conformance
+
+test "channel_elem_type: int payload — bare Channel.new, unaffected baseline" {
+    ro { tx, rx } = Channel.new(4)
+    tx.send(10)
+    tx.send(20)
+    ro a = rx.recv()
+    ro b = rx.recv()
+    assert(a ?? -1 == 10)
+    assert(b ?? -1 == 20)
+    tx.close()
+}
+
+test "channel_elem_type: bool payload — word-safe, still compiles/runs" {
+    ro { tx, rx } = Channel.new(2)
+    tx.send(true)
+    tx.send(false)
+    ro a = rx.recv()
+    ro b = rx.recv()
+    assert(a ?? false == true)
+    assert(b ?? true == false)
+    tx.close()
+}
+
+test "channel_elem_type: []u8 payload — pointer-sized, honest gate accepts send" {
+    ro { tx, rx } = Channel.new(2)
+    mut v []u8 = []u8.new()
+    v.push(1)
+    v.push(2)
+    v.push(3)
+    tx.send(v)
+    ro got = rx.recv()
+    assert(got.is_some())
+    tx.close()
+}
+
+test "channel_elem_type: try_send honors the same word-safe gate as send" {
+    ro { tx, rx } = Channel.new(2)
+    assert(tx.try_send(5))
+    ro v = rx.recv()
+    assert(v ?? -1 == 5)
+    tx.close()
+}
+
+test "channel_elem_type: Channel[int].new turbofish — no ICE, round-trips (b)" {
+    ro { tx, rx } = Channel[int].new(4)
+    tx.send(7)
+    ro v = rx.recv()
+    assert(v ?? -1 == 7)
+    tx.close()
+}
+
+test "channel_elem_type: Channel[bool].new turbofish — no ICE, round-trips (b)" {
+    ro { tx, rx } = Channel[bool].new(2)
+    tx.send(true)
+    ro v = rx.recv()
+    assert(v ?? false == true)
+    tx.close()
+}

@@ -56,9 +56,9 @@ test "channel: send + recv FIFO" {
     ro a = rx.recv()
     ro b = rx.recv()
     ro c = rx.recv()
-    assert(a.unwrap_or(-1) == 10)
-    assert(b.unwrap_or(-1) == 20)
-    assert(c.unwrap_or(-1) == 30)
+    assert(a ?? -1 == 10)
+    assert(b ?? -1 == 20)
+    assert(c ?? -1 == 30)
     tx.close()
 }
 ```
@@ -121,7 +121,15 @@ tx.send(42)         // T = int
 ro v = rx.recv()   // Option[int]
 ```
 
-Explicit annotation via turbofish: `Channel[str].new(8)`.
+Explicit annotation via turbofish: `Channel[int].new(8)`.
+
+**Word-safe `T` only ([M-channel-generic-elem-type]).** The runtime stores
+every element in a single word-sized slot, so `T` must round-trip losslessly
+through it: `int`, `bool`, `char`, fixed-width int types, and any
+pointer-sized type (`[]T`, records, `HashMap`, sums, …) all work. A `T` that
+does not fit a word — `str`, `f32`/`f64`, tuples, value-records — is
+rejected at compile time (`E_CHANNEL_UNSOUND_ELEM_TYPE`) rather than
+silently truncated or reinterpreted.
 
 ---
 
@@ -168,7 +176,7 @@ test "channel: try_send full buffer" {
     assert(tx.try_send(10))
     assert(tx.try_send(20))
     assert(!tx.try_send(30))            // buffer full
-    assert(rx.recv().unwrap_or(-1) == 10)
+    assert(rx.recv() ?? -1 == 10)
     assert(tx.try_send(30))             // slot freed
     tx.close()
 }
@@ -221,8 +229,8 @@ test "channel: close + recv drain" {
     tx.send(1)
     tx.send(2)
     tx.close()
-    assert(rx.recv().unwrap_or(-1) == 1)
-    assert(rx.recv().unwrap_or(-1) == 2)
+    assert(rx.recv() ?? -1 == 1)
+    assert(rx.recv() ?? -1 == 2)
     assert(rx.recv().is_none())             // drained — None
     assert(rx.recv().is_none())             // repeated — still None
 }
@@ -318,12 +326,12 @@ test "channel: ping-pong" {
         spawn {
             tx1.send(10)
             ro reply = rx2.recv()
-            result = reply.unwrap_or(-1)
+            result = reply ?? -1
             tx1.close()
         }
         spawn {
             ro msg = rx1.recv()
-            tx2.send(msg.unwrap_or(0) * 2)
+            tx2.send((msg ?? 0) * 2)
             tx2.close()
         }
     }

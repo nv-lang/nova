@@ -56,9 +56,9 @@ test "channel: send + recv FIFO" {
     ro a = rx.recv()
     ro b = rx.recv()
     ro c = rx.recv()
-    assert(a.unwrap_or(-1) == 10)
-    assert(b.unwrap_or(-1) == 20)
-    assert(c.unwrap_or(-1) == 30)
+    assert(a ?? -1 == 10)
+    assert(b ?? -1 == 20)
+    assert(c ?? -1 == 30)
     tx.close()
 }
 ```
@@ -121,7 +121,15 @@ tx.send(42)         // T = int
 ro v = rx.recv()   // Option[int]
 ```
 
-Явная аннотация — turbofish: `Channel[str].new(8)`.
+Явная аннотация — turbofish: `Channel[int].new(8)`.
+
+**`T` обязан быть word-safe ([M-channel-generic-elem-type]).** Рантайм
+хранит каждый элемент в одном слоте размером со слово, поэтому `T` должен
+без потерь укладываться в него: `int`, `bool`, `char`, целые фиксированной
+ширины и любой pointer-sized тип (`[]T`, records, `HashMap`, суммы, …) —
+работают. `T`, не влезающий в слово — `str`, `f32`/`f64`, кортежи,
+value-records — отвергается на этапе компиляции
+(`E_CHANNEL_UNSOUND_ELEM_TYPE`), а не тихо усекается/переинтерпретируется.
 
 ---
 
@@ -168,7 +176,7 @@ test "channel: try_send full buffer" {
     assert(tx.try_send(10))
     assert(tx.try_send(20))
     assert(!tx.try_send(30))            // буфер полон
-    assert(rx.recv().unwrap_or(-1) == 10)
+    assert(rx.recv() ?? -1 == 10)
     assert(tx.try_send(30))             // место освободилось
     tx.close()
 }
@@ -221,8 +229,8 @@ test "channel: close + recv drain" {
     tx.send(1)
     tx.send(2)
     tx.close()
-    assert(rx.recv().unwrap_or(-1) == 1)
-    assert(rx.recv().unwrap_or(-1) == 2)
+    assert(rx.recv() ?? -1 == 1)
+    assert(rx.recv() ?? -1 == 2)
     assert(rx.recv().is_none())             // drain'нули — None
     assert(rx.recv().is_none())             // повторно — тоже None
 }
@@ -318,12 +326,12 @@ test "channel: ping-pong" {
         spawn {
             tx1.send(10)
             ro reply = rx2.recv()
-            result = reply.unwrap_or(-1)
+            result = reply ?? -1
             tx1.close()
         }
         spawn {
             ro msg = rx1.recv()
-            tx2.send(msg.unwrap_or(0) * 2)
+            tx2.send((msg ?? 0) * 2)
             tx2.close()
         }
     }
