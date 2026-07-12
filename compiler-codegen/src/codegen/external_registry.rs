@@ -579,36 +579,29 @@ impl ExternalRegistry {
 
     /// Type mapping из Nova TypeRef в C-имя. Соответствует
     /// `CEmitter::type_ref_to_c`, но в standalone-форме (не требует
-    /// CEmitter state). `Self` резолвится к receiver-типу.
+    /// CEmitter state — эта функция запускается ДО того, как CEmitter
+    /// вообще существует, во время построения registry). `Self` резолвится
+    /// к receiver-типу.
     // Plan 172.1 U.2.2: pub(crate) — SigRegistry переиспользует ЭТОТ standalone
     // type→C mapping (а не копирует), реализуя §0 «один type→C mapping».
     pub(crate) fn type_ref_to_c(ty: &TypeRef, recv: Option<&str>) -> Result<String, String> {
         match ty {
             TypeRef::Named { path, generics, .. } => {
                 let name = path.join("_");
+                // 196.3 D315: primitives resolve through THE single shared table
+                // `CEmitter::primitive_name_to_c` (emit_c.rs, made `pub(crate)` for
+                // this call) instead of a 4th hand-copied primitive list — mirrors
+                // the U.6.1.b dedup already done for `apply_type_subst_to_ref`
+                // (missing-`u32`-drift precedent: Plan 152.8). Only the
+                // caller-specific bits (removed usize/isize/ptr, Self/Result/
+                // Option, opaque user-type fallback) stay below.
+                if let Some(c) = super::emit_c::CEmitter::primitive_name_to_c(&name) {
+                    return Ok(c.into());
+                }
                 Ok(match name.as_str() {
-                    // Plan 133: int = nova_int (intptr_t), i64 = int64_t (fixed).
-                    "int" => "nova_int".into(),
-                    "i64" => "int64_t".into(),
-                    "i32" => "int32_t".into(),
-                    "i16" => "int16_t".into(),
-                    "i8"  => "int8_t".into(),
-                    // Plan 133: uint = nova_uint (uintptr_t), u64 = uint64_t (fixed).
-                    "u64" => "uint64_t".into(),
-                    "uint" => "nova_uint".into(),
                     // Plan 133: usize/isize removed — use int/uint instead.
                     "usize" => return Err("type `usize` is removed — use `int` (Plan 133)".into()),
                     "isize" => return Err("type `isize` is removed — use `int` (Plan 133)".into()),
-                    "u32" => "uint32_t".into(),
-                    "u16" => "uint16_t".into(),
-                    // Plan 70.4 Ф.4: u8 → nova_byte (unified with byte).
-                    "u8"  => "nova_byte".into(),
-                    "f64" => "nova_f64".into(),
-                    "f32" => "nova_f32".into(),
-                    "bool" => "nova_bool".into(),
-                    "str" => "nova_str".into(),
-                    // Plan 70.3: distinct nova_char typedef (mirror emit_c.rs:2680).
-                    "char" => "nova_char".into(),
                     // Plan 134: `ptr` builtin type REMOVED — use `*()` (Plan 134).
                     // *() parsed as TypeRef::Pointer(TypeRef::Unit) → handled below.
                     "ptr" => return Err("type `ptr` is removed — use `*()` (Plan 134)".into()),
