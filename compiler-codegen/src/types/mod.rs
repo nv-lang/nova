@@ -10509,7 +10509,33 @@ impl<'a> TypeCheckCtx<'a> {
                     };
                     let rt = ResolvedType::from_type_ref(ret_ty);
                     self.resolved_types_buf.borrow_mut().insert(call_id, rt);
-                } else if callee.receiver.is_none() && !callee_gs_inner.is_empty() {
+                } else if (callee.receiver.is_none()
+                    // Plan 196.4 Stage-1b: a STATIC method (`fn Type[T].method(...)`,
+                    // called bare — `Type.method(args)`, no turbofish on `Type`) has NO
+                    // receiver VALUE to carrier-subst from (unlike an instance method —
+                    // that's `resolve_return_channel`'s job, 9594) and no explicit
+                    // type-args either (a turbofish call — `Type[T].method(args)` — is a
+                    // DIFFERENT AST shape, `Member{obj:TurboFish{..}}`, that never reaches
+                    // `f1_check_call`'s callee-resolution arms at all — see
+                    // `resolve_generic_static_return`, 13567, the Tier-1 channel for
+                    // THAT shape, D372). The only source of concrete type for the
+                    // receiver's carrier generics AND the method's own generics is the
+                    // SAME one a free fn has: the call's ARGUMENTS. Extend this arm to a
+                    // static receiver too — the `unify_type` walk below is receiver-
+                    // agnostic (`callee.params`/`args` line up 1:1 for a static call
+                    // exactly like a free fn, no implicit receiver param) and the
+                    // materialize-only-when-FULLY-resolved gate two lines down already
+                    // guards a `-> Self`-adjacent bounded-generic residual (e.g.
+                    // `ArrayGen[G Generator[T], T].default(elem G) -> ArrayGen[G, T]` —
+                    // `T` is not itself a param, only reachable through `G`'s bound;
+                    // structural `unify_type` leaves it unbound → residual → skip,
+                    // unchanged legacy fallback, exactly the erased-body contract below).
+                    || matches!(
+                        callee.receiver.as_ref().map(|r| &r.kind),
+                        Some(ReceiverKind::Static)
+                    ))
+                    && !callee_gs_inner.is_empty()
+                {
                     // [M-172.1-U4-freefn-generic-return] (Plan 177 Ф.2c): the callee's
                     // return MENTIONS its own type-params — e.g. `sequence(items
                     // []Result[T,E]) -> Result[[]T,E]`, `partition(...) -> ([]T,[]E)`.
@@ -10522,12 +10548,15 @@ impl<'a> TypeCheckCtx<'a> {
                     // the SAME unifier `build_recv_subst` uses for receivers) and
                     // SUBSTITUTE, so the CONCRETE return (`Result[[]int,str]` /
                     // `([]int,[]str)`) is materialized and codegen lowers it through the
-                    // SINGLE `resolved_type_to_c` (D315), not a subst-mirror. Only for a
-                    // FREE fn (no receiver — receiver-carrier generics are the method
-                    // channel's job, 7202) and only when FULLY resolved for THIS caller
-                    // (no residual type-param after subst): an erased generic body caller
-                    // (unbound `T` in scope) leaves a residual → skip → legacy (mirrors
-                    // the concrete-caller invariant of the method-channel gs-gate).
+                    // SINGLE `resolved_type_to_c` (D315), not a subst-mirror. For a FREE
+                    // fn OR a STATIC method (Plan 196.4 Stage-1b — receiver-VALUE carrier
+                    // generics are the instance-method channel's job, 7202; a static
+                    // receiver has no value, only its declared carrier names, which this
+                    // arm now solves from args the same as a method-own generic) and only
+                    // when FULLY resolved for THIS caller (no residual type-param after
+                    // subst): an erased generic body caller (unbound `T` in scope) leaves
+                    // a residual → skip → legacy (mirrors the concrete-caller invariant
+                    // of the method-channel gs-gate).
                     let mut subst: HashMap<String, TypeRef> = HashMap::new();
                     for (p, a) in callee.params.iter().zip(args.iter()) {
                         if p.is_variadic {
