@@ -77,6 +77,22 @@ import std.runtime.defaults
 // в каждый модуль → единый реестр (из import-resolved модуля) их содержит.
 import std.runtime.char
 
+// Plan 196.3 (D109/D74 checker-visibility migration, [M-compiler-nv-porting-wave]
+// item A precedent): `f64`/`f32` math-intrinsics (sqrt/abs/trig/exp/log/...) +
+// `int.abs()` были known ТОЛЬКО через emit_c.rs-хардкод (`f64_method_to_c`/
+// `int_method_to_c`) — реальные `extern "nova"` декларации в этом файле никогда
+// не импортировались, поэтому чекер не видел их сигнатуры в `method_table`
+// (`method_overloads` возвращал `None`), и `.sqrt()`/`.abs()` резолвились только
+// через отдельный existence-whitelist (`primitive_instance_method_known`), без
+// arg-type проверки. Плейн import (как `char`/`defaults` выше) делает их
+// auto-available (без явного `import` пользователем — сохраняет прежнее
+// поведение) И инлайнит сигнатуры в `method_table`, так что чекер теперь
+// резолвит `.sqrt()`/`.abs()` через нормальный overload-канал. Codegen EMISSION
+// не меняется — `f64_method_to_c`/`int_method_to_c` (emit_c.rs) остаются
+// единственным источником C-функции (`sqrt`/`llabs`/...); этот import только
+// закрывает checker-side существование/arg-checking канал.
+import std.runtime.math
+
 // Plan 62.C / 62.C.bis: re-export error types из std.prelude.errors.
 // RuntimeError (6 variants) + ReadBufferError (1 variant) +
 // RuntimeNoneError (unit-type, D85 — ошибка `Option!!` на None). Type
@@ -272,5 +288,13 @@ export import std.runtime.string.{pad_left, pad_right, repeat, replace, compare,
 ///     type, was superseded by the owner before landing; a type-set-bounded
 ///     generic for it also hit a live path-call codegen gap,
 ///     [M-174.1-parse-typeset-pathcall], out of scope here.)
+///   - 17 = Plan 196.3 done (2026-07-12, D109/D74 checker-visibility
+///     migration): `std.runtime.math` (`f64`/`f32` math intrinsics +
+///     `int.abs()`) now plain-imported (same pattern as `char`/`defaults`
+///     above) so the checker resolves them via `method_table` instead of
+///     the emit_c.rs-only `primitive_instance_method_known` existence
+///     whitelist. Auto-available without explicit import (unchanged
+///     surface); codegen emission (`f64_method_to_c`/`int_method_to_c`)
+///     unaffected.
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 16
+export const PRELUDE_VERSION int = 17
