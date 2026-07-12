@@ -45069,6 +45069,38 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         Self::is_typed_integer(&ty_c).then_some(ty_c)
     }
 
+    /// 197.3 (Q3 A, channel-first migration): the C return-type of the
+    /// underlying `lambda_N` function, read from the checker's OWN
+    /// annotation of the closure literal (`resolved_types[closure_id] =
+    /// ResolvedType::Func { ret, .. }`) instead of the legacy AST body-walk
+    /// (`infer_lambda_return_type_with_params`). `closure_id` is the
+    /// ORIGINAL closure literal's `ExprId` — `ExprId::UNSET` (no source
+    /// closure node, e.g. a legacy-lowered `Trailing::Fn`) always misses.
+    ///
+    /// Mirrors `channel_int_c_type`'s shape: `None` on ANY miss (unset id,
+    /// no channel entry, entry isn't `Func`, or `ret` fails to lower) — the
+    /// caller (`emit_lambda`) falls back to the legacy body-walk exactly as
+    /// before. Pure (no mono side-effects) — `resolved_type_to_c` on a
+    /// `Func.ret` is the same read `channel_int_c_type` already performs.
+    ///
+    /// Populated by the checker's `ExprKind::ClosureFull` arm (types/mod.rs,
+    /// D22/Q3 B) for EVERY closure-full literal (params always typed by
+    /// grammar; `ret` = the `-> R` annotation, or `Unit` when absent —
+    /// mirrors the legacy default). NOT populated for `ClosureLight`/
+    /// `Lambda` beyond the pre-existing zero-param primitive-body gate, so
+    /// those keep falling to the legacy body-walk here (no regression).
+    fn closure_channel_ret_c(&self, closure_id: crate::ast::ExprId) -> Option<String> {
+        if !closure_id.is_set() {
+            return None;
+        }
+        match self.resolved_types.get(&closure_id) {
+            Some(crate::types::ResolvedType::Func { ret, .. }) => {
+                self.resolved_type_to_c(ret).ok()
+            }
+            _ => None,
+        }
+    }
+
     /// Plan 38: numeric type constants — `int.MAX` / `f64.NAN` / etc.
     /// Returns `Some((c_expression, c_type))` если path = primitive
     /// type constant, иначе `None`. C-expression готов к emit'у напрямую.
