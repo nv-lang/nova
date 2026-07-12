@@ -48460,41 +48460,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 return "nova_int".into();
                             }
                         }
-                        // String method calls return type inference
-                        if obj_ty == "nova_str" {
-                            self.icr_trace("B11ab_str_method_big_match_second");
-                            return match method.as_str() {
-                                "to_upper" | "to_lower" | "trim" | "slice" | "concat" => "nova_str".into(),
-                                "starts_with" | "ends_with" | "contains" | "eq" => "nova_bool".into(),
-                                "len" | "char_len" | "byte_len" => "nova_int".into(),
-                                // Plan 90: byte_at → u8.
-                                "byte_at" => "nova_byte".into(),
-                                // Plan 71 follow-up + Plan 75: char_at → Option[char], not Option[int].
-                                "char_at" => "NovaOpt_nova_char".into(),
-                                "find" | "rfind" => "NovaOpt_nova_int".into(),
-                                // D410 (2026-07-06, ex-D176 as_bytes): s.bytes() → readonly
-                                // []u8. 172.12 A6 (Vec-canon): `@bytes` is a Nova-body method
-                                // returning a real Vec[u8] (Plan 139.2, via from_raw_parts);
-                                // the checker channel supersedes this legacy fallback. Aligned
-                                // to the Vec-image (was stale NovaArray_nova_byte*).
-                                "bytes" => "Nova_Vec____nova_byte*".into(),
-                                // D178: split → []str. 172.12 A6: `@split` is Nova-body
-                                // returning a real Vec[str]; aligned to the Vec-image.
-                                "split" => "Nova_Vec____nova_str*".into(),
-                                // D178: compare → int.
-                                "compare" => "nova_int".into(),
-                                // Plan 177 / D325 Ф.2b (de-hardcode §3): `str.parse_int` is now
-                                // the SINGLE Result-form (`try_parse_int`/`parse_int_opt` retracted).
-                                // Its `Result[int, ParseIntError]` is materialized by the checker
-                                // (`infer_method_call_channel_type` → `resolve_instance_method_return`)
-                                // into `resolved_types` and read by the single `resolved_type_to_c`
-                                // (Channel 2, BEFORE this legacy). The `NovaOpt_nova_int` stopgap was
-                                // wrong for the Result-form anyway (it named Option) and is REMOVED;
-                                // a legacy hit now = channel miss → loud CC-FAIL, not a silent mis-type.
-                                "pad_left" | "pad_right" | "repeat" | "replace" => "nova_str".into(),
-                                _ => "nova_int".into(),
-                            };
-                        }
+                        // Plan 196.2 W1 [gate-1]: B11ab_str_method_big_match_second REMOVED.
+                        // `str` is a .nv-backed type whose methods (to_upper/trim/len/byte_at/
+                        // char_at/find/bytes/split/compare/pad/repeat/replace/…) are Nova-body /
+                        // Result-form; their returns the checker materialises into `resolved_types`
+                        // (Channel 2, read BEFORE this legacy). str methods are exercised pervasively
+                        // by std (text/encoding/crypto) yet NO-HIT across conformance+std ⟹ every
+                        // reachable str-method call is Channel-2-covered ⟹ this name-keyed table is
+                        // structurally-unreachable legacy (§5). Its `bytes`/`split`/`parse_int` arms
+                        // already carried "channel supersedes / REMOVED" notes.
                         // Direct vtable call: switcher.flip() → look up method ret in effect schema
                         if obj_ty.starts_with("NovaVtable_") && obj_ty.ends_with('*') {
                             let eff = obj_ty
