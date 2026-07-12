@@ -1,18 +1,24 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 193 — nova-tls: вынос TLS в отдельную репу + examples + доки
 
-**Статус:** 🚧 Ф.1 IN PROGRESS, BLOCKED 2026-07-12 — раскладка `nova-tls` готова и
-закоммичена; rt_dir/cg_include resolver-пробел ЗАКРЫТ env-override'ом
-(`NOVA_CG_INCLUDE`/`NOVA_RT_DIR`, см. «Ф.1 продолжение» ниже) — это НЕ было
-работой ext-dep-resolver-03-1 (проверено, другой домен). Ложный
-`D133-not-consumed` на consume-param transfer в отдельно-пакетном контексте
-(см. «Ф.1 продолжение #2» ниже) — **ПОЧИНЕН** (`find_repo_root_from` +
-`ResolvedFfiConfig::from_manifest`, module-loader/manifest-resolver, НЕ
-consume-checker). За ним вскрылся ТРЕТИЙ, ЕЩЁ НЕ починенный блокер:
-duplicate-symbol linker error (`tls_c_shim.c` линкуется дважды — из
-`nova-tls`'s собственного `[ffi] c_shims` И из монорепного `nova_rt/`
-auto-link'а, т.к. Ф.2 (монорепо → external dep) ещё не сделана) — ожидаемо
-разрешится Ф.2-миграцией, не отдельный баг.
+**Статус:** 🚧 Ф.1 ✅ ЗАКРЫТА, Ф.2 BLOCKED 2026-07-12 — файловый вынос
++ dependency-wiring сделаны (nova-abi `4d8abf0b0`, nova-tls `488a16d`),
+duplicate-symbol УШЁЛ (эмпирически подтверждено), conformance δ0 (95/0),
+blast-radius чист (только std/http). Ф.2-гейт НЕ закрыт — STOP на 2
+реальных gap'ах compiler-codegen (не мандат этого захода): (1) генерик
+`[ffi] libs` не умеет lib-dir propagation/detect-and-degrade → hard
+CC-FAIL «could not open mbedtls.lib» (либ нигде не установлена на машине);
+(2) `embed_resolve.rs`'s `project_root` не per-package →
+`E_EMBED_OUTSIDE_PROJECT` на легитимных `embed(...)` в nova-tls's
+`*_test.nv` при потреблении ЛЮБЫМ внешним пакетом. См. «Ф.2» ниже —
+детальный gap-отчёт, оба блокируют `std/http`, Ф.3 транзитивно тоже.
+Ф.1-история (закрыта): раскладка `nova-tls` закоммичена; rt_dir/cg_include
+resolver-пробел закрыт env-override'ом (`NOVA_CG_INCLUDE`/`NOVA_RT_DIR`,
+см. «Ф.1 продолжение» ниже) — это НЕ было работой ext-dep-resolver-03-1
+(проверено, другой домен). Ложный `D133-not-consumed` на consume-param
+transfer в отдельно-пакетном контексте (см. «Ф.1 продолжение #2» ниже) —
+починен (`find_repo_root_from` + `ResolvedFfiConfig::from_manifest`,
+module-loader/manifest-resolver, НЕ consume-checker).
 **Приоритет:** P2 (packaging, не функционал). **Консолидирует:** бывш. 116 #5 (вынос
 nova-tls) + 116 #6 (examples/доки) + 195 Ф.3 (та же экстракция) — сведено в ОДИН план,
 чтобы TLS-домен не был размазан по 116/195. Номер 193 заполняет дырку от консолидации
@@ -256,3 +262,125 @@ env-override-моста поверх ещё-не-мигрированного м
 разрешится сам после Ф.2 (монорепо перестанет иметь собственную копию
 шима). Реальный mbedTLS-линк (библиотек на машине нет) — отдельно
 непроверяем, как и раньше.
+
+## Ф.2 (2026-07-12): монорепо → external dep — механика СДЕЛАНА,
+## duplicate-symbol УШЁЛ, но GATE НЕ закрыт — STOP на 2 реальных gap'ах
+
+**Сделано** (nova-abi commit `4d8abf0b0`, nova-tls commit `488a16d`):
+- `std/tls/` (13 `.nv` + `testdata/`) и `compiler-codegen/nova_rt/{tls_c_shim.c,
+  tls_shim.h, tls_mozilla_roots.h}` удалены из монорепы.
+- Built-in D337-style TLS auto-link спецкейс (`MbedtlsConfig`,
+  `detect_mbedtls`, `c_file_uses_tls`, `uses_tls`-ветки во всех 3
+  toolchain'ах Clang/Msvc/Gcc) убран из `test_runner.rs` — эта машинерия
+  целиком заменяется nova-tls's собственным `[ffi]` (сделано в Ф.1).
+  `nova_rt.h` больше не `#include "tls_shim.h"` (файла нет).
+- `std/nova.toml`: `[dependencies] tls = { path = "../../nova-tls" }`
+  (path — **два** `..`, т.к. relative к директории `std/nova.toml`, НЕ к
+  workspace-корню: `std/` → `nova-abi/` → `nv-lang/` → `nova-tls/`; сначала
+  ошибся с одним `..`, поймал через `nova check` — «expected:
+  …\std\..\nova-tls»).
+- `std/http/error.nv` + `std/http/transport/real.nv`:
+  `import std.tls.{...}` → `import tls.tls.{...}`.
+- nova-tls's `nova.toml`: `[ffi] c_shims` дополнен `native/tls_shim.h`
+  (force-include прототипов во ВСЕ TU — иначе caller'ские CU видят
+  `tls_client_cfg_new`/`tls_server_cfg_new` только как implicit-int decl →
+  усечение 64-битного handle; раньше это гарантировал монорепный
+  `nova_rt.h`'s безусловный `#include`, теперь эта роль — на nova-tls
+  самой). `.gitignore` (codegen-артефакты + `target/`).
+
+**Эмпирически подтверждено — duplicate-symbol ушёл:** standalone
+`nova-tls test src/tls --filter cert_modes_test` (тот же env-override
+мост на монорепный toolchain: `NOVA_STD_PATH`/`NOVA_CG_INCLUDE`/
+`NOVA_RT_DIR`/`NOVA_GC_LIB_DIR`/`NOVA_GC_INCLUDE_DIR`) — было `lld-link:
+duplicate symbol`, стало `lld-link: error: could not open 'mbedtls.lib':
+no such file or directory` (× mbedtls/mbedx509/mbedcrypto). Класс ошибки
+СМЕНИЛСЯ — двойная линковка шима исчезла, ровно то, что обещала Ф.2.
+Toolchain на этой машине — **Clang** (не MSVC; `cl.exe` не на `PATH`,
+`C:\Program Files\LLVM\bin\clang.exe` найден).
+
+**Regression-check (Rust-уровня правки test_runner.rs/nova_rt.h не задели
+остальной язык):**
+- `spec_tests/conformance --full --timeout 300 --jobs 4` (env
+  `NOVA_GC_LIB_DIR`/`NOVA_GC_INCLUDE_DIR` → монорепо `nova`) —
+  **95 PASS / 0 FAIL, δ0**. Conformance не трогает `std.tls` вовсе
+  (`m178_variant_ctor_crosssum_option_collision.nv` явно «reproduces the
+  bug WITHOUT std.tls»), поэтому это чистая проверка «ничего не
+  сломалось в остальном компиляторе».
+- `nova check std` (весь пакет) — 117 PASS / 29 FAIL. Blast-radius
+  подтверждён ТОЧНО std/http-доменом: 22 из 29 FAIL — заведомо-красные
+  `*_neg.nv` фикстуры (`std/encoding/serde_neg`, `std/fs/neg`,
+  `std/io/neg`, `std/net/neg`, `std/time/civil/neg`, `std/http/neg/*`) —
+  это НЕГАТИВНЫЕ фикстуры, `nova check` (в отличие от `nova test`) не
+  знает про `EXPECT_FAIL`-конвенцию и репортит их «ошибку типизации» как
+  raw FAIL — так было ДО этого захода тоже, не регрессия. Оставшиеся 7 —
+  реальные новые FAIL, все внутри `std/http` (`body.nv`, `client/
+  client.nv`, `serdejson/serdejson.nv`, `server/mux_test.nv`,
+  `servernet/{servernet.nv,rt/handle_connection_smoke.nv}`,
+  `transport/real.nv`) — все транзитивно тянут `http.error` → `tls.tls`.
+  Никакой другой домен (net/fs/io/time/encoding — их ПОЗИТИВНЫЕ файлы)
+  не задет.
+
+**STOP — 2 реальных gap'а 03.1/D412-механизма, НЕ костылил (по мандату):**
+
+1. **`[ffi] libs` — нет lib-dir propagation, нет detect-and-degrade.**
+   Генерик `[ffi]`-конвейер (`ResolvedFfiConfig`, `test_runner.rs`) для
+   `libs = [...]` эмитит ТОЛЬКО голые `-l<name>` (Clang/Gcc) /
+   `<name>.lib` (MSVC) — нет эквивалента `include_dirs`'ного `-I` для
+   search-directory (`-L`/`/LIBPATH`), и нет detect-if-present-else-stub
+   семантики, которую имели retired built-in спецкейсы (Boehm/brotli/
+   старый mbedtls: находили vcpkg lib_dir explicit'но, ИЛИ тихо
+   компилировали Q11-стаб при отсутствии — никогда hard link error).
+   На Windows нет системного «default lib search path» аналога `/usr/lib`
+   — единственный способ найти non-standard-path `.lib` это либо `LIB`
+   env var (vcvars-snapshot, `env_clear()`-изолирован в MSVC-ветке — НЕ
+   видит внешний `NOVA_MBEDTLS_LIB_DIR`/`NOVA_GC_LIB_DIR`), либo explicit
+   `-L`/`/LIBPATH`, которого генерик-`[ffi]` не умеет декларировать.
+   Итог: `mbedtls.lib`/`mbedx509.lib`/`mbedcrypto.lib` нигде не установлены
+   на этой машине (не в `compiler-codegen/vcpkg_installed/`, не в
+   `VCPKG_ROOT`, не системно) → **hard CC-FAIL** для ЛЮБОГО потребителя
+   `tls` (не только TLS-тестов — самого факта `[dependencies] tls`
+   достаточно). Раньше (built-in спецкейс) это же отсутствие mbedTLS
+   давало graceful Q11-stub (RUN-FAIL на 4 теста, остальное PASS) — Ф.2
+   потеряла эту деградацию, т.к. переехала на генерик-конвейер, у
+   которого её никогда не было (не регрессия Ф.2, а первое реальное
+   упражнение генерик-`[ffi] libs` с non-default-path нативной либой).
+   Установка mbedTLS через vcpkg разблокировала бы ЭТУ конкретную
+   проверку, но не саму архитектурную дыру (не трогал
+   `compiler-codegen/vcpkg.json` — не мой мандат, отдельное владельческое
+   решение: registry-путь для non-standard lib search paths в `[ffi]`).
+
+2. **`embed_resolve.rs::resolve_embeds` — `project_root` не per-package,
+   не 03.1-aware.** `project_root = find_repo_root_from(entry_path)`
+   считается ОДИН раз от entry-файла CU (`test_runner.rs:2830`) и
+   применяется как единственная граница для ВСЕХ peer-файлов слитого
+   модуля, включая peer-файлы из ВНЕШНЕЙ `[dependencies]`-зависимости.
+   `nova-tls`'s `*_test.nv` (folder=module, co-equal с `ffi.nv`/
+   `stream.nv` — тот же `module tls.tls`) легитимно вызывают
+   `embed("testdata/....pem")`, разрешаемое ОТНОСИТЕЛЬНО ИХ СОБСТВЕННОЙ
+   директории (это `base_dir` — корректно, per-file) — но
+   `E_EMBED_OUTSIDE_PROJECT`-проверка сверяет результат с ЕДИНСТВЕННЫМ
+   `canon_root` (директория `nova-abi`, entry-файла `std/http/error.nv`),
+   которая физически не включает `nova-tls/` (сиблинг-репа) → **любой**
+   потребитель `tls.tls` получает `E_EMBED_OUTSIDE_PROJECT`. Блокирует
+   даже голый `nova check` (не только codegen/link) — обнаружено ПОСЛЕ
+   исправления off-by-one в path (`../../nova-tls`). Не пересекается с
+   03.1's `lookup_dependency`/`resolved_dependency_roots` (та машинерия
+   резолвит модули/FFI корректно) — отдельный, доселе неупражнённый шов
+   между D412 (Plan 186, embed) и 03.1 (Plan 03.1, package deps): D412
+   никогда не видел peer-файл из ДРУГОГО пакета с `embed(...)` внутри,
+   пока конвенция «тесты рядом с модулем» (`feedback-module-tests-
+   beside-module`) не встретилась с folder=module-схлопыванием через
+   границу пакета.
+
+**Вывод:** механика Ф.2 (файловый вынос + dependency-wiring + import fix +
+retirement built-in auto-link) — корректна и подтверждена (duplicate-
+symbol ушёл, δ0 conformance, чистый blast-radius). Оставшиеся 2 gap'а —
+в `compiler-codegen` (генерик `[ffi]` и `embed_resolve.rs`), вне мандата
+этого захода («НЕ трогай compiler-codegen кроме удаления tls_c_shim.c»);
+не костылил vcpkg.json / lib_dirs / project_root logic. Ф.2-гейт
+(«std/tls-тесты зелёные ЧЕРЕЗ dep», «монорепо собирается» на уровне
+`std`-пакета) — **не закрыт**; нужен отдельный заход на любой из двух
+gap'ов (или оба) с owner sign-off — это архитектурные решения
+(lib_dirs-в-`[ffi]` формат / detect-and-degrade семантика / per-package
+embed project-root), не локальные фиксы. Ф.3 (examples/tls/echo, гайд)
+блокирована тем же — echo-пример не соберётся, пока gap #1 открыт.

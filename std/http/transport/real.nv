@@ -34,7 +34,7 @@
 module http.transport
 
 import std.net.{TcpStream, resolve}
-import std.tls.{TlsStream, ClientConfig, TlsError}
+import tls.tls.{TlsStream, ClientConfig, TlsError}
 import std.http.{Http, HttpError, ErrorKind}
 
 /// Production `Http` handler over the `Net` effect (TCP + DNS via libuv).

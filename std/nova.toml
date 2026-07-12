@@ -66,16 +66,15 @@ src = "."
 # в stderr, но не блокирует CI.
 enforce-stability = true
 
-# Stdlib не имеет внешних зависимостей — использует только
-# prelude и собственные модули.
+# Plan 193 Ф.2: std/tls вынесен в отдельную репу `nova-tls` (сиблинг монорепы,
+# см. docs/plans/193-nova-tls-repo.md) — «настоящий рабочий native-модуль»
+# (эталон паттерна Plan 195), больше НЕ compiler-built-in (nova_rt/tls_c_shim.c
+# + test_runner.rs's D337-style TLS auto-link special case — оба retired в
+# этом заходе). std/http/transport/real.nv тянет TLS через эту зависимость
+# (`import tls.tls.{...}`) — единственный внешний dep стандартной библиотеки.
+#
+# `path` — форма для локальной разработки (механизм 03.1 ✅, path-deps не
+# пинуются). CI/публикация — `git`-форма на реальном remote nova-tls; пока не
+# переключено (nova-tls ещё не имеет remote — см. docs/plans/193).
 [dependencies]
-
-# Plan 195 Ф.2: std/tls больше не «пользовательский native-модуль» — TLS-бэкенд
-# теперь чистый C (mbedTLS, vcpkg-пребилженная .lib) + nova_rt/tls_c_shim.c,
-# собираемый/линкуемый ТЕМ ЖЕ путём, что nova_rt/net.c или brotli_shim.c
-# (compiler-codegen/test_runner.rs build_command, условная линковка по факту
-# использования tls_* символов — механизм D337). Никакой манифест-декларации
-# не нужно: это заменяет прежний `[ffi.staticlib]` (Rust rustls-крейт,
-# собираемый cargo'ом) — весь cargo/Rust-staticlib механизм retracted владельцем
-# (docs/plans/195-native-modules-c-not-rust.md: «Никакого [ffi.staticlib]
-# build="cargo" как пользовательского паттерна»).
+tls = { path = "../../nova-tls" }

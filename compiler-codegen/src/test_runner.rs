@@ -922,7 +922,8 @@ pub struct BrotliConfig {
 ///   1) target/brotli-cache build artifact (rt_dir/../../target — owner's cache).
 ///   2) tracked vendor copy under nova_rt/brotli/lib (Windows fat `.lib` today).
 ///   3) [cigreen-fix] non-Windows SYSTEM package (`apt install libbrotli-dev` on
-///      CI, mirrors detect_mbedtls's system-package fallback): CI's Linux build
+///      CI, same system-package-fallback shape TLS used to have before Plan 193
+///      Ф.2 retired the compiler-built-in mbedTLS auto-link): CI's Linux build
 ///      previously had NO brotli source at all (no vendored `.a`, no cache) →
 ///      detect_brotli always returned None → the shim silently compiled its
 ///      Q11 feature-gate stub path → every brotli_test.nv assertion that
@@ -995,108 +996,6 @@ fn detect_brotli(rt_dir: &Path) -> Option<BrotliConfig> {
         }
     }
     None
-}
-
-/// Plan 195 Ф.1: vcpkg-installed mbedTLS (mbedtls/mbedx509/mbedcrypto), the
-/// pure-C TLS backend for nova_rt/tls_c_shim.c. Replaces the Rust rustls
-/// staticlib (Plan 116) — linked CONDITIONALLY on use, exactly like brotli/
-/// Boehm (D337); no build-on-demand here (mbedTLS is a vcpkg dependency the
-/// dev host installs once — `vcpkg install` in compiler-codegen/, see
-/// vcpkg.json — mirroring the z3-backend feature's own vcpkg usage).
-pub struct MbedtlsConfig {
-    pub include_dir: PathBuf,
-    /// None on Linux/macOS when relying on the system linker's default search
-    /// path (`-lmbedtls` etc., mirrors `BoehmConfig.lib_dir`'s convention).
-    pub lib_dir: Option<PathBuf>,
-}
-
-/// Locate a vcpkg-installed mbedTLS. Lookup order (mirrors `detect_boehm`):
-///   1. `$NOVA_MBEDTLS_LIB_DIR` (+ optional `$NOVA_MBEDTLS_INCLUDE_DIR`,
-///      inferred as `lib/../include` if unset) — CI/custom override.
-///   2. Windows: local vcpkg `<cg_include>/vcpkg_installed/x64-windows-static/`,
-///      else global vcpkg via `$VCPKG_ROOT`.
-///   3. Linux/macOS: system headers (`/usr/include/mbedtls/ssl.h` etc.) —
-///      `lib_dir = None`, linker finds `-lmbedtls` in the standard path.
-/// `None` → mbedTLS not available for this host → the CU compiles the Q11
-/// stub path baked into tls_c_shim.c (`TlsError.Internal` at runtime, never
-/// a link error) — same degrade-not-fail contract as brotli/detect_tls had.
-fn detect_mbedtls(cg_include: &Path) -> Option<MbedtlsConfig> {
-    if let Ok(lib_dir_env) = std::env::var("NOVA_MBEDTLS_LIB_DIR") {
-        if !lib_dir_env.trim().is_empty() {
-            let lib_dir = PathBuf::from(&lib_dir_env);
-            let include_dir = std::env::var("NOVA_MBEDTLS_INCLUDE_DIR")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .map(PathBuf::from)
-                .or_else(|| lib_dir.parent().map(|p| p.join("include")))
-                .unwrap_or_else(|| lib_dir.clone());
-            return Some(MbedtlsConfig { include_dir, lib_dir: Some(lib_dir) });
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let local_inc = cg_include.join("vcpkg_installed").join("x64-windows-static").join("include");
-        let local_lib = cg_include.join("vcpkg_installed").join("x64-windows-static").join("lib");
-        if local_lib.join("mbedtls.lib").is_file() {
-            return Some(MbedtlsConfig { include_dir: local_inc, lib_dir: Some(local_lib) });
-        }
-        if let Ok(vcpkg_root) = std::env::var("VCPKG_ROOT") {
-            let global_inc = PathBuf::from(&vcpkg_root).join("installed").join("x64-windows-static").join("include");
-            let global_lib = PathBuf::from(&vcpkg_root).join("installed").join("x64-windows-static").join("lib");
-            if global_lib.join("mbedtls.lib").is_file() {
-                return Some(MbedtlsConfig { include_dir: global_inc, lib_dir: Some(global_lib) });
-            }
-        }
-        return None;
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = cg_include;
-        let candidates = ["/usr/include/mbedtls/ssl.h", "/usr/local/include/mbedtls/ssl.h"];
-        for c in candidates {
-            if std::path::Path::new(c).is_file() {
-                let inc = std::path::Path::new(c)
-                    .parent().and_then(|p| p.parent()) // strip mbedtls/ssl.h -> mbedtls -> include
-                    .map(PathBuf::from);
-                if let Some(inc) = inc {
-                    return Some(MbedtlsConfig { include_dir: inc, lib_dir: None });
-                }
-            }
-        }
-        None
-    }
-}
-
-/// True iff the generated `.c` uses the TLS shim — drives the conditional
-/// compile+link of `nova_rt/tls_c_shim.c` (real mbedTLS backend when found,
-/// else the Q11 stub path baked into the same file — `#ifdef NOVA_USE_MBEDTLS`).
-///
-/// Marker (unchanged since plan 116 Ф.2): call sites / emitted decls of the
-/// two session-entry externs (`tls_client_cfg_new` / `tls_server_cfg_new`) —
-/// every TLS path starts by building a config. Extern decls are emitted only
-/// for USED fns (D82), so presence == use. NB Ф.5 refinement, same lesson as
-/// brotli: once std/http imports std/tls, DEAD TlsStream bodies in http CUs
-/// will carry these call sites and over-detect — switch the marker to call
-/// sites of the mangled public wrappers (TlsStream.connect/accept), mirror of
-/// `c_file_uses_brotli`'s wrapper-scan (plan 116 Ф.5.3, still outstanding).
-fn c_file_uses_tls(c_file: &Path) -> bool {
-    let Ok(src) = std::fs::read_to_string(c_file) else { return false; };
-    for line in src.lines() {
-        if !(line.contains("tls_client_cfg_new(") || line.contains("tls_server_cfg_new(")) {
-            continue;
-        }
-        // Skip a (hypothetical) static prototype / definition header, as in
-        // c_file_uses_brotli — extern decls & call sites are non-static.
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("static ") {
-            let end = line.trim_end();
-            if end.ends_with(");") || end.ends_with('{') {
-                continue;
-            }
-        }
-        return true;
-    }
-    false
 }
 
 /// True iff the generated `.c` actually CALLS the brotli decoder wrapper — the
@@ -1197,28 +1096,6 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             eprintln!(
                 "nova/brotli-link: {} uses_brotli={} → LINK {}",
                 opts.c_file.display(), uses_brotli, names.join(", "));
-        }
-    }
-    // Plan 195 Ф.1: TLS shim — CONDITIONAL on USE, mirror of brotli (D337).
-    // `tls_c_shim.c` is ALWAYS the compiled TU when the CU uses TLS (single
-    // file, like brotli_shim.c): mbedTLS found → `-DNOVA_USE_MBEDTLS=1` +
-    // its include/lib wired in; not found → same TU compiles its baked-in
-    // Q11 stub path (TlsError.Internal at runtime, never a link error).
-    let rt_tls_c_shim = opts.rt_dir.join("tls_c_shim.c");
-    let uses_tls = c_file_uses_tls(opts.c_file);
-    let mbedtls_cfg = if uses_tls { detect_mbedtls(opts.cg_include) } else { None };
-    let mbedtls_include = mbedtls_cfg.as_ref().map(|c| c.include_dir.clone());
-    let mbedtls_lib_dir = mbedtls_cfg.as_ref().and_then(|c| c.lib_dir.clone());
-    // Diagnostic (NOVA_DEBUG_TLS_LINK=1): make the conditional-link decision
-    // observable in both directions (real mbedTLS / stub / not used).
-    if std::env::var("NOVA_DEBUG_TLS_LINK").as_deref() == Ok("1") {
-        match &mbedtls_cfg {
-            Some(_) => eprintln!(
-                "nova/tls-link: {} uses_tls={} → LINK mbedTLS", opts.c_file.display(), uses_tls),
-            None => eprintln!(
-                "nova/tls-link: {} uses_tls={} → {}",
-                opts.c_file.display(), uses_tls,
-                if uses_tls { "STUB (mbedTLS not found)" } else { "no tls" }),
         }
     }
     let march = march_flag();
@@ -1407,40 +1284,6 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                             c.arg(lib_path);
                         }
                     }
-                }
-            }
-            // Plan 195 Ф.1: TLS shim — CONDITIONAL link (only when used). One
-            // TU always (tls_c_shim.c); mbedTLS include/libs added only when
-            // found for this host (else its baked-in Q11 stub path compiles).
-            if uses_tls {
-                c.arg(&rt_tls_c_shim);
-                if let (Some(inc_path), Some(lib_dir)) = (&mbedtls_include, &mbedtls_lib_dir) {
-                    c.arg("-DNOVA_USE_MBEDTLS=1");
-                    c.arg("-I").arg(inc_path);
-                    // Dependency order matters for single-pass Unix linkers
-                    // (mbedtls -> mbedx509 -> mbedcrypto). Windows lib.exe/
-                    // link.exe are multi-pass and tolerate any order.
-                    #[cfg(target_os = "windows")]
-                    {
-                        c.arg(lib_dir.join("mbedtls.lib"));
-                        c.arg(lib_dir.join("mbedx509.lib"));
-                        c.arg(lib_dir.join("mbedcrypto.lib"));
-                    }
-                    #[cfg(not(target_os = "windows"))]
-                    {
-                        c.arg("-L").arg(lib_dir);
-                        c.arg("-lmbedtls");
-                        c.arg("-lmbedx509");
-                        c.arg("-lmbedcrypto");
-                    }
-                } else if let Some(inc_path) = &mbedtls_include {
-                    // mbedtls_lib_dir == None → system default search path
-                    // (Linux/macOS system package): -I only, then plain -l flags.
-                    c.arg("-DNOVA_USE_MBEDTLS=1");
-                    c.arg("-I").arg(inc_path);
-                    c.arg("-lmbedtls");
-                    c.arg("-lmbedx509");
-                    c.arg("-lmbedcrypto");
                 }
             }
             // Plan 27 Ф.1+Ф.D: Boehm link flags for Clang.
@@ -1637,21 +1480,6 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg(&rt_brotli_shim);
                 }
             }
-            // Plan 195 Ф.1: TLS shim — CONDITIONAL link (only when used). One
-            // TU always (tls_c_shim.c); mbedTLS include/libs added only when
-            // found for this host (else its baked-in Q11 stub path compiles).
-            if uses_tls {
-                if let (Some(inc_path), Some(lib_dir)) = (&mbedtls_include, &mbedtls_lib_dir) {
-                    c.arg("/DNOVA_USE_MBEDTLS=1");
-                    c.arg(format!("/I{}", inc_path.display()));
-                    c.arg(&rt_tls_c_shim);
-                    c.arg(lib_dir.join("mbedtls.lib"));
-                    c.arg(lib_dir.join("mbedx509.lib"));
-                    c.arg(lib_dir.join("mbedcrypto.lib"));
-                } else {
-                    c.arg(&rt_tls_c_shim);
-                }
-            }
             c.arg(opts.c_file);
             c.arg(&rt_alloc);
             c.arg(&rt_effects);
@@ -1766,22 +1594,6 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                             c.arg(lib_path);
                         }
                     }
-                }
-            }
-            // Plan 195 Ф.1: TLS shim — CONDITIONAL link (only when used). On a
-            // host without mbedTLS found → the same TU's Q11 stub path compiles,
-            // never a link error.
-            if uses_tls {
-                c.arg(&rt_tls_c_shim);
-                if let Some(inc_path) = &mbedtls_include {
-                    c.arg("-DNOVA_USE_MBEDTLS=1");
-                    c.arg("-I").arg(inc_path);
-                    if let Some(lib_dir) = &mbedtls_lib_dir {
-                        c.arg("-L").arg(lib_dir);
-                    }
-                    c.arg("-lmbedtls");
-                    c.arg("-lmbedx509");
-                    c.arg("-lmbedcrypto");
                 }
             }
             // Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI shim flags (GCC).
