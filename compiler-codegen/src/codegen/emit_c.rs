@@ -19700,6 +19700,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Plan 56 followup: deep version — компонует chain `obj.f1.f2.field[i]`
     /// рекурсивно вызывая debt_compute_field_array_elem_type на каждом уровне.
     /// Возвращает element type для **самого внутреннего** array.
+    ///
+    /// Plan 196.3 wave-2 (D239, one-window) status: every caller of this fn
+    /// OUTSIDE `infer_call_ret_c` now tries `channel_array_elem_c` FIRST (this
+    /// stays a fallback for a channel miss). It CANNOT be removed or replaced
+    /// with a `panic!` marker — it is still called DIRECTLY (no channel probe)
+    /// from `infer_call_ret_c`'s `"get"` arm (~48401, inside the wave-1
+    /// 46293-48883 region that this window's discipline forbids touching) —
+    /// genuinely SHARED with an out-of-scope caller, not dead legacy code.
     fn compute_array_elem_type_for_obj(&self, obj: &Expr) -> Option<String> {
         match &obj.kind {
             ExprKind::Ident(n) => self.array_element_types.get(n).cloned(),

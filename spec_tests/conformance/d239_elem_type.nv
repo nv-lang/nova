@@ -1,0 +1,96 @@
+// D239 wave-2 (Plan 196.3, compute_array_elem_type_for_obj migration) — element-type
+// resolution for `[]T`/`Vec[T]` RECEIVERS reached through a record-field / chain access
+// (not a bare local ident, which d239_slice_vec_alias.nv already covers) — the
+// checker-channel-first path `channel_array_elem_c` (emit_c.rs ~19735: reads
+// `resolved_types[obj.id]` as `Named{Vec,[elem]}` and lowers `elem` via
+// `resolved_type_to_c`), falling back to the legacy AST-walk
+// `compute_array_elem_type_for_obj` (~19703) only on a channel miss (unset id / bare
+// unsubstituted generic typevar). Matrix (Plan 196 wave-2 coverage table, row
+// `compute_array_elem_type_for_obj`): []int, []<record>, []Vec[int] (nested),
+// []Option[int], generic []T (free fn + generic array-ext method receiver — D373-style),
+// cross-module (D164-style export/import single-CU package mock). Один folder-module
+// `spec_tests.conformance`.
+module spec_tests.conformance
+
+import std.sort
+
+type D239ElemPoint {
+    x int
+    y int
+}
+
+fn D239ElemPoint @compare(other D239ElemPoint) -> int => @x - other.x
+
+type D239ElemBox {
+    items []int
+    points []D239ElemPoint
+    grid []Vec[int]
+    maybes []Option[int]
+}
+
+fn d239_elem_box_new() -> D239ElemBox => { items: [1, 2, 3], points: [D239ElemPoint { x: 10, y: 20 }, D239ElemPoint { x: 30, y: 40 }], grid: [[1, 2], [3, 4, 5]], maybes: [Some(7), None] }
+
+test "[]int record field element type through chain access (D239 elem)" {
+    ro b = d239_elem_box_new()
+    assert(b.items[1] == 2)
+}
+
+test "[]<record> field — element member access through chain (D239 elem)" {
+    ro b = d239_elem_box_new()
+    assert(b.points[0].x == 10)
+    assert(b.points[1].y == 40)
+}
+
+test "[]Vec[int] nested field — double index through chain (D239 elem)" {
+    ro b = d239_elem_box_new()
+    assert(b.grid[0][1] == 2)
+    assert(b.grid[1][2] == 5)
+}
+
+test "[]Option[int] field — element unwraps correctly through chain (D239 elem)" {
+    ro b = d239_elem_box_new()
+    match b.maybes[0] {
+        Some(v) => assert(v == 7)
+        None => assert(false)
+    }
+    match b.maybes[1] {
+        Some(_) => assert(false)
+        None => assert(true)
+    }
+}
+
+fn d239_elem_generic_first[T](xs []T) -> T => xs[0]
+
+test "generic []T free fn — element type resolves per instantiation (D239 elem)" {
+    assert(d239_elem_generic_first([100, 200, 300]) == 100)
+    ro pts = [D239ElemPoint { x: 1, y: 2 }, D239ElemPoint { x: 3, y: 4 }]
+    assert(d239_elem_generic_first(pts).x == 1)
+}
+
+test "generic []T array-ext method receiver — composite record element (D239 elem)" {
+    mut scores = [D239ElemPoint { x: 30, y: 1 }, D239ElemPoint { x: 10, y: 2 }, D239ElemPoint { x: 20, y: 3 }]
+    scores.sort_of()
+    assert(scores[0].x == 10)
+    assert(scores[1].x == 20)
+    assert(scores[2].x == 30)
+    assert(scores.position_of(|p| p.x == 20) == Some(1))
+    match scores.find_of(|p| p.x == 20) {
+        Some(p) => assert(p.x == 20)
+        None => assert(false)
+    }
+}
+
+// «Package A» — экспортирует record-тип с []<record>-полем через границу
+// (D164-style single-CU package mock, см. d164_cross_module_consume.nv).
+export type D239ElemCrossPkg {
+    values []D239ElemPoint
+}
+
+export fn d239_elem_cross_pkg_new() -> D239ElemCrossPkg => { values: [D239ElemPoint { x: 5, y: 6 }] }
+
+// «Package B» — потребляет запись через границу пакета, индексирует []<record>-поле.
+test "cross-module: import-binding record []<record> field element type (D239 elem)" {
+    ro pkg = d239_elem_cross_pkg_new()
+    assert(pkg.values[0].x == 5)
+    assert(pkg.values[0].y == 6)
+}
