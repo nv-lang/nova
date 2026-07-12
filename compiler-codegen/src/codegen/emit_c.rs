@@ -48504,52 +48504,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // `int.to_bits` (exercised: d141_ptr_bitcast_roundtrip.nv,
                             // write_buffer.nv) checker-materialised, NO-HIT ⟹ structurally
                             // unreachable (§5).
-                            // D26 prelude: Error.new(msg) → Nova_Error*.
-                            if eff == "Error" && method_name == "new" {
-                                self.icr_trace("B12g_path_error_new");
-                                return "Nova_Error*".into();
-                            }
+                            // Plan 196.2 W1 [gate-1]: B12g_path_error_new REMOVED. `Error.new(msg)`
+                            // (D26 prelude) is checker-materialised (resolved_types) ahead of
+                            // this legacy. Exercised pervasively yet NO-HIT ⟹ structurally
+                            // unreachable (§5).
                             // Plan 08 Ф.2: T.try_from(...) → Result[T, E].
                             // Plan 59 Ф.7.5 D3: erased mono Result-инстанс.
                             if method_name == "try_from" {
                                 self.icr_trace("B12h_path_try_from");
                                 return "NovaRes_nova_int_nova_str*".into();
                             }
-                            // Plan 91 Ф.3 / [M-91.13-codegen-none-arm-nested-generic-mismatch]:
-                            // `T.try_parse(s str) -> Option[T]` для numeric/bool/char.
-                            // Mirror'ит emit_c.rs Path-form codegen ветку — здесь
-                            // отдаём concrete `NovaOpt_<inner>` чтобы downstream
-                            // (match-arm result_ty inference, Some-pattern dispatch)
-                            // увидели правильный struct-тип вместо `nova_int` fallback.
-                            if method_name == "try_parse" {
-                                // [M-f64-try-parse-to-parse-f64]: `f64` retracted
-                                // from this Option-returning builtin — see the
-                                // matching removal at the Path-form codegen site
-                                // this mirrors. Replacement `f64.parse` is a
-                                // plain `extern "C" fn` FFI declaration (D282),
-                                // resolved through the ordinary declared-function
-                                // path above (`mono_method_decls`/
-                                // `self_method_decls`) — no entry needed here.
-                                let opt_inner: Option<&str> = match eff.as_str() {
-                                    "int" | "i64" => Some("nova_int"),
-                                    "u64" | "uint" => Some("uint64_t"),
-                                    "u32" => Some("uint32_t"),
-                                    "u16" => Some("uint16_t"),
-                                    "u8"  => Some("nova_byte"),
-                                    "i32" => Some("int32_t"),
-                                    "i16" => Some("int16_t"),
-                                    "i8"  => Some("int8_t"),
-                                    "f32" => Some("nova_f32"),
-                                    "bool" => Some("nova_bool"),
-                                    "char" => Some("nova_char"),
-                                    _ => None,
-                                };
-                                if let Some(inner) = opt_inner {
-                                    self.icr_trace("B12i_path_try_parse");
-                                    let sani = Self::sanitize_for_novaopt(inner);
-                                    return format!("NovaOpt_{}", sani);
-                                }
-                            }
+                            // Plan 196.2 W1 [gate-1]: B12i_path_try_parse REMOVED. `T.try_parse(s)
+                            // -> Option[T]` for numeric/bool/char (Plan 91 Ф.3) is checker-
+                            // materialised (resolved_types) ahead of this legacy — mirrored
+                            // emit_c.rs Path-form codegen branch stays untouched (different
+                            // function). Exercised yet NO-HIT ⟹ structurally unreachable (§5).
                             // Plan 196.2 W1 [gate-1]: B12j_path_str_from_1 + B12j_path_str_from_2_dup
                             // + B12j_path_str_from_bytes + B12k_path_user_type_from REMOVED.
                             // Path-form mirrors of the already-removed B11s_str_from_ident +
@@ -48571,69 +48540,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // (AtomicInt.new()/Mutex.new()/WaitGroup.new(), exercised: std/
                             // concurrency, std/runtime/sync) checker-materialised, NO-HIT ⟹
                             // structurally unreachable (§5).
-                            // Plan 180 [M-180-static-method-path-ret-infer]: general
-                            // user static-method return-type inference. The global
-                            // `fn_ret_<method>` fallback below CANNOT distinguish
-                            // static methods overloaded by receiver type (every
-                            // `T.deserialize() -> Result[T, DeError]` — Addr / User /
-                            // int / str / Vec / Option share the name `deserialize`
-                            // with DIFFERENT return types). Resolve the receiver: if
-                            // `eff` is a typevar bound in the active mono context
-                            // (`T.deserialize` with T=User), map it to the concrete
-                            // Nova type first; then look up the per-(type, method)
-                            // `method_overloads` static sig and return its concrete
-                            // `return_c_type`. Makes parametric-return generic-static-
-                            // dispatch (the serde `Deserialize` contract) codegen-
-                            // resolvable. Runs only AFTER hardcoded cases missed, and
-                            // only overrides the (already-wrong-for-overloads) global
-                            // fn_ret fallback.
-                            {
-                                let concrete_eff = self.subst_c(eff)
-                                    .map(|c| Self::debt_nova_type_name_from_c(&c))
-                                    .unwrap_or_else(|| eff.clone());
-                                // Plan 180 Ф.6: for the serde `serialize`/`deserialize`
-                                // static contract, a mono-ordering-degraded overload sig
-                                // (`void*`/generic-stub return) must NOT be accepted — it
-                                // mis-lowers `T.deserialize(d)` (silent wrong value or the
-                                // P67 ICE below). Skip it and fall through to the direct
-                                // reconstruction. Non-serde methods keep the prior predicate.
-                                let is_serde_static =
-                                    method_name == "deserialize" || method_name == "serialize";
-                                if let Some(sigs) = self.method_overloads
-                                    .get(&(concrete_eff.clone(), method_name.clone()))
-                                {
-                                    if let Some(sig) = sigs.iter().find(|s| {
-                                        !s.is_instance
-                                            && !s.return_c_type.is_empty()
-                                            && !(is_serde_static
-                                                && (s.return_c_type == "void*"
-                                                    || self.debt_is_generic_stub_c(&s.return_c_type)))
-                                    }) {
-                                        self.icr_trace("B12n_path_user_static_overload");
-                                        return sig.return_c_type.clone();
-                                    }
-                                }
-                                // Plan 180 Ф.6: reconstruct `Result[T, DeError]` directly
-                                // from the receiver type when the overload sig is absent or
-                                // degraded (mono-collection ordering — the `Deserialize`
-                                // contract fixes the return). Mirrors the `?`-lowering pin.
-                                if method_name == "deserialize" {
-                                    let named = |n: &str| crate::ast::TypeRef::Named {
-                                        path: vec![n.to_string()], generics: vec![],
-                                        span: crate::diag::Span::dummy(),
-                                    };
-                                    if let Ok(ok_c) = self.type_ref_to_c(&named(&concrete_eff)) {
-                                        if !ok_c.is_empty() && ok_c != "void*"
-                                            && !self.debt_is_generic_stub_c(&ok_c)
-                                        {
-                                            let err_c = self.type_ref_to_c(&named("DeError"))
-                                                .unwrap_or_else(|_| "NovaValue_DeError".to_string());
-                                            self.icr_trace("B12n_path_deserialize_reconstruct");
-                                            return self.result_repr_c_type(&ok_c, &err_c);
-                                        }
-                                    }
-                                }
-                            }
+                            // Plan 196.2 W1 [gate-1]: B12n_path_user_static_overload +
+                            // B12n_path_deserialize_reconstruct REMOVED. General user
+                            // static-method return-type inference (Plan 180, serde
+                            // `Deserialize` contract: `method_overloads` lookup +
+                            // `Result[T, DeError]` direct reconstruction fallback) is
+                            // checker-materialised (resolved_types) ahead of this legacy.
+                            // Exercised (serde round-trips) yet NO-HIT ⟹ structurally
+                            // unreachable (§5).
                             let key = format!("fn_ret_{}", method_name);
                             if let Some(t) = self.var_types.get(&key).cloned() {
                                 self.icr_trace("B12o_path_fn_ret_method");
