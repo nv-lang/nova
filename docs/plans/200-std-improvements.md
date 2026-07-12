@@ -129,6 +129,31 @@ Set/Queue/StringBuilder/WriteBuffer.
 
 ---
 
+## Пункт 5 — фолд `from_raw_parts` → `new(ptr, len, cap)` overload (D372-amend1)
+
+**Статус:** ⛔ ЗАБЛОКИРОВАН до фикса `[M-vec-new-static-arity-overload]` (отслеживается 196.2/волна-1).
+Зарегистрирован по указанию владельца 2026-07-12.
+
+**Что:**
+```nova
+fn Vec[T].from_raw_parts(ptr *T, len int, cap int) -> Self
+⇒ fn Vec[T].new(ptr *mut T, len int, cap int) -> Self require cap >= len
+```
+3-арг overload конструктора `new` + `*mut T` НАПРЯМУЮ (вместо `unsafe { ptr as *mut T }` reinterpret-cast) +
+контракт `cap >= len`. Тогда `new(cap int = 0)` + `new(ptr, len, cap)` = легальный набор перегрузок.
+
+**Блокер `[M-vec-new-static-arity-overload]`:** codegen (второе окно) путает 0-арг и 3-арг перегрузки `new`
+при сборке всего vec-folder-модуля одной CU (в C уходит неверный тип/арность; репро — `vec_of_empty_panic`
+neg-тест ломается). ДРУГОЙ класс, чем default-arg backfill Пункта 1 (тот закрыт). Пока не зачинен —
+`from_raw_parts` остаётся ИМЕНОВАННЫМ. Фикс = часть class-C static-ctor overload+return «одного окна»
+(196.2/волна-1); снятие маркера = разблокировка этого пункта.
+
+**Приёмка (после разблокировки):** `nova test --full std/collections/vec` — vec-folder без cross-wiring;
+`vec_of_empty_panic` neg-тест зелёный; conformance 95/0; red→green тест на 3-арг `new` overload; все
+call-сайты `from_raw_parts` → `new(ptr, len, cap)`; спека D372-amend1 (снять пометку «ОТКАЧЕНО»).
+
+---
+
 ## Кандидаты на будущее
 
 _(сюда — новые std-эргономические/корректностные улучшения по мере появления; каждый с D-рефом и приёмкой)_
