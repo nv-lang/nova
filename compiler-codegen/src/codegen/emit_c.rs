@@ -691,6 +691,17 @@ pub struct CEmitter {
     /// same-name collision → all qualification code below is a no-op (byte-
     /// identical guarantee). Built in `emit_module` from `peer_files`.
     colliding_type_names: HashSet<String>,
+    /// `[M-178-server-typed-body]`: names of plain (non-receiver) free fns
+    /// declared in ≥2 DISTINCT modules of this CU that need file-discriminated
+    /// mangling (see the `colliding_fn_names` computation in `emit_module`,
+    /// mirrors `colliding_type_names` above). Consulted by the D84 free-fn
+    /// overload-registration pass to EXCLUDE these names from the shared
+    /// `method_overloads` sentinel-key registry (same reasoning as the
+    /// existing `f.file_private` exclusion just above it: registering them
+    /// there mixes UNRELATED same-name declarations from different modules
+    /// under one dispatch key). Empty for any CU without a cross-module
+    /// free-fn collision → byte-identical for everything else.
+    colliding_fn_names: HashSet<String>,
     /// [M-sync-crossmodule…] `FileId → module_name` for every peer file. Gives a
     /// TypeDecl its DEFINING module (`t.span.file_id → module`) at emission, and
     /// the current-file context for reference-site qualification. Built from
@@ -1862,6 +1873,7 @@ impl CEmitter {
             value_record_names: HashSet::new(),
             sum_schemas: HashMap::new(),
             colliding_type_names: HashSet::new(),
+            colliding_fn_names: HashSet::new(),
             emit_file_module: HashMap::new(),
             file_type_module: HashMap::new(),
             being_defined_sum_types: HashSet::new(),
@@ -4127,8 +4139,28 @@ impl CEmitter {
             // В карту идут только коллизии с ИДЕНТИЧНОЙ сигнатурой (rotl32
             // md5/sha1) — их overload-путь различить не может (один want_params
             // → первый c_name для обоих тел, старый duplicate-symbol баг).
+            //
+            // [M-178-server-typed-body] fix (2026-07-12): the identical-sig-only
+            // condition above misses a DIFFERENT-signature cross-module
+            // collision where at least one side is module-PRIVATE (no
+            // `export`) — e.g. `std.http.client`'s private
+            // `serialize_response(status, headers, body) -> str` vs
+            // `std.http.server`'s EXPORTED `serialize_response(resp) -> []u8`.
+            // A private declaration is by D307/D78 construction NEVER a
+            // legitimate D84 overload candidate for callers outside its own
+            // module (nothing outside the module can even name it) — the
+            // "already handled via overload suffixes" escape above only
+            // holds when EVERY colliding declaration is `export`ed (so a
+            // downstream call site genuinely importing both could pick
+            // between them by arg-shape). When any side is private, the
+            // naive single-entry `fn_module_map` can silently steal a
+            // same-module call site (`mock_dispatch` in `client/mock.nv`
+            // calling its own peer's private `serialize_response`) and mangle
+            // it to the OTHER module's symbol — right name, wrong body,
+            // wrong C type. Route those through the same safe per-file path.
             let mut name_modules: HashMap<String, std::collections::BTreeSet<Vec<String>>> = HashMap::new();
             let mut name_sigs: HashMap<String, std::collections::BTreeSet<String>> = HashMap::new();
+            let mut name_all_exported: HashMap<String, bool> = HashMap::new();
             for pf in &module.peer_files {
                 for item in &pf.items_here {
                     if let Item::Fn(f) = item {
@@ -4142,26 +4174,68 @@ impl CEmitter {
                                 .collect::<Vec<_>>()
                                 .join(",");
                             name_sigs.entry(f.name.clone()).or_default().insert(sig);
+                            name_all_exported.entry(f.name.clone())
+                                .and_modify(|all| *all = *all && f.is_export)
+                                .or_insert(f.is_export);
                         }
                     }
                 }
             }
             let colliding_fn_names: std::collections::HashSet<String> = name_modules.into_iter()
                 .filter(|(name, mods)| {
-                    mods.len() >= 2
-                        && name_sigs.get(name).map_or(false, |sigs| sigs.len() == 1)
+                    if mods.len() < 2 { return false; }
+                    let identical_sig = name_sigs.get(name).map_or(false, |sigs| sigs.len() == 1);
+                    let any_private = !name_all_exported.get(name).copied().unwrap_or(true);
+                    identical_sig || any_private
                 })
                 .map(|(name, _)| name)
                 .collect();
+            // Persist for the D84 free-fn overload-registration pass below
+            // (~line 5700s), which must exclude these names from the shared
+            // `method_overloads` sentinel-key registry — see field doc.
+            self.colliding_fn_names = colliding_fn_names.clone();
+            // [M-178-server-typed-body] fix: `file_priv_fn_c_names` is keyed
+            // by the SINGLE declaring peer-file's `file_id` — correct for a
+            // TRUE `priv(file)` item (only ever called from its own
+            // declaring file, so caller's `current_emit_file_id` always
+            // equals the declarer's), but a module-private (D307 default,
+            // no modifier) colliding fn is callable from ANY peer file of
+            // its OWN module (folder-module = one namespace across
+            // co-equal files, D29/D78) — e.g. `client/wire.nv`'s
+            // `serialize_response` called from the peer file
+            // `client/mock.nv`. Registering the mangled name under ONLY
+            // `wire.nv`'s file_id left `mock.nv`'s call site (a DIFFERENT
+            // `current_emit_file_id`) unresolved, falling through past both
+            // `file_priv_fn_c_names` AND `fn_module_map` (excluded once
+            // colliding) to the bare `nova_fn_<name>` legacy fallback — a
+            // symbol nothing emits (implicit-int C compile error). Register
+            // the mangled name under EVERY peer file's `file_id` that
+            // shares the declaring `pf.module_name`, so the shadow lookup
+            // succeeds regardless of which peer file the call site is
+            // emitted from.
+            let mut module_file_ids: HashMap<Vec<String>, Vec<u32>> = HashMap::new();
+            for pf in &module.peer_files {
+                module_file_ids.entry(pf.module_name.clone())
+                    .or_default()
+                    .push(pf.file_id);
+            }
             for pf in &module.peer_files {
                 for item in &pf.items_here {
                     if let Item::Fn(f) = item {
                         if f.receiver.is_none() {
                             if colliding_fn_names.contains(&f.name) {
                                 let mangled = Self::mangle_free_fn(&pf.module_name, &f.name);
-                                self.file_priv_fn_c_names
-                                    .entry((pf.file_id, f.name.clone()))
-                                    .or_insert(mangled);
+                                if let Some(file_ids) = module_file_ids.get(&pf.module_name) {
+                                    for &fid in file_ids {
+                                        self.file_priv_fn_c_names
+                                            .entry((fid, f.name.clone()))
+                                            .or_insert_with(|| mangled.clone());
+                                    }
+                                } else {
+                                    self.file_priv_fn_c_names
+                                        .entry((pf.file_id, f.name.clone()))
+                                        .or_insert(mangled);
+                                }
                             } else {
                                 self.fn_module_map
                                     .entry(f.name.clone())
@@ -5455,6 +5529,11 @@ impl CEmitter {
             // Otherwise (merged from import) — skip.
             !user_type_spans.contains(&(t.name.clone(), t.span))
         };
+        // [M-178-server-typed-body] fix: snapshot into a local so the
+        // `should_skip_fn` closure below doesn't hold an immutable borrow of
+        // `self` for its whole lifetime (this fn does plenty of `&mut self`
+        // work — `self.emit_type_decl`/etc — after the closure is defined).
+        let colliding_fn_names_snapshot: HashSet<String> = self.colliding_fn_names.clone();
         let should_skip_fn = |f: &FnDecl| -> bool {
             // Plan 138.2 Ф.0c (D29 method-level shadow): skip emitting an
             // imported generic type's method when the user has redeclared that
@@ -5471,6 +5550,21 @@ impl CEmitter {
                         return true;
                     }
                 }
+            }
+            // [M-178-server-typed-body] fix: this D29-shadow skip assumes a
+            // free fn matching the entry-module's key by NAME is the SAME
+            // declaration reached via a second (merged/import) path — true
+            // for genuine prelude-shadow re-exports, but FALSE for a
+            // cross-module collision (`colliding_fn_names`, e.g.
+            // `std.http.client`'s private `serialize_response` vs
+            // `std.http.server`'s exported one) — two UNRELATED functions
+            // that happen to share a name. Skipping the non-entry-module one
+            // here would silently drop its body (implicit-decl CC-FAIL at
+            // every call site, since the collision-aware mangling above
+            // gives it its OWN distinct C symbol that then never gets
+            // defined). Never skip those via this path.
+            if f.receiver.is_none() && colliding_fn_names_snapshot.contains(&f.name) {
+                return false;
             }
             let key = match &f.receiver {
                 Some(r) => format!("{}.{}", r.type_name, f.name),
@@ -5634,7 +5728,20 @@ impl CEmitter {
                 // directly through free_fn_c_name. Registering them here would
                 // (a) collide same-named privates from peer files under the same
                 // sentinel key, and (b) wrongly surface them to sibling call-sites.
-                if f.receiver.is_none() && f.file_private && !f.is_external {
+                //
+                // [M-178-server-typed-body] fix: the same reasoning applies to a
+                // name detected as a cross-MODULE collision (`colliding_fn_names`,
+                // e.g. `std.http.client`'s private `serialize_response` vs
+                // `std.http.server`'s exported one of the same name) even when
+                // NEITHER declaration is `priv(file)` — they are two UNRELATED
+                // functions that happen to share a name, not overloads of each
+                // other, so they must not share a `method_overloads` sentinel
+                // key either. Resolved instead via the (module-wide) per-file
+                // `file_priv_fn_c_names` map built earlier in this fn.
+                if f.receiver.is_none()
+                    && ((f.file_private && !f.is_external)
+                        || self.colliding_fn_names.contains(&f.name))
+                {
                     continue;
                 }
                 // === D84: free-function overload registration ===

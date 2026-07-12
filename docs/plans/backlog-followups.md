@@ -1252,7 +1252,23 @@ Server-followups (за CORE, честные маркеры):
   см. `[M-channel-generic-elem-type]` ниже.
 - **[M-178-server-policy-surface]** — middleware onion, 100-continue, keep-alive, chunked-request decode, trailing-slash-301.
 - **[M-178-server-graceful-deadline]** — bounded deadline-drain gated на `supervised(deadline:)` (unimpl в main); cancel-based stop-accept доступен.
-- **[M-178-server-typed-body]** — типизированные `#impl(Deserialize)` request-bodies (serde-в-http-CU codegen-барьер, см. serdejson).
+- **[M-channel-generic-elem-type]** (P1-ish, найден 2026-07-12 при работе над `[M-178-server-streaming]`,
+  isolated-repro подтверждён вне std/http — pre-existing, компиляторный, НЕ мой зона в этой волне):
+  `docs/channels.md` §«element type T is inferred from the first send/recv» **не выполняется** для
+  non-`int` T. Repro: `ro { tx, rx } = Channel.new(4); tx.send("first")` (str) → emit_c.rs типизирует
+  канал-элемент как `nova_int` НЕЗАВИСИМО от первого `send`, эмитит
+  `nova_chan_writer_send(tx, (nova_int)(_nova_strlit_...))` (строка→int cast) → CC-FAIL (`nova_str` не
+  влезает в `nova_int` param, компилятор C ловит). С `[]u8`-пейлоадом та же мистипизация КОМПИЛИРУЕТСЯ
+  (указатель→int неявный C-cast разрешён) — silent semantics bug, не поймано компилятором. Документированный
+  turbofish-эскейп `Channel[str].new(n)` (channels.md:124) **ICE**: `internal error at emit_c.rs:49360:
+  [P67-LEGACY] Ident \`Channel\` not in var_types / not a sum-variant` — воспроизведено МИНИМАЛЬНО (голый
+  `module chan_repro { test {...} }` вне std/, без деструктуризации тоже падает — не про
+  `ro {tx,rx}`-паттерн). `int`-payload работает штатно (baseline sanity PASS). Обход в
+  `std/http/server/streaming_test.nv` (см. коммент там): канал несёт `int`-индексы вместо
+  `[]u8`/`str`-пейлоада напрямую. Нужен владельцу компилятора: (1) реальная T-inference от
+  first-send/recv (docs claim), ИЛИ (2) минимум — turbofish `Channel[T].new` без ICE как рабочий
+  escape hatch, ИЛИ (3) поймать non-int-payload-через-int-канал как ЯВНУЮ typed-error вместо silent
+  pointer/int reinterpret для pointer-sized T (в компиляторе, не здесь).
 - ~~**[M-channel-generic-elem-type]**~~ ✅ **(2)+(3) ЗАКРЫТЫ 2026-07-12** (ветка `channel-elem`,
   worktree `nova-capmig`, коммиты `<см. HEAD channel-elem>`). Найден 2026-07-12 при работе над
   `[M-178-server-streaming]`; репро было: `docs/channels.md` §«element type T is inferred from the

@@ -22870,6 +22870,24 @@ struct ConsumeRegistry {
     /// blast-radius fix, out of scope here).
     mut_methods_arity: HashSet<(String, String, usize)>,
     ro_methods_arity: HashSet<(String, String, usize)>,
+    /// `[M-178-server-typed-body]` fix (2026-07-12): arity-aware companion of
+    /// `recv_returning` — `(receiver_type, method_name, arity)`. The name-only
+    /// `recv_returning` set collapses cross-type same-name pairs at DIFFERENT
+    /// arity (e.g. `ServeMux mut @post(pattern, handler) -> @`, arity 2, vs
+    /// `HttpClient @post(url) -> RequestBuilder`, arity 1, plain non-fluent
+    /// return) into one bucket keyed only by "post". The fluent-chain
+    /// receiver check below (`obj` itself a `-> @` Call result) used
+    /// name-only `recv_returning` to decide whether the INNER call of a
+    /// chain is a confirmed self-returning method — for a call whose true
+    /// arity only matches an UNRELATED type's fluent method, that produced a
+    /// false `E_RECEIVER_BINDING_NOT_MUT` (any multi-file CU that pulls in
+    /// both a `ServeMux`-shaped router and an `HttpClient`-shaped builder
+    /// with same-named, different-arity chain methods). Scoped to that ONE
+    /// check only, same narrow-blast-radius precedent as `mut_methods_arity`/
+    /// `ro_methods_arity` (`[M-172.5-chain-gating-ro-at]`) — pre-existing
+    /// name-only `recv_returning` uses elsewhere are already type-scoped via
+    /// `ctx.var_types`, so left unchanged.
+    recv_returning_arity: HashSet<(String, String, usize)>,
     /// Plan 108.1 followup ([M-108.1-readonly-to-explicit-mut-coerce]):
     /// free-fn name → indices of `mut`-params.  Используется при call
     /// site: если arg в этой позиции имеет тип `readonly T` (или
@@ -22908,6 +22926,8 @@ impl ConsumeRegistry {
         // Fix [M-172.5-chain-gating-ro-at]: arity-aware companions (see field doc).
         let mut mut_methods_arity: HashSet<(String, String, usize)> = HashSet::new();
         let mut ro_methods_arity: HashSet<(String, String, usize)> = HashSet::new();
+        // `[M-178-server-typed-body]` fix: arity-aware companion of `recv_returning`.
+        let mut recv_returning_arity: HashSet<(String, String, usize)> = HashSet::new();
         // Plan 108.1 followup: mut-params indices for E_READONLY_COERCE.
         let mut fn_mut_params: HashMap<String, Vec<usize>> = HashMap::new();
         let mut method_mut_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
@@ -22945,6 +22965,8 @@ impl ConsumeRegistry {
                     && f.nova_body.is_none()
                 {
                     recv_returning.insert((recv.to_string(), f.name.to_string()));
+                    recv_returning_arity.insert(
+                        (recv.to_string(), f.name.to_string(), f.params.len()));
                 }
             }
         }
@@ -23016,6 +23038,8 @@ impl ConsumeRegistry {
                         if fd.returns_receiver {
                             recv_returning
                                 .insert((r.type_name.clone(), fd.name.clone()));
+                            recv_returning_arity.insert(
+                                (r.type_name.clone(), fd.name.clone(), fd.params.len()));
                         }
                         if !consume_idx.is_empty() {
                             method_params.insert(
@@ -23063,7 +23087,7 @@ impl ConsumeRegistry {
         ConsumeRegistry {
             methods, fn_params, method_params, fn_return_types, recv_returning,
             fn_view_params, method_return_types, mut_methods, ro_methods,
-            mut_methods_arity, ro_methods_arity,
+            mut_methods_arity, ro_methods_arity, recv_returning_arity,
             fn_mut_params, method_mut_params,
             fn_non_unsafe_params, method_non_unsafe_params,
         }
@@ -26187,8 +26211,18 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                     // gate the name-only ro/mut registries (no receiver-type
                                     // resolution here) misfire broadly across std (lazy iterator
                                     // adapters, http builders, `chars().next()`, …).
-                                    let inner_is_self_return = ctx.reg.recv_returning.iter()
-                                        .any(|(_, m)| m == inner_method.as_str());
+                                    // `[M-178-server-typed-body]` fix: arity-scoped (not
+                                    // name-only) — `recv_returning` collapses cross-type
+                                    // same-name pairs at DIFFERENT arity (e.g. `ServeMux
+                                    // mut @post(pattern, handler) -> @`, arity 2, vs
+                                    // `HttpClient @post(url) -> RequestBuilder`, arity 1,
+                                    // a plain non-fluent constructor) into one bucket keyed
+                                    // only by "post", causing this check to misfire on the
+                                    // UNRELATED arity-1 call. `recv_returning_arity` mirrors
+                                    // `inner_ever_mut_same_arity` below — same arity-matching
+                                    // discipline the escape-hatch already relies on.
+                                    let inner_is_self_return = ctx.reg.recv_returning_arity.iter()
+                                        .any(|(_, m, a)| m == inner_method.as_str() && *a == inner_arity);
                                     // POSITIVE evidence only: reject ONLY when `inner_method`
                                     // is a CONFIRMED registered ro-INSTANCE method (present in
                                     // `ro_methods_arity` — populated exclusively for
