@@ -47778,23 +47778,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // строка: type-keyed пробы ниже не матчатся, name-keyed specials
                         // (`n == "runtime"` и т.п.) дальше по потоку отрабатывают.
                         let obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
-                        // Plan 138.4 Ф.1 G-C: identity `.clone()` on a record/heap type
-                        // with no user `@clone` returns the receiver type (mirrors the
-                        // emit-side identity fallback ~21215). Without this the mono'd
-                        // generic body's `@data[i].clone()` could infer a foreign type.
-                        if method == "clone" && args.is_empty()
-                            && obj_ty.starts_with("Nova_")
-                            && obj_ty.ends_with('*')
-                            && obj_ty != "void*"
-                        {
-                            let recv_nova = Self::debt_nova_type_name_from_c(&obj_ty);
-                            let has_user_clone = self.all_methods
-                                .contains(&(recv_nova.clone(), "clone".to_string()));
-                            if !has_user_clone && !Self::debt_contains_mono_sep(&recv_nova) {
-                                self.icr_trace("B11b_clone_identity");
-                                return obj_ty;
-                            }
-                        }
+                        // Plan 196.2 W1 [gate-1]: B11b_clone_identity REMOVED. Identity
+                        // `.clone()` on a record/heap type with no user `@clone` (mirrors
+                        // the emit-side identity fallback ~21215, which stays — that path
+                        // is unrelated emit-side code, not this legacy inference dispatch)
+                        // is checker-materialised into resolved_types ahead of this legacy.
+                        // Exercised pervasively yet NO-HIT ⟹ structurally unreachable (§5).
                         // Plan 48: если obj_ty — монотип вида "Nova_X____A__B*",
                         // вычислить return-type метода через generic_type_methods["X"]
                         // с подстановкой type-аргументов. Это исправляет случаи вроде
@@ -48398,19 +48387,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             self.icr_trace("B11ai_serialize_contract");
                             return "NovaRes_nova_unit_NovaValue_SerError*".to_string();
                         }
-                        // bench.opaque(x): compiler black-box identity intrinsic (mirror of
-                        // emit_expr's NOVA_BENCH_OPAQUE_PRIM) — its return type IS the argument
-                        // type. The checker leaves resolved_types UNSET for this namespace
-                        // intrinsic (obj_ty="" on Ident("bench") receiver), so the channel
-                        // above misses. [M-182-crash-method-ret-unknown] (bench-intrinsic branch).
-                        if method == "opaque" && args.len() == 1 {
-                            if let ExprKind::Ident(n) = &obj.kind {
-                                if n == "bench" {
-                                    self.icr_trace("B11aj_bench_opaque");
-                                    return self.infer_expr_c_type(args[0].expr());
-                                }
-                            }
-                        }
+                        // Plan 196.2 W1 [gate-1]: B11aj_bench_opaque REMOVED.
+                        // `bench.opaque(x)` compiler black-box identity intrinsic
+                        // (mirror of emit_expr's NOVA_BENCH_OPAQUE_PRIM, which stays —
+                        // emit-side, unrelated to this legacy inference dispatch) is now
+                        // checker-materialised (resolved_types) ahead of this legacy.
+                        // Exercised (bench harness) yet NO-HIT ⟹ structurally
+                        // unreachable (§5).
                         // [M-generic-method-self-recursive-return] (Plan 186, recursive-mono):
                         // a generic method's mono'd body calling ITSELF on a value of its own
                         // receiver type (`fn LinkedList[T] @map[U](f) -> LinkedList[U] { ...
