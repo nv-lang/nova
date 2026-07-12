@@ -1,0 +1,87 @@
+// D109 wave-2 (196.3, Q7) — coverage-fill discovered while investigating
+// `primitive_instance_method_known` (compiler-codegen/src/codegen/emit_c.rs), the
+// checker's EXISTENCE oracle for primitive instance methods (consulted as a fallback
+// after `method_overloads` misses). The float-math branch (`f64_method_to_c`: sqrt/
+// cbrt/abs/ceil/floor/round/trunc/trig/exp/log/pow/hypot/is_nan/is_finite/is_infinite)
+// LOOKED like a redundant duplicate of the `extern "nova" fn f64 @sqrt()`-style
+// declarations in `std/runtime/math.nv` — it is NOT: `extern` methods register into
+// codegen's `ExternalRegistry`, not the checker's `method_table` that `method_overloads`
+// reads, so this arm is the checker's ONLY existence channel for them (confirmed
+// empirically: removing it broke `(9.0).sqrt()` with `[E_UNKNOWN_METHOD]`). This file
+// stays as a plain coverage-fill: exercises the FULL f64/f32 math-method set (not just
+// the D74 subset already covered by `d74_math_methods.nv`), including `f32` — previously
+// UNCOVERED by any conformance fixture. One folder-module CU (`spec_tests.conformance`).
+module spec_tests.conformance
+
+test "f64 full math-intrinsic set resolves + computes (D109/D74 wave-2)" {
+    assert((9.0).sqrt() == 3.0)
+    assert((27.0).cbrt() == 3.0)
+    assert((-4.5).abs() == 4.5)
+    assert((3.1).ceil() == 4.0)
+    assert((3.9).floor() == 3.0)
+    assert((3.5).round() == 4.0)
+    assert((3.9).trunc() == 3.0)
+    assert((0.0).sin() == 0.0)
+    assert((0.0).cos() == 1.0)
+    assert((0.0).tan() == 0.0)
+    assert((0.0).asin() == 0.0)
+    assert((1.0).acos() == 0.0)
+    assert((0.0).atan() == 0.0)
+    assert((0.0).atan2(1.0) == 0.0)
+    assert((0.0).sinh() == 0.0)
+    assert((0.0).cosh() == 1.0)
+    assert((0.0).tanh() == 0.0)
+    assert((0.0).exp() == 1.0)
+    assert((0.0).exp2() == 1.0)
+    assert((1.0).ln() == 0.0)
+    assert((1.0).log2() == 0.0)
+    assert((1.0).log10() == 0.0)
+    assert((2.0).pow(10.0) == 1024.0)
+    assert((3.0).hypot(4.0) == 5.0)
+    assert(!((1.0).is_nan()))
+    assert((1.0).is_finite())
+    assert(!((1.0).is_infinite()))
+}
+
+test "f32 full math-intrinsic set resolves + computes (D109 wave-2, previously uncovered)" {
+    ro nine f32 = 9.0
+    ro twentyseven f32 = 27.0
+    assert(nine.sqrt() == 3.0)
+    assert(twentyseven.cbrt() == 3.0)
+    ro negfour f32 = -4.5
+    assert(negfour.abs() == 4.5)
+    ro c f32 = 3.1
+    assert(c.ceil() == 4.0)
+    ro fl f32 = 3.9
+    assert(fl.floor() == 3.0)
+    ro rd f32 = 3.5
+    assert(rd.round() == 4.0)
+    ro tr f32 = 3.9
+    assert(tr.trunc() == 3.0)
+    ro zero f32 = 0.0
+    assert(zero.sin() == 0.0)
+    assert(zero.cos() == 1.0)
+    assert(zero.tan() == 0.0)
+    assert(zero.asin() == 0.0)
+    ro one f32 = 1.0
+    assert(one.acos() == 0.0)
+    assert(zero.atan() == 0.0)
+    assert(zero.atan2(one) == 0.0)
+    assert(zero.sinh() == 0.0)
+    assert(zero.cosh() == 1.0)
+    assert(zero.tanh() == 0.0)
+    assert(zero.exp() == 1.0)
+    assert(zero.exp2() == 1.0)
+    assert(one.ln() == 0.0)
+    assert(one.log2() == 0.0)
+    assert(one.log10() == 0.0)
+    ro two f32 = 2.0
+    ro ten f32 = 10.0
+    assert(two.pow(ten) == 1024.0)
+    ro three f32 = 3.0
+    ro four f32 = 4.0
+    assert(three.hypot(four) == 5.0)
+    assert(!(one.is_nan()))
+    assert(one.is_finite())
+    assert(!(one.is_infinite()))
+}
