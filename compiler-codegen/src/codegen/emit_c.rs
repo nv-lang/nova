@@ -20928,8 +20928,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.line(&format!("return {};", val));
                     }
                 } else {
+                    // [M-196-mono-block-notrailing-ret-ignored] (dormant-fixes):
+                    // `block.trailing == None` means the block's last item was
+                    // an explicit `Stmt::Return` (or another terminator), NOT an
+                    // implicit-return expression — `emit_stmt` above already
+                    // emitted the real `return <value>;`. Unconditionally
+                    // appending `return NOVA_UNIT;` here (regardless of `ret_c`)
+                    // used to follow that real return with a SECOND, wrongly-typed
+                    // one: `nova_unit` doesn't convert to a non-unit `ret_c`
+                    // (pointer/scalar/struct), so clang/MSVC rejected the
+                    // otherwise-correct generic-static method body outright
+                    // (`returning 'nova_unit' from a function with incompatible
+                    // result type ...`). Mirrors the canonical non-mono path
+                    // (`emit_block_stmts`, ~24407-24416): only synthesize the
+                    // fallthrough `return NOVA_UNIT;` when the function's OWN
+                    // return type is unit; otherwise the explicit return already
+                    // covers it (a truly missing return path stays a *legitimate*
+                    // C "control reaches end of non-void function" diagnostic,
+                    // not a silently-fabricated wrong-type one).
                     self.leave_defer_scope(block_id);
-                    self.line("return NOVA_UNIT;");
+                    if ret_c == "nova_unit" {
+                        self.line("return NOVA_UNIT;");
+                    }
                 }
             }
             FnBody::External => {}

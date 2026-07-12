@@ -1,0 +1,77 @@
+// Regression `[M-196-mono-block-notrailing-ret-ignored]` (dormant-fixes
+// wave, Plan 196, 2026-07-12). `emit_monomorphized_method` (emit_c.rs,
+// generic-static/instance method mono codegen) unconditionally appended
+// `return NOVA_UNIT;` whenever the block-body had NO trailing expression
+// (`block.trailing == None`) — i.e. whenever the body's last item was an
+// explicit `return <value>;` statement rather than an implicit-return
+// expression. That extra line followed the REAL, already-emitted `return
+// <value>;`, so for any non-unit `ret_c` it was a hard C error (`nova_unit`
+// does not convert to the fn's actual pointer/scalar/struct return type) —
+// unconditionally, not just in unreachable-code edge cases, since the type
+// mismatch is checked regardless of reachability. The non-mono sibling path
+// (`emit_fn` → `emit_block_stmts`) already had the correct guard (only
+// synthesize the fallthrough `return NOVA_UNIT;` when the function itself
+// returns unit) — the mono path's hand-duplicated copy had drifted from it.
+// Fix: same guard added to the mono path's block-body-without-trailing arm.
+module spec_tests.conformance
+
+type M196PickBox[T] { value T }
+
+// Canonical anonymous-literal ctor (D221 §G1 — explicit `M196PickBox[T]{
+// value: v }` in expression position is a separate, documented bootstrap
+// parser limitation, unrelated to this bug; the anonymous form with
+// return-type inference is the supported spelling).
+fn M196PickBox[T].new(v T) -> Self => { value: v }
+
+// Single-statement block-body: `return a` is the block's ONLY item, so
+// `block.trailing` is `None` (it's a `Stmt::Return`, not an implicit-return
+// expression) — the exact minimal shape that reproduced the bug.
+fn M196PickBox[T].pick(a T) -> T {
+    return a
+}
+
+// Same shape, but the explicit return is reached only via an early exit —
+// confirms the fix covers a block whose LAST statement is a `return`
+// embedded inside a conditional, not just a single bare `return`.
+fn M196PickBox[T].pick_cond(a T, b T, use_a bool) -> T {
+    if use_a {
+        return a
+    }
+    return b
+}
+
+// Instance-method (not just static) mono variant of the same shape —
+// `emit_monomorphized_method` covers both instance and static generic
+// methods; the bug's `else` branch is shared by both.
+fn M196PickBox[T] @unwrap() -> T {
+    return @value
+}
+
+// Control: a generic-static method whose block-body genuinely returns unit
+// with NO trailing expression — must still fall through to `return
+// NOVA_UNIT;` (the guard must not regress the unit case it was already
+// correct for).
+fn M196PickBox[T].touch(a T) {
+    ro _unused = a
+}
+
+test "generic-static method, block-body, bare explicit return, non-unit (M-196)" {
+    ro b = M196PickBox[int].pick(42)
+    assert(b == 42)
+    ro s = M196PickBox[str].pick("hi")
+    assert(s == "hi")
+}
+
+test "generic-static method, block-body, conditional explicit return, non-unit (M-196)" {
+    assert(M196PickBox[int].pick_cond(1, 2, true) == 1)
+    assert(M196PickBox[int].pick_cond(1, 2, false) == 2)
+}
+
+test "generic INSTANCE method, block-body, bare explicit return, non-unit (M-196)" {
+    ro box = M196PickBox[int].new(7)
+    assert(box.unwrap() == 7)
+}
+
+test "generic-static method, block-body, no trailing, unit return — regression guard (M-196)" {
+    M196PickBox[int].touch(9)  // must not crash / must compile — unit fallthrough intact
+}
