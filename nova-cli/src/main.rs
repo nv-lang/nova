@@ -1475,6 +1475,7 @@ fn cmd_check_explain_cache(
         paths.iter().cloned().collect()
     };
 
+    let std_runtime_dir = std_runtime_dir_hint();
     let mut files: Vec<PathBuf> = Vec::new();
     for p in &resolved_paths {
         if !p.exists() {
@@ -1490,7 +1491,7 @@ fn cmd_check_explain_cache(
             nova_codegen::test_runner::walk_nv(p, &mut found)
                 .map_err(|e| anyhow!("walk {}: {}", p.display(), e))?;
             for f in found {
-                if !should_skip_path_full(&f, include_runtime, skip) {
+                if !should_skip_path_full(&f, include_runtime, skip, std_runtime_dir.as_deref()) {
                     files.push(f);
                 }
             }
@@ -1579,6 +1580,7 @@ fn cmd_check_telemetry_cache(
         paths.iter().cloned().collect()
     };
 
+    let std_runtime_dir = std_runtime_dir_hint();
     let mut files: Vec<PathBuf> = Vec::new();
     for p in &resolved_paths {
         if !p.exists() {
@@ -1594,7 +1596,7 @@ fn cmd_check_telemetry_cache(
             nova_codegen::test_runner::walk_nv(p, &mut found)
                 .map_err(|e| anyhow!("walk {}: {}", p.display(), e))?;
             for f in found {
-                if !should_skip_path_full(&f, include_runtime, skip) {
+                if !should_skip_path_full(&f, include_runtime, skip, std_runtime_dir.as_deref()) {
                     files.push(f);
                 }
             }
@@ -1939,6 +1941,7 @@ fn cmd_check(
     };
 
     // Собираем список .nv файлов: для file — сам файл, для dir — рекурсивный walk.
+    let std_runtime_dir = std_runtime_dir_hint();
     let mut files: Vec<PathBuf> = Vec::new();
     for p in &resolved_paths {
         if !p.exists() {
@@ -1955,7 +1958,7 @@ fn cmd_check(
             nova_codegen::test_runner::walk_nv(p, &mut found)
                 .map_err(|e| anyhow!("walk {}: {}", p.display(), e))?;
             for f in found {
-                if !should_skip_path_full(&f, include_runtime, skip) {
+                if !should_skip_path_full(&f, include_runtime, skip, std_runtime_dir.as_deref()) {
                     files.push(f);
                 }
             }
@@ -2393,6 +2396,9 @@ fn conv_lint_options_for(path: &Path) -> nova_codegen::lints::ConvLintOptions {
     // Definition-site `Vec[T]` — папка std/collections/vec/ ПЛЮС её
     // вынесенные поверхности vec_iter.nv / vec_lazy.nv (реализация самого
     // Vec[T]-итератор-слоя; receiver-позиция требует номинального спеллинга).
+    // Plan 195: std на `src/` — оба substring-варианта ("/collections/vec/",
+    // "/collections/vec_") уже layout-agnostic (не зависят от того, что
+    // предшествует "collections" в пути), поэтому доп. хардкод не нужен.
     let in_vec_module = s.contains("/collections/vec/")
         || s.contains("/collections/vec_")
         || s.starts_with("std/collections/vec");
@@ -2457,6 +2463,7 @@ fn cmd_lint(
     } else {
         paths.to_vec()
     };
+    let std_runtime_dir = std_runtime_dir_hint();
     let mut files: Vec<PathBuf> = Vec::new();
     for p in &resolved_paths {
         if !p.exists() {
@@ -2485,7 +2492,7 @@ fn cmd_lint(
                 if is_neg_fixture {
                     continue;
                 }
-                if !should_skip_path_full(&f, include_runtime, skip) {
+                if !should_skip_path_full(&f, include_runtime, skip, std_runtime_dir.as_deref()) {
                     files.push(f);
                 }
             }
@@ -2574,10 +2581,28 @@ fn cmd_lint(
     }
 }
 
+/// Plan 195: манифест-derived `<std-source-root>/runtime` (уважает `[lib]
+/// src` в `std/nova.toml` через `resolve_std_path`) — используется вместо
+/// хардкода литерала `"std/runtime/"` или `"std/src/runtime/"`, чтобы skip
+/// не зависел от того, живёт ли std плоско или на `src/`. `None`, если repo
+/// root не резолвится (redundant safety net — тогда skip просто не
+/// применяется).
+fn std_runtime_dir_hint() -> Option<PathBuf> {
+    let repo = find_repo_root().ok()?;
+    Some(nova_codegen::manifest::resolve_std_path(&repo).join("runtime"))
+}
+
 /// Hard-coded skip patterns (Plan 36 R3 minimal version).
-/// `include_runtime=true` отключает skip `std/runtime/`.
+/// `include_runtime=true` отключает skip auto-gen std-runtime.
 /// `skip` — user-provided substrings (--skip flag).
-fn should_skip_path_full(p: &Path, include_runtime: bool, skip: &[String]) -> bool {
+/// `std_runtime_dir` — см. [`std_runtime_dir_hint`]; передаётся вызывающим
+/// кодом один раз (не пересчитывается на каждый файл).
+fn should_skip_path_full(
+    p: &Path,
+    include_runtime: bool,
+    skip: &[String],
+    std_runtime_dir: Option<&Path>,
+) -> bool {
     let s = p.to_string_lossy().replace('\\', "/");
     // User-provided skip patterns first.
     for pat in skip {
@@ -2585,9 +2610,22 @@ fn should_skip_path_full(p: &Path, include_runtime: bool, skip: &[String]) -> bo
             return true;
         }
     }
-    // Skip auto-gen std/runtime/ (unless --include-runtime).
-    if !include_runtime && (s.contains("/std/runtime/") || s.starts_with("std/runtime/")) {
-        return true;
+    // Skip auto-gen std-runtime (unless --include-runtime). Path-based
+    // (canonicalize + starts_with), не string-хардкод — корень читается из
+    // манифеста std (`[lib] src`), поэтому одинаково корректен для любой
+    // раскладки std-пакета.
+    if !include_runtime {
+        if let Some(dir) = std_runtime_dir {
+            let under_runtime = match (p.canonicalize(), dir.canonicalize()) {
+                (Ok(pc), Ok(dc)) => pc.starts_with(&dc),
+                // canonicalize может не сработать (напр. синтетический path
+                // в unit-тестах) — best-effort fallback на raw prefix.
+                _ => p.starts_with(dir),
+            };
+            if under_runtime {
+                return true;
+            }
+        }
     }
     // Skip if any component starts with `_` or `.`, or is target/node_modules/vendor.
     for comp in p.components() {
@@ -2606,7 +2644,7 @@ fn should_skip_path_full(p: &Path, include_runtime: bool, skip: &[String]) -> bo
 /// Backward-compat shim (default flags — no override).
 #[allow(dead_code)]
 fn should_skip_path(p: &Path) -> bool {
-    should_skip_path_full(p, false, &[])
+    should_skip_path_full(p, false, &[], std_runtime_dir_hint().as_deref())
 }
 
 fn num_cpus() -> usize {
@@ -5131,6 +5169,13 @@ fn cmd_test_build(
 
 fn cmd_regen_runtime(check: bool) -> Result<()> {
     let repo = find_repo_root()?;
+    // Plan 195: `module_to_path` возвращает module-name-derived путь ВКЛЮЧАЯ
+    // package-префикс (`"std/runtime/math.nv"` для module `std.runtime.math`)
+    // — это НЕ repo-relative filesystem путь, а module-path. Реальный файл
+    // живёт под std-source-root'ом (манифест `[lib] src`, resolve_std_path),
+    // поэтому package-префикс `std/` снимается и остаток джойнится на
+    // манифест-derived root, а не хардкодится как `repo.join("std/...")`.
+    let std_src = nova_codegen::manifest::resolve_std_path(&repo);
     use nova_codegen::codegen::runtime_registry;
     let registry = runtime_registry::all();
     let groups = runtime_registry::group_by_module(&registry);
@@ -5138,7 +5183,7 @@ fn cmd_regen_runtime(check: bool) -> Result<()> {
     let mut diffs: Vec<String> = Vec::new();
     for (module, fns) in &groups {
         let rel = runtime_registry::module_to_path(module);
-        let abs = repo.join(&rel);
+        let abs = std_src.join(rel.strip_prefix("std/").unwrap_or(&rel));
         let content = runtime_registry::render_nv(module, fns);
         if check {
             let existing = std::fs::read_to_string(&abs)

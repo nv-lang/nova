@@ -116,33 +116,43 @@ pub struct ExternalRegistry {
 }
 
 impl ExternalRegistry {
-    /// Plan 13 Ф.8: builtins.nv удалён, заменён на per-type
+    // NB Plan 195: эти `include_str!` — ЕДИНСТВЕННОЕ законное место с
+    // литеральным `std/src/...`-путём в компиляторе. `include_str!`
+    // резолвится rustc на СВОЁМ compile-time (собирая nova-codegen), когда
+    // никакой Nova-манифест ещё не читается — манифест-derived путь тут
+    // технически невозможен (нет build.rs). Путь жёстко привязан к
+    // физической раскладке МОНОРЕПО (`std/nova.toml`: `[lib] src = "src"`);
+    // если std когда-нибудь переедет ещё раз — эти строки правятся вручную.
+    // Везде ГДЕ ВОЗМОЖНО читать раскладку в рантайме (resolve_std_path и
+    // всё, что через него) — читаем `[lib] src` из манифеста, не хардкодим.
+    //
+    // Plan 13 Ф.8: builtins.nv удалён, заменён на per-type
     /// auto-generated файлы. ExternalRegistry загружает все 4 модуля
     /// (string_builder, write_buffer, read_buffer, char) — они embedded
     /// в binary через include_str!.
     pub const STRING_BUILDER_SRC: &'static str =
-        include_str!("../../../std/runtime/string_builder.nv");
+        include_str!("../../../std/src/runtime/string_builder.nv");
     pub const WRITE_BUFFER_SRC: &'static str =
-        include_str!("../../../std/runtime/write_buffer.nv");
+        include_str!("../../../std/src/runtime/write_buffer.nv");
     pub const READ_BUFFER_SRC: &'static str =
-        include_str!("../../../std/runtime/read_buffer.nv");
+        include_str!("../../../std/src/runtime/read_buffer.nv");
     pub const CHAR_SRC: &'static str =
-        include_str!("../../../std/runtime/char.nv");
+        include_str!("../../../std/src/runtime/char.nv");
     pub const SYNC_SRC: &'static str =
-        include_str!("../../../std/runtime/sync.nv");
+        include_str!("../../../std/src/runtime/sync.nv");
     // Plan 118.1 Ф.1: byte-level memory intrinsics для FFI / driver work.
     pub const RAW_MEM_SRC: &'static str =
-        include_str!("../../../std/runtime/raw_mem.nv");
+        include_str!("../../../std/src/runtime/raw_mem.nv");
     // Plan 172.1 U.1.3b срез 1: `FFI_CSTR_SRC` (include_str! `std/ffi/cstr.nv`) УДАЛЁН —
     // cstr больше не pre-load'ится в codegen-реестр, приходит через `import` (inline).
 
     // Plan 83.12: std/net — async TCP/UDP socket stdlib.
     pub const NET_ADDR_SRC: &'static str =
-        include_str!("../../../std/net/addr.nv");
+        include_str!("../../../std/src/net/addr.nv");
     pub const NET_TCP_SRC: &'static str =
-        include_str!("../../../std/net/tcp.nv");
+        include_str!("../../../std/src/net/tcp.nv");
     pub const NET_UDP_SRC: &'static str =
-        include_str!("../../../std/net/udp.nv");
+        include_str!("../../../std/src/net/udp.nv");
 
     // [M-compiler-nv-porting-wave] item B1: gc/fibers/runtime/bench —
     // namespace pseudo-receiver API (Plan 32/44.2/44/57). Embedded так же,
@@ -151,21 +161,21 @@ impl ExternalRegistry {
     // ExternalRegistry (NAMESPACE_OVERRIDES выше), убирая hardcoded
     // match-блоки emit_c.rs.
     pub const GC_SRC: &'static str =
-        include_str!("../../../std/runtime/gc.nv");
+        include_str!("../../../std/src/runtime/gc.nv");
     pub const FIBERS_SRC: &'static str =
-        include_str!("../../../std/runtime/fibers.nv");
+        include_str!("../../../std/src/runtime/fibers.nv");
     // Plan 175 (owner TODO closure, 2026-07-10): virtual-clock auto-idle-
     // advance coordination hook — see std/runtime/vclock.nv.
     pub const VCLOCK_SRC: &'static str =
-        include_str!("../../../std/runtime/vclock.nv");
+        include_str!("../../../std/src/runtime/vclock.nv");
     pub const RUNTIME_SRC: &'static str =
-        include_str!("../../../std/runtime/runtime.nv");
+        include_str!("../../../std/src/runtime/runtime.nv");
     pub const BENCH_SRC: &'static str =
-        include_str!("../../../std/bench.nv");
+        include_str!("../../../std/src/bench.nv");
     // [M-compiler-nv-porting-wave] item B2: f64/f32 IEEE 754 bit-cast —
     // c-name dispatch via PRIMITIVE_BITCAST_OVERRIDES above.
     pub const NUMERIC_SRC: &'static str =
-        include_str!("../../../std/runtime/numeric.nv");
+        include_str!("../../../std/src/runtime/numeric.nv");
 
     /// Парсит per-type .nv файлы (string_builder/write_buffer/read_buffer/
     /// char/sync) и строит unified registry. Вызывается один раз при
