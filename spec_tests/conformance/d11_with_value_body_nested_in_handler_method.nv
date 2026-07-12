@@ -29,19 +29,23 @@
 // (`alt` — bare-ident locally bound ВНУТРИ `exec()`, не захвачен из
 // closure).
 //
-// NB (найдено при отладке этого фикса, НЕ чинится здесь — region этой
-// задачи = parser/mod.rs): closure-обёрнутый вариант «один-в-один» с
-// orm_decorators.nv (nested closure, захватывающая ИМЕННО ТО ЖЕ имя,
-// что уже #define-алиасится как context-field энклоузящего handler-
-// литерала) упирается в ОТДЕЛЬНЫЙ codegen-дефект — macro-hygiene
-// коллизия в emit_c.rs: `#define X (_c->X)`-алиасинг контекстного поля
-// текстово подставляется и в member-access вида `env_ptr->X = X;`
-// (генерируется при инициализации env-структуры вложенного closure-
-// литерала, если тот захватывает переменную с ТЕМ ЖЕ именем X) →
-// `env_ptr->(_c->X) = ...` — невалидный C, `error: expected identifier`.
-// Значит фикс парсера сам по себе НЕ разблокирует orm_decorators.nv —
-// нужен ещё один, независимый codegen-фикс (Plan 197 examples-revision
-// / отдельная задача).
+// (Было NB здесь: closure-обёрнутый вариант «один-в-один» с
+// orm_decorators.nv:145 — nested closure, захватывающая ИМЕННО ТО ЖЕ
+// имя, что уже #define-алиасится как context-field энклоузящего
+// handler-литерала — упирался в ОТДЕЛЬНЫЙ codegen-дефект, macro-hygiene
+// коллизию в emit_c.rs: `#define X (_c->X)`-алиасинг контекстного поля
+// handler-method текстово подставлялся и в member-access вида
+// `env_tmp->X = X;` — код, эмитируемый `emit_lambda` при инициализации
+// env-структуры вложенного closure-литерала, захватывающего свободную
+// переменную X — давая невалидный C `env_tmp->(_c->X) = (_c->X);`.
+// ФИКС (Plan 196): env-struct поля вложенного closure переименованы в
+// `_nv_fv_<lambda-id>_<name>` (см. `mangled_field` в `emit_lambda`,
+// compiler-codegen/src/codegen/emit_c.rs) — токен, который никакой
+// `#define` контекст-алиаса никогда не заспеллит, так что LHS
+// member-access вне опасности коллизии независимо от того, какие
+// capture-макросы активны в объемлющей области. Регресс-гард —
+// `d11_ctx_closure_leaf`/тест «nested closure captures same-named
+// context field» ниже.)
 module spec_tests.conformance
 
 type D11WithDb effect {
@@ -77,4 +81,39 @@ test "D11: `with EFFECT = value { ... }` — baseline (не вложенный) 
     ro primary = d11_leaf(7)
     ro result = with D11WithDb = primary { D11WithDb.exec() }
     assert(result == 7)
+}
+
+// Регресс-гард на macro-hygiene codegen-дефект из бывшего NB (см. выше):
+// handler-литерал захватывает `primary` из объемлющего factory-fn как
+// context-field (`#define primary (_c->primary)` активен на всё тело
+// `exec()`), а внутри тела создаётся ВЛОЖЕННЫЙ closure-литерал `|| ...`,
+// который захватывает переменную с ТЕМ ЖЕ ИМЕНЕМ `primary` как свой
+// собственный free var. `emit_lambda` при инициализации env-структуры
+// этого closure эмитит `env_tmp->primary = primary;` — без фикса LHS
+// member-access `->primary` тоже подставлялся объемлющим `#define`,
+// давая `env_tmp->(_c->primary) = ...` (invalid C). Паттерн — прямой
+// аналог orm_decorators.nv:145 (`primary.in_transaction(|| with Db =
+// primary { b() })`), упрощённый до голого closure-захвата без
+// `with`-обёртки (сам `with` тут не существенен — существенно только
+// имя-коллизия между context-capture'ом handler-метода и free var'ом
+// вложенного closure-литерала).
+// `primary` должен встречаться и НАПРЯМУЮ в теле `exec()` (это делает
+// его captured context-field handler-литерала, `#define primary
+// (_c->primary)`), И внутри вложенного closure-литерала (тот захватывает
+// `primary` как СВОЙ собственный free var) — иначе не воспроизводится
+// именно та коллизия, что была в orm_decorators.nv:145
+// (`primary.in_transaction(|| with Db = primary { b() })`: `primary`
+// одновременно receiver вызова снаружи И capture внутри closure'а).
+fn d11_ctx_closure_leaf(primary int) -> Effect[D11WithDb] => effect D11WithDb {
+    exec() {
+        ro base = primary
+        ro doubled = || primary * 2
+        base + doubled()
+    }
+}
+
+test "D11: вложенный closure-литерал захватывает переменную с ТЕМ ЖЕ именем, что уже #define-алиасится как context-field handler-метода (macro-hygiene)" {
+    ro h = d11_ctx_closure_leaf(21)
+    ro result = with D11WithDb = h { D11WithDb.exec() }
+    assert(result == 63)
 }
