@@ -29808,6 +29808,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     /// Infer the C function name for a call expression (without emitting args).
+    ///
+    /// Plan 196.3 (мелочь-пакет, one-window inventory) verdict: LEGIT-LOWERING,
+    /// не кандидат на миграцию к `resolved_callees` — это не пере-резолв
+    /// перегрузки (то, что закрывает канал `resolved_callees`, U.4.3, §0/§7.7),
+    /// а простой dispatch «sum-variant-конструктор vs свободная fn», который
+    /// делегирует фактическое mangling'ование ЕДИНОЙ канонической точке
+    /// `free_fn_c_name` (:16481 «Единая точка построения имени»). Само
+    /// mangling — по дизайну codegen-side lowering (см. коммент поля
+    /// `fn_ret_by_span` :906 «mangling/return are codegen lowering, §0/§7.7»),
+    /// НЕ входит в объём resolved_types/resolved_callees. Единственный
+    /// вызывающий (`emit_call_with_trailing`, :29762) достигает этой ветки
+    /// ТОЛЬКО когда `func_stripped` — свободный вызов по идентификатору
+    /// (Member/Path перехвачены раньше, :29739-29759, и уходят через
+    /// `emit_call`); `_ => free_fn_c_name("unknown")` — defensive fallback
+    /// для прочих `ExprKind`, структурно недостижим на этом пути.
     fn infer_func_c_name(&self, func: &Expr) -> String {
         match &func.kind {
             ExprKind::Ident(name) => {
