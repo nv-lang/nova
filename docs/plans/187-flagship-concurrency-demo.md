@@ -66,8 +66,9 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
 ## 2. Объём (что делаем)
 
 1. **Бек на Nova** — `aggregate(sources, budget) Net Time Fail -> Report`
-   (одноуровневый fan-out через `supervised { parallel for }`, сбор mut-захватом —
-   обход `[M-parfor-record-result-miscompile]`, закрывается 173.1). Хендлеры:
+   (одноуровневый fan-out через `supervised { parallel for }`, прямой сбор
+   `[]Report` — `[M-parfor-record-result-miscompile]` полностью закрыт
+   2026-07-13, mut-захват workaround больше не нужен). Хендлеры:
    `real_net()` и **`mock_net()`** (существует; НЕ «fake_net» — имя из std/net/mock.nv)
    + seeded-обёртка латентностей поверх него.
 2. **Эмиссия событий хода задач** — task started/progress/done/failed/cancelled +
