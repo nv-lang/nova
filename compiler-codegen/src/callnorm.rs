@@ -41,8 +41,14 @@ struct Sigs {
     /// при overload нормализация пропускается (D102: overload нет, но
     /// bootstrap fn_decls может иметь несколько).
     free: HashMap<String, Vec<Param>>,
-    /// Static-методы по `(type, method)`.
-    static_methods: HashMap<(String, String), Vec<Param>>,
+    /// Static-методы по `(type, method)`. [M-vec-new-static-arity-overload]
+    /// fix: carries ALL overload signatures (was: filtered to unambiguous
+    /// `v.len() == 1` and skipped otherwise) — `pick_static_params` below
+    /// disambiguates by arity/bind-success at each call-site, so a genuine
+    /// arity-overload (`Vec[T].new(cap int=0)` 0/1-arg vs
+    /// `Vec[T].new(ptr,len,cap)` 3-arg) still gets its DEFAULT backfilled
+    /// instead of unconditionally bailing out of normalization.
+    static_methods: HashMap<(String, String), Vec<Vec<Param>>>,
     /// Plan 46 Ф.3: instance-методы по имени метода. Резолв `obj.method`
     /// без type-inference: если имя метода уникально (один тип, один
     /// overload) — нормализуем. Иначе — пропускаем (codegen резолвит
@@ -96,9 +102,11 @@ fn collect_sigs(module: &Module) -> Sigs {
     let free = free.into_iter()
         .filter_map(|(k, mut v)| if v.len() == 1 { Some((k, v.remove(0))) } else { None })
         .collect();
-    let static_methods = static_methods.into_iter()
-        .filter_map(|(k, mut v)| if v.len() == 1 { Some((k, v.remove(0))) } else { None })
-        .collect();
+    // [M-vec-new-static-arity-overload] fix: keep ALL overload signatures
+    // (was: `filter_map` dropping any (type, method) with >1 registered
+    // signature) — the ambiguity is now resolved per call-site by arity in
+    // `pick_static_params`, not by refusing to normalize at all.
+    let static_methods = static_methods;
     let instance_by_name = instance.into_iter()
         .filter_map(|(k, mut v)| if v.len() == 1 { Some((k, v.remove(0))) } else { None })
         .collect();
@@ -412,6 +420,43 @@ fn normalize_trailing(t: &mut Trailing, sigs: &Sigs) {
     }
 }
 
+/// [M-vec-new-static-arity-overload] fix: pick the ONE overload signature
+/// (from `candidates`, all `(type, method)` overloads collected by
+/// `collect_sigs`) that this call-site's `args` can bind against —
+/// disambiguates arity-overloaded static ctors (e.g. `Vec[T].new(cap
+/// int=0)` 0/1-arg vs `Vec[T].new(ptr,len,cap)` 3-arg) so default-arg
+/// backfill still fires for the correct candidate instead of bailing out
+/// whenever a static method has more than one registered signature.
+/// Fast path (`candidates.len() == 1`) is BYTE-IDENTICAL to the prior
+/// unconditional lookup. `None` (no candidate binds, or ≥2 candidates
+/// bind — genuinely ambiguous) leaves the call untouched, same as before
+/// — codegen resolves it via full type-info (arity + param-C-type +
+/// checker's `resolved_callees`).
+fn pick_static_params<'a>(
+    candidates: &'a [Vec<Param>],
+    args: &[CallArg],
+    trailing_present: bool,
+) -> Option<&'a [Param]> {
+    if candidates.len() == 1 {
+        return Some(&candidates[0]);
+    }
+    let mut matched: Option<&'a [Param]> = None;
+    for cand in candidates {
+        let effective: &[Param] = if trailing_present && !cand.is_empty() {
+            &cand[..cand.len() - 1]
+        } else {
+            cand
+        };
+        if bind_call_args(effective, args).is_ok() {
+            if matched.is_some() {
+                return None; // ≥2 candidates bind — genuinely ambiguous, skip.
+            }
+            matched = Some(cand.as_slice());
+        }
+    }
+    matched
+}
+
 /// Попытаться нормализовать `Call`. Возвращает `Some(new_kind)` если
 /// переписали (в Block-expr), `None` если оставили как есть.
 fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
@@ -457,12 +502,15 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
         // used for every other `Type.method()` call, just with `Self`
         // substituted to its real name first.
         ExprKind::Path(parts) if parts.len() == 2 => {
+            // [merge Ф.C + П5]: Self-резолв (enclosing type) И overload-aware
+            // дизамбигуация — обе способности нужны.
             let type_name = if parts[0] == "Self" {
                 sigs.self_type.borrow().clone()?
             } else {
                 parts[0].clone()
             };
-            sigs.static_methods.get(&(type_name, parts[1].clone()))?
+            let cands = sigs.static_methods.get(&(type_name, parts[1].clone()))?;
+            pick_static_params(cands, args, trailing.is_some())?
         }
         // `obj` may itself be the SAME two type-position shapes handled by
         // the `Path`/`TurboFish` arms above — a generic receiver written
@@ -489,7 +537,10 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
                 }
                 _ => None,
             };
-            match static_key.and_then(|tn| sigs.static_methods.get(&(tn, name.clone()))) {
+            match static_key
+                .and_then(|tn| sigs.static_methods.get(&(tn, name.clone())))
+                .and_then(|cands| pick_static_params(cands, args, trailing.is_some()))
+            {
                 Some(p) => { is_static_generic_recv = true; p }
                 None => sigs.instance_by_name.get(name)?,
             }
