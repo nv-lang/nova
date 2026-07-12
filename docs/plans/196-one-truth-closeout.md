@@ -173,6 +173,30 @@ CODEGEN (POST-mono, ЧИСТЫЙ ЛОУЭРИНГ — НИКОГДА не пер
 Codegen лоуэрит из каналов; LSP читает ТЕ ЖЕ каналы. **Приёмка 196 = ни одна `infer_*`/`resolve_*` в codegen
 не перевыводит; всё из канала; матрица зелёная.**
 
+### ★ Сверка с Rust (2026-07-12) — mono = ФАЗА, не codegen-side-effect; поправка к «ОСТАЁТСЯ»
+
+**rustc-эталон:** типы ОДИН раз в typeck (HIR)→`TyCtxt`; HIR→THIR→**MIR**; **мономорфизация — ОТДЕЛЬНАЯ ФАЗА**
+(`rustc_monomorphize::collector`: обход достижимого от корней → worklist `Instance`=def_id+substs, НЕ
+side-effect резолва); манглинг — отдельная фаза (`rustc_symbol_mangling`, чистая fn от `Instance`); codegen
+(`rustc_codegen_ssa/llvm`) берёт МОНОМОРФИЗОВАННЫЙ MIR, подставляет ИЗВЕСТНЫЕ substs, лоуэрит ty→LLVM через
+`tcx`-запросы — **codegen НИКОГДА не инферит.**
+
+**Поправка к строке «✅ ОСТАЁТСЯ в codegen»:**
+- `resolved_type_to_c` (ty→C, читает канал) — **ВЕРНО, совпадает с Rust** (codegen лоуэрит ty→backend).
+- Mono-машинерия — БЫЛО СЛИШКОМ РАЗМЫТО. В Rust это ФАЗА, не ad-hoc:
+  - `register_generic_instances_in_typeref` как **side-effect резолва = АНТИ-паттерн** (Rust: отдельный
+    collector-проход). Stage-1-цель: переструктурировать в **mono-COLLECTOR-проход, читающий каналы**, а не
+    складывать в resolve/лоуэринг.
+  - `resolve_mono_type_args` — обязана быть чистой **ПОДСТАНОВКОЙ** известных substs (Rust `subst`), НЕ
+    инференсом; если инферит — баг.
+  - `compute_mono_name`/`compute_generic_type_c_name` — манглинг = чистая fn от инстанса (ок как функция).
+
+**Итог по mono (честно): наш «без MIR» = сознательный Stage-1-КОМПРОМИСС, не конечная архитектура.**
+- **Stage-1 (196):** mono ОСТАЁТСЯ в codegen, но как **collector-проход + чистая subst/mangle, читающие
+  каналы** (не resolve-side-effect). Тип-лоуэринг уже rustc-образен.
+- **Stage-2 (MIR, будущее):** типизированный IR + отдельная mono-фаза = ровно rustc-модель. Это и есть «полный
+  MIR», отложенный из §0. 196 НЕ обязан его достигать — но и НЕ должен закреплять mono-side-effect как «норму».
+
 ## Зачем `resolved_types` лучше `infer_call_ret_c` (мотивация — не «оно и так работает»)
 
 **История:** `infer_call_ret_c` (codegen-перевывод) ИСТОРИЧЕСКИ был ЕДИНСТВЕННЫМ окном — до §0/172 не было
