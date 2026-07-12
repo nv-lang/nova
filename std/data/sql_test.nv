@@ -8,7 +8,7 @@ import std.data.sql.{Sql, SqlValue, DbRow, sql}
 
 test "sql tag builds template with placeholders" {
     ro user_id = 42
-    ro q = sql`SELECT * FROM users WHERE id = ${SqlValue.I(user_id as i64)}`
+    ro q = sql`SELECT * FROM users WHERE id = ${user_id}`
     assert(q.template == "SELECT * FROM users WHERE id = ?")
     assert(q.args.len() == 1)
     match q.args[0] {
@@ -20,7 +20,7 @@ test "sql tag builds template with placeholders" {
 test "sql tag with multiple args preserves order" {
     ro name = "alice"
     ro age  = 30
-    ro q = sql`INSERT INTO users (name, age) VALUES (${SqlValue.S(name)}, ${SqlValue.I(age as i64)})`
+    ro q = sql`INSERT INTO users (name, age) VALUES (${name}, ${age})`
     assert(q.template == "INSERT INTO users (name, age) VALUES (?, ?)")
     assert(q.args.len() == 2)
     match q.args[0] {
@@ -77,8 +77,124 @@ test "Sql.builder — fluent WHERE composition" {
 }
 
 test "Sql.with_filter — handler-decorator use case" {
-    ro original = sql`SELECT * FROM users WHERE active = ${SqlValue.B(true)}`
+    ro original = sql`SELECT * FROM users WHERE active = ${true}`
     ro filtered = original.with_filter(sql`deleted_at IS NULL`)
     assert(filtered.template.contains("AND (deleted_at IS NULL)"))
     assert(filtered.args.len() == 1)                     // только original.args
+}
+
+// Plan 200 (sql-autoconv) repro + fix: bare ${expr} interpolation D55-
+// coerces to SqlValue without manual SqlValue.I/S/B wrap.
+//
+// Diagnosis (2026-07-12, before the fix in this same commit): the
+// tag-template desugars (parser/mod.rs TokenKind::Backtick) straight into a
+// plain Call `sql([parts...], [args...])` — `args_arr` is an ordinary
+// `ArrayLit` in call-arg position. The call-arg D55 coercion pass
+// (`walk_expr` ExprKind::Call, Plan 52 Ф.3a) resolved the expected param
+// type `[]SqlValue` for `args_arr` correctly, but `assignable()` (the
+// actual accept/reject check, E7301) had NO `ArrayLit` arm at all — it fell
+// through to the generic `infer_expr_type`-based path, which infers an
+// array literal's type from its FIRST element only (`["alice", 1, true,
+// n]` → `Vec[str]`) and then rejected the whole array as `Vec[str]` vs
+// `[]SqlValue`. Separately, `assignable` had no notion of "obvious"
+// sum-variant wrapping AT ALL (confirmed empirically — even the simplest
+// non-array case `ro v StrOrInt = 42` and prelude `ro r Result[int,str] =
+// 42` failed/mis-codegenned) — this was not a narrow tag-template gap but a
+// missing D55 rule: "a value whose type matches EXACTLY ONE sum variant's
+// (or a newtype's) payload auto-wraps at an explicit-target position."
+//
+// Fix: `assignable()` (types/mod.rs) now tries this "single-wrapper
+// coercion" whenever the direct structural check fails (int→I, str→S,
+// bool→B, f64→F, []u8→Bytes disambiguated via a STRICT `WrapKind`, not the
+// permissive int↔float `cat_compatible_rt` used for ordinary assignability
+// — else `${1}` would ambiguously match both `I`/`F`), AND gained an
+// `ArrayLit` arm that recurses the SAME check per element. The actual
+// MATERIALIZATION (AST rewrite `${1}` → `SqlValue.I(1 as i64)`) piggy-backs
+// on the existing `annotate_map_literals` expected-type-propagated mutable
+// pass (`MapLitAnnotator::walk_expr`/`try_wrap_leaf`) — one walker already
+// threads expected types through let/const/call-arg/array-element/tuple/
+// record-field positions, so no new pass/pipeline wiring was needed.
+// Spec: D55 amend, spec/decisions/02-types.md.
+test "sql tag bare-literal/var interpolation auto-coerces to SqlValue (D55 obvious-coercion)" {
+    ro n = 1
+    ro q = sql`UPDATE users SET name = ${"alice"} WHERE id = ${1} AND active = ${true} AND age = ${n}`
+    assert(q.template == "UPDATE users SET name = ? WHERE id = ? AND active = ? AND age = ?")
+    assert(q.args.len() == 4)
+    match q.args[0] {
+        SqlValue.S(s) => assert(s == "alice")
+        _             => assert(false)
+    }
+    match q.args[1] {
+        SqlValue.I(v) => assert(v == 1)
+        _             => assert(false)
+    }
+    match q.args[2] {
+        SqlValue.B(b) => assert(b == true)
+        _             => assert(false)
+    }
+    match q.args[3] {
+        SqlValue.I(v) => assert(v == 1)
+        _             => assert(false)
+    }
+}
+
+// Owner-directive target syntax (Plan 200): `@builder.set_suffix(sql`LIMIT
+// ${n}`)` with `n` an `int` VARIABLE (not `${I(n as i64)}`) — the
+// tag-fn call-arg is nested one level deeper (method-chain receiver), and
+// the int→i64 widening must stay invisible.
+test "sql tag interpolation of int VARIABLE via method-chain builder (owner directive)" {
+    ro n = 10
+    ro q = Sql.builder(sql`SELECT * FROM users`).set_suffix(sql`LIMIT ${n}`).build()
+    assert(q.template.contains("LIMIT ?"))
+    match q.args[q.args.len() - 1] {
+        SqlValue.I(v) => assert(v == 10)
+        _             => assert(false)
+    }
+}
+
+// D55 amend: the SAME "obvious single-wrapper coercion" also fires OUTSIDE
+// tag-templates — any explicit sum-typed binding with exactly one matching
+// unary variant (int→I, str→S), matching D55's existing record/map-literal
+// coercion positions (annotated `let`).
+test "D55 obvious sum-coercion at plain let-annotation (non-array, non-tag)" {
+    ro v SqlValue = 42
+    match v {
+        SqlValue.I(n) => assert(n == 42)
+        _             => assert(false)
+    }
+    ro w SqlValue = "hi"
+    match w {
+        SqlValue.S(s) => assert(s == "hi")
+        _             => assert(false)
+    }
+}
+
+// D55 amend: array literal `[]SqlValue` element-position coercion works
+// stand-alone too (not only via the tag-template desugar path).
+test "D55 obvious sum-coercion at array-literal element position" {
+    ro args []SqlValue = [1, "alice", true]
+    assert(args.len() == 3)
+    match args[0] {
+        SqlValue.I(n) => assert(n == 1)
+        _             => assert(false)
+    }
+    match args[1] {
+        SqlValue.S(s) => assert(s == "alice")
+        _             => assert(false)
+    }
+    match args[2] {
+        SqlValue.B(b) => assert(b == true)
+        _             => assert(false)
+    }
+}
+
+// Explicit `SqlValue.I(1)` must stay valid — the value is ALREADY the
+// target type, `try_wrap_leaf` only fires on a plain literal/`Ident` leaf
+// (a `Call` node is never a wrap trigger), so this is not double-wrapped.
+test "explicit SqlValue.I(...) interpolation still valid (no double-wrap)" {
+    ro q = sql`WHERE id = ${SqlValue.I(1)}`
+    match q.args[0] {
+        SqlValue.I(n) => assert(n == 1)
+        _             => assert(false)
+    }
 }

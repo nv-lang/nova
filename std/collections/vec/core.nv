@@ -94,16 +94,19 @@ export type Vec[T] priv {
 // Constructors
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Create a `Vec[T]` — `cap == 0` (default): empty, no allocation. `cap: n`
-/// (`n > 0`): exactly `n` pre-allocated element slots, `len == 0` — a single
-/// allocation, no rounding (spec D372-amend2). Equivalent to
+/// Create a `Vec[T]` — always a single allocation of `cap.max(1)` element
+/// slots (`len == 0`), no rounding (spec D372-amend2). `cap == 0` (default,
+/// `Vec[T].new()`): logically empty (`@cap() == 0`) but backed by a 1-slot
+/// placeholder buffer — same non-null-pointer-always invariant the old
+/// `null_buf` path gave, just folded into this one expression; the slot is
+/// never read/written until the first `@push`/`@reserve` grows it. `cap: n`
+/// (`n > 0`): exactly `n` pre-allocated element slots. Equivalent to
 /// `Vec[T].new().cap(n)` but one call, one allocation — the canonical
 /// pre-sizing spelling (`Vec[T].new(cap: 1024)`, or positionally
 /// `Vec[T].new(1024)`).
-export fn Vec[T].new(cap int = 0) -> Self {
-    ro buf = if cap == 0 { null_buf[T]() } else { alloc_buf[T](cap) }
-    Self { data: buf, len: 0, cap }
-}
+export fn Vec[T].new(cap int = 0) -> Self
+    requires cap >= 0
+    => { data: alloc_buf[T](cap.max(1)), len: 0, cap }
 
 /// Build a `Vec[T]` directly from its three raw components — the element
 /// buffer pointer, the live-element count, and the allocated capacity.
@@ -127,30 +130,32 @@ export fn Vec[T].new(cap int = 0) -> Self {
 ///     `str.@bytes()` aliasing a string's internal bytes — the originating
 ///     owner must outlive the view, and the view must be treated read-only).
 ///
-/// The incoming `ptr` is a `*T` (canonical ro pointee, `*T ≡ *ro T`); it is
-/// reinterpreted as the field's `*mut T` inside an `unsafe` block. The cast
-/// only re-labels pointee-mutability (L3) — no address arithmetic — so it is a
-/// pointer-value copy, never a dereference here. Whether the resulting buffer
-/// is *actually* writable is the caller's invariant (a `ro` view must not be
-/// pushed/index-written; binding the result `ro` enforces this at L2).
+/// The `ptr` param is already `*mut T` (writable pointee) — no
+/// reinterpret-cast needed in the body, unlike the retired `from_raw_parts`
+/// (which took a `*T` and re-labelled it `*mut T` under `unsafe`). Whether
+/// the resulting buffer is *actually* writable remains the caller's
+/// invariant (a `ro` view must not be pushed/index-written; binding the
+/// result `ro` enforces this at L2) — passing a genuinely read-only `*T`
+/// through the `*mut T` param is itself the caller's `unsafe` obligation
+/// (D216 §8), same as before.
 ///
-/// [M-vec-new-static-arity-overload] (vec-sweep, 2026-07-06, compiler gap —
-/// REPORTED, temporary rollback per owner's zero-tolerance directive): D372
-/// amend attempted to fold this into a `new()` arity-overload (`Vec[T].new()`
-/// 0-arg vs `Vec[T].new(ptr, len, cap)` 3-arg). It compiled and PASSED
-/// `spec_tests/conformance` (55/1, delta 0) in isolation, but corrupts
-/// codegen when this WHOLE vec-module peer-file set compiles together
-/// (`nova test --full std/collections/vec`): `vec_of_empty_panic` neg-test
-/// (unrelated to from_raw_parts) started CC-FAILing — generated C passed a
-/// `Nova_Vec____nova_byte*` where `nova_str` was expected, and called a
-/// 0-arg function with 3 arguments — i.e. the 0-arg/3-arg `new` overloads
-/// got cross-wired for SOME caller elsewhere in the same CU. Repro: add the
-/// `new(ptr,len,cap)` overload alongside `new()` on `Vec[T]`, then run the
-/// full `vec` folder-module (not just this file in isolation). Rolled back
-/// to the original name below pending a compiler-side fix (same wave).
-export fn Vec[T].from_raw_parts(ptr *T, len int, cap int) -> Self { // [M-lint-findings-param-no-contract]
-    Self { data: unsafe { ptr as *mut T }, len, cap }
-}
+/// [M-vec-new-static-arity-overload] — folded 2026-07-12 (forced-fix
+/// session, plan 200 П5): `from_raw_parts` retired into this 3-arg `new`
+/// arity-overload (`Vec[T].new()`/`new(cap:)` 0/1-arg vs
+/// `Vec[T].new(ptr, len, cap)` 3-arg). Root cause was TWO co-located
+/// name-only (arity-blind) overload lookups that both collapsed onto the
+/// FIRST-declared `new` regardless of which overload a call site actually
+/// needed: `compiler-codegen/src/callnorm.rs` (`Sigs::static_methods`
+/// default-arg backfill — now carries every overload + `pick_static_params`
+/// disambiguates by `bind_call_args` arity/name compatibility) and
+/// `compiler-codegen/src/codegen/emit_c.rs` (the "1b" turbofish
+/// static-ctor call-emission branch, `Type[Args].method(...)` —
+/// `generic_type_methods[base].find(name)` — now mirrors the sibling 5b
+/// instance-method path's `[M-138.2-generic-method-overload-mono]`
+/// arity/param-C-type disambiguation + per-overload mono-name suffix).
+export fn Vec[T].new(ptr *mut T, len int, cap int) -> Self
+    requires len >= 0 && cap >= len
+=> { data: ptr, len, cap }
 
 /// Consume this `Vec[T]`, surrendering ownership of its raw element buffer and
 /// returning the writable `*mut T` data pointer. The exact inverse of

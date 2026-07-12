@@ -619,10 +619,11 @@ match @buckets[idx] {
   отложено до следующей версии.
 - **Итерация по вариантам** (`for c in Color`, `Color.values()`) —
   связано с reflection, откладывается до Q9 (stdlib).
-- **Implicit cast литерала в newtype.** Сейчас `let u UserId = 42`
-  — допустим (литерал подгоняется), но `let n u64 = 42; let u
-  UserId = n` — требует явного cast. Точную семантику зафиксировать
-  в Q (литералы vs binding'и).
+- ~~**Implicit cast литерала в newtype.**~~ **Закрыто** (Plan 200,
+  2026-07-12) — [D55 §Obvious single-wrapper coercion](#d55-literal-coercion-в-позиции-с-явным-типом-sum-конструкторы-и-record-литералы):
+  и литерал (`let u UserId = 42`), и binding (`let n = 42; let u
+  UserId = n`) авто-коэрсятся одинаково (`... as UserId`), без разницы
+  между литералом и переменной.
 
 ### Эволюция
 [D17](#d17-объявление-типов-единый-синтаксис-без-) был первой
@@ -1175,7 +1176,8 @@ Coercion (и sum-, и record-вариант) применяется только
 | Generic-параметр после конкретизации — numeric (`Vec[u8].push(1)`) | да | ✅ numeric literals |
 | Generic-параметр после конкретизации — record/sum | да | ⛔ ещё нет |
 | Match-arm result (когда тип ветки фиксирован) | да | ⛔ ещё нет |
-| Литерал коллекции с явным типом (`[]T`) | да для каждого элемента | ⛔ ещё нет |
+| Литерал коллекции с явным типом (`[]T`) — **record**-элементы | да для каждого элемента | ⛔ ещё нет |
+| Литерал коллекции с явным типом (`[]T`) — **sum/newtype**-элементы (obvious single-wrapper, см. ниже) | да для каждого элемента | ✅ (Plan 200, 2026-07-12) |
 | `let x = value` (без аннотации) | **нет** — выводится тип значения | — |
 
 В позициях без явного типа никакая coercion не применяется — литерал
@@ -1191,10 +1193,18 @@ Coercion (и sum-, и record-вариант) применяется только
 > масса — это перенос имени, а не устранение).
 >
 > ⚠️ **Пример `save_all([{id:1,name:"a"}, ...])` ниже некорректен для
-> bootstrap'а.** Элемент-позиция литерала коллекции (`[]T`) помечена ⛔ —
-> coercion на элементах массива пока не работает. Пример станет валиден
-> после расширения Ф.3a на element-positions (за scope Plan 52). Пока
-> там нужен `[User{...}, ...]` с явным именем типа на каждом элементе.
+> bootstrap'а.** Элемент-позиция литерала коллекции (`[]T`) для
+> **record**-coercion помечена ⛔ — coercion анонимного `{...}` на
+> элементах массива пока не работает. Пример станет валиден после
+> расширения Ф.3a на element-positions (за scope Plan 52). Пока там нужен
+> `[User{...}, ...]` с явным именем типа на каждом элементе.
+>
+> **sum/newtype element-position — реализовано (Plan 200, 2026-07-12),
+> см. «Obvious single-wrapper coercion» ниже.** `ro args []SqlValue = [1,
+> "alice", true]` работает без `SqlValue.I(1)`-обёрток — это отдельный,
+> более узкий, механизм от record element-coercion выше (годится ровно
+> для one-level sum-variant/newtype wrap, не для произвольных record-
+> литералов).
 
 #### Запрет дублирования имени типа (Plan 51)
 
@@ -1242,7 +1252,75 @@ ro args []SqlValue = [42, "alice", true]    // [I(42), S("alice"), B(true)]
 
 // В sql`...` тэге интерполяции тоже coerce'ятся: i64 → I, str → S, bool → B
 ro q = sql`SELECT * FROM users WHERE id = ${42}`   // args = [I(42)]
+
+// D48 tagged-template интерполяция — та же coercion, включая ПЕРЕМЕННЫЕ
+// (не только литералы синтаксически):
+ro n = 1
+ro id = 7
+ro q2 = sql`UPDATE t SET name = ${"alice"} WHERE id = ${id} LIMIT ${n}`
+// args = [S("alice"), I(7), I(1)] — без единой ручной обёртки
 ```
+
+##### Obvious single-wrapper coercion (D55 amend, Plan 200, 2026-07-12)
+
+Уточнение и расширение sum-coercion, закрывающее компилятор-gap (не
+только «литералы», но и переменные/произвольные простые выражения; не
+только sum, но и newtype — см. открытый вопрос в [D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-)):
+
+Значение выражения `expr` в позиции с явным ожидаемым типом `W`
+авто-оборачивается, если `W` — **ровно одна** из двух форм «обёртки над
+значением», и КАНДИДАТ **однозначен**:
+
+1. **Newtype** (`type W Y`, [D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-)) — `expr` того же
+   структурного «рода» (см. ниже), что и `Y` → `expr as W` (компилятор
+   вставляет `as`-cast автоматически; `newtype` — та же C-repr, что и
+   `Y`, поэтому это zero-cost, не runtime wrap).
+2. **Sum** с **ровно одним** unary-вариантом `C(Y)`, чей `Y` совпадает
+   по «роду» с типом `expr` → `W.C(expr)` (как ручная форма
+   `SqlValue.I(1)`, которую авторы писали раньше вручную).
+
+Совпадение по «роду» (не полная type-identity — иначе int-переменная
+никогда не совпала бы с `i64`-payload'ом варианта) — это int-семья
+(`int`/`i8..i64`/`u8..u64`, друг с другом взаимозаменяемы, ширина
+доводится тем же `as`-cast'ом что и в п.1 — «прячет» `int`→`i64`
+widening невидимо для автора), `f32`/`f64`, `bool`, `str`,
+`[]u8`/`Vec[u8]`, именованный тип по имени. **Не** путать с
+`cat_compatible_rt`'s permissive int↔float assignability — здесь int и
+float — РАЗНЫЕ «роды», иначе `${1}` был бы неоднозначен между
+`I(i64)`/`F(f64)` и ничего бы не обернулось.
+
+**Однозначность обязательна**: если ⩾2 кандидата совпадают по «роду»
+(гипотетический sum с двумя int-payload'ами) или 0 совпадают —
+auto-wrap НЕ срабатывает, экспрешн остаётся как есть (существующая
+ошибка/поведение).
+
+**Ровно один уровень** — кандидат-обёртка НЕ разворачивается рекурсивно:
+`int → UserId → Wrapper` (обёртка над обёрткой) остаётся **отвергнутой**
+(нужен явный промежуточный cast/конструктор). Аналогично — значение
+**без** явной целевой типизации (`ro x = "test"` — тип `str`, никакой
+обёртки) coercion не касается: правило работает только там, где
+target-тип **явно известен** (см. таблицу позиций выше — `let`/`const`,
+`return`, call-arg на РЕЗОЛВЛЕННОГО callee, element-позиция
+`[]T`/`Vec[T]`).
+
+Явный конструктор (`SqlValue.I(1)`, `n as UserId`) остаётся валиден без
+изменений — значение УЖЕ целевого типа, `expr`-обёртка не запускается
+(матчится только «голый» литерал/`Ident`, не произвольный `Call`/`As`).
+
+```nova
+type UserId int                              // newtype
+
+ro id UserId = 100                            // 100 as UserId (было: E7301)
+ro n = 100
+ro id2 UserId = n                             // n as UserId — ПЕРЕМЕННАЯ, не только литерал
+```
+
+**Реализация:** `assignable`/`single_wrap_candidates`/`wrap_kind_of` в
+`compiler-codegen/src/types/mod.rs` (accept-сторона, единое правило);
+материализация (AST-rewrite `${1}` → `SqlValue.I(1 as i64)`) — в уже
+существующем mutable-проходе `annotate_map_literals`/
+`MapLitAnnotator::try_wrap_leaf` (тот же expected-type-propagated walker,
+что и map-литерал coercion — без отдельного нового прохода).
 
 **Генерики:**
 
@@ -6848,19 +6926,26 @@ fn User.guest() -> Self => { name: "guest", email: "", is_admin: false }
 > `Type[Args].method(...)`/`[]T.method(...)` call-сайты) — ЗАКРЫТ в `callnorm.rs` (`try_normalize_call`
 > classify-match расширен на turbofish/`__array`-Path static-receiver формы) + 3 hand-formatted ctor-call
 > сайта в `emit_c.rs`. **НЕ тот же класс**, что `[M-vec-new-static-arity-overload]` (arity-overload
-> cross-wiring, ниже) — тот остаётся открытым, отдельно отслеживается Plan 196.2.
+> cross-wiring) — см. поправку ниже: тот дефект ЗАКРЫТ отдельно, вне зоны Plan 196.2.
 >
-> **ПОПРАВКА к Амендменту 1 (from_raw_parts → new-overload): ОТКАЧЕНО, спека была рассинхронена.** Складывание
-> `from_raw_parts` в 3-арг перегрузку `Vec[T].new(ptr,len,cap)` НЕ состоялось в коде — дефект
-> `[M-vec-new-static-arity-overload]` (`std/collections/vec/core.nv:130`): 0-арг и 3-арг `new` перепутываются
-> в codegen при сборке всего vec-folder-модуля (в C уходит неверный тип/арность). `from_raw_parts` остаётся
-> ИМЕНОВАННЫМ конструктором до фикса. Фикс отслеживается в **Plan 196.2 (W2 — class-C static-ctor overload+return
-> в одном чекер-окне)**; снятие маркера = приёмочная веха. `new(cap int = 0)` (одна функция, default-arg)
-> НЕ в конфликте и безопасен уже сейчас; вернуть folded `new`-overload можно ТОЛЬКО после фикса 196.2.
-> Целевая сигнатура (складывается ПОПУТНО с фиксом, W2): `fn Vec[T].from_raw_parts(ptr *T, len, cap) -> Self`
-> ⇒ `fn Vec[T].new(ptr *mut T, len int, cap int) -> Self require cap >= len` (3-арг overload + `*mut T`
-> напрямую вместо `unsafe { ptr as *mut T }` reinterpret-cast + контракт `cap >= len`). Тогда `new(cap int=0)`
-> + `new(ptr *mut T, len, cap)` = легальный набор перегрузок.
+> **ПОПРАВКА 2 к Амендменту 1 (from_raw_parts → new-overload): ЗАКРЫТО 2026-07-12 (форс-фикс, Plan 200 П5).**
+> Складывание `from_raw_parts` в 3-арг перегрузку `Vec[T].new(ptr,len,cap)` **состоялось в коде**
+> (`std/collections/vec/core.nv`): `fn Vec[T].new(ptr *mut T, len int, cap int) -> Self requires len >= 0 &&
+> cap >= len => { data: ptr, len, cap }` — рядом с `new(cap int = 0)`. Дефект `[M-vec-new-static-arity-overload]`
+> — **ЗАКРЫТ, вне 196-зоны** (не `infer_call_ret_c`/W2, как предполагалось ранее — тот план остаётся про
+> ДРУГОЙ баг-класс, PRE-mono class-C резолв). Корень был в ДВУХ co-located name-only (arity-blind) overload-
+> резолвах, оба «первый-по-имени», игнорирующие арность: (1) `compiler-codegen/src/callnorm.rs`
+> (`Sigs::static_methods` — default-arg backfill раньше ФИЛЬТРОВАЛ прочь любой `(type,method)` с >1
+> сигнатурой, т.е. просто НЕ бэкфиллил default для overloaded ctor; фикс — хранить ВСЕ overload'ы +
+> `pick_static_params` дизамбигуирует по `bind_call_args`-совместимости на каждом call-site); (2)
+> `compiler-codegen/src/codegen/emit_c.rs` — ветка «1b» (turbofish static-ctor call, `Type[Args].method(...)`,
+> ~emit_call строка 32577) резолвила `generic_type_methods[base].find(name)` первым совпадением по имени,
+> тогда как соседняя ветка «5b» (instance-method generic dispatch) уже имела арность/param-type дизамбигуацию
+> (`[M-138.2-generic-method-overload-mono]`, 2026-06); фикс — та же схема (арность → param-C-type →
+> `resolved_callees`-span чекера) + per-overload `__<paramtype>` суффикс у mono-имени, портированные в ветку
+> «1b». Гейты: `vec_of_empty_panic` neg-тест зелёный, `nova test --full std/collections/vec` без cross-wiring,
+> `nova test --full std/collections` (14/14) + `std/checksums`+`std/crypto` (используют `str.@bytes()` через
+> folded `new`) зелёные, conformance single-CU 95/0. Целевая сигнатура (сложена): см. выше.
 
 ---
 

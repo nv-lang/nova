@@ -9959,114 +9959,33 @@ impl Parser {
         Ok(result)
     }
 
-    /// Парсит выражение, специально проверяя на handler-литерал `EffName { op... }`.
-    /// Эвристика: после path `{` и первый элемент — `Ident (` (= операция),
-    /// а не `Ident :` (= record).
+    /// Парсит handler-value в позиции `with EFFECT = <handler> { body }`.
+    ///
+    /// До D61 здесь жила эвристика, распознающая bare-form handler-литерал
+    /// без keyword'а (`EffName { op(...) => ... }` угадывался по «после `{`
+    /// первый токен — `Ident (`»). D61 сделало keyword-префикс (`handler`,
+    /// затем `effect` — Plan 97 Ф.3) ОБЯЗАТЕЛЬНЫМ для handler-литерала
+    /// (см. spec/decisions/04-effects.md «Слово `handler` — keyword (D61)»):
+    /// inline handler-литерал теперь всегда парсится через `parse_handler_lit`
+    /// (keyword `effect`, диспетчеризуется в основном expr-парсере по
+    /// `TokenKind::KwEffect`), а НЕ через эту функцию.
+    ///
+    /// Эвристика пережила D61 как dead code и ложно триггерилась на bare-
+    /// identifier handler-value, чьё with-тело начиналось с вызова вида
+    /// `Ident(...)` — например `with Db = primary { b() }`: `primary`
+    /// парсился как path, `{` — как начало литерала, `b(` внутри — как
+    /// «похоже на сигнатуру handler-метода», и парсер уходил разбирать
+    /// `{ b() }` как тело handler-литерала (падая на отсутствующем `=>`/`{`
+    /// после `b()`, встретив закрывающую `}` самого with-тела). Найдено
+    /// Plan 197 audit на `examples/real_world/orm_decorators.nv:145`
+    /// (nested `with` внутри тела handler-метода — closure-аргумент
+    /// вызова другого handler-метода). Regression-guard:
+    /// spec_tests/conformance/d11_with_value_body_nested_in_handler_method.nv.
+    ///
+    /// Fix: удалить эвристику целиком — handler-value в `with`-биндинге
+    /// это ВСЕГДА обычное выражение (bare identifier, вызов, `effect Name
+    /// {...}` литерал и т.д.), парсим `parse_expr()` напрямую.
     fn parse_expr_or_handler_lit(&mut self) -> Result<Expr, Diagnostic> {
-        // Попробуем определить handler-литерал: ident + `{` + `Ident (` внутри.
-        if matches!(self.peek().kind, TokenKind::Ident(_)) {
-            let saved = self.pos;
-            // Парсим path
-            let mut path = vec![self.parse_ident()?.0];
-            while matches!(self.peek().kind, TokenKind::Dot)
-                && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
-            {
-                self.bump();
-                path.push(self.parse_ident()?.0);
-            }
-            if matches!(self.peek().kind, TokenKind::LBrace) {
-                // Заглядываем внутрь: первый значимый — Ident `(`?
-                let mut i = self.pos + 1;
-                while i < self.tokens.len()
-                    && matches!(
-                        self.tokens[i].kind,
-                        TokenKind::Newline | TokenKind::Semicolon
-                    )
-                {
-                    i += 1;
-                }
-                if matches!(self.tokens.get(i).map(|t| &t.kind), Some(TokenKind::Ident(_)))
-                    && matches!(
-                        self.tokens.get(i + 1).map(|t| &t.kind),
-                        Some(TokenKind::LParen)
-                    )
-                {
-                    // handler-литерал
-                    let start = self.tokens[saved].span;
-                    self.bump(); // {
-                    let mut methods = Vec::new();
-                    self.skip_newlines();
-                    while !matches!(self.peek().kind, TokenKind::RBrace) {
-                        let (mname, mspan) = self.parse_ident()?;
-                        self.expect(&TokenKind::LParen)?;
-                        let mut params = Vec::new();
-                        while !matches!(self.peek().kind, TokenKind::RParen) {
-                            let (pname, pspan) = self.parse_ident()?;
-                            // опциональный тип параметра
-                            let pty = if !matches!(
-                                self.peek().kind,
-                                TokenKind::Comma | TokenKind::RParen
-                            ) {
-                                let attempt = self.pos;
-                                match self.parse_type() {
-                                    Ok(t) => Some(t),
-                                    Err(_) => {
-                                        self.pos = attempt;
-                                        None
-                                    }
-                                }
-                            } else {
-                                None
-                            };
-                            params.push(HandlerMethodParam {
-                                name: pname,
-                                ty: pty,
-                                span: pspan,
-                            });
-                            if self.eat(&TokenKind::Comma).is_none() {
-                                break;
-                            }
-                        }
-                        self.expect(&TokenKind::RParen)?;
-                        let body = match self.peek().kind {
-                            TokenKind::FatArrow => {
-                                self.bump();
-                                self.skip_newlines();
-                                HandlerMethodBody::Expr(self.parse_expr()?)
-                            }
-                            TokenKind::LBrace => HandlerMethodBody::Block(self.parse_block()?),
-                            _ => {
-                                return Err(Diagnostic::new(
-                                    "expected `=>` or `{` for handler-method body",
-                                    self.peek().span,
-                                ));
-                            }
-                        };
-                        let end = match &body {
-                            HandlerMethodBody::Expr(e) => e.span,
-                            HandlerMethodBody::Block(b) => b.span,
-                        };
-                        methods.push(HandlerMethod {
-                            name: mname,
-                            params,
-                            body,
-                            span: mspan.merge(end),
-                        });
-                        self.skip_newlines();
-                    }
-                    let end = self.expect(&TokenKind::RBrace)?.span;
-                    return Ok(Expr::new(
-                        ExprKind::HandlerLit {
-                            effect_name: path,
-                            methods,
-                        },
-                        start.merge(end),
-                    ));
-                }
-            }
-            // Не handler-литерал — откатываемся и парсим как обычное выражение.
-            self.pos = saved;
-        }
         // Handler — это выражение в позиции `with E = <expr> { body }`.
         // Чтобы `(e) => interrupt Some(e)` не "сожрало" следующий `{`-block
         // как trailing-block, парсим в режиме no_trailing_block. С этим
@@ -10172,8 +10091,8 @@ impl Parser {
     }
 
     /// Извлечённая логика парсинга handler-method'ов.
-    /// Используется и в parse_handler_lit, и в parse_expr_or_handler_lit
-    /// (старая эвристика для обратной совместимости).
+    /// Используется в parse_handler_lit (`effect Name { ops }`) и
+    /// parse_protocol_lit (`protocol Name { method-impl* }`).
     fn parse_handler_methods(&mut self) -> Result<Vec<HandlerMethod>, Diagnostic> {
         let mut methods = Vec::new();
         while !matches!(self.peek().kind, TokenKind::RBrace) {

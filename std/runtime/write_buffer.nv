@@ -43,12 +43,12 @@ export type WriteBuffer {
 const INITIAL_CAPACITY = 16
 
 // Пустой WriteBuffer с pre-allocated capacity 16.
-export fn WriteBuffer.new() -> Self => { buf: []u8.new().cap(INITIAL_CAPACITY) }
+export fn WriteBuffer.new(cap int = INITIAL_CAPACITY) -> Self => { buf: []u8.new(cap: cap) }
 
 // WriteBuffer из существующих байт (deep copy — append через memmove).
 // Param `b` is readonly by default (D176 amend, Plan 108.1).
 export fn WriteBuffer.from(b []u8) -> Self {
-    mut wb WriteBuffer = { buf: []u8.new().cap(b.len()) }
+    mut wb WriteBuffer = { buf: []u8.new(cap: b.len()) }
     wb.buf.append(b)
     wb
 }
@@ -75,7 +75,7 @@ export fn WriteBuffer mut @cap(n int) -> @
 
 // Независимая копия (deep copy buffer). Read-only access — original не consume'ится.
 export fn WriteBuffer @clone() -> Self {
-    mut copy WriteBuffer = { buf: []u8.new().cap(@buf.len()) }
+    mut copy WriteBuffer = { buf: []u8.new(cap: @buf.len()) }
     copy.buf.append(@buf)
     copy
 }

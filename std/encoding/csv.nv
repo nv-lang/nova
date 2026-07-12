@@ -95,7 +95,7 @@ export fn Csv.parse(input str) Fail[ParseCsvError] -> [][]str { // [M-lint-findi
 /// Encode `[][]str` обратно в CSV string. Auto-quote fields с `,`/`"`/`\n`.
 #stable(since = "0.1")
 export fn Csv.encode(records [][]str) -> str {
-    consume buf = StringBuilder.new().cap(records.len() * 64)
+    consume buf = StringBuilder.new(cap: records.len() * 64)
     for record in records {
         mut first = true
         for field in record {

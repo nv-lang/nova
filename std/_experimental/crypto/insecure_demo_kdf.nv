@@ -194,7 +194,7 @@ const DEMO_ALPHABET str = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxy
 
 
 fn demo_base64_encode(data []u8) -> str {
-    consume buf = StringBuilder.new().cap(data.len() * 4 / 3 + 4)
+    consume buf = StringBuilder.new(cap: data.len() * 4 / 3 + 4)
     mut i = 0
     while i + 2 < data.len() {
         ro b0 = data[i] as u32

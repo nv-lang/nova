@@ -73,6 +73,24 @@ enum PrimBuiltin { Fn(&'static str), BinOp(&'static str), Identity }
 /// ClosureFull / HandlerLit) и найти первый `interrupt VAL` — вернуть
 /// C-тип VAL. Используется в `infer_expr_c_type` для `With`, когда body
 /// не имеет trailing (тогда тип blocка определяется handler'ом).
+///
+/// Plan 196.3 (мелочь-пакет, one-window inventory) verdict: LEGIT-LOWERING,
+/// не кандидат на прямую миграцию к `resolved_types`/`resolved_callees` —
+/// это структурный AST-walk (найти узел `Interrupt`, не переизобретённая
+/// проверка типа), а фактический C-тип VAL уже читается через
+/// `emitter.infer_expr_c_type(v)`, который сам «channels FIRST, legacy
+/// LAZY» (Plan 172.1 §0/§1, см. :48691) — то есть чтение канала уже
+/// происходит на один уровень ниже. Прямое чтение `resolved_types` ЗДЕСЬ
+/// невозможно by design: оба вызывающих (`probe_handler_ty` / :8883,
+/// `probe_handler_ty_ro` / :8922) намеренно временно переопределяют тип
+/// первого параметра handler'а на РЕАЛЬНЫЙ payload-тип `Fail[E]` ПЕРЕД
+/// вызовом этой функции, потому что чекер типизирует `|e| interrupt
+/// Some(e)` по WIRE-схеме эффекта (hardcoded `nova_str`, effects.h), а не
+/// по конкретной инстанциации `E` — известное ограничение задокументировано
+/// ещё в Plan 120 (`docs/plans/120-named-tuples-and-allocation-contract.md`
+/// `[M-D215-defaults-handler-lambda-type]`) и закрыто этим rebind-приёмом.
+/// Значит `resolved_types[interrupt_val.id]` на момент вызова либо
+/// отсутствует, либо содержит устаревший WIRE-тип — не источник истины.
 pub fn infer_handler_interrupt_ty(emitter: &CEmitter, handler: &Expr) -> Option<String> {
     use crate::ast::{ClosureBody, FnBody, ElseBranch};
     fn walk_expr(emitter: &CEmitter, e: &Expr, out: &mut Option<String>) {
@@ -16689,7 +16707,53 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     ///   return-type (`typed_closure_c_sig`).
     ///
     /// `None` — тип не выводится (caller фоллбэчится на `(nova_int, nova_str)`).
+    ///
+    /// Plan 196.3 Q9 (D16/D53/D72 inventory; this fn's own D30/D85 Result-channel
+    /// twin): wraps [`Self::infer_result_type_params_legacy`] with a byte-identity
+    /// guarded read of [`Self::infer_result_type_params_channel`] (checker
+    /// `resolved_types[expr.id]`, Stage-1a `resolve_return_channel` 196.4). Legacy
+    /// wins on disagreement (safety — mirrors `subst_map_adopt_rt`'s guard); the
+    /// channel ONLY fills a gap the legacy local-registry inference missed. The
+    /// channel structurally CANNOT cover every case: the checker's per-`Call`
+    /// annotation (`types/mod.rs` `f1_expr_inner`, `ExprKind::Call` arm) writes
+    /// `resolved_types_buf[e.id]` only for method-level-generic method calls
+    /// (`infer_method_call_channel_type`), TurboFish static ctors, `size_of`/
+    /// `align_of`, and `Some(x)` — Result ctors (`Ok`/`Err`) and free-fn generic
+    /// calls with a declared `-> Result[T,E]` are explicitly NOT channeled
+    /// (`Result needs BOTH Ok+Err → contextual`, `types/mod.rs` ~7910) — a real,
+    /// current architectural gap (Tier-2 per the 196.3 Q5 finding), not a bug
+    /// here. So the legacy Ident/Call/`.map`/`.map_err` inference below remains
+    /// load-bearing for the OVERWHELMING majority of call sites.
     fn infer_result_type_params(&self, expr: &crate::ast::Expr) -> Option<(String, String)> {
+        let legacy = self.infer_result_type_params_legacy(expr);
+        match (&legacy, self.infer_result_type_params_channel(expr)) {
+            (Some(_), _) => legacy,
+            (None, Some(c)) => Some(c),
+            (None, None) => None,
+        }
+    }
+
+    /// Plan 196.3 Q9: channel-first half of [`Self::infer_result_type_params`] —
+    /// reads `resolved_types[expr.id]` (checker channel, D315) and, when it
+    /// resolves to a concrete `Result[Ok,Err]` (peeling any view wrapper), lowers
+    /// both arms via [`Self::resolved_type_to_c`]. `None` on channel-miss OR a
+    /// non-`Result`/residual (`TypeParam`/`Any`/`Raw`) shape — the caller then
+    /// relies purely on the legacy local-registry inference.
+    fn infer_result_type_params_channel(&self, expr: &crate::ast::Expr) -> Option<(String, String)> {
+        use crate::types::ResolvedType as R;
+        let rt = self.channel_arg_rt(expr)?;
+        let rt = rt.peel_view();
+        let R::Named { name, args, .. } = &rt else { return None };
+        if name != "Result" || args.len() != 2 { return None; }
+        let ok = self.resolved_type_to_c(&args[0]).ok()?;
+        let err = self.resolved_type_to_c(&args[1]).ok()?;
+        if ok.is_empty() || err.is_empty() || ok == "void*" || err == "void*" {
+            return None;
+        }
+        Some((ok, err))
+    }
+
+    fn infer_result_type_params_legacy(&self, expr: &crate::ast::Expr) -> Option<(String, String)> {
         use crate::ast::ExprKind;
         match &expr.kind {
             ExprKind::TurboFish { base, .. } => self.infer_result_type_params(base),
@@ -17678,6 +17742,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// already-NovaValue forms) pass through unchanged. Apply this on any
     /// return-type / let-binding inference that may produce a generic instance,
     /// so the local-var type matches the by-value method ABI.
+    ///
+    /// [196.3 audit, 2026-07-12] NOT a redundant re-derivation of the
+    /// checker-resolved-type channel: `resolved_named_to_c`'s parallel
+    /// `is_value_generic_template(&full)` check (`Ok(format!("NovaValue_{}",
+    /// ..))` arm, ~line 3807) makes this SAME value-vs-heap decision for
+    /// `ResolvedType`-typed inputs inside `resolved_type_to_c` — the
+    /// checker-first channel. This function's callers instead all sit on
+    /// the SEPARATE, still-legacy `TypeRef` + string-subst inference path
+    /// (`apply_type_subst_to_ref`, `value_aware_subst_to_ref`,
+    /// `register_generic_instances_in_typeref`, `debt_bind_self_for_mono_
+    /// recv`, `infer_mono_method_ret_with_args`), which `infer_expr_c_type`
+    /// falls back to only AFTER Channel 1/2 (`resolved_callees`/
+    /// `resolved_types` → `resolved_type_to_c`) have already missed or
+    /// yielded an erased/generic stub (see the `// Channel N:` cascade at
+    /// ~48751). Since no `ResolvedType` is available at those call sites,
+    /// there is no checker-resolved value to duplicate — this is the
+    /// legitimate value-category → C-representation lowering step for that
+    /// fallback path and stays as-is. It should be retired only when the
+    /// `apply_type_subst_to_ref`/`infer_mono_method_ret_with_args` family
+    /// itself migrates from `TypeRef` onto `ResolvedType` (out of scope
+    /// here — that is the broader 172.x/196.4 channel migration).
     fn value_aware_generic_c_type(&self, c_ty: &str) -> String {
         if let Some(short) = self.debt_value_generic_mono_short(c_ty) {
             format!("NovaValue_{}", short)
@@ -18418,6 +18503,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Plan 48 Ф.0: resolve concrete type args for a generic fn call.
     /// Returns Vec<(param_name, c_type)> or Err with a helpful message (R5).
     /// Priority: turbofish > arg-type inference > return-type context.
+    ///
+    /// **[Q10, Plan 196.3 wave-2, 2026-07-12] Судьба: ВТОРОЕ ОКНО, Tier-2
+    /// СТРУКТУРНО ЗАБЛОКИРОВАНО (не мигрирована в этом окне).** Это не
+    /// "mono-lowering" (механическая подстановка уже-решённого) — тело
+    /// делает РЕАЛЬНУЮ unification (param `TypeRef` ⋂ arg C-type → T),
+    /// т.е. повторяет инференс, который чекер обязан выполнить для
+    /// type-check'а вызова generic-функции (`f1_check_call`,
+    /// `types/mod.rs` ~10242), но НЕ сохраняет: guard `typeref_mentions_any`
+    /// (`types/mod.rs` ~10478 — ВНУТРИ forbidden-зоны Q10, маркер 10452
+    /// лежит буквально в теле той же `f1_check_call`) явно пропускает
+    /// generic-возврат («they'd need type-subst, not available here»).
+    /// rustc-аналогия «mono = подстановка, не инференс» здесь НЕ применима
+    /// буквально: у rustc typeck уже пишет `node_substs`; у нас channel для
+    /// per-call generic type-args ОТСУТСТВУЕТ — то, что происходит здесь
+    /// СЕЙЧАС, суть повтор инференса под видом «lowering» (ранняя карта
+    /// `196.wave2-progress.md` строка `resolve_mono_type_args` называла это
+    /// «✅ остаётся (lowering-subst)» — уточнено этим заходом: не lowering).
+    /// Подтверждает Tier-2-находку Q5 (`196.3-wave2-d-driven.md` §«СТРУКТУРНАЯ
+    /// НАХОДКА») для «mono-резолверов» конкретным кодовым доказательством.
+    /// Постройка недостающего канала (per-call `ExprId` → `Vec<ResolvedType>`,
+    /// аналог `node_substs`) требует правки `f1_check_call`/instance-method
+    /// сиблинга — запрещённой для Q10 зоны; решение о постройке — за
+    /// владельцем (см. Q5 «Развилка (A)/(B)»). Легаси НЕ трогается. См. также
+    /// `resolve_method_level_subst` (~19355) — идентичный вердикт; три
+    /// независимых hand-duplicated инференс-движка (эта функция +
+    /// `resolve_method_level_subst` + инлайн instance-method dispatch)
+    /// исторически чинились СИНХРОННО вручную (см. Source 4 ниже,
+    /// «[M-exp-promotion-blockers: retry]»), что и есть симптом второго окна.
     fn resolve_mono_type_args(
         &self,
         fn_decl: &crate::ast::FnDecl,
@@ -19352,6 +19465,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// `current_type_subst` save'ится/restore'ится локально (вход с
     /// `receiver_subst`, выход — оригинальное состояние). Возвращает
     /// `Vec<(name, c_ty)>` отфильтрованный (пустые / `void*` отброшены).
+    ///
+    /// **[Q10, Plan 196.3 wave-2, 2026-07-12] Судьба: ВТОРОЕ ОКНО, Tier-2
+    /// СТРУКТУРНО ЗАБЛОКИРОВАНО.** Тот же вердикт и то же обоснование, что у
+    /// twin-функции `resolve_mono_type_args` (~18421, см. её doc-блок для
+    /// полного разбора) — это НЕ mono-lowering (компьютерная подстановка
+    /// уже-решённого чекером факта), а собственный unification-движок
+    /// (Steps 1/2/2f/3 ниже), дублирующий инференс, который `f1_check_call`
+    /// (`types/mod.rs` ~10242, forbidden для Q10) обязан выполнять для
+    /// type-check'а вызова метода с method-level generics, но не
+    /// экспортирует. Migration требует нового канала
+    /// (per-call `ExprId` → substitution, аналог rustc `node_substs`),
+    /// постройка которого трогает forbidden-зону — вне scope Q10; решение
+    /// за владельцем (Q5 «Развилка (A)/(B)», `196.3-wave2-d-driven.md`
+    /// §«СТРУКТУРНАЯ НАХОДКА»). Ранняя карта `196.wave2-progress.md` строка
+    /// `resolve_method_level_subst` уже верно отмечала «➡ чекер» (SEP от
+    /// волны-1) — этот заход уточняет: направление верное, но ПРЕЖДЕВРЕМЕННО
+    /// (тот же канал-гэп блокирует и её). Легаси НЕ трогается.
     fn resolve_method_level_subst(
         &mut self,
         fn_decl: &crate::ast::FnDecl,
@@ -29790,6 +29920,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     /// Infer the C function name for a call expression (without emitting args).
+    ///
+    /// Plan 196.3 (мелочь-пакет, one-window inventory) verdict: LEGIT-LOWERING,
+    /// не кандидат на миграцию к `resolved_callees` — это не пере-резолв
+    /// перегрузки (то, что закрывает канал `resolved_callees`, U.4.3, §0/§7.7),
+    /// а простой dispatch «sum-variant-конструктор vs свободная fn», который
+    /// делегирует фактическое mangling'ование ЕДИНОЙ канонической точке
+    /// `free_fn_c_name` (:16481 «Единая точка построения имени»). Само
+    /// mangling — по дизайну codegen-side lowering (см. коммент поля
+    /// `fn_ret_by_span` :906 «mangling/return are codegen lowering, §0/§7.7»),
+    /// НЕ входит в объём resolved_types/resolved_callees. Единственный
+    /// вызывающий (`emit_call_with_trailing`, :29762) достигает этой ветки
+    /// ТОЛЬКО когда `func_stripped` — свободный вызов по идентификатору
+    /// (Member/Path перехвачены раньше, :29739-29759, и уходят через
+    /// `emit_call`); `_ => free_fn_c_name("unknown")` — defensive fallback
+    /// для прочих `ExprKind`, структурно недостижим на этом пути.
     fn infer_func_c_name(&self, func: &Expr) -> String {
         match &func.kind {
             ExprKind::Ident(name) => {
@@ -32603,9 +32748,52 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     self.generic_type_instance_info.borrow()
                                         .get(&mangled).cloned();
                                 if let Some((base_name, targs)) = instance_opt {
-                                    let method_decl = self.generic_type_methods.get(&base_name)
-                                        .and_then(|ms| ms.iter().find(|m| m.name == *method))
-                                        .cloned();
+                                    // [M-vec-new-static-arity-overload] Overload-aware
+                                    // selection — mirrors the [M-138.2-generic-method-
+                                    // overload-mono] fix on the 5b instance-method
+                                    // dispatch path below (~line 34098). A bare
+                                    // first-wins `.find()` picked overload 0 regardless
+                                    // of arity — e.g. `Vec[T].new(cap int=0)` (0/1-arg)
+                                    // vs `Vec[T].new(ptr,len,cap)` (3-arg) collapsed onto
+                                    // ONE mono C symbol while call-sites still emitted
+                                    // their own (correct) arg count against that single,
+                                    // wrong-arity declaration → arg-count/type CC-FAIL
+                                    // cross-wiring (repro: `nova test --full
+                                    // std/collections/vec`, `vec_of_empty_panic`).
+                                    // Disambiguate by arity, then by param C-type, using
+                                    // the checker's resolved_callees span when available.
+                                    let same_name: Vec<crate::ast::FnDecl> = self.generic_type_methods
+                                        .get(&base_name)
+                                        .map(|ms| ms.iter().filter(|m| m.name == *method).cloned().collect())
+                                        .unwrap_or_default();
+                                    let (method_decl, overload_index): (Option<crate::ast::FnDecl>, usize) =
+                                        if same_name.len() <= 1 {
+                                            (same_name.first().cloned(), 0)
+                                        } else if let Some(idx) = self.resolved_callees.get(&call_id)
+                                            .and_then(|sp| same_name.iter().position(|m| m.span == *sp))
+                                        {
+                                            (Some(same_name[idx].clone()), idx)
+                                        } else {
+                                            let arg_c: Vec<String> = args.iter()
+                                                .map(|a| self.infer_expr_c_type(a.expr())).collect();
+                                            let mut pick: Option<usize> = None;
+                                            for (idx, m) in same_name.iter().enumerate() {
+                                                if m.params.len() != args.len() { continue; }
+                                                let mut ok = true;
+                                                for (p, ac) in m.params.iter().zip(arg_c.iter()) {
+                                                    let pc = self.type_ref_to_c(&p.ty).unwrap_or_default();
+                                                    if !pc.is_empty() && &pc != ac { ok = false; break; }
+                                                }
+                                                if ok { pick = Some(idx); break; }
+                                            }
+                                            if pick.is_none() {
+                                                pick = same_name.iter().position(|m| m.params.len() == args.len());
+                                            }
+                                            match pick {
+                                                Some(idx) => (Some(same_name[idx].clone()), idx),
+                                                None => (same_name.first().cloned(), 0),
+                                            }
+                                        };
                                     if let Some(fn_decl) = method_decl {
                                         let tmpl_opt = self.generic_type_templates.get(&base_name).cloned();
                                         if let Some(tmpl) = tmpl_opt {
@@ -32617,10 +32805,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             let is_inst = matches!(
                                                 fn_decl.receiver.as_ref().map(|r| &r.kind),
                                                 Some(crate::ast::ReceiverKind::Instance));
-                                            let method_c_name = if is_inst {
+                                            let base_method_c_name = if is_inst {
                                                 format!("{}_method_{}", mangled, method)
                                             } else {
                                                 format!("{}_static_{}", mangled, method)
+                                            };
+                                            // [M-vec-new-static-arity-overload] 2nd+
+                                            // overload gets a `__<paramtype>` suffix
+                                            // (mirrors [M-138.2] on the 5b path) so its
+                                            // mono C symbol does NOT collide with
+                                            // overload 0's.
+                                            let method_c_name = if overload_index > 0 {
+                                                let saved_ov = std::mem::replace(
+                                                    &mut self.current_type_subst,
+                                                    Self::subst_map_from_c_pairs(type_subst.iter().cloned()));
+                                                let suffix = fn_decl.params.iter()
+                                                    .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_default()
+                                                        .replace('*', "_p")
+                                                        .replace(' ', "_")
+                                                        .replace('[', "_arr_")
+                                                        .replace(']', ""))
+                                                    .collect::<Vec<_>>()
+                                                    .join("_");
+                                                self.current_type_subst = saved_ov;
+                                                if suffix.is_empty() {
+                                                    format!("{base_method_c_name}__ov{overload_index}")
+                                                } else {
+                                                    format!("{base_method_c_name}__{suffix}")
+                                                }
+                                            } else {
+                                                base_method_c_name
                                             };
                                             let saved_subst = std::mem::replace(
                                                 &mut self.current_type_subst,
@@ -32747,9 +32961,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         };
                                                         self.register_mono_method_instance(
                                                             &fn_decl, type_subst.clone(), &mono_name, &recv_c_ident);
+                                                        // Plan 196.3 Q9 (D16/D53/D72): seed with structural RT
+                                                        // from the checker channel where it lowers byte-
+                                                        // identically (else Raw debt) — mirrors the
+                                                        // `try_generic_static_ctor_mono` A1″ adoption (~18238).
+                                                        let slot_names: Vec<String> =
+                                                            fn_decl.generics.iter().map(|g| g.name.clone()).collect();
+                                                        let rt_slots = self.rt_slots_from_args(
+                                                            fn_decl.params.iter().map(|p| &p.ty), args, &slot_names);
+                                                        let seeded = self.subst_map_adopt_rt(&type_subst, &rt_slots);
                                                         let saved = std::mem::replace(
-                                                            &mut self.current_type_subst,
-                                                            Self::subst_map_from_c_pairs(type_subst.iter().cloned()));
+                                                            &mut self.current_type_subst, seeded);
                                                         let mut arg_strs = Vec::new();
                                                         for a in args {
                                                             arg_strs.push(self.emit_expr(a.expr())?);
@@ -33753,6 +33975,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         let type_subst: Vec<(String, String)> = subst_pending.into_iter()
                                             .map(|(n, c)| (n, c.unwrap_or_else(|| "nova_int".to_string())))
                                             .collect();
+                                        // Plan 196.3 Q9 (D16/D53/D72): structural RT slots from the
+                                        // checker channel (`resolved_types[arg.id]`), adopted below at
+                                        // the fn-typed-param inner-subst seed where it lowers byte-
+                                        // identically to the string result (else Raw debt) — mirrors
+                                        // `try_generic_static_ctor_mono`'s A1″ adoption (~18238).
+                                        let recv_slot_names: Vec<String> =
+                                            fn_decl.generics.iter().map(|g| g.name.clone()).collect();
+                                        let recv_rt_slots = self.rt_slots_from_args(
+                                            fn_decl.params.iter().map(|p| &p.ty), args, &recv_slot_names);
                                         let base_c_name = format!("Nova_{}_method_{}", rt, method);
                                         let mono_name = Self::compute_mono_name(&base_c_name, &type_subst);
                                         // Plan 101 [M-fn-prefix-int-only-mono]: register с recv_type
@@ -33777,9 +34008,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         let mut arg_strs = Vec::new();
                                         for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
                                             if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {
+                                                let recv_seeded = self.subst_map_adopt_rt(&type_subst, &recv_rt_slots);
                                                 let saved_inner = std::mem::replace(
                                                     &mut self.current_type_subst,
-                                                    Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
+                                                    recv_seeded,
                                                 );
                                                 // Plan 70 PhaseA2: strict — fn-typed param resolution через mono subst.
                                                 let mut inner_ptys: Vec<String> = fp.iter()
@@ -34336,9 +34568,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     base_method_name
                                 };
                                 // Apply subst to param types for fn_param_sigs (closure params)
+                                // Plan 196.3 Q9 (D16/D53/D72): structural RT slots from the checker
+                                // channel, adopted only where they lower byte-identically to the
+                                // merged string `type_subst` (else Raw debt) — mirrors the
+                                // `try_generic_static_ctor_mono` A1″ adoption (~18238).
+                                let full_slot_names: Vec<String> =
+                                    type_subst.iter().map(|(n, _)| n.clone()).collect();
+                                let full_rt_slots = self.rt_slots_from_args(
+                                    fn_decl.params.iter().map(|p| &p.ty), args, &full_slot_names);
+                                let full_seeded = self.subst_map_adopt_rt(&type_subst, &full_rt_slots);
                                 let saved_subst = std::mem::replace(
                                     &mut self.current_type_subst,
-                                    Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
+                                    full_seeded,
                                 );
                                 let mut arg_strs = Vec::new();
                                 for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
@@ -35041,9 +35282,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     &fn_decl, type_subst.clone(), &mono_name, &recv_type);
                                 // 3. Set current_type_subst для closure-arg type
                                 //    resolution (`pred fn(T) -> bool` → fn(nova_str) -> bool).
+                                // Plan 196.3 Q9 (D16/D53/D72): structural RT slots from the
+                                // checker channel, adopted only where they lower byte-
+                                // identically to the string `type_subst` (else Raw debt) —
+                                // mirrors the `try_generic_static_ctor_mono` A1″ adoption (~18238).
+                                let arrext_slot_names: Vec<String> =
+                                    fn_decl.generics.iter().map(|g| g.name.clone()).collect();
+                                let arrext_rt_slots = self.rt_slots_from_args(
+                                    fn_decl.params.iter().map(|p| &p.ty), args, &arrext_slot_names);
+                                let arrext_seeded = self.subst_map_adopt_rt(&type_subst, &arrext_rt_slots);
                                 let saved_subst = std::mem::replace(
                                     &mut self.current_type_subst,
-                                    Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
+                                    arrext_seeded,
                                 );
                                 // 4. Emit args с closure context. ClosureLight
                                 //    (inline `|x| ...` literal) → call emit_lambda
@@ -37167,11 +37417,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         let sb = self.fresh_tmp_named("interp_sb");
-        // D372 amend (vec-sweep, 2026-07-07): `StringBuilder.with_capacity`
-        // removed — construct via `new()` and pre-size through the D117
-        // `mut @cap(n) -> @` setter's mono symbol (fluent, returns the sb).
+        // D372 amend2 (Plan 196 Ф.C, 2026-07-12): `StringBuilder.new(cap int =
+        // INITIAL_CAPACITY)` now pre-sizes in one call — synthesize the canonical
+        // `.new(cap: estimate)` directly (was `.new().cap(estimate)` chain, which
+        // now under-supplies the required `cap` arg on the hand-formatted call).
+        // This is the same hand-synth arity class as the Vec `(0)` sites (Plan 200
+        // п.1): no Nova-AST Call node here → callnorm cannot normalize it.
         self.line(&format!(
-            "Nova_StringBuilder* {} = Nova_StringBuilder_method_cap__nova_int(Nova_StringBuilder_static_new(), {});",
+            "Nova_StringBuilder* {} = Nova_StringBuilder_static_new({});",
             sb, estimate
         ));
         for p in parts {
@@ -37672,11 +37925,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 )
             })?;
             // Render into a dedicated builder, then steal to a str.
-            // D372 amend (vec-sweep, 2026-07-07): with_capacity removed —
-            // `new()` already pre-sizes to the same 16-byte default.
+            // D372 amend2 (Plan 196 Ф.C, 2026-07-12): `StringBuilder.new` now
+            // takes `cap int = INITIAL_CAPACITY` — supply the default (16) on this
+            // hand-synth call (same hand-formatted arity class as the Vec `(0)`
+            // sites, Plan 200 п.1: no Nova-AST Call node → callnorm cannot see it).
             let fmt_sb = self.fresh_tmp_named("fmt_sb");
             self.line(&format!(
-                "Nova_StringBuilder* {} = Nova_StringBuilder_static_new();",
+                "Nova_StringBuilder* {} = Nova_StringBuilder_static_new(16);",
                 fmt_sb
             ));
             self.line(&format!("{}({}, {});", fn_name, v, fmt_sb));
@@ -44865,6 +45120,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// ([M-172.1-some-target-coerce] / -tuple-destructure-annot / -default-arg-typed).
     /// `resolved_type_to_c(Scalar)` is pure (no mono side-effects) so calling it on `&self`
     /// from the value-emitter is safe.
+    ///
+    /// Plan 196.3 (мелочь-пакет, one-window inventory) verdict: ALREADY the
+    /// second-window channel reader — не легаси-переизобретение, а сама
+    /// точка чтения `resolved_types` (см. `self.resolved_types.get(&id)`
+    /// ниже). Единственный вызывающий (`emit_expr` IntLit-ветка, :26114)
+    /// уже follows правило «канал первым, legacy-каст lazy fallback».
+    /// Действие по этому пункту инвентаря = нет изменений, только
+    /// подтверждение статуса (не переносить снова).
     fn channel_int_c_type(&self, id: crate::ast::ExprId) -> Option<String> {
         if !id.is_set() {
             return None;
@@ -50938,6 +51201,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c);
                     format!("{}*", clos_struct)
                 }
+                // ClosureFull `fn(x T) -> R => body` / `fn(x T) -> R { block }` —
+                // fully typed already (unlike ClosureLight, no inference needed).
+                // [BUG apply-codegen-fix]: the checker (types/mod.rs ExprKind::
+                // ClosureFull arm) never inserts a `ResolvedType::Func` for the
+                // ClosureFull expr's OWN id — it only annotates zero-param
+                // ClosureLight that way — so Channel 2 above (which keys off
+                // `resolved_types.get(&expr.id)`) never fires for ClosureFull,
+                // and without this arm it fell through to the `_` wildcard and
+                // returned "" (empty C type). A `ro apply = fn(f fn(int)->int,
+                // x int) -> int => f(x)` local then got emitted with NO C type
+                // at all (`apply = (void*)(&...);`) instead of `NovaClos_vii*
+                // apply = ...;`, producing `use of undeclared identifier 'apply'`
+                // at every subsequent use — not name-specific, reproduces with
+                // ANY identifier assigned an anonymous typed-`fn` literal.
+                ExprKind::ClosureFull(sb) => {
+                    let param_c_tys: Vec<String> = sb.params.iter()
+                        .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
+                        .collect();
+                    let ret_c = sb.return_type.as_ref()
+                        .and_then(|rt| self.type_ref_to_c(rt).ok())
+                        .filter(|t| !t.is_empty())
+                        .unwrap_or_else(|| "nova_unit".into());
+                    let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c);
+                    format!("{}*", clos_struct)
+                }
                 // IfLet: infer from checker annotation on then-trailing (pattern binds
                 // are annotated by the checker but not yet in var_types at inference time,
                 // so recursive legacy re-derive would panic on the bound ident).
@@ -52089,6 +52377,246 @@ mod named_tuple_mut_recv_abi_tests {
         let got_ro  = e.receiver_c_type("Widget", /*recv_mutable=*/ false);
         assert_eq!(got_mut, "Nova_Widget*");
         assert_eq!(got_ro,  "Nova_Widget*");
+    }
+}
+
+#[cfg(test)]
+mod receiver_c_type_coverage_tests {
+    //! Plan 196.3 wave-2 (recv-ctype window, D-driven): `receiver_c_type` /
+    //! `builtin_sum_receiver_c_type` architecture investigation + coverage
+    //! fill.
+    //!
+    //! Architecture finding (recorded here so it isn't re-litigated per-D):
+    //! both functions take a DECLARATION-side receiver TYPE NAME
+    //! (`Receiver.type_name` — parsed straight from `fn Type @method`
+    //! syntax, see `ast/mod.rs::Receiver`, which carries NO `ExprId`) or a
+    //! monomorphizer-computed type-name string (`register_mono_method_
+    //! instance`/`emit_monomorphized_method`'s `recv_type: &str`) — never an
+    //! `Expr`. Grepped ALL 11 call sites (emit_c.rs:3730/5833/5855/13099/
+    //! 15937/16079/16220/20153/20278/22111/22283): every one passes
+    //! `recv.type_name` (from the parsed `Receiver` AST node — a spelled-out
+    //! declaration, not an inferred expression) or an already-resolved
+    //! `recv_type: &str` threaded in from a caller outside this window. So
+    //! there is no `resolved_types[recv.id]` to read here — that channel is
+    //! for the CALL-SITE receiver EXPRESSION (`obj` in `obj.method()`),
+    //! already handled by `recv_c_type_materialized` (emit_c.rs:46261, keys
+    //! off `obj.id`) which sits at the frozen wave-1 boundary
+    //! (`46293`-`48883`) and is out of this window's region.
+    //!
+    //! What IS the single-window path here is generic SUBSTITUTION
+    //! (`current_type_subst`/`subst_c`), which ALREADY routes through the
+    //! canonical `resolved_type_to_c` printer (`subst_val_c`, ~2697) for
+    //! every branch that resolves a type-param/mono payload (bare typevar,
+    //! Option/Result payload types) — confirmed channel-first, not legacy
+    //! re-derivation. The remaining branches (NamedTuple mut/ro ABI,
+    //! always-pointer struct/value-record receiver ABI, Vec-canon slice
+    //! mangling, cross-module collision qualification via `ref_type_base`)
+    //! are RECEIVER-ABI-SPECIFIC conventions with no `resolved_type_to_c`
+    //! analogue (a plain VALUE of the same type lowers differently — e.g. a
+    //! `ro` NamedTuple FIELD is by-value, but a `ro` NamedTuple RECEIVER is
+    //! always-pointer, D226/A6) — exactly why the function's own doc comment
+    //! (Plan 172.1-K1, ~15667) defers its full retirement into a
+    //! "receiver-aware `resolved_type_to_c`" to the U.4.5/FIN endgame, not
+    //! this wave. These tests pin current behaviour across the receiver
+    //! matrix (примитив/record/sum/generic/кросс-модуль) as the regression
+    //! net for that future retirement.
+
+    use super::CEmitter;
+    use crate::types::ResolvedType;
+
+    // ---- примитив --------------------------------------------------------
+
+    #[test]
+    fn receiver_c_type_primitive_family_matches_primitive_name_to_c() {
+        // The int-family + f32/f64/bool/char/str arms are an UNCONDITIONAL
+        // string match (Plan 172.1-K1) routing through the SAME leaf
+        // (`primitive_name_to_c`) `resolved_type_to_c` uses for a Scalar/
+        // Float/Bool/Str `ResolvedType` — already the single source.
+        let e = CEmitter::new();
+        let cases: &[(&str, &str)] = &[
+            ("int", "nova_int"),
+            ("i64", "int64_t"),
+            ("i32", "int32_t"),
+            ("i16", "int16_t"),
+            ("i8", "int8_t"),
+            ("u64", "uint64_t"),
+            ("uint", "nova_uint"),
+            ("u32", "uint32_t"),
+            ("u16", "uint16_t"),
+            ("u8", "nova_byte"),
+            ("f64", "nova_f64"),
+            ("f32", "nova_f32"),
+            ("bool", "nova_bool"),
+            ("char", "nova_char"),
+            ("str", "nova_str"),
+        ];
+        for (recv, want) in cases {
+            assert_eq!(e.receiver_c_type(recv, false), *want, "receiver_c_type({:?}, false)", recv);
+            // Primitives are by-value receivers (D35 v2) — recv_mutable is a no-op.
+            assert_eq!(e.receiver_c_type(recv, true), *want, "receiver_c_type({:?}, true)", recv);
+        }
+    }
+
+    #[test]
+    fn receiver_c_type_size_stays_nova_int_pending_width_model() {
+        // `size` has no `primitive_name_to_c` entry (unpinned width/sign,
+        // per the doc comment at receiver_c_type's `"size"` arm) — preserved
+        // as `nova_int`.
+        let e = CEmitter::new();
+        assert_eq!(e.receiver_c_type("size", false), "nova_int");
+    }
+
+    // ---- sum (Option/Result) ---------------------------------------------
+
+    #[test]
+    fn builtin_sum_receiver_c_type_option_value_abi_via_subst_channel() {
+        // Option[T] receiver — value ABI `NovaOpt_<T>`; T's C-name comes
+        // from `subst_c` -> `subst_val_c` -> `resolved_type_to_c` (the SAME
+        // canonical printer non-receiver lowering uses).
+        let mut e = CEmitter::new();
+        e.builtin_sum_type_params.insert("Option".to_string(), vec!["T".to_string()]);
+        e.current_type_subst.insert(
+            "T".to_string(),
+            ResolvedType::Scalar { width: 64, signed: true, wide_default: true },
+        );
+        assert_eq!(e.builtin_sum_receiver_c_type("Option"), "NovaOpt_nova_int");
+        // Reached the same way through the receiver_c_type dispatcher.
+        assert_eq!(e.receiver_c_type("Option", false), "NovaOpt_nova_int");
+    }
+
+    #[test]
+    fn builtin_sum_receiver_c_type_result_pointer_abi_via_subst_channel() {
+        // Result[T,E] receiver — pointer ABI `NovaRes_<ok>_<err>*`.
+        let mut e = CEmitter::new();
+        e.builtin_sum_type_params.insert(
+            "Result".to_string(), vec!["T".to_string(), "E".to_string()]);
+        e.current_type_subst.insert(
+            "T".to_string(),
+            ResolvedType::Scalar { width: 64, signed: true, wide_default: true },
+        );
+        e.current_type_subst.insert("E".to_string(), ResolvedType::Str);
+        assert_eq!(e.builtin_sum_receiver_c_type("Result"), "NovaRes_nova_int_nova_str*");
+        assert_eq!(e.receiver_c_type("Result", true), "NovaRes_nova_int_nova_str*");
+    }
+
+    #[test]
+    fn builtin_sum_receiver_c_type_no_params_registered_falls_back_loud() {
+        // Defensive fallback (Plan 95 Ф.2.1 doc): no `builtin_sum_type_params`
+        // entry — should not happen outside a mono-context. Falls back to
+        // the legacy `Nova_<T>*` spelling rather than guessing a concrete
+        // (possibly wrong) instantiation.
+        let e = CEmitter::new();
+        assert_eq!(e.builtin_sum_receiver_c_type("Option"), "Nova_Option*");
+        assert_eq!(e.builtin_sum_receiver_c_type("Result"), "Nova_Result*");
+    }
+
+    // ---- generic -----------------------------------------------------------
+
+    #[test]
+    fn receiver_c_type_bare_typevar_routes_through_subst_channel() {
+        // `fn[T] T @method` — bare typevar receiver, resolved via
+        // `subst_c("T")` (current_type_subst), not a string-shape guess of
+        // the SUBSTITUTED type.
+        let mut e = CEmitter::new();
+        e.current_type_subst.insert(
+            "T".to_string(),
+            ResolvedType::Scalar { width: 32, signed: true, wide_default: false },
+        );
+        assert_eq!(e.receiver_c_type("T", false), "int32_t");
+    }
+
+    #[test]
+    fn receiver_c_type_bare_typevar_heap_struct_gets_pointer() {
+        // Plan 161 (blanket protocol-receiver methods): when the substituted
+        // C type is a heap struct WITHOUT a trailing `*` (the `Raw` debt
+        // carrier — see subst_val_c), receiver_c_type adds the `*` itself —
+        // struct receivers are always by-pointer.
+        let mut e = CEmitter::new();
+        e.current_type_subst.insert(
+            "I".to_string(),
+            ResolvedType::Raw("Nova_Widget".to_string()),
+        );
+        assert_eq!(e.receiver_c_type("I", false), "Nova_Widget*");
+    }
+
+    #[test]
+    fn receiver_c_type_value_generic_mono_returns_novavalue_pointer() {
+        // Plan 153.2 Ф.1: a `value` generic mono receiver (`BoxIter____
+        // nova_int`) is a D226 value-record — pointer to a stack slot
+        // (`NovaValue_<short>*`) so `@field`-mutating `mut` methods
+        // propagate to the caller.
+        let mut e = CEmitter::new();
+        e.generic_type_templates.insert(
+            "BoxIter".to_string(),
+            crate::ast::TypeDecl {
+                name: "BoxIter".to_string(),
+                kind: crate::ast::TypeDeclKind::Record(vec![]),
+                allocation: crate::ast::AllocKind::Value,
+                ..Default::default()
+            },
+        );
+        e.generic_type_instance_info.borrow_mut().insert(
+            "Nova_BoxIter____nova_int".to_string(),
+            (
+                "BoxIter".to_string(),
+                vec![ResolvedType::Scalar { width: 64, signed: true, wide_default: true }],
+            ),
+        );
+        assert_eq!(
+            e.receiver_c_type("BoxIter____nova_int", false),
+            "NovaValue_BoxIter____nova_int*"
+        );
+    }
+
+    #[test]
+    fn receiver_c_type_slice_receiver_vec_canon_mangles_and_is_pointer() {
+        // Plan 172.12 A7 (Vec-canon flip): single-level `[]T` receiver
+        // mirrors `resolved_array_to_c`'s Vec-flip (D239 `[]T ≡ Vec[T]`)
+        // instead of a legacy `NovaArray_<elem>*` name.
+        let e = CEmitter::new();
+        let got = e.receiver_c_type("[]int", false);
+        assert_eq!(got, "Nova_Vec____nova_int*");
+    }
+
+    #[test]
+    fn receiver_c_type_nested_slice_receiver_flattens_and_is_pointer() {
+        // Plan 153.5 (D263): a NESTED slice receiver (`[][]T`, depth >= 2)
+        // reconstructs the structured `Array(Array(Named))` TypeRef and
+        // lowers via `type_ref_to_c` (mono's each level to
+        // `Nova_Vec____<elem>*`) instead of the flat single-level path.
+        let e = CEmitter::new();
+        let got = e.receiver_c_type("[][]int", false);
+        assert!(got.ends_with('*'), "nested slice receiver must be a pointer: {}", got);
+        assert!(got.contains("Vec"), "expected Vec-canon mangled name: {}", got);
+    }
+
+    // ---- кросс-модуль ------------------------------------------------------
+
+    #[test]
+    fn receiver_c_type_cross_module_colliding_record_qualifies_by_defining_module() {
+        // [M-sync-crossmodule…] (D381): a method receiver whose type is a
+        // colliding sum/record resolves to its module-qualified base via
+        // `ref_type_base` (byte-identical for non-colliding — `ref_type_base`
+        // is a no-op then, see the sibling non-colliding test above).
+        let mut e = CEmitter::new();
+        e.colliding_type_names.insert("ErrorKind".to_string());
+        let fid: crate::diag::FileId = 7;
+        e.current_emit_file_id = Some(fid);
+        e.file_type_module.insert(
+            (fid, "ErrorKind".to_string()),
+            vec!["std".to_string(), "io".to_string()],
+        );
+        assert_eq!(e.receiver_c_type("ErrorKind", false), "Nova_std_io_ErrorKind*");
+    }
+
+    #[test]
+    fn receiver_c_type_colliding_name_without_module_context_passes_through() {
+        // No `current_emit_file_id`/`file_type_module` entry available (e.g.
+        // pre-pass) — `ref_type_base` degrades to the bare name rather than
+        // guessing a module, so this stays the legacy `Nova_<name>*` form.
+        let mut e = CEmitter::new();
+        e.colliding_type_names.insert("ErrorKind".to_string());
+        assert_eq!(e.receiver_c_type("ErrorKind", false), "Nova_ErrorKind*");
     }
 }
 
