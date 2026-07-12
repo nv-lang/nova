@@ -16467,11 +16467,28 @@ impl<'a> BoundCtx<'a> {
         scope: &HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
+        // A local/param is "callable" if it's a fn-type, a fn-POINTER
+        // (`*fn`/`*unsafe fn` = `Pointer(Func)` / `Pointer(Uninit(Func))`), or
+        // any of those under a ro/mut/uninit/ref wrapper — peel and re-check.
+        // (Bug fix: the bare `TypeRef::Func` guard mis-fired on `*unsafe fn(...)`
+        // locals, which ARE callable via `fp(...)` — repro
+        // spec_tests/conformance/d216_uninit_rename_174_5.nv:32.)
+        fn is_callable_local_ty(ty: &TypeRef) -> bool {
+            match ty {
+                TypeRef::Func { .. } => true,
+                TypeRef::Pointer(inner, _)
+                | TypeRef::Uninit(inner, _)
+                | TypeRef::Readonly(inner, _)
+                | TypeRef::Mut(inner, _)
+                | TypeRef::Ref(inner, _) => is_callable_local_ty(inner),
+                _ => false,
+            }
+        }
         let ExprKind::Call { func, .. } = &e.kind else { return; };
         let ExprKind::Ident(name) = &func.kind else { return; };
         let Some(ty) = scope.get(name) else { return; };
-        if matches!(ty, TypeRef::Func { .. }) {
-            return; // callable local (closure / fn-typed param) — legit call.
+        if is_callable_local_ty(ty) {
+            return; // callable local (closure / fn-typed param / fn-pointer).
         }
         errors.push(Diagnostic::new(
             format!(
