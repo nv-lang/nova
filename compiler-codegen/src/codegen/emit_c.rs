@@ -47364,69 +47364,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             self.icr_trace("B10a_ident_println_assert");
                             return "nova_unit".into();
                         }
-                        // Variant constructor call: Some(x), None, etc. → return option/sum type.
-                        // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
-                        if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
-                            self.icr_trace("B10b_ident_variant_constructor");
-                            // Plan 14 Ф.1: Some(x) infer как NovaOpt_<T>, где T = тип аргумента.
-                            // None infer'ится по контексту current_fn_return_ty (если NovaOpt_<X>).
-                            // Иначе — legacy NovaOpt_nova_int.
-                            if type_name == "Option" || type_name == "NovaOpt_nova_int" {
-                                self.icr_trace("B10b_opt_variant");
-                                if name == "Some" && !args.is_empty() {
-                                    let arg_ty = self.infer_expr_c_type(args[0].expr());
-                                    if !arg_ty.is_empty() && arg_ty != "void*" {
-                                        let sanitized = Self::sanitize_for_novaopt(&arg_ty);
-                                        return format!("NovaOpt_{}", sanitized);
-                                    }
-                                }
-                                if name == "None" {
-                                    if let Some(t) = self.current_fn_return_ty.as_ref() {
-                                        if t.starts_with("NovaOpt_") {
-                                            return t.clone();
-                                        }
-                                    }
-                                }
-                                return "NovaOpt_nova_int".into();
-                            }
-                            // Plan 59 Ф.7.5 D3: `Ok(v)` / `Err(e)` для prelude
-                            // `Result` → mono `NovaRes_<n>*` (зеркало D2-
-                            // конструкции). (T,E) best-effort из типа arg;
-                            // недостающий slot — legacy-default. `result_repr_
-                            // c_type` регистрирует typedef + даёт `NovaRes_<n>*`.
-                            if type_name == "Result"
-                                && (name == "Ok" || name == "Err")
-                            {
-                                self.icr_trace("B10b_result_variant");
-                                let arg_c = args.first()
-                                    .map(|a| self.infer_expr_c_type(a.expr()))
-                                    .filter(|t| !t.is_empty()
-                                        && t != "void*"
-                                        && !self.debt_is_generic_stub_c(t));
-                                let (ok_c, err_c): (String, String) = if name == "Ok" {
-                                    (arg_c.unwrap_or_else(|| panic!("[P67-LEGACY] Ok(arg) arg type unknown — checker must annotate (compiler-conventions.md §0)")),
-                                     "nova_str".to_string())
-                                } else {
-                                    ("nova_int".to_string(),
-                                     arg_c.unwrap_or_else(|| panic!("[P67-LEGACY] Err(arg) arg type unknown — checker must annotate (compiler-conventions.md §0)")))
-                                };
-                                return self.result_repr_c_type(&ok_c, &err_c);
-                            }
-                            // Plan 48 Ф.7.4 (partial): user-defined generic sum
-                            // constructor with args (`Ok2(42)` etc.) — infer mono
-                            // instance from arg types so the let-binding gets the
-                            // concrete `Nova_Result2____nova_int*` type, not the
-                            // erased `Nova_Result2*`. This is what feeds the mono
-                            // method-dispatch path on subsequent `.method()` calls.
-                            if let Some((_, mangled, _)) =
-                                self.try_infer_variant_mono_args(name, args)
-                            {
-                                self.icr_trace("B10b_user_variant_mono");
-                                return format!("{}*", mangled);
-                            }
-                            self.icr_trace("B10b_variant_nova_fallback");
-                            return format!("Nova_{}*", type_name);
-                        }
                         // Plan 172.1 D402: unannotated ClosureLight call-site return-type
                         // re-derivation. MUST precede clos_struct_ret_type check below:
                         // an unannotated `|v| v` closure defaults to NovaClos_ii (nova_int
