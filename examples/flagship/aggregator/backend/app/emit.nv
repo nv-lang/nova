@@ -34,10 +34,10 @@ export type Emit effect {
     lane_done(id str, elapsed_ms int) -> ()
     // A lane's upstream/transport call failed (`Fail[AggError]` surfaced).
     lane_failed(id str, err str, elapsed_ms int) -> ()
-    // A lane settled after the shared soft deadline had already elapsed —
-    // relabeled `Cancelled` (self-checked, not a killed fiber; the fetch
-    // itself ran to real completion — see aggregate.nv's file-header
-    // "Simplification" note).
+    // A lane was still in flight when the shared deadline hit — genuinely
+    // cancelled (real `supervised(deadline:)`, not a self-check; the fetch
+    // itself was interrupted, not run to completion — see aggregate.nv's
+    // file-header note).
     lane_cancelled(id str, elapsed_ms int) -> ()
     // The whole fan-out has settled (every lane done/failed/cancelled).
     swarm_done(fanout int, done int, failed int, cancelled int, wall_ms int, sequential_ms int) -> ()

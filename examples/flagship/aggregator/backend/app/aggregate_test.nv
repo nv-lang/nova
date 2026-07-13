@@ -105,26 +105,27 @@ test "aggregate: same code, two source lists (handler/source swap only)" {
     }
 }
 
-// ── NEG: a source that settles past the deadline is RELABELED cancelled ────
-//    (self-checked soft deadline, not a killed fiber — see aggregate.nv's
-//    file-header "Simplification" note). `fetch_one` always runs to real
-//    completion, so `wall_ms` here is bounded by the SOURCE's own latency,
-//    not by `budget_ms` — that is the honest cost of this MVP's
-//    simplification, asserted explicitly below rather than swept under the
-//    rug.
+// ── NEG: a source past the deadline is GENUINELY cancelled early ───────────
+//    (real `supervised(deadline:)` cancel, plan 187 Ф.MVP-2 деливерабл 1 —
+//    see aggregate.nv's file-header note). The lane's `Time.sleep(300)` is
+//    interrupted AT the shared deadline (~40ms), not run to completion —
+//    `wall_ms` must stay close to the budget, well under the source's own
+//    (uncancelled) 300ms latency. This replaces the earlier self-checked-
+//    soft-deadline test (which asserted the OPPOSITE — `wall_ms >= 300`,
+//    i.e. the fetch always ran to completion); that assertion now correctly
+//    FAILS since the cancel is real.
 
-test "aggregate: source past deadline is relabeled cancelled (soft budget, fetch still completes)" {
+test "aggregate: source past deadline is cancelled early — wall_ms bounded by budget, not by source latency" {
     with Net = mock_net() {
         with Emit = null_emit() {
             ro srcs []Source = [Source.new("slow", "", 1, 300, false)]
             ro report = aggregate(srcs, Duration.from_millis(40))
             assert(report.cancelled == 1)
             assert(report.done == 0)
-            // Soft budget: the fetch ran to completion (~300ms), it was not cut
-            // short at the ~40ms budget — generous upper bound to absorb CI jitter
-            // without masking a real regression (e.g. an infinite loop/hang).
-            assert(report.wall_ms >= 300)
-            assert(report.wall_ms < 2000)
+            // Generous slack (CI jitter/scheduler overhead) but strictly well
+            // under the source's own 300ms — a regression back to "let it run to
+            // completion" would fail this bound.
+            assert(report.wall_ms < 250)
         }
     }
 }
