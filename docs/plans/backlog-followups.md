@@ -3195,3 +3195,13 @@ header-комментарий с датой/командой) — **следую
 выполнено). Если объём кода в std/examples вырастет и появятся нарушения —
 перезапустить `nova --strict-effects check std examples --format short` и
 пополнить `strict-effects-debt.txt` по тому же формату.
+
+## [M-173-trace-not-in-child-error] — трасса/throw-site не протягиваются через эскалацию scope (P3, 2026-07-13)
+
+Вскрыто волной trace-per-fiber (173-tails-progress.md §201.4): `child_error[]` несёт
+msg/kind/payload/tid, но НЕ throw-site и НЕ propagation-trace ребёнка → при эскалации
+через `nova_rethrow_scope` наружу uncaught-abort печатает трассу РОДИТЕЛЯ (пустую/чужую),
+дамп ребёнка теряется. Диагностика only (catch-механика корректна). Фикс-направление:
+поля site+trace-снапшот в NovaChildError при фиксации детской ошибки, rethrow
+восстанавливает. Тест-блокер: наблюдать трассу с Nova-уровня пока нечем — нужен
+accessor (`error_trace() -> []str`?) либо проверка stderr-дампа раннером.
