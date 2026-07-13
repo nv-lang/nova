@@ -2,8 +2,8 @@
 // Plan 187 — flagship concurrent aggregator: HTTP snapshot bridge tests.
 //
 // Mock-driven, no sockets — same `serve_once(mux, raw_bytes)` idiom as
-// std/http/server/mux_test.nv. `Net` is substituted (`mock_net()`); `Time` is
-// left at its real ambient default (same choice aggregate_test.nv makes) —
+// nova-http's server/mux_test.nv. `Net` is substituted (`mock_net()`); `Time`
+// is left at its real ambient default (same choice aggregate_test.nv makes) —
 // latencies here are small/deadline-bounded, so real sleeps stay fast.
 
 module aggregator.server_test
@@ -13,7 +13,7 @@ import ./aggregate.{aggregate}
 import ./domain.{Source}
 import ./emit.{null_emit}
 import std.net.{mock_net}
-import std.http.server.{serve_once}
+import http.server.{serve_once}
 import std.encoding.json.{Json}
 
 fn status_line(wire []u8) -> str {

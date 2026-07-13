@@ -70,15 +70,11 @@ src = "src"
 # в stderr, но не блокирует CI.
 enforce-stability = true
 
-# Plan 193 Ф.2: std/tls вынесен в отдельную репу `nova-tls` (сиблинг монорепы,
-# см. docs/plans/193-nova-tls-repo.md) — «настоящий рабочий native-модуль»
-# (эталон паттерна Plan 195), больше НЕ compiler-built-in (nova_rt/tls_c_shim.c
-# + test_runner.rs's D337-style TLS auto-link special case — оба retired в
-# этом заходе). std/http/transport/real.nv тянет TLS через эту зависимость
-# (`import tls.{...}`) — единственный внешний dep стандартной библиотеки.
-#
-# `path` — форма для локальной разработки (механизм 03.1 ✅, path-deps не
-# пинуются). CI/публикация — `git`-форма на реальном remote nova-tls; пока не
-# переключено (nova-tls ещё не имеет remote — см. docs/plans/193).
-[dependencies]
-tls = { path = "../../nova-tls" }
+# Plan 193 Ф.2 вынес std/tls в отдельную репу `nova-tls` (сиблинг монорепы,
+# см. docs/plans/193-nova-tls-repo.md); std/http/transport/real.nv тянул TLS
+# через `[dependencies] tls` — единственный внешний dep стандартной
+# библиотеки. Plan 203 (2026-07-13) довынес и сам std/http в отдельную репу
+# `nova-http` (см. docs/plans/203-http-out-of-std.md — мотив: голый http без
+# tls почти не используется, связка неразрывна, ни одна экосистема не держит
+# «http в std, tls снаружи»). С уходом http зависимость `tls` в std больше не
+# нужна никем — std снова самодостаточен (0 внешних deps).

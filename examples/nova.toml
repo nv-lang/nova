@@ -31,8 +31,11 @@ src = "."
 
 # Большинство demo-файлов self-contained (только prelude). `std.*` доступен
 # ВСЕГДА неявно (D78 — reserved implicit stdlib package, не объявляется
-# здесь). Внешние (не-std) пакеты нужно объявлять явно — как `tls` ниже
-# (Plan 193: nova-tls, extracted std/tls, `examples/tls/echo_*.nv`
-# демонстрирует native-module dependency pattern, симметрично `std/nova.toml`).
+# здесь). Внешние (не-std) пакеты нужно объявлять явно — как `tls`/`http`
+# ниже (Plan 193: nova-tls, extracted std/tls, `examples/tls/echo_*.nv`
+# демонстрирует native-module dependency pattern, симметрично `std/nova.toml`;
+# Plan 203: nova-http, extracted std/http, `examples/flagship/aggregator`
+# потребляет `http.server` тем же путём).
 [dependencies]
 tls = { path = "../../nova-tls" }
+http = { path = "../../nova-http" }
