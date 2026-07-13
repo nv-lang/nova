@@ -905,11 +905,10 @@ pub struct CEmitter {
     resolved_callees: std::collections::HashMap<crate::ast::ExprId, crate::diag::Span>,
     /// Plan 196.5 Stage-A: the subst-value channel (call-site `ExprId` → ordered
     /// `(generic-param name → concrete ResolvedType)`) the checker populated
-    /// (`ModuleEnv.node_substs`). Mirrors `resolved_callees`'s plumbing. ADDITIVE — not yet
-    /// read by codegen (Stage-B wires the three mono/method-generic engines onto this as a
-    /// channel-first source, replacing their C-type re-inference). Dead-code-allowed in
-    /// release until Stage-B flips a reader onto it. [M-196.5-node-substs]
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    /// (`ModuleEnv.node_substs`). Mirrors `resolved_callees`'s plumbing. Stage-B1
+    /// (`resolve_mono_type_args_ch`, ~19315) reads it unconditionally (propose-then-verify
+    /// against the legacy re-inference, `NOVA_NODE_SUBSTS_TRACE` hit/fallback tally) — no
+    /// longer dead in release. [M-196.5-node-substs]
     node_substs: std::collections::HashMap<crate::ast::ExprId, Vec<(String, crate::types::ResolvedType)>>,
     /// Plan 172.1 U.4.3 (stages a+b+c1): codegen's OWN view of a callee's return C-type,
     /// keyed by the declaration `Span`. Built from the same `ret` codegen registers as
@@ -2485,7 +2484,7 @@ impl CEmitter {
 
     /// Plan 196.5 Stage-A: feed the subst-value channel (`ExprId` → ordered
     /// `(generic-param name → concrete ResolvedType)`) the checker populated. Mirrors
-    /// `set_resolved_callees`. ADDITIVE — not yet read by codegen (Stage-B).
+    /// `set_resolved_callees`. Stage-B1 reads it (`resolve_mono_type_args_ch`).
     pub fn set_node_substs(
         &mut self,
         m: &std::collections::HashMap<crate::ast::ExprId, Vec<(String, crate::types::ResolvedType)>>,
@@ -18968,6 +18967,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// `resolve_method_level_subst` + инлайн instance-method dispatch)
     /// исторически чинились СИНХРОННО вручную (см. Source 4 ниже,
     /// «[M-exp-promotion-blockers: retry]»), что и есть симптом второго окна.
+    ///
+    /// **[Plan 196.5 Stage-B1 update]** канал построен (Stage-A, `node_substs`) —
+    /// владелец санкционировал развилку (A). Этот легаси-body ОСТАЁТСЯ нетронутым
+    /// (fallback + Stage-B propose-then-verify verifier); два из трёх вызывающих
+    /// сайтов (вне замороженной зоны волны-1) теперь идут через channel-first
+    /// `resolve_mono_type_args_ch` (ниже, ~19315), которая вызывает ЭТУ функцию как
+    /// легаси-сторону гейта. Смотри `resolve_mono_type_args_ch` doc — там же метрика
+    /// `NOVA_NODE_SUBSTS_TRACE` hit/fallback.
     fn resolve_mono_type_args(
         &self,
         fn_decl: &crate::ast::FnDecl,
@@ -19366,6 +19373,102 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         Ok(result)
+    }
+
+    /// Plan 196.5 Stage-B1 — channel-first preamble for `resolve_mono_type_args` (Q10
+    /// engine #1, see the doc block above `resolve_mono_type_args` itself). `call_id` is
+    /// the SAME call-site key `resolved_types`/`resolved_callees`/`node_substs` all use
+    /// (`emit_call`'s own parameter — every caller of this fn is `⊂ emit_call`, §4 196.5).
+    ///
+    /// Propose-then-verify (mirrors the `subst_map_adopt_rt` byte-identity guard, §6.3):
+    /// the checker channel (`node_substs[call_id]`, written by `f1_check_call` /
+    /// `resolve_return_channel`, Stage-A, ADDITIVE) is the PROPOSAL; the unchanged legacy
+    /// body (`resolve_mono_type_args`, ~400 lines of ad-hoc re-unification) is both the
+    /// FALLBACK and, during Stage-B, the VERIFIER. The channel is adopted (`hit`) ONLY when
+    /// it is present, COMPLETE (`ordered.len() == fn_decl.generics.len()` — a residual/
+    /// erased-body param means the channel legitimately stayed unwritten, §7), and lowers
+    /// (`resolved_type_to_c`, D315) to the EXACT SAME C-string as legacy for every name
+    /// (name-for-name, not positional, in case a future producer reorders). A miss
+    /// (no entry / incomplete entry) or a mismatch degrades to the legacy value — this
+    /// function's return is therefore byte-identical to calling `resolve_mono_type_args`
+    /// directly, BY CONSTRUCTION, regardless of hit/fallback (zero behavior-change risk;
+    /// the hit/fallback split is a coverage metric, not a correctness fork). Once the
+    /// corpus proves hit-only for a given D-form, Stage-C detaches the legacy body for
+    /// that form (§8/§9) — this function is the propose-then-verify scaffolding that gate
+    /// rests on. `NOVA_NODE_SUBSTS_TRACE` (same env var as the Stage-A producer trace)
+    /// tallies `hit` / `fallback=miss|incomplete|mismatch` per call-site for the Stage-B
+    /// acceptance metric ("channel-subst ≡ legacy-subst, no site regresses").
+    ///
+    /// NOT wired at the frozen-zone call-site (`infer_call_ret_c`, `46293`–`48883` per the
+    /// 196.5 plan `wave-1` freeze — that site keeps calling `resolve_mono_type_args`
+    /// directly, unchanged) — only the two out-of-zone `emit_call` call-sites are flipped
+    /// to this entry point (§8 point 1: "resolve_mono_type_args MIXED → detach вне-зонных
+    /// сайтов, зонный ждёт волну-1").
+    fn resolve_mono_type_args_ch(
+        &self,
+        fn_decl: &crate::ast::FnDecl,
+        turbofish_refs: &[crate::ast::TypeRef],
+        args: &[crate::ast::CallArg],
+        call_id: crate::ast::ExprId,
+    ) -> Result<Vec<(String, String)>, String> {
+        let legacy = self.resolve_mono_type_args(fn_decl, turbofish_refs, args);
+        let trace = std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some();
+        let Ok(legacy_pairs) = legacy else {
+            // Legacy already loud-errors (turbofish-required diagnostics, §7) — Stage-B
+            // does not paper over an Err with an unverified channel guess.
+            return legacy;
+        };
+        let Some(channel) = self.node_substs.get(&call_id) else {
+            if trace {
+                eprintln!(
+                    "[NODE_SUBSTS] consumer=mono_type_args call_id={:?} fallback=miss",
+                    call_id
+                );
+            }
+            return Ok(legacy_pairs);
+        };
+        if channel.len() != fn_decl.generics.len() {
+            if trace {
+                eprintln!(
+                    "[NODE_SUBSTS] consumer=mono_type_args call_id={:?} fallback=incomplete \
+                     channel_n={} want_n={}",
+                    call_id, channel.len(), fn_decl.generics.len()
+                );
+            }
+            return Ok(legacy_pairs);
+        }
+        let mut lowered: Vec<(String, String)> = Vec::with_capacity(channel.len());
+        for (name, rt) in channel.iter() {
+            let Some((_, legacy_c)) = legacy_pairs.iter().find(|(n, _)| n == name) else {
+                if trace {
+                    eprintln!(
+                        "[NODE_SUBSTS] consumer=mono_type_args call_id={:?} fallback=mismatch \
+                         {}=<no-legacy-name>",
+                        call_id, name
+                    );
+                }
+                return Ok(legacy_pairs);
+            };
+            let channel_c = self.resolved_type_to_c(rt).ok();
+            if channel_c.as_deref() != Some(legacy_c.as_str()) {
+                if trace {
+                    eprintln!(
+                        "[NODE_SUBSTS] consumer=mono_type_args call_id={:?} fallback=mismatch \
+                         {}={:?} legacy={:?}",
+                        call_id, name, channel_c, legacy_c
+                    );
+                }
+                return Ok(legacy_pairs);
+            }
+            lowered.push((name.clone(), legacy_c.clone()));
+        }
+        if trace {
+            eprintln!(
+                "[NODE_SUBSTS] consumer=mono_type_args call_id={:?} hit n={}",
+                call_id, lowered.len()
+            );
+        }
+        Ok(lowered)
     }
 
     /// Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]: count the
@@ -36677,7 +36780,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // real T (Vec[T]@cap → copy_n_nonoverlapping
                                     // silently corrupted non-str Vecs). Loud error
                                     // per project doctrine — no silent fallback.
-                                    let type_subst = self.resolve_mono_type_args(&fn_decl, &[], args)?;
+                                    let type_subst = self.resolve_mono_type_args_ch(&fn_decl, &[], args, call_id)?;
                                     let base_c_name = format!("Nova_{}_static_{}", recv_seg, method_name);
                                     let mono_name = Self::compute_mono_name(&base_c_name, &type_subst);
                                     let rt_clone = recv_seg.clone();
@@ -36959,7 +37062,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // (см. emit_c.rs:4562-4596, 10105, 2786-2807 finalize emit).
                 //
                 // Ф.0: resolve type args
-                match self.resolve_mono_type_args(&fn_decl, &turbofish_type_refs, args) {
+                match self.resolve_mono_type_args_ch(&fn_decl, &turbofish_type_refs, args, call_id) {
                     Ok(type_subst) => {
                         let base_c_name = self.free_fn_c_name(fn_name);
                         let mono_name = Self::compute_mono_name(&base_c_name, &type_subst);
