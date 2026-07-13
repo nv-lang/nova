@@ -405,3 +405,25 @@ export NOVA_INCLUDE_DIR=/d/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed
    подпапки, soundness) — зелёные и составляют текущий гейт.
 
 - 2026-07-13 FIN: гейт снят. Merged flat CU (1010 файлов, 2589 test-блоков) ПОЛНОСТЬЮ компилируется и линкуется (0 dup, 0 checker/codegen/link ошибок) — заблокирован только runtime-дефектами №8a/8b (стек main_impl + AV в panics-recovery), чинит компиляторная волна. До фикса №8 строка app_effect_basic_t8_1 в прогоне = ожидаемый RUN-FAIL.
+
+- 2026-07-13 ПОСТ-MERGE main 29b5a8836 (chunked test-main): пересборка release, доводка,
+  финальный гейт FIN-4 (conformance+soundness, эксклюзивно, без --jobs):
+  **PASS 486 / FAIL 7 / SKIP 16** — 0 environmental. Все 7 FAIL объяснены:
+  1) `app_effect_basic_t8_1` (merged flat CU, 1005 файлов) — КОМПИЛИРУЕТСЯ И ЛИНКУЕТСЯ
+     начисто; RUN-FAIL = **layout-зависимая память-порча 0xC0000005**: точка падения
+     ПЛАВАЕТ при изменении состава CU (562 → 1179 → 997 из 2589 тестов; все тесты до
+     падения PASS; «виноватые» тесты изолированно PASS) — блокер 8b-real, чинит
+     компиляторная волна (chunked-фикс снял 8a-стек, синтетический корпус чист,
+     реальный — нет: подозрение на GC/конкурентные тесты в общем процессе);
+  2) t4_sqlite_e2e_ok — known-red (post-merge форма: lld undefined mini_sqlite_* —
+     FFI-шим sqlite_mini_ffi.h не линкуется у standalone);
+  3) pos_max_fibers_concurrent — СВЕЖАЯ post-merge регрессия: user-вызовы методов
+     CancelToken (`cancel()`/`is_cancelled()`) биндятся к чужим типам (WriteBuffer/Conn10);
+     ICE-вариант (`is_cancelled` → emit_c.rs:50387) в fixtures/ice_blocked/nested_supervised_cancel.nv;
+  4) m176_method_return_turbofish — СВЕЖАЯ post-merge регрессия (196.x mono-волна,
+     method-return turbofish U-erasure: NovaOpt_Nova_T_p vs NovaOpt_nova_str);
+  5) view_descriptor_stack — known-red (172.14);
+  6-7) soundness/deferred ×2 — Ф.3(a)/(b) статус-кво.
+  Драйф-фиксы канона: str.len() → byte_len() в from_codepoint_invalid_neg/from_codepoint_test/
+  str_new_test (version-skew прятал). Два новых Plan-173 теста из merge размещены по
+  конвенции (rt-panic → neg/, scope_multierror → standalone/ из-за alias-import-дефекта №3).
