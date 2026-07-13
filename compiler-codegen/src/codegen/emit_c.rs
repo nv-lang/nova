@@ -29838,6 +29838,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         .map(|t| !Self::is_result_like(t))
                         .unwrap_or(false);
                     self.line(&format!("{} {} = {};", inner_ty, try_tmp, val));
+                    // [M-173-error-return-trace]: propagation-trace push на
+                    // КАЖДОЙ `?`-точке проброса (обе ветки ниже) — ring-buffer
+                    // rethrow-точек поверх throw-site минимума Ф.5 п.7.
+                    // Только error-path (внутри Err-ветки), happy-path чист.
+                    let (trace_file, trace_line) = self.loc_for_span(expr.span.start);
                     if in_fail_ctx {
                         // Fail-context: throw the Err value via Nova_Fail_fail /
                         // nova_throw_typed — same as ExprKind::Bang for Result.
@@ -29851,6 +29856,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             try_tmp
                         ));
                         self.indent += 1;
+                        self.line(&format!(
+                            "nova_throw_trace_push(\"{f}\", {l}); nova_throw_site_mark(\"{f}\", {l});",
+                            f = trace_file, l = trace_line
+                        ));
                         if err_is_str {
                             self.line(&format!(
                                 "if ({}->err_typed_type_id != NOVA_TID_NONE) {{",
@@ -29898,7 +29907,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             .cloned()
                             .unwrap_or_else(|| inner_ty.clone());
                         let err_ctor = self.result_ctor_name(&ret_result_ty, "Err");
-                        self.line(&format!("if ({}->tag == NOVA_TAG_Result_Err) {{ return {}({}->payload.Err._0); }}", try_tmp, err_ctor, try_tmp));
+                        // [M-173-error-return-trace]: push перед early-return
+                        // Err — value-mode звено той же `?`-цепочки.
+                        self.line(&format!(
+                            "if ({tmp}->tag == NOVA_TAG_Result_Err) {{ nova_throw_trace_push(\"{f}\", {l}); return {ctor}({tmp}->payload.Err._0); }}",
+                            tmp = try_tmp, f = trace_file, l = trace_line, ctor = err_ctor));
                     }
                     Ok(format!("({}->payload.Ok._0)", try_tmp))
                 } else {
@@ -29929,9 +29942,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.line(&format!("{} {} = {};", inner_ty, bang_tmp, val));
                     let inner_sani = inner_ty.strip_prefix("NovaOpt_").unwrap_or(&inner_ty);
                     let none_check = self.option_is_none_check(&bang_tmp, inner_sani);
+                    // [M-173-error-return-trace]: None!!-throw = свежий
+                    // origin (RuntimeNoneError рождается здесь) → полный
+                    // стемп site_set (reset трассы) как у user-throw.
+                    let (bfile, bline) = self.loc_for_span(expr.span.start);
                     self.line(&format!(
-                        "if ({}) {{ nova_throw_runtime_none_error(); }}",
-                        none_check
+                        "if ({}) {{ nova_throw_site_set(\"{}\", {}); nova_throw_runtime_none_error(); }}",
+                        none_check, bfile, bline
                     ));
                     Ok(format!("({}.value)", bang_tmp))
                 } else if Self::is_result_like(&inner_ty) {
@@ -29964,6 +29981,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         bang_tmp
                     ));
                     self.indent += 1;
+                    // [M-173-error-return-trace]: Err!! — конверсия УЖЕ
+                    // пропагирующей Result-ошибки в Fail-эффект: push-звено
+                    // цепочки + site-mark БЕЗ сброса трассы (накопленные
+                    // `?`-кадры переживают конверсию).
+                    {
+                        let (bfile, bline) = self.loc_for_span(expr.span.start);
+                        self.line(&format!(
+                            "nova_throw_trace_push(\"{f}\", {l}); nova_throw_site_mark(\"{f}\", {l});",
+                            f = bfile, l = bline
+                        ));
+                    }
                     if err_is_str {
                         self.line(&format!(
                             "if ({}->err_typed_type_id != NOVA_TID_NONE) {{",

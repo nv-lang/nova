@@ -38262,3 +38262,73 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
 - Побочно найден несвязанный баг (region checker/auto_derive, вне
   объёма) — `[M-202-ident-x-module-alias-collision]`.
 - Полный отчёт: `docs/plans/202-progress.md`.
+
+## Волна «173 хвосты» п.2 — полный propagation-trace [M-173-error-return-trace] (2026-07-13)
+
+- **Runtime (effects.h/effects.c):** TLS ring-buffer `_nova_throw_trace`
+  (`NOVA_THROW_TRACE_CAP=16`, count хранит суммарные push'и — дамп сообщает
+  «N earlier frames dropped»); `nova_throw_trace_push/reset`;
+  `nova_throw_site_set` теперь сбрасывает трассу (fresh origin = новая
+  ошибка), новый `nova_throw_site_mark` обновляет site БЕЗ сброса (для
+  конверсии уже пропагирующей Result-ошибки в Fail-эффект). Сброс также на
+  catch (`nova_scope_exit` CATCH), interrupt-consume (4 точки effects.c) и в
+  `nova_runtime_reset` (+ там же гашение стейл `_nova_throw_site` между
+  panics-тестами). Дамп — в существующем `nova_throw_site_dump` → все 4
+  uncaught-abort ветки получили трассу бесплатно.
+- **Codegen (emit_c.rs):** push на `?` value-mode (`return Err`) и Fail-ctx
+  ветке; `!!`-Err = push + site-mark (трасса переживает конверсию);
+  `!!`-None = полноценный origin-стемп `site_set` (раньше bang-сайты не
+  стемпились вовсе). Только error-path — happy-path не затронут.
+- **Тест:** `nova_tests/err173/rt/f5_propagation_trace_full.nv` — Err
+  рождается в leaf, 2 value-mode `?`-звена + `!!`-конверсия, uncaught →
+  дамп содержит 3 `via file:line (?)`-звена в хронологическом порядке
+  (проверено вручную на бинаре + --panic lane PASS).
+- **Ограничение (задокументировано в effects.h):** `Err(...)`-конструктор
+  не сбрасывает трассу (нет стемпа) — кадры ошибки, разобранной `match`'ем
+  (не catch), могут остаться в хвосте следующего дампа.
+- **Попутно вскрыто:** `nova build` (nova-cli) не прокидывает
+  `set_source_file_name` → `at <unknown>:N` (pre-existing, `nova test`-путь
+  честный) — `[M-cli-build-source-file-name-unknown]` (P3).
+- **Гейты:** conformance один CU 111/0 + 7 SKIP (δ0); err173 folder-CU +
+  err173_2 PASS; rt-lane 3/3 (--panic); neg 10/0; std/src/concurrency:
+  2 PASS + 2 CC-FAIL pre-existing (main-бинарь на main-дереве падает
+  идентично, δ=0); cargo build --release чист.
+
+## Волна «173 хвосты» п.1 — MultiError scope-агрегация (D414 §1 ← Ф.4) (2026-07-13)
+
+- **Разрыв спека/код закрыт:** D414 §1 обещал «Не-primary ошибки уходят в
+  suppressed-карман», но re-throw хвост `nova_supervised_run_impl` кидал
+  только primary (`nova_scope_collect_child_errors` — 0 вызывающих; ошибки
+  siblings терялись). Гейт 174.3 (any/is-downcast) в main — п.1 разгейчен.
+- **Механика:** staging-слот TLS `_nova_pending_suppressed` (effects.h/.c);
+  хвост scope собирает не-primary retained детские падения в
+  NovaErrorChain (через `nv_compose_suppressed` — D193 identity/depth) и
+  ставит в staging; ближайший throw потребляет его в `nova_last_error_set`
+  (карман D158 модели Б) + несёт в fail-frame (`nova_throw`/
+  `nova_throw_typed` теперь копируют из pocket вместо жёсткого NULL —
+  вне агрегации это тот же NULL). Чтение — существующий
+  `suppressed() -> []any`.
+- **Исключения:** CANCEL-производные; Stop-решённые супервизором (новый
+  drive-thread-only флаг `NovaChildError.escalated`, ставится в ESCALATE-
+  ветке decision-loop; D416 — Stop = осознанный выброс, retained для
+  observability). Primary идентифицируется msg+payload+tid+kind (typed-
+  броски делят литерал `msg_repr` «<nova_int>» — по одному msg скипались
+  ОБА ребёнка). Видимый порядок = порядок слотов.
+- **Попутный ABI-фикс (вскрыт тестом):** `nova_any_from_boxed` (typeid.h)
+  всегда заворачивал payload в слот-индирекцию (расчёт на pointer-repr
+  records) → `try_as[int]` на suppressed-элементе возвращал АДРЕС бокса
+  как int. Теперь value-ABI примитивы (tid 1..7) кладут box напрямую в
+  `data`; user value-типы ≥ USER_BASE — прежнее pointer-предположение
+  (задокументировано, pre-existing).
+- **Детерминизм теста:** в supervisor-режиме отмена не летит до решения →
+  хендлер спин-ждёт фиксации обоих падений (fetch_add строго перед throw,
+  без yield между), затем Escalate — оба слота retained гарантированно.
+  `nova_tests/err173_2/scope_multierror_test.nv`: (1) не-primary в кармане
+  с точным значением; (2) Stop не течёт + сброс кармана свежей ловлей;
+  (3) default-Escalate инвариант ⊆ (расписание-независимый).
+- **Спека:** D414 §1 амендмент (06-concurrency.md) тем же слиянием; план
+  173 §Ф.4 acceptance дополнен строкой хвоста.
+- **Гейты:** conformance один CU 111/0 + 7 SKIP (δ0); err173_2 CU PASS
+  (все supervisor-тесты + 3 новых); err173 + any_is + plan110 PASS;
+  runtime_panics CU PASS (precedence в т.ч.); std/src/concurrency δ=0
+  (2 pre-existing CC-FAIL).

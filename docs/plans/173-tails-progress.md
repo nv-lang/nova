@@ -1,0 +1,24 @@
+# 173 — хвосты пост-закрытия семейства: прогресс (ветка tails-173)
+
+> Чекпойнт-файл волны «173 хвосты» (2026-07-13, база main dfe47ca16).
+> Задание: верификация гейтов → propagation-trace → MultiError-агрегация scope /
+> panics-клаузула (по гейтам) → semaphore-cap (остаток бюджета).
+
+## Пункт 0 — верификация гейтов (выполнено, код не трогался)
+
+| Гейт | Статус | Факт |
+|---|---|---|
+| (а) Plan 174.3 (any/is-downcast) — гейтит п.1 | ✅ ЗАКРЫТ в нужном объёме | Ф.1+Ф.2 выполнены 2026-07-04 (any fat-pointer + `is`/`try_as` + narrowing + `E_IS_NON_ANY`); Ф.3 (гетерогенные `[]any`-коллекции) вынесена в Plan 188 и Ф.4-механике НЕ нужна — `suppressed() -> []any` уже работает (Ф.4 закрыта на этой инфре) |
+| (б) 173 Ф.5 `nova_runtime_reset` — гейтит п.3 | ✅ ЗАКРЫТ | Ф.5 закрыта 2026-07-10 (ветка err-173-f56); п.6 `nova_runtime_reset()` — коммит `cdd23a5b2` (fibers.h; из user-кода недоступен, neg-тест есть) |
+| (в1) объём Ф.4 (перечитано) | ✅ закрыта 2026-07-06 — но ТОЛЬКО defer/cleanup-ось | Сделано: D158 модель Б (primary как есть + карман `suppressed() -> []any`), typed `ScopeOutcome.Failure(any)`, catchability-инвариант, anti-hijack `is_cleanup`. **НЕ сделано: scope-агрегация N детских ошибок** — re-throw-хвост `nova_supervised_run_impl` (fibers.h ~2960) кидает только primary; `nova_scope_collect_child_errors` (fibers.h:1172) не имеет ни одного вызывающего; теста «3 ребёнка падают → primary + 2 в suppressed» (Ф.3-остаток §Тесты) не существует. D414 §1 в спеке УЖЕ обещает «Не-primary ошибки уходят в suppressed-карман» — спека впереди реализации. → п.1 задания реально открыт И разгейчен |
+| (в2) объём Ф.6 (перечитано) | ✅ закрыта ПОЛНОСТЬЮ 2026-07-10 | D348 в спеке (09-tooling.md) + amend D89; `TestDecl.panics` + codegen-инверсия + `nova_runtime_reset()` в эпилоге; миграция 67 тестов / −52 CU; маркер `[M-173-panics-clause]` ЗАКРЫТ (ветка err-173-f56, слита в main) → **п.3 задания уже сделан в main, работы нет** |
+
+## Таблица пунктов
+
+| Пункт | Статус | Коммит(ы) |
+|---|---|---|
+| 0. Верификация гейтов | ✅ сделано | b6d5ea091 |
+| 2. Полный propagation-trace `[M-173-error-return-trace]` | ✅ сделано (ring-buffer 16 + `?`/`!!`-стемпы + сбросы origin/catch/reset; тест rt/f5_propagation_trace_full; маркер CLOSED; попутный `[M-cli-build-source-file-name-unknown]` P3) | 1b3b87aa2 |
+| 1. MultiError: scope-агрегация детских ошибок в suppressed | ✅ сделано (staging `_nova_pending_suppressed` + escalated-флаг + skip-primary по payload/tid/kind; ABI-фикс `nova_any_from_boxed` value-примитивов; D414 §1-амендмент; тест err173_2/scope_multierror_test 3 сценария) | 7bbd523d7 |
+| 3. Panics-клаузула (Ф.6) | уже закрыта в main — работы нет | — |
+| 4. Semaphore-cap живых детей parallel for (P3) | НЕ начат (решение по бюджету): объём = заход в parfor-десугар (spawn-троттлинг Semaphore Plan 103.4, парковка родителя × cancel/deadline-семантика) — полноценная волна, не остаток; опция остаётся зафиксированной в 173.1 §Ф.3 | — |

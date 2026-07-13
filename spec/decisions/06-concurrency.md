@@ -6523,6 +6523,28 @@ PANIC на уже-записанном USER). Тест: `nova_tests/expected_run
 (10 USER + 10 PANIC детей → primary детерминированно PANIC, ×5 стабильно).
 Стыкуется с catchability-инвариантом [Ф.4 п.6](../../docs/plans/173-error-system-unify-harden.md).
 
+> **Амендмент (2026-07-13, волна «173 хвосты»): suppressed-агрегация РЕАЛИЗОВАНА.**
+> Обещание «Не-primary ошибки уходят в suppressed-карман» теперь факт: re-throw
+> хвост `nova_supervised_run_impl` (fibers.h) собирает все ПРОЧИЕ retained
+> детские падения в suppressed-цепочку primary-броска (staging-слот
+> `_nova_pending_suppressed` → транспорт через `nova_last_error_set`); после
+> ловли primary они читаются **`suppressed() -> []any`** — та же поверхность
+> [D158](02-types.md#d158) модели Б, что у cleanup-ошибок (`is T`/`try_as[T]`
+> narrowing). Паритет Kotlin `coroutineScope` / Java `Joiner` (агрегация),
+> строго лучше Swift TaskGroup first-wins.
+> **В карман НЕ попадают:** CANCEL-производные падения siblings (следствие
+> эскалации, не корневая причина) и Stop-решённые супервизором ошибки
+> ([D416](#d416) — хендлер осознанно выкинул; retained в `child_error[]` для
+> observability, наружу не текут). Primary исключается по идентичности
+> (msg+payload/tid/kind — typed-броски делят литерал `msg_repr`); дубликаты
+> схлопывает D193 identity-check. Видимый порядок = порядок слотов
+> (spawn-порядок). Попутный фикс ABI: `nova_any_from_boxed` (typeid.h) для
+> value-ABI примитивов (tid 1..7) кладёт heap-box значения в `data` напрямую —
+> `try_as[int]` на suppressed-элементе возвращал адрес бокса вместо значения.
+> Тесты: `nova_tests/err173_2/scope_multierror_test.nv` (детерминированный
+> supervisor-барьер: оба слота retained; Stop не течёт; default-Escalate
+> инвариант).
+
 ### §2. `detach` error-policy + enforcement эффекта `Detach`
 
 **Enforcement (checker, `CapabilityCtx`).** `detach { … }` — fire-and-forget

@@ -238,6 +238,14 @@ typedef struct {
     /* Plan 173.2: drive-thread-only bookkeeping — this failure has been fed
      * to the Supervisor decision exactly once. Never touched by workers. */
     nova_bool     decided;
+    /* Plan 173 хвост (D414 §1, MultiError-агрегация, 2026-07-13):
+     * drive-thread-only — решение по этому падению было ESCALATE (ошибка
+     * участвует в primary-выборе и, если не выиграла, уходит в suppressed-
+     * карман при scope re-throw). Stop-решённые остаются retained, но в
+     * suppressed НЕ попадают (хендлер осознанно их выкинул — D416).
+     * Для default-scope (нет супервизора) флаг не используется: там ВСЕ
+     * retained не-CANCEL падения escalate-класса по определению. */
+    nova_bool     escalated;
 } NovaChildError;
 
 /* ─── Plan 175 (owner TODO closure, 2026-07-10): virtual-clock auto-idle-
@@ -1157,6 +1165,7 @@ static inline int nova_scope_alloc_child_slot(NovaFiberQueue* scope) {
     scope->child_error[idx].msg = NULL;
     nova_abool_init(&scope->child_error[idx].published, false);  /* Plan 173.2 */
     scope->child_error[idx].decided = false;                      /* Plan 173.2 */
+    scope->child_error[idx].escalated = false;                    /* D414 §1 агрегация */
     scope->child_ctx[idx] = NULL;
     return idx;
 }
@@ -2690,6 +2699,7 @@ static inline void nova_supervised_process_decisions(NovaFiberQueue* q) {
                 break;
             case NOVA_SUPERVISE_ESCALATE:
             default:
+                ce->escalated = true;  /* D414 §1: участвует в primary/suppressed */
                 nova_fiber_report_atomic_kinded(q, ce->msg, ce->kind,
                                                 ce->reason, ce->payload, ce->tid);
                 break;
@@ -2942,6 +2952,53 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
         if (kind == NOVA_THROW_CANCEL) {
             /* Отмена не убегает наружу. Caller продолжает выполнение. */
             return;
+        }
+        /* ── Plan 173 хвост (D414 §1 ← Ф.4): scope MultiError-агрегация ──
+         * Спека обещает: «Не-primary ошибки уходят в suppressed-карман».
+         * Здесь (единственная точка, где primary покидает scope) собираем
+         * ВСЕ прочие retained детские падения в цепочку и ставим её в
+         * staging-слот `_nova_pending_suppressed` — ближайший throw ниже
+         * (typed / panic / plain) потребит её через nova_last_error_set,
+         * и после ловли primary они читаются `suppressed() -> []any`
+         * (D158 модель Б).
+         * Исключаются: CANCEL-производные (следствие эскалации, не корень);
+         * Stop-решённые супервизором (хендлер осознанно выкинул — D416;
+         * retained в child_error[] для observability, наружу не текут);
+         * сам primary. Идентификация primary: msg-указатель НЕДОСТАТОЧЕН —
+         * typed-броски делят один литерал msg_repr («<nova_int>» и т.п.),
+         * поэтому для atomic-primary дополнительно сверяем payload/tid/kind
+         * (боксы per-throw — уникальны). Для str-бросков payload=NULL у
+         * всех — совпадение всех полей = неотличимый дубликат, его всё
+         * равно схлопнул бы identity-check nv_compose_suppressed (D193).
+         * Порядок: prepend-compose (LIFO) + back-to-front чтение accessor'а
+         * (`suppressed()` материализует цепочку с хвоста) → обход слотов по
+         * ВОЗРАСТАНИЮ даёт видимый порядок = порядок слотов (spawn-порядок,
+         * детерминированно). */
+        {
+            NovaFailFrame _nv_aggf;
+            _nv_aggf.error_suppressed = NULL;
+            if (q->child_error) {
+                nova_bool _nv_prim_local = (q->first_error != NULL);
+                for (int _nv_ai = 0; _nv_ai < q->child_count; _nv_ai++) {
+                    NovaChildError* _nv_ce = &q->child_error[_nv_ai];
+                    if (_nv_ce->msg == NULL) continue;
+                    if (_nv_ce->kind == NOVA_THROW_CANCEL) continue;
+                    if (q->has_supervisor && !_nv_ce->escalated) continue;
+                    if (_nv_ce->msg == err
+                        && (_nv_prim_local
+                            || (_nv_ce->payload == q->first_error_atomic_payload
+                                && _nv_ce->tid  == q->first_error_atomic_tid
+                                && _nv_ce->kind == q->first_error_atomic_kind))) {
+                        continue;  /* primary сам */
+                    }
+                    nv_compose_suppressed(&_nv_aggf,
+                                          nova_str_from_cstr(_nv_ce->msg),
+                                          _nv_ce->kind,
+                                          _nv_ce->payload,
+                                          _nv_ce->tid);
+                }
+            }
+            _nova_pending_suppressed = _nv_aggf.error_suppressed;
         }
         /* Plan 83.10 (2026-05-25): fix [M-83.10-armed-user-throw-routing].
          * USER_TYPED re-throw must preserve payload + tid для typed handler
@@ -3994,6 +4051,8 @@ static inline void nova_runtime_reset(void) {
     _nova_interrupt_top = NULL;
     _nova_current_handler_iframe = NULL;
     _nova_last_error.live = 0;
+    nova_throw_trace_reset();       /* [M-173-error-return-trace] */
+    _nova_throw_site.file = NULL;   /* стейл throw-site не течёт в следующий тест */
     _nova_handler_Fail = NULL;
     _nova_handler_Fail_any = NULL;
     _nova_handler_Time = NULL;
