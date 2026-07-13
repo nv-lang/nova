@@ -159,7 +159,30 @@ pub struct Manifest {
     /// Разделение «что требуется» (`[dependencies]`) / «откуда взять
     /// СЕЙЧАС» (`[replace]`) — go-школа (D-block Q-dependency-versioning).
     /// Пусто, если секция отсутствует. См. [`Manifest::effective_source`].
+    ///
+    /// **Plan 204 дофикс №2:** объединяет ДВА источника — `[replace]` из
+    /// самого `nova.toml` (закоммиченный, см. `replace_in_committed_manifest`)
+    /// и `[replace]` из необязательного соседнего `nova.local.toml`
+    /// (машино-локальный, не коммитится). `nova.local.toml` побеждает при
+    /// совпадении ключа (более специфичный, машино-локальный оверрайд).
+    /// Само по себе это поле НЕ учитывает go-scope (корень vs зависимость)
+    /// — это делает `Manifest::effective_source`'s caller
+    /// (`imports::lookup_dependency`), консультируя его ТОЛЬКО когда
+    /// текущий манифест — корень собираемого дерева.
     pub replace: HashMap<String, DepSource>,
+    /// **Plan 204 дофикс №2:** `true`, если `[replace]` объявлен
+    /// непосредственно в ЭТОМ `nova.toml` (закоммиченном файле) — а не
+    /// только в соседнем `nova.local.toml`. Триггерит `W_REPLACE_IN_MANIFEST`
+    /// (`manifest_warnings`): закоммиченный `[replace]` ломает чистый клон
+    /// (путь, валидный на машине автора, отсутствует у клонирующего).
+    pub replace_in_committed_manifest: bool,
+    /// **Plan 204 дофикс №2:** секции/ключи `nova.local.toml`, отличные от
+    /// `[replace]` — эта волна поддерживает в `nova.local.toml` ТОЛЬКО
+    /// `[replace]`. Каждая запись — метка вида `"section"` (секция целиком)
+    /// или `"section.key"` (конкретный ключ) для diagnostic message.
+    /// Пусто, если `nova.local.toml` отсутствует либо полностью валиден.
+    /// Триггерит `W_LOCAL_TOML_UNSUPPORTED_KEY`.
+    pub local_toml_unsupported: Vec<String>,
 }
 
 /// Plan 149 D233: `[runtime]` section config — fiber arena tuning.
@@ -323,6 +346,55 @@ fn parse_dep_forbid(raw_val: &str) -> Vec<String> {
         .map(|s| s.trim().trim_matches('"').to_string())
         .filter(|s| !s.is_empty())
         .collect()
+}
+
+/// Plan 204 дофикс №2: разобрать `nova.local.toml` — необязательный,
+/// НЕ коммитящийся файл рядом с `nova.toml` для машино-локальных
+/// оверрайдов. В этой волне поддержана ТОЛЬКО секция `[replace]` (тот же
+/// формат записи, что и `[replace]` в `nova.toml`). Прочие секции/ключи не
+/// отклоняют парсинг (forward-compat — будущие волны могут добавить
+/// поддержанные ключи без breaking change) — но собираются как
+/// `unsupported`-метки для `W_LOCAL_TOML_UNSUPPORTED_KEY`.
+///
+/// Returns `(replace_map, unsupported_labels)`. Файл отсутствует/пуст/не
+/// читается → `(HashMap::new(), Vec::new())`.
+fn parse_local_toml(path: &Path) -> (HashMap<String, DepSource>, Vec<String>) {
+    let mut replace: HashMap<String, DepSource> = HashMap::new();
+    let mut unsupported: Vec<String> = Vec::new();
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return (replace, unsupported);
+    };
+    let mut section = String::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            section = line.trim_start_matches('[').trim_end_matches(']').trim().to_string();
+            continue;
+        }
+        if let Some((key, val)) = line.split_once('=') {
+            let key = key.trim();
+            let raw_val = val.trim();
+            let raw_val = raw_val.split('#').next().unwrap_or("").trim();
+            if section == "replace" {
+                replace.insert(key.to_string(), parse_dep_source(raw_val));
+            } else {
+                // Key outside `[replace]` — either no section header seen
+                // yet (top-level key) or an already-flagged unsupported
+                // section. Record `section.key` (or `<top-level>.key`) so
+                // the diagnostic can point at the exact offending line.
+                let label = if section.is_empty() {
+                    format!("<top-level>.{}", key)
+                } else {
+                    format!("{}.{}", section, key)
+                };
+                unsupported.push(label);
+            }
+        }
+    }
+    (replace, unsupported)
 }
 
 /// Plan 03.1 Ф.4: директория ближайшего вверх по дереву `nova.toml` —
@@ -538,6 +610,22 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     } else {
         None
     };
+    // Plan 204 дофикс №2: `[replace]` объявленный ПРЯМО в этом (закоммиченном)
+    // nova.toml — до слияния с nova.local.toml, для W_REPLACE_IN_MANIFEST.
+    let replace_in_committed_manifest = !replace.is_empty();
+    // Plan 204 дофикс №2: соседний nova.local.toml (та же директория, что и
+    // toml_path) — необязательный, машино-локальный, НЕ коммитится.
+    // `[replace]` из него сливается поверх committed [replace] (побеждает
+    // при совпадении ключа — более специфичный, machine-local override).
+    let local_toml_path = dir.join("nova.local.toml");
+    let mut local_toml_unsupported: Vec<String> = Vec::new();
+    if local_toml_path.is_file() {
+        let (local_replace, unsupported) = parse_local_toml(&local_toml_path);
+        local_toml_unsupported = unsupported;
+        for (k, v) in local_replace {
+            replace.insert(k, v);
+        }
+    }
     Some(Manifest {
         package_name: pkg,
         source_root,
@@ -549,6 +637,8 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
         ffi,
         runtime,
         replace,
+        replace_in_committed_manifest,
+        local_toml_unsupported,
     })
 }
 
@@ -575,29 +665,101 @@ pub struct ManifestWarning {
     pub message: String,
 }
 
+/// Plan 204 дофикс №2 (owner correction): найти корень git-репозитория —
+/// ближайший вверх по дереву каталог с `.git` (файл ИЛИ директория —
+/// покрывает и обычный репозиторий, и git-worktree, где `.git` внутри
+/// worktree-директории — ФАЙЛ с указателем на реальный gitdir). Работает и
+/// для ещё НЕСУЩЕСТВУЮЩЕГО `dir` (path-зависимость может указывать на
+/// каталог, которого ещё нет) — поднимается сперва до ближайшего
+/// существующего предка.
+///
+/// Используется, чтобы отличить path-зависимость, остающуюся ВНУТРИ той же
+/// git-репы (workspace-член, вложенный тест-пакет — clone-safe, `git clone`
+/// подтягивает её вместе с остальным деревом), от path-зависимости,
+/// выходящей ЗА границу репозитория (сосед-репозиторий типа `../nova-tls` —
+/// НЕ материализуется чистым клоном, нужна релизная git+version форма).
+pub fn git_repo_root(dir: &Path) -> Option<PathBuf> {
+    let mut d = dir.to_path_buf();
+    while !d.exists() {
+        if !d.pop() {
+            return None;
+        }
+    }
+    let mut d = d.canonicalize().unwrap_or(d);
+    loop {
+        if d.join(".git").exists() {
+            return Some(d);
+        }
+        if !d.pop() {
+            return None;
+        }
+    }
+}
+
+/// Plan 204 дофикс №2 (owner correction): `[replace]` объявленный ПРЯМО в
+/// закоммиченном `nova.toml` — ЖЁСТКАЯ ОШИБКА (не warning), без периода
+/// депрекейшна: закоммиченный `[replace]` ломает чистый клон, если
+/// override-путь существует только на машине автора манифеста.
+/// `[replace]` разрешён ИСКЛЮЧИТЕЛЬНО в соседнем `nova.local.toml`
+/// (машино-локальный, не коммитится — см. `parse_local_toml`).
+pub fn check_no_committed_replace(m: &Manifest, toml_path: &Path) -> Result<(), String> {
+    if m.replace_in_committed_manifest {
+        return Err(format!(
+            "[E_REPLACE_IN_MANIFEST] [replace] объявлен прямо в {} \
+             (закоммиченный файл) — запрещено\n  \
+             fix: перенеси секцию [replace] в nova.local.toml рядом \
+             (не коммитится — добавь nova.local.toml в .gitignore); \
+             закоммиченный [replace] ломает чистый клон, если override-путь \
+             существует только на твоей машине",
+            toml_path.display(),
+        ));
+    }
+    Ok(())
+}
+
 /// Собрать warnings по манифесту `m` (путь к нему — `toml_path`, только
 /// для сообщения). Правила:
 ///   - `W_DEP_PATH_NO_RELEASE`: зависимость объявлена ГОЛЫМ `path = "..."`
 ///     непосредственно в `[dependencies]` — нет публикуемого источника
 ///     (git+version). Рекомендация: релизная форма в `[dependencies]` +
 ///     `path` вынести в `[replace]` для локальной разработки.
+///     **Owner correction:** НЕ срабатывает, если целевой путь остаётся
+///     ВНУТРИ той же git-репы, что и сам манифест (workspace-член,
+///     вложенный тест-пакет — `git clone` уже приносит его; см.
+///     `git_repo_root`). Срабатывает только когда путь выходит за границу
+///     репозитория (сосед-репозиторий).
 ///   - `W_REPLACE_UNKNOWN_DEP`: `[replace]` ссылается на имя, которого нет
 ///     в `[dependencies]` — нечего заменять (typo / забытый dependency-entry).
+///   - `W_LOCAL_TOML_UNSUPPORTED_KEY` (Plan 204 дофикс №2): соседний
+///     `nova.local.toml` содержит секцию/ключ, отличные от `[replace]` —
+///     эта волна поддерживает в нём ТОЛЬКО `[replace]`.
+///
+/// **`[replace]` в закоммиченном `nova.toml` — см. `check_no_committed_replace`
+/// (жёсткая ошибка, не warning, вызывается отдельно ДО этой функции).**
 pub fn manifest_warnings(m: &Manifest, toml_path: &Path) -> Vec<ManifestWarning> {
     let mut out = Vec::new();
     for d in &m.dependencies {
-        if matches!(d.source, DepSource::Path(_)) {
-            out.push(ManifestWarning {
-                code: "W_DEP_PATH_NO_RELEASE",
-                message: format!(
-                    "зависимость `{}` объявлена голым `path` в [dependencies] \
-                     ({}) — нет публикуемого источника (версия/git)\n    \
-                     подсказка: релизная форма — `{} = {{ git = \"...\", \
-                     version = \"x.y\" }}` в [dependencies], а `path` — в \
-                     `[replace] {} = {{ path = \"...\" }}` для локальной разработки",
-                    d.name, toml_path.display(), d.name, d.name,
-                ),
-            });
+        if let DepSource::Path(rel) = &d.source {
+            let dep_dir = m.manifest_dir.join(rel);
+            let same_repo = match (git_repo_root(&m.manifest_dir), git_repo_root(&dep_dir)) {
+                (Some(a), Some(b)) => a == b,
+                _ => false,
+            };
+            if !same_repo {
+                out.push(ManifestWarning {
+                    code: "W_DEP_PATH_NO_RELEASE",
+                    message: format!(
+                        "зависимость `{}` объявлена голым `path` в [dependencies] \
+                         ({}) — путь выходит за границу git-репозитория, нет \
+                         публикуемого источника (версия/git)\n    \
+                         подсказка: релизная форма — `{} = {{ git = \"...\", \
+                         version = \"x.y\" }}` в [dependencies], а `path` — в \
+                         `[replace] {} = {{ path = \"...\" }}` (nova.local.toml) \
+                         для локальной разработки",
+                        d.name, toml_path.display(), d.name, d.name,
+                    ),
+                });
+            }
         }
     }
     for name in m.replace.keys() {
@@ -608,6 +770,21 @@ pub fn manifest_warnings(m: &Manifest, toml_path: &Path) -> Vec<ManifestWarning>
                     "[replace] `{}` не соответствует ни одной записи \
                      [dependencies] ({}) — нечего заменять",
                     name, toml_path.display(),
+                ),
+            });
+        }
+    }
+    if !m.local_toml_unsupported.is_empty() {
+        let local_path = toml_path.parent()
+            .map(|d| d.join("nova.local.toml"))
+            .unwrap_or_else(|| PathBuf::from("nova.local.toml"));
+        for label in &m.local_toml_unsupported {
+            out.push(ManifestWarning {
+                code: "W_LOCAL_TOML_UNSUPPORTED_KEY",
+                message: format!(
+                    "{}: неподдерживаемый ключ/секция `{}` — nova.local.toml \
+                     поддерживает в этой волне ТОЛЬКО [replace]",
+                    local_path.display(), label,
                 ),
             });
         }
@@ -1281,8 +1458,14 @@ mod parse_tests {
     }
 
     /// `path`-зависимость ПОД `[replace]` (override git+version dep для
-    /// dev) НЕ warns — declared-форма (`[dependencies]`) сама по себе git,
-    /// публикуемый источник есть; path — только override.
+    /// dev) НЕ warns via `manifest_warnings` — declared-форма
+    /// (`[dependencies]`) сама по себе git, публикуемый источник есть;
+    /// path — только override. **Owner correction (дофикс №2):** committed
+    /// `[replace]` НЕ warning, а жёсткая ошибка через отдельную функцию
+    /// `check_no_committed_replace` — см. `committed_replace_is_hard_error`
+    /// ниже; `manifest_warnings` больше не эмитит ничего про `[replace]`
+    /// в закоммиченном файле (только `W_REPLACE_UNKNOWN_DEP` /
+    /// `W_LOCAL_TOML_UNSUPPORTED_KEY`).
     #[test]
     fn manifest_no_warning_when_path_is_replace_override() {
         let (path, dir) = write_toml(
@@ -1294,6 +1477,148 @@ mod parse_tests {
         let m = parse_manifest(&path, &dir).expect("parse");
         let ws = manifest_warnings(&m, &path);
         assert!(ws.is_empty(), "warnings: {:?}", ws);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Plan 204 дофикс №2 (owner correction): `[replace]` declared directly
+    /// in the COMMITTED `nova.toml` — `check_no_committed_replace` must
+    /// hard-Err with `E_REPLACE_IN_MANIFEST`, no deprecation window.
+    #[test]
+    fn committed_replace_is_hard_error() {
+        let (path, dir) = write_toml(
+            "committed_replace_err",
+            "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\n\
+             [dependencies]\ntls = { git = \"https://x.org/tls\", version = \"0.1\" }\n\
+             [replace]\ntls = { path = \"../nova-tls\" }\n",
+        );
+        let m = parse_manifest(&path, &dir).expect("parse");
+        let err = check_no_committed_replace(&m, &path).expect_err("must hard-error");
+        assert!(err.contains("E_REPLACE_IN_MANIFEST"), "err: {}", err);
+        assert!(err.contains("nova.local.toml"), "err hints nova.local.toml: {}", err);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `[replace]` living ONLY in `nova.local.toml` (nothing in the
+    /// committed `nova.toml`) — `check_no_committed_replace` must be Ok,
+    /// AND `effective_source` must still honor the override (merged into
+    /// `m.replace` by `parse_manifest`).
+    #[test]
+    fn local_toml_only_replace_is_not_a_hard_error() {
+        let (path, dir) = write_toml(
+            "local_only_replace_ok",
+            "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\n\
+             [dependencies]\ntls = { git = \"https://x.org/tls\", version = \"0.1\" }\n",
+        );
+        std::fs::write(
+            dir.join("nova.local.toml"),
+            "[replace]\ntls = { path = \"../nova-tls\" }\n",
+        ).unwrap();
+        let m = parse_manifest(&path, &dir).expect("parse");
+        assert!(check_no_committed_replace(&m, &path).is_ok());
+        assert!(!m.replace_in_committed_manifest);
+        match m.effective_source(&m.dependencies[0]) {
+            DepSource::Path(p) => assert_eq!(p, "../nova-tls"),
+            other => panic!("nova.local.toml [replace] must still be honored, got {:?}", other),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `nova.local.toml` with a section OTHER than `[replace]` — the
+    /// unsupported key/section is recorded (`W_LOCAL_TOML_UNSUPPORTED_KEY`),
+    /// but parsing itself is NOT rejected (forward-compat: unknown keys are
+    /// soft-flagged, not fatal).
+    #[test]
+    fn local_toml_unsupported_section_warns() {
+        let (path, dir) = write_toml(
+            "local_toml_unsupported",
+            "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\n",
+        );
+        std::fs::write(
+            dir.join("nova.local.toml"),
+            "[dependencies]\nfoo = { path = \"../foo\" }\n",
+        ).unwrap();
+        let m = parse_manifest(&path, &dir).expect("parse");
+        let ws = manifest_warnings(&m, &path);
+        let unsupported: Vec<_> = ws.iter()
+            .filter(|w| w.code == "W_LOCAL_TOML_UNSUPPORTED_KEY")
+            .collect();
+        assert_eq!(unsupported.len(), 1, "ws: {:?}", ws);
+        assert!(unsupported[0].message.contains("dependencies.foo"), "msg: {}", unsupported[0].message);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `nova.local.toml` absent — no unsupported-key warnings, `replace`
+    /// unaffected (byte-identical to pre-dофикс behavior).
+    #[test]
+    fn no_local_toml_is_a_no_op() {
+        let (path, dir) = write_toml(
+            "no_local_toml",
+            "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\n",
+        );
+        let m = parse_manifest(&path, &dir).expect("parse");
+        assert!(m.local_toml_unsupported.is_empty());
+        assert!(m.replace.is_empty());
+        assert!(!m.replace_in_committed_manifest);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Plan 204 дофикс №2 (owner correction №2): path-dep staying INSIDE the
+    /// same git repo as the manifest (a real `.git` ancestor shared by both)
+    /// must NOT trigger `W_DEP_PATH_NO_RELEASE` — clone-safe (workspace
+    /// member / nested test package). Uses a REAL temp git repo (via `git
+    /// init`) since `git_repo_root` looks for an actual `.git` entry.
+    #[test]
+    fn in_repo_path_dep_no_warning() {
+        let dir = std::env::temp_dir().join(format!("nova_p204_inrepo_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let sub_a = dir.join("pkg_a");
+        let sub_b = dir.join("pkg_b");
+        std::fs::create_dir_all(&sub_a).unwrap();
+        std::fs::create_dir_all(&sub_b).unwrap();
+        // Fake `.git` at the shared repo root (a directory is enough for
+        // `git_repo_root`'s `.exists()` check — no real git needed).
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        let toml_a = sub_a.join("nova.toml");
+        std::fs::write(
+            &toml_a,
+            "[package]\nname = \"a\"\n[lib]\nsrc = \".\"\n\
+             [dependencies]\nb = { path = \"../pkg_b\" }\n",
+        ).unwrap();
+        std::fs::write(sub_b.join("nova.toml"), "[package]\nname = \"b\"\n[lib]\nsrc = \".\"\n").unwrap();
+        let m = parse_manifest(&toml_a, &sub_a).expect("parse");
+        let ws = manifest_warnings(&m, &toml_a);
+        assert!(
+            ws.iter().all(|w| w.code != "W_DEP_PATH_NO_RELEASE"),
+            "in-repo path dep must not warn: {:?}", ws,
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Cross-repo path-dep (target has ITS OWN separate `.git`, not shared
+    /// with the manifest's repo) — `W_DEP_PATH_NO_RELEASE` still fires.
+    #[test]
+    fn cross_repo_path_dep_still_warns() {
+        let dir = std::env::temp_dir().join(format!("nova_p204_crossrepo_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let repo_a = dir.join("repo_a");
+        let repo_b = dir.join("repo_b");
+        std::fs::create_dir_all(&repo_a).unwrap();
+        std::fs::create_dir_all(&repo_b).unwrap();
+        std::fs::create_dir_all(repo_a.join(".git")).unwrap();
+        std::fs::create_dir_all(repo_b.join(".git")).unwrap();
+        let toml_a = repo_a.join("nova.toml");
+        std::fs::write(
+            &toml_a,
+            "[package]\nname = \"a\"\n[lib]\nsrc = \".\"\n\
+             [dependencies]\nb = { path = \"../repo_b\" }\n",
+        ).unwrap();
+        std::fs::write(repo_b.join("nova.toml"), "[package]\nname = \"b\"\n[lib]\nsrc = \".\"\n").unwrap();
+        let m = parse_manifest(&toml_a, &repo_a).expect("parse");
+        let ws = manifest_warnings(&m, &toml_a);
+        assert!(
+            ws.iter().any(|w| w.code == "W_DEP_PATH_NO_RELEASE"),
+            "cross-repo path dep must still warn: {:?}", ws,
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

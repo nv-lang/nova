@@ -374,6 +374,71 @@ fn check_cycle(
     Ok(())
 }
 
+/// Plan 204 дофикс №2 (D420 go-scope): `[replace]` declared inside a
+/// DEPENDENCY's own manifest is inert per Go-module semantics — only the
+/// build ROOT's `[replace]` is ever consulted (enforced at resolution time
+/// by `imports::lookup_dependency`'s root-check). This walks the SAME
+/// dependency graph as [`collect_dep_graph_ex`] (declared `dep.source` only
+/// — `[replace]` never affects graph traversal, mirroring the "replace
+/// doesn't leak into lock" rule above) and, for every NON-ROOT package
+/// visited, surfaces `W_REPLACE_IN_DEPENDENCY` if THAT package's own
+/// manifest (`nova.toml` and/or its own `nova.local.toml`, already merged by
+/// `manifest::parse_manifest`) declares a non-empty `[replace]` — dead
+/// configuration the dependency author should know about (it is honored
+/// only when THEY build their own package as the root, never when consumed
+/// transitively).
+pub fn collect_replace_scope_warnings(entry_pkg_dir: &Path) -> Vec<crate::manifest::ManifestWarning> {
+    let mut out = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    seen.insert(canon(entry_pkg_dir));
+    walk_replace_scope(entry_pkg_dir, &mut out, &mut seen);
+    out
+}
+
+fn walk_replace_scope(
+    pkg_dir: &Path,
+    out: &mut Vec<crate::manifest::ManifestWarning>,
+    seen: &mut HashSet<PathBuf>,
+) {
+    let toml = pkg_dir.join("nova.toml");
+    let Some(manifest) = crate::manifest::parse_manifest(&toml, pkg_dir) else {
+        return;
+    };
+    for dep in &manifest.dependencies {
+        let dep_dir = match &dep.source {
+            DepSource::Path(rel) => {
+                let d = pkg_dir.join(rel);
+                if d.is_dir() { Some(d) } else { None }
+            }
+            DepSource::Git { url, pin } => {
+                git_cache::resolve_git_dep(url, pin, None).ok().map(|r| r.checkout)
+            }
+            DepSource::Registry(_) | DepSource::Invalid(_) => None,
+        };
+        let Some(dep_dir) = dep_dir else { continue };
+        let c = canon(&dep_dir);
+        if !seen.insert(c.clone()) {
+            continue; // already visited (diamond dep / cycle) — no duplicate warnings.
+        }
+        let dep_toml = dep_dir.join("nova.toml");
+        if let Some(dep_manifest) = crate::manifest::parse_manifest(&dep_toml, &dep_dir) {
+            for name in dep_manifest.replace.keys() {
+                out.push(crate::manifest::ManifestWarning {
+                    code: "W_REPLACE_IN_DEPENDENCY",
+                    message: format!(
+                        "зависимость `{}` объявляет [replace] `{}` в СВОЁМ \
+                         манифесте ({}) — игнорируется: [replace] действует \
+                         только для корневого пакета текущей сборки \
+                         (go-семантика), не для зависимостей",
+                        dep.name, name, dep_toml.display(),
+                    ),
+                });
+            }
+        }
+        walk_replace_scope(&dep_dir, out, seen);
+    }
+}
+
 /// Синхронизировать `nova.lock` пакета `entry_pkg_dir`:
 ///   1. загрузить существующий lock в `git_cache`-таблицу пинов
 ///      (воспроизводимость — git-deps не резолвятся «вживую»);

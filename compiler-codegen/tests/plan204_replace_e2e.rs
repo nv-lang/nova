@@ -3,18 +3,47 @@
 //! Плановая дельта поверх уже закрытых Plan 03.1/03.2 (git+semver deps,
 //! backtracking-резолвер, `nova.lock`): `[replace]`-блок перекрывает
 //! источник `[dependencies]`-записи для локальной разработки (go-школа).
-//! Голая `path`-запись без соответствующей git+version формы — warning
-//! (`manifest::manifest_warnings`), не ошибка.
+//! Голая `path`-запись без соответствующей git+version формы (ВНЕ границы
+//! git-репозитория) — warning (`manifest::manifest_warnings`), не ошибка.
+//!
+//! **Дофикс №2 (2026-07-13, владелец вскрыл дыру):** закоммиченный
+//! `[replace]` ломает чистый клон — исправлено:
+//!   1. `[replace]` живёт ТОЛЬКО в соседнем `nova.local.toml` (не коммитится).
+//!      В КОММИЧЕННОМ `nova.toml` — жёсткая ошибка `E_REPLACE_IN_MANIFEST`
+//!      (не warning, без депрекейшна).
+//!   2. Go-scope: `[replace]` действует ТОЛЬКО для корня текущей сборки;
+//!      в манифесте ЗАВИСИМОСТИ (обходимой транзитивно) — игнорируется
+//!      (её собственный `effective_source` никогда не консультируется) +
+//!      warning `W_REPLACE_IN_DEPENDENCY`.
+//!   3. Отсутствующий путь в АКТИВНОМ корневом `[replace]` — честная
+//!      ошибка `E_REPLACE_PATH_MISSING` (не тихий откат на git/declared).
 //!
 //! Источник для git-теста — ЛОКАЛЬНАЯ репа `nova-tls` (сосед-репозиторий,
 //! `../nova-tls` относительно этого worktree) через `file://` URL — офлайн,
 //! детерминированно, без сети (реальный `v0.1.0` тег уже заведён владельцем).
 
+use nova_codegen::ast::Item;
+use nova_codegen::imports;
 use nova_codegen::lockfile::{self, LockedSource};
 use nova_codegen::manifest;
+use nova_codegen::parser;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
+
+/// `NOVA_HOME` is a process-global env var (`git_cache` reads it per-call,
+/// not per-test) — tests that mutate it must not run concurrently with each
+/// other (Rust's default test harness runs `#[test]` fns in parallel
+/// threads within the SAME process). Serialize via this lock; recover from
+/// poisoning (`unwrap_or_else`) so one panicking test doesn't cascade-fail
+/// every other lock-holder after it.
+static NOVA_HOME_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_nova_home() -> std::sync::MutexGuard<'static, ()> {
+    NOVA_HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn git(args: &[&str], cwd: Option<&Path>) -> String {
     let mut cmd = Command::new("git");
@@ -68,6 +97,7 @@ fn commit_tag(dir: &Path, tag: &str) -> String {
 /// sync with replace still active leaves the lock byte-identical.
 #[test]
 fn replace_does_not_leak_into_lock() {
+    let _guard = lock_nova_home();
     let libb = unique("libb");
     init_repo(&libb);
     fs::write(
@@ -211,6 +241,7 @@ fn bare_path_dep_warns_but_resolves() {
 /// tag isn't present (CI checkout without nova-tls sibling).
 #[test]
 fn resolve_real_nova_tls_v0_1_0_via_file_url() {
+    let _guard = lock_nova_home();
     // `cargo test`'s cwd is this crate's manifest dir (`<worktree>/compiler-codegen`);
     // nova-tls is a sibling of the WORKTREE root (`<parent-of-worktree>/nova-tls`),
     // so check both one and two levels up (plain worktree checkout vs.
@@ -281,6 +312,224 @@ fn resolve_real_nova_tls_v0_1_0_via_file_url() {
 
     fs::remove_dir_all(&consumer).ok();
     fs::remove_dir_all(&cache_home).ok();
+}
+
+fn write_file(path: &Path, content: &str) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create_dir_all");
+    }
+    fs::write(path, content).expect("write fixture file");
+}
+
+fn fn_names(items: &[Item]) -> HashSet<String> {
+    items
+        .iter()
+        .filter_map(|it| match it {
+            Item::Fn(f) => Some(f.name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Plan 204 дофикс №2 (owner correction): `nova.local.toml` (не коммитится)
+/// merges its `[replace]` into the effective manifest — REAL end-to-end
+/// resolution (`imports::resolve_imports_inline_ex`), not just
+/// `manifest::parse_manifest` inspection. `app`'s declared `libx` points at
+/// a directory whose module defines `wrong_marker`; `nova.local.toml`
+/// overrides it to a sibling defining `right_marker` instead. If the
+/// override weren't honored, resolution would hard-fail (`right_marker`
+/// undefined in `libx_wrong`) rather than silently pick the wrong one — a
+/// self-checking assertion.
+#[test]
+fn local_toml_replace_is_honored_in_real_resolution() {
+    let root = unique("local_toml_e2e");
+    let proj = root.join("proj");
+
+    let app_dir = proj.join("app");
+    write_file(
+        &app_dir.join("nova.toml"),
+        "[package]\nname = \"app\"\n[lib]\nsrc = \".\"\n\
+         [dependencies]\nlibx = { path = \"../libx_wrong\" }\n",
+    );
+    write_file(
+        &app_dir.join("nova.local.toml"),
+        "[replace]\nlibx = { path = \"../libx_right\" }\n",
+    );
+    write_file(
+        &app_dir.join("app.nv"),
+        "module app\n\nimport libx.{right_marker}\n\nfn main() -> int => right_marker()\n",
+    );
+
+    write_file(
+        &proj.join("libx_wrong").join("nova.toml"),
+        "[package]\nname = \"libx\"\n[lib]\nsrc = \".\"\n",
+    );
+    write_file(
+        &proj.join("libx_wrong").join("libx.nv"),
+        "module libx\n\nexport fn wrong_marker() -> int => 1\n",
+    );
+    write_file(
+        &proj.join("libx_right").join("nova.toml"),
+        "[package]\nname = \"libx\"\n[lib]\nsrc = \".\"\n",
+    );
+    write_file(
+        &proj.join("libx_right").join("libx.nv"),
+        "module libx\n\nexport fn right_marker() -> int => 2\n",
+    );
+
+    let app_nv = app_dir.join("app.nv");
+    let src = fs::read_to_string(&app_nv).expect("read entry");
+    let mut module = parser::parse(&src).expect("entry parses");
+    let stdlib = root.join("no_stdlib");
+
+    imports::resolve_imports_inline_ex(&app_nv, &mut module, &proj, &stdlib, false).expect(
+        "nova.local.toml [replace] must be honored — resolution must pick \
+         libx_right (right_marker), not the declared libx_wrong",
+    );
+    assert!(fn_names(&module.items).contains("right_marker"));
+
+    fs::remove_dir_all(&root).ok();
+}
+
+/// Plan 204 дофикс №2 (D420 go-scope + owner correction, full git flavor —
+/// exact scenario from the task spec): package `app` (root) depends on a
+/// GIT dependency `b`; `b`'s OWN manifest declares a normal path-dep `c`
+/// AND a `[replace]` override for `c` pointing at a path that DOESN'T
+/// EXIST. `app`'s build must still succeed (b's `[replace]` is inert —
+/// go-scope: only the root's `[replace]` is ever consulted) — if the
+/// dofix#2 bug were still present, `b`'s own files resolving their own `c`
+/// import would hard-fail with the missing replace path. A
+/// `W_REPLACE_IN_DEPENDENCY` warning must also surface.
+#[test]
+fn nested_git_dependency_replace_ignored_build_succeeds_with_warning() {
+    let _guard = lock_nova_home();
+    let b_repo = unique("b_repo");
+    init_repo(&b_repo);
+    write_file(
+        &b_repo.join("nova.toml"),
+        "[package]\nname = \"b\"\nversion = \"1.0.0\"\n[lib]\nsrc = \".\"\n\
+         [dependencies]\nc = { path = \"cdep\" }\n\
+         [replace]\nc = { path = \"nonexistent_c_override\" }\n",
+    );
+    write_file(&b_repo.join("b.nv"), "module b\n\nimport c.{c_fn}\n\nexport fn b_fn() -> int => c_fn()\n");
+    write_file(
+        &b_repo.join("cdep").join("nova.toml"),
+        "[package]\nname = \"c\"\n[lib]\nsrc = \".\"\n",
+    );
+    write_file(&b_repo.join("cdep").join("c.nv"), "module c\n\nexport fn c_fn() -> int => 7\n");
+    commit_tag(&b_repo, "v1.0.0");
+    let b_url = b_repo.to_string_lossy().replace('\\', "/");
+
+    let a_dir = unique("consumer_a_nested");
+    write_file(
+        &a_dir.join("nova.toml"),
+        format!(
+            "[package]\nname = \"app\"\n[lib]\nsrc = \".\"\n\
+             [dependencies]\nb = {{ git = \"{}\", tag = \"v1.0.0\" }}\n",
+            b_url,
+        )
+        .as_str(),
+    );
+    write_file(&a_dir.join("app.nv"), "module app\n\nimport b.{b_fn}\n\nfn main() -> int => b_fn()\n");
+
+    let cache_home = unique("home_nested");
+    std::env::set_var("NOVA_HOME", &cache_home);
+    let sync_res = lockfile::sync(&a_dir);
+    assert!(sync_res.is_ok(), "app build (lockfile sync) must succeed despite b's broken [replace]: {:?}", sync_res.err());
+
+    let app_nv = a_dir.join("app.nv");
+    let src = fs::read_to_string(&app_nv).expect("read entry");
+    let mut module = parser::parse(&src).expect("entry parses");
+    let stdlib = a_dir.join("no_stdlib");
+    let resolve_res = imports::resolve_imports_inline_ex(&app_nv, &mut module, &a_dir, &stdlib, false);
+    std::env::remove_var("NOVA_HOME");
+    assert!(
+        resolve_res.is_ok(),
+        "resolution must succeed — b's OWN [replace] (nonexistent path) must be \
+         ignored (go-scope: not root): {:?}",
+        resolve_res.err(),
+    );
+    let names = fn_names(&module.items);
+    assert!(names.contains("b_fn"), "b's b_fn merged");
+    assert!(names.contains("c_fn"), "c's REAL c_fn merged via b's declared path, not b's ignored replace");
+
+    let warnings = lockfile::collect_replace_scope_warnings(&a_dir);
+    assert!(
+        warnings.iter().any(|w| w.code == "W_REPLACE_IN_DEPENDENCY" && w.message.contains('c')),
+        "expected W_REPLACE_IN_DEPENDENCY mentioning `c`, got {:?}", warnings,
+    );
+
+    fs::remove_dir_all(&b_repo).ok();
+    fs::remove_dir_all(&a_dir).ok();
+    fs::remove_dir_all(&cache_home).ok();
+}
+
+/// Plan 204 дофикс №2 owner correction: missing path behind an ACTIVE
+/// ROOT `[replace]` override (nova.local.toml) — dedicated
+/// `E_REPLACE_PATH_MISSING` error, NOT a silent fallback to the declared
+/// git/path source.
+#[test]
+fn root_replace_missing_path_is_honest_error() {
+    let root = unique("replace_missing_e2e");
+    let proj = root.join("proj");
+    let app_dir = proj.join("app");
+    write_file(
+        &app_dir.join("nova.toml"),
+        "[package]\nname = \"app\"\n[lib]\nsrc = \".\"\n\
+         [dependencies]\nlibx = { path = \"../libx_real\" }\n",
+    );
+    write_file(
+        &app_dir.join("nova.local.toml"),
+        "[replace]\nlibx = { path = \"../libx_does_not_exist\" }\n",
+    );
+    write_file(
+        &app_dir.join("app.nv"),
+        "module app\n\nimport libx.{whatever}\n\nfn main() -> int => whatever()\n",
+    );
+    write_file(
+        &proj.join("libx_real").join("nova.toml"),
+        "[package]\nname = \"libx\"\n[lib]\nsrc = \".\"\n",
+    );
+    write_file(
+        &proj.join("libx_real").join("libx.nv"),
+        "module libx\n\nexport fn whatever() -> int => 1\n",
+    );
+    // NOTE: `proj/libx_does_not_exist` deliberately never created.
+
+    let app_nv = app_dir.join("app.nv");
+    let src = fs::read_to_string(&app_nv).expect("read entry");
+    let mut module = parser::parse(&src).expect("entry parses");
+    let stdlib = root.join("no_stdlib");
+    let err = imports::resolve_imports_inline_ex(&app_nv, &mut module, &proj, &stdlib, false)
+        .expect_err("missing [replace] path must be a hard error, not a silent fallback");
+    assert!(
+        format!("{}", err).contains("E_REPLACE_PATH_MISSING"),
+        "err: {}", err,
+    );
+
+    fs::remove_dir_all(&root).ok();
+}
+
+/// Plan 204 дофикс №2 (owner correction): `[replace]` declared directly in
+/// the COMMITTED `nova.toml` — `manifest::check_no_committed_replace` must
+/// hard-Err (`E_REPLACE_IN_MANIFEST`), no deprecation window (legacy zero —
+/// nova-http, the one real consumer, migrated to `nova.local.toml`).
+#[test]
+fn committed_replace_hard_errors_e2e() {
+    let dir = unique("committed_replace_e2e");
+    write_file(
+        &dir.join("nova.toml"),
+        "[package]\nname = \"app\"\n[lib]\nsrc = \".\"\n\
+         [dependencies]\ntls = { git = \"https://example.org/tls\", version = \"0.1\" }\n\
+         [replace]\ntls = { path = \"../nova-tls\" }\n",
+    );
+    let toml_path = dir.join("nova.toml");
+    let m = manifest::parse_manifest(&toml_path, &dir).expect("parse");
+    let err = manifest::check_no_committed_replace(&m, &toml_path)
+        .expect_err("committed [replace] must hard-error");
+    assert!(err.contains("E_REPLACE_IN_MANIFEST"), "err: {}", err);
+
+    fs::remove_dir_all(&dir).ok();
 }
 
 /// Naive relative-path from `from` to `to` (both must exist) — good enough

@@ -387,7 +387,7 @@ fn collect_sigs_one(
     let dep_root: Option<PathBuf> = if rel_root.is_some() || imp.path.is_empty() {
         None
     } else {
-        match lookup_dependency(importer_path, &imp.path[0]) {
+        match lookup_dependency(importer_path, &imp.path[0], entry_dir) {
             DepLookup::PathDep(root) if imp.path.len() >= 2 => Some(root),
             DepLookup::PathDep(root)
                 if collect_root_peers(&root, &imp.path[0], false).is_some() =>
@@ -1258,7 +1258,7 @@ fn resolve_one(
     let dep_root: Option<PathBuf> = if rel_root.is_some() || imp.path.is_empty() {
         None
     } else {
-        match lookup_dependency(importer_path, &imp.path[0]) {
+        match lookup_dependency(importer_path, &imp.path[0], entry_dir) {
             DepLookup::NotADep => None,
             DepLookup::PathDep(root) => {
                 // Plan 202 Ф.2 (D78 rev-4 "root peers"): a BARE dependency
@@ -1315,6 +1315,17 @@ fn resolve_one(
                  expected:       {}\n  \
                  importing file: {}\n  \
                  hint: проверьте `path` в `[dependencies]`",
+                imp.path[0], p, importer_path.display(),
+            )),
+            DepLookup::ReplacePathMissing(p) => return Err(anyhow!(
+                "[E_REPLACE_PATH_MISSING] [replace] `{}` указывает на \
+                 несуществующий путь\n  \
+                 expected:       {}\n  \
+                 importing file: {}\n  \
+                 hint: проверьте `path` в `[replace]` (nova.toml или \
+                 nova.local.toml) — на несуществующий override-путь \
+                 компилятор НЕ откатывается тихо на git/декларированный \
+                 источник; либо исправьте путь, либо уберите override",
                 imp.path[0], p, importer_path.display(),
             )),
             DepLookup::NoManifest(p) => return Err(anyhow!(
@@ -2415,6 +2426,10 @@ enum DepLookup {
     InvalidDep(String),
     /// `path`-зависимость указывает на несуществующую директорию.
     PathMissing(String),
+    /// **Plan 204 дофикс №2:** активный `[replace]`-override корневого
+    /// пакета указывает на несуществующий путь — честная ошибка
+    /// (`E_REPLACE_PATH_MISSING`), НЕ тихий откат на git/declared источник.
+    ReplacePathMissing(String),
     /// Директория `path`-зависимости не содержит `nova.toml`.
     NoManifest(String),
     /// Имя ключа в `[dependencies]` ≠ `[package].name` зависимости.
@@ -2432,7 +2447,39 @@ enum DepLookup {
 /// - Валидирует `[dependencies]` целиком: имя `std` зарезервировано,
 ///   дубли имён запрещены (§3.2) — ошибка возвращается независимо от
 ///   того, какой именно `dep_name` ищется.
-fn lookup_dependency(importer_path: &Path, dep_name: &str) -> DepLookup {
+/// Plan 204 дофикс №2 (D420 go-scope): true if `pkg_dir` (a package root
+/// found via `package_root_of`) IS the root/main package of the CURRENT
+/// build session — the package that owns `entry_dir` (the top-level
+/// compiled file's directory). Go-module semantics: `[replace]` applies
+/// ONLY when resolving from within the root package; a package reached
+/// TRANSITIVELY (as someone else's `[dependencies]` entry) has its OWN
+/// `[replace]` ignored even though its manifest parses one — see
+/// `lookup_dependency`'s use below.
+fn is_root_package(pkg_dir: &Path, entry_dir: &Path) -> bool {
+    let Some(root) = find_root_package_dir(entry_dir) else {
+        return false;
+    };
+    let a = pkg_dir.canonicalize().unwrap_or_else(|_| pkg_dir.to_path_buf());
+    let b = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    a == b
+}
+
+/// Directory of the nearest `nova.toml` at or above `dir` — mirrors
+/// `package_root_of`'s rule but starts from a DIRECTORY (`entry_dir` is
+/// already one) instead of a file.
+fn find_root_package_dir(dir: &Path) -> Option<PathBuf> {
+    let mut d = dir.to_path_buf();
+    loop {
+        if d.join("nova.toml").is_file() {
+            return Some(d);
+        }
+        if !d.pop() {
+            return None;
+        }
+    }
+}
+
+fn lookup_dependency(importer_path: &Path, dep_name: &str, entry_dir: &Path) -> DepLookup {
     if dep_name == "std" {
         return DepLookup::NotADep;
     }
@@ -2488,15 +2535,30 @@ fn lookup_dependency(importer_path: &Path, dep_name: &str) -> DepLookup {
     let Some(dep) = manifest.dependencies.iter().find(|d| d.name == dep_name) else {
         return DepLookup::NotADep;
     };
-    // Plan 204: [replace] override (dev path поверх релизной git+version
-    // формы) резолвится единообразно через effective_source — ниже это
-    // просто DepSource, откуда взялся (declared vs replaced) для module
-    // resolution значения не имеет.
-    let effective = manifest.effective_source(dep);
+    // Plan 204 дофикс №2 (D420 go-scope, Cargo/Go semantics): [replace]
+    // override (dev path поверх релизной git+version формы) резолвится
+    // через effective_source ТОЛЬКО когда `manifest` (владелец `dep`) —
+    // КОРЕНЬ текущей сборки (entry-пакет). Манифест ЗАВИСИМОСТИ, обходимой
+    // транзитивно (её собственные файлы импортируют её собственные
+    // deps) — её [replace] игнорируется, используется ДЕКЛАРИРОВАННЫЙ
+    // `dep.source` без изменений (см. `W_REPLACE_IN_DEPENDENCY`,
+    // `lockfile::collect_replace_scope_warnings`, для диагностики).
+    let is_root = is_root_package(&pkg_dir, entry_dir);
+    let effective = if is_root {
+        manifest.effective_source(dep)
+    } else {
+        dep.source.clone()
+    };
     match &effective {
         crate::manifest::DepSource::Path(rel) => {
             let dep_dir = pkg_dir.join(rel);
             if !dep_dir.is_dir() {
+                // Plan 204 дофикс №2: честная ошибка (не тихий откат на
+                // git/declared источник) когда путь пришёл из АКТИВНОГО
+                // корневого [replace]-override.
+                if is_root && manifest.replace.contains_key(dep_name) {
+                    return DepLookup::ReplacePathMissing(dep_dir.display().to_string());
+                }
                 return DepLookup::PathMissing(dep_dir.display().to_string());
             }
             finalize_dep_pkg(&dep_dir, dep_name)
@@ -2564,6 +2626,15 @@ fn finalize_dep_pkg(dep_dir: &Path, dep_name: &str) -> DepLookup {
 ///
 /// **Честный маркер v1:** только ПРЯМЫЕ зависимости — транзитивные
 /// зависимости зависимостей не обходятся (см. docs/plans/03.1-*.md).
+///
+/// **Plan 204 дофикс №2 (go-scope invariant):** unconditionally honors
+/// `effective_source` (i.e. `[replace]`) for `pkg_dir`'s OWN dependencies —
+/// this is safe ONLY because every current caller passes the ROOT package
+/// of the build (`test_runner.rs`: `package_root_of(opts.nv_file)`, the
+/// entry file). If a future caller ever invokes this for a non-root
+/// (transitively-reached) package, it would need the same root-check as
+/// `lookup_dependency`'s `is_root_package` — `[replace]` must never apply
+/// to a dependency's OWN manifest (Go module semantics; see D420 §2-3).
 pub fn resolved_dependency_roots(pkg_dir: &Path) -> Vec<PathBuf> {
     let toml = pkg_dir.join("nova.toml");
     let Some(manifest) = crate::manifest::parse_manifest(&toml, pkg_dir) else {
@@ -3124,6 +3195,84 @@ mod entry_folder_module_tests {
         assert!(
             !fn_names.contains("unrelated"),
             "a file declaring a different module must not be pulled in"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Plan 204 дофикс №2 (D420 go-scope): `[replace]` declared inside a
+    /// DEPENDENCY's own manifest (reached transitively — `b`, a `[dependencies]`
+    /// entry of the root `app`) must be IGNORED when `b`'s own files resolve
+    /// their OWN imports (`c`). `b`'s `[replace] c = { path = "<nonexistent>" }`
+    /// points at a directory that DOESN'T EXIST — if the bug were still present
+    /// (`lookup_dependency` honoring ANY manifest's `effective_source`, not
+    /// just the root's), this would hard-fail with `ReplacePathMissing`.
+    /// After the fix, `b`'s declared `c = { path = "../c_real" }` is used
+    /// instead, resolution succeeds, and `c`'s real `c_fn` (returning `1`,
+    /// not the fake's hypothetical value) is merged in.
+    #[test]
+    fn nested_dependency_replace_is_ignored_root_scope_only() {
+        let root = unique_tmp("p204scope");
+        let proj = root.join("proj");
+
+        let app_dir = proj.join("app");
+        write_file(
+            &app_dir.join("nova.toml"),
+            "[package]\nname = \"app\"\n[lib]\nsrc = \".\"\n\
+             [dependencies]\nb = { path = \"../b\" }\n",
+        );
+        write_file(
+            &app_dir.join("app.nv"),
+            "module app\n\nimport b.core.{b_fn}\n\nfn main() -> int => b_fn()\n",
+        );
+
+        let b_dir = proj.join("b");
+        write_file(
+            &b_dir.join("nova.toml"),
+            "[package]\nname = \"b\"\n[lib]\nsrc = \".\"\n\
+             [dependencies]\nc = { path = \"../c_real\" }\n\
+             [replace]\nc = { path = \"../c_fake_nonexistent\" }\n",
+        );
+        write_file(
+            &b_dir.join("core.nv"),
+            "module b.core\n\nimport c.{c_fn}\n\nexport fn b_fn() -> int => c_fn()\n",
+        );
+
+        // NOTE: `proj/c_fake_nonexistent` is deliberately never created —
+        // if `b`'s [replace] were (wrongly) honored, this would hard-error
+        // (`E_REPLACE_PATH_MISSING` / legacy `PathMissing`).
+        let c_real_dir = proj.join("c_real");
+        write_file(
+            &c_real_dir.join("nova.toml"),
+            "[package]\nname = \"c\"\n[lib]\nsrc = \".\"\n",
+        );
+        write_file(
+            &c_real_dir.join("c.nv"),
+            "module c\n\nexport fn c_fn() -> int => 1\n",
+        );
+
+        let app_nv = app_dir.join("app.nv");
+        let src = std::fs::read_to_string(&app_nv).expect("read entry");
+        let mut module = parser::parse(&src).expect("entry parses");
+        let stdlib = root.join("no_stdlib");
+
+        resolve_imports_inline_ex(&app_nv, &mut module, &proj, &stdlib, false).expect(
+            "resolution must succeed — b's OWN [replace] must be ignored \
+             (not root), falling back to b's declared `c = path(../c_real)`",
+        );
+
+        let fn_names: HashSet<String> = module
+            .items
+            .iter()
+            .filter_map(|it| match it {
+                Item::Fn(f) => Some(f.name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(fn_names.contains("b_fn"), "b's b_fn merged");
+        assert!(
+            fn_names.contains("c_fn"),
+            "c's REAL c_fn merged (via b's declared source, not b's ignored replace)"
         );
 
         let _ = std::fs::remove_dir_all(&root);
