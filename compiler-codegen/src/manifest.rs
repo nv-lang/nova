@@ -149,6 +149,17 @@ pub struct Manifest {
     /// Precedence env > nova.toml(-D) > builtin #define. None если секция
     /// отсутствует.
     pub runtime: Option<RuntimeConfig>,
+    /// Plan 204: `[replace]` section — dev-override источника зависимости,
+    /// объявленной в `[dependencies]` (school Go `replace`-директивы /
+    /// Cargo `[patch]`). Ключ — имя зависимости (должно совпадать с
+    /// записью в `[dependencies]`); значение — источник, который
+    /// РЕАЛЬНО резолвится вместо декларированного (обычно `path = "../..."`
+    /// поверх релизной `{ git = "...", version = "..." }` формы).
+    ///
+    /// Разделение «что требуется» (`[dependencies]`) / «откуда взять
+    /// СЕЙЧАС» (`[replace]`) — go-школа (D-block Q-dependency-versioning).
+    /// Пусто, если секция отсутствует. См. [`Manifest::effective_source`].
+    pub replace: HashMap<String, DepSource>,
 }
 
 /// Plan 149 D233: `[runtime]` section config — fiber arena tuning.
@@ -384,6 +395,8 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     let mut edition: Option<String> = None;
     let mut enforce_stability: bool = false;
     let mut dependencies: Vec<Dependency> = Vec::new();
+    // Plan 204: [replace] — dev-override источника (см. Manifest::replace).
+    let mut replace: HashMap<String, DepSource> = HashMap::new();
     // Plan 100.6 (D164 §6): [exports.consume_types] — type_name → version_contract.
     let mut exports_consume_types: HashMap<String, String> = HashMap::new();
     // Plan 115 D214 [M-115-ffi-build-pipeline]: [ffi] config.
@@ -414,6 +427,7 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
                 "package"              => "package",
                 "lib"                  => "lib",
                 "dependencies"         => "dependencies",
+                "replace"              => "replace",
                 "exports.consume_types" => "exports.consume_types",
                 "ffi"                  => { ffi_section_seen = true; "ffi" }
                 "runtime"              => { runtime_section_seen = true; "runtime" }
@@ -436,6 +450,13 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
                     source: parse_dep_source(raw_val),
                     forbid: parse_dep_forbid(raw_val),
                 });
+                continue;
+            }
+            // Plan 204: [replace] — key = имя зависимости, val = источник
+            // (обычно `{ path = "..." }`), формат тот же, что и записи
+            // `[dependencies]`.
+            if section == "replace" {
+                replace.insert(key.to_string(), parse_dep_source(raw_val));
                 continue;
             }
             // Plan 100.6 (D164 §6): [exports.consume_types] — type_name = "version".
@@ -527,7 +548,71 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
         exports_consume_types,
         ffi,
         runtime,
+        replace,
     })
+}
+
+impl Manifest {
+    /// Plan 204: эффективный источник зависимости `dep` — `[replace]`
+    /// override, если объявлен под её именем, иначе декларированный
+    /// `dep.source` без изменений. Единая точка резолва для всех
+    /// потребителей (`imports.rs` module-path resolution, `lockfile.rs`
+    /// dep-graph walk) — добавление/снятие override не требует правок
+    /// на call-сайтах.
+    pub fn effective_source(&self, dep: &Dependency) -> DepSource {
+        self.replace.get(&dep.name).cloned().unwrap_or_else(|| dep.source.clone())
+    }
+}
+
+/// Plan 204: диагностики манифеста по dependency-versioning схеме.
+/// Не фатальны (warning) — публикуемая форма (`git` + `version`) станет
+/// обязательной отдельным будущим ужесточением (после появления `nova
+/// publish`), сейчас существующий corpus (path-only deps, Plan 202/203)
+/// не должен ломаться.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManifestWarning {
+    pub code: &'static str,
+    pub message: String,
+}
+
+/// Собрать warnings по манифесту `m` (путь к нему — `toml_path`, только
+/// для сообщения). Правила:
+///   - `W_DEP_PATH_NO_RELEASE`: зависимость объявлена ГОЛЫМ `path = "..."`
+///     непосредственно в `[dependencies]` — нет публикуемого источника
+///     (git+version). Рекомендация: релизная форма в `[dependencies]` +
+///     `path` вынести в `[replace]` для локальной разработки.
+///   - `W_REPLACE_UNKNOWN_DEP`: `[replace]` ссылается на имя, которого нет
+///     в `[dependencies]` — нечего заменять (typo / забытый dependency-entry).
+pub fn manifest_warnings(m: &Manifest, toml_path: &Path) -> Vec<ManifestWarning> {
+    let mut out = Vec::new();
+    for d in &m.dependencies {
+        if matches!(d.source, DepSource::Path(_)) {
+            out.push(ManifestWarning {
+                code: "W_DEP_PATH_NO_RELEASE",
+                message: format!(
+                    "зависимость `{}` объявлена голым `path` в [dependencies] \
+                     ({}) — нет публикуемого источника (версия/git)\n    \
+                     подсказка: релизная форма — `{} = {{ git = \"...\", \
+                     version = \"x.y\" }}` в [dependencies], а `path` — в \
+                     `[replace] {} = {{ path = \"...\" }}` для локальной разработки",
+                    d.name, toml_path.display(), d.name, d.name,
+                ),
+            });
+        }
+    }
+    for name in m.replace.keys() {
+        if !m.dependencies.iter().any(|d| &d.name == name) {
+            out.push(ManifestWarning {
+                code: "W_REPLACE_UNKNOWN_DEP",
+                message: format!(
+                    "[replace] `{}` не соответствует ни одной записи \
+                     [dependencies] ({}) — нечего заменять",
+                    name, toml_path.display(),
+                ),
+            });
+        }
+    }
+    out
 }
 
 /// Plan 149 D233: parse a human-friendly size/count string into a raw integer
@@ -1132,6 +1217,99 @@ mod parse_tests {
             "[package]\nname = \"x\"\nenforce-stability = true\n[lib]\nsrc = \".\"\n");
         let m = parse_manifest(&path, &dir).expect("parse");
         assert!(!m.enforce_stability, "flag только в [lib], не в [package]");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ── Plan 204: [replace] + manifest_warnings ──────────────────────────
+
+    /// `[replace]` перекрывает эффективный источник зависимости, объявленной
+    /// в `[dependencies]` как `{ git, version }` — `effective_source` должен
+    /// вернуть `path`, не git.
+    #[test]
+    fn replace_overrides_git_dep() {
+        let (path, dir) = write_toml(
+            "replace_override",
+            "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\n\
+             [dependencies]\ntls = { git = \"https://x.org/tls\", version = \"0.1\" }\n\
+             [replace]\ntls = { path = \"../nova-tls\" }\n",
+        );
+        let m = parse_manifest(&path, &dir).expect("parse");
+        assert_eq!(m.dependencies.len(), 1);
+        let dep = &m.dependencies[0];
+        // Declared source остаётся git — replace не мутирует [dependencies].
+        assert!(matches!(dep.source, DepSource::Git { .. }));
+        // Effective — path из [replace].
+        match m.effective_source(dep) {
+            DepSource::Path(p) => assert_eq!(p, "../nova-tls"),
+            other => panic!("ожидался Path (replace), получено {:?}", other),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Без `[replace]` — effective_source == declared source (no-op).
+    #[test]
+    fn no_replace_effective_equals_declared() {
+        let (path, dir) = write_toml(
+            "no_replace",
+            "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\n\
+             [dependencies]\nfoo = { path = \"../foo\" }\n",
+        );
+        let m = parse_manifest(&path, &dir).expect("parse");
+        let dep = &m.dependencies[0];
+        match m.effective_source(dep) {
+            DepSource::Path(p) => assert_eq!(p, "../foo"),
+            other => panic!("ожидался Path, получено {:?}", other),
+        }
+        assert!(m.replace.is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Голый `path` в [dependencies] (без release-формы) → W_DEP_PATH_NO_RELEASE.
+    #[test]
+    fn manifest_warning_bare_path_dep() {
+        let (path, dir) = write_toml(
+            "bare_path_warn",
+            "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\n\
+             [dependencies]\nfoo = { path = \"../foo\" }\n",
+        );
+        let m = parse_manifest(&path, &dir).expect("parse");
+        let ws = manifest_warnings(&m, &path);
+        assert_eq!(ws.len(), 1);
+        assert_eq!(ws[0].code, "W_DEP_PATH_NO_RELEASE");
+        assert!(ws[0].message.contains("foo"), "msg: {}", ws[0].message);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `path`-зависимость ПОД `[replace]` (override git+version dep для
+    /// dev) НЕ warns — declared-форма (`[dependencies]`) сама по себе git,
+    /// публикуемый источник есть; path — только override.
+    #[test]
+    fn manifest_no_warning_when_path_is_replace_override() {
+        let (path, dir) = write_toml(
+            "replace_no_warn",
+            "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\n\
+             [dependencies]\ntls = { git = \"https://x.org/tls\", version = \"0.1\" }\n\
+             [replace]\ntls = { path = \"../nova-tls\" }\n",
+        );
+        let m = parse_manifest(&path, &dir).expect("parse");
+        let ws = manifest_warnings(&m, &path);
+        assert!(ws.is_empty(), "warnings: {:?}", ws);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `[replace]` без соответствующей записи в `[dependencies]` →
+    /// W_REPLACE_UNKNOWN_DEP.
+    #[test]
+    fn manifest_warning_replace_unknown_dep() {
+        let (path, dir) = write_toml(
+            "replace_unknown",
+            "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\n\
+             [replace]\nghost = { path = \"../ghost\" }\n",
+        );
+        let m = parse_manifest(&path, &dir).expect("parse");
+        let ws = manifest_warnings(&m, &path);
+        assert_eq!(ws.len(), 1);
+        assert_eq!(ws[0].code, "W_REPLACE_UNKNOWN_DEP");
         std::fs::remove_dir_all(&dir).ok();
     }
 

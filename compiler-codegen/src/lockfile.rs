@@ -296,7 +296,11 @@ fn visit_pkg(
         return Ok(());
     };
     for dep in &manifest.dependencies {
-        match &dep.source {
+        // Plan 204: [replace] override — dep-graph walk (nova.lock) must
+        // agree with import resolution (imports.rs) on which source is
+        // actually materialized, else lock would pin a URL nobody imports.
+        let effective = manifest.effective_source(dep);
+        match &effective {
             DepSource::Path(rel) => {
                 let dep_dir = pkg_dir.join(rel);
                 if !dep_dir.is_dir() {
@@ -589,13 +593,14 @@ fn resolve_version_deps(
     let Some(manifest) = crate::manifest::parse_manifest(&toml, entry_pkg_dir) else {
         return Ok(HashMap::new());
     };
+    // Plan 204: [replace]-overridden deps skip version-resolve entirely —
+    // if `[replace]` swaps a `{ git, version }` entry for a local `path`
+    // (dev-mode), there is no version to pick and no need to touch git.
     let mut root_version_deps: Vec<(PkgId, VersionReq)> = manifest
         .dependencies
         .iter()
-        .filter_map(|d| match &d.source {
-            DepSource::Git { url, pin: GitPin::Version(req) } => {
-                Some((url.clone(), req.clone()))
-            }
+        .filter_map(|d| match manifest.effective_source(d) {
+            DepSource::Git { url, pin: GitPin::Version(req) } => Some((url, req)),
             _ => None,
         })
         .collect();

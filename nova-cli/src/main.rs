@@ -4583,6 +4583,16 @@ fn cmd_build(
         // Plan 03.4 Ф.3: capability-confined deps — проверить, что
         // зависимости с `forbid` не используют запрещённые эффекты.
         nova_codegen::effect_surface::check_forbidden(&pkg_dir)?;
+        // Plan 204: dependency-versioning diagnostics — bare `path` в
+        // [dependencies] без release-формы, [replace] на несуществующую
+        // запись. Warning-only (не блокирует сборку — существующий
+        // path-only corpus, Plan 202/203, не должен ломаться).
+        let toml_path = pkg_dir.join("nova.toml");
+        if let Some(m) = nova_codegen::manifest::parse_manifest(&toml_path, &pkg_dir) {
+            for w in nova_codegen::manifest::manifest_warnings(&m, &toml_path) {
+                eprintln!("  {} {} [{}]", bold(&yellow("warning:")), w.message, w.code);
+            }
+        }
     }
 
     // Plan 35 Ф.1 MVP: cross-file resolve через inline expansion.
