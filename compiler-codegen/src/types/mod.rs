@@ -9772,6 +9772,29 @@ impl<'a> TypeCheckCtx<'a> {
         let ret_self = crate::const_fn_trampoline::subst_type_ref_pub(ret, &self_subst);
         let ret_template =
             Self::ty_from_resolved_vars(&ResolvedType::from_type_ref(&ret_self), &vars);
+        // Plan 196.5 producers-widen: carrier unify moved UP (was after `extra_eqs`
+        // construction) so the Class-1 closure-return-peek fallback below can read
+        // back a CONCRETE carrier binding (`carrier_tr_subst`) to seed a closure
+        // literal's own params — a closure body like `|x| x * 2` needs `x`'s
+        // concrete type (e.g. `int`, from the receiver's `T`) to infer correctly,
+        // not just `Self`. Pure reordering for the pre-existing `a_rt`-driven path:
+        // it never touched `solver` while building `extra_eqs`, so moving WHEN the
+        // carrier unify happens relative to that construction changes nothing for
+        // it — `solver.unify(recv_pattern, concrete_recv)` still runs exactly once,
+        // still strictly before `extra_eqs` is consumed (`solver.unify(a, b)` below).
+        let mut solver = Solver::new();
+        solver.unify(&recv_pattern, &concrete_recv).ok()?;
+        let mut carrier_tr_subst: HashMap<String, TypeRef> = HashMap::new();
+        carrier_tr_subst.insert("Self".to_string(), peeled.clone());
+        for n in &names {
+            if let Some(v) = vars.get(n) {
+                if let Some(prt) = solver.as_concrete_leaf(&solver.resolve(&Ty::Var(*v))) {
+                    if let Some(tr) = Self::resolved_to_typeref_tp(&prt, recv.span) {
+                        carrier_tr_subst.insert(n.clone(), tr);
+                    }
+                }
+            }
+        }
         // Stage-1a: Constraint::Eq param↔arg for METHOD-level generics — see doc
         // comment. Only the params whose DECLARED type mentions a method
         // generic are considered (matches the targeted scan `resolve_
@@ -9800,12 +9823,32 @@ impl<'a> TypeCheckCtx<'a> {
                         });
                     if let Some(a_rt) = a_rt {
                         extra_eqs.push((p_lifted, Ty::from_resolved(&a_rt)));
+                    } else if let TypeRef::Func { params: fpp, return_type: Some(fr), .. } = &p_self {
+                        // [M-196.5 producers-widen, Class-1] closure-return-bound:
+                        // `p_self` is Self-substituted but still carrier-generic
+                        // (`self_subst` only carries "Self") — reseed `fpp` with the
+                        // CONCRETE carrier binding (`carrier_tr_subst`, resolved from
+                        // THIS solver above) before peeking, so a closure param typed
+                        // by the receiver's carrier (`.map(|x| …)` on `Vec[int]`, `x:
+                        // int`) infers correctly. `unresolved` stays `method_names`
+                        // only — carrier names are now concrete in `fpp_concrete`.
+                        let fpp_concrete: Vec<TypeRef> = fpp
+                            .iter()
+                            .map(|t| crate::const_fn_trampoline::subst_type_ref_pub(t, &carrier_tr_subst))
+                            .collect();
+                        if let Some(body_ty) =
+                            self.closure_arg_return_peek(&fpp_concrete, a.expr(), scope, method_names)
+                        {
+                            let fr_lifted =
+                                Self::ty_from_resolved_vars(&ResolvedType::from_type_ref(fr), &vars);
+                            let body_lifted = Self::ty_from_resolved_vars(
+                                &ResolvedType::from_type_ref(&body_ty), &vars);
+                            extra_eqs.push((fr_lifted, body_lifted));
+                        }
                     }
                 }
             }
         }
-        let mut solver = Solver::new();
-        solver.unify(&recv_pattern, &concrete_recv).ok()?;
         for (a, b) in &extra_eqs {
             // Best-effort per-pair (mirrors `f1_check_call`'s `let _ =
             // unify_type(..)`, `10477`): one param's structural conflict (an
@@ -10647,9 +10690,13 @@ impl<'a> TypeCheckCtx<'a> {
         if call_id.is_set() {
             if let Some(ret_ty) = &callee.return_type {
                 let callee_gs_inner = fn_generic_scope(callee);
-                if !typeref_mentions_any(ret_ty, &callee_gs_inner)
-                    && !typeref_mentions_any(ret_ty, gs)
-                {
+                // Plan 196.5 producers-widen (Class-2): split out as a named bool —
+                // reused below so the generic-subst arm (formerly `else if`, now an
+                // unconditional sibling `if`) knows whether THIS branch already
+                // materialized the return channel, to avoid a double/divergent write.
+                let ret_is_concrete = !typeref_mentions_any(ret_ty, &callee_gs_inner)
+                    && !typeref_mentions_any(ret_ty, gs);
+                if ret_is_concrete {
                     // [M-172.1-d174-sync-consume-registry]: `-> Self` у static-метода
                     // (`Mutex.new() -> Self`) обязан субституироваться в receiver-тип
                     // ПЕРЕД материализацией — иначе канал несёт несуществующий
@@ -10676,7 +10723,21 @@ impl<'a> TypeCheckCtx<'a> {
                     };
                     let rt = ResolvedType::from_type_ref(ret_ty);
                     self.resolved_types_buf.borrow_mut().insert(call_id, rt);
-                } else if (callee.receiver.is_none()
+                }
+                // Plan 196.5 producers-widen (Class-2, d122-class gap): this used to be
+                // `else if` — meaning a free-fn/static-method call whose DECLARED return
+                // does NOT mention any callee generic (`fn f[K Bound](a K, b K) -> bool`)
+                // never reached the unify-from-args block below at all, even though the
+                // call unambiguously has generic ARGUMENTS the `node_substs` channel wants
+                // (potential consumers just never got fed — see 196.5-perd-verification.md
+                // §3 Класс 2). Lifted off the `else` so this block runs whenever the callee
+                // is eligible (free fn / static method with generics), independent of
+                // whether the return happens to mention them; the concrete-return
+                // materialize sub-step inside stays gated on `!ret_is_concrete` (the branch
+                // above already wrote `resolved_types_buf` for that call_id — this avoids a
+                // second, possibly-divergent write for the SAME channel). The `node_substs`
+                // write is genuinely unconditional now (Class-2's whole point).
+                if (callee.receiver.is_none()
                     // Plan 196.4 Stage-1b: a STATIC method (`fn Type[T].method(...)`,
                     // called bare — `Type.method(args)`, no turbofish on `Type`) has NO
                     // receiver VALUE to carrier-subst from (unlike an instance method —
@@ -10735,6 +10796,41 @@ impl<'a> TypeCheckCtx<'a> {
                             );
                         }
                     }
+                    // [M-196.5 producers-widen, Class-1] closure-return-bound: a
+                    // fn-typed param whose arg is a closure LITERAL (`f fn() -> T`,
+                    // arg `|| 7`) never got a binding above — `infer_expr_type` has no
+                    // ClosureLight/ClosureFull arm (checker doesn't type closure bodies
+                    // generally), so `a_ty` was always `None` for it. Close any callee
+                    // generic still unbound after the structural pass by peeking the
+                    // closure literal's body return type instead — mirrors the legacy
+                    // codegen `resolve_mono_type_args` Source 2b (`emit_c.rs` ~19025,
+                    // C-string based) ported to the checker/TypeRef level (see
+                    // `closure_arg_return_peek`'s doc comment for the "no invention"
+                    // contract). `fp_seeded` substitutes what's ALREADY bound from the
+                    // pass above so a multi-param closure whose OTHER params depend on
+                    // an already-resolved generic still seeds correctly.
+                    for (p, a) in callee.params.iter().zip(args.iter()) {
+                        if p.is_variadic {
+                            break;
+                        }
+                        let TypeRef::Func { params: fpp, return_type: Some(fr), .. } = &p.ty else {
+                            continue;
+                        };
+                        if !typeref_mentions_any(fr, &callee_gs_inner) {
+                            continue;
+                        }
+                        let fp_seeded: Vec<TypeRef> = fpp
+                            .iter()
+                            .map(|t| crate::const_fn_trampoline::subst_type_ref_pub(t, &subst))
+                            .collect();
+                        if let Some(body_ty) = self.closure_arg_return_peek(
+                            &fp_seeded, a.expr(), scope, &callee_gs_inner,
+                        ) {
+                            let _ = crate::const_fn_trampoline::unify_type(
+                                fr, &body_ty, &callee_gs_inner, &mut subst,
+                            );
+                        }
+                    }
                     // [M-196.5 producer-A width fix, D310] An explicit, COMPLETE
                     // turbofish (`func[T1,...](...)`, arity == callee.generics)
                     // is ground truth — overlay it on top of the unify-derived
@@ -10752,13 +10848,24 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     }
                     if !subst.is_empty() {
-                        let concrete =
-                            crate::const_fn_trampoline::subst_type_ref_pub(ret_ty, &subst);
-                        if !typeref_mentions_any(&concrete, &callee_gs_inner)
-                            && !typeref_mentions_any(&concrete, gs)
-                        {
-                            let rt = ResolvedType::from_type_ref(&concrete);
-                            self.resolved_types_buf.borrow_mut().insert(call_id, rt);
+                        // Plan 196.5 producers-widen (Class-2): only attempt the
+                        // return-channel materialize when the DECLARED return actually
+                        // mentions a callee generic — `ret_is_concrete` means the
+                        // sibling branch above (formerly the `if` half of this `else
+                        // if`) already wrote `resolved_types_buf` for this call_id from
+                        // the UNMODIFIED declared return; re-deriving it here from the
+                        // unify-subst would be redundant at best and a DIVERGENT second
+                        // write at worst (this arm's `subst` is arg-derived, not the
+                        // Self-substitution the concrete branch performs).
+                        if !ret_is_concrete {
+                            let concrete =
+                                crate::const_fn_trampoline::subst_type_ref_pub(ret_ty, &subst);
+                            if !typeref_mentions_any(&concrete, &callee_gs_inner)
+                                && !typeref_mentions_any(&concrete, gs)
+                            {
+                                let rt = ResolvedType::from_type_ref(&concrete);
+                                self.resolved_types_buf.borrow_mut().insert(call_id, rt);
+                            }
                         }
                         // [M-196.5-node-substs] Producer A: `subst` above is the SAME map
                         // just applied to the return — capture the VALUES themselves,
@@ -14341,6 +14448,23 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(a_ty) = self.infer_expr_type(a.expr(), call_scope) {
                     let _ = crate::const_fn_trampoline::unify_type(
                         &p_seeded, &a_ty, &method_names, &mut full_subst);
+                } else if let TypeRef::Func { params: fpp, return_type: Some(fr), .. } = &p_seeded {
+                    // [M-196.5 producers-widen, Class-1] closure-return-bound: the
+                    // COMMON `.map(|x| …)`/`Option.map`/`Result.map` shape — arg is a
+                    // closure LITERAL, `infer_expr_type` has no arm for it (`a_ty` is
+                    // always `None`). `p_seeded` is already carrier+`Self`-concrete
+                    // (from `subst` above), so `fpp` only still names UNRESOLVED
+                    // method-level generics (checked by `closure_arg_return_peek`
+                    // itself) — peek the closure body's return type and unify just
+                    // the return position (`fr`, typically a bare method generic like
+                    // `U`) against it. Mirrors the free-fn arm's identical fallback in
+                    // `f1_check_call` (~10738).
+                    if let Some(body_ty) =
+                        self.closure_arg_return_peek(fpp, a.expr(), call_scope, &method_names)
+                    {
+                        let _ = crate::const_fn_trampoline::unify_type(
+                            fr, &body_ty, &method_names, &mut full_subst);
+                    }
                 }
             }
             let out_full = crate::const_fn_trampoline::subst_type_ref_pub(ret, &full_subst);
@@ -14753,6 +14877,64 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
         out
+    }
+
+    /// Plan 196.5 producers-widen (Class-1, closure-return-bound fallback):
+    /// peek a closure-literal ARG's body return type, seeding the closure's OWN
+    /// declared params with `fp` (caller-substituted — must ALREADY be concrete
+    /// for every name NOT in `unresolved`, e.g. carrier/`Self` already bound by
+    /// the caller). Mirrors the legacy codegen `resolve_mono_type_args` Source 2b
+    /// (`emit_c.rs` ~19025 — C-string based) at the checker/TypeRef level, so the
+    /// SAME class of closure (identity/computed `Expr` body, or an empty-stmts
+    /// `Block` trailing expr) the legacy codegen path already lowers correctly
+    /// can ALSO populate the `node_substs`/return-channel — not inventing new
+    /// inference, porting the existing legacy heuristic one layer up (checker
+    /// phase, ahead of codegen). Honest `None` (no annotation, no guess)
+    /// whenever: arity mismatch, a closure param's declared type still mentions
+    /// an `unresolved` name (nothing concrete to seed it with — refuses to guess
+    /// with a bare generic), or the body itself doesn't resolve via
+    /// `infer_expr_type` (stmts-block, unsupported expr shape, etc.) — the same
+    /// "no invention" contract `infer_expr_type` already holds everywhere else
+    /// in this file.
+    fn closure_arg_return_peek(
+        &self,
+        fp: &[TypeRef],
+        arg_expr: &Expr,
+        outer_scope: &HashMap<String, TypeRef>,
+        unresolved: &HashSet<String>,
+    ) -> Option<TypeRef> {
+        match &arg_expr.kind {
+            ExprKind::ClosureLight { params: cp, body } => {
+                if cp.len() != fp.len() {
+                    return None;
+                }
+                let mut cscope = outer_scope.clone();
+                for (cpar, fpt) in cp.iter().zip(fp.iter()) {
+                    if typeref_mentions_any(fpt, unresolved) {
+                        return None;
+                    }
+                    if cpar.name != "_" {
+                        cscope.insert(cpar.name.clone(), fpt.clone());
+                    }
+                }
+                match body {
+                    ClosureBody::Expr(be) => self.infer_expr_type(be, &cscope),
+                    ClosureBody::Block(b) if b.stmts.is_empty() => {
+                        b.trailing.as_deref().and_then(|t| self.infer_expr_type(t, &cscope))
+                    }
+                    _ => None,
+                }
+            }
+            ExprKind::ClosureFull(sb) => {
+                // Fully typed by grammar (Q3 B, 197.3) — no body-inference needed,
+                // the declared return type IS the answer (when present and it
+                // doesn't itself still mention an unresolved name).
+                sb.return_type.as_ref().and_then(|rt| {
+                    if typeref_mentions_any(rt, unresolved) { None } else { Some(rt.clone()) }
+                })
+            }
+            _ => None,
+        }
     }
 
     /// 172.1.2 arg-binding: `v.map(|x| x*2)` при v: Vec[int] — параметр метода
