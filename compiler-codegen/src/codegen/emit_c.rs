@@ -21074,6 +21074,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.mono_fwd_decls.push_str(&fwd_decl);
         }
         // Enqueue for body emission — prefix __method__TYPE::name so worklist drain can route
+        if std::env::var_os("NOVA_D2_TRACE").is_some() && mono_name.contains("Nova_T") {
+            eprintln!("[D2] register_mono_method_instance mono_name={} recv={} subst={:?}\n{}",
+                mono_name, recv_type, type_subst,
+                std::backtrace::Backtrace::force_capture());
+        }
         let worklist_key = format!("__method__{}::{}", recv_type, fn_decl.name);
         self.mono_worklist.push((worklist_key.clone(), Self::subst_vec_from_c_pairs(&type_subst), mono_name.to_string()));
         // [M-138.2-generic-method-overload-mono] Record the EXACT chosen overload
@@ -41189,6 +41194,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.drain_generic_type_worklist()?;
             }
             if !self.record_schemas.contains_key(&struct_name) {
+                if std::env::var_os("NOVA_D2_TRACE").is_some() {
+                    eprintln!("[D2] anon-record miss '{}'\n{}", struct_name,
+                        std::backtrace::Backtrace::force_capture());
+                }
                 return Err(format!(
                     "anonymous record literal: expected struct '{}' not in record_schemas",
                     struct_name));
