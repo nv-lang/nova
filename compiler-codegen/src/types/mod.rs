@@ -7994,6 +7994,36 @@ impl<'a> TypeCheckCtx<'a> {
                                 }
                             }
                         }
+                        // [196.5 Stage-D волна-4] B12c producer (intrinsic-scheme
+                        // mirror): `ChanReader.close_after(d Duration) -> ChanReader`
+                        // is a COMPILER BUILTIN — no `.nv` declaration anywhere
+                        // (std/src/concurrency/timer.nv:84's `ChanReader_close_after_
+                        // doc_marker` is a documentation-only stand-in; the real
+                        // codegen dispatch is name-keyed, `emit_c.rs` ~34500/~37766/
+                        // ~50862). `ChanReader` itself has no `.nv` type-decl either
+                        // (`BUILTIN_RUNTIME_TYPES`, defined in `nova_rt/*.h`) — the
+                        // checker's static-return paths never see it, so this
+                        // Path-form call-site never reaches Channel 2. Mirror the
+                        // SAME fixed return the codegen fallback (`B12c_path_
+                        // chanreader_close_after`) already hardcodes: a bare
+                        // `ResolvedType::Named { name: "ChanReader" }` — the
+                        // catch-all arm of `resolved_named_to_c` (no protocol/alias/
+                        // generic-template/colliding-name match) lowers ANY
+                        // unregistered concrete Named type to `Nova_{name}*`,
+                        // producing the IDENTICAL `Nova_ChanReader*` byte-for-byte.
+                        if parts.len() == 2 && parts[0] == "ChanReader" && parts[1] == "close_after" {
+                            if std::env::var_os("NOVA_B12C_LOCATE").is_some() {
+                                eprintln!("[B12C-CHECKER] id={:?} id_set={} span={:?}", e.id, e.id.is_set(), e.span);
+                            }
+                            self.resolved_types_buf.borrow_mut().insert(
+                                e.id,
+                                ResolvedType::Named {
+                                    name: "ChanReader".to_string(),
+                                    module: vec![],
+                                    args: vec![],
+                                },
+                            );
+                        }
                     } else if let ExprKind::TurboFish { base: tf_base, type_args } = &func.kind {
                         // 172.1.2 (Call:<expr>): интринсики size_of[T]()/align_of[T]()
                         // — ВСЕГДА int (фундаментальный факт; чекер уже знает их

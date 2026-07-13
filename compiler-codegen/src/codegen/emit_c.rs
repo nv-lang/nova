@@ -48668,6 +48668,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     fn debt_is_generic_stub_c(&self, s: &str) -> bool {
+        // [196.5 Stage-D волна-4] B12c: the SAME name set as `BUILTIN_RUNTIME_TYPES`
+        // (emit_module forward-decl skip, ~5275 — function-local `const`, not
+        // reachable from here without restructuring, hence duplicated rather than
+        // shared; a drift between the two only regresses to the OLD stub-guess
+        // behavior, never a NEW correctness bug). These are types defined in
+        // `nova_rt/*.h` with NO Nova `.nv` declaration at all — genuinely CONCRETE,
+        // but absent from every registry this function otherwise consults
+        // (`record_schemas`/`sum_schemas`/`generic_types`/`opaque_ffi_types`), so
+        // the "not registered anywhere ⟹ unresolved generic-param stub" heuristic
+        // false-positived on `Nova_ChanReader*` (a checker-materialized Channel-2
+        // return for the `ChanReader.close_after` intrinsic fell through to legacy
+        // ANYWAY despite a correct channel hit — B12c producer, docs/plans/
+        // 196.5-stage-d-wave4-notes.md). Structurally safe: every name here is a
+        // multi-char PascalCase runtime-builtin identifier, never a plausible
+        // generic type-param spelling (those are always ≤2-char, e.g. `T`/`U`/`K`).
+        const RUNTIME_NATIVE_CONCRETE_TYPES: &[&str] = &[
+            "ChanReader", "ChanWriter", "ChannelPair",
+            "AtomicInt", "AtomicBool", "Mutex", "WaitGroup", "Once",
+            "RwLock", "ReentrantMutex", "Timestamp", "MemOrdering",
+            "AtomicI8", "AtomicI16", "AtomicI32", "AtomicI64",
+            "AtomicU8", "AtomicU16", "AtomicU32", "AtomicU64",
+            "AtomicIsize", "AtomicUsize", "AtomicPtr",
+            "MutexGuard", "ReadGuard", "WriteGuard", "Permit", "OnceGuard",
+            "Barrier", "Condvar", "WaitResult", "CountDownLatch", "Semaphore",
+        ];
         if let Some(inner) = s.strip_prefix("Nova_").and_then(|x| x.strip_suffix('*')) {
             let name = inner.trim();
             return !name.is_empty()
@@ -48683,6 +48708,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 100.5 (D163): opaque FFI consume types are concrete —
                 // `Nova_File*` must NOT be treated as a generic stub.
                 && !self.opaque_ffi_types.contains(name)
+                && !RUNTIME_NATIVE_CONCRETE_TYPES.contains(&name)
                 // Plan 91.13 (D295 V2): monomorphized generic instances carry
                 // `____` in their mangled name (e.g. `Vec____NovaValue_SocketAddr`)
                 // and are always concrete — never an unresolved type-param stub.
@@ -50852,17 +50878,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.icr_trace("B12b_path_channel_new");
                                 return "Nova_ChannelPair".into();
                             }
-                            // Plan 65 Ф.1: ChanReader.close_after(Duration) —
-                            // Path-form.
-                            // [196.5 Stage-D волна-3 replay] B12c: НЕ дубликат —
-                            // kill-switch A/B уронил std/src/time паникой (B12q,
-                            // method=close_after): Path-форму этого fixed-return
-                            // интринсика чекер не аннотирует, каскад ниже её не
-                            // резолвит. Уникальный трафик до продюсера интринсик-схем.
-                            if eff == "ChanReader" && method_name == "close_after" {
-                                self.icr_trace("B12c_path_chanreader_close_after");
-                                return "Nova_ChanReader*".into();
-                            }
+                            // [196.5 Stage-D волна-4] B12c_path_chanreader_close_after
+                            // REMOVED. Producer added (types/mod.rs f1_expr Path-arm):
+                            // `ChanReader.close_after` materializes
+                            // `ResolvedType::Named{"ChanReader"}` into Channel 2
+                            // unconditionally (compiler-builtin, no `.nv` decl —
+                            // mirrors this SAME hardcoded return). Consumer-side fix
+                            // (`debt_is_generic_stub_c`): `Nova_ChanReader*` was a
+                            // FALSE-POSITIVE "generic stub" (ChanReader absent from
+                            // record_schemas/sum_schemas/generic_types/opaque_ffi_types
+                            // — genuinely concrete `nova_rt/*.h` runtime type, never
+                            // Nova-declared) — added `RUNTIME_NATIVE_CONCRETE_TYPES`
+                            // allowlist there. NO-HIT after both fixes across
+                            // conformance + std/src/{time,concurrency,runtime,
+                            // collections,data} (docs/plans/196.5-stage-d-wave4-notes.md)
+                            // ⟹ structurally unreachable (§5).
                             // Plan 196.2 W1 [gate-1]: B12c_path_chanreader_close_at REMOVED.
                             // ChanReader.close_at(Monotonic) Path-form (sibling close_after
                             // above still fires) — checker-materialised. NO-HIT (§5).
