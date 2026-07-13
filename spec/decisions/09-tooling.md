@@ -3742,15 +3742,55 @@ test "index out of bounds panics" panics "index out of bounds" {
    `tls = { git = "https://github.com/nv-lang/nova-tls", version = "0.1" }`
    (версии = git-теги `vX.Y.Z`; caret-семантика по умолчанию, tilde/wildcard
    поддержаны — semver.rs). Пины `tag =`/`branch =`/`rev =` допустимы (03.2).
-2. **`[replace]`-секция** (NEW, Plan 204) — dev-override источника, НЕ меняющий
-   требование: `[replace] tls = { path = "../nova-tls" }`. Единая точка применения —
-   `Manifest::effective_source()` (module-resolution и dep-graph walk).
+2. **`[replace]`-секция** — dev-override источника, НЕ меняющий требование:
+   `[replace] tls = { path = "../nova-tls" }`. Единая точка применения —
+   `Manifest::effective_source()`.
+   **Дофикс №2 (2026-07-13, владелец вскрыл дыру: закоммиченный `[replace]`
+   ломает чистый клон):**
+   - **`nova.local.toml`** — необязательный, НЕ коммитящийся файл рядом с
+     `nova.toml` (машино-локальные оверрайды; добавляется в `.gitignore`
+     потребителем). В этой волне поддерживает в себе ТОЛЬКО секцию
+     `[replace]` — прочие ключи/секции не отклоняют парсинг (forward-compat),
+     но собираются в `W_LOCAL_TOML_UNSUPPORTED_KEY`. Загрузчик манифеста
+     (`manifest::parse_manifest`) сливает `[replace]` из `nova.local.toml`
+     поверх `[replace]` из самого `nova.toml` (nova.local.toml побеждает при
+     совпадении ключа — более специфичный, machine-local override).
+   - **`[replace]` в САМОМ (закоммиченном) `nova.toml`** — теперь **жёсткая
+     ошибка `E_REPLACE_IN_MANIFEST`** (не предупреждение, без периода
+     депрекейшна: единственный реальный потребитель, nova-http, мигрирован
+     на `nova.local.toml` тем же слиянием) — `manifest::check_no_committed_replace`,
+     вызывается из `nova build` ДО материализации зависимостей (fail fast).
+     `[replace]` разрешён ИСКЛЮЧИТЕЛЬНО в `nova.local.toml`.
+   - **Go-scope (область действия):** `[replace]` (из обоих файлов)
+     применяется ТОЛЬКО когда его манифест — КОРЕНЬ текущей сборки
+     (entry-пакет); в манифесте ЗАВИСИМОСТИ, обходимой транзитивно, —
+     игнорируется (её собственный `effective_source` никогда не
+     консультируется при резолве её собственных импортов — см.
+     `imports::lookup_dependency`'s root-check) + предупреждение
+     `W_REPLACE_IN_DEPENDENCY` (`lockfile::collect_replace_scope_warnings`,
+     обходит граф зависимостей теми же declared-source правилами, что и
+     `nova.lock`).
+   - **Отсутствующий путь в АКТИВНОМ корневом `[replace]`** — честная ошибка
+     `E_REPLACE_PATH_MISSING` с подсказкой (НЕ тихий откат на git/declared
+     источник).
 3. **Голый `path`-dep вне `[replace]`** — `W_DEP_PATH_NO_RELEASE` (предупреждение;
    станет ошибкой публикуемой сборки при появлении `nova publish`).
+   **Дофикс №2:** срабатывает ТОЛЬКО когда целевой путь выходит ЗА границу
+   текущего git-репозитория (`manifest::git_repo_root` — ближайший `.git`
+   вверх по дереву от манифеста и от цели пути); path-зависимость, остающаяся
+   ВНУТРИ той же репы (workspace-член, вложенный тест-пакет — `git clone`
+   уже приносит её вместе с остальным деревом), НЕ warns. Симметрично,
+   `nova add <name> --path DIR` с `DIR` вне текущей git-репы отказывается
+   молча писать голый `path` в `[dependencies]` — печатает
+   git+version/`nova.local.toml`-рецепт и требует явного `--allow-external-path`
+   для старого поведения; внутрирепный `--path` не гейтится.
    `[replace]` на неизвестное имя — `W_REPLACE_UNKNOWN_DEP`.
 4. **nova.lock** — источник точных версий при сборке (тег+commit); расхождение
    с манифестом — ошибка с подсказкой `nova update`; `nova update [dep|--precise
-   name@x.y.z]` — переререзолв (03.1/03.2).
+   name@x.y.z]` — переререзолв (03.1/03.2). `[replace]` НИКОГДА не пишется в
+   lock (граф обходится по декларированному `dep.source`, не по
+   `effective_source`) — lock остаётся публикуемым источником истины
+   независимо от активных локальных оверрайдов.
 5. **Разрешение версий** — backtracking semver-unify (03.2) СОХРАНЁН как канон
    (доминирует MVS: находит решение всегда, когда оно существует; конфликт
    мажоров — диагностика с цепочкой ограничений). Обоснование: docs/plans/204-progress.md.
@@ -3759,3 +3799,5 @@ test "index out of bounds panics" panics "index out of bounds" {
 - Q-dependency-versioning (open-questions) — RESOLVED → D420.
 - [D78](07-modules.md) — пакет/модуль-модель; Plan 203 (nova-http — первый
   git-потребитель после миграции Ф.4); Plans 03.1/03.2/03.4 — фундамент.
+- docs/plans/204-progress.md — дофикс №2 session notes (owner corrections,
+  test tally).
