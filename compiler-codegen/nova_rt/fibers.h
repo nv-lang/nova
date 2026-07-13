@@ -2721,6 +2721,34 @@ static inline void nova_supervised_process_decisions(NovaFiberQueue* q) {
  * стеке сгенерированного C-frame'а и становится невалидным после
  * longjmp'а, поэтому `bound_scope` нельзя оставлять висеть.
  */
+
+/* Plan 201 (владелец: «механика, не инвариант-в-комментарии»): единая
+ * scope re-throw точка, ЯВНО принимающая suppressed-цепочку параметром —
+ * заменяет удалённый ambient TLS-слот `_nova_pending_suppressed`. Раньше
+ * механизм полагался на недоказанный руками инвариант «между постановкой
+ * слота и потреблением ближайшим throw нет точки планирования»; теперь
+ * цепочка физически идёт по стеку вызова (аргумент), планирование между
+ * "составить цепочку" и "бросить" структурно не может её потерять/подменить
+ * — компилятору/ревьюеру нечего инспектировать вручную.
+ *
+ * Диспетчеризует на explicit-suppressed вариант throw-пути по `kind`
+ * (единственный вызывающий — хвост `nova_supervised_run_impl` ниже, где
+ * kind уже классифицирован: USER_TYPED cross-worker / PANIC / USER-иначе). */
+static inline void nova_rethrow_scope(const char* err_cstr, NovaThrowKind kind,
+                                       void* payload, NovaTypeId tid,
+                                       NovaErrorChain* suppressed) {
+    nova_str msg = nova_str_from_cstr(err_cstr);
+    if (kind == NOVA_THROW_USER_TYPED) {
+        nova_throw_typed_ex(msg, payload, tid, suppressed);
+        return;  /* unreachable */
+    }
+    if (kind == NOVA_THROW_PANIC) {
+        nv_panic_ex(msg, suppressed);
+        return;  /* unreachable */
+    }
+    nova_throw_ex(msg, suppressed);
+}
+
 static inline void nova_supervised_run_impl(NovaFiberQueue* q,
                                             NovaCancelToken* tok) {
     /* Plan 83.11 Phase A diagnostics (Variant B, 2026-05-27): watchdog timer.
@@ -2953,14 +2981,16 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
             /* Отмена не убегает наружу. Caller продолжает выполнение. */
             return;
         }
-        /* ── Plan 173 хвост (D414 §1 ← Ф.4): scope MultiError-агрегация ──
+        /* ── Plan 173 хвост (D414 §1 ← Ф.4), рефактор Plan 201 ──
          * Спека обещает: «Не-primary ошибки уходят в suppressed-карман».
          * Здесь (единственная точка, где primary покидает scope) собираем
-         * ВСЕ прочие retained детские падения в цепочку и ставим её в
-         * staging-слот `_nova_pending_suppressed` — ближайший throw ниже
-         * (typed / panic / plain) потребит её через nova_last_error_set,
-         * и после ловли primary они читаются `suppressed() -> []any`
-         * (D158 модель Б).
+         * ВСЕ прочие retained детские падения в локальную цепочку
+         * `_nv_suppressed` и передаём её ЯВНЫМ параметром в
+         * `nova_rethrow_scope` ниже — никакого ambient TLS-relay (был
+         * `_nova_pending_suppressed`, удалён вместе с held-by-comment
+         * инвариантом «нет точки планирования между постановкой и
+         * потреблением»; цепочка теперь физически в аргументе вызова,
+         * планированию тут нечего портить).
          * Исключаются: CANCEL-производные (следствие эскалации, не корень);
          * Stop-решённые супервизором (хендлер осознанно выкинул — D416;
          * retained в child_error[] для observability, наружу не текут);
@@ -2974,6 +3004,7 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
          * (`suppressed()` материализует цепочку с хвоста) → обход слотов по
          * ВОЗРАСТАНИЮ даёт видимый порядок = порядок слотов (spawn-порядок,
          * детерминированно). */
+        NovaErrorChain* _nv_suppressed = NULL;
         {
             NovaFailFrame _nv_aggf;
             _nv_aggf.error_suppressed = NULL;
@@ -2998,15 +3029,8 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
                                           _nv_ce->tid);
                 }
             }
-            _nova_pending_suppressed = _nv_aggf.error_suppressed;
+            _nv_suppressed = _nv_aggf.error_suppressed;
         }
-        /* ИНВАРИАНТ M:N (не нарушать!): слот _nova_pending_suppressed —
-         * thread-local, и его безопасность держится на том, что между
-         * постановкой (выше) и потреблением ближайшим throw (ниже: typed /
-         * panic / plain → все через nova_last_error_set) НЕТ НИ ОДНОЙ точки
-         * планирования (park/yield/канал/sleep/IO). GC-аллокация файбер не
-         * перепланирует. Вставка сюда любой планирующей операции превращает
-         * это в STALE-slot гонку (см. docs/cases/mn-race-stale-slot-2026-05). */
         /* Plan 83.10 (2026-05-25): fix [M-83.10-armed-user-throw-routing].
          * USER_TYPED re-throw must preserve payload + tid для typed handler
          * dispatch. Без этого `with Fail[int]` handler не fires на main thread
@@ -3022,7 +3046,7 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
             /* Cross-worker typed throw. */
             void* payload = q->first_error_atomic_payload;
             NovaTypeId tid = q->first_error_atomic_tid;
-            nova_throw_typed(nova_str_from_cstr(err), payload, tid);
+            nova_rethrow_scope(err, NOVA_THROW_USER_TYPED, payload, tid, _nv_suppressed);
             /* unreachable */
         }
         /* Plan 173 Ф.6 (§4а, вскрыто panics-миграцией; D13/D414): PANIC
@@ -3035,12 +3059,12 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
             NovaThrowKind _rk = q->first_error ? q->first_error_kind
                                                : q->first_error_atomic_kind;
             if (_rk == NOVA_THROW_PANIC) {
-                nv_panic(nova_str_from_cstr(err));
+                nova_rethrow_scope(err, NOVA_THROW_PANIC, NULL, NOVA_TID_NONE, _nv_suppressed);
                 /* unreachable */
             }
         }
-        /* USER либо USER_TYPED (local — see note above): plain nova_throw. */
-        nova_throw(nova_str_from_cstr(err));
+        /* USER либо USER_TYPED (local — see note above): plain throw. */
+        nova_rethrow_scope(err, NOVA_THROW_USER, NULL, NOVA_TID_NONE, _nv_suppressed);
     }
 }
 
