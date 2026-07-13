@@ -24221,6 +24221,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.line(&format!("static int nova_test_chunk_{}(void) {{", chunk_idx));
                 self.indent += 1;
                 self.line("int _nova_tests_failed = 0;");
+                // [race-198 / 196.6]: snapshot the IMPLICIT MAIN SCOPE (D92 —
+                // established once in the emitted main() wrapper before any
+                // chunk runs; at every chunk entry _nova_active_scope is that
+                // scope, pristine or restored below). The per-test
+                // nova_runtime_reset() NULLs _nova_active_scope — correct for
+                // discarding a DANGLING scope a longjmp-unwound test left
+                // behind, but a later test's main-flow Time.sleep would then
+                // hit the D92 FATAL (sleep outside any scope). Restore the
+                // known-good main scope after every reset instead.
+                self.line("NovaFiberQueue* _chunk_main_scope = _nova_active_scope;");
+                self.line("int _chunk_main_slot = _nova_active_slot;");
                 for (local_idx, t) in chunk.iter().enumerate() {
                     let idx = chunk_idx * TEST_CHUNK_SIZE + local_idx;
                     let safe = Self::mangle_test_name_indexed(&t.name, idx);
@@ -24307,6 +24318,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // handler-слотов после ПОЙМАННОЙ паники (longjmp мимо
                     // эпилогов) — N panics-тестов в одном процессе безопасны.
                     self.line("nova_runtime_reset();");
+                    // [race-198 / 196.6]: re-establish the implicit main scope
+                    // (see _chunk_main_scope snapshot at chunk entry).
+                    self.line("_nova_active_scope = _chunk_main_scope;");
+                    self.line("_nova_active_slot = _chunk_main_slot;");
                 } else {
                     self.line("if (_tf_jmp == 0 && _tf_fail_jmp == 0) {");
                     self.indent += 1;
@@ -24346,6 +24361,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // LATER test. Reset unconditionally after every test-block,
                     // not only after panics-clause ones.
                     self.line("nova_runtime_reset();");
+                    // [race-198 / 196.6]: re-establish the implicit main scope
+                    // (see _chunk_main_scope snapshot at chunk entry) — the
+                    // reset NULLs _nova_active_scope, and a later test's
+                    // main-flow Time.sleep would hit the D92 FATAL otherwise.
+                    self.line("_nova_active_scope = _chunk_main_scope;");
+                    self.line("_nova_active_slot = _chunk_main_slot;");
                 }
                     self.indent -= 1;
                     self.line("}");
