@@ -98,7 +98,7 @@ test "structural == on self-recursive tuple/record/Vec variants" {
     }
 }
 
-fn main() {
+test "enum_tree_result smoke" {
     ro r = build(3)
     match r {
         Ok(t)  => assert(depth(t) == 2, "smoke: depth of a single BNode")

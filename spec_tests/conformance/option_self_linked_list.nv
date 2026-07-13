@@ -78,7 +78,7 @@ test "structural == on separately-allocated-but-equal chains is TRUE" {
     assert(!(a2 == d2), "Some(...) vs None tail makes the chains unequal")
 }
 
-fn main() {
+test "option_self_linked_list smoke" {
     ro head = Node { value: 1, next: Some(Node { value: 2, next: None }) }
     assert(len(Some(head)) == 2, "smoke: two-node chain")
     println("all assertions passed")

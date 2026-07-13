@@ -27,8 +27,8 @@ export NOVA_INCLUDE_DIR=/d/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed
 
 | Батч | Объём | Статус |
 |---|---|---|
-| M — маркерные → standalone/ | 58 файлов | ⬜ |
-| T — fn main → test-блок | 14 файлов | ⬜ |
+| M — маркерные → standalone/ | 58+1 файлов | ✅ 72d0f30bd+8b7f69fe5 (57/59 PASS, 2 stable-red документированы) |
+| T — fn main → test-блок | 14 файлов | ✅ (dup `main` 0, duplicate 437→378) |
 | D1 — dedup | 10 кластеров / 32 файлов | ⬜ |
 | D2 — dedup | 14 кластеров / 17 файлов | ⬜ |
 | D3 — dedup | 9 кластеров / 22 файлов | ⬜ |

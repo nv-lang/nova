@@ -9,7 +9,7 @@ fn offset(i int, lo int, hi int) -> int
     requires lo <= i && i < hi
 => i - lo
 
-fn main() -> () {
+test "p2_contract_real_bounds smoke" {
     assert(offset(5, 0, 10) == 5)
     assert(offset(3, 2, 8) == 1)
     assert(offset(0, 0, 1) == 0)

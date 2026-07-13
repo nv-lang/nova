@@ -4,6 +4,6 @@ import std.unicode
 
 fn str @shout() -> str => @to_upper()
 
-fn main() -> () {
+test "pos_extension_new_name smoke" {
     assert("abc".shout() == "ABC")
 }

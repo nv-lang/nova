@@ -6,7 +6,7 @@ type Locale { s str }
 
 fn Locale @to_lower() -> str => "custom"
 
-fn main() -> () {
+test "pos_newtype_override smoke" {
     ro l = Locale { s: "ABC" }
     assert(l.to_lower() == "custom")
 }

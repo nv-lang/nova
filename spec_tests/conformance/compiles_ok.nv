@@ -20,6 +20,6 @@ fn helper(x int) -> int {
     x * 2
 }
 
-fn main() -> () {
+test "compiles_ok smoke" {
     ro _ = helper(21)
 }

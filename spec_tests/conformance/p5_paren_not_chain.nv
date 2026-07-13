@@ -5,7 +5,7 @@
 // EXPECT_OUTPUT: ok
 
 module spec_tests.conformance
-fn main() -> () {
+test "p5_paren_not_chain smoke" {
     assert((3 < 5) == true)
     assert((5 < 3) == false)
     assert((2 < 3) != (4 < 1))

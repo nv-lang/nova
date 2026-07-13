@@ -22,7 +22,7 @@ fn paint(c Color) -> int {
 // type (`int` ∈ SignedInt) → must pass membership (no E_TYPE_NOT_IN_SET).
 fn[T SignedInt] pick(x T) -> T => x
 
-fn main() -> int {
+test "p172_3_typeset_parse_smoke_positive smoke" {
     // exercise the sum so it is not DCE'd; type-sets are bound-only (no value).
-    pick(paint(Color.Red))
+    ro _ = pick(paint(Color.Red))
 }

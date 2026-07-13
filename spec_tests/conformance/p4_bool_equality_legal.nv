@@ -4,7 +4,7 @@
 // EXPECT_OUTPUT: ok
 
 module spec_tests.conformance
-fn main() -> () {
+test "p4_bool_equality_legal smoke" {
     assert(true == true)
     assert(true != false)
     ro a = (3 < 5)
