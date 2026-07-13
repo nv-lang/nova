@@ -14,9 +14,9 @@
 // this session's instance of the documented workaround ("dynamic json / by
 // hand, not typed `.json[T]`").
 
-module aggregator.report_json
+module backend.api
 
-import ./domain.{Report, TaskResult, TaskStatus}
+import ../app.{Report, TaskResult, TaskStatus}
 import std.encoding.json.{JsonValue}
 import std.collections.hashmap.{HashMap}
 

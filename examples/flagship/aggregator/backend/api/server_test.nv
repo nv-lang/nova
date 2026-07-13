@@ -6,12 +6,9 @@
 // is left at its real ambient default (same choice aggregate_test.nv makes) —
 // latencies here are small/deadline-bounded, so real sleeps stay fast.
 
-module aggregator.server_test
+module backend.api
 
-import ./server.{snapshot_mux, snapshot_for, weather_snapshot_mux, health_snapshot_mux}
-import ./aggregate.{aggregate}
-import ./domain.{Source}
-import ./emit.{null_emit}
+import ../app.{aggregate, Source, null_emit}
 import std.net.{mock_net}
 import http.server.{serve_once}
 import std.encoding.json.{Json}

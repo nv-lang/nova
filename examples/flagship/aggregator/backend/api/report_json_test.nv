@@ -4,10 +4,9 @@
 // Pure function (`Report -> str`, no effects) — tested directly, no handler
 // substitution needed here (see server_test.nv for the HTTP-layer tests).
 
-module aggregator.report_json_test
+module backend.api
 
-import ./report_json.{report_to_json}
-import ./domain.{Report, TaskResult, TaskStatus, SourceData}
+import ../app.{Report, TaskResult, TaskStatus, SourceData}
 import std.encoding.json.{Json}
 
 // [M-flagship-anon-record-literal-enum-payload]: a BARE record literal

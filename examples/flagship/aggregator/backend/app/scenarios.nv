@@ -16,9 +16,7 @@
 // EFFECT for tests; here we want a plain pure-value generator with no effect
 // dependency, since scenario-building is not itself an I/O concern).
 
-module aggregator.scenarios
-
-import ./domain.{Source}
+module backend.app
 
 // ── Weather legend (research 15 §5a) ────────────────────────────────────────
 

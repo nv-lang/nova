@@ -15,11 +15,8 @@
 // (draining a `Channel[str]` event log — the sanctioned cross-fiber handoff,
 // D415 — since `lane_*` ops fire from worker fibers, not the test's own).
 
-module aggregator.aggregate_test
+module backend.app
 
-import ./aggregate.{aggregate}
-import ./domain.{Source, TaskStatus, TaskResult}
-import ./emit.{Emit, null_emit}
 import std.net.{mock_net}
 import std.runtime.fibers
 

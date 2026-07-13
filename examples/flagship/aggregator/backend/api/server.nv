@@ -21,13 +21,10 @@
 // nova-http, sibling repo) — declared in `examples/nova.toml`'s
 // `[dependencies]`, same pattern as `tls`/`examples/tls`.
 
-module aggregator.server
+module backend.api
 
-import ./aggregate.{aggregate}
-import ./domain.{Source, Report}
-import ./emit.{Emit}
-import ./report_json.{report_to_json}
-import ./scenarios.{weather_demo_sources, WEATHER_BUDGET_MS, health_demo_sources, HEALTH_BUDGET_MS}
+import ../app.{aggregate, Source, Report, Emit}
+import ../app.{weather_demo_sources, WEATHER_BUDGET_MS, health_demo_sources, HEALTH_BUDGET_MS}
 import http.server.{ServeMux, ServerResponse, handler_fn}
 // Explicit import for the C runtime to link `Duration` support (same
 // requirement as aggregate.nv — see that file's header comment).

@@ -4,7 +4,7 @@
 // Pure data, no effects. Shared by the backend (aggregate.nv), the synthetic
 // scenarios (scenarios.nv), and the JSON snapshot (report_json.nv).
 
-module aggregator.domain
+module backend.app
 
 // ── Source ───────────────────────────────────────────────────────────────
 
