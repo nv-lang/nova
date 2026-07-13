@@ -9642,6 +9642,35 @@ impl<'a> TypeCheckCtx<'a> {
     /// Named, effectful Func, Readonly/Mut/Ptr) falls to a `Ty::Concrete` leaf —
     /// safe, because a carrier buried under such a leaf simply fails to unify and
     /// the caller's byte-parity gate then defers to legacy.
+    /// 196.5 Stage-D wave-2 (дыра-2): does `rt` RE-SPELL any of the callee's own
+    /// generic names (`vars` keys) as a bare `Named{name}`/`TypeParam(name)` leaf?
+    /// Such a value is a leaked DECLARATION spelling (an unsubstituted `T`/`U`),
+    /// not a concrete type — feeding it to the solver as a `Ty::Concrete` leaf is
+    /// exactly the d119 spelling-collision hazard (see `constraint_solver` module
+    /// doc). Used to reject poisoned arg-type candidates in
+    /// `resolve_return_channel` (producer B).
+    fn rt_respells_names(
+        rt: &ResolvedType,
+        vars: &HashMap<String, constraint_solver::TypeVar>,
+    ) -> bool {
+        use ResolvedType as R;
+        match rt {
+            R::TypeParam(n) => vars.contains_key(n),
+            R::Named { name, args, module } => {
+                (module.is_empty() && args.is_empty() && vars.contains_key(name))
+                    || args.iter().any(|a| Self::rt_respells_names(a, vars))
+            }
+            R::Tuple(items) => items.iter().any(|i| Self::rt_respells_names(i, vars)),
+            R::Array(inner) => Self::rt_respells_names(inner, vars),
+            R::Func { params, ret, .. } => {
+                params.iter().any(|p| Self::rt_respells_names(p, vars))
+                    || Self::rt_respells_names(ret, vars)
+            }
+            R::TypedPtr(_, inner) | R::Readonly(inner) => Self::rt_respells_names(inner, vars),
+            _ => false,
+        }
+    }
+
     fn ty_from_resolved_vars(
         rt: &ResolvedType,
         vars: &HashMap<String, constraint_solver::TypeVar>,
@@ -9820,7 +9849,23 @@ impl<'a> TypeCheckCtx<'a> {
                                 return None;
                             }
                             self.resolved_types_buf.borrow().get(&a.expr().id).cloned()
-                        });
+                        })
+                        // 196.5 Stage-D wave-2 (дыра-2, D2H): an arg type that RE-SPELLS
+                        // any of THIS callee's own generic names (`fn(T)->U` buffered for
+                        // a closure literal whose registration didn't substitute the
+                        // carrier — observed for user generic records: `D119Box[T]@map[U]`
+                        // arg buffered as `Func{[Named"T"], Named"U"}`) is unification
+                        // POISON, not information: `Ty::from_resolved` lifts the bare
+                        // `Named{T}` as a CONCRETE leaf (the d119 spelling hazard this
+                        // solver's fresh-var design exists to avoid), the pair-unify then
+                        // conflicts with the already-bound carrier var (`Var(T)=int` vs
+                        // `Named{T}`) and the WHOLE eq is atomically dropped — `U` never
+                        // binds, `as_concrete_leaf` honestly `None`s, and producer B
+                        // stays silent for the ENTIRE user-record method-generic class.
+                        // Rejecting the poisoned value falls through to the closure-
+                        // return peek below (`fpp_concrete` reseeded from the solver's
+                        // OWN carrier binding), which resolves the same call correctly.
+                        .filter(|rt| !Self::rt_respells_names(rt, &vars));
                     if let Some(a_rt) = a_rt {
                         extra_eqs.push((p_lifted, Ty::from_resolved(&a_rt)));
                     } else if let TypeRef::Func { params: fpp, return_type: Some(fr), .. } = &p_self {
@@ -13603,7 +13648,7 @@ impl<'a> TypeCheckCtx<'a> {
             //
             // Plan 125.1 (Ф.2): never-returning builtins + user fns whose
             // return_type resolves to `Ty::Never` → propagate `never`.
-            ExprKind::Call { func, .. } => {
+            ExprKind::Call { func, args: outer_call_args, .. } => {
                 // [M-183-int-to-str-module-method-collision] (§0 checker-primary):
                 // EFFECT-OPERATION call — `Time.now_monotonic_ns()` / `Clock.tick()` — has a
                 // STATICALLY-KNOWN declared return type (the op's `return_type` in the
@@ -13640,6 +13685,131 @@ impl<'a> TypeCheckCtx<'a> {
                                     Some(rt) => rt.clone(),
                                     None => TypeRef::Unit(expr.span),
                                 });
+                            }
+                        }
+                    }
+                }
+                // 196.5 Stage-D wave-2 (дыра-1, D1H1): a static call on a PRIMITIVE
+                // type name (`str.from(x)`, `int.parse(...)`) parses to
+                // `ExprKind::Path(["str", "from"])`, NOT `Member{obj:Ident, name}` —
+                // primitive type names are reserved tokens, not plain `Ident`s (mirrors
+                // the SAME Path-shape check `f1_check_call` already relies on at
+                // `~12290`: `parts[0] == "str" && parts[1] == "from"`). The Member-keyed
+                // static-return arm below (`tyname`/`ctor`, gated on `self.types`/
+                // `is_primitive_type_name`) therefore never sees this call shape —
+                // `closure_arg_return_peek`'s `infer_expr_type(body, ..)` on a closure
+                // literal whose body is `str.from(x)` returned `None`, so `Option[T]
+                // @map[U](fn(T)->U)`/`Result[T,E]@map[U]` calls with such a closure
+                // co-missed BOTH `resolved_types` (Channel 2) and `node_substs` (same
+                // propose-then-verify block in `resolve_return_channel`/
+                // `resolve_instance_method_return_arity`, both gated on this same
+                // return-type resolution) and fell to legacy
+                // `infer_method_level_return_for_sum` (emit_c.rs). Mirror ONLY the
+                // primitive-receiver concrete-return sub-case (no `self.types`/generics
+                // lookup needed — primitives are never generic) — single-overload,
+                // static receiver, concrete Named/Self return, same gate as `13741`.
+                if let ExprKind::Path(parts) = &func.kind {
+                    if parts.len() == 2 && Self::is_primitive_type_name(parts[0].as_str()) {
+                        if let Some(overloads) = self.method_overloads(&parts[0], &parts[1]) {
+                            // `str.from` etc. commonly have MULTIPLE static overloads
+                            // (one per source primitive: char/bool/f64/f32/int/...,
+                            // `std/runtime/string/from_scalar.nv` + `std/runtime/
+                            // char.nv`) — same arg-type dispatch the instance-method
+                            // multi-overload arm already performs (`~14382`): same
+                            // arity, single overload whose CONCRETE (non-generic,
+                            // primitive-or-Str/Bool) param0 matches the first arg's
+                            // inferred type.
+                            let static_candidates: Vec<&FnDecl> = overloads.iter()
+                                .filter(|s| s.receiver.as_ref()
+                                    .map_or(false, |r| matches!(r.kind, ReceiverKind::Static))
+                                    && s.generics.is_empty())
+                                .copied()
+                                .collect();
+                            let picked: Option<&FnDecl> = match static_candidates.as_slice() {
+                                [] => None,
+                                [one] => Some(*one),
+                                many => {
+                                    let a0 = outer_call_args.first().map(|a| a.expr());
+                                    a0.and_then(|a0| {
+                                        let a0_rt = self.infer_expr_type(a0, scope)
+                                            .map(|t| ResolvedType::from_type_ref(&t))?;
+                                        let mut hit: Option<&FnDecl> = None;
+                                        for cand in many {
+                                            let Some(p0) = cand.params.first() else { continue };
+                                            let p0_rt = ResolvedType::from_type_ref(&p0.ty);
+                                            let concrete = Self::primitive_gate(&p0_rt)
+                                                || matches!(&p0_rt,
+                                                    ResolvedType::Str | ResolvedType::Bool)
+                                                || matches!(&p0_rt,
+                                                    ResolvedType::Named { args, .. } if args.is_empty());
+                                            if !concrete || p0_rt != a0_rt { continue; }
+                                            if hit.is_some() { return None; } // ambiguous
+                                            hit = Some(*cand);
+                                        }
+                                        hit
+                                    })
+                                }
+                            };
+                            if let Some(f) = picked {
+                                if let Some(ret) = &f.return_type {
+                                    let concrete = match ret {
+                                        TypeRef::Named { path, generics, .. }
+                                            if path.len() == 1 && generics.is_empty() =>
+                                        {
+                                            if path[0] == "Self" {
+                                                Some(parts[0].clone())
+                                            } else if self.types.contains_key(&path[0])
+                                                || Self::is_primitive_type_name(&path[0])
+                                            {
+                                                Some(path[0].clone())
+                                            } else {
+                                                None
+                                            }
+                                        }
+                                        _ => None,
+                                    };
+                                    if let Some(n) = concrete {
+                                        return Some(TypeRef::Named {
+                                            path: vec![n],
+                                            generics: Vec::new(),
+                                            span: expr.span,
+                                        });
+                                    }
+                                    if ret.is_pointer_or_wraps_pointer() || ret.is_readonly() {
+                                        return Some(ret.clone());
+                                    }
+                                    // 196.5 Stage-D wave-2 (дыра-1, D1H1 follow-up): a
+                                    // NON-bare `Self`-mentioning return (`fn u64.
+                                    // try_from(s str) -> Result[Self, TryFromIntError]`,
+                                    // `std/runtime/*`) falls through the bare-Named
+                                    // `concrete` match above (`generics.is_empty()` is
+                                    // false for `Result[Self,E]`) — the whole call
+                                    // (`u64.try_from(a)`) stayed untyped, so a CHAINED
+                                    // `.ok()`/`.unwrap_or`/`??` on it (`std/src/data/
+                                    // semver.nv`: `u64.try_from(a).ok() ?? 0`) could not
+                                    // resolve ITS OWN receiver type either → co-miss
+                                    // cascades one level up (`Result.ok`, same channel/
+                                    // node_substs block). `f.generics.is_empty()` was
+                                    // already gated above, so `Self` is the ONLY name
+                                    // that can be a residual placeholder here — substitute
+                                    // it (mirrors `resolve_return_channel`'s `self_subst`
+                                    // pattern, `~9770`) and accept iff NOTHING still
+                                    // mentions `Self` afterward (recursive, catches nested
+                                    // generics — no new inference, one substitution pass).
+                                    let mut self_subst: HashMap<String, TypeRef> = HashMap::new();
+                                    self_subst.insert("Self".to_string(), TypeRef::Named {
+                                        path: vec![parts[0].clone()],
+                                        generics: Vec::new(),
+                                        span: expr.span,
+                                    });
+                                    let substituted = crate::const_fn_trampoline::subst_type_ref_pub(
+                                        ret, &self_subst);
+                                    let mut self_only: HashSet<String> = HashSet::new();
+                                    self_only.insert("Self".to_string());
+                                    if !typeref_mentions_any(&substituted, &self_only) {
+                                        return Some(substituted);
+                                    }
+                                }
                             }
                         }
                     }
@@ -13738,10 +13908,26 @@ impl<'a> TypeCheckCtx<'a> {
                     // (fail-path эмиссия defer-тел читает канал, не var_types-тайминг).
                     // Консервативно: single-overload static, non-generic тип, конкретный
                     // Named/Self return без generic-упоминаний.
+                    // 196.5 Stage-D wave-2 (дыра-1, D1H1): `self.types` — только
+                    // ПОЛЬЗОВАТЕЛЬСКИЕ `type X {..}` декларации; builtin-примитивы
+                    // (`str`/`int`/...) в ней НЕ зарегистрированы, хотя они законные
+                    // non-generic static-receiver'ы с `method_overloads`-записями
+                    // (`str.from(x)` — Plan 35/73). Гейт раньше ронял ВЕСЬ арм для
+                    // примитивного receiver'а → `closure_arg_return_peek` (types/mod.rs
+                    // ~14993, `infer_expr_type` на теле closure-литерала) не мог
+                    // вывести тип тела `str.from(x)` → `Option[T]@map[U]`/`Result[T,E]
+                    // @map[U]` с ТАКИМ closure-телом падали в co-miss (Channel-2 И
+                    // node_substs — оба продюсера пишут в ОДНОМ блоке, гейтированном
+                    // ИМЕННО этим условием) → легаси `infer_method_level_return_for_sum`
+                    // (emit_c.rs). Расширение на `is_primitive_type_name` — тот же
+                    // паттерн, что уже используется чуть ниже (`13759`) для bare-Named
+                    // return-конкретизации; НЕ новый инференс, тот же `method_overloads`
+                    // lookup, тот же single-overload/static/non-generic гейт.
                     if let ExprKind::Ident(tyname) = &obj.kind {
-                        if self.types.get(tyname.as_str())
+                        let non_generic_known_recv = self.types.get(tyname.as_str())
                             .map_or(false, |td| td.generics.is_empty())
-                        {
+                            || Self::is_primitive_type_name(tyname);
+                        if non_generic_known_recv {
                             if let Some(overloads) = self.method_overloads(tyname, ctor) {
                                 if let [f] = overloads.as_slice() {
                                     if f.receiver.as_ref()
@@ -14349,6 +14535,29 @@ impl<'a> TypeCheckCtx<'a> {
         }) {
             Some(o) => o,
             None => {
+                // 196.5 Stage-D wave-2 (дыра-1, D1H1 шаг 3): `unwrap`-семья на
+                // Option/Result — РЕТРАКТИРОВАННЫЕ методы (D85/D86, prelude
+                // `[M-unwrap-twins-retraction]`): деклараций в .nv НЕТ, но вызовы
+                // живут (conformance d119_*, m196_*; desugar map-spread СИНТЕЗИРУЕТ
+                // `.get(k).unwrap()`) и обслуживаются исключительно codegen-легаси
+                // хардкодом (`emit_c.rs` B11q/B11r match-армы: `"unwrap" |
+                // "unwrap_or" | "unwrap_or_else" => elem_ty/ok_c`). Продюсер канала
+                // работает от деклараций → для undeclared метода канал co-miss
+                // ПО ПОСТРОЕНИЮ. Зеркалируем тот же фундаментальный факт
+                // (`Option[T]→T`, `Result[T,E]→T`) на уровне чекера — НЕ язык-
+                // меняющее (поведение уже такое), просто материализация в канал.
+                // Гейт: конкретный (не param) первый generic — residual пометит
+                // mark_type_params на Call-арме, как у всех продюсеров.
+                if matches!(method, "unwrap" | "unwrap_or" | "unwrap_or_else") {
+                    if let TypeRef::Named { path, generics, .. } = peeled {
+                        if path.len() == 1
+                            && ((path[0] == "Option" && generics.len() == 1)
+                                || (path[0] == "Result" && generics.len() == 2))
+                        {
+                            return Some(generics[0].clone());
+                        }
+                    }
+                }
                 // 172.1.2 (protocol-ресивер, 2026-07-03): `w Writer` — сигнатура
                 // метода живёт в декларации ПРОТОКОЛА (D53), не в method_table.
                 // Konkretный declared return (без generics/Self) — фундаментальный
