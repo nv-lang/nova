@@ -22,7 +22,7 @@
 module tls.echo_client
 
 import std.net.{SocketAddr, TcpStream, real_net}
-import tls.tls.{TlsStream, ClientConfig, VerificationMode, TlsVersion}
+import tls.{TlsStream, ClientConfig, VerificationMode, TlsVersion}
 
 const PORT u16 = 7778
 const MESSAGE str = "hello from nova, over tls"
@@ -47,7 +47,7 @@ fn main() {
                             Err(e) => println("TLS handshake failed: " + e.to_str())
                             Ok(session) => {
                                 // NB: don't name this binding `tls` — it would
-                                // shadow the imported package alias (`tls.tls.*`)
+                                // shadow the imported package alias (`tls.*`)
                                 // and turn `stream.write_all(...)` below into
                                 // an (invalid) module-qualified call instead of
                                 // a method call (E7401).

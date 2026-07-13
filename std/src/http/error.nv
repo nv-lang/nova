@@ -30,7 +30,7 @@ module std.http
 
 import std.encoding.compress.{CompressError}
 import std.net.{NetError}
-import tls.tls.{TlsError}
+import tls.{TlsError}
 
 /// Категория ошибки http-домена. **OPEN** (D358): `Other(str)` — catch-all,
 /// поэтому `match` ОБЯЗАН нести wildcard-arm; расширение (h2/h3) не ломает

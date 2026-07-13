@@ -75,7 +75,7 @@ enforce-stability = true
 # (эталон паттерна Plan 195), больше НЕ compiler-built-in (nova_rt/tls_c_shim.c
 # + test_runner.rs's D337-style TLS auto-link special case — оба retired в
 # этом заходе). std/http/transport/real.nv тянет TLS через эту зависимость
-# (`import tls.tls.{...}`) — единственный внешний dep стандартной библиотеки.
+# (`import tls.{...}`) — единственный внешний dep стандартной библиотеки.
 #
 # `path` — форма для локальной разработки (механизм 03.1 ✅, path-deps не
 # пинуются). CI/публикация — `git`-форма на реальном remote nova-tls; пока не

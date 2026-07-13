@@ -13,7 +13,7 @@
 |---|---|
 | `echo_server.nv` | Accepts one TCP connection, TLS-handshakes as server, echoes one message |
 | `echo_client.nv` | Connects, TLS-handshakes as client, sends a message, prints the echo |
-| `certs/` | Self-signed `localhost` cert/key pair — **test-only fixture**, copied from `nova-tls`'s own `src/tls/testdata/` (keys are public by design, see `nova-tls/src/tls/testdata/README.md`); regenerate with the `openssl` recipe documented there before reusing this pattern for anything real |
+| `certs/` | Self-signed `localhost` cert/key pair — **test-only fixture**, copied from `nova-tls`'s own `src/testdata/` (keys are public by design, see `nova-tls/src/testdata/README.md`); regenerate with the `openssl` recipe documented there before reusing this pattern for anything real |
 
 Both files mirror `examples/net/echo_server.nv` / `echo_client.nv` 1:1 —
 same `TcpListener`/`TcpStream`/`spawn`/`supervised` shape — with exactly one
@@ -37,13 +37,13 @@ the code itself is sound. `nova build`/`nova run`, unlike `nova test`, has
 no detect-and-degrade: it always tries to actually link, so it needs a real
 mbedTLS (`mbedtls`/`mbedx509`/`mbedcrypto`) reachable exactly as described
 below — without one, expect a linker error (`undefined symbol: tls_*`), not
-a silent skip. `nova test std/http/transport` (a real `tls.tls` consumer
+a silent skip. `nova test std/http/transport` (a real `tls` consumer
 already in the tree) is the easiest way to check your setup first — SKIP
 means "no mbedTLS yet", not "broken".
 
 ## How the dependency is wired
 
-`tls.tls.*` is **not** part of `std` — it lives in a separate repository,
+`tls.*` is **not** part of `std` — it lives in a separate repository,
 [`nova-tls`](https://github.com/nv-lang/nova-tls), a sibling checkout next
 to this one (`../../nova-tls` relative to this repo's root). It is declared
 as an ordinary external `path` dependency in `examples/nova.toml`:
@@ -58,7 +58,7 @@ TLS support for `std.http.transport` — an external package is not a
 special case, it's declared and imported like any other dependency:
 
 ```nova
-import tls.tls.{TlsStream, ClientConfig, ServerConfig, VerificationMode}
+import tls.{TlsStream, ClientConfig, ServerConfig, VerificationMode}
 ```
 
 `nova-tls` ships zero Rust/cargo: a `.nv` facade over a thin C shim
@@ -72,9 +72,9 @@ lib_dirs`) instead of a hard link failure — see `nova-tls/nova.toml`'s
 
 ## See also
 
-- `nova-tls` repository — package layout, module-path notes (`tls.tls`,
-  not bare `tls` — a D78 external-package-naming quirk explained there),
-  standalone build instructions
+- `nova-tls` repository — package layout, module-path notes (root peers,
+  D78 rev-4 — bare `tls`, no more `tls.tls` statter), standalone build
+  instructions
 - `docs/plans/193-nova-tls-repo.md` — the extraction plan (std/tls →
   nova-tls) this example validates end-to-end
 - `docs/plans/195-native-modules-c-not-rust.md` — the general native-module
