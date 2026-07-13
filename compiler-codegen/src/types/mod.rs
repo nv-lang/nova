@@ -23670,6 +23670,15 @@ struct ConsumeRegistry {
     /// → indices of non-unsafe-T-typed params. Parallel free-fn
     /// `fn_non_unsafe_params`.
     method_non_unsafe_params: HashMap<(String, String), Vec<usize>>,
+    /// `[M-178-consume-field-ctor-from-var]` fix (Plan 178.5, 2026-07-13):
+    /// type name (record's own name, or a sum variant's name for
+    /// `SumVariantKind::Record`) → names of its `consume`-marked fields.
+    /// Used at `RecordLit` construction sites: initializing a consume-field
+    /// with a bare owned variable / consume-param (`{ tcp: stream, .. }`) is
+    /// a move of that binding — mirrors consume-param call-site semantics
+    /// (`consume_args`). Keyed by last path segment, same lookup convention
+    /// as `infer_value_type`'s `RecordLit { type_name: Some(path), .. }` arm.
+    record_consume_fields: HashMap<String, HashSet<String>>,
 }
 
 impl ConsumeRegistry {
@@ -23698,6 +23707,38 @@ impl ConsumeRegistry {
         // indices (positions where param's outer wrapper is NOT Unsafe).
         let mut fn_non_unsafe_params: HashMap<String, Vec<usize>> = HashMap::new();
         let mut method_non_unsafe_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
+        // `[M-178-consume-field-ctor-from-var]`: type name → consume-field
+        // names (record types + sum-variant record payloads).
+        let mut record_consume_fields: HashMap<String, HashSet<String>> = HashMap::new();
+        for item in &module.items {
+            if let Item::Type(td) = item {
+                match &td.kind {
+                    TypeDeclKind::Record(fields) => {
+                        let names: HashSet<String> = fields.iter()
+                            .filter(|f| f.consume)
+                            .map(|f| f.name.clone())
+                            .collect();
+                        if !names.is_empty() {
+                            record_consume_fields.insert(td.name.clone(), names);
+                        }
+                    }
+                    TypeDeclKind::Sum(variants) => {
+                        for v in variants {
+                            if let SumVariantKind::Record(fields) = &v.kind {
+                                let names: HashSet<String> = fields.iter()
+                                    .filter(|f| f.consume)
+                                    .map(|f| f.name.clone())
+                                    .collect();
+                                if !names.is_empty() {
+                                    record_consume_fields.insert(v.name.clone(), names);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         // Plan 100.3 (D157): collect consume-types for view-param detection.
         // Mirrors LinearityRegistry::build consume_types collection.
@@ -23853,6 +23894,7 @@ impl ConsumeRegistry {
             mut_methods_arity, ro_methods_arity, recv_returning_arity,
             fn_mut_params, method_mut_params,
             fn_non_unsafe_params, method_non_unsafe_params,
+            record_consume_fields,
         }
     }
 
@@ -28183,7 +28225,14 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                 }
             }
         }
-        ExprKind::RecordLit { fields, .. } => {
+        ExprKind::RecordLit { type_name, fields, .. } => {
+            // `[M-178-consume-field-ctor-from-var]` fix: consume-поля этого
+            // типа литерала (по последнему сегменту пути — тот же lookup,
+            // что и `infer_value_type`'s `RecordLit` arm).
+            let consume_field_names: Option<&HashSet<String>> = type_name
+                .as_ref()
+                .and_then(|p| p.last())
+                .and_then(|tn| ctx.reg.record_consume_fields.get(tn));
             for f in fields {
                 if let Some(v) = &f.value {
                     consume_walk_expr(ctx, v, errors);
@@ -28195,7 +28244,29 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                         let vcanon = ctx.canonical(vn);
                         if ctx.block_guards.contains(&vcanon) {
                             ctx.guard_violations.push((vcanon, v.span));
+                        } else if consume_field_names
+                            .map_or(false, |s| s.contains(f.name.as_str()))
+                        {
+                            // `[M-178-consume-field-ctor-from-var]`: голая
+                            // owned-переменная / consume-параметр в
+                            // consume-поле record-литерала — потребление
+                            // этого биндинга (как передача в consume-параметр
+                            // вызова, см. `consume_args`).
+                            ctx.mark_consumed(vn, v.span);
                         }
+                    }
+                } else if !f.is_spread {
+                    // D52 field punning `{ name }` — implied value = ident
+                    // `name`. Тот же move-эффект, что и explicit `{ name: name }`
+                    // (которая, впрочем, запрещена D52 §2 — редундантная форма).
+                    ctx.use_var(&f.name, f.span, errors);
+                    let vcanon = ctx.canonical(&f.name);
+                    if ctx.block_guards.contains(&vcanon) {
+                        ctx.guard_violations.push((vcanon, f.span));
+                    } else if consume_field_names
+                        .map_or(false, |s| s.contains(f.name.as_str()))
+                    {
+                        ctx.mark_consumed(&f.name, f.span);
                     }
                 }
             }
