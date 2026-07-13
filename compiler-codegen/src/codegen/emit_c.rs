@@ -31642,23 +31642,53 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // fallback), but the actual argument types are more specific (e.g. nova_uint),
                 // re-derive param and return types from the arguments + body inference.
                 // This fixes width collapse: `|v| v` called with `uint` stays `uint`.
-                if let Some((param_names, body)) = self.unanno_light_clos.get(name).cloned() {
-                    if args.len() == param_names.len() {
-                        let actual_ptys: Vec<String> = args.iter()
-                            .map(|a| self.infer_expr_c_type(a.expr()))
-                            .collect();
-                        if actual_ptys.iter().any(|t| t != "nova_int") {
-                            // Temporarily bind param names → actual types for body inference.
-                            for (pname, pty) in param_names.iter().zip(actual_ptys.iter()) {
-                                self.closure_param_type_overrides.borrow_mut()
-                                    .insert(pname.clone(), pty.clone());
+                //
+                // [M-196.5-b3-unanno-clos-stale] (found closing the segfault fix above
+                // end-to-end against the full conformance CU): `unanno_light_clos` is
+                // keyed ONLY by the fn-typed PARAMETER's bare name (e.g. "f" — the SAME
+                // name vec_seq.nv's `map`/`filter`/BoxIter's `map`/etc. all happen to
+                // share), globally, across the WHOLE compile — not per call-site, not
+                // per mono instance. A `.map(...)` call's own worklist-drained mono BODY
+                // (`emit_monomorphized_method`, register_mono_method_instance's queue) is
+                // emitted LAZILY, potentially long after every OUTER call site in the CU
+                // already ran and overwrote `unanno_light_clos["f"]` with whichever
+                // UNRELATED closure literal was bound to "f" last — so re-deriving from
+                // `self.unanno_light_clos.get(name)` here can silently type THIS mono's
+                // `f(x)` from a completely different closure's body (observed: a `[]T`
+                // receiver's `.map()` call picked up a stale entry and mistyped `w.name`
+                // — U=str — as the receiver's OWN type `Nova_M186Widget*`, corrupting the
+                // NovaClosBase invocation cast; the qty/U=int sibling call was equally
+                // wrong but happened to still compile since nova_int and a pointer are
+                // both scalar-width). The gate below gets D402 back to its DOCUMENTED
+                // intent — the STORED `fn_param_sigs` entry (`param_tys`/`ret_ty`, read
+                // above) LOOKING LIKE the "nova_int" bootstrap placeholder — instead of
+                // firing whenever the CALL's own argument merely isn't `nova_int` (true
+                // for EVERY non-int-element generic HOF, whether or not the stored sig
+                // was ever a placeholder). A mono-registered sig like ours
+                // (`emit_monomorphized_method`, never a bootstrap default) now skips this
+                // re-derivation entirely — no stale lookup, no corruption; the genuine
+                // D402 bootstrap-default case (all-`nova_int` stored sig) is unaffected.
+                let sig_looks_like_bootstrap_default =
+                    ret_ty == "nova_int" && param_tys.iter().all(|t| t == "nova_int");
+                if sig_looks_like_bootstrap_default {
+                    if let Some((param_names, body)) = self.unanno_light_clos.get(name).cloned() {
+                        if args.len() == param_names.len() {
+                            let actual_ptys: Vec<String> = args.iter()
+                                .map(|a| self.infer_expr_c_type(a.expr()))
+                                .collect();
+                            if actual_ptys.iter().any(|t| t != "nova_int") {
+                                // Temporarily bind param names → actual types for body inference.
+                                for (pname, pty) in param_names.iter().zip(actual_ptys.iter()) {
+                                    self.closure_param_type_overrides.borrow_mut()
+                                        .insert(pname.clone(), pty.clone());
+                                }
+                                let actual_ret = self.infer_expr_c_type(&body);
+                                for pname in &param_names {
+                                    self.closure_param_type_overrides.borrow_mut().remove(pname);
+                                }
+                                param_tys = actual_ptys;
+                                ret_ty = actual_ret;
                             }
-                            let actual_ret = self.infer_expr_c_type(&body);
-                            for pname in &param_names {
-                                self.closure_param_type_overrides.borrow_mut().remove(pname);
-                            }
-                            param_tys = actual_ptys;
-                            ret_ty = actual_ret;
                         }
                     }
                 }
@@ -34818,19 +34848,113 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 }
                                             }
                                         }
+                                        // Plan 196.5 Stage-B3 [M-196.5-b3-channel-first]: consult
+                                        // `node_substs[call_id]` — the checker channel (196.5 §6.2,
+                                        // producer B `resolve_instance_method_return_arity`'s
+                                        // method-residual/carrier branches) — BEFORE the legacy
+                                        // per-arg/closure-body inference below. `infer_type_param_binding`
+                                        // only fills a still-`None` slot (see its body — idempotent),
+                                        // so pre-seeding here can only FILL a gap the legacy loop
+                                        // would otherwise miss; it never overrides a value the legacy
+                                        // path already computes, so calls the legacy engine already
+                                        // resolves correctly are untouched (byte-identical). Where the
+                                        // channel has nothing (this call-shape's own `resolve_
+                                        // method_return_with_closure_args` producer doesn't write the
+                                        // channel — a known Tier-2 gap, not this stage's scope), the
+                                        // corrected fallback below still applies.
+                                        if let Some(channel) = self.node_substs.get(&call_id) {
+                                            for (name, rt) in channel {
+                                                if let Some(slot) = subst_pending.iter_mut().find(|(n, _)| n == name) {
+                                                    if slot.1.is_none() {
+                                                        if let Ok(c) = self.resolved_type_to_c(rt) {
+                                                            if !c.is_empty() && c != "void*" {
+                                                                slot.1 = Some(c);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                         // Infer остальные generics из args + closure return.
+                                        // [M-196.5-b3-closure-param-bind] segfault fix (see
+                                        // spec_tests/conformance/m186_map_field_hof_return_infer.nv
+                                        // header): track which generic names are bound FROM a
+                                        // closure-arg's return type, so an unresolved one can get an
+                                        // honest error below instead of silently defaulting to
+                                        // `nova_int` (the segfault: a non-int closure return, e.g.
+                                        // `w.name : str`, silently mono'd as if it were `nova_int`).
+                                        let mut closure_return_generics: Vec<String> = Vec::new();
                                         for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
                                             let arg_c = self.infer_expr_c_type(arg.expr());
                                             self.infer_type_param_binding(&param.ty, &arg_c, &mut subst_pending);
-                                            if let crate::ast::TypeRef::Func { return_type: Some(ret_ty_ref), .. } = &param.ty {
-                                                let closure_ret_c = match &arg.expr().kind {
-                                                    crate::ast::ExprKind::ClosureLight { body, .. } => match body {
-                                                        crate::ast::ClosureBody::Expr(e) => self.infer_expr_c_type(e),
-                                                        crate::ast::ClosureBody::Block(b) => b.trailing.as_ref()
-                                                            .map(|e| self.infer_expr_c_type(e))
-                                                            .unwrap_or_default(),
-                                                    },
+                                            if let crate::ast::TypeRef::Func { params: closure_param_tys, return_type: Some(ret_ty_ref), .. } = &param.ty {
+                                                // Bare-typevar return slot name (the shape `fn(T) -> U`
+                                                // this whole branch targets) — `None` for anything else
+                                                // (a composite return type, e.g. `fn(T) -> []U`, is left
+                                                // to the general `infer_type_param_binding` recursion
+                                                // below, unchanged from legacy).
+                                                let ret_slot_name: Option<&str> =
+                                                    match ret_ty_ref.as_ref() {
+                                                        crate::ast::TypeRef::Named { path, generics, .. }
+                                                            if generics.is_empty() && path.len() == 1 =>
+                                                            Some(path[0].as_str()),
+                                                        _ => None,
+                                                    };
+                                                if let Some(name) = ret_slot_name {
+                                                    closure_return_generics.push(name.to_string());
+                                                }
+                                                // Already bound (channel pre-seed above, or an earlier
+                                                // param in this same loop) — skip the body re-inference.
+                                                let already_bound = ret_slot_name.map_or(false, |name|
+                                                    subst_pending.iter().any(|(n, v)| n == name && v.is_some()));
+                                                let closure_ret_c = if already_bound {
+                                                    String::new()
+                                                } else {
+                                                    match &arg.expr().kind {
+                                                    crate::ast::ExprKind::ClosureLight { params: cl_params, body } => {
+                                                        // [M-196.5-b3-closure-param-bind]: bind the
+                                                        // closure's OWN param(s) into `var_types` BEFORE
+                                                        // inferring the body — without this a Member expr
+                                                        // in the body (`w.name`) can't resolve its
+                                                        // receiver's field type (`w` unbound), `infer_
+                                                        // expr_c_type` comes back empty, and the call's
+                                                        // fallback below silently mistyped a non-int U as
+                                                        // `nova_int` — the runtime segfault this fixes.
+                                                        // Mirrors `resolve_method_level_subst`'s Step 2
+                                                        // (~19920): resolve the closure's declared param
+                                                        // types (`closure_param_tys`, e.g. the receiver
+                                                        // typevar `T`) under the subst bound so far.
+                                                        let saved_subst = std::mem::replace(
+                                                            &mut self.current_type_subst,
+                                                            Self::subst_map_from_c_pairs(subst_pending.iter()
+                                                                .filter_map(|(n, v)| v.clone().map(|c| (n.clone(), c)))));
+                                                        let inner_ptys: Vec<Option<String>> = cl_params.iter()
+                                                            .zip(closure_param_tys.iter())
+                                                            .map(|(_, t)| self.type_ref_to_c(t).ok())
+                                                            .collect();
+                                                        let saved_var_types: Vec<(String, Option<String>)> = cl_params.iter()
+                                                            .zip(inner_ptys.iter())
+                                                            .filter_map(|(cp, c_ty)| c_ty.as_ref().map(|c_ty| {
+                                                                (cp.name.clone(), self.var_types.insert(cp.name.clone(), c_ty.clone()))
+                                                            }))
+                                                            .collect();
+                                                        let ret_c = match body {
+                                                            crate::ast::ClosureBody::Expr(e) => self.infer_expr_c_type(e),
+                                                            crate::ast::ClosureBody::Block(b) => b.trailing.as_ref()
+                                                                .map(|e| self.infer_expr_c_type(e))
+                                                                .unwrap_or_default(),
+                                                        };
+                                                        for (name, prev) in saved_var_types {
+                                                            match prev {
+                                                                Some(old) => { self.var_types.insert(name, old); }
+                                                                None => { self.var_types.remove(&name); }
+                                                            }
+                                                        }
+                                                        self.current_type_subst = saved_subst;
+                                                        ret_c
+                                                    }
                                                     _ => String::new(),
+                                                    }
                                                 };
                                                 if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
                                                     self.infer_type_param_binding(
@@ -34914,9 +35038,40 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         // to nova_int here: whatever concrete type is picked, the
                                         // `Option[E]` slot it types never gets constructed with
                                         // real data on that call path.
+                                        // [M-196.5-b3-closure-param-bind]: a CLOSURE-RETURN-driven slot
+                                        // (tracked in `closure_return_generics` above) is different —
+                                        // silently defaulting it to `nova_int` is the exact segfault
+                                        // this stage fixes (a non-int U mono'd as if it were int). By
+                                        // this point the channel (pre-seed above) AND the corrected
+                                        // closure-body inference (param bound before the body is typed,
+                                        // above) have both had a chance, plus the turbofish/effect
+                                        // seeds in between. A residual miss here means BOTH the checker
+                                        // channel and codegen's own re-derivation failed to type the
+                                        // closure body — an honest CC-ERROR (Plan 70
+                                        // `[M-no-silent-nova-int-fallback]` convention, `err_no_int_
+                                        // fallback`) instead of a silent, possibly memory-unsafe
+                                        // miscompile.
+                                        let mut unresolved_closure_ret: Vec<String> = Vec::new();
                                         let type_subst: Vec<(String, String)> = subst_pending.into_iter()
-                                            .map(|(n, c)| (n, c.unwrap_or_else(|| "nova_int".to_string())))
+                                            .map(|(n, c)| match c {
+                                                Some(c) => (n, c),
+                                                None => {
+                                                    if closure_return_generics.contains(&n) {
+                                                        unresolved_closure_ret.push(n.clone());
+                                                    }
+                                                    (n, "nova_int".to_string())
+                                                }
+                                            })
                                             .collect();
+                                        if !unresolved_closure_ret.is_empty() {
+                                            return Err(self.err_no_int_fallback(
+                                                &format!(
+                                                    "closure-arg return type ({}) for `.{}()` on `{}`",
+                                                    unresolved_closure_ret.join(", "), method, rt),
+                                                "neither the node_substs checker channel nor the \
+                                                 closure body's own (param-bound) inference could \
+                                                 resolve it — see M-196.5-b3-closure-param-bind"));
+                                        }
                                         // Plan 196.3 Q9 (D16/D53/D72): structural RT slots from the
                                         // checker channel (`resolved_types[arg.id]`), adopted below at
                                         // the fn-typed-param inner-subst seed where it lowers byte-
