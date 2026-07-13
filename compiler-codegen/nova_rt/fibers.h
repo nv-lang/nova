@@ -309,6 +309,14 @@ typedef struct {
     NovaFailFrame** fiber_fail_top;      /* dynamic [count] */
     NovaInterruptFrame** fiber_interrupt_top; /* dynamic [count] */
     NovaEffectSnapshot** fiber_effect_snapshot; /* dynamic [count] */
+    /* Plan 201 trace-per-fiber (2026-07-13): per-fiber owned bucket for
+     * `_nova_last_error`/`_nova_throw_site`/`_nova_throw_trace` (effects.h
+     * NovaFiberErrorState). Allocated once when the slot is created
+     * (nova_scope_alloc_slot / nova_fiber_spawn_into) — mirrors
+     * fiber_effect_snapshot's lifecycle exactly, but swapped by POINTER
+     * (not copied) around mco_resume: see effects.h NovaFiberErrorState
+     * doc-comment for why a copy is unnecessary here. */
+    NovaFiberErrorState** fiber_error_state;    /* dynamic [count] */
     const char**    fiber_error;         /* dynamic [count] */
     nova_bool**     fiber_did_throw;     /* dynamic [count] */
     int             capacity;            /* alloc'нутая длина массивов */
@@ -721,6 +729,7 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
     NovaFailFrame**      new_fail_top = (NovaFailFrame**)nova_alloc(sizeof(NovaFailFrame*) * cap);
     NovaInterruptFrame** new_interrupt_top = (NovaInterruptFrame**)nova_alloc(sizeof(NovaInterruptFrame*) * cap);
     NovaEffectSnapshot** new_effect_snapshot = (NovaEffectSnapshot**)nova_alloc(sizeof(NovaEffectSnapshot*) * cap);
+    NovaFiberErrorState** new_error_state = (NovaFiberErrorState**)nova_alloc(sizeof(NovaFiberErrorState*) * cap);
     const char**         new_error = (const char**)nova_alloc(sizeof(const char*) * cap);
     nova_bool**          new_did_throw = (nova_bool**)nova_alloc(sizeof(nova_bool*) * cap);
     /* Copy existing data. */
@@ -731,6 +740,7 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
             new_fail_top[i]        = q->fiber_fail_top[i];
             new_interrupt_top[i]   = q->fiber_interrupt_top[i];
             new_effect_snapshot[i] = q->fiber_effect_snapshot[i];
+            new_error_state[i]     = q->fiber_error_state[i];
             new_error[i]           = q->fiber_error[i];
             new_did_throw[i]       = q->fiber_did_throw[i];
         }
@@ -742,6 +752,7 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
         new_fail_top[i]        = NULL;
         new_interrupt_top[i]   = NULL;
         new_effect_snapshot[i] = NULL;
+        new_error_state[i]     = NULL;
         new_error[i]           = NULL;
         new_did_throw[i]       = NULL;
     }
@@ -751,6 +762,7 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
     q->fiber_fail_top      = new_fail_top;
     q->fiber_interrupt_top = new_interrupt_top;
     q->fiber_effect_snapshot = new_effect_snapshot;
+    q->fiber_error_state   = new_error_state;
     q->fiber_error         = new_error;
     q->fiber_did_throw     = new_did_throw;
     q->capacity            = cap;
@@ -773,6 +785,7 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
     q->fiber_fail_top = NULL;
     q->fiber_interrupt_top = NULL;
     q->fiber_effect_snapshot = NULL;
+    q->fiber_error_state = NULL;  /* Plan 201 trace-per-fiber */
     q->fiber_error = NULL;
     q->fiber_did_throw = NULL;
     q->first_error = NULL;
@@ -1005,6 +1018,16 @@ static inline int nova_scope_alloc_slot(NovaFiberQueue* scope, mco_coro* co) {
             scope->fiber_fail_top[i]       = NULL;
             scope->fiber_interrupt_top[i]  = NULL;
             scope->fiber_effect_snapshot[i]= NULL;
+            /* Plan 201 trace-per-fiber: fresh per-fiber error-diag bucket
+             * (fresh fiber = no in-flight error yet) + point the active
+             * TLS pointer at it NOW — this call runs INSIDE the fiber's
+             * own preamble (first resume, before any user body statement
+             * that could throw), so by the time user code starts running
+             * `_nova_error_state_p` already targets this slot's OWN
+             * bucket instead of the calling worker's ambient one. */
+            scope->fiber_error_state[i]    =
+                (NovaFiberErrorState*)nova_alloc(sizeof(NovaFiberErrorState));
+            _nova_error_state_p = scope->fiber_error_state[i];
             scope->fiber_error[i]          = NULL;
             scope->fiber_did_throw[i]      = NULL;
             __atomic_store_n(&scope->slot_lock, 0, __ATOMIC_RELEASE);
@@ -1028,6 +1051,10 @@ static inline int nova_scope_alloc_slot(NovaFiberQueue* scope, mco_coro* co) {
     scope->fiber_fail_top[slot]       = NULL;
     scope->fiber_interrupt_top[slot]  = NULL;
     scope->fiber_effect_snapshot[slot]= NULL;
+    /* Plan 201 trace-per-fiber: see reuse-path comment above. */
+    scope->fiber_error_state[slot]    =
+        (NovaFiberErrorState*)nova_alloc(sizeof(NovaFiberErrorState));
+    _nova_error_state_p = scope->fiber_error_state[slot];
     scope->fiber_error[slot]          = NULL;
     scope->fiber_did_throw[slot]      = NULL;
     /* Release store: makes slot visible to other threads only after all
@@ -2032,6 +2059,14 @@ static inline void nova_fiber_spawn_into(NovaFiberQueue* q,
     q->fiber_ctx[q->count] = user;            /* GC root: SpawnCtx reachable via managed array */
     q->fiber_fail_top[q->count] = NULL;       /* fresh fiber: empty fail-stack */
     q->fiber_interrupt_top[q->count] = NULL;  /* and empty interrupt-stack */
+    /* Plan 201 trace-per-fiber: fresh per-fiber error-diag bucket (single-
+     * thread/bootstrap path). Parent thread allocates it here; the fiber's
+     * OWN first resume (nova_supervised_step, below) points the active TLS
+     * pointer at it before mco_resume — this function itself never runs
+     * the fiber, so pointing the TLS pointer here would be pointless (and
+     * wrong: this runs on the SPAWNING thread/fiber, not the new one). */
+    q->fiber_error_state[q->count] =
+        (NovaFiberErrorState*)nova_alloc(sizeof(NovaFiberErrorState));
     q->fiber_error[q->count] = NULL;
     q->fiber_did_throw[q->count] = NULL;
     /* Inherit current handler-state: новый fiber видит handlers из enclosing
@@ -2355,6 +2390,13 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
     int             outer_slot  = _nova_active_slot;
     NovaFailFrame*  outer_fail_top = _nova_fail_top;
     NovaInterruptFrame* outer_interrupt_top = _nova_interrupt_top;
+    /* Plan 201 trace-per-fiber: save outer active error-state pointer
+     * (getter self-heals to the native per-thread bucket if never touched
+     * on this thread). Restored after each fiber's resume below — no
+     * "save fiber's current value back" step needed (the fiber's bucket
+     * is fixed for its whole lifetime; mutations already land in it
+     * in-place through the pointer, see effects.h NovaFiberErrorState). */
+    NovaFiberErrorState* outer_error_state = nova_error_state_active();
     /* Save outer effect-handler-snapshot before scheduling fibers — после
      * resume каждого fiber'а handlers будут восстановлены к состоянию
      * outer flow. Фибры могут устанавливать собственные `with X = h`
@@ -2414,6 +2456,13 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
         _nova_interrupt_top = q->fiber_interrupt_top[i];
         _nova_active_scope  = q;
         _nova_active_slot   = i;
+        /* Plan 201 trace-per-fiber: point the active error-state pointer at
+         * THIS fiber's own bucket (allocated once at slot-creation —
+         * nova_fiber_spawn_into). Falls back to outer if somehow NULL
+         * (defensive; should not happen post slot-creation). */
+        if (q->fiber_error_state[i]) {
+            _nova_error_state_p = q->fiber_error_state[i];
+        }
         /* Per-fiber handler scoping: install fiber's saved handler-snapshot
          * before resume. Каждый fiber видит свои `with X = h` биндинги,
          * не handlers других fibers. */
@@ -2455,6 +2504,7 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
         _nova_interrupt_top = outer_interrupt_top;
         _nova_active_scope  = outer_scope;
         _nova_active_slot   = outer_slot;
+        _nova_error_state_p = outer_error_state;  /* Plan 201 trace-per-fiber */
         /* Restore outer handlers (clean state для следующего fiber'а
          * или main-flow после step). */
         nova_effect_snapshot_restore(&outer_effects);

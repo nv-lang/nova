@@ -963,6 +963,17 @@ static void _worker_main(void* arg) {
         NovaFiberQueue*     outer_scope     = _nova_active_scope;
         NovaFailFrame*      outer_fail      = _nova_fail_top;
         NovaInterruptFrame* outer_interrupt = _nova_interrupt_top;
+        /* Plan 201 trace-per-fiber: save outer active error-state pointer
+         * (getter self-heals to the native per-thread bucket on first
+         * touch). Restored unconditionally below, after mco_resume — no
+         * "save fiber's current value back" needed: unlike fail/interrupt,
+         * this pointer is never reassigned by ordinary throw/catch code
+         * during the fiber's run, only by this wrapper + the one-time
+         * slot-creation hook (nova_scope_alloc_slot, fibers.h), so the
+         * fiber's bucket contents mutate in-place through the pointer —
+         * see effects.h NovaFiberErrorState doc-comment for the full
+         * rationale (pointer-swap chosen over per-resume struct copy). */
+        NovaFiberErrorState* outer_error_state = nova_error_state_active();
         /* Plan 83.4.2 Ф.2 (2026-05-23): per-fiber handler-snapshot
          * save/restore на worker (A3+B2 fix). Раньше worker НЕ менял
          * TLS handler-state перед mco_resume — fiber видел handler'ы
@@ -983,6 +994,15 @@ static void _worker_main(void* arg) {
             int fslot = base->_nova_worker_slot;
             if (fslot < fscope->count && fscope->fiber_effect_snapshot[fslot]) {
                 nova_effect_snapshot_restore(fscope->fiber_effect_snapshot[fslot]);
+            }
+            /* Plan 201 trace-per-fiber: point at this fiber's OWN
+             * persistent error-diag bucket (allocated once at slot
+             * creation — nova_scope_alloc_slot, fibers.h). This is the
+             * fix for the cross-fiber trace corruption: a stolen fiber
+             * carries its own bucket regardless of which OS thread (and
+             * therefore which native/ambient bucket) resumes it. */
+            if (fslot < fscope->count && fscope->fiber_error_state[fslot]) {
+                _nova_error_state_p = fscope->fiber_error_state[fslot];
             }
         } else if (base && base->_nova_worker_slot <= -2 && base->_nova_fiber_scope) {
             /* Plan 83.11 fix: displaced fiber (slot=-2 sentinel set by close_cb Fix B).
@@ -1073,6 +1093,7 @@ static void _worker_main(void* arg) {
         _nova_active_scope  = outer_scope;
         _nova_fail_top      = outer_fail;
         _nova_interrupt_top = outer_interrupt;
+        _nova_error_state_p = outer_error_state;  /* Plan 201 trace-per-fiber */
         /* Plan 83.4.2 Ф.2: restore outer worker's effect state (для следующего
          * fiber'а или idle worker loop'а). */
         nova_effect_snapshot_restore(&outer_effects);
@@ -1849,6 +1870,8 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
     int                 outer_slot      = _nova_active_slot;
     NovaFailFrame*      outer_fail      = _nova_fail_top;
     NovaInterruptFrame* outer_interrupt = _nova_interrupt_top;
+    /* Plan 201 trace-per-fiber: see _worker_main for full rationale. */
+    NovaFiberErrorState* outer_error_state = nova_error_state_active();
     NovaEffectSnapshot  outer_effects;
     nova_effect_snapshot_save(&outer_effects);
 
@@ -1862,6 +1885,10 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
         int fslot = base->_nova_worker_slot;
         if (fslot < fscope->count && fscope->fiber_effect_snapshot[fslot]) {
             nova_effect_snapshot_restore(fscope->fiber_effect_snapshot[fslot]);
+        }
+        /* Plan 201 trace-per-fiber: point at this fiber's own bucket. */
+        if (fslot < fscope->count && fscope->fiber_error_state[fslot]) {
+            _nova_error_state_p = fscope->fiber_error_state[fslot];
         }
     } else if (base) {
         /* Before preamble (first run): restore saved fail/interrupt frames.
@@ -1910,6 +1937,7 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
     _nova_active_slot   = outer_slot;
     _nova_fail_top      = outer_fail;
     _nova_interrupt_top = outer_interrupt;
+    _nova_error_state_p = outer_error_state;  /* Plan 201 trace-per-fiber */
     nova_effect_snapshot_restore(&outer_effects);
 
     /* Parked check + deferred unlock (mirrors _worker_main). Plan 83-go-cmn Ф.2:
