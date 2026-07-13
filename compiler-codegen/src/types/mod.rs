@@ -27297,12 +27297,37 @@ fn scan_guard_decide(ctx: &ConsumeCtx, e: &Expr, canon: &str) -> (bool, Vec<(Spa
     (sanctioned, occ, closures)
 }
 
-/// Пушит E_CONSUME_BLOCK_MOVE_OUT-диагностику(и) для НАРУШЕНИЯ (`occ`/
-/// `closures` от `scan_guard_decide`, где `sanctioned == false`, но EXPR
-/// таки ссылается на `canon` — нечего пушить, если `occ`/`closures` оба
-/// пусты — EXPR канон вообще не упоминает). Уточнённый текст по причине
-/// (п.(д)): захватывающее замыкание / >1 вхождение / единственное
-/// вхождение не в consume-позиции.
+/// D188-амендмент v3 (non-consume-position fix, 2026-07-13, Plan 201):
+/// классификация `scan_guard_decide`'s `occ`/`closures` для ОДНОГО guard'а.
+/// - `Sanctioned` — ровно одно вхождение, В consume-позиции, без
+///   захватывающих замыканий → санкционированный вынос (disarm).
+/// - `Ordinary` — НИ ОДНОГО вхождения в consume-позиции (0 или сколько
+///   угодно обычных non-consume вхождений — receiver / view-/mut-
+///   аргумент), и нет захватывающих замыканий → ОБЫЧНОЕ использование, как
+///   в теле блока: НЕ ошибка, cleanup срабатывает штатно, дизарма нет.
+/// - `Violation` — захватывающее замыкание, ЛИБО ≥1 consume-вхождение
+///   вместе с ЕЩЁ каким-либо вхождением того же canon в том же EXPR
+///   (смешение выноса с дополнительным использованием — двойное
+///   использование при выносе).
+enum GuardScan { Sanctioned, Ordinary, Violation }
+
+fn classify_guard_scan(occ: &[(Span, bool)], closures: &[Span]) -> GuardScan {
+    if !closures.is_empty() {
+        return GuardScan::Violation;
+    }
+    let consume_count = occ.iter().filter(|(_, c)| *c).count();
+    if consume_count == 0 {
+        return GuardScan::Ordinary;
+    }
+    if occ.len() == 1 {
+        return GuardScan::Sanctioned;
+    }
+    GuardScan::Violation
+}
+
+/// Пушит E_CONSUME_BLOCK_MOVE_OUT-диагностику(и) для `GuardScan::Violation`
+/// (`occ`/`closures` от `scan_guard_decide`). Уточнённый текст по причине:
+/// захватывающее замыкание / смешение consume-выноса с ещё вхождением(ями).
 fn push_guard_escape_diags(
     errors: &mut Vec<Diagnostic>,
     display_name: &str,
@@ -27329,26 +27354,20 @@ fn push_guard_escape_diags(
         errors.push(Diagnostic::new(
             format!(
                 "[E_CONSUME_BLOCK_MOVE_OUT] `{n}`: `{n}` встречается в tail/return-\
-                 выражении {cnt} раз(а) — санкционированный вынос допускает РОВНО \
-                 одно вхождение, как аргумент consume-параметра (D188-амендмент v3, \
-                 Plan 201). Для лишних вхождений возьмите `@share()`-копию.",
+                 выражении {cnt} раз(а), включая consume-позицию — санкционированный \
+                 вынос допускает РОВНО одно вхождение, как аргумент consume-параметра \
+                 (D188-амендмент v3, Plan 201). Для лишних вхождений возьмите \
+                 `@share()`-копию.",
                 n = display_name, cnt = occ.len()
             ),
             occ[0].0,
         ));
-    } else if occ.len() == 1 {
-        errors.push(Diagnostic::new(
-            format!(
-                "[E_CONSUME_BLOCK_MOVE_OUT] `{n}`: единственное вхождение `{n}` в tail/\
-                 return-выражении — НЕ в consume-позиции (view/mut-параметр или иная \
-                 форма). Санкционированный вынос — только аргумент consume-параметра \
-                 (либо голый `{n}`) (D188-амендмент v3, Plan 201).",
-                n = display_name
-            ),
-            occ[0].0,
-        ));
     }
-    // occ.is_empty() && closures.is_empty() — canon вообще не упомянут, нечего пушить.
+    // occ.len() <= 1 здесь недостижимо через классификатор `classify_guard_scan`
+    // (0 вхождений consume-позиции → Ordinary, отфильтровано ДО вызова этой
+    // ф-ции; 1 вхождение consume-позиции → Sanctioned, тоже не сюда) —
+    // остаётся только `occ.len() > 1` (смешение) выше, либо только closures
+    // (обработано веткой выше).
 }
 
 /// Multi-canon помощник для tail/return EXPR (`return EXPR` — п.4, и
@@ -27360,6 +27379,16 @@ fn push_guard_escape_diags(
 /// каждый дизармится побочным эффектом (`mark_consumed_bypass_guard`)
 /// независимо. Возвращает множество канонов, чей вынос был санкционирован
 /// ЭТИМ EXPR (может быть >1 — разные уровни одного multi-var блока).
+///
+/// D188-амендмент v3 non-consume-position fix (2026-07-13, Plan 201):
+/// `GuardScan::Ordinary` (guard'ится, но НЕТ ни одного consume-вхождения) —
+/// НЕ санкционирован (canon остаётся armed, никакого disarm), но ТАКЖЕ
+/// НЕ нарушение — никакой диагностики. Реальный walk (`consume_walk_expr`
+/// ниже, guard всё ещё активен) обрабатывает EXPR как обычное
+/// использование: consume-receiver-методы на guarded-имени по-прежнему
+/// ловятся через `mark_consumed`/`guard_violations` (независимый механизм,
+/// не завязан на этот scan) — этот branch расширяет легальность ТОЛЬКО
+/// для не-consume-позиционных использований (view-borrow/receiver).
 fn walk_guarded_escape_expr_multi(
     ctx: &mut ConsumeCtx,
     e: &Expr,
@@ -27368,11 +27397,11 @@ fn walk_guarded_escape_expr_multi(
     let active_canons: Vec<String> = ctx.block_guards.iter().cloned().collect();
     let mut to_disarm: Vec<String> = Vec::new();
     for canon in &active_canons {
-        let (sanctioned, occ, closures) = scan_guard_decide(ctx, e, canon);
-        if sanctioned {
-            to_disarm.push(canon.clone());
-        } else {
-            push_guard_escape_diags(errors, canon, &occ, &closures);
+        let (_, occ, closures) = scan_guard_decide(ctx, e, canon);
+        match classify_guard_scan(&occ, &closures) {
+            GuardScan::Sanctioned => to_disarm.push(canon.clone()),
+            GuardScan::Ordinary => {}
+            GuardScan::Violation => push_guard_escape_diags(errors, canon, &occ, &closures),
         }
     }
     for c in &to_disarm { ctx.block_guards.remove(c); }
