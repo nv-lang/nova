@@ -208,6 +208,66 @@ export type Write protocol {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// D419 (Plan 152.7.2) — Fmt protocol: format-spec context for `@display_fmt`
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Format context passed to the optional `@display_fmt(mut f Fmt)` hook
+/// (D419, spec/decisions/02-types.md#d419). `Fmt` extends `Write` — same
+/// `@write` method, same sink semantics — with the two format-spec axes a
+/// type is allowed to react to: `alternate` (canonical pretty-flag, `#`) and
+/// `precision` (`.N`). Width/fill/align stay caller-side post-processing
+/// (D419 §в) — a type must not know how to pad itself.
+///
+/// **Dispatch rule (D419):** `${x:SPEC}` calls `@display_fmt` only when the
+/// type defines it; otherwise it falls back to `Display.@display` plus the
+/// existing external post-processing — byte-identical to pre-D419 behavior
+/// for every type that doesn't opt in. No signature change to
+/// `@display`/`@debug` (D374 not re-broken a second time).
+///
+/// # Examples
+///
+/// ```nova
+/// fn MyType @display_fmt(mut f Fmt) -> () {
+///     if f.alternate() {
+///         f.write(@to_str_pretty())
+///     } else {
+///         f.write(@to_str())
+///     }
+/// }
+/// // "${v}"  -> Display.@display (unaffected, if declared) / to_str fallback
+/// // "${v:#}" -> @display_fmt(f) with f.alternate() == true
+/// ```
+#stable(since = "0.1")
+export type Fmt protocol {
+    mut @write(s str) -> ()
+    @alternate() -> bool
+    @precision() -> Option[int]
+}
+
+/// Concrete `Fmt` implementor constructed internally by the interpolation
+/// codegen at each `${x:SPEC}` call site that dispatches to a type's
+/// `@display_fmt` (D419). Not intended for direct user construction — the
+/// compiler wires `sink`/`alt`/`has_prec`/`prec` from the parsed rich format
+/// spec (`FormatSpecParsed`, compiler-codegen/src/ast/format_spec.rs).
+#stable(since = "0.1")
+export type FmtCtx {
+    sink Write
+    alt bool
+    has_prec bool
+    prec int
+}
+
+export fn FmtCtx.new(sink Write, alt bool, has_prec bool, prec int) -> Self =>
+    { sink, alt, has_prec, prec }
+
+export fn FmtCtx mut @write(s str) -> () { @sink.write(s) }
+
+export fn FmtCtx @alternate() -> bool => @alt
+
+export fn FmtCtx @precision() -> Option[int] =>
+    if @has_prec { Some(@prec) } else { None }
+
+// ──────────────────────────────────────────────────────────────────────────
 // Plan 137 (D237) — Display + Debug protocols (renamed from Display/Debug)
 // ──────────────────────────────────────────────────────────────────────────
 

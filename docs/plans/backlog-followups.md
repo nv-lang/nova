@@ -794,7 +794,8 @@ Open V1 markers (gated on type-checker resolver API in Plan 104.2):
 |---|---|---|
 | `[M-91.14-sum-debug-variants]` | OPEN | Sum-type debug V1 outputs type name; extend `synthesize_debug` for per-variant output |
 | `[M-91.14-str-from-debug-walker]` | OPEN | `default_body_calls_satisfy_for` doesn't check `str.from_debug`; add check |
-| `[M-91.14-format-dsl-extensions]` | OPEN | Future format-spec extensions: `:hex`, `:.3`, `:pad-N` |
+| `[M-91.14-format-dsl-extensions]` | CLOSED (D419, Plan 152.7.2) | `:hex`/`:.3`/`:pad-N` shipped in D258/152.7-B; per-type spec dispatch (`@display_fmt`) shipped in D419 |
+| `[M-152.7.2-interp-direct-primitives]` | OPEN | Interpolation engine writes user-type Display/Debug directly into the sink already (Plan 175 Ф.3(d)); primitives (`nova_int_to_str` etc. in `emit_interpolated_str`) still allocate an intermediate `nova_str` before copying into `StringBuilder` — collapse to a direct-to-sink write |
 
 ## Follow-up: Plan 91.8c (generic array sort/min/max/_by)
 

@@ -205,6 +205,14 @@ test "pretty: формат с отступами" {
     assert(Json.parse(p)!! == v)
 }
 
+test "D419: ${v:#} = to_str_pretty(), ${v} = to_str() (@display_fmt)" {
+    mut m = HashMap[str, JsonValue].new()
+    m.insert("name", JsonValue.Str("alice"))
+    ro v = JsonValue.Object(m)
+    assert("${v:#}" == v.to_str_pretty())
+    assert("${v}" == v.to_str())
+}
+
 test "whitespace терпимость" {
     ro v = Json.parse("  [  1  ,  2  ]  ")!!
     match v.array() {
