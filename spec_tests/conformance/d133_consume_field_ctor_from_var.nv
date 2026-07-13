@@ -1,0 +1,39 @@
+// D133-амендмент 2026-07-13 (fix `[M-178-consume-field-ctor-from-var]`):
+// инициализация consume-поля record-литерала ГОЛОЙ owned-переменной /
+// consume-параметром = потребление биндинга (как передача в consume-параметр
+// вызова). Покрытие: (1) consume-параметр → АНОНИМНЫЙ литерал (тип из
+// return-позиции — форма nova-tls `TlsStream.wrap`, ранее требовала
+// pass-through `tcp_move`; типизированный префикс в этой позиции redundant);
+// (2) локал → ТИПИЗИРОВАННЫЙ литерал в теле; (3) non-consume поле
+// punning'ом рядом.
+// Негативы — neg/d133_consume_field_*.nv.
+// Spec: spec/decisions/02-types.md D133 §«Что считается consume».
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+type D133FcInner consume { id int }
+fn D133FcInner consume @fc_close() -> () { () }
+fn d133_fc_open(n int) -> D133FcInner => { id: n }
+
+type D133FcOuter consume {
+    consume fc_res D133FcInner,
+    fc_tag int,
+}
+fn D133FcOuter consume @fc_shutdown() -> () { @fc_res.fc_close() }
+
+// (1)+(3) consume-ПАРАМЕТР — прямой move в consume-поле АНОНИМНОГО литерала
+// (тип из return-позиции; типизированный префикс тут ЗАПРЕЩЁН как redundant —
+// форма nova-tls `TlsStream.wrap`). Non-consume поле рядом — punning'ом.
+fn d133_fc_wrap(consume s D133FcInner, fc_tag int) -> D133FcOuter =>
+    { fc_res: s, fc_tag }
+
+test "M-178: consume-параметр → consume-поле анонимного литерала (D133)" {
+    consume o = d133_fc_wrap(d133_fc_open(1), 10)
+    o.fc_shutdown()
+}
+
+test "M-178: локал → consume-поле типизированного литерала в теле (D133)" {
+    consume s = d133_fc_open(2)
+    consume o = D133FcOuter { fc_res: s, fc_tag: 20 }
+    o.fc_shutdown()
+}

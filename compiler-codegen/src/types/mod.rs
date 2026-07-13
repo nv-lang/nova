@@ -23670,6 +23670,23 @@ struct ConsumeRegistry {
     /// → indices of non-unsafe-T-typed params. Parallel free-fn
     /// `fn_non_unsafe_params`.
     method_non_unsafe_params: HashMap<(String, String), Vec<usize>>,
+    /// `[M-178-consume-field-ctor-from-var]` fix (Plan 178.5, 2026-07-13):
+    /// type name (record's own name, or a sum variant's name for
+    /// `SumVariantKind::Record`) → names of its `consume`-marked fields.
+    /// Used at `RecordLit` construction sites: initializing a consume-field
+    /// with a bare owned variable / consume-param (`{ tcp: stream, .. }`) is
+    /// a move of that binding — mirrors consume-param call-site semantics
+    /// (`consume_args`). Keyed by last path segment, same lookup convention
+    /// as `infer_value_type`'s `RecordLit { type_name: Some(path), .. }` arm.
+    record_consume_fields: HashMap<String, HashSet<String>>,
+    /// `[M-178-consume-field-ctor-from-var]`: companion of
+    /// `record_consume_fields` — ALL field names per record type / record-
+    /// payload sum variant. Used to resolve ANONYMOUS record literals
+    /// (`type_name: None`, тип из контекста — например `=> { tcp: stream,
+    /// session }` с типом из return-позиции): литерал резолвится в тип,
+    /// ЕДИНСТВЕННЫЙ среди всех записей, чей field-set покрывает имена
+    /// литерала. Неоднозначность → None (без действия — консервативно).
+    record_field_names: HashMap<String, HashSet<String>>,
 }
 
 impl ConsumeRegistry {
@@ -23698,6 +23715,43 @@ impl ConsumeRegistry {
         // indices (positions where param's outer wrapper is NOT Unsafe).
         let mut fn_non_unsafe_params: HashMap<String, Vec<usize>> = HashMap::new();
         let mut method_non_unsafe_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
+        // `[M-178-consume-field-ctor-from-var]`: type name → consume-field
+        // names (record types + sum-variant record payloads) + companion
+        // record_field_names (ALL fields) для резолва анонимных литералов.
+        let mut record_consume_fields: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut record_field_names: HashMap<String, HashSet<String>> = HashMap::new();
+        {
+            let mut collect_fields = |type_name: &str, fields: &[RecordField]| {
+                let all: HashSet<String> = fields.iter()
+                    .map(|f| f.name.clone())
+                    .collect();
+                let consume: HashSet<String> = fields.iter()
+                    .filter(|f| f.consume)
+                    .map(|f| f.name.clone())
+                    .collect();
+                if !all.is_empty() {
+                    record_field_names.insert(type_name.to_string(), all);
+                }
+                if !consume.is_empty() {
+                    record_consume_fields.insert(type_name.to_string(), consume);
+                }
+            };
+            for item in &module.items {
+                if let Item::Type(td) = item {
+                    match &td.kind {
+                        TypeDeclKind::Record(fields) => collect_fields(&td.name, fields),
+                        TypeDeclKind::Sum(variants) => {
+                            for v in variants {
+                                if let SumVariantKind::Record(fields) = &v.kind {
+                                    collect_fields(&v.name, fields);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
 
         // Plan 100.3 (D157): collect consume-types for view-param detection.
         // Mirrors LinearityRegistry::build consume_types collection.
@@ -23853,7 +23907,42 @@ impl ConsumeRegistry {
             mut_methods_arity, ro_methods_arity, recv_returning_arity,
             fn_mut_params, method_mut_params,
             fn_non_unsafe_params, method_non_unsafe_params,
+            record_consume_fields, record_field_names,
         }
+    }
+
+    /// `[M-178-consume-field-ctor-from-var]`: consume-поля record-литерала.
+    /// Типизированный (`Type { … }` / `Variant { … }`) — прямой lookup по
+    /// последнему сегменту пути. Анонимный (`{ … }`, тип из контекста) —
+    /// структурный резолв: тип, ЕДИНСТВЕННЫЙ среди всех записей модуля, чей
+    /// field-set покрывает все имена литерала (defaulted-поля можно опускать
+    /// → subset-match). Неоднозначность/нет матча → None (консервативно:
+    /// поведение как до фикса — никакого mark_consumed).
+    fn consume_fields_for_lit(
+        &self,
+        type_name: &Option<Vec<String>>,
+        fields: &[RecordLitField],
+    ) -> Option<&HashSet<String>> {
+        if let Some(p) = type_name {
+            return p.last().and_then(|tn| self.record_consume_fields.get(tn));
+        }
+        let lit_names: Vec<&str> = fields.iter()
+            .filter(|f| !f.is_spread)
+            .map(|f| f.name.as_str())
+            .collect();
+        if lit_names.is_empty() {
+            return None;
+        }
+        let mut found: Option<&String> = None;
+        for (tn, fnames) in &self.record_field_names {
+            if lit_names.iter().all(|n| fnames.contains(*n)) {
+                if found.is_some() {
+                    return None; // ambiguous — консервативно ничего
+                }
+                found = Some(tn);
+            }
+        }
+        found.and_then(|tn| self.record_consume_fields.get(tn))
     }
 
     /// Plan 172.1 [M-172.1-d174-sync-consume-registry]: влить consume-СУЩЕСТВЕННЫЕ
@@ -26503,7 +26592,18 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
             // `T` из хелпера заблокировал бы any-consume-method fallback
             // walker'а при последующем `out.close()`).
             if let Some(r) = result {
-                let known_result_ty = ty.clone().filter(|t| {
+                // Тип result'а: bare tail-вынос — тип X; non-bare tail (v3 /
+                // M-178: `consume box = consume b { BoomBox{boom: b, …} }`) —
+                // best-effort тип САМОГО tail-выражения (`infer_value_type`),
+                // НЕ тип X (значение блока — другой тип; брать тип X здесь
+                // давало ложный D133-not-consumed: obligation `box` типа
+                // D201Boom не кредитуется методами реального типа result'а).
+                let raw_result_ty = if tail_escape {
+                    ty.clone()
+                } else {
+                    body.trailing.as_ref().and_then(|t| ctx.infer_value_type(t))
+                };
+                let known_result_ty = raw_result_ty.filter(|t| {
                     ctx.lin_reg.local_type_names.contains(t.as_str())
                         || ctx.lin_reg.consume_types.contains(t.as_str())
                         || ctx.lin_reg.consume_methods.contains_key(t.as_str())
@@ -27189,9 +27289,40 @@ fn scan_guard_rec(
                 }
             }
         }
-        ExprKind::RecordLit { fields, .. } => {
+        ExprKind::RecordLit { type_name, fields, inferred_map_v } => {
+            // `[M-178-consume-field-ctor-from-var]` × D188 v3 (2026-07-13):
+            // consume-поле record-литерала — тоже consume-позиция (дизарм в
+            // момент конструирования литерала), симметрично consume-аргументу
+            // вызова. Non-consume поля — обычные вхождения. Анонимный
+            // литерал — структурный unique-match (`consume_fields_for_lit`);
+            // guarded-биндинг по построению consume-типен, gate не нужен.
+            let consume_field_names: Option<&HashSet<String>> =
+                if inferred_map_v.is_some() {
+                    None
+                } else {
+                    ctx.reg.consume_fields_for_lit(type_name, fields)
+                };
             for f in fields {
-                if let Some(v) = &f.value { scan_guard_rec(ctx, v, canon, occ, closures); }
+                let is_consume_field = !f.is_spread && consume_field_names
+                    .map_or(false, |s| s.contains(f.name.as_str()));
+                match &f.value {
+                    Some(v) => {
+                        if let ExprKind::Ident(name) = &v.kind {
+                            if ctx.canonical(name) == canon {
+                                occ.push((v.span, is_consume_field));
+                                continue;
+                            }
+                        }
+                        scan_guard_rec(ctx, v, canon, occ, closures);
+                    }
+                    // D52 punning `{ name }` — implied ident `name`.
+                    None if !f.is_spread => {
+                        if ctx.canonical(&f.name) == canon {
+                            occ.push((f.span, is_consume_field));
+                        }
+                    }
+                    None => {}
+                }
             }
         }
         ExprKind::TupleLit(items) => {
@@ -28183,7 +28314,38 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                 }
             }
         }
-        ExprKind::RecordLit { fields, .. } => {
+        ExprKind::RecordLit { type_name, fields, inferred_map_v } => {
+            // `[M-178-consume-field-ctor-from-var]` fix: consume-поля этого
+            // типа литерала. Типизированный — прямой lookup; анонимный
+            // (`=> { tcp: stream, session }`, тип из контекста) — структурный
+            // unique-match (`consume_fields_for_lit`). Map-coercion литерал
+            // (`inferred_map_v`) — не record, пропуск. Для анонимного
+            // резолва дополнительный gate на consume-релевантность самого
+            // биндинга (см. ниже) давит структурные false-positives.
+            let anonymous = type_name.is_none();
+            let consume_field_names: Option<HashSet<String>> =
+                if inferred_map_v.is_some() {
+                    None
+                } else {
+                    ctx.reg.consume_fields_for_lit(type_name, fields).cloned()
+                };
+            let consume_field_names = consume_field_names.as_ref();
+            // Gate для анонимного литерала: биндинг должен быть сам
+            // consume-релевантен (declared-consume, или его известный тип —
+            // consume-тип). Типизированный литерал — без gate (симметрия с
+            // `consume_args`, безусловный mark).
+            let binding_gate = |ctx: &ConsumeCtx, name: &str| -> bool {
+                if !anonymous { return true; }
+                let canon = ctx.canonical(name);
+                if ctx.all_declared_consume.contains(&canon)
+                    || ctx.all_declared_consume.contains(name) {
+                    return true;
+                }
+                ctx.var_types.get(&canon)
+                    .or_else(|| ctx.var_types.get(name))
+                    .map_or(false, |t| ctx.lin_reg.consume_types.contains(t)
+                        || ctx.consume_bound_generics.contains(t))
+            };
             for f in fields {
                 if let Some(v) = &f.value {
                     consume_walk_expr(ctx, v, errors);
@@ -28195,7 +28357,31 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                         let vcanon = ctx.canonical(vn);
                         if ctx.block_guards.contains(&vcanon) {
                             ctx.guard_violations.push((vcanon, v.span));
+                        } else if consume_field_names
+                            .map_or(false, |s| s.contains(f.name.as_str()))
+                            && binding_gate(ctx, vn)
+                        {
+                            // `[M-178-consume-field-ctor-from-var]`: голая
+                            // owned-переменная / consume-параметр в
+                            // consume-поле record-литерала — потребление
+                            // этого биндинга (как передача в consume-параметр
+                            // вызова, см. `consume_args`).
+                            ctx.mark_consumed(vn, v.span);
                         }
+                    }
+                } else if !f.is_spread {
+                    // D52 field punning `{ name }` — implied value = ident
+                    // `name`. Тот же move-эффект, что и explicit `{ name: name }`
+                    // (которая, впрочем, запрещена D52 §2 — редундантная форма).
+                    ctx.use_var(&f.name, f.span, errors);
+                    let vcanon = ctx.canonical(&f.name);
+                    if ctx.block_guards.contains(&vcanon) {
+                        ctx.guard_violations.push((vcanon, f.span));
+                    } else if consume_field_names
+                        .map_or(false, |s| s.contains(f.name.as_str()))
+                        && binding_gate(ctx, &f.name)
+                    {
+                        ctx.mark_consumed(&f.name, f.span);
                     }
                 }
             }

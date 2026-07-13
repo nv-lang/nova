@@ -96,3 +96,35 @@ test "D188/201 consume-блок целиком внутри итерации ц�
     }
     assert(total == 3)
 }
+
+// ─── Амендмент v3 × M-178 (2026-07-13): consume-поле record-литерала в
+// tail/return — consume-позиция; дизарм при конструировании литерала.
+// Сторож — паникующий cleanup D201Boom: недизармленный вынос = runtime panic.
+
+type D201BoomBox consume {
+    consume boom D201Boom,
+    box_tag int,
+}
+fn D201BoomBox consume @unbox() -> () { @boom.defuse() }
+
+test "D188 v3 × M-178: tail record-литерал с consume-полем дизармит cleanup" {
+    consume b = d201_boom(11)
+    consume box = consume b {
+        D201BoomBox { boom: b, box_tag: 1 }
+    }
+    assert(box.box_tag == 1)
+    box.unbox()
+}
+
+fn d201_box_ret(consume b D201Boom) -> D201BoomBox {
+    consume b {
+        return D201BoomBox { boom: b, box_tag: 2 }
+    }
+}
+
+test "D188 v3 × M-178: return record-литерал с consume-полем дизармит cleanup" {
+    consume b = d201_boom(12)
+    consume box = d201_box_ret(b)
+    assert(box.box_tag == 2)
+    box.unbox()
+}
