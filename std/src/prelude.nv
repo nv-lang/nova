@@ -179,6 +179,16 @@ export import std.prelude.protocols.{Hash, Equal, Compare, Display, Clone, Index
 // D50), syntactic form а не declarable effect. См. std/prelude/effects.nv.
 export import std.prelude.effects.{Fail, Time, Mem}
 
+// [M-canceltoken-prelude-decl] (2026-07-13, Plan 173-хвост): re-export
+// CancelToken (D75 revised, Plan 47) из std.prelude.concurrency — перенос
+// из hardcoded type-checker builtins HashSet в формальные декларации
+// (образец Plan 62.D.bis / 62.B). Auto-available без explicit import —
+// паритет с прежним builtin-статусом (`supervised(cancel: tok)` — языковая
+// конструкция, токен обязан быть доступен везде). Dispatch остаётся в
+// emit_c.rs D75 special-cases (NovaCancelToken*, nova_cancel_token_* в
+// nova_rt/fibers.h) — см. заголовок std/prelude/concurrency.nv.
+export import std.prelude.concurrency.{CancelToken}
+
 // Plan 91 Ф.2.5 (D177) + Ф.2.6 (D178): str Nova-body methods auto-available без explicit import.
 // Nova bodies в std/runtime/string.nv; Plan 54 Ф.2 dispatch (!is_external filter).
 // D178: parse_int_radix → parse_int(radix=10); to_bytes/to_chars/compare added.
