@@ -9,14 +9,14 @@
 // produce identical results.
 
 module spec_tests.conformance
-type Buf {
+type Buf3 {
     mut count int
     mut arr []int
 }
 
-fn Buf.new() -> Buf => { count: 0, arr: []int.new() }
+fn Buf3.new() -> Buf3 => { count: 0, arr: []int.new() }
 
-fn Buf mut @track_and_grow(v int) -> int {
+fn Buf3 mut @track_and_grow(v int) -> int {
     // Two sibling-field reads — V1.1 candidate region A.
     ro a = @count
     ro b = @count
@@ -30,7 +30,7 @@ fn Buf mut @track_and_grow(v int) -> int {
 }
 
 test "V7.5: sibling field survives @field.method() call" {
-    mut b = Buf.new()
+    mut b = Buf3.new()
     b.count = 5
     ro r = b.track_and_grow(42)
     // count = 5 throughout — (5+5+5+5) = 20

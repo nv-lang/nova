@@ -6,13 +6,13 @@
 // referenced array's internals change). Semantic preservation verified.
 
 module spec_tests.conformance
-type Buf {
+type Buf5 {
     mut arr []int
 }
 
-fn Buf.new() -> Buf => { arr: []int.new() }
+fn Buf5.new() -> Buf5 => { arr: []int.new() }
 
-fn Buf mut @sample_len_and_grow(v int) -> int {
+fn Buf5 mut @sample_len_and_grow(v int) -> int {
     // 2 pre-push reads of @arr.len() — uses cached @arr handle.
     ro a = @arr.len()
     ro b = @arr.len()
@@ -26,7 +26,7 @@ fn Buf mut @sample_len_and_grow(v int) -> int {
 }
 
 test "V7.6: ref-type @arr cache survives @arr.push()" {
-    mut b = Buf.new()
+    mut b = Buf5.new()
     b.arr.push(1)
     b.arr.push(2)
     // Pre-state: len=2.

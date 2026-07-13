@@ -7,7 +7,7 @@ type Bag3_plan12371negipaunknowncalleeconservativeok {
 }
 
 // Free function — IPA doesn't track its effects on @value.
-fn helper_external(x int) -> int { x + 1 }
+priv(file) fn helper_external(x int) -> int { x + 1 }
 
 fn Bag3_plan12371negipaunknowncalleeconservativeok mut @use_external() -> int {
     // V7.1 conservative: helper_external is non-self → invalidate.

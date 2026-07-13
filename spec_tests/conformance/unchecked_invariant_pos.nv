@@ -4,7 +4,7 @@
 
 #unchecked(invariant)
 module spec_tests.conformance
-type Account {
+priv(file) type Account {
     balance int
 }
     invariant balance >= 0

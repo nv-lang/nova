@@ -5,27 +5,27 @@
 // would skip).
 
 module spec_tests.conformance
-type Counter4 {
+type Counter4_3 {
     mut n int
 }
 
-fn Counter4.new() -> Counter4 => { n: 0 }
+fn Counter4_3.new() -> Counter4_3 => { n: 0 }
 
 // User fluent builder: `-> @` return marker → registered в
 // FluentMethodRegistry.
-fn Counter4 mut @step(by int) -> @ {
+fn Counter4_3 mut @step(by int) -> @ {
     @n = @n + by
 }
 
-fn Counter4 @get() -> int => @n
+fn Counter4_3 @get() -> int => @n
 
-type Holder8 {
-    mut c Counter4
+type Holder8_1 {
+    mut c Counter4_3
 }
 
-fn Holder8.new() -> Holder8 => { c: Counter4.new() }
+fn Holder8_1.new() -> Holder8_1 => { c: Counter4_3.new() }
 
-fn Holder8 mut @use_chain() -> int {
+fn Holder8_1 mut @use_chain() -> int {
     // V2: `@c.step(1).step(2).step(3)` — root `@c` (heap-record ref),
     // chain depth 3 of user-defined `step` `-> @`. V2 hoists root.
     @c.step(1).step(2).step(3)
@@ -33,7 +33,7 @@ fn Holder8 mut @use_chain() -> int {
 }
 
 test "chain-norm V2 user fluent: depth-3 user step chain" {
-    mut h = Holder8.new()
+    mut h = Holder8_1.new()
     ro r = h.use_chain()
     // 0 → 1 → 3 → 6
     assert(r == 6)

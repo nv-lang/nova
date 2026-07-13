@@ -3,12 +3,12 @@
 // suffix) — user-local untouched, semantics preserved.
 
 module spec_tests.conformance
-type Bag3 {
+type Bag3_2 {
     ro x int
     ro y int
 }
 
-fn Bag3 @combine_with_existing() -> int {
+fn Bag3_2 @combine_with_existing() -> int {
     // User has _at_x as local — pass must rename cache to avoid
     // collision.
     ro _at_x = 100
@@ -17,18 +17,18 @@ fn Bag3 @combine_with_existing() -> int {
     (@x + @x + @x) + (@y + @y) + _at_x
 }
 
-fn Bag3.new(x int, y int) -> Bag3 {
-    Bag3 { x, y }
+fn Bag3_2.new(x int, y int) -> Bag3_2 {
+    Bag3_2 { x, y }
 }
 
 test "property: user local _at_x not clobbered" {
-    ro r = Bag3.new(2, 3).combine_with_existing()
+    ro r = Bag3_2.new(2, 3).combine_with_existing()
     // 3*2 + 2*3 + 100 = 6+6+100 = 112
     assert(r == 112)
 }
 
 test "property: multiple user collisions" {
-    ro r = Bag3.new(7, 11).combine_with_existing()
+    ro r = Bag3_2.new(7, 11).combine_with_existing()
     // 3*7 + 2*11 + 100 = 21+22+100 = 143
     assert(r == 143)
 }

@@ -5,13 +5,13 @@
 // эмитится только для региона A.
 
 module spec_tests.conformance
-type Counter3 {
+type Counter3_4 {
     mut x int
 }
 
-fn Counter3.new() -> Counter3 => { x: 100 }
+fn Counter3_4.new() -> Counter3_4 => { x: 100 }
 
-fn Counter3 mut @mixed_density() -> int {
+fn Counter3_4 mut @mixed_density() -> int {
     // Region A: 2 reads (cached).
     ro a1 = @x
     ro a2 = @x
@@ -22,7 +22,7 @@ fn Counter3 mut @mixed_density() -> int {
 }
 
 test "V1.1: single-read region не cached, semantic ok" {
-    mut c = Counter3.new()
+    mut c = Counter3_4.new()
     ro r = c.mixed_density()
     // 100 + 100 + 7 = 207
     assert(r == 207)

@@ -5,7 +5,7 @@
 // for the invariant kind. The LOC points at the invariant clause's source line.
 
 module spec_tests.conformance
-type Account {
+priv(file) type Account {
     balance int
 }
     invariant balance >= 0, "balance must stay non-negative"

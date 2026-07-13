@@ -1,28 +1,28 @@
 // Plan 123.2 T1.3: for loop hoisting.
 
 module spec_tests.conformance
-type Box4 {
+type Box4_2 {
     ro factor int
 }
 
-fn Box4.helper() -> int { 7 }
+fn Box4_2.helper() -> int { 7 }
 
-fn Box4 @apply(n int) -> int {
+fn Box4_2 @apply(n int) -> int {
     // Call before loop → Plan 123.1 ro path may still cache since ro
     // unaffected by call. But test verifies for-loop hoist works.
-    mut sum = Box4.helper()
+    mut sum = Box4_2.helper()
     for i in 0..n {
         sum = sum + @factor + @factor
     }
     sum
 }
 
-fn Box4.new(f int) -> Box4 {
-    Box4 { factor: f }
+fn Box4_2.new(f int) -> Box4_2 {
+    Box4_2 { factor: f }
 }
 
 test "for loop @factor hoisted" {
-    ro b = Box4.new(3)
+    ro b = Box4_2.new(3)
     ro r = b.apply(4)
     // sum = 7, 4 iterations × (3+3) = 24. Total = 31.
     assert(r == 31)

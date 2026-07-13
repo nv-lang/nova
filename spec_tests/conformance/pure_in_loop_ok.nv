@@ -2,14 +2,14 @@
 // prefix (since no @F write).
 
 module spec_tests.conformance
-type Buf {
+type Buf2 {
     ro data int
 }
 
 #pure
-fn Buf @size() -> int => @data
+fn Buf2 @size() -> int => @data
 
-fn Buf @scan_for(target int) -> int {
+fn Buf2 @scan_for(target int) -> int {
     mut count = 0
     mut i = 0
     while i < @size() {
@@ -20,12 +20,12 @@ fn Buf @scan_for(target int) -> int {
     count + @size()
 }
 
-fn Buf.new(d int) -> Buf {
-    Buf { data: d }
+fn Buf2.new(d int) -> Buf2 {
+    Buf2 { data: d }
 }
 
 test "pure method in loop cached at body prefix" {
-    ro b = Buf.new(4)
+    ro b = Buf2.new(4)
     ro r = b.scan_for(2)
     // size=4, loop iterates 0..4. count=1 (only i==2). + size=4 → 5.
     assert(r == 5)
