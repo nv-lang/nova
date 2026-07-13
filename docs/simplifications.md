@@ -38219,3 +38219,46 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   путями. Проверить ту же ось в C-mangling (`Nova_<modpath>_`).
 - Маркер в backlog-followups.md (P1); детали/варианты —
   docs/research/2026-07-13-module-naming-two-segment-review.md.
+
+## [M-d78-duplicate-decl-module-swallow] ЗАКРЫТ + Plan 202 Ф.1/Ф.1b/Ф.2 (2026-07-13)
+
+- **Ф.1 (резолвер).** `imports.rs`: `resolve_one`/`resolve_imports_inline_ex`
+  (`visited`/`in_progress`) и `collect_all_signatures`/`collect_sigs_one`/
+  `ModuleSigTable` (сигнатурный pre-pass, D292/D293) переведены с
+  decl-keyed на **canonical-path-keyed** (`canonical_module_key` — anchor =
+  parent-директория для folder-module-пира, сам файл для single-file;
+  устойчиво к порядку peers). Декларация остаётся ТОЛЬКО identity-check
+  (`E_D78_MODULE_PATH_MISMATCH`) — никогда не routing/registry ключ.
+  Обязательно СИНХРОННО оба реестра — иначе резолвер чинится, а sig-table
+  продолжает жить по decl (второе окно идентичности).
+- **Ф.1b (mangling, обнаружено ЖИВЫМ, не гипотетически).** Первый же
+  прогон pos-фикстуры дал `CC-FAIL redefinition of 'nova_fn_...'` — D307/
+  D381 collision-детекторы в `emit_c.rs` ТОЖЕ группировали по decl
+  (`BTreeSet<Vec<String>>` дедупил два физически разных модуля с
+  одинаковым decl в ОДНУ запись → коллизия не детектится → одинаковый
+  C-символ). Фикс: `phys_key_of`/`decl_phys_groups`/`effective_modpath`
+  (общий helper перед fn- и type-коллизионными блоками) — decl расширяется
+  суффиксом `dupN` ТОЛЬКО когда реально расшарен ≥2 физическими модулями в
+  CU; byte-identical для всего остального корпуса (0 деклараций сегодня
+  расшарены — раньше глотались резолвером, теперь легальны и обязаны
+  различаться в C). Известный узкий остаток (branch (2) cross-import
+  suffix-match) → `[M-d78-dup-decl-type-cross-import-ambiguous]`.
+- **Ф.2 (root peers, D78 rev-4).** `.nv`-файлы прямо в source root пакета
+  МОГУТ объявлять однoсегментную `module <package>` — peers корневого
+  модуля (аналог `lib.rs`), ДОПОЛНИТЕЛЬНО к независимой `<package>.<stem>`
+  форме (смешанный корень допустим). Фикс статтера `tls.tls`
+  (nova-tls): `import tls.{TlsStream}` вместо `import tls.tls.{TlsStream}`.
+  `manifest::expected_root_peer_decl` (доп. acceptance-ветка) +
+  `imports::collect_root_peers`/`is_peer_group_member` +
+  `resolve_module_paths`-ветка для bare single-segment import (свой пакет
+  через `nova.toml`, cross-package `[dependencies]` через уже
+  провалидированное `lookup_dependency`-имя, включая ослабление жёсткой
+  «голое имя зависимости требует путь к модулю» ошибки).
+- **Гейты:** conformance один CU (см. tally в отчёте Plan 202); стресс —
+  ветка `triage-198` (~1480 peer-файлов) компилируется Ф.1-компилятором;
+  `nova check std` дельта-нейтрально.
+- **Спека:** D78 rev-4 амендмент в `spec/decisions/07-modules.md` (keying-
+  семантика D29 п.4 + root peers секция) — в том же слиянии, что код.
+- Побочно найден несвязанный баг (region checker/auto_derive, вне
+  объёма) — `[M-202-ident-x-module-alias-collision]`.
+- Полный отчёт: `docs/plans/202-progress.md`.
