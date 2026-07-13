@@ -1,0 +1,6 @@
+module spec_tests.conformance
+fn[T] []T @keep_all() -> []T => @
+test "array-ext method coexists" {
+    ro v []int = [1, 2, 3]
+    assert(v.keep_all().len() == 3)
+}

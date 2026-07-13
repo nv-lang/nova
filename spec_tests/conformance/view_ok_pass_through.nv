@@ -1,0 +1,21 @@
+// Plan 100.3 (D157): view-param передаётся в другую view-fn без consume.
+
+module spec_tests.conformance
+type Transaction8_2 consume {
+    id int,
+}
+
+fn Transaction8_2 consume @commit() -> () { () }
+
+fn log_id(t Transaction8_2) -> () { println(t.id) }
+
+fn print_and_log(t Transaction8_2) -> () {
+    println("processing")
+    log_id(t)                                    // ✅ view-передача в view-param
+}
+
+test "view pass-through через view-funcs" {
+    consume tx = Transaction8_2 { id: 5 }
+    print_and_log(tx)
+    tx.commit()                                  // tx Live после view-uses
+}

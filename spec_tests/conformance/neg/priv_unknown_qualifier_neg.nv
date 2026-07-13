@@ -1,0 +1,9 @@
+// EXPECT_COMPILE_ERROR E_PRIV_QUALIFIER
+//
+// Plan 170 (D307): negative — `priv(module)` (or any qualifier other than
+// `file`) on a top-level item is rejected. The only valid top-level form is
+// `priv(file)` => E_PRIV_QUALIFIER.
+
+module neg.priv_unknown_qualifier_neg
+
+priv(module) fn bad() -> int => 0

@@ -1,0 +1,27 @@
+# nova.toml — scoped FFI manifest for Plan 143.2 preempt-elision tests.
+#
+# Force-includes the header-only `p143_ffi_shim.h` shim so the FFI negative
+# fixture (`negative_ffi_call.nv`) has a real linkable extern target
+# (`p143_c_add`). The shim is `static inline` → dead-code-eliminated in every
+# other fixture of this package (zero cost). Pattern mirrors plan115/nova.toml
+# (Plan 115 D214 [M-115-ffi-build-pipeline]): scoped here so the shim does not
+# leak into the package-wide test set.
+#
+# package name = "plan143_2" matches `module plan143_2.<file>` (D78: package +
+# src="." → module identity unchanged).
+
+[package]
+name = "plan143_2"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+description = "Plan 143.2 leaf preempt-check elision positive+negative fixtures"
+
+[lib]
+src = "."
+
+[dependencies]
+
+[ffi]
+c_shims      = ["p143_ffi_shim.h"]
+include_dirs = []
+libs         = []

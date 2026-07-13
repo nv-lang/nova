@@ -1,0 +1,22 @@
+// Plan 100.4.4 (D161): 3 defers с Fail bodies; D161 codegen wrap гарантирует
+// LIFO continues — все 3 attempted regardless of partial failure. Runtime
+// composition chain materialized в outer fail-frame через nova_rethrow_with_suppressed.
+
+module spec_tests.conformance
+type Err12 { msg str }
+type Err22 { msg str }
+type Err3_2 { msg str }
+
+fn defer_a2() Fail[Err12] -> () { () }
+fn defer_b2() Fail[Err22] -> () { () }
+fn defer_c() Fail[Err3_2] -> () { () }
+
+priv(file) fn process3() Fail -> () {
+    defer { defer_a2() }   // runs last LIFO
+    defer { defer_b2() }
+    defer { defer_c() }   // runs first LIFO
+}
+
+test "3 failable defers — D161 compile pass + LIFO" {
+    process3()
+}

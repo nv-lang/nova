@@ -1,0 +1,20 @@
+// Plan 100.3 (D157): consume-closure (FnOnce-equivalent).
+//
+// Closure-body вызывает consume-метод на captured var → closure становится
+// consume-closure: invoke = consume, повторный invoke → error.
+// Если closure не invoked — на scope-exit обязан Consumed (invoked / passed).
+
+module spec_tests.conformance
+type Transaction2 consume {
+    id int,
+}
+
+fn Transaction2 consume @commit() -> () { () }
+
+test "consume-closure (FnOnce) — invoke ровно один раз" {
+    consume tx = Transaction2 { id: 1 }
+    ro commit_it = || tx.commit()             // consume-closure
+    commit_it()                                 // ✅ tx Consumed, closure Consumed
+    // tx Consumed; нельзя использовать.
+    // closure Consumed; нельзя invoke повторно.
+}

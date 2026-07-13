@@ -1,0 +1,35 @@
+// Plan 173 Ф.6 (D348): `test "имя" panics "паттерн" { … }` — инверсия
+// PASS/FAIL: PASS ⇔ тело запаниковало (PANIC-класс D13) сообщением ⊇
+// паттерн (substring, D89-семантика). Granularity per-test; N паник в
+// одном folder-module CU не ломают рантайм (nova_runtime_reset — Ф.5 п.6).
+// Мета-FAIL-кейсы («нет паники → FAIL», «неверный паттерн → FAIL») — НЕ
+// .nv-фикстуры (сделали бы suite красным): Rust-тесты раннера.
+
+module spec_tests.conformance
+fn f6_div(a int, b int) -> int => a / b
+
+test "f6 D348: explicit panic() matched by substring" panics "boom-f6" {
+    panic("boom-f6-full-message")
+}
+
+test "f6 D348: empty pattern matches any panic" panics "" {
+    panic("whatever")
+}
+
+test "f6 D348: integer overflow is PANIC-class" panics "integer overflow" {
+    mut x = 9223372036854775807
+    x = x + 1
+    ro _ = x
+}
+
+test "f6 D348: assert failure is PANIC-class (D13)" panics "assert failed" {
+    assert(f6_div(10, 5) == 3)
+}
+
+test "f6 D348: second panic in same process is safe (Ф.5 runtime_reset)" panics "second" {
+    panic("second-panic-same-process")
+}
+
+test "f6 D348: regular test still green after panics-tests" {
+    assert(f6_div(10, 5) == 2)
+}

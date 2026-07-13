@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR E_IMPL_UNKNOWN_PROTOCOL
+//
+// Plan 164 Ф.1: negative — #impl(UnknownProto[T]) where UnknownProto is not
+// a known protocol => E_IMPL_UNKNOWN_PROTOCOL.
+module neg.impl_attr_generic_neg
+
+type Box[T] value { val T }
+
+#impl(UnknownProto[T])
+fn Box[T] mut @next() -> Option[T] => Some(@val)

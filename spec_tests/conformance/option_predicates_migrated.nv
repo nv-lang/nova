@@ -1,0 +1,65 @@
+// Plan 95 Ф.4: подтверждение, что `is_some`/`is_none` теперь — Nova-body
+// (а не C-трамплины). Проверяем через `match @`-эквиваленты и реальные
+// контексты использования: переменные, элементы массива, generic-функция.
+
+module spec_tests.conformance
+test "Option[int]: is_some/is_none — базовый паритет с match" {
+    ro a Option[int] = Some(42)
+    ro b Option[int] = None
+    // Прямой вызов:
+    assert(a.is_some())
+    assert(!a.is_none())
+    assert(!b.is_some())
+    assert(b.is_none())
+    // Паритет с match (тем же выражением что и тело перенесённого метода):
+    ro match_some = match a { Some(_) => true, None => false }
+    ro match_none = match b { Some(_) => true, None => false }
+    assert(a.is_some() == match_some)
+    assert(b.is_some() == match_none)
+}
+
+test "Option[str]: is_some/is_none на nova_str" {
+    ro s Option[str] = Some("hi")
+    ro n Option[str] = None
+    assert(s.is_some() && !s.is_none())
+    assert(n.is_none() && !n.is_some())
+}
+
+test "Option[char]: is_some/is_none на nova_char" {
+    ro c Option[char] = Some('x')
+    ro n Option[char] = None
+    assert(c.is_some())
+    assert(n.is_none())
+}
+
+type Inner6 { val int }
+
+test "Option[user-record]: is_some/is_none на pointer-T" {
+    ro r Option[Inner6] = Some(Inner6{val: 7})
+    ro n Option[Inner6] = None
+    assert(r.is_some())
+    assert(!r.is_none())
+    assert(n.is_none())
+    assert(!n.is_some())
+}
+
+test "[]Option[int] — for-in c is_some/is_none (Plan 89 интеграция)" {
+    ro opts []Option[int] = [Some(1), None, Some(3), None, Some(5)]
+    mut present = 0
+    mut absent = 0
+    for o in opts {
+        if o.is_some() { present = present + 1 }
+        if o.is_none() { absent = absent + 1 }
+    }
+    assert(present == 3)
+    assert(absent == 2)
+}
+
+test "nested Option[Option[int]] — outer is_some" {
+    ro a Option[Option[int]] = Some(Some(7))
+    ro b Option[Option[int]] = Some(None)
+    ro c Option[Option[int]] = None
+    assert(a.is_some())
+    assert(b.is_some())
+    assert(c.is_none())
+}

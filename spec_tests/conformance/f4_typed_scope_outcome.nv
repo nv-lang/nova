@@ -1,0 +1,86 @@
+// Plan 173 Ф.4 #5 (D188/D190, [M-110-multierror-any] closed): `ScopeOutcome`
+// carries the erased ORIGINAL error as `Failure(any)`. A `defer(o)` / `@cleanup`
+// body recovers the typed cause via `if err is T` (D54/174.3):
+//   - a typed `throw MyErr{..}` surfaces as `Failure(any = MyErr)` → field readable
+//     after narrowing (Zig-parity: payload richer than a bare error tag);
+//   - a bare `throw "msg"` surfaces as `Failure(any = str)`.
+// Runtime-observable: throw caught by `with Fail`, defer(o) inspects the outcome.
+
+module spec_tests.conformance
+type F4Err { code int }
+
+fn f4_throw_typed() Fail[F4Err] -> () {
+    throw F4Err { code: 7 }
+}
+
+// Typed payload: body throws F4Err, defer narrows `err is F4Err` and reads .code.
+fn f4_run_typed() -> int {
+    mut seen = 0
+    with Fail = effect Fail { fail(_m) { interrupt () } } {
+        defer(o ScopeOutcome) {
+            match o {
+                Success      => ()
+                Failure(err) => {
+                    if err is F4Err {
+                        seen = err.code
+                    }
+                }
+                Panic(_)     => ()
+            }
+        }
+        f4_throw_typed()
+    }
+    seen
+}
+
+fn f4_throw_str() Fail -> () {
+    throw "boom-str"
+}
+
+// Bare-str payload: body throws a plain str, defer narrows `err is str`.
+fn f4_run_str() -> str {
+    mut got = "none"
+    with Fail = effect Fail { fail(_m) { interrupt () } } {
+        defer(o ScopeOutcome) {
+            match o {
+                Success      => ()
+                Failure(err) => {
+                    if let Some(m) = err.try_as[str]() {
+                        got = m
+                    }
+                }
+                Panic(_)     => ()
+            }
+        }
+        f4_throw_str()
+    }
+    got
+}
+
+// Negative narrowing: a typed F4Err is NOT a str.
+fn f4_run_typed_not_str() -> bool {
+    mut is_str = true
+    with Fail = effect Fail { fail(_m) { interrupt () } } {
+        defer(o ScopeOutcome) {
+            match o {
+                Success      => ()
+                Failure(err) => { is_str = err is str }
+                Panic(_)     => ()
+            }
+        }
+        f4_throw_typed()
+    }
+    is_str
+}
+
+test "f4 #5: Failure(any) narrows to thrown typed error, field readable" {
+    assert(f4_run_typed() == 7)
+}
+
+test "f4 #5: Failure(any) narrows a bare-str throw to str" {
+    assert(f4_run_str() == "boom-str")
+}
+
+test "f4 #5: typed payload is not str (is-discrimination)" {
+    assert(!f4_run_typed_not_str())
+}

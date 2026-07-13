@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+//
+// Plan 135 Ф.3 NEG3: ro binding calling a method that has ONLY a mut overload.
+// There is no ro fallback for `flush()` on Buffer.
+// Nova checker raises E_LOCAL_NOT_MUT: ro binding cannot invoke mut-receiver method.
+// Verifies A-135: fallback is mut→ro only, never ro→mut.
+
+module neg.neg3_ro_cannot_call_mut_only
+
+type Buffer { priv mut data int }
+
+fn Buffer.new() -> Self => { data: 0 }
+
+// Only the mut overload exists — no ro counterpart.
+fn Buffer mut @flush() { @data = 0 }
+
+test "ro binding cannot call mut-only method" {
+    ro b = Buffer.new()
+    b.flush()   // error: b is ro, flush() is mut-only — no fallback
+}

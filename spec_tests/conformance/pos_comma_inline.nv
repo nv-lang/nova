@@ -1,0 +1,11 @@
+// POSITIVE: fields on the same line separated by commas — valid.
+module spec_tests.conformance
+type Point9 value { x int, y int }
+type Color2 { r int, g int, b int }
+
+fn sum(p Point9) -> int => p.x + p.y
+
+test "inline comma-separated fields parse and run correctly" {
+    ro p = Point9 { x: 3, y: 4 }
+    assert(sum(p) == 7)
+}

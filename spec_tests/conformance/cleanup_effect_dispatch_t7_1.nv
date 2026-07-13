@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.4.4.a + 110.4.4.b (D185, rename Plan 173 Ф.2.R1; амендмент
+// Plan 173 Ф.5 п.2 — D192-ретракт): ResourceTrace observability effect
+// dispatch from ConsumeScope.
+//
+// Verifies codegen emit:
+//   • on_resource_enter fires при entry в `consume X = expr { body }` IF
+//     ResourceTrace handler bound. Receives (label="<type-name>") — timeout
+//     ДРОПНУТ из enter (§3a/п.8, D185 amend).
+//   • on_resource_exit fires at scope exit (after user cleanup body).
+//     Receives (label, outcome, duration_ms, overrun) — превышение
+//     watchdog-порога наблюдаемо структурно (overrun-флаг), длительность
+//     cleanup'а — в duration_ms.
+//   • Without handler bound — silent no-op (verified by existing 28
+//     plan110 fixtures continuing to PASS без any ResourceTrace binding).
+//
+// Acceptance:
+//   A110.4.4.a.a — handler.on_resource_enter called с type name.
+//   A110.4.4.b.a — handler.on_resource_exit called с outcome value +
+//                  duration/overrun (fast cleanup → overrun=false).
+
+module spec_tests.conformance
+type TracedRes3 {
+    ro id int
+}
+
+fn TracedRes3.new(id int) -> TracedRes3 => { id }
+fn TracedRes3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
+
+test "Plan 110.4.4.a A110.4.4.a.a + A110.4.4.b.a: ResourceTrace handler observes enter+exit" {
+    mut enter_calls = 0
+    mut exit_calls = 0
+    mut last_enter_label = ""
+    mut last_duration = -1
+    mut last_overrun = true
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label) {
+            enter_calls += 1
+            last_enter_label = label
+            return ()
+        }
+        on_resource_exit(_label, _outcome, duration_ms, overrun) {
+            exit_calls += 1
+            last_duration = duration_ms
+            last_overrun = overrun
+            return ()
+        }
+    } {
+        consume r = TracedRes3.new(99) {
+            ro _ = r.id
+        }
+    }
+    assert(enter_calls == 1)
+    assert(exit_calls == 1)
+    assert(last_enter_label == "TracedRes3")
+    // Instant no-op cleanup: duration ~0ms, порог (Level 3 default 5000ms)
+    // не превышен → overrun=false.
+    assert(last_duration >= 0)
+    assert(last_overrun == false)
+}
+
+test "Plan 110.4.4.a/b: no handler bound → silent no-op (no crash, body runs)" {
+    mut completed = 0
+    consume r = TracedRes3.new(11) {
+        completed = r.id
+    }
+    assert(completed == 11)
+}

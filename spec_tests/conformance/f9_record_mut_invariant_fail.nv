@@ -1,0 +1,17 @@
+//
+// Plan 33.3 Ф.9.2: record invariant check на конструкции через
+// record-литерал. Constructor с invariant-violation → runtime panic.
+
+module spec_tests.conformance
+type Counter11 {
+    value int
+}
+    invariant value >= 0
+    invariant value <= 100
+
+test "f9 record mut invariant fail" panics "invariant failed:" {
+    // value == 200 нарушает `value <= 100`.
+    ro c = Counter11 { value: 200 }
+    println("UNREACHABLE")
+    ro _ = c
+}

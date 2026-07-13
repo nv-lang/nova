@@ -1,0 +1,16 @@
+// Plan 100.4.4 (D161): codegen per-defer wrap guarantees LIFO continues
+// regardless of individual failure mode (throw / panic / Fail). Compile-pass
+// verify, runtime LIFO sequencing tested через mixed_defer_*.
+
+module spec_tests.conformance
+fn step_log(_n int) -> () { () }
+
+priv(file) fn process4() -> () {
+    defer { step_log(1) }   // runs last LIFO
+    defer { step_log(2) }   // runs middle
+    defer { step_log(3) }   // runs first LIFO
+}
+
+test "multi-defer LIFO continues — D161 all 3 attempted" {
+    process4()
+}

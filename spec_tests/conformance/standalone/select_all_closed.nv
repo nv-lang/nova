@@ -1,0 +1,25 @@
+// EXPECT_RUNTIME_PANIC select: all channels closed
+//
+// D94 Ф.6: если в multi-arm select все recv-арм'ы ждут Some(v)
+// из закрытых каналов без данных, и нет default-арма —
+// nova_select_park() обнаруживает registered==0 и кидает панику
+// вместо вечного deadlock.
+//
+// Используем Some(v) = rx (не wildcard _ = rx), потому что wildcard
+// срабатывает немедленно на закрытый канал — это штатное поведение.
+
+module standalone.select_all_closed
+fn main() Io -> () {
+    ro ch1 = Channel.new(1)
+    ro tx1 = ch1.tx
+    ro rx1 = ch1.rx
+    ro ch2 = Channel.new(1)
+    ro tx2 = ch2.tx
+    ro rx2 = ch2.rx
+    tx1.close()
+    tx2.close()
+    select {
+        Some(v) = rx1 => { assert(v == 0) }
+        Some(w) = rx2 => { assert(w == 0) }
+    }
+}

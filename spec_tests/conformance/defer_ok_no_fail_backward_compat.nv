@@ -1,0 +1,13 @@
+// Plan 100.4.1 (D158): backward-compat — defer без Fail effect работает
+// как раньше (Plan 20 D90). Verify D158 не ломает infallible defer.
+
+module spec_tests.conformance
+fn cleanup2() -> () { () }
+
+fn process8() -> () {
+    defer { cleanup2() }                         // infallible body — work как раньше
+}
+
+test "defer без Fail — backward-compat (D158 не ломает Plan 20)" {
+    process8()
+}

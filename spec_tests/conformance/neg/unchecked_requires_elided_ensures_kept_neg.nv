@@ -1,0 +1,20 @@
+// Plan 140.3 ([M-140-contract-levels]): Eiffel-style per-kind opt-out.
+// `#unchecked(requires)` elides ONLY the preconditions — `ensures` stays enforced.
+// At x=-5 the `requires x > 0` would fire FIRST if enforced; because it is elided,
+// execution proceeds to the `ensures result > 100`, which fires (result=-5). The
+// panic kind is therefore `ensures` (not `requires`), proving requires was elided
+// and ensures kept.
+// EXPECT_RUNTIME_PANIC ensures failed
+
+module neg.unchecked_requires_elided_ensures_kept_neg
+
+#unchecked(requires)
+fn f(x int) -> int
+    requires x > 0
+    ensures result > 100
+=> x
+
+test "#unchecked(requires): requires elided, ensures still enforced" {
+    ro r = f(-5)
+    assert(r == -5)
+}

@@ -1,0 +1,27 @@
+// Plan 100.6 (D164) + (D133 D6 generic-заразность): consume type across
+// "package" boundary — call-site sees consume binding inherits properly.
+//
+// 2026-06-05 baseline-fix: original used `Ok(make_tx(1))` direct-return which
+// is incompatible с D133-consume-rvalue-in-view strict check (consume-rvalue
+// passed to non-consume-marker position). Migrated к direct cross-package
+// dispatch — same intent (consume type used across module boundary) without
+// triggering rvalue-in-view. Result-Ok propagation pattern documented as
+// [M-100.6-consume-rvalue-in-result-ok] followup для future Plan 100 work.
+
+module spec_tests.conformance
+// "Package A":
+export type Transaction_crosspkggenericconsumeok consume { id int }
+export fn Transaction_crosspkggenericconsumeok consume @commit() -> () { () }
+
+fn make_tx(id int) -> Transaction_crosspkggenericconsumeok => { id }
+
+// "Package B" — direct cross-package consume dispatch (no Result wrap).
+fn use_tx_direct(id int) -> () {
+    consume tx = make_tx(id)
+    tx.commit()
+}
+
+test "cross-package consume dispatch — direct call" {
+    use_tx_direct(1)
+    use_tx_direct(2)
+}

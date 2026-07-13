@@ -1,0 +1,30 @@
+// Plan 70.2b POSITIVE: methods on generic sum-type LinkedList3[T]
+// (instance @method dispatch via mono'd receiver).
+//
+// Pre-fix: codegen эмитил literal `l->@len()` в C (`@` invalid в
+// identifiers) → CC-FAIL. Method-name resolution для mono'd
+// generic sum-type receiver не stripped `@` prefix.
+//
+// Post-fix (plan-70.2b): `method.trim_start_matches('@')` в
+// generic_type_methods lookup + base_method_name construction →
+// emits `Nova_LL____nova_int_method_len(l)` correctly.
+
+module spec_tests.conformance
+type LinkedList3[T]
+    | Nil2
+    | Cons2(T, LinkedList3[T])
+
+fn LinkedList3[T] @len() -> int => match @ {
+    Nil2 => 0
+    Cons2(_, rest) => 1 + rest.len()
+}
+
+test "LinkedList3[int] @len method (mono'd dispatch)" {
+    ro l = Cons2(1, Cons2(2, Cons2(3, Nil2)))
+    assert(l.len() == 3)
+}
+
+test "LinkedList3[int] empty @len = 0" {
+    ro l LinkedList3[int] = Nil2
+    assert(l.len() == 0)
+}

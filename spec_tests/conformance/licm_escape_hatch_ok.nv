@@ -1,0 +1,29 @@
+// Plan 123.2 T1.9: semantic equivalence — runtime result identical
+// regardless of LICM ON/OFF. Verified by test runner under env vars.
+
+module spec_tests.conformance
+type Inv3_1 {
+    ro x int
+    ro y int
+}
+
+fn Inv3_1 @combo(n int) -> int {
+    mut total = 0
+    mut i = 0
+    while i < n {
+        total = total + @x + @y + @x * @y
+        i = i + 1
+    }
+    total
+}
+
+fn Inv3_1.new(x int, y int) -> Inv3_1 {
+    Inv3_1 { x, y }
+}
+
+test "escape hatch — runtime semantic preserved" {
+    ro v = Inv3_1.new(2, 3)
+    ro r = v.combo(4)
+    // 4 × (2+3+6) = 4 × 11 = 44.
+    assert(r == 44)
+}

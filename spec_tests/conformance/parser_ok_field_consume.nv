@@ -1,0 +1,27 @@
+// Plan 100.1 (D133 / D4): `consume field T` — field-level marker парсируется.
+// Positive parser test.
+
+module spec_tests.conformance
+
+// D4: double-marker — и тип, и поле должны быть consume.
+type Inner7 consume {
+    id int,
+}
+
+type Outer1 consume {
+    consume inner Inner7,    // D4: field-level consume marker
+    name str,
+}
+
+fn Inner7 consume @destroy() -> () { () }
+fn Outer1 consume @close() -> () {
+    @inner.destroy()
+}
+
+fn make_inner() -> Inner7 => { id: 1 }
+fn make_outer() -> Outer1 => { inner: make_inner(), name: "test" }
+
+test "consume field — парсируется" {
+    consume o = make_outer()
+    o.close()
+}

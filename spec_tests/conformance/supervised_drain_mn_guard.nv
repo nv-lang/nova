@@ -1,0 +1,50 @@
+// supervised_drain_mn_guard.nv — Plan 173.0 Ф.1 регресс-гард.
+//
+// Назначение: purpose-built guard на закрытую multi-worker supervised
+// drain-гонку (исторически [M-83.11-grow-vs-wake-race] + смежные supervised
+// double-resume / nested-cascade-drain-hang). Структурно закрыта в рантайме
+// (chunked stable-address SchedState fibers.h:398-445 + single-winner park_state
+// :1864 + nested cancel-propagation :893). Этот гард ФИКСИРУЕТ закрытие: под
+// РЕАЛЬНЫМ armed M:N (без NOVA_MAXPROCS=1 и без NOVA_AUTOARM=0) множественные
+// supervised-блоки с параллельно паркующимися детьми дренируются без зависания.
+//
+// НЕТ // ENV NOVA_AUTOARM=0 и НЕТ NOVA_MAXPROCS=1 — гард обязан бежать ARMED
+// на дефолтном worker-count (в этом весь смысл, Plan 173.0 §5/§6.1).
+// Pre-fix профиль: torn-base потерянный wake → supervised-блок не завершался
+// → TIMEOUT. Post-fix: все блоки завершаются, elapsed мал.
+
+module spec_tests.conformance
+test "supervised drain: 6 armed M:N блоков с растущими sched-state завершаются" {
+    ro t0 = Time.now_unix_ms()
+
+    // Профиль роста sched-state (3/1/6/4/8/5) под armed M:N: повторные grow
+    // конкурентно с wake'ами (каждый ребёнок паркуется в Time.sleep, driver
+    // будит через close_cb) — воспроизводит grow-vs-wake окно на supervised-drain.
+    supervised { for _ in 0..3 { spawn { Time.sleep(5) } } }
+    supervised { for _ in 0..1 { spawn { Time.sleep(5) } } }
+    supervised { for _ in 0..6 { spawn { Time.sleep(5) } } }
+    supervised { for _ in 0..4 { spawn { Time.sleep(5) } } }
+    supervised { for _ in 0..8 { spawn { Time.sleep(5) } } }
+    supervised { for _ in 0..5 { spawn { Time.sleep(5) } } }
+
+    ro elapsed = Time.now_unix_ms() - t0
+    // Все 27 детей спят по 5мс параллельно; при отсутствии зависания общий
+    // elapsed должен остаться малым (< 2000мс с огромным запасом на CI-jitter).
+    assert(elapsed < 2000)
+}
+
+test "supervised drain: вложенные supervised под armed M:N дренируются" {
+    ro t0 = Time.now_unix_ms()
+    // Nested supervised — cancel-propagation drain (fibers.h:893) под M:N.
+    supervised {
+        for _ in 0..4 {
+            spawn {
+                supervised {
+                    for _ in 0..3 { spawn { Time.sleep(5) } }
+                }
+            }
+        }
+    }
+    ro elapsed = Time.now_unix_ms() - t0
+    assert(elapsed < 2000)
+}

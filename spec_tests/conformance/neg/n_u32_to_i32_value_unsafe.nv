@@ -1,0 +1,5 @@
+// EXPECT_COMPILE_ERROR E_IMPLICIT_NARROWING
+// u32 -> i32 is value-range-unsafe (u32.MAX > i32.MAX) even at equal width (D54).
+module neg.n_u32_to_i32_value_unsafe
+fn take_i32(x i32) -> i32 => x
+test "t" { ro u u32 = 100  assert(take_i32(u) >= 0) }

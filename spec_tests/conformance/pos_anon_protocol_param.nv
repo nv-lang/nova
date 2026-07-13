@@ -1,0 +1,24 @@
+// Plan 97 Ф.2 (D142) — анонимный protocol-тип в позиции параметра.
+//
+// Проверяет: парсер принимает `protocol { method-sig* }` в типе параметра;
+// type-checker (compute_protocol_satisfaction inline) не требует named-
+// типа в registry; вызов метода через структурную совместимость работает.
+
+module spec_tests.conformance
+type Doc2 {
+    title str
+}
+
+fn Doc2 @close() -> () => ()
+
+
+// Анонимный protocol-тип `protocol { @close() -> () }` — параметр должен
+// иметь метод `close`. `Doc2` структурно совместим.
+fn use_closer1(c protocol { @close() -> () }) -> () => c.close()
+
+
+test "анонимный protocol-тип в параметре, structural match" {
+    ro d = Doc2 { title: "x" }
+    use_closer1(d)
+    assert(d.title == "x")
+}

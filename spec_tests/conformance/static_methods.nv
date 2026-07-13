@@ -1,0 +1,29 @@
+// Plan 88 Ф.3.1 — static-метод `T.new` (user-defined через protocol)
+// на type-параметре. Обобщённый путь, не спец-кейс под один метод `from`.
+//
+// [D73/D77 retraction 2026-07-06]: вторая часть файла (`T.try_from` через
+// `TryFrom[int, str]` bound) удалена — протокол `TryFrom` ретрактирован,
+// покрытие generic-bound static-dispatch остаётся через `Buildable` ниже.
+
+module spec_tests.conformance
+// --- T.new() — user-defined static-метод через protocol ---
+type Buildable protocol { @new() -> Self }
+
+type Counter14 { n int }
+fn Counter14.new() -> Counter14 => { n: 0 }
+
+type Score2 { points int }
+fn Score2.new() -> Score2 => { points: 100 }
+
+fn fresh[T Buildable]() -> T => T.new()
+
+
+test "T.new() static на typevar — Counter14" {
+    ro c = fresh[Counter14]()
+    assert(c.n == 0)
+}
+
+test "T.new() static на typevar — Score2" {
+    ro s = fresh[Score2]()
+    assert(s.points == 100)
+}

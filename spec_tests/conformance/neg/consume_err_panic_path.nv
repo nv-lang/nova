@@ -1,0 +1,28 @@
+// EXPECT_COMPILE_ERROR D133
+//
+// Plan 100.1 (D133, D3): exit через `panic` — tx Live на panic-path
+// → error.
+//
+// `consume tx = begin(); panic("...")` — на panic-path tx Live →
+// E (D133-not-consumed). Defer cover'аут это (Plan 100.4.5
+// D162), но без defer'а — голый panic-path требует, чтобы tx был
+// Consumed до panic'а.
+
+module neg.consume_err_panic_path
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+fn begin() -> Transaction => { id: 1 }
+
+test "panic между begin и commit — tx Live на panic-path" {
+    consume tx = begin()
+    // panic — exit-path с Live tx.
+    // ОШИБКА D133-not-consumed на panic exit-point.
+    // Suggest: либо консьюм до panic, либо defer cover (D162 Plan 100.4.5).
+    panic("something went wrong")
+    tx.commit()                                // unreachable
+}

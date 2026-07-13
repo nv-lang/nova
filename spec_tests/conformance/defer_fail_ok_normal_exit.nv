@@ -1,0 +1,18 @@
+// Plan 100.4.1 (D158): defer body может Fail; на normal exit fail
+// propagates как обычный Fail. Compile pass — D158 checker permits
+// Fail-throws когда enclosing fn-sig declares Fail[E].
+
+module spec_tests.conformance
+type CommitErr2 { msg str }
+
+// Failable cleanup function (infallible body, just declares Fail).
+fn commit3() Fail[CommitErr2] -> () { () }
+
+// fn-sig объявляет Fail[CommitErr2] — D158 разрешает Fail-call в defer.
+priv(file) fn process4() Fail[CommitErr2] -> () {
+    defer { commit3() }                          // failable cleanup body (D158)
+}
+
+test "defer с Fail effect на normal exit — D158 compile pass" {
+    process4()
+}

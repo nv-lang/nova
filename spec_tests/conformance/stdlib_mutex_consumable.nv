@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.3.1 (D194): MutexGuard/ReadGuard/WriteGuard/Permit
+// implement Cleanup[never] — `consume g = mu.acquire() { body }`
+// scope-block работает с auto-release on exit.
+
+module spec_tests.conformance
+fn use_mutex() -> int {
+    mut mu = Mutex.new()
+    mut value = 0
+    consume g = mu.lock() {
+        value = 42
+    }
+    // g.cleanup auto-released the mutex.
+    value
+}
+
+fn use_semaphore() -> int {
+    mut sem = Semaphore.new(1)
+    mut value = 0
+    consume p = sem.acquire() {
+        value = 99
+    }
+    value
+}
+
+test "Plan 110.3.1: MutexGuard Cleanup[never]" {
+    assert(use_mutex() == 42)
+}
+
+test "Plan 110.3.1: Permit Cleanup[never]" {
+    assert(use_semaphore() == 99)
+}
