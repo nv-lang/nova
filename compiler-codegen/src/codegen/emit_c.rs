@@ -23973,19 +23973,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.line("");
         } else
         if !tests.is_empty() && !has_main {
-            // Generate a test runner as nova_fn_main_impl + C main
-            self.line("static nova_unit nova_fn_main_impl(void) {");
-            self.indent += 1;
-            self.line(&format!("int _nova_tests_total = {};", tests.len()));
-            self.line("int _nova_tests_failed = 0;");
-            self.line("printf(\"Running %d tests...\\n\", _nova_tests_total);");
-            self.line("fflush(stdout);");
-            for (idx, t) in tests.iter().enumerate() {
-                let safe = Self::mangle_test_name_indexed(&t.name, idx);
-                let escaped = Self::escape_c_str(&t.name);
-                self.line("{");
+            // [8a-fix] Plan 198 defect #8a: each test used to get a
+            // `{ NovaTestFrame _tf; NovaFailFrame _tf_fail; ... }` scope
+            // INLINED straight into one giant nova_fn_main_impl. `_tf`'s
+            // address escapes into the global `_nova_test_frame`, so clang
+            // cannot prove sibling test scopes are non-overlapping and
+            // keeps every scope's stack slot live for the whole function —
+            // a merged CU with N test-blocks grew main_impl's C stack frame
+            // O(N) (>1MB at N=2589 → stack overflow 0xC00000FD at process
+            // startup, before a single test runs). Fix: split test bodies
+            // into fixed-size (TEST_CHUNK_SIZE) chunk functions; each
+            // function's frame is bounded by the chunk size regardless of
+            // total corpus size, and nova_fn_main_impl becomes a
+            // constant-frame loop of chunk calls. (Bonus: fewer live
+            // stack slots per function scope also trims merged-CU
+            // startup/compile cost — relevant to Plan 200.1 §1.)
+            const TEST_CHUNK_SIZE: usize = 64;
+            let test_chunks: Vec<&[&TestDecl]> = tests.chunks(TEST_CHUNK_SIZE).collect();
+            for (chunk_idx, chunk) in test_chunks.iter().enumerate() {
+                self.line(&format!("static int nova_test_chunk_{}(void) {{", chunk_idx));
                 self.indent += 1;
-                self.line("NovaTestFrame _tf;");
+                self.line("int _nova_tests_failed = 0;");
+                for (local_idx, t) in chunk.iter().enumerate() {
+                    let idx = chunk_idx * TEST_CHUNK_SIZE + local_idx;
+                    let safe = Self::mangle_test_name_indexed(&t.name, idx);
+                    let escaped = Self::escape_c_str(&t.name);
+                    self.line("{");
+                    self.indent += 1;
+                    self.line("NovaTestFrame _tf;");
                 self.line("_tf.fail_msg = NULL;");
                 self.line("_nova_test_frame = &_tf;");
                 /* Push a fail-frame too: assertion failures inside a fiber are
@@ -24082,8 +24097,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.line("nova_fail_pop();");
                     self.line("_nova_test_frame = NULL;");
                 }
+                    self.indent -= 1;
+                    self.line("}");
+                }
+                self.line("return _nova_tests_failed;");
                 self.indent -= 1;
                 self.line("}");
+                self.line("");
+            }
+            self.line("static nova_unit nova_fn_main_impl(void) {");
+            self.indent += 1;
+            self.line(&format!("int _nova_tests_total = {};", tests.len()));
+            self.line("int _nova_tests_failed = 0;");
+            self.line("printf(\"Running %d tests...\\n\", _nova_tests_total);");
+            self.line("fflush(stdout);");
+            for chunk_idx in 0..test_chunks.len() {
+                self.line(&format!("_nova_tests_failed += nova_test_chunk_{}();", chunk_idx));
             }
             self.line("printf(\"%d/%d passed\\n\", _nova_tests_total - _nova_tests_failed, _nova_tests_total);");
             self.line("if (_nova_tests_failed > 0) { exit(1); }");
