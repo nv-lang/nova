@@ -35200,9 +35200,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let want_instance = !matches!(&obj.kind, ExprKind::Ident(n)
                             if self.current_type_subst.contains_key(n)
                                || self.method_overloads.keys().any(|(t, _)| t == n));
-                        if std::env::var_os("NOVA_TRACE_D2HOLE").is_some() && rt.contains("D119Box") {
-                            eprintln!("[D2H-B3] rt={} method={} want_instance={}", rt, method, want_instance);
-                        }
                         let key = (rt.clone(), method.clone());
                         // Plan 138.2 Ф.0-final: under the universal `[]T` ≡
                         // `Vec[T]` flip, an array-extension method call
@@ -35264,10 +35261,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             && c.c_name.starts_with("__mono_method__")))
                                         .unwrap_or(false))
                                     .unwrap_or(false);
-                                if std::env::var_os("NOVA_TRACE_D2HOLE").is_some() && rt.contains("D119Box") {
-                                    eprintln!("[D2H-B3] rt={} method={} sentinel_here={} sentinel_alt={} n_cand={}",
-                                        rt, method, has_sentinel_here, has_sentinel_alt, candidates.len());
-                                }
                                 if has_sentinel_here || has_sentinel_alt {
                                     let recv_key = (rt.clone(), method.clone());
                                     // Plan 101.1: для array-ext receivers, mono_method_decls
@@ -49799,15 +49792,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // D26 prelude: NovaOpt_T method type inference.
                         if obj_ty.starts_with("NovaOpt_") {
                             self.icr_trace("B11q_novaopt_methods");
-                            if std::env::var_os("NOVA_TRACE_D1HOLE1_ICR").is_some() {
-                                let ch2 = self.resolved_types.get(&expr.id);
-                                let ch2_c = ch2.map(|rt| self.resolved_type_to_c(rt));
-                                let ns = self.node_substs.get(&expr.id);
-                                eprintln!(
-                                    "[D1H1-ICR] arm=Option method={} id={:?} ch2={:?} ch2_c={:?} node_substs={:?}",
-                                    method, expr.id, ch2, ch2_c, ns
-                                );
-                            }
                             let elem_ty = Self::debt_unmangle_ptr_suffix(
                                 obj_ty.strip_prefix("NovaOpt_")
                                     .unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"))
@@ -49839,15 +49823,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Plan 72 P1-C: use tracked Result[T,E] type params when available.
                         if Self::is_result_like(&obj_ty) {
                             self.icr_trace("B11r_result_like_methods");
-                            if std::env::var_os("NOVA_TRACE_D1HOLE1_ICR").is_some() {
-                                let ch2 = self.resolved_types.get(&expr.id);
-                                let ch2_c = ch2.map(|rt| self.resolved_type_to_c(rt));
-                                let ns = self.node_substs.get(&expr.id);
-                                eprintln!(
-                                    "[D1H1-ICR] arm=Result method={} id={:?} ch2={:?} ch2_c={:?} node_substs={:?}",
-                                    method, expr.id, ch2, ch2_c, ns
-                                );
-                            }
                             // Plan 59 Ф.7.5-lite: inline-aware (T,E) inference.
                             let (ok_c, err_c) = self.resolve_result_te(obj, &obj_ty)
                                 .unwrap_or_else(|| panic!("[P67-LEGACY] Result T/E unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0)", obj_ty));

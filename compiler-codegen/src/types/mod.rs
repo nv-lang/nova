@@ -9811,16 +9811,7 @@ impl<'a> TypeCheckCtx<'a> {
         // carrier unify happens relative to that construction changes nothing for
         // it — `solver.unify(recv_pattern, concrete_recv)` still runs exactly once,
         // still strictly before `extra_eqs` is consumed (`solver.unify(a, b)` below).
-        let __d2h_trace = std::env::var_os("NOVA_TRACE_D2HOLE").is_some()
-            && recv.type_name.contains("D119Box");
         let mut solver = Solver::new();
-        if __d2h_trace {
-            eprintln!(
-                "[D2H-RRC-IN] recv={} pattern={:?} concrete={:?} unify_ok={}",
-                recv.type_name, recv_pattern, concrete_recv,
-                Solver::new().unify(&recv_pattern, &concrete_recv).is_ok()
-            );
-        }
         solver.unify(&recv_pattern, &concrete_recv).ok()?;
         let mut carrier_tr_subst: HashMap<String, TypeRef> = HashMap::new();
         carrier_tr_subst.insert("Self".to_string(), peeled.clone());
@@ -9911,13 +9902,6 @@ impl<'a> TypeCheckCtx<'a> {
             let _ = solver.unify(a, b);
         }
         let resolved_ret = solver.resolve(&ret_template);
-        if __d2h_trace {
-            eprintln!(
-                "[D2H-RRC-IN] recv={} extra_eqs={:?} resolved_ret={:?} leaf={:?}",
-                recv.type_name, extra_eqs, resolved_ret,
-                solver.as_concrete_leaf(&resolved_ret)
-            );
-        }
         let rt = solver.as_concrete_leaf(&resolved_ret)?;
         // [M-196.5-node-substs] Producer B: `solver.subst` (via `solver.resolve`/
         // `as_concrete_leaf` per-var) already has EVERY carrier + method-level binding —
@@ -9940,12 +9924,6 @@ impl<'a> TypeCheckCtx<'a> {
                 })
             })
             .collect();
-        if std::env::var_os("NOVA_TRACE_D2HOLE").is_some() {
-            eprintln!(
-                "[D2H-RRC] recv={} names={:?} method_names_ordered={:?} decl_order_len={} ordered_len={} ordered={:?}",
-                recv.type_name, names, method_names_ordered, decl_order.len(), ordered.len(), ordered
-            );
-        }
         let ordered = if !decl_order.is_empty() && ordered.len() == decl_order.len() {
             ordered
         } else {
@@ -14549,23 +14527,14 @@ impl<'a> TypeCheckCtx<'a> {
             }
             _ => None,
         };
-        let __d1h1_trace2 = std::env::var_os("NOVA_TRACE_D1HOLE1").is_some();
         let overloads = match self.method_overloads(&type_name, method).or_else(|| {
             slice_key
                 .as_deref()
                 .filter(|k| *k != type_name.as_str())
                 .and_then(|k| self.method_overloads(k, method))
         }) {
-            Some(o) => {
-                if __d1h1_trace2 {
-                    eprintln!("[D1H1-arity] type_name={} method={} overloads={}", type_name, method, o.len());
-                }
-                o
-            }
+            Some(o) => o,
             None => {
-                if __d1h1_trace2 {
-                    eprintln!("[D1H1-arity] type_name={} method={} NO-OVERLOADS", type_name, method);
-                }
                 // 196.5 Stage-D wave-2 (дыра-1, D1H1 шаг 3): `unwrap`-семья на
                 // Option/Result — РЕТРАКТИРОВАННЫЕ методы (D85/D86, prelude
                 // `[M-unwrap-twins-retraction]`): деклараций в .nv НЕТ, но вызовы
@@ -14740,15 +14709,6 @@ impl<'a> TypeCheckCtx<'a> {
                     continue;
                 }
                 let p_seeded = crate::const_fn_trampoline::subst_type_ref_pub(&p.ty, &subst);
-                if std::env::var_os("NOVA_TRACE_D2HOLE").is_some()
-                    && recv.type_name.contains("D119Box")
-                {
-                    eprintln!(
-                        "[D2H-RESID] recv={} method={} p_seeded={:?} a_ty={:?}",
-                        recv.type_name, f.name,
-                        p_seeded, self.infer_expr_type(a.expr(), call_scope)
-                    );
-                }
                 if let Some(a_ty) = self.infer_expr_type(a.expr(), call_scope) {
                     let _ = crate::const_fn_trampoline::unify_type(
                         &p_seeded, &a_ty, &method_names, &mut full_subst);
@@ -14772,15 +14732,6 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             let out_full = crate::const_fn_trampoline::subst_type_ref_pub(ret, &full_subst);
-            if std::env::var_os("NOVA_TRACE_D2HOLE").is_some()
-                && recv.type_name.contains("D119Box")
-            {
-                eprintln!(
-                    "[D2H-RESID] recv={} method={} out_full={:?} bail={}",
-                    recv.type_name, f.name, out_full,
-                    typeref_mentions_any(&out_full, &method_names)
-                );
-            }
             if typeref_mentions_any(&out_full, &method_names) {
                 return None; // still unresolved from the args — honest bail
             }
@@ -15108,21 +15059,13 @@ impl<'a> TypeCheckCtx<'a> {
         // writes under (propagated through `resolve_instance_method_return_arity` →
         // `resolve_return_channel`'s caller-side insert).
         let call_id = if e.id.is_set() { Some(e.id) } else { None };
-        let __d1h1_trace = std::env::var_os("NOVA_TRACE_D1HOLE1").is_some();
-        if __d1h1_trace {
-            eprintln!("[D1H1] enter method={} recv_ty={:?} call_id={:?}", name, recv_ty, call_id);
-        }
-        let __d1h1_res = self.resolve_instance_method_return_arity(
+        self.resolve_instance_method_return_arity(
             &recv_ty, name, Some(call_arity), Some((call_args.as_slice(), scope)), call_id)
             .or_else(|| {
                 // 172.1.2 arg-binding (2026-07-03): method-level generic (`map[U]`)
                 // выводится из closure-аргумента при известном carrier-subst.
                 self.resolve_method_return_with_closure_args(&recv_ty, name, call_args, scope)
-            });
-        if __d1h1_trace {
-            eprintln!("[D1H1] exit method={} call_id={:?} result={:?}", name, call_id, __d1h1_res);
-        }
-        __d1h1_res
+            })
     }
 
     /// 172.1.2 C6(a): посев типов closure-параметров из СУБСТИТУИРОВАННОЙ
