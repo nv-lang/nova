@@ -11237,10 +11237,9 @@ AST `FormatSpec` (`compiler-codegen/src/ast/format_spec.rs`, расширен о
 `_radix_prefix`/`_f64_body` + sign/prefix). Целые — `nova_int` (64-bit), negative hex =
 two's-complement (`${-1:x}` → `ffffffffffffffff`, как Rust).
 
-### Отложено (B2 → Plan 152.7.1, `[M-152.7-write-sink]`)
-Обобщение `@display(mut sb StringBuilder)` → `@display(mut w Write)` (форматтер в любой
-sink: StringBuilder/WriteBuffer/stdout, direct-to-sink `print` без промежуточной str).
-Breaking (меняет сигнатуры всех `@display`/`@debug`) → отдельный sub-plan.
+### ~~Отложено~~ B2 — ✅ ЗАКРЫТО (2026-06-16, [D374](02-types.md#d374-write-sink-протокол--декаплинг-displaydebug-от-stringbuilder-plan-15271))
+Обобщение `@display(mut sb StringBuilder)` → `@display(mut w Write)` выполнено Plan 152.7.1:
+sink-протокол `Write`, сигнатуры Display/Debug переломлены (breaking, сделан).
 
 См. [Plan 152.7](../../docs/plans/152.7-interpolation-formatting.md),
 [D229](02-types.md#d229-Debug-protocol--format-spec-expr).
