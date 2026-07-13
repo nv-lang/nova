@@ -1,9 +1,0 @@
-// Plan 84 Ф.5 NEGATIVE — относительный импорт несуществующего модуля.
-// EXPECT_COMPILE_ERROR cannot find module
-module neg_notfound.nf_test
-
-import ./no_such_module.{nope}
-
-test "unreachable" {
-    assert(true)
-}

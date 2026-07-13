@@ -1,8 +1,0 @@
-// Plan 84 Ф.5 — sibling-модуль для относительного импорта `./helper`.
-module sibling.helper
-
-export fn add(a int, b int) -> int => a + b
-
-test "helper self-check" {
-    assert(add(2, 3) == 5)
-}

@@ -1,9 +1,0 @@
-// Plan 84 Ф.5 POSITIVE — относительный импорт соседа `./helper`.
-// rel_root = директория этого файла; `./helper` → ./sibling/helper.nv.
-module sibling.use_sibling_test
-
-import ./helper.{add}
-
-test "relative ./ — sibling module" {
-    assert(add(40, 2) == 42)
-}

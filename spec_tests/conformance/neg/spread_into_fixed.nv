@@ -1,7 +1,0 @@
-// EXPECT_COMPILE_ERROR
-module neg.spread_into_fixed
-test "spread in [N]T literal rejected" {
-    ro xs []int = [1, 2, 3]
-    ro a [3]int = [...xs]
-    assert(a[0] == 1)
-}

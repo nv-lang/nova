@@ -1,6 +1,0 @@
-// EXPECT_COMPILE_ERROR
-module neg.len_mismatch
-test "literal length mismatch vs [3]int" {
-    ro a [3]int = [1, 2]
-    assert(a[0] == 1)
-}

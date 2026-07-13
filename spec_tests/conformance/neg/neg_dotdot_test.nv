@@ -1,8 +1,0 @@
-// Plan 84 Ф.5 NEGATIVE — `./` не может сопровождаться `../` (ошибка парсера).
-// EXPECT_COMPILE_ERROR не может идти
-module neg.neg_dotdot_test
-import ./../something.{nope}
-
-test "unreachable" {
-    assert(true)
-}

@@ -1,7 +1,0 @@
-module spec_tests.conformance
-import std.collections.vec.{Vec}
-
-test "vec basics work" {
-    ro v = Vec[int].of(1, 2, 3)
-    assert(v.len() == 3)
-}

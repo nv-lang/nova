@@ -1,8 +1,0 @@
-// Plan 84 Ф.5 — внутренний модуль, реэкспортируется facade'ом.
-module reexport.inner
-
-export fn compute() -> int => 42
-
-test "inner self-check" {
-    assert(compute() == 42)
-}

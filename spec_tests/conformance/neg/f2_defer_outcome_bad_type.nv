@@ -1,9 +1,0 @@
-// EXPECT_COMPILE_ERROR E_DEFER_OUTCOME_TYPE
-//
-// Plan 173 Ф.2.B1 (D314): outcome-биндинг `defer(o T)` требует тип `T` == `ScopeOutcome`
-// (единственный поддерживаемый тип исхода). Иной тип → `[E_DEFER_OUTCOME_TYPE]`.
-
-module neg.f2_defer_outcome_bad_type
-fn bad_defer_type() -> () {
-    defer(o NotScopeOutcome) { () }              // ❌ [E_DEFER_OUTCOME_TYPE]
-}

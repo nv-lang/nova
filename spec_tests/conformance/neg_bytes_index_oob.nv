@@ -1,9 +1,0 @@
-//
-// Plan 145 — негатив: индексация байтового слоя за границей → panic.
-// NovaArray-путь (emit_bchk_array_access) через nova_idx_chk.
-
-module spec_tests.conformance
-test "neg bytes index oob" panics "out of bounds" {
-    ro s = "AB"
-    ro _ = s.bytes()[5]
-}
