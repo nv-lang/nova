@@ -3,9 +3,9 @@
 // on sum types unaffected.
 
 module spec_tests.conformance
-type Shape2 | Circle(int) | Square(int) | Rect(int, int)
+type Shape2_1 | Circle(int) | Square(int) | Rect(int, int)
 
-fn Shape2 @area() -> int {
+fn Shape2_1 @area() -> int {
     match @ {
         Circle(r) => r * r * 3,
         Square(s) => s * s,

@@ -6,7 +6,7 @@ type Errors2 {}
 
 fn Errors2.boom(reason str) -> never => panic("Errors2.boom: ${reason}")
 
-fn pick(c bool) -> int {
+priv(file) fn pick(c bool) -> int {
     if c {
         42
     } else {

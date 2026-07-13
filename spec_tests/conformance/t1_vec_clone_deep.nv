@@ -13,25 +13,25 @@
 //   - buffer-level independence (length/push/pop on the clone never touch the
 //     original — separate backing buffer),
 //   - value-`T` element independence (`Vec[int]`, where shallow == deep).
-// It does NOT assert field-level deep-pointee independence for `Vec[Point]`
+// It does NOT assert field-level deep-pointee independence for `Vec[Point14]`
 // (that is the documented gap — would FAIL under the shallow form because the
-// clone shares the element `Point` pointers).
+// clone shares the element `Point14` pointers).
 
 module spec_tests.conformance
 import std.collections.vec.{Vec}
 
-type Point {
+type Point14 {
     mut x int
     mut y int
 }
 
-test "Vec[Point].clone — buffer independence: pushing to clone does not grow original" {
-    mut v = Vec[Point].new()
-    v.push(Point { x: 10, y: 20 })
+test "Vec[Point14].clone — buffer independence: pushing to clone does not grow original" {
+    mut v = Vec[Point14].new()
+    v.push(Point14 { x: 10, y: 20 })
 
     mut c = v.clone()
     assert(c.len() == 1)
-    c.push(Point { x: 30, y: 40 })
+    c.push(Point14 { x: 30, y: 40 })
 
     assert(v.len() == 1)   // original buffer unchanged
     assert(c.len() == 2)

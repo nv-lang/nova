@@ -23,7 +23,7 @@ type Box { a int }
 
 type Vptr value { p Box }
 
-type Holder {
+priv(file) type Holder {
     x int
     v Vptr
     y int

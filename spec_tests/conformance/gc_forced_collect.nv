@@ -42,7 +42,7 @@ test "[4]str survives forced GC (stack scan holds payloads)" {
     assert(names[3] == "name_3_payload")
 }
 
-type Holder { tag str }
+priv(file) type Holder { tag str }
 
 fn build_holders() -> [3]Holder {
     mut out [3]Holder = [

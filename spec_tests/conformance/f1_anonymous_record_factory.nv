@@ -2,7 +2,7 @@ module spec_tests.conformance
 // Plan 63 Fix C: regression guard для anonymous record literal в generic
 // fn return position. Coverage:
 //   - single-field Box[T].of
-//   - multi-field Pair[A, B].make
+//   - multi-field Pair1[A, B].make
 //   - heterogeneous Holder[T] с T-field + concrete-type field
 //   - nested generic Box[Box[T]]
 //   - computed-field record literal
@@ -22,13 +22,13 @@ export fn Box[T].twin(v1 T, v2 T) -> Box[T] {
     if v1 == v2 { Box[T].of(v1) } else { Box[T].of(v2) }
 }
 
-export type Pair[A, B] { first A; second B }
+export type Pair1[A, B] { first A; second B }
 
-export fn Pair[A, B].make(a A, b B) -> Pair[A, B] => { first: a, second: b }
+export fn Pair1[A, B].make(a A, b B) -> Pair1[A, B] => { first: a, second: b }
 
-export type Holder[T] { value T; count int }
+priv(file) type Holder[T] { value T; count int }
 
-export fn Holder[T].new_with(v T, n int) -> Holder[T] => { value: v, count: n }
+priv(file) fn Holder[T].new_with(v T, n int) -> Holder[T] => { value: v, count: n }
 
 test "Box[int].of — simplest case" {
     ro m = Box[int].of(42)
@@ -40,8 +40,8 @@ test "Box[str].of — str type-arg" {
     assert(s.v == "hi", "single-field str")
 }
 
-test "Pair[int, str].make — multi-field, heterogeneous" {
-    ro p = Pair[int, str].make(7, "seven")
+test "Pair1[int, str].make — multi-field, heterogeneous" {
+    ro p = Pair1[int, str].make(7, "seven")
     assert(p.first == 7, "first field")
     assert(p.second == "seven", "second field")
 }

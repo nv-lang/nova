@@ -5,30 +5,30 @@
 // record-literal»).
 
 module spec_tests.conformance
-type Point { x int, y int }
+type Point12 { x int, y int }
 type PointV value { ro x int, ro y int }
 
 type MakesPoint effect {
-    heap_record() -> Point
+    heap_record() -> Point12
     value_record() -> PointV
     anon_tuple() -> (int, int)
-    ctor_call() -> Point
+    ctor_call() -> Point12
 }
 
-type Shape2 enum
+type Shape2_2 enum
     | Circle { r int }
     | Square { side int }
 
 type MakesShape effect {
-    sum_variant() -> Shape2
+    sum_variant() -> Shape2_2
 }
 
 test "handler-лит: heap record-литерал в теле опа" {
     with MakesPoint = effect MakesPoint {
-        heap_record() { return Point { x: 1, y: 2 } }
+        heap_record() { return Point12 { x: 1, y: 2 } }
         value_record() => PointV { x: 3, y: 4 }
         anon_tuple() => (5, 6)
-        ctor_call() => Point.new(7, 8)
+        ctor_call() => Point12.new(7, 8)
     } {
         ro p = MakesPoint.heap_record()
         assert(p.x == 1)
@@ -47,25 +47,25 @@ test "handler-лит: heap record-литерал в теле опа" {
 
 test "handler-лит: sum-variant record в теле опа" {
     with MakesShape = effect MakesShape {
-        sum_variant() => Shape2.Circle { r: 9 }
+        sum_variant() => Shape2_2.Circle { r: 9 }
     } {
         ro s = MakesShape.sum_variant()
         match s {
-            Shape2.Circle { r } => assert(r == 9)
+            Shape2_2.Circle { r } => assert(r == 9)
             _ => assert(false)
         }
     }
 }
 
-fn Point.new(x int, y int) -> Point {
-    Point { x, y }
+fn Point12.new(x int, y int) -> Point12 {
+    Point12 { x, y }
 }
 
 // ==== Анонимные record-литералы (type_name: None) — задокументированный
 // дефект D316-amend Ф.2: expected_record_type не подводится в handler-тело.
 
 type AnonHeap effect {
-    make() -> Point
+    make() -> Point12
 }
 
 type AnonValue effect {
@@ -114,7 +114,7 @@ test "handler-лит: анонимный value record-литерал" {
 // ==== Захват + анонимный record в одном теле (не сломать capture-механизм).
 
 type AnonWithCapture effect {
-    make() -> Point
+    make() -> Point12
 }
 
 test "handler-лит: захват локали + анонимный record" {
@@ -137,7 +137,7 @@ test "handler-лит: захват локали + анонимный record" {
 // capture-механизм и вложенную эмиссию #define/#undef).
 
 type OuterEff effect {
-    outer_make() -> Point
+    outer_make() -> Point12
 }
 
 type InnerEff effect {

@@ -21,7 +21,7 @@ type Scalars {
     c char
 }
 
-fn pick(s Scalars) -> int {
+priv(file) fn pick(s Scalars) -> int {
     if s.flag { s.n } else { 0 }
 }
 

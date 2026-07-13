@@ -8,7 +8,7 @@ type SignedInt set i8 | i16 | i32 | i64 | int
 type UnsignedInt set u8 | u16 | u32 | u64 | uint
 
 // sum-type MUST still parse as sum (leading `|`, no `set` kind-token)
-type Color | Red | Green | Blue
+priv(file) type Color | Red | Green | Blue
 
 fn paint(c Color) -> int {
     match c {
@@ -20,7 +20,7 @@ fn paint(c Color) -> int {
 
 // Plan 172.3 Ф.2 — type-set used AS a generic bound; instantiated with a member
 // type (`int` ∈ SignedInt) → must pass membership (no E_TYPE_NOT_IN_SET).
-fn[T SignedInt] pick(x T) -> T => x
+priv(file) fn[T SignedInt] pick(x T) -> T => x
 
 test "p172_3_typeset_parse_smoke_positive smoke" {
     // exercise the sum so it is not DCE'd; type-sets are bound-only (no value).

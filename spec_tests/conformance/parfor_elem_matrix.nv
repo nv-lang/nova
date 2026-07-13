@@ -11,8 +11,8 @@ module spec_tests.conformance
 // ── виды элементов ──────────────────────────────────────────────
 
 type Health { name str; code int }              // heap-record
-type Point value { x int; y int }               // value/stack-record (D228)
-type Pair(a int, b int)                         // именованный tuple (D215)
+type Point7 value { x int; y int }               // value/stack-record (D228)
+type Pair2(a int, b int)                         // именованный tuple (D215)
 type Status enum Up | Down(int)                 // sum-тип (D406)
 
 test "matrix: примитив f64 (boxed-транспорт)" {
@@ -48,7 +48,7 @@ test "matrix: heap-record" {
 
 test "matrix: value-record (D228 stack-struct, boxed-транспорт)" {
     ro xs = parallel for i in 0..3 {
-        Point { x: i, y: i * 2 }
+        Point7 { x: i, y: i * 2 }
     }
     assert(xs.len() == 3)
     mut sx = 0
@@ -72,7 +72,7 @@ test "matrix: анонимный tuple" {
 
 test "matrix: именованный tuple (D215)" {
     ro xs = parallel for i in 0..3 {
-        Pair(i, i + 100)
+        Pair2(i, i + 100)
     }
     assert(xs.len() == 3)
     mut sa = 0

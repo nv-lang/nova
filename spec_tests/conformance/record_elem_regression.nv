@@ -8,14 +8,14 @@
 // разбокс genuine-pointer элементов.
 
 module spec_tests.conformance
-type Point { x int, y int }
+type Point11 { x int, y int }
 
 
 test "for-in []Record + доступ к полям" {
-    ro pts []Point = [
-        Point { x: 1, y: 2 },
-        Point { x: 3, y: 4 },
-        Point { x: 10, y: 20 },
+    ro pts []Point11 = [
+        Point11 { x: 1, y: 2 },
+        Point11 { x: 3, y: 4 },
+        Point11 { x: 10, y: 20 },
     ]
     mut sum = 0
     for p in pts {
@@ -25,11 +25,11 @@ test "for-in []Record + доступ к полям" {
 }
 
 test "for-in []Record + match по record-паттерну" {
-    ro pts []Point = [Point { x: 5, y: 5 }, Point { x: 1, y: 9 }]
+    ro pts []Point11 = [Point11 { x: 5, y: 5 }, Point11 { x: 1, y: 9 }]
     mut diag = 0
     for p in pts {
         match p {
-            Point { x, y } => {
+            Point11 { x, y } => {
                 if x == y { diag = diag + 1 }
             }
         }

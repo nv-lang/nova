@@ -1,7 +1,7 @@
 // [M-125-unreachable-builtin] positive — unreachable() в match default arm.
 
 module spec_tests.conformance
-type Color | Red | Green | Blue
+priv(file) type Color | Red | Green | Blue
 
 fn rgb(c Color) -> int {
     match c {
