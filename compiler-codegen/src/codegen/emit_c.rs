@@ -50699,59 +50699,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             self.icr_trace("B11af_fn_ret_method_nameonly");
                             return ret_ty.clone();
                         }
-                        // [M-172.1-d174-sync-consume-registry] (Gap B, extern-method return):
-                        // extern "nova"-метод (sync guards: `MutexGuard consume @unlock()` и пр.)
-                        // не имеет `fn_ret_*` var_types-записи (тело — C-рантайм, forward-decl
-                        // не эмитится) — его return берём из РЕЕСТРА .nv-деклараций
-                        // (ExternalRegistry, §3: реестр из деклараций, не хардкод).
-                        {
-                            let bare = obj_ty.trim_end_matches('*');
-                            let recv_tn = Self::debt_strip_value_nova_tuple_prefix(bare);
-                            // D289 qualified static path `mod.Type.method(...)`: obj =
-                            // Member{Ident(mod ∈ imported_modules), TypeName} — тип
-                            // ресивера берём СИНТАКСИЧЕСКИ (имя типа), не из C-типа
-                            // (module-namespace не значение, obj_ty пуст).
-                            let recv_tn: &str = if recv_tn.is_empty() {
-                                match &obj.kind {
-                                    ExprKind::Member { obj: mo, name: tn }
-                                        if matches!(&mo.kind, ExprKind::Ident(m)
-                                            if self.imported_modules.contains(m.as_str())) =>
-                                    {
-                                        tn.as_str()
-                                    }
-                                    _ => recv_tn,
-                                }
-                            } else {
-                                recv_tn
-                            };
-                            if !recv_tn.is_empty() {
-                                if let Some(decls) =
-                                    self.external_registry.lookup(recv_tn, method)
-                                {
-                                    // ≥1 decl, ВСЕ с одинаковым return — берём его
-                                    // (дубль одной декларации возникает легитимно:
-                                    // load_builtins + inline-merge того же .nv через
-                                    // `import`). Разошедшиеся overload-returns → mimo
-                                    // (не угадываем).
-                                    // [196.5 Stage-D волна-3 replay] B11ag: НЕ дубликат —
-                                    // kill-switch A/B уронил std/src/runtime паникой
-                                    // (`.call_once` на Nova_Once* → B11al): extern "nova"
-                                    // методы (тело в C-рантайме) не имеют fn_ret_*-записей
-                                    // и не каналируются — реестр .nv-деклараций здесь
-                                    // единственный источник возврата. Уникальный трафик.
-                                    if let Some(first) = decls.first() {
-                                        if !first.return_c_type.is_empty()
-                                            && decls.iter().all(|d| {
-                                                d.return_c_type == first.return_c_type
-                                            })
-                                        {
-                                            self.icr_trace("B11ag_extern_method_registry");
-                                            return first.return_c_type.clone();
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        // [196.5 Stage-D волна-4] B11ag_extern_method_registry REMOVED.
+                        // Former: extern "nova" method return read from the
+                        // ExternalRegistry `.nv`-declaration registry
+                        // (`external_registry.lookup(recv_tn, method)`) — covered two
+                        // sub-classes now both checker-materialised into Channel 2:
+                        //   (a) INSTANCE extern method with implicit-Unit return
+                        //       (`extern "nova" fn Once mut @call_once(...)` — no `->`):
+                        //       `resolve_instance_method_return_arity` used to bail on
+                        //       `f.return_type.as_ref()?` for a None return; now returns
+                        //       `Unit` for `is_external` methods (types/mod.rs ~14778).
+                        //   (b) STATIC extern method via D289 module-qualified path
+                        //       (`raw_mem.RawMem.alloc_uncollectable(8)` — nested
+                        //       `Member{Member{Ident(mod), Type}, method}`): the checker
+                        //       could not recover a receiver type (`mod.Type` is a
+                        //       namespace, not a value), so no return reached the channel;
+                        //       now resolved via `resolve_generic_static_return(Type,
+                        //       method, &[], span)` (empty turbofish; these builtins are
+                        //       non-generic) in f1_expr's nested-Member arm (~7914).
+                        // NO-HIT after both producers across conformance + std/src/{time,
+                        // concurrency,runtime,collections,data} (docs/plans/
+                        // 196.5-stage-d-wave4-notes.md) ⟹ structurally unreachable (§5).
                         // [196.5 Stage-D волна-3] B11ah_resolved_types_channel_late REMOVED.
                         // Former: `if expr.id.is_set() { if let Some(rt) =
                         // self.resolved_types.get(&expr.id) { if let Ok(ct) =
