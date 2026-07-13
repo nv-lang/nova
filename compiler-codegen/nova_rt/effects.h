@@ -130,6 +130,20 @@ __declspec(thread) extern NovaLastError _nova_last_error;
 extern __thread NovaLastError _nova_last_error;
 #endif
 
+/* ── Plan 173 хвост (D414 §1 ← Ф.4): scope MultiError-агрегация ──
+ * Staging-слот suppressed-цепочки для БЛИЖАЙШЕГО throw. Транспортный
+ * chokepoint fresh-throw (nova_last_error_set) по умолчанию сбрасывает
+ * карман (D158: новая ошибка = новый карман); scope re-throw хвост
+ * `nova_supervised_run_impl` обязан пронести НЕ-primary retained детские
+ * ошибки В карман primary-броска — он складывает готовую цепочку сюда,
+ * и ближайший nova_last_error_set потребляет её вместо NULL (одноразово).
+ * Вне scope-агрегации слот всегда NULL → поведение прежнее. */
+#ifdef _MSC_VER
+__declspec(thread) extern NovaErrorChain* _nova_pending_suppressed;
+#else
+extern __thread NovaErrorChain* _nova_pending_suppressed;
+#endif
+
 static inline void nova_last_error_set(nova_str msg, NovaThrowKind kind,
                                        void* payload, NovaTypeId tid) {
     _nova_last_error.live               = 1;
@@ -138,7 +152,9 @@ static inline void nova_last_error_set(nova_str msg, NovaThrowKind kind,
     _nova_last_error.frame.error_reason_ptr    = NULL;
     _nova_last_error.frame.error_user_payload  = payload;
     _nova_last_error.frame.error_user_type_id  = tid;
-    _nova_last_error.frame.error_suppressed    = NULL;
+    /* D414 §1: staged scope-агрегат (обычно NULL — прежний reset). */
+    _nova_last_error.frame.error_suppressed    = _nova_pending_suppressed;
+    _nova_pending_suppressed                   = NULL;
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -265,7 +281,10 @@ static inline void nova_throw(nova_str msg) {
         _nova_fail_top->error_reason_ptr = NULL;
         _nova_fail_top->error_user_payload = NULL;
         _nova_fail_top->error_user_type_id = NOVA_TID_NONE;
-        _nova_fail_top->error_suppressed = NULL;
+        /* D414 §1: staged scope-агрегат (обычно NULL = прежний D158-reset);
+         * несём и в кадре, чтобы цепочка пережила дальнейшие rethrow-хопы
+         * (nova_scope_exit -> nova_rethrow_with_suppressed зеркалит кадр). */
+        _nova_fail_top->error_suppressed = _nova_last_error.frame.error_suppressed;
         longjmp(_nova_fail_top->jmp, 1);
     }
     /* No handler: abort. Plan 20 Ф.8 follow-up: flush stdout перед
@@ -1095,7 +1114,8 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
         _nova_fail_top->error_reason_ptr   = NULL;
         _nova_fail_top->error_user_payload = payload;
         _nova_fail_top->error_user_type_id = tid;
-        _nova_fail_top->error_suppressed   = NULL;  /* Plan 100.4.1 D158 */
+        /* D414 §1: staged scope-агрегат (обычно NULL = прежний D158-reset). */
+        _nova_fail_top->error_suppressed   = _nova_last_error.frame.error_suppressed;
     }
     /* Step 2: erased typed slot.
      * Plan 173 Ф.4 #6: cleanup-unwind bypasses handler dispatch (model B). */

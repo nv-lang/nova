@@ -38293,3 +38293,42 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   err173_2 PASS; rt-lane 3/3 (--panic); neg 10/0; std/src/concurrency:
   2 PASS + 2 CC-FAIL pre-existing (main-бинарь на main-дереве падает
   идентично, δ=0); cargo build --release чист.
+
+## Волна «173 хвосты» п.1 — MultiError scope-агрегация (D414 §1 ← Ф.4) (2026-07-13)
+
+- **Разрыв спека/код закрыт:** D414 §1 обещал «Не-primary ошибки уходят в
+  suppressed-карман», но re-throw хвост `nova_supervised_run_impl` кидал
+  только primary (`nova_scope_collect_child_errors` — 0 вызывающих; ошибки
+  siblings терялись). Гейт 174.3 (any/is-downcast) в main — п.1 разгейчен.
+- **Механика:** staging-слот TLS `_nova_pending_suppressed` (effects.h/.c);
+  хвост scope собирает не-primary retained детские падения в
+  NovaErrorChain (через `nv_compose_suppressed` — D193 identity/depth) и
+  ставит в staging; ближайший throw потребляет его в `nova_last_error_set`
+  (карман D158 модели Б) + несёт в fail-frame (`nova_throw`/
+  `nova_throw_typed` теперь копируют из pocket вместо жёсткого NULL —
+  вне агрегации это тот же NULL). Чтение — существующий
+  `suppressed() -> []any`.
+- **Исключения:** CANCEL-производные; Stop-решённые супервизором (новый
+  drive-thread-only флаг `NovaChildError.escalated`, ставится в ESCALATE-
+  ветке decision-loop; D416 — Stop = осознанный выброс, retained для
+  observability). Primary идентифицируется msg+payload+tid+kind (typed-
+  броски делят литерал `msg_repr` «<nova_int>» — по одному msg скипались
+  ОБА ребёнка). Видимый порядок = порядок слотов.
+- **Попутный ABI-фикс (вскрыт тестом):** `nova_any_from_boxed` (typeid.h)
+  всегда заворачивал payload в слот-индирекцию (расчёт на pointer-repr
+  records) → `try_as[int]` на suppressed-элементе возвращал АДРЕС бокса
+  как int. Теперь value-ABI примитивы (tid 1..7) кладут box напрямую в
+  `data`; user value-типы ≥ USER_BASE — прежнее pointer-предположение
+  (задокументировано, pre-existing).
+- **Детерминизм теста:** в supervisor-режиме отмена не летит до решения →
+  хендлер спин-ждёт фиксации обоих падений (fetch_add строго перед throw,
+  без yield между), затем Escalate — оба слота retained гарантированно.
+  `nova_tests/err173_2/scope_multierror_test.nv`: (1) не-primary в кармане
+  с точным значением; (2) Stop не течёт + сброс кармана свежей ловлей;
+  (3) default-Escalate инвариант ⊆ (расписание-независимый).
+- **Спека:** D414 §1 амендмент (06-concurrency.md) тем же слиянием; план
+  173 §Ф.4 acceptance дополнен строкой хвоста.
+- **Гейты:** conformance один CU 111/0 + 7 SKIP (δ0); err173_2 CU PASS
+  (все supervisor-тесты + 3 новых); err173 + any_is + plan110 PASS;
+  runtime_panics CU PASS (precedence в т.ч.); std/src/concurrency δ=0
+  (2 pre-existing CC-FAIL).

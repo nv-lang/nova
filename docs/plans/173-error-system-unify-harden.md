@@ -514,6 +514,15 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
 - **Acceptance:** ✅ **Ф.4 ЗАКРЫТА 2026-07-06.** D158 материализация end-to-end (модель Б);
   cleanup-ошибка НИКОГДА не перезаписывает body-ошибку (и больше не hijack'ит handler/результат);
   catchability под regression-guard; conformance 54/0; regress delta 0; **без упрощений**.
+- ✅ **Хвост «scope-агрегация» ДОДЕЛАН 2026-07-13** (волна «173 хвосты», ветка `tails-173`) —
+  обещание Ф.3-остатка «после Ф.4 — агрегация MultiError» и D414 §1 «не-primary → suppressed»
+  оставалось НЕреализованным (re-throw хвост кидал только primary; `nova_scope_collect_child_errors`
+  не имел вызывающих). Теперь: не-primary retained детские падения (кроме CANCEL-производных и
+  Stop-решённых D416) композируются в suppressed-карман primary-броска (staging
+  `_nova_pending_suppressed` → потребление в `nova_last_error_set`); после ловли primary читаются
+  `suppressed() -> []any`. Попутный ABI-фикс `nova_any_from_boxed` (value-примитивы tid 1..7:
+  data = heap-box напрямую — `try_as[int]` на элементе возвращал адрес бокса). Тест
+  `err173_2/scope_multierror_test.nv` (3 сценария); D414 §1-амендмент тем же слиянием.
 
 ### Ф.5 — Hygiene: exactly-once + watchdog + traces + spec-sweep (СКВОЗНАЯ: пункты закрываются по готовности зависимостей)
 1. **#8:** D188 R2 exactly-once runtime-счётчик `_consume_count` + `D188-on-exit-double-invocation`
