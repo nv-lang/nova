@@ -19903,32 +19903,94 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// `receiver_subst`, выход — оригинальное состояние). Возвращает
     /// `Vec<(name, c_ty)>` отфильтрованный (пустые / `void*` отброшены).
     ///
-    /// **[Q10, Plan 196.3 wave-2, 2026-07-12] Судьба: ВТОРОЕ ОКНО, Tier-2
-    /// СТРУКТУРНО ЗАБЛОКИРОВАНО.** Тот же вердикт и то же обоснование, что у
-    /// twin-функции `resolve_mono_type_args` (~18421, см. её doc-блок для
-    /// полного разбора) — это НЕ mono-lowering (компьютерная подстановка
-    /// уже-решённого чекером факта), а собственный unification-движок
-    /// (Steps 1/2/2f/3 ниже), дублирующий инференс, который `f1_check_call`
-    /// (`types/mod.rs` ~10242, forbidden для Q10) обязан выполнять для
-    /// type-check'а вызова метода с method-level generics, но не
-    /// экспортирует. Migration требует нового канала
-    /// (per-call `ExprId` → substitution, аналог rustc `node_substs`),
-    /// постройка которого трогает forbidden-зону — вне scope Q10; решение
-    /// за владельцем (Q5 «Развилка (A)/(B)», `196.3-wave2-d-driven.md`
-    /// §«СТРУКТУРНАЯ НАХОДКА»). Ранняя карта `196.wave2-progress.md` строка
-    /// `resolve_method_level_subst` уже верно отмечала «➡ чекер» (SEP от
-    /// волны-1) — этот заход уточняет: направление верное, но ПРЕЖДЕВРЕМЕННО
-    /// (тот же канал-гэп блокирует и её). Легаси НЕ трогается.
+    /// **[Q10, Plan 196.3 wave-2, 2026-07-12] Судьба: было ВТОРОЕ ОКНО,
+    /// Tier-2 СТРУКТУРНО ЗАБЛОКИРОВАНО** (тот же вердикт, что у twin-функции
+    /// `resolve_mono_type_args`, ~18421) — эта функция была собственным
+    /// unification-движком (Steps 1/2/2f/3 ниже), дублирующим инференс,
+    /// который `f1_check_call`/`resolve_return_channel` (`types/mod.rs`)
+    /// обязаны выполнять для type-check'а вызова метода с method-level
+    /// generics, но раньше не экспортировали. **Plan 196.5 Stage-B2:
+    /// разблокировано** — тот самый канал (`node_substs: ExprId →
+    /// Vec<(имя, ResolvedType)>`, Stage-A) теперь читается CHANNEL-FIRST
+    /// ниже; Steps 1/2/2f/3 остаются легаси-fallback для промаха/residual
+    /// (переходный период, Stage-C снимает fallback per-D после ICR-трейса).
+    /// [M-196.5-node-substs]
     fn resolve_method_level_subst(
         &mut self,
         fn_decl: &crate::ast::FnDecl,
         args: &[CallArg],
         receiver_subst: &[(String, String)],
         diag_context: &str,
+        call_id: crate::ast::ExprId,
     ) -> Result<Vec<(String, String)>, String> {
         if fn_decl.generics.is_empty() {
             return Ok(Vec::new());
         }
+        // [M-196.5-node-substs] Plan 196.5 Stage-B2: consume any pending
+        // method-level turbofish (`obj.method[U,...](...)`) UP FRONT,
+        // REGARDLESS of which path below resolves the subst — mirrors the
+        // legacy seed's `mem::take` (a stashed OUTER turbofish must never
+        // leak into a NESTED `resolve_method_level_subst` call triggered
+        // while THIS call's own args/closures get emitted further down in
+        // `emit_call`). The channel-first path below doesn't need the
+        // VALUE — the checker already folded any explicit turbofish into
+        // the subst it wrote to `node_substs` at this SAME `call_id` (same
+        // AST node, same source text) — only the CLEARING side-effect; the
+        // legacy fallback still consumes `explicit_tf` exactly as before.
+        let explicit_tf = std::mem::take(&mut self.current_method_turbofish);
+        // Channel-first: the checker (`f1_check_call` / `resolve_return_
+        // channel`, 196.5 §6.2) already solved this call-site's FULL subst
+        // (receiver-carrier ++ method-level, in declaration order) into
+        // `node_substs[call_id]` — pull just THIS method's OWN declared
+        // names out of it by name, instead of re-running the Steps 1/2/2f/3
+        // inference below. Byte-identity gate: a name only "wins" when its
+        // channel `ResolvedType` lowers (`resolved_type_to_c`, D315) to a
+        // non-empty, non-`void*` C-string — the EXACT completeness bar the
+        // legacy result is filtered through at the bottom of this function
+        // (`.filter(|(_, c)| !c.is_empty() && c != "void*")`) — AND only
+        // when EVERY method-generic name clears that bar (a partial hit is
+        // never adopted: it would silently drop a name Step 2f/3 might
+        // still resolve from forwarding/effect-clause sources the channel
+        // doesn't cover). Any miss degrades the WHOLE call-site to the
+        // untouched legacy fallback below — never a partial channel
+        // adoption. `NOVA_NODE_SUBSTS_TRACE` tallies hit vs fallback
+        // (mirrors the producer-side trace, 196.5 Stage-A).
+        let trace_ns = std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some();
+        if let Some(channel) = self.node_substs.get(&call_id) {
+            let mut ordered: Vec<(String, String)> = Vec::with_capacity(fn_decl.generics.len());
+            let mut complete = true;
+            for g in &fn_decl.generics {
+                let lowered = channel.iter()
+                    .find(|(n, _)| n == &g.name)
+                    .and_then(|(_, rt)| self.resolved_type_to_c(rt).ok())
+                    .filter(|c| !c.is_empty() && c != "void*");
+                match lowered {
+                    Some(c) => ordered.push((g.name.clone(), c)),
+                    None => { complete = false; break; }
+                }
+            }
+            if complete {
+                if trace_ns {
+                    eprintln!(
+                        "[NODE_SUBSTS] consumer=resolve_method_level_subst call_id={:?} ctx={} hit n={}",
+                        call_id, diag_context, ordered.len(),
+                    );
+                }
+                return Ok(ordered);
+            }
+            if trace_ns {
+                eprintln!(
+                    "[NODE_SUBSTS] consumer=resolve_method_level_subst call_id={:?} ctx={} fallback reason=partial",
+                    call_id, diag_context,
+                );
+            }
+        } else if trace_ns {
+            eprintln!(
+                "[NODE_SUBSTS] consumer=resolve_method_level_subst call_id={:?} ctx={} fallback reason=miss",
+                call_id, diag_context,
+            );
+        }
+        // ---- legacy fallback (Steps 1/2/2f/3, unchanged) ----
         // Set receiver-only subst как окружающий контекст для
         // type_ref_to_c / infer_expr_c_type вызовов внутри.
         let saved_outer = std::mem::replace(
@@ -19942,11 +20004,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 .collect();
         // [M-91.1-method-turbofish-dispatch] Seed slots from explicit
         // method-level type-args (`obj.method[U,...]`). Positional map onto
-        // fn_decl.generics. mem::take so nested method calls don't inherit the
-        // seed. Resolved in the receiver_subst context (current_type_subst set
-        // above). Inference (Steps 1/2) still runs and, for same-type call
-        // sites, re-derives the identical binding — explicit + inferred converge.
-        let explicit_tf = std::mem::take(&mut self.current_method_turbofish);
+        // fn_decl.generics. `explicit_tf` was already taken above (channel-
+        // first preamble) — consumed here exactly as legacy did. Resolved
+        // in the receiver_subst context (current_type_subst set above).
+        // Inference (Steps 1/2) still runs and, for same-type call sites,
+        // re-derives the identical binding — explicit + inferred converge.
         if !explicit_tf.is_empty() {
             for (slot, tr) in subst_slots.iter_mut().zip(explicit_tf.iter()) {
                 if slot.1.is_none() {
@@ -31751,7 +31813,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             {
                                 let method_subst = self.resolve_method_level_subst(
                                     &fn_decl, args, &[],
-                                    &format!("{}.{}", pn, method))?;
+                                    &format!("{}.{}", pn, method), call_id)?;
                                 let base_c_name =
                                     format!("Nova_{}_method_{}", pn, method);
                                 let mono_name =
@@ -32294,6 +32356,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     let method_extras = self.resolve_method_level_subst(
                                         &fn_decl, args, &type_subst,
                                         &format!("Option.{}", method.as_str()),
+                                        call_id,
                                     )?;
                                     for entry in &method_extras {
                                         type_subst.push(entry.clone());
@@ -32561,6 +32624,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     let method_extras = self.resolve_method_level_subst(
                                         &fn_decl, args, &type_subst,
                                         &format!("Result.{}", method.as_str()),
+                                        call_id,
                                     )?;
                                     for entry in &method_extras {
                                         type_subst.push(entry.clone());
@@ -35058,6 +35122,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let method_extra_subst = self.resolve_method_level_subst(
                                     &fn_decl, args, &type_subst,
                                     &format!("{}.{}", rt_trimmed, method),
+                                    call_id,
                                 )?;
                                 let has_method_subst = !method_extra_subst.is_empty();
                                 for entry in method_extra_subst {
@@ -35352,7 +35417,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             {
                                 let method_subst = self.resolve_method_level_subst(
                                     &fn_decl, args, &[],
-                                    &format!("{}.{}", recv_type, method))?;
+                                    &format!("{}.{}", recv_type, method), call_id)?;
                                 let base_c_name =
                                     format!("Nova_{}_method_{}", recv_type, method);
                                 let mono_name =
