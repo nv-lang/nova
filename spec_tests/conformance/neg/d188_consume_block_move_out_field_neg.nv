@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_CONSUME_BLOCK_MOVE_OUT
+// D188-амендмент (Plan 201): move X в consume-поле конструктора изнутри
+// `consume X { … }` — вынос владения запрещён (только tail/return самого X,
+// либо @share()-копия).
+module neg.d188_consume_block_move_out_field_neg
+
+type MfRes consume { id int }
+fn MfRes consume @cleanup(_outcome ScopeOutcome) -> () { }
+fn MfRes consume @dispose() -> () { }
+
+type MfHolder consume { consume res MfRes }
+fn MfHolder consume @drop_all() -> () { @res.dispose() }
+
+test "move-out в consume-поле конструктора — E_CONSUME_BLOCK_MOVE_OUT" {
+    consume r = MfRes { id: 1 }
+    consume r {
+        consume h = MfHolder { res: r }
+        h.drop_all()
+    }
+}

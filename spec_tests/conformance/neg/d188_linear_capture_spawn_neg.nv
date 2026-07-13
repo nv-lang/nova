@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_LINEAR_CAPTURE_IN_FIBER
+// Plan 201 (взаимодействие с 173.1 by-value капчуром): захват owned
+// linear-значения (consume-тип) в тело spawn — by-value копия обёртки в
+// файбер = алиас ресурса БЕЗ учёта владения → double-close. Канон:
+// @share()-копия per-fiber либо явный move `spawn consume c { … }`.
+module neg.d188_linear_capture_spawn_neg
+
+type LcRes consume { id int }
+fn LcRes consume @cleanup(_outcome ScopeOutcome) -> () { }
+fn LcRes consume @dispose() -> () { }
+
+test "захват consume-типа в spawn — E_LINEAR_CAPTURE_IN_FIBER" {
+    consume r LcRes = LcRes { id: 1 }
+    supervised {
+        spawn {
+            ro _x = r.id
+        }
+    }
+    r.dispose()
+}

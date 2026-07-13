@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_D188_NOT_CLEANUP
+// D188-амендмент (Plan 201): тип X обязан реализовывать Cleanup[E]
+// (consume @cleanup(outcome ScopeOutcome)) — как у binding-формы.
+module neg.d188_consume_block_not_cleanup_neg
+
+type NcRes consume { id int }
+fn NcRes consume @dispose() -> () { }
+
+test "re-consume типа без Cleanup — E_D188_NOT_CLEANUP" {
+    consume r = NcRes { id: 1 }
+    consume r {
+        ro _x = r.id
+    }
+}
