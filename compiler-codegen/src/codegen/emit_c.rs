@@ -48000,105 +48000,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     self.icr_trace("B05_array_ext_slice_sentinel_mono");
                                     let recv_key = (slice_key_ret.clone(), mn.clone());
                                     if let Some(fn_decl) = self.mono_method_decls.get(&recv_key).cloned() {
-                                        // Plan 153.5 (D263): bind the receiver typevar(s)
-                                        // STRUCTURALLY (innermost element at any depth)
-                                        // via the parser-preserved structured receiver
-                                        // type, mirroring the emit-side path 5b. For a
-                                        // FLAT `[]T` receiver this reduces to the legacy
-                                        // `T = immediate element` seed.
-                                        let recv_structured_ty = fn_decl.receiver.as_ref()
-                                            .and_then(|r| r.receiver_ty.clone());
-                                        // Legacy flat elem (fallback seed).
-                                        let elem_c = if let Some(na) = Self::debt_strip_novaarray_prefix_opt(&rt) {
-                                            na.to_string()
-                                        } else if rt.starts_with("Vec____") {
-                                            self.generic_type_instance_info.borrow()
-                                                .get(&format!("Nova_{}", rt))
-                                                .and_then(|(_, args)| args.first().map(|rt| self.arg_c(rt)))
-                                                .unwrap_or_else(|| rt
-                                                    .strip_prefix("Vec____")
-                                                    .unwrap_or("")
-                                                    .to_string())
-                                        } else {
-                                            String::new()
-                                        };
-                                        let mut subst_pending: Vec<(String, Option<String>)> =
-                                            fn_decl.generics.iter()
-                                            .map(|g| (g.name.clone(), None))
-                                            .collect();
-                                        let mut bound_structurally = false;
-                                        if let Some(rty) = &recv_structured_ty {
-                                            let recv_concrete_c = format!("Nova_{}*", rt);
-                                            self.infer_type_param_binding(
-                                                rty, &recv_concrete_c, &mut subst_pending);
-                                            bound_structurally = subst_pending.iter()
-                                                .any(|(_, c)| c.is_some());
-                                        }
-                                        if !bound_structurally && !elem_c.is_empty() {
-                                            if let Some(slot) = subst_pending.first_mut() {
-                                                if slot.1.is_none() {
-                                                    slot.1 = Some(elem_c.clone());
-                                                }
-                                            }
-                                        }
-                                        let fn_decl = &fn_decl;
-                                        // Infer остальные generics из args + closure return.
-                                        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
-                                            let arg_c = self.infer_expr_c_type(arg.expr());
-                                            self.infer_type_param_binding(&param.ty, &arg_c, &mut subst_pending);
-                                            if let crate::ast::TypeRef::Func { params: fp, return_type: Some(ret_ty_ref), .. } = &param.ty {
-                                                let closure_ret_c = match &arg.expr().kind {
-                                                    crate::ast::ExprKind::ClosureLight { params: cl_params, body } => {
-                                                        // Bind closure params so body inference can resolve them.
-                                                        let fp_tys: Vec<String> = fp.iter()
-                                                            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                                                            .collect();
-                                                        let mut ovr = self.closure_param_type_overrides.borrow_mut();
-                                                        let saved_cl: Vec<(String, Option<String>)> = cl_params.iter().zip(fp_tys.iter())
-                                                            .map(|(p, ty)| (p.name.clone(), ovr.insert(p.name.clone(), ty.clone())))
-                                                            .collect();
-                                                        drop(ovr);
-                                                        let ret_c = match body {
-                                                            crate::ast::ClosureBody::Expr(e) => self.infer_expr_c_type(e),
-                                                            crate::ast::ClosureBody::Block(b) => b.trailing.as_ref()
-                                                                .map(|e| self.infer_expr_c_type(e))
-                                                                .unwrap_or_default(),
-                                                        };
-                                                        let mut ovr = self.closure_param_type_overrides.borrow_mut();
-                                                        for (name, prev) in saved_cl {
-                                                            match prev {
-                                                                Some(old) => { ovr.insert(name, old); }
-                                                                None => { ovr.remove(&name); }
-                                                            }
-                                                        }
-                                                        ret_c
-                                                    }
-                                                    _ => String::new(),
-                                                };
-                                                if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
-                                                    self.infer_type_param_binding(
-                                                        ret_ty_ref.as_ref(), &closure_ret_c, &mut subst_pending);
-                                                }
-                                            }
-                                        }
+                                        // Plan 196.5 §W1-i.B (flip+retire, B05): единый
+                                        // POST-mono резолвер resolve_instance_call_subst
+                                        // (nested/structural carrier bind + method-level
+                                        // args/closure-return bind, `19912`+) заменяет
+                                        // ручную реконструкцию subst_pending — SHADOW
+                                        // (W1-i.A) доказал 0/0 mismatch (1/1 hit,
+                                        // conformance + std/collections). [M-196.5-w1i-flip]
+                                        let subst_pending = self
+                                            .resolve_instance_call_subst(expr.id, &fn_decl, &rt, args)
+                                            .unwrap_or_default();
                                         if let Some(ret_ty) = &fn_decl.return_type {
                                             if let Some(c_ty) = Self::apply_type_subst_to_ref(
                                                 ret_ty, &subst_pending,
                                             ) {
                                                 if !c_ty.is_empty() && c_ty != "void*" {
-                                                    // Plan 196.5 §W1-i.A SHADOW (extract, no flip):
-                                                    // сверяем resolve_instance_call_subst против
-                                                    // ЭТОГО же legacy-результата, через ТУ ЖЕ
-                                                    // lowering-цепочку (apply_type_subst_to_ref).
-                                                    #[cfg(debug_assertions)]
-                                                    {
-                                                        let helper_c = self
-                                                            .resolve_instance_call_subst(expr.id, fn_decl, &rt, args)
-                                                            .and_then(|s| Self::apply_type_subst_to_ref(ret_ty, &s));
-                                                        self.w1_shadow_probe(
-                                                            "B05", expr.id.0 as u64, helper_c.as_deref(), &c_ty,
-                                                        );
-                                                    }
                                                     return c_ty;
                                                 }
                                             }
