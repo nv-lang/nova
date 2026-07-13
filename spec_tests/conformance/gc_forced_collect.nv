@@ -42,18 +42,18 @@ test "[4]str survives forced GC (stack scan holds payloads)" {
     assert(names[3] == "name_3_payload")
 }
 
-priv(file) type Holder { tag str }
+type Holder2 { tag str }
 
-fn build_holders() -> [3]Holder {
-    mut out [3]Holder = [
-        Holder { tag: "h" + "0" },
-        Holder { tag: "h" + "1" },
-        Holder { tag: "h" + "2" },
+fn build_holders() -> [3]Holder2 {
+    mut out [3]Holder2 = [
+        Holder2 { tag: "h" + "0" },
+        Holder2 { tag: "h" + "1" },
+        Holder2 { tag: "h" + "2" },
     ]
     out
 }
 
-test "[3]Holder (heap-record pointers) survives forced GC" {
+test "[3]Holder2 (heap-record pointers) survives forced GC" {
     ro hs = build_holders()
     mut k = 0
     while k < 3 {

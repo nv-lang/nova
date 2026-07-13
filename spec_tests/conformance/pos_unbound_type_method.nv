@@ -9,7 +9,7 @@ fn Counter9_2 @add(n int) -> int => @value + n
 
 test "unbound Type.@method: explicit self pass" {
     ro c = Counter9_2.new()
-    ro f = Counter9_2.@add
-    ro r = f(c, 5)
+    ro fub = Counter9_2.@add
+    ro r = fub(c, 5)
     assert(r == 5)
 }

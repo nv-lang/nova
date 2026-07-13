@@ -12,8 +12,8 @@
 //
 //   Leaf       (unit)        → []           (no payload)
 //   Count(int) (scalar)      → []           (int@8 is SCALAR — per-variant precision!)
-//   Cons(Box)  (heap record) → [8]          (Nova_Box* at payload base 8)
-//   Seg { from Box, n int, to Box } (record variant):
+//   Cons(Box5)  (heap record) → [8]          (Nova_Box* at payload base 8)
+//   Seg { from Box5, n int, to Box5 } (record variant):
 //       from@8 (ptr), n@16 (scalar), to@24 (ptr) → [8, 24]
 //
 // EXPECT (gc-layout-analyze --format json) for type Node:
@@ -23,17 +23,17 @@
 //     [1] Count → []         (scalar payload NOT scanned)
 //     [2] Cons  → [8]
 //     [3] Seg   → [8, 24]
-//   Box → size 8, pointer_offsets []
+//   Box5 → size 8, pointer_offsets []
 
 module spec_tests.conformance
 
-type Box { a int }
+type Box5 { a int }
 
 priv(file) type Node
     | Leaf
     | Count(int)
-    | Cons(Box)
-    | Seg { from Box, n int, to Box }
+    | Cons(Box5)
+    | Seg { from Box5, n int, to Box5 }
 
 fn node_kind(node Node) -> int => match node {
     Leaf       => 0
@@ -43,8 +43,8 @@ fn node_kind(node Node) -> int => match node {
 }
 
 test "sum per-variant constructs and matches" {
-    ro b1 = Box { a: 1 }
-    ro b2 = Box { a: 2 }
+    ro b1 = Box5 { a: 1 }
+    ro b2 = Box5 { a: 2 }
     assert(node_kind(Leaf) == 0)
     assert(node_kind(Count(7)) == 1)
     assert(node_kind(Cons(b1)) == 2)

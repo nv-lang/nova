@@ -4,11 +4,11 @@
 // this module's `fn f(x int)` instead of the local closure param, raising a
 // spurious "обязательный параметр `x` не передан". A local binding shadows a
 // module free function of the same name.
-module spec_tests.conformance
+module standalone.resize_with_free_fn_shadow
 import std.collections.vec.{Vec}
 
 // Same name as the closure param `f` inside Vec.resize_with / fill_with.
-priv(file) fn f(x int) -> int => x + 100
+fn f(x int) -> int => x + 100
 
 test "free fn f does not shadow resize_with closure param" {
     mut v = Vec[int].new()

@@ -16,7 +16,7 @@
 
 #no_prelude
 module spec_tests.conformance
-fn helper(x int) -> int {
+priv(file) fn helper(x int) -> int {
     x * 2
 }
 

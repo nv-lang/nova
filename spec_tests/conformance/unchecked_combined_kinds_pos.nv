@@ -5,12 +5,12 @@
 
 module spec_tests.conformance
 #unchecked(requires, ensures)
-priv(file) fn f(x int) -> int
+fn f_unchecked_kinds(x int) -> int
     requires x > 0
     ensures result > 100
 => x
 
 test "#unchecked(requires, ensures): both elided — no panic at x=-5" {
-    ro r = f(-5)
+    ro r = f_unchecked_kinds(-5)
     assert(r == -5)
 }

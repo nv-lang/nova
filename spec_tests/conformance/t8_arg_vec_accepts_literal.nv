@@ -1,26 +1,26 @@
 // Plan 138.1 Ф.4 — t8: []T == Vec[T] (B1/A8)
-// fn f(a []int) accepts [1,2,3] literal and Vec[int].from([4,5]).
+// fn f_veclit(a []int) accepts [1,2,3] literal and Vec[int].from([4,5]).
 
 module spec_tests.conformance
 import std.collections.vec.{Vec}
 
-priv(file) fn f(a []int) -> int {
+fn f_veclit(a []int) -> int {
     mut sum = 0
     for x in a { sum = sum + x }
     sum
 }
 
 test "[]T param accepts array literal [1,2,3]" {
-    assert(f([1, 2, 3]) == 6)
+    assert(f_veclit([1, 2, 3]) == 6)
 }
 
 test "[]T param accepts Vec[int].from([4,5])" {
     ro v = Vec[int].from([4, 5])
-    assert(f(v) == 9)
+    assert(f_veclit(v) == 9)
 }
 
 test "[]T param accepts empty literal" {
-    assert(f([]) == 0)
+    assert(f_veclit([]) == 0)
 }
 
 test "[]T param accepts Vec[int].new() with pushes" {
@@ -28,5 +28,5 @@ test "[]T param accepts Vec[int].new() with pushes" {
     v.push(10)
     v.push(20)
     v.push(30)
-    assert(f(v) == 60)
+    assert(f_veclit(v) == 60)
 }

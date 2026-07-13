@@ -39,7 +39,7 @@ test "именованный аргумент" {
 }
 
 test "fn-как-значение отравляет by-ref (вызов через fn-pointer)" {
-    ro f = bp_taker
+    ro fptr = bp_taker
     ro c = BigPair { name: "a", value: "fv" }
-    assert(f(c) == "fv")
+    assert(fptr(c) == "fv")
 }

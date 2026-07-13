@@ -1,42 +1,42 @@
 module spec_tests.conformance
 // Plan 63 Fix C: regression guard для anonymous record literal в generic
 // fn return position. Coverage:
-//   - single-field Box[T].of
+//   - single-field Box1[T].of
 //   - multi-field Pair1[A, B].make
-//   - heterogeneous Holder[T] с T-field + concrete-type field
-//   - nested generic Box[Box[T]]
+//   - heterogeneous Holder1[T] с T-field + concrete-type field
+//   - nested generic Box1[Box1[T]]
 //   - computed-field record literal
 //   - intermediate-helper pattern (factory вызывает factory)
 //
-// До Plan 63 (proposed) предполагалось что Box[T].of emit'тся как
+// До Plan 63 (proposed) предполагалось что Box1[T].of emit'тся как
 // `Nova_Box____Nova_T_p* m = ...` (placeholder leak). После Plan 59 +
 // existing mono pipeline всё работает корректно. Tests служат
 // permanent regression guards.
 
-export type Box[T] { v T }
+export type Box1[T] { v T }
 
-export fn Box[T].of(value T) -> Box[T] => { v: value }
+export fn Box1[T].of(value T) -> Box1[T] => { v: value }
 
 // Intermediate helper: factory calls factory.
-export fn Box[T].twin(v1 T, v2 T) -> Box[T] {
-    if v1 == v2 { Box[T].of(v1) } else { Box[T].of(v2) }
+export fn Box1[T].twin(v1 T, v2 T) -> Box1[T] {
+    if v1 == v2 { Box1[T].of(v1) } else { Box1[T].of(v2) }
 }
 
 export type Pair1[A, B] { first A; second B }
 
 export fn Pair1[A, B].make(a A, b B) -> Pair1[A, B] => { first: a, second: b }
 
-priv(file) type Holder[T] { value T; count int }
+type Holder1[T] { value T; count int }
 
-priv(file) fn Holder[T].new_with(v T, n int) -> Holder[T] => { value: v, count: n }
+fn Holder1[T].new_with(v T, n int) -> Holder1[T] => { value: v, count: n }
 
-test "Box[int].of — simplest case" {
-    ro m = Box[int].of(42)
+test "Box1[int].of — simplest case" {
+    ro m = Box1[int].of(42)
     assert(m.v == 42, "single-field int")
 }
 
-test "Box[str].of — str type-arg" {
-    ro s = Box[str].of("hi")
+test "Box1[str].of — str type-arg" {
+    ro s = Box1[str].of("hi")
     assert(s.v == "hi", "single-field str")
 }
 
@@ -46,27 +46,27 @@ test "Pair1[int, str].make — multi-field, heterogeneous" {
     assert(p.second == "seven", "second field")
 }
 
-test "Holder[str].new_with — T-field + concrete-type field" {
-    ro h = Holder[str].new_with("name", 99)
+test "Holder1[str].new_with — T-field + concrete-type field" {
+    ro h = Holder1[str].new_with("name", 99)
     assert(h.value == "name", "T-typed value")
     assert(h.count == 99, "concrete int count")
 }
 
-test "Box[Box[int]].of — nested generic" {
-    ro inner = Box[int].of(42)
-    ro outer = Box[Box[int]].of(inner)
+test "Box1[Box1[int]].of — nested generic" {
+    ro inner = Box1[int].of(42)
+    ro outer = Box1[Box1[int]].of(inner)
     assert(outer.v.v == 42, "nested unwrap")
 }
 
-test "Box.twin — factory-calls-factory" {
-    ro a = Box[int].twin(5, 5)
+test "Box1.twin — factory-calls-factory" {
+    ro a = Box1[int].twin(5, 5)
     assert(a.v == 5, "same args")
-    ro b = Box[int].twin(1, 2)
+    ro b = Box1[int].twin(1, 2)
     assert(b.v == 2, "different args")
 }
 
 test "computed field в record literal" {
-    ro h = Holder[int].new_with(10 + 5, 100 / 4)
+    ro h = Holder1[int].new_with(10 + 5, 100 / 4)
     assert(h.value == 15, "computed value")
     assert(h.count == 25, "computed count")
 }
