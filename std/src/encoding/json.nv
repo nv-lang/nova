@@ -885,6 +885,28 @@ fn format_object(m HashMap[str, JsonValue]) -> str {
 #stable(since = "0.1")
 export fn JsonValue @to_str_pretty() -> str => pretty_at(@, 0)
 
+/// D419 first consumer: `${v:#}` (alternate/pretty-flag) routes here and
+/// renders the same output as [`to_str_pretty`]; any other spec on a
+/// `JsonValue` (bare `${v}`, `.N` precision, etc.) falls back to the
+/// existing compact `@to_str()` — `#` is the only axis this type reacts to.
+///
+/// # Examples
+/// ```nova
+/// let mut m = HashMap[str, JsonValue].new()
+/// m.insert("name", Str("alice"))
+/// let v = Object(m)
+/// assert("${v:#}" == v.to_str_pretty())
+/// assert("${v}" == v.to_str())
+/// ```
+#stable(since = "0.1")
+export fn JsonValue @display_fmt(mut f Fmt) -> () {
+    if f.alternate() {
+        f.write(@to_str_pretty())
+    } else {
+        f.write(@to_str())
+    }
+}
+
 fn pretty_at(v JsonValue, depth int) -> str => match v {
     Array(xs) if xs.len() == 0 => "[]"
     Array(xs) => pretty_array(xs, depth)
