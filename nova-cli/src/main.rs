@@ -232,6 +232,13 @@ enum Cmd {
         /// Локальная path-зависимость: путь к каталогу пакета.
         #[arg(long, value_name = "DIR", conflicts_with = "git")]
         path: Option<String>,
+        /// Plan 204 дофикс №2 (owner correction №3): разрешить `--path`,
+        /// выходящий за границу текущего git-репозитория, записать голым
+        /// `path` в `[dependencies]` (старое поведение). Без флага такой
+        /// `--path` отклоняется с подсказкой (git-форма + nova.local.toml
+        /// [replace]) — path вне репы не clone-safe.
+        #[arg(long, requires = "path")]
+        allow_external_path: bool,
         /// Git-зависимость: URL репозитория.
         #[arg(long, value_name = "URL")]
         git: Option<String>,
@@ -3767,6 +3774,7 @@ fn cmd_add(
     branch: Option<&str>,
     rev: Option<&str>,
     version: Option<&str>,
+    allow_external_path: bool,
 ) -> Result<()> {
     let pkg_dir = package_dir_from_cwd().ok_or_else(|| {
         usage_err("`nova add` запускается внутри Nova-пакета (нет nova.toml)")
@@ -3782,7 +3790,36 @@ fn cmd_add(
     }
 
     let value = match (path, git) {
-        (Some(p), None) => format!("{{ path = \"{}\" }}", p),
+        (Some(p), None) => {
+            // Plan 204 дофикс №2 (owner correction №3): a `--path` target
+            // that escapes the current git repo isn't clone-safe (`git
+            // clone` won't bring it along) — refuse to silently write a
+            // bare `path` into [dependencies] unless explicitly allowed.
+            // In-repo paths (workspace members, nested test packages) are
+            // unaffected — same rule as `W_DEP_PATH_NO_RELEASE` scoping.
+            let cwd = std::env::current_dir().unwrap_or_else(|_| pkg_dir.clone());
+            let target_dir = cwd.join(p);
+            let same_repo = match (
+                nova_codegen::manifest::git_repo_root(&pkg_dir),
+                nova_codegen::manifest::git_repo_root(&target_dir),
+            ) {
+                (Some(a), Some(b)) => a == b,
+                _ => false,
+            };
+            if !same_repo && !allow_external_path {
+                return Err(usage_err(format!(
+                    "--path `{}` выходит за границу текущего git-репозитория \
+                     — не clone-safe (`git clone` НЕ принесёт `{}`)\n  \
+                     hint: релизная форма — `nova add {} --git <URL> --version <x.y>`, \
+                     а `path` — dev-override в `nova.local.toml` (не коммитится):\n    \
+                     [replace]\n    {} = {{ path = \"{}\" }}\n  \
+                     чтобы всё же записать голый внешний path в [dependencies] \
+                     (не рекомендуется) — повтори с --allow-external-path",
+                    p, target_dir.display(), name, name, p,
+                )));
+            }
+            format!("{{ path = \"{}\" }}", p)
+        }
         (None, Some(url)) => {
             let pin = match (tag, branch, rev, version) {
                 (Some(t), _, _, _) => format!(", tag = \"{}\"", t),
@@ -4577,6 +4614,14 @@ fn cmd_build(
     // пользуется резолвер. Файл без пакета (нет `nova.toml`) —
     // зависимостей нет, шаг пропускается.
     if let Some(pkg_dir) = nova_codegen::manifest::find_package_dir(&path) {
+        // Plan 204 дофикс №2 (owner correction): [replace] declared directly
+        // in the COMMITTED nova.toml — HARD error (E_REPLACE_IN_MANIFEST),
+        // checked FIRST (fail fast, before any git materialization work).
+        let toml_path = pkg_dir.join("nova.toml");
+        if let Some(m) = nova_codegen::manifest::parse_manifest(&toml_path, &pkg_dir) {
+            nova_codegen::manifest::check_no_committed_replace(&m, &toml_path)
+                .map_err(|e| anyhow!("{}", e))?;
+        }
         let _t = nova_codegen::perf_timer::PerfTimer::new("dep-lock");
         nova_codegen::lockfile::sync(&pkg_dir)
             .map_err(|e| anyhow!("резолюция зависимостей (nova.lock): {}", e))?;
@@ -4584,14 +4629,19 @@ fn cmd_build(
         // зависимости с `forbid` не используют запрещённые эффекты.
         nova_codegen::effect_surface::check_forbidden(&pkg_dir)?;
         // Plan 204: dependency-versioning diagnostics — bare `path` в
-        // [dependencies] без release-формы, [replace] на несуществующую
-        // запись. Warning-only (не блокирует сборку — существующий
-        // path-only corpus, Plan 202/203, не должен ломаться).
-        let toml_path = pkg_dir.join("nova.toml");
+        // [dependencies] без release-формы (вне git-репы), [replace] на
+        // несуществующую запись. Warning-only (не блокирует сборку —
+        // существующий path-only corpus, Plan 202/203, не должен ломаться).
         if let Some(m) = nova_codegen::manifest::parse_manifest(&toml_path, &pkg_dir) {
             for w in nova_codegen::manifest::manifest_warnings(&m, &toml_path) {
                 eprintln!("  {} {} [{}]", bold(&yellow("warning:")), w.message, w.code);
             }
+        }
+        // Plan 204 дофикс №2 (D420 go-scope): [replace] declared inside a
+        // DEPENDENCY's own manifest is inert (root-only semantics) — warn
+        // so the author notices dead configuration, without blocking build.
+        for w in nova_codegen::lockfile::collect_replace_scope_warnings(&pkg_dir) {
+            eprintln!("  {} {} [{}]", bold(&yellow("warning:")), w.message, w.code);
         }
     }
 
@@ -6109,7 +6159,7 @@ fn run() -> ExitCode {
             cmd_lint(&paths, rule.as_deref(), list_rules, include_runtime, &skip, quiet)
         }
         Cmd::Run { file } => cmd_run(&file),
-        Cmd::Add { name, path, git, tag, branch, rev, version } => cmd_add(
+        Cmd::Add { name, path, git, tag, branch, rev, version, allow_external_path } => cmd_add(
             &name,
             path.as_deref(),
             git.as_deref(),
@@ -6117,6 +6167,7 @@ fn run() -> ExitCode {
             branch.as_deref(),
             rev.as_deref(),
             version.as_deref(),
+            allow_external_path,
         ),
         Cmd::Update { name, precise } => cmd_update(name.as_deref(), precise.as_deref()),
         Cmd::Info { target, format, diff, fail_on_new } => {
