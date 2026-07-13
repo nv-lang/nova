@@ -61,15 +61,16 @@ nova-tls/
 
 | Фаза | Что | Детали / гейты |
 |---|---|---|
-| **Ф.1 — path-keyed реестр** | resolver/manifest: ключ реестра модулей → канонический путь; decl — только identity-check файла. | Репро §2а становится PASS (оба экспорта живы). Fixtures: pos (два `neg.x` в разных поддеревьях, импорт обоих, оба экспорта работают) в spec_tests/conformance. |
+| **Ф.1 — path-keyed реестр** | ШАГ 0 (обязательный, до правки): ГРЕП-ИНВЕНТАРЬ всех потребителей module-ключа/decl-строки — build_cache-ключи, `SigRegistry`/method_table, D307 file-discriminated codegen, nova-lsp индекс, сериализация сигнатур; каждого перевести/подтвердить path-keyed (иначе реестр чинится, а кэш/LSP тихо живут по decl — второе окно идентичности). Затем resolver/manifest: ключ реестра модулей → канонический путь; decl — только identity-check файла. | Репро §2а становится PASS (оба экспорта живы). Fixtures: pos (два `neg.x` в разных поддеревьях, импорт обоих, оба экспорта работают) в spec_tests/conformance. |
 | **Ф.1b — mangling-ось** | Проверить `Nova_<modpath>_…`-манглинг при дубле decl в одном CU: одноимённые ПРИВАТНЫЕ fn в двух same-decl модулях обязаны получить разные C-символы (расширение D381 collision-aware прецедента, если керится по decl). | Fixture: same-decl модули с одноимённой приватной fn + вызовы обеих → бинарь линкуется, значения различны. |
 | **Ф.2 — root peers (D78 rev-4)** | `.nv` прямо в source root = peers модуля `<package>` (декларация `module <package>`, одиночный сегмент — легальная форма только для корня). Файл в корне, объявивший `<package>.<stem>`, остаётся независимым single-file модулем (обратная совместимость — существующие пакеты не ломаются). | Спек-амендмент D78 (rev-4) в том же слиянии. Fixtures: pos root-peers пакет + neg (кривая декларация в корне). |
-| **Ф.3 — миграция nova-tls** | `src/tls/*.nv` → `src/*.nv`, декларации → `module tls`; `src/tls/neg/` → `src/neg/`; потребители: `import tls.tls.{…}` → `import tls.{…}` (examples/tls/*, docs, README nova-tls). | `nova test` nova-tls зелёный (или SKIP-degrade без mbedtls — как сейчас); examples/tls компилируются. |
+| **Ф.3 — миграция nova-tls** *(СТРОГО ПОСЛЕ посадки Plan 201 tls-части — 201-агент правит те же client/server/stream)* | `src/tls/*.nv` → `src/*.nv`, декларации → `module tls`; `src/tls/neg/` → `src/neg/`; потребители: `import tls.tls.{…}` → `import tls.{…}` (examples/tls/*, docs, README nova-tls). | `nova test` nova-tls зелёный (или SKIP-degrade без mbedtls — как сейчас); examples/tls компилируются. |
 | **Ф.4 (опция, после Ф.1)** | Ретракция rev-3.1 (`internal/` 3-сегментное) — заплатка вокруг закрытого Ф.1 дефекта. Инвентаризация `internal/`-модулей в корпусе → decl обратно в `parent.target`. | Отдельным коммитом; если корпус пуст — только спек-правка. |
 
 ## 2. Гейты приёмки (весь план)
 
-1. conformance один CU δ0 (baseline 97/0) + новые фикстуры Ф.1/Ф.1b/Ф.2.
+1. conformance один CU δ0 (baseline **98/0**; прогоны БЕЗ `--jobs` — дефолт-максимум, директива владельца 2026-07-13; одиночный TIMEOUT — точечный ре-ран) + новые фикстуры Ф.1/Ф.1b/Ф.2.
+1b. **Стресс-гейт Ф.1:** ветка 198 (`triage-198`, ~1480 peer-файлов `spec_tests.conformance`) компилируется на Ф.1-компиляторе — лучший стресс path-keyed-агрегации.
 2. `nova check std` дельта-нейтрально; `nova test` таргетно по задетым зонам.
 3. nova-tls: тесты зелёные/SKIP-degrade, потребители мигрированы.
 4. D78-амендмент (rev-4 + фикс keying-семантики «Свойства п.4») в том же
