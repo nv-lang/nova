@@ -1050,17 +1050,31 @@ fn synth_display_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody
             } else {
                 format!(", {}: ", f.name)
             };
+            // [race-198 / 196.6] `write` (NOT `write_str`): the `w: Write`
+            // param lowers to the CONCRETE `Nova_StringBuilder*`
+            // (type_ref_to_c special case), and StringBuilder has
+            // `mut @write(s str)` but NO `write_str` — a `write_str` call
+            // here fell through to the single-key `method_receivers`
+            // name-only fallback (documented last-wins) and dispatched to
+            // whichever OTHER type in the CU happened to register
+            // `write_str` last: WriteBuffer in a small CU (accidentally
+            // layout-compatible `{buf Vec[u8]}` → silently "worked"),
+            // TcpStream in a merged CU with std.net (foreign struct
+            // offset read → 0xC0000005, the Plan 198 floating-AV blocker;
+            // see docs/plans/196.6-race-state-dump-notes.md). The sibling
+            // open/close-brace writes in this SAME body already use
+            // `write` and dispatch correctly.
             stmts.push(Stmt::Expr(member_call(
                 ident("w"),
-                "write_str",
+                "write",
                 vec![ex(ExprKind::StrLit(prefix))],
             )));
             if is_primitive_field(&f.ty) {
                 // Primitive field: no `.display()` method on scalars — route via
-                // `w.write_str(str.from(@field))` (Display path).
+                // `w.write(str.from(@field))` (Display path).
                 stmts.push(Stmt::Expr(member_call(
                     ident("w"),
-                    "write_str",
+                    "write",
                     vec![member_call(ident("str"), "from", vec![self_field(&f.name)])],
                 )));
             } else {
@@ -1106,9 +1120,12 @@ fn synth_debug_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
             } else {
                 format!(", {}: ", f.name)
             };
+            // [race-198 / 196.6] `write` (NOT `write_str`) — см. комментарий в
+            // synth_display_record_body выше (StringBuilder has no write_str;
+            // name-only fallback dispatched to a foreign type → merged-CU AV).
             stmts.push(Stmt::Expr(member_call(
                 ident("w"),
-                "write_str",
+                "write",
                 vec![ex(ExprKind::StrLit(prefix))],
             )));
             // All fields (primitive or record) implement Debug — call @debug(w) uniformly.
@@ -1463,8 +1480,10 @@ fn synth_fmt_sum_body(variants: &[SumVariant], is_debug: bool) -> FnBody {
         if is_debug {
             Stmt::Expr(member_call(ident(bind), "debug", vec![ident("w")]))
         } else if is_primitive_field(ty) {
+            // [race-198 / 196.6] `write` (NOT `write_str`) — см.
+            // synth_display_record_body (StringBuilder has no write_str).
             Stmt::Expr(member_call(
-                ident("w"), "write_str",
+                ident("w"), "write",
                 vec![member_call(ident("str"), "from", vec![ident(bind)])],
             ))
         } else {
@@ -1498,8 +1517,10 @@ fn synth_fmt_sum_body(variants: &[SumVariant], is_debug: bool) -> FnBody {
                         } else {
                             format!(", {}: ", f.name)
                         };
+                        // [race-198 / 196.6] `write` (NOT `write_str`) — см.
+                        // synth_display_record_body.
                         stmts.push(Stmt::Expr(member_call(
-                            ident("w"), "write_str", vec![ex(ExprKind::StrLit(prefix))])));
+                            ident("w"), "write", vec![ex(ExprKind::StrLit(prefix))])));
                         stmts.push(emit_value(bind, ty));
                     }
                     stmts.push(write_lit(" }".to_string()));

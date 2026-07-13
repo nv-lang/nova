@@ -37401,6 +37401,53 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         Self::receiver_type_c_ident(&type_name)
                     };
                     if is_instance {
+                        // [race-198 / 196.6, E_RECV_METHOD_MISMATCH] instance-call
+                        // counterpart of the Plan 82 static fail-loudly guard above
+                        // (and the Plan 154.1/D269 primitive guard): the single-key
+                        // `method_receivers` fallback is last-wins by METHOD NAME
+                        // ONLY. When the receiver's own C type is a KNOWN concrete
+                        // Nova type X (it has methods registered) that (a) is NOT
+                        // the registered type_name and (b) does NOT itself have
+                        // this method, emitting `Nova_<type_name>_method_<m>(recv)`
+                        // is a type-confused call through a foreign struct layout —
+                        // exactly how auto-derived @debug bodies' `w.write_str`
+                        // (receiver Nova_StringBuilder*, no write_str) dispatched
+                        // to Nova_WriteBuffer_/Nova_TcpStream_method_write_str
+                        // (composition-dependent 0xC0000005, the Plan 198 blocker;
+                        // docs/plans/196.6-race-state-dump-notes.md). Fail loudly
+                        // instead. Scope: skip slice/typevar registrations (they
+                        // legitimately dispatch by name here) and unknown/erased
+                        // receivers (void*, mono/Opt/Res carriers — knownness
+                        // proxy: X must have ≥1 registered method).
+                        if !type_name.starts_with("[]")
+                            && !(type_name.len() <= 2
+                                && type_name.chars().all(|c| c.is_ascii_uppercase()))
+                        {
+                            let recv_c = self.recv_c_type_materialized(obj).unwrap_or_default();
+                            if let Some(stripped) = Self::debt_strip_value_or_nova_prefix_opt(&recv_c) {
+                                let no_ptr = stripped.trim_end_matches('*').trim();
+                                let recv_base = no_ptr.split("____").next().unwrap_or(no_ptr).to_string();
+                                let recv_is_typevar = recv_base.len() <= 2
+                                    && recv_base.chars().all(|c| c.is_ascii_uppercase());
+                                if !recv_base.is_empty()
+                                    && !recv_is_typevar
+                                    && recv_base != type_name
+                                    && !self.all_methods.contains(&(recv_base.clone(), method.to_string()))
+                                    && self.all_methods.iter().any(|(t, _)| t == &recv_base)
+                                {
+                                    return Err(format!(
+                                        "[E_RECV_METHOD_MISMATCH] `.{m}(...)` на ресивере \
+                                         типа `{recv}` — у `{recv}` нет метода `{m}`, а \
+                                         single-key fallback резолвит имя в чужой тип \
+                                         `{reg}` (last-wins) — вызов через чужой layout \
+                                         отвергнут (strict-mode, зеркало E_UNKNOWN_TYPE_METHOD). \
+                                         Подсказка: опечатка в имени метода, либо методу \
+                                         `{recv}.{m}` нужна декларация/импорт.",
+                                        m = method, recv = recv_base, reg = type_name,
+                                    ));
+                                }
+                            }
+                        }
                         let obj_c = self.emit_expr(obj)?;
                         // Plan 124.8 V2 (D226): value-record receiver needs `&obj`
                         // (pointer to stack-slot) so @field mutations propagate.
