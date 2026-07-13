@@ -31,12 +31,15 @@ fn body_of(wire []u8) -> str {
 
 const GET_SNAPSHOT = "GET /api/snapshot HTTP/1.1\r\nHost: x\r\n\r\n"
 
+// `handlers_demo()` — shared with report_json_test.nv (same module `backend.api`, peers).
+
 // ── POS: the snapshot endpoint serves the settled Report as JSON ───────────
 
 test "snapshot: GET /api/snapshot serves the report as JSON" {
     with Net = mock_net() {
         with Emit = null_emit() {
-            ro mux = snapshot_for([Source.new("only-one", "", 1, 5, false)], Duration.from_millis(100))
+            ro srcs = [Source.new("only-one", "", 1, 5, false)]
+            ro mux = snapshot_for(srcs, Duration.from_millis(100), "weather", "demo", 0, handlers_demo())
             ro wire = serve_once(mux, GET_SNAPSHOT.bytes())
             assert(status_line(wire) == "HTTP/1.1 200 OK")
             assert(resp_contains(wire, "application/json"))
@@ -44,6 +47,7 @@ test "snapshot: GET /api/snapshot serves the report as JSON" {
             ro obj = v.object()!!
             assert(obj.get("fanout")!!.num() == Some(1.0))
             assert(obj.get("done")!!.num() == Some(1.0))
+            assert(obj.get("legend")!!.str() == Some("weather"))
         }
     }
 }
@@ -55,8 +59,9 @@ test "snapshot: GET /api/snapshot serves the report as JSON" {
 test "snapshot: snapshot_mux(report) serves a Report obtained separately" {
     with Net = mock_net() {
         with Emit = null_emit() {
-            ro report = aggregate([Source.new("only-one", "", 1, 5, false)], Duration.from_millis(100))
-            ro mux = snapshot_mux(report)   // pure — no Net/Time/Emit needed here
+            ro srcs = [Source.new("only-one", "", 1, 5, false)]
+            ro report = aggregate(srcs, Duration.from_millis(100))
+            ro mux = snapshot_mux(report, srcs, "weather", "demo", 0, 100, handlers_demo())   // pure — no Net/Time/Emit needed here
             ro wire = serve_once(mux, GET_SNAPSHOT.bytes())
             assert(status_line(wire) == "HTTP/1.1 200 OK")
             ro v = Json.parse(body_of(wire))!!
@@ -70,7 +75,7 @@ test "snapshot: snapshot_mux(report) serves a Report obtained separately" {
 test "snapshot: unknown path -> 404" {
     with Net = mock_net() {
         with Emit = null_emit() {
-            ro mux = snapshot_for([], Duration.from_millis(50))
+            ro mux = snapshot_for([], Duration.from_millis(50), "weather", "demo", 0, handlers_demo())
             ro req = "GET /missing HTTP/1.1\r\nHost: x\r\n\r\n".bytes()
             ro wire = serve_once(mux, req)
             assert(status_line(wire) == "HTTP/1.1 404 Not Found")
@@ -83,7 +88,7 @@ test "snapshot: unknown path -> 404" {
 test "snapshot: empty source list -> empty results, no panic" {
     with Net = mock_net() {
         with Emit = null_emit() {
-            ro mux = snapshot_for([], Duration.from_millis(50))
+            ro mux = snapshot_for([], Duration.from_millis(50), "weather", "demo", 0, handlers_demo())
             ro wire = serve_once(mux, GET_SNAPSHOT.bytes())
             assert(status_line(wire) == "HTTP/1.1 200 OK")
             ro v = Json.parse(body_of(wire))!!

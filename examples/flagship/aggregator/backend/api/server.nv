@@ -30,13 +30,18 @@ import http.server.{ServeMux, ServerResponse, handler_fn}
 // requirement as aggregate.nv — see that file's header comment).
 import std.time.duration
 
-/// Build a `ServeMux` serving a PRECOMPUTED `report` as JSON at
-/// `GET /api/snapshot`. Pure (the JSON body is baked into the handler
-/// closure at build time) — `snapshot_for` below is the effectful entry
-/// point that actually runs the fan-out.
-#stable(since = "0.1")
-export fn snapshot_mux(report Report) -> ServeMux {
-    ro body = report_to_json(report).bytes()
+/// Build a `ServeMux` serving a PRECOMPUTED `report` (+ its run context —
+/// which `sources` fed it, legend/mode/seed, installed handlers) as the
+/// typed snapshot JSON (report_json.nv, `build_snapshot`/`snapshot_to_json`
+/// — peers, same module, no import needed) at `GET /api/snapshot`. Pure
+/// (the JSON body is baked into the handler closure at build time) —
+/// `snapshot_for` below is the effectful entry point that actually runs the
+/// fan-out.
+#stable(since = "0.2")
+export fn snapshot_mux(report Report, sources []Source, legend str, mode str, seed int,
+        budget_ms int, handlers HandlersDto) -> ServeMux {
+    ro dto = build_snapshot(report, sources, legend, mode, seed, budget_ms, handlers)
+    ro body = snapshot_to_json(dto).bytes()
     mut mux = ServeMux.new()
     mux.get("/api/snapshot", handler_fn(|_req| ServerResponse.bytes(200, "application/json", body)))
     mux
@@ -46,20 +51,23 @@ export fn snapshot_mux(report Report) -> ServeMux {
 /// servable snapshot mux. `Emit` is a real effect here too (emit.nv) — the
 /// caller installs a handler (or `null_emit()`) the same way it installs
 /// `Net`/`Time`.
-#stable(since = "0.1")
-export fn snapshot_for(sources []Source, budget Duration) Net Time Emit -> ServeMux {
+#stable(since = "0.2")
+export fn snapshot_for(sources []Source, budget Duration, legend str, mode str, seed int,
+        handlers HandlersDto) Net Time Emit -> ServeMux {
     ro report = aggregate(sources, budget)
-    snapshot_mux(report)
+    snapshot_mux(report, sources, legend, mode, seed, budget.as_millis() as int, handlers)
 }
 
 /// Weather-legend snapshot (research 15 §5a demo table, scenarios.nv).
-#stable(since = "0.1")
+#stable(since = "0.2")
 export fn weather_snapshot_mux() Net Time Emit -> ServeMux {
-    snapshot_for(weather_demo_sources(), Duration.from_millis(WEATHER_BUDGET_MS))
+    snapshot_for(weather_demo_sources(), Duration.from_millis(WEATHER_BUDGET_MS), "weather", "demo", 0,
+        HandlersDto { net: "mock(seed=42)", time: "real" })
 }
 
 /// Health-check-legend snapshot (research 15 §5b demo table, scenarios.nv).
-#stable(since = "0.1")
+#stable(since = "0.2")
 export fn health_snapshot_mux() Net Time Emit -> ServeMux {
-    snapshot_for(health_demo_sources(), Duration.from_millis(HEALTH_BUDGET_MS))
+    snapshot_for(health_demo_sources(), Duration.from_millis(HEALTH_BUDGET_MS), "health", "demo", 0,
+        HandlersDto { net: "mock(seed=42)", time: "real" })
 }

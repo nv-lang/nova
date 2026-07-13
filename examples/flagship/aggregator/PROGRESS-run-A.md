@@ -6,7 +6,7 @@
 |---|---|---|---|
 | 0 | Реструктуризация → backend/app + backend/api | done | f8975d63e |
 | 1 | real-cancel (supervised(deadline:)) | done (не fallback — настоящая отмена) | (этот) |
-| 2 | typed-serde report_json.nv | pending | — |
+| 2 | typed-serde report_json.nv + расширенная схема §9.5 | done | (этот) |
 | 3 | backend/main.nv (accept-loop + endpoints) | pending | — |
 | 4 | UI data-glue frontend/index.html | pending | — |
 | 5 | Live-легенды (health/weather) | pending | — |
@@ -64,3 +64,37 @@
   simplification оставленным для контекста.
 - Гейт: `nova test flagship/aggregator --strict-effects` — 22/22 PASS
   (5 прогонов подряд, без флаки).
+
+## Деливерабл 2 — детали
+
+- `report_json.nv` (backend/api) переведён с ручного `JsonValue`/`HashMap`
+  на typed `#impl(Serialize)` DTO (`StatusDto`/`ResultDto`/`HandlersDto`/
+  `SnapshotDto`) + `json_encode`/`json_encode_pretty` (`std.encoding.serde`,
+  D344). `[M-178-server-typed-body]` (закрыт в main) больше не блокирует.
+  `TaskStatus` НЕ сериализуется напрямую auto-derive'ом (его wire-форма —
+  externally-tagged, `"Cancelled"`/`{"Failed":"..."}`, не то, что нужно UI) —
+  `status_dto()` мапит вручную в фиксированную форму `{state, error}`.
+- Схема расширена по §9.5: верхний уровень + `budget_ms`, `legend`, `mode`,
+  `seed`, `handlers{net,time}`, `fibers_spawned`, `fibers_closed`; per-result
+  + `kind`/`probes` (из `Source`, по id — `parallel for` даёт completion-order,
+  не исходный порядок sources).
+- `[M-187-leaks-introspection]`: `fibers.slot_count()`-семейство — честный
+  no-op sentinel на Windows (текущая гейт-платформа) — реальный before/after
+  delta показал бы фальшивый 0/0. Fallback (разрешён планом): структурный
+  счёт — 2 fiber на лан (`parallel for`-спавн + вложенный
+  `supervised(deadline:)`-спавн), оба гарантированно join'ятся до возврата
+  `aggregate()` → `fibers_spawned == fibers_closed == 2 × fanout` всегда;
+  "0 leaks" — структурный инвариант дизайна, не измеренное число.
+- D419 `"${v:#}"` НЕ применим к голому `#impl(Serialize)`-DTO напрямую (нет
+  `@display_fmt`, Serialize ≠ Display) — pretty через `json_encode_pretty`
+  напрямую (`snapshot_to_json_pretty`).
+- `Option[T]::None` сериализуется в JSON `null` СО ВСТАВЛЕННЫМ ключом (не
+  опускается) — `#serde(skip)` пока не поддержан синтезом
+  (`[M-180-serde-field-attributes]`, чужой существующий маркер, не новый);
+  `status.error` в UI — «null или строка», не «есть ключ или нет».
+- `server.nv`: `snapshot_mux`/`snapshot_for`/`weather_snapshot_mux`/
+  `health_snapshot_mux` обновлены под новую сигнатуру (принимают
+  legend/mode/seed/handlers). Тесты (`server_test.nv`, `report_json_test.nv`)
+  переписаны под typed API.
+- Гейт: `nova test flagship/aggregator --strict-effects` — 24/24 PASS
+  (12 aggregate + 12 report_json/server_test).
