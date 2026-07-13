@@ -3994,6 +3994,8 @@ static inline void nova_runtime_reset(void) {
     _nova_interrupt_top = NULL;
     _nova_current_handler_iframe = NULL;
     _nova_last_error.live = 0;
+    nova_throw_trace_reset();       /* [M-173-error-return-trace] */
+    _nova_throw_site.file = NULL;   /* стейл throw-site не течёт в следующий тест */
     _nova_handler_Fail = NULL;
     _nova_handler_Fail_any = NULL;
     _nova_handler_Time = NULL;

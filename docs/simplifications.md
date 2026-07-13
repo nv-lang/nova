@@ -38262,3 +38262,34 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
 - Побочно найден несвязанный баг (region checker/auto_derive, вне
   объёма) — `[M-202-ident-x-module-alias-collision]`.
 - Полный отчёт: `docs/plans/202-progress.md`.
+
+## Волна «173 хвосты» п.2 — полный propagation-trace [M-173-error-return-trace] (2026-07-13)
+
+- **Runtime (effects.h/effects.c):** TLS ring-buffer `_nova_throw_trace`
+  (`NOVA_THROW_TRACE_CAP=16`, count хранит суммарные push'и — дамп сообщает
+  «N earlier frames dropped»); `nova_throw_trace_push/reset`;
+  `nova_throw_site_set` теперь сбрасывает трассу (fresh origin = новая
+  ошибка), новый `nova_throw_site_mark` обновляет site БЕЗ сброса (для
+  конверсии уже пропагирующей Result-ошибки в Fail-эффект). Сброс также на
+  catch (`nova_scope_exit` CATCH), interrupt-consume (4 точки effects.c) и в
+  `nova_runtime_reset` (+ там же гашение стейл `_nova_throw_site` между
+  panics-тестами). Дамп — в существующем `nova_throw_site_dump` → все 4
+  uncaught-abort ветки получили трассу бесплатно.
+- **Codegen (emit_c.rs):** push на `?` value-mode (`return Err`) и Fail-ctx
+  ветке; `!!`-Err = push + site-mark (трасса переживает конверсию);
+  `!!`-None = полноценный origin-стемп `site_set` (раньше bang-сайты не
+  стемпились вовсе). Только error-path — happy-path не затронут.
+- **Тест:** `nova_tests/err173/rt/f5_propagation_trace_full.nv` — Err
+  рождается в leaf, 2 value-mode `?`-звена + `!!`-конверсия, uncaught →
+  дамп содержит 3 `via file:line (?)`-звена в хронологическом порядке
+  (проверено вручную на бинаре + --panic lane PASS).
+- **Ограничение (задокументировано в effects.h):** `Err(...)`-конструктор
+  не сбрасывает трассу (нет стемпа) — кадры ошибки, разобранной `match`'ем
+  (не catch), могут остаться в хвосте следующего дампа.
+- **Попутно вскрыто:** `nova build` (nova-cli) не прокидывает
+  `set_source_file_name` → `at <unknown>:N` (pre-existing, `nova test`-путь
+  честный) — `[M-cli-build-source-file-name-unknown]` (P3).
+- **Гейты:** conformance один CU 111/0 + 7 SKIP (δ0); err173 folder-CU +
+  err173_2 PASS; rt-lane 3/3 (--panic); neg 10/0; std/src/concurrency:
+  2 PASS + 2 CC-FAIL pre-existing (main-бинарь на main-дереве падает
+  идентично, δ=0); cargo build --release чист.

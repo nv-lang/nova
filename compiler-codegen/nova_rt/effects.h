@@ -164,16 +164,90 @@ __declspec(thread) extern NovaThrowSite _nova_throw_site;
 extern __thread NovaThrowSite _nova_throw_site;
 #endif
 
+/* ──────────────────────────────────────────────────────────────────
+ * [M-173-error-return-trace] (Plan 173 хвост, 2026-07-13): ПОЛНЫЙ
+ * propagation-trace — ring-buffer rethrow-точек цепочки `?`-проброса
+ * (Zig error-return-trace парность) поверх throw-site минимума Ф.5 п.7.
+ * ──────────────────────────────────────────────────────────────────
+ *
+ * Codegen стемпит `nova_throw_trace_push("file.nv", line)` на КАЖДОЙ
+ * `?`-точке проброса ошибки (Result-Err early-return и Fail-context
+ * конверсия Err→throw) — только на error-path, happy-path не затронут.
+ * Ring фиксированной ёмкости: при переполнении старейшие записи
+ * перезаписываются (хвост цепочки — самые информативные кадры ближе
+ * к границе); `count` хранит суммарное число push'ей для диагностики
+ * «N ранних кадров вытеснено».
+ *
+ * Сброс (= трасса принадлежит ОДНОЙ in-flight ошибке):
+ *   - fresh throw-origin — nova_throw_site_set (codegen стемпит его
+ *     перед каждым user-throw/panic/unreachable);
+ *   - ошибка поймана/поглощена — nova_scope_exit CATCH,
+ *     interrupt-consume (effects.c), nova_runtime_reset (fibers.h).
+ * Err(...)-конструктор БЕЗ throw трассу не сбрасывает (нет стемпа) —
+ * задокументированное ограничение: две подряд Result-mode ошибки,
+ * первая из которых разобрана match'ем, могут оставить свои кадры
+ * в хвосте следующего дампа. */
+#define NOVA_THROW_TRACE_CAP 16
+
+typedef struct {
+    NovaThrowSite entries[NOVA_THROW_TRACE_CAP];
+    int           count;  /* всего push'ей с последнего reset */
+} NovaThrowTrace;
+
+#ifdef _MSC_VER
+__declspec(thread) extern NovaThrowTrace _nova_throw_trace;
+#else
+extern __thread NovaThrowTrace _nova_throw_trace;
+#endif
+
+static inline void nova_throw_trace_reset(void) {
+    _nova_throw_trace.count = 0;
+}
+
+static inline void nova_throw_trace_push(const char* file, int line) {
+    NovaThrowSite* e =
+        &_nova_throw_trace.entries[_nova_throw_trace.count % NOVA_THROW_TRACE_CAP];
+    e->file = file;
+    e->line = line;
+    _nova_throw_trace.count++;
+}
+
 static inline void nova_throw_site_set(const char* file, int line) {
+    _nova_throw_site.file = file;
+    _nova_throw_site.line = line;
+    nova_throw_trace_reset();  /* [M-173-error-return-trace]: новая ошибка = новая трасса */
+}
+
+/* [M-173-error-return-trace]: обновить throw-site БЕЗ сброса трассы —
+ * для конверсии УЖЕ пропагирующей Result-ошибки в Fail-эффект (`!!` на
+ * Err): бросок здесь — не новая ошибка, а звено той же `?`-цепочки;
+ * накопленные propagation-кадры должны пережить конверсию. */
+static inline void nova_throw_site_mark(const char* file, int line) {
     _nova_throw_site.file = file;
     _nova_throw_site.line = line;
 }
 
-/* Печать throw-site в uncaught-abort ветках (no-op если сайт неизвестен). */
+/* Печать throw-site + propagation-trace в uncaught-abort ветках
+ * (обе части независимо no-op при отсутствии данных). */
 static inline void nova_throw_site_dump(void) {
     if (_nova_throw_site.file) {
         fprintf(stderr, "  at %s:%d (throw site)\n",
                 _nova_throw_site.file, _nova_throw_site.line);
+    }
+    if (_nova_throw_trace.count > 0) {
+        int total = _nova_throw_trace.count;
+        int kept  = total < NOVA_THROW_TRACE_CAP ? total : NOVA_THROW_TRACE_CAP;
+        int first = total - kept;  /* хронологический индекс старейшей retained-записи */
+        fprintf(stderr, "  propagation trace (`?`-chain, oldest first):\n");
+        if (first > 0) {
+            fprintf(stderr, "    ... (%d earlier frame%s dropped)\n",
+                    first, first == 1 ? "" : "s");
+        }
+        for (int i = first; i < total; i++) {
+            NovaThrowSite* e =
+                &_nova_throw_trace.entries[i % NOVA_THROW_TRACE_CAP];
+            fprintf(stderr, "    via %s:%d (?)\n", e->file, e->line);
+        }
     }
 }
 
@@ -421,6 +495,7 @@ static inline void nova_scope_exit(NovaFailFrame* primary, NovaScopeExitPolicy p
      * Ф.4 #5: the error is now caught & recovered — invalidate the stable
      * snapshot so a later value-`interrupt` does not resurrect it. */
     _nova_last_error.live = 0;
+    nova_throw_trace_reset();  /* [M-173-error-return-trace]: ошибка поймана */
 }
 
 /* Accessors для MultiError prelude — count + indexed access на chain.
