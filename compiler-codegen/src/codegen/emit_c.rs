@@ -48251,44 +48251,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         self.icr_trace("B06a_method_overload_sentinel_mono");
                                         let recv_key = (rt.clone(), mn.clone());
                                         if let Some(fn_decl) = self.mono_method_decls.get(&recv_key).cloned() {
-                                            if let Ok(type_subst) = self.resolve_mono_type_args(&fn_decl, &turbofish_args, args) {
-                                                let subst_opt: Vec<(String, Option<String>)> = type_subst.iter()
-                                                    .map(|(n, t)| (n.clone(), Some(t.clone()))).collect();
-                                                if let Some(ret_ty) = &fn_decl.return_type {
-                                                    // [M-valuerecord-receiver-generic-method] value-AWARE
-                                                    // FIRST: a method-generic method whose return embeds a
-                                                    // VALUE-record (`Result[T, DeErr]`, `Option[VDec]`)
-                                                    // cannot be lowered by the static `apply_type_subst_to
-                                                    // _ref` (no `&self` → can't resolve `NovaValue_<E>` /
-                                                    // register the `NovaRes_<ok>_NovaValue_<E>` typedef) and
-                                                    // fell through to the `void*` fallback — the match
-                                                    // scrutinee then typed `void*` and `_nv_scr->tag` /
-                                                    // `payload.Ok` broke. `value_aware_subst_to_ref` resolves
-                                                    // + registers the value-record Result/Option mono.
-                                                    let c_ty_opt = self.resolve_result_option_ret(ret_ty, &subst_opt)
-                                                        .or_else(|| self.value_aware_subst_to_ref(ret_ty, &subst_opt))
-                                                        .or_else(|| Self::apply_type_subst_to_ref(ret_ty, &subst_opt));
-                                                    if let Some(c_ty) = c_ty_opt {
-                                                        if !c_ty.is_empty() && c_ty != "void*" {
-                                                            // Plan 196.5 §W1-i.A SHADOW (extract, no
-                                                            // flip): та же lowering-цепочка, fed'ая
-                                                            // resolve_instance_call_subst вместо
-                                                            // resolve_mono_type_args.
-                                                            #[cfg(debug_assertions)]
-                                                            {
-                                                                let helper_c = self
-                                                                    .resolve_instance_call_subst(expr.id, &fn_decl, &rt, args)
-                                                                    .and_then(|s| {
-                                                                        self.resolve_result_option_ret(ret_ty, &s)
-                                                                            .or_else(|| self.value_aware_subst_to_ref(ret_ty, &s))
-                                                                            .or_else(|| Self::apply_type_subst_to_ref(ret_ty, &s))
-                                                                    });
-                                                                self.w1_shadow_probe(
-                                                                    "B06a", expr.id.0 as u64, helper_c.as_deref(), &c_ty,
-                                                                );
-                                                            }
-                                                            return c_ty;
-                                                        }
+                                            // Plan 196.5 §W1-i.B (flip+retire, B06a): resolve_
+                                            // instance_call_subst заменяет resolve_mono_type_args
+                                            // (turbofish-only движок, не читает receiver-carrier) —
+                                            // SHADOW (W1-i.A) доказал 0/0 mismatch (1/1 hit,
+                                            // conformance + std/collections). [M-196.5-w1i-flip]
+                                            let subst_opt = self
+                                                .resolve_instance_call_subst(expr.id, &fn_decl, &rt, args)
+                                                .unwrap_or_default();
+                                            if let Some(ret_ty) = &fn_decl.return_type {
+                                                // [M-valuerecord-receiver-generic-method] value-AWARE
+                                                // FIRST: a method-generic method whose return embeds a
+                                                // VALUE-record (`Result[T, DeErr]`, `Option[VDec]`)
+                                                // cannot be lowered by the static `apply_type_subst_to
+                                                // _ref` (no `&self` → can't resolve `NovaValue_<E>` /
+                                                // register the `NovaRes_<ok>_NovaValue_<E>` typedef) and
+                                                // fell through to the `void*` fallback — the match
+                                                // scrutinee then typed `void*` and `_nv_scr->tag` /
+                                                // `payload.Ok` broke. `value_aware_subst_to_ref` resolves
+                                                // + registers the value-record Result/Option mono.
+                                                let c_ty_opt = self.resolve_result_option_ret(ret_ty, &subst_opt)
+                                                    .or_else(|| self.value_aware_subst_to_ref(ret_ty, &subst_opt))
+                                                    .or_else(|| Self::apply_type_subst_to_ref(ret_ty, &subst_opt));
+                                                if let Some(c_ty) = c_ty_opt {
+                                                    if !c_ty.is_empty() && c_ty != "void*" {
+                                                        return c_ty;
                                                     }
                                                 }
                                             }
