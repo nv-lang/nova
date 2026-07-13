@@ -296,6 +296,14 @@ fn visit_pkg(
         return Ok(());
     };
     for dep in &manifest.dependencies {
+        // Plan 204 lockfix (D420, Cargo-семантика): lock фиксирует
+        // РЕЛИЗНОЕ разрешение — ДЕКЛАРИРОВАННЫЙ источник из
+        // `[dependencies]` (git url + резолвнутый тег + commit), а НЕ
+        // `[replace]`-override. `[replace]` — локальный overlay: применяется
+        // только в module-resolution/сборке (imports.rs, effective_source),
+        // в `nova.lock` не записывается вовсе. Сборка с активным replace
+        // просто использует path поверх lock, не переписывая его —
+        // lock остаётся публикуемым источником истины.
         match &dep.source {
             DepSource::Path(rel) => {
                 let dep_dir = pkg_dir.join(rel);
@@ -589,6 +597,10 @@ fn resolve_version_deps(
     let Some(manifest) = crate::manifest::parse_manifest(&toml, entry_pkg_dir) else {
         return Ok(HashMap::new());
     };
+    // Plan 204 lockfix (D420): version-резолв идёт по ДЕКЛАРИРОВАННЫМ
+    // `[dependencies]` (release-форма) даже при активном `[replace]` —
+    // lock обязан фиксировать релизное разрешение (тег+commit), replace
+    // в lock не протекает (Cargo-семантика; применяется только в сборке).
     let mut root_version_deps: Vec<(PkgId, VersionReq)> = manifest
         .dependencies
         .iter()

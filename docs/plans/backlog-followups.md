@@ -794,7 +794,8 @@ Open V1 markers (gated on type-checker resolver API in Plan 104.2):
 |---|---|---|
 | `[M-91.14-sum-debug-variants]` | OPEN | Sum-type debug V1 outputs type name; extend `synthesize_debug` for per-variant output |
 | `[M-91.14-str-from-debug-walker]` | OPEN | `default_body_calls_satisfy_for` doesn't check `str.from_debug`; add check |
-| `[M-91.14-format-dsl-extensions]` | OPEN | Future format-spec extensions: `:hex`, `:.3`, `:pad-N` |
+| `[M-91.14-format-dsl-extensions]` | CLOSED (D419, Plan 152.7.2) | `:hex`/`:.3`/`:pad-N` shipped in D258/152.7-B; per-type spec dispatch (`@display_fmt`) shipped in D419 |
+| `[M-152.7.2-interp-direct-primitives]` | OPEN | Interpolation engine writes user-type Display/Debug directly into the sink already (Plan 175 Ф.3(d)); primitives (`nova_int_to_str` etc. in `emit_interpolated_str`) still allocate an intermediate `nova_str` before copying into `StringBuilder` — collapse to a direct-to-sink write |
 
 ## Follow-up: Plan 91.8c (generic array sort/min/max/_by)
 
@@ -3195,3 +3196,13 @@ header-комментарий с датой/командой) — **следую
 выполнено). Если объём кода в std/examples вырастет и появятся нарушения —
 перезапустить `nova --strict-effects check std examples --format short` и
 пополнить `strict-effects-debt.txt` по тому же формату.
+
+## [M-173-trace-not-in-child-error] — трасса/throw-site не протягиваются через эскалацию scope (P3, 2026-07-13)
+
+Вскрыто волной trace-per-fiber (173-tails-progress.md §201.4): `child_error[]` несёт
+msg/kind/payload/tid, но НЕ throw-site и НЕ propagation-trace ребёнка → при эскалации
+через `nova_rethrow_scope` наружу uncaught-abort печатает трассу РОДИТЕЛЯ (пустую/чужую),
+дамп ребёнка теряется. Диагностика only (catch-механика корректна). Фикс-направление:
+поля site+trace-снапшот в NovaChildError при фиксации детской ошибки, rethrow
+восстанавливает. Тест-блокер: наблюдать трассу с Nova-уровня пока нечем — нужен
+accessor (`error_trace() -> []str`?) либо проверка stderr-дампа раннером.

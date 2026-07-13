@@ -2488,7 +2488,12 @@ fn lookup_dependency(importer_path: &Path, dep_name: &str) -> DepLookup {
     let Some(dep) = manifest.dependencies.iter().find(|d| d.name == dep_name) else {
         return DepLookup::NotADep;
     };
-    match &dep.source {
+    // Plan 204: [replace] override (dev path поверх релизной git+version
+    // формы) резолвится единообразно через effective_source — ниже это
+    // просто DepSource, откуда взялся (declared vs replaced) для module
+    // resolution значения не имеет.
+    let effective = manifest.effective_source(dep);
+    match &effective {
         crate::manifest::DepSource::Path(rel) => {
             let dep_dir = pkg_dir.join(rel);
             if !dep_dir.is_dir() {
@@ -2569,7 +2574,9 @@ pub fn resolved_dependency_roots(pkg_dir: &Path) -> Vec<PathBuf> {
         if d.name == "std" {
             continue;
         }
-        let dep_dir = match &d.source {
+        // Plan 204: honor [replace] override, same as lookup_dependency.
+        let effective = manifest.effective_source(d);
+        let dep_dir = match &effective {
             crate::manifest::DepSource::Path(rel) => {
                 let dir = pkg_dir.join(rel);
                 if dir.is_dir() { Some(dir) } else { None }

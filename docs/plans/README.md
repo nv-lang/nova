@@ -24,6 +24,7 @@
 - **203** — [вынос http из std → nv-lang/nova-http](203-http-out-of-std.md) 📋 согласован 2026-07-13 (школа Rust/Swift; std перестаёт зависеть от внешней tls-репы; module-path потребителей не меняется); path-dep в нём — dev-форма до 204.
 - **204** — [версии зависимостей: git+semver+nova.lock](204-dependency-versioning.md) 📋 согласован 2026-07-13 (Q-dependency-versioning; path только под [replace]; MVS-резолв; D-блок тем же слиянием, что код).
 - **205** — [компрессия из nova_rt → nv-lang/nova-compress](205-compress-out-of-nova-rt.md) 📋 согласован 2026-07-13 (nova_rt = только рантайм; brotli 7МБ уезжает пакетом по школе nova-tls; после гейтов 203).
+- **152.7.2** — [формат-контекст в Display (D419) + интерполяция прямо-в-sink](152.7.2-format-context.md) 🔨 в работе 2026-07-13 (Fmt-протокол, `#`=pretty, str.from уходит из движка интерполяции).
 - Гейт: conformance один-CU **97/0**; язык-меняющее — только со спек-амендментом в том же слиянии.
 
 ## Схема нумерации

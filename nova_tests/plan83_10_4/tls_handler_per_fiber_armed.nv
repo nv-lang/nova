@@ -27,27 +27,27 @@ module nova_tests.plan83_10_4
 fn get_time_a() -> int {
     with Time = effect Time {
         sleep(_ms) { return () }
-        now() { return 1001 }
+        now_unix_ms() { return 1001 }
     } {
-        Time.now()
+        Time.now_unix_ms()
     }
 }
 
 fn get_time_b() -> int {
     with Time = effect Time {
         sleep(_ms) { return () }
-        now() { return 2002 }
+        now_unix_ms() { return 2002 }
     } {
-        Time.now()
+        Time.now_unix_ms()
     }
 }
 
 fn get_time_c() -> int {
     with Time = effect Time {
         sleep(_ms) { return () }
-        now() { return 3003 }
+        now_unix_ms() { return 3003 }
     } {
-        Time.now()
+        Time.now_unix_ms()
     }
 }
 
@@ -75,11 +75,11 @@ test "armed M:N — spawn inherits outer with-handler from parent" {
     mut got = AtomicInt.new(0)
     with Time = effect Time {
         sleep(_ms) { return () }
-        now() { return 7777 }
+        now_unix_ms() { return 7777 }
     } {
         supervised {
             spawn {
-                got.store(Time.now())  // must see outer handler = 7777
+                got.store(Time.now_unix_ms())  // must see outer handler = 7777
             }
         }
     }
@@ -96,10 +96,10 @@ test "armed M:N — inner with overrides outer within same fiber" {
     mut inner_val = AtomicInt.new(0)
     with Time = effect Time {
         sleep(_ms) { return () }
-        now() { return 444 }
+        now_unix_ms() { return 444 }
     } {
         supervised {
-            spawn { outer_val.store(Time.now()) }             // inherits 444
+            spawn { outer_val.store(Time.now_unix_ms()) }             // inherits 444
             spawn { inner_val.store(get_time_b()) }           // inner overrides → 2002
         }
     }
@@ -119,15 +119,15 @@ test "armed M:N — fiber A handler does not affect fiber B" {
         spawn {
             with Time = effect Time {
                 sleep(_ms) { return () }
-                now() { return 111 }
+                now_unix_ms() { return 111 }
             } {
-                got_a.store(Time.now())
+                got_a.store(Time.now_unix_ms())
             }
         }
         spawn {
             // fiber B should see default handler (not 111)
-            // Default Time.now() returns a real timestamp >= 0
-            got_b.store(Time.now())
+            // Default Time.now_unix_ms() returns a real timestamp >= 0
+            got_b.store(Time.now_unix_ms())
         }
     }
     assert(got_a.load() == 111)

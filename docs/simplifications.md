@@ -33216,7 +33216,8 @@ Production-grade implementation per user directive «доделать все с�
 
 ### Followups deferred (explicit, not silent)
 
-- [M-91.14-format-dsl-extensions] — `:hex`, `:pad-N`, `:.3` spec variants
+- [M-91.14-format-dsl-extensions] — CLOSED (D419, Plan 152.7.2): `:hex`/`:pad-N`/`:.3` shipped in D258/152.7-B; per-type spec dispatch (`@display_fmt(mut f Fmt)`) shipped in D419
+- [M-152.7.2-interp-direct-primitives] — primitive interpolation fast-path (`nova_int_to_str` etc.) still allocates an intermediate `nova_str` before the `StringBuilder` copy; user-type Display/Debug already writes direct-to-sink (Plan 175 Ф.3(d))
 - [M-91.14-derive-debug] — `#impl(Debug)` Plan 126 integration
 - [M-91.14-private-field-policy] — `#debug_skip` field attribute
 - [M-91.14-ptr-auto-derive] — *T auto-derive (avoiding manual @debug)

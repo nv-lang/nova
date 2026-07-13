@@ -136,6 +136,26 @@ export fn str @rsplit_once(sep str) -> Option[(str, str)] {
     }
 }
 
+// 196.5 Stage-D волна-3 п.2: substring BEFORE the first occurrence of `sep`
+// (whole string if not found). Convenience pair with `@after` — unlike
+// `@split_once` (which returns `None` on a miss), both stay TOTAL: a missing
+// separator means "no split happened", so `@until` returns the whole string
+// and `@after` returns `""`.
+export fn str @until(sep str) -> str {
+    match @find(sep) {
+        Some(k) => @[0..k],
+        None    => @,
+    }
+}
+
+// Substring AFTER the first occurrence of `sep` (`""` if not found). See `@until`.
+export fn str @after(sep str) -> str {
+    match @find(sep) {
+        Some(k) => @[k + sep.byte_len() .. @byte_len()],
+        None    => "",
+    }
+}
+
 // Like `split`, but a trailing empty segment (when the string ends with `sep`)
 // is omitted (Rust `split_terminator`), lazy since Plan 199.
 // `"a,b,".split_terminator(",").collect() == ["a","b"]`.

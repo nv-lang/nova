@@ -14,18 +14,18 @@ module nova_tests.plan83_10
 fn helper_h_100() Time -> int {
     with Time = effect Time {
         sleep(_ms) { return () }
-        now() { return 100 }
+        now_unix_ms() { return 100 }
     } {
-        Time.now()
+        Time.now_unix_ms()
     }
 }
 
 fn helper_h_999() Time -> int {
     with Time = effect Time {
         sleep(_ms) { return () }
-        now() { return 999 }
+        now_unix_ms() { return 999 }
     } {
-        Time.now()
+        Time.now_unix_ms()
     }
 }
 

@@ -1,0 +1,75 @@
+// D75 (revised, Plan 47) + [M-canceltoken-prelude-decl] (2026-07-13, Plan
+// 173-хвост) followup — nested `supervised`/`spawn` scopes + CancelToken
+// method calls (`.cancel()` / `.is_cancelled()`) in the SAME compile-unit as
+// other prelude external types with same-shaped 0-effective-arg static
+// constructors (`WriteBuffer.new()` — see d372_generic_static_default_cap.nv,
+// already a folder-module peer of this file).
+//
+// Origin: Plan 198 REDO's large merged conformance corpus (nova-198 worktree,
+// branch triage-198, ~1005+ peer files) flagged a suspected regression —
+// user calls `tok.cancel()`/`tok.is_cancelled()` binding to a FOREIGN type
+// (`WriteBuffer`/a local `Conn10`-shaped record) in some CU compositions,
+// with an ICE variant (`is_cancelled` → emit_c.rs legacy `infer_call_ret_c`
+// "[P67-LEGACY] method call return type unknown" panic) in the double-nested
+// `supervised { spawn { supervised { spawn { ... } } } }` shape below.
+//
+// Investigation (Plan 173 fix-canceltoken-methods, 2026-07-13): triage-198's
+// checkout LACKS today's `std/src/prelude/concurrency.nv` formal decl
+// (confirmed via `git diff <main-base> triage-198-HEAD` — the file is wholly
+// ABSENT on that branch, which only carries an EARLIER/partial attempt).
+// Its corpus was exercised against the PRE-migration hardcoded-HashSet
+// `CancelToken` (no `TypeDecl`, no method signatures) — the exact legacy
+// arity-guessing class already diagnosed and fixed by `abc75b18f` /
+// `96b3ac54c` / `454a78117` (see `d75_canceltoken_prelude_ctor.nv`'s header):
+// a bigger merged CU just made the arity-collision more likely to land on
+// `WriteBuffer`/a local record instead of `StringBuilder`. It is NOT a new
+// checker defect surviving today's migration.
+//
+// Verification on this branch (main tip + 454a78117 applied): the exact two
+// quarantined fixtures (nova-198 `fixtures/ice_blocked/
+// nested_supervised_cancel.nv` — reproduced below — and `standalone/
+// pos_max_fibers_concurrent.nv`) both pass standalone AND merged into this
+// folder-module's real single-CU gate (`nova test --positive
+// --compile-error spec_tests/conformance`, entry `b11x_novaarray_user_ext_
+// methods`) alongside `WriteBuffer`/`Conn10`-shaped types — no ICE, no
+// mis-bind. This test locks that composition in permanently so a future
+// regression is caught by the main gate instead of only a side corpus.
+//
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+test "nested supervised with cancel token — cancel propagates (198-corpus composition)" {
+    ro tok = CancelToken.new()
+    mut inner_ran = AtomicBool.new(false)
+
+    supervised(cancel: tok) {
+        spawn {
+            supervised {
+                spawn {
+                    inner_ran.store(true)
+                    tok.cancel("inner cancel")
+                }
+            }
+        }
+    }
+
+    // After supervised exits: tok was cancelled by inner spawn.
+    assert(inner_ran.load())
+    assert(tok.is_cancelled())
+}
+
+test "nested supervised with cancel token — normal completion (198-corpus composition)" {
+    ro tok = CancelToken.new()
+    mut result = AtomicInt.new(0)
+
+    supervised(cancel: tok) {
+        spawn {
+            supervised {
+                spawn { result.store(42) }
+            }
+        }
+    }
+
+    assert(result.load() == 42)
+    assert(!tok.is_cancelled())
+}

@@ -309,6 +309,14 @@ typedef struct {
     NovaFailFrame** fiber_fail_top;      /* dynamic [count] */
     NovaInterruptFrame** fiber_interrupt_top; /* dynamic [count] */
     NovaEffectSnapshot** fiber_effect_snapshot; /* dynamic [count] */
+    /* Plan 201 trace-per-fiber (2026-07-13): per-fiber owned bucket for
+     * `_nova_last_error`/`_nova_throw_site`/`_nova_throw_trace` (effects.h
+     * NovaFiberErrorState). Allocated once when the slot is created
+     * (nova_scope_alloc_slot / nova_fiber_spawn_into) — mirrors
+     * fiber_effect_snapshot's lifecycle exactly, but swapped by POINTER
+     * (not copied) around mco_resume: see effects.h NovaFiberErrorState
+     * doc-comment for why a copy is unnecessary here. */
+    NovaFiberErrorState** fiber_error_state;    /* dynamic [count] */
     const char**    fiber_error;         /* dynamic [count] */
     nova_bool**     fiber_did_throw;     /* dynamic [count] */
     int             capacity;            /* alloc'нутая длина массивов */
@@ -383,6 +391,34 @@ typedef struct {
      * Initial value 0 — для single-thread (без runtime.init) остаётся 0
      * navсегда, behaviour identical. */
     nova_atomic_int pending_remote;
+    /* [196.6 / D228 §6 class, 2026-07-13] pending_sweeps — count of remote
+     * children whose fiber body (epilogue) has finished but whose WORKER-side
+     * post-mortem sweep (_worker_main: mco_destroy → nova_scope_retain_or_
+     * release_child → nova_spawn_pool_release) has not completed yet.
+     *
+     * Race this closes (VEH-localized, docs/plans/196.6-race-state-dump-notes.md):
+     * the child epilogue decrements `pending_remote` INSIDE the fiber; the
+     * worker's sweep runs strictly AFTER the fiber returns, and
+     * nova_scope_retain_or_release_child dereferences
+     * `dead_ctx->_nova_parent_scope` — but by then the scope owner may have
+     * observed pending_remote==0, returned from nova_supervised_run_impl, and
+     * the STACK-allocated NovaFiberQueue is gone: the sweep reads (and on the
+     * error-retention path WRITES child_ctx[slot] into) reused stack memory →
+     * the Plan 198 floating corruption / 0xC0000005 at
+     * `parent->child_capacity` (offset 0x74 off a NULL/garbage reload).
+     * Same class as §12.31 `pending_driver_jobs` (stack scope must outlive
+     * all async references — D228 §6); same counter-based-wait fix:
+     *   - increment: child epilogue (codegen), program-order BEFORE its
+     *     pending_remote release-decrement — the acquire that sees
+     *     pending_remote==0 therefore also sees pending_sweeps>0 until the
+     *     sweep finishes (relaxed inc suffices).
+     *   - decrement: worker sweep, fetch_sub RELEASE, AFTER retain/release —
+     *     via a parent pointer SNAPSHOT taken before the ctx can be pooled
+     *     (pool push overlays _nova_parent_scope with the freelist next-ptr).
+     *   - wait: supervised_run_impl tail (next to the pending_driver_jobs
+     *     wait) + drain_main_scope, acquire loads.
+     * Single-thread baseline: stays 0 forever, behaviour identical. */
+    nova_atomic_int pending_sweeps;
     /* Plan 44.5 Layer 5: atomic first_error для cross-worker error
      * propagation. Worker fiber на throw делает CAS (NULL → err_msg);
      * первый wins. После CAS — sets cancel_requested = true для
@@ -721,6 +757,7 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
     NovaFailFrame**      new_fail_top = (NovaFailFrame**)nova_alloc(sizeof(NovaFailFrame*) * cap);
     NovaInterruptFrame** new_interrupt_top = (NovaInterruptFrame**)nova_alloc(sizeof(NovaInterruptFrame*) * cap);
     NovaEffectSnapshot** new_effect_snapshot = (NovaEffectSnapshot**)nova_alloc(sizeof(NovaEffectSnapshot*) * cap);
+    NovaFiberErrorState** new_error_state = (NovaFiberErrorState**)nova_alloc(sizeof(NovaFiberErrorState*) * cap);
     const char**         new_error = (const char**)nova_alloc(sizeof(const char*) * cap);
     nova_bool**          new_did_throw = (nova_bool**)nova_alloc(sizeof(nova_bool*) * cap);
     /* Copy existing data. */
@@ -731,6 +768,7 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
             new_fail_top[i]        = q->fiber_fail_top[i];
             new_interrupt_top[i]   = q->fiber_interrupt_top[i];
             new_effect_snapshot[i] = q->fiber_effect_snapshot[i];
+            new_error_state[i]     = q->fiber_error_state[i];
             new_error[i]           = q->fiber_error[i];
             new_did_throw[i]       = q->fiber_did_throw[i];
         }
@@ -742,6 +780,7 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
         new_fail_top[i]        = NULL;
         new_interrupt_top[i]   = NULL;
         new_effect_snapshot[i] = NULL;
+        new_error_state[i]     = NULL;
         new_error[i]           = NULL;
         new_did_throw[i]       = NULL;
     }
@@ -751,6 +790,7 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
     q->fiber_fail_top      = new_fail_top;
     q->fiber_interrupt_top = new_interrupt_top;
     q->fiber_effect_snapshot = new_effect_snapshot;
+    q->fiber_error_state   = new_error_state;
     q->fiber_error         = new_error;
     q->fiber_did_throw     = new_did_throw;
     q->capacity            = cap;
@@ -773,6 +813,7 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
     q->fiber_fail_top = NULL;
     q->fiber_interrupt_top = NULL;
     q->fiber_effect_snapshot = NULL;
+    q->fiber_error_state = NULL;  /* Plan 201 trace-per-fiber */
     q->fiber_error = NULL;
     q->fiber_did_throw = NULL;
     q->first_error = NULL;
@@ -789,6 +830,7 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
      * Single-thread baseline (без runtime.init) — оба остаются нулевыми
      * forever, behaviour identical. */
     nova_aint_init(&q->pending_remote, 0);
+    nova_aint_init(&q->pending_sweeps, 0);   /* [196.6 / D228 §6 class] */
     nova_aptr_init(&q->first_error_atomic, NULL);
     q->first_error_atomic_kind = NOVA_THROW_USER;
     q->first_error_atomic_reason = NULL;
@@ -1005,6 +1047,16 @@ static inline int nova_scope_alloc_slot(NovaFiberQueue* scope, mco_coro* co) {
             scope->fiber_fail_top[i]       = NULL;
             scope->fiber_interrupt_top[i]  = NULL;
             scope->fiber_effect_snapshot[i]= NULL;
+            /* Plan 201 trace-per-fiber: fresh per-fiber error-diag bucket
+             * (fresh fiber = no in-flight error yet) + point the active
+             * TLS pointer at it NOW — this call runs INSIDE the fiber's
+             * own preamble (first resume, before any user body statement
+             * that could throw), so by the time user code starts running
+             * `_nova_error_state_p` already targets this slot's OWN
+             * bucket instead of the calling worker's ambient one. */
+            scope->fiber_error_state[i]    =
+                (NovaFiberErrorState*)nova_alloc(sizeof(NovaFiberErrorState));
+            _nova_error_state_p = scope->fiber_error_state[i];
             scope->fiber_error[i]          = NULL;
             scope->fiber_did_throw[i]      = NULL;
             __atomic_store_n(&scope->slot_lock, 0, __ATOMIC_RELEASE);
@@ -1028,6 +1080,10 @@ static inline int nova_scope_alloc_slot(NovaFiberQueue* scope, mco_coro* co) {
     scope->fiber_fail_top[slot]       = NULL;
     scope->fiber_interrupt_top[slot]  = NULL;
     scope->fiber_effect_snapshot[slot]= NULL;
+    /* Plan 201 trace-per-fiber: see reuse-path comment above. */
+    scope->fiber_error_state[slot]    =
+        (NovaFiberErrorState*)nova_alloc(sizeof(NovaFiberErrorState));
+    _nova_error_state_p = scope->fiber_error_state[slot];
     scope->fiber_error[slot]          = NULL;
     scope->fiber_did_throw[slot]      = NULL;
     /* Release store: makes slot visible to other threads only after all
@@ -2032,6 +2088,14 @@ static inline void nova_fiber_spawn_into(NovaFiberQueue* q,
     q->fiber_ctx[q->count] = user;            /* GC root: SpawnCtx reachable via managed array */
     q->fiber_fail_top[q->count] = NULL;       /* fresh fiber: empty fail-stack */
     q->fiber_interrupt_top[q->count] = NULL;  /* and empty interrupt-stack */
+    /* Plan 201 trace-per-fiber: fresh per-fiber error-diag bucket (single-
+     * thread/bootstrap path). Parent thread allocates it here; the fiber's
+     * OWN first resume (nova_supervised_step, below) points the active TLS
+     * pointer at it before mco_resume — this function itself never runs
+     * the fiber, so pointing the TLS pointer here would be pointless (and
+     * wrong: this runs on the SPAWNING thread/fiber, not the new one). */
+    q->fiber_error_state[q->count] =
+        (NovaFiberErrorState*)nova_alloc(sizeof(NovaFiberErrorState));
     q->fiber_error[q->count] = NULL;
     q->fiber_did_throw[q->count] = NULL;
     /* Inherit current handler-state: новый fiber видит handlers из enclosing
@@ -2321,6 +2385,34 @@ static inline bool nova_scope_retain_or_release_child(NovaSpawnCtxBase* dead_ctx
  * tail to release retained child ctx buffers back to their pool. */
 void nova_spawn_pool_release(void* ctx, size_t size);
 
+/* [196.6 / D228 §6 class, 2026-07-13]: the ONE post-mortem sweep for a dead
+ * remote child — retain-or-release the ctx, then RELEASE-decrement the parent
+ * scope's pending_sweeps (see the field doc at NovaFiberQueue.pending_sweeps).
+ * All worker-side dead-fiber sites MUST route through this helper (three in
+ * runtime.c: _worker_main loop, worker cleanup drain, pump_scope) so the
+ * scope owner's sweep-wait can pair with every sweep.
+ *
+ * Ordering contract:
+ *  1. `parent` is SNAPSHOT before retain/release — a pool push overlays
+ *     `_nova_parent_scope` with the freelist next pointer, so the field must
+ *     not be re-read afterwards.
+ *  2. The snapshot is safe to dereference until OUR decrement: the child's
+ *     epilogue incremented pending_sweeps program-order-before its
+ *     pending_remote release-decrement, so the owner cannot observe
+ *     "all done" until this function's fetch_sub lands.
+ *  3. fetch_sub is RELEASE — a retained `child_ctx[slot]` store must be
+ *     visible to the owner's decision-loop (acquire wait) before it reads. */
+static inline void nova_scope_sweep_dead_child(NovaSpawnCtxBase* dead_ctx) {
+    if (!dead_ctx) return;
+    NovaFiberQueue* parent_snapshot = dead_ctx->_nova_parent_scope;
+    if (!nova_scope_retain_or_release_child(dead_ctx)) {
+        nova_spawn_pool_release(dead_ctx, dead_ctx->_nova_pool_size);
+    }
+    if (parent_snapshot) {
+        (void)nova_aint_fetch_sub_release(&parent_snapshot->pending_sweeps);
+    }
+}
+
 /* Plan 83.10.3 (2026-05-26): forward-decls — runtime.h included AFTER
  * fibers.h in nova_rt.h. Forward-declare to allow use in fibers.h functions.
  * Returns -1 on main thread, worker id (>=0) on worker thread. */
@@ -2355,6 +2447,13 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
     int             outer_slot  = _nova_active_slot;
     NovaFailFrame*  outer_fail_top = _nova_fail_top;
     NovaInterruptFrame* outer_interrupt_top = _nova_interrupt_top;
+    /* Plan 201 trace-per-fiber: save outer active error-state pointer
+     * (getter self-heals to the native per-thread bucket if never touched
+     * on this thread). Restored after each fiber's resume below — no
+     * "save fiber's current value back" step needed (the fiber's bucket
+     * is fixed for its whole lifetime; mutations already land in it
+     * in-place through the pointer, see effects.h NovaFiberErrorState). */
+    NovaFiberErrorState* outer_error_state = nova_error_state_active();
     /* Save outer effect-handler-snapshot before scheduling fibers — после
      * resume каждого fiber'а handlers будут восстановлены к состоянию
      * outer flow. Фибры могут устанавливать собственные `with X = h`
@@ -2414,6 +2513,13 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
         _nova_interrupt_top = q->fiber_interrupt_top[i];
         _nova_active_scope  = q;
         _nova_active_slot   = i;
+        /* Plan 201 trace-per-fiber: point the active error-state pointer at
+         * THIS fiber's own bucket (allocated once at slot-creation —
+         * nova_fiber_spawn_into). Falls back to outer if somehow NULL
+         * (defensive; should not happen post slot-creation). */
+        if (q->fiber_error_state[i]) {
+            _nova_error_state_p = q->fiber_error_state[i];
+        }
         /* Per-fiber handler scoping: install fiber's saved handler-snapshot
          * before resume. Каждый fiber видит свои `with X = h` биндинги,
          * не handlers других fibers. */
@@ -2455,6 +2561,7 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
         _nova_interrupt_top = outer_interrupt_top;
         _nova_active_scope  = outer_scope;
         _nova_active_slot   = outer_slot;
+        _nova_error_state_p = outer_error_state;  /* Plan 201 trace-per-fiber */
         /* Restore outer handlers (clean state для следующего fiber'а
          * или main-flow после step). */
         nova_effect_snapshot_restore(&outer_effects);
@@ -2505,6 +2612,16 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
         int parked = nova_sched_count_parked(q);
         if (parked > 0 && parked == alive) {
             uv_run(nova_current_loop(), UV_RUN_ONCE);
+        }
+    }
+    /* [196.6 / D228 §6 class]: wait for worker-side sweeps of this scope's
+     * remote children (see pending_sweeps field doc / supervised_run_impl
+     * tail). The orphan scope is static, but drain is also the pre-exit
+     * fence — keep the sweep/ctx-pool accounting symmetric. */
+    while (nova_aint_load(&q->pending_sweeps) > 0) {
+        uv_run(nova_current_loop(), UV_RUN_NOWAIT);
+        if (nova_aint_load(&q->pending_sweeps) > 0) {
+            uv_sleep(1);
         }
     }
     nova_sched_drop_state(q);
@@ -2858,6 +2975,24 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
         uv_run(nova_current_loop(), UV_RUN_NOWAIT);
         if (nova_aint_load(&q->pending_driver_jobs) > 0) {
             uv_sleep(1);  /* yield ~1ms; driver thread is independent of our loop */
+        }
+    }
+    /* [196.6 / D228 §6 class]: same guarantee for the WORKER-side post-mortem
+     * sweep of remote children (mco_destroy → retain_or_release_child →
+     * pool_release). A child's epilogue decrements pending_remote INSIDE the
+     * fiber; the sweep runs after the fiber returns and dereferences THIS
+     * stack-allocated scope (child_capacity/child_error/child_ctx). Returning
+     * before every sweep finished lets the next stack frame reuse the memory
+     * → the sweep reads garbage / writes child_ctx into a live frame (Plan
+     * 198 floating AV). Wait here — strictly BEFORE the decision-loop below
+     * reads child_ctx[] (a retained store must be visible: release-dec in the
+     * sweep pairs with this acquire load). Typical wait: zero iterations —
+     * the sweep is the very next thing the worker does after the fiber
+     * returns. See pending_sweeps field doc. */
+    while (nova_aint_load(&q->pending_sweeps) > 0) {
+        uv_run(nova_current_loop(), UV_RUN_NOWAIT);
+        if (nova_aint_load(&q->pending_sweeps) > 0) {
+            uv_sleep(1);
         }
     }
     /* Cleanup sched-state for этого scope'а (если был alloc'ом). */

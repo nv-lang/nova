@@ -7923,6 +7923,77 @@ impl<'a> TypeCheckCtx<'a> {
                                 self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                             }
                         }
+                    } else if let ExprKind::Path(parts) = &func.kind {
+                        // 196.5 Stage-D волна-3 п.2 (P67-LEGACY panic
+                        // `[P67-LEGACY] Path call return type unknown for
+                        // method=deserialize`, серде-корпус): `T.deserialize(d)`
+                        // inside a generic fn/method body bound `[T Deserialize]`
+                        // (std/src/encoding/serde/{serde,json}.nv) — the receiver
+                        // is the function's OWN still-abstract type param, spelled
+                        // as a `Path` (the parser turns ANY PascalCase identifier
+                        // followed by `.lowercase_ident` into `Path`, not just
+                        // declared type names — `T` is never in `self.types`/
+                        // `method_overloads`, so no existing static-return path
+                        // (`resolve_generic_static_return`, the primitive arm
+                        // above in `infer_expr_type`) sees it). The `Deserialize`
+                        // protocol contract fixes `.deserialize[D Deserializer]
+                        // (mut d D) -> Result[Self, DeError]` for EVERY
+                        // implementor (mirrors the already-channelled `Serialize`
+                        // contract, `Result[(), SerError]` — but here `Self` is
+                        // NOT invariant, so it is carried through as an explicit
+                        // `TypeParam` rather than hardcoded). Gated on `parts[0]`
+                        // being an in-scope generic name (`gs`) so a REAL
+                        // concrete-type static call is unaffected (those resolve
+                        // via the paths named above). `resolved_type_to_c`'s
+                        // `TypeParam` arm already knows how to resolve this from
+                        // `current_type_subst` at the mono instance's own
+                        // emission time (same contract every other TypeParam-
+                        // channelled return relies on) — no new lowering needed.
+                        if parts.len() == 2 && parts[1] == "deserialize" && gs.contains(&parts[0]) {
+                            // Return type read from the PROTOCOL DECLARATION (not
+                            // hardcoded): `Result[Self, DeError]` with `Self` → `T`.
+                            // If the CU has no `Deserialize` protocol in scope, or
+                            // its `deserialize` return still mentions the method's
+                            // own generics after substitution — no annotation
+                            // (honest fall-through to legacy, as before).
+                            if let Some(td) = self.types.get("Deserialize") {
+                                if let TypeDeclKind::Protocol { methods, .. } = &td.kind {
+                                    if let Some(m) =
+                                        methods.iter().find(|m| m.name == "deserialize")
+                                    {
+                                        if let Some(ret) = &m.return_type {
+                                            let mut self_subst: HashMap<String, TypeRef> =
+                                                HashMap::new();
+                                            self_subst.insert(
+                                                "Self".to_string(),
+                                                TypeRef::Named {
+                                                    path: vec![parts[0].clone()],
+                                                    generics: Vec::new(),
+                                                    span: e.span,
+                                                },
+                                            );
+                                            let substituted =
+                                                crate::const_fn_trampoline::subst_type_ref_pub(
+                                                    ret, &self_subst);
+                                            let own_gens: HashSet<String> = m
+                                                .generics
+                                                .iter()
+                                                .map(|g| g.name.clone())
+                                                .collect();
+                                            if !typeref_mentions_any(&substituted, &own_gens) {
+                                                let rt = Self::mark_type_params(
+                                                    ResolvedType::from_type_ref(&substituted),
+                                                    gs,
+                                                );
+                                                self.resolved_types_buf
+                                                    .borrow_mut()
+                                                    .insert(e.id, rt);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     } else if let ExprKind::TurboFish { base: tf_base, type_args } = &func.kind {
                         // 172.1.2 (Call:<expr>): интринсики size_of[T]()/align_of[T]()
                         // — ВСЕГДА int (фундаментальный факт; чекер уже знает их
@@ -20838,11 +20909,18 @@ impl NameResCtx {
             "Fail",
             // Detach effect-type для detach {} expression (D50).
             "Detach",
-            // CancelToken — caller-owned cancellation handle (D75 revised,
-            // Plan 47). Builtin type: `CancelToken.new()` конструктор +
-            // тип параметра `cancel CancelToken`. Методы (cancel/is_cancelled/
-            // bind) — built-in dispatch в codegen на receiver NovaCancelToken*.
-            "CancelToken",
+            // [M-canceltoken-prelude-decl] (2026-07-13, Plan 173-хвост):
+            // `CancelToken` УБРАН из этого HashSet'а — объявлен формально в
+            // std/prelude/concurrency.nv (`export type CancelToken(*())` +
+            // extern "nova" методы) и re-export'ится фасадом std/prelude.nv,
+            // образец Plan 62.D.bis (StringBuilder/WriteBuffer/ReadBuffer).
+            // Bypass-имя без TypeDecl оставляло `CancelToken.new()`
+            // нерезолвленным в чекере (ни Channel-1, ни Channel-2) → legacy
+            // infer_call_ret_c угадывал чужой `.new()` по arity → CC-FAIL
+            // класса «no member named 'cancel' in 'struct Nova_WriteBuffer'»
+            // (std/src/concurrency/supervised_deadline_test.nv). Методы
+            // (cancel/is_cancelled/reason/merge/cancelled_by) — по-прежнему
+            // built-in dispatch в codegen на receiver NovaCancelToken*.
             // Plan 62.D.bis (2026-05-18): StringBuilder / WriteBuffer /
             // ReadBuffer объявлены в std/prelude/collections.nv через
             // `external type` (D126). **Не были** в этом HashSet'е изначально

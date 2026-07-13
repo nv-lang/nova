@@ -107,3 +107,78 @@ per-fiber (входит в save/restore). Функциональность/ко�
 с `propagation trace`, нужен прогон conformance + rt-лейна на предмет
 byte-identical trace output в существующих тестах). НЕ входит в объём
 Plan 201 (задание — только оценка).
+
+**201.4 (сделано, ветка `trace-per-fiber`, worktree nova-p201) — перенос
+trace-диагностики в per-fiber:**
+
+Схема: НЕ добавление полей в `NovaSpawnCtxBase` (избегает мирроринга layout
+в 3 codegen emit-сайтах `emit_c.rs` — `emit_spawn`/статический-spawn/
+`emit_detach`). Вместо этого — новый параллельный массив
+`fiber_error_state[]` в `NovaFiberQueue` (fibers.h), ТОЧНО по образцу уже
+существующего `fiber_effect_snapshot[]`: аллоцируется один раз при
+создании слота (`nova_scope_alloc_slot` — M:N; `nova_fiber_spawn_into` —
+однопоточный/bootstrap путь). `_nova_last_error`/`_nova_throw_site`/
+`_nova_throw_trace` (effects.h) объединены в один `NovaFiberErrorState` и
+превращены в макросы над ОДНИМ TLS-указателем `_nova_error_state_p`
+(`nova_error_state_active()` — self-healing геттер, дефолт на
+`_nova_error_state_native`, per-OS-thread «вне-файбера» бакет). Swap —
+указатель (не копия): в отличие от `_nova_fail_top`, этот указатель НИКЕМ
+не переставляется во время работы файбера (только этой обвязкой +
+одноразовым hook'ом в `nova_scope_alloc_slot`), поэтому save-back после
+`mco_resume` не нужен — содержимое мутируется прямо в персистентном
+per-slot блоке. Выбран **указатель, не snapshot-копия** (владелец
+предлагал оба варианта): копия ring-buffer (~340 байт, из них ~256 —
+16-слотовый буфер) на КАЖДЫЙ resume строго дороже одного pointer-store,
+без выигрыша (ничего здесь не требует value-copy семантики).
+
+Диф: `effects.h` (реорганизация + новый комбинированный тип/геттер/
+макросы + апдейт debug-tripwire комментария по п.2 задания), `effects.c`
+(3 TLS-глобали → 2 новых), `fibers.h` (+поле в `NovaFiberQueue`, grow/init/
+alloc_slot/spawn_into, swap в `nova_supervised_step`), `runtime.c` (swap в
+`_worker_main` и `_worker_run_one_fiber`, оба сайта). Codegen (`emit_c.rs`)
+НЕ тронут вообще.
+
+Тест (п.3 задания): детерминированный сценарий «fiber A паркуется в defer
+при размотке, fiber B кидает свою ошибку на том же потоке» реализуем
+(virtual-clock `mut_clock` из `std.testing.handlers` даёт детерминированный
+deadline-order park без реальных гонок, без `NOVA_MAXPROCS=1` — координация
+virtual-clock однопоточна по контракту). НО построить его НЕ удалось —
+причина не в детерминизме, а в независимой, ДО-СУЩЕСТВУЮЩЕЙ дыре
+наблюдаемости: единственный канал, которым `_nova_throw_trace`
+(ring-buffer) вообще виден с Nova-уровня — это stderr-дамп
+`nova_throw_site_dump()` при uncaught-abort; он вызывается из
+`nova_throw_ex`/`nova_rethrow_with_suppressed`, когда для ошибки НЕТ
+внешнего `_nova_fail_top`. Путь эскалации scope (`spawn`/`supervised` →
+`nova_supervised_run_impl` → `nova_rethrow_scope` → финальный re-throw на
+родительском потоке) переносит message/kind/payload через
+`child_error[]`/`first_error`, но НЕ throw-site/trace — подтверждено
+пробой (`fn fiber_a() Fail -> () { ro v = mid()!! }` внутри
+`supervised { spawn { fiber_a() } }`, БЕЗ второго файбера и БЕЗ park)
+на ТЕКУЩЕМ (после 201.4) коде: дамп печатает только `nova: unhandled
+Fail: leaf-error-A`, БЕЗ секции `propagation trace`. Тот же проб на
+STASHED baseline (до 201.4, тот же коммит `3ca63780b`) даёт БАЙТ-В-БАЙТ
+идентичный вывод — т.е. эта дыра существовала ДО волны 201.4 и волна её
+не создала и не задевает. Единственный сценарий, где нужен ВТОРОЙ
+файбер на том же потоке (park A + throw B), СТРУКТУРНО требует
+`spawn`/`supervised` (raw fiber без scope не паркуется осмысленно) — а
+значит любой такой Nova-тест неизбежно проходит через эскалацию, которая
+дамп не печатает вообще, что делает утверждение о содержимом trace
+непроверяемым с Nova-уровня. Существующие 3 rt-теста (`f5_propagation_
+trace_full`, `f5_uncaught_trace_panic/throw`) все — простой синхронный
+main-flow БЕЗ spawn/supervised, что и есть единственный путь, где дамп
+сейчас реально печатает трассу. Не ослаблено: err173/rt остаётся 3/3 без
+изменений; новый тест не добавлен (вместо неработающего/vacuous теста —
+этот честный анализ). Отдельный follow-up (вне объёма Plan 201): протянуть
+throw-site/trace через `child_error[]`/`nova_rethrow_scope` было бы нужно,
+чтобы вообще сделать trace видимым в scope-escalation сценариях — это
+самостоятельная фича-работа поверх `[M-173-error-return-trace]`, не
+per-fiber-изоляция.
+
+Гейты: `cargo build --release` чист (оба crate); `spec_tests/conformance`
+ПОЛНЫЙ без `--jobs` — 113/0+7skip (b11x прошёл в этом прогоне, без
+доп. перезапуска); `err173`-семейство `--full` — 30/30 (один прогон дал
+29/1, но FAIL — `err173_3/const_init_runtime_ok_test`,
+воспроизведён КАК ДО-СУЩЕСТВУЮЩИЙ флейк на STASHED baseline той же
+частоты — не регрессия); `std/src/concurrency --full` — δ=0 (те же 2
+известных CC-FAIL: `retry_test`, `supervised_deadline_test`, не мои,
+причины не связаны с error-state).

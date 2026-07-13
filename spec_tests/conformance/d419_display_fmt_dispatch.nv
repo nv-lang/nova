@@ -1,0 +1,64 @@
+// Plan 152.7.2 (D419) POS — @display_fmt(mut f Fmt) receives alternate/
+// precision from a rich `${x:SPEC}`; a type that does NOT define it falls
+// back to Display + the existing external post-processing, byte-identical
+// to pre-D419 behavior.
+//
+// See spec/decisions/02-types.md#d419 for the protocol/dispatch rule.
+
+module spec_tests.conformance
+
+// Type WITH @display_fmt — reacts to `#` (alternate) and `.N` (precision).
+type TaggedD419 { s str }
+
+fn TaggedD419 @to_str() -> str => @s
+
+fn TaggedD419 @display_fmt(mut f Fmt) -> () {
+    if f.alternate() {
+        f.write("<")
+        f.write(@s)
+        f.write(">")
+    } else {
+        match f.precision() {
+            Some(p) => f.write("${@s}#${p}")
+            None    => f.write(@s)
+        }
+    }
+}
+
+// Type WITHOUT @display_fmt — pre-D419 behavior: `#` is silently ignored
+// (as before D419); external precision truncation still applies.
+type Plain { s str }
+
+fn Plain @display(mut w Write) -> () {
+    w.write(@s)
+}
+
+test "type with @display_fmt: bare interpolation unaffected (falls back to to_str)" {
+    ro t = TaggedD419 { s: "hi" }
+    assert("${t}" == "hi")
+}
+
+test "type with @display_fmt: `#` (alternate) reaches the type" {
+    ro t = TaggedD419 { s: "hi" }
+    assert("${t:#}" == "<hi>")
+}
+
+test "type with @display_fmt: `.N` (precision) reaches the type" {
+    ro t = TaggedD419 { s: "hi" }
+    assert("${t:.3}" == "hi#3")
+}
+
+test "type with @display_fmt: width/align still post-processed externally (D419 §в)" {
+    ro t = TaggedD419 { s: "x" }
+    assert("${t:>4}" == "   x")
+}
+
+test "type WITHOUT @display_fmt: `#` has no effect (byte-identical pre-D419 behavior)" {
+    ro p = Plain { s: "y" }
+    assert("${p:#}" == "y")
+}
+
+test "type WITHOUT @display_fmt: precision still truncates externally (byte-identical pre-D419 behavior)" {
+    ro p = Plain { s: "abcdef" }
+    assert("${p:.3}" == "abc")
+}

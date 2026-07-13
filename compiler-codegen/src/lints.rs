@@ -1228,6 +1228,19 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
             out.insert("from".to_string());
             out.insert("from_debug".to_string());
             out.insert("to_str".to_string());
+            // D419 (Plan 152.7.2): rich `${x:SPEC}` dispatches to a type's
+            // `@display_fmt(mut f Fmt)` (when present) via a hand-emitted
+            // `Nova_FmtCtx_static_new(...)` + `Nova_<T>_method_display_fmt(...)`
+            // call in `emit_format_spec_value` — same class of invisible-to-AST
+            // selector as the seeds above. Without seeding these, method-DCE
+            // prunes `FmtCtx`'s own methods and any user `@display_fmt` body
+            // whenever the rest of the program never spells these names.
+            out.insert("FmtCtx".to_string());
+            out.insert("new".to_string());
+            out.insert("display_fmt".to_string());
+            out.insert("alternate".to_string());
+            out.insert("precision".to_string());
+            out.insert("write".to_string());
         }
         ExprKind::Lambda { body, .. } => collect_expr(body, out),
         ExprKind::ClosureLight { body, .. } => match body {
