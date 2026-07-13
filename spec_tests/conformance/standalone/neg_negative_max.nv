@@ -13,7 +13,7 @@
 // ENV NOVA_MAXPROCS=1
 // EXPECT_STDERR invalid NOVA_MAX_FIBERS
 
-module spec_tests.conformance
+module standalone.neg_negative_max
 test "negative NOVA_MAX_FIBERS: warn + default, program still runs" {
     // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
     mut total = AtomicInt.new(0)

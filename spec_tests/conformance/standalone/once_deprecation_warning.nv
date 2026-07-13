@@ -4,7 +4,7 @@
 //
 // Runtime behavior: deprecated API still works (backward compat).
 
-module spec_tests.conformance
+module standalone.once_deprecation_warning
 // EXPECT_COMPILE_WARNING W_ONCE_RUN_DONE_DEPRECATED
 
 test "Once: deprecated run/done still works (backward compat)" {

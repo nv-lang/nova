@@ -9,7 +9,7 @@
 // summed value proves the transitive generic instance survives.
 // EXPECT_STDOUT 30
 
-module spec_tests.conformance
+module standalone.f3_generic_transitive_from_main
 // Generic free fn — emitted lazily per instantiation by the monomorphizer.
 fn box_it[T](x T) -> T => x
 

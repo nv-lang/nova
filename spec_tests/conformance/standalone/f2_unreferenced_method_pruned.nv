@@ -13,7 +13,7 @@
 // program compiles, runs, and prints the result of the USED method.
 // EXPECT_STDOUT used 7
 
-module spec_tests.conformance
+module standalone.f2_unreferenced_method_pruned
 
 type Widget {
     n int

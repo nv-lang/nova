@@ -8,7 +8,7 @@
 // Эскейпящий вид (замыкание/return/арг) — классический heap-путь, семантика
 // неизменна. Критерий владельца: gc.alloc_count δ = 0 на строгих видах.
 
-module spec_tests.conformance
+module standalone.view_descriptor_stack
 import std.runtime.gc
 
 test "ro b = s.bytes(): стек-дескриптор, 0 аллокаций, zero-copy payload" {

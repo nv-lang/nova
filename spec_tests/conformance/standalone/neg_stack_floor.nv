@@ -15,7 +15,7 @@
 // ENV NOVA_MAXPROCS=1
 // EXPECT_STDERR below floor
 
-module spec_tests.conformance
+module standalone.neg_stack_floor
 fn rec_sum1(n int) -> int {
     if n <= 0 {
         0

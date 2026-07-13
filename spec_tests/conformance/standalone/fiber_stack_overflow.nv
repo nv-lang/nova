@@ -15,7 +15,7 @@
 // `deep` рекурсирует НЕ в хвостовой позиции (вызов followed by `x + y`)
 // — гарантированно настоящие стек-кадры даже под оптимизацией.
 
-module spec_tests.conformance
+module standalone.fiber_stack_overflow
 fn deep(n int) -> int {
     ro x = n + 1
     ro y = deep(x)

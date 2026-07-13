@@ -4,7 +4,7 @@
 // `Pair.equal` must stay reachable, otherwise codegen calls an undeclared fn.
 // EXPECT_STDOUT eqop ok
 
-module spec_tests.conformance
+module standalone.hunt_eq_operator_method
 
 import std.prelude.protocols.{Equal}
 

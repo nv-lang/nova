@@ -3,7 +3,7 @@
 // До 9a90802b022 это эмитило nova_print_int(nova_int_to_str(...)) — CC-FAIL.
 // После фикса — nova_print_str(...) с корректным выводом.
 
-module spec_tests.conformance
+module standalone.f11_corpus_06_pattern_regression
 // EXPECT_STDOUT 7
 // EXPECT_STDOUT 5
 // EXPECT_STDOUT 120

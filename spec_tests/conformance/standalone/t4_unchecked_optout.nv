@@ -13,7 +13,7 @@
 // снимает страховку даже у недоказанного контракта (hot-path под
 // ответственность разработчика). Build-аналог — `--contracts=off` (t5).
 
-module spec_tests.conformance
+module standalone.t4_unchecked_optout
 #unchecked
 fn bad(x int) -> int
     requires x > 0          // нарушается: bad(-5)

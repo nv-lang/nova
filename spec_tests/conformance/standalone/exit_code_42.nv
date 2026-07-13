@@ -5,7 +5,7 @@
 //
 // Проверяем D13 exit() — гасит весь процесс с указанным кодом.
 
-module spec_tests.conformance
+module standalone.exit_code_42
 fn main() Io -> () {
     exit(42, "intentional exit with code 42")
 }

@@ -1,7 +1,7 @@
 // Plan 67 Ф.2 f6 — println(char literal) → AD3 nova_print_char.
 // До фикса: nova_print_int('a') → печатает "97", не "a".
 
-module spec_tests.conformance
+module standalone.f6_char_literal
 // EXPECT_STDOUT a
 // EXPECT_STDOUT z
 
