@@ -2,30 +2,30 @@
 // `@a.b.cv6.method()` still sibling-safe.
 
 module spec_tests.conformance
-type Leaf2 {
+type Leaf2_2 {
     mut store []int
 }
 
-type Mid2 {
-    mut leaf Leaf2
+type Mid2_2 {
+    mut leaf Leaf2_2
 }
 
-type Inner4 {
-    mut mid Mid2
+type Inner4_2 {
+    mut mid Mid2_2
 }
 
-type Cv6 {
+type Cv6_2 {
     mut tag int
-    mut inner Inner4
+    mut inner Inner4_2
 }
 
-fn Leaf2.new() -> Leaf2 => { store: []int.new() }
-fn Mid2.new() -> Mid2 => { leaf: Leaf2.new() }
-fn Inner4.new() -> Inner4 => { mid: Mid2.new() }
+fn Leaf2_2.new() -> Leaf2_2 => { store: []int.new() }
+fn Mid2_2.new() -> Mid2_2 => { leaf: Leaf2_2.new() }
+fn Inner4_2.new() -> Inner4_2 => { mid: Mid2_2.new() }
 
-fn Cv6.new() -> Cv6 => { tag: 0, inner: Inner4.new() }
+fn Cv6_2.new() -> Cv6_2 => { tag: 0, inner: Inner4_2.new() }
 
-fn Cv6 mut @cycle(v int) -> int {
+fn Cv6_2 mut @cycle(v int) -> int {
     ro a = @tag
     ro b = @tag
     // depth-3 chain: @inner.mid.leaf.store.push(v)
@@ -36,7 +36,7 @@ fn Cv6 mut @cycle(v int) -> int {
 }
 
 test "V7.7: depth-3 chain doesn't invalidate sibling cache" {
-    mut cv6 = Cv6.new()
+    mut cv6 = Cv6_2.new()
     cv6.tag = 5
     ro r = cv6.cycle(99)
     // tag = 5 throughout вЂ” 5*4 = 20

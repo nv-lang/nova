@@ -2,12 +2,12 @@
 // `@a.b.cv6.method()` still sibling-safe.
 
 module spec_tests.conformance
-type Leaf2 {
+type Leaf2_1 {
     mut store []int
 }
 
 type Mid2_plan12377v77depth3chainok {
-    mut leaf Leaf2
+    mut leaf Leaf2_1
 }
 
 type Inner4_plan12377v77depth3chainok {
@@ -19,8 +19,8 @@ type Cv6_plan12377v77depth3chainok {
     mut inner Inner4_plan12377v77depth3chainok
 }
 
-fn Leaf2.new() -> Leaf2 => { store: []int.new() }
-fn Mid2_plan12377v77depth3chainok.new() -> Mid2_plan12377v77depth3chainok => { leaf: Leaf2.new() }
+fn Leaf2_1.new() -> Leaf2_1 => { store: []int.new() }
+fn Mid2_plan12377v77depth3chainok.new() -> Mid2_plan12377v77depth3chainok => { leaf: Leaf2_1.new() }
 fn Inner4_plan12377v77depth3chainok.new() -> Inner4_plan12377v77depth3chainok => { mid: Mid2_plan12377v77depth3chainok.new() }
 
 fn Cv6_plan12377v77depth3chainok.new() -> Cv6_plan12377v77depth3chainok => { tag: 0, inner: Inner4_plan12377v77depth3chainok.new() }

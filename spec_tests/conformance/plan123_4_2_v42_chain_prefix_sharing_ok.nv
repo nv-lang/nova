@@ -10,12 +10,12 @@ type Leaf {
     ro d int
 }
 
-type Mid {
+priv(file) type Mid {
     ro x int
     ro y Leaf
 }
 
-type Root {
+type Root1 {
     ro inner Inner_plan12342v42chainprefixsharingok
 }
 
@@ -23,18 +23,18 @@ type Inner_plan12342v42chainprefixsharingok {
     ro middle Mid
 }
 
-fn Root @sum_both() -> int {
+fn Root1 @sum_both() -> int {
     // Each chain @inner.middle.y.c, etc — exceeds threshold (≥2 reads)
     // and shares the @inner.middle prefix.
     @inner.middle.y.c + @inner.middle.y.c + @inner.middle.y.d + @inner.middle.y.d
 }
 
-fn Root.new() -> Root {
-    Root { inner: Inner_plan12342v42chainprefixsharingok { middle: Mid { x: 99, y: Leaf { c: 3, d: 4 } } } }
+fn Root1.new() -> Root1 {
+    Root1 { inner: Inner_plan12342v42chainprefixsharingok { middle: Mid { x: 99, y: Leaf { c: 3, d: 4 } } } }
 }
 
 test "V4.2: shared chain prefix preserves semantics" {
-    ro r = Root.new()
+    ro r = Root1.new()
     ro got = r.sum_both()
     // 3 + 3 + 4 + 4 = 14.
     assert(got == 14)

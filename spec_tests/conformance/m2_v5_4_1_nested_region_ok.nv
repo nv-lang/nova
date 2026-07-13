@@ -4,13 +4,13 @@
 // write вЂ” semantic preservation through region-aware caching.
 
 module spec_tests.conformance
-type Cv3 {
+type Cv3_1 {
     mut x int
 }
 
-fn Cv3.new() -> Cv3 => { x: 0 }
+fn Cv3_1.new() -> Cv3_1 => { x: 0 }
 
-fn Cv3 mut @nested_two_regions(cond bool) -> int {
+fn Cv3_1 mut @nested_two_regions(cond bool) -> int {
     // mut acc init.
     mut acc = 0
     if cond {
@@ -28,7 +28,7 @@ fn Cv3 mut @nested_two_regions(cond bool) -> int {
 }
 
 test "V5.4.1 nested region: semantic preservation with cond true" {
-    mut cv3 = Cv3.new()
+    mut cv3 = Cv3_1.new()
     cv3.x = 10
     ro r = cv3.nested_two_regions(true)
     // a=10, b=10, write @x=99, cv3=99, d=99 в‡’ 10+10+99+99 = 218
@@ -37,7 +37,7 @@ test "V5.4.1 nested region: semantic preservation with cond true" {
 }
 
 test "V5.4.1 nested region: cond false skips region entirely" {
-    mut cv3 = Cv3.new()
+    mut cv3 = Cv3_1.new()
     cv3.x = 10
     ro r = cv3.nested_two_regions(false)
     assert(r == 0)

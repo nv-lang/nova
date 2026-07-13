@@ -32,11 +32,11 @@ test "Option[char]: is_some/is_none на nova_char" {
     assert(n.is_none())
 }
 
-type Inner { val int }
+type Inner6 { val int }
 
 test "Option[user-record]: is_some/is_none на pointer-T" {
-    ro r Option[Inner] = Some(Inner{val: 7})
-    ro n Option[Inner] = None
+    ro r Option[Inner6] = Some(Inner6{val: 7})
+    ro n Option[Inner6] = None
     assert(r.is_some())
     assert(!r.is_none())
     assert(n.is_none())

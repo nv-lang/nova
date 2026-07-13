@@ -14,10 +14,10 @@ module spec_tests.conformance
 type Box {
     mut counter int
     mut other   int
-    inner Inner
+    inner Inner10
 }
 
-type Inner {
+type Inner10 {
     mut value int
 }
 
@@ -62,7 +62,7 @@ fn Box mut @chain_use() -> int {
 }
 
 fn Box.new() -> Box {
-    Box { counter: 7, other: 0, inner: Inner { value: 11 } }
+    Box { counter: 7, other: 0, inner: Inner10 { value: 11 } }
 }
 
 test "V7.2: LICM survives non-writing call (explicit IPA)" {

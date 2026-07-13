@@ -4,22 +4,22 @@
 module spec_tests.conformance
 
 // D4: double-marker — и тип, и поле должны быть consume.
-type Inner consume {
+type Inner7 consume {
     id int,
 }
 
-type Outer consume {
-    consume inner Inner,    // D4: field-level consume marker
+type Outer1 consume {
+    consume inner Inner7,    // D4: field-level consume marker
     name str,
 }
 
-fn Inner consume @destroy() -> () { () }
-fn Outer consume @close() -> () {
+fn Inner7 consume @destroy() -> () { () }
+fn Outer1 consume @close() -> () {
     @inner.destroy()
 }
 
-fn make_inner() -> Inner => { id: 1 }
-fn make_outer() -> Outer => { inner: make_inner(), name: "test" }
+fn make_inner() -> Inner7 => { id: 1 }
+fn make_outer() -> Outer1 => { inner: make_inner(), name: "test" }
 
 test "consume field — парсируется" {
     consume o = make_outer()
