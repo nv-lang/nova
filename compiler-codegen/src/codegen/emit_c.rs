@@ -49792,6 +49792,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // D26 prelude: NovaOpt_T method type inference.
                         if obj_ty.starts_with("NovaOpt_") {
                             self.icr_trace("B11q_novaopt_methods");
+                            if std::env::var_os("NOVA_TRACE_D1HOLE1_ICR").is_some() {
+                                let ch2 = self.resolved_types.get(&expr.id);
+                                let ch2_c = ch2.map(|rt| self.resolved_type_to_c(rt));
+                                let ns = self.node_substs.get(&expr.id);
+                                eprintln!(
+                                    "[D1H1-ICR] arm=Option method={} id={:?} ch2={:?} ch2_c={:?} node_substs={:?}",
+                                    method, expr.id, ch2, ch2_c, ns
+                                );
+                            }
                             let elem_ty = Self::debt_unmangle_ptr_suffix(
                                 obj_ty.strip_prefix("NovaOpt_")
                                     .unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"))
@@ -49823,6 +49832,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Plan 72 P1-C: use tracked Result[T,E] type params when available.
                         if Self::is_result_like(&obj_ty) {
                             self.icr_trace("B11r_result_like_methods");
+                            if std::env::var_os("NOVA_TRACE_D1HOLE1_ICR").is_some() {
+                                let ch2 = self.resolved_types.get(&expr.id);
+                                let ch2_c = ch2.map(|rt| self.resolved_type_to_c(rt));
+                                let ns = self.node_substs.get(&expr.id);
+                                eprintln!(
+                                    "[D1H1-ICR] arm=Result method={} id={:?} ch2={:?} ch2_c={:?} node_substs={:?}",
+                                    method, expr.id, ch2, ch2_c, ns
+                                );
+                            }
                             // Plan 59 Ф.7.5-lite: inline-aware (T,E) inference.
                             let (ok_c, err_c) = self.resolve_result_te(obj, &obj_ty)
                                 .unwrap_or_else(|| panic!("[P67-LEGACY] Result T/E unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0)", obj_ty));
