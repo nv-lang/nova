@@ -5,11 +5,11 @@
 | # | Деливерабл | Статус | Коммит |
 |---|---|---|---|
 | 0 | Реструктуризация → backend/app + backend/api | done | f8975d63e |
-| 1 | real-cancel (supervised(deadline:)) | done (не fallback — настоящая отмена) | (этот) |
-| 2 | typed-serde report_json.nv + расширенная схема §9.5 | done | (этот) |
+| 1 | real-cancel (supervised(deadline:)) | done (не fallback — настоящая отмена) | 5c9467eee |
+| 2 | typed-serde report_json.nv + расширенная схема §9.5 | done | bd98ac530 |
+| 5 | Live-легенды (health real_net — РЕАЛЬНО работает; weather — честно заблокирован) | done вне очереди (нужен был перед проектированием main.nv-эндпоинтов) | (этот) |
 | 3 | backend/main.nv (accept-loop + endpoints) | pending | — |
 | 4 | UI data-glue frontend/index.html | pending | — |
-| 5 | Live-легенды (health/weather) | pending | — |
 | 6 | README.md | pending | — |
 
 ## Деливерабл 0 — детали
@@ -98,3 +98,63 @@
   переписаны под typed API.
 - Гейт: `nova test flagship/aggregator --strict-effects` — 24/24 PASS
   (12 aggregate + 12 report_json/server_test).
+
+## Деливерабл 5 — детали (сделан вне очереди, до №3/4)
+
+Порядок исполнения отклонён от плана: исследование live-путей (какие эффекты/
+пакеты реально доступны для HTTPS) понадобилось ДО проектирования эндпоинтов
+main.nv (№3) — иначе пришлось бы дважды переписывать роутинг. Деливерабл
+самодостаточен (`backend/app/live.nv` + `live_test.nv`, не зависит от main.nv).
+
+- **health, live: РЕАЛЬНО работает.** `aggregate_live_health(budget)` —
+  та же гонка `supervised(deadline:)`, что и `aggregate()` (деливерабл 1),
+  но fetch — настоящий `std.net.resolve` + `TcpStream.connect` (порт 443)
+  против 5 реальных доменов (github.com, cloudflare.com, wikipedia.org,
+  npmjs.org, pypi.org). Ручной smoke (`nova build` + запуск, см. ниже) —
+  5/5 done, ~100мс каждый, wall_ms=147.
+- **weather, live: ЧЕСТНО ЗАБЛОКИРОВАН**, не мок с фальшивыми данными.
+  Каждый лан `Failed` с текстом-подсказкой, содержащим маркер
+  `[M-187-weather-live-tls-diamond-blocked]` — не «недоступность сети», а
+  diamond-зависимость: `examples/nova.toml` тянет `tls` ПУТЁМ (локальный
+  worktree), `nova-http/nova.toml` тянет `tls` ЧЕРЕЗ git+version (другая
+  физическая копия) — D420 `[replace]` не пробрасывается в зависимости
+  зависимостей. Два независимых симптома пойманы и задокументированы в
+  заголовке live.nv:
+  1. через `http.transport.real_http()` — `no function 'read_to_vec'/'close'
+     in module 'tls'` (переменная `tls` в nova-http's real.nv затеняет имя
+     пакета под diamond'ом — ИМЕННО тот анти-паттерн, о котором предупреждает
+     комментарий в `examples/tls/echo_client.nv`);
+  2. через прямой `import tls.{TlsStream, ClientConfig}` в live.nv (когда
+     `backend/api` с `http.server` и `backend/app` с прямым `tls` попадают в
+     ОДИН compile unit) — `[E_METHOD_REDEFINITION] TlsStream.connect уже
+     определён` (checker видит ДВЕ физические копии `tls`, не дедуплицирует).
+  nova-http/nova-tls (соседние репо) НЕ трогались (вне периметра сессии).
+- Попутно пойман и обойдён **[M-187-monotonic-plus-operator-mono]**:
+  `t0 + budget` (оператор) ломается при ВТОРОМ/ТРЕТЬЕМ вызове той же
+  комбинации `Monotonic + Duration` в одном CU (`aggregate.nv` использует
+  оператор один раз — работает; `live.nv` добавляет ещё 2 вызова — CC-FAIL
+  "returning 'int' from a function with incompatible result type
+  'NovaValue_Monotonic'" в generic-обёртке `nova_vr_binop_...`) — того же
+  семейства, что уже задокументированные mono-коллизии в этом кодовой базе.
+  Обход: `t0.plus(budget)` (именованный метод) вместо оператора — только в
+  live.nv, `aggregate.nv`'s единственный call-site не трогался.
+- Ручной smoke (`nova build backend/app/_smoke_live.nv` — временный файл,
+  удалён после проверки, НЕ в git) против настоящей сети:
+  ```
+  --- live health ---
+  done=5 failed=0 cancelled=0 wall_ms=147
+    pypi.org OK 96ms
+    wikipedia.org OK 97ms
+    npmjs.org OK 106ms
+    cloudflare.com OK 107ms
+    github.com OK 107ms
+  --- live weather (expected: blocked, honest fail) ---
+  done=0 failed=4 cancelled=0 wall_ms=15
+    London FAIL transport error: live weather unavailable in this build:
+    [M-187-weather-live-tls-diamond-blocked] ...
+  ```
+- Офлайн-тесты (`live_test.nv`, `mock_net()` — гейт остаётся зелёным без
+  сети): fan-out shape (5 хостов), tiny-budget-отменяет-всё, weather честно
+  проваливается с маркером в тексте ошибки, source-таблицы совпадают по id.
+- Гейт: `nova test flagship/aggregator --strict-effects` — 29/29 PASS
+  (17 aggregate [+5 live] + 12 report_json/server_test).
