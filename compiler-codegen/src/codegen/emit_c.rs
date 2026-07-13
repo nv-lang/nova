@@ -1405,6 +1405,12 @@ pub struct CEmitter {
     /// Plan 20 Ф.4: monotonic block-ID counter for stable, unique C names
     /// (`_defer_<BLKID>_<N>_active`, `_defer_cleanup_<BLKID>`, etc.).
     defer_block_counter: usize,
+    /// Plan 201 (D188-амендмент): стек активных re-consume блоков
+    /// `consume X { … }` во время эмита их тел: (binding, consume defer
+    /// block-id). `return X` голым идентификатором из-под такого блока —
+    /// санкционированный вынос владения: Return-эмит гасит cleanup
+    /// (`_defer_<id>_0_active = 0;`) ПЕРЕД прогоном early-exit cleanup'ов.
+    reconsume_scopes: Vec<(String, usize)>,
     /// Closure mut-capture heap-box registry. Maps variable name → C box-pointer
     /// variable name (`_box_<name>`). When a mut local is captured by a closure,
     /// it is heap-promoted: a `T* _box_x = nova_alloc(sizeof(T)); *_box_x = x;`
@@ -2035,6 +2041,7 @@ impl CEmitter {
             novares_value_types: std::cell::RefCell::new(std::collections::HashMap::new()),
             defer_scopes: Vec::new(),
             defer_block_counter: 0,
+            reconsume_scopes: Vec::new(),
             var_boxed: HashMap::new(),
             warnings: std::cell::RefCell::new(Vec::new()),
             strict_errors: std::cell::RefCell::new(Vec::new()),
@@ -26212,6 +26219,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Plan 72 P3-B return: box explicit return value for a protocol return type.
                     let val = self.wrap_protocol_return(val, v);
                     let val = self.wrap_any_return(val, v);
+                    // Plan 201 (D188-амендмент): `return X` ГОЛЫМ идентификатором
+                    // из-под re-consume блока `consume X { … }` — санкционированный
+                    // вынос владения: дизармим cleanup ИМЕННО этого блока (innermost
+                    // с совпадающим binding'ом) ПЕРЕД прогоном early-exit cleanup'ов.
+                    // Объемлющие consume-блоки НЕ трогаем — их ресурсы не выносятся.
+                    if let ExprKind::Ident(ret_name) = &v.kind {
+                        if let Some((_, bid)) = self.reconsume_scopes.iter().rev()
+                            .find(|(b, _)| b == ret_name)
+                        {
+                            self.line(&format!(
+                                "_defer_{}_0_active = 0;  /* Plan 201: return-вынос — cleanup дизармлен */",
+                                bid));
+                        }
+                    }
                     if let Some(label) = post_label {
                         // Contracts mode: stash в _nova_result, defer cleanup,
                         // потом goto. Если defers пустой — просто assign + goto.
@@ -26347,7 +26368,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // defer-kernel also aligns impl to spec: `@cleanup` now runs on `interrupt`
             // (D314 §2) and on early `return`/`break`/`continue` — the ex-monolith
             // skipped both (raw `return`/no interrupt-frame).
-            Stmt::ConsumeScope { binding, type_annot: _, init, body, .. } => {
+            Stmt::ConsumeScope { binding, type_annot: _, init, body, re_consume, result, .. } => {
                 let init_c_type = self.infer_expr_c_type(init);
                 let init_c_code = self.emit_expr(init)?;
                 let scope_id = self.defer_block_counter;
@@ -26355,7 +26376,38 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let c_binding = format!("_consume_{}_{}", binding, scope_id);
                 // Strip Nova_ prefix + pointer star for symbol/label resolution.
                 let type_name = self.debt_strip_nova_trim_start(&init_c_type);
+                // Plan 201: value-record (`consume value`, C-тип NovaValue_<T>)
+                // — cleanup-символ (`Nova_<T>_consume_cleanup`), exit_timeout-
+                // lookup и trace-label используют NOVA-имя типа `<T>`
+                // (receiver_type_c_ident), не C-обёртку NovaValue_.
+                let type_name = type_name
+                    .strip_prefix("NovaValue_")
+                    .map(|s| s.to_string())
+                    .unwrap_or(type_name);
 
+                // Plan 201 (D188-амендмент): блок = ВЫРАЖЕНИЕ. result-приёмник
+                // (`ro s = consume X { …; X }`) декларируется ПЕРЕД блоком
+                // (переживает его); tail-значение присваивается на выходе;
+                // tail-вынос самого X дизармит cleanup. var_types регистрируем
+                // persistently (не снимаем на #undef-е блока).
+                // Тип result'а: tail-вынос → тип X; прочий tail — best-effort
+                // инференс trailing-выражения (fallback nova_int — канон-путь
+                // = tail-вынос, там тип точный).
+                if let Some(r) = result {
+                    let tail_is_escape = matches!(
+                        &body.trailing,
+                        Some(t) if matches!(&t.kind, ExprKind::Ident(n) if n == binding));
+                    let res_ty = if tail_is_escape {
+                        init_c_type.clone()
+                    } else if let Some(t) = &body.trailing {
+                        let tt = self.infer_expr_c_type(t);
+                        if tt.is_empty() { "nova_int".to_string() } else { tt }
+                    } else {
+                        "nova_int".to_string()
+                    };
+                    self.line(&format!("{} {};", res_ty, r.name));
+                    self.var_types.insert(r.name.clone(), res_ty);
+                }
                 self.line(&format!("/* Plan 173 Ф.2.B3-merge: consume {} = ... {{ ... }} */", binding));
                 self.line("{");
                 self.indent += 1;
@@ -26422,9 +26474,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 173 Ф.5 (#8, D188 R2): runtime exactly-once counter, declared
                 // alongside the `_active` flag by `enter_consume_defer_scope`.
                 let count_var = format!("_consume_ccount_{}", scope_id);
+                // Plan 201: value-record binding (`NovaValue_<T>` по значению) —
+                // cleanup-метод принимает `NovaValue_<T>* nova_self` → передаём
+                // адрес локала. Heap-record — уже указатель, как есть.
+                let c_binding_arg = if init_c_type.starts_with("NovaValue_")
+                    && !init_c_type.ends_with('*')
+                {
+                    format!("(&{})", c_binding)
+                } else {
+                    c_binding.clone()
+                };
                 let policy = ConsumePolicy {
                     type_name,
-                    c_binding,
+                    c_binding: c_binding_arg,
                     prev_deadline_var,
                     has_resource_trace,
                     count_var,
@@ -26434,6 +26496,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Partial-init + exactly-once: arm the cleanup only now that the
                 // resource is captured (init above cannot have thrown past here).
                 self.line(&format!("_defer_{}_0_active = 1;", consume_block_id));
+
+                // Plan 201: re-consume блок — регистрируем в стеке для
+                // `return X`-дизарма (Return-эмит гасит _active этого скоупа
+                // при санкционированном выносе владения голым `return X`).
+                if *re_consume {
+                    self.reconsume_scopes.push((binding.clone(), consume_block_id));
+                }
 
                 // Body in its OWN nested defer-scope so body-defers run BEFORE the
                 // consume-cleanup (LIFO). enter/leave are no-ops when body has none.
@@ -26451,8 +26520,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.emit_stmt(s)?;
                 }
                 if let Some(t) = &body.trailing {
+                    // Plan 201: tail-вынос `X` (голый binding, при result-
+                    // приёмнике) — САНКЦИОНИРОВАННЫЙ вынос владения: cleanup
+                    // дизармится, значение уезжает в result. Прочий tail —
+                    // обычное значение блока-выражения.
+                    let tail_escape = *re_consume
+                        && result.is_some()
+                        && matches!(&t.kind, ExprKind::Ident(n) if n == binding);
                     let v = self.emit_expr(t)?;
-                    self.line(&format!("(void)({});", v));
+                    if tail_escape {
+                        self.line(&format!(
+                            "_defer_{}_0_active = 0;  /* Plan 201: tail-вынос — cleanup дизармлен */",
+                            consume_block_id));
+                    }
+                    match result {
+                        Some(r) => self.line(&format!("{} = {};", r.name, v)),
+                        None => self.line(&format!("(void)({});", v)),
+                    }
+                }
+                if *re_consume {
+                    self.reconsume_scopes.pop();
                 }
                 self.leave_defer_scope(body_defer_id);
                 if suspended_capture {
@@ -33090,7 +33177,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             "len"       => return Ok(format!("nova_chan_writer_len({})", obj_c)),
                             "capacity"  => return Ok(format!("nova_chan_writer_capacity({})", obj_c)),
                             "is_closed" => return Ok(format!("nova_chan_writer_is_closed({})", obj_c)),
-                            "clone"     => return Ok(format!("nova_chan_writer_clone({})", obj_c)),
+                            // Plan 201: alias-семантика = `share()` (НЕ `clone`
+                            // — Clone-протокол = независимая глубокая копия).
+                            // C-символ рантайма остаётся nova_chan_writer_clone
+                            // (внутреннее имя, не Nova-поверхность).
+                            "share"     => return Ok(format!("nova_chan_writer_clone({})", obj_c)),
                             _ => {}
                         }
                     }
@@ -49399,7 +49490,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 "try_send"         => "nova_bool".into(),
                                 "is_closed"        => "nova_bool".into(),
                                 "len" | "capacity" => "nova_int".into(),
-                                "clone"            => "Nova_ChanWriter*".into(),
+                                // Plan 201: clone → share (alias-семантика).
+                                "share"            => "Nova_ChanWriter*".into(),
                                 _ => "nova_int".into(),
                             };
                         }

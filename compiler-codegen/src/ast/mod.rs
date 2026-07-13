@@ -1956,6 +1956,22 @@ pub struct Block {
     pub is_unsafe: bool,
 }
 
+/// Plan 201 (D188-амендмент 2026-07-13): приёмник значения
+/// consume-блока-выражения — `ro s = consume X { …; X }` /
+/// `mut s = …` / `consume s = …`. Хранится ВНУТРИ `Stmt::ConsumeScope`
+/// (Let растворяется в стейтмент блока при парсинге) — result-имя
+/// объявляется в ОБЪЕМЛЮЩЕМ scope ПОСЛЕ блока.
+#[derive(Debug, Clone)]
+pub struct ConsumeScopeResult {
+    pub name: String,
+    /// `mut s = …` — приёмник мутабелен.
+    pub mutable: bool,
+    /// `consume s = …` — приёмник объявлен с явным consume-keyword
+    /// (ownership-binding D180). При tail-выносе обязательство
+    /// назначается result'у независимо от keyword'а.
+    pub declared_consume: bool,
+    pub span: Span,
+}
 
 #[derive(Debug, Clone)]
 pub enum Stmt {
@@ -2035,6 +2051,26 @@ pub enum Stmt {
         type_annot: Option<TypeRef>,
         init: Expr,
         body: Block,
+        /// D188-амендмент 2026-07-13 (Plan 201): `consume X { body }`
+        /// (без `= expr`) — re-consume СУЩЕСТВУЮЩЕГО owned-биндинга
+        /// (consume-параметр / `consume X = …` локал). `init` при этом —
+        /// `Expr::Ident(X)`. Checker (D131-проход): owned-требование
+        /// (E_CONSUME_BLOCK_NOT_OWNED), Cleanup[E]-требование
+        /// (E_D188_NOT_CLEANUP), внутри тела `X` — только ro-view
+        /// (consume-операция → E_CONSUME_BLOCK_MOVE_OUT); санкционированный
+        /// вынос владения — ТОЛЬКО tail-значение `X` или `return X`
+        /// (голый `X`) — на этом пути cleanup дизармится. После блока `X`
+        /// consumed. Codegen — тем же механизмом, что и binding-форма
+        /// (init читается ДО `#define`).
+        ///
+        /// `false` для binding-формы `consume X = expr { body }` И для
+        /// spawn-формы `spawn consume c [= e] { body }` (D415 §4 —
+        /// у неё свои правила, move-out-запрет там не вводился).
+        re_consume: bool,
+        /// Plan 201: блок = ВЫРАЖЕНИЕ. `ro s = consume X { …; X }` —
+        /// биндинг-приёмник значения блока. `None` — statement-позиция
+        /// (значение отброшено, tail-вынос невозможен).
+        result: Option<ConsumeScopeResult>,
         span: Span,
     },
     /// Plan 33.2 Ф.8 (D24): `assert_static <bool>` — intermediate proof

@@ -29,8 +29,14 @@ export type TcpListener consume value { priv handle *() }
 
 /// Connected async TCP stream. `connect`/`read`/`write`/`close` carry `Net`.
 /// `close()` consumes (use-after-close is a compile error, D133).
+///
+/// Plan 201 (D188-амендмент): `rc` — разделяемый refcount владельцев:
+/// `@share()`-копии несут ТОТ ЖЕ `AtomicInt`; `@close`/`@cleanup` =
+/// `fetch_sub`, реальный extern-close сокета выполняет ТОЛЬКО последний
+/// владелец (переход к 0). Refcount целиком в nv (конвенция §3) — ноль
+/// нового C.
 #stable(since = "0.1")
-export type TcpStream consume value { priv handle *() }
+export type TcpStream consume value { priv handle *(), priv rc AtomicInt }
 
 /// Read half of a split `TcpStream` (D407 §6). Shares the connection with its
 /// sibling `TcpWriteHalf`; the two may run in separate fibers (independent
@@ -45,7 +51,13 @@ export type TcpWriteHalf consume value { priv handle *() }
 // ─── Package-private factories / helpers ──────────────────────────────────────
 
 fn TcpListener.from_raw(h *()) -> TcpListener => { handle: h }
-fn TcpStream.from_raw(h *()) -> TcpStream => { handle: h }
+// Plan 201: свежий стрим = единственный владелец (rc=1). NB: эфемерные
+// `from_raw(@handle)`-обёртки в half-методах ниже тоже аллоцируют rc —
+// мелкая GC-аллокация на вызов (перф-заметка Plan 201; половины хранят
+// голый handle, их close идёт мимо nv-rc через C-side split-refcount).
+fn TcpStream.from_raw(h *()) -> TcpStream => { handle: h, rc: AtomicInt.new(1) }
+// Plan 201: share-копия — тот же handle И ТОТ ЖЕ rc (alias владения).
+fn share_copy(h *(), rc AtomicInt) -> TcpStream => { handle: h, rc }
 fn TcpReadHalf.from_raw(h *()) -> TcpReadHalf => { handle: h }
 fn TcpWriteHalf.from_raw(h *()) -> TcpWriteHalf => { handle: h }
 
@@ -233,15 +245,59 @@ export fn TcpStream mut @set_nodelay(on bool) Net { Net.set_nodelay(@, on) }
 #stable(since = "0.1")
 export fn TcpStream mut @set_keepalive(on bool) Net { Net.set_keepalive(@, on) }
 
-/// Close the stream (consume).
+/// **Alias одного TCP-потока, НЕ независимая копия** (Plan 201,
+/// D188-амендмент): `share()` возвращает второго ВЛАДЕЛЬЦА того же
+/// сокета — байты чтения/записи ДЕЛЯТСЯ между копиями, а сокет
+/// **закрывает последний** владелец (`rc` fetch_add при share,
+/// fetch_sub при `close`/`cleanup`; реальный extern-close — только при
+/// переходе rc к 0). Каждая копия — owned linear-значение со СВОИМ
+/// consume-обязательством (D133): её тоже нужно закрыть.
+///
+/// Канонические применения: escape из `consume X { … }`-блока
+/// (`TlsStream.wrap(stream.share(), session)`) и per-fiber копия при
+/// многофиберном доступе (`ro w = s.share(); spawn { …w… }` —
+/// E_LINEAR_CAPTURE_IN_FIBER запрещает захват без share).
+///
+/// Имя `share` (НЕ `clone`): Clone-протокол в Nova — независимая
+/// глубокая копия; alias-семантика — всегда `share()`.
 #stable(since = "0.1")
-export fn TcpStream consume @close() Net { Net.close_stream(@) }
+export fn TcpStream @share() -> TcpStream {
+    @rc.fetch_add(1)
+    share_copy(@handle, @rc)
+}
+
+/// Close the stream (consume). Plan 201: при `share()`-копиях реальный
+/// extern-close выполняет только ПОСЛЕДНИЙ владелец (rc → 0); остальные
+/// close лишь отпускают свою долю владения.
+#stable(since = "0.1")
+export fn TcpStream consume @close() Net {
+    if @rc.fetch_sub(1) == 1 {
+        Net.close_stream(@)
+    }
+}
+
+/// D188 `Cleanup[never]`-имплементация (Plan 201): cleanup = `@close()`
+/// (rc-aware — реальный extern-close только у последнего владельца).
+/// Делает `TcpStream` пригодным для `consume s = … { … }` /
+/// `consume s { … }` scope-block'ов.
+#stable(since = "0.1")
+export fn TcpStream consume @cleanup(_outcome ScopeOutcome) -> () {
+    @close()
+}
 
 /// Split into a read half and a write half (consume). The halves share the
 /// connection but have independent park slots, so they may be moved into
 /// separate fibers and used concurrently; the socket closes after BOTH close.
+///
+/// Plan 201: split требует ЕДИНОЛИЧНОГО владения — `split()` на
+/// `share()`-нутом стриме (rc > 1) = runtime panic: половины считаются
+/// C-side split-refcount'ом, живая share-копия ломала бы «закрывает
+/// последний».
 #stable(since = "0.1")
 export fn TcpStream consume @split() Net -> (TcpReadHalf, TcpWriteHalf) {
+    if @rc.fetch_sub(1) != 1 {
+        panic("TcpStream.split(): stream has live share()-copies — split requires sole ownership (close the copies first)")
+    }
     ro h = @handle
     Net.mark_split(TcpStream.from_raw(h))
     split_pair(TcpReadHalf.from_raw(h), TcpWriteHalf.from_raw(h))

@@ -5506,6 +5506,31 @@ impl Parser {
                 self.peek().span,
             ));
         }
+        // Plan 201 (D188-амендмент 2026-07-13): `consume X { body }` —
+        // re-consume СУЩЕСТВУЮЩЕГО owned-биндинга, statement-позиция
+        // (значение блока отброшено). Интерцепт ДО parse_pattern: иначе
+        // `X {` съедается как record-destructure pattern. Дизамбиг:
+        // строчный IDENT + `{` на ТОЙ ЖЕ строке БЕЗ `=`; `Type { … }`
+        // (заглавная) остаётся record-pattern'ом raw-формы D180.
+        if let TokenKind::Ident(n) = &self.peek().kind {
+            let lower_ident = n != "_"
+                && !n.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false);
+            if lower_ident && matches!(self.peek_at(1).kind, TokenKind::LBrace) {
+                let (name, name_span) = self.parse_ident()?;
+                let body = self.parse_block()?;
+                let span = start.merge(body.span);
+                self.expect_newline_or_eof().ok();
+                return Ok(Stmt::ConsumeScope {
+                    binding: name.clone(),
+                    type_annot: None,
+                    init: Expr::new(ExprKind::Ident(name), name_span),
+                    body,
+                    re_consume: true,
+                    result: None,
+                    span,
+                });
+            }
+        }
         let pattern = self.parse_pattern()?;
         // Optional type annotation between pattern and `=`.
         let ty = if !matches!(self.peek().kind, TokenKind::Eq | TokenKind::Newline) {
@@ -5515,6 +5540,30 @@ impl Parser {
         };
         self.expect(&TokenKind::Eq)?;
         self.skip_newlines();
+        // Plan 201: `consume s = consume X { body }` — блок-выражение,
+        // result-приёмник с явным consume-keyword.
+        if matches!(self.peek().kind, TokenKind::KwConsume) {
+            let result_name = match &pattern {
+                Pattern::Ident { name, is_mut: false, .. } => name.clone(),
+                _ => {
+                    return Err(Diagnostic::new(
+                        "Plan 201 (D188): `consume s = consume X { body }` требует \
+                         простого identifier-биндинга слева (без destructure/mut)."
+                            .to_string(),
+                        self.peek().span,
+                    ));
+                }
+            };
+            return self.parse_reconsume_block_expr_stmt(
+                start,
+                ConsumeScopeResult {
+                    name: result_name,
+                    mutable: false,
+                    declared_consume: true,
+                    span: start,
+                },
+            );
+        }
         // Parse init expression с disabled trailing-block чтобы не путать
         // `init() { body }` с trailing-block call syntax. Struct literals
         // разрешены (no_struct_lit НЕ устанавливаем — `Config { ... }`
@@ -5559,6 +5608,8 @@ impl Parser {
                 type_annot: ty,
                 init: value,
                 body,
+                re_consume: false,
+                result: None,
                 span,
             });
         }
@@ -5575,6 +5626,58 @@ impl Parser {
             is_ghost: false,
             consume: true,
         }))
+    }
+
+    /// Plan 201 (D188-амендмент 2026-07-13): распарсить rvalue-форму
+    /// `consume X { body }` (re-consume block как ВЫРАЖЕНИЕ) в позиции
+    /// значения биндинга: `ro s = consume X { …; X }` /
+    /// `mut s = consume X { … }` / `consume s = consume X { … }`.
+    /// Caller уже распарсил `<kw> s =` и стоит на `consume`.
+    /// Let-биндинг РАСТВОРЯЕТСЯ в `Stmt::ConsumeScope { result: Some(…) }`
+    /// (result-имя объявляется в объемлющем scope после блока).
+    fn parse_reconsume_block_expr_stmt(
+        &mut self,
+        start: Span,
+        result: ConsumeScopeResult,
+    ) -> Result<Stmt, Diagnostic> {
+        self.expect(&TokenKind::KwConsume)?;
+        let (name, name_span) = match self.peek().kind.clone() {
+            TokenKind::Ident(n)
+                if n != "_"
+                    && !n.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false) =>
+            {
+                self.parse_ident()?
+            }
+            _ => {
+                return Err(Diagnostic::new(
+                    "Plan 201 (D188): в rvalue-позиции после `=` ожидается \
+                     re-consume блок `consume X { body }` — `X` = существующий \
+                     owned-биндинг (строчный идентификатор)."
+                        .to_string(),
+                    self.peek().span,
+                ));
+            }
+        };
+        if !matches!(self.peek().kind, TokenKind::LBrace) {
+            return Err(Diagnostic::new(
+                "Plan 201 (D188): `consume X` в rvalue-позиции требует блок \
+                 `{ body }` на той же строке (re-consume block-выражение)."
+                    .to_string(),
+                self.peek().span,
+            ));
+        }
+        let body = self.parse_block()?;
+        let span = start.merge(body.span);
+        self.expect_newline_or_eof().ok();
+        Ok(Stmt::ConsumeScope {
+            binding: name.clone(),
+            type_annot: None,
+            init: Expr::new(ExprKind::Ident(name), name_span),
+            body,
+            re_consume: true,
+            result: Some(result),
+            span,
+        })
     }
 
     /// Plan 114 (D184) helper: pattern is structural (constructor /
@@ -10203,6 +10306,10 @@ impl Parser {
                     type_annot: None,
                     init,
                     body: user_body,
+                    // D415 §4 already-bound form — НЕ Plan-201 re-consume:
+                    // у spawn-формы свои правила (move-out-запрет не вводился).
+                    re_consume: false,
+                    result: None,
                     span: cs_span,
                 }],
                 trailing: None,
@@ -10502,6 +10609,28 @@ impl Parser {
                 Ok(StmtOrExpr::Stmt(Stmt::Let(l)))
             }
             // Plan 114 (D184): `ro X = expr` scope-binding (immutable).
+            // Plan 201 (D188-амендмент): `ro s = consume X { body }` —
+            // consume-блок-выражение; интерцепт ДО parse_ro_mut_binding
+            // (KwConsume не парсится как expression).
+            TokenKind::KwRo
+                if matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+                    && matches!(self.peek_at(2).kind, TokenKind::Eq)
+                    && matches!(self.peek_at(3).kind, TokenKind::KwConsume) =>
+            {
+                self.bump(); // ro
+                let (rname, rspan) = self.parse_ident()?;
+                self.expect(&TokenKind::Eq)?;
+                let stmt = self.parse_reconsume_block_expr_stmt(
+                    start,
+                    ConsumeScopeResult {
+                        name: rname,
+                        mutable: false,
+                        declared_consume: false,
+                        span: rspan,
+                    },
+                )?;
+                Ok(StmtOrExpr::Stmt(stmt))
+            }
             TokenKind::KwRo => {
                 let l = self.parse_ro_mut_binding(false)?;
                 Ok(StmtOrExpr::Stmt(Stmt::Let(l)))
@@ -10510,6 +10639,26 @@ impl Parser {
             // Disambiguation: leading `mut` в stmt-position — binding.
             // `mut` внутри patterns / params / receivers — обрабатывается
             // в parse_pattern / parse_param / parse_method_decl.
+            // Plan 201: `mut s = consume X { body }` — см. KwRo-интерцепт.
+            TokenKind::KwMut
+                if matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+                    && matches!(self.peek_at(2).kind, TokenKind::Eq)
+                    && matches!(self.peek_at(3).kind, TokenKind::KwConsume) =>
+            {
+                self.bump(); // mut
+                let (rname, rspan) = self.parse_ident()?;
+                self.expect(&TokenKind::Eq)?;
+                let stmt = self.parse_reconsume_block_expr_stmt(
+                    start,
+                    ConsumeScopeResult {
+                        name: rname,
+                        mutable: true,
+                        declared_consume: false,
+                        span: rspan,
+                    },
+                )?;
+                Ok(StmtOrExpr::Stmt(stmt))
+            }
             TokenKind::KwMut => {
                 let l = self.parse_ro_mut_binding(true)?;
                 Ok(StmtOrExpr::Stmt(Stmt::Let(l)))

@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_CONSUME_BLOCK_MOVE_OUT
+// D188-амендмент (Plan 201): передача X в consume-параметр изнутри
+// `consume X { … }` — вынос владения запрещён (только tail/return самого X,
+// либо @share()-копия).
+module neg.d188_consume_block_move_out_param_neg
+
+type MoRes consume { id int }
+fn MoRes consume @cleanup(_outcome ScopeOutcome) -> () { }
+fn MoRes consume @dispose() -> () { }
+
+fn mo_eat(consume r MoRes) -> () { r.dispose() }
+
+test "move-out через consume-параметр — E_CONSUME_BLOCK_MOVE_OUT" {
+    consume r = MoRes { id: 1 }
+    consume r {
+        mo_eat(r)
+    }
+}

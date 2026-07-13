@@ -2112,7 +2112,7 @@ impl Interpreter {
             // существующий test runner не silently no-op (как у Defer).
             // Interp пока eval init expr (evaluate side-effects) + body
             // stmts (без on_exit вызова). Production-grade impl — 110.1.4.
-            Stmt::ConsumeScope { binding: _, type_annot: _, init, body, span: _ } => {
+            Stmt::ConsumeScope { init, body, .. } => {
                 let _ = match self.eval_expr(init, env)? {
                     Flow::Value(_) => {}
                     other => return Ok(other),

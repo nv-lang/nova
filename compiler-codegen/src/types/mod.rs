@@ -19613,9 +19613,29 @@ impl<'a> CapabilityCtx<'a> {
         // `Type.field.subfield` chain + reason, so that a non-share `mut`
         // field deep inside a type no longer strips share-ness silently.
         let mut flagged: Vec<(String, String)> = Vec::new();
+        // Plan 201 (D188-амендмент, взаимодействие с 173.1 by-value капчуром):
+        // захват linear-значения (consume-тип: TcpStream/Transaction/…) в
+        // тело spawn/parallel-for/detach — by-value КОПИЯ обёртки в N
+        // файберов = N алиасов одного ресурса БЕЗ учёта владения →
+        // double-close/интерференция. Ошибка независимо от ro/mut; канон —
+        // `@share()`-копия per-fiber (refcount «закрывает последний») либо
+        // явный move `spawn consume c { … }` (D415 §4 — init exempt в
+        // capture_scan). Отдельный Vec — своя диагностика.
+        let mut linear_flagged: Vec<(String, String)> = Vec::new();
         for name in free {
             let binding = state.scopes.iter().rev().find_map(|f| f.get(&name));
             if let Some(b) = binding {
+                if let Some(ty) = &b.ty {
+                    if let Some(base) = TypeCheckCtx::typeref_named_base(ty) {
+                        let is_linear = self.type_decls.get(base)
+                            .map(|td| td.consume)
+                            .unwrap_or(false);
+                        if is_linear {
+                            linear_flagged.push((name.clone(), base.to_string()));
+                            continue;
+                        }
+                    }
+                }
                 if !b.mutable {
                     // `ro` capture — deep-immutable view (D246): always safe,
                     // no share requirement (D415 §2 "ro" arm).
@@ -19659,6 +19679,23 @@ impl<'a> CapabilityCtx<'a> {
                 };
                 flagged.push((name, why));
             }
+        }
+        linear_flagged.sort(); // deterministic diagnostic order
+        for (name, ty) in linear_flagged {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_LINEAR_CAPTURE_IN_FIBER] `{n}` (linear consume-тип \
+                     `{ty}`) захвачен в тело `spawn`/`parallel for`/`detach`: \
+                     by-value копия обёртки в N файберов = N алиасов одного \
+                     ресурса БЕЗ учёта владения → double-close/интерференция \
+                     (Plan 201 / 173.1 by-value капчур). Возьмите \
+                     `@share()`-копию per-fiber (`ro w = {n}.share()` перед \
+                     `spawn {{ …w… }}` — refcount закрывает последним) либо \
+                     явный move: `spawn consume {n} {{ … }}` (D415 §4).",
+                    n = name, ty = ty
+                ),
+                body.span,
+            ));
         }
         flagged.sort(); // deterministic diagnostic order (HashSet iteration)
         for (name, why) in flagged {
@@ -20622,7 +20659,7 @@ impl NameResCtx {
             // Plan 110 D188: walk init + push new scope frame с binding,
             // walk body, pop frame. Binding visible только внутри body
             // (D188 §«Syntax» single-name binding).
-            Stmt::ConsumeScope { binding, init, body, .. } => {
+            Stmt::ConsumeScope { binding, init, body, result, .. } => {
                 self.walk_expr(init, file_id, scope, errors);
                 scope.push({
                     let mut frame = HashSet::new();
@@ -20636,6 +20673,13 @@ impl NameResCtx {
                     self.walk_expr(t, file_id, scope, errors);
                 }
                 scope.pop();
+                // Plan 201: result-приёмник блока-выражения виден в
+                // объемлющем scope ПОСЛЕ блока (как let-binding).
+                if let Some(r) = result {
+                    if let Some(frame) = scope.last_mut() {
+                        frame.insert(r.name.clone());
+                    }
+                }
             }
             // Plan 33.2 Ф.8: assert_static — walk expr.
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, file_id, scope, errors),
@@ -23785,6 +23829,17 @@ struct ConsumeCtx<'a> {
     /// shadows (`tx`). Used to fire `E_REBIND_LIVE_CONSUME` when a rebind hides
     /// an unmet consume obligation. Empty for modules without a rebind.
     rebind_shadows: &'a HashMap<String, String>,
+    /// Plan 201 (D188-амендмент 2026-07-13): канонические имена биндингов,
+    /// находящихся под активным re-consume блоком `consume X { … }`.
+    /// Внутри тела `X` — ro-view: consume-операция над guarded-именем НЕ
+    /// переводит состояние, а записывает нарушение в `guard_violations`
+    /// (дренируется в E_CONSUME_BLOCK_MOVE_OUT на выходе из блока).
+    /// Санкционированные формы выноса (tail `X` / `return X`) обходят
+    /// guard через `mark_consumed_bypass_guard`.
+    block_guards: HashSet<String>,
+    /// Plan 201: (имя, span) consume-операций над guarded-биндингами,
+    /// собранные во время walk'а тела re-consume блока.
+    guard_violations: Vec<(String, Span)>,
 }
 
 impl<'a> ConsumeCtx<'a> {
@@ -23811,6 +23866,8 @@ impl<'a> ConsumeCtx<'a> {
             local_mut: HashMap::new(),
             readonly_locals: HashSet::new(),
             unsafe_t_locals: HashSet::new(),
+            block_guards: HashSet::new(),
+            guard_violations: Vec::new(),
         }
     }
 
@@ -23829,7 +23886,26 @@ impl<'a> ConsumeCtx<'a> {
     }
 
     /// Пометить alias-класс переменной потреблённым.
+    ///
+    /// Plan 201 (D188-амендмент): если имя под активным re-consume блоком
+    /// (`consume X { … }`) — consume-операция ЗАПРЕЩЕНА: записываем
+    /// нарушение (E_CONSUME_BLOCK_MOVE_OUT на дренаже), состояние НЕ
+    /// меняем (X остаётся Live — им владеет cleanup блока).
     fn mark_consumed(&mut self, name: &str, span: Span) {
+        let canon = self.canonical(name);
+        if self.block_guards.contains(&canon) || self.block_guards.contains(name) {
+            self.guard_violations.push((canon, span));
+            return;
+        }
+        if self.states.contains_key(&canon) {
+            self.states.insert(canon, VarState::Consumed(span));
+        }
+    }
+
+    /// Plan 201: санкционированный consume guarded-биндинга — tail-значение
+    /// `X` / `return X` (вынос владения с дизармом cleanup'а) и финальный
+    /// «блок потребил X» на выходе из re-consume блока. Обходит guard.
+    fn mark_consumed_bypass_guard(&mut self, name: &str, span: Span) {
         let canon = self.canonical(name);
         if self.states.contains_key(&canon) {
             self.states.insert(canon, VarState::Consumed(span));
@@ -25918,8 +25994,23 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
         Stmt::Expr(e) => consume_walk_expr(ctx, e, errors),
         Stmt::Assign { target, op, value, .. } => {
             consume_walk_expr(ctx, value, errors);
+            // Plan 201 (D188-амендмент): присваивание guarded-биндинга
+            // re-consume блока в ЛЮБОЕ место (`place = X`, вкл. consume-поле)
+            // — move-out: guard-нарушение (дренаж → E_CONSUME_BLOCK_MOVE_OUT).
+            if let ExprKind::Ident(vn) = &value.kind {
+                let vcanon = ctx.canonical(vn);
+                if ctx.block_guards.contains(&vcanon) {
+                    ctx.guard_violations.push((vcanon, value.span));
+                }
+            }
             match &target.kind {
                 ExprKind::Ident(name) => {
+                    // Plan 201: реассайн самого guarded-биндинга (`X = …`)
+                    // внутри его re-consume блока — запрещён (ro-view).
+                    let tcanon = ctx.canonical(name);
+                    if ctx.block_guards.contains(&tcanon) {
+                        ctx.guard_violations.push((tcanon, target.span));
+                    }
                     if matches!(op, AssignOp::Assign) {
                         // `x = v` — свежее значение. Развязываем alias-класс
                         // `x` (прочие члены сохраняют прежнее состояние), x
@@ -25981,7 +26072,15 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                     // Plan 100.1 (D133 / D9): `return tx` — обязательство
                     // передаётся caller'у. Пометить возвращённый consume-var как
                     // Consumed (obligation satisfied by transfer).
-                    if ctx.consume_obligations.contains(name.as_str()) {
+                    //
+                    // Plan 201 (D188-амендмент): `return X` ГОЛЫМ идентификатором
+                    // из-под re-consume блока — САНКЦИОНИРОВАННЫЙ вынос владения
+                    // (cleanup дизармится в codegen) — обходим guard. Не-голые
+                    // формы (`return f(X)`) уже прошли walk выше и словили guard.
+                    let ret_canon = ctx.canonical(name);
+                    if ctx.block_guards.contains(&ret_canon) {
+                        ctx.mark_consumed_bypass_guard(name, *span);
+                    } else if ctx.consume_obligations.contains(name.as_str()) {
                         ctx.mark_consumed(name, *span);
                     }
                 }
@@ -26011,13 +26110,144 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
         // только в body; cleanup dispatch как auto-consume) — Plan 110.1.2.
         // Здесь walk recursively, не вводим binding в obligations (110.1.2
         // обязанность).
-        Stmt::ConsumeScope { init, body, .. } => {
+        //
+        // Plan 201 (D188-амендмент 2026-07-13): re-consume форма
+        // `consume X { body }` (re_consume=true, init = Ident(X)):
+        //   1. owned-требование → E_CONSUME_BLOCK_NOT_OWNED;
+        //   2. Cleanup[E]-требование → E_D188_NOT_CLEANUP;
+        //   3. guard на X: consume-операции внутри тела →
+        //      E_CONSUME_BLOCK_MOVE_OUT (дренаж нарушений после walk'а);
+        //   4. санкционированный вынос — ТОЛЬКО tail-значение `X`
+        //      (при result-приёмнике; cleanup дизармится в codegen) и
+        //      `return X` (Return-arm обходит guard);
+        //   5. после блока X — Consumed; result-приёмник (если есть)
+        //      получает obligation при tail-выносе.
+        Stmt::ConsumeScope { init, body, re_consume, result, span, .. } => {
             consume_walk_expr(ctx, init, errors);
+            if !*re_consume {
+                for stmt in &body.stmts {
+                    consume_walk_stmt(ctx, stmt, errors);
+                }
+                if let Some(t) = &body.trailing {
+                    consume_walk_expr(ctx, t, errors);
+                }
+                return;
+            }
+            // ── Plan 201 re-consume path ──
+            let orig: &str = match &init.kind {
+                ExprKind::Ident(n) => n.as_str(),
+                _ => "?", // парсер гарантирует Ident; defensive
+            };
+            let canon = ctx.canonical(orig);
+            // 1. owned-требование: consume-параметр / `consume X = …` локал
+            // оба регистрируются через declare_consume_binding →
+            // consume_obligations.
+            let owned = ctx.consume_obligations.contains(&canon)
+                || ctx.consume_obligations.contains(orig);
+            if !owned {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_CONSUME_BLOCK_NOT_OWNED] `consume {n} {{ … }}` требует \
+                         СУЩЕСТВУЮЩЕГО owned-биндинга: consume-параметра функции \
+                         или `consume {n} = …` локала (D188-амендмент, Plan 201). \
+                         `{n}` — не owned (ro/mut локал, view-параметр или \
+                         неизвестное имя).",
+                        n = orig
+                    ),
+                    *span,
+                ));
+            }
+            // 2. Cleanup[E]-требование (best-effort по var_types — D131-стиль:
+            // неизвестный/generic тип → false-negative, не false-positive:
+            // проверяем ТОЛЬКО типы, известные LinearityRegistry — локальные
+            // декларации + absorbed builtin-модули; `T` из generic-хелпера
+            // (`must[T]`) в registry отсутствует → skip).
+            let ty = ctx.var_types.get(&canon)
+                .or_else(|| ctx.var_types.get(orig))
+                .cloned();
+            if let Some(ty) = &ty {
+                let ty_known = ctx.lin_reg.local_type_names.contains(ty.as_str())
+                    || ctx.lin_reg.consume_types.contains(ty.as_str())
+                    || ctx.lin_reg.consume_methods.contains_key(ty.as_str());
+                let has_cleanup = ctx.lin_reg.consume_methods
+                    .get(ty.as_str())
+                    .map_or(false, |ms| ms.iter().any(|m| m == "cleanup"));
+                if ty_known && !has_cleanup {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_D188_NOT_CLEANUP] тип `{ty}` биндинга `{n}` не \
+                             реализует `Cleanup[E]` (нет `consume @cleanup(outcome \
+                             ScopeOutcome)`) — `consume {n} {{ … }}` требует \
+                             Cleanup, как и binding-форма D188.",
+                            ty = ty, n = orig
+                        ),
+                        *span,
+                    ));
+                }
+            }
+            // 3. guard: внутри тела X — только ro-view/методы.
+            let newly_guarded = ctx.block_guards.insert(canon.clone());
             for stmt in &body.stmts {
                 consume_walk_stmt(ctx, stmt, errors);
             }
+            // 4. tail: `X` при result-приёмнике — санкционированный вынос
+            // (cleanup дизармится); прочий tail — обычное выражение.
+            let mut tail_escape = false;
             if let Some(t) = &body.trailing {
-                consume_walk_expr(ctx, t, errors);
+                if let ExprKind::Ident(tn) = &t.kind {
+                    if result.is_some() && ctx.canonical(tn) == canon {
+                        tail_escape = true;
+                        ctx.use_var(tn, t.span, errors); // use-after-consume check
+                    }
+                }
+                if !tail_escape {
+                    consume_walk_expr(ctx, t, errors);
+                }
+            }
+            if newly_guarded {
+                ctx.block_guards.remove(&canon);
+            }
+            // Дренаж нарушений guard'а этого блока → E_CONSUME_BLOCK_MOVE_OUT.
+            let mut kept = Vec::new();
+            for (vname, vspan) in std::mem::take(&mut ctx.guard_violations) {
+                if vname == canon {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_CONSUME_BLOCK_MOVE_OUT] `{n}`: вынос владения из \
+                             consume-блока — только tail/return самого `{n}`; либо \
+                             возьмите `@share()`-копию. Внутри `consume {n} {{ … }}` \
+                             биндинг — ro-view + вызовы методов; cleanup блока \
+                             безусловно владеет значением (D188-амендмент, Plan 201; \
+                             дизарм-примитива нет намеренно).",
+                            n = orig
+                        ),
+                        vspan,
+                    ));
+                } else {
+                    kept.push((vname, vspan));
+                }
+            }
+            ctx.guard_violations = kept;
+            // 5. после блока X — Consumed (tail-вынос: владение уехало в
+            // result; иначе — cleanup блока закрыл значение).
+            ctx.mark_consumed_bypass_guard(orig, *span);
+            // result-приёмник: tail-вынос → owned-биндинг с obligation
+            // (тип X); иначе — обычный локал (тип блока best-effort неизвестен).
+            // Тип передаём только ИЗВЕСТНЫЙ registry (иначе None — generic
+            // `T` из хелпера заблокировал бы any-consume-method fallback
+            // walker'а при последующем `out.close()`).
+            if let Some(r) = result {
+                let known_result_ty = ty.clone().filter(|t| {
+                    ctx.lin_reg.local_type_names.contains(t.as_str())
+                        || ctx.lin_reg.consume_types.contains(t.as_str())
+                        || ctx.lin_reg.consume_methods.contains_key(t.as_str())
+                });
+                if tail_escape || r.declared_consume {
+                    ctx.declare_consume_binding(&r.name, known_result_ty);
+                } else {
+                    ctx.declare(&r.name, None);
+                }
+                ctx.local_mut.insert(r.name.clone(), r.mutable || tail_escape || r.declared_consume);
             }
         }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
@@ -27307,7 +27537,19 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
         }
         ExprKind::RecordLit { fields, .. } => {
             for f in fields {
-                if let Some(v) = &f.value { consume_walk_expr(ctx, v, errors); }
+                if let Some(v) = &f.value {
+                    consume_walk_expr(ctx, v, errors);
+                    // Plan 201 (D188-амендмент): move guarded-биндинга
+                    // re-consume блока в поле конструктора (вкл. consume-поле,
+                    // [M-178-consume-field-ctor-from-var]) — move-out:
+                    // guard-нарушение → E_CONSUME_BLOCK_MOVE_OUT (дренаж).
+                    if let ExprKind::Ident(vn) = &v.kind {
+                        let vcanon = ctx.canonical(vn);
+                        if ctx.block_guards.contains(&vcanon) {
+                            ctx.guard_violations.push((vcanon, v.span));
+                        }
+                    }
+                }
             }
         }
         ExprKind::TaggedTemplate { tag, args, .. } => {
