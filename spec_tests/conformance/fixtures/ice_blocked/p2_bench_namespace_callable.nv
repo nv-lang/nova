@@ -1,0 +1,32 @@
+// ICE-QUARANTINE (Plan 198 Ф.2 REDO, 2026-07-13): bench.* интринзики внутри test-блоков
+// роняют компилятор ЦЕЛЫМ процессом — emit_c.rs:48774 [P67-LEGACY] `.opaque` return type
+// unknown (регрессия после census 2026-07-11, класс Ф.4c). Файл в fixtures/ (walker skip),
+// вернуть в standalone/ после фикса компилятора. Тест НЕ ослаблен — заблокирован ICE.
+// Plan 57 MVP/57.C.2: bench.* namespace + gc.last_pause_ns callable.
+module ice_blocked.p2_bench_namespace_callable
+test "bench.opaque identity на int" {
+    ro v = bench.opaque(42)
+    assert(v == 42)
+}
+
+test "bench.opaque identity на bool" {
+    ro b = bench.opaque(true)
+    assert(b == true)
+}
+
+test "bench.now_ns returns positive int" {
+    ro t = bench.now_ns()
+    assert(t > 0)
+}
+
+test "bench.allocs returns int" {
+    ro a = bench.allocs()
+    assert(a >= 0)
+}
+
+test "gc.last_pause_ns callable (Plan 57.C.2)" {
+    // Под malloc backend = 0, под boehm = monotonic timer wraps.
+    gc.collect()
+    ro p = gc.last_pause_ns()
+    assert(p >= 0)
+}
