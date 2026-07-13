@@ -1719,6 +1719,11 @@ pub struct CEmitter {
     /// block cleanup must be DISARMED at literal construction (mirror of the
     /// consume-call-argument disarm).
     record_consume_fields: HashMap<String, HashSet<String>>,
+    /// Companion of `record_consume_fields`: ALL field names per record type /
+    /// record-payload variant — resolves ANONYMOUS record literals
+    /// (`type_name: None`) by unique structural field-set match (mirror of
+    /// checker's `ConsumeRegistry::consume_fields_for_lit`).
+    record_field_names: HashMap<String, HashSet<String>>,
 }
 
 /// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }` statement.
@@ -2132,6 +2137,7 @@ impl CEmitter {
             consume_cleanup_types: HashSet::new(),
             consume_ccount_structs: HashSet::new(),
             record_consume_fields: HashMap::new(),
+            record_field_names: HashMap::new(),
         }
     }
 
@@ -4230,41 +4236,50 @@ impl CEmitter {
         // (mirror of checker's ConsumeRegistry.record_consume_fields; keyed by
         // source name, same lookup as the RecordLit type_name last segment).
         {
-            let mut collect_types = |items: &[Item]| {
-                for item in items {
-                    if let Item::Type(td) = item {
-                        match &td.kind {
-                            TypeDeclKind::Record(fields) => {
-                                let names: HashSet<String> = fields.iter()
-                                    .filter(|f| f.consume)
-                                    .map(|f| f.name.clone())
-                                    .collect();
-                                if !names.is_empty() {
-                                    self.record_consume_fields.insert(td.name.clone(), names);
-                                }
-                            }
-                            TypeDeclKind::Sum(variants) => {
-                                for v in variants {
-                                    if let crate::ast::SumVariantKind::Record(fields) = &v.kind {
-                                        let names: HashSet<String> = fields.iter()
-                                            .filter(|f| f.consume)
-                                            .map(|f| f.name.clone())
-                                            .collect();
-                                        if !names.is_empty() {
-                                            self.record_consume_fields.insert(v.name.clone(), names);
+            let mut rcf: HashMap<String, HashSet<String>> = HashMap::new();
+            let mut rfn: HashMap<String, HashSet<String>> = HashMap::new();
+            {
+                let mut collect_fields =
+                    |type_name: &str, fields: &[crate::ast::RecordField]| {
+                        let all: HashSet<String> = fields.iter()
+                            .map(|f| f.name.clone())
+                            .collect();
+                        let consume: HashSet<String> = fields.iter()
+                            .filter(|f| f.consume)
+                            .map(|f| f.name.clone())
+                            .collect();
+                        if !all.is_empty() {
+                            rfn.insert(type_name.to_string(), all);
+                        }
+                        if !consume.is_empty() {
+                            rcf.insert(type_name.to_string(), consume);
+                        }
+                    };
+                let mut collect_types = |items: &[Item]| {
+                    for item in items {
+                        if let Item::Type(td) = item {
+                            match &td.kind {
+                                TypeDeclKind::Record(fields) =>
+                                    collect_fields(&td.name, fields),
+                                TypeDeclKind::Sum(variants) => {
+                                    for v in variants {
+                                        if let crate::ast::SumVariantKind::Record(fields) = &v.kind {
+                                            collect_fields(&v.name, fields);
                                         }
                                     }
                                 }
+                                _ => {}
                             }
-                            _ => {}
                         }
                     }
+                };
+                collect_types(&module.items);
+                for pf in &module.peer_files {
+                    collect_types(&pf.items_here);
                 }
-            };
-            collect_types(&module.items);
-            for pf in &module.peer_files {
-                collect_types(&pf.items_here);
             }
+            self.record_consume_fields = rcf;
+            self.record_field_names = rfn;
         }
 
         // Plan 70.1: register imported-module prefix names (aliases + last-segments)
@@ -25457,6 +25472,37 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// считаем occurrences ПОЗИЦИОННО (`call_consume_arg_idxs`) и
     /// возвращаем имя, ТОЛЬКО если оно встретилось единожды И это вхождение
     /// — consume-параметр.
+    /// `[M-178-consume-field-ctor-from-var]` × D188 v3: consume-поля record-
+    /// литерала (зеркало checker'ского `ConsumeRegistry::consume_fields_for_lit`).
+    /// Типизированный литерал — прямой lookup по последнему сегменту пути;
+    /// анонимный (`type_name: None`) — unique структурный field-set match.
+    fn consume_fields_for_lit(
+        &self,
+        type_name: &Option<Vec<String>>,
+        fields: &[crate::ast::RecordLitField],
+    ) -> Option<&HashSet<String>> {
+        if let Some(p) = type_name {
+            return p.last().and_then(|tn| self.record_consume_fields.get(tn));
+        }
+        let lit_names: Vec<&str> = fields.iter()
+            .filter(|f| !f.is_spread)
+            .map(|f| f.name.as_str())
+            .collect();
+        if lit_names.is_empty() {
+            return None;
+        }
+        let mut found: Option<&String> = None;
+        for (tn, fnames) in &self.record_field_names {
+            if lit_names.iter().all(|n| fnames.contains(*n)) {
+                if found.is_some() {
+                    return None; // ambiguous — консервативно ничего
+                }
+                found = Some(tn);
+            }
+        }
+        found.and_then(|tn| self.record_consume_fields.get(tn))
+    }
+
     fn collect_reconsume_disarm_names(
         &self,
         e: &Expr,
@@ -25530,11 +25576,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // checker'ского `scan_guard_rec`). Инициализация consume-поля
             // guarded-биндингом в tail/return EXPR — санкционированный
             // вынос: дизарм при конструировании литерала.
-            ExprKind::RecordLit { type_name, fields, .. } => {
-                let consume_field_names: Option<&HashSet<String>> = type_name
-                    .as_ref()
-                    .and_then(|p| p.last())
-                    .and_then(|tn| self.record_consume_fields.get(tn));
+            ExprKind::RecordLit { type_name, fields, inferred_map_v } => {
+                let consume_field_names: Option<&HashSet<String>> =
+                    if inferred_map_v.is_some() {
+                        None
+                    } else {
+                        self.consume_fields_for_lit(type_name, fields)
+                    };
                 for f in fields {
                     let is_consume_field = !f.is_spread && consume_field_names
                         .map_or(false, |s| s.contains(f.name.as_str()));
