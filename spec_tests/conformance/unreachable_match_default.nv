@@ -1,9 +1,9 @@
 // [M-125-unreachable-builtin] positive — unreachable() в match default arm.
 
 module spec_tests.conformance
-priv(file) type Color | Red | Green | Blue
+type Color4 | Red | Green | Blue
 
-fn rgb(c Color) -> int {
+fn rgb(c Color4) -> int {
     match c {
         Red   => 0xFF0000
         Green => 0x00FF00
@@ -11,7 +11,7 @@ fn rgb(c Color) -> int {
     }
 }
 
-fn name(c Color, allow_red bool) -> str {
+fn name(c Color4, allow_red bool) -> str {
     match c {
         Red if allow_red => "red"
         Green => "green"
@@ -21,13 +21,13 @@ fn name(c Color, allow_red bool) -> str {
 }
 
 test "rgb exhaustive — no unreachable hit" {
-    assert(rgb(Color.Red) == 0xFF0000)
-    assert(rgb(Color.Green) == 0x00FF00)
-    assert(rgb(Color.Blue) == 0x0000FF)
+    assert(rgb(Color4.Red) == 0xFF0000)
+    assert(rgb(Color4.Green) == 0x00FF00)
+    assert(rgb(Color4.Blue) == 0x0000FF)
 }
 
 test "name with guard — happy paths only" {
-    assert(name(Color.Red, true) == "red")
-    assert(name(Color.Green, false) == "green")
-    assert(name(Color.Blue, false) == "blue")
+    assert(name(Color4.Red, true) == "red")
+    assert(name(Color4.Green, false) == "green")
+    assert(name(Color4.Blue, false) == "blue")
 }

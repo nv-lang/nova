@@ -1,7 +1,7 @@
 // Plan 98 Ф.2.1: type-param inference из Option[T] параметра.
 //
-// До Plan 98: `fn check[T](o Option[T])` требовал turbofish
-// (`check[int](a)` вместо `check(a)`), потому что
+// До Plan 98: `fn check_opt[T](o Option[T])` требовал turbofish
+// (`check_opt[int](a)` вместо `check_opt(a)`), потому что
 // infer_type_param_binding игнорировал Option[T] в позиции param.
 // После Plan 98: T выводится из NovaOpt_<sani> → реальный c_ty
 // через novaopt_value_types.
@@ -9,15 +9,15 @@
 module spec_tests.conformance
 type User { id int, name str }
 
-fn check[T](o Option[T]) -> bool => o.is_some()
+fn check_opt[T](o Option[T]) -> bool => o.is_some()
 
 fn extract[T](o Option[T], default_v T) -> T => o ?? default_v
 
 test "Option[int] param inference — без turbofish" {
     ro a Option[int] = Some(42)
     ro b Option[int] = None
-    assert(check(a))
-    assert(!check(b))
+    assert(check_opt(a))
+    assert(!check_opt(b))
     assert(extract(a, 0) == 42)
     assert(extract(b, 99) == 99)
 }
@@ -25,7 +25,7 @@ test "Option[int] param inference — без turbofish" {
 test "Option[str] param inference" {
     ro s1 Option[str] = Some("hello")
     ro s2 Option[str] = None
-    assert(check(s1))
+    assert(check_opt(s1))
     assert(extract(s1, "default") == "hello")
     assert(extract(s2, "default") == "default")
 }
@@ -33,7 +33,7 @@ test "Option[str] param inference" {
 test "Option[char] param inference" {
     ro c1 Option[char] = Some('A')
     ro c2 Option[char] = None
-    assert(check(c1))
+    assert(check_opt(c1))
     assert(extract(c1, 'Z') == 'A')
     assert(extract(c2, 'Z') == 'Z')
 }
@@ -42,7 +42,7 @@ test "Option[User] param inference — non-primitive" {
     ro u1 Option[User] = Some(User { id: 1, name: "Alice" })
     ro u2 Option[User] = None
     ro default_u = User { id: 0, name: "default" }
-    assert(check(u1))
+    assert(check_opt(u1))
     assert(extract(u1, default_u).id == 1)
     assert(extract(u2, default_u).id == 0)
 }

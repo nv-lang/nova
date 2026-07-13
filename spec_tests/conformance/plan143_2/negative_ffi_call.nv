@@ -9,7 +9,7 @@
 // Verify in negative_ffi_call.c: body of `add_via_c` contains
 // `nova_preempt_check();` (NOT the elided marker).
 
-module spec_tests.conformance
+module plan143_2.negative_ffi_call
 extern "nova" fn p143_c_add(a int, b int) -> int
 
 // Calls FFI → KEEP.

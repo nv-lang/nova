@@ -24,7 +24,7 @@ fn silent_cleanup() -> () {
 }
 
 // process6 НЕ имеет Fail в sig — defer вызывает silent (already no-Fail).
-fn process6() -> () {
+priv(file) fn process6() -> () {
     defer { silent_cleanup() }                  // no Fail propagation
 }
 

@@ -1,24 +1,24 @@
 // Plan 89 Ф.2.5 — РЕГРЕСС-ГВАРД: массив пользовательского sum-типа.
 //
-// User-sum (`type Shape | Circle | Square`) — heap-pointer семантика
+// User-sum (`type Shape | Circle3 | Square3`) — heap-pointer семантика
 // (`Nova_Shape*`), codegen pattern-match использует `->`. Фикс Plan 89
 // деболксит только value-семантику (Option) — user-sum не трогается.
 
 module spec_tests.conformance
 type Shape
-    | Circle(int)
-    | Square(int)
-    | Empty
+    | Circle3(int)
+    | Square3(int)
+    | Empty3
 
 
 test "for-in []UserSum + match" {
-    ro shapes []Shape = [Circle(2), Square(3), Circle(5), Empty]
+    ro shapes []Shape = [Circle3(2), Square3(3), Circle3(5), Empty3]
     mut total = 0
     for s in shapes {
         ro area = match s {
-            Circle(r)    => r * r
-            Square(side) => side * side
-            Empty        => 0
+            Circle3(r)    => r * r
+            Square3(side) => side * side
+            Empty3        => 0
         }
         total = total + area
     }
@@ -26,10 +26,10 @@ test "for-in []UserSum + match" {
 }
 
 test "for-in []UserSum + if ro" {
-    ro shapes []Shape = [Circle(4), Empty, Square(1)]
+    ro shapes []Shape = [Circle3(4), Empty3, Square3(1)]
     mut circle_count = 0
     for s in shapes {
-        if Circle(_) = s {
+        if Circle3(_) = s {
             circle_count = circle_count + 1
         }
     }

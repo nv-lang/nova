@@ -29,12 +29,12 @@ type UserLockFree {
 // (3) consume-ресурс c Cleanup[never] — для spawn-consume формы.
 // Не consume-обязательный тип с consume-методом (класс TcpListener) —
 // для формы повторной отдачи `spawn consume h { … }` при обычном биндинге.
-type Handle {
+type Handle1 {
     payload int
 }
 
-fn Handle.new(p int) -> Handle => { payload: p }
-fn Handle consume @cleanup(_outcome ScopeOutcome) -> () => ()
+fn Handle1.new(p int) -> Handle1 => { payload: p }
+fn Handle1 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 type Job consume {
     payload int
@@ -98,7 +98,7 @@ test "spawn consume: re-give form moves existing binding (D415 §4)" {
     // consume-обязательный (класс TcpListener: consume-метод есть, маркер нет),
     // иначе внешний биндинг сам потребовал бы consume-scope (D180).
     ro (tx, rx) = Channel.new(1)
-    mut h = Handle.new(9)
+    mut h = Handle1.new(9)
     supervised {
         spawn consume h {
             tx.try_send(h.payload)

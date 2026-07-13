@@ -4,23 +4,23 @@
 // opaque pointer type: usable in type declarations, structs, and assignments.
 
 module spec_tests.conformance
-type Handle { ro value *() }
+type Handle2 { ro value *() }
 
-fn make_handle(raw int) -> Handle {
-    Handle { value: raw as *() }
+fn make_handle(raw int) -> Handle2 {
+    Handle2 { value: raw as *() }
 }
 
-fn handle_value(h Handle) -> int {
+fn handle_value(h Handle2) -> int {
     h.value as int
 }
 
-test "Handle wrapping *() round-trips integer value" {
+test "Handle2 wrapping *() round-trips integer value" {
     ro h = make_handle(42)
     assert(handle_value(h) == 42)
 }
 
-test "zero *() in Handle is valid" {
-    ro h = Handle { value: (0 as *()) }
+test "zero *() in Handle2 is valid" {
+    ro h = Handle2 { value: (0 as *()) }
     assert(handle_value(h) == 0)
 }
 

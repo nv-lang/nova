@@ -3,19 +3,19 @@
 // followup для full composite materialize'а).
 
 module spec_tests.conformance
-priv(file) type WorkErr { msg str }
+type WorkErr2 { msg str }
 type CommitErr1 { msg str }
 
 fn commit1() Fail[CommitErr1] -> () { () }
 
-fn do_work_that_fails() Fail[WorkErr] -> () {
-    throw WorkErr { msg: "operation failed" }
+fn do_work_that_fails() Fail[WorkErr2] -> () {
+    throw WorkErr2 { msg: "operation failed" }
 }
 
-// fn-sig объявляет generic Fail (union для WorkErr | CommitErr1).
+// fn-sig объявляет generic Fail (union для WorkErr2 | CommitErr1).
 priv(file) fn process1() Fail -> () {
     defer { commit1() }                          // failable cleanup (D158)
-    do_work_that_fails()                         // throws WorkErr (Plan 173 #3: `?` на unit no-op, дропнут)
+    do_work_that_fails()                         // throws WorkErr2 (Plan 173 #3: `?` на unit no-op, дропнут)
 }
 
 test "do_work fails + failable-defer compile pass" {

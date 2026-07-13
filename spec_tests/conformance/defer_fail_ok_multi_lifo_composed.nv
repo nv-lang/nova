@@ -4,11 +4,11 @@
 module spec_tests.conformance
 type Err1 { msg str }
 type Err2 { msg str }
-priv(file) type Err3 { msg str }
+type Err3_1 { msg str }
 
 fn commit2() Fail[Err1] -> () { () }
 fn defer_a() Fail[Err2] -> () { () }
-fn defer_b() Fail[Err3] -> () { () }
+fn defer_b() Fail[Err3_1] -> () { () }
 
 // 3 failable defers — compile pass (D158); runtime LIFO chain Plan 100.4.4.
 priv(file) fn process2() Fail -> () {

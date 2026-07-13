@@ -2,32 +2,32 @@
 // configurations + various inputs.
 
 module spec_tests.conformance
-type RegA4 {
+type RegA4_2 {
     ro field RegA_Sub
 }
 
-type RegA_Sub {
+priv(file) type RegA_Sub {
     ro x int
     ro y int
 }
 
-fn RegA4 @sum_all() -> int {
+fn RegA4_2 @sum_all() -> int {
     @field.x + @field.x + @field.y + @field.y
 }
 
-fn RegA4 @diff() -> int {
+fn RegA4_2 @diff() -> int {
     @field.x - @field.y + @field.x - @field.y
 }
 
-fn RegA4.new(x int, y int) -> RegA4 {
-    RegA4 { field: RegA_Sub { x, y } }
+fn RegA4_2.new(x int, y int) -> RegA4_2 {
+    RegA4_2 { field: RegA_Sub { x, y } }
 }
 
 test "chain semantics across inputs" {
-    ro a1 = RegA4.new(3, 5)
+    ro a1 = RegA4_2.new(3, 5)
     assert(a1.sum_all() == 16)
     assert(a1.diff() == -4)
-    ro a2 = RegA4.new(10, 1)
+    ro a2 = RegA4_2.new(10, 1)
     assert(a2.sum_all() == 22)
     assert(a2.diff() == 18)
 }

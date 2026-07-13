@@ -6,7 +6,7 @@
 // — compile-pass only; runtime panic verification — manual.
 
 module spec_tests.conformance
-fn process7() -> () {
+priv(file) fn process7() -> () {
     defer { () }   // infallible cleanup placeholder
 }
 

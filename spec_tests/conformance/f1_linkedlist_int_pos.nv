@@ -1,38 +1,38 @@
 // Plan 70.2 Ф.1+Ф.2+Ф.3 POSITIVE: LinkedList1[int] sum-type mono.
 //
 // Pre-fix: LinkedList1.nil() при mono с T=int не подставляет параметр в
-// constructor name; Cons destructure → t: void* вместо LinkedList____nova_int*;
+// constructor name; Cons1 destructure → t: void* вместо LinkedList____nova_int*;
 // method dispatch collides с StringBuilder.
 
 module spec_tests.conformance
 type LinkedList1[T]
-    | Nil
-    | Cons(T, LinkedList1[T])
+    | Nil1
+    | Cons1(T, LinkedList1[T])
 
 fn len_int(l LinkedList1[int]) -> int {
     match l {
-        Nil => 0
-        Cons(_, rest) => 1 + len_int(rest)
+        Nil1 => 0
+        Cons1(_, rest) => 1 + len_int(rest)
     }
 }
 
 fn sum_int(l LinkedList1[int]) -> int {
     match l {
-        Nil => 0
-        Cons(h, rest) => h + sum_int(rest)
+        Nil1 => 0
+        Cons1(h, rest) => h + sum_int(rest)
     }
 }
 
 test "LinkedList1[int]: nil + cons + len" {
-    ro l0 LinkedList1[int] = Nil
-    ro l1 = Cons(1, l0)
-    ro l2 = Cons(2, l1)
-    ro l3 = Cons(3, l2)
+    ro l0 LinkedList1[int] = Nil1
+    ro l1 = Cons1(1, l0)
+    ro l2 = Cons1(2, l1)
+    ro l3 = Cons1(3, l2)
     assert(len_int(l0) == 0)
     assert(len_int(l3) == 3)
 }
 
 test "LinkedList1[int]: sum" {
-    ro l = Cons(10, Cons(20, Cons(30, Nil)))
+    ro l = Cons1(10, Cons1(20, Cons1(30, Nil1)))
     assert(sum_int(l) == 60)
 }

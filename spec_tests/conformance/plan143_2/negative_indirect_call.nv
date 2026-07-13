@@ -18,7 +18,7 @@
 //     indirect — actually `drive` resolves a direct edge to run_op; run_op is
 //     KEPT, drive itself is a plain resolved forwarder so MAY elide — see note)
 
-module spec_tests.conformance
+module plan143_2.negative_indirect_call
 fn triple(x int) -> int => x * 3
 
 // Indirect call through a fn-value parameter → KEEP.

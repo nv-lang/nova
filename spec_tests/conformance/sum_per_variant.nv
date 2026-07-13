@@ -2,51 +2,51 @@
 // by tag; the tag field itself is scalar and never marked.
 //
 // Per-variant precision is the crux: a union-over-variants bitmap would scan
-// the `Count(int)` payload as if it were a pointer when the LIVE variant is
-// actually `Count` → false retention. The pass keys each bitmap by the variant
+// the `SpvCount(int)` payload as if it were a pointer when the LIVE variant is
+// actually `SpvCount` → false retention. The pass keys each bitmap by the variant
 // tag so an inactive variant's scalar is never mis-scanned.
 //
 // Emitted C layout (emit_c::emit_sum_type):
 //   struct { Nova_Node_Tag tag@0 (C enum, 4 bytes); union payload@8 }
 //   payload base = align_up(4, max_payload_align=8) = 8.
 //
-//   Leaf       (unit)        → []           (no payload)
-//   Count(int) (scalar)      → []           (int@8 is SCALAR — per-variant precision!)
-//   Cons(Box5)  (heap record) → [8]          (Nova_Box* at payload base 8)
-//   Seg { from Box5, n int, to Box5 } (record variant):
+//   SpvLeaf       (unit)        → []           (no payload)
+//   SpvCount(int) (scalar)      → []           (int@8 is SCALAR — per-variant precision!)
+//   SpvCons(Box5)  (heap record) → [8]          (Nova_Box* at payload base 8)
+//   SpvSeg { from Box5, n int, to Box5 } (record variant):
 //       from@8 (ptr), n@16 (scalar), to@24 (ptr) → [8, 24]
 //
-// EXPECT (gc-layout-analyze --format json) for type Node:
+// EXPECT (gc-layout-analyze --format json) for type Node3:
 //   pointer_offsets [] (top-level — offsets live per-variant)
 //   variants:
-//     [0] Leaf  → []
-//     [1] Count → []         (scalar payload NOT scanned)
-//     [2] Cons  → [8]
-//     [3] Seg   → [8, 24]
+//     [0] SpvLeaf  → []
+//     [1] SpvCount → []         (scalar payload NOT scanned)
+//     [2] SpvCons  → [8]
+//     [3] SpvSeg   → [8, 24]
 //   Box5 → size 8, pointer_offsets []
 
 module spec_tests.conformance
 
 type Box5 { a int }
 
-priv(file) type Node
-    | Leaf
-    | Count(int)
-    | Cons(Box5)
-    | Seg { from Box5, n int, to Box5 }
+type Node3
+    | SpvLeaf
+    | SpvCount(int)
+    | SpvCons(Box5)
+    | SpvSeg { from Box5, n int, to Box5 }
 
-fn node_kind(node Node) -> int => match node {
-    Leaf       => 0
-    Count(_)   => 1
-    Cons(_)    => 2
-    Seg { .. } => 3
+fn node_kind(node Node3) -> int => match node {
+    SpvLeaf       => 0
+    SpvCount(_)   => 1
+    SpvCons(_)    => 2
+    SpvSeg { .. } => 3
 }
 
 test "sum per-variant constructs and matches" {
     ro b1 = Box5 { a: 1 }
     ro b2 = Box5 { a: 2 }
-    assert(node_kind(Leaf) == 0)
-    assert(node_kind(Count(7)) == 1)
-    assert(node_kind(Cons(b1)) == 2)
-    assert(node_kind(Seg { from: b1, n: 5, to: b2 }) == 3)
+    assert(node_kind(SpvLeaf) == 0)
+    assert(node_kind(SpvCount(7)) == 1)
+    assert(node_kind(SpvCons(b1)) == 2)
+    assert(node_kind(SpvSeg { from: b1, n: 5, to: b2 }) == 3)
 }

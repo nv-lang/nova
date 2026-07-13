@@ -14,11 +14,11 @@
 // требует runtime-уровня support).
 
 module spec_tests.conformance
-type Clock { ms u64 }
+type Clock2 { ms u64 }
 
-fn clock_new(start_ms u64) -> Clock => { ms: start_ms }
+fn clock_new(start_ms u64) -> Clock2 => { ms: start_ms }
 
-fn clock_sleep_ms(c Clock, delta_ms u64) -> Clock =>
+fn clock_sleep_ms(c Clock2, delta_ms u64) -> Clock2 =>
     { ms: c.ms + delta_ms }
 
 

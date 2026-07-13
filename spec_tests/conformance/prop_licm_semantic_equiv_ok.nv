@@ -3,12 +3,12 @@
 // identical results regardless of LICM caching.
 
 module spec_tests.conformance
-type Calc5 {
+type Calc5_2 {
     ro base int
     ro step int
 }
 
-fn Calc5 @while_form(n int) -> int {
+fn Calc5_2 @while_form(n int) -> int {
     mut total = 0
     mut i = 0
     while i < n {
@@ -18,7 +18,7 @@ fn Calc5 @while_form(n int) -> int {
     total
 }
 
-fn Calc5 @for_form(n int) -> int {
+fn Calc5_2 @for_form(n int) -> int {
     mut total = 0
     for i in 0..n {
         total = total + @base + @step
@@ -26,7 +26,7 @@ fn Calc5 @for_form(n int) -> int {
     total
 }
 
-fn Calc5 @loop_form(n int) -> int {
+fn Calc5_2 @loop_form(n int) -> int {
     mut total = 0
     mut i = 0
     loop {
@@ -37,12 +37,12 @@ fn Calc5 @loop_form(n int) -> int {
     total
 }
 
-fn Calc5.new(b int, s int) -> Calc5 {
-    Calc5 { base: b, step: s }
+fn Calc5_2.new(b int, s int) -> Calc5_2 {
+    Calc5_2 { base: b, step: s }
 }
 
 test "property: while/for/loop equivalence" {
-    ro c = Calc5.new(10, 3)
+    ro c = Calc5_2.new(10, 3)
     assert(c.while_form(5) == c.for_form(5))
     assert(c.for_form(5) == c.loop_form(5))
     // 5 × (10+3) = 65.
@@ -50,7 +50,7 @@ test "property: while/for/loop equivalence" {
 }
 
 test "property: zero iter preserves" {
-    ro c = Calc5.new(99, 1)
+    ro c = Calc5_2.new(99, 1)
     assert(c.while_form(0) == 0)
     assert(c.for_form(0) == 0)
     assert(c.loop_form(0) == 0)

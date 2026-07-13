@@ -2,10 +2,10 @@ module spec_tests.conformance
 // Plan 61 / D65 правило 1: `Fail` ≡ `Fail[any]` — alias / catch-all.
 // `with Fail = |e| ...` (без [E]) ловит **любой** throw.
 
-export type ParseError_d65rule1failaliasany | Bad
+export type ParseError_d65rule1failaliasany | BadD65
 
 fn raise1() Fail[ParseError_d65rule1failaliasany] -> int {
-    throw Bad
+    throw BadD65
 }
 
 test "Fail без [E] ловит любой typed throw" {

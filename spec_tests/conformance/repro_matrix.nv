@@ -16,8 +16,8 @@ type MakesPoint effect {
 }
 
 type Shape2_2 enum
-    | Circle { r int }
-    | Square { side int }
+    | Circle2 { r int }
+    | Square2 { side int }
 
 type MakesShape effect {
     sum_variant() -> Shape2_2
@@ -47,11 +47,11 @@ test "handler-лит: heap record-литерал в теле опа" {
 
 test "handler-лит: sum-variant record в теле опа" {
     with MakesShape = effect MakesShape {
-        sum_variant() => Shape2_2.Circle { r: 9 }
+        sum_variant() => Shape2_2.Circle2 { r: 9 }
     } {
         ro s = MakesShape.sum_variant()
         match s {
-            Shape2_2.Circle { r } => assert(r == 9)
+            Shape2_2.Circle2 { r } => assert(r == 9)
             _ => assert(false)
         }
     }

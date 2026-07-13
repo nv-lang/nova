@@ -4,7 +4,7 @@
 // Covers: all scalars (incl. `uint` = nova_uint, distinct from u64), raw ptrs
 // (`*T` / `*()` / CStr), `str` (= {ptr,len} value-record), value-records +
 // named-tuples + anon tuples with all-C-ABI fields, a cyclic value-record
-// (`Node value {next *Node}`), `Option[*T]` (NPO), `-> ()` = void, and a
+// (`Node2 value {next *Node2}`), `Option[*T]` (NPO), `-> ()` = void, and a
 // `*extern "C" fn(...)` C-callback parameter (D353 fn-ptr ABI-tag).
 //
 // Declarations only (bodyless extern) — uncalled, so no C shim / linker symbol
@@ -12,13 +12,13 @@
 
 module spec_tests.conformance
 // C-ABI value-record (all fields C-ABI) — passed by-value as a C struct.
-priv(file) type Rect value { w int, h int }
+type Rect1 value { w int, h int }
 
 // Named tuple (stack value type) — C-ABI iff all fields C-ABI.
 type Point8(x f64, y f64)
 
-// Cyclic value-record: `next *Node` is a raw pointer → recursion stops.
-priv(file) type Node value { val int, next *Node }
+// Cyclic value-record: `next *Node2` is a raw pointer → recursion stops.
+type Node2 value { val int, next *Node2 }
 
 // ─── Scalars (incl. uint, the address-sized unsigned, ≠ u64) ───────────────
 extern "C" fn cffi_scalars(a int, b uint, c i8, d i16, e i32, f i64) -> int
@@ -32,12 +32,12 @@ extern "C" fn cffi_ptrs(p *u8, q *(), r *int) -> *u8
 extern "C" fn cffi_str_roundtrip(s str) -> str
 
 // ─── value-record / named-tuple / anon-tuple, param + return ───────────────
-extern "C" fn cffi_rect_area(r Rect) -> int
+extern "C" fn cffi_rect_area(r Rect1) -> int
 extern "C" fn cffi_make_point(x f64, y f64) -> Point8
 extern "C" fn cffi_pair(a int, b *u8) -> (int, *u8)
 
 // ─── cyclic value-record ───────────────────────────────────────────────────
-extern "C" fn cffi_node_sum(n *Node) -> int
+extern "C" fn cffi_node_sum(n *Node2) -> int
 
 // ─── Option[*T] via NPO (None = NULL) ──────────────────────────────────────
 extern "C" fn cffi_opt_ptr(p Option[*u8]) -> Option[*int]

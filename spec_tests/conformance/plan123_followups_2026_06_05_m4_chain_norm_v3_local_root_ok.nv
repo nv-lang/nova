@@ -4,7 +4,7 @@
 // hoisting (V1/V2 only handled `@F` self-field root).
 
 module spec_tests.conformance
-fn build_list() -> []int {
+priv(file) fn build_list() -> []int {
     mut v = [10, 20, 30]
     // V3 local-var Ident root pattern: hoisted under V3.
     v.push(40).push(50).push(60)

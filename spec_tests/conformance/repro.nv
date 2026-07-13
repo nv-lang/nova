@@ -85,7 +85,7 @@ fn pick_str(c bool) -> str {
 }
 
 // ── CONTROL: nested value-typed if stays its value type. ──
-fn classify(n int) -> str {
+fn repro_classify(n int) -> str {
     if n > 0 {
         if n > 10 { "big" } else { "small" }
     } else {
@@ -148,7 +148,7 @@ test "control: value-typed if stays str" {
 }
 
 test "control: nested value-typed if stays str" {
-    assert(classify(20) == "big")
-    assert(classify(5) == "small")
-    assert(classify(-1) == "non-positive")
+    assert(repro_classify(20) == "big")
+    assert(repro_classify(5) == "small")
+    assert(repro_classify(-1) == "non-positive")
 }

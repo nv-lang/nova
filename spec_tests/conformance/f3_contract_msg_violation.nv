@@ -6,7 +6,7 @@
 // Combination: contract, with msg.
 
 module spec_tests.conformance
-fn withdraw(amount int) -> int
+priv(file) fn withdraw(amount int) -> int
     requires amount > 0, "amount must be positive"
 => amount
 

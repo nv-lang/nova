@@ -1,7 +1,7 @@
 // Plan 104.9 pos: ro/mut binding syntax (not let) as surfaced by nova-lsp completion.
 // Verifies that ro/mut are valid binding keywords across all contexts.
 module spec_tests.conformance
-fn identity(x int) -> int => x
+priv(file) fn identity(x int) -> int => x
 
 test "ro binding is read-only" {
     ro x = 42

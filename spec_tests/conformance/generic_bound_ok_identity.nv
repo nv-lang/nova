@@ -5,12 +5,12 @@
 // (no `consume` let-binding on call site → no caller obligation).
 
 module spec_tests.conformance
-type Transaction10 consume {
+type Transaction10_1 consume {
     id int,
 }
-fn Transaction10 consume @commit() -> () { () }
+fn Transaction10_1 consume @commit() -> () { () }
 
-fn begin2() -> Transaction10 => { id: 42 }
+fn begin2() -> Transaction10_1 => { id: 42 }
 
 // Identity: x returned as trailing FnBody::Expr ident — obligation satisfied.
 fn id_consume[T consume](consume x T) -> T => x

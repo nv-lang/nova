@@ -2,10 +2,10 @@
 // continues через D161 per-defer NovaFailFrame wrap.
 
 module spec_tests.conformance
-type Err { msg str }
+type Err5 { msg str }
 
 fn cleanup_ok1() -> () { () }
-fn cleanup_maybe_fail() Fail[Err] -> () { () }
+fn cleanup_maybe_fail() Fail[Err5] -> () { () }
 
 priv(file) fn process5() Fail -> () {
     defer { cleanup_ok1() }                 // runs last LIFO

@@ -1,7 +1,7 @@
 // Plan 98 Ф.2.1: type-param inference из Result[T, E] параметра.
 
 module spec_tests.conformance
-fn check_ok[T, E](r Result[T, E]) -> bool => r.is_ok()
+priv(file) fn check_ok[T, E](r Result[T, E]) -> bool => r.is_ok()
 
 fn extract_ok[T, E](r Result[T, E], default_v T) -> T => r ?? default_v
 

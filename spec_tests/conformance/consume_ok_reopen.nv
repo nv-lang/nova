@@ -5,16 +5,16 @@
 // Compiler tracks: close → Consumed → rebind → Live. ✅
 
 module spec_tests.conformance
-type File consume {
+type File1 consume {
     fd int,
 }
 
-fn File consume @close() -> () { () }
+fn File1 consume @close() -> () { () }
 
-fn File_open(path int) -> File => { fd: path }
+priv(file) fn File_open(path int) -> File1 => { fd: path }
 
 type Service consume {
-    consume file File,
+    consume file File1,
 }
 
 fn Service consume @shutdown() -> () {

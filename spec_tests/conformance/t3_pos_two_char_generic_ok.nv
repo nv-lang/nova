@@ -4,7 +4,7 @@
 // only to TypeDecl names, not to generic parameter names.
 
 module spec_tests.conformance
-fn[T] identity(x T) -> T {
+priv(file) fn[T] identity(x T) -> T {
     x
 }
 

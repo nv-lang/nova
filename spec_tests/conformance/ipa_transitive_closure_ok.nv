@@ -2,22 +2,22 @@
 // If A calls B, A's effective write-set includes B's.
 
 module spec_tests.conformance
-type Stack5 {
+type Stack5_1 {
     mut top int
     mut sum int
 }
 
 // Indirectly writes @top through @raw_inc.
-fn Stack5 mut @raw_inc() -> () {
+fn Stack5_1 mut @raw_inc() -> () {
     @top = @top + 1
 }
 
 // Calls @raw_inc → transitively writes @top.
-fn Stack5 mut @push_one() -> () {
+fn Stack5_1 mut @push_one() -> () {
     @raw_inc()
 }
 
-fn Stack5 mut @count_with_indirect() -> int {
+fn Stack5_1 mut @count_with_indirect() -> int {
     // 2 reads of @sum, then call @push_one (transitively writes @top,
     // NOT @sum), then 2 more reads.
     // V7.1 IPA: @push_one's transitive write-set = {top}; doesn't
@@ -27,12 +27,12 @@ fn Stack5 mut @count_with_indirect() -> int {
     a + @sum + @sum
 }
 
-fn Stack5.new(t int, s int) -> Stack5 {
-    Stack5 { top: t, sum: s }
+fn Stack5_1.new(t int, s int) -> Stack5_1 {
+    Stack5_1 { top: t, sum: s }
 }
 
 test "IPA transitive closure preserves cache" {
-    mut st = Stack5.new(0, 10)
+    mut st = Stack5_1.new(0, 10)
     ro r = st.count_with_indirect()
     // @sum=10 throughout. a=20. + 20 = 40.
     assert(r == 40)

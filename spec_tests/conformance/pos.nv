@@ -1,7 +1,7 @@
 // Non-literal int narrowing requires `as` (D54). These are the cases that must
 // stay legal: value-range-preserving widening, explicit `as`, and literals.
 module spec_tests.conformance
-fn take_int(x int) -> int => x
+priv(file) fn take_int(x int) -> int => x
 
 test "widening u8 -> int is implicit" {
     ro b u8 = 5

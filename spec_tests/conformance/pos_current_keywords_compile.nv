@@ -5,7 +5,7 @@
 module spec_tests.conformance
 const LIMIT = 3
 
-fn sum_to(n int) -> int {
+priv(file) fn sum_to(n int) -> int {
     mut total = 0
     for i in 0..n {
         if i == 0 {

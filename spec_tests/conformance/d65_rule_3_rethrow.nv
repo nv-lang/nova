@@ -5,7 +5,7 @@ module spec_tests.conformance
 
 export type AppError | Network | Internal
 
-fn op() Fail[AppError] -> int {
+fn d65_op() Fail[AppError] -> int {
     throw Network
 }
 
@@ -17,7 +17,7 @@ test "re-throw в typed handler-arm → outer ловит" {
     }) {
         // Inner re-throws: классическая D65 правило 3.
         with Fail[AppError] = |e| throw e {
-            op()
+            d65_op()
         }
     }
     assert(result == 1, "outer должен получить Network re-thrown через inner")

@@ -2,11 +2,11 @@
 // method с `-> never` детектится как divergent в if-expr inference.
 
 module spec_tests.conformance
-type Logger2 { tag str }
+type Logger2_1 { tag str }
 
-fn Logger2 @fail(msg str) -> never => panic("[${@tag}] FATAL: ${msg}")
+fn Logger2_1 @fail(msg str) -> never => panic("[${@tag}] FATAL: ${msg}")
 
-fn classify1(log Logger2, c bool) -> str {
+fn classify1(log Logger2_1, c bool) -> str {
     if c {
         "ok"
     } else {
@@ -15,6 +15,6 @@ fn classify1(log Logger2, c bool) -> str {
 }
 
 test "method-never in else picks str from then" {
-    ro logger = Logger2 { tag: "test" }
+    ro logger = Logger2_1 { tag: "test" }
     assert(classify1(logger, true) == "ok")
 }

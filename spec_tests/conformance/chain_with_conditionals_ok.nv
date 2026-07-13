@@ -2,10 +2,10 @@
 
 module spec_tests.conformance
 type Wrap3_1 {
-    ro inner Wrap_Inner
+    ro inner Wrap_Inner1
 }
 
-priv(file) type Wrap_Inner {
+type Wrap_Inner1 {
     ro flag int
     ro data int
 }
@@ -19,7 +19,7 @@ fn Wrap3_1 @select_value() -> int {
 }
 
 fn Wrap3_1.new(f int, d int) -> Wrap3_1 {
-    Wrap3_1 { inner: Wrap_Inner { flag: f, data: d } }
+    Wrap3_1 { inner: Wrap_Inner1 { flag: f, data: d } }
 }
 
 test "chain caching across branches" {

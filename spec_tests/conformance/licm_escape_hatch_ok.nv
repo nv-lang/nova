@@ -2,12 +2,12 @@
 // regardless of LICM ON/OFF. Verified by test runner under env vars.
 
 module spec_tests.conformance
-type Inv3 {
+type Inv3_1 {
     ro x int
     ro y int
 }
 
-fn Inv3 @combo(n int) -> int {
+fn Inv3_1 @combo(n int) -> int {
     mut total = 0
     mut i = 0
     while i < n {
@@ -17,12 +17,12 @@ fn Inv3 @combo(n int) -> int {
     total
 }
 
-fn Inv3.new(x int, y int) -> Inv3 {
-    Inv3 { x, y }
+fn Inv3_1.new(x int, y int) -> Inv3_1 {
+    Inv3_1 { x, y }
 }
 
 test "escape hatch — runtime semantic preserved" {
-    ro v = Inv3.new(2, 3)
+    ro v = Inv3_1.new(2, 3)
     ro r = v.combo(4)
     // 4 × (2+3+6) = 4 × 11 = 44.
     assert(r == 44)

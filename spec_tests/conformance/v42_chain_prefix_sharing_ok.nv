@@ -10,7 +10,7 @@ type V42Leaf {
     ro d int
 }
 
-priv(file) type Mid {
+type Mid3 {
     ro x int
     ro y V42Leaf
 }
@@ -20,7 +20,7 @@ type Root2 {
 }
 
 type Inner9 {
-    ro middle Mid
+    ro middle Mid3
 }
 
 fn Root2 @sum_both() -> int {
@@ -30,7 +30,7 @@ fn Root2 @sum_both() -> int {
 }
 
 fn Root2.new() -> Root2 {
-    Root2 { inner: Inner9 { middle: Mid { x: 99, y: V42Leaf { c: 3, d: 4 } } } }
+    Root2 { inner: Inner9 { middle: Mid3 { x: 99, y: V42Leaf { c: 3, d: 4 } } } }
 }
 
 test "V4.2: shared chain prefix preserves semantics" {

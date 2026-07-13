@@ -2,14 +2,14 @@
 // разрешён если enclosing fn-sig declares Fail[E].
 
 module spec_tests.conformance
-type Err { msg str }
+type Err4 { msg str }
 
 fn cond_cleanup_failed() -> bool => false
 
-fn process7() Fail[Err] -> () {
+priv(file) fn process7() Fail[Err4] -> () {
     defer {
         if cond_cleanup_failed() {
-            throw Err { msg: "cleanup-specific failure" }   // explicit throw в defer (D158)
+            throw Err4 { msg: "cleanup-specific failure" }   // explicit throw в defer (D158)
         }
     }
 }

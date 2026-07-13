@@ -1,11 +1,11 @@
 // Plan 123.2 T1.8: while-let form — LICM hoists invariant @field.
 
 module spec_tests.conformance
-type Counter7 {
+type Counter7_1 {
     ro limit int
 }
 
-fn Counter7 @count_options() -> int {
+fn Counter7_1 @count_options() -> int {
     mut x = 0
     mut state = Some(0)
     while let Some(v) = state {
@@ -19,12 +19,12 @@ fn Counter7 @count_options() -> int {
     x
 }
 
-fn Counter7.new(l int) -> Counter7 {
-    Counter7 { limit: l }
+fn Counter7_1.new(l int) -> Counter7_1 {
+    Counter7_1 { limit: l }
 }
 
 test "while-let — @limit hoisted" {
-    ro c = Counter7.new(3)
+    ro c = Counter7_1.new(3)
     ro r = c.count_options()
     // 2*3=6 iterations.
     assert(r == 6)

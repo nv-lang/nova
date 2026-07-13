@@ -3,37 +3,37 @@
 // public API (used by future V7.1 full integration).
 
 module spec_tests.conformance
-type WS {
+type WS1 {
     ro x int
     mut count int
 }
 
-fn WS.helper(x int) -> int { x * 2 }
+fn WS1.helper(x int) -> int { x * 2 }
 
-fn WS mut @increment() -> () {
+fn WS1 mut @increment() -> () {
     @count = @count + 1
 }
 
-fn WS @double_x() -> int {
+fn WS1 @double_x() -> int {
     @x + @x   // ro cached.
 }
 
-fn WS @sum_uses_helper() -> int {
-    @x + WS.helper(3)
+fn WS1 @sum_uses_helper() -> int {
+    @x + WS1.helper(3)
 }
 
-fn WS.new(x int, c int) -> WS {
-    WS { x, count: c }
+fn WS1.new(x int, c int) -> WS1 {
+    WS1 { x, count: c }
 }
 
 test "V7 ships без semantic changes для V1-V6 layers" {
-    ro w = WS.new(5, 0)
+    ro w = WS1.new(5, 0)
     assert(w.double_x() == 10)
     assert(w.sum_uses_helper() == 5 + 6)
 }
 
 test "mut path still works (V1)" {
-    mut w = WS.new(7, 10)
+    mut w = WS1.new(7, 10)
     w.increment()
     assert(w.count == 11)
 }

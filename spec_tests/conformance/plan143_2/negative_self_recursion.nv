@@ -8,10 +8,10 @@
 // Verify in negative_self_recursion.c: the body of `count_down` contains
 // `nova_preempt_check();` (NOT the elided marker).
 
-module spec_tests.conformance
+module plan143_2.negative_self_recursion
 
 // Direct self-recursion: sum 1..=n.
-fn sum_to(n int) -> int {
+priv(file) fn sum_to(n int) -> int {
     if n <= 0 { 0 } else { sum_to(n - 1) + n }
 }
 

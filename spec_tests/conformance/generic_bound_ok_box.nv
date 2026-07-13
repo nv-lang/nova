@@ -4,12 +4,12 @@
 // ident satisfies consume-obligation. Distinct from identity (FnBody::Expr).
 
 module spec_tests.conformance
-type Transaction8 consume {
+type Transaction8_1 consume {
     id int,
 }
-fn Transaction8 consume @commit() -> () { () }
+fn Transaction8_1 consume @commit() -> () { () }
 
-fn begin1() -> Transaction8 => { id: 1 }
+fn begin1() -> Transaction8_1 => { id: 1 }
 
 // Block-form: trailing ident in block body — consume obligation satisfied.
 fn box_wrap[T consume](consume x T) -> T {

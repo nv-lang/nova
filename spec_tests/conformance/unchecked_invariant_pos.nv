@@ -4,12 +4,12 @@
 
 #unchecked(invariant)
 module spec_tests.conformance
-priv(file) type Account {
+type Account3 {
     balance int
 }
     invariant balance >= 0
 
 test "#unchecked(invariant): invalid construction does not panic (invariant elided)" {
-    ro a = Account { balance: -5 }
+    ro a = Account3 { balance: -5 }
     assert(a.balance == -5)
 }

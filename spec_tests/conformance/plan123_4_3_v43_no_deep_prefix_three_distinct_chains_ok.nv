@@ -5,10 +5,10 @@
 // идентично V4.2 baseline.
 
 module spec_tests.conformance
-priv(file) type Lv3 { ro x int, ro y int, ro z int }
-type Mid2_plan12343v43nodeepprefixthreedistinctchainsok { ro c Lv3, ro d Lv3, ro e Lv3 }
-priv(file) type Inn { ro b Mid2_plan12343v43nodeepprefixthreedistinctchainsok }
-type Out3_1 { ro a Inn }
+type Lv3_1 { ro x int, ro y int, ro z int }
+type Mid2_plan12343v43nodeepprefixthreedistinctchainsok { ro c Lv3_1, ro d Lv3_1, ro e Lv3_1 }
+type Inn1 { ro b Mid2_plan12343v43nodeepprefixthreedistinctchainsok }
+type Out3_1 { ro a Inn1 }
 
 fn Out3_1 @sum_all() -> int {
     // 6 chain occurrences (3 distinct chains, каждая встречается 2 раза).
@@ -18,10 +18,10 @@ fn Out3_1 @sum_all() -> int {
 }
 
 fn Out3_1.new() -> Out3_1 {
-    Out3_1 { a: Inn { b: Mid2_plan12343v43nodeepprefixthreedistinctchainsok {
-        c: Lv3 { x: 1, y: 0, z: 0 },
-        d: Lv3 { x: 0, y: 10, z: 0 },
-        e: Lv3 { x: 0, y: 0, z: 100 },
+    Out3_1 { a: Inn1 { b: Mid2_plan12343v43nodeepprefixthreedistinctchainsok {
+        c: Lv3_1 { x: 1, y: 0, z: 0 },
+        d: Lv3_1 { x: 0, y: 10, z: 0 },
+        e: Lv3_1 { x: 0, y: 0, z: 100 },
     } } }
 }
 

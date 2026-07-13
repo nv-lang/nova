@@ -1,8 +1,8 @@
 // Plan 183 Ф.4 followup — [M-183-int-to-str-module-method-collision] POSITIVE.
 //
-// An effect-operation result (`Clock.tick() -> int`) now carries its declared
+// An effect-operation result (`Clock1.tick() -> int`) now carries its declared
 // return type through the checker (types/mod.rs infer_expr_type, effect-op arm).
-// Before the fix `ro x = Clock.tick()` left `x` UNTYPED in the checker scope, so
+// Before the fix `ro x = Clock1.tick()` left `x` UNTYPED in the checker scope, so
 // a primitive method-call on it was NOT gated by the checker and codegen
 // coarse-by-name (`method_receivers` last-wins) mis-dispatched it to a same-named
 // FOREIGN method — here `NetErr @to_str` — passing the `nova_int` as an enum
@@ -23,12 +23,12 @@ export fn NetErr @to_str() -> str {
     }
 }
 
-type Clock effect {
+type Clock1 effect {
     tick() -> int
 }
 
-fn use_effect_int() Clock -> str {
-    ro x = Clock.tick()          // effect-op result — declared `-> int`
+fn use_effect_int() Clock1 -> str {
+    ro x = Clock1.tick()          // effect-op result — declared `-> int`
     ro doubled = x * 2 - 1       // arithmetic keeps int
     ro viastr = str.from(doubled)
     ro viainterp = "${doubled}"
@@ -37,7 +37,7 @@ fn use_effect_int() Clock -> str {
 }
 
 test "effect-op int result: correct typing, no foreign to_str interception" {
-    ro out = with Clock = effect Clock { tick() => 5 } {
+    ro out = with Clock1 = effect Clock1 { tick() => 5 } {
         use_effect_int()
     }
     assert(out == "9")           // 5*2-1 = 9

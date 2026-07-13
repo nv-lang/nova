@@ -5,15 +5,15 @@
 // Simulated single-file mock: folder-module с consume-types.
 
 module spec_tests.conformance
-// "resources/" folder-module — File + Socket consume-types:
+// "resources/" folder-module — File3 + Socket consume-types:
 
-export type File consume {
+export type File3 consume {
     fd int,
 }
 
-export fn File consume @close() -> () { () }
-fn File_make(fd int) -> File => { fd }
-export fn File_open(path int) -> File => File_make(path)
+export fn File3 consume @close() -> () { () }
+fn File_make(fd int) -> File3 => { fd }
+priv(file) fn File_open(path int) -> File3 => File_make(path)
 
 export type Socket consume {
     port int,
@@ -25,7 +25,7 @@ export fn Socket_connect(port int) -> Socket => Socket_make(port)
 
 // "main.nv" — uses folder-module consume-types:
 
-test "folder-module consume-types — File + Socket closed" {
+test "folder-module consume-types — File3 + Socket closed" {
     consume f = File_open(1)
     consume s = Socket_connect(8080)
     f.close()

@@ -10,7 +10,7 @@ type Leaf4 {
     ro d int
 }
 
-priv(file) type Mid {
+type Mid2 {
     ro x int
     ro y Leaf4
 }
@@ -20,7 +20,7 @@ type Root1 {
 }
 
 type Inner_plan12342v42chainprefixsharingok {
-    ro middle Mid
+    ro middle Mid2
 }
 
 fn Root1 @sum_both() -> int {
@@ -30,7 +30,7 @@ fn Root1 @sum_both() -> int {
 }
 
 fn Root1.new() -> Root1 {
-    Root1 { inner: Inner_plan12342v42chainprefixsharingok { middle: Mid { x: 99, y: Leaf4 { c: 3, d: 4 } } } }
+    Root1 { inner: Inner_plan12342v42chainprefixsharingok { middle: Mid2 { x: 99, y: Leaf4 { c: 3, d: 4 } } } }
 }
 
 test "V4.2: shared chain prefix preserves semantics" {

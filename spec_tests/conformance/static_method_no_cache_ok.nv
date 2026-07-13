@@ -2,21 +2,21 @@
 // — no @self/@field access → no caching attempted, no panic.
 
 module spec_tests.conformance
-type Calc3 {
+type Calc3_2 {
     ro factor int
 }
 
-fn Calc3.constant() -> int {
+fn Calc3_2.constant() -> int {
     42
 }
 
-fn Calc3.from_pair(a int, b int) -> Calc3 {
-    Calc3 { factor: a + b }
+fn Calc3_2.from_pair(a int, b int) -> Calc3_2 {
+    Calc3_2 { factor: a + b }
 }
 
 test "static methods unaffected" {
-    ro c1 = Calc3.constant()
+    ro c1 = Calc3_2.constant()
     assert(c1 == 42)
-    ro c2 = Calc3.from_pair(3, 4)
+    ro c2 = Calc3_2.from_pair(3, 4)
     assert(c2.factor == 7)
 }

@@ -1,23 +1,23 @@
 // Plan 123.5 T1.1: --explain-cache output verification.
 
 module spec_tests.conformance
-type Calc {
+type Calc2 {
     ro a int
     ro b int
 }
 
 #pure
-fn Calc @sum() -> int => @a + @b
+fn Calc2 @sum() -> int => @a + @b
 
-fn Calc @demo() -> int {
+fn Calc2 @demo() -> int {
     @a + @a + @b + @b + @sum() + @sum()
 }
 
-fn Calc.new(a int, b int) -> Calc {
-    Calc { a, b }
+fn Calc2.new(a int, b int) -> Calc2 {
+    Calc2 { a, b }
 }
 
 test "demo runs" {
-    ro c = Calc.new(3, 5)
+    ro c = Calc2.new(3, 5)
     assert(c.demo() == 32)  // 3+3+5+5 + 8+8 = 16 + 16 = 32
 }

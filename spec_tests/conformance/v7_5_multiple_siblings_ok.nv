@@ -2,15 +2,15 @@
 // все survive across @arr.push().
 
 module spec_tests.conformance
-type Tracker {
+type Tracker2 {
     mut count int
     mut total int
     mut arr []int
 }
 
-fn Tracker.new() -> Tracker => { count: 7, total: 100, arr: []int.new() }
+fn Tracker2.new() -> Tracker2 => { count: 7, total: 100, arr: []int.new() }
 
-fn Tracker mut @sample_then_grow(v int) -> int {
+fn Tracker2 mut @sample_then_grow(v int) -> int {
     ro c1 = @count
     ro t1 = @total
     @arr.push(v)
@@ -20,7 +20,7 @@ fn Tracker mut @sample_then_grow(v int) -> int {
 }
 
 test "V7.5: multiple siblings all survive" {
-    mut t = Tracker.new()
+    mut t = Tracker2.new()
     ro r = t.sample_then_grow(99)
     // (7+100) + (7+100) = 214
     assert(r == 214)

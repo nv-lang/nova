@@ -3,7 +3,7 @@
 //
 // A self-referential heap RECORD via `Option[Self]` — the textbook singly
 // linked list shape:
-//     type Node { value int; next Option[Node] }
+//     type Node1 { value int; next Option[Node1] }
 // used to mis-monomorphize: the `next` field was emitted as `NovaOpt_nova_int`
 // (the C type of the record's FIRST field) instead of the correct
 // `NovaOpt_Nova_Node_p`, cascading into "assigning to incompatible type" /
@@ -38,25 +38,25 @@
 
 module spec_tests.conformance
 
-priv(file) type Node {
+type Node1 {
     value int
-    next Option[Node]
+    next Option[Node1]
 }
 
-fn len(n Option[Node]) -> int => match n {
+fn len(n Option[Node1]) -> int => match n {
     None       => 0
     Some(node) => 1 + len(node.next)
 }
 
-fn sum(n Option[Node]) -> int => match n {
+fn sum(n Option[Node1]) -> int => match n {
     None       => 0
     Some(node) => node.value + sum(node.next)
 }
 
 test "Option[Self] linked-list round-trips through field read/write" {
-    ro tail  = Node { value: 3, next: None }
-    ro mid   = Node { value: 2, next: Some(tail) }
-    ro head  = Node { value: 1, next: Some(mid) }
+    ro tail  = Node1 { value: 3, next: None }
+    ro mid   = Node1 { value: 2, next: Some(tail) }
+    ro head  = Node1 { value: 1, next: Some(mid) }
     assert(len(Some(head)) == 3, "three-node chain has length 3")
     assert(sum(Some(head)) == 6, "1 + 2 + 3")
     match head.next {
@@ -66,20 +66,20 @@ test "Option[Self] linked-list round-trips through field read/write" {
 }
 
 test "structural == on separately-allocated-but-equal chains is TRUE" {
-    ro a1 = Node { value: 1, next: None }
-    ro a2 = Node { value: 2, next: Some(a1) }
-    ro b1 = Node { value: 1, next: None }
-    ro b2 = Node { value: 2, next: Some(b1) }
+    ro a1 = Node1 { value: 1, next: None }
+    ro a2 = Node1 { value: 2, next: Some(a1) }
+    ro b1 = Node1 { value: 1, next: None }
+    ro b2 = Node1 { value: 2, next: Some(b1) }
     assert(a2 == b2, "two independently-built equal chains compare structurally equal")
-    ro c1 = Node { value: 9, next: None }
-    ro c2 = Node { value: 2, next: Some(c1) }
+    ro c1 = Node1 { value: 9, next: None }
+    ro c2 = Node1 { value: 2, next: Some(c1) }
     assert(!(a2 == c2), "different tail value makes the chains unequal")
-    ro d2 = Node { value: 2, next: None }
+    ro d2 = Node1 { value: 2, next: None }
     assert(!(a2 == d2), "Some(...) vs None tail makes the chains unequal")
 }
 
 test "option_self_linked_list smoke" {
-    ro head = Node { value: 1, next: Some(Node { value: 2, next: None }) }
+    ro head = Node1 { value: 1, next: Some(Node1 { value: 2, next: None }) }
     assert(len(Some(head)) == 2, "smoke: two-node chain")
     println("all assertions passed")
 }

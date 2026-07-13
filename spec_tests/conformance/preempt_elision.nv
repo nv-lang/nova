@@ -7,7 +7,7 @@
 
 module spec_tests.conformance
 // --- POSITIVE: provably-leaf, no calls, not address-taken → ELIDE ---
-fn pure_leaf(x int) -> int => x * 2 + 1
+priv(file) fn pure_leaf(x int) -> int => x * 2 + 1
 
 // --- leaf_double IS address-taken below (used as value) → KEEP ---
 fn leaf_double(x int) -> int => x * 2

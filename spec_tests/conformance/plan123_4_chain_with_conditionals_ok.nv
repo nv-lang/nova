@@ -2,10 +2,10 @@
 
 module spec_tests.conformance
 type Wrap3_plan1234chainwithconditionalsok {
-    ro inner Wrap_Inner
+    ro inner Wrap_Inner2
 }
 
-priv(file) type Wrap_Inner {
+type Wrap_Inner2 {
     ro flag int
     ro data int
 }
@@ -19,7 +19,7 @@ fn Wrap3_plan1234chainwithconditionalsok @select_value() -> int {
 }
 
 fn Wrap3_plan1234chainwithconditionalsok.new(f int, d int) -> Wrap3_plan1234chainwithconditionalsok {
-    Wrap3_plan1234chainwithconditionalsok { inner: Wrap_Inner { flag: f, data: d } }
+    Wrap3_plan1234chainwithconditionalsok { inner: Wrap_Inner2 { flag: f, data: d } }
 }
 
 test "chain caching across branches" {

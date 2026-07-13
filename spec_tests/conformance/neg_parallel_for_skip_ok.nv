@@ -3,11 +3,11 @@
 // concurrently per element.
 
 module spec_tests.conformance
-type Cfg3 {
+type Cfg3_1 {
     ro factor int
 }
 
-fn Cfg3 @gather() -> int {
+fn Cfg3_1 @gather() -> int {
     mut total = 0
     mut i = 0
     while i < 3 {
@@ -17,12 +17,12 @@ fn Cfg3 @gather() -> int {
     total
 }
 
-fn Cfg3.new(f int) -> Cfg3 {
-    Cfg3 { factor: f }
+fn Cfg3_1.new(f int) -> Cfg3_1 {
+    Cfg3_1 { factor: f }
 }
 
 test "regular while loop hoists; parallel for body would be skipped" {
-    ro c = Cfg3.new(5)
+    ro c = Cfg3_1.new(5)
     ro r = c.gather()
     // 3 × (5+5) = 30.
     assert(r == 30)

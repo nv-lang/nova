@@ -5,7 +5,7 @@ module spec_tests.conformance
 type Complex(re f64 = 0.0, im f64 = 0.0)
 
 // Mixed: some fields have defaults, some don't
-priv(file) type Rect(x f64, y f64, width f64 = 100.0, height f64 = 50.0)
+type Rect3(x f64, y f64, width f64 = 100.0, height f64 = 50.0)
 
 // Default referencing a module-level constant
 const DEFAULT_SCALE f64 = 1.0
@@ -36,7 +36,7 @@ test "all fields provided" {
 }
 
 test "mixed required and default: all defaults omitted" {
-    ro r = Rect(x: 10.0, y: 20.0)
+    ro r = Rect3(x: 10.0, y: 20.0)
     assert(r.x == 10.0)
     assert(r.y == 20.0)
     assert(r.width == 100.0)
@@ -44,7 +44,7 @@ test "mixed required and default: all defaults omitted" {
 }
 
 test "mixed required and default: override width" {
-    ro r = Rect(x: 0.0, y: 0.0, width: 200.0)
+    ro r = Rect3(x: 0.0, y: 0.0, width: 200.0)
     assert(r.width == 200.0)
     assert(r.height == 50.0)
 }

@@ -4,19 +4,19 @@
 // корректно типизирована.
 
 module spec_tests.conformance
-type Logger2 effect {
+type Logger2_2 effect {
     log(msg str) -> ()
 }
 
 
-fn console_logger() -> Effect[Logger2] => effect Logger2 {
+fn console_logger() -> Effect[Logger2_2] => effect Logger2_2 {
     log(msg) => ()
 }
 
 
 test "Effect[E] alias return type" {
     ro h = console_logger()
-    with Logger2 = h {
-        Logger2.log("ok")
+    with Logger2_2 = h {
+        Logger2_2.log("ok")
     }
 }

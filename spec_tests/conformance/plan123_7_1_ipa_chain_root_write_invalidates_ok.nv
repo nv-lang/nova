@@ -2,12 +2,12 @@
 // DOES invalidate chain cache.
 
 module spec_tests.conformance
-priv(file) type Layer {
+type Layer2 {
     ro v int
 }
 
 type Container3_plan12371ipachainrootwriteinvalidatesok {
-    mut layer Layer
+    mut layer Layer2
 }
 
 fn Container3_plan12371ipachainrootwriteinvalidatesok mut @swap_layer() -> int {
@@ -15,12 +15,12 @@ fn Container3_plan12371ipachainrootwriteinvalidatesok mut @swap_layer() -> int {
     // then 2 more reads.
     // V4.1: @layer write invalidates chain @layer.v (root in write-set).
     ro a = @layer.v + @layer.v
-    @layer = Layer { v: 99 }
+    @layer = Layer2 { v: 99 }
     a + @layer.v + @layer.v
 }
 
 fn Container3_plan12371ipachainrootwriteinvalidatesok.new(v int) -> Container3_plan12371ipachainrootwriteinvalidatesok {
-    Container3_plan12371ipachainrootwriteinvalidatesok { layer: Layer { v } }
+    Container3_plan12371ipachainrootwriteinvalidatesok { layer: Layer2 { v } }
 }
 
 test "V4.1: root write invalidates chain" {

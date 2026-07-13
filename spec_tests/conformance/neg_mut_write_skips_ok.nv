@@ -2,14 +2,14 @@
 // skips all pure-call caching (without frame info).
 
 module spec_tests.conformance
-type Cell {
+type Cell1 {
     mut value int
 }
 
 #pure
-fn Cell @snapshot() -> int => @value
+fn Cell1 @snapshot() -> int => @value
 
-fn Cell mut @update_and_double() -> int {
+fn Cell1 mut @update_and_double() -> int {
     // body has @value = ... → pure cache skipped полностью.
     ro before = @snapshot()
     @value = @value + 1
@@ -17,12 +17,12 @@ fn Cell mut @update_and_double() -> int {
     before + after
 }
 
-fn Cell.new(v int) -> Cell {
-    Cell { value: v }
+fn Cell1.new(v int) -> Cell1 {
+    Cell1 { value: v }
 }
 
 test "mut write in body skips pure cache (correctness)" {
-    mut c = Cell.new(10)
+    mut c = Cell1.new(10)
     ro r = c.update_and_double()
     // before=10, value 10→11, after=11. 10+11=21.
     assert(r == 21)

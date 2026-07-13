@@ -4,17 +4,17 @@
 
 module spec_tests.conformance
 // "Package A" — resource type:
-export type Lock consume {
+export type Lock1 consume {
     id int,
 }
 
-export fn Lock consume @release() -> () { () }
-fn Lock_make(id int) -> Lock => { id }
-export fn Lock_acquire(id int) -> Lock => Lock_make(id)
+export fn Lock1 consume @release() -> () { () }
+fn Lock_make(id int) -> Lock1 => { id }
+export fn Lock_acquire(id int) -> Lock1 => Lock_make(id)
 
 // "Package B" — container с consume field из A:
 export type GuardedSection consume {
-    consume lock Lock,
+    consume lock Lock1,
     value int,
 }
 

@@ -2,21 +2,21 @@
 // V3 doesn't cache. Result preserved.
 
 module spec_tests.conformance
-type Cnt {
+type Cnt1 {
     ro v int
 }
 
-fn Cnt @get_v() -> int { @v }  // NOT #pure → not eligible
+fn Cnt1 @get_v() -> int { @v }  // NOT #pure → not eligible
 
-fn Cnt @double() -> int {
+fn Cnt1 @double() -> int {
     @get_v() + @get_v()
 }
 
-fn Cnt.new(v int) -> Cnt {
-    Cnt { v }
+fn Cnt1.new(v int) -> Cnt1 {
+    Cnt1 { v }
 }
 
 test "non-pure method not cached" {
-    ro c = Cnt.new(7)
+    ro c = Cnt1.new(7)
     assert(c.double() == 14)
 }

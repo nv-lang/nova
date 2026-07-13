@@ -2,7 +2,7 @@
 // coercion) is NOT range-checked: int = i64 holds 3_000_000_000 fine.
 
 module spec_tests.conformance
-fn take_int(n int) -> int => n
+priv(file) fn take_int(n int) -> int => n
 
 test "wide literal in default int binding compiles" {
     ro z = 3_000_000_000
