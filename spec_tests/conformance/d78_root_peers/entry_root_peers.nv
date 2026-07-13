@@ -1,0 +1,19 @@
+// Plan 202 Ф.2 (D78 rev-4 "root peers") — entry test file. Deliberately an
+// INDEPENDENT single-file module (`d78_root_peers.entry_root_peers`, NOT
+// itself a root peer) so its imports below exercise the EXPLICIT
+// same-package root-peer import path (`import d78_root_peers.{...}` — a
+// bare single-segment path matching this package's OWN `[package].name`,
+// D78 rev-4 §7) rather than relying on entry-sibling namespace sharing.
+// Also imports the independent `util` module — proves the "mixed root"
+// pos case (root peers + independent module coexisting in one
+// source_root, owner decision 2026-07-13) end to end.
+module d78_root_peers.entry_root_peers
+
+import d78_root_peers.{hello_client, hello_server}
+import util.{util_value}
+
+test "D78 rev-4 Ф.2: root peers (same-package import) + mixed-root independent module" {
+    assert(hello_client() == "client")
+    assert(hello_server() == "server")
+    assert(util_value() == 42)
+}

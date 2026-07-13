@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E_D78_MODULE_PATH_MISMATCH
+//
+// Plan 202 Ф.2 (D78 rev-4 "root peers") neg-fixture — a `.nv` file
+// directly in the package source_root with a declaration matching NEITHER
+// legal root form: not the root-peer form (`module d78_root_peers`), not
+// the independent back-compat form (`module d78_root_peers.bad_root_decl_neg`).
+// Root peers is an ADDITIONAL legal form, not a loophole — anything else
+// at root still hard-errors exactly as before Plan 202.
+module totally_wrong_name
+
+export fn unreachable_fn() -> int => 0

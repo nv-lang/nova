@@ -1,0 +1,13 @@
+# Plan 202 Ф.2 (D78 rev-4 "root peers") — own nested package, DISTINCT
+# `[package].name` from `spec_tests` (the ambient conformance package),
+# so `.nv` files directly in this directory can legally declare the
+# single-segment `module d78_root_peers` form (root peers of THIS
+# package's root module — the fix for the historic `tls.tls` stutter,
+# research 2026-07-13-module-naming-two-segment-review.md §7). Own
+# subdirectory under `spec_tests/conformance/` per convention (see
+# `partial_prelude/nova.toml`-less precedent — this one needs its OWN
+# manifest specifically to exercise the package-name-matching root-peer
+# rule, which the shared `spec_tests` package identity can't).
+[package]
+name = "d78_root_peers"
+version = "0.1.0"

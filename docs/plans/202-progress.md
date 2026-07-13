@@ -104,3 +104,56 @@ let effective_modpath = |pf: &PeerFile| -> Vec<String> { ... };  // decl, либ
   `Alpha|Gamma`), конструкция+match внутри каждого модуля, наружу — только функции-аксессоры.
   `assert(describe_a(1)=="a-alpha")`, `assert(describe_b(1)=="b-gamma")` и т.д. — значения не
   смешаны.
+
+## Ф.2 — root peers (D78 rev-4)
+
+**Код:**
+- `compiler-codegen/src/manifest.rs` — новая `pub fn expected_root_peer_decl(file, m) ->
+  Option<Vec<String>>` (Some(`[package_name]`) для файлов, чей родитель == `source_root`, иначе
+  None); wired как ДОПОЛНИТЕЛЬНАЯ acceptance-ветка в `check_module_path_with_kind` (после rev-3,
+  до финального Err) — легальна ОДНОВРЕМЕННО с независимой `<package>.<stem>` формой (смешанный
+  корень).
+- `compiler-codegen/src/imports.rs`:
+  - `is_peer_group_member(path)` — новый helper (существующий `is_folder_module_peer` ИЛИ decl ==
+    single-segment package_name И parent == source_root); используется ТОЛЬКО в
+    `canonical_module_key`, не трогает `is_folder_module_peer`'ов контракт (D78 validation в
+    manifest.rs использует старую функцию как прежде).
+  - `collect_root_peers(source_root, package_name, include_test_peers)` — сканирует прямых детей
+    source_root, фильтрует по декларации `[package_name]`, теми же test/target-фильтрами что и
+    обычный folder-peer сбор.
+  - `resolve_module_paths`: новая ветка ПЕРЕД generic single-file/folder поиском — для
+    single-segment import, совпавшего с package_name корневого кандидата (через `nova.toml` того
+    root), возвращает `collect_root_peers`. Для cross-package `[dependencies]`-импорта (`dep_root`)
+    — тот же путь, но package_name берётся из `imp.path[0]` (уже провалидирован
+    `lookup_dependency`'s `NameMismatch`-веткой), без re-parse манифеста.
+  - Ослаблена жёсткая ошибка «голое имя зависимости требует путь к модулю»: bare `import <dep>`
+    (1 сегмент) теперь легален, ЕСЛИ у зависимости есть root peers (иначе прежняя ошибка).
+- Sibling-коллекция entry-группы (`resolve_imports_inline_ex`, decl-based, без явной
+  `is_folder_module_peer`-проверки) уже была ОБЩЕЙ и заработала для root peers без изменений
+  (verified — см. ниже).
+
+**Проверено вручную (`d/nova202rootpeers` + `d/nova202rootpeers_consumer`, вне репо):**
+- pos: `client.nv`/`server.nv` (`module tls`) — `nova check` PASS, sibling-коллекция подтянула оба
+  без import (entry-group namespace sharing).
+- pos cross-package: consumer-пакет с `[dependencies] tls = { path = "../..." }`,
+  `import tls.{hello_client, hello_server}` — PASS через `nova test` (`assert` на оба значения).
+- pos смешанный корень: `util.nv` (`module tls.util`, независимый) + root peers в одном
+  source_root — `import util.{util_value}` (внутрипакетный, БЕЗ префикса имени пакета — абсолютные
+  внутрипакетные импорты не содержат имя пакета, только `import <package_name>.{...}` явно для
+  ССЫЛКИ НА root peers из независимого файла того же пакета) — PASS.
+- neg: файл прямо в source_root с decl `module wrongname` (ни rev-3, ни root-peer форма) —
+  `E_D78_MODULE_PATH_MISMATCH`, сообщение перечисляет все три ожидаемые формы.
+
+**Fixtures (в репо, `nova test` verified):**
+`spec_tests/conformance/d78_root_peers/` — СОБСТВЕННЫЙ `nova.toml` (package `d78_root_peers`,
+отдельно от `spec_tests`, чтобы легально сработало правило package-name-matching):
+`client.nv`+`server.nv` (root peers), `util.nv` (независимый, смешанный корень), `entry_root_peers.nv`
+(explicit `import d78_root_peers.{...}` + `import util.{...}`, test-блок с assert), `bad_root_decl_neg.nv`
+(`EXPECT_COMPILE_ERROR E_D78_MODULE_PATH_MISMATCH`). Прогон
+`nova test --compile-error --positive spec_tests/conformance/d78_root_peers`: **PASS: 2, FAIL: 0,
+SKIP: 3** (client/server/util — compiled OK, no test blocks, норма).
+
+**Спек-амендмент D78 rev-4** — `spec/decisions/07-modules.md`: два блока — (1) keying-семантика
+(D29 «Свойства правила» п.4, дубль decl из разных физических модулей легален и безвреден после
+Ф.1) + (2) root peers (новая секция под D78 «Path / module enforcement»). В том же слиянии, что
+код (lang-change-needs-spec).

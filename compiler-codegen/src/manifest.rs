@@ -840,6 +840,21 @@ pub fn check_module_path_with_kind(
             return Ok(ModulePathCheck::Rev3);
         }
     }
+    // Plan 202 Ф.2 (D78 rev-4 "root peers"): a `.nv` file directly in the
+    // package source_root MAY ADDITIONALLY declare the single-segment
+    // `module <package>` form — peer of the root module (aliases Rust's
+    // `lib.rs`; research 2026-07-13-module-naming-two-segment-review.md
+    // §7). This is legal ALONGSIDE the independent `<package>.<stem>` form
+    // checked above — a source root MAY mix root peers and independent
+    // single-file modules (owner decision 2026-07-13, "смешанный корень
+    // допустим"). Checked as a SEPARATE acceptance path (not folded into
+    // `expected_rev3`) so it never changes the rev-3 error message shape
+    // for the overwhelming non-root-peer case.
+    if let Some(root_peer) = expected_root_peer_decl(file, &manifest) {
+        if declared == root_peer.as_slice() {
+            return Ok(ModulePathCheck::Rev3);
+        }
+    }
     // [M-D78-strict-removal] 2026-06-01: rev-1 legacy form больше не
     // accepted (full corpus migration completed; ~846 files migrated to
     // rev-3 via scripts/d78_audit_migrate.py). Declaration в rev-1 form
@@ -859,12 +874,36 @@ pub fn check_module_path_with_kind(
          in {}\n  \
          declares `{}`\n  \
          expected (rev-3 parent.X): `{}`\n  \
-         expected (rev-1 legacy):    `{}`",
+         expected (rev-1 legacy):    `{}`\n  \
+         expected (rev-4 root peer, only if directly in source root): `{}`",
         file.display(),
         declared.join("."),
         exp_rev3_str,
         exp_legacy_str,
+        manifest.package_name,
     ))
+}
+
+/// Plan 202 Ф.2 (D78 rev-4 "root peers"): expected single-segment
+/// `module <package>` declaration for a `.nv` file living DIRECTLY in the
+/// package's `source_root` (depth 1, no subfolder). Returns `None` for any
+/// file NOT a direct child of `source_root` — root peers are, by design,
+/// only the immediate `.nv` files of the source root; a subfolder file
+/// keeps the ordinary rev-3 `parent.target` rule unchanged.
+///
+/// Examples (`source_root` = package root, `package_name` = "tls"):
+/// - `<root>/client.nv` → `Some(["tls"])` — legal ALTERNATIVE to the
+///   independent form `["tls", "client"]` (both accepted, see caller).
+/// - `<root>/x509/cert.nv` → `None` (not a direct child — ordinary rev-3
+///   rule `["x509", "cert"]` applies, root peers don't reach subfolders).
+pub fn expected_root_peer_decl(file: &Path, m: &Manifest) -> Option<Vec<String>> {
+    let abs_file = std::fs::canonicalize(file).ok()?;
+    let abs_root = std::fs::canonicalize(&m.source_root).ok()?;
+    let parent = abs_file.parent()?;
+    if parent != abs_root {
+        return None;
+    }
+    Some(vec![m.package_name.clone()])
 }
 
 /// Plan 42 Sub-plan 42.6 (D29 rev-3): identify stdlib runtime module

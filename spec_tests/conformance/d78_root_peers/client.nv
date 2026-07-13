@@ -1,0 +1,10 @@
+// Plan 202 Ф.2 (D78 rev-4 "root peers") pos-fixture — half of the root
+// peer group. `.nv` files directly in this package's source_root
+// declaring the single-segment `module d78_root_peers` are peers of ONE
+// root module (aliases Rust's `lib.rs`) — the fix for the historic
+// `tls.tls` stutter (research 2026-07-13-module-naming-two-segment-
+// review.md §7): a package's main folder no longer needs a name-mirroring
+// subfolder just to become "one module out of many files".
+module d78_root_peers
+
+export fn hello_client() -> str => "client"
