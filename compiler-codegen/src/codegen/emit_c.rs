@@ -4258,6 +4258,52 @@ impl CEmitter {
         // both the definition-emit and every call-site (via
         // `current_emit_file_id`), so no change needed there. Non-colliding
         // names are completely unaffected (byte-identical).
+        //
+        // Plan 202 Ф.1b (D78 rev-4 §5): `pf.module_name` is a DECLARATION, and
+        // D78 rev-4 legalizes two PHYSICALLY DISTINCT modules sharing the exact
+        // same 2-segment `parent.target` declaration (research 2026-07-13 §2а
+        // — e.g. `a/neg/helper.nv` and `b/neg/helper.nv`, both forced to
+        // declare `module neg.helper`). Every grouping/mangling site below (fn
+        // axis — this block — AND the D381 type axis right after it) used to
+        // key by `pf.module_name` alone: a `BTreeSet<Vec<String>>` of
+        // declarations silently collapsed the two physically distinct modules
+        // into ONE entry (not detected as colliding), and even a detected
+        // collision would still mangle/qualify both to the IDENTICAL C symbol
+        // (decl-based) — observed as a hard `CC-FAIL "redefinition of
+        // nova_fn_..."` the moment Ф.1's registry fix let both physical
+        // modules' items reach codegen (previously the resolver silently
+        // swallowed the second one, so this never got this far). `phys_key_of`
+        // / `decl_phys_groups` / `effective_modpath` give every peer file its
+        // PHYSICAL identity (canonical directory for a folder-module peer,
+        // canonical file path for a single-file module — mirrors
+        // `imports::canonical_module_key`) and append a stable, deterministic
+        // `dupN` discriminator to the declaration ONLY for peers of a
+        // declaration shared by ≥2 physically distinct modules in THIS CU.
+        // Every other declaration (the overwhelming common case) is untouched
+        // — `effective_modpath(pf) == pf.module_name` whenever the declaration
+        // maps to exactly one physical module, so mangling/qualification stays
+        // byte-identical for the whole existing corpus (0 CUs today have a
+        // decl shared by ≥2 physical modules — that used to be swallowed, not
+        // merely rare). Shared by BOTH the fn-axis block and the type-axis
+        // (D381) block below.
+        let mut phys_key_of: HashMap<u32, Vec<String>> = HashMap::new();
+        let mut decl_phys_groups: HashMap<Vec<String>, std::collections::BTreeSet<Vec<String>>> = HashMap::new();
+        for pf in &module.peer_files {
+            let phys = crate::imports::canonical_module_key(std::slice::from_ref(&pf.path));
+            phys_key_of.insert(pf.file_id, phys.clone());
+            decl_phys_groups.entry(pf.module_name.clone()).or_default().insert(phys);
+        }
+        let effective_modpath = |pf: &crate::ast::PeerFile| -> Vec<String> {
+            let groups = match decl_phys_groups.get(&pf.module_name) {
+                Some(g) if g.len() >= 2 => g,
+                _ => return pf.module_name.clone(),
+            };
+            let phys = phys_key_of.get(&pf.file_id).cloned().unwrap_or_default();
+            let idx = groups.iter().position(|p| p == &phys).unwrap_or(0);
+            let mut m = pf.module_name.clone();
+            m.push(format!("dup{}", idx));
+            m
+        };
         {
             // [батч 3, follow-up]: сигнатурно-РАЗЛИЧИМЫЕ коллизии (разная
             // арность/типы параметров — `encode_with` у hex и base64) уже
@@ -4296,7 +4342,7 @@ impl CEmitter {
                         if f.receiver.is_none() && !f.is_external {
                             name_modules.entry(f.name.clone())
                                 .or_default()
-                                .insert(pf.module_name.clone());
+                                .insert(effective_modpath(pf));
                             let sig: String = f.params.iter()
                                 .map(|p| self.type_ref_to_c(&p.ty)
                                     .unwrap_or_else(|_| "?".into()))
@@ -4342,9 +4388,13 @@ impl CEmitter {
             // shares the declaring `pf.module_name`, so the shadow lookup
             // succeeds regardless of which peer file the call site is
             // emitted from.
+            // Plan 202 Ф.1b: grouped by `effective_modpath`, NOT raw `pf.module_name`
+            // — so peers of a decl-AMBIGUOUS module (see doc above) are grouped only
+            // with their TRUE physical siblings, never with the other physically
+            // distinct module sharing the same declaration.
             let mut module_file_ids: HashMap<Vec<String>, Vec<u32>> = HashMap::new();
             for pf in &module.peer_files {
-                module_file_ids.entry(pf.module_name.clone())
+                module_file_ids.entry(effective_modpath(pf))
                     .or_default()
                     .push(pf.file_id);
             }
@@ -4352,9 +4402,10 @@ impl CEmitter {
                 for item in &pf.items_here {
                     if let Item::Fn(f) = item {
                         if f.receiver.is_none() {
+                            let modpath = effective_modpath(pf);
                             if colliding_fn_names.contains(&f.name) {
-                                let mangled = Self::mangle_free_fn(&pf.module_name, &f.name);
-                                if let Some(file_ids) = module_file_ids.get(&pf.module_name) {
+                                let mangled = Self::mangle_free_fn(&modpath, &f.name);
+                                if let Some(file_ids) = module_file_ids.get(&modpath) {
                                     for &fid in file_ids {
                                         self.file_priv_fn_c_names
                                             .entry((fid, f.name.clone()))
@@ -4368,7 +4419,7 @@ impl CEmitter {
                             } else {
                                 self.fn_module_map
                                     .entry(f.name.clone())
-                                    .or_insert_with(|| pf.module_name.clone());
+                                    .or_insert_with(|| modpath);
                             }
                         }
                     }
@@ -4396,8 +4447,12 @@ impl CEmitter {
         {
             use std::collections::BTreeSet;
             // file_id → module_name (all peer files, incl. imported modules).
+            // Plan 202 Ф.1b: `effective_modpath`, not raw `pf.module_name` — see
+            // the shared doc comment above the fn-axis block. Byte-identical
+            // for every peer whose declaration isn't shared by ≥2 physically
+            // distinct modules (the entire existing corpus).
             for pf in &module.peer_files {
-                self.emit_file_module.insert(pf.file_id, pf.module_name.clone());
+                self.emit_file_module.insert(pf.file_id, effective_modpath(pf));
             }
             // name → set of DEFINING modules (distinct module paths declaring a
             // non-generic type of that simple name).
@@ -4432,7 +4487,9 @@ impl CEmitter {
                 for pf in &module.peer_files {
                     for item in &pf.items_here {
                         if let Item::Type(td) = item {
-                            record_def(td, &mut type_def_modules, &pf.module_name);
+                            // Plan 202 Ф.1b: physical identity, not raw decl —
+                            // mirrors the fn axis (see shared doc comment above).
+                            record_def(td, &mut type_def_modules, &effective_modpath(pf));
                         }
                     }
                 }
@@ -4458,9 +4515,13 @@ impl CEmitter {
                         // Rule C (D281), referencing them WITHOUT any import. So the
                         // peer sees `name` as its own module regardless of which
                         // sibling file physically declares it.
-                        if cands.contains(&pf.module_name) {
+                        // Plan 202 Ф.1b: compare/store `effective_modpath(pf)` —
+                        // `cands` is now keyed by physical identity (see above),
+                        // not the raw (possibly decl-ambiguous) `pf.module_name`.
+                        let pf_modpath = effective_modpath(pf);
+                        if cands.contains(&pf_modpath) {
                             self.file_type_module
-                                .insert((pf.file_id, name.clone()), pf.module_name.clone());
+                                .insert((pf.file_id, name.clone()), pf_modpath);
                             continue;
                         }
                         // (2) Selectively imported from exactly one candidate module.

@@ -1,0 +1,10 @@
+// Plan 202 Ф.2 (D78 rev-4 "root peers") pos-fixture — the "mixed root"
+// half: an INDEPENDENT single-file module living directly in the SAME
+// source_root as the `client.nv`/`server.nv` root-peer group, declaring
+// the back-compat `<package>.<stem>` form instead of the root-peer form.
+// D78 rev-4 explicitly allows this coexistence (owner decision
+// 2026-07-13, "смешанный корень допустим") — declaration is the
+// membership bit, same as inside any other folder.
+module d78_root_peers.util
+
+export fn util_value() -> int => 42

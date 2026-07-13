@@ -1,0 +1,14 @@
+// Plan 202 Ф.1 (D78 rev-4) repro fixture, half A. D29 rev-3 forces this
+// file's declaration to the 2-segment `parent.target` form (`neg.helper`)
+// regardless of the fact it lives under a completely different physical
+// directory than its `b/neg/helper.nv` sibling — see research
+// 2026-07-13-module-naming-two-segment-review.md §2а. Before Plan 202 Ф.1
+// the module registry keyed by this declaration string, so the SECOND
+// same-decl module to resolve had its exports silently swallowed
+// (`[M-d78-duplicate-decl-module-swallow]`). This file + its `b/` sibling
+// are imported together by `../entry_d78_dup_decl.nv`.
+module neg.helper
+
+fn secret() -> int => 1
+
+export fn who_a() -> int => secret()

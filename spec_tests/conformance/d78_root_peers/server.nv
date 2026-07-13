@@ -1,0 +1,7 @@
+// Plan 202 Ф.2 (D78 rev-4 "root peers") pos-fixture — other half of the
+// root peer group, see `client.nv` doc comment. Same declaration (`module
+// d78_root_peers`) — peer, shares namespace with `client.nv` WITHOUT any
+// `import` between them (Rule C, same as an ordinary folder-module).
+module d78_root_peers
+
+export fn hello_server() -> str => "server"

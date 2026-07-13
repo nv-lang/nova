@@ -1,0 +1,32 @@
+// Plan 202 Ф.1 (D78 rev-4): pos-fixture for the module-registry
+// path-keying fix. Imports TWO physically distinct modules
+// (`a/neg/helper.nv`, `b/neg/helper.nv`) that D29 rev-3 forces to declare
+// the IDENTICAL 2-segment `module neg.helper` (parent = containing dir,
+// target = file basename — the declaration is a pure function of the
+// LAST TWO path segments, so two unrelated subtrees sharing a `neg/<stem>`
+// suffix collide by construction). Repro: research
+// docs/research/2026-07-13-module-naming-two-segment-review.md §2а.
+//
+// Before Plan 202 Ф.1 the resolver's `visited`/`in_progress` diamond-dedup
+// keyed by this declaration string — so the SECOND same-decl module
+// resolved (`b/neg/helper.nv`) was treated as "already visited" and its
+// exports (`who_b`) silently vanished: `import b.neg.helper.{who_b}` would
+// fail with "undefined identifier `who_b`", anchored on the module-decl
+// line, with no duplicate-declaration diagnostic at all
+// (`[M-d78-duplicate-decl-module-swallow]`).
+//
+// Own subdirectory (NOT the shared `spec_tests.conformance` folder-module
+// used by every top-level file in `spec_tests/conformance/`) — this file's
+// own imports (`a.neg.helper`, `b.neg.helper`) resolve relative to ITS OWN
+// entry directory, so it needs a private subtree exactly like
+// `partial_prelude/`. D29 `parent.target` naming: `d78_dup_decl_registry.
+// entry_d78_dup_decl`.
+module d78_dup_decl_registry.entry_d78_dup_decl
+
+import a.neg.helper.{who_a}
+import b.neg.helper.{who_b}
+
+test "D78 rev-4: duplicate 2-segment decl from different physical dirs — both exports live, values distinct" {
+    assert(who_a() == 1)
+    assert(who_b() == 2)
+}
