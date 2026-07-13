@@ -1,0 +1,19 @@
+// Plan 103.2 Ф.9 negative — non-existent instance method on AtomicI64.
+//
+// EXPECT_COMPILE_ERROR E7320
+//
+// `a.no_such_op()` on AtomicI64 → codegen emits a member access of
+// `no_such_op` on the `Nova_AtomicI64` struct → clang error:
+// "no member named 'no_such_op' in 'Nova_AtomicI64'".
+// 2026-07-02 (U.1.3b sync-merge, §6): чекер ловит раньше C — [E7320] no field or method.
+
+module neg.plan103_2_atomic_i64_no_such_method_neg
+fn bad() -> int {
+    mut a = AtomicI64.new(0)
+    a.no_such_op()
+}
+
+test "should not compile" {
+    ro _ = bad()
+    assert(true)
+}

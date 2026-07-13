@@ -1,0 +1,17 @@
+//
+// Plan 140.1 Ф.2/Ф.3 (D13/D84 amend), acceptance F2+F3+F7: an `assert` WITH a
+// custom message (D84 2-arg form `assert(cond, "msg")`), when violated, aborts
+// with `<file>:<line>: assert failed: <msg> (<expr>)` — same principle as
+// contracts. The LOC prefix is auto-added by codegen; the user supplies only
+// the message. Combination: assert, with msg.
+
+module spec_tests.conformance
+fn f6_assert_msg_violation_check(a int) -> int {
+    assert(a > 0, "a must be positive")
+    a
+}
+
+test "f6 assert msg violation" panics "assert failed: a must be positive (a > 0)" {
+    ro _ = f6_assert_msg_violation_check(-3)
+    println("UNREACHABLE")
+}

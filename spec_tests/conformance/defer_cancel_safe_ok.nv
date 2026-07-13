@@ -1,0 +1,17 @@
+// Plan 100.4.2 (D159): cleanup body suspend allowed. Cancel-safe semantics
+// (cleanup completes-then-cancel-propagates) — runtime followup
+// [M-100.4.2-cancel-shielding]; bootstrap: defer runs after throw OR
+// cancel as throw тоже triggers defer cleanup.
+
+module spec_tests.conformance
+fn cleanup_async() Time -> () {
+    Time.sleep(5)   // suspend-able cleanup
+}
+
+priv(file) fn process1() Time -> () {
+    defer { cleanup_async() }   // D159: suspend в defer — OK
+}
+
+test "defer suspend body — D159 compile pass + run" {
+    process1()
+}

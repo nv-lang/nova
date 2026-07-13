@@ -1,0 +1,58 @@
+// Plan 173 Ф.5 (#8, D188 R2): genuine RUNTIME exactly-once counter for
+// consume-scope cleanup dispatch. `emit_consume_entry_cleanup` now declares
+// a real C `_consume_ccount_N` local (alongside the structural `active`
+// flag) and checks+increments it immediately before the actual
+// `Nova_<T>_consume_cleanup` call, panicking with
+// `D188-on-exit-double-invocation` at >=2 — NOT merely inferred from the
+// `active`-flag silent-skip (§8 «НЕ сводить к структурному»).
+//
+// Observable proof: `ResourceTrace.on_resource_exit` fires once per CLEAN
+// cleanup dispatch (D185/R4b: skipped when the cleanup itself throws), so
+// `exit_calls == 1` on both the Success and the Failure path demonstrates
+// the dispatch happened exactly once. The manual double-invocation defense
+// (compile-time) is the neg-twin `neg/f5_consume_manual_alias.nv`; the
+// runtime counter is the last-line defense for escapes the checker cannot
+// see (FFI/reflection — D188 R2 acknowledged residual).
+
+module spec_tests.conformance
+type F5Res { ro id int }
+fn F5Res.new(id int) -> F5Res => { id }
+fn F5Res consume @cleanup(_o ScopeOutcome) -> () => ()
+
+type F5Err { msg str }
+
+fn f5_throws() Fail[F5Err] -> () {
+    throw F5Err { msg: "boom" }
+}
+
+test "f5 #8: consume cleanup dispatches exactly once — success path" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        consume r = F5Res.new(7) {
+            ro _ = r.id
+        }
+    }
+    assert(exit_calls == 1)
+}
+
+test "f5 #8: consume cleanup dispatches exactly once — failure path" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        with Fail = effect Fail { fail(_m) { interrupt () } } {
+            consume r = F5Res.new(8) { f5_throws() }
+        }
+    }
+    assert(exit_calls == 1)
+}

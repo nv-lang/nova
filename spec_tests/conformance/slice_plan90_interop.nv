@@ -1,0 +1,21 @@
+// Plan 96 Ф.5 — позитив: Plan 90 bulk-ops (copy_from/compare/fill)
+// работают на view (view это []T → методы доступны автоматически).
+
+module spec_tests.conformance
+test "copy_from on slice view" {
+    ro src = [10, 20, 30, 40, 50]
+    mut dst []int = [0, 0, 0]
+    dst.copy_from(src[1..4])
+    assert(dst[0] == 20)
+    assert(dst[1] == 30)
+    assert(dst[2] == 40)
+}
+
+test "len + is_empty on view" {
+    mut arr = [1, 2, 3, 4, 5]
+    ro view = arr[1..4]
+    assert(view.len() == 3)
+    assert(!view.is_empty())
+    ro empty = arr[2..2]
+    assert(empty.is_empty())
+}

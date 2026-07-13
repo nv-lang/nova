@@ -1,0 +1,13 @@
+// Plan 100.4.4 (D161): panic в defer на normal exit — propagates (или
+// abort if no enclosing handler).  Bootstrap: verify compile-pass.
+
+module spec_tests.conformance
+fn cleanup_ok2() -> () { () }
+
+priv(file) fn process6() -> () {
+    defer { cleanup_ok2() }
+}
+
+test "single defer normal-exit — compile + run" {
+    process6()
+}

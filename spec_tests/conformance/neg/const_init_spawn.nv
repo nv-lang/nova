@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_CONST_INIT_CONCURRENCY
+//
+// Plan 173.3 addendum ([M-const-init-concurrency-gate]): module-level
+// `ro`-инициализаторы исполняются в nova_consts_init() ДО спавна M:N-воркеров
+// (eager-фикс [M-lazy-const-init-race]). `spawn`/`supervised` здесь лениво
+// подняли бы воркеров ПОСРЕДИ consts_init → остальные инициализаторы стали бы
+// исполняться multi-threaded → возврат убитой гонки. Запрещено чекером.
+
+module neg.const_init_spawn
+ro racy_init = {
+    supervised {
+        spawn { ro _x = 1 }
+    }
+    1
+}

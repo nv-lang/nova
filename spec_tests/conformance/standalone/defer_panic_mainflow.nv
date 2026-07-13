@@ -1,0 +1,11 @@
+// EXPECT_RUNTIME_PANIC unhandled Fail (D158 composite): crash
+// EXPECT_STDOUT DEFER_RUNS
+//
+// nv_panic fix: defer тоже срабатывает на panic() на
+// main flow. defer срабатывает на любом exit — panic, throw, normal.
+
+module standalone.defer_panic_mainflow
+fn main() Io -> () {
+    defer { println("DEFER_RUNS") }
+    panic("crash")
+}

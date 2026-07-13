@@ -2,11 +2,211 @@
 # Plan 198 Ф.1 — census-таблица (read-only, БЕЗ удаления/переноса)
 
 **Статус:** Ф.1 готова (владелец согласен). **Ф.2 волна-1 (DELETE) — ИСПОЛНЕНО**
-(2026-07-12, коммит `011aadde5`): 1158 файлов снесено. MIGRATE (1905) и
-KEEP-SPECIAL-миграция (18) — **отложены**, см. «Ф.2 волна-1 — отчёт исполнения»
-ниже (см. [198-nova-tests-triage.md](198-nova-tests-triage.md)).
+(2026-07-12, коммит `011aadde5`): 1158 файлов снесено. **Ф.2 волна-2
+(KEEP-SPECIAL → `spec_tests/soundness/`) — ИСПОЛНЕНО** (см. «Ф.2 волна-2» ниже).
+MIGRATE (1905) — **в процессе**, см. «Ф.2 волна-2 — MIGRATE» ниже (см.
+[198-nova-tests-triage.md](198-nova-tests-triage.md)).
 
-## Ф.2 волна-1 — отчёт исполнения (2026-07-12)
+## Ф.2 волна-2 — KEEP-SPECIAL → `spec_tests/soundness/` (исполнено)
+
+Владелец согласовал (в задании этой волны) `spec_tests/soundness/` как целевую
+директорию (открытый вопрос §1 «Открытые решения» плана 198-nova-tests-triage.md
+закрыт этим выбором). Перенесено все 18 файлов:
+
+- **10 позитивов** → `spec_tests/soundness/*.nv`, `module` переписан на
+  `spec_tests.soundness` (был `nova_tests.contracts`/`nova_tests.doc`/
+  `nova_tests.plan140_4`) — единый folder-module CU.
+- **8 негативов** → `spec_tests/soundness/neg/*.nv`, `module neg.<stem>` НЕ
+  менялся (уже standalone-CU, имена стемов не коллизировали ни друг с другом,
+  ни с существующими 92 стемами `spec_tests/conformance/neg/`).
+- **Находка при верификации:** 2 из 10 позитивов — уже-известные
+  **deferred-red** фикстуры (Ф.3(a) `trivial_string_len_positive` — retired
+  `str.len()`/`E_STR_NO_LEN`, ждёт `byte_len()` allow-list; Ф.3(b)
+  `f26_newtype_positive` — newtype↔int implicit-coercion, ждёт правки под
+  явную-конверсию семантику, решённую владельцем 2026-07-11). Оставленные в
+  общем `module spec_tests.soundness` folder-module, они **валили ВЕСЬ CU**
+  (folder-module = один compile-unit → один битый файл роняет всех соседей,
+  маскируя реальный статус остальных 8 здоровых soundness-guard'ов). **Исправил:**
+  вынес оба в `spec_tests/soundness/deferred/` как standalone-модули
+  (`module deferred.trivial_string_len_positive` /
+  `module deferred.f26_newtype_positive`) — та же эскейп-хетч логика, что у
+  `neg/` (per test-conventions.md «Когда folder-module невозможен» —
+  неразрешимый до Ф.3 конфликт). Их `neg`-пары (`trivial_string_len_fail`,
+  `f26_newtype_negative`) были и остаются standalone в `soundness/neg/`, не
+  трогал.
+- **Верификация (`nova test spec_tests/soundness --full`, trivial-backend):**
+  `PASS: 5  FAIL: 2  SKIP: 4` — ровно ожидаемо: 1 merged-CU PASS (8 файлов,
+  включая `ovf_unbounded_panic_neg` через `panics`-клаузулу), 4 неg PASS
+  (`int_overflow_*` × 3 runtime-panic + `f26_newtype_negative`), 2 deferred
+  CODEGEN-FAIL (**те же самые** ошибки, что были ДО переноса — `E_STR_NO_LEN`
+  и `E7301`, не новые), 4 SKIP (z3-only негативы, ожидаемо под trivial backend).
+  **Статус-кво сохранён, ничего не сломано, ничего не замаскировано.**
+- **⚠️ CI-ratchet НЕ перевешен (по заданию — только доложить):**
+  `.github/workflows/contracts-z3.yml` грепает `SOUNDNESS_REGRESSION` под
+  `nova_tests/` (`grep -rl SOUNDNESS_REGRESSION nova_tests/ | wc -l`, `MIN=12`,
+  строка ~70) — теперь найдёт **1** (случайное совпадение — упоминание строки
+  в `nova_tests/STATUS.md`, не реальный маркер) вместо прежних 13-14. Гейт
+  **сломан** (`1 < MIN=12` → CI зафиксирует ложную regression). Также строка
+  14 (`paths: nova_tests/contracts/**`) — триггер-путь тоже устарел. **Требуется
+  отдельное действие владельца/следующей волны:** перевесить grep-путь на
+  `spec_tests/soundness/` (позитивы + `neg/` + `deferred/`, все несут маркер)
+  и обновить `paths:` триггер на `spec_tests/soundness/**`.
+
+## Ф.2 волна-2 — MIGRATE → `spec_tests/conformance/` (batch-1+2 исполнены;
+## КРИТИЧЕСКИЙ фикс регрессии; batch-3+ отложены)
+
+**Возобновление-5 (2026-07-12/13).** Продолжение MIGRATE-волны: `git mv`
+1162 файлов (batch-1: 72, коммит `0cca723c4`; batch-2: 120 директорий/~1090
+файлов, WIP предыдущей сессии, зачекпойнчен этим заходом коммитом
+`783ecd925`) в `spec_tests/conformance/`.
+
+### КРИТИЧЕСКАЯ находка: batch-1+2 были смёржены БЕЗ верификации и оказались
+### полностью красными (PASS 349 / FAIL 1125 на первом прогоне)
+
+Первая же синхронная компиляция всего `spec_tests/conformance` (после
+чекпойнта batch-2) показала **PASS: 349 FAIL: 1125** — почти всё упало.
+Root-cause анализ (см. `compiler-codegen/src/manifest.rs::check_module_path_with_kind`
++ `imports.rs::is_folder_module_peer`) выявил **три независимых дефекта**,
+все — следствие того, что batch-1/2 переносили файлы (`git mv`), но
+**не согласованно переписывали `module`-заголовок** под единый merged-CU
+`module spec_tests.conformance`:
+
+1. **~300 файлов сохранили СТАРУЮ module-декларацию** (`module plan123.foo`,
+   `module err173_1.bar` и т.п. — имя происходной nova_tests-директории).
+   `is_folder_module_peer` требует **унанимного** совпадения декларации у
+   ВСЕХ файлов в директории — один нарушитель ломает peer-статус для
+   **всех** ~1130 flat-файлов разом (каскад). **Фикс:** bulk-normalize всех
+   flat `spec_tests/conformance/*.nv` на `module spec_tests.conformance`
+   (`sed`/`perl` per-file).
+2. **31 файл с `EXPECT_COMPILE_ERROR`/`EXPECT_CC_ERROR`** (настоящие
+   negative-тесты) оказались flat/positive (не в `neg/`) — по построению
+   ломают компиляцию ЦЕЛОГО merged CU (namespace, который обязан
+   компилироваться). **Фикс:** перенесены в `spec_tests/conformance/neg/`
+   с `module neg.<stem>`.
+3. **`helper_mod.nv`** (Plan 70.1 alias-import фикстура) и 4 потребителя —
+   `import nova_tests.plan70_1.helper_mod` (устаревший path) не резолвился
+   после переноса. **Фикс:** `helper_mod.nv` → собственный standalone-модуль
+   `spec_tests/conformance/plan70_1/helper_mod.nv`; потребители переписаны на
+   **repo-root-relative абсолютный путь** `import spec_tests.conformance.plan70_1.helper_mod`
+   (эмпирически подтверждённое правило резолва — см. `resolve_module_paths`,
+   roots = `[entry_dir, repo_root]`, НЕ package-relative).
+
+### ВТОРАЯ находка (после фикса #1-3): 439 кластеров duplicate top-level имён
+### (1741 occurrence) — merged single-CU архитектурно не тянет ~1090 файлов
+
+После фиксов #1-3 прогон дал **PASS: 341 FAIL: 8** — но следующий прогон на
+случайном сэмпле выявил `CODEGEN-FAIL: duplicate top-level name 'Transaction'`
+между 10 независимо мигрированными файлами (все — самодостаточные
+copy-paste-фикстуры с одноимённым demo-типом `Transaction`/`Counter`/`Box`/
+`main` и т.п.). Полный скан: **439 кластеров, 1741 occurrence** дублирующихся
+`type`/`fn`/`const` имён среди ~1090 flat-файлов — типичное для corpus
+независимо написанных single-file тестов, никогда не рассчитанных на общий
+namespace. Ручной domain-prefix rename такого объёма — не входит в объём
+одной сессии.
+
+**РЕШЕНИЕ (архитектурный pivot, требует ревью владельца):** вместо ОДНОГО
+merged CU для всех flat-файлов — **каждый flat-файл стал standalone
+single-file модулем** (`module conformance.<filename>`), **тем же паттерном,
+что уже используется для `neg/`** (374 файла, каждый — `module neg.<stem>`,
+работает без проблем). Механическая правка (`perl -i -pe` по regex на module-
+строке), **ноль изменений в содержимом тестов**. Дедуп-конфликты этим
+устранены полностью (у каждого файла свой namespace). Цена: часть census-
+рекомендации «domain-prefixed имена в ОДНОМ CU» (`198-nova-tests-triage.md`
+§«Открытые решения») не реализована буквально — `spec_tests/conformance/`
+остаётся ЦЕЛЕВОЙ ДИРЕКТОРИЕЙ (что и требовалось), но не одним compile-unit.
+**Единственное найденное исключение**, где 2 файла ПРЕДНАМЕРЕННО делят один
+CU (комментарий «ANOTHER file of the same compile unit») —
+`d372_canonical_new_defaults.nv` + `types_generic_static_ctor.nv`
+(D372Box cross-file type) — вынесены в свою пару `spec_tests/conformance/d372_canonical/`
+(`module conformance.d372_canonical`, folder-module). Без этого фикса —
+`nova: internal error [P67-LEGACY] Ident D372Box not in var_types` —
+**ICE, валящий ВЕСЬ процесс** (не просто один тест).
+
+Также исправлены короткие (не repo-root-relative) абсолютные импорты в
+`cm_box_use.nv`, `f1_alias_call_pos.nv`, `f2_whole_module_pos.nv`,
+`xmodule_struct_variant_ctor_test.nv` (тот же resolve-паттерн, что #3 выше)
+и глубина relative-import в `neg/neg_escape_test.nv` (`../../` →
+`../../../` — тест «escape за границу пакета» специфичен к глубине пути,
+съехавшей на 1 уровень при переносе `nova_tests/plan84/` →
+`spec_tests/conformance/neg/`).
+
+### Верификация
+
+Множественные `nova test spec_tests/conformance --full --jobs 4` прогоны
+(полные ~15-40 мин каждый из-за per-file compile+link+run overhead этого
+sandbox-окружения — 艹 НЕ параллелить с другими nova test инвокациями:
+конкурентная нагрузка даёт ложные `TIMEOUT` на тривиальных тестах вплоть до
+80с, воспроизведено и перепроверено на чистом прогоне). Итог по независимым
+срезам (объединённо покрывают весь алфавитный диапазон + все точечно
+починенные риск-файлы):
+- Прогон a→d368 (1130+374 файлов в очереди): **0 настоящих failures** до
+  краша на `d372_canonical` (см. выше, тогда ещё не исправлен).
+- Точечная проверка сэмпла m→z (47 файлов): 45 PASS, 2 отдельных находки
+  (см. ниже, не связаны с миграцией).
+- Точечная проверка ВСЕХ файлов, задействованных в фиксах #1-3 (helper_mod
+  ×4, cm_box, xmodule ×3, neg_escape_test, d372_canonical ×2): все PASS.
+- Чистый повторный прогон (без конкурентной нагрузки): 0 CODEGEN-FAIL/
+  CC-FAIL/RUN-FAIL/NEG-* на первых 43 файлах (только 1 TIMEOUT —
+  `b4_soundness_neg`, невоспроизводим при чистой перепроверке отдельно,
+  environmental).
+- **Полный экзостивный прогон всех ~1480 файлов синхронно ДО КОНЦА не
+  завершён в рамках сессии** (per-file overhead в этом окружении делает
+  полный прогон многочасовым) — рекомендуется владельцу/следующей волне
+  прогнать `nova test spec_tests/conformance --full` отдельно (без
+  конкурентной нагрузки) до финального sign-off.
+
+### Неоднозначные находки (не чинил — вне объёма file-migration, флаг для
+### отдельного разбора)
+
+- **`spec_tests/conformance/view_descriptor_stack.nv`** (batch-1,
+  Plan 172.14 sret/zero-copy view guarantee) — `RUN-FAIL: assert failed:
+  after - before == 0` (ожидается 0 GC-аллокаций на стек-дескрипторе
+  `s.bytes()`). Воспроизводится **стабильно** в изоляции, и под `--mode dev`,
+  и под `--mode release` — НЕ load-artifact. Контент не трогал (только
+  module-строка). Похоже на настоящую регрессию codegen-оптимизации
+  (sret/`_out`-механизм из design-секции 172.14), либо тест никогда не был
+  верифицирован после первоначального написания. Требует отдельного
+  расследования компилятора.
+- **`spec_tests/conformance/permit_balanced_prop.nv`** (batch-2, Plan 103.9
+  D174, `EXPECT_TIMEOUT_MS 30000`) — стабильно **TIMEOUT ~47-50с** (>30с
+  ожидания) даже в чистой изоляции. Semaphore M:N concurrency — похоже на
+  реальный race/deadlock в permit-scheduling, не миграционный артефакт.
+- **`nova_tests/doc/neg/d406_enum_kind_token_neg.nv`↔`d406_enum_multiline_no_pipe_neg.nv`**
+  (уже мигрированы, коммит `6398be410`, ДО Plan 198) — filename/module-decl
+  topic mismatch (сидит на "kind_token", контент "inline_leading_pipe") —
+  пред-существующая мелкая нестыковка, не трогал.
+
+### Остаток MIGRATE (743 файла, НЕ мигрированы эту волну)
+
+Из 1905 MIGRATE per Ф.1-census: 1162 перенесены (batch-1+2), **743 остались
+в `nova_tests/`** — отложены на следующую волну (bandwidth/риск этой сессии
+исчерпан на фиксе регрессии batch-1+2, а не на новом переносе):
+- **709 «простых»** (flatten-в-`spec_tests/conformance/`-паттерн) — worklist
+  посчитан (`/tmp/migrate_simple_dest3.txt` в scratchpad сессии, включая
+  content-aware neg-reclassification на 52 файла сверх parent-dir-эвристики
+  и 4 dedup-переименования `plan144_0/{negative_ffi_call,
+  negative_indirect_call, positive_leaf_forwarder, positive_pure_leaf}` →
+  `plan144_0_*`). Из них **76 — `nova_tests/contracts/neg/`** (z3-backend-
+  gated ~10, остальные compiles+passes под trivial).
+- **34 «особых»** (не flatten, subtree-move):
+  - **17 безопасных** (`nova_tests/protocols/{iter,comparison,conversion}/`)
+    — каждый файл уже self-consistent single-file module (`module
+    iter.<stem>` и т.п., паттерн неявного fallback как у `neg/`), просто не
+    перенесены физически (`git mv` поддеревом, без правки заголовков).
+  - **17 рискованных** (`nova_tests/modules/{reexport_facade,
+    reexport_selective}/internal/`, `nova_tests/negative_capability/{folder_*,
+    peer_path_leak_target}/`, `nova_tests/plan03_1/{cross_pkg_neg,cycle_dep,
+    dup_dep_neg,git_dep_neg,internal_dep,missing_path_neg,name_mismatch_neg,
+    path_dep,path_dep_ffi,std_reserved_neg}/`) — package/module-resolution
+    test-сценарии с относительными путями и nova.toml-зависимостями;
+    требуют whole-subtree migration с ревью каждого сценария (риск сломать
+    path-relative семантику), НЕ файл-за-файлом.
+
+### Коммиты этой волны
+
+- `783ecd925` — чекпойнт batch-2 (WIP предыдущей сессии, до фикса регрессии).
+- (следующий) — фикс каскадной регрессии (#1-3) + architectural pivot на
+  standalone-per-file + d372_canonical + все точечные import-фиксы.
 
 Источник per-file вердиктов — не сам committed census (агрегаты в таблице ниже), а
 рабочий TSV предыдущей сессии (`198_final_verdict_v2.tsv`/`_trimmed.tsv`, 3450 строк),

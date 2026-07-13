@@ -1,0 +1,12 @@
+// Plan 174.6 M1 (D282 rule 2) NEG — `Option[X]` is C-ABI ONLY when `X` is a
+// raw-pointer type (NPO: None=0). `Option[int]` has no null-pointer
+// optimization → tagged layout → not C-ABI.
+//
+// EXPECT_COMPILE_ERROR E_FFI_NON_C_ABI_TYPE
+
+module neg.plan174_6_neg_option_nonptr
+extern "C" fn c_take_opt_int(x Option[int]) -> int
+
+test "rejects Option[non-ptr] param over C ABI" {
+    assert(1 == 1)
+}

@@ -1,0 +1,16 @@
+// Plan 70.1 Ф.2 POSITIVE: `import X.Y.Z` + `Z.func(args)` (whole-module
+// import без alias). Last-segment `Z` registered как imported_modules
+// entry — same rewrite path как alias case.
+
+module standalone.f2_whole_module_pos
+import spec_tests.conformance.plan70_1.helper_mod
+
+test "whole-module import: helper_mod.add_one(int)" {
+    ro r = helper_mod.add_one(41)
+    assert(r == 42)
+}
+
+test "whole-module import: helper_mod.greet(str)" {
+    ro s = helper_mod.greet("alice")
+    assert(s == "hello, alice")
+}

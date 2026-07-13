@@ -1,0 +1,21 @@
+module spec_tests.conformance
+#impl(Debug)
+type Point10 { x int, y int }
+
+#impl(Debug)
+type Named { name str, score int }
+
+test "Point10 debug" {
+    ro p = Point10 { x: 1, y: 2 }
+    assert("${p:?}" == "Point10 { x: 1, y: 2 }")
+}
+
+test "Point10 debug zero" {
+    ro p = Point10 { x: 0, y: 0 }
+    assert("${p:?}" == "Point10 { x: 0, y: 0 }")
+}
+
+test "Named debug with str field" {
+    ro n = Named { name: "hello", score: 42 }
+    assert("${n:?}" == "Named { name: \"hello\", score: 42 }")
+}

@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_EXTERNAL_TYPE_RETRACTED
+//
+// D163 (`external type X consume`) fully retracted.
+//
+// Originally Plan 100.1 rejected `external type X consume` as invalid.
+// Plan 100.5 (D163) then allowed it as an FFI opaque consume-type mechanism.
+// Now D163 is retracted: `external type X consume` gives E_EXTERNAL_TYPE_RETRACTED.
+// Migration: `type X value { priv handle int }` + consume @close().
+
+module neg.parser_err_external_consume
+
+external type OpaqueHandle consume
+
+test "external type X consume is retracted (E_EXTERNAL_TYPE_RETRACTED)" {
+    // Declaration rejected — type-check error fires before this executes.
+}

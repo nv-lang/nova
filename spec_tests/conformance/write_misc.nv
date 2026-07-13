@@ -1,0 +1,154 @@
+// Plan 85.2 Ф.4 — WriteBuffer прочие методы записи.
+//
+// write_zero(n) / write_bytes(src) / write_char(c) + Unicode + str.
+
+module spec_tests.conformance
+// ── write_zero ─────────────────────────────────────────────────────
+
+test "write_zero — n нулевых байт" {
+    mut wb = WriteBuffer.new()
+    wb.write_byte(0xFF)
+    wb.write_zero(3)
+    wb.write_byte(0xAA)
+    ro a = wb.into()
+    assert(a.len() == 5)
+    assert(a[0] == 0xFF)
+    assert(a[1] == 0)
+    assert(a[2] == 0)
+    assert(a[3] == 0)
+    assert(a[4] == 0xAA)
+}
+
+test "write_zero(0) — ничего не пишет" {
+    mut wb = WriteBuffer.new()
+    wb.write_byte(1)
+    wb.write_zero(0)
+    assert(wb.len() == 1)
+}
+
+test "write_zero — большой блок" {
+    mut wb = WriteBuffer.new()
+    wb.write_zero(100)
+    ro a = wb.into()
+    assert(a.len() == 100)
+    assert(a[0] == 0)
+    assert(a[99] == 0)
+}
+
+
+// ── write_bytes ────────────────────────────────────────────────────
+
+test "write_bytes — append массива" {
+    mut wb = WriteBuffer.new()
+    ro src []u8 = [0x10, 0x20, 0x30]
+    wb.write_bytes(src)
+    ro a = wb.into()
+    assert(a.len() == 3)
+    assert(a[0] == 0x10)
+    assert(a[1] == 0x20)
+    assert(a[2] == 0x30)
+}
+
+test "write_bytes — пустой массив" {
+    mut wb = WriteBuffer.new()
+    wb.write_byte(0xAA)
+    ro empty []u8 = []
+    wb.write_bytes(empty)
+    assert(wb.len() == 1)
+}
+
+test "write_bytes — несколько вызовов" {
+    mut wb = WriteBuffer.new()
+    ro p1 []u8 = [1, 2]
+    ro p2 []u8 = [3, 4, 5]
+    wb.write_bytes(p1)
+    wb.write_bytes(p2)
+    ro a = wb.into()
+    assert(a.len() == 5)
+    assert(a[0] == 1)
+    assert(a[4] == 5)
+}
+
+
+// ── write_char ─────────────────────────────────────────────────────
+
+test "write_char ASCII — 1 байт" {
+    mut wb = WriteBuffer.new()
+    wb.write_char('A')
+    ro a = wb.into()
+    assert(a.len() == 1)
+    assert(a[0] == 65)
+}
+
+test "write_char Cyrillic — 2 байта UTF-8" {
+    mut wb = WriteBuffer.new()
+    wb.write_char('Я')            // U+042F → D0 AF
+    ro a = wb.into()
+    assert(a.len() == 2)
+    assert(a[0] == 0xD0)
+    assert(a[1] == 0xAF)
+}
+
+test "write_char CJK — 3 байта UTF-8" {
+    mut wb = WriteBuffer.new()
+    wb.write_char('中')           // U+4E2D → E4 B8 AD
+    ro a = wb.into()
+    assert(a.len() == 3)
+    assert(a[0] == 0xE4)
+    assert(a[1] == 0xB8)
+    assert(a[2] == 0xAD)
+}
+
+test "write_char emoji — 4 байта UTF-8" {
+    mut wb = WriteBuffer.new()
+    wb.write_char('😀')           // U+1F600 → F0 9F 98 80
+    ro a = wb.into()
+    assert(a.len() == 4)
+    assert(a[0] == 0xF0)
+    assert(a[1] == 0x9F)
+    assert(a[2] == 0x98)
+    assert(a[3] == 0x80)
+}
+
+
+// ── write_str ──────────────────────────────────────────────────────
+
+test "write_str ASCII" {
+    mut wb = WriteBuffer.new()
+    wb.write_str("ABC")
+    ro a = wb.into()
+    assert(a.len() == 3)
+    assert(a[0] == 65)
+    assert(a[2] == 67)
+}
+
+test "write_str Unicode — UTF-8 байты" {
+    mut wb = WriteBuffer.new()
+    wb.write_str("Я中")          // 2 + 3 байта
+    ro a = wb.into()
+    assert(a.len() == 5)
+    assert(a[0] == 0xD0)
+    assert(a[2] == 0xE4)
+}
+
+test "write_str пустая строка" {
+    mut wb = WriteBuffer.new()
+    wb.write_str("")
+    assert(wb.len() == 0)
+}
+
+
+// ── смешанная запись char/str/byte ────────────────────────────────
+
+test "write_char + write_str + write_byte вперемешку" {
+    mut wb = WriteBuffer.new()
+    wb.write_char('A')
+    wb.write_str("BC")
+    wb.write_byte(0x44)
+    ro a = wb.into()
+    assert(a.len() == 4)
+    assert(a[0] == 65)
+    assert(a[1] == 66)
+    assert(a[2] == 67)
+    assert(a[3] == 0x44)
+}

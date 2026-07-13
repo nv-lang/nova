@@ -1,0 +1,17 @@
+//
+// Plan 140.1 Ф.2/Ф.3 (D13 amend), acceptance F2+F7: an `assert` WITHOUT a
+// message, when violated, aborts with `<file>:<line>: assert failed: <expr>`.
+// Before Plan 140.1 assert printed `assertion failed: <expr>` with NO location;
+// now `assertion`->`assert` and the LOC prefix is auto-added by codegen.
+// Combination: assert, no msg.
+
+module spec_tests.conformance
+fn check(a int) -> int {
+    assert(a > 0)
+    a
+}
+
+test "f4 assert nomsg violation" panics "assert failed: a > 0" {
+    ro _ = check(-3)
+    println("UNREACHABLE")
+}

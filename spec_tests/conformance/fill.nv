@@ -1,0 +1,22 @@
+// Plan 90 Ф.4.5 — []T.fill: заполнение значением.
+
+module spec_tests.conformance
+test "fill — заполнение значением" {
+    mut a []u8 = [1, 2, 3, 4]
+    a.fill(7)
+    ro expect []u8 = [7, 7, 7, 7]
+    assert(a.compare(expect) == 0)
+}
+
+test "fill — пустой срез безопасен" {
+    mut a []u8 = []
+    a.fill(9)
+    assert(a.len() == 0)
+}
+
+test "fill — []int" {
+    mut a []int = [0, 0, 0]
+    a.fill(42)
+    ro expect []int = [42, 42, 42]
+    assert(a == expect)
+}

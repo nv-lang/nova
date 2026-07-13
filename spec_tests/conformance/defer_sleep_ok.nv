@@ -1,0 +1,11 @@
+// Plan 100.4.2 (D159): suspend в defer body — Time.sleep валиден.
+// D90 §5 amended — suspend operations allowed для production cleanup.
+
+module spec_tests.conformance
+priv(file) fn process4() Time -> () {
+    defer { Time.sleep(10) }                    // suspend в cleanup — D159
+}
+
+test "defer + Time.sleep — D159 suspend разрешён" {
+    process4()
+}

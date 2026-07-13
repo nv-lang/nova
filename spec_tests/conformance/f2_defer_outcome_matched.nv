@@ -1,0 +1,50 @@
+// Plan 173 Ф.2.B2 (D314): материализация ScopeOutcome для defer(o). Тело
+// матчит `o` и наблюдает исход per-path: Success (normal exit), Failure (throw
+// пойман with Fail). Panic/Cancel — compile-покрыты (match exhaustive), runtime
+// не наблюдаем чисто (panic убивает процесс; cancel — supervised-сценарий).
+
+module spec_tests.conformance
+type B2Err { msg str }
+
+fn b2_throws() Fail[B2Err] -> () {
+    throw B2Err { msg: "boom" }
+}
+
+// Success-path: normal end-of-scope → o = Success.
+fn b2_run_success() -> str {
+    mut trail = ""
+    {
+        defer(o ScopeOutcome) {
+            match o {
+                Success    => { trail = trail + "S" }
+                Failure(_) => { trail = trail + "F" }
+                Panic(_)   => { trail = trail + "P" }
+            }
+        }
+    }
+    trail
+}
+
+// Failure-path: throw пойман with Fail → o = Failure (Zig-парность: payload доступен).
+fn b2_run_failure() -> str {
+    mut trail = ""
+    with Fail = effect Fail { fail(_m) { interrupt () } } {
+        defer(o ScopeOutcome) {
+            match o {
+                Success    => { trail = trail + "S" }
+                Failure(_) => { trail = trail + "F" }
+                Panic(_)   => { trail = trail + "P" }
+            }
+        }
+        b2_throws()
+    }
+    trail
+}
+
+test "f2.B2: defer(o) — Success на normal exit" {
+    assert(b2_run_success() == "S")
+}
+
+test "f2.B2: defer(o) — Failure на throw (outcome match)" {
+    assert(b2_run_failure() == "F")
+}

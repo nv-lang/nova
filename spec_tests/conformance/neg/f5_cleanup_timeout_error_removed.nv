@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR CleanupTimeoutError
+//
+// Plan 173 Ф.5 п.2 (D192-РЕТРАКТ): тип `CleanupTimeoutError` УДАЛЁН из
+// prelude вместе со всем force-timeout механизмом (заглушка
+// nv_resolve_exit_timeout как источник ПРЕРЫВАНИЯ, typed-throw splice,
+// `_nova_throw_cleanup_timeout_fn`). Cleanup всегда добегает (§3a
+// completes-by-default); превышение watchdog-порога = stderr-варн +
+// duration_ms/overrun в ResourceTrace exit-событии (D185 amend).
+// Любая ссылка на тип — ошибка компиляции (символ не существует).
+
+module neg.f5_cleanup_timeout_error_removed
+fn make_removed_error() -> () {
+    ro _e = CleanupTimeoutError { duration_ms: 100 }
+}

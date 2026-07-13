@@ -1,7 +1,0 @@
-//
-// Plan 153.1 — негатив: @cap(n) с n < len → контракт `n >= @len` паника.
-module nova_tests.plan153_1
-test "cap below len neg" panics "requires failed" {
-    mut v = Vec[int].of(1, 2, 3)
-    v.cap(1)
-}

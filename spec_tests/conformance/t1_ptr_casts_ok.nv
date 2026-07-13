@@ -1,0 +1,29 @@
+// Plan 115 Ф.1 T1.3-T1.4 — `as *()` / `as u64` / `as i64` / `as int` casts.
+
+module spec_tests.conformance
+test "u64 to *() round-trip" {
+    ro original u64 = 0x1234ABCD
+    ro p *() = original as *()
+    ro back u64 = p as u64
+    assert(back == original)
+}
+
+test "i64 to *() round-trip" {
+    ro original i64 = 0x5678
+    ro p *() = original as *()
+    ro back i64 = p as i64
+    assert(back == original)
+}
+
+test "int to *() round-trip" {
+    ro original int = 42
+    ro p *() = original as *()
+    ro back int = p as int
+    assert(back == 42)
+}
+
+test "(0 as *()) cast to u64 equals zero" {
+    ro p *() = (0 as *())
+    ro n u64 = p as u64
+    assert(n == 0)
+}

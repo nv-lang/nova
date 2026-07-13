@@ -1,0 +1,11 @@
+// EXPECT_STDOUT hello world
+//
+// D89: EXPECT_STDOUT маркер. Test-runner ожидает что exe запустится
+// (любой exit code) и stdout содержит указанный pattern (substring).
+//
+// Полезно для golden-file тестов и проверки format/print-логики.
+
+module standalone.stdout_hello
+fn main() Io -> () {
+    println("hello world from Nova")
+}

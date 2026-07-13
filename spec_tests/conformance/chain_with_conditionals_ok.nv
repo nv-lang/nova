@@ -1,0 +1,28 @@
+// Plan 123.4 T1.6: chain reads spanning if-else branches.
+
+module spec_tests.conformance
+type Wrap3_1 {
+    ro inner Wrap_Inner1
+}
+
+type Wrap_Inner1 {
+    ro flag int
+    ro data int
+}
+
+fn Wrap3_1 @select_value() -> int {
+    if @inner.flag > 0 {
+        @inner.data + @inner.data
+    } else {
+        @inner.flag * 0 + 100
+    }
+}
+
+fn Wrap3_1.new(f int, d int) -> Wrap3_1 {
+    Wrap3_1 { inner: Wrap_Inner1 { flag: f, data: d } }
+}
+
+test "chain caching across branches" {
+    assert(Wrap3_1.new(1, 5).select_value() == 10)
+    assert(Wrap3_1.new(0, 99).select_value() == 100)
+}

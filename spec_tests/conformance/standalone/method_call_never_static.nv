@@ -1,0 +1,19 @@
+// [M-125-method-call-never-detection] positive — static method `Type.method()`
+// с `-> never` тоже детектится.
+
+module standalone.method_call_never_static
+type Errors2 {}
+
+fn Errors2.boom(reason str) -> never => panic("Errors2.boom: ${reason}")
+
+priv(file) fn pick(c bool) -> int {
+    if c {
+        42
+    } else {
+        Errors2.boom("got false")
+    }
+}
+
+test "static-method-never in else picks int from then" {
+    assert(pick(true) == 42)
+}

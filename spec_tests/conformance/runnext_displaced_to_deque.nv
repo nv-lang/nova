@@ -1,0 +1,36 @@
+// Plan 83.7 (2026-05-25): runnext displacement test.
+//
+// Two consecutive same-worker wake'ов — second push displaces first
+// runnext к deque. Verify no loss — both fibers eventually run.
+//
+// Test через channel ping-pong: producer wakes consumer; multiple
+// pong cycles → runnext gets exercise displaced+restored.
+//
+// ALLOC_REQUIRES boehm
+// Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
+
+module spec_tests.conformance
+test "consecutive wakes — both fibers run, no loss" {
+    ro n = 100
+    ro ch = Channel.new(1)
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut received = AtomicInt.new(0)
+    supervised {
+        spawn {
+            mut i = 0
+            while i < n {
+                ro _v = ch.rx.recv()
+                received.fetch_add(1)
+                i = i + 1
+            }
+        }
+        spawn {
+            mut i = 0
+            while i < n {
+                ch.tx.send(i)
+                i = i + 1
+            }
+        }
+    }
+    assert(received.load() == n)
+}

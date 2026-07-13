@@ -1,0 +1,56 @@
+// bounded_rate.nv — GC stress: 100k string allocs, no OOM.
+//
+// Проверяет что runtime не падает по OOM при 100k аллокаций.
+// Под malloc (default): heap растёт неограниченно, но за 100k итераций
+// не падает (~6 MB — допустимо).
+// Под boehm: GC собирает unreachable objects в ходе аллокаций —
+// heap остаётся bounded. Тест не проверяет фактическое освобождение
+// (GC_gcollect нет в Nova API), но доказывает что процесс завершается.
+//
+// Plan 182 Ф.3: `str.len()` retired (D249 lens model, E_STR_NO_LEN) — updated
+// to `byte_len()` (only used as a liveness/DCE guard here, not asserted on).
+
+module spec_tests.conformance
+test "100k string allocs — process does not OOM" {
+    Mem.reset()
+    ro before = Mem.alloc_count()
+    mut i = 0
+    while i < 100_000 {
+        ro s = "alloc-" + str.from(i)
+        // prevent dead-code elimination: use the string
+        assert(s.byte_len() > 0)
+        i += 1
+    }
+    ro after = Mem.alloc_count()
+    // At least one alloc per iteration (concat creates new buffer).
+    assert(after > before)
+}
+
+test "100k iterations — sum correct, no OOM" {
+    // Pure integer accumulation — verifies GC switch doesn't corrupt arithmetic.
+    // Under Boehm: GC may run during loop, must not corrupt live stack.
+    mut sum = 0
+    mut i = 0
+    while i < 100_000 {
+        sum += i
+        i += 1
+    }
+    // sum = n*(n-1)/2 where n=100000 → 4999950000
+    assert(sum == 4999950000)
+}
+
+test "alloc rate: 1k strings — growth bounded" {
+    // Sanity: alloc rate does not explode after GC switch.
+    Mem.reset()
+    ro before = Mem.alloc_count()
+    mut i = 0
+    while i < 1000 {
+        ro s = str.from(i)
+        ro _ = s.byte_len()
+        i += 1
+    }
+    ro after = Mem.alloc_count()
+    ro delta = after - before
+    // At most ~10 allocs per iteration (string buffer + intermediate).
+    assert(delta < 1000 * 10)
+}

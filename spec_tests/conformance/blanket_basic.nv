@@ -1,0 +1,13 @@
+module spec_tests.conformance
+import std.collections.vec.{Vec, VecIter}
+import std.prelude.collections.{Next}
+
+fn[I Next[T]] I mut @elem0() -> Option[T] { @next() }
+
+test "blanket elem0 on VecIter" {
+    ro v = Vec[int].of(10, 20, 30)
+    mut it = v.iter()
+    ro r = it.elem0()
+    assert(r.is_some())
+    assert(r ?? 0 == 10)
+}

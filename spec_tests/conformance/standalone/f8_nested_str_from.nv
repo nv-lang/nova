@@ -1,0 +1,11 @@
+// Plan 67 Ф.2 f8 — nested str.from: println(str.from(x + y)).
+// x + y returns nova_int → str.from(nova_int) → nova_print_str dispatch.
+
+module standalone.f8_nested_str_from
+// EXPECT_STDOUT 15
+
+fn main() Io -> () {
+    ro x = 7
+    ro y = 8
+    println(str.from(x + y))
+}

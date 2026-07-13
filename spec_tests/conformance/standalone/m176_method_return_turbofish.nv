@@ -1,0 +1,37 @@
+// [M-codegen-method-return-turbofish] repro/regression test.
+//
+// A generic METHOD whose type-param appears ONLY in return position — the
+// method-call turbofish (`r.empty[str]()`, `r.into[str]()`) must carry the
+// type-arg into the monomorphization. Before the fix the turbofish was dropped:
+// the method mono'd to `nova_int` (silent `void*`/wrong-element miscompile), and
+// a `consume` method with turbofish (`r.into[str]()`) was not recognised as
+// consuming its receiver → spurious `D133-not-consumed`. Both are fixed here;
+// the real deliverable is the `resp.json_as[T]()` method form in
+// std/http/serdejson (nova_tests/http_typed/typed_json_test.nv).
+
+module standalone.m176_method_return_turbofish
+type Reg { ro n int }
+
+// T appears ONLY in return position (not in any param).
+fn Reg @empty[T]() -> Vec[T] => Vec[T].new()
+
+test "method return turbofish: T only in return monomorphizes correctly" {
+    ro r = Reg { n: 0 }
+    mut v = r.empty[str]()          // T = str via turbofish, not defaulted to int
+    v.push("hi")
+    v.push("yo")
+    assert(v.len() == 2)
+    assert(v[0] == "hi")
+}
+
+type Res consume { ro n int }
+
+fn Res.new(n int) -> Res => { n }
+
+fn Res consume @into[T]() -> Option[T] => None
+
+test "consume method with turbofish is recognized as consuming its receiver" {
+    consume r = Res.new(5)
+    ro x = r.into[str]()            // consume @into[str]() must consume `r` (no D133)
+    match x { Some(_) => assert(false), None => assert(true) }
+}

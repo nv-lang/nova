@@ -1,0 +1,14 @@
+module spec_tests.conformance
+// Plan 91.7 Part D: str.new() canonical default.
+
+test "str.new() == \"\"" {
+    ro s = str.new()
+    assert(s == "")
+    assert(s.byte_len() == 0)
+    assert(s.is_empty())
+}
+
+test "str.new() usable как builder seed" {
+    ro s = str.new() + "hello"
+    assert(s == "hello")
+}

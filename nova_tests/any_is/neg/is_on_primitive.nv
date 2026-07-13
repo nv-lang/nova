@@ -1,9 +1,0 @@
-// Plan 174.3 (D54 §6) — negative: `is` on a primitive operand is a compile
-// error. `n: int` is statically known, so `n is str` is meaningless. Use `any`
-// (v1 downcast) or a sum-value (v2 variant check) — never a bare primitive.
-//
-// EXPECT_COMPILE_ERROR E_IS_NON_ANY
-
-module neg.is_on_primitive
-
-fn bad(n int) -> bool => n is str

@@ -1,0 +1,14 @@
+module spec_tests.conformance
+type Score1 { val int }
+fn Score1 @compare(other Score1) -> int => @val - other.val
+
+test "compare dispatch: < > == via @compare" {
+    ro a = Score1 { val: 3 }
+    ro b = Score1 { val: 5 }
+    assert(a < b)
+    assert(b > a)
+    assert(a <= a)
+    assert(b >= b)
+    assert(a == a)
+    assert(a != b)
+}
