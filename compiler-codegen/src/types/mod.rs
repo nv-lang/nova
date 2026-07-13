@@ -10410,6 +10410,18 @@ impl<'a> TypeCheckCtx<'a> {
         if trailing_present {
             return;
         }
+        // [M-196.5 producer-A width fix, D310] Capture the explicit turbofish
+        // type-args ALONGSIDE `base` — `producer=A` below (the free-fn/static-
+        // method generic-return arm) used to derive `subst` PURELY from
+        // structural `unify_type(param, arg)`, silently discarding an explicit
+        // `func[T1, T2](...)` annotation. For a bare int literal arg
+        // (`d310_twice[i64](10)`) `infer_expr_type` collapses to the default
+        // `nova_int` width, so the unify-derived `T` lost the user's explicit
+        // `i64` — a real bug (mismatch vs the legacy channel), not a gap.
+        let explicit_type_args: Option<&Vec<TypeRef>> = match &func.kind {
+            ExprKind::TurboFish { type_args, .. } => Some(type_args),
+            _ => None,
+        };
         let base: &Expr = match &func.kind {
             ExprKind::TurboFish { base, .. } => base.as_ref(),
             _ => func,
@@ -10721,6 +10733,22 @@ impl<'a> TypeCheckCtx<'a> {
                             let _ = crate::const_fn_trampoline::unify_type(
                                 &p.ty, &a_ty, &callee_gs_inner, &mut subst,
                             );
+                        }
+                    }
+                    // [M-196.5 producer-A width fix, D310] An explicit, COMPLETE
+                    // turbofish (`func[T1,...](...)`, arity == callee.generics)
+                    // is ground truth — overlay it on top of the unify-derived
+                    // `subst` per-generic. This is what fixes the fixed-width
+                    // loss: `d310_twice[i64](10)` now carries `T=i64` (the
+                    // explicit annotation), not the literal-arg's collapsed
+                    // default `nova_int`. Partial/absent turbofish (inference
+                    // call, e.g. `d310_twice(a)`) leaves the unify result
+                    // untouched — unchanged legacy behavior for that path.
+                    if let Some(tas) = explicit_type_args {
+                        if tas.len() == callee.generics.len() {
+                            for (g, ta) in callee.generics.iter().zip(tas.iter()) {
+                                subst.insert(g.name.clone(), ta.clone());
+                            }
                         }
                     }
                     if !subst.is_empty() {
