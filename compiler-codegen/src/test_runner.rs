@@ -2998,16 +2998,42 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
             let has_content_marker = !stdout_pats.is_empty() || !stderr_pats.is_empty();
 
             if !has_content_marker && exit != 0 {
-                // Prefer lines that actually name the failure (FAIL/assert/panic);
-                // the in-binary harness prints many PASS lines then a summary, so
-                // a blind "last 3 lines" only shows the trailing PASS + count and
-                // hides WHICH test failed. Fall back to last-3 if none match.
+                // Prefer lines that actually name the failure (a genuine "  FAIL: …"
+                // harness line, or a runtime panic banner); the in-binary harness
+                // prints many PASS lines then a summary, so a blind "last 3 lines"
+                // only shows the trailing PASS + count and hides WHICH test failed.
+                //
+                // [M-run-fail-detail-substring-false-positive] (2026-07-13): the prior
+                // filter matched ANY line containing the substring "fail" case-
+                // insensitively (also "assert"/"panic") and took the FIRST 4 matches.
+                // Test PROSE routinely contains "Fail" as English text (the Fail
+                // EFFECT feature: `with Fail = …`, `"with Fail: recoverable USER throw
+                // …"` test descriptions) — those are ordinary "  PASS: …" lines, not
+                // failure reports. On a mid-stream crash (segfault — no "FAIL:" line
+                // is EVER printed for the killed test) this filter still matched the
+                // first few *unrelated* "Fail"-mentioning PASS lines near the top of
+                // the corpus and reported them as the "detail", which is always the
+                // SAME misleading text regardless of where the process actually died
+                // (confirmed: direct re-runs of the identical exe crashed at wildly
+                // different points in the output, but `nova test`'s summary always
+                // named the same 4 early D13/D158 lines). Fix: match the harness's
+                // OWN failure-line prefix (`FAIL:` after trim) or a genuine panic
+                // marker, not bare prose containing "fail"; take the LAST such
+                // markers (nearest the crash) — and when none exist (pure crash, no
+                // FAIL: line ever printed), fall back to the true last 3 lines, which
+                // (since every PASS/FAIL print is followed by `fflush(stdout)`) are
+                // the last test that actually completed before the process died.
+                let is_real_failure_line = |l: &&str| {
+                    let t = l.trim_start();
+                    t.starts_with("FAIL:") || t.to_lowercase().contains("panic")
+                };
                 let fail_lines: Vec<&str> = stdout.lines().chain(stderr.lines())
-                    .filter(|l| {
-                        let lc = l.to_lowercase();
-                        lc.contains("fail") || lc.contains("assert") || lc.contains("panic")
-                    })
+                    .filter(is_real_failure_line)
+                    .rev()
                     .take(4)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
                     .collect();
                 let detail = if !fail_lines.is_empty() {
                     fail_lines.join(" | ")

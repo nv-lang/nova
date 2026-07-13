@@ -13257,18 +13257,40 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 // Last resort: if name = a unit-variant of a known sum type, infer as that type.
                 // Covers bare enum variants (`D52Red`, `None`) used in expression position.
-                for (type_name, td) in &self.types {
-                    if let TypeDeclKind::Sum(variants) = &td.kind {
-                        if td.generics.is_empty() {
-                            if variants.iter().any(|v| &v.name == name) {
-                                return Some(TypeRef::Named {
-                                    path: vec![type_name.clone()],
-                                    generics: Vec::new(),
-                                    span: expr.span,
-                                });
+                // [M-hashmap-order-bare-variant-flake] (2026-07-13): `self.types` is a
+                // `HashMap<String, TypeDecl>` — Rust's default `RandomState` hasher reseeds
+                // every process, so iterating it directly picked a DIFFERENT candidate on
+                // every `nova test`/`nova build` invocation whenever ≥2 sum types in the CU
+                // declare a unit-variant of the same bare name (corpus example:
+                // `d406_enum_kind_token.nv`'s `D406Color` and `d52_type_forms.nv`'s
+                // `D52Color` both declare `Green`; a bare `ro c = Green` resolved to
+                // whichever type the hash iteration surfaced first that run). When the
+                // colliding candidates have INCOMPATIBLE payload shapes elsewhere in a
+                // large corpus, a wrong-candidate pick is a genuine type-confusion bug, not
+                // just cosmetic — this is the root cause of the `spec_tests/conformance`
+                // segfault flake (RUN-FAIL ~1-in-4..5, byte-different `.c` across separate
+                // compiles of the SAME source, confirmed via bisection + generated-C diff).
+                // Fix: collect every candidate, sort by name, always pick the same
+                // (lexicographically smallest) one — same source now ALWAYS produces the
+                // same C, so a genuinely-ambiguous corpus fails (or passes) the SAME way on
+                // every run instead of flaking.
+                let mut candidates: Vec<&String> = self.types.iter()
+                    .filter_map(|(type_name, td)| {
+                        if let TypeDeclKind::Sum(variants) = &td.kind {
+                            if td.generics.is_empty() && variants.iter().any(|v| &v.name == name) {
+                                return Some(type_name);
                             }
                         }
-                    }
+                        None
+                    })
+                    .collect();
+                candidates.sort();
+                if let Some(type_name) = candidates.into_iter().next() {
+                    return Some(TypeRef::Named {
+                        path: vec![type_name.clone()],
+                        generics: Vec::new(),
+                        span: expr.span,
+                    });
                 }
                 None
             }

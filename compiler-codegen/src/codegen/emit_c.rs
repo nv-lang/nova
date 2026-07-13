@@ -43934,7 +43934,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let mut initial_bound = param_names.clone();
         Self::collect_truly_free_idents(body, &mut initial_bound, &mut body_idents);
         // Free vars = body idents that exist in var_types and are not lambda params
-        let free_vars: Vec<(String, String)> = body_idents.iter()
+        let mut free_vars: Vec<(String, String)> = body_idents.iter()
             .filter(|n| !param_names.contains(*n) && self.var_types.contains_key(*n))
             .filter(|n| {
                 // Exclude global function names (they are registered too, but are not "captured")
@@ -43943,6 +43943,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             })
             .map(|n| (n.clone(), self.var_types.get(n).cloned().unwrap_or_else(|| "nova_int".into())))
             .collect();
+        // [M-hashmap-order-bare-variant-flake] (2026-07-13): `body_idents` is a
+        // `HashSet<String>` — iterating it directly gave `free_vars` a
+        // process-random order (Rust's default RandomState hasher reseeds per
+        // process), so the SAME closure's env-struct field order, unpack order,
+        // and populate/init statement order (all derived from this Vec below)
+        // differed across separate `nova test`/`nova build` invocations of the
+        // identical source (confirmed via generated-.c diff across repeated
+        // compiles). Sort by capture name so the same closure ALWAYS emits the
+        // same C — removes another source of the conformance-CU flake.
+        free_vars.sort_by(|a, b| a.0.cmp(&b.0));
 
         // Determine the NovaClos_XX struct type name for this closure signature
         let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c_ty);
