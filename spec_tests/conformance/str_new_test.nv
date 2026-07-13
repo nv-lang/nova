@@ -4,7 +4,7 @@ module spec_tests.conformance
 test "str.new() == \"\"" {
     ro s = str.new()
     assert(s == "")
-    assert(s.len() == 0)
+    assert(s.byte_len() == 0)
     assert(s.is_empty())
 }
 

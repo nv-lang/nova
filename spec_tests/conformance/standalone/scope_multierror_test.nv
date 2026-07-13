@@ -12,7 +12,7 @@
 //
 // Бежит ARMED на дефолтном worker-count (M:N — периметр семантики).
 
-module spec_tests.conformance
+module standalone.scope_multierror_test
 
 import std.concurrency.supervisor as sup
 

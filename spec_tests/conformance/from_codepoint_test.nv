@@ -29,5 +29,5 @@ test "supplementary codepoint" {
 
 test "zero codepoint (NUL)" {
     ro s = str.from_codepoint(0)
-    assert(s.len() == 1)  // UTF-8: \x00
+    assert(s.byte_len() == 1)  // UTF-8: \x00
 }

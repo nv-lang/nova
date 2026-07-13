@@ -1,9 +1,13 @@
+// ICE-QUARANTINE (198 REDO, 2026-07-13, ПОСЛЕ merge main 29b5a8836): user-вызов
+// tok.is_cancelled() на CancelToken -> emit_c.rs:50387 [P67-LEGACY] return type unknown
+// (checker биндит tok к чужому типу). Воспроизводится standalone. std-внутренние вызовы
+// is_cancelled живы. Регрессия пост-census компилятора; вернуть после фикса.
 // Plan 83.10.3 (2026-05-26): nested supervised with cancel token under armed M:N.
 //
 // Tests that cancel token is properly visible inside nested supervised scopes
 // when cooperative resume is used on worker thread.
 
-module spec_tests.conformance
+module ice_blocked.nested_supervised_cancel
 test "nested supervised with cancel token — cancel propagates" {
     ro tok = CancelToken.new()
     // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
