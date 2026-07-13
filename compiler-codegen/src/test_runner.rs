@@ -1450,6 +1450,19 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             if matches!(opts.mode, Mode::Release) {
                 flags.push("-fuse-ld=lld".to_string());
             }
+            // Plan 198 (defect #8a insurance, NOT the fix): a modest stack
+            // RESERVE safety margin on Windows. The real fix for the merged-CU
+            // stack overflow is bounding `nova_fn_main_impl`'s C frame via
+            // fixed-size test-chunk functions (see emit_main_wrapper /
+            // TEST_CHUNK_SIZE in emit_c.rs) — that keeps the frame constant
+            // regardless of corpus size. This flag is pure belt-and-suspenders:
+            // RESERVE only consumes address space (pages commit lazily), so a
+            // generous bump costs nothing at rest and gives headroom for
+            // legitimately deep call stacks (generics/recursion) in real test
+            // bodies, without masking a still-broken O(N) frame. Both
+            // lld-link and link.exe accept `/stack:<reserve>`.
+            #[cfg(target_os = "windows")]
+            flags.push("-Wl,/stack:0x1000000".to_string()); // 16 MiB reserve
             // Plan 44.2 P41-5 + audit round 5: stack-clash protection (CVE-2017-1000366).
             // -fstack-clash-protection inserts page-by-page probing on stack frames
             // >4KB, preventing skip past single guard page in one SP subtraction.
@@ -1777,6 +1790,10 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 || opts.ffi.map_or(false, |f| !f.libs.is_empty() || !f.lib_dirs.is_empty());
             if has_link_phase {
                 c.arg("/link");
+                // Plan 198 (defect #8a insurance, NOT the fix — see the
+                // matching clang-branch comment above): modest RESERVE-only
+                // stack safety margin.
+                c.arg("/STACK:0x1000000"); // 16 MiB reserve
                 if opts.gc_kind == GcKind::Boehm {
                     // PathBuf-аргумент — Command экранирует сам; ручные кавычки
                     // не нужны (и вредны, см. комментарий к /Fo выше).
