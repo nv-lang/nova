@@ -7923,7 +7923,7 @@ impl<'a> TypeCheckCtx<'a> {
                                 self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                             }
                         }
-                    } else if let ExprKind::TurboFish { base: tf_base, .. } = &func.kind {
+                    } else if let ExprKind::TurboFish { base: tf_base, type_args } = &func.kind {
                         // 172.1.2 (Call:<expr>): интринсики size_of[T]()/align_of[T]()
                         // — ВСЕГДА int (фундаментальный факт; чекер уже знает их
                         // спец-кейсами :2000/:2271/:16365, codegen — sizeof/_Alignof).
@@ -7935,6 +7935,57 @@ impl<'a> TypeCheckCtx<'a> {
                                         width: 64, signed: true, wide_default: true,
                                     },
                                 );
+                            } else if !scope.contains_key(tf_n) {
+                                // [M-196.5-node-substs] Producer D (Stage-B4): FREE-FN
+                                // turbofish `f[U](args)` — the explicit `type_args` ARE
+                                // the subst, directly (no inference needed, unlike
+                                // Producer A at `f1_check_call` ~10664, which infers from
+                                // ARGS via `unify_type` and so MISSES a turbofish call
+                                // whose generics don't surface in any param — e.g. a
+                                // zero-arg `d326_mono[D326Node]()`). Single-overload-by-
+                                // arity resolve mirrors `BoundCtx::check_call_bounds`'s
+                                // free-fn turbofish arm (same AST shape/resolution
+                                // strategy) — kept independent here rather than threaded
+                                // through `BoundCtx` (a separate checker pass with no
+                                // `node_substs` handle).
+                                if let Some(overloads) = self.sig.fn_decls.get(tf_n.as_str()) {
+                                    let arity_matches: Vec<&&FnDecl> = overloads.iter()
+                                        .filter(|f| f.params.len() == args.len())
+                                        .collect();
+                                    if let [callee] = arity_matches.as_slice() {
+                                        // Decl order = `callee.generics` — a FREE fn has
+                                        // no carrier, so ALL its generics are the D372
+                                        // "method-level" tier; the turbofish binds them
+                                        // 1:1 positionally (D16). Completeness gate:
+                                        // turbofish arity matches DECLARED arity, and
+                                        // every type-arg is itself concrete (gs-gated) —
+                                        // an outer-generic caller re-spelling its OWN
+                                        // unbound param (`d16_identity[T](x)` inside a
+                                        // generic body) must not materialize a fake
+                                        // binding.
+                                        if !callee.generics.is_empty()
+                                            && type_args.len() == callee.generics.len()
+                                            && type_args.iter().all(|t| !typeref_mentions_any(t, gs))
+                                        {
+                                            let ordered: Vec<(String, ResolvedType)> = callee
+                                                .generics
+                                                .iter()
+                                                .zip(type_args.iter())
+                                                .map(|(g, t)| {
+                                                    (g.name.clone(), ResolvedType::from_type_ref(t))
+                                                })
+                                                .collect();
+                                            if std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some() {
+                                                eprintln!(
+                                                    "[NODE_SUBSTS] producer=D-freefn-turbofish \
+                                                     call_id={:?} callee={} n={}",
+                                                    e.id, callee.name, ordered.len(),
+                                                );
+                                            }
+                                            self.node_substs.borrow_mut().insert(e.id, ordered);
+                                        }
+                                    }
+                                }
                             }
                         }
                     } else if let ExprKind::Ident(fname) = &func.kind {
@@ -13451,9 +13502,26 @@ impl<'a> TypeCheckCtx<'a> {
                             // the former name-keyed ctor hardcode below — a Self-returning
                             // ctor (`new`/…) resolves here to the SAME `Type[Targs]`, and
                             // ANY other static method (`of`, user ctors) now infers too.
-                            if let Some(rt) = self.resolve_generic_static_return(
+                            if let Some((rt, ordered)) = self.resolve_generic_static_return(
                                 tyname, ctor, type_args, expr.span,
                             ) {
+                                // [M-196.5-node-substs] Producer C write: this call shape
+                                // (`Member{obj:TurboFish}`) never reaches ANY legacy return-
+                                // channel producer (see the comment at f1_check_call ~10622),
+                                // so there is no independent propose-then-verify pair here —
+                                // `ordered` IS the value THIS fn computed the return from
+                                // (same `subst` map). SHADOW verification (emit_c,
+                                // `shadow_check_node_substs`) is the independent cross-check.
+                                if expr.id.is_set() && !ordered.is_empty() {
+                                    if std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some() {
+                                        eprintln!(
+                                            "[NODE_SUBSTS] producer=C-static-turbofish \
+                                             call_id={:?} type={} method={} n={}",
+                                            expr.id, tyname, ctor, ordered.len(),
+                                        );
+                                    }
+                                    self.node_substs.borrow_mut().insert(expr.id, ordered);
+                                }
                                 return Some(rt);
                             }
                             // Intrinsic fallback: Self-returning ctors whose methods live
@@ -13896,13 +13964,20 @@ impl<'a> TypeCheckCtx<'a> {
     /// receiver, no declared return, turbofish/receiver arity mismatch, or a substituted
     /// return that still mentions an UNBOUND method-level generic (`fn Box[T].wrap[U](u U)
     /// -> U` — `U` comes from the arg, not the turbofish).
+    /// Plan 196.5 Stage-B4: return also carries the ordered turbofish subst (§6.1
+    /// `node_substs` — Producer C). Declaration order = the receiver's carrier generic
+    /// names (`recv.generics`, turbofish-supplied) THEN this static method's OWN
+    /// method-level generics (`f.generics`) — mirrors `resolve_return_channel`'s
+    /// `names.chain(method_names_ordered)` convention (9777) even though THIS call
+    /// shape (`Type[T].method(args)`, ONE bracket, on the type) never supplies
+    /// method-level values — see the completeness-gate comment at the tail of this fn.
     fn resolve_generic_static_return(
         &self,
         tyname: &str,
         method: &str,
         type_args: &[TypeRef],
         span: Span,
-    ) -> Option<TypeRef> {
+    ) -> Option<(TypeRef, Vec<(String, ResolvedType)>)> {
         // Synth-aware (base ∪ auto-derive overlay), same source the dispatch channel reads.
         let overloads = self.method_overloads(tyname, method)?;
         // Single overload only — ≥2 is permissive (codegen / hardcode fallback handle it,
@@ -13927,11 +14002,17 @@ impl<'a> TypeCheckCtx<'a> {
         };
         let mut subst: HashMap<String, TypeRef> = HashMap::new();
         subst.insert("Self".to_string(), recv_ty);
+        // Plan 196.5 Stage-B4: `carrier_names` — DECLARATION-order twin of the `subst`
+        // insertions below (the `HashMap` has no stable order; `node_substs` needs
+        // positional order for mono-manging, same rationale as `resolve_return_channel`'s
+        // `names`, 9684).
+        let mut carrier_names: Vec<String> = Vec::new();
         for (i, g) in recv.generics.iter().enumerate() {
             if let TypeRef::Named { path, generics, .. } = g {
                 if path.len() == 1 && generics.is_empty() {
                     if let Some(ta) = type_args.get(i) {
                         subst.insert(path[0].clone(), ta.clone());
+                        carrier_names.push(path[0].clone());
                     }
                 }
             }
@@ -13950,7 +14031,31 @@ impl<'a> TypeCheckCtx<'a> {
         if !unbound.is_empty() && typeref_mentions_any(&out, &unbound) {
             return None;
         }
-        Some(out)
+        // [M-196.5-node-substs] Producer C (Stage-B4): the turbofish `type_args` themselves
+        // ARE the subst — read directly off `subst`, no inference (unlike Producer A's
+        // args-based `unify_type` or Producer B's constraint solver). Declaration order =
+        // `carrier_names` then `f.generics` (method-level) — but `subst` only HAS carrier
+        // bindings (this AST shape has one bracket, on the TYPE; a static method's OWN
+        // generics are never turbofish-supplied here). Same whole-map completeness gate as
+        // Stage-A (`ordered.len() == decl_order.len()`): the map only reaches full
+        // decl-order length when `f.generics` is empty — a static method that ALSO
+        // declares method-level generics leaves the channel unwritten for this call-site
+        // (genuine gap: filling it needs arg-based inference, out of THIS producer's
+        // scope — mirrors the erased/partial-caller "stays unwritten" contract).
+        let decl_order: Vec<&String> =
+            carrier_names.iter().chain(f.generics.iter().map(|g| &g.name)).collect();
+        let ordered: Vec<(String, ResolvedType)> = decl_order
+            .iter()
+            .filter_map(|n| {
+                subst.get(n.as_str()).map(|ta| ((*n).clone(), ResolvedType::from_type_ref(ta)))
+            })
+            .collect();
+        let ordered = if !decl_order.is_empty() && ordered.len() == decl_order.len() {
+            ordered
+        } else {
+            Vec::new()
+        };
+        Some((out, ordered))
     }
 
     /// Plan 172.1.2 [M-172.1-U4-recv-infer]: resolve the DECLARED return type of an
