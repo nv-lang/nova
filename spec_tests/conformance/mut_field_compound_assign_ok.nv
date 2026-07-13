@@ -2,11 +2,11 @@
 // → cache invalidated после compound boundary.
 
 module spec_tests.conformance
-type Acc3 {
+type Acc3_2 {
     mut total int
 }
 
-fn Acc3 mut @sum_with_bonus(bonus int) -> int {
+fn Acc3_2 mut @sum_with_bonus(bonus int) -> int {
     // 2 reads of @total в prefix → eligible.
     ro pre_bonus = @total + @total
     @total += bonus
@@ -14,12 +14,12 @@ fn Acc3 mut @sum_with_bonus(bonus int) -> int {
     @total + pre_bonus
 }
 
-fn Acc3.new(x int) -> Acc3 {
-    Acc3 { total: x }
+fn Acc3_2.new(x int) -> Acc3_2 {
+    Acc3_2 { total: x }
 }
 
 test "compound assign as write boundary" {
-    mut a = Acc3.new(10)
+    mut a = Acc3_2.new(10)
     ro r = a.sum_with_bonus(5)
     // pre_bonus = 10+10 = 20, total += 5 → 15, return 15+20 = 35.
     assert(r == 35)

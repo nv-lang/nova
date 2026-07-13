@@ -4,7 +4,7 @@
 // interpolation cost and does not panic.
 
 module spec_tests.conformance
-fn must_be_positive(x int) -> int
+priv(file) fn must_be_positive(x int) -> int
     requires x > 0, "got ${x}"
 => x
 

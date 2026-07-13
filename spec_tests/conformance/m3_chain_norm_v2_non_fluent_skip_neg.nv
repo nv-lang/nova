@@ -4,20 +4,20 @@
 // runtime behavior. Verifies V2 registry's positive discrimination.
 
 module spec_tests.conformance
-type Acc3 {
+type Acc3_1 {
     mut total int
 }
 
-fn Acc3.new() -> Acc3 => { total: 0 }
+fn Acc3_1.new() -> Acc3_1 => { total: 0 }
 
 // `-> int` return type — NOT fluent. V2 registry skips.
-fn Acc3 mut @add_and_read(by int) -> int {
+fn Acc3_1 mut @add_and_read(by int) -> int {
     @total = @total + by
     @total
 }
 
 test "chain-norm V2: non-fluent method not chained but still correct" {
-    mut a = Acc3.new()
+    mut a = Acc3_1.new()
     // depth-1 single call — no chain rewrite, just call.
     ro r = a.add_and_read(5)
     assert(r == 5)

@@ -4,7 +4,7 @@
 module spec_tests.conformance
 import std.collections.vec.{Vec}
 
-fn f(a []int) -> int {
+priv(file) fn f(a []int) -> int {
     mut sum = 0
     for x in a { sum = sum + x }
     sum

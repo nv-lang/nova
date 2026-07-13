@@ -14,26 +14,26 @@
 // no contract violation).
 
 module spec_tests.conformance
-type Bag[T] { priv n int }
+type Bag2[T] { priv n int }
 
-fn Bag[T].mk(n int) -> Self => { n }
+fn Bag2[T].mk(n int) -> Self => { n }
 
-fn Bag[T] @at(i int) -> int
-    requires 0 <= i && i < @n, "Bag.at OOB"
+fn Bag2[T] @at(i int) -> int
+    requires 0 <= i && i < @n, "Bag2.at OOB"
 => @n
 
-fn Bag[T] @checked() -> int
+fn Bag2[T] @checked() -> int
     ensures result >= 0
 => @n
 
 test "generic-method requires holds on in-bounds index" {
-    ro b = Bag[int].mk(3)
+    ro b = Bag2[int].mk(3)
     ro r = b.at(1)
     assert(r == 3)
 }
 
 test "generic-method ensures survives mono and holds" {
-    ro b = Bag[int].mk(3)
+    ro b = Bag2[int].mk(3)
     ro c = b.checked()
     assert(c == 3)
 }

@@ -4,26 +4,26 @@
 // across in-place mutator calls.
 
 module spec_tests.conformance
-type Acc8 {
+type Acc8_2 {
     mut total int
 }
 
-fn Acc8.new() -> Acc8 => { total: 0 }
+fn Acc8_2.new() -> Acc8_2 => { total: 0 }
 
 // `mut` receiver + only non-Self params (int) ⇒ NOT marked replaces_self.
-fn Acc8 mut @bump_by(by int) -> () {
+fn Acc8_2 mut @bump_by(by int) -> () {
     @total = @total + by
 }
 
 // `mut` receiver + no params ⇒ NOT marked replaces_self.
-fn Acc8 mut @reset_to_zero() -> () {
+fn Acc8_2 mut @reset_to_zero() -> () {
     @total = 0
 }
 
-fn Acc8 @snapshot() -> int => @total
+fn Acc8_2 @snapshot() -> int => @total
 
 test "V7.6 realloc neg: non-self-param mut method preserves semantics" {
-    mut a = Acc8.new()
+    mut a = Acc8_2.new()
     a.bump_by(10)
     assert(a.snapshot() == 10)
     a.bump_by(5)

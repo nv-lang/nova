@@ -3,7 +3,7 @@
 // нарушении requires в runtime (debug сборка).
 
 module spec_tests.conformance
-fn must_be_positive(x int) -> int
+priv(file) fn must_be_positive(x int) -> int
     requires x > 0
 => x * 2
 

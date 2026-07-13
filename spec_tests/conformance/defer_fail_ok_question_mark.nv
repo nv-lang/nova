@@ -6,7 +6,7 @@ type CommitErr3 { msg str }
 
 fn commit4() Fail[CommitErr3] -> () { () }
 
-fn process5() Fail[CommitErr3] -> () {
+priv(file) fn process5() Fail[CommitErr3] -> () {
     defer { commit4()? }                         // ? operator в defer body (D158)
 }
 

@@ -9,7 +9,7 @@ type CommitErr2 { msg str }
 fn commit3() Fail[CommitErr2] -> () { () }
 
 // fn-sig объявляет Fail[CommitErr2] — D158 разрешает Fail-call в defer.
-fn process4() Fail[CommitErr2] -> () {
+priv(file) fn process4() Fail[CommitErr2] -> () {
     defer { commit3() }                          // failable cleanup body (D158)
 }
 

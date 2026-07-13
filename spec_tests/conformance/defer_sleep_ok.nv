@@ -2,7 +2,7 @@
 // D90 §5 amended — suspend operations allowed для production cleanup.
 
 module spec_tests.conformance
-fn process4() Time -> () {
+priv(file) fn process4() Time -> () {
     defer { Time.sleep(10) }                    // suspend в cleanup — D159
 }
 

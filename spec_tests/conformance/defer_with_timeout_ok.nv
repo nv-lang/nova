@@ -5,7 +5,7 @@ fn graceful_close() Time -> () {
     Time.sleep(10)   // simulate I/O cleanup
 }
 
-fn process5() Time -> () {
+priv(file) fn process5() Time -> () {
     defer { graceful_close() }   // D159: suspend allowed
 }
 

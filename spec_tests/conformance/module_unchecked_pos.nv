@@ -5,7 +5,7 @@
 
 #unchecked
 module spec_tests.conformance
-fn must_be_positive(x int) -> int
+priv(file) fn must_be_positive(x int) -> int
     requires x > 0
 => x
 

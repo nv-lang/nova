@@ -2,29 +2,29 @@
 // conservative skip hoisting (call could mutate @F via alias).
 
 module spec_tests.conformance
-type Acc4 {
+type Acc4_1 {
     mut total int
 }
 
-fn Acc4.adjust(x int) -> int { x + 1 }
+fn Acc4_1.adjust(x int) -> int { x + 1 }
 
-fn Acc4 mut @sum_n(n int) -> int {
+fn Acc4_1 mut @sum_n(n int) -> int {
     mut i = 0
     mut s = 0
     while i < n {
         // call inside loop body → no LICM hoist для mut @total.
-        s = s + @total + @total + Acc4.adjust(i)
+        s = s + @total + @total + Acc4_1.adjust(i)
         i = i + 1
     }
     s
 }
 
-fn Acc4.new(t int) -> Acc4 {
-    Acc4 { total: t }
+fn Acc4_1.new(t int) -> Acc4_1 {
+    Acc4_1 { total: t }
 }
 
 test "call in loop blocks mut hoist — correctness" {
-    mut a = Acc4.new(10)
+    mut a = Acc4_1.new(10)
     ro r = a.sum_n(3)
     // 3 iterations × (10+10) + (1+2+3) = 60 + 6 = 66.
     assert(r == 66)
