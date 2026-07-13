@@ -427,3 +427,14 @@ export NOVA_INCLUDE_DIR=/d/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed
   Драйф-фиксы канона: str.len() → byte_len() в from_codepoint_invalid_neg/from_codepoint_test/
   str_new_test (version-skew прятал). Два новых Plan-173 теста из merge размещены по
   конвенции (rt-panic → neg/, scope_multierror → standalone/ из-за alias-import-дефекта №3).
+
+- 2026-07-13 ФИНИШ (после merge main 0b95302b4 / 196.6): плавающий AV убит фиксом
+  auto-derive/worker-sweep/override-scoping; попутно закрылись m176_method_return_turbofish
+  и pos_max_fibers_concurrent (CancelToken) — оба снова PASS. Остались 4 детерминированных
+  жертвы merged CU (Ф.4c-очередь, изолированно все PASS → вынесены в standalone/):
+  method_call_never_static + scalar_only_empty (priv(file)-fn bleed pick — чужой priv
+  `pick` побеждает при вызове), module_unchecked_pos + unchecked_invariant_pos
+  (file-scoped `#unchecked` теряется в folder-module — контракты НЕ элидируются).
+  **MERGED CU (1005 файлов / 2585 test-блоков): PASS.**
+
+- 2026-07-13 ФИНАЛЬНЫЙ TALLY (FIN-6, полный conformance+soundness, без --jobs, из лога): **PASS 501 / FAIL 4 / SKIP 16**, merged CU app_effect_basic_t8_1 = PASS (446s, 2585 блоков). 4 FAIL = t4_sqlite_e2e_ok + view_descriptor_stack (known-red) + 2 soundness/deferred (Ф.3 статус-кво). Гуляющих/environmental — ноль. Ф.2 REDO ЗАКРЫТ.
