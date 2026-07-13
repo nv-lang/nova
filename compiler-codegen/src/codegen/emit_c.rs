@@ -48369,27 +48369,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     self.icr_trace("B07_generic_type_instance_method");
                                     // A1‴: registry args carry `ResolvedType` — lower once to C-names for this block.
                                     let type_args_c: Vec<String> = type_args_rt.iter().map(|c| self.arg_c(c)).collect();
-                                    if let Some(tmpl) = self.generic_type_templates.get(&base_name) {
-                                        let mut subst: Vec<(String, Option<String>)> = tmpl.generics.iter()
-                                            .zip(type_args_c.iter())
-                                            .map(|(g, c)| (g.name.clone(), Some(c.clone())))
-                                            .collect();
-                                        // Plan 153.4: bind `Self` to the concrete mono'd
-                                        // receiver pointer type so a method return that
-                                        // EMBEDS `Self` inside a composite — `(Self, Self)`
-                                        // (`@split_at`), `Option[(T, Self)]` (`@split_first`)
-                                        // — resolves its inner `Self` elements. The
-                                        // top-level-`Self` case is handled by the `.or_else`
-                                        // below, but that never recursed into tuple/Option
-                                        // elements, so `let (l, r) = v.split_at(i)` declared
-                                        // the local with the GENERIC `Nova_Vec*` tuple
-                                        // (vs the mono `Nova_Vec_int*` the callee returns)
-                                        // → C "incompatible tuple type" init error.
-                                        let self_mono = format!(
-                                            "{}*",
-                                            Self::compute_generic_type_c_name(&base_name, &type_args_c),
-                                        );
-                                        subst.push(("Self".to_string(), Some(self_mono)));
+                                    if self.generic_type_templates.contains_key(&base_name) {
                                         // [M-138.2-overload-chain-return-infer] overload-aware:
                                         // pick the same-name candidate matching the call arity
                                         // (the 1-arg `@cap(n)` setter -> `@`/Self -> mono receiver,
@@ -48407,112 +48387,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 }
                                             })
                                         {
-                                            // Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]:
-                                            // for a NESTED carrier receiver (`Vec[Vec[T]] @flatten`)
-                                            // the method's receiver typevar `T` binds to the
-                                            // element-OF-element (innermost), NOT the immediate
-                                            // element the shallow `tmpl.generics` binding above
-                                            // produced. Re-bind structurally so the call-site
-                                            // return-type inference (`ro flat = nested.flatten()`)
-                                            // types `flat` as `Vec[int]`, not `Vec[Vec[int]]`.
-                                            // Mirrors emit_call path 5b. Flat receivers are
-                                            // unaffected (`receiver_ty_is_nested` is false).
-                                            if let Some(recv_ty) = method_decl.receiver.as_ref()
-                                                .and_then(|r| r.receiver_ty.as_ref())
-                                            {
-                                                if Self::receiver_ty_is_nested(recv_ty) {
-                                                    let recv_concrete_c = format!("Nova_{}*", rt);
-                                                    let mut tvars: Vec<String> = Vec::new();
-                                                    Self::collect_receiver_typevars(recv_ty, &mut tvars);
-                                                    for g in &method_decl.generics {
-                                                        if !tvars.contains(&g.name) {
-                                                            tvars.push(g.name.clone());
-                                                        }
-                                                    }
-                                                    let mut pend: Vec<(String, Option<String>)> = tvars
-                                                        .iter().map(|n| (n.clone(), None)).collect();
-                                                    self.infer_type_param_binding(
-                                                        recv_ty, &recv_concrete_c, &mut pend);
-                                                    for (n, c) in pend {
-                                                        if let Some(c) = c {
-                                                            if let Some(slot) = subst.iter_mut()
-                                                                .find(|(sn, _)| sn == &n)
-                                                            {
-                                                                slot.1 = Some(c);
-                                                            } else {
-                                                                subst.push((n, Some(c)));
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            // [M-153.2-tuple-elem-adapter]: bind receiver type-vars
-                                            // used in the RETURN TYPE under their method-local
-                                            // names. Example: `fn BoxIter[A] @zip[B] -> BoxIter[(A,B)]`
-                                            // — subst from tmpl.generics uses template name "T";
-                                            // the method aliases it as "A" in `receiver_ty = BoxIter[A]`.
-                                            // Without this, `A` stays unbound in `value_aware_subst_
-                                            // to_ref(BoxIter[(A,B)], {T:int, B:int})` → returns None.
-                                            // Bind by matching receiver_ty structurally vs concrete c-type.
-                                            if let Some(recv_ty_ref) = method_decl.receiver.as_ref()
-                                                .and_then(|r| r.receiver_ty.as_ref())
-                                            {
-                                                let receiver_c = format!("Nova_{}*", rt);
-                                                let mut recv_vars: Vec<String> = Vec::new();
-                                                Self::collect_receiver_typevars(recv_ty_ref, &mut recv_vars);
-                                                let mut recv_pending: Vec<(String, Option<String>)> =
-                                                    recv_vars.into_iter().map(|n| (n, None)).collect();
-                                                self.infer_type_param_binding(
-                                                    recv_ty_ref, &receiver_c, &mut recv_pending);
-                                                for (n, c) in recv_pending {
-                                                    if let Some(c) = c {
-                                                        if !subst.iter().any(|(sn, sv)|
-                                                            sn == &n && sv.is_some()) {
-                                                            if let Some(slot) = subst.iter_mut()
-                                                                .find(|(sn, _)| sn == &n) {
-                                                                slot.1 = Some(c);
-                                                            } else {
-                                                                subst.push((n, Some(c)));
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            // [M-153.2-tuple-elem-adapter]: bind method-level
-                                            // type params (e.g. `[B]` in `zip[B]`) from
-                                            // the call arguments. Without this, subst only
-                                            // has receiver-level params (A from BoxIter[A])
-                                            // and the return type `BoxIter[(A,B)]` cannot be
-                                            // fully resolved — B stays unbound, `value_aware_
-                                            // subst_to_ref` returns None, and the call falls
-                                            // through to the `nova_int` default which then
-                                            // dispatches `count()` on the wrong type.
-                                            for method_gen in &method_decl.generics {
-                                                if subst.iter().any(|(n, _)| n == &method_gen.name) {
-                                                    continue; // already bound from receiver
-                                                }
-                                                // Infer from the first param whose declared type
-                                                // mentions this type var. `zip[B](other BoxIter[B])`:
-                                                // walk params, try infer_type_param_binding(param_ty, arg_c, ..).
-                                                let mut pending: Vec<(String, Option<String>)> =
-                                                    vec![(method_gen.name.clone(), None)];
-                                                'arg_search: for (param, call_arg) in
-                                                    method_decl.params.iter().zip(args.iter())
-                                                {
-                                                    let arg_c = self.infer_expr_c_type(call_arg.expr());
-                                                    self.infer_type_param_binding(
-                                                        &param.ty, &arg_c, &mut pending);
-                                                    if pending[0].1.is_some() {
-                                                        break 'arg_search;
-                                                    }
-                                                }
-                                                if let Some(bound_c) = pending.into_iter().next()
-                                                    .and_then(|(_, c)| c)
-                                                {
-                                                    subst.push((method_gen.name.clone(), Some(bound_c)));
-                                                }
-                                            }
+                                            // Plan 196.5 §W1-i.B (flip+retire, B07/B07r): единый
+                                            // POST-mono резолвер `resolve_instance_call_subst`
+                                            // (carrier bind + registry-enrichment + Self + method-
+                                            // level bind, `19912`+) заменяет ручную реконструкцию
+                                            // subst (nested-receiver structural bind / tuple-elem-
+                                            // adapter receiver bind / method-level generics bind) —
+                                            // SHADOW (W1-i.A) доказал 0/0 mismatch на conformance
+                                            // (96/96) + std/collections (146/146).
+                                            // [M-196.5-w1i-flip]
                                             if let Some(ret_ty) = &method_decl.return_type {
+                                                let subst = self
+                                                    .resolve_instance_call_subst(expr.id, method_decl, &rt, args)
+                                                    .unwrap_or_default();
                                                 // Plan 153.2 Ф.2 (STAGE 2): value-AWARE so a
                                                 // chained adapter return (nested generic-over-
                                                 // source instance) gets the `NovaValue_<short>`
@@ -48559,32 +48446,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         // local var type matches the by-value
                                                         // method ABI.
                                                         let final_c = self.value_aware_generic_c_type(&c_ty);
-                                                        // Plan 196.5 §W1-i.A SHADOW (extract, no
-                                                        // flip): B07/B07r share this single return
-                                                        // point — one helper-subst reconstruction,
-                                                        // two bucket tallies (mirrors legacy's two
-                                                        // icr_trace ids for the same site).
-                                                        #[cfg(debug_assertions)]
-                                                        {
-                                                            let helper_c = self
-                                                                .resolve_instance_call_subst(expr.id, method_decl, &rt, args)
-                                                                .and_then(|s| {
-                                                                    self.value_aware_subst_to_ref(ret_ty, &s).or_else(|| {
-                                                                        if let crate::ast::TypeRef::Named { path, generics, .. } = ret_ty {
-                                                                            if generics.is_empty()
-                                                                                && path.last().map(|s| s.as_str()) == Some("Self")
-                                                                            {
-                                                                                let mangled = Self::compute_generic_type_c_name(&base_name, &type_args_c);
-                                                                                return Some(self.value_aware_generic_c_type(&format!("{}*", mangled)));
-                                                                            }
-                                                                        }
-                                                                        None
-                                                                    })
-                                                                })
-                                                                .map(|c| self.value_aware_generic_c_type(&c));
-                                                            self.w1_shadow_probe("B07", expr.id.0 as u64, helper_c.as_deref(), &final_c);
-                                                            self.w1_shadow_probe("B07r", expr.id.0 as u64, helper_c.as_deref(), &final_c);
-                                                        }
                                                         return final_c;
                                                     }
                                                 }
