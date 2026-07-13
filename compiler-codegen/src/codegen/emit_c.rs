@@ -2959,8 +2959,10 @@ impl CEmitter {
         match full_name.as_str() {
             // NovaOpt_/NovaRes_/NovaArray_/void*/nova_int/NovaVtable_/NovaCancelToken*/
             // Nova_StringBuilder* — none is a bare `Nova_<param>*` stub.
+            // D419 (Plan 152.7.2): `Fmt` mirrors `Write` — hardcoded erasure to a
+            // concrete C type (`Nova_FmtCtx*`), not a generic protocol stub.
             "Option" | "Result" | "Vec" | "any" | "never" | "Effect" | "CancelToken"
-            | "Write" | "usize" | "isize" | "ptr" => return false,
+            | "Write" | "Fmt" | "usize" | "isize" | "ptr" => return false,
             // `Self` lowers via the (string) receiver context.
             "Self" => return self.debt_lowered_is_stub(&as_rt(), full),
             _ => {}
@@ -3924,6 +3926,13 @@ impl CEmitter {
             },
             "CancelToken" => "NovaCancelToken*".to_string(),
             "Write" => "Nova_StringBuilder*".to_string(),
+            // D419 (Plan 152.7.2): `Fmt` protocol — same V1 erasure strategy as
+            // `Write` above (concrete C type, vtable upgrade deferred). The
+            // ONLY production implementor is `FmtCtx` (std/prelude/protocols.nv,
+            // a real Nova record — compiles to this same "Nova_FmtCtx*" via the
+            // ordinary record path), constructed by the interpolation codegen
+            // at each `${x:SPEC}` call site that dispatches to `@display_fmt`.
+            "Fmt" => "Nova_FmtCtx*".to_string(),
             // D239 `[]T ≡ Vec[T]` (D315 §0/§3): the NOMINAL `Vec[T]` and the slice sugar
             // `[]T` (both now `Named{Vec}`) lower through the SINGLE canonical Vec→C source
             // `resolved_array_to_c` — closure-array (`NovaArray_void_p*`), unresolved-stub
@@ -8326,7 +8335,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // `type_ref_to_c` to map to `Nova_StringBuilder*` (a concrete C
             // type), so it must NOT be treated as an erased protocol variable
             // — doing so would cause E7201 on every `w.write(s)` call.
-            if name == "Write" { return None; }
+            // D419 (Plan 152.7.2): `Fmt` mirrors the same erasure (→ `Nova_FmtCtx*`)
+            // — same exclusion, same reason (`f.write(s)`/`f.alternate()`/
+            // `f.precision()` calls inside a user `@display_fmt` body).
+            if name == "Write" || name == "Fmt" { return None; }
             if self.protocol_types.contains(name) {
                 return Some(name.clone());
             }
@@ -39675,41 +39687,83 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
         // ---- string / char / bool / user-type: render a core str, then pad ----
         // Determine the core (unpadded) string per the kind (Display vs Debug).
+        // `precision_consumed`: D419 — when a type's `@display_fmt` fires, IT
+        // received `.precision()` and is responsible for its own meaning (or
+        // deliberate no-op); the generic `nova_fmt_str_precision` (codepoint
+        // truncation) below must NOT re-apply on top of that output. Every
+        // other arm keeps the pre-D419 behavior (`false` — precision still
+        // truncates the rendered string). Width/fill/align padding is
+        // UNCHANGED either way (D419 §в — a type never controls its own pad).
         let is_debug = matches!(spec.kind, Kind::Debug);
-        let core: String = if is_char {
+        let (core, precision_consumed): (String, bool) = if is_char {
             if is_debug {
-                format!("nova_char_to_debug_str({})", v)
+                (format!("nova_char_to_debug_str({})", v), false)
             } else {
-                format!("nova_char_to_str({})", v)
+                (format!("nova_char_to_str({})", v), false)
             }
         } else if is_str {
             if is_debug {
-                format!("nova_str_to_debug_str({})", v)
+                (format!("nova_str_to_debug_str({})", v), false)
             } else {
-                v.to_string()
+                (v.to_string(), false)
             }
         } else if is_bool {
             if is_debug {
-                format!("nova_bool_to_debug_str({})", v)
+                (format!("nova_bool_to_debug_str({})", v), false)
             } else {
-                format!("nova_bool_to_str({})", v)
+                (format!("nova_bool_to_str({})", v), false)
             }
         } else if is_int {
             // int with `?` debug kind + non-radix.
             if is_debug {
-                format!("nova_int_to_debug_str((nova_int)({}))", v)
+                (format!("nova_int_to_debug_str((nova_int)({}))", v), false)
             } else {
-                format!("nova_int_to_str((nova_int)({}))", v)
+                (format!("nova_int_to_str((nova_int)({}))", v), false)
             }
         } else if is_float {
             // float with `?` debug kind.
-            format!("nova_f64_to_debug_str((double)({}))", v)
+            (format!("nova_f64_to_debug_str((double)({}))", v), false)
         } else {
+            // D419 (Plan 152.7.2): a type that defines `@display_fmt(mut f Fmt)`
+            // gets first refusal on a RICH (non-`:?`) spec — it receives the
+            // parsed alternate/precision axes directly via a constructed
+            // `FmtCtx`, instead of the generic Display auto-delegation +
+            // external post-processing below. `:?` (Debug) is untouched —
+            // `@display_fmt` mirrors `Display` only; no signature/behavior
+            // change to `@display`/`@debug` (D419 §б — D374 not re-broken a
+            // second time). Falls through to the byte-identical original path
+            // when the type has no `@display_fmt`.
+            let arg_type = self.debt_strip_nova_trim_start_no_ws(arg_ty);
+            let has_display_fmt = !is_debug
+                && self.all_methods.contains(&(arg_type.clone(), "display_fmt".to_string()));
+            if has_display_fmt {
+                let safe = Self::sanitize_c_for_ident(&arg_type);
+                let fn_name = format!("Nova_{}_method_display_fmt", safe);
+                // Same hand-synth `StringBuilder.new(cap: 16)` call as below —
+                // this builder becomes the `FmtCtx.sink` (a `Write`).
+                let fmt_sb = self.fresh_tmp_named("fmt_sb");
+                self.line(&format!(
+                    "Nova_StringBuilder* {} = Nova_StringBuilder_static_new(16);",
+                    fmt_sb
+                ));
+                let alt_c = if spec.alternate { "true" } else { "false" };
+                let (has_prec_c, prec_c): (&str, i64) = match spec.precision {
+                    Some(p) => ("true", p as i64),
+                    None => ("false", 0),
+                };
+                let fmt_ctx = self.fresh_tmp_named("fmt_ctx");
+                self.line(&format!(
+                    "Nova_FmtCtx* {} = Nova_FmtCtx_static_new({}, {}, {}, {});",
+                    fmt_ctx, fmt_sb, alt_c, has_prec_c, prec_c
+                ));
+                self.line(&format!("{}({}, {});", fn_name, v, fmt_ctx));
+                let _ = sb; // interp builder unused on this path.
+                (format!("Nova_StringBuilder_consume_into_str({})", fmt_sb), true)
+            } else {
             // User type: render via @display / @debug into a fresh builder, then
             // steal the string. This reuses the exact same dispatch the bare
             // ${x}/${x:?} path uses, so user Display/Debug impls are honored.
             let method_name = if is_debug { "debug" } else { "display" };
-            let arg_type = self.debt_strip_nova_trim_start_no_ws(arg_ty);
             let has_explicit =
                 self.all_methods.contains(&(arg_type.clone(), method_name.to_string()));
             let method_c_fn: Option<String> = if has_explicit {
@@ -39742,12 +39796,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ));
             self.line(&format!("{}({}, {});", fn_name, v, fmt_sb));
             let _ = sb; // interp builder unused on this path.
-            format!("Nova_StringBuilder_consume_into_str({})", fmt_sb)
+            (format!("Nova_StringBuilder_consume_into_str({})", fmt_sb), false)
+            }
         };
 
         // Apply string-precision truncation (codepoints), then pad/align.
         // Strings default to LEFT alignment (Rust); precision truncates.
-        let core_after_prec = if let Some(p) = spec.precision {
+        // D419: skip when `@display_fmt` already consumed `.precision()` —
+        // see `precision_consumed` doc comment above.
+        let core_after_prec = if precision_consumed {
+            core
+        } else if let Some(p) = spec.precision {
             format!("nova_fmt_str_precision({}, {})", core, p as i64)
         } else {
             core
