@@ -49588,19 +49588,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // is unrelated emit-side code, not this legacy inference dispatch)
                         // is checker-materialised into resolved_types ahead of this legacy.
                         // Exercised pervasively yet NO-HIT ⟹ structurally unreachable (§5).
-                        // Plan 48: если obj_ty — монотип вида "Nova_X____A__B*",
-                        // вычислить return-type метода через generic_type_methods["X"]
-                        // с подстановкой type-аргументов. Это исправляет случаи вроде
-                        // `let s = p.swap()` где p: Pair[int,str] — без этого
-                        // fn_ret_swap = "void*" (erased) и поля s потом неверно typed.
-                        //
-                        // Plan 48 method-param mono (Plan 63 followup): передаём args
-                        // чтобы resolve method-level type params (`@map[U]` → U из
-                        // closure return type).
-                        if let Some(ret) = self.infer_mono_method_ret_with_args(&obj_ty, method, args) {
-                            self.icr_trace("B11c_infer_mono_method_ret");
-                            return ret;
-                        }
+                        // [196.5 Stage-D] B11c_infer_mono_method_ret call-site REMOVED
+                        // (helper `infer_mono_method_ret_with_args` itself STAYS — SHARED,
+                        // still called from the emit-path, 196.2-progress.md's "13 SHARED"
+                        // list). This call re-derived a generic-type-instance method's
+                        // return via `generic_type_methods[X]` + hand-rolled subst — the
+                        // SAME receiver-instance space B07/B07r (earlier in this same
+                        // cascade, `generic_type_instance_info.get("Nova_{rt}")`) already
+                        // cover via the POST-mono `resolve_instance_call_subst` resolver
+                        // (196.5 §W1-i.B, SHADOW-verified 0/0 mismatch on conformance 96/96
+                        // + std/collections 146/146 per that wave's own notes). Any call
+                        // reaching this point with a generic-type-instance receiver has
+                        // already fallen through B07/B07r without a match — the SAME
+                        // lookup here structurally cannot succeed either. NO-HIT across
+                        // conformance + std/src/collections + std/src/data + std/src/net
+                        // (docs/plans/196.5-stage-d-notes.md) ⟹ structurally unreachable (§5).
                         // Plan 118 Ф.4 V1: typed pointer (*T).read() -> T,
                         // (*mut T).write(v T) -> nova_unit. Match obj_ty pattern
                         // `T*` или `const T*`, NOT Nova_*/NovaArray_*/etc.
