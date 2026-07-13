@@ -1,0 +1,33 @@
+// env_overrides_toml.nv — Plan 149 D233 AC4: env overrides the toml-baked default.
+//
+// The package nova.toml bakes -DNOVA_FIBER_STACK_DEFAULT=2097152 (2MB). This
+// fixture sets NOVA_FIBER_STACK=8MB at runtime. Precedence is
+// env > toml(-D) > builtin, so the arena uses the 8MB env value, NOT the 2MB
+// baked default. The deeper recursion here (3000 levels) comfortably fits 8MB
+// and exercises the runtime override path. The env value is read fresh in
+// nova_fiber_arena_init, overriding the compile-time #define.
+//
+// NOVA_MAXPROCS=1 for a single deterministic arena.
+//
+// ENV NOVA_FIBER_STACK=8MB
+// ENV NOVA_MAXPROCS=1
+
+module spec_tests.conformance
+
+priv(file) fn rec_sum(n int) -> int {
+    if n <= 0 {
+        0
+    } else {
+        n + rec_sum(n - 1)
+    }
+}
+
+test "env NOVA_FIBER_STACK=8MB overrides toml-baked 2MB: deep recursion ok" {
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut r = AtomicInt.new(0)
+    supervised {
+        spawn { r.store(rec_sum(3000)) }
+    }
+    // 3000 * 3001 / 2 = 4501500
+    assert(r.load() == 4501500)
+}

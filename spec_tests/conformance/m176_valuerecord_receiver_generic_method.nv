@@ -1,0 +1,29 @@
+// [M-valuerecord-receiver-generic-method] repro/regression test.
+//
+// A method-generic method (`fn VDec mut @take[T](x T) -> Result[T, DeErr]`) on a
+// VALUE-record receiver, where the return embeds a value-record error. Before the
+// codegen fix the call-site return-type inference could not lower the
+// `Result[T, <value-record>]` return (the `__mono_method__` sentinel path used the
+// value-BLIND static `apply_type_subst_to_ref`, which skips Result/Option) → the
+// match scrutinee typed `void*` (`_nv_scr->tag` / `payload.Ok` on a void base) and
+// the Ok-arm binding typed `Nova_T*` (unsubstituted). Fix: the sentinel inference
+// path now resolves the return via `resolve_result_option_ret` (builds + registers
+// `NovaRes_<ok>_NovaValue_<E>*`). Receiver ABI (`&d` for the mut value-record) was
+// already correct.
+
+module spec_tests.conformance
+type DeErr value { ro code int }
+
+type VDec value { mut pos int }
+
+fn VDec mut @take[T](x T) -> Result[T, DeErr] {
+    @pos = @pos + 1
+    Ok(x)
+}
+
+test "value-record receiver generic method" {
+    mut d = VDec { pos: 0 }
+    match d.take(42) { Ok(v) => assert(v == 42), Err(_) => assert(false) }
+    match d.take(true) { Ok(v) => assert(v == true), Err(_) => assert(false) }
+    assert(d.pos == 2)
+}

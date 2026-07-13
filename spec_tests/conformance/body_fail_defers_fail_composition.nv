@@ -1,0 +1,29 @@
+// Plan 100.4.4 (D161): body throws + multi-defer все могут Fail — D158
+// + D161 composition. Compile pass + runtime catches primary через outer
+// handler (composite chain handled runtime-side).
+
+module spec_tests.conformance
+type WorkErr1 { msg str }
+type Err11 { msg str }
+type Err21 { msg str }
+
+fn defer_a1() Fail[Err11] -> () { () }
+fn defer_b1() Fail[Err21] -> () { () }
+
+fn do_work_fails() Fail[WorkErr1] -> () {
+    throw WorkErr1 { msg: "operation failed" }
+}
+
+priv(file) fn process2() Fail -> () {
+    defer { defer_a1() }
+    defer { defer_b1() }
+    // Plan 173 Ф.1 (#3 / 174.2): `?` return-only. `do_work_fails()` возвращает
+    // unit (не Result) + throw'ит через Fail-эффект — `?` тут был no-op; дропнут.
+    do_work_fails()
+}
+
+test "body fail + multi-defer Fail bodies — D161 composition" {
+    with Fail = effect Fail { fail(_msg) { interrupt () } } {
+        process2()
+    }
+}

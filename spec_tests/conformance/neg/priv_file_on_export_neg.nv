@@ -1,0 +1,9 @@
+// EXPECT_COMPILE_ERROR E_PRIV_QUALIFIER
+//
+// Plan 170 (D307): negative — `export priv(file) fn` is rejected. `priv(file)`
+// (file-private) and `export` (public) are mutually exclusive: a symbol cannot
+// be both narrowest and widest visibility => E_PRIV_QUALIFIER.
+
+module neg.priv_file_on_export_neg
+
+export priv(file) fn bad() -> int => 0

@@ -1,0 +1,22 @@
+// [M-125-method-call-never-detection] negative (runtime-panic) — method
+// с `-> never` действительно diverge'ит в runtime.
+//
+
+module spec_tests.conformance
+type Logger { tag str }
+
+fn Logger @fail(msg str) -> never => panic("[${@tag}] Logger fatal: ${msg}")
+
+fn force(log Logger) -> int {
+    if true {
+        log.fail("forced")
+    } else {
+        0
+    }
+}
+
+test "method-never fires runtime panic" panics "Logger fatal" {
+    ro logger = Logger { tag: "test" }
+    ro _ = force(logger)
+    assert(false, "should not reach")
+}

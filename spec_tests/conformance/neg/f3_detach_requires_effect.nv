@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR E_DETACH_REQUIRES_EFFECT
+//
+// Plan 173 Ф.3 п.2 (D50 / D414 §2): `detach { }` — fire-and-forget задача,
+// переживающая caller'а — это наблюдаемый capability и ТРЕБУЕТ эффект `Detach`
+// в сигнатуре enclosing-`fn`. Раньше (bootstrap-gap, 06-concurrency.md:938):
+// «эффект Detach не объявлен, compile-time проверка не выполняется». Теперь
+// checker (CapabilityCtx) отвергает `detach` в обычной fn без `Detach` в
+// effect-row чистым `[E_DETACH_REQUIRES_EFFECT]`.
+//
+// Здесь `bg_write` использует `detach { }`, но сигнатура — `-> ()` без `Detach`.
+// Исправление: `fn bg_write() Detach -> ()` (см. pos-twin f3_detach_effect_ok).
+
+module neg.f3_detach_requires_effect
+fn audit(x int) -> () {
+    // side-effect stub
+}
+
+fn bg_write() -> () {
+    detach {
+        audit(42)
+    }
+}

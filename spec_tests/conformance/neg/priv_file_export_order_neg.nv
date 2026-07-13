@@ -1,0 +1,8 @@
+// EXPECT_COMPILE_ERROR E_PRIV_QUALIFIER
+//
+// Plan 170 (D307): negative — `priv(file) export fn` (other order) is also
+// rejected as mutually exclusive => E_PRIV_QUALIFIER.
+
+module neg.priv_file_export_order_neg
+
+priv(file) export fn bad() -> int => 0

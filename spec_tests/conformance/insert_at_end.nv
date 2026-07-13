@@ -1,0 +1,31 @@
+// Plan 90.1 — позитив: insert(len, src) ≡ extend_from(src).
+// D141 amend: i == dst.len is valid (append-at-end case).
+
+module spec_tests.conformance
+test "insert at end (i == len) — equivalent to extend_from" {
+    mut dst []int = [1, 2, 3]
+    ro src []int = [4, 5, 6]
+    dst.splice(3, src)
+    assert(dst.len() == 6)
+    assert(dst[0] == 1)
+    assert(dst[3] == 4)
+    assert(dst[5] == 6)
+}
+
+test "insert at end of empty array" {
+    mut dst []int = []
+    ro src []int = [10, 20]
+    dst.splice(0, src)
+    assert(dst.len() == 2)
+    assert(dst[0] == 10)
+    assert(dst[1] == 20)
+}
+
+test "insert at end triggers growth" {
+    mut dst []int = [1, 2, 3, 4, 5, 6, 7, 8]  // fills default cap=8
+    ro src []int = [9, 10]
+    dst.splice(8, src)
+    assert(dst.len() == 10)
+    assert(dst[8] == 9)
+    assert(dst[9] == 10)
+}

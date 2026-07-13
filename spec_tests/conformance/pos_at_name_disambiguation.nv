@@ -1,0 +1,38 @@
+// Plan 132 Ф.3.3 + Plan 132.1 (POS): @name vs @name() disambiguation in method bodies.
+// @name (no parens) inside a method body = field access.
+// @name() (with parens) inside a method body = method call on self.
+// Both forms are unambiguous and work correctly even when field and method share a name.
+// Plan 132.1 fix: @name() self-call now generates correct Nova_T_method_name(nova_self, ...).
+
+module spec_tests.conformance
+type Counter6_2 { priv mut n int, priv mut len int }
+
+fn Counter6_2.new() -> Self => { n: 0, len: 0 }
+
+// @len() method: returns field value via @len (no parens = field access)
+fn Counter6_2 @len() -> int => @len
+
+// @inc(): increments both n and len fields using @field (no parens = field)
+fn Counter6_2 @inc() { @n = @n + 1; @len = @len + 1 }
+
+// @call_len(): calls method @len() using @len() (WITH parens = method call)
+// This was the bug site: generated nova_fn__at_len instead of Nova_Counter_method_len
+fn Counter6_2 @call_len() -> int => @len()
+
+// @double_len(): uses BOTH @len (field) and @len() (method) in the same body
+fn Counter6_2 @double_len() -> int {
+    ro field_val = @len          // @len (no parens) = field access
+    ro method_val = @len()       // @len() (with parens) = method call
+    assert(field_val == method_val)
+    field_val + method_val
+}
+
+test "@name (no parens) = field; @name() (parens) = method call" {
+    mut c = Counter6_2.new()
+    c.inc()
+    c.inc()
+    c.inc()
+    assert(c.len() == 3)         // method call from outside
+    assert(c.call_len() == 3)    // method call via @len() inside another method
+    assert(c.double_len() == 6)  // both @len (field) and @len() (method) in same body
+}

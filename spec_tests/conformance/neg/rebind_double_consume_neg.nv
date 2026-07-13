@@ -1,0 +1,22 @@
+// Plan 181 (D347) R2 / B2 — double-consume-shadow leak теперь ловится.
+// `consume tx = begin(); consume tx = begin(); tx.commit()`: второй `consume tx`
+// затеняет ПЕРВЫЙ tx, у которого consume-обязательство ещё не выполнено. До Plan 181
+// obligations ключевались по имени → одно `Consumed` гасило оба → первый tx утекал
+// МОЛЧА. Теперь alpha-rename даёт разные имена, а R2 ловит затенение живого
+// обязательства на месте второго `consume`.
+//
+// EXPECT_COMPILE_ERROR E_REBIND_LIVE_CONSUME
+
+module neg.rebind_double_consume_neg
+type NRbTx consume {
+    id int,
+}
+fn NRbTx consume @commit() -> () { () }
+
+fn nrb_begin(n int) -> NRbTx => { id: n }
+
+test "should not compile" {
+    consume tx = nrb_begin(1)
+    consume tx = nrb_begin(2)   // первый tx утёк бы — R2 ловит здесь
+    tx.commit()
+}

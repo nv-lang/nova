@@ -1,0 +1,13 @@
+// Plan 174.6 M1 (D282 rule 2 / D353) NEG — a Nova-ABI `*fn(...)` (no `extern
+// "C"` tag) is NOT C-ABI: its signature is passed with the Nova ABI, so it
+// cannot be a real C callback. Using it as an `extern "C" fn` parameter →
+// E_FFI_NON_C_ABI_TYPE (author must tag it `*extern "C" fn`).
+//
+// EXPECT_COMPILE_ERROR E_FFI_NON_C_ABI_TYPE
+
+module neg.plan174_6_neg_nova_fnptr_param
+extern "C" fn c_register_nova_cb(cb *fn(i64) -> i64) -> int
+
+test "rejects Nova-ABI *fn as C callback param" {
+    assert(1 == 1)
+}

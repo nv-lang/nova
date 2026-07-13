@@ -1,0 +1,14 @@
+// Plan 115 Ф.1 T1.1-T1.2 — `(0 as *())` literal + equality + default value.
+
+module spec_tests.conformance
+test "(0 as *()) literal parses and assigns" {
+    ro p *() = (0 as *())
+    assert(p == (0 as *()))
+}
+
+test "(0 as *()) inequality with itself is false" {
+    ro p *() = (0 as *())
+    ro q *() = (0 as *())
+    assert(p == q)
+    assert(!(p != q))
+}

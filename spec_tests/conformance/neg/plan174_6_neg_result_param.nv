@@ -1,0 +1,11 @@
+// Plan 174.6 M1 (D282 rule 2) NEG — `Result[T,E]` is a tagged union (tag +
+// payload layout), not C-ABI → forbidden as an `extern "C" fn` parameter.
+//
+// EXPECT_COMPILE_ERROR E_FFI_NON_C_ABI_TYPE
+
+module neg.plan174_6_neg_result_param
+extern "C" fn c_take_result(r Result[int, str]) -> int
+
+test "rejects Result param over C ABI" {
+    assert(1 == 1)
+}

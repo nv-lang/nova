@@ -1,0 +1,9 @@
+module spec_tests.conformance
+test "str == dispatches via @equal" {
+    ro a = "hello"
+    ro b = "hello"
+    ro c = "world"
+    assert(a == b)
+    assert(a != c)
+    assert("" == "")
+}

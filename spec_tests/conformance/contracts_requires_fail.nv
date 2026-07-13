@@ -1,0 +1,13 @@
+//
+// Plan 33.1 Ф.4 (D24): nova_contract_violation срабатывает при
+// нарушении requires в runtime (debug сборка).
+
+module spec_tests.conformance
+priv(file) fn must_be_positive(x int) -> int
+    requires x > 0
+=> x * 2
+
+test "contracts requires fail" panics "requires failed: x > 0" {
+    ro _ = must_be_positive(-5)
+    println("UNREACHABLE")
+}

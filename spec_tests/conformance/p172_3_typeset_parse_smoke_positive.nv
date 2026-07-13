@@ -1,0 +1,28 @@
+module spec_tests.conformance
+// Plan 172.3 (D310) Ф.1 — parse smoke: type-set declaration parses + a sum-type
+// `type X | A | B` still parses as sum (no regression from the `set` kind-token).
+// EXPECT_RUN_OK
+
+// type-set declaration (contextual `set` kind-token)
+type SignedInt set i8 | i16 | i32 | i64 | int
+type UnsignedInt set u8 | u16 | u32 | u64 | uint
+
+// sum-type MUST still parse as sum (leading `|`, no `set` kind-token)
+type Color1 | Red | Green | Blue
+
+fn paint(c Color1) -> int {
+    match c {
+        Color1.Red => 0
+        Color1.Green => 1
+        Color1.Blue => 2
+    }
+}
+
+// Plan 172.3 Ф.2 — type-set used AS a generic bound; instantiated with a member
+// type (`int` ∈ SignedInt) → must pass membership (no E_TYPE_NOT_IN_SET).
+priv(file) fn[T SignedInt] pick(x T) -> T => x
+
+test "p172_3_typeset_parse_smoke_positive smoke" {
+    // exercise the sum so it is not DCE'd; type-sets are bound-only (no value).
+    ro _ = pick(paint(Color1.Red))
+}

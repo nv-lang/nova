@@ -1,0 +1,13 @@
+// Plan 154: overload по сигнатуре (разные arg-types) — разрешён (D84), не error.
+module spec_tests.conformance
+
+type Foo { x int }
+
+fn Foo @m(a int) -> int => a
+fn Foo @m(a str) -> int => 0
+
+test "pos_overload_sig smoke" {
+    ro f = Foo { x: 1 }
+    assert(f.m(5) == 5)
+    assert(f.m("hi") == 0)
+}

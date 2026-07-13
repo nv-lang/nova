@@ -1,0 +1,30 @@
+// [M-result-direct-recursive-enum] / [M-option-self-recursive-record-mono]
+// robustness companion (Plan 186, recursive-mono, 2026-07-10).
+//
+// A `value` record that includes ITSELF directly, with no pointer/heap
+// indirection —
+//     type Node value { next Node }
+// — has genuinely infinite layout (no boxing to break the cycle: a `value`
+// record is inlined, `NovaValue_Node`). Unlike the HEAP self-recursion this
+// directory's `pos/` fixtures exercise (where a `Nova_X*` pointer field is a
+// finite 8-byte leaf — see [D280]), this shape cannot be given a finite size
+// at all.
+//
+// This is NOT the bug this plan fixes (that root cause is
+// `[M-checker-recursive-type-overflow]`/D280, already closed) — this fixture
+// is the "and verify the value-record variant" companion the plan's recursive-
+// mono work item explicitly calls for: confirm the compiler still gives an
+// HONEST diagnostic here (E_INFINITE_TYPE, at DECLARATION time) rather than
+// hanging or crashing, so nobody mistakes today's heap-recursion fix for a
+// green light on inlined self-recursion too.
+//
+// EXPECT_COMPILE_ERROR E_INFINITE_TYPE
+
+module neg.value_record_self_include
+type Node value {
+    next Node
+}
+
+fn main() {
+    println("unreachable — Node's infinite layout must be rejected at check time")
+}

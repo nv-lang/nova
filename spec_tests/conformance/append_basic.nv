@@ -1,0 +1,35 @@
+// Plan 90.1 — позитив: append — append with growth.
+// D141 amend: 2x cap growth, memmove, self-extend safe.
+
+module spec_tests.conformance
+test "append basic []int" {
+    mut dst []int = [1, 2]
+    ro src []int = [3, 4, 5]
+    dst.append(src)
+    assert(dst.len() == 5)
+    assert(dst[0] == 1)
+    assert(dst[1] == 2)
+    assert(dst[2] == 3)
+    assert(dst[3] == 4)
+    assert(dst[4] == 5)
+}
+
+test "append []u8 bytes" {
+    mut buf []u8 = [0x48, 0x65]     // "He"
+    ro more []u8 = [0x6c, 0x6c, 0x6f]  // "llo"
+    buf.append(more)
+    assert(buf.len() == 5)
+    assert(buf[0] == 0x48)
+    assert(buf[2] == 0x6c)
+    assert(buf[4] == 0x6f)
+}
+
+test "append triggers growth (cap doubling)" {
+    // Start with exactly capacity 8 (default initial cap).
+    mut dst []int = [1, 2, 3, 4, 5, 6, 7, 8]
+    ro src []int = [9, 10, 11]
+    dst.append(src)
+    assert(dst.len() == 11)
+    assert(dst[8] == 9)
+    assert(dst[10] == 11)
+}

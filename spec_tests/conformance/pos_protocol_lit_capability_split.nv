@@ -1,0 +1,44 @@
+// Plan 97.1 Ф.3 (D142) — capability-split factory pattern.
+//
+// Каноничный use-case из D142: factory возвращает несколько
+// связанных capabilities как разные protocol-литералы над одним
+// state. Без anonymous protocol-литерала пришлось бы объявлять
+// два отдельных named-типа-обёртки.
+
+module spec_tests.conformance
+export type Reader protocol {
+    @read() -> int
+}
+
+export type Writer protocol {
+    @write(v int) -> ()
+}
+
+
+type Cell2 {
+    mut value int
+}
+
+
+fn Cell2.new(initial int) -> (Reader, Writer) {
+    mut state = Cell2 { value: initial }
+    ro r = protocol Reader {
+        read() => state.value
+    }
+    ro w = protocol Writer {
+        write(v) {
+            state.value = v
+        }
+    }
+    (r, w)
+}
+
+
+test "capability-split factory pattern" {
+    ro (r, w) = Cell2.new(10)
+    ro initial = r.read()
+    assert(initial == 10)
+    w.write(99)
+    ro after = r.read()
+    assert(after == 99)
+}

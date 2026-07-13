@@ -1,0 +1,29 @@
+// Plan 123.1.1 (V1.1, 2026-06-03): NEGATIVE — region с <threshold
+// reads пропускается. Здесь region B имеет только 1 read,
+// которая остаётся как `@x` (no cache let).
+// Semantic preservation: код работает correctly, даже если cache
+// эмитится только для региона A.
+
+module spec_tests.conformance
+type Counter3_4 {
+    mut x int
+}
+
+fn Counter3_4.new() -> Counter3_4 => { x: 100 }
+
+fn Counter3_4 mut @mixed_density() -> int {
+    // Region A: 2 reads (cached).
+    ro a1 = @x
+    ro a2 = @x
+    @x = 7
+    // Region B: 1 read только — SKIPPED V1.1 (below threshold=2).
+    ro b = @x
+    a1 + a2 + b
+}
+
+test "V1.1: single-read region не cached, semantic ok" {
+    mut c = Counter3_4.new()
+    ro r = c.mixed_density()
+    // 100 + 100 + 7 = 207
+    assert(r == 207)
+}

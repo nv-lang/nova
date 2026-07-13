@@ -1,0 +1,23 @@
+// [M-compress-checksum-structvariant-ctor-xmodule] (P1, Plan 173 P1-волна): regression
+// fixture для cross-module struct-payload variant-конструктора.
+//
+// Реальный баг: `std/encoding/compress/error.nv` объявляет `ErrorKind` со struct-payload
+// вариантом `Checksum { kind, expected, got }`, конструируемым БЕЗ квалификации внутри
+// СВОЕГО ЖЕ модуля (`{ kind: Checksum { kind, expected, got }, offset: None }`). Это
+// компилируется соло, но ломается в БОЛЬШОМ multi-module CU (std/http client_test),
+// где co-present ЕЩЁ один sum-тип с ИМЕНЕМ `ErrorKind` (std/io) — чекер хранит
+// объявления типов в `HashMap<String, TypeDecl>`, keyed по bare-имени суммы; при
+// коллизии имён (`ErrorKind` из compress И из io) выживает только ПОСЛЕДНИЙ, и
+// E_UNKNOWN_TYPE-гейт для RecordLit-варианта (`self.types.values().any(...)`) теряет
+// вариант проигравшей суммы → ложный `[E_UNKNOWN_TYPE] unknown type Checksum`.
+//
+// Этот файл — mod_a: сумма `Kind` со struct-payload вариантом `Info`, сконструированным
+// bare (без квалификации) внутри своего модуля — зеркало `CompressError.checksum_err`.
+module conformance.xmodule_struct_variant_ctor_a
+
+export type Kind enum
+    | Info { ro code int, ro msg str }
+    | Other(str)
+
+export fn make_info(code int, msg str) -> Kind =>
+    Info { code, msg }

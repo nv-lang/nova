@@ -1,0 +1,16 @@
+// Plan 67 Ф.2 f9 — println(rec.name) regression guard.
+// record_schemas path: field type nova_str → nova_print_str.
+// Tests that existing record field printing still works after the fix.
+
+module standalone.f9_record_field_str
+type Person {
+    name str
+    age int
+}
+
+// EXPECT_STDOUT Alice
+
+fn main() Io -> () {
+    ro p = Person { name: "Alice", age: 30 }
+    println(p.name)
+}

@@ -1,0 +1,86 @@
+// D372 — Canonical `.new()` constructors (convention). stdlib provides `.new()`
+// для типов с единственным очевидным default-значением, возвращая этот default:
+// int/u*/i* → 0, f32/f64 → 0.0, bool → false, str → "", []T → [] (empty).
+// Также []T.new().cap(n) (ex-with_capacity(n), D372 amend 2026-07-06) — empty
+// с pre-allocated capacity; push после new работает.
+// Spec: spec/decisions/02-types.md §D372 (table line ~6526-6535). Декларации:
+// std/runtime/defaults.nv (numeric/bool), std/runtime/string/core.nv (str), builtin []T.
+module conformance.d372_canonical
+
+test "primitive .new() возвращает canonical default 0 / false (D372)" {
+    ro i = int.new()
+    assert(i == 0)
+    ro u = u8.new()
+    assert(u == 0)
+    ro s8 = i32.new()
+    assert(s8 == 0)
+    ro f = f64.new()
+    assert(f == 0.0)
+    ro b = bool.new()
+    assert(b == false)
+}
+
+test "str.new() возвращает пустую строку \"\" (D372)" {
+    ro s = str.new()
+    assert(s == "")
+    assert(s.is_empty())
+    assert(s.byte_len() == 0)
+}
+
+test "[]T.new() возвращает empty array; push после new работает (D372)" {
+    mut a []int = []int.new()
+    assert(a.len() == 0)
+    a.push(1)
+    a.push(2)
+    assert(a.len() == 2)
+    assert(a[0] == 1)
+    assert(a[1] == 2)
+}
+
+test "[]T.new().cap(n) — empty (len 0) с pre-allocated capacity (D372 amend)" {
+    mut a []int = []int.new()
+    a.cap(8)
+    assert(a.len() == 0)
+    a.push(42)
+    assert(a.len() == 1)
+    assert(a[0] == 42)
+}
+
+test "Vec[T].new(cap: n) точный pre-alloc за один вызов (D372 amend 2)" {
+    mut a = Vec[int].new(cap: 8)
+    assert(a.len() == 0)
+    assert(a.cap() == 8)
+    a.push(42)
+    assert(a.len() == 1)
+    assert(a[0] == 42)
+
+    // Positional спеллинг — легален (D372 amend 2).
+    mut b = Vec[int].new(4)
+    assert(b.cap() == 4)
+}
+
+// Regression [M-vec-new-cap-default-arg-backfill]: a generic-static ctor's
+// DEFAULT arg must backfill at EVERY 0-arg call-site, including the
+// `Type[Args].method(...)` turbofish spelling on a user-defined type in
+// ANOTHER file of the same compile unit (`D372Box` — types_generic_static_
+// ctor.nv peer). This is the exact intersection that broke: callnorm's
+// callee-classification (`try_normalize_call`, callnorm.rs) treated
+// `Member{obj: TurboFish{..}, name}` as an instance-method call
+// (`instance_by_name`) instead of probing `static_methods` — so the omitted
+// `cap` default was silently NOT backfilled, and codegen emitted a call
+// with too few arguments against the mono'd C ctor (which always takes
+// `cap`). Mirrors the std repro (`Vec[T].new(cap int = 0)`,
+// std/collections/vec/core.nv, consumed 0-arg from std/runtime/string —
+// see std/collections/vec test gates for the real cross-MODULE case; this
+// test pins the general, user-type-level LANGUAGE norm).
+test "generic-static-ctor default-arg backfills at every call-site, incl. cross-file turbofish `Type[T].method()` (regression [M-vec-new-cap-default-arg-backfill])" {
+    // 0-arg-for-`cap` call — default MUST backfill.
+    ro b1 = D372Box[int].make(1)
+    assert(b1.slot == 1)
+    assert(b1.cap == 42)
+
+    // Explicit named override — the non-default path must still work.
+    ro b2 = D372Box[int].make(2, cap: 5)
+    assert(b2.slot == 2)
+    assert(b2.cap == 5)
+}

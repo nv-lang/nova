@@ -8,11 +8,11 @@
 module spec_tests.conformance
 
 // Type WITH @display_fmt — reacts to `#` (alternate) and `.N` (precision).
-type Tagged { s str }
+type TaggedD419 { s str }
 
-fn Tagged @to_str() -> str => @s
+fn TaggedD419 @to_str() -> str => @s
 
-fn Tagged @display_fmt(mut f Fmt) -> () {
+fn TaggedD419 @display_fmt(mut f Fmt) -> () {
     if f.alternate() {
         f.write("<")
         f.write(@s)
@@ -34,22 +34,22 @@ fn Plain @display(mut w Write) -> () {
 }
 
 test "type with @display_fmt: bare interpolation unaffected (falls back to to_str)" {
-    ro t = Tagged { s: "hi" }
+    ro t = TaggedD419 { s: "hi" }
     assert("${t}" == "hi")
 }
 
 test "type with @display_fmt: `#` (alternate) reaches the type" {
-    ro t = Tagged { s: "hi" }
+    ro t = TaggedD419 { s: "hi" }
     assert("${t:#}" == "<hi>")
 }
 
 test "type with @display_fmt: `.N` (precision) reaches the type" {
-    ro t = Tagged { s: "hi" }
+    ro t = TaggedD419 { s: "hi" }
     assert("${t:.3}" == "hi#3")
 }
 
 test "type with @display_fmt: width/align still post-processed externally (D419 §в)" {
-    ro t = Tagged { s: "x" }
+    ro t = TaggedD419 { s: "x" }
     assert("${t:>4}" == "   x")
 }
 

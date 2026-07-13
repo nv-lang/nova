@@ -1,0 +1,146 @@
+// share_capture_ok_test.nv — Plan 173.3 (D415) pos-fixtures: все
+// САНКЦИОНИРОВАННЫЕ виды захвата через границу spawn/parallel-for
+// компилируются И работают. Neg-twins — nova_tests/err173_3/neg/.
+//
+// Покрытие (план §5 pos):
+//   (1) захват `ro`-immutable — читаемый снимок, никакого share не нужно;
+//   (2) захват `#share`-примитивов (Mutex/AtomicInt/WaitGroup) mut-биндингом;
+//   (3) явный move во владение ребёнка — `spawn consume c = e { … }`
+//       (D415 §4; cleanup на выходе РЕБЁНКА);
+//   (4) пользовательский тип с share-полями — авто-#share (memberwise);
+//   (5) пользовательский lock-free тип с авторским `#share`-vouch.
+
+module spec_tests.conformance
+// (4) авто-#share: все поля — immutable share-типы → тип share без аннотаций.
+type Config {
+    threshold int
+    label str
+}
+
+// (5) авторский vouch: тип содержит mut-поле (не share по выводу), но автор
+// ручается `#share` — компилятор верит vouch'у (audited, аналог unsafe impl
+// Sync). Здесь «синхронизация» тривиальна (никто не пишет из детей) —
+// суть фикстуры в том, что vouch снимает E_CONCURRENT_MUT_CAPTURE.
+#share
+type UserLockFree {
+    mut hot int
+}
+
+// (3) consume-ресурс c Cleanup[never] — для spawn-consume формы.
+// Не consume-обязательный тип с consume-методом (класс TcpListener) —
+// для формы повторной отдачи `spawn consume h { … }` при обычном биндинге.
+type Handle1 {
+    payload int
+}
+
+fn Handle1.new(p int) -> Handle1 => { payload: p }
+fn Handle1 consume @cleanup(_outcome ScopeOutcome) -> () => ()
+
+type Job consume {
+    payload int
+}
+
+fn Job.new(p int) -> Job => { payload: p }
+fn Job consume @cleanup(_outcome ScopeOutcome) -> () => ()
+
+test "ro capture: immutable snapshot readable from children" {
+    ro cfg = Config { threshold: 40, label: "t" }
+    ro base = 2
+    mut sum = AtomicInt.new(0)
+    supervised {
+        spawn { sum.fetch_add(cfg.threshold + base) }
+        spawn { sum.fetch_add(cfg.threshold - base) }
+    }
+    assert(sum.load() == 80)
+}
+
+test "#share primitives: Mutex/AtomicInt/WaitGroup captured mut by siblings" {
+    mut wg = WaitGroup.new()
+    mut counter = AtomicInt.new(0)
+    mut mu = Mutex.new()
+    wg.add(2)
+    supervised {
+        spawn {
+            consume g = mu.lock()
+            counter.fetch_add(1)
+            g.unlock()
+            wg.done()
+        }
+        spawn {
+            consume g = mu.lock()
+            counter.fetch_add(10)
+            g.unlock()
+            wg.done()
+        }
+    }
+    wg.wait()
+    assert(counter.load() == 11)
+}
+
+test "spawn consume: explicit move into child ownership (D415 §4)" {
+    ro (tx, rx) = Channel.new(1)
+    supervised {
+        spawn consume j = Job.new(7) {
+            // `j` принадлежит ребёнку; cleanup сработает на выходе ЭТОГО
+            // тела (child-exit), не лексического блока родителя.
+            tx.try_send(j.payload)
+        }
+    }
+    tx.close()
+    assert((rx.try_recv() ?? -1) == 7)
+}
+
+test "spawn consume: re-give form moves existing binding (D415 §4)" {
+    // Форма повторной отдачи `spawn consume x { … }` (init = сам внешний
+    // биндинг): внешний `h` обязан попасть в spawn-ctx как захват, а тело —
+    // работать через consume-локал (регресс: capture терялся → undeclared C
+    // identifier; затем тело било в `_c->h` мимо `#define`). Тип — не
+    // consume-обязательный (класс TcpListener: consume-метод есть, маркер нет),
+    // иначе внешний биндинг сам потребовал бы consume-scope (D180).
+    ro (tx, rx) = Channel.new(1)
+    mut h = Handle1.new(9)
+    supervised {
+        spawn consume h {
+            tx.try_send(h.payload)
+        }
+    }
+    tx.close()
+    assert((rx.try_recv() ?? -1) == 9)
+}
+
+test "auto-#share user type: memberwise share fields, mut binding capture ok" {
+    // Config — record из immutable share-полей → авто-share (D415 §1):
+    // mut-биндинг захватывается детьми без vouch'а и без E_CONCURRENT_MUT_CAPTURE
+    // (запись поля невозможна — полей mut нет; перепривязка в ребёнке — копия
+    // указателя, не гонка).
+    mut shared = Config { threshold: 5, label: "auto" }
+    mut seen = AtomicInt.new(0)
+    supervised {
+        spawn { seen.fetch_add(shared.threshold) }
+        spawn { seen.fetch_add(shared.threshold * 2) }
+    }
+    assert(seen.load() == 15)
+}
+
+test "user lock-free type with #share vouch: mut capture allowed" {
+    mut ulf = UserLockFree { hot: 3 }
+    mut out = AtomicInt.new(0)
+    supervised {
+        spawn { out.store(ulf.hot) }
+    }
+    assert(out.load() == 3)
+}
+
+// (6) `detach` — same capture boundary as `spawn` (D415 §2 amendment,
+// 2026-07-11): `ro`/`#share` captures are just as legal inside a detached
+// orphan body as inside a spawn body; only a raw non-`#share` `mut` is
+// rejected (see neg/mut_capture_in_detach.nv).
+test "detach: ro + #share captures allowed (same boundary as spawn)" {
+    ro base = 10
+    mut out = AtomicInt.new(0)
+    detach {
+        out.store(base * 2)
+    }
+    runtime.drain_orphans()
+    assert(out.load() == 20)
+}

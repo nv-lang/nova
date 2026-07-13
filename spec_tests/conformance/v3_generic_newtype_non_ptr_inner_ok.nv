@@ -1,0 +1,103 @@
+// Plan 91.12 V2 followup [M-91.12-generic-newtype-non-ptr-inner] —
+// positive test: generic newtype `type X[T](INNER)` где INNER не `ptr`.
+//
+// Использует phantom T для compile-time discrimination при identical
+// runtime C ABI. Inner может быть любым primitive типом — int / str /
+// bool / f64. T parameter — type-system fiction (no per-T mono needed;
+// shared single typedef `Nova_X` over inner).
+//
+// Use cases:
+//  - Counter16[Persistent], Counter16[Transient] — отдельные namespace
+//    тегированных int-counter'ов через phantom T.
+//  - Tag2[Email], Tag2[UserId] — typed string wrappers.
+//  - Flag[Visible], Flag[Hidden] — typed bool wrappers.
+//
+// Plan 91.12 V2 followup (2026-06-02) — generic ptr-newtype работал;
+// non-ptr inner следующий шаг для production-grade coverage.
+
+module spec_tests.conformance
+// ─── Phantom T markers (unit types) ────────────────────────────────
+
+type Persistent
+type Transient
+type Email
+type UserId
+type Visible
+type Hidden
+
+// ─── Generic newtypes с non-ptr inner ──────────────────────────────
+
+type Counter16[T](int)
+type Tag2[T](str)
+type Flag[T](bool)
+type Measure[T](f64)
+
+// ─── Counter16[T] (int inner) ────────────────────────────────────────
+
+test "Counter16[Persistent] — construct + .0 для int inner" {
+    ro c = Counter16[Persistent](42)
+    assert(c.0 == 42)
+}
+
+test "Counter16[Transient] — distinct T value same int ABI" {
+    ro p = Counter16[Persistent](100)
+    ro t = Counter16[Transient](100)
+    assert(p.0 == t.0)  // same underlying int value
+}
+
+test "Counter16[T] negative values" {
+    ro c = Counter16[Persistent](-42)
+    assert(c.0 == -42)
+}
+
+// ─── Tag2[T] (str inner) ────────────────────────────────────────────
+
+test "Tag2[Email] — construct + .0 для str inner" {
+    ro tag = Tag2[Email]("user@example.com")
+    assert(tag.0 == "user@example.com")
+}
+
+test "Tag2[UserId] — distinct T phantom" {
+    ro email = Tag2[Email]("foo@bar.com")
+    ro uid = Tag2[UserId]("u_12345")
+    assert(email.0 != uid.0)
+}
+
+test "Tag2[T] empty string" {
+    ro tag = Tag2[Email]("")
+    assert(tag.0 == "")
+}
+
+// ─── Flag[T] (bool inner) ──────────────────────────────────────────
+
+test "Flag[Visible] — true" {
+    ro f = Flag[Visible](true)
+    assert(f.0 == true)
+}
+
+test "Flag[Hidden] — false + distinct T" {
+    ro v = Flag[Visible](false)
+    ro h = Flag[Hidden](false)
+    assert(v.0 == h.0)  // both false, identical bool ABI
+}
+
+// ─── Measure[T] (f64 inner) ────────────────────────────────────────
+
+test "Measure[Persistent] — construct + .0 для f64 inner" {
+    ro m = Measure[Persistent](3.14)
+    assert(m.0 == 3.14)
+}
+
+test "Measure[T] negative f64" {
+    ro m = Measure[Transient](-2.5)
+    assert(m.0 == -2.5)
+}
+
+// ─── Multi-param + non-ptr ─────────────────────────────────────────
+
+type Tagged[T, U](int)
+
+test "multi-param non-ptr generic newtype" {
+    ro h = Tagged[Persistent, Email](999)
+    assert(h.0 == 999)
+}

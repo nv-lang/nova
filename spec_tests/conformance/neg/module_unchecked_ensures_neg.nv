@@ -1,0 +1,19 @@
+// Plan 140.3 ([M-140-contract-levels]): MODULE-level per-kind opt-out.
+// `#unchecked(ensures)` before `module X` elides ONLY ensures for the whole
+// module — `requires` stays enforced module-wide. At x=-5 the `requires x > 0`
+// fires (the module-wide ensures opt-out does not touch it), so the panic kind
+// is `requires`, proving module-level granularity is per-kind (not all-or-nothing).
+// EXPECT_RUNTIME_PANIC requires failed
+
+#unchecked(ensures)
+module neg.module_unchecked_ensures_neg
+
+fn f(x int) -> int
+    requires x > 0
+    ensures result > 100
+=> x
+
+test "module #unchecked(ensures): ensures elided module-wide, requires kept" {
+    ro r = f(-5)
+    assert(r == -5)
+}

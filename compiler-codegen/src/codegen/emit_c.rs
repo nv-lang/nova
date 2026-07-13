@@ -7496,6 +7496,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Orchestration делается в emit_main_wrapper bench-mode: вызывает
     /// nova_bench_run("name", setup, measure, teardown).
     fn emit_bench(&mut self, b: &BenchDecl, idx: usize) -> Result<(), String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc.
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.emit_bench_scoped_inner(b, idx);
+        self.override_maps_scope_exit(ovr_saved, r.is_ok());
+        r
+    }
+
+    fn emit_bench_scoped_inner(&mut self, b: &BenchDecl, idx: usize) -> Result<(), String> {
         let safe = Self::mangle_test_name_indexed(&b.name, idx);
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
@@ -7717,6 +7725,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     fn emit_test(&mut self, t: &TestDecl, idx: usize) -> Result<(), String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc.
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.emit_test_scoped_inner(t, idx);
+        self.override_maps_scope_exit(ovr_saved, r.is_ok());
+        r
+    }
+
+    fn emit_test_scoped_inner(&mut self, t: &TestDecl, idx: usize) -> Result<(), String> {
         let safe = Self::mangle_test_name_indexed(&t.name, idx);
         // Buffer the test body so we can prepend any lambdas discovered during emit
         let saved_out = std::mem::take(&mut self.out);
@@ -8998,6 +9014,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         candidates: &[(String, EffectMethod)],
         canonical_c_name: &str,
     ) -> Option<String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc. Этот
+        // синтез вызывается ЛЕНИВО из середины эмиссии чужого тела — scoping
+        // обязателен в обе стороны (не утечь наружу, не унаследовать чужое).
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.try_emit_default_body_candidates_scoped_inner(
+            t_name, t_c_ty, method_name, candidates, canonical_c_name);
+        self.override_maps_scope_exit(ovr_saved, r.is_some());
+        r
+    }
+
+    fn try_emit_default_body_candidates_scoped_inner(
+        &mut self,
+        t_name: &str,
+        t_c_ty: &str,
+        method_name: &str,
+        candidates: &[(String, EffectMethod)],
+        canonical_c_name: &str,
+    ) -> Option<String> {
         for (_proto_name, m) in candidates {
             // Snapshot mutable state. Если emission fails — rollback'аем
             // полностью, чтобы partial state не утёк в callers.
@@ -9940,7 +9974,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             self.indent -= 1;
             self.line("}");
-            self.line("nova_fail_pop();");
+            // [race-state-dump 2026-07-13] `nova_fail_pop()` here is WRONG:
+            // it assumes `_nova_fail_top == &ff` (single-level pop), which only
+            // holds when the throw was caught DIRECTLY at this with-block's own
+            // setjmp. When the body called into nested Fail-signature functions
+            // (each pushing its OWN NovaFailFrame deeper on the C stack) and the
+            // handler recovered via `interrupt` (nova_interrupt() in effects.c
+            // longjmps straight to the nearest NovaInterruptFrame — see D61
+            // comment there — WITHOUT touching `_nova_fail_top`), those nested
+            // frames' own `nova_fail_pop()` epilogues never ran (their C stack
+            // was discarded by the longjmp). `_nova_fail_top` is then left
+            // dangling at one of those now-dead stack frames. A naive
+            // `nova_fail_pop()` here walks ONE level from that dangling pointer
+            // instead of restoring the true pre-entry value, so the corruption
+            // survives this with-block and (in a merged multi-test-block C
+            // process) later gets treated as a live NovaFailFrame — the next
+            // throw writes its error fields through the dangling pointer
+            // (corrupting whatever unrelated local/test now occupies that stack
+            // slot) and longjmps to a garbage `jmp_buf` (crash at a
+            // composition-dependent point). `ff.prev` was captured ONCE at
+            // `nova_fail_push(&ff)` time and never mutated since — restoring
+            // directly to it is a correct hard-reset in EVERY case (identical
+            // to the old single-level pop when `_nova_fail_top == &ff` still
+            // holds, and self-healing when it doesn't).
+            self.line(&format!("_nova_fail_top = {}.prev;", ff));
         }
 
         // Restore handlers (regardless of path)
@@ -11414,6 +11471,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("_nova_active_slot = -1;");
         self.indent -= 1;
         self.line("}");
+        // [196.6 / D228 §6 class]: pending_sweeps++ strictly BEFORE the
+        // pending_remote release-decrement (same thread, program order) —
+        // the scope owner that observes pending_remote==0 therefore also
+        // observes pending_sweeps>0 until the worker's post-mortem sweep
+        // (nova_scope_sweep_dead_child) release-decrements it. Closes the
+        // stack-scope use-after-return in the sweep (Plan 198 floating AV;
+        // docs/plans/196.6-race-state-dump-notes.md).
+        self.line("(void)nova_aint_inc(&_c->_nova_parent_scope->pending_sweeps);");
         self.line("(void)nova_aint_fetch_sub_release(&_c->_nova_parent_scope->pending_remote);");
         self.line("nova_runtime_signal_main();");
         self.indent -= 1;
@@ -12213,6 +12278,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("_nova_active_slot = -1;");
         self.indent -= 1;
         self.line("}");
+        // [196.6 / D228 §6 class]: pending_sweeps++ strictly BEFORE the
+        // pending_remote release-decrement (same thread, program order) —
+        // the scope owner that observes pending_remote==0 therefore also
+        // observes pending_sweeps>0 until the worker's post-mortem sweep
+        // (nova_scope_sweep_dead_child) release-decrements it. Closes the
+        // stack-scope use-after-return in the sweep (Plan 198 floating AV;
+        // docs/plans/196.6-race-state-dump-notes.md).
+        self.line("(void)nova_aint_inc(&_c->_nova_parent_scope->pending_sweeps);");
         self.line("(void)nova_aint_fetch_sub_release(&_c->_nova_parent_scope->pending_remote);");
         self.line("nova_runtime_signal_main();");
         self.indent -= 1;
@@ -12445,6 +12518,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("_nova_active_slot = -1;");
         self.indent -= 1;
         self.line("}");
+        // [196.6 / D228 §6 class]: pending_sweeps++ strictly BEFORE the
+        // pending_remote release-decrement (same thread, program order) —
+        // the scope owner that observes pending_remote==0 therefore also
+        // observes pending_sweeps>0 until the worker's post-mortem sweep
+        // (nova_scope_sweep_dead_child) release-decrements it. Closes the
+        // stack-scope use-after-return in the sweep (Plan 198 floating AV;
+        // docs/plans/196.6-race-state-dump-notes.md).
+        self.line("(void)nova_aint_inc(&_c->_nova_parent_scope->pending_sweeps);");
         self.line("(void)nova_aint_fetch_sub_release(&_c->_nova_parent_scope->pending_remote);");
         self.line("nova_runtime_signal_main();");
         self.indent -= 1;
@@ -16653,6 +16734,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Emit a type-erased version of a generic method (instance or static).
     /// Type params in recv.generics map to void*.
     fn emit_generic_method_erased(&mut self, f: &FnDecl) -> Result<(), String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc.
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.emit_generic_method_erased_scoped_inner(f);
+        self.override_maps_scope_exit(ovr_saved, r.is_ok());
+        r
+    }
+
+    fn emit_generic_method_erased_scoped_inner(&mut self, f: &FnDecl) -> Result<(), String> {
         let recv = f.receiver.as_ref().unwrap();
         let is_instance = matches!(recv.kind, ReceiverKind::Instance);
         let type_params: HashSet<String> = recv.generics.iter().filter_map(|tr| {
@@ -21416,6 +21505,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         mono_name: &str,
         recv_type: &str,
     ) -> Result<(), String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc. Mono-
+        // эмиссия дренится ЛЕНИВО из середины чужих тел — scoping обязателен.
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.emit_monomorphized_method_scoped_inner(
+            fn_decl, type_subst, mono_name, recv_type);
+        self.override_maps_scope_exit(ovr_saved, r.is_ok());
+        r
+    }
+
+    fn emit_monomorphized_method_scoped_inner(
+        &mut self,
+        fn_decl: &crate::ast::FnDecl,
+        type_subst: Vec<(String, crate::types::ResolvedType)>,
+        mono_name: &str,
+        recv_type: &str,
+    ) -> Result<(), String> {
         use crate::ast::FnBody;
         // [M-sync-crossmodule…] (D381): a monomorphized method body references
         // colliding types (`ErrorKind.WriteZero` in `BufWriter[W].flush`) — resolve
@@ -22105,6 +22210,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         type_subst: &[(String, String)],
         mangled: &str,
     ) -> Result<(), String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc.
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.emit_generic_type_instance_scoped_inner(template, type_subst, mangled);
+        self.override_maps_scope_exit(ovr_saved, r.is_ok());
+        r
+    }
+
+    fn emit_generic_type_instance_scoped_inner(
+        &mut self,
+        template: &crate::ast::TypeDecl,
+        type_subst: &[(String, String)],
+        mangled: &str,
+    ) -> Result<(), String> {
         use crate::ast::TypeDeclKind;
         use crate::ast::SumVariantKind;
 
@@ -22674,6 +22792,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         type_subst: Vec<(String, crate::types::ResolvedType)>,
         mono_name: &str,
     ) -> Result<(), String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc.
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.emit_monomorphized_fn_scoped_inner(fn_decl, type_subst, mono_name);
+        self.override_maps_scope_exit(ovr_saved, r.is_ok());
+        r
+    }
+
+    fn emit_monomorphized_fn_scoped_inner(
+        &mut self,
+        fn_decl: &crate::ast::FnDecl,
+        type_subst: Vec<(String, crate::types::ResolvedType)>,
+        mono_name: &str,
+    ) -> Result<(), String> {
         use crate::ast::FnBody;
         // [M-sync-crossmodule…] (D381): resolve colliding-type references in a
         // monomorphized free-fn body under its declaring file (gated; byte-
@@ -22891,6 +23022,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
     /// All type parameters map to void*. The body is emitted with type params erased.
     fn emit_generic_fn_erased(&mut self, f: &FnDecl) -> Result<(), String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc.
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.emit_generic_fn_erased_scoped_inner(f);
+        self.override_maps_scope_exit(ovr_saved, r.is_ok());
+        r
+    }
+
+    fn emit_generic_fn_erased_scoped_inner(&mut self, f: &FnDecl) -> Result<(), String> {
         let mangled = self.mangle_fn(f);
         let type_params: HashSet<String> = f.generics.iter().map(|g| g.name.clone()).collect();
         // Build param types: bare T → void*, generic record T[U] → Nova_T*
@@ -23207,7 +23346,87 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("nova_preempt_check();");
     }
 
+    /// [race-198 class-closure 2026-07-13] Per-function scoping for the two
+    /// shared inference-override maps (`closure_param_type_overrides`,
+    /// `pattern_binding_overrides`). Both are consulted FIRST — before
+    /// `var_types` — by `recv_c_type_materialized` / `infer_expr_c_type`, so
+    /// any entry that survives past its intended insert/remove pair (early
+    /// return between the pair, unbalanced nesting on same-named params, a
+    /// `?`-propagated error that a caller recovers from, …) silently
+    /// SHADOWS the correct `var_types` entry for every LATER function in the
+    /// same CU that uses the same identifier. In a merged folder-module CU
+    /// (~1000 files) this manifested as auto-derived `@debug`/`@display`
+    /// bodies (`w: Write` → `Nova_StringBuilder*`) dispatching `w.write_str`
+    /// to a FOREIGN receiver type (`Nova_TcpStream_method_write_str`) —
+    /// reading a field at a foreign struct offset → composition-dependent
+    /// access violation (the Plan 198 floating-AV blocker; full localization
+    /// in docs/plans/196-race-state-dump-notes.md). Same defect class as the
+    /// documented Plan 139.2 `var_types`-not-per-fn-scoped case
+    /// (docs/debugging-races.md §6.4) — closed HERE as a CLASS (playbook
+    /// precedent), not by hunting the single unbalanced insert/remove site
+    /// (~30 candidate pairs, and a new one could regress tomorrow).
+    ///
+    /// Usage: every top-level function-body emission entry point wraps its
+    /// body in `enter`/`exit`. `enter` empties both maps (a fresh function
+    /// body legitimately starts with NO ambient overrides — closure params /
+    /// pattern bindings are strictly body-local) and returns the previous
+    /// contents; `exit` restores them, so LAZY re-entrant emission (a mono
+    /// drain or default-method synthesis triggered MID-body of an outer
+    /// function) hands the outer context back exactly what it had.
+    fn override_maps_scope_enter(
+        &self,
+    ) -> (HashMap<String, String>, HashMap<String, String>) {
+        (
+            std::mem::take(&mut *self.closure_param_type_overrides.borrow_mut()),
+            std::mem::take(&mut *self.pattern_binding_overrides.borrow_mut()),
+        )
+    }
+
+    /// Counterpart of `override_maps_scope_enter`. `emitted_ok` gates the
+    /// leak point-probe: on a successful emission both maps MUST have
+    /// drained back to empty (every insert paired with its remove) — a
+    /// non-empty map here is precisely the cross-function leak this scoping
+    /// contains, so surface it loudly in debug builds (release: contained
+    /// and discarded by the restore below either way). On a failed emission
+    /// (caller aborts or rolls back) intermediate entries are expected.
+    fn override_maps_scope_exit(
+        &self,
+        saved: (HashMap<String, String>, HashMap<String, String>),
+        emitted_ok: bool,
+    ) {
+        if emitted_ok {
+            debug_assert!(
+                self.closure_param_type_overrides.borrow().is_empty(),
+                "closure_param_type_overrides leaked past a function-body \
+                 emission (unbalanced insert/remove): {:?}",
+                self.closure_param_type_overrides
+                    .borrow()
+                    .keys()
+                    .collect::<Vec<_>>()
+            );
+            debug_assert!(
+                self.pattern_binding_overrides.borrow().is_empty(),
+                "pattern_binding_overrides leaked past a function-body \
+                 emission (unbalanced insert/remove): {:?}",
+                self.pattern_binding_overrides
+                    .borrow()
+                    .keys()
+                    .collect::<Vec<_>>()
+            );
+        }
+        *self.closure_param_type_overrides.borrow_mut() = saved.0;
+        *self.pattern_binding_overrides.borrow_mut() = saved.1;
+    }
+
     fn emit_fn(&mut self, f: &FnDecl) -> Result<(), String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc.
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.emit_fn_scoped_inner(f);
+        self.override_maps_scope_exit(ovr_saved, r.is_ok());
+        r
+    }
+
+    fn emit_fn_scoped_inner(&mut self, f: &FnDecl) -> Result<(), String> {
         // D82: external fn — Nova body отсутствует, реализация в nova_rt/.
         // Skip emit'инг полностью: dispatch на C-функцию делается в emit_call.
         // Plan 91.10 (D163 retracted): D163 stub generation удалён.
@@ -23893,6 +24112,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     fn emit_nova_main(&mut self, f: &FnDecl) -> Result<(), String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc.
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.emit_nova_main_scoped_inner(f);
+        self.override_maps_scope_exit(ovr_saved, r.is_ok());
+        r
+    }
+
+    fn emit_nova_main_scoped_inner(&mut self, f: &FnDecl) -> Result<(), String> {
         // nova main() → stored separately, called from C main()
         // Buffer body so spawn-ctx typedefs (lambda_forward_decls) flush
         // BEFORE main's body — иначе typedef в out появится после своего
@@ -24052,6 +24279,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.line(&format!("static int nova_test_chunk_{}(void) {{", chunk_idx));
                 self.indent += 1;
                 self.line("int _nova_tests_failed = 0;");
+                // [race-198 / 196.6]: snapshot the IMPLICIT MAIN SCOPE (D92 —
+                // established once in the emitted main() wrapper before any
+                // chunk runs; at every chunk entry _nova_active_scope is that
+                // scope, pristine or restored below). The per-test
+                // nova_runtime_reset() NULLs _nova_active_scope — correct for
+                // discarding a DANGLING scope a longjmp-unwound test left
+                // behind, but a later test's main-flow Time.sleep would then
+                // hit the D92 FATAL (sleep outside any scope). Restore the
+                // known-good main scope after every reset instead.
+                self.line("NovaFiberQueue* _chunk_main_scope = _nova_active_scope;");
+                self.line("int _chunk_main_slot = _nova_active_slot;");
                 for (local_idx, t) in chunk.iter().enumerate() {
                     let idx = chunk_idx * TEST_CHUNK_SIZE + local_idx;
                     let safe = Self::mangle_test_name_indexed(&t.name, idx);
@@ -24138,6 +24376,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // handler-слотов после ПОЙМАННОЙ паники (longjmp мимо
                     // эпилогов) — N panics-тестов в одном процессе безопасны.
                     self.line("nova_runtime_reset();");
+                    // [race-198 / 196.6]: re-establish the implicit main scope
+                    // (see _chunk_main_scope snapshot at chunk entry).
+                    self.line("_nova_active_scope = _chunk_main_scope;");
+                    self.line("_nova_active_slot = _chunk_main_slot;");
                 } else {
                     self.line("if (_tf_jmp == 0 && _tf_fail_jmp == 0) {");
                     self.indent += 1;
@@ -24154,6 +24396,35 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.line("}");
                     self.line("nova_fail_pop();");
                     self.line("_nova_test_frame = NULL;");
+                    // [race-state-dump 2026-07-13] Plan 173 Ф.5 п.6 originally
+                    // scoped `nova_runtime_reset()` to ONLY the panics-clause
+                    // branch above ("N panics-тестов в одном процессе
+                    // безопасны") — but the same longjmp-past-epilogues hazard
+                    // (stale _nova_fail_top/_nova_interrupt_top/handler-vtable
+                    // slots/_nova_active_scope/_nova_active_finalizer_stack)
+                    // is reachable from an ORDINARY (non-panics) test whose
+                    // body catches a Fail via `with Fail[E] = |e| interrupt
+                    // (...)`, or whose `assert()` fails deep inside nested
+                    // calls (D89 plain-fail route) — both unwind via longjmp
+                    // past intermediate epilogues just like a panics-clause
+                    // catch does. In a merged folder-module CU (spec_tests/
+                    // conformance: ~1000 files / ~2500 test-blocks in ONE
+                    // process) an ordinary test leaving any of that TLS state
+                    // dirty leaks it into the NEXT, unrelated test-block —
+                    // observed as a deterministic cross-test-block assertion
+                    // corruption (D158/D188 "pocket"/"cleanup dispatches
+                    // exactly once" cluster) and, when the leaked pointer is a
+                    // dangling stack address of the completed test's own C
+                    // frame, a composition-dependent access violation in a
+                    // LATER test. Reset unconditionally after every test-block,
+                    // not only after panics-clause ones.
+                    self.line("nova_runtime_reset();");
+                    // [race-198 / 196.6]: re-establish the implicit main scope
+                    // (see _chunk_main_scope snapshot at chunk entry) — the
+                    // reset NULLs _nova_active_scope, and a later test's
+                    // main-flow Time.sleep would hit the D92 FATAL otherwise.
+                    self.line("_nova_active_scope = _chunk_main_scope;");
+                    self.line("_nova_active_slot = _chunk_main_slot;");
                 }
                     self.indent -= 1;
                     self.line("}");
@@ -37233,6 +37504,53 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         Self::receiver_type_c_ident(&type_name)
                     };
                     if is_instance {
+                        // [race-198 / 196.6, E_RECV_METHOD_MISMATCH] instance-call
+                        // counterpart of the Plan 82 static fail-loudly guard above
+                        // (and the Plan 154.1/D269 primitive guard): the single-key
+                        // `method_receivers` fallback is last-wins by METHOD NAME
+                        // ONLY. When the receiver's own C type is a KNOWN concrete
+                        // Nova type X (it has methods registered) that (a) is NOT
+                        // the registered type_name and (b) does NOT itself have
+                        // this method, emitting `Nova_<type_name>_method_<m>(recv)`
+                        // is a type-confused call through a foreign struct layout —
+                        // exactly how auto-derived @debug bodies' `w.write_str`
+                        // (receiver Nova_StringBuilder*, no write_str) dispatched
+                        // to Nova_WriteBuffer_/Nova_TcpStream_method_write_str
+                        // (composition-dependent 0xC0000005, the Plan 198 blocker;
+                        // docs/plans/196.6-race-state-dump-notes.md). Fail loudly
+                        // instead. Scope: skip slice/typevar registrations (they
+                        // legitimately dispatch by name here) and unknown/erased
+                        // receivers (void*, mono/Opt/Res carriers — knownness
+                        // proxy: X must have ≥1 registered method).
+                        if !type_name.starts_with("[]")
+                            && !(type_name.len() <= 2
+                                && type_name.chars().all(|c| c.is_ascii_uppercase()))
+                        {
+                            let recv_c = self.recv_c_type_materialized(obj).unwrap_or_default();
+                            if let Some(stripped) = Self::debt_strip_value_or_nova_prefix_opt(&recv_c) {
+                                let no_ptr = stripped.trim_end_matches('*').trim();
+                                let recv_base = no_ptr.split("____").next().unwrap_or(no_ptr).to_string();
+                                let recv_is_typevar = recv_base.len() <= 2
+                                    && recv_base.chars().all(|c| c.is_ascii_uppercase());
+                                if !recv_base.is_empty()
+                                    && !recv_is_typevar
+                                    && recv_base != type_name
+                                    && !self.all_methods.contains(&(recv_base.clone(), method.to_string()))
+                                    && self.all_methods.iter().any(|(t, _)| t == &recv_base)
+                                {
+                                    return Err(format!(
+                                        "[E_RECV_METHOD_MISMATCH] `.{m}(...)` на ресивере \
+                                         типа `{recv}` — у `{recv}` нет метода `{m}`, а \
+                                         single-key fallback резолвит имя в чужой тип \
+                                         `{reg}` (last-wins) — вызов через чужой layout \
+                                         отвергнут (strict-mode, зеркало E_UNKNOWN_TYPE_METHOD). \
+                                         Подсказка: опечатка в имени метода, либо методу \
+                                         `{recv}.{m}` нужна декларация/импорт.",
+                                        m = method, recv = recv_base, reg = type_name,
+                                    ));
+                                }
+                            }
+                        }
                         let obj_c = self.emit_expr(obj)?;
                         // Plan 124.8 V2 (D226): value-record receiver needs `&obj`
                         // (pointer to stack-slot) so @field mutations propagate.

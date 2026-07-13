@@ -1,0 +1,22 @@
+// Plan 123.3 T1.4: single call в†’ no cache (below threshold).
+
+module spec_tests.conformance
+type Xv2 {
+    ro v int
+}
+
+#pure
+fn Xv2 @get() -> int => @v
+
+fn Xv2 @single() -> int {
+    @get()
+}
+
+fn Xv2.new(v int) -> Xv2 {
+    Xv2 { v }
+}
+
+test "single pure call not cached (semantic preserved)" {
+    ro xv = Xv2.new(42)
+    assert(xv.single() == 42)
+}

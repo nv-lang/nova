@@ -1,0 +1,87 @@
+// child_error_retention_test.nv — Plan 173.0 Ф.2/Ф.3 pos-тест.
+//
+// Разрыв, который план закрывает (§1/§EXEC): раньше N ОДНОВРЕМЕННЫХ падений
+// remote-детей (armed M:N) схлопывались в один слот first_error_atomic CAS —
+// 2 из 3 реальных ошибок терялись/перезаписывались. Теперь каждый remote-
+// ребёнок владеет СВОИМ индексом в child_error[]/child_ctx[]
+// (nova_scope_alloc_child_slot → NovaSpawnCtxBase._nova_parent_slot,
+// fibers.h) — падения НЕ схлопываются. Serialized decision-loop (Ф.3,
+// nova_supervised_run_impl, после nova_sched_drop_state / до free ctx_pins)
+// обходит retained-падения по одному, ctx ребёнка жив на этот момент
+// (R1-guard в nova_scope_retain_or_release_child подавил pool-recycle).
+//
+// Внешне-наблюдаемое: нет пользовательского API к child_error[] — экспозиция
+// (сбор списка/политика на падение) это 173.1/173.2, не 173.0. supervised{}
+// по-прежнему перевыбрасывает РОВНО одну ошибку (byte-parity с текущим
+// поведением — G-NEG). Но она ОБЯЗАНА быть целым, неповреждённым тегом из
+// множества ЭТОГО прогона: R1 (pool-recycle aliasing) или R2 (torn-base на
+// grow child_error[]) исказили бы содержимое (чужой tag / мусор) либо
+// уронили/подвесили процесс. N=40 (>2×NOVA_SCOPE_INITIAL_CAP=16) форсирует
+// минимум один nova_scope_grow_children() под конкурентной remote-записью.
+//
+// НЕТ // ENV NOVA_AUTOARM=0 и НЕТ NOVA_MAXPROCS=1 — тест обязан бежать
+// ARMED на дефолтном worker-count (весь смысл Ф.2/Ф.3 — M:N без костыля).
+
+module spec_tests.conformance
+test "supervised: N одновременных детей с РАЗНЫМИ ошибками — well-formed retained re-throw" {
+    ro n = 40
+    for run in 0..5 {
+        mut caught = false
+        mut got = -1
+        ro _ = with Fail[int] = |e| {
+            caught = true
+            got = e
+            0
+        } {
+            supervised {
+                for i in 0..n {
+                    ro tag = 1000 + i
+                    if i % 2 == 0 {
+                        spawn { throw tag }
+                    }
+                }
+            }
+            99
+        }
+        // Ровно одна ошибка перевыбрасывается наружу (unchanged behaviour) —
+        // но она обязана быть ЦЕЛЫМ тегом из множества этого прогона:
+        // tag ∈ {1000, 1002, 1004, ..., 1000+n-2}. Любое искажение (не-чётный
+        // остаток, значение вне диапазона) — симптом R1/R2 corruption.
+        assert(caught)
+        assert(got >= 1000)
+        assert(got < 1000 + n)
+        assert((got - 1000) % 2 == 0)
+    }
+}
+
+test "supervised: одновременные разные ошибки — decision-loop не теряет и не виснет (стресс-профиль)" {
+    // Меньше детей (12), но больше повторов run — другой профиль роста
+    // child_error[] (12 < 16 — НЕ форсирует grow на первом прогоне, но
+    // повторные supervised-блоки в цикле дают несколько независимых
+    // scope-объектов подряд, стрессуя alloc/free lifecycle нового
+    // child_error[]/child_ctx[] пути без ассоциации с ростом).
+    ro n = 12
+    mut total_caught = 0
+    for run in 0..8 {
+        mut caught = false
+        mut got = -1
+        ro _ = with Fail[int] = |e| {
+            caught = true
+            got = e
+            0
+        } {
+            supervised {
+                for i in 0..n {
+                    ro tag = 2000 + i
+                    spawn { throw tag }
+                }
+            }
+            99
+        }
+        assert(caught)
+        assert(got >= 2000)
+        assert(got < 2000 + n)
+        if caught { total_caught += 1 }
+    }
+    assert(total_caught == 8)
+}

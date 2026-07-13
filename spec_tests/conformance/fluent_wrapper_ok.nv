@@ -1,0 +1,27 @@
+// Plan 77 (D132) amendment: wrapper-метод `-> @` правильно делегирует
+// в другой `-> @` метод. StringBuilder.@append chain — эталонный пример.
+// Plan 91 followup: @plus убран, заменён на explicit .append() chain.
+
+module spec_tests.conformance
+type Buf1 { mut n int }
+
+fn Buf1.new() -> Buf1 => { n: 0 }
+
+fn Buf1 mut @write() -> @ {
+    @n = @n + 1
+}
+
+// Правильно: wrapper объявлен `-> @`, делегирует во fluent `-> @`.
+fn Buf1 mut @push() -> @ => @write()
+
+test "fluent wrapper -> @ делегирует в -> @" {
+    mut b = Buf1.new()
+    ro r = b.push().push().push()
+    assert(r.n == 3)
+}
+
+test "StringBuilder @append -> @ chain" {
+    consume sb = StringBuilder.new()
+    ro s = sb.append("hello").append(" ").append("world").into_str()
+    assert(s == "hello world")
+}

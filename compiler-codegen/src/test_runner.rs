@@ -3040,9 +3040,25 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
                 // FAIL: line ever printed), fall back to the true last 3 lines, which
                 // (since every PASS/FAIL print is followed by `fflush(stdout)`) are
                 // the last test that actually completed before the process died.
+                // [race-state-dump 2026-07-13]: `contains("panic")` case-
+                // insensitively is the SAME false-positive class the 2026-07-13
+                // fix above already fixed for "fail" — ordinary "  PASS: …" test
+                // descriptions routinely mention "panic" in prose (the Fail/
+                // panic effect feature: "compile to Panic-class outcome",
+                // "runs without panic", "panic-категория не съедена"). On a
+                // pure segfault (no line ever printed for the killed test) this
+                // still matched the first/last few *unrelated* panic-mentioning
+                // PASS lines and reported them as "detail" — confirmed: the
+                // merged spec_tests/conformance CU's `app_effect_basic_t8_1`
+                // RUN-FAIL always showed the SAME 4 early PASS lines (Plan
+                // 140.3 / "@field contract" / "interpolated-message contract" /
+                // D325 A1/R0) regardless of where the process actually died.
+                // Match the GENUINE panic banner (`nv_panic` writes literal
+                // lowercase "panic: " — effects.h) instead of any-case
+                // substring "panic" anywhere in the line.
                 let is_real_failure_line = |l: &&str| {
                     let t = l.trim_start();
-                    t.starts_with("FAIL:") || t.to_lowercase().contains("panic")
+                    t.starts_with("FAIL:") || t.starts_with("panic: ")
                 };
                 let fail_lines: Vec<&str> = stdout.lines().chain(stderr.lines())
                     .filter(is_real_failure_line)

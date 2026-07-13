@@ -1171,9 +1171,9 @@ static void _worker_main(void* arg) {
                  * of releasing/recycling it (nova_scope_retain_or_release_
                  * child, fibers.h); nova_supervised_run_impl's decision-loop
                  * frees it later, after the failure has been observed. */
-                if (!nova_scope_retain_or_release_child(dead_ctx)) {
-                    nova_spawn_pool_release(dead_ctx, dead_ctx->_nova_pool_size);
-                }
+                /* [196.6 / D228 §6 class]: unified sweep — retain/release +
+                 * pending_sweeps release-decrement (scope-lifetime fence). */
+                nova_scope_sweep_dead_child(dead_ctx);
             }
         } else if (mco_status(co) == MCO_SUSPENDED) {
             /* Yielded: if parked (timer/channel wait) → dispatch_ready re-queues.
@@ -1227,9 +1227,9 @@ static void _worker_main(void* arg) {
                  * Plan 173.0 Ф.3 (A3.3, R1-guard): retain instead of
                  * releasing if this child failed under a supervised parent
                  * (see nova_scope_retain_or_release_child, fibers.h). */
-                if (!nova_scope_retain_or_release_child(dead_ctx)) {
-                    nova_spawn_pool_release(dead_ctx, dead_ctx->_nova_pool_size);
-                }
+                /* [196.6 / D228 §6 class]: unified sweep — retain/release +
+                 * pending_sweeps release-decrement (scope-lifetime fence). */
+                nova_scope_sweep_dead_child(dead_ctx);
             }
         }
     }
@@ -1966,9 +1966,8 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
             /* Plan 173.0 Ф.3 (A3.3, R1-guard): retain instead of releasing
              * if this child failed under a supervised parent (see
              * nova_scope_retain_or_release_child, fibers.h). */
-            if (!nova_scope_retain_or_release_child(dead_ctx)) {
-                nova_spawn_pool_release(dead_ctx, dead_ctx->_nova_pool_size);
-            }
+            /* [196.6 / D228 §6 class]: unified sweep — see nova_scope_sweep_dead_child. */
+            nova_scope_sweep_dead_child(dead_ctx);
         }
     } else if (mco_status(co) == MCO_SUSPENDED) {
         if (fiber_is_parked) {
