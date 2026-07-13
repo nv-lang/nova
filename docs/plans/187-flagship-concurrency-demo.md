@@ -1,5 +1,23 @@
 # План 187 — Флагманское демо: конкурентный агрегатор с живой визуализацией
 
+> **Ред.3 (2026-07-13, вечер) — сверка с кодом после дневных слияний; все внешние гейты волны-1 СНЯТЫ:**
+> 1. **TLS-гейт Ф.3b МЁРТВ.** «Plan 116 std/tls (PLANNED, rustls)» не существует — TLS приехал
+>    планами 193/202/203: публичная репа **nv-lang/nova-tls** (mbedTLS-шим, реальные хендшейки
+>    в тестах зелёные), https-транспорт в http-клиенте подключён (`transport/real.nv` → tls).
+>    **Live-погода (open-meteo) разблокирована**; §9.4 п.5 «Погода disabled» устарел.
+> 2. **173-остатки закрыты целиком:** 173.0 (drain-гонка) ✅, 173.1 (`parallel for → []T`) ✅,
+>    173-хвосты 2026-07-13 ✅ (MultiError-агрегация + propagation-trace per-fiber). Оговорка
+>    «тесты под NOVA_MAXPROCS=1» снята. Образец real-cancel `supervised_deadline_test`
+>    ЗЕЛЁНЫЙ (CC-FAIL WriteBuffer.cancel закрыт миграцией CancelToken в prelude, 2026-07-13).
+> 3. **http живёт НЕ в std:** план 203 (2026-07-13) вынес его в публичную **nv-lang/nova-http**
+>    (module-path `http.*` НЕ изменился; examples уже подключены зависимостью; path-dep =
+>    dev-форма до плана 204). Упоминания «std/http» ниже читать как «пакет http (nova-http)».
+> 4. **Гейт-числа:** conformance-база на 2026-07-13 = **113/0 + 7 SKIP** (не 97/0); критерий
+>    §9.6 п.2 = δ0 от текущей базы. Плюс: examples обязаны собираться с `--strict-effects`.
+> 5. **Известный риск:** гуляющий рантайм-рейс (~30% прогонов больших merged-CU, предсуществующий,
+>    класс stale fiber-slot) — может флакать тесты агрегатора; точечный ре-ран = норма протокола,
+>    решение о глубокой инвестигации — за владельцем.
+>
 > **Статус: В РАБОТЕ (Ред.2, 2026-07-13).** MVP-ядро ✅ (коммит `514bcd8d5` — бек-библиотека+тесты),
 > но **запускаемого веб-приложения ещё НЕТ** — добор = Ф.MVP-2, см. **§9** (честный статус,
 > решения владельца 2026-07-13: запуск обязателен локально И под Docker, декомпозиция для
@@ -111,7 +129,7 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
 | **Ф.1 — SSE-стриминг** | ~~`[M-178-server-streaming]`~~ ✅ **гейт СНЯТ 2026-07-12** (`ServerResponse.sse`/`sse_event` в main, std/http/server + streaming_test) | живой поток событий бек→фронт (`text/event-stream`); в Ф.MVP-2 — replay-вариант (§9.3 п.3) | M |
 | **Ф.2 — runtime-отмена/deadline/0-leaks** | 173 Ф.3 ЗАКРЫТА (2026-07-12/13): `deadline:`/`timeout:`-параметр landed (D408, 2026-07-06) + захардено — нашёлся и починен реальный leak (спавненный child на `Time.sleep` не unwind'ился на отмену области; см. `[M-178-server-graceful-deadline]` в backlog-followups.md). Остаётся: 173.0 (substrate: multi-worker drain-гонка) + 173.1 (`parallel for → []T`, WIP `parallel-collect-173-1`) + servernet accept-LOOP функции ещё нет вообще (только `handle_connection` + smoke) — проводка bounded-drain в реальный цикл не сделана | отмена рантаймом + leaks-инвариант честен при MAXPROCS>1; чище код сбора | M |
 | **Ф.3a — Live health-check + Live-LLM (Ollama)** | Ф.1 (SSE); TLS НЕ нужен (health = HTTP/TCP-замер; Ollama = `localhost:11434` plain-HTTP) | реальные домены + **реальные LLM с машины пользователя** (одобрено owner 2026-07-09: детект `/api/tags`, модель=строка; нет Ollama → кнопка disabled с подсказкой, мок всегда работает) | M |
-| **Ф.3b — Live погода (+опц. поиск)** | Ф.3a + **Plan 116 std/tls (PLANNED, rustls)** — open-meteo/DDG/Wikipedia HTTPS-only, 🔴 внешний гейт | open-meteo по-настоящему; опц. поисковый race (бесключевые провайдеры) | S |
+| **Ф.3b — Live погода (+опц. поиск)** | Ф.3a; ~~Plan 116 std/tls~~ ✅ **гейт СНЯТ Ред.3** (TLS = nv-lang/nova-tls, https-транспорт в http подключён) | open-meteo по-настоящему; опц. поисковый race (бесключевые провайдеры) | S |
 | **Ф.4 — фронт до прода + лендинг** | Ф.1 | шрифты, подключение, публикация демо | M |
 | **Ф.5 — (опция) вложенность/граф B** | Ф.2 | scope⊃scope как разворот строки; граф-режим для тизера | S |
 
@@ -268,7 +286,7 @@ Nova-приложения, D78 «папка = модуль» ложится на
 | 2 | typed-serde | report_json.nv: JsonValue → `#impl(Serialize)` typed-путь; тесты обновить |
 | 3 | endpoints | `GET /` → frontend/index.html (`embed()`); `GET /api/snapshot` (есть, fallback); `GET /api/run?legend=weather\|health&mode=demo\|chaos&seed=N` → JSON свежего прогона; `GET /api/events` (те же параметры) → SSE-replay |
 | 4 | UI-внутренности | frontend/index.html: Live-сегмент разблокировать → `EventSource` на /api/events + fallback-poll /api/snapshot; Demo/Chaos-кнопки → /api/run; JS-модель — по контракту §9.5 |
-| 5 | легенда health | Live health-check = plain TCP/HTTP-замер через `real_net()`; Погода-Live — disabled с подсказкой (ждёт mbedtls-vendored/TLS) |
+| 5 | легенды Live | Live health-check = plain TCP/HTTP-замер через `real_net()`; **Погода-Live ДОСТУПНА** (Ред.3: https через nova-tls) — open-meteo без ключа; при недоступности сети — мок с подсказкой |
 | 6 | README.md | сборка + запуск локально (Windows/Unix), порт, env |
 | 7 | Docker (волна 2) | Dockerfile: Linux-сборка компилятора+рантайма+примера. 🔴 ГЕЙТ-РИСК `[M-nova-linux-build]` (Linux-сборка Nova не верифицирована) — при блокере зафиксировать маркер `[M-187-docker-linux-build]`, не обходить молча |
 
