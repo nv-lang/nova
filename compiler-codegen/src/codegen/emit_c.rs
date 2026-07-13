@@ -19881,6 +19881,144 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
+    /// Plan 196.5 §W1-instance addendum (W1.5, вариант ii) — W1-i.A
+    /// (extract+SHADOW). ЕДИНЫЙ POST-mono резолвер, консолидирующий per-
+    /// instance subst-реконструкцию, дублированную вручную в 6 legacy-
+    /// армах `infer_call_ret_c` (B05/B06a/B07/B07r/B11c/B11x, все — внутри
+    /// wave-1 замороженной зоны, RESUME-4/`AGENT_HEARTBEAT.txt`) — все шесть
+    /// решают один и тот же предикат: «дан структурный signature каллиси
+    /// (`callee`) + конкретный ресивер-инстанс (`recv_instance_rt` — тот же
+    /// `rt`/`stripped`, что армы уже держат: base+args mono-имя БЕЗ
+    /// `Nova_`-префикса, БЕЗ trailing `*`) + args → собрать subst каллиси
+    /// (carrier ++ method-level)».
+    ///
+    /// rustc-эталон (196.5-node-substs-channel.md §W1.3): per-instance subst
+    /// = `node_args.instantiate(Instance.args)`; здесь `Instance.args` —
+    /// уже материализованный `current_type_subst`/конкретный ресивер-
+    /// инстанс, НЕ checker-side `node_substs`-канал (эти сайты — residual
+    /// ПО ПОСТРОЕНИЮ: RESUME-4 инструментировал вход всех 6 армов — 850/850
+    /// `node_substs.get(&expr.id)` = NONE, множества «канал покрыл» и «арм
+    /// жив» дизъюнктны по гейту §7).
+    ///
+    /// W1-i.A: ЧИСТО-READ, БЕЗ side-effects (typedef/instance-регистрацию
+    /// по-прежнему делает вызывающий арм — напр. B07r остаётся
+    /// `register_generic_instances_in_typeref` на месте). Потребляется
+    /// ТОЛЬКО SHADOW-сверкой (см. `w1_shadow_probe`) — легаси-армы остаются
+    /// единственным авторитетным источником возврата до W1-i.B (flip).
+    ///
+    /// Возвращает `None`, если у `callee` нет receiver (не instance-метод).
+    /// `_call_id` не используется в самой реконструкции (эти сайты node_
+    /// substs-residual) — параметр зарезервирован под probe-dedup/W1-i.B.
+    fn resolve_instance_call_subst(
+        &self,
+        _call_id: ExprId,
+        callee: &FnDecl,
+        recv_instance_rt: &str,
+        args: &[CallArg],
+    ) -> Option<Vec<(String, Option<String>)>> {
+        // 1. Carrier-биндинг — СТРУКТУРНО через уже-существующий
+        // `infer_type_param_binding` (нет нового инференса): собрать
+        // typevar-имена, встречающиеся в receiver_ty, матчить против
+        // конкретного mono-имени ресивера. Два кандидата конкретной
+        // C-строки — с "Nova_"-префиксом (generic_type_templates-конвенция:
+        // Vec/Pair/пользовательские шаблоны) и без (builtin `NovaArray_
+        // <elem>`, без registry-записи) — `infer_type_param_binding`
+        // заполняет ТОЛЬКО пустые слоты, так что пробовать оба кандидата
+        // по очереди безопасно (мирроринг B05 47788-47800 fallback-пути).
+        //
+        // Receiver МОЖЕТ отсутствовать (`callee.receiver`/`receiver_ty ==
+        // None`) — некоторые `mono_method_decls`-sentinel-записи (напр.
+        // `Mutex.with_lock` B06a) хранят FnDecl без заполненного receiver,
+        // хотя return у них зависит ТОЛЬКО от method-level generics (не от
+        // carrier). Не бейлимся — carrier-шаг просто no-op, метод-level
+        // (шаг 2) всё ещё может резолвить return.
+        let recv_ty = callee.receiver.as_ref().and_then(|r| r.receiver_ty.as_ref());
+        let mut subst: Vec<(String, Option<String>)> = Vec::new();
+        let recv_prefixed = format!("Nova_{}*", recv_instance_rt);
+        if let Some(recv_ty) = recv_ty {
+            let mut tvars: Vec<String> = Vec::new();
+            Self::collect_receiver_typevars(recv_ty, &mut tvars);
+            subst = tvars.iter().map(|n| (n.clone(), None)).collect();
+            self.infer_type_param_binding(recv_ty, &recv_prefixed, &mut subst);
+            if subst.iter().any(|(_, c)| c.is_none()) {
+                let recv_bare = format!("{}*", recv_instance_rt);
+                self.infer_type_param_binding(recv_ty, &recv_bare, &mut subst);
+            }
+        }
+        // Registry-enrichment: остаточные carrier-слоты — из structurally-
+        // typed `generic_type_instance_info` (A1‴), для форм, которые
+        // структурный матч выше не видит (напр. receiver_ty == bare `Self`,
+        // или receiver отсутствует вовсе — enrichment всё равно пробует
+        // registry по `recv_instance_rt`, добавляя НОВЫЕ слоты).
+        if recv_ty.is_none() || subst.iter().any(|(_, c)| c.is_none()) {
+            let instance = self.generic_type_instance_info.borrow()
+                .get(&format!("Nova_{}", recv_instance_rt)).cloned();
+            if let Some((base_name, type_args_rt)) = instance {
+                if let Some(tmpl) = self.generic_type_templates.get(&base_name) {
+                    for (g, rt) in tmpl.generics.iter().zip(type_args_rt.iter()) {
+                        let c = self.arg_c(rt);
+                        match subst.iter_mut().find(|(n, _)| n == &g.name) {
+                            Some(slot) if slot.1.is_none() => slot.1 = Some(c),
+                            None => subst.push((g.name.clone(), Some(c))),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        if !subst.iter().any(|(n, _)| n == "Self") {
+            subst.push(("Self".to_string(), Some(recv_prefixed.clone())));
+        }
+        // 2. Method-level биндинг — из конкретных args + closure-return-тел
+        // (тот же двух-шаговый паттерн, что `resolve_method_level_subst`
+        // Steps 1/2 и `infer_mono_method_ret_with_args`).
+        for g in &callee.generics {
+            if !subst.iter().any(|(n, _)| n == &g.name) {
+                subst.push((g.name.clone(), None));
+            }
+        }
+        if !callee.generics.is_empty() {
+            let receiver_subst_map: HashMap<String, String> = subst.iter()
+                .filter_map(|(n, c)| c.clone().map(|c| (n.clone(), c)))
+                .collect();
+            let saved = self.type_subst_overrides.replace(receiver_subst_map);
+            for (param, arg) in callee.params.iter().zip(args.iter()) {
+                let arg_c = self.infer_expr_c_type(arg.expr());
+                self.infer_type_param_binding(&param.ty, &arg_c, &mut subst);
+                if let TypeRef::Func { params: fp, return_type: Some(ret_ty_ref), .. } = &param.ty {
+                    if let ExprKind::ClosureLight { params: cl_params, body } = &arg.expr().kind {
+                        let fp_tys: Vec<String> = fp.iter()
+                            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                            .collect();
+                        let mut ovr = self.closure_param_type_overrides.borrow_mut();
+                        let saved_cl: Vec<(String, Option<String>)> = cl_params.iter().zip(fp_tys.iter())
+                            .map(|(p, ty)| (p.name.clone(), ovr.insert(p.name.clone(), ty.clone())))
+                            .collect();
+                        drop(ovr);
+                        let ret_c = match body {
+                            ClosureBody::Expr(e) => self.infer_expr_c_type(e),
+                            ClosureBody::Block(b) => b.trailing.as_ref()
+                                .map(|e| self.infer_expr_c_type(e)).unwrap_or_default(),
+                        };
+                        let mut ovr = self.closure_param_type_overrides.borrow_mut();
+                        for (name, prev) in saved_cl {
+                            match prev {
+                                Some(old) => { ovr.insert(name, old); }
+                                None => { ovr.remove(&name); }
+                            }
+                        }
+                        drop(ovr);
+                        if !ret_c.is_empty() && ret_c != "void*" {
+                            self.infer_type_param_binding(ret_ty_ref.as_ref(), &ret_c, &mut subst);
+                        }
+                    }
+                }
+            }
+            self.type_subst_overrides.replace(saved);
+        }
+        Some(subst)
+    }
+
     /// Plan 99.1 Ф.1: resolve method-level type-param substitutions для
     /// generic method (с собственными `[U]`/`[F]`/`[E]` после receiver T).
     ///
@@ -44227,6 +44365,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // the erased base method. abort-on-unresolved inside the helper keeps
         // placeholder (`Nova_U`) instances out of the registry.
         self.register_generic_instances_in_typeref(&ret_ref, &subst);
+        // Plan 196.5 §W1-i.A SHADOW (extract, no flip): shared helper (6
+        // call-sites, no ExprId in scope) — dedup key = cheap hash of
+        // (obj_ty, method) instead of expr.id (see `w1_shadow_probe` doc).
+        #[cfg(debug_assertions)]
+        {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            obj_ty.hash(&mut hasher);
+            method.hash(&mut hasher);
+            let site_key = hasher.finish();
+            let helper_c = self
+                .resolve_instance_call_subst(ExprId::UNSET, &fd, stripped, args)
+                .and_then(|s| self.value_aware_subst_to_ref(&ret_ref, &s))
+                .map(|c| self.value_aware_generic_c_type(&c));
+            // Mirror BOTH branches below (Self-return vs normal) so the
+            // SHADOW comparison targets what this fn actually returns.
+            let legacy_final = if ret_c == format!("Nova_{}*", base_name) {
+                let mangled = Self::compute_generic_type_c_name(base_name, &type_args);
+                self.value_aware_generic_c_type(&format!("{}*", mangled))
+            } else {
+                self.value_aware_generic_c_type(&ret_c)
+            };
+            self.w1_shadow_probe("B11c", site_key, helper_c.as_deref(), &legacy_final);
+        }
         // Если return type совпадает с самим типом (Self), используем mono тип
         if ret_c == format!("Nova_{}*", base_name) {
             // Возвращается Self → нужен конкретный mono тип.
@@ -47862,6 +48024,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 ret_ty, &subst_pending,
                                             ) {
                                                 if !c_ty.is_empty() && c_ty != "void*" {
+                                                    // Plan 196.5 §W1-i.A SHADOW (extract, no flip):
+                                                    // сверяем resolve_instance_call_subst против
+                                                    // ЭТОГО же legacy-результата, через ТУ ЖЕ
+                                                    // lowering-цепочку (apply_type_subst_to_ref).
+                                                    #[cfg(debug_assertions)]
+                                                    {
+                                                        let helper_c = self
+                                                            .resolve_instance_call_subst(expr.id, fn_decl, &rt, args)
+                                                            .and_then(|s| Self::apply_type_subst_to_ref(ret_ty, &s));
+                                                        self.w1_shadow_probe(
+                                                            "B05", expr.id.0 as u64, helper_c.as_deref(), &c_ty,
+                                                        );
+                                                    }
                                                     return c_ty;
                                                 }
                                             }
@@ -47901,6 +48076,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         .or_else(|| Self::apply_type_subst_to_ref(ret_ty, &subst_opt));
                                                     if let Some(c_ty) = c_ty_opt {
                                                         if !c_ty.is_empty() && c_ty != "void*" {
+                                                            // Plan 196.5 §W1-i.A SHADOW (extract, no
+                                                            // flip): та же lowering-цепочка, fed'ая
+                                                            // resolve_instance_call_subst вместо
+                                                            // resolve_mono_type_args.
+                                                            #[cfg(debug_assertions)]
+                                                            {
+                                                                let helper_c = self
+                                                                    .resolve_instance_call_subst(expr.id, &fn_decl, &rt, args)
+                                                                    .and_then(|s| {
+                                                                        self.resolve_result_option_ret(ret_ty, &s)
+                                                                            .or_else(|| self.value_aware_subst_to_ref(ret_ty, &s))
+                                                                            .or_else(|| Self::apply_type_subst_to_ref(ret_ty, &s))
+                                                                    });
+                                                                self.w1_shadow_probe(
+                                                                    "B06a", expr.id.0 as u64, helper_c.as_deref(), &c_ty,
+                                                                );
+                                                            }
                                                             return c_ty;
                                                         }
                                                     }
@@ -48172,7 +48364,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         // to_ref` produced — so the let-binding
                                                         // local var type matches the by-value
                                                         // method ABI.
-                                                        return self.value_aware_generic_c_type(&c_ty);
+                                                        let final_c = self.value_aware_generic_c_type(&c_ty);
+                                                        // Plan 196.5 §W1-i.A SHADOW (extract, no
+                                                        // flip): B07/B07r share this single return
+                                                        // point — one helper-subst reconstruction,
+                                                        // two bucket tallies (mirrors legacy's two
+                                                        // icr_trace ids for the same site).
+                                                        #[cfg(debug_assertions)]
+                                                        {
+                                                            let helper_c = self
+                                                                .resolve_instance_call_subst(expr.id, method_decl, &rt, args)
+                                                                .and_then(|s| {
+                                                                    self.value_aware_subst_to_ref(ret_ty, &s).or_else(|| {
+                                                                        if let crate::ast::TypeRef::Named { path, generics, .. } = ret_ty {
+                                                                            if generics.is_empty()
+                                                                                && path.last().map(|s| s.as_str()) == Some("Self")
+                                                                            {
+                                                                                let mangled = Self::compute_generic_type_c_name(&base_name, &type_args_c);
+                                                                                return Some(self.value_aware_generic_c_type(&format!("{}*", mangled)));
+                                                                            }
+                                                                        }
+                                                                        None
+                                                                    })
+                                                                })
+                                                                .map(|c| self.value_aware_generic_c_type(&c));
+                                                            self.w1_shadow_probe("B07", expr.id.0 as u64, helper_c.as_deref(), &final_c);
+                                                            self.w1_shadow_probe("B07r", expr.id.0 as u64, helper_c.as_deref(), &final_c);
+                                                        }
+                                                        return final_c;
                                                     }
                                                 }
                                             }
@@ -49321,6 +49540,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     let key = ("[]T".to_string(), method.clone());
                                     if let Some(fn_decl) = self.mono_method_decls.get(&key) {
                                         if let Some(ret_ty) = &fn_decl.return_type {
+                                            // Plan 196.5 §W1-i.A SHADOW (extract, no flip):
+                                            // helper-subst fed through the SAME general
+                                            // lowering (`apply_type_subst_to_ref`) this arm's
+                                            // hand-rolled T-substitution below re-derives
+                                            // per-shape. No ExprId in scope here (shared
+                                            // `_` arm) — dedup key = hash(obj_ty, method).
+                                            #[cfg(debug_assertions)]
+                                            let (w1_site_key, helper_c): (u64, Option<String>) = {
+                                                use std::hash::{Hash, Hasher};
+                                                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                                                obj_ty.hash(&mut hasher);
+                                                method.hash(&mut hasher);
+                                                let key = hasher.finish();
+                                                let hc = self
+                                                    .resolve_instance_call_subst(
+                                                        ExprId::UNSET, fn_decl, obj_ty.trim_end_matches('*'), args,
+                                                    )
+                                                    .and_then(|s| Self::apply_type_subst_to_ref(ret_ty, &s));
+                                                (key, hc)
+                                            };
                                             if let Some(t_name) = fn_decl.generics.first().map(|g| g.name.clone()) {
                                                 // Manual substitute T в return type.
                                                 // Simpler: pattern-match common shapes.
@@ -49330,13 +49569,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         if path.len() == 1 && path[0] == t_name =>
                                                     {
                                                         // Return type is bare T → elem_ty.
+                                                        #[cfg(debug_assertions)]
+                                                        self.w1_shadow_probe(
+                                                            "B11x", w1_site_key, helper_c.as_deref(), elem_ty,
+                                                        );
                                                         return elem_ty.to_string();
                                                     }
                                                     TypeRef::Array(inner, _) => {
                                                         // Return []T → NovaArray_<elem_ty>*.
                                                         if let TypeRef::Named { path, .. } = inner.as_ref() {
                                                             if path.len() == 1 && path[0] == t_name {
-                                                                return format!("NovaArray_{}*", elem_ty);
+                                                                let legacy = format!("NovaArray_{}*", elem_ty);
+                                                                #[cfg(debug_assertions)]
+                                                                self.w1_shadow_probe(
+                                                                    "B11x", w1_site_key, helper_c.as_deref(), &legacy,
+                                                                );
+                                                                return legacy;
                                                             }
                                                         }
                                                     }
@@ -49346,7 +49594,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         // Return Option[T] → NovaOpt_<elem_ty>.
                                                         if let TypeRef::Named { path: ipath, .. } = &generics[0] {
                                                             if ipath.len() == 1 && ipath[0] == t_name {
-                                                                return format!("NovaOpt_{}", elem_ty);
+                                                                let legacy = format!("NovaOpt_{}", elem_ty);
+                                                                #[cfg(debug_assertions)]
+                                                                self.w1_shadow_probe(
+                                                                    "B11x", w1_site_key, helper_c.as_deref(), &legacy,
+                                                                );
+                                                                return legacy;
                                                             }
                                                         }
                                                     }
@@ -49355,6 +49608,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             }
                                             // Не T-зависимый return — type_ref_to_c напрямую.
                                             if let Ok(c_ty) = self.type_ref_to_c(ret_ty) {
+                                                #[cfg(debug_assertions)]
+                                                self.w1_shadow_probe(
+                                                    "B11x", w1_site_key, helper_c.as_deref(), &c_ty,
+                                                );
                                                 return c_ty;
                                             }
                                         }
@@ -49739,6 +49996,69 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             if seen.insert(_id) {
                 eprintln!("[ICR-HIT] {}", _id);
             }
+        }
+    }
+
+    /// Plan 196.5 §W1-instance addendum, W1-i.A (extract+SHADOW).
+    /// SHADOW-only verify probe: сверяет C-тип, лоуэренный из
+    /// `resolve_instance_call_subst`'s subst через ТУ ЖЕ lowering-цепочку,
+    /// что уже применяет легаси-арм, с C-типом, который легаси-арм САМ
+    /// только что вычислил. Легаси остаётся авторитетным — эта функция
+    /// НИЧЕГО не возвращает вызывающему, только считает/трейсит (мирроринг
+    /// RESUME-4 `w1_probe_node_substs` методологии, `AGENT_HEARTBEAT.txt`).
+    ///
+    /// debug-only (`cfg(debug_assertions)`), активна под
+    /// `NOVA_TRACE_W1_SHADOW=1`. Dedup по (bucket, call_id) — один call-site
+    /// считается один раз на bucket (как `icr_trace`, но keyed, не только
+    /// first-hit). Печатает КАЖДЫЙ MISMATCH сразу (для диагностики) +
+    /// running per-bucket tally на каждый (первый на call-site) hit.
+    #[inline]
+    /// `_site_key`: dedup key для повторных инференсов ОДНОГО call-site
+    /// (`infer_expr_c_type` может рекурсивно перевызываться на тот же
+    /// `Expr` несколько раз за компиляцию). Для армов внутри
+    /// `infer_call_ret_c` — `expr.id.0 as u64` (реальный call_id). Для
+    /// `infer_mono_method_ret_with_args` (B11c) — вызывается БЕЗ ExprId в
+    /// сигнатуре (shared helper, 6 call-сайтов) — дешёвый хэш
+    /// `(obj_ty, method)` вместо расширения сигнатуры (не расширяем
+    /// поверхность правки за пределы shadow-probe строк).
+    fn w1_shadow_probe(
+        &self,
+        _bucket: &'static str,
+        _site_key: u64,
+        _helper_c: Option<&str>,
+        _legacy_c: &str,
+    ) {
+        #[cfg(debug_assertions)]
+        {
+            use std::sync::{Mutex, OnceLock};
+            static ON: OnceLock<bool> = OnceLock::new();
+            if !*ON.get_or_init(|| std::env::var_os("NOVA_TRACE_W1_SHADOW").is_some()) {
+                return;
+            }
+            static SEEN: OnceLock<Mutex<HashSet<(&'static str, u64)>>> = OnceLock::new();
+            static COUNTS: OnceLock<Mutex<HashMap<&'static str, (u32, u32)>>> = OnceLock::new();
+            {
+                let mut seen = SEEN.get_or_init(|| Mutex::new(HashSet::new())).lock().unwrap();
+                if !seen.insert((_bucket, _site_key)) {
+                    return;
+                }
+            }
+            let matched = _helper_c == Some(_legacy_c);
+            let mut counts = COUNTS.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
+            let entry = counts.entry(_bucket).or_insert((0u32, 0u32));
+            if matched {
+                entry.0 += 1;
+            } else {
+                entry.1 += 1;
+                eprintln!(
+                    "[W1-SHADOW-MISMATCH] {} site={:#x} helper={:?} legacy={:?}",
+                    _bucket, _site_key, _helper_c, _legacy_c
+                );
+            }
+            eprintln!(
+                "[W1-SHADOW-TALLY] {} match={} mismatch={}",
+                _bucket, entry.0, entry.1
+            );
         }
     }
 
