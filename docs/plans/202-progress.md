@@ -157,3 +157,20 @@ SKIP: 3** (client/server/util — compiled OK, no test blocks, норма).
 (D29 «Свойства правила» п.4, дубль decl из разных физических модулей легален и безвреден после
 Ф.1) + (2) root peers (новая секция под D78 «Path / module enforcement»). В том же слиянии, что
 код (lang-change-needs-spec).
+
+## Гейты (итоговые прогоны, 2026-07-13)
+
+1. **Conformance (весь suite, release-бинарь, БЕЗ `--jobs`):** `nova test --positive
+   --compile-error --timeout 300 spec_tests/conformance` → **PASS: 102 / FAIL: 0 / SKIP: 7**.
+   Baseline был 98/0; +4 PASS = ровно четыре новых test-entry (entry_d78_dup_decl,
+   entry_d78_dup_decl_type, entry_root_peers, bad_root_decl_neg); все 7 SKIP = ровно новые
+   peer-файлы фикстур без test-блоков («compiled OK» в каждом) — норма.
+2. **Стресс-гейт triage-198** (`d:/Sources/nv-lang/nova-198`, ~1480 файлов
+   `spec_tests/conformance` ТОЙ ветки, компиляция-фаза = `nova check` рекурсивно, std той же
+   ветки): FAIL-лист p202-компилятора **байт-идентичен** FAIL-листу baseline-компилятора
+   (307 = 307, diff пуст). Все 307 — `neg`-фикстуры (fail-by-design) плюс один
+   pre-existing WIP-провал `app_effect_basic_t8_1.nv`, воспроизводящийся ОБОИМИ
+   компиляторами одинаково. Дельта = 0 → зелёный.
+3. **nova check std:** дельта-замер (см. ниже в отчёте сессии) — параллельный первый замер дал
+   расхождение сводки (30 vs 21 FAIL) при обоих прогонах под конкурентной нагрузкой двух
+   стресс-чеков; чистый последовательный перезамер — авторитетный (результат в отчёте).
