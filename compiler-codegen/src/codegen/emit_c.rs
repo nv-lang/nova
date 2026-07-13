@@ -46693,51 +46693,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    /// Plan 180 [M-180-static-method-path-ret-infer]: resolve the concrete C
-    /// return type of a static method call `Type.method(...)` whose receiver is
-    /// a type-name / mono'd-typevar Ident. Needed for the serde `Deserialize`
-    /// contract (`T.deserialize() -> Result[T, DeError]`): `method_overloads`
-    /// stores an ERASED `void*` return for generic Self-returning / method-generic
-    /// static methods, so `?`/Try/`!!` degenerate. Reconstruct from the method's
-    /// DECLARED return `TypeRef` (via `mono_method_decls`/`self_method_decls`),
-    /// which is concrete (`Result[str, DeError]`). Returns None when
-    /// unresolvable — caller keeps its existing behaviour. `from`/`try_*` keep
-    /// their dedicated handling and are excluded.
-    fn infer_static_method_ret(&self, receiver_ident: &str, method: &str) -> Option<String> {
-        if method == "from" || method == "try_from"
-            || method == "try_into" || method == "try_parse"
-        {
-            return None;
-        }
-        let concrete = self.subst_c(receiver_ident)
-            .map(|c| Self::debt_nova_type_name_from_c(&c))
-            .unwrap_or_else(|| receiver_ident.to_string());
-        let key = (concrete.clone(), method.to_string());
-        if let Some(fd) = self.mono_method_decls.get(&key)
-            .or_else(|| self.self_method_decls.get(&key))
-        {
-            if !matches!(fd.receiver.as_ref().map(|r| &r.kind),
-                Some(crate::ast::ReceiverKind::Instance))
-            {
-                if let Some(ret) = &fd.return_type {
-                    if let Ok(c) = self.type_ref_to_c(ret) {
-                        if !c.is_empty() && c != "void*" {
-                            return Some(c);
-                        }
-                    }
-                }
-            }
-        }
-        // Fallback: a non-erased static overload's concrete return type.
-        if let Some(sigs) = self.method_overloads.get(&key) {
-            if let Some(sig) = sigs.iter().find(|s|
-                !s.is_instance && !s.return_c_type.is_empty() && s.return_c_type != "void*")
-            {
-                return Some(sig.return_c_type.clone());
-            }
-        }
-        None
-    }
+    // [196.5 Stage-D] `infer_static_method_ret` REMOVED. Its sole surviving
+    // caller was B12a_path_static_method_ret (Path-form `Type.method(...)`
+    // static return, below) — the earlier Member/Ident-form twin
+    // (B11t_static_method_ret_ident) was already removed as NO-HIT in an
+    // earlier wave, whose comment noted this fn "stays (other call site
+    // above still uses it)"; that other call site is B12a, which this same
+    // sweep also proved NO-HIT (0 hits across conformance +
+    // std/src/collections + std/src/data + std/src/net) — the serde
+    // Deserialize contract's static-method return is checker-materialised
+    // into resolved_types ahead of infer_call_ret_c for every measured case.
+    // With both callers gone, the helper is fully dead (§5, docs/plans/
+    // 196.5-stage-d-notes.md).
 
     /// Returns true для C-целочисленных типов, явно несущих ширину/знак
     /// (uint8_t..uint64_t, int8_t..int32_t). `nova_int` (= int64_t) сюда
@@ -49130,32 +49097,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     }
                                 }
                             }
-                            // Plan 63 Fix A: fallback на external_registry.by_key для
-                            // built-in типов (StringBuilder/WriteBuffer/etc.) которые
-                            // регистрируются через runtime stub'ы. Без этого
-                            // `sb.peek() -> str` инфер'ит в nova_int (fallback), что
-                            // ломает downstream type-check'и.
-                            if let Some(decls) = self.external_registry.by_key
-                                .get(&(rt.clone(), mn.clone()))
-                            {
-                                let matching: Vec<_> = decls.iter()
-                                    .filter(|d| d.is_instance == want_inst)
-                                    .collect();
-                                if let Some(decl) = matching.first() {
-                                    self.icr_trace("B09_external_registry_bykey_builtin");
-                                    // Plan 62.B: пропускаем generic-стаб `Nova_T*`
-                                    // (single uppercase letter = type-param return)
-                                    // — fall through to specialized NovaOpt_/
-                                    // Nova_Result* блокам, знающим concrete тип.
-                                    let c_ret = &decl.return_c_type;
-                                    if !c_ret.is_empty()
-                                        && c_ret != "void*"
-                                        && !self.debt_is_generic_stub_c(c_ret)
-                                    {
-                                        return c_ret.clone();
-                                    }
-                                }
-                            }
+                            // [196.5 Stage-D] B09_external_registry_bykey_builtin REMOVED.
+                            // `external_registry.by_key` fallback for built-in types
+                            // (StringBuilder/WriteBuffer/etc.) — the SAME registry-declared
+                            // return this arm re-derived by-key is, for every method-return
+                            // purpose, checker-materialised into `resolved_types` (Channel 2,
+                            // read BEFORE `infer_call_ret_c` — mirrors the already-removed
+                            // B11l_{stringbuilder,writebuffer,readbuffer}_static/B11n/B11o/
+                            // B11p siblings a few hundred lines below, all the same
+                            // ExternalRegistry-by-key pattern). NO-HIT across conformance +
+                            // std/src/collections + std/src/data + std/src/net (docs/plans/
+                            // 196.5-stage-d-notes.md) ⟹ structurally unreachable (§5).
                         }
                     }
                     // Infer return type for call expressions
@@ -49236,29 +49188,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 return ret_ty.clone();
                             }
                         }
-                        let key = format!("fn_ret_{}", name);
-                        // Plan 196.2 W1 [gate-1]: B10g_fn_ret_var_generic_stash REMOVED
-                        // (paired with its sole consumer B10j_generic_fn_stash_or_voidstar,
-                        // removed below — the `fn_ret_generic_stash` mechanism is dead as a
-                        // unit). It used to stash the erased `fn_ret_<name>` answer for a
-                        // non-turbofish generic fn call ([M-property-testing-rot], Plan
-                        // 172.13) so a later fallback could return it when mono-aware
-                        // inference failed to bind. NO-HIT on either end across
-                        // conformance+std ⟹ mono-aware inference now always binds when this
-                        // cascade is reached (Channel-2-covered otherwise).
-                        if let Some(t) = self.var_types.get(&key).cloned() {
-                            // Plan 180 [M-180-namespace-static-generic-mono followup]:
-                            // for a TURBOFISH generic free-fn call (`json_decode[User](..)`
-                            // — the serde public API), the bare-name `fn_ret_<name>` table
-                            // holds the ERASED return (type-param → void*), so `?`/Try/`!!`
-                            // on the `Result[User, DeError]` degenerated to void*. Fall
-                            // through to the turbofish-aware generic-fn resolution below
-                            // (which substitutes the turbofish args into the return type).
-                            if !self.generic_fns.contains(name.as_str()) {
-                                self.icr_trace("B10g_fn_ret_var_nongeneric");
-                                return t;
-                            }
-                        }
+                        // [196.5 Stage-D] B10g_fn_ret_var_nongeneric REMOVED (paired with
+                        // the already-removed B10g_fn_ret_var_generic_stash sibling above,
+                        // which used the SAME `fn_ret_<name>` var_types key). Any bare
+                        // free-fn call whose `fn_ret_<name>` entry exists and whose fn is
+                        // non-generic is, per B10f's own comment a few lines above
+                        // ("`user_fn_sigs` is registered ONLY for non-generic free fns...
+                        // the authoritative source for a bare call's return type"), already
+                        // resolved by B10f before this cascade point is ever reached — this
+                        // arm was a redundant second read of the same fact. NO-HIT across
+                        // conformance + std/src/collections + std/src/data + std/src/net
+                        // (docs/plans/196.5-stage-d-notes.md) ⟹ structurally unreachable (§5).
                         // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)`
                         // newtype constructor — return type = aliased C type.
                         // Mirror emit_call newtype intercept (single-arg only).
@@ -49268,22 +49208,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 return aliased_c;
                             }
                         }
-                        // Plan 115 D214: free external fn (declared в user module
-                        // OR stdlib runtime) return-type через ExternalRegistry.
-                        // Без этого `nova_p115_make_pair() -> (ptr, int)` infer'ит
-                        // в "nova_int" fallback → call-site assigns to _NovaTuple2
-                        // mismatch'ит с mono'd `_NovaTuple_2_8_nova_ptr_8_nova_int`.
-                        if let Some(decls) = self.external_registry.by_key
-                            .get(&(String::new(), name.clone()))
-                        {
-                            if let Some(decl) = decls.first() {
-                                let c_ret = &decl.return_c_type;
-                                if !c_ret.is_empty() && c_ret != "void*" {
-                                    self.icr_trace("B10i_external_registry_free_fn");
-                                    return c_ret.clone();
-                                }
-                            }
-                        }
+                        // [196.5 Stage-D] B10i_external_registry_free_fn REMOVED. Free
+                        // external-fn (`ExternalRegistry.by_key(("", name))`) return-type
+                        // fallback — same by-key registry lookup as the removed
+                        // B09_external_registry_bykey_builtin (instance form) above; the
+                        // declared return is checker-materialised into `resolved_types`
+                        // ahead of this legacy for the free-fn form too. NO-HIT across
+                        // conformance + std/src/collections + std/src/data + std/src/net
+                        // (docs/plans/196.5-stage-d-notes.md) ⟹ structurally unreachable (§5).
                         // Plan 48: infer concrete return type for monomorphized generic fn calls.
                         // When a generic fn's return type is a bare type param T, resolve T
                         // from the first matching argument type.
@@ -49623,19 +49555,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // is unrelated emit-side code, not this legacy inference dispatch)
                         // is checker-materialised into resolved_types ahead of this legacy.
                         // Exercised pervasively yet NO-HIT ⟹ structurally unreachable (§5).
-                        // Plan 48: если obj_ty — монотип вида "Nova_X____A__B*",
-                        // вычислить return-type метода через generic_type_methods["X"]
-                        // с подстановкой type-аргументов. Это исправляет случаи вроде
-                        // `let s = p.swap()` где p: Pair[int,str] — без этого
-                        // fn_ret_swap = "void*" (erased) и поля s потом неверно typed.
-                        //
-                        // Plan 48 method-param mono (Plan 63 followup): передаём args
-                        // чтобы resolve method-level type params (`@map[U]` → U из
-                        // closure return type).
-                        if let Some(ret) = self.infer_mono_method_ret_with_args(&obj_ty, method, args) {
-                            self.icr_trace("B11c_infer_mono_method_ret");
-                            return ret;
-                        }
+                        // [196.5 Stage-D] B11c_infer_mono_method_ret call-site REMOVED
+                        // (helper `infer_mono_method_ret_with_args` itself STAYS — SHARED,
+                        // still called from the emit-path, 196.2-progress.md's "13 SHARED"
+                        // list). This call re-derived a generic-type-instance method's
+                        // return via `generic_type_methods[X]` + hand-rolled subst — the
+                        // SAME receiver-instance space B07/B07r (earlier in this same
+                        // cascade, `generic_type_instance_info.get("Nova_{rt}")`) already
+                        // cover via the POST-mono `resolve_instance_call_subst` resolver
+                        // (196.5 §W1-i.B, SHADOW-verified 0/0 mismatch on conformance 96/96
+                        // + std/collections 146/146 per that wave's own notes). Any call
+                        // reaching this point with a generic-type-instance receiver has
+                        // already fallen through B07/B07r without a match — the SAME
+                        // lookup here structurally cannot succeed either. NO-HIT across
+                        // conformance + std/src/collections + std/src/data + std/src/net
+                        // (docs/plans/196.5-stage-d-notes.md) ⟹ structurally unreachable (§5).
                         // Plan 118 Ф.4 V1: typed pointer (*T).read() -> T,
                         // (*mut T).write(v T) -> nova_unit. Match obj_ty pattern
                         // `T*` или `const T*`, NOT Nova_*/NovaArray_*/etc.
@@ -50024,121 +49958,57 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 // const-init issues в unsafe blocks (codegen layout).
                                 // D410 (2026-07-06): as_ptr → ptr (as_ prefix retracted).
                                 "ptr" | "as_mut_ptr" => return format!("{}*", elem_ty),
-                                _ => {
-                                    // Plan 101.1: user-extension array method
-                                    // (fn[T] []T @method...). Поиск в mono_method_decls
-                                    // по ключу ("[]T", method) — return type substitute
-                                    // T → elem_ty.
-                                    let key = ("[]T".to_string(), method.clone());
-                                    if let Some(fn_decl) = self.mono_method_decls.get(&key) {
-                                        if let Some(ret_ty) = &fn_decl.return_type {
-                                            // Plan 196.5 §W1-i.A SHADOW (extract, no flip):
-                                            // helper-subst fed through the SAME general
-                                            // lowering (`apply_type_subst_to_ref`) this arm's
-                                            // hand-rolled T-substitution below re-derives
-                                            // per-shape. No ExprId in scope here (shared
-                                            // `_` arm) — dedup key = hash(obj_ty, method).
-                                            #[cfg(debug_assertions)]
-                                            let (w1_site_key, helper_c): (u64, Option<String>) = {
-                                                use std::hash::{Hash, Hasher};
-                                                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                                                obj_ty.hash(&mut hasher);
-                                                method.hash(&mut hasher);
-                                                let key = hasher.finish();
-                                                let hc = self
-                                                    .resolve_instance_call_subst(
-                                                        ExprId::UNSET, fn_decl, obj_ty.trim_end_matches('*'), args,
-                                                    )
-                                                    .and_then(|s| Self::apply_type_subst_to_ref(ret_ty, &s));
-                                                (key, hc)
-                                            };
-                                            if let Some(t_name) = fn_decl.generics.first().map(|g| g.name.clone()) {
-                                                // Manual substitute T в return type.
-                                                // Simpler: pattern-match common shapes.
-                                                use crate::ast::TypeRef;
-                                                match ret_ty {
-                                                    TypeRef::Named { path, generics: _, .. }
-                                                        if path.len() == 1 && path[0] == t_name =>
-                                                    {
-                                                        // Return type is bare T → elem_ty.
-                                                        #[cfg(debug_assertions)]
-                                                        self.w1_shadow_probe(
-                                                            "B11x", w1_site_key, helper_c.as_deref(), elem_ty,
-                                                        );
-                                                        return elem_ty.to_string();
-                                                    }
-                                                    TypeRef::Array(inner, _) => {
-                                                        // Return []T → NovaArray_<elem_ty>*.
-                                                        if let TypeRef::Named { path, .. } = inner.as_ref() {
-                                                            if path.len() == 1 && path[0] == t_name {
-                                                                let legacy = format!("NovaArray_{}*", elem_ty);
-                                                                #[cfg(debug_assertions)]
-                                                                self.w1_shadow_probe(
-                                                                    "B11x", w1_site_key, helper_c.as_deref(), &legacy,
-                                                                );
-                                                                return legacy;
-                                                            }
-                                                        }
-                                                    }
-                                                    TypeRef::Named { path, generics, .. }
-                                                        if path.len() == 1 && path[0] == "Option" && generics.len() == 1 =>
-                                                    {
-                                                        // Return Option[T] → NovaOpt_<elem_ty>.
-                                                        if let TypeRef::Named { path: ipath, .. } = &generics[0] {
-                                                            if ipath.len() == 1 && ipath[0] == t_name {
-                                                                let legacy = format!("NovaOpt_{}", elem_ty);
-                                                                #[cfg(debug_assertions)]
-                                                                self.w1_shadow_probe(
-                                                                    "B11x", w1_site_key, helper_c.as_deref(), &legacy,
-                                                                );
-                                                                return legacy;
-                                                            }
-                                                        }
-                                                    }
-                                                    _ => {}
-                                                }
-                                            }
-                                            // Не T-зависимый return — type_ref_to_c напрямую.
-                                            if let Ok(c_ty) = self.type_ref_to_c(ret_ty) {
-                                                #[cfg(debug_assertions)]
-                                                self.w1_shadow_probe(
-                                                    "B11x", w1_site_key, helper_c.as_deref(), &c_ty,
-                                                );
-                                                return c_ty;
-                                            }
-                                        }
-                                    }
-                                    return "nova_int".into();
-                                }
+                                // [196.5 Stage-D] user-extension array method
+                                // (`fn[T] []T @method(...)`) hand-rolled T-substitution
+                                // sub-arm REMOVED. `NOVA_TRACE_W1_SHADOW=1` over the full
+                                // corpus (conformance incl. the arm's OWN dedicated
+                                // `b11x_novaarray_user_ext_methods.nv` — built specifically
+                                // to exercise all four return shapes this arm distinguished
+                                // — + std/src/collections + std/src/data) never printed a
+                                // single `[W1-SHADOW-TALLY] B11x` line: the checker's
+                                // return-type channel (`resolved_types[call.id]`, Channel-2)
+                                // already materialises this method's return ahead of
+                                // `infer_call_ret_c` in every measured case — this sub-arm
+                                // is structurally unreachable (§5), not merely untested.
+                                // Panic (not silent fallback) enforces that: a real miss
+                                // here is a checker gap, not a legacy-arm gap.
+                                _ => panic!(
+                                    "[CC-ERROR][196.5-stage-d] user-extension array method \
+                                     {:?} on {:?} reached infer_call_ret_c's B11x legacy \
+                                     sub-arm, which the 196.5 Stage-D sweep removed as \
+                                     structurally unreachable (checker's resolved_types/ \
+                                     node_substs channel must cover this call; see \
+                                     docs/plans/196.5-stage-d-notes.md)",
+                                    method, obj_ty
+                                ),
                             }
                         }
-                        // D74 math methods on f64/f32 — return f64 (most) or bool (predicates).
-                        if obj_ty == "nova_f64" || obj_ty == "nova_f32" {
-                            // [M-ptr-raw-access-contract-and-unaligned] item 3:
-                            // `to_bits` hardcode return-type снят — numeric.nv
-                            // ЧИСТЫЙ .nv method, return-type резолвится обычным
-                            // Nova-body method-return-type инференсом (declared
-                            // `-> u64`/`-> u32` в сигнатуре).
-                            if Self::f64_method_to_c(method).is_some() {
-                                self.icr_trace("B11y_f64_f32_math");
-                                return match method.as_str() {
-                                    "is_nan" | "is_finite" | "is_infinite" => "nova_bool".into(),
-                                    _ => "nova_f64".into(),
-                                };
-                            }
-                        }
+                        // [196.5 Stage-D] B11y_f64_f32_math REMOVED. D74 math-method
+                        // return-type consultation of `f64_method_to_c` (sqrt/trig/exp/
+                        // log/pow/hypot/is_nan/…) — per the `primitive_instance_method_known`
+                        // doc comment above (Plan 196.3, D109/D74 checker-visibility
+                        // migration): `std/prelude.nv` now plain-`import`s
+                        // `std.runtime.math`, so `method_table["f64"]["sqrt"]` etc. are
+                        // populated the NORMAL way and the checker materialises the
+                        // Nova-body declared return into `resolved_types` ahead of
+                        // `infer_call_ret_c` — the SAME fact that already made the sibling
+                        // existence-oracle arms in `primitive_instance_method_known`
+                        // unreachable applies here to the return-TYPE consultation.
+                        // `f64_method_to_c` itself stays (still the sole Nova-method →
+                        // C-function mapping for emit_call). NO-HIT across conformance +
+                        // std/src/collections + std/src/data + std/src/net (docs/plans/
+                        // 196.5-stage-d-notes.md) ⟹ structurally unreachable (§5).
                         // Plan 196.2 W1 [gate-1]: B11z_prim_builtin_method_second REMOVED.
                         // Duplicate of the FIRST prim-builtin check (B11f, above) — primitive
                         // builtin methods (hash/comparison/identity-clone) are caught by B11f or
                         // materialised into Channel-2; this SECOND check is NO-HIT ⟹ structurally
                         // unreachable (§5).
-                        // D74 math methods on int.
-                        if obj_ty == "nova_int" {
-                            if Self::int_method_to_c(method).is_some() {
-                                self.icr_trace("B11aa_int_math");
-                                return "nova_int".into();
-                            }
-                        }
+                        // [196.5 Stage-D] B11aa_int_math REMOVED. D74 `int_method_to_c`
+                        // (`abs`) return-type consultation — same reasoning as B11y above
+                        // (`int.abs()` is now a normal prelude method, checker-materialised
+                        // ahead of this legacy). `int_method_to_c` itself stays (emit_call
+                        // still uses it for the C-function mapping). NO-HIT across the same
+                        // 4-corpus measurement ⟹ structurally unreachable (§5).
                         // Plan 196.2 W1 [gate-1]: B11ab_str_method_big_match_second REMOVED.
                         // `str` is a .nv-backed type whose methods (to_upper/trim/len/byte_at/
                         // char_at/find/bytes/split/compare/pad/repeat/replace/…) are Nova-body /
@@ -50337,19 +50207,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if parts.len() == 2 {
                             let eff = &parts[0];
                             let method_name = &parts[1];
-                            // Plan 180 [M-180-static-method-path-ret-infer]: general
-                            // user static-method return inference for Path-form
-                            // `Type.method(...)` — incl. a mono'd typevar receiver
-                            // (`T.deserialize` inside a container body with T=str). The
-                            // serde `Deserialize` contract returns `Result[T, DeError]`;
-                            // without this the `?`/Try on it degenerates. Resolve the
-                            // receiver (typevar → concrete via current_type_subst) and
-                            // return the STATIC overload's concrete `return_c_type`.
-                            // `from`/`try_*` keep their dedicated handling below.
-                            if let Some(c) = self.infer_static_method_ret(eff, method_name) {
-                                self.icr_trace("B12a_path_static_method_ret");
-                                return c;
-                            }
+                            // [196.5 Stage-D] B12a_path_static_method_ret REMOVED along
+                            // with `infer_static_method_ret` itself (comment above its
+                            // former definition) — the serde Deserialize contract's
+                            // static-method return (`T.deserialize() -> Result[T,DeError]`)
+                            // is checker-materialised into resolved_types ahead of
+                            // infer_call_ret_c. NO-HIT across conformance +
+                            // std/src/collections + std/src/data + std/src/net (docs/plans/
+                            // 196.5-stage-d-notes.md) ⟹ structurally unreachable (§5).
                             // D91 (Plan 21): Channel.new(cap) — Path-form.
                             if eff == "Channel" && method_name == "new" {
                                 self.icr_trace("B12b_path_channel_new");
@@ -50366,11 +50231,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // above still fires) — checker-materialised. NO-HIT (§5).
                             // Plan 175 Ф.3(a): `Monotonic.now()` inference builtin
                             // RETIRED (Path-form) — see Member-form note above.
-                            // D75 (revised, Plan 47): CancelToken.new() — Path-form.
-                            if eff == "CancelToken" && method_name == "new" {
-                                self.icr_trace("B12d_path_canceltoken_new");
-                                return "NovaCancelToken*".into();
-                            }
+                            // [196.5 Stage-D] B12d_path_canceltoken_new REMOVED. Path-form
+                            // `CancelToken.new()` — sibling of the already-removed
+                            // Member-form B11h_canceltoken_new (comment above, "Channel.new/
+                            // ChanReader.close_after/close_at/CancelToken.new are Nova-body
+                            // static constructors whose declared return the checker
+                            // materialises into resolved_types... structurally unreachable");
+                            // this Path-form of the SAME constructor is NO-HIT across
+                            // conformance + std/src/collections + std/src/data + std/src/net
+                            // (docs/plans/196.5-stage-d-notes.md) for the identical reason.
                             // Plan 196.2 W1 [gate-1]: B12e_path_{stringbuilder,writebuffer,
                             // readbuffer}_static REMOVED. Path-form mirror of the already-
                             // removed B11l_{stringbuilder,writebuffer,readbuffer}_static
@@ -50491,68 +50360,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    /// Plan 196.5 §W1-instance addendum, W1-i.A (extract+SHADOW).
-    /// SHADOW-only verify probe: сверяет C-тип, лоуэренный из
-    /// `resolve_instance_call_subst`'s subst через ТУ ЖЕ lowering-цепочку,
-    /// что уже применяет легаси-арм, с C-типом, который легаси-арм САМ
-    /// только что вычислил. Легаси остаётся авторитетным — эта функция
-    /// НИЧЕГО не возвращает вызывающему, только считает/трейсит (мирроринг
-    /// RESUME-4 `w1_probe_node_substs` методологии, `AGENT_HEARTBEAT.txt`).
-    ///
-    /// debug-only (`cfg(debug_assertions)`), активна под
-    /// `NOVA_TRACE_W1_SHADOW=1`. Dedup по (bucket, call_id) — один call-site
-    /// считается один раз на bucket (как `icr_trace`, но keyed, не только
-    /// first-hit). Печатает КАЖДЫЙ MISMATCH сразу (для диагностики) +
-    /// running per-bucket tally на каждый (первый на call-site) hit.
-    #[inline]
-    /// `_site_key`: dedup key для повторных инференсов ОДНОГО call-site
-    /// (`infer_expr_c_type` может рекурсивно перевызываться на тот же
-    /// `Expr` несколько раз за компиляцию). Для армов внутри
-    /// `infer_call_ret_c` — `expr.id.0 as u64` (реальный call_id). Для
-    /// `infer_mono_method_ret_with_args` (B11c) — вызывается БЕЗ ExprId в
-    /// сигнатуре (shared helper, 6 call-сайтов) — дешёвый хэш
-    /// `(obj_ty, method)` вместо расширения сигнатуры (не расширяем
-    /// поверхность правки за пределы shadow-probe строк).
-    fn w1_shadow_probe(
-        &self,
-        _bucket: &'static str,
-        _site_key: u64,
-        _helper_c: Option<&str>,
-        _legacy_c: &str,
-    ) {
-        #[cfg(debug_assertions)]
-        {
-            use std::sync::{Mutex, OnceLock};
-            static ON: OnceLock<bool> = OnceLock::new();
-            if !*ON.get_or_init(|| std::env::var_os("NOVA_TRACE_W1_SHADOW").is_some()) {
-                return;
-            }
-            static SEEN: OnceLock<Mutex<HashSet<(&'static str, u64)>>> = OnceLock::new();
-            static COUNTS: OnceLock<Mutex<HashMap<&'static str, (u32, u32)>>> = OnceLock::new();
-            {
-                let mut seen = SEEN.get_or_init(|| Mutex::new(HashSet::new())).lock().unwrap();
-                if !seen.insert((_bucket, _site_key)) {
-                    return;
-                }
-            }
-            let matched = _helper_c == Some(_legacy_c);
-            let mut counts = COUNTS.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
-            let entry = counts.entry(_bucket).or_insert((0u32, 0u32));
-            if matched {
-                entry.0 += 1;
-            } else {
-                entry.1 += 1;
-                eprintln!(
-                    "[W1-SHADOW-MISMATCH] {} site={:#x} helper={:?} legacy={:?}",
-                    _bucket, _site_key, _helper_c, _legacy_c
-                );
-            }
-            eprintln!(
-                "[W1-SHADOW-TALLY] {} match={} mismatch={}",
-                _bucket, entry.0, entry.1
-            );
-        }
-    }
+    // [196.5 Stage-D] `w1_shadow_probe` REMOVED. Its only callers were the
+    // B11x user-extension array-method `_ =>` sub-arm removed in this same
+    // sweep (0 hits across the full corpus, including the dedicated
+    // `b11x_novaarray_user_ext_methods.nv`) — dead SHADOW scaffolding goes
+    // with the arm it fed (see docs/plans/196.5-stage-d-notes.md).
 
     fn infer_expr_c_type(&self, expr: &Expr) -> String {
         // Plan 172.1 §0/§1: channels FIRST, legacy LAZY (only when channel cannot cover).
