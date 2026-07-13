@@ -12259,7 +12259,10 @@ export type Debug protocol {
 Inside Nova interp-string `${expr:SPEC}`:
 - `${expr}` — calls Display.@display (D183, unchanged)
 - `${expr:?}` — calls Debug.@debug (NEW)
-- `${expr:foo}` — E_FORMAT_SPEC_UNKNOWN (foundation, extensions per [M-91.14-format-dsl-extensions])
+- `${expr:foo}` — E_FORMAT_SPEC_UNKNOWN (foundation; rich spec grammar
+  extension shipped in D258/152.7-B, per-type spec dispatch via
+  `@display_fmt` shipped in [D419](#d419-Fmt-protocol--format-spec-контекст-для-display_fmt-plan-173-2026-07-13);
+  [M-91.14-format-dsl-extensions] CLOSED by D419)
 
 #### Default body synthesis (#impl(Debug))
 
@@ -14865,3 +14868,132 @@ closure-значения.
 ДО фикса возвращали `true` для ЛЮБОГО входа (closure-указатель, коэрснутый в
 `bool`, always-truthy). Обе мигрированы на трейлинг-`||` (тот же канон, что
 `toml.nv`'s `is_bare_key_char`) в той же волне.
+
+## D419. `Fmt` protocol — format-spec context для `@display_fmt` (Plan 152.7.2, 2026-07-13)
+
+**Закрывает** [Q-format-spec-to-display](../open-questions.md#q-format-spec-to-display--передача-формат-спека-в-displaydebug-pretty-и-др--движок-интерполяции-без-промежуточных-аллокаций--🟡-open-2026-07-13)
+и обновляет протухший followup-маркер `[M-91.14-format-dsl-extensions]`
+(перечислял уже реализованное — 152.7-B закрыл `:hex`/`:pad-N`/`:.3` до этого
+амендмента; единственный реальный остаток был «типу не передаётся спек»,
+что и закрывает это решение).
+
+#### Проблема
+
+До D419 встроенный rich format-spec (`${x:[[fill]align][sign][#][0][width]
+[.precision][type]}`, D258/152.7-B) применялся СНАРУЖИ к выводу
+`Display.@display` — тип не видел собственный спек. `#` (alternate)
+существовал только для integer radix-префиксов (`0x`/`0o`/`0b`); для
+user-типов флаг молча игнорировался. Pretty-печать (`JsonValue.to_str_pretty`)
+жила отдельным методом, не связанным с интерполяцией.
+
+#### Решение — три развилки (см. Q-блок), решены так:
+
+**(а) Форма контекста.** Второй ОПЦИОНАЛЬНЫЙ метод, не расширение сигнатуры
+`@display`: `@display_fmt(mut f Fmt)`. `Fmt` — protocol ПОВЕРХ `Write`
+(структурно расширяет его: тот же метод `@write(s str)`, НЕ переименованный
+`@write_str` — это сохраняет «Fmt поверх Write» буквально верным: любой `Fmt`
+структурно удовлетворяет и `Write`) плюс две новые оси:
+
+```nova
+export type Fmt protocol {
+    mut @write(s str) -> ()
+    @alternate() -> bool
+    @precision() -> Option[int]
+}
+```
+
+Единственный production-implementor V1 — `FmtCtx` (конкретный record,
+`std/prelude/protocols.nv`), который компилятор конструирует НА КАЖДОМ
+call-site `${x:SPEC}`, диспетчащем в `@display_fmt`:
+
+```nova
+export type FmtCtx {
+    sink Write
+    alt bool
+    has_prec bool
+    prec int
+}
+export fn FmtCtx.new(sink Write, alt bool, has_prec bool, prec int) -> Self => …
+export fn FmtCtx mut @write(s str) -> () { @sink.write(s) }
+export fn FmtCtx @alternate() -> bool => @alt
+export fn FmtCtx @precision() -> Option[int] =>
+    if @has_prec { Some(@prec) } else { None }
+```
+
+ABI: `Fmt` эрайзится к конкретному C-типу `Nova_FmtCtx*` ТЕМ ЖЕ приёмом, что
+`Write` уже эрайзится к `Nova_StringBuilder*` (152.7.1 D374 AMEND) — не
+generic protocol-boxing (`NovaBox_<proto>`/vtable), явный V1-компромисс
+(апгрейд до реального vtable — future followup, как и у `Write`).
+
+**(б) Без ломки.** Сигнатуры `@display(mut w Write)` / `@debug(mut w Write)`
+НЕ меняются — D374 не переламывается второй раз. `@display_fmt` — целиком
+опциональный второй метод; тип без него получает ровно ПРЕЖНЕЕ поведение
+(auto-делегация в `@display`/D410-`to_str`-fallback + внешняя пост-обработка
+width/align/fill/precision).
+
+**(в) Какие оси передаются типу.** Только `alternate` (`#` — канонический
+pretty-флаг) и `precision` (`.N`). `width`/`fill`/`align` ОСТАЮТСЯ
+пост-обработкой у вызывающего — тип не должен уметь паддить себя сам (тот же
+`nova_fmt_pad` внешний проход, что и раньше). `radix` (`x`/`X`/`b`/`o`) —
+без изменений: встроенный числовой путь, к user-типам неприменим
+(`E_BAD_FORMAT_SPEC` как раньше).
+
+#### Правило диспетча (`${expr:SPEC}`, ТОЛЬКО non-`?` rich-spec ветка)
+
+1. Если `typeof(expr)` объявляет `@display_fmt` — вызывается ОН, с
+   `FmtCtx`, сконструированным из разобранного спека (`alt`/`has_prec`/
+   `prec` — из `FormatSpecParsed`, compiler-codegen/src/ast/format_spec.rs).
+2. Иначе — прежний путь: `Display.@display` (или D410 `to_str`-fallback) в
+   свежий `StringBuilder`, затем внешняя пост-обработка
+   (precision-truncation + `nova_fmt_pad`) — байт-в-байт как до D419.
+3. `${expr:?}` (Debug) — ВНЕ этого правила, не затронут; `@display_fmt`
+   зеркалит только `Display`.
+4. `E_FORMAT_SPEC_UNKNOWN` (парсер, syntax-level — неизвестный type-char
+   типа `${x:foo}`) — БЕЗ изменений для всех типов (парсер типа не знает);
+   «смягчение только для типов с `@display_fmt`» относится к СЕМАНТИКЕ
+   `#`/`.N`, не к синтаксической диагностике: до D419 `#`/`.N` на
+   user-типе БЕЗ ошибки, но МОЛЧА игнорировались (`#` не имел эффекта);
+   после D419 — типы С `@display_fmt` получают РЕАЛЬНЫЙ эффект этих осей,
+   типы БЕЗ — прежнее молчаливое игнорирование (не регрессия, задокументированный
+   status quo).
+
+#### Первый потребитель
+
+`JsonValue @display_fmt` (`std/src/encoding/json.nv`): `f.alternate()` →
+`@to_str_pretty()` (существующий `pretty_at`), иначе `@to_str()` (compact).
+`"${v:#}" == v.to_str_pretty()`; `"${v}" == v.to_str()` (unaffected).
+
+#### Codegen
+
+`compiler-codegen/src/codegen/emit_c.rs::emit_format_spec_value` — user-type
+branch: lookup `(arg_type, "display_fmt")` в `all_methods` (тот же реестр,
+что и `@display`/`@debug`-lookup рядом); при hit — constructs `FmtCtx` inline
+(`Nova_FmtCtx_static_new(sink, alt, has_prec, prec)`) и зовёт
+`Nova_<T>_method_display_fmt(v, fmtctx)`; при miss — байт-в-байт прежний
+`@display`/`@debug` путь. ABI-эрейзинг `Fmt`→`Nova_FmtCtx*` — три
+hardcode-точки, зеркалящие существующие `Write`→`Nova_StringBuilder*`
+(`resolved_named_to_c`, `debt_lowered_is_stub`, `extract_protocol_type_name`
+E7201-exclusion).
+
+#### Прямо-в-sink для примитивов (Q-блок п.4) — НЕ в этом амендменте
+
+Q-блок поднимал отдельно движок интерполяции «прямо-в-sink» (`${x}` для
+ЛЮБОГО типа лоуэрится в `@display`/`@debug` без промежуточной `str`,
+`str.from` перестаёт быть движком интерполяции). D419 НЕ трогает эту часть —
+value-record-путь (`${d}`/`${d:?}` для value-records) уже пишет напрямую в
+sink (Plan 175 Ф.3(d)); примитивы/fallback-путь (`nova_int_to_str` и т.п.
+внутри `emit_interpolated_str`) остаются как есть. Остаток —
+[M-152.7.2-interp-direct-primitives].
+
+#### Cross-refs
+
+- [D374](#d374-write-sink-протокол--декаплинг-displaydebug-от-stringbuilder-plan-1527176)
+  — `Write` sink protocol (Fmt расширяет структурно, тот же erasure-приём).
+- [D229](#d229--Debug-protocol--format-spec-expr) — Debug, sibling, НЕ
+  затронут этим амендментом.
+- D258/152.7-B (`spec/decisions/03-syntax.md`) — rich format-spec grammar
+  (parser, `FormatSpecParsed`), source of `alternate`/`precision` values.
+- [M-91.14-format-dsl-extensions] — CLOSED by this decision (протухший
+  followup обновлён; реальный остаток формализован здесь).
+- Q-format-spec-to-display (`spec/open-questions.md`) — RESOLVED → D419.
+- Plan 152.7.2 (докладной подплан 152.7 — интерполяция и форматирование; this D-block's home plan).

@@ -8639,7 +8639,7 @@ warning→error для транзитивных эффектов **меняет*
 - [D78](decisions/07-modules.md) — модель модулей/пакетов (rev-4 root peers).
 - Plan 202 (path-keyed реестр), Plan 203 (nova-http; path-dep помечен как dev-форма до 204).
 
-## Q-format-spec-to-display — передача формат-спека в @display/@debug (pretty и др.) + движок интерполяции без промежуточных аллокаций — 🟡 OPEN (2026-07-13)
+## Q-format-spec-to-display — передача формат-спека в @display/@debug (pretty и др.) + движок интерполяции без промежуточных аллокаций — ✅ RESOLVED → [D419](decisions/02-types.md#d419-Fmt-protocol--format-spec-контекст-для-display_fmt-plan-1527-2-2026-07-13) (Plan 152.7.2, 2026-07-13)
 
 Обсуждалось при дизайне 152.7, но решением не оформлено (владелец поднял повторно 2026-07-13).
 Сегодня: встроенные спеки (`${x:[[fill]align][sign][#][0][width][.precision][type]}`, 152.7-B)
@@ -8672,3 +8672,21 @@ warning→error для транзитивных эффектов **меняет*
 ### Связь
 - D374 (Write-sink), D229+152.7-B (формат mini-language), 174.1 (to_*-канон, str.from → движок),
   D410; `JsonValue @to_str_pretty` (std/src/encoding/json.nv:886) — первый потребитель.
+
+### Резолюция (Plan 152.7.2, 2026-07-13)
+
+Развилки решены: (а) второй опциональный метод `@display_fmt(mut f Fmt)`, `Fmt`
+структурно поверх `Write` (тот же `@write`, не переименован) + `@alternate()`/
+`@precision()`; (б) `@display`/`@debug` сигнатуры НЕ тронуты — вторая ломка
+избегнута; (в) типу передаются только `alternate`+`precision`; width/fill/align
+остаются пост-обработкой у вызывающего; radix — встроенные числовые пути без
+изменений. Детали, ABI-эрейзинг (`Fmt`→`Nova_FmtCtx*`, зеркалит `Write`→
+`Nova_StringBuilder*`) и dispatch-правило — [D419](decisions/02-types.md#d419-Fmt-protocol--format-spec-контекст-для-display_fmt-plan-1527-2-2026-07-13).
+П.4 (движок «прямо-в-sink» для ПРИМИТИВОВ) НЕ закрыт этим решением —
+value-record-путь уже писал напрямую в sink (Plan 175 Ф.3(d)), но
+примитивная быстрая тропа (`nova_int_to_str`/`nova_f64_to_str` и т.п. внутри
+`emit_interpolated_str`) всё ещё аллоцирует промежуточную `nova_str` перед
+копированием в `StringBuilder` — глубоко вплетено в общий с Plan 196 регион
+кода (`emit_c.rs::emit_interpolated_str`), оставлено отдельным follow-up:
+`[M-152.7.2-interp-direct-primitives]`.
+`[M-91.14-format-dsl-extensions]` — CLOSED by D419.
