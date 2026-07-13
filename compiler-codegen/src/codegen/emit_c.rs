@@ -46693,51 +46693,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    /// Plan 180 [M-180-static-method-path-ret-infer]: resolve the concrete C
-    /// return type of a static method call `Type.method(...)` whose receiver is
-    /// a type-name / mono'd-typevar Ident. Needed for the serde `Deserialize`
-    /// contract (`T.deserialize() -> Result[T, DeError]`): `method_overloads`
-    /// stores an ERASED `void*` return for generic Self-returning / method-generic
-    /// static methods, so `?`/Try/`!!` degenerate. Reconstruct from the method's
-    /// DECLARED return `TypeRef` (via `mono_method_decls`/`self_method_decls`),
-    /// which is concrete (`Result[str, DeError]`). Returns None when
-    /// unresolvable — caller keeps its existing behaviour. `from`/`try_*` keep
-    /// their dedicated handling and are excluded.
-    fn infer_static_method_ret(&self, receiver_ident: &str, method: &str) -> Option<String> {
-        if method == "from" || method == "try_from"
-            || method == "try_into" || method == "try_parse"
-        {
-            return None;
-        }
-        let concrete = self.subst_c(receiver_ident)
-            .map(|c| Self::debt_nova_type_name_from_c(&c))
-            .unwrap_or_else(|| receiver_ident.to_string());
-        let key = (concrete.clone(), method.to_string());
-        if let Some(fd) = self.mono_method_decls.get(&key)
-            .or_else(|| self.self_method_decls.get(&key))
-        {
-            if !matches!(fd.receiver.as_ref().map(|r| &r.kind),
-                Some(crate::ast::ReceiverKind::Instance))
-            {
-                if let Some(ret) = &fd.return_type {
-                    if let Ok(c) = self.type_ref_to_c(ret) {
-                        if !c.is_empty() && c != "void*" {
-                            return Some(c);
-                        }
-                    }
-                }
-            }
-        }
-        // Fallback: a non-erased static overload's concrete return type.
-        if let Some(sigs) = self.method_overloads.get(&key) {
-            if let Some(sig) = sigs.iter().find(|s|
-                !s.is_instance && !s.return_c_type.is_empty() && s.return_c_type != "void*")
-            {
-                return Some(sig.return_c_type.clone());
-            }
-        }
-        None
-    }
+    // [196.5 Stage-D] `infer_static_method_ret` REMOVED. Its sole surviving
+    // caller was B12a_path_static_method_ret (Path-form `Type.method(...)`
+    // static return, below) — the earlier Member/Ident-form twin
+    // (B11t_static_method_ret_ident) was already removed as NO-HIT in an
+    // earlier wave, whose comment noted this fn "stays (other call site
+    // above still uses it)"; that other call site is B12a, which this same
+    // sweep also proved NO-HIT (0 hits across conformance +
+    // std/src/collections + std/src/data + std/src/net) — the serde
+    // Deserialize contract's static-method return is checker-materialised
+    // into resolved_types ahead of infer_call_ret_c for every measured case.
+    // With both callers gone, the helper is fully dead (§5, docs/plans/
+    // 196.5-stage-d-notes.md).
 
     /// Returns true для C-целочисленных типов, явно несущих ширину/знак
     /// (uint8_t..uint64_t, int8_t..int32_t). `nova_int` (= int64_t) сюда
@@ -50240,19 +50207,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if parts.len() == 2 {
                             let eff = &parts[0];
                             let method_name = &parts[1];
-                            // Plan 180 [M-180-static-method-path-ret-infer]: general
-                            // user static-method return inference for Path-form
-                            // `Type.method(...)` — incl. a mono'd typevar receiver
-                            // (`T.deserialize` inside a container body with T=str). The
-                            // serde `Deserialize` contract returns `Result[T, DeError]`;
-                            // without this the `?`/Try on it degenerates. Resolve the
-                            // receiver (typevar → concrete via current_type_subst) and
-                            // return the STATIC overload's concrete `return_c_type`.
-                            // `from`/`try_*` keep their dedicated handling below.
-                            if let Some(c) = self.infer_static_method_ret(eff, method_name) {
-                                self.icr_trace("B12a_path_static_method_ret");
-                                return c;
-                            }
+                            // [196.5 Stage-D] B12a_path_static_method_ret REMOVED along
+                            // with `infer_static_method_ret` itself (comment above its
+                            // former definition) — the serde Deserialize contract's
+                            // static-method return (`T.deserialize() -> Result[T,DeError]`)
+                            // is checker-materialised into resolved_types ahead of
+                            // infer_call_ret_c. NO-HIT across conformance +
+                            // std/src/collections + std/src/data + std/src/net (docs/plans/
+                            // 196.5-stage-d-notes.md) ⟹ structurally unreachable (§5).
                             // D91 (Plan 21): Channel.new(cap) — Path-form.
                             if eff == "Channel" && method_name == "new" {
                                 self.icr_trace("B12b_path_channel_new");
