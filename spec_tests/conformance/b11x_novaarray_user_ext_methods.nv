@@ -20,10 +20,9 @@ module spec_tests.conformance
 fn[T] []T @b11x_last() -> T => @[@len() - 1]
 
 // Shape 2: `[]T` return — the `TypeRef::Array(inner)` case (~49560-49572). Echoes
-// the receiver (no fresh `Vec[T]`/`[]T` construction inside the body — that hits an
-// UNRELATED, pre-existing gap in mono record-schema registration for a `fn[T]`
-// PREFIX-declared receiver generic, `Vec____Nova_T_p not in record_schemas`; out of
-// this task's scope, filed separately, see 196.5-producers-widen-notes.md §B11x).
+// the receiver. (The fresh-`Vec[T].new()`-inside-body shape used to hit a separate
+// record-schema gap — `Vec____Nova_T_p not in record_schemas` — FIXED in Plan 196.5
+// closure-lowering-fix wave; covered by d145_prefix_generic_vec_construct.nv.)
 fn[T] []T @b11x_double_up() -> []T => @
 
 // Shape 3: `Option[T]` return — the `Option[T]` case (~49573-49587).
