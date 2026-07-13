@@ -50024,92 +50024,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 // const-init issues в unsafe blocks (codegen layout).
                                 // D410 (2026-07-06): as_ptr → ptr (as_ prefix retracted).
                                 "ptr" | "as_mut_ptr" => return format!("{}*", elem_ty),
-                                _ => {
-                                    // Plan 101.1: user-extension array method
-                                    // (fn[T] []T @method...). Поиск в mono_method_decls
-                                    // по ключу ("[]T", method) — return type substitute
-                                    // T → elem_ty.
-                                    let key = ("[]T".to_string(), method.clone());
-                                    if let Some(fn_decl) = self.mono_method_decls.get(&key) {
-                                        if let Some(ret_ty) = &fn_decl.return_type {
-                                            // Plan 196.5 §W1-i.A SHADOW (extract, no flip):
-                                            // helper-subst fed through the SAME general
-                                            // lowering (`apply_type_subst_to_ref`) this arm's
-                                            // hand-rolled T-substitution below re-derives
-                                            // per-shape. No ExprId in scope here (shared
-                                            // `_` arm) — dedup key = hash(obj_ty, method).
-                                            #[cfg(debug_assertions)]
-                                            let (w1_site_key, helper_c): (u64, Option<String>) = {
-                                                use std::hash::{Hash, Hasher};
-                                                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                                                obj_ty.hash(&mut hasher);
-                                                method.hash(&mut hasher);
-                                                let key = hasher.finish();
-                                                let hc = self
-                                                    .resolve_instance_call_subst(
-                                                        ExprId::UNSET, fn_decl, obj_ty.trim_end_matches('*'), args,
-                                                    )
-                                                    .and_then(|s| Self::apply_type_subst_to_ref(ret_ty, &s));
-                                                (key, hc)
-                                            };
-                                            if let Some(t_name) = fn_decl.generics.first().map(|g| g.name.clone()) {
-                                                // Manual substitute T в return type.
-                                                // Simpler: pattern-match common shapes.
-                                                use crate::ast::TypeRef;
-                                                match ret_ty {
-                                                    TypeRef::Named { path, generics: _, .. }
-                                                        if path.len() == 1 && path[0] == t_name =>
-                                                    {
-                                                        // Return type is bare T → elem_ty.
-                                                        #[cfg(debug_assertions)]
-                                                        self.w1_shadow_probe(
-                                                            "B11x", w1_site_key, helper_c.as_deref(), elem_ty,
-                                                        );
-                                                        return elem_ty.to_string();
-                                                    }
-                                                    TypeRef::Array(inner, _) => {
-                                                        // Return []T → NovaArray_<elem_ty>*.
-                                                        if let TypeRef::Named { path, .. } = inner.as_ref() {
-                                                            if path.len() == 1 && path[0] == t_name {
-                                                                let legacy = format!("NovaArray_{}*", elem_ty);
-                                                                #[cfg(debug_assertions)]
-                                                                self.w1_shadow_probe(
-                                                                    "B11x", w1_site_key, helper_c.as_deref(), &legacy,
-                                                                );
-                                                                return legacy;
-                                                            }
-                                                        }
-                                                    }
-                                                    TypeRef::Named { path, generics, .. }
-                                                        if path.len() == 1 && path[0] == "Option" && generics.len() == 1 =>
-                                                    {
-                                                        // Return Option[T] → NovaOpt_<elem_ty>.
-                                                        if let TypeRef::Named { path: ipath, .. } = &generics[0] {
-                                                            if ipath.len() == 1 && ipath[0] == t_name {
-                                                                let legacy = format!("NovaOpt_{}", elem_ty);
-                                                                #[cfg(debug_assertions)]
-                                                                self.w1_shadow_probe(
-                                                                    "B11x", w1_site_key, helper_c.as_deref(), &legacy,
-                                                                );
-                                                                return legacy;
-                                                            }
-                                                        }
-                                                    }
-                                                    _ => {}
-                                                }
-                                            }
-                                            // Не T-зависимый return — type_ref_to_c напрямую.
-                                            if let Ok(c_ty) = self.type_ref_to_c(ret_ty) {
-                                                #[cfg(debug_assertions)]
-                                                self.w1_shadow_probe(
-                                                    "B11x", w1_site_key, helper_c.as_deref(), &c_ty,
-                                                );
-                                                return c_ty;
-                                            }
-                                        }
-                                    }
-                                    return "nova_int".into();
-                                }
+                                // [196.5 Stage-D] user-extension array method
+                                // (`fn[T] []T @method(...)`) hand-rolled T-substitution
+                                // sub-arm REMOVED. `NOVA_TRACE_W1_SHADOW=1` over the full
+                                // corpus (conformance incl. the arm's OWN dedicated
+                                // `b11x_novaarray_user_ext_methods.nv` — built specifically
+                                // to exercise all four return shapes this arm distinguished
+                                // — + std/src/collections + std/src/data) never printed a
+                                // single `[W1-SHADOW-TALLY] B11x` line: the checker's
+                                // return-type channel (`resolved_types[call.id]`, Channel-2)
+                                // already materialises this method's return ahead of
+                                // `infer_call_ret_c` in every measured case — this sub-arm
+                                // is structurally unreachable (§5), not merely untested.
+                                // Panic (not silent fallback) enforces that: a real miss
+                                // here is a checker gap, not a legacy-arm gap.
+                                _ => panic!(
+                                    "[CC-ERROR][196.5-stage-d] user-extension array method \
+                                     {:?} on {:?} reached infer_call_ret_c's B11x legacy \
+                                     sub-arm, which the 196.5 Stage-D sweep removed as \
+                                     structurally unreachable (checker's resolved_types/ \
+                                     node_substs channel must cover this call; see \
+                                     docs/plans/196.5-stage-d-notes.md)",
+                                    method, obj_ty
+                                ),
                             }
                         }
                         // D74 math methods on f64/f32 — return f64 (most) or bool (predicates).
@@ -50491,68 +50428,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    /// Plan 196.5 §W1-instance addendum, W1-i.A (extract+SHADOW).
-    /// SHADOW-only verify probe: сверяет C-тип, лоуэренный из
-    /// `resolve_instance_call_subst`'s subst через ТУ ЖЕ lowering-цепочку,
-    /// что уже применяет легаси-арм, с C-типом, который легаси-арм САМ
-    /// только что вычислил. Легаси остаётся авторитетным — эта функция
-    /// НИЧЕГО не возвращает вызывающему, только считает/трейсит (мирроринг
-    /// RESUME-4 `w1_probe_node_substs` методологии, `AGENT_HEARTBEAT.txt`).
-    ///
-    /// debug-only (`cfg(debug_assertions)`), активна под
-    /// `NOVA_TRACE_W1_SHADOW=1`. Dedup по (bucket, call_id) — один call-site
-    /// считается один раз на bucket (как `icr_trace`, но keyed, не только
-    /// first-hit). Печатает КАЖДЫЙ MISMATCH сразу (для диагностики) +
-    /// running per-bucket tally на каждый (первый на call-site) hit.
-    #[inline]
-    /// `_site_key`: dedup key для повторных инференсов ОДНОГО call-site
-    /// (`infer_expr_c_type` может рекурсивно перевызываться на тот же
-    /// `Expr` несколько раз за компиляцию). Для армов внутри
-    /// `infer_call_ret_c` — `expr.id.0 as u64` (реальный call_id). Для
-    /// `infer_mono_method_ret_with_args` (B11c) — вызывается БЕЗ ExprId в
-    /// сигнатуре (shared helper, 6 call-сайтов) — дешёвый хэш
-    /// `(obj_ty, method)` вместо расширения сигнатуры (не расширяем
-    /// поверхность правки за пределы shadow-probe строк).
-    fn w1_shadow_probe(
-        &self,
-        _bucket: &'static str,
-        _site_key: u64,
-        _helper_c: Option<&str>,
-        _legacy_c: &str,
-    ) {
-        #[cfg(debug_assertions)]
-        {
-            use std::sync::{Mutex, OnceLock};
-            static ON: OnceLock<bool> = OnceLock::new();
-            if !*ON.get_or_init(|| std::env::var_os("NOVA_TRACE_W1_SHADOW").is_some()) {
-                return;
-            }
-            static SEEN: OnceLock<Mutex<HashSet<(&'static str, u64)>>> = OnceLock::new();
-            static COUNTS: OnceLock<Mutex<HashMap<&'static str, (u32, u32)>>> = OnceLock::new();
-            {
-                let mut seen = SEEN.get_or_init(|| Mutex::new(HashSet::new())).lock().unwrap();
-                if !seen.insert((_bucket, _site_key)) {
-                    return;
-                }
-            }
-            let matched = _helper_c == Some(_legacy_c);
-            let mut counts = COUNTS.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
-            let entry = counts.entry(_bucket).or_insert((0u32, 0u32));
-            if matched {
-                entry.0 += 1;
-            } else {
-                entry.1 += 1;
-                eprintln!(
-                    "[W1-SHADOW-MISMATCH] {} site={:#x} helper={:?} legacy={:?}",
-                    _bucket, _site_key, _helper_c, _legacy_c
-                );
-            }
-            eprintln!(
-                "[W1-SHADOW-TALLY] {} match={} mismatch={}",
-                _bucket, entry.0, entry.1
-            );
-        }
-    }
+    // [196.5 Stage-D] `w1_shadow_probe` REMOVED. Its only callers were the
+    // B11x user-extension array-method `_ =>` sub-arm removed in this same
+    // sweep (0 hits across the full corpus, including the dedicated
+    // `b11x_novaarray_user_ext_methods.nv`) — dead SHADOW scaffolding goes
+    // with the arm it fed (see docs/plans/196.5-stage-d-notes.md).
 
     fn infer_expr_c_type(&self, expr: &Expr) -> String {
         // Plan 172.1 §0/§1: channels FIRST, legacy LAZY (only when channel cannot cover).
