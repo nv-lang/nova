@@ -1,0 +1,30 @@
+// EXPECT_COMPILE_ERROR E_CONSUME_BLOCK_MOVE_OUT
+// D188-амендмент v3 (Plan 201): единственное вхождение `X` в tail/return-
+// EXPR, но НЕ в consume-позиции (view-параметр) — санкционированный вынос
+// требует consume-позицию (или голый `X`). Обычный view-borrow СНАРУЖИ
+// tail/return-позиции (как statement внутри тела) остаётся легальным
+// (см. позитивные D188-тесты — `pump_handshake(stream, session)`-стиль
+// вызов внутри body, НЕ в tail/return, не затронут этим негативным тестом).
+module neg.d188_v3_non_consume_position_neg
+
+type MoRes3 consume { id int }
+fn MoRes3 consume @cleanup(_outcome ScopeOutcome) -> () { }
+fn MoRes3 consume @dispose() -> () { }
+
+// view-параметр (без `consume`/`mut`) — легальный ro-borrow.
+fn mo3_peek(r MoRes3) -> int => r.id
+
+fn mo3_wrap(consume r MoRes3) -> int {
+    consume r {
+        // Легально КАК STATEMENT внутри тела (view-borrow, ro-view):
+        ro _seen = mo3_peek(r)
+        // НО в tail/return-позиции — единственное вхождение `r` НЕ в
+        // consume-позиции mo3_peek → E_CONSUME_BLOCK_MOVE_OUT.
+        return mo3_peek(r)
+    }
+}
+
+test "X в tail/return EXPR НЕ в consume-позиции — E_CONSUME_BLOCK_MOVE_OUT" {
+    consume r = MoRes3 { id: 1 }
+    ro _ = mo3_wrap(r)
+}

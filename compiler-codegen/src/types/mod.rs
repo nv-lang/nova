@@ -13290,18 +13290,40 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 // Last resort: if name = a unit-variant of a known sum type, infer as that type.
                 // Covers bare enum variants (`D52Red`, `None`) used in expression position.
-                for (type_name, td) in &self.types {
-                    if let TypeDeclKind::Sum(variants) = &td.kind {
-                        if td.generics.is_empty() {
-                            if variants.iter().any(|v| &v.name == name) {
-                                return Some(TypeRef::Named {
-                                    path: vec![type_name.clone()],
-                                    generics: Vec::new(),
-                                    span: expr.span,
-                                });
+                // [M-hashmap-order-bare-variant-flake] (2026-07-13): `self.types` is a
+                // `HashMap<String, TypeDecl>` — Rust's default `RandomState` hasher reseeds
+                // every process, so iterating it directly picked a DIFFERENT candidate on
+                // every `nova test`/`nova build` invocation whenever ≥2 sum types in the CU
+                // declare a unit-variant of the same bare name (corpus example:
+                // `d406_enum_kind_token.nv`'s `D406Color` and `d52_type_forms.nv`'s
+                // `D52Color` both declare `Green`; a bare `ro c = Green` resolved to
+                // whichever type the hash iteration surfaced first that run). When the
+                // colliding candidates have INCOMPATIBLE payload shapes elsewhere in a
+                // large corpus, a wrong-candidate pick is a genuine type-confusion bug, not
+                // just cosmetic — this is the root cause of the `spec_tests/conformance`
+                // segfault flake (RUN-FAIL ~1-in-4..5, byte-different `.c` across separate
+                // compiles of the SAME source, confirmed via bisection + generated-C diff).
+                // Fix: collect every candidate, sort by name, always pick the same
+                // (lexicographically smallest) one — same source now ALWAYS produces the
+                // same C, so a genuinely-ambiguous corpus fails (or passes) the SAME way on
+                // every run instead of flaking.
+                let mut candidates: Vec<&String> = self.types.iter()
+                    .filter_map(|(type_name, td)| {
+                        if let TypeDeclKind::Sum(variants) = &td.kind {
+                            if td.generics.is_empty() && variants.iter().any(|v| &v.name == name) {
+                                return Some(type_name);
                             }
                         }
-                    }
+                        None
+                    })
+                    .collect();
+                candidates.sort();
+                if let Some(type_name) = candidates.into_iter().next() {
+                    return Some(TypeRef::Named {
+                        path: vec![type_name.clone()],
+                        generics: Vec::new(),
+                        span: expr.span,
+                    });
                 }
                 None
             }
@@ -26270,8 +26292,8 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
         }
         Stmt::Return { value, span } => {
             if let Some(v) = value {
-                consume_walk_expr(ctx, v, errors);
                 if let ExprKind::Ident(name) = &v.kind {
+                    consume_walk_expr(ctx, v, errors);
                     // Plan 100.3 (D157): view-param cannot escape via return.
                     if ctx.is_view_param(name) {
                         errors.push(Diagnostic::new(
@@ -26290,14 +26312,20 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                     //
                     // Plan 201 (D188-амендмент): `return X` ГОЛЫМ идентификатором
                     // из-под re-consume блока — САНКЦИОНИРОВАННЫЙ вынос владения
-                    // (cleanup дизармится в codegen) — обходим guard. Не-голые
-                    // формы (`return f(X)`) уже прошли walk выше и словили guard.
+                    // (cleanup дизармится в codegen) — обходим guard.
                     let ret_canon = ctx.canonical(name);
                     if ctx.block_guards.contains(&ret_canon) {
                         ctx.mark_consumed_bypass_guard(name, *span);
                     } else if ctx.consume_obligations.contains(name.as_str()) {
                         ctx.mark_consumed(name, *span);
                     }
+                } else {
+                    // Plan 201 (D188-амендмент v3): не-голое `return EXPR` —
+                    // per-canon scan+disarm по ВСЕМ активным re-consume guard'ам
+                    // (композиция с multi-var-вложением, п.(е): `consume A, B
+                    // { return f(A, B) }` — оба guard'а санкционируются на своих
+                    // consume-позициях по отдельности).
+                    walk_guarded_escape_expr_multi(ctx, v, errors);
                 }
             }
         }
@@ -26407,6 +26435,17 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
             }
             // 4. tail: `X` при result-приёмнике — санкционированный вынос
             // (cleanup дизармится); прочий tail — обычное выражение.
+            //
+            // Plan 201 (D188-амендмент v3, «однократный вынос через
+            // выражение»): non-bare tail EXPR — multi-canon scan+disarm
+            // (`walk_guarded_escape_expr_multi`, композиция п.(е)): каждый
+            // АКТИВНЫЙ guard (в т.ч. внешних уровней multi-var-вложения)
+            // решается независимо; санкционированные — дизармятся ПОБОЧНЫМ
+            // эффектом. `tail_escape` (obligation-тип result'а = тип X)
+            // остаётся ИСКЛЮЧИТЕЛЬНО bare-`X`-путём — значение non-bare
+            // tail'а обычно НЕ равно X (другой тип), `result` — обычный
+            // локал (см. `ctx.declare(&r.name, None)` ниже, как у любого
+            // прочего вычисляемого tail'а).
             let mut tail_escape = false;
             if let Some(t) = &body.trailing {
                 if let ExprKind::Ident(tn) = &t.kind {
@@ -26416,7 +26455,19 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                     }
                 }
                 if !tail_escape {
-                    consume_walk_expr(ctx, t, errors);
+                    // Plan 201 (D188-амендмент v3): расширенный вынос через
+                    // выражение ТОЛЬКО когда tail — реально ЗНАЧЕНИЕ блока
+                    // (result-приёмник есть). Блок-как-STATEMENT (`consume X
+                    // { mo_eat(X) }`, без приёмника) — tail-position здесь НЕ
+                    // выносящая: тот же `mo_eat(X)` (consume-параметр) внутри
+                    // тела остаётся `E_CONSUME_BLOCK_MOVE_OUT` (п.4 §«Правила
+                    // формы», НЕ затронуто амендментом v3 — узкий scope: v3
+                    // только про tail/return ЗНАЧЕНИЯ, не про statement-tail).
+                    if result.is_some() {
+                        walk_guarded_escape_expr_multi(ctx, t, errors);
+                    } else {
+                        consume_walk_expr(ctx, t, errors);
+                    }
                 }
             }
             if newly_guarded {
@@ -26978,6 +27029,359 @@ impl RefPlace {
         // prefix of the other (`x` vs `x`, `x.a` vs `x`, `arr[i]` vs `arr[i]`).
         true
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Plan 201 (D188-амендмент v3, 2026-07-13): «однократный вынос через
+// выражение». Расширяет re-consume форму `consume X { … }`: tail-выражение
+// блока / `return EXPR` разрешены НЕ только как голый `X`, но и как EXPR, в
+// котором `X` встречается РОВНО ОДИН раз — АРГУМЕНТОМ consume-параметра
+// какого-либо вызова (свободная fn / метод / `Type.static`), на ЛЮБОЙ
+// глубине вложенности (`Ok(TlsStream.wrap(stream, session))`). Замыкание
+// внутри EXPR, захватывающее `X` — ошибка. Дизарм — в момент передачи
+// владения (вход в consuming-вызов); всё, что в EXPR вычисляется/фейлит ДО
+// этого момента, всё ещё видит cleanup взведённым (см. spec/decisions/
+// 03-syntax.md D188 §«Re-consume форма» — амендмент v3).
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Consume-индексы callee вызова (тот же классификатор форм, что и
+/// `consume_walk_expr`'s `Call`-рукав: `Member{obj:Ident}` метод, свободная
+/// `Ident` fn, `Path` (`Type.static` / `module.fn`)). Используется ТОЛЬКО
+/// read-only сканом `scan_guard_rec` — не мутирует `ctx`.
+fn call_consume_idxs(ctx: &ConsumeCtx, func_kind: &ExprKind) -> Vec<usize> {
+    match func_kind {
+        ExprKind::Member { obj, name: method } => {
+            if let ExprKind::Ident(recv) = &obj.kind {
+                let canon = ctx.canonical(recv);
+                let ty = ctx.var_types.get(&canon)
+                    .or_else(|| ctx.var_types.get(recv.as_str()))
+                    .cloned();
+                if let Some(ty) = ty {
+                    return ctx.reg.method_params
+                        .get(&(ty, method.clone())).cloned().unwrap_or_default();
+                }
+            }
+            Vec::new()
+        }
+        ExprKind::Ident(fname) => {
+            ctx.reg.fn_params.get(fname.as_str()).cloned().unwrap_or_default()
+        }
+        ExprKind::Path(parts) => {
+            if parts.len() == 2 {
+                if let Some(v) = ctx.reg.method_params
+                    .get(&(parts[0].clone(), parts[1].clone()))
+                {
+                    return v.clone();
+                }
+            }
+            if let Some(last) = parts.last() {
+                return ctx.reg.fn_params.get(last).cloned().unwrap_or_default();
+            }
+            Vec::new()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Read-only скан EXPR на предмет вхождений guarded-биндинга `canon`
+/// (вне замыканий) — каждое вхождение помечено `is_consume_pos` (аргумент
+/// consume-параметра вызова на этом уровне). Замыкания (`ClosureLight` /
+/// `Lambda` / trailing `Fn`), чьё тело ссылается на `canon` в ЛЮБОЙ форме —
+/// собираются отдельно в `closures` (span замыкания) — п.(в) амендмента v3.
+/// DSL trailing-блок (`f(args) { … }`) исполняется INLINE (не замыкание,
+/// см. `d157_scan_expr` тот же прецедент) — сканируется как обычный блок.
+fn scan_guard_rec(
+    ctx: &ConsumeCtx,
+    e: &Expr,
+    canon: &str,
+    occ: &mut Vec<(Span, bool)>,
+    closures: &mut Vec<Span>,
+) {
+    match &e.kind {
+        ExprKind::Ident(name) => {
+            if ctx.canonical(name) == canon {
+                occ.push((e.span, false));
+            }
+        }
+        ExprKind::ClosureLight { body, .. } => {
+            if closure_body_refs_guard(ctx, body, canon) {
+                closures.push(e.span);
+            }
+        }
+        ExprKind::Lambda { body, .. } => {
+            let (mut io, mut ic) = (Vec::new(), Vec::new());
+            scan_guard_rec(ctx, body, canon, &mut io, &mut ic);
+            if !io.is_empty() || !ic.is_empty() {
+                closures.push(e.span);
+            }
+        }
+        ExprKind::ClosureFull(fsb) => {
+            let (mut io, mut ic) = (Vec::new(), Vec::new());
+            scan_guard_fnbody(ctx, &fsb.body, canon, &mut io, &mut ic);
+            if !io.is_empty() || !ic.is_empty() {
+                closures.push(e.span);
+            }
+        }
+        ExprKind::Call { func, args, trailing } => {
+            let func_u = func.unwrap_turbofish();
+            let consume_idxs = call_consume_idxs(ctx, &func_u.kind);
+            if let ExprKind::Member { obj, .. } = &func_u.kind {
+                scan_guard_rec(ctx, obj, canon, occ, closures);
+            } else if !matches!(func_u.kind, ExprKind::Ident(_) | ExprKind::Path(_)) {
+                scan_guard_rec(ctx, func_u, canon, occ, closures);
+            }
+            for (i, a) in args.iter().enumerate() {
+                let ax = a.expr();
+                if let ExprKind::Ident(name) = &ax.kind {
+                    if ctx.canonical(name) == canon {
+                        occ.push((ax.span, consume_idxs.contains(&i)));
+                        continue;
+                    }
+                }
+                scan_guard_rec(ctx, ax, canon, occ, closures);
+            }
+            if let Some(t) = trailing {
+                match t {
+                    Trailing::Block(b) => scan_guard_block(ctx, b, canon, occ, closures),
+                    Trailing::Fn(fsb) => {
+                        let (mut io, mut ic) = (Vec::new(), Vec::new());
+                        scan_guard_fnbody(ctx, &fsb.body, canon, &mut io, &mut ic);
+                        if !io.is_empty() || !ic.is_empty() {
+                            closures.push(t.span());
+                        }
+                    }
+                    Trailing::LegacyBlockWithParams(tb) => {
+                        scan_guard_block(ctx, &tb.body, canon, occ, closures);
+                    }
+                }
+            }
+        }
+        ExprKind::Member { obj, .. } => scan_guard_rec(ctx, obj, canon, occ, closures),
+        ExprKind::Index { obj, index } => {
+            scan_guard_rec(ctx, obj, canon, occ, closures);
+            scan_guard_rec(ctx, index, canon, occ, closures);
+        }
+        ExprKind::TurboFish { base, .. } => scan_guard_rec(ctx, base, canon, occ, closures),
+        ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
+            scan_guard_rec(ctx, inner, canon, occ, closures);
+        }
+        ExprKind::As(inner, _) | ExprKind::Is(inner, _) => {
+            scan_guard_rec(ctx, inner, canon, occ, closures);
+        }
+        ExprKind::Unary { operand, .. } => scan_guard_rec(ctx, operand, canon, occ, closures),
+        ExprKind::Binary { left, right, .. } => {
+            scan_guard_rec(ctx, left, canon, occ, closures);
+            scan_guard_rec(ctx, right, canon, occ, closures);
+        }
+        ExprKind::Throw(inner) => scan_guard_rec(ctx, inner, canon, occ, closures),
+        ExprKind::Coalesce(a, b) => {
+            scan_guard_rec(ctx, a, canon, occ, closures);
+            scan_guard_rec(ctx, b, canon, occ, closures);
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { scan_guard_rec(ctx, s, canon, occ, closures); }
+            if let Some(en) = end { scan_guard_rec(ctx, en, canon, occ, closures); }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr { expr, .. } = p {
+                    scan_guard_rec(ctx, expr, canon, occ, closures);
+                }
+            }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields {
+                if let Some(v) = &f.value { scan_guard_rec(ctx, v, canon, occ, closures); }
+            }
+        }
+        ExprKind::TupleLit(items) => {
+            for it in items { scan_guard_rec(ctx, it, canon, occ, closures); }
+        }
+        ExprKind::ArrayLit(items) => {
+            for it in items {
+                match it {
+                    ArrayElem::Item(ex) | ArrayElem::Spread(ex) =>
+                        scan_guard_rec(ctx, ex, canon, occ, closures),
+                }
+            }
+        }
+        ExprKind::If { cond, then, else_ } => {
+            scan_guard_rec(ctx, cond, canon, occ, closures);
+            scan_guard_block(ctx, then, canon, occ, closures);
+            match else_ {
+                Some(ElseBranch::Block(b)) => scan_guard_block(ctx, b, canon, occ, closures),
+                Some(ElseBranch::If(e2)) => scan_guard_rec(ctx, e2, canon, occ, closures),
+                None => {}
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            scan_guard_rec(ctx, scrutinee, canon, occ, closures);
+            for arm in arms {
+                match &arm.body {
+                    MatchArmBody::Expr(ex) => scan_guard_rec(ctx, ex, canon, occ, closures),
+                    MatchArmBody::Block(b) => scan_guard_block(ctx, b, canon, occ, closures),
+                }
+            }
+        }
+        ExprKind::Block(b) => scan_guard_block(ctx, b, canon, occ, closures),
+        _ => {}
+    }
+}
+
+/// Тело замыкания ссылается на `canon` (в ЛЮБОЙ форме — захват независимо
+/// от позиции)? Используется только для да/нет-детекта захвата (п.(в)).
+fn closure_body_refs_guard(ctx: &ConsumeCtx, body: &ClosureBody, canon: &str) -> bool {
+    let (mut io, mut ic) = (Vec::new(), Vec::new());
+    match body {
+        ClosureBody::Expr(ex) => scan_guard_rec(ctx, ex, canon, &mut io, &mut ic),
+        ClosureBody::Block(b) => scan_guard_block(ctx, b, canon, &mut io, &mut ic),
+    }
+    !io.is_empty() || !ic.is_empty()
+}
+
+fn scan_guard_fnbody(
+    ctx: &ConsumeCtx,
+    body: &FnBody,
+    canon: &str,
+    occ: &mut Vec<(Span, bool)>,
+    closures: &mut Vec<Span>,
+) {
+    match body {
+        FnBody::Expr(e) => scan_guard_rec(ctx, e, canon, occ, closures),
+        FnBody::Block(b) => scan_guard_block(ctx, b, canon, occ, closures),
+        FnBody::External => {}
+    }
+}
+
+fn scan_guard_block(
+    ctx: &ConsumeCtx,
+    b: &Block,
+    canon: &str,
+    occ: &mut Vec<(Span, bool)>,
+    closures: &mut Vec<Span>,
+) {
+    for s in &b.stmts {
+        match s {
+            Stmt::Expr(e) | Stmt::Throw { value: e, .. } =>
+                scan_guard_rec(ctx, e, canon, occ, closures),
+            Stmt::Return { value: Some(v), .. } => scan_guard_rec(ctx, v, canon, occ, closures),
+            Stmt::Let(decl) => scan_guard_rec(ctx, &decl.value, canon, occ, closures),
+            Stmt::Assign { value, .. } => scan_guard_rec(ctx, value, canon, occ, closures),
+            _ => {}
+        }
+    }
+    if let Some(t) = &b.trailing { scan_guard_rec(ctx, t, canon, occ, closures); }
+}
+
+/// Обрабатывает tail/return EXPR (НЕ голый `X`) под активным re-consume
+/// guard'ом `canon` (D188-амендмент v3). Возвращает `true` — санкционированный
+/// вынос (ровно одно вхождение `X`, в consume-позиции, без захватывающих
+/// замыканий): EXPR walk'ается с ВРЕМЕННО снятым guard'ом (реальный
+/// `consume_args`-путь помечает `X` Consumed естественно), затем guard
+/// восстанавливается на время, пока не отработает финальный drain вызывающего
+/// (`Stmt::ConsumeScope`/`Stmt::Return` caller решает сам, снимать ли guard
+/// насовсем). Возвращает `false` во всех прочих случаях — EXPR walk'ается
+/// нормально (guard активен); при нарушении (>1 вхождение, единственное
+/// вхождение не в consume-позиции, захватывающее замыкание) — диагностика
+/// уже добавлена в `errors` с уточнённым текстом (E_CONSUME_BLOCK_MOVE_OUT).
+/// Read-only решение для ОДНОГО guard'а `canon` относительно EXPR `e`:
+/// сканирует (без мутации `ctx`) и классифицирует. Не пушит диагностики —
+/// вызывающий решает (single-canon tail-путь бьёт сразу; multi-canon
+/// return-путь — собирает решения по ВСЕМ активным guard'ам одного EXPR
+/// прежде чем действовать, п.(е) — композиция с multi-var).
+fn scan_guard_decide(ctx: &ConsumeCtx, e: &Expr, canon: &str) -> (bool, Vec<(Span, bool)>, Vec<Span>) {
+    let mut occ: Vec<(Span, bool)> = Vec::new();
+    let mut closures: Vec<Span> = Vec::new();
+    scan_guard_rec(ctx, e, canon, &mut occ, &mut closures);
+    let sanctioned = closures.is_empty() && occ.len() == 1 && occ[0].1;
+    (sanctioned, occ, closures)
+}
+
+/// Пушит E_CONSUME_BLOCK_MOVE_OUT-диагностику(и) для НАРУШЕНИЯ (`occ`/
+/// `closures` от `scan_guard_decide`, где `sanctioned == false`, но EXPR
+/// таки ссылается на `canon` — нечего пушить, если `occ`/`closures` оба
+/// пусты — EXPR канон вообще не упоминает). Уточнённый текст по причине
+/// (п.(д)): захватывающее замыкание / >1 вхождение / единственное
+/// вхождение не в consume-позиции.
+fn push_guard_escape_diags(
+    errors: &mut Vec<Diagnostic>,
+    display_name: &str,
+    occ: &[(Span, bool)],
+    closures: &[Span],
+) {
+    if !closures.is_empty() {
+        for cspan in closures {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_CONSUME_BLOCK_MOVE_OUT] `{n}`: замыкание внутри tail/return-\
+                     выражения захватывает `{n}` — вынос владения из consume-блока \
+                     через замыкание запрещён (D188-амендмент v3, Plan 201). \
+                     Санкционированные формы — голый `{n}` либо ровно одно вхождение \
+                     `{n}` как аргумент consume-параметра.",
+                    n = display_name
+                ),
+                *cspan,
+            ));
+        }
+        return;
+    }
+    if occ.len() > 1 {
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_CONSUME_BLOCK_MOVE_OUT] `{n}`: `{n}` встречается в tail/return-\
+                 выражении {cnt} раз(а) — санкционированный вынос допускает РОВНО \
+                 одно вхождение, как аргумент consume-параметра (D188-амендмент v3, \
+                 Plan 201). Для лишних вхождений возьмите `@share()`-копию.",
+                n = display_name, cnt = occ.len()
+            ),
+            occ[0].0,
+        ));
+    } else if occ.len() == 1 {
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_CONSUME_BLOCK_MOVE_OUT] `{n}`: единственное вхождение `{n}` в tail/\
+                 return-выражении — НЕ в consume-позиции (view/mut-параметр или иная \
+                 форма). Санкционированный вынос — только аргумент consume-параметра \
+                 (либо голый `{n}`) (D188-амендмент v3, Plan 201).",
+                n = display_name
+            ),
+            occ[0].0,
+        ));
+    }
+    // occ.is_empty() && closures.is_empty() — canon вообще не упомянут, нечего пушить.
+}
+
+/// Multi-canon помощник для tail/return EXPR (`return EXPR` — п.4, и
+/// block-tail's композиция с внешними уровнями multi-var-вложения, п.(е)):
+/// решает НЕЗАВИСИМО по КАЖДОМУ активному re-consume guard'у в
+/// `ctx.block_guards` (в т.ч. guard'ы объемлющих уровней вложенного
+/// desugar'а `consume A { consume B { … } }`), затем walk'ает EXPR ОДИН РАЗ
+/// с временно снятыми guard'ами для всех санкционированных канонов —
+/// каждый дизармится побочным эффектом (`mark_consumed_bypass_guard`)
+/// независимо. Возвращает множество канонов, чей вынос был санкционирован
+/// ЭТИМ EXPR (может быть >1 — разные уровни одного multi-var блока).
+fn walk_guarded_escape_expr_multi(
+    ctx: &mut ConsumeCtx,
+    e: &Expr,
+    errors: &mut Vec<Diagnostic>,
+) -> HashSet<String> {
+    let active_canons: Vec<String> = ctx.block_guards.iter().cloned().collect();
+    let mut to_disarm: Vec<String> = Vec::new();
+    for canon in &active_canons {
+        let (sanctioned, occ, closures) = scan_guard_decide(ctx, e, canon);
+        if sanctioned {
+            to_disarm.push(canon.clone());
+        } else {
+            push_guard_escape_diags(errors, canon, &occ, &closures);
+        }
+    }
+    for c in &to_disarm { ctx.block_guards.remove(c); }
+    consume_walk_expr(ctx, e, errors);
+    for c in &to_disarm {
+        ctx.block_guards.insert(c.clone());
+        ctx.mark_consumed_bypass_guard(c, e.span);
+    }
+    to_disarm.into_iter().collect()
 }
 
 fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic>) {

@@ -25114,6 +25114,178 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         Ok(())
     }
 
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 201 (D188-амендмент v3, 2026-07-13): «однократный вынос через
+    // выражение». Checker (types/mod.rs ConsumeCtx) уже validated —
+    // codegen НЕ переверяет consume-позицию, только (а) находит, какие из
+    // АКТИВНЫХ re-consume guard'ов (`self.reconsume_scopes`) referenced
+    // где-то внутри `return EXPR` голым идентификатором, (б) эмитит
+    // disarm-присвоение (`_defer_<bid>_0_active = 0;`) ИМЕННО в момент
+    // передачи владения — после того, как ВСЕ аргументы объемлющего
+    // consuming-вызова вычислены (в исходном AST-порядке слева направо —
+    // Nova's порядок вычисления), но до самого вызова. Каждый арг
+    // hoist'ится в свой temp (`self.line`) — это ЕСТЕСТВЕННО сериализует
+    // порядок вычисления, включая любые side-effecting под-вызовы (если
+    // они кидают — throw срабатывает до disarm-строки, cleanup ещё
+    // взведён). Итоговый Call пересобирается с temp-идент-аргументами и
+    // эмитится ШТАТНЫМ `emit_expr` (mangling/overload dispatch не
+    // дублируем — id/span вызова сохраняются, checker-resolved callee
+    // остаётся привязан).
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Собрать подмножество `active`, встречающееся ГДЕ-ТО внутри `e` голым
+    /// идентификатором (любая глубина — Call-аргументы на любом уровне
+    /// вложенности, а также прозрачные обёртки `Try`/`Bang`/`RefArg`/`As`/
+    /// `Is`/`Unary`/`Binary`/`Index`/`TurboFish`/`Member`-receiver). Не
+    /// проверяет consume-позицию — это уже сделал checker; здесь только
+    /// находим ГДЕ эмитить disarm.
+    fn collect_reconsume_disarm_names(
+        e: &Expr,
+        active: &std::collections::HashSet<String>,
+    ) -> std::collections::HashSet<String> {
+        let mut found = std::collections::HashSet::new();
+        Self::collect_reconsume_disarm_names_rec(e, active, &mut found);
+        found
+    }
+
+    fn collect_reconsume_disarm_names_rec(
+        e: &Expr,
+        active: &std::collections::HashSet<String>,
+        found: &mut std::collections::HashSet<String>,
+    ) {
+        match &e.kind {
+            ExprKind::Ident(name) => {
+                if active.contains(name) {
+                    found.insert(name.clone());
+                }
+            }
+            ExprKind::Call { func, args, .. } => {
+                let func_u = func.unwrap_turbofish();
+                if let ExprKind::Member { obj, .. } = &func_u.kind {
+                    Self::collect_reconsume_disarm_names_rec(obj, active, found);
+                }
+                for a in args {
+                    Self::collect_reconsume_disarm_names_rec(a.expr(), active, found);
+                }
+            }
+            ExprKind::Member { obj, .. } => {
+                Self::collect_reconsume_disarm_names_rec(obj, active, found);
+            }
+            ExprKind::Index { obj, index } => {
+                Self::collect_reconsume_disarm_names_rec(obj, active, found);
+                Self::collect_reconsume_disarm_names_rec(index, active, found);
+            }
+            ExprKind::TurboFish { base, .. } => {
+                Self::collect_reconsume_disarm_names_rec(base, active, found);
+            }
+            ExprKind::Try(i) | ExprKind::Bang(i) | ExprKind::RefArg(i)
+            | ExprKind::Unary { operand: i, .. } => {
+                Self::collect_reconsume_disarm_names_rec(i, active, found);
+            }
+            ExprKind::As(i, _) | ExprKind::Is(i, _) => {
+                Self::collect_reconsume_disarm_names_rec(i, active, found);
+            }
+            ExprKind::Binary { left, right, .. } => {
+                Self::collect_reconsume_disarm_names_rec(left, active, found);
+                Self::collect_reconsume_disarm_names_rec(right, active, found);
+            }
+            ExprKind::Coalesce(a, b) => {
+                Self::collect_reconsume_disarm_names_rec(a, active, found);
+                Self::collect_reconsume_disarm_names_rec(b, active, found);
+            }
+            _ => {}
+        }
+    }
+
+    /// Emit EXPR (`return EXPR` value), дизармя `names` (подмножество
+    /// `self.reconsume_scopes`) в момент передачи владения (см. блок-
+    /// комментарий выше). `e` — Call на любом уровне: рекурсивно hoist'ит
+    /// args, дизармит те `names`, что встретились ПРЯМЫМИ аргументами
+    /// ЭТОГО вызова, сразу после того как все его args вычислены, затем
+    /// делегирует итоговый (args-hoisted) Call в штатный `emit_expr`.
+    /// Non-Call обёртки (`Try`/`As`/…) — прозрачная рекурсия. Прочие формы
+    /// (Match/If как ПРЯМОЕ значение return) — консервативный fallback:
+    /// disarm перед вычислением всего EXPR (за пределами узкого амендмента
+    /// v3 — вложенность Call-в-Call, засвидетельствованная в nova-tls).
+    fn emit_expr_with_reconsume_disarm(
+        &mut self,
+        e: &Expr,
+        names: &std::collections::HashSet<String>,
+    ) -> Result<String, String> {
+        if names.is_empty() {
+            return self.emit_expr(e);
+        }
+        match &e.kind {
+            ExprKind::Call { func, args, trailing } => {
+                let mut hoisted_args: Vec<CallArg> = Vec::with_capacity(args.len());
+                let mut disarmed_here: Vec<String> = Vec::new();
+                for a in args {
+                    let ax = a.expr();
+                    let c = if let ExprKind::Ident(name) = &ax.kind {
+                        if names.contains(name) {
+                            disarmed_here.push(name.clone());
+                        }
+                        self.emit_expr(ax)?
+                    } else {
+                        self.emit_expr_with_reconsume_disarm(ax, names)?
+                    };
+                    let ty = self.infer_expr_c_type(ax);
+                    let tmp = self.fresh_tmp();
+                    self.line(&format!("{} {} = {};", ty, tmp, c));
+                    self.var_types.insert(tmp.clone(), ty);
+                    let tmp_expr = Expr::new(ExprKind::Ident(tmp), ax.span);
+                    hoisted_args.push(match a {
+                        CallArg::Item(_) => CallArg::Item(tmp_expr),
+                        CallArg::Spread(_) => CallArg::Spread(tmp_expr),
+                        CallArg::Named { name, .. } =>
+                            CallArg::Named { name: name.clone(), value: tmp_expr },
+                    });
+                }
+                // Все args этого вызова вычислены (в исходном AST-порядке) —
+                // момент передачи владения: дизармим guard'ы, бывшие ПРЯМЫМИ
+                // аргументами именно этого вызова.
+                for name in &disarmed_here {
+                    if let Some((_, bid)) = self.reconsume_scopes.iter().rev()
+                        .find(|(b, _)| b == name)
+                    {
+                        self.line(&format!(
+                            "_defer_{}_0_active = 0;  /* Plan 201 v3: consuming-вызов — cleanup дизармлен */",
+                            bid));
+                    }
+                }
+                let rebuilt = Expr {
+                    kind: ExprKind::Call {
+                        func: func.clone(),
+                        args: hoisted_args,
+                        trailing: trailing.clone(),
+                    },
+                    span: e.span,
+                    id: e.id,
+                };
+                self.emit_expr(&rebuilt)
+            }
+            _ => {
+                // Fallback (не Call/Try на прямом пути) — не разбираем глубже;
+                // дизармим всё, что EXPR ссылается, перед его вычислением.
+                // Заведомо избыточно-консервативно (порядок относительно
+                // внутренних под-throws не гарантирован для этих редких
+                // форм), но узкий амендмент v3 не таргетирует их —
+                // единственный засвидетельствованный путь — Call-в-Call.
+                let names_here = Self::collect_reconsume_disarm_names(e, names);
+                for name in &names_here {
+                    if let Some((_, bid)) = self.reconsume_scopes.iter().rev()
+                        .find(|(b, _)| b == name)
+                    {
+                        self.line(&format!(
+                            "_defer_{}_0_active = 0;  /* Plan 201 v3: consuming-вызов (fallback) — cleanup дизармлен */",
+                            bid));
+                    }
+                }
+                self.emit_expr(e)
+            }
+        }
+    }
+
     fn emit_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
         // Source annotation hook: if --annotate-source enabled, emit the
         // originating Nova source as a /* SRC: ... */ comment.
@@ -26203,7 +26375,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `emit_expr_with_target_type` only specializes None/typed-int/
                     // array-literal targets and otherwise delegates to `emit_expr`,
                     // so non-literal returns are unchanged.
-                    let val = if ret_ty != "nova_int" && ret_ty != "nova_unit" {
+                    //
+                    // Plan 201 (D188-амендмент v3): non-bare `return EXPR` that
+                    // references an ACTIVE re-consume guard (checker already
+                    // validated single-occurrence consume-position) — compute
+                    // `val` through `emit_expr_with_reconsume_disarm` so the
+                    // disarm-assignment lands exactly between "consuming call's
+                    // args evaluated" and "call invoked" (see helper doc above).
+                    let reconsume_disarm_names: std::collections::HashSet<String> =
+                        if matches!(&v.kind, ExprKind::Ident(_)) || self.reconsume_scopes.is_empty() {
+                            std::collections::HashSet::new()
+                        } else {
+                            let active: std::collections::HashSet<String> =
+                                self.reconsume_scopes.iter().map(|(b, _)| b.clone()).collect();
+                            Self::collect_reconsume_disarm_names(v, &active)
+                        };
+                    let val = if !reconsume_disarm_names.is_empty() {
+                        self.emit_expr_with_reconsume_disarm(v, &reconsume_disarm_names)?
+                    } else if ret_ty != "nova_int" && ret_ty != "nova_unit" {
                         self.emit_expr_with_target_type(v, &ret_ty)?
                     } else {
                         self.emit_expr(v)?
@@ -26532,7 +26721,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let tail_escape = *re_consume
                         && result.is_some()
                         && matches!(&t.kind, ExprKind::Ident(n) if n == binding);
-                    let v = self.emit_expr(t)?;
+                    // Plan 201 (D188-амендмент v3): non-bare tail EXPR — те же
+                    // disarm-at-consuming-call правила, что и у `return EXPR`
+                    // (см. block-comment у `emit_expr_with_reconsume_disarm`
+                    // выше `emit_stmt`). Гейт `result.is_some()` зеркалит
+                    // checker'а (ConsumeCtx `walk_guarded_escape_expr_multi`
+                    // вызывается ТОЛЬКО при наличии result-приёмника).
+                    let v = if tail_escape || result.is_none() || self.reconsume_scopes.is_empty() {
+                        self.emit_expr(t)?
+                    } else {
+                        let active: std::collections::HashSet<String> =
+                            self.reconsume_scopes.iter().map(|(b, _)| b.clone()).collect();
+                        let disarm_names = Self::collect_reconsume_disarm_names(t, &active);
+                        if disarm_names.is_empty() {
+                            self.emit_expr(t)?
+                        } else {
+                            self.emit_expr_with_reconsume_disarm(t, &disarm_names)?
+                        }
+                    };
                     if tail_escape {
                         self.line(&format!(
                             "_defer_{}_0_active = 0;  /* Plan 201: tail-вынос — cleanup дизармлен */",
@@ -43737,7 +43943,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let mut initial_bound = param_names.clone();
         Self::collect_truly_free_idents(body, &mut initial_bound, &mut body_idents);
         // Free vars = body idents that exist in var_types and are not lambda params
-        let free_vars: Vec<(String, String)> = body_idents.iter()
+        let mut free_vars: Vec<(String, String)> = body_idents.iter()
             .filter(|n| !param_names.contains(*n) && self.var_types.contains_key(*n))
             .filter(|n| {
                 // Exclude global function names (they are registered too, but are not "captured")
@@ -43746,6 +43952,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             })
             .map(|n| (n.clone(), self.var_types.get(n).cloned().unwrap_or_else(|| "nova_int".into())))
             .collect();
+        // [M-hashmap-order-bare-variant-flake] (2026-07-13): `body_idents` is a
+        // `HashSet<String>` — iterating it directly gave `free_vars` a
+        // process-random order (Rust's default RandomState hasher reseeds per
+        // process), so the SAME closure's env-struct field order, unpack order,
+        // and populate/init statement order (all derived from this Vec below)
+        // differed across separate `nova test`/`nova build` invocations of the
+        // identical source (confirmed via generated-.c diff across repeated
+        // compiles). Sort by capture name so the same closure ALWAYS emits the
+        // same C — removes another source of the conformance-CU flake.
+        free_vars.sort_by(|a, b| a.0.cmp(&b.0));
 
         // Determine the NovaClos_XX struct type name for this closure signature
         let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c_ty);
