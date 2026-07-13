@@ -11457,6 +11457,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("_nova_active_slot = -1;");
         self.indent -= 1;
         self.line("}");
+        // [196.6 / D228 §6 class]: pending_sweeps++ strictly BEFORE the
+        // pending_remote release-decrement (same thread, program order) —
+        // the scope owner that observes pending_remote==0 therefore also
+        // observes pending_sweeps>0 until the worker's post-mortem sweep
+        // (nova_scope_sweep_dead_child) release-decrements it. Closes the
+        // stack-scope use-after-return in the sweep (Plan 198 floating AV;
+        // docs/plans/196.6-race-state-dump-notes.md).
+        self.line("(void)nova_aint_inc(&_c->_nova_parent_scope->pending_sweeps);");
         self.line("(void)nova_aint_fetch_sub_release(&_c->_nova_parent_scope->pending_remote);");
         self.line("nova_runtime_signal_main();");
         self.indent -= 1;
@@ -12256,6 +12264,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("_nova_active_slot = -1;");
         self.indent -= 1;
         self.line("}");
+        // [196.6 / D228 §6 class]: pending_sweeps++ strictly BEFORE the
+        // pending_remote release-decrement (same thread, program order) —
+        // the scope owner that observes pending_remote==0 therefore also
+        // observes pending_sweeps>0 until the worker's post-mortem sweep
+        // (nova_scope_sweep_dead_child) release-decrements it. Closes the
+        // stack-scope use-after-return in the sweep (Plan 198 floating AV;
+        // docs/plans/196.6-race-state-dump-notes.md).
+        self.line("(void)nova_aint_inc(&_c->_nova_parent_scope->pending_sweeps);");
         self.line("(void)nova_aint_fetch_sub_release(&_c->_nova_parent_scope->pending_remote);");
         self.line("nova_runtime_signal_main();");
         self.indent -= 1;
@@ -12488,6 +12504,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("_nova_active_slot = -1;");
         self.indent -= 1;
         self.line("}");
+        // [196.6 / D228 §6 class]: pending_sweeps++ strictly BEFORE the
+        // pending_remote release-decrement (same thread, program order) —
+        // the scope owner that observes pending_remote==0 therefore also
+        // observes pending_sweeps>0 until the worker's post-mortem sweep
+        // (nova_scope_sweep_dead_child) release-decrements it. Closes the
+        // stack-scope use-after-return in the sweep (Plan 198 floating AV;
+        // docs/plans/196.6-race-state-dump-notes.md).
+        self.line("(void)nova_aint_inc(&_c->_nova_parent_scope->pending_sweeps);");
         self.line("(void)nova_aint_fetch_sub_release(&_c->_nova_parent_scope->pending_remote);");
         self.line("nova_runtime_signal_main();");
         self.indent -= 1;

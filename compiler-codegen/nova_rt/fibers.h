@@ -391,6 +391,34 @@ typedef struct {
      * Initial value 0 — для single-thread (без runtime.init) остаётся 0
      * navсегда, behaviour identical. */
     nova_atomic_int pending_remote;
+    /* [196.6 / D228 §6 class, 2026-07-13] pending_sweeps — count of remote
+     * children whose fiber body (epilogue) has finished but whose WORKER-side
+     * post-mortem sweep (_worker_main: mco_destroy → nova_scope_retain_or_
+     * release_child → nova_spawn_pool_release) has not completed yet.
+     *
+     * Race this closes (VEH-localized, docs/plans/196.6-race-state-dump-notes.md):
+     * the child epilogue decrements `pending_remote` INSIDE the fiber; the
+     * worker's sweep runs strictly AFTER the fiber returns, and
+     * nova_scope_retain_or_release_child dereferences
+     * `dead_ctx->_nova_parent_scope` — but by then the scope owner may have
+     * observed pending_remote==0, returned from nova_supervised_run_impl, and
+     * the STACK-allocated NovaFiberQueue is gone: the sweep reads (and on the
+     * error-retention path WRITES child_ctx[slot] into) reused stack memory →
+     * the Plan 198 floating corruption / 0xC0000005 at
+     * `parent->child_capacity` (offset 0x74 off a NULL/garbage reload).
+     * Same class as §12.31 `pending_driver_jobs` (stack scope must outlive
+     * all async references — D228 §6); same counter-based-wait fix:
+     *   - increment: child epilogue (codegen), program-order BEFORE its
+     *     pending_remote release-decrement — the acquire that sees
+     *     pending_remote==0 therefore also sees pending_sweeps>0 until the
+     *     sweep finishes (relaxed inc suffices).
+     *   - decrement: worker sweep, fetch_sub RELEASE, AFTER retain/release —
+     *     via a parent pointer SNAPSHOT taken before the ctx can be pooled
+     *     (pool push overlays _nova_parent_scope with the freelist next-ptr).
+     *   - wait: supervised_run_impl tail (next to the pending_driver_jobs
+     *     wait) + drain_main_scope, acquire loads.
+     * Single-thread baseline: stays 0 forever, behaviour identical. */
+    nova_atomic_int pending_sweeps;
     /* Plan 44.5 Layer 5: atomic first_error для cross-worker error
      * propagation. Worker fiber на throw делает CAS (NULL → err_msg);
      * первый wins. После CAS — sets cancel_requested = true для
@@ -802,6 +830,7 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
      * Single-thread baseline (без runtime.init) — оба остаются нулевыми
      * forever, behaviour identical. */
     nova_aint_init(&q->pending_remote, 0);
+    nova_aint_init(&q->pending_sweeps, 0);   /* [196.6 / D228 §6 class] */
     nova_aptr_init(&q->first_error_atomic, NULL);
     q->first_error_atomic_kind = NOVA_THROW_USER;
     q->first_error_atomic_reason = NULL;
@@ -2356,6 +2385,34 @@ static inline bool nova_scope_retain_or_release_child(NovaSpawnCtxBase* dead_ctx
  * tail to release retained child ctx buffers back to their pool. */
 void nova_spawn_pool_release(void* ctx, size_t size);
 
+/* [196.6 / D228 §6 class, 2026-07-13]: the ONE post-mortem sweep for a dead
+ * remote child — retain-or-release the ctx, then RELEASE-decrement the parent
+ * scope's pending_sweeps (see the field doc at NovaFiberQueue.pending_sweeps).
+ * All worker-side dead-fiber sites MUST route through this helper (three in
+ * runtime.c: _worker_main loop, worker cleanup drain, pump_scope) so the
+ * scope owner's sweep-wait can pair with every sweep.
+ *
+ * Ordering contract:
+ *  1. `parent` is SNAPSHOT before retain/release — a pool push overlays
+ *     `_nova_parent_scope` with the freelist next pointer, so the field must
+ *     not be re-read afterwards.
+ *  2. The snapshot is safe to dereference until OUR decrement: the child's
+ *     epilogue incremented pending_sweeps program-order-before its
+ *     pending_remote release-decrement, so the owner cannot observe
+ *     "all done" until this function's fetch_sub lands.
+ *  3. fetch_sub is RELEASE — a retained `child_ctx[slot]` store must be
+ *     visible to the owner's decision-loop (acquire wait) before it reads. */
+static inline void nova_scope_sweep_dead_child(NovaSpawnCtxBase* dead_ctx) {
+    if (!dead_ctx) return;
+    NovaFiberQueue* parent_snapshot = dead_ctx->_nova_parent_scope;
+    if (!nova_scope_retain_or_release_child(dead_ctx)) {
+        nova_spawn_pool_release(dead_ctx, dead_ctx->_nova_pool_size);
+    }
+    if (parent_snapshot) {
+        (void)nova_aint_fetch_sub_release(&parent_snapshot->pending_sweeps);
+    }
+}
+
 /* Plan 83.10.3 (2026-05-26): forward-decls — runtime.h included AFTER
  * fibers.h in nova_rt.h. Forward-declare to allow use in fibers.h functions.
  * Returns -1 on main thread, worker id (>=0) on worker thread. */
@@ -2555,6 +2612,16 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
         int parked = nova_sched_count_parked(q);
         if (parked > 0 && parked == alive) {
             uv_run(nova_current_loop(), UV_RUN_ONCE);
+        }
+    }
+    /* [196.6 / D228 §6 class]: wait for worker-side sweeps of this scope's
+     * remote children (see pending_sweeps field doc / supervised_run_impl
+     * tail). The orphan scope is static, but drain is also the pre-exit
+     * fence — keep the sweep/ctx-pool accounting symmetric. */
+    while (nova_aint_load(&q->pending_sweeps) > 0) {
+        uv_run(nova_current_loop(), UV_RUN_NOWAIT);
+        if (nova_aint_load(&q->pending_sweeps) > 0) {
+            uv_sleep(1);
         }
     }
     nova_sched_drop_state(q);
@@ -2908,6 +2975,24 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
         uv_run(nova_current_loop(), UV_RUN_NOWAIT);
         if (nova_aint_load(&q->pending_driver_jobs) > 0) {
             uv_sleep(1);  /* yield ~1ms; driver thread is independent of our loop */
+        }
+    }
+    /* [196.6 / D228 §6 class]: same guarantee for the WORKER-side post-mortem
+     * sweep of remote children (mco_destroy → retain_or_release_child →
+     * pool_release). A child's epilogue decrements pending_remote INSIDE the
+     * fiber; the sweep runs after the fiber returns and dereferences THIS
+     * stack-allocated scope (child_capacity/child_error/child_ctx). Returning
+     * before every sweep finished lets the next stack frame reuse the memory
+     * → the sweep reads garbage / writes child_ctx into a live frame (Plan
+     * 198 floating AV). Wait here — strictly BEFORE the decision-loop below
+     * reads child_ctx[] (a retained store must be visible: release-dec in the
+     * sweep pairs with this acquire load). Typical wait: zero iterations —
+     * the sweep is the very next thing the worker does after the fiber
+     * returns. See pending_sweeps field doc. */
+    while (nova_aint_load(&q->pending_sweeps) > 0) {
+        uv_run(nova_current_loop(), UV_RUN_NOWAIT);
+        if (nova_aint_load(&q->pending_sweeps) > 0) {
+            uv_sleep(1);
         }
     }
     /* Cleanup sched-state for этого scope'а (если был alloc'ом). */
