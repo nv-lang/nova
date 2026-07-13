@@ -159,6 +159,44 @@ static inline void nova_last_error_set(nova_str msg, NovaThrowKind kind,
     nova_last_error_set_ex(msg, kind, payload, tid, NULL);
 }
 
+/* ── Plan 201 Ф.2: debug tripwire — класс «ambient TLS staging слот, чья
+ * корректность держится на инварианте "нет точки планирования между
+ * постановкой и потреблением"» ────────────────────────────────────────
+ *
+ * Единственный известный представитель этого класса — `_nova_pending_
+ * suppressed` (D414 §1) — удалён выше (см. comment над
+ * `nova_last_error_set_ex`): цепочка теперь идёт explicit-параметром
+ * через `nova_rethrow_scope` (fibers.h), так что производителю/потребителю
+ * структурно нечего терять на scheduling-точке между ними.
+ *
+ * Этот tripwire — ЗАПРЕТ НА БУДУЩЕЕ, а не диагностика текущего дефекта:
+ * реестр проверок пуст, потому что живых слотов этого класса нет. Если
+ * когда-нибудь появится НОВЫЙ ambient-слот с тем же контрактом
+ * (producer ставит значение "на потом", consumer читает его позже БЕЗ
+ * явной параметр-передачи, а между ними возможен park/yield/channel/
+ * sleep/IO) — он обязан либо (предпочтительно) стать explicit-параметром
+ * по образцу выше, либо добавить сюда РЕАЛЬНУЮ проверку "слот невзведён"
+ * вместо комментария-инварианта (то, что владелец потребовал для
+ * _nova_pending_suppressed). Другие живые TLS-слоты (`_nova_fail_top`,
+ * `_nova_interrupt_top`, handler-vtable-слоты, `_nova_active_scope`) —
+ * НЕ этого класса: они намеренно переживают scheduling-точки как per-
+ * fiber динамический контекст и явно save/restore'ятся вокруг
+ * mco_resume (runtime.c, Plan 44.5 Layer 5) — их корректность держится
+ * на этом save/restore коде, не на "не должно планироваться".
+ *
+ * Вызывается из `nova_gopark` (nova_sched.h) — единственной настоящей
+ * точки, где живой fiber передаёт управление планировщику (mco_yield).
+ * Debug-only (см. R2-tripwire конвенцию, fibers.h): no-op под NDEBUG. */
+static inline void nova_assert_no_ambient_error_staging(void) {
+    /* Реестр пуст — см. doc-comment выше. */
+}
+
+#if !defined(NDEBUG)
+#  define NOVA_ASSERT_NO_AMBIENT_ERROR_STAGING() nova_assert_no_ambient_error_staging()
+#else
+#  define NOVA_ASSERT_NO_AMBIENT_ERROR_STAGING() ((void)0)
+#endif
+
 /* ──────────────────────────────────────────────────────────────────
  * Plan 173 Ф.5 п.7 (Zig-парность, минимум): throw-site трассировка.
  * ──────────────────────────────────────────────────────────────────

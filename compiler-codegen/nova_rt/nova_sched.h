@@ -285,6 +285,11 @@ static inline void nova_gopark(void (*unlock_fn)(void*), void* unlock_arg) {
      * guaranteed a re-queue, so the next resume picks us up. Skipping the yield
      * on DISPATCHED would fall through while ALSO on the runq → double-run
      * (review fence_hazard #2). */
+    /* Plan 201 Ф.2: this IS the scheduling point (control leaves this fiber
+     * here) — tripwire for the "ambient TLS staging slot with no-scheduling-
+     * window invariant" defect class (see effects.h doc-comment above
+     * nova_assert_no_ambient_error_staging). Debug-only, no-op in release. */
+    NOVA_ASSERT_NO_AMBIENT_ERROR_STAGING();
     mco_yield(co);
     /* Resumed. Clear the TLS the scheduler already drained (yield path). */
     _nova_park_unlock_fn  = NULL;
