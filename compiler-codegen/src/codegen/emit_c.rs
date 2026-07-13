@@ -49130,32 +49130,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     }
                                 }
                             }
-                            // Plan 63 Fix A: fallback на external_registry.by_key для
-                            // built-in типов (StringBuilder/WriteBuffer/etc.) которые
-                            // регистрируются через runtime stub'ы. Без этого
-                            // `sb.peek() -> str` инфер'ит в nova_int (fallback), что
-                            // ломает downstream type-check'и.
-                            if let Some(decls) = self.external_registry.by_key
-                                .get(&(rt.clone(), mn.clone()))
-                            {
-                                let matching: Vec<_> = decls.iter()
-                                    .filter(|d| d.is_instance == want_inst)
-                                    .collect();
-                                if let Some(decl) = matching.first() {
-                                    self.icr_trace("B09_external_registry_bykey_builtin");
-                                    // Plan 62.B: пропускаем generic-стаб `Nova_T*`
-                                    // (single uppercase letter = type-param return)
-                                    // — fall through to specialized NovaOpt_/
-                                    // Nova_Result* блокам, знающим concrete тип.
-                                    let c_ret = &decl.return_c_type;
-                                    if !c_ret.is_empty()
-                                        && c_ret != "void*"
-                                        && !self.debt_is_generic_stub_c(c_ret)
-                                    {
-                                        return c_ret.clone();
-                                    }
-                                }
-                            }
+                            // [196.5 Stage-D] B09_external_registry_bykey_builtin REMOVED.
+                            // `external_registry.by_key` fallback for built-in types
+                            // (StringBuilder/WriteBuffer/etc.) — the SAME registry-declared
+                            // return this arm re-derived by-key is, for every method-return
+                            // purpose, checker-materialised into `resolved_types` (Channel 2,
+                            // read BEFORE `infer_call_ret_c` — mirrors the already-removed
+                            // B11l_{stringbuilder,writebuffer,readbuffer}_static/B11n/B11o/
+                            // B11p siblings a few hundred lines below, all the same
+                            // ExternalRegistry-by-key pattern). NO-HIT across conformance +
+                            // std/src/collections + std/src/data + std/src/net (docs/plans/
+                            // 196.5-stage-d-notes.md) ⟹ structurally unreachable (§5).
                         }
                     }
                     // Infer return type for call expressions
@@ -49268,22 +49253,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 return aliased_c;
                             }
                         }
-                        // Plan 115 D214: free external fn (declared в user module
-                        // OR stdlib runtime) return-type через ExternalRegistry.
-                        // Без этого `nova_p115_make_pair() -> (ptr, int)` infer'ит
-                        // в "nova_int" fallback → call-site assigns to _NovaTuple2
-                        // mismatch'ит с mono'd `_NovaTuple_2_8_nova_ptr_8_nova_int`.
-                        if let Some(decls) = self.external_registry.by_key
-                            .get(&(String::new(), name.clone()))
-                        {
-                            if let Some(decl) = decls.first() {
-                                let c_ret = &decl.return_c_type;
-                                if !c_ret.is_empty() && c_ret != "void*" {
-                                    self.icr_trace("B10i_external_registry_free_fn");
-                                    return c_ret.clone();
-                                }
-                            }
-                        }
+                        // [196.5 Stage-D] B10i_external_registry_free_fn REMOVED. Free
+                        // external-fn (`ExternalRegistry.by_key(("", name))`) return-type
+                        // fallback — same by-key registry lookup as the removed
+                        // B09_external_registry_bykey_builtin (instance form) above; the
+                        // declared return is checker-materialised into `resolved_types`
+                        // ahead of this legacy for the free-fn form too. NO-HIT across
+                        // conformance + std/src/collections + std/src/data + std/src/net
+                        // (docs/plans/196.5-stage-d-notes.md) ⟹ structurally unreachable (§5).
                         // Plan 48: infer concrete return type for monomorphized generic fn calls.
                         // When a generic fn's return type is a bare type param T, resolve T
                         // from the first matching argument type.
@@ -50303,11 +50280,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // above still fires) — checker-materialised. NO-HIT (§5).
                             // Plan 175 Ф.3(a): `Monotonic.now()` inference builtin
                             // RETIRED (Path-form) — see Member-form note above.
-                            // D75 (revised, Plan 47): CancelToken.new() — Path-form.
-                            if eff == "CancelToken" && method_name == "new" {
-                                self.icr_trace("B12d_path_canceltoken_new");
-                                return "NovaCancelToken*".into();
-                            }
+                            // [196.5 Stage-D] B12d_path_canceltoken_new REMOVED. Path-form
+                            // `CancelToken.new()` — sibling of the already-removed
+                            // Member-form B11h_canceltoken_new (comment above, "Channel.new/
+                            // ChanReader.close_after/close_at/CancelToken.new are Nova-body
+                            // static constructors whose declared return the checker
+                            // materialises into resolved_types... structurally unreachable");
+                            // this Path-form of the SAME constructor is NO-HIT across
+                            // conformance + std/src/collections + std/src/data + std/src/net
+                            // (docs/plans/196.5-stage-d-notes.md) for the identical reason.
                             // Plan 196.2 W1 [gate-1]: B12e_path_{stringbuilder,writebuffer,
                             // readbuffer}_static REMOVED. Path-form mirror of the already-
                             // removed B11l_{stringbuilder,writebuffer,readbuffer}_static
