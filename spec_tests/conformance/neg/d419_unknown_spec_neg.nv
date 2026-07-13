@@ -9,12 +9,12 @@
 
 module neg.d419_unknown_spec_neg
 
-type Tagged { s str }
+type TaggedD419 { s str }
 
-fn Tagged @display_fmt(mut f Fmt) -> () { f.write(@s) }
+fn TaggedD419 @display_fmt(mut f Fmt) -> () { f.write(@s) }
 
 test "unknown format spec type-char still rejected even for a type WITH @display_fmt" {
-    ro t = Tagged { s: "x" }
+    ro t = TaggedD419 { s: "x" }
     ro out = "${t:zz}"
     assert(out == "x")
 }
