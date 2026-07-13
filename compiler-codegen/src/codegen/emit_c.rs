@@ -50275,19 +50275,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                             }
                         }
-                        // Plan 172.1 D145/D282: prefix-generic receiver methods are annotated by the
-                        // checker via `resolve_prefix_generic_method_return` into `resolved_types`.
-                        // Check the channel before panicking — the annotation exists but legacy has no
-                        // fn_ret_{recv}_{method} entry because the method is registered under the
-                        // typevar name ("T"/"I"), not the concrete receiver type.
-                        if expr.id.is_set() {
-                            if let Some(rt) = self.resolved_types.get(&expr.id) {
-                                if let Ok(ct) = self.resolved_type_to_c(rt) {
-                                    self.icr_trace("B11ah_resolved_types_channel_late");
-                                    return ct;
-                                }
-                            }
-                        }
+                        // [196.5 Stage-D волна-3] B11ah_resolved_types_channel_late REMOVED.
+                        // Former: `if expr.id.is_set() { if let Some(rt) =
+                        // self.resolved_types.get(&expr.id) { if let Ok(ct) =
+                        // self.resolved_type_to_c(rt) { return ct; } } }` — a SECOND
+                        // read of the exact same `(self.resolved_types, expr.id)` pair
+                        // the dispatcher (`infer_expr_c_type`'s Channel-2 block, same
+                        // function invocation, same immutable `&self`, no write path in
+                        // between) already reads for every `Call` expr BEFORE
+                        // dispatching into `infer_call_ret_c` at all. `resolved_type_to_c`
+                        // is a pure function of `rt` — re-running it here on the same
+                        // input can only reproduce the dispatcher's own verdict:
+                        //   - dispatcher lookup failed (no entry / `Err`) ⟹ this re-check
+                        //     fails identically (same map, same pure fn) ⟹ never hits;
+                        //   - dispatcher lookup SUCCEEDED but was a generic-stub C type
+                        //     (`debt_is_generic_stub_c`, `~50712`) ⟹ it deliberately did
+                        //     NOT return, falling through so the receiver-substitution-
+                        //     -aware method-return inference below could resolve the
+                        //     type-param to its concrete instance — this arm would have
+                        //     handed back the SAME stub the fallthrough was written to
+                        //     avoid, i.e. the wrong answer, not merely a redundant one.
+                        // Structurally unreachable either way, confirmed empirically
+                        // NO-HIT across conformance + std/src (all folders) + examples +
+                        // vec_iter/vec_lazy (docs/plans/196.5-stage-d-census.md §3.1,
+                        // re-confirmed post-wave-2 spot-check: docs/plans/
+                        // 196.5-stage-d-wave3-notes.md).
                         // Plan 180: the `Serialize` contract fixes `@x.serialize(s)`
                         // to `Result[(), SerError]` for EVERY receiver. Inside a
                         // generic container-conformance mono (e.g.
