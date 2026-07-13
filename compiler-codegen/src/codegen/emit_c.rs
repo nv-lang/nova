@@ -2672,6 +2672,62 @@ impl CEmitter {
         slots
     }
 
+    /// Plan 196.5 Stage-B5 — channel-first twin of `rt_slots_from_args`: the SOURCE of the
+    /// slots becomes a SINGLE `node_substs[call_id]` lookup (196.5 §6.4) — the checker
+    /// producers (`f1_check_call`/`resolve_return_channel`, Stage-A) already solved the FULL
+    /// per-call subst map — falling back to the per-arg structural re-derive (the
+    /// `rt_slots_from_args` body) only for names the channel MISSES (no `node_substs` entry
+    /// for this call-site, or the entry omits that name — the §6.2 `ordered.len()==
+    /// generics.len()` completeness gate can legitimately be NARROWER than the legacy
+    /// per-arg engine on residual/erased forms, mirroring `shadow_check_node_substs`'s MISS
+    /// framing — not a divergence). The byte-identity guard in `subst_map_adopt_rt` still
+    /// gates per-key ADOPTION, so a channel/legacy mismatch degrades to the `Raw` debt
+    /// exactly as before — this only changes the CANDIDATE source, never the safety net.
+    /// `NOVA_B5_TRACE` tallies per-call-site hit (all slots resolved from the ONE channel
+    /// lookup, per-arg engine not engaged) vs fallback (channel missing/partial → per-arg
+    /// re-derive engaged for the remainder) for yield measurement. [M-196.5-node-substs]
+    fn rt_slots_from_call<'a>(
+        &self,
+        call_id: crate::ast::ExprId,
+        param_tys: impl Iterator<Item = &'a crate::ast::TypeRef>,
+        args: &[crate::ast::CallArg],
+        slot_names: &[String],
+    ) -> Vec<(String, Option<crate::types::ResolvedType>)> {
+        // ONE authoritative lookup — the channel carries the whole per-call map (§6.2).
+        let channel = self.node_substs.get(&call_id);
+        let mut slots: Vec<(String, Option<crate::types::ResolvedType>)> = slot_names
+            .iter()
+            .map(|n| {
+                let rt = channel
+                    .and_then(|c| c.iter().find(|(cn, _)| cn == n))
+                    .map(|(_, rt)| rt.clone());
+                (n.clone(), rt)
+            })
+            .collect();
+        let all_hit = !slots.is_empty() && slots.iter().all(|(_, o)| o.is_some());
+        if !all_hit {
+            // Transitional fallback (Q9 path): per-arg structural re-derive fills ONLY
+            // still-`None` slots (`infer_type_param_binding_rt` never overwrites a bound
+            // one), so a channel HIT for some names and a MISS for others merges cleanly.
+            for (param_ty, arg) in param_tys.zip(args.iter()) {
+                if let Some(rt) = self.channel_arg_rt(arg.expr()) {
+                    self.infer_type_param_binding_rt(param_ty, &rt, &mut slots);
+                }
+            }
+        }
+        if std::env::var_os("NOVA_B5_TRACE").is_some() {
+            if all_hit {
+                eprintln!("[B5] hit      call={:?} names={:?}", call_id, slot_names);
+            } else {
+                eprintln!(
+                    "[B5] fallback call={:?} names={:?} channel={:?}",
+                    call_id, slot_names, channel,
+                );
+            }
+        }
+        slots
+    }
+
     /// Plan 172.12 A1″ — seed slots (positionally) from explicit turbofish type-args, the
     /// DECLARATION-`TypeRef` structural source (`obj.method[U]` / `fn[U](...)`): `from_type_ref`
     /// resolves the written type to a real `ResolvedType` (NO C-name parse), highest priority
@@ -33456,8 +33512,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         // `try_generic_static_ctor_mono` A1″ adoption (~18238).
                                                         let slot_names: Vec<String> =
                                                             fn_decl.generics.iter().map(|g| g.name.clone()).collect();
-                                                        let rt_slots = self.rt_slots_from_args(
-                                                            fn_decl.params.iter().map(|p| &p.ty), args, &slot_names);
+                                                        let rt_slots = self.rt_slots_from_call(
+                                                            call_id, fn_decl.params.iter().map(|p| &p.ty), args, &slot_names);
                                                         let seeded = self.subst_map_adopt_rt(&type_subst, &rt_slots);
                                                         #[cfg(debug_assertions)]
                                                         self.shadow_check_node_substs(call_id, &type_subst);
@@ -34472,8 +34528,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         // `try_generic_static_ctor_mono`'s A1″ adoption (~18238).
                                         let recv_slot_names: Vec<String> =
                                             fn_decl.generics.iter().map(|g| g.name.clone()).collect();
-                                        let recv_rt_slots = self.rt_slots_from_args(
-                                            fn_decl.params.iter().map(|p| &p.ty), args, &recv_slot_names);
+                                        let recv_rt_slots = self.rt_slots_from_call(
+                                            call_id, fn_decl.params.iter().map(|p| &p.ty), args, &recv_slot_names);
                                         let base_c_name = format!("Nova_{}_method_{}", rt, method);
                                         let mono_name = Self::compute_mono_name(&base_c_name, &type_subst);
                                         // Plan 101 [M-fn-prefix-int-only-mono]: register с recv_type
@@ -35065,8 +35121,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 // `try_generic_static_ctor_mono` A1″ adoption (~18238).
                                 let full_slot_names: Vec<String> =
                                     type_subst.iter().map(|(n, _)| n.clone()).collect();
-                                let full_rt_slots = self.rt_slots_from_args(
-                                    fn_decl.params.iter().map(|p| &p.ty), args, &full_slot_names);
+                                let full_rt_slots = self.rt_slots_from_call(
+                                    call_id, fn_decl.params.iter().map(|p| &p.ty), args, &full_slot_names);
                                 let full_seeded = self.subst_map_adopt_rt(&type_subst, &full_rt_slots);
                                 #[cfg(debug_assertions)]
                                 self.shadow_check_node_substs(call_id, &type_subst);
@@ -35781,8 +35837,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 // mirrors the `try_generic_static_ctor_mono` A1″ adoption (~18238).
                                 let arrext_slot_names: Vec<String> =
                                     fn_decl.generics.iter().map(|g| g.name.clone()).collect();
-                                let arrext_rt_slots = self.rt_slots_from_args(
-                                    fn_decl.params.iter().map(|p| &p.ty), args, &arrext_slot_names);
+                                let arrext_rt_slots = self.rt_slots_from_call(
+                                    call_id, fn_decl.params.iter().map(|p| &p.ty), args, &arrext_slot_names);
                                 let arrext_seeded = self.subst_map_adopt_rt(&type_subst, &arrext_rt_slots);
                                 #[cfg(debug_assertions)]
                                 self.shadow_check_node_substs(call_id, &type_subst);
@@ -36567,8 +36623,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // Plan 172.12 A1″: structural RT seed (byte-identity-guarded).
                                     let a1pp_names: Vec<String> =
                                         fn_decl.generics.iter().map(|g| g.name.clone()).collect();
-                                    let a1pp_slots = self.rt_slots_from_args(
-                                        fn_decl.params.iter().map(|p| &p.ty), args, &a1pp_names);
+                                    let a1pp_slots = self.rt_slots_from_call(
+                                        call_id, fn_decl.params.iter().map(|p| &p.ty), args, &a1pp_names);
                                     let mut arg_strs = Vec::new();
                                     for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
                                         if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {
@@ -36850,8 +36906,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // the inner-subst — the call `args` carry `ExprId` → channel RT.
                         let a1pp_names: Vec<String> =
                             fn_decl.generics.iter().map(|g| g.name.clone()).collect();
-                        let mut a1pp_slots = self.rt_slots_from_args(
-                            fn_decl.params.iter().map(|p| &p.ty), args, &a1pp_names);
+                        let mut a1pp_slots = self.rt_slots_from_call(
+                            call_id, fn_decl.params.iter().map(|p| &p.ty), args, &a1pp_names);
                         self.rt_slots_seed_turbofish(&mut a1pp_slots, &turbofish_type_refs);
                         let mut arg_strs = Vec::new();
                         for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
