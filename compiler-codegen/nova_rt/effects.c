@@ -210,7 +210,6 @@ void nova_interrupt_ptr(void* value) {
 __declspec(thread) NovaFailFrame*      _nova_fail_top      = NULL;
 __declspec(thread) NovaThrowSite       _nova_throw_site    = {0};  /* Plan 173 Ф.5 п.7 */
 __declspec(thread) NovaThrowTrace      _nova_throw_trace   = {0};  /* [M-173-error-return-trace] */
-__declspec(thread) NovaErrorChain*     _nova_pending_suppressed = NULL;  /* D414 §1 scope-агрегация */
 __declspec(thread) NovaLastError       _nova_last_error    = {0};  /* Plan 173 Ф.4 #5 */
 __declspec(thread) NovaInterruptFrame* _nova_interrupt_top = NULL;
 /* Plan 61 followup #1: cross-effect throw routing slot. */
@@ -237,7 +236,6 @@ __declspec(thread) NovaFinalizerStack* _nova_active_finalizer_stack = NULL;
 __thread NovaFailFrame*      _nova_fail_top      = NULL;
 __thread NovaThrowSite       _nova_throw_site    = {0};  /* Plan 173 Ф.5 п.7 */
 __thread NovaThrowTrace      _nova_throw_trace   = {0};  /* [M-173-error-return-trace] */
-__thread NovaErrorChain*     _nova_pending_suppressed = NULL;  /* D414 §1 scope-агрегация */
 __thread NovaLastError       _nova_last_error    = {0};  /* Plan 173 Ф.4 #5 */
 __thread NovaInterruptFrame* _nova_interrupt_top = NULL;
 __thread NovaInterruptFrame* _nova_current_handler_iframe = NULL;  /* Plan 61 fu#1 */
