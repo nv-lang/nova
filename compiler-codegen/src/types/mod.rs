@@ -20629,11 +20629,18 @@ impl NameResCtx {
             "Fail",
             // Detach effect-type для detach {} expression (D50).
             "Detach",
-            // CancelToken — caller-owned cancellation handle (D75 revised,
-            // Plan 47). Builtin type: `CancelToken.new()` конструктор +
-            // тип параметра `cancel CancelToken`. Методы (cancel/is_cancelled/
-            // bind) — built-in dispatch в codegen на receiver NovaCancelToken*.
-            "CancelToken",
+            // [M-canceltoken-prelude-decl] (2026-07-13, Plan 173-хвост):
+            // `CancelToken` УБРАН из этого HashSet'а — объявлен формально в
+            // std/prelude/concurrency.nv (`export type CancelToken(*())` +
+            // extern "nova" методы) и re-export'ится фасадом std/prelude.nv,
+            // образец Plan 62.D.bis (StringBuilder/WriteBuffer/ReadBuffer).
+            // Bypass-имя без TypeDecl оставляло `CancelToken.new()`
+            // нерезолвленным в чекере (ни Channel-1, ни Channel-2) → legacy
+            // infer_call_ret_c угадывал чужой `.new()` по arity → CC-FAIL
+            // класса «no member named 'cancel' in 'struct Nova_WriteBuffer'»
+            // (std/src/concurrency/supervised_deadline_test.nv). Методы
+            // (cancel/is_cancelled/reason/merge/cancelled_by) — по-прежнему
+            // built-in dispatch в codegen на receiver NovaCancelToken*.
             // Plan 62.D.bis (2026-05-18): StringBuilder / WriteBuffer /
             // ReadBuffer объявлены в std/prelude/collections.nv через
             // `external type` (D126). **Не были** в этом HashSet'е изначально
