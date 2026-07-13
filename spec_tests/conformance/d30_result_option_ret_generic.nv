@@ -1,0 +1,186 @@
+// D30/D85 wave-2 (Plan 196.3) — `resolve_result_option_ret` (emit_c.rs ~17743) coverage:
+// a GENERIC free-fn/mono-method whose declared return is `Result[Ok, Err]`/`Option[Inner]`
+// with type-params bound only in a codegen-local `subst` table (turbofish extraction /
+// closure-return peeking / receiver-arg inference — NOT the checker's `resolved_types`
+// channel, which never annotates a Call expr's own resolved return type — see gap note
+// below). `value_aware_subst_to_ref`/`apply_type_subst_to_ref` deliberately SKIP
+// Result/Option (they carry `NovaRes_`/`NovaOpt_` mangling, not generic-type-template
+// mangling), so `resolve_result_option_ret` is the ONLY producer of a correct C-type here
+// — reached from `infer_call_ret_c`'s `B06a_method_overload_sentinel_mono` (generic
+// INSTANCE method, own method-level type-param) and `B10j_generic_fn_mono_resolve`
+// (generic FREE fn) buckets (both inside the wave-1 46293-48883 region, out of scope to
+// edit this window). Matrix: free-fn Result[T,E] (T from turbofish only, no param carries
+// T — mirrors `std/encoding/serde/json.nv:356 json_decode[T Deserialize](s) -> Result[T,
+// DeError]`), free-fn Option[T] (turbofish-only T), nested `Result[Option[T], E]`,
+// generic-type method with its OWN method-level type-param U returning
+// `Result[U,Err]`/`Option[U]` (D119-style receiver, mono sentinel), cross-module
+// (D164-style export/import single-CU mock).
+// Plan 196.5 producers-widen (2026-07-13): restored from the orphaned commit `4d9fc2298`
+// (branch `keep/d30-matrix`) minus ONE subclass — `d30_ror_from_closure` (T bound purely
+// via a closure-literal's RETURN type, e.g. `d30_ror_from_closure(true, || 7, "boom")`).
+// That subclass now correctly WRITES/READS the `node_substs` channel (Producer A closure-
+// return-peek, `types/mod.rs` `f1_check_call`'s free-fn generic-return arm) but still hits
+// a genuine, SEPARATE codegen bug: the closure LITERAL's own emitted C function
+// (`nova_lambda_N_body`) keeps an ERASED `Nova_T*` return type regardless of what the
+// call-site's channel resolves — a closure-lowering gap, not a channel-population gap. See
+// `docs/plans/196.5-producers-widen-d30-closure-return-gap.nv` (kept OUTSIDE conformance,
+// NOT gated) for the isolated repro + diagnosis, and `docs/plans/
+// 196.5-producers-widen-notes.md` §closure-lowering-gap for the trace evidence.
+// Spec: spec/decisions/01-values-and-types.md (D30), spec/decisions/04-effects.md (D85).
+// Один folder-module `spec_tests.conformance` CU.
+module spec_tests.conformance
+
+type D30RorErr { msg str }
+
+// T appears ONLY in the return type — bound exclusively via turbofish (no param to
+// infer from), mirroring `json_decode[T](s) -> Result[T, DeError]`.
+fn d30_ror_make[T](tag int, v T) -> Result[T, D30RorErr] {
+    if tag == 0 {
+        Err(D30RorErr { msg: "bad tag" })
+    } else {
+        Ok(v)
+    }
+}
+
+test "generic free-fn Result[T,E] — Ok payload via turbofish+arg (D30/D85 ror)" {
+    ro r = d30_ror_make[int](1, 42)
+    match r {
+        Ok(v) => assert(v == 42)
+        Err(_) => assert(false)
+    }
+}
+
+test "generic free-fn Result[T,E] — Err path preserves E (D30/D85 ror)" {
+    ro r = d30_ror_make[int](0, 42)
+    match r {
+        Ok(_) => assert(false)
+        Err(e) => assert(e.msg == "bad tag")
+    }
+}
+
+fn d30_ror_opt_none[T]() -> Option[T] => None
+fn d30_ror_opt_some[T](v T) -> Option[T] => Some(v)
+
+test "generic free-fn Option[T] — turbofish-only T, None (D30/D85 ror)" {
+    ro o = d30_ror_opt_none[int]()
+    match o {
+        Some(_) => assert(false)
+        None => assert(true)
+    }
+}
+
+test "generic free-fn Option[T] — turbofish-only T, Some (D30/D85 ror)" {
+    ro o = d30_ror_opt_some[str]("hi")
+    match o {
+        Some(v) => assert(v == "hi")
+        None => assert(false)
+    }
+}
+
+// Nested: Result[Option[T], E] — inner Option[T] arg to resolve_arg is a non-bare
+// generic (generics non-empty), routed through the general `type_ref_to_c` path.
+fn d30_ror_nested[T](v T, present bool) -> Result[Option[T], D30RorErr] {
+    if present {
+        Ok(Some(v))
+    } else {
+        Ok(None)
+    }
+}
+
+test "generic free-fn Result[Option[T],E] — nested unwrap, Some (D30/D85 ror)" {
+    ro r = d30_ror_nested[int](9, true)
+    match r {
+        Ok(inner) => match inner {
+            Some(v) => assert(v == 9)
+            None => assert(false)
+        }
+        Err(_) => assert(false)
+    }
+}
+
+test "generic free-fn Result[Option[T],E] — nested unwrap, None (D30/D85 ror)" {
+    ro r = d30_ror_nested[int](9, false)
+    match r {
+        Ok(inner) => match inner {
+            Some(_) => assert(false)
+            None => assert(true)
+        }
+        Err(_) => assert(false)
+    }
+}
+
+// Generic TYPE with a method-level generic U (independent of the receiver's T,
+// D119-style) returning Result[U, Err] — B06a `__mono_method__` sentinel path.
+type D30RorBox[T] { inner T }
+
+fn D30RorBox[T].new(v T) -> D30RorBox[T] => { inner: v }
+
+fn D30RorBox[T] @try_get[U](f fn(T) -> U, ok bool, err D30RorErr) -> Result[U, D30RorErr] {
+    if ok {
+        Ok(f(@inner))
+    } else {
+        Err(err)
+    }
+}
+
+test "mono method — receiver T, method-level U, Result[U,Err] Ok (D30/D85 ror)" {
+    ro b = D30RorBox[int].new(5)
+    ro r = b.try_get(|x| x * 2, true, D30RorErr { msg: "miss" })
+    match r {
+        Ok(v) => assert(v == 10)
+        Err(_) => assert(false)
+    }
+}
+
+test "mono method — receiver T, method-level U, Result[U,Err] Err (D30/D85 ror)" {
+    ro b = D30RorBox[int].new(5)
+    ro r = b.try_get(|x| x * 2, false, D30RorErr { msg: "miss" })
+    match r {
+        Ok(_) => assert(false)
+        Err(e) => assert(e.msg == "miss")
+    }
+}
+
+// Same mono-method shape but returning Option[U] directly (no Err payload) —
+// exercises the Option arm of resolve_result_option_ret from the SAME B06a bucket.
+fn D30RorBox[T] @try_double[U](f fn(T) -> U, present bool) -> Option[U] {
+    if present {
+        Some(f(@inner))
+    } else {
+        None
+    }
+}
+
+test "mono method — receiver T, method-level U, Option[U] Some/None (D30/D85 ror)" {
+    ro b = D30RorBox[str].new("z")
+    ro some_r = b.try_double(|x| x + x, true)
+    match some_r {
+        Some(v) => assert(v == "zz")
+        None => assert(false)
+    }
+    ro none_r = b.try_double(|x| x + x, false)
+    match none_r {
+        Some(_) => assert(false)
+        None => assert(true)
+    }
+}
+
+// «Package A» — export a generic fn returning Result[T,E] across the D164-style
+// single-CU package-mock boundary.
+export fn d30_ror_cross_make[T](v T, ok bool) -> Result[T, D30RorErr] {
+    if ok { Ok(v) } else { Err(D30RorErr { msg: "cross-fail" }) }
+}
+
+// «Package B» — consumes it via turbofish from a different test in the same CU.
+test "cross-module: import-binding generic free-fn Result[T,E] turbofish (D30/D85 ror)" {
+    ro r = d30_ror_cross_make[int](3, true)
+    match r {
+        Ok(v) => assert(v == 3)
+        Err(_) => assert(false)
+    }
+    ro e = d30_ror_cross_make[int](3, false)
+    match e {
+        Ok(_) => assert(false)
+        Err(er) => assert(er.msg == "cross-fail")
+    }
+}
