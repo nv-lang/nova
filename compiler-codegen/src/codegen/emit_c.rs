@@ -50992,13 +50992,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             if seen.insert(_id) {
                 eprintln!("[ICR-HIT] {}", _id);
             }
-            // TEMP (196.5 Stage-D волна-4, revert before final commit): per-hit
-            // COUNT (not dedup) for the 4 producer-remeasure branches — mirrors
-            // wave-1/2/3's temporary counting-probe methodology.
-            static COUNT_ON: OnceLock<bool> = OnceLock::new();
-            if *COUNT_ON.get_or_init(|| std::env::var_os("NOVA_TRACE_ICR_COUNT").is_some()) {
-                eprintln!("[ICR-CNT] {}", _id);
-            }
         }
     }
 
