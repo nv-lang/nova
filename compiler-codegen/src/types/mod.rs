@@ -8080,6 +8080,33 @@ impl<'a> TypeCheckCtx<'a> {
                                     self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                                 }
                             }
+                        } else if matches!(
+                            fname.as_str(),
+                            "println" | "print" | "assert" | "debug_assert"
+                        ) && !scope.contains_key(fname)
+                        {
+                            // [196.5 Stage-D волна-4] B10a producer (intrinsic-scheme
+                            // mirror): `println`/`print`/`assert`/`debug_assert` are
+                            // ALWAYS-Unit-returning compiler intrinsics — `extern "nova"
+                            // fn ... -> ()` in std/prelude/runtime.nv, but
+                            // `#no_prelude` modules (breaking the prelude→string→
+                            // prelude import cycle, `[panic-assert-intrinsic]` above)
+                            // never see that declaration reachable, so no static-
+                            // return path materializes Channel 2 for these call-sites
+                            // there. codegen's `emit_call` already dispatches all four
+                            // NAME-KEYED regardless of declaration visibility
+                            // (`emit_c.rs` ~32213 println/print,
+                            // panic-assert-intrinsic doc for assert/debug_assert) —
+                            // mirror that SAME fact into the checker channel
+                            // unconditionally (Unit is invariant for these names
+                            // regardless of which declaration, if any, is visible;
+                            // in prelude-having modules this is a no-op re-write of
+                            // the same Unit the extern decl already gave). Legacy
+                            // `infer_call_ret_c` B10a_ident_println_assert arm remains
+                            // the fallback for any CU shape this producer misses.
+                            self.resolved_types_buf
+                                .borrow_mut()
+                                .insert(e.id, ResolvedType::Unit);
                         }
                     }
                 }

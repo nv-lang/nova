@@ -49733,12 +49733,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     // Infer return type for call expressions
                     if let ExprKind::Ident(name) = &func.kind {
-                        // [196.5 Stage-D волна-3 replay] B10a: НЕ дубликат — kill-switch
-                        // A/B показал .c-диф на no-prelude CU (spec_tests/conformance/
-                        // no_prelude_panic_assert): в #no_prelude-режиме println/assert —
-                        // интринсики БЕЗ .nv-деклараций, канал/реестры их возврата не
-                        // производят. Уникальный легаси-трафик, остаётся до продюсера
-                        // интринсик-схем (docs/plans/196.5-stage-d-wave3-notes.md).
+                        // [196.5 Stage-D волна-4] B10a: продюсер добавлен
+                        // (types/mod.rs, f1_expr Call/Ident-арм — mirrors
+                        // this SAME hardcode into `resolved_types` Channel 2
+                        // unconditionally). Закрыл ВЕСЬ таргетный трафик
+                        // (no-prelude CU spec_tests/conformance/
+                        // no_prelude_panic_assert: 4/4 assert/debug_assert
+                        // call-sites → 0 hit, изолированный ре-замер). Снос
+                        // НЕ выполнен — обнаружен ДРУГОЙ, структурно
+                        // отдельный источник трафика (2 hit, conformance CU):
+                        // `assert(...)` внутри тела `effect Supervisor {
+                        // on_child_fail(idx, err) { ... } }`
+                        // (spec_tests/conformance/standalone/
+                        // supervisor_escalate_test.nv:77-78). Корень —
+                        // `f1_expr`'s `ExprKind::With { bindings, body }` арм
+                        // рекурсирует ТОЛЬКО в `body`, НИКОГДА в
+                        // `bindings[i].handler` (сам handler-литерал
+                        // `effect X { ... }`) — ни один exp внутри ЛЮБОГО
+                        // handler-метода (не только Supervisor) не проходит
+                        // через `f1_expr`, значит НИКОГДА не попадает в
+                        // `resolved_types_buf`. Это не B10a-специфичный
+                        // пробел — это структурный пробел канала для ВСЕХ
+                        // handler-literal-тел (потенциально шире, чем 4
+                        // интринсик-имени здесь), выходит за объём узкого
+                        // "intrinsic-scheme producer" задания волны-4.
+                        // Остаётся для будущей волны: расширить `With`-арм
+                        // f1_expr, чтобы обходить `bindings[i].handler` (с
+                        // осторожностью — параметры метода (`idx`, `err`) не
+                        // сидированы в scope нигде в этом пути, нужно
+                        // отдельное исследование побочных эффектов на другие
+                        // handler-walk'и: never-ops/purity/throw-detection).
                         if name == "println" || name == "print" || name == "assert" || name == "debug_assert" {
                             self.icr_trace("B10a_ident_println_assert");
                             return "nova_unit".into();
@@ -50969,6 +50993,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 .unwrap();
             if seen.insert(_id) {
                 eprintln!("[ICR-HIT] {}", _id);
+            }
+            // TEMP (196.5 Stage-D волна-4, revert before final commit): per-hit
+            // COUNT (not dedup) for the 4 producer-remeasure branches — mirrors
+            // wave-1/2/3's temporary counting-probe methodology.
+            static COUNT_ON: OnceLock<bool> = OnceLock::new();
+            if *COUNT_ON.get_or_init(|| std::env::var_os("NOVA_TRACE_ICR_COUNT").is_some()) {
+                eprintln!("[ICR-CNT] {}", _id);
             }
         }
     }
