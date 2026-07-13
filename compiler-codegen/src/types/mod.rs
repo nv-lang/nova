@@ -25879,15 +25879,21 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                 ));
             }
             // 2. Cleanup[E]-требование (best-effort по var_types — D131-стиль:
-            // неизвестный тип → false-negative, не false-positive).
+            // неизвестный/generic тип → false-negative, не false-positive:
+            // проверяем ТОЛЬКО типы, известные LinearityRegistry — локальные
+            // декларации + absorbed builtin-модули; `T` из generic-хелпера
+            // (`must[T]`) в registry отсутствует → skip).
             let ty = ctx.var_types.get(&canon)
                 .or_else(|| ctx.var_types.get(orig))
                 .cloned();
             if let Some(ty) = &ty {
+                let ty_known = ctx.lin_reg.local_type_names.contains(ty.as_str())
+                    || ctx.lin_reg.consume_types.contains(ty.as_str())
+                    || ctx.lin_reg.consume_methods.contains_key(ty.as_str());
                 let has_cleanup = ctx.lin_reg.consume_methods
                     .get(ty.as_str())
                     .map_or(false, |ms| ms.iter().any(|m| m == "cleanup"));
-                if !has_cleanup {
+                if ty_known && !has_cleanup {
                     errors.push(Diagnostic::new(
                         format!(
                             "[E_D188_NOT_CLEANUP] тип `{ty}` биндинга `{n}` не \
@@ -25948,9 +25954,17 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
             ctx.mark_consumed_bypass_guard(orig, *span);
             // result-приёмник: tail-вынос → owned-биндинг с obligation
             // (тип X); иначе — обычный локал (тип блока best-effort неизвестен).
+            // Тип передаём только ИЗВЕСТНЫЙ registry (иначе None — generic
+            // `T` из хелпера заблокировал бы any-consume-method fallback
+            // walker'а при последующем `out.close()`).
             if let Some(r) = result {
+                let known_result_ty = ty.clone().filter(|t| {
+                    ctx.lin_reg.local_type_names.contains(t.as_str())
+                        || ctx.lin_reg.consume_types.contains(t.as_str())
+                        || ctx.lin_reg.consume_methods.contains_key(t.as_str())
+                });
                 if tail_escape || r.declared_consume {
-                    ctx.declare_consume_binding(&r.name, ty.clone());
+                    ctx.declare_consume_binding(&r.name, known_result_ty);
                 } else {
                     ctx.declare(&r.name, None);
                 }

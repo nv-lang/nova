@@ -139,8 +139,8 @@ silently truncated or reinterpreted.
 |---|---|---|
 | `send` | `(v T) -> bool` | Blocking send. Returns `true` on success; `false` if the channel is closed (no panic — [Plan 30](plans/30-channel-improvements.md)) |
 | `try_send` | `(v T) -> bool` | Non-blocking. `true` if accepted; `false` if buffer full or closed |
-| `close` | `() -> ()` | Closes this writer capability. Idempotent. With multi-writer (`clone`) — ref-counted: the channel actually closes only when all writers close |
-| `clone` | `() -> ChanWriter[T]` | Creates an additional writer over the same buffer. `writer_count++` |
+| `close` | `() -> ()` | Closes this writer capability. Idempotent. With multi-writer (`share`) — ref-counted: the channel actually closes only when all writers close |
+| `share` | `() -> ChanWriter[T]` | Creates an additional writer over the same buffer. `writer_count++` |
 | `is_closed` | `() -> bool` | `true` if the buffer is closed *and* this writer no longer has send capability |
 
 ### `send` returns `bool`
@@ -182,12 +182,19 @@ test "channel: try_send full buffer" {
 }
 ```
 
-### `clone` — multi-writer
+### `share` — multi-writer
+
+> **Naming (Plan 201, 2026-07-13):** the method is `share()`, NOT `clone()`
+> — Nova's `Clone` protocol means an independent deep copy, while this is
+> an **alias** of the same channel (a second capability over the same
+> buffer; the channel closes only when the last writer closes). The same
+> rule names `TcpStream.share()`. Alias semantics = `share`, deep copy =
+> `clone` — everywhere in std.
 
 ```nova
 test "channel: fan-in — two writers, one reader" {
     ro { tx, rx } = Channel.new(8)
-    ro tx2 = tx.clone()                // writer_count = 2
+    ro tx2 = tx.share()                // writer_count = 2
     mut sum = 0
     supervised {
         spawn { tx.send(1);  tx.send(2);  tx.send(3);  tx.close() }
@@ -202,7 +209,7 @@ test "channel: fan-in — two writers, one reader" {
 
 The channel closes **only when all writers have called `close()`.**
 Internally — a ref count (`writer_count`): `Channel.new` initializes
-to 1, `clone()` increments, `close()` decrements. When it reaches 0,
+to 1, `share()` increments, `close()` decrements. When it reaches 0,
 the channel actually closes and `rx.recv()` starts returning `None`.
 
 ---
@@ -347,7 +354,7 @@ Several spawns produce, one consumes.
 ro { tx, rx } = Channel.new(8)
 supervised {
     for item in work_items {
-        ro worker_tx = tx.clone()      // each spawn gets its own capability
+        ro worker_tx = tx.share()      // each spawn gets its own capability
         spawn {
             worker_tx.send(process(item))
             worker_tx.close()
@@ -362,9 +369,9 @@ supervised {
 }
 ```
 
-**Why `clone()` is required:** without it, every spawn would capture
+**Why `share()` is required:** without it, every spawn would capture
 the same `tx` by managed reference; `close()` from the first one would
-close the channel for everyone. With `clone()`, each spawn holds its
+close the channel for everyone. With `share()`, each spawn holds its
 own capability and closes it independently — the channel only closes
 once all `worker_count + 1` writers have called `close()`.
 
@@ -811,7 +818,7 @@ test "channel: close idempotent" {
 }
 ```
 
-With multi-writer (`clone`), a repeated `close()` on *one* writer does
+With multi-writer (`share`), a repeated `close()` on *one* writer does
 not double-decrement `writer_count` (idempotent per instance).
 
 ---
@@ -855,7 +862,7 @@ not double-decrement `writer_count` (idempotent per instance).
 - [`docs/plans/21-channel-revision-implementation.md`](plans/21-channel-revision-implementation.md)
   — D91 implementation (capability split)
 - [`docs/plans/30-channel-improvements.md`](plans/30-channel-improvements.md)
-  — `send → bool` + `tx.clone()`
+  — `send → bool` + `tx.share()`
 - [`docs/plans/31-channel-select.md`](plans/31-channel-select.md) —
   `select { ... }` (D94)
 - [`docs/plans/44.1-channel-hardening.md`](plans/44.1-channel-hardening.md)

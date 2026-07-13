@@ -139,8 +139,8 @@ value-records — отвергается на этапе компиляции
 |---|---|---|
 | `send` | `(v T) -> bool` | Blocking send. Возвращает `true` если отправил; `false` если канал закрыт (не panic — [Plan 30](plans/30-channel-improvements.md)) |
 | `try_send` | `(v T) -> bool` | Non-blocking. `true` если поместилось; `false` если буфер полон или канал закрыт |
-| `close` | `() -> ()` | Закрывает writer-capability. Idempotent. С multi-writer (`clone`) — ref-counted: канал реально закрывается только когда все writers закрылись |
-| `clone` | `() -> ChanWriter[T]` | Создаёт дополнительный writer на тот же буфер. `writer_count++` |
+| `close` | `() -> ()` | Закрывает writer-capability. Idempotent. С multi-writer (`share`) — ref-counted: канал реально закрывается только когда все writers закрылись |
+| `share` | `() -> ChanWriter[T]` | Создаёт дополнительный writer на тот же буфер. `writer_count++` |
 | `is_closed` | `() -> bool` | `true` если буфер закрыт *и* у этого writer'а нет capability слать |
 
 ### `send` возвращает `bool`
@@ -182,12 +182,19 @@ test "channel: try_send full buffer" {
 }
 ```
 
-### `clone` — multi-writer
+### `share` — multi-writer
+
+> **Именование (Plan 201, 2026-07-13):** метод называется `share()`, НЕ
+> `clone()` — Clone-протокол в Nova означает независимую глубокую копию,
+> а здесь **alias** того же канала (вторая capability над тем же буфером;
+> канал закрывается, только когда закроется последний writer). То же
+> правило именует `TcpStream.share()`. Alias-семантика = `share`,
+> глубокая копия = `clone` — везде в std.
 
 ```nova
 test "channel: fan-in — два writer'а, один reader" {
     ro { tx, rx } = Channel.new(8)
-    ro tx2 = tx.clone()                // writer_count = 2
+    ro tx2 = tx.share()                // writer_count = 2
     mut sum = 0
     supervised {
         spawn { tx.send(1);  tx.send(2);  tx.send(3);  tx.close() }
@@ -202,7 +209,7 @@ test "channel: fan-in — два writer'а, один reader" {
 
 Канал закрывается **только когда все writers вызвали `close()`**.
 Внутри — ref-count (`writer_count`): `Channel.new` инициализирует в 1,
-`clone()` инкрементирует, `close()` декрементирует. Когда достигает 0
+`share()` инкрементирует, `close()` декрементирует. Когда достигает 0
 — канал реально закрывается, `rx.recv()` начинает возвращать `None`.
 
 ---
@@ -347,7 +354,7 @@ test "channel: ping-pong" {
 ro { tx, rx } = Channel.new(8)
 supervised {
     for item in work_items {
-        ro worker_tx = tx.clone()      // каждому spawn'у — свой capability
+        ro worker_tx = tx.share()      // каждому spawn'у — свой capability
         spawn {
             worker_tx.send(process(item))
             worker_tx.close()
@@ -362,9 +369,9 @@ supervised {
 }
 ```
 
-**Почему `clone()` обязателен:** без него все spawn'ы захватили бы один
+**Почему `share()` обязателен:** без него все spawn'ы захватили бы один
 `tx` через managed reference; `close()` первого закрыл бы канал для
-всех. С `clone()` каждый spawn держит свою capability и закрывает её
+всех. С `share()` каждый spawn держит свою capability и закрывает её
 независимо — канал закрывается только когда все `worker_count + 1`
 writers вызвали `close()`.
 
@@ -810,7 +817,7 @@ test "channel: close idempotent" {
 }
 ```
 
-С multi-writer (`clone`) повторный `close()` *одного* writer'а не
+С multi-writer (`share`) повторный `close()` *одного* writer'а не
 декрементирует `writer_count` повторно (idempotent per-instance).
 
 ---
@@ -854,7 +861,7 @@ test "channel: close idempotent" {
 - [`docs/plans/21-channel-revision-implementation.md`](plans/21-channel-revision-implementation.md)
   — D91 implementation (capability-split)
 - [`docs/plans/30-channel-improvements.md`](plans/30-channel-improvements.md)
-  — `send → bool` + `tx.clone()`
+  — `send → bool` + `tx.share()`
 - [`docs/plans/31-channel-select.md`](plans/31-channel-select.md) —
   `select { ... }` (D94)
 - [`docs/plans/44.1-channel-hardening.md`](plans/44.1-channel-hardening.md)

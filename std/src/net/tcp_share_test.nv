@@ -1,0 +1,115 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 201 (D188-амендмент) — `TcpStream @share()`: alias одного TCP-потока
+// с nv-refcount'ом («закрывает последний»; НЕ независимая копия). Тесты:
+//   1. rc-семантика (mock): share = fetch_add; close не-последнего НЕ
+//      делает real-close; последний — делает.
+//   2. real loopback: close оригинала при живой копии НЕ рвёт соединение;
+//      сокет закрывается только последним владельцем.
+//   3. конкурентные share-копии per-fiber (канон E_LINEAR_CAPTURE_IN_FIBER):
+//      `spawn consume w = c.share() { … }` — авто-cleanup (Cleanup-импл)
+//      закрывает долю на выходе дочернего файбера.
+//   4. escape из `consume X { … }`-блока share-копией.
+// Peer-файл модуля std.net — must/must_io берутся из tcp_test.nv.
+
+module std.net
+
+test "tcp/share: rc-семантика — share() инкрементит, закрывает последний" {
+    with Net = mock_net() {
+        mut s = must(TcpStream.connect(SocketAddr.loopback(0)))
+        assert(s.rc.load() == 1)
+        mut s2 = s.share()
+        assert(s.rc.load() == 2)
+        assert(s2.rc.load() == 2)
+        s.close()                       // не последний — real-close НЕ выполнен
+        assert(s2.rc.load() == 1)
+        s2.close()                      // последний владелец
+    }
+}
+
+test "tcp/share: real loopback — копия живёт после close оригинала" {
+    with Net = real_net() {
+        ro ch = Channel.new(1)   // server port → client
+        supervised {
+            spawn {
+                ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
+                mut c = must(TcpStream.connect(SocketAddr.loopback(port)))
+                mut c2 = c.share()
+                assert(must_io(c.write("one.".bytes())) == 4)
+                c.close()                               // NOT last — сокет жив
+                assert(must_io(c2.write("two.".bytes())) == 4)
+                c2.close()                              // последний — real close
+            }
+            spawn {
+                mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+                ch.tx.send(lst.local_port())
+                mut srv = must(lst.accept())
+                mut got = ""
+                while got.byte_len() < 8 {
+                    ro part = must(srv.read_text(16))
+                    if part.byte_len() == 0 { break }   // EOF
+                    got = got + part
+                }
+                // Если close оригинала рвал бы сокет — второй write упал бы /
+                // сервер увидел бы EOF после "one.".
+                assert(got == "one.two.")
+                srv.close()
+                lst.close()
+            }
+        }
+    }
+}
+
+test "tcp/share: конкурентные share-копии per-fiber, авто-cleanup закрывает долю" {
+    with Net = real_net() {
+        ro ch = Channel.new(1)
+        supervised {
+            spawn {
+                ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
+                mut c = must(TcpStream.connect(SocketAddr.loopback(port)))
+                supervised {
+                    // D415 §4 move-capture + D188 Cleanup: share-доля per-fiber,
+                    // закрывается авто-cleanup'ом на выходе дочернего файбера
+                    // (ручной close не нужен). NB: пишет ОДИН файбер — у handle
+                    // один C-side park-slot на направление (D407; конкурентный
+                    // I/O = @split, share = конкурентное ВЛАДЕНИЕ).
+                    spawn consume w1 = c.share() {
+                        assert(must_io(w1.write("xy".bytes())) == 2)
+                    }
+                    spawn consume w2 = c.share() {
+                        ro _held = w2.rc.load()          // владеет долей до выхода
+                        assert(_held >= 2)
+                    }
+                }
+                c.close()                               // последний — real close
+            }
+            spawn {
+                mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+                ch.tx.send(lst.local_port())
+                mut srv = must(lst.accept())
+                mut got = ""
+                while got.byte_len() < 2 {
+                    ro part = must(srv.read_text(8))
+                    if part.byte_len() == 0 { break }
+                    got = got + part
+                }
+                assert(got == "xy")
+                mut buf []u8 = []u8.new()
+                buf.resize(4, 0 as u8)
+                assert(must_io(srv.read(buf)) == 0)     // EOF после close последнего
+                srv.close()
+                lst.close()
+            }
+        }
+    }
+}
+
+test "tcp/share: escape из consume-блока — share()-копия" {
+    with Net = mock_net() {
+        consume s = must(TcpStream.connect(SocketAddr.loopback(0)))
+        consume out = consume s {
+            s.share()                   // копия уезжает значением блока;
+        }                               // cleanup закрывает долю оригинала
+        assert(out.rc.load() == 1)      // осталась одна доля — у копии
+        out.close()
+    }
+}

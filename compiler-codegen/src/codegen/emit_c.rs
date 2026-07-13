@@ -25967,6 +25967,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let c_binding = format!("_consume_{}_{}", binding, scope_id);
                 // Strip Nova_ prefix + pointer star for symbol/label resolution.
                 let type_name = self.debt_strip_nova_trim_start(&init_c_type);
+                // Plan 201: value-record (`consume value`, C-тип NovaValue_<T>)
+                // — cleanup-символ (`Nova_<T>_consume_cleanup`), exit_timeout-
+                // lookup и trace-label используют NOVA-имя типа `<T>`
+                // (receiver_type_c_ident), не C-обёртку NovaValue_.
+                let type_name = type_name
+                    .strip_prefix("NovaValue_")
+                    .map(|s| s.to_string())
+                    .unwrap_or(type_name);
 
                 // Plan 201 (D188-амендмент): блок = ВЫРАЖЕНИЕ. result-приёмник
                 // (`ro s = consume X { …; X }`) декларируется ПЕРЕД блоком
@@ -26057,9 +26065,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 173 Ф.5 (#8, D188 R2): runtime exactly-once counter, declared
                 // alongside the `_active` flag by `enter_consume_defer_scope`.
                 let count_var = format!("_consume_ccount_{}", scope_id);
+                // Plan 201: value-record binding (`NovaValue_<T>` по значению) —
+                // cleanup-метод принимает `NovaValue_<T>* nova_self` → передаём
+                // адрес локала. Heap-record — уже указатель, как есть.
+                let c_binding_arg = if init_c_type.starts_with("NovaValue_")
+                    && !init_c_type.ends_with('*')
+                {
+                    format!("(&{})", c_binding)
+                } else {
+                    c_binding.clone()
+                };
                 let policy = ConsumePolicy {
                     type_name,
-                    c_binding,
+                    c_binding: c_binding_arg,
                     prev_deadline_var,
                     has_resource_trace,
                     count_var,
@@ -32748,7 +32766,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             "len"       => return Ok(format!("nova_chan_writer_len({})", obj_c)),
                             "capacity"  => return Ok(format!("nova_chan_writer_capacity({})", obj_c)),
                             "is_closed" => return Ok(format!("nova_chan_writer_is_closed({})", obj_c)),
-                            "clone"     => return Ok(format!("nova_chan_writer_clone({})", obj_c)),
+                            // Plan 201: alias-семантика = `share()` (НЕ `clone`
+                            // — Clone-протокол = независимая глубокая копия).
+                            // C-символ рантайма остаётся nova_chan_writer_clone
+                            // (внутреннее имя, не Nova-поверхность).
+                            "share"     => return Ok(format!("nova_chan_writer_clone({})", obj_c)),
                             _ => {}
                         }
                     }
@@ -48963,7 +48985,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 "try_send"         => "nova_bool".into(),
                                 "is_closed"        => "nova_bool".into(),
                                 "len" | "capacity" => "nova_int".into(),
-                                "clone"            => "Nova_ChanWriter*".into(),
+                                // Plan 201: clone → share (alias-семантика).
+                                "share"            => "Nova_ChanWriter*".into(),
                                 _ => "nova_int".into(),
                             };
                         }
