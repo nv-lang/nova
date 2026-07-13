@@ -10683,6 +10683,16 @@ impl<'a> TypeCheckCtx<'a> {
         // stay codegen-resolved for now (gap, not wrong). ADDITIVE: written, not yet read →
         // byte-identical.
         self.resolved_callees.borrow_mut().insert(call_id, callee.span);
+        // [196.5 closure-lowering fix] The literal-materialization arg-loop below must
+        // NOT see a param type that still mentions callee generics (`f fn() -> T`):
+        // `materialize_literal_coercion`'s ClosureLight arm gates on
+        // `ConcreteNamedNoArgs`, which a bare `Named("T")` PASSES (any no-args name),
+        // so the closure arg got stamped with an ERASED `Func{ret: Named("T")}` in
+        // `resolved_types` — and codegen's channel-first `closure_channel_ret_c` then
+        // emitted the lambda body with a `Nova_T*` C return (CC-FAIL,
+        // d30_closure_return_generic.nv). Capture the producer-A unify subst here so
+        // the arg-loop can substitute the CONCRETE instance types instead.
+        let mut arg_subst: Option<HashMap<String, TypeRef>> = None;
         // Plan 172.1 §0 (call-return type channel): annotate the CALL expr's type from
         // the callee's declared return type — mirrors the check_instance_overload channel
         // (§3a/U.4.3). Guard with typeref_mentions_any to skip generic returns (they'd
@@ -10847,6 +10857,9 @@ impl<'a> TypeCheckCtx<'a> {
                             }
                         }
                     }
+                    // [196.5 closure-lowering fix] expose the resolved type-args to the
+                    // literal-materialization arg-loop below (see `arg_subst` decl above).
+                    arg_subst = Some(subst.clone());
                     if !subst.is_empty() {
                         // Plan 196.5 producers-widen (Class-2): only attempt the
                         // return-channel materialize when the DECLARED return actually
@@ -10928,7 +10941,27 @@ impl<'a> TypeCheckCtx<'a> {
             // Plan 172.1 [literal-coercion channel] (§0/§1): DEFINITE site — the call
             // resolved to THIS callee (`resolved_callees`), so a context-typed literal arg
             // (`f(0x80)` with `f(x uint)`) carries `uint`, not the collapsed `nova_int`.
-            self.materialize_literal_coercion(arg.expr(), &param.ty);
+            //
+            // [196.5 closure-lowering fix] A param type that mentions callee generics
+            // (`f fn() -> T`) is NOT the truth for THIS call — materializing against it
+            // stamped an ERASED closure annotation (`Func{ret: Named("T")}` passes the
+            // `ConcreteNamedNoArgs` gate) into `resolved_types`, and codegen's
+            // channel-first `closure_channel_ret_c` emitted the lambda body with a
+            // `Nova_T*` C return. Substitute the call's resolved type-args (producer-A
+            // unify, `arg_subst` above) first; a residual/absent subst → SKIP the
+            // materialization entirely (absence is honest — consumers fall back to the
+            // legacy body-walk; an erased stamp is a lie). Non-generic-mentioning
+            // params keep the raw declared type — byte-identical legacy behavior.
+            if typeref_mentions_any(&param.ty, &callee_gs) {
+                if let Some(s) = &arg_subst {
+                    let exp_ty = crate::const_fn_trampoline::subst_type_ref_pub(&param.ty, s);
+                    if !typeref_mentions_any(&exp_ty, &callee_gs) {
+                        self.materialize_literal_coercion(arg.expr(), &exp_ty);
+                    }
+                }
+            } else {
+                self.materialize_literal_coercion(arg.expr(), &param.ty);
+            }
             match self.assignable(arg.expr(), &param.ty, gs, &callee_gs, scope)
             {
                 Compat::Bad { found } => {

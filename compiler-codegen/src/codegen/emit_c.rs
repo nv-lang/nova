@@ -23006,6 +23006,40 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // FnDecl stored in mono_method_decls during forward-decl phase.
                 return Ok(());
             }
+            // [196.5 ДЕФЕКТ-2, record_schemas-гэп] A PREFIX-generic slice-ext method
+            // (`fn[T] []T @method` — the receiver ELEMENT is itself a declared
+            // fn-prefix type-param) is mono-only since Plan 101.1: call-sites route
+            // through the mono sentinel (see the mono_method_decls registration in
+            // the forward-decl pass) and per-elem bodies come from
+            // emit_monomorphized_method with `current_type_subst[T]` bound. The
+            // legacy ERASED fall-through emission below additionally emitted the
+            // body ONCE with NO subst — dead weight (nothing references the
+            // `Nova_NovaArray_nova_int_method_<m>` erased symbol) that POISONS the
+            // mono registries: `Vec[T].new()` inside such a body lowers `T` →
+            // `Nova_T*`, registering an erased `Vec____Nova_T_p` generic-type
+            // instance (refused by the type-drain guard → never in record_schemas)
+            // PLUS an erased `..._static_new` METHOD instance (no equivalent
+            // guard) whose body emission then fails loud: "expected struct
+            // 'Vec____Nova_T_p' not in record_schemas". Skip the erased emission
+            // for exactly this shape — mono is a PHASE, not a codegen side-effect
+            // (rustc-collector analogy); generic templates are never emitted
+            // erased. CONCRETE-receiver ext methods (`fn []int @max`, generics
+            // empty) and method-own generics over a concrete slice receiver
+            // (`fn[U] []int @m`) keep the legacy fall-through unchanged.
+            // INSTANCE receivers only: a STATIC `fn[T] []T.m(...)` call-site
+            // (slice_static_generic_method.nv `Vec[int].echo2`) still links
+            // against the erased `Nova_NovaArray_<elem>_static_<m>` symbol —
+            // that dispatch family has no mono routing yet, so its erased
+            // emission stays (undefined-symbol link error otherwise).
+            let recv_elem = f.receiver.as_ref()
+                .and_then(|r| r.type_name.strip_prefix("[]"))
+                .unwrap_or("");
+            let recv_is_instance = matches!(
+                f.receiver.as_ref().map(|r| &r.kind),
+                Some(crate::ast::ReceiverKind::Instance));
+            if recv_is_instance && f.generics.iter().any(|g| g.name == recv_elem) {
+                return Ok(());
+            }
             // Fall through to regular emit path.
         }
         if let Some(recv) = &f.receiver {

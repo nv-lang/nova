@@ -1,0 +1,41 @@
+// D145 prefix-generic slice-ext method (`fn[T] []T @method`) whose body CONSTRUCTS a
+// fresh container of the receiver's element type (`Vec[T].new()`), not just echoing the
+// receiver. Regression guard for the Plan 196.5 record_schemas gap (found as a B11x
+// side-note, see 196.5-producers-widen-notes.md §B11x): the legacy ERASED single
+// emission of such a body lowered `T` → `Nova_T*` at the `Vec[T].new()` turbofish,
+// registering an erased `Vec____Nova_T_p` generic-type instance (refused by the
+// type-drain guard → never in record_schemas) plus an erased `..._static_new` METHOD
+// mono (no such guard) whose body emission failed loud: "anonymous record literal:
+// expected struct 'Vec____Nova_T_p' not in record_schemas". Fixed by making
+// INSTANCE prefix-generic slice-ext methods mono-only in emit_fn (the erased body was
+// dead weight — call-sites route through the Plan 101.1 mono sentinel); the STATIC
+// `fn[T] []T.m(...)` family keeps its load-bearing erased base
+// (slice_static_generic_method.nv).
+module spec_tests.conformance
+
+fn[T] []T @d145vc_reversed() -> []T {
+    mut out = Vec[T].new()
+    mut i = @len()
+    loop {
+        if i == 0 { break }
+        i = i - 1
+        out.push(@[i])
+    }
+    out
+}
+
+test "prefix-generic []T method constructing Vec[T].new() inside body (int elem)" {
+    ro xs []int = [1, 2, 3]
+    ro r = xs.d145vc_reversed()
+    assert(r.len() == 3)
+    assert(r[0] == 3)
+    assert(r[2] == 1)
+}
+
+test "prefix-generic []T method constructing Vec[T].new() inside body (str elem)" {
+    ro xs []str = ["a", "b"]
+    ro r = xs.d145vc_reversed()
+    assert(r.len() == 2)
+    assert(r[0] == "b")
+    assert(r[1] == "a")
+}
