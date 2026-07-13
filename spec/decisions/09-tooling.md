@@ -3726,3 +3726,36 @@ test "index out of bounds panics" panics "index out of bounds" {
 - [D13](08-runtime.md#d13) — PANIC-класс (panic/assert/overflow/contract).
 - Plan 173 Ф.5 п.6 — `nova_runtime_reset()`.
 - [Plan 169.1.2](../../docs/plans/169.1.2-consolidate-tests.md) — цель −78 CU.
+
+---
+
+## D420 — зависимости пакета: git+semver+nova.lock — канон; `path` только под `[replace]` (Plan 204)
+
+> **Status:** ✅ ACCEPTED 2026-07-13 (владелец: «делай» на схему Q-dependency-versioning;
+> реализация — Plan 204 тем же слиянием). Консолидирует уже принятую механику
+> Plans 03.1/03.2/03.4 (git-источники, semver 2.0.0, bare-clone кеш `~/.nova/git`,
+> backtracking-резолвер, nova.lock, `nova add`/`update`/`info`) + добавляет `[replace]`.
+
+### Решение
+
+1. **Релизная форма зависимости** — git-источник + семвер-требование:
+   `tls = { git = "https://github.com/nv-lang/nova-tls", version = "0.1" }`
+   (версии = git-теги `vX.Y.Z`; caret-семантика по умолчанию, tilde/wildcard
+   поддержаны — semver.rs). Пины `tag =`/`branch =`/`rev =` допустимы (03.2).
+2. **`[replace]`-секция** (NEW, Plan 204) — dev-override источника, НЕ меняющий
+   требование: `[replace] tls = { path = "../nova-tls" }`. Единая точка применения —
+   `Manifest::effective_source()` (module-resolution и dep-graph walk).
+3. **Голый `path`-dep вне `[replace]`** — `W_DEP_PATH_NO_RELEASE` (предупреждение;
+   станет ошибкой публикуемой сборки при появлении `nova publish`).
+   `[replace]` на неизвестное имя — `W_REPLACE_UNKNOWN_DEP`.
+4. **nova.lock** — источник точных версий при сборке (тег+commit); расхождение
+   с манифестом — ошибка с подсказкой `nova update`; `nova update [dep|--precise
+   name@x.y.z]` — переререзолв (03.1/03.2).
+5. **Разрешение версий** — backtracking semver-unify (03.2) СОХРАНЁН как канон
+   (доминирует MVS: находит решение всегда, когда оно существует; конфликт
+   мажоров — диагностика с цепочкой ограничений). Обоснование: docs/plans/204-progress.md.
+
+### Связь
+- Q-dependency-versioning (open-questions) — RESOLVED → D420.
+- [D78](07-modules.md) — пакет/модуль-модель; Plan 203 (nova-http — первый
+  git-потребитель после миграции Ф.4); Plans 03.1/03.2/03.4 — фундамент.

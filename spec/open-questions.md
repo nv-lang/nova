@@ -8610,7 +8610,7 @@ warning→error для транзитивных эффектов **меняет*
 - `docs/plans/backlog-followups.md` → `[M-strict-effects-conformance-sweep]`
   — снапшот долга (0 нарушений, 2026-07-13).
 
-## Q-dependency-versioning — версии зависимостей: git+semver+lock, path = только dev — 🟡 OPEN (2026-07-13)
+## Q-dependency-versioning — версии зависимостей — ✅ RESOLVED 2026-07-13 → D420 (09-tooling; Plan 204)
 
 Сейчас межпакетная зависимость выражается только путём: `tls = { path = "../nova-tls" }`
 (прецеденты 202-Ф.2/Ф.3, 203). У формы нет версии и нет публикуемого источника истины —
