@@ -355,3 +355,51 @@ export NOVA_INCLUDE_DIR=/d/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed
 
 - 2026-07-13: карта сгенерирована (анализ: 1085 flat; 58 маркерных; 14 main-конверсий; 144 компилятор-подтверждённых dup-кластеров (51 PRIV / 93 RENAME, 346 файл-вхождений). Источник истины по dup — `nova check` лог; статический анализ давал 7 ложных кластеров (легальные D84-overload'ы и уже-priv(file) фикстуры D307) — исключены.
 - 2026-07-13 (продолжение): батчи M (58+1 → standalone/, 57/59 PASS), T (14 main→test), D1-D6 (63 кластера / 136 файлов) исполнены. После D6 `nova check spec_tests/conformance` = 0 ошибок на flat-файлах, 0 duplicate вне двух НАМЕРЕННЫХ neg-фикстур (neg/blanket_conflict_neg, neg/neg_same_module_dup). Кластеры D7-D12 оказались каскадными артефактами исходного check-лога (снят ДО батча M — маркерные файлы ещё сидели в CU и порождали пары); после M/T/D1-D6 компилятор их не подтверждает — батчи D7-D12 объявлены НЕ ТРЕБУЮЩИМИСЯ. Если полный test-гейт вскроет codegen-дубли — чинить точечно по той же схеме (карта остаётся источником new-имён).
+
+- 2026-07-13 (пост-D, codegen/link/runtime-хвосты): check-лог оказался НЕ полным
+  источником дублей (бюджет ошибок) — D7-D12 применены (подтверждены codegen-стадией),
+  плюс волна хвостов до линка и рантайма. Сделано: 50 twin-копий batch-2 удалены
+  (`git mv`+copy артефакт миграции — prefixed-имена были ДОБАВЛЕННЫМИ копиями тех же
+  файлов); type-кластеры переведены с priv(file) на rename; variant-ctor коллизии
+  переименованы per-file; plan143_2 восстановлен как nova.toml-пакет с FFI-шимом
+  (7/7 PASS); f2_whole_module_pos, f1_alias_call_pos, supervisor_*, d124/d289/d316,
+  f3_typed_result_err, repro_cross_effect_throw, repro_silent_ub_throw_typed,
+  t3_handle_pattern_ok, p1/p4/p5_bench -> standalone/ (все PASS standalone);
+  p2_bench_namespace_callable -> fixtures/ice_blocked/ (ICE);
+  t4_sqlite_e2e_ok -> standalone/ known-red (красный и изолированно).
+
+## Находки-дефекты компилятора (Ф.4c-очередь; вскрыты merged CU — доложить владельцу)
+
+1. **priv(file) типы не файл-дискриминируются в checker-резолве** — use-site биндится к
+   чужому одноимённому priv-типу (`Rect`/`Holder` кейсы; D307 §1 для типов не работает).
+   Конвенция знала про метод-символы, но ломается и БЕЗ методов. Обход: rename.
+2. **Локал/параметр НЕ затеняет top-level fn при вызове** — `ro f = bp_taker; f(c)` биндится
+   к top-level `fn f` чужого файла (E_NO_MATCHING_OVERLOAD/E7301/E_IMPLICIT_NARROWING).
+   Родственно резолв-багу, который сторожит resize_with_free_fn_shadow (тот фикс покрыл
+   closure-параметры std-методов, но не локалы юзер-кода). priv(file) fn ПОПАДАЕТ в
+   overload-набор чужого файла (D307 §3 «не регистрируются в shared overload-registry»
+   не выполняется).
+3. **Alias-import (`import X as h`) в folder-module peer** — codegen эмитит `h.fn(...)`
+   буквально (undeclared identifier). Жертвы: f1_alias_call_pos (сам guard этого фикса!),
+   f2_whole_module_pos (whole-module вариант — недефинированный unqualified символ),
+   supervisor_* (std-алиасы), d124/d289/d316.
+4. **Handler-литерал: биндинг match-арма считается захватом внешнего локала** —
+   `with Fail[E] = |e| interrupt (match e { Ctor(x) => x })` эмитит `ctx->x = x` из
+   несуществующего внешнего скоупа (undeclared identifier). Только в merged CU.
+5. **std-internal вызов захвачен пользовательским символом**: `std.net` internal `classify`
+   в merged CU эмитился как вызов пользовательского `nova_fn_10spec_tests11conformance8classify`
+   (несоответствие манглинга → undefined symbol; потенциально soundness-грейд захват).
+6. **bench.* интринзики внутри test-блоков = ICE** emit_c.rs:48774 [P67-LEGACY] `.opaque`
+   (и standalone, и merged) — регрессия после census (Jul 11 → Jul 12 бинарь).
+7. **extern "nova" fn + tuple-return**: t4_sqlite_e2e_ok CC-FAIL (`_NovaTuple_2_6_void_p_8_nova_int`
+   инициализируется int) — красный и standalone = pre-existing регрессия Plan 115 FFI.
+8. **Merged CU ~1010 файлов / 2589 test-блоков: два runtime-блокера:**
+   a) **stack overflow 0xC00000FD на старте** — main_impl держит 2589 NovaTestFrame/setjmp
+      (адресозависимы, clang не переиспользует слоты) → кадр >1МБ дефолтного стека Windows.
+      Верифицировано PE-патчем SizeOfStackReserve→64МБ: бинарь стартует и бежит.
+      Фикс = /STACK линкер-флаг в test_runner (compile_c_to_exe) или чанкование main_impl.
+   b) **access violation 0xC0000005 в panics-recovery** — с 64МБ стеком прогон доходит до
+      ~520-го теста и падает на `contracts loop preentry fail` (panics-клаузула);
+      изолированно тест PASS → баг runtime-паник-машинерии на большом CU.
+   До фикса a+b merged flat CU **не запускаем**; отдельные единицы (neg/, standalone/,
+   подпапки, soundness) — зелёные и составляют текущий гейт.
