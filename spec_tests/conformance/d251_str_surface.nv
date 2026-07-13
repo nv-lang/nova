@@ -49,6 +49,24 @@ test "split_once / rsplit_once -> Option[(str, str)] (D251)" {
     }
 }
 
+// 196.5 Stage-D волна-3 (D251-амендмент 2026-07-13): тотальная пара к split_once.
+test "until / after: подстрока до/после первого sep, тотальные (D251)" {
+    assert("users WHERE id = 1".until(" WHERE ") == "users")
+    assert("users WHERE id = 1".after(" WHERE ") == "id = 1")
+    // sep не найден: until → вся строка, after → ""
+    assert("nosep".until("=") == "nosep")
+    assert("nosep".after("=") == "")
+    // первое вхождение (не последнее)
+    assert("a=b=c".until("=") == "a")
+    assert("a=b=c".after("=") == "b=c")
+    // multibyte-safe (byte-offset по codepoint-границе)
+    assert("αβ→γδ".until("→") == "αβ")
+    assert("αβ→γδ".after("→") == "γδ")
+    // пустой sep: find("") = Some(0) → until = "", after = вся строка
+    assert("abc".until("") == "")
+    assert("abc".after("") == "abc")
+}
+
 test "split_terminator: без пустого хвоста (D251)" {
     ro d251_t = "a,b,".split_terminator(",").collect()
     assert(d251_t.len() == 2)

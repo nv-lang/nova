@@ -10863,6 +10863,15 @@ strip/split возвращают **zero-copy** sub-views (`@[a..b]`).
   > `@split_whitespace`/`@lines` (эагерный `[]str`) — без изменений. Попутно исправлены
   > 2 codegen-бага (non-generic `Next[T]` в `@collect`); открытый хвост —
   > `[M-splititer-filter-closure-ctx-gap]`.
+
+  > **Амендмент 2026-07-13 (196.5 Stage-D волна-3): `@until` / `@after`** — тотальная
+  > пара к `@split_once`: `@until(sep) -> str` — подстрока ДО первого вхождения `sep`
+  > (вся строка, если `sep` не найден); `@after(sep) -> str` — подстрока ПОСЛЕ первого
+  > вхождения (`""`, если не найден). В отличие от `@split_once` (`None` при промахе)
+  > обе тотальны — «нет разделителя» = «разбиение не произошло». Byte-offset,
+  > zero-copy views (search.nv). Мотивация: examples/real_world/orm_decorators.nv
+  > использовал их с заведения; компилятор падал P67-паникой (тест авторитетен —
+  > метод добавлен в std, пример не переписан).
 - **trim/strip** (transform.nv, **zero-copy** views): `@trim` / `@trim_start` /
   `@trim_end` (ASCII-WS ≤0x20; Unicode-WS — Phase B); `@trim_matches(c char)` /
   `@trim_start_matches` / `@trim_end_matches` (codepoint-pattern, multibyte-safe через
