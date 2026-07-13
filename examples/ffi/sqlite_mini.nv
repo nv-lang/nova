@@ -34,18 +34,18 @@ type DbError
 // External declarations — sqlite3_ffi.h (см. cookbook).
 // V1: shim header нужен в compiler-codegen/nova_rt/ для actual link
 // (followup [M-115-ffi-build-pipeline] добавит user-side --c-shim CLI).
-extern "nova" fn nova_fn_sqlite3_open(path str) -> (*(), int)
-extern "nova" fn nova_fn_sqlite3_close(db *()) -> int
-extern "nova" fn nova_fn_sqlite3_exec(db *(), sql str) -> int
-extern "nova" fn nova_fn_sqlite3_prepare(db *(), sql str) -> (*(), int)
-extern "nova" fn nova_fn_sqlite3_step(stmt *()) -> int
-extern "nova" fn nova_fn_sqlite3_column_int(stmt *(), col int) -> int
-extern "nova" fn nova_fn_sqlite3_finalize(stmt *()) -> int
+extern "nova" fn mini_sqlite_open(path str) -> (*(), int)
+extern "nova" fn mini_sqlite_close(db *()) -> int
+extern "nova" fn mini_sqlite_exec(db *(), sql str) -> int
+extern "nova" fn mini_sqlite_prepare(db *(), sql str) -> (*(), int)
+extern "nova" fn mini_sqlite_step(stmt *()) -> int
+extern "nova" fn mini_sqlite_column_int(stmt *(), col int) -> int
+extern "nova" fn mini_sqlite_finalize(stmt *()) -> int
 
 // Layer 2: typed wrappers.
 
 fn Db.open(path str) Fail[DbError] -> Db {
-    ro (raw, rc) = nova_fn_sqlite3_open(path)
+    ro (raw, rc) = mini_sqlite_open(path)
     if rc != SQLITE_OK {
         throw DbError.OpenFailed(rc)
     }
@@ -53,14 +53,14 @@ fn Db.open(path str) Fail[DbError] -> Db {
 }
 
 fn Db @exec(sql str) Fail[DbError] -> () {
-    ro rc = nova_fn_sqlite3_exec(self.value, sql)
+    ro rc = mini_sqlite_exec(self.value, sql)
     if rc != SQLITE_OK {
         throw DbError.ExecFailed(rc)
     }
 }
 
 fn Db @prepare(sql str) Fail[DbError] -> Stmt {
-    ro (raw, rc) = nova_fn_sqlite3_prepare(self.value, sql)
+    ro (raw, rc) = mini_sqlite_prepare(self.value, sql)
     if rc != SQLITE_OK {
         throw DbError.PrepareFailed(rc)
     }
@@ -68,21 +68,21 @@ fn Db @prepare(sql str) Fail[DbError] -> Stmt {
 }
 
 fn Db consume @close() -> () {
-    nova_fn_sqlite3_close(self.value)
+    mini_sqlite_close(self.value)
 }
 
 // Stmt methods.
 
 fn Stmt @step_to_int(col int) Fail[DbError] -> int {
-    ro rc = nova_fn_sqlite3_step(self.value)
+    ro rc = mini_sqlite_step(self.value)
     if rc != SQLITE_ROW && rc != SQLITE_DONE {
         throw DbError.StepFailed(rc)
     }
-    nova_fn_sqlite3_column_int(self.value, col)
+    mini_sqlite_column_int(self.value, col)
 }
 
 fn Stmt consume @close() -> () {
-    nova_fn_sqlite3_finalize(self.value)
+    mini_sqlite_finalize(self.value)
 }
 
 // Example usage. Would actually exercise libsqlite3 if shim is wired up

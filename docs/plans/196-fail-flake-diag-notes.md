@@ -1,0 +1,234 @@
+# 196 — `spec_tests/conformance` RUN-FAIL flake: diagnosis notes (2026-07-13)
+
+Worktree: `d:/Sources/nv-lang/nova-199`, branch `fail-flake-diag`, base `e1e55acb3`.
+Model: sonnet.
+
+## Status: PARTIALLY FIXED — segfault root cause NOT closed
+
+Two confirmed, real compiler-determinism bugs found and fixed (kept in this
+branch). The underlying intermittent SEGFAULT (RUN-FAIL) in the merged
+`spec_tests/conformance` CU **persists at roughly the same rate** after
+these fixes (~35-40% per full-corpus run, `--positive --timeout 300`,
+sample n=18 post-fix vs ~25-30% pre-fix, n≈40 across bisection). The two
+fixes are real and worth keeping (they remove genuine nondeterministic-
+codegen bugs, one of which is a proven wrong-type-resolution bug), but they
+are **not** the (sole) cause of the flake.
+
+## 1. Repro
+
+```
+cd nova-199
+$env:NOVA_GC_LIB_DIR = "D:\Sources\nv-lang\nova\compiler-codegen\vcpkg_installed\x64-windows-static\lib"
+$env:NOVA_GC_INCLUDE_DIR = "D:\Sources\nv-lang\nova\compiler-codegen\vcpkg_installed\x64-windows-static\include"
+nova-cli\target\release\nova.exe test --positive --timeout 300 .\spec_tests\conformance
+```
+Repeated invocations: ~1-in-3 fail with `RUN-FAIL spec_tests/conformance/c_keyword_ident_mangling`
+(this is the whole merged folder-module CU, ~955 test-blocks across ~170
+`.nv` files, reported under one representative file name per
+`project-conformance-single-cu-run` convention).
+
+Direct re-execution of one already-built `.exe` (no recompile) ALSO
+segfaults intermittently (~1-in-3 to 1-in-4 of 15 runs), at a **different
+byte-offset in stdout each time** (confirmed via `fflush(stdout)` after
+every `PASS:`/`FAIL:` print — so the offset genuinely reflects the last
+test that completed, not a buffering artifact). Observed crash-adjacent
+regions across samples: mid-corpus content around line ~544/762/943 of 957
+total lines — i.e. **anywhere in the back half of the run**, not a fixed
+test. Ruled out as factors (still crashes with each of these):
+- `NOVA_MAXPROCS=1` (single OS thread, cooperative fiber scheduling only)
+- `GC_DONT_GC=1` (Boehm collection disabled)
+- `NOVA_FIBER_STACK=64MB` (16x default 4MB fiber stack — rules out silent
+  stack-overflow-skips-guard-page)
+- No `stderr` output on any crash (rules out the fiber-arena guard-page
+  SIGSEGV handler firing — crash is not a caught guard-page hit)
+
+## 2. Red herring: `nova test`'s own RUN-FAIL "detail" message
+
+**FIXED** (`compiler-codegen/src/test_runner.rs`, `run_one`, ~line 3000).
+
+The harness's crash-detail message always showed the SAME 4 lines
+regardless of where the process actually died:
+```
+RUN-FAIL … #   PASS: with Fail: recoverable USER throw пойман → handler result (D13/173) |
+             PASS: with Fail: no-throw путь → нормальный результат (регресс-гард) |
+             PASS: D325 A1/R0: expected-failure = Result/Option; panic-категория не съедена (D13) |
+             PASS: failable call в defer при Fail[E] в sig — normal exit (D158)
+```
+This looked like "crash always happens right after the d158 cluster" — a
+plausible-looking but **wrong** lead (a sibling agent, nova-174, reported
+the same misread independently). Root cause: the old code filtered
+`stdout.lines().chain(stderr.lines())` for the **substring** `"fail"`
+case-insensitive (also `"assert"`/`"panic"`) and took the **first 4**
+matches. Those 4 lines are ordinary `"  PASS: …"` lines whose ENGLISH
+PROSE happens to contain the word "Fail" (they describe the `Fail`
+*effect* feature) — they sit at lines 116-147 out of 957 total, nowhere
+near the crash. Direct raw-exe reruns (bypassing the harness) proved the
+real crash point varies across the whole back half of the output.
+
+Fix: match the harness's own failure-line prefix (`FAIL:` after trim) or a
+genuine `panic` marker instead of bare prose containing "fail"; take the
+**last** such markers (nearest the crash), falling back to the true last-3
+lines (accurate now, since every print is `fflush`ed) when no genuine
+failure line exists — i.e. the pure-segfault case.
+
+## 3. Two confirmed nondeterministic-codegen bugs (FIXED)
+
+Found by bisecting + diffing the **generated `.c`** across back-to-back
+`nova test --keep-artifacts` compiles of the byte-identical source (no
+recompile in between should ever change output — this project's own
+stated design invariant, e.g. `[M-sync-crossmodule-samename-type-collision]`
+already sorts a `BTreeSet` for exactly this reason elsewhere). Found it did
+NOT hold for two spots:
+
+### 3a. Bare-variant resolution picks a random colliding type
+`compiler-codegen/src/types/mod.rs`, `infer_expr_type`, `ExprKind::Ident`
+last-resort fallback (~line 13151). Iterated `self.types:
+HashMap<String, TypeDecl>` directly and returned the **first** sum type
+found (in Rust's process-randomized `HashMap` iteration order) whose
+unit-variant name matches a bare identifier.
+
+**Proven with a live example in this exact corpus:**
+`spec_tests/conformance/d406_enum_kind_token.nv` declares
+`type D406Color enum Red | Green | Blue` and does `ro c = Green`;
+`spec_tests/conformance/d52_type_forms.nv` declares
+`type D52Color | Red | Green | Blue` (pre-D406 syntax, still silently
+accepted — separate pre-existing issue, see `feedback-sum-enum-marker-d406`)
+and also does `ro c = Green`. Across two back-to-back compiles of the
+IDENTICAL source, the generated C differed:
+```
+-     Nova_D406Color* c = nova_make_D406Color_Green();
++     Nova_D52Color* c = nova_make_D52Color_Green();
+```
+i.e. the SAME bare `Green` resolved to a **different, unrelated declared
+type** depending on hash-seed luck. This specific pair happens to be
+layout-compatible (both are plain 3-variant no-payload enums) so it's
+silently harmless here, but the mechanism is a genuine, general type-
+confusion hazard: anywhere else in a ~170-file/~955-test corpus where two
+sum types share a variant name AND have incompatible payload shapes, this
+same fallback would emit a type-confused program nondeterministically.
+
+**Fix:** collect all candidates, sort by name, always pick the same
+(lexicographically smallest) one. Same source → same C, always. Does not
+change behavior for the (overwhelmingly common) unambiguous case.
+
+### 3b. Closure free-variable order is HashSet-iteration order
+`compiler-codegen/src/codegen/emit_c.rs`, closure-lowering fn building
+`free_vars` (~line 43730). `body_idents: HashSet<String>` iterated
+directly into the `free_vars: Vec<(String, String)>` that determines the
+closure env-struct's field **declaration order**, its unpack order, AND
+its populate/init-statement order — all three shuffled together,
+differently, on repeat compiles of the same source (confirmed via diff on
+`nova_lambda_85/86/87/88_env` in this corpus — e.g. `_box_left` allocated
+and assigned to the env struct BEFORE vs AFTER an unrelated sibling
+field's assignment, depending on build). **Fix:** sort `free_vars` by name
+right after collection.
+
+Note: even after both fixes, generated `.c` was NOT fully byte-identical
+across repeat compiles — a THIRD source of reordering remains
+(pre-declaration order of opaque `typedef struct Nova_X Nova_X;` forward
+decls, and variant-check order inside auto-derived structural-`@equal`
+`&&`-chains). Both of those look semantically inert (forward-decl order is
+irrelevant in C; `&&`-chain reordering of commutative tag checks doesn't
+change the boolean result) but were NOT chased down to their own
+HashMap/HashSet source given time constraints — worth a follow-up sweep if
+full byte-identical compiles become a hard requirement.
+
+## 4. Bisection results (does NOT implicate 201 / B2 / B3 / W1-i.A specifically)
+
+Built + looped `nova test --positive --timeout 300 ./spec_tests/conformance`
+(10-15 reps each) at these points on the `e1e55acb3` ancestry chain:
+
+| commit | description | result |
+|---|---|---|
+| `77239c014` | pre-173.1 (no d414 file, pre by-value parfor-capture fix) | 11/11 clean |
+| `ed10b7996` | 173.1 closed (d414 file added, by-value fix landed) | 10/10 clean |
+| `bd7bf6588` | 196.5 Stage-A (node_substs plumbing, claims "release behavior unchanged") | 2/14 FAIL |
+| `0d633e50b` | feat(201/D188) consume-block-expr | 1/11 FAIL |
+| `4055132ee` | 196.5 producer-A turbofish fix (pre-201-channel-share) | 1/9 FAIL |
+| `ecc032ead` | 201 CLOSED (Channel clone→share, TcpStream refcount) — **also independently sampled by sibling agent nova-174**: ~1-in-4..8 | present |
+| `e1e55acb3` (HEAD) | 196.5 Stage-B3 closed | ~25-35% (n≈40) |
+
+**Reading:** 21/21 clean immediately before Stage-A, then failures appear
+starting exactly at Stage-A (`bd7bf6588`) despite its commit message
+claiming byte-identical release behavior — and indeed, diffing the
+generated `.c` between `ed10b7996` and `bd7bf6588` found the type-name-
+collision bug (§3a) was ALREADY reachable via `resolve_return_channel`'s
+new per-name `solver.resolve()` calls disturbing evaluation order enough
+to change which HashMap-iteration-order-dependent branch got hit — **but
+critically, `ed10b7996`'s own 10/10 clean sample is not strong evidence of
+zero underlying rate** (binomial: P(0 fails in 10 | true rate 10-15%) ≈
+25-35%, not negligible). Net conclusion: the §3a/§3b bugs are OLD
+(HashMap/HashSet iteration has presumably been used this way for a long
+time), not introduced by 196.5/201/W1-i.A — those merges just grew the
+corpus (more files → more chance of a variant-name collision landing on an
+incompatible-payload pair, and more closures → more chance of a
+capture-order-sensitive bug tripping) and probably raised the trigger
+probability, matching the owner's before/after read (main showing ~4/5,
+higher than what any single bisection point showed here). **Do not
+conclude 201/B2/B3/W1-i.A introduced the crash** — evidence points to a
+pre-existing corpus-scale-sensitive class of bug, consistent with the
+already-documented (and deliberately deferred) marker
+`[M-parfor-tuple-corpus-scale-order-sensitive]` (`docs/plans/173.1-parallel-collect-and-supervised-value.md`,
+2026-07-13, "требует отдельной state-dump-style инвестигации").
+
+## 5. What's NOT fixed / next steps
+
+The two §3 fixes did not move the observed segfault rate (7/18 post-fix
+vs ~10-12/40 pre-fix on the same `--positive --timeout 300` invocation —
+statistically indistinguishable). The 5/5-clean streak on the *exact*
+gate command (`--positive --compile-error`, no `--timeout` override) is
+most likely sampling luck (P(5/5 clean | rate ~35%) ≈ 12%), not evidence
+of a fix — a larger post-fix sample of the SAME invocation style (n=18)
+still shows ~39% failure.
+
+The remaining bug is a **genuine runtime nondeterminism** (same compiled
+`.exe`, re-executed with no rebuild, crashes at varying points) — ruled
+out GC-collection timing, OS-thread count, and fiber-stack size as primary
+factors (see §1). Working hypotheses not yet checked, in priority order:
+1. **Stale/reused fiber-stack content**: `fiber_arena` reuses stack slots
+   across sequential fiber lifetimes within one process
+   (`compiler-codegen/nova_rt/fiber_arena.c`/`.h`); an uninitialized read
+   of a local that happens to alias a previous fiber's leftover stack
+   content would reproduce exactly this profile (harmless most of the
+   time, catastrophic when the garbage looks like a live pointer) and
+   would explain why it's not fixed by GC-disable/thread-count/bigger-
+   stack, and why it gets MORE likely as the corpus (and hence total
+   fiber churn) grows. Compare to this codebase's own prior case study
+   `docs/cases/mn-race-stale-slot-2026-05.md` (STALE-slot pattern in the
+   M:N runtime) — same shape of bug, different subsystem.
+2. Channel/TcpStream `@share()` AtomicInt refcounting (`ddb329856`,
+   `ecc032ead`) — touches every parallel-for/channel test's close path;
+   not yet code-reviewed for a TOCTOU on the refcount-to-zero transition.
+3. Further HashMap/HashSet iteration sites feeding codegen decisions
+   (only two found and fixed here; emit_c.rs is ~50k lines, not
+   exhaustively audited — grep for `.iter()` on `HashMap`/`HashSet`
+   fields that flow into emitted C is the mechanical way to find more).
+
+**Blocker for closing this properly:** no memory debugger (cdb/windbg/gdb)
+is installed in this environment (`Debugging Tools for Windows` DLLs are
+present in `Windows Kits\10\Debuggers\x64` but not `cdb.exe` itself), and
+no ASan build path is wired into `nova build`/`test`. A proper root-cause
+needs either: install Debugging Tools for Windows + capture a crash dump
+(WER LocalDumps) + analyze with a real debugger, or wire up
+`-fsanitize=address` for the C codegen path (clang toolchain is already in
+use) and rerun the loop under ASan, which would pinpoint the exact
+use-after-free/uninitialized-read immediately.
+
+## 6. Verification commands used
+
+```
+git -C d:/Sources/nv-lang/nova-199 checkout -B fail-flake-diag e1e55acb3
+$env:NOVA_GC_LIB_DIR = "D:\Sources\nv-lang\nova\compiler-codegen\vcpkg_installed\x64-windows-static\lib"
+$env:NOVA_GC_INCLUDE_DIR = "D:\Sources\nv-lang\nova\compiler-codegen\vcpkg_installed\x64-windows-static\include"
+cd nova-cli && cargo build --release
+target\release\nova.exe test --positive --compile-error ..\spec_tests\conformance   # official gate
+target\release\nova.exe test --positive --timeout 300 ..\spec_tests\conformance --keep-artifacts --jobs 1  # + diff kept .c across reps
+```
+
+## 7. Gate results this session
+
+`nova test --positive --compile-error ./spec_tests/conformance` (exact gate
+command, HEAD `e1e55acb3` + both §3 fixes): **5/5 runs clean, 104/0 each.**
+Given §5's larger-sample evidence that the underlying rate is unchanged,
+treat this streak as inconclusive, not a green gate — rerun before trusting
+it, ideally under `-fsanitize=address` once wired up.

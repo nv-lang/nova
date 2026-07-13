@@ -1,6 +1,9 @@
-# План 187 — Флагманское демо: конкурентный агрегатор с живой визуализацией (ЧЕРНОВИК)
+# План 187 — Флагманское демо: конкурентный агрегатор с живой визуализацией
 
-> **Статус: ЧЕРНОВИК / PROPOSED** (не в очереди). Родитель-research:
+> **Статус: В РАБОТЕ (Ред.2, 2026-07-13).** MVP-ядро ✅ (коммит `514bcd8d5` — бек-библиотека+тесты),
+> но **запускаемого веб-приложения ещё НЕТ** — добор = Ф.MVP-2, см. **§9** (честный статус,
+> решения владельца 2026-07-13: запуск обязателен локально И под Docker, декомпозиция для
+> исполнителя, контракт данных snapshot↔мокап). Родитель-research:
 > [docs/research/15-flagship-concurrency-showcase.md](../research/15-flagship-concurrency-showcase.md)
 > — там полный дизайн бека, легенды, история решений по визуалу, мокап.
 > **Спека:** нового D-блока, вероятно, НЕ требует (демо на существующих
@@ -55,8 +58,11 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
 - **std/http почти целиком** (178 Ф.1-Ф.3 де-факто приземлились): message-model
   (D358/D359 must-consume `Body` + `BodyReader`), client (mock+real transport,
   decompress, typed json), **server** (`ServeMux` + middleware-onion + `serve_once`),
-  **servernet** — живой HTTP/1.1 accept-loop поверх `Net`: per-conn spawned fiber
-  под supervised + `CancelToken` graceful-stop. README-статус «178 READY» отстаёт.
+  **servernet** — HTTP/1.1 поверх `Net`. README-статус «178 READY» отстаёт.
+  **⚠ Ред.2-поправка (2026-07-13):** аудит переоценил servernet — экспортируется только
+  `handle_connection(stream, mux)` + smoke; **accept-LOOP функции нет** — цикл
+  `TcpListener.accept → spawn handle_connection` собирается в самом приложении по образцу
+  `examples/net/echo_server.nv` (см. §9.4 п.0).
 - **Кооперативная отмена/дедлайн СЕГОДНЯ**: `std/concurrency/cancellation.nv` —
   `within(ms)` / `race` / `with_timeout` / `supervised(cancel: CancelToken)` (Plan 47).
 - **Мок часов СЕГОДНЯ**: `with Time = th.fixed_ms(...)` (std/time, D316).
@@ -66,8 +72,9 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
 ## 2. Объём (что делаем)
 
 1. **Бек на Nova** — `aggregate(sources, budget) Net Time Fail -> Report`
-   (одноуровневый fan-out через `supervised { parallel for }`, сбор mut-захватом —
-   обход `[M-parfor-record-result-miscompile]`, закрывается 173.1). Хендлеры:
+   (одноуровневый fan-out через `supervised { parallel for }`, прямой сбор
+   `[]Report` — `[M-parfor-record-result-miscompile]` полностью закрыт
+   2026-07-13, mut-захват workaround больше не нужен). Хендлеры:
    `real_net()` и **`mock_net()`** (существует; НЕ «fake_net» — имя из std/net/mock.nv)
    + seeded-обёртка латентностей поверх него.
 2. **Эмиссия событий хода задач** — task started/progress/done/failed/cancelled +
@@ -101,8 +108,8 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
 | Фаза | Зависит от (уточнено аудитом) | Что даёт | Оценка |
 |---|---|---|---|
 | **Ф.0 — прототип на СУЩЕСТВУЮЩЕМ std/http** | ничего: servernet accept-loop + ServeMux уже в main | `aggregate` + **настоящая кооперативная отмена** (`within`/`supervised(cancel:)` — уже есть, НЕ «мягкий бюджет»); polling-эндпоинт `/status` (JSON снапшот хода) | S |
-| **Ф.1 — SSE-стриминг** | `[M-178-server-streaming]` (streaming response + write-backpressure D361) — точечный маркер, НЕ весь 178 | живой поток событий бек→фронт (`text/event-stream`) | M |
-| **Ф.2 — runtime-отмена/deadline/0-leaks** | 173 Ф.3 (`deadline:`-параметр; `supervised(deadline:)` unimplemented in main — см. `[M-178-server-graceful-deadline]`) + 173.0 (substrate: multi-worker drain-гонка) + 173.1 (`parallel for → []T`, WIP `parallel-collect-173-1`) | отмена рантаймом + leaks-инвариант честен при MAXPROCS>1; чище код сбора | M |
+| **Ф.1 — SSE-стриминг** | ~~`[M-178-server-streaming]`~~ ✅ **гейт СНЯТ 2026-07-12** (`ServerResponse.sse`/`sse_event` в main, std/http/server + streaming_test) | живой поток событий бек→фронт (`text/event-stream`); в Ф.MVP-2 — replay-вариант (§9.3 п.3) | M |
+| **Ф.2 — runtime-отмена/deadline/0-leaks** | 173 Ф.3 ЗАКРЫТА (2026-07-12/13): `deadline:`/`timeout:`-параметр landed (D408, 2026-07-06) + захардено — нашёлся и починен реальный leak (спавненный child на `Time.sleep` не unwind'ился на отмену области; см. `[M-178-server-graceful-deadline]` в backlog-followups.md). Остаётся: 173.0 (substrate: multi-worker drain-гонка) + 173.1 (`parallel for → []T`, WIP `parallel-collect-173-1`) + servernet accept-LOOP функции ещё нет вообще (только `handle_connection` + smoke) — проводка bounded-drain в реальный цикл не сделана | отмена рантаймом + leaks-инвариант честен при MAXPROCS>1; чище код сбора | M |
 | **Ф.3a — Live health-check + Live-LLM (Ollama)** | Ф.1 (SSE); TLS НЕ нужен (health = HTTP/TCP-замер; Ollama = `localhost:11434` plain-HTTP) | реальные домены + **реальные LLM с машины пользователя** (одобрено owner 2026-07-09: детект `/api/tags`, модель=строка; нет Ollama → кнопка disabled с подсказкой, мок всегда работает) | M |
 | **Ф.3b — Live погода (+опц. поиск)** | Ф.3a + **Plan 116 std/tls (PLANNED, rustls)** — open-meteo/DDG/Wikipedia HTTPS-only, 🔴 внешний гейт | open-meteo по-настоящему; опц. поисковый race (бесключевые провайдеры) | S |
 | **Ф.4 — фронт до прода + лендинг** | Ф.1 | шрифты, подключение, публикация демо | M |
@@ -112,8 +119,9 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
 бек-звезда, честный нарратив).
 
 **Известные подводные камни (из аудита std/http):**
-- `[M-178-server-typed-body]` — typed body через serdejson имеет codegen-дефект →
-  сериализацию событий делать через dynamic json / ручную, не typed `.json[T]`.
+- `[M-178-server-typed-body]` — ЗАКРЫТ (2026-07-12, баг-фиксер 196): typed body
+  через serdejson теперь компилируется в http-CU — можно использовать typed
+  `json_decode_body[T]`/`.json_as[T]()`, dynamic-JSON workaround больше не нужен.
 - Тесты демо гонять под `NOVA_MAXPROCS=1` до закрытия 173.0 (multi-worker
   drain-гонка субстрата); leaks-инвариант при MAXPROCS>1 — после 173.0.
 - 173 Ф.3 удалит `with_timeout` в пользу `deadline:`/`timeout:`-параметров (после
@@ -177,3 +185,120 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
 - Фронт на Nova (язык не про UI).
 - Продовый метапоиск с платными API (легенда отвергнута — см. research §5).
 - DAP/отладчик, native codegen — отдельные планы.
+
+## 9. Ред.2 (2026-07-13) — честный статус MVP и добор до запускаемого приложения
+
+### 9.1 Что фактически есть после «MVP закрыт» (коммит `514bcd8d5`)
+
+- ✅ Бек-ядро `examples/flagship/aggregator/`: domain / aggregate (плоский fan-out,
+  self-checked soft-deadline) / Emit-эффект / scenarios (Demo + Chaos-seeded) /
+  report_json (динамический JsonValue — workaround снятого typed-body) /
+  server.nv (`snapshot_mux`, тестируется через `serve_once`) + 22 теста.
+- ❌ НЕТ точки входа (`fn main`) — приложение **незапускаемо**.
+- ❌ НЕТ UI в примере (мокап не скопирован и не подключён).
+- ❌ НЕТ живого сервера (accept-loop в примере не собран; servernet даёт только
+  `handle_connection` — см. Ред.2-поправку в §1).
+- ❌ НЕТ README и Docker.
+
+Причина разрыва: план был ЧЕРНОВИК — ни одна фаза явно не владела «запускаемым
+приложением» (main/README/Docker не числились деливераблом ни одной фазы), а
+§1-аудит переоценил готовность servernet. Исполнитель закрыл «MVP» узко.
+
+### 9.2 Разблокировки после Ред.1 (все уже в main)
+
+- `[M-178-server-streaming]` ✅ ЗАКРЫТ 2026-07-12: `ServerResponse.sse`/`sse_event`
+  (std/http/server + streaming_test) — гейт Ф.1 снят.
+- `[M-178-server-typed-body]` ✅ ЗАКРЫТ 2026-07-12 (merge `77239c014`): typed
+  `.json[T]` работает — report_json можно перевести на `#impl(Serialize)`.
+- 173 Ф.3 ✅: `supervised(deadline:)` (D408) + прерываемый `Time.sleep`
+  (`c4b8c38d9`, fibers.h) — настоящий real-cancel доступен; образец:
+  `std/concurrency/supervised_deadline_test.nv`.
+
+### 9.3 Решения владельца (2026-07-13)
+
+1. **Запуск обязателен ЛОКАЛЬНО и ПОД DOCKER** (Docker из «опц.» §7 п.2 →
+   обязательный деливерабл; волна 2, см. §9.4 п.7).
+2. **UI: внешний вид — как в мокапе (утверждён, не трогать); внутренности (JS)
+   — переделывать свободно** под реальные данные. Смягчение прежнего «вербатим»:
+   вербатим = дизайн/вёрстка/стили/механика анимации; синтетический `providers()`
+   и data-модель можно заменять целиком на серверные данные. Файл:
+   `examples/flagship/aggregator/frontend/index.html` (копия мокапа с переработанным JS).
+3. **SSE в этом заходе = честный replay** Emit-событий завершённого прогона
+   (первая запись — `event: replay_info`); живой per-request стрим — отдельный
+   маркер `[M-187-sse-live-stream]` (требует эффект-несущего пути в соединение,
+   ServeMux-handler'ы чистые — см. заголовок server.nv).
+4. LLM/Ollama — НЕ в MVP (подтверждение §7 п.7); в UI сегмент LLM остаётся
+   в demo-синтетике или disabled.
+
+### 9.4 Ф.MVP-2 — запускаемое веб-приложение (декомпозиция для исполнителя)
+
+**Структура каталога (решение владельца 2026-07-13: полноценное веб-приложение —
+бек и фронт по разным папкам):**
+
+```
+examples/flagship/aggregator/
+  backend/
+    main.nv           — тонкая точка входа: wiring (real_net, порт+env) + accept-loop
+    app/              — ядро, чистая логика (свой модуль, D78):
+                        domain.nv, aggregate.nv, emit.nv, scenarios.nv
+    api/              — HTTP-слой (свой модуль): server.nv (mux/endpoints),
+                        report_json.nv, sse.nv
+  frontend/
+    index.html        — копия мокапа с переработанным JS; self-contained
+                        (стили+JS внутри) предпочтителен
+  README.md           — сборка + запуск (локально; волной 2 — Docker)
+  Dockerfile          — волна 2 (§9.4 п.7)
+```
+
+Обоснование: не сваливать исходники в корень backend/ — конвенция соседей
+(Go `cmd/` + `internal/{domain,api}`, Rust `main.rs` + модули-папки): тонкий
+вход + слои по папкам; флагман — ещё и витрина структуры настоящего
+Nova-приложения, D78 «папка = модуль» ложится на слои напрямую. Глубже двух
+слоёв для 8 файлов не дробить. `*_test.nv` — рядом со своим модулем.
+
+Миграция существующих `aggregator/*.nv` → `backend/{app,api}/` — тем же заходом
+(module-пути выровнять по фактической папке; file+folder одного имени запрещён).
+`embed()`-путь фронта из backend-кода — проверить относительно корня пакета
+(E_EMBED_OUTSIDE_PROJECT не должен сработать — frontend внутри того же примера).
+
+| # | Деливерабл | Детали |
+|---|---|---|
+| 0 | `backend/main.nv` | `fn main`: `real_net()` + real time; цикл `TcpListener.bind(127.0.0.1:8187).accept → spawn servernet.handle_connection(stream, mux)` по образцу `examples/net/echo_server.nv`; порт — const + env-override |
+| 1 | real-cancel | aggregate.nv: self-checked soft-deadline → `supervised(deadline:)`; снять соответствующие `[M-flagship-*]`-обходы; тест «опоздавший отменяется раньше своей латентности» (wall_ms < бюджет+слак). Если гонка воспроизводится — repro + доклад, оставить self-checked |
+| 2 | typed-serde | report_json.nv: JsonValue → `#impl(Serialize)` typed-путь; тесты обновить |
+| 3 | endpoints | `GET /` → frontend/index.html (`embed()`); `GET /api/snapshot` (есть, fallback); `GET /api/run?legend=weather\|health&mode=demo\|chaos&seed=N` → JSON свежего прогона; `GET /api/events` (те же параметры) → SSE-replay |
+| 4 | UI-внутренности | frontend/index.html: Live-сегмент разблокировать → `EventSource` на /api/events + fallback-poll /api/snapshot; Demo/Chaos-кнопки → /api/run; JS-модель — по контракту §9.5 |
+| 5 | легенда health | Live health-check = plain TCP/HTTP-замер через `real_net()`; Погода-Live — disabled с подсказкой (ждёт mbedtls-vendored/TLS) |
+| 6 | README.md | сборка + запуск локально (Windows/Unix), порт, env |
+| 7 | Docker (волна 2) | Dockerfile: Linux-сборка компилятора+рантайма+примера. 🔴 ГЕЙТ-РИСК `[M-nova-linux-build]` (Linux-сборка Nova не верифицирована) — при блокере зафиксировать маркер `[M-187-docker-linux-build]`, не обходить молча |
+
+### 9.5 Контракт данных snapshot ↔ UI (карта для исполнителя)
+
+**JSON снапшота** (report_json.nv, расширить текущую форму):
+верхний уровень `{fanout, done, failed, cancelled, wall_ms, sequential_ms,`
+`budget_ms (NEW), legend (NEW), mode (NEW), seed (NEW), results[]}`;
+каждый result: `{id, kind (NEW ← Source), probes (NEW ← Source),`
+`status{state: "done"|"failed"|"cancelled", error?}, elapsed_ms}`.
+
+**Маппинг в модель UI** (бывш. SCENARIOS/providers мокапа):
+`id→id`; `kind→kind`; `probes→probes`; `status.state`: done→outcome `done`
+(`slow`, если elapsed_ms > 1300), failed→`fail` (failAt = elapsed_ms/1000),
+cancelled→`cancel` (cancelAt = budget_ms/1000); `elapsed_ms/1000→total`;
+`DEADLINE = budget_ms/1000` (снять хардкод 2.0 в JS); HUD: done/fail/cancel +
+speedup = sequential_ms/wall_ms + «N reqs closed · 0 leaks» из Report.
+Swarm-wall: до вложенного fan-out (Ф.5) скрыть в Live-режиме либо кормить
+теми же results.
+
+**SSE-события** (таксономия = emit.nv): `event:` `replay_info` (первым) |
+`lane_started` | `lane_done` | `lane_failed` | `lane_cancelled` | `run_summary`;
+`data:` JSON тех же форм (result-объект / summary-объект); порядок = порядок
+Emit при прогоне.
+
+### 9.6 Гейты приёмки Ф.MVP-2
+
+1. `nova build` → бинарь; запуск; curl `/` (HTML), `/api/snapshot` (JSON),
+   `/api/run` (JSON), `/api/events` (SSE) — вывод приложить к отчёту.
+2. `nova test examples/flagship/aggregator` зелёный; conformance один CU δ0 (97/0).
+3. Каждое временное упрощение — явный маркер (`[M-187-sse-live-stream]`, при
+   Docker-блокере `[M-187-docker-linux-build]`).
+4. Волна 2: `docker build` + `docker run` → тот же curl-smoke снаружи контейнера.

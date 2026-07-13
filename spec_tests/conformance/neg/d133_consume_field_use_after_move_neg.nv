@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR использование потреблённой переменной
+// D133-амендмент 2026-07-13 [M-178-consume-field-ctor-from-var]: move биндинга
+// в consume-поле record-литерала = потребление; использование ПОСЛЕ литерала —
+// use-after-consume (D131).
+module neg.d133_consume_field_use_after_move_neg
+
+type FcuInner consume { id int }
+fn FcuInner consume @close() -> () { () }
+fn fcu_open(n int) -> FcuInner => { id: n }
+
+type FcuOuter consume {
+    consume res FcuInner,
+    tag int,
+}
+fn FcuOuter consume @shutdown() -> () { @res.close() }
+
+test "использование после move в consume-поле — ошибка" {
+    consume s = fcu_open(1)
+    consume o = FcuOuter { res: s, tag: 1 }
+    s.close()
+    o.shutdown()
+}

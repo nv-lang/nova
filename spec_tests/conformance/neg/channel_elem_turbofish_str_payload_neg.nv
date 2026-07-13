@@ -1,0 +1,16 @@
+// [M-channel-generic-elem-type] (b) fixed the turbofish `Channel[T].new`
+// ICE, but (a)'s honest-fail gate still (correctly) rejects a `str`
+// payload — turbofish `T` is erased at the runtime layer (Nova_ChannelPair
+// is non-generic), so it carries no codegen payload beyond parsing; the
+// elem-type-safety check is purely on the argument's actual C type at each
+// `.send`/`.try_send` call site.
+//
+// EXPECT_COMPILE_ERROR E_CHANNEL_UNSOUND_ELEM_TYPE
+
+module neg.channel_elem_turbofish_str_payload_neg
+
+fn channel_elem_turbofish_str_payload_neg_use() {
+    ro { tx, rx } = Channel[str].new(4)
+    tx.send("first")
+    ro _v = rx.recv()
+}

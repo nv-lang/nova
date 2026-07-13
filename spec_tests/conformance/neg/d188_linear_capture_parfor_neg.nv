@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_LINEAR_CAPTURE_IN_FIBER
+// Plan 201: захват owned linear-значения (consume-тип) в тело parallel for
+// — N by-value копий = N алиасов одного ресурса → double-close.
+module neg.d188_linear_capture_parfor_neg
+
+type LpRes consume { id int }
+fn LpRes consume @cleanup(_outcome ScopeOutcome) -> () { }
+fn LpRes consume @dispose() -> () { }
+
+test "захват consume-типа в parallel for — E_LINEAR_CAPTURE_IN_FIBER" {
+    consume r LpRes = LpRes { id: 2 }
+    parallel for _i in 0..4 {
+        ro _x = r.id
+    }
+    r.dispose()
+}

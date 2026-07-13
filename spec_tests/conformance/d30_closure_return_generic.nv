@@ -1,0 +1,33 @@
+// D30/D85 closure-return subclass (Plan 196.5): generic free-fn whose type-param T is
+// bound ONLY via a closure-literal argument's inferred body-return type (no turbofish,
+// no direct-T param). Exercises BOTH halves of the pipeline: (1) the checker-side
+// node_substs channel (producer-A `closure_arg_return_peek`, types/mod.rs) that
+// specializes the call-site's mono name, and (2) the closure-LOWERING half — the
+// lambda literal's own emitted C body (`nova_lambda_N_body`) must carry the CONCRETE
+// instance return type (nova_int / nova_str), not the erased `Nova_T*`. Half (2) was
+// the 196.5 producers-widen follow-up gap (see git history of
+// docs/plans/196.5-producers-widen-d30-closure-return-gap.nv).
+module spec_tests.conformance
+
+type D30CrErr { msg str }
+
+fn d30cr_ror_from_closure[T](ok bool, f fn() -> T, e str) -> Result[T, D30CrErr] {
+    if ok {
+        Ok(f())
+    } else {
+        Err(D30CrErr { msg: e })
+    }
+}
+
+test "generic free-fn Result[T,E] — T from closure-return peek (D30/D85 ror)" {
+    ro r = d30cr_ror_from_closure(true, || 7, "boom")
+    match r {
+        Ok(v) => assert(v == 7)
+        Err(_) => assert(false)
+    }
+    ro s = d30cr_ror_from_closure(false, || "x", "boom2")
+    match s {
+        Ok(_) => assert(false)
+        Err(e) => assert(e.msg == "boom2")
+    }
+}

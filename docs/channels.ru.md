@@ -56,9 +56,9 @@ test "channel: send + recv FIFO" {
     ro a = rx.recv()
     ro b = rx.recv()
     ro c = rx.recv()
-    assert(a.unwrap_or(-1) == 10)
-    assert(b.unwrap_or(-1) == 20)
-    assert(c.unwrap_or(-1) == 30)
+    assert(a ?? -1 == 10)
+    assert(b ?? -1 == 20)
+    assert(c ?? -1 == 30)
     tx.close()
 }
 ```
@@ -121,7 +121,15 @@ tx.send(42)         // T = int
 ro v = rx.recv()   // Option[int]
 ```
 
-Явная аннотация — turbofish: `Channel[str].new(8)`.
+Явная аннотация — turbofish: `Channel[int].new(8)`.
+
+**`T` обязан быть word-safe ([M-channel-generic-elem-type]).** Рантайм
+хранит каждый элемент в одном слоте размером со слово, поэтому `T` должен
+без потерь укладываться в него: `int`, `bool`, `char`, целые фиксированной
+ширины и любой pointer-sized тип (`[]T`, records, `HashMap`, суммы, …) —
+работают. `T`, не влезающий в слово — `str`, `f32`/`f64`, кортежи,
+value-records — отвергается на этапе компиляции
+(`E_CHANNEL_UNSOUND_ELEM_TYPE`), а не тихо усекается/переинтерпретируется.
 
 ---
 
@@ -131,8 +139,8 @@ ro v = rx.recv()   // Option[int]
 |---|---|---|
 | `send` | `(v T) -> bool` | Blocking send. Возвращает `true` если отправил; `false` если канал закрыт (не panic — [Plan 30](plans/30-channel-improvements.md)) |
 | `try_send` | `(v T) -> bool` | Non-blocking. `true` если поместилось; `false` если буфер полон или канал закрыт |
-| `close` | `() -> ()` | Закрывает writer-capability. Idempotent. С multi-writer (`clone`) — ref-counted: канал реально закрывается только когда все writers закрылись |
-| `clone` | `() -> ChanWriter[T]` | Создаёт дополнительный writer на тот же буфер. `writer_count++` |
+| `close` | `() -> ()` | Закрывает writer-capability. Idempotent. С multi-writer (`share`) — ref-counted: канал реально закрывается только когда все writers закрылись |
+| `share` | `() -> ChanWriter[T]` | Создаёт дополнительный writer на тот же буфер. `writer_count++` |
 | `is_closed` | `() -> bool` | `true` если буфер закрыт *и* у этого writer'а нет capability слать |
 
 ### `send` возвращает `bool`
@@ -168,18 +176,25 @@ test "channel: try_send full buffer" {
     assert(tx.try_send(10))
     assert(tx.try_send(20))
     assert(!tx.try_send(30))            // буфер полон
-    assert(rx.recv().unwrap_or(-1) == 10)
+    assert(rx.recv() ?? -1 == 10)
     assert(tx.try_send(30))             // место освободилось
     tx.close()
 }
 ```
 
-### `clone` — multi-writer
+### `share` — multi-writer
+
+> **Именование (Plan 201, 2026-07-13):** метод называется `share()`, НЕ
+> `clone()` — Clone-протокол в Nova означает независимую глубокую копию,
+> а здесь **alias** того же канала (вторая capability над тем же буфером;
+> канал закрывается, только когда закроется последний writer). То же
+> правило именует `TcpStream.share()`. Alias-семантика = `share`,
+> глубокая копия = `clone` — везде в std.
 
 ```nova
 test "channel: fan-in — два writer'а, один reader" {
     ro { tx, rx } = Channel.new(8)
-    ro tx2 = tx.clone()                // writer_count = 2
+    ro tx2 = tx.share()                // writer_count = 2
     mut sum = 0
     supervised {
         spawn { tx.send(1);  tx.send(2);  tx.send(3);  tx.close() }
@@ -194,7 +209,7 @@ test "channel: fan-in — два writer'а, один reader" {
 
 Канал закрывается **только когда все writers вызвали `close()`**.
 Внутри — ref-count (`writer_count`): `Channel.new` инициализирует в 1,
-`clone()` инкрементирует, `close()` декрементирует. Когда достигает 0
+`share()` инкрементирует, `close()` декрементирует. Когда достигает 0
 — канал реально закрывается, `rx.recv()` начинает возвращать `None`.
 
 ---
@@ -221,8 +236,8 @@ test "channel: close + recv drain" {
     tx.send(1)
     tx.send(2)
     tx.close()
-    assert(rx.recv().unwrap_or(-1) == 1)
-    assert(rx.recv().unwrap_or(-1) == 2)
+    assert(rx.recv() ?? -1 == 1)
+    assert(rx.recv() ?? -1 == 2)
     assert(rx.recv().is_none())             // drain'нули — None
     assert(rx.recv().is_none())             // повторно — тоже None
 }
@@ -318,12 +333,12 @@ test "channel: ping-pong" {
         spawn {
             tx1.send(10)
             ro reply = rx2.recv()
-            result = reply.unwrap_or(-1)
+            result = reply ?? -1
             tx1.close()
         }
         spawn {
             ro msg = rx1.recv()
-            tx2.send(msg.unwrap_or(0) * 2)
+            tx2.send((msg ?? 0) * 2)
             tx2.close()
         }
     }
@@ -339,7 +354,7 @@ test "channel: ping-pong" {
 ro { tx, rx } = Channel.new(8)
 supervised {
     for item in work_items {
-        ro worker_tx = tx.clone()      // каждому spawn'у — свой capability
+        ro worker_tx = tx.share()      // каждому spawn'у — свой capability
         spawn {
             worker_tx.send(process(item))
             worker_tx.close()
@@ -354,9 +369,9 @@ supervised {
 }
 ```
 
-**Почему `clone()` обязателен:** без него все spawn'ы захватили бы один
+**Почему `share()` обязателен:** без него все spawn'ы захватили бы один
 `tx` через managed reference; `close()` первого закрыл бы канал для
-всех. С `clone()` каждый spawn держит свою capability и закрывает её
+всех. С `share()` каждый spawn держит свою capability и закрывает её
 независимо — канал закрывается только когда все `worker_count + 1`
 writers вызвали `close()`.
 
@@ -802,7 +817,7 @@ test "channel: close idempotent" {
 }
 ```
 
-С multi-writer (`clone`) повторный `close()` *одного* writer'а не
+С multi-writer (`share`) повторный `close()` *одного* writer'а не
 декрементирует `writer_count` повторно (idempotent per-instance).
 
 ---
@@ -846,7 +861,7 @@ test "channel: close idempotent" {
 - [`docs/plans/21-channel-revision-implementation.md`](plans/21-channel-revision-implementation.md)
   — D91 implementation (capability-split)
 - [`docs/plans/30-channel-improvements.md`](plans/30-channel-improvements.md)
-  — `send → bool` + `tx.clone()`
+  — `send → bool` + `tx.share()`
 - [`docs/plans/31-channel-select.md`](plans/31-channel-select.md) —
   `select { ... }` (D94)
 - [`docs/plans/44.1-channel-hardening.md`](plans/44.1-channel-hardening.md)

@@ -440,7 +440,7 @@ ro c2 = s.to_cstr(buf, 64)      // copies ≤63 bytes + '\0'; TRUNCATES if longe
 ro n = c_strlen(s.to_cstr())
 ```
 
-Pure-Nova реализация в `std/ffi/cstr.nv`: `str` carries no trailing-NUL
+Pure-Nova реализация в `std/src/ffi/cstr.nv`: `str` carries no trailing-NUL
 guarantee (D418 retracts D26 §Nul-termination), so BOTH `to_cstr` overloads
 COPY — there is no zero-copy path. `to_cstr()` allocates a fresh GC-managed
 `byte_len()+1`-byte buffer, copies the bytes, and appends `\0` — after an O(n)

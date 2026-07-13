@@ -1,0 +1,23 @@
+// Plan 202 Ф.1b (D78 rev-4 §5) — type axis, half A. Same rationale as
+// `d78_dup_decl_registry/` (fn axis): D29 rev-3 forces this file's
+// declaration to `module neg.kind`, identical to its `b/neg/kind.nv`
+// sibling despite living under a completely different physical directory
+// (research 2026-07-13-module-naming-two-segment-review.md §2а). Both
+// modules privately declare a SUM type named `Kind` with DIFFERENT
+// variants and construct/match it entirely WITHIN their own module — this
+// exercises D381's collision-aware qualification
+// (`emit_c.rs::qualify_type_base`/`colliding_type_names`) on the NEW axis
+// Plan 202 opens: two colliding declaring modules that are physically
+// distinct rather than merely two different declarations.
+module neg.kind
+
+type Kind enum Alpha | Beta
+
+fn classify(n int) -> Kind =>
+    if n > 0 { Alpha } else { Beta }
+
+export fn describe_a(n int) -> str =>
+    match classify(n) {
+        Alpha => "a-alpha"
+        Beta => "a-beta"
+    }

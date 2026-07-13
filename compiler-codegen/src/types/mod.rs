@@ -886,6 +886,14 @@ pub struct ModuleEnv {
     /// byte-identical, mirrors U.4.1); U.4.3 wires the codegen consumption + equivalence
     /// assert.
     pub resolved_callees: HashMap<crate::ast::ExprId, Span>,
+    /// Plan 196.5 Stage-A: per-call SUBST-VALUE channel (call-site `ExprId` → ordered
+    /// `(generic-param name → concrete ResolvedType)`, declaration order). Lifted from
+    /// `TypeCheckCtx.node_substs` after the check pass (mirrors `resolved_callees`). ADDITIVE
+    /// substrate — codegen does not read it yet (Stage-B); mono-manging
+    /// (`compute_mono_name`/`register_mono_method_instance`) will read it directly instead of
+    /// re-deriving the subst from C-types (§0 — the "three hand-duplicated inference
+    /// engines"). See `docs/plans/196.5-node-substs-channel.md`.
+    pub node_substs: HashMap<crate::ast::ExprId, Vec<(String, ResolvedType)>>,
     /// Plan 104.10 Ф.2 (D379): OPT-IN per-expression type map for the IDE — expression
     /// source `Span` → its inferred `TypeRef` (the checker's real expression type, e.g.
     /// `int`, `str`, `Named{Rec}`, `Range`, `(int, str)`). Populated ONLY by
@@ -1572,6 +1580,13 @@ fn check_module_impl(
     let cap_ctx = CapabilityCtx::build(module, &sig);
     cap_ctx.check_module(module, &mut errors);
 
+    // Plan 197 (--strict-effects, experimental, D62): E_EFFECT_ERASED_IN_FN_TYPE.
+    // No-op (byte-identical) unless the CLI flag is set — see
+    // `strict_effects::strict_effects_enabled()`. `E_UNDECLARED_TRANSITIVE_EFFECT`
+    // (the flag's other diagnostic) is driven from inside `CapabilityCtx::
+    // check_callee_effects` just above, reusing its handler-scope tracking.
+    crate::strict_effects::check_effect_erasure(module, &sig, &mut errors);
+
     // D90 Plan 20 Ф.3: defer/errdefer body constraints.
     //
     // Body запрещает:
@@ -1890,6 +1905,9 @@ fn check_module_impl(
     // hands it to codegen. ADDITIVE substrate — codegen does not read it yet (U.4.3), so
     // byte-identical. Populated even when there are errors (harmless; only read on success).
     env.resolved_callees = type_check_ctx.resolved_callees.take();
+    // Plan 196.5 Stage-A: lift the per-call subst-value channel out of the checker (mirrors
+    // resolved_callees above). ADDITIVE — not read by codegen yet.
+    env.node_substs = type_check_ctx.node_substs.take();
     // Plan 172.1 U.4.4(b): lift the checker-side resolved-type channel; the pipeline merges
     // it OVER the number_exprs seed (main.rs / test_runner).
     env.resolved_types = type_check_ctx.resolved_types_buf.take();
@@ -3330,6 +3348,20 @@ struct TypeCheckCtx<'a> {
     /// check walk is `&self` (mirrors the other `RefCell` side-tables here). ADDITIVE —
     /// not yet consumed by codegen (U.4.3), so byte-identical.
     resolved_callees: std::cell::RefCell<HashMap<crate::ast::ExprId, Span>>,
+    /// Plan 196.5 Stage-A: write-buffer for the per-call SUBST-VALUE channel (call-site
+    /// `ExprId` → ordered `(generic-param name → concrete ResolvedType)`), mirrors
+    /// `resolved_callees`'s plumbing exactly. `f1_check_call` (free-fn/static generic) and
+    /// `resolve_return_channel` (instance-method carrier+method-level) already COMPUTE the
+    /// full subst map for type-checking the call and used to discard it after applying it to
+    /// the return type (196.4); this buffer captures the map itself instead of throwing it
+    /// away. Order = generic-param DECLARATION order (carrier-generics of the receiver, then
+    /// method-level) — mono-manging (`compute_mono_name`) needs positional order, not just
+    /// names. ADDITIVE — not yet consumed by codegen (Stage-B), so byte-identical.
+    /// Gated: only written when ALL of the callee's generic params resolved to a fully-
+    /// concrete type (no residual `TypeParam`) — an erased-body caller leaves the channel
+    /// unwritten for that call-site, exactly like `resolved_types_buf`'s materialize-only-
+    /// when-fully-resolved contract. [M-196.5-node-substs]
+    node_substs: std::cell::RefCell<HashMap<crate::ast::ExprId, Vec<(String, ResolvedType)>>>,
     /// Plan 172.1 U.4.4(b): per-expr resolved-type channel the checker fills during the
     /// scope-aware `f1_expr` walk (expr `ExprId` → its `ResolvedType`), for the structural /
     /// semantic arms the SYNTACTIC `number_exprs` producer cannot reach. FIRST arm: `Ident`
@@ -3923,6 +3955,8 @@ impl<'a> TypeCheckCtx<'a> {
             sig_table: crate::imports::ModuleSigTable::new(),
             // Plan 172.1 U.3.4: empty callee channel; filled during the check walk.
             resolved_callees: std::cell::RefCell::new(HashMap::new()),
+            // Plan 196.5 Stage-A: empty subst-value channel; filled during the check walk.
+            node_substs: std::cell::RefCell::new(HashMap::new()),
             // Plan 172.1 U.4.4(b): empty checker-side resolved-type channel.
             resolved_types_buf: std::cell::RefCell::new(HashMap::new()),
             in_call_func: std::cell::Cell::new(false),
@@ -7889,7 +7923,7 @@ impl<'a> TypeCheckCtx<'a> {
                                 self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                             }
                         }
-                    } else if let ExprKind::TurboFish { base: tf_base, .. } = &func.kind {
+                    } else if let ExprKind::TurboFish { base: tf_base, type_args } = &func.kind {
                         // 172.1.2 (Call:<expr>): интринсики size_of[T]()/align_of[T]()
                         // — ВСЕГДА int (фундаментальный факт; чекер уже знает их
                         // спец-кейсами :2000/:2271/:16365, codegen — sizeof/_Alignof).
@@ -7901,6 +7935,57 @@ impl<'a> TypeCheckCtx<'a> {
                                         width: 64, signed: true, wide_default: true,
                                     },
                                 );
+                            } else if !scope.contains_key(tf_n) {
+                                // [M-196.5-node-substs] Producer D (Stage-B4): FREE-FN
+                                // turbofish `f[U](args)` — the explicit `type_args` ARE
+                                // the subst, directly (no inference needed, unlike
+                                // Producer A at `f1_check_call` ~10664, which infers from
+                                // ARGS via `unify_type` and so MISSES a turbofish call
+                                // whose generics don't surface in any param — e.g. a
+                                // zero-arg `d326_mono[D326Node]()`). Single-overload-by-
+                                // arity resolve mirrors `BoundCtx::check_call_bounds`'s
+                                // free-fn turbofish arm (same AST shape/resolution
+                                // strategy) — kept independent here rather than threaded
+                                // through `BoundCtx` (a separate checker pass with no
+                                // `node_substs` handle).
+                                if let Some(overloads) = self.sig.fn_decls.get(tf_n.as_str()) {
+                                    let arity_matches: Vec<&&FnDecl> = overloads.iter()
+                                        .filter(|f| f.params.len() == args.len())
+                                        .collect();
+                                    if let [callee] = arity_matches.as_slice() {
+                                        // Decl order = `callee.generics` — a FREE fn has
+                                        // no carrier, so ALL its generics are the D372
+                                        // "method-level" tier; the turbofish binds them
+                                        // 1:1 positionally (D16). Completeness gate:
+                                        // turbofish arity matches DECLARED arity, and
+                                        // every type-arg is itself concrete (gs-gated) —
+                                        // an outer-generic caller re-spelling its OWN
+                                        // unbound param (`d16_identity[T](x)` inside a
+                                        // generic body) must not materialize a fake
+                                        // binding.
+                                        if !callee.generics.is_empty()
+                                            && type_args.len() == callee.generics.len()
+                                            && type_args.iter().all(|t| !typeref_mentions_any(t, gs))
+                                        {
+                                            let ordered: Vec<(String, ResolvedType)> = callee
+                                                .generics
+                                                .iter()
+                                                .zip(type_args.iter())
+                                                .map(|(g, t)| {
+                                                    (g.name.clone(), ResolvedType::from_type_ref(t))
+                                                })
+                                                .collect();
+                                            if std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some() {
+                                                eprintln!(
+                                                    "[NODE_SUBSTS] producer=D-freefn-turbofish \
+                                                     call_id={:?} callee={} n={}",
+                                                    e.id, callee.name, ordered.len(),
+                                                );
+                                            }
+                                            self.node_substs.borrow_mut().insert(e.id, ordered);
+                                        }
+                                    }
+                                }
                             }
                         }
                     } else if let ExprKind::Ident(fname) = &func.kind {
@@ -8638,7 +8723,44 @@ impl<'a> TypeCheckCtx<'a> {
                     FnBody::Block(b) => self.check_ref_escape_capture_block(b, errors),
                     FnBody::External => {}
                 }
-                self.f1_fn_sig_body(sb, gs, scope, errors)
+                self.f1_fn_sig_body(sb, gs, scope, errors);
+                // 197.3 (Q3 B, channel-first migration): ClosureFull is fully
+                // typed by grammar — every param carries an explicit `T`,
+                // `return_type` is `-> R` or absent (= Unit) — unlike
+                // ClosureLight, no body-inference is needed. Register
+                // `ResolvedType::Func` for the closure's OWN id, mirroring
+                // the ClosureLight zero-param arm above. Consumed by
+                // emit_c.rs Channel 2 (`infer_expr_c_type`'s dedicated
+                // ClosureLight/ClosureFull block) to type e.g.
+                // `ro apply = fn(f fn(int)->int, x int)->int => f(x)`
+                // without falling to the legacy ClosureFull arm there
+                // (dead once this fires — removed alongside this change).
+                // `mark_type_params` (same helper the HOF closure-arg
+                // channel at ~7797 uses) reclassifies a bare in-scope
+                // generic name (`gs`) as `ResolvedType::TypeParam` instead
+                // of a naive `Named` — `resolved_type_to_c`'s TypeParam arm
+                // consults `current_type_subst`, so a generic ClosureFull
+                // resolves correctly PER mono-instantiation at emit time
+                // (not just the fully-concrete case).
+                if e.id.is_set() {
+                    let params_rt: Vec<ResolvedType> = sb.params.iter()
+                        .map(|p| Self::mark_type_params(ResolvedType::from_type_ref(&p.ty), gs))
+                        .collect();
+                    let ret_rt = Self::mark_type_params(
+                        sb.return_type.as_ref()
+                            .map(ResolvedType::from_type_ref)
+                            .unwrap_or(ResolvedType::Unit),
+                        gs,
+                    );
+                    self.resolved_types_buf.borrow_mut().insert(
+                        e.id,
+                        ResolvedType::Func {
+                            params: params_rt,
+                            ret: Box::new(ret_rt),
+                            effects: vec![],
+                        },
+                    );
+                }
             }
             ExprKind::Spawn(body) => {
                 self.check_ref_escape_capture(body, errors);
@@ -9520,6 +9642,35 @@ impl<'a> TypeCheckCtx<'a> {
     /// Named, effectful Func, Readonly/Mut/Ptr) falls to a `Ty::Concrete` leaf —
     /// safe, because a carrier buried under such a leaf simply fails to unify and
     /// the caller's byte-parity gate then defers to legacy.
+    /// 196.5 Stage-D wave-2 (дыра-2): does `rt` RE-SPELL any of the callee's own
+    /// generic names (`vars` keys) as a bare `Named{name}`/`TypeParam(name)` leaf?
+    /// Such a value is a leaked DECLARATION spelling (an unsubstituted `T`/`U`),
+    /// not a concrete type — feeding it to the solver as a `Ty::Concrete` leaf is
+    /// exactly the d119 spelling-collision hazard (see `constraint_solver` module
+    /// doc). Used to reject poisoned arg-type candidates in
+    /// `resolve_return_channel` (producer B).
+    fn rt_respells_names(
+        rt: &ResolvedType,
+        vars: &HashMap<String, constraint_solver::TypeVar>,
+    ) -> bool {
+        use ResolvedType as R;
+        match rt {
+            R::TypeParam(n) => vars.contains_key(n),
+            R::Named { name, args, module } => {
+                (module.is_empty() && args.is_empty() && vars.contains_key(name))
+                    || args.iter().any(|a| Self::rt_respells_names(a, vars))
+            }
+            R::Tuple(items) => items.iter().any(|i| Self::rt_respells_names(i, vars)),
+            R::Array(inner) => Self::rt_respells_names(inner, vars),
+            R::Func { params, ret, .. } => {
+                params.iter().any(|p| Self::rt_respells_names(p, vars))
+                    || Self::rt_respells_names(ret, vars)
+            }
+            R::TypedPtr(_, inner) | R::Readonly(inner) => Self::rt_respells_names(inner, vars),
+            _ => false,
+        }
+    }
+
     fn ty_from_resolved_vars(
         rt: &ResolvedType,
         vars: &HashMap<String, constraint_solver::TypeVar>,
@@ -9591,6 +9742,11 @@ impl<'a> TypeCheckCtx<'a> {
     /// itself unresolved) simply stays a free `Var` — `as_concrete_leaf` then
     /// honestly reports `None` for the whole return, exactly mirroring the old
     /// bail's "no annotation" contract for the erased/unresolved case.
+    /// Plan 196.5 Stage-A: `method_names_ordered` mirrors `method_names` (same set) but
+    /// preserves the DECLARATION order (`FnDecl.generics` order) — the `HashSet` the rest of
+    /// this fn uses has no stable order, but `node_substs` (§6.1) needs positional order for
+    /// mono-manging. Threaded in ADDITIVELY by the two callers below (they already build it
+    /// from `f.generics`, right next to the existing `HashSet` construction).
     fn resolve_return_channel(
         &self,
         recv: &Receiver,
@@ -9598,9 +9754,10 @@ impl<'a> TypeCheckCtx<'a> {
         peeled: &TypeRef,
         ret: &TypeRef,
         method_names: &HashSet<String>,
+        method_names_ordered: &[String],
         method_params: &[Param],
         call_args_scope: Option<(&[CallArg], &HashMap<String, TypeRef>)>,
-    ) -> Option<ResolvedType> {
+    ) -> Option<(ResolvedType, Vec<(String, ResolvedType)>)> {
         use constraint_solver::{Solver, Ty, TypeVar, VarGen};
         // Carrier generic names — bare single-segment, no args (same extraction
         // `build_recv_subst` performs). A FRESH var per name (numeric identity).
@@ -9644,6 +9801,29 @@ impl<'a> TypeCheckCtx<'a> {
         let ret_self = crate::const_fn_trampoline::subst_type_ref_pub(ret, &self_subst);
         let ret_template =
             Self::ty_from_resolved_vars(&ResolvedType::from_type_ref(&ret_self), &vars);
+        // Plan 196.5 producers-widen: carrier unify moved UP (was after `extra_eqs`
+        // construction) so the Class-1 closure-return-peek fallback below can read
+        // back a CONCRETE carrier binding (`carrier_tr_subst`) to seed a closure
+        // literal's own params — a closure body like `|x| x * 2` needs `x`'s
+        // concrete type (e.g. `int`, from the receiver's `T`) to infer correctly,
+        // not just `Self`. Pure reordering for the pre-existing `a_rt`-driven path:
+        // it never touched `solver` while building `extra_eqs`, so moving WHEN the
+        // carrier unify happens relative to that construction changes nothing for
+        // it — `solver.unify(recv_pattern, concrete_recv)` still runs exactly once,
+        // still strictly before `extra_eqs` is consumed (`solver.unify(a, b)` below).
+        let mut solver = Solver::new();
+        solver.unify(&recv_pattern, &concrete_recv).ok()?;
+        let mut carrier_tr_subst: HashMap<String, TypeRef> = HashMap::new();
+        carrier_tr_subst.insert("Self".to_string(), peeled.clone());
+        for n in &names {
+            if let Some(v) = vars.get(n) {
+                if let Some(prt) = solver.as_concrete_leaf(&solver.resolve(&Ty::Var(*v))) {
+                    if let Some(tr) = Self::resolved_to_typeref_tp(&prt, recv.span) {
+                        carrier_tr_subst.insert(n.clone(), tr);
+                    }
+                }
+            }
+        }
         // Stage-1a: Constraint::Eq param↔arg for METHOD-level generics — see doc
         // comment. Only the params whose DECLARED type mentions a method
         // generic are considered (matches the targeted scan `resolve_
@@ -9669,15 +9849,51 @@ impl<'a> TypeCheckCtx<'a> {
                                 return None;
                             }
                             self.resolved_types_buf.borrow().get(&a.expr().id).cloned()
-                        });
+                        })
+                        // 196.5 Stage-D wave-2 (дыра-2, D2H): an arg type that RE-SPELLS
+                        // any of THIS callee's own generic names (`fn(T)->U` buffered for
+                        // a closure literal whose registration didn't substitute the
+                        // carrier — observed for user generic records: `D119Box[T]@map[U]`
+                        // arg buffered as `Func{[Named"T"], Named"U"}`) is unification
+                        // POISON, not information: `Ty::from_resolved` lifts the bare
+                        // `Named{T}` as a CONCRETE leaf (the d119 spelling hazard this
+                        // solver's fresh-var design exists to avoid), the pair-unify then
+                        // conflicts with the already-bound carrier var (`Var(T)=int` vs
+                        // `Named{T}`) and the WHOLE eq is atomically dropped — `U` never
+                        // binds, `as_concrete_leaf` honestly `None`s, and producer B
+                        // stays silent for the ENTIRE user-record method-generic class.
+                        // Rejecting the poisoned value falls through to the closure-
+                        // return peek below (`fpp_concrete` reseeded from the solver's
+                        // OWN carrier binding), which resolves the same call correctly.
+                        .filter(|rt| !Self::rt_respells_names(rt, &vars));
                     if let Some(a_rt) = a_rt {
                         extra_eqs.push((p_lifted, Ty::from_resolved(&a_rt)));
+                    } else if let TypeRef::Func { params: fpp, return_type: Some(fr), .. } = &p_self {
+                        // [M-196.5 producers-widen, Class-1] closure-return-bound:
+                        // `p_self` is Self-substituted but still carrier-generic
+                        // (`self_subst` only carries "Self") — reseed `fpp` with the
+                        // CONCRETE carrier binding (`carrier_tr_subst`, resolved from
+                        // THIS solver above) before peeking, so a closure param typed
+                        // by the receiver's carrier (`.map(|x| …)` on `Vec[int]`, `x:
+                        // int`) infers correctly. `unresolved` stays `method_names`
+                        // only — carrier names are now concrete in `fpp_concrete`.
+                        let fpp_concrete: Vec<TypeRef> = fpp
+                            .iter()
+                            .map(|t| crate::const_fn_trampoline::subst_type_ref_pub(t, &carrier_tr_subst))
+                            .collect();
+                        if let Some(body_ty) =
+                            self.closure_arg_return_peek(&fpp_concrete, a.expr(), scope, method_names)
+                        {
+                            let fr_lifted =
+                                Self::ty_from_resolved_vars(&ResolvedType::from_type_ref(fr), &vars);
+                            let body_lifted = Self::ty_from_resolved_vars(
+                                &ResolvedType::from_type_ref(&body_ty), &vars);
+                            extra_eqs.push((fr_lifted, body_lifted));
+                        }
                     }
                 }
             }
         }
-        let mut solver = Solver::new();
-        solver.unify(&recv_pattern, &concrete_recv).ok()?;
         for (a, b) in &extra_eqs {
             // Best-effort per-pair (mirrors `f1_check_call`'s `let _ =
             // unify_type(..)`, `10477`): one param's structural conflict (an
@@ -9686,7 +9902,34 @@ impl<'a> TypeCheckCtx<'a> {
             let _ = solver.unify(a, b);
         }
         let resolved_ret = solver.resolve(&ret_template);
-        solver.as_concrete_leaf(&resolved_ret)
+        let rt = solver.as_concrete_leaf(&resolved_ret)?;
+        // [M-196.5-node-substs] Producer B: `solver.subst` (via `solver.resolve`/
+        // `as_concrete_leaf` per-var) already has EVERY carrier + method-level binding —
+        // Stage-1a minted a fresh `Var` for each (`vars`, above) and unified them. Read the
+        // SAME solver, per declared name, instead of discarding the bindings with `solver`
+        // at fn exit. Declaration order = carrier names (`names`, receiver order) then
+        // method-level (`method_names_ordered`, caller-supplied `FnDecl.generics` order) —
+        // mirrors rustc's `SubstsRef` (early carrier params, then late method params).
+        // Same completeness gate as producer A: a residual (unresolved) var anywhere in the
+        // declared set means the WHOLE map stays unwritten for this call-site (caller
+        // decides — this fn only proposes the value, `&self` has no `call_id` here).
+        let decl_order: Vec<&String> = names.iter().chain(method_names_ordered.iter()).collect();
+        let ordered: Vec<(String, ResolvedType)> = decl_order
+            .iter()
+            .filter_map(|n| {
+                vars.get(n.as_str()).and_then(|v| {
+                    solver
+                        .as_concrete_leaf(&solver.resolve(&Ty::Var(*v)))
+                        .map(|prt| ((*n).clone(), prt))
+                })
+            })
+            .collect();
+        let ordered = if !decl_order.is_empty() && ordered.len() == decl_order.len() {
+            ordered
+        } else {
+            Vec::new()
+        };
+        Some((rt, ordered))
     }
 
     /// Plan 172.1 U.4.4 (Match-arm half): the COMMON result type of a `match`
@@ -10255,6 +10498,18 @@ impl<'a> TypeCheckCtx<'a> {
         if trailing_present {
             return;
         }
+        // [M-196.5 producer-A width fix, D310] Capture the explicit turbofish
+        // type-args ALONGSIDE `base` — `producer=A` below (the free-fn/static-
+        // method generic-return arm) used to derive `subst` PURELY from
+        // structural `unify_type(param, arg)`, silently discarding an explicit
+        // `func[T1, T2](...)` annotation. For a bare int literal arg
+        // (`d310_twice[i64](10)`) `infer_expr_type` collapses to the default
+        // `nova_int` width, so the unify-derived `T` lost the user's explicit
+        // `i64` — a real bug (mismatch vs the legacy channel), not a gap.
+        let explicit_type_args: Option<&Vec<TypeRef>> = match &func.kind {
+            ExprKind::TurboFish { type_args, .. } => Some(type_args),
+            _ => None,
+        };
         let base: &Expr = match &func.kind {
             ExprKind::TurboFish { base, .. } => base.as_ref(),
             _ => func,
@@ -10473,6 +10728,16 @@ impl<'a> TypeCheckCtx<'a> {
         // stay codegen-resolved for now (gap, not wrong). ADDITIVE: written, not yet read →
         // byte-identical.
         self.resolved_callees.borrow_mut().insert(call_id, callee.span);
+        // [196.5 closure-lowering fix] The literal-materialization arg-loop below must
+        // NOT see a param type that still mentions callee generics (`f fn() -> T`):
+        // `materialize_literal_coercion`'s ClosureLight arm gates on
+        // `ConcreteNamedNoArgs`, which a bare `Named("T")` PASSES (any no-args name),
+        // so the closure arg got stamped with an ERASED `Func{ret: Named("T")}` in
+        // `resolved_types` — and codegen's channel-first `closure_channel_ret_c` then
+        // emitted the lambda body with a `Nova_T*` C return (CC-FAIL,
+        // d30_closure_return_generic.nv). Capture the producer-A unify subst here so
+        // the arg-loop can substitute the CONCRETE instance types instead.
+        let mut arg_subst: Option<HashMap<String, TypeRef>> = None;
         // Plan 172.1 §0 (call-return type channel): annotate the CALL expr's type from
         // the callee's declared return type — mirrors the check_instance_overload channel
         // (§3a/U.4.3). Guard with typeref_mentions_any to skip generic returns (they'd
@@ -10480,9 +10745,13 @@ impl<'a> TypeCheckCtx<'a> {
         if call_id.is_set() {
             if let Some(ret_ty) = &callee.return_type {
                 let callee_gs_inner = fn_generic_scope(callee);
-                if !typeref_mentions_any(ret_ty, &callee_gs_inner)
-                    && !typeref_mentions_any(ret_ty, gs)
-                {
+                // Plan 196.5 producers-widen (Class-2): split out as a named bool —
+                // reused below so the generic-subst arm (formerly `else if`, now an
+                // unconditional sibling `if`) knows whether THIS branch already
+                // materialized the return channel, to avoid a double/divergent write.
+                let ret_is_concrete = !typeref_mentions_any(ret_ty, &callee_gs_inner)
+                    && !typeref_mentions_any(ret_ty, gs);
+                if ret_is_concrete {
                     // [M-172.1-d174-sync-consume-registry]: `-> Self` у static-метода
                     // (`Mutex.new() -> Self`) обязан субституироваться в receiver-тип
                     // ПЕРЕД материализацией — иначе канал несёт несуществующий
@@ -10509,7 +10778,47 @@ impl<'a> TypeCheckCtx<'a> {
                     };
                     let rt = ResolvedType::from_type_ref(ret_ty);
                     self.resolved_types_buf.borrow_mut().insert(call_id, rt);
-                } else if callee.receiver.is_none() && !callee_gs_inner.is_empty() {
+                }
+                // Plan 196.5 producers-widen (Class-2, d122-class gap): this used to be
+                // `else if` — meaning a free-fn/static-method call whose DECLARED return
+                // does NOT mention any callee generic (`fn f[K Bound](a K, b K) -> bool`)
+                // never reached the unify-from-args block below at all, even though the
+                // call unambiguously has generic ARGUMENTS the `node_substs` channel wants
+                // (potential consumers just never got fed — see 196.5-perd-verification.md
+                // §3 Класс 2). Lifted off the `else` so this block runs whenever the callee
+                // is eligible (free fn / static method with generics), independent of
+                // whether the return happens to mention them; the concrete-return
+                // materialize sub-step inside stays gated on `!ret_is_concrete` (the branch
+                // above already wrote `resolved_types_buf` for that call_id — this avoids a
+                // second, possibly-divergent write for the SAME channel). The `node_substs`
+                // write is genuinely unconditional now (Class-2's whole point).
+                if (callee.receiver.is_none()
+                    // Plan 196.4 Stage-1b: a STATIC method (`fn Type[T].method(...)`,
+                    // called bare — `Type.method(args)`, no turbofish on `Type`) has NO
+                    // receiver VALUE to carrier-subst from (unlike an instance method —
+                    // that's `resolve_return_channel`'s job, 9594) and no explicit
+                    // type-args either (a turbofish call — `Type[T].method(args)` — is a
+                    // DIFFERENT AST shape, `Member{obj:TurboFish{..}}`, that never reaches
+                    // `f1_check_call`'s callee-resolution arms at all — see
+                    // `resolve_generic_static_return`, 13567, the Tier-1 channel for
+                    // THAT shape, D372). The only source of concrete type for the
+                    // receiver's carrier generics AND the method's own generics is the
+                    // SAME one a free fn has: the call's ARGUMENTS. Extend this arm to a
+                    // static receiver too — the `unify_type` walk below is receiver-
+                    // agnostic (`callee.params`/`args` line up 1:1 for a static call
+                    // exactly like a free fn, no implicit receiver param) and the
+                    // materialize-only-when-FULLY-resolved gate two lines down already
+                    // guards a `-> Self`-adjacent bounded-generic residual (e.g.
+                    // `ArrayGen[G Generator[T], T].default(elem G) -> ArrayGen[G, T]` —
+                    // `T` is not itself a param, only reachable through `G`'s bound;
+                    // structural `unify_type` leaves it unbound → residual → skip,
+                    // unchanged legacy fallback, exactly the erased-body contract below).
+                    || matches!(
+                        callee.receiver.as_ref().map(|r| &r.kind),
+                        Some(ReceiverKind::Static)
+                    ))
+                    && !callee_gs_inner.is_empty()
+                {
                     // [M-172.1-U4-freefn-generic-return] (Plan 177 Ф.2c): the callee's
                     // return MENTIONS its own type-params — e.g. `sequence(items
                     // []Result[T,E]) -> Result[[]T,E]`, `partition(...) -> ([]T,[]E)`.
@@ -10522,12 +10831,15 @@ impl<'a> TypeCheckCtx<'a> {
                     // the SAME unifier `build_recv_subst` uses for receivers) and
                     // SUBSTITUTE, so the CONCRETE return (`Result[[]int,str]` /
                     // `([]int,[]str)`) is materialized and codegen lowers it through the
-                    // SINGLE `resolved_type_to_c` (D315), not a subst-mirror. Only for a
-                    // FREE fn (no receiver — receiver-carrier generics are the method
-                    // channel's job, 7202) and only when FULLY resolved for THIS caller
-                    // (no residual type-param after subst): an erased generic body caller
-                    // (unbound `T` in scope) leaves a residual → skip → legacy (mirrors
-                    // the concrete-caller invariant of the method-channel gs-gate).
+                    // SINGLE `resolved_type_to_c` (D315), not a subst-mirror. For a FREE
+                    // fn OR a STATIC method (Plan 196.4 Stage-1b — receiver-VALUE carrier
+                    // generics are the instance-method channel's job, 7202; a static
+                    // receiver has no value, only its declared carrier names, which this
+                    // arm now solves from args the same as a method-own generic) and only
+                    // when FULLY resolved for THIS caller (no residual type-param after
+                    // subst): an erased generic body caller (unbound `T` in scope) leaves
+                    // a residual → skip → legacy (mirrors the concrete-caller invariant
+                    // of the method-channel gs-gate).
                     let mut subst: HashMap<String, TypeRef> = HashMap::new();
                     for (p, a) in callee.params.iter().zip(args.iter()) {
                         if p.is_variadic {
@@ -10539,14 +10851,114 @@ impl<'a> TypeCheckCtx<'a> {
                             );
                         }
                     }
+                    // [M-196.5 producers-widen, Class-1] closure-return-bound: a
+                    // fn-typed param whose arg is a closure LITERAL (`f fn() -> T`,
+                    // arg `|| 7`) never got a binding above — `infer_expr_type` has no
+                    // ClosureLight/ClosureFull arm (checker doesn't type closure bodies
+                    // generally), so `a_ty` was always `None` for it. Close any callee
+                    // generic still unbound after the structural pass by peeking the
+                    // closure literal's body return type instead — mirrors the legacy
+                    // codegen `resolve_mono_type_args` Source 2b (`emit_c.rs` ~19025,
+                    // C-string based) ported to the checker/TypeRef level (see
+                    // `closure_arg_return_peek`'s doc comment for the "no invention"
+                    // contract). `fp_seeded` substitutes what's ALREADY bound from the
+                    // pass above so a multi-param closure whose OTHER params depend on
+                    // an already-resolved generic still seeds correctly.
+                    for (p, a) in callee.params.iter().zip(args.iter()) {
+                        if p.is_variadic {
+                            break;
+                        }
+                        let TypeRef::Func { params: fpp, return_type: Some(fr), .. } = &p.ty else {
+                            continue;
+                        };
+                        if !typeref_mentions_any(fr, &callee_gs_inner) {
+                            continue;
+                        }
+                        let fp_seeded: Vec<TypeRef> = fpp
+                            .iter()
+                            .map(|t| crate::const_fn_trampoline::subst_type_ref_pub(t, &subst))
+                            .collect();
+                        if let Some(body_ty) = self.closure_arg_return_peek(
+                            &fp_seeded, a.expr(), scope, &callee_gs_inner,
+                        ) {
+                            let _ = crate::const_fn_trampoline::unify_type(
+                                fr, &body_ty, &callee_gs_inner, &mut subst,
+                            );
+                        }
+                    }
+                    // [M-196.5 producer-A width fix, D310] An explicit, COMPLETE
+                    // turbofish (`func[T1,...](...)`, arity == callee.generics)
+                    // is ground truth — overlay it on top of the unify-derived
+                    // `subst` per-generic. This is what fixes the fixed-width
+                    // loss: `d310_twice[i64](10)` now carries `T=i64` (the
+                    // explicit annotation), not the literal-arg's collapsed
+                    // default `nova_int`. Partial/absent turbofish (inference
+                    // call, e.g. `d310_twice(a)`) leaves the unify result
+                    // untouched — unchanged legacy behavior for that path.
+                    if let Some(tas) = explicit_type_args {
+                        if tas.len() == callee.generics.len() {
+                            for (g, ta) in callee.generics.iter().zip(tas.iter()) {
+                                subst.insert(g.name.clone(), ta.clone());
+                            }
+                        }
+                    }
+                    // [196.5 closure-lowering fix] expose the resolved type-args to the
+                    // literal-materialization arg-loop below (see `arg_subst` decl above).
+                    arg_subst = Some(subst.clone());
                     if !subst.is_empty() {
-                        let concrete =
-                            crate::const_fn_trampoline::subst_type_ref_pub(ret_ty, &subst);
-                        if !typeref_mentions_any(&concrete, &callee_gs_inner)
-                            && !typeref_mentions_any(&concrete, gs)
-                        {
-                            let rt = ResolvedType::from_type_ref(&concrete);
-                            self.resolved_types_buf.borrow_mut().insert(call_id, rt);
+                        // Plan 196.5 producers-widen (Class-2): only attempt the
+                        // return-channel materialize when the DECLARED return actually
+                        // mentions a callee generic — `ret_is_concrete` means the
+                        // sibling branch above (formerly the `if` half of this `else
+                        // if`) already wrote `resolved_types_buf` for this call_id from
+                        // the UNMODIFIED declared return; re-deriving it here from the
+                        // unify-subst would be redundant at best and a DIVERGENT second
+                        // write at worst (this arm's `subst` is arg-derived, not the
+                        // Self-substitution the concrete branch performs).
+                        if !ret_is_concrete {
+                            let concrete =
+                                crate::const_fn_trampoline::subst_type_ref_pub(ret_ty, &subst);
+                            if !typeref_mentions_any(&concrete, &callee_gs_inner)
+                                && !typeref_mentions_any(&concrete, gs)
+                            {
+                                let rt = ResolvedType::from_type_ref(&concrete);
+                                self.resolved_types_buf.borrow_mut().insert(call_id, rt);
+                            }
+                        }
+                        // [M-196.5-node-substs] Producer A: `subst` above is the SAME map
+                        // just applied to the return — capture the VALUES themselves,
+                        // ordered by `callee.generics` declaration order (mono-manging
+                        // needs positional order). Same materialize-only-when-fully-
+                        // resolved gate as the return-channel write above (per-param, via
+                        // `typeref_mentions_any`), plus a whole-map completeness gate
+                        // (`ordered.len() == callee.generics.len()`): a residual (erased-
+                        // body caller leaving some param unbound) means the channel stays
+                        // UNWRITTEN for this call-site — same contract as `resolved_types_buf`.
+                        let ordered: Vec<(String, ResolvedType)> = callee
+                            .generics
+                            .iter()
+                            .filter_map(|g| {
+                                subst.get(&g.name).and_then(|tr| {
+                                    if !typeref_mentions_any(tr, &callee_gs_inner)
+                                        && !typeref_mentions_any(tr, gs)
+                                    {
+                                        Some((g.name.clone(), ResolvedType::from_type_ref(tr)))
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .collect();
+                        if !callee.generics.is_empty() && ordered.len() == callee.generics.len() {
+                            // [M-196.5-node-substs] Stage-A coverage trace (§9 acceptance:
+                            // "канал непуст на generic-формах"). Opt-in, mirrors NOVA_A1PP_TRACE.
+                            if std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some() {
+                                eprintln!(
+                                    "[NODE_SUBSTS] producer=A call_id={:?} callee={} n={}",
+                                    call_id, callee.name, ordered.len()
+                                );
+                            }
+                            self.node_substs.borrow_mut().insert(call_id, ordered);
                         }
                     }
                 }
@@ -10574,7 +10986,27 @@ impl<'a> TypeCheckCtx<'a> {
             // Plan 172.1 [literal-coercion channel] (§0/§1): DEFINITE site — the call
             // resolved to THIS callee (`resolved_callees`), so a context-typed literal arg
             // (`f(0x80)` with `f(x uint)`) carries `uint`, not the collapsed `nova_int`.
-            self.materialize_literal_coercion(arg.expr(), &param.ty);
+            //
+            // [196.5 closure-lowering fix] A param type that mentions callee generics
+            // (`f fn() -> T`) is NOT the truth for THIS call — materializing against it
+            // stamped an ERASED closure annotation (`Func{ret: Named("T")}` passes the
+            // `ConcreteNamedNoArgs` gate) into `resolved_types`, and codegen's
+            // channel-first `closure_channel_ret_c` emitted the lambda body with a
+            // `Nova_T*` C return. Substitute the call's resolved type-args (producer-A
+            // unify, `arg_subst` above) first; a residual/absent subst → SKIP the
+            // materialization entirely (absence is honest — consumers fall back to the
+            // legacy body-walk; an erased stamp is a lie). Non-generic-mentioning
+            // params keep the raw declared type — byte-identical legacy behavior.
+            if typeref_mentions_any(&param.ty, &callee_gs) {
+                if let Some(s) = &arg_subst {
+                    let exp_ty = crate::const_fn_trampoline::subst_type_ref_pub(&param.ty, s);
+                    if !typeref_mentions_any(&exp_ty, &callee_gs) {
+                        self.materialize_literal_coercion(arg.expr(), &exp_ty);
+                    }
+                }
+            } else {
+                self.materialize_literal_coercion(arg.expr(), &param.ty);
+            }
             match self.assignable(arg.expr(), &param.ty, gs, &callee_gs, scope)
             {
                 Compat::Bad { found } => {
@@ -11030,7 +11462,32 @@ impl<'a> TypeCheckCtx<'a> {
                     return;
                 }
                 // Метод? Имена операторных методов могут храниться с ведущим `@`.
-                let has_method = self.t_provides_method(tname, name);
+                // Plan 186 [bug-1 audit-197 fix]: `t_provides_method` is a bare
+                // `tname`-keyed lookup — for a slice receiver reconstructed from
+                // the CHANNEL (`obj_tr` round-tripped through `ResolvedType`,
+                // which canonicalizes `[]T` → `Named{Vec,[T]}`, D239/Stage-1a
+                // comment above :14074-14087), `tname` is the bare "Vec" alias
+                // with the element carried separately in `recv_type_args` — a
+                // CONCRETE-slice-receiver method (`fn []str @join(sep) -> str`,
+                // `std/text.nv` — registered under the LITERAL "[]str" key, same
+                // class as the `[]<elem>` `slice_key` fallback already used by
+                // `resolve_instance_method_return_arity`, 13816-13849) is invisible
+                // to a plain "Vec" lookup. Retry with the reconstructed literal
+                // "[]<elem>" key when the receiver carries exactly one concrete
+                // element type-arg.
+                let slice_elem_has_method = if tname == "Vec" {
+                    match recv_type_args.as_slice() {
+                        [TypeRef::Named { path: ep, generics: eg, .. }]
+                            if ep.len() == 1 && eg.is_empty() =>
+                        {
+                            self.t_provides_method(&format!("[]{}", ep[0]), name)
+                        }
+                        _ => false,
+                    }
+                } else {
+                    false
+                };
+                let has_method = self.t_provides_method(tname, name) || slice_elem_has_method;
                 if has_method {
                     // Plan 162 Ф.5: extension method policy.
                     self.check_extension_method_policy(tname, name, span, errors);
@@ -12878,18 +13335,40 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 // Last resort: if name = a unit-variant of a known sum type, infer as that type.
                 // Covers bare enum variants (`D52Red`, `None`) used in expression position.
-                for (type_name, td) in &self.types {
-                    if let TypeDeclKind::Sum(variants) = &td.kind {
-                        if td.generics.is_empty() {
-                            if variants.iter().any(|v| &v.name == name) {
-                                return Some(TypeRef::Named {
-                                    path: vec![type_name.clone()],
-                                    generics: Vec::new(),
-                                    span: expr.span,
-                                });
+                // [M-hashmap-order-bare-variant-flake] (2026-07-13): `self.types` is a
+                // `HashMap<String, TypeDecl>` — Rust's default `RandomState` hasher reseeds
+                // every process, so iterating it directly picked a DIFFERENT candidate on
+                // every `nova test`/`nova build` invocation whenever ≥2 sum types in the CU
+                // declare a unit-variant of the same bare name (corpus example:
+                // `d406_enum_kind_token.nv`'s `D406Color` and `d52_type_forms.nv`'s
+                // `D52Color` both declare `Green`; a bare `ro c = Green` resolved to
+                // whichever type the hash iteration surfaced first that run). When the
+                // colliding candidates have INCOMPATIBLE payload shapes elsewhere in a
+                // large corpus, a wrong-candidate pick is a genuine type-confusion bug, not
+                // just cosmetic — this is the root cause of the `spec_tests/conformance`
+                // segfault flake (RUN-FAIL ~1-in-4..5, byte-different `.c` across separate
+                // compiles of the SAME source, confirmed via bisection + generated-C diff).
+                // Fix: collect every candidate, sort by name, always pick the same
+                // (lexicographically smallest) one — same source now ALWAYS produces the
+                // same C, so a genuinely-ambiguous corpus fails (or passes) the SAME way on
+                // every run instead of flaking.
+                let mut candidates: Vec<&String> = self.types.iter()
+                    .filter_map(|(type_name, td)| {
+                        if let TypeDeclKind::Sum(variants) = &td.kind {
+                            if td.generics.is_empty() && variants.iter().any(|v| &v.name == name) {
+                                return Some(type_name);
                             }
                         }
-                    }
+                        None
+                    })
+                    .collect();
+                candidates.sort();
+                if let Some(type_name) = candidates.into_iter().next() {
+                    return Some(TypeRef::Named {
+                        path: vec![type_name.clone()],
+                        generics: Vec::new(),
+                        span: expr.span,
+                    });
                 }
                 None
             }
@@ -13169,7 +13648,7 @@ impl<'a> TypeCheckCtx<'a> {
             //
             // Plan 125.1 (Ф.2): never-returning builtins + user fns whose
             // return_type resolves to `Ty::Never` → propagate `never`.
-            ExprKind::Call { func, .. } => {
+            ExprKind::Call { func, args: outer_call_args, .. } => {
                 // [M-183-int-to-str-module-method-collision] (§0 checker-primary):
                 // EFFECT-OPERATION call — `Time.now_monotonic_ns()` / `Clock.tick()` — has a
                 // STATICALLY-KNOWN declared return type (the op's `return_type` in the
@@ -13206,6 +13685,131 @@ impl<'a> TypeCheckCtx<'a> {
                                     Some(rt) => rt.clone(),
                                     None => TypeRef::Unit(expr.span),
                                 });
+                            }
+                        }
+                    }
+                }
+                // 196.5 Stage-D wave-2 (дыра-1, D1H1): a static call on a PRIMITIVE
+                // type name (`str.from(x)`, `int.parse(...)`) parses to
+                // `ExprKind::Path(["str", "from"])`, NOT `Member{obj:Ident, name}` —
+                // primitive type names are reserved tokens, not plain `Ident`s (mirrors
+                // the SAME Path-shape check `f1_check_call` already relies on at
+                // `~12290`: `parts[0] == "str" && parts[1] == "from"`). The Member-keyed
+                // static-return arm below (`tyname`/`ctor`, gated on `self.types`/
+                // `is_primitive_type_name`) therefore never sees this call shape —
+                // `closure_arg_return_peek`'s `infer_expr_type(body, ..)` on a closure
+                // literal whose body is `str.from(x)` returned `None`, so `Option[T]
+                // @map[U](fn(T)->U)`/`Result[T,E]@map[U]` calls with such a closure
+                // co-missed BOTH `resolved_types` (Channel 2) and `node_substs` (same
+                // propose-then-verify block in `resolve_return_channel`/
+                // `resolve_instance_method_return_arity`, both gated on this same
+                // return-type resolution) and fell to legacy
+                // `infer_method_level_return_for_sum` (emit_c.rs). Mirror ONLY the
+                // primitive-receiver concrete-return sub-case (no `self.types`/generics
+                // lookup needed — primitives are never generic) — single-overload,
+                // static receiver, concrete Named/Self return, same gate as `13741`.
+                if let ExprKind::Path(parts) = &func.kind {
+                    if parts.len() == 2 && Self::is_primitive_type_name(parts[0].as_str()) {
+                        if let Some(overloads) = self.method_overloads(&parts[0], &parts[1]) {
+                            // `str.from` etc. commonly have MULTIPLE static overloads
+                            // (one per source primitive: char/bool/f64/f32/int/...,
+                            // `std/runtime/string/from_scalar.nv` + `std/runtime/
+                            // char.nv`) — same arg-type dispatch the instance-method
+                            // multi-overload arm already performs (`~14382`): same
+                            // arity, single overload whose CONCRETE (non-generic,
+                            // primitive-or-Str/Bool) param0 matches the first arg's
+                            // inferred type.
+                            let static_candidates: Vec<&FnDecl> = overloads.iter()
+                                .filter(|s| s.receiver.as_ref()
+                                    .map_or(false, |r| matches!(r.kind, ReceiverKind::Static))
+                                    && s.generics.is_empty())
+                                .copied()
+                                .collect();
+                            let picked: Option<&FnDecl> = match static_candidates.as_slice() {
+                                [] => None,
+                                [one] => Some(*one),
+                                many => {
+                                    let a0 = outer_call_args.first().map(|a| a.expr());
+                                    a0.and_then(|a0| {
+                                        let a0_rt = self.infer_expr_type(a0, scope)
+                                            .map(|t| ResolvedType::from_type_ref(&t))?;
+                                        let mut hit: Option<&FnDecl> = None;
+                                        for cand in many {
+                                            let Some(p0) = cand.params.first() else { continue };
+                                            let p0_rt = ResolvedType::from_type_ref(&p0.ty);
+                                            let concrete = Self::primitive_gate(&p0_rt)
+                                                || matches!(&p0_rt,
+                                                    ResolvedType::Str | ResolvedType::Bool)
+                                                || matches!(&p0_rt,
+                                                    ResolvedType::Named { args, .. } if args.is_empty());
+                                            if !concrete || p0_rt != a0_rt { continue; }
+                                            if hit.is_some() { return None; } // ambiguous
+                                            hit = Some(*cand);
+                                        }
+                                        hit
+                                    })
+                                }
+                            };
+                            if let Some(f) = picked {
+                                if let Some(ret) = &f.return_type {
+                                    let concrete = match ret {
+                                        TypeRef::Named { path, generics, .. }
+                                            if path.len() == 1 && generics.is_empty() =>
+                                        {
+                                            if path[0] == "Self" {
+                                                Some(parts[0].clone())
+                                            } else if self.types.contains_key(&path[0])
+                                                || Self::is_primitive_type_name(&path[0])
+                                            {
+                                                Some(path[0].clone())
+                                            } else {
+                                                None
+                                            }
+                                        }
+                                        _ => None,
+                                    };
+                                    if let Some(n) = concrete {
+                                        return Some(TypeRef::Named {
+                                            path: vec![n],
+                                            generics: Vec::new(),
+                                            span: expr.span,
+                                        });
+                                    }
+                                    if ret.is_pointer_or_wraps_pointer() || ret.is_readonly() {
+                                        return Some(ret.clone());
+                                    }
+                                    // 196.5 Stage-D wave-2 (дыра-1, D1H1 follow-up): a
+                                    // NON-bare `Self`-mentioning return (`fn u64.
+                                    // try_from(s str) -> Result[Self, TryFromIntError]`,
+                                    // `std/runtime/*`) falls through the bare-Named
+                                    // `concrete` match above (`generics.is_empty()` is
+                                    // false for `Result[Self,E]`) — the whole call
+                                    // (`u64.try_from(a)`) stayed untyped, so a CHAINED
+                                    // `.ok()`/`.unwrap_or`/`??` on it (`std/src/data/
+                                    // semver.nv`: `u64.try_from(a).ok() ?? 0`) could not
+                                    // resolve ITS OWN receiver type either → co-miss
+                                    // cascades one level up (`Result.ok`, same channel/
+                                    // node_substs block). `f.generics.is_empty()` was
+                                    // already gated above, so `Self` is the ONLY name
+                                    // that can be a residual placeholder here — substitute
+                                    // it (mirrors `resolve_return_channel`'s `self_subst`
+                                    // pattern, `~9770`) and accept iff NOTHING still
+                                    // mentions `Self` afterward (recursive, catches nested
+                                    // generics — no new inference, one substitution pass).
+                                    let mut self_subst: HashMap<String, TypeRef> = HashMap::new();
+                                    self_subst.insert("Self".to_string(), TypeRef::Named {
+                                        path: vec![parts[0].clone()],
+                                        generics: Vec::new(),
+                                        span: expr.span,
+                                    });
+                                    let substituted = crate::const_fn_trampoline::subst_type_ref_pub(
+                                        ret, &self_subst);
+                                    let mut self_only: HashSet<String> = HashSet::new();
+                                    self_only.insert("Self".to_string());
+                                    if !typeref_mentions_any(&substituted, &self_only) {
+                                        return Some(substituted);
+                                    }
+                                }
                             }
                         }
                     }
@@ -13258,9 +13862,26 @@ impl<'a> TypeCheckCtx<'a> {
                             // the former name-keyed ctor hardcode below — a Self-returning
                             // ctor (`new`/…) resolves here to the SAME `Type[Targs]`, and
                             // ANY other static method (`of`, user ctors) now infers too.
-                            if let Some(rt) = self.resolve_generic_static_return(
+                            if let Some((rt, ordered)) = self.resolve_generic_static_return(
                                 tyname, ctor, type_args, expr.span,
                             ) {
+                                // [M-196.5-node-substs] Producer C write: this call shape
+                                // (`Member{obj:TurboFish}`) never reaches ANY legacy return-
+                                // channel producer (see the comment at f1_check_call ~10622),
+                                // so there is no independent propose-then-verify pair here —
+                                // `ordered` IS the value THIS fn computed the return from
+                                // (same `subst` map). SHADOW verification (emit_c,
+                                // `shadow_check_node_substs`) is the independent cross-check.
+                                if expr.id.is_set() && !ordered.is_empty() {
+                                    if std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some() {
+                                        eprintln!(
+                                            "[NODE_SUBSTS] producer=C-static-turbofish \
+                                             call_id={:?} type={} method={} n={}",
+                                            expr.id, tyname, ctor, ordered.len(),
+                                        );
+                                    }
+                                    self.node_substs.borrow_mut().insert(expr.id, ordered);
+                                }
                                 return Some(rt);
                             }
                             // Intrinsic fallback: Self-returning ctors whose methods live
@@ -13287,10 +13908,26 @@ impl<'a> TypeCheckCtx<'a> {
                     // (fail-path эмиссия defer-тел читает канал, не var_types-тайминг).
                     // Консервативно: single-overload static, non-generic тип, конкретный
                     // Named/Self return без generic-упоминаний.
+                    // 196.5 Stage-D wave-2 (дыра-1, D1H1): `self.types` — только
+                    // ПОЛЬЗОВАТЕЛЬСКИЕ `type X {..}` декларации; builtin-примитивы
+                    // (`str`/`int`/...) в ней НЕ зарегистрированы, хотя они законные
+                    // non-generic static-receiver'ы с `method_overloads`-записями
+                    // (`str.from(x)` — Plan 35/73). Гейт раньше ронял ВЕСЬ арм для
+                    // примитивного receiver'а → `closure_arg_return_peek` (types/mod.rs
+                    // ~14993, `infer_expr_type` на теле closure-литерала) не мог
+                    // вывести тип тела `str.from(x)` → `Option[T]@map[U]`/`Result[T,E]
+                    // @map[U]` с ТАКИМ closure-телом падали в co-miss (Channel-2 И
+                    // node_substs — оба продюсера пишут в ОДНОМ блоке, гейтированном
+                    // ИМЕННО этим условием) → легаси `infer_method_level_return_for_sum`
+                    // (emit_c.rs). Расширение на `is_primitive_type_name` — тот же
+                    // паттерн, что уже используется чуть ниже (`13759`) для bare-Named
+                    // return-конкретизации; НЕ новый инференс, тот же `method_overloads`
+                    // lookup, тот же single-overload/static/non-generic гейт.
                     if let ExprKind::Ident(tyname) = &obj.kind {
-                        if self.types.get(tyname.as_str())
+                        let non_generic_known_recv = self.types.get(tyname.as_str())
                             .map_or(false, |td| td.generics.is_empty())
-                        {
+                            || Self::is_primitive_type_name(tyname);
+                        if non_generic_known_recv {
                             if let Some(overloads) = self.method_overloads(tyname, ctor) {
                                 if let [f] = overloads.as_slice() {
                                     if f.receiver.as_ref()
@@ -13350,6 +13987,49 @@ impl<'a> TypeCheckCtx<'a> {
                                             }
                                         }
                                     }
+                                }
+                            }
+                        }
+                    }
+                    // Plan 186 [bug-1 audit-197 fix] field-of-func-type call:
+                    // `obj.field(args)` / `@field(args)` where `field` is a plain
+                    // RECORD FIELD holding a first-class function value (D42 Model-A
+                    // DI-by-field, e.g. `type Repo[T] { ro to_columns fn(T) -> []ColumnValue }`
+                    // then `@to_columns(value)`) — NOT a declared method
+                    // (`method_overloads` has no entry for it). The Member-arm above
+                    // (this same fn, `ExprKind::Member{obj,name}`) already resolves
+                    // such a field's declared `TypeRef` correctly, INCLUDING generic-
+                    // receiver substitution (`subst_receiver_generics`) — recurse into
+                    // it via `func` itself (which IS that Member expr) and, if it
+                    // resolves to `TypeRef::Func`, the call's type is its return type.
+                    // Guarded on NO method of this name existing on the receiver, so
+                    // this can only fire on the field case — it is structurally unable
+                    // to change the outcome of any instance-METHOD call (a name can't
+                    // be both a field and a method on the same type), keeping this
+                    // disjoint from the deliberate method-call decoupling below.
+                    // Without this, the RHS of `ro cols = @to_columns(value)` resolved
+                    // to `None` unconditionally (this whole arm never considered a
+                    // field-call), so `cols` was never registered into `scope`
+                    // (`f1_stmt`'s `Stmt::Let` binding falls to `scope.remove`) —
+                    // every later `cols.<method>(...)` then had an unknown receiver,
+                    // surfacing downstream as the codegen `[P67-LEGACY] method call
+                    // \`.map\` return type unknown` ICE (examples/real_world/orm_demo.nv
+                    // `@insert`/`@update`/`@update_versioned`, Plan 197 audit finding #1).
+                    if let Some(mut peeled) = self.infer_expr_type(obj, scope) {
+                        loop {
+                            match peeled {
+                                TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => peeled = *i,
+                                _ => break,
+                            }
+                        }
+                        if let TypeRef::Named { path, .. } = &peeled {
+                            if path.len() == 1
+                                && self.method_overloads(&path[0], ctor).is_none()
+                            {
+                                if let Some(TypeRef::Func { return_type: Some(rt), .. }) =
+                                    self.infer_expr_type(func, scope)
+                                {
+                                    return Some(*rt);
                                 }
                             }
                         }
@@ -13660,13 +14340,20 @@ impl<'a> TypeCheckCtx<'a> {
     /// receiver, no declared return, turbofish/receiver arity mismatch, or a substituted
     /// return that still mentions an UNBOUND method-level generic (`fn Box[T].wrap[U](u U)
     /// -> U` — `U` comes from the arg, not the turbofish).
+    /// Plan 196.5 Stage-B4: return also carries the ordered turbofish subst (§6.1
+    /// `node_substs` — Producer C). Declaration order = the receiver's carrier generic
+    /// names (`recv.generics`, turbofish-supplied) THEN this static method's OWN
+    /// method-level generics (`f.generics`) — mirrors `resolve_return_channel`'s
+    /// `names.chain(method_names_ordered)` convention (9777) even though THIS call
+    /// shape (`Type[T].method(args)`, ONE bracket, on the type) never supplies
+    /// method-level values — see the completeness-gate comment at the tail of this fn.
     fn resolve_generic_static_return(
         &self,
         tyname: &str,
         method: &str,
         type_args: &[TypeRef],
         span: Span,
-    ) -> Option<TypeRef> {
+    ) -> Option<(TypeRef, Vec<(String, ResolvedType)>)> {
         // Synth-aware (base ∪ auto-derive overlay), same source the dispatch channel reads.
         let overloads = self.method_overloads(tyname, method)?;
         // Single overload only — ≥2 is permissive (codegen / hardcode fallback handle it,
@@ -13691,11 +14378,17 @@ impl<'a> TypeCheckCtx<'a> {
         };
         let mut subst: HashMap<String, TypeRef> = HashMap::new();
         subst.insert("Self".to_string(), recv_ty);
+        // Plan 196.5 Stage-B4: `carrier_names` — DECLARATION-order twin of the `subst`
+        // insertions below (the `HashMap` has no stable order; `node_substs` needs
+        // positional order for mono-manging, same rationale as `resolve_return_channel`'s
+        // `names`, 9684).
+        let mut carrier_names: Vec<String> = Vec::new();
         for (i, g) in recv.generics.iter().enumerate() {
             if let TypeRef::Named { path, generics, .. } = g {
                 if path.len() == 1 && generics.is_empty() {
                     if let Some(ta) = type_args.get(i) {
                         subst.insert(path[0].clone(), ta.clone());
+                        carrier_names.push(path[0].clone());
                     }
                 }
             }
@@ -13714,7 +14407,31 @@ impl<'a> TypeCheckCtx<'a> {
         if !unbound.is_empty() && typeref_mentions_any(&out, &unbound) {
             return None;
         }
-        Some(out)
+        // [M-196.5-node-substs] Producer C (Stage-B4): the turbofish `type_args` themselves
+        // ARE the subst — read directly off `subst`, no inference (unlike Producer A's
+        // args-based `unify_type` or Producer B's constraint solver). Declaration order =
+        // `carrier_names` then `f.generics` (method-level) — but `subst` only HAS carrier
+        // bindings (this AST shape has one bracket, on the TYPE; a static method's OWN
+        // generics are never turbofish-supplied here). Same whole-map completeness gate as
+        // Stage-A (`ordered.len() == decl_order.len()`): the map only reaches full
+        // decl-order length when `f.generics` is empty — a static method that ALSO
+        // declares method-level generics leaves the channel unwritten for this call-site
+        // (genuine gap: filling it needs arg-based inference, out of THIS producer's
+        // scope — mirrors the erased/partial-caller "stays unwritten" contract).
+        let decl_order: Vec<&String> =
+            carrier_names.iter().chain(f.generics.iter().map(|g| &g.name)).collect();
+        let ordered: Vec<(String, ResolvedType)> = decl_order
+            .iter()
+            .filter_map(|n| {
+                subst.get(n.as_str()).map(|ta| ((*n).clone(), ResolvedType::from_type_ref(ta)))
+            })
+            .collect();
+        let ordered = if !decl_order.is_empty() && ordered.len() == decl_order.len() {
+            ordered
+        } else {
+            Vec::new()
+        };
+        Some((out, ordered))
     }
 
     /// Plan 172.1.2 [M-172.1-U4-recv-infer]: resolve the DECLARED return type of an
@@ -13737,7 +14454,7 @@ impl<'a> TypeCheckCtx<'a> {
         recv_ty: &TypeRef,
         method: &str,
     ) -> Option<TypeRef> {
-        self.resolve_instance_method_return_arity(recv_ty, method, None, None)
+        self.resolve_instance_method_return_arity(recv_ty, method, None, None, None)
     }
 
     /// 172.1.2 (2026-07-03): arity-aware вариант — при >1 перегрузке выбирает
@@ -13750,6 +14467,12 @@ impl<'a> TypeCheckCtx<'a> {
         // 172.1.2 arg-type dispatch (2026-07-04): (args, scope) для
         // дизамбигуации same-arity перегрузок по типу первого аргумента.
         args_scope: Option<(&[CallArg], &HashMap<String, TypeRef>)>,
+        // Plan 196.5 Stage-A: call-site `ExprId`, threaded down ONLY so the producer-B
+        // `node_substs` write (inside the method-generic-residual branch AND the pure-carrier
+        // branch below) has a key. `None` from the 0-arity wrapper above (no call-site to key
+        // by — that wrapper has no callers today, kept for API symmetry with
+        // `resolve_generic_static_return`).
+        call_id: Option<crate::ast::ExprId>,
     ) -> Option<TypeRef> {
         // Normalize receiver: peel ro/mut views; `[]T`/`[N]T` → "Vec" (D239 slice alias),
         // so a slice receiver resolves Vec's methods (std's pervasive spelling). Mirror of
@@ -13812,6 +14535,29 @@ impl<'a> TypeCheckCtx<'a> {
         }) {
             Some(o) => o,
             None => {
+                // 196.5 Stage-D wave-2 (дыра-1, D1H1 шаг 3): `unwrap`-семья на
+                // Option/Result — РЕТРАКТИРОВАННЫЕ методы (D85/D86, prelude
+                // `[M-unwrap-twins-retraction]`): деклараций в .nv НЕТ, но вызовы
+                // живут (conformance d119_*, m196_*; desugar map-spread СИНТЕЗИРУЕТ
+                // `.get(k).unwrap()`) и обслуживаются исключительно codegen-легаси
+                // хардкодом (`emit_c.rs` B11q/B11r match-армы: `"unwrap" |
+                // "unwrap_or" | "unwrap_or_else" => elem_ty/ok_c`). Продюсер канала
+                // работает от деклараций → для undeclared метода канал co-miss
+                // ПО ПОСТРОЕНИЮ. Зеркалируем тот же фундаментальный факт
+                // (`Option[T]→T`, `Result[T,E]→T`) на уровне чекера — НЕ язык-
+                // меняющее (поведение уже такое), просто материализация в канал.
+                // Гейт: конкретный (не param) первый generic — residual пометит
+                // mark_type_params на Call-арме, как у всех продюсеров.
+                if matches!(method, "unwrap" | "unwrap_or" | "unwrap_or_else") {
+                    if let TypeRef::Named { path, generics, .. } = peeled {
+                        if path.len() == 1
+                            && ((path[0] == "Option" && generics.len() == 1)
+                                || (path[0] == "Result" && generics.len() == 2))
+                        {
+                            return Some(generics[0].clone());
+                        }
+                    }
+                }
                 // 172.1.2 (protocol-ресивер, 2026-07-03): `w Writer` — сигнатура
                 // метода живёт в декларации ПРОТОКОЛА (D53), не в method_table.
                 // Konkretный declared return (без generics/Self) — фундаментальный
@@ -13935,6 +14681,11 @@ impl<'a> TypeCheckCtx<'a> {
         // receiver-instance-map/subst или Err→legacy (Шаг 1/2b инфраструктура).
         let method_names: HashSet<String> =
             f.generics.iter().map(|g| g.name.clone()).collect();
+        // Plan 196.5 Stage-A: declaration-order twin of `method_names` (see
+        // `resolve_return_channel`'s doc comment) — `node_substs` needs positional order,
+        // the `HashSet` above does not preserve it.
+        let method_names_ordered: Vec<String> =
+            f.generics.iter().map(|g| g.name.clone()).collect();
         if !method_names.is_empty() && typeref_mentions_any(&out, &method_names) {
             // Plan 196.4 Stage-1a: `out` (carrier+`Self` only, `build_recv_subst`)
             // still carries an unbound METHOD-level generic — bound by the CALL'S
@@ -13961,6 +14712,23 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(a_ty) = self.infer_expr_type(a.expr(), call_scope) {
                     let _ = crate::const_fn_trampoline::unify_type(
                         &p_seeded, &a_ty, &method_names, &mut full_subst);
+                } else if let TypeRef::Func { params: fpp, return_type: Some(fr), .. } = &p_seeded {
+                    // [M-196.5 producers-widen, Class-1] closure-return-bound: the
+                    // COMMON `.map(|x| …)`/`Option.map`/`Result.map` shape — arg is a
+                    // closure LITERAL, `infer_expr_type` has no arm for it (`a_ty` is
+                    // always `None`). `p_seeded` is already carrier+`Self`-concrete
+                    // (from `subst` above), so `fpp` only still names UNRESOLVED
+                    // method-level generics (checked by `closure_arg_return_peek`
+                    // itself) — peek the closure body's return type and unify just
+                    // the return position (`fr`, typically a bare method generic like
+                    // `U`) against it. Mirrors the free-fn arm's identical fallback in
+                    // `f1_check_call` (~10738).
+                    if let Some(body_ty) =
+                        self.closure_arg_return_peek(fpp, a.expr(), call_scope, &method_names)
+                    {
+                        let _ = crate::const_fn_trampoline::unify_type(
+                            fr, &body_ty, &method_names, &mut full_subst);
+                    }
                 }
             }
             let out_full = crate::const_fn_trampoline::subst_type_ref_pub(ret, &full_subst);
@@ -13976,9 +14744,28 @@ impl<'a> TypeCheckCtx<'a> {
             // checked in EVERY build (not a debug-only assert): there is
             // nothing else to trust a release build's materialization against.
             let channel = self.resolve_return_channel(
-                recv, recv_ty, peeled, ret, &method_names, &f.params, args_scope);
+                recv, recv_ty, peeled, ret, &method_names, &method_names_ordered, &f.params,
+                args_scope);
             return match channel {
-                Some(rt) if rt == ResolvedType::from_type_ref(&out_full) => Some(out_full),
+                Some((rt, ordered)) if rt == ResolvedType::from_type_ref(&out_full) => {
+                    // [M-196.5-node-substs] SHADOW-adjacent write: the solver
+                    // INDEPENDENTLY re-derived this binding (propose-then-verify gate
+                    // above just confirmed `rt == out_full`) — the per-param `ordered`
+                    // map is the SAME solver's per-var bindings, so it inherits the
+                    // same verified trust. `call_id` absent (0-arity wrapper) → skip.
+                    if let Some(cid) = call_id {
+                        if !ordered.is_empty() {
+                            if std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some() {
+                                eprintln!(
+                                    "[NODE_SUBSTS] producer=B-method-residual call_id={:?} method={} n={}",
+                                    cid, f.name, ordered.len()
+                                );
+                            }
+                            self.node_substs.borrow_mut().insert(cid, ordered);
+                        }
+                    }
+                    Some(out_full)
+                }
                 _ => None,
             };
         }
@@ -14043,13 +14830,30 @@ impl<'a> TypeCheckCtx<'a> {
         // branch above, gated on independent solver agreement (not a debug-only
         // assert), which is Stage-1a's actual Tier-2 deliverable.
         let channel = self.resolve_return_channel(
-            recv, recv_ty, peeled, ret, &method_names, &f.params, args_scope);
+            recv, recv_ty, peeled, ret, &method_names, &method_names_ordered, &f.params,
+            args_scope);
         debug_assert!(
             channel
                 .as_ref()
-                .map_or(true, |s| *s == ResolvedType::from_type_ref(&out)),
+                .map_or(true, |(s, _)| *s == ResolvedType::from_type_ref(&out)),
             "Ф.4c: resolve_return diverged from build_recv_subst binding"
         );
+        // [M-196.5-node-substs] Same channel/solver as the debug_assert above — write
+        // node_substs ONLY when the return independently agrees with legacy `out` (mirrors
+        // the assert's parity contract; checked unconditionally, not debug-only, since this
+        // is a brand-new additive channel nothing reads yet — costs nothing in release and
+        // keeps both channels' trust level identical).
+        if let (Some(cid), Some((rt, ordered))) = (call_id, &channel) {
+            if !ordered.is_empty() && *rt == ResolvedType::from_type_ref(&out) {
+                if std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some() {
+                    eprintln!(
+                        "[NODE_SUBSTS] producer=B-carrier call_id={:?} method={} n={}",
+                        cid, method, ordered.len()
+                    );
+                }
+                self.node_substs.borrow_mut().insert(cid, ordered.clone());
+            }
+        }
         let _ = channel;
         Some(out)
     }
@@ -14251,8 +15055,12 @@ impl<'a> TypeCheckCtx<'a> {
                 Self::resolved_to_typeref_tp(&rt, e.span)
             })?;
         let call_arity = call_args.len();
+        // Plan 196.5 Stage-A: this call-site's `ExprId` is the `node_substs` key producer B
+        // writes under (propagated through `resolve_instance_method_return_arity` →
+        // `resolve_return_channel`'s caller-side insert).
+        let call_id = if e.id.is_set() { Some(e.id) } else { None };
         self.resolve_instance_method_return_arity(
-            &recv_ty, name, Some(call_arity), Some((call_args.as_slice(), scope)))
+            &recv_ty, name, Some(call_arity), Some((call_args.as_slice(), scope)), call_id)
             .or_else(|| {
                 // 172.1.2 arg-binding (2026-07-03): method-level generic (`map[U]`)
                 // выводится из closure-аргумента при известном carrier-subst.
@@ -14335,6 +15143,64 @@ impl<'a> TypeCheckCtx<'a> {
         out
     }
 
+    /// Plan 196.5 producers-widen (Class-1, closure-return-bound fallback):
+    /// peek a closure-literal ARG's body return type, seeding the closure's OWN
+    /// declared params with `fp` (caller-substituted — must ALREADY be concrete
+    /// for every name NOT in `unresolved`, e.g. carrier/`Self` already bound by
+    /// the caller). Mirrors the legacy codegen `resolve_mono_type_args` Source 2b
+    /// (`emit_c.rs` ~19025 — C-string based) at the checker/TypeRef level, so the
+    /// SAME class of closure (identity/computed `Expr` body, or an empty-stmts
+    /// `Block` trailing expr) the legacy codegen path already lowers correctly
+    /// can ALSO populate the `node_substs`/return-channel — not inventing new
+    /// inference, porting the existing legacy heuristic one layer up (checker
+    /// phase, ahead of codegen). Honest `None` (no annotation, no guess)
+    /// whenever: arity mismatch, a closure param's declared type still mentions
+    /// an `unresolved` name (nothing concrete to seed it with — refuses to guess
+    /// with a bare generic), or the body itself doesn't resolve via
+    /// `infer_expr_type` (stmts-block, unsupported expr shape, etc.) — the same
+    /// "no invention" contract `infer_expr_type` already holds everywhere else
+    /// in this file.
+    fn closure_arg_return_peek(
+        &self,
+        fp: &[TypeRef],
+        arg_expr: &Expr,
+        outer_scope: &HashMap<String, TypeRef>,
+        unresolved: &HashSet<String>,
+    ) -> Option<TypeRef> {
+        match &arg_expr.kind {
+            ExprKind::ClosureLight { params: cp, body } => {
+                if cp.len() != fp.len() {
+                    return None;
+                }
+                let mut cscope = outer_scope.clone();
+                for (cpar, fpt) in cp.iter().zip(fp.iter()) {
+                    if typeref_mentions_any(fpt, unresolved) {
+                        return None;
+                    }
+                    if cpar.name != "_" {
+                        cscope.insert(cpar.name.clone(), fpt.clone());
+                    }
+                }
+                match body {
+                    ClosureBody::Expr(be) => self.infer_expr_type(be, &cscope),
+                    ClosureBody::Block(b) if b.stmts.is_empty() => {
+                        b.trailing.as_deref().and_then(|t| self.infer_expr_type(t, &cscope))
+                    }
+                    _ => None,
+                }
+            }
+            ExprKind::ClosureFull(sb) => {
+                // Fully typed by grammar (Q3 B, 197.3) — no body-inference needed,
+                // the declared return type IS the answer (when present and it
+                // doesn't itself still mention an unresolved name).
+                sb.return_type.as_ref().and_then(|rt| {
+                    if typeref_mentions_any(rt, unresolved) { None } else { Some(rt.clone()) }
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// 172.1.2 arg-binding: `v.map(|x| x*2)` при v: Vec[int] — параметр метода
     /// `f (T)->U`: closure-параметры типизируются СУБСТИТУИРОВАННОЙ сигнатурой
     /// (T→int из ресивера), тело инферится → U связывается результатом. Гейты:
@@ -14364,8 +15230,42 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _) => "Vec".to_string(),
             _ => return None,
         };
-        let overloads = self.method_overloads(&type_name, method)?;
-        let [f] = overloads.as_slice() else { return None; };
+        let f: &FnDecl = match self.method_overloads(&type_name, method) {
+            Some(overloads) => match overloads.as_slice() {
+                [f] => *f,
+                _ => return None,
+            },
+            // NARROWED (post-bisect, conformance regression on
+            // c_keyword_ident_mangling): the original scan ALSO matched a
+            // "bare typevar receiver" candidate (`fn[T] T @m[U](...)`) for
+            // ANY `TypeRef::Named` `peeled` — far too permissive (`method`
+            // is just a name; an UNRELATED bare-typevar decl sharing the
+            // same method name anywhere in the reachable corpus could match
+            // and feed the closure-binding logic below a WRONG `f`/`recv`,
+            // silently mistyping some OTHER closure-arg call — the observed
+            // regression). Scope this fallback to EXACTLY the slice-sugar
+            // shape this fix targets (`[]T @map[U]`-style, vec_seq.nv):
+            // `peeled` must be a genuine `Array`/`FixedArray`, and the
+            // candidate's recv_key must be the LITERAL "[]<typevar>" form.
+            None if matches!(peeled, TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _)) => {
+                self.sig.method_table.iter().find_map(|(recv_key, methods)| {
+                    let overloads = methods.get(method)?;
+                    let [cand] = overloads.as_slice() else { return None };
+                    let crecv = cand.receiver.as_ref()?;
+                    if !matches!(crecv.kind, ReceiverKind::Instance) {
+                        return None;
+                    }
+                    if recv_key.starts_with("[]")
+                        && cand.generics.iter().any(|g| g.name == recv_key[2..])
+                    {
+                        Some(*cand)
+                    } else {
+                        None
+                    }
+                })?
+            }
+            None => return None,
+        };
         let recv = f.receiver.as_ref()?;
         if !matches!(recv.kind, ReceiverKind::Instance) {
             return None;
@@ -14380,6 +15280,42 @@ impl<'a> TypeCheckCtx<'a> {
             return None; // покрыто базовой resolve_instance_method_return
         }
         let mut subst = build_recv_subst(recv, recv_ty);
+        // Plan 186 [bug-1 audit-197 fix]: `build_recv_subst` extracts the
+        // carrier-binding names ONLY from `recv.generics` (the `Type[T,U]`
+        // bracket-carrier slots) — for a PREFIX-generic `[]T` slice
+        // receiver `recv.generics` is EMPTY (the parser never populates
+        // `generics_first_decl` on the `[]T` fast-path, `parser/mod.rs`
+        // ~3009-3049, so the Receiver's own `.generics` Vec stays empty;
+        // the carrier typevar lives ONLY inside the structured
+        // `recv.receiver_ty` — `Array(Named T)`). `build_recv_subst`
+        // early-returns an EMPTY subst in that case (its `receiver_ty`
+        // structural-unify branch is gated behind `!names.is_empty()`),
+        // leaving `T` unbound — every closure-param seed below then still
+        // mentions `T` (`typeref_mentions_any`) and bails, so `U` never
+        // gets inferred. Retry the structural unify here directly, using
+        // THIS decl's own generics (`f.generics` — receiver-carrier +
+        // method-level names combined, `parser/mod.rs:3169`-3174) as the
+        // bindable set: sound because `f`/`recv` are the SAME decl
+        // `build_recv_subst` was just called for.
+        if recv.generics.is_empty() {
+            if let Some(decl_ty) = &recv.receiver_ty {
+                let mut t = recv_ty;
+                loop {
+                    match t {
+                        TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => t = i,
+                        _ => break,
+                    }
+                }
+                let mut s: HashMap<String, TypeRef> = HashMap::new();
+                if crate::const_fn_trampoline::unify_type(decl_ty, t, &method_names, &mut s)
+                    .is_ok()
+                {
+                    for (k, v) in s {
+                        subst.entry(k).or_insert(v);
+                    }
+                }
+            }
+        }
         subst.insert("Self".to_string(), peeled.clone());
         for (pd, a) in f.params.iter().zip(args.iter()) {
             let arg_expr = a.expr();
@@ -18990,6 +19926,64 @@ impl<'a> CapabilityCtx<'a> {
                 ));
             }
         }
+        // Plan 197 (--strict-effects, experimental, D62 §Правило 1): opt-in
+        // promotion of "undeclared transitive effect" from the (currently
+        // unimplemented) default warning to a hard error. No-op unless the
+        // CLI flag is set — see `crate::strict_effects::strict_effects_enabled()`.
+        if crate::strict_effects::strict_effects_enabled() {
+            self.check_transitive_effect_strict(callee, callee_label, state, span, errors);
+        }
+    }
+
+    /// Plan 197 (--strict-effects): `E_UNDECLARED_TRANSITIVE_EFFECT`. Fires
+    /// when `callee` carries a non-`Fail` effect `E` that the ENCLOSING
+    /// function neither declares in its own signature
+    /// (`state.declared_effects`, filled once in `walk_fn_body`) nor handles
+    /// via an enclosing `with E = … { }` block (`state.with_handler_stack`
+    /// — D62 "Альтернатива через with": a locally-installed handler
+    /// discharges the obligation right there, D11 with-semantics
+    /// unchanged). `state.effect_root` (test-block bodies — D414 §2, no
+    /// enclosing signature to declare against) is exempt, mirroring the
+    /// existing `Detach`-effect `effect_root` exemption above (D50).
+    /// `Fail` is excluded — D62 §Правило 2 already makes `Fail`
+    /// transitivity strict and UNCONDITIONAL (a separate, pre-existing
+    /// concern, not gated by this experimental flag).
+    fn check_transitive_effect_strict(
+        &self,
+        callee: &FnDecl,
+        callee_label: &str,
+        state: &CapState,
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        if state.effect_root {
+            return;
+        }
+        for eff in &callee.effects {
+            let TypeRef::Named { path, .. } = eff else { continue; };
+            let Some(name) = path.last() else { continue; };
+            if name == "Fail" {
+                continue;
+            }
+            if state.declared_effects.contains(name) {
+                continue;
+            }
+            if state.with_handler_stack.iter().any(|h| h == name) {
+                continue;
+            }
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_UNDECLARED_TRANSITIVE_EFFECT] call to `{}` requires effect `{}`, \
+                     not declared in the enclosing function's signature and not handled \
+                     by an enclosing `with {} = …` block (--strict-effects; D62 §Правило \
+                     1 — without this flag this is only a warning). Hint: add `{}` to the \
+                     enclosing fn's effect-row, or install `with {} = handler {{ … }}` \
+                     around this call.",
+                    callee_label, name, name, name, name
+                ),
+                span,
+            ));
+        }
     }
 
     /// Plan 16 D63: единичная проверка effect'a против forbidden-стека.
@@ -19065,9 +20059,29 @@ impl<'a> CapabilityCtx<'a> {
         // `Type.field.subfield` chain + reason, so that a non-share `mut`
         // field deep inside a type no longer strips share-ness silently.
         let mut flagged: Vec<(String, String)> = Vec::new();
+        // Plan 201 (D188-амендмент, взаимодействие с 173.1 by-value капчуром):
+        // захват linear-значения (consume-тип: TcpStream/Transaction/…) в
+        // тело spawn/parallel-for/detach — by-value КОПИЯ обёртки в N
+        // файберов = N алиасов одного ресурса БЕЗ учёта владения →
+        // double-close/интерференция. Ошибка независимо от ro/mut; канон —
+        // `@share()`-копия per-fiber (refcount «закрывает последний») либо
+        // явный move `spawn consume c { … }` (D415 §4 — init exempt в
+        // capture_scan). Отдельный Vec — своя диагностика.
+        let mut linear_flagged: Vec<(String, String)> = Vec::new();
         for name in free {
             let binding = state.scopes.iter().rev().find_map(|f| f.get(&name));
             if let Some(b) = binding {
+                if let Some(ty) = &b.ty {
+                    if let Some(base) = TypeCheckCtx::typeref_named_base(ty) {
+                        let is_linear = self.type_decls.get(base)
+                            .map(|td| td.consume)
+                            .unwrap_or(false);
+                        if is_linear {
+                            linear_flagged.push((name.clone(), base.to_string()));
+                            continue;
+                        }
+                    }
+                }
                 if !b.mutable {
                     // `ro` capture — deep-immutable view (D246): always safe,
                     // no share requirement (D415 §2 "ro" arm).
@@ -19111,6 +20125,23 @@ impl<'a> CapabilityCtx<'a> {
                 };
                 flagged.push((name, why));
             }
+        }
+        linear_flagged.sort(); // deterministic diagnostic order
+        for (name, ty) in linear_flagged {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_LINEAR_CAPTURE_IN_FIBER] `{n}` (linear consume-тип \
+                     `{ty}`) захвачен в тело `spawn`/`parallel for`/`detach`: \
+                     by-value копия обёртки в N файберов = N алиасов одного \
+                     ресурса БЕЗ учёта владения → double-close/интерференция \
+                     (Plan 201 / 173.1 by-value капчур). Возьмите \
+                     `@share()`-копию per-fiber (`ro w = {n}.share()` перед \
+                     `spawn {{ …w… }}` — refcount закрывает последним) либо \
+                     явный move: `spawn consume {n} {{ … }}` (D415 §4).",
+                    n = name, ty = ty
+                ),
+                body.span,
+            ));
         }
         flagged.sort(); // deterministic diagnostic order (HashSet iteration)
         for (name, why) in flagged {
@@ -20074,7 +21105,7 @@ impl NameResCtx {
             // Plan 110 D188: walk init + push new scope frame с binding,
             // walk body, pop frame. Binding visible только внутри body
             // (D188 §«Syntax» single-name binding).
-            Stmt::ConsumeScope { binding, init, body, .. } => {
+            Stmt::ConsumeScope { binding, init, body, result, .. } => {
                 self.walk_expr(init, file_id, scope, errors);
                 scope.push({
                     let mut frame = HashSet::new();
@@ -20088,6 +21119,13 @@ impl NameResCtx {
                     self.walk_expr(t, file_id, scope, errors);
                 }
                 scope.pop();
+                // Plan 201: result-приёмник блока-выражения виден в
+                // объемлющем scope ПОСЛЕ блока (как let-binding).
+                if let Some(r) = result {
+                    if let Some(frame) = scope.last_mut() {
+                        frame.insert(r.name.clone());
+                    }
+                }
             }
             // Plan 33.2 Ф.8: assert_static — walk expr.
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, file_id, scope, errors),
@@ -22804,6 +23842,24 @@ struct ConsumeRegistry {
     /// blast-radius fix, out of scope here).
     mut_methods_arity: HashSet<(String, String, usize)>,
     ro_methods_arity: HashSet<(String, String, usize)>,
+    /// `[M-178-server-typed-body]` fix (2026-07-12): arity-aware companion of
+    /// `recv_returning` — `(receiver_type, method_name, arity)`. The name-only
+    /// `recv_returning` set collapses cross-type same-name pairs at DIFFERENT
+    /// arity (e.g. `ServeMux mut @post(pattern, handler) -> @`, arity 2, vs
+    /// `HttpClient @post(url) -> RequestBuilder`, arity 1, plain non-fluent
+    /// return) into one bucket keyed only by "post". The fluent-chain
+    /// receiver check below (`obj` itself a `-> @` Call result) used
+    /// name-only `recv_returning` to decide whether the INNER call of a
+    /// chain is a confirmed self-returning method — for a call whose true
+    /// arity only matches an UNRELATED type's fluent method, that produced a
+    /// false `E_RECEIVER_BINDING_NOT_MUT` (any multi-file CU that pulls in
+    /// both a `ServeMux`-shaped router and an `HttpClient`-shaped builder
+    /// with same-named, different-arity chain methods). Scoped to that ONE
+    /// check only, same narrow-blast-radius precedent as `mut_methods_arity`/
+    /// `ro_methods_arity` (`[M-172.5-chain-gating-ro-at]`) — pre-existing
+    /// name-only `recv_returning` uses elsewhere are already type-scoped via
+    /// `ctx.var_types`, so left unchanged.
+    recv_returning_arity: HashSet<(String, String, usize)>,
     /// Plan 108.1 followup ([M-108.1-readonly-to-explicit-mut-coerce]):
     /// free-fn name → indices of `mut`-params.  Используется при call
     /// site: если arg в этой позиции имеет тип `readonly T` (или
@@ -22823,6 +23879,23 @@ struct ConsumeRegistry {
     /// → indices of non-unsafe-T-typed params. Parallel free-fn
     /// `fn_non_unsafe_params`.
     method_non_unsafe_params: HashMap<(String, String), Vec<usize>>,
+    /// `[M-178-consume-field-ctor-from-var]` fix (Plan 178.5, 2026-07-13):
+    /// type name (record's own name, or a sum variant's name for
+    /// `SumVariantKind::Record`) → names of its `consume`-marked fields.
+    /// Used at `RecordLit` construction sites: initializing a consume-field
+    /// with a bare owned variable / consume-param (`{ tcp: stream, .. }`) is
+    /// a move of that binding — mirrors consume-param call-site semantics
+    /// (`consume_args`). Keyed by last path segment, same lookup convention
+    /// as `infer_value_type`'s `RecordLit { type_name: Some(path), .. }` arm.
+    record_consume_fields: HashMap<String, HashSet<String>>,
+    /// `[M-178-consume-field-ctor-from-var]`: companion of
+    /// `record_consume_fields` — ALL field names per record type / record-
+    /// payload sum variant. Used to resolve ANONYMOUS record literals
+    /// (`type_name: None`, тип из контекста — например `=> { tcp: stream,
+    /// session }` с типом из return-позиции): литерал резолвится в тип,
+    /// ЕДИНСТВЕННЫЙ среди всех записей, чей field-set покрывает имена
+    /// литерала. Неоднозначность → None (без действия — консервативно).
+    record_field_names: HashMap<String, HashSet<String>>,
 }
 
 impl ConsumeRegistry {
@@ -22842,6 +23915,8 @@ impl ConsumeRegistry {
         // Fix [M-172.5-chain-gating-ro-at]: arity-aware companions (see field doc).
         let mut mut_methods_arity: HashSet<(String, String, usize)> = HashSet::new();
         let mut ro_methods_arity: HashSet<(String, String, usize)> = HashSet::new();
+        // `[M-178-server-typed-body]` fix: arity-aware companion of `recv_returning`.
+        let mut recv_returning_arity: HashSet<(String, String, usize)> = HashSet::new();
         // Plan 108.1 followup: mut-params indices for E_READONLY_COERCE.
         let mut fn_mut_params: HashMap<String, Vec<usize>> = HashMap::new();
         let mut method_mut_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
@@ -22849,6 +23924,43 @@ impl ConsumeRegistry {
         // indices (positions where param's outer wrapper is NOT Unsafe).
         let mut fn_non_unsafe_params: HashMap<String, Vec<usize>> = HashMap::new();
         let mut method_non_unsafe_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
+        // `[M-178-consume-field-ctor-from-var]`: type name → consume-field
+        // names (record types + sum-variant record payloads) + companion
+        // record_field_names (ALL fields) для резолва анонимных литералов.
+        let mut record_consume_fields: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut record_field_names: HashMap<String, HashSet<String>> = HashMap::new();
+        {
+            let mut collect_fields = |type_name: &str, fields: &[RecordField]| {
+                let all: HashSet<String> = fields.iter()
+                    .map(|f| f.name.clone())
+                    .collect();
+                let consume: HashSet<String> = fields.iter()
+                    .filter(|f| f.consume)
+                    .map(|f| f.name.clone())
+                    .collect();
+                if !all.is_empty() {
+                    record_field_names.insert(type_name.to_string(), all);
+                }
+                if !consume.is_empty() {
+                    record_consume_fields.insert(type_name.to_string(), consume);
+                }
+            };
+            for item in &module.items {
+                if let Item::Type(td) = item {
+                    match &td.kind {
+                        TypeDeclKind::Record(fields) => collect_fields(&td.name, fields),
+                        TypeDeclKind::Sum(variants) => {
+                            for v in variants {
+                                if let SumVariantKind::Record(fields) = &v.kind {
+                                    collect_fields(&v.name, fields);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
 
         // Plan 100.3 (D157): collect consume-types for view-param detection.
         // Mirrors LinearityRegistry::build consume_types collection.
@@ -22879,6 +23991,8 @@ impl ConsumeRegistry {
                     && f.nova_body.is_none()
                 {
                     recv_returning.insert((recv.to_string(), f.name.to_string()));
+                    recv_returning_arity.insert(
+                        (recv.to_string(), f.name.to_string(), f.params.len()));
                 }
             }
         }
@@ -22950,6 +24064,8 @@ impl ConsumeRegistry {
                         if fd.returns_receiver {
                             recv_returning
                                 .insert((r.type_name.clone(), fd.name.clone()));
+                            recv_returning_arity.insert(
+                                (r.type_name.clone(), fd.name.clone(), fd.params.len()));
                         }
                         if !consume_idx.is_empty() {
                             method_params.insert(
@@ -22997,10 +24113,45 @@ impl ConsumeRegistry {
         ConsumeRegistry {
             methods, fn_params, method_params, fn_return_types, recv_returning,
             fn_view_params, method_return_types, mut_methods, ro_methods,
-            mut_methods_arity, ro_methods_arity,
+            mut_methods_arity, ro_methods_arity, recv_returning_arity,
             fn_mut_params, method_mut_params,
             fn_non_unsafe_params, method_non_unsafe_params,
+            record_consume_fields, record_field_names,
         }
+    }
+
+    /// `[M-178-consume-field-ctor-from-var]`: consume-поля record-литерала.
+    /// Типизированный (`Type { … }` / `Variant { … }`) — прямой lookup по
+    /// последнему сегменту пути. Анонимный (`{ … }`, тип из контекста) —
+    /// структурный резолв: тип, ЕДИНСТВЕННЫЙ среди всех записей модуля, чей
+    /// field-set покрывает все имена литерала (defaulted-поля можно опускать
+    /// → subset-match). Неоднозначность/нет матча → None (консервативно:
+    /// поведение как до фикса — никакого mark_consumed).
+    fn consume_fields_for_lit(
+        &self,
+        type_name: &Option<Vec<String>>,
+        fields: &[RecordLitField],
+    ) -> Option<&HashSet<String>> {
+        if let Some(p) = type_name {
+            return p.last().and_then(|tn| self.record_consume_fields.get(tn));
+        }
+        let lit_names: Vec<&str> = fields.iter()
+            .filter(|f| !f.is_spread)
+            .map(|f| f.name.as_str())
+            .collect();
+        if lit_names.is_empty() {
+            return None;
+        }
+        let mut found: Option<&String> = None;
+        for (tn, fnames) in &self.record_field_names {
+            if lit_names.iter().all(|n| fnames.contains(*n)) {
+                if found.is_some() {
+                    return None; // ambiguous — консервативно ничего
+                }
+                found = Some(tn);
+            }
+        }
+        found.and_then(|tn| self.record_consume_fields.get(tn))
     }
 
     /// Plan 172.1 [M-172.1-d174-sync-consume-registry]: влить consume-СУЩЕСТВЕННЫЕ
@@ -23213,6 +24364,17 @@ struct ConsumeCtx<'a> {
     /// shadows (`tx`). Used to fire `E_REBIND_LIVE_CONSUME` when a rebind hides
     /// an unmet consume obligation. Empty for modules without a rebind.
     rebind_shadows: &'a HashMap<String, String>,
+    /// Plan 201 (D188-амендмент 2026-07-13): канонические имена биндингов,
+    /// находящихся под активным re-consume блоком `consume X { … }`.
+    /// Внутри тела `X` — ro-view: consume-операция над guarded-именем НЕ
+    /// переводит состояние, а записывает нарушение в `guard_violations`
+    /// (дренируется в E_CONSUME_BLOCK_MOVE_OUT на выходе из блока).
+    /// Санкционированные формы выноса (tail `X` / `return X`) обходят
+    /// guard через `mark_consumed_bypass_guard`.
+    block_guards: HashSet<String>,
+    /// Plan 201: (имя, span) consume-операций над guarded-биндингами,
+    /// собранные во время walk'а тела re-consume блока.
+    guard_violations: Vec<(String, Span)>,
 }
 
 impl<'a> ConsumeCtx<'a> {
@@ -23239,6 +24401,8 @@ impl<'a> ConsumeCtx<'a> {
             local_mut: HashMap::new(),
             readonly_locals: HashSet::new(),
             unsafe_t_locals: HashSet::new(),
+            block_guards: HashSet::new(),
+            guard_violations: Vec::new(),
         }
     }
 
@@ -23257,7 +24421,26 @@ impl<'a> ConsumeCtx<'a> {
     }
 
     /// Пометить alias-класс переменной потреблённым.
+    ///
+    /// Plan 201 (D188-амендмент): если имя под активным re-consume блоком
+    /// (`consume X { … }`) — consume-операция ЗАПРЕЩЕНА: записываем
+    /// нарушение (E_CONSUME_BLOCK_MOVE_OUT на дренаже), состояние НЕ
+    /// меняем (X остаётся Live — им владеет cleanup блока).
     fn mark_consumed(&mut self, name: &str, span: Span) {
+        let canon = self.canonical(name);
+        if self.block_guards.contains(&canon) || self.block_guards.contains(name) {
+            self.guard_violations.push((canon, span));
+            return;
+        }
+        if self.states.contains_key(&canon) {
+            self.states.insert(canon, VarState::Consumed(span));
+        }
+    }
+
+    /// Plan 201: санкционированный consume guarded-биндинга — tail-значение
+    /// `X` / `return X` (вынос владения с дизармом cleanup'а) и финальный
+    /// «блок потребил X» на выходе из re-consume блока. Обходит guard.
+    fn mark_consumed_bypass_guard(&mut self, name: &str, span: Span) {
         let canon = self.canonical(name);
         if self.states.contains_key(&canon) {
             self.states.insert(canon, VarState::Consumed(span));
@@ -25346,8 +26529,23 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
         Stmt::Expr(e) => consume_walk_expr(ctx, e, errors),
         Stmt::Assign { target, op, value, .. } => {
             consume_walk_expr(ctx, value, errors);
+            // Plan 201 (D188-амендмент): присваивание guarded-биндинга
+            // re-consume блока в ЛЮБОЕ место (`place = X`, вкл. consume-поле)
+            // — move-out: guard-нарушение (дренаж → E_CONSUME_BLOCK_MOVE_OUT).
+            if let ExprKind::Ident(vn) = &value.kind {
+                let vcanon = ctx.canonical(vn);
+                if ctx.block_guards.contains(&vcanon) {
+                    ctx.guard_violations.push((vcanon, value.span));
+                }
+            }
             match &target.kind {
                 ExprKind::Ident(name) => {
+                    // Plan 201: реассайн самого guarded-биндинга (`X = …`)
+                    // внутри его re-consume блока — запрещён (ro-view).
+                    let tcanon = ctx.canonical(name);
+                    if ctx.block_guards.contains(&tcanon) {
+                        ctx.guard_violations.push((tcanon, target.span));
+                    }
                     if matches!(op, AssignOp::Assign) {
                         // `x = v` — свежее значение. Развязываем alias-класс
                         // `x` (прочие члены сохраняют прежнее состояние), x
@@ -25392,8 +26590,8 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
         }
         Stmt::Return { value, span } => {
             if let Some(v) = value {
-                consume_walk_expr(ctx, v, errors);
                 if let ExprKind::Ident(name) = &v.kind {
+                    consume_walk_expr(ctx, v, errors);
                     // Plan 100.3 (D157): view-param cannot escape via return.
                     if ctx.is_view_param(name) {
                         errors.push(Diagnostic::new(
@@ -25409,9 +26607,23 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                     // Plan 100.1 (D133 / D9): `return tx` — обязательство
                     // передаётся caller'у. Пометить возвращённый consume-var как
                     // Consumed (obligation satisfied by transfer).
-                    if ctx.consume_obligations.contains(name.as_str()) {
+                    //
+                    // Plan 201 (D188-амендмент): `return X` ГОЛЫМ идентификатором
+                    // из-под re-consume блока — САНКЦИОНИРОВАННЫЙ вынос владения
+                    // (cleanup дизармится в codegen) — обходим guard.
+                    let ret_canon = ctx.canonical(name);
+                    if ctx.block_guards.contains(&ret_canon) {
+                        ctx.mark_consumed_bypass_guard(name, *span);
+                    } else if ctx.consume_obligations.contains(name.as_str()) {
                         ctx.mark_consumed(name, *span);
                     }
+                } else {
+                    // Plan 201 (D188-амендмент v3): не-голое `return EXPR` —
+                    // per-canon scan+disarm по ВСЕМ активным re-consume guard'ам
+                    // (композиция с multi-var-вложением, п.(е): `consume A, B
+                    // { return f(A, B) }` — оба guard'а санкционируются на своих
+                    // consume-позициях по отдельности).
+                    walk_guarded_escape_expr_multi(ctx, v, errors);
                 }
             }
         }
@@ -25439,13 +26651,178 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
         // только в body; cleanup dispatch как auto-consume) — Plan 110.1.2.
         // Здесь walk recursively, не вводим binding в obligations (110.1.2
         // обязанность).
-        Stmt::ConsumeScope { init, body, .. } => {
+        //
+        // Plan 201 (D188-амендмент 2026-07-13): re-consume форма
+        // `consume X { body }` (re_consume=true, init = Ident(X)):
+        //   1. owned-требование → E_CONSUME_BLOCK_NOT_OWNED;
+        //   2. Cleanup[E]-требование → E_D188_NOT_CLEANUP;
+        //   3. guard на X: consume-операции внутри тела →
+        //      E_CONSUME_BLOCK_MOVE_OUT (дренаж нарушений после walk'а);
+        //   4. санкционированный вынос — ТОЛЬКО tail-значение `X`
+        //      (при result-приёмнике; cleanup дизармится в codegen) и
+        //      `return X` (Return-arm обходит guard);
+        //   5. после блока X — Consumed; result-приёмник (если есть)
+        //      получает obligation при tail-выносе.
+        Stmt::ConsumeScope { init, body, re_consume, result, span, .. } => {
             consume_walk_expr(ctx, init, errors);
+            if !*re_consume {
+                for stmt in &body.stmts {
+                    consume_walk_stmt(ctx, stmt, errors);
+                }
+                if let Some(t) = &body.trailing {
+                    consume_walk_expr(ctx, t, errors);
+                }
+                return;
+            }
+            // ── Plan 201 re-consume path ──
+            let orig: &str = match &init.kind {
+                ExprKind::Ident(n) => n.as_str(),
+                _ => "?", // парсер гарантирует Ident; defensive
+            };
+            let canon = ctx.canonical(orig);
+            // 1. owned-требование: consume-параметр / `consume X = …` локал
+            // оба регистрируются через declare_consume_binding →
+            // consume_obligations.
+            let owned = ctx.consume_obligations.contains(&canon)
+                || ctx.consume_obligations.contains(orig);
+            if !owned {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_CONSUME_BLOCK_NOT_OWNED] `consume {n} {{ … }}` требует \
+                         СУЩЕСТВУЮЩЕГО owned-биндинга: consume-параметра функции \
+                         или `consume {n} = …` локала (D188-амендмент, Plan 201). \
+                         `{n}` — не owned (ro/mut локал, view-параметр или \
+                         неизвестное имя).",
+                        n = orig
+                    ),
+                    *span,
+                ));
+            }
+            // 2. Cleanup[E]-требование (best-effort по var_types — D131-стиль:
+            // неизвестный/generic тип → false-negative, не false-positive:
+            // проверяем ТОЛЬКО типы, известные LinearityRegistry — локальные
+            // декларации + absorbed builtin-модули; `T` из generic-хелпера
+            // (`must[T]`) в registry отсутствует → skip).
+            let ty = ctx.var_types.get(&canon)
+                .or_else(|| ctx.var_types.get(orig))
+                .cloned();
+            if let Some(ty) = &ty {
+                let ty_known = ctx.lin_reg.local_type_names.contains(ty.as_str())
+                    || ctx.lin_reg.consume_types.contains(ty.as_str())
+                    || ctx.lin_reg.consume_methods.contains_key(ty.as_str());
+                let has_cleanup = ctx.lin_reg.consume_methods
+                    .get(ty.as_str())
+                    .map_or(false, |ms| ms.iter().any(|m| m == "cleanup"));
+                if ty_known && !has_cleanup {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_D188_NOT_CLEANUP] тип `{ty}` биндинга `{n}` не \
+                             реализует `Cleanup[E]` (нет `consume @cleanup(outcome \
+                             ScopeOutcome)`) — `consume {n} {{ … }}` требует \
+                             Cleanup, как и binding-форма D188.",
+                            ty = ty, n = orig
+                        ),
+                        *span,
+                    ));
+                }
+            }
+            // 3. guard: внутри тела X — только ro-view/методы.
+            let newly_guarded = ctx.block_guards.insert(canon.clone());
             for stmt in &body.stmts {
                 consume_walk_stmt(ctx, stmt, errors);
             }
+            // 4. tail: `X` при result-приёмнике — санкционированный вынос
+            // (cleanup дизармится); прочий tail — обычное выражение.
+            //
+            // Plan 201 (D188-амендмент v3, «однократный вынос через
+            // выражение»): non-bare tail EXPR — multi-canon scan+disarm
+            // (`walk_guarded_escape_expr_multi`, композиция п.(е)): каждый
+            // АКТИВНЫЙ guard (в т.ч. внешних уровней multi-var-вложения)
+            // решается независимо; санкционированные — дизармятся ПОБОЧНЫМ
+            // эффектом. `tail_escape` (obligation-тип result'а = тип X)
+            // остаётся ИСКЛЮЧИТЕЛЬНО bare-`X`-путём — значение non-bare
+            // tail'а обычно НЕ равно X (другой тип), `result` — обычный
+            // локал (см. `ctx.declare(&r.name, None)` ниже, как у любого
+            // прочего вычисляемого tail'а).
+            let mut tail_escape = false;
             if let Some(t) = &body.trailing {
-                consume_walk_expr(ctx, t, errors);
+                if let ExprKind::Ident(tn) = &t.kind {
+                    if result.is_some() && ctx.canonical(tn) == canon {
+                        tail_escape = true;
+                        ctx.use_var(tn, t.span, errors); // use-after-consume check
+                    }
+                }
+                if !tail_escape {
+                    // Plan 201 (D188-амендмент v3): расширенный вынос через
+                    // выражение ТОЛЬКО когда tail — реально ЗНАЧЕНИЕ блока
+                    // (result-приёмник есть). Блок-как-STATEMENT (`consume X
+                    // { mo_eat(X) }`, без приёмника) — tail-position здесь НЕ
+                    // выносящая: тот же `mo_eat(X)` (consume-параметр) внутри
+                    // тела остаётся `E_CONSUME_BLOCK_MOVE_OUT` (п.4 §«Правила
+                    // формы», НЕ затронуто амендментом v3 — узкий scope: v3
+                    // только про tail/return ЗНАЧЕНИЯ, не про statement-tail).
+                    if result.is_some() {
+                        walk_guarded_escape_expr_multi(ctx, t, errors);
+                    } else {
+                        consume_walk_expr(ctx, t, errors);
+                    }
+                }
+            }
+            if newly_guarded {
+                ctx.block_guards.remove(&canon);
+            }
+            // Дренаж нарушений guard'а этого блока → E_CONSUME_BLOCK_MOVE_OUT.
+            let mut kept = Vec::new();
+            for (vname, vspan) in std::mem::take(&mut ctx.guard_violations) {
+                if vname == canon {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_CONSUME_BLOCK_MOVE_OUT] `{n}`: вынос владения из \
+                             consume-блока — только tail/return самого `{n}`; либо \
+                             возьмите `@share()`-копию. Внутри `consume {n} {{ … }}` \
+                             биндинг — ro-view + вызовы методов; cleanup блока \
+                             безусловно владеет значением (D188-амендмент, Plan 201; \
+                             дизарм-примитива нет намеренно).",
+                            n = orig
+                        ),
+                        vspan,
+                    ));
+                } else {
+                    kept.push((vname, vspan));
+                }
+            }
+            ctx.guard_violations = kept;
+            // 5. после блока X — Consumed (tail-вынос: владение уехало в
+            // result; иначе — cleanup блока закрыл значение).
+            ctx.mark_consumed_bypass_guard(orig, *span);
+            // result-приёмник: tail-вынос → owned-биндинг с obligation
+            // (тип X); иначе — обычный локал (тип блока best-effort неизвестен).
+            // Тип передаём только ИЗВЕСТНЫЙ registry (иначе None — generic
+            // `T` из хелпера заблокировал бы any-consume-method fallback
+            // walker'а при последующем `out.close()`).
+            if let Some(r) = result {
+                // Тип result'а: bare tail-вынос — тип X; non-bare tail (v3 /
+                // M-178: `consume box = consume b { BoomBox{boom: b, …} }`) —
+                // best-effort тип САМОГО tail-выражения (`infer_value_type`),
+                // НЕ тип X (значение блока — другой тип; брать тип X здесь
+                // давало ложный D133-not-consumed: obligation `box` типа
+                // D201Boom не кредитуется методами реального типа result'а).
+                let raw_result_ty = if tail_escape {
+                    ty.clone()
+                } else {
+                    body.trailing.as_ref().and_then(|t| ctx.infer_value_type(t))
+                };
+                let known_result_ty = raw_result_ty.filter(|t| {
+                    ctx.lin_reg.local_type_names.contains(t.as_str())
+                        || ctx.lin_reg.consume_types.contains(t.as_str())
+                        || ctx.lin_reg.consume_methods.contains_key(t.as_str())
+                });
+                if tail_escape || r.declared_consume {
+                    ctx.declare_consume_binding(&r.name, known_result_ty);
+                } else {
+                    ctx.declare(&r.name, None);
+                }
+                ctx.local_mut.insert(r.name.clone(), r.mutable || tail_escape || r.declared_consume);
             }
         }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
@@ -25963,6 +27340,419 @@ impl RefPlace {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Plan 201 (D188-амендмент v3, 2026-07-13): «однократный вынос через
+// выражение». Расширяет re-consume форму `consume X { … }`: tail-выражение
+// блока / `return EXPR` разрешены НЕ только как голый `X`, но и как EXPR, в
+// котором `X` встречается РОВНО ОДИН раз — АРГУМЕНТОМ consume-параметра
+// какого-либо вызова (свободная fn / метод / `Type.static`), на ЛЮБОЙ
+// глубине вложенности (`Ok(TlsStream.wrap(stream, session))`). Замыкание
+// внутри EXPR, захватывающее `X` — ошибка. Дизарм — в момент передачи
+// владения (вход в consuming-вызов); всё, что в EXPR вычисляется/фейлит ДО
+// этого момента, всё ещё видит cleanup взведённым (см. spec/decisions/
+// 03-syntax.md D188 §«Re-consume форма» — амендмент v3).
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Consume-индексы callee вызова (тот же классификатор форм, что и
+/// `consume_walk_expr`'s `Call`-рукав: `Member{obj:Ident}` метод, свободная
+/// `Ident` fn, `Path` (`Type.static` / `module.fn`)). Используется ТОЛЬКО
+/// read-only сканом `scan_guard_rec` — не мутирует `ctx`.
+fn call_consume_idxs(ctx: &ConsumeCtx, func_kind: &ExprKind) -> Vec<usize> {
+    match func_kind {
+        ExprKind::Member { obj, name: method } => {
+            if let ExprKind::Ident(recv) = &obj.kind {
+                let canon = ctx.canonical(recv);
+                let ty = ctx.var_types.get(&canon)
+                    .or_else(|| ctx.var_types.get(recv.as_str()))
+                    .cloned();
+                if let Some(ty) = ty {
+                    return ctx.reg.method_params
+                        .get(&(ty, method.clone())).cloned().unwrap_or_default();
+                }
+            }
+            Vec::new()
+        }
+        ExprKind::Ident(fname) => {
+            ctx.reg.fn_params.get(fname.as_str()).cloned().unwrap_or_default()
+        }
+        ExprKind::Path(parts) => {
+            if parts.len() == 2 {
+                if let Some(v) = ctx.reg.method_params
+                    .get(&(parts[0].clone(), parts[1].clone()))
+                {
+                    return v.clone();
+                }
+            }
+            if let Some(last) = parts.last() {
+                return ctx.reg.fn_params.get(last).cloned().unwrap_or_default();
+            }
+            Vec::new()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Read-only скан EXPR на предмет вхождений guarded-биндинга `canon`
+/// (вне замыканий) — каждое вхождение помечено `is_consume_pos` (аргумент
+/// consume-параметра вызова на этом уровне). Замыкания (`ClosureLight` /
+/// `Lambda` / trailing `Fn`), чьё тело ссылается на `canon` в ЛЮБОЙ форме —
+/// собираются отдельно в `closures` (span замыкания) — п.(в) амендмента v3.
+/// DSL trailing-блок (`f(args) { … }`) исполняется INLINE (не замыкание,
+/// см. `d157_scan_expr` тот же прецедент) — сканируется как обычный блок.
+fn scan_guard_rec(
+    ctx: &ConsumeCtx,
+    e: &Expr,
+    canon: &str,
+    occ: &mut Vec<(Span, bool)>,
+    closures: &mut Vec<Span>,
+) {
+    match &e.kind {
+        ExprKind::Ident(name) => {
+            if ctx.canonical(name) == canon {
+                occ.push((e.span, false));
+            }
+        }
+        ExprKind::ClosureLight { body, .. } => {
+            if closure_body_refs_guard(ctx, body, canon) {
+                closures.push(e.span);
+            }
+        }
+        ExprKind::Lambda { body, .. } => {
+            let (mut io, mut ic) = (Vec::new(), Vec::new());
+            scan_guard_rec(ctx, body, canon, &mut io, &mut ic);
+            if !io.is_empty() || !ic.is_empty() {
+                closures.push(e.span);
+            }
+        }
+        ExprKind::ClosureFull(fsb) => {
+            let (mut io, mut ic) = (Vec::new(), Vec::new());
+            scan_guard_fnbody(ctx, &fsb.body, canon, &mut io, &mut ic);
+            if !io.is_empty() || !ic.is_empty() {
+                closures.push(e.span);
+            }
+        }
+        ExprKind::Call { func, args, trailing } => {
+            let func_u = func.unwrap_turbofish();
+            let consume_idxs = call_consume_idxs(ctx, &func_u.kind);
+            if let ExprKind::Member { obj, .. } = &func_u.kind {
+                scan_guard_rec(ctx, obj, canon, occ, closures);
+            } else if !matches!(func_u.kind, ExprKind::Ident(_) | ExprKind::Path(_)) {
+                scan_guard_rec(ctx, func_u, canon, occ, closures);
+            }
+            for (i, a) in args.iter().enumerate() {
+                let ax = a.expr();
+                if let ExprKind::Ident(name) = &ax.kind {
+                    if ctx.canonical(name) == canon {
+                        occ.push((ax.span, consume_idxs.contains(&i)));
+                        continue;
+                    }
+                }
+                scan_guard_rec(ctx, ax, canon, occ, closures);
+            }
+            if let Some(t) = trailing {
+                match t {
+                    Trailing::Block(b) => scan_guard_block(ctx, b, canon, occ, closures),
+                    Trailing::Fn(fsb) => {
+                        let (mut io, mut ic) = (Vec::new(), Vec::new());
+                        scan_guard_fnbody(ctx, &fsb.body, canon, &mut io, &mut ic);
+                        if !io.is_empty() || !ic.is_empty() {
+                            closures.push(t.span());
+                        }
+                    }
+                    Trailing::LegacyBlockWithParams(tb) => {
+                        scan_guard_block(ctx, &tb.body, canon, occ, closures);
+                    }
+                }
+            }
+        }
+        ExprKind::Member { obj, .. } => scan_guard_rec(ctx, obj, canon, occ, closures),
+        ExprKind::Index { obj, index } => {
+            scan_guard_rec(ctx, obj, canon, occ, closures);
+            scan_guard_rec(ctx, index, canon, occ, closures);
+        }
+        ExprKind::TurboFish { base, .. } => scan_guard_rec(ctx, base, canon, occ, closures),
+        ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
+            scan_guard_rec(ctx, inner, canon, occ, closures);
+        }
+        ExprKind::As(inner, _) | ExprKind::Is(inner, _) => {
+            scan_guard_rec(ctx, inner, canon, occ, closures);
+        }
+        ExprKind::Unary { operand, .. } => scan_guard_rec(ctx, operand, canon, occ, closures),
+        ExprKind::Binary { left, right, .. } => {
+            scan_guard_rec(ctx, left, canon, occ, closures);
+            scan_guard_rec(ctx, right, canon, occ, closures);
+        }
+        ExprKind::Throw(inner) => scan_guard_rec(ctx, inner, canon, occ, closures),
+        ExprKind::Coalesce(a, b) => {
+            scan_guard_rec(ctx, a, canon, occ, closures);
+            scan_guard_rec(ctx, b, canon, occ, closures);
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { scan_guard_rec(ctx, s, canon, occ, closures); }
+            if let Some(en) = end { scan_guard_rec(ctx, en, canon, occ, closures); }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr { expr, .. } = p {
+                    scan_guard_rec(ctx, expr, canon, occ, closures);
+                }
+            }
+        }
+        ExprKind::RecordLit { type_name, fields, inferred_map_v } => {
+            // `[M-178-consume-field-ctor-from-var]` × D188 v3 (2026-07-13):
+            // consume-поле record-литерала — тоже consume-позиция (дизарм в
+            // момент конструирования литерала), симметрично consume-аргументу
+            // вызова. Non-consume поля — обычные вхождения. Анонимный
+            // литерал — структурный unique-match (`consume_fields_for_lit`);
+            // guarded-биндинг по построению consume-типен, gate не нужен.
+            let consume_field_names: Option<&HashSet<String>> =
+                if inferred_map_v.is_some() {
+                    None
+                } else {
+                    ctx.reg.consume_fields_for_lit(type_name, fields)
+                };
+            for f in fields {
+                let is_consume_field = !f.is_spread && consume_field_names
+                    .map_or(false, |s| s.contains(f.name.as_str()));
+                match &f.value {
+                    Some(v) => {
+                        if let ExprKind::Ident(name) = &v.kind {
+                            if ctx.canonical(name) == canon {
+                                occ.push((v.span, is_consume_field));
+                                continue;
+                            }
+                        }
+                        scan_guard_rec(ctx, v, canon, occ, closures);
+                    }
+                    // D52 punning `{ name }` — implied ident `name`.
+                    None if !f.is_spread => {
+                        if ctx.canonical(&f.name) == canon {
+                            occ.push((f.span, is_consume_field));
+                        }
+                    }
+                    None => {}
+                }
+            }
+        }
+        ExprKind::TupleLit(items) => {
+            for it in items { scan_guard_rec(ctx, it, canon, occ, closures); }
+        }
+        ExprKind::ArrayLit(items) => {
+            for it in items {
+                match it {
+                    ArrayElem::Item(ex) | ArrayElem::Spread(ex) =>
+                        scan_guard_rec(ctx, ex, canon, occ, closures),
+                }
+            }
+        }
+        ExprKind::If { cond, then, else_ } => {
+            scan_guard_rec(ctx, cond, canon, occ, closures);
+            scan_guard_block(ctx, then, canon, occ, closures);
+            match else_ {
+                Some(ElseBranch::Block(b)) => scan_guard_block(ctx, b, canon, occ, closures),
+                Some(ElseBranch::If(e2)) => scan_guard_rec(ctx, e2, canon, occ, closures),
+                None => {}
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            scan_guard_rec(ctx, scrutinee, canon, occ, closures);
+            for arm in arms {
+                match &arm.body {
+                    MatchArmBody::Expr(ex) => scan_guard_rec(ctx, ex, canon, occ, closures),
+                    MatchArmBody::Block(b) => scan_guard_block(ctx, b, canon, occ, closures),
+                }
+            }
+        }
+        ExprKind::Block(b) => scan_guard_block(ctx, b, canon, occ, closures),
+        _ => {}
+    }
+}
+
+/// Тело замыкания ссылается на `canon` (в ЛЮБОЙ форме — захват независимо
+/// от позиции)? Используется только для да/нет-детекта захвата (п.(в)).
+fn closure_body_refs_guard(ctx: &ConsumeCtx, body: &ClosureBody, canon: &str) -> bool {
+    let (mut io, mut ic) = (Vec::new(), Vec::new());
+    match body {
+        ClosureBody::Expr(ex) => scan_guard_rec(ctx, ex, canon, &mut io, &mut ic),
+        ClosureBody::Block(b) => scan_guard_block(ctx, b, canon, &mut io, &mut ic),
+    }
+    !io.is_empty() || !ic.is_empty()
+}
+
+fn scan_guard_fnbody(
+    ctx: &ConsumeCtx,
+    body: &FnBody,
+    canon: &str,
+    occ: &mut Vec<(Span, bool)>,
+    closures: &mut Vec<Span>,
+) {
+    match body {
+        FnBody::Expr(e) => scan_guard_rec(ctx, e, canon, occ, closures),
+        FnBody::Block(b) => scan_guard_block(ctx, b, canon, occ, closures),
+        FnBody::External => {}
+    }
+}
+
+fn scan_guard_block(
+    ctx: &ConsumeCtx,
+    b: &Block,
+    canon: &str,
+    occ: &mut Vec<(Span, bool)>,
+    closures: &mut Vec<Span>,
+) {
+    for s in &b.stmts {
+        match s {
+            Stmt::Expr(e) | Stmt::Throw { value: e, .. } =>
+                scan_guard_rec(ctx, e, canon, occ, closures),
+            Stmt::Return { value: Some(v), .. } => scan_guard_rec(ctx, v, canon, occ, closures),
+            Stmt::Let(decl) => scan_guard_rec(ctx, &decl.value, canon, occ, closures),
+            Stmt::Assign { value, .. } => scan_guard_rec(ctx, value, canon, occ, closures),
+            _ => {}
+        }
+    }
+    if let Some(t) = &b.trailing { scan_guard_rec(ctx, t, canon, occ, closures); }
+}
+
+/// Обрабатывает tail/return EXPR (НЕ голый `X`) под активным re-consume
+/// guard'ом `canon` (D188-амендмент v3). Возвращает `true` — санкционированный
+/// вынос (ровно одно вхождение `X`, в consume-позиции, без захватывающих
+/// замыканий): EXPR walk'ается с ВРЕМЕННО снятым guard'ом (реальный
+/// `consume_args`-путь помечает `X` Consumed естественно), затем guard
+/// восстанавливается на время, пока не отработает финальный drain вызывающего
+/// (`Stmt::ConsumeScope`/`Stmt::Return` caller решает сам, снимать ли guard
+/// насовсем). Возвращает `false` во всех прочих случаях — EXPR walk'ается
+/// нормально (guard активен); при нарушении (>1 вхождение, единственное
+/// вхождение не в consume-позиции, захватывающее замыкание) — диагностика
+/// уже добавлена в `errors` с уточнённым текстом (E_CONSUME_BLOCK_MOVE_OUT).
+/// Read-only решение для ОДНОГО guard'а `canon` относительно EXPR `e`:
+/// сканирует (без мутации `ctx`) и классифицирует. Не пушит диагностики —
+/// вызывающий решает (single-canon tail-путь бьёт сразу; multi-canon
+/// return-путь — собирает решения по ВСЕМ активным guard'ам одного EXPR
+/// прежде чем действовать, п.(е) — композиция с multi-var).
+fn scan_guard_decide(ctx: &ConsumeCtx, e: &Expr, canon: &str) -> (bool, Vec<(Span, bool)>, Vec<Span>) {
+    let mut occ: Vec<(Span, bool)> = Vec::new();
+    let mut closures: Vec<Span> = Vec::new();
+    scan_guard_rec(ctx, e, canon, &mut occ, &mut closures);
+    let sanctioned = closures.is_empty() && occ.len() == 1 && occ[0].1;
+    (sanctioned, occ, closures)
+}
+
+/// D188-амендмент v3 (non-consume-position fix, 2026-07-13, Plan 201):
+/// классификация `scan_guard_decide`'s `occ`/`closures` для ОДНОГО guard'а.
+/// - `Sanctioned` — ровно одно вхождение, В consume-позиции, без
+///   захватывающих замыканий → санкционированный вынос (disarm).
+/// - `Ordinary` — НИ ОДНОГО вхождения в consume-позиции (0 или сколько
+///   угодно обычных non-consume вхождений — receiver / view-/mut-
+///   аргумент), и нет захватывающих замыканий → ОБЫЧНОЕ использование, как
+///   в теле блока: НЕ ошибка, cleanup срабатывает штатно, дизарма нет.
+/// - `Violation` — захватывающее замыкание, ЛИБО ≥1 consume-вхождение
+///   вместе с ЕЩЁ каким-либо вхождением того же canon в том же EXPR
+///   (смешение выноса с дополнительным использованием — двойное
+///   использование при выносе).
+enum GuardScan { Sanctioned, Ordinary, Violation }
+
+fn classify_guard_scan(occ: &[(Span, bool)], closures: &[Span]) -> GuardScan {
+    if !closures.is_empty() {
+        return GuardScan::Violation;
+    }
+    let consume_count = occ.iter().filter(|(_, c)| *c).count();
+    if consume_count == 0 {
+        return GuardScan::Ordinary;
+    }
+    if occ.len() == 1 {
+        return GuardScan::Sanctioned;
+    }
+    GuardScan::Violation
+}
+
+/// Пушит E_CONSUME_BLOCK_MOVE_OUT-диагностику(и) для `GuardScan::Violation`
+/// (`occ`/`closures` от `scan_guard_decide`). Уточнённый текст по причине:
+/// захватывающее замыкание / смешение consume-выноса с ещё вхождением(ями).
+fn push_guard_escape_diags(
+    errors: &mut Vec<Diagnostic>,
+    display_name: &str,
+    occ: &[(Span, bool)],
+    closures: &[Span],
+) {
+    if !closures.is_empty() {
+        for cspan in closures {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_CONSUME_BLOCK_MOVE_OUT] `{n}`: замыкание внутри tail/return-\
+                     выражения захватывает `{n}` — вынос владения из consume-блока \
+                     через замыкание запрещён (D188-амендмент v3, Plan 201). \
+                     Санкционированные формы — голый `{n}` либо ровно одно вхождение \
+                     `{n}` как аргумент consume-параметра.",
+                    n = display_name
+                ),
+                *cspan,
+            ));
+        }
+        return;
+    }
+    if occ.len() > 1 {
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_CONSUME_BLOCK_MOVE_OUT] `{n}`: `{n}` встречается в tail/return-\
+                 выражении {cnt} раз(а), включая consume-позицию — санкционированный \
+                 вынос допускает РОВНО одно вхождение, как аргумент consume-параметра \
+                 (D188-амендмент v3, Plan 201). Для лишних вхождений возьмите \
+                 `@share()`-копию.",
+                n = display_name, cnt = occ.len()
+            ),
+            occ[0].0,
+        ));
+    }
+    // occ.len() <= 1 здесь недостижимо через классификатор `classify_guard_scan`
+    // (0 вхождений consume-позиции → Ordinary, отфильтровано ДО вызова этой
+    // ф-ции; 1 вхождение consume-позиции → Sanctioned, тоже не сюда) —
+    // остаётся только `occ.len() > 1` (смешение) выше, либо только closures
+    // (обработано веткой выше).
+}
+
+/// Multi-canon помощник для tail/return EXPR (`return EXPR` — п.4, и
+/// block-tail's композиция с внешними уровнями multi-var-вложения, п.(е)):
+/// решает НЕЗАВИСИМО по КАЖДОМУ активному re-consume guard'у в
+/// `ctx.block_guards` (в т.ч. guard'ы объемлющих уровней вложенного
+/// desugar'а `consume A { consume B { … } }`), затем walk'ает EXPR ОДИН РАЗ
+/// с временно снятыми guard'ами для всех санкционированных канонов —
+/// каждый дизармится побочным эффектом (`mark_consumed_bypass_guard`)
+/// независимо. Возвращает множество канонов, чей вынос был санкционирован
+/// ЭТИМ EXPR (может быть >1 — разные уровни одного multi-var блока).
+///
+/// D188-амендмент v3 non-consume-position fix (2026-07-13, Plan 201):
+/// `GuardScan::Ordinary` (guard'ится, но НЕТ ни одного consume-вхождения) —
+/// НЕ санкционирован (canon остаётся armed, никакого disarm), но ТАКЖЕ
+/// НЕ нарушение — никакой диагностики. Реальный walk (`consume_walk_expr`
+/// ниже, guard всё ещё активен) обрабатывает EXPR как обычное
+/// использование: consume-receiver-методы на guarded-имени по-прежнему
+/// ловятся через `mark_consumed`/`guard_violations` (независимый механизм,
+/// не завязан на этот scan) — этот branch расширяет легальность ТОЛЬКО
+/// для не-consume-позиционных использований (view-borrow/receiver).
+fn walk_guarded_escape_expr_multi(
+    ctx: &mut ConsumeCtx,
+    e: &Expr,
+    errors: &mut Vec<Diagnostic>,
+) -> HashSet<String> {
+    let active_canons: Vec<String> = ctx.block_guards.iter().cloned().collect();
+    let mut to_disarm: Vec<String> = Vec::new();
+    for canon in &active_canons {
+        let (_, occ, closures) = scan_guard_decide(ctx, e, canon);
+        match classify_guard_scan(&occ, &closures) {
+            GuardScan::Sanctioned => to_disarm.push(canon.clone()),
+            GuardScan::Ordinary => {}
+            GuardScan::Violation => push_guard_escape_diags(errors, canon, &occ, &closures),
+        }
+    }
+    for c in &to_disarm { ctx.block_guards.remove(c); }
+    consume_walk_expr(ctx, e, errors);
+    for c in &to_disarm {
+        ctx.block_guards.insert(c.clone());
+        ctx.mark_consumed_bypass_guard(c, e.span);
+    }
+    to_disarm.into_iter().collect()
+}
+
 fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic>) {
     match &e.kind {
         // ─── Листья ───
@@ -26121,8 +27911,18 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                     // gate the name-only ro/mut registries (no receiver-type
                                     // resolution here) misfire broadly across std (lazy iterator
                                     // adapters, http builders, `chars().next()`, …).
-                                    let inner_is_self_return = ctx.reg.recv_returning.iter()
-                                        .any(|(_, m)| m == inner_method.as_str());
+                                    // `[M-178-server-typed-body]` fix: arity-scoped (not
+                                    // name-only) — `recv_returning` collapses cross-type
+                                    // same-name pairs at DIFFERENT arity (e.g. `ServeMux
+                                    // mut @post(pattern, handler) -> @`, arity 2, vs
+                                    // `HttpClient @post(url) -> RequestBuilder`, arity 1,
+                                    // a plain non-fluent constructor) into one bucket keyed
+                                    // only by "post", causing this check to misfire on the
+                                    // UNRELATED arity-1 call. `recv_returning_arity` mirrors
+                                    // `inner_ever_mut_same_arity` below — same arity-matching
+                                    // discipline the escape-hatch already relies on.
+                                    let inner_is_self_return = ctx.reg.recv_returning_arity.iter()
+                                        .any(|(_, m, a)| m == inner_method.as_str() && *a == inner_arity);
                                     // POSITIVE evidence only: reject ONLY when `inner_method`
                                     // is a CONFIRMED registered ro-INSTANCE method (present in
                                     // `ro_methods_arity` — populated exclusively for
@@ -26723,9 +28523,76 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                 }
             }
         }
-        ExprKind::RecordLit { fields, .. } => {
+        ExprKind::RecordLit { type_name, fields, inferred_map_v } => {
+            // `[M-178-consume-field-ctor-from-var]` fix: consume-поля этого
+            // типа литерала. Типизированный — прямой lookup; анонимный
+            // (`=> { tcp: stream, session }`, тип из контекста) — структурный
+            // unique-match (`consume_fields_for_lit`). Map-coercion литерал
+            // (`inferred_map_v`) — не record, пропуск. Для анонимного
+            // резолва дополнительный gate на consume-релевантность самого
+            // биндинга (см. ниже) давит структурные false-positives.
+            let anonymous = type_name.is_none();
+            let consume_field_names: Option<HashSet<String>> =
+                if inferred_map_v.is_some() {
+                    None
+                } else {
+                    ctx.reg.consume_fields_for_lit(type_name, fields).cloned()
+                };
+            let consume_field_names = consume_field_names.as_ref();
+            // Gate для анонимного литерала: биндинг должен быть сам
+            // consume-релевантен (declared-consume, или его известный тип —
+            // consume-тип). Типизированный литерал — без gate (симметрия с
+            // `consume_args`, безусловный mark).
+            let binding_gate = |ctx: &ConsumeCtx, name: &str| -> bool {
+                if !anonymous { return true; }
+                let canon = ctx.canonical(name);
+                if ctx.all_declared_consume.contains(&canon)
+                    || ctx.all_declared_consume.contains(name) {
+                    return true;
+                }
+                ctx.var_types.get(&canon)
+                    .or_else(|| ctx.var_types.get(name))
+                    .map_or(false, |t| ctx.lin_reg.consume_types.contains(t)
+                        || ctx.consume_bound_generics.contains(t))
+            };
             for f in fields {
-                if let Some(v) = &f.value { consume_walk_expr(ctx, v, errors); }
+                if let Some(v) = &f.value {
+                    consume_walk_expr(ctx, v, errors);
+                    // Plan 201 (D188-амендмент): move guarded-биндинга
+                    // re-consume блока в поле конструктора (вкл. consume-поле,
+                    // [M-178-consume-field-ctor-from-var]) — move-out:
+                    // guard-нарушение → E_CONSUME_BLOCK_MOVE_OUT (дренаж).
+                    if let ExprKind::Ident(vn) = &v.kind {
+                        let vcanon = ctx.canonical(vn);
+                        if ctx.block_guards.contains(&vcanon) {
+                            ctx.guard_violations.push((vcanon, v.span));
+                        } else if consume_field_names
+                            .map_or(false, |s| s.contains(f.name.as_str()))
+                            && binding_gate(ctx, vn)
+                        {
+                            // `[M-178-consume-field-ctor-from-var]`: голая
+                            // owned-переменная / consume-параметр в
+                            // consume-поле record-литерала — потребление
+                            // этого биндинга (как передача в consume-параметр
+                            // вызова, см. `consume_args`).
+                            ctx.mark_consumed(vn, v.span);
+                        }
+                    }
+                } else if !f.is_spread {
+                    // D52 field punning `{ name }` — implied value = ident
+                    // `name`. Тот же move-эффект, что и explicit `{ name: name }`
+                    // (которая, впрочем, запрещена D52 §2 — редундантная форма).
+                    ctx.use_var(&f.name, f.span, errors);
+                    let vcanon = ctx.canonical(&f.name);
+                    if ctx.block_guards.contains(&vcanon) {
+                        ctx.guard_violations.push((vcanon, f.span));
+                    } else if consume_field_names
+                        .map_or(false, |s| s.contains(f.name.as_str()))
+                        && binding_gate(ctx, &f.name)
+                    {
+                        ctx.mark_consumed(&f.name, f.span);
+                    }
+                }
             }
         }
         ExprKind::TaggedTemplate { tag, args, .. } => {

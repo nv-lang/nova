@@ -1,0 +1,85 @@
+// Plan 196.5 producers-widen — bonus corpus (B11x). `fn[T] []T @method(...)` user-
+// extension methods on a slice receiver (D145) whose return shape is one the
+// `emit_c.rs` `infer_call_ret_c`'s `B11x_novaarray_methods` `_ =>` catch-all sub-arm
+// (obj_ty starts with `NovaArray_`, method name is NOT one of the built-in
+// get/pop/push/copy_from/copy_within/fill/append_zero/append/insert/reserve/
+// truncate/compare/len/capacity/is_empty/ptr/as_mut_ptr names, ~emit_c.rs 49517)
+// is specifically built to decode via `mono_method_decls` + hand-rolled T-substitution
+// (bare-T / `[]T` / `Option[T]` / non-T-dependent shapes). Distinct method NAMES from
+// `d145_fn_prefix_receiver_generic.nv` (avoids the shared-module clash D145 already
+// warns about) but the SAME receiver family, deliberately covering all four return
+// shapes that arm's inner `match ret_ty` distinguishes. Does NOT flip/modify the arm —
+// corpus-only, per 196.5 §fallback (see docs/plans/196.5-producers-widen-notes.md
+// §B11x for the NOVA_TRACE_ICR/NOVA_TRACE_W1_SHADOW hit/miss evidence this file was
+// built to produce).
+// Spec: spec/decisions/02-types.md §D145.
+module spec_tests.conformance
+
+// Shape 1: bare-T return — `_ => {}` sub-arm's `path[0] == t_name` case (emit_c.rs
+// ~49550-49559).
+fn[T] []T @b11x_last() -> T => @[@len() - 1]
+
+// Shape 2: `[]T` return — the `TypeRef::Array(inner)` case (~49560-49572). Echoes
+// the receiver. (The fresh-`Vec[T].new()`-inside-body shape used to hit a separate
+// record-schema gap — `Vec____Nova_T_p not in record_schemas` — FIXED in Plan 196.5
+// closure-lowering-fix wave; covered by d145_prefix_generic_vec_construct.nv.)
+fn[T] []T @b11x_double_up() -> []T => @
+
+// Shape 3: `Option[T]` return — the `Option[T]` case (~49573-49587).
+fn[T] []T @b11x_maybe_first() -> Option[T] {
+    if @is_empty() {
+        None
+    } else {
+        Some(@[0])
+    }
+}
+
+// Shape 4: non-T-dependent return (`int`) — falls PAST the inner match to the
+// direct `type_ref_to_c(ret_ty)` branch (~49591-49598).
+fn[T] []T @b11x_count() -> int => @len()
+
+test "B11x user-extension array method — bare-T return, int elem (196.5 corpus)" {
+    ro xs []int = [10, 20, 30]
+    assert(xs.b11x_last() == 30)
+}
+
+test "B11x user-extension array method — bare-T return, str elem (196.5 corpus)" {
+    ro xs []str = ["a", "bb", "ccc"]
+    assert(xs.b11x_last() == "ccc")
+}
+
+test "B11x user-extension array method — []T return, int elem (196.5 corpus)" {
+    ro xs []int = [1, 2, 3]
+    ro echoed = xs.b11x_double_up()
+    assert(echoed.len() == 3)
+    assert(echoed[0] == 1)
+    assert(echoed[2] == 3)
+}
+
+test "B11x user-extension array method — []T return, str elem (196.5 corpus)" {
+    ro xs []str = ["x", "y"]
+    ro echoed = xs.b11x_double_up()
+    assert(echoed.len() == 2)
+    assert(echoed[0] == "x")
+    assert(echoed[1] == "y")
+}
+
+test "B11x user-extension array method — Option[T] return, both branches (196.5 corpus)" {
+    ro xs []int = [7, 8]
+    ro some_r = xs.b11x_maybe_first()
+    match some_r {
+        Some(v) => assert(v == 7)
+        None => assert(false)
+    }
+    ro empty []int = []
+    ro none_r = empty.b11x_maybe_first()
+    match none_r {
+        Some(_) => assert(false)
+        None => assert(true)
+    }
+}
+
+test "B11x user-extension array method — non-T-dependent int return (196.5 corpus)" {
+    ro xs []str = ["a", "b", "c", "d"]
+    assert(xs.b11x_count() == 4)
+}

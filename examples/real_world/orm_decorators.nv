@@ -164,8 +164,7 @@ export fn with_read_replica(primary Effect[Db], replica Effect[Db]) -> Effect[Db
 // - `with_read_replica` — на самом верху, маршрутизирует по типу
 //   операции **до** того, как остальные декораторы что-то делают
 //   с запросом.
-export fn build_db(primary Effect[Db], replica Effect[Db], current_user_id u64)
-    -> Effect[Db] {
+export fn build_db(primary Effect[Db], replica Effect[Db], current_user_id u64) -> Effect[Db] {
     ro with_sd_primary = with_soft_delete(primary)
     ro with_sd_replica = with_soft_delete(replica)
     ro with_audited    = with_audit(with_sd_primary, current_user_id)

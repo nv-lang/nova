@@ -13,6 +13,15 @@
 //!   Rust `include_bytes!`); файл вызова определяется по `span.file_id`
 //!   через `module.peer_files`, fallback — entry-файл;
 //! - выход из дерева проекта наружу — ошибка (`E_EMBED_OUTSIDE_PROJECT`);
+//!   граница — ОБЫЧНО общий CU `project_root`, но per-file_id (Plan 193
+//!   Ф.2 gap-2, см. `per_file_embed_root`): peer-файл, физически лежащий
+//!   ВНЕ дерева `project_root` (peer из внешней `[dependencies]`
+//!   path/git-зависимости, напр. folder=module co-equal `*_test.nv` в
+//!   sibling-репе), проверяется против СВОЕЙ СОБСТВЕННОЙ package root
+//!   (ближайший `nova.toml`, та же граница что `imports::package_root_of`
+//!   даёт относительным импортам) — иначе легитимный `embed(...)` внутри
+//!   такой зависимости ловил бы ложный `E_EMBED_OUTSIDE_PROJECT` для
+//!   ЛЮБОГО потребителя этой зависимости;
 //! - файл не найден / не читается — `E_EMBED_NOT_FOUND`;
 //! - список встроенных файлов возвращается caller'у: nova-cli включает
 //!   их содержимое в fingerprint кэша сборки (build_cache::compute_c_key) —
@@ -47,10 +56,25 @@ pub fn resolve_embeds(
     // пропускается (файл всё равно должен существовать).
     let canon_root = project_root.canonicalize().ok();
 
+    // Plan 193 Ф.2 gap-2: per-file_id embed-check root (см. module doc-comment
+    // + `per_file_embed_root`). Вычисляется для каждого peer-файла (включая
+    // entry, который тоже присутствует в `module.peer_files` под
+    // `MAIN_FILE_ID` — Plan 42.4); файлы без записи в `roots` (не должно
+    // случаться при непустом `peer_files`, но на всякий случай) падают на
+    // `entry_root`.
+    let mut roots: HashMap<FileId, PathBuf> = HashMap::new();
+    for pf in &module.peer_files {
+        if let Some(root) = per_file_embed_root(&pf.path, &canon_root) {
+            roots.insert(pf.file_id, root);
+        }
+    }
+    let entry_root = per_file_embed_root(entry_path, &canon_root);
+
     let mut ctx = EmbedCtx {
         dirs,
         entry_dir,
-        canon_root,
+        roots,
+        entry_root,
         files: Vec::new(),
         diags: Vec::new(),
     };
@@ -78,10 +102,41 @@ pub fn resolve_embeds(
     }
 }
 
+/// Plan 193 Ф.2 gap-2: embed-check boundary для `file`. Если `file`
+/// физически лежит ВНУТРИ `shared_root`'s дерева (обычный случай —
+/// entry-файл, его folder-module peers, любой intra-workspace peer) —
+/// возвращает `shared_root` НЕИЗМЕНЁННЫМ (существовавшее до gap-2
+/// поведение, никакого дрейфа для уже упражнённых кейсов). Иначе (peer
+/// пришёл из внешней `[dependencies]` path/git-зависимости — sibling-репа,
+/// физически вне `shared_root`) — граница СУЖАЕТСЯ до собственной package
+/// root `file`'а (ближайший `nova.toml` вверх по дереву, та же граница,
+/// что `imports::package_root_of` даёт относительным импортам) —
+/// легитимные `embed(...)` внутри зависимости резолвятся относительно ЕЁ
+/// СОБСТВЕННОГО дерева, не дерева импортёра. Если ни `shared_root`, ни
+/// package root не резолвятся (виртуальный/несуществующий путь) —
+/// fallback на `shared_root.clone()` (тот же soft-skip как раньше: `None`
+/// → проверка глушится в `try_replace_embed`).
+fn per_file_embed_root(file: &Path, shared_root: &Option<PathBuf>) -> Option<PathBuf> {
+    let canon_dir = file.parent().and_then(|p| p.canonicalize().ok());
+    if let (Some(dir), Some(root)) = (&canon_dir, shared_root) {
+        if dir.starts_with(root) {
+            return Some(root.clone());
+        }
+    }
+    crate::imports::package_root_of(file)
+        .and_then(|p| p.canonicalize().ok())
+        .or_else(|| shared_root.clone())
+}
+
 struct EmbedCtx {
     dirs: HashMap<FileId, PathBuf>,
     entry_dir: PathBuf,
-    canon_root: Option<PathBuf>,
+    /// Plan 193 Ф.2 gap-2: per-file_id embed-check boundary (см.
+    /// `per_file_embed_root`); `None`-запись (файл вообще не резолвил
+    /// никакой root) — намеренно НЕ хранится, `root_for` тогда падает на
+    /// `entry_root`.
+    roots: HashMap<FileId, PathBuf>,
+    entry_root: Option<PathBuf>,
     files: Vec<PathBuf>,
     diags: Vec<Diagnostic>,
 }
@@ -92,6 +147,15 @@ impl EmbedCtx {
             .get(&file_id)
             .map(|p| p.as_path())
             .unwrap_or(self.entry_dir.as_path())
+    }
+
+    /// Plan 193 Ф.2 gap-2: embed-check root для конкретного вызова, по
+    /// `file_id` вызывающего файла (`e.span.file_id`) — см. `roots` doc.
+    fn root_for(&self, file_id: FileId) -> Option<&Path> {
+        self.roots
+            .get(&file_id)
+            .map(|p| p.as_path())
+            .or(self.entry_root.as_deref())
     }
 
     /// Если `e` — вызов `embed(...)`, заменить его на HexBlobLit (или
@@ -153,7 +217,7 @@ impl EmbedCtx {
                 return true;
             }
         };
-        if let Some(root) = &self.canon_root {
+        if let Some(root) = self.root_for(e.span.file_id) {
             if !canon.starts_with(root) {
                 self.diags.push(Diagnostic::new(
                     format!(

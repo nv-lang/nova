@@ -254,6 +254,39 @@ module parent.name                          // первая строка фай�
    `decl ↔ canonical path`); declaration — это **identity check**,
    не routing key.
 
+> **Амендмент — keying-семантика реестра модулей (D78 rev-4, Plan 202,
+> 2026-07-13).** П.4 выше корректно описывал НАМЕРЕНИЕ («declaration —
+> identity check, не routing key»), но до Plan 202 внутренний реестр
+> модулей (diamond-dep dedup + cycle-guard резолвера, `ModuleSigTable`
+> сигнатурного pre-pass'а) фактически **키ировался по declaration**, а не
+> по canonical path. Следствие: **декларация обычно 2 сегмента** (п.1) и
+> зависит только от (parent, target) — по построению НЕ уникальна для
+> глубоких деревьев (два разных поддерева с совпавшим `(parent, target)`
+> вынуждены D29 rev-3 к ОДИНАКОВОЙ декларации). Дубль decl из разных
+> физических модулей тихо ГЛОТАЛ экспорты второго (реестр считал его уже
+> resolved) — без diagnostics, с обманным «undefined identifier» на
+> call-site (research 2026-07-13-module-naming-two-segment-review.md §2а,
+> маркер `[M-d78-duplicate-decl-module-swallow]`).
+>
+> **Фикс:** реестр модулей (резолвер + sig-table) теперь **키ируется по
+> canonical filesystem path** — ровно как задумано п.4. Следствие:
+> **дубль declaration из РАЗНЫХ физических модулей — легален и безвреден**
+> (оба резолвятся, оба namespace живы). Declaration остаётся **чистой
+> чексуммой + битом членства** (п.2 refactor safety, peer vs независимый
+> модуль — см. «Модуль — файл или папка» выше) — НИКОГДА не источником
+> identity для реестра. Mangling/codegen-слой (D307 file-discriminated
+> free-fn, D381 collision-aware types) синхронно расширен: при декларации,
+> расшаренной ≥2 физическими модулями в одном compile unit, C-символ
+> дополнительно дизамбигьюируется физической идентичностью (canonical
+> path), не только декларацией — иначе тот же класс дефекта воспроизвёлся
+> бы на уровне C-имён (redefinition).
+>
+> Ретракция rev-3.1 (`internal/` 3-сегментное исключение) как ставшей
+> ненужной заплаткой вокруг ИМЕННО этого дефекта — отдельный followup
+> (Plan 202 Ф.4, backlog; НЕ выполнена в этом слиянии — internal/-паттерн
+> продолжает работать неизменным, просто более не единственный обходной
+> путь).
+
 **Diagnostic codes (compiler enforcement):**
 
 | Код | Кogда |
@@ -1072,13 +1105,24 @@ realtime = []
 
 #### Source root — корень пакета
 
-Source root (корень для резолвинга путей module ↔ file) — **сам корень
-пакета** (директория с `nova.toml`). Отдельной директории `src/` и
-настройки `[lib] src` **нет** (2026-05-22: убраны). Это совпадает с
-фактической практикой — `std/`, `examples/`, `nova_tests/` кладут модули
-прямо в корень пакета.
+Source root (корень для резолвинга путей module ↔ file) — директория,
+определяемая ключом `[lib] src` в `nova.toml` пакета; при отсутствии ключа
+(или `src = "."`) — **сам корень пакета** (директория с `nova.toml`).
 
-`module admin.audit` ↔ `<package-root>/admin/audit.nv`.
+> **Амендмент (Plan 195, владелец 2026-07-10) — `src/` канонизирован.**
+> Прежнее решение 2026-05-22 («отдельной `src/` и `[lib] src` нет, убраны»)
+> **отменено**. Канон пакета: `nova.toml` (+ `README`/`LICENSE` + `native/`
+> для native-backed) в корне, весь `.nv` — в `src/` (как Rust/npm/Python/Zig).
+> Механизм `[lib] src = "src"` — не legacy-совместимость, а **стандартная
+> раскладка** для новых пакетов (эталон — `nova-tls`). `std` переведён на
+> этот канон тем же заходом (`std/nova.toml`: `[lib] src = "src"`,
+> `std/src/**` — 314 файлов, module-path НЕ изменился: `std/src/encoding/
+> base64.nv` по-прежнему объявляет `module std.encoding.base64`). Плоская
+> раскладка (`src = "."`) остаётся легальной (мелкие/сгенерированные
+> пакеты), но не рекомендуется для новых пакетов.
+
+`module admin.audit` ↔ `<package-source-root>/admin/audit.nv` (для пакета
+без `[lib] src` это то же самое, что `<package-root>/admin/audit.nv`).
 
 Резолвер сканирует `.nv`-файлы от корня пакета, **исключая** служебные
 директории: `target/`, `.git/`, `.nova-cache/` и скрытые (`.`-префикс).
@@ -1109,6 +1153,57 @@ error: module declaration does not match file path
 
 Это AI-friendly: LLM получает не просто ошибку, а конкретное действие.
 
+#### Root peers — `.nv`-файлы прямо в source root (амендмент D78 rev-4, Plan 202, 2026-07-13)
+
+**Что.** `.nv`-файлы, лежащие ПРЯМО в source root пакета (без
+промежуточной папки), МОГУТ объявлять **однoсегментную** декларацию
+`module <package>` — peers корневого модуля пакета (аналог Rust `lib.rs`).
+Легально ДОПОЛНИТЕЛЬНО к существующей независимой форме
+`module <package>.<stem>` (rev-3, back-compat) — оба варианта могут
+сосуществовать в одном source root («смешанный корень», см. ниже).
+
+**Зачем.** Устраняет системный статтер: пакет с одним доменным модулем,
+названным как сам пакет, — самый частый форм-фактор пакета в любой
+экосистеме — раньше был вынужден заводить папку-обёртку с именем пакета
+ради «одного модуля из многих файлов». Живой пример — nova-tls
+(`[package] name = "tls"`): `src/tls/{client,server,stream}.nv` были
+вынуждены объявлять `module tls.tls` (parent = имя папки `tls`, target =
+сама папка `tls`), потребитель писал `import tls.tls.{TlsStream}`. После
+root peers файлы переезжают на уровень выше — `src/{client,server,
+stream}.nv`, декларация `module tls`, потребитель пишет
+`import tls.{TlsStream}` — ровно как `lib.rs` у Cargo. Форма 2
+(«collapse», одна папка с именем пакета схлопывается) отдельно не
+вводится — root peers как единственное правило проще и покрывает тот же
+случай.
+
+**Правило.**
+- Root-peer файл — `.nv` файл, чей родитель == `source_root` пакета
+  (директория `nova.toml`, либо `[lib] src`, если задан), объявляющий
+  `module <package_name>` (декларация = имя пакета, один сегмент).
+- Все root-peer файлы одного пакета — peers друг другу: делят namespace
+  БЕЗ import между собой (Rule C, как обычные folder-module peers).
+- **Импорт.** Внутри своего пакета независимый файл того же source root
+  обращается к root peers через `import <package_name>.{Names}` (голое
+  имя пакета — один сегмент). Из другого пакета (через `[dependencies]`)
+  — `import <dep_name>.{Names}`, тот же однoсегментный вид: это и решает
+  статтер `tls.tls` для nova-tls — `import tls.{TlsStream}` вместо
+  `import tls.tls.{TlsStream}`.
+- **Смешанный корень — явно допустим.** В одном source root ОДНОВРЕМЕННО
+  могут жить root-peer файлы (`module tls`) и независимые single-file
+  модули (`module tls.util`) — декларация = бит членства, ровно как
+  внутри любой обычной папки (см. «Модуль — файл или папка» выше).
+  Независимый файл того же source root, объявивший `<package>.<stem>`,
+  остаётся легальным (back-compat — существующие пакеты не ломаются).
+- Root peers применяются ТОЛЬКО к прямым детям source root; вложенные
+  папки продолжают работать по обычному rev-3 правилу `parent.target`
+  (root peers не «протекают» вглубь дерева — `src/x509/cert.nv` не
+  становится root-peer-eligible).
+
+**Диагностика.** Неверная декларация в файле, лежащем прямо в source
+root, — по-прежнему `E_D78_MODULE_PATH_MISMATCH` (сообщение теперь
+перечисляет rev-3, rev-1 legacy И rev-4 root-peer ожидаемые формы; ни
+одна не совпала — та же hard-error семантика, что и раньше).
+
 #### Структура nova-lang репозитория
 
 Сам репозиторий языка (этот) использует **specific layout**, который
@@ -1118,19 +1213,21 @@ error: module declaration does not match file path
 ```
 nova-lang/
 ├── compiler-codegen/        Rust компилятор: парсер, type-checker, treewalk-interp + C-codegen
-├── std/                     стандартная библиотека Nova (.nv)
-│   ├── collections/         hashmap, set, deque, vec, queue, ...
-│   ├── crypto/              md5, sha1, sha256, hmac, jwt
-│   ├── encoding/            base64, hex, json, csv, ini, toml, url
-│   ├── identifiers/         uuid, ulid, snowflake
-│   ├── checksums/           crc32, fnv
-│   ├── time/                duration, cron
-│   ├── path/                path, glob
-│   ├── math/                complex, statistics
-│   ├── text/                regex, markdown_minimal, diff
-│   ├── data/                semver, semver_range, sql
-│   ├── concurrency/         rate_limiter, retry
-│   └── (новые домены — net/, io/, testing/, и т.д.)
+├── std/                     стандартная библиотека Nova — package root (nova.toml: [lib] src = "src")
+│   ├── nova.toml
+│   └── src/                 весь `.nv` (Plan 195 — std на src/; module-path НЕ включает "src")
+│       ├── collections/     hashmap, set, deque, vec, queue, ...
+│       ├── crypto/          md5, sha1, sha256, hmac, jwt
+│       ├── encoding/        base64, hex, json, csv, ini, toml, url
+│       ├── identifiers/     uuid, ulid, snowflake
+│       ├── checksums/       crc32, fnv
+│       ├── time/            duration, cron
+│       ├── path/            path, glob
+│       ├── math/            complex, statistics
+│       ├── text/            regex, markdown_minimal, diff
+│       ├── data/            semver, semver_range, sql
+│       ├── concurrency/     rate_limiter, retry
+│       └── (новые домены — net/, io/, testing/, и т.д.)
 ├── examples/                демо-программы и tutorial snippets
 │   └── *.nv                 (НЕ stdlib — это именно examples)
 ├── nova_tests/              .nv-тесты bootstrap'а (package `nova_tests`)
@@ -1145,10 +1242,12 @@ nova-lang/
    которые **используют** stdlib.
 
 2. **Имя папки `std/` = префикс модуля `std.`.** Module path 1:1
-   соответствует file path **без специальных маппингов** (см. правило
-   `Path / module enforcement` выше). Файл `std/encoding/base64.nv`
+   соответствует file path от source root (`std/src/`, см. амендмент
+   Plan 195 выше) **без специальных маппингов** (см. правило
+   `Path / module enforcement` выше). Файл `std/src/encoding/base64.nv`
    объявляет `module std.encoding.base64`; ничего не разворачивается
-   в имени, ничего не подразумевается.
+   в имени, ничего не подразумевается (слово `src` в module-path не
+   участвует).
 
 3. **Группировка по домену, не по типу артефакта.** Каждая папка в
    `std/` — semantic domain (`crypto`, `encoding`, `time`),
@@ -1157,7 +1256,7 @@ nova-lang/
    см. [03-syntax.md → D29](03-syntax.md#d29).
 
 4. **Плоская иерархия внутри домена.** Без подпапок второго уровня
-   (`std/crypto/md5.nv`, не `std/crypto/hash/md5.nv`). Если
+   (`std/src/crypto/md5.nv`, не `std/src/crypto/hash/md5.nv`). Если
    домен растёт до 15+ файлов — рассматривать подкатегорию.
 
 5. **Прецеденты.** Go (`net/http/`, `encoding/json/`), Python
@@ -1190,6 +1289,7 @@ nova-lang/
 | Имя пакета (`nova.toml [package] name`) | `<пакет>` (snake, без префикса) | `tls`, `http` |
 | Корень модуля | `<пакет>.*` (path 1:1 = module) | `import tls.{TlsStream}` |
 | Native-артефакты | подкаталог `native/` пакета | `native/tls_shim/` |
+| C-символы шима | публичные (extern для .nv) — `<пакет>_*`; static-хелперы — `_<пакет>_*` (или `_<аббр>_*`, как `_nn2_*` в net.c); **`nova_*` зарезервирован рантайму** | `tls_read_tls`, `_tls_buf_ensure` |
 
 Префикс `nova-` на **репозитории** (не на имени пакета) отделяет
 экосистемную принадлежность от короткого импорта: репозиторий
@@ -1212,6 +1312,27 @@ Native-backed пакет декларирует свои C-артефакты ч
 > собираться БЕЗ Rust/cargo. Единственный native-канон — `[ffi]` (.c+.lib).
 > Механизм удалён из `manifest.rs`/`test_runner.rs` (волна `tls-mbedtls-195`);
 > TLS-бэкенд переведён rustls→mbedTLS (C). Амендирует Plan 192-абзац выше.
+
+> **Амендмент (Plan 193 Ф.2 / 195 vendored, 2026-07-13) — расширение `[ffi]`:**
+> - **`lib_dirs = ["..."]`** — каталоги поиска `libs` (`-L`-propagation во все три
+>   тулчейна); пути относительно каталога `nova.toml` пакета. При объявленном
+>   `lib_dirs` включается **detect-and-degrade**: отсутствующая либа даёт тестам
+>   честный `SKIP «[ffi] lib <name> not found in lib_dirs»` вместо link-FAIL.
+> - **`vendor_src_dirs = ["..."]`** — каталоги vendored C-исходников; если либа из
+>   `libs` не найдена в `lib_dirs`, тулчейн ОДИН раз компилирует все `.c` из этих
+>   каталогов (clang/cl, калька libuv build-and-cache) и архивирует в
+>   `lib_dirs[0]` под ожидаемым именем — далее кэш по наличию файла. Generic:
+>   тулчейн не знает имён библиотек (эталон — mbedTLS в `nova-tls`).
+> - Каждой найденной/собранной либе шим-код получает define
+>   **`NOVA_FFI_HAVE_<LIB>`** (uppercase имя) — для условной компиляции реального
+>   пути против stub'а.
+> **Границы `src/`-канона (владелец 2026-07-13):** `src/` обязателен для БИБЛИОТЕЧНЫХ пакетов
+> (отделяет отгружаемый API-код: `std/src/`, `nova-tls/src/`). ТЕСТОВЫЕ/витринные корпуса живут БЕЗ
+> `src/`-обёртки — `spec_tests/`, `examples/` (аналогия Rust: `tests/`/`examples/` рядом с `src`,
+> не внутри): у них нет экспортируемого API, содержимое и есть контент.
+> - `[ffi]`-конфиг **зависимости** резолвится от каталога ЕЁ `nova.toml`
+>   (manifest_dir), не от source_root — dep-пакеты с `[lib] src = "src"`
+>   линкуются корректно.
 
 #### Lockfile — `nova.lock`
 

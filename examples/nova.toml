@@ -7,7 +7,7 @@
 #   basics/         Hello, arithmetic, match, records, strings
 #   effects/        Эффекты и handler'ы (D61, D63, D64)
 #   real_world/     Полноразмерные примеры (orm_decorators, orm_demo)
-#   ffi/, net/, typed_pointers/, plan110/ — тематические demo
+#   ffi/, net/, tls/, typed_pointers/, plan110/ — тематические demo
 #   _wip/           Концепты, требующие переписи начисто (Plan 197 Ф.1/Ф.2,
 #                   не участвуют в CI-гейте компиляции — см. _wip/README.md)
 #
@@ -29,8 +29,13 @@ repository = "https://github.com/nv-lang/nova.git"
 [lib]
 src = "."
 
-# Зависимостей пока нет — каждый demo-файл self-contained, использует
-# только prelude. Когда examples начнут импортировать std-модули
-# (например, std.encoding.json или std.crypto.sha256) — здесь
-# появится `std = { path = "../std" }`.
+# Большинство demo-файлов self-contained (только prelude). `std.*` доступен
+# ВСЕГДА неявно (D78 — reserved implicit stdlib package, не объявляется
+# здесь). Внешние (не-std) пакеты нужно объявлять явно — как `tls`/`http`
+# ниже (Plan 193: nova-tls, extracted std/tls, `examples/tls/echo_*.nv`
+# демонстрирует native-module dependency pattern, симметрично `std/nova.toml`;
+# Plan 203: nova-http, extracted std/http, `examples/flagship/aggregator`
+# потребляет `http.server` тем же путём).
 [dependencies]
+tls = { path = "../../nova-tls" }
+http = { path = "../../nova-http" }

@@ -1,0 +1,130 @@
+// D188-амендмент 2026-07-13 (Plan 201) — re-consume форма `consume X { body }`:
+// re-consume СУЩЕСТВУЮЩЕГО owned-биндинга; блок = ВЫРАЖЕНИЕ; единственная
+// легальная форма выноса владения — tail-значение `X` / `return X` (голый X) —
+// на этом пути cleanup ДИЗАРМИТСЯ; все прочие пути — cleanup exactly-once (R2).
+// Spec: spec/decisions/03-syntax.md D188 §«Re-consume форма».
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+// Ресурс с наблюдаемым cleanup'ом (через ResourceTrace exit-события).
+type D201Res consume { id int }
+
+fn D201Res consume @cleanup(_outcome ScopeOutcome) -> () { }
+fn D201Res consume @dispose() -> () { }
+
+fn d201_make(v int) -> D201Res => { id: v }
+
+// Ресурс, чей cleanup ПАНИКУЕТ — сторож дизарма: если tail/return-вынос
+// не дизармит cleanup, тест упадёт паникой.
+type D201Boom consume { id int }
+
+fn D201Boom consume @cleanup(_outcome ScopeOutcome) -> () {
+    panic("D201Boom.cleanup must be disarmed on tail/return escape")
+}
+fn D201Boom consume @defuse() -> () { }
+
+fn d201_boom(v int) -> D201Boom => { id: v }
+
+test "D188/201 re-consume statement: body runs, cleanup exactly-once" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        consume r = d201_make(5)
+        mut seen = 0
+        consume r {
+            seen = r.id
+        }
+        assert(seen == 5)
+    }
+    assert(exit_calls == 1)
+}
+
+test "D188/201 re-consume: cleanup runs on throw path (Failure)" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        with Fail = effect Fail { fail(_m) { interrupt () } } {
+            consume r = d201_make(6)
+            consume r {
+                d188_r2_throws()
+            }
+        }
+    }
+    assert(exit_calls == 1)
+}
+
+test "D188/201 tail-вынос: cleanup дизармлен, владение уходит result'у" {
+    consume b = d201_boom(7)
+    ro s = consume b {
+        b
+    }
+    assert(s.id == 7)
+    s.defuse()
+}
+
+fn d201_ret_escape(consume b D201Boom) -> D201Boom {
+    consume b {
+        ro _x = b.id
+        return b
+    }
+}
+
+test "D188/201 return-вынос: cleanup дизармлен на return-пути" {
+    consume b = d201_boom(9)
+    consume out = d201_ret_escape(b)
+    assert(out.id == 9)
+    out.defuse()
+}
+
+test "D188/201 consume-блок целиком внутри итерации цикла — легален" {
+    mut total = 0
+    for i in 0..3 {
+        consume r = d201_make(i)
+        consume r {
+            total = total + r.id
+        }
+    }
+    assert(total == 3)
+}
+
+// ─── Амендмент v3 × M-178 (2026-07-13): consume-поле record-литерала в
+// tail/return — consume-позиция; дизарм при конструировании литерала.
+// Сторож — паникующий cleanup D201Boom: недизармленный вынос = runtime panic.
+
+type D201BoomBox consume {
+    consume boom D201Boom,
+    box_tag int,
+}
+fn D201BoomBox consume @unbox() -> () { @boom.defuse() }
+
+test "D188 v3 × M-178: tail record-литерал с consume-полем дизармит cleanup" {
+    consume b = d201_boom(11)
+    consume box = consume b {
+        D201BoomBox { boom: b, box_tag: 1 }
+    }
+    assert(box.box_tag == 1)
+    box.unbox()
+}
+
+fn d201_box_ret(consume b D201Boom) -> D201BoomBox {
+    consume b {
+        return D201BoomBox { boom: b, box_tag: 2 }
+    }
+}
+
+test "D188 v3 × M-178: return record-литерал с consume-полем дизармит cleanup" {
+    consume b = d201_boom(12)
+    consume box = d201_box_ret(b)
+    assert(box.box_tag == 2)
+    box.unbox()
+}

@@ -8440,6 +8440,27 @@ checker-overflow), см. `[M-181-pattern-var-rebind]`. Nested-scope double-consu
 >
 > 🎯 **Plan 110 family полностью завершена.** 9 sub-plans + 12 D-blocks
 > ACTIVE + 76 fixtures PASS (74 baseline + 2 new V1.1.a closures).
+>
+> **Амендмент 2026-07-13 (решение владельца, Plan 201, ветка
+> d188-consume-block):** вторая форма scope-block'а — **re-consume block**
+> `consume X { body }` (без `= expr`) — re-consume СУЩЕСТВУЮЩЕГО
+> owned-биндинга; блок — ВЫРАЖЕНИЕ. Внутри блока `X` — ro-view + методы;
+> единственная легальная форма выноса владения — tail-значение `X` или
+> `return X` (голый `X`; на этом пути cleanup ДИЗАРМИТСЯ); прочие формы
+> выноса → `E_CONSUME_BLOCK_MOVE_OUT`; alias-копия — `stream.share()`;
+> give/release-дизарм-примитив ОТВЕРГНУТ. См. §«Re-consume форма
+> `consume X { body }`» ниже.
+>
+> **Амендмент v3 (2026-07-13, решение владельца «хочу», Plan 201, ветка
+> d188-v3):** «однократный вынос через выражение» — tail/return EXPR (не
+> только голый `X`) санкционирован, если `X` встречается РОВНО ОДИН раз,
+> АРГУМЕНТОМ consume-параметра (`return Ok(TlsStream.wrap(stream,
+> session))` — без промежуточного `mut session_out`/`ro s` танца);
+> замыкание внутри EXPR, захватывающее `X` — ошибка; дизарм — в момент
+> передачи владения (вход в consuming-вызов), всё что фейлит ДО этого в
+> EXPR — cleanup ещё сработает. Композиция с multi-var-формой — по-
+> переменно на каждом уровне вложенного desugar'а. См. §«Амендмент v3 —
+> "однократный вынос через выражение"» ниже.
 
 ### Что
 
@@ -8448,6 +8469,10 @@ checker-overflow), см. `[M-181-pattern-var-rebind]`. Nested-scope double-consu
 1. **`Cleanup[E]` protocol** — контракт ресурсов, требующих cleanup.
 2. **`consume X = expr { body }`** — scope-block, гарантирующий exactly-once
    вызов `cleanup` при выходе из `body` (success, throw, panic, cancel).
+   У scope-block'а есть и вторая форма — `consume X { body }` (re-consume
+   существующего owned-биндинга, амендмент 2026-07-13) — а также
+   multi-var сахар `consume A, B, C { body }` над её вложением
+   (амендмент D188-multivar, Plan 174).
 
 ```nova
 type Cleanup[E] protocol {
@@ -8472,12 +8497,24 @@ type ScopeOutcome
 ### Syntax
 
 ```nova
-consume IDENT = EXPR { BODY }
+consume IDENT = EXPR { BODY }              // binding-форма
+consume IDENT { BODY }                     // re-consume форма (амендмент 2026-07-13)
+consume IDENT (, IDENT)* { BODY }          // multi-var re-consume (амендмент D188-multivar, Plan 174)
 ```
 
-- Parser lookahead на `{` после `EXPR` решает между:
-  - `consume X = expr { body }` — scope-block (этот D188).
+- Parser lookahead решает между формами:
+  - `consume X = expr { body }` — scope-block (этот D188; `{` после EXPR).
   - `consume X = expr` — raw linear binding (D180; для builder/transfer).
+  - `consume X { body }` — re-consume block существующего owned-биндинга
+    (амендмент 2026-07-13; см. §«Re-consume форма»). Дизамбиг: `IDENT`
+    (со строчной буквы) + `{` на той же строке БЕЗ `=`. `Type { … }`
+    (с заглавной) остаётся record-destructure pattern'ом raw-формы.
+  - `consume A, B, C { body }` — multi-var re-consume (амендмент
+    D188-multivar, Plan 174; см. §«Multi-var re-consume форма»).
+    Дизамбиг: `IDENT` (со строчной буквы) + `,` на той же строке.
+    Список идентов — ТОЛЬКО re-consume форма; смешение со `=`
+    (`consume A, B = expr { … }`) — парс-ошибка (список идентов не
+    поддерживает инициализатор).
 - `IDENT` — single name. Destructure (`consume (a, b) = ...`) не разрешается
   для scope-block (один resource = один cleanup).
 - `EXPR` должен statically resolve к типу `Cleanup[E]` для некоторого `E`
@@ -8509,6 +8546,278 @@ consume IDENT = EXPR { BODY }
 - `throw e` / `?` propagation / cancel-as-throw (D90 §7 amend) → `Failure(e)`
 - `panic(m)` → `Panic(m)`
 - `exit(code)` — НЕ captures; process exit'ы напрямую (handler.cleanup не runs).
+
+### Re-consume форма `consume X { body }` (амендмент 2026-07-13, Plan 201)
+
+Вторая форма scope-block'а — БЕЗ инициализатора: re-consume уже
+существующего owned-биндинга (consume-параметра функции или owned-локала
+`consume X = …`, [D180](05-memory.md#d180-consume-binding-syntax-plan-731)).
+Даёт те же гарантии, что и binding-форма: `cleanup` exactly-once на всех
+cleanup-путях выхода (R2), cancel-shield (R3), LIFO-композиция (R5);
+после блока `X` недоступен (consumed, D131).
+
+**Блок — ВЫРАЖЕНИЕ**: `ro s = consume X { …; <tail> }` — значение блока
+= tail-выражение. Приёмник (`ro`/`mut`/`consume s = …`) объявляется в
+объемлющем scope после блока.
+
+```nova
+fn serve(consume stream TcpStream) Net Fail[NetError] -> () {
+    consume stream {                          // re-consume owned-параметра
+        ro banner = stream.read_to_vec(64)?   // throw → cleanup(Failure) → закрыт
+        stream.write_all("hello".bytes())?
+    }
+    // stream consumed — использование после блока = compile error (D131)
+}
+```
+
+#### Правила формы
+
+1. **Owned-требование.** `X` — существующий owned-биндинг: consume-параметр
+   или `consume X = …` локал. Не-owned (`ro`/`mut` локал, view-параметр,
+   параметр без `consume`) → ошибка **`E_CONSUME_BLOCK_NOT_OWNED`**.
+2. **Cleanup[E]-требование** — как у binding-формы: тип `X` обязан
+   реализовывать `Cleanup[E]`; нет `cleanup`-метода →
+   **`E_D188_NOT_CLEANUP`** (у binding-формы исторический код той же
+   ошибки — `D188-not-consumable`).
+3. **Вынос владения — tail/return самого `X`, либо (амендмент v3 ниже)
+   `X` РОВНО ОДИН раз в consume-позиции внутри tail/return EXPR.**
+   Легальные формы выноса — tail-значение `X` (при биндинге-
+   приёмнике) или `return X` (ГОЛЫЙ `X`), а также — амендмент v3,
+   2026-07-13, Plan 201, §«Амендмент v3» ниже — tail/return **EXPR**, где
+   `X` встречается ровно один раз в consume-позиции: аргументом
+   consume-параметра (`return Ctor(x, other)`,
+   `return Ok(TlsStream.wrap(stream, session))`) или — M-178-амендмент
+   v3 п.2 — инициализатором consume-поля record-литерала
+   (`return Ok(TlsStream { tcp: stream, session })`).
+   На этих путях cleanup блока **дизармится**, владение уходит результату
+   блока / из функции — приёмник получает обязательство (D133). Все
+   ОСТАЛЬНЫЕ пути выхода (конец тела, throw, panic, cancel, break/continue,
+   `return <не-X>` с нуля/>1 вхождений X не в consume-позиции) — cleanup
+   exactly-once (R2 как есть).
+4. **Внутри блока `X` — ro-view + вызовы методов.** Прочие формы выноса —
+   передача `X` в consume-параметр ВНЕ санкционированной tail/return-
+   позиции (п.3 / амендмент v3), вызов consume-метода (включая
+   `X.close()`), присваивание `X` в consume-поле / любое место
+   (`place = X`, `T { field: X }` — вне санкционированной tail/return-
+   позиции п.3), повторный `consume X { }`, реассайн
+   `X = …` — ошибка компиляции **`E_CONSUME_BLOCK_MOVE_OUT`** с текстом:
+   «вынос владения из consume-блока — только tail/return самого `X` либо
+   ровно одно вхождение `X` аргументом consume-параметра в tail/return
+   EXPR; либо возьмите `@share()`-копию». Ручной `X.cleanup(...)` —
+   по-прежнему `D188-r2-manual-on-exit`.
+5. **Alias-копия — `@share()`.** Второй владелец того же ресурса — только
+   явной share-копией со СВОИМ consume-обязательством: `TcpStream
+   @share()` — alias одного TCP-потока с refcount-close («закрывает
+   последний»; НЕ независимая копия — см. std/src/net/tcp.nv и
+   переименование `ChanWriter.clone()` → `share()`).
+
+#### Канонический TLS-паттерн (заменяет ручные `stream.close()`)
+
+v2 (голый tail-вынос + wrap СНАРУЖИ блока):
+
+```nova
+ro s = consume stream {
+    // … handshake по ro-view `stream`; любая ошибка/throw →
+    // cleanup(Failure) закрывает stream exactly-once …
+    pump_handshake(stream, session)?
+    stream                                  // tail-вынос: cleanup дизармлен,
+}                                           // владение уехало в `s`
+Ok(TlsStream.wrap(s, session))              // s → consume-параметр wrap
+```
+
+v3 (амендмент ниже, 2026-07-13, Plan 201) — `wrap(...)` ПРЯМО в `return`
+внутри арма, без промежуточного mut-локала/tail-выноса:
+
+```nova
+consume stream {
+    ro c = match build_client_cfg(config) {
+        Err(e) => { return Err(e) }             // cleanup закрывает stream
+        Ok(cc) => cc
+    }
+    ro session = /* … tls_client_new … */
+    match pump_handshake(stream, session) {
+        Ok(_)  => { return Ok(TlsStream.wrap(stream, session)) }  // дизарм
+        Err(e) => { return Err(e) }             // cleanup закрывает stream
+    }
+}
+```
+
+### Multi-var re-consume форма `consume A, B, C { body }` (амендмент D188-multivar, Plan 174)
+
+Список из ≥ 2 идентов через запятую — **ЧИСТЫЙ САХАР** над вложением
+re-consume-форм, разворачиваемый парсером ДО type-check/codegen:
+
+```nova
+consume A, B, C { body }
+// ≡
+consume A {
+    consume B {
+        consume C { body }
+    }
+}
+```
+
+Cleanup срабатывает в **LIFO-порядке** (`C`, потом `B`, потом `A`) — не
+отдельная механика, а прямое следствие вложенности desugar'а (внутренний
+scope закрывается первым, при выходе из него — внешний). Каждый идент —
+независимый re-consume-блок: **все правила формы** (§«Правила формы»
+выше — owned-требование `E_CONSUME_BLOCK_NOT_OWNED`, `Cleanup[E]`-
+требование `E_D188_NOT_CLEANUP`, guard/`E_CONSUME_BLOCK_MOVE_OUT`)
+действуют на каждый идент **независимо** — checker и codegen не знают
+про multi-форму вообще, видят только цепочку вложенных
+`consume IDENT { … }`.
+
+**Tail/return-вынос — ПОИМЕНОВАННЫЙ, дизармит СВОЙ cleanup.** Поскольку
+только САМЫЙ внутренний идент (`C` в примере) непосредственно граничит
+с реальным телом `body`, только голый `C` в tail/`return`-позиции
+дизармит cleanup `C` (как у single-var формы). Голый `return A` или
+`return B` из глубины `body` дизармит cleanup соответствующего
+идента точно так же, как если бы вложенность была написана вручную —
+guard/дренаж работает по имени, не по глубине вложенности. Прочие
+иденты на этом пути (не упомянутые в tail/`return`) cleanup'ятся как
+обычно.
+
+**Только re-consume-список — без инициализаторов.** Форма существует
+ТОЛЬКО для re-consume уже существующих owned-биндингов; смешение со
+связывающей (binding) формой запрещено:
+
+```nova
+consume A, B = expr { … }   // ПАРС-ОШИБКА: список идентов не поддерживает `=`
+```
+
+Для инициализации нового owned-ресурса ВНУТРИ multi-var блока — обычный
+`consume X = expr { … }` вложенным statement'ом внутри `body` (или
+раздельные `consume`-блоки).
+
+#### Взаимодействие с `spawn` / `parallel for` (173.1 by-value капчур)
+
+Захват owned linear-значения (consume-типа) в тело
+`spawn`/`parallel for`/`detach` — ошибка
+**`E_LINEAR_CAPTURE_IN_FIBER`**: by-value копия обёртки в N файберов =
+N алиасов одного ресурса БЕЗ учёта владения → double-close/интерференция.
+Канон многофиберного доступа — `@share()`-копия per-fiber
+(`ro w = tx.share(); spawn { …w… }`) либо явный move
+`spawn consume c { … }` (D415 §4). `consume X { … }`-блок ЦЕЛИКОМ внутри
+тела итерации (свой ресурс на итерацию) — легален, без особенностей.
+
+#### Desugaring / реализация
+
+Тот же D188-механизм, что и у binding-формы, с init = сам биндинг `X`
+(эквивалент `consume X = X { body }` с уже готовым ресурсом). R1
+(partial-construction) тривиален — init не может throw. Tail/return-вынос
+= сброс arm-флага cleanup'а НА ЭТОМ пути непосредственно перед выносом
+(все прочие пути видят флаг взведённым). Compile-time ловля move-out —
+расширение D131 flow-анализа; формы, которые D131 не распознаёт —
+bootstrap-граница: ловля расширится вместе с D131 (double-close на
+TcpStream дополнительно смягчён rc-close механикой `@share()`).
+
+Cross-ref: `spawn consume c { body }` (D415 §4 already-bound form) — тот
+же re-consume-синтаксис, но cleanup привязан к выходу ДОЧЕРНЕГО фибра,
+а move-out-запрет D415 не вводил (осознанное расхождение: тело spawn —
+владеющий scope дочернего фибра).
+
+#### Rejected — `give X` / `release X` (дизарм-примитив)
+
+Рассматривался вариант «отдать `X` наружу произвольным путём, отключив
+cleanup блока явным примитивом» (give / release / disarm; обсуждены Rust
+`ScopeGuard::into_inner`, Swift `consume`, Zig `errdefer` — последний у
+нас ретрактирован D189). **ОТВЕРГНУТО** (решение владельца 2026-07-13):
+свободный дизарм ослабляет главную гарантию формы — безусловный
+exactly-once cleanup — и возвращает класс багов «забыл закрыть на одном
+из путей». Вынос владения разрешён ровно в СИНТАКСИЧЕСКИ видимых формах
+(tail `X` / `return X` — п.3 выше; плюс амендмент v3 ниже — ровно одно
+вхождение `X` аргументом consume-параметра в tail/return EXPR), где
+приёмник обязательства очевиден checker'у; всё прочее — `@share()`-копия
+со своим обязательством.
+
+### Амендмент v3 — «однократный вынос через выражение» (2026-07-13, Plan 201)
+
+> **Мотивация (владелец):** канонический TLS-паттерн (§«Канонический
+> TLS-паттерн» выше) вынуждал танец `mut session_out` + `ro s = consume
+> stream { … }` + `Ok(TlsStream.wrap(s, session_out))` СНАРУЖИ блока —
+> потому что v2 разрешал выносить наружу только ГОЛЫЙ `X`, а `wrap(...)`
+> нужно вызвать С ним. Амендмент узко расширяет вынос: `X` можно передать
+> ПРЯМО В consume-параметр вызова, стоящего в tail/return-позиции — без
+> танца с промежуточным mut-локалом.
+
+**Грамматика НЕ меняется** (см. §Syntax выше) — меняется только правило
+выноса владения (п.3 §«Правила формы»).
+
+1. **Ровно одно вхождение.** В tail-выражении блока (при result-приёмнике)
+   или в `return EXPR` guarded-биндинг `X` должен встречаться **РОВНО
+   ОДИН РАЗ** во всём EXPR (на любой глубине вложенности вызовов —
+   `Ok(TlsStream.wrap(stream, session))` содержит `stream` один раз, хотя
+   и внутри двух вложенных вызовов). Два и более вхождения (в т.ч. если
+   ОБА — в consume-позиции разных вызовов) — нарушение.
+2. **Вхождение — в consume-позиции для ДИЗАРМА; не-consume-позиция —
+   обычное использование (исправлено 2026-07-13, тот же день, до первого
+   релиза амендмента — regression в `tcp_share_test.nv`).** Единственное
+   вхождение `X` дизармит cleanup, ТОЛЬКО если оно — АРГУМЕНТ параметра,
+   помеченного `consume`, у вызова (свободная fn, метод `obj.method(...)`,
+   статический `Type.method(...)` / `module.fn(...)`), **либо — амендмент
+   того же дня (2026-07-13, fix `[M-178-consume-field-ctor-from-var]`, см.
+   [D133](02-types.md#d133) §«Что считается consume») — инициализатор
+   `consume`-поля record-литерала** (`consume s { MyRec{res: s, tag: 1} }`,
+   `return Ok(TlsStream { tcp: stream, session })`; форма литерала любая —
+   типизированный / record-вариант суммы / анонимный с типом из контекста /
+   D52-punning): конструирование литерала забирает владение так же, как
+   consuming-вызов. Не-consume-поле литерала — НЕ consume-позиция (обычное
+   использование, см. ниже). Частный случай —
+   EXPR = голый `X` (п.3 §«Правила формы» — как в v2, БЕЗ изменений).
+   Вхождение(я) `X` **исключительно** в НЕ-consume-позиции — RECEIVER
+   (`X.method()`, включая `X.share()`) или view-/mut-АРГУМЕНТ
+   (`mo3_peek(X)`) — это **обычное использование**, ровно как то же самое
+   использование внутри тела блока СТЕЙТМЕНТОМ (п.4 §«Правила формы»):
+   **НЕ ошибка**, cleanup срабатывает штатно на выходе из блока, дизарма
+   НЕТ (значение блока — обычно копия/производное, НЕ сам `X`). Пример:
+   `consume s { s.share() }` — `share()` берёт `s` RECEIVER'ом (ro-view),
+   создаёт независимую shared-копию; копия уезжает значением блока,
+   cleanup блока штатно закрывает долю оригинала `s`. Смешение — вынос
+   (consume-позиция) ПЛЮС ещё вхождение того же `X` в том же EXPR
+   (consume-позиция или нет) — остаётся нарушением (см. п.5).
+3. **Замыкание, захватывающее `X`, внутри EXPR — ошибка.** `return
+   Ok(spawn { … stream … })` или любой `|…| … X …` / `fn(…) … X …`
+   ВНУТРИ tail/return EXPR, чьё тело ссылается на `X` (в любой форме,
+   не только consume-позиции) — `E_CONSUME_BLOCK_MOVE_OUT`: время жизни
+   замыкания не синтаксически видно checker'у (может пережить сам вызов),
+   несовместимо с «приёмник обязательства очевиден checker'у» (см.
+   §Rejected выше).
+4. **Точка дизарма — момент передачи владения** (вход в consuming-вызов,
+   т.е. после того, как ВСЕ аргументы ЭТОГО вызова вычислены — Nova's
+   порядок вычисления аргументов слева направо). Всё, что в EXPR
+   вычисляется/падает/throw'ит **до** этого момента — cleanup блока ещё
+   взведён и сработает как обычно (R2). Пример: `return Ok(wrap(stream,
+   risky()))` — если `risky()` вычисляется до входа в `wrap` (по AST-
+   порядку аргументов `wrap`) и throw'ит — `stream` ещё НЕ передан
+   `wrap`, cleanup закрывает его; успешный `risky()` → вход в `wrap` →
+   дизарм → `wrap` теперь владеет `stream`. Для record-литеральной
+   consume-позиции (п.2, M-178-амендмент) точка дизарма — конструирование
+   литерала: само конструирование после вычисления полей упасть не может,
+   поэтому окно риска схлопывается в field-выражения — throw в другом
+   поле ДО конструирования оставляет cleanup взведённым.
+5. **Нарушения — тот же `E_CONSUME_BLOCK_MOVE_OUT`, уточнённый текст.**
+   Оставшиеся два failure-режима (смешение — consume-вхождение ПЛЮС ещё
+   вхождение того же `X` в том же EXPR; захватывающее замыкание) остаются
+   ОДНИМ кодом ошибки `E_CONSUME_BLOCK_MOVE_OUT` — текст диагностики
+   уточняет причину. Единственное вхождение НЕ в consume-позиции —
+   БОЛЬШЕ НЕ failure-режим (см. п.2, исправлено 2026-07-13) — обычное
+   использование.
+   Легальный `pump_handshake(stream, session)` КАК STATEMENT внутри тела
+   (НЕ в tail/return-позиции) — НЕ затронут: это ro-view-borrow
+   (view-параметр `stream` у `pump_handshake`), разрешённый п.4 §«Правила
+   формы» независимо от этого амендмента; амендмент v3 сужен ИСКЛЮЧИТЕЛЬНО
+   до tail/return EXPR.
+6. **Композиция с multi-var-формой.** `consume A, B { return f(A, B) }`
+   десугарится (см. §«Multi-var re-consume форма» выше) в `consume A {
+   consume B { return f(A, B) } }` — правило применяется **по-переменно
+   на каждом уровне вложенного desugar'а независимо**: у `return f(A, B)`
+   ДВА активных guard'а (`A` — внешний, `B` — внутренний) одновременно;
+   каждый решается САМ ПО СЕБЕ (ровно одно вхождение своего имени, в
+   consume-позиции) — оба могут дизармиться этим ОДНИМ `return`, если оба
+   — прямые consume-аргументы `f`. Дизарм — индивидуальный (свой
+   `_defer_<bid>_0_active = 0` на каждый уровень вложения); ошибка одного
+   guard'а (напр. `B` встречается дважды) не блокирует дизарм другого
+   (`A`), если тот сам по себе санкционирован.
 
 ### Правила (R1-R6)
 
@@ -10928,10 +11237,9 @@ AST `FormatSpec` (`compiler-codegen/src/ast/format_spec.rs`, расширен о
 `_radix_prefix`/`_f64_body` + sign/prefix). Целые — `nova_int` (64-bit), negative hex =
 two's-complement (`${-1:x}` → `ffffffffffffffff`, как Rust).
 
-### Отложено (B2 → Plan 152.7.1, `[M-152.7-write-sink]`)
-Обобщение `@display(mut sb StringBuilder)` → `@display(mut w Write)` (форматтер в любой
-sink: StringBuilder/WriteBuffer/stdout, direct-to-sink `print` без промежуточной str).
-Breaking (меняет сигнатуры всех `@display`/`@debug`) → отдельный sub-plan.
+### ~~Отложено~~ B2 — ✅ ЗАКРЫТО (2026-06-16, [D374](02-types.md#d374-write-sink-протокол--декаплинг-displaydebug-от-stringbuilder-plan-15271))
+Обобщение `@display(mut sb StringBuilder)` → `@display(mut w Write)` выполнено Plan 152.7.1:
+sink-протокол `Write`, сигнатуры Display/Debug переломлены (breaking, сделан).
 
 См. [Plan 152.7](../../docs/plans/152.7-interpolation-formatting.md),
 [D229](02-types.md#d229-Debug-protocol--format-spec-expr).

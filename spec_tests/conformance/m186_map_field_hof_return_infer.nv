@@ -1,0 +1,98 @@
+// [bug-1 audit-197 fix] (Plan 186) — `.map()` on a `[]T` value produced by
+// CALLING A RECORD FIELD that holds a first-class fn (D42 Model-A
+// DI-by-field, e.g. `ro to_columns fn(T) -> []ColumnValue` then
+// `@to_columns(value)`) used to hit `nova: internal error at emit_c.rs:...:
+// [P67-LEGACY] method call `.map` return type unknown — checker must
+// annotate`. This whole compile unit ICE'd before the fix — real-world
+// instance: `examples/real_world/orm_demo.nv`'s `cols.map(|c| c.name)` where
+// `cols = @to_columns(value)`.
+//
+// Three independent checker gaps (all `compiler-codegen/src/types/mod.rs`),
+// all needed to reach a correct return type here:
+//   1. `infer_expr_type`'s Call arm never considered a callee that's a plain
+//      RECORD FIELD holding a fn value (only real methods) — `@to_widgets(n)`
+//      resolved to `None`, so `widgets` below never entered scope; every
+//      later `widgets.<method>(...)` then had an unknown receiver.
+//   2. `resolve_method_return_with_closure_args` (the `.map(|x| ...)`
+//      closure-arg U-inference engine) only looked up the callee under the
+//      "Vec" alias or a concrete "[]<elem>" key — but vec_seq.nv's dominant
+//      HOF spelling (`fn[T] []T @map[U](...)`) registers under the LITERAL
+//      "[]T" prefix-generic key, invisible to that lookup.
+//   3. `build_recv_subst` bound the receiver carrier ONLY from
+//      `recv.generics` (bracket-carrier `Type[T,U]` slots) — empty for a
+//      `[]T` prefix-generic receiver, so `T` stayed unbound and closure-param
+//      seeding bailed.
+//
+// FIXED (Plan 196.5 Stage-B3, 2026-07-13): `.map(|w| w.<str-field>)` on a
+// `[]<UserRecord>` produced by this exact field-call path — i.e. the SAME
+// shape as `cols.map(|c| c.name)`, U=str instead of U=int — used to
+// SEGFAULT at runtime (verified via a standalone synthetic repro during
+// bug-1's write-up). Root cause (codegen, NOT the checker fixes above):
+// `emit_c.rs::emit_call`'s inline instance-method dispatch (the array-ext
+// `"[]T"`-sentinel branch — Q10's "third hand-duplicated" inference engine,
+// alongside `resolve_mono_type_args`/`resolve_method_level_subst`) computed
+// its closure-arg U-inference by evaluating the closure body BEFORE the
+// closure's own param (`w`) had any type binding visible to
+// `infer_expr_c_type` — so the Member expr `w.name` couldn't resolve and
+// the lookup silently came back empty. The unresolved generic then
+// defaulted to `nova_int` (`c.unwrap_or_else(|| "nova_int".to_string())`)
+// — which happened to be the CORRECT concrete type for an int-valued field
+// (masking the bug for `w.qty`-shaped closures) but was silently wrong —
+// and unsafe — for any other concrete type (`str`, a heap pointer, ...).
+// Fix `[M-196.5-b3-closure-param-bind]`: consult the `node_substs[call_id]`
+// checker channel FIRST (channel-first, mirrors the sibling Stage-B
+// migrations); on a channel miss, bind the closure's own declared param
+// type(s) into `var_types` — from the subst already resolved for the
+// receiver element — BEFORE inferring the body, mirroring
+// `resolve_method_level_subst`'s already-correct Step 2. A closure-return
+// generic slot that STILL can't be resolved after both now raises an
+// honest `[E7001]` CC-ERROR instead of silently defaulting to `nova_int`
+// (`[M-no-silent-nova-int-fallback]`, Plan 70). The `str`-returning case
+// below exercises the fix.
+//
+// Единица: folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+import std.collections.vec_seq.{map}
+
+type M186Widget {
+    ro name str
+    ro qty int
+}
+
+type M186Repo {
+    ro to_widgets fn(int) -> []M186Widget
+}
+
+test "map() on a []T from a field-held fn call — checker annotates the return type (used to ICE)" {
+    ro repo = M186Repo { to_widgets: |n| [
+        M186Widget { name: "a", qty: n },
+        M186Widget { name: "b", qty: n * 2 },
+    ] }
+
+    // Gap 1: `@to_widgets(n)` — calling a FIELD holding a fn value, not a method.
+    ro widgets = repo.to_widgets(5)
+    assert(widgets.len() == 2)
+
+    // Gap 2 + 3: `.map()` on the resulting `[]M186Widget` — vec_seq.nv's
+    // prefix-generic `[]T @map[U]`, U inferred from the closure's return.
+    ro qtys = widgets.map(|w| w.qty)
+    assert(qtys.len() == 2)
+    assert(qtys[0] == 5)
+    assert(qtys[1] == 10)
+
+    // A second, independently-shaped `.map()` call on the SAME receiver
+    // (different closure) — orm_demo.nv's real usage calls `.map()` more
+    // than once per `[]T`; this reproduces that without the str gap above.
+    ro doubled = widgets.map(|w| w.qty * 2)
+    assert(doubled[0] == 10)
+    assert(doubled[1] == 20)
+
+    // Stage-B3 fix: U=str (a non-int closure return on this exact
+    // field-call-produced `[]T` receiver) used to SEGFAULT at runtime —
+    // see the header comment's `[M-196.5-b3-closure-param-bind]` writeup.
+    ro names = widgets.map(|w| w.name)
+    assert(names.len() == 2)
+    assert(names[0] == "a")
+    assert(names[1] == "b")
+}

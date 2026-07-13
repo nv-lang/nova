@@ -4,13 +4,19 @@
 // after `method_overloads` misses). The float-math branch (`f64_method_to_c`: sqrt/
 // cbrt/abs/ceil/floor/round/trunc/trig/exp/log/pow/hypot/is_nan/is_finite/is_infinite)
 // LOOKED like a redundant duplicate of the `extern "nova" fn f64 @sqrt()`-style
-// declarations in `std/runtime/math.nv` — it is NOT: `extern` methods register into
-// codegen's `ExternalRegistry`, not the checker's `method_table` that `method_overloads`
-// reads, so this arm is the checker's ONLY existence channel for them (confirmed
-// empirically: removing it broke `(9.0).sqrt()` with `[E_UNKNOWN_METHOD]`). This file
-// stays as a plain coverage-fill: exercises the FULL f64/f32 math-method set (not just
-// the D74 subset already covered by `d74_math_methods.nv`), including `f32` — previously
-// UNCOVERED by any conformance fixture. One folder-module CU (`spec_tests.conformance`).
+// declarations in `std/runtime/math.nv` — at the time it was NOT: `std/runtime/math.nv`
+// was never `import`-ed anywhere (auto-generated, dead weight), so `extern` methods
+// never reached the checker's `method_table` that `method_overloads` reads, making that
+// arm the checker's ONLY existence channel for them (confirmed empirically: removing it
+// broke `(9.0).sqrt()` with `[E_UNKNOWN_METHOD]`). Plan 196.3 CLOSED that gap:
+// `std/prelude.nv` now plain-`import`s `std.runtime.math` (same fix as `char.nv`,
+// `[M-compiler-nv-porting-wave]` item A precedent) — the checker resolves `.sqrt()` /
+// `int.abs()` via `method_table` directly, and the corresponding existence arms in
+// `primitive_instance_method_known` were removed as unreachable. Codegen emission
+// (`f64_method_to_c`/`int_method_to_c`) is unchanged. This file stays as a plain
+// coverage-fill: exercises the FULL f64/f32 math-method set (not just the D74 subset
+// already covered by `d74_math_methods.nv`), including `f32` — previously UNCOVERED by
+// any conformance fixture. One folder-module CU (`spec_tests.conformance`).
 module spec_tests.conformance
 
 test "f64 full math-intrinsic set resolves + computes (D109/D74 wave-2)" {

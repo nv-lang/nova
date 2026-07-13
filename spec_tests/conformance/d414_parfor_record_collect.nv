@@ -1,0 +1,134 @@
+// D414 §4 — `parallel for → []T` channel-collected result for ANY element
+// type (closes `[M-parfor-record-result-miscompile]`). The old codegen
+// whitelisted only `{int,bool,f64,str}` and silently degraded any other
+// element type (record/tuple/sum) to `unit`, leaking a raw C compile error
+// downstream. Plan 173.1 Ф.2 replaced the whitelist with a uniform
+// channel+consume desugar that collects ANY `T` from ANY iterator.
+//
+// This file is the CONFORMANCE-gate counterpart of the existing
+// `nova_tests/err173_1/parfor_elem_matrix.nv` corpus test (element-type
+// matrix) plus the realistic call-shapes an `aggregate()`-style fan-out
+// helper actually uses (Plan 187 draft): a function returning `[]Record`
+// directly as its trailing (no intermediate binding), `parallel for`
+// nested inside an explicit `supervised { … }` wrapper, and the result
+// used immediately at a call-arg position.
+//
+// Spec: spec/decisions/06-concurrency.md (D414 §4), D71-amend.
+// Single `spec_tests.conformance` folder-module; all top-level names
+// d414pf_-prefixed to avoid collision with peer files in the same CU.
+module spec_tests.conformance
+
+type D414pfReport { source str; status int; ok bool }
+type D414pfPoint value { x int; y int }        // value/stack-record (D228)
+type D414pfPair(a int, b int)                  // named tuple (D215)
+type D414pfStatus enum Up | Down(int)          // sum type (D406)
+
+// (A) `parallel for` result returned DIRECTLY as a fn's trailing — no
+// intermediate `ro` binding. This is the shape an `aggregate()`-style
+// fan-out helper (Plan 187) uses; it must NOT need a mut-capture workaround.
+fn d414pf_fetch_all(sources []str) -> []D414pfReport {
+    parallel for s in sources {
+        D414pfReport { source: s, status: 200, ok: true }
+    }
+}
+
+// (B) `parallel for` nested inside an explicit `supervised { … }` wrapper —
+// mirrors `supervised(cancel: tok) { parallel for … }` (Plan 187 aggregate
+// idiom): the outer supervised's value-expression type must come through
+// the inner ParallelFor's `[]T` unchanged.
+fn d414pf_fetch_all_supervised(sources []str) -> []D414pfReport {
+    supervised {
+        parallel for s in sources {
+            D414pfReport { source: s, status: 200, ok: (s != "") }
+        }
+    }
+}
+
+fn d414pf_sum_status(rs []D414pfReport) -> int {
+    mut s = 0
+    for r in rs { s += r.status }
+    s
+}
+
+test "D414: fn-return-trailing parallel-for []Record (no ro binding)" {
+    ro reports = d414pf_fetch_all(["a", "b", "c"])
+    assert(reports.len() == 3)
+    mut has_a = false
+    mut has_b = false
+    mut has_c = false
+    for r in reports {
+        if r.source == "a" { has_a = true }
+        if r.source == "b" { has_b = true }
+        if r.source == "c" { has_c = true }
+        assert(r.status == 200)
+        assert(r.ok)
+    }
+    assert(has_a)
+    assert(has_b)
+    assert(has_c)
+}
+
+test "D414: parallel-for nested inside supervised{} []Record" {
+    ro reports = d414pf_fetch_all_supervised(["x", "y"])
+    assert(reports.len() == 2)
+    assert(d414pf_sum_status(reports) == 400)
+}
+
+test "D414: parallel-for result used immediately at call-arg position" {
+    ro total = d414pf_sum_status(d414pf_fetch_all(["p", "q"]))
+    assert(total == 400)
+}
+
+test "D414: parallel-for []T — value/stack-record element (D228)" {
+    ro xs = parallel for i in 0..4 {
+        D414pfPoint { x: i, y: i * 2 }
+    }
+    assert(xs.len() == 4)
+    mut sx = 0
+    mut sy = 0
+    for p in xs { sx += p.x; sy += p.y }
+    assert(sx == 0 + 1 + 2 + 3)
+    assert(sy == 0 + 2 + 4 + 6)
+}
+
+test "D414: parallel-for []T — named-tuple element (D215)" {
+    ro xs = parallel for i in 0..3 {
+        D414pfPair(i, i + 100)
+    }
+    assert(xs.len() == 3)
+    mut sa = 0
+    mut sb = 0
+    for p in xs { sa += p.a; sb += p.b }
+    assert(sa == 0 + 1 + 2)
+    assert(sb == 300 + 3)
+}
+
+test "D414: parallel-for []T — sum-type element (D406)" {
+    ro xs = parallel for i in 0..4 {
+        if i % 2 == 0 { Up } else { Down(i) }
+    }
+    assert(xs.len() == 4)
+    mut ups = 0
+    mut downs_sum = 0
+    for s in xs {
+        match s {
+            Up      => { ups += 1 }
+            Down(n) => { downs_sum += n }
+        }
+    }
+    assert(ups == 2)
+    assert(downs_sum == 1 + 3)
+}
+
+test "D414: parallel-for []T — nested []T elements" {
+    ro nested = parallel for i in 0..3 {
+        [i, i + 1, i + 2]
+    }
+    assert(nested.len() == 3)
+    mut total = 0
+    for inner in nested {
+        assert(inner.len() == 3)
+        for v in inner { total += v }
+    }
+    assert(total == 18)
+}

@@ -19,6 +19,12 @@
 
 ---
 
+## P2 — вне объёма Plan 202, найдено попутно
+
+| Маркер | Суть | Home | Pri |
+|---|---|---|---|
+| `[M-202-ident-x-module-alias-collision]` | **OPEN 2026-07-13 (найдено при ручном репро Plan 202 Ф.1, region НЕ resolver/manifest/imports — вне объёма).** `nova build`/`test` (НЕ `nova check`) на программе, импортирующей ЛЮБОЙ модуль чей последний path-сегмент — `x` (basename `x.nv`), даёт ложный `[E7401] no function 'compare' in module 'x'` в позиции EOF — не связано с самим импортом пользователя. Похоже на коллизию между `imported_modules`-регистрацией последнего сегмента импорта (D289, `types/mod.rs` `ExprKind::Member` dispatch, ~10553-10617) и внутренним синтезированным идентификатором дериватора сравнения (`auto_derive.rs`, generic `compare`-шаблоны используют однобуквенные placeholder'ы). Репро: `import a.neg.x.{who}` — `nova build` падает; переименование файла в `helper.nv` убирает симптом. НЕ блокирует Plan 202 (обойдено переименованием фикстур). Требует отдельного расследования в checker/auto_derive region. | floating | P2 |
+
 ## P1 — Correctness / Safety / Debuggability
 
 | Маркер | Суть | Home | Pri |
@@ -49,7 +55,8 @@
 | `[M-83-f4-global-routing-gated-on-bench]` | Ф.4 global-routing (cross-thread работа → global вместо home-worker wake_pending) ОТЛОЖЕН: review нашёл stranding (wake-one неверен; нужен wake-all) + home-affinity дизайн Nova уже корректен/stranding-proof. Go global-queue = balancing-vs-locality tradeoff, НЕ строгое улучшение. Делать только если профайл покажет home-affinity боттлнеком. Блокирует Ф.3 coalescing. Безопасный subset (steal random-victim + 61-tick fairness) — минор. | Plan 83-go-cmn (bench-gated) | P3 |
 | `[M-83.11-grow-vs-wake-race]` | ✅ **CLOSED 2026-06-11** (Plan 83-go-cmn Ф.1b, commit `e1525d90671`). Структурный фикс: `NovaSchedState` chunked stable-address storage (chunk'и never-realloc → torn-pointer невозможен); GitHub issue #2. Closure: grow_vs_wake_explicit 100/100 + stress_iso_3e 66/66 + semaphore_batch_n 30/30 armed. История — simplifications.md + plan §9.5. | Plan 83-go-cmn Ф.1b | ✅ done |
 | `[M-debug-line-directives]` | Нет `#line N "file.nv"` → дебаггер показывает C, не Nova. Только comment-only `/* SRC */`. | Plan 25 G9 → dedicated план | P1 |
-| `[M-173-error-return-trace]` | **Полный propagation-trace** uncaught throw/panic (Zig-парность): цепочка `?`-проброса от throw-site до границы, не только throw-site file:line. **Минимум СДЕЛАН (Ф.5 п.7, 2026-07-10, `cdd23a5b2`):** TLS `_nova_throw_site` + codegen-стемп + `at file:line (throw site)` в uncaught-abort ветках. Полный трейс (ring-buffer rethrow-точек) — этот маркер. | Plan 173 (Ф.5 минимум ✅) | P2 |
+| `[M-173-error-return-trace]` | ✅ **CLOSED 2026-07-13** (волна «173 хвосты», ветка `tails-173`). Полный propagation-trace поверх Ф.5-минимума `cdd23a5b2`: TLS ring-buffer `_nova_throw_trace` (16 записей + счётчик вытесненных) в effects.h/effects.c; codegen-push на каждой `?`-точке (value-mode `return Err` + Fail-ctx конверсия) и на `!!`-Err (конверсия пропагирующей ошибки — `nova_throw_site_mark` обновляет site БЕЗ сброса трассы); `!!`-None = свежий origin (`site_set`). Сброс трассы: fresh throw-origin (`site_set`) / catch (`nova_scope_exit` CATCH, interrupt-consume effects.c) / `nova_runtime_reset`. Дамп во всех uncaught-abort ветках: `propagation trace (?-chain, oldest first)` + `via file:line (?)`. Тест `nova_tests/err173/rt/f5_propagation_trace_full.nv` (3 звена, порядок, --panic lane). Известный остаток (задокументирован в effects.h): `Err(...)`-конструктор без throw трассу не сбрасывает — кадры разобранной match'ем ошибки могут остаться в хвосте следующего дампа. | Plan 173 (хвост) | ✅ done |
+| `[M-cli-build-source-file-name-unknown]` | Обнаружено волной «173 хвосты» (2026-07-13): путь `nova build` (nova-cli) НЕ вызывает `set_source_file_name` у эмиттера → throw-site/propagation-trace печатают `at <unknown>:12` (line честный, файл нет). Путь `nova test` (test_runner.rs:3457) и nova-codegen main.rs:517 стемпят basename честно. Pre-existing (виден и на Ф.5-минимуме до этой волны). Fix: прокинуть basename entry-файла в build-пайплайне nova-cli. | floating (nova-cli) | P3 |
 | `[M-closurefull-let-empty-ty]` | Обнаружен волной handler-annot (2026-07-10): let-bound ClosureFull (`ro f = fn(a int) -> int => a+1`) → CC-FAIL «use of undeclared identifier f» В ЛЮБОМ контексте, вкл. обычные тест-тела. Root: `infer_expr_c_type(ClosureFull)` возвращает пустой `ty_c` → Let-decl эмитится без типа (` f = (void*)&nova_lambda_N_clos_singleton;`). Канал: чекер пишет `resolved_types` (`ResolvedType::Func` → `NovaClos_X*`) только для zero-param ClosureLight (types/mod.rs:8424-8443); ClosureFull-ветка (:8445) не аннотирует, а в `infer_expr_c_type` legacy-ветки для ClosureFull нет (есть ClosureLight :49034 и Lambda :49102). **Pre-existing** (чистая база 6582887e1 падает идентично; репро: `nova_tests/basics/functions.nv`). Fix-направление: аннотировать ClosureFull в чекере (params+ret явные — гадать нечего) ИЛИ legacy-ветка ClosureFull в infer по образцу Lambda. | floating (codegen/checker, класс 172.12) | P2 |
 | `[M-folder-module-spawn-const-capture]` | Обнаружен Plan 175 Ф.1 (2026-07-04): в folder-module `spawn`/`select`-closure, захватывающий **module-level const** (напр. `Duration.from_millis(TIMEOUT_MS1)` внутри `spawn`), эмитит captured-поле по **bare-имени** (`_ctx->TIMEOUT_MS1 = &TIMEOUT_MS1`) вместо мангл-имени `Nova_const_<mod>_TIMEOUT_MS1` → C-compile `use of undeclared identifier`. Делает целый модуль некомпилируемым при `nova test <folder-module-dir>`. **Pre-existing** (baseline-delta=0: тот же CC-FAIL на parent-бинаре). Репро: `nova_tests/plan65` (f10/f7/f11 — `TIMEOUT_MS1`/`TIMEOUT_MS2`/`TIMERS_PER_FIBER`), `nova_tests/basics/control_flow` (`apply`). Fix: спавн-capture должен резолвить module-const в мангл-глобал (не local-var capture). | floating (codegen) | P2 |
 | `[M-detach-transitive-effect]` | Обнаружено research-заходом detach vs #blocking/#realtime (2026-07-11): `check_callee_effects` (types/mod.rs:17400) проверяет `callee.effects` только против forbid/realtime/blocking-body — транзитивного «caller обязан объявить `Detach`, если callee его декларирует» НЕТ. Следствие: `fn f() -> () { helper() }` при `fn helper() Detach -> ()` компилируется без `Detach` — сирота прячется на глубине 1 вызова; `forbid Detach` дыряв (обёртка без `Detach` в row обходит sandbox). Fix: Detach-ветка в `check_callee_effects` с теми же exemptions, что `E_DETACH_REQUIRES_EFFECT` (declared_effects / ambient with-handler / effect_root), тот же код диагностики. Закрывает и forbid-дыру. | floating (checker, Plan 173 follow-up) | P2 |
@@ -65,6 +72,8 @@
 | `[M-fiber-arena-raise-cap]` | ✅ **SUPERSEDED + IMPLEMENTED — [Plan 149](149-configurable-fiber-arena.md)** (Ф.0-Ф.6 closed+merged 2026-06-12, D233) — configurable fiber arena: стек/макс через env (`NOVA_FIBER_STACK`/`NOVA_MAX_FIBERS`) + nova.toml `[runtime]`, default 8MB→4MB, авто-округление вверх + clamp + garbage→warn+default; compile-time bitmap MAX (262144) отделён от runtime default; per-fiber minicoro stack scales с runtime slot_size. **ЗАМЕТКА о дальнейшем подъёме (2026-06-14):** кап 256k — НЕ ограничение VA (резерв виртуальной памяти почти бесплатен, коммит ленивый). Поднять тривиально: **static bitmap MAX + бронь заранее** (bitmap на 1M слотов = 128 KB; 1M×1MB-резерв = 1 TB из 128 TB → миллионы доступны без динамики; ограничение `max_slots×reserve ≤ 128 TB`). **Динамический chunked-grow** (добронировать чанк по требованию, never-realloc как `NovaSchedState` против grow-vs-wake) — опция, но ИЗБЫТОЧНА (раз резерв бесплатен — проще большой static-кап); схлопывание = decommit ФИЗИКИ свободных слотов (`[M-fiber-stack-lazy-decommit]`), virtual не un-reserve'им. Реальные стены — RAM (N×глубина) и GC-скан (∝ живых стеков), не VA/кап. **Калибровка:** 256k покрывает практически все реальные нагрузки (типичные Go-программы < сотен тысяч горутин; кто >~1M — уходят на пулы/event-driven из-за RAM/GC, не рантайма — кейс Kamardin «A Million WebSockets»). | Plan 149 | ✅ done |
 | `[M-fiber-stack-lazy-decommit]` | Возврат **физической** RAM при усадке fiber-стека: декоммит страниц выше high-water mark (Win `VirtualFree(MEM_DECOMMIT)`/`MEM_RESET`; Linux `madvise(MADV_DONTNEED/FREE)`). Виртуальный адрес остаётся зарезервирован → **указатели целы** (адреса те же, физ-страницы вернутся page-fault'ом при регросте). **Делать ЛЕНИВО с ГИСТЕРЕЗИСОМ, НЕ на каждом возврате** (per-return декоммит = syscall+TLB+page-fault thrashing на колеблющихся стеках — тот же hot-split, что у сегментного). **Политика (автор 2026-06-14):** стек растёт вниз — `[SP, base)` занято, `[low_committed, SP)` committed-but-unused; когда занято стало **≤ ¼** committed → декоммитить **нижнюю ½** от `[low_committed, SP)` (отдаём половину, оставляем headroom → мелкие колебания не рефолтят). **Триггер — park fiber'а** (заснул → стек точно не нужен), либо sysmon/GC. **Дополнение, НЕ замена сегментному:** отдаёт RAM простаивающих/усохших fiber'ов, но **НЕ снимает потолок** одновременных fiber'ов (тот из-за ВИРТУАЛЬНОЙ брони 8MB×N, не физической — для потолка нужен меньший резерв/segmented). **ПОЗИЦИЯ автора:** умеренный резерв (1–4MB) + lazy commit + decommit-с-гистерезисом покрывает RAM-гигиену **БЕЗ сегментного**; сегментный — только при доказанной нужде в 100k+ fiber'ов с глубокими стеками. Прецедент: heap-scavenger Go. | Plan 149 / 146 | P3 |
 | `[M-comparison-bool-operand-or-chaining]` | `0 <= i < @len` парсится как `(0<=i) < @len` = `bool < @len` → молча **вакуумно-истинно** (range-check обходится; SECURITY для контрактов — `requires 0<=i<@len` вакуумен). Nova сейчас хуже всех peers (даже untyped JS коэрсит; Nova нейтрализует предикат). Решение автора (2026-06-13): **hard-error (как Rust); chained comparison ОТКЛОНЁН** (`&&` явно) → **[Plan 150](150-chained-comparison-relational-safety.md)** ✅ **CLOSED 2026-06-13** (Ф.0-Ф.1: D248 + `E_CMP_CHAIN_UNSUPPORTED` parser + `E_RELATIONAL_OPERAND_NOT_ORDERED` checker; full check-sweep 2938 файлов = 0 регрессий; 13 фикстур plan150). Резолвил Q35; разблокировал `[M-140-bounds-as-contract]`. | Plan 150 | ✅ DONE |
+| ~~`[M-d78-duplicate-decl-module-swallow]`~~ | ✅ **CLOSED 2026-07-13 (Plan 202 Ф.1+Ф.1b).** Реестр модулей (резолвер `visited`/`in_progress` + `ModuleSigTable` sig pre-pass) теперь керится по **canonical filesystem path** (`imports::canonical_module_key`), не по декларации — дубль decl из двух физически разных модулей (`a/neg/x.nv`+`b/neg/x.nv`, оба принуждены D29 rev-3 к `module neg.x`) больше НЕ глотает экспорты второго. Синхронно расширен D307/D381 mangling-слой (`emit_c.rs`, `effective_modpath`/`phys_key_of`/`decl_phys_groups`) — иначе C-codegen дал бы redefinition для той же пары (обнаружено ЖИВЫМ CC-FAIL на pos-фикстуре при первом прогоне, не гипотетически). Fixtures: `spec_tests/conformance/d78_dup_decl_registry/` (fn-ось) + `d78_dup_decl_type_axis/` (type-ось) — оба PASS, значения не смешаны. Спека: D78 rev-4 (`spec/decisions/07-modules.md`, keying-семантика амендмент к D29 п.4). Остаточный узкий пробел (НЕ блокирует закрытие — вне acceptance Ф.1b) → `[M-d78-dup-decl-type-cross-import-ambiguous]` ниже. rev-3.1 (`internal/`) ретракция — Ф.4, отдельный followup, НЕ выполнена в этом слиянии. | Plan 202 | ✅ DONE |
+| `[M-d78-dup-decl-type-cross-import-ambiguous]` | **OPEN 2026-07-13 (Plan 202 Ф.1b, известный узкий остаток).** D381 collision-qualification `file_type_module` branch (2) — суффикс-матчинг import-пути к DEFINING module — не различает decl-дубль, когда colliding-тип импортируется СЕЛЕКТИВНО ИЗВНЕ (не из своего же модуля): деградирует к «ambiguous, оставить неквалифицированным» (существующий safe fallback — не путает значения, но может вернуть C-коллизию именно в этом узком сценарии: ИМЕНА не строятся, потому что import-путь `a.neg.kind` / `b.neg.kind` физически различим, а `cands`-множество после Ф.1b хранит `dupN`-дизамбигьюированные ключи, с которыми суффикс-матчинг не работает). Обе Ф.1b-фикстуры этот путь не используют (тип используется только ВНУТРИ объявляющего модуля). Fix-направление: расширить branch (2) на `dupN`-aware суффикс-матчинг (сопоставлять И decl-суффикс, И физическую группу через `imp`-резолюцию). Дом: Plan 202 followups / floating. | Plan 202 (residual) | P2 |
 | `[M-match-arm-mixed-int-width-sentinel-coerce]` | **OPEN 2026-06-26 (Plan 172.2).** `match o { Some(v) => v, None => -1 }` где `v u32` в функции `-> int` тихо коэрсит `-1` к u32 (0xFFFFFFFF → widened int 4294967295). Repro: `fn f(o Option[u32]) -> int { match o { Some(v)=>v, None=>-1 } }` → `f(None) != -1`. Корень: `infer_match_common_primitive` ([types/mod.rs:7361](../../compiler-codegen/src/types/mod.rs)) бейлит на расхождении арм-типов → codegen re-derive'ит общий тип по ПЕРВОЙ арме (u32), коэрся sentinel второй арме. Это §1 «авто-выведенный неверный тип» + §4 «тихая дыра» Plan 172.2. Фикс: width-aware widen смешанных int-ширин/знаков к `int` (объемлющий) + материализовать в канал. Миграция `compose_pair → Option[u32]` убрала триггер из unicode, НЕ из компилятора. | Plan 172.1 (type-engine) / floating | P1 |
 
 ## P2 — Correctness / Completeness
@@ -1094,7 +1103,7 @@ failure** → должны возвращать `Result[T, <Timeout/RaceError>]`
 - **[M-178-body-copy-json-trailers]** — `Body.@copy_to` (fs-gate 176) / `@json[T]` (serde-gate 180 Ф.4) / `@trailers` (Ф.2).
 - **[M-178-body-text-charset]** — charset-aware `@text` (latin1-fallback по Content-Type) — Response-контекст Ф.2; Ф.1 = строгий UTF-8.
 - **[M-178-bodyreader-option-eof-eq-ordering]** — план-форма `@next_chunk -> Result[Option[[]u8]]` (None=EOF) упирается в codegen forward-decl-ordering-баг eq `Option[Option[[]u8]]`; Ф.1 = `@at_eof()` + `Result[[]u8]`.
-- **[M-178-consume-field-ctor-from-var]** — checker не распознаёт move consume-переменной/параметра в record-поле (только свежее inline-выражение) → Request/Response-конструкторы принимают сырьё тела. Кандидат на fix в consume-analysis.
+- ~~**[M-178-consume-field-ctor-from-var]**~~ ✅ **CLOSED 2026-07-13** (ветка m178-consume-field) — consume-analysis теперь распознаёт move голой owned-переменной/consume-параметра в consume-поле record-литерала (типизированного, анонимного-из-контекста, punning; sum record-варианты тоже) = потребление биндинга; use-after-move/двойной move ловятся (D131). Композиция с D188 v3: consume-поле литерала в tail/return re-consume блока = consume-позиция (дизарм при конструировании; codegen `collect_reconsume_occurrences_rec` расширен на RecordLit). Спека: D133 §«Что считается consume» (02-types.md) + D188 v3 п.2/п.3/п.4 (03-syntax.md). Тесты: `spec_tests/conformance/d133_consume_field_ctor_from_var.nv` + neg (use-after-move, double-move) + v3-хвост в `d188_reconsume_block.nv`. nova-tls: pass-through `tcp_move` удалён, `TlsStream.wrap` строит `{ tcp: stream, session }` напрямую (ветка m178).
 - **[M-178-errsource-net/utf8/io/tls]** — payload-типизированные `ErrSource`-варианты добавляются при приземлении зависимостей (Ф.2 / 176 Ф.0.5 / 116); enum OPEN → non-breaking. **`Compress(CompressError)` ✅ приземлён 2026-07-06** (auto-decompress, разблокирован D381) — остаются `Net`/`Utf8`/`Io`/`Tls`.
 - **[M-178-setcookie-expires-timestamp]** — typed `expires Option[Timestamp]` (IMF-fixdate→epoch, Plan 175); Ф.1 несёт `max_age`.
 - **[M-178-message-builders]** — RequestBuilder/ResponseBuilder/verb one-shots/`error_for_status` — Ф.2.
@@ -1251,8 +1260,25 @@ Server-followups (за CORE, честные маркеры):
   **Отдельно найден (НЕ ЗДЕСЬ почин, вне зоны std/http) реальный компиляторный дефект** —
   см. `[M-channel-generic-elem-type]` ниже.
 - **[M-178-server-policy-surface]** — middleware onion, 100-continue, keep-alive, chunked-request decode, trailing-slash-301.
-- **[M-178-server-graceful-deadline]** — bounded deadline-drain gated на `supervised(deadline:)` (unimpl в main); cancel-based stop-accept доступен.
-- **[M-178-server-typed-body]** — типизированные `#impl(Deserialize)` request-bodies (serde-в-http-CU codegen-барьер, см. serdejson).
+- **[M-178-server-graceful-deadline]** (PRIMITIVE LANDED+HARDENED 2026-07-06/2026-07-12-13, Plan 174 D408 + Plan 173 Ф.3) —
+  `supervised(deadline:)`/`supervised(timeout:)` больше НЕ блокер: примитив в main
+  с 2026-07-06 (D408); при исполнении 173 Ф.3 найден и починен реальный дефект —
+  спавненный child, запаркованный на `Time.sleep`, будился РАНО отменой области
+  (`nova_scope_deliver_cancel`), но не re-check'ал `cancel_requested` после
+  `park_until`/на pre-arm fast-path'ах → «успешно» досыпал и докручивал тело до
+  конца вместо unwind (leak: outer `supervised` уже вернул/бросил `TimeoutError`
+  вовремя — это НЕЗАВИСИМый gate в `nova_supervised_run_impl` — а ребёнок ещё жил
+  в фоне). Чинено в `fibers.h` (`_nova_sleep_via_libuv`/`_nova_sleep_via_driver`,
+  4 сайта: 2×pre-arm early-exit + 2×post-park, shield-aware
+  `nova_cancel_mask_load`+`nova_throw_cancel_reason`, паритет с
+  `nova_fiber_yield`/channels.h/net.c). Regression: `std/concurrency/
+  supervised_deadline_test.nv` test 8 (8/8 PASS). Спека НЕ менялась — D408 §3
+  УЖЕ обещал «Sleep/сетевой park прерывается РАНО» нормативно; это conformance-
+  фикс, не language-change. **Остаток (НЕ в этой волне, std/http-зона):**
+  `servernet.nv` не имеет reusable multi-connection accept-LOOP вообще (только
+  `handle_connection` + smoke-тесты) — сама проводка bounded-deadline-drain в
+  такой цикл ещё предстоит написать; cancel-based stop-accept (без deadline)
+  доступен уже сейчас на том же примитиве.
 - **[M-channel-generic-elem-type]** (P1-ish, найден 2026-07-12 при работе над `[M-178-server-streaming]`,
   isolated-repro подтверждён вне std/http — pre-existing, компиляторный, НЕ мой зона в этой волне):
   `docs/channels.md` §«element type T is inferred from the first send/recv» **не выполняется** для
@@ -1270,6 +1296,56 @@ Server-followups (за CORE, честные маркеры):
   first-send/recv (docs claim), ИЛИ (2) минимум — turbofish `Channel[T].new` без ICE как рабочий
   escape hatch, ИЛИ (3) поймать non-int-payload-через-int-канал как ЯВНУЮ typed-error вместо silent
   pointer/int reinterpret для pointer-sized T (в компиляторе, не здесь).
+- ~~**[M-channel-generic-elem-type]**~~ ✅ **(2)+(3) ЗАКРЫТЫ 2026-07-12** (ветка `channel-elem`,
+  worktree `nova-capmig`, коммиты `<см. HEAD channel-elem>`). Найден 2026-07-12 при работе над
+  `[M-178-server-streaming]`; репро было: `docs/channels.md` §«element type T is inferred from the
+  first send/recv» не выполнялось для non-`int` T (`tx.send("first")` → CC-FAIL сырым C-компилятором;
+  `[]u8`-пейлоад мистипизировался silently через pointer→int implicit C-cast; документированный
+  turbofish-эскейп `Channel[str].new(n)` — ICE `[P67-LEGACY] Ident 'Channel' not in var_types`).
+  Из трёх вариантов почина реализованы **два**:
+  - **(a) честный gate** (`channel_payload_c_type_ok`, `emit_c.rs`): `.send`/`.try_send` теперь
+    отвергают компиляцией (`E_CHANNEL_UNSOUND_ELEM_TYPE`) любой payload, чей C-тип не влезает
+    без потерь в word-sized слот рантайма (`nova_str`, `nova_f32`/`nova_f64`, tuples,
+    value-records) — вместо сырого C-cast-краша или silent pointer/int reinterpret. Word-safe
+    типы (`int`, `bool`, `char`, fixed-width ints, любой pointer-sized `T` — `[]T`, records,
+    `HashMap`, суммы) продолжают компилироваться как раньше (backward-compat подтверждена).
+  - **(b) turbofish-ICE фикс**: `Channel[T].new(cap)` (`emit_call` + оба `infer_expr_c_type`-сайта)
+    больше не падает — `Channel` как turbofish-база (`ExprKind::TurboFish{base: Ident("Channel")}`)
+    распознаётся explicitly и эмитится идентично bare/Path-формам (`T` стёрт на рантайм-уровне
+    регардless — `Nova_ChannelPair` нежанрик). `Channel[int]`/`Channel[bool]`/`Channel[str]`
+    (последний — до честного (a)-gate на `.send`) больше не ICE.
+  - **(1) реальная end-to-end T-inference НЕ реализована** — `rx.recv()` остаётся `Option[int]`
+    на уровне codegen C-типа независимо от отправленного T (`infer_call_ret_c`,
+    `"recv" | "try_recv" => "NovaOpt_nova_int"`); попытка реально ПОТРЕБИТЬ полученный `[]u8` как
+    `[]u8` (`.len()`, индексация) даёт отдельный, другой ICE (`Index element type unknown for
+    obj_ty="nova_int"`, `emit_c.rs:49468`) — тот же класс, что и (a)/(b), но НЕ починен этой волной
+    (зона `resolve_return_channel`/`f1_check_call`, ~46293-48883, была явно вне периметра правки).
+    Вынесено в отдельный **`[M-channel-real-elem-type-inference]`** (P2, требует полноценной
+    generic-моно-типизации `Channel[T]` в checker+codegen — заметно больший объём, чем (a)/(b)).
+  - **docs/channels.md**/**channels.ru.md**: убран misleading-пример `Channel[str].new(8)` (заменён
+    на `Channel[int].new(8)`), добавлен явный §«word-safe T only» с перечислением supported/rejected
+    и ссылкой на `E_CHANNEL_UNSOUND_ELEM_TYPE`.
+  - **Регресс-покрытие**: `spec_tests/conformance/channel_elem_type_word_safe.nv` (int/bool/[]u8
+    send, try_send, оба turbofish-варианта — pos) + `spec_tests/conformance/neg/
+    channel_elem_str_payload_neg.nv` + `neg/channel_elem_turbofish_str_payload_neg.nv` (str payload
+    через bare И turbofish `Channel[str].new` — оба ловят `E_CHANNEL_UNSOUND_ELEM_TYPE`).
+  - **Гейты**: `cargo build --release` (nova-cli) чист (только pre-existing warnings). Conformance
+    (`spec_tests/conformance`, один CU, `--positive --compile-error --timeout 300 --jobs 4`) —
+    **97 PASS / 0 FAIL** (95 baseline + 2 новых neg). `std/http` (`--full --jobs 4`) — 9 PASS / 0 FAIL
+    (два `servernet/rt/*smoke*` тайм-аутили ТОЛЬКО под `--jobs 4`-нагрузкой — компайл-фаза congestion,
+    прецедент `[M-net-close-teardown-hang]`; PASS 2/2 при `--jobs 1 --timeout 180`). Точечный регресс
+    по всем существующим Channel-юзерам (`nova_tests/err173_2`, `err173_3`, `negative_capability`,
+    `plan83_10/neg`, `plan83_7`, `expected_runtime`, `std/concurrency`) — все зелёные, включая
+    `err173_3/share_capture_ok_test` (`.try_send(j.payload)`/`.try_send(h.payload)`, int payload)
+    и `std/concurrency/cancellation.nv` `race2[T]` (generic try_send, без каких-либо callers в репо
+    — не задет).
+  - **Побочная находка (НЕ почин, вне зоны этой правки)**: `nova_tests/plan83_10/
+    handler_isolation_per_fiber.nv` падает ICE `[P67-LEGACY] Path call return type unknown for
+    method=now` (`emit_c.rs:48941`) — эффект-хендлер `with Time = effect Time {...} { Time.now() }`,
+    **нулевого отношения к Channel** (подтверждено: код-ревью показал, что диф (a)/(b) не трогает
+    generic Path-call return-type dispatch; сам файл не использует Channel вообще). Pre-existing,
+    независимый баг — не заведён отдельным маркером в рамках этой волны (не моя зона), но стоит
+    завести при следующем заходе в эту область.
 
 **NEW codegen-баги (обнаружены при Ф.2-enh + Ф.3, кандидаты на fix, вне .nv):**
 - ~~**[M-codegen-nominal-type-name-collision]**~~ ✅ **CLOSED 2026-07-06 (D381).** Collision-aware module-qualified mangling приземлён (см. `[M-sync-crossmodule-samename-type-collision]` выше). Одноимённые cross-module типы (`ErrorKind` × io/http/compress) сосуществуют в одном CU: `Nova_<modpath>_<Name>` для коллидирующих, byte-identical для прочих. Разблокирует auto-decompress co-presence (http+compress `ErrorKind` в одном CU компилятся/линкуются — conformance PASS 1/0) + `ErrSource.Compress`.
@@ -3085,3 +3161,37 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   swallow-match, lint-clean: `flush_out` вне RESULT_CALLEES-списка правила).
   Чинить в чекере (вывод типа `Result[(), E].ok()` → `Option[()]`, не
   `Option[E]`) отдельным заходом compiler-codegen.
+
+## [M-strict-effects-conformance-sweep] — `--strict-effects` debt snapshot: std/ + examples/ ЧИСТЫ (2026-07-13, Plan 197)
+
+Plan 197 добавил экспериментальный флаг `--strict-effects` (`nova check/build/test
+--strict-effects`, off by default — nova-cli/src/main.rs + compiler-codegen/src/
+strict_effects.rs) с двумя opt-in диагностиками поверх обычного чекера:
+`E_UNDECLARED_TRANSITIVE_EFFECT` (D62 §Правило 1 — транзитивный эффект без
+объявления/lexical with-хендлера, сейчас silent, под флагом — hard error) и
+`E_EFFECT_ERASED_IN_FN_TYPE` (присвоение/передача/return fn-значения в более
+узкий по эффектам fn-тип — erasure). Реализация: types/mod.rs::CapabilityCtx::
+check_transitive_effect_strict (диагностика 1, переиспользует существующий
+with_handler_stack/declared_effects walk) + strict_effects.rs::check_effect_erasure
+(диагностика 2, отдельный syntactic pass). См. spec/decisions/04-effects.md D62,
+spec/open-questions.md.
+
+**Снапшот долга (2026-07-13, commit на ветке `strict-effects`, worktree nova-197):**
+`nova --strict-effects check std --format short` → `PASS: 126 FAIL: 21 WARN: 250`
+— **байт-в-байт идентично** прогону БЕЗ флага (diff отсортированных выводов
+пустой); все 21 FAIL — pre-existing негативные фикстуры (`*_neg.nv`/`neg/`:
+serde/consume/D131 и т.п.), НЕ связаны с эффектами. `nova --strict-effects check
+examples --format short` → `PASS: 30 FAIL: 0 WARN: 51` (`examples/_wip/` вне
+скана — pre-existing tooling-skip, не Plan-197-specific). **Итог: ZERO строк
+нарушений** в обоих деревьях — `std/` и `examples/` уже конформны
+`--strict-effects` без единой правки.
+
+Машинно-парсимый список (`docs/plans/strict-effects-debt.txt`,
+`путь:строка:вид:недостающий-эффект`) создан пустым (0 data-строк, только
+header-комментарий с датой/командой) — **следующему haiku-агенту делать
+нечего**: миграция аннотаций std/examples не требуется, флаг можно включать
+в конвенцию сборки std/examples уже сейчас (владелец: «внутренние модули std
+и программы ДОЛЖНЫ собираться с `--strict-effects`» — это условие уже
+выполнено). Если объём кода в std/examples вырастет и появятся нарушения —
+перезапустить `nova --strict-effects check std examples --format short` и
+пополнить `strict-effects-debt.txt` по тому же формату.

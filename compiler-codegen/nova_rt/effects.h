@@ -130,16 +130,72 @@ __declspec(thread) extern NovaLastError _nova_last_error;
 extern __thread NovaLastError _nova_last_error;
 #endif
 
-static inline void nova_last_error_set(nova_str msg, NovaThrowKind kind,
-                                       void* payload, NovaTypeId tid) {
+/* ── Plan 173 хвост (D414 §1 ← Ф.4), рефактор Plan 201 ──
+ * scope MultiError-агрегация: суффикс-цепочка suppressed-ошибок
+ * ПЕРЕДАЁТСЯ явным параметром (`nova_last_error_set_ex`), не через
+ * ambient thread-local staging-слот (был `_nova_pending_suppressed`,
+ * удалён — держался на недокументированной механикой инварианте «нет
+ * точки планирования между постановкой и потреблением»; владелец
+ * потребовал механику вместо комментария-инварианта). Единственный
+ * caller, которому есть что передать помимо NULL — `nova_rethrow_scope`
+ * (fibers.h) на хвосте `nova_supervised_run_impl`. Все прочие throw-сайты
+ * не несут suppressed-цепочку и используют `nova_last_error_set`
+ * (обёртку с suppressed=NULL — прежнее поведение, D158: новая ошибка =
+ * новый карман). */
+static inline void nova_last_error_set_ex(nova_str msg, NovaThrowKind kind,
+                                          void* payload, NovaTypeId tid,
+                                          NovaErrorChain* suppressed) {
     _nova_last_error.live               = 1;
     _nova_last_error.frame.error_msg           = msg;
     _nova_last_error.frame.error_kind          = kind;
     _nova_last_error.frame.error_reason_ptr    = NULL;
     _nova_last_error.frame.error_user_payload  = payload;
     _nova_last_error.frame.error_user_type_id  = tid;
-    _nova_last_error.frame.error_suppressed    = NULL;
+    _nova_last_error.frame.error_suppressed    = suppressed;
 }
+
+static inline void nova_last_error_set(nova_str msg, NovaThrowKind kind,
+                                       void* payload, NovaTypeId tid) {
+    nova_last_error_set_ex(msg, kind, payload, tid, NULL);
+}
+
+/* ── Plan 201 Ф.2: debug tripwire — класс «ambient TLS staging слот, чья
+ * корректность держится на инварианте "нет точки планирования между
+ * постановкой и потреблением"» ────────────────────────────────────────
+ *
+ * Единственный известный представитель этого класса — `_nova_pending_
+ * suppressed` (D414 §1) — удалён выше (см. comment над
+ * `nova_last_error_set_ex`): цепочка теперь идёт explicit-параметром
+ * через `nova_rethrow_scope` (fibers.h), так что производителю/потребителю
+ * структурно нечего терять на scheduling-точке между ними.
+ *
+ * Этот tripwire — ЗАПРЕТ НА БУДУЩЕЕ, а не диагностика текущего дефекта:
+ * реестр проверок пуст, потому что живых слотов этого класса нет. Если
+ * когда-нибудь появится НОВЫЙ ambient-слот с тем же контрактом
+ * (producer ставит значение "на потом", consumer читает его позже БЕЗ
+ * явной параметр-передачи, а между ними возможен park/yield/channel/
+ * sleep/IO) — он обязан либо (предпочтительно) стать explicit-параметром
+ * по образцу выше, либо добавить сюда РЕАЛЬНУЮ проверку "слот невзведён"
+ * вместо комментария-инварианта (то, что владелец потребовал для
+ * _nova_pending_suppressed). Другие живые TLS-слоты (`_nova_fail_top`,
+ * `_nova_interrupt_top`, handler-vtable-слоты, `_nova_active_scope`) —
+ * НЕ этого класса: они намеренно переживают scheduling-точки как per-
+ * fiber динамический контекст и явно save/restore'ятся вокруг
+ * mco_resume (runtime.c, Plan 44.5 Layer 5) — их корректность держится
+ * на этом save/restore коде, не на "не должно планироваться".
+ *
+ * Вызывается из `nova_gopark` (nova_sched.h) — единственной настоящей
+ * точки, где живой fiber передаёт управление планировщику (mco_yield).
+ * Debug-only (см. R2-tripwire конвенцию, fibers.h): no-op под NDEBUG. */
+static inline void nova_assert_no_ambient_error_staging(void) {
+    /* Реестр пуст — см. doc-comment выше. */
+}
+
+#if !defined(NDEBUG)
+#  define NOVA_ASSERT_NO_AMBIENT_ERROR_STAGING() nova_assert_no_ambient_error_staging()
+#else
+#  define NOVA_ASSERT_NO_AMBIENT_ERROR_STAGING() ((void)0)
+#endif
 
 /* ──────────────────────────────────────────────────────────────────
  * Plan 173 Ф.5 п.7 (Zig-парность, минимум): throw-site трассировка.
@@ -164,16 +220,90 @@ __declspec(thread) extern NovaThrowSite _nova_throw_site;
 extern __thread NovaThrowSite _nova_throw_site;
 #endif
 
+/* ──────────────────────────────────────────────────────────────────
+ * [M-173-error-return-trace] (Plan 173 хвост, 2026-07-13): ПОЛНЫЙ
+ * propagation-trace — ring-buffer rethrow-точек цепочки `?`-проброса
+ * (Zig error-return-trace парность) поверх throw-site минимума Ф.5 п.7.
+ * ──────────────────────────────────────────────────────────────────
+ *
+ * Codegen стемпит `nova_throw_trace_push("file.nv", line)` на КАЖДОЙ
+ * `?`-точке проброса ошибки (Result-Err early-return и Fail-context
+ * конверсия Err→throw) — только на error-path, happy-path не затронут.
+ * Ring фиксированной ёмкости: при переполнении старейшие записи
+ * перезаписываются (хвост цепочки — самые информативные кадры ближе
+ * к границе); `count` хранит суммарное число push'ей для диагностики
+ * «N ранних кадров вытеснено».
+ *
+ * Сброс (= трасса принадлежит ОДНОЙ in-flight ошибке):
+ *   - fresh throw-origin — nova_throw_site_set (codegen стемпит его
+ *     перед каждым user-throw/panic/unreachable);
+ *   - ошибка поймана/поглощена — nova_scope_exit CATCH,
+ *     interrupt-consume (effects.c), nova_runtime_reset (fibers.h).
+ * Err(...)-конструктор БЕЗ throw трассу не сбрасывает (нет стемпа) —
+ * задокументированное ограничение: две подряд Result-mode ошибки,
+ * первая из которых разобрана match'ем, могут оставить свои кадры
+ * в хвосте следующего дампа. */
+#define NOVA_THROW_TRACE_CAP 16
+
+typedef struct {
+    NovaThrowSite entries[NOVA_THROW_TRACE_CAP];
+    int           count;  /* всего push'ей с последнего reset */
+} NovaThrowTrace;
+
+#ifdef _MSC_VER
+__declspec(thread) extern NovaThrowTrace _nova_throw_trace;
+#else
+extern __thread NovaThrowTrace _nova_throw_trace;
+#endif
+
+static inline void nova_throw_trace_reset(void) {
+    _nova_throw_trace.count = 0;
+}
+
+static inline void nova_throw_trace_push(const char* file, int line) {
+    NovaThrowSite* e =
+        &_nova_throw_trace.entries[_nova_throw_trace.count % NOVA_THROW_TRACE_CAP];
+    e->file = file;
+    e->line = line;
+    _nova_throw_trace.count++;
+}
+
 static inline void nova_throw_site_set(const char* file, int line) {
+    _nova_throw_site.file = file;
+    _nova_throw_site.line = line;
+    nova_throw_trace_reset();  /* [M-173-error-return-trace]: новая ошибка = новая трасса */
+}
+
+/* [M-173-error-return-trace]: обновить throw-site БЕЗ сброса трассы —
+ * для конверсии УЖЕ пропагирующей Result-ошибки в Fail-эффект (`!!` на
+ * Err): бросок здесь — не новая ошибка, а звено той же `?`-цепочки;
+ * накопленные propagation-кадры должны пережить конверсию. */
+static inline void nova_throw_site_mark(const char* file, int line) {
     _nova_throw_site.file = file;
     _nova_throw_site.line = line;
 }
 
-/* Печать throw-site в uncaught-abort ветках (no-op если сайт неизвестен). */
+/* Печать throw-site + propagation-trace в uncaught-abort ветках
+ * (обе части независимо no-op при отсутствии данных). */
 static inline void nova_throw_site_dump(void) {
     if (_nova_throw_site.file) {
         fprintf(stderr, "  at %s:%d (throw site)\n",
                 _nova_throw_site.file, _nova_throw_site.line);
+    }
+    if (_nova_throw_trace.count > 0) {
+        int total = _nova_throw_trace.count;
+        int kept  = total < NOVA_THROW_TRACE_CAP ? total : NOVA_THROW_TRACE_CAP;
+        int first = total - kept;  /* хронологический индекс старейшей retained-записи */
+        fprintf(stderr, "  propagation trace (`?`-chain, oldest first):\n");
+        if (first > 0) {
+            fprintf(stderr, "    ... (%d earlier frame%s dropped)\n",
+                    first, first == 1 ? "" : "s");
+        }
+        for (int i = first; i < total; i++) {
+            NovaThrowSite* e =
+                &_nova_throw_trace.entries[i % NOVA_THROW_TRACE_CAP];
+            fprintf(stderr, "    via %s:%d (?)\n", e->file, e->line);
+        }
     }
 }
 
@@ -183,15 +313,22 @@ static inline void nova_throw_site_dump(void) {
  * прошлые suppressed). Chain populated runtime'ом во время defer-cleanup
  * через nv_compose_suppressed; transferred к outer frame через
  * nova_rethrow_with_suppressed. */
-static inline void nova_throw(nova_str msg) {
-    nova_last_error_set(msg, NOVA_THROW_USER, NULL, NOVA_TID_NONE);  /* Ф.4 #5 */
+/* Plan 201: explicit-suppressed variant — used by `nova_rethrow_scope`
+ * (fibers.h) which HAS a suppressed chain to carry (scope MultiError
+ * aggregate) and needs it threaded through without an ambient TLS relay.
+ * `nova_throw` (below) is the ordinary zero-suppressed call site. */
+static inline void nova_throw_ex(nova_str msg, NovaErrorChain* suppressed) {
+    nova_last_error_set_ex(msg, NOVA_THROW_USER, NULL, NOVA_TID_NONE, suppressed);  /* Ф.4 #5 */
     if (_nova_fail_top) {
         _nova_fail_top->error_msg = msg;
         _nova_fail_top->error_kind = NOVA_THROW_USER;
         _nova_fail_top->error_reason_ptr = NULL;
         _nova_fail_top->error_user_payload = NULL;
         _nova_fail_top->error_user_type_id = NOVA_TID_NONE;
-        _nova_fail_top->error_suppressed = NULL;
+        /* D414 §1: suppressed chain (NULL for plain throws) — carried in the
+         * frame so it survives further rethrow-hops (nova_scope_exit ->
+         * nova_rethrow_with_suppressed mirrors the frame). */
+        _nova_fail_top->error_suppressed = suppressed;
         longjmp(_nova_fail_top->jmp, 1);
     }
     /* No handler: abort. Plan 20 Ф.8 follow-up: flush stdout перед
@@ -203,6 +340,10 @@ static inline void nova_throw(nova_str msg) {
         (int)msg.len, msg.ptr);
     nova_throw_site_dump();  /* Plan 173 Ф.5 п.7 */
     abort();
+}
+
+static inline void nova_throw(nova_str msg) {
+    nova_throw_ex(msg, NULL);
 }
 
 /* Plan 49 Ф.0: cancel-throw — kind=CANCEL, reason=NULL (Ф.1 заполняет
@@ -421,6 +562,7 @@ static inline void nova_scope_exit(NovaFailFrame* primary, NovaScopeExitPolicy p
      * Ф.4 #5: the error is now caught & recovered — invalidate the stable
      * snapshot so a later value-`interrupt` does not resurrect it. */
     _nova_last_error.live = 0;
+    nova_throw_trace_reset();  /* [M-173-error-return-trace]: ошибка поймана */
 }
 
 /* Accessors для MultiError prelude — count + indexed access на chain.
@@ -766,8 +908,13 @@ static inline void nova_assert(nova_bool cond, const char* expr_str) {
  * потому что longjmp/abort не возвращаются по определению.
  *
  * См. spec/decisions/08-runtime.md → D13 (panic — fiber-уровень). */
-static inline void nv_panic(nova_str msg) {
-    nova_last_error_set(msg, NOVA_THROW_PANIC, NULL, NOVA_TID_NONE);  /* Ф.4 #5 */
+/* Plan 201: explicit-suppressed variant — см. nova_throw_ex. `nv_panic`
+ * historically did not carry a suppressed chain into `_nova_fail_top`
+ * itself (only into the `_nova_last_error` snapshot the `.suppressed()`
+ * accessor reads); this preserves that behavior while removing the
+ * ambient relay. */
+static inline void nv_panic_ex(nova_str msg, NovaErrorChain* suppressed) {
+    nova_last_error_set_ex(msg, NOVA_THROW_PANIC, NULL, NOVA_TID_NONE, suppressed);  /* Ф.4 #5 */
     if (_nova_fail_top) {
         _nova_fail_top->error_msg = msg;
         /* Plan 110.1.4.g (D188): mark frame's error_kind = PANIC so
@@ -793,6 +940,10 @@ static inline void nv_panic(nova_str msg) {
     fwrite("\n", 1, 1, stderr);
     nova_throw_site_dump();  /* Plan 173 Ф.5 п.7 */
     abort();
+}
+
+static inline void nv_panic(nova_str msg) {
+    nv_panic_ex(msg, NULL);
 }
 
 /* Plan 33.8 Ф.1.2: checked знаковая `int`-арифметика.
@@ -1005,22 +1156,29 @@ extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any;
  * Ф.3 dispatcher). `payload` указывает на value (caller-allocated, обычно
  * heap-boxed на throw-site), `tid` — compile-time NOVA_TID_<E>, `msg_repr`
  * — fallback string-репрезентация для diagnostic и string-only handler. */
-static inline nova_unit nova_throw_typed(nova_str msg_repr,
-                                          void* payload,
-                                          NovaTypeId tid) {
+/* Plan 201: explicit-suppressed variant — см. nova_throw_ex. `nova_throw_typed`
+ * (below) is the ordinary zero-suppressed call site used by every other
+ * codegen site; `nova_rethrow_scope` (fibers.h) is the one caller with an
+ * actual chain to carry. */
+static inline nova_unit nova_throw_typed_ex(nova_str msg_repr,
+                                             void* payload,
+                                             NovaTypeId tid,
+                                             NovaErrorChain* suppressed) {
     /* Plan 61 Ф.3 fix: set fail-frame payload ДО любого handler dispatch.
      * Handler arm (typed via fail_e_map) читает `e` через
      * _nova_fail_top->error_user_payload — payload должен быть доступен
      * к моменту invoke. Это OK даже без unwind: handler-arm body — это
      * inline fn-call с captured pointer to fail-frame top. */
-    nova_last_error_set(msg_repr, NOVA_THROW_USER_TYPED, payload, tid);  /* Ф.4 #5 */
+    nova_last_error_set_ex(msg_repr, NOVA_THROW_USER_TYPED, payload, tid, suppressed);  /* Ф.4 #5 */
     if (_nova_fail_top) {
         _nova_fail_top->error_msg          = msg_repr;
         _nova_fail_top->error_kind         = NOVA_THROW_USER_TYPED;
         _nova_fail_top->error_reason_ptr   = NULL;
         _nova_fail_top->error_user_payload = payload;
         _nova_fail_top->error_user_type_id = tid;
-        _nova_fail_top->error_suppressed   = NULL;  /* Plan 100.4.1 D158 */
+        /* D414 §1: suppressed chain (NULL for plain typed throws) — carried
+         * in the frame so it survives further rethrow-hops. */
+        _nova_fail_top->error_suppressed   = suppressed;
     }
     /* Step 2: erased typed slot.
      * Plan 173 Ф.4 #6: cleanup-unwind bypasses handler dispatch (model B). */
@@ -1059,6 +1217,12 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
     nova_throw_site_dump();  /* Plan 173 Ф.5 п.7 */
     abort();
     return NOVA_UNIT;  /* unreachable */
+}
+
+static inline nova_unit nova_throw_typed(nova_str msg_repr,
+                                          void* payload,
+                                          NovaTypeId tid) {
+    return nova_throw_typed_ex(msg_repr, payload, tid, NULL);
 }
 
 /* ---- Built-in `Time` effect (D11 / D14 / D62) ----

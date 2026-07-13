@@ -1,0 +1,9 @@
+// Plan 202 Ф.1 (D78 rev-4) repro fixture, half B — see `a/neg/helper.nv`
+// doc comment for the full rationale. Same 2-segment declaration
+// (`neg.helper`) as the `a/` sibling, DIFFERENT physical directory —
+// legal after Plan 202 Ф.1 (registry keyed by canonical path, not decl).
+module neg.helper
+
+fn secret() -> int => 2
+
+export fn who_b() -> int => secret()

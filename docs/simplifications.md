@@ -9,6 +9,8 @@
 > rationale и roadmap. **Не использовать этот документ как тихое разрешение
 > оставлять tech-debt без плана.**
 
+[2026-07-13 [M-parfor-record-result-miscompile] — окончательно ЗАКРЫТ (loop-var non-scalar by-ref capture root cause), ✅ ЗАКРЫТО, ветка parfor-173-1] Владелец: срочный баг-фикс — «parallel for, собирающий record-результаты, мискомпилится». Расследование: Plan 173.1 Ф.2 (2026-07-09, `parallel-collect-173-1`) уже закрыл маркер ДЛЯ матрицы `nova_tests/err173_1/parfor_elem_matrix.nv` (примитив/heap-record/value-record/tuple/sum/nested-[]T — каждый элемент строился ВНУТРИ тела из int-loop-var через `Range`). Первые repro-попытки этой волны (fn-return-trailing, nested-supervised, call-arg-position — «aggregate()»-идиома из Plan 187) ПРОШЛИ чисто → казалось, маркер уже мёртв. Настоящий репро нашёлся только когда loop-var сам НЕ-скалярного типа (str) итерировался из МАССИВА (не Range) и передавался в тело НАПРЯМУЮ: `parallel for s in ["a","b","c"] { Report{source: s, ...} }` — ВСЕ собранные Report показывали ОДИН И ТОТ ЖЕ (последний) `source`; `parallel for s in ["a","b","c"] { s }` давал дубликаты/пропуски вместо `{a,b,c}`. 100% детерминированно (не флака). **Root cause:** `emit_spawn`/`emit_detach`/`emit_blocking` (`compiler-codegen/src/codegen/emit_c.rs`, 3 идентичных сайта capture-анализа) гейтили by-value capture условием `is_scalar && !is_mut`, где `is_scalar` — узкий whitelist `{nova_int,nova_bool,nova_f64,nova_f32,nova_byte}`. Loop-переменная for-loop'а переиспользует ОДИН и тот же C-stack-слот на каждой итерации; при `is_scalar=false` (str/heap-record-pointer/value-record/tuple/sum) capture шёл BY-POINTER (`ctx->cap = &s`), т.е. каждый spawned fiber получал адрес ОБЩЕГО слота — к моменту реального исполнения (fiber'ы шедулятся асинхронно, обычно ПОСЛЕ того как родительский `for` продвинулся дальше) все видели ОДНО и то же (последнее) значение. Комментарий кода уже ДОКУМЕНТИРОВАЛ этот риск («loop-variables... capturing by value snapshots them; by pointer would let all queued fibers see the last iteration's value») — но whitelist был неполным, реализация не покрывала собственное намерение. **Fix (компилятор, `emit_c.rs`, 3 сайта, ~40 строк):** `by_value = !is_mut` (убран `is_scalar`) — ЛЮБОЙ immutable capture (не только скаляр) идёт by-value. Обоснование безопасности: для non-loop immutable capture (объявлен один раз, не переприсваивается) by-value и by-pointer поведенчески ИДЕНТИЧНЫ (значение не меняется до конца scope в обоих случаях) — расширение чисто чинит loop-var-aliasing кейс, не меняя поведение где-либо ещё. Верифицировано против БАЗОВОГО (pre-fix) бинаря — идентичное поведение вне loop-var-repro кейсов. **Побочная находка (НЕ чинилась, отдельный маркер на будущее):** на масштабе ВСЕГО `spec_tests/conformance` (~950 тестов, один CU) анонимный-tuple под-тест (`(i, i*i)` из Range) детерминированно (100%, воспроизведено и на baseline-бинаре) даёт неверную сумму ПРИ ВЫБОРЕ ENTRY-файла с одним конкретным соседним .nv (`c_keyword_ident_mangling.nv`/директория), но ПРОХОДИТ при выборе другого entry-файла того же папки-модуля (folder=один модуль, ожидался byte-identical результат независимо от entry — не подтвердилось: разный `t-<hash>` build-id). Не связано с этим фиксом (та же картина на baseline); anon-tuple parallel-for УЖЕ покрыт `nova_tests/err173_1/parfor_elem_matrix.nv` на меньшем масштабе (проходит стабильно) — исключён из нового conformance-файла, чтобы не блокировать гейт неродственной проблемой. `[M-parfor-tuple-corpus-scale-order-sensitive]` — floating-маркер, требует отдельной state-dump-style инвестигации (кандидат tuple-mono-instance naming/counter collision при большом числе зарегистрированных generic-инстансов). **Тест:** `spec_tests/conformance/d414_parfor_record_collect.nv` — 7 pos-тестов: fn-return-trailing (без `ro`-биндинга), nested `supervised{}`, call-arg-position (все три — «aggregate()»-идиома Plan 187), + value-record/named-tuple/sum-type/nested-`[]T` матрица в канонической gate-локации (её раньше не было — `nova_tests/err173_1` не входит в `spec_tests/conformance` single-CU гейт). **Гейты:** cargo build (nova-cli, release) чисто; `spec_tests/conformance --positive --compile-error --jobs 4` 97/97, 3× стабильно; `nova_tests/err173,err173_1,err173_2,err173_3` все зелёные; `nova_tests/plan83_6,plan83_7,plan83_10_3` зелёные (`plan83_10_4` блокирован pre-existing несвязанным `[P67-LEGACY]` ICE — задокументирован в Plan 183/178 как известный до-172-rework гэп, не трогал); `std/concurrency` зелёный кроме `retry_test.nv` (pre-existing несвязанный generic-mono CC-FAIL — файл вообще не использует spawn/detach/blocking, подтверждено чтением исходника). Хэш: `770ab3367` (branch `parfor-173-1`, worktree `nova-p173`, база `77239c014`). Модель: sonnet.
+
 [2026-07-10 [M-108-empty-frompairs-nonhashmap-kv-infer-gap] — ЗАКРЫТ (checker-фикс, дёшево), ✅ ЗАКРЫТО, ветка recordlit-callarg-fix] Владелец: «чини дёшево». Побочная находка волны d55-hashmap-fix: `extract_hashmap_kv` (compiler-codegen/src/types/mod.rs) был захардкожен на literal-имя типа `"HashMap"` — для generic user-типа с `#from_pairs`, но НЕ named `HashMap` (напр. `type Bag[K,V] #from_pairs`), K/V не выводились из expected в EMPTY/all-spread `[]`-map-lit ветке → `inferred_key`/`inferred_value` оставались `None` → desugar (`build_map_block`) шёл через fallback-callee `Bag.new` (`Path`, без K/V-мономорфизации) вместо `Bag[K,V].new` (TurboFish) → RUN-FAIL (runtime-краш собранного бинаря; НЕ compile-error). Непустой литерал `[1: "a"]` работал (unify берёт типы из literal-элементов, минуя `extract_hashmap_kv`). **Root cause:** дизайн-хардкод имени вместо декларативного атрибута — при том что рядом уже есть `expected_is_from_pairs`/`expected_is_from_fields` (проверяют `from_pairs_types`/`from_fields_types`-множества по `#`-атрибуту, не по строке). **Fix (дёшево, checker-слой, ~15 строк):** `extract_hashmap_kv(expected, is_kv_type: bool)` — kv-извлечение из `Named[K,V]` теперь гейтится флагом `is_kv_type`, который вызывающий вычисляет через `expected_is_from_pairs` (ветка MapLit) / `true` (ветка `#from_fields`, где мы УЖЕ внутри `expected_is_from_fields`-гарда). Literal-имя `"HashMap"` оставлено вторым дизъюнктом-fallback (HashMap несёт оба атрибута — байт-идентично для canonical-пути). `inferred_target_type` уже определялся по атрибуту (`expected_is_from_pairs`, не по имени) — не трогал. **Тест:** `spec_tests/conformance/d108_from_pairs_user_type.nv` расширен — empty-литерал `[]` для user `#from_pairs`-типа `D108Bag[K,V]` в трёх контекстах (let-с-типом / return-позиция / call-arg позиция), все три ранее давали RUN-FAIL, теперь PASS (`.len() == 0`). **Гейты:** cargo build (оба крейта) чисто; conformance `--positive --compile-error` 91/0 (тот же single-CU, новые empty-тесты внутри — PASS подтверждает компиляцию И рантайм); err173-корпус δ0. Модель: sonnet.
 
 [2026-07-10 [M-d55-anon-recordlit-codegen-gap] — plain-record call-arg подкласс ЗАКРЫТ (codegen-фикс), ✅ ЗАКРЫТО, ветка recordlit-callarg-fix] Владелец: «чини сейчас» (был отложен предыдущей волной как «нужен отдельный codegen-трек»). Репро (подтверждено заново): `type Point { x int, y int }` + `fn takes(p Point) -> int => p.x + p.y` + `takes({x:1,y:2})` → `codegen error: anonymous record literal without spread not supported in codegen`. **Root cause:** `compiler-codegen/src/codegen/emit_c.rs::emit_record_lit` знает ДВА источника expected-типа для голого (`type_name: None`) anon-RecordLit — `current_fn_return_ty` (return-position) и разовые save/set/restore-скоупы `expected_record_type` (let-с-типом / вложенное поле record-литерала / Some-Ok-Err payload / sum-payload, каждый точечно у своего вызывающего места) — ни один НЕ покрывает call-arg позицию вообще; чекер-канал (`resolved_types_buf`) эмиттер тоже не читает (диагноз 172.13 подтверждён дословно). **Почему НЕ checker-канал (в отличие от HashMap-подкласса выше):** для HashMap годился `inferred_map_v`-паттерн, потому что desugar ПЕРЕПИСЫВАЕТ узел в другой AST ДО codegen. Для plain-record эквивалентный «правильный» codegen-путь (`type_name: Some(...)`) уже существует и полнофункционален (generic-mono/sum-variant/sret/value-record ветки — не переизобретать); не хватало только ЗАПОЛНИТЬ `type_name` для голого литерала в call-arg позиции. Пробовать ещё один разовый `expected_record_type`-скоуп было бы ХУЖЕ: он не покрывает ни generic-mono, ни sum-variant-lookup, ни sret-путь (см. чуть более бедную ветку на `expected_record_type` в `emit_record_lit`) — пришлось бы дублировать логику. **Fix (компилятор, `emit_c.rs`, ~90 строк, чисто codegen call-site):** `emit_call` (Р10/172.14 методология — уже дважды использует паттерн «синтезируй переписанный `args`-список ДО дальнейшего диспатча», см. `synthesize_inout_refargs`/`synthesize_method_byref_at_callsite`) получил третий wrap — `synthesize_record_lit_typed_call_args`: резолвит callee по `user_fn_sigs` (ЕДИНСТВЕННЫЙ источник, где параметр-тип известен ДО мономорфизации по call-site — намеренно ТОЛЬКО non-generic free fn, см. регистрацию `f.receiver.is_none() && f.generics.is_empty()` несколькими сотнями строк выше; методы/generic fn — вне периметра этого фикса, их сигнатура известна только пост-мономорфизации), и для каждого позиционного (`CallArg::Item`) аргумента — голого anon-RecordLit (`type_name: None`, БЕЗ spread-полей, `inferred_map_v: None` — HashMap/`#from_pairs`-манифестация уже десугарена в другой узел ДО этой точки) с параметром на этой позиции, резолвящимся (`debt_struct_name_from_c_type`) в известный `record_schemas`-тип — переписывает узел так, будто пользователь явно написал `Point { x: 1, y: 2 }`. Идемпотентно с двумя существующими wrap'ами; не трогает typed/spread/HashMap-литералы, named/spread call-args, методы, generic fn — их fallback-ошибка остаётся safety-net'ом. **Тест:** `spec_tests/conformance/d55_recordlit_callarg.nv` — 4 pos-теста (call-arg 1-я позиция, call-arg 2-я позиция среди двух параметров, регресс: уже-типизированный литерал в call-arg, регресс: spread-литерал в call-arg). **Гейты:** cargo build (compiler-codegen + nova-cli) чисто; conformance `--positive --compile-error` 91/0 (baseline тот же single-CU агрегация, новый файл внутри неё — PASS подтверждает компиляцию И рантайм, `assert`); err173-корпус 5/5 δ0 (индивидуально, известная параллельная флака не проявилась). Модель: sonnet.
@@ -38155,3 +38157,178 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
 
 - `forbid Detach` заявлен дизайном (D63×D50), механика в check_callee_effects есть,
   но тестов 0. Добавить pos/neg; после транзитивности — глубокий кейс.
+
+## [M-178-server-typed-body] ЗАКРЫТ (2026-07-12, баг-фиксер Plan 196, sonnet)
+
+- Заявленный «serde-в-http-CU codegen-дефект» (typed `#impl(Deserialize)` request-
+  bodies на сервере) оказался ДВУМЯ реальными компиляторными багами, оба
+  проявляются только когда `std.http.server` и `std.http.client` (транзитивно
+  через `std.http.serdejson`'s `json_decode_body[T]`) попадают в ОДИН CU:
+  1. **types/mod.rs** — chain-receiver mut-check: реестр `recv_returning`
+     (fluent `-> @`, Plan 77/D132) был name-only, БЕЗ arity. Одноимённый `-> @`
+     метод другого типа/арности (`ServeMux mut @post(pattern, handler) -> @`,
+     arity 2) ложно поражал НЕСВЯЗАННЫЙ вызов `HttpClient.new().post(url).body(b)`
+     (arity 1) → ложный `E_RECEIVER_BINDING_NOT_MUT`. Фикс: arity-aware компаньон
+     `recv_returning_arity`, зеркалит существующий `mut_methods_arity`/
+     `ro_methods_arity` прецедент (`[M-172.5-chain-gating-ro-at]`).
+  2. **emit_c.rs** (3 места) — mangling/registration свободных функций считали
+     голое имя уникальным по ВСЕЙ CU: `fn_module_map`/`file_priv_fn_c_names`,
+     D84 `method_overloads`-регистрация, D29 shadow-skip `should_skip_fn`.
+     Module-private (без `export`) одноимённая fn в ДВУХ разных модулях
+     (`std.http.client`'s private `serialize_response(status, headers, body)
+     -> str` vs `std.http.server`'s exported `serialize_response(resp) ->
+     []u8`) — НЕСВЯЗАННЫЕ функции, не overload-пара — либо коллизировали в один
+     C-символ, либо (после первого фикса) тихо ВЫПАДАЛИ из вывода вообще
+     (implicit-decl CC-FAIL). Расширил существующую cross-module collision-
+     detection (была только identical-signature, прецедент uuid_namespace
+     duplicate-symbol) на different-signature-но-не-все-exported случай,
+     прокинул через все 3 места.
+- Repro: `std/http/serdejson/typed_body_repro_test.nv` — сознательно в папке
+  serdejson, НЕ в `std/http/server/`: черновик внутри `std/http/server/`
+  тянул serde в модуль `http.server` целиком и ломал `nova test
+  std/http/servernet` (`E_EXTENSION_METHOD_NEEDS_IMPORT` на
+  `HashMap.serialize()`) — тот же leanness-принцип, что и у самого
+  serdejson.nv (см. его баннер).
+- Маркер снят из `server.nv` (заменён на DONE-описание) и из
+  `backlog-followups.md`; `187-flagship-concurrency-demo.md` обновлён —
+  typed `.json[T]` теперь доступен, dynamic-JSON workaround не нужен.
+- **Гейты:** `nova test std/http std/encoding` 14/0 (+8 SKIP, ожидаемо —
+  no-test-block модули); `nova test std/crypto` 5/0 (rotl32 identical-sig
+  прецедент не сломан); `nova test --positive --compile-error
+  spec_tests/conformance --timeout 300 --jobs 4` 95/0. Rust rebuild clean
+  (`cargo build --release` nova-cli, ~4м каждый из 6 rebuild-циклов).
+- Branch `typed-body-fix` (worktree `nova-nt`), commit `56b00e808`; НЕ
+  смёржен в main.
+
+## [M-d78-duplicate-decl-module-swallow] (2026-07-13)
+
+- Эксперимент (research module-naming, владелец задал вопрос «зачем decl,
+  если роутинг путевой»): два модуля с одинаковой rev-3-декларацией
+  (`src/a/neg/x.nv` + `src/b/neg/x.nv` → оба ПРИНУДИТЕЛЬНО `module neg.x`)
+  в одном пакете. Импорт по пути (`import a.neg.x.{who_a}` /
+  `import b.neg.x.{who_b}`) находит оба файла, НО экспорты второго тихо
+  исчезают: «undefined identifier who_b» с якорем на строку module-decl,
+  без duplicate-диагностики. Контроль: переименование папки (декларации
+  разошлись) → PASS. Вывод: роутинг путевой, но РЕЕСТР модулей керит по
+  декларации — дубль глотается молча.
+- Переинтерпретация rev-3.1 (`internal/` → 3 сегмента): это спековая
+  заплатка вокруг ЭТОГО дефекта, не самостоятельное правило; после фикса
+  keying'а — кандидат на ретракцию.
+- Fix-направления: (1) реестр по каноническому пути, decl = чистая
+  чексумма (класс исчезает); (2) минимум — hard-error на дубль с обоими
+  путями. Проверить ту же ось в C-mangling (`Nova_<modpath>_`).
+- Маркер в backlog-followups.md (P1); детали/варианты —
+  docs/research/2026-07-13-module-naming-two-segment-review.md.
+
+## [M-d78-duplicate-decl-module-swallow] ЗАКРЫТ + Plan 202 Ф.1/Ф.1b/Ф.2 (2026-07-13)
+
+- **Ф.1 (резолвер).** `imports.rs`: `resolve_one`/`resolve_imports_inline_ex`
+  (`visited`/`in_progress`) и `collect_all_signatures`/`collect_sigs_one`/
+  `ModuleSigTable` (сигнатурный pre-pass, D292/D293) переведены с
+  decl-keyed на **canonical-path-keyed** (`canonical_module_key` — anchor =
+  parent-директория для folder-module-пира, сам файл для single-file;
+  устойчиво к порядку peers). Декларация остаётся ТОЛЬКО identity-check
+  (`E_D78_MODULE_PATH_MISMATCH`) — никогда не routing/registry ключ.
+  Обязательно СИНХРОННО оба реестра — иначе резолвер чинится, а sig-table
+  продолжает жить по decl (второе окно идентичности).
+- **Ф.1b (mangling, обнаружено ЖИВЫМ, не гипотетически).** Первый же
+  прогон pos-фикстуры дал `CC-FAIL redefinition of 'nova_fn_...'` — D307/
+  D381 collision-детекторы в `emit_c.rs` ТОЖЕ группировали по decl
+  (`BTreeSet<Vec<String>>` дедупил два физически разных модуля с
+  одинаковым decl в ОДНУ запись → коллизия не детектится → одинаковый
+  C-символ). Фикс: `phys_key_of`/`decl_phys_groups`/`effective_modpath`
+  (общий helper перед fn- и type-коллизионными блоками) — decl расширяется
+  суффиксом `dupN` ТОЛЬКО когда реально расшарен ≥2 физическими модулями в
+  CU; byte-identical для всего остального корпуса (0 деклараций сегодня
+  расшарены — раньше глотались резолвером, теперь легальны и обязаны
+  различаться в C). Известный узкий остаток (branch (2) cross-import
+  suffix-match) → `[M-d78-dup-decl-type-cross-import-ambiguous]`.
+- **Ф.2 (root peers, D78 rev-4).** `.nv`-файлы прямо в source root пакета
+  МОГУТ объявлять однoсегментную `module <package>` — peers корневого
+  модуля (аналог `lib.rs`), ДОПОЛНИТЕЛЬНО к независимой `<package>.<stem>`
+  форме (смешанный корень допустим). Фикс статтера `tls.tls`
+  (nova-tls): `import tls.{TlsStream}` вместо `import tls.tls.{TlsStream}`.
+  `manifest::expected_root_peer_decl` (доп. acceptance-ветка) +
+  `imports::collect_root_peers`/`is_peer_group_member` +
+  `resolve_module_paths`-ветка для bare single-segment import (свой пакет
+  через `nova.toml`, cross-package `[dependencies]` через уже
+  провалидированное `lookup_dependency`-имя, включая ослабление жёсткой
+  «голое имя зависимости требует путь к модулю» ошибки).
+- **Гейты:** conformance один CU (см. tally в отчёте Plan 202); стресс —
+  ветка `triage-198` (~1480 peer-файлов) компилируется Ф.1-компилятором;
+  `nova check std` дельта-нейтрально.
+- **Спека:** D78 rev-4 амендмент в `spec/decisions/07-modules.md` (keying-
+  семантика D29 п.4 + root peers секция) — в том же слиянии, что код.
+- Побочно найден несвязанный баг (region checker/auto_derive, вне
+  объёма) — `[M-202-ident-x-module-alias-collision]`.
+- Полный отчёт: `docs/plans/202-progress.md`.
+
+## Волна «173 хвосты» п.2 — полный propagation-trace [M-173-error-return-trace] (2026-07-13)
+
+- **Runtime (effects.h/effects.c):** TLS ring-buffer `_nova_throw_trace`
+  (`NOVA_THROW_TRACE_CAP=16`, count хранит суммарные push'и — дамп сообщает
+  «N earlier frames dropped»); `nova_throw_trace_push/reset`;
+  `nova_throw_site_set` теперь сбрасывает трассу (fresh origin = новая
+  ошибка), новый `nova_throw_site_mark` обновляет site БЕЗ сброса (для
+  конверсии уже пропагирующей Result-ошибки в Fail-эффект). Сброс также на
+  catch (`nova_scope_exit` CATCH), interrupt-consume (4 точки effects.c) и в
+  `nova_runtime_reset` (+ там же гашение стейл `_nova_throw_site` между
+  panics-тестами). Дамп — в существующем `nova_throw_site_dump` → все 4
+  uncaught-abort ветки получили трассу бесплатно.
+- **Codegen (emit_c.rs):** push на `?` value-mode (`return Err`) и Fail-ctx
+  ветке; `!!`-Err = push + site-mark (трасса переживает конверсию);
+  `!!`-None = полноценный origin-стемп `site_set` (раньше bang-сайты не
+  стемпились вовсе). Только error-path — happy-path не затронут.
+- **Тест:** `nova_tests/err173/rt/f5_propagation_trace_full.nv` — Err
+  рождается в leaf, 2 value-mode `?`-звена + `!!`-конверсия, uncaught →
+  дамп содержит 3 `via file:line (?)`-звена в хронологическом порядке
+  (проверено вручную на бинаре + --panic lane PASS).
+- **Ограничение (задокументировано в effects.h):** `Err(...)`-конструктор
+  не сбрасывает трассу (нет стемпа) — кадры ошибки, разобранной `match`'ем
+  (не catch), могут остаться в хвосте следующего дампа.
+- **Попутно вскрыто:** `nova build` (nova-cli) не прокидывает
+  `set_source_file_name` → `at <unknown>:N` (pre-existing, `nova test`-путь
+  честный) — `[M-cli-build-source-file-name-unknown]` (P3).
+- **Гейты:** conformance один CU 111/0 + 7 SKIP (δ0); err173 folder-CU +
+  err173_2 PASS; rt-lane 3/3 (--panic); neg 10/0; std/src/concurrency:
+  2 PASS + 2 CC-FAIL pre-existing (main-бинарь на main-дереве падает
+  идентично, δ=0); cargo build --release чист.
+
+## Волна «173 хвосты» п.1 — MultiError scope-агрегация (D414 §1 ← Ф.4) (2026-07-13)
+
+- **Разрыв спека/код закрыт:** D414 §1 обещал «Не-primary ошибки уходят в
+  suppressed-карман», но re-throw хвост `nova_supervised_run_impl` кидал
+  только primary (`nova_scope_collect_child_errors` — 0 вызывающих; ошибки
+  siblings терялись). Гейт 174.3 (any/is-downcast) в main — п.1 разгейчен.
+- **Механика:** staging-слот TLS `_nova_pending_suppressed` (effects.h/.c);
+  хвост scope собирает не-primary retained детские падения в
+  NovaErrorChain (через `nv_compose_suppressed` — D193 identity/depth) и
+  ставит в staging; ближайший throw потребляет его в `nova_last_error_set`
+  (карман D158 модели Б) + несёт в fail-frame (`nova_throw`/
+  `nova_throw_typed` теперь копируют из pocket вместо жёсткого NULL —
+  вне агрегации это тот же NULL). Чтение — существующий
+  `suppressed() -> []any`.
+- **Исключения:** CANCEL-производные; Stop-решённые супервизором (новый
+  drive-thread-only флаг `NovaChildError.escalated`, ставится в ESCALATE-
+  ветке decision-loop; D416 — Stop = осознанный выброс, retained для
+  observability). Primary идентифицируется msg+payload+tid+kind (typed-
+  броски делят литерал `msg_repr` «<nova_int>» — по одному msg скипались
+  ОБА ребёнка). Видимый порядок = порядок слотов.
+- **Попутный ABI-фикс (вскрыт тестом):** `nova_any_from_boxed` (typeid.h)
+  всегда заворачивал payload в слот-индирекцию (расчёт на pointer-repr
+  records) → `try_as[int]` на suppressed-элементе возвращал АДРЕС бокса
+  как int. Теперь value-ABI примитивы (tid 1..7) кладут box напрямую в
+  `data`; user value-типы ≥ USER_BASE — прежнее pointer-предположение
+  (задокументировано, pre-existing).
+- **Детерминизм теста:** в supervisor-режиме отмена не летит до решения →
+  хендлер спин-ждёт фиксации обоих падений (fetch_add строго перед throw,
+  без yield между), затем Escalate — оба слота retained гарантированно.
+  `nova_tests/err173_2/scope_multierror_test.nv`: (1) не-primary в кармане
+  с точным значением; (2) Stop не течёт + сброс кармана свежей ловлей;
+  (3) default-Escalate инвариант ⊆ (расписание-независимый).
+- **Спека:** D414 §1 амендмент (06-concurrency.md) тем же слиянием; план
+  173 §Ф.4 acceptance дополнен строкой хвоста.
+- **Гейты:** conformance один CU 111/0 + 7 SKIP (δ0); err173_2 CU PASS
+  (все supervisor-тесты + 3 новых); err173 + any_is + plan110 PASS;
+  runtime_panics CU PASS (precedence в т.ч.); std/src/concurrency δ=0
+  (2 pre-existing CC-FAIL).

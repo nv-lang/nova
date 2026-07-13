@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR E_CONSUME_BLOCK_MOVE_OUT
+// D188-амендмент v3 (Plan 201): `X` встречается в tail/return-EXPR ДВАЖДЫ —
+// санкционированный вынос допускает РОВНО одно вхождение (аргументом
+// consume-параметра). Два вхождения — нарушение, даже если оба формально
+// в consume-позиции разных параметров одного вызова.
+module neg.d188_v3_two_occurrences_neg
+
+type MoRes2 consume { id int }
+fn MoRes2 consume @cleanup(_outcome ScopeOutcome) -> () { }
+fn MoRes2 consume @dispose() -> () { }
+
+fn mo2_pair(consume x MoRes2, consume y MoRes2) -> int {
+    x.dispose()
+    y.dispose()
+    return 0
+}
+
+fn mo2_wrap(consume r MoRes2) -> int {
+    consume r {
+        return mo2_pair(r, r)
+    }
+}
+
+test "два вхождения X в tail/return EXPR — E_CONSUME_BLOCK_MOVE_OUT" {
+    consume r = MoRes2 { id: 1 }
+    ro _ = mo2_wrap(r)
+}

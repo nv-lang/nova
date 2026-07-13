@@ -1,0 +1,127 @@
+// D188-амендмент v3 (2026-07-13, Plan 201) — «однократный вынос через
+// выражение»: tail/return EXPR (не только голый `X`) санкционирован, если
+// `X` встречается РОВНО ОДИН раз, АРГУМЕНТОМ consume-параметра. Дизарм — в
+// момент передачи владения (вход в consuming-вызов).
+// Spec: spec/decisions/03-syntax.md D188 §«Амендмент v3».
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+// ── (а) return Ctor(x, other) выносит и дизармит ───────────────────────
+// Cleanup ПАНИКУЕТ — сторож дизарма: если tail/return-вынос через
+// выражение не дизармит cleanup, тест упадёт паникой.
+type D188V3Boom consume { id int }
+
+fn D188V3Boom consume @cleanup(_outcome ScopeOutcome) -> () {
+    panic("D188V3Boom.cleanup must be disarmed on expr-escape (v3)")
+}
+fn D188V3Boom consume @defuse() -> () { }
+
+fn d188v3_boom(v int) -> D188V3Boom => { id: v }
+
+type D188V3Pair { a int, b int }
+
+fn d188v3_pair_ctor(consume x D188V3Boom, other int) -> D188V3Pair {
+    ro id = x.id
+    x.defuse()
+    return { a: id, b: other }
+}
+
+fn d188v3_wrap(consume b D188V3Boom) -> D188V3Pair {
+    consume b {
+        return d188v3_pair_ctor(b, 42)
+    }
+}
+
+test "D188-v3 (а): return Ctor(x, other) выносит и дизармит cleanup" {
+    consume boom = d188v3_boom(5)
+    ro p = d188v3_wrap(boom)
+    assert(p.a == 5)
+    assert(p.b == 42)
+}
+
+// ── (б) падение ДО момента передачи в том же EXPR → cleanup сработал ───
+// `other`-аргумент вычисляется ПЕРВЫМ (по AST-порядку, слева от guarded
+// `x`) и throw'ит — `x` ещё НЕ передан consuming-вызову, block's cleanup
+// обязан закрыть ресурс (exit_calls == 1, ResourceTrace).
+type D188V3Res consume { id int }
+
+fn D188V3Res consume @cleanup(_outcome ScopeOutcome) -> () { }
+fn D188V3Res consume @dispose() -> () { }
+
+fn d188v3_make(v int) -> D188V3Res => { id: v }
+
+type D188V3Err { msg str }
+
+fn d188v3_risky_fails() Fail[D188V3Err] -> int {
+    throw D188V3Err { msg: "risky failed before consuming call" }
+}
+
+fn d188v3_pair_ctor2(other int, consume x D188V3Res) -> D188V3Pair {
+    ro id = x.id
+    x.dispose()
+    return { a: other, b: id }
+}
+
+// Inline (не отдельная Fail-объявленная функция — D162-uncovered-error-path
+// эвристика (`block_has_throw`) не распознаёт ИНДИРЕКТНЫЙ throw через
+// вызываемую failable-функцию как покрытый error-path у ОБЁРТКИ без
+// литерального `throw`-statement в её собственном теле; это независимый
+// pre-existing gap D162, не относящийся к амендменту v3 — тест обходит его,
+// как и существующие D188 R2-тесты в d188_reconsume_block.nv, держа
+// consume-блок прямо в `test`-теле).
+test "D188-v3 (б): падение ДО передачи владения — cleanup ещё сработал" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        with Fail = effect Fail { fail(_m) { interrupt () } } {
+            consume r = d188v3_make(7)
+            ro _p = consume r {
+                d188v3_pair_ctor2(d188v3_risky_fails(), r)
+            }
+        }
+    }
+    assert(exit_calls == 1)
+}
+
+// ── (в) композиция с multi-var: consume a, b { return f(a, b) } ────────
+type D188V3BoomA consume { id int }
+type D188V3BoomB consume { id int }
+
+fn D188V3BoomA consume @cleanup(_outcome ScopeOutcome) -> () {
+    panic("D188V3BoomA.cleanup must be disarmed on multi-var expr-escape (v3)")
+}
+fn D188V3BoomA consume @defuse() -> () { }
+fn D188V3BoomB consume @cleanup(_outcome ScopeOutcome) -> () {
+    panic("D188V3BoomB.cleanup must be disarmed on multi-var expr-escape (v3)")
+}
+fn D188V3BoomB consume @defuse() -> () { }
+
+fn d188v3_boom_a(v int) -> D188V3BoomA => { id: v }
+fn d188v3_boom_b(v int) -> D188V3BoomB => { id: v }
+
+fn d188v3_pair_ctor3(consume x D188V3BoomA, consume y D188V3BoomB) -> D188V3Pair {
+    ro ida = x.id
+    ro idb = y.id
+    x.defuse()
+    y.defuse()
+    return { a: ida, b: idb }
+}
+
+fn d188v3_wrap_multivar(consume a D188V3BoomA, consume b D188V3BoomB) -> D188V3Pair {
+    consume a, b {
+        return d188v3_pair_ctor3(a, b)
+    }
+}
+
+test "D188-v3 (в): multi-var composition — оба guard'а дизармятся независимо" {
+    consume ba = d188v3_boom_a(1)
+    consume bb = d188v3_boom_b(2)
+    ro p = d188v3_wrap_multivar(ba, bb)
+    assert(p.a == 1)
+    assert(p.b == 2)
+}

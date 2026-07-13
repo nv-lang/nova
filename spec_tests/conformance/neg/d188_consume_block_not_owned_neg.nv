@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_CONSUME_BLOCK_NOT_OWNED
+// D188-амендмент (Plan 201): `consume X { … }` требует СУЩЕСТВУЮЩЕГО
+// owned-биндинга (consume-параметр / `consume X = …` локал); ro-локал —
+// не owned.
+module neg.d188_consume_block_not_owned_neg
+
+type NoRes { id int }
+fn NoRes consume @cleanup(_outcome ScopeOutcome) -> () { }
+
+test "re-consume не-owned биндинга — E_CONSUME_BLOCK_NOT_OWNED" {
+    ro r = NoRes { id: 1 }
+    consume r {
+        ro _x = r.id
+    }
+}

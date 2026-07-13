@@ -1,0 +1,28 @@
+// Plan 197 (--strict-effects fixture, POSITIVE control).
+// Diagnostic: E_EFFECT_ERASED_IN_FN_TYPE.
+// Must compile CLEAN both with and without --strict-effects: the target
+// fn-type's effect-row (`Counter`) COVERS the source function's effects —
+// ordinary assignment, no erasure.
+
+module strict_effects.pos_erasure_widening
+
+type Counter effect {
+    next() -> int
+}
+
+fn tick() Counter -> int =>
+    Counter.next()
+
+fn caller() -> int {
+    ro f fn() Counter -> int = tick
+    with Counter = effect Counter {
+        next() => 1
+    } {
+        f()
+    }
+}
+
+fn main() {
+    ro a = caller()
+    println(a)
+}

@@ -123,12 +123,24 @@ pub struct Manifest {
     /// [ffi]
     /// c_shims      = ["src/sqlite3_shim.c", "src/libpng_shim.c"]
     /// include_dirs = ["src/", "third_party/sqlite3/"]
+    /// lib_dirs     = ["third_party/sqlite3/lib/"]
     /// libs         = ["sqlite3", "png"]
     /// ```
     ///
     /// Семантика: `c_shims` — дополнительные `.c` или `.h` файлы для
     /// compilation (header-only inline shims OK); `include_dirs` →
-    /// clang `-I` flags; `libs` → clang `-l<name>` flags для linking.
+    /// clang `-I` flags; `lib_dirs` (Plan 193 Ф.2 gap-1) → linker
+    /// search-directory flags (`-L`/MSVC `/LIBPATH:`) для non-default-path
+    /// native libs; `libs` → clang `-l<name>` / MSVC `<name>.lib` flags для
+    /// linking. `lib_dirs` пустой (не задан) → только default toolchain
+    /// search path (как раньше).
+    ///
+    /// Detect-and-degrade (Plan 193 Ф.2 gap-1): когда `lib_dirs` задан явно,
+    /// но объявленный `libs`-файл не найден ни в одной из директорий —
+    /// test_runner деградирует ЭТОТ пакет к SKIP («lib not found»), а не
+    /// hard CC/link-FAIL (мирроринг retired built-in
+    /// MbedtlsConfig/BrotliConfig graceful-degrade контракта, обобщённый
+    /// для generic `[ffi] libs`).
     ///
     /// Пусто (None), если секция отсутствует.
     pub ffi: Option<FfiConfig>,
@@ -168,9 +180,29 @@ pub struct FfiConfig {
     /// Include directories для clang `-I`. Дают доступ к user shim header'ам
     /// и third-party C library headers.
     pub include_dirs: Vec<String>,
+    /// Plan 193 Ф.2 gap-1: library search directories для linker `-L`
+    /// (Clang/GCC) / `/LIBPATH:` (MSVC) — non-default-path native libs
+    /// (напр. vcpkg install без system-wide регистрации). Пусто → только
+    /// toolchain default search path (Windows: нет системного аналога
+    /// `/usr/lib` — без `lib_dirs` non-default `.lib` не найдётся).
+    pub lib_dirs: Vec<String>,
     /// System library names для clang `-l<name>` linking. Например
     /// `libs = ["sqlite3", "png"]` → `-lsqlite3 -lpng`.
     pub libs: Vec<String>,
+    /// Plan 193 Ф.2 gate-3 (mbedtls-vendored, 2026-07-12): vendored C source
+    /// directories to build-and-cache when a declared `libs` entry is
+    /// missing from `lib_dirs` — generic "195-pattern" extension of the
+    /// monorepo's libuv one-time-build-and-cache precedent
+    /// (`detect_or_build_libuv` in `test_runner.rs`), so ANY native module
+    /// can vendor upstream C sources instead of requiring a prebuilt
+    /// system/vcpkg lib. All `.c` files directly under each declared dir
+    /// (non-recursive — matches typical upstream `library/`-style flat
+    /// layouts, e.g. mbedTLS) are compiled + archived into `lib_dirs[0]`
+    /// under EVERY name declared in `libs` (see
+    /// `test_runner::build_missing_vendor_ffi_libs`). Empty (default) — no
+    /// vendor build attempted, unchanged legacy behaviour (falls through to
+    /// the existing `first_missing_ffi_lib` detect-and-degrade probe).
+    pub vendor_src_dirs: Vec<String>,
 }
 
 /// Plan 03.1 / 03.4: quote- и bracket-aware разбор тела inline-таблицы
@@ -357,7 +389,11 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     // Plan 115 D214 [M-115-ffi-build-pipeline]: [ffi] config.
     let mut ffi_c_shims: Vec<String> = Vec::new();
     let mut ffi_include_dirs: Vec<String> = Vec::new();
+    let mut ffi_lib_dirs: Vec<String> = Vec::new();
     let mut ffi_libs: Vec<String> = Vec::new();
+    // Plan 193 Ф.2 gate-3: [ffi] vendor_src_dirs — vendored C sources for
+    // generic build-and-cache (see FfiConfig::vendor_src_dirs doc-comment).
+    let mut ffi_vendor_src_dirs: Vec<String> = Vec::new();
     let mut ffi_section_seen: bool = false;
     // Plan 149 D233: [runtime] config.
     let mut runtime_fiber_stack: Option<String> = None;
@@ -412,7 +448,9 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
                 match key {
                     "c_shims"      => ffi_c_shims = parse_toml_string_array(raw_val),
                     "include_dirs" => ffi_include_dirs = parse_toml_string_array(raw_val),
+                    "lib_dirs"     => ffi_lib_dirs = parse_toml_string_array(raw_val),
                     "libs"         => ffi_libs = parse_toml_string_array(raw_val),
+                    "vendor_src_dirs" => ffi_vendor_src_dirs = parse_toml_string_array(raw_val),
                     _ => {} // ignore unknown keys для forward-compat
                 }
                 continue;
@@ -461,7 +499,9 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
         Some(FfiConfig {
             c_shims: ffi_c_shims,
             include_dirs: ffi_include_dirs,
+            lib_dirs: ffi_lib_dirs,
             libs: ffi_libs,
+            vendor_src_dirs: ffi_vendor_src_dirs,
         })
     } else {
         None
@@ -800,6 +840,21 @@ pub fn check_module_path_with_kind(
             return Ok(ModulePathCheck::Rev3);
         }
     }
+    // Plan 202 Ф.2 (D78 rev-4 "root peers"): a `.nv` file directly in the
+    // package source_root MAY ADDITIONALLY declare the single-segment
+    // `module <package>` form — peer of the root module (aliases Rust's
+    // `lib.rs`; research 2026-07-13-module-naming-two-segment-review.md
+    // §7). This is legal ALONGSIDE the independent `<package>.<stem>` form
+    // checked above — a source root MAY mix root peers and independent
+    // single-file modules (owner decision 2026-07-13, "смешанный корень
+    // допустим"). Checked as a SEPARATE acceptance path (not folded into
+    // `expected_rev3`) so it never changes the rev-3 error message shape
+    // for the overwhelming non-root-peer case.
+    if let Some(root_peer) = expected_root_peer_decl(file, &manifest) {
+        if declared == root_peer.as_slice() {
+            return Ok(ModulePathCheck::Rev3);
+        }
+    }
     // [M-D78-strict-removal] 2026-06-01: rev-1 legacy form больше не
     // accepted (full corpus migration completed; ~846 files migrated to
     // rev-3 via scripts/d78_audit_migrate.py). Declaration в rev-1 form
@@ -819,12 +874,36 @@ pub fn check_module_path_with_kind(
          in {}\n  \
          declares `{}`\n  \
          expected (rev-3 parent.X): `{}`\n  \
-         expected (rev-1 legacy):    `{}`",
+         expected (rev-1 legacy):    `{}`\n  \
+         expected (rev-4 root peer, only if directly in source root): `{}`",
         file.display(),
         declared.join("."),
         exp_rev3_str,
         exp_legacy_str,
+        manifest.package_name,
     ))
+}
+
+/// Plan 202 Ф.2 (D78 rev-4 "root peers"): expected single-segment
+/// `module <package>` declaration for a `.nv` file living DIRECTLY in the
+/// package's `source_root` (depth 1, no subfolder). Returns `None` for any
+/// file NOT a direct child of `source_root` — root peers are, by design,
+/// only the immediate `.nv` files of the source root; a subfolder file
+/// keeps the ordinary rev-3 `parent.target` rule unchanged.
+///
+/// Examples (`source_root` = package root, `package_name` = "tls"):
+/// - `<root>/client.nv` → `Some(["tls"])` — legal ALTERNATIVE to the
+///   independent form `["tls", "client"]` (both accepted, see caller).
+/// - `<root>/x509/cert.nv` → `None` (not a direct child — ordinary rev-3
+///   rule `["x509", "cert"]` applies, root peers don't reach subfolders).
+pub fn expected_root_peer_decl(file: &Path, m: &Manifest) -> Option<Vec<String>> {
+    let abs_file = std::fs::canonicalize(file).ok()?;
+    let abs_root = std::fs::canonicalize(&m.source_root).ok()?;
+    let parent = abs_file.parent()?;
+    if parent != abs_root {
+        return None;
+    }
+    Some(vec![m.package_name.clone()])
 }
 
 /// Plan 42 Sub-plan 42.6 (D29 rev-3): identify stdlib runtime module
@@ -907,15 +986,42 @@ pub fn is_prelude_self_module(name: &[String]) -> bool {
 /// CLI `--std-path` (ещё одна config-поверхность поверх env) — followup
 /// `[M-172.1-U1-cli-stdpath]`; env+manifest уже делают расположение std
 /// настраиваемым, что и требует §2.
+///
+/// **Plan 195 (2026-07-13):** возвращаемое значение исторически трактовалось
+/// вызывающим кодом как каталог, где `.nv`-файлы лежат НЕПОСРЕДСТВЕННО
+/// (`stdlib_dir.join("prelude.nv")` и т.п.) — то есть как **source root**, а
+/// не просто корень пакета. После перевода `std` на канон `src/`
+/// (`std/nova.toml`: `[lib] src = "src"`) корень пакета (`repo/std`) и
+/// source root (`repo/std/src`) разошлись. Чтобы не трогать ~20 call-сайтов
+/// в compiler-codegen/nova-cli/nova-lsp, шаг (4) читает `[lib] src` из
+/// `nova.toml` найденного std-корня (через тот же `parse_manifest`, что и
+/// для обычных пакетов) и возвращает `source_root`, если манифест валиден.
+/// Std без `nova.toml` (тестовые фикстуры) или без `[lib] src` — не
+/// меняется (fallback на сам `std_root`, byte-identical прежнему поведению).
 pub fn resolve_std_path(repo: &Path) -> PathBuf {
     // (1) env override.
-    if let Ok(v) = std::env::var("NOVA_STD_PATH") {
+    let std_root = if let Ok(v) = std::env::var("NOVA_STD_PATH") {
         let v = v.trim();
         if !v.is_empty() {
             let p = PathBuf::from(v);
-            return if p.is_absolute() { p } else { repo.join(p) };
+            if p.is_absolute() { p } else { repo.join(p) }
+        } else {
+            resolve_std_root_no_env(repo)
         }
-    }
+    } else {
+        resolve_std_root_no_env(repo)
+    };
+    // (4) уважать `[lib] src` внутри найденного std-пакета — source root,
+    // а не просто package root (Plan 195).
+    parse_manifest(&std_root.join("nova.toml"), &std_root)
+        .map(|m| m.source_root)
+        .unwrap_or(std_root)
+}
+
+/// Шаги (2)-(3) `resolve_std_path` (без env override) — вынесены в helper,
+/// чтобы (4) `[lib] src` применялся единообразно независимо от того, откуда
+/// взялся package root.
+fn resolve_std_root_no_env(repo: &Path) -> PathBuf {
     // (2) manifest `[workspace]/[package].std`.
     if let Some(rel) = read_std_key(&repo.join("nova.toml")) {
         let p = PathBuf::from(&rel);
@@ -1144,6 +1250,42 @@ mod parse_tests {
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("nova.toml"), "[workspace]\nstd = \"vendored/std\"\n").unwrap();
         assert_eq!(resolve_std_path(&dir), dir.join("vendored/std"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Plan 195 (2026-07-13): найденный std-корень с собственным `nova.toml`
+    /// объявляющим `[lib] src = "src"` — `resolve_std_path` возвращает
+    /// SOURCE ROOT (`<std_root>/src`), а не package root, чтобы ~20
+    /// call-сайтов, трактующих результат как «где лежат .nv напрямую»,
+    /// продолжали работать без изменений.
+    #[test]
+    fn resolve_std_path_respects_lib_src_in_std_manifest() {
+        if std::env::var_os("NOVA_STD_PATH").is_some() {
+            return; // env override wins — skip in that environment.
+        }
+        let dir = std::env::temp_dir().join(format!("nova_p195_libsrc_{}", std::process::id()));
+        let std_dir = dir.join("std");
+        let _ = std::fs::create_dir_all(&std_dir);
+        std::fs::write(
+            std_dir.join("nova.toml"),
+            "[package]\nname = \"std\"\n[lib]\nsrc = \"src\"\n",
+        ).unwrap();
+        assert_eq!(resolve_std_path(&dir), std_dir.join("src"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// std-корень с `nova.toml`, но БЕЗ `[lib] src` (или `src = "."`) —
+    /// source root == package root, byte-identical прежнему поведению.
+    #[test]
+    fn resolve_std_path_std_manifest_without_lib_src_is_unchanged() {
+        if std::env::var_os("NOVA_STD_PATH").is_some() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("nova_p195_nolibsrc_{}", std::process::id()));
+        let std_dir = dir.join("std");
+        let _ = std::fs::create_dir_all(&std_dir);
+        std::fs::write(std_dir.join("nova.toml"), "[package]\nname = \"std\"\n").unwrap();
+        assert_eq!(resolve_std_path(&dir), std_dir);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

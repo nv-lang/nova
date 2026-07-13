@@ -238,6 +238,14 @@ typedef struct {
     /* Plan 173.2: drive-thread-only bookkeeping — this failure has been fed
      * to the Supervisor decision exactly once. Never touched by workers. */
     nova_bool     decided;
+    /* Plan 173 хвост (D414 §1, MultiError-агрегация, 2026-07-13):
+     * drive-thread-only — решение по этому падению было ESCALATE (ошибка
+     * участвует в primary-выборе и, если не выиграла, уходит в suppressed-
+     * карман при scope re-throw). Stop-решённые остаются retained, но в
+     * suppressed НЕ попадают (хендлер осознанно их выкинул — D416).
+     * Для default-scope (нет супервизора) флаг не используется: там ВСЕ
+     * retained не-CANCEL падения escalate-класса по определению. */
+    nova_bool     escalated;
 } NovaChildError;
 
 /* ─── Plan 175 (owner TODO closure, 2026-07-10): virtual-clock auto-idle-
@@ -1157,6 +1165,7 @@ static inline int nova_scope_alloc_child_slot(NovaFiberQueue* scope) {
     scope->child_error[idx].msg = NULL;
     nova_abool_init(&scope->child_error[idx].published, false);  /* Plan 173.2 */
     scope->child_error[idx].decided = false;                      /* Plan 173.2 */
+    scope->child_error[idx].escalated = false;                    /* D414 §1 агрегация */
     scope->child_ctx[idx] = NULL;
     return idx;
 }
@@ -2690,6 +2699,7 @@ static inline void nova_supervised_process_decisions(NovaFiberQueue* q) {
                 break;
             case NOVA_SUPERVISE_ESCALATE:
             default:
+                ce->escalated = true;  /* D414 §1: участвует в primary/suppressed */
                 nova_fiber_report_atomic_kinded(q, ce->msg, ce->kind,
                                                 ce->reason, ce->payload, ce->tid);
                 break;
@@ -2711,6 +2721,34 @@ static inline void nova_supervised_process_decisions(NovaFiberQueue* q) {
  * стеке сгенерированного C-frame'а и становится невалидным после
  * longjmp'а, поэтому `bound_scope` нельзя оставлять висеть.
  */
+
+/* Plan 201 (владелец: «механика, не инвариант-в-комментарии»): единая
+ * scope re-throw точка, ЯВНО принимающая suppressed-цепочку параметром —
+ * заменяет удалённый ambient TLS-слот `_nova_pending_suppressed`. Раньше
+ * механизм полагался на недоказанный руками инвариант «между постановкой
+ * слота и потреблением ближайшим throw нет точки планирования»; теперь
+ * цепочка физически идёт по стеку вызова (аргумент), планирование между
+ * "составить цепочку" и "бросить" структурно не может её потерять/подменить
+ * — компилятору/ревьюеру нечего инспектировать вручную.
+ *
+ * Диспетчеризует на explicit-suppressed вариант throw-пути по `kind`
+ * (единственный вызывающий — хвост `nova_supervised_run_impl` ниже, где
+ * kind уже классифицирован: USER_TYPED cross-worker / PANIC / USER-иначе). */
+static inline void nova_rethrow_scope(const char* err_cstr, NovaThrowKind kind,
+                                       void* payload, NovaTypeId tid,
+                                       NovaErrorChain* suppressed) {
+    nova_str msg = nova_str_from_cstr(err_cstr);
+    if (kind == NOVA_THROW_USER_TYPED) {
+        nova_throw_typed_ex(msg, payload, tid, suppressed);
+        return;  /* unreachable */
+    }
+    if (kind == NOVA_THROW_PANIC) {
+        nv_panic_ex(msg, suppressed);
+        return;  /* unreachable */
+    }
+    nova_throw_ex(msg, suppressed);
+}
+
 static inline void nova_supervised_run_impl(NovaFiberQueue* q,
                                             NovaCancelToken* tok) {
     /* Plan 83.11 Phase A diagnostics (Variant B, 2026-05-27): watchdog timer.
@@ -2943,6 +2981,56 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
             /* Отмена не убегает наружу. Caller продолжает выполнение. */
             return;
         }
+        /* ── Plan 173 хвост (D414 §1 ← Ф.4), рефактор Plan 201 ──
+         * Спека обещает: «Не-primary ошибки уходят в suppressed-карман».
+         * Здесь (единственная точка, где primary покидает scope) собираем
+         * ВСЕ прочие retained детские падения в локальную цепочку
+         * `_nv_suppressed` и передаём её ЯВНЫМ параметром в
+         * `nova_rethrow_scope` ниже — никакого ambient TLS-relay (был
+         * `_nova_pending_suppressed`, удалён вместе с held-by-comment
+         * инвариантом «нет точки планирования между постановкой и
+         * потреблением»; цепочка теперь физически в аргументе вызова,
+         * планированию тут нечего портить).
+         * Исключаются: CANCEL-производные (следствие эскалации, не корень);
+         * Stop-решённые супервизором (хендлер осознанно выкинул — D416;
+         * retained в child_error[] для observability, наружу не текут);
+         * сам primary. Идентификация primary: msg-указатель НЕДОСТАТОЧЕН —
+         * typed-броски делят один литерал msg_repr («<nova_int>» и т.п.),
+         * поэтому для atomic-primary дополнительно сверяем payload/tid/kind
+         * (боксы per-throw — уникальны). Для str-бросков payload=NULL у
+         * всех — совпадение всех полей = неотличимый дубликат, его всё
+         * равно схлопнул бы identity-check nv_compose_suppressed (D193).
+         * Порядок: prepend-compose (LIFO) + back-to-front чтение accessor'а
+         * (`suppressed()` материализует цепочку с хвоста) → обход слотов по
+         * ВОЗРАСТАНИЮ даёт видимый порядок = порядок слотов (spawn-порядок,
+         * детерминированно). */
+        NovaErrorChain* _nv_suppressed = NULL;
+        {
+            NovaFailFrame _nv_aggf;
+            _nv_aggf.error_suppressed = NULL;
+            if (q->child_error) {
+                nova_bool _nv_prim_local = (q->first_error != NULL);
+                for (int _nv_ai = 0; _nv_ai < q->child_count; _nv_ai++) {
+                    NovaChildError* _nv_ce = &q->child_error[_nv_ai];
+                    if (_nv_ce->msg == NULL) continue;
+                    if (_nv_ce->kind == NOVA_THROW_CANCEL) continue;
+                    if (q->has_supervisor && !_nv_ce->escalated) continue;
+                    if (_nv_ce->msg == err
+                        && (_nv_prim_local
+                            || (_nv_ce->payload == q->first_error_atomic_payload
+                                && _nv_ce->tid  == q->first_error_atomic_tid
+                                && _nv_ce->kind == q->first_error_atomic_kind))) {
+                        continue;  /* primary сам */
+                    }
+                    nv_compose_suppressed(&_nv_aggf,
+                                          nova_str_from_cstr(_nv_ce->msg),
+                                          _nv_ce->kind,
+                                          _nv_ce->payload,
+                                          _nv_ce->tid);
+                }
+            }
+            _nv_suppressed = _nv_aggf.error_suppressed;
+        }
         /* Plan 83.10 (2026-05-25): fix [M-83.10-armed-user-throw-routing].
          * USER_TYPED re-throw must preserve payload + tid для typed handler
          * dispatch. Без этого `with Fail[int]` handler не fires на main thread
@@ -2958,7 +3046,7 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
             /* Cross-worker typed throw. */
             void* payload = q->first_error_atomic_payload;
             NovaTypeId tid = q->first_error_atomic_tid;
-            nova_throw_typed(nova_str_from_cstr(err), payload, tid);
+            nova_rethrow_scope(err, NOVA_THROW_USER_TYPED, payload, tid, _nv_suppressed);
             /* unreachable */
         }
         /* Plan 173 Ф.6 (§4а, вскрыто panics-миграцией; D13/D414): PANIC
@@ -2971,12 +3059,12 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
             NovaThrowKind _rk = q->first_error ? q->first_error_kind
                                                : q->first_error_atomic_kind;
             if (_rk == NOVA_THROW_PANIC) {
-                nv_panic(nova_str_from_cstr(err));
+                nova_rethrow_scope(err, NOVA_THROW_PANIC, NULL, NOVA_TID_NONE, _nv_suppressed);
                 /* unreachable */
             }
         }
-        /* USER либо USER_TYPED (local — see note above): plain nova_throw. */
-        nova_throw(nova_str_from_cstr(err));
+        /* USER либо USER_TYPED (local — see note above): plain throw. */
+        nova_rethrow_scope(err, NOVA_THROW_USER, NULL, NOVA_TID_NONE, _nv_suppressed);
     }
 }
 
@@ -3359,9 +3447,22 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
         }
     }
     /* FIX 83.10.2 (Race 2a): Early-exit — parent scope already cancelled
-     * BEFORE we start the timer. Fiber will complete normally (wake early),
-     * parent scope's drain will return promptly. */
+     * BEFORE we start the timer. [M-178-server-graceful-deadline] amend
+     * (Plan 173 Ф.3, 2026-07-12): the original fix just returned here
+     * ("fiber will complete normally") — that is precisely the leak this
+     * amendment closes: returning success lets the fiber run its remaining
+     * body instead of unwinding via cancel-throw, same class of bug as the
+     * post-park gap fixed below. Throw here too (shield-aware, matching
+     * nova_fiber_yield), so a fiber that calls `Time.sleep` AFTER its scope
+     * was already cancelled unwinds immediately instead of skipping the
+     * sleep silently. */
     if (nova_abool_load(&cancel_scope->cancel_requested)) {
+        if (nova_cancel_mask_load(mco_running()) == 0) {
+            nova_throw_cancel_reason(
+                nova_str_from_cstr("scope cancelled"),
+                cancel_scope->cancel_reason_ptr);
+            /* unreachable */
+        }
         return;
     }
     NovaSleepState st = { .scope = scope, .slot = slot };
@@ -3408,6 +3509,21 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
      * Никакого FATAL-check'а больше не нужно — by construction. */
     nova_sched_park_until(scope, slot, _nova_sleep_stage_is_closed, &st);
     nova_sched_unregister_pending(scope, slot);
+
+    /* [M-178-server-graceful-deadline] fix (Plan 173 Ф.3, 2026-07-12): see the
+     * identical comment in _nova_sleep_via_driver above — CLOSED wakes on
+     * BOTH natural timer expiry and a cooperative-cancel early-close, and
+     * this legacy (non-driver) path silently treated both the same,
+     * dropping the cancel-throw a spawned child needs to actually unwind
+     * instead of running its remaining body to completion. */
+    if (nova_abool_load(&cancel_scope->cancel_requested)) {
+        if (nova_cancel_mask_load(mco_running()) == 0) {
+            nova_throw_cancel_reason(
+                nova_str_from_cstr("scope cancelled"),
+                cancel_scope->cancel_reason_ptr);
+            /* unreachable */
+        }
+    }
 }
 
 /* ─── Plan 83.3 Ф.1: `Blocking`-эффект → libuv threadpool offload ───
@@ -3584,8 +3700,17 @@ static inline void _nova_sleep_via_driver(NovaFiberQueue* scope, int slot,
     }
 
     /* Race 2a early-exit — still useful as cheap fast-path. Если cancel уже
-     * fired, even submitting ARM_SLEEP job is wasted work. */
+     * fired, even submitting ARM_SLEEP job is wasted work.
+     * [M-178-server-graceful-deadline] amend (Plan 173 Ф.3, 2026-07-12):
+     * throw here too, shield-aware — same reasoning as the identical
+     * amendment in _nova_sleep_via_libuv above. */
     if (nova_abool_load(&cancel_scope->cancel_requested)) {
+        if (nova_cancel_mask_load(mco_running()) == 0) {
+            nova_throw_cancel_reason(
+                nova_str_from_cstr("scope cancelled"),
+                cancel_scope->cancel_reason_ptr);
+            /* unreachable */
+        }
         return;
     }
 
@@ -3697,7 +3822,34 @@ static inline void _nova_sleep_via_driver(NovaFiberQueue* scope, int slot,
     nova_sched_park_until(scope, slot, _nova_sleep_drv_state_is_closed, &st);
 
     /* After CLOSED: st unlinked from armed_list by close_cb. Fiber safe to
-     * return; coroutine stack может deallocate when fiber dies. */
+     * return; coroutine stack может deallocate when fiber dies.
+     *
+     * [M-178-server-graceful-deadline] fix (Plan 173 Ф.3, 2026-07-12): the
+     * wake above is ambiguous — CLOSED fires both on natural timer expiry
+     * AND on a cooperative-cancel-driven early close (nova_scope_deliver_cancel
+     * → nova_scope_cancel_wake_all → this fiber's stop_cb → close_cb).
+     * Every OTHER park-based suspend site (nova_fiber_yield, channels.h
+     * recv/send, net.c accept/read/write) re-checks cancel_requested after
+     * waking and throws — this one silently returned success either way,
+     * so a spawned child's `Time.sleep` treated a cancel-wake exactly like
+     * a completed sleep and ran its remaining body to completion instead of
+     * unwinding. That is the root cause of the deadline/timeout + spawned-
+     * child leak: `supervised(deadline:)`/`supervised(timeout:)` fires the
+     * TimeoutError on time (the scope's own deadline gate in
+     * nova_supervised_run_impl is independent), but the child fiber that was
+     * sleeping kept running in the background instead of being unwound.
+     * Same shield-aware check as nova_fiber_yield (D188 R3): a cleanup body
+     * running under an active cancel-mask defers the throw (cancel stays
+     * latched on the scope; sleep returns normally so `defer`/cleanup code
+     * completes-by-default). */
+    if (nova_abool_load(&cancel_scope->cancel_requested)) {
+        if (nova_cancel_mask_load(mco_running()) == 0) {
+            nova_throw_cancel_reason(
+                nova_str_from_cstr("scope cancelled"),
+                cancel_scope->cancel_reason_ptr);
+            /* unreachable */
+        }
+    }
 }
 
 /* Plan 83.11 Ф.3: tok.cancel() submits CANCEL_SCOPE job to driver.
@@ -3930,6 +4082,8 @@ static inline void nova_runtime_reset(void) {
     _nova_interrupt_top = NULL;
     _nova_current_handler_iframe = NULL;
     _nova_last_error.live = 0;
+    nova_throw_trace_reset();       /* [M-173-error-return-trace] */
+    _nova_throw_site.file = NULL;   /* стейл throw-site не течёт в следующий тест */
     _nova_handler_Fail = NULL;
     _nova_handler_Fail_any = NULL;
     _nova_handler_Time = NULL;

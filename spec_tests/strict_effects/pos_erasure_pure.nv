@@ -1,0 +1,19 @@
+// Plan 197 (--strict-effects fixture, POSITIVE control).
+// Diagnostic: E_EFFECT_ERASED_IN_FN_TYPE.
+// Must compile CLEAN both with and without --strict-effects: `pure_stub`
+// carries no effects — assigning it into a pure `fn() -> int` slot erases
+// nothing (empty ⊆ empty).
+
+module strict_effects.pos_erasure_pure
+
+fn pure_stub() -> int => 7
+
+fn caller() -> int {
+    ro g fn() -> int = pure_stub
+    g()
+}
+
+fn main() {
+    ro a = caller()
+    println(a)
+}

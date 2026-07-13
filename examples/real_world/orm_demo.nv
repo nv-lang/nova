@@ -41,6 +41,8 @@
 module real_world.orm_demo
 
 import std.data.sql.{Sql, SqlValue, Db, DbRow, SqlBuilder}
+import std.collections.vec_seq.{map}
+import std.text.{join}
 
 
 // ──────────────────────────────────────────────────────────────────────────

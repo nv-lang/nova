@@ -155,10 +155,27 @@ static inline void* nova_any_from_boxed(void* payload, NovaTypeId tid) {
     NovaTypeInfo* ti = (NovaTypeInfo*)nova_alloc(sizeof(NovaTypeInfo));
     ti->type_id = tid;
     ti->name = nova_typeid_to_name(tid);
-    void** slot = (void**)nova_alloc(sizeof(void*));
-    *slot = payload;
     a->info = ti;
-    a->data = (void*)slot;
+    /* Plan 173 хвост (D414 §1, вскрыто scope-агрегацией, 2026-07-13):
+     * ABI-класс определяет форму `data`. Narrowing/`try_as[T]` читает
+     * `*(<value-repr>*)data`, т.е. `data` обязан указывать НА value-repr:
+     *   - value-ABI примитивы (tid 1..7: int/str/bool/f64/f32/byte/unit) —
+     *     `payload` (heap-box throw-сайта) УЖЕ указывает на значение →
+     *     data = payload напрямую; прежняя слот-обёртка давала лишнюю
+     *     индирекцию (`try_as[int]` возвращал адрес бокса как int);
+     *   - pointer-repr типы (user-записи ≥ NOVA_TID_USER_BASE — универсум
+     *     typed-errors, Ф.4) — value-repr САМ указатель → нужен слот,
+     *     держащий его (`*(Nova_T**)data`), как nova_any_box(&ptr,…).
+     *     (Известный pre-existing остаток: user VALUE-типы ≥ USER_BASE
+     *      здесь неотличимы от записей — как и было, предполагаем
+     *      pointer-repr; см. Ф.4 #5 «box-repr предполагает pointer».) */
+    if (tid >= (NovaTypeId)1 && tid < NOVA_TID_USER_BASE) {
+        a->data = payload;
+    } else {
+        void** slot = (void**)nova_alloc(sizeof(void*));
+        *slot = payload;
+        a->data = (void*)slot;
+    }
     return (void*)a;
 }
 

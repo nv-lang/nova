@@ -8,6 +8,24 @@
 > [backlog-followups.md](backlog-followups.md) (только актуальное). Plan-bound детали — в Followups
 > своего плана; полная история — в [../simplifications.md](../simplifications.md). Конвенция: [AGENTS.md](../../AGENTS.md).
 
+## ⚡ Актуальное состояние (снапшот 2026-07-13)
+
+Быстрый вход для нового агента — [docs/promts/read-project.md](../promts/read-project.md). Сводка:
+
+- **196 (одно окно) — высший приоритет.** Фундамент [196.4] Stage-1a+1b ✅; волна-2 [196.3]: инвентарь
+  12/12 обработан (трекер с доказательствами), D-трекер 13✅/7🔄; волна-1 [196.2]: 26/114, атомарные
+  исчерпаны. Следующий keystone — node_substs-канал (Stage-1c) → Tier-2 + финал `infer_call_ret_c`.
+- **187** MVP ✅ (`examples/flagship/aggregator/`); остаток: SSE-мост, typed-serde, real-cancel (за 173), Live.
+- **173** — срочные хвосты в работе: parfor-record-miscompile + `supervised(deadline:)` (sleep-гонка).
+- **193** ✅ закрыт (std/tls → внешний dep `../nova-tls`, ноль Rust в TLS-пути); хвост — vendored mbedTLS.
+- **198**: DELETE ✅ (1158), MIGRATE финиширует; `nova_tests/` заморожен.
+- **200** — живой реестр: П1/П2/П4/П5 ✅; П6 (Vec.data→ptr) ⏸️ на паузе (ABI-правка, не std-рефактор); П3 (As*) — в Q.
+- **200.1** — [скорость `nova test std`](200.1-std-test-speed.md) 📋 согласован 2026-07-13: папочные CU для std-тестов + кеш + профиль медленных; после 196/198.
+- **203** — [вынос http из std → nv-lang/nova-http](203-http-out-of-std.md) 📋 согласован 2026-07-13 (школа Rust/Swift; std перестаёт зависеть от внешней tls-репы; module-path потребителей не меняется); path-dep в нём — dev-форма до 204.
+- **204** — [версии зависимостей: git+semver+nova.lock](204-dependency-versioning.md) 📋 согласован 2026-07-13 (Q-dependency-versioning; path только под [replace]; MVS-резолв; D-блок тем же слиянием, что код).
+- **205** — [компрессия из nova_rt → nv-lang/nova-compress](205-compress-out-of-nova-rt.md) 📋 согласован 2026-07-13 (nova_rt = только рантайм; brotli 7МБ уезжает пакетом по школе nova-tls; после гейтов 203).
+- Гейт: conformance один-CU **97/0**; язык-меняющее — только со спек-амендментом в том же слиянии.
+
 ## Схема нумерации
 
 - `01-…`, `02-…` — главные планы по порядку создания.
@@ -494,7 +512,8 @@ Renumber D216/D282 ✅ уже выполнен (2026-07-03) — гейты 174.5
 | 191 | [191-bcrypt-security-hardening.md](191-bcrypt-security-hardening.md) | **bcrypt: закрыть security-surface (демо-KDF под именем bcrypt).** Вариант A (де-риск): покрытие API bcrypt без внешних KDF-зависимостей. Вариант B (настоящая KDF) — будущая волна. (Plan 193 слит сюда 2026-07-11.) | ✅ **ВАРИАНТ A ЗАКРЫТ 2026-07-10** (ветка `bcrypt-derisk-191`) |
 | 192 | _снесён 2026-07-11 (надгробие, дизайн → 195)_ (⛔ дизайн суперседед → [195-native-modules-c-not-rust.md](195-native-modules-c-not-rust.md)) | **Native-backed модуль (СЛИТ В PLAN 195 2026-07-11).** Исходный 192 предлагал Rust-staticlib (`[ffi.staticlib] build="cargo"`) — отвергнут (владелец: модуль = .nv + .c + .lib, БЕЗ Rust). Актуальный дизайн — в Plan 195. | ⛔ **SUPERSEDED 2026-07-11** |
 | 194 | [194-contract-execution-model.md](194-contract-execution-model.md) | **Модель исполнения контрактов: `#debug` + переопределение `--contracts`.** Контракты — безопасность/корректность, а не опциональная оптимизация. Дизайн: `#debug`-префикс для маркирования тестовых контрактов; язык-семантика. Разблокирует vrange-роутинг. | 📋 PROPOSED 2026-07-10 |
-| 195 | [195-native-modules-c-not-rust.md](195-native-modules-c-not-rust.md) | **Native-модули = .nv + .c + .lib (Rust-free); TLS на C-библиотеке.** Архитектура: компилятор Nova + clang (`.nv → .c → бинарь`). Модуль обязан содержать `.nv`-интерфейс; связь через механизм `[ffi]` (D78 амендмент, конвенция `nova-<пакет>`). Зависит от 03.1 (резолвер). Исправляет неправильный Rust-подход 192. | 📋 PROPOSED 2026-07-10 |
+| 195 | [195-native-modules-c-not-rust.md](195-native-modules-c-not-rust.md) | **Native-модули = .nv + .c + .lib (Rust-free); TLS на C-библиотеке; `src/`-раскладка std.** Архитектура: компилятор Nova + clang (`.nv → .c → бинарь`). Модуль обязан содержать `.nv`-интерфейс; связь через механизм `[ffi]` (D78 амендмент, конвенция `nova-<пакет>`). Ф.1-2 mbedTLS-своп TLS (T40); Ф.4 `std/` → `std/src/` (git mv 314 файлов, компилятор на манифест-derived резолв, D78-спека амендмент). | ✅ ЗАКРЫТ 2026-07-13 (conformance 97/0, cargo build чист, targeted std-тесты зелёные) |
+| 202 | [202-module-registry-path-keyed-and-root-module.md](202-module-registry-path-keyed-and-root-module.md) | **D78: реестр модулей по каноническому пути + корневой модуль пакета (root peers, аналог lib.rs).** Ф.1 чинит тихое проглатывание модуля при дубле rev-3-декларации (`[M-d78-duplicate-decl-module-swallow]` P1, репро research 2026-07-13 §2а) + Ф.1b mangling-ось; Ф.2 root peers (`module <package>` для `.nv` прямо в source root) убирает статтер `tls.tls`; Ф.3 миграция nova-tls; Ф.4 (опц.) ретракция rev-3.1. Язык-меняющее: D78 rev-4 амендмент в том же слиянии. | 📋 READY (одобрен владельцем 2026-07-13), НЕ ЗАПУЩЕН |
 
 > Plan 19 — see `19-closure-and-error-ops.md` (closure-rev + D85 error-ops).
 > Plan 20 и 21 — последовательные (Plan 21 зависит от Plan 20).

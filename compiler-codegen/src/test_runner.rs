@@ -717,7 +717,37 @@ impl GcKind {
 pub struct ResolvedFfiConfig {
     pub c_shims: Vec<PathBuf>,
     pub include_dirs: Vec<PathBuf>,
+    /// Plan 193 Ф.2 gap-1: linker search directories (`-L`/MSVC
+    /// `/LIBPATH:`) for `libs` below — resolved absolute, same
+    /// manifest-dir-relative contract as `c_shims`/`include_dirs`.
+    pub lib_dirs: Vec<PathBuf>,
     pub libs: Vec<String>,
+    /// Plan 193 Ф.2 gate-3: vendored C source dirs for generic
+    /// build-and-cache (`manifest::FfiConfig::vendor_src_dirs` doc-comment).
+    pub vendor_src_dirs: Vec<PathBuf>,
+}
+
+/// Plan 193 Ф.2 gate-3 (mbedtls-vendored, 2026-07-12): Windows
+/// `std::fs::canonicalize` always returns a `\\?\`-verbatim-prefixed path —
+/// the origin here is `manifest::find_manifest`'s canonicalize call, which
+/// `ResolvedFfiConfig::from_manifest`'s `manifest_dir.join(p)` inherits for
+/// EVERY `[ffi]`-declared path. Empirically confirmed (both cl.exe AND
+/// clang, so not an MSVC-only quirk): a `\\?\`-prefixed path given as a
+/// SOURCE FILE or `-I`/`/I` search directory fails to resolve (`c1: fatal
+/// error C1083` / `fatal error: '...' file not found`) even though the
+/// underlying file/dir exists and the SAME path minus the prefix compiles
+/// clean — this had simply never been exercised end-to-end before
+/// (existing `[ffi]` consumers' shims are either header-free or don't
+/// `#include` anything from their own declared `include_dirs`). Strip the
+/// prefix once, here, at the one place ALL `[ffi]` paths are constructed —
+/// every downstream consumer (`build_command`'s 3 toolchain branches, the
+/// vendor build-and-cache mechanism below) inherits the fix for free.
+/// A no-op on non-Windows (canonicalize there never adds this prefix).
+fn strip_verbatim_prefix(p: &Path) -> PathBuf {
+    match p.to_string_lossy().strip_prefix(r"\\?\") {
+        Some(rest) => PathBuf::from(rest),
+        None => p.to_path_buf(),
+    }
 }
 
 impl ResolvedFfiConfig {
@@ -733,24 +763,314 @@ impl ResolvedFfiConfig {
         let cfg = m.ffi.as_ref()?;
         let base = m.manifest_dir.clone();
         Some(ResolvedFfiConfig {
-            c_shims: cfg.c_shims.iter().map(|p| base.join(p)).collect(),
-            include_dirs: cfg.include_dirs.iter().map(|p| base.join(p)).collect(),
+            c_shims: cfg.c_shims.iter().map(|p| strip_verbatim_prefix(&base.join(p))).collect(),
+            include_dirs: cfg.include_dirs.iter().map(|p| strip_verbatim_prefix(&base.join(p))).collect(),
+            lib_dirs: cfg.lib_dirs.iter().map(|p| strip_verbatim_prefix(&base.join(p))).collect(),
             libs: cfg.libs.clone(),
+            vendor_src_dirs: cfg.vendor_src_dirs.iter().map(|p| strip_verbatim_prefix(&base.join(p))).collect(),
         })
     }
 
     /// Plan 03.1 (ext-dep native/FFI propagation): смёржить `[ffi]` внешней
     /// (`path`/`git`) зависимости в СВОЙ resolved config. `c_shims` /
-    /// `include_dirs` / `libs` — конкатенация (свои первыми, `libs`
-    /// дедуплицируются).
+    /// `include_dirs` / `lib_dirs` / `libs` — конкатенация (свои первыми,
+    /// `lib_dirs`/`libs` дедуплицируются).
     pub fn merge(&mut self, other: ResolvedFfiConfig) {
         self.c_shims.extend(other.c_shims);
         self.include_dirs.extend(other.include_dirs);
+        for dir in other.lib_dirs {
+            if !self.lib_dirs.contains(&dir) {
+                self.lib_dirs.push(dir);
+            }
+        }
         for lib in other.libs {
             if !self.libs.contains(&lib) {
                 self.libs.push(lib);
             }
         }
+        for dir in other.vendor_src_dirs {
+            if !self.vendor_src_dirs.contains(&dir) {
+                self.vendor_src_dirs.push(dir);
+            }
+        }
+    }
+}
+
+/// Plan 193 Ф.2 gap-1: platform-specific candidate file names for a
+/// declared `[ffi] libs` entry `name` — mirrors what each toolchain branch
+/// in `build_command` actually emits (`<name>.lib` on Windows regardless of
+/// Clang/MSVC — both target the MSVC ABI/lib format; `lib<name>.a` /
+/// `lib<name>.so` on Linux, `lib<name>.a` / `lib<name>.dylib` on macOS).
+fn ffi_lib_candidate_names(lib: &str) -> Vec<String> {
+    if cfg!(target_os = "windows") {
+        vec![format!("{}.lib", lib)]
+    } else if cfg!(target_os = "macos") {
+        vec![format!("lib{}.a", lib), format!("lib{}.dylib", lib)]
+    } else {
+        vec![format!("lib{}.a", lib), format!("lib{}.so", lib)]
+    }
+}
+
+/// Plan 193 Ф.2 gap-1: detect-and-degrade probe for generic `[ffi] libs`.
+/// Mirrors the retired built-in MbedtlsConfig/BrotliConfig contract
+/// (missing native lib → graceful degrade, never a hard link error) —
+/// generalized to ANY user-declared `[ffi] libs` entry that has an
+/// explicit `lib_dirs` search path. Returns the first lib name that could
+/// not be located in any declared `lib_dirs`, plus the dirs searched (for
+/// the SkipReason message).
+///
+/// `lib_dirs` empty (no explicit search path declared) → None: nothing to
+/// verify against, falls back to the toolchain's own default search (system
+/// `-l` resolution) — unchanged legacy behaviour; a hard link error is
+/// still possible there, same as before this fix (no regression for
+/// existing consumers relying on system-installed libs with no
+/// non-default path, e.g. `-lsqlite3` found via the system linker path).
+fn first_missing_ffi_lib(ffi: &ResolvedFfiConfig) -> Option<(String, Vec<PathBuf>)> {
+    if ffi.lib_dirs.is_empty() {
+        return None;
+    }
+    for lib in &ffi.libs {
+        let candidates = ffi_lib_candidate_names(lib);
+        let found = ffi.lib_dirs.iter()
+            .any(|dir| candidates.iter().any(|name| dir.join(name).is_file()));
+        if !found {
+            return Some((lib.clone(), ffi.lib_dirs.clone()));
+        }
+    }
+    None
+}
+
+/// Plan 193 Ф.2 gate-3 (mbedtls-vendored, 2026-07-12): generic compile-time
+/// feature-gate defines for `[ffi] libs` — `NOVA_FFI_HAVE_<LIB>` (sanitized
+/// uppercase) per lib name, emitted ONLY when `first_missing_ffi_lib`
+/// confirms all declared libs are actually present (never emitted on a path
+/// that's about to SKIP — a shim gated on this define must never reference
+/// symbols the linker won't find). Lets a package's own `.c` shim tell real
+/// backend from feature-gate-stub at compile time WITHOUT the compiler
+/// hardcoding any specific library's name (mirrors the now-guarded-off
+/// built-in `NOVA_USE_MBEDTLS` monorepo special-case one层 up, generalized —
+/// nova-tls's `native/tls_c_shim.c` checks `NOVA_FFI_HAVE_MBEDTLS`).
+/// `lib_dirs` empty (no explicit search path, same precedent as
+/// `first_missing_ffi_lib`) → no defines (can't verify presence, and the
+/// legacy system-`-l`-search consumers predate this mechanism / don't need
+/// it — unchanged behaviour).
+fn ffi_have_defines(ffi: &ResolvedFfiConfig) -> Vec<String> {
+    if ffi.lib_dirs.is_empty() || !ffi.libs.is_empty() && first_missing_ffi_lib(ffi).is_some() {
+        return Vec::new();
+    }
+    ffi.libs.iter().map(|lib| {
+        let sanitized: String = lib.chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
+            .collect();
+        format!("NOVA_FFI_HAVE_{}", sanitized)
+    }).collect()
+}
+
+/// Plan 193 Ф.2 gate-3 (mbedtls-vendored, 2026-07-12): generic
+/// build-and-cache for `[ffi] vendor_src_dirs` — "195-pattern" extension of
+/// the `detect_or_build_libuv` precedent (см. `build_libuv_lib` below, whose
+/// cc-invocation shape this mirrors 1:1) generalized to ANY user-declared
+/// native module. NOT mbedTLS-specific: compiles whatever `.c` files a
+/// package vendors under its declared dirs, no knowledge of what library
+/// it is.
+///
+/// No-op (Ok, nothing built) when `vendor_src_dirs`, `lib_dirs` or `libs`
+/// is empty — unchanged legacy behaviour for every existing `[ffi]`
+/// consumer that doesn't opt in. Cache check: if EVERY name in `libs`
+/// already resolves to a file in `lib_dirs[0]` (via
+/// `ffi_lib_candidate_names`), returns immediately without invoking the
+/// compiler — cheap per-call check, same shape as
+/// `detect_or_build_libuv`'s `lib_file.is_file()` fast path (this function
+/// is called once per test, so the cache check dominates after the first
+/// build in a `nova test` run).
+///
+/// Build: collects all `.c` files directly under each `vendor_src_dirs`
+/// entry (non-recursive — flat `library/`-style upstream layouts), compiles
+/// them with the SAME toolchain flags `build_libuv_lib` uses
+/// (`/MT /O2` MSVC / `-O2 -fPIC` cc — CRT/PIC consistency with the rest of
+/// the nova runtime is required for static linking to succeed), then
+/// archives the resulting objects into `lib_dirs[0]` under EVERY name in
+/// `libs` — identical combined archives (a static-archive linker only pulls
+/// object members needed to resolve outstanding externals, so the same
+/// content appearing under 3 different archive names, as mbedTLS's
+/// `mbedtls`/`mbedx509`/`mbedcrypto` split needs, is harmless: whichever
+/// archive is scanned first when a symbol is still unresolved satisfies it,
+/// the others contribute nothing further). A real per-library object-list
+/// split (matching upstream's own `CMakeLists.txt` `src_crypto`/`src_x509`/
+/// `src_tls` sets) would avoid the redundant duplication but needs
+/// per-package source-list config this generic mechanism intentionally
+/// does not have — "минимально" per Plan 193 Ф.2 gate-3 scope.
+///
+/// Build failures are NOT fatal here — they're logged (eprintln) and
+/// swallowed (Ok(())) so the EXISTING `first_missing_ffi_lib` detect-and-
+/// degrade probe (called right after this, at the call site) still runs
+/// and degrades gracefully to `SkipReason::FfiLibNotFound` instead of a
+/// hard test-runner crash — this function only ever tries to IMPROVE on
+/// that outcome, never regresses it.
+fn build_missing_vendor_ffi_libs(ffi: &ResolvedFfiConfig, vcvars: Option<&Path>) {
+    if ffi.vendor_src_dirs.is_empty() || ffi.lib_dirs.is_empty() || ffi.libs.is_empty() {
+        return;
+    }
+    let target_dir = &ffi.lib_dirs[0];
+    let already_built = ffi.libs.iter().all(|lib| {
+        let candidates = ffi_lib_candidate_names(lib);
+        candidates.iter().any(|name| target_dir.join(name).is_file())
+    });
+    if already_built {
+        return;
+    }
+    let mut srcs: Vec<PathBuf> = Vec::new();
+    for dir in &ffi.vendor_src_dirs {
+        if let Err(e) = collect_c_files(dir, &mut srcs, /*recursive*/ false) {
+            eprintln!("nova: warning: vendor FFI build: read {}: {}", dir.display(), e);
+            return;
+        }
+    }
+    if srcs.is_empty() {
+        eprintln!("nova: warning: vendor FFI build: no .c files found under {:?}", ffi.vendor_src_dirs);
+        return;
+    }
+    eprintln!(
+        "nova: FFI lib(s) {:?} not found in {}, building from vendored source ({} files, one-time)...",
+        ffi.libs, target_dir.display(), srcs.len()
+    );
+    if let Err(e) = std::fs::create_dir_all(target_dir) {
+        eprintln!("nova: warning: vendor FFI build: create lib_dir {}: {}", target_dir.display(), e);
+        return;
+    }
+    if let Err(e) = build_vendor_ffi_lib(&srcs, &ffi.include_dirs, target_dir, &ffi.libs, vcvars) {
+        eprintln!("nova: warning: vendor FFI build failed: {}", e);
+        // Swallowed — caller's first_missing_ffi_lib degrades to SKIP.
+    }
+}
+
+/// Plan 193 Ф.2 gate-3: compile `srcs` + archive into `target_dir` under
+/// every name in `lib_names` (see `build_missing_vendor_ffi_libs` doc).
+/// Object dir: `target_dir/.vendor-obj` (recreated each build attempt,
+/// mirrors `build_libuv_lib`'s `obj_dir` handling).
+fn build_vendor_ffi_lib(srcs: &[PathBuf], include_dirs: &[PathBuf], target_dir: &Path,
+                         lib_names: &[String], vcvars: Option<&Path>) -> Result<()> {
+    let obj_dir = target_dir.join(".vendor-obj");
+    if obj_dir.is_dir() {
+        let _ = std::fs::remove_dir_all(&obj_dir);
+    }
+    std::fs::create_dir_all(&obj_dir)
+        .map_err(|e| anyhow!("create obj_dir: {}", e))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let vcv = vcvars.ok_or_else(|| anyhow!("vcvars required for vendor FFI build on Windows"))?;
+        let rsp = obj_dir.join("compile.rsp");
+        let mut lines: Vec<String> = Vec::new();
+        lines.push("/c /nologo /W0 /MT /O2 /D_WIN32_WINNT=0x0602 /DWIN32_LEAN_AND_MEAN \
+                     /D_CRT_SECURE_NO_WARNINGS /D_CRT_SECURE_NO_DEPRECATE".to_string());
+        for inc in include_dirs {
+            lines.push(format!("/I \"{}\"", strip_verbatim_prefix(inc).display()));
+        }
+        lines.push(format!("/Fo\"{}\\\\\"", strip_verbatim_prefix(&obj_dir).display()));
+        for s in srcs {
+            lines.push(format!("\"{}\"", strip_verbatim_prefix(s).display()));
+        }
+        std::fs::write(&rsp, lines.join("\n"))
+            .map_err(|e| anyhow!("write rsp: {}", e))?;
+        let inner = format!(
+            "\"call \"{}\" >nul 2>&1 && cl.exe @\"{}\"\"",
+            vcv.display(), rsp.display()
+        );
+        let mut cmd = Command::new("cmd");
+        cmd.raw_arg("/c").raw_arg(&inner);
+        let out = cmd.output()
+            .map_err(|e| anyhow!("spawn cl.exe: {}", e))?;
+        if !out.status.success() {
+            let combined = format!("{}{}",
+                bytes_to_string(&out.stdout),
+                bytes_to_string(&out.stderr));
+            return Err(anyhow!("vendor FFI compile failed: {}",
+                combined.lines().take(15).collect::<Vec<_>>().join("\n")));
+        }
+        let mut obj_files: Vec<PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(&obj_dir)? {
+            let p = entry?.path();
+            if p.extension().and_then(|s| s.to_str()) == Some("obj") {
+                obj_files.push(p);
+            }
+        }
+        if obj_files.is_empty() {
+            return Err(anyhow!("vendor FFI compile produced no .obj files"));
+        }
+        for lib in lib_names {
+            let lib_file = target_dir.join(format!("{}.lib", lib));
+            let lib_rsp = obj_dir.join(format!("lib_{}.rsp", lib));
+            let mut lib_lines: Vec<String> = Vec::new();
+            lib_lines.push("/nologo".to_string());
+            lib_lines.push(format!("/OUT:\"{}\"", strip_verbatim_prefix(&lib_file).display()));
+            for o in &obj_files {
+                lib_lines.push(format!("\"{}\"", strip_verbatim_prefix(o).display()));
+            }
+            std::fs::write(&lib_rsp, lib_lines.join("\n"))
+                .map_err(|e| anyhow!("write lib.rsp: {}", e))?;
+            let lib_inner = format!(
+                "\"call \"{}\" >nul 2>&1 && lib.exe @\"{}\"\"",
+                vcv.display(), lib_rsp.display()
+            );
+            let mut lib_cmd = Command::new("cmd");
+            lib_cmd.raw_arg("/c").raw_arg(&lib_inner);
+            let lib_out = lib_cmd.output()
+                .map_err(|e| anyhow!("spawn lib.exe: {}", e))?;
+            if !lib_out.status.success() {
+                return Err(anyhow!("lib.exe failed for {}: {}", lib,
+                    bytes_to_string(&lib_out.stderr)));
+            }
+        }
+        eprintln!("nova: vendor FFI lib(s) {:?} built ({} files)", lib_names, srcs.len());
+        let _ = std::fs::remove_dir_all(&obj_dir);
+        return Ok(());
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
+        let mut obj_files: Vec<PathBuf> = Vec::new();
+        for src in srcs {
+            let obj = obj_dir.join(
+                src.file_name().unwrap().to_string_lossy().replace(".c", ".o")
+            );
+            let mut c = Command::new(&cc);
+            c.args(["-c", "-O2", "-w", "-fPIC"]);
+            for inc in include_dirs {
+                c.arg("-I").arg(inc);
+            }
+            c.arg("-o").arg(&obj);
+            c.arg(src);
+            let out = c.output()
+                .map_err(|e| anyhow!("spawn {}: {}", cc, e))?;
+            if !out.status.success() {
+                return Err(anyhow!("vendor FFI compile failed on {}: {}",
+                    src.display(), bytes_to_string(&out.stderr)));
+            }
+            obj_files.push(obj);
+        }
+        for lib in lib_names {
+            let lib_file = target_dir.join(format!("lib{}.a", lib));
+            let mut ar = Command::new("ar");
+            ar.arg("rcs").arg(&lib_file);
+            for o in &obj_files {
+                ar.arg(o);
+            }
+            let ar_out = ar.output()
+                .map_err(|e| anyhow!("spawn ar: {}", e))?;
+            if !ar_out.status.success() {
+                return Err(anyhow!("ar failed for {}: {}", lib,
+                    bytes_to_string(&ar_out.stderr)));
+            }
+        }
+        eprintln!("nova: vendor FFI lib(s) {:?} built ({} files)", lib_names, srcs.len());
+        let _ = std::fs::remove_dir_all(&obj_dir);
+        return Ok(());
+    }
+    #[allow(unreachable_code)]
+    {
+        let _ = (srcs, include_dirs, target_dir, lib_names, vcvars, &obj_dir);
+        Err(anyhow!("unsupported platform for vendor FFI build"))
     }
 }
 
@@ -868,7 +1188,8 @@ pub struct BrotliConfig {
 ///   1) target/brotli-cache build artifact (rt_dir/../../target — owner's cache).
 ///   2) tracked vendor copy under nova_rt/brotli/lib (Windows fat `.lib` today).
 ///   3) [cigreen-fix] non-Windows SYSTEM package (`apt install libbrotli-dev` on
-///      CI, mirrors detect_mbedtls's system-package fallback): CI's Linux build
+///      CI, same system-package-fallback shape TLS used to have before Plan 193
+///      Ф.2 retired the compiler-built-in mbedTLS auto-link): CI's Linux build
 ///      previously had NO brotli source at all (no vendored `.a`, no cache) →
 ///      detect_brotli always returned None → the shim silently compiled its
 ///      Q11 feature-gate stub path → every brotli_test.nv assertion that
@@ -941,108 +1262,6 @@ fn detect_brotli(rt_dir: &Path) -> Option<BrotliConfig> {
         }
     }
     None
-}
-
-/// Plan 195 Ф.1: vcpkg-installed mbedTLS (mbedtls/mbedx509/mbedcrypto), the
-/// pure-C TLS backend for nova_rt/tls_c_shim.c. Replaces the Rust rustls
-/// staticlib (Plan 116) — linked CONDITIONALLY on use, exactly like brotli/
-/// Boehm (D337); no build-on-demand here (mbedTLS is a vcpkg dependency the
-/// dev host installs once — `vcpkg install` in compiler-codegen/, see
-/// vcpkg.json — mirroring the z3-backend feature's own vcpkg usage).
-pub struct MbedtlsConfig {
-    pub include_dir: PathBuf,
-    /// None on Linux/macOS when relying on the system linker's default search
-    /// path (`-lmbedtls` etc., mirrors `BoehmConfig.lib_dir`'s convention).
-    pub lib_dir: Option<PathBuf>,
-}
-
-/// Locate a vcpkg-installed mbedTLS. Lookup order (mirrors `detect_boehm`):
-///   1. `$NOVA_MBEDTLS_LIB_DIR` (+ optional `$NOVA_MBEDTLS_INCLUDE_DIR`,
-///      inferred as `lib/../include` if unset) — CI/custom override.
-///   2. Windows: local vcpkg `<cg_include>/vcpkg_installed/x64-windows-static/`,
-///      else global vcpkg via `$VCPKG_ROOT`.
-///   3. Linux/macOS: system headers (`/usr/include/mbedtls/ssl.h` etc.) —
-///      `lib_dir = None`, linker finds `-lmbedtls` in the standard path.
-/// `None` → mbedTLS not available for this host → the CU compiles the Q11
-/// stub path baked into tls_c_shim.c (`TlsError.Internal` at runtime, never
-/// a link error) — same degrade-not-fail contract as brotli/detect_tls had.
-fn detect_mbedtls(cg_include: &Path) -> Option<MbedtlsConfig> {
-    if let Ok(lib_dir_env) = std::env::var("NOVA_MBEDTLS_LIB_DIR") {
-        if !lib_dir_env.trim().is_empty() {
-            let lib_dir = PathBuf::from(&lib_dir_env);
-            let include_dir = std::env::var("NOVA_MBEDTLS_INCLUDE_DIR")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .map(PathBuf::from)
-                .or_else(|| lib_dir.parent().map(|p| p.join("include")))
-                .unwrap_or_else(|| lib_dir.clone());
-            return Some(MbedtlsConfig { include_dir, lib_dir: Some(lib_dir) });
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let local_inc = cg_include.join("vcpkg_installed").join("x64-windows-static").join("include");
-        let local_lib = cg_include.join("vcpkg_installed").join("x64-windows-static").join("lib");
-        if local_lib.join("mbedtls.lib").is_file() {
-            return Some(MbedtlsConfig { include_dir: local_inc, lib_dir: Some(local_lib) });
-        }
-        if let Ok(vcpkg_root) = std::env::var("VCPKG_ROOT") {
-            let global_inc = PathBuf::from(&vcpkg_root).join("installed").join("x64-windows-static").join("include");
-            let global_lib = PathBuf::from(&vcpkg_root).join("installed").join("x64-windows-static").join("lib");
-            if global_lib.join("mbedtls.lib").is_file() {
-                return Some(MbedtlsConfig { include_dir: global_inc, lib_dir: Some(global_lib) });
-            }
-        }
-        return None;
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = cg_include;
-        let candidates = ["/usr/include/mbedtls/ssl.h", "/usr/local/include/mbedtls/ssl.h"];
-        for c in candidates {
-            if std::path::Path::new(c).is_file() {
-                let inc = std::path::Path::new(c)
-                    .parent().and_then(|p| p.parent()) // strip mbedtls/ssl.h -> mbedtls -> include
-                    .map(PathBuf::from);
-                if let Some(inc) = inc {
-                    return Some(MbedtlsConfig { include_dir: inc, lib_dir: None });
-                }
-            }
-        }
-        None
-    }
-}
-
-/// True iff the generated `.c` uses the TLS shim — drives the conditional
-/// compile+link of `nova_rt/tls_c_shim.c` (real mbedTLS backend when found,
-/// else the Q11 stub path baked into the same file — `#ifdef NOVA_USE_MBEDTLS`).
-///
-/// Marker (unchanged since plan 116 Ф.2): call sites / emitted decls of the
-/// two session-entry externs (`tls_client_cfg_new` / `tls_server_cfg_new`) —
-/// every TLS path starts by building a config. Extern decls are emitted only
-/// for USED fns (D82), so presence == use. NB Ф.5 refinement, same lesson as
-/// brotli: once std/http imports std/tls, DEAD TlsStream bodies in http CUs
-/// will carry these call sites and over-detect — switch the marker to call
-/// sites of the mangled public wrappers (TlsStream.connect/accept), mirror of
-/// `c_file_uses_brotli`'s wrapper-scan (plan 116 Ф.5.3, still outstanding).
-fn c_file_uses_tls(c_file: &Path) -> bool {
-    let Ok(src) = std::fs::read_to_string(c_file) else { return false; };
-    for line in src.lines() {
-        if !(line.contains("tls_client_cfg_new(") || line.contains("tls_server_cfg_new(")) {
-            continue;
-        }
-        // Skip a (hypothetical) static prototype / definition header, as in
-        // c_file_uses_brotli — extern decls & call sites are non-static.
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("static ") {
-            let end = line.trim_end();
-            if end.ends_with(");") || end.ends_with('{') {
-                continue;
-            }
-        }
-        return true;
-    }
-    false
 }
 
 /// True iff the generated `.c` actually CALLS the brotli decoder wrapper — the
@@ -1145,28 +1364,6 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 opts.c_file.display(), uses_brotli, names.join(", "));
         }
     }
-    // Plan 195 Ф.1: TLS shim — CONDITIONAL on USE, mirror of brotli (D337).
-    // `tls_c_shim.c` is ALWAYS the compiled TU when the CU uses TLS (single
-    // file, like brotli_shim.c): mbedTLS found → `-DNOVA_USE_MBEDTLS=1` +
-    // its include/lib wired in; not found → same TU compiles its baked-in
-    // Q11 stub path (TlsError.Internal at runtime, never a link error).
-    let rt_tls_c_shim = opts.rt_dir.join("tls_c_shim.c");
-    let uses_tls = c_file_uses_tls(opts.c_file);
-    let mbedtls_cfg = if uses_tls { detect_mbedtls(opts.cg_include) } else { None };
-    let mbedtls_include = mbedtls_cfg.as_ref().map(|c| c.include_dir.clone());
-    let mbedtls_lib_dir = mbedtls_cfg.as_ref().and_then(|c| c.lib_dir.clone());
-    // Diagnostic (NOVA_DEBUG_TLS_LINK=1): make the conditional-link decision
-    // observable in both directions (real mbedTLS / stub / not used).
-    if std::env::var("NOVA_DEBUG_TLS_LINK").as_deref() == Ok("1") {
-        match &mbedtls_cfg {
-            Some(_) => eprintln!(
-                "nova/tls-link: {} uses_tls={} → LINK mbedTLS", opts.c_file.display(), uses_tls),
-            None => eprintln!(
-                "nova/tls-link: {} uses_tls={} → {}",
-                opts.c_file.display(), uses_tls,
-                if uses_tls { "STUB (mbedTLS not found)" } else { "no tls" }),
-        }
-    }
     let march = march_flag();
 
     // Plan 27 Ф.1+Ф.D: Boehm paths resolved via detect_boehm (env overrides
@@ -1253,6 +1450,19 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             if matches!(opts.mode, Mode::Release) {
                 flags.push("-fuse-ld=lld".to_string());
             }
+            // Plan 198 (defect #8a insurance, NOT the fix): a modest stack
+            // RESERVE safety margin on Windows. The real fix for the merged-CU
+            // stack overflow is bounding `nova_fn_main_impl`'s C frame via
+            // fixed-size test-chunk functions (see emit_main_wrapper /
+            // TEST_CHUNK_SIZE in emit_c.rs) — that keeps the frame constant
+            // regardless of corpus size. This flag is pure belt-and-suspenders:
+            // RESERVE only consumes address space (pages commit lazily), so a
+            // generous bump costs nothing at rest and gives headroom for
+            // legitimately deep call stacks (generics/recursion) in real test
+            // bodies, without masking a still-broken O(N) frame. Both
+            // lld-link and link.exe accept `/stack:<reserve>`.
+            #[cfg(target_os = "windows")]
+            flags.push("-Wl,/stack:0x1000000".to_string()); // 16 MiB reserve
             // Plan 44.2 P41-5 + audit round 5: stack-clash protection (CVE-2017-1000366).
             // -fstack-clash-protection inserts page-by-page probing on stack frames
             // >4KB, preventing skip past single guard page in one SP subtraction.
@@ -1355,40 +1565,6 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     }
                 }
             }
-            // Plan 195 Ф.1: TLS shim — CONDITIONAL link (only when used). One
-            // TU always (tls_c_shim.c); mbedTLS include/libs added only when
-            // found for this host (else its baked-in Q11 stub path compiles).
-            if uses_tls {
-                c.arg(&rt_tls_c_shim);
-                if let (Some(inc_path), Some(lib_dir)) = (&mbedtls_include, &mbedtls_lib_dir) {
-                    c.arg("-DNOVA_USE_MBEDTLS=1");
-                    c.arg("-I").arg(inc_path);
-                    // Dependency order matters for single-pass Unix linkers
-                    // (mbedtls -> mbedx509 -> mbedcrypto). Windows lib.exe/
-                    // link.exe are multi-pass and tolerate any order.
-                    #[cfg(target_os = "windows")]
-                    {
-                        c.arg(lib_dir.join("mbedtls.lib"));
-                        c.arg(lib_dir.join("mbedx509.lib"));
-                        c.arg(lib_dir.join("mbedcrypto.lib"));
-                    }
-                    #[cfg(not(target_os = "windows"))]
-                    {
-                        c.arg("-L").arg(lib_dir);
-                        c.arg("-lmbedtls");
-                        c.arg("-lmbedx509");
-                        c.arg("-lmbedcrypto");
-                    }
-                } else if let Some(inc_path) = &mbedtls_include {
-                    // mbedtls_lib_dir == None → system default search path
-                    // (Linux/macOS system package): -I only, then plain -l flags.
-                    c.arg("-DNOVA_USE_MBEDTLS=1");
-                    c.arg("-I").arg(inc_path);
-                    c.arg("-lmbedtls");
-                    c.arg("-lmbedx509");
-                    c.arg("-lmbedcrypto");
-                }
-            }
             // Plan 27 Ф.1+Ф.D: Boehm link flags for Clang.
             if opts.gc_kind == GcKind::Boehm {
                 #[cfg(target_os = "windows")]
@@ -1429,6 +1605,11 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 for inc in &ffi.include_dirs {
                     c.arg("-I").arg(inc);
                 }
+                // Plan 193 Ф.2 gate-3: generic feature-gate defines — see
+                // `ffi_have_defines` doc-comment.
+                for def in ffi_have_defines(ffi) {
+                    c.arg(format!("-D{}=1", def));
+                }
                 for shim in &ffi.c_shims {
                     let ext = shim.extension().and_then(|s| s.to_str()).unwrap_or("");
                     if ext.eq_ignore_ascii_case("c") {
@@ -1451,7 +1632,13 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
             c.arg(&rt_segv_diag);    /* Plan 83.11 §12.31 */
             // Plan 115 D214 [M-115-ffi-build-pipeline]: system libs (-l) в link phase.
+            // Plan 193 Ф.2 gap-1: lib_dirs (-L) BEFORE -l so the linker's
+            // search path includes non-default-path native libs (mirrors
+            // detect_mbedtls's now-generalized -L <lib_dir> pattern).
             if let Some(ffi) = opts.ffi {
+                for dir in &ffi.lib_dirs {
+                    c.arg("-L").arg(dir);
+                }
                 for lib in &ffi.libs {
                     c.arg(format!("-l{}", lib));
                 }
@@ -1532,6 +1719,11 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 for inc in &ffi.include_dirs {
                     c.arg(format!("/I{}", inc.display()));
                 }
+                // Plan 193 Ф.2 gate-3: generic feature-gate defines — see
+                // `ffi_have_defines` doc-comment.
+                for def in ffi_have_defines(ffi) {
+                    c.arg(format!("/D{}=1", def));
+                }
                 for shim in &ffi.c_shims {
                     let ext = shim.extension().and_then(|s| s.to_str()).unwrap_or("");
                     if ext.eq_ignore_ascii_case("c") {
@@ -1577,21 +1769,6 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg(&rt_brotli_shim);
                 }
             }
-            // Plan 195 Ф.1: TLS shim — CONDITIONAL link (only when used). One
-            // TU always (tls_c_shim.c); mbedTLS include/libs added only when
-            // found for this host (else its baked-in Q11 stub path compiles).
-            if uses_tls {
-                if let (Some(inc_path), Some(lib_dir)) = (&mbedtls_include, &mbedtls_lib_dir) {
-                    c.arg("/DNOVA_USE_MBEDTLS=1");
-                    c.arg(format!("/I{}", inc_path.display()));
-                    c.arg(&rt_tls_c_shim);
-                    c.arg(lib_dir.join("mbedtls.lib"));
-                    c.arg(lib_dir.join("mbedx509.lib"));
-                    c.arg(lib_dir.join("mbedcrypto.lib"));
-                } else {
-                    c.arg(&rt_tls_c_shim);
-                }
-            }
             c.arg(opts.c_file);
             c.arg(&rt_alloc);
             c.arg(&rt_effects);
@@ -1605,10 +1782,18 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_segv_diag);    /* Plan 83.11 §12.31 */
             // Plan 27 Ф.1: Boehm link flags for MSVC (after sources, before /link).
             // Plan 115 D214 [M-115-ffi-build-pipeline]: also pass user FFI libs.
+            // Plan 193 Ф.2 gap-1: also open the /link phase when lib_dirs is
+            // declared alone (e.g. libs list empty but search path wired for
+            // a future c_shim-only consumer — matches `!libs.is_empty()` OR
+            // gate below).
             let has_link_phase = opts.gc_kind == GcKind::Boehm
-                || opts.ffi.map_or(false, |f| !f.libs.is_empty());
+                || opts.ffi.map_or(false, |f| !f.libs.is_empty() || !f.lib_dirs.is_empty());
             if has_link_phase {
                 c.arg("/link");
+                // Plan 198 (defect #8a insurance, NOT the fix — see the
+                // matching clang-branch comment above): modest RESERVE-only
+                // stack safety margin.
+                c.arg("/STACK:0x1000000"); // 16 MiB reserve
                 if opts.gc_kind == GcKind::Boehm {
                     // PathBuf-аргумент — Command экранирует сам; ручные кавычки
                     // не нужны (и вредны, см. комментарий к /Fo выше).
@@ -1616,6 +1801,15 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg(vcpkg_lib.join("atomic_ops.lib"));
                 }
                 if let Some(ffi) = opts.ffi {
+                    // Plan 193 Ф.2 gap-1: /LIBPATH: BEFORE bare <name>.lib
+                    // entries — MSVC's `LIB` env var (vcvars-snapshot,
+                    // env_clear()-isolated above) doesn't see external
+                    // overrides, so a non-default-path native lib is
+                    // otherwise unfindable on Windows (no system default
+                    // search path analogue to /usr/lib).
+                    for dir in &ffi.lib_dirs {
+                        c.arg(format!("/LIBPATH:{}", dir.display()));
+                    }
                     for lib in &ffi.libs {
                         // MSVC: -l<name> не поддерживается, нужен <name>.lib.
                         c.arg(format!("{}.lib", lib));
@@ -1695,27 +1889,16 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     }
                 }
             }
-            // Plan 195 Ф.1: TLS shim — CONDITIONAL link (only when used). On a
-            // host without mbedTLS found → the same TU's Q11 stub path compiles,
-            // never a link error.
-            if uses_tls {
-                c.arg(&rt_tls_c_shim);
-                if let Some(inc_path) = &mbedtls_include {
-                    c.arg("-DNOVA_USE_MBEDTLS=1");
-                    c.arg("-I").arg(inc_path);
-                    if let Some(lib_dir) = &mbedtls_lib_dir {
-                        c.arg("-L").arg(lib_dir);
-                    }
-                    c.arg("-lmbedtls");
-                    c.arg("-lmbedx509");
-                    c.arg("-lmbedcrypto");
-                }
-            }
             // Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI shim flags (GCC).
             // .h shims via -include (force-include); .c via compilation unit.
             if let Some(ffi) = opts.ffi {
                 for inc in &ffi.include_dirs {
                     c.arg("-I").arg(inc);
+                }
+                // Plan 193 Ф.2 gate-3: generic feature-gate defines — see
+                // `ffi_have_defines` doc-comment.
+                for def in ffi_have_defines(ffi) {
+                    c.arg(format!("-D{}=1", def));
                 }
                 for shim in &ffi.c_shims {
                     let ext = shim.extension().and_then(|s| s.to_str()).unwrap_or("");
@@ -1739,7 +1922,11 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
             c.arg(&rt_segv_diag);    /* Plan 83.11 §12.31 */
             // Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI libs (GCC).
+            // Plan 193 Ф.2 gap-1: lib_dirs (-L) BEFORE -l, same as Clang.
             if let Some(ffi) = opts.ffi {
+                for dir in &ffi.lib_dirs {
+                    c.arg("-L").arg(dir);
+                }
                 for lib in &ffi.libs {
                     c.arg(format!("-l{}", lib));
                 }
@@ -1845,6 +2032,13 @@ pub enum SkipReason {
     /// успешно. Компиляция уже проверена — SKIP вместо CC-FAIL, cc/link/run
     /// не выполняются (дешевле оборвать сразу после codegen).
     NoEntryPoint,
+    /// Plan 193 Ф.2 gap-1 (03.1 [ffi] libs detect-and-degrade): a declared
+    /// `[ffi] libs` entry has an explicit `lib_dirs` search path, but the
+    /// platform lib file was not found in any of them. Degrades to SKIP
+    /// instead of a hard CC/link-FAIL — mirrors the retired built-in
+    /// MbedtlsConfig/BrotliConfig graceful-degrade contract (missing native
+    /// lib → never a hard link error), generalized to generic `[ffi] libs`.
+    FfiLibNotFound { lib: String, searched: Vec<PathBuf> },
 }
 
 impl SkipReason {
@@ -1865,6 +2059,12 @@ impl SkipReason {
             ),
             SkipReason::NoEntryPoint =>
                 "no test blocks and no fn main() — nothing to link/run (compiled OK)".to_string(),
+            SkipReason::FfiLibNotFound { lib, searched } => format!(
+                "[ffi] lib `{}` not found in lib_dirs ({})",
+                lib,
+                searched.iter().map(|p| p.display().to_string())
+                    .collect::<Vec<_>>().join(", "),
+            ),
         }
     }
 }
@@ -2566,6 +2766,32 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
         }
     }
 
+    // Plan 193 Ф.2 gap-1: detect-and-degrade — если merged [ffi] объявляет
+    // явный lib_dirs search path, но declared libs-файл не найден ни в
+    // одной из директорий, деградируем к SKIP вместо hard CC/link-FAIL
+    // (см. first_missing_ffi_lib doc-comment). Проверяется ПОСЛЕ merge
+    // (own + ext-dep [ffi]), ДО build_command/CC — самая дешёвая точка
+    // обрыва для этого случая (subdir/obj_dir уже созданы выше, но CC ещё
+    // не запущен).
+    //
+    // Plan 193 Ф.2 gate-3: если [ffi] declares `vendor_src_dirs`, try to
+    // build-and-cache the missing lib(s) from vendored source FIRST — this
+    // can turn what would've been a SKIP into a real build. No-op (and
+    // never fatal here) when vendor_src_dirs is empty/absent, or when the
+    // libs are already cached from a previous test in this run — see
+    // `build_missing_vendor_ffi_libs` doc-comment.
+    if let Some(ffi) = &resolved_ffi {
+        build_missing_vendor_ffi_libs(ffi, opts.toolchain.vcvars_path());
+    }
+    if let Some(ffi) = &resolved_ffi {
+        if let Some((lib, searched)) = first_missing_ffi_lib(ffi) {
+            return Outcome::Skipped {
+                reason: SkipReason::FfiLibNotFound { lib, searched },
+                elapsed: start.elapsed(),
+            };
+        }
+    }
+
     // Plan 149 D233: resolve [runtime] section в package nova.toml для
     // test_file. Plain strings (no path resolution) — baked as -D...DEFAULT.
     let resolved_runtime: Option<crate::manifest::RuntimeConfig> =
@@ -2789,16 +3015,42 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
             let has_content_marker = !stdout_pats.is_empty() || !stderr_pats.is_empty();
 
             if !has_content_marker && exit != 0 {
-                // Prefer lines that actually name the failure (FAIL/assert/panic);
-                // the in-binary harness prints many PASS lines then a summary, so
-                // a blind "last 3 lines" only shows the trailing PASS + count and
-                // hides WHICH test failed. Fall back to last-3 if none match.
+                // Prefer lines that actually name the failure (a genuine "  FAIL: …"
+                // harness line, or a runtime panic banner); the in-binary harness
+                // prints many PASS lines then a summary, so a blind "last 3 lines"
+                // only shows the trailing PASS + count and hides WHICH test failed.
+                //
+                // [M-run-fail-detail-substring-false-positive] (2026-07-13): the prior
+                // filter matched ANY line containing the substring "fail" case-
+                // insensitively (also "assert"/"panic") and took the FIRST 4 matches.
+                // Test PROSE routinely contains "Fail" as English text (the Fail
+                // EFFECT feature: `with Fail = …`, `"with Fail: recoverable USER throw
+                // …"` test descriptions) — those are ordinary "  PASS: …" lines, not
+                // failure reports. On a mid-stream crash (segfault — no "FAIL:" line
+                // is EVER printed for the killed test) this filter still matched the
+                // first few *unrelated* "Fail"-mentioning PASS lines near the top of
+                // the corpus and reported them as the "detail", which is always the
+                // SAME misleading text regardless of where the process actually died
+                // (confirmed: direct re-runs of the identical exe crashed at wildly
+                // different points in the output, but `nova test`'s summary always
+                // named the same 4 early D13/D158 lines). Fix: match the harness's
+                // OWN failure-line prefix (`FAIL:` after trim) or a genuine panic
+                // marker, not bare prose containing "fail"; take the LAST such
+                // markers (nearest the crash) — and when none exist (pure crash, no
+                // FAIL: line ever printed), fall back to the true last 3 lines, which
+                // (since every PASS/FAIL print is followed by `fflush(stdout)`) are
+                // the last test that actually completed before the process died.
+                let is_real_failure_line = |l: &&str| {
+                    let t = l.trim_start();
+                    t.starts_with("FAIL:") || t.to_lowercase().contains("panic")
+                };
                 let fail_lines: Vec<&str> = stdout.lines().chain(stderr.lines())
-                    .filter(|l| {
-                        let lc = l.to_lowercase();
-                        lc.contains("fail") || lc.contains("assert") || lc.contains("panic")
-                    })
+                    .filter(is_real_failure_line)
+                    .rev()
                     .take(4)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
                     .collect();
                 let detail = if !fail_lines.is_empty() {
                     fail_lines.join(" | ")
@@ -3243,6 +3495,9 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         // FnDecl.span) so codegen reads its OWN view of the chosen callee instead of
         // re-resolving the overload (§0). Stage (a): equivalence-assert (debug).
         emitter.set_resolved_callees(&module_env.resolved_callees);
+        // Plan 196.5 Stage-A: feed the per-call subst-value channel (mirrors
+        // set_resolved_callees above).
+        emitter.set_node_substs(&module_env.node_substs);
         emitter.emit_module(&module)
             .map_err(|e| format!("codegen error: {}", e))?
     };

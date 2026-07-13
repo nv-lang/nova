@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_CONSUME_MULTIVAR_BINDING_MIX
+// Plan 174 (D188-multivar амендмент): `consume A, B, C { body }` — ЧИСТЫЙ
+// САХАР над списком идентов re-consume; список НЕ поддерживает
+// `=`-инициализацию — смешение со связывающей (binding) формой
+// (`consume X = expr { … }`) — парс-ошибка, не грамматическая неоднозначность.
+module neg.d188_multivar_binding_mix_neg
+
+type NmvRes consume { id int }
+fn NmvRes consume @cleanup(_outcome ScopeOutcome) -> () { }
+
+test "multi-var re-consume форма смешана со связывающей `=` — парс-ошибка" {
+    consume a, b = NmvRes { id: 1 } {
+        ro _x = a.id
+    }
+}
