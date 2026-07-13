@@ -17,8 +17,8 @@
 
 | Пункт | Статус | Коммит(ы) |
 |---|---|---|
-| 0. Верификация гейтов | ✅ сделано | (этот) |
-| 2. Полный propagation-trace `[M-173-error-return-trace]` | ✅ сделано (ring-buffer 16 + `?`/`!!`-стемпы + сбросы origin/catch/reset; тест rt/f5_propagation_trace_full; маркер CLOSED; попутный `[M-cli-build-source-file-name-unknown]` P3) | (см. git log tails-173) |
-| 1. MultiError: scope-агрегация детских ошибок в suppressed | ✅ сделано (staging `_nova_pending_suppressed` + escalated-флаг + skip-primary по payload/tid/kind; ABI-фикс `nova_any_from_boxed` value-примитивов; D414 §1-амендмент; тест err173_2/scope_multierror_test 3 сценария) | (см. git log tails-173) |
+| 0. Верификация гейтов | ✅ сделано | b6d5ea091 |
+| 2. Полный propagation-trace `[M-173-error-return-trace]` | ✅ сделано (ring-buffer 16 + `?`/`!!`-стемпы + сбросы origin/catch/reset; тест rt/f5_propagation_trace_full; маркер CLOSED; попутный `[M-cli-build-source-file-name-unknown]` P3) | 1b3b87aa2 |
+| 1. MultiError: scope-агрегация детских ошибок в suppressed | ✅ сделано (staging `_nova_pending_suppressed` + escalated-флаг + skip-primary по payload/tid/kind; ABI-фикс `nova_any_from_boxed` value-примитивов; D414 §1-амендмент; тест err173_2/scope_multierror_test 3 сценария) | 7bbd523d7 |
 | 3. Panics-клаузула (Ф.6) | уже закрыта в main — работы нет | — |
-| 4. Semaphore-cap живых детей parallel for (P3) | только остаток бюджета | |
+| 4. Semaphore-cap живых детей parallel for (P3) | НЕ начат (решение по бюджету): объём = заход в parfor-десугар (spawn-троттлинг Semaphore Plan 103.4, парковка родителя × cancel/deadline-семантика) — полноценная волна, не остаток; опция остаётся зафиксированной в 173.1 §Ф.3 | — |
