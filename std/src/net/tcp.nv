@@ -254,7 +254,7 @@ export fn TcpStream mut @set_keepalive(on bool) Net { Net.set_keepalive(@, on) }
 /// consume-обязательством (D133): её тоже нужно закрыть.
 ///
 /// Канонические применения: escape из `consume X { … }`-блока
-/// (`TlsStream.wrap(stream.share(), session)`) и per-fiber копия при
+/// (`TlsStream.new(stream.share(), session)`) и per-fiber копия при
 /// многофиберном доступе (`ro w = s.share(); spawn { …w… }` —
 /// E_LINEAR_CAPTURE_IN_FIBER запрещает захват без share).
 ///
