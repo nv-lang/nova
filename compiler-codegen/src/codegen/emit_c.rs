@@ -49221,29 +49221,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 return ret_ty.clone();
                             }
                         }
-                        let key = format!("fn_ret_{}", name);
-                        // Plan 196.2 W1 [gate-1]: B10g_fn_ret_var_generic_stash REMOVED
-                        // (paired with its sole consumer B10j_generic_fn_stash_or_voidstar,
-                        // removed below — the `fn_ret_generic_stash` mechanism is dead as a
-                        // unit). It used to stash the erased `fn_ret_<name>` answer for a
-                        // non-turbofish generic fn call ([M-property-testing-rot], Plan
-                        // 172.13) so a later fallback could return it when mono-aware
-                        // inference failed to bind. NO-HIT on either end across
-                        // conformance+std ⟹ mono-aware inference now always binds when this
-                        // cascade is reached (Channel-2-covered otherwise).
-                        if let Some(t) = self.var_types.get(&key).cloned() {
-                            // Plan 180 [M-180-namespace-static-generic-mono followup]:
-                            // for a TURBOFISH generic free-fn call (`json_decode[User](..)`
-                            // — the serde public API), the bare-name `fn_ret_<name>` table
-                            // holds the ERASED return (type-param → void*), so `?`/Try/`!!`
-                            // on the `Result[User, DeError]` degenerated to void*. Fall
-                            // through to the turbofish-aware generic-fn resolution below
-                            // (which substitutes the turbofish args into the return type).
-                            if !self.generic_fns.contains(name.as_str()) {
-                                self.icr_trace("B10g_fn_ret_var_nongeneric");
-                                return t;
-                            }
-                        }
+                        // [196.5 Stage-D] B10g_fn_ret_var_nongeneric REMOVED (paired with
+                        // the already-removed B10g_fn_ret_var_generic_stash sibling above,
+                        // which used the SAME `fn_ret_<name>` var_types key). Any bare
+                        // free-fn call whose `fn_ret_<name>` entry exists and whose fn is
+                        // non-generic is, per B10f's own comment a few lines above
+                        // ("`user_fn_sigs` is registered ONLY for non-generic free fns...
+                        // the authoritative source for a bare call's return type"), already
+                        // resolved by B10f before this cascade point is ever reached — this
+                        // arm was a redundant second read of the same fact. NO-HIT across
+                        // conformance + std/src/collections + std/src/data + std/src/net
+                        // (docs/plans/196.5-stage-d-notes.md) ⟹ structurally unreachable (§5).
                         // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)`
                         // newtype constructor — return type = aliased C type.
                         // Mirror emit_call newtype intercept (single-arg only).
