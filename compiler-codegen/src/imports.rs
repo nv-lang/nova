@@ -2443,6 +2443,28 @@ fn lookup_dependency(importer_path: &Path, dep_name: &str) -> DepLookup {
     let Some(manifest) = crate::manifest::parse_manifest(&toml, &pkg_dir) else {
         return DepLookup::NotADep;
     };
+    // Plan 203 (D78 rev-4 root-peer self-reference, cross-package fix):
+    // a package's OWN subfolder file absolutely self-referencing its own
+    // root peers (`import <own_package_name>.{...}`, matching
+    // `manifest.package_name`) must resolve against the package's OWN
+    // `source_root` regardless of which OUTER entry file started this
+    // resolution session — `entry_dir`/`repo` in `resolve_one` stay fixed
+    // to the top-level entry for the whole session (by design, Plan 84
+    // relative-import anchor semantics), so they only happen to contain
+    // this package's own root when compiling FROM WITHIN it. A package
+    // consumed TRANSITIVELY via another package's `[dependencies]`
+    // couldn't otherwise resolve its own root-peer self-references: e.g.
+    // nova-http's `src/server/server.nv` (`module http.server`) doing
+    // `import http.{Method, ...}` broke once `http.server` itself was
+    // pulled in by an external consumer's `[dependencies] http = ...`,
+    // because the root-peer detection in `resolve_module_paths` only
+    // checked `entry_dir`/`repo` — both belonging to the OUTER consumer.
+    // Treating "own package name" like a reflexive dependency reuses the
+    // already-correct external-dep root-peer codepath (`DepLookup::PathDep`
+    // below) instead of adding a parallel resolution mechanism.
+    if manifest.package_name == dep_name {
+        return DepLookup::PathDep(manifest.source_root.clone());
+    }
     // Валидация `[dependencies]` целиком (§3.2) — до поиска конкретной
     // записи: ошибка конфигурации должна сорвать любой импорт пакета.
     let mut seen: HashSet<&str> = HashSet::new();
@@ -2632,6 +2654,32 @@ fn resolve_module_paths(
                         return Ok(peers);
                     }
                 }
+            }
+        }
+
+        // Plan 203 (D78 rev-4 root peers, dep_root fix): a bare single-
+        // segment import addressed THROUGH `dep_root` (external
+        // `[dependencies]` OR the reflexive self-package-name case added by
+        // `lookup_dependency`, both mean `root == dep_root == the target
+        // package's own source_root` and `parts[0] == that package's own
+        // name`) must resolve via the SAME filtered `collect_root_peers`
+        // used above — NOT the generic single-file/folder search below.
+        // The generic path computes `local_rel = parts[1..]` (empty for a
+        // single segment) and treats `root` itself as the "folder", listing
+        // EVERY direct `.nv` file in source_root unfiltered by module
+        // declaration — for a "mixed root" package (root peers coexisting
+        // with independent single-file modules, D78 rev-4 §7 "смешанный
+        // корень", e.g. `spec_tests/conformance/d78_root_peers/util.nv`)
+        // this wrongly pulls the independent modules in too, double-
+        // defining their items (`redefinition of 'nova_fn_...'` at
+        // codegen). `collect_root_peers` already does the correct
+        // decl-filtered collection (mirrors the `rel_root.is_none() &&
+        // dep_root.is_none()` branch above, which never had this bug
+        // because it re-derives `m.source_root` from a real `nova.toml`
+        // lookup instead of trusting `root` blindly).
+        if parts.len() == 1 && dep_root.is_some() {
+            if let Some(peers) = collect_root_peers(root, &parts[0], include_test_peers) {
+                return Ok(peers);
             }
         }
 
