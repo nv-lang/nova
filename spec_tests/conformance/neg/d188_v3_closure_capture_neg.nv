@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR E_CONSUME_BLOCK_MOVE_OUT
+// D188-амендмент v3 (Plan 201): замыкание внутри tail/return-EXPR,
+// захватывающее guarded-биндинг `X` — запрещено (время жизни замыкания не
+// синтаксически видно checker'у).
+module neg.d188_v3_closure_capture_neg
+
+type MoRes4 consume { id int }
+fn MoRes4 consume @cleanup(_outcome ScopeOutcome) -> () { }
+fn MoRes4 consume @dispose() -> () { }
+
+fn mo4_call_closure(f fn() -> int) -> int => f()
+
+fn mo4_wrap(consume r MoRes4) -> int {
+    consume r {
+        return mo4_call_closure(|| r.id)
+    }
+}
+
+test "замыкание захватывает X в tail/return EXPR — E_CONSUME_BLOCK_MOVE_OUT" {
+    consume r = MoRes4 { id: 1 }
+    ro _ = mo4_wrap(r)
+}
