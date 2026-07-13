@@ -3238,9 +3238,11 @@ impl CEmitter {
     fn debt_strip_novaarray_prefix_or_panic(s: &str) -> &str {
         s.strip_prefix("NovaArray_").unwrap_or_else(|| panic!("[P67] nova_int collapse"))
     }
-    fn debt_strip_novaarray_prefix_or_panic_legacy(s: &str) -> &str {
-        s.strip_prefix("NovaArray_").unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"))
-    }
+    // [196.5 Stage-D волна-3] `debt_strip_novaarray_prefix_or_panic_legacy`
+    // REMOVED — its sole caller was the B11x_novaarray_methods legacy arm
+    // (removed same wave, byte-identity-verified duplicate of the channel/
+    // Vec-unified inference). The non-legacy twin above stays (dispatcher
+    // call sites).
 
     /// `NovaValue_<X>` / `Nova_<X>` / `NovaTuple_<X>`, first match wins, identity
     /// fallback — the by-value/heap/named-tuple receiver-prefix priority order
@@ -49281,6 +49283,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     // Infer return type for call expressions
                     if let ExprKind::Ident(name) = &func.kind {
+                        // [196.5 Stage-D волна-3 replay] B10a: НЕ дубликат — kill-switch
+                        // A/B показал .c-диф на no-prelude CU (spec_tests/conformance/
+                        // no_prelude_panic_assert): в #no_prelude-режиме println/assert —
+                        // интринсики БЕЗ .nv-деклараций, канал/реестры их возврата не
+                        // производят. Уникальный легаси-трафик, остаётся до продюсера
+                        // интринсик-схем (docs/plans/196.5-stage-d-wave3-notes.md).
                         if name == "println" || name == "print" || name == "assert" || name == "debug_assert" {
                             self.icr_trace("B10a_ident_println_assert");
                             return "nova_unit".into();
@@ -49292,6 +49300,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // nova_uint. Re-infer from actual arg types + body inference to
                         // avoid signed-collapse. Falls through on all-nova_int args (the
                         // normal int-only closure path remains unchanged).
+                        // [196.5 Stage-D волна-3 replay] B10c: НЕ дубликат — kill-switch
+                        // A/B дал RUN-FAIL ровно на его посвящённом D402-тесте
+                        // (unsigned-closure signed-collapse, b11x_novaarray_user_ext_
+                        // methods.nv:68/:86) — арм несёт живую value-aware ре-деривацию,
+                        // которой в канале нет. Уникальный легаси-трафик.
                         if let Some((param_names, body)) = self.unanno_light_clos.get(name).cloned() {
                             if args.len() == param_names.len() {
                                 let actual_ptys: Vec<String> = args.iter()
@@ -49313,18 +49326,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                             }
                         }
-                        // Calling a closure-typed local variable: `first()` where
-                        // `first: NovaClos_vi*` → return type is the closure's return
-                        // type. MUST precede the `fn_ret_<name>` lookup below: a local
-                        // closure binding shadows a same-named free fn (e.g. the std
-                        // iterator adapter `first() -> Option[T]`), whose `fn_ret_first`
-                        // would otherwise hijack the inference and mistype the call.
-                        if let Some(clos_ty) = self.var_types.get(name).cloned() {
-                            if let Some(ret_c) = Self::clos_struct_ret_type(&clos_ty) {
-                                self.icr_trace("B10d_closure_var_struct_ret");
-                                return ret_c.to_string();
-                            }
-                        }
+                        // [196.5 Stage-D волна-3] B10d_closure_var_struct_ret REMOVED.
+                        // Former: closure-typed local call `first()` where `first:
+                        // NovaClos_vi*` → `clos_struct_ret_type(var_types[name])`.
+                        // LIVE traffic (5 hits, conformance CU) — removed NOT as dead
+                        // but as DUPLICATED: kill-switch A/B on the same debug binary
+                        // (NOVA_ICR_DETACH методика, feedback-codegen-dce-verification)
+                        // showed byte-identical emitted C (normalized for the two known
+                        // benign HashMap-order classes: fwd-typedef order + sum-eq
+                        // conjunct order) across conformance CU + std/src/{time,runtime,
+                        // collections,data} with the arm skipped — the checker channel
+                        // (`resolved_types`, read by the dispatcher before
+                        // `infer_call_ret_c`) and the `fn_param_sigs` arm right below
+                        // (B10e — same closure-binding registry, same return) cover
+                        // every measured call-site with the same answer. See
+                        // docs/plans/196.5-stage-d-wave3-notes.md.
                         // A closure binding registered in `fn_param_sigs` (lambda,
                         // fn-value, or tuple-of-closures element like `ro get =
                         // pair.1`) carries its return type there. The emit side
@@ -49933,6 +49949,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         // Plan 04 + Plan 13 Ф.9.1: instance-method type inference.
                         // Self-return для chaining (mut @append, all @write_*, @clone).
+                        // [196.5 Stage-D волна-3 replay] B11m: НЕ дубликат — kill-switch
+                        // A/B дал .c-диф на conformance CU: синтезированное Debug-тело
+                        // (D229) зовёт write_str на StringBuilder-ресивере, fall-through
+                        // меняет unit-вердикт statement-эмиссии ((void)-обёртка).
+                        // Уникальный легаси-трафик.
                         if obj_ty == "Nova_StringBuilder*" {
                             self.icr_trace("B11m_stringbuilder_instance");
                             return match method.as_str() {
@@ -50083,75 +50104,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // earlier removal attempt regressed `vec_lazy` ONLY via the
                         // now-fixed `NovaOpt-from-int` closure-sig bug (W1 step1); with that
                         // fixed the fall-through is byte-safe. Gate-1: Δ infer_call_ret_c < 0.
-                        // Array method calls
-                        if obj_ty.starts_with("NovaArray_") {
-                            self.icr_trace("B11x_novaarray_methods");
-                            let elem_ty = Self::debt_strip_novaarray_prefix_or_panic_legacy(&obj_ty)
-                                .trim_end_matches('*').trim();
-                            match method.as_str() {
-                                // [M-91.1-composite-array-storage] Plan 91 Ф.1: when
-                                // the array carries a real composite element type,
-                                // `.get(i)` is repackaged (in emit) to NovaOpt_<sani>
-                                // (the real element pointer). infer MUST agree so the
-                                // result var / match destructure see the same type.
-                                // (pop emit is not yet repackaged → keep nova_int.)
-                                "get" => {
-                                    if elem_ty == "nova_int" {
-                                        if let Some(ec) = self.compute_array_elem_type_for_obj(obj) {
-                                            if ec.ends_with('*') && ec != "nova_int*" {
-                                                return format!("NovaOpt_{}", Self::sanitize_for_novaopt(&ec));
-                                            }
-                                        }
-                                    }
-                                    return format!("NovaOpt_{}", elem_ty);
-                                }
-                                "pop" => return format!("NovaOpt_{}", elem_ty),
-                                // Plan 91.7 (D181): mut методы возвращают `@` (D131
-                                // fluent), чтобы поддерживать chain: arr.push(1).push(2).
-                                // Type-check: return type = receiver type (NovaArray_T*).
-                                "push" |
-                                "copy_from" | "copy_within" | "fill" | "append_zero" |
-                                "append" | "insert" | "reserve" | "truncate"
-                                    => return obj_ty.clone(),
-                                // Plan 90: compare → int (-1/0/1).
-                                "compare" => return "nova_int".into(),
-                                // Plan 60 / D117: size-accessor methods.
-                                "len" | "capacity" => return "nova_int".into(),
-                                "is_empty" => return "nova_bool".into(),
-                                // Plan 118.2 — FFI access to internal data pointer.
-                                // Returns C `T*` for both ptr and as_mut_ptr;
-                                // semantic distinction (*ro T vs *mut T) enforced
-                                // в type-checker через mut binding requirement
-                                // (as_mut_ptr requires mut binding per D108.1).
-                                // C-side const qualifier dropped to avoid temp-var
-                                // const-init issues в unsafe blocks (codegen layout).
-                                // D410 (2026-07-06): as_ptr → ptr (as_ prefix retracted).
-                                "ptr" | "as_mut_ptr" => return format!("{}*", elem_ty),
-                                // [196.5 Stage-D] user-extension array method
-                                // (`fn[T] []T @method(...)`) hand-rolled T-substitution
-                                // sub-arm REMOVED. `NOVA_TRACE_W1_SHADOW=1` over the full
-                                // corpus (conformance incl. the arm's OWN dedicated
-                                // `b11x_novaarray_user_ext_methods.nv` — built specifically
-                                // to exercise all four return shapes this arm distinguished
-                                // — + std/src/collections + std/src/data) never printed a
-                                // single `[W1-SHADOW-TALLY] B11x` line: the checker's
-                                // return-type channel (`resolved_types[call.id]`, Channel-2)
-                                // already materialises this method's return ahead of
-                                // `infer_call_ret_c` in every measured case — this sub-arm
-                                // is structurally unreachable (§5), not merely untested.
-                                // Panic (not silent fallback) enforces that: a real miss
-                                // here is a checker gap, not a legacy-arm gap.
-                                _ => panic!(
-                                    "[CC-ERROR][196.5-stage-d] user-extension array method \
-                                     {:?} on {:?} reached infer_call_ret_c's B11x legacy \
-                                     sub-arm, which the 196.5 Stage-D sweep removed as \
-                                     structurally unreachable (checker's resolved_types/ \
-                                     node_substs channel must cover this call; see \
-                                     docs/plans/196.5-stage-d-notes.md)",
-                                    method, obj_ty
-                                ),
-                            }
-                        }
+                        // [196.5 Stage-D волна-3] B11x_novaarray_methods REMOVED (the
+                        // whole `obj_ty.starts_with("NovaArray_")` builtin-table arm:
+                        // get/pop → NovaOpt_<elem>, push/fill/… fluent → receiver,
+                        // compare/len/capacity → int, is_empty → bool, ptr/as_mut_ptr
+                        // → elem*, plus the wave-1 `_ =>` CC-ERROR panic that replaced
+                        // the user-ext sub-arm). LIVE traffic (1 hit, conformance CU)
+                        // — removed NOT as dead but as DUPLICATED: kill-switch A/B on
+                        // the same debug binary (NOVA_ICR_DETACH методика) showed
+                        // byte-identical emitted C (normalized for the two benign
+                        // HashMap-order classes) across conformance CU + std/src/
+                        // {time,runtime,collections,data} with the arm skipped — since
+                        // Plan 172.12 A7/A8 retired the legacy `NovaArray_<prim>`
+                        // element names, every reachable NovaArray-receiver method is
+                        // checker-materialised (Channel-2) or resolved by the Vec-
+                        // unified generic-method inference below with the same answer.
+                        // Loud-fail duty of the wave-1 `_ =>` panic transfers to the
+                        // cascade's terminal `B11al` P67 panic (same CC-ERROR class,
+                        // one honest terminal instead of two). See
+                        // docs/plans/196.5-stage-d-wave3-notes.md.
                         // [196.5 Stage-D] B11y_f64_f32_math REMOVED. D74 math-method
                         // return-type consultation of `f64_method_to_c` (sqrt/trig/exp/
                         // log/pow/hypot/is_nan/…) — per the `primitive_instance_method_known`
@@ -50262,6 +50233,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // load_builtins + inline-merge того же .nv через
                                     // `import`). Разошедшиеся overload-returns → mimo
                                     // (не угадываем).
+                                    // [196.5 Stage-D волна-3 replay] B11ag: НЕ дубликат —
+                                    // kill-switch A/B уронил std/src/runtime паникой
+                                    // (`.call_once` на Nova_Once* → B11al): extern "nova"
+                                    // методы (тело в C-рантайме) не имеют fn_ret_*-записей
+                                    // и не каналируются — реестр .nv-деклараций здесь
+                                    // единственный источник возврата. Уникальный трафик.
                                     if let Some(first) = decls.first() {
                                         if !first.return_c_type.is_empty()
                                             && decls.iter().all(|d| {
@@ -50403,6 +50380,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                             // Plan 65 Ф.1: ChanReader.close_after(Duration) —
                             // Path-form.
+                            // [196.5 Stage-D волна-3 replay] B12c: НЕ дубликат —
+                            // kill-switch A/B уронил std/src/time паникой (B12q,
+                            // method=close_after): Path-форму этого fixed-return
+                            // интринсика чекер не аннотирует, каскад ниже её не
+                            // резолвит. Уникальный трафик до продюсера интринсик-схем.
                             if eff == "ChanReader" && method_name == "close_after" {
                                 self.icr_trace("B12c_path_chanreader_close_after");
                                 return "Nova_ChanReader*".into();
