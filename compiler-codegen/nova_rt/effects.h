@@ -101,7 +101,9 @@ static inline void nova_fail_pop(void) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
- * Plan 173 Ф.4 #5 (D188/D190): thread-local STABLE error snapshot.
+ * Plan 173 Ф.4 #5 (D188/D190): STABLE error snapshot (type only —
+ * storage moved per-fiber by Plan 201 trace-per-fiber, see combined
+ * `NovaFiberErrorState` below).
  * ──────────────────────────────────────────────────────────────────
  *
  * The per-throw error identity (msg/kind/typed-payload/tid) lives on a
@@ -113,22 +115,144 @@ static inline void nova_fail_pop(void) {
  *
  * `_nova_last_error` snapshots those four stable, self-owned fields (the typed
  * payload is heap/GC-boxed at the throw site and outlives the stack frame; the
- * msg is a heap/static `nova_str`) into thread-local storage at throw-time, so
- * a defer/consume-cleanup unwound via `interrupt` can recover the ORIGINAL
- * typed error for `Failure(any)` → `if err is T`. `.live` gates the read:
- * set on every throw/panic, cleared when the error is caught (nova_scope_exit
- * CATCH) — a pure value-`interrupt` with no in-flight throw sees `.live == 0`
- * and falls back to the plain `"interrupt"` marker. */
+ * msg is a heap/static `nova_str`) at throw-time, so a defer/consume-cleanup
+ * unwound via `interrupt` can recover the ORIGINAL typed error for
+ * `Failure(any)` → `if err is T`. `.live` gates the read: set on every
+ * throw/panic, cleared when the error is caught (nova_scope_exit CATCH) —
+ * a pure value-`interrupt` with no in-flight throw sees `.live == 0` and
+ * falls back to the plain `"interrupt"` marker. */
 typedef struct {
     int           live;   /* 1 while an error is propagating; 0 once caught */
     NovaFailFrame frame;  /* stable snapshot of the in-flight error */
 } NovaLastError;
 
+/* ──────────────────────────────────────────────────────────────────
+ * Plan 173 Ф.5 п.7 (Zig-парность, минимум): throw-site трассировка
+ * (type only — storage moved per-fiber below, Plan 201).
+ * ──────────────────────────────────────────────────────────────────
+ *
+ * Codegen стемпит `nova_throw_site_set("file.nv", line)` НЕПОСРЕДСТВЕННО
+ * перед каждым user-`throw`/`panic()`/`unreachable()` (только на
+ * error-path — happy-path не затронут). Все uncaught-abort-ветки
+ * (unhandled Fail / composite / typed / panic) печатают
+ * `  at <file>:<line> (throw site)` вслед за сообщением — debug-парность
+ * Zig error-return-trace минимум (полный propagation-trace —
+ * `[M-173-error-return-trace]`). assert/contract уже location-first
+ * (D13 amend) — их не стемпим. */
+typedef struct {
+    const char* file;  /* NULL = сайт неизвестен (runtime-internal throw) */
+    int         line;
+} NovaThrowSite;
+
+/* ──────────────────────────────────────────────────────────────────
+ * [M-173-error-return-trace] (Plan 173 хвост, 2026-07-13): ПОЛНЫЙ
+ * propagation-trace — ring-buffer rethrow-точек цепочки `?`-проброса
+ * (Zig error-return-trace парность) поверх throw-site минимума Ф.5 п.7
+ * (type only — storage moved per-fiber below, Plan 201).
+ * ──────────────────────────────────────────────────────────────────
+ *
+ * Codegen стемпит `nova_throw_trace_push("file.nv", line)` на КАЖДОЙ
+ * `?`-точке проброса ошибки (Result-Err early-return и Fail-context
+ * конверсия Err→throw) — только на error-path, happy-path не затронут.
+ * Ring фиксированной ёмкости: при переполнении старейшие записи
+ * перезаписываются (хвост цепочки — самые информативные кадры ближе
+ * к границе); `count` хранит суммарное число push'ей для диагностики
+ * «N ранних кадров вытеснено».
+ *
+ * Сброс (= трасса принадлежит ОДНОЙ in-flight ошибке):
+ *   - fresh throw-origin — nova_throw_site_set (codegen стемпит его
+ *     перед каждым user-throw/panic/unreachable);
+ *   - ошибка поймана/поглощена — nova_scope_exit CATCH,
+ *     interrupt-consume (effects.c), nova_runtime_reset (fibers.h).
+ * Err(...)-конструктор БЕЗ throw трассу не сбрасывает (нет стемпа) —
+ * задокументированное ограничение: две подряд Result-mode ошибки,
+ * первая из которых разобрана match'ем, могут оставить свои кадры
+ * в хвосте следующего дампа. */
+#define NOVA_THROW_TRACE_CAP 16
+
+typedef struct {
+    NovaThrowSite entries[NOVA_THROW_TRACE_CAP];
+    int           count;  /* всего push'ей с последнего reset */
+} NovaThrowTrace;
+
+/* ──────────────────────────────────────────────────────────────────
+ * Plan 201 «trace-per-fiber» (2026-07-13): combined per-owner bucket +
+ * ONE pointer swapped per-fiber around mco_resume.
+ * ──────────────────────────────────────────────────────────────────
+ *
+ * Bug this fixes (docs/plans/173-tails-progress.md §201.3): `_nova_last_
+ * error` / `_nova_throw_site` / `_nova_throw_trace` used to be plain
+ * `__thread` globals — pure OS-thread-local, NOT part of the per-fiber
+ * save/restore set (`_nova_fail_top`/`_nova_interrupt_top`/handler-
+ * snapshot) that runtime.c swaps around every `mco_resume` (Plan 44.5
+ * Layer 5). Work-stealing (`nova_runq_steal`) and parking mid-unwind in
+ * a defer/cleanup body (`nova_sched_park_until` — real path: Net-cleanup
+ * closing a socket inside `errdefer`) let a fiber's throw-trace be
+ * overwritten by whichever OTHER fiber happens to run on the same OS
+ * thread while the first is parked — the propagation-trace in an
+ * uncaught-abort dump comes out mixed/truncated. Catch mechanics
+ * (`_nova_fail_top` longjmp chain) were never affected — this was a
+ * diagnostics-only bug.
+ *
+ * Fix: bundle all three into one `NovaFiberErrorState` and give each
+ * fiber its OWN persistent bucket — embedded in its home `NovaFiberQueue`
+ * slot arrays (fibers.h `fiber_error_state[]`, allocated once when the
+ * slot is created: `nova_scope_alloc_slot` for M:N-worker fibers,
+ * `nova_fiber_spawn_into` for single-thread/bootstrap fibers — mirrors
+ * the existing `fiber_effect_snapshot[]` array). Exactly ONE thread-local
+ * pointer, `_nova_error_state_p`, is repointed at that bucket around each
+ * `mco_resume` (runtime.c both worker sites + fibers.h
+ * `nova_supervised_step` for the single-thread path) — same shape as the
+ * existing `_nova_fail_top`/`_nova_interrupt_top` swap, so a stolen fiber
+ * carries its own trace with it regardless of which OS thread resumes it.
+ *
+ * Chosen over copying the struct (~340 bytes, ring buffer dominates) on
+ * every resume: nothing here needs value-copy semantics — a fiber's
+ * bucket is fixed for its whole lifetime (ordinary throw/catch code never
+ * reassigns the pointer, only the resume/restore wrapper and the one-time
+ * slot-creation hook do), so pointing at it directly is both cheaper
+ * (one pointer store, vs `NOVA_THROW_TRACE_CAP`×16 bytes each way) AND
+ * simpler than restore-then-save-back. `_nova_last_error`/`_nova_throw_
+ * site`/`_nova_throw_trace` are kept as macros over the active bucket
+ * (`nova_error_state_active()`) so every existing consumer — effects.c,
+ * codegen `emit_c.rs` (`_nova_last_error.frame...`, `nova_failframe_
+ * suppressed_*`) — compiles unchanged; only the storage moved. */
+typedef struct {
+    NovaLastError  last_error;
+    NovaThrowSite  throw_site;
+    NovaThrowTrace throw_trace;
+} NovaFiberErrorState;
+
 #ifdef _MSC_VER
-__declspec(thread) extern NovaLastError _nova_last_error;
+__declspec(thread) extern NovaFiberErrorState  _nova_error_state_native;
+__declspec(thread) extern NovaFiberErrorState* _nova_error_state_p;
 #else
-extern __thread NovaLastError _nova_last_error;
+extern __thread NovaFiberErrorState  _nova_error_state_native;
+extern __thread NovaFiberErrorState* _nova_error_state_p;
 #endif
+
+/* Self-healing accessor — guarantees a non-NULL bucket regardless of
+ * thread-startup ordering. `_nova_error_state_p` starts NULL on a fresh
+ * OS thread (zero-initialized `__thread`/`__declspec(thread)` storage);
+ * this lazily points it at the thread's own `_nova_error_state_native`
+ * bucket the first time anything touches error-state OUTSIDE a fiber
+ * (main flow before any scope, idle worker between fibers, test-runner
+ * harness) — the same role the old bare `__thread` structs played, one
+ * indirection removed. Deliberately NOT a static initializer taking the
+ * address of another TLS object (`= &_nova_error_state_native`): that is
+ * not portably a constant expression for `__declspec(thread)` under
+ * MSVC, so it is assigned here as ordinary runtime code instead.
+ * runtime.c's per-fiber swap bypasses this getter and assigns
+ * `_nova_error_state_p` directly to the fiber's own bucket — this getter
+ * only matters for the "never touched on this thread yet" default. */
+static inline NovaFiberErrorState* nova_error_state_active(void) {
+    if (!_nova_error_state_p) _nova_error_state_p = &_nova_error_state_native;
+    return _nova_error_state_p;
+}
+
+#define _nova_last_error   (nova_error_state_active()->last_error)
+#define _nova_throw_site   (nova_error_state_active()->throw_site)
+#define _nova_throw_trace  (nova_error_state_active()->throw_trace)
 
 /* ── Plan 173 хвост (D414 §1 ← Ф.4), рефактор Plan 201 ──
  * scope MultiError-агрегация: суффикс-цепочка suppressed-ошибок
@@ -184,6 +308,20 @@ static inline void nova_last_error_set(nova_str msg, NovaThrowKind kind,
  * mco_resume (runtime.c, Plan 44.5 Layer 5) — их корректность держится
  * на этом save/restore коде, не на "не должно планироваться".
  *
+ * Plan 201 «trace-per-fiber» (2026-07-13): `_nova_last_error`/
+ * `_nova_throw_site`/`_nova_throw_trace` (через `_nova_error_state_p`,
+ * см. `NovaFiberErrorState` выше) ПЕРЕЕХАЛИ в тот же save/restore класс,
+ * что и `_nova_fail_top`/`_nova_interrupt_top`. До переезда они были
+ * плоскими `__thread`-глобалями БЕЗ per-fiber изоляции вообще — не
+ * представителем ЭТОГО tripwire-класса (не держались на инварианте
+ * «нет точки планирования между постановкой и потреблением», их
+ * баг был проще: полное отсутствие per-fiber save/restore), а
+ * самостоятельным диагностическим дефектом (docs/plans/173-tails-
+ * progress.md §201.3: work-stealing + park-в-defer смешивали trace
+ * между fiber'ами). Теперь их корректность тоже держится на явном
+ * save/restore вокруг mco_resume (runtime.c) и nova_supervised_step
+ * (fibers.h) — они ambient уже НЕ являются ни в каком смысле.
+ *
  * Вызывается из `nova_gopark` (nova_sched.h) — единственной настоящей
  * точки, где живой fiber передаёт управление планировщику (mco_yield).
  * Debug-only (см. R2-tripwire конвенцию, fibers.h): no-op под NDEBUG. */
@@ -195,65 +333,6 @@ static inline void nova_assert_no_ambient_error_staging(void) {
 #  define NOVA_ASSERT_NO_AMBIENT_ERROR_STAGING() nova_assert_no_ambient_error_staging()
 #else
 #  define NOVA_ASSERT_NO_AMBIENT_ERROR_STAGING() ((void)0)
-#endif
-
-/* ──────────────────────────────────────────────────────────────────
- * Plan 173 Ф.5 п.7 (Zig-парность, минимум): throw-site трассировка.
- * ──────────────────────────────────────────────────────────────────
- *
- * Codegen стемпит `nova_throw_site_set("file.nv", line)` НЕПОСРЕДСТВЕННО
- * перед каждым user-`throw`/`panic()`/`unreachable()` (только на
- * error-path — happy-path не затронут). Все uncaught-abort-ветки
- * (unhandled Fail / composite / typed / panic) печатают
- * `  at <file>:<line> (throw site)` вслед за сообщением — debug-парность
- * Zig error-return-trace минимум (полный propagation-trace —
- * `[M-173-error-return-trace]`). assert/contract уже location-first
- * (D13 amend) — их не стемпим. */
-typedef struct {
-    const char* file;  /* NULL = сайт неизвестен (runtime-internal throw) */
-    int         line;
-} NovaThrowSite;
-
-#ifdef _MSC_VER
-__declspec(thread) extern NovaThrowSite _nova_throw_site;
-#else
-extern __thread NovaThrowSite _nova_throw_site;
-#endif
-
-/* ──────────────────────────────────────────────────────────────────
- * [M-173-error-return-trace] (Plan 173 хвост, 2026-07-13): ПОЛНЫЙ
- * propagation-trace — ring-buffer rethrow-точек цепочки `?`-проброса
- * (Zig error-return-trace парность) поверх throw-site минимума Ф.5 п.7.
- * ──────────────────────────────────────────────────────────────────
- *
- * Codegen стемпит `nova_throw_trace_push("file.nv", line)` на КАЖДОЙ
- * `?`-точке проброса ошибки (Result-Err early-return и Fail-context
- * конверсия Err→throw) — только на error-path, happy-path не затронут.
- * Ring фиксированной ёмкости: при переполнении старейшие записи
- * перезаписываются (хвост цепочки — самые информативные кадры ближе
- * к границе); `count` хранит суммарное число push'ей для диагностики
- * «N ранних кадров вытеснено».
- *
- * Сброс (= трасса принадлежит ОДНОЙ in-flight ошибке):
- *   - fresh throw-origin — nova_throw_site_set (codegen стемпит его
- *     перед каждым user-throw/panic/unreachable);
- *   - ошибка поймана/поглощена — nova_scope_exit CATCH,
- *     interrupt-consume (effects.c), nova_runtime_reset (fibers.h).
- * Err(...)-конструктор БЕЗ throw трассу не сбрасывает (нет стемпа) —
- * задокументированное ограничение: две подряд Result-mode ошибки,
- * первая из которых разобрана match'ем, могут оставить свои кадры
- * в хвосте следующего дампа. */
-#define NOVA_THROW_TRACE_CAP 16
-
-typedef struct {
-    NovaThrowSite entries[NOVA_THROW_TRACE_CAP];
-    int           count;  /* всего push'ей с последнего reset */
-} NovaThrowTrace;
-
-#ifdef _MSC_VER
-__declspec(thread) extern NovaThrowTrace _nova_throw_trace;
-#else
-extern __thread NovaThrowTrace _nova_throw_trace;
 #endif
 
 static inline void nova_throw_trace_reset(void) {

@@ -208,9 +208,14 @@ void nova_interrupt_ptr(void* value) {
 
 #ifdef _MSC_VER
 __declspec(thread) NovaFailFrame*      _nova_fail_top      = NULL;
-__declspec(thread) NovaThrowSite       _nova_throw_site    = {0};  /* Plan 173 Ф.5 п.7 */
-__declspec(thread) NovaThrowTrace      _nova_throw_trace   = {0};  /* [M-173-error-return-trace] */
-__declspec(thread) NovaLastError       _nova_last_error    = {0};  /* Plan 173 Ф.4 #5 */
+/* Plan 201 trace-per-fiber: combined last_error/throw_site/throw_trace
+ * bucket (effects.h NovaFiberErrorState) + the ONE active-pointer swapped
+ * per-fiber around mco_resume (runtime.c) / nova_supervised_step
+ * (fibers.h). `_nova_error_state_native` is the per-OS-thread fallback
+ * bucket for "outside any fiber" contexts; `_nova_error_state_p` starts
+ * NULL and self-heals to it via `nova_error_state_active()` (effects.h). */
+__declspec(thread) NovaFiberErrorState  _nova_error_state_native = {0};
+__declspec(thread) NovaFiberErrorState* _nova_error_state_p      = NULL;
 __declspec(thread) NovaInterruptFrame* _nova_interrupt_top = NULL;
 /* Plan 61 followup #1: cross-effect throw routing slot. */
 __declspec(thread) NovaInterruptFrame* _nova_current_handler_iframe = NULL;
@@ -234,9 +239,9 @@ __declspec(thread) volatile int*       _nova_preempt_ptr   = NULL;  /* Plan 44.7
 __declspec(thread) NovaFinalizerStack* _nova_active_finalizer_stack = NULL;
 #else
 __thread NovaFailFrame*      _nova_fail_top      = NULL;
-__thread NovaThrowSite       _nova_throw_site    = {0};  /* Plan 173 Ф.5 п.7 */
-__thread NovaThrowTrace      _nova_throw_trace   = {0};  /* [M-173-error-return-trace] */
-__thread NovaLastError       _nova_last_error    = {0};  /* Plan 173 Ф.4 #5 */
+/* Plan 201 trace-per-fiber: see MSVC branch above for rationale. */
+__thread NovaFiberErrorState  _nova_error_state_native = {0};
+__thread NovaFiberErrorState* _nova_error_state_p      = NULL;
 __thread NovaInterruptFrame* _nova_interrupt_top = NULL;
 __thread NovaInterruptFrame* _nova_current_handler_iframe = NULL;  /* Plan 61 fu#1 */
 __thread NovaTestFrame*      _nova_test_frame    = NULL;
