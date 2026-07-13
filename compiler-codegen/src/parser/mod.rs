@@ -5512,6 +5512,11 @@ impl Parser {
         // `X {` съедается как record-destructure pattern. Дизамбиг:
         // строчный IDENT + `{` на ТОЙ ЖЕ строке БЕЗ `=`; `Type { … }`
         // (заглавная) остаётся record-pattern'ом raw-формы D180.
+        //
+        // Plan 174 (D188-амендмент): `consume A, B, C { body }` —
+        // multi-var re-consume, ЧИСТЫЙ САХАР над вложением. Дизамбиг:
+        // строчный IDENT + `,` на ТОЙ ЖЕ строке — тот же класс формы,
+        // список идентов вместо одного.
         if let TokenKind::Ident(n) = &self.peek().kind {
             let lower_ident = n != "_"
                 && !n.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false);
@@ -5529,6 +5534,9 @@ impl Parser {
                     result: None,
                     span,
                 });
+            }
+            if lower_ident && matches!(self.peek_at(1).kind, TokenKind::Comma) {
+                return self.parse_multi_reconsume_scope(start);
             }
         }
         let pattern = self.parse_pattern()?;
@@ -5626,6 +5634,93 @@ impl Parser {
             is_ghost: false,
             consume: true,
         }))
+    }
+
+    /// Plan 174 (D188-амендмент): `consume A, B, C { body }` — multi-var
+    /// re-consume форма, ЧИСТЫЙ САХАР на парс-этапе над вложением:
+    /// `consume A, B, C { body }` ≡
+    ///   `consume A { consume B { consume C { body } } }`.
+    /// Cleanup срабатывает в LIFO-порядке (C, потом B, потом A) —
+    /// естественное следствие вложения, а не отдельная механика. Все
+    /// правила single-формы (owned-требование E_CONSUME_BLOCK_NOT_OWNED,
+    /// Cleanup[E]-требование E_D188_NOT_CLEANUP, guard/дренаж
+    /// E_CONSUME_BLOCK_MOVE_OUT, tail/return-вынос дизармит СВОЙ cleanup)
+    /// действуют на каждый идент независимо — checker/codegen не знают
+    /// про multi-форму, видят только вложенные `Stmt::ConsumeScope`.
+    ///
+    /// Caller уже увидел `IDENT ,` на текущей позиции (после `consume`).
+    /// Список идентов — ТОЛЬКО re-consume форма (без `=`); смешение с
+    /// binding-формой (`consume A, B = expr { … }`) — парс-ошибка.
+    fn parse_multi_reconsume_scope(&mut self, start: Span) -> Result<Stmt, Diagnostic> {
+        let mut idents: Vec<(String, Span)> = Vec::new();
+        loop {
+            let (name, name_span) = self.parse_ident()?;
+            idents.push((name, name_span));
+            if self.eat(&TokenKind::Comma).is_some() {
+                continue;
+            }
+            break;
+        }
+        if matches!(self.peek().kind, TokenKind::Eq) {
+            return Err(Diagnostic::new(
+                "[E_CONSUME_MULTIVAR_BINDING_MIX] `consume A, B = expr { … }` \
+                 не валиден: multi-var re-consume форма \
+                 (`consume A, B, C { body }`, Plan 174 D188-амендмент) — \
+                 ЧИСТЫЙ САХАР над вложенным re-consume СУЩЕСТВУЮЩИХ owned-\
+                 биндингов и не поддерживает `=`-инициализацию; binding-\
+                 форма (`consume X = expr { body }`) остаётся одно-идентной."
+                    .to_string(),
+                self.peek().span,
+            ));
+        }
+        if !matches!(self.peek().kind, TokenKind::LBrace) {
+            return Err(Diagnostic::new(
+                "Plan 174 (D188): `consume A, B, C` (multi-var re-consume) \
+                 требует блок `{ body }` на той же строке."
+                    .to_string(),
+                self.peek().span,
+            ));
+        }
+        let body = self.parse_block()?;
+        let outer_span = start.merge(body.span);
+        self.expect_newline_or_eof().ok();
+        // Desugar (LIFO): последний идент — самый внутренний слой, его
+        // body — РЕАЛЬНОЕ тело пользователя (unchanged, включая свой
+        // trailing/return для собственного tail-дизарма). Каждый следующий
+        // слой снаружи оборачивает предыдущий в единственный statement.
+        let mut inner_body = body;
+        for (name, name_span) in idents.into_iter().rev() {
+            let scope_span = name_span.merge(inner_body.span);
+            let scope_stmt = Stmt::ConsumeScope {
+                binding: name.clone(),
+                type_annot: None,
+                init: Expr::new(ExprKind::Ident(name), name_span),
+                body: inner_body,
+                re_consume: true,
+                result: None,
+                span: scope_span,
+            };
+            inner_body = Block {
+                stmts: vec![scope_stmt],
+                trailing: None,
+                span: scope_span,
+                is_unsafe: false,
+            };
+        }
+        // После цикла `inner_body` — Block с ровно ОДНИМ stmt: самый
+        // внешний (первый по списку) `Stmt::ConsumeScope`. Разворачиваем
+        // его наружу — caller (parse_stmt_or_expr) ожидает Stmt, не Block.
+        match inner_body.stmts.into_iter().next() {
+            Some(mut outer @ Stmt::ConsumeScope { .. }) => {
+                if let Stmt::ConsumeScope { span, .. } = &mut outer {
+                    *span = outer_span;
+                }
+                Ok(outer)
+            }
+            // Недостижимо: idents гарантированно непусто (parse_ident
+            // выше минимум раз успешно распарсил один идент до `,`/`{`).
+            _ => unreachable!("parse_multi_reconsume_scope: empty ident list"),
+        }
     }
 
     /// Plan 201 (D188-амендмент 2026-07-13): распарсить rvalue-форму

@@ -1,0 +1,87 @@
+// Plan 174 (D188-multivar амендмент, 2026-07-13): `consume A, B, C { body }` —
+// multi-var re-consume форма, ЧИСТЫЙ САХАР на парс-этапе над вложением:
+// `consume A, B, C { body }` ≡ `consume A { consume B { consume C { body } } }`.
+// Cleanup срабатывает в LIFO-порядке (C, потом B, потом A) как прямое
+// следствие вложенности — checker/codegen НЕ знают про multi-форму, видят
+// только цепочку вложенных `Stmt::ConsumeScope` (парсер разворачивает список).
+// Spec: spec/decisions/03-syntax.md D188 §«Multi-var re-consume форма».
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+// ── Три различимых ресурса — ResourceTrace label = имя типа, что даёт
+// наблюдаемый LIFO-порядок cleanup'ов без доп. инструментария. ──
+type D188MvResA consume { id int }
+fn D188MvResA consume @cleanup(_outcome ScopeOutcome) -> () { }
+fn D188MvResA consume @dispose() -> () { }
+fn d188mv_a(v int) -> D188MvResA => { id: v }
+
+type D188MvResB consume { id int }
+fn D188MvResB consume @cleanup(_outcome ScopeOutcome) -> () { }
+fn D188MvResB consume @dispose() -> () { }
+fn d188mv_b(v int) -> D188MvResB => { id: v }
+
+type D188MvResC consume { id int }
+fn D188MvResC consume @cleanup(_outcome ScopeOutcome) -> () { }
+fn D188MvResC consume @dispose() -> () { }
+fn d188mv_c(v int) -> D188MvResC => { id: v }
+
+// Ресурс, чей cleanup ПАНИКУЕТ — сторож дизарма: если return-вынос не
+// дизармит cleanup, тест упадёт паникой.
+type D188MvBoom consume { id int }
+fn D188MvBoom consume @cleanup(_outcome ScopeOutcome) -> () {
+    panic("D188MvBoom.cleanup must be disarmed on return escape (Plan 174 multivar)")
+}
+fn D188MvBoom consume @defuse() -> () { }
+fn d188mv_boom(v int) -> D188MvBoom => { id: v }
+
+test "Plan 174 D188-multivar: consume A, B, C { } — LIFO cleanup order via ResourceTrace" {
+    mut order []str = []str.new()
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(label, _outcome, _duration_ms, _overrun) {
+            order.push(label)
+            return ()
+        }
+    } {
+        consume a = d188mv_a(1)
+        consume b = d188mv_b(2)
+        consume c = d188mv_c(3)
+        consume a, b, c {
+            ro _sum = a.id + b.id + c.id
+        }
+    }
+    // LIFO: самый внутренний (c) закрывается первым, самый внешний (a) — последним.
+    assert(order.len() == 3)
+    assert(order[0] == "D188MvResC")
+    assert(order[1] == "D188MvResB")
+    assert(order[2] == "D188MvResA")
+}
+
+// Функция с двумя re-consume-параметрами внутри multi-var блока: `keep`
+// уносится наружу голым `return` (СВОЙ cleanup дизармится), `drop` НЕ
+// упомянут на выносящем пути — его cleanup срабатывает как обычно.
+fn d188mv_pick_first(consume keep D188MvBoom, consume drop D188MvResA) -> D188MvBoom {
+    consume keep, drop {
+        return keep
+    }
+}
+
+test "Plan 174 D188-multivar: return-вынос ОДНОГО из двух дизармит СВОЙ cleanup, второй cleanup'ится" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        consume keep = d188mv_boom(42)
+        consume drop = d188mv_a(7)
+        consume out = d188mv_pick_first(keep, drop)
+        assert(out.id == 42)
+        out.defuse()
+    }
+    // Только `drop`'s cleanup сработал (панике `keep.cleanup` не бывать —
+    // дизармлен голым `return keep` из-под ОБОИХ вложенных re-consume-слоёв).
+    assert(exit_calls == 1)
+}

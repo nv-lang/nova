@@ -8459,7 +8459,9 @@ checker-overflow), см. `[M-181-pattern-var-rebind]`. Nested-scope double-consu
 2. **`consume X = expr { body }`** — scope-block, гарантирующий exactly-once
    вызов `cleanup` при выходе из `body` (success, throw, panic, cancel).
    У scope-block'а есть и вторая форма — `consume X { body }` (re-consume
-   существующего owned-биндинга, амендмент 2026-07-13).
+   существующего owned-биндинга, амендмент 2026-07-13) — а также
+   multi-var сахар `consume A, B, C { body }` над её вложением
+   (амендмент D188-multivar, Plan 174).
 
 ```nova
 type Cleanup[E] protocol {
@@ -8484,17 +8486,24 @@ type ScopeOutcome
 ### Syntax
 
 ```nova
-consume IDENT = EXPR { BODY }      // binding-форма
-consume IDENT { BODY }             // re-consume форма (амендмент 2026-07-13)
+consume IDENT = EXPR { BODY }              // binding-форма
+consume IDENT { BODY }                     // re-consume форма (амендмент 2026-07-13)
+consume IDENT (, IDENT)* { BODY }          // multi-var re-consume (амендмент D188-multivar, Plan 174)
 ```
 
-- Parser lookahead решает между тремя формами:
+- Parser lookahead решает между формами:
   - `consume X = expr { body }` — scope-block (этот D188; `{` после EXPR).
   - `consume X = expr` — raw linear binding (D180; для builder/transfer).
   - `consume X { body }` — re-consume block существующего owned-биндинга
     (амендмент 2026-07-13; см. §«Re-consume форма»). Дизамбиг: `IDENT`
     (со строчной буквы) + `{` на той же строке БЕЗ `=`. `Type { … }`
     (с заглавной) остаётся record-destructure pattern'ом raw-формы.
+  - `consume A, B, C { body }` — multi-var re-consume (амендмент
+    D188-multivar, Plan 174; см. §«Multi-var re-consume форма»).
+    Дизамбиг: `IDENT` (со строчной буквы) + `,` на той же строке.
+    Список идентов — ТОЛЬКО re-consume форма; смешение со `=`
+    (`consume A, B = expr { … }`) — парс-ошибка (список идентов не
+    поддерживает инициализатор).
 - `IDENT` — single name. Destructure (`consume (a, b) = ...`) не разрешается
   для scope-block (один resource = один cleanup).
 - `EXPR` должен statically resolve к типу `Cleanup[E]` для некоторого `E`
@@ -8591,6 +8600,53 @@ ro s = consume stream {
 }                                           // владение уехало в `s`
 Ok(TlsStream.wrap(s, session))              // s → consume-параметр wrap
 ```
+
+### Multi-var re-consume форма `consume A, B, C { body }` (амендмент D188-multivar, Plan 174)
+
+Список из ≥ 2 идентов через запятую — **ЧИСТЫЙ САХАР** над вложением
+re-consume-форм, разворачиваемый парсером ДО type-check/codegen:
+
+```nova
+consume A, B, C { body }
+// ≡
+consume A {
+    consume B {
+        consume C { body }
+    }
+}
+```
+
+Cleanup срабатывает в **LIFO-порядке** (`C`, потом `B`, потом `A`) — не
+отдельная механика, а прямое следствие вложенности desugar'а (внутренний
+scope закрывается первым, при выходе из него — внешний). Каждый идент —
+независимый re-consume-блок: **все правила формы** (§«Правила формы»
+выше — owned-требование `E_CONSUME_BLOCK_NOT_OWNED`, `Cleanup[E]`-
+требование `E_D188_NOT_CLEANUP`, guard/`E_CONSUME_BLOCK_MOVE_OUT`)
+действуют на каждый идент **независимо** — checker и codegen не знают
+про multi-форму вообще, видят только цепочку вложенных
+`consume IDENT { … }`.
+
+**Tail/return-вынос — ПОИМЕНОВАННЫЙ, дизармит СВОЙ cleanup.** Поскольку
+только САМЫЙ внутренний идент (`C` в примере) непосредственно граничит
+с реальным телом `body`, только голый `C` в tail/`return`-позиции
+дизармит cleanup `C` (как у single-var формы). Голый `return A` или
+`return B` из глубины `body` дизармит cleanup соответствующего
+идента точно так же, как если бы вложенность была написана вручную —
+guard/дренаж работает по имени, не по глубине вложенности. Прочие
+иденты на этом пути (не упомянутые в tail/`return`) cleanup'ятся как
+обычно.
+
+**Только re-consume-список — без инициализаторов.** Форма существует
+ТОЛЬКО для re-consume уже существующих owned-биндингов; смешение со
+связывающей (binding) формой запрещено:
+
+```nova
+consume A, B = expr { … }   // ПАРС-ОШИБКА: список идентов не поддерживает `=`
+```
+
+Для инициализации нового owned-ресурса ВНУТРИ multi-var блока — обычный
+`consume X = expr { … }` вложенным statement'ом внутри `body` (или
+раздельные `consume`-блоки).
 
 #### Взаимодействие с `spawn` / `parallel for` (173.1 by-value капчур)
 
