@@ -23,29 +23,32 @@
 //      `[]T` prefix-generic receiver, so `T` stayed unbound and closure-param
 //      seeding bailed.
 //
-// KNOWN SEPARATE GAP (NOT covered by this fixture / NOT fixed by bug-1):
-// `.map(|w| w.<str-field>)` on a `[]<UserRecord>` produced by this exact
-// field-call path — i.e. the SAME shape as `cols.map(|c| c.name)`, U=str
-// instead of U=int — SEGFAULTS at runtime (verified via a standalone
-// synthetic repro during this fixture's own write-up, 2026-07-13). Root
-// cause (codegen, NOT the checker fix above): `emit_c.rs::emit_call`'s
-// closure-arg U-inference for this call shape
-// (~line 33918, `let closure_ret_c = ... self.infer_expr_c_type(e) ...`)
-// evaluates the closure body BEFORE the closure's own param (`w`) has any
-// type binding visible to `infer_expr_c_type` — so the Member expr `w.name`
-// can't resolve and the lookup silently comes back empty. The unresolved
-// generic then defaults to `nova_int` (line ~34010,
-// `c.unwrap_or_else(|| "nova_int".to_string())`) — which happens to be the
-// CORRECT concrete type for an int-valued field (masking the bug for
-// `w.qty`-shaped closures, which is why this fixture below only exercises
-// int-returning closures) but silently wrong — and unsafe — for any other
-// concrete type (`str`, a heap pointer, ...). This is a genuinely SEPARATE,
-// deeper codegen defect from the three checker gaps above (it can only be
-// reached AFTER the checker stops ICE'ing — i.e. it was unreachable/dormant
-// before this very fix) — flagged here for a follow-up wave, intentionally
-// NOT fixed in this pass (out of bug-1's diagnosed scope; needs its own
-// investigation into propagating the receiver-element C-type into
-// `infer_expr_c_type`'s view of the closure's own params before that call).
+// FIXED (Plan 196.5 Stage-B3, 2026-07-13): `.map(|w| w.<str-field>)` on a
+// `[]<UserRecord>` produced by this exact field-call path — i.e. the SAME
+// shape as `cols.map(|c| c.name)`, U=str instead of U=int — used to
+// SEGFAULT at runtime (verified via a standalone synthetic repro during
+// bug-1's write-up). Root cause (codegen, NOT the checker fixes above):
+// `emit_c.rs::emit_call`'s inline instance-method dispatch (the array-ext
+// `"[]T"`-sentinel branch — Q10's "third hand-duplicated" inference engine,
+// alongside `resolve_mono_type_args`/`resolve_method_level_subst`) computed
+// its closure-arg U-inference by evaluating the closure body BEFORE the
+// closure's own param (`w`) had any type binding visible to
+// `infer_expr_c_type` — so the Member expr `w.name` couldn't resolve and
+// the lookup silently came back empty. The unresolved generic then
+// defaulted to `nova_int` (`c.unwrap_or_else(|| "nova_int".to_string())`)
+// — which happened to be the CORRECT concrete type for an int-valued field
+// (masking the bug for `w.qty`-shaped closures) but was silently wrong —
+// and unsafe — for any other concrete type (`str`, a heap pointer, ...).
+// Fix `[M-196.5-b3-closure-param-bind]`: consult the `node_substs[call_id]`
+// checker channel FIRST (channel-first, mirrors the sibling Stage-B
+// migrations); on a channel miss, bind the closure's own declared param
+// type(s) into `var_types` — from the subst already resolved for the
+// receiver element — BEFORE inferring the body, mirroring
+// `resolve_method_level_subst`'s already-correct Step 2. A closure-return
+// generic slot that STILL can't be resolved after both now raises an
+// honest `[E7001]` CC-ERROR instead of silently defaulting to `nova_int`
+// (`[M-no-silent-nova-int-fallback]`, Plan 70). The `str`-returning case
+// below exercises the fix.
 //
 // Единица: folder-module `spec_tests.conformance`.
 module spec_tests.conformance
@@ -73,8 +76,6 @@ test "map() on a []T from a field-held fn call — checker annotates the return 
 
     // Gap 2 + 3: `.map()` on the resulting `[]M186Widget` — vec_seq.nv's
     // prefix-generic `[]T @map[U]`, U inferred from the closure's return.
-    // Int-returning closures only (see header comment re: the separate,
-    // NOT-yet-fixed str-return codegen gap this fixture deliberately avoids).
     ro qtys = widgets.map(|w| w.qty)
     assert(qtys.len() == 2)
     assert(qtys[0] == 5)
@@ -86,4 +87,12 @@ test "map() on a []T from a field-held fn call — checker annotates the return 
     ro doubled = widgets.map(|w| w.qty * 2)
     assert(doubled[0] == 10)
     assert(doubled[1] == 20)
+
+    // Stage-B3 fix: U=str (a non-int closure return on this exact
+    // field-call-produced `[]T` receiver) used to SEGFAULT at runtime —
+    // see the header comment's `[M-196.5-b3-closure-param-bind]` writeup.
+    ro names = widgets.map(|w| w.name)
+    assert(names.len() == 2)
+    assert(names[0] == "a")
+    assert(names[1] == "b")
 }
