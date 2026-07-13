@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR использование потреблённой переменной
+// D133-амендмент 2026-07-13 [M-178-consume-field-ctor-from-var]: двойной move —
+// два consume-поля одного литерала из ОДНОЙ переменной; второе вхождение =
+// use-after-consume (D131).
+module neg.d133_consume_field_double_move_neg
+
+type FcdInner consume { id int }
+fn FcdInner consume @close() -> () { () }
+fn fcd_open(n int) -> FcdInner => { id: n }
+
+type FcdPair consume {
+    consume a FcdInner,
+    consume b FcdInner,
+}
+fn FcdPair consume @shutdown() -> () {
+    @a.close()
+    @b.close()
+}
+
+test "двойной move в два consume-поля — ошибка" {
+    consume s = fcd_open(1)
+    consume p = FcdPair { a: s, b: s }
+    p.shutdown()
+}

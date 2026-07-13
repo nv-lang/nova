@@ -5137,6 +5137,7 @@ Compiler проводит **flow-sensitive** анализ (расширение 
 | `f(make_tx())` где `f(consume t Tx)` — rvalue → consume-param | rvalue ownership передаётся напрямую (без binding) ✅ |
 | `return tx` (тип consume) | `tx` → `Returned` (передача caller'у) |
 | `record.field = tx` где field declared consume | `tx` → `Moved` (в record) |
+| `T { field: tx, … }` — init consume-поля record-литерала голым binding'ом | `tx` → `Consumed` (move при конструировании) |
 | `consume new_owner = tx` (transfer alias) | `tx` → `Consumed`, `new_owner` → `Live` |
 | `f(tx)` где `f(tx Tx)` — view-param (no qualifier) | `tx` остаётся `Live` (callee — view-borrow) |
 | `f(make_tx())` где `f(t Tx)` — rvalue → view-param | ❌ E (D133-consume-rvalue-in-view) |
@@ -5145,6 +5146,21 @@ Compiler проводит **flow-sensitive** анализ (расширение 
 | `let alias = tx` — view-alias | оба в alias-class (Plan 73); consume любого инвалидирует |
 | `let mut alias = tx` — mut-view-alias | то же + mut-методы через alias |
 | `let _ = tx` (silent drop) | ❌ compile error D133-suppress-not-allowed |
+
+> **Амендмент 2026-07-13 (fix `[M-178-consume-field-ctor-from-var]`):**
+> строка «init consume-поля record-литерала» — НОРМАТИВНОЕ уточнение,
+> закрывающее языковой обход. Инициализация **consume-поля** record-литерала
+> **голой owned-переменной или consume-параметром** (`{ tcp: stream, session }`)
+> — потребление этого биндинга, ровно как передача в consume-параметр вызова.
+> Действует для всех форм литерала: типизированного (`T { … }` /
+> record-вариант суммы `V { … }`), анонимного с типом из контекста
+> (`=> { tcp: stream, session }` — best-effort структурный резолв;
+> неоднозначность → консервативно без move, остаётся D133-not-consumed) и
+> D52-punning (`{ tx }`). Использование биндинга ПОСЛЕ литерала —
+> use-after-consume (D131); два consume-поля из одного биндинга — то же.
+> До амендмента распознавалось только свежее inline-выражение/вызов в
+> позиции поля, что вынуждало pass-through-обёртки вида
+> `fn tcp_move(consume s TcpStream) -> TcpStream => s`.
 
 ### Заразность через поля + explicit double-marker
 
