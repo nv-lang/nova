@@ -3,7 +3,7 @@
 // record-литерал. Constructor с invariant-violation → runtime panic.
 
 module spec_tests.conformance
-type Counter {
+type Counter11 {
     value int
 }
     invariant value >= 0
@@ -11,7 +11,7 @@ type Counter {
 
 test "f9 record mut invariant fail" panics "invariant failed:" {
     // value == 200 нарушает `value <= 100`.
-    ro c = Counter { value: 200 }
+    ro c = Counter11 { value: 200 }
     println("UNREACHABLE")
     ro _ = c
 }

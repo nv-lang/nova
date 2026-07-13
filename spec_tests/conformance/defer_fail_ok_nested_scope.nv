@@ -7,7 +7,7 @@ type CleanupErr1 { msg str }
 
 fn cleanup1() Fail[CleanupErr1] -> () { () }
 
-fn process3(cond bool) Fail[CleanupErr1] -> () {
+priv(file) fn process3(cond bool) Fail[CleanupErr1] -> () {
     if cond {
         defer { cleanup1() }                     // nested scope; outer Fail in sig — D158 OK
     }

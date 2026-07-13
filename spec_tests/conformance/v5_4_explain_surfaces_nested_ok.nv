@@ -7,13 +7,13 @@
 // affects the EXPLAIN REPORT (not the runtime path).
 
 module spec_tests.conformance
-type Counter {
+type Counter17 {
     mut x int
 }
 
-fn Counter.new(start int) -> Counter => { x: start }
+fn Counter17.new(start int) -> Counter17 => { x: start }
 
-fn Counter mut @nested(cond bool, target int) -> int {
+fn Counter17 mut @nested(cond bool, target int) -> int {
     mut acc = 0
     if cond {
         // V1.2 nested region A → V5.4 should surface this _at_x_n*
@@ -29,13 +29,13 @@ fn Counter mut @nested(cond bool, target int) -> int {
 }
 
 test "V5.4: nested cache reporting preserves runtime semantics" {
-    mut c = Counter.new(7)
+    mut c = Counter17.new(7)
     ro r = c.nested(true, 30)
     // (7+7) + (30+30) = 74
     assert(r == 74)
     // Verify mutation happened.
     assert(c.x == 30)
-    mut c2 = Counter.new(99)
+    mut c2 = Counter17.new(99)
     ro r2 = c2.nested(false, 1)
     assert(r2 == 0)
     assert(c2.x == 99)

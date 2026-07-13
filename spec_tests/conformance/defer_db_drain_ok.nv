@@ -5,7 +5,7 @@ fn drain(_timeout_ms int) Time -> () {
     Time.sleep(10)
 }
 
-fn process2() Time -> () {
+priv(file) fn process2() Time -> () {
     defer { drain(50) }   // graceful drain — Time.sleep allowed (D159)
 }
 

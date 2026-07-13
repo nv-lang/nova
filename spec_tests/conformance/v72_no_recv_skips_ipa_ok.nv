@@ -4,26 +4,26 @@
 // conservative). Must compile + run identically to V7.1 behavior.
 
 module spec_tests.conformance
-type Counter {
+type Counter18 {
     mut n int
 }
 
 // Method exists so write_sets is non-empty in the module.
-fn Counter mut @inc() -> () {
+fn Counter18 mut @inc() -> () {
     @n = @n + 1
 }
 
 // Free fn — `f.receiver == None` → build_ipa returns None → V1 fallback.
-fn compute(c Counter) -> int {
+priv(file) fn compute(c Counter18) -> int {
     c.n + c.n
 }
 
-fn Counter.new() -> Counter {
-    Counter { n: 9 }
+fn Counter18.new() -> Counter18 {
+    Counter18 { n: 9 }
 }
 
 test "V7.2: free fn (no receiver) skips IPA gracefully" {
-    ro c = Counter.new()
+    ro c = Counter18.new()
     ro r = compute(c)
     assert(r == 18)
 }

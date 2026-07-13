@@ -5,13 +5,13 @@
 module spec_tests.conformance
 type Err12 { msg str }
 type Err22 { msg str }
-type Err3 { msg str }
+priv(file) type Err3 { msg str }
 
 fn defer_a2() Fail[Err12] -> () { () }
 fn defer_b2() Fail[Err22] -> () { () }
 fn defer_c() Fail[Err3] -> () { () }
 
-fn process3() Fail -> () {
+priv(file) fn process3() Fail -> () {
     defer { defer_a2() }   // runs last LIFO
     defer { defer_b2() }
     defer { defer_c() }   // runs first LIFO

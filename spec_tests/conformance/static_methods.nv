@@ -9,21 +9,21 @@ module spec_tests.conformance
 // --- T.new() — user-defined static-метод через protocol ---
 type Buildable protocol { @new() -> Self }
 
-type Counter { n int }
-fn Counter.new() -> Counter => { n: 0 }
+type Counter14 { n int }
+fn Counter14.new() -> Counter14 => { n: 0 }
 
-type Score { points int }
-fn Score.new() -> Score => { points: 100 }
+type Score2 { points int }
+fn Score2.new() -> Score2 => { points: 100 }
 
 fn fresh[T Buildable]() -> T => T.new()
 
 
-test "T.new() static на typevar — Counter" {
-    ro c = fresh[Counter]()
+test "T.new() static на typevar — Counter14" {
+    ro c = fresh[Counter14]()
     assert(c.n == 0)
 }
 
-test "T.new() static на typevar — Score" {
-    ro s = fresh[Score]()
+test "T.new() static на typevar — Score2" {
+    ro s = fresh[Score2]()
     assert(s.points == 100)
 }

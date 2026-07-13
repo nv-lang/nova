@@ -6,7 +6,7 @@ fn cleanup_a() Time -> () { Time.sleep(3) }
 fn cleanup_b() Time -> () { Time.sleep(3) }
 fn cleanup_c() Time -> () { Time.sleep(3) }
 
-fn process3() Time -> () {
+priv(file) fn process3() Time -> () {
     defer { cleanup_a() }   // LIFO last
     defer { cleanup_b() }
     defer { cleanup_c() }   // LIFO first

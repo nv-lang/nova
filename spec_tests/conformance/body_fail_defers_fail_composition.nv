@@ -3,7 +3,7 @@
 // handler (composite chain handled runtime-side).
 
 module spec_tests.conformance
-type WorkErr { msg str }
+priv(file) type WorkErr { msg str }
 type Err11 { msg str }
 type Err21 { msg str }
 
@@ -14,7 +14,7 @@ fn do_work_fails() Fail[WorkErr] -> () {
     throw WorkErr { msg: "operation failed" }
 }
 
-fn process2() Fail -> () {
+priv(file) fn process2() Fail -> () {
     defer { defer_a1() }
     defer { defer_b1() }
     // Plan 173 Ф.1 (#3 / 174.2): `?` return-only. `do_work_fails()` возвращает

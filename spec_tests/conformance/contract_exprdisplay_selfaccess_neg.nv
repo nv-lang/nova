@@ -6,7 +6,7 @@
 // the generic-mono enforcement fix (c2bbb685) merely made it visible (the same
 // garble exists for non-generic `@field` contracts — exercised here).
 //
-// `Counter` is NON-generic, so this hits the contract-display path independently
+// `Counter5` is NON-generic, so this hits the contract-display path independently
 // of the generic-mono fix. No custom message → the raw contract source is the
 // surfaced text (format A: "<file>:<line>: requires failed: <src>"). At count=0
 // the first conjunct `@count > 0` is false → the precondition fires.
@@ -14,14 +14,14 @@
 // Pre-fix this message read "requires failed: assert > 0 && assert <= assert".
 
 module spec_tests.conformance
-type Counter { count int, limit int }
+type Counter5 { count int, limit int }
 
-fn Counter @step() -> int
+fn Counter5 @step() -> int
     requires @count > 0 && @count <= @limit
 => @count - 1
 
 test "contract-violation message renders @field readably (not 'assert')" panics "requires failed: @count > 0 && @count <= @limit" {
-    ro c = Counter { count: 0, limit: 10 }
+    ro c = Counter5 { count: 0, limit: 10 }
     ro r = c.step()
     assert(r == -1)
 }

@@ -3,25 +3,25 @@
 // просто мутирует, chaining работает без ручного `@`.
 
 module spec_tests.conformance
-type Counter { mut n int }
+type Counter12 { mut n int }
 
-fn Counter.new() -> Counter => { n: 0 }
+fn Counter12.new() -> Counter12 => { n: 0 }
 
 // fluent-метод: мутирует; возврат receiver'а — implicit (D409).
-fn Counter mut @bump() -> @ {
+fn Counter12 mut @bump() -> @ {
     @n = @n + 1
 }
 
-fn Counter @value() -> int => @n
+fn Counter12 @value() -> int => @n
 
 test "user fluent-метод — chaining через -> @" {
-    mut c = Counter.new()
+    mut c = Counter12.new()
     ro r = c.bump().bump().bump()
     assert(r.value() == 3)
 }
 
 test "fluent + alias — потребления нет, ошибки нет" {
-    mut c = Counter.new()
+    mut c = Counter12.new()
     ro same = c.bump()        // same — алиас c (bump: -> @)
     assert(same.value() == 1)
 }

@@ -7,9 +7,9 @@
 // shared single typedef `Nova_X` over inner).
 //
 // Use cases:
-//  - Counter[Persistent], Counter[Transient] — отдельные namespace
+//  - Counter16[Persistent], Counter16[Transient] — отдельные namespace
 //    тегированных int-counter'ов через phantom T.
-//  - Tag[Email], Tag[UserId] — typed string wrappers.
+//  - Tag2[Email], Tag2[UserId] — typed string wrappers.
 //  - Flag[Visible], Flag[Hidden] — typed bool wrappers.
 //
 // Plan 91.12 V2 followup (2026-06-02) — generic ptr-newtype работал;
@@ -27,44 +27,44 @@ type Hidden
 
 // ─── Generic newtypes с non-ptr inner ──────────────────────────────
 
-type Counter[T](int)
-type Tag[T](str)
+type Counter16[T](int)
+type Tag2[T](str)
 type Flag[T](bool)
 type Measure[T](f64)
 
-// ─── Counter[T] (int inner) ────────────────────────────────────────
+// ─── Counter16[T] (int inner) ────────────────────────────────────────
 
-test "Counter[Persistent] — construct + .0 для int inner" {
-    ro c = Counter[Persistent](42)
+test "Counter16[Persistent] — construct + .0 для int inner" {
+    ro c = Counter16[Persistent](42)
     assert(c.0 == 42)
 }
 
-test "Counter[Transient] — distinct T value same int ABI" {
-    ro p = Counter[Persistent](100)
-    ro t = Counter[Transient](100)
+test "Counter16[Transient] — distinct T value same int ABI" {
+    ro p = Counter16[Persistent](100)
+    ro t = Counter16[Transient](100)
     assert(p.0 == t.0)  // same underlying int value
 }
 
-test "Counter[T] negative values" {
-    ro c = Counter[Persistent](-42)
+test "Counter16[T] negative values" {
+    ro c = Counter16[Persistent](-42)
     assert(c.0 == -42)
 }
 
-// ─── Tag[T] (str inner) ────────────────────────────────────────────
+// ─── Tag2[T] (str inner) ────────────────────────────────────────────
 
-test "Tag[Email] — construct + .0 для str inner" {
-    ro tag = Tag[Email]("user@example.com")
+test "Tag2[Email] — construct + .0 для str inner" {
+    ro tag = Tag2[Email]("user@example.com")
     assert(tag.0 == "user@example.com")
 }
 
-test "Tag[UserId] — distinct T phantom" {
-    ro email = Tag[Email]("foo@bar.com")
-    ro uid = Tag[UserId]("u_12345")
+test "Tag2[UserId] — distinct T phantom" {
+    ro email = Tag2[Email]("foo@bar.com")
+    ro uid = Tag2[UserId]("u_12345")
     assert(email.0 != uid.0)
 }
 
-test "Tag[T] empty string" {
-    ro tag = Tag[Email]("")
+test "Tag2[T] empty string" {
+    ro tag = Tag2[Email]("")
     assert(tag.0 == "")
 }
 

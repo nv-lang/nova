@@ -1,11 +1,11 @@
 module spec_tests.conformance
-type Tag { name str }
-fn Tag @equal(other Tag) -> bool => @name == other.name
+type Tag1 { name str }
+fn Tag1 @equal(other Tag1) -> bool => @name == other.name
 
 test "equal dispatch: == != via @equal" {
-    ro t1 = Tag { name: "foo" }
-    ro t2 = Tag { name: "foo" }
-    ro t3 = Tag { name: "bar" }
+    ro t1 = Tag1 { name: "foo" }
+    ro t2 = Tag1 { name: "foo" }
+    ro t3 = Tag1 { name: "bar" }
     assert(t1 == t2)
     assert(t1 != t3)
 }

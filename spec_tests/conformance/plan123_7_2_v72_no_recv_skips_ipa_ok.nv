@@ -14,7 +14,7 @@ fn Counter_plan12372v72norecvskipsipaok mut @inc() -> () {
 }
 
 // Free fn — `f.receiver == None` → build_ipa returns None → V1 fallback.
-fn compute(c Counter_plan12372v72norecvskipsipaok) -> int {
+priv(file) fn compute(c Counter_plan12372v72norecvskipsipaok) -> int {
     c.n + c.n
 }
 

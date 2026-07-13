@@ -4,17 +4,17 @@ import std.collections.vec.{Vec}
 
 // Verify that a type implementing Next[T] works with our blanket dispatch
 // (positive test, not a negative test — duplicate detection is a separate concern)
-type Counter value { mut cur int, end int }
+type Counter1 value { mut cur int, end int }
 
-fn Counter mut @next() -> Option[int] {
+fn Counter1 mut @next() -> Option[int] {
     if @cur >= @end { return None }
     ro v = @cur
     @cur = @cur + 1
     Some(v)
 }
 
-test "Counter implements Next[int]" {
-    mut c = Counter { cur: 0, end: 3 }
+test "Counter1 implements Next[int]" {
+    mut c = Counter1 { cur: 0, end: 3 }
     ro r0 = c.next()
     ro r1 = c.next()
     ro r2 = c.next()
