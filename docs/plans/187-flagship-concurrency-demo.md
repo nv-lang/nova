@@ -21,9 +21,9 @@
 >    auto-derive `@debug/@display` эмитил несуществующий у StringBuilder `w.write_str`.
 >    Оба фикса на финальных гейтах (ветка race-state-dump); после вливания флейки
 >    больших CU должны исчезнуть — тестам агрегатора ничего не мешает.
-> 6. **Ред.4, приятный бонус:** идёт план 152.7.2 (D419) — `"${v:#}"` = pretty; после его
->    вливания report_json может отдавать красивый JSON без отдельного pretty-метода
->    (опциональное удобство, не гейт).
+> 6. **Ред.4, приятный бонус → Ред.5: ВЛИТ** (план 152.7.2/D419 в main, `197d5a3c5`):
+>    `"${v:#}"` = pretty — report_json может отдавать красивый JSON без отдельного
+>    pretty-метода (опциональное удобство, не гейт).
 >
 > **Статус: В РАБОТЕ (Ред.2, 2026-07-13).** MVP-ядро ✅ (коммит `514bcd8d5` — бек-библиотека+тесты),
 > но **запускаемого веб-приложения ещё НЕТ** — добор = Ф.MVP-2, см. **§9** (честный статус,
@@ -34,11 +34,11 @@
 > **Спека:** нового D-блока, вероятно, НЕ требует (демо на существующих
 > примитивах); при вскрытии дыры — завести D в срок.
 > **Маркер:** `[M-flagship-concurrency-demo]` (завести в backlog при старте).
-> **Гейты (уточнены аудитом кода 2026-07-09, Ред.1):** точечные, НЕ «весь план»:
-> SSE ← `[M-178-server-streaming]` (streaming response в server — deferred-маркер,
-> остальной std/http УЖЕ в main); Live-Погода ← **Plan 116 std/tls (PLANNED)** —
-> open-meteo = HTTPS-only; runtime-отмена/deadline ← 173 Ф.3/173.0/173.1
-> (но кооперативная отмена `supervised(cancel:)`/`within` РАБОТАЕТ уже сейчас).
+> ~~**Гейты (уточнены аудитом кода 2026-07-09, Ред.1):** точечные, НЕ «весь план»:
+> SSE ← `[M-178-server-streaming]`; Live-Погода ← Plan 116 std/tls (PLANNED);
+> runtime-отмена/deadline ← 173 Ф.3/173.0/173.1.~~
+> **⚠ Ред.5-зачистка: абзац выше УСТАРЕЛ ЦЕЛИКОМ (история). Все три гейта СНЯТЫ —
+> см. Ред.3 п.1-2 и §9.2: SSE в main, TLS = nova-tls (116 мёртв), 173-семейство закрыто.**
 >
 > Дата черновика: 2026-07-09 (Ред.1 — сверка с кодом в тот же день). До
 > постановки в очередь закрыть открытые решения §7.
@@ -132,9 +132,9 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
 
 | Фаза | Зависит от (уточнено аудитом) | Что даёт | Оценка |
 |---|---|---|---|
-| **Ф.0 — прототип на СУЩЕСТВУЮЩЕМ std/http** | ничего: servernet accept-loop + ServeMux уже в main | `aggregate` + **настоящая кооперативная отмена** (`within`/`supervised(cancel:)` — уже есть, НЕ «мягкий бюджет»); polling-эндпоинт `/status` (JSON снапшот хода) | S |
+| **Ф.0 — прототип на существующем http** | ничего: ~~servernet accept-loop~~ (Ред.2: loop'а в пакете НЕТ — собирается в приложении, §9.4 п.0) + ServeMux в пакете `http` | `aggregate` + настоящая кооперативная отмена; ~~polling-эндпоинт `/status`~~ (Ред.5-зачистка: канон = `GET /api/snapshot`, §9.4 п.3) | S |
 | **Ф.1 — SSE-стриминг** | ~~`[M-178-server-streaming]`~~ ✅ **гейт СНЯТ 2026-07-12** (`ServerResponse.sse`/`sse_event` в main, std/http/server + streaming_test) | живой поток событий бек→фронт (`text/event-stream`); в Ф.MVP-2 — replay-вариант (§9.3 п.3) | M |
-| **Ф.2 — runtime-отмена/deadline/0-leaks** | 173 Ф.3 ЗАКРЫТА (2026-07-12/13): `deadline:`/`timeout:`-параметр landed (D408, 2026-07-06) + захардено — нашёлся и починен реальный leak (спавненный child на `Time.sleep` не unwind'ился на отмену области; см. `[M-178-server-graceful-deadline]` в backlog-followups.md). Остаётся: 173.0 (substrate: multi-worker drain-гонка) + 173.1 (`parallel for → []T`, WIP `parallel-collect-173-1`) + servernet accept-LOOP функции ещё нет вообще (только `handle_connection` + smoke) — проводка bounded-drain в реальный цикл не сделана | отмена рантаймом + leaks-инвариант честен при MAXPROCS>1; чище код сбора | M |
+| **Ф.2 — runtime-отмена/deadline/0-leaks** | **Ред.5-зачистка: ВСЁ ЗАКРЫТО.** 173 Ф.3 ✅ (D408 + sleep-cancel + child-leak); 173.0 ✅ 2026-07-08 (drain-гонка, MAXPROCS>1 честен); 173.1 ✅ 2026-07-09 (`parallel for → []T`); 173-хвосты ✅ 2026-07-13 (MultiError + trace). Accept-loop — деливерабл приложения (§9.4 п.0), не гейт | отмена рантаймом + leaks-инвариант честен при MAXPROCS>1; чище код сбора | M |
 | **Ф.3a — Live health-check + Live-LLM (Ollama)** | Ф.1 (SSE); TLS НЕ нужен (health = HTTP/TCP-замер; Ollama = `localhost:11434` plain-HTTP) | реальные домены + **реальные LLM с машины пользователя** (одобрено owner 2026-07-09: детект `/api/tags`, модель=строка; нет Ollama → кнопка disabled с подсказкой, мок всегда работает) | M |
 | **Ф.3b — Live погода (+опц. поиск)** | Ф.3a; ~~Plan 116 std/tls~~ ✅ **гейт СНЯТ Ред.3** (TLS = nv-lang/nova-tls, https-транспорт в http подключён) | open-meteo по-настоящему; опц. поисковый race (бесключевые провайдеры) | S |
 | **Ф.4 — фронт до прода + лендинг** | Ф.1 | шрифты, подключение, публикация демо | M |
@@ -147,8 +147,8 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
 - `[M-178-server-typed-body]` — ЗАКРЫТ (2026-07-12, баг-фиксер 196): typed body
   через serdejson теперь компилируется в http-CU — можно использовать typed
   `json_decode_body[T]`/`.json_as[T]()`, dynamic-JSON workaround больше не нужен.
-- Тесты демо гонять под `NOVA_MAXPROCS=1` до закрытия 173.0 (multi-worker
-  drain-гонка субстрата); leaks-инвариант при MAXPROCS>1 — после 173.0.
+- ~~Тесты демо гонять под `NOVA_MAXPROCS=1` до закрытия 173.0~~ **Ред.5-зачистка:
+  СНЯТО** (173.0 ✅ 2026-07-08) — тесты в обычном M:N, leaks-инвариант честен.
 - 173 Ф.3 удалит `with_timeout` в пользу `deadline:`/`timeout:`-параметров (после
   175) — Ф.0-код писать на `within`/`supervised(cancel:)`, миграция на `deadline:`
   в Ф.2 (ожидаемая, не сюрприз).
@@ -200,19 +200,20 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
 
 ## 7. Открытые решения (закрыть до постановки в очередь)
 
-1. **Эмиссия событий из воркера** — доп. эффект `Emit` vs канал в оркестратор?
-   (Каналы существуют — docs/channels.md; канал выглядит дешевле нового эффекта.)
-2. **Где хостить живое демо** — Artifact / GitHub Pages / nv-lang.org?
+1. ~~**Эмиссия событий из воркера**~~ ✅ РЕШЕНО (шапка §7-РЕШЕНО п.1: Emit-эффект;
+   реализован в MVP-ядре, emit.nv).
+2. ~~**Где хостить живое демо**~~ ✅ РЕШЕНО (критерий №5 Ред.5-v2: канон = Docker,
+   локально = dev-путь, запечённая статика = дополнение, VPS не планируется).
 3. **Вложенность (Ф.5)** — нужна ли вообще, или одноуровневый fan-out достаточно?
 4. **Реальные источники Live** — список доменов для health-check; города для погоды.
 5. ~~Готовность гейтов~~ — ✅ ЗАКРЫТО аудитом 2026-07-09: гейты точечные (см. §3);
    std/http Ф.1-Ф.3 уже в main; блокеры только `[M-178-server-streaming]` (SSE),
    116-TLS (Live-погода), 173.0/.1/Ф.3 (runtime-deadline + MAXPROCS>1 leaks).
-6. **NEW: seeded-латентности поверх mock_net** — форма API (обёртка-хендлер
-   `seeded_net(seed, profile)` в демо-пакете, не в std)?
-7. **NEW: договорка о README-статусе 178** — код Ф.1-Ф.3 в main, README «READY»;
-   при старте 187 сверить фактический остаток 178 (маркеры) и не дублировать работу.
-8. **NEW: Ollama-интеграция** — формат стриминга ответа (`/api/generate` NDJSON
+6. ~~**NEW: seeded-латентности поверх mock_net**~~ ✅ РЕШЕНО-и-СДЕЛАНО (шапка
+   §7-РЕШЕНО п.5; реализовано в MVP-ядре: scenarios.nv, splitmix64 в демо-пакете).
+7. ~~**NEW: договорка о README-статусе 178**~~ ✅ ЗАКРЫТО событиями (Ред.3 п.3:
+   http вынесен в nova-http планом 203; статус-вопрос 178-README снят).
+8. **NEW (не в MVP — §7-РЕШЕНО п.7): Ollama-интеграция** — формат стриминга ответа (`/api/generate` NDJSON
    stream → прогресс строки = токены!); критерий «пригодного» ответа для race
    (первый токен vs полный ответ); поведение при 1 установленной модели (race из
    одного — вырожденный: fallback на aggregate-вид или прогнать одну модель с
@@ -304,14 +305,14 @@ Nova-приложения, D78 «папка = модуль» ложится на
 
 | # | Деливерабл | Детали |
 |---|---|---|
-| 0 | `backend/main.nv` | `fn main`: `real_net()` + real time; цикл `TcpListener.bind(127.0.0.1:8187).accept → spawn servernet.handle_connection(stream, mux)` по образцу `examples/net/echo_server.nv`; порт — const + env-override |
+| 0 | `backend/main.nv` | `fn main`: `real_net()` + real time; цикл `TcpListener.bind(127.0.0.1:8187).accept → spawn handle_connection(stream, mux)` по образцу `examples/net/echo_server.nv`; `handle_connection` — из **пакета `http`** (nv-lang/nova-http, план 203; module-path `http.servernet` прежний, в std его больше НЕТ); порт — const + env-override |
 | 1 | real-cancel | aggregate.nv: self-checked soft-deadline → `supervised(deadline:)`; снять соответствующие `[M-flagship-*]`-обходы; тест «опоздавший отменяется раньше своей латентности» (wall_ms < бюджет+слак). Если гонка воспроизводится — repro + доклад, оставить self-checked |
-| 2 | typed-serde | report_json.nv: JsonValue → `#impl(Serialize)` typed-путь; тесты обновить |
-| 3 | endpoints | `GET /` → frontend/index.html (`embed()`); `GET /api/snapshot` (есть, fallback); `GET /api/run?legend=weather\|health&mode=demo\|chaos&seed=N` → JSON свежего прогона; `GET /api/events` (те же параметры) → SSE-replay |
-| 4 | UI-внутренности | frontend/index.html: Live-сегмент разблокировать → `EventSource` на /api/events + fallback-poll /api/snapshot; Demo/Chaos-кнопки → /api/run; JS-модель — по контракту §9.5 |
+| 2 | typed-serde | report_json.nv: JsonValue → `#impl(Serialize)` typed-путь; тесты обновить. Опция: `/api/snapshot` отдаёт pretty через `${v:#}` (D419 УЖЕ в main, `197d5a3c5`) |
+| 3 | endpoints | `GET /` → frontend/index.html (`embed()`); `GET /api/snapshot` (есть, fallback); `GET /api/run?legend=weather\|health&mode=demo\|chaos\|live&seed=N` → JSON свежего прогона (**`live`**: health = real_net TCP-замер, weather = open-meteo https; `seed` игнорируется в live); `GET /api/events` (те же параметры) → SSE-replay |
+| 4 | UI-внутренности | frontend/index.html: Live-сегмент разблокировать → `EventSource` на /api/events + fallback-poll /api/snapshot; Demo/Chaos-кнопки → /api/run; JS-модель — по контракту §9.5. **`legend=llm` — ОСТАЁТСЯ клиентской синтетикой** (кнопка на сервер не ходит, не в MVP — §9.3 п.4) |
 | 5 | легенды Live | Live health-check = plain TCP/HTTP-замер через `real_net()`; **Погода-Live ДОСТУПНА** (Ред.3: https через nova-tls) — open-meteo без ключа; при недоступности сети — мок с подсказкой |
-| 6 | README.md | сборка + запуск локально (Windows/Unix), порт, env |
-| 7 | Docker (волна 2) | Dockerfile: Linux-сборка компилятора+рантайма+примера. 🔴 ГЕЙТ-РИСК `[M-nova-linux-build]` (Linux-сборка Nova не верифицирована) — при блокере зафиксировать маркер `[M-187-docker-linux-build]`, не обходить молча |
+| 6 | README.md | сборка + запуск локально (Windows/Unix), порт, env. **Path-dep реальность (план 203/193, до 204):** требуются сиблинг-репы `nv-lang/nova-http` и `nv-lang/nova-tls` РЯДОМ с nova — раздел «клонируй три репы» обязателен |
+| 7 | Docker (волна 2) | Dockerfile: Linux-сборка компилятора+рантайма+примера. **Build-контекст обязан покрывать path-deps** (контекст = родительский каталог трёх реп ЛИБО clone внутри Dockerfile) + vendor-сборка mbedtls (nova-tls) под Linux-clang. 🔴 ГЕЙТ-РИСК `[M-nova-linux-build]` — при блокере маркер `[M-187-docker-linux-build]`, не обходить молча |
 
 ### 9.5 Контракт данных snapshot ↔ UI (карта для исполнителя)
 
@@ -355,7 +356,9 @@ Emit при прогоне.
 4. Волна 2: `docker build` + `docker run` → тот же curl-smoke снаружи контейнера.
 5. **Ред.5, пре-гейт волны 2 (снятие Docker-риска ЗАРАНЕЕ):** до старта волны 2 —
    получасовая пробная Linux-сборка компилятора (WSL или CI): `cargo build --release`
-   + `nova build` на hello-примере. Провал = маркер `[M-187-docker-linux-build]`
-   сразу, а не в конце волны.
+   + `nova build` на hello-примере, **плюс (Ред.5-зачистка) та же проба на
+   path-deps: vendor-сборка mbedtls (nova-tls) под Linux-clang + компиляция
+   hello-с-http (nova-http)** — вторая ось Linux-риска, не только компилятор.
+   Провал = маркер `[M-187-docker-linux-build]` сразу, а не в конце волны.
 6. **Ред.5:** тест детерминизма (`seed` ⇒ идентичный snapshot) и replay-тайминги
    (`t_ms` в каждом SSE-событии) — входят в гейт Ф.MVP-2, не отложены.
