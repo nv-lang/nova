@@ -155,37 +155,76 @@ Debug-функция, тот же файл, ~строка 76003-76011): иден
      утечка НЕ через `var_types["w"]` от чужой функции с тем же именем
      параметра впрямую.
 
-### План фикса (для следующей волны — НЕ архитектурный, но требует находки
-точного места)
-1. Найти, где `infer_expr_c_type`/эквивалент для `ExprKind::Ident("w")`
-   ВНУТРИ auto-derived debug/display метода получает C-тип receiver'а перед
-   method-call codegen (вероятно НЕ через `var_types` по имени параметра
-   напрямую, а через какой-то resolved/checker-driven путь для
-   protocol-typed параметров — возможно related к duck-typing/structural
-   резолву протокола `Write` по СПИСКУ типов, реализующих метод с нужной
-   сигнатурой, где список НЕ детерминирован/не отфильтрован по ИМЕННО
-   этому параметру, а даёт "любой implementor" — HashMap/Vec order-
-   dependent, тот же класс, что уже чинили дважды в этом файле [§3a/3b
-   Plan 196 notes]).
-2. Проверить: есть ли отдельный путь для method call, когда receiver's
-   STATIC (AST-declared) тип — protocol-имя, НЕ являющееся `self.types`
-   (конкретным type_decl) — вероятно там ищется "который тип реализует
-   метод write_str" среди ВСЕХ зарегистрированных типов вместо того, чтобы
-   зафорсить `StringBuilder` (как это уже сделано для C-типа сигнатуры).
-3. Минимальный детерминированный репро для дальнейшей атаки: ЛЮБОЙ record-
-   тип с `@debug`/`@display`-дериватом + std.net (TcpStream.write_str) ИЛИ
-   `std.runtime.write_buffer` (WriteBuffer.write_str) в ОДНОМ CU. Кандидат
-   на минимальный файл-пара: `spec_tests/conformance/d229_*.nv` (любой файл
-   объявляющий `D229Point`/`D229Named` с `#[derive(Debug)]`-подобной
-   аннотацией) + любой файл, использующий `TcpStream.write_str` (или просто
-   `import std.net` где регистрируется TcpStream's write_str) — собрать их
-   ВДВОЁМ как folder-module и посмотреть, воспроизводится ли (не проверено
-   в отведённое время — экономия по эффорту).
-4. После находки точного места — вероятный фикс: при резолве
-   `w.write_str(...)` где `w`'s ДЕКЛАРИРОВАННЫЙ (AST) тип — protocol-имя
-   `Write`, форсить `recv_ty = "StringBuilder"` НАПРЯМУЮ (симметрично тому,
-   что `type_ref_to_c` уже делает для сигнатуры), вместо любого
-   generic/duck-typed поиска "кто реализует write_str".
+### План фикса — МЕХАНИЗМ НАЙДЕН (не хватило времени пришпилить ТОЧНЫЙ leak-сайт)
+
+`recv_c_type_materialized(obj)` (`codegen/emit_c.rs:48415-48449`) — функция,
+которая ФАКТИЧЕСКИ вычисляет receiver-тип `w` для `w.write_str(...)`
+(используется во ВСЕХ `obj_ty`-сайтах `emit_call`, включая
+registry-driven dispatch на ~33977). Для `ExprKind::Ident(n)` порядок
+резолва:
+
+```rust
+self.closure_param_type_overrides.borrow().get(n)      // (1) — ПЕРВЫЙ приоритет
+    .or_else(|| self.pattern_binding_overrides.borrow().get(n).cloned())  // (2)
+    .or_else(|| self.var_types.get(n).cloned())          // (3) — КОРРЕКТНОЕ значение
+    .or_else(|| /* resolved_types checker-fallback */)   // (4)
+```
+
+`var_types["w"]` (3) для `Nova_D229Point_method_debug` — КОРРЕКТНО
+"Nova_StringBuilder*" (та же переменная работает верно для
+`Nova_StringBuilder_method_write(w, ...)` в ТОЙ ЖЕ функции). Но (1)/(2) —
+ДВА RefCell<HashMap<String,String>>, ПРОВЕРЯЕМЫЕ ПЕРВЫМИ — общие
+(НЕ per-function scoped) на весь codegen-проход. Если ГДЕ-ТО В КОРПУСЕ
+(любой файл, любая функция) существует closure-параметр ИЛИ
+match-pattern-binding, названный буквально `w`, разрешающийся в
+`Nova_TcpStream*` (или другой не-StringBuilder тип), и insert/remove-пара
+для этой overrides-записи НЕ идеально сбалансирована (early-return между
+insert и remove, или неверная LIFO-вложенность при nested closures с
+ОДИНАКОВЫМ именем параметра) — запись `"w" → "Nova_TcpStream*"` ПЕРЕЖИВАЕТ
+свой scope и молча ПОДМЕНЯЕТ `var_types["w"]` для ЛЮБОЙ последующей функции
+в корпусе, использующей идентификатор `w` — включая ВСЕ auto-derived
+Debug/Display методы (все используют параметр `w` по имени, см.
+`protocols/auto_derive.rs` `make_param("w", ...)`). Это ТОТ ЖЕ класс бага,
+что уже задокументирован в `docs/debugging-races.md` §6.4 (Plan 139.2:
+"var_types codegen-карта НЕ per-fn scoped") — но здесь утечка через
+`closure_param_type_overrides`/`pattern_binding_overrides`, не через
+`var_types` напрямую (var_types САМ по себе корректен и сбалансирован —
+подтверждено многочисленными save/restore парами вокруг emit_fn).
+
+**Кандидаты leak-сайтов** (insert БЕЗ гарантированного remove на ВСЕХ
+путях — не проверено по одному из-за нехватки времени; `grep -n
+"closure_param_type_overrides\|pattern_binding_overrides"
+compiler-codegen/src/codegen/emit_c.rs` даёт ~30 сайтов):
+`emit_c.rs:9447/9455`, `20323/20333`, `32416/32421`, `45838/45845`,
+`49377/49382`, `49507/49522`, `51555/51576/51592` (pattern_binding,
+match-arm), `51752/51760`, `52951/52957`. Диагностика по playbook
+(`docs/debugging-races.md` §1 Step 4, point-probe): gate каждый insert +
+remove за `NOVA_DIAG_OVERRIDE_LEAK` fprintf показывающий
+`(pname, old_value_if_any, new_value)` на insert и `(pname,
+value_removed)` на remove; прогнать полный merged-CU compile один раз;
+любой `pname` со СЧЁТОМ insert > remove — виновник.
+
+**Минимальный детерминированный репро** (не собран в отведённое время —
+экономия эффорта, следующая волна): ЛЮБОЙ record-тип с auto-derived
+`@debug`/`@display` (даёт `w.write_str(...)` через `Write`-протокол) +
+файл(ы), дающие closure-параметр или match-binding буквально `w`,
+разрешающийся не в StringBuilder — в ОДНОМ merged-CU. Кандидат-пара:
+`spec_tests/conformance/d229_*.nv` (объявляет `D229Point`/`D229Named`
+через дериватор) + любой файл с closure/match, где параметр/binding назван
+`w` (грепнуть `\bw\b` как closure-param/pattern-binding по корпусу —
+не сделано в отведённое время).
+
+**Фикс после локализации** (не архитектурный, точечный): либо (a)
+исправить конкретный insert/remove дисбаланс на найденном сайте (симметрия
+save/restore, как везде в `var_types`), либо (b), защитнее и дешевле —
+в `recv_c_type_materialized`, при `n == "w"` ИЛИ вообще для ЛЮБОГО
+идентификатора, чей `var_types`-запись присутствует, проверять
+`var_types` (3) ПЕРЕД overrides (1)/(2) для параметров ТЕКУЩЕЙ функции
+(overrides предназначены для closure/pattern params, которые физически НЕ
+могут быть functon-level params с тем же именем в другой функции — так что
+приоритет (1)/(2) над (3) в принципе подозрителен как общий design, не
+только для этого бага; смена приоритета может дать сайд-эффекты в других
+местах — проверить осторожно, это уже НЕ триггер-фикс, а design review).
 
 ## 4. Гейт (честный отчёт, не закрыт)
 
