@@ -7485,6 +7485,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Orchestration делается в emit_main_wrapper bench-mode: вызывает
     /// nova_bench_run("name", setup, measure, teardown).
     fn emit_bench(&mut self, b: &BenchDecl, idx: usize) -> Result<(), String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc.
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.emit_bench_scoped_inner(b, idx);
+        self.override_maps_scope_exit(ovr_saved, r.is_ok());
+        r
+    }
+
+    fn emit_bench_scoped_inner(&mut self, b: &BenchDecl, idx: usize) -> Result<(), String> {
         let safe = Self::mangle_test_name_indexed(&b.name, idx);
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
@@ -7706,6 +7714,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     fn emit_test(&mut self, t: &TestDecl, idx: usize) -> Result<(), String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc.
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.emit_test_scoped_inner(t, idx);
+        self.override_maps_scope_exit(ovr_saved, r.is_ok());
+        r
+    }
+
+    fn emit_test_scoped_inner(&mut self, t: &TestDecl, idx: usize) -> Result<(), String> {
         let safe = Self::mangle_test_name_indexed(&t.name, idx);
         // Buffer the test body so we can prepend any lambdas discovered during emit
         let saved_out = std::mem::take(&mut self.out);
@@ -8977,6 +8993,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// (synthesizing set + cache) обрамляли единую попытку. Возвращает
     /// canonical C name на success, None если все кандидаты не emit'нулись.
     fn try_emit_default_body_candidates(
+        &mut self,
+        t_name: &str,
+        t_c_ty: &str,
+        method_name: &str,
+        candidates: &[(String, EffectMethod)],
+        canonical_c_name: &str,
+    ) -> Option<String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc. Этот
+        // синтез вызывается ЛЕНИВО из середины эмиссии чужого тела — scoping
+        // обязателен в обе стороны (не утечь наружу, не унаследовать чужое).
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.try_emit_default_body_candidates_scoped_inner(
+            t_name, t_c_ty, method_name, candidates, canonical_c_name);
+        self.override_maps_scope_exit(ovr_saved, r.is_some());
+        r
+    }
+
+    fn try_emit_default_body_candidates_scoped_inner(
         &mut self,
         t_name: &str,
         t_c_ty: &str,
@@ -16662,6 +16696,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Emit a type-erased version of a generic method (instance or static).
     /// Type params in recv.generics map to void*.
     fn emit_generic_method_erased(&mut self, f: &FnDecl) -> Result<(), String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc.
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.emit_generic_method_erased_scoped_inner(f);
+        self.override_maps_scope_exit(ovr_saved, r.is_ok());
+        r
+    }
+
+    fn emit_generic_method_erased_scoped_inner(&mut self, f: &FnDecl) -> Result<(), String> {
         let recv = f.receiver.as_ref().unwrap();
         let is_instance = matches!(recv.kind, ReceiverKind::Instance);
         let type_params: HashSet<String> = recv.generics.iter().filter_map(|tr| {
@@ -21381,6 +21423,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         mono_name: &str,
         recv_type: &str,
     ) -> Result<(), String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc. Mono-
+        // эмиссия дренится ЛЕНИВО из середины чужих тел — scoping обязателен.
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.emit_monomorphized_method_scoped_inner(
+            fn_decl, type_subst, mono_name, recv_type);
+        self.override_maps_scope_exit(ovr_saved, r.is_ok());
+        r
+    }
+
+    fn emit_monomorphized_method_scoped_inner(
+        &mut self,
+        fn_decl: &crate::ast::FnDecl,
+        type_subst: Vec<(String, crate::types::ResolvedType)>,
+        mono_name: &str,
+        recv_type: &str,
+    ) -> Result<(), String> {
         use crate::ast::FnBody;
         // [M-sync-crossmodule…] (D381): a monomorphized method body references
         // colliding types (`ErrorKind.WriteZero` in `BufWriter[W].flush`) — resolve
@@ -22070,6 +22128,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         type_subst: &[(String, String)],
         mangled: &str,
     ) -> Result<(), String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc.
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.emit_generic_type_instance_scoped_inner(template, type_subst, mangled);
+        self.override_maps_scope_exit(ovr_saved, r.is_ok());
+        r
+    }
+
+    fn emit_generic_type_instance_scoped_inner(
+        &mut self,
+        template: &crate::ast::TypeDecl,
+        type_subst: &[(String, String)],
+        mangled: &str,
+    ) -> Result<(), String> {
         use crate::ast::TypeDeclKind;
         use crate::ast::SumVariantKind;
 
@@ -22639,6 +22710,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         type_subst: Vec<(String, crate::types::ResolvedType)>,
         mono_name: &str,
     ) -> Result<(), String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc.
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.emit_monomorphized_fn_scoped_inner(fn_decl, type_subst, mono_name);
+        self.override_maps_scope_exit(ovr_saved, r.is_ok());
+        r
+    }
+
+    fn emit_monomorphized_fn_scoped_inner(
+        &mut self,
+        fn_decl: &crate::ast::FnDecl,
+        type_subst: Vec<(String, crate::types::ResolvedType)>,
+        mono_name: &str,
+    ) -> Result<(), String> {
         use crate::ast::FnBody;
         // [M-sync-crossmodule…] (D381): resolve colliding-type references in a
         // monomorphized free-fn body under its declaring file (gated; byte-
@@ -22856,6 +22940,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
     /// All type parameters map to void*. The body is emitted with type params erased.
     fn emit_generic_fn_erased(&mut self, f: &FnDecl) -> Result<(), String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc.
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.emit_generic_fn_erased_scoped_inner(f);
+        self.override_maps_scope_exit(ovr_saved, r.is_ok());
+        r
+    }
+
+    fn emit_generic_fn_erased_scoped_inner(&mut self, f: &FnDecl) -> Result<(), String> {
         let mangled = self.mangle_fn(f);
         let type_params: HashSet<String> = f.generics.iter().map(|g| g.name.clone()).collect();
         // Build param types: bare T → void*, generic record T[U] → Nova_T*
@@ -23172,7 +23264,87 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("nova_preempt_check();");
     }
 
+    /// [race-198 class-closure 2026-07-13] Per-function scoping for the two
+    /// shared inference-override maps (`closure_param_type_overrides`,
+    /// `pattern_binding_overrides`). Both are consulted FIRST — before
+    /// `var_types` — by `recv_c_type_materialized` / `infer_expr_c_type`, so
+    /// any entry that survives past its intended insert/remove pair (early
+    /// return between the pair, unbalanced nesting on same-named params, a
+    /// `?`-propagated error that a caller recovers from, …) silently
+    /// SHADOWS the correct `var_types` entry for every LATER function in the
+    /// same CU that uses the same identifier. In a merged folder-module CU
+    /// (~1000 files) this manifested as auto-derived `@debug`/`@display`
+    /// bodies (`w: Write` → `Nova_StringBuilder*`) dispatching `w.write_str`
+    /// to a FOREIGN receiver type (`Nova_TcpStream_method_write_str`) —
+    /// reading a field at a foreign struct offset → composition-dependent
+    /// access violation (the Plan 198 floating-AV blocker; full localization
+    /// in docs/plans/196-race-state-dump-notes.md). Same defect class as the
+    /// documented Plan 139.2 `var_types`-not-per-fn-scoped case
+    /// (docs/debugging-races.md §6.4) — closed HERE as a CLASS (playbook
+    /// precedent), not by hunting the single unbalanced insert/remove site
+    /// (~30 candidate pairs, and a new one could regress tomorrow).
+    ///
+    /// Usage: every top-level function-body emission entry point wraps its
+    /// body in `enter`/`exit`. `enter` empties both maps (a fresh function
+    /// body legitimately starts with NO ambient overrides — closure params /
+    /// pattern bindings are strictly body-local) and returns the previous
+    /// contents; `exit` restores them, so LAZY re-entrant emission (a mono
+    /// drain or default-method synthesis triggered MID-body of an outer
+    /// function) hands the outer context back exactly what it had.
+    fn override_maps_scope_enter(
+        &self,
+    ) -> (HashMap<String, String>, HashMap<String, String>) {
+        (
+            std::mem::take(&mut *self.closure_param_type_overrides.borrow_mut()),
+            std::mem::take(&mut *self.pattern_binding_overrides.borrow_mut()),
+        )
+    }
+
+    /// Counterpart of `override_maps_scope_enter`. `emitted_ok` gates the
+    /// leak point-probe: on a successful emission both maps MUST have
+    /// drained back to empty (every insert paired with its remove) — a
+    /// non-empty map here is precisely the cross-function leak this scoping
+    /// contains, so surface it loudly in debug builds (release: contained
+    /// and discarded by the restore below either way). On a failed emission
+    /// (caller aborts or rolls back) intermediate entries are expected.
+    fn override_maps_scope_exit(
+        &self,
+        saved: (HashMap<String, String>, HashMap<String, String>),
+        emitted_ok: bool,
+    ) {
+        if emitted_ok {
+            debug_assert!(
+                self.closure_param_type_overrides.borrow().is_empty(),
+                "closure_param_type_overrides leaked past a function-body \
+                 emission (unbalanced insert/remove): {:?}",
+                self.closure_param_type_overrides
+                    .borrow()
+                    .keys()
+                    .collect::<Vec<_>>()
+            );
+            debug_assert!(
+                self.pattern_binding_overrides.borrow().is_empty(),
+                "pattern_binding_overrides leaked past a function-body \
+                 emission (unbalanced insert/remove): {:?}",
+                self.pattern_binding_overrides
+                    .borrow()
+                    .keys()
+                    .collect::<Vec<_>>()
+            );
+        }
+        *self.closure_param_type_overrides.borrow_mut() = saved.0;
+        *self.pattern_binding_overrides.borrow_mut() = saved.1;
+    }
+
     fn emit_fn(&mut self, f: &FnDecl) -> Result<(), String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc.
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.emit_fn_scoped_inner(f);
+        self.override_maps_scope_exit(ovr_saved, r.is_ok());
+        r
+    }
+
+    fn emit_fn_scoped_inner(&mut self, f: &FnDecl) -> Result<(), String> {
         // D82: external fn — Nova body отсутствует, реализация в nova_rt/.
         // Skip emit'инг полностью: dispatch на C-функцию делается в emit_call.
         // Plan 91.10 (D163 retracted): D163 stub generation удалён.
@@ -23858,6 +24030,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     fn emit_nova_main(&mut self, f: &FnDecl) -> Result<(), String> {
+        // [race-198 class-closure]: см. override_maps_scope_enter doc.
+        let ovr_saved = self.override_maps_scope_enter();
+        let r = self.emit_nova_main_scoped_inner(f);
+        self.override_maps_scope_exit(ovr_saved, r.is_ok());
+        r
+    }
+
+    fn emit_nova_main_scoped_inner(&mut self, f: &FnDecl) -> Result<(), String> {
         // nova main() → stored separately, called from C main()
         // Buffer body so spawn-ctx typedefs (lambda_forward_decls) flush
         // BEFORE main's body — иначе typedef в out появится после своего
