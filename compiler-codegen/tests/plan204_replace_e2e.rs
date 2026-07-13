@@ -60,12 +60,14 @@ fn commit_tag(dir: &Path, tag: &str) -> String {
     git(&["-C", &d, "rev-parse", "HEAD"], None)
 }
 
-/// `[replace]` overrides a `{ git, version }` dependency to a local `path`
-/// — `nova.lock` must record the PATH source (what's actually imported
-/// from), not a git/commit entry, and no network/git resolve for that dep
-/// is attempted at all (offline-safe dev loop).
+/// Plan 204 lockfix (D420, Cargo-семантика): `[replace]` overrides a
+/// `{ git, version }` dependency to a local `path` for the BUILD only.
+/// `nova.lock` must still record the RELEASE resolution — git url +
+/// resolved semver version + commit of the tag — NOT the replace path
+/// (replace is a local overlay and never leaks into the lock). A repeated
+/// sync with replace still active leaves the lock byte-identical.
 #[test]
-fn replace_overrides_to_path_in_lock() {
+fn replace_does_not_leak_into_lock() {
     let libb = unique("libb");
     init_repo(&libb);
     fs::write(
@@ -74,11 +76,10 @@ fn replace_overrides_to_path_in_lock() {
     )
     .unwrap();
     fs::write(libb.join("core.nv"), "module libb.core\n\nexport fn b() -> int => 1\n").unwrap();
-    commit_tag(&libb, "v1.0.0");
+    let libb_commit = commit_tag(&libb, "v1.0.0");
     let libb_url = libb.to_string_lossy().replace('\\', "/");
 
-    // Local sibling override — points at libb's OWN checked-out sources
-    // directly (no git involved at all for this dep).
+    // Local sibling override — points at libb's dev checkout directly.
     let libb_local = unique("libb_local");
     fs::create_dir_all(&libb_local).unwrap();
     fs::write(
@@ -107,19 +108,35 @@ fn replace_overrides_to_path_in_lock() {
     // path only appears as a [replace] override.
     let warnings = manifest::manifest_warnings(&m, &consumer.join("nova.toml"));
     assert!(warnings.is_empty(), "unexpected warnings: {:?}", warnings);
+    // Build-side resolution DOES honor the replace (imports.rs codepath).
+    match m.effective_source(&m.dependencies[0]) {
+        nova_codegen::manifest::DepSource::Path(p) => assert_eq!(p, libb_local_rel),
+        other => panic!("effective_source must honor replace, got {:?}", other),
+    }
 
     let cache_home = unique("home");
     std::env::set_var("NOVA_HOME", &cache_home);
     let res = lockfile::sync(&consumer);
-    std::env::remove_var("NOVA_HOME");
     assert!(res.is_ok(), "sync with replace: {:?}", res.err());
 
+    // Lock records the RELEASE resolution: git + version + tag commit.
     let lock = lockfile::load(&consumer).expect("load").expect("lock exists");
     assert_eq!(lock.packages.len(), 1);
     match &lock.packages[0].source {
-        LockedSource::Path { path } => assert_eq!(path, &libb_local_rel),
-        other => panic!("expected Path (replace override), got {:?}", other),
+        LockedSource::Git { url, version, commit, .. } => {
+            assert_eq!(url, &libb_url);
+            assert_eq!(version.as_deref(), Some("1.0.0"), "^1.0 → tag v1.0.0");
+            assert_eq!(commit, &libb_commit, "commit of the release tag, not dev path");
+        }
+        other => panic!("lock must record git (release) source, got {:?}", other),
     }
+
+    // Second sync with replace still active — lock byte-identical.
+    let text1 = fs::read_to_string(consumer.join("nova.lock")).unwrap();
+    lockfile::sync(&consumer).expect("second sync");
+    std::env::remove_var("NOVA_HOME");
+    let text2 = fs::read_to_string(consumer.join("nova.lock")).unwrap();
+    assert_eq!(text1, text2, "repeat sync with active replace must not rewrite lock");
 
     fs::remove_dir_all(&libb).ok();
     fs::remove_dir_all(&libb_local).ok();
