@@ -35200,6 +35200,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let want_instance = !matches!(&obj.kind, ExprKind::Ident(n)
                             if self.current_type_subst.contains_key(n)
                                || self.method_overloads.keys().any(|(t, _)| t == n));
+                        if std::env::var_os("NOVA_TRACE_D2HOLE").is_some() && rt.contains("D119Box") {
+                            eprintln!("[D2H-B3] rt={} method={} want_instance={}", rt, method, want_instance);
+                        }
                         let key = (rt.clone(), method.clone());
                         // Plan 138.2 Ф.0-final: under the universal `[]T` ≡
                         // `Vec[T]` flip, an array-extension method call
@@ -35261,6 +35264,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             && c.c_name.starts_with("__mono_method__")))
                                         .unwrap_or(false))
                                     .unwrap_or(false);
+                                if std::env::var_os("NOVA_TRACE_D2HOLE").is_some() && rt.contains("D119Box") {
+                                    eprintln!("[D2H-B3] rt={} method={} sentinel_here={} sentinel_alt={} n_cand={}",
+                                        rt, method, has_sentinel_here, has_sentinel_alt, candidates.len());
+                                }
                                 if has_sentinel_here || has_sentinel_alt {
                                     let recv_key = (rt.clone(), method.clone());
                                     // Plan 101.1: для array-ext receivers, mono_method_decls

@@ -9642,6 +9642,35 @@ impl<'a> TypeCheckCtx<'a> {
     /// Named, effectful Func, Readonly/Mut/Ptr) falls to a `Ty::Concrete` leaf —
     /// safe, because a carrier buried under such a leaf simply fails to unify and
     /// the caller's byte-parity gate then defers to legacy.
+    /// 196.5 Stage-D wave-2 (дыра-2): does `rt` RE-SPELL any of the callee's own
+    /// generic names (`vars` keys) as a bare `Named{name}`/`TypeParam(name)` leaf?
+    /// Such a value is a leaked DECLARATION spelling (an unsubstituted `T`/`U`),
+    /// not a concrete type — feeding it to the solver as a `Ty::Concrete` leaf is
+    /// exactly the d119 spelling-collision hazard (see `constraint_solver` module
+    /// doc). Used to reject poisoned arg-type candidates in
+    /// `resolve_return_channel` (producer B).
+    fn rt_respells_names(
+        rt: &ResolvedType,
+        vars: &HashMap<String, constraint_solver::TypeVar>,
+    ) -> bool {
+        use ResolvedType as R;
+        match rt {
+            R::TypeParam(n) => vars.contains_key(n),
+            R::Named { name, args, module } => {
+                (module.is_empty() && args.is_empty() && vars.contains_key(name))
+                    || args.iter().any(|a| Self::rt_respells_names(a, vars))
+            }
+            R::Tuple(items) => items.iter().any(|i| Self::rt_respells_names(i, vars)),
+            R::Array(inner) => Self::rt_respells_names(inner, vars),
+            R::Func { params, ret, .. } => {
+                params.iter().any(|p| Self::rt_respells_names(p, vars))
+                    || Self::rt_respells_names(ret, vars)
+            }
+            R::TypedPtr(_, inner) | R::Readonly(inner) => Self::rt_respells_names(inner, vars),
+            _ => false,
+        }
+    }
+
     fn ty_from_resolved_vars(
         rt: &ResolvedType,
         vars: &HashMap<String, constraint_solver::TypeVar>,
@@ -9782,7 +9811,16 @@ impl<'a> TypeCheckCtx<'a> {
         // carrier unify happens relative to that construction changes nothing for
         // it — `solver.unify(recv_pattern, concrete_recv)` still runs exactly once,
         // still strictly before `extra_eqs` is consumed (`solver.unify(a, b)` below).
+        let __d2h_trace = std::env::var_os("NOVA_TRACE_D2HOLE").is_some()
+            && recv.type_name.contains("D119Box");
         let mut solver = Solver::new();
+        if __d2h_trace {
+            eprintln!(
+                "[D2H-RRC-IN] recv={} pattern={:?} concrete={:?} unify_ok={}",
+                recv.type_name, recv_pattern, concrete_recv,
+                Solver::new().unify(&recv_pattern, &concrete_recv).is_ok()
+            );
+        }
         solver.unify(&recv_pattern, &concrete_recv).ok()?;
         let mut carrier_tr_subst: HashMap<String, TypeRef> = HashMap::new();
         carrier_tr_subst.insert("Self".to_string(), peeled.clone());
@@ -9820,7 +9858,23 @@ impl<'a> TypeCheckCtx<'a> {
                                 return None;
                             }
                             self.resolved_types_buf.borrow().get(&a.expr().id).cloned()
-                        });
+                        })
+                        // 196.5 Stage-D wave-2 (дыра-2, D2H): an arg type that RE-SPELLS
+                        // any of THIS callee's own generic names (`fn(T)->U` buffered for
+                        // a closure literal whose registration didn't substitute the
+                        // carrier — observed for user generic records: `D119Box[T]@map[U]`
+                        // arg buffered as `Func{[Named"T"], Named"U"}`) is unification
+                        // POISON, not information: `Ty::from_resolved` lifts the bare
+                        // `Named{T}` as a CONCRETE leaf (the d119 spelling hazard this
+                        // solver's fresh-var design exists to avoid), the pair-unify then
+                        // conflicts with the already-bound carrier var (`Var(T)=int` vs
+                        // `Named{T}`) and the WHOLE eq is atomically dropped — `U` never
+                        // binds, `as_concrete_leaf` honestly `None`s, and producer B
+                        // stays silent for the ENTIRE user-record method-generic class.
+                        // Rejecting the poisoned value falls through to the closure-
+                        // return peek below (`fpp_concrete` reseeded from the solver's
+                        // OWN carrier binding), which resolves the same call correctly.
+                        .filter(|rt| !Self::rt_respells_names(rt, &vars));
                     if let Some(a_rt) = a_rt {
                         extra_eqs.push((p_lifted, Ty::from_resolved(&a_rt)));
                     } else if let TypeRef::Func { params: fpp, return_type: Some(fr), .. } = &p_self {
@@ -9857,6 +9911,13 @@ impl<'a> TypeCheckCtx<'a> {
             let _ = solver.unify(a, b);
         }
         let resolved_ret = solver.resolve(&ret_template);
+        if __d2h_trace {
+            eprintln!(
+                "[D2H-RRC-IN] recv={} extra_eqs={:?} resolved_ret={:?} leaf={:?}",
+                recv.type_name, extra_eqs, resolved_ret,
+                solver.as_concrete_leaf(&resolved_ret)
+            );
+        }
         let rt = solver.as_concrete_leaf(&resolved_ret)?;
         // [M-196.5-node-substs] Producer B: `solver.subst` (via `solver.resolve`/
         // `as_concrete_leaf` per-var) already has EVERY carrier + method-level binding —
@@ -9879,6 +9940,12 @@ impl<'a> TypeCheckCtx<'a> {
                 })
             })
             .collect();
+        if std::env::var_os("NOVA_TRACE_D2HOLE").is_some() {
+            eprintln!(
+                "[D2H-RRC] recv={} names={:?} method_names_ordered={:?} decl_order_len={} ordered_len={} ordered={:?}",
+                recv.type_name, names, method_names_ordered, decl_order.len(), ordered.len(), ordered
+            );
+        }
         let ordered = if !decl_order.is_empty() && ordered.len() == decl_order.len() {
             ordered
         } else {
@@ -14673,6 +14740,15 @@ impl<'a> TypeCheckCtx<'a> {
                     continue;
                 }
                 let p_seeded = crate::const_fn_trampoline::subst_type_ref_pub(&p.ty, &subst);
+                if std::env::var_os("NOVA_TRACE_D2HOLE").is_some()
+                    && recv.type_name.contains("D119Box")
+                {
+                    eprintln!(
+                        "[D2H-RESID] recv={} method={} p_seeded={:?} a_ty={:?}",
+                        recv.type_name, f.name,
+                        p_seeded, self.infer_expr_type(a.expr(), call_scope)
+                    );
+                }
                 if let Some(a_ty) = self.infer_expr_type(a.expr(), call_scope) {
                     let _ = crate::const_fn_trampoline::unify_type(
                         &p_seeded, &a_ty, &method_names, &mut full_subst);
@@ -14696,6 +14772,15 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             let out_full = crate::const_fn_trampoline::subst_type_ref_pub(ret, &full_subst);
+            if std::env::var_os("NOVA_TRACE_D2HOLE").is_some()
+                && recv.type_name.contains("D119Box")
+            {
+                eprintln!(
+                    "[D2H-RESID] recv={} method={} out_full={:?} bail={}",
+                    recv.type_name, f.name, out_full,
+                    typeref_mentions_any(&out_full, &method_names)
+                );
+            }
             if typeref_mentions_any(&out_full, &method_names) {
                 return None; // still unresolved from the args — honest bail
             }
