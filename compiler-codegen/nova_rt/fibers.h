@@ -3000,6 +3000,13 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
             }
             _nova_pending_suppressed = _nv_aggf.error_suppressed;
         }
+        /* ИНВАРИАНТ M:N (не нарушать!): слот _nova_pending_suppressed —
+         * thread-local, и его безопасность держится на том, что между
+         * постановкой (выше) и потреблением ближайшим throw (ниже: typed /
+         * panic / plain → все через nova_last_error_set) НЕТ НИ ОДНОЙ точки
+         * планирования (park/yield/канал/sleep/IO). GC-аллокация файбер не
+         * перепланирует. Вставка сюда любой планирующей операции превращает
+         * это в STALE-slot гонку (см. docs/cases/mn-race-stale-slot-2026-05). */
         /* Plan 83.10 (2026-05-25): fix [M-83.10-armed-user-throw-routing].
          * USER_TYPED re-throw must preserve payload + tid для typed handler
          * dispatch. Без этого `with Fail[int]` handler не fires на main thread
