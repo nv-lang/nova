@@ -19486,7 +19486,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // does not paper over an Err with an unverified channel guess.
             return legacy;
         };
-        let Some(channel) = self.node_substs.get(&call_id) else {
+        let channel = self.node_substs.get(&call_id);
+        // [M-196.5-stage-c2] Plan 196.5 Stage-C2 — before degrading to legacy on a
+        // channel miss/incomplete/mismatch, try the composition described in
+        // `docs/plans/196.5-stage-c-notes.md` §2 Class R1: the checker channel
+        // structurally CANNOT write an entry when a call's turbofish re-spells the
+        // ENCLOSING generic body's OWN (residual, pre-mono) type-param (e.g.
+        // `alloc_buf[T](n)` called from inside `Vec[T]`'s own body — `T` is bound
+        // only post-mono). At EMIT time, though, `current_type_subst` (populated by
+        // the mono-wrapper before this body is emitted) already carries exactly
+        // that binding — `type_ref_to_c`/`resolved_type_to_c` already consult it
+        // (`resolved_named_to_c` ~3809, `TypeParam` arm ~3384). This composes TWO
+        // already-existing truths (channel-per-name ∪ turbofish-lowered-through-
+        // current_type_subst) — no new inference engine — and is trusted as a
+        // "hit" ONLY when it reproduces `legacy_pairs` byte-for-byte (propose-
+        // then-verify, unchanged discipline).
+        if let Some(composed) = self.compose_mono_type_args_ch(fn_decl, turbofish_refs, channel) {
+            if composed == legacy_pairs {
+                if trace {
+                    eprintln!(
+                        "[NODE_SUBSTS] consumer=mono_type_args call_id={:?} hit-composed n={}",
+                        call_id, composed.len()
+                    );
+                }
+                return Ok(composed);
+            }
+        }
+        let Some(channel) = channel else {
             if trace {
                 eprintln!(
                     "[NODE_SUBSTS] consumer=mono_type_args call_id={:?} fallback=miss",
@@ -19537,6 +19563,48 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             );
         }
         Ok(lowered)
+    }
+
+    /// [M-196.5-stage-c2] Plan 196.5 Stage-C2 — POST-mono composition helper for
+    /// `resolve_mono_type_args_ch` (B1). For each of `fn_decl`'s declared generics,
+    /// prefer a per-name `node_substs[call_id]` entry (lowered via
+    /// `resolved_type_to_c`, which ITSELF composes any residual `TypeParam` through
+    /// `current_type_subst` — so a channel entry that mentions the ENCLOSING body's
+    /// own type-param still lowers correctly here); where the channel has no entry
+    /// for a name, fall back to the positional turbofish ref (`resolve_mono_type_
+    /// args`'s own Source-1) lowered the SAME way. Returns `None` (never a partial
+    /// vec) unless EVERY generic resolves to a concrete (non-empty, non-`void*`)
+    /// C-name — the caller then gates adoption on byte-identity with the legacy
+    /// result, so this function inventing nothing new is provable, not assumed.
+    fn compose_mono_type_args_ch(
+        &self,
+        fn_decl: &crate::ast::FnDecl,
+        turbofish_refs: &[crate::ast::TypeRef],
+        channel: Option<&Vec<(String, crate::types::ResolvedType)>>,
+    ) -> Option<Vec<(String, String)>> {
+        if fn_decl.generics.is_empty() {
+            return None;
+        }
+        let mut out = Vec::with_capacity(fn_decl.generics.len());
+        for (i, g) in fn_decl.generics.iter().enumerate() {
+            let from_channel = channel
+                .and_then(|c| c.iter().find(|(n, _)| n == &g.name))
+                .and_then(|(_, rt)| self.resolved_type_to_c(rt).ok())
+                .filter(|c| !c.is_empty() && c != "void*");
+            let resolved = match from_channel {
+                Some(c) => c,
+                None => {
+                    let tr = turbofish_refs.get(i)?;
+                    let c = self.type_ref_to_c(tr).ok()?;
+                    if c.is_empty() || c == "void*" {
+                        return None;
+                    }
+                    c
+                }
+            };
+            out.push((g.name.clone(), resolved));
+        }
+        Some(out)
     }
 
     /// Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]: count the
@@ -20311,6 +20379,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             fn_decl.generics.iter()
                 .map(|g| (g.name.clone(), None))
                 .collect();
+        // [M-196.5-stage-c2] Pre-seed any names the channel DID resolve, even
+        // though the whole-map completeness gate above rejected the entry (a
+        // partial channel hit still safely narrows what Step 1 below needs to
+        // (re)derive — `infer_type_param_binding` never overwrites a bound
+        // slot, mirroring the `ordered`/`complete` per-name lowering above).
+        if let Some(channel) = self.node_substs.get(&call_id) {
+            for (name, rt) in channel {
+                if let Some(slot) = subst_slots.iter_mut().find(|(n, _)| n == name) {
+                    if slot.1.is_none() {
+                        if let Ok(c) = self.resolved_type_to_c(rt) {
+                            if !c.is_empty() && c != "void*" {
+                                slot.1 = Some(c);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         // [M-91.1-method-turbofish-dispatch] Seed slots from explicit
         // method-level type-args (`obj.method[U,...]`). Positional map onto
         // fn_decl.generics. `explicit_tf` was already taken above (channel-
@@ -20338,6 +20424,35 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let arg_c = self.infer_expr_c_type(arg.expr());
                 self.infer_type_param_binding(&param.ty, &arg_c, &mut subst_slots);
             }
+        }
+        // [M-196.5-stage-c2] Composed-hit early exit (Plan 196.5 Stage-C2, Class
+        // R2 — docs/plans/196.5-stage-c-notes.md §2): if the channel pre-seed +
+        // explicit turbofish + Step 1 (non-closure structural arg binding) alone
+        // already resolved EVERY method-level generic, Steps 2/2f/3 below are
+        // no-ops (each only fills a still-`None` slot) and the tail diagnostics
+        // never fire — returning here is BYTE-IDENTICAL to letting the function
+        // run to completion, just skipping the redundant closure/effect-clause
+        // work. R2's dominant shape (`fn Vec[T] mut @append[S AsSlice[T]](other
+        // S)`) binds `S` ONLY from `other`'s arg C-type — residual at CHECK time
+        // (the checker's `node_substs` producer structurally can't write it
+        // inside another generic body, §7 erased-body boundary) but ALREADY
+        // concrete at EMIT time (`infer_expr_c_type` resolves through THIS mono
+        // clone's `var_types`/`current_type_subst`) — composing the channel's
+        // silence with that already-concrete arg C-type, not a new inference path.
+        if subst_slots.iter().all(|(_, v)| v.is_some()) {
+            self.current_type_subst = saved_outer;
+            let result: Vec<(String, String)> = subst_slots.into_iter()
+                .filter_map(|(n, c)| c.map(|c| (n, c)))
+                .filter(|(_, c)| !c.is_empty() && c != "void*")
+                .collect();
+            if trace_ns {
+                eprintln!(
+                    "[NODE_SUBSTS] consumer=resolve_method_level_subst call_id={:?} ctx={} \
+                     hit-composed n={}",
+                    call_id, diag_context, result.len(),
+                );
+            }
+            return Ok(result);
         }
         // Step 2: closure args (`ClosureLight` `|x| ...` или `ClosureFull`
         // `fn(x int) -> int => ...`) — pre-infer closure return type.
@@ -34313,8 +34428,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         // `try_generic_static_ctor_mono` A1″ adoption (~18238).
                                                         let slot_names: Vec<String> =
                                                             fn_decl.generics.iter().map(|g| g.name.clone()).collect();
-                                                        let rt_slots = self.rt_slots_from_call(
+                                                        let mut rt_slots = self.rt_slots_from_call(
                                                             call_id, fn_decl.params.iter().map(|p| &p.ty), args, &slot_names);
+                                                        // [M-196.5-stage-c2] narrow B5 composition: the
+                                                        // receiver's own turbofish (`Vec[<elem>].method()`)
+                                                        // is a residual-safe RT source too — a bare `<elem>`
+                                                        // that re-spells the ENCLOSING generic body's own
+                                                        // type-param lowers through `current_type_subst`
+                                                        // exactly like `type_ref_to_c` already does for the
+                                                        // STRING `elem_c` above; only fills a still-`None`
+                                                        // slot (mirrors the existing `37877` call-site's
+                                                        // turbofish seed).
+                                                        self.rt_slots_seed_turbofish(&mut rt_slots, type_args);
                                                         let seeded = self.subst_map_adopt_rt(&type_subst, &rt_slots);
                                                         #[cfg(debug_assertions)]
                                                         self.shadow_check_node_substs(call_id, &type_subst);
