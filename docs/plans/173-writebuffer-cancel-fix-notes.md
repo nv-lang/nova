@@ -1,10 +1,52 @@
-# WriteBuffer.cancel CC-FAIL — диагноз (СТОП, ядро 196)
+# WriteBuffer.cancel CC-FAIL — диагноз + фикс (ЗАКРЫТО 2026-07-13)
 
 Задача: фикс pre-existing CC-FAIL `std/src/concurrency/supervised_deadline_test.nv`
 («WriteBuffer.cancel» класс). Worktree `nova-p173`, ветка `fix-writebuffer-cancel`
 (база `eede02fb8`).
 
-## Статус: диагноз завершён, ФИКС НЕ ДЕЛАЛСЯ (первопричина — ядро Plan 196)
+> **ИТОГ:** первичный СТОП снят владельцем (точка фикса — чекер-продюсер,
+> не легаси-зона). Фикс `[M-canceltoken-prelude-decl]` (коммит `96b3ac54c`,
+> системная форма по решению владельца — не спец-продюсер):
+> - `std/src/prelude/concurrency.nv` (НОВЫЙ): `export type CancelToken(*())`
+>   + extern "nova" декларации new / cancel() / cancel(reason any) /
+>   is_cancelled / reason -> Option[str] / merge -> CancelToken /
+>   cancelled_by (образец Plan 62.D.bis + 62.B; merge спеллится
+>   `-> CancelToken`, не `-> Self` — D132-проверка ложно требует fluent
+>   `-> @` у extern без тела).
+> - `std/src/prelude.nv`: re-export `{CancelToken}` (auto-available без
+>   import — паритет с прежним builtin-статусом).
+> - `types/mod.rs`: `"CancelToken"` убран из builtins HashSet.
+> - Codegen-диспатч не тронут: D75 special-cases перехватывают эмиссию
+>   раньше registry (instance ~33078 < ~33902, чей `Nova_`-гейт
+>   `NovaCancelToken*` не матчит; static 34196/37403 < 34206/37667);
+>   лоуэринг `CancelToken → NovaCancelToken*` — хардкод
+>   resolved_named_to_c (:3923), стоит раньше newtype-ветки.
+> - Тест: `spec_tests/conformance/d75_canceltoken_prelude_ctor.nv`
+>   (точная форма класса: ro-binding + cancel в spawn-капчуре + typed
+>   surface reason()).
+>
+> **Гейты:** conformance ПОЛНЫЙ канонично (`--positive --compile-error`,
+> без --jobs) = 113/0+7skip (== база; корневой merged-CU репортится под
+> именем одного файла — отдельной строки на новый файл не будет, норма;
+> точечный прогон файла — PASS); std/src/concurrency:
+> supervised_deadline_test **PASS** (позеленел), retry_test остался
+> CC-FAIL (generic-mono `nova_str`↔`Nova_T*`, ядро 196 — вне объёма);
+> std/src/collections 13/0+6skip; таргетные CancelToken-тесты nova_tests
+> (cancel_with_NULL_reason_ptr, supervised_cancel_double_bind,
+> pos_max_fibers_concurrent, nested_supervised_cancel, defer_cancel_safe_ok)
+> — PASS. Минимальный репро: binding эмитится
+> `NovaCancelToken* tok = nova_cancel_token_new();`.
+>
+> **Попутная находка (PRE-EXISTING, δ=0 доказан пересборкой base
+> eede02fb8):** ICE `[P67-LEGACY] Path call return type unknown for
+> method=now` (emit_c.rs:50492) при whole-folder прогоне
+> `nova_tests/plan83_10` — сосед по CU `handler_isolation_per_fiber.nv`
+> с Path-form `Time.now()`. Та же легаси-зона `infer_call_ret_c`
+> (ядро Plan 196) — НЕ тронуто, вне объёма.
+
+Ниже — исходный диагноз (историческая часть, написан на этапе СТОП).
+
+## Статус (исторический): диагноз завершён, фикс ждал снятия СТОП (ядро Plan 196)
 
 Владелец заранее указал стоп-условие: если первопричина в легаси-зоне
 `infer_call_ret_c` (ядро 196) — стоп после диагноза, не лезть в зону.
