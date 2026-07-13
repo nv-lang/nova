@@ -7,7 +7,7 @@
 //
 // EXPECT_COMPILE_ERROR E_FORMAT_SPEC_UNKNOWN
 
-module neg.unknown_spec_no_display_fmt
+module neg.d419_unknown_spec_neg
 
 type Tagged { s str }
 

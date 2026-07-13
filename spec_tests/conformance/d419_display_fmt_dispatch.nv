@@ -5,7 +5,7 @@
 //
 // See spec/decisions/02-types.md#d419 for the protocol/dispatch rule.
 
-module nova_tests.plan152_7_2
+module spec_tests.conformance
 
 // Type WITH @display_fmt — reacts to `#` (alternate) and `.N` (precision).
 type Tagged { s str }
