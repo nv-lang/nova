@@ -25223,65 +25223,139 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     // остаётся привязан).
     // ─────────────────────────────────────────────────────────────────
 
-    /// Собрать подмножество `active`, встречающееся ГДЕ-ТО внутри `e` голым
-    /// идентификатором (любая глубина — Call-аргументы на любом уровне
-    /// вложенности, а также прозрачные обёртки `Try`/`Bang`/`RefArg`/`As`/
-    /// `Is`/`Unary`/`Binary`/`Index`/`TurboFish`/`Member`-receiver). Не
-    /// проверяет consume-позицию — это уже сделал checker; здесь только
-    /// находим ГДЕ эмитить disarm.
+    /// Plan 201 (D188-амендмент v3, non-consume-position fix, 2026-07-13):
+    /// consume-параметр индексы ВЫЗОВА `e` (`e.id` — resolved-callee key) —
+    /// зеркалит checker's `call_consume_idxs` (types/mod.rs) для disarm-
+    /// детекции: НЕ каждое вхождение guarded-имени АРГУМЕНТОМ вызова —
+    /// санкционированный вынос, ТОЛЬКО consume-параметр позиция (receiver
+    /// НИКОГДА не консьюм-позиция здесь — consume-receiver-метод на
+    /// guarded-имени уже поймана checker'ом как `E_CONSUME_BLOCK_MOVE_OUT`
+    /// через `mark_consumed`/`guard_violations`, этот EXPR никогда не
+    /// доходит до codegen). Overload-aware: если checker резолвнул
+    /// конкретный callee для ЭТОГО call-site (`resolved_callees[e.id]`) —
+    /// использует ЕГО `param_modes` (точно, как основной dispatch-путь,
+    /// U.4.3 c2.2); иначе — последняя зарегистрированная сигнатура (нет
+    /// overload'а по этому ключу → нет неоднозначности).
+    fn call_consume_arg_idxs(
+        &self,
+        e: &Expr,
+        func_kind: &ExprKind,
+    ) -> std::collections::HashSet<usize> {
+        let mut out = std::collections::HashSet::new();
+        let key: Option<(String, String)> = match func_kind {
+            ExprKind::Member { obj, name: method } => {
+                if let ExprKind::Ident(recv) = &obj.kind {
+                    self.var_types.get(recv).map(|ty| {
+                        let bare = self.debt_strip_nova_trim_start(ty);
+                        let bare = bare.strip_prefix("NovaValue_")
+                            .map(|s| s.to_string()).unwrap_or(bare);
+                        (bare, method.clone())
+                    })
+                } else {
+                    None
+                }
+            }
+            ExprKind::Ident(fname) => Some((String::new(), fname.clone())),
+            ExprKind::Path(parts) if parts.len() == 2 => {
+                Some((parts[0].clone(), parts[1].clone()))
+            }
+            ExprKind::Path(parts) => parts.last().map(|last| (String::new(), last.clone())),
+            _ => None,
+        };
+        let Some(key) = key else { return out; };
+        let Some(sigs) = self.method_overloads.get(&key) else { return out; };
+        let chosen: Option<&MethodSig> = self.resolved_callees.get(&e.id)
+            .and_then(|chosen_span| sigs.iter().find(|s| s.fn_span == Some(*chosen_span)))
+            .or_else(|| sigs.last());
+        if let Some(sig) = chosen {
+            for (i, m) in sig.param_modes.iter().enumerate() {
+                if *m == 2 { out.insert(i); }
+            }
+        }
+        out
+    }
+
+    /// Собрать подмножество `active`, встречающееся РОВНО ОДИН раз внутри
+    /// `e`, В consume-параметр-позиции (любая глубина — Call-аргументы на
+    /// любом уровне вложенности, прозрачные обёртки `Try`/`Bang`/`RefArg`/
+    /// `As`/`Is`/`Unary`/`Binary`/`Index`/`TurboFish`/`Member`-receiver).
+    /// Plan 201 non-consume-position fix (2026-07-13): чекер теперь
+    /// санкционирует НЕ только единственное consume-позиционное вхождение
+    /// (disarm), но и ЛЮБОЕ количество вхождений ЦЕЛИКОМ вне consume-
+    /// позиции (receiver / view- / mut-аргумент — обычное использование,
+    /// БЕЗ disarm'а, см. `types::mod::classify_guard_scan`). Codegen
+    /// больше не может слепо доверять «любое найденное вхождение — вынос»
+    /// (это ломало `s.share()`-паттерн — receiver, не consume-арг) —
+    /// считаем occurrences ПОЗИЦИОННО (`call_consume_arg_idxs`) и
+    /// возвращаем имя, ТОЛЬКО если оно встретилось единожды И это вхождение
+    /// — consume-параметр.
     fn collect_reconsume_disarm_names(
+        &self,
         e: &Expr,
         active: &std::collections::HashSet<String>,
     ) -> std::collections::HashSet<String> {
-        let mut found = std::collections::HashSet::new();
-        Self::collect_reconsume_disarm_names_rec(e, active, &mut found);
-        found
+        let mut occs: std::collections::HashMap<String, Vec<bool>> = std::collections::HashMap::new();
+        self.collect_reconsume_occurrences_rec(e, active, &mut occs);
+        occs.into_iter()
+            .filter(|(_, v)| v.len() == 1 && v[0])
+            .map(|(k, _)| k)
+            .collect()
     }
 
-    fn collect_reconsume_disarm_names_rec(
+    fn collect_reconsume_occurrences_rec(
+        &self,
         e: &Expr,
         active: &std::collections::HashSet<String>,
-        found: &mut std::collections::HashSet<String>,
+        occs: &mut std::collections::HashMap<String, Vec<bool>>,
     ) {
         match &e.kind {
             ExprKind::Ident(name) => {
                 if active.contains(name) {
-                    found.insert(name.clone());
+                    occs.entry(name.clone()).or_default().push(false);
                 }
             }
             ExprKind::Call { func, args, .. } => {
                 let func_u = func.unwrap_turbofish();
+                let consume_idxs = self.call_consume_arg_idxs(e, &func_u.kind);
                 if let ExprKind::Member { obj, .. } = &func_u.kind {
-                    Self::collect_reconsume_disarm_names_rec(obj, active, found);
+                    self.collect_reconsume_occurrences_rec(obj, active, occs);
                 }
-                for a in args {
-                    Self::collect_reconsume_disarm_names_rec(a.expr(), active, found);
+                for (i, a) in args.iter().enumerate() {
+                    let ax = a.expr();
+                    if let ExprKind::Ident(name) = &ax.kind {
+                        if active.contains(name) {
+                            occs.entry(name.clone()).or_default()
+                                .push(consume_idxs.contains(&i));
+                            continue;
+                        }
+                    }
+                    self.collect_reconsume_occurrences_rec(ax, active, occs);
                 }
             }
             ExprKind::Member { obj, .. } => {
-                Self::collect_reconsume_disarm_names_rec(obj, active, found);
+                self.collect_reconsume_occurrences_rec(obj, active, occs);
             }
             ExprKind::Index { obj, index } => {
-                Self::collect_reconsume_disarm_names_rec(obj, active, found);
-                Self::collect_reconsume_disarm_names_rec(index, active, found);
+                self.collect_reconsume_occurrences_rec(obj, active, occs);
+                self.collect_reconsume_occurrences_rec(index, active, occs);
             }
             ExprKind::TurboFish { base, .. } => {
-                Self::collect_reconsume_disarm_names_rec(base, active, found);
+                self.collect_reconsume_occurrences_rec(base, active, occs);
             }
             ExprKind::Try(i) | ExprKind::Bang(i) | ExprKind::RefArg(i)
             | ExprKind::Unary { operand: i, .. } => {
-                Self::collect_reconsume_disarm_names_rec(i, active, found);
+                self.collect_reconsume_occurrences_rec(i, active, occs);
             }
             ExprKind::As(i, _) | ExprKind::Is(i, _) => {
-                Self::collect_reconsume_disarm_names_rec(i, active, found);
+                self.collect_reconsume_occurrences_rec(i, active, occs);
             }
             ExprKind::Binary { left, right, .. } => {
-                Self::collect_reconsume_disarm_names_rec(left, active, found);
-                Self::collect_reconsume_disarm_names_rec(right, active, found);
+                self.collect_reconsume_occurrences_rec(left, active, occs);
+                self.collect_reconsume_occurrences_rec(right, active, occs);
             }
             ExprKind::Coalesce(a, b) => {
-                Self::collect_reconsume_disarm_names_rec(a, active, found);
-                Self::collect_reconsume_disarm_names_rec(b, active, found);
+                self.collect_reconsume_occurrences_rec(a, active, occs);
+                self.collect_reconsume_occurrences_rec(b, active, occs);
             }
             _ => {}
         }
@@ -25361,7 +25435,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // внутренних под-throws не гарантирован для этих редких
                 // форм), но узкий амендмент v3 не таргетирует их —
                 // единственный засвидетельствованный путь — Call-в-Call.
-                let names_here = Self::collect_reconsume_disarm_names(e, names);
+                let names_here = self.collect_reconsume_disarm_names(e, names);
                 for name in &names_here {
                     if let Some((_, bid)) = self.reconsume_scopes.iter().rev()
                         .find(|(b, _)| b == name)
@@ -26478,7 +26552,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         } else {
                             let active: std::collections::HashSet<String> =
                                 self.reconsume_scopes.iter().map(|(b, _)| b.clone()).collect();
-                            Self::collect_reconsume_disarm_names(v, &active)
+                            self.collect_reconsume_disarm_names(v, &active)
                         };
                     let val = if !reconsume_disarm_names.is_empty() {
                         self.emit_expr_with_reconsume_disarm(v, &reconsume_disarm_names)?
@@ -26822,7 +26896,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     } else {
                         let active: std::collections::HashSet<String> =
                             self.reconsume_scopes.iter().map(|(b, _)| b.clone()).collect();
-                        let disarm_names = Self::collect_reconsume_disarm_names(t, &active);
+                        let disarm_names = self.collect_reconsume_disarm_names(t, &active);
                         if disarm_names.is_empty() {
                             self.emit_expr(t)?
                         } else {

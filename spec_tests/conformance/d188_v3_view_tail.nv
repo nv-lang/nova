@@ -1,0 +1,90 @@
+// D188-амендмент v3 non-consume-position fix (2026-07-13, Plan 201): tail/
+// return EXPR под `consume X { … }`, где guarded-биндинг `X` встречается
+// ТОЛЬКО в НЕ-consume-позиции (receiver `X.method()`, view-параметр
+// `f(X)`) — ОБЫЧНОЕ использование (как то же самое использование внутри
+// тела блока стейтментом): НЕ ошибка, cleanup срабатывает штатно, дизарма
+// нет. Регрессия (в тот же день, до первого релиза амендмента): v3-чекер
+// первой версии ошибочно объявлял ЛЮБОЕ такое вхождение нарушением
+// `E_CONSUME_BLOCK_MOVE_OUT` — ломало легальный v2-паттерн `consume s {
+// s.share() }` (живой пример: std/src/net/tcp_share_test.nv). Этот файл —
+// бывший `neg/d188_v3_non_consume_position_neg.nv`, переделанный в
+// позитив после исправления.
+// Spec: spec/decisions/03-syntax.md D188 §«Амендмент v3», п.2/п.5.
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+type D188V3Share consume { id int }
+
+fn D188V3Share consume @cleanup(_outcome ScopeOutcome) -> () { }
+fn D188V3Share consume @dispose() -> () { }
+
+// receiver-position (ro-view, НЕ consume) — обычное использование.
+fn D188V3Share @share() -> D188V3Share => { id: @id * 10 }
+fn D188V3Share @share_id() -> int => @id
+
+// свободная fn, `v` — view-параметр (НЕ consume) — обычное использование
+// АРГУМЕНТОМ, но НЕ в consume-позиции.
+fn d188v3_peek(v D188V3Share) -> int => v.id
+
+fn d188v3_view_wrap(consume r D188V3Share) -> int {
+    consume r {
+        return r.share_id()
+    }
+}
+
+fn d188v3_peek_wrap(consume r D188V3Share) -> int {
+    consume r {
+        return d188v3_peek(r)
+    }
+}
+
+test "D188-v3 fix: consume s { s.share() } — receiver-позиция tail-EXPR — обычное использование, cleanup срабатывает" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        consume s = D188V3Share { id: 7 }
+        consume out = consume s {
+            s.share()
+        }
+        assert(out.id == 70)         // копия-значение блока ушла наружу
+        assert(exit_calls == 1)      // cleanup `s` сработал (НЕ дизармлен)
+        out.dispose()
+    }
+}
+
+test "D188-v3 fix: return s.method_view() — receiver-позиция return-EXPR — обычное использование, cleanup срабатывает" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        consume r = D188V3Share { id: 9 }
+        ro v = d188v3_view_wrap(r)
+        assert(v == 9)
+        assert(exit_calls == 1)
+    }
+}
+
+test "D188-v3 fix: return f(r) — свободная fn, view-аргумент в return-EXPR — обычное использование, cleanup срабатывает" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        consume r = D188V3Share { id: 11 }
+        ro v = d188v3_peek_wrap(r)
+        assert(v == 11)
+        assert(exit_calls == 1)
+    }
+}
