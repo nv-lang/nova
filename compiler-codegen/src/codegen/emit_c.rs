@@ -20218,12 +20218,35 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Возвращает `None`, если у `callee` нет receiver (не instance-метод).
     /// `_call_id` не используется в самой реконструкции (эти сайты node_
     /// substs-residual) — параметр зарезервирован под probe-dedup/W1-i.B.
+    ///
+    /// `turbofish_args` — explicit method-level type-args from `obj.method[T,
+    /// ...](...)` call syntax (already extracted by the caller — `infer_call_
+    /// ret_c`'s `TurboFish{base:Member}` unwrap at its top, mirroring `emit_
+    /// call`'s `current_method_turbofish` stash at `~31860`). **[M-196.5-w1i-
+    /// turbofish-regression fix]** The W1-i.B flip (`resolve_mono_type_args`/
+    /// hand-rolled subst → this resolver, 196.5 Stage-D) dropped the m176 fix
+    /// ([M-codegen-method-return-turbofish], backlog-followups.md — CLOSED
+    /// 2026-07-06) for a METHOD-LEVEL generic that appears ONLY in RETURN
+    /// position with NO args/closures to structurally bind it from (e.g. `fn
+    /// Res consume @into[T]() -> Option[T]`): this resolver's carrier-bind
+    /// (step 1) and arg/closure-bind (step 2) both had nothing to see, so an
+    /// explicit `r.into[str]()` turbofish silently erased to the unbound
+    /// generic-stub `NovaOpt_Nova_T_p` — CC-FAIL (`nova_tests/plan176_holes/
+    /// m176_method_return_turbofish.nv`, regression caught outside the 4-
+    /// corpus census measurement). Fix: seed unbound method-level slots from
+    /// `turbofish_args` positionally (declaration order of `callee.generics`)
+    /// BEFORE the arg/closure derivation below — mirrors `resolve_method_
+    /// level_subst`'s `explicit_tf` seeding (`~20477`), same "explicit user
+    /// annotation wins, `infer_type_param_binding` never overwrites a bound
+    /// slot" precedence. Empty slice at call sites with no turbofish in scope
+    /// (chained-receiver dispatch, `~45297`) is a no-op — byte-identical there.
     fn resolve_instance_call_subst(
         &self,
         _call_id: ExprId,
         callee: &FnDecl,
         recv_instance_rt: &str,
         args: &[CallArg],
+        turbofish_args: &[TypeRef],
     ) -> Option<Vec<(String, Option<String>)>> {
         // 1. Carrier-биндинг — СТРУКТУРНО через уже-существующий
         // `infer_type_param_binding` (нет нового инференса): собрать
@@ -20284,6 +20307,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         for g in &callee.generics {
             if !subst.iter().any(|(n, _)| n == &g.name) {
                 subst.push((g.name.clone(), None));
+            }
+        }
+        // [M-196.5-w1i-turbofish-regression fix] Seed method-level slots from
+        // an explicit turbofish BEFORE structural arg/closure derivation —
+        // the ONLY source for a type-param appearing solely in return
+        // position with no param/closure to bind it from (m176 precedent).
+        // Positional: `callee.generics[i]` <- `turbofish_args[i]`. Only fills
+        // still-`None` slots (never overwrites a carrier/Self binding from
+        // step 1 above — disjoint namespace in practice, but the guard is
+        // cheap insurance).
+        if !turbofish_args.is_empty() {
+            for (g, tr) in callee.generics.iter().zip(turbofish_args.iter()) {
+                if let Ok(c) = self.type_ref_to_c(tr) {
+                    if !c.is_empty() && c != "void*" {
+                        if let Some(slot) = subst.iter_mut().find(|(n, _)| n == &g.name) {
+                            if slot.1.is_none() {
+                                slot.1 = Some(c);
+                            }
+                        }
+                    }
+                }
             }
         }
         if !callee.generics.is_empty() {
@@ -45294,7 +45338,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // использует `call_id` в самой реконструкции (см. его doc).
         // [M-196.5-w1i-flip]
         let subst = self
-            .resolve_instance_call_subst(ExprId::UNSET, &fd, stripped, args)
+            .resolve_instance_call_subst(ExprId::UNSET, &fd, stripped, args, &[])
             .unwrap_or_default();
         // Plan 153.2 Ф.2 (STAGE 2): value-AWARE resolution so a method that
         // returns a nested generic-over-source instance (e.g.
@@ -48840,7 +48884,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         // (W1-i.A) доказал 0/0 mismatch (1/1 hit,
                                         // conformance + std/collections). [M-196.5-w1i-flip]
                                         let subst_pending = self
-                                            .resolve_instance_call_subst(expr.id, &fn_decl, &rt, args)
+                                            .resolve_instance_call_subst(expr.id, &fn_decl, &rt, args, &turbofish_args)
                                             .unwrap_or_default();
                                         if let Some(ret_ty) = &fn_decl.return_type {
                                             if let Some(c_ty) = Self::apply_type_subst_to_ref(
@@ -48873,7 +48917,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             // SHADOW (W1-i.A) доказал 0/0 mismatch (1/1 hit,
                                             // conformance + std/collections). [M-196.5-w1i-flip]
                                             let subst_opt = self
-                                                .resolve_instance_call_subst(expr.id, &fn_decl, &rt, args)
+                                                .resolve_instance_call_subst(expr.id, &fn_decl, &rt, args, &turbofish_args)
                                                 .unwrap_or_default();
                                             if let Some(ret_ty) = &fn_decl.return_type {
                                                 // [M-valuerecord-receiver-generic-method] value-AWARE
@@ -49001,7 +49045,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             // [M-196.5-w1i-flip]
                                             if let Some(ret_ty) = &method_decl.return_type {
                                                 let subst = self
-                                                    .resolve_instance_call_subst(expr.id, method_decl, &rt, args)
+                                                    .resolve_instance_call_subst(expr.id, method_decl, &rt, args, &turbofish_args)
                                                     .unwrap_or_default();
                                                 // Plan 153.2 Ф.2 (STAGE 2): value-AWARE so a
                                                 // chained adapter return (nested generic-over-
