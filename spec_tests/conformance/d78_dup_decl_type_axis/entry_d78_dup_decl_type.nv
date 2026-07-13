@@ -1,0 +1,24 @@
+// Plan 202 Ф.1b (D78 rev-4 §5) — type-axis pos-fixture. Imports two
+// physically distinct modules (`a/neg/kind.nv`, `b/neg/kind.nv`) that D29
+// rev-3 forces to share the identical `module neg.kind` declaration, each
+// privately declaring/constructing/matching its OWN `Kind` sum type. Only
+// the accessor functions (`describe_a`/`describe_b`) are exported —
+// exercises `emit_c.rs`'s D381 collision-aware qualification
+// (`colliding_type_names`/`qualify_type_base`) on the physical-identity
+// axis Plan 202 Ф.1 opens (research 2026-07-13-module-naming-two-segment-
+// review.md §2а). Before the Ф.1b fix this failed to even reach a
+// runnable binary — a `Kind` collision undetected by decl-only grouping
+// meant both sum types shared one C tag-enum/ctor namespace.
+// D29 `parent.target` naming: `d78_dup_decl_type_axis.
+// entry_d78_dup_decl_type`.
+module d78_dup_decl_type_axis.entry_d78_dup_decl_type
+
+import a.neg.kind.{describe_a}
+import b.neg.kind.{describe_b}
+
+test "D78 rev-4 type axis: duplicate-decl modules each keep their own Kind sum type, values not mixed" {
+    assert(describe_a(1) == "a-alpha")
+    assert(describe_a(-1) == "a-beta")
+    assert(describe_b(1) == "b-gamma")
+    assert(describe_b(-1) == "b-alpha")
+}

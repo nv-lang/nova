@@ -1,0 +1,18 @@
+// Plan 202 Ф.1b (D78 rev-4 §5) — type axis, half B. See `a/neg/kind.nv`
+// doc comment for the full rationale. Same declaration (`module
+// neg.kind`), DIFFERENT physical directory, DIFFERENT variant set for the
+// same simple type name `Kind` — legal after Plan 202 Ф.1 (registry keyed
+// by canonical path) + Ф.1b (D381 qualification extended to physical
+// identity).
+module neg.kind
+
+type Kind enum Alpha | Gamma
+
+fn classify(n int) -> Kind =>
+    if n > 0 { Gamma } else { Alpha }
+
+export fn describe_b(n int) -> str =>
+    match classify(n) {
+        Alpha => "b-alpha"
+        Gamma => "b-gamma"
+    }

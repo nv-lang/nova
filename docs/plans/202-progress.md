@@ -38,3 +38,69 @@
 - **Вне объёма гейтов Plan 202:** #10 (`nova doc`).
 
 Commit этой таблицы — ДО правки резолвера (план требует commit-first).
+
+## Ф.1 — реализация (path-keyed реестр)
+
+**Код:** `compiler-codegen/src/imports.rs` — новая `pub(crate) fn canonical_module_key(resolved_paths:
+&[PathBuf]) -> Vec<String>` (identity = canonical filesystem path: parent-директория для
+folder-module-пира, сам файл для single-file — не зависит от алфавитного порядка peers, см.
+doc-comment у функции). Заменяет decl-based `module_key`/`entry_key` в:
+- `resolve_one`/`resolve_imports_inline_ex` (`visited`/`in_progress`, главный резолвер);
+- `collect_all_signatures`/`collect_sigs_one`/`ModuleSigTable::insert` (D292/D293 sig pre-pass —
+  переведён СИНХРОННО, `insert` теперь принимает explicit `key: Vec<String>` вместо `sigs.module_name`).
+
+Декларация (`module_name`) остаётся ТОЛЬКО identity-check (`E_D78_MODULE_PATH_MISMATCH`,
+`manifest.rs`, без изменений) — по плану «decl = identity-check, не routing key».
+
+**Репро §2а → PASS.** Ручной репро (`d/nova202repro`, вне репо) с двумя `neg.x`-модулями в разных
+поддеревьях: `nova check` — PASS (раньше `who_b` — «undefined identifier», якорь на module-decl).
+Побочно найден и обойдён НЕ связанный с Plan 202 баг: файл с basename `x` коллидирует с
+внутренним синтезированным идентификатором дериватора (`E7401 no function 'compare' in module
+'x'` при `nova build`, не при `nova check`) — переименование в `helper.nv` убирает симптом;
+отмечено ниже как отдельный backlog-маркер, вне объёма Plan 202.
+
+**Pos-фикстура:** `spec_tests/conformance/d78_dup_decl_registry/{a/neg/helper.nv, b/neg/helper.nv,
+entry_d78_dup_decl.nv}` — оба `neg.helper` (разные поддеревья `a/`, `b/`), оба экспорта (`who_a`,
+`who_b`) живы, значения не смешаны (`assert(who_a()==1)`, `assert(who_b()==2)`). `nova test` →
+**PASS**.
+
+## Ф.1b — mangling-ось (расширение D381-прецедента)
+
+При первом прогоне pos-фикстуры Ф.1 всплыл ОБЯЗАТЕЛЬНЫЙ (не гипотетический) баг: `CC-FAIL
+redefinition of 'nova_fn_3neg6helper6secret'` — обе одноимённые приватные `secret()` манглились в
+ОДИН C-символ, потому что D307-детектор коллизий (`name_modules: HashMap<String,
+BTreeSet<Vec<String>>>`, `emit_c.rs`) группировал по **decl** (`pf.module_name`): два физически
+разных модуля с одинаковым decl схлопывались в ОДНУ запись множества (`mods.len()==1` — коллизия
+НЕ детектится), а сам `mangle_free_fn`/`qualify_type_base` манглит по decl — даже задетекченная
+коллизия дала бы идентичный C-символ.
+
+**Код:** `compiler-codegen/src/codegen/emit_c.rs`, `emit_module` — общий блок ПЕРЕД fn- и
+type-коллизионными под-блоками:
+```
+let mut phys_key_of: HashMap<u32, Vec<String>> = ...;        // file_id → canonical_module_key
+let mut decl_phys_groups: HashMap<Vec<String>, BTreeSet<Vec<String>>> = ...; // decl → {physical keys}
+let effective_modpath = |pf: &PeerFile| -> Vec<String> { ... };  // decl, либо decl+"dupN" при
+                                                                   // decl_phys_groups[decl].len()>=2
+```
+`effective_modpath(pf) == pf.module_name` для ЛЮБОГО decl, отображающегося РОВНО в один физический
+модуль (весь существующий корпус, 0 деклараций сегодня расшарены ≥2 физическими модулями — раньше
+такое глоталось резолвером, а не существовало легально) — byte-identical гарантия сохранена.
+Применено к: `name_modules`/`module_file_ids`/`mangle_free_fn`/`fn_module_map` (fn-ось) и
+`type_def_modules`/`emit_file_module`/`file_type_module`-branch-(1) (type-ось, D381).
+
+**Известный остаточный пробел (вне обязательного объёма Ф.1b):** branch (2) `file_type_module`
+(суффикс-матчинг import-пути к DEFINING module) не различает decl-дубль при импорте типа
+СЕЛЕКТИВНО извне (не из своего же модуля) — деградирует к «ambiguous, оставить неквалифицированным»
+(существующий safe fallback, не путает значения, но может вернуть C-коллизию в этом узком
+сценарии). Обе Ф.1b-фикстуры этот путь не используют (тип используется только ВНУТРИ
+объявляющего модуля, экспортируются только функции-аксессоры) — задокументировано, не блокирует
+гейт. Кандидат-маркер: `[M-d78-dup-decl-type-cross-import-ambiguous]`.
+
+**Фикстуры (обе PASS через `nova test`, debug-бинарь):**
+- fn-ось: переиспользует Ф.1 pos-фикстуру (`d78_dup_decl_registry/`) — `secret()` линкуется, значения
+  разные (1/2).
+- type-ось: `spec_tests/conformance/d78_dup_decl_type_axis/{a/neg/kind.nv, b/neg/kind.nv,
+  entry_d78_dup_decl_type.nv}` — оба `neg.kind`, разные варианты sum-типа `Kind` (`Alpha|Beta` vs
+  `Alpha|Gamma`), конструкция+match внутри каждого модуля, наружу — только функции-аксессоры.
+  `assert(describe_a(1)=="a-alpha")`, `assert(describe_b(1)=="b-gamma")` и т.д. — значения не
+  смешаны.

@@ -61,9 +61,18 @@ impl ModuleSigTable {
         Self { table: HashMap::new() }
     }
 
-    /// Insert or replace the signatures for a module.
-    pub fn insert(&mut self, sigs: ModuleSignatures) {
-        self.table.insert(sigs.module_name.clone(), sigs);
+    /// Insert or replace the signatures for a module, keyed by `key`.
+    ///
+    /// **Plan 202 Ф.1 (D78 rev-4):** `key` MUST be the module's canonical
+    /// **path** identity ([`canonical_module_key`]), not its declaration —
+    /// see the doc on [`canonical_module_key`] for why. Before Plan 202 this
+    /// keyed by `sigs.module_name` (the declaration); two physically distinct
+    /// modules sharing a declaration (legal since D78 rev-4 — research
+    /// 2026-07-13 §2а) would silently overwrite each other's signatures here.
+    /// `sigs.module_name` is retained on [`ModuleSignatures`] as informational
+    /// (identity-check / display) — no longer the lookup key.
+    pub fn insert(&mut self, key: Vec<String>, sigs: ModuleSignatures) {
+        self.table.insert(key, sigs);
     }
 
     /// Return all modules that declare a function named `fn_name`.
@@ -289,9 +298,15 @@ pub fn collect_all_signatures(
     let mut visited: HashSet<Vec<String>> = HashSet::new();
     let mut in_progress: HashSet<Vec<String>> = HashSet::new();
 
+    // Plan 202 Ф.1 (D78 rev-4): key by canonical PATH identity, not
+    // declaration — see `canonical_module_key` doc. Mirrors the entry_key
+    // used by `resolve_imports_inline_ex` below so both registries agree on
+    // module identity (no second decl-keyed window, D78 rev-4 §Свойства п.4).
+    let entry_key = canonical_module_key(std::slice::from_ref(&entry_path.to_path_buf()));
+
     // Seed the table with the entry module's own items.
     let entry_sigs = collect_module_signatures_from_items(&module.items, module.name.clone());
-    table.insert(entry_sigs);
+    table.insert(entry_key.clone(), entry_sigs);
 
     // Build import work-list from the entry module's declared imports.
     let mut import_work: Vec<(Import, PathBuf)> = Vec::new();
@@ -308,7 +323,7 @@ pub fn collect_all_signatures(
     }
 
     // Mark entry as in-progress so transitive re-imports of entry early-return.
-    in_progress.insert(module.name.clone());
+    in_progress.insert(entry_key.clone());
 
     for (imp, importer) in &import_work {
         collect_sigs_one(
@@ -323,8 +338,8 @@ pub fn collect_all_signatures(
         );
     }
 
-    in_progress.remove(&module.name);
-    visited.insert(module.name.clone());
+    in_progress.remove(&entry_key);
+    visited.insert(entry_key);
 
     Ok(table)
 }
@@ -393,12 +408,11 @@ fn collect_sigs_one(
         return;
     }
 
-    // Determine module key from the first peer file.
-    let first_path = &resolved_paths[0];
-    let module_key: Vec<String> = read_module_decl(first_path).unwrap_or_else(|| {
-        let canon = first_path.canonicalize().unwrap_or_else(|_| first_path.clone());
-        vec![canon.to_string_lossy().to_string()]
-    });
+    // Plan 202 Ф.1 (D78 rev-4): canonical-path identity, not declaration —
+    // see `canonical_module_key` doc (research 2026-07-13 §2а: two physically
+    // distinct modules forced to the same 2-segment decl by D78 rev-3 must
+    // NOT be treated as "the same module" here).
+    let module_key: Vec<String> = canonical_module_key(&resolved_paths);
 
     // Cycle guard and dedup.
     if in_progress.contains(&module_key) || visited.contains(&module_key) {
@@ -423,7 +437,7 @@ fn collect_sigs_one(
         // Extract and insert signatures for this peer.
         let peer_sigs =
             collect_module_signatures_from_items(&peer_module.items, peer_module.name.clone());
-        table.insert(peer_sigs);
+        table.insert(module_key.clone(), peer_sigs);
 
         // Recurse into this peer's transitive imports.
         for sub in &peer_module.imports {
@@ -691,8 +705,14 @@ pub fn resolve_imports_inline_ex(
 
     // Plan 35 Ф.1 (D29): добавляем entry в in_progress + chain ДО resolve.
     // Если transitive import ссылается обратно на entry — cycle detected.
-    // Entry key = его declared module name (module.name).
-    let entry_key = module.name.clone();
+    // Plan 202 Ф.1 (D78 rev-4): entry_key — canonical PATH identity
+    // (`canonical_module_key`), NOT the declared module name. Two physically
+    // distinct modules forced to the same 2-segment decl by D78 rev-3 (research
+    // 2026-07-13 §2а) must resolve to DIFFERENT keys here, or the second one's
+    // exports silently vanish (`[M-d78-duplicate-decl-module-swallow]`).
+    // `import_chain` stays decl-based — it is purely a display trail for error
+    // messages, not an identity key.
+    let entry_key = canonical_module_key(std::slice::from_ref(&entry_path.to_path_buf()));
     in_progress.insert(entry_key.clone());
     import_chain.push(module.name.clone());
 
@@ -1496,22 +1516,20 @@ fn resolve_one(
         }
     }
 
-    // Plan 42.14 Ф.3 ([M11]): cycle detection по DECLARED MODULE NAME,
-    // не canonical PathBuf. Symlink / case-insensitive FS могли дать
-    // разные пути для same module → false-negative cycle. Module name
-    // (parent.X) — стабильный логический identity.
-    //
-    // Читаем `module X.Y` declaration из первого peer (lightweight —
-    // только первая non-comment строка, без полного parse).
-    let first_path = &resolved_paths[0];
-    let module_key: Vec<String> = read_module_decl(first_path)
-        .unwrap_or_else(|| {
-            // Fallback: если decl не прочитался — canonical path string
-            // как single-element key (всё равно уникален).
-            let canon = first_path.canonicalize()
-                .unwrap_or_else(|_| first_path.clone());
-            vec![canon.to_string_lossy().to_string()]
-        });
+    // Plan 42.14 Ф.3 ([M11], history): cycle detection изначально керилась
+    // по DECLARED MODULE NAME. Plan 202 Ф.1 (D78 rev-4, research 2026-07-13
+    // §2а): декларация — усечённая `parent.target` форма (D29 rev-3), НЕ
+    // уникальна по построению — два физически разных модуля, чьи пути
+    // случайно дают одинаковый `(parent, target)`, обязаны совпасть по
+    // decl (иначе `E_D78_MODULE_PATH_MISMATCH`), но это РАЗНЫЕ модули.
+    // Кеинг по decl тихо ГЛОТАЛ экспорты второго (`visited`-dedup считал
+    // его уже resolved) — `[M-d78-duplicate-decl-module-swallow]`.
+    // `canonical_module_key` — identity по canonical filesystem path
+    // (symlink/case-insensitive-safe через `Path::canonicalize`, как и
+    // раньше использовалось в fallback-ветке здесь). Декларация остаётся
+    // identity-check файла (`E_D78_MODULE_PATH_MISMATCH`, manifest.rs) —
+    // не routing/registry key.
+    let module_key: Vec<String> = canonical_module_key(&resolved_paths);
 
     // Plan 162 Ф.2: cycle guard — когда модуль уже находится в стеке
     // DFS (in_progress), это цикл импортов. Вместо stack-overflow или
@@ -1806,8 +1824,9 @@ fn resolve_one(
     }
 
     // Plan 42.14 Ф.3: pop in_progress + chain; promote module_key в
-    // closed-set. Все peers folder-module share один module_key (declared
-    // name) — diamond-dep dedup работает естественно.
+    // closed-set. Plan 202 Ф.1: все peers folder-module share один
+    // module_key (canonical directory path) — diamond-dep dedup работает
+    // естественно, и БЕЗ путаницы при decl-дубле из другой директории.
     // Plan 162 Ф.4: store collected exportable names alongside the key so
     // dedup-skipped imports can still populate visible_acc.
     in_progress.remove(&module_key);
@@ -1884,6 +1903,51 @@ pub fn scan_module_decl(src: &str) -> Option<Vec<String>> {
 fn read_module_decl(path: &Path) -> Option<Vec<String>> {
     let src = std::fs::read_to_string(path).ok()?;
     scan_module_decl(&src)
+}
+
+/// Plan 202 Ф.1 (D78 rev-4): module-registry identity key — canonical
+/// **filesystem path**, NOT declaration.
+///
+/// `resolved_paths` is whatever [`resolve_module_paths`] returned for one
+/// import target: either a single file (single-file module) or every peer
+/// `.nv` file of a folder-module. Every peer of a given physical
+/// folder-module resolves to the SAME key (all peers share one canonical
+/// directory); a genuine single-file module keys off the file itself. This
+/// is stable regardless of WHICH peer happens to be `resolved_paths[0]`
+/// (alphabetical sort order is irrelevant — folder identity is derived from
+/// the parent directory, not from any one file in it).
+///
+/// Two DIFFERENT physical modules whose D29 rev-3 `parent.target`
+/// declarations happen to coincide (research 2026-07-13 §2а — e.g.
+/// `src/a/neg/x.nv` and `src/b/neg/x.nv`, both forced to declare `module
+/// neg.x`) get DIFFERENT keys here, because they live under different
+/// canonical directories. This is the fix for
+/// `[M-d78-duplicate-decl-module-swallow]`: before Plan 202, the registry
+/// keyed by declaration, so the second same-decl module's `visited`/
+/// `in_progress` entry silently deduped against the first and its exports
+/// vanished. The declaration remains a pure identity-check
+/// (`E_D78_MODULE_PATH_MISMATCH`, `manifest.rs`) — never a routing/registry
+/// key (D78 rev-3 «Свойства» п.4, unchanged by this fix).
+///
+/// `canonicalize()` resolves symlinks and (on case-insensitive filesystems)
+/// normalizes to the on-disk casing, so two spellings of the same physical
+/// path collapse to one key — this mirrors the fallback branch this
+/// function replaces (used historically only when the decl-scan failed).
+pub(crate) fn canonical_module_key(resolved_paths: &[PathBuf]) -> Vec<String> {
+    debug_assert!(!resolved_paths.is_empty(), "caller must guard empty resolved_paths");
+    if resolved_paths.is_empty() {
+        return Vec::new();
+    }
+    let anchor: PathBuf = if is_folder_module_peer(&resolved_paths[0]) {
+        resolved_paths[0]
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| resolved_paths[0].clone())
+    } else {
+        resolved_paths[0].clone()
+    };
+    let canon = anchor.canonicalize().unwrap_or(anchor);
+    vec![canon.to_string_lossy().to_string()]
 }
 
 /// Plan 42 D29 rev-3 / Plan 81 Ф.10: is `path` a peer of a folder-module?
