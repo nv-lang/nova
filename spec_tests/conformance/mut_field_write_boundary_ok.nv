@@ -3,11 +3,11 @@
 // reads AFTER write — stay as direct @F access.
 
 module spec_tests.conformance
-type Counter6 {
+type Counter6_1 {
     mut value int
 }
 
-fn Counter6 mut @bump_and_check() -> int {
+fn Counter6_1 mut @bump_and_check() -> int {
     // Two reads BEFORE write → cache eligible (count=2 ≥ threshold).
     ro doubled = @value + @value
     @value = doubled
@@ -15,12 +15,12 @@ fn Counter6 mut @bump_and_check() -> int {
     @value
 }
 
-fn Counter6.new(v int) -> Counter6 {
-    Counter6 { value: v }
+fn Counter6_1.new(v int) -> Counter6_1 {
+    Counter6_1 { value: v }
 }
 
 test "mut field write invalidates cache" {
-    mut c = Counter6.new(5)
+    mut c = Counter6_1.new(5)
     ro r = c.bump_and_check()
     // initial=5, doubled = 5+5=10, @value=10, return @value=10.
     assert(r == 10)

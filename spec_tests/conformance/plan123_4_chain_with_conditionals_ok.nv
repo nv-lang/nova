@@ -5,7 +5,7 @@ type Wrap3_plan1234chainwithconditionalsok {
     ro inner Wrap_Inner
 }
 
-type Wrap_Inner {
+priv(file) type Wrap_Inner {
     ro flag int
     ro data int
 }

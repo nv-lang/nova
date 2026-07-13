@@ -1,15 +1,15 @@
 // Plan 132 Ф.1.7 (POS): unbound method value `Type.@method` still works.
-// `Counter9.@add` takes (Counter9, int) as explicit args (no capture).
+// `Counter9_2.@add` takes (Counter9_2, int) as explicit args (no capture).
 
 module spec_tests.conformance
-type Counter9 { value int }
+type Counter9_2 { value int }
 
-fn Counter9.new() -> Self => { value: 0 }
-fn Counter9 @add(n int) -> int => @value + n
+fn Counter9_2.new() -> Self => { value: 0 }
+fn Counter9_2 @add(n int) -> int => @value + n
 
 test "unbound Type.@method: explicit self pass" {
-    ro c = Counter9.new()
-    ro f = Counter9.@add
+    ro c = Counter9_2.new()
+    ro f = Counter9_2.@add
     ro r = f(c, 5)
     assert(r == 5)
 }

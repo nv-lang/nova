@@ -2,14 +2,14 @@
 // treated as ro (stack value immutable) → cached.
 
 module spec_tests.conformance
-type Vec32(x int, y int, z int)
+type Vec32_3(x int, y int, z int)
 
-fn Vec32 @magnitude_sq() -> int {
+fn Vec32_3 @magnitude_sq() -> int {
     @x * @x + @y * @y + @z * @z
 }
 
 test "named tuple ro caching" {
-    ro v = Vec32(3, 4, 12)
+    ro v = Vec32_3(3, 4, 12)
     // 9 + 16 + 144 = 169
     assert(v.magnitude_sq() == 169)
 }

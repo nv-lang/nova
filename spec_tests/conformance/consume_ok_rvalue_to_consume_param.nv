@@ -3,15 +3,15 @@
 // обязан consumed внутри.
 
 module spec_tests.conformance
-type Transaction6 consume {
+type Transaction6_1 consume {
     id int,
 }
 
-fn Transaction6 consume @commit() -> () { () }
+fn Transaction6_1 consume @commit() -> () { () }
 
-fn begin() -> Transaction6 => { id: 42 }
+fn begin() -> Transaction6_1 => { id: 42 }
 
-fn close(consume t Transaction6) -> () {        // consume-param
+fn close(consume t Transaction6_1) -> () {        // consume-param
     t.commit()                                  // ownership consumed внутри
 }
 

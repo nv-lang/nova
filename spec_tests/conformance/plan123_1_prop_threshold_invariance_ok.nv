@@ -3,11 +3,11 @@
 // give same answer regardless of caching.
 
 module spec_tests.conformance
-type Counter9 {
+type Counter9_1 {
     ro init int
 }
 
-fn Counter9 @factorial_like(n int) -> int {
+fn Counter9_1 @factorial_like(n int) -> int {
     // @init accessed n times через recursion-like loop.
     mut total = @init
     mut i = 0
@@ -18,12 +18,12 @@ fn Counter9 @factorial_like(n int) -> int {
     total
 }
 
-fn Counter9.new(x int) -> Counter9 {
-    Counter9 { init: x }
+fn Counter9_1.new(x int) -> Counter9_1 {
+    Counter9_1 { init: x }
 }
 
 test "property: caching never changes result" {
-    ro c = Counter9.new(2)
+    ro c = Counter9_1.new(2)
     assert(c.factorial_like(0) == 2)        // just init
     assert(c.factorial_like(1) == 4)        // 2 * 2
     assert(c.factorial_like(3) == 16)       // 2 * 2*2*2 = 16
@@ -31,7 +31,7 @@ test "property: caching never changes result" {
 }
 
 test "property: zero/positive args invariant" {
-    ro c = Counter9.new(5)
+    ro c = Counter9_1.new(5)
     // 5 * 5^n
     assert(c.factorial_like(0) == 5)
     assert(c.factorial_like(2) == 125)
