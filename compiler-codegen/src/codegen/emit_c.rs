@@ -1709,6 +1709,16 @@ pub struct CEmitter {
     /// gates on THIS set (not `consume_cleanup_types`) so the two can never
     /// desync into a C compile error (field read without field emit).
     consume_ccount_structs: HashSet<String>,
+    /// `[M-178-consume-field-ctor-from-var]` × D188 v3 (2026-07-13): source
+    /// type name (record, or sum-variant name for record-payload variants) →
+    /// names of its `consume`-marked fields. Populated by an emit_module
+    /// pre-pass (module.items + peer_files). Consulted by
+    /// `collect_reconsume_occurrences_rec` / `emit_expr_with_reconsume_disarm`:
+    /// a guarded re-consume binding appearing as a consume-field init of a
+    /// record literal in tail/return position = sanctioned move-out → the
+    /// block cleanup must be DISARMED at literal construction (mirror of the
+    /// consume-call-argument disarm).
+    record_consume_fields: HashMap<String, HashSet<String>>,
 }
 
 /// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }` statement.
@@ -2121,6 +2131,7 @@ impl CEmitter {
             preempt_keep: crate::codegen::preempt_keep::PreemptKeepSet::default(),
             consume_cleanup_types: HashSet::new(),
             consume_ccount_structs: HashSet::new(),
+            record_consume_fields: HashMap::new(),
         }
     }
 
@@ -4211,6 +4222,48 @@ impl CEmitter {
             collect(&module.items);
             for pf in &module.peer_files {
                 collect(&pf.items_here);
+            }
+        }
+
+        // `[M-178-consume-field-ctor-from-var]` × D188 v3: pre-pass — collect
+        // consume-field names per record type / record-payload sum variant
+        // (mirror of checker's ConsumeRegistry.record_consume_fields; keyed by
+        // source name, same lookup as the RecordLit type_name last segment).
+        {
+            let mut collect_types = |items: &[Item]| {
+                for item in items {
+                    if let Item::Type(td) = item {
+                        match &td.kind {
+                            TypeDeclKind::Record(fields) => {
+                                let names: HashSet<String> = fields.iter()
+                                    .filter(|f| f.consume)
+                                    .map(|f| f.name.clone())
+                                    .collect();
+                                if !names.is_empty() {
+                                    self.record_consume_fields.insert(td.name.clone(), names);
+                                }
+                            }
+                            TypeDeclKind::Sum(variants) => {
+                                for v in variants {
+                                    if let crate::ast::SumVariantKind::Record(fields) = &v.kind {
+                                        let names: HashSet<String> = fields.iter()
+                                            .filter(|f| f.consume)
+                                            .map(|f| f.name.clone())
+                                            .collect();
+                                        if !names.is_empty() {
+                                            self.record_consume_fields.insert(v.name.clone(), names);
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            };
+            collect_types(&module.items);
+            for pf in &module.peer_files {
+                collect_types(&pf.items_here);
             }
         }
 
@@ -25472,6 +25525,41 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.collect_reconsume_occurrences_rec(a, active, occs);
                 self.collect_reconsume_occurrences_rec(b, active, occs);
             }
+            // `[M-178-consume-field-ctor-from-var]` × D188 v3 (2026-07-13):
+            // consume-поле record-литерала = consume-позиция (зеркало
+            // checker'ского `scan_guard_rec`). Инициализация consume-поля
+            // guarded-биндингом в tail/return EXPR — санкционированный
+            // вынос: дизарм при конструировании литерала.
+            ExprKind::RecordLit { type_name, fields, .. } => {
+                let consume_field_names: Option<&HashSet<String>> = type_name
+                    .as_ref()
+                    .and_then(|p| p.last())
+                    .and_then(|tn| self.record_consume_fields.get(tn));
+                for f in fields {
+                    let is_consume_field = !f.is_spread && consume_field_names
+                        .map_or(false, |s| s.contains(f.name.as_str()));
+                    match &f.value {
+                        Some(v) => {
+                            if let ExprKind::Ident(name) = &v.kind {
+                                if active.contains(name) {
+                                    occs.entry(name.clone()).or_default()
+                                        .push(is_consume_field);
+                                    continue;
+                                }
+                            }
+                            self.collect_reconsume_occurrences_rec(v, active, occs);
+                        }
+                        // D52 punning `{ name }` — implied ident `name`.
+                        None if !f.is_spread => {
+                            if active.contains(f.name.as_str()) {
+                                occs.entry(f.name.clone()).or_default()
+                                    .push(is_consume_field);
+                            }
+                        }
+                        None => {}
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -25549,7 +25637,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Заведомо избыточно-консервативно (порядок относительно
                 // внутренних под-throws не гарантирован для этих редких
                 // форм), но узкий амендмент v3 не таргетирует их —
-                // единственный засвидетельствованный путь — Call-в-Call.
+                // засвидетельствованные пути: Call-в-Call и (M-178 ×
+                // D188 v3, 2026-07-13) record-литерал с consume-полем,
+                // инициализированным guarded-биндингом (`MyRec{res: s, …}`
+                // как tail/return) — конструирование литерала не может
+                // упасть ПОСЛЕ вычисления полей, окно «дизарм → до
+                // передачи владения» схлопывается в сами field-exprs.
                 let names_here = self.collect_reconsume_disarm_names(e, names);
                 for name in &names_here {
                     if let Some((_, bid)) = self.reconsume_scopes.iter().rev()

@@ -27231,9 +27231,36 @@ fn scan_guard_rec(
                 }
             }
         }
-        ExprKind::RecordLit { fields, .. } => {
+        ExprKind::RecordLit { type_name, fields, .. } => {
+            // `[M-178-consume-field-ctor-from-var]` × D188 v3 (2026-07-13):
+            // consume-поле record-литерала — тоже consume-позиция (дизарм в
+            // момент конструирования литерала), симметрично consume-аргументу
+            // вызова. Non-consume поля — обычные вхождения.
+            let consume_field_names: Option<&HashSet<String>> = type_name
+                .as_ref()
+                .and_then(|p| p.last())
+                .and_then(|tn| ctx.reg.record_consume_fields.get(tn));
             for f in fields {
-                if let Some(v) = &f.value { scan_guard_rec(ctx, v, canon, occ, closures); }
+                let is_consume_field = !f.is_spread && consume_field_names
+                    .map_or(false, |s| s.contains(f.name.as_str()));
+                match &f.value {
+                    Some(v) => {
+                        if let ExprKind::Ident(name) = &v.kind {
+                            if ctx.canonical(name) == canon {
+                                occ.push((v.span, is_consume_field));
+                                continue;
+                            }
+                        }
+                        scan_guard_rec(ctx, v, canon, occ, closures);
+                    }
+                    // D52 punning `{ name }` — implied ident `name`.
+                    None if !f.is_spread => {
+                        if ctx.canonical(&f.name) == canon {
+                            occ.push((f.span, is_consume_field));
+                        }
+                    }
+                    None => {}
+                }
             }
         }
         ExprKind::TupleLit(items) => {
