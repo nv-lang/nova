@@ -17,7 +17,9 @@ Go/Python/Node — оба внутри (ценой бандла криптогр
 ### Ф.1 — перенос
 - `git init d:/Sources/nv-lang/nova-http`; структура: `nova.toml` (`[lib] src="src"`,
   `[dependencies] tls = { path = "../nova-tls" }` — форму зависимости взять из рабочего
-  cross-package прецедента 202-Ф.2/Ф.3), `src/*.nv` (module `http`, root peers D78 rev-4),
+  cross-package прецедента 202-Ф.2/Ф.3; **path-dep = dev-форма, временно до Plan 204**
+  (git+semver+nova.lock, Q-dependency-versioning) — при закрытии 204 заменить на
+  `{ git = "https://github.com/nv-lang/nova-tls", version = "..." }`), `src/*.nv` (module `http`, root peers D78 rev-4),
   подпапки `src/client/` и т.д. — как в текущем `std/src/http/**` (папка = подмодуль,
   `http.client`, `http.transport`, ...).
 - Лицензии MIT+Apache и README — по образцу nova-tls.
