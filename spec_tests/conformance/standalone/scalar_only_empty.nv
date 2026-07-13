@@ -13,7 +13,7 @@
 // EXPECT (gc-layout-analyze --format json):
 //   Scalars → size 24, align 8, pointer_offsets [], variants [], unresolved false
 
-module spec_tests.conformance
+module standalone.scalar_only_empty
 
 type Scalars {
     n int
