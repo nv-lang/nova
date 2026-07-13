@@ -14499,6 +14499,29 @@ impl<'a> TypeCheckCtx<'a> {
                 if __d1h1_trace2 {
                     eprintln!("[D1H1-arity] type_name={} method={} NO-OVERLOADS", type_name, method);
                 }
+                // 196.5 Stage-D wave-2 (дыра-1, D1H1 шаг 3): `unwrap`-семья на
+                // Option/Result — РЕТРАКТИРОВАННЫЕ методы (D85/D86, prelude
+                // `[M-unwrap-twins-retraction]`): деклараций в .nv НЕТ, но вызовы
+                // живут (conformance d119_*, m196_*; desugar map-spread СИНТЕЗИРУЕТ
+                // `.get(k).unwrap()`) и обслуживаются исключительно codegen-легаси
+                // хардкодом (`emit_c.rs` B11q/B11r match-армы: `"unwrap" |
+                // "unwrap_or" | "unwrap_or_else" => elem_ty/ok_c`). Продюсер канала
+                // работает от деклараций → для undeclared метода канал co-miss
+                // ПО ПОСТРОЕНИЮ. Зеркалируем тот же фундаментальный факт
+                // (`Option[T]→T`, `Result[T,E]→T`) на уровне чекера — НЕ язык-
+                // меняющее (поведение уже такое), просто материализация в канал.
+                // Гейт: конкретный (не param) первый generic — residual пометит
+                // mark_type_params на Call-арме, как у всех продюсеров.
+                if matches!(method, "unwrap" | "unwrap_or" | "unwrap_or_else") {
+                    if let TypeRef::Named { path, generics, .. } = peeled {
+                        if path.len() == 1
+                            && ((path[0] == "Option" && generics.len() == 1)
+                                || (path[0] == "Result" && generics.len() == 2))
+                        {
+                            return Some(generics[0].clone());
+                        }
+                    }
+                }
                 // 172.1.2 (protocol-ресивер, 2026-07-03): `w Writer` — сигнатура
                 // метода живёт в декларации ПРОТОКОЛА (D53), не в method_table.
                 // Konkretный declared return (без generics/Self) — фундаментальный
