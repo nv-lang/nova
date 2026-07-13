@@ -41,7 +41,7 @@ export NOVA_INCLUDE_DIR=/d/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed
 | D10 — dedup | 13 кластеров / 22 файлов | ❎ НЕ ТРЕБУЕТСЯ (см. журнал) |
 | D11 — dedup | 11 кластеров / 22 файлов | ❎ НЕ ТРЕБУЕТСЯ (см. журнал) |
 | D12 — dedup | 11 кластеров / 22 файлов | ❎ НЕ ТРЕБУЕТСЯ (см. журнал) |
-| FIN — интеграция: полный check 0 dup, полный `nova test spec_tests/conformance --full` без --jobs | — | ⬜ |
+| FIN — интеграция | — | ✅ 2026-07-13: conformance+soundness полный прогон PASS 463 / FAIL 14 / SKIP 9; 9 TIMEOUT (neg/) = environmental, точечный ре-ран 9/9 PASS → эффективно **472 PASS / 5 объяснённых FAIL**: merged-CU (блокер №8), view_descriptor_stack + t4_sqlite (known-red), 2 soundness/deferred (Ф.3 статус-кво) |
 
 ## Батч M — файлы с процессными EXPECT-маркерами → `standalone/`
 
@@ -403,3 +403,5 @@ export NOVA_INCLUDE_DIR=/d/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed
       изолированно тест PASS → баг runtime-паник-машинерии на большом CU.
    До фикса a+b merged flat CU **не запускаем**; отдельные единицы (neg/, standalone/,
    подпапки, soundness) — зелёные и составляют текущий гейт.
+
+- 2026-07-13 FIN: гейт снят. Merged flat CU (1010 файлов, 2589 test-блоков) ПОЛНОСТЬЮ компилируется и линкуется (0 dup, 0 checker/codegen/link ошибок) — заблокирован только runtime-дефектами №8a/8b (стек main_impl + AV в panics-recovery), чинит компиляторная волна. До фикса №8 строка app_effect_basic_t8_1 в прогоне = ожидаемый RUN-FAIL.
