@@ -12,20 +12,25 @@
 
 Быстрый вход для нового агента — [docs/promts/read-project.md](../promts/read-project.md). Сводка:
 
-- **196 (одно окно) — высший приоритет.** Фундамент [196.4] Stage-1a+1b ✅; волна-2 [196.3]: инвентарь
-  12/12 обработан (трекер с доказательствами), D-трекер 13✅/7🔄; волна-1 [196.2]: 26/114, атомарные
-  исчерпаны. Следующий keystone — node_substs-канал (Stage-1c) → Tier-2 + финал `infer_call_ret_c`.
-- **187** MVP ✅ (`examples/flagship/aggregator/`); остаток: SSE-мост, typed-serde, real-cancel (за 173), Live.
-- **173** — срочные хвосты в работе: parfor-record-miscompile + `supervised(deadline:)` (sleep-гонка).
+- **196 (одно окно) — высший приоритет; статус 2026-07-13 (вечер): стадия-1 ~70%, стабильность ДОСТИГНУТА.**
+  Канал node_substs + композиция POST-mono влиты (промахи B1/B2 → единицы); реестр `infer_call_ret_c`
+  **114 → 51** (волны 1-3 + census [196.5-stage-d-census]); 196.6: три первопричины нестабильности убиты
+  (плавающий AV/b11x-флейк = мисскомпиляция auto-derive + рейс worker-sweep + утечка override-карт) —
+  **гейт 468/0 строго зелёный**. Остаток до closeout: 48 живых веток (6 replay-доказанных → волна-4 идёт),
+  фасеты B/C/D матрицы (callnorm/argbind, единый FnDecl-резолв), структурный финал-гейт + `->data`-греп.
+- **187** — Ред.5-v2 готова к запуску Ф.MVP-2: ВСЕ внешние гейты сняты (TLS=nova-tls, 173 закрыт, SSE в main); демо = живой Nova-бек, канон показа Docker; предложена Ред.6-пятёрка витринных улучшений.
+- **173** ✅ семейство закрыто 2026-07-13 (MultiError D414 + propagation-trace per-fiber + suppressed явным параметром); остаток: п.4 semaphore-cap (P3, опция) + [M-173-trace-not-in-child-error] (P3).
 - **193** ✅ закрыт (std/tls → внешний dep `../nova-tls`, ноль Rust в TLS-пути); хвост — vendored mbedTLS.
-- **198**: DELETE ✅ (1158), MIGRATE финиширует; `nova_tests/` заморожен.
+- **198** ✅ Ф.2 REDO ЗАКРЫТ 2026-07-13: корпус мигрирован в spec_tests по D307 (merged-CU 2585 блоков PASS; гейт 468/0+12skip); вечно-красные в fixtures/known_red; остаток Ф.4c = 9 классов компиляторных находок (198-redo-notes).
+- **201** ✅ ЗАКРЫТ 2026-07-13 (consume-блок D188 v1/v2/multi-var/v3/v3.1 + @share/refcount в nv + M-178 прямой move в consume-поле D133; спек-амендменты в тех же слияниях).
+- **202** ✅ ЗАКРЫТ 2026-07-13 (path-keyed реестр модулей + root peers D78 rev-4 + миграция nova-tls; [M-d78-duplicate-decl-module-swallow] снят).
 - **200** — живой реестр: П1/П2/П4/П5 ✅; П6 (Vec.data→ptr) ⏸️ на паузе (ABI-правка, не std-рефактор); П3 (As*) — в Q.
 - **200.1** — [скорость `nova test std`](200.1-std-test-speed.md) 📋 согласован 2026-07-13: папочные CU для std-тестов + кеш + профиль медленных; после 196/198.
-- **203** — [вынос http из std → nv-lang/nova-http](203-http-out-of-std.md) 📋 согласован 2026-07-13 (школа Rust/Swift; std перестаёт зависеть от внешней tls-репы; module-path потребителей не меняется); path-dep в нём — dev-форма до 204.
-- **204** — [версии зависимостей: git+semver+nova.lock](204-dependency-versioning.md) 📋 согласован 2026-07-13 (Q-dependency-versioning; path только под [replace]; MVS-резолв; D-блок тем же слиянием, что код).
+- **203** ✅ ЗАКРЫТ 2026-07-13: http = публичная nv-lang/nova-http (root peers, module-path прежний), std самодостаточен; +2 фикса резолвера.
+- **204** ✅ ЗАКРЫТ 2026-07-13 (D420): 03.x уже дал git+semver+lock+резолвер; дельта = [replace]-секция + W_DEP_PATH_NO_RELEASE + lock-семантика (replace не течёт в lock); nova-http на git-форме v0.1.0 с lock в репе.
 - **205** — [компрессия из nova_rt → nv-lang/nova-compress](205-compress-out-of-nova-rt.md) 📋 согласован 2026-07-13 (nova_rt = только рантайм; brotli 7МБ уезжает пакетом по школе nova-tls; после гейтов 203).
 - **152.7.2** — [формат-контекст в Display (D419) + интерполяция прямо-в-sink](152.7.2-format-context.md) 🔨 в работе 2026-07-13 (Fmt-протокол, `#`=pretty, str.from уходит из движка интерполяции).
-- Гейт: conformance один-CU **97/0**; язык-меняющее — только со спек-амендментом в том же слиянии.
+- Гейт: conformance (мега-CU 2585 блоков + корпус) **468/0 + 12 SKIP** (2026-07-13); язык-меняющее — только со спек-амендментом в том же слиянии.
 
 ## Схема нумерации
 
