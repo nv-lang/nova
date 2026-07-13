@@ -50026,33 +50026,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 ),
                             }
                         }
-                        // D74 math methods on f64/f32 — return f64 (most) or bool (predicates).
-                        if obj_ty == "nova_f64" || obj_ty == "nova_f32" {
-                            // [M-ptr-raw-access-contract-and-unaligned] item 3:
-                            // `to_bits` hardcode return-type снят — numeric.nv
-                            // ЧИСТЫЙ .nv method, return-type резолвится обычным
-                            // Nova-body method-return-type инференсом (declared
-                            // `-> u64`/`-> u32` в сигнатуре).
-                            if Self::f64_method_to_c(method).is_some() {
-                                self.icr_trace("B11y_f64_f32_math");
-                                return match method.as_str() {
-                                    "is_nan" | "is_finite" | "is_infinite" => "nova_bool".into(),
-                                    _ => "nova_f64".into(),
-                                };
-                            }
-                        }
+                        // [196.5 Stage-D] B11y_f64_f32_math REMOVED. D74 math-method
+                        // return-type consultation of `f64_method_to_c` (sqrt/trig/exp/
+                        // log/pow/hypot/is_nan/…) — per the `primitive_instance_method_known`
+                        // doc comment above (Plan 196.3, D109/D74 checker-visibility
+                        // migration): `std/prelude.nv` now plain-`import`s
+                        // `std.runtime.math`, so `method_table["f64"]["sqrt"]` etc. are
+                        // populated the NORMAL way and the checker materialises the
+                        // Nova-body declared return into `resolved_types` ahead of
+                        // `infer_call_ret_c` — the SAME fact that already made the sibling
+                        // existence-oracle arms in `primitive_instance_method_known`
+                        // unreachable applies here to the return-TYPE consultation.
+                        // `f64_method_to_c` itself stays (still the sole Nova-method →
+                        // C-function mapping for emit_call). NO-HIT across conformance +
+                        // std/src/collections + std/src/data + std/src/net (docs/plans/
+                        // 196.5-stage-d-notes.md) ⟹ structurally unreachable (§5).
                         // Plan 196.2 W1 [gate-1]: B11z_prim_builtin_method_second REMOVED.
                         // Duplicate of the FIRST prim-builtin check (B11f, above) — primitive
                         // builtin methods (hash/comparison/identity-clone) are caught by B11f or
                         // materialised into Channel-2; this SECOND check is NO-HIT ⟹ structurally
                         // unreachable (§5).
-                        // D74 math methods on int.
-                        if obj_ty == "nova_int" {
-                            if Self::int_method_to_c(method).is_some() {
-                                self.icr_trace("B11aa_int_math");
-                                return "nova_int".into();
-                            }
-                        }
+                        // [196.5 Stage-D] B11aa_int_math REMOVED. D74 `int_method_to_c`
+                        // (`abs`) return-type consultation — same reasoning as B11y above
+                        // (`int.abs()` is now a normal prelude method, checker-materialised
+                        // ahead of this legacy). `int_method_to_c` itself stays (emit_call
+                        // still uses it for the C-function mapping). NO-HIT across the same
+                        // 4-corpus measurement ⟹ structurally unreachable (§5).
                         // Plan 196.2 W1 [gate-1]: B11ab_str_method_big_match_second REMOVED.
                         // `str` is a .nv-backed type whose methods (to_upper/trim/len/byte_at/
                         // char_at/find/bytes/split/compare/pad/repeat/replace/…) are Nova-body /
