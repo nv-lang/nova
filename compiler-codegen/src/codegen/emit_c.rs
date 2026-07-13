@@ -9926,7 +9926,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             self.indent -= 1;
             self.line("}");
-            self.line("nova_fail_pop();");
+            // [race-state-dump 2026-07-13] `nova_fail_pop()` here is WRONG:
+            // it assumes `_nova_fail_top == &ff` (single-level pop), which only
+            // holds when the throw was caught DIRECTLY at this with-block's own
+            // setjmp. When the body called into nested Fail-signature functions
+            // (each pushing its OWN NovaFailFrame deeper on the C stack) and the
+            // handler recovered via `interrupt` (nova_interrupt() in effects.c
+            // longjmps straight to the nearest NovaInterruptFrame — see D61
+            // comment there — WITHOUT touching `_nova_fail_top`), those nested
+            // frames' own `nova_fail_pop()` epilogues never ran (their C stack
+            // was discarded by the longjmp). `_nova_fail_top` is then left
+            // dangling at one of those now-dead stack frames. A naive
+            // `nova_fail_pop()` here walks ONE level from that dangling pointer
+            // instead of restoring the true pre-entry value, so the corruption
+            // survives this with-block and (in a merged multi-test-block C
+            // process) later gets treated as a live NovaFailFrame — the next
+            // throw writes its error fields through the dangling pointer
+            // (corrupting whatever unrelated local/test now occupies that stack
+            // slot) and longjmps to a garbage `jmp_buf` (crash at a
+            // composition-dependent point). `ff.prev` was captured ONCE at
+            // `nova_fail_push(&ff)` time and never mutated since — restoring
+            // directly to it is a correct hard-reset in EVERY case (identical
+            // to the old single-level pop when `_nova_fail_top == &ff` still
+            // holds, and self-healing when it doesn't).
+            self.line(&format!("_nova_fail_top = {}.prev;", ff));
         }
 
         // Restore handlers (regardless of path)
@@ -24096,6 +24119,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.line("}");
                     self.line("nova_fail_pop();");
                     self.line("_nova_test_frame = NULL;");
+                    // [race-state-dump 2026-07-13] Plan 173 Ф.5 п.6 originally
+                    // scoped `nova_runtime_reset()` to ONLY the panics-clause
+                    // branch above ("N panics-тестов в одном процессе
+                    // безопасны") — but the same longjmp-past-epilogues hazard
+                    // (stale _nova_fail_top/_nova_interrupt_top/handler-vtable
+                    // slots/_nova_active_scope/_nova_active_finalizer_stack)
+                    // is reachable from an ORDINARY (non-panics) test whose
+                    // body catches a Fail via `with Fail[E] = |e| interrupt
+                    // (...)`, or whose `assert()` fails deep inside nested
+                    // calls (D89 plain-fail route) — both unwind via longjmp
+                    // past intermediate epilogues just like a panics-clause
+                    // catch does. In a merged folder-module CU (spec_tests/
+                    // conformance: ~1000 files / ~2500 test-blocks in ONE
+                    // process) an ordinary test leaving any of that TLS state
+                    // dirty leaks it into the NEXT, unrelated test-block —
+                    // observed as a deterministic cross-test-block assertion
+                    // corruption (D158/D188 "pocket"/"cleanup dispatches
+                    // exactly once" cluster) and, when the leaked pointer is a
+                    // dangling stack address of the completed test's own C
+                    // frame, a composition-dependent access violation in a
+                    // LATER test. Reset unconditionally after every test-block,
+                    // not only after panics-clause ones.
+                    self.line("nova_runtime_reset();");
                 }
                     self.indent -= 1;
                     self.line("}");
