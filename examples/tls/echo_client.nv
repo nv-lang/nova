@@ -39,10 +39,10 @@ fn main() {
             spawn {
                 match TcpStream.connect(addr) {
                     Err(_) => {
-                        println("Connect failed — is echo_server running on port " + str.from(PORT) + "?")
+                        println("Connect failed — is echo_server running on port " + PORT.to_str() + "?")
                     }
                     Ok(tcp) => {
-                        println("TCP connected to " + str.from(PORT) + ", starting TLS handshake")
+                        println("TCP connected to " + PORT.to_str() + ", starting TLS handshake")
                         match TlsStream.connect(tcp, cfg) {
                             Err(e) => println("TLS handshake failed: " + e.to_str())
                             Ok(session) => {

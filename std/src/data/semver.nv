@@ -308,7 +308,7 @@ fn is_ascii_ident_char(c char) -> bool {
 /// Round-trip: `v.to_str().to_version()== v` для валидной Version.
 #stable(since = "0.1")
 export fn Version @to_str() -> str {
-    mut s = str.from(@major) + "." + str.from(@minor) + "." + str.from(@patch)
+    mut s = @major.to_str() + "." + @minor.to_str() + "." + @patch.to_str()
     if @pre.len() > 0 {
         s = s + "-" + join_dots(@pre)
     }

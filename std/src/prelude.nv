@@ -69,7 +69,7 @@ export import std.prelude.runtime.{panic, exit, unreachable, assert, debug_asser
 import std.runtime.defaults
 
 // Plan 172.1 U.1.3a (минимальный prelude — Rust std::prelude / Go universe, §3
-// conventions). `char` сюда: `str.from(char)` / `str.from_codepoint` эмитит САМ
+// conventions). `char` сюда: `char @to_str()` / `str.from_codepoint` эмитит САМ
 // компилятор (тест-харнесс, строковая интерполяция char-литералов) — пользователь
 // не может заимпортить за compiler-generated код → обязан быть неявным, как
 // Option/print. Прочие std-API (sync/net/cstr) — библиотечные, требуют ЯВНЫЙ

@@ -49,7 +49,7 @@ test "Option.map[U] type-changing int -> record, not collapsed to nova_int (D119
 
 test "Option.map[U] chain int -> str -> record, no erasure across two hops (D119/D85)" {
     ro o = Some(9)
-    ro w = o.map(|x| str.from(x)).map(|s| d119m_wrap(s.byte_len()))
+    ro w = o.map(|x| x.to_str()).map(|s| d119m_wrap(s.byte_len()))
     assert(w.unwrap().n == 1)
     assert(w.unwrap().tag == "wrapped")
 }

@@ -20,9 +20,9 @@ type D374Pair { lo int, hi int }
 
 fn D374Pair @display(mut w Write) -> () {
     w.write("[")
-    w.write(str.from(@lo))
+    w.write(@lo.to_str())
     w.write("..")
-    w.write(str.from(@hi))
+    w.write(@hi.to_str())
     w.write("]")
 }
 

@@ -92,7 +92,7 @@ export fn DeError @to_str() -> str {
         UnexpectedType { expected, found } => "expected ${expected}, found ${found}"
         MissingField(f)    => "missing required field `${f}`"
         UnknownField(f)    => "unknown field `${f}`"
-        UnknownVariant { name, expected } => "unknown enum variant `${name}` (expected one of ${str.from(expected.len())})"
+        UnknownVariant { name, expected } => "unknown enum variant `${name}` (expected one of ${expected.len()})"
         NoVariantMatched   => "no enum variant matched (untagged)"
         OutOfRange(v)      => "number ${v} out of range"
         LossyInteger(v)    => "number ${v} is not a lossless integer"
@@ -221,15 +221,15 @@ fn str.deserialize[D Deserializer](mut d D) -> Result[str, DeError] => d.deser_s
 
 fn i8.deserialize[D Deserializer](mut d D) -> Result[i8, DeError] {
     ro n = d.deser_int()?
-    if n < -128 || n > 127 { Err(DeError.new(OutOfRange(str.from(n)))) } else { Ok(n as i8) }
+    if n < -128 || n > 127 { Err(DeError.new(OutOfRange(n.to_str()))) } else { Ok(n as i8) }
 }
 fn i16.deserialize[D Deserializer](mut d D) -> Result[i16, DeError] {
     ro n = d.deser_int()?
-    if n < -32768 || n > 32767 { Err(DeError.new(OutOfRange(str.from(n)))) } else { Ok(n as i16) }
+    if n < -32768 || n > 32767 { Err(DeError.new(OutOfRange(n.to_str()))) } else { Ok(n as i16) }
 }
 fn i32.deserialize[D Deserializer](mut d D) -> Result[i32, DeError] {
     ro n = d.deser_int()?
-    if n < -2147483648 || n > 2147483647 { Err(DeError.new(OutOfRange(str.from(n)))) } else { Ok(n as i32) }
+    if n < -2147483648 || n > 2147483647 { Err(DeError.new(OutOfRange(n.to_str()))) } else { Ok(n as i32) }
 }
 fn i64.deserialize[D Deserializer](mut d D) -> Result[i64, DeError] {
     ro n = d.deser_int()?
@@ -237,15 +237,15 @@ fn i64.deserialize[D Deserializer](mut d D) -> Result[i64, DeError] {
 }
 fn u8.deserialize[D Deserializer](mut d D) -> Result[u8, DeError] {
     ro n = d.deser_uint()?
-    if n > 255 { Err(DeError.new(OutOfRange(str.from(n)))) } else { Ok(n as u8) }
+    if n > 255 { Err(DeError.new(OutOfRange(n.to_str()))) } else { Ok(n as u8) }
 }
 fn u16.deserialize[D Deserializer](mut d D) -> Result[u16, DeError] {
     ro n = d.deser_uint()?
-    if n > 65535 { Err(DeError.new(OutOfRange(str.from(n)))) } else { Ok(n as u16) }
+    if n > 65535 { Err(DeError.new(OutOfRange(n.to_str()))) } else { Ok(n as u16) }
 }
 fn u32.deserialize[D Deserializer](mut d D) -> Result[u32, DeError] {
     ro n = d.deser_uint()?
-    if n > 4294967295 { Err(DeError.new(OutOfRange(str.from(n)))) } else { Ok(n as u32) }
+    if n > 4294967295 { Err(DeError.new(OutOfRange(n.to_str()))) } else { Ok(n as u32) }
 }
 fn uint.deserialize[D Deserializer](mut d D) -> Result[uint, DeError] {
     ro n = d.deser_uint()?

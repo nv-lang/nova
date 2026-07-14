@@ -8,7 +8,7 @@ import std.collections.hashmap.{HashMap}
 test "@clone × 100 итераций — heap bounded" {
     mut m HashMap[str, int] = []
     for i in 0..100 {
-        m.insert(str.from(i), i)
+        m.insert(i.to_str(), i)
     }
     ro baseline_pre = gc.heap_size()
     gc.collect()
@@ -36,7 +36,7 @@ test "@clone × 100 итераций — heap bounded" {
 test "@clone deep iterations — clone of clone of clone..." {
     mut m HashMap[str, int] = []
     for i in 0..50 {
-        m.insert(str.from(i), i * 2)
+        m.insert(i.to_str(), i * 2)
     }
     // Chain clones — каждый clone независим.
     ro c1 = m.clone()

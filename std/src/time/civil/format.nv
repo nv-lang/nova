@@ -98,7 +98,7 @@ export fn DateTimeFormat mut @opt_end() -> @ { @items.push(FOptEnd) }
 // ──────────────────────────────────────────────────────────────────────────
 
 fn fmt_pad2(n int) -> str =>
-    if n < 10 { "0" + str.from(n) } else { str.from(n) }
+    if n < 10 { "0" + n.to_str() } else { n.to_str() }
 
 /// Отформатировать plain DateTime по паттерну.
 #stable(since = "0.1")
@@ -114,7 +114,7 @@ export fn DateTimeFormat @format(dt DateTime) -> str {
             FSecond2 => fmt_pad2(dt.second()),
             FFrac3 => {
                 ro ms = (dt.time().nano() / 1_000_000) as int
-                ro base = str.from(ms)
+                ro base = ms.to_str()
                 base.pad_start(3, '0')
             }
             FMonthName => dt.month().to_str(),

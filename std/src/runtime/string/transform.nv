@@ -45,9 +45,9 @@ export fn str @trim_ascii_end() -> str {
 }
 
 // Убирает все ведущие вхождения codepoint'а `c` (zero-copy). Rust `trim_start_matches`
-// для char-pattern. `str.from(c)` — UTF-8-байты символа; repeated strip_prefix.
+// для char-pattern. `c.to_str()` — UTF-8-байты символа; repeated strip_prefix.
 export fn str @trim_start_matches(c char) -> str {
-    ro pat = str.from(c)
+    ro pat = c.to_str()
     ro plen = pat.byte_len()
     if plen == 0 { return @ }
     mut s = @
@@ -57,7 +57,7 @@ export fn str @trim_start_matches(c char) -> str {
 
 // Убирает все хвостовые вхождения codepoint'а `c` (zero-copy). Rust `trim_end_matches`.
 export fn str @trim_end_matches(c char) -> str {
-    ro pat = str.from(c)
+    ro pat = c.to_str()
     ro plen = pat.byte_len()
     if plen == 0 { return @ }
     mut s = @
@@ -156,7 +156,7 @@ export fn str @plus(other str) -> str => @concat(other)
 export fn str @pad_start(width int, fill char) -> str {
     ro pad = width - @chars().count()
     if pad <= 0 { return @ }
-    ro fill_s = str.from(fill)
+    ro fill_s = fill.to_str()
     StringBuilder.new(cap: @byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).into_str()
 }
 
@@ -165,7 +165,7 @@ export fn str @pad_start(width int, fill char) -> str {
 export fn str @pad_end(width int, fill char) -> str {
     ro pad = width - @chars().count()
     if pad <= 0 { return @ }
-    ro fill_s = str.from(fill)
+    ro fill_s = fill.to_str()
     StringBuilder.new(cap: @byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).into_str()
 }
 
@@ -175,7 +175,7 @@ export fn str @pad_center(width int, fill char) -> str {
     if pad <= 0 { return @ }
     ro left = pad / 2
     ro right = pad - left
-    ro fill_s = str.from(fill)
+    ro fill_s = fill.to_str()
     StringBuilder.new(cap: @byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, left).append(@).append_repeat(fill_s, right).into_str()
 }
 

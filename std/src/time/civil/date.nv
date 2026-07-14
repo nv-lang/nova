@@ -358,13 +358,13 @@ export fn Date @compare(other Date) -> int =>
 fn format_year(y i64) -> str {
     ro neg = y < 0
     ro a = if neg { -y } else { y }
-    ro digits = str.from(a)
+    ro digits = a.to_str()
     ro padded = if digits.len() >= 4 { digits } else { digits.pad_start(4, '0') }
     if neg { "-" + padded } else { padded }
 }
 
 fn pad2(n i64) -> str =>
-    if n < 10 { "0" + str.from(n) } else { str.from(n) }
+    if n < 10 { "0" + n.to_str() } else { n.to_str() }
 
 /// ISO-8601 календарная форма `YYYY-MM-DD` (round-trip c `s.to_date()`, Ф.5).
 #stable(since = "0.1")

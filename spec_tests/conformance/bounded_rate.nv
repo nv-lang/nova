@@ -16,7 +16,7 @@ test "100k string allocs — process does not OOM" {
     ro before = Mem.alloc_count()
     mut i = 0
     while i < 100_000 {
-        ro s = "alloc-" + str.from(i)
+        ro s = "alloc-" + i.to_str()
         // prevent dead-code elimination: use the string
         assert(s.byte_len() > 0)
         i += 1
@@ -45,7 +45,7 @@ test "alloc rate: 1k strings — growth bounded" {
     ro before = Mem.alloc_count()
     mut i = 0
     while i < 1000 {
-        ro s = str.from(i)
+        ro s = i.to_str()
         ro _ = s.byte_len()
         i += 1
     }

@@ -1,10 +1,11 @@
-// Plan 67 Ф.2 f2 — println(str.from(bool)) → "true"/"false" строкой.
+// Plan 67 Ф.2 f2 — println(bool.to_str()) → "true"/"false" строкой.
+// Plan 174.2: мигрировано со `str.from(bool)` (ретрактирован) на `.to_str()`.
 
 module standalone.f2_static_method_str_from_bool
 // EXPECT_STDOUT true
 // EXPECT_STDOUT false
 
 fn main() Io -> () {
-    println(str.from(true))
-    println(str.from(false))
+    println(true.to_str())
+    println(false.to_str())
 }

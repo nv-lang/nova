@@ -138,9 +138,9 @@ export fn Period @compare(other Period) -> int {
 export fn Period @to_iso() -> str {
     if @is_zero() { return "P0D" }
     mut s = "P"
-    if @years != 0 { s = s + str.from(@years) + "Y" }
-    if @months != 0 { s = s + str.from(@months) + "M" }
-    if @days != 0 { s = s + str.from(@days) + "D" }
+    if @years != 0 { s = s + @years.to_str() + "Y" }
+    if @months != 0 { s = s + @months.to_str() + "M" }
+    if @days != 0 { s = s + @days.to_str() + "D" }
     s
 }
 
