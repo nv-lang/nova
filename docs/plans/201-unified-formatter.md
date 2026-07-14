@@ -29,9 +29,11 @@
 | Scratch-SB | только осмыслен как альтернатива pad_in_place; выбран in-place |
 | `pad_consumed` | если тип сам звал `f.pad(...)` — компилятор внешний pad не навешивает (зеркало текущего `precision_consumed`) |
 
-**Открытые (рекомендации, ждут owner-подтверждения):** имя буфер-примитива (отд. имя, не перегрузка `@to_str`);
-слить `Write`↔`io.Write` (рек. слить, коорд. 176); str-overload `@write(str)` (рек. да); единица width = кодпоинты
-(Rust V1); ретракт `str.from_debug` заодно.
+**Решено 2026-07-15:** буфер-примитив = **внутренний** рендер `int_fmt(v,buf,cap)->len` (не публичный `@to_str`);
+`Write`↔`io.Write` — **СЛИТЬ** (коорд. 176), направления `Read`/`Write` НЕ сливать; str-форма = **default-метод**
+`@write(s str) => @write(s.as_bytes())` (один required байтовый + бесплатный default, не двойной бойлерплейт);
+`width` = **кодпоинты** (Rust-парити; графемы/дисплей-колонки — future-ось, у нас уже есть unicode/grapheme-таблицы);
+`str.from_debug` — **ретракт** вместе с `str.from`. **Новое (investigation):** buffer-consolidation — см. §6.
 
 ## 2. Протоколы sink
 
@@ -168,7 +170,12 @@ result = sb.into_str()
 - **D237** (Display/Debug) — аменд: сигнатуры `@display`/`@debug` → `(mut f Fmt)`.
 - **D229** (Debug + format-spec) — аменд: диспатч спека через `@display(f)`/`@debug(f)`; радикс через `f.kind()`.
 - **D179** (`StringBuilder`) — аменд: байтовый append + `@reserve`/`@advance`/`@len` + `pad_in_place`/`write_padded`.
-- (рек.) ретракт `str.from_debug` вместе с `str.from` (Plan 174.2).
+- **ретракт `str.from_debug`** вместе с `str.from` (Plan 174.2) — Debug идёт через derive/`@to_str`, как Display.
+
+**Investigation (коорд. Plan 176) — buffer-consolidation:** сверить API `ReadBuffer`/`WriteBuffer`/`StringBuilder`;
+кандидат — schlop `StringBuilder`→`Vec[u8]` (реализующий `Write`) + `into_str` (модель Rust `Vec<u8>`/`String`), минус
+один тип; `ReadBuffer`/`WriteBuffer` остаются **адаптерами** (буферизация) на едином `Read`/`Write`. НЕ сливать
+направления Read/Write.
 
 ## 7. Миграция / гейты (набросок)
 
@@ -179,5 +186,11 @@ sign/radix/precision/alternate/pretty) pos; byte-parity НЕ требуется 
 
 ## 8. Открытые вопросы (ждут owner)
 
-Имя буфер-примитива · слияние `Write`↔`io.Write` (коорд. 176) · str-overload `@write(str)` · единица width
-(кодпоинты) · ретракт `str.from_debug`.
+1. **Fallibility единого `Write`** (главный). Форматирование-в-строку **инфаллибельно** (in-memory SB), а io-`Write`
+   **фейлится** (файл/сокет). Rust держит `fmt::Write` и `io::Write` РАЗДЕЛЬНО именно из-за этого. Наш ход —
+   **effect-полиморфный `Write`**: `@write([]u8)` несёт `Fail[IoError]`-эффект, ОТСУТСТВУЮЩИЙ у in-memory sink →
+   один протокол, эффект решает фейл (лучше Rust-двух-трейтов). `@display` эффект-полиморфен по sink; интерполяция
+   `${x}` всегда инфаллибельна (SB). **Ждёт подтверждения.**
+2. **`into_str()`** — assume-valid-UTF-8 (писатели гарантируют валидный UTF-8) vs validate (`Result[str, Utf8Error]`).
+   Рек: assume-valid для fmt-пути + checked-вариант для сырого байт-sink.
+3. **buffer-consolidation scope** (см. §6) — schlop `StringBuilder`→`Vec[u8]`? Координация Plan 176.
