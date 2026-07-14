@@ -37026,13 +37026,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         .unwrap_or(&recv_stripped);
                     // Only apply when receiver is a generic-mono type (has ____) or is a
                     // concrete non-primitive type that could implement a protocol.
-                    // Skip primitives — they have their own dispatch above.
-                    let recv_is_candidate = !recv_base.is_empty()
-                        && !matches!(recv_base,
+                    // Primitives normally have their own dispatch above and are skipped —
+                    // EXCEPT for an unconstrained bare-typevar blanket (e.g.
+                    // `fn[T] T @to_str() => "${@}"`), which DOES apply to primitives.
+                    // Without this exception the single-key method_receivers fallback would
+                    // mis-dispatch a primitive receiver into a foreign concrete same-named
+                    // method (e.g. `int.to_str()` → `Nova_NetErr_method_to_str(nova_int)`,
+                    // a number passed where an enum pointer is expected → type confusion /
+                    // SEGV). A CONSTRAINED blanket still skips primitives (no
+                    // `type_impl_protocols` entry → protocols_match false below); with no
+                    // blanket the primitive path is byte-identical to before.
+                    // Plan 174.2 (scalar→str); same dispatch class as Plan 196.6.
+                    let recv_is_primitive = matches!(recv_base,
                             "nova_int" | "nova_bool" | "nova_char" | "nova_str"
                             | "nova_f32" | "nova_f64" | "int" | "bool" | "char"
                             | "str" | "f32" | "f64" | "void")
-                        && !recv_base.starts_with("nova_");
+                        || recv_base.starts_with("nova_");
+                    let has_unconstrained_blanket = self.mono_method_decls.iter()
+                        .any(|((tvname, mname), fd)| {
+                            mname == method
+                                && tvname.len() <= 2
+                                && tvname.chars().all(|c| c.is_ascii_uppercase())
+                                && fd.generics.iter()
+                                    .find(|g| &g.name == tvname)
+                                    .map(|g| g.bounds.is_empty())
+                                    .unwrap_or(false)
+                        });
+                    let recv_is_candidate = !recv_base.is_empty()
+                        && (!recv_is_primitive || has_unconstrained_blanket);
                     if recv_is_candidate {
                         // Find all bare-typevar blanket entries for this method name.
                         let blanket_key_opt: Option<(String, String)> = self.mono_method_decls
@@ -48602,6 +48623,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     fn debt_is_generic_stub_c(&self, s: &str) -> bool {
+        // [196.5 Stage-D волна-4] B12c: the SAME name set as `BUILTIN_RUNTIME_TYPES`
+        // (emit_module forward-decl skip, ~5275 — function-local `const`, not
+        // reachable from here without restructuring, hence duplicated rather than
+        // shared; a drift between the two only regresses to the OLD stub-guess
+        // behavior, never a NEW correctness bug). These are types defined in
+        // `nova_rt/*.h` with NO Nova `.nv` declaration at all — genuinely CONCRETE,
+        // but absent from every registry this function otherwise consults
+        // (`record_schemas`/`sum_schemas`/`generic_types`/`opaque_ffi_types`), so
+        // the "not registered anywhere ⟹ unresolved generic-param stub" heuristic
+        // false-positived on `Nova_ChanReader*` (a checker-materialized Channel-2
+        // return for the `ChanReader.close_after` intrinsic fell through to legacy
+        // ANYWAY despite a correct channel hit — B12c producer, docs/plans/
+        // 196.5-stage-d-wave4-notes.md). Structurally safe: every name here is a
+        // multi-char PascalCase runtime-builtin identifier, never a plausible
+        // generic type-param spelling (those are always ≤2-char, e.g. `T`/`U`/`K`).
+        const RUNTIME_NATIVE_CONCRETE_TYPES: &[&str] = &[
+            "ChanReader", "ChanWriter", "ChannelPair",
+            "AtomicInt", "AtomicBool", "Mutex", "WaitGroup", "Once",
+            "RwLock", "ReentrantMutex", "Timestamp", "MemOrdering",
+            "AtomicI8", "AtomicI16", "AtomicI32", "AtomicI64",
+            "AtomicU8", "AtomicU16", "AtomicU32", "AtomicU64",
+            "AtomicIsize", "AtomicUsize", "AtomicPtr",
+            "MutexGuard", "ReadGuard", "WriteGuard", "Permit", "OnceGuard",
+            "Barrier", "Condvar", "WaitResult", "CountDownLatch", "Semaphore",
+        ];
         if let Some(inner) = s.strip_prefix("Nova_").and_then(|x| x.strip_suffix('*')) {
             let name = inner.trim();
             return !name.is_empty()
@@ -48617,6 +48663,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 100.5 (D163): opaque FFI consume types are concrete —
                 // `Nova_File*` must NOT be treated as a generic stub.
                 && !self.opaque_ffi_types.contains(name)
+                && !RUNTIME_NATIVE_CONCRETE_TYPES.contains(&name)
                 // Plan 91.13 (D295 V2): monomorphized generic instances carry
                 // `____` in their mangled name (e.g. `Vec____NovaValue_SocketAddr`)
                 // and are always concrete — never an unresolved type-param stub.
@@ -49667,12 +49714,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     // Infer return type for call expressions
                     if let ExprKind::Ident(name) = &func.kind {
-                        // [196.5 Stage-D волна-3 replay] B10a: НЕ дубликат — kill-switch
-                        // A/B показал .c-диф на no-prelude CU (spec_tests/conformance/
-                        // no_prelude_panic_assert): в #no_prelude-режиме println/assert —
-                        // интринсики БЕЗ .nv-деклараций, канал/реестры их возврата не
-                        // производят. Уникальный легаси-трафик, остаётся до продюсера
-                        // интринсик-схем (docs/plans/196.5-stage-d-wave3-notes.md).
+                        // [196.5 Stage-D волна-4] B10a: продюсер добавлен
+                        // (types/mod.rs, f1_expr Call/Ident-арм — mirrors
+                        // this SAME hardcode into `resolved_types` Channel 2
+                        // unconditionally). Закрыл ВЕСЬ таргетный трафик
+                        // (no-prelude CU spec_tests/conformance/
+                        // no_prelude_panic_assert: 4/4 assert/debug_assert
+                        // call-sites → 0 hit, изолированный ре-замер). Снос
+                        // НЕ выполнен — обнаружен ДРУГОЙ, структурно
+                        // отдельный источник трафика (2 hit, conformance CU):
+                        // `assert(...)` внутри тела `effect Supervisor {
+                        // on_child_fail(idx, err) { ... } }`
+                        // (spec_tests/conformance/standalone/
+                        // supervisor_escalate_test.nv:77-78). Корень —
+                        // `f1_expr`'s `ExprKind::With { bindings, body }` арм
+                        // рекурсирует ТОЛЬКО в `body`, НИКОГДА в
+                        // `bindings[i].handler` (сам handler-литерал
+                        // `effect X { ... }`) — ни один exp внутри ЛЮБОГО
+                        // handler-метода (не только Supervisor) не проходит
+                        // через `f1_expr`, значит НИКОГДА не попадает в
+                        // `resolved_types_buf`. Это не B10a-специфичный
+                        // пробел — это структурный пробел канала для ВСЕХ
+                        // handler-literal-тел (потенциально шире, чем 4
+                        // интринсик-имени здесь), выходит за объём узкого
+                        // "intrinsic-scheme producer" задания волны-4.
+                        // Остаётся для будущей волны: расширить `With`-арм
+                        // f1_expr, чтобы обходить `bindings[i].handler` (с
+                        // осторожностью — параметры метода (`idx`, `err`) не
+                        // сидированы в scope нигде в этом пути, нужно
+                        // отдельное исследование побочных эффектов на другие
+                        // handler-walk'и: never-ops/purity/throw-detection).
                         if name == "println" || name == "print" || name == "assert" || name == "debug_assert" {
                             self.icr_trace("B10a_ident_println_assert");
                             return "nova_unit".into();
@@ -50583,59 +50654,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             self.icr_trace("B11af_fn_ret_method_nameonly");
                             return ret_ty.clone();
                         }
-                        // [M-172.1-d174-sync-consume-registry] (Gap B, extern-method return):
-                        // extern "nova"-метод (sync guards: `MutexGuard consume @unlock()` и пр.)
-                        // не имеет `fn_ret_*` var_types-записи (тело — C-рантайм, forward-decl
-                        // не эмитится) — его return берём из РЕЕСТРА .nv-деклараций
-                        // (ExternalRegistry, §3: реестр из деклараций, не хардкод).
-                        {
-                            let bare = obj_ty.trim_end_matches('*');
-                            let recv_tn = Self::debt_strip_value_nova_tuple_prefix(bare);
-                            // D289 qualified static path `mod.Type.method(...)`: obj =
-                            // Member{Ident(mod ∈ imported_modules), TypeName} — тип
-                            // ресивера берём СИНТАКСИЧЕСКИ (имя типа), не из C-типа
-                            // (module-namespace не значение, obj_ty пуст).
-                            let recv_tn: &str = if recv_tn.is_empty() {
-                                match &obj.kind {
-                                    ExprKind::Member { obj: mo, name: tn }
-                                        if matches!(&mo.kind, ExprKind::Ident(m)
-                                            if self.imported_modules.contains(m.as_str())) =>
-                                    {
-                                        tn.as_str()
-                                    }
-                                    _ => recv_tn,
-                                }
-                            } else {
-                                recv_tn
-                            };
-                            if !recv_tn.is_empty() {
-                                if let Some(decls) =
-                                    self.external_registry.lookup(recv_tn, method)
-                                {
-                                    // ≥1 decl, ВСЕ с одинаковым return — берём его
-                                    // (дубль одной декларации возникает легитимно:
-                                    // load_builtins + inline-merge того же .nv через
-                                    // `import`). Разошедшиеся overload-returns → mimo
-                                    // (не угадываем).
-                                    // [196.5 Stage-D волна-3 replay] B11ag: НЕ дубликат —
-                                    // kill-switch A/B уронил std/src/runtime паникой
-                                    // (`.call_once` на Nova_Once* → B11al): extern "nova"
-                                    // методы (тело в C-рантайме) не имеют fn_ret_*-записей
-                                    // и не каналируются — реестр .nv-деклараций здесь
-                                    // единственный источник возврата. Уникальный трафик.
-                                    if let Some(first) = decls.first() {
-                                        if !first.return_c_type.is_empty()
-                                            && decls.iter().all(|d| {
-                                                d.return_c_type == first.return_c_type
-                                            })
-                                        {
-                                            self.icr_trace("B11ag_extern_method_registry");
-                                            return first.return_c_type.clone();
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        // [196.5 Stage-D волна-4] B11ag_extern_method_registry REMOVED.
+                        // Former: extern "nova" method return read from the
+                        // ExternalRegistry `.nv`-declaration registry
+                        // (`external_registry.lookup(recv_tn, method)`) — covered two
+                        // sub-classes now both checker-materialised into Channel 2:
+                        //   (a) INSTANCE extern method with implicit-Unit return
+                        //       (`extern "nova" fn Once mut @call_once(...)` — no `->`):
+                        //       `resolve_instance_method_return_arity` used to bail on
+                        //       `f.return_type.as_ref()?` for a None return; now returns
+                        //       `Unit` for `is_external` methods (types/mod.rs ~14778).
+                        //   (b) STATIC extern method via D289 module-qualified path
+                        //       (`raw_mem.RawMem.alloc_uncollectable(8)` — nested
+                        //       `Member{Member{Ident(mod), Type}, method}`): the checker
+                        //       could not recover a receiver type (`mod.Type` is a
+                        //       namespace, not a value), so no return reached the channel;
+                        //       now resolved via `resolve_generic_static_return(Type,
+                        //       method, &[], span)` (empty turbofish; these builtins are
+                        //       non-generic) in f1_expr's nested-Member arm (~7914).
+                        // NO-HIT after both producers across conformance + std/src/{time,
+                        // concurrency,runtime,collections,data} (docs/plans/
+                        // 196.5-stage-d-wave4-notes.md) ⟹ structurally unreachable (§5).
                         // [196.5 Stage-D волна-3] B11ah_resolved_types_channel_late REMOVED.
                         // Former: `if expr.id.is_set() { if let Some(rt) =
                         // self.resolved_types.get(&expr.id) { if let Ok(ct) =
@@ -50669,6 +50708,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // the return type is receiver-invariant, so resolve it
                         // directly instead of ICE-ing (§6). Guarded on the exact
                         // serde `Result[(),SerError]` C mono being in use.
+                        // [196.5 Stage-D волна-5] PARTIAL producer landed
+                        // (types/mod.rs f1_expr Member-arm, `method == "serialize"`,
+                        // ~7960): a receiver that is a bare in-scope generic
+                        // (`Named{path:["T"]}`, `gs.contains("T")`) resolved via
+                        // `infer_expr_type`/`resolved_types_buf` now channels
+                        // `Result[(), SerError]` straight from the `Serialize`
+                        // protocol decl — confirmed closing the FOR-LOOP-receiver
+                        // class (`fn[T Serialize] []T @serialize(...) { for v in @
+                        // { v.serialize(s) } }`, `NOVA_B11AI_TRACE`-style probe:
+                        // every for-loop call-site now channels
+                        // `Ok("NovaRes_nova_unit_NovaValue_SerError*")` byte-
+                        // identical to this arm's own hardcoded string). REMAINS
+                        // live for a DIFFERENT receiver class: a MATCH-ARM-BOUND
+                        // variable (`Option[T]@serialize`'s `Some(v) => v.serialize
+                        // (s)` — `v` bound by `Pattern::Variant`, not a `for`-loop
+                        // var) is not present in `scope` NOR `resolved_types_buf`
+                        // at the point `f1_expr` visits the arm body (`ExprKind::
+                        // Match` in types/mod.rs does not seed pattern-bound names
+                        // into `scope` before walking `arm.body` — confirmed by
+                        // direct trace: `recv_ty` lookup fails silently, the new
+                        // producer's outer `if let Some(recv_ty)` is never entered
+                        // for this call class). Fixing THAT is a broader change
+                        // (enum-variant pattern-bind → scope/channel registration,
+                        // touching every match arm, not just Serialize) — out of
+                        // this point-fix's narrow blast radius; left live,
+                        // documented here for the next wave.
                         if method == "serialize"
                             && self.novares_typedefs_buf
                                 .borrow()
@@ -50762,17 +50827,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.icr_trace("B12b_path_channel_new");
                                 return "Nova_ChannelPair".into();
                             }
-                            // Plan 65 Ф.1: ChanReader.close_after(Duration) —
-                            // Path-form.
-                            // [196.5 Stage-D волна-3 replay] B12c: НЕ дубликат —
-                            // kill-switch A/B уронил std/src/time паникой (B12q,
-                            // method=close_after): Path-форму этого fixed-return
-                            // интринсика чекер не аннотирует, каскад ниже её не
-                            // резолвит. Уникальный трафик до продюсера интринсик-схем.
-                            if eff == "ChanReader" && method_name == "close_after" {
-                                self.icr_trace("B12c_path_chanreader_close_after");
-                                return "Nova_ChanReader*".into();
-                            }
+                            // [196.5 Stage-D волна-4] B12c_path_chanreader_close_after
+                            // REMOVED. Producer added (types/mod.rs f1_expr Path-arm):
+                            // `ChanReader.close_after` materializes
+                            // `ResolvedType::Named{"ChanReader"}` into Channel 2
+                            // unconditionally (compiler-builtin, no `.nv` decl —
+                            // mirrors this SAME hardcoded return). Consumer-side fix
+                            // (`debt_is_generic_stub_c`): `Nova_ChanReader*` was a
+                            // FALSE-POSITIVE "generic stub" (ChanReader absent from
+                            // record_schemas/sum_schemas/generic_types/opaque_ffi_types
+                            // — genuinely concrete `nova_rt/*.h` runtime type, never
+                            // Nova-declared) — added `RUNTIME_NATIVE_CONCRETE_TYPES`
+                            // allowlist there. NO-HIT after both fixes across
+                            // conformance + std/src/{time,concurrency,runtime,
+                            // collections,data} (docs/plans/196.5-stage-d-wave4-notes.md)
+                            // ⟹ structurally unreachable (§5).
                             // Plan 196.2 W1 [gate-1]: B12c_path_chanreader_close_at REMOVED.
                             // ChanReader.close_at(Monotonic) Path-form (sibling close_after
                             // above still fires) — checker-materialised. NO-HIT (§5).

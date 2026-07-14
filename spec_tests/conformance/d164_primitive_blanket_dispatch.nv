@@ -1,0 +1,37 @@
+// Plan 174.2 / D164 Ф.3: примитивный получатель ОБЯЗАН диспатчиться в свой
+// unconstrained bare-typevar бланкет, а НЕ в чужой конкретный одноимённый метод.
+//
+// Регресс на класс бага (тот же, что Plan 196.6 name-only dispatch): бланкет
+// `fn[T] T @d164tag() => "..."` даёт `int.d164tag()`. Рядом — чужой конкретный
+// `D164Err @d164tag()`. Без фикса codegen эмитил бы `Nova_D164Err_method_tag(nova_int)`
+// — число уходит в функцию, ждущую enum-указатель → type confusion / SEGV.
+
+module spec_tests.conformance
+
+// Unconstrained bare-typevar бланкет — применим к ЛЮБОМУ типу, включая примитивы.
+fn[T] T @d164tag() -> str => "blanket"
+
+// Чужой конкретный тип с одноимённым методом @d164tag — НЕ должен красть диспатч int'а.
+type D164Err enum Eof | Reset
+
+fn D164Err @d164tag() -> str => match @ {
+    Eof => "d164err:eof"
+    Reset => "d164err:reset"
+}
+
+test "примитив int.d164tag() → свой бланкет, не чужой D164Err.d164tag() (D164/174.2)" {
+    ro x = 5
+    assert(x.d164tag() == "blanket")
+}
+
+test "чужой конкретный D164Err.d164tag() продолжает работать (сосуществование)" {
+    ro e = D164Err.Eof
+    assert(e.d164tag() == "d164err:eof")
+}
+
+test "bool/char-получатели тоже берут бланкет (примитивы в целом)" {
+    ro b = true
+    ro c = 'z'
+    assert(b.d164tag() == "blanket")
+    assert(c.d164tag() == "blanket")
+}

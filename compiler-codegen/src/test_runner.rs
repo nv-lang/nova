@@ -3418,7 +3418,7 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
     }
     {
         let _t = crate::perf_timer::PerfTimer::new("callnorm");
-        crate::callnorm::normalize_module(&mut module);
+        crate::callnorm::normalize_module(&mut module, &module_env.resolved_callees);
     crate::chain_norm::normalize_chains_module(&mut module, &module_env.resolved_types);
     }
     // Plan 123.1 (D217): method-local receiver field caching. AST-pass

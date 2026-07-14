@@ -7911,7 +7911,7 @@ impl<'a> TypeCheckCtx<'a> {
                         let rt = Self::mark_type_params(
                             ResolvedType::from_type_ref(&tr), gs);
                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
-                    } else if let ExprKind::Member { obj: mo, .. } = &func.kind {
+                    } else if let ExprKind::Member { obj: mo, name: method } = &func.kind {
                         // 172.1.2 (static-ctor канал, 2026-07-03): TurboFish-статик
                         // (`Vec[u8].of(...)`) исключён из method-resolve producer'а,
                         // а infer_expr_type его резолвит (ctor-армы +
@@ -7921,6 +7921,128 @@ impl<'a> TypeCheckCtx<'a> {
                                 let rt = Self::mark_type_params(
                                     ResolvedType::from_type_ref(&tr), gs);
                                 self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                            }
+                        } else if let ExprKind::Member { obj: mod_obj, name: tyname } = &mo.kind {
+                            // [196.5 Stage-D волна-4] B11ag producer (module-qualified
+                            // static extern call, external_registry feeds the checker):
+                            // a D289 last-segment-qualified static call
+                            // `mod.Type.static_method(args)` (`raw_mem.RawMem.
+                            // alloc_uncollectable(8)`, spec_tests/conformance/standalone/
+                            // d289_import_last_segment) parses to nested
+                            // `Member{obj: Member{obj: Ident(mod), name: Type}, name:
+                            // method}`. `infer_method_call_channel_type` bailed above
+                            // because `mod.Type` is a MODULE-NAMESPACE-qualified TYPE
+                            // reference, NOT a value expression — `infer_expr_type`
+                            // returns None for it, so no receiver type was recoverable
+                            // and the call's declared return never reached Channel 2
+                            // (co-miss → legacy `infer_call_ret_c` B11ag extern-registry
+                            // arm). Resolve the static method's DECLARED return directly
+                            // off the type name (`resolve_generic_static_return` with an
+                            // EMPTY turbofish — these builtins are non-generic, so
+                            // `type_args.len() == recv.generics.len() == 0` gates cleanly
+                            // and the concrete `-> *mut u8` / `-> ()` return substitutes
+                            // with no residual). Gated: `mod` is an in-scope Ident (an
+                            // import alias / module head, not itself a value) and `tyname`
+                            // is a known type — a genuine value-receiver method call never
+                            // matches this Member-of-Member-of-Ident shape.
+                            if matches!(&mod_obj.kind, ExprKind::Ident(_))
+                                && self.types.contains_key(tyname)
+                            {
+                                if let Some((tr, _node_subst)) =
+                                    self.resolve_generic_static_return(tyname, method, &[], e.span)
+                                {
+                                    if !typeref_mentions_any(&tr, gs) {
+                                        let rt = ResolvedType::from_type_ref(&tr);
+                                        self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                                    }
+                                }
+                            }
+                        } else if method == "serialize" {
+                            // 196.5 Stage-D волна-5 (`[P67-LEGACY]`-adjacent B11ai
+                            // producer, Member-form mirror of the Path-form
+                            // `deserialize` producer below): inside a generic
+                            // container-conformance body (`fn[T Serialize] []T
+                            // @serialize[S Serializer](mut s S) { for v in @ {
+                            // v.serialize(s) } }`, std/src/encoding/serde/serde.nv)
+                            // the receiver `v` is the method's OWN still-abstract
+                            // type param, spelled as a bare `Named{path:["T"]}`
+                            // (Nova has no separate `TypeParam` TypeRef variant).
+                            // `resolve_instance_method_return_arity`'s protocol-
+                            // receiver branch (~14728) only fires when the
+                            // receiver's type NAME literally IS the protocol
+                            // (`w Writer`) — a receiver that is a GENERIC PARAM
+                            // BOUND BY a protocol never matches
+                            // (`self.types.get("T")` finds nothing; "T" is not a
+                            // registered type) → co-miss, legacy `infer_call_ret_c`
+                            // B11ai fallback (gated there on a codegen-side C
+                            // typedef probe, since the checker is pre-mono and
+                            // cannot see emitted C state). The `Serialize`
+                            // contract's `@serialize` return does NOT mention
+                            // `Self` (unlike `Deserialize`'s `Result[Self,
+                            // DeError]`) — it is receiver-INVARIANT
+                            // (`Result[(), SerError]` for every implementor) — so
+                            // no substitution is needed. Gated: receiver's TYPE
+                            // (not name) resolves to a bare `Named{path:[n]}` with
+                            // `n` an IN-SCOPE GENERIC of the enclosing decl
+                            // (`gs`) — a concrete receiver (even one literally
+                            // named "T", which user code never does) is read from
+                            // `self.types`/`method_overloads` by
+                            // `infer_method_call_channel_type` already tried above
+                            // and would have returned `Some` there, never reaching
+                            // this arm.
+                            if let Some(recv_ty) = self.infer_expr_type(mo, scope).or_else(|| {
+                                if !mo.id.is_set() {
+                                    return None;
+                                }
+                                let buf = self.resolved_types_buf.borrow();
+                                let rt = buf.get(&mo.id)?.clone();
+                                drop(buf);
+                                Self::resolved_to_typeref_tp(&rt, e.span)
+                            }) {
+                                let mut peeled = &recv_ty;
+                                loop {
+                                    match peeled {
+                                        TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => {
+                                            peeled = i;
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                                if let TypeRef::Named { path, generics, .. } = peeled {
+                                    if path.len() == 1
+                                        && generics.is_empty()
+                                        && gs.contains(&path[0])
+                                    {
+                                        if let Some(td) = self.types.get("Serialize") {
+                                            if let TypeDeclKind::Protocol { methods, .. } =
+                                                &td.kind
+                                            {
+                                                if let Some(m) = methods.iter().find(|m| {
+                                                    m.name == "serialize"
+                                                        || m.name.trim_start_matches('@')
+                                                            == "serialize"
+                                                }) {
+                                                    let ret = match &m.return_type {
+                                                        Some(r) => r.clone(),
+                                                        None => TypeRef::Unit(m.span),
+                                                    };
+                                                    let self_only: HashSet<String> =
+                                                        std::iter::once("Self".to_string())
+                                                            .collect();
+                                                    if !typeref_mentions_any(&ret, &self_only) {
+                                                        let rt = Self::mark_type_params(
+                                                            ResolvedType::from_type_ref(&ret),
+                                                            gs,
+                                                        );
+                                                        self.resolved_types_buf
+                                                            .borrow_mut()
+                                                            .insert(e.id, rt);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     } else if let ExprKind::Path(parts) = &func.kind {
@@ -7993,6 +8115,36 @@ impl<'a> TypeCheckCtx<'a> {
                                     }
                                 }
                             }
+                        }
+                        // [196.5 Stage-D волна-4] B12c producer (intrinsic-scheme
+                        // mirror): `ChanReader.close_after(d Duration) -> ChanReader`
+                        // is a COMPILER BUILTIN — no `.nv` declaration anywhere
+                        // (std/src/concurrency/timer.nv:84's `ChanReader_close_after_
+                        // doc_marker` is a documentation-only stand-in; the real
+                        // codegen dispatch is name-keyed, `emit_c.rs` ~34500/~37766/
+                        // ~50862). `ChanReader` itself has no `.nv` type-decl either
+                        // (`BUILTIN_RUNTIME_TYPES`, defined in `nova_rt/*.h`) — the
+                        // checker's static-return paths never see it, so this
+                        // Path-form call-site never reaches Channel 2. Mirror the
+                        // SAME fixed return the codegen fallback (`B12c_path_
+                        // chanreader_close_after`) already hardcodes: a bare
+                        // `ResolvedType::Named { name: "ChanReader" }` — the
+                        // catch-all arm of `resolved_named_to_c` (no protocol/alias/
+                        // generic-template/colliding-name match) lowers ANY
+                        // unregistered concrete Named type to `Nova_{name}*`,
+                        // producing the IDENTICAL `Nova_ChanReader*` byte-for-byte.
+                        if parts.len() == 2 && parts[0] == "ChanReader" && parts[1] == "close_after" {
+                            if std::env::var_os("NOVA_B12C_LOCATE").is_some() {
+                                eprintln!("[B12C-CHECKER] id={:?} id_set={} span={:?}", e.id, e.id.is_set(), e.span);
+                            }
+                            self.resolved_types_buf.borrow_mut().insert(
+                                e.id,
+                                ResolvedType::Named {
+                                    name: "ChanReader".to_string(),
+                                    module: vec![],
+                                    args: vec![],
+                                },
+                            );
                         }
                     } else if let ExprKind::TurboFish { base: tf_base, type_args } = &func.kind {
                         // 172.1.2 (Call:<expr>): интринсики size_of[T]()/align_of[T]()
@@ -8080,6 +8232,33 @@ impl<'a> TypeCheckCtx<'a> {
                                     self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                                 }
                             }
+                        } else if matches!(
+                            fname.as_str(),
+                            "println" | "print" | "assert" | "debug_assert"
+                        ) && !scope.contains_key(fname)
+                        {
+                            // [196.5 Stage-D волна-4] B10a producer (intrinsic-scheme
+                            // mirror): `println`/`print`/`assert`/`debug_assert` are
+                            // ALWAYS-Unit-returning compiler intrinsics — `extern "nova"
+                            // fn ... -> ()` in std/prelude/runtime.nv, but
+                            // `#no_prelude` modules (breaking the prelude→string→
+                            // prelude import cycle, `[panic-assert-intrinsic]` above)
+                            // never see that declaration reachable, so no static-
+                            // return path materializes Channel 2 for these call-sites
+                            // there. codegen's `emit_call` already dispatches all four
+                            // NAME-KEYED regardless of declaration visibility
+                            // (`emit_c.rs` ~32213 println/print,
+                            // panic-assert-intrinsic doc for assert/debug_assert) —
+                            // mirror that SAME fact into the checker channel
+                            // unconditionally (Unit is invariant for these names
+                            // regardless of which declaration, if any, is visible;
+                            // in prelude-having modules this is a no-op re-write of
+                            // the same Unit the extern decl already gave). Legacy
+                            // `infer_call_ret_c` B10a_ident_println_assert arm remains
+                            // the fallback for any CU shape this producer misses.
+                            self.resolved_types_buf
+                                .borrow_mut()
+                                .insert(e.id, ResolvedType::Unit);
                         }
                     }
                 }
@@ -14722,6 +14901,24 @@ impl<'a> TypeCheckCtx<'a> {
         // эха = тип ресивера (D132/D181-факт); return_type при этом None.
         if f.returns_receiver {
             return Some(peeled.clone());
+        }
+        // [196.5 Stage-D волна-4] B11ag producer (external_registry feeds the
+        // checker): an `extern "nova"` INSTANCE method declared WITHOUT a `->`
+        // return annotation (`extern "nova" fn Once mut @call_once(body fn()
+        // -> ())`) returns Unit — that IS its declared return. The bare
+        // `f.return_type.as_ref()?` below would BAIL to None on it (co-miss →
+        // legacy `infer_call_ret_c` B11ag extern-registry arm). Materialize the
+        // Unit the declaration states, so Channel 2 covers it. Gated on
+        // `f.is_external` to stay scoped to the extern-registry class (a
+        // non-extern user method with an implicit-Unit body is left to legacy —
+        // narrow byte-identity blast radius); `returns_receiver` was already
+        // handled above, so reaching here with `return_type == None` on an
+        // extern method is unambiguously the Unit case.
+        if f.return_type.is_none() {
+            if f.is_external {
+                return Some(TypeRef::Unit(f.span));
+            }
+            return None;
         }
         let ret = f.return_type.as_ref()?;
         // Subst: receiver carrier generics (`Vec[int]` → T=int) + `Self` → concrete receiver.

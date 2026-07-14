@@ -285,35 +285,41 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
 **Структура каталога (решение владельца 2026-07-13: полноценное веб-приложение —
 бек и фронт по разным папкам):**
 
+**Ред.9 (2026-07-14, владелец): образец структуры = nova-http** (пакетный
+`src/`-канон плана 195; std сам переехал в `std/src/`). Прежняя `backend/`-форма
+ретрактирована:
+
 ```
 examples/flagship/aggregator/
-  backend/
+  src/                — весь Nova-код (бек), src-канон как в nova-http:
     main.nv           — тонкая точка входа: wiring (real_net, порт+env) + accept-loop
     app/              — ядро, чистая логика (свой модуль, D78):
                         domain.nv, aggregate.nv, emit.nv, scenarios.nv
     api/              — HTTP-слой (свой модуль): server.nv (mux/endpoints),
                         report_json.nv, sse.nv
   frontend/
-    index.html        — копия мокапа с переработанным JS; self-contained
-                        (стили+JS внутри) предпочтителен
+    index.html        — мокап v9 (уже положен): вид канона + панель «Код»,
+                        эффект-бейдж, seed-в-URL; self-contained
   README.md           — сборка + запуск (локально; волной 2 — Docker)
   Dockerfile          — волна 2 (§9.4 п.7)
 ```
 
-Обоснование: не сваливать исходники в корень backend/ — конвенция соседей
-(Go `cmd/` + `internal/{domain,api}`, Rust `main.rs` + модули-папки): тонкий
-вход + слои по папкам; флагман — ещё и витрина структуры настоящего
-Nova-приложения, D78 «папка = модуль» ложится на слои напрямую. Глубже двух
-слоёв для 8 файлов не дробить. `*_test.nv` — рядом со своим модулем.
+Aggregator живёт внутри пакета `examples` (вложенный собственный nova.toml НЕ
+заводить в этом заходе — workspace-вложенность не проверена; кандидат волны 2
+вместе с Docker-standalone, где собственный `nova.toml` станет естественным —
+пометить как решение при старте волны 2). `*_test.nv` — рядом со своим модулем.
+Заодно (Ред.9, находка владельца): в `fetch_one` двойную привязку
+`ro stream = match … ; mut st = stream` заменить одной `mut`-привязкой —
+двойная сидит на дыре линейности `[M-176-consume-through-result-match]`.
 
-Миграция существующих `aggregator/*.nv` → `backend/{app,api}/` — тем же заходом
+Миграция существующих `aggregator/*.nv` → `src/{app,api}/` — тем же заходом
 (module-пути выровнять по фактической папке; file+folder одного имени запрещён).
-`embed()`-путь фронта из backend-кода — проверить относительно корня пакета
+`embed()`-путь фронта из src-кода — проверить относительно корня пакета
 (E_EMBED_OUTSIDE_PROJECT не должен сработать — frontend внутри того же примера).
 
 | # | Деливерабл | Детали |
 |---|---|---|
-| 0 | `backend/main.nv` | `fn main`: `real_net()` + real time; цикл `TcpListener.bind(127.0.0.1:8187).accept → spawn handle_connection(stream, mux)` по образцу `examples/net/echo_server.nv`; `handle_connection` — из **пакета `http`** (nv-lang/nova-http, план 203; module-path `http.servernet` прежний, в std его больше НЕТ); порт — const + env-override |
+| 0 | `src/main.nv` | `fn main`: `real_net()` + real time; цикл `TcpListener.bind(127.0.0.1:8187).accept → spawn handle_connection(stream, mux)` по образцу `examples/net/echo_server.nv`; `handle_connection` — из **пакета `http`** (nv-lang/nova-http, план 203; module-path `http.servernet` прежний, в std его больше НЕТ); порт — const + env-override |
 | 1 | real-cancel | aggregate.nv: self-checked soft-deadline → `supervised(deadline:)`; снять соответствующие `[M-flagship-*]`-обходы; тест «опоздавший отменяется раньше своей латентности» (wall_ms < бюджет+слак). Если гонка воспроизводится — repro + доклад, оставить self-checked |
 | 2 | typed-serde | report_json.nv: JsonValue → `#impl(Serialize)` typed-путь; тесты обновить. Опция: `/api/snapshot` отдаёт pretty через `${v:#}` (D419 УЖЕ в main, `197d5a3c5`) |
 | 3 | endpoints | `GET /` → frontend/index.html (`embed()`); `GET /api/snapshot` (есть, fallback); `GET /api/run?legend=weather\|health&mode=demo\|chaos\|live&seed=N` → JSON свежего прогона (**`live`**: health = real_net TCP-замер, weather = open-meteo https; `seed` игнорируется в live); `GET /api/events` (те же параметры) → SSE-replay |

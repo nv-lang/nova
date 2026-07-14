@@ -1549,7 +1549,7 @@ fn cmd_check_explain_cache(
         nova_codegen::types::annotate_map_literals(&mut module);
         nova_codegen::desugar::desugar_module(&mut module);
         nova_codegen::types::infer_effects(&mut module);
-        nova_codegen::callnorm::normalize_module(&mut module);
+        nova_codegen::callnorm::normalize_module(&mut module, &check_env.resolved_callees);
         nova_codegen::chain_norm::normalize_chains_module(
             &mut module, &check_env.resolved_types);
         let report = nova_codegen::field_cache::analyze_module(&module, &cfg);
@@ -1662,7 +1662,7 @@ fn cmd_check_telemetry_cache(
         nova_codegen::types::annotate_map_literals(&mut module);
         nova_codegen::desugar::desugar_module(&mut module);
         nova_codegen::types::infer_effects(&mut module);
-        nova_codegen::callnorm::normalize_module(&mut module);
+        nova_codegen::callnorm::normalize_module(&mut module, &check_env.resolved_callees);
         nova_codegen::chain_norm::normalize_chains_module(
             &mut module, &check_env.resolved_types);
         let report = nova_codegen::field_cache::analyze_module(&module, &cfg);
@@ -4769,7 +4769,7 @@ fn cmd_build(
             // Plan 46 (D102) Ф.2: нормализация call-site — named → positional.
             {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("callnorm");
-                nova_codegen::callnorm::normalize_module(&mut module);
+                nova_codegen::callnorm::normalize_module(&mut module, &build_env.resolved_callees);
                 // Plan 184 (Р7): REAL resolved_types — the value-root guard must
                 // be live on `nova build` (defect-B fix), not just `nova test`.
                 nova_codegen::chain_norm::normalize_chains_module(
