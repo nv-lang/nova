@@ -63,3 +63,7 @@ nova_tests/**/*_conformance_slow.nv
 docs/research/170-str-unicode-api-improvements.md
 docs/research/13-str-unicode-api-audit.md
 test_out.txt
+
+# spec_tests: codegen-артефакты рядом с .nv (пробел закрыт 2026-07-14 — spec_tests не было в списке)
+spec_tests/**/*.c
+*.ilk
