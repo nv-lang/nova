@@ -38349,3 +38349,15 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
 - Честная находка: HTTP-снапшот НЕ байт-детерминирован по seed (elapsed_ms/
   wall_ms от реальных часов) — детерминирован состав/исходы; критерий №7
   плана 187 выполняется только на мок-часах (как и записано).
+
+## 2026-07-14 — план 206 (арифметика) дизайн-уточнения + CAS-follow-up
+- Согласовано владельцем: 206 = 1 интринсик `@overflowing_add/_sub/_mul -> (int,bool)`
+  (в компиляторе, per-type авто через `__builtin_*_overflow`) + 3 `.nv`-бланкета на
+  `fn[T Ints]` (`checked`→Option / `saturating`→clamp / `wrapping`→модуль); trap-дефолт
+  (`nova_int_checked_add`) уже есть; `unchecked` (unsafe, сырой `+`) ОТЛОЖЕН (дублирует
+  Z3-элизию `--contracts=optimized`). Именование = дословно Rust (эталон) + прецедент
+  атомиков `sync.nv` (`compare_exchange`/`fetch_add`). Детали — docs/plans/206.
+- Новый floating-маркер `[M-cas-return-witnessed-value]` P3: `AtomicI*.compare_exchange -> bool`
+  выбрасывает свидетеля провала (C-примитив пишет фактическое в `expected`); пересмотреть на
+  `Result[unit,T]`/`(bool,T)` по принципу «примитив не теряет информацию». Ломающая правка
+  API sync.nv → отдельно, не в 206.
