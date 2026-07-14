@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR
+//
+// Plan 174.2 (str.from-ретракция, D410-амендмент 2026-07-14) — НЕГАТИВ:
+// `str.from(x)` больше не существует. Единственный публичный вход
+// «скаляр → строка» — `@to_str()` (bare-T blanket, std/runtime/string/
+// core.nv). `str` не имеет статического метода `from`; call-site должен
+// провалиться на этапе type-check (нет такого метода) — codegen эту форму
+// уже не распознаёт (Path-form hardcoded dispatch снят вместе с
+// декларациями from_scalar.nv/char.nv).
+
+module neg.neg_str_from_retracted
+
+test "str.from(5) does not compile — use 5.to_str()" {
+    ro s = str.from(5)
+    assert(s.byte_len() > 0)
+}

@@ -38027,46 +38027,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     };
                     return self.emit_expr(&new_call);
                 }
-                // Plan 08 Ф.2: T.from(v) — infallible конверсии.
-                // bool → str / char → str / f64 → str.
-                if parts.len() == 2 && parts[1] == "from" {
-                    if let Some(arg) = args.first() {
-                        let arg_expr = arg.expr();
-                        let arg_ty = self.infer_expr_c_type(arg_expr);
-                        let v = self.emit_expr(arg_expr)?;
-                        if parts[0] == "str" {
-                            // CharLit is always nova_char (Plan 70.3); char
-                            // variable is also nova_char — both must route
-                            // to nova_char_to_str, not nova_int_to_str.
-                            if let ExprKind::CharLit(_) = &arg_expr.kind {
-                                return Ok(format!("nova_char_to_str({})", v));
-                            }
-                            match arg_ty.as_str() {
-                                // Plan 75: char variable → nova_char_to_str (D26/Plan 70.3).
-                                "nova_char" => return Ok(format!("nova_char_to_str({})", v)),
-                                "nova_bool" => return Ok(format!("nova_bool_to_str({})", v)),
-                                "nova_f64"  => return Ok(format!("nova_f64_to_str({})", v)),
-                                // Plan 180: str.from(f32) must route to the f32
-                                // shortest-round-trip formatter (mirror of the
-                                // interpolation/display path). Без этой ветки
-                                // f32-аргумент проваливался в целочисленный
-                                // fallback и ТРУНКИРОВАЛСЯ (0.1f → "0").
-                                "nova_f32"  => return Ok(format!("nova_f32_to_str({})", v)),
-                                "nova_int"  => return Ok(format!("nova_int_to_str({})", v)),
-                                _ => {}
-                            }
-                        }
-                    }
-                }
+                // Plan 174.2 (str.from-ретракция): the old Path-form `T.from(v)`
+                // hardcoded scalar dispatch (bool/char/f64/f32/int → str) lived
+                // HERE — removed together with the `.nv` declarations
+                // (std/runtime/string/from_scalar.nv, std/runtime/char.nv).
+                // Canonical path now: `.to_str()` (bare-T blanket,
+                // std/runtime/string/core.nv), ordinary instance-method dispatch
+                // below — no Path-form special-case needed. `str.from(...)` is no
+                // longer a known static method; it now falls through to the
+                // PRIMITIVE_TYPES loud-fail guard further down
+                // (`[E_UNKNOWN_STATIC_METHOD]`, ~line 38430 pre-removal).
+                //
                 // Plan 12: registry-driven dispatch для Path-form static
                 // (Type.method(args)). Resolve по (recv_type, method_name)
                 // + arg-types.
-                //
-                // Skip `str.from` — есть hard-coded path ниже с D410 to_str()
-                // fallback. Registry знает только `str.from(char)`
-                // но `str.from(int/f64/bool)` идут через builtin nova_*_to_str
-                // helpers — которых в registry нет.
-                if parts.len() == 2 && !(parts[0] == "str" && parts[1] == "from") {
+                if parts.len() == 2 {
                     let recv_ty = &parts[0];
                     let method_name = &parts[1];
                     if let Some(decls) = self.external_registry
@@ -38103,60 +38078,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if parts.len() == 2 && self.effect_schemas.contains_key(&parts[0]) {
                     format!("Nova_{}_{}", parts[0], parts[1])
                 } else if parts.len() == 2 {
-                    // Built-in primitive static methods (D35).
-                    // `str.from(x)` — convert any value to string (D410
-                    // to_str() family). Bootstrap implementation: dispatch on
-                    // arg type — nova_str pass-through, nova_int via
-                    // nova_int_to_str. Other types TBD.
+                    // Plan 174.2 (str.from-ретракция): the `str.from(x)`
+                    // Path-form static-dispatch special-case (D35 bootstrap)
+                    // that lived HERE is removed — `str.from` is no longer a
+                    // declared static method anywhere (see the `.nv`-side
+                    // removal in from_scalar.nv/char.nv). The canonical path
+                    // is `.to_str()` (bare-T blanket, D410), an ordinary
+                    // instance-method call handled by the ordinary method-call
+                    // codegen, not this Path-form-static branch. A leftover
+                    // `str.from(...)` call site now falls through to the
+                    // PRIMITIVE_TYPES loud-fail guard below
+                    // (`[E_UNKNOWN_STATIC_METHOD]`) — but the type-checker
+                    // already rejects it earlier (no such static method).
                     //
-                    // If user defined `fn V @to_str() -> str` for the arg's
-                    // type V, call that instead of the builtin (so user code
-                    // wins). Checked below before falling back to builtin.
-                    if parts[0] == "str" && parts[1] == "from" {
-                        if let Some(arg) = args.first() {
-                            let arg_ty = self.infer_expr_c_type(arg.expr());
-                            // Plan 175 Ф.3(d): value-records (`NovaValue_<X>`) need
-                            // the value-aware strip too — `_no_ws` only handled
-                            // `Nova_<X>*` (heap), silently leaving `NovaValue_<X>`
-                            // unstripped и ломая user-method lookup below (falls
-                            // through to the numeric-cast fallback for value-record
-                            // Display/Debug interpolation otherwise).
-                            let arg_type = Self::debt_strip_value_prefix_or_nova_trim_start(&arg_ty);
-                            // Plan 11: try multi-overload registry first — strict
-                            // arg-type match resolves between overloads (e.g. char vs int).
-                            // If found, use the matching overload's c_name (with parameter
-                            // mangling like `Nova_str_static_from_char`).
-                            let key = ("str".to_string(), "from".to_string());
-                            if let Some(overloads) = self.method_overloads.get(&key).cloned() {
-                                let static_overloads: Vec<MethodSig> = overloads.into_iter()
-                                    .filter(|s| !s.is_instance).collect();
-                                if !static_overloads.is_empty() {
-                                    let v = self.emit_expr(arg.expr())?;
-                                    let chosen = static_overloads.iter()
-                                        .find(|s| s.param_c_types.len() == 1
-                                            && s.param_c_types[0] == arg_ty);
-                                    if let Some(sig) = chosen {
-                                        return Ok(format!("{}({})", sig.c_name, v));
-                                    }
-                                }
-                            }
-                            // [D410] V has @to_str() -> str?
-                            let to_str_c_name = self.method_overloads
-                                .get(&(arg_type.clone(), "to_str".to_string()))
-                                .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
-                                .map(|s| s.c_name.clone());
-                            if let Some(c_name) = to_str_c_name {
-                                let v = self.emit_expr(arg.expr())?;
-                                return Ok(format!("{}({})", c_name, v));
-                            }
-                            let v = self.emit_expr(arg.expr())?;
-                            return Ok(if arg_ty == "nova_str" {
-                                v
-                            } else {
-                                format!("nova_int_to_str((nova_int)({}))", v)
-                            });
-                        }
-                    }
                     // Could be a static method call: `Type.method(args)`.
                     let method_name = &parts[1];
                     // Plan 88 Ф.1: `parts[0]` может быть type-параметром
@@ -47191,10 +47125,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ("str",  "i32",  "use `i32.try_from(s)?`"),
             ("str",  "f64",  "use `f64.try_from(s)?`"),
             ("str",  "bool", "use `bool.try_from(s)?`"),
-            ("int",  "str",  "use `str.from(n)`"),
-            ("f64",  "str",  "use `str.from(f)`"),
-            ("bool", "str",  "use `str.from(b)`"),
-            ("char", "str",  "use `str.from(c)` (UTF-8 encode)"),
+            ("int",  "str",  "use `n.to_str()`"),
+            ("f64",  "str",  "use `f.to_str()`"),
+            ("bool", "str",  "use `b.to_str()`"),
+            ("char", "str",  "use `c.to_str()` (UTF-8 encode)"),
             // Plan 134: *() cast restrictions (replaces `ptr` — Plan 134).
             // Allowed: *() ↔ {u64, i64, int} (для integer-storage).
             // Banned: *() ↔ {str, bool, f32, f64, char}.
