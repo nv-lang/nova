@@ -11,7 +11,10 @@
 //
 // Это РЕЛИЗНОЕ поведение: гоняется `--mode release`; per-fn opt-out
 // снимает страховку даже у недоказанного контракта (hot-path под
-// ответственность разработчика). Build-аналог — `--contracts=off` (t5).
+// ответственность разработчика). Plan 194 A2.1: build-level
+// `--contracts=off` (глобальный аналог) retired — `#unchecked` остаётся
+// единственным opt-out механизмом (см. t5_build_policy_off.nv, репурпонен
+// под proven-элизию под `optimized`).
 
 module standalone.t4_unchecked_optout
 #unchecked
