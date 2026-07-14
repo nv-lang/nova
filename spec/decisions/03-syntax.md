@@ -11435,6 +11435,25 @@ Rust C-CONV — источник старого правила (итератор
 (`AsSpan`/`ToArray`, `asSequence`/`toList`) — таксономия, от которой уходим благодаря
 `[]T`-модели. Правило §1 nv-coding-style переписано синхронно.
 
+> **AMEND (2026-07-14, Plan 174.2):** канонический вход «скаляр/значение → строка» —
+> ОДИН путь, `@to_str()`, через bare-T blanket (D145 форма, зеркалит
+> `fn[T] T @identity() -> T => @`):
+> ```nova
+> fn[T] T @to_str() -> str => "${@}"
+> ```
+> («строка из значения = подставить значение в интерполяцию»). Статический
+> `str.from(scalar)` (был bootstrap-путём D35, см. историю D70/D73/D77 выше)
+> **ретрактирован** — `.to_str()` чейнится, `str.from(x)` нет, держать оба
+> нарушало бы D9 (один канонический путь). Специализация — по D84 «concrete
+> побеждает generic» + [D285](10-overloading.md#d285--receiver-compatibility-rule--blanket-dispatch-priority-plan-164-ф3):
+> конкретный `T @to_str()` (напр. `[]u8 @to_str() -> Result[str, Utf8Error]` —
+> UTF-8 decode, другая семантика/arity, НЕ `"${bytes}"`; `char @to_str()`)
+> всегда побеждает blanket по receiver-типу. Рекурсия исключена: `"${@}"` для
+> примитива лоуэрится напрямую в Display-хелпер (emit_c.rs
+> `emit_interpolated_str` primitive dispatch: `nova_int_to_str`/`nova_f64_to_str`/…),
+> НЕ через `.to_str()` повторно; для не-примитива — через `Display.@display`.
+> Детали миграции — `[M-d410-str-from-retraction]`, `docs/plans/174.2-scalar-to-str-notes.md`.
+
 ## D411. Record-деструктуризация в биндингах `ro`/`mut` (2026-07-07)
 
 > **Status:** ✅ IMPLEMENTED 2026-07-07 (решение владельца, предложено на живом коде —
