@@ -38333,3 +38333,19 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   (все supervisor-тесты + 3 новых); err173 + any_is + plan110 PASS;
   runtime_panics CU PASS (precedence в т.ч.); std/src/concurrency δ=0
   (2 pre-existing CC-FAIL).
+
+## 187 прогон А (2026-07-14, sonnet, ветка flagship-187) — 4 новых маркера
+
+- Переделка main.nv: ~150 строк ручного HTTP снесено → ServeMux +
+  http.servernet.handle_connection (требование владельца); структура
+  backend/ → src/ (Ред.9, nova-http-канон); детерминизм-тест + README.
+- Новые маркеры (детали в backlog-followups.md):
+  [M-187-http-serde-setcookie-serialize-collision] P1 (генерик json_encode[T]
+  ломает линковку #impl(Serialize) в CU с http — семья typed-body/D84);
+  [M-187-supervised-nested-fiber-slot-race] P1 (рантайм: сервер часто виснет
+  на 2-3-м запросе, застрявший слот); [M-187-errorkind-parsejsonerror-
+  variant-collision] P2 (одноимённый вариант разной арности в двух sum в CU);
+  [M-187-nested-spawn-scope-var-cc-fail] P2 (spawn-в-spawn под supervised).
+- Честная находка: HTTP-снапшот НЕ байт-детерминирован по seed (elapsed_ms/
+  wall_ms от реальных часов) — детерминирован состав/исходы; критерий №7
+  плана 187 выполняется только на мок-часах (как и записано).

@@ -24084,6 +24084,10 @@ struct ConsumeRegistry {
     /// Для var-type инференса `let x = factory()` — расширяет резолв
     /// consume-метода за пределы очевидных конструкторов.
     fn_return_types: HashMap<String, String>,
+    /// D86-followup (2026-07-14): free-fn name → Ok/Some-inner type name,
+    /// companion of `fn_return_types` — see `unwrapped_method_return_types`
+    /// doc for rationale (same `Result[T,E]`/`Option[T]` unwrap, free-fn side).
+    unwrapped_fn_return_types: HashMap<String, String>,
     /// Plan 77 (D132): `(receiver_type, method)` — fluent-методы `-> @`,
     /// гарантированно возвращающие сам receiver. `let x = recv.method()`
     /// для такого метода → `x` алиас `recv`.
@@ -24096,6 +24100,22 @@ struct ConsumeRegistry {
     /// (single-segment Named). Used for var-type inference of method calls:
     /// `consume g = mu.lock()` → g has type `MutexGuard`.
     method_return_types: HashMap<(String, String), String>,
+    /// D86-followup (2026-07-14): `(receiver_type, method_name)` → the
+    /// Ok/Some-INNER type name when the method's declared return type is
+    /// `Result[T,E]`/`Option[T]` (`Self` resolved to the receiver type).
+    /// Companion of `method_return_types` (which stores the bare/wrapped
+    /// name — e.g. `Result` itself — for a `Result[T,E]`-returning method,
+    /// since `path.len() == 1` is true for the OUTER `Named{"Result"}` too).
+    /// Consulted ONLY from `ConsumeCtx::infer_unwrapped_call_type` — i.e.
+    /// only when the call is wrapped by `?` / `!!` / `??`, so a bare
+    /// (non-unwrapped) call site keeps seeing the wrapped type via
+    /// `method_return_types` unchanged. Root-caused the false-empty-type
+    /// `[D133-not-consumed]` (`тип ``) on `consume X = T.f() ?? panic(...)` /
+    /// `consume X = T.f()!!` — `var_types` had no entry at all for these RHS
+    /// shapes, so `is_consume_method` fell through to the coarse
+    /// `is_any_consume_method` name-only fallback (28381) instead of the
+    /// precise per-type lookup.
+    unwrapped_method_return_types: HashMap<(String, String), String>,
     /// Plan 108.1 (D176 amend): `(receiver_type, method_name)` для всех
     /// методов с `mut`-receiver (`fn T mut @method(...)`).  Вызов такого
     /// метода на параметре без `mut` → E_PARAM_NOT_MUT.
@@ -24173,12 +24193,45 @@ struct ConsumeRegistry {
     record_field_names: HashMap<String, HashSet<String>>,
 }
 
+/// D86-followup (2026-07-14): if `rt` is `Result[T,E]` / `Option[T]` with a
+/// single-segment Named generic `T` (`Self` resolved to `self_ty`), return
+/// `T`'s name — the Ok/Some-inner type. `None` for anything else (bare type,
+/// multi-segment/tuple/array generic, erased bare `Result`/`Option`), so
+/// callers fall back to their existing (wrapped-type) behaviour — sound
+/// (false-negative, never false-positive).
+///
+/// Used to populate `unwrapped_method_return_types`/`unwrapped_fn_return_types`
+/// — see those fields' docs for why this must be a SEPARATE map rather than
+/// changing `method_return_types`/`fn_return_types` in place.
+fn unwrap_result_option_name(rt: &TypeRef, self_ty: &str) -> Option<String> {
+    if let TypeRef::Named { path, generics, .. } = rt {
+        if path.len() == 1
+            && (path[0] == "Result" || path[0] == "Option")
+            && !generics.is_empty()
+        {
+            if let TypeRef::Named { path: ip, .. } = &generics[0] {
+                if ip.len() == 1 {
+                    return Some(if ip[0] == "Self" {
+                        self_ty.to_string()
+                    } else {
+                        ip[0].clone()
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
 impl ConsumeRegistry {
     fn build(module: &Module) -> Self {
         let mut methods: HashSet<(String, String)> = HashSet::new();
         let mut fn_params: HashMap<String, Vec<usize>> = HashMap::new();
         let mut method_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
         let mut fn_return_types: HashMap<String, String> = HashMap::new();
+        // D86-followup: unwrapped (Ok/Some-inner) companion maps — see field docs.
+        let mut unwrapped_fn_return_types: HashMap<String, String> = HashMap::new();
+        let mut unwrapped_method_return_types: HashMap<(String, String), String> = HashMap::new();
         let mut recv_returning: HashSet<(String, String)> = HashSet::new();
         let mut fn_view_params: HashMap<String, Vec<usize>> = HashMap::new();
         // Plan 103.9 (D174): method return-type map for var-type inference.
@@ -24335,6 +24388,13 @@ impl ConsumeRegistry {
                                 );
                             }
                         }
+                        // D86-followup: Ok/Some-inner companion (see field doc).
+                        if let Some(rt) = &fd.return_type {
+                            if let Some(inner) = unwrap_result_option_name(rt, &r.type_name) {
+                                unwrapped_method_return_types.insert(
+                                    (r.type_name.clone(), fd.name.clone()), inner);
+                            }
+                        }
                         // Plan 77 (D132): `-> @` fluent-метод.
                         if fd.returns_receiver {
                             recv_returning
@@ -24366,6 +24426,12 @@ impl ConsumeRegistry {
                                     .insert(fd.name.clone(), path[0].clone());
                             }
                         }
+                        // D86-followup: Ok/Some-inner companion (see field doc).
+                        if let Some(rt) = &fd.return_type {
+                            if let Some(inner) = unwrap_result_option_name(rt, "") {
+                                unwrapped_fn_return_types.insert(fd.name.clone(), inner);
+                            }
+                        }
                         // Plan 100.3 (D157): collect view-params — non-consume params
                         // of consume types. Used for D133-consume-rvalue-in-view check.
                         let view_idx: Vec<usize> = fd.params.iter().enumerate()
@@ -24392,6 +24458,7 @@ impl ConsumeRegistry {
             fn_mut_params, method_mut_params,
             fn_non_unsafe_params, method_non_unsafe_params,
             record_consume_fields, record_field_names,
+            unwrapped_method_return_types, unwrapped_fn_return_types,
         }
     }
 
@@ -24461,6 +24528,14 @@ impl ConsumeRegistry {
                             self.method_return_types
                                 .entry((r.type_name.clone(), fd.name.clone()))
                                 .or_insert(ret);
+                        }
+                    }
+                    // D86-followup: Ok/Some-inner companion (see field doc).
+                    if let Some(rt) = &fd.return_type {
+                        if let Some(inner) = unwrap_result_option_name(rt, &r.type_name) {
+                            self.unwrapped_method_return_types
+                                .entry((r.type_name.clone(), fd.name.clone()))
+                                .or_insert(inner);
                         }
                     }
                     if !consume_idx.is_empty() {
@@ -24860,6 +24935,68 @@ impl<'a> ConsumeCtx<'a> {
             // `User { ... }` record-литерал.
             ExprKind::RecordLit { type_name: Some(path), .. } if path.len() == 1 => {
                 Some(path[0].clone())
+            }
+            // D86-followup (2026-07-14): consume-binding RHS через unwrap-
+            // operator `?` / `!!` / `&`. Разворачивает `Result[T,E]`/`Option[T]`
+            // → T (Ok/Some branch) для известных Call-форм через
+            // `infer_unwrapped_call_type`; иначе (alias, generic container,
+            // recursive unwrap) — прозрачно наследует тип внутреннего expr
+            // (текущее поведение до фикса), НЕ произвольный fallback.
+            // Прежде для ЭТИХ трёх форм арма не было вовсе → var_types
+            // оставался None → `is_consume_method` не видел точный тип
+            // (empty `тип ``` в D133-диагностике; см. field-docи выше).
+            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
+                self.infer_unwrapped_call_type(inner)
+                    .or_else(|| self.infer_value_type(inner))
+            }
+            // `a ?? b` — b (обычно `panic(...)`/иной diverging fallback) не
+            // производит consume-значения; см. ExprKind::Coalesce арм в
+            // infer_expr_type (типовой «канал» для codegen) — тот же принцип:
+            // тип/значение берутся из Ok/Some-ветки `a`, `b` игнорируется.
+            ExprKind::Coalesce(a, _) => {
+                self.infer_unwrapped_call_type(a)
+                    .or_else(|| self.infer_value_type(a))
+            }
+            _ => None,
+        }
+    }
+
+    /// D86-followup helper for the `Try`/`Bang`/`RefArg`/`Coalesce` arms of
+    /// `infer_value_type` above: resolve the Ok/Some-INNER type of a
+    /// `Result[T,E]`/`Option[T]`-returning Call, via the `unwrapped_*`
+    /// companion maps. Intentionally NOT used from the bare `Call` arm —
+    /// a non-unwrapped call site must keep seeing the wrapped type.
+    fn infer_unwrapped_call_type(&self, e: &Expr) -> Option<String> {
+        let ExprKind::Call { func, .. } = &e.kind else { return None; };
+        match &func.kind {
+            // `Type.static_method(...)` / `module.fn(...)`.
+            ExprKind::Path(parts) if parts.len() >= 2 => {
+                let type_name = parts[parts.len() - 2].clone();
+                let method_name = parts[parts.len() - 1].clone();
+                self.reg.unwrapped_method_return_types
+                    .get(&(type_name, method_name)).cloned()
+            }
+            // Free function call by bare name.
+            ExprKind::Ident(fname) => {
+                self.reg.unwrapped_fn_return_types.get(fname).cloned()
+            }
+            // `recv.method()` / `self.method()` / `@method()`.
+            ExprKind::Member { obj, name: method } => {
+                let recv_ty: Option<String> = match &obj.kind {
+                    ExprKind::Ident(recv) if recv == "self" => self.self_type.clone(),
+                    ExprKind::Ident(recv) => {
+                        let canon = self.canonical(recv);
+                        self.var_types.get(&canon)
+                            .or_else(|| self.var_types.get(recv.as_str()))
+                            .cloned()
+                    }
+                    ExprKind::SelfAccess => self.self_type.clone(),
+                    _ => None,
+                };
+                recv_ty.and_then(|rty| {
+                    self.reg.unwrapped_method_return_types
+                        .get(&(rty, method.clone())).cloned()
+                })
             }
             _ => None,
         }
