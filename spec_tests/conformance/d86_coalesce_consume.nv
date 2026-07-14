@@ -1,0 +1,38 @@
+// D86-followup (2026-07-14): `consume X = RESULT ?? panic("msg")` (and the
+// `!!`/`?` forms) must (1) type-check green — the `??` coalesce propagates the
+// Ok/Some-inner consume type so the D133 linear checker names the real type and
+// method (fix landed in `ConsumeCtx::infer_value_type`, compiler-codegen/src/
+// types/mod.rs — Try/Bang/RefArg/Coalesce arms unwrap Result[T,E]/Option[T]),
+// and (2) codegen green in the MERGED folder-module CU — a user `consume`-record
+// used through Result/Option lowers to the heap `Nova_<T>*` repr and its
+// NovaRes_/NovaOpt_ wrapper typedefs (`NovaRes_Nova_D86Res_p_nova_str`,
+// `NovaOpt_Nova_D86Res_p`) are emitted correctly alongside the value struct.
+// Companion neg: neg/d86_coalesce_consume_neg.nv (D133 not weakened).
+// Named record literals `Ok(D86Res { id: 1 })` — anonymous `Ok({...})` is a
+// separate contextual-literal path. Part of the SINGLE `spec_tests.conformance`
+// folder-module.
+module spec_tests.conformance
+
+export type D86Res consume {
+    id int,
+}
+
+export fn D86Res consume @close() -> () { () }
+
+export fn d86_try_open(ok bool) -> Result[D86Res, str] {
+    if ok { Ok(D86Res { id: 1 }) } else { Err("boom") }
+}
+
+export fn d86_try_open_opt(ok bool) -> Option[D86Res] {
+    if ok { Some(D86Res { id: 2 }) } else { None }
+}
+
+test "?? consume: Result[ConsumeType,E] Ok-branch consumed via .close() (D86)" {
+    consume r = d86_try_open(true) ?? panic("open failed")
+    r.close()
+}
+
+test "?? consume: Option[ConsumeType] Some-branch consumed via .close() (D86)" {
+    consume r = d86_try_open_opt(true) ?? panic("open failed")
+    r.close()
+}
