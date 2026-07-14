@@ -1,0 +1,54 @@
+// [M-175-type-const-max-shadows-builtin] — regression conformance fixture.
+//
+// A user value-record type-const named `MAX`/`MIN` must NOT shadow the builtin
+// numeric `.MAX`/`.MIN` in a type-set-bounded generic body. Repro shape mirrors
+// the production trigger (`Duration.MAX`/`Duration.MIN`, Plan 175 Ф.1c): a
+// module-level const named exactly `MAX`/`MIN` on an unrelated value-record,
+// sitting in the SAME compile-unit as a `fn[T <numeric set>] … => x == T.MAX`
+// body (reuses `D310Ints`, declared next-door in d310_type_set_bound.nv — same
+// module `spec_tests.conformance`, single-CU gate). Before the fix, `T.MAX`
+// mis-typed as `NovaValue_M175ShadowRec` (the record) instead of the
+// substituted numeric member's own type, and `==` mis-routed into structural
+// field-eq on a non-record operand → CC-FAIL ("member reference base type
+// 'int' is not a structure"). The constant's VALUE was always correct
+// (INT32_MAX/etc.) — only the checker's TYPE channel was missing the D310
+// type-parameter substitution mirror. Fix: `compiler-codegen/src/codegen/
+// emit_c.rs` `infer_expr_c_type`'s Path arm now substitutes a type-PARAMETER
+// `parts[0]` through `subst_c` (mono `current_type_subst`) BEFORE falling to
+// the name-only `var_types.get(last)` legacy lookup that caused the shadow.
+module spec_tests.conformance
+
+/// Unrelated value-record whose module-const is named `MAX`/`MIN` — the
+/// SAME names the builtin numeric type-set bound uses for its own constant.
+type M175ShadowRec value {
+    ro nanos i64
+}
+
+const MAX M175ShadowRec = { nanos: 999 }
+const MIN M175ShadowRec = { nanos: -999 }
+
+// Reuses `D310Ints` (declared in d310_type_set_bound.nv, same module/CU) —
+// `T.MAX`/`T.MIN` here must resolve to the SUBSTITUTED numeric member's own
+// bound, never to `M175ShadowRec` above.
+fn[T D310Ints] m175_is_max(x T) -> bool => x == T.MAX
+fn[T D310Ints] m175_is_min(x T) -> bool => x == T.MIN
+
+test "M175: `T.MAX`/`T.MIN` stay numeric next to a same-named user value-record const" {
+    // i32
+    assert(m175_is_max[i32](2147483647))
+    assert(!m175_is_max[i32](0))
+    assert(m175_is_min[i32](-2147483648))
+    assert(!m175_is_min[i32](0))
+    // i64
+    assert(m175_is_max[i64](9223372036854775807))
+    assert(!m175_is_max[i64](0))
+    // int
+    assert(m175_is_max[int](9223372036854775807))
+    assert(!m175_is_max[int](0))
+}
+
+// NOTE: `M175ShadowRec.MAX`/`.MIN` used AS A VALUE (e.g. a `.nanos` field
+// read) hits the pre-existing, UNRELATED `[M-175-value-record-const-ref]`
+// codegen gap (value-record module-const-as-value emits an undeclared
+// mangled symbol) — out of scope here; this fixture only proves the CONST
+// NAME no longer shadows the builtin numeric `.MAX`/`.MIN` TYPE channel.

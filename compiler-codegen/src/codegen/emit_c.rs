@@ -52278,6 +52278,52 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if let Some((_, c_ty)) = Self::numeric_type_constant_mapping(parts) {
                     return c_ty.to_string();
                 }
+                // [M-175-type-const-max-shadows-builtin] (2026-07-14): `T.MAX`/`T.MIN`/…
+                // inside a type-set-bounded generic body — `parts[0]` is a type-PARAMETER,
+                // not a concrete type name, so the direct `numeric_type_constant_mapping`
+                // check above (unsubstituted `parts`) misses. Mirror the D310 VALUE-side
+                // substitution already applied in `emit_expr`'s Path arm (Plan 172.3,
+                // ~line 28331): resolve `parts[0]` through `subst_c` (mono `current_type_
+                // subst`, keyed by type-PARAM name — a concrete type name like `Duration`
+                // never matches, so this cannot fire for `Duration.MAX`/legit assoc-const
+                // reads), map the substituted C-name back to its Nova primitive, and look
+                // the TYPE up in the SAME mapping table. Without this, the Path falls
+                // through — past every arm below — to the P67-LEGACY final Path arm's bare
+                // `var_types.get(last)` (last segment = "MAX"), which resolves the
+                // constant NAME against ANY module-level const called `MAX`/`MIN`
+                // regardless of qualifier (a user `const MAX Duration = {…}` shadows the
+                // builtin, mis-typing `T.MAX` as `NovaValue_Duration` and routing `==`
+                // into structural field-eq on a non-record operand — CC-FAIL "member
+                // reference base type 'int' is not a structure"). The constant's C
+                // *value* was always correct (numeric_type_constant_mapping VALUE table
+                // in `emit_expr` already substitutes) — only the TYPE channel was missing
+                // this mirror.
+                if parts.len() == 2 {
+                    if let Some(c_name) = self.subst_c(&parts[0]) {
+                        let nova_prim: Option<&str> = match c_name.trim_end_matches('*').trim() {
+                            "nova_int" => Some("int"),
+                            "int8_t" => Some("i8"),
+                            "int16_t" => Some("i16"),
+                            "int32_t" => Some("i32"),
+                            "int64_t" => Some("i64"),
+                            "nova_uint" | "uint64_t" => Some("uint"),
+                            "uint8_t" | "nova_byte" => Some("u8"),
+                            "uint16_t" => Some("u16"),
+                            "uint32_t" => Some("u32"),
+                            "nova_char" => Some("char"),
+                            "nova_bool" => Some("bool"),
+                            "f32" | "float" => Some("f32"),
+                            "f64" | "double" => Some("f64"),
+                            _ => None,
+                        };
+                        if let Some(np) = nova_prim {
+                            let subst_parts = [np.to_string(), parts[1].clone()];
+                            if let Some((_, c_ty)) = Self::numeric_type_constant_mapping(&subst_parts) {
+                                return c_ty.to_string();
+                            }
+                        }
+                    }
+                }
                 // D406: qualified sum-variant access `TypeName.Variant` parsed by the
                 // parser as `Path(["TypeName", "Variant"])` when the sum-type name is
                 // not a local variable. The whole expression has type `Nova_TypeName*`
