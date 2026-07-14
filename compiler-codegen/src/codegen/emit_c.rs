@@ -30582,12 +30582,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if left_ty.starts_with("NovaOpt_") {
                     let opt_tmp = self.fresh_tmp();
                     self.line(&format!("{} {} = {};", left_ty, opt_tmp, l));
-                    // Plan 118 Ф.5: NPO-aware is-some check.
+                    // Plan 118 Ф.5: NPO-aware is-some check keyed by the SANITIZED
+                    // payload identifier (`NovaOpt_Nova_X_p` → `Nova_X_p`).
                     let sani = left_ty.strip_prefix("NovaOpt_").unwrap_or(&left_ty);
                     let some_check = self.option_is_some_check(&opt_tmp, sani);
-                    // Plan 172.1 [literal-coercion]: fallback coerces to the Some-payload
-                    // type (`?? (0,0)` against `Option[(uint,uint)]` builds a matching tuple).
-                    let r = self.emit_expr_with_target_type(right, sani)?;
+                    // Plan 172.1 [literal-coercion]: the fallback coerces to the
+                    // Some-payload type — which is the REAL c-type of the `.value`
+                    // field (`Nova_X*`), NOT the sanitized identifier `sani`
+                    // (`Nova_X_p`). Passing `sani` made a never-typed fallback
+                    // (`Option[HeapRec] ?? panic(...)`) synthesize the struct
+                    // compound-literal `((Nova_X_p){0})` via `typed_zero_value_125`
+                    // (D86 [M-d86-option-coalesce-never-payload-p]): `Nova_X_p` is
+                    // only ever a mangled component (`NovaOpt_Nova_X_p`), never a
+                    // standalone typedef → `use of undeclared identifier 'Nova_X_p'`.
+                    // Mirror the Result arm below, which targets the real ok-payload
+                    // c-type from `novares_ok_err`. `desanitize_c_from_ident` restores
+                    // the pointer (`Nova_X_p`→`Nova_X*`); value payloads (no `_p`
+                    // suffix: `nova_int`, `NovaValue_…`, `NovaTuple_…`) pass through
+                    // unchanged, so this is byte-identical for every non-pointer payload.
+                    let payload_c = Self::desanitize_c_from_ident(sani);
+                    let r = self.emit_expr_with_target_type(right, &payload_c)?;
                     Ok(format!("({} ? {}.value : {})", some_check, opt_tmp, r))
                 } else if Self::is_result_like(&left_ty) {
                     // D86: `Result ?? fb` — `Ok(v)` → `v`, `Err(_)` → `fb` (ошибка отброшена).
