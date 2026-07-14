@@ -3,27 +3,39 @@
 // regression fixture: calling a method DIRECTLY on a freshly-constructed
 // variant value, with NO intermediate `ro`/`mut` binding, must resolve
 // identically to the (already-working) `ro x = Type.Variant(...); x.method()`
-// form — both cross-module (`Kind` imported from `m176_variant_ctor_method_a`,
-// mirrors the real bug's `std.net.NetError` used from `std.io` context) and
-// same-module (`Local` declared right here).
+// form. Covers all three receiver shapes across module boundaries:
+//   - concrete sum, unique name          (`Kind` from _a, same-module `Local`)
+//   - concrete sum whose bare name COLLIDES (D381: `Phase` is declared in BOTH
+//     `_b` and `_c` — co-present; this is the merged-CU condition that made the
+//     pre-fix arm qualify the name via `ref_type_base`, miss the bare-keyed
+//     `sum_schemas`, and PANIC — see below)
+//   - GENERIC sum                        (`GBox[T]` from _g)
 //
-// Root cause (see docs/plans/backlog-followups.md for the full writeup): the
-// parser's PascalCase path-collector greedily folds EVERY `.ident` following
-// an initial PascalCase segment into one flat `Path`, regardless of casing
-// (kept deliberately so lowercase static-ctor calls like `SeekFrom.start(5)`
-// still parse as a single Path) — so `Type.Variant.method()`, with NO parens
-// on the nullary variant, collapses into a single 3-part Path
-// `[Type, Variant, method]` wrapped in one Call, never reaching the Member-
-// call dispatch that a bound variable's `.method()` goes through. A
-// PAYLOAD-variant ctor (`Type.Info(5).method()`) does NOT collapse this way —
-// the ctor's own parens force a nested Call/Member shape that already
-// dispatches correctly — so payload-ctor coverage here is a green control,
-// not a fix target; the nullary-variant chain is the actual regression this
-// fixture locks down (checker `infer_call_ret_c`'s `recv_and_method` Path arm
-// + `emit_call`'s Path arm, both in compiler-codegen/src/codegen/emit_c.rs).
+// Root cause: the parser's PascalCase path-collector greedily folds EVERY
+// `.ident` following an initial PascalCase segment into one flat `Path`,
+// regardless of casing (kept deliberately so lowercase static-ctor calls like
+// `SeekFrom.start(5)` still parse as a single Path) — so `Type.Variant.method()`,
+// with NO parens on the nullary variant, collapses into a single 3-part Path
+// `[Type, Variant, method]` wrapped in one Call, never reaching the Member-call
+// dispatch that a bound variable's `.method()` goes through. The Path-only
+// tail then hit `[P67-LEGACY] ... (no method segment)` — a hard panic that
+// aborts the WHOLE compile unit (surfaced only in the merged CU, where the
+// colliding `Kind` forces name qualification). A PAYLOAD-variant ctor
+// (`Type.Info(5).method()`) does NOT collapse this way — its own parens force a
+// nested Call/Member shape that already dispatched — so payload-ctor coverage
+// here is a green control, not a fix target.
+//
+// Fix (compiler-codegen/src/codegen/emit_c.rs `variant_chain_as_member`):
+// rewrite the collapsed 3-part variant chain into the equivalent
+// `Member{ Path[Type, Variant], method }` at the top of BOTH `infer_call_ret_c`
+// and `emit_call`, so it flows through the existing collision-aware AND
+// generic-aware Member machinery with zero duplicated per-shape logic.
 module conformance.m176_variant_ctor_method_test
 
 import spec_tests.conformance.m176_variant_ctor_method_a.{Kind}
+import spec_tests.conformance.m176_variant_ctor_method_b.{Phase}
+import spec_tests.conformance.m176_variant_ctor_method_c.{make_phase_c, phase_c_render}
+import spec_tests.conformance.m176_variant_ctor_method_g.{GBox}
 
 type Local enum
     | Empty
@@ -54,6 +66,22 @@ test "[M-176-xmod-payload-variant-ctor]: same-module nullary variant ctor + imme
 
 test "[M-176-xmod-payload-variant-ctor]: same-module payload variant ctor + immediate method call (no ro binding)" {
     assert(Local.Info(7).label() == "info:7")
+}
+
+test "[M-176-xmod-payload-variant-ctor]: colliding bare sum name (D381) — nullary chain still resolves in merged CU (was P67 panic)" {
+    // `Phase` collides with the co-present `Phase` in `_c`; this nullary chain
+    // (qualified receiver via `ref_type_base`) is exactly what aborted the
+    // merged conformance CU with the P67 panic before the fix.
+    assert(Phase.Ready.name() == "ready")
+    assert(Phase.Done.name() == "done")
+    // Keep `_c`'s colliding `Phase` genuinely co-present (referenced, so it is
+    // pulled into the same merged module.items → the collision is real).
+    ro p = make_phase_c()
+    assert(phase_c_render(p) == "c-stop")
+}
+
+test "[M-176-xmod-payload-variant-ctor]: generic sum nullary variant ctor + immediate method call (no ro binding)" {
+    assert(GBox.Vacant.tag() == "g-vacant")
 }
 
 test "[M-176-xmod-payload-variant-ctor]: control — ro-bound variant then method call still resolves (xmod + same-module)" {

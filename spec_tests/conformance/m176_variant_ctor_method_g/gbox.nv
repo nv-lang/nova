@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// [M-176-xmod-payload-variant-ctor]: GENERIC sum fixture. `GBox.Vacant.tag()`
+// (nullary variant chain on a generic sum, no `ro` binding) is the generic-mono
+// arm the coordinator flagged: pre-fix it hit the same P67 panic; the rewrite-to-
+// Member fix routes it through the generic-aware Member machinery. Distinct type
+// name (`GBox`) AND distinct variant names (`Vacant`/`Item`, not the `Empty`
+// shared by the concrete `Kind`/`Local` fixtures) — a generic sum whose bare
+// name ALSO collides is a SEPARATE, broader codegen gap (C typedef redefinition)
+// out of this fix's scope.
+module conformance.m176_variant_ctor_method_g
+
+export type GBox[T] enum
+    | Vacant
+    | Item(T)
+
+export fn GBox[T] @tag() -> str {
+    match @ {
+        Vacant  => "g-vacant"
+        Item(_) => "g-item"
+    }
+}

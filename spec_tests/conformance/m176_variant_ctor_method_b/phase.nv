@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// [M-176-xmod-payload-variant-ctor]: one half of a bare-name COLLISION pair.
+// `Phase` is ALSO declared in `_c` — the mere co-presence of two same-named
+// sums makes `Phase` collide (D381), forcing `ref_type_base` to qualify the
+// name. That qualification is the exact condition under which the pre-fix
+// 3-part variant-chain arm looked the qualified name up in the bare-keyed
+// `sum_schemas`, missed, and fell into the CU-aborting
+// `[P67-LEGACY] ... (no method segment)` panic. This half owns the chained
+// method (`@name`); `_c`'s half is referenced only via functions.
+module conformance.m176_variant_ctor_method_b
+
+export type Phase enum
+    | Ready
+    | Done
+
+export fn Phase @name() -> str {
+    match @ {
+        Ready => "ready"
+        Done  => "done"
+    }
+}
