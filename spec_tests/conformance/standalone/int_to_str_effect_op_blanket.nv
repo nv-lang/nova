@@ -1,0 +1,42 @@
+// Plan 174.2 / D164 — ПОЗИТИВ (был neg/int_to_str_effect_collision_neg до
+// 174.2): int, полученный из результата effect-op (`Clock.tick() -> int`), в
+// модуле, где ТАКЖЕ объявлен чужой конкретный `NetErr @to_str()`, ОБЯЗАН
+// диспатчиться в СВОЙ bare-typevar бланкет `fn[T] T @to_str() => "${@}"`
+// (prelude), а НЕ в `Nova_NetErr_method_to_str(nova_int)` (число как enum-
+// указатель → type confusion / SEGV).
+//
+// До 174.2 `int` не имел `to_str` вовсе → это был EXPECT_COMPILE_ERROR
+// (E_UNKNOWN_METHOD). Теперь бланкет даёт `int.to_str()`, а фикс D164 (guard
+// Plan 164 Ф.3, расширенный на примитивы) гарантирует правильный диспатч.
+// Отличие от d164_primitive_blanket_dispatch.nv: там ресивер — литерал `5`;
+// здесь — результат effect-op (изначальная забота [M-183]: результат
+// effect-op был UNTYPED в scope чекера и проскакивал primitive-gate).
+// EXPECT_STDOUT 9
+
+module standalone.int_to_str_effect_op_blanket
+
+type NetErr enum
+    | Eof
+    | Closed
+
+// Чужой конкретный @to_str — НЕ должен красть диспатч int'а.
+export fn NetErr @to_str() -> str {
+    match @ {
+        Eof    => "eof"
+        Closed => "closed"
+    }
+}
+
+type Clock effect {
+    tick() -> int
+}
+
+fn describe() Clock -> str {
+    ro x = Clock.tick()          // int из effect-op
+    x.to_str()                   // → бланкет "${x}" = "9", НЕ NetErr.to_str
+}
+
+fn main() Io -> () {
+    ro s = with Clock = effect Clock { tick() => 9 } { describe() }
+    println(s)
+}
