@@ -28,6 +28,8 @@
 | pad-механизм для width-композита | **pad_in_place** на главном sb (mark + measure + memmove для right/center; left — без сдвига) |
 | Scratch-SB | только осмыслен как альтернатива pad_in_place; выбран in-place |
 | `pad_consumed` | если тип сам звал `f.pad(...)` — компилятор внешний pad не навешивает (зеркало текущего `precision_consumed`) |
+| **fallibility** | fmt-`Write.@write([]u8) -> ()` **инфаллибельно** (пишет в растущий SB, не падает); io-`Write` → `Result[(), IoError]` (Plan 176). **Два байтовых РОДСТВЕННИКА** (единый шейп `@write([]u8)`, разные сигнатуры), НЕ один протокол — как `fmt::Write`/`io::Write` у Rust. Форматировать в файл → мост: SB (инфаллибельно) → `file.write(sb.bytes())?`. Конвенция [177/D325]: std=`Result`, не `Fail`-эффект → инфаллибельной операции Result не нужен |
+| `into_str()` | **assume-valid-UTF-8** (писатели гарантируют) + checked-вариант `Result[str,Utf8Error]` для сырого байт-sink |
 
 **Решено 2026-07-15:** буфер-примитив = **внутренний** рендер `int_fmt(v,buf,cap)->len` (не публичный `@to_str`);
 `Write`↔`io.Write` — **СЛИТЬ** (коорд. 176), направления `Read`/`Write` НЕ сливать; str-форма = **default-метод**
@@ -184,13 +186,14 @@ result = sb.into_str()
 overload); `nova_f64_into` C-контракт. Гейты: полный conformance один-CU зелёный; форматные фикстуры (width/align/fill/
 sign/radix/precision/alternate/pretty) pos; byte-parity НЕ требуется (вывод тот же, .c меняется законно).
 
-## 8. Открытые вопросы (ждут owner)
+## 8. Статус развилок
 
-1. **Fallibility единого `Write`** (главный). Форматирование-в-строку **инфаллибельно** (in-memory SB), а io-`Write`
-   **фейлится** (файл/сокет). Rust держит `fmt::Write` и `io::Write` РАЗДЕЛЬНО именно из-за этого. Наш ход —
-   **effect-полиморфный `Write`**: `@write([]u8)` несёт `Fail[IoError]`-эффект, ОТСУТСТВУЮЩИЙ у in-memory sink →
-   один протокол, эффект решает фейл (лучше Rust-двух-трейтов). `@display` эффект-полиморфен по sink; интерполяция
-   `${x}` всегда инфаллибельна (SB). **Ждёт подтверждения.**
-2. **`into_str()`** — assume-valid-UTF-8 (писатели гарантируют валидный UTF-8) vs validate (`Result[str, Utf8Error]`).
-   Рек: assume-valid для fmt-пути + checked-вариант для сырого байт-sink.
-3. **buffer-consolidation scope** (см. §6) — schlop `StringBuilder`→`Vec[u8]`? Координация Plan 176.
+**Все дизайн-развилки закрыты 2026-07-15** (owner-подтверждение):
+1. ✅ **Fallibility** — fmt-`Write` инфаллибельно (`-> ()`), io-`Write` — `Result[(), IoError]`; два байтовых
+   родственника, не эффект (`Fail` запрещён конвенцией 177 для std). См. таблицу §1.
+2. ✅ **`into_str()`** — assume-valid-UTF-8 + checked-вариант.
+3. 🔎 **buffer-consolidation** (§6) — investigation, не блокер; решится при дизайне (коорд. Plan 176).
+
+**Следующий шаг:** финализировать сигнатуры (`Fmt`/`Write`/`Display`/`Debug`/буфер-примитив/`nova_f64_into`) +
+карта исполнения (что opus-синтез в компиляторе, что дешёвыми агентами по `.nv`/`conv.h`→`.nv`; порядок; гейты).
+**Реализация не начинается без owner-go** (язык-меняющее).
