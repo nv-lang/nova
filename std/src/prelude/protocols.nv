@@ -285,20 +285,22 @@ export fn FmtCtx @precision() -> Option[int] =>
 /// type Point { x int, y int }
 /// fn Point @display(mut w Write) -> () {
 ///     w.write("Point(")
-///     w.write(str.from(@x))
+///     w.write(@x.to_str())
 ///     w.write(", ")
-///     w.write(str.from(@y))
+///     w.write(@y.to_str())
 ///     w.write(")")
 /// }
 /// ```
-/// Plan 91.8a.2 (D183 amendment): default body использует `str.from(@)`
-/// — primitive C function для primitives, или user-declared overload для
-/// custom types. Implementer пишет @display явно для perf (no intermediate
-/// string), либо предоставляет `fn str.from(MyType) -> str` overload.
+/// Plan 174.2 (str.from-ретракция, было Plan 91.8a.2/D183): default body
+/// использует `@.to_str()` — bare-T blanket (`fn[T] T @to_str() -> str =>
+/// "${@}"`, std/runtime/string/core.nv) для primitives, или
+/// user-declared `@to_str()` override для custom types. Implementer пишет
+/// @display явно для perf (no intermediate string), либо предоставляет
+/// `fn MyType @to_str() -> str` override.
 #stable(since = "0.1")
 export type Display protocol {
     @display(mut w Write) {
-        w.write(str.from(@))
+        w.write(@to_str())
     }
 }
 
@@ -336,9 +338,9 @@ export type Display protocol {
 /// ```nova
 /// fn Point @debug(mut w Write) -> () {
 ///     w.write("Point(")
-///     w.write(str.from(@x))
+///     w.write(@x.to_str())
 ///     w.write(", ")
-///     w.write(str.from(@y))
+///     w.write(@y.to_str())
 ///     w.write(")")
 /// }
 /// ```
@@ -543,33 +545,41 @@ export type AsSlice[T] protocol {
 // the f64 formatter; `@append(f32)` casts to f64; interp-map routes `${f32}`
 // directly to conv.h. Numeric debug == display (no escaping).
 
+// Plan 174.2 (str.from-ретракция): тела ниже пишут через интерполяцию
+// ("${@}" / "${@:?}") НАПРЯМУЮ — НЕ через `.to_str()` (инвариант рекурсии:
+// `.to_str()`'s blanket-тело САМО есть `"${@}"`; примитив-путь `${@}`
+// лоуэрится в emit_c.rs::emit_interpolated_str прямо в
+// nova_int_to_str/nova_f64_to_str/… — цикла нет ни в одну, ни в другую
+// сторону). Debug-тело численных примитивов идентично display (D229 —
+// numbers don't need escaping), спеллинг через `:?` — та же C-функция
+// (nova_*_to_debug_str == nova_*_to_str, conv.h).
 #impl(Display)
-fn int @display(mut w Write) -> () { w.write(str.from(@)) }
+fn int @display(mut w Write) -> () { w.write("${@}") }
 #impl(Debug)
-fn int @debug(mut w Write) -> () { w.write(str.from(@)) }
+fn int @debug(mut w Write) -> () { w.write("${@:?}") }
 
 #impl(Display)
-fn f64 @display(mut w Write) -> () { w.write(str.from(@)) }
+fn f64 @display(mut w Write) -> () { w.write("${@}") }
 #impl(Debug)
-fn f64 @debug(mut w Write) -> () { w.write(str.from(@)) }
+fn f64 @debug(mut w Write) -> () { w.write("${@:?}") }
 
-// Plan 180: f32 display/debug via `str.from(@)` — the f32-precise
-// shortest-round-trip formatter (nova_f32_to_str, strtof-based). Widening to
-// f64 first (`str.from(@ as f64)`) would surface the f32→f64 mantissa tail now
-// that str.from(f64) is faithful (0.1f → "0.10000000149011612"); the direct
-// f32 path keeps "0.1".
+// Plan 180: f32 display/debug — f32-precise shortest-round-trip formatter
+// (nova_f32_to_str, strtof-based), routed directly by the interp `${f32}`
+// dispatch (emit_c.rs primitive_to_str_fn). Widening to f64 first
+// (`@ as f64` before interpolating) would surface the f32→f64 mantissa tail
+// (0.1f → "0.10000000149011612"); the direct f32 interp path keeps "0.1".
 #impl(Display)
-fn f32 @display(mut w Write) -> () { w.write(str.from(@)) }
+fn f32 @display(mut w Write) -> () { w.write("${@}") }
 #impl(Debug)
-fn f32 @debug(mut w Write) -> () { w.write(str.from(@)) }
-
-#impl(Display)
-fn bool @display(mut w Write) -> () { w.write(str.from(@)) }
-#impl(Debug)
-fn bool @debug(mut w Write) -> () { w.write(str.from(@)) }
+fn f32 @debug(mut w Write) -> () { w.write("${@:?}") }
 
 #impl(Display)
-fn char @display(mut w Write) -> () { w.write(str.from(@)) }
+fn bool @display(mut w Write) -> () { w.write("${@}") }
+#impl(Debug)
+fn bool @debug(mut w Write) -> () { w.write("${@:?}") }
+
+#impl(Display)
+fn char @display(mut w Write) -> () { w.write("${@}") }
 #impl(Debug)
 fn char @debug(mut w Write) -> () { w.write("${@:?}") }
 
