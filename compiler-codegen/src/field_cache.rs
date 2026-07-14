@@ -5112,10 +5112,10 @@ fn build_at_field_let(fname: &str, local_name: &str,
                        span: crate::diag::Span) -> Stmt {
     let access = Expr {
         kind: ExprKind::Member {
-            obj: Box::new(Expr { kind: ExprKind::SelfAccess, span, id: crate::ast::ExprId::UNSET }),
+            obj: Box::new(Expr { kind: ExprKind::SelfAccess, span, id: crate::ast::ExprId::UNSET, debug_only: false }),
             name: fname.to_string(),
         },
-        span, id: crate::ast::ExprId::UNSET,
+        span, id: crate::ast::ExprId::UNSET, debug_only: false,
     };
     Stmt::Let(LetDecl {
         mutable: false,
@@ -6083,11 +6083,11 @@ fn make_hoist_let(local_name: &str, fname: &str, span: crate::diag::Span) -> Stm
         kind: ExprKind::Member {
             obj: Box::new(Expr {
                 kind: ExprKind::SelfAccess,
-                span, id: crate::ast::ExprId::UNSET,
+                span, id: crate::ast::ExprId::UNSET, debug_only: false,
             }),
             name: fname.to_string(),
         },
-        span, id: crate::ast::ExprId::UNSET,
+        span, id: crate::ast::ExprId::UNSET, debug_only: false,
     };
     Stmt::Let(LetDecl {
         mutable: false,
@@ -7211,16 +7211,16 @@ fn pure_cache_fn_impl(
                         kind: ExprKind::Member {
                             obj: Box::new(Expr {
                                 kind: ExprKind::SelfAccess,
-                                span: *span, id: crate::ast::ExprId::UNSET,
+                                span: *span, id: crate::ast::ExprId::UNSET, debug_only: false,
                             }),
                             name: k.method.clone(),
                         },
-                        span: *span, id: crate::ast::ExprId::UNSET,
+                        span: *span, id: crate::ast::ExprId::UNSET, debug_only: false,
                     }),
                     args,
                     trailing: None,
                 },
-                span: *span, id: crate::ast::ExprId::UNSET,
+                span: *span, id: crate::ast::ExprId::UNSET, debug_only: false,
             };
             prefix.push(Stmt::Let(LetDecl {
                 mutable: false,
@@ -9002,7 +9002,7 @@ fn find_chain_shared_prefix<'a, 'p>(
 fn build_chain_from_ident(ident: &str, tail: &[String], span: crate::diag::Span) -> Expr {
     let mut current = Expr {
         kind: ExprKind::Ident(ident.to_string()),
-        span, id: crate::ast::ExprId::UNSET,
+        span, id: crate::ast::ExprId::UNSET, debug_only: false,
     };
     for name in tail {
         current = Expr {
@@ -9010,7 +9010,7 @@ fn build_chain_from_ident(ident: &str, tail: &[String], span: crate::diag::Span)
                 obj: Box::new(current),
                 name: name.clone(),
             },
-            span, id: crate::ast::ExprId::UNSET,
+            span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
     }
     current
@@ -9020,7 +9020,7 @@ fn build_chain_from_ident(ident: &str, tail: &[String], span: crate::diag::Span)
 fn build_chain_expr(path: &[String], span: crate::diag::Span) -> Expr {
     let mut current = Expr {
         kind: ExprKind::SelfAccess,
-        span, id: crate::ast::ExprId::UNSET,
+        span, id: crate::ast::ExprId::UNSET, debug_only: false,
     };
     for name in path {
         current = Expr {
@@ -9028,7 +9028,7 @@ fn build_chain_expr(path: &[String], span: crate::diag::Span) -> Expr {
                 obj: Box::new(current),
                 name: name.clone(),
             },
-            span, id: crate::ast::ExprId::UNSET,
+            span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
     }
     current
@@ -10907,7 +10907,7 @@ fn Outer mut @do(other Bldr) -> () {
     fn int_lit(n: i64) -> Expr {
         Expr {
             kind: ExprKind::IntLit(n),
-            span: crate::diag::Span::default(), id: crate::ast::ExprId::UNSET,
+            span: crate::diag::Span::default(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
@@ -10919,12 +10919,12 @@ fn Outer mut @do(other Bldr) -> () {
             kind: ExprKind::Call {
                 func: Box::new(Expr {
                     kind: ExprKind::Ident("range".to_string()),
-                    span, id: crate::ast::ExprId::UNSET,
+                    span, id: crate::ast::ExprId::UNSET, debug_only: false,
                 }),
                 args: vec![CallArg::Item(int_lit(42))],
                 trailing: None,
             },
-            span, id: crate::ast::ExprId::UNSET,
+            span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         assert_eq!(parse_loop_iter_count(&iter), Some(42));
     }
@@ -10937,12 +10937,12 @@ fn Outer mut @do(other Bldr) -> () {
             kind: ExprKind::Call {
                 func: Box::new(Expr {
                     kind: ExprKind::Ident("range".to_string()),
-                    span, id: crate::ast::ExprId::UNSET,
+                    span, id: crate::ast::ExprId::UNSET, debug_only: false,
                 }),
                 args: vec![CallArg::Item(int_lit(3)), CallArg::Item(int_lit(20))],
                 trailing: None,
             },
-            span, id: crate::ast::ExprId::UNSET,
+            span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         assert_eq!(parse_loop_iter_count(&iter), Some(17));
     }
@@ -10955,15 +10955,15 @@ fn Outer mut @do(other Bldr) -> () {
             kind: ExprKind::Call {
                 func: Box::new(Expr {
                     kind: ExprKind::Ident("range".to_string()),
-                    span, id: crate::ast::ExprId::UNSET,
+                    span, id: crate::ast::ExprId::UNSET, debug_only: false,
                 }),
                 args: vec![CallArg::Item(Expr {
                     kind: ExprKind::Ident("x".to_string()),
-                    span, id: crate::ast::ExprId::UNSET,
+                    span, id: crate::ast::ExprId::UNSET, debug_only: false,
                 })],
                 trailing: None,
             },
-            span, id: crate::ast::ExprId::UNSET,
+            span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         assert!(parse_loop_iter_count(&iter).is_none());
     }
@@ -10976,12 +10976,12 @@ fn Outer mut @do(other Bldr) -> () {
             kind: ExprKind::Call {
                 func: Box::new(Expr {
                     kind: ExprKind::Ident("range".to_string()),
-                    span, id: crate::ast::ExprId::UNSET,
+                    span, id: crate::ast::ExprId::UNSET, debug_only: false,
                 }),
                 args: vec![CallArg::Item(int_lit(0))],
                 trailing: None,
             },
-            span, id: crate::ast::ExprId::UNSET,
+            span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         assert!(parse_loop_iter_count(&iter).is_none());
     }
@@ -10996,7 +10996,7 @@ fn Outer mut @do(other Bldr) -> () {
                 end: Some(Box::new(int_lit(50))),
                 inclusive: false,
             },
-            span, id: crate::ast::ExprId::UNSET,
+            span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         assert_eq!(parse_loop_iter_count(&iter), Some(45));
     }
@@ -11011,7 +11011,7 @@ fn Outer mut @do(other Bldr) -> () {
                 end: Some(Box::new(int_lit(50))),
                 inclusive: true,
             },
-            span, id: crate::ast::ExprId::UNSET,
+            span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         assert_eq!(parse_loop_iter_count(&iter), Some(46));
     }
@@ -11026,7 +11026,7 @@ fn Outer mut @do(other Bldr) -> () {
                 end: Some(Box::new(int_lit(7))),
                 inclusive: true,
             },
-            span, id: crate::ast::ExprId::UNSET,
+            span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         assert_eq!(parse_loop_iter_count(&iter), Some(1));
     }
@@ -11037,7 +11037,7 @@ fn Outer mut @do(other Bldr) -> () {
         let span = crate::diag::Span::default();
         let iter = Expr {
             kind: ExprKind::Ident("items".to_string()),
-            span, id: crate::ast::ExprId::UNSET,
+            span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         assert!(parse_loop_iter_count(&iter).is_none());
     }
@@ -11213,9 +11213,9 @@ fn C @do(n int) -> int {
         let span = crate::diag::Span { start: 0, end: 0, file_id: 0 };
         let read = || Expr {
             kind: ExprKind::Member {
-                obj: Box::new(Expr { kind: ExprKind::SelfAccess, span, id: crate::ast::ExprId::UNSET }),
+                obj: Box::new(Expr { kind: ExprKind::SelfAccess, span, id: crate::ast::ExprId::UNSET, debug_only: false }),
                 name: "x".to_string(),
-            }, span, id: crate::ast::ExprId::UNSET,
+            }, span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         let sum = Expr {
             kind: ExprKind::Binary {
@@ -11225,10 +11225,10 @@ fn C @do(n int) -> int {
                         op: BinOp::Add,
                         left: Box::new(read()),
                         right: Box::new(read()),
-                    }, span, id: crate::ast::ExprId::UNSET,
+                    }, span, id: crate::ast::ExprId::UNSET, debug_only: false,
                 }),
                 right: Box::new(read()),
-            }, span, id: crate::ast::ExprId::UNSET,
+            }, span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         let simple = count_field_reads_in_expr(&sum, "x");
         let weighted = count_field_reads_in_expr_weighted(&sum, "x", 1);
@@ -11326,19 +11326,19 @@ fn C mut @do() -> int {
         let span = crate::diag::Span { start: 0, end: 0, file_id: 0 };
         let inner_a = Expr {
             kind: ExprKind::Member {
-                obj: Box::new(Expr { kind: ExprKind::SelfAccess, span, id: crate::ast::ExprId::UNSET }),
+                obj: Box::new(Expr { kind: ExprKind::SelfAccess, span, id: crate::ast::ExprId::UNSET, debug_only: false }),
                 name: "a".to_string(),
-            }, span, id: crate::ast::ExprId::UNSET,
+            }, span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         let inner_ab = Expr {
             kind: ExprKind::Member {
                 obj: Box::new(inner_a), name: "b".to_string(),
-            }, span, id: crate::ast::ExprId::UNSET,
+            }, span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         let chain_abc = Expr {
             kind: ExprKind::Member {
                 obj: Box::new(inner_ab), name: "c".to_string(),
-            }, span, id: crate::ast::ExprId::UNSET,
+            }, span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         let segments = call_recv_self_chain(&chain_abc).expect("chain");
         assert_eq!(segments, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
@@ -11350,17 +11350,17 @@ fn C mut @do() -> int {
     fn v7_7_chain_extractor_rejects_non_self() {
         let span = crate::diag::Span { start: 0, end: 0, file_id: 0 };
         let ident_x = Expr {
-            kind: ExprKind::Ident("x".to_string()), span, id: crate::ast::ExprId::UNSET,
+            kind: ExprKind::Ident("x".to_string()), span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         let chain_xab = Expr {
             kind: ExprKind::Member {
                 obj: Box::new(Expr {
                     kind: ExprKind::Member {
                         obj: Box::new(ident_x), name: "a".to_string(),
-                    }, span, id: crate::ast::ExprId::UNSET,
+                    }, span, id: crate::ast::ExprId::UNSET, debug_only: false,
                 }),
                 name: "b".to_string(),
-            }, span, id: crate::ast::ExprId::UNSET,
+            }, span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         assert!(call_recv_self_chain(&chain_xab).is_none(),
             "non-self-rooted chain must return None");
@@ -11371,7 +11371,7 @@ fn C mut @do() -> int {
     #[test]
     fn v7_7_chain_extractor_rejects_plain_self() {
         let span = crate::diag::Span { start: 0, end: 0, file_id: 0 };
-        let self_only = Expr { kind: ExprKind::SelfAccess, span, id: crate::ast::ExprId::UNSET };
+        let self_only = Expr { kind: ExprKind::SelfAccess, span, id: crate::ast::ExprId::UNSET, debug_only: false };
         assert!(call_recv_self_chain(&self_only).is_none(),
             "plain SelfAccess must return None (not a chain)");
     }

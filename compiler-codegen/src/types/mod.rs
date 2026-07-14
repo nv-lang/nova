@@ -34581,12 +34581,12 @@ mod named_tuple_ctor_infer_tests {
             kind: ExprKind::Call {
                 func: Box::new(Expr {
                     kind: ExprKind::Ident(ctor_name.to_string()),
-                    span: dummy_span(), id: crate::ast::ExprId::UNSET,
+                    span: dummy_span(), id: crate::ast::ExprId::UNSET, debug_only: false,
                 }),
                 args: Vec::new(),
                 trailing: None,
             },
-            span: dummy_span(), id: crate::ast::ExprId::UNSET,
+            span: dummy_span(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
@@ -34896,7 +34896,7 @@ mod chain_root_mut_check_tests {
     }
 
     fn ident(name: &str) -> Expr {
-        Expr { kind: ExprKind::Ident(name.to_string()), span: dummy_span(), id: crate::ast::ExprId::UNSET }
+        Expr { kind: ExprKind::Ident(name.to_string()), span: dummy_span(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     fn member(obj: Expr, field: &str) -> Expr {
@@ -34905,7 +34905,7 @@ mod chain_root_mut_check_tests {
                 obj: Box::new(obj),
                 name: field.to_string(),
             },
-            span: dummy_span(), id: crate::ast::ExprId::UNSET,
+            span: dummy_span(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
@@ -34915,12 +34915,12 @@ mod chain_root_mut_check_tests {
                 obj: Box::new(obj),
                 index: Box::new(idx),
             },
-            span: dummy_span(), id: crate::ast::ExprId::UNSET,
+            span: dummy_span(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
     fn int_lit(n: i64) -> Expr {
-        Expr { kind: ExprKind::IntLit(n), span: dummy_span(), id: crate::ast::ExprId::UNSET }
+        Expr { kind: ExprKind::IntLit(n), span: dummy_span(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     fn turbofish(base: Expr, args: Vec<TypeRef>) -> Expr {
@@ -34929,12 +34929,12 @@ mod chain_root_mut_check_tests {
                 base: Box::new(base),
                 type_args: args,
             },
-            span: dummy_span(), id: crate::ast::ExprId::UNSET,
+            span: dummy_span(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
     fn self_access() -> Expr {
-        Expr { kind: ExprKind::SelfAccess, span: dummy_span(), id: crate::ast::ExprId::UNSET }
+        Expr { kind: ExprKind::SelfAccess, span: dummy_span(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     fn call(func: Expr) -> Expr {
@@ -34944,7 +34944,7 @@ mod chain_root_mut_check_tests {
                 args: vec![],
                 trailing: None,
             },
-            span: dummy_span(), id: crate::ast::ExprId::UNSET,
+            span: dummy_span(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 

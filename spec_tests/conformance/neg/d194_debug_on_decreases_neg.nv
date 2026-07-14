@@ -1,0 +1,15 @@
+// Plan 194 Ф.1 (D-блок TBD): `#debug` — единый dev-only префикс, валиден
+// ТОЛЬКО перед requires/ensures/invariant (клауза) или assert(...) (statement).
+// На `decreases` (и аналогично reads/modifies/ensures_fail) — внятная ошибка,
+// не silent-ignore.
+// EXPECT_COMPILE_ERROR E_DEBUG_ATTR_TARGET
+
+module neg.d194_debug_on_decreases_neg
+
+fn f(n int) -> int
+    #debug decreases n
+=> n
+
+test "unreachable — file must not compile" {
+    assert(f(1) == 1)
+}

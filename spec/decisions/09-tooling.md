@@ -32,6 +32,19 @@
 
 ## D24. Стратегия SMT-проверки контрактов
 
+> **AMEND (Plan 194 Ф.0, 2026-07-14) — модель исполнения контрактов
+> переопределена, `#unchecked` и `--contracts=enforce|off` RETRACTED.**
+> Полная новая модель — [D421](#d421-contract-execution-model--debug-dev-only-префикс--contracts-уровни-ретракция-uncheckeddebug_assert-plan-194-2026-07-14).
+> Кратко: `#unchecked` (per-fn/per-module opt-out, ниже §4 «Опт-ин строгости»)
+> заменяется `#debug`-префиксом (dev-only контракты) + автоматической
+> sound-элизией `--contracts=optimized`; `--contracts=off` (footgun) удалён,
+> три новых значения `checked|optimized|verified` — роль SMT-движка, не
+> вкл/выкл. **Статус этой волны (Ф.0+Ф.1):** только спека + парсер `#debug`
+> (флаг в AST, инертен); `#unchecked`/`--contracts=enforce|off` физически
+> ЕЩЁ РАБОТАЮТ как описано ниже — ретракция/codegen-эрозия по режиму — Ф.2/Ф.4
+> (см. таблицу статуса в D421). Читать §4 «Опт-ин строгости» ниже как
+> ТЕКУЩЕЕ (не целевое) поведение до Ф.4.
+>
 > **AMEND (Plan 140.2 Part A, 2026-06-13) — `@field` self-access в контрактах.**
 > Прежнее ограничение «контракт не может ссылаться на `@field` (self-access);
 > передавайте поля явным параметром в #pure fn» — **RETRACT**. Контракт метода
@@ -3801,3 +3814,137 @@ test "index out of bounds panics" panics "index out of bounds" {
   git-потребитель после миграции Ф.4); Plans 03.1/03.2/03.4 — фундамент.
 - docs/plans/204-progress.md — дофикс №2 session notes (owner corrections,
   test tally).
+
+## D421. Contract execution model — `#debug` dev-only префикс + `--contracts`-уровни; ретракция `#unchecked`/`debug_assert` (Plan 194, 2026-07-14)
+
+### Что
+
+Контракты (`requires`/`ensures`/`invariant`) и assert-семья (`assert`/
+`debug_assert`, [D81](08-runtime.md#d81-assertcond-vs-debug_assertcond--build-mode-семантика))
+получают ЕДИНУЮ модель исполнения по стадии разработки (dev vs release) —
+взамен зоопарка независимых ad-hoc механизмов (`#unchecked` per-fn/per-module
+opt-out, `debug_assert` отдельная prelude-функция, `--contracts=enforce|off`
+бинарный флаг). Решение владельца 2026-07-14 (согласовано; сверено против
+D24/D81/Plan-140 — §«Сверка» в
+[docs/plans/194-contract-execution-model.md](../../docs/plans/194-contract-execution-model.md)).
+
+### Правило
+
+#### 1. Контракты по умолчанию ВСЕГДА исполняются
+
+`requires`/`ensures`/`invariant`/`assert(...)` + memory-safety проверки
+(границы массива, null) выполняются в рантайме ВСЕГДА, независимо от
+build-режима. Не элидируются никаким глобальным флагом — только доказуемо-
+избыточные (sound-элизия компилятором, Z3). Глобальный kill-switch
+(`--contracts=off`, [D24](#d24-стратегия-smt-проверки-контрактов) Plan 140
+Ф.2) — footgun, RETRACTED (см. §3).
+
+#### 2. `#debug` — единый dev-only префикс
+
+Один атрибут-модификатор (стиль `#cfg`/`#stable`,
+[D96](#d96-синтаксис-атрибутов-name-без-квадратных-скобок)) применим перед
+ЛЮБОЙ контракт-формой:
+
+```nova
+fn binary_search(arr []int, x int) -> int
+    #debug requires is_sorted(arr)    // O(n) — только dev, в релизе стирается
+    requires arr.len() > 0            // дёшево — ВСЕГДА
+{
+    #debug assert(invariant_holds())  // тело: dev-only
+    ...
+}
+```
+
+- `#debug requires <e>` / `#debug ensures <e>` / `#debug invariant <e>` —
+  клаузы (fn-сигнатура / type-декларация).
+- `#debug assert(<e>)` — statement-форма, зеркало `assert` (D81), dev-only.
+- Единый модификатор ВМЕСТО зоопарка (`debug_requires`/`debug_ensures`/...,
+  вариант владельца #1, отвергнут) — вариант #2 (владелец 2026-07-14):
+  один префикс, комбинируется с любой клаузой/statement.
+
+#### 3. `--contracts` — уровень = роль SMT-движка, НЕ вкл/выкл
+
+| Значение | SMT-движок | Рантайм (не-`#debug`) | Рантайм (`#debug`) | Компиляция | Профиль |
+|---|---|---|---|---|---|
+| `checked` | НЕ вызывается | работает (unproven = runtime-check) | работает | быстрая (нет Z3) | dev-дефолт |
+| `optimized` | доказать-избыточные → sound-элизия | недоказанные работают | УБРАНЫ (стёрты) | медленная (Z3 на всё) | release-дефолт |
+| `verified` | доказать ВСЕ не-`#debug` или **compile-error** | доказанные убраны, остальные все доказаны | убраны | медленная | opt-in, формальная гарантия |
+
+`off` (Plan 140 Ф.2) — **RETRACTED**: глобальное «выключить всё» — footgun,
+симметричный C `NDEBUG`. Локальный отказ от проверки в горячем месте — только
+`unsafe`/`get_unchecked` (явно, локально, под ответственность автора кода,
+НЕ ответственность языка).
+
+#### 4. Ретракции (целевая модель — см. §Статус реализации)
+
+- **`#unchecked`** (Plan 140 Ф.2/140.3 — per-fn/per-module contract opt-out,
+  Eiffel-гранулярность requires/ensures/invariant) — **RETRACTED**. Роли
+  расходятся по трём наследникам: дорогая dev-only проверка → `#debug`;
+  ускорение доказуемо-безопасного → `--contracts=optimized` (автоматическая
+  sound-элизия, НЕ ручная); «я уверен, пропусти» недоказуемое — ЗАПРЕЩЕНО для
+  контрактов (это и есть footgun, который 194 убирает).
+- **`debug_assert(cond)`** ([D81](08-runtime.md#d81-assertcond-vs-debug_assertcond--build-mode-семантика))
+  — **RETRACTED** → замена `#debug assert(cond)` (тот же смысл — dev-only
+  assertion — единый префикс вместо отдельной prelude-функции). `assert(cond)`
+  (always-on, D81) — БЕЗ ИЗМЕНЕНИЙ.
+
+#### 5. Bounds/overflow — always-on SAFETY, не контракт
+
+Проверка границ среза/массива (`@index`) и int-overflow (Plan 140.4 amend
+выше / [D272](#d272-элизия-доказуемо-безопасных-int-overflow-проверок)) — это
+memory-safety гарантия языка, НЕ `requires`-контракт → никогда не элидируется
+build-флагом или заменой `#unchecked`; только компилятор может снять её через
+sound-доказательство (та же `optimized`-элизия §3). Следствие: `v[a..b]`
+роутится через `.nv Vec[T] @index(Range)` (единый источник; codegen-магия
+`nova_vec_slice_chk`-интринсик снимается отдельной фазой — Ф.3 Plan 194); не
+меняет модель исполнения контрактов из этого D-блока.
+
+### Статус реализации (Plan 194)
+
+| Фаза | Что | Статус |
+|---|---|---|
+| Ф.0 | Эта спека (D-блок + amend-пометки в D24/D81) | ✅ 2026-07-14 |
+| Ф.1 | Парсер: `#debug`-префикс перед `requires`/`ensures`/`invariant` (клаузы fn-сигнатуры, type-invariant, effect-handler и lemma contracts) и `#debug assert(...)` (statement, требует call-форму). AST: `Contract.debug_only: bool`, `Expr.debug_only: bool` (parser/mod.rs `eat_debug_contract_attr`, `parse_stmt_or_expr` Hash-arm) | ✅ парсится, флаг сохранён в AST, 2026-07-14 |
+| Ф.2 | Codegen: эмиссия по режиму (`#debug` эрозия вне `checked`; `optimized` sound-элизия; CLI `--contracts` меняется с `enforce\|off` на `checked\|optimized\|verified`) | ⏳ следующая волна |
+| Ф.3 | vrange-роутинг (`@index(Range)`, снятие `nova_vec_slice_chk`-интринсика) | ⏳ |
+| Ф.4 | Физическая ретракция `#unchecked`/`debug_assert` из парсера + миграция существующих тестов/build_cache-сайтов (13 файлов корпуса, 0 в std-логике) | ⏳ |
+
+**ВАЖНО (эта волна = Ф.0+Ф.1 только):** `#debug`-контракты и `#debug assert`
+парсятся и флаг `debug_only` записан в AST, но **codegen пока НЕ различает**
+`#debug` от обычного контракта — исполнение сегодня byte-identical поведению
+БЕЗ префикса (эрозия по режиму — Ф.2, следующая волна). `#unchecked` и
+`debug_assert(...)` **физически ещё присутствуют** в парсере (не удалены,
+не depreacted-warning) — §4 описывает ЦЕЛЕВУЮ модель, фактическая ретракция —
+Ф.4. CLI-флаг `--contracts` на этой волне **всё ещё** `enforce|off` (не
+`checked|optimized|verified`) — таблица §3 тоже целевая (Ф.2 меняет
+реализацию, включая build_cache-ключ).
+
+### Почему
+
+- Единый префикс вместо `debug_requires`/`debug_ensures`/... — меньше
+  поверхности языка, тот же принцип, что unified `#cfg`/`#stable` (D96).
+  Владелец явно отверг «зоопарк debug_*» (вариант 1) в пользу единого
+  `#debug`-модификатора (вариант 2).
+- `--contracts` как «роль SMT», а не бинарный вкл/выкл — устраняет две
+  проблемы Plan 140's `enforce|off`: Z3 на каждой dev-пересборке (медленно) И
+  `off` как дыра безопасности (все проверки исчезают, включая доказанно-нужные).
+- `#unchecked`-ретракция — раньше единственный ручной способ «сними проверку»
+  без доказательства; философия 194 («контракт = безопасность, не опция»)
+  делает его структурно несовместимым с моделью — заменяется автоматической
+  (не ручной) sound-элизией `optimized`.
+
+### Связь
+
+- Amends [D24](#d24-стратегия-smt-проверки-контрактов) (Plan 140/140.3
+  `#unchecked` + `--contracts=enforce|off` — RETRACTED здесь, см. §Статус) и
+  [D81](08-runtime.md#d81-assertcond-vs-debug_assertcond--build-mode-семантика)
+  (`debug_assert` — RETRACTED здесь, `assert` без изменений).
+- [docs/plans/194-contract-execution-model.md](../../docs/plans/194-contract-execution-model.md)
+  — полный план + §«Сверка» (D81/D24/Plan-140 cross-check, владелец 2026-07-14)
+  + судьба `#unchecked` (наследники, миграция 13 файлов) + связь с
+  [Plan 206](../../docs/plans/206-arithmetic-overflow-policy.md) (арифметика,
+  вынесена из 194, та же философия).
+- [D96](#d96-синтаксис-атрибутов-name-без-квадратных-скобок) — `#`-атрибут
+  синтаксис (`#debug` следует тому же паттерну, что `#cfg`/`#stable`).
+- [D272](#d272-элизия-доказуемо-безопасных-int-overflow-проверок) — модель
+  «sound-элизия доказанного», переиспользуется §3 `optimized`.

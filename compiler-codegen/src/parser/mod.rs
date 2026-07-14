@@ -2780,6 +2780,9 @@ impl Parser {
         loop {
             // Пропустить newlines между контрактами.
             self.skip_newlines();
+            // Plan 194 Ф.1 (D-блок TBD): опц. `#debug` перед клаузой —
+            // dev-only (см. `eat_debug_contract_attr`).
+            let debug_only = self.eat_debug_contract_attr();
             match &self.peek().kind {
                 TokenKind::Ident(n) if n == "requires" => {
                     let start = self.peek().span;
@@ -2787,7 +2790,7 @@ impl Parser {
                     let expr = self.parse_expr()?;
                     let (message, message_expr) = self.parse_opt_contract_message()?;
                     let span = start.merge(expr.span);
-                    contracts.push(Contract { kind: ContractKind::Requires, expr, span, message, message_expr });
+                    contracts.push(Contract { kind: ContractKind::Requires, expr, span, message, message_expr, debug_only });
                 }
                 TokenKind::Ident(n) if n == "ensures" => {
                     let start = self.peek().span;
@@ -2795,25 +2798,29 @@ impl Parser {
                     let expr = self.parse_expr()?;
                     let (message, message_expr) = self.parse_opt_contract_message()?;
                     let span = start.merge(expr.span);
-                    contracts.push(Contract { kind: ContractKind::Ensures, expr, span, message, message_expr });
+                    contracts.push(Contract { kind: ContractKind::Ensures, expr, span, message, message_expr, debug_only });
                 }
                 TokenKind::Ident(n) if n == "ensures_fail" => {
+                    self.reject_debug_attr_on_non_debug_clause(debug_only, "ensures_fail")?;
                     let start = self.peek().span;
                     self.bump();
                     let expr = self.parse_expr()?;
                     let (message, message_expr) = self.parse_opt_contract_message()?;
                     let span = start.merge(expr.span);
-                    contracts.push(Contract { kind: ContractKind::EnsuresFail, expr, span, message, message_expr });
+                    contracts.push(Contract { kind: ContractKind::EnsuresFail, expr, span, message, message_expr, debug_only: false });
                 }
                 TokenKind::Ident(n) if n == "reads" => {
+                    self.reject_debug_attr_on_non_debug_clause(debug_only, "reads")?;
                     self.bump();
                     self.parse_frame_target_list(&mut reads)?;
                 }
                 TokenKind::Ident(n) if n == "modifies" => {
+                    self.reject_debug_attr_on_non_debug_clause(debug_only, "modifies")?;
                     self.bump();
                     self.parse_frame_target_list(&mut modifies)?;
                 }
                 TokenKind::Ident(n) if n == "decreases" => {
+                    self.reject_debug_attr_on_non_debug_clause(debug_only, "decreases")?;
                     if decreases.is_some() {
                         let sp = self.peek().span;
                         return Err(Diagnostic::new(
@@ -2823,10 +2830,63 @@ impl Parser {
                     let expr = self.parse_expr()?;
                     decreases = Some(expr);
                 }
-                _ => break,
+                _ => {
+                    if debug_only {
+                        let sp = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "[E_DEBUG_ATTR_TARGET] `#debug` здесь допустим только перед \
+                             `requires`/`ensures` (клауза контракта); получено что-то другое. \
+                             См. Plan 194 (#debug — единый dev-only префикс).",
+                            sp,
+                        ));
+                    }
+                    break;
+                }
             }
         }
         Ok((contracts, reads, modifies, decreases))
+    }
+
+    /// Plan 194 Ф.1 (D-блок TBD): опц. `#debug`-префикс перед контракт-клаузой
+    /// (`requires`/`ensures`/`invariant`) — единый маркер dev-only (Plan 194
+    /// решение владельца 2026-07-14: замена зоопарка `debug_requires` и т.п.).
+    /// По образцу `#cfg`/`#stable`: `#` + contextual-ident `debug`, оба —
+    /// обычные токены в лексере (не keyword), поэтому lookahead на 2 токена.
+    /// Возвращает `true` и consumes `#debug`, если он присутствует; `false`
+    /// иначе (no-op, позиция не сдвигается).
+    fn eat_debug_contract_attr(&mut self) -> bool {
+        if matches!(self.peek().kind, TokenKind::Hash)
+            && matches!(&self.peek_at(1).kind, TokenKind::Ident(n) if n == "debug")
+        {
+            self.bump(); // #
+            self.bump(); // debug
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Plan 194 Ф.1: `#debug` валиден только перед requires/ensures/invariant
+    /// (контракт-клаузами, зеркало §2 плана) — на `reads`/`modifies`/
+    /// `decreases`/`ensures_fail` и т.п. — внятная ошибка, а не silent-ignore.
+    fn reject_debug_attr_on_non_debug_clause(
+        &self,
+        debug_only: bool,
+        clause_name: &str,
+    ) -> Result<(), Diagnostic> {
+        if debug_only {
+            let sp = self.peek().span;
+            Err(Diagnostic::new(
+                format!(
+                    "[E_DEBUG_ATTR_TARGET] `#debug` не поддерживается перед `{clause_name}` — \
+                     только перед `requires`/`ensures`/`invariant` (клаузы) или перед \
+                     `assert(...)` (statement). См. Plan 194 (#debug dev-only prefix)."
+                ),
+                sp,
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     /// Plan 140.1 Ф.1 (D24 amend): после contract-выражения опционально
@@ -4280,6 +4340,8 @@ impl Parser {
         let mut invariants: Vec<Contract> = Vec::new();
         loop {
             self.skip_newlines();
+            // Plan 194 Ф.1: опц. `#debug` перед type-`invariant` (dev-only).
+            let debug_only = self.eat_debug_contract_attr();
             match &self.peek().kind {
                 TokenKind::Ident(n) if n == "invariant" => {
                     if !matches!(kind, TypeDeclKind::Record(_)) {
@@ -4301,9 +4363,20 @@ impl Parser {
                         span: cspan,
                         message,
                         message_expr,
+                        debug_only,
                     });
                 }
-                _ => break,
+                _ => {
+                    if debug_only {
+                        let sp = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "[E_DEBUG_ATTR_TARGET] `#debug` здесь допустим только перед \
+                             `invariant` (клауза типа). См. Plan 194.",
+                            sp,
+                        ));
+                    }
+                    break;
+                }
             }
         }
         let span = start.merge(self.tokens[self.pos.saturating_sub(1)].span);
@@ -5204,13 +5277,15 @@ impl Parser {
             self.skip_newlines();
             loop {
                 let cstart = self.peek().span;
+                // Plan 194 Ф.1: опц. `#debug` перед клаузой (dev-only).
+                let debug_only = self.eat_debug_contract_attr();
                 match self.peek().kind.clone() {
                     TokenKind::Ident(ref n) if n == "requires" => {
                         self.bump();
                         let expr = self.parse_expr()?;
                         let (message, message_expr) = self.parse_opt_contract_message()?;
                         let span = cstart.merge(expr.span);
-                        contracts.push(Contract { kind: ContractKind::Requires, expr, span, message, message_expr });
+                        contracts.push(Contract { kind: ContractKind::Requires, expr, span, message, message_expr, debug_only });
                         self.skip_newlines();
                     }
                     TokenKind::Ident(ref n) if n == "ensures" => {
@@ -5218,10 +5293,20 @@ impl Parser {
                         let expr = self.parse_expr()?;
                         let (message, message_expr) = self.parse_opt_contract_message()?;
                         let span = cstart.merge(expr.span);
-                        contracts.push(Contract { kind: ContractKind::Ensures, expr, span, message, message_expr });
+                        contracts.push(Contract { kind: ContractKind::Ensures, expr, span, message, message_expr, debug_only });
                         self.skip_newlines();
                     }
-                    _ => break,
+                    _ => {
+                        if debug_only {
+                            let sp = self.peek().span;
+                            return Err(Diagnostic::new(
+                                "[E_DEBUG_ATTR_TARGET] `#debug` здесь допустим только перед \
+                                 `requires`/`ensures`. См. Plan 194.",
+                                sp,
+                            ));
+                        }
+                        break;
+                    }
                 }
             }
 
@@ -6326,22 +6411,34 @@ impl Parser {
         loop {
             self.skip_newlines();
             let cstart = self.peek().span;
+            // Plan 194 Ф.1: опц. `#debug` перед клаузой (dev-only).
+            let debug_only = self.eat_debug_contract_attr();
             match self.peek().kind.clone() {
                 TokenKind::Ident(ref n) if n == "requires" => {
                     self.bump();
                     let expr = self.parse_expr()?;
                     let (message, message_expr) = self.parse_opt_contract_message()?;
                     let span = cstart.merge(expr.span);
-                    contracts.push(Contract { kind: ContractKind::Requires, expr, span, message, message_expr });
+                    contracts.push(Contract { kind: ContractKind::Requires, expr, span, message, message_expr, debug_only });
                 }
                 TokenKind::Ident(ref n) if n == "ensures" => {
                     self.bump();
                     let expr = self.parse_expr()?;
                     let (message, message_expr) = self.parse_opt_contract_message()?;
                     let span = cstart.merge(expr.span);
-                    contracts.push(Contract { kind: ContractKind::Ensures, expr, span, message, message_expr });
+                    contracts.push(Contract { kind: ContractKind::Ensures, expr, span, message, message_expr, debug_only });
                 }
-                _ => break,
+                _ => {
+                    if debug_only {
+                        let sp = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "[E_DEBUG_ATTR_TARGET] `#debug` здесь допустим только перед \
+                             `requires`/`ensures`. См. Plan 194.",
+                            sp,
+                        ));
+                    }
+                    break;
+                }
             }
         }
 
@@ -10953,6 +11050,35 @@ impl Parser {
                 let end = self.tokens[self.pos.saturating_sub(1)].span;
                 let span = start.merge(end);
                 Ok(StmtOrExpr::Stmt(Stmt::Reveal { name, span }))
+            }
+            // Plan 194 Ф.1 (D-блок TBD, 09-tooling.md / D81-амендмент):
+            // `#debug assert(<expr>)` — statement-form, зеркало `assert`,
+            // единый dev-only префикс (см. `eat_debug_contract_attr` для
+            // клауз requires/ensures/invariant). `#`/`debug` — обычные
+            // токены (не keyword'ы), lookahead на `debug` ident по образцу
+            // `#cfg`/`#stable` (item-level attrs, parse_item).
+            // V1: парсится и Expr.debug_only=true записывается в AST;
+            // codegen erasure-поведение по `--contracts`-режиму — Ф.2
+            // (следующая волна). `debug_assert(...)` НЕ ретрактирован —
+            // сосуществует как отдельная форма до Ф.4 (миграция).
+            TokenKind::Hash if matches!(&self.peek_at(1).kind, TokenKind::Ident(n) if n == "debug") => {
+                self.bump(); // #
+                self.bump(); // debug
+                let is_assert_call = matches!(&self.peek().kind, TokenKind::Ident(n) if n == "assert")
+                    && matches!(self.peek_at(1).kind, TokenKind::LParen);
+                if !is_assert_call {
+                    let sp = self.peek().span;
+                    return Err(Diagnostic::new(
+                        "[E_DEBUG_ATTR_TARGET] `#debug` в теле функции допустим только перед \
+                         вызовом `assert(...)` (dev-only statement, Plan 194); для \
+                         `requires`/`ensures`/`invariant` клауз пишите `#debug` перед \
+                         соответствующей клаузой в сигнатуре/типе, не в теле.",
+                        sp,
+                    ));
+                }
+                let mut expr = self.parse_expr()?;
+                expr.debug_only = true;
+                Ok(StmtOrExpr::Expr(expr))
             }
             // Plan 100.1 (D133 / D9): `consume tx = expr` binding form.
             // Disambig vs `consume` в receiver-pos (parse_fn handles before

@@ -1,0 +1,15 @@
+// Plan 194 Ф.1 (D-блок TBD): `#debug` в теле функции (statement-position)
+// допустим ТОЛЬКО перед `assert(...)` (зеркало assert, dev-only). На любом
+// другом statement (напр. `let`) — внятная ошибка, не silent-ignore.
+// EXPECT_COMPILE_ERROR E_DEBUG_ATTR_TARGET
+
+module neg.d194_debug_on_let_stmt_neg
+
+fn f() -> int {
+    #debug let x = 1
+    x
+}
+
+test "unreachable — file must not compile" {
+    assert(f() == 1)
+}

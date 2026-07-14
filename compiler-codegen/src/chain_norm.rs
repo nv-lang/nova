@@ -650,7 +650,7 @@ fn build_chain_block(chain: FluentChain, counter: &mut ChainCounter) -> Expr {
     for frame in &chain.frames {
         let recv = Expr {
             kind: ExprKind::Ident(local_name.clone()),
-            span: frame.span, id: crate::ast::ExprId::UNSET,
+            span: frame.span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         let call = Expr {
             kind: ExprKind::Call {
@@ -659,12 +659,12 @@ fn build_chain_block(chain: FluentChain, counter: &mut ChainCounter) -> Expr {
                         obj: Box::new(recv),
                         name: frame.method.clone(),
                     },
-                    span: frame.span, id: frame.orig_func_id,
+                    span: frame.span, id: frame.orig_func_id, debug_only: false,
                 }),
                 args: frame.args.clone(),
                 trailing: frame.trailing.clone(),
             },
-            span: frame.span, id: frame.orig_id,
+            span: frame.span, id: frame.orig_id, debug_only: false,
         };
         stmts.push(Stmt::Expr(call));
     }
@@ -673,7 +673,7 @@ fn build_chain_block(chain: FluentChain, counter: &mut ChainCounter) -> Expr {
     // `@`-return chains).
     let trailing = Some(Box::new(Expr {
         kind: ExprKind::Ident(local_name.clone()),
-        span, id: crate::ast::ExprId::UNSET,
+        span, id: crate::ast::ExprId::UNSET, debug_only: false,
     }));
     Expr {
         kind: ExprKind::Block(Block {
@@ -682,7 +682,7 @@ fn build_chain_block(chain: FluentChain, counter: &mut ChainCounter) -> Expr {
             span,
             is_unsafe: false,
         }),
-        span, id: crate::ast::ExprId::UNSET,
+        span, id: crate::ast::ExprId::UNSET, debug_only: false,
     }
 }
 

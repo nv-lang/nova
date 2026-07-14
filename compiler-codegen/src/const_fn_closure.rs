@@ -369,7 +369,7 @@ impl<'a> GenericClosureHofCtx<'a> {
                 base: Box::new(old_func),
                 type_args,
             },
-            span, id: crate::ast::ExprId::UNSET,
+            span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         let _ = self.errors;
     }
@@ -1144,7 +1144,7 @@ fn rewrite_expr(
             (format!("{}{}", host_name, suffix), type_args.clone())
         }).clone();
         let span = e.span;
-        *e = Expr { kind: ExprKind::Ident(spec_name), span, id: crate::ast::ExprId::UNSET };
+        *e = Expr { kind: ExprKind::Ident(spec_name), span, id: crate::ast::ExprId::UNSET, debug_only: false };
     }
 }
 

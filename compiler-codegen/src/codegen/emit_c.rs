@@ -7490,7 +7490,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn synth_int_let(name: &str, value: i64, span: crate::diag::Span) -> Stmt {
         let int_lit = Expr {
             kind: ExprKind::IntLit(value),
-            span, id: crate::ast::ExprId::UNSET,
+            span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         Stmt::Let(LetDecl {
             mutable: false,
@@ -26091,6 +26091,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     },
                     span: e.span,
                     id: e.id,
+                    debug_only: e.debug_only,
                 };
                 self.emit_expr(&rebuilt)
             }
@@ -32403,7 +32404,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.var_types.insert(tmp.clone(), box_ty);
                                 new_args.push(CallArg::Item(Expr {
                                     kind: ExprKind::Ident(tmp),
-                                    span: arg_expr.span, id: crate::ast::ExprId::UNSET,
+                                    span: arg_expr.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                                 }));
                                 rewrote = true;
                                 continue;
@@ -32439,7 +32440,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.var_types.insert(tmp.clone(), "void*".to_string());
                                 new_args.push(CallArg::Item(Expr {
                                     kind: ExprKind::Ident(tmp),
-                                    span: arg_expr.span, id: crate::ast::ExprId::UNSET,
+                                    span: arg_expr.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                                 }));
                                 rewrote = true;
                                 continue;
@@ -32485,7 +32486,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }).collect();
             let synth_array = Expr {
                 kind: ExprKind::ArrayLit(var_elems),
-                span: func.span, id: crate::ast::ExprId::UNSET,
+                span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,
             };
             let mut new_args: Vec<CallArg> = args[..regular_arity].to_vec();
             new_args.push(CallArg::Item(synth_array));
@@ -33127,7 +33128,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     {
                         let bare_func = Expr {
                             kind: ExprKind::Ident(method.clone()),
-                            span: func.span, id: crate::ast::ExprId::UNSET,
+                            span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                         };
                         return self.emit_call(&bare_func, args, call_id);
                     }
@@ -33175,7 +33176,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let Some(recv) = &self.current_receiver_type {
                             self_obj_storage = Expr {
                                 kind: ExprKind::Ident(recv.clone()),
-                                span: obj.span, id: crate::ast::ExprId::UNSET,
+                                span: obj.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                             };
                             &self_obj_storage
                         } else {
@@ -33443,12 +33444,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     base: Box::new(Expr {
                                         kind: ExprKind::Ident("Vec".to_string()),
                                         span: obj.span,
-                                        id: crate::ast::ExprId::UNSET,
+                                        id: crate::ast::ExprId::UNSET, debug_only: false,
                                     }),
                                     type_args: vec![elem_tr],
                                 },
                                 span: obj.span,
-                                id: crate::ast::ExprId::UNSET,
+                                id: crate::ast::ExprId::UNSET, debug_only: false,
                             };
                             // Fresh call — its own variadic routing must be
                             // allowed (`of` packs its args into a collected []T).
@@ -33464,13 +33465,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 name: "new".to_string(),
                                             },
                                             span: func.span,
-                                            id: crate::ast::ExprId::UNSET,
+                                            id: crate::ast::ExprId::UNSET, debug_only: false,
                                         }),
                                         args: Vec::new(),
                                         trailing: None,
                                     },
                                     span: func.span,
-                                    id: crate::ast::ExprId::UNSET,
+                                    id: crate::ast::ExprId::UNSET, debug_only: false,
                                 };
                                 let cap_func = Expr {
                                     kind: ExprKind::Member {
@@ -33478,7 +33479,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         name: "cap".to_string(),
                                     },
                                     span: func.span,
-                                    id: crate::ast::ExprId::UNSET,
+                                    id: crate::ast::ExprId::UNSET, debug_only: false,
                                 };
                                 self.emit_call(&cap_func, args, call_id)
                             } else {
@@ -33488,7 +33489,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         name: method.clone(),
                                     },
                                     span: func.span,
-                                    id: crate::ast::ExprId::UNSET,
+                                    id: crate::ast::ExprId::UNSET, debug_only: false,
                                 };
                                 self.emit_call(&new_func, args, call_id)
                             };
@@ -38100,14 +38101,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 {
                     let new_obj = Expr {
                         kind: ExprKind::Ident(parts[0].clone()),
-                        span: func.span, id: crate::ast::ExprId::UNSET,
+                        span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                     };
                     let new_func = Expr {
                         kind: ExprKind::Member {
                             obj: Box::new(new_obj),
                             name: parts[1].clone(),
                         },
-                        span: func.span, id: crate::ast::ExprId::UNSET,
+                        span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                     };
                     let new_call = Expr {
                         kind: ExprKind::Call {
@@ -38115,7 +38116,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             args: args.to_vec(),
                             trailing: None,
                         },
-                        span: func.span, id: crate::ast::ExprId::UNSET,
+                        span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                     };
                     return self.emit_expr(&new_call);
                 }
@@ -40902,12 +40903,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             obj: Box::new(iter.clone()),
                             name: "iter".to_string(),
                         },
-                        span: iter.span, id: crate::ast::ExprId::UNSET,
+                        span: iter.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                     }),
                     args: Vec::new(),
                     trailing: None,
                 },
-                span: iter.span, id: crate::ast::ExprId::UNSET,
+                span: iter.span, id: crate::ast::ExprId::UNSET, debug_only: false,
             };
             return self.emit_for(pattern, &iter_call, body);
         }
@@ -50200,7 +50201,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                             kind: ExprKind::Ident(
                                                                 "Vec".to_string()),
                                                             span: obj.span,
-                                                            id: crate::ast::ExprId::UNSET,
+                                                            id: crate::ast::ExprId::UNSET, debug_only: false,
                                                         }),
                                                         type_args: vec![
                                                             crate::ast::TypeRef::Named {
@@ -50211,18 +50212,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         ],
                                                     },
                                                     span: obj.span,
-                                                    id: crate::ast::ExprId::UNSET,
+                                                    id: crate::ast::ExprId::UNSET, debug_only: false,
                                                 }),
                                                 name: "new".to_string(),
                                             },
                                             span: func.span,
-                                            id: crate::ast::ExprId::UNSET,
+                                            id: crate::ast::ExprId::UNSET, debug_only: false,
                                         }),
                                         args: Vec::new(),
                                         trailing: None,
                                     },
                                     span: func.span,
-                                    id: crate::ast::ExprId::UNSET,
+                                    id: crate::ast::ExprId::UNSET, debug_only: false,
                                 };
                                 return self.infer_expr_c_type(&synth_new);
                                 }
@@ -50244,7 +50245,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                             kind: ExprKind::Ident(
                                                                 "Vec".to_string()),
                                                             span: obj.span,
-                                                            id: crate::ast::ExprId::UNSET,
+                                                            id: crate::ast::ExprId::UNSET, debug_only: false,
                                                         }),
                                                         type_args: vec![
                                                             crate::ast::TypeRef::Named {
@@ -50255,18 +50256,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         ],
                                                     },
                                                     span: obj.span,
-                                                    id: crate::ast::ExprId::UNSET,
+                                                    id: crate::ast::ExprId::UNSET, debug_only: false,
                                                 }),
                                                 name: method.clone(),
                                             },
                                             span: func.span,
-                                            id: crate::ast::ExprId::UNSET,
+                                            id: crate::ast::ExprId::UNSET, debug_only: false,
                                         }),
                                         args: args.to_vec(),
                                         trailing: None,
                                     },
                                     span: func.span,
-                                    id: crate::ast::ExprId::UNSET,
+                                    id: crate::ast::ExprId::UNSET, debug_only: false,
                                 };
                                 return self.infer_expr_c_type(&synth);
                             }
@@ -52455,14 +52456,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if parts.len() == 2 && self.lazy_consts.contains(&parts[0]) {
                         let new_obj = Expr {
                             kind: ExprKind::Ident(parts[0].clone()),
-                            span: func.span, id: crate::ast::ExprId::UNSET,
+                            span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                         };
                         let new_func = Expr {
                             kind: ExprKind::Member {
                                 obj: Box::new(new_obj),
                                 name: parts[1].clone(),
                             },
-                            span: func.span, id: crate::ast::ExprId::UNSET,
+                            span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                         };
                         let new_call = Expr {
                             kind: ExprKind::Call {
@@ -52470,7 +52471,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 args: args.clone(),
                                 trailing: trailing.clone(),
                             },
-                            span: expr.span, id: crate::ast::ExprId::UNSET,
+                            span: expr.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                         };
                         return self.infer_expr_c_type(&new_call);
                     }
@@ -54448,7 +54449,7 @@ mod mem_ordering_tests {
     fn path_expr(parts: &[&str]) -> Expr {
         Expr {
             kind: ExprKind::Path(parts.iter().map(|s| s.to_string()).collect()),
-            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
@@ -54491,7 +54492,7 @@ mod mem_ordering_tests {
     #[test]
     fn non_mem_ordering_path_returns_none() {
         // Bare ident (not a path) → None
-        let e = Expr { kind: ExprKind::Ident("Relaxed".to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET };
+        let e = Expr { kind: ExprKind::Ident("Relaxed".to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false };
         assert_eq!(CEmitter::nova_mem_ordering_to_atomic(&e), None);
     }
 
@@ -54890,36 +54891,36 @@ mod lvalue_receiver_tests {
     use crate::diag::Span;
 
     fn ident(name: &str) -> Expr {
-        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET }
+        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     fn member(obj: Expr, name: &str) -> Expr {
         Expr {
             kind: ExprKind::Member { obj: Box::new(obj), name: name.to_string() },
-            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
     fn index(obj: Expr, key: Expr) -> Expr {
         Expr {
             kind: ExprKind::Index { obj: Box::new(obj), index: Box::new(key) },
-            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
     fn self_access() -> Expr {
-        Expr { kind: ExprKind::SelfAccess, span: Span::dummy(), id: crate::ast::ExprId::UNSET }
+        Expr { kind: ExprKind::SelfAccess, span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     fn call(func: Expr) -> Expr {
         Expr {
             kind: ExprKind::Call { func: Box::new(func), args: vec![], trailing: None },
-            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
     fn int_lit(v: i64) -> Expr {
-        Expr { kind: ExprKind::IntLit(v), span: Span::dummy(), id: crate::ast::ExprId::UNSET }
+        Expr { kind: ExprKind::IntLit(v), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     #[test]
@@ -55097,11 +55098,11 @@ mod array_lit_named_tuple_box_tests {
     use crate::diag::Span;
 
     fn ident(name: &str) -> Expr {
-        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET }
+        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     fn float_lit(v: f64) -> Expr {
-        Expr { kind: ExprKind::FloatLit(v), span: Span::dummy(), id: crate::ast::ExprId::UNSET }
+        Expr { kind: ExprKind::FloatLit(v), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     fn call(func: Expr, args: Vec<Expr>) -> Expr {
@@ -55111,7 +55112,7 @@ mod array_lit_named_tuple_box_tests {
                 args: args.into_iter().map(CallArg::Item).collect(),
                 trailing: None,
             },
-            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
@@ -55156,8 +55157,8 @@ mod array_lit_named_tuple_box_tests {
         // (e.g. accidentally matching int prefix) сломал бы baseline.
         let mut e = CEmitter::new();
         let elems = vec![
-            ArrayElem::Item(Expr { kind: ExprKind::IntLit(1), span: Span::dummy(), id: crate::ast::ExprId::UNSET }),
-            ArrayElem::Item(Expr { kind: ExprKind::IntLit(2), span: Span::dummy(), id: crate::ast::ExprId::UNSET }),
+            ArrayElem::Item(Expr { kind: ExprKind::IntLit(1), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }),
+            ArrayElem::Item(Expr { kind: ExprKind::IntLit(2), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }),
         ];
         let before_out = e.out.clone();
         let _tmp = e.emit_array_lit(&elems).expect("emit_array_lit must succeed");
@@ -55231,20 +55232,20 @@ mod plan127_promoted_member_access_tests {
     use crate::diag::Span;
 
     fn ident(name: &str) -> Expr {
-        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET }
+        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     fn member(obj: Expr, name: &str) -> Expr {
         Expr {
             kind: ExprKind::Member { obj: Box::new(obj), name: name.to_string() },
-            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
     fn path(parts: &[&str]) -> Expr {
         Expr {
             kind: ExprKind::Path(parts.iter().map(|s| s.to_string()).collect()),
-            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
