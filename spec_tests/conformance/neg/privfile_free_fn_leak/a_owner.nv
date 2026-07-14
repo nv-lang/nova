@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR E_FILE_PRIV_LEAK
+//
+// [Facet-B D307 §1/§3/§4] negative — companion to the §5.3 co-exist positive
+// trio (`d307_5_3_pf_dispatch_*.nv`): a peer file must NOT be able to call
+// another peer's `priv(file) free fn`, even when both peers are otherwise
+// legitimate folder-module members. This is the free-FN-specific instance of
+// the general leak rule already covered by `neg/file_priv_leak/` — kept as
+// its own pair here because it is the exact negative counterpart this
+// facet-B investigation exercised (own-file resolve must stay correct AND
+// the leak diagnostic must stay intact once the generic-mono dispatch fix
+// lands).
+//
+// This file (sorts first => entry, carries the marker) declares the private
+// helper; `b_intruder.nv` references it and fails.
+
+module neg.privfile_free_fn_leak
+
+priv(file) fn owner_only(n int) -> int => n + 1
+
+test "own file can see its own file-private free fn (companion positive)" {
+    assert(owner_only(41) == 42)
+}

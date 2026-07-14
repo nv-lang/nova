@@ -1,0 +1,16 @@
+// [Facet-B D307 §5.3] Positive — co-exist RUNTIME, part 2/3.
+//
+// See `d307_5_3_pf_dispatch_bool.nv` for the full trio rationale. This peer
+// declares its OWN `priv(file) fn pf_dispatch(int)` — a DIFFERENT signature
+// (and a DIFFERENT concrete overload from the `bool` one in the sibling
+// file) — and must resolve its own calls to ITS OWN body (n*10+7), never the
+// sibling `bool` overload nor the generic identity in the third peer file.
+
+module spec_tests.conformance
+
+priv(file) fn pf_dispatch(n int) -> int => n * 10 + 7
+
+test "D307 §5.3 co-exist: own-file int priv(file) pf_dispatch wins over peer generic" {
+    assert(pf_dispatch(3) == 37)
+    assert(pf_dispatch(0) == 7)
+}

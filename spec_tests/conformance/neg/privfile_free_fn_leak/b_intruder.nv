@@ -1,0 +1,9 @@
+// [Facet-B D307 §1/§4] negative (peer of `a_owner.nv`) — this file illegally
+// references `owner_only`, which is `priv(file)` to `a_owner.nv`. The
+// folder-module is compiled as one TU and must fail with E_FILE_PRIV_LEAK.
+
+module neg.privfile_free_fn_leak
+
+test "peer cannot see another file's file-private free fn" {
+    assert(owner_only(41) == 42)
+}
