@@ -7957,6 +7957,93 @@ impl<'a> TypeCheckCtx<'a> {
                                     }
                                 }
                             }
+                        } else if method == "serialize" {
+                            // 196.5 Stage-D волна-5 (`[P67-LEGACY]`-adjacent B11ai
+                            // producer, Member-form mirror of the Path-form
+                            // `deserialize` producer below): inside a generic
+                            // container-conformance body (`fn[T Serialize] []T
+                            // @serialize[S Serializer](mut s S) { for v in @ {
+                            // v.serialize(s) } }`, std/src/encoding/serde/serde.nv)
+                            // the receiver `v` is the method's OWN still-abstract
+                            // type param, spelled as a bare `Named{path:["T"]}`
+                            // (Nova has no separate `TypeParam` TypeRef variant).
+                            // `resolve_instance_method_return_arity`'s protocol-
+                            // receiver branch (~14728) only fires when the
+                            // receiver's type NAME literally IS the protocol
+                            // (`w Writer`) — a receiver that is a GENERIC PARAM
+                            // BOUND BY a protocol never matches
+                            // (`self.types.get("T")` finds nothing; "T" is not a
+                            // registered type) → co-miss, legacy `infer_call_ret_c`
+                            // B11ai fallback (gated there on a codegen-side C
+                            // typedef probe, since the checker is pre-mono and
+                            // cannot see emitted C state). The `Serialize`
+                            // contract's `@serialize` return does NOT mention
+                            // `Self` (unlike `Deserialize`'s `Result[Self,
+                            // DeError]`) — it is receiver-INVARIANT
+                            // (`Result[(), SerError]` for every implementor) — so
+                            // no substitution is needed. Gated: receiver's TYPE
+                            // (not name) resolves to a bare `Named{path:[n]}` with
+                            // `n` an IN-SCOPE GENERIC of the enclosing decl
+                            // (`gs`) — a concrete receiver (even one literally
+                            // named "T", which user code never does) is read from
+                            // `self.types`/`method_overloads` by
+                            // `infer_method_call_channel_type` already tried above
+                            // and would have returned `Some` there, never reaching
+                            // this arm.
+                            if let Some(recv_ty) = self.infer_expr_type(mo, scope).or_else(|| {
+                                if !mo.id.is_set() {
+                                    return None;
+                                }
+                                let buf = self.resolved_types_buf.borrow();
+                                let rt = buf.get(&mo.id)?.clone();
+                                drop(buf);
+                                Self::resolved_to_typeref_tp(&rt, e.span)
+                            }) {
+                                let mut peeled = &recv_ty;
+                                loop {
+                                    match peeled {
+                                        TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => {
+                                            peeled = i;
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                                if let TypeRef::Named { path, generics, .. } = peeled {
+                                    if path.len() == 1
+                                        && generics.is_empty()
+                                        && gs.contains(&path[0])
+                                    {
+                                        if let Some(td) = self.types.get("Serialize") {
+                                            if let TypeDeclKind::Protocol { methods, .. } =
+                                                &td.kind
+                                            {
+                                                if let Some(m) = methods.iter().find(|m| {
+                                                    m.name == "serialize"
+                                                        || m.name.trim_start_matches('@')
+                                                            == "serialize"
+                                                }) {
+                                                    let ret = match &m.return_type {
+                                                        Some(r) => r.clone(),
+                                                        None => TypeRef::Unit(m.span),
+                                                    };
+                                                    let self_only: HashSet<String> =
+                                                        std::iter::once("Self".to_string())
+                                                            .collect();
+                                                    if !typeref_mentions_any(&ret, &self_only) {
+                                                        let rt = Self::mark_type_params(
+                                                            ResolvedType::from_type_ref(&ret),
+                                                            gs,
+                                                        );
+                                                        self.resolved_types_buf
+                                                            .borrow_mut()
+                                                            .insert(e.id, rt);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     } else if let ExprKind::Path(parts) = &func.kind {
                         // 196.5 Stage-D волна-3 п.2 (P67-LEGACY panic
