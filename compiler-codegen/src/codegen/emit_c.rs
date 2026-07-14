@@ -50753,6 +50753,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // the return type is receiver-invariant, so resolve it
                         // directly instead of ICE-ing (§6). Guarded on the exact
                         // serde `Result[(),SerError]` C mono being in use.
+                        // [196.5 Stage-D волна-5] PARTIAL producer landed
+                        // (types/mod.rs f1_expr Member-arm, `method == "serialize"`,
+                        // ~7960): a receiver that is a bare in-scope generic
+                        // (`Named{path:["T"]}`, `gs.contains("T")`) resolved via
+                        // `infer_expr_type`/`resolved_types_buf` now channels
+                        // `Result[(), SerError]` straight from the `Serialize`
+                        // protocol decl — confirmed closing the FOR-LOOP-receiver
+                        // class (`fn[T Serialize] []T @serialize(...) { for v in @
+                        // { v.serialize(s) } }`, `NOVA_B11AI_TRACE`-style probe:
+                        // every for-loop call-site now channels
+                        // `Ok("NovaRes_nova_unit_NovaValue_SerError*")` byte-
+                        // identical to this arm's own hardcoded string). REMAINS
+                        // live for a DIFFERENT receiver class: a MATCH-ARM-BOUND
+                        // variable (`Option[T]@serialize`'s `Some(v) => v.serialize
+                        // (s)` — `v` bound by `Pattern::Variant`, not a `for`-loop
+                        // var) is not present in `scope` NOR `resolved_types_buf`
+                        // at the point `f1_expr` visits the arm body (`ExprKind::
+                        // Match` in types/mod.rs does not seed pattern-bound names
+                        // into `scope` before walking `arm.body` — confirmed by
+                        // direct trace: `recv_ty` lookup fails silently, the new
+                        // producer's outer `if let Some(recv_ty)` is never entered
+                        // for this call class). Fixing THAT is a broader change
+                        // (enum-variant pattern-bind → scope/channel registration,
+                        // touching every match arm, not just Serialize) — out of
+                        // this point-fix's narrow blast radius; left live,
+                        // documented here for the next wave.
                         if method == "serialize"
                             && self.novares_typedefs_buf
                                 .borrow()
