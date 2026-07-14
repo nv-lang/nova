@@ -406,3 +406,15 @@ MIR / оптимизации (SSA/DCE) — Стадия 2, отдельный г
 - **`int as char` под unsafe — нужен D-амендмент:** реализовано (`cb9944acd`) — `int as char` разрешён
   в `unsafe`, чекер распознаёт как unsafe-op (E_UNSAFE_UNUSED §21). Позволяет `int @to_char()` в .nv.
   Нужен D-блок легитимизировать.
+
+## ⏸️ ОТЛОЖЕНО (фасет B, точечно) — priv(file) free-fn generic-mono bleed (2026-07-14)
+
+**Статус:** диагноз завершён, фикс отложен решением владельца (не срочно: 2 теста в `standalone/`,
+merged-CU зелёный). Полный рецепт + локализация — [196-facetB-privfile-notes.md](196-facetB-privfile-notes.md).
+**Первопричина:** `priv(file)` generic free-fn (`fn[T] pick`) в merged-CU (а) выигрывает overload-резолв
+у более специфичной file-local КОНКРЕТНОЙ перегрузки (наруш. D84 specificity), (б) mono-именуется по
+`file_id` ВЫЗЫВАЮЩЕГО, не файла generic'а. Сайт: `emit_c.rs` generic-mono dispatch (~21530/22812).
+**Оценка:** одна sonnet-волна; дорогая часть — баг воспроизводится ТОЛЬКО на полном merged-CU
+(изолированно нет) → каждая итерация = 7-мин мега-CU гейт. Две под-правки (чекер-фильтр + codegen-имя)
+готовы в рецепте, третий сайт — по нему же. Закроется при системном фасете B ИЛИ отдельной волной по слову.
+**Возврат в merged-CU:** `standalone/{method_call_never_static,scalar_only_empty}.nv` — после фикса.
