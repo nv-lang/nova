@@ -45,8 +45,8 @@ fn main() Io -> () {
         spawn { producer(tx, 100) }
     }
     ro s = consumer(rx)
-    println(str.from(s))
+    println(s.to_str())
 
     ro d = dual_select()
-    println(str.from(d))
+    println(d.to_str())
 }

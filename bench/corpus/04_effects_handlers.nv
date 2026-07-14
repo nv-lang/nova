@@ -77,17 +77,17 @@ fn main() Io -> () {
 
     with Logger = console, Counter = counter {
         ro r = process(10)
-        println(str.from(r))
+        println(r.to_str())
     }
 
     with Logger = null_log, Counter = zero_counter {
         ro r = process(5)
-        println(str.from(r))
+        println(r.to_str())
     }
 
     with Cache[str, int] = in_memory_cache, Logger = console {
         ro r = fetch_with_cache("key")
-        println(if Some(v) = r { str.from(v) } else { "none" })
+        println(if Some(v) = r { v.to_str() } else { "none" })
     }
 
     with Audit = stdout_audit, Logger = console {

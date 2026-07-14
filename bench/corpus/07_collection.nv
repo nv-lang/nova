@@ -95,18 +95,18 @@ fn dist(a Pt, b Pt) -> f64 {
 
 fn main() Io -> () {
     ro xs = build_range(100)
-    println(str.from(xs.sum()))
-    println(str.from(xs.len()))
-    println(str.from(xs.count_even()))
+    println(xs.sum().to_str())
+    println(xs.len().to_str())
+    println(xs.count_even().to_str())
     ro sq = squared(xs)
-    println(str.from(sq.sum()))
+    println(sq.sum().to_str())
     ro even = evens_only(xs)
-    println(str.from(even.sum()))
+    println(even.sum().to_str())
     ro m = xs.max()
-    println(if Some(v) = m { str.from(v) } else { "none" })
+    println(if Some(v) = m { v.to_str() } else { "none" })
 
     ro p1 = Pt { x: 0.0, y: 0.0 }
     ro p2 = Pt { x: 3.0, y: 4.0 }
     ro d = dist(p1, p2)
-    println(str.from(d))
+    println(d.to_str())
 }
