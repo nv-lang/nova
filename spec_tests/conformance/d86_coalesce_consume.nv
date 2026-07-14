@@ -26,11 +26,11 @@ export type D86Res consume {
 export fn D86Res consume @close() -> () { () }
 
 export fn d86_try_open(ok bool) -> Result[D86Res, str] {
-    if ok { Ok({ id: 1 }) } else { Err("boom") }
+    if ok { Ok(D86Res { id: 1 }) } else { Err("boom") }
 }
 
 export fn d86_try_open_opt(ok bool) -> Option[D86Res] {
-    if ok { Some({ id: 2 }) } else { None }
+    if ok { Some(D86Res { id: 2 }) } else { None }
 }
 
 test "?? consume: Result[ConsumeType,E] Ok-branch consumed via .close() (D86)" {

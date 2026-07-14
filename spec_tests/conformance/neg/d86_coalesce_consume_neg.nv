@@ -11,7 +11,7 @@ type D86NegRes consume {
 fn D86NegRes consume @close() -> () { () }
 
 fn d86_neg_try_open(ok bool) -> Result[D86NegRes, str] {
-    if ok { Ok({ id: 1 }) } else { Err("boom") }
+    if ok { Ok(D86NegRes { id: 1 }) } else { Err("boom") }
 }
 
 test "?? consume-var забыта на exit — D133-not-consumed остаётся (D86)" {
