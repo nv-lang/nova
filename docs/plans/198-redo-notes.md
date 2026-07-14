@@ -438,3 +438,28 @@ export NOVA_INCLUDE_DIR=/d/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed
   **MERGED CU (1005 файлов / 2585 test-блоков): PASS.**
 
 - 2026-07-13 ФИНАЛЬНЫЙ TALLY (FIN-6, полный conformance+soundness, без --jobs, из лога): **PASS 501 / FAIL 4 / SKIP 16**, merged CU app_effect_basic_t8_1 = PASS (446s, 2585 блоков). 4 FAIL = t4_sqlite_e2e_ok + view_descriptor_stack (known-red) + 2 soundness/deferred (Ф.3 статус-кво). Гуляющих/environmental — ноль. Ф.2 REDO ЗАКРЫТ.
+
+---
+
+## Ф.5 — ревизия подпапок `spec_tests/conformance/` (2026-07-14, задание владельца)
+
+**Мотив:** до 198 был чистый `conformance/` = один merged-CU. Миграция 198 добавила подпапки —
+часть законна (по природе не-merged), часть может быть следом «свалили пачку файлов в подпапку»
+(анти-паттерн test-conventions.md: «НЕ плоди per-задача/per-фича standalone-модули»).
+
+**Задача:** инвентарь КАЖДОЙ подпапки `conformance/*/` → вердикт одной из трёх категорий:
+1. **Законный отдельный CU** — оставить. Критерии: `neg/` (каждый = свой EXPECT_COMPILE_ERROR CU);
+   `standalone/` (процессные EXPECT-маркеры, entry-only); многофайловые тесты
+   (`d78_root_peers`, `d78_dup_decl_*`, `xmodule_struct_variant_ctor_*`, `plan143_2` FFI-пакет,
+   `fixtures/`); особый prelude-режим (`partial_prelude`, `no_prelude_panic_assert`).
+2. **Вернуть плоскими пирами в merged-CU** — если подпапка = просто группировка одиночных
+   позитивов, выразимых как пиры `module spec_tests.conformance` (per-фича папка без нужды в своём CU).
+   Проверить D307-совместимость (priv(file)/ordinal-rename при коллизиях имён).
+3. **Карантин-бага** — вынесены из-за компилятор-дефекта (Ф.4c-очередь: priv(file)-bleed,
+   #unchecked-folder-module). Судьба = по фиксу дефекта (bleed → фасет-B волна; #unchecked → ретракт 194).
+
+**Кандидаты «под подозрением» (проверить каждую):** `any_is/`, `cm_box/`, `d372_canonical/`,
+`lint/`, `plan70_1/`, `plan84/`, `consume_fixtures/`.
+
+**Метод (CPU-лёгкий):** только чтение + классификация; таблица-вердикт в этот файл. Возврат в merged-CU
+(если решён) — отдельным шагом с гейтом (авторитетный у оркестратора, серийно). НЕ ломать merged-CU.
