@@ -881,13 +881,13 @@ pub struct CEmitter {
     proven_contracts: std::collections::HashSet<(String, usize)>,
     /// Plan 140.2 Part B (D257 / B.4): proven Index-сайты `v[idx]`/`v[a..b]`
     /// (по span.start), доказанные из LOOP/CODE. Codegen элидит inline
-    /// bounds-check ВСЕГДА (unconditional — не через contracts-режим/`#unchecked`).
+    /// bounds-check ВСЕГДА (unconditional — не через contracts-режим).
     proven_index_sites: std::collections::HashSet<usize>,
     /// Plan 140.2 followup §2: Index-сайты, доказанные ТОЛЬКО с fn-`requires`
-    /// (cross-fn). Элидируются ТОЛЬКО при включённых контрактах — под
-    /// `#unchecked(requires)` requires не enforced → элизия unsound (Plan 194
-    /// A2.1: legacy build-level `--contracts=off` retired, `#unchecked` —
-    /// единственный surviving opt-out).
+    /// (cross-fn). Элидируются ТОЛЬКО при включённых контрактах — если
+    /// requires этой fn не enforced, элизия unsound (Plan 194 A2.1: legacy
+    /// build-level `--contracts=off` retired; Plan 194 A4: per-fn/module
+    /// `#unchecked` opt-out тоже retired — requires теперь ВСЕГДА enforced).
     proven_index_sites_contract: std::collections::HashSet<usize>,
     /// Plan 172.1 U.4.1: per-Expr resolved-type annotations (ExprId → ResolvedType)
     /// from the semantic pass — codegen reads them (equivalence-checked in debug)
@@ -932,28 +932,22 @@ pub struct CEmitter {
     /// contracts-режим/`#unchecked`).
     proven_overflow_sites: std::collections::HashSet<usize>,
     /// Plan 140.4: `int`-арифм. сайты, доказанные ТОЛЬКО с fn-`requires`.
-    /// Элидируются ТОЛЬКО при включённых контрактах — под
-    /// `#unchecked(requires)` requires не enforced → элизия была бы unsound
-    /// (Plan 194 A2.1: legacy build-level `--contracts=off` retired).
+    /// Элидируются ТОЛЬКО при включённых контрактах — если requires этой fn
+    /// не enforced, элизия была бы unsound (Plan 194 A2.1: legacy
+    /// build-level `--contracts=off` retired; Plan 194 A4: per-fn/module
+    /// `#unchecked` opt-out тоже retired — requires теперь ВСЕГДА enforced,
+    /// т.е. `contracts_elided_here()` константно `false`).
     proven_overflow_sites_contract: std::collections::HashSet<usize>,
     /// Plan 194 A2.1 (замена Plan 140 Ф.2 / D24 amend `contracts_off: bool`):
     /// build-policy режим `--contracts=checked|optimized|verified`. Legacy
-    /// `off` (глобальный unconditional bypass) убран — ни одно из трёх
-    /// значений больше не элидирует ВСЕ контракт-проверки разом; предикаты
-    /// элизии (`contracts_elided_for` / `invariants_elided_here`) читают
-    /// ТОЛЬКО per-fn/module `#unchecked` opt-out. В этом атоме `mode` сам по
-    /// себе не влияет на элизию (все три значения ведут себя как старый
-    /// default `enforce`) — задел под будущую Z3-driven дифференциацию
-    /// (`optimized`/`verified`, атомы A2.2+/A3).
+    /// `off` (глобальный unconditional bypass) убран. Plan 194 A4: `#unchecked`
+    /// per-fn/module opt-out РЕТРАКТИРОВАН — предикаты элизии
+    /// (`contracts_elided_for` / `invariants_elided_here`) теперь читают
+    /// ТОЛЬКО доказательство (`proven_contracts`) / `#debug`-эрозию
+    /// (`mode_erases_debug`); `mode` сам по себе всё ещё не добавляет
+    /// собственную ветку элизии для requires/ensures/invariant (задел под
+    /// будущую Z3-driven дифференциацию `optimized`/`verified`, атомы A3+).
     contracts_mode: crate::ast::ContractsMode,
-    /// Plan 140 Ф.2 + Plan 140.3 ([M-140-contract-levels]): per-fn contract
-    /// opt-out (`#unchecked` / `#unchecked(kinds)`) для тела ТЕКУЩЕЙ функции,
-    /// УЖЕ объединённый с module-level opt-out. Set на входе в fn-body,
-    /// restored на выходе. Per-kind гейт — `contracts_elided_for(kind)` /
-    /// `invariants_elided_here()`.
-    contract_opt_out_fn: crate::ast::ContractOptOut,
-    /// Plan 140.3: module-level `#unchecked` opt-out (set при входе в module).
-    contract_opt_out_module: crate::ast::ContractOptOut,
     /// Maps array variable name → actual element C type (e.g. "Nova_Box*").
     /// The array always uses nova_int storage but elements may be pointers to records.
     array_element_types: HashMap<String, String>,
@@ -1976,8 +1970,6 @@ impl CEmitter {
             proven_overflow_sites: std::collections::HashSet::new(),
             proven_overflow_sites_contract: std::collections::HashSet::new(),
             contracts_mode: crate::ast::ContractsMode::Checked,
-            contract_opt_out_fn: crate::ast::ContractOptOut::default(),
-            contract_opt_out_module: crate::ast::ContractOptOut::default(),
             record_invariants: HashMap::new(),
             array_element_types: HashMap::new(),
             option_inner_types: HashMap::new(),
@@ -4054,9 +4046,9 @@ impl CEmitter {
 
     /// Plan 140.2: можно ли элидировать inline bounds-check Index-сайта `span`?
     /// loop/code-доказанные — всегда; contract-доказанные — только если контракты
-    /// для этой fn НЕ сняты (`#unchecked` оставляет проверку, т.к. requires там
-    /// не enforced → элизия по нему была бы unsound; Plan 194 A2.1: legacy
-    /// build-level `--contracts=off` retired).
+    /// для этой fn enforced (Plan 194 A2.1: legacy build-level `--contracts=off`
+    /// retired; Plan 194 A4: per-fn/module `#unchecked` opt-out тоже retired —
+    /// `contracts_elided_here()` константно `false`, гейт всегда проходит).
     fn index_site_elided(&self, span_start: usize) -> bool {
         self.proven_index_sites.contains(&span_start)
             || (!self.contracts_elided_here()
@@ -4079,11 +4071,11 @@ impl CEmitter {
 
     /// Plan 140.4: можно ли элидировать `nova_int_checked_*` на сайте `span`?
     /// loop/code-доказанные — всегда; contract-доказанные — только если контракты
-    /// (`requires`) для этой fn НЕ сняты (`#unchecked(requires)` оставляет
-    /// проверку, т.к. requires там не enforced → элизия была бы unsound;
-    /// Plan 194 A2.1: legacy build-level `--contracts=off` retired).
+    /// (`requires`) для этой fn enforced (Plan 194 A2.1: legacy build-level
+    /// `--contracts=off` retired; Plan 194 A4: per-fn/module `#unchecked`
+    /// opt-out тоже retired — `contracts_elided_here()` константно `false`).
     /// Та же логика, что `index_site_elided` — overflow-panic = soundness-guard,
-    /// элидируется ТОЛЬКО пруфом, никогда одним лишь `#unchecked`.
+    /// элидируется ТОЛЬКО пруфом.
     fn overflow_site_elided(&self, span_start: usize) -> bool {
         self.proven_overflow_sites.contains(&span_start)
             || (!self.contracts_elided_here()
@@ -4103,9 +4095,8 @@ impl CEmitter {
     /// работает (byte-identical старому поведению без различения режима);
     /// `optimized`/`verified` (release) — `#debug`-клаузы/statement'ы
     /// СТИРАЮТСЯ (не эмитятся, zero-cost). Не-`#debug` контракты этим
-    /// предикатом НЕ гейтятся — они always-on независимо от режима (см.
-    /// `contracts_elided_for` / `invariants_elided_here` — отдельный,
-    /// `#unchecked`-driven путь элизии).
+    /// предикатом НЕ гейтятся — они always-on независимо от режима (сайт-
+    /// specific sound-элизия идёт отдельно через `proven_contracts`).
     fn mode_erases_debug(&self) -> bool {
         matches!(
             self.contracts_mode,
@@ -4113,39 +4104,31 @@ impl CEmitter {
         )
     }
 
-    /// Plan 140 Ф.2: контракт-проверки элидируются для тела текущей fn?
-    /// `true` если per-fn `#unchecked` (через `contracts_unchecked_fn`,
-    /// выставленный на входе в fn-body). Используется body-уровневыми
-    /// эмиттерами (`assert_static`/`assume`/record-invariant), у которых нет
-    /// прямого `&FnDecl`.
+    /// Plan 140 Ф.2 / Plan 194 A4 (ретракт `#unchecked`): контракт-проверки
+    /// элидируются для тела текущей fn? Единственный оставшийся per-fn/module
+    /// opt-out (`#unchecked`) убран вместе с языковой фичой — requires/
+    /// ensures/invariant теперь ВСЕГДА enforced (кроме Z3/loop/code-proven
+    /// сайтов, которые гейтятся отдельно через `proven_contracts` /
+    /// `proven_overflow_sites*`). Оставлен как named predicate (а не удалён
+    /// целиком) — вызывающие сайты читаются как «элизия для kind `X`»
+    /// декларативно; будущая mode-based sound-элизия (A3+) заполнит тело.
     fn contracts_elided_here(&self) -> bool {
-        // body-level assert_static/assume — precondition-like → requires-gated.
-        self.contracts_elided_for(crate::ast::ContractKind::Requires)
+        false
     }
 
-    /// Plan 140.3 ([M-140-contract-levels]): элидируется ли контракт-вид `kind`
-    /// здесь? = module-opt-out(kind) ИЛИ fn-opt-out(kind). `Requires` →
-    /// `.requires`; `Ensures`/`EnsuresFail` → `.ensures`.
-    ///
-    /// Plan 194 A2.1: legacy `--contracts=off` (global unconditional bypass)
-    /// убран вместе с флагом — `self.contracts_mode` в этом атоме НЕ
-    /// добавляет сюда собственную ветку (`checked`/`optimized`/`verified`
-    /// поведенчески идентичны старому `enforce`: только `#unchecked`
-    /// элидирует). Различия между режимами — будущие атомы (A2.2+/A3).
-    fn contracts_elided_for(&self, kind: crate::ast::ContractKind) -> bool {
-        let pick = |o: &crate::ast::ContractOptOut| match kind {
-            crate::ast::ContractKind::Requires => o.requires,
-            _ => o.ensures,
-        };
-        pick(&self.contract_opt_out_module) || pick(&self.contract_opt_out_fn)
+    /// Plan 140.3 / Plan 194 A4: элидируется ли контракт-вид `kind` здесь?
+    /// Ретракт `#unchecked` убрал единственный источник элизии этого
+    /// предиката (module/fn opt-out) — константно `false` до будущей
+    /// mode-based Z3-driven дифференциации (`optimized`/`verified`, A3+).
+    fn contracts_elided_for(&self, _kind: crate::ast::ContractKind) -> bool {
+        false
     }
 
-    /// Plan 140.3: элидируется ли type-`invariant`-страховка здесь?
-    /// = module/fn `#unchecked(invariant)` (или bare). Plan 194 A2.1: см.
-    /// `contracts_elided_for` — `contracts_mode` не добавляет глобальный
-    /// bypass в этом атоме.
+    /// Plan 140.3 / Plan 194 A4: элидируется ли type-`invariant`-страховка
+    /// здесь? Ретракт `#unchecked` убрал единственный источник элизии —
+    /// константно `false` (type invariants теперь всегда enforced).
     fn invariants_elided_here(&self) -> bool {
-        self.contract_opt_out_module.invariant || self.contract_opt_out_fn.invariant
+        false
     }
 
     /// Get the Span of a statement (where in source it came from).
@@ -4215,10 +4198,6 @@ impl CEmitter {
     }
 
     pub fn emit_module(mut self, module: &Module) -> Result<(String, Vec<String>), String> {
-        // Plan 140.3 ([M-140-contract-levels]): module-level `#unchecked` opt-out
-        // applies to every fn/type in the module — ORed with per-fn opt-out by
-        // `contracts_elided_for` / `invariants_elided_here`.
-        self.contract_opt_out_module = module.contract_opt_out.clone();
         // [M-consume-rebind-nested-block-shadow] (Plan 172.13): copy the
         // alpha_rename-computed span set so `Stmt::Let` can look up its own
         // span below.
@@ -21914,13 +21893,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // contract violation on a generic-type method (e.g. `Vec[T] @index`
         // OOB called via dispatch, `Bag[int] @at` OOB) went silently UNCAUGHT
         // — a soundness hole. This ports the exact logic from `emit_fn`
-        // (lines ~14555+): build-/per-fn opt-out folds into `has_contracts`,
-        // Z3-proven contracts elide via `proven_contracts`, quantifiers skip.
-        // Plan 140.3 ([M-140-contract-levels]): per-kind opt-out. Set the fn-level
-        // opt-out (contracts_elided_for ORs it with module-level), then gate
-        // requires and ensures INDEPENDENTLY. Restored at fn-body end below.
-        let prev_mono_contract_opt_out = self.contract_opt_out_fn.clone();
-        self.contract_opt_out_fn = fn_decl.contract_opt_out.clone();
+        // (lines ~14555+): Z3-proven contracts elide via `proven_contracts`,
+        // quantifiers skip. Plan 194 A4 (ретракт `#unchecked`): per-fn/module
+        // opt-out убран — requires/ensures gate только по `contracts_elided_for`
+        // (константно `false` до будущей mode-based элизии, A3+).
         let mono_verifiable = !fn_decl.contracts.is_empty()
             && !matches!(fn_decl.verify_mode, VerifyMode::Unverified);
         let mono_has_contracts = mono_verifiable
@@ -22157,8 +22133,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.current_fn_name = saved_fn_name;
         self.current_fn_param_typerefs = saved_param_typerefs;
         self.expected_record_type = saved_expected;
-        // Plan 140 cgfix: restore per-fn contract opt-out flag after fn body.
-        self.contract_opt_out_fn = prev_mono_contract_opt_out;
         for key in &saved_mono_array_elem_keys {
             self.array_element_types.remove(key);
         }
@@ -23239,8 +23213,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 140 Ф.1 (D24 amend): эмитим безусловно — НЕ под
         // `#ifdef NOVA_CONTRACTS_RUNTIME`. Недоказанные ensures проверяются
         // и в release (enforce-with-elision); Z3-proven уже элидируются ниже
-        // через `continue` на codegen (zero-cost). Per-fn `#unchecked` — Ф.2
-        // (Plan 194 A2.1: legacy build-level `--contracts=off` opt-out retired).
+        // через `continue` на codegen (zero-cost). Plan 194 A2.1/A4: legacy
+        // build-level `--contracts=off` И per-fn/module `#unchecked` opt-out
+        // оба retired — ensures теперь ВСЕГДА enforced.
         // Подставляем `result` → `_nova_result` при emit'е выражения.
         // emit_expr на Ident("result") вернёт "result" (она в var_types),
         // нам нужно "_nova_result". Используем post-process подмену.
@@ -23964,19 +23939,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // контракты эмитятся БЕЗУСЛОВНО (debug И release), Z3-proven
         // элидируются на codegen через `continue` (zero-cost). Прежняя
         // модель «в release стираются» (NDEBUG/assert) — retracted.
-        // Plan 140 Ф.2 (D24 amend): per-fn `#unchecked` элидирует ВСЕ
-        // контракт-проверки в теле этой fn (даже недоказанные; Plan 194 A2.1:
-        // legacy build-policy `--contracts=off` opt-out retired).
-        // `contracts_elided_fn` фолдится в `has_contracts`
-        // (requires/ensures) и в decreases-guard ниже. Также выставляется как
-        // `self.contracts_unchecked_fn` на входе в fn-body для body-уровневых
-        // эмиттеров (assert_static/assume/record-invariant).
-        // Plan 140.3 ([M-140-contract-levels]): set the fn-level opt-out EARLY so
-        // `contracts_elided_for(kind)` (which ORs module-level) drives the per-kind
-        // gates below AND the body-level emitters (assert_static/assume/record-
-        // invariant). Restored after fn-body (parallel to in_realtime).
-        let prev_contract_opt_out_fn = self.contract_opt_out_fn.clone();
-        self.contract_opt_out_fn = f.contract_opt_out.clone();
+        // Plan 194 A4 (ретракт `#unchecked`): per-fn/module opt-out убран —
+        // `contracts_elided_for(kind)` константно `false` (requires/ensures
+        // ВСЕГДА enforced, кроме Z3-proven-elided сайтов через `continue`).
         let verifiable = !f.contracts.is_empty()
             && !matches!(f.verify_mode, VerifyMode::Unverified);
         let has_contracts = verifiable && !self.contracts_elided_for(ContractKind::Requires);
@@ -23985,9 +23950,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // превышает порог (10000) — runtime panic. Это catches infinite
         // recursion в debug. Полный well-founded check (m_new < m_old) —
         // ждёт SMT (Z3 backend).
-        // Plan 140 Ф.2: `#unchecked` элидирует и decreases recursion-guard
-        // (контракт-проверка как и прочие; legacy `--contracts=off` retired,
-        // Plan 194 A2.1).
         let _depth_var = if f.decreases.is_some() && !self.contracts_elided_for(ContractKind::Requires) {
             // Sanitize fn name для C-identifier.
             let san: String = f.name.chars()
@@ -24014,7 +23976,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 140 Ф.1 (D24 amend): эмитим безусловно — НЕ под
         // `#ifdef NOVA_CONTRACTS_RUNTIME`. Недоказанные requires проверяются
         // и в release (enforce-with-elision); Z3-proven элидируются ниже через
-        // `continue` (zero-cost). Build-opt-out / per-fn `#unchecked` — Ф.2.
+        // `continue` (zero-cost). Plan 194 A4: per-fn/module `#unchecked`
+        // opt-out retired.
         if has_contracts {
             for c in &f.contracts {
                 if matches!(c.kind, ContractKind::Requires) {
@@ -24053,10 +24016,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if f.blocking_attr {
             self.in_blocking = true;
         }
-        // Plan 140.3 ([M-140-contract-levels]): per-fn contract opt-out уже
-        // выставлен ВЫШЕ (early, до has_contracts) — для per-kind гейтов И
-        // body-уровневых эмиттеров (assert_static/assume/record-invariant);
-        // restored после fn-body через `prev_contract_opt_out_fn`.
         // Plan 127 Ф.3: track current fn-id for escape-result lookup при
         // emit_let / emit_record_lit. Format must match
         // `escape_analyze::fn_id` (free fn → name; method → `<recv>::<name>`).
@@ -24069,8 +24028,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let prev_promoted_locals = std::mem::take(&mut self.promoted_value_record_locals);
         let prev_promoted_prim_locals = std::mem::take(&mut self.promoted_primitive_locals);
         // emit body — collect into _nova_result if ensures present
-        // Plan 140.3: ensures gated INDEPENDENTLY from requires (has_contracts) —
-        // `#unchecked(requires)` must NOT also drop ensures, and vice-versa.
+        // Plan 140.3: ensures gated INDEPENDENTLY from requires (has_contracts).
         let has_ensures = verifiable
             && !self.contracts_elided_for(ContractKind::Ensures)
             && f.contracts.iter().any(|c| matches!(c.kind, ContractKind::Ensures));
@@ -24148,8 +24106,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 113 (D172): restore in_realtime / in_blocking after fn body.
         self.in_realtime = prev_in_realtime;
         self.in_blocking = prev_in_blocking;
-        // Plan 140 Ф.2: restore per-fn contract opt-out flag after fn body.
-        self.contract_opt_out_fn = prev_contract_opt_out_fn;
         // Plan 127 Ф.3: restore prev fn-id + promoted-locals after fn body.
         self.current_fn_id = prev_fn_id;
         self.promoted_value_record_locals = prev_promoted_locals;
@@ -27656,9 +27612,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 33.3 Ф.9.1: skip runtime check если expr читает
                 // ghost-var (ghost эрейзится в codegen; SMT-verify в Z3
                 // будет работать). assert_static с ghost — pure spec-level.
-                // Plan 140 Ф.2: `#unchecked` элидирует assert_static как и
-                // прочие контракт-проверки (legacy `--contracts=off` retired,
-                // Plan 194 A2.1).
+                // Plan 194 A4: per-fn/module `#unchecked` opt-out retired —
+                // `contracts_elided_here()` константно `false`.
                 if Self::expr_uses_ghost(expr, &self.ghost_vars)
                     || self.contracts_elided_here()
                 {
@@ -27681,9 +27636,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // `#ifdef NOVA_CONTRACTS_RUNTIME`.
             Stmt::Assume { expr, span } => {
                 // Plan 33.3 Ф.9.1: skip если expr читает ghost-var.
-                // Plan 140 Ф.2: `#unchecked` элидирует assume-check как и
-                // прочие контракт-проверки (legacy `--contracts=off` retired,
-                // Plan 194 A2.1).
+                // Plan 194 A4: per-fn/module `#unchecked` opt-out retired —
+                // `contracts_elided_here()` константно `false`.
                 if Self::expr_uses_ghost(expr, &self.ghost_vars)
                     || self.contracts_elided_here()
                 {
@@ -30028,10 +29982,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 continue;
                             }
                             // Получаем поля типа.
-                            // Plan 140 Ф.2 (D24 amend): per-fn/module
-                            // `#unchecked` / `#unchecked(invariant)` элидируют
-                            // invariant-check (legacy build-level
-                            // `--contracts=off` retired, Plan 194 A2.1).
+                            // Plan 194 A4: per-fn/module `#unchecked` opt-out
+                            // retired — `invariants_elided_here()` константно
+                            // `false`, invariant-check теперь ВСЕГДА enforced.
                             if self.invariants_elided_here() {
                                 continue;
                             }

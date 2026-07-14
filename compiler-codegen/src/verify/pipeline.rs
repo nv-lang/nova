@@ -4457,8 +4457,9 @@ pub struct ModuleVerifyReport {
     pub proven_overflow_sites: Vec<Span>,
     /// Plan 140.4: `int`-арифм. сайты, доказанные ТОЛЬКО с учётом fn-`requires`
     /// (`requires 0<=a && a<=1000` ⇒ `a+5` в диапазоне). Codegen элидит ТОЛЬКО при
-    /// включённых контрактах (под `--contracts=off`/`#unchecked(requires)` чек
-    /// остаётся — requires не enforced ⇒ элизия была бы unsound).
+    /// включённых контрактах (под `--contracts=off` чек остаётся — requires не
+    /// enforced ⇒ элизия была бы unsound; Plan 194 A4: per-fn/module
+    /// `#unchecked` opt-out тоже retired, requires теперь ВСЕГДА enforced).
     pub proven_overflow_sites_contract: Vec<Span>,
 }
 
