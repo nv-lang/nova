@@ -32149,6 +32149,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     fn emit_call(&mut self, func: &Expr, args: &[CallArg], call_id: crate::ast::ExprId) -> Result<String, String> {
+        // [M-176-xmod-payload-variant-ctor]: a nullary-variant method chain
+        // collapsed by the parser into a flat 3-part Path
+        // (`Type.Variant.method()`) — rewrite to the equivalent Member form and
+        // re-enter, so the (collision/generic-aware) Member-call emission builds
+        // the receiver + dispatches the method instead of falling to the bottom
+        // `free_fn_c_name(parts.join("_"))` fallback (a bogus
+        // `nova_fn_Type_Variant_method()` free-fn call → undefined symbol / CU
+        // link failure). See `variant_chain_as_member`.
+        if let Some(member_func) = self.variant_chain_as_member(func) {
+            return self.emit_call(&member_func, args, call_id);
+        }
         // Plan 184 Р10: a value/primitive `mut x T` free-fn param uses the
         // by-pointer in-out ABI (`T*`). Wrap the matching call args in `RefArg`
         // (emits `(&(place))`) so EVERY downstream arg-emission branch passes the
@@ -37803,62 +37814,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     parts.clone()
                 };
                 let parts: &[String] = &parts;
-                // [M-176-xmod-payload-variant-ctor]: `Type.Variant.method(...)`
-                // called DIRECTLY on a freshly-constructed nullary variant, no
-                // `ro`/`mut` binding in between (e.g. `NetError.ConnectionRefused
-                // .to_error_kind()`). The parser's PascalCase path-collector
-                // (parser/mod.rs `starts_uppercase` loop) greedily eats every
-                // `.ident` after the initial PascalCase segment regardless of
-                // casing — needed so lowercase static-ctor calls like
-                // `SeekFrom.start(5)` still parse as a single Path — so the WHOLE
-                // chain collapses into ONE flat 3-part Path and the trailing
-                // `(...)` wraps it in a single Call; there is no nested Member
-                // node to dispatch through the (already-correct) Member arm
-                // above. Mirror of the analogous fix in `infer_call_ret_c`'s
-                // `recv_and_method` (same file) — that one only fixes TYPE
-                // inference; this fixes the actual C emission, else codegen
-                // falls to the `free_fn_c_name(parts.join("_"))` bottom fallback
-                // and mis-emits a bogus zero-arg free-function call
-                // (`nova_fn_Kind_Empty_label()`).
-                //
-                // Verify parts[1] really is a variant of parts[0] via
-                // `sum_schemas` (qualifying parts[0] through `ref_type_base` for
-                // the D381 cross-module name-collision case) so this only fires
-                // for the genuine variant-chain shape — anything else falls
-                // through unchanged. Generic-mono sums are excluded (rare/out of
-                // scope for this fix; falls through to legacy, unchanged
-                // behaviour) to avoid duplicating the template/mono resolution
-                // that `emit_expr`'s "D109 qualified unit variant" Path arm
-                // already owns.
-                if parts.len() == 3 && !self.generic_type_templates.contains_key(parts[0].as_str()) {
-                    let eff_q = self.ref_type_base(&parts[0], &[]);
-                    let is_nullary_variant = self.sum_schemas.get(eff_q.as_str())
-                        .and_then(|variants| variants.get(parts[1].as_str()))
-                        .map_or(false, |fields| fields.is_empty());
-                    if is_nullary_variant {
-                        let method_name = &parts[2];
-                        // Receiver construction: delegate to the (already-correct,
-                        // checker-independent) 2-part nullary-variant Path arm in
-                        // `emit_expr` — handles the D381 qualification + ctor
-                        // mangling identically to the working `ro x = Type.Variant`
-                        // path, with zero logic duplication.
-                        let synthetic_recv = Expr::new(
-                            ExprKind::Path(vec![parts[0].clone(), parts[1].clone()]),
-                            func.span,
-                        );
-                        let recv_c_expr = self.emit_expr(&synthetic_recv)?;
-                        let tmp = self.fresh_tmp();
-                        self.line(&format!("Nova_{}* {} = {};", eff_q, tmp, recv_c_expr));
-                        let mut arg_strs = Vec::new();
-                        for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
-                        let mut call_args = vec![tmp];
-                        call_args.extend(arg_strs);
-                        return Ok(format!(
-                            "Nova_{}_method_{}({})",
-                            eff_q, method_name, call_args.join(", ")
-                        ));
-                    }
-                }
                 // Self.method(args) direct-emit fast path:
                 // когда Self был substituted, и parts.len() == 2 — выдаём
                 // явный static-method вызов `Nova_<RecvType>_static_<method>(args)`
@@ -49046,6 +49001,65 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.fn_field_call_sig(obj, field).map(|(_, ret)| ret)
     }
 
+    /// [M-176-xmod-payload-variant-ctor]: recognise a nullary-variant method
+    /// chain that the parser collapsed into ONE flat 3-part Path
+    /// `[Type, Variant, method]` with a trailing `(...)` — the PascalCase
+    /// path-collector (parser/mod.rs `starts_uppercase` loop) greedily eats
+    /// EVERY `.ident` after an initial PascalCase segment regardless of casing
+    /// (kept deliberately so lowercase static-ctor calls like `SeekFrom.start(5)`
+    /// still parse as a single Path), so `Type.Variant.method()` — with NO
+    /// parens on the nullary variant, hence no nested Call/Member node — becomes
+    /// one flat `Path([Type, Variant, method])`. Rewrite it into the equivalent
+    /// `Member{ obj: Path[Type, Variant], name: method }` so it flows through
+    /// the SAME (collision-aware AND generic-aware) Member-call machinery a
+    /// bound `ro x = Type.Variant; x.method()` already uses — instead of hitting
+    /// the Path-only `parts.len() != 2` P67-LEGACY panic (emit_c.rs `infer_call
+    /// _ret_c` legacy tail / `emit_call` bottom fallback). A PAYLOAD variant
+    /// (`Type.Info(5).method()`) never reaches here — its ctor parens already
+    /// force a nested Call/Member shape.
+    ///
+    /// Returns `None` for any 3-part Path whose middle segment is NOT a variant
+    /// of the head type (module-qualified statics `Mod.Type.fn`, deep member
+    /// paths, …) — those stay on their existing path unchanged. Collision-aware
+    /// (D381): a variant is recognised under the bare head name, under the
+    /// file-context-qualified base (`ref_type_base`), OR — for a generic sum —
+    /// against the template's declared variants; mirrors `emit_expr`'s D109
+    /// unit-variant Path arm. The Member form owns the correct receiver-type
+    /// resolution (qualified for colliding sums, mono for generics) + the method
+    /// return/dispatch, so BOTH inference and emission delegate to it with zero
+    /// duplicated per-shape logic.
+    fn variant_chain_as_member(&self, func: &Expr) -> Option<Expr> {
+        let parts = match &func.kind {
+            ExprKind::Path(p) if p.len() == 3 => p,
+            _ => return None,
+        };
+        let head = &parts[0];
+        let variant = &parts[1];
+        let is_variant = self
+            .sum_schemas
+            .get(head.as_str())
+            .map_or(false, |v| v.contains_key(variant.as_str()))
+            || self
+                .sum_schemas
+                .get(self.ref_type_base(head, &[]).as_str())
+                .map_or(false, |v| v.contains_key(variant.as_str()))
+            || self.generic_type_templates.get(head.as_str()).map_or(false, |td| {
+                matches!(&td.kind, crate::ast::TypeDeclKind::Sum(vars)
+                    if vars.iter().any(|sv| &sv.name == variant))
+            });
+        if !is_variant {
+            return None;
+        }
+        let recv = Expr::new(
+            ExprKind::Path(vec![head.clone(), variant.clone()]),
+            func.span,
+        );
+        Some(Expr::new(
+            ExprKind::Member { obj: Box::new(recv), name: parts[2].clone() },
+            func.span,
+        ))
+    }
+
     /// Plan 172.1 U.4.1: thin entry over the legacy re-derivation. When the semantic
     /// pass annotated this Expr (resolved_types), DEBUG-asserts the annotation lowers
     /// to the SAME C-type — proving equivalence across the corpus before U.4.2+ flips
@@ -49057,6 +49071,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// (2485 строк × 2) в channel-6q и в финальном legacy-match Call-арме;
     /// оба сайта теперь зовут этот хелпер.
     fn infer_call_ret_c(&self, expr: &Expr, func: &Expr, args: &[CallArg]) -> String {
+                    // [M-176-xmod-payload-variant-ctor]: a nullary-variant method
+                    // chain collapsed into a flat 3-part Path — rewrite to the
+                    // Member form and re-enter so the (collision/generic-aware)
+                    // Member machinery resolves the method return, never reaching
+                    // the Path-only "no method segment" P67 panic. See
+                    // `variant_chain_as_member`.
+                    if let Some(member_func) = self.variant_chain_as_member(func) {
+                        return self.infer_call_ret_c(expr, &member_func, args);
+                    }
                     // D38 turbofish прозрачен для inference — но extract type_args
                     // ПЕРЕД unwrap чтобы Plan 54 Ф.4 return-type inference (для
                     // generic-fn возвращающей []T) могла использовать turbofish
@@ -49272,39 +49295,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 };
                                 if parts.len() == 2 {
                                     Some((parts[0].clone(), parts[1].clone(), false, false))
-                                } else if parts.len() == 3 {
-                                    // [M-176-xmod-payload-variant-ctor]: a method called
-                                    // DIRECTLY on a freshly-constructed nullary variant with
-                                    // no intermediate `ro`/`mut` binding (`Type.Variant.method()`,
-                                    // e.g. `NetError.ConnectionRefused.to_error_kind()`) is NOT
-                                    // parsed as a Member-on-Call chain — the parser's PascalCase
-                                    // path-collector (parser/mod.rs, `starts_uppercase` loop)
-                                    // greedily eats every `.ident` after an initial PascalCase
-                                    // segment regardless of casing (documented tradeoff: needed
-                                    // to keep lowercase static-ctor calls like `SeekFrom.start(5)`
-                                    // parsing as a single Path), so `Type.Variant.method` collapses
-                                    // into ONE flat 3-part Path and the trailing `(...)` wraps the
-                                    // WHOLE thing in a single Call — `func.kind` here is
-                                    // `Path([Type, Variant, method])`, never reaching the Member
-                                    // arm above. Without this, the call fell through to the
-                                    // "no method segment" P67-LEGACY panic (parts.len() != 2)
-                                    // because the checker's normal method-of-a-bound-variable
-                                    // Channel never runs (there IS no bound variable). Verify
-                                    // parts[1] really is a variant of parts[0] (not some other
-                                    // 3-segment shape) via `sum_schemas`, qualifying through
-                                    // `ref_type_base` for the D381 cross-module name-collision
-                                    // case — then dispatch exactly like the working
-                                    // `ro x = Type.Variant; x.method()` path: instance-method
-                                    // lookup (`want_inst = true`) keyed by the enum's base type.
-                                    let eff_q = self.ref_type_base(&parts[0], &[]);
-                                    if self.sum_schemas.get(eff_q.as_str())
-                                        .map_or(false, |variants| variants.contains_key(parts[1].as_str()))
-                                    {
-                                        Some((eff_q, parts[2].clone(), true, false))
-                                    } else {
-                                        None
-                                    }
                                 } else {
+                                    // [M-176-xmod-payload-variant-ctor]: a 3-part variant
+                                    // chain (`Type.Variant.method()`) is rewritten to Member
+                                    // form at the top of `infer_call_ret_c`
+                                    // (`variant_chain_as_member`) and never reaches here as a
+                                    // Path — this arm only sees genuine 2-part static/effect
+                                    // Path calls.
                                     None
                                 }
                             }
