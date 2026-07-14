@@ -207,8 +207,15 @@ fn main() Time {
 // request — `NOVA_RUNTIME_DUMP` (`SIGABRT`-adjacent watchdog dump,
 // `nova_sched_park`-family) shows `[supervised] ... pending_remote=1` with
 // `count=0`: a child scope's slot never gets marked done. Reproduced with
-// `nova build` + repeated `curl`: sometimes the 2nd request hangs, sometimes
-// the 3rd–7th, sometimes ten-plus requests run clean — genuinely
+// `nova build` + repeated `curl`: usually the 2nd request hangs, sometimes
+// the 3rd–7th, occasionally ten-plus requests run clean — the exact
+// frequency shifted (worse) under heavier concurrent CPU load on this dev
+// machine (other unrelated `nova` builds running in parallel worktrees) in
+// this session's own testing, so contention is plausibly a contributing
+// factor to the TIMING — but the runtime's OWN 5s watchdog fired every
+// time this was hit, actively diagnosing a permanently-stuck slot (not
+// merely "still running, just slow": `curl` was given up to 10s, well past
+// the watchdog's own 5s, and never got a response) — genuinely
 // PROBABILISTIC, matching the shape of this codebase's own documented M:N
 // stale-slot race class (`docs/cases/mn-race-stale-slot-2026-05.md`) rather
 // than a deterministic logic bug. `aggregate_test.nv`'s OWN 17-test suite
