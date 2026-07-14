@@ -2858,6 +2858,18 @@ Mem.reset()       -> ()    // zero stats counters (for per-test isolation)
 
 ## D81. `assert(cond)` vs `debug_assert(cond)` — build-mode семантика
 
+> **AMEND (Plan 194 Ф.0, 2026-07-14) — `debug_assert(cond)` RETRACTED, заменён
+> `#debug assert(cond)`.** Единый dev-only префикс `#debug` (см.
+> [D421](09-tooling.md#d421-contract-execution-model--debug-dev-only-префикс--contracts-уровни-ретракция-uncheckeddebug_assert-plan-194-2026-07-14))
+> покрывает ту же роль — "dev-only assertion, no-op в release" — что и
+> `debug_assert` ниже, единой формой вместо отдельной prelude-функции.
+> `assert(cond)` (always runtime, ниже) — БЕЗ ИЗМЕНЕНИЙ. **Статус этой волны
+> (Ф.0+Ф.1):** только спека + парсер `#debug assert(...)` (новая форма,
+> распознаётся РЯДОМ с существующим `debug_assert`); `debug_assert` физически
+> ЕЩЁ присутствует в prelude/парсере — фактическая ретракция — Ф.4 (D421
+> §Статус). Читать `debug_assert`-текст ниже как ТЕКУЩЕЕ (не целевое)
+> поведение до Ф.4.
+
 ### Что
 
 Два уровня assertion'ов в prelude:

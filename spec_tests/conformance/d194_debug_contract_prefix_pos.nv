@@ -1,0 +1,52 @@
+// Plan 194 Ф.1 (D-блок TBD, 09-tooling.md / D24-амендмент): `#debug`-префикс
+// перед requires/ensures/invariant — парсится, флаг debug_only записан в AST
+// (parser::Contract.debug_only). Codegen эрозия по --contracts (Ф.2) ещё НЕ
+// реализована — в этой фазе `#debug`-контракт исполняется КАК ОБЫЧНЫЙ (byte-
+// identical поведению requires/ensures без префикса). Тест доказывает: (а)
+// парсится без ошибки; (б) поведение сегодня не регрессировало (контракт
+// по-прежнему держится/падает как обычно).
+
+module spec_tests.conformance
+
+priv(file) fn d194_debug_requires_fn(x int) -> int
+    #debug requires x > 0
+=> x * 2
+
+priv(file) fn d194_debug_ensures_fn(x int) -> int
+    #debug ensures result > 0
+=> x
+
+type D194DebugInvT {
+    n int
+}
+    #debug invariant n >= 0
+
+test "#debug requires: valid input passes through" {
+    assert(d194_debug_requires_fn(5) == 10)
+}
+
+test "#debug requires: violation still panics (dev-only == always-on for now, Ф.2 pending)" panics "requires failed: x > 0" {
+    ro _ = d194_debug_requires_fn(-1)
+    println("UNREACHABLE")
+}
+
+test "#debug ensures: valid output passes" {
+    assert(d194_debug_ensures_fn(5) == 5)
+}
+
+test "#debug invariant: valid construction passes" {
+    ro v = D194DebugInvT { n: 3 }
+    assert(v.n == 3)
+}
+
+test "#debug assert stmt: true condition passes" {
+    ro x = 5
+    #debug assert(x > 0)
+    assert(x == 5)
+}
+
+test "#debug assert stmt: false condition still panics (dev-only == always-on for now)" panics "assert failed: x > 0" {
+    ro x = -1
+    #debug assert(x > 0)
+    println("UNREACHABLE")
+}

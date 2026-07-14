@@ -1308,7 +1308,7 @@ mod tests {
     }
 
     fn e(kind: ExprKind) -> Expr {
-        Expr { kind, span: sp(), id: crate::ast::ExprId::UNSET }
+        Expr { kind, span: sp(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     fn int_lit(n: i64) -> Expr {

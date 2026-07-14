@@ -674,7 +674,7 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
                 obj: Box::new(ident_expr(recv_name, sp)),
                 name: name.clone(),
             },
-            span: func.span, id: crate::ast::ExprId::UNSET,
+            span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,
         })
         }
     } else {
@@ -741,7 +741,7 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
             args: call_args,
             trailing: trailing.clone(),
         },
-        span: sp, id: crate::ast::ExprId::UNSET,
+        span: sp, id: crate::ast::ExprId::UNSET, debug_only: false,
     };
 
     Some(ExprKind::Block(Block {
@@ -779,5 +779,5 @@ fn let_stmt_typed(name: &str, value: Expr, ty: Option<crate::ast::TypeRef>, span
 
 /// `<name>` identifier expression.
 fn ident_expr(name: &str, span: Span) -> Expr {
-    Expr { kind: ExprKind::Ident(name.to_string()), span, id: crate::ast::ExprId::UNSET }
+    Expr { kind: ExprKind::Ident(name.to_string()), span, id: crate::ast::ExprId::UNSET, debug_only: false }
 }

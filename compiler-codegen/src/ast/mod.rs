@@ -570,6 +570,14 @@ pub struct Contract {
     /// показывают литерал, как до Plan 140.3; без silent-drop). Плоский литерал
     /// (без `${}`) → `message_expr = None`, только `message`. Оба `None` — без сообщения.
     pub message_expr: Option<Expr>,
+    /// Plan 194 Ф.1 (D-блок TBD, 09-tooling.md / D24-амендмент): `#debug`-
+    /// префикс перед клаузой (`#debug requires`/`#debug ensures`/
+    /// `#debug invariant`) — dev-only контракт (дорогая проверка, стирается
+    /// в release). V1 (эта фаза): парсится и хранится, но ИНЕРТНО — codegen
+    /// эмитирует контракт как обычно независимо от значения этого поля;
+    /// реальная erasure-семантика по `--contracts`-режиму — Ф.2 (следующая
+    /// волна). `false` — обычный always-on контракт (текущее поведение).
+    pub debug_only: bool,
 }
 
 /// Plan 33.2 (D24): frame-target — l-value, который функция читает
@@ -2204,6 +2212,14 @@ pub struct Expr {
     /// Plan 172.1 U.4.1: stable identity for type-annotation carry.
     /// `ExprId::UNSET` until `number_exprs` assigns it (post-parse, pre-check).
     pub id: ExprId,
+    /// Plan 194 Ф.1 (D-блок TBD, 09-tooling.md / D81-амендмент): `#debug`-
+    /// префикс — dev-only marker. V1 (эта фаза): ставится ТОЛЬКО парсером на
+    /// `assert(...)` Call-выражении, разобранном после statement-префикса
+    /// `#debug` (parser/mod.rs `parse_stmt_or_expr`). Поле ИНЕРТНО в этой
+    /// фазе — ни один consumer его не читает, поведение не меняется;
+    /// codegen-эрозия по `--contracts`-режиму (checked/optimized/verified) —
+    /// Ф.2 (следующая волна). Default `false` для всех остальных Expr.
+    pub debug_only: bool,
 }
 
 impl Expr {
@@ -2212,6 +2228,7 @@ impl Expr {
             kind,
             span,
             id: ExprId::UNSET,
+            debug_only: false,
         }
     }
 

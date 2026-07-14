@@ -718,6 +718,7 @@ pub fn expand_bench_sweeps(module: &mut nova_codegen::ast::Module) {
                         kind: ExprKind::IntLit(*v),
                         span: params.span,
                         id: nova_codegen::ast::ExprId::UNSET,
+                        debug_only: false,
                     };
                     let let_stmt = Stmt::Let(LetDecl {
                         mutable: false,
