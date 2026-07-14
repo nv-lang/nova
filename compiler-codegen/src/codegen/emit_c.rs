@@ -37026,13 +37026,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         .unwrap_or(&recv_stripped);
                     // Only apply when receiver is a generic-mono type (has ____) or is a
                     // concrete non-primitive type that could implement a protocol.
-                    // Skip primitives — they have their own dispatch above.
-                    let recv_is_candidate = !recv_base.is_empty()
-                        && !matches!(recv_base,
+                    // Primitives normally have their own dispatch above and are skipped —
+                    // EXCEPT for an unconstrained bare-typevar blanket (e.g.
+                    // `fn[T] T @to_str() => "${@}"`), which DOES apply to primitives.
+                    // Without this exception the single-key method_receivers fallback would
+                    // mis-dispatch a primitive receiver into a foreign concrete same-named
+                    // method (e.g. `int.to_str()` → `Nova_NetErr_method_to_str(nova_int)`,
+                    // a number passed where an enum pointer is expected → type confusion /
+                    // SEGV). A CONSTRAINED blanket still skips primitives (no
+                    // `type_impl_protocols` entry → protocols_match false below); with no
+                    // blanket the primitive path is byte-identical to before.
+                    // Plan 174.2 (scalar→str); same dispatch class as Plan 196.6.
+                    let recv_is_primitive = matches!(recv_base,
                             "nova_int" | "nova_bool" | "nova_char" | "nova_str"
                             | "nova_f32" | "nova_f64" | "int" | "bool" | "char"
                             | "str" | "f32" | "f64" | "void")
-                        && !recv_base.starts_with("nova_");
+                        || recv_base.starts_with("nova_");
+                    let has_unconstrained_blanket = self.mono_method_decls.iter()
+                        .any(|((tvname, mname), fd)| {
+                            mname == method
+                                && tvname.len() <= 2
+                                && tvname.chars().all(|c| c.is_ascii_uppercase())
+                                && fd.generics.iter()
+                                    .find(|g| &g.name == tvname)
+                                    .map(|g| g.bounds.is_empty())
+                                    .unwrap_or(false)
+                        });
+                    let recv_is_candidate = !recv_base.is_empty()
+                        && (!recv_is_primitive || has_unconstrained_blanket);
                     if recv_is_candidate {
                         // Find all bare-typevar blanket entries for this method name.
                         let blanket_key_opt: Option<(String, String)> = self.mono_method_decls
