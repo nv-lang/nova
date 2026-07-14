@@ -1,0 +1,21 @@
+// CONTRACTS optimized
+// EXPECT_RUNTIME_PANIC requires failed: x > 0
+//
+// Plan 194 A2.2 (D421 §3) — soundness guard: erasure under `optimized`
+// applies ONLY to `#debug`-prefixed contracts (see
+// t6_debug_prefix_erased_optimized.nv). A PLAIN (non-`#debug`) `requires` —
+// unproven, so not eligible for the separate Z3 sound-elision path either —
+// stays enforced even under `optimized`/`verified` (D421 §1, "always-on").
+// Guards against `mode_erases_debug()` accidentally gating ALL contracts
+// instead of only the ones with `debug_only == true`.
+
+module standalone.t6_debug_prefix_optimized_plain_still_enforced
+
+fn bad(x int) -> int
+    requires x > 0
+=> x * 2
+
+fn main() Io -> () {
+    ro _ = bad(-1)
+    println("UNREACHABLE")
+}

@@ -1,0 +1,43 @@
+// CONTRACTS optimized
+// EXPECT_STDOUT DEBUG_ERASED_OK
+// EXPECT_EXIT_CODE 0
+//
+// Plan 194 A2.2 (D421 §3, codegen side of Ф.1's `#debug` prefix): under
+// `optimized`/`verified` build-policy, EVERY `#debug`-prefixed contract form
+// (`requires`/`ensures`/`invariant` clause + `assert(...)` statement) is
+// ERASED from codegen entirely — not "elided when proven" (that is the
+// separate Z3 sound-elision path), unconditionally dropped, mirroring C's
+// `assert`/NDEBUG (condition not even evaluated). This fixture deliberately
+// VIOLATES all four `#debug` forms below; under `checked` (dev-default —
+// see companion t6_debug_prefix_checked_requires_panics.nv /
+// t6_debug_prefix_checked_assert_panics.nv) any ONE of them would abort the
+// process. Under `optimized` none of them fire, so `main` runs to
+// completion.
+//
+// Companion t6_debug_prefix_optimized_plain_still_enforced.nv proves the
+// erasure predicate is `debug_only && mode_erases_debug()`, NOT a bare
+// `mode_erases_debug()` — a plain, non-`#debug` `requires` still aborts
+// under `optimized`.
+
+module standalone.t6_debug_prefix_erased_optimized
+
+type T6Box {
+    n int
+}
+    #debug invariant n >= 0 // VIOLATED at construction below (n = -1) — erased
+
+fn bad(x int) -> int
+    #debug requires x > 0     // VIOLATED (x = -1) — erased under optimized
+    #debug ensures result > 0 // VIOLATED (returns -2) — erased under optimized
+=> x * 2
+
+fn main() Io -> () {
+    ro r = bad(-1)          // both #debug clauses violated; erased, no abort
+    ro b = T6Box { n: -1 }  // #debug invariant violated; erased, no abort
+    #debug assert(r > 0)    // VIOLATED (r = -2); erased under optimized, no abort
+    if r == -2 && b.n == -1 {
+        println("DEBUG_ERASED_OK")
+    } else {
+        println("UNEXPECTED")
+    }
+}
