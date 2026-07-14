@@ -3,8 +3,22 @@
 //
 // Pure data, no effects. Shared by the backend (aggregate.nv), the synthetic
 // scenarios (scenarios.nv), and the JSON snapshot (report_json.nv).
+//
+// [M-187-errorkind-parsejsonerror-variant-collision]: split into its OWN
+// folder-module (`src.domain`, separate from `src.app`) specifically so
+// `src/api/report_json.nv` (needs these types + `std.encoding.serde`'s
+// `json_encode`, which transitively pulls `std.encoding.json.ParseJsonError`)
+// does NOT also pull in `src/app/aggregate.nv`/`live.nv`'s `std.net` import
+// (which transitively pulls `std.io.error.ErrorKind`, same file as
+// `IoError`) into the SAME compile unit — see `report_json_test.nv`'s own
+// file-header note for the full collision writeup (two unrelated sum types
+// each declaring a variant literally named `UnexpectedEof`, one 0-arg, one
+// 2-arg — a same-CU cross-type codegen bug, not fixed in-place, compiler-side,
+// out of this package's remit). `src/app/*.nv` (which DOES need `std.net`)
+// imports these types back via `../domain.{...}` — no behavior change, pure
+// module-boundary move.
 
-module backend.app
+module src.domain
 
 // ── Source ───────────────────────────────────────────────────────────────
 

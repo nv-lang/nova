@@ -12,8 +12,9 @@
 // `aggregate_live_weather` is BLOCKED (`[M-187-weather-live-tls-diamond-
 // blocked]`, live.nv) — its own test just pins the honest-fail contract.
 
-module backend.app
+module src.app
 
+import ../domain.{Source}
 import std.net.{mock_net}
 
 // ── live health: mock_net exercises the SAME fan-out/cancel shape ──────────

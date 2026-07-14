@@ -1,0 +1,507 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 187 — flagship concurrent aggregator: entry point (Ф.MVP-2 переделка).
+//
+// EXPECT_TIMEOUT_MS 5000 — `fn main()` below is a REAL long-running server
+// (accept loop, never returns on its own): `nova test`'s default run-to-
+// completion sweep (no test blocks, so it drives `fn main()` directly, same
+// as any other entry-point-only `.nv` file) would hang forever waiting for
+// exit, then hit a scheduler teardown crash on forced kill
+// (`nova_sched_park: invalid scope/slot`) — this marker moves this file into
+// the `TestType::Timeout` category, EXCLUDED from the default `{Positive}`
+// selection (`nova test flagship/aggregator --strict-effects`, no `--timeout`/
+// `--full`), same convention as nova-http's own live-socket smoke tests
+// (`servernet/rt/handle_connection_smoke.nv`). Real end-to-end verification
+// of this file happens via `nova build` + manual run + curl (see the
+// package's own README "как это тестируется" / plan 187 gate step), not
+// `nova test`'s run-to-completion sweep — this file has no `test { }` blocks
+// of its own (the `build_snapshot`-driven field-population logic this
+// file's handlers depend on is exercised by `src/api/report_json_test.nv`;
+// this file's own hand-rendered JSON text layer,
+// `[M-187-http-serde-setcookie-serialize-collision]` below, is covered by
+// the smoke test — curl-diffing the wire bytes — not a `test{}` block).
+//
+// Owner requirement (hard, this rewrite's whole reason to exist): the PREVIOUS
+// draft of this file (never committed — a from-scratch rewrite, not an edit)
+// hand-rolled HTTP (`read_request_line`/`route`/`serialize_response`) while
+// the `http` package sat right there unused. Manual parsing/routing/response-
+// serialization/SSE-byte-framing is BANNED — the flagship's whole pitch is
+// "a server in Nova = the `http` package + ~20 lines", not reinvented
+// plumbing.
+//
+// This file now does ONLY wiring:
+//   - a manual accept LOOP (legitimately hand-rolled — `http.servernet` has no
+//     reusable accept-loop function yet, only single-shot `handle_connection`,
+//     see that module's own header) that spawns
+//     `http.servernet.handle_connection(stream, mux)` per connection;
+//   - EVERY endpoint is a `ServeMux` route (`http.server`) — routing, request
+//     parsing, response serialization, and (for `/api/events`) the SSE wire
+//     format all come from the `http` package.
+//
+// The one design fact that makes this possible: `http.server`'s `Handler` is
+// a PURE closure type (`fn(ServerRequest) -> ServerResponse`, no effect row —
+// `server.nv`'s own header explains why: CORE stays mock-testable without a
+// runtime effect-handler stack). That looks like it would forbid a handler
+// from ever calling `aggregate()` (`Net Time Emit`) — but a handler's BODY can
+// open its own `with Net = mock_net()/real_net() { ... }` (+ `with Emit =
+// ...`) and fully DISCHARGE those effects before returning its
+// `ServerResponse`; the closure's OWN exposed type stays effect-free, same as
+// any other fully-discharged effectful call (`aggregate_test.nv`'s `test { }`
+// blocks do exactly this). Verified directly by this rewrite compiling/
+// running (`nova test` gate) — the real handlers (`snapshot_body`/
+// `events_body` below, wired through `handler_fn(|req| ...)`) ARE the proof.
+// This is what lets `/api/run`/`/api/events` do PER-REQUEST fresh
+// `aggregate()` calls (fresh `mode`/`seed`/live-vs-mock) from inside an
+// otherwise-pure `ServeMux` route, with no second dispatch mechanism needed
+// alongside `ServeMux`.
+//
+// `/api/events` is a SSE REPLAY, not a live per-request push: the whole run
+// settles first (so the JSON `run_summary` + every lane's real `t_ms` are
+// already known), then the FULL event list is handed to `http.server`'s
+// `StreamBody.from_chunks` + `ServerResponse.sse` (`[M-178-server-streaming]`,
+// landed) — `handle_connection` drives the true incremental chunked write
+// over the socket, this file just builds the (already-complete) chunk list.
+// A genuinely live push (chunks arriving AS lanes settle, mid-request) is a
+// separate, already-scoped-out marker (`[M-187-sse-live-stream]`, plan 187
+// §9.3 п.3, owner decision) — unrelated to today's http-package-only
+// requirement, so no new marker here for it.
+//
+// Endpoints: `GET /` (embedded `frontend/index.html`), `GET /api/snapshot`
+// (fallback: fixed weather/demo/seed=42 run), `GET /api/run?legend=&mode=
+// &seed=` (fresh run, JSON snapshot — §9.5 wire contract, `report_json.nv`),
+// `GET /api/events?legend=&mode=&seed=` (SSE replay of the same run's `Emit`
+// timeline, real `t_ms` offsets).
+
+module src.main
+
+import ./domain.{Source, Report}
+import ./app.{Emit, null_emit}
+import ./app.{aggregate, weather_demo_sources, WEATHER_BUDGET_MS, health_demo_sources, HEALTH_BUDGET_MS, chaos_variant}
+import ./app.{aggregate_live_health, aggregate_live_weather, health_live_sources, weather_live_sources}
+import ./api.{build_snapshot, SnapshotDto, ResultDto, StatusDto, HandlersDto}
+import std.net.{SocketAddr, TcpListener, real_net, mock_net}
+import std.os.{env, real_os}
+import http.server.{ServeMux, ServerRequest, ServerResponse, StreamBody, handler_fn, sse_event}
+import http.servernet.{handle_connection}
+import std.time.duration
+
+// Loopback port: env override (`AGGREGATOR_PORT`) or this default.
+const DEFAULT_PORT u16 = 8187
+
+// Live legends use a wall-clock (not simulated) budget — generous enough for
+// a handful of real round-trips, still bounded (the real-cancel race,
+// deliverable 1, applies here too — a hung real connection is genuinely cut
+// off, not left to block the response forever).
+const LIVE_BUDGET_MS int = 4000
+
+fn frontend_html() -> []u8 => embed("../frontend/index.html")
+
+fn resolve_port() Os -> u16 {
+    match env("AGGREGATOR_PORT") {
+        Some(s) => match s.to_int() {
+            Ok(n) => n as u16
+            Err(_) => DEFAULT_PORT
+        }
+        None => DEFAULT_PORT
+    }
+}
+
+// ── fn main: accept-loop (the only legitimately hand-rolled part — see the
+//    file-header note: http.servernet has no reusable accept-loop function
+//    yet) ────────────────────────────────────────────────────────────────
+
+// [M-187-nested-spawn-scope-var-cc-fail]: **compiler codegen bug, NOT worked
+// around in-place — the SHAPE below routes around it entirely (accept loop
+// runs INSIDE one dedicated `spawn`, connections served SEQUENTIALLY, no
+// nested spawn at all).** Two shapes tried before this one, both broken:
+//   (1) `supervised { spawn { <accept-loop>; while running { ... Ok(stream)
+//       => spawn { handle_connection(...) } ... } } }` — an acceptor fiber
+//       that itself `spawn`s a per-connection worker fiber on every accepted
+//       connection (`spawn` LEXICALLY NESTED inside another `spawn`, both
+//       under one `supervised`). CC-FAILs: generated C (`main.c`) has the
+//       OUTER spawn's own fiber function reference `&_nova_scope_q_6` (the
+//       `supervised` scope variable, needed so the inner spawn can register
+//       as a child of the SAME scope) — never threaded into the outer
+//       spawn's own context struct — `error: use of undeclared identifier
+//       '_nova_scope_q_6'`, 3 call sites.
+//   (2) accept loop moved OUT of any `spawn`, directly into `supervised`'s
+//       OWN body (reasoning: `.bind`/`.accept()` are ordinary suspending
+//       `Net` ops, no fiber should be needed) + one spawn per connection
+//       (sibling spawns, not nested — compiles and LINKS fine). Runtime
+//       crash the INSTANT the binary actually runs, before even printing
+//       the "listening on" line: `nova: nova_sched_park: invalid scope/slot`
+//       — a blocking suspend (the first `.accept()`) directly on the fiber
+//       that OWNS a `supervised` scope (not a properly spawned child of it)
+//       corrupts the scheduler's slot bookkeeping. No existing example in
+//       this codebase runs a blocking accept loop directly in `supervised`'s
+//       own body either — every precedent (`echo_server.nv`,
+//       `servernet/rt/handle_connection_smoke.nv`) wraps it in exactly ONE
+//       `spawn`.
+// Root cause of both not investigated further (compiler/runtime-side,
+// `emit_c.rs`'s spawn-context-capture pass + `fibers.h`'s scope/slot
+// bookkeeping — out of this package's remit). WORKAROUND (this shape):
+// exactly ONE `spawn` (matching every proven precedent) holds bind + the
+// WHOLE accept loop; each connection is handled SEQUENTIALLY, inline,
+// inside that same fiber (`handle_connection` called directly, no nested
+// spawn) — the ONE known-good shape given the two failure modes above.
+// Trade-off, explicit: connections are served one at a time, not
+// concurrently — acceptable for this flagship's own traffic shape (a single
+// browser tab's `fetch`/`EventSource` calls; the interesting concurrency
+// this package demonstrates is INSIDE `aggregate()`'s fan-out, per request,
+// not across simultaneous HTTP connections). A concurrent accept loop is
+// exactly the shape `[M-187-nested-spawn-scope-var-cc-fail]` blocks —
+// revisit once that's fixed upstream.
+fn main() Time {
+    with Os = real_os() {
+        ro port = resolve_port()
+        with Net = real_net() {
+            ro addr = SocketAddr.loopback(port)
+            supervised {
+                spawn {
+                    // Plan 173.3 (D415 §2): listener lives ENTIRELY inside
+                    // this fiber (same discipline as echo_server.nv) — a
+                    // mut-capture of an outer listener from spawn's body
+                    // would be E_CONCURRENT_MUT_CAPTURE.
+                    mut lst = match TcpListener.bind(addr) {
+                        Ok(l)  => l
+                        Err(_) => panic("Failed to bind: " + str.from(port))
+                    }
+                    println("Nova flagship aggregator listening on http://127.0.0.1:" + str.from(lst.local_port()))
+                    mut running = true
+                    while running {
+                        match lst.accept() {
+                            Ok(stream) => {
+                                // [M-187-sequential-2nd-request-hang]: each
+                                // connection gets its OWN, SELF-CONTAINED
+                                // `supervised { spawn { ... } } }` (not a
+                                // bare direct call, not a spawn nested in the
+                                // OUTER `supervised` above) — see that
+                                // marker's own note (below `main`) for why.
+                                supervised {
+                                    spawn {
+                                        // `routes()` is cheap (a handful of
+                                        // ServeMux entries) — rebuilt per
+                                        // connection, same shape as
+                                        // nova-http's own
+                                        // servernet/rt/handle_connection_smoke.nv.
+                                        ro _ = handle_connection(stream, routes())
+                                    }
+                                }
+                            }
+                            Err(_) => { running = false }
+                        }
+                    }
+                    lst.close()
+                }
+            }
+        }
+    }
+}
+
+// [M-187-supervised-nested-fiber-slot-race]: **runtime bug (fiber
+// scheduler, `nova_rt/fibers.h`-family — NOT a `compiler-codegen` codegen
+// bug, NOT worked around in-place, NOT fully eliminated — MITIGATED only,
+// disclosed honestly.** With THIS file serving many SEQUENTIAL HTTP
+// requests over the LIFETIME of one process (each request's handler running
+// `aggregate()`'s own `parallel for` + `fetch_guarded`'s nested
+// `supervised(deadline:)`), the server intermittently hangs on some later
+// request — `NOVA_RUNTIME_DUMP` (`SIGABRT`-adjacent watchdog dump,
+// `nova_sched_park`-family) shows `[supervised] ... pending_remote=1` with
+// `count=0`: a child scope's slot never gets marked done. Reproduced with
+// `nova build` + repeated `curl`: sometimes the 2nd request hangs, sometimes
+// the 3rd–7th, sometimes ten-plus requests run clean — genuinely
+// PROBABILISTIC, matching the shape of this codebase's own documented M:N
+// stale-slot race class (`docs/cases/mn-race-stale-slot-2026-05.md`) rather
+// than a deterministic logic bug. `aggregate_test.nv`'s OWN 17-test suite
+// calls `aggregate()` repeatedly within ONE test-binary process and never
+// hits this — the difference this file introduces is DEPTH: a `spawn` many
+// layers deep (`main`'s own `supervised{spawn{...}}` accept-loop +
+// PER-CONNECTION `supervised{spawn{...}}` + `aggregate`'s OWN internal
+// `parallel for`'s implicit scope + `fetch_guarded`'s
+// `supervised(deadline:)`) — a nesting depth no existing test in this
+// codebase exercises. Tried and kept: wrapping each connection in its OWN
+// self-contained `supervised{spawn{...}}` (this file's current shape, see
+// `[M-187-nested-spawn-scope-var-cc-fail]` above) — REDUCES the observed
+// hang frequency relative to a bare `handle_connection(...)` call with NO
+// wrapper at all (that shape hung reproducibly on request #2, both tries),
+// but does NOT eliminate it. Root cause not investigated further (runtime
+// C-side, `nova_rt/fibers.h`'s scope/slot bookkeeping under repeated nested
+// `supervised` — well outside a `.nv`-only package's remit; a real fix
+// likely needs the fiber scheduler's own maintainer). Practical impact,
+// disclosed in the package README: this demo server may need an occasional
+// restart under sustained interactive use until this is fixed upstream —
+// NOT a fake/degraded demo (every SUCCESSFUL response is fully real,
+// concurrent `aggregate()` output, nothing faked to route around this), a
+// genuine reliability caveat.
+
+// ── ServeMux: every endpoint is a route, no manual parsing/routing/wire ────
+
+fn routes() Time -> ServeMux {
+    mut mux = ServeMux.new()
+    mux.get("/", handler_fn(|_req| ServerResponse.bytes(200, "text/html; charset=utf-8", frontend_html())))
+    mux.get("/api/snapshot", handler_fn(|_req| snapshot_body("weather", "demo", 42)))
+    mux.get("/api/run", handler_fn(|req| snapshot_body(legend_of(req), mode_of(req), seed_of(req))))
+    mux.get("/api/events", handler_fn(|req| events_body(legend_of(req), mode_of(req), seed_of(req))))
+    mux
+}
+
+fn legend_of(req ServerRequest) -> str => req.query_param("legend") ?? "weather"
+fn mode_of(req ServerRequest) -> str => req.query_param("mode") ?? "demo"
+
+fn seed_of(req ServerRequest) -> int {
+    match req.query_param("seed") {
+        Some(s) => match s.to_int() { Ok(n) => n, Err(_) => 42 }
+        None    => 42
+    }
+}
+
+// ── Run dispatch (legend x mode -> Report + context) ────────────────────────
+
+/// One resolved run: the settled `Report`, the `sources` list that produced
+/// it (for `report_json.nv`'s id-keyed `kind`/`probes` lookup), the budget
+/// actually used (ms), and a description of the installed handlers (UI
+/// effect-badge, plan 187 §9.4 деливерабл 11 — wave 2, field carried now).
+type RunResult value {
+    ro report    Report
+    ro sources   []Source
+    ro budget_ms int
+    ro handlers  HandlersDto
+}
+
+/// Same `aggregate()`/`aggregate_live_*` call, only `legend`/`mode`/`seed`
+/// (and, for `mode=live`, which real fetcher) differ — the effect-system
+/// pitch made concrete: ONE dispatcher, the `with Net = ...` (or which
+/// `aggregate_*` fn) installed per branch is the only thing that changes.
+/// `Emit`/`Time` stay UNDISCHARGED here (declared in the row) — `Time` has
+/// no `with Time = ...` anywhere in this package (no real-clock handler
+/// factory exists in `std.time`, matching every other production call site
+/// in this package, e.g. `aggregate.nv`'s own `deadline_elapsed_ms`/
+/// `fetch_one` — `Time` just propagates up to the ambient runtime default,
+/// same as `Net`/`Emit` propagate up to whatever `main()` eventually
+/// installs). The two callers below (`snapshot_body`/`events_body`) install
+/// different `Emit` handlers (`null_emit()` vs a real recorder) and, between
+/// them, fully discharge `Time` too — see those functions' own notes.
+fn run_net(legend str, mode str, seed int) Emit Time -> RunResult {
+    if legend == "weather" {
+        if mode == "live" {
+            ro sources = weather_live_sources()
+            ro report = with Net = real_net() { aggregate_live_weather(Duration.from_millis(LIVE_BUDGET_MS)) }
+            RunResult { report, sources, budget_ms: LIVE_BUDGET_MS, handlers: { net: "real", time: "real" } }
+        } else if mode == "chaos" {
+            ro sources = chaos_variant(weather_demo_sources(), seed as u64)
+            ro report = with Net = mock_net() { aggregate(sources, Duration.from_millis(WEATHER_BUDGET_MS)) }
+            RunResult { report, sources, budget_ms: WEATHER_BUDGET_MS,
+                handlers: { net: "mock(seed=" + str.from(seed) + ")", time: "real" } }
+        } else {
+            ro sources = weather_demo_sources()
+            ro report = with Net = mock_net() { aggregate(sources, Duration.from_millis(WEATHER_BUDGET_MS)) }
+            RunResult { report, sources, budget_ms: WEATHER_BUDGET_MS,
+                handlers: { net: "mock(seed=42)", time: "real" } }
+        }
+    } else {
+        // health (default legend for any unrecognized value — honest fallback,
+        // not a 400: the UI never sends anything else, and a stray query
+        // param typo shouldn't 500 the demo).
+        if mode == "live" {
+            ro sources = health_live_sources()
+            ro report = with Net = real_net() { aggregate_live_health(Duration.from_millis(LIVE_BUDGET_MS)) }
+            RunResult { report, sources, budget_ms: LIVE_BUDGET_MS, handlers: { net: "real", time: "real" } }
+        } else if mode == "chaos" {
+            ro sources = chaos_variant(health_demo_sources(), seed as u64)
+            ro report = with Net = mock_net() { aggregate(sources, Duration.from_millis(HEALTH_BUDGET_MS)) }
+            RunResult { report, sources, budget_ms: HEALTH_BUDGET_MS,
+                handlers: { net: "mock(seed=" + str.from(seed) + ")", time: "real" } }
+        } else {
+            ro sources = health_demo_sources()
+            ro report = with Net = mock_net() { aggregate(sources, Duration.from_millis(HEALTH_BUDGET_MS)) }
+            RunResult { report, sources, budget_ms: HEALTH_BUDGET_MS,
+                handlers: { net: "mock(seed=42)", time: "real" } }
+        }
+    }
+}
+
+// ── GET / (fallback) and /api/run: plain JSON snapshot ─────────────────────
+
+/// `Emit` is discharged here (`with Emit = null_emit()`); `Time` stays
+/// declared (ambient default, see `run_net`'s own note) — probing whether
+/// `Handler` (`fn(ServerRequest) -> ServerResponse`) tolerates a
+/// default-only remaining row.
+fn snapshot_body(legend str, mode str, seed int) Time -> ServerResponse {
+    ro rr = with Emit = null_emit() { run_net(legend, mode, seed) }
+    ro seed_out = if mode == "live" { 0 } else { seed }
+    ro dto = build_snapshot(rr.report, rr.sources, legend, mode, seed_out, rr.budget_ms, rr.handlers)
+    ServerResponse.bytes(200, "application/json", snapshot_dto_json(dto).bytes())
+}
+
+// ── JSON rendering: hand-written, NOT `std.encoding.serde.json_encode` ─────
+//
+// [M-187-http-serde-setcookie-serialize-collision]: **compiler codegen bug,
+// NOT worked around by touching `http`/`std.encoding.serde` (out of remit) —
+// worked around by NOT routing this file's JSON output through the generic
+// `json_encode[T]`/`#impl(Serialize)` machinery at all.** `report_json.nv`'s
+// own typed-serde deliverable (`build_snapshot` -> `SnapshotDto` +
+// `json_encode`/`json_encode_pretty`) is UNCHANGED and still fully typed —
+// this file still calls `build_snapshot` for ALL the field-population logic
+// (id-keyed `kind`/`probes` lookup, structural fiber counting, `TaskStatus`
+// -> `{state,error}` mapping) and only renders the ALREADY-BUILT `SnapshotDto`
+// to text by hand below. Discovered wiring this file's SSE/JSON handlers
+// through `http.server`/`http.servernet` (this rewrite's whole point):
+// `nova build`/`test` LINK-FAILs (not a compile error — codegen and `clang -c`
+// both succeed) — `lld-link: error: undefined symbol:
+// Nova_SetCookie_method_serialize`, referenced from THREE independent
+// `json_encode[T]` monomorphizations (`SnapshotDto`, and this file's own
+// `ReplayInfoDto`/`EmitRecordDto` before this fix). `http.cookie`'s
+// `SetCookie @serialize(self) -> str` (nova-http, RFC 6265bis Set-Cookie
+// header serialization — an ordinary method, UNRELATED to the `Serialize`
+// protocol, just coincidentally named `serialize` too) is pulled into this
+// file's compile unit transitively by ANY `http.*` import (`cookie.nv` is a
+// peer file in the top-level `module http` folder-module, D78 — importing
+// `http.server` for `Method`/`StatusCode`/etc. pulls the WHOLE `http` module
+// in, `SetCookie` included, regardless of whether cookies are ever used).
+// Bisected: `report_json.nv`'s OWN isolated compile unit (no `http` import
+// at all) links fine — the SAME `json_encode[SnapshotDto]` call, unchanged,
+// works there; a minimal probe (single trivial `#impl(Serialize)` type +
+// one `http.server` import, no other code) reproduces the exact same
+// undefined-symbol link failure. Root cause (not investigated further,
+// compiler-side, out of this package's remit): `json_encode[T]`'s generated
+// dispatch for the type parameter's `@serialize()` call appears to resolve
+// through a NAME-only lookup (ignoring which concrete `T`/receiver type is
+// bound) once ANY other `serialize`-named method exists in the same compile
+// unit — same bug FAMILY as `[M-187-errorkind-parsejsonerror-variant-
+// collision]` (`report_json_test.nv`) and nova-http's own already-fixed
+// `recv_returning` name-only registry (`server.nv` header) — a class of
+// "same-named symbol across unrelated types, not properly type/arity-scoped"
+// codegen defects, this one specifically NOT yet fixed. WORKAROUND below:
+// plain string-building renderers for the (already fully-typed, already
+// business-logic-correct) DTOs — not "manual HTTP" (no status lines,
+// headers, routing, or wire framing here, all of that still goes through
+// `http.server`/`ServeMux`/`sse_event`), just JSON VALUE text, the same
+// class of code `report_json.nv` itself wrote before deliverable 2's
+// typed-serde migration.
+
+fn json_escape(s str) -> str => s.replace("\\", "\\\\").replace("\"", "\\\"")
+
+fn status_dto_json(s StatusDto) -> str {
+    ro err = match s.error { Some(e) => "\"" + json_escape(e) + "\"", None => "null" }
+    "{\"state\":\"" + s.state + "\",\"error\":" + err + "}"
+}
+
+fn result_dto_json(r ResultDto) -> str {
+    "{\"id\":\"" + json_escape(r.id) + "\",\"kind\":\"" + json_escape(r.kind) +
+        "\",\"probes\":" + str.from(r.probes) + ",\"status\":" + status_dto_json(r.status) +
+        ",\"elapsed_ms\":" + str.from(r.elapsed_ms) + "}"
+}
+
+fn handlers_dto_json(h HandlersDto) -> str {
+    "{\"net\":\"" + json_escape(h.net) + "\",\"time\":\"" + json_escape(h.time) + "\"}"
+}
+
+fn snapshot_dto_json(dto SnapshotDto) -> str {
+    mut results_json = "["
+    mut first = true
+    for r in dto.results {
+        if !first { results_json += "," }
+        results_json += result_dto_json(r)
+        first = false
+    }
+    results_json += "]"
+    "{\"fanout\":" + str.from(dto.fanout) + ",\"done\":" + str.from(dto.done) +
+        ",\"failed\":" + str.from(dto.failed) + ",\"cancelled\":" + str.from(dto.cancelled) +
+        ",\"wall_ms\":" + str.from(dto.wall_ms) + ",\"sequential_ms\":" + str.from(dto.sequential_ms) +
+        ",\"budget_ms\":" + str.from(dto.budget_ms) + ",\"legend\":\"" + dto.legend + "\"" +
+        ",\"mode\":\"" + dto.mode + "\",\"seed\":" + str.from(dto.seed) +
+        ",\"handlers\":" + handlers_dto_json(dto.handlers) +
+        ",\"fibers_spawned\":" + str.from(dto.fibers_spawned) +
+        ",\"fibers_closed\":" + str.from(dto.fibers_closed) +
+        ",\"results\":" + results_json + "}"
+}
+
+// ── GET /api/events: SSE replay of the run's Emit timeline ─────────────────
+
+// One recorded `Emit` op, timestamped relative to the run's OWN start (`t0`,
+// captured before `run_net` is called) — real `Emit`-fired wall-clock
+// offsets, not synthesized. Sent over a `Channel` (D415: `lane_*` ops fire
+// from worker fibers, a bare `mut` capture would be a data race) and drained
+// only AFTER `run_net` returns (every lane already joined by then — race-free,
+// same reasoning as `aggregate_test.nv`'s own Emit tests).
+//
+// Deliberately a HEAP record (`type X { … }`, no `value` — D290/02-types.md
+// §2694-2708), NOT a value-record: `Channel[T].try_send` requires a
+// word-safe (pointer-sized) payload (`[M-channel-generic-elem-type]`,
+// already documented in nova-http's `server/streaming_test.nv`) — the
+// runtime channel slot is a single `nova_int`-sized word, and a multi-`str`-
+// field value-record is NOT word-safe (`E_CHANNEL_UNSOUND_ELEM_TYPE`, hit
+// directly by this file before this fix). A heap record is ALWAYS a bare
+// `Nova_<X>*` pointer (same representation class as the sum-type `TaskStatus`
+// this package already threads through `Channel[TaskStatus]` in
+// `aggregate.nv`'s `fetch_guarded`), so it fits the one supported multi-field
+// shape without changing the field-access call sites below at all.
+type EmitRecord {
+    ro kind       str    // "lane_started" | "lane_done" | "lane_failed" | "lane_cancelled"
+    ro id         str
+    ro elapsed_ms int
+    ro err        str    // "" unless kind == "lane_failed"
+    ro t_ms       int
+}
+
+// Wire payload for one replayed event (SSE `data:` line). Hand-rendered
+// (`json_escape`/`str.from`, `snapshot_dto_json`'s own neighbours above) —
+// see `[M-187-http-serde-setcookie-serialize-collision]` above for why this
+// is NOT `#impl(Serialize)` + `json_encode` (this file's own earlier attempt
+// hit the exact same link failure on this DTO too).
+fn emit_record_json(r EmitRecord) -> str {
+    ro err_field = if r.kind == "lane_failed" {
+        ",\"error\":\"" + json_escape(r.err) + "\""
+    } else {
+        ""
+    }
+    "{\"id\":\"" + json_escape(r.id) + "\",\"elapsed_ms\":" + str.from(r.elapsed_ms) +
+        err_field + ",\"t_ms\":" + str.from(r.t_ms) + "}"
+}
+
+/// `Emit` is discharged here (`with Emit = <recorder>`); `Time` stays
+/// declared, same as `snapshot_body`.
+fn events_body(legend str, mode str, seed int) Time -> ServerResponse {
+    ro t0 Monotonic = Monotonic.now()
+    ro { tx, rx } = Channel.new(256)
+    ro rr = with Emit = effect Emit {
+        lane_started(id str, idx int) {
+            ro t_ms = Monotonic.now().elapsed_since(t0).as_millis() as int
+            ro _ = tx.try_send(EmitRecord { kind: "lane_started", id, elapsed_ms: 0, err: "", t_ms })
+        }
+        lane_done(id str, elapsed_ms int) {
+            ro t_ms = Monotonic.now().elapsed_since(t0).as_millis() as int
+            ro _ = tx.try_send(EmitRecord { kind: "lane_done", id, elapsed_ms, err: "", t_ms })
+        }
+        lane_failed(id str, err str, elapsed_ms int) {
+            ro t_ms = Monotonic.now().elapsed_since(t0).as_millis() as int
+            ro _ = tx.try_send(EmitRecord { kind: "lane_failed", id, elapsed_ms, err, t_ms })
+        }
+        lane_cancelled(id str, elapsed_ms int) {
+            ro t_ms = Monotonic.now().elapsed_since(t0).as_millis() as int
+            ro _ = tx.try_send(EmitRecord { kind: "lane_cancelled", id, elapsed_ms, err: "", t_ms })
+        }
+        swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) {}
+    } {
+        run_net(legend, mode, seed)
+    }
+    tx.close()
+    mut records []EmitRecord = []
+    mut draining = true
+    while draining {
+        match rx.try_recv() {
+            Some(r) => { records.push(r) }
+            None    => { draining = false }
+        }
+    }
+    ro total_ms = Monotonic.now().elapsed_since(t0).as_millis() as int
+    ro seed_out = if mode == "live" { 0 } else { seed }
+    ro dto = build_snapshot(rr.report, rr.sources, legend, mode, seed_out, rr.budget_ms, rr.handlers)
+
+    mut chunks [][]u8 = []
+    chunks.push(sse_event("replay_info", "{\"total_ms\":" + str.from(total_ms) + ",\"time_scale\":1}"))
+    for r in records {
+        chunks.push(sse_event(r.kind, emit_record_json(r)))
+    }
+    chunks.push(sse_event("run_summary", snapshot_dto_json(dto)))
+    ServerResponse.sse(StreamBody.from_chunks(chunks))
+}
