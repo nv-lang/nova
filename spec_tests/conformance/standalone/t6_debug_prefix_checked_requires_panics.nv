@@ -1,0 +1,21 @@
+// CONTRACTS checked
+// EXPECT_RUNTIME_PANIC requires failed: x > 0
+//
+// Plan 194 A2.2 (D421 §3) companion to t6_debug_prefix_erased_optimized.nv:
+// the SAME violated `#debug requires x > 0` clause on `bad`, but under
+// `checked` (dev-default) `#debug` contracts are NOT erased — Ф.1 behaviour,
+// byte-identical to a plain (non-`#debug`) `requires`. Proves the erasure
+// exercised by the `optimized` sibling fixture is mode-gated, not a codegen
+// branch that happens to never fire either way.
+
+module standalone.t6_debug_prefix_checked_requires_panics
+
+fn bad(x int) -> int
+    #debug requires x > 0
+    #debug ensures result > 0
+=> x * 2
+
+fn main() Io -> () {
+    ro _ = bad(-1)
+    println("UNREACHABLE")
+}

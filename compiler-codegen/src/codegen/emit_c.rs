@@ -856,10 +856,12 @@ pub struct CEmitter {
     /// wrap'а конструкции в runtime-check (`if (!Inv(tmp)) violation; tmp`).
     /// Заполняется в emit_module pre-pass.
     /// Plan 33.3 Ф.9.2 (D24): record-type invariant clauses, keyed by struct
-    /// name. Each entry is `(expr, span, message)` — `message` (Plan 140.1
-    /// Ф.2, D24 amend) is the optional user message for the location-first
-    /// violation diagnostic (`<file>:<line>: invariant failed: <msg> (<expr>)`).
-    record_invariants: HashMap<String, Vec<(Expr, Span, Option<String>, Option<Expr>)>>,
+    /// name. Each entry is `(expr, span, message, message_expr, debug_only)` —
+    /// `message` (Plan 140.1 Ф.2, D24 amend) is the optional user message for
+    /// the location-first violation diagnostic (`<file>:<line>: invariant
+    /// failed: <msg> (<expr>)`); `debug_only` (Plan 194 A2.2, D421 §3) marks a
+    /// `#debug invariant` clause — erased outside `checked` mode.
+    record_invariants: HashMap<String, Vec<(Expr, Span, Option<String>, Option<Expr>, bool)>>,
     /// Plan 33.1 Ф.4 (D24): если установлено — функция имеет ensures-контракты,
     /// и все `Stmt::Return X` подменяются на `{ _nova_result = X; goto <label>; }`.
     /// Trailing block-expression также. После label эмитятся ensures-checks
@@ -4096,6 +4098,21 @@ impl CEmitter {
         self.contracts_mode = mode;
     }
 
+    /// Plan 194 A2.2 (D421 §3): предикат для эрозии `#debug`-контрактов/
+    /// `#debug assert` по build-режиму. `checked` (dev-дефолт) — `#debug`
+    /// работает (byte-identical старому поведению без различения режима);
+    /// `optimized`/`verified` (release) — `#debug`-клаузы/statement'ы
+    /// СТИРАЮТСЯ (не эмитятся, zero-cost). Не-`#debug` контракты этим
+    /// предикатом НЕ гейтятся — они always-on независимо от режима (см.
+    /// `contracts_elided_for` / `invariants_elided_here` — отдельный,
+    /// `#unchecked`-driven путь элизии).
+    fn mode_erases_debug(&self) -> bool {
+        matches!(
+            self.contracts_mode,
+            crate::ast::ContractsMode::Optimized | crate::ast::ContractsMode::Verified
+        )
+    }
+
     /// Plan 140 Ф.2: контракт-проверки элидируются для тела текущей fn?
     /// `true` если per-fn `#unchecked` (через `contracts_unchecked_fn`,
     /// выставленный на входе в fn-body). Используется body-уровневыми
@@ -4979,8 +4996,8 @@ impl CEmitter {
         for item in &module.items {
             if let Item::Type(td) = item {
                 if !td.invariants.is_empty() {
-                    let invs: Vec<(Expr, Span, Option<String>, Option<Expr>)> = td.invariants.iter()
-                        .map(|c| (c.expr.clone(), c.span, c.message.clone(), c.message_expr.clone())).collect();
+                    let invs: Vec<(Expr, Span, Option<String>, Option<Expr>, bool)> = td.invariants.iter()
+                        .map(|c| (c.expr.clone(), c.span, c.message.clone(), c.message_expr.clone(), c.debug_only)).collect();
                     self.record_invariants.insert(td.name.clone(), invs);
                 }
             }
@@ -21915,6 +21932,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if mono_has_contracts {
             for c in &fn_decl.contracts {
                 if matches!(c.kind, ContractKind::Requires) {
+                    if c.debug_only && self.mode_erases_debug() {
+                        continue;
+                    }
                     if self.proven_contracts.contains(&(fn_decl.name.clone(), c.span.start)) {
                         continue;
                     }
@@ -23226,6 +23246,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // нам нужно "_nova_result". Используем post-process подмену.
         for c in &f.contracts {
             if matches!(c.kind, ContractKind::Ensures) {
+                // Plan 194 A2.2 (D421 §3): `#debug ensures` erased outside `checked`.
+                if c.debug_only && self.mode_erases_debug() {
+                    continue;
+                }
                 // Plan 33.3 Ф.9.9: skip emit для proven контрактов (zero-cost).
                 if self.proven_contracts.contains(&(f.name.clone(), c.span.start)) {
                     continue;
@@ -23994,6 +24018,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if has_contracts {
             for c in &f.contracts {
                 if matches!(c.kind, ContractKind::Requires) {
+                    // Plan 194 A2.2 (D421 §3): `#debug requires` erased outside `checked`.
+                    if c.debug_only && self.mode_erases_debug() {
+                        continue;
+                    }
                     // Plan 33.3 Ф.9.9: skip emit для proven контрактов
                     // (true zero-cost). proven_contracts — set от
                     // VerificationPipeline. Key: (fn_name, span.start).
@@ -29559,6 +29587,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
 
             ExprKind::Call { func, args, trailing } => {
+                // Plan 194 A2.2 (D421 §3): `#debug assert(cond)` — statement-form
+                // dev-only assert (parser `#debug` Hash-arm, parser/mod.rs,
+                // sets `Expr.debug_only = true` ONLY on this exact Call node —
+                // no other codepath sets it). Outside `checked` (`optimized`/
+                // `verified`) it is erased ENTIRELY, including the condition
+                // (zero-cost, mirrors C `assert`/NDEBUG — not evaluated, not
+                // just "ignored result"). `expr` (outer node, not `func`) carries
+                // the flag, so this must be checked here — `emit_call` below only
+                // sees `func`/`args`, not the wrapping Call expr.
+                if expr.debug_only && self.mode_erases_debug() {
+                    if let ExprKind::Ident(n) = &func.kind {
+                        if n == "assert" && trailing.is_none() {
+                            return Ok("NOVA_UNIT".to_string());
+                        }
+                    }
+                }
                 // Plan 131 Ф.3: residual `size_of[T]()` / `align_of[T]()` left
                 // intact by const_fn_eval when `T` is an unresolved generic
                 // param (E_CONST_FN_GENERIC_NEEDS_T_REFLECTION suppressed для
@@ -29970,7 +30014,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // отдельный line-emit, а не expr-substitution.
                         // Поскольку lit обычно tmp (см. emit_record_lit), просто
                         // эмитим check после.
-                        for (inv_expr, span, inv_msg, inv_msg_expr) in &invs {
+                        for (inv_expr, span, inv_msg, inv_msg_expr, inv_debug_only) in &invs {
                             // Bind поля record'а как `tmp->field` для invariant-eval.
                             // В bootstrap — простой text substitution через
                             // emit_expr с self.expected_record_type set.
@@ -29979,6 +30023,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // Чтобы он сработал — должны field'ы быть в scope.
                             // В bootstrap делаем макрос через define + undef.
                             let inv_src = Self::expr_to_display(inv_expr);
+                            // Plan 194 A2.2 (D421 §3): `#debug invariant` erased outside `checked`.
+                            if *inv_debug_only && self.mode_erases_debug() {
+                                continue;
+                            }
                             // Получаем поля типа.
                             // Plan 140 Ф.2 (D24 amend): per-fn/module
                             // `#unchecked` / `#unchecked(invariant)` элидируют
