@@ -2,7 +2,8 @@
 // Plan 140.4 ([M-opt-elide-proven-overflow-checks]) OE1 (always-safe): `i + j` где
 // i,j — loop-bounded переменные (`0..N`) ⇒ `i + j ∈ [0, 2N)` доказывается Z3 из
 // loop-bounds (БЕЗ requires) ⇒ `nova_int_checked_add(i,j)` элидируется (и под
-// `--contracts=off` тоже — пруф контракт-независим). Аккумулятор `total` безграничен
+// под per-fn `#unchecked` тоже — пруф контракт-независим; Plan 194 A2.1:
+// legacy build-level `--contracts=off` retired). Аккумулятор `total` безграничен
 // ⇒ его `total + pair` чек остаётся. Корректность инвариантна к элизии (тест
 // проходит и на Trivial). C-инспекция подтверждает элизию (см. план OE1).
 module nova_tests.plan140_4

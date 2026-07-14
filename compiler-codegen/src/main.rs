@@ -43,12 +43,15 @@ enum Cmd {
         /// Отключить lint-проверки (export-fail-untyped и т.д.).
         #[arg(long = "no-lint")]
         no_lint: bool,
-        /// Plan 140 Ф.2 (D24 amend): contract build-policy.
-        /// `enforce` (default) — недоказанные контракты проверяются в runtime
-        /// (debug И release; fail-fast abort), Z3-proven элидируются.
-        /// `off` — все контракт-проверки элидируются глобально (legacy
-        /// zero-cost; недоказанность под ответственность разработчика).
-        #[arg(long = "contracts", value_parser = ["enforce", "off"], default_value = "enforce")]
+        /// Plan 194 A2.1 (замена Plan 140 Ф.2 / D24 amend `enforce|off`):
+        /// contract build-policy. `checked` (default) — недоказанные
+        /// контракты проверяются в runtime (debug И release; fail-fast
+        /// abort), Z3/Trivial-proven элидируются. `optimized`/`verified` — в
+        /// этом атоме поведенчески идентичны `checked` (различия — атомы
+        /// A2.2+/A3). Legacy `off` (глобальный unconditional bypass) убран —
+        /// нет отдельного profile-концепта у этой low-level команды, поэтому
+        /// default статически `checked` (нет `--mode dev/release` здесь).
+        #[arg(long = "contracts", value_parser = ["checked", "optimized", "verified"], default_value = "checked")]
         contracts: String,
     },
     /// Plan 13: auto-gen `std/runtime/string.nv` и `std/runtime/math.nv`
@@ -136,11 +139,14 @@ enum Cmd {
         /// Plan 27 Ф.4: GC backend. boehm = Boehm GC (default). malloc = plain malloc (bench only).
         #[arg(long, value_parser = ["boehm", "malloc"], default_value = "boehm")]
         gc: String,
-        /// Plan 140 Ф.2 (D24 amend): contract build-policy. `enforce`
-        /// (default) — недоказанные контракты проверяются (debug И release);
-        /// `off` — все контракт-проверки элидируются глобально (legacy).
-        #[arg(long = "contracts", value_parser = ["enforce", "off"], default_value = "enforce")]
-        contracts: String,
+        /// Plan 194 A2.1 (замена Plan 140 Ф.2 / D24 amend `enforce|off`):
+        /// contract build-policy. `checked` — недоказанные контракты
+        /// проверяются (debug И release). `optimized`/`verified` — в этом
+        /// атоме поведенчески идентичны `checked`. Legacy `off` убран. Без
+        /// значения — дефолт по `--mode`: dev → `checked`, release →
+        /// `optimized`.
+        #[arg(long = "contracts", value_parser = ["checked", "optimized", "verified"])]
+        contracts: Option<String>,
     },
 }
 
@@ -190,8 +196,14 @@ fn run() -> ExitCode {
         Cmd::DumpRuntime => cmd_dump_runtime(),
         Cmd::Unicode { ucd_dir, root, unicode_version, emit_conformance, conformance_limit, conformance_full, check } =>
             cmd_unicode(&ucd_dir, &root, &unicode_version, emit_conformance, conformance_limit, conformance_full, check),
-        Cmd::TestBuild { file, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, display, keep_artifacts, timeout, gc, contracts } =>
-            cmd_test_build(&file, &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), display.as_deref(), keep_artifacts, timeout, &gc, &contracts),
+        Cmd::TestBuild { file, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, display, keep_artifacts, timeout, gc, contracts } => {
+            // Plan 194 A2.1: дефолт `--contracts` по профилю — dev → `checked`,
+            // release → `optimized` (в этом атоме оба поведенчески идентичны).
+            let contracts = contracts.unwrap_or_else(|| {
+                if mode == "release" { "optimized".to_string() } else { "checked".to_string() }
+            });
+            cmd_test_build(&file, &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), display.as_deref(), keep_artifacts, timeout, &gc, &contracts)
+        }
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -541,10 +553,10 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
         &module_env.proven_overflow_sites,
         &module_env.proven_overflow_sites_contract,
     );
-    // Plan 140 Ф.2 (D24 amend): build-policy `--contracts=off` элидирует ВСЕ
-    // контракт-проверки глобально (legacy zero-cost). Default `enforce` —
-    // недоказанные проверяются (debug И release; Z3-proven уже элидированы).
-    emitter.set_contracts_off(contracts == "off");
+    // Plan 194 A2.1 (замена Plan 140 Ф.2): apply build-policy `--contracts`
+    // mode. Legacy `off` retired — недоказанные проверяются под всеми
+    // тремя значениями (debug И release; Z3/Trivial-proven уже элидированы).
+    emitter.set_contracts_mode(nova_codegen::ast::ContractsMode::parse(contracts));
     let (c_code, warnings) = emitter
         .emit_module(&module)
         .map_err(|e| anyhow!("codegen error: {}", e))?;
@@ -1077,9 +1089,9 @@ fn cmd_test_build(
         // Plan 83.1 Ф.5: single-file run — один процесс, нет
         // oversubscription, бюджет не нужен.
         maxprocs_budget: None,
-        // Plan 140 Ф.2 (D24 amend): `--contracts=off` → элидировать все
-        // контракт-проверки на codegen (legacy zero-cost). Default enforce.
-        contracts_off: contracts == "off",
+        // Plan 194 A2.1 (замена Plan 140 Ф.2): build-policy режим. Legacy
+        // `off` retired — default `checked` (недоказанные проверяются).
+        contracts_mode: nova_codegen::ast::ContractsMode::parse(contracts),
     };
     let mut _split: (u128, u128) = (0, 0);
     let status = test_runner::run_one(&opts, &mut _split);
