@@ -38361,3 +38361,15 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   выбрасывает свидетеля провала (C-примитив пишет фактическое в `expected`); пересмотреть на
   `Result[unit,T]`/`(bool,T)` по принципу «примитив не теряет информацию». Ломающая правка
   API sync.nv → отдельно, не в 206.
+
+## [M-serde-encode-pointer-op-regression] (2026-07-15, гейт-находка оркестратора 187)
+
+- РЕГРЕССИЯ main: голый `#impl(Serialize)`-тип + `json_encode(p)` в свежем CU →
+  CODEGEN-FAIL `E_POINTER_OP_USE_METHOD` («operator p + i on raw pointer retired»,
+  Plan 70 silent-fallback-детектор, БЕЗ file:line). Репро: module tmpprobe.probe,
+  type Point {x int, y int} #impl(Serialize), json_encode(Point{...}) — падает.
+  std/encoding-тесты PASS (их CU не тянет synth-encode путь). Сайт НЕ в .nv
+  (греп чист) — эмитит codegen (synth-derive Serialize / string-builder lowering).
+  Подозреваемый: слияние scalar-to-str (57e0d91c8; from_scalar.nv удалён,
+  string_builder/transform переработаны). Блокирует вливание flagship-187
+  (typed-serde report_json). Передан багфикс-волне 187 нулевым приоритетом.
