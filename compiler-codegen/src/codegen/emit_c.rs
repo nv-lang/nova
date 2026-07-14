@@ -37803,6 +37803,62 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     parts.clone()
                 };
                 let parts: &[String] = &parts;
+                // [M-176-xmod-payload-variant-ctor]: `Type.Variant.method(...)`
+                // called DIRECTLY on a freshly-constructed nullary variant, no
+                // `ro`/`mut` binding in between (e.g. `NetError.ConnectionRefused
+                // .to_error_kind()`). The parser's PascalCase path-collector
+                // (parser/mod.rs `starts_uppercase` loop) greedily eats every
+                // `.ident` after the initial PascalCase segment regardless of
+                // casing — needed so lowercase static-ctor calls like
+                // `SeekFrom.start(5)` still parse as a single Path — so the WHOLE
+                // chain collapses into ONE flat 3-part Path and the trailing
+                // `(...)` wraps it in a single Call; there is no nested Member
+                // node to dispatch through the (already-correct) Member arm
+                // above. Mirror of the analogous fix in `infer_call_ret_c`'s
+                // `recv_and_method` (same file) — that one only fixes TYPE
+                // inference; this fixes the actual C emission, else codegen
+                // falls to the `free_fn_c_name(parts.join("_"))` bottom fallback
+                // and mis-emits a bogus zero-arg free-function call
+                // (`nova_fn_Kind_Empty_label()`).
+                //
+                // Verify parts[1] really is a variant of parts[0] via
+                // `sum_schemas` (qualifying parts[0] through `ref_type_base` for
+                // the D381 cross-module name-collision case) so this only fires
+                // for the genuine variant-chain shape — anything else falls
+                // through unchanged. Generic-mono sums are excluded (rare/out of
+                // scope for this fix; falls through to legacy, unchanged
+                // behaviour) to avoid duplicating the template/mono resolution
+                // that `emit_expr`'s "D109 qualified unit variant" Path arm
+                // already owns.
+                if parts.len() == 3 && !self.generic_type_templates.contains_key(parts[0].as_str()) {
+                    let eff_q = self.ref_type_base(&parts[0], &[]);
+                    let is_nullary_variant = self.sum_schemas.get(eff_q.as_str())
+                        .and_then(|variants| variants.get(parts[1].as_str()))
+                        .map_or(false, |fields| fields.is_empty());
+                    if is_nullary_variant {
+                        let method_name = &parts[2];
+                        // Receiver construction: delegate to the (already-correct,
+                        // checker-independent) 2-part nullary-variant Path arm in
+                        // `emit_expr` — handles the D381 qualification + ctor
+                        // mangling identically to the working `ro x = Type.Variant`
+                        // path, with zero logic duplication.
+                        let synthetic_recv = Expr::new(
+                            ExprKind::Path(vec![parts[0].clone(), parts[1].clone()]),
+                            func.span,
+                        );
+                        let recv_c_expr = self.emit_expr(&synthetic_recv)?;
+                        let tmp = self.fresh_tmp();
+                        self.line(&format!("Nova_{}* {} = {};", eff_q, tmp, recv_c_expr));
+                        let mut arg_strs = Vec::new();
+                        for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+                        let mut call_args = vec![tmp];
+                        call_args.extend(arg_strs);
+                        return Ok(format!(
+                            "Nova_{}_method_{}({})",
+                            eff_q, method_name, call_args.join(", ")
+                        ));
+                    }
+                }
                 // Self.method(args) direct-emit fast path:
                 // когда Self был substituted, и parts.len() == 2 — выдаём
                 // явный static-method вызов `Nova_<RecvType>_static_<method>(args)`
@@ -49216,6 +49272,38 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 };
                                 if parts.len() == 2 {
                                     Some((parts[0].clone(), parts[1].clone(), false, false))
+                                } else if parts.len() == 3 {
+                                    // [M-176-xmod-payload-variant-ctor]: a method called
+                                    // DIRECTLY on a freshly-constructed nullary variant with
+                                    // no intermediate `ro`/`mut` binding (`Type.Variant.method()`,
+                                    // e.g. `NetError.ConnectionRefused.to_error_kind()`) is NOT
+                                    // parsed as a Member-on-Call chain — the parser's PascalCase
+                                    // path-collector (parser/mod.rs, `starts_uppercase` loop)
+                                    // greedily eats every `.ident` after an initial PascalCase
+                                    // segment regardless of casing (documented tradeoff: needed
+                                    // to keep lowercase static-ctor calls like `SeekFrom.start(5)`
+                                    // parsing as a single Path), so `Type.Variant.method` collapses
+                                    // into ONE flat 3-part Path and the trailing `(...)` wraps the
+                                    // WHOLE thing in a single Call — `func.kind` here is
+                                    // `Path([Type, Variant, method])`, never reaching the Member
+                                    // arm above. Without this, the call fell through to the
+                                    // "no method segment" P67-LEGACY panic (parts.len() != 2)
+                                    // because the checker's normal method-of-a-bound-variable
+                                    // Channel never runs (there IS no bound variable). Verify
+                                    // parts[1] really is a variant of parts[0] (not some other
+                                    // 3-segment shape) via `sum_schemas`, qualifying through
+                                    // `ref_type_base` for the D381 cross-module name-collision
+                                    // case — then dispatch exactly like the working
+                                    // `ro x = Type.Variant; x.method()` path: instance-method
+                                    // lookup (`want_inst = true`) keyed by the enum's base type.
+                                    let eff_q = self.ref_type_base(&parts[0], &[]);
+                                    if self.sum_schemas.get(eff_q.as_str())
+                                        .map_or(false, |variants| variants.contains_key(parts[1].as_str()))
+                                    {
+                                        Some((eff_q, parts[2].clone(), true, false))
+                                    } else {
+                                        None
+                                    }
                                 } else {
                                     None
                                 }
