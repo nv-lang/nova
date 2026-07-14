@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// [M-176-xmod-payload-variant-ctor] (P2, Plan 176 Ф.1/Ф.4 / checker) —
+// regression fixture: calling a method DIRECTLY on a freshly-constructed
+// variant value, with NO intermediate `ro`/`mut` binding, must resolve
+// identically to the (already-working) `ro x = Type.Variant(...); x.method()`
+// form — both cross-module (`Kind` imported from `m176_variant_ctor_method_a`,
+// mirrors the real bug's `std.net.NetError` used from `std.io` context) and
+// same-module (`Local` declared right here).
+//
+// Root cause (see docs/plans/backlog-followups.md for the full writeup): the
+// parser's PascalCase path-collector greedily folds EVERY `.ident` following
+// an initial PascalCase segment into one flat `Path`, regardless of casing
+// (kept deliberately so lowercase static-ctor calls like `SeekFrom.start(5)`
+// still parse as a single Path) — so `Type.Variant.method()`, with NO parens
+// on the nullary variant, collapses into a single 3-part Path
+// `[Type, Variant, method]` wrapped in one Call, never reaching the Member-
+// call dispatch that a bound variable's `.method()` goes through. A
+// PAYLOAD-variant ctor (`Type.Info(5).method()`) does NOT collapse this way —
+// the ctor's own parens force a nested Call/Member shape that already
+// dispatches correctly — so payload-ctor coverage here is a green control,
+// not a fix target; the nullary-variant chain is the actual regression this
+// fixture locks down (checker `infer_call_ret_c`'s `recv_and_method` Path arm
+// + `emit_call`'s Path arm, both in compiler-codegen/src/codegen/emit_c.rs).
+module conformance.m176_variant_ctor_method_test
+
+import spec_tests.conformance.m176_variant_ctor_method_a.{Kind}
+
+type Local enum
+    | Empty
+    | Full
+    | Info(int)
+
+fn Local @label() -> str {
+    match @ {
+        Empty   => "empty"
+        Full    => "full"
+        Info(n) => if n == 7 { "info:7" } else { "info:?" }
+    }
+}
+
+test "[M-176-xmod-payload-variant-ctor]: xmod nullary variant ctor + immediate method call (no ro binding)" {
+    assert(Kind.Empty.label() == "empty")
+    assert(Kind.Full.label() == "full")
+}
+
+test "[M-176-xmod-payload-variant-ctor]: xmod payload variant ctor + immediate method call (no ro binding)" {
+    assert(Kind.Info(5).label() == "info:5")
+}
+
+test "[M-176-xmod-payload-variant-ctor]: same-module nullary variant ctor + immediate method call (no ro binding)" {
+    assert(Local.Empty.label() == "empty")
+    assert(Local.Full.label() == "full")
+}
+
+test "[M-176-xmod-payload-variant-ctor]: same-module payload variant ctor + immediate method call (no ro binding)" {
+    assert(Local.Info(7).label() == "info:7")
+}
+
+test "[M-176-xmod-payload-variant-ctor]: control — ro-bound variant then method call still resolves (xmod + same-module)" {
+    ro k = Kind.Empty
+    assert(k.label() == "empty")
+    ro l = Local.Info(7)
+    assert(l.label() == "info:7")
+}
