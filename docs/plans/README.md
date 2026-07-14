@@ -28,6 +28,8 @@
 - **200.1** — [скорость `nova test std`](200.1-std-test-speed.md) 📋 согласован 2026-07-13: папочные CU для std-тестов + кеш + профиль медленных; после 196/198.
 - **203** ✅ ЗАКРЫТ 2026-07-13: http = публичная nv-lang/nova-http (root peers, module-path прежний), std самодостаточен; +2 фикса резолвера.
 - **204** ✅ ЗАКРЫТ 2026-07-13 (D420): 03.x уже дал git+semver+lock+резолвер; дельта = [replace]-секция + W_DEP_PATH_NO_RELEASE + lock-семантика (replace не течёт в lock); nova-http на git-форме v0.1.0 с lock в репе.
+- **194** — [модель исполнения контрактов: `#debug` + `--contracts`](194-contract-execution-model.md) ✅ СОГЛАСОВАН 2026-07-14 (сверка против D81/D24/Plan-140): `#unchecked` РЕТРАКТ, `debug_assert`→`#debug assert`, три режима checked|optimized|verified, bounds/overflow=always-on-safety; готов к очереди на реализацию.
+- **206** — [арифметическая политика: 5 исходов из 1 overflow-примитива](206-arithmetic-overflow-policy.md) 📋 согласован 2026-07-14 (наблюдение владельца: Duration.checked_* дублируют codegen-overflow; интринсик `@overflowing_*` → trap/checked/saturating/wrapping/unchecked; после 194).
 - **205** — [компрессия из nova_rt → nv-lang/nova-compress](205-compress-out-of-nova-rt.md) 📋 согласован 2026-07-13 (nova_rt = только рантайм; brotli 7МБ уезжает пакетом по школе nova-tls; после гейтов 203).
 - **152.7.2** — [формат-контекст в Display (D419) + интерполяция прямо-в-sink](152.7.2-format-context.md) 🔨 в работе 2026-07-13 (Fmt-протокол, `#`=pretty, str.from уходит из движка интерполяции).
 - Гейт: conformance (мега-CU 2585 блоков + корпус) **468/0 + 12 SKIP** (2026-07-13); язык-меняющее — только со спек-амендментом в том же слиянии.
