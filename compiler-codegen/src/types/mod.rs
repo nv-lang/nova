@@ -10767,9 +10767,20 @@ impl<'a> TypeCheckCtx<'a> {
         // Резолвим callee только однозначно (ровно один overload).
         let callee: &FnDecl = match &base.kind {
             ExprKind::Ident(n) => {
-                match self.sig.fn_decls.get(n).map(|v| v.as_slice()) {
+                // [Facet-B D307 §1/§3] `priv(file)` free-fn кандидаты видны ТОЛЬКО
+                // из своего файла — фильтруем ПЕРЕД arity/type-compat, иначе чужой
+                // file-private overload участвует в резолве call-site другого файла
+                // (folder-CU bleed).
+                let caller_file_id = base.span.file_id;
+                let visible: Option<Vec<&FnDecl>> = self.sig.fn_decls.get(n).map(|v| {
+                    v.iter()
+                        .filter(|c| !c.file_private || c.span.file_id == caller_file_id)
+                        .copied()
+                        .collect()
+                });
+                match visible.as_deref() {
                     Some([single]) => single,
-                    Some(multi) => {
+                    Some(multi) if !multi.is_empty() => {
                         // Plan 172.1 U.3.1: resolve free-fn overloads in the
                         // CHECKER (§0/§1). Consider ONLY arity-applicable overloads
                         // (`overload_applicability` → Some(_)); if at least one
@@ -10823,7 +10834,7 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                         return;
                     }
-                    None => return,
+                    _ => return,
                 }
             }
             ExprKind::Path(parts) if parts.len() == 2 => {

@@ -1390,6 +1390,18 @@ pub struct CEmitter {
     /// via `current_emit_file_id` inside `free_fn_c_name`. File-private fns are
     /// kept OUT of `method_overloads` (file-local, never cross-file overloads).
     file_priv_fn_c_names: HashMap<(crate::diag::FileId, String), String>,
+    /// [Facet-B D307 §1/§3] Same key as `file_priv_fn_c_names`, but the VALUE
+    /// is the declaring `FnDecl` itself (cloned) rather than just its C name.
+    /// Lets a generic-mono call-site distinguish "does MY OWN declaring file
+    /// have a `priv(file)` overload of this name, and is it generic or
+    /// concrete" — needed because `generic_fns`/`mono_fn_decls` are plain
+    /// bare-name (file-oblivious, last-registration-wins) maps: a same-named
+    /// `priv(file)` GENERIC in some OTHER peer file would otherwise hijack
+    /// EVERY same-named call in the whole folder-CU (including a call to a
+    /// more-specific CONCRETE `priv(file)` overload living in the caller's
+    /// own file — D84 requires the concrete file-local one to win, and it
+    /// must never be resolved through a different peer's mono instance).
+    file_priv_free_fn_decls: HashMap<(crate::diag::FileId, String), crate::ast::FnDecl>,
     /// Plan 170 (D307): the current file being emitted (function definition or
     /// the body whose call-sites are being lowered). Threaded so `free_fn_c_name`
     /// can resolve a file-private free fn to its declaring-file C symbol.
@@ -2068,6 +2080,7 @@ impl CEmitter {
             fn_module_map: HashMap::new(),
             private_const_c_names: HashMap::new(),
             file_priv_fn_c_names: HashMap::new(),
+            file_priv_free_fn_decls: HashMap::new(),
             current_emit_file_id: None,
             mono_fn_decls: HashMap::new(),
             free_fn_inout_params: HashMap::new(),
@@ -4754,6 +4767,15 @@ impl CEmitter {
                             self.file_priv_fn_c_names
                                 .entry((pf.file_id, f.name.clone()))
                                 .or_insert(mangled);
+                            // [Facet-B D307 §1/§3] mirror into the FnDecl-keyed
+                            // map (see field doc) — same key, same condition,
+                            // so generic-mono call-site dispatch can tell a
+                            // file-local CONCRETE overload from a file-local
+                            // GENERIC one without consulting the bare-name
+                            // (file-oblivious) `mono_fn_decls`/`generic_fns`.
+                            self.file_priv_free_fn_decls
+                                .entry((pf.file_id, f.name.clone()))
+                                .or_insert_with(|| f.clone());
                         }
                     }
                 }
@@ -17080,6 +17102,41 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             _ => None,
         }
+    }
+
+    /// [Facet-B D307 §1/§3] True when the CALLING file (`caller_fid`) itself
+    /// declares a `priv(file)` CONCRETE (non-generic) overload of `name` —
+    /// per D84, a file-visible concrete overload beats a same-named generic
+    /// that happens to live (as `priv(file)`) in an unrelated peer file.
+    /// Consulted BEFORE routing a call to `name` through the bare-name
+    /// (file-oblivious) `generic_fns`/`mono_fn_decls` generic-mono
+    /// machinery, which would otherwise hijack EVERY call to `name` in the
+    /// whole folder-CU the moment ANY peer file declares a same-named
+    /// `priv(file)` generic (byte-identical when no such collision exists).
+    fn facetb_file_local_concrete_overload(&self, caller_fid: crate::diag::FileId, name: &str) -> bool {
+        self.file_priv_free_fn_decls
+            .get(&(caller_fid, name.to_string()))
+            .map(|d| d.generics.is_empty())
+            .unwrap_or(false)
+    }
+
+    /// [Facet-B D307 §1/§3] The FnDecl to actually monomorphize for a same-
+    /// named generic call: prefer the CALLER's own file-local `priv(file)`
+    /// generic (the only `priv(file)` decl a caller may legally reference)
+    /// over the bare-name `mono_fn_decls` entry, which is last-registration-
+    /// wins across ALL peer files and can silently hand back an UNRELATED
+    /// peer's same-named generic FnDecl (wrong body / wrong declaring file
+    /// for mono-name purposes). Falls back to the legacy global lookup when
+    /// the caller's file has no local candidate — the normal cross-file
+    /// exported-generic case, untouched (byte-identical).
+    fn facetb_mono_fn_decl_for_call(
+        &self, caller_fid: crate::diag::FileId, name: &str,
+    ) -> Option<crate::ast::FnDecl> {
+        self.file_priv_free_fn_decls
+            .get(&(caller_fid, name.to_string()))
+            .filter(|d| !d.generics.is_empty())
+            .cloned()
+            .or_else(|| self.mono_fn_decls.get(name).cloned())
     }
 
     /// Plan 63 Fix F+: get C-name of callee for fn_result_ok_inner_types lookup.
@@ -38460,14 +38517,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let is_option_or_result_ok_ctor = func_c == "nova_make_Option_Some"
             || func_c == "nova_make_Result_Ok";
         // Plan 48: detect monomorphizable call (generic free fn, turbofish or inferred)
+        // [Facet-B D307 §1/§3]: gated by `facetb_file_local_concrete_overload`
+        // — a file-local CONCRETE `priv(file)` overload of the SAME name wins
+        // over a same-named generic living (as `priv(file)`) in a peer file
+        // (D84 specificity); see helper doc.
+        let caller_fid = func.span.file_id;
         let (mono_fn_name_opt, turbofish_type_refs): (Option<String>, Vec<crate::ast::TypeRef>) =
             match &func.kind {
-                ExprKind::Ident(name) if self.generic_fns.contains(name.as_str()) => {
+                ExprKind::Ident(name) if self.generic_fns.contains(name.as_str())
+                    && !self.facetb_file_local_concrete_overload(caller_fid, name) =>
+                {
                     (Some(name.clone()), vec![])
                 }
                 ExprKind::TurboFish { base, type_args } => {
                     if let ExprKind::Ident(name) = &base.kind {
-                        if self.generic_fns.contains(name.as_str()) {
+                        if self.generic_fns.contains(name.as_str())
+                            && !self.facetb_file_local_concrete_overload(caller_fid, name)
+                        {
                             (Some(name.clone()), type_args.clone())
                         } else { (None, vec![]) }
                     } else { (None, vec![]) }
@@ -38476,7 +38542,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             };
 
         if let Some(ref fn_name) = mono_fn_name_opt {
-            if let Some(fn_decl) = self.mono_fn_decls.get(fn_name).cloned() {
+            if let Some(fn_decl) = self.facetb_mono_fn_decl_for_call(caller_fid, fn_name) {
                 // Plan 59.1 (2026-06-01): bailout «skip monomorphization for
                 // tuple-returning generics» удалён. Plan 48 V1 fallback на
                 // legacy `_NovaTupleN` (nova_int placeholders) был актуален
@@ -49873,8 +49939,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Plan 48: infer concrete return type for monomorphized generic fn calls.
                         // When a generic fn's return type is a bare type param T, resolve T
                         // from the first matching argument type.
-                        if self.generic_fns.contains(name.as_str()) {
-                            if let Some(fn_decl) = self.mono_fn_decls.get(name).cloned() {
+                        // [Facet-B D307 §1/§3]: same file-local-concrete-wins gate as
+                        // emit_call's mono-dispatch detection — a same-named `priv(file)`
+                        // CONCRETE overload in THIS call's own file must not have its
+                        // return type inferred through an unrelated peer's generic.
+                        let facetb_caller_fid = func.span.file_id;
+                        if self.generic_fns.contains(name.as_str())
+                            && !self.facetb_file_local_concrete_overload(facetb_caller_fid, name)
+                        {
+                            if let Some(fn_decl) = self.facetb_mono_fn_decl_for_call(facetb_caller_fid, name) {
                                 self.icr_trace("B10j_generic_fn_mono_resolve");
                                 // Plan 59.1 (2026-06-01): tuple-returning bailout
                                 // (was: return "void*") удалён. Plan 59 Ф.7.5
