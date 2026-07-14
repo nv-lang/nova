@@ -31061,80 +31061,95 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // или nova_str_slice_panic(obj, from, to). Open-ended границы
                 // подставляются из len-выражения.
                 if let ExprKind::Range { start, end, inclusive } = &index.kind {
+                    // Plan 194 Ф.3 (vrange-роутинг, closes [M-172.14-vrange-nv-route]):
+                    // `v[a..b]` no longer builds the view inline here (was the
+                    // `nova_vec_slice_chk`/`_nochk` codegen intrinsic) — it now
+                    // dispatches to the REAL `.nv` method `Vec[T] @index(r Range)
+                    // -> Self` (std/src/collections/vec/slice.nv), same "one
+                    // window of truth" principle as the rest of D238. The
+                    // bounds-check lives ONLY in that method body now (an
+                    // always-on panic guard, NOT a `requires` contract — see
+                    // slice.nv), so it can no longer be silently elided by
+                    // contract policy; emit_c.rs no longer knows the check
+                    // exists at all.
+                    //
+                    // We synthesize `obj.index(materialized_range)` and re-emit
+                    // through the normal Call/Member path (mirrors the
+                    // `rebuilt`/`iter_call` synthetic-AST idiom used elsewhere in
+                    // this file, e.g. ~26128 / ~40975) — this reuses the
+                    // EXISTING generic-method overload resolution +
+                    // monomorphization + the general sret/`_out` rewrite (Plan
+                    // 172.14, `sret_maybe_rewrite_call`) that already fires for
+                    // ANY Vec-returning Leaf-form mono method, so the zero-alloc
+                    // view-descriptor placement is preserved automatically — no
+                    // Vec-slice-specific sret plumbing is needed here anymore.
+                    // The synthetic outer Call reuses `expr.id` so an armed
+                    // `sret_out_dest` (from `ro view = v[a..b]`) still matches.
+                    //
+                    // Open-ended / inclusive ranges MUST be materialized to a
+                    // concrete `start..end` here: the general `ExprKind::Range`
+                    // value-emission path (used when Range is passed as a plain
+                    // argument) requires BOTH bounds and errors on open-ended
+                    // (that form is only legal in the index-syntax position —
+                    // Plan 96 Ф.2). Missing start -> `0`; missing end ->
+                    // `obj.len()`; inclusive end -> `end + 1`.
+                    //
+                    // Checked BEFORE `o = emit_expr(obj)` below (not after) so
+                    // `obj` is emitted exactly once for the common closed-range
+                    // case (the receiver of the synthesized `.index()` call) —
+                    // computing `o` here too would double-emit `obj` for no
+                    // reason (its text is unused on this path).
+                    if obj_ty.starts_with("Nova_Vec____") {
+                        let start_e: Box<Expr> = match start.clone() {
+                            Some(s) => s,
+                            None => Box::new(Expr::new(ExprKind::IntLit(0), expr.span)),
+                        };
+                        let end_e: Box<Expr> = match (end.clone(), *inclusive) {
+                            (Some(e), false) => e,
+                            (Some(e), true) => Box::new(Expr::new(
+                                ExprKind::Binary {
+                                    op: BinOp::Add,
+                                    left: e,
+                                    right: Box::new(Expr::new(ExprKind::IntLit(1), expr.span)),
+                                },
+                                expr.span,
+                            )),
+                            (None, _) => Box::new(Expr::new(
+                                ExprKind::Call {
+                                    func: Box::new(Expr::new(
+                                        ExprKind::Member { obj: obj.clone(), name: "len".to_string() },
+                                        expr.span,
+                                    )),
+                                    args: Vec::new(),
+                                    trailing: None,
+                                },
+                                expr.span,
+                            )),
+                        };
+                        let range_arg = Expr::new(
+                            ExprKind::Range { start: Some(start_e), end: Some(end_e), inclusive: false },
+                            expr.span,
+                        );
+                        let synthetic_call = Expr {
+                            kind: ExprKind::Call {
+                                func: Box::new(Expr::new(
+                                    ExprKind::Member { obj: obj.clone(), name: "index".to_string() },
+                                    expr.span,
+                                )),
+                                args: vec![CallArg::Item(range_arg)],
+                                trailing: None,
+                            },
+                            span: expr.span,
+                            id: expr.id,
+                            debug_only: expr.debug_only,
+                        };
+                        return self.emit_expr(&synthetic_call);
+                    }
                     let o = self.emit_expr(obj)?;
                     // Plan 96 Ф.4.4 — emit_range_bounds: open-ended → подставить
                     // (0, len) / (start, len) / (0, end) / (start, end[+1]).
-                    // Plan 138 Ф.2: Vec[T] range-slice — inline zero-copy view.
-                    // Layout: { T* data; nova_int len; nova_int cap }.
-                    // Allocate a new Vec struct pointing interior into parent's data.
-                    if obj_ty.starts_with("Nova_Vec____") {
-                        let vec_ty = obj_ty.trim_end_matches('*').trim();
-                        let elem_ty = obj_ty
-                            .strip_prefix("Nova_Vec____")
-                            .unwrap_or_else(|| panic!("[P67] nova_int collapse"))
-                            .trim_end_matches('*')
-                            .trim();
-                        // [M-153.4-vec-value-record-slice-typedef] `elem_ty` here is the
-                        // MANGLED Vec-name element form: a value-record (or Nova_T*)
-                        // element reads as `Nova_Range_p` (`_p` = the `*` mangling used in
-                        // symbol names), which is NOT a declared C typedef — so the cast
-                        // below `(Nova_Range_p*)` hits "undeclared identifier" in clang.
-                        // Restore each trailing `_p` to `*` so the slice cast emits the
-                        // real C type (`Nova_Range**` for the `*mut T` element buffer).
-                        // Primitive elements (`nova_int`) have no `_p` and pass unchanged.
-                        let elem_c = {
-                            let mut base = elem_ty;
-                            let mut stars = 0usize;
-                            while let Some(stem) = base.strip_suffix("_p") {
-                                base = stem;
-                                stars += 1;
-                            }
-                            format!("{}{}", base, "*".repeat(stars))
-                        };
-                        let from_expr = match start.as_deref() {
-                            Some(s) => self.emit_expr(s)?,
-                            None => "((nova_int)0LL)".to_string(),
-                        };
-                        let to_expr_inner = match (end.as_deref(), *inclusive) {
-                            (Some(e), false) => self.emit_expr(e)?,
-                            (Some(e), true) => {
-                                let e_str = self.emit_expr(e)?;
-                                format!("(({}) + ((nova_int)1LL))", e_str)
-                            }
-                            (None, _) => format!("({})->len", o),
-                        };
-                        // Plan 145 — portable Vec slice (MSVC C2059): nova_vec_slice_chk/
-                        // nochk (array.h) вместо GNU statement-expression. Plan 140.2 §2
-                        // элизия bounds-check на proven-in-range сайтах -> _nochk.
-                        // (open-ended `v[a..]` двоично вычисляет `o` как и прежняя форма.)
-                        let slice_helper = if self.index_site_elided(expr.span.start) {
-                            "nova_vec_slice_nochk"
-                        } else {
-                            "nova_vec_slice_chk"
-                        };
-                        // Plan 172.14 (sret/_out §3): armed стек-плейсмент — дескриптор
-                        // конструируется в caller-слоте (*_out-форма хелпера, 0 аллокаций).
-                        // Сверка ExprId — потребляем сигнал ТОЛЬКО для RHS-выражения
-                        // самого Let (не для вложенного среза-аргумента).
-                        if expr.id.is_set() {
-                            if let Some((dest, armed_id)) = self.sret_out_dest.clone() {
-                                if armed_id == expr.id {
-                                    self.sret_out_dest = None;
-                                    return Ok(format!(
-                                        "({vty}*){helper}_out((void*)({o}), ({from}), ({to}), sizeof({ety}), (void*){dest})",
-                                        vty = vec_ty, helper = slice_helper, o = o,
-                                        from = from_expr, to = to_expr_inner, ety = elem_c,
-                                        dest = dest
-                                    ));
-                                }
-                            }
-                        }
-                        return Ok(format!(
-                            "({vty}*){helper}((void*)({o}), ({from}), ({to}), sizeof({ety}))",
-                            vty = vec_ty, helper = slice_helper, o = o,
-                            from = from_expr, to = to_expr_inner, ety = elem_c
-                        ));
-                    }
+                    // (Vec[T] range-slice handled above — dispatches to `.nv`
+                    // `@index(Range)`, Plan 194 Ф.3.)
                     // [M-fixed-array-value-semantics] (регрессия main f2f7f65e2 +
                     // [N]T value-класс, чинится волной 172.14): срез value-массива
                     // `[N]T[a..b]` — КОПИЯ диапазона в свежий `[]T` (value-семантика;
@@ -51221,6 +51236,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     // with the arm it fed (see docs/plans/196.5-stage-d-notes.md).
 
     fn infer_expr_c_type(&self, expr: &Expr) -> String {
+        // Plan 194 Ф.3 (vrange-роутинг): a bare closed `ExprKind::Range` VALUE
+        // (both bounds present — the only shape that can appear as a plain
+        // argument; open-ended is index-syntax-only, Plan 96 Ф.2) is a
+        // CONCRETE, non-generic type whose C representation doesn't depend on
+        // any checker channel / type-subst context — mirrors the materialize
+        // logic in the `ExprKind::Range` emit arm below. Needed because a
+        // CODEGEN-SYNTHESIZED Range node (e.g. the `v[a..b]` -> `v.index(range)`
+        // vrange dispatch in the `ExprKind::Index` arm) has no checker-assigned
+        // `ExprId`, so Channel 1/2 below can't cover it — without this arm the
+        // overload-resolution call site (`same_name` param-C-type compare,
+        // ~36660) sees an unresolved/default type and can mis-pick a same-arity
+        // sibling overload (e.g. `@index(i int)` instead of `@index(r Range)`).
+        if matches!(&expr.kind, ExprKind::Range { start: Some(_), end: Some(_), .. }) {
+            if self.value_record_names.contains("Range") {
+                return "NovaValue_Range".to_string();
+            } else if self.record_schemas.contains_key("Range") {
+                return "Nova_Range*".to_string();
+            }
+        }
         // Plan 172.1 §0/§1: channels FIRST, legacy LAZY (only when channel cannot cover).
         // Side-effects (typedef/mono registration) that were previously in legacy are a §1
         // violation — they belong in dedicated emit-passes, not in type-inference. We accept
