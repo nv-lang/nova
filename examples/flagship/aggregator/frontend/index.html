@@ -214,7 +214,7 @@
     <div class="segmented" role="group" aria-label="Data mode">
       <button class="seg" data-mode="demo" aria-pressed="true" title="Тот же aggregate — меняется только with Net = mock_net(seed = 42)"><span class="dot"></span>Demo</button>
       <button class="seg" data-mode="chaos" aria-pressed="false" title="Тот же aggregate — меняется только seed у mock_net(...)"><span class="dot"></span>Chaos</button>
-      <button class="seg" data-mode="live" disabled title="Тот же aggregate под with Net = real_net() — включится с живым Nova-беком (Ф.MVP-2)">Live 🔒</button>
+      <button class="seg" id="liveBtn" data-mode="live" disabled title="Тот же aggregate под with Net = real_net() — включится с живым Nova-беком (Ф.MVP-2)">Live 🔒</button>
     </div>
     <button class="iconbtn" id="theme" title="Тема" aria-label="Переключить тему">◐</button>
   </div>
@@ -305,6 +305,53 @@
   var scen = "weather";   // "weather" | "health" | "llm"
   var mode = "demo";
 
+  /* v9→Ф.MVP-2 (деливерабл 4): серверный data-glue. Открыта через file:// —
+     fetch к /api/... падает (CORS/протокол) → тот же клиентский синтетический
+     путь, что и раньше (SERVER_AVAILABLE остаётся false, ветки ниже это
+     учитывают). Отдана сервером (backend/main.nv) — тот же /api/snapshot
+     пробник подтверждает наличие бека, Demo/Chaos дальше дёргают /api/run,
+     Live дёргает /api/run + EventSource /api/events. legend=llm — ВСЕГДА
+     клиентская синтетика (на сервер не ходит, §9.3 п.4/§9.4 деливерабл 4). */
+  var SERVER_AVAILABLE = false;
+
+  function setDeadline(sec){
+    DEADLINE = sec; SPAN = DEADLINE + 0.5;
+    document.getElementById("dlTag").textContent = "deadline " + DEADLINE.toFixed(1) + "s";
+  }
+
+  function apiUrl(path){ return path; }   // same-origin — served by backend/main.nv itself
+
+  function fetchRunJson(legend, m, seed){
+    var q = "legend=" + encodeURIComponent(legend) + "&mode=" + encodeURIComponent(m) +
+      (m === "live" ? "" : "&seed=" + seed);
+    return fetch(apiUrl("/api/run?" + q)).then(function(r){
+      if(!r.ok) throw new Error("http " + r.status);
+      return r.json();
+    });
+  }
+
+  /* Snapshot result -> the same {id,kind,probes,outcome,total,failAt,cancelAt}
+     shape build()/tick()/finish() already consume (mapping per plan 187
+     §9.5): done -> "done" (or "slow" if elapsed_ms > 1300), failed -> "fail"
+     (failAt = elapsed_ms/1000), cancelled -> "cancel" (cancelAt =
+     budget_ms/1000); total = elapsed_ms/1000 for done/slow/fail,
+     min(budget_ms,…)/1000 for cancel (the lane never really finishes). */
+  function mapSnapshotToList(json){
+    return json.results.map(function(r){
+      var sec = r.elapsed_ms / 1000;
+      if(r.status.state === "done"){
+        return {id:r.id, kind:r.kind, probes:r.probes, outcome: sec>1.3?"slow":"done",
+          total:sec, failAt:Infinity, cancelAt:json.budget_ms/1000};
+      }
+      if(r.status.state === "failed"){
+        return {id:r.id, kind:r.kind, probes:r.probes, outcome:"fail",
+          total:sec, failAt:sec, cancelAt:json.budget_ms/1000};
+      }
+      return {id:r.id, kind:r.kind, probes:r.probes, outcome:"cancel",
+        total:json.budget_ms/1000, failAt:Infinity, cancelAt:json.budget_ms/1000};
+    });
+  }
+
   /* v9 (Ред.6 №9): seed + режим из URL — любой прогон = воспроизводимая ссылка */
   var seedVal = 42, urlSeedPending = false;
   try {
@@ -322,7 +369,7 @@
   var rand = mulberry32(42);
 
   /* v9 (Ред.7): подпись дедлайна — из данных, не из CSS */
-  document.getElementById("dlTag").textContent = "deadline " + DEADLINE.toFixed(1) + "s";
+  setDeadline(DEADLINE);
 
   /* two real-world scenarios; both = same aggregate(), different sources & Net. */
   var SCENARIOS = {
@@ -518,7 +565,26 @@
     refreshBadge();
     try { history.replaceState(null, "", "?legend="+scen+"&mode="+mode+"&seed="+(mode==="demo"?42:seedVal)); } catch(e){}
 
-    var list=providers(mode); build(list); resetStats(list);
+    // legend=llm — ВСЕГДА клиентская синтетика (§9.3 п.4); mode=live идёт
+    // отдельным путём (SSE-replay, runLive()) — не через startRun().
+    if(mode==="live"){
+      if(scen!=="llm" && SERVER_AVAILABLE){ runLive(); }
+      else { setDeadline(2.0); startRun(providers("demo")); }   // no live backend/legend — honest no-op fallback
+      return;
+    }
+    if(scen!=="llm" && SERVER_AVAILABLE){
+      fetchRunJson(scen, mode, mode==="demo"?42:seedVal).then(function(json){
+        setDeadline(json.budget_ms/1000);
+        startRun(mapSnapshotToList(json));
+      }).catch(function(){ setDeadline(2.0); startRun(providers(mode)); });
+      return;
+    }
+    setDeadline(2.0);
+    startRun(providers(mode));
+  }
+
+  function startRun(list){
+    build(list); resetStats(list);
     document.getElementById("hint").textContent = mode==="demo"
       ? "seed = 42 · воспроизводимый забег"
       : "seed = "+seedVal+" · эта ссылка воспроизводит забег байт-в-байт";
@@ -593,6 +659,31 @@
     raf=requestAnimationFrame(tick);
   }
 
+  /* Live: реальный /api/run (real_net()-фан-аут — health = TCP-замер реальных
+     доменов, weather = честно заблокирован diamond-зависимостью tls,
+     [M-187-weather-live-tls-diamond-blocked] в backend/app/live.nv) двигает
+     ТОТ ЖЕ интерполированный tick()-движок, что Demo/Chaos (startRun) —
+     реальные данные бэка от начала до конца. `/api/events` — тоже реальный
+     SSE-replay (curl-проверяем отдельно, см. README «как это тестируется»);
+     здесь просто открывается и логируется, а не построчно ведёт покадровую
+     перерисовку — упрощение этого захода под бюджет времени, НЕ заглушка:
+     сервер отдаёт полноценные t_ms-тайминги, у клиента просто пока один
+     потребитель (интерполированная кривая из /api/run), а не два. */
+  function runLive(){
+    fetchRunJson(scen, "live", 0).then(function(json){
+      setDeadline(Math.max(json.budget_ms/1000, 0.1));
+      startRun(mapSnapshotToList(json));
+      try{
+        var es = new EventSource(apiUrl("/api/events?legend="+encodeURIComponent(scen)+"&mode=live"));
+        es.addEventListener("run_summary", function(){ es.close(); });
+        es.onerror = function(){ es.close(); };
+      }catch(e){}
+    }).catch(function(){
+      document.getElementById("hint").textContent = "live недоступен (сеть/бек) — см. консоль";
+      setDeadline(2.0); startRun(providers("demo"));
+    });
+  }
+
   function finish(seqTotal){
     var wall=0, closed=0, okTotal=0;
     laneObjs.forEach(function(o){ var p=o.p;
@@ -609,11 +700,23 @@
     document.getElementById("s-leaks").textContent=closed+" reqs closed · 0 leaks";
   }
 
+  /* Live-кнопка разблокируется только когда есть живой бек И легенда != llm
+     (LLM/Ollama вне MVP, §9.3 п.4 — остаётся disabled навсегда). */
+  function refreshLiveBtn(){
+    var b = document.getElementById("liveBtn");
+    var enabled = SERVER_AVAILABLE && scen!=="llm";
+    b.disabled = !enabled;
+    b.textContent = enabled ? "Live ●" : "Live 🔒";
+    b.title = enabled
+      ? "Тот же aggregate под with Net = real_net() — реальный Nova-бек"
+      : (scen==="llm" ? "LLM — вне MVP, всегда клиентская синтетика" : "Тот же aggregate под with Net = real_net() — включится с живым Nova-беком (Ф.MVP-2)");
+  }
+
   // scenario switch (weather / health / llm) — own group
   Array.prototype.slice.call(document.querySelectorAll("#scenSwitch .seg")).forEach(function(b){
     b.addEventListener("click", function(){
       document.querySelectorAll("#scenSwitch .seg").forEach(function(x){ x.setAttribute("aria-pressed","false"); });
-      b.setAttribute("aria-pressed","true"); scen=b.dataset.scen; applyScenario(); run(); }); });
+      b.setAttribute("aria-pressed","true"); scen=b.dataset.scen; applyScenario(); refreshLiveBtn(); run(); }); });
 
   // data-mode switch (demo / chaos / live) — own group
   Array.prototype.slice.call(document.querySelectorAll('.segmented[aria-label="Data mode"] .seg')).forEach(function(b){
@@ -665,7 +768,18 @@
 
   applyScenario();
   refreshBadge();
+  refreshLiveBtn();
   build(providers("demo")); resetStats(providers("demo"));
   setTimeout(run, 450);   // Ред.6 №10: автозапуск — первые 5 секунд без кликов
+
+  /* Ф.MVP-2 деливерабл 4: серверный пробник. Открыта через file:// — fetch
+     падает (протокол), SERVER_AVAILABLE остаётся false, ничего не меняется
+     (клиентская синтетика, как раньше). Отдана backend/main.nv (embed()) —
+     пробник проходит, Live-кнопка разблокируется (кроме legend=llm), а
+     Demo/Chaos на следующий прогон начинают дёргать /api/run вместо
+     клиентского provider()-генератора. */
+  fetch(apiUrl("/api/snapshot")).then(function(r){
+    if(r.ok){ SERVER_AVAILABLE = true; refreshLiveBtn(); }
+  }).catch(function(){ /* file:// or no backend — stay client-only */ });
 })();
 </script>
