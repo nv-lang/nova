@@ -656,12 +656,22 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         // Ф.25.2 (Plan 33.6): string/array length non-negative.
         // `(>= (App "_field_len_int" [obj]) goal)` если goal <= 0 → true.
         // Encoded form длины — UF `_field_len_int(obj)` через type-aware naming Ф.10.1.
+        // Plan (2026-07-15, deferred/trivial_string_len_positive.nv): `byte_len()`
+        // (D249 lens model заменил `str.len()`) кодируется как отдельная UF
+        // `_field_byte_len_int` (см. encode.rs Ф.10.1/D117) — `starts_with("_field_len")`
+        // её НЕ матчил, хотя z3.rs (legacy_uninterpreted_app) уже считает
+        // `_field_len_int`/`_field_cap_int`/`_field_byte_len_int` non-negative by
+        // construction. Список синхронизирован с z3.rs.
         let try_len_check = |inner: &SmtTerm| -> Option<bool> {
             if let SmtTerm::App(iop, iargs) = inner {
                 if iop != ">=" || iargs.len() != 2 { return None; }
                 let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
                 if let SmtTerm::App(lop, _) = &iargs[0] {
-                    if lop.starts_with("_field_len") && goal <= 0 {
+                    let is_size_accessor = matches!(
+                        lop.as_str(),
+                        "_field_len_int" | "_field_cap_int" | "_field_byte_len_int"
+                    );
+                    if is_size_accessor && goal <= 0 {
                         return Some(true);
                     }
                 }

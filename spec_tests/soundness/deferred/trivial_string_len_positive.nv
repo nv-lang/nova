@@ -1,16 +1,15 @@
-// Ф.25.2 (Plan 33.6): string length non-negative — `s.len() >= 0` всегда true.
+// Ф.25.2 (Plan 33.6): string length non-negative — `s.byte_len() >= 0` всегда true.
 //
-// Plan 182 Ф.3 DISPUTED (не тронуто): `str.len()` retired (D249, E_STR_NO_LEN).
-// Механическая замена на `byte_len()` меняет характер теста — TrivialBackend
-// (см. имя файла) более не может доказать `ensures result >= 0` для
-// `byte_len()` (`#verify failed: trivial backend handles only
-// tautologies/contradictions and simple linear-arith`), тогда как `len()`,
-// по-видимому, был в allow-list тривиального бэкенда. Это либо (а) пробел
-// компилятора (`byte_len` не в том же allow-list, что был у `len`), либо
-// (б) тест изначально держался на спец-кейсе, которого для `byte_len` нет и
-// не будет. Решение владельца нужно ДО правки — не гейтить на z3 втихую
-// (поменяло бы смысл имени "trivial"), не удалять (единственный тривиальный
-// non-negative-string-length репро). Оставлено RED как было.
+// Plan 182 Ф.3 (резолвлено 2026-07-15): `str.len()` retired (D249,
+// E_STR_NO_LEN) → заменено на `byte_len()`. Диагноз подтвердился как
+// (а) пробел компилятора: TrivialBackend (compiler-codegen/src/verify/backend/
+// trivial.rs, `try_len_check`) матчил UF-имя через `starts_with("_field_len")`,
+// что покрывало `_field_len_int`, но НЕ `_field_byte_len_int` (byte_len
+// кодируется отдельной UF, см. encode.rs Ф.10.1/D117) — хотя z3.rs
+// (`legacy_uninterpreted_app`) уже считал все три size-accessor'а
+// (`_field_len_int`/`_field_cap_int`/`_field_byte_len_int`) non-negative
+// by construction. Список в trivial.rs синхронизирован с z3.rs — тест
+// снова тривиален (не уходит в Z3).
 
 module deferred.trivial_string_len_positive
 
@@ -22,7 +21,7 @@ type Wrapper {
 fn data_len(w Wrapper) -> int
     ensures result >= 0
 {
-    w.data.len()
+    w.data.byte_len()
 }
 
 test "string len non-negative" {
