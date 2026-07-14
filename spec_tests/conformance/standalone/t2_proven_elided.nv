@@ -1,9 +1,10 @@
-// CONTRACTS enforce
+// CONTRACTS checked
 // EXPECT_STDOUT PROVEN_ELIDED_OK
 // EXPECT_EXIT_CODE 0
 //
 // Plan 140 Ф.3 (D24 amend), acceptance F2: Z3/Trivial-PROVEN contracts are
-// elided at codegen (zero-cost), even under default `--contracts=enforce`.
+// elided at codegen (zero-cost), even under default `--contracts=checked`
+// (Plan 194 A2.1: renamed from `enforce`, `off` retired).
 //
 // `inc_nonneg` carries `requires x >= 0` and `ensures result >= 1`. With the
 // given body (`x + 1`) the postcondition is statically PROVABLE from the

@@ -40,5 +40,5 @@ fn main() Io -> () {
         total = total + o.cross_sum(2000)
         k = k + 1
     }
-    println(str.from(total))
+    println(total.to_str())
 }

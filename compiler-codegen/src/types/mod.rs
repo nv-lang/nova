@@ -7911,7 +7911,7 @@ impl<'a> TypeCheckCtx<'a> {
                         let rt = Self::mark_type_params(
                             ResolvedType::from_type_ref(&tr), gs);
                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
-                    } else if let ExprKind::Member { obj: mo, .. } = &func.kind {
+                    } else if let ExprKind::Member { obj: mo, name: method } = &func.kind {
                         // 172.1.2 (static-ctor канал, 2026-07-03): TurboFish-статик
                         // (`Vec[u8].of(...)`) исключён из method-resolve producer'а,
                         // а infer_expr_type его резолвит (ctor-армы +
@@ -7921,6 +7921,128 @@ impl<'a> TypeCheckCtx<'a> {
                                 let rt = Self::mark_type_params(
                                     ResolvedType::from_type_ref(&tr), gs);
                                 self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                            }
+                        } else if let ExprKind::Member { obj: mod_obj, name: tyname } = &mo.kind {
+                            // [196.5 Stage-D волна-4] B11ag producer (module-qualified
+                            // static extern call, external_registry feeds the checker):
+                            // a D289 last-segment-qualified static call
+                            // `mod.Type.static_method(args)` (`raw_mem.RawMem.
+                            // alloc_uncollectable(8)`, spec_tests/conformance/standalone/
+                            // d289_import_last_segment) parses to nested
+                            // `Member{obj: Member{obj: Ident(mod), name: Type}, name:
+                            // method}`. `infer_method_call_channel_type` bailed above
+                            // because `mod.Type` is a MODULE-NAMESPACE-qualified TYPE
+                            // reference, NOT a value expression — `infer_expr_type`
+                            // returns None for it, so no receiver type was recoverable
+                            // and the call's declared return never reached Channel 2
+                            // (co-miss → legacy `infer_call_ret_c` B11ag extern-registry
+                            // arm). Resolve the static method's DECLARED return directly
+                            // off the type name (`resolve_generic_static_return` with an
+                            // EMPTY turbofish — these builtins are non-generic, so
+                            // `type_args.len() == recv.generics.len() == 0` gates cleanly
+                            // and the concrete `-> *mut u8` / `-> ()` return substitutes
+                            // with no residual). Gated: `mod` is an in-scope Ident (an
+                            // import alias / module head, not itself a value) and `tyname`
+                            // is a known type — a genuine value-receiver method call never
+                            // matches this Member-of-Member-of-Ident shape.
+                            if matches!(&mod_obj.kind, ExprKind::Ident(_))
+                                && self.types.contains_key(tyname)
+                            {
+                                if let Some((tr, _node_subst)) =
+                                    self.resolve_generic_static_return(tyname, method, &[], e.span)
+                                {
+                                    if !typeref_mentions_any(&tr, gs) {
+                                        let rt = ResolvedType::from_type_ref(&tr);
+                                        self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                                    }
+                                }
+                            }
+                        } else if method == "serialize" {
+                            // 196.5 Stage-D волна-5 (`[P67-LEGACY]`-adjacent B11ai
+                            // producer, Member-form mirror of the Path-form
+                            // `deserialize` producer below): inside a generic
+                            // container-conformance body (`fn[T Serialize] []T
+                            // @serialize[S Serializer](mut s S) { for v in @ {
+                            // v.serialize(s) } }`, std/src/encoding/serde/serde.nv)
+                            // the receiver `v` is the method's OWN still-abstract
+                            // type param, spelled as a bare `Named{path:["T"]}`
+                            // (Nova has no separate `TypeParam` TypeRef variant).
+                            // `resolve_instance_method_return_arity`'s protocol-
+                            // receiver branch (~14728) only fires when the
+                            // receiver's type NAME literally IS the protocol
+                            // (`w Writer`) — a receiver that is a GENERIC PARAM
+                            // BOUND BY a protocol never matches
+                            // (`self.types.get("T")` finds nothing; "T" is not a
+                            // registered type) → co-miss, legacy `infer_call_ret_c`
+                            // B11ai fallback (gated there on a codegen-side C
+                            // typedef probe, since the checker is pre-mono and
+                            // cannot see emitted C state). The `Serialize`
+                            // contract's `@serialize` return does NOT mention
+                            // `Self` (unlike `Deserialize`'s `Result[Self,
+                            // DeError]`) — it is receiver-INVARIANT
+                            // (`Result[(), SerError]` for every implementor) — so
+                            // no substitution is needed. Gated: receiver's TYPE
+                            // (not name) resolves to a bare `Named{path:[n]}` with
+                            // `n` an IN-SCOPE GENERIC of the enclosing decl
+                            // (`gs`) — a concrete receiver (even one literally
+                            // named "T", which user code never does) is read from
+                            // `self.types`/`method_overloads` by
+                            // `infer_method_call_channel_type` already tried above
+                            // and would have returned `Some` there, never reaching
+                            // this arm.
+                            if let Some(recv_ty) = self.infer_expr_type(mo, scope).or_else(|| {
+                                if !mo.id.is_set() {
+                                    return None;
+                                }
+                                let buf = self.resolved_types_buf.borrow();
+                                let rt = buf.get(&mo.id)?.clone();
+                                drop(buf);
+                                Self::resolved_to_typeref_tp(&rt, e.span)
+                            }) {
+                                let mut peeled = &recv_ty;
+                                loop {
+                                    match peeled {
+                                        TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => {
+                                            peeled = i;
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                                if let TypeRef::Named { path, generics, .. } = peeled {
+                                    if path.len() == 1
+                                        && generics.is_empty()
+                                        && gs.contains(&path[0])
+                                    {
+                                        if let Some(td) = self.types.get("Serialize") {
+                                            if let TypeDeclKind::Protocol { methods, .. } =
+                                                &td.kind
+                                            {
+                                                if let Some(m) = methods.iter().find(|m| {
+                                                    m.name == "serialize"
+                                                        || m.name.trim_start_matches('@')
+                                                            == "serialize"
+                                                }) {
+                                                    let ret = match &m.return_type {
+                                                        Some(r) => r.clone(),
+                                                        None => TypeRef::Unit(m.span),
+                                                    };
+                                                    let self_only: HashSet<String> =
+                                                        std::iter::once("Self".to_string())
+                                                            .collect();
+                                                    if !typeref_mentions_any(&ret, &self_only) {
+                                                        let rt = Self::mark_type_params(
+                                                            ResolvedType::from_type_ref(&ret),
+                                                            gs,
+                                                        );
+                                                        self.resolved_types_buf
+                                                            .borrow_mut()
+                                                            .insert(e.id, rt);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     } else if let ExprKind::Path(parts) = &func.kind {
@@ -7993,6 +8115,36 @@ impl<'a> TypeCheckCtx<'a> {
                                     }
                                 }
                             }
+                        }
+                        // [196.5 Stage-D волна-4] B12c producer (intrinsic-scheme
+                        // mirror): `ChanReader.close_after(d Duration) -> ChanReader`
+                        // is a COMPILER BUILTIN — no `.nv` declaration anywhere
+                        // (std/src/concurrency/timer.nv:84's `ChanReader_close_after_
+                        // doc_marker` is a documentation-only stand-in; the real
+                        // codegen dispatch is name-keyed, `emit_c.rs` ~34500/~37766/
+                        // ~50862). `ChanReader` itself has no `.nv` type-decl either
+                        // (`BUILTIN_RUNTIME_TYPES`, defined in `nova_rt/*.h`) — the
+                        // checker's static-return paths never see it, so this
+                        // Path-form call-site never reaches Channel 2. Mirror the
+                        // SAME fixed return the codegen fallback (`B12c_path_
+                        // chanreader_close_after`) already hardcodes: a bare
+                        // `ResolvedType::Named { name: "ChanReader" }` — the
+                        // catch-all arm of `resolved_named_to_c` (no protocol/alias/
+                        // generic-template/colliding-name match) lowers ANY
+                        // unregistered concrete Named type to `Nova_{name}*`,
+                        // producing the IDENTICAL `Nova_ChanReader*` byte-for-byte.
+                        if parts.len() == 2 && parts[0] == "ChanReader" && parts[1] == "close_after" {
+                            if std::env::var_os("NOVA_B12C_LOCATE").is_some() {
+                                eprintln!("[B12C-CHECKER] id={:?} id_set={} span={:?}", e.id, e.id.is_set(), e.span);
+                            }
+                            self.resolved_types_buf.borrow_mut().insert(
+                                e.id,
+                                ResolvedType::Named {
+                                    name: "ChanReader".to_string(),
+                                    module: vec![],
+                                    args: vec![],
+                                },
+                            );
                         }
                     } else if let ExprKind::TurboFish { base: tf_base, type_args } = &func.kind {
                         // 172.1.2 (Call:<expr>): интринсики size_of[T]()/align_of[T]()
@@ -8080,6 +8232,33 @@ impl<'a> TypeCheckCtx<'a> {
                                     self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                                 }
                             }
+                        } else if matches!(
+                            fname.as_str(),
+                            "println" | "print" | "assert" | "debug_assert"
+                        ) && !scope.contains_key(fname)
+                        {
+                            // [196.5 Stage-D волна-4] B10a producer (intrinsic-scheme
+                            // mirror): `println`/`print`/`assert`/`debug_assert` are
+                            // ALWAYS-Unit-returning compiler intrinsics — `extern "nova"
+                            // fn ... -> ()` in std/prelude/runtime.nv, but
+                            // `#no_prelude` modules (breaking the prelude→string→
+                            // prelude import cycle, `[panic-assert-intrinsic]` above)
+                            // never see that declaration reachable, so no static-
+                            // return path materializes Channel 2 for these call-sites
+                            // there. codegen's `emit_call` already dispatches all four
+                            // NAME-KEYED regardless of declaration visibility
+                            // (`emit_c.rs` ~32213 println/print,
+                            // panic-assert-intrinsic doc for assert/debug_assert) —
+                            // mirror that SAME fact into the checker channel
+                            // unconditionally (Unit is invariant for these names
+                            // regardless of which declaration, if any, is visible;
+                            // in prelude-having modules this is a no-op re-write of
+                            // the same Unit the extern decl already gave). Legacy
+                            // `infer_call_ret_c` B10a_ident_println_assert arm remains
+                            // the fallback for any CU shape this producer misses.
+                            self.resolved_types_buf
+                                .borrow_mut()
+                                .insert(e.id, ResolvedType::Unit);
                         }
                     }
                 }
@@ -10588,9 +10767,20 @@ impl<'a> TypeCheckCtx<'a> {
         // Резолвим callee только однозначно (ровно один overload).
         let callee: &FnDecl = match &base.kind {
             ExprKind::Ident(n) => {
-                match self.sig.fn_decls.get(n).map(|v| v.as_slice()) {
+                // [Facet-B D307 §1/§3] `priv(file)` free-fn кандидаты видны ТОЛЬКО
+                // из своего файла — фильтруем ПЕРЕД arity/type-compat, иначе чужой
+                // file-private overload участвует в резолве call-site другого файла
+                // (folder-CU bleed).
+                let caller_file_id = base.span.file_id;
+                let visible: Option<Vec<&FnDecl>> = self.sig.fn_decls.get(n).map(|v| {
+                    v.iter()
+                        .filter(|c| !c.file_private || c.span.file_id == caller_file_id)
+                        .copied()
+                        .collect()
+                });
+                match visible.as_deref() {
                     Some([single]) => single,
-                    Some(multi) => {
+                    Some(multi) if !multi.is_empty() => {
                         // Plan 172.1 U.3.1: resolve free-fn overloads in the
                         // CHECKER (§0/§1). Consider ONLY arity-applicable overloads
                         // (`overload_applicability` → Some(_)); if at least one
@@ -10644,7 +10834,7 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                         return;
                     }
-                    None => return,
+                    _ => return,
                 }
             }
             ExprKind::Path(parts) if parts.len() == 2 => {
@@ -14722,6 +14912,24 @@ impl<'a> TypeCheckCtx<'a> {
         // эха = тип ресивера (D132/D181-факт); return_type при этом None.
         if f.returns_receiver {
             return Some(peeled.clone());
+        }
+        // [196.5 Stage-D волна-4] B11ag producer (external_registry feeds the
+        // checker): an `extern "nova"` INSTANCE method declared WITHOUT a `->`
+        // return annotation (`extern "nova" fn Once mut @call_once(body fn()
+        // -> ())`) returns Unit — that IS its declared return. The bare
+        // `f.return_type.as_ref()?` below would BAIL to None on it (co-miss →
+        // legacy `infer_call_ret_c` B11ag extern-registry arm). Materialize the
+        // Unit the declaration states, so Channel 2 covers it. Gated on
+        // `f.is_external` to stay scoped to the extern-registry class (a
+        // non-extern user method with an implicit-Unit body is left to legacy —
+        // narrow byte-identity blast radius); `returns_receiver` was already
+        // handled above, so reaching here with `return_type == None` on an
+        // extern method is unambiguously the Unit case.
+        if f.return_type.is_none() {
+            if f.is_external {
+                return Some(TypeRef::Unit(f.span));
+            }
+            return None;
         }
         let ret = f.return_type.as_ref()?;
         // Subst: receiver carrier generics (`Vec[int]` → T=int) + `Self` → concrete receiver.
@@ -23887,6 +24095,10 @@ struct ConsumeRegistry {
     /// Для var-type инференса `let x = factory()` — расширяет резолв
     /// consume-метода за пределы очевидных конструкторов.
     fn_return_types: HashMap<String, String>,
+    /// D86-followup (2026-07-14): free-fn name → Ok/Some-inner type name,
+    /// companion of `fn_return_types` — see `unwrapped_method_return_types`
+    /// doc for rationale (same `Result[T,E]`/`Option[T]` unwrap, free-fn side).
+    unwrapped_fn_return_types: HashMap<String, String>,
     /// Plan 77 (D132): `(receiver_type, method)` — fluent-методы `-> @`,
     /// гарантированно возвращающие сам receiver. `let x = recv.method()`
     /// для такого метода → `x` алиас `recv`.
@@ -23899,6 +24111,22 @@ struct ConsumeRegistry {
     /// (single-segment Named). Used for var-type inference of method calls:
     /// `consume g = mu.lock()` → g has type `MutexGuard`.
     method_return_types: HashMap<(String, String), String>,
+    /// D86-followup (2026-07-14): `(receiver_type, method_name)` → the
+    /// Ok/Some-INNER type name when the method's declared return type is
+    /// `Result[T,E]`/`Option[T]` (`Self` resolved to the receiver type).
+    /// Companion of `method_return_types` (which stores the bare/wrapped
+    /// name — e.g. `Result` itself — for a `Result[T,E]`-returning method,
+    /// since `path.len() == 1` is true for the OUTER `Named{"Result"}` too).
+    /// Consulted ONLY from `ConsumeCtx::infer_unwrapped_call_type` — i.e.
+    /// only when the call is wrapped by `?` / `!!` / `??`, so a bare
+    /// (non-unwrapped) call site keeps seeing the wrapped type via
+    /// `method_return_types` unchanged. Root-caused the false-empty-type
+    /// `[D133-not-consumed]` (`тип ``) on `consume X = T.f() ?? panic(...)` /
+    /// `consume X = T.f()!!` — `var_types` had no entry at all for these RHS
+    /// shapes, so `is_consume_method` fell through to the coarse
+    /// `is_any_consume_method` name-only fallback (28381) instead of the
+    /// precise per-type lookup.
+    unwrapped_method_return_types: HashMap<(String, String), String>,
     /// Plan 108.1 (D176 amend): `(receiver_type, method_name)` для всех
     /// методов с `mut`-receiver (`fn T mut @method(...)`).  Вызов такого
     /// метода на параметре без `mut` → E_PARAM_NOT_MUT.
@@ -23976,12 +24204,45 @@ struct ConsumeRegistry {
     record_field_names: HashMap<String, HashSet<String>>,
 }
 
+/// D86-followup (2026-07-14): if `rt` is `Result[T,E]` / `Option[T]` with a
+/// single-segment Named generic `T` (`Self` resolved to `self_ty`), return
+/// `T`'s name — the Ok/Some-inner type. `None` for anything else (bare type,
+/// multi-segment/tuple/array generic, erased bare `Result`/`Option`), so
+/// callers fall back to their existing (wrapped-type) behaviour — sound
+/// (false-negative, never false-positive).
+///
+/// Used to populate `unwrapped_method_return_types`/`unwrapped_fn_return_types`
+/// — see those fields' docs for why this must be a SEPARATE map rather than
+/// changing `method_return_types`/`fn_return_types` in place.
+fn unwrap_result_option_name(rt: &TypeRef, self_ty: &str) -> Option<String> {
+    if let TypeRef::Named { path, generics, .. } = rt {
+        if path.len() == 1
+            && (path[0] == "Result" || path[0] == "Option")
+            && !generics.is_empty()
+        {
+            if let TypeRef::Named { path: ip, .. } = &generics[0] {
+                if ip.len() == 1 {
+                    return Some(if ip[0] == "Self" {
+                        self_ty.to_string()
+                    } else {
+                        ip[0].clone()
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
 impl ConsumeRegistry {
     fn build(module: &Module) -> Self {
         let mut methods: HashSet<(String, String)> = HashSet::new();
         let mut fn_params: HashMap<String, Vec<usize>> = HashMap::new();
         let mut method_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
         let mut fn_return_types: HashMap<String, String> = HashMap::new();
+        // D86-followup: unwrapped (Ok/Some-inner) companion maps — see field docs.
+        let mut unwrapped_fn_return_types: HashMap<String, String> = HashMap::new();
+        let mut unwrapped_method_return_types: HashMap<(String, String), String> = HashMap::new();
         let mut recv_returning: HashSet<(String, String)> = HashSet::new();
         let mut fn_view_params: HashMap<String, Vec<usize>> = HashMap::new();
         // Plan 103.9 (D174): method return-type map for var-type inference.
@@ -24138,6 +24399,13 @@ impl ConsumeRegistry {
                                 );
                             }
                         }
+                        // D86-followup: Ok/Some-inner companion (see field doc).
+                        if let Some(rt) = &fd.return_type {
+                            if let Some(inner) = unwrap_result_option_name(rt, &r.type_name) {
+                                unwrapped_method_return_types.insert(
+                                    (r.type_name.clone(), fd.name.clone()), inner);
+                            }
+                        }
                         // Plan 77 (D132): `-> @` fluent-метод.
                         if fd.returns_receiver {
                             recv_returning
@@ -24169,6 +24437,12 @@ impl ConsumeRegistry {
                                     .insert(fd.name.clone(), path[0].clone());
                             }
                         }
+                        // D86-followup: Ok/Some-inner companion (see field doc).
+                        if let Some(rt) = &fd.return_type {
+                            if let Some(inner) = unwrap_result_option_name(rt, "") {
+                                unwrapped_fn_return_types.insert(fd.name.clone(), inner);
+                            }
+                        }
                         // Plan 100.3 (D157): collect view-params — non-consume params
                         // of consume types. Used for D133-consume-rvalue-in-view check.
                         let view_idx: Vec<usize> = fd.params.iter().enumerate()
@@ -24195,6 +24469,7 @@ impl ConsumeRegistry {
             fn_mut_params, method_mut_params,
             fn_non_unsafe_params, method_non_unsafe_params,
             record_consume_fields, record_field_names,
+            unwrapped_method_return_types, unwrapped_fn_return_types,
         }
     }
 
@@ -24264,6 +24539,14 @@ impl ConsumeRegistry {
                             self.method_return_types
                                 .entry((r.type_name.clone(), fd.name.clone()))
                                 .or_insert(ret);
+                        }
+                    }
+                    // D86-followup: Ok/Some-inner companion (see field doc).
+                    if let Some(rt) = &fd.return_type {
+                        if let Some(inner) = unwrap_result_option_name(rt, &r.type_name) {
+                            self.unwrapped_method_return_types
+                                .entry((r.type_name.clone(), fd.name.clone()))
+                                .or_insert(inner);
                         }
                     }
                     if !consume_idx.is_empty() {
@@ -24663,6 +24946,68 @@ impl<'a> ConsumeCtx<'a> {
             // `User { ... }` record-литерал.
             ExprKind::RecordLit { type_name: Some(path), .. } if path.len() == 1 => {
                 Some(path[0].clone())
+            }
+            // D86-followup (2026-07-14): consume-binding RHS через unwrap-
+            // operator `?` / `!!` / `&`. Разворачивает `Result[T,E]`/`Option[T]`
+            // → T (Ok/Some branch) для известных Call-форм через
+            // `infer_unwrapped_call_type`; иначе (alias, generic container,
+            // recursive unwrap) — прозрачно наследует тип внутреннего expr
+            // (текущее поведение до фикса), НЕ произвольный fallback.
+            // Прежде для ЭТИХ трёх форм арма не было вовсе → var_types
+            // оставался None → `is_consume_method` не видел точный тип
+            // (empty `тип ``` в D133-диагностике; см. field-docи выше).
+            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
+                self.infer_unwrapped_call_type(inner)
+                    .or_else(|| self.infer_value_type(inner))
+            }
+            // `a ?? b` — b (обычно `panic(...)`/иной diverging fallback) не
+            // производит consume-значения; см. ExprKind::Coalesce арм в
+            // infer_expr_type (типовой «канал» для codegen) — тот же принцип:
+            // тип/значение берутся из Ok/Some-ветки `a`, `b` игнорируется.
+            ExprKind::Coalesce(a, _) => {
+                self.infer_unwrapped_call_type(a)
+                    .or_else(|| self.infer_value_type(a))
+            }
+            _ => None,
+        }
+    }
+
+    /// D86-followup helper for the `Try`/`Bang`/`RefArg`/`Coalesce` arms of
+    /// `infer_value_type` above: resolve the Ok/Some-INNER type of a
+    /// `Result[T,E]`/`Option[T]`-returning Call, via the `unwrapped_*`
+    /// companion maps. Intentionally NOT used from the bare `Call` arm —
+    /// a non-unwrapped call site must keep seeing the wrapped type.
+    fn infer_unwrapped_call_type(&self, e: &Expr) -> Option<String> {
+        let ExprKind::Call { func, .. } = &e.kind else { return None; };
+        match &func.kind {
+            // `Type.static_method(...)` / `module.fn(...)`.
+            ExprKind::Path(parts) if parts.len() >= 2 => {
+                let type_name = parts[parts.len() - 2].clone();
+                let method_name = parts[parts.len() - 1].clone();
+                self.reg.unwrapped_method_return_types
+                    .get(&(type_name, method_name)).cloned()
+            }
+            // Free function call by bare name.
+            ExprKind::Ident(fname) => {
+                self.reg.unwrapped_fn_return_types.get(fname).cloned()
+            }
+            // `recv.method()` / `self.method()` / `@method()`.
+            ExprKind::Member { obj, name: method } => {
+                let recv_ty: Option<String> = match &obj.kind {
+                    ExprKind::Ident(recv) if recv == "self" => self.self_type.clone(),
+                    ExprKind::Ident(recv) => {
+                        let canon = self.canonical(recv);
+                        self.var_types.get(&canon)
+                            .or_else(|| self.var_types.get(recv.as_str()))
+                            .cloned()
+                    }
+                    ExprKind::SelfAccess => self.self_type.clone(),
+                    _ => None,
+                };
+                recv_ty.and_then(|rty| {
+                    self.reg.unwrapped_method_return_types
+                        .get(&(rty, method.clone())).cloned()
+                })
             }
             _ => None,
         }
@@ -34236,12 +34581,12 @@ mod named_tuple_ctor_infer_tests {
             kind: ExprKind::Call {
                 func: Box::new(Expr {
                     kind: ExprKind::Ident(ctor_name.to_string()),
-                    span: dummy_span(), id: crate::ast::ExprId::UNSET,
+                    span: dummy_span(), id: crate::ast::ExprId::UNSET, debug_only: false,
                 }),
                 args: Vec::new(),
                 trailing: None,
             },
-            span: dummy_span(), id: crate::ast::ExprId::UNSET,
+            span: dummy_span(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
@@ -34551,7 +34896,7 @@ mod chain_root_mut_check_tests {
     }
 
     fn ident(name: &str) -> Expr {
-        Expr { kind: ExprKind::Ident(name.to_string()), span: dummy_span(), id: crate::ast::ExprId::UNSET }
+        Expr { kind: ExprKind::Ident(name.to_string()), span: dummy_span(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     fn member(obj: Expr, field: &str) -> Expr {
@@ -34560,7 +34905,7 @@ mod chain_root_mut_check_tests {
                 obj: Box::new(obj),
                 name: field.to_string(),
             },
-            span: dummy_span(), id: crate::ast::ExprId::UNSET,
+            span: dummy_span(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
@@ -34570,12 +34915,12 @@ mod chain_root_mut_check_tests {
                 obj: Box::new(obj),
                 index: Box::new(idx),
             },
-            span: dummy_span(), id: crate::ast::ExprId::UNSET,
+            span: dummy_span(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
     fn int_lit(n: i64) -> Expr {
-        Expr { kind: ExprKind::IntLit(n), span: dummy_span(), id: crate::ast::ExprId::UNSET }
+        Expr { kind: ExprKind::IntLit(n), span: dummy_span(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     fn turbofish(base: Expr, args: Vec<TypeRef>) -> Expr {
@@ -34584,12 +34929,12 @@ mod chain_root_mut_check_tests {
                 base: Box::new(base),
                 type_args: args,
             },
-            span: dummy_span(), id: crate::ast::ExprId::UNSET,
+            span: dummy_span(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
     fn self_access() -> Expr {
-        Expr { kind: ExprKind::SelfAccess, span: dummy_span(), id: crate::ast::ExprId::UNSET }
+        Expr { kind: ExprKind::SelfAccess, span: dummy_span(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     fn call(func: Expr) -> Expr {
@@ -34599,7 +34944,7 @@ mod chain_root_mut_check_tests {
                 args: vec![],
                 trailing: None,
             },
-            span: dummy_span(), id: crate::ast::ExprId::UNSET,
+            span: dummy_span(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 

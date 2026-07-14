@@ -445,13 +445,16 @@ enum Cmd {
         /// via env var NOVA_MONO_DEPTH.
         #[arg(long = "mono-depth", value_name = "N")]
         mono_depth: Option<usize>,
-        /// Plan 140 Ф.2 (D24 amend): contract build-policy. `enforce`
-        /// (default) — недоказанные контракты проверяются в runtime
-        /// (debug И release; fail-fast abort), Z3-proven элидируются.
-        /// `off` — все контракт-проверки элидируются глобально (legacy
-        /// zero-cost; недоказанность под ответственность разработчика).
-        #[arg(long = "contracts", value_parser = ["enforce", "off"], default_value = "enforce")]
-        contracts: String,
+        /// Plan 194 A2.1 (замена Plan 140 Ф.2 / D24 amend `enforce|off`):
+        /// contract build-policy. `checked` — ничего не элидируется кроме
+        /// уже доказанного (default для `--mode dev`). `optimized` (default
+        /// для `--mode release`) / `verified` — в этом атоме поведенчески
+        /// идентичны `checked` (Z3-driven различия — атомы A2.2+/A3). Legacy
+        /// `off` (глобальный unconditional bypass) убран — недоказанные
+        /// контракты ВСЕГДА проверяются в runtime под всеми тремя режимами
+        /// (per-fn/module `#unchecked` остаётся единственным opt-out).
+        #[arg(long = "contracts", value_parser = ["checked", "optimized", "verified"])]
+        contracts: Option<String>,
     },
     /// Run Nova tests from directories or files.
     ///
@@ -1549,7 +1552,7 @@ fn cmd_check_explain_cache(
         nova_codegen::types::annotate_map_literals(&mut module);
         nova_codegen::desugar::desugar_module(&mut module);
         nova_codegen::types::infer_effects(&mut module);
-        nova_codegen::callnorm::normalize_module(&mut module);
+        nova_codegen::callnorm::normalize_module(&mut module, &check_env.resolved_callees);
         nova_codegen::chain_norm::normalize_chains_module(
             &mut module, &check_env.resolved_types);
         let report = nova_codegen::field_cache::analyze_module(&module, &cfg);
@@ -1662,7 +1665,7 @@ fn cmd_check_telemetry_cache(
         nova_codegen::types::annotate_map_literals(&mut module);
         nova_codegen::desugar::desugar_module(&mut module);
         nova_codegen::types::infer_effects(&mut module);
-        nova_codegen::callnorm::normalize_module(&mut module);
+        nova_codegen::callnorm::normalize_module(&mut module, &check_env.resolved_callees);
         nova_codegen::chain_norm::normalize_chains_module(
             &mut module, &check_env.resolved_types);
         let report = nova_codegen::field_cache::analyze_module(&module, &cfg);
@@ -4569,10 +4572,11 @@ fn cmd_build(
     if timeout_secs == 0 {
         return Err(usage_err("--timeout must be >= 1 second"));
     }
-    // Plan 140 Ф.2 (D24 amend): contract build-policy. `off` → codegen
-    // элидирует ВСЕ контракт-проверки глобально (legacy zero-cost). Default
-    // `enforce` — недоказанные контракты проверяются (debug И release).
-    let contracts_off = contracts == "off";
+    // Plan 194 A2.1 (замена Plan 140 Ф.2 / D24 amend): contract build-policy
+    // режим. Legacy `off` убран — все три значения (`checked`/`optimized`/
+    // `verified`) enforce'ят недоказанные контракты (debug И release); см.
+    // `ContractsMode` doc.
+    let contracts_mode = nova_codegen::ast::ContractsMode::parse(contracts);
     // Plan 36 R6: validate path semantics before canonicalize (better errors).
     // `nova build` принимает **только single file** (по дизайну — `-o output`
     // один binary, multi-source builds через imports внутри одного entry-point).
@@ -4694,7 +4698,7 @@ fn cmd_build(
                 &feats,
                 nova_codegen::imports::current_target_os(),
                 mono_depth,
-                contracts_off,
+                contracts_mode,
                 &embed_files,
                 nova_codegen::strict_effects::strict_effects_enabled(),
             )
@@ -4769,7 +4773,7 @@ fn cmd_build(
             // Plan 46 (D102) Ф.2: нормализация call-site — named → positional.
             {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("callnorm");
-                nova_codegen::callnorm::normalize_module(&mut module);
+                nova_codegen::callnorm::normalize_module(&mut module, &build_env.resolved_callees);
                 // Plan 184 (Р7): REAL resolved_types — the value-root guard must
                 // be live on `nova build` (defect-B fix), not just `nova test`.
                 nova_codegen::chain_norm::normalize_chains_module(
@@ -4807,8 +4811,9 @@ fn cmd_build(
                 if let Some(n) = mono_depth {
                     emitter.set_mono_depth_limit(n);
                 }
-                // Plan 140 Ф.2 (D24 amend): apply build-policy `--contracts=off`.
-                emitter.set_contracts_off(contracts_off);
+                // Plan 194 A2.1 (замена Plan 140 Ф.2): apply build-policy
+                // `--contracts` mode.
+                emitter.set_contracts_mode(contracts_mode);
                 // Plan 140 Ф.3 (D24 amend): feed proven contracts from the
                 // VerificationPipeline (run in check_module above) so Z3/Trivial-
                 // proven requires/ensures are elided at codegen (zero-cost).
@@ -5092,9 +5097,10 @@ fn cmd_test(
         shuffle_seed,
         skip,
         mono_depth,
-        // Plan 140 Ф.2 (D24 amend): `nova test` enforce'ит контракты по
-        // умолчанию (тесты проверяют поведение enforce-with-elision).
-        contracts_off: false,
+        // Plan 194 A2.1 (замена Plan 140 Ф.2 / D24 amend): `nova test`
+        // enforce'ит контракты по умолчанию (тесты проверяют поведение
+        // enforce-with-elision) — `checked` = поведенчески старый `enforce`.
+        contracts_mode: nova_codegen::ast::ContractsMode::Checked,
         // Plan 169.1.1: type + slow selection.
         selection: {
             use test_runner::{TestSelection, TestType};
@@ -5204,9 +5210,10 @@ fn cmd_test_build(
         // Plan 83.1 Ф.5: single-file run — один процесс, нет
         // oversubscription, бюджет не нужен.
         maxprocs_budget: None,
-        // Plan 140 Ф.2 (D24 amend): `nova test` enforce'ит контракты по
-        // умолчанию (тесты проверяют поведение enforce-with-elision).
-        contracts_off: false,
+        // Plan 194 A2.1 (замена Plan 140 Ф.2 / D24 amend): `nova test`
+        // enforce'ит контракты по умолчанию (тесты проверяют поведение
+        // enforce-with-elision) — `checked` = поведенчески старый `enforce`.
+        contracts_mode: nova_codegen::ast::ContractsMode::Checked,
     };
 
     test_runner::install_cancel_handler();
@@ -6193,18 +6200,26 @@ fn run() -> ExitCode {
         }
         Cmd::DocQuery { json_file, query } => cmd_doc_query(&json_file, &query),
         Cmd::DocMcp { file, port } => cmd_doc_mcp(&file, port),
-        Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts, mono_depth, contracts } => cmd_build(
-            &file,
-            output.as_deref(),
-            &mode,
-            &toolchain,
-            vcvars.as_deref(),
-            clang.as_deref(),
-            timeout,
-            keep_artifacts,
-            mono_depth,
-            &contracts,
-        ),
+        Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts, mono_depth, contracts } => {
+            // Plan 194 A2.1: дефолт `--contracts` по профилю сборки —
+            // dev → `checked`, release → `optimized` (в этом атоме оба
+            // поведенчески идентичны; см. ContractsMode doc).
+            let contracts = contracts.unwrap_or_else(|| {
+                if mode == "release" { "optimized".to_string() } else { "checked".to_string() }
+            });
+            cmd_build(
+                &file,
+                output.as_deref(),
+                &mode,
+                &toolchain,
+                vcvars.as_deref(),
+                clang.as_deref(),
+                timeout,
+                keep_artifacts,
+                mono_depth,
+                &contracts,
+            )
+        }
         Cmd::Test {
             paths, filter, jobs, format, mode, toolchain, vcvars, clang, timeout,
             verbose, quiet, results_file, rerun_failed, retries,

@@ -31,7 +31,7 @@ fn main() Io -> () {
     ro p = product_floats(1000)
     ro f = fib(20)
     println("results")
-    println(str.from(r))
-    println(str.from(p))
-    println(str.from(f))
+    println(r.to_str())
+    println(p.to_str())
+    println(f.to_str())
 }

@@ -1,7 +1,7 @@
 // [M-125-method-call-never-detection] positive — static method `Type.method()`
 // с `-> never` тоже детектится.
 
-module standalone.method_call_never_static
+module spec_tests.conformance
 type Errors2 {}
 
 fn Errors2.boom(reason str) -> never => panic("Errors2.boom: ${reason}")

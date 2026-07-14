@@ -10,7 +10,7 @@ import std.collections.hashmap.{HashMap}
 test "clone[str, int]: 50 элементов — все сохранены" {
     mut m HashMap[str, int] = []
     for i in 0..50 {
-        m.insert(str.from(i), i * 10)
+        m.insert(i.to_str(), i * 10)
     }
     assert(m.len() == 50)
 
@@ -18,7 +18,7 @@ test "clone[str, int]: 50 элементов — все сохранены" {
     assert(c.len() == 50)
 
     for i in 0..50 {
-        assert(c.get(str.from(i)) == Some(i * 10))
+        assert(c.get(i.to_str()) == Some(i * 10))
     }
 }
 

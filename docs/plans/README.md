@@ -14,9 +14,9 @@
 
 - **196 (одно окно) — высший приоритет; статус 2026-07-13 (вечер): стадия-1 ~70%, стабильность ДОСТИГНУТА.**
   Канал node_substs + композиция POST-mono влиты (промахи B1/B2 → единицы); реестр `infer_call_ret_c`
-  **114 → 51** (волны 1-3 + census [196.5-stage-d-census]); 196.6: три первопричины нестабильности убиты
+  **114 → 48** (волны 1-3 + census [196.5-stage-d-census]); 196.6: три первопричины нестабильности убиты
   (плавающий AV/b11x-флейк = мисскомпиляция auto-derive + рейс worker-sweep + утечка override-карт) —
-  **гейт 468/0 строго зелёный**. Остаток до closeout: 48 живых веток (6 replay-доказанных → волна-4 идёт),
+  **гейт 468/0 строго зелёный**. Остаток до closeout: 45 живых веток (6 replay-доказанных → волна-4 идёт),
   фасеты B/C/D матрицы (callnorm/argbind, единый FnDecl-резолв), структурный финал-гейт + `->data`-греп.
 - **187** — Ред.5-v2 готова к запуску Ф.MVP-2: ВСЕ внешние гейты сняты (TLS=nova-tls, 173 закрыт, SSE в main); демо = живой Nova-бек, канон показа Docker; предложена Ред.6-пятёрка витринных улучшений.
 - **173** ✅ семейство закрыто 2026-07-13 (MultiError D414 + propagation-trace per-fiber + suppressed явным параметром); остаток: п.4 semaphore-cap (P3, опция) + [M-173-trace-not-in-child-error] (P3).
@@ -24,10 +24,12 @@
 - **198** ✅ Ф.2 REDO ЗАКРЫТ 2026-07-13: корпус мигрирован в spec_tests по D307 (merged-CU 2585 блоков PASS; гейт 468/0+12skip); вечно-красные в fixtures/known_red; остаток Ф.4c = 9 классов компиляторных находок (198-redo-notes).
 - **201** ✅ ЗАКРЫТ 2026-07-13 (consume-блок D188 v1/v2/multi-var/v3/v3.1 + @share/refcount в nv + M-178 прямой move в consume-поле D133; спек-амендменты в тех же слияниях).
 - **202** ✅ ЗАКРЫТ 2026-07-13 (path-keyed реестр модулей + root peers D78 rev-4 + миграция nova-tls; [M-d78-duplicate-decl-module-swallow] снят).
-- **200** — живой реестр: П1/П2/П4/П5 ✅; П6 (Vec.data→ptr) ⏸️ на паузе (ABI-правка, не std-рефактор); П3 (As*) — в Q.
+- **200** — живой реестр: П1/П2/П4/П5/**П7** (scalar→str `@to_str`, str.from убран, влито) ✅; П6 (Vec.data→ptr) ⏸️ на паузе (ABI-правка); **П8 → [Plan 201](201-unified-formatter.md)** (unified Formatter — дизайн); П3 (As*) — в Q.
 - **200.1** — [скорость `nova test std`](200.1-std-test-speed.md) 📋 согласован 2026-07-13: папочные CU для std-тестов + кеш + профиль медленных; после 196/198.
 - **203** ✅ ЗАКРЫТ 2026-07-13: http = публичная nv-lang/nova-http (root peers, module-path прежний), std самодостаточен; +2 фикса резолвера.
 - **204** ✅ ЗАКРЫТ 2026-07-13 (D420): 03.x уже дал git+semver+lock+резолвер; дельта = [replace]-секция + W_DEP_PATH_NO_RELEASE + lock-семантика (replace не течёт в lock); nova-http на git-форме v0.1.0 с lock в репе.
+- **194** — [модель исполнения контрактов: `#debug` + `--contracts`](194-contract-execution-model.md) ✅ СОГЛАСОВАН 2026-07-14 (сверка против D81/D24/Plan-140): `#unchecked` РЕТРАКТ, `debug_assert`→`#debug assert`, три режима checked|optimized|verified, bounds/overflow=always-on-safety; готов к очереди на реализацию.
+- **206** — [арифметическая политика: 5 исходов из 1 overflow-примитива](206-arithmetic-overflow-policy.md) 📋 согласован 2026-07-14 (наблюдение владельца: Duration.checked_* дублируют codegen-overflow; интринсик `@overflowing_*` → trap/checked/saturating/wrapping/unchecked; после 194).
 - **205** — [компрессия из nova_rt → nv-lang/nova-compress](205-compress-out-of-nova-rt.md) 📋 согласован 2026-07-13 (nova_rt = только рантайм; brotli 7МБ уезжает пакетом по школе nova-tls; после гейтов 203).
 - **152.7.2** — [формат-контекст в Display (D419) + интерполяция прямо-в-sink](152.7.2-format-context.md) 🔨 в работе 2026-07-13 (Fmt-протокол, `#`=pretty, str.from уходит из движка интерполяции).
 - Гейт: conformance (мега-CU 2585 блоков + корпус) **468/0 + 12 SKIP** (2026-07-13); язык-меняющее — только со спек-амендментом в том же слиянии.

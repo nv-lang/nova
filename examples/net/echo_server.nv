@@ -29,14 +29,14 @@ fn main() {
                 // телом spawn был бы E_CONCURRENT_MUT_CAPTURE.
                 mut lst = match TcpListener.bind(addr) {
                     Ok(l)  => l
-                    Err(_) => panic("Failed to bind: " + str.from(PORT))
+                    Err(_) => panic("Failed to bind: " + PORT.to_str())
                 }
-                println("Listening on 127.0.0.1:" + str.from(lst.local_port()))
+                println("Listening on 127.0.0.1:" + lst.local_port().to_str())
                 // Accept one connection and echo data back.
                 match lst.accept() {
                     Ok(stream) => {
                         mut s = stream
-                        println("Client connected from port " + str.from(s.peer_port()))
+                        println("Client connected from port " + s.peer_port().to_str())
                         match s.read_to_vec(4096) {
                             Ok(_data) => {
                                 match s.write_str("echo_ok\n") {

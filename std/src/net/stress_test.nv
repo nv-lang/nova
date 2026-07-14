@@ -142,14 +142,17 @@ test "net2/stress: throughput baseline — 8 MiB echo in 64 KiB chunks" {
                 // One-way payload: 8 MiB. MiB/s = 8 * 1e9 / elapsed_ns.
                 ro mibps = 8 * 1000000000 / elapsed_ns
                 ro elapsed_ms = elapsed_ns / 1000000
-                // NOTE: `${…}` interpolation (or `str.from(mibps)`) — `int`
-                // owns no `to_str` method, so `mibps.to_str()` is a clean
-                // `[E_UNKNOWN_METHOD]`. The same-module collision that used to
-                // let it SILENTLY mis-dispatch to `NetError.to_str` (int passed
-                // as the enum pointer → SEGV) is FIXED: the checker now infers
-                // the effect-op receiver type (`Time.now_monotonic_ns()` → int)
-                // so the primitive unknown-method gate fires. See CLOSED
-                // [M-183-int-to-str-module-method-collision].
+                // NOTE: `${…}` interpolation kept here (not `mibps.to_str()`)
+                // — historically `int` owned no `to_str` method and a
+                // same-module collision let a bare `.to_str()` call SILENTLY
+                // mis-dispatch to `NetError.to_str` (int passed as the enum
+                // pointer → SEGV); fixed by checker receiver-type inference,
+                // [M-183-int-to-str-module-method-collision] CLOSED. Plan 174.2:
+                // `int` now HAS a canonical `@to_str()` (bare-T blanket,
+                // std/runtime/string/core.nv) and D84/D285 receiver-compatibility
+                // dispatch resolves it correctly even alongside `NetError.to_str`
+                // in the same CU — interpolation kept here anyway (no reason to
+                // churn a working call site; `.to_str()` is exercised elsewhere).
                 println("net2/stress: throughput ${mibps} MiB/s (8 MiB in 64K chunks, ${elapsed_ms} ms)")
                 assert(mibps > 0)
                 conn.close()

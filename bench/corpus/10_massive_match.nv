@@ -30,5 +30,5 @@ fn name(o Op) -> str => match o {
 
 fn main() Io -> () {
     println(name(Add))
-    println(str.from(opcode(Halt)))
+    println(opcode(Halt).to_str())
 }

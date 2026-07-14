@@ -55,7 +55,7 @@ fn sum_positive(xs []int) -> int
 }
 
 fn main() Io -> () {
-    println(str.from(abs(-7)))
-    println(str.from(max(3, 5)))
-    println(str.from(factorial(5)))
+    println(abs(-7).to_str())
+    println(max(3, 5).to_str())
+    println(factorial(5).to_str())
 }

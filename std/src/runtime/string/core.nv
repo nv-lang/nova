@@ -310,6 +310,21 @@ export fn []u8 @decode_utf8() -> Result[str, Utf8Error] {
     Err(Utf8Error { byte_offset: off })
 }
 
+// Plan 174.2 (D410-амендмент, str.from-ретракция): ОДИН публичный вход
+// «скаляр → строка» — `@to_str()`. Bare-T blanket (D145 форма, зеркалит
+// `fn[T] T @identity() -> T => @`): "строка из значения = подставить
+// значение в интерполяцию". Инвариант рекурсии: `"${@}"` для ПРИМИТИВА
+// лоуэрится ПРЯМО в Display-хелпер (`nova_int_to_str`/`nova_f64_to_str`/…,
+// emit_c.rs::emit_interpolated_str primitive_to_str_fn dispatch) — НЕ через
+// `.to_str()` снова, цикла нет. Для НЕ-примитива `"${@}"` идёт через
+// Display.@display (explicit или auto-derive) — тоже не через `.to_str()`.
+// Инвариант специализации (D84 «concrete побеждает generic» + D285
+// receiver-compatibility): конкретный `T @to_str()` (напр. `char` ниже,
+// `[]u8 @to_str() -> Result[str, Utf8Error]` выше — другая arity/семантика,
+// decode а не format) ВСЕГДА побеждает этот blanket по receiver-типу —
+// blanket применяется только когда конкретной перегрузки на T нет.
+export fn[T] T @to_str() -> str => "${@}"
+
 // D410 (2026-07-06): `@to_chars()` (materializing-copy twin of `@chars()`) RETRACTED —
 // its exact meaning is `@chars().collect()`, spelled explicitly at the call site now.
 // D178: lexicographic comparison, like C strcmp. Returns negative/0/positive.
@@ -375,7 +390,7 @@ export type InvalidCodepoint enum InvalidCodepointError
 /// negative values, and values > 0x10FFFF. Valid codepoints map to a 1–4-byte str.
 export fn str.try_from_codepoint(cp int) -> Result[str, InvalidCodepoint] {
     match cp.to_char() {
-        Ok(c)  => Ok(str.from(c))
+        Ok(c)  => Ok(c.to_str())
         Err(_) => Err(InvalidCodepointError)
     }
 }

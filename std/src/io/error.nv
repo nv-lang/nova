@@ -119,7 +119,7 @@ export fn IoError @to_str() -> str {
     ro base = kind_to_str(@kind)
     ro withop = if @op.is_empty() { base } else { "${base} (${@op})" }
     if @raw_os != 0 {
-        "${withop} [os ${str.from(@raw_os)}]"
+        "${withop} [os ${@raw_os}]"
     } else {
         withop
     }
@@ -153,6 +153,6 @@ export fn kind_to_str(k ErrorKind) -> str {
         AddrInUse           => "address in use"
         AddrNotAvailable    => "address not available"
         Unsupported         => "unsupported operation"
-        Other(code)         => "other os error ${str.from(code)}"
+        Other(code)         => "other os error ${code}"
     }
 }

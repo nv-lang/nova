@@ -405,7 +405,7 @@ fn Lexer mut @read_keyword(kw str, t Token, line int, col int) -> Result[TokenWi
 // нужен (и был бы некорректен: byte 0xC3 — часть multibyte-последовательности,
 // а не codepoint U+00C3). Литеральные runs между escape-последовательностями
 // копируются одним batch-append (не char-by-char конкатенацией — убирает
-// второй O(n²) паттерн, `buf = buf + str.from(c)`).
+// второй O(n²) паттерн, `buf = buf + c.to_str()`).
 // D133: `buf` — type-level consume (StringBuilder), обязан быть потреблён на
 // КАЖДОМ exit-point. Ранний `return Err(..)` посреди цикла нарушил бы это —
 // поэтому ошибка копится в `err` и цикл всегда доходит до одного финального
@@ -767,7 +767,7 @@ export fn JsonValue.try_from(s str) -> Result[JsonValue, ParseJsonError] => // [
 
 /// `to_str()` — сериализация в compact JSON (single line, без отступов, D410).
 ///
-/// Интерполяция (`"${v}"`) и `str.from(v)` используют этот же метод через
+/// Интерполяция (`"${v}"`) и `v.to_str()` используют этот же метод через
 /// компиляторный Display-fallback. Для multi-line форматирования используй
 /// [`pretty`].
 ///
@@ -791,9 +791,9 @@ fn format_num(n f64) -> str {
     // но для round-trip с целыми хорошо иметь короткую форму.
     if n.is_finite() && n == n.trunc() && n.abs() < 1e16 {
         // целое в безопасном диапазоне для f64 (2^53)
-        str.from(n as i64)
+        (n as i64).to_str()
     } else {
-        str.from(n)
+        n.to_str()
     }
 }
 

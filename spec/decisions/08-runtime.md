@@ -1764,14 +1764,32 @@ fn main() {
 > `E_BLANKET_IDENTITY_OVERRIDE` — минус компиляторная магия (§3 compiler-conventions).
 >
 > **Что ОСТАЁТСЯ.** (а) Конкретные статики `.from(x)` / `.try_from(x)` — как
-> конвенция имён конструктора-конверсии (D259/D372, `try_` по R3 D325); в частности
+> конвенция имён конструктора-конверсии (D259/D372, `try_` по R3 D325); ~~в частности
 > оверлоады `str.from(v)` / `str.from_debug(v)` — точка расширения Display/Debug и
-> интерполяции (D183/D229), они протокола не требуют. (б) Потребляющая передача
+> интерполяции (D183/D229), они протокола не требуют~~ **(ретрактировано Plan 174.2,
+> см. ниже)**. (б) Потребляющая передача
 > владения — конкретные имена `consume @into_ЦЕЛЬ()` (`into_str`, `into_raw`,
 > `into_reader`; канон D131). (в) Представление — `to_str()` и семейство `to_*`
 > (D410). Миграция: `[M-d73-d77-retraction-migration]` (объявления `@into() -> str`
 > у 6 типов → `@to_str()`, 103 вызова, снос протоколов из prelude + синтеза из
 > компилятора). Ниже — исторический текст.
+>
+> **AMEND (2026-07-14, Plan 174.2) — `str.from(v)` тоже РЕТРАКТИРОВАН.** Пункт
+> «(а)» выше 2026-07-06 ещё держал `str.from(scalar)`/`str.from(v)`/
+> `str.from_debug(v)` как legal bootstrap-конверсию (D35) — asymmetric с (в):
+> `char @to_str()` уже существовал РЯДОМ с `str.from(char)`, давая ДВА входа для
+> одной операции («скаляр → строка»), нарушая D9. Plan 174.2 закрывает разрыв:
+> единственный публичный вход — bare-T blanket `fn[T] T @to_str() -> str =>
+> "${@}"` (std/runtime/string/core.nv), специализируемый конкретными
+> перегрузками (`[]u8 @to_str() -> Result[str, Utf8Error]` — decode, другая
+> arity/семантика; `char`/`str` — покрыты blanket'ом без явного override).
+> `str.from(scalar)` — публичные декларации в `from_scalar.nv`/`char.nv` и
+> Path-form hardcoded dispatch в `emit_c.rs` — УДАЛЕНЫ; негатив-тест
+> `spec_tests/conformance/neg/neg_str_from_retracted.nv`. Рекурсия исключена:
+> `"${@}"` для примитива лоуэрится напрямую в Display-хелпер
+> (`nova_int_to_str`/`nova_f64_to_str`/…), не через `.to_str()` повторно.
+> Детали — [D410 AMEND](03-syntax.md#d410-ретракция-as_to_-близнецов-голые-имена-виды-копия-на-месте-вызова-2026-07-06),
+> `docs/plans/174.2-scalar-to-str-notes.md`.
 
 > **Ревизия (2026-07-01, согласовано с [D325](04-effects.md#d325) Plan 177):** D73 и D77 —
 > **две отдельные иерархии** по модели Rust. `From`/`Into` строго инфаллибельны (возвращают T).
@@ -2839,6 +2857,18 @@ Mem.reset()       -> ()    // zero stats counters (for per-test isolation)
 ---
 
 ## D81. `assert(cond)` vs `debug_assert(cond)` — build-mode семантика
+
+> **AMEND (Plan 194 Ф.0, 2026-07-14) — `debug_assert(cond)` RETRACTED, заменён
+> `#debug assert(cond)`.** Единый dev-only префикс `#debug` (см.
+> [D421](09-tooling.md#d421-contract-execution-model--debug-dev-only-префикс--contracts-уровни-ретракция-uncheckeddebug_assert-plan-194-2026-07-14))
+> покрывает ту же роль — "dev-only assertion, no-op в release" — что и
+> `debug_assert` ниже, единой формой вместо отдельной prelude-функции.
+> `assert(cond)` (always runtime, ниже) — БЕЗ ИЗМЕНЕНИЙ. **Статус этой волны
+> (Ф.0+Ф.1):** только спека + парсер `#debug assert(...)` (новая форма,
+> распознаётся РЯДОМ с существующим `debug_assert`); `debug_assert` физически
+> ЕЩЁ присутствует в prelude/парсере — фактическая ретракция — Ф.4 (D421
+> §Статус). Читать `debug_assert`-текст ниже как ТЕКУЩЕЕ (не целевое)
+> поведение до Ф.4.
 
 ### Что
 

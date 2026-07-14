@@ -1,7 +1,8 @@
 // Plan 67 closure regression-guard — pattern из bench/corpus/02_arithmetic_loop.nv:
-// println(str.from(local_var)) для разных числовых типов (int + float).
+// println(local_var.to_str()) для разных числовых типов (int + float).
 // Проверяет что infer_print_helper → infer_expr_c_type unification
 // корректно резолвит локальные переменные через var_types lookup.
+// Plan 174.2: мигрировано со `str.from(local_var)` (ретрактирован) на `.to_str()`.
 
 module standalone.f12_corpus_02_pattern_regression
 // EXPECT_STDOUT results
@@ -15,6 +16,6 @@ fn main() Io -> () {
     ro r = 100              // int local
     ro f = fib(20)          // int via fn-return inference
     println("results")
-    println(str.from(r))
-    println(str.from(f))
+    println(r.to_str())
+    println(f.to_str())
 }

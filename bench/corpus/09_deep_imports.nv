@@ -54,5 +54,5 @@ fn unwrap10(l Layer10) -> int {
 fn main() Io -> () {
     ro w = wrap10(42)
     ro u = unwrap10(w)
-    println(str.from(u))
+    println(u.to_str())
 }

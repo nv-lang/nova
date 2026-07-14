@@ -1,26 +1,40 @@
-// CONTRACTS off
-// EXPECT_STDOUT POLICY_OFF_REACHED
+// CONTRACTS optimized
+// EXPECT_STDOUT PROVEN_ELIDED_OPTIMIZED_OK
 // EXPECT_EXIT_CODE 0
 //
-// Plan 140 Ф.2 (D24 amend), acceptance F4: `--contracts=off` build-policy.
+// Plan 194 A2.1 (retires Plan 140 Ф.2 / D24-amend `--contracts=off`):
+// this fixture historically exercised the legacy build-policy `off`
+// (global unconditional elision of ALL contract checks — unsound for
+// unproven contracts). Atom A2.1 removes `off` entirely: `checked` /
+// `optimized` / `verified` all enforce unproven contracts (no global
+// bypass survives under any flag value — see emit_c.rs
+// `contracts_elided_for`), so the original "unproven requires silently
+// skipped, exit 0" scenario can no longer be expressed.
 //
-// `must_be_positive` нарушает `requires x > 0` (вызывается с -7). НЕТ
-// per-fn `#unchecked` — под default `--contracts=enforce` это был бы
-// fail-fast abort (enforce-with-elision). Per-fixture директива
-// `// CONTRACTS off` (выше) переключает codegen-политику для этого
-// фикстура: элидируются ВСЕ контракт-проверки глобально (legacy
-// zero-cost), abort не происходит → exit 0 + POLICY_OFF_REACHED stdout.
-// Тот же эффект даёт CLI `--contracts=off` / `nova build --contracts=off`.
-//
-// ВАЖНО: без `// CONTRACTS off` (т.е. под default enforce) этот контракт
-// ОБЯЗАН abort'ить — это acceptance F1 (см. expected_runtime/contracts_*).
+// Repurposed per the A2.1 migration note (map item 5): cover "under
+// `optimized`, a genuinely PROVEN contract is still elided (zero-cost)"
+// — the direct analogue of `t2_proven_elided.nv`'s `enforce`/`checked`
+// case, but exercised through the `optimized` flag value. In THIS atom
+// `optimized` is byte-identical to `checked` (see `ContractsMode` doc in
+// compiler-codegen/src/ast/mod.rs); differentiated Z3-driven elision
+// specifically under `optimized`/`verified` is future work (atoms
+// A2.2+/A3, волна 2).
 
 module standalone.t5_build_policy_off
 fn must_be_positive(x int) -> int
-    requires x > 0   // нарушается: must_be_positive(-7); снимается --contracts=off
+    requires x > 0
+    ensures result > 0
 => x * 2
 
 fn main() Io -> () {
-    ro _ = must_be_positive(-7)
-    println("POLICY_OFF_REACHED")
+    // x=5 SATISFIES `requires x > 0`; `ensures result > 0` is statically
+    // PROVABLE from it (x>0 ⟹ x*2>0) — both TrivialBackend and Z3 discharge
+    // this VC, so it lands in `proven_contracts` and is elided at codegen
+    // even under `--contracts=optimized`.
+    ro r = must_be_positive(5)
+    if r == 10 {
+        println("PROVEN_ELIDED_OPTIMIZED_OK")
+    } else {
+        println("UNEXPECTED")
+    }
 }

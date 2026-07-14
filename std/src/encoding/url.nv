@@ -270,7 +270,7 @@ export fn Url @to_str() -> str {
         match @port {
             Some(p) => {
                 buf.append(':')
-                buf.append(str.from(p))
+                buf.append(p.to_str())
             }
             None => ()
         }

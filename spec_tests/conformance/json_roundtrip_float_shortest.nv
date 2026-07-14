@@ -14,13 +14,13 @@
 module spec_tests.conformance
 import std.encoding.json.{JsonValue, Json}
 
-// str.from(v) directly → parse the emitted JSON number back → identity.
+// v.to_str() directly → parse the emitted JSON number back → identity.
 priv(file) fn f64rt_direct(v f64) -> bool {
-    Json.parse(str.from(v))!!.num() == Some(v)
+    Json.parse(v.to_str())!!.num() == Some(v)
 }
 
 // JsonValue.num(v).to_str() → Json.parse → num(): the json encode/decode path
-// (`format_num` → `str.from(n)`), exactly the `decode(encode(v)) == v` gate.
+// (`format_num` → `n.to_str()`), exactly the `decode(encode(v)) == v` gate.
 priv(file) fn f64rt_json(v f64) -> bool {
     ro encoded = JsonValue.num(v).to_str()
     Json.parse(encoded)!!.num() == Some(v)

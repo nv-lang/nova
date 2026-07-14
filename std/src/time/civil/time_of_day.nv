@@ -144,7 +144,7 @@ export fn TimeOfDay @compare(other TimeOfDay) -> int =>
     else { 0 }
 
 fn pad2_i64(n i64) -> str =>
-    if n < 10 { "0" + str.from(n) } else { str.from(n) }
+    if n < 10 { "0" + n.to_str() } else { n.to_str() }
 
 // Дробная часть секунды: ".SSS"/".SSSSSS"/".SSSSSSSSS" (короткая форма,
 // trailing-zero группами по 3, как java.time) или "" при ns==0.
@@ -152,15 +152,15 @@ fn format_frac(ns i64) -> str {
     if ns == 0 { return "" }
     if ns % 1_000_000 == 0 {
         ro ms = ns / 1_000_000
-        ro s = str.from(ms)
+        ro s = ms.to_str()
         return "." + s.pad_start(3, '0')
     }
     if ns % 1_000 == 0 {
         ro us = ns / 1_000
-        ro s = str.from(us)
+        ro s = us.to_str()
         return "." + s.pad_start(6, '0')
     }
-    ro s = str.from(ns)
+    ro s = ns.to_str()
     "." + s.pad_start(9, '0')
 }
 

@@ -96,13 +96,13 @@ fn JsonSerializer mut @serialize_int(v int) -> Result[(), SerError] {
     // 2^53`, strict), so a value this encodes is one deser_int accepts back.
     // `json_encode(9007199254740993)` is `Err(SerLossyInteger)`, never ...992.
     if v >= 9007199254740992 || v <= -9007199254740992 {
-        return Err(SerError.new(SerLossyInteger(str.from(v))))
+        return Err(SerError.new(SerLossyInteger(v.to_str())))
     }
     @put(JsonValue.num(v as f64))
 }
 fn JsonSerializer mut @serialize_uint(v u64) -> Result[(), SerError] {
     if v >= 9007199254740992 {
-        return Err(SerError.new(SerLossyInteger(str.from(v))))
+        return Err(SerError.new(SerLossyInteger(v.to_str())))
     }
     @put(JsonValue.num(v as f64))
 }
@@ -203,7 +203,7 @@ fn JsonDeserializer mut @deser_int() -> Result[int, DeError] {
         None => Err(DeError.unexpected("int", json_kind(@cur)))
         Some(n) => {
             if !is_exact_int(n) {
-                Err(DeError.new(LossyInteger(str.from(n))))
+                Err(DeError.new(LossyInteger(n.to_str())))
             } else {
                 Ok(n as int)
             }
@@ -215,9 +215,9 @@ fn JsonDeserializer mut @deser_uint() -> Result[u64, DeError] {
         None => Err(DeError.unexpected("uint", json_kind(@cur)))
         Some(n) => {
             if n < 0.0 {
-                Err(DeError.new(OutOfRange(str.from(n))))
+                Err(DeError.new(OutOfRange(n.to_str())))
             } else if !is_exact_int(n) {
-                Err(DeError.new(LossyInteger(str.from(n))))
+                Err(DeError.new(LossyInteger(n.to_str())))
             } else {
                 Ok(n as u64)
             }
@@ -292,19 +292,19 @@ fn JsonDeserializer mut @enter_key(key str) -> Result[JsonDeserializer, DeError]
 fn parse_err_msg(e ParseJsonError) -> str {
     match e {
         UnexpectedChar { line, col, found } =>
-            "unexpected character '${found.to_str()}' at line ${str.from(line)}, col ${str.from(col)}"
+            "unexpected character '${found.to_str()}' at line ${line}, col ${col}"
         UnexpectedEof { line, col } =>
-            "unexpected end of input at line ${str.from(line)}, col ${str.from(col)}"
+            "unexpected end of input at line ${line}, col ${col}"
         InvalidEscape { line, col, seq } =>
-            "invalid escape '${seq}' at line ${str.from(line)}, col ${str.from(col)}"
+            "invalid escape '${seq}' at line ${line}, col ${col}"
         InvalidUnicode { line, col, hex } =>
-            "invalid unicode '${hex}' at line ${str.from(line)}, col ${str.from(col)}"
+            "invalid unicode '${hex}' at line ${line}, col ${col}"
         InvalidNumber { line, col, text } =>
-            "invalid number '${text}' at line ${str.from(line)}, col ${str.from(col)}"
+            "invalid number '${text}' at line ${line}, col ${col}"
         DuplicateKey { line, col, key } =>
-            "duplicate key '${key}' at line ${str.from(line)}, col ${str.from(col)}"
+            "duplicate key '${key}' at line ${line}, col ${col}"
         TrailingContent { line, col } =>
-            "trailing content at line ${str.from(line)}, col ${str.from(col)}"
+            "trailing content at line ${line}, col ${col}"
     }
 }
 
@@ -390,6 +390,6 @@ export fn json_decode_bytes[T Deserialize](b []u8) -> Result[T, DeError] {
                 Err(e) => Err(DeError.new(Syntax(parse_err_msg(e))))
             }
         }
-        Err(e) => Err(DeError.new(Syntax("invalid utf-8 at byte ${str.from(e.byte_offset)}")))
+        Err(e) => Err(DeError.new(Syntax("invalid utf-8 at byte ${e.byte_offset}")))
     }
 }

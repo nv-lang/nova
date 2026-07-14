@@ -48,7 +48,7 @@ test "fn[T] prefix: slice `[]T` receiver, no carrier brackets (D145)" {
 
 test "fn[T] receiver + method-level U: T=int → U=str, independent (D145)" {
     ro v []int = [1, 2, 3]
-    ro strs = v.d145_map(|x| str.from(x))   // receiver T=int, method U=str (inferred)
+    ro strs = v.d145_map(|x| x.to_str())   // receiver T=int, method U=str (inferred)
     assert(strs.len() == 3)
     assert(strs[0] == "1")
     assert(strs[2] == "3")

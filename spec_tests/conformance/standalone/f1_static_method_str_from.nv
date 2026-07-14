@@ -1,11 +1,13 @@
-// Plan 67 Ф.2 f1 — println(str.from(int)) должен эмитить nova_print_str.
+// Plan 67 Ф.2 f1 — println(int.to_str()) должен эмитить nova_print_str.
 // BUG: до фикса — nova_print_int(nova_int_to_str(...)) → CC-FAIL или неверный вывод.
+// Plan 174.2: мигрировано со `str.from(int)` (ретрактирован) на `.to_str()`
+// (D410 канон) — тот же codegen-путь остаётся под наблюдением этого теста.
 
 module standalone.f1_static_method_str_from
 // EXPECT_STDOUT 42
 // EXPECT_STDOUT 100
 
 fn main() Io -> () {
-    println(str.from(42))
-    println(str.from(50 + 50))
+    println(42.to_str())
+    println((50 + 50).to_str())
 }

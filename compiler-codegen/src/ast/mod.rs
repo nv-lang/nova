@@ -547,6 +547,46 @@ impl ContractOptOut {
     }
 }
 
+/// Plan 194 A2.1: build-policy режим флага `--contracts` (замена legacy
+/// `enforce|off`, D24 amend — `off` убран, глобальный legacy zero-cost
+/// bypass больше не существует ни под одним значением флага).
+///
+/// В ЭТОМ атоме все три значения производят БАЙТ-ИДЕНТИЧНЫЙ codegen —
+/// поведение старого default `enforce`: недоказанные `requires`/`ensures`/
+/// `invariant` проверяются в runtime (debug И release), Z3/Trivial-proven
+/// элидируются; per-fn/module `#unchecked` opt-out работает как раньше.
+/// Различия между режимами (Z3-driven элизия под `optimized`/`verified`,
+/// `#debug`-эрозия) — последующие атомы волны 2 (A2.2+/A3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ContractsMode {
+    /// Ничего не элидируется кроме уже доказанного (loop/code-proven ИЛИ
+    /// contract-proven-when-enforced) — как нынешний `enforce`. Default для
+    /// dev-профиля.
+    #[default]
+    Checked,
+    /// Пока идентично `Checked` (различия — атомы A2.2+/A3). Default для
+    /// release-профиля.
+    Optimized,
+    /// Пока идентично `Checked` (различия — атомы A2.2+/A3).
+    Verified,
+}
+
+impl ContractsMode {
+    /// Парсит значение CLI-флага `--contracts`. Clap `value_parser`
+    /// ограничивает вход этими тремя строками — паника здесь означала бы
+    /// баг в самом парсере, а не пользовательский ввод.
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "checked" => ContractsMode::Checked,
+            "optimized" => ContractsMode::Optimized,
+            "verified" => ContractsMode::Verified,
+            other => panic!(
+                "invalid --contracts value (CLI value_parser should have rejected this): {other}"
+            ),
+        }
+    }
+}
+
 /// Plan 33.1 (D24): один контракт-clause функции.
 #[derive(Debug, Clone)]
 pub struct Contract {
@@ -570,6 +610,14 @@ pub struct Contract {
     /// показывают литерал, как до Plan 140.3; без silent-drop). Плоский литерал
     /// (без `${}`) → `message_expr = None`, только `message`. Оба `None` — без сообщения.
     pub message_expr: Option<Expr>,
+    /// Plan 194 Ф.1 (D-блок TBD, 09-tooling.md / D24-амендмент): `#debug`-
+    /// префикс перед клаузой (`#debug requires`/`#debug ensures`/
+    /// `#debug invariant`) — dev-only контракт (дорогая проверка, стирается
+    /// в release). V1 (эта фаза): парсится и хранится, но ИНЕРТНО — codegen
+    /// эмитирует контракт как обычно независимо от значения этого поля;
+    /// реальная erasure-семантика по `--contracts`-режиму — Ф.2 (следующая
+    /// волна). `false` — обычный always-on контракт (текущее поведение).
+    pub debug_only: bool,
 }
 
 /// Plan 33.2 (D24): frame-target — l-value, который функция читает
@@ -2204,6 +2252,14 @@ pub struct Expr {
     /// Plan 172.1 U.4.1: stable identity for type-annotation carry.
     /// `ExprId::UNSET` until `number_exprs` assigns it (post-parse, pre-check).
     pub id: ExprId,
+    /// Plan 194 Ф.1 (D-блок TBD, 09-tooling.md / D81-амендмент): `#debug`-
+    /// префикс — dev-only marker. V1 (эта фаза): ставится ТОЛЬКО парсером на
+    /// `assert(...)` Call-выражении, разобранном после statement-префикса
+    /// `#debug` (parser/mod.rs `parse_stmt_or_expr`). Поле ИНЕРТНО в этой
+    /// фазе — ни один consumer его не читает, поведение не меняется;
+    /// codegen-эрозия по `--contracts`-режиму (checked/optimized/verified) —
+    /// Ф.2 (следующая волна). Default `false` для всех остальных Expr.
+    pub debug_only: bool,
 }
 
 impl Expr {
@@ -2212,6 +2268,7 @@ impl Expr {
             kind,
             span,
             id: ExprId::UNSET,
+            debug_only: false,
         }
     }
 

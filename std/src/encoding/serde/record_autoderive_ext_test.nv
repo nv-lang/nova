@@ -7,14 +7,18 @@
 // NOT migrated (Plan 182 Ф.2 disputed): the original ExtDto also carried
 // narrow scalars (i64/i32/u32/f32). Any `#impl(Deserialize)` record with a
 // narrow-int field newly-discovered live compiler bug: `i32.deserialize`/
-// `u32.deserialize`/etc (serde.nv) build their `OutOfRange` message via
-// `str.from(n)`, which collides with `ReadBuffer.from` in the single-key
-// `method_receivers` registry (emit_c.rs) — `[E_UNKNOWN_TYPE_METHOD]
+// `u32.deserialize`/etc (serde.nv) built their `OutOfRange` message via
+// `str.from(n)` (Path-form static call), which collided with `ReadBuffer.from`
+// in the single-key `method_receivers` registry (emit_c.rs) — `[E_UNKNOWN_TYPE_METHOD]
 // str.from(...) — тип str неизвестен codegen'у ... Single-key fallback на
-// ReadBuffer.from отвергнут — strict-mode`. Reproduces standalone with just
-// `type X value { ro a i64, ro b i32, ro c u32, ro g f32 }` under
-// `#impl(Serialize + Deserialize)` decoded once. Same family as the
-// name-keyed-registry class in docs/plans/182-test-suite-sanation.md §3.3
+// ReadBuffer.from отвергнут — strict-mode`. Plan 174.2 (str.from-ретракция):
+// serde.nv now builds the message via `n.to_str()` (instance-method dispatch,
+// D285 receiver-compatibility — a different lookup path from the Path-form
+// single-key registry that collided above), which likely sidesteps THIS
+// specific collision — not re-verified/re-enabled here (out of scope for
+// 174.2; the underlying single-key-registry collision class may still apply
+// to OTHER Path-form static calls). Same family as the name-keyed-registry
+// class in docs/plans/182-test-suite-sanation.md §3.3
 // ([M-172.1-var-types-cu-name-leak]) — compiler-track follow-up, test not
 // force-fitted around it.
 module encoding.serde

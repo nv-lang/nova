@@ -102,8 +102,8 @@ export fn char @len_utf8() -> int {
     else { 4 }
 }
 
-// UTF-8-кодировка codepoint'а как `str` (= `str.from(@)`).
-export fn char @encode_utf8() -> str => str.from(@)
+// UTF-8-кодировка codepoint'а как `str` (= `@to_str()`).
+export fn char @encode_utf8() -> str => @to_str()
 
 // ASCII case-insensitive equality (Plan 152.5a, D254). Rust `char::eq_ignore_ascii_case`.
 export fn char @eq_ignore_ascii_case(other char) -> bool =>

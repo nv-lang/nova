@@ -1,0 +1,15 @@
+// Plan 194 Ф.1 (D-блок TBD): `#debug assert` требует call-форму
+// `assert(<expr>)` — bare `assert` (без скобок) после `#debug` — внятная
+// ошибка, не silent fallthrough в `ExprKind::Ident("assert")`.
+// EXPECT_COMPILE_ERROR E_DEBUG_ATTR_TARGET
+
+module neg.d194_debug_assert_bare_no_parens_neg
+
+fn f() -> int {
+    #debug assert
+    1
+}
+
+test "unreachable — file must not compile" {
+    assert(f() == 1)
+}

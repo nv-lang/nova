@@ -856,10 +856,12 @@ pub struct CEmitter {
     /// wrap'а конструкции в runtime-check (`if (!Inv(tmp)) violation; tmp`).
     /// Заполняется в emit_module pre-pass.
     /// Plan 33.3 Ф.9.2 (D24): record-type invariant clauses, keyed by struct
-    /// name. Each entry is `(expr, span, message)` — `message` (Plan 140.1
-    /// Ф.2, D24 amend) is the optional user message for the location-first
-    /// violation diagnostic (`<file>:<line>: invariant failed: <msg> (<expr>)`).
-    record_invariants: HashMap<String, Vec<(Expr, Span, Option<String>, Option<Expr>)>>,
+    /// name. Each entry is `(expr, span, message, message_expr, debug_only)` —
+    /// `message` (Plan 140.1 Ф.2, D24 amend) is the optional user message for
+    /// the location-first violation diagnostic (`<file>:<line>: invariant
+    /// failed: <msg> (<expr>)`); `debug_only` (Plan 194 A2.2, D421 §3) marks a
+    /// `#debug invariant` clause — erased outside `checked` mode.
+    record_invariants: HashMap<String, Vec<(Expr, Span, Option<String>, Option<Expr>, bool)>>,
     /// Plan 33.1 Ф.4 (D24): если установлено — функция имеет ensures-контракты,
     /// и все `Stmt::Return X` подменяются на `{ _nova_result = X; goto <label>; }`.
     /// Trailing block-expression также. После label эмитятся ensures-checks
@@ -879,11 +881,13 @@ pub struct CEmitter {
     proven_contracts: std::collections::HashSet<(String, usize)>,
     /// Plan 140.2 Part B (D257 / B.4): proven Index-сайты `v[idx]`/`v[a..b]`
     /// (по span.start), доказанные из LOOP/CODE. Codegen элидит inline
-    /// bounds-check ВСЕГДА (safe даже под `--contracts=off`).
+    /// bounds-check ВСЕГДА (unconditional — не через contracts-режим/`#unchecked`).
     proven_index_sites: std::collections::HashSet<usize>,
     /// Plan 140.2 followup §2: Index-сайты, доказанные ТОЛЬКО с fn-`requires`
     /// (cross-fn). Элидируются ТОЛЬКО при включённых контрактах — под
-    /// `--contracts=off`/`#unchecked` requires не enforced → элизия unsound.
+    /// `#unchecked(requires)` requires не enforced → элизия unsound (Plan 194
+    /// A2.1: legacy build-level `--contracts=off` retired, `#unchecked` —
+    /// единственный surviving opt-out).
     proven_index_sites_contract: std::collections::HashSet<usize>,
     /// Plan 172.1 U.4.1: per-Expr resolved-type annotations (ExprId → ResolvedType)
     /// from the semantic pass — codegen reads them (equivalence-checked in debug)
@@ -924,19 +928,24 @@ pub struct CEmitter {
     fn_ret_by_span: std::collections::HashMap<crate::diag::Span, String>,
     /// Plan 140.4 ([M-opt-elide-proven-overflow-checks]): proven `int` `+`/`-`/`*`
     /// сайты (по span.start), чей результат доказан в диапазоне i64 из LOOP/CODE.
-    /// Codegen элидит `nova_int_checked_*` ВСЕГДА (safe даже под `--contracts=off`).
+    /// Codegen элидит `nova_int_checked_*` ВСЕГДА (unconditional — не через
+    /// contracts-режим/`#unchecked`).
     proven_overflow_sites: std::collections::HashSet<usize>,
     /// Plan 140.4: `int`-арифм. сайты, доказанные ТОЛЬКО с fn-`requires`.
-    /// Элидируются ТОЛЬКО при включённых контрактах — под `--contracts=off` /
-    /// `#unchecked(requires)` requires не enforced → элизия была бы unsound.
+    /// Элидируются ТОЛЬКО при включённых контрактах — под
+    /// `#unchecked(requires)` requires не enforced → элизия была бы unsound
+    /// (Plan 194 A2.1: legacy build-level `--contracts=off` retired).
     proven_overflow_sites_contract: std::collections::HashSet<usize>,
-    /// Plan 140 Ф.2 (D24 amend): build-level contract opt-out
-    /// (`nova build --contracts=off` / `nova-codegen ... --contracts=off`).
-    /// Когда `true` — codegen НЕ эмитит НИ ОДНУ контракт-проверку
-    /// (`requires`/`ensures`/`invariant`/`decreases`/`assert_static`/`assume`)
-    /// во всём модуле — глобально восстанавливает legacy zero-cost. Default
-    /// `false` (enforce-with-elision: недоказанные проверяются и в release).
-    contracts_off: bool,
+    /// Plan 194 A2.1 (замена Plan 140 Ф.2 / D24 amend `contracts_off: bool`):
+    /// build-policy режим `--contracts=checked|optimized|verified`. Legacy
+    /// `off` (глобальный unconditional bypass) убран — ни одно из трёх
+    /// значений больше не элидирует ВСЕ контракт-проверки разом; предикаты
+    /// элизии (`contracts_elided_for` / `invariants_elided_here`) читают
+    /// ТОЛЬКО per-fn/module `#unchecked` opt-out. В этом атоме `mode` сам по
+    /// себе не влияет на элизию (все три значения ведут себя как старый
+    /// default `enforce`) — задел под будущую Z3-driven дифференциацию
+    /// (`optimized`/`verified`, атомы A2.2+/A3).
+    contracts_mode: crate::ast::ContractsMode,
     /// Plan 140 Ф.2 + Plan 140.3 ([M-140-contract-levels]): per-fn contract
     /// opt-out (`#unchecked` / `#unchecked(kinds)`) для тела ТЕКУЩЕЙ функции,
     /// УЖЕ объединённый с module-level opt-out. Set на входе в fn-body,
@@ -1390,6 +1399,18 @@ pub struct CEmitter {
     /// via `current_emit_file_id` inside `free_fn_c_name`. File-private fns are
     /// kept OUT of `method_overloads` (file-local, never cross-file overloads).
     file_priv_fn_c_names: HashMap<(crate::diag::FileId, String), String>,
+    /// [Facet-B D307 §1/§3] Same key as `file_priv_fn_c_names`, but the VALUE
+    /// is the declaring `FnDecl` itself (cloned) rather than just its C name.
+    /// Lets a generic-mono call-site distinguish "does MY OWN declaring file
+    /// have a `priv(file)` overload of this name, and is it generic or
+    /// concrete" — needed because `generic_fns`/`mono_fn_decls` are plain
+    /// bare-name (file-oblivious, last-registration-wins) maps: a same-named
+    /// `priv(file)` GENERIC in some OTHER peer file would otherwise hijack
+    /// EVERY same-named call in the whole folder-CU (including a call to a
+    /// more-specific CONCRETE `priv(file)` overload living in the caller's
+    /// own file — D84 requires the concrete file-local one to win, and it
+    /// must never be resolved through a different peer's mono instance).
+    file_priv_free_fn_decls: HashMap<(crate::diag::FileId, String), crate::ast::FnDecl>,
     /// Plan 170 (D307): the current file being emitted (function definition or
     /// the body whose call-sites are being lowered). Threaded so `free_fn_c_name`
     /// can resolve a file-private free fn to its declaring-file C symbol.
@@ -1954,7 +1975,7 @@ impl CEmitter {
             fn_ret_by_span: std::collections::HashMap::new(),
             proven_overflow_sites: std::collections::HashSet::new(),
             proven_overflow_sites_contract: std::collections::HashSet::new(),
-            contracts_off: false,
+            contracts_mode: crate::ast::ContractsMode::Checked,
             contract_opt_out_fn: crate::ast::ContractOptOut::default(),
             contract_opt_out_module: crate::ast::ContractOptOut::default(),
             record_invariants: HashMap::new(),
@@ -2068,6 +2089,7 @@ impl CEmitter {
             fn_module_map: HashMap::new(),
             private_const_c_names: HashMap::new(),
             file_priv_fn_c_names: HashMap::new(),
+            file_priv_free_fn_decls: HashMap::new(),
             current_emit_file_id: None,
             mono_fn_decls: HashMap::new(),
             free_fn_inout_params: HashMap::new(),
@@ -4032,8 +4054,9 @@ impl CEmitter {
 
     /// Plan 140.2: можно ли элидировать inline bounds-check Index-сайта `span`?
     /// loop/code-доказанные — всегда; contract-доказанные — только если контракты
-    /// для этой fn НЕ сняты (`--contracts=off` / `#unchecked` оставляют проверку,
-    /// т.к. requires там не enforced → элизия по нему была бы unsound).
+    /// для этой fn НЕ сняты (`#unchecked` оставляет проверку, т.к. requires там
+    /// не enforced → элизия по нему была бы unsound; Plan 194 A2.1: legacy
+    /// build-level `--contracts=off` retired).
     fn index_site_elided(&self, span_start: usize) -> bool {
         self.proven_index_sites.contains(&span_start)
             || (!self.contracts_elided_here()
@@ -4056,8 +4079,9 @@ impl CEmitter {
 
     /// Plan 140.4: можно ли элидировать `nova_int_checked_*` на сайте `span`?
     /// loop/code-доказанные — всегда; contract-доказанные — только если контракты
-    /// (`requires`) для этой fn НЕ сняты (`--contracts=off` / `#unchecked(requires)`
-    /// оставляют проверку, т.к. requires там не enforced → элизия была бы unsound).
+    /// (`requires`) для этой fn НЕ сняты (`#unchecked(requires)` оставляет
+    /// проверку, т.к. requires там не enforced → элизия была бы unsound;
+    /// Plan 194 A2.1: legacy build-level `--contracts=off` retired).
     /// Та же логика, что `index_site_elided` — overflow-panic = soundness-guard,
     /// элидируется ТОЛЬКО пруфом, никогда одним лишь `#unchecked`.
     fn overflow_site_elided(&self, span_start: usize) -> bool {
@@ -4066,31 +4090,49 @@ impl CEmitter {
                 && self.proven_overflow_sites_contract.contains(&span_start))
     }
 
-    /// Plan 140 Ф.2 (D24 amend): build-level contract opt-out
-    /// (`--contracts=off`). Когда `true` — codegen элидирует ВСЕ контракт-
-    /// проверки во всём модуле (глобальный legacy zero-cost). Default `false`
-    /// (`--contracts=enforce`: недоказанные проверяются и в release).
-    pub fn set_contracts_off(&mut self, off: bool) {
-        self.contracts_off = off;
+    /// Plan 194 A2.1 (замена `set_contracts_off`): build-policy режим
+    /// `--contracts=checked|optimized|verified`. `off` (глобальный
+    /// unconditional bypass) убран — см. doc `contracts_mode` поля и
+    /// `contracts_elided_for` ниже.
+    pub fn set_contracts_mode(&mut self, mode: crate::ast::ContractsMode) {
+        self.contracts_mode = mode;
+    }
+
+    /// Plan 194 A2.2 (D421 §3): предикат для эрозии `#debug`-контрактов/
+    /// `#debug assert` по build-режиму. `checked` (dev-дефолт) — `#debug`
+    /// работает (byte-identical старому поведению без различения режима);
+    /// `optimized`/`verified` (release) — `#debug`-клаузы/statement'ы
+    /// СТИРАЮТСЯ (не эмитятся, zero-cost). Не-`#debug` контракты этим
+    /// предикатом НЕ гейтятся — они always-on независимо от режима (см.
+    /// `contracts_elided_for` / `invariants_elided_here` — отдельный,
+    /// `#unchecked`-driven путь элизии).
+    fn mode_erases_debug(&self) -> bool {
+        matches!(
+            self.contracts_mode,
+            crate::ast::ContractsMode::Optimized | crate::ast::ContractsMode::Verified
+        )
     }
 
     /// Plan 140 Ф.2: контракт-проверки элидируются для тела текущей fn?
-    /// `true` если build-policy `--contracts=off` ИЛИ per-fn `#unchecked`
-    /// (через `contracts_unchecked_fn`, выставленный на входе в fn-body).
-    /// Используется body-уровневыми эмиттерами (`assert_static`/`assume`/
-    /// record-invariant), у которых нет прямого `&FnDecl`.
+    /// `true` если per-fn `#unchecked` (через `contracts_unchecked_fn`,
+    /// выставленный на входе в fn-body). Используется body-уровневыми
+    /// эмиттерами (`assert_static`/`assume`/record-invariant), у которых нет
+    /// прямого `&FnDecl`.
     fn contracts_elided_here(&self) -> bool {
         // body-level assert_static/assume — precondition-like → requires-gated.
         self.contracts_elided_for(crate::ast::ContractKind::Requires)
     }
 
     /// Plan 140.3 ([M-140-contract-levels]): элидируется ли контракт-вид `kind`
-    /// здесь? = build `--contracts=off` ИЛИ module-opt-out(kind) ИЛИ fn-opt-out(kind).
-    /// `Requires` → `.requires`; `Ensures`/`EnsuresFail` → `.ensures`.
+    /// здесь? = module-opt-out(kind) ИЛИ fn-opt-out(kind). `Requires` →
+    /// `.requires`; `Ensures`/`EnsuresFail` → `.ensures`.
+    ///
+    /// Plan 194 A2.1: legacy `--contracts=off` (global unconditional bypass)
+    /// убран вместе с флагом — `self.contracts_mode` в этом атоме НЕ
+    /// добавляет сюда собственную ветку (`checked`/`optimized`/`verified`
+    /// поведенчески идентичны старому `enforce`: только `#unchecked`
+    /// элидирует). Различия между режимами — будущие атомы (A2.2+/A3).
     fn contracts_elided_for(&self, kind: crate::ast::ContractKind) -> bool {
-        if self.contracts_off {
-            return true;
-        }
         let pick = |o: &crate::ast::ContractOptOut| match kind {
             crate::ast::ContractKind::Requires => o.requires,
             _ => o.ensures,
@@ -4099,11 +4141,11 @@ impl CEmitter {
     }
 
     /// Plan 140.3: элидируется ли type-`invariant`-страховка здесь?
-    /// = `--contracts=off` ИЛИ module/fn `#unchecked(invariant)` (или bare).
+    /// = module/fn `#unchecked(invariant)` (или bare). Plan 194 A2.1: см.
+    /// `contracts_elided_for` — `contracts_mode` не добавляет глобальный
+    /// bypass в этом атоме.
     fn invariants_elided_here(&self) -> bool {
-        self.contracts_off
-            || self.contract_opt_out_module.invariant
-            || self.contract_opt_out_fn.invariant
+        self.contract_opt_out_module.invariant || self.contract_opt_out_fn.invariant
     }
 
     /// Get the Span of a statement (where in source it came from).
@@ -4754,6 +4796,15 @@ impl CEmitter {
                             self.file_priv_fn_c_names
                                 .entry((pf.file_id, f.name.clone()))
                                 .or_insert(mangled);
+                            // [Facet-B D307 §1/§3] mirror into the FnDecl-keyed
+                            // map (see field doc) — same key, same condition,
+                            // so generic-mono call-site dispatch can tell a
+                            // file-local CONCRETE overload from a file-local
+                            // GENERIC one without consulting the bare-name
+                            // (file-oblivious) `mono_fn_decls`/`generic_fns`.
+                            self.file_priv_free_fn_decls
+                                .entry((pf.file_id, f.name.clone()))
+                                .or_insert_with(|| f.clone());
                         }
                     }
                 }
@@ -4945,8 +4996,8 @@ impl CEmitter {
         for item in &module.items {
             if let Item::Type(td) = item {
                 if !td.invariants.is_empty() {
-                    let invs: Vec<(Expr, Span, Option<String>, Option<Expr>)> = td.invariants.iter()
-                        .map(|c| (c.expr.clone(), c.span, c.message.clone(), c.message_expr.clone())).collect();
+                    let invs: Vec<(Expr, Span, Option<String>, Option<Expr>, bool)> = td.invariants.iter()
+                        .map(|c| (c.expr.clone(), c.span, c.message.clone(), c.message_expr.clone(), c.debug_only)).collect();
                     self.record_invariants.insert(td.name.clone(), invs);
                 }
             }
@@ -7468,7 +7519,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn synth_int_let(name: &str, value: i64, span: crate::diag::Span) -> Stmt {
         let int_lit = Expr {
             kind: ExprKind::IntLit(value),
-            span, id: crate::ast::ExprId::UNSET,
+            span, id: crate::ast::ExprId::UNSET, debug_only: false,
         };
         Stmt::Let(LetDecl {
             mutable: false,
@@ -17082,6 +17133,41 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
+    /// [Facet-B D307 §1/§3] True when the CALLING file (`caller_fid`) itself
+    /// declares a `priv(file)` CONCRETE (non-generic) overload of `name` —
+    /// per D84, a file-visible concrete overload beats a same-named generic
+    /// that happens to live (as `priv(file)`) in an unrelated peer file.
+    /// Consulted BEFORE routing a call to `name` through the bare-name
+    /// (file-oblivious) `generic_fns`/`mono_fn_decls` generic-mono
+    /// machinery, which would otherwise hijack EVERY call to `name` in the
+    /// whole folder-CU the moment ANY peer file declares a same-named
+    /// `priv(file)` generic (byte-identical when no such collision exists).
+    fn facetb_file_local_concrete_overload(&self, caller_fid: crate::diag::FileId, name: &str) -> bool {
+        self.file_priv_free_fn_decls
+            .get(&(caller_fid, name.to_string()))
+            .map(|d| d.generics.is_empty())
+            .unwrap_or(false)
+    }
+
+    /// [Facet-B D307 §1/§3] The FnDecl to actually monomorphize for a same-
+    /// named generic call: prefer the CALLER's own file-local `priv(file)`
+    /// generic (the only `priv(file)` decl a caller may legally reference)
+    /// over the bare-name `mono_fn_decls` entry, which is last-registration-
+    /// wins across ALL peer files and can silently hand back an UNRELATED
+    /// peer's same-named generic FnDecl (wrong body / wrong declaring file
+    /// for mono-name purposes). Falls back to the legacy global lookup when
+    /// the caller's file has no local candidate — the normal cross-file
+    /// exported-generic case, untouched (byte-identical).
+    fn facetb_mono_fn_decl_for_call(
+        &self, caller_fid: crate::diag::FileId, name: &str,
+    ) -> Option<crate::ast::FnDecl> {
+        self.file_priv_free_fn_decls
+            .get(&(caller_fid, name.to_string()))
+            .filter(|d| !d.generics.is_empty())
+            .cloned()
+            .or_else(|| self.mono_fn_decls.get(name).cloned())
+    }
+
     /// Plan 63 Fix F+: get C-name of callee for fn_result_ok_inner_types lookup.
     /// Plan 81 Ф.6: C-имя символа пользовательской свободной функции.
     ///
@@ -21846,6 +21932,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if mono_has_contracts {
             for c in &fn_decl.contracts {
                 if matches!(c.kind, ContractKind::Requires) {
+                    if c.debug_only && self.mode_erases_debug() {
+                        continue;
+                    }
                     if self.proven_contracts.contains(&(fn_decl.name.clone(), c.span.start)) {
                         continue;
                     }
@@ -23150,13 +23239,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 140 Ф.1 (D24 amend): эмитим безусловно — НЕ под
         // `#ifdef NOVA_CONTRACTS_RUNTIME`. Недоказанные ensures проверяются
         // и в release (enforce-with-elision); Z3-proven уже элидируются ниже
-        // через `continue` на codegen (zero-cost). Build-opt-out (`--contracts=off`)
-        // и per-fn `#unchecked` — Ф.2.
+        // через `continue` на codegen (zero-cost). Per-fn `#unchecked` — Ф.2
+        // (Plan 194 A2.1: legacy build-level `--contracts=off` opt-out retired).
         // Подставляем `result` → `_nova_result` при emit'е выражения.
         // emit_expr на Ident("result") вернёт "result" (она в var_types),
         // нам нужно "_nova_result". Используем post-process подмену.
         for c in &f.contracts {
             if matches!(c.kind, ContractKind::Ensures) {
+                // Plan 194 A2.2 (D421 §3): `#debug ensures` erased outside `checked`.
+                if c.debug_only && self.mode_erases_debug() {
+                    continue;
+                }
                 // Plan 33.3 Ф.9.9: skip emit для proven контрактов (zero-cost).
                 if self.proven_contracts.contains(&(f.name.clone(), c.span.start)) {
                     continue;
@@ -23871,9 +23964,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // контракты эмитятся БЕЗУСЛОВНО (debug И release), Z3-proven
         // элидируются на codegen через `continue` (zero-cost). Прежняя
         // модель «в release стираются» (NDEBUG/assert) — retracted.
-        // Plan 140 Ф.2 (D24 amend): per-fn `#unchecked` ИЛИ build-policy
-        // `--contracts=off` элидируют ВСЕ контракт-проверки в теле этой fn
-        // (даже недоказанные). `contracts_elided_fn` фолдится в `has_contracts`
+        // Plan 140 Ф.2 (D24 amend): per-fn `#unchecked` элидирует ВСЕ
+        // контракт-проверки в теле этой fn (даже недоказанные; Plan 194 A2.1:
+        // legacy build-policy `--contracts=off` opt-out retired).
+        // `contracts_elided_fn` фолдится в `has_contracts`
         // (requires/ensures) и в decreases-guard ниже. Также выставляется как
         // `self.contracts_unchecked_fn` на входе в fn-body для body-уровневых
         // эмиттеров (assert_static/assume/record-invariant).
@@ -23891,8 +23985,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // превышает порог (10000) — runtime panic. Это catches infinite
         // recursion в debug. Полный well-founded check (m_new < m_old) —
         // ждёт SMT (Z3 backend).
-        // Plan 140 Ф.2: `#unchecked` / `--contracts=off` элидируют и
-        // decreases recursion-guard (контракт-проверка как и прочие).
+        // Plan 140 Ф.2: `#unchecked` элидирует и decreases recursion-guard
+        // (контракт-проверка как и прочие; legacy `--contracts=off` retired,
+        // Plan 194 A2.1).
         let _depth_var = if f.decreases.is_some() && !self.contracts_elided_for(ContractKind::Requires) {
             // Sanitize fn name для C-identifier.
             let san: String = f.name.chars()
@@ -23923,6 +24018,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if has_contracts {
             for c in &f.contracts {
                 if matches!(c.kind, ContractKind::Requires) {
+                    // Plan 194 A2.2 (D421 §3): `#debug requires` erased outside `checked`.
+                    if c.debug_only && self.mode_erases_debug() {
+                        continue;
+                    }
                     // Plan 33.3 Ф.9.9: skip emit для proven контрактов
                     // (true zero-cost). proven_contracts — set от
                     // VerificationPipeline. Key: (fn_name, span.start).
@@ -26034,6 +26133,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     },
                     span: e.span,
                     id: e.id,
+                    debug_only: e.debug_only,
                 };
                 self.emit_expr(&rebuilt)
             }
@@ -27556,8 +27656,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 33.3 Ф.9.1: skip runtime check если expr читает
                 // ghost-var (ghost эрейзится в codegen; SMT-verify в Z3
                 // будет работать). assert_static с ghost — pure spec-level.
-                // Plan 140 Ф.2: `#unchecked` / `--contracts=off` элидируют
-                // assert_static как и прочие контракт-проверки.
+                // Plan 140 Ф.2: `#unchecked` элидирует assert_static как и
+                // прочие контракт-проверки (legacy `--contracts=off` retired,
+                // Plan 194 A2.1).
                 if Self::expr_uses_ghost(expr, &self.ghost_vars)
                     || self.contracts_elided_here()
                 {
@@ -27580,8 +27681,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // `#ifdef NOVA_CONTRACTS_RUNTIME`.
             Stmt::Assume { expr, span } => {
                 // Plan 33.3 Ф.9.1: skip если expr читает ghost-var.
-                // Plan 140 Ф.2: `#unchecked` / `--contracts=off` элидируют
-                // assume-check как и прочие контракт-проверки.
+                // Plan 140 Ф.2: `#unchecked` элидирует assume-check как и
+                // прочие контракт-проверки (legacy `--contracts=off` retired,
+                // Plan 194 A2.1).
                 if Self::expr_uses_ghost(expr, &self.ghost_vars)
                     || self.contracts_elided_here()
                 {
@@ -29485,6 +29587,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
 
             ExprKind::Call { func, args, trailing } => {
+                // Plan 194 A2.2 (D421 §3): `#debug assert(cond)` — statement-form
+                // dev-only assert (parser `#debug` Hash-arm, parser/mod.rs,
+                // sets `Expr.debug_only = true` ONLY on this exact Call node —
+                // no other codepath sets it). Outside `checked` (`optimized`/
+                // `verified`) it is erased ENTIRELY, including the condition
+                // (zero-cost, mirrors C `assert`/NDEBUG — not evaluated, not
+                // just "ignored result"). `expr` (outer node, not `func`) carries
+                // the flag, so this must be checked here — `emit_call` below only
+                // sees `func`/`args`, not the wrapping Call expr.
+                if expr.debug_only && self.mode_erases_debug() {
+                    if let ExprKind::Ident(n) = &func.kind {
+                        if n == "assert" && trailing.is_none() {
+                            return Ok("NOVA_UNIT".to_string());
+                        }
+                    }
+                }
                 // Plan 131 Ф.3: residual `size_of[T]()` / `align_of[T]()` left
                 // intact by const_fn_eval when `T` is an unresolved generic
                 // param (E_CONST_FN_GENERIC_NEEDS_T_REFLECTION suppressed для
@@ -29896,7 +30014,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // отдельный line-emit, а не expr-substitution.
                         // Поскольку lit обычно tmp (см. emit_record_lit), просто
                         // эмитим check после.
-                        for (inv_expr, span, inv_msg, inv_msg_expr) in &invs {
+                        for (inv_expr, span, inv_msg, inv_msg_expr, inv_debug_only) in &invs {
                             // Bind поля record'а как `tmp->field` для invariant-eval.
                             // В bootstrap — простой text substitution через
                             // emit_expr с self.expected_record_type set.
@@ -29905,10 +30023,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // Чтобы он сработал — должны field'ы быть в scope.
                             // В bootstrap делаем макрос через define + undef.
                             let inv_src = Self::expr_to_display(inv_expr);
+                            // Plan 194 A2.2 (D421 §3): `#debug invariant` erased outside `checked`.
+                            if *inv_debug_only && self.mode_erases_debug() {
+                                continue;
+                            }
                             // Получаем поля типа.
-                            // Plan 140 Ф.2 (D24 amend): per-fn `#unchecked` /
-                            // build `--contracts=off` / `#unchecked(invariant)`
-                            // (module или окружающей fn) элидируют invariant-check.
+                            // Plan 140 Ф.2 (D24 amend): per-fn/module
+                            // `#unchecked` / `#unchecked(invariant)` элидируют
+                            // invariant-check (legacy build-level
+                            // `--contracts=off` retired, Plan 194 A2.1).
                             if self.invariants_elided_here() {
                                 continue;
                             }
@@ -30582,12 +30705,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if left_ty.starts_with("NovaOpt_") {
                     let opt_tmp = self.fresh_tmp();
                     self.line(&format!("{} {} = {};", left_ty, opt_tmp, l));
-                    // Plan 118 Ф.5: NPO-aware is-some check.
+                    // Plan 118 Ф.5: NPO-aware is-some check keyed by the SANITIZED
+                    // payload identifier (`NovaOpt_Nova_X_p` → `Nova_X_p`).
                     let sani = left_ty.strip_prefix("NovaOpt_").unwrap_or(&left_ty);
                     let some_check = self.option_is_some_check(&opt_tmp, sani);
-                    // Plan 172.1 [literal-coercion]: fallback coerces to the Some-payload
-                    // type (`?? (0,0)` against `Option[(uint,uint)]` builds a matching tuple).
-                    let r = self.emit_expr_with_target_type(right, sani)?;
+                    // Plan 172.1 [literal-coercion]: the fallback coerces to the
+                    // Some-payload type — which is the REAL c-type of the `.value`
+                    // field (`Nova_X*`), NOT the sanitized identifier `sani`
+                    // (`Nova_X_p`). Passing `sani` made a never-typed fallback
+                    // (`Option[HeapRec] ?? panic(...)`) synthesize the struct
+                    // compound-literal `((Nova_X_p){0})` via `typed_zero_value_125`
+                    // (D86 [M-d86-option-coalesce-never-payload-p]): `Nova_X_p` is
+                    // only ever a mangled component (`NovaOpt_Nova_X_p`), never a
+                    // standalone typedef → `use of undeclared identifier 'Nova_X_p'`.
+                    // Mirror the Result arm below, which targets the real ok-payload
+                    // c-type from `novares_ok_err`. `desanitize_c_from_ident` restores
+                    // the pointer (`Nova_X_p`→`Nova_X*`); value payloads (no `_p`
+                    // suffix: `nova_int`, `NovaValue_…`, `NovaTuple_…`) pass through
+                    // unchanged, so this is byte-identical for every non-pointer payload.
+                    let payload_c = Self::desanitize_c_from_ident(sani);
+                    let r = self.emit_expr_with_target_type(right, &payload_c)?;
                     Ok(format!("({} ? {}.value : {})", some_check, opt_tmp, r))
                 } else if Self::is_result_like(&left_ty) {
                     // D86: `Result ?? fb` — `Ok(v)` → `v`, `Err(_)` → `fb` (ошибка отброшена).
@@ -32077,6 +32214,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     fn emit_call(&mut self, func: &Expr, args: &[CallArg], call_id: crate::ast::ExprId) -> Result<String, String> {
+        // [M-176-xmod-payload-variant-ctor]: a nullary-variant method chain
+        // collapsed by the parser into a flat 3-part Path
+        // (`Type.Variant.method()`) — rewrite to the equivalent Member form and
+        // re-enter, so the (collision/generic-aware) Member-call emission builds
+        // the receiver + dispatches the method instead of falling to the bottom
+        // `free_fn_c_name(parts.join("_"))` fallback (a bogus
+        // `nova_fn_Type_Variant_method()` free-fn call → undefined symbol / CU
+        // link failure). See `variant_chain_as_member`.
+        if let Some(member_func) = self.variant_chain_as_member(func) {
+            return self.emit_call(&member_func, args, call_id);
+        }
         // Plan 184 Р10: a value/primitive `mut x T` free-fn param uses the
         // by-pointer in-out ABI (`T*`). Wrap the matching call args in `RefArg`
         // (emits `(&(place))`) so EVERY downstream arg-emission branch passes the
@@ -32332,7 +32480,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.var_types.insert(tmp.clone(), box_ty);
                                 new_args.push(CallArg::Item(Expr {
                                     kind: ExprKind::Ident(tmp),
-                                    span: arg_expr.span, id: crate::ast::ExprId::UNSET,
+                                    span: arg_expr.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                                 }));
                                 rewrote = true;
                                 continue;
@@ -32368,7 +32516,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.var_types.insert(tmp.clone(), "void*".to_string());
                                 new_args.push(CallArg::Item(Expr {
                                     kind: ExprKind::Ident(tmp),
-                                    span: arg_expr.span, id: crate::ast::ExprId::UNSET,
+                                    span: arg_expr.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                                 }));
                                 rewrote = true;
                                 continue;
@@ -32414,7 +32562,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }).collect();
             let synth_array = Expr {
                 kind: ExprKind::ArrayLit(var_elems),
-                span: func.span, id: crate::ast::ExprId::UNSET,
+                span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,
             };
             let mut new_args: Vec<CallArg> = args[..regular_arity].to_vec();
             new_args.push(CallArg::Item(synth_array));
@@ -33056,7 +33204,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     {
                         let bare_func = Expr {
                             kind: ExprKind::Ident(method.clone()),
-                            span: func.span, id: crate::ast::ExprId::UNSET,
+                            span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                         };
                         return self.emit_call(&bare_func, args, call_id);
                     }
@@ -33104,7 +33252,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let Some(recv) = &self.current_receiver_type {
                             self_obj_storage = Expr {
                                 kind: ExprKind::Ident(recv.clone()),
-                                span: obj.span, id: crate::ast::ExprId::UNSET,
+                                span: obj.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                             };
                             &self_obj_storage
                         } else {
@@ -33372,12 +33520,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     base: Box::new(Expr {
                                         kind: ExprKind::Ident("Vec".to_string()),
                                         span: obj.span,
-                                        id: crate::ast::ExprId::UNSET,
+                                        id: crate::ast::ExprId::UNSET, debug_only: false,
                                     }),
                                     type_args: vec![elem_tr],
                                 },
                                 span: obj.span,
-                                id: crate::ast::ExprId::UNSET,
+                                id: crate::ast::ExprId::UNSET, debug_only: false,
                             };
                             // Fresh call — its own variadic routing must be
                             // allowed (`of` packs its args into a collected []T).
@@ -33393,13 +33541,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 name: "new".to_string(),
                                             },
                                             span: func.span,
-                                            id: crate::ast::ExprId::UNSET,
+                                            id: crate::ast::ExprId::UNSET, debug_only: false,
                                         }),
                                         args: Vec::new(),
                                         trailing: None,
                                     },
                                     span: func.span,
-                                    id: crate::ast::ExprId::UNSET,
+                                    id: crate::ast::ExprId::UNSET, debug_only: false,
                                 };
                                 let cap_func = Expr {
                                     kind: ExprKind::Member {
@@ -33407,7 +33555,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         name: "cap".to_string(),
                                     },
                                     span: func.span,
-                                    id: crate::ast::ExprId::UNSET,
+                                    id: crate::ast::ExprId::UNSET, debug_only: false,
                                 };
                                 self.emit_call(&cap_func, args, call_id)
                             } else {
@@ -33417,7 +33565,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         name: method.clone(),
                                     },
                                     span: func.span,
-                                    id: crate::ast::ExprId::UNSET,
+                                    id: crate::ast::ExprId::UNSET, debug_only: false,
                                 };
                                 self.emit_call(&new_func, args, call_id)
                             };
@@ -37026,13 +37174,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         .unwrap_or(&recv_stripped);
                     // Only apply when receiver is a generic-mono type (has ____) or is a
                     // concrete non-primitive type that could implement a protocol.
-                    // Skip primitives — they have their own dispatch above.
-                    let recv_is_candidate = !recv_base.is_empty()
-                        && !matches!(recv_base,
+                    // Primitives normally have their own dispatch above and are skipped —
+                    // EXCEPT for an unconstrained bare-typevar blanket (e.g.
+                    // `fn[T] T @to_str() => "${@}"`), which DOES apply to primitives.
+                    // Without this exception the single-key method_receivers fallback would
+                    // mis-dispatch a primitive receiver into a foreign concrete same-named
+                    // method (e.g. `int.to_str()` → `Nova_NetErr_method_to_str(nova_int)`,
+                    // a number passed where an enum pointer is expected → type confusion /
+                    // SEGV). A CONSTRAINED blanket still skips primitives (no
+                    // `type_impl_protocols` entry → protocols_match false below); with no
+                    // blanket the primitive path is byte-identical to before.
+                    // Plan 174.2 (scalar→str); same dispatch class as Plan 196.6.
+                    let recv_is_primitive = matches!(recv_base,
                             "nova_int" | "nova_bool" | "nova_char" | "nova_str"
                             | "nova_f32" | "nova_f64" | "int" | "bool" | "char"
                             | "str" | "f32" | "f64" | "void")
-                        && !recv_base.starts_with("nova_");
+                        || recv_base.starts_with("nova_");
+                    let has_unconstrained_blanket = self.mono_method_decls.iter()
+                        .any(|((tvname, mname), fd)| {
+                            mname == method
+                                && tvname.len() <= 2
+                                && tvname.chars().all(|c| c.is_ascii_uppercase())
+                                && fd.generics.iter()
+                                    .find(|g| &g.name == tvname)
+                                    .map(|g| g.bounds.is_empty())
+                                    .unwrap_or(false)
+                        });
+                    let recv_is_candidate = !recv_base.is_empty()
+                        && (!recv_is_primitive || has_unconstrained_blanket);
                     if recv_is_candidate {
                         // Find all bare-typevar blanket entries for this method name.
                         let blanket_key_opt: Option<(String, String)> = self.mono_method_decls
@@ -38008,14 +38177,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 {
                     let new_obj = Expr {
                         kind: ExprKind::Ident(parts[0].clone()),
-                        span: func.span, id: crate::ast::ExprId::UNSET,
+                        span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                     };
                     let new_func = Expr {
                         kind: ExprKind::Member {
                             obj: Box::new(new_obj),
                             name: parts[1].clone(),
                         },
-                        span: func.span, id: crate::ast::ExprId::UNSET,
+                        span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                     };
                     let new_call = Expr {
                         kind: ExprKind::Call {
@@ -38023,50 +38192,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             args: args.to_vec(),
                             trailing: None,
                         },
-                        span: func.span, id: crate::ast::ExprId::UNSET,
+                        span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                     };
                     return self.emit_expr(&new_call);
                 }
-                // Plan 08 Ф.2: T.from(v) — infallible конверсии.
-                // bool → str / char → str / f64 → str.
-                if parts.len() == 2 && parts[1] == "from" {
-                    if let Some(arg) = args.first() {
-                        let arg_expr = arg.expr();
-                        let arg_ty = self.infer_expr_c_type(arg_expr);
-                        let v = self.emit_expr(arg_expr)?;
-                        if parts[0] == "str" {
-                            // CharLit is always nova_char (Plan 70.3); char
-                            // variable is also nova_char — both must route
-                            // to nova_char_to_str, not nova_int_to_str.
-                            if let ExprKind::CharLit(_) = &arg_expr.kind {
-                                return Ok(format!("nova_char_to_str({})", v));
-                            }
-                            match arg_ty.as_str() {
-                                // Plan 75: char variable → nova_char_to_str (D26/Plan 70.3).
-                                "nova_char" => return Ok(format!("nova_char_to_str({})", v)),
-                                "nova_bool" => return Ok(format!("nova_bool_to_str({})", v)),
-                                "nova_f64"  => return Ok(format!("nova_f64_to_str({})", v)),
-                                // Plan 180: str.from(f32) must route to the f32
-                                // shortest-round-trip formatter (mirror of the
-                                // interpolation/display path). Без этой ветки
-                                // f32-аргумент проваливался в целочисленный
-                                // fallback и ТРУНКИРОВАЛСЯ (0.1f → "0").
-                                "nova_f32"  => return Ok(format!("nova_f32_to_str({})", v)),
-                                "nova_int"  => return Ok(format!("nova_int_to_str({})", v)),
-                                _ => {}
-                            }
-                        }
-                    }
-                }
+                // Plan 174.2 (str.from-ретракция): the old Path-form `T.from(v)`
+                // hardcoded scalar dispatch (bool/char/f64/f32/int → str) lived
+                // HERE — removed together with the `.nv` declarations
+                // (std/runtime/string/from_scalar.nv, std/runtime/char.nv).
+                // Canonical path now: `.to_str()` (bare-T blanket,
+                // std/runtime/string/core.nv), ordinary instance-method dispatch
+                // below — no Path-form special-case needed. `str.from(...)` is no
+                // longer a known static method; it now falls through to the
+                // PRIMITIVE_TYPES loud-fail guard further down
+                // (`[E_UNKNOWN_STATIC_METHOD]`, ~line 38430 pre-removal).
+                //
                 // Plan 12: registry-driven dispatch для Path-form static
                 // (Type.method(args)). Resolve по (recv_type, method_name)
                 // + arg-types.
-                //
-                // Skip `str.from` — есть hard-coded path ниже с D410 to_str()
-                // fallback. Registry знает только `str.from(char)`
-                // но `str.from(int/f64/bool)` идут через builtin nova_*_to_str
-                // helpers — которых в registry нет.
-                if parts.len() == 2 && !(parts[0] == "str" && parts[1] == "from") {
+                if parts.len() == 2 {
                     let recv_ty = &parts[0];
                     let method_name = &parts[1];
                     if let Some(decls) = self.external_registry
@@ -38103,60 +38247,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if parts.len() == 2 && self.effect_schemas.contains_key(&parts[0]) {
                     format!("Nova_{}_{}", parts[0], parts[1])
                 } else if parts.len() == 2 {
-                    // Built-in primitive static methods (D35).
-                    // `str.from(x)` — convert any value to string (D410
-                    // to_str() family). Bootstrap implementation: dispatch on
-                    // arg type — nova_str pass-through, nova_int via
-                    // nova_int_to_str. Other types TBD.
+                    // Plan 174.2 (str.from-ретракция): the `str.from(x)`
+                    // Path-form static-dispatch special-case (D35 bootstrap)
+                    // that lived HERE is removed — `str.from` is no longer a
+                    // declared static method anywhere (see the `.nv`-side
+                    // removal in from_scalar.nv/char.nv). The canonical path
+                    // is `.to_str()` (bare-T blanket, D410), an ordinary
+                    // instance-method call handled by the ordinary method-call
+                    // codegen, not this Path-form-static branch. A leftover
+                    // `str.from(...)` call site now falls through to the
+                    // PRIMITIVE_TYPES loud-fail guard below
+                    // (`[E_UNKNOWN_STATIC_METHOD]`) — but the type-checker
+                    // already rejects it earlier (no such static method).
                     //
-                    // If user defined `fn V @to_str() -> str` for the arg's
-                    // type V, call that instead of the builtin (so user code
-                    // wins). Checked below before falling back to builtin.
-                    if parts[0] == "str" && parts[1] == "from" {
-                        if let Some(arg) = args.first() {
-                            let arg_ty = self.infer_expr_c_type(arg.expr());
-                            // Plan 175 Ф.3(d): value-records (`NovaValue_<X>`) need
-                            // the value-aware strip too — `_no_ws` only handled
-                            // `Nova_<X>*` (heap), silently leaving `NovaValue_<X>`
-                            // unstripped и ломая user-method lookup below (falls
-                            // through to the numeric-cast fallback for value-record
-                            // Display/Debug interpolation otherwise).
-                            let arg_type = Self::debt_strip_value_prefix_or_nova_trim_start(&arg_ty);
-                            // Plan 11: try multi-overload registry first — strict
-                            // arg-type match resolves between overloads (e.g. char vs int).
-                            // If found, use the matching overload's c_name (with parameter
-                            // mangling like `Nova_str_static_from_char`).
-                            let key = ("str".to_string(), "from".to_string());
-                            if let Some(overloads) = self.method_overloads.get(&key).cloned() {
-                                let static_overloads: Vec<MethodSig> = overloads.into_iter()
-                                    .filter(|s| !s.is_instance).collect();
-                                if !static_overloads.is_empty() {
-                                    let v = self.emit_expr(arg.expr())?;
-                                    let chosen = static_overloads.iter()
-                                        .find(|s| s.param_c_types.len() == 1
-                                            && s.param_c_types[0] == arg_ty);
-                                    if let Some(sig) = chosen {
-                                        return Ok(format!("{}({})", sig.c_name, v));
-                                    }
-                                }
-                            }
-                            // [D410] V has @to_str() -> str?
-                            let to_str_c_name = self.method_overloads
-                                .get(&(arg_type.clone(), "to_str".to_string()))
-                                .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
-                                .map(|s| s.c_name.clone());
-                            if let Some(c_name) = to_str_c_name {
-                                let v = self.emit_expr(arg.expr())?;
-                                return Ok(format!("{}({})", c_name, v));
-                            }
-                            let v = self.emit_expr(arg.expr())?;
-                            return Ok(if arg_ty == "nova_str" {
-                                v
-                            } else {
-                                format!("nova_int_to_str((nova_int)({}))", v)
-                            });
-                        }
-                    }
                     // Could be a static method call: `Type.method(args)`.
                     let method_name = &parts[1];
                     // Plan 88 Ф.1: `parts[0]` может быть type-параметром
@@ -38491,14 +38594,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let is_option_or_result_ok_ctor = func_c == "nova_make_Option_Some"
             || func_c == "nova_make_Result_Ok";
         // Plan 48: detect monomorphizable call (generic free fn, turbofish or inferred)
+        // [Facet-B D307 §1/§3]: gated by `facetb_file_local_concrete_overload`
+        // — a file-local CONCRETE `priv(file)` overload of the SAME name wins
+        // over a same-named generic living (as `priv(file)`) in a peer file
+        // (D84 specificity); see helper doc.
+        let caller_fid = func.span.file_id;
         let (mono_fn_name_opt, turbofish_type_refs): (Option<String>, Vec<crate::ast::TypeRef>) =
             match &func.kind {
-                ExprKind::Ident(name) if self.generic_fns.contains(name.as_str()) => {
+                ExprKind::Ident(name) if self.generic_fns.contains(name.as_str())
+                    && !self.facetb_file_local_concrete_overload(caller_fid, name) =>
+                {
                     (Some(name.clone()), vec![])
                 }
                 ExprKind::TurboFish { base, type_args } => {
                     if let ExprKind::Ident(name) = &base.kind {
-                        if self.generic_fns.contains(name.as_str()) {
+                        if self.generic_fns.contains(name.as_str())
+                            && !self.facetb_file_local_concrete_overload(caller_fid, name)
+                        {
                             (Some(name.clone()), type_args.clone())
                         } else { (None, vec![]) }
                     } else { (None, vec![]) }
@@ -38507,7 +38619,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             };
 
         if let Some(ref fn_name) = mono_fn_name_opt {
-            if let Some(fn_decl) = self.mono_fn_decls.get(fn_name).cloned() {
+            if let Some(fn_decl) = self.facetb_mono_fn_decl_for_call(caller_fid, fn_name) {
                 // Plan 59.1 (2026-06-01): bailout «skip monomorphization for
                 // tuple-returning generics» удалён. Plan 48 V1 fallback на
                 // legacy `_NovaTupleN` (nova_int placeholders) был актуален
@@ -40867,12 +40979,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             obj: Box::new(iter.clone()),
                             name: "iter".to_string(),
                         },
-                        span: iter.span, id: crate::ast::ExprId::UNSET,
+                        span: iter.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                     }),
                     args: Vec::new(),
                     trailing: None,
                 },
-                span: iter.span, id: crate::ast::ExprId::UNSET,
+                span: iter.span, id: crate::ast::ExprId::UNSET, debug_only: false,
             };
             return self.emit_for(pattern, &iter_call, body);
         }
@@ -47191,10 +47303,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ("str",  "i32",  "use `i32.try_from(s)?`"),
             ("str",  "f64",  "use `f64.try_from(s)?`"),
             ("str",  "bool", "use `bool.try_from(s)?`"),
-            ("int",  "str",  "use `str.from(n)`"),
-            ("f64",  "str",  "use `str.from(f)`"),
-            ("bool", "str",  "use `str.from(b)`"),
-            ("char", "str",  "use `str.from(c)` (UTF-8 encode)"),
+            ("int",  "str",  "use `n.to_str()`"),
+            ("f64",  "str",  "use `f.to_str()`"),
+            ("bool", "str",  "use `b.to_str()`"),
+            ("char", "str",  "use `c.to_str()` (UTF-8 encode)"),
             // Plan 134: *() cast restrictions (replaces `ptr` — Plan 134).
             // Allowed: *() ↔ {u64, i64, int} (для integer-storage).
             // Banned: *() ↔ {str, bool, f32, f64, char}.
@@ -48668,6 +48780,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     fn debt_is_generic_stub_c(&self, s: &str) -> bool {
+        // [196.5 Stage-D волна-4] B12c: the SAME name set as `BUILTIN_RUNTIME_TYPES`
+        // (emit_module forward-decl skip, ~5275 — function-local `const`, not
+        // reachable from here without restructuring, hence duplicated rather than
+        // shared; a drift between the two only regresses to the OLD stub-guess
+        // behavior, never a NEW correctness bug). These are types defined in
+        // `nova_rt/*.h` with NO Nova `.nv` declaration at all — genuinely CONCRETE,
+        // but absent from every registry this function otherwise consults
+        // (`record_schemas`/`sum_schemas`/`generic_types`/`opaque_ffi_types`), so
+        // the "not registered anywhere ⟹ unresolved generic-param stub" heuristic
+        // false-positived on `Nova_ChanReader*` (a checker-materialized Channel-2
+        // return for the `ChanReader.close_after` intrinsic fell through to legacy
+        // ANYWAY despite a correct channel hit — B12c producer, docs/plans/
+        // 196.5-stage-d-wave4-notes.md). Structurally safe: every name here is a
+        // multi-char PascalCase runtime-builtin identifier, never a plausible
+        // generic type-param spelling (those are always ≤2-char, e.g. `T`/`U`/`K`).
+        const RUNTIME_NATIVE_CONCRETE_TYPES: &[&str] = &[
+            "ChanReader", "ChanWriter", "ChannelPair",
+            "AtomicInt", "AtomicBool", "Mutex", "WaitGroup", "Once",
+            "RwLock", "ReentrantMutex", "Timestamp", "MemOrdering",
+            "AtomicI8", "AtomicI16", "AtomicI32", "AtomicI64",
+            "AtomicU8", "AtomicU16", "AtomicU32", "AtomicU64",
+            "AtomicIsize", "AtomicUsize", "AtomicPtr",
+            "MutexGuard", "ReadGuard", "WriteGuard", "Permit", "OnceGuard",
+            "Barrier", "Condvar", "WaitResult", "CountDownLatch", "Semaphore",
+        ];
         if let Some(inner) = s.strip_prefix("Nova_").and_then(|x| x.strip_suffix('*')) {
             let name = inner.trim();
             return !name.is_empty()
@@ -48683,6 +48820,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 100.5 (D163): opaque FFI consume types are concrete —
                 // `Nova_File*` must NOT be treated as a generic stub.
                 && !self.opaque_ffi_types.contains(name)
+                && !RUNTIME_NATIVE_CONCRETE_TYPES.contains(&name)
                 // Plan 91.13 (D295 V2): monomorphized generic instances carry
                 // `____` in their mangled name (e.g. `Vec____NovaValue_SocketAddr`)
                 // and are always concrete — never an unresolved type-param stub.
@@ -48928,6 +49066,65 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.fn_field_call_sig(obj, field).map(|(_, ret)| ret)
     }
 
+    /// [M-176-xmod-payload-variant-ctor]: recognise a nullary-variant method
+    /// chain that the parser collapsed into ONE flat 3-part Path
+    /// `[Type, Variant, method]` with a trailing `(...)` — the PascalCase
+    /// path-collector (parser/mod.rs `starts_uppercase` loop) greedily eats
+    /// EVERY `.ident` after an initial PascalCase segment regardless of casing
+    /// (kept deliberately so lowercase static-ctor calls like `SeekFrom.start(5)`
+    /// still parse as a single Path), so `Type.Variant.method()` — with NO
+    /// parens on the nullary variant, hence no nested Call/Member node — becomes
+    /// one flat `Path([Type, Variant, method])`. Rewrite it into the equivalent
+    /// `Member{ obj: Path[Type, Variant], name: method }` so it flows through
+    /// the SAME (collision-aware AND generic-aware) Member-call machinery a
+    /// bound `ro x = Type.Variant; x.method()` already uses — instead of hitting
+    /// the Path-only `parts.len() != 2` P67-LEGACY panic (emit_c.rs `infer_call
+    /// _ret_c` legacy tail / `emit_call` bottom fallback). A PAYLOAD variant
+    /// (`Type.Info(5).method()`) never reaches here — its ctor parens already
+    /// force a nested Call/Member shape.
+    ///
+    /// Returns `None` for any 3-part Path whose middle segment is NOT a variant
+    /// of the head type (module-qualified statics `Mod.Type.fn`, deep member
+    /// paths, …) — those stay on their existing path unchanged. Collision-aware
+    /// (D381): a variant is recognised under the bare head name, under the
+    /// file-context-qualified base (`ref_type_base`), OR — for a generic sum —
+    /// against the template's declared variants; mirrors `emit_expr`'s D109
+    /// unit-variant Path arm. The Member form owns the correct receiver-type
+    /// resolution (qualified for colliding sums, mono for generics) + the method
+    /// return/dispatch, so BOTH inference and emission delegate to it with zero
+    /// duplicated per-shape logic.
+    fn variant_chain_as_member(&self, func: &Expr) -> Option<Expr> {
+        let parts = match &func.kind {
+            ExprKind::Path(p) if p.len() == 3 => p,
+            _ => return None,
+        };
+        let head = &parts[0];
+        let variant = &parts[1];
+        let is_variant = self
+            .sum_schemas
+            .get(head.as_str())
+            .map_or(false, |v| v.contains_key(variant.as_str()))
+            || self
+                .sum_schemas
+                .get(self.ref_type_base(head, &[]).as_str())
+                .map_or(false, |v| v.contains_key(variant.as_str()))
+            || self.generic_type_templates.get(head.as_str()).map_or(false, |td| {
+                matches!(&td.kind, crate::ast::TypeDeclKind::Sum(vars)
+                    if vars.iter().any(|sv| &sv.name == variant))
+            });
+        if !is_variant {
+            return None;
+        }
+        let recv = Expr::new(
+            ExprKind::Path(vec![head.clone(), variant.clone()]),
+            func.span,
+        );
+        Some(Expr::new(
+            ExprKind::Member { obj: Box::new(recv), name: parts[2].clone() },
+            func.span,
+        ))
+    }
+
     /// Plan 172.1 U.4.1: thin entry over the legacy re-derivation. When the semantic
     /// pass annotated this Expr (resolved_types), DEBUG-asserts the annotation lowers
     /// to the SAME C-type — proving equivalence across the corpus before U.4.2+ flips
@@ -48939,6 +49136,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// (2485 строк × 2) в channel-6q и в финальном legacy-match Call-арме;
     /// оба сайта теперь зовут этот хелпер.
     fn infer_call_ret_c(&self, expr: &Expr, func: &Expr, args: &[CallArg]) -> String {
+                    // [M-176-xmod-payload-variant-ctor]: a nullary-variant method
+                    // chain collapsed into a flat 3-part Path — rewrite to the
+                    // Member form and re-enter so the (collision/generic-aware)
+                    // Member machinery resolves the method return, never reaching
+                    // the Path-only "no method segment" P67 panic. See
+                    // `variant_chain_as_member`.
+                    if let Some(member_func) = self.variant_chain_as_member(func) {
+                        return self.infer_call_ret_c(expr, &member_func, args);
+                    }
                     // D38 turbofish прозрачен для inference — но extract type_args
                     // ПЕРЕД unwrap чтобы Plan 54 Ф.4 return-type inference (для
                     // generic-fn возвращающей []T) могла использовать turbofish
@@ -49155,6 +49361,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 if parts.len() == 2 {
                                     Some((parts[0].clone(), parts[1].clone(), false, false))
                                 } else {
+                                    // [M-176-xmod-payload-variant-ctor]: a 3-part variant
+                                    // chain (`Type.Variant.method()`) is rewritten to Member
+                                    // form at the top of `infer_call_ret_c`
+                                    // (`variant_chain_as_member`) and never reaches here as a
+                                    // Path — this arm only sees genuine 2-part static/effect
+                                    // Path calls.
                                     None
                                 }
                             }
@@ -49733,12 +49945,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     // Infer return type for call expressions
                     if let ExprKind::Ident(name) = &func.kind {
-                        // [196.5 Stage-D волна-3 replay] B10a: НЕ дубликат — kill-switch
-                        // A/B показал .c-диф на no-prelude CU (spec_tests/conformance/
-                        // no_prelude_panic_assert): в #no_prelude-режиме println/assert —
-                        // интринсики БЕЗ .nv-деклараций, канал/реестры их возврата не
-                        // производят. Уникальный легаси-трафик, остаётся до продюсера
-                        // интринсик-схем (docs/plans/196.5-stage-d-wave3-notes.md).
+                        // [196.5 Stage-D волна-4] B10a: продюсер добавлен
+                        // (types/mod.rs, f1_expr Call/Ident-арм — mirrors
+                        // this SAME hardcode into `resolved_types` Channel 2
+                        // unconditionally). Закрыл ВЕСЬ таргетный трафик
+                        // (no-prelude CU spec_tests/conformance/
+                        // no_prelude_panic_assert: 4/4 assert/debug_assert
+                        // call-sites → 0 hit, изолированный ре-замер). Снос
+                        // НЕ выполнен — обнаружен ДРУГОЙ, структурно
+                        // отдельный источник трафика (2 hit, conformance CU):
+                        // `assert(...)` внутри тела `effect Supervisor {
+                        // on_child_fail(idx, err) { ... } }`
+                        // (spec_tests/conformance/standalone/
+                        // supervisor_escalate_test.nv:77-78). Корень —
+                        // `f1_expr`'s `ExprKind::With { bindings, body }` арм
+                        // рекурсирует ТОЛЬКО в `body`, НИКОГДА в
+                        // `bindings[i].handler` (сам handler-литерал
+                        // `effect X { ... }`) — ни один exp внутри ЛЮБОГО
+                        // handler-метода (не только Supervisor) не проходит
+                        // через `f1_expr`, значит НИКОГДА не попадает в
+                        // `resolved_types_buf`. Это не B10a-специфичный
+                        // пробел — это структурный пробел канала для ВСЕХ
+                        // handler-literal-тел (потенциально шире, чем 4
+                        // интринсик-имени здесь), выходит за объём узкого
+                        // "intrinsic-scheme producer" задания волны-4.
+                        // Остаётся для будущей волны: расширить `With`-арм
+                        // f1_expr, чтобы обходить `bindings[i].handler` (с
+                        // осторожностью — параметры метода (`idx`, `err`) не
+                        // сидированы в scope нигде в этом пути, нужно
+                        // отдельное исследование побочных эффектов на другие
+                        // handler-walk'и: never-ops/purity/throw-detection).
                         if name == "println" || name == "print" || name == "assert" || name == "debug_assert" {
                             self.icr_trace("B10a_ident_println_assert");
                             return "nova_unit".into();
@@ -49854,8 +50090,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Plan 48: infer concrete return type for monomorphized generic fn calls.
                         // When a generic fn's return type is a bare type param T, resolve T
                         // from the first matching argument type.
-                        if self.generic_fns.contains(name.as_str()) {
-                            if let Some(fn_decl) = self.mono_fn_decls.get(name).cloned() {
+                        // [Facet-B D307 §1/§3]: same file-local-concrete-wins gate as
+                        // emit_call's mono-dispatch detection — a same-named `priv(file)`
+                        // CONCRETE overload in THIS call's own file must not have its
+                        // return type inferred through an unrelated peer's generic.
+                        let facetb_caller_fid = func.span.file_id;
+                        if self.generic_fns.contains(name.as_str())
+                            && !self.facetb_file_local_concrete_overload(facetb_caller_fid, name)
+                        {
+                            if let Some(fn_decl) = self.facetb_mono_fn_decl_for_call(facetb_caller_fid, name) {
                                 self.icr_trace("B10j_generic_fn_mono_resolve");
                                 // Plan 59.1 (2026-06-01): tuple-returning bailout
                                 // (was: return "void*") удалён. Plan 59 Ф.7.5
@@ -50108,7 +50351,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                             kind: ExprKind::Ident(
                                                                 "Vec".to_string()),
                                                             span: obj.span,
-                                                            id: crate::ast::ExprId::UNSET,
+                                                            id: crate::ast::ExprId::UNSET, debug_only: false,
                                                         }),
                                                         type_args: vec![
                                                             crate::ast::TypeRef::Named {
@@ -50119,18 +50362,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         ],
                                                     },
                                                     span: obj.span,
-                                                    id: crate::ast::ExprId::UNSET,
+                                                    id: crate::ast::ExprId::UNSET, debug_only: false,
                                                 }),
                                                 name: "new".to_string(),
                                             },
                                             span: func.span,
-                                            id: crate::ast::ExprId::UNSET,
+                                            id: crate::ast::ExprId::UNSET, debug_only: false,
                                         }),
                                         args: Vec::new(),
                                         trailing: None,
                                     },
                                     span: func.span,
-                                    id: crate::ast::ExprId::UNSET,
+                                    id: crate::ast::ExprId::UNSET, debug_only: false,
                                 };
                                 return self.infer_expr_c_type(&synth_new);
                                 }
@@ -50152,7 +50395,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                             kind: ExprKind::Ident(
                                                                 "Vec".to_string()),
                                                             span: obj.span,
-                                                            id: crate::ast::ExprId::UNSET,
+                                                            id: crate::ast::ExprId::UNSET, debug_only: false,
                                                         }),
                                                         type_args: vec![
                                                             crate::ast::TypeRef::Named {
@@ -50163,18 +50406,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         ],
                                                     },
                                                     span: obj.span,
-                                                    id: crate::ast::ExprId::UNSET,
+                                                    id: crate::ast::ExprId::UNSET, debug_only: false,
                                                 }),
                                                 name: method.clone(),
                                             },
                                             span: func.span,
-                                            id: crate::ast::ExprId::UNSET,
+                                            id: crate::ast::ExprId::UNSET, debug_only: false,
                                         }),
                                         args: args.to_vec(),
                                         trailing: None,
                                     },
                                     span: func.span,
-                                    id: crate::ast::ExprId::UNSET,
+                                    id: crate::ast::ExprId::UNSET, debug_only: false,
                                 };
                                 return self.infer_expr_c_type(&synth);
                             }
@@ -50649,59 +50892,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             self.icr_trace("B11af_fn_ret_method_nameonly");
                             return ret_ty.clone();
                         }
-                        // [M-172.1-d174-sync-consume-registry] (Gap B, extern-method return):
-                        // extern "nova"-метод (sync guards: `MutexGuard consume @unlock()` и пр.)
-                        // не имеет `fn_ret_*` var_types-записи (тело — C-рантайм, forward-decl
-                        // не эмитится) — его return берём из РЕЕСТРА .nv-деклараций
-                        // (ExternalRegistry, §3: реестр из деклараций, не хардкод).
-                        {
-                            let bare = obj_ty.trim_end_matches('*');
-                            let recv_tn = Self::debt_strip_value_nova_tuple_prefix(bare);
-                            // D289 qualified static path `mod.Type.method(...)`: obj =
-                            // Member{Ident(mod ∈ imported_modules), TypeName} — тип
-                            // ресивера берём СИНТАКСИЧЕСКИ (имя типа), не из C-типа
-                            // (module-namespace не значение, obj_ty пуст).
-                            let recv_tn: &str = if recv_tn.is_empty() {
-                                match &obj.kind {
-                                    ExprKind::Member { obj: mo, name: tn }
-                                        if matches!(&mo.kind, ExprKind::Ident(m)
-                                            if self.imported_modules.contains(m.as_str())) =>
-                                    {
-                                        tn.as_str()
-                                    }
-                                    _ => recv_tn,
-                                }
-                            } else {
-                                recv_tn
-                            };
-                            if !recv_tn.is_empty() {
-                                if let Some(decls) =
-                                    self.external_registry.lookup(recv_tn, method)
-                                {
-                                    // ≥1 decl, ВСЕ с одинаковым return — берём его
-                                    // (дубль одной декларации возникает легитимно:
-                                    // load_builtins + inline-merge того же .nv через
-                                    // `import`). Разошедшиеся overload-returns → mimo
-                                    // (не угадываем).
-                                    // [196.5 Stage-D волна-3 replay] B11ag: НЕ дубликат —
-                                    // kill-switch A/B уронил std/src/runtime паникой
-                                    // (`.call_once` на Nova_Once* → B11al): extern "nova"
-                                    // методы (тело в C-рантайме) не имеют fn_ret_*-записей
-                                    // и не каналируются — реестр .nv-деклараций здесь
-                                    // единственный источник возврата. Уникальный трафик.
-                                    if let Some(first) = decls.first() {
-                                        if !first.return_c_type.is_empty()
-                                            && decls.iter().all(|d| {
-                                                d.return_c_type == first.return_c_type
-                                            })
-                                        {
-                                            self.icr_trace("B11ag_extern_method_registry");
-                                            return first.return_c_type.clone();
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        // [196.5 Stage-D волна-4] B11ag_extern_method_registry REMOVED.
+                        // Former: extern "nova" method return read from the
+                        // ExternalRegistry `.nv`-declaration registry
+                        // (`external_registry.lookup(recv_tn, method)`) — covered two
+                        // sub-classes now both checker-materialised into Channel 2:
+                        //   (a) INSTANCE extern method with implicit-Unit return
+                        //       (`extern "nova" fn Once mut @call_once(...)` — no `->`):
+                        //       `resolve_instance_method_return_arity` used to bail on
+                        //       `f.return_type.as_ref()?` for a None return; now returns
+                        //       `Unit` for `is_external` methods (types/mod.rs ~14778).
+                        //   (b) STATIC extern method via D289 module-qualified path
+                        //       (`raw_mem.RawMem.alloc_uncollectable(8)` — nested
+                        //       `Member{Member{Ident(mod), Type}, method}`): the checker
+                        //       could not recover a receiver type (`mod.Type` is a
+                        //       namespace, not a value), so no return reached the channel;
+                        //       now resolved via `resolve_generic_static_return(Type,
+                        //       method, &[], span)` (empty turbofish; these builtins are
+                        //       non-generic) in f1_expr's nested-Member arm (~7914).
+                        // NO-HIT after both producers across conformance + std/src/{time,
+                        // concurrency,runtime,collections,data} (docs/plans/
+                        // 196.5-stage-d-wave4-notes.md) ⟹ structurally unreachable (§5).
                         // [196.5 Stage-D волна-3] B11ah_resolved_types_channel_late REMOVED.
                         // Former: `if expr.id.is_set() { if let Some(rt) =
                         // self.resolved_types.get(&expr.id) { if let Ok(ct) =
@@ -50735,6 +50946,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // the return type is receiver-invariant, so resolve it
                         // directly instead of ICE-ing (§6). Guarded on the exact
                         // serde `Result[(),SerError]` C mono being in use.
+                        // [196.5 Stage-D волна-5] PARTIAL producer landed
+                        // (types/mod.rs f1_expr Member-arm, `method == "serialize"`,
+                        // ~7960): a receiver that is a bare in-scope generic
+                        // (`Named{path:["T"]}`, `gs.contains("T")`) resolved via
+                        // `infer_expr_type`/`resolved_types_buf` now channels
+                        // `Result[(), SerError]` straight from the `Serialize`
+                        // protocol decl — confirmed closing the FOR-LOOP-receiver
+                        // class (`fn[T Serialize] []T @serialize(...) { for v in @
+                        // { v.serialize(s) } }`, `NOVA_B11AI_TRACE`-style probe:
+                        // every for-loop call-site now channels
+                        // `Ok("NovaRes_nova_unit_NovaValue_SerError*")` byte-
+                        // identical to this arm's own hardcoded string). REMAINS
+                        // live for a DIFFERENT receiver class: a MATCH-ARM-BOUND
+                        // variable (`Option[T]@serialize`'s `Some(v) => v.serialize
+                        // (s)` — `v` bound by `Pattern::Variant`, not a `for`-loop
+                        // var) is not present in `scope` NOR `resolved_types_buf`
+                        // at the point `f1_expr` visits the arm body (`ExprKind::
+                        // Match` in types/mod.rs does not seed pattern-bound names
+                        // into `scope` before walking `arm.body` — confirmed by
+                        // direct trace: `recv_ty` lookup fails silently, the new
+                        // producer's outer `if let Some(recv_ty)` is never entered
+                        // for this call class). Fixing THAT is a broader change
+                        // (enum-variant pattern-bind → scope/channel registration,
+                        // touching every match arm, not just Serialize) — out of
+                        // this point-fix's narrow blast radius; left live,
+                        // documented here for the next wave.
                         if method == "serialize"
                             && self.novares_typedefs_buf
                                 .borrow()
@@ -50828,17 +51065,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.icr_trace("B12b_path_channel_new");
                                 return "Nova_ChannelPair".into();
                             }
-                            // Plan 65 Ф.1: ChanReader.close_after(Duration) —
-                            // Path-form.
-                            // [196.5 Stage-D волна-3 replay] B12c: НЕ дубликат —
-                            // kill-switch A/B уронил std/src/time паникой (B12q,
-                            // method=close_after): Path-форму этого fixed-return
-                            // интринсика чекер не аннотирует, каскад ниже её не
-                            // резолвит. Уникальный трафик до продюсера интринсик-схем.
-                            if eff == "ChanReader" && method_name == "close_after" {
-                                self.icr_trace("B12c_path_chanreader_close_after");
-                                return "Nova_ChanReader*".into();
-                            }
+                            // [196.5 Stage-D волна-4] B12c_path_chanreader_close_after
+                            // REMOVED. Producer added (types/mod.rs f1_expr Path-arm):
+                            // `ChanReader.close_after` materializes
+                            // `ResolvedType::Named{"ChanReader"}` into Channel 2
+                            // unconditionally (compiler-builtin, no `.nv` decl —
+                            // mirrors this SAME hardcoded return). Consumer-side fix
+                            // (`debt_is_generic_stub_c`): `Nova_ChanReader*` was a
+                            // FALSE-POSITIVE "generic stub" (ChanReader absent from
+                            // record_schemas/sum_schemas/generic_types/opaque_ffi_types
+                            // — genuinely concrete `nova_rt/*.h` runtime type, never
+                            // Nova-declared) — added `RUNTIME_NATIVE_CONCRETE_TYPES`
+                            // allowlist there. NO-HIT after both fixes across
+                            // conformance + std/src/{time,concurrency,runtime,
+                            // collections,data} (docs/plans/196.5-stage-d-wave4-notes.md)
+                            // ⟹ structurally unreachable (§5).
                             // Plan 196.2 W1 [gate-1]: B12c_path_chanreader_close_at REMOVED.
                             // ChanReader.close_at(Monotonic) Path-form (sibling close_after
                             // above still fires) — checker-materialised. NO-HIT (§5).
@@ -52261,6 +52502,52 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if let Some((_, c_ty)) = Self::numeric_type_constant_mapping(parts) {
                     return c_ty.to_string();
                 }
+                // [M-175-type-const-max-shadows-builtin] (2026-07-14): `T.MAX`/`T.MIN`/…
+                // inside a type-set-bounded generic body — `parts[0]` is a type-PARAMETER,
+                // not a concrete type name, so the direct `numeric_type_constant_mapping`
+                // check above (unsubstituted `parts`) misses. Mirror the D310 VALUE-side
+                // substitution already applied in `emit_expr`'s Path arm (Plan 172.3,
+                // ~line 28331): resolve `parts[0]` through `subst_c` (mono `current_type_
+                // subst`, keyed by type-PARAM name — a concrete type name like `Duration`
+                // never matches, so this cannot fire for `Duration.MAX`/legit assoc-const
+                // reads), map the substituted C-name back to its Nova primitive, and look
+                // the TYPE up in the SAME mapping table. Without this, the Path falls
+                // through — past every arm below — to the P67-LEGACY final Path arm's bare
+                // `var_types.get(last)` (last segment = "MAX"), which resolves the
+                // constant NAME against ANY module-level const called `MAX`/`MIN`
+                // regardless of qualifier (a user `const MAX Duration = {…}` shadows the
+                // builtin, mis-typing `T.MAX` as `NovaValue_Duration` and routing `==`
+                // into structural field-eq on a non-record operand — CC-FAIL "member
+                // reference base type 'int' is not a structure"). The constant's C
+                // *value* was always correct (numeric_type_constant_mapping VALUE table
+                // in `emit_expr` already substitutes) — only the TYPE channel was missing
+                // this mirror.
+                if parts.len() == 2 {
+                    if let Some(c_name) = self.subst_c(&parts[0]) {
+                        let nova_prim: Option<&str> = match c_name.trim_end_matches('*').trim() {
+                            "nova_int" => Some("int"),
+                            "int8_t" => Some("i8"),
+                            "int16_t" => Some("i16"),
+                            "int32_t" => Some("i32"),
+                            "int64_t" => Some("i64"),
+                            "nova_uint" | "uint64_t" => Some("uint"),
+                            "uint8_t" | "nova_byte" => Some("u8"),
+                            "uint16_t" => Some("u16"),
+                            "uint32_t" => Some("u32"),
+                            "nova_char" => Some("char"),
+                            "nova_bool" => Some("bool"),
+                            "f32" | "float" => Some("f32"),
+                            "f64" | "double" => Some("f64"),
+                            _ => None,
+                        };
+                        if let Some(np) = nova_prim {
+                            let subst_parts = [np.to_string(), parts[1].clone()];
+                            if let Some((_, c_ty)) = Self::numeric_type_constant_mapping(&subst_parts) {
+                                return c_ty.to_string();
+                            }
+                        }
+                    }
+                }
                 // D406: qualified sum-variant access `TypeName.Variant` parsed by the
                 // parser as `Path(["TypeName", "Variant"])` when the sum-type name is
                 // not a local variable. The whole expression has type `Nova_TypeName*`
@@ -52319,14 +52606,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if parts.len() == 2 && self.lazy_consts.contains(&parts[0]) {
                         let new_obj = Expr {
                             kind: ExprKind::Ident(parts[0].clone()),
-                            span: func.span, id: crate::ast::ExprId::UNSET,
+                            span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                         };
                         let new_func = Expr {
                             kind: ExprKind::Member {
                                 obj: Box::new(new_obj),
                                 name: parts[1].clone(),
                             },
-                            span: func.span, id: crate::ast::ExprId::UNSET,
+                            span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                         };
                         let new_call = Expr {
                             kind: ExprKind::Call {
@@ -52334,7 +52621,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 args: args.clone(),
                                 trailing: trailing.clone(),
                             },
-                            span: expr.span, id: crate::ast::ExprId::UNSET,
+                            span: expr.span, id: crate::ast::ExprId::UNSET, debug_only: false,
                         };
                         return self.infer_expr_c_type(&new_call);
                     }
@@ -54312,7 +54599,7 @@ mod mem_ordering_tests {
     fn path_expr(parts: &[&str]) -> Expr {
         Expr {
             kind: ExprKind::Path(parts.iter().map(|s| s.to_string()).collect()),
-            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
@@ -54355,7 +54642,7 @@ mod mem_ordering_tests {
     #[test]
     fn non_mem_ordering_path_returns_none() {
         // Bare ident (not a path) → None
-        let e = Expr { kind: ExprKind::Ident("Relaxed".to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET };
+        let e = Expr { kind: ExprKind::Ident("Relaxed".to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false };
         assert_eq!(CEmitter::nova_mem_ordering_to_atomic(&e), None);
     }
 
@@ -54754,36 +55041,36 @@ mod lvalue_receiver_tests {
     use crate::diag::Span;
 
     fn ident(name: &str) -> Expr {
-        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET }
+        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     fn member(obj: Expr, name: &str) -> Expr {
         Expr {
             kind: ExprKind::Member { obj: Box::new(obj), name: name.to_string() },
-            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
     fn index(obj: Expr, key: Expr) -> Expr {
         Expr {
             kind: ExprKind::Index { obj: Box::new(obj), index: Box::new(key) },
-            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
     fn self_access() -> Expr {
-        Expr { kind: ExprKind::SelfAccess, span: Span::dummy(), id: crate::ast::ExprId::UNSET }
+        Expr { kind: ExprKind::SelfAccess, span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     fn call(func: Expr) -> Expr {
         Expr {
             kind: ExprKind::Call { func: Box::new(func), args: vec![], trailing: None },
-            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
     fn int_lit(v: i64) -> Expr {
-        Expr { kind: ExprKind::IntLit(v), span: Span::dummy(), id: crate::ast::ExprId::UNSET }
+        Expr { kind: ExprKind::IntLit(v), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     #[test]
@@ -54961,11 +55248,11 @@ mod array_lit_named_tuple_box_tests {
     use crate::diag::Span;
 
     fn ident(name: &str) -> Expr {
-        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET }
+        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     fn float_lit(v: f64) -> Expr {
-        Expr { kind: ExprKind::FloatLit(v), span: Span::dummy(), id: crate::ast::ExprId::UNSET }
+        Expr { kind: ExprKind::FloatLit(v), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     fn call(func: Expr, args: Vec<Expr>) -> Expr {
@@ -54975,7 +55262,7 @@ mod array_lit_named_tuple_box_tests {
                 args: args.into_iter().map(CallArg::Item).collect(),
                 trailing: None,
             },
-            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
@@ -55020,8 +55307,8 @@ mod array_lit_named_tuple_box_tests {
         // (e.g. accidentally matching int prefix) сломал бы baseline.
         let mut e = CEmitter::new();
         let elems = vec![
-            ArrayElem::Item(Expr { kind: ExprKind::IntLit(1), span: Span::dummy(), id: crate::ast::ExprId::UNSET }),
-            ArrayElem::Item(Expr { kind: ExprKind::IntLit(2), span: Span::dummy(), id: crate::ast::ExprId::UNSET }),
+            ArrayElem::Item(Expr { kind: ExprKind::IntLit(1), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }),
+            ArrayElem::Item(Expr { kind: ExprKind::IntLit(2), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }),
         ];
         let before_out = e.out.clone();
         let _tmp = e.emit_array_lit(&elems).expect("emit_array_lit must succeed");
@@ -55095,20 +55382,20 @@ mod plan127_promoted_member_access_tests {
     use crate::diag::Span;
 
     fn ident(name: &str) -> Expr {
-        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET }
+        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }
     }
 
     fn member(obj: Expr, name: &str) -> Expr {
         Expr {
             kind: ExprKind::Member { obj: Box::new(obj), name: name.to_string() },
-            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 
     fn path(parts: &[&str]) -> Expr {
         Expr {
             kind: ExprKind::Path(parts.iter().map(|s| s.to_string()).collect()),
-            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false,
         }
     }
 

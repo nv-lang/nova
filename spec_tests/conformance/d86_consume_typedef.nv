@@ -1,0 +1,25 @@
+// Repro (2026-07-14, orchestrator-diagnosed): user consume-record used through
+// Result[T,E]/Option[T] in the MERGED folder-module spec_tests.conformance fails
+// C-compile with `use of undeclared identifier 'Nova_D86Res_p'` — the pointer
+// typedef for a consume-record is not emitted in the merged-CU (single-file CU
+// builds green). Minimal isolation of the codegen gap before the real ??+consume
+// fix (see d5bf3b11a / 6cebb3091 history).
+module spec_tests.conformance
+
+export type D86TypedefRes consume {
+    id int,
+}
+
+export fn D86TypedefRes consume @close() -> () { () }
+
+export fn d86_typedef_open(ok bool) -> Result[D86TypedefRes, str] {
+    if ok { Ok(D86TypedefRes { id: 1 }) } else { Err("boom") }
+}
+
+test "consume-record через Result[T,E] typedef Nova_<T>_p эмитится в merged-CU" {
+    ro r = d86_typedef_open(true)
+    match r {
+        Ok(v) => v.close(),
+        Err(_) => panic("unexpected"),
+    }
+}

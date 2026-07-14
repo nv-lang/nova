@@ -1,0 +1,27 @@
+// [Facet-B D307 §5.3] Positive — co-exist RUNTIME, part 1/3.
+//
+// D307 §5 criterion 3 ("Позитив co-exist"): peer files of the SAME
+// folder-module (`spec_tests.conformance`) may each declare a `priv(file) fn`
+// with the SAME NAME — file-discriminated codegen must dispatch each call to
+// ITS OWN declaring file's body, never a peer's. This trio (this file +
+// `d307_5_3_pf_dispatch_int.nv` + `d307_5_3_pf_dispatch_generic.nv`) sharpens
+// the existing criterion to the case that used to bleed: one of the three
+// same-named `priv(file)` overloads is GENERIC (`fn[T SignedInt]`) — the
+// generic-mono dispatch path used to hijack every same-named call in the
+// whole folder-CU (this file's own concrete `bool` overload included) once
+// ANY peer declared a same-named `priv(file)` generic (facet-B, D84
+// specificity: a file-local CONCRETE overload must win).
+//
+// This file's own `pf_dispatch(bool)` must return its OWN 111/222 — never the
+// generic identity body from a peer file.
+
+module spec_tests.conformance
+
+priv(file) fn pf_dispatch(c bool) -> int {
+    if c { 111 } else { 222 }
+}
+
+test "D307 §5.3 co-exist: own-file bool priv(file) pf_dispatch wins over peer generic" {
+    assert(pf_dispatch(true) == 111)
+    assert(pf_dispatch(false) == 222)
+}

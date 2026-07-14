@@ -18,7 +18,7 @@ module time.civil
 // Ровно n ASCII-цифр с позиции pos → (значение, новая позиция).
 fn digits_at(s str, pos int, n int) -> Result[(i64, int), ParseDateTimeError] {
     if pos + n > s.byte_len() {
-        return Err(FormatMismatch(pos, str.from(n) + " digits"))
+        return Err(FormatMismatch(pos, n.to_str() + " digits"))
     }
     mut v i64 = 0
     mut i = pos

@@ -30,7 +30,7 @@ type Clock1 effect {
 fn use_effect_int() Clock1 -> str {
     ro x = Clock1.tick()          // effect-op result — declared `-> int`
     ro doubled = x * 2 - 1       // arithmetic keeps int
-    ro viastr = str.from(doubled)
+    ro viastr = doubled.to_str()
     ro viainterp = "${doubled}"
     assert(viastr == viainterp)
     viastr

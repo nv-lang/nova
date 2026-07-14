@@ -658,19 +658,19 @@ export fn Duration @to_str() -> str {
     ro sign = if n < 0 { "-" } else { "" }
 
     if abs < 1_000 {
-        sign + str.from(abs) + "ns"
+        sign + abs.to_str() + "ns"
     } else if abs < 1_000_000 {
-        sign + str.from(abs / 1_000) + "us"
+        sign + (abs / 1_000).to_str() + "us"
     } else if abs < 1_000_000_000 {
-        sign + str.from(abs / 1_000_000) + "ms"
+        sign + (abs / 1_000_000).to_str() + "ms"
     } else if abs < 60 * 1_000_000_000 {
-        sign + str.from(@as_secs_f64().abs()) + "s"
+        sign + @as_secs_f64().abs().to_str() + "s"
     } else if abs < 3_600 * 1_000_000_000 {
-        sign + str.from((abs / 60_000_000_000)) + "min"
+        sign + (abs / 60_000_000_000).to_str() + "min"
     } else if abs < 86_400 * 1_000_000_000 {
-        sign + str.from((abs / 3_600_000_000_000)) + "h"
+        sign + (abs / 3_600_000_000_000).to_str() + "h"
     } else {
-        sign + str.from((abs / 86_400_000_000_000)) + "d"
+        sign + (abs / 86_400_000_000_000).to_str() + "d"
     }
 }
 
@@ -689,7 +689,7 @@ export fn Duration @debug(mut w Write) -> () {
     w.write("Duration(")
     w.write(@to_str())
     w.write(", ")
-    w.write(str.from(@nanos))
+    w.write(@nanos.to_str())
     w.write("ns)")
 }
 
@@ -714,10 +714,10 @@ export fn Duration @to_human() -> str {
     buf.append(sign)
 
     mut started = false
-    if p.days > 0 { buf.append(str.from(p.days)); buf.append("d "); started = true }
-    if p.hours > 0 || started { buf.append(str.from(p.hours)); buf.append("h "); started = true }
-    if p.minutes > 0 || started { buf.append(str.from(p.minutes)); buf.append("min "); started = true }
-    if p.seconds > 0 || started { buf.append(str.from(p.seconds)); buf.append("s") }
+    if p.days > 0 { buf.append(p.days.to_str()); buf.append("d "); started = true }
+    if p.hours > 0 || started { buf.append(p.hours.to_str()); buf.append("h "); started = true }
+    if p.minutes > 0 || started { buf.append(p.minutes.to_str()); buf.append("min "); started = true }
+    if p.seconds > 0 || started { buf.append(p.seconds.to_str()); buf.append("s") }
 
     ro result = buf.into_str()
     result.trim_ascii()
@@ -864,7 +864,7 @@ export fn Timestamp @compare(other Timestamp) -> int =>
 #stable(since = "0.1")
 export fn Timestamp @debug(mut w Write) -> () {
     w.write("Timestamp(unix_ns=")
-    w.write(str.from(@nanos))
+    w.write(@nanos.to_str())
     w.write(")")
 }
 

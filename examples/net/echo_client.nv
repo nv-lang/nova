@@ -25,11 +25,11 @@ fn main() {
             spawn {
                 match TcpStream.connect(addr) {
                     Err(_) => {
-                        println("Connect failed — is echo_server running on port " + str.from(PORT) + "?")
+                        println("Connect failed — is echo_server running on port " + PORT.to_str() + "?")
                     }
                     Ok(conn) => {
                         mut stream = conn
-                        println("Connected to " + str.from(PORT))
+                        println("Connected to " + PORT.to_str())
 
                         match stream.write_str(MESSAGE) {
                             Err(_) => { println("Write failed"); stream.close() }

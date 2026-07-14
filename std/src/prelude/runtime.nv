@@ -196,7 +196,7 @@ extern "nova" fn print(...items []any) -> ()
 /// # Examples
 /// ```nova
 /// println("hello")                                  // → "hello\n"
-/// println(str.from(factorial(5)))                   // → "120\n"
+/// println(factorial(5).to_str())                     // → "120\n"
 /// println("count=", n, " total=", sum)              // mixed-type ok
 /// ```
 #stable(since = "0.1")

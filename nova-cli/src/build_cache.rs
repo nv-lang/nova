@@ -31,7 +31,7 @@
 //! через `NOVA_CACHE=0`; пропускается при `--keep-artifacts` (там
 //! нужен полный набор промежуточных артефактов реальной сборки).
 
-use nova_codegen::ast::PeerFile;
+use nova_codegen::ast::{ContractsMode, PeerFile};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -58,10 +58,13 @@ pub fn compute_c_key(
     features: &[String],
     target_os: &str,
     mono_depth: Option<usize>,
-    // Plan 140 Ф.2 (D24 amend): contract build-policy влияет на codegen
-    // (`--contracts=off` элидирует все контракт-проверки) → входит в ключ,
-    // иначе кэш `enforce`-сборки переиспользовался бы для `off` и наоборот.
-    contracts_off: bool,
+    // Plan 194 A2.1 (замена Plan 140 Ф.2 / D24 amend `contracts_off: bool`):
+    // contract build-policy режим (`checked`/`optimized`/`verified`) влияет
+    // на codegen → входит в ключ, иначе кэш одного режима переиспользовался
+    // бы для другого. В этом атоме все три режима производят byte-identical
+    // `.c` (см. emit_c.rs `contracts_elided_for`), но ключ уже разделяет их
+    // — задел под будущую Z3-driven дифференциацию (A2.2+/A3).
+    contracts_mode: ContractsMode,
     // Plan 186 (D412): файлы, встроенные через `embed("path")` - их байты
     // попадают в сгенерированный `.c` (HexBlobLit -> static const), поэтому
     // правка встроенного файла ОБЯЗАНА инвалидировать кэш.
@@ -77,7 +80,9 @@ pub fn compute_c_key(
 ) -> Option<String> {
     let mut h = DefaultHasher::new();
     // Версия схемы ключа — смена формата кэша инвалидирует все записи.
-    "nova-c-cache-v1".hash(&mut h);
+    // v2 (Plan 194 A2.1): `contracts_off: bool` → `contracts_mode: ContractsMode`
+    // (3 варианта вместо 2) — старые v1-ключи больше не сопоставимы.
+    "nova-c-cache-v2".hash(&mut h);
 
     // Отпечаток компилятора Nova: пересборка компилятора меняет
     // кодогенерацию и ОБЯЗАНА инвалидировать кэш. mtime+size надёжно
@@ -99,8 +104,9 @@ pub fn compute_c_key(
     }
     target_os.hash(&mut h);
     mono_depth.hash(&mut h);
-    // Plan 140 Ф.2: contract build-policy (enforce vs off) меняет codegen.
-    contracts_off.hash(&mut h);
+    // Plan 194 A2.1: contract build-policy режим меняет (в будущих атомах)
+    // codegen — входит в ключ уже сейчас.
+    contracts_mode.hash(&mut h);
     // Plan 197: strict-effects gate — see param doc above.
     strict_effects.hash(&mut h);
 
@@ -189,13 +195,13 @@ mod tests {
         std::fs::write(&a, "module t\nfn main() -> int => 0\n").unwrap();
         let peers = vec![mk_peer(a.clone())];
 
-        let k1 = compute_c_key(&peers, &[], "windows", None, false, &[], false).expect("key");
-        let k2 = compute_c_key(&peers, &[], "windows", None, false, &[], false).expect("key");
+        let k1 = compute_c_key(&peers, &[], "windows", None, ContractsMode::Checked, &[], false).expect("key");
+        let k2 = compute_c_key(&peers, &[], "windows", None, ContractsMode::Checked, &[], false).expect("key");
         assert_eq!(k1, k2, "identical inputs → identical key");
 
         // Изменение содержимого файла → другой ключ.
         std::fs::write(&a, "module t\nfn main() -> int => 1\n").unwrap();
-        let k3 = compute_c_key(&peers, &[], "windows", None, false, &[], false).expect("key");
+        let k3 = compute_c_key(&peers, &[], "windows", None, ContractsMode::Checked, &[], false).expect("key");
         assert_ne!(k1, k3, "changed source content → different key");
 
         let _ = std::fs::remove_dir_all(&root);
@@ -209,20 +215,20 @@ mod tests {
         std::fs::write(&a, "module t\nfn main() -> int => 0\n").unwrap();
         let peers = vec![mk_peer(a)];
 
-        let base = compute_c_key(&peers, &[], "windows", None, false, &[], false).unwrap();
-        let other_target = compute_c_key(&peers, &[], "linux", None, false, &[], false).unwrap();
+        let base = compute_c_key(&peers, &[], "windows", None, ContractsMode::Checked, &[], false).unwrap();
+        let other_target = compute_c_key(&peers, &[], "linux", None, ContractsMode::Checked, &[], false).unwrap();
         let with_feat =
-            compute_c_key(&peers, &["z3".to_string()], "windows", None, false, &[], false).unwrap();
-        let other_depth = compute_c_key(&peers, &[], "windows", Some(900), false, &[], false).unwrap();
-        // Plan 140 Ф.2: contract build-policy входит в ключ.
-        let contracts_off = compute_c_key(&peers, &[], "windows", None, true, &[], false).unwrap();
+            compute_c_key(&peers, &["z3".to_string()], "windows", None, ContractsMode::Checked, &[], false).unwrap();
+        let other_depth = compute_c_key(&peers, &[], "windows", Some(900), ContractsMode::Checked, &[], false).unwrap();
+        // Plan 194 A2.1: contract build-policy режим входит в ключ.
+        let other_contracts_mode = compute_c_key(&peers, &[], "windows", None, ContractsMode::Optimized, &[], false).unwrap();
         // Plan 197: --strict-effects входит в ключ (иначе cache-hit тихо
         // пропускал бы check_module под флагом — см. param doc).
-        let strict_on = compute_c_key(&peers, &[], "windows", None, false, &[], true).unwrap();
+        let strict_on = compute_c_key(&peers, &[], "windows", None, ContractsMode::Checked, &[], true).unwrap();
         assert_ne!(base, other_target, "target OS is part of the key");
         assert_ne!(base, with_feat, "active features are part of the key");
         assert_ne!(base, other_depth, "mono-depth is part of the key");
-        assert_ne!(base, contracts_off, "contract build-policy is part of the key");
+        assert_ne!(base, other_contracts_mode, "contract build-policy mode is part of the key");
         assert_ne!(base, strict_on, "strict-effects flag is part of the key");
 
         let _ = std::fs::remove_dir_all(&root);
@@ -241,14 +247,14 @@ fn main() -> int => 0
         std::fs::write(&blob, [0x48u8, 0x69]).unwrap();
         let peers = vec![mk_peer(a)];
 
-        let no_embed = compute_c_key(&peers, &[], "windows", None, false, &[], false).unwrap();
+        let no_embed = compute_c_key(&peers, &[], "windows", None, ContractsMode::Checked, &[], false).unwrap();
         let with_embed =
-            compute_c_key(&peers, &[], "windows", None, false, &[blob.clone()], false).unwrap();
+            compute_c_key(&peers, &[], "windows", None, ContractsMode::Checked, &[blob.clone()], false).unwrap();
         assert_ne!(no_embed, with_embed, "embed file set is part of the key");
 
         std::fs::write(&blob, [0x48u8, 0x69, 0x00]).unwrap();
         let changed =
-            compute_c_key(&peers, &[], "windows", None, false, &[blob.clone()], false).unwrap();
+            compute_c_key(&peers, &[], "windows", None, ContractsMode::Checked, &[blob.clone()], false).unwrap();
         assert_ne!(with_embed, changed, "embed file CONTENT is part of the key");
 
         let _ = std::fs::remove_dir_all(&root);

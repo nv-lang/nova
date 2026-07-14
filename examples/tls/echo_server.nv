@@ -41,14 +41,14 @@ fn main() {
                 // E_CONCURRENT_MUT_CAPTURE).
                 mut lst = match TcpListener.bind(addr) {
                     Ok(l)  => l
-                    Err(_) => panic("Failed to bind: " + str.from(PORT))
+                    Err(_) => panic("Failed to bind: " + PORT.to_str())
                 }
-                println("Listening on 127.0.0.1:" + str.from(lst.local_port()))
+                println("Listening on 127.0.0.1:" + lst.local_port().to_str())
 
                 match lst.accept() {
                     Err(_) => println("Accept failed")
                     Ok(tcp) => {
-                        println("Client connected from port " + str.from(tcp.peer_port()))
+                        println("Client connected from port " + tcp.peer_port().to_str())
                         match TlsStream.accept(tcp, cfg) {
                             Err(e) => println("TLS handshake failed: " + e.to_str())
                             Ok(session) => {

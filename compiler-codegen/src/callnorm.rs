@@ -63,26 +63,62 @@ struct Sigs {
     /// (Sigs уже общий `&Sigs` на весь module-pass, items обрабатываются
     /// строго последовательно, так что интерьерная мутация безопасна).
     self_type: std::cell::RefCell<Option<String>>,
+    /// 196.5 Stage-D волна-5 (facet C, callnorm/argbind карта): every
+    /// `Item::Fn`'s OWN declaration span → its params, so a call-site can be
+    /// resolved to the EXACT decl the checker already picked
+    /// (`resolved_callees[call.id] → decl span → by_span[span]`) instead of
+    /// re-deriving a candidate through the coarse per-form name/arity
+    /// heuristics below (`free`/`static_methods`/`instance_by_name` all
+    /// independently re-resolve overload identity from scratch, with NO type
+    /// information — `instance_by_name` in particular drops ANY method name
+    /// shared by ≥2 types in the whole module, `pick_static_params` picks by
+    /// arity/bind-success alone, blind to argument TYPES). Keyed by the same
+    /// `f.span` the checker inserts into `resolved_callees` at
+    /// `types/mod.rs` (`self.resolved_callees.borrow_mut().insert(call_id,
+    /// f.span)` / `chosen.span` / `callee.span`).
+    by_span: HashMap<Span, Vec<Param>>,
+    /// Checker's authoritative call→declaration resolution
+    /// (`ModuleEnv.resolved_callees`, populated by `check_module` BEFORE
+    /// this pass runs — `types::check_module` → `normalize_module` order is
+    /// fixed in every pipeline caller). `None`-keyed (missing entry) is
+    /// honest: the checker had no unambiguous pick for that call-site
+    /// (0 or ≥2 type-compatible overloads, or a call-shape the checker's
+    /// resolver does not cover, e.g. an erased generic-mono body) — falls
+    /// through to the pre-existing coarse heuristics, UNCHANGED.
+    resolved_callees: HashMap<ExprId, Span>,
 }
 
 /// Plan 46 Ф.2: нормализовать все call-site в модуле.
 /// Вызывается ПОСЛЕ resolve_imports_inline (нужны все сигнатуры) и
 /// type-check, ПЕРЕД codegen.
-pub fn normalize_module(module: &mut Module) {
-    let sigs = collect_sigs(module);
+///
+/// `resolved_callees` — checker's `ModuleEnv.resolved_callees` (196.5
+/// Stage-D волна-5, facet C): when a call-site's `ExprId` has an entry
+/// here, `try_normalize_call` resolves its params from the EXACT decl the
+/// checker picked instead of re-deriving a candidate through the coarse
+/// per-form heuristics. Pass an empty map from a caller that has no
+/// `ModuleEnv` available (pre-existing coarse behavior, unchanged).
+pub fn normalize_module(module: &mut Module, resolved_callees: &HashMap<ExprId, Span>) {
+    let sigs = collect_sigs(module, resolved_callees);
     for item in &mut module.items {
         normalize_item(item, &sigs);
     }
 }
 
-fn collect_sigs(module: &Module) -> Sigs {
+fn collect_sigs(module: &Module, resolved_callees: &HashMap<ExprId, Span>) -> Sigs {
     let mut free: HashMap<String, Vec<Vec<Param>>> = HashMap::new();
     let mut static_methods: HashMap<(String, String), Vec<Vec<Param>>> = HashMap::new();
     // instance: по имени метода → список сигнатур (со всех типов).
     // Уникальное имя (1 запись) → нормализуем; иначе skip.
     let mut instance: HashMap<String, Vec<Vec<Param>>> = HashMap::new();
+    let mut by_span: HashMap<Span, Vec<Param>> = HashMap::new();
     for item in &module.items {
         if let Item::Fn(f) = item {
+            // 196.5 Stage-D волна-5: index EVERY decl by its own span,
+            // regardless of receiver kind — the channel fast path below
+            // resolves through this, bypassing the free/static/instance
+            // split entirely (that split only serves the coarse fallback).
+            by_span.insert(f.span, f.params.clone());
             match &f.receiver {
                 None => free.entry(f.name.clone()).or_default().push(f.params.clone()),
                 Some(recv) if recv.kind == ReceiverKind::Static => {
@@ -110,7 +146,12 @@ fn collect_sigs(module: &Module) -> Sigs {
     let instance_by_name = instance.into_iter()
         .filter_map(|(k, mut v)| if v.len() == 1 { Some((k, v.remove(0))) } else { None })
         .collect();
-    Sigs { free, static_methods, instance_by_name, self_type: std::cell::RefCell::new(None) }
+    Sigs {
+        free, static_methods, instance_by_name,
+        self_type: std::cell::RefCell::new(None),
+        by_span,
+        resolved_callees: resolved_callees.clone(),
+    }
 }
 
 fn normalize_item(item: &mut Item, sigs: &Sigs) {
@@ -482,7 +523,45 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
     // evaluate the TYPE expression `obj` as a VALUE — that hoist is only
     // correct for genuine instance receivers.
     let mut is_static_generic_recv = false;
-    let params: &[Param] = match &base.kind {
+    // 196.5 Stage-D волна-5 (facet C point-fix): if the CHECKER already
+    // resolved this exact call-site to one declaration (`resolved_callees`,
+    // populated by `check_module` BEFORE this pass), read its params
+    // straight from `by_span` — a strict superset of every per-form
+    // heuristic below (`free`/`static_methods`/`instance_by_name`), all of
+    // which re-derive candidate identity from scratch with LESS
+    // information than the checker already had (arity/bind-success only,
+    // no argument types) and — for `instance_by_name` — drop the call
+    // entirely whenever ≥2 types in the module share the method name. When
+    // present this is BYTE-IDENTICAL to a correct heuristic pick (same
+    // decl) and a STRICT FIX for the cases the heuristics silently skip
+    // (overloaded free-fn, cross-type instance-method name collision,
+    // arity-ambiguous static overload). Absent (checker had no unambiguous
+    // pick, or `e.id` unset) → falls through to the unchanged heuristics.
+    let channel_params: Option<&[Param]> = if e.id.is_set() {
+        sigs.resolved_callees
+            .get(&e.id)
+            .and_then(|sp| sigs.by_span.get(sp))
+            .map(|v| v.as_slice())
+    } else {
+        None
+    };
+    let params: &[Param] = if let Some(p) = channel_params {
+        // Receiver-hoist shape flag (Ф.3 below) is purely SYNTACTIC — it
+        // depends on whether `obj` is a type-expression (TurboFish /
+        // `[]T`-sugar) or a genuine value receiver, independent of which
+        // params-source resolved this call. Mirrors the shape test the
+        // heuristic `Member` arm performs below, computed unconditionally
+        // here since the channel fast path skips that arm entirely.
+        if let ExprKind::Member { obj, .. } = &base.kind {
+            is_static_generic_recv = matches!(&obj.kind, ExprKind::TurboFish { .. })
+                || matches!(
+                    &obj.kind,
+                    ExprKind::Path(bparts) if bparts.len() == 2 && bparts[0] == "__array"
+                );
+        }
+        p
+    } else {
+        match &base.kind {
         ExprKind::Ident(name) => sigs.free.get(name)?,
         // [M-set-from-iter-self-new-default-arg-backfill] (Plan 196 Ф.C):
         // `Self.new()` written INSIDE a generic-static/instance method body
@@ -546,6 +625,7 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
             }
         }
         _ => return None, // сложный func — codegen сам.
+        }
     };
 
     // Trailing связывает последний param — bind против params без него.
@@ -594,7 +674,7 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
                 obj: Box::new(ident_expr(recv_name, sp)),
                 name: name.clone(),
             },
-            span: func.span, id: crate::ast::ExprId::UNSET,
+            span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,
         })
         }
     } else {
@@ -661,7 +741,7 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
             args: call_args,
             trailing: trailing.clone(),
         },
-        span: sp, id: crate::ast::ExprId::UNSET,
+        span: sp, id: crate::ast::ExprId::UNSET, debug_only: false,
     };
 
     Some(ExprKind::Block(Block {
@@ -699,5 +779,5 @@ fn let_stmt_typed(name: &str, value: Expr, ty: Option<crate::ast::TypeRef>, span
 
 /// `<name>` identifier expression.
 fn ident_expr(name: &str, span: Span) -> Expr {
-    Expr { kind: ExprKind::Ident(name.to_string()), span, id: crate::ast::ExprId::UNSET }
+    Expr { kind: ExprKind::Ident(name.to_string()), span, id: crate::ast::ExprId::UNSET, debug_only: false }
 }

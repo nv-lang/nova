@@ -1,0 +1,98 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// [M-176-xmod-payload-variant-ctor] (Plan 176 Ф.1/Ф.4) — regression: calling a
+// method DIRECTLY on a freshly-constructed variant, with NO intermediate
+// `ro`/`mut` binding (`Type.Variant.method()`), must resolve identically to the
+// (already-working) `ro x = Type.Variant; x.method()` form and must NOT abort
+// the compile unit with `[P67-LEGACY] ... (no method segment)`.
+//
+// Root cause (fixed): the parser's PascalCase path-collector greedily folds
+// EVERY `.ident` after an initial PascalCase segment into ONE flat `Path`
+// (kept so lowercase static-ctor calls like `SeekFrom.start(5)` parse as a
+// single Path), so a nullary-variant chain collapses to
+// `Path([Type, Variant, method])` wrapped in one Call — bypassing the
+// Member-call dispatch a bound variable uses, and hitting the Path-only
+// `parts.len() != 2` P67 panic that aborts the WHOLE merged CU. Fix
+// (`variant_chain_as_member`, emit_c.rs): rewrite that collapsed shape to the
+// equivalent `Member{ Path[Type, Variant], method }` at the top of BOTH
+// `infer_call_ret_c` and `emit_call`, routing concrete / colliding / generic
+// receivers through the existing Member machinery.
+//
+// SCOPE NOTE — the value produced by a variant-chain method call when the sum
+// NAME COLLIDES (D381) *and* the method name is shared across types is governed
+// by the SEPARATE, PRE-EXISTING defect [M-176-collision-variant-method-dispatch]
+// (backlog-followups.md): the qualified receiver C-type misses `method_overloads`
+// (bare-name-keyed) and falls to a name-keyed last-wins that can pick a foreign
+// same-named method. That defect affects the `ro`-bound form IDENTICALLY —
+// proven flat≡ro (2026-07-14 diagnosis) — so it is NOT introduced by this
+// wave's chain rewrite. Accordingly the colliding axis below locks the invariant
+// this wave OWNS (no P67 panic + flat ≡ ro), while the NON-colliding axes assert
+// full value-correctness.
+//
+// Peer file of the `spec_tests.conformance` folder-module (like
+// `xmodule_struct_variant_ctor_test.nv`); the colliding `Kind` co-exists with
+// the two `xmodule_struct_variant_ctor_{a,b}` `Kind`s in the merged CU.
+module spec_tests.conformance
+
+import spec_tests.conformance.m176_variant_ctor_method_a.{Kind}
+import spec_tests.conformance.m176_variant_ctor_method_g.{GBox}
+// Reference the co-present `xmodule_struct_variant_ctor_{a,b}` `Kind`s so the
+// `Kind` name collision (D381) is exercised even in a reduced compile unit, not
+// only in the full folder-CU.
+import spec_tests.conformance.xmodule_struct_variant_ctor_a.{make_info}
+import spec_tests.conformance.xmodule_struct_variant_ctor_b.{make_bad}
+
+// Same-module sum with a UNIQUE name AND a UNIQUE method — never collides, so
+// its receiver C-type is never qualified and method dispatch is exact: the
+// non-colliding correctness oracle for the chain rewrite.
+type M176Tok enum
+    | Alpha
+    | Beta
+    | Wrap(int)
+
+fn M176Tok @m176_show() -> str {
+    match @ {
+        Alpha   => "alpha"
+        Beta    => "beta"
+        Wrap(n) => if n == 9 { "wrap:9" } else { "wrap:?" }
+    }
+}
+
+// Keep the co-present colliding `Kind`s genuinely referenced (so they are pulled
+// into module.items → the `Kind` collision is real in this CU too).
+fn m176_keep_xmod() -> str {
+    ro _a = make_info(1, "x")
+    ro _b = make_bad("y")
+    "kept"
+}
+
+test "[M-176-variant-ctor-method]: non-colliding concrete sum — flat NULLARY chain resolves to correct value" {
+    assert(M176Tok.Alpha.m176_show() == "alpha")
+    assert(M176Tok.Beta.m176_show() == "beta")
+}
+
+test "[M-176-variant-ctor-method]: non-colliding concrete sum — payload variant + method resolves to correct value" {
+    assert(M176Tok.Wrap(9).m176_show() == "wrap:9")
+}
+
+test "[M-176-variant-ctor-method]: generic sum — flat NULLARY chain resolves to correct value" {
+    assert(GBox.Vacant.tag() == "g-vacant")
+}
+
+test "[M-176-variant-ctor-method]: colliding sum name (D381) — flat chain RUNS (no P67 panic) and equals the ro-bound form" {
+    // `Kind` collides with the co-present `xmodule_struct_variant_ctor_{a,b}`
+    // `Kind`s. The value here is governed by
+    // [M-176-collision-variant-method-dispatch] (pre-existing, affects ro too);
+    // this wave guarantees only: (1) the chain compiles + runs = no P67 panic,
+    // (2) the flat chain is byte-equivalent to the ro-bound form.
+    ro xe = Kind.Empty
+    assert(Kind.Empty.label() == xe.label())     // flat ≡ ro (nullary chain — the rewrite's target)
+    ro xi = Kind.Info(5)
+    assert(Kind.Info(5).label() == xi.label())   // flat ≡ ro (payload — Member-form, untouched control)
+}
+
+test "[M-176-variant-ctor-method]: control — ro-bound non-colliding variant then method resolves to correct value" {
+    ro t = M176Tok.Wrap(9)
+    assert(t.m176_show() == "wrap:9")
+    ro n = M176Tok.Alpha
+    assert(n.m176_show() == "alpha")
+}

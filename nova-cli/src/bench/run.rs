@@ -124,7 +124,7 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
     }
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
-    nova_codegen::callnorm::normalize_module(&mut module);
+    nova_codegen::callnorm::normalize_module(&mut module, &bench_env.resolved_callees);
     nova_codegen::chain_norm::normalize_chains_module(
         &mut module, &bench_env.resolved_types);
 
@@ -407,7 +407,7 @@ pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
     nova_codegen::types::infer_effects(&mut module);
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
-    nova_codegen::callnorm::normalize_module(&mut module);
+    nova_codegen::callnorm::normalize_module(&mut module, &bench_env.resolved_callees);
     nova_codegen::chain_norm::normalize_chains_module(
         &mut module, &bench_env.resolved_types);
 
@@ -718,6 +718,7 @@ pub fn expand_bench_sweeps(module: &mut nova_codegen::ast::Module) {
                         kind: ExprKind::IntLit(*v),
                         span: params.span,
                         id: nova_codegen::ast::ExprId::UNSET,
+                        debug_only: false,
                     };
                     let let_stmt = Stmt::Let(LetDecl {
                         mutable: false,

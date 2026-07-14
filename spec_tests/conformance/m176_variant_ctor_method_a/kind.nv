@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// [M-176-xmod-payload-variant-ctor] (P2, Plan 176 Ф.1/Ф.4 / checker) —
+// regression fixture for the cross-module half of
+// `m176_variant_ctor_method_test.nv` (same-module half declares its own local
+// `Kind` sum right in the test file). This module exists purely to give the
+// test file a sum type it does NOT declare itself, so `Kind.Variant.method()`
+// crosses a module boundary exactly like the real bug's `NetError.
+// ConnectionRefused.to_error_kind()` (std.net → std.io).
+module conformance.m176_variant_ctor_method_a
+
+export type Kind enum
+    | Empty
+    | Full
+    | Info(int)
+
+export fn Kind @label() -> str {
+    match @ {
+        Empty   => "empty"
+        Full    => "full"
+        Info(n) => if n == 5 { "info:5" } else { "info:?" }
+    }
+}
