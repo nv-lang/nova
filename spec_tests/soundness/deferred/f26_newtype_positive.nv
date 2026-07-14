@@ -2,6 +2,15 @@
 // Позитивный тест: newtype declarations компилируются и runtime работает.
 // Через doc-pipeline (НЕ через nova test): JSON output должен показывать
 // kind: "newtype", не "alias". Здесь проверяем что Nova compile + runtime ok.
+//
+// Резолвлено 2026-07-15: `account_to_int` изначально делал НЕЯВНУЮ
+// распаковку newtype (`ro raw int = id`) — это корректно отвергается
+// E7301 (Nova без implicit-coercion, D52/D215; newtype = distinct type).
+// Баг был в тесте, не в компиляторе. Фикс: явный `as`-cast, newtype ↔
+// underlying (D54, spec/decisions/03-syntax.md#d54) — zero-cost identity
+// bit-reuse. Construction-сайты (`ro id AccountId = 42`) остались как
+// есть — они уже проходят через документированный single-wrap-candidate
+// auto-coercion (D52 revised, spec/decisions/02-types.md).
 
 module deferred.f26_newtype_positive
 
@@ -19,7 +28,7 @@ export fn validate_email(e Email) -> bool => true
 
 /// Get account_id as raw int (newtype unwrap).
 export fn account_to_int(id AccountId) -> int {
-    ro raw int = id
+    ro raw = id as int
     raw
 }
 
