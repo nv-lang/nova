@@ -2128,14 +2128,17 @@ pub fn parse_timeout_ms(src: &str) -> Option<Duration> {
     None
 }
 
-/// Plan 140 Ф.2 (D24 amend): per-fixture директива `// CONTRACTS off`
-/// (или `// CONTRACTS enforce`) в первых 30 строках. Override codegen-
-/// политики контрактов **для этого фикстура** — позволяет регрессионным
-/// фикстурам Plan 140 (t5_build_policy_off) проверять `--contracts=off`
-/// поведение в обычном `test-all` прогоне без отдельной CLI-команды.
-/// Возвращает `Some(true)` для `off`, `Some(false)` для `enforce`,
-/// `None` если директивы нет (используется build-policy из opts).
-pub fn parse_contracts_policy(src: &str) -> Option<bool> {
+/// Plan 194 A2.1 (замена Plan 140 Ф.2 / D24 amend): per-fixture директива
+/// `// CONTRACTS checked|optimized|verified` в первых 30 строках. Override
+/// codegen build-policy режима **для этого фикстура** — позволяет
+/// регрессионным фикстурам проверять конкретный режим в обычном `test-all`
+/// прогоне без отдельной CLI-команды. Legacy `off`/`enforce` keywords
+/// больше НЕ распознаются (флаг `off` убран атомом A2.1 целиком; `enforce`
+/// переименован в `checked` без alias — конвенция «чище убрать»,
+/// см. атом-заметку). Возвращает `None`, если директивы нет (используется
+/// build-policy из opts) — старые `// CONTRACTS off`/`// CONTRACTS enforce`
+/// в непереехавших фикстурах молча игнорируются (fallback на opts default).
+pub fn parse_contracts_policy(src: &str) -> Option<ast::ContractsMode> {
     for line in src.lines().take(30) {
         let trimmed = line.trim_start();
         let Some(body) = trimmed.strip_prefix("//") else {
@@ -2150,8 +2153,9 @@ pub fn parse_contracts_policy(src: &str) -> Option<bool> {
             continue;
         }
         match rest.trim() {
-            "off" => return Some(true),
-            "enforce" => return Some(false),
+            "checked" => return Some(ast::ContractsMode::Checked),
+            "optimized" => return Some(ast::ContractsMode::Optimized),
+            "verified" => return Some(ast::ContractsMode::Verified),
             _ => continue,
         }
     }
@@ -2434,10 +2438,11 @@ pub struct TestBuildOpts<'a> {
     /// Explicit `runtime.init(n>0)` тоже бьёт env (D136). `None` — не
     /// выставлять.
     pub maxprocs_budget: Option<u32>,
-    /// Plan 140 Ф.2 (D24 amend): build-policy `--contracts=off`. Когда
-    /// `true` — codegen элидирует ВСЕ контракт-проверки (legacy zero-cost).
-    /// Default `false` (enforce — недоказанные проверяются в debug И release).
-    pub contracts_off: bool,
+    /// Plan 194 A2.1 (замена Plan 140 Ф.2 / D24 amend `contracts_off: bool`):
+    /// build-policy режим (`checked`/`optimized`/`verified`). Legacy `off`
+    /// убран — недоказанные контракты проверяются в debug И release под
+    /// всеми тремя значениями. Default `Checked`.
+    pub contracts_mode: ast::ContractsMode,
 }
 
 /// Plan 26 Ф.2: unique tmp subdir per test. Хеш от display даёт
@@ -2590,11 +2595,11 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     // test-блок или явный `fn main()` (иначе `nova_fn_main_impl` не
     // эмитится, cc/link неизбежно упадёт — SKIP ниже).
     // Plan 48 Ф.7.6: mono_depth прокинут через opts (None = default 500).
-    // Plan 140 Ф.2: contracts_off прокинут через opts (build-policy opt-out).
-    // Per-fixture `// CONTRACTS off|enforce` директива переопределяет
-    // build-policy для этого фикстура (regression-guard t5_build_policy_off).
-    let contracts_off = parse_contracts_policy(&src).unwrap_or(opts.contracts_off);
-    let codegen_result = codegen_to_c(opts.nv_file, &src, opts.mono_depth, contracts_off);
+    // Plan 194 A2.1 (замена Plan 140 Ф.2): contracts_mode прокинут через opts
+    // (build-policy режим). Per-fixture `// CONTRACTS checked|optimized|verified`
+    // директива переопределяет build-policy для этого фикстура.
+    let contracts_mode = parse_contracts_policy(&src).unwrap_or(opts.contracts_mode);
+    let codegen_result = codegen_to_c(opts.nv_file, &src, opts.mono_depth, contracts_mode);
     let codegen_warnings: Vec<String> = match &codegen_result {
         Ok((ws, _, _)) => ws.clone(),
         Err(_) => vec![],
@@ -3194,7 +3199,7 @@ fn is_folder_module_peer(path: &Path) -> bool {
 ///
 /// Plan 48 Ф.7.6: `mono_depth` — optional CLI override для
 /// CEmitter.mono_depth_limit (None = default из env var или 500).
-fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off: bool) -> Result<(Vec<String>, Vec<String>, bool), String> {
+fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_mode: ast::ContractsMode) -> Result<(Vec<String>, Vec<String>, bool), String> {
     // Plan 57.D.1: PerfTimer wraps вокруг каждого pass. Markers эмитятся
     // если NOVA_PERF_TIMER=1, accumulated если NOVA_PERF_TIMER_AGGREGATE=1.
     let mut module = {
@@ -3492,9 +3497,9 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         if let Some(n) = mono_depth {
             emitter.set_mono_depth_limit(n);
         }
-        // Plan 140 Ф.2 (D24 amend): build-policy `--contracts=off` элидирует
-        // все контракт-проверки на codegen (legacy zero-cost). Default enforce.
-        emitter.set_contracts_off(contracts_off);
+        // Plan 194 A2.1 (замена Plan 140 Ф.2): build-policy режим. Legacy
+        // `off` retired — недоказанные проверяются под всеми тремя значениями.
+        emitter.set_contracts_mode(contracts_mode);
         // Plan 140 Ф.3 (D24 amend): feed Z3/Trivial-proven contracts from the
         // VerificationPipeline (run inside check_module above) so proven
         // requires/ensures are elided at codegen (zero-cost). Without this the
@@ -3585,10 +3590,10 @@ pub struct TestAllOpts<'a> {
     /// Propagated to every per-test TestBuildOpts so polymorphic-recursion
     /// guard уходит из hardcoded 500 в configurable CLI knob.
     pub mono_depth: Option<usize>,
-    /// Plan 140 Ф.2 (D24 amend): build-policy `--contracts=off` — элидировать
-    /// все контракт-проверки на codegen для всего прогона (legacy zero-cost).
-    /// Propagated to every per-test TestBuildOpts. Default `false` (enforce).
-    pub contracts_off: bool,
+    /// Plan 194 A2.1 (замена Plan 140 Ф.2 / D24 amend `contracts_off: bool`):
+    /// build-policy режим для всего прогона. Propagated to every per-test
+    /// TestBuildOpts. Default `Checked`. Legacy `off` убран.
+    pub contracts_mode: ast::ContractsMode,
     /// Plan 169.1.1: test type + slow selection. Default = {Positive}, no slow.
     pub selection: TestSelection,
     /// [M-169-timing-report-regression-gate]: if > 0, after run_all report
@@ -4957,7 +4962,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
             let retries = opts.retries;
             let gc_kind = opts.gc_kind;
             let mono_depth = opts.mono_depth;
-            let contracts_off = opts.contracts_off;
+            let contracts_mode = opts.contracts_mode;
 
             // [M-codegen-conformance-stack-overflow]: large generated test files
             // (Unicode conformance fixtures — thousands of asserts in one block)
@@ -4988,7 +4993,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                     verbosity,
                     mono_depth,
                     maxprocs_budget,
-                    contracts_off,
+                    contracts_mode,
                 };
                 // Plan 26 Ф.12: retry для transient AV/linker race fails.
                 // Exponential backoff: 100ms, 200ms, 400ms.

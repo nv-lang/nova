@@ -547,6 +547,46 @@ impl ContractOptOut {
     }
 }
 
+/// Plan 194 A2.1: build-policy режим флага `--contracts` (замена legacy
+/// `enforce|off`, D24 amend — `off` убран, глобальный legacy zero-cost
+/// bypass больше не существует ни под одним значением флага).
+///
+/// В ЭТОМ атоме все три значения производят БАЙТ-ИДЕНТИЧНЫЙ codegen —
+/// поведение старого default `enforce`: недоказанные `requires`/`ensures`/
+/// `invariant` проверяются в runtime (debug И release), Z3/Trivial-proven
+/// элидируются; per-fn/module `#unchecked` opt-out работает как раньше.
+/// Различия между режимами (Z3-driven элизия под `optimized`/`verified`,
+/// `#debug`-эрозия) — последующие атомы волны 2 (A2.2+/A3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ContractsMode {
+    /// Ничего не элидируется кроме уже доказанного (loop/code-proven ИЛИ
+    /// contract-proven-when-enforced) — как нынешний `enforce`. Default для
+    /// dev-профиля.
+    #[default]
+    Checked,
+    /// Пока идентично `Checked` (различия — атомы A2.2+/A3). Default для
+    /// release-профиля.
+    Optimized,
+    /// Пока идентично `Checked` (различия — атомы A2.2+/A3).
+    Verified,
+}
+
+impl ContractsMode {
+    /// Парсит значение CLI-флага `--contracts`. Clap `value_parser`
+    /// ограничивает вход этими тремя строками — паника здесь означала бы
+    /// баг в самом парсере, а не пользовательский ввод.
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "checked" => ContractsMode::Checked,
+            "optimized" => ContractsMode::Optimized,
+            "verified" => ContractsMode::Verified,
+            other => panic!(
+                "invalid --contracts value (CLI value_parser should have rejected this): {other}"
+            ),
+        }
+    }
+}
+
 /// Plan 33.1 (D24): один контракт-clause функции.
 #[derive(Debug, Clone)]
 pub struct Contract {
