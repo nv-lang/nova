@@ -42,16 +42,18 @@
 
 Концептуальная группировка std-планов (физически — в общей таблице ниже). Сквозная **конвенция** над всеми — [Plan 177](177-fallible-result-everywhere.md) (Result-everywhere, D325): любая публичная std-операция возвращает `Result[T, E]`. 177 — НЕ модуль, а политика, governing все модули ниже.
 
-| Модуль | План | Статус |
-|---|---|---|
-| parse (str→примитив) | [174.1](174.1-primitive-parse-api.md) | ✅ CLOSED 2026-07-09 (§1а to_int/to_str-семьи, char.to_str, доменные to_*) |
-| time | [175](175-time-system-rework.md) + [175.1](175.1-civil-time.md) (civil) | 175.1 ✅ SHIPPED 2026-07-10 (ветка civil-time-175-1; D319-321; остатки-маркеры [M-175.1-*] — `local-offset-effect-op` ЗАКРЫТ 2026-07-10, ветка time-tails-175, D316-amend); 175 ядро ✅ (Ф.0-Ф.1c + Ф.3a-d + Ф.5d, ветка time-rework-175, 2026-07-10) — Ф.2 typed-wire SUPERSEDED (option C — см. D316-amend); auto-idle-advance ✅ ЗАКРЫТ 2026-07-10 (ветка time-tails-175 — deadline-order держит под кооперативным spawn, armed M:N деградирует безопасно без гарантии порядка, маркер [M-175-vclock-armed-mn-scope-identity]); per-OS monotonicity-тест остаётся TODO |
-| io / fs / os | [176](176-io-fs-os.md) (umbrella) | ✅ CLOSED 2026-07-09 (Ф.4/Ф.5 net-миграции + D302) |
-| **nova lint** (полная: сабкоманда+реестр) | [185](185-nova-lint.md) | ✅ CLOSED 2026-07-09 |
-| http (client+server, HTTPS, h2) | [178](178-std-http.md) (umbrella) | 📋 READY (Ред.2) |
-| encoding/compress (gzip/deflate/brotli) | [179](179-std-encoding-compress.md) — гейт 178 decompress | 📋 READY (Ред.2) |
-| serde / typed-json | [180](180-serde-derive.md) — гейт 178 `.json[T]` | 📋 READY (Ред.2) |
-| encoding/json · base64 · url | существующие / `_experimental` (url → промоут в 178) | — |
+Статус модуля — в его плане (`**Статус:**`) / сводно в [STATUS.md](STATUS.md); здесь — только группировка модуль→план.
+
+| Модуль | План |
+|---|---|
+| parse (str→примитив) | [174.1](174.1-primitive-parse-api.md) |
+| time | [175](175-time-system-rework.md) + [175.1](175.1-civil-time.md) (civil) |
+| io / fs / os | [176](176-io-fs-os.md) (umbrella) |
+| **nova lint** (полная: сабкоманда+реестр) | [185](185-nova-lint.md) |
+| http (client+server, HTTPS, h2) | [178](178-std-http.md) (umbrella) |
+| encoding/compress (gzip/deflate/brotli) | [179](179-std-encoding-compress.md) — гейт 178 decompress |
+| serde / typed-json | [180](180-serde-derive.md) — гейт 178 `.json[T]` |
+| encoding/json · base64 · url | существующие / `_experimental` (url → промоут в 178) |
 
 **Сквозная конвенция:** [177](177-fallible-result-everywhere.md) (Result-everywhere) — применяется ко ВСЕМ модулям выше.
 
