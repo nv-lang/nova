@@ -41,15 +41,13 @@
 ## 2. Протоколы sink
 
 ```nova
-export type Write protocol {
+export type Write protocol {         // МИНИМАЛЬНЫЙ (ревью 2026-07-15): reserve/advance УБРАНЫ (см. §9)
     mut @write(bytes []u8) -> ()
-    // zero-copy для примитивов:
-    mut @reserve(n int) -> *u8       // гарантировать n свободных, вернуть голову записи
-    mut @advance(n int) -> ()        // зафиксировать n записанных байт
-    // (рек. str-overload: mut @write(s str) -> () поверх байтового)
+    mut @write(s str) -> () { @write(s.as_bytes()) }   // str-overload поверх байтового
+    // reserve/advance — КОНКРЕТНО на StringBuilder (не в протоколе); zero-copy = компилятор через SB
 }
 
-export type Fmt protocol {           // Fmt extends Write (= @write/@reserve/@advance +)
+export type Fmt protocol {           // Fmt = @write + оси спека (reserve/advance НЕ в протоколе)
     @width()     -> Option[int]
     @precision() -> Option[int]
     @align()     -> Option[Align]
@@ -64,8 +62,8 @@ type Align   enum Left | Right | Center      // D406
 type Sign    enum Minus | Plus
 type FmtKind enum Display | Debug | Hex | Oct | Bin | Exp
 
-export type Display protocol { @display(mut f Fmt) { f.write(@to_str()) } }
-export type Debug   protocol { @debug(mut f Fmt)   { /* derive / @to_str */ } }
+export type Display protocol { @display(mut f Fmt) }   // REQUIRED (ревью: без to_str-дефолта, см. §9 инвариант)
+export type Debug   protocol { @debug(mut f Fmt) }     // REQUIRED
 ```
 `StringBuilder` реализует `Write`; компилятор на каждом `${x:SPEC}` строит `FmtCtx` (реализатор `Fmt`),
 обёрнутый вокруг главного sb + распарсенного спека.
@@ -212,25 +210,30 @@ type FmtKind enum Display | Debug | Hex | Oct | Bin | Exp
 type FloatKind enum Shortest | Fixed | Sci        // для nova_f64_into
 ```
 
-**`Write` — байтовый sink форматирования (ИНФАЛЛИБЕЛЬНЫЙ):**
+**`Write` — байтовый sink форматирования (ИНФАЛЛИБЕЛЬНЫЙ). МИНИМАЛЬНЫЙ (ревью 2026-07-15):**
 ```nova
 export type Write protocol {
     mut @write(bytes []u8) -> ()
     mut @write(s str) -> () { @write(s.as_bytes()) }   // ⚠syntax: default-перегрузка; str уже UTF-8 → 0 копий
-    mut @reserve(n int) -> *mut u8                       // гарантировать n свободных, вернуть голову записи (zero-copy)
-    mut @advance(n int) -> ()                            // зафиксировать k записанных байт
 }
 ```
-(io-`Write` из Plan 176 — ОТДЕЛЬНЫЙ протокол с `@write([]u8) -> Result[(), IoError]`; тот же байтовый шейп, другая
-сигнатура — «два родственника».)
+**Ревью-решение (владелец 2026-07-15): `@reserve`/`@advance` УБРАНЫ из протокола `Write`** (Rust-путь). Причины:
+(1) `@reserve -> *mut u8` реализуем только буфером — стриминговый/io-sink не даёт указатель на будущие байты, т.е.
+это разъезжается с io-`Write`-родственником; (2) сырой `*mut u8` не должен течь в общий протокол. **Zero-copy
+сохранён иначе:** `@reserve`/`@advance` остаются КОНКРЕТНЫМИ методами `StringBuilder` (§«StringBuilder аменд»), и
+**компилятор**, зная что sink — конкретно `StringBuilder`, использует их напрямую для примитивов (digit-loop в
+spare-capacity). Пользовательские generic-`@display` (над `Fmt`/`Write`) пишут через `@write(slice)`: примитив
+рендерится в **стек-буфер** (zero-**alloc**, без кучи) + один memcpy стек→sink. Итог: zero-COPY на горячем
+компилятор-пути (sink=SB), zero-ALLOC для generic-методов — как в Rust (`fmt::Write` минимален).
 
-**`Fmt` — sink + оси спека** (повторяет write-методы + добавляет оси; НЕ полагаемся на наследование протокола `⚠syntax`):
+(io-`Write` из Plan 176 — ОТДЕЛЬНЫЙ протокол с `@write([]u8) -> Result[(), IoError]`; тот же байтовый шейп, другая
+сигнатура — «два родственника»; теперь обе минимальны = честно общий шейп.)
+
+**`Fmt` — sink + оси спека** (повторяет `@write` + добавляет оси; НЕ полагаемся на наследование протокола `⚠syntax`):
 ```nova
 export type Fmt protocol {
     mut @write(bytes []u8) -> ()
     mut @write(s str) -> () { @write(s.as_bytes()) }
-    mut @reserve(n int) -> *mut u8
-    mut @advance(n int) -> ()
     @width()     -> Option[int]
     @precision() -> Option[int]
     @align()     -> Option[Align]
@@ -242,11 +245,20 @@ export type Fmt protocol {
 }
 ```
 
-**`Display` / `Debug` — ОДИН метод каждый, инфаллибельный:**
+**`Display` / `Debug` — ОДИН метод каждый, инфаллибельный, `@display`/`@debug` = REQUIRED-примитив
+(ревью 2026-07-15 — убран to_str-зовущий дефолт во избежание цикла):**
 ```nova
-export type Display protocol { @display(mut f Fmt) -> () { f.write(@to_str()) } }   // default через to_str
-export type Debug   protocol { @debug(mut f Fmt) -> () { /* auto-derive / @to_str */ } }
+export type Display protocol { @display(mut f Fmt) -> () }   // REQUIRED — без дефолта (не зовёт to_str!)
+export type Debug   protocol { @debug(mut f Fmt) -> () }     // REQUIRED
 ```
+**★ Инвариант «нет циклической ловушки» (легализация 2026-07-15):**
+1. `@display`/`@debug` — **required-примитив**, дефолта, зовущего `@to_str`, НЕТ.
+2. `@to_str` — бланкет **bounded `Display`** (`fn[T Display] T @to_str()`): вызываем только на типе, который
+   *уже* Display (уже имеет реальный `@display`) → зовёт настоящий примитив, не себя. Цикл невозможен.
+3. **Auto-derive** структурных типов (record/sum/tuple, §5/§159): компилятор синтезирует реальный
+   `@display`/`@debug` по требованию → структурный тип Display-способен без ручного impl.
+4. Тип без `@display` и не-деривируемый (опак без полей) → **НЕ Display** → `${x}` = **compile-error
+   «type X не реализует Display»**, а не рекурсия. Худший случай — понятная ошибка сборки, не бесконечный цикл.
 
 **`FmtCtx` — конкретный реализатор `Fmt`, строит компилятор на каждом `${x:SPEC}`:**
 ```nova
@@ -327,6 +339,10 @@ width/align/fill/sign/`#`alt/`0`zero-pad/radix(hex/oct/bin)/precision(float+str)
 - **язык-меняющее** → D-амендмент в том же слиянии (Фаза 0 спека → Фаза 2 код ссылается);
 - **Фаза 2 = big-bang** (сигнатуры взаимозависимы) — главный риск; митигигация: Фаза 1 аддитивна (примитивы готовы
   заранее), Фаза 2 дробить по под-шагам с checkpoint, полный conformance после каждого под-шага.
+- **Стоимость гейтов Фазы 2 (заложить в сроки, ревью 2026-07-15):** смена сигнатур рипплит по корпусу, а опыт
+  показал — merged-CU-регрессии ловятся ТОЛЬКО полным conformance-гейтом (не таргетным). Значит КАЖДЫЙ под-шаг Фазы 2
+  оркестратор гейтит полным conformance САМ (агенты — только таргетно). Это много ~7-мин серийных гейтов оркестратора —
+  Фаза 2 по календарю дольше прочих; это норма, не задержка.
 
 **Следующий шаг:** финализировать сигнатуры (`Fmt`/`Write`/`Display`/`Debug`/буфер-примитив/`nova_f64_into`) +
 карта исполнения (что opus-синтез в компиляторе, что дешёвыми агентами по `.nv`/`conv.h`→`.nv`; порядок; гейты).
