@@ -4949,6 +4949,21 @@ fn cmd_build(
             }
         }
     }
+    // [M-nova-build-vendor-ffi-no-autobuild] (2026-07-15): `nova test`
+    // (test_runner.rs's `build_and_run_one`) build-and-caches any
+    // `[ffi] vendor_src_dirs` native dep (e.g. nova-tls's vendored mbedTLS)
+    // from source BEFORE linking, but `nova build` never called that step —
+    // it only merged `[ffi] libs`/`lib_dirs` and went straight to the link,
+    // so a clean checkout with no pre-built vendor archive failed to link
+    // under `nova build` (had to be worked around by manually copying
+    // pre-built libs into place). Mirrors test_runner's call site exactly:
+    // no-op when `vendor_src_dirs`/`lib_dirs`/`libs` is empty or already
+    // cached, never fatal (falls through to the real link step, which
+    // fails with its own honest error if the lib is genuinely still
+    // missing).
+    if let Some(ffi) = &resolved_ffi {
+        test_runner::build_missing_vendor_ffi_libs(ffi, tc.vcvars_path());
+    }
     let resolved_runtime: Option<nova_codegen::manifest::RuntimeConfig> =
         manifest.as_ref().and_then(|m| m.runtime.clone());
     let build_opts = test_runner::BuildOpts {

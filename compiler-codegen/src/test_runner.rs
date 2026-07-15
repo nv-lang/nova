@@ -926,7 +926,20 @@ fn ffi_have_defines(ffi: &ResolvedFfiConfig) -> Vec<String> {
 /// and degrades gracefully to `SkipReason::FfiLibNotFound` instead of a
 /// hard test-runner crash — this function only ever tries to IMPROVE on
 /// that outcome, never regresses it.
-fn build_missing_vendor_ffi_libs(ffi: &ResolvedFfiConfig, vcvars: Option<&Path>) {
+///
+/// [M-nova-build-vendor-ffi-no-autobuild] (2026-07-15): `pub` (was private
+/// to this module) so `nova-cli::cmd_build` can call it too — `nova build`
+/// used to skip this step entirely (only `nova test`'s
+/// `build_and_run_one` called it), so any example with a `vendor_src_dirs`
+/// native dep (e.g. nova-tls's vendored mbedTLS) failed to link under
+/// plain `nova build` unless the archives had been pre-built by a prior
+/// `nova test` run or copied in by hand. `cmd_build` now calls this right
+/// after merging its own + dependency `[ffi]` config, mirroring
+/// `build_and_run_one`'s call site 1:1 (same no-op/cache/swallow contract
+/// described above — a build failure here just falls through to the
+/// unchanged real link step, which fails with its own honest error if the
+/// lib is genuinely still missing).
+pub fn build_missing_vendor_ffi_libs(ffi: &ResolvedFfiConfig, vcvars: Option<&Path>) {
     if ffi.vendor_src_dirs.is_empty() || ffi.lib_dirs.is_empty() || ffi.libs.is_empty() {
         return;
     }
@@ -990,7 +1003,20 @@ fn build_vendor_ffi_lib(srcs: &[PathBuf], include_dirs: &[PathBuf], target_dir: 
         for s in srcs {
             lines.push(format!("\"{}\"", strip_verbatim_prefix(s).display()));
         }
-        std::fs::write(&rsp, lines.join("\n"))
+        // [M-nova-build-vendor-ffi-no-autobuild] follow-up (2026-07-15):
+        // `\u{FEFF}` (UTF-8 BOM) prefix — cl.exe/link.exe response files
+        // default to the process ANSI codepage when no BOM is present;
+        // without it, any non-ASCII byte in a path (e.g. a Windows user
+        // profile dir containing Cyrillic characters — exercised for real
+        // the first time by THIS call site once vendor autobuild is
+        // actually reached instead of short-circuited by a pre-built
+        // cache hit, see `build_missing_vendor_ffi_libs` doc) gets
+        // misdecoded, corrupting every subsequent source-file path in the
+        // rsp and failing with a spurious `C1083: file not found`. BOM
+        // makes cl.exe read the file as UTF-8 regardless of the console's
+        // active codepage — same fix applied to the `lib.exe` archive rsp
+        // below (its object-file paths live under the same tree).
+        std::fs::write(&rsp, format!("\u{FEFF}{}", lines.join("\n")))
             .map_err(|e| anyhow!("write rsp: {}", e))?;
         let inner = format!(
             "\"call \"{}\" >nul 2>&1 && cl.exe @\"{}\"\"",
@@ -1026,7 +1052,9 @@ fn build_vendor_ffi_lib(srcs: &[PathBuf], include_dirs: &[PathBuf], target_dir: 
             for o in &obj_files {
                 lib_lines.push(format!("\"{}\"", strip_verbatim_prefix(o).display()));
             }
-            std::fs::write(&lib_rsp, lib_lines.join("\n"))
+            // BOM — see compile.rsp comment above (same non-ASCII-path
+            // codepage-misdecode risk; obj_files live under the same tree).
+            std::fs::write(&lib_rsp, format!("\u{FEFF}{}", lib_lines.join("\n")))
                 .map_err(|e| anyhow!("write lib.rsp: {}", e))?;
             let lib_inner = format!(
                 "\"call \"{}\" >nul 2>&1 && lib.exe @\"{}\"\"",
