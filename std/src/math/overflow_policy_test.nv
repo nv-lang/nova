@@ -1,0 +1,124 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 206 Ф.2 (D423) — тесты трёх .nv-бланкетов над компиляторным
+// интринсиком `@overflowing_add/_sub/_mul` (std/src/prelude/protocols.nv,
+// `fn[T Ints] T @checked_*/@saturating_*/@wrapping_*`):
+//   - `checked_*`    -> `Option[T]` (overflow -> `None`)
+//   - `wrapping_*`   -> `T` (модульная арифметика, флаг игнор)
+//   - `saturating_*` -> `T` (клампит к `T.MAX`/`T.MIN`, op-специфичная
+//     формула направления — см. план §Дизайн)
+//
+// Расположение: НЕ рядом с protocols.nv (`std/src/prelude/`) — файлы внутри
+// `std.prelude.*` имеют auto-import global prelude отключённым (cycle
+// protection, protocols.nv:13-18), что ломает `assert()`-инфраструктуру
+// (`Nova_StringBuilder` struct-tag CC-FAIL) для ЛЮБОГО теста в этом
+// namespace — pre-existing gap, не specific для Ф.2 (в prelude.* до сих пор
+// не было ни одного *_test.nv). Тесты бланкетов живут здесь, рядом с
+// numeric/math-поверхностью, где обычный implicit-prelude работает.
+//
+// Все receiver'ы — типизированные локали (`ro a i32 = ...`), НЕ inline
+// конверсия-вызов (`i32(10).checked_add(...)`): последнее бьётся в
+// pre-existing `[P67-LEGACY] method call return type unknown` ICE
+// (emit_c.rs:51424) для generic type-set-bound бланкетов, когда receiver
+// сам — Call-выражение (obj_ty не выводится для чейна на Call). Не задевает
+// реальный overflow-migration-код (fnv/bloom_filter/md5/sha1/sha256/xoshiro)
+// — там receiver'ы везде уже типизированные локали/поля, не inline-конверсии.
+//
+// [M-option-eq-some-literal-elem-adapt] (backlog-followups.md, OPEN,
+// pre-existing P2, Plan 172.2): `Option[T] == Some(int-литерал)` не
+// адаптирует литерал к `T` для sized не-`int` T → CC-FAIL
+// (`NovaOpt_nova_int` vs `NovaOpt_int32_t`). Обход — тот же, что в
+// зарегистрированном followup: типизированная локаль вместо голого
+// литерала внутри `Some(...)`.
+module math.overflow_policy_test
+
+test "Ф.2: checked_add — Some при no-overflow, None при overflow (signed+unsigned)" {
+    ro a i32 = 10
+    ro fifteen i32 = 15
+    assert(a.checked_add(5) == Some(fifteen))
+    ro amax i32 = i32.MAX
+    assert(amax.checked_add(1) == None)
+    ro b u8 = 250
+    ro u255 u8 = 255
+    assert(b.checked_add(5) == Some(u255))
+    assert(b.checked_add(6) == None)
+    ro cmin i8 = i8.MIN
+    assert(cmin.checked_add(-1) == None)
+}
+
+test "Ф.2: checked_sub — Some при no-overflow, None при overflow (signed+unsigned)" {
+    ro a i32 = 10
+    ro five i32 = 5
+    assert(a.checked_sub(5) == Some(five))
+    ro bmin i8 = i8.MIN
+    assert(bmin.checked_sub(1) == None)
+    ro c u8 = 0
+    assert(c.checked_sub(1) == None)
+    ro d u8 = 5
+    ro zero u8 = 0
+    assert(d.checked_sub(5) == Some(zero))
+}
+
+test "Ф.2: checked_mul — Some при no-overflow, None при overflow" {
+    ro a i32 = 6
+    ro forty_two i32 = 42
+    assert(a.checked_mul(7) == Some(forty_two))
+    ro bmax i8 = i8.MAX
+    assert(bmax.checked_mul(2) == None)
+    ro c u8 = 100
+    assert(c.checked_mul(3) == None)
+    ro d u8 = 10
+    ro twenty u8 = 20
+    assert(d.checked_mul(2) == Some(twenty))
+}
+
+test "Ф.2: wrapping_add/_sub/_mul — модульная арифметика, без паники" {
+    ro a u8 = 250
+    assert(a.wrapping_add(10) == 4)
+    ro bmax i8 = i8.MAX
+    assert(bmax.wrapping_add(1) == i8.MIN)
+    ro c u8 = 0
+    assert(c.wrapping_sub(1) == u8.MAX)
+    ro dmin i8 = i8.MIN
+    assert(dmin.wrapping_sub(1) == i8.MAX)
+    ro e u8 = 100
+    assert(e.wrapping_mul(3) == 44)
+    // 2_000_000_000 + 2_000_000_000 = 4_000_000_000 = 2^32 - 294_967_296 -> wraps to -294_967_296
+    ro f i32 = 2_000_000_000
+    assert(f.wrapping_add(2_000_000_000) == -294_967_296)
+}
+
+test "Ф.2: saturating_add — клампит по знаку rhs (add-формула), signed+unsigned" {
+    ro a i32 = 10
+    assert(a.saturating_add(5) == 15)
+    ro bmax i8 = i8.MAX
+    assert(bmax.saturating_add(1) == i8.MAX)
+    ro cmin i8 = i8.MIN
+    assert(cmin.saturating_add(-1) == i8.MIN)
+    ro d u8 = 250
+    assert(d.saturating_add(10) == u8.MAX)
+}
+
+test "Ф.2: saturating_sub — клампит по знаку rhs (sub-формула: rhs<0 -> MAX)" {
+    ro a i32 = 10
+    assert(a.saturating_sub(5) == 5)
+    ro bmin i8 = i8.MIN
+    assert(bmin.saturating_sub(1) == i8.MIN)
+    ro cmax i8 = i8.MAX
+    assert(cmax.saturating_sub(-1) == i8.MAX)
+    ro d u8 = 0
+    assert(d.saturating_sub(1) == 0)
+}
+
+test "Ф.2: saturating_mul — клампит по знаку операндов (одинаковый знак -> MAX)" {
+    ro a i32 = 6
+    assert(a.saturating_mul(7) == 42)
+    ro bmax i8 = i8.MAX
+    assert(bmax.saturating_mul(2) == i8.MAX)
+    ro cmin i8 = i8.MIN
+    assert(cmin.saturating_mul(2) == i8.MIN)
+    ro dmax i8 = i8.MAX
+    assert(dmax.saturating_mul(-2) == i8.MIN)
+    ro e u8 = 100
+    assert(e.saturating_mul(3) == u8.MAX)
+}

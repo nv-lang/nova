@@ -670,3 +670,104 @@ type UnsignedInt set u8 | u16 | u32 | u64 | uint
 // частичного микса тут нет. Тот же случай, что иллюстративный `AnyNumber`
 // в самом тексте D310 (02-types.md).
 type Ints set i8 | i16 | i32 | i64 | int | u8 | u16 | u32 | u64 | uint
+
+// Plan 206 Ф.2 (D423): три .nv-бланкета над компиляторным интринсиком
+// `@overflowing_add/_sub/_mul` (генерик `fn[T Ints] T @overflowing_op(rhs T)
+// -> (T, bool)`, Ф.1 hardcoded dispatch, см. 206-progress.md). По одному
+// бланкету на op — работает и для signed, и для unsigned Ints без
+// дублирования тела (диспетч бланкетов над примитивами — D164-фикс).
+//
+// - `checked_*` -> `Option[T]` (overflow -> `None`, иначе `Some(wrapped)`).
+// - `wrapping_*` -> `T` (модульная арифметика: берёт `wrapped`, флаг игнор).
+// - `saturating_*` -> `T` (overflow -> клампит к `T.MAX`/`T.MIN`,
+//   ОП-СПЕЦИФИЧНАЯ формула направления, НЕ «по знаку rhs» одинаково для
+//   всех трёх — см. план §Дизайн):
+//     add: overflow -> `rhs > 0 ? MAX : MIN`
+//     sub: overflow -> `rhs < 0 ? MAX : MIN` (вычли отрицательное -> вверх)
+//     mul: overflow -> `(a < 0) == (rhs < 0) ? MAX : MIN` (одинаковый знак
+//          операндов -> произведение вверх)
+//   Все три формулы автоматически корректны и для unsigned: `x < 0`
+//   константно `false` для unsigned-члена мономорфизации -> ветки
+//   схлопываются в правильную сторону (unsigned add/mul -> MAX, unsigned
+//   sub -> MIN=0).
+// - `unchecked_*` — ОТЛОЖЕН (владелец 2026-07-14), не реализуется здесь.
+
+/// `checked_add` — `None` при overflow, иначе `Some(a + b)`.
+#stable(since = "0.1")
+export fn[T Ints] T @checked_add(rhs T) -> Option[T] {
+    ro (wrapped, overflowed) = @overflowing_add(rhs)
+    if overflowed { None } else { Some(wrapped) }
+}
+
+/// `checked_sub` — `None` при overflow, иначе `Some(a - b)`.
+#stable(since = "0.1")
+export fn[T Ints] T @checked_sub(rhs T) -> Option[T] {
+    ro (wrapped, overflowed) = @overflowing_sub(rhs)
+    if overflowed { None } else { Some(wrapped) }
+}
+
+/// `checked_mul` — `None` при overflow, иначе `Some(a * b)`.
+#stable(since = "0.1")
+export fn[T Ints] T @checked_mul(rhs T) -> Option[T] {
+    ro (wrapped, overflowed) = @overflowing_mul(rhs)
+    if overflowed { None } else { Some(wrapped) }
+}
+
+/// `wrapping_add` — модульная арифметика (2^n wraparound); флаг overflow игнорируется.
+#stable(since = "0.1")
+export fn[T Ints] T @wrapping_add(rhs T) -> T {
+    ro (wrapped, _overflowed) = @overflowing_add(rhs)
+    wrapped
+}
+
+/// `wrapping_sub` — модульная арифметика (2^n wraparound); флаг overflow игнорируется.
+#stable(since = "0.1")
+export fn[T Ints] T @wrapping_sub(rhs T) -> T {
+    ro (wrapped, _overflowed) = @overflowing_sub(rhs)
+    wrapped
+}
+
+/// `wrapping_mul` — модульная арифметика (2^n wraparound); флаг overflow игнорируется.
+#stable(since = "0.1")
+export fn[T Ints] T @wrapping_mul(rhs T) -> T {
+    ro (wrapped, _overflowed) = @overflowing_mul(rhs)
+    wrapped
+}
+
+/// `saturating_add` — при overflow клампит к `T.MAX`/`T.MIN` (направление
+/// по знаку `rhs`: прибавили положительное -> перелилось вверх -> `MAX`).
+#stable(since = "0.1")
+export fn[T Ints] T @saturating_add(rhs T) -> T {
+    ro (wrapped, overflowed) = @overflowing_add(rhs)
+    if overflowed {
+        if rhs > 0 { T.MAX } else { T.MIN }
+    } else {
+        wrapped
+    }
+}
+
+/// `saturating_sub` — при overflow клампит к `T.MAX`/`T.MIN` (направление по
+/// знаку `rhs`: вычли отрицательное -> перелилось вверх -> `MAX`; unsigned
+/// underflow -> `MIN` = 0).
+#stable(since = "0.1")
+export fn[T Ints] T @saturating_sub(rhs T) -> T {
+    ro (wrapped, overflowed) = @overflowing_sub(rhs)
+    if overflowed {
+        if rhs < 0 { T.MAX } else { T.MIN }
+    } else {
+        wrapped
+    }
+}
+
+/// `saturating_mul` — при overflow клампит к `T.MAX`/`T.MIN` (направление по
+/// знаку операндов: одинаковый знак -> произведение положительное ->
+/// перелилось вверх -> `MAX`; разный знак -> вниз -> `MIN`).
+#stable(since = "0.1")
+export fn[T Ints] T @saturating_mul(rhs T) -> T {
+    ro (wrapped, overflowed) = @overflowing_mul(rhs)
+    if overflowed {
+        if (@ < 0) == (rhs < 0) { T.MAX } else { T.MIN }
+    } else {
+        wrapped
+    }
+}
