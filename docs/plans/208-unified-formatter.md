@@ -216,8 +216,10 @@ sign/radix/precision/alternate/pretty) pos; byte-parity НЕ требуется 
    zero-copy через SB-конкретику, zero-alloc через stack-buf); совместимо с io.Write. См. §9.
 5. ✅ **@display/@debug required + цикл** (ревью 2026-07-15) — required-примитив, `@to_str` bounded Display,
    auto-derive структур, опак=compile-error. Цикл структурно невозможен. См. §9 инвариант.
-6. ✅ **derived Display vs Debug** (владелец 2026-07-15) — auto-derive ОБОИХ, но РАЗЛИЧАЮТСЯ формой:
-   Debug=`Point { x: 1, y: 2 }` (с именами), Display=`Point(1, 2)` (компактно). См. §5.
+6. ✅ **derived Display vs Debug** (владелец 2026-07-15, ПОДТВЕРЖДЕНО) — auto-derive **ОБОИХ**, но РАЗЛИЧАЮТСЯ формой:
+   Debug=`Point { x: 1, y: 2 }` (с именами), Display=`Point(1, 2)` (компактно). См. §5. **Намеренный отход от Rust:**
+   Rust деривит только `Debug` (Display — ручной, намеренно); мы деривим оба ради эргономики (`${любая_структура}`
+   работает без ручного impl). Инвариант №4 (§9) тогда срабатывает только на опак-типах без полей и без `@display`.
 
 **Все вопросы закрыты — дизайн-развилок не осталось.**
 
