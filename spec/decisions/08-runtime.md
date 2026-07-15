@@ -4399,6 +4399,28 @@ Legacy C aliases сохранены для совместимости кода, 
 
 ## D179. `StringBuilder` — pure Nova consume type — Plan 91 Ф.2.6
 
+> **AMEND (Plan 208 Ф.0, 2026-07-15) — байтовый append + pad-примитивы для
+> [D422](02-types.md#d422-unified-formatter--единый-displaymut-f-fmt--debug-байтовый-write-zero-alloc-pad-plan-208-2026-07-15).**
+> `StringBuilder` остаётся отдельным типом (buffer-consolidation РЕШЕНА — не схлопывается в
+> `Vec[u8]`, консолидация = только единый байтовый `Write`-шейп). Добавляются/меняются методы:
+> ```nova
+> fn StringBuilder mut @reserve(n int) -> *mut u8                                    // NEW
+> fn StringBuilder mut @advance(n int) -> ()                                         // NEW
+> fn StringBuilder @len() -> int                                                     // unchanged (уже был)
+> fn StringBuilder mut @pad_in_place(mark int, width int, fill char, align Align) -> ()  // NEW
+> fn StringBuilder mut @write_padded(bytes []u8, width int, fill char, align Align) -> () // NEW
+> fn StringBuilder consume @into_str() -> str                                        // unchanged (assume-valid UTF-8)
+> fn StringBuilder consume @into_str_checked() -> Result[str, Utf8Error]             // NEW
+> ```
+> `@reserve`/`@advance` — компилятор-приватный zero-copy путь (top-level `${x}` рендер примитива
+> прямо в spare-capacity, минуя стек-буфер+memcpy); НЕ часть протокола `Write` (см. D422 §1) —
+> конкретные методы именно `StringBuilder`. `@pad_in_place` — width-композит (record/tuple/
+> Vec/sum), где длина тела известна только ПОСЛЕ стрим-рендера: memmove тела + fill-вставка
+> (right/center), left — без сдвига. `@write_padded` — известная-длина примитивы (int/float/
+> bool/char/str): рендер в стек-буфер, потом padded-запись без сдвига. Целевая модель,
+> **Ф.1-4 pending** (см. D422 §Статус) — API ниже (`@append`/`@into_str` без pad-семьи) читать
+> как ТЕКУЩЕЕ (до-D422) поведение; новые методы — АДДИТИВНЫ (Ф.1 не ломает существующий API).
+>
 **Статус:** закрыт (Plan 91 Ф.2.6 sub-phase, 2026-05-28).
 
 ### Суть
