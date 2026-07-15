@@ -180,7 +180,7 @@ result = sb.into_str()
 ## 6. D-план
 
 **НОВЫЙ:**
-- **D422 (keystone)** — Unified Formatter: единый `@display(mut f Fmt)`; `Fmt extends Write` (оси + `@pad`/`@kind`);
+- **D422 (keystone)** — Unified Formatter: единый `@display(mut f Fmt)`; `Fmt` = write-методы + оси/`@pad`/`@kind` (без наследования протокола — см. §9);
   `pad_consumed` auto-pad; буфер-примитив `(buf,cap)->len`; перенос `conv.h`→`.nv`; float-extern-контракт
   (`nova_f64_into(buf,cap,v,kind,prec)`); энумы `Align`/`Sign`/`FmtKind`.
 
