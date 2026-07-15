@@ -1739,6 +1739,20 @@ pub struct CEmitter {
     /// (`type_name: None`) by unique structural field-set match (mirror of
     /// checker's `ConsumeRegistry::consume_fields_for_lit`).
     record_field_names: HashMap<String, HashSet<String>>,
+    /// Plan 209 Ф.1 (A1): multi-TU codegen split flag. When `false` (default),
+    /// ALL top-level definitions (free/method/mono/lambda/thunk/test/bench/eq/
+    /// supervisor/timeout fns + file-scope globals) keep `static` (internal
+    /// linkage) exactly as before Plan 209 — output is byte-identical to
+    /// pre-209. When `true` (env `NOVA_MULTI_TU=1`), `top_level_storage()` /
+    /// `top_level_storage_inline()` emit `""` instead, promoting those symbols
+    /// to external linkage so a post-finalize splitter (`split_tu`, A2) can
+    /// scatter definitions across N `_partK.c` translation units that all
+    /// `#include` one `_common.h` (declarations only) — see
+    /// docs/plans/209-recon-notes.md §2/§5. Mangled names are already
+    /// CU-unique (D381 collision-aware mangle), so promoting `static` →
+    /// external never collides; `assert_multi_tu_symbol_uniqueness` (A3)
+    /// double-checks this invariant defensively.
+    multi_tu_enabled: bool,
 }
 
 /// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }` statement.
@@ -1885,6 +1899,45 @@ struct DeferScope {
     /// `true` if this scope is loop-body — break/continue stop here
     /// rather than walking outer scopes.
     is_loop_body: bool,
+}
+
+/// Plan 209 Ф.1 (A4): result of `CEmitter::emit_module_multi_tu`. See that
+/// function's doc for the byte-identity guarantee on the `Single` arm.
+pub enum EmitOutput {
+    /// Multi-TU disabled, or CU under threshold: the single `.c` string,
+    /// byte-identical to what `emit_module` alone would have returned.
+    Single(String),
+    /// Multi-TU enabled AND CU over threshold: one `_common.h` (decl-only)
+    /// + N `_partK.c` bodies (`split_tu`, A2).
+    Split { common_h: String, parts: Vec<String> },
+}
+
+/// Plan 209 Ф.1 (A4), recon-notes §6: multi-TU only pays for CUs above
+/// ~2MB of finalized output OR (approximately) ~200 top-level function
+/// definitions — below that, split+multi-file-link overhead isn't worth
+/// it and the CU stays a single `.c` even with `NOVA_MULTI_TU=1`.
+const MULTI_TU_SIZE_THRESHOLD_BYTES: usize = 2 * 1024 * 1024;
+const MULTI_TU_FN_COUNT_THRESHOLD: usize = 200;
+/// Plan 209 Ф.1 (A2 §3): target bytes per `_partK.c` once split.
+const MULTI_TU_PART_THRESHOLD_BYTES: usize = 500 * 1024;
+
+/// Cheap (single linear scan, no tokenizing) approximation of "is this CU
+/// big enough to bother splitting?" — exact top-level function counting is
+/// `split_tu`'s job (which this function deliberately avoids duplicating
+/// for a CU that may be many MB; that's exactly the cost Plan 209 exists to
+/// amortize, so the GATE deciding whether to pay it must itself stay cheap).
+/// `") {"` is a reasonable proxy for "a function signature's closing paren
+/// immediately followed by its opening brace" — it can only ever
+/// UNDER-count (a `") {"` inside a string/comment would over-count, but
+/// none of this codebase's generated top-level text contains that
+/// particular 3-byte sequence inside a literal/comment in practice) or
+/// slightly over/under vs. the true count; either way it only feeds a
+/// coarse "> 200" threshold decision, never correctness.
+fn exceeds_multi_tu_threshold(finalized: &str) -> bool {
+    if finalized.len() > MULTI_TU_SIZE_THRESHOLD_BYTES {
+        return true;
+    }
+    finalized.matches(") {").count() > MULTI_TU_FN_COUNT_THRESHOLD
 }
 
 impl CEmitter {
@@ -2152,7 +2205,38 @@ impl CEmitter {
             consume_ccount_structs: HashSet::new(),
             record_consume_fields: HashMap::new(),
             record_field_names: HashMap::new(),
+            // Plan 209 Ф.1 (A1): off by default → byte-identical single-.c
+            // path unchanged. `NOVA_MULTI_TU=1` opts in (see field doc).
+            multi_tu_enabled: std::env::var("NOVA_MULTI_TU")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
         }
+    }
+
+    /// Plan 209 Ф.1 (A1): storage-class prefix for a top-level `static`
+    /// definition/global (function body or object-with-initializer). Returns
+    /// `"static "` when multi-TU split is disabled (default — byte-identical
+    /// to pre-209 output) or `""` when enabled (promotes to external linkage
+    /// so `split_tu`, A2, may place the definition in a different `_partK.c`
+    /// than its call sites). Do NOT use for `static inline` header-style
+    /// helpers meant to be duplicated verbatim per-TU via `_common.h`
+    /// inclusion (e.g. `nova_typeid_user_name`, per-E throw fast-path) — those
+    /// stay hardcoded `"static inline "` always (see 209-recon-notes.md §2).
+    #[inline]
+    fn top_level_storage(&self) -> &'static str {
+        if self.multi_tu_enabled { "" } else { "static " }
+    }
+
+    /// Plan 209 Ф.1 (A1): variant of `top_level_storage()` for definitions
+    /// currently written `static inline` that are NOT meant to be duplicated
+    /// per-TU (e.g. `nova_opt_eq_*`, once/lazy property methods, sum-variant
+    /// constructors) — recon-notes §4 routes their BODIES into exactly one
+    /// `_partK.c` (promoted, external), not `_common.h`. `inline` is dropped
+    /// too when promoting (mixing `extern`+`inline` C linkage across TUs is
+    /// its own can of worms; plain external is simplest and correct here).
+    #[inline]
+    fn top_level_storage_inline(&self) -> &'static str {
+        if self.multi_tu_enabled { "" } else { "static inline " }
     }
 
     /// Plan 61 followup #4: register an E type для per-E Fail dispatch.
@@ -2229,15 +2313,19 @@ impl CEmitter {
             out.push_str(&format!("    struct NovaVtable_Fail_{m}* prev;\n", m = mangled));
             out.push_str("    struct NovaInterruptFrame* owner_iframe;\n");
             out.push_str(&format!("}} NovaVtable_Fail_{m};\n", m = mangled));
+            // Plan 209 Ф.1: mutable cross-TU TLS state (installer/throw in
+            // different `_partK.c` must observe the SAME slot) — promoted
+            // per recon-notes.md §2 (unlike the throw fast-path below, which
+            // stays `static inline` and is safely duplicated per-TU).
             out.push_str("#ifdef _MSC_VER\n");
             out.push_str(&format!(
-                "__declspec(thread) static NovaVtable_Fail_{m}* _nova_handler_Fail_{m} = NULL;\n",
-                m = mangled
+                "__declspec(thread) {storage}NovaVtable_Fail_{m}* _nova_handler_Fail_{m} = NULL;\n",
+                storage = self.top_level_storage(), m = mangled
             ));
             out.push_str("#else\n");
             out.push_str(&format!(
-                "static __thread NovaVtable_Fail_{m}* _nova_handler_Fail_{m} = NULL;\n",
-                m = mangled
+                "{storage}__thread NovaVtable_Fail_{m}* _nova_handler_Fail_{m} = NULL;\n",
+                storage = self.top_level_storage(), m = mangled
             ));
             out.push_str("#endif\n");
             out.push_str("/* Per-E throw entry: prefer per-E slot, fallback на erased nova_throw_typed.\n");
@@ -6706,7 +6794,7 @@ impl CEmitter {
                 if let Item::Test(t) = item {
                     let safe = Self::mangle_test_name_indexed(&t.name, idx);
                     idx += 1;
-                    self.line(&format!("static nova_unit nova_test_{}(void);", safe));
+                    self.line(&format!("{}nova_unit nova_test_{}(void);", self.top_level_storage(), safe));
                 }
             }
         }
@@ -7404,8 +7492,8 @@ static nova_int _nova_supervisor_decide_impl(void* _scope_v, nova_int _idx, cons
             );
             for (sani, (tid_macro, name)) in &self.any_typeinfos {
                 tid_defines.push_str(&format!(
-                    "static const NovaTypeInfo NOVA_TYPEINFO_{} = {{ {}, \"{}\" }};\n",
-                    sani, tid_macro, name
+                    "{}const NovaTypeInfo NOVA_TYPEINFO_{} = {{ {}, \"{}\" }};\n",
+                    self.top_level_storage(), sani, tid_macro, name
                 ));
             }
         }
@@ -7489,6 +7577,41 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         Ok((self.out, warnings))
     }
 
+    /// Plan 209 Ф.1 (A4): multi-TU-aware wrapper around `emit_module`.
+    ///
+    /// `emit_module` itself is left COMPLETELY UNCHANGED by Plan 209 — every
+    /// existing caller (`main.rs`, `test_runner.rs`, `bench/run.rs`) keeps
+    /// calling it directly and keeps getting exactly the single-`.c` shape
+    /// it always has (back-compat, per recon-notes.md §8 A4). This wrapper
+    /// is the future Ф.2 toolchain's entry point: it runs the identical
+    /// emission, then — ONLY if multi-TU is enabled (`NOVA_MULTI_TU`) AND
+    /// the resulting CU is over the size/fn-count threshold (recon-notes
+    /// §6) — hands the finalized string to `split_tu` (A2) and returns the
+    /// split shape instead. Nothing in this repo calls this function yet
+    /// (Ф.2 — parallel compile+link — is out of scope for Ф.1); it exists
+    /// so Ф.2 has a stable, already-gated entry point to wire up.
+    ///
+    /// Byte-identity guarantee: when multi-TU is disabled (the default) OR
+    /// the CU is under threshold, this returns `EmitOutput::Single` wrapping
+    /// the EXACT SAME string `emit_module` would have returned — `split_tu`
+    /// is never invoked on that path.
+    pub fn emit_module_multi_tu(
+        self,
+        module: &Module,
+        cu_name: &str,
+    ) -> Result<(EmitOutput, Vec<String>), String> {
+        let multi_tu_enabled = self.multi_tu_enabled;
+        let (finalized, warnings) = self.emit_module(module)?;
+        if !multi_tu_enabled || !exceeds_multi_tu_threshold(&finalized) {
+            return Ok((EmitOutput::Single(finalized), warnings));
+        }
+        let split = super::split_tu::split_tu(&finalized, cu_name, MULTI_TU_PART_THRESHOLD_BYTES)?;
+        Ok((
+            EmitOutput::Split { common_h: split.common_h, parts: split.parts },
+            warnings,
+        ))
+    }
+
     /// Mangle a test name and append a numeric suffix to guarantee uniqueness.
     /// Plan 57.B.3: synthesize `let <name> = <value>;` Stmt для prepending
     /// param-substitution в setup.
@@ -7560,7 +7683,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // чтобы поддерживать sub-benchmarks (`group "..." { case "..." { } }`).
 
         self.indent = 0;
-        self.line(&format!("static nova_unit nova_bench_main_{}(void) {{", safe));
+        self.line(&format!("{}nova_unit nova_bench_main_{}(void) {{", self.top_level_storage(), safe));
         self.indent = 1;
 
         // Reset bench TLS state.
@@ -7801,7 +7924,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // обход Item::Test). Без этого armed-предикат стек-плейсмента в
         // emit_let никогда не проходит внутри test-блоков.
         let saved_test_fn_id = self.current_fn_id.replace(format!("test::{}", t.name));
-        self.line(&format!("static nova_unit nova_test_{}(void) {{", safe));
+        self.line(&format!("{}nova_unit nova_test_{}(void) {{", self.top_level_storage(), safe));
         self.indent = 1;
         self.emit_block_stmts(&t.body, "nova_unit")?;
         self.indent = 0;
@@ -7953,8 +8076,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let escaped = Self::escape_c_str(s);
                 let len = s.len();
                 self.line(&format!(
-                    "static const nova_str {} = {{(const uint8_t*)\"{}\" , {}}};",
-                    c_name, escaped, len
+                    "{}const nova_str {} = {{(const uint8_t*)\"{}\" , {}}};",
+                    self.top_level_storage(), c_name, escaped, len
                 ));
                 self.var_types.insert(c.name.clone(), ty_c.clone());
                 return Ok(());
@@ -7968,7 +8091,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // вне диапазона int64, баг был замечен в std/checksums/fnv.nv).
         match self.emit_const_expr_typed(&c.value, Some(&ty_c)) {
             Ok(val) => {
-                self.line(&format!("static const {} {} = {};", ty_c, c_name, val));
+                self.line(&format!("{}const {} {} = {};", self.top_level_storage(), ty_c, c_name, val));
                 // Регистрируем тип const'а в var_types, чтобы Ident(name) на
                 // use-site инферился с правильным c-типом (например u32-const,
                 // используемый как `let mut h = FOO`, должен дать `uint32_t h`,
@@ -8024,7 +8147,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.var_types.insert(name.to_string(), ty_c.to_string());
         // Эмитим storage (file-scope static; no `_init` flag anymore — the
         // combined `nova_consts_init()` runs it exactly once, eagerly).
-        self.line(&format!("static {} _nova_const_{}_value;", ty_c, name));
+        self.line(&format!("{}{} _nova_const_{}_value;", self.top_level_storage(), ty_c, name));
         // Capture this const's init-BODY into its own buffer (same
         // side-statement-safety rationale as the old getter-body capture —
         // nested emits, e.g. a record-literal's helper statements, must not
@@ -8123,7 +8246,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn render_consts_init_fn(&self) -> String {
         let order = Self::topo_sort_const_inits(&self.pending_const_inits);
         let mut out = String::new();
-        out.push_str("static void nova_consts_init(void) {\n");
+        out.push_str(&format!("{}void nova_consts_init(void) {{\n", self.top_level_storage()));
         for i in order {
             out.push_str(&self.pending_const_inits[i].1);
         }
@@ -8692,9 +8815,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     )
                 };
                 self.mono_fwd_decls.push_str(&format!(
-                    "static {ret_c} {thunk}(void* self{extra_sig}) {{\n\
+                    "{storage}{ret_c} {thunk}(void* self{extra_sig}) {{\n\
                      \t{body}\n\
                      }}\n",
+                    storage = self.top_level_storage(),
                     ret_c = ret_c,
                     thunk = thunk_name,
                     extra_sig = extra_sig,
@@ -8704,7 +8828,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             self.current_type_subst = old_subst;
             self.mono_fwd_decls.push_str(&format!(
-                "static const {} {} = {{\n{}\n}};\n",
+                "{}const {} {} = {{\n{}\n}};\n",
+                self.top_level_storage(),
                 vtable_struct,
                 vtable_instance,
                 field_inits.join(",\n")
@@ -9148,8 +9273,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 sig_parts.push(format!("{} {}", pc, p.name));
             }
             self.line(&format!(
-                "static {} {}({}) {{",
-                ret_c, canonical_c_name, sig_parts.join(", ")
+                "{}{} {}({}) {{",
+                self.top_level_storage(), ret_c, canonical_c_name, sig_parts.join(", ")
             ));
             self.indent = 1;
 
@@ -9182,8 +9307,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Forward decl in mono_fwd_decls so callers can reference
                     // before the body appears.
                     self.mono_fwd_decls.push_str(&format!(
-                        "static {} {}({});\n",
-                        ret_c, canonical_c_name, sig_parts.join(", ")
+                        "{}{} {}({});\n",
+                        self.top_level_storage(), ret_c, canonical_c_name, sig_parts.join(", ")
                     ));
                     self.mono_fwd_decls.push_str(&emitted);
                     // Register synthesized method в overload/registry maps
@@ -10376,8 +10501,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     decl_params.push(format!("{} {}", ty, p.name));
                 }
                 let _ = writeln!(self.lambda_forward_decls,
-                    "static {ret} {fn}({params});",
-                    ret = ret_ty, fn = fn_name, params = decl_params.join(", ")
+                    "{storage}{ret} {fn}({params});",
+                    storage = self.top_level_storage(), ret = ret_ty, fn = fn_name, params = decl_params.join(", ")
                 );
             }
             // Resolve mangled vtable field: look up by plain name in schema,
@@ -10421,8 +10546,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             let fn_name = format!("{}_impl_{}_{}", handler_id, eff, m.name);
             let _ = writeln!(self.deferred_impls,
-                "static {ret} {fn}({params});",
-                ret = ret_ty, fn = fn_name, params = fn_params.join(", ")
+                "{storage}{ret} {fn}({params});",
+                storage = self.top_level_storage(), ret = ret_ty, fn = fn_name, params = fn_params.join(", ")
             );
         }
 
@@ -10500,8 +10625,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
             // Emit function signature + ctx unpacking into self.out (which we'll move to deferred)
             self.line(&format!(
-                "static {ret} {fn}({params}) {{",
-                ret = ret_ty, fn = fn_name, params = fn_params.join(", ")
+                "{storage}{ret} {fn}({params}) {{",
+                storage = self.top_level_storage(), ret = ret_ty, fn = fn_name, params = fn_params.join(", ")
             ));
             self.indent += 1;
 
@@ -10816,8 +10941,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             let fn_name = format!("{}_impl_{}", lit_name, m.name);
             let _ = writeln!(self.lambda_forward_decls,
-                "static {ret} {fn}({params});",
-                ret = ret_c, fn = fn_name, params = fn_params.join(", ")
+                "{storage}{ret} {fn}({params});",
+                storage = self.top_level_storage(), ret = ret_c, fn = fn_name, params = fn_params.join(", ")
             );
         }
 
@@ -10854,8 +10979,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let fn_name = format!("{}_impl_{}", lit_name, m.name);
 
             self.line(&format!(
-                "static {ret} {fn}({params}) {{",
-                ret = ret_c, fn = fn_name, params = fn_params.join(", ")
+                "{storage}{ret} {fn}({params}) {{",
+                storage = self.top_level_storage(), ret = ret_c, fn = fn_name, params = fn_params.join(", ")
             ));
             self.indent += 1;
 
@@ -11337,10 +11462,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // counter, no risk of duplicates.
         if !self.current_type_subst.is_empty() {
             self.mono_fwd_decls.push_str(&format!(
-                "static void {}(mco_coro* _co);\n", spawn_id));
+                "{}void {}(mco_coro* _co);\n", self.top_level_storage(), spawn_id));
         }
 
-        self.line(&format!("static void {}(mco_coro* _co) {{", spawn_id));
+        self.line(&format!("{}void {}(mco_coro* _co) {{", self.top_level_storage(), spawn_id));
         self.indent += 1;
         // Plan 143.2: prologue safepoint — unconditional. This is a FIBER-ENTRY
         // function reached indirectly via the scheduler; its body is user Nova
@@ -12220,7 +12345,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "    {}* _nova_pf_acc;", vec_mangled);
         let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
         let _ = writeln!(self.lambda_forward_decls,
-            "static void {}(mco_coro* _co);", drain_id);
+            "{}void {}(mco_coro* _co);", self.top_level_storage(), drain_id);
 
         // ── (b) call site: alloc ctx + spawn into the scope (mirror of
         // emit_spawn's call-site protocol, incl. pool-acquire under armed M:N
@@ -12261,9 +12386,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // pre-pass never saw this drain — push the decl to the mono splice.
         if !self.current_type_subst.is_empty() {
             self.mono_fwd_decls.push_str(&format!(
-                "static void {}(mco_coro* _co);\n", drain_id));
+                "{}void {}(mco_coro* _co);\n", self.top_level_storage(), drain_id));
         }
-        self.line(&format!("static void {}(mco_coro* _co) {{", drain_id));
+        self.line(&format!("{}void {}(mco_coro* _co) {{", self.top_level_storage(), drain_id));
         self.indent += 1;
         self.emit_prologue_preempt_check_unconditional();
         self.line(&format!("{ctx}* _c = ({ctx}*)mco_get_user_data(_co);", ctx = ctx_ty));
@@ -12498,14 +12623,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
         let _ = writeln!(self.lambda_forward_decls,
-            "static void {}(mco_coro* _co);", detach_id);
+            "{}void {}(mco_coro* _co);", self.top_level_storage(), detach_id);
 
         // ── Entry function body в deferred_impls ──
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
         self.indent = 0;
 
-        self.line(&format!("static void {}(mco_coro* _co) {{", detach_id));
+        self.line(&format!("{}void {}(mco_coro* _co) {{", self.top_level_storage(), detach_id));
         self.indent += 1;
         self.line(&format!("{ctx}* _c = ({ctx}*)mco_get_user_data(_co);", ctx = ctx_ty));
 
@@ -12781,7 +12906,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
         let _ = writeln!(self.lambda_forward_decls,
-            "static void {}(void* _blk_arg);", blk_id);
+            "{}void {}(void* _blk_arg);", self.top_level_storage(), blk_id);
 
         // ─── ctx-инстанс на стеке текущего кадра + заполнение захватов ───
         self.line(&format!("{} {};", ctx_ty, ctx_var));
@@ -12832,7 +12957,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_indent = self.indent;
         self.indent = 0;
 
-        self.line(&format!("static void {}(void* _blk_arg) {{", blk_id));
+        self.line(&format!("{}void {}(void* _blk_arg) {{", self.top_level_storage(), blk_id));
         self.indent += 1;
         self.line(&format!("{}* _c = ({}*)_blk_arg;", ctx_ty, ctx_ty));
         // _c может быть unused (нет захватов и нет результата) — глушим.
@@ -12945,7 +13070,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
         let _ = writeln!(self.lambda_forward_decls,
-            "static void {}(void* _blk_arg);", blk_id);
+            "{}void {}(void* _blk_arg);", self.top_level_storage(), blk_id);
 
         // ─── ctx instance on stack + fill args ───
         self.line(&format!("{} {};", ctx_ty, ctx_var));
@@ -12976,7 +13101,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_indent = self.indent;
         self.indent = 0;
 
-        self.line(&format!("static void {}(void* _blk_arg) {{", blk_id));
+        self.line(&format!("{}void {}(void* _blk_arg) {{", self.top_level_storage(), blk_id));
         self.indent += 1;
         self.line(&format!("{}* _c = ({}*)_blk_arg;", ctx_ty, ctx_ty));
         self.line("(void)_c;");
@@ -13119,8 +13244,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     let fn_name = format!("{}_impl_{}_{}", handler_id, eff, m.name);
                     self.line(&format!(
-                        "static {ret} {fn}({params});",
-                        ret = ret_ty, fn = fn_name, params = fn_params.join(", ")
+                        "{storage}{ret} {fn}({params});",
+                        storage = self.top_level_storage(), ret = ret_ty, fn = fn_name, params = fn_params.join(", ")
                     ));
                     // Recurse в method body — могут содержать nested
                     // HandlerLit/Spawn.
@@ -13147,7 +13272,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ExprKind::Spawn(body) => {
                 let spawn_id = format!("_nova_spawn_{}", *s);
                 *s += 1;
-                self.line(&format!("static void {}(mco_coro* _co);", spawn_id));
+                self.line(&format!("{}void {}(mco_coro* _co);", self.top_level_storage(), spawn_id));
                 // Plan 47: рекурсия в тело spawn'а — вложенные spawn'ы
                 // (`spawn { supervised { spawn {...} } }`) тоже нуждаются в
                 // forward-decl, и `*s` counter обязан совпадать с emit'овским
@@ -13205,7 +13330,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.scan_block_fwd(body, h, s)?;
                 let spawn_id = format!("_nova_spawn_{}", *s);
                 *s += 1;
-                self.line(&format!("static void {}(mco_coro* _co);", spawn_id));
+                self.line(&format!("{}void {}(mco_coro* _co);", self.top_level_storage(), spawn_id));
             }
             ExprKind::Loop { body, .. } => {
                 self.scan_block_fwd(body, h, s)?;
@@ -13805,7 +13930,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 152.4.3: type-qualified return key (disambiguates same-named
                 // methods across types in the inference fallback).
                 self.var_types.insert(format!("fn_ret_{}_{}", recv.type_name, f.name), ret_c.clone());
-                self.line(&format!("static {} {}({});", ret_c, mangled, params_s));
+                self.line(&format!("{}{} {}({});", self.top_level_storage(), ret_c, mangled, params_s));
                 return Ok(());
             }
         }
@@ -13998,7 +14123,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.user_fn_variadic.insert(f.name.clone());
             }
         }
-        self.line(&format!("static {} {}({});", ret, mangled, params));
+        self.line(&format!("{}{} {}({});", self.top_level_storage(), ret, mangled, params));
         // Plan 172.14 (sret/_out §2): forward-decl `__sret`-варианта для
         // sret-eligible методов (та же классификация, что в emit_fn).
         if f.receiver.is_some() && self.sret_fn_eligible(f, &ret) {
@@ -14007,7 +14132,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             } else {
                 format!("{}, {} _out", params, ret)
             };
-            self.line(&format!("static {} {}__sret({});", ret, mangled, params_sret));
+            self.line(&format!("{}{} {}__sret({});", self.top_level_storage(), ret, mangled, params_sret));
         }
         Ok(())
     }
@@ -14380,8 +14505,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         .join(", ");
                     let params_str = if params.is_empty() { "void".to_string() } else { params };
                     self.line(&format!(
-                        "static {cname}* nova_make_{tname}_{var}({params}) {{",
-                        cname = cname, tname = type_name, var = v.name, params = params_str
+                        "{storage}{cname}* nova_make_{tname}_{var}({params}) {{",
+                        storage = self.top_level_storage(), cname = cname, tname = type_name, var = v.name, params = params_str
                     ));
                     self.indent += 1;
                     self.line(&format!(
@@ -14482,7 +14607,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     t.name, ac.name, e
                 ))?;
             let symbol = format!("{}_{}", t.name, ac.name);
-            self.line(&format!("static const {} {} = {};", ty_c, symbol, val));
+            self.line(&format!("{}const {} {} = {};", self.top_level_storage(), ty_c, symbol, val));
             self.var_types.insert(symbol, ty_c);
         }
         // [M-sync-crossmodule…] (D381): make the type's own defining file the
@@ -14622,8 +14747,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             _ => return Ok(()),
         };
         self.line(&format!(
-            "static inline void Nova_{}_zero_storage({}* p) {{",
-            t.name, target_c_type
+            "{}void Nova_{}_zero_storage({}* p) {{",
+            self.top_level_storage_inline(), t.name, target_c_type
         ));
         self.indent += 1;
         self.line("if (p) memset((void*)p, 0, sizeof(*p));");
@@ -14702,8 +14827,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             };
             let call_args_str = call_args.join(", ");
             self.line(&format!(
-                "static inline {ret} Nova_{name}_{method}({params}) {{",
-                ret = ret, name = name, method = mangled, params = fn_params_str
+                "{storage}{ret} Nova_{name}_{method}({params}) {{",
+                storage = self.top_level_storage_inline(), ret = ret, name = name, method = mangled, params = fn_params_str
             ));
             self.indent += 1;
             // Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]:
@@ -14821,10 +14946,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     arg_names.push(format!("arg{}", i));
                 }
                 // Forward decl + body.
-                self.line(&format!("static {} {}({});",
-                    sig.return_c_type, sig.c_name, param_decls.join(", ")));
-                self.line(&format!("static {} {}({}) {{",
-                    sig.return_c_type, sig.c_name, param_decls.join(", ")));
+                self.line(&format!("{}{} {}({});",
+                    self.top_level_storage(), sig.return_c_type, sig.c_name, param_decls.join(", ")));
+                self.line(&format!("{}{} {}({}) {{",
+                    self.top_level_storage(), sig.return_c_type, sig.c_name, param_decls.join(", ")));
                 self.indent += 1;
                 let field_mangled = Self::mangle_field_name(&field_name);
                 let mut call_args = vec![format!("nova_self->{}", field_mangled)];
@@ -14994,7 +15119,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // neighbouring blocks. A prototype may safely stay at the late
             // splice — eq call-sites live in fn bodies emitted after it.
             let sani = &fty["NovaOpt_".len()..];
-            let eq_needle = format!("static inline nova_bool nova_opt_eq_{}(", sani);
+            // Plan 209 Ф.1: needle must track the actual emitted storage-class
+            // prefix — `top_level_storage_inline()` drops "static inline "
+            // under multi-TU (nova_opt_eq_* bodies get promoted to a single
+            // external part; see recon-notes.md §4), so a hardcoded needle
+            // would silently stop matching and this hoist would no-op.
+            let eq_needle = format!("{}nova_bool nova_opt_eq_{}(", self.top_level_storage_inline(), sani);
             let eq_block = if let Some(eq_start) = buf.find(&eq_needle) {
                 let header_end = buf[eq_start..].find('\n')
                     .map(|r| eq_start + r)
@@ -15355,8 +15485,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 .join(", ");
             let params_str = if params.is_empty() { "void".to_string() } else { params };
             self.line(&format!(
-                "static Nova_{name}* nova_make_{name}_{var}({params}) {{",
-                name = name, var = v.name, params = params_str
+                "{storage}Nova_{name}* nova_make_{name}_{var}({params}) {{",
+                storage = self.top_level_storage(), name = name, var = v.name, params = params_str
             ));
             self.indent += 1;
             self.line(&format!(
@@ -16782,7 +16912,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             parts.push(format!("{} {}", p_c, p.name));
         }
         let params_s = if parts.is_empty() { "void".into() } else { parts.join(", ") };
-        self.line(&format!("static {} {}({}) {{", ret_c, mangled, params_s));
+        self.line(&format!("{}{} {}({}) {{", self.top_level_storage(), ret_c, mangled, params_s));
         self.indent += 1;
         if is_instance { self.line("(void)nova_self;"); }
         for p in &f.params {
@@ -16941,7 +17071,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
         self.indent = 0;
-        self.line(&format!("static {} {}({}) {{", ret_c, mangled, params_s));
+        self.line(&format!("{}{} {}({}) {{", self.top_level_storage(), ret_c, mangled, params_s));
         self.indent += 1;
         // Plan 143.2: prologue safepoint. Erased generic method body inherits
         // the SOURCE template (`f`) KEEP-status — a recursive generic method
@@ -17767,10 +17897,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             let probe = format!("{}(", wrap);
                             if !buf.contains(&probe) {
                                 self.vr_ueq_protos_buf.borrow_mut().push_str(&format!(
-                                    "static nova_bool {w}({t} a, {t} b);
-", w = wrap, t = cty));
+                                    "{s}nova_bool {w}({t} a, {t} b);
+", s = self.top_level_storage(), w = wrap, t = cty));
                                 buf.push_str(&format!(
-                                    "static nova_bool {w}({t} a, {t} b) {{ return {c}(&a, {arg}); }}\n",
+                                    "{s}nova_bool {w}({t} a, {t} b) {{ return {c}(&a, {arg}); }}\n",
+                                    s = self.top_level_storage(),
                                     w = wrap,
                                     t = cty,
                                     c = sig.c_name,
@@ -18221,16 +18352,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // B's definition references it, regardless of which of the two
             // finishes building (and thus gets spliced) first.
             self.struct_eq_protos_buf.borrow_mut().push_str(&format!(
-                "static nova_bool {fname}(Nova_{t}* a, Nova_{t}* b);\n",
-                fname = fn_name, t = type_name,
+                "{s}nova_bool {fname}(Nova_{t}* a, Nova_{t}* b);\n",
+                s = self.top_level_storage(), fname = fn_name, t = type_name,
             ));
             let cty = format!("Nova_{}*", type_name);
             self.struct_eq_stack.borrow_mut().push(type_name.to_string());
             let body = self.structural_eq_body_for_ptr(type_name, &cty, "a", "b", 0);
             self.struct_eq_stack.borrow_mut().pop();
             self.novaopt_eq_fns_buf.borrow_mut().push_str(&format!(
-                "static nova_bool {fname}(Nova_{t}* a, Nova_{t}* b) {{ return {body}; }}\n",
-                fname = fn_name, t = type_name, body = body,
+                "{s}nova_bool {fname}(Nova_{t}* a, Nova_{t}* b) {{ return {body}; }}\n",
+                s = self.top_level_storage(), fname = fn_name, t = type_name, body = body,
             ));
         }
         format!("{}({}, {})", fn_name, l, r)
@@ -21410,7 +21541,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }).collect::<Vec<_>>().join(", ")
         };
         // Emit forward decl into mono_fwd_decls buffer
-        self.mono_fwd_decls.push_str(&format!("static void* {}({});\n", erased_name, params_str));
+        self.mono_fwd_decls.push_str(&format!("{}void* {}({});\n", self.top_level_storage(), erased_name, params_str));
         // Register var_types for erased return (legacy)
         self.var_types.insert(format!("fn_ret_{}", fn_decl.name), "void*".into());
         // Enqueue in worklist with special marker: empty type_subst = erased mode
@@ -21472,8 +21603,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         };
         // Emit forward decl into buffer
         self.mono_fwd_decls.push_str(&format!(
-            "static {} {}({});\n",
-            ret_c, mono_name, params_str
+            "{}{} {}({});\n",
+            self.top_level_storage(), ret_c, mono_name, params_str
         ));
         // Enqueue for body emission (A1‴: carrier is RT-typed; lift string subst at the boundary)
         self.mono_worklist.push((fn_decl.name.clone(), Self::subst_vec_from_c_pairs(&type_subst), mono_name.to_string()));
@@ -21564,7 +21695,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // routing fwd-decl в `builtin_sum_method_fwd_decls` чтобы splice'ить
         // его ПОСЛЕ NovaOpt/NovaRes typedef placeholder'ов (file order:
         // typedefs Y < fwd-decl Z < body P). Иначе CC-fail `incomplete type`.
-        let fwd_decl = format!("static {} {}({});\n", ret_c, mono_name, params_str);
+        let fwd_decl = format!("{}{} {}({});\n", self.top_level_storage(), ret_c, mono_name, params_str);
         if matches!(recv_type, "Option" | "Result") {
             self.builtin_sum_method_fwd_decls.push_str(&fwd_decl);
         } else {
@@ -21634,7 +21765,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 format!("{}, {} _out", params_str, ret_c)
             };
             self.mono_fwd_decls.push_str(
-                &format!("static {} {}({});\n", ret_c, sret_name, params_sret));
+                &format!("{}{} {}({});\n", self.top_level_storage(), ret_c, sret_name, params_sret));
             self.mono_worklist.push((
                 worklist_key, Self::subst_vec_from_c_pairs(&type_subst), sret_name.clone()));
             self.mono_method_fndecl_for_name.insert(sret_name, fn_decl.clone());
@@ -21758,7 +21889,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // (line ~23846).
         let saved_var_boxed = std::mem::take(&mut self.var_boxed);
         self.indent = 0;
-        self.line(&format!("static {} {}({}) {{", ret_c, mono_name, params_str));
+        self.line(&format!("{}{} {}({}) {{", self.top_level_storage(), ret_c, mono_name, params_str));
         self.indent += 1;
         // Plan 143.2: prologue safepoint. The monomorphized instance inherits
         // the KEEP-status of its SOURCE template (`fn_decl`), so a recursive
@@ -22544,8 +22675,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         .join(", ");
                     let params_str = if params.is_empty() { "void".to_string() } else { params };
                     self.line(&format!(
-                        "static {name}* nova_make_{name}_{var}({params}) {{",
-                        name = mangled_clone, var = v.name, params = params_str
+                        "{storage}{name}* nova_make_{name}_{var}({params}) {{",
+                        storage = self.top_level_storage(), name = mangled_clone, var = v.name, params = params_str
                     ));
                     self.indent += 1;
                     self.line(&format!(
@@ -22674,7 +22805,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line(&format!("}} {m};", m = m));
         self.line("");
         // static new()
-        self.line(&format!("static inline {m}* {m}_static_new(void) {{", m = m));
+        self.line(&format!("{s}{m}* {m}_static_new(void) {{", s = self.top_level_storage_inline(), m = m));
         self.indent += 1;
         self.line(&format!("{m}* _c = ({m}*)nova_alloc(sizeof({m}));", m = m));
         self.line("nova_mutex_init(&_c->mu);");
@@ -22684,7 +22815,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("}");
         self.line("");
         // get() -> Option[T]
-        self.line(&format!("static inline {o} {m}_method_get({m}* _c) {{", o = opt_ty, m = m));
+        self.line(&format!("{s}{o} {m}_method_get({m}* _c) {{", s = self.top_level_storage_inline(), o = opt_ty, m = m));
         self.indent += 1;
         // Plan 118 Ф.5: NPO-aware return constructors.
         let opt_sani = opt_ty.strip_prefix("NovaOpt_").unwrap_or(&opt_ty);
@@ -22700,7 +22831,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("}");
         self.line("");
         // set(v T) -> bool
-        self.line(&format!("static inline nova_bool {m}_method_set({m}* _c, {t} _v) {{", m = m, t = t_cty));
+        self.line(&format!("{s}nova_bool {m}_method_set({m}* _c, {t} _v) {{", s = self.top_level_storage_inline(), m = m, t = t_cty));
         self.indent += 1;
         self.line("nova_mutex_lock(&_c->mu);");
         self.line("if (_c->has_value) { nova_mutex_unlock(&_c->mu); return false; }");
@@ -22713,8 +22844,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("}");
         self.line("");
         // get_or_init(init fn() -> T) -> T
-        self.line(&format!("static inline {t} {m}_method_get_or_init({m}* _c, NovaClosBase* _init) {{",
-            t = t_cty, m = m));
+        self.line(&format!("{s}{t} {m}_method_get_or_init({m}* _c, NovaClosBase* _init) {{",
+            s = self.top_level_storage_inline(), t = t_cty, m = m));
         self.indent += 1;
         // retry label for re-entry after init failure
         self.line("_oc_retry:;");
@@ -22781,7 +22912,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("}");
         self.line("");
         // take() -> Option[T]
-        self.line(&format!("static inline {o} {m}_method_take({m}* _c) {{", o = opt_ty, m = m));
+        self.line(&format!("{s}{o} {m}_method_take({m}* _c) {{", s = self.top_level_storage_inline(), o = opt_ty, m = m));
         self.indent += 1;
         self.line("nova_mutex_lock(&_c->mu);");
         // Plan 118 Ф.5: NPO-aware constructors.
@@ -22803,7 +22934,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("}");
         self.line("");
         // is_initialized() -> bool
-        self.line(&format!("static inline nova_bool {m}_method_is_initialized({m}* _c) {{", m = m));
+        self.line(&format!("{s}nova_bool {m}_method_is_initialized({m}* _c) {{", s = self.top_level_storage_inline(), m = m));
         self.indent += 1;
         self.line("return __atomic_load_n(&_c->has_value, __ATOMIC_ACQUIRE);");
         self.indent -= 1;
@@ -22833,7 +22964,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line(&format!("}} {m};", m = m));
         self.line("");
         // static new(init fn() -> T) -> Self
-        self.line(&format!("static inline {m}* {m}_static_new(NovaClosBase* _init) {{", m = m));
+        self.line(&format!("{s}{m}* {m}_static_new(NovaClosBase* _init) {{", s = self.top_level_storage_inline(), m = m));
         self.indent += 1;
         self.line(&format!("{m}* _l = ({m}*)nova_alloc(sizeof({m}));", m = m));
         self.line("nova_mutex_init(&_l->mu);");
@@ -22844,7 +22975,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("}");
         self.line("");
         // force() -> T  (Poisoned semantics — NOT retry like OnceCell)
-        self.line(&format!("static inline {t} {m}_method_force({m}* _l) {{", t = t_cty, m = m));
+        self.line(&format!("{s}{t} {m}_method_force({m}* _l) {{", s = self.top_level_storage_inline(), t = t_cty, m = m));
         self.indent += 1;
         self.line("/* Fast path A: already forced. */");
         self.line("if (__atomic_load_n(&_l->has_value, __ATOMIC_ACQUIRE)) return _l->value;");
@@ -22920,7 +23051,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("}");
         self.line("");
         // is_forced() -> bool
-        self.line(&format!("static inline nova_bool {m}_method_is_forced({m}* _l) {{", m = m));
+        self.line(&format!("{s}nova_bool {m}_method_is_forced({m}* _l) {{", s = self.top_level_storage_inline(), m = m));
         self.indent += 1;
         self.line("return __atomic_load_n(&_l->has_value, __ATOMIC_ACQUIRE);");
         self.indent -= 1;
@@ -23008,7 +23139,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
         self.indent = 0;
-        self.line(&format!("static {} {}({}) {{", ret_c, mono_name, params_str));
+        self.line(&format!("{}{} {}({}) {{", self.top_level_storage(), ret_c, mono_name, params_str));
         self.indent += 1;
         // Plan 143.2: prologue safepoint. The monomorphized instance inherits
         // the KEEP-status of its SOURCE template (`fn_decl`), so a recursive
@@ -23204,7 +23335,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
         self.indent = 0;
-        self.line(&format!("static void* {}({}) {{", mangled, params_str));
+        self.line(&format!("{}void* {}({}) {{", self.top_level_storage(), mangled, params_str));
         self.indent += 1;
         // Plan 143.2: prologue safepoint. Erased generic free-fn body inherits
         // the SOURCE template (`f`) KEEP-status — a recursive generic fn keeps
@@ -23971,7 +24102,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         } else {
             params
         };
-        self.line(&format!("static {} {}({}) {{", ret, mangled, params));
+        self.line(&format!("{}{} {}({}) {{", self.top_level_storage(), ret, mangled, params));
         self.indent = 1;
         // Plan 44.7: preemption safepoint. First statement of every Nova
         // function — a TLS-flag check that cooperatively yields when the
@@ -24261,7 +24392,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
         self.indent = 0;
-        self.line("static nova_unit nova_fn_main_impl(void) {");
+        self.line(&format!("{}nova_unit nova_fn_main_impl(void) {{", self.top_level_storage()));
         self.indent = 1;
         match &f.body {
             FnBody::Expr(e) => {
@@ -24332,7 +24463,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Игнорируем test-items, эмитим bench runner который последовательно
         // вызывает все nova_bench_main_<idx>().
         if self.bench_mode && !benches_expanded.is_empty() && !has_main {
-            self.line("static nova_unit nova_fn_main_impl(void) {");
+            self.line(&format!("{}nova_unit nova_fn_main_impl(void) {{", self.top_level_storage()));
             self.indent += 1;
             self.line(&format!("int _nova_benches_total = {};", benches_expanded.len()));
             // Bench filter via NOVA_BENCH_FILTER env: comma-separated substrings.
@@ -24410,7 +24541,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             const TEST_CHUNK_SIZE: usize = 64;
             let test_chunks: Vec<&[&TestDecl]> = tests.chunks(TEST_CHUNK_SIZE).collect();
             for (chunk_idx, chunk) in test_chunks.iter().enumerate() {
-                self.line(&format!("static int nova_test_chunk_{}(void) {{", chunk_idx));
+                self.line(&format!("{}int nova_test_chunk_{}(void) {{", self.top_level_storage(), chunk_idx));
                 self.indent += 1;
                 self.line("int _nova_tests_failed = 0;");
                 // [race-198 / 196.6]: snapshot the IMPLICIT MAIN SCOPE (D92 —
@@ -24568,7 +24699,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.line("}");
                 self.line("");
             }
-            self.line("static nova_unit nova_fn_main_impl(void) {");
+            self.line(&format!("{}nova_unit nova_fn_main_impl(void) {{", self.top_level_storage()));
             self.indent += 1;
             self.line(&format!("int _nova_tests_total = {};", tests.len()));
             self.line("int _nova_tests_failed = 0;");
@@ -24589,7 +24720,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // File-scope helper function emitted before main() so it can be
         // assigned to _nova_register_effects_fn. C does not allow nested
         // function definitions, so it must be at file scope.
-        self.line("static void _nova_register_all_effects_(void) {");
+        self.line(&format!("{}void _nova_register_all_effects_(void) {{", self.top_level_storage()));
         self.indent += 1;
         self.line("nova_register_effect_storage((void**)&_nova_handler_Fail);");
         self.line("nova_register_effect_storage((void**)&_nova_handler_Time);");
@@ -29002,11 +29133,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let probe = format!("{}(", wrap);
                                 if !buf.contains(&probe) {
                                     self.vr_ueq_protos_buf.borrow_mut().push_str(&format!(
-                                        "static {ret} {w}({recv} a, {arg} b);\n",
-                                        ret = ret, w = wrap, recv = lty, arg = arg_ty));
+                                        "{s}{ret} {w}({recv} a, {arg} b);\n",
+                                        s = self.top_level_storage(), ret = ret, w = wrap, recv = lty, arg = arg_ty));
                                     buf.push_str(&format!(
-                                        "static {ret} {w}({recv} a, {arg} b) {{ return {c}(&a, b); }}\n",
-                                        ret = ret, w = wrap, recv = lty, arg = arg_ty, c = c_name));
+                                        "{s}{ret} {w}({recv} a, {arg} b) {{ return {c}(&a, b); }}\n",
+                                        s = self.top_level_storage(), ret = ret, w = wrap, recv = lty, arg = arg_ty, c = c_name));
                                 }
                             }
                             return Ok(format!("{}({}, {})", wrap, l, r));
@@ -29042,11 +29173,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             let probe = format!("{}(", wrap);
                             if !buf.contains(&probe) {
                                 self.vr_ueq_protos_buf.borrow_mut().push_str(&format!(
-                                    "static {ret} {w}({recv} a, {arg} b);\n",
-                                    ret = ret, w = wrap, recv = lty, arg = arg_ty));
+                                    "{s}{ret} {w}({recv} a, {arg} b);\n",
+                                    s = self.top_level_storage(), ret = ret, w = wrap, recv = lty, arg = arg_ty));
                                 buf.push_str(&format!(
-                                    "static {ret} {w}({recv} a, {arg} b) {{ return {c}(&a, b); }}\n",
-                                    ret = ret, w = wrap, recv = lty, arg = arg_ty, c = c_name));
+                                    "{s}{ret} {w}({recv} a, {arg} b) {{ return {c}(&a, b); }}\n",
+                                    s = self.top_level_storage(), ret = ret, w = wrap, recv = lty, arg = arg_ty, c = c_name));
                             }
                         }
                         let call = format!("{}({}, {})", wrap, l, r);
@@ -29525,11 +29656,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let probe = format!("{}(", wrap);
                                 if !buf.contains(&probe) {
                                     self.vr_ueq_protos_buf.borrow_mut().push_str(&format!(
-                                        "static {ret} {w}({recv} a);\n",
-                                        ret = ret, w = wrap, recv = operand_ty));
+                                        "{s}{ret} {w}({recv} a);\n",
+                                        s = self.top_level_storage(), ret = ret, w = wrap, recv = operand_ty));
                                     buf.push_str(&format!(
-                                        "static {ret} {w}({recv} a) {{ return {c}(&a); }}\n",
-                                        ret = ret, w = wrap, recv = operand_ty, c = c_name));
+                                        "{s}{ret} {w}({recv} a) {{ return {c}(&a); }}\n",
+                                        s = self.top_level_storage(), ret = ret, w = wrap, recv = operand_ty, c = c_name));
                                 }
                             }
                             return Ok(format!("{}({})", wrap, v));
@@ -31802,7 +31933,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let old_out = std::mem::replace(&mut self.out, String::new());
             let old_indent = self.indent;
             self.indent = 0;
-            self.line(&format!("static {} {}({}) {{", ret_c_ty, fn_name, body_param_list));
+            self.line(&format!("{}{} {}({}) {{", self.top_level_storage(), ret_c_ty, fn_name, body_param_list));
             self.indent += 1;
             // Plan 143.2: prologue safepoint — unconditional. Trailing-block
             // body is its own C function reached indirectly via the DSL fn; no
@@ -31859,7 +31990,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // но это не portable. Кладём в `lambda_forward_decls` — тот же
             // буфер что и для closure-lambda fwd-декл'ов, эмитится file-scope
             // перед всеми fn-телами.
-            let fwd = format!("static {} {}({});\n", ret_c_ty, fn_name, body_param_list);
+            let fwd = format!("{}{} {}({});\n", self.top_level_storage(), ret_c_ty, fn_name, body_param_list);
             self.lambda_forward_decls.push_str(&fwd);
 
             // Wrap in a NovaClos_XX struct so fn_param_sigs call mechanism works
@@ -33798,11 +33929,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         b = b_c, ub = unbox_b, a = a_c, call = call_from)
                                                 };
                                                 let wrapper = format!(
-                                                    "static void* {conv}(void* _b_ptr) {{\n{body}}}\n",
-                                                    conv = conv_name, body = body
+                                                    "{storage}void* {conv}(void* _b_ptr) {{\n{body}}}\n",
+                                                    storage = self.top_level_storage(), conv = conv_name, body = body
                                                 );
                                                 self.lambda_forward_decls.push_str(
-                                                    &format!("static void* {}(void*);\n", conv_name));
+                                                    &format!("{}void* {}(void*);\n", self.top_level_storage(), conv_name));
                                                 self.lambda_impls.push_str(&wrapper);
                                             }
                                             return Ok(format!(
@@ -45112,7 +45243,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         };
 
         // Emit forward decl for body function
-        let fwd = format!("static {} {}({});", ret_c_ty, body_name, body_params_str);
+        let fwd = format!("{}{} {}({});", self.top_level_storage(), ret_c_ty, body_name, body_params_str);
         self.lambda_forward_decls.push_str(&fwd);
         self.lambda_forward_decls.push('\n');
 
@@ -45159,7 +45290,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Env struct declaration
         self.out.push_str(&format!("typedef struct {{ {} }} {};\n", env_fields, env_name));
         // Body function implementation
-        self.line(&format!("static {} {}({}) {{", ret_c_ty, body_name, body_params_str));
+        self.line(&format!("{}{} {}({}) {{", self.top_level_storage(), ret_c_ty, body_name, body_params_str));
         self.indent = 1;
         // Plan 143.2: prologue safepoint — unconditional. A closure body is its
         // own C function reachable only via an indirect call; no source FnDecl
@@ -45232,11 +45363,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // initializer `&<env>` / `{<body>, &<env>}` is well-defined.
             // The body fn forward-decl is flushed before all impls, so the
             // body symbol is in scope for the static initializer.
-            let _ = writeln!(self.out, "static {} {} = {{ 0 }};", env_name, env_singleton);
+            let _ = writeln!(self.out, "{}{} {} = {{ 0 }};", self.top_level_storage(), env_name, env_singleton);
             let _ = writeln!(
                 self.out,
-                "static {} {} = {{ ({}){}, (void*)&{} }};",
-                clos_struct, clos_singleton, fn_ty, body_name, env_singleton,
+                "{}{} {} = {{ ({}){}, (void*)&{} }};",
+                self.top_level_storage(), clos_struct, clos_singleton, fn_ty, body_name, env_singleton,
             );
             Some(clos_singleton)
         } else {
@@ -45476,7 +45607,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         for (i, ty) in closure_param_tys.iter().enumerate() {
             body_params.push(format!("{} p{}", ty, i));
         }
-        let body_sig = format!("static {} {}({})", ret_ty, body_name, body_params.join(", "));
+        let body_sig = format!("{}{} {}({})", self.top_level_storage(), ret_ty, body_name, body_params.join(", "));
         // Fwd decl.
         self.lambda_forward_decls.push_str(&format!("{};\n", body_sig));
 
@@ -45568,10 +45699,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let params_str = params.join(", ");
             // Forward decl into lambda_forward_decls.
             self.lambda_forward_decls
-                .push_str(&format!("static {} {}({});\n", ret_c_ty, thunk_name, params_str));
+                .push_str(&format!("{}{} {}({});\n", self.top_level_storage(), ret_c_ty, thunk_name, params_str));
             // Body — call original nova_fn_<name>.
             let mut impl_buf = String::new();
-            impl_buf.push_str(&format!("static {} {}({}) {{\n", ret_c_ty, thunk_name, params_str));
+            impl_buf.push_str(&format!("{}{} {}({}) {{\n", self.top_level_storage(), ret_c_ty, thunk_name, params_str));
             impl_buf.push_str("    (void)_env;\n");
             let call_args: Vec<String> = (0..param_c_tys.len())
                 .map(|i| format!("p{}", i))
@@ -46529,10 +46660,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 "typedef struct NovaOpt_{sani} {{ {cty} value; }} NovaOpt_{sani};\n",
                 sani = sanitized, cty = c_ty);
             let eq_fn_vr = format!(
-                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                "{storage}nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
                  \x20   return {cmp};\n\
                  }}\n",
-                sani = sanitized, cmp = cmp_body_vr);
+                storage = self.top_level_storage_inline(), sani = sanitized, cmp = cmp_body_vr);
             let mut vrbuf = self.novaopt_vr_typedefs_buf.borrow_mut();
             vrbuf.push_str(&line_vr);
             vrbuf.push_str(&eq_fn_vr);
@@ -46575,18 +46706,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         };
         let eq_fn = if force_npo {
             format!(
-                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                "{storage}nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
                  \x20   return a.value == b.value;\n\
                  }}\n",
-                sani = sanitized)
+                storage = self.top_level_storage_inline(), sani = sanitized)
         } else {
             format!(
-                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                "{storage}nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
                  \x20   if (a.tag != b.tag) return 0;\n\
                  \x20   if (a.tag == 0) return 1;\n\
                  \x20   return {cmp};\n\
                  }}\n",
-                sani = sanitized, cmp = cmp_body)
+                storage = self.top_level_storage_inline(), sani = sanitized, cmp = cmp_body)
         };
         self.novaopt_typedefs_buf.borrow_mut().push_str(&eq_fn);
     }
@@ -46648,15 +46779,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let cmp_body2 = self.emit_field_eq(c_ty, "a.value", "b.value", 0);
             let line2 = format!(
                 "typedef struct NovaOpt_{sani} {{ int tag; {cty} value; }} NovaOpt_{sani};\n\
-                 static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b);\n",
-                sani = sanitized, cty = c_ty);
+                 {storage}nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b);\n",
+                storage = self.top_level_storage_inline(), sani = sanitized, cty = c_ty);
             let eq_fn2 = format!(
-                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                "{storage}nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
                  \x20   if (a.tag != b.tag) return 0;\n\
                  \x20   if (a.tag == 0) return 1;\n\
                  \x20   return {cmp};\n\
                  }}\n",
-                sani = sanitized, cmp = cmp_body2);
+                storage = self.top_level_storage_inline(), sani = sanitized, cmp = cmp_body2);
             self.novaopt_vr_typedefs_buf.borrow_mut().push_str(&line2);
             self.novaopt_eq_fns_buf.borrow_mut().push_str(&eq_fn2);
             return;
@@ -46686,8 +46817,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // typedef so the hoist in `emit_value_record_type` carries both together.
             self.novaopt_typedefs_buf.borrow_mut().push_str(&format!(
                 "typedef struct NovaOpt_{sani} {{ {cty} value; }} NovaOpt_{sani};\n\
-                 static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b);\n",
-                sani = sanitized, cty = c_ty));
+                 {storage}nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b);\n",
+                storage = self.top_level_storage_inline(), sani = sanitized, cty = c_ty));
             // [M-option-self-recursive-record-mono] (Plan 186): if `c_ty` self-
             // references a type CURRENTLY mid-emission (`Option[Self]` registered
             // while lowering `Self`'s own fields — e.g. `type Node { next
@@ -46714,12 +46845,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // NPO: None = NULL.
             let structural = self.emit_field_eq(c_ty, "a.value", "b.value", 0);
             self.novaopt_eq_fns_buf.borrow_mut().push_str(&format!(
-                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                "{storage}nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
                  \x20   if ((a.value == NULL) != (b.value == NULL)) return 0;\n\
                  \x20   if (a.value == NULL) return 1;\n\
                  \x20   return {body};\n\
                  }}\n",
-                sani = sanitized, body = structural));
+                storage = self.top_level_storage_inline(), sani = sanitized, body = structural));
             return;
         }
         // Plan 54 Ф.9: запомнить реальный c_ty для recovery в
@@ -46790,18 +46921,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // NPO eq: value-based identity (NULL == NULL = None equal;
             // p1 == p2 for Some). No tag field.
             format!(
-                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                "{storage}nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
                  \x20   return a.value == b.value;\n\
                  }}\n",
-                sani = sanitized)
+                storage = self.top_level_storage_inline(), sani = sanitized)
         } else {
             format!(
-                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                "{storage}nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
                  \x20   if (a.tag != b.tag) return 0;\n\
                  \x20   if (a.tag == NOVA_TAG_Option_None) return 1;\n\
                  \x20   return {body};\n\
                  }}\n",
-                sani = sanitized, body = cmp_body)
+                storage = self.top_level_storage_inline(), sani = sanitized, body = cmp_body)
         };
         self.novaopt_typedefs_buf.borrow_mut().push_str(&eq_fn);
 
@@ -46827,12 +46958,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         for (sanitized, c_ty) in pending {
             let structural = self.emit_field_eq(&c_ty, "a.value", "b.value", 0);
             self.novaopt_eq_fns_buf.borrow_mut().push_str(&format!(
-                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                "{storage}nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
                  \x20   if ((a.value == NULL) != (b.value == NULL)) return 0;\n\
                  \x20   if (a.value == NULL) return 1;\n\
                  \x20   return {body};\n\
                  }}\n",
-                sani = sanitized, body = structural));
+                storage = self.top_level_storage_inline(), sani = sanitized, body = structural));
         }
     }
 
@@ -47240,19 +47371,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 n = name, ok = ok_c, err = err_c));
         }
         body.push_str(&format!(
-            "static inline NovaRes_{n}* nova_make_NovaRes_{n}_Ok({ok} v) {{ \
+            "{storage}NovaRes_{n}* nova_make_NovaRes_{n}_Ok({ok} v) {{ \
              NovaRes_{n}* r = (NovaRes_{n}*)nova_alloc(sizeof(NovaRes_{n})); \
              r->tag = NOVA_TAG_Result_Ok; r->payload.Ok._0 = v; \
              r->err_typed_payload = NULL; r->err_typed_type_id = NOVA_TID_NONE; \
              return r; }}\n",
-            n = name, ok = ok_c));
+            storage = self.top_level_storage_inline(), n = name, ok = ok_c));
         body.push_str(&format!(
-            "static inline NovaRes_{n}* nova_make_NovaRes_{n}_Err({err} v) {{ \
+            "{storage}NovaRes_{n}* nova_make_NovaRes_{n}_Err({err} v) {{ \
              NovaRes_{n}* r = (NovaRes_{n}*)nova_alloc(sizeof(NovaRes_{n})); \
              r->tag = NOVA_TAG_Result_Err; r->payload.Err._0 = v; \
              r->err_typed_payload = NULL; r->err_typed_type_id = NOVA_TID_NONE; \
              return r; }}\n",
-            n = name, err = err_c));
+            storage = self.top_level_storage_inline(), n = name, err = err_c));
         // Plan 59 Ф.7.5 D3: typed-Err конструктор для mono — аналог
         // legacy `nova_make_Result_Err_typed`. `Err._0` payload —
         // диагностический string-fallback; реальное typed-значение в
@@ -47260,13 +47391,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // `err_c == nova_str` (typed-Err требует string-slot для diag).
         if err_c == "nova_str" {
             body.push_str(&format!(
-                "static inline NovaRes_{n}* nova_make_NovaRes_{n}_Err_typed(void* payload, NovaTypeId tid) {{ \
+                "{storage}NovaRes_{n}* nova_make_NovaRes_{n}_Err_typed(void* payload, NovaTypeId tid) {{ \
                  NovaRes_{n}* r = (NovaRes_{n}*)nova_alloc(sizeof(NovaRes_{n})); \
                  r->tag = NOVA_TAG_Result_Err; \
                  r->payload.Err._0 = (nova_str){{.ptr = (const uint8_t*)\"<typed err>\", .len = 11}}; \
                  r->err_typed_payload = payload; r->err_typed_type_id = tid; \
                  return r; }}\n",
-                n = name));
+                storage = self.top_level_storage_inline(), n = name));
         }
         // Route: late by-value payload → forward typedef early + body in the
         // VR-late buffer; else everything in the early buffer (byte-identical).
@@ -54090,7 +54221,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         out.push_str("/* Plan 186 (D412): interned hex-blob/embed literals (rodata dedup). */\n");
         for (sym, bytes) in &self.interned_blob_emit {
             // Empty blobs never reach here (emit sites pass NULL/0 directly).
-            out.push_str(&format!("static const uint8_t {}[] = {{", sym));
+            out.push_str(&format!("{}const uint8_t {}[] = {{", self.top_level_storage(), sym));
             for (i, b) in bytes.iter().enumerate() {
                 if i % 16 == 0 {
                     out.push_str("\n    ");
@@ -54150,9 +54281,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         for (sym, escaped, len) in &self.interned_str_emit {
             // One shared immutable byte buffer + one shared nova_str value.
             // `static const` → internal linkage, no cross-TU symbol clash.
+            let storage = self.top_level_storage();
             out.push_str(&format!(
-                "static const uint8_t {sym}_buf[] = \"{escaped}\";\n\
-                 static const nova_str {sym} = {{ .ptr = {sym}_buf, .len = {len} }};\n"
+                "{storage}const uint8_t {sym}_buf[] = \"{escaped}\";\n\
+                 {storage}const nova_str {sym} = {{ .ptr = {sym}_buf, .len = {len} }};\n"
             ));
         }
         out
