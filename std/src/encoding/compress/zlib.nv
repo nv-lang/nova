@@ -87,18 +87,16 @@ export type ZlibReader value {
 }
 
 #stable(since = "0.1")
-export fn ZlibReader.new(max_output int) -> ZlibReader {
-    mut _init_header_buf []u8 = []u8.new(cap: 2)
+export fn ZlibReader.new(max_output int) -> ZlibReader =>
     {
         inner: Inflater.new(max_output),
-        header_buf: _init_header_buf,
+        header_buf: []u8.new(cap: 2),
         header_done: false,
         adler: adler32_init(),
         max_output,
         tail: []u8.new(),
         tpos: 0,
     }
-}
 
 #stable(since = "0.1")
 export fn ZlibReader mut @feed(chunk []u8) -> Result[(), CompressError] {
