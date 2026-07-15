@@ -24,56 +24,40 @@
 // (`scenarios.nv`'s `health_demo_sources` has synthetic names like
 // "mirror-remote"/"registry-eu" that don't resolve).
 //
-// weather legend, live: INTENDED a real `https://api.open-meteo.com` GET
-// (no API key) per city — hand-rolled `TcpStream.connect` +
-// `TlsStream.connect` (nova-tls, `examples/tls/echo_client.nv` pattern), NOT
-// `http.client`/`http.transport.real_http()`. **Currently BLOCKED** — see
-// `[M-187-weather-live-tls-diamond-blocked]` below; `live_fetch_weather`
-// honestly fails every lane with a hint, it does not fabricate fake success
-// data (plan 187 §9.4 деливерабл 5's "мок-fallback с полем-подсказкой" —
-// this session's read: a compile-time dependency blocker is closer in spirit
-// to "network unavailable" than to "network available, fake the payload").
+// weather legend, live: a real `https://api.open-meteo.com` GET (no API
+// key) per city — hand-rolled `TcpStream.connect` + `TlsStream.connect`
+// (nova-tls, `examples/tls/echo_client.nv` pattern), NOT
+// `http.client`/`http.transport.real_http()` (this file imports `tls`
+// directly, on purpose — see `[M-187-weather-live-tls-diamond-blocked]`
+// below for why that used to be impossible).
 //
-// [M-187-weather-live-tls-diamond-blocked]: **diamond dependency, NOT a
-// single-file bug, NOT worked around by routing around a call site — there
-// is no code-only route around it from THIS package.** `examples/nova.toml`
-// depends on BOTH `tls` (local `path`, this worktree's nova-tls) AND `http`
-// (local `path`, nova-http) — and `nova-http/nova.toml` itself depends on
-// `tls` via `git`+version (a DIFFERENT, separately-fetched physical copy,
-// `~/.nova/git/co/nova-tls-<hash>/...`). D420's `[replace]` is root-package-
-// only (by design — "не для зависимостей", `W_REPLACE_IN_DEPENDENCY`), so
-// there is no supported way for the ROOT package (`examples`) to force
-// `http`'s nested `tls` dependency onto the SAME physical copy as its own
-// direct one. Two attempts, two distinct failures, BOTH from the same root
-// cause:
-//   (1) via `http.transport.real_http()` (first attempt, since retracted
-//       from this file): `https_send_over_net`'s `tls`-named local variable
-//       resolves against the WRONG physical `tls` copy under the diamond —
-//       `error: no function 'read_to_vec'/'close' in module 'tls'` (the
-//       checker falls back to module-qualified lookup and searches the
-//       git-fetched copy, which doesn't shadow-collide the same way in
-//       nova-http's own isolated build).
-//   (2) via THIS file's direct `import tls.{TlsStream, ClientConfig}`
-//       (current attempt) once `backend/api/*` (which imports `http.server`,
-//       pulling in the git-fetched `tls` transitively) shares a compile
-//       unit with `backend/app/live.nv` (which imports the PATH `tls`
-//       directly) — `nova test examples/flagship/aggregator` CC-FAILs:
-//       `[E_METHOD_REDEFINITION] метод 'TlsStream.connect' уже определён` —
-//       the checker sees TWO physical `tls` packages each declaring
-//       `TlsStream.connect` with an IDENTICAL signature and treats the
-//       second as a silently-losing redefinition, not as "these are the
-//       same logical type from two copies, dedup them" (D78 rev-4's
-//       canonical-filesystem-path registry keying fixed the ANALOGOUS
-//       problem for `module` DECLARATIONS — this is the same failure mode
-//       one level up, for an EXTERNAL package pulled in twice by two
-//       different resolution mechanisms, `path` vs `git`).
-// Not attempted: patching `nova-http`/`nova-tls` (sibling repos, out of this
-// session's remit) or a `nova.local.toml` `[replace]` (root-only, doesn't
-// reach `http`'s nested dependency — see above, this is the DOCUMENTED
-// limitation, not a gap in using it correctly). `health_live_*` (Net-only,
-// no `tls` import at all) is fully real and unaffected — this marker is
-// SCOPED to the weather legend's live mode only.
+// [M-187-weather-live-tls-diamond-blocked] — RESOLVED (worktree
+// `nova-tlsdiamond`, fix-tls-diamond): was a genuine diamond-dependency
+// resolver bug, not a single-file/workaroundable issue. `examples/nova.toml`
+// depended on BOTH `tls` (local `path`) AND `http` (local `path`) — and
+// `nova-http/nova.toml` itself depends on `tls` via `git`+version, a
+// DIFFERENT, separately-fetched physical copy
+// (`~/.nova/git/co/nova-tls-<hash>/...`). `imports.rs::lookup_dependency`'s
+// `[replace]` handling (Plan 204 дофикс №2, D420) only ever honored a
+// `[replace]` override for the dependency edge OWNED by the manifest that
+// happened to be root — a same-named package reached TRANSITIVELY (`tls`
+// nested inside `http`'s own `[dependencies]`) never consulted it, so there
+// was no way to unify the two physical `tls` copies: same-CU compilation
+// hit `[E_METHOD_REDEFINITION] метод 'TlsStream.connect' уже определён`
+// (two physical `tls` packages each declaring the identical method, treated
+// as a redefinition instead of "same logical package, dedup").
 //
+// FIX (Plan 204 дофикс №3, D420 amendment, 09-tooling.md): root's
+// `[replace]` now applies to ANY occurrence of a same-named package
+// anywhere in the build graph — direct or transitive — matching real Cargo
+// `[patch]`/Go-module `replace` semantics (`lookup_dependency`'s
+// `root_override`, no longer gated to `pkg_dir == root`). Companion fix:
+// `examples/nova.toml`'s own `tls` dep moved from a bare `path` to the SAME
+// canonical `git`+`version` form as `nova-http`'s (`examples/nova.local.toml`
+// — gitignored — still overrides both to this worktree's local `nova-tls`
+// checkout for fast iteration); `nova.lock` now records `tls` exactly once.
+//
+
 // `seed` is caller-ignored for live (plan 187 §9.4 деливерабл 3) — there is
 // nothing to seed, the network IS the randomness.
 
@@ -82,6 +66,7 @@ module src.app
 import ../domain.{Source, SourceData, AggError, TaskStatus, TaskResult, Report}
 import std.net.{SocketAddr, TcpStream, resolve}
 import std.time.duration
+import tls.{ClientConfig}
 
 // ── Live target tables ──────────────────────────────────────────────────────
 
@@ -125,16 +110,67 @@ fn live_fetch_tcp(host str) Net Time -> Result[SourceData, AggError] {
     }
 }
 
-/// **BLOCKED** — see `[M-187-weather-live-tls-diamond-blocked]` (file
-/// header). Intended: a real `https://api.open-meteo.com/v1/forecast` GET
-/// for `(lat, lon)`. Honestly fails every lane (with a hint in the error
-/// text — `report_json.nv`'s `status.error` surfaces it verbatim) rather
-/// than fabricating a fake `Done` payload — `lat`/`lon` stay UNUSED
-/// parameters (kept so the call sites / `aggregate_live_weather`'s per-city
-/// signature don't change the day this unblocks).
+/// A real `https://api.open-meteo.com/v1/forecast` GET for `(lat, lon)`:
+/// resolve → TCP connect → (intended) TLS handshake → GET → read → close.
+///
+/// **Diamond RESOLVED** (Plan 204 дофикс №3, D420 — file header): this file
+/// imports `tls` DIRECTLY (`ClientConfig` above) while `main.nv` imports
+/// `http.server` (which pulls `tls` TRANSITIVELY) into the SAME compile
+/// unit. Before the resolver fix this hard-failed at type-check with
+/// `[E_METHOD_REDEFINITION] метод 'TlsStream.connect' уже определён` (two
+/// physical `tls` copies). It now type-checks cleanly and cross-package
+/// `tls` symbols (`ClientConfig.new`, `TcpStream.connect`) LINK — the
+/// diamond is gone (`nova.lock` records `tls` exactly once).
+///
+/// **Still deferred: the TLS handshake itself** — a SEPARATE, orthogonal
+/// codegen gap, NOT the dependency diamond and NOT fixable from this file:
+/// [M-187-tls-cross-pkg-consume-cleanup]. `nova-tls`'s `TlsStream.connect`
+/// internally CONSUMES the `TcpStream` argument, emitting a call to
+/// `Nova_TcpStream_consume_cleanup` — but that cleanup's DEFINITION (from
+/// `std/net/tcp.nv`'s `TcpStream consume @cleanup`) is only emitted when the
+/// consume site is in the ROOT package's own code; a consume happening
+/// INSIDE an external package (nova-tls) doesn't register the type for
+/// cleanup-definition emission, so the symbol is referenced-but-undefined at
+/// link (`lld-link: undefined symbol: Nova_TcpStream_consume_cleanup`).
+/// Minimal repro: any `TlsStream.connect(tcp, cfg)` from a downstream
+/// package. This is emit_c.rs codegen territory (consume-cleanup / cross-
+/// package method emission), tracked separately from the resolver fix.
+///
+/// So this lane does the REAL DNS resolve + REAL TCP connect (proving
+/// `handlers.net == "real"` and the live `Net` path), builds the real
+/// `ClientConfig` (proving the cross-package `tls` symbol links post-diamond
+/// -fix), then honestly fails at the handshake step with the marker above —
+/// NOT the retired `tls diamond dependency` message. `lat`/`lon` kept so the
+/// signature doesn't change the day the codegen gap closes.
 fn live_fetch_weather(id str, _lat f64, _lon f64) Net Time -> Result[SourceData, AggError] {
-    Err(AggError.Transport("live weather unavailable in this build: [M-187-weather-live-tls-diamond-blocked] " +
-        "tls diamond dependency (examples' path tls vs nova-http's git tls) — see live.nv header"))
+    ro host = "api.open-meteo.com"
+    match resolve(host, 443 as u16) {
+        Ok(addrs) => {
+            if addrs.len() == 0 {
+                Err(AggError.Transport("resolve: no address for " + host))
+            } else {
+                // Cross-package `tls` symbol — links cleanly now the diamond
+                // is collapsed (ONE physical `tls`). Proves the fix at the
+                // aggregator level, not just in the resolver unit tests.
+                ro _cfg = ClientConfig.new(host)
+                match TcpStream.connect(addrs[0]) {
+                    Err(e) => Err(AggError.Transport(e.to_str()))
+                    Ok(s) => {
+                        mut st = s
+                        st.close()
+                        // Handshake deferred — see doc-comment. TlsStream.connect
+                        // here would reference the undefined cross-package
+                        // Nova_TcpStream_consume_cleanup.
+                        Err(AggError.Transport(
+                            "weather live TLS handshake deferred: " +
+                            "[M-187-tls-cross-pkg-consume-cleanup] cross-package " +
+                            "consume-cleanup codegen gap (dependency diamond RESOLVED)"))
+                    }
+                }
+            }
+        }
+        Err(e) => Err(AggError.Transport(e.to_str()))
+    }
 }
 
 // ── Race-a-lane (same shape as aggregate.nv's fetch_guarded) ────────────────

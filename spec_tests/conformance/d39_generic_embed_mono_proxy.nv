@@ -1,0 +1,34 @@
+// D39 — generic embed auto-proxy dispatch on a MONOMORPHIZED wrapper
+// instance (`Set[int]`). Regression for the mono-proxy gap: `Set[T]` embeds
+// `HashMap[T, ()]` (`use map HashMap[T, ()]`); auto-proxied methods that are
+// NOT hand-written on `Set` (`merge_from`/`values`/`keys` — unlike `len`/
+// `insert`/`contains`, which delegate explicitly via `@map.<method>()`) used
+// to mis-dispatch: the call-site routed through the erased single-key
+// `Nova_HashMap_method_*` with an UN-projected receiver (the whole `Set`,
+// not its `map` field) — layout-compatible enough not to crash, but reading
+// garbage → silent no-op / empty-iterator (`merge_from` a no-op, `values`/
+// `keys` iterating zero times).
+// Spec: spec/decisions/02-types.md:1880 (D39). Non-generic embed coverage
+// lives in d39_embed_delegation.nv (unaffected by this fix — see there for
+// override-precedence + whole-object-alias norms).
+module spec_tests.conformance
+
+import std.collections.set.{Set}
+
+test "generic embed: auto-proxy keys/values iterate and merge_from mutates (D39 mono)" {
+    mut a = Set[int].new()
+    a.insert(1)
+    a.insert(2)
+    a.insert(3)
+    mut b = Set[int].new()
+    b.insert(10)
+    b.insert(20)
+    a.merge_from(b)
+    assert(a.len() == 5)
+    mut vc = 0
+    for v in a.values() { vc = vc + 1 }
+    assert(vc == 5)
+    mut kc = 0
+    for k in a.keys() { kc = kc + 1 }
+    assert(kc == 5)
+}

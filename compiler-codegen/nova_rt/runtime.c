@@ -2092,6 +2092,19 @@ void nova_runtime_worker_pump_scope(struct NovaFiberQueue* scope) {
         w->runnext = NULL;
     }
     if (!co) co = nova_runq_get(&w->runq);
+    /* Plan 83.4.5.12 (2026-07-15): also drain THIS worker's yielded-FIFO —
+     * cooperatively-preempted fibers (Plan 44.7 sysmon preemption / runtime.
+     * yield) land here via _worker_run_one_fiber (line ~1980), which pump_scope
+     * itself calls at step (4a). While the worker is blocked in this nested-
+     * supervised pump it never returns to _worker_main's own drain
+     * (_worker_yielded_pop, line ~890), so a yielded child of the very scope
+     * being pumped would be black-holed → its pending_remote never reaches 0 →
+     * permanent supervised hang ([M-187-supervised-nested-fiber-slot-race]:
+     * dump shows the fiber SUSPENDED-not-parked with a non-empty yielded-FIFO).
+     * Same class + same fix shape as the global-overflow consumer just below
+     * (the "MUST run as a consumer here" note in _worker_main). Ordering
+     * mirrors _worker_main exactly: runnext → runq → yielded → global. */
+    if (!co) co = _worker_yielded_pop(w);
     /* Ф.1: also consult the global overflow queue — a nested-supervised pump
      * must not strand spilled fibers (compounds the overflow black-hole). */
     if (!co) co = nova_globrunq_get_one(&_nova_global_runq);

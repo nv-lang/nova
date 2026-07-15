@@ -3807,12 +3807,59 @@ test "index out of bounds panics" panics "index out of bounds" {
    (доминирует MVS: находит решение всегда, когда оно существует; конфликт
    мажоров — диагностика с цепочкой ограничений). Обоснование: docs/plans/204-progress.md.
 
+### Дофикс №3 (2026-07-15, [M-187] diamond) — `[replace]` = Cargo-`[patch]`-семантика (graph-wide), НЕ узкий Go-scope
+
+**Что изменилось.** Область действия корневого `[replace]` УТОЧНЕНА (амендмент
+пункта 2 «Go-scope» выше). Раньше дофикс №2 применял `[replace]`-override только
+к тому ребру зависимости, чей ВЛАДЕЛЕЦ-манифест ОКАЗЫВАЛСЯ корнем сборки — то
+есть фактически только к прямым зависимостям корня. Теперь корневой `[replace]`
+на имя пакета `P` перекрывает **ЛЮБОЕ вхождение пакета с именем `P` в графе** —
+прямое ребро корня **И** транзитивное ребро (`P`, затянутый как чья-то ЧУЖАЯ
+`[dependencies]`-запись). Это ровно семантика Cargo `[patch]` / Go-module
+`replace` в go.mod ГЛАВНОГО модуля: подстановка источника действует везде, где
+пакет требуется во всём build-графе, а не только среди прямых требований корня.
+
+**Почему.** Диамант «одно-имя-два-источника» (`[M-187-weather-live-tls-diamond-
+blocked]`): корень (`examples`) зависел и от `tls` (напрямую), и от `http`, чей
+СОБСТВЕННЫЙ манифест зависит от `tls` git+version'ом — ДРУГАЯ физическая копия.
+Резолвер трактовал path-`tls` и git-`tls` (одно ИМЯ пакета) как РАЗНЫЕ узлы →
+`nova.lock` содержал `tls` дважды (source=path И source=git) → two physical `tls`
+packages в одном compile-unit → чекер видел два объявления идентичного
+`TlsStream.connect` и падал `[E_METHOD_REDEFINITION]` (D78 rev-4 canonical-path
+registry дедупит `module`-DECL по одному пути, но не EXTERNAL-пакет, затянутый
+двумя разными механизмами резолва). Узкого Go-scope дофикса №2 не хватало: он не
+дотягивался до транзитивного `tls` внутри `http`. Дофикс №3 канонизирует
+Cargo-`[patch]`-модель — корневой `[replace] tls = { path = "../nova-tls" }`
+теперь схлопывает ОБА вхождения на один узел; в связке с переводом
+`examples/nova.toml`'s собственного `tls`-dep на ту же git+version форму, что у
+`http`, `nova.lock` фиксирует `tls` РОВНО ОДИН раз (unify по git-URL в
+`git_cache` пин-таблице).
+
+**Точка реализации.** `imports::lookup_dependency` — консультирует таблицу
+`[replace]` КОРНЕВОГО манифеста (build entry-пакет) для любого искомого
+`dep_name`, независимо от того, какой манифест владеет конкретным ребром;
+`Path`-override резолвится ОТНОСИТЕЛЬНО директории корневого манифеста (объявителя
+`[replace]`), не относительно транзитивно-достигнутого пакета. Отсутствующий путь
+активного корневого override — по-прежнему честная ошибка `E_REPLACE_PATH_MISSING`
+(не тихий откат).
+
+**Инвариант «`[replace]` зависимости инертен» СОХРАНЁН.** `[replace]`, объявленный
+в манифесте САМОЙ зависимости (не корня), при транзитивном обходе по-прежнему
+игнорируется (`W_REPLACE_IN_DEPENDENCY`, `lockfile::collect_replace_scope_warnings`)
+— консультируется ТОЛЬКО таблица корня. Дофикс №3 не противоречит этой
+диагностике: расширяется область действия КОРНЕВОГО `[replace]` (на транзитивные
+рёбра тоже), а не легитимируется чужой. `[replace]` НИКОГДА не пишется в
+`nova.lock` (граф lock обходится по декларированному `dep.source`) — публикуемость
+lock не затронута.
+
 ### Связь
 - Q-dependency-versioning (open-questions) — RESOLVED → D420.
 - [D78](07-modules.md) — пакет/модуль-модель; Plan 203 (nova-http — первый
   git-потребитель после миграции Ф.4); Plans 03.1/03.2/03.4 — фундамент.
 - docs/plans/204-progress.md — дофикс №2 session notes (owner corrections,
-  test tally).
+  test tally); дофикс №3 ([M-187] diamond, graph-wide `[replace]`).
+- docs/plans/tls-diamond-progress.md — дофикс №3 checkpoint (диагноз, repro,
+  cross-package consume-cleanup codegen gap tracked separately).
 
 ## D421. Contract execution model — `#debug` dev-only префикс + `--contracts`-уровни; ретракция `#unchecked`/`debug_assert` (Plan 194, 2026-07-14)
 

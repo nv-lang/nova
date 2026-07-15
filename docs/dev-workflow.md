@@ -86,8 +86,11 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
 - **План = самодостаточный файл** `docs/plans/NNN-<slug>.md` со всем контекстом для исполнения. Запуск
   одной фразой: «**выполни план NNN**». Внутри: фазы (`Ф.0`/`Ф.1`/…), критерии приёмки, источники, тесты.
 - **Под-планы** наследуют номер: `169.1.2` — под-план `169.1`. Крупный план дробится на под-планы.
-- **Индекс** всех планов и статусов — [docs/plans/README.md](plans/README.md) (большой файл, читать
-  страницами через offset/limit).
+- **Индекс** всех планов — [docs/plans/README.md](plans/README.md) (большой файл, читать
+  страницами через offset/limit). **Статус** — только пофайлово: строка `**Статус:**` внутри
+  самого `docs/plans/NNN-*.md`; сводный обзор — сгенерированный [docs/plans/STATUS.md](plans/STATUS.md)
+  (регенерация: `bash scripts/gen-plan-status.sh`). Ручная сводная таблица статусов — запрещена
+  (см. [conventions-governance.md](conventions-governance.md)).
 - **Обязательный сквозной критерий** многих планов: «**без упрощений, как для прода**» — фаза не
   закрывается заглушкой/TODO; фазирование — это порядок, не урезание объёма.
 - **Followup-маркеры `[M-…]`** — отложенная работа:
@@ -168,7 +171,8 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
 
 ## 8. Где сейчас идёт работа / как сориентироваться
 
-- Текущие статусы и приоритеты — **только** в [docs/plans/README.md](plans/README.md),
+- Текущие статусы — **только** пофайлово (`**Статус:**` в `docs/plans/NNN-*.md`) + сгенерированный
+  [docs/plans/STATUS.md](plans/STATUS.md); приоритеты — [docs/plans/README.md](plans/README.md) (снапшот-хайлайты),
   [docs/simplifications.md](simplifications.md), `nova-private/`. Внешним заметкам про статус не доверять.
 - Активные направления видно по worktree (`git worktree list`) и по индексу планов. На момент написания
   крупные узлы: унификация системы ошибок/cleanup (план 173 + 174/175/176), единый type-engine 172.x
@@ -194,7 +198,8 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
 | Обзор языка + примеры | [README.md](../README.md), [spec/overview.md](../spec/overview.md) |
 | Вклад, DCO, лицензии | [CONTRIBUTING.md](../CONTRIBUTING.md) |
 | Решения/семантика | [spec/decisions/README.md](../spec/decisions/README.md) |
-| Все планы + статусы | [docs/plans/README.md](plans/README.md) |
+| Все планы (индекс/навигация) | [docs/plans/README.md](plans/README.md) |
+| Статусы планов (сгенерировано, пофайловый источник) | [docs/plans/STATUS.md](plans/STATUS.md) |
 | Тесты (маркеры, folder-модули, флаги) | [docs/test-conventions.md](test-conventions.md) |
 | Правила разработки компилятора | [docs/compiler-conventions.md](compiler-conventions.md) |
 | Управление конвенциями (мета) | [docs/conventions-governance.md](conventions-governance.md) |

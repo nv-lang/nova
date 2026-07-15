@@ -106,7 +106,7 @@ export fn SocketAddr @ip() -> str {
     // Err is unreachable). The unsafe `to_str_unchecked` spelling hit a P67
     // annotation gap in cross-package CUs (examples/net) — see marker.
     ro ip_bytes []u8 = buf[0..n]
-    ip_bytes.decode_utf8() ?? ""
+    ip_bytes.to_str() ?? ""
 }
 
 /// Return a human-readable "host:port" string (v6: "[host]:port").
@@ -118,5 +118,5 @@ export fn SocketAddr @to_str() -> str {
     // [M-174.1-vec-method-chain-elem-erasure]: explicit []u8 local; non-unsafe
     // decode + `??` fallback (ASCII FFI buffer), see @ip above.
     ro addr_bytes []u8 = buf[0..n]
-    addr_bytes.decode_utf8() ?? ""
+    addr_bytes.to_str() ?? ""
 }

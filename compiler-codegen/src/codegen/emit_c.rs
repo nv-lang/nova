@@ -6772,6 +6772,60 @@ impl CEmitter {
         // Single named binding only (Ident, or a single-segment unit Variant for
         // the UPPER_CASE constant-name form), non-ghost. Thread-safety of
         // first-touch init: see `[M-lazy-static-thread-safety]`.
+        //
+        // Plan 209 Ф.3 finding: a `ro NAME = some_free_fn()` initializer with
+        // NO explicit type annotation infers its C storage type via
+        // `infer_expr_c_type` → `infer_call_ret_c` → the `user_fn_sigs`
+        // lookup (B10f, the authoritative source for a bare free-fn call's
+        // return type). But `user_fn_sigs` is populated ONLY inside
+        // `emit_fn_forward_decl` (§2 below, "Forward declarations for all
+        // functions") — which runs AFTER this loop. So at this point
+        // `user_fn_sigs` is still EMPTY for every free fn in the module, the
+        // lookup misses, every other inference channel also misses (the
+        // checker does not annotate a module-level `ro` initializer's callee
+        // the same way it does inside a fn body), and `ty_c` ends up the
+        // empty string. The emitted storage line
+        // (`{top_level_storage()}{ty_c} _nova_const_{name}_value;`) then has
+        // NO type before the name — in single-TU/`static` mode this
+        // compiles anyway (C's legacy "implicit int" backward-compat quirk
+        // silently treats bare `static  x;` as `static int x;`), which
+        // masked the gap; under Plan 209's multi-TU promotion the same
+        // malformed, TYPELESS declarator can't be safely promoted to
+        // `extern` (`split_tu`'s `decl_from_uninitialized_global` correctly
+        // refuses — an `extern` with no type would be nonsense C) and so
+        // stays a verbatim tentative definition duplicated into every part
+        // via `_common.h` → `lld-link: error: duplicate symbol` (observed:
+        // `_nova_const_module_dim_value` / `_nova_const_module_len_value`,
+        // `spec_tests/conformance/const_init_runtime_ok_test.nv`'s
+        // `ro module_dim = compute_dim()` / `ro module_len = alloc_len()`).
+        // Fix: pre-seed `user_fn_sigs` for every eligible top-level free fn
+        // (mirrors the real registration at `emit_fn_forward_decl`'s
+        // `user_fn_sigs.insert`, `f.receiver.is_none() && f.generics.is_empty()`)
+        // BEFORE this loop runs, so the very same authoritative B10f lookup
+        // that already exists succeeds here too. Best-effort (`.ok()` — a
+        // function whose param/return type doesn't translate is simply
+        // skipped, exactly as it already is skipped implicitly today; this
+        // is only a re-ordering of an existing registration, not new
+        // fallback logic). The REAL pass at §2 re-inserts the identical
+        // value later — idempotent, zero functional change for every
+        // already-working case.
+        for item in &module.items {
+            if let Item::Fn(f) = item {
+                if f.receiver.is_none() && f.generics.is_empty()
+                    && !self.user_fn_sigs.contains_key(&f.name)
+                {
+                    if let Some(param_c_tys) = f.params.iter()
+                        .map(|p| self.type_ref_to_c(&p.ty))
+                        .collect::<Result<Vec<_>, _>>()
+                        .ok()
+                    {
+                        if let Ok(ret_c) = self.return_type_c(f) {
+                            self.user_fn_sigs.insert(f.name.clone(), (param_c_tys, ret_c));
+                        }
+                    }
+                }
+            }
+        }
         for item in &module.items {
             if let Item::Let(l) = item {
                 if l.is_ghost { continue; }
@@ -36868,6 +36922,42 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
 
+                // D39 embed generic-mono-proxy fix (recon-d39-embed): an
+                // embed-delegated method (`values`/`keys`/`merge_from`/
+                // `filter`/`equal` on `Set[T]` via `use map HashMap[T, ()]`)
+                // has NO own FnDecl on the wrapper — `generic_type_methods
+                // ["Set"]` misses it, so block 5b below (which drives the
+                // already-correct `len()`/`insert()` dispatch) can't find a
+                // `method_decl` and falls through to the coarse single-key
+                // `method_receivers["merge_from"] = ("HashMap", true)`
+                // fallback with an UN-projected receiver — a mono'd
+                // `Nova_Set____T*` gets read through the erased
+                // `Nova_HashMap_method_*` as if it WERE the (layout-
+                // compatible, hence no crash) erased HashMap struct: silent
+                // no-op / empty-iterator mis-dispatch.
+                //
+                // Fix: when `method` is NOT an own method of the receiver's
+                // wrapper base type but IS a real (own) method of an embedded
+                // field's type, rewrite the receiver — and any SAME-WRAPPER-
+                // TYPED argument (facet B: `other Set[T]` param of HashMap's
+                // `merge_from(other HashMap[K,V])`) — to project through the
+                // embed field (`obj.map` / `arg.map`), exactly mirroring what
+                // a hand-written `@map.merge_from(other.map)` body would do.
+                // Block 5b then resolves the MATERIALIZED embedded-field type
+                // and dispatches to the real mono'd method — the same
+                // mechanism `len()`/`insert()` already use. Own-method
+                // override-precedence is preserved (mirrors
+                // `emit_embed_proxies`'s override check): this only fires
+                // when the wrapper itself has no such method.
+                let d39_proxy = self.d39_embed_project(obj, method, args);
+                let obj: &Expr = d39_proxy.as_ref().map(|(o, _)| o).unwrap_or(obj);
+                let args: &[CallArg] = d39_proxy.as_ref().map(|(_, a)| a.as_slice()).unwrap_or(args);
+                // Re-derive `obj_ty` from the (possibly just-projected) `obj`
+                // so block 5b's `rt_trimmed`/`instance_opt` lookups see the
+                // embedded field's own materialized type. No-op (identical
+                // value) whenever the projection above did not fire.
+                let obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
+
                 // 5b. Plan 48 Ф.3: generic type instance method dispatch.
                 // If receiver type is a concrete generic instance (e.g. "Nova_HashMap____nova_str__nova_int*"),
                 // look up the method in generic_type_methods and emit a monomorphized instance.
@@ -37462,6 +37552,101 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                             return Ok(format!("{}({})", c_fn, call_args.join(", ")));
                         }
+                    }
+                }
+
+                // Plan 196.7 [M-174.1-to-str-name-collision-codegen-bug]: ONE-WINDOW
+                // method dispatch. The protocol-aware blanket dispatch below (and the
+                // single-key `method_receivers` fallback after it) route by method NAME —
+                // an unconstrained bare-T blanket (`fn[T] T @to_str() -> str`) HIJACKS a
+                // `Vec`/`[]u8` facade receiver whose CONCRETE method is
+                // `[]u8 @to_str() -> Result[str, Utf8Error]` (registered under the array
+                // C-ident key, invisible to the blanket / `generic_type_methods[Vec]`).
+                // Emitted `Nova_Nova_Vec____nova_byte_method_to_str` (the str blanket) in
+                // place of `Nova_NovaArray_nova_byte_method_to_str` (the Result body) →
+                // wrong return type → `->tag` on a `nova_str` CC-FAIL.
+                //
+                // The checker ALREADY resolved THIS call-site to a concrete FnDecl by
+                // RECEIVER (`resolved_callees[call_id] -> FnDecl.span`, `check_instance_
+                // overload`, D84 "concrete beats generic"). Honor that fact FIRST: if the
+                // channel points at a CONCRETE instance method, lower ITS registered
+                // mangled c_name — the same span-consulting dispatch already used at c2.2
+                // (~36726) / 5b (~36840), NOT another name-guard (D164). `fn_ret_by_span`
+                // holds ONLY concrete (non-generic) callees — the generic blanket span is
+                // absent — so a genuine blanket dispatch (`int.to_str()`, checker chose the
+                // blanket) has no entry here and falls through untouched (byte-identical).
+                {
+                    // Resolve the concrete facade callee by TWO complementary receiver-
+                    // truthful sources (never by method-name last-wins):
+                    //  (A) the checker channel — `resolved_callees[call_id]` points at the
+                    //      concrete FnDecl.span (recorded for a local/`self` receiver whose
+                    //      type the checker inferred; gated to `fn_ret_by_span` = concrete
+                    //      non-generic callees, so a genuine blanket dispatch is untouched);
+                    //  (B) the receiver's own concrete C-TYPE — a `Nova_Vec____<E>*` /
+                    //      `NovaArray_<E>*` receiver with a CONCRETE `[]E @<method>` registered
+                    //      under the array C-ident key. This covers the shapes the checker's
+                    //      STATIC receiver-inference (`infer_arg_ty`) does not reach — a
+                    //      `@field` / expression receiver (e.g. `@buf.to_str()`), where the
+                    //      channel is empty. Both find the SAME concrete sig; (A) is precise
+                    //      (span), (B) is the type-directed fallback. Scoped to elements that
+                    //      HAVE a concrete facade method → `[]int.to_str()` (none) still uses
+                    //      the bare-T blanket, byte-identical.
+                    let sig_hit: Option<(String, MethodSig)> = self.resolved_callees
+                        .get(&call_id)
+                        .filter(|sp| self.fn_ret_by_span.contains_key(sp))
+                        .and_then(|&chosen_span| self.method_overloads.iter()
+                            .filter(|((_, m), _)| m == method)
+                            .find_map(|((t, _), sigs)| sigs.iter()
+                                .find(|s| s.fn_span == Some(chosen_span)
+                                    && s.is_instance && !s.is_delegated)
+                                .map(|s| (t.clone(), s.clone()))))
+                        .or_else(|| {
+                            // (B) fires ONLY when an unconstrained bare-T blanket for this
+                            // method exists — i.e. the ONLY situation in which the blanket
+                            // dispatch below would hijack the facade receiver. Absent a
+                            // blanket, the existing array-ext / method_receivers paths already
+                            // dispatch the facade correctly → leave them (byte-identical).
+                            let has_blanket = self.mono_method_decls.iter().any(
+                                |((tvname, mname), fd)| mname == method
+                                    && tvname.len() <= 2
+                                    && tvname.chars().all(|c| c.is_ascii_uppercase())
+                                    && fd.generics.iter()
+                                        .find(|g| &g.name == tvname)
+                                        .map(|g| g.bounds.is_empty())
+                                        .unwrap_or(false));
+                            if !has_blanket {
+                                return None;
+                            }
+                            let recv_c = self.recv_c_type_materialized(obj).unwrap_or_default();
+                            let stripped = recv_c.trim_end_matches('*').trim();
+                            let elem = stripped.strip_prefix("Nova_Vec____")
+                                .or_else(|| stripped.strip_prefix("NovaArray_"))?;
+                            let array_key = format!("NovaArray_{}", elem);
+                            self.method_overloads
+                                .get(&(array_key.clone(), method.to_string()))
+                                .and_then(|sigs| sigs.iter()
+                                    .find(|s| s.is_instance && !s.is_delegated))
+                                .map(|s| (array_key, s.clone()))
+                        });
+                    if let Some((sig_type, sig)) = sig_hit {
+                        // Concrete callee → NOT a generic-type key → no arg void*-boxing
+                        // (mirrors the general instance path's non-generic branch). Apply
+                        // the SAME `[M-172.14]` by-ref arg wrapping the general path uses so
+                        // a large ro value-struct arg lowers byte-identically.
+                        let obj_c = self.emit_expr(obj)?;
+                        let obj_ty_local = self.recv_c_type_materialized(obj)
+                            .unwrap_or_default();
+                        let obj_c = self.prepare_method_recv(
+                            &obj_c, &obj_ty_local, sig.recv_mutable, Some(obj));
+                        let mut arg_strs = vec![obj_c];
+                        let method_wrapped =
+                            self.synthesize_method_byref_args(&sig_type, method, args);
+                        let call_args: &[CallArg] =
+                            method_wrapped.as_deref().unwrap_or(args);
+                        for a in call_args {
+                            arg_strs.push(self.emit_expr(a.expr())?);
+                        }
+                        return Ok(format!("{}({})", sig.c_name, arg_strs.join(", ")));
                     }
                 }
 
@@ -49205,6 +49390,81 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         false
     }
 
+    /// D39 embed generic-mono-proxy projection (recon-d39-embed). For a method
+    /// call `obj.method(args)` where `method` is an AUTO-PROXIED embed
+    /// delegation — i.e. the receiver's wrapper base type has NO own FnDecl for
+    /// `method` (`generic_type_methods[base]` misses it) but an embedded field's
+    /// type DOES — rewrite the receiver (and any same-wrapper-typed argument)
+    /// to project through the embed field, exactly as a hand-written
+    /// `@<field>.method(other.<field>)` body would. Returns `Some((new_obj,
+    /// new_args))` when the projection fires, `None` otherwise (identity).
+    ///
+    /// This unifies emit (`emit_call`) and inference (`infer_call_ret_c`) so a
+    /// mono'd wrapper (`Set[int]` embedding `HashMap[int,()]`) dispatches
+    /// delegated methods (`values`/`keys`/`merge_from`/…) through the embedded
+    /// field's OWN mono method — the same generic-instance path `len()`/
+    /// `insert()` already take — instead of the coarse single-key
+    /// `method_receivers` last-wins fallback that reads the whole wrapper
+    /// through a foreign (layout-compatible → silent no-op) erased struct.
+    ///
+    /// `&self` (read-only): safe to call from both the `&mut self` emit path and
+    /// the `&self` inference path.
+    fn d39_embed_project(
+        &self, obj: &Expr, method: &str, args: &[CallArg],
+    ) -> Option<(Expr, Vec<CallArg>)> {
+        let probe_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
+        let stripped = Self::debt_strip_value_or_nova_prefix_opt(&probe_ty)?;
+        let no_ptr = stripped.trim_end_matches('*').trim();
+        let recv_base = no_ptr.split("____").next().unwrap_or(no_ptr).to_string();
+        let method_stripped = method.trim_start_matches('@');
+        // Own method on the wrapper wins (override-precedence): skip projection.
+        let has_own = self.generic_type_methods.get(&recv_base)
+            .map(|ms| ms.iter().any(|m| m.name == method_stripped))
+            .unwrap_or(false);
+        if has_own { return None; }
+        let embeds = self.embed_fields.get(&recv_base)?;
+        for (field_name, embedded_ty, _anon) in embeds {
+            let embed_has_method = self.generic_type_methods.get(embedded_ty)
+                .map(|ms| ms.iter().any(|m| m.name == method_stripped))
+                .unwrap_or(false);
+            if !embed_has_method { continue; }
+            let new_obj = Expr::new(
+                ExprKind::Member {
+                    obj: Box::new(obj.clone()),
+                    name: field_name.clone(),
+                },
+                obj.span,
+            );
+            // Facet B: project a SAME-WRAPPER-TYPED argument through the SAME
+            // embed field (e.g. `other Set[T]` param of HashMap's
+            // `merge_from(other HashMap[K,V])`). Gated on an EXACT static
+            // C-type match against the receiver's own (un-projected) type, so
+            // an already-embedded-typed arg is never double-projected.
+            let new_args: Vec<CallArg> = args.iter().map(|a| {
+                let a_ty = self.infer_expr_c_type(a.expr());
+                if !a_ty.is_empty() && a_ty == probe_ty {
+                    let projected = Expr::new(
+                        ExprKind::Member {
+                            obj: Box::new(a.expr().clone()),
+                            name: field_name.clone(),
+                        },
+                        a.expr().span,
+                    );
+                    match a {
+                        CallArg::Item(_) => CallArg::Item(projected),
+                        CallArg::Spread(_) => CallArg::Spread(projected),
+                        CallArg::Named { name: an, .. } =>
+                            CallArg::Named { name: an.clone(), value: projected },
+                    }
+                } else {
+                    a.clone()
+                }
+            }).collect();
+            return Some((new_obj, new_args));
+        }
+        None
+    }
+
     /// Plan 153.2 Ф.2 (STAGE 2 — generic-over-source adapters): does a COMPOUND
     /// mangled C-type name embed an UNRESOLVED generic-param placeholder? A
     /// type-param `T` lowers to the placeholder C token `Nova_T` (`Nova_T*` when
@@ -49518,6 +49778,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `variant_chain_as_member`.
                     if let Some(member_func) = self.variant_chain_as_member(func) {
                         return self.infer_call_ret_c(expr, &member_func, args);
+                    }
+                    // D39 embed generic-mono-proxy: mirror the emit-side receiver/
+                    // arg projection here so a delegated method's RETURN TYPE (e.g.
+                    // `Set[int].values()` → `ValuesIter[int,()]`, the type that
+                    // drives the `for v in a.values()` loop) resolves through the
+                    // embedded field's OWN mono method rather than the erased
+                    // wrapper. Without this the iterator temp is typed wrong and the
+                    // loop iterates zero times. Re-enter with the projected receiver.
+                    if let ExprKind::Member { obj, name: method } = &func.unwrap_turbofish().kind {
+                        if let Some((new_obj, new_args)) =
+                            self.d39_embed_project(obj, method, args)
+                        {
+                            let new_func = Expr::new(
+                                ExprKind::Member {
+                                    obj: Box::new(new_obj),
+                                    name: method.clone(),
+                                },
+                                func.span,
+                            );
+                            return self.infer_call_ret_c(expr, &new_func, &new_args);
+                        }
                     }
                     // D38 turbofish прозрачен для inference — но extract type_args
                     // ПЕРЕД unwrap чтобы Plan 54 Ф.4 return-type inference (для
@@ -51708,6 +51989,50 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // concrete element and yields the correct `nova_byte*`.
                         if !self.debt_is_generic_stub_c(ch_ret) {
                             return ch_ret.clone();
+                        }
+                    }
+                }
+            }
+        }
+        // Channel 1b (Plan 196.7 [M-174.1-to-str-name-collision-codegen-bug]):
+        // return C-type of a facade method call on a `Vec[E]`/`[]E` receiver whose
+        // concrete callee the checker could NOT channel — a pattern-bound (`Ok(bytes)
+        // => bytes.to_str()`) / field / expression receiver, which the checker's
+        // static receiver-inference does not reach, so Channel 1 above found no
+        // `resolved_callees` entry and the legacy `infer_call_ret_c` re-derives the
+        // return by NAME → the bare-T `to_str` blanket's `nova_str` (WRONG) instead of
+        // `[]E @to_str`'s `Result`. This is the RETURN-TYPE twin of the receiver-type-
+        // directed DISPATCH fallback (~37374): resolve the concrete facade sig by the
+        // receiver's own C-type and return ITS declared return C-type, keeping the two
+        // windows consistent WITHOUT touching `infer_call_ret_c`. Gated to a bare-T
+        // blanket collision + channel-less call → byte-identical elsewhere.
+        if expr.id.is_set() && self.resolved_callees.get(&expr.id).is_none() {
+            if let ExprKind::Call { func, .. } = &expr.kind {
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    let has_blanket = self.mono_method_decls.iter().any(
+                        |((tvname, mname), fd)| mname == name
+                            && tvname.len() <= 2
+                            && tvname.chars().all(|c| c.is_ascii_uppercase())
+                            && fd.generics.iter()
+                                .find(|g| &g.name == tvname)
+                                .map(|g| g.bounds.is_empty())
+                                .unwrap_or(false));
+                    if has_blanket {
+                        let recv_c = self.recv_c_type_materialized(obj).unwrap_or_default();
+                        let stripped = recv_c.trim_end_matches('*').trim();
+                        if let Some(elem) = stripped.strip_prefix("Nova_Vec____")
+                            .or_else(|| stripped.strip_prefix("NovaArray_"))
+                        {
+                            let array_key = format!("NovaArray_{}", elem);
+                            if let Some(sig) = self.method_overloads
+                                .get(&(array_key, name.clone()))
+                                .and_then(|sigs| sigs.iter()
+                                    .find(|s| s.is_instance && !s.is_delegated))
+                            {
+                                if !sig.return_c_type.is_empty() {
+                                    return sig.return_c_type.clone();
+                                }
+                            }
                         }
                     }
                 }

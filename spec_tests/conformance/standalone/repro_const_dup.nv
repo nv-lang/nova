@@ -1,0 +1,25 @@
+// Plan 209 Ф.3 fix repro: minimal multi-TU lazy-const duplicate-symbol case.
+// EXPECT_STDOUT 6
+
+module standalone.repro_const_dup
+
+fn identity(x int) -> int {
+    x
+}
+
+ro ZERO int = identity(0)
+ro SECOND int = identity(1)
+ro THIRD int = identity(2)
+ro FOURTH int = identity(3)
+
+fn use_a() -> int {
+    ZERO + SECOND
+}
+
+fn use_b() -> int {
+    THIRD + FOURTH
+}
+
+fn main() {
+    println(use_a() + use_b())
+}

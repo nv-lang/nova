@@ -418,6 +418,21 @@ fn trailing_identifier(prefix: &str) -> Option<String> {
 /// (mirrors `find_top_level_open_brace`'s mode-tracking exactly), so it
 /// lands on the signature's own `(` regardless of what the comment above
 /// it says.
+/// Does this function-signature prefix (text up to, not including, the
+/// opening `{`) declare the function `inline` (`inline ...` or
+/// `static inline ...`, the only two forms this codebase emits — see
+/// `CEmitter::top_level_storage_inline`'s two permanent exceptions,
+/// `nova_typeid_user_name` and `_nova_throw_typed_<m>`, which stay
+/// `static inline` under every flag combination)? Skips a leading doc
+/// comment first (mirrors `decl_from_uninitialized_global`'s
+/// `skip_leading_trivia` use, same rationale: `find_first_real_paren`-style
+/// comment-blindness bugs already bit this file twice, see Ф.2 findings
+/// above).
+fn sig_has_inline_keyword(sig: &str) -> bool {
+    let core = skip_leading_trivia(sig);
+    core.starts_with("inline ") || core.starts_with("static inline ")
+}
+
 fn decl_from_fn_def(unit: &str) -> Option<(String, String)> {
     let brace = find_top_level_open_brace(unit)?;
     let sig = unit[..brace].trim_end();
@@ -598,6 +613,94 @@ fn strip_trailing_array_brackets(s: &str) -> &str {
     }
 }
 
+/// For a top-level, brace-free, `=`-free unit ending in `;` — i.e. a plain
+/// C declarator statement (`TYPE NAME;`) — extract (name, extern decl) IF
+/// this is a tentative-definition GLOBAL OBJECT (uninitialized file-scope
+/// storage: `nova_int _nova_const_ZERO_value;`, emitted by
+/// `CEmitter::emit_lazy_const` for every lazy `ro`/module const — the
+/// combined `nova_consts_init()` assigns it later, at runtime, not via a
+/// C initializer). In standard C this has NO `extern`/`static` keyword and
+/// no initializer, which makes it a **tentative definition**: under Clang's
+/// (and lld-link's) default `-fno-common`, every translation unit that
+/// contains one becomes a strong definition of that symbol. `_common.h` is
+/// `#include`d by EVERY part, so if this shape is (as before this fix) kept
+/// verbatim in the header, every part's `.c` gets its OWN copy of the
+/// definition — `lld-link: error: duplicate symbol` at link time (Plan 209
+/// Ф.3 finding: `_nova_const_ZERO_value`, `_nova_const_lower_map_value`,
+/// `_nova_const_collate_single_map_value`, ... — every lazy const in any CU
+/// that splits into >1 part). Must be treated exactly like an initialized
+/// global (recon-notes §4's "глобал с ОПРЕДЕЛЕНИЕМ" invariant): definition
+/// in exactly ONE part, `extern` declaration in `_common.h`.
+///
+/// Deliberately excluded (return `None`, fall through to plain `DeclOnly`,
+/// kept verbatim/duplicate-safe in the header as before):
+/// - `typedef ...;` (type forward-decls, e.g. `typedef struct Nova_X Nova_X;`
+///   or the braceless `typedef int64_t Nova_X;` empty-sum shape) — these are
+///   type declarations, not object definitions; duplicating them across
+///   every part (they all `#include` the same header) is exactly what a
+///   header is for.
+/// - anything already spelled `extern ...;` — already an explicit
+///   declaration of storage defined elsewhere; safe to duplicate verbatim.
+/// - anything containing a top-level `(` — a function prototype (handled by
+///   the caller's existing paren-based `DeclOnly` name extraction), not an
+///   object declarator.
+fn decl_from_uninitialized_global(unit: &str) -> Option<(String, String)> {
+    let trimmed = unit.trim();
+    let body = trimmed.strip_suffix(';')?.trim_end();
+    if body.is_empty() { return None; }
+    // Plan 209 Ф.3 (found while verifying against real generated output,
+    // `e2e_collate.nv`): a leading DOC COMMENT (e.g. the `/* Plan 36: ...
+    // */` attached to `typedef int64_t Nova_RawMem;`) means a naive
+    // `trimmed.starts_with("typedef ")` misses it — the comment sits before
+    // the keyword — and this function wrongly classified the typedef as a
+    // tentative-definition global, prefixing the WHOLE unit (comment AND
+    // typedef) with `extern `: nonsense C (`extern /* ... */\ntypedef ...`)
+    // that fails to compile ("cannot combine with previous 'extern'
+    // declaration specifier" / spurious redefinition once the malformed
+    // line desyncs the parser). Skip leading `//`/`/* */` trivia (mirrors
+    // `find_first_real_paren`'s mode-tracking) before checking for the
+    // `typedef`/`extern` keywords that must exempt this unit.
+    let core = skip_leading_trivia(body);
+    if core.starts_with("typedef ") || core.starts_with("typedef\t") { return None; }
+    if core.starts_with("extern ") || core.starts_with("extern\t") { return None; }
+    if core.contains('(') || core.contains('{') || core.contains('}') { return None; }
+    if core.trim().is_empty() { return None; }
+    let stripped = strip_trailing_array_brackets(core);
+    let name = trailing_identifier(stripped)?;
+    // Defensive: the declarator must have at least one token before the
+    // name (a bare identifier with no type at all is not a C declaration
+    // this codebase ever emits standalone at top level) — reject rather
+    // than mis-promote something unrecognized.
+    let before_name = &stripped[..stripped.len() - name.len()];
+    if before_name.trim().is_empty() { return None; }
+    Some((name, format!("extern {};", body)))
+}
+
+/// Skips leading whitespace and `//`/`/* */` comments (repeatedly, so
+/// `/* a */ // b\n  TYPE` correctly lands on `TYPE`), returning the
+/// remaining suffix. Used by `decl_from_uninitialized_global` to look past
+/// a leading doc-comment before checking for the `typedef`/`extern`
+/// keywords that exempt a unit from tentative-definition promotion.
+fn skip_leading_trivia(s: &str) -> &str {
+    let mut cur = s;
+    loop {
+        let trimmed = cur.trim_start();
+        if trimmed.starts_with("//") {
+            cur = match trimmed.find('\n') {
+                Some(nl) => &trimmed[nl + 1..],
+                None => "",
+            };
+        } else if trimmed.starts_with("/*") {
+            cur = match trimmed[2..].find("*/") {
+                Some(end) => &trimmed[2 + end + 2..],
+                None => "", // unterminated — defensive, shouldn't happen
+            };
+        } else {
+            return trimmed;
+        }
+    }
+}
+
 /// Is this unit (trimmed) exactly one of the known part-only macro
 /// invocation statements (see `KNOWN_PART_ONLY_MACRO_STATEMENTS`)?
 fn is_known_part_only_macro(unit: &str) -> bool {
@@ -631,6 +734,30 @@ fn classify_unit(unit: &str) -> UnitKind {
     if let Some(brace) = find_top_level_open_brace(unit) {
         let sig = unit[..brace].trim_end();
         if sig.ends_with(')') {
+            // Plan 209 Ф.3 finding: an `inline`/`static inline` function
+            // DEFINITION (the two permanent exceptions the Ф.1 design
+            // deliberately keeps `static inline` under ANY flag —
+            // `nova_typeid_user_name`, per-E throw fast-path
+            // `_nova_throw_typed_<m>` — plus, defensively, any future site
+            // shaped the same way) must NOT be split into a bare prototype
+            // (→ `_common.h`) + body (→ one part) like an ordinary `FnDef`.
+            // `inline` semantics require the FULL definition to be visible
+            // in every TU that calls it; a `static`-linkage function with
+            // only a prototype visible has NO definition in that TU at all
+            // — real failure observed: `_common.h` got
+            // `static inline nova_unit _nova_throw_typed_WorkErr1(...);`
+            // (prototype only), the body landed in exactly one part (this
+            // is exactly the ordinary `FnDef` split, which is CORRECT for a
+            // plain external definition but wrong here), and every OTHER
+            // part calling it hit `lld-link: error: undefined symbol` (a
+            // `static`-linkage callee with no body in that TU — the linker
+            // can't reach across TUs for `static`). Fix: keep the WHOLE
+            // unit (signature + body) verbatim in `_common.h` instead —
+            // safe to duplicate per-TU exactly like any other
+            // `static inline` header helper.
+            if sig_has_inline_keyword(sig) {
+                return UnitKind::HeaderVerbatim;
+            }
             if let Some((name, proto)) = decl_from_fn_def(unit) {
                 return UnitKind::FnDef { name, proto };
             }
@@ -651,6 +778,15 @@ fn classify_unit(unit: &str) -> UnitKind {
         if let Some((name, ext)) = decl_from_global_def(unit) {
             return UnitKind::GlobalDef { name, extern_decl: ext };
         }
+    }
+    // Plan 209 Ф.3: no `=`, no braces, no top-level `(` — a bare `TYPE
+    // NAME;` declarator. Unless it's `typedef .../extern ...` (a real
+    // declaration, safe to duplicate across parts via the header), this is
+    // an uninitialized tentative-definition global (lazy-const storage
+    // cells from `emit_lazy_const`) and MUST be single-part + `extern`'d,
+    // exactly like an initialized global — see `decl_from_uninitialized_global`.
+    if let Some((name, ext)) = decl_from_uninitialized_global(unit) {
+        return UnitKind::GlobalDef { name, extern_decl: ext };
     }
     // Decl-only (prototype, typedef, extern decl, `#`-free pragma-like
     // statement). Try to extract a name (for prototypes ending `NAME(...);`)
@@ -921,17 +1057,27 @@ mod tests {
 
     #[test]
     fn classify_global_def_extracts_name_and_extern() {
+        // Plan 209 Ф.3: no initializer -> a C tentative definition, no
+        // top-level '='. This shape (declared-but-uninitialized global,
+        // real example: `CEmitter::emit_lazy_const`'s
+        // `nova_int _nova_const_X_value;` storage cell, assigned later at
+        // runtime by `nova_consts_init()`) must be treated as a definition
+        // needing a single home + `extern` in `_common.h`, matching
+        // recon-notes §4's "глобал с ОПРЕДЕЛЕНИЕМ" invariant — same as an
+        // initialized global. Before this fix it fell through to
+        // `DeclOnly { name: None }`, which is unnamed (A3 dedup can never
+        // supersede it) and so was kept VERBATIM in `_common.h`; every part
+        // `#include`ing that header got its own copy of the definition ->
+        // `lld-link: error: duplicate symbol` (observed for real lazy
+        // consts: `_nova_const_ZERO_value`, `_nova_const_lower_map_value`,
+        // `_nova_const_collate_single_map_value`, ...).
         let unit = "nova_int _nova_const_X_value;";
-        // No initializer -> tentative definition, no top-level '='.
-        // This shape (declared-but-uninitialized global) must still be
-        // treated as a definition needing a single home + extern, matching
-        // recon-notes §2 (lazy-const storage). Handled as DeclOnly with no
-        // name match only if we don't special-case it — verify the actual
-        // behavior via the `=`-based classifier first for the initialized
-        // case, then check the no-initializer case separately below.
         match classify_unit(unit) {
-            UnitKind::DeclOnly { name } => assert_eq!(name, None),
-            other => panic!("unexpected: {:?}", other),
+            UnitKind::GlobalDef { name, extern_decl } => {
+                assert_eq!(name, "_nova_const_X_value");
+                assert_eq!(extern_decl, "extern nova_int _nova_const_X_value;");
+            }
+            other => panic!("expected GlobalDef, got {:?}", other),
         }
 
         let unit2 = "NovaVtable_Fail_X* _nova_handler_Fail_X = NULL;";
@@ -941,6 +1087,56 @@ mod tests {
                 assert_eq!(extern_decl, "extern NovaVtable_Fail_X* _nova_handler_Fail_X;");
             }
             other => panic!("expected GlobalDef, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn classify_static_inline_fn_def_stays_header_verbatim_whole() {
+        // Plan 209 Ф.3 regression (real generated `.c`, `app_effect_basic_t8_1.nv`):
+        // the two permanent `static inline` exceptions
+        // (`nova_typeid_user_name`, per-E throw fast-path
+        // `_nova_throw_typed_<m>`) are function DEFINITIONS with a body —
+        // ordinary `FnDef` classification would split them into a bare
+        // prototype (`_common.h`) + body (one part), which is correct for a
+        // plain external definition but WRONG for `inline`: a `static`
+        // function with only a prototype visible in a TU has no body THERE
+        // to call, so every part other than the one holding the body hit
+        // `lld-link: error: undefined symbol`. The whole unit (signature +
+        // body) must stay verbatim in the header instead — safe to
+        // duplicate per-TU exactly like any other `static inline` helper.
+        let unit = "static inline nova_unit _nova_throw_typed_WorkErr1(Nova_WorkErr1* payload) {\n    return NOVA_UNIT;\n}\n";
+        match classify_unit(unit) {
+            UnitKind::HeaderVerbatim => {}
+            other => panic!("expected HeaderVerbatim (whole inline def kept together), got {:?}", other),
+        }
+
+        let r = split_tu(unit, "cu", 1 << 20).expect("split_tu should succeed");
+        assert!(r.common_h.contains("static inline nova_unit _nova_throw_typed_WorkErr1"));
+        assert!(r.common_h.contains("return NOVA_UNIT;"), "the header must carry the FULL body, not just a prototype");
+        assert!(r.parts.iter().all(|p| !p.contains("_nova_throw_typed_WorkErr1")),
+            "an inline def must not ALSO be duplicated into a part");
+    }
+
+    #[test]
+    fn classify_typedef_with_leading_comment_is_not_promoted_to_global_def() {
+        // Plan 209 Ф.3 regression (real generated `.c`, `e2e_collate.nv`):
+        // `typedef int64_t Nova_RawMem;` preceded by a doc comment (`/*
+        // Plan 36: forward decls для user types — нужны для NovaOpt_<T> */`)
+        // is a braceless, `=`-free, paren-free unit — exactly the shape
+        // `decl_from_uninitialized_global` targets. A naive
+        // `trimmed.starts_with("typedef ")` check misses the keyword
+        // because the comment comes first, so this unit was wrongly
+        // promoted to `GlobalDef` with `extern ` prefixed onto the WHOLE
+        // unit (comment included) — malformed C
+        // (`extern /* ... */\ntypedef int64_t Nova_RawMem;`) that failed to
+        // compile ("cannot combine with previous 'extern' declaration
+        // specifier"). Must stay a plain (unpromoted) declaration — kept
+        // verbatim in the header, safe to duplicate across every part —
+        // NOT `GlobalDef` (which would prepend `extern `).
+        let unit = "/* Plan 36: forward decls для user types — нужны для NovaOpt_<T> */\ntypedef int64_t Nova_RawMem;\n";
+        match classify_unit(unit) {
+            UnitKind::DeclOnly { .. } => {}
+            other => panic!("expected DeclOnly (unpromoted typedef), got {:?}", other),
         }
     }
 
@@ -1097,12 +1293,48 @@ mod tests {
     fn split_tu_global_with_initializer_gets_extern_and_single_definition() {
         let src = "nova_int _nova_const_FOO_value;\nvoid nova_consts_init(void) { _nova_const_FOO_value = 42; }\n";
         let r = split_tu(src, "cu", 1 << 20).expect("split_tu should succeed for these fixtures");
-        // Uninitialized tentative-definition global has no top-level '=' in
-        // this shape, so it's DeclOnly (no name) and passes through
-        // unchanged into the header today; the important invariant is that
-        // it is NOT silently dropped.
-        assert!(r.common_h.contains("nova_int _nova_const_FOO_value;"));
+        // Plan 209 Ф.3: the uninitialized tentative-definition global must
+        // be `extern`'d in the header (NOT kept verbatim — verbatim is what
+        // produced the `lld-link: error: duplicate symbol` for every lazy
+        // const once a CU split into >1 part, see
+        // `classify_global_def_extracts_name_and_extern` for the full
+        // mechanism doc).
+        assert!(r.common_h.contains("extern nova_int _nova_const_FOO_value;"));
+        assert_eq!(r.common_h.matches("nova_int _nova_const_FOO_value;").count(), 1,
+            "the header must contain ONLY the extern-decl form, not also a bare verbatim tentative definition");
         assert!(r.common_h.contains("void nova_consts_init(void);"));
+        let def_occurrences: usize = r.parts.iter()
+            .map(|p| p.matches("nova_int _nova_const_FOO_value;").count())
+            .sum();
+        assert_eq!(def_occurrences, 1, "the const storage definition must appear in exactly one part");
+    }
+
+    #[test]
+    fn split_tu_lazy_const_storage_single_part_no_duplicate_across_multiple_parts() {
+        // Plan 209 Ф.3 end-to-end regression: real generated shape (multiple
+        // `emit_lazy_const` storage cells + `nova_consts_init` + several
+        // functions big enough to be forced into DIFFERENT parts by a tiny
+        // threshold) — the const storage definitions must land in exactly
+        // one part each and be `extern`'d (never bare-duplicated) in the
+        // header, regardless of how many parts the CU splits into.
+        let filler_a = "a".repeat(60);
+        let filler_b = "b".repeat(60);
+        let src = format!(
+            "nova_int _nova_const_ZERO_value;\n\
+             nova_int _nova_const_SECOND_value;\n\
+             void nova_consts_init(void) {{ _nova_const_ZERO_value = 0; _nova_const_SECOND_value = 1; }}\n\
+             int use_a(void) {{ /* {filler_a} */ return (int)_nova_const_ZERO_value; }}\n\
+             int use_b(void) {{ /* {filler_b} */ return (int)_nova_const_SECOND_value; }}\n"
+        );
+        let r = split_tu(&src, "cu", 48).expect("split_tu should succeed");
+        assert!(r.parts.len() >= 2, "fixture must actually exercise >1 part: {:?}", r.parts);
+        for sym in ["_nova_const_ZERO_value", "_nova_const_SECOND_value"] {
+            assert!(r.common_h.contains(&format!("extern nova_int {};", sym)));
+            let def_occurrences: usize = r.parts.iter()
+                .map(|p| p.matches(&format!("nova_int {};", sym)).count())
+                .sum();
+            assert_eq!(def_occurrences, 1, "{} definition must appear in exactly one part (no duplicate symbol)", sym);
+        }
     }
 
     #[test]
