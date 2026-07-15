@@ -1,0 +1,297 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 187 — flagship concurrent aggregator: LIVE legends (deliverable 5).
+//
+// `aggregate()`/`fetch_guarded()`/`fetch_one()` (aggregate.nv) stay UNCHANGED
+// — that trio is the Demo/Chaos synthetic path (loopback `Net`, seeded
+// latency/failure knobs) and the one quoted verbatim in the UI's "Код"
+// panel/README as the killer-narrative signature. Live sources hit REAL
+// external hosts with genuinely different addressing (DNS host names /
+// HTTPS URLs, not a `BASE_PORT + idx` loopback probe) — bolting that onto
+// `Source`/`fetch_one` would either grow `Source` with live-only fields no
+// Demo/Chaos caller needs, or fork `fetch_one`'s signature. Instead, this
+// file re-runs the SAME race-a-lane-against-a-shared-`supervised(deadline:)`
+// SHAPE (peer of `aggregate.nv`, same module `backend.app` — reuses
+// `deadline_elapsed_ms`, `Report.from`, `TaskResult`/`TaskStatus`/`SourceData`/
+// `AggError`/`Emit` directly, no import needed) against two small, honest
+// live fetchers below. Same cancellation guarantee, same `Report`/`Emit`
+// contract feeding `report_json.nv` unchanged — only the fetch body and the
+// source list differ, which IS the effect-system pitch (`with Net = ...`
+// swaps the world) one level up: here it's "which fn populates the fan-out"
+// that swaps, not just the handler.
+//
+// health legend, live: plain TCP connect timing (`std.net.resolve` + `Net`)
+// against a handful of well-known real domains — NOT the Demo/Chaos table
+// (`scenarios.nv`'s `health_demo_sources` has synthetic names like
+// "mirror-remote"/"registry-eu" that don't resolve).
+//
+// weather legend, live: INTENDED a real `https://api.open-meteo.com` GET
+// (no API key) per city — hand-rolled `TcpStream.connect` +
+// `TlsStream.connect` (nova-tls, `examples/tls/echo_client.nv` pattern), NOT
+// `http.client`/`http.transport.real_http()`. **Currently BLOCKED** — see
+// `[M-187-weather-live-tls-diamond-blocked]` below; `live_fetch_weather`
+// honestly fails every lane with a hint, it does not fabricate fake success
+// data (plan 187 §9.4 деливерабл 5's "мок-fallback с полем-подсказкой" —
+// this session's read: a compile-time dependency blocker is closer in spirit
+// to "network unavailable" than to "network available, fake the payload").
+//
+// [M-187-weather-live-tls-diamond-blocked]: **diamond dependency, NOT a
+// single-file bug, NOT worked around by routing around a call site — there
+// is no code-only route around it from THIS package.** `examples/nova.toml`
+// depends on BOTH `tls` (local `path`, this worktree's nova-tls) AND `http`
+// (local `path`, nova-http) — and `nova-http/nova.toml` itself depends on
+// `tls` via `git`+version (a DIFFERENT, separately-fetched physical copy,
+// `~/.nova/git/co/nova-tls-<hash>/...`). D420's `[replace]` is root-package-
+// only (by design — "не для зависимостей", `W_REPLACE_IN_DEPENDENCY`), so
+// there is no supported way for the ROOT package (`examples`) to force
+// `http`'s nested `tls` dependency onto the SAME physical copy as its own
+// direct one. Two attempts, two distinct failures, BOTH from the same root
+// cause:
+//   (1) via `http.transport.real_http()` (first attempt, since retracted
+//       from this file): `https_send_over_net`'s `tls`-named local variable
+//       resolves against the WRONG physical `tls` copy under the diamond —
+//       `error: no function 'read_to_vec'/'close' in module 'tls'` (the
+//       checker falls back to module-qualified lookup and searches the
+//       git-fetched copy, which doesn't shadow-collide the same way in
+//       nova-http's own isolated build).
+//   (2) via THIS file's direct `import tls.{TlsStream, ClientConfig}`
+//       (current attempt) once `backend/api/*` (which imports `http.server`,
+//       pulling in the git-fetched `tls` transitively) shares a compile
+//       unit with `backend/app/live.nv` (which imports the PATH `tls`
+//       directly) — `nova test examples/flagship/aggregator` CC-FAILs:
+//       `[E_METHOD_REDEFINITION] метод 'TlsStream.connect' уже определён` —
+//       the checker sees TWO physical `tls` packages each declaring
+//       `TlsStream.connect` with an IDENTICAL signature and treats the
+//       second as a silently-losing redefinition, not as "these are the
+//       same logical type from two copies, dedup them" (D78 rev-4's
+//       canonical-filesystem-path registry keying fixed the ANALOGOUS
+//       problem for `module` DECLARATIONS — this is the same failure mode
+//       one level up, for an EXTERNAL package pulled in twice by two
+//       different resolution mechanisms, `path` vs `git`).
+// Not attempted: patching `nova-http`/`nova-tls` (sibling repos, out of this
+// session's remit) or a `nova.local.toml` `[replace]` (root-only, doesn't
+// reach `http`'s nested dependency — see above, this is the DOCUMENTED
+// limitation, not a gap in using it correctly). `health_live_*` (Net-only,
+// no `tls` import at all) is fully real and unaffected — this marker is
+// SCOPED to the weather legend's live mode only.
+//
+// `seed` is caller-ignored for live (plan 187 §9.4 деливерабл 3) — there is
+// nothing to seed, the network IS the randomness.
+
+module src.app
+
+import ../domain.{Source, SourceData, AggError, TaskStatus, TaskResult, Report}
+import std.net.{SocketAddr, TcpStream, resolve}
+import std.time.duration
+
+// ── Live target tables ──────────────────────────────────────────────────────
+
+/// Real, resolvable domains for the health legend's live mode.
+#stable(since = "0.2")
+export fn health_live_hosts() -> []str {
+    ["github.com", "cloudflare.com", "wikipedia.org", "npmjs.org", "pypi.org"]
+}
+
+/// Real cities (lat/lon) for the weather legend's live mode — open-meteo
+/// forecast query, no API key.
+#stable(since = "0.2")
+export fn weather_live_cities() -> [](str, f64, f64) {
+    [
+        ("Moscow",   55.75,  37.62),
+        ("London",   51.51,  -0.13),
+        ("Tokyo",    35.68, 139.69),
+        ("New-York", 40.71, -74.01),
+    ]
+}
+
+// ── Live fetchers ────────────────────────────────────────────────────────────
+
+/// One real TCP connect (port 443 — every host in `health_live_hosts` serves
+/// HTTPS) — the "SLA timing" for the health legend. Connect success/latency
+/// IS the measurement; no bytes are read (matches `fetch_one`'s framing:
+/// payload content is not domain-meaningful, only timing/outcome are).
+fn live_fetch_tcp(host str) Net Time -> Result[SourceData, AggError] {
+    match resolve(host, 443 as u16) {
+        Ok(addrs) => {
+            if addrs.len() == 0 {
+                Err(AggError.Transport("resolve: no address for " + host))
+            } else {
+                match TcpStream.connect(addrs[0]) {
+                    Ok(s)  => { mut st = s; st.close(); Ok(SourceData { id: host, payload: []u8.new() }) }
+                    Err(e) => Err(AggError.Transport(e.to_str()))
+                }
+            }
+        }
+        Err(e) => Err(AggError.Transport(e.to_str()))
+    }
+}
+
+/// **BLOCKED** — see `[M-187-weather-live-tls-diamond-blocked]` (file
+/// header). Intended: a real `https://api.open-meteo.com/v1/forecast` GET
+/// for `(lat, lon)`. Honestly fails every lane (with a hint in the error
+/// text — `report_json.nv`'s `status.error` surfaces it verbatim) rather
+/// than fabricating a fake `Done` payload — `lat`/`lon` stay UNUSED
+/// parameters (kept so the call sites / `aggregate_live_weather`'s per-city
+/// signature don't change the day this unblocks).
+fn live_fetch_weather(id str, _lat f64, _lon f64) Net Time -> Result[SourceData, AggError] {
+    Err(AggError.Transport("live weather unavailable in this build: [M-187-weather-live-tls-diamond-blocked] " +
+        "tls diamond dependency (examples' path tls vs nova-http's git tls) — see live.nv header"))
+}
+
+// ── Race-a-lane (same shape as aggregate.nv's fetch_guarded) ────────────────
+
+/// See `aggregate.nv`'s `fetch_guarded` — identical race-against-a-shared-
+/// deadline shape (`supervised(deadline:)` + spawn + `Channel[TaskStatus]`
+/// handoff + `Fail[TimeoutError]` catch), applied to `live_fetch_tcp`.
+fn live_lane_tcp(host str, shared_deadline Monotonic, idx int) Net Time Emit -> TaskResult {
+    ro t0 Monotonic = Monotonic.now()
+    Emit.lane_started(host, idx)
+    ro { tx, rx } = Channel.new(1)
+    mut timed_out = false
+    with Fail[TimeoutError] = |_e| { timed_out = true } {
+        supervised(deadline: shared_deadline) {
+            spawn {
+                ro outcome = live_fetch_tcp(host)
+                ro st = match outcome {
+                    Ok(data) => TaskStatus.Done(data)
+                    Err(e)   => TaskStatus.Failed(e.to_str())
+                }
+                ro _ = tx.try_send(st)
+            }
+        }
+    }
+    ro elapsed_ms = deadline_elapsed_ms(t0)
+    ro status = if timed_out {
+        TaskStatus.Cancelled
+    } else {
+        match rx.try_recv() {
+            Some(st) => st
+            None     => TaskStatus.Cancelled
+        }
+    }
+    match status {
+        Done(_)   => Emit.lane_done(host, elapsed_ms)
+        Failed(m) => Emit.lane_failed(host, m, elapsed_ms)
+        Cancelled => Emit.lane_cancelled(host, elapsed_ms)
+    }
+    TaskResult { id: host, status, elapsed_ms }
+}
+
+/// Same shape as `live_lane_tcp`, racing `live_fetch_weather` instead.
+fn live_lane_weather(id str, lat f64, lon f64, shared_deadline Monotonic, idx int) Net Time Emit -> TaskResult {
+    ro t0 Monotonic = Monotonic.now()
+    Emit.lane_started(id, idx)
+    ro { tx, rx } = Channel.new(1)
+    mut timed_out = false
+    with Fail[TimeoutError] = |_e| { timed_out = true } {
+        supervised(deadline: shared_deadline) {
+            spawn {
+                ro outcome = live_fetch_weather(id, lat, lon)
+                ro st = match outcome {
+                    Ok(data) => TaskStatus.Done(data)
+                    Err(e)   => TaskStatus.Failed(e.to_str())
+                }
+                ro _ = tx.try_send(st)
+            }
+        }
+    }
+    ro elapsed_ms = deadline_elapsed_ms(t0)
+    ro status = if timed_out {
+        TaskStatus.Cancelled
+    } else {
+        match rx.try_recv() {
+            Some(st) => st
+            None     => TaskStatus.Cancelled
+        }
+    }
+    match status {
+        Done(_)   => Emit.lane_done(id, elapsed_ms)
+        Failed(m) => Emit.lane_failed(id, m, elapsed_ms)
+        Cancelled => Emit.lane_cancelled(id, elapsed_ms)
+    }
+    TaskResult { id, status, elapsed_ms }
+}
+
+// ── Entry points (mirror aggregate()'s shape — plan 187 §9.4 деливерабл 3/5) ─
+
+/// Live health legend: real TCP-connect timing against `health_live_hosts()`,
+/// raced against the SAME real `supervised(deadline:)` cancel as Demo/Chaos.
+#stable(since = "0.2")
+export fn aggregate_live_health(budget Duration) Net Time Emit -> Report {
+    ro hosts = health_live_hosts()
+    ro t0 Monotonic = Monotonic.now()
+    // [M-187-monotonic-plus-operator-mono]: see this file's end-of-file note
+    // — `t0.plus(budget)` (explicit method), not `t0 + budget` (operator).
+    ro shared_deadline Monotonic = t0.plus(budget)
+    ro results = parallel for idx int in 0..hosts.len() {
+        live_lane_tcp(hosts[idx], shared_deadline, idx)
+    }
+    ro wall_ms = deadline_elapsed_ms(t0)
+    ro report = Report.from(results, wall_ms)
+    Emit.swarm_done(report.results.len(), report.done, report.failed, report.cancelled,
+        report.wall_ms, report.sequential_ms)
+    report
+}
+
+/// Live weather legend: real open-meteo GETs against `weather_live_cities()`.
+#stable(since = "0.2")
+export fn aggregate_live_weather(budget Duration) Net Time Emit -> Report {
+    ro cities = weather_live_cities()
+    ro t0 Monotonic = Monotonic.now()
+    ro shared_deadline Monotonic = t0.plus(budget)
+    ro results = parallel for idx int in 0..cities.len() {
+        ro city = cities[idx]
+        live_lane_weather(city.0, city.1, city.2, shared_deadline, idx)
+    }
+    ro wall_ms = deadline_elapsed_ms(t0)
+    ro report = Report.from(results, wall_ms)
+    Emit.swarm_done(report.results.len(), report.done, report.failed, report.cancelled,
+        report.wall_ms, report.sequential_ms)
+    report
+}
+
+/// Fake `Source` list matching `aggregate_live_health`'s real host list —
+/// so `report_json.nv`'s `build_snapshot` (id-keyed `kind`/`probes` lookup)
+/// has something to match against for the live legend too (kind = "live",
+/// probes = 1 — there is no synthetic sub-request count for a real fetch).
+#stable(since = "0.2")
+export fn health_live_sources() -> []Source {
+    mut out []Source = []
+    for h in health_live_hosts() {
+        out.push(Source.new(h, "live", 1, 0, false))
+    }
+    out
+}
+
+/// Same idea as `health_live_sources`, for the weather legend.
+#stable(since = "0.2")
+export fn weather_live_sources() -> []Source {
+    mut out []Source = []
+    for c in weather_live_cities() {
+        out.push(Source.new(c.0, "live", 1, 0, false))
+    }
+    out
+}
+
+// [M-187-monotonic-plus-operator-mono]: **compiler codegen bug, NOT worked
+// around in-place — the CALL SHAPE above routes around it entirely
+// (`t0.plus(budget)`, not `t0 + budget`).** `aggregate.nv`'s own
+// `aggregate()` uses the `+` OPERATOR form (`t0 + budget`) for the exact
+// same `Monotonic + Duration -> Monotonic` combination and compiles/runs
+// fine on its own. Once THIS file adds a SECOND and THIRD call site of the
+// same operator combination within the SAME compile unit (one CU = the
+// whole `backend.app` module + whatever `.nv` has `fn main`), `nova build`
+// CC-FAILs: `error: returning 'int' from a function with incompatible
+// result type 'NovaValue_Monotonic'` inside a compiler-generated wrapper
+// `nova_vr_binop_Nova_Monotonic_method_plus` — looks like the SAME family
+// of generics/operator-wrapper mono-cache collisions already documented
+// elsewhere in this codebase for a repeated instantiation within one CU
+// (`[M-172.1-var-types-cu-name-leak]`, `[M-flagship-nested-hashmap-
+// jsonvalue-mono]`) — a duplicate/mismatched codegen when the same
+// operator+types pair is lowered more than once in one CU, not something
+// specific to `Monotonic`/`Duration`. Root cause not investigated further
+// (compiler-side, out of this session's remit). WORKAROUND: call the
+// underlying named method directly (`Monotonic @plus(d Duration) ->
+// Monotonic`, `std/time/duration.nv`) instead of the `+` operator, at both
+// call sites in THIS file — `aggregate.nv`'s own (sole, still operator-form)
+// call site is untouched (deliverable 1 is proven-stable; not worth
+// touching for a defect that doesn't reproduce there alone).

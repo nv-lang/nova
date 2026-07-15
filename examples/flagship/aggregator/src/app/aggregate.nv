@@ -18,32 +18,36 @@
 // Fan-out by N sources with a SHARED budget, concurrent (`parallel for`),
 // 0 leaks.
 //
-// **Simplification — self-checked soft deadline, NOT real fiber
-// cancellation (plan 187, resumption-6, 2026-07-12):** `supervised
-// (deadline:)` (D408) was the FIRST design (see git history up to commit
-// a8f6da81c for three probing sessions' worth of detail) and was dropped
-// after direct reproduction showed it does not interrupt a `Time.sleep` in
-// flight here: the deadline's `Fail[TimeoutError]` fires close to on-time,
-// but the sleeping child fiber keeps running to completion regardless — a
-// straight race between "cancellation observed" and "the child's result
-// lands in the handoff channel", flaky in both directions (confirmed: the
-// SAME source settles `Done` in one run and `Cancelled` in the next, no
-// code change). The owner's call for this MVP: don't fight that race.
-// `fetch_guarded` lets `fetch_one` run for real to completion (no
-// mid-flight abandonment, no unwind edge cases, no leaks-by-construction),
-// then — in the `parallel for` loop that assembles `results`, i.e. right
-// after each lane's own elapsed time is known — compares that elapsed time
-// against the shared `budget` and RELABELS the outcome `TaskStatus.
-// Cancelled` when it arrives late, discarding whatever real Done/Failed
-// payload `fetch_one` produced. This is a REPORTING simplification, not a
-// resource one: it is honest that `wall_ms` ends up bounded by the SLOWEST
-// source in the batch, not by `budget` (a single very-slow straggler is not
-// cut short) — the "×N faster than sequential" narrative still holds
-// because the fan-out itself is genuinely concurrent (`parallel for`
-// below), just not early-exiting. Real runtime-cancel (fixing `supervised
-// (deadline:)`/`Time.sleep` interrupt semantics so a late lane's work is
-// actually abandoned, not just relabeled) is follow-up work — see plan
-// 173.x. See also `domain.nv`'s `TaskStatus.Cancelled` doc comment.
+// **Real runtime-cancel (plan 187 Ф.MVP-2 деливерабл 1, 2026-07-14):**
+// `fetch_guarded` now races each lane's `fetch_one` against a REAL
+// `supervised(deadline:)` (D408) scope — a shared ABSOLUTE `Monotonic`
+// deadline (`aggregate`'s own `t0 + budget`, computed once, D408 "deadline:
+// canon" — an absolute point, not a per-lane relative interval, so lane
+// start-up jitter doesn't skew the shared budget). A late lane's `fetch_one`
+// (in particular an in-flight `Time.sleep`) is genuinely INTERRUPTED at the
+// deadline — the `[M-178-server-graceful-deadline]` fibers.h fix (re-check
+// `cancel_requested` after every park return, `std/concurrency/
+// supervised_deadline_test.nv` test 8, landed before this session) is
+// exactly the unblock this needed. Verified (`--strict-effects` gate below,
+// `wall_ms < budget + slack` test in aggregate_test.nv): a lane whose
+// simulated latency is 10× the shared budget still settles `Cancelled`
+// within the budget's own window, not after running to completion — the
+// EARLIER (2026-07-12, resumption-6) self-checked "let it finish, relabel
+// after the fact" simplification is gone; `wall_ms` for a fan-out with a
+// straggler is now genuinely bounded by `budget`, not by the slowest source.
+// The per-lane race is structured as `with Fail[TimeoutError] = |_| {...}
+// { supervised(deadline: shared_deadline) { spawn { ...; tx.try_send(...) }
+// } }` — the spawned child hands its outcome back over a `Channel[
+// TaskStatus]` (D415 sanctioned handoff, same idiom `parallel for` itself
+// uses internally); a caught `TimeoutError` (or an empty channel — belt and
+// suspenders) relabels the lane `Cancelled`. `fetch_guarded` itself still
+// never THROWS out to its own `parallel for` iteration slot — the
+// `Fail[TimeoutError]` catch is fully local to this fn — so the swarm-level
+// "child error cancels siblings, array not returned" `parallel for`
+// semantics (spec/decisions/06-concurrency.md §"parallel for") is never
+// triggered by a late lane; every lane always contributes a `TaskResult`.
+// See also `domain.nv`'s `TaskStatus.Cancelled` doc comment (updated
+// alongside this change).
 //
 // `fetch_one` performs a REAL `Net` byte-surface round-trip (connect / read /
 // close) — the SAME code runs under `mock_net()` (Demo/Chaos, this package)
@@ -56,10 +60,9 @@
 // prefer a dedicated `seeded_net(seed, profile)` handler instead (heavier:
 // a full ~20-op `Net` handler literal) — flagged, not decided.
 
-module aggregator.aggregate
+module src.app
 
-import ./domain.{Source, SourceData, AggError, TaskStatus, TaskResult, Report}
-import ./emit.{Emit}
+import ../domain.{Source, SourceData, AggError, TaskStatus, TaskResult, Report}
 import std.net.{SocketAddr, TcpStream}
 // Explicit import required for the C runtime to link `Monotonic`/`Duration`
 // support (prelude-visible type alone is not enough — the `.c` companion is
@@ -114,12 +117,40 @@ const BASE_PORT int = 20000
 /// (see the marker above for why this is `Result`, not `throw`/`Fail`) or
 /// the real `Net` round-trip against whatever handler is ambient
 /// (`mock_net()` today).
-fn fetch_one(source Source, idx int) Net Time -> Result[SourceData, AggError] {
-    if source.latency_ms > 0 {
-        Time.sleep(source.latency_ms)
+// [M-flagship-spawn-capture-value-struct-ptr-mismatch]: **compiler/runtime
+// bug, NOT worked around in-place — the SIGNATURE below routes around it
+// entirely (scalar params, no captured `Source` struct).** Discovered
+// 2026-07-14 while wiring deliverable 1 (real `supervised(deadline:)`
+// cancel, see file-header note): capturing a multi-field `value` struct
+// param (`Source`, 2 `str` + 3 scalar fields) into a `spawn { ... }` ctx
+// nested inside `supervised(deadline:) { spawn { ... } }` (two closure
+// levels: `fetch_guarded`'s own body, then the deadline-race spawn) CC-FAILs
+// TWICE in the SAME generated function: (1) `_nova_spawn_0_ctx->source =
+// source;` — "assigning to 'NovaValue_Source' from incompatible type
+// 'NovaValue_Source *'; dereference with *" (the ctx struct field is typed
+// as a VALUE, the captured param is apparently already a POINTER under
+// Nova's by-pointer-for-larger-structs ABI — an assignment-site type
+// mismatch); (2) inside the spawned fn body itself, "use of undeclared
+// identifier 'source'" — the capture-macro substitution that correctly
+// wraps OTHER captured locals (`_c->idx` used directly; `timed_out` in the
+// sibling `Fail[TimeoutError]` handler literal gets a proper `#define
+// timed_out (*_c->timed_out)`) is simply MISSING for this struct-typed
+// capture, so the read site still emits the bare (out-of-scope) parameter
+// name. A scalar param (`idx int`, `str`-typed locals) captured the SAME way
+// does NOT trip this — narrowed to struct-typed (`value`, multi-field)
+// params specifically. Root cause not investigated further (capture-emission
+// pass's handling of the by-pointer-ABI case for nested spawn contexts is
+// the leading suspect, but this is a guess) — out of this session's remit.
+// WORKAROUND: `fetch_one` takes the `Source` fields it actually needs as
+// separate SCALAR/`str` params instead of the whole struct — `fetch_guarded`
+// destructures `source` into locals BEFORE the spawn (already needed `sid`
+// for `Emit.lane_started` anyway) and captures only those into the spawn ctx.
+fn fetch_one(id str, latency_ms int, should_fail bool, idx int) Net Time -> Result[SourceData, AggError] {
+    if latency_ms > 0 {
+        Time.sleep(latency_ms)
     }
-    if source.should_fail {
-        return Err(AggError.Upstream(source.id))
+    if should_fail {
+        return Err(AggError.Upstream(id))
     }
     ro addr = SocketAddr.loopback((BASE_PORT + idx) as u16)
     ro stream = match TcpStream.connect(addr) {
@@ -135,7 +166,7 @@ fn fetch_one(source Source, idx int) Net Time -> Result[SourceData, AggError] {
         }
     }
     st.close()
-    Ok(SourceData { id: source.id, payload: bytes })
+    Ok(SourceData { id, payload: bytes })
 }
 
 // Chain broken into separate bindings ([M-174.1-vec-method-chain-elem-erasure]-
@@ -147,16 +178,16 @@ fn deadline_elapsed_ms(t0 Monotonic) Time -> int {
     elapsed.as_millis() as int
 }
 
-/// One source, checked against the SHARED soft budget (`budget_ms`). See the
-/// file-header "Simplification" note: `fetch_one` always runs to real
-/// completion — there is no fiber interruption here. Once it settles, this
-/// fn compares ITS OWN measured elapsed time against `budget_ms` and
-/// relabels the outcome `TaskStatus.Cancelled` when it arrives late,
-/// discarding the real Done/Failed payload. Exactly one `Emit` terminal
-/// event fires per source, matching whatever status ends up in the
+/// One source, raced against the SHARED absolute deadline via a REAL
+/// `supervised(deadline:)` scope (see file-header note): `fetch_one` runs in
+/// a spawned child that hands its outcome back over `tx`; a lane still
+/// in-flight at `shared_deadline` is genuinely cancelled (its `Time.sleep`/
+/// `Net` op is interrupted, the child unwinds, `tx` never sends) — relabeled
+/// `TaskStatus.Cancelled` via the caught `TimeoutError`. Exactly one `Emit`
+/// terminal event fires per source, matching whatever status ends up in the
 /// returned `TaskResult` — Report and Emit are the same truth, by
 /// construction (no separate race to keep in sync).
-fn fetch_guarded(source Source, budget_ms int, idx int) Net Time Emit -> TaskResult {
+fn fetch_guarded(source Source, shared_deadline Monotonic, idx int) Net Time Emit -> TaskResult {
     // [M-flagship-monotonic-now-bare-binding-ice]: an un-annotated
     // `ro t0 = Monotonic.now()` ICEs emit_c.rs ("[P67-LEGACY] Path call
     // return type unknown for method=now — checker must annotate") — the
@@ -170,14 +201,33 @@ fn fetch_guarded(source Source, budget_ms int, idx int) Net Time Emit -> TaskRes
     ro t0 Monotonic = Monotonic.now()
     ro sid = source.id
     Emit.lane_started(sid, idx)
-    ro outcome = fetch_one(source, idx)
+    // [M-flagship-spawn-capture-value-struct-ptr-mismatch] (see fetch_one's
+    // header): destructure `source` into scalar/`str` locals BEFORE the
+    // spawn below — capturing the `Source` struct itself into the nested
+    // spawn ctx CC-FAILs.
+    ro slatency = source.latency_ms
+    ro sfail = source.should_fail
+    ro { tx, rx } = Channel.new(1)
+    mut timed_out = false
+    with Fail[TimeoutError] = |_e| { timed_out = true } {
+        supervised(deadline: shared_deadline) {
+            spawn {
+                ro outcome = fetch_one(sid, slatency, sfail, idx)
+                ro st = match outcome {
+                    Ok(data) => TaskStatus.Done(data)
+                    Err(e)   => TaskStatus.Failed(e.to_str())
+                }
+                ro _ = tx.try_send(st)
+            }
+        }
+    }
     ro elapsed_ms = deadline_elapsed_ms(t0)
-    ro status = if elapsed_ms > budget_ms {
+    ro status = if timed_out {
         TaskStatus.Cancelled
     } else {
-        match outcome {
-            Ok(data) => TaskStatus.Done(data)
-            Err(e)   => TaskStatus.Failed(e.to_str())
+        match rx.try_recv() {
+            Some(st) => st
+            None     => TaskStatus.Cancelled   // belt-and-suspenders: no send, no TimeoutError either
         }
     }
     match status {
@@ -189,19 +239,21 @@ fn fetch_guarded(source Source, budget_ms int, idx int) Net Time Emit -> TaskRes
 }
 
 /// The killer-narrative entry point: fan-out `sources` with a shared
-/// `budget`, 0 leaks. See the file-header "Simplification" note — the
-/// budget is enforced as a soft, self-checked deadline (relabel-after-
-/// settle), not real fiber cancellation.
+/// `budget`, 0 leaks. See the file-header note — the budget is enforced as a
+/// REAL `supervised(deadline:)` cancellation, shared as one absolute
+/// `Monotonic` point across every lane (D408 "deadline: canon" — absolute,
+/// not per-lane-relative, so lane start-up jitter can't skew the shared
+/// budget).
 #stable(since = "0.1")
 export fn aggregate(sources []Source, budget Duration) Net Time Emit -> Report {
     ro t0 Monotonic = Monotonic.now()
-    ro budget_ms = budget.as_millis() as int
+    ro shared_deadline Monotonic = t0 + budget
     // Plan 87: the loop-variable type must be annotated when the checker
     // can't infer the collected `[]T` element type from the trailing probe
     // alone (`TaskResult` return of `fetch_guarded` — codegen asked for an
     // explicit `int` annotation on the index here).
     ro results = parallel for idx int in 0..sources.len() {
-        fetch_guarded(sources[idx], budget_ms, idx)
+        fetch_guarded(sources[idx], shared_deadline, idx)
     }
     ro wall_ms = deadline_elapsed_ms(t0)
     ro report = Report.from(results, wall_ms)

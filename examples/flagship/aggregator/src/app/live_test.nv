@@ -1,0 +1,78 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 187 — flagship concurrent aggregator: LIVE legend tests (offline).
+//
+// Per plan 187 §9.4 деливерабл 5: "сетевые тесты в test-блоки не вносить —
+// гейт должен быть зелёным офлайн; live-пути покрыть мок-тестами хендлер-
+// подменой." These tests substitute `with Net = mock_net()` (D361 mock-
+// first — `lookup`/`connect`/`read`/`close` all stubbed, no socket) for
+// `aggregate_live_health`'s SHAPE (fan-out size, deadline/cancel wiring) —
+// they do NOT reach `github.com`/etc for real; a manual `nova build` +
+// run against real `real_net()` (see PROGRESS-run-A.md for the transcript)
+// is how the ACTUAL live network path was verified this session.
+// `aggregate_live_weather` is BLOCKED (`[M-187-weather-live-tls-diamond-
+// blocked]`, live.nv) — its own test just pins the honest-fail contract.
+
+module src.app
+
+import ../domain.{Source}
+import std.net.{mock_net}
+
+// ── live health: mock_net exercises the SAME fan-out/cancel shape ──────────
+
+test "aggregate_live_health: mock_net — fans out across all live hosts, settles" {
+    with Net = mock_net() {
+        with Emit = null_emit() {
+            ro report = aggregate_live_health(Duration.from_secs(5))
+            assert(report.results.len() == health_live_hosts().len())
+            // mock_net's connect always succeeds — every lane should settle Done
+            // well within a 5s budget.
+            assert(report.done == health_live_hosts().len())
+            assert(report.failed == 0)
+            assert(report.cancelled == 0)
+        }
+    }
+}
+
+test "aggregate_live_health: mock_net — a tiny budget cancels every lane" {
+    with Net = mock_net() {
+        with Emit = null_emit() {
+            // 0ns budget: every lane's deadline has already elapsed at spawn.
+            ro report = aggregate_live_health(Duration.from_millis(0))
+            assert(report.results.len() == health_live_hosts().len())
+            assert(report.done + report.failed + report.cancelled == health_live_hosts().len())
+        }
+    }
+}
+
+// ── live weather: honest-fail contract (blocked, not fabricated) ───────────
+
+test "aggregate_live_weather: every lane fails with the documented blocker hint" {
+    with Net = mock_net() {
+        with Emit = null_emit() {
+            ro report = aggregate_live_weather(Duration.from_secs(5))
+            assert(report.results.len() == weather_live_cities().len())
+            assert(report.done == 0)
+            assert(report.failed == weather_live_cities().len())
+            for r in report.results {
+                match r.status {
+                    Failed(m) => assert(m.contains("M-187-weather-live-tls-diamond-blocked"))
+                    _         => assert(false)
+                }
+            }
+        }
+    }
+}
+
+// ── live source tables (kind/probes for report_json.nv's id-lookup) ───────
+
+test "health_live_sources: one Source per health_live_hosts entry, matching ids" {
+    ro srcs = health_live_sources()
+    assert(srcs.len() == health_live_hosts().len())
+    assert(srcs[0].id == health_live_hosts()[0])
+}
+
+test "weather_live_sources: one Source per weather_live_cities entry, matching ids" {
+    ro srcs = weather_live_sources()
+    assert(srcs.len() == weather_live_cities().len())
+    assert(srcs[0].id == weather_live_cities()[0].0)
+}

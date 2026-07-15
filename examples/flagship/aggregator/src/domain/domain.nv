@@ -3,8 +3,22 @@
 //
 // Pure data, no effects. Shared by the backend (aggregate.nv), the synthetic
 // scenarios (scenarios.nv), and the JSON snapshot (report_json.nv).
+//
+// [M-187-errorkind-parsejsonerror-variant-collision]: split into its OWN
+// folder-module (`src.domain`, separate from `src.app`) specifically so
+// `src/api/report_json.nv` (needs these types + `std.encoding.serde`'s
+// `json_encode`, which transitively pulls `std.encoding.json.ParseJsonError`)
+// does NOT also pull in `src/app/aggregate.nv`/`live.nv`'s `std.net` import
+// (which transitively pulls `std.io.error.ErrorKind`, same file as
+// `IoError`) into the SAME compile unit — see `report_json_test.nv`'s own
+// file-header note for the full collision writeup (two unrelated sum types
+// each declaring a variant literally named `UnexpectedEof`, one 0-arg, one
+// 2-arg — a same-CU cross-type codegen bug, not fixed in-place, compiler-side,
+// out of this package's remit). `src/app/*.nv` (which DOES need `std.net`)
+// imports these types back via `../domain.{...}` — no behavior change, pure
+// module-boundary move.
 
-module aggregator.domain
+module src.domain
 
 // ── Source ───────────────────────────────────────────────────────────────
 
@@ -51,17 +65,19 @@ export fn AggError @to_str() -> str {
 
 /// Mirrors the waterfall UI states (mockup: done / fail / cancel).
 ///
-/// **`Cancelled` is a self-checked SOFT deadline, not a killed fiber**
-/// (plan 187, resumption-6, 2026-07-12 simplification — see aggregate.nv's
-/// file header for the full story). `aggregate.nv`'s `fetch_guarded` always
-/// lets the underlying fetch run to real completion, then relabels the
-/// outcome `Cancelled` if it settled after the shared `budget`, discarding
-/// whatever Done/Failed payload the fetch actually produced. No fiber is
-/// interrupted, no work is abandoned mid-flight — this is a REPORTING
-/// simplification (honest about the wall-clock cost: a single very-slow
-/// straggler is not cut short), not a resource-safety one. Real
-/// runtime-cancel (actually interrupting the late lane's `Time.sleep`/`Net`
-/// op so its work stops early) is follow-up work — see plan 173.x.
+/// **`Cancelled` is a REAL runtime cancel** (plan 187 Ф.MVP-2 деливерабл 1,
+/// 2026-07-14 — see aggregate.nv's file header for the full story).
+/// `aggregate.nv`'s `fetch_guarded` races each lane's fetch against a real
+/// `supervised(deadline:)` (D408) scope sharing one absolute deadline; a
+/// lane still in flight when the deadline hits is genuinely interrupted (its
+/// `Time.sleep`/`Net` op is cut short, the underlying fetch is abandoned, no
+/// Done/Failed payload is ever produced for it) — `wall_ms` for a fan-out
+/// with a straggler is bounded by the shared `budget`, not by the slowest
+/// source. (Earlier, 2026-07-12 resumption-6: this was a self-checked SOFT
+/// deadline — let the fetch run to completion, then relabel after the fact
+/// — dropped once the `[M-178-server-graceful-deadline]` fibers.h fix
+/// (`Time.sleep` now re-checks `cancel_requested` on every park return) made
+/// the real cancel race-free.)
 export type TaskStatus enum
     | Done(SourceData)
     | Failed(str)

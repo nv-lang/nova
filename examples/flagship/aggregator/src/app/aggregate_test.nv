@@ -15,11 +15,9 @@
 // (draining a `Channel[str]` event log — the sanctioned cross-fiber handoff,
 // D415 — since `lane_*` ops fire from worker fibers, not the test's own).
 
-module aggregator.aggregate_test
+module src.app
 
-import ./aggregate.{aggregate}
-import ./domain.{Source, TaskStatus, TaskResult}
-import ./emit.{Emit, null_emit}
+import ../domain.{Source, TaskResult, TaskStatus, Report}
 import std.net.{mock_net}
 import std.runtime.fibers
 
@@ -108,26 +106,27 @@ test "aggregate: same code, two source lists (handler/source swap only)" {
     }
 }
 
-// ── NEG: a source that settles past the deadline is RELABELED cancelled ────
-//    (self-checked soft deadline, not a killed fiber — see aggregate.nv's
-//    file-header "Simplification" note). `fetch_one` always runs to real
-//    completion, so `wall_ms` here is bounded by the SOURCE's own latency,
-//    not by `budget_ms` — that is the honest cost of this MVP's
-//    simplification, asserted explicitly below rather than swept under the
-//    rug.
+// ── NEG: a source past the deadline is GENUINELY cancelled early ───────────
+//    (real `supervised(deadline:)` cancel, plan 187 Ф.MVP-2 деливерабл 1 —
+//    see aggregate.nv's file-header note). The lane's `Time.sleep(300)` is
+//    interrupted AT the shared deadline (~40ms), not run to completion —
+//    `wall_ms` must stay close to the budget, well under the source's own
+//    (uncancelled) 300ms latency. This replaces the earlier self-checked-
+//    soft-deadline test (which asserted the OPPOSITE — `wall_ms >= 300`,
+//    i.e. the fetch always ran to completion); that assertion now correctly
+//    FAILS since the cancel is real.
 
-test "aggregate: source past deadline is relabeled cancelled (soft budget, fetch still completes)" {
+test "aggregate: source past deadline is cancelled early — wall_ms bounded by budget, not by source latency" {
     with Net = mock_net() {
         with Emit = null_emit() {
             ro srcs []Source = [Source.new("slow", "", 1, 300, false)]
             ro report = aggregate(srcs, Duration.from_millis(40))
             assert(report.cancelled == 1)
             assert(report.done == 0)
-            // Soft budget: the fetch ran to completion (~300ms), it was not cut
-            // short at the ~40ms budget — generous upper bound to absorb CI jitter
-            // without masking a real regression (e.g. an infinite loop/hang).
-            assert(report.wall_ms >= 300)
-            assert(report.wall_ms < 2000)
+            // Generous slack (CI jitter/scheduler overhead) but strictly well
+            // under the source's own 300ms — a regression back to "let it run to
+            // completion" would fail this bound.
+            assert(report.wall_ms < 250)
         }
     }
 }
@@ -361,4 +360,68 @@ test "aggregate: source past deadline fires lane_cancelled, nothing else" {
             assert(rx.try_recv().is_none())
         }
     }
+}
+
+// ── Determinism (plan 187 §9, деливерабл-добор шаг 3) ───────────────────────
+//
+// **Scope note, honest disclosure:** `chaos_variant` (scenarios.nv, PURE —
+// no effects, a local splitmix64 stream keyed on `seed`) IS byte-for-byte
+// deterministic per seed — verified below, two independent calls with the
+// SAME seed produce an IDENTICAL source list (id/detail/sub_count/latency/
+// should_fail, every field). The full HTTP `/api/run` JSON snapshot is NOT
+// fully byte-identical run-to-run even for the SAME seed, though — `elapsed_
+// ms`/`wall_ms`/`sequential_ms` are REAL measured `Time.sleep`+fiber-
+// scheduling durations (this package's whole pitch is REAL concurrency, not
+// simulated timing), and `report.results`' COMPLETION order (hence the JSON
+// `results` array order) is real-scheduling-dependent too near the
+// budget boundary — confirmed empirically this session (`nova build` +
+// repeated `curl "…/api/run?legend=weather&mode=demo&seed=42"`: same
+// `fanout`/same which-lane-fails/same `budget_ms`/same `legend`/`mode`/
+// `seed` every time, but `elapsed_ms` values and `results` array ORDER vary
+// by tens to hundreds of ms between runs under load). What IS guaranteed
+// deterministic per seed, tested below + by `report_json_test.nv`'s own
+// `build_snapshot` tests: the INPUT (which sources exist, which are
+// seeded to fail, target latencies) and the pure JSON-shape mapping from a
+// given `Report` — i.e. everything upstream of the real wall clock.
+
+test "chaos_variant: same seed -> identical source list, every field" {
+    ro base = [
+        Source.new("a", "d1", 1, 100, false),
+        Source.new("b", "d2", 2, 200, true),
+        Source.new("c", "d3", 3, 300, false),
+    ]
+    ro v1 = chaos_variant(base, 42 as u64)
+    ro v2 = chaos_variant(base, 42 as u64)
+    assert(v1.len() == v2.len())
+    mut i = 0
+    while i < v1.len() {
+        assert(v1[i].id == v2[i].id)
+        assert(v1[i].detail == v2[i].detail)
+        assert(v1[i].sub_count == v2[i].sub_count)
+        assert(v1[i].latency_ms == v2[i].latency_ms)
+        assert(v1[i].should_fail == v2[i].should_fail)
+        i += 1
+    }
+}
+
+test "chaos_variant: different seeds -> generally different latency/fail rolls" {
+    ro base = [
+        Source.new("a", "", 1, 100, false),
+        Source.new("b", "", 1, 100, false),
+        Source.new("c", "", 1, 100, false),
+    ]
+    ro v1 = chaos_variant(base, 1 as u64)
+    ro v2 = chaos_variant(base, 2 as u64)
+    // Not a strict inequality on every field (a collision is statistically
+    // possible) — just confirms the seed actually PARAMETERIZES the roll,
+    // not a hardcoded ignore-the-seed constant.
+    mut any_diff = false
+    mut i = 0
+    while i < v1.len() {
+        if v1[i].latency_ms != v2[i].latency_ms || v1[i].should_fail != v2[i].should_fail {
+            any_diff = true
+        }
+        i += 1
+    }
+    assert(any_diff)
 }

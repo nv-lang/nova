@@ -1,0 +1,785 @@
+<title>Nova · Concurrent Aggregator — мокап v9</title>
+<style>
+  :root {
+    --paper: #F5F7FA; --panel: #FFFFFF; --panel-2: #EDF1F6; --line: #D3DBE6;
+    --ink: #10151F; --ink-soft: #46536B; --ink-faint: #8492A8; --track: #E4E9F1;
+    --accent: #10B981; --accent-deep: #0E9E70; --warn: #E0900B; --crit: #F0436A; --ghost: #7C8BA8; --seq: #B7C1D2;
+    --shadow: 0 1px 2px rgba(16,21,31,.06), 0 8px 30px rgba(16,21,31,.08);
+    --radius: 14px;
+    --mono: "NovaMono", ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --sans: "NovaSans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper:#0B0F19;--panel:#0F1524;--panel-2:#131B2E;--line:#223049;--ink:#EAF0FA;--ink-soft:#A9B7CF;
+      --ink-faint:#64748E;--track:#1A2438;--accent:#3DDC97;--accent-deep:#29B77C;--warn:#F5A623;--crit:#FF5C7A;
+      --ghost:#5B6B8C;--seq:#2C3A56;--shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 18px 50px rgba(0,0,0,.5); }
+  }
+  :root[data-theme="light"]{--paper:#F5F7FA;--panel:#FFFFFF;--panel-2:#EDF1F6;--line:#D3DBE6;--ink:#10151F;
+    --ink-soft:#46536B;--ink-faint:#8492A8;--track:#E4E9F1;--accent:#10B981;--accent-deep:#0E9E70;--warn:#E0900B;
+    --crit:#F0436A;--ghost:#7C8BA8;--seq:#B7C1D2;--shadow:0 1px 2px rgba(16,21,31,.06),0 8px 30px rgba(16,21,31,.08);}
+  :root[data-theme="dark"]{--paper:#0B0F19;--panel:#0F1524;--panel-2:#131B2E;--line:#223049;--ink:#EAF0FA;
+    --ink-soft:#A9B7CF;--ink-faint:#64748E;--track:#1A2438;--accent:#3DDC97;--accent-deep:#29B77C;--warn:#F5A623;
+    --crit:#FF5C7A;--ghost:#5B6B8C;--seq:#2C3A56;--shadow:0 1px 0 rgba(255,255,255,.03) inset,0 18px 50px rgba(0,0,0,.5);}
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: radial-gradient(1000px 500px at 82% -20%, color-mix(in oklab, var(--accent) 8%, transparent), transparent 60%), var(--paper);
+    color: var(--ink); font-family: var(--sans); line-height: 1.45; -webkit-font-smoothing: antialiased;
+    padding: clamp(10px, 1.8vw, 20px);
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+
+  .topbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .brand { display: flex; align-items: baseline; gap: 9px; }
+  .brand .n { font-family: var(--mono); font-weight: 700; font-size: 18px; letter-spacing: -.02em; color: var(--ink); }
+  .brand .n b { color: var(--accent); }
+  .brand .tag { font-size: 10.5px; letter-spacing: .15em; text-transform: uppercase; color: var(--ink-faint); }
+  .spacer { flex: 1 1 auto; }
+  .segmented { display: inline-flex; background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 3px; gap: 2px; }
+  .seg { font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; border: 0; background: transparent;
+    color: var(--ink-soft); padding: 6px 13px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; transition: color .15s, background .15s; }
+  .seg .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity:.7;}
+  .seg[aria-pressed="true"] { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
+  .seg[data-mode="demo"][aria-pressed="true"] { color: var(--accent); }
+  .seg[data-mode="chaos"][aria-pressed="true"] { color: var(--warn); }
+  .seg:disabled { opacity: .45; cursor: not-allowed; }
+  .seg:focus-visible, .iconbtn:focus-visible, .runbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .iconbtn { font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--ink-soft);
+    width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; }
+  .iconbtn:hover { color: var(--ink); }
+
+  /* thesis: thin one-line strip, not a giant hero */
+  .thesis { display: flex; align-items: center; gap: 14px; padding: 10px 16px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 11px; box-shadow: var(--shadow); flex-wrap: wrap; }
+  .thesis .sig { font-family: var(--mono); font-size: clamp(12px, 1.5vw, 15px); white-space: nowrap; overflow-x: auto; }
+  .sig .kw { color: var(--accent); font-weight: 600; } .sig .eff { color: var(--warn); font-weight: 600; }
+  .sig .ty { color: var(--ink-soft); } .sig .pun { color: var(--ink-faint); }
+  .thesis .note { font-size: 12px; color: var(--ink-soft); border-left: 2px solid var(--line); padding-left: 12px; flex: 1 1 240px; min-width: 0; }
+  .thesis .note b { color: var(--ink); } .thesis .note code { font-family: var(--mono); font-size: 11px; }
+
+  /* v9 (Ред.7 №11): эффект-бейдж — живая подмена мира хендлером */
+  .fxbadge { font-family: var(--mono); font-size: 11.5px; white-space: nowrap; border: 1px solid var(--line);
+    border-radius: 999px; padding: 4px 12px; background: var(--panel-2); color: var(--ink-soft); }
+  .fxbadge b { color: var(--accent); font-weight: 600; }
+  .fxbadge.flash { animation: fxpulse .9s ease-out 1; }
+  @keyframes fxpulse { 0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 45%, transparent); }
+    100% { box-shadow: 0 0 0 12px transparent; } }
+
+  .scope { display: flex; flex-direction: column; position: relative; background: var(--panel);
+    border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+  .scope-head { display: flex; align-items: center; gap: 12px; padding: 9px 16px; border-bottom: 1px solid var(--line);
+    background: color-mix(in oklab, var(--panel) 85%, var(--panel-2)); flex-wrap: wrap; }
+  .scope-head .title { font-size: 11px; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-faint); }
+  .scope-head .sub { font-size: 11.5px; color: var(--ink-faint); }
+  .scope-head .sub b { color: var(--ink-soft); font-family: var(--mono); }
+  .clock { margin-left: auto; font-family: var(--mono); font-size: 12.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  .clock b { color: var(--ink); }
+
+  .lanes { position: relative; padding: 12px 16px 4px; display: flex; flex-direction: column; justify-content: center; min-height: 230px; }
+  #grid { position:absolute; inset:12px 16px 4px; z-index:0; pointer-events:none; }
+  #fx { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
+
+  .lane { position: relative; z-index:1; display: grid; grid-template-columns: 150px 1fr 92px; align-items: center;
+    gap: 12px; height: 33px; }
+  .lane .name { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); white-space: nowrap; overflow: hidden;
+    display:flex; flex-direction:column; gap:1px; line-height:1.25; }
+  .lane .name .id { display:flex; gap:6px; align-items:baseline; }
+  .lane .name .kind { color: var(--ink-faint); font-size: 10px; }
+  .lane .name .cnt { color: var(--ink-faint); font-size: 10px; font-variant-numeric: tabular-nums; }
+  .lane[data-state="done"] .name .cnt { color: var(--accent); }
+
+  /* waterfall: rail = full time axis (0..2.5s); bar grows left→right by TIME */
+  .rail { position: relative; height: 16px; border-radius: 5px; background: var(--track); overflow: hidden; }
+  .seq-ghost { position:absolute; inset:0 auto 0 0; height:100%; width:0;
+    background: repeating-linear-gradient(90deg, var(--seq) 0 3px, transparent 3px 7px); opacity:.5; }
+  .bar { position:absolute; left:0; top:0; bottom:0; width:0; border-radius:5px;
+    background: linear-gradient(90deg, color-mix(in oklab, var(--accent) 55%, transparent), var(--accent)); }
+  .bar.pulsing::after { content:""; position:absolute; right:0; top:0; bottom:0; width:14px;
+    background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--accent) 70%, white 20%));
+    animation: shimmer 1s ease-in-out infinite; }
+  @keyframes shimmer { 50% { opacity:.4; } }
+  .lane[data-state="done"] .bar { background: linear-gradient(90deg, var(--accent-deep), var(--accent)); }
+  .lane[data-state="slow"] .bar { background: linear-gradient(90deg, color-mix(in oklab, var(--warn) 55%, transparent), var(--warn)); }
+  .lane[data-state="fail"] .bar { background: linear-gradient(90deg, color-mix(in oklab, var(--crit) 55%, transparent), var(--crit)); }
+  .lane[data-state="cancel"] .bar { background: linear-gradient(90deg, var(--ghost), color-mix(in oklab, var(--ghost) 30%, transparent)); }
+  /* thin notches = sub-requests, decorative (not a scale) */
+  .notches { position:absolute; inset:0; pointer-events:none; opacity:.35; }
+  .notches i { position:absolute; top:2px; bottom:2px; width:1px; background: var(--panel); }
+
+  /* swarm wall: each cell = ONE real request (background fan-out beyond the hero lanes) */
+  .swarm { position:relative; z-index:1; margin-top:6px; padding-top:6px; border-top:1px dashed var(--line); }
+  .swarm .swarm-label { font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:5px; display:flex; gap:6px; align-items:baseline; }
+  .swarm .swarm-label b { font-family:var(--mono); color:var(--ink-soft); }
+  .swarm-grid { display:grid; grid-template-columns:repeat(30,1fr); grid-auto-rows:20px; gap:3px; }
+  .sq { border-radius:3px; background:var(--track); transition:background .25s, opacity .3s; cursor:default; }
+  .sq:hover { outline:2px solid color-mix(in oklab, var(--ink) 35%, transparent); outline-offset:1px; }
+
+  /* hover tooltip for swarm cells */
+  #tip { position:fixed; z-index:100; pointer-events:none; display:none;
+    background:var(--panel); border:1px solid var(--line); border-radius:8px; box-shadow:var(--shadow);
+    padding:6px 10px; font-family:var(--mono); font-size:11.5px; color:var(--ink);
+    transform:translate(-50%,-130%); white-space:nowrap; }
+  #tip .st-done { color:var(--accent); } #tip .st-fail { color:var(--crit); }
+  #tip .st-cancel { color:var(--ghost); } #tip .st-run { color:var(--ink-soft); }
+  .sq.run { background:color-mix(in oklab, var(--accent) 30%, var(--track)); }
+  .sq.done { background:var(--accent); }
+  .sq.fail { background:var(--crit); }
+  .sq.cancel { background:var(--ghost); opacity:.35; }
+  @media (max-width:640px){ .swarm-grid { grid-template-columns:repeat(18,1fr); grid-auto-rows:14px; } }
+
+  .lane .status { font-family: var(--mono); font-size: 11.5px; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-faint); white-space: nowrap; }
+  .lane[data-state="done"] .status { color: var(--accent); } .lane[data-state="fail"] .status { color: var(--crit); }
+  .lane[data-state="slow"] .status { color: var(--warn); } .lane[data-state="cancel"] .status { color: var(--ghost); }
+
+  /* v9 (Ред.7): подпись дедлайна — из данных (budget_ms), не из CSS-хардкода */
+  .deadline { position: absolute; top: 6px; bottom: 22px; width: 0; border-left: 2px dashed var(--crit); z-index: 3; }
+  .deadline .dl-tag { position: absolute; top: -14px; left: -4px; font-family: var(--mono);
+    font-size: 9.5px; letter-spacing: .05em; color: var(--crit); text-transform: uppercase; white-space: nowrap; }
+
+  /* fixed 7-column track so a value appearing in one cell can't re-flow the others. */
+  .hud { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; background: var(--line);
+    border-top: 1px solid var(--line); flex: 0 0 auto; }
+  @media (max-width: 720px) { .hud { grid-template-columns: repeat(4, 1fr); } }
+  @media (max-width: 460px) { .hud { grid-template-columns: repeat(2, 1fr); } }
+  .stat { background: var(--panel); padding: 8px 14px; min-width: 0;
+    display: flex; flex-direction: column; justify-content: center; gap: 3px; }
+  .stat .k { font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stat .v { font-family: var(--mono); font-size: 17px; line-height: 1.2; font-variant-numeric: tabular-nums;
+    color: var(--ink); display: flex; align-items: baseline; gap: 5px; height: 21px; }
+  .stat.accent .v { color: var(--accent); }
+  .stat.speed { background: color-mix(in oklab, var(--panel) 80%, var(--accent) 8%); }
+  .stat.speed .v { color: var(--accent); font-size: 19px; height: 23px; }
+  .stat .cmp { font-size: 10px; line-height: 1.2; color: var(--ink-faint); font-family: var(--mono); height: 12px; }
+  .leaks .pill { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 999px;
+    background: color-mix(in oklab, var(--accent) 18%, transparent); color: var(--accent-deep);
+    display: inline-block; white-space: nowrap; }
+  @media (prefers-color-scheme: dark){ .leaks .pill{ color: var(--accent);} }
+  :root[data-theme="dark"] .leaks .pill { color: var(--accent); }
+
+  .controls { display: flex; align-items: center; gap: 12px; padding: 9px 16px; flex-wrap: wrap; border-top: 1px solid var(--line); }
+  .runbtn { font: inherit; font-weight: 700; font-size: 13.5px; cursor: pointer; border: 0; color: #04120C;
+    background: linear-gradient(180deg, var(--accent), var(--accent-deep)); padding: 8px 18px; border-radius: 9px;
+    box-shadow: 0 5px 14px color-mix(in oklab, var(--accent) 38%, transparent); }
+  .runbtn:active { transform: translateY(1px); }
+  .hint { font-size: 11.5px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11px; color: var(--ink-soft); }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .legend i { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
+  .legend i.gh { background: repeating-linear-gradient(90deg, var(--seq) 0 3px, transparent 3px 6px); }
+
+  /* ── v9 (Ред.6 №8 + Ред.7): панель «Код» — витрина языка; всё в токенах канона ── */
+  .codewrap { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); overflow: hidden; }
+  .codehead { display: flex; align-items: center; gap: 12px; padding: 9px 16px; border-bottom: 1px solid var(--line);
+    background: color-mix(in oklab, var(--panel) 85%, var(--panel-2)); flex-wrap: wrap; }
+  .codehead .title { font-size: 11px; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-faint); }
+  .codehead .path { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); }
+  .codehead .note2 { font-size: 11.5px; color: var(--ink-faint); margin-left: auto; }
+  pre.code { margin: 0; padding: 14px 18px; overflow-x: auto; font-family: var(--mono); font-size: 12px;
+    line-height: 1.6; color: var(--ink); }
+  pre.code .cm { color: var(--ink-faint); font-style: italic; }
+  pre.code .kw { color: var(--accent); font-weight: 600; }
+  pre.code .eff { color: var(--warn); font-weight: 600; }
+  pre.code .ty { color: var(--ink-soft); }
+  pre.code .pun { color: var(--ink-faint); }
+  pre.code .st { color: var(--accent-deep); }
+  pre.code .line { display: block; padding: 0 6px; margin: 0 -6px; border-radius: 4px; min-height: 1.6em; }
+  pre.code .line.hl { background: color-mix(in oklab, var(--warn) 12%, transparent); }
+  pre.code .line.hl.flash { animation: hlflash 1.2s ease-out 1; }
+  @keyframes hlflash { 0%, 55% { background: color-mix(in oklab, var(--warn) 28%, transparent); }
+    100% { background: color-mix(in oklab, var(--warn) 12%, transparent); } }
+
+  .foot { font-size: 10.5px; color: var(--ink-faint); text-align: center; }
+  .foot code { font-family: var(--mono); color: var(--ink-soft); }
+  .foot .sep { margin: 0 6px; opacity: .6; }
+
+  @media (max-width: 640px) { .lane { grid-template-columns: 108px 1fr 66px; } .thesis .note { flex-basis: 100%; border-left: 0; padding-left: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .cell.run { animation: none; } .cell, .seq-ghost { transition: none; }
+    .fxbadge.flash, pre.code .line.hl.flash { animation: none; }
+  }
+</style>
+
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand"><span class="n">no<b>v</b>a</span><span class="tag">concurrent aggregator</span></div>
+    <div class="spacer"></div>
+    <div class="segmented" role="group" aria-label="Scenario" id="scenSwitch">
+      <button class="seg" data-scen="weather" aria-pressed="true">☀ Погода</button>
+      <button class="seg" data-scen="health" aria-pressed="false">◉ Health</button>
+      <button class="seg" data-scen="llm" aria-pressed="false">🤖 LLM</button>
+    </div>
+    <div class="segmented" role="group" aria-label="Data mode">
+      <button class="seg" data-mode="demo" aria-pressed="true" title="Тот же aggregate — меняется только with Net = mock_net(seed = 42)"><span class="dot"></span>Demo</button>
+      <button class="seg" data-mode="chaos" aria-pressed="false" title="Тот же aggregate — меняется только seed у mock_net(...)"><span class="dot"></span>Chaos</button>
+      <button class="seg" id="liveBtn" data-mode="live" disabled title="Тот же aggregate под with Net = real_net() — включится с живым Nova-беком (Ф.MVP-2)">Live 🔒</button>
+    </div>
+    <button class="iconbtn" id="theme" title="Тема" aria-label="Переключить тему">◐</button>
+  </div>
+
+  <div class="thesis">
+    <div class="sig" id="sigLine"></div>
+    <span class="fxbadge" id="fxNet" title="Эффект-хендлер прогона: код один — мир подменяется">with Net = <b>mock_net(seed = 42)</b></span>
+    <div class="note" id="noteLine"></div>
+  </div>
+
+  <div class="scope">
+    <div class="scope-head">
+      <span class="title">nested fan-out</span>
+      <span class="sub"><b id="unitLabel">sources</b>: <b>6</b> · sub-requests: <b id="subtotal">0</b></span>
+      <span class="clock">T = <b id="tclock">0.00</b>s</span>
+    </div>
+    <div class="lanes" id="lanes">
+      <canvas id="grid"></canvas>
+      <div class="deadline" id="deadline"><span class="dl-tag" id="dlTag"></span></div>
+      <canvas id="fx"></canvas>
+    </div>
+
+    <div class="swarm" id="swarm" style="margin:0 16px 10px; display:none;">
+      <div class="swarm-label">background fan-out — ещё <b id="swarmCount">90</b> реальных запросов той же пачки · наведи на квадрат</div>
+      <div class="swarm-grid" id="swarmGrid"></div>
+    </div>
+    <div id="tip"></div>
+
+    <div class="hud" id="hud">
+      <div class="stat"><span class="k" id="s-fanoutK">sources</span><span class="v" id="s-fanout">6</span></div>
+      <div class="stat accent"><span class="k">responded</span><span class="v" id="s-done">0</span></div>
+      <div class="stat"><span class="k" id="s-pagesK">checks ok</span><span class="v" id="s-pages">0</span></div>
+      <div class="stat"><span class="k">failed</span><span class="v" id="s-fail" style="color:var(--crit)">0</span></div>
+      <div class="stat"><span class="k">cancelled</span><span class="v" id="s-cancel" style="color:var(--ghost)">0</span></div>
+      <div class="stat speed"><span class="k">wall vs sequential</span><span class="v" id="s-speed">—</span><span class="cmp" id="s-cmp">measuring…</span></div>
+      <div class="stat"><span class="k">resource safety</span><span class="v"><span class="leaks"><span class="pill" id="s-leaks">0 leaks</span></span></span></div>
+    </div>
+
+    <div class="controls">
+      <button class="runbtn" id="run">▶ Search</button>
+      <span class="hint" id="hint">seed = 42 · воспроизводимый забег</span>
+      <div class="spacer"></div>
+      <div class="legend">
+        <span><i style="background:var(--accent)"></i>probe ok</span>
+        <span><i style="background:var(--warn)"></i>slow</span>
+        <span><i style="background:var(--crit)"></i>fail</span>
+        <span><i style="background:var(--ghost)"></i>cancelled</span>
+        <span><i class="gh"></i>sequential</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- v9 (Ред.6 №8, Ред.7 п.1/п.2): панель «Код» — этот экран порождён вот этим кодом -->
+  <div class="codewrap">
+    <div class="codehead">
+      <span class="title">код за экраном</span>
+      <div class="segmented" role="group" aria-label="Code tabs" id="codeTabs">
+        <button class="seg" data-tab="1" aria-pressed="true">aggregate.nv</button>
+        <button class="seg" data-tab="2" aria-pressed="false">aggregate_test.nv</button>
+      </div>
+      <span class="path" id="codePath">examples/flagship/aggregator/backend/app/aggregate.nv · фрагмент</span>
+      <span class="note2" id="codeNote">этот экран порождён вот этим кодом</span>
+    </div>
+    <pre class="code" id="codeTab1"><span class="line"><span class="cm">// aggregate.nv — настоящий код примера (фрагмент; real-cancel supervised(deadline:) = деливерабл №1)</span></span><span class="line"></span><span class="line"><span class="kw">fn</span> fetch_guarded(source <span class="ty">Source</span>, budget_ms <span class="ty">int</span>, idx <span class="ty">int</span>) <span class="eff">Net Time Emit</span> <span class="pun">-&gt;</span> <span class="ty">TaskResult</span> {</span><span class="line">    <span class="kw">ro</span> t0 <span class="ty">Monotonic</span> = <span class="ty">Monotonic</span>.now()</span><span class="line">    <span class="eff">Emit</span>.lane_started(source.id, idx)</span><span class="line">    <span class="kw">ro</span> outcome    = fetch_one(source, idx)          <span class="cm">// реальный Net round-trip</span></span><span class="line">    <span class="kw">ro</span> elapsed_ms = deadline_elapsed_ms(t0)</span><span class="line">    <span class="kw">ro</span> status = <span class="kw">if</span> elapsed_ms &gt; budget_ms {</span><span class="line">        <span class="ty">TaskStatus</span>.Cancelled                        <span class="cm">// опоздал — за бюджетом</span></span><span class="line">    } <span class="kw">else</span> {</span><span class="line">        <span class="kw">match</span> outcome {</span><span class="line">            Ok(data) =&gt; <span class="ty">TaskStatus</span>.Done(data)</span><span class="line">            Err(e)   =&gt; <span class="ty">TaskStatus</span>.Failed(e.to_str())</span><span class="line">        }</span><span class="line">    }</span><span class="line">    <span class="cm">// + Emit.lane_done / lane_failed / lane_cancelled — см. полный файл</span></span><span class="line">    <span class="ty">TaskResult</span> { id: source.id, status, elapsed_ms }</span><span class="line">}</span><span class="line"></span><span class="line"><span class="kw">export fn</span> aggregate(sources <span class="pun">[]</span><span class="ty">Source</span>, budget <span class="ty">Duration</span>) <span class="eff">Net Time Emit</span> <span class="pun">-&gt;</span> <span class="ty">Report</span> {</span><span class="line">    <span class="kw">ro</span> t0 <span class="ty">Monotonic</span> = <span class="ty">Monotonic</span>.now()</span><span class="line">    <span class="kw">ro</span> budget_ms = budget.as_millis() <span class="kw">as</span> <span class="ty">int</span></span><span class="line">    <span class="kw">ro</span> results = <span class="kw">parallel for</span> idx <span class="ty">int</span> <span class="kw">in</span> 0..sources.len() {   <span class="cm">// fan-out</span></span><span class="line">        fetch_guarded(sources[idx], budget_ms, idx)</span><span class="line">    }</span><span class="line">    <span class="eff">Emit</span>.swarm_done(<span class="pun">…</span>)</span><span class="line">    <span class="ty">Report</span>.from(results, deadline_elapsed_ms(t0))</span><span class="line">}</span></pre>
+    <pre class="code" id="codeTab2" style="display:none"><span class="line"><span class="cm">// aggregate_test.nv — фрагмент: подменяем МИР, не код (ни одного мок-фреймворка)</span></span><span class="line"></span><span class="line"><span class="kw">test</span> <span class="st">"aggregate: done/failed/cancelled settle correctly on a mixed fan-out"</span> {</span><span class="line hl" id="hlNetLine">    <span class="kw">with</span> <span class="eff">Net</span> = mock_net(), <span class="eff">Emit</span> = null_emit() {   <span class="cm">// ← весь сетевой мир = хендлер</span></span><span class="line">        <span class="kw">ro</span> report = aggregate(tiny_sources(), <span class="ty">Duration</span>.from_millis(120))</span><span class="line">        assert(report.done == 2)</span><span class="line">        assert(report.failed == 1)</span><span class="line">        assert(report.cancelled == 1)</span><span class="line">        assert(report.wall_ms &lt; report.sequential_ms)    <span class="cm">// speedup</span></span><span class="line">    }</span><span class="line">}</span><span class="line"></span><span class="line"><span class="cm">// тот же aggregate под with Net = real_net() — Live; код не меняется</span></span></pre>
+  </div>
+
+  <div class="foot">
+    Nova v0.1-dev <span class="sep">·</span> <code>github.com/nv-lang</code> <span class="sep">·</span>
+    <code>nova build</code> → C → нативный бинарь, без VM
+    <span class="sep">·</span> мокап v9 по плану 187 (Ред.6-8): данные синтетические; цифры сборки в подвале появятся из <code>docker build</code> (волна 2)
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var root = document.documentElement;
+  root.setAttribute("data-theme","dark");   // dark is the default look (owner 2026-07-09)
+  document.getElementById("theme").addEventListener("click", function(){
+    var cur = root.getAttribute("data-theme");
+    if(!cur){ cur = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; }
+    root.setAttribute("data-theme", cur === "dark" ? "light" : "dark");
+  });
+
+  var DEADLINE = 2.0, SPAN = DEADLINE + 0.5;
+  var css = function(v){ return getComputedStyle(root).getPropertyValue(v).trim(); };
+  var scen = "weather";   // "weather" | "health" | "llm"
+  var mode = "demo";
+
+  /* v9→Ф.MVP-2 (деливерабл 4): серверный data-glue. Открыта через file:// —
+     fetch к /api/... падает (CORS/протокол) → тот же клиентский синтетический
+     путь, что и раньше (SERVER_AVAILABLE остаётся false, ветки ниже это
+     учитывают). Отдана сервером (backend/main.nv) — тот же /api/snapshot
+     пробник подтверждает наличие бека, Demo/Chaos дальше дёргают /api/run,
+     Live дёргает /api/run + EventSource /api/events. legend=llm — ВСЕГДА
+     клиентская синтетика (на сервер не ходит, §9.3 п.4/§9.4 деливерабл 4). */
+  var SERVER_AVAILABLE = false;
+
+  function setDeadline(sec){
+    DEADLINE = sec; SPAN = DEADLINE + 0.5;
+    document.getElementById("dlTag").textContent = "deadline " + DEADLINE.toFixed(1) + "s";
+  }
+
+  function apiUrl(path){ return path; }   // same-origin — served by backend/main.nv itself
+
+  function fetchRunJson(legend, m, seed){
+    var q = "legend=" + encodeURIComponent(legend) + "&mode=" + encodeURIComponent(m) +
+      (m === "live" ? "" : "&seed=" + seed);
+    return fetch(apiUrl("/api/run?" + q)).then(function(r){
+      if(!r.ok) throw new Error("http " + r.status);
+      return r.json();
+    });
+  }
+
+  /* Snapshot result -> the same {id,kind,probes,outcome,total,failAt,cancelAt}
+     shape build()/tick()/finish() already consume (mapping per plan 187
+     §9.5): done -> "done" (or "slow" if elapsed_ms > 1300), failed -> "fail"
+     (failAt = elapsed_ms/1000), cancelled -> "cancel" (cancelAt =
+     budget_ms/1000); total = elapsed_ms/1000 for done/slow/fail,
+     min(budget_ms,…)/1000 for cancel (the lane never really finishes). */
+  function mapSnapshotToList(json){
+    return json.results.map(function(r){
+      var sec = r.elapsed_ms / 1000;
+      if(r.status.state === "done"){
+        return {id:r.id, kind:r.kind, probes:r.probes, outcome: sec>1.3?"slow":"done",
+          total:sec, failAt:Infinity, cancelAt:json.budget_ms/1000};
+      }
+      if(r.status.state === "failed"){
+        return {id:r.id, kind:r.kind, probes:r.probes, outcome:"fail",
+          total:sec, failAt:sec, cancelAt:json.budget_ms/1000};
+      }
+      return {id:r.id, kind:r.kind, probes:r.probes, outcome:"cancel",
+        total:json.budget_ms/1000, failAt:Infinity, cancelAt:json.budget_ms/1000};
+    });
+  }
+
+  /* v9 (Ред.6 №9): seed + режим из URL — любой прогон = воспроизводимая ссылка */
+  var seedVal = 42, urlSeedPending = false;
+  try {
+    var q = new URLSearchParams(location.search);
+    var ql = q.get("legend"), qm = q.get("mode"), qs = q.get("seed");
+    if(qm === "chaos") mode = "chaos";
+    if(qs && !isNaN(+qs)) { seedVal = (+qs) >>> 0; urlSeedPending = true; }
+    if(ql) scen = ql; // валидируется ниже, после объявления SCENARIOS
+  } catch(e){}
+
+  /* v9: детерминированный PRNG (splitmix32-семейство) — seed ⇒ тот же забег */
+  function mulberry32(a){ return function(){ a |= 0; a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  var rand = mulberry32(42);
+
+  /* v9 (Ред.7): подпись дедлайна — из данных, не из CSS */
+  setDeadline(DEADLINE);
+
+  /* two real-world scenarios; both = same aggregate(), different sources & Net. */
+  var SCENARIOS = {
+    weather: {
+      unit: "cities", subUnit: "days", bg: 90,
+      sig: '<span class="kw">fn</span> aggregate<span class="pun">(</span>cities <span class="ty">[]City</span><span class="pun">,</span> budget <span class="ty">Duration</span><span class="pun">)</span> <span class="eff">Net Time Fail</span> <span class="pun">-&gt;</span> <span class="ty">WeatherReport</span>',
+      note: 'Сводка погоды по городам — fan-out к <code>open-meteo</code> (без ключа). Каждый город параллельно тянет несколько дней. Дедлайн <b>2с</b>: дальний сервер не успел → под-запросы <b>каскадно</b> отменяются, <code>0 leaks</code>.',
+      defs: [
+        {id:"Москва",      kind:"7 days",  probes:7,  outcome:"done"},
+        {id:"С-Петербург", kind:"7 days",  probes:7,  outcome:"done"},
+        {id:"Новосибирск", kind:"10 days", probes:10, outcome:"slow"},
+        {id:"Лондон",      kind:"14 days", probes:14, outcome:"slow"},
+        {id:"Нью-Йорк",    kind:"7 days",  probes:7,  outcome:"fail"},
+        {id:"Токио",       kind:"16 days", probes:16, outcome:"cancel"}
+      ]
+    },
+    health: {
+      unit: "services", subUnit: "checks", bg: 90,
+      sig: '<span class="kw">fn</span> aggregate<span class="pun">(</span>svc <span class="ty">[]Service</span><span class="pun">,</span> budget <span class="ty">Duration</span><span class="pun">)</span> <span class="eff">Net Time Fail</span> <span class="pun">-&gt;</span> <span class="ty">HealthReport</span>',
+      note: 'Health-check сервисов — параллельный пинг реальных доменов + замер латентности. Дедлайн <b>2с</b> = SLA-таймаут: зависший сервис <b>каскадно</b> отменяется, <code>0 leaks</code>.',
+      defs: [
+        {id:"github.com",    kind:"3 checks", probes:3, outcome:"done"},
+        {id:"cloudflare",    kind:"3 checks", probes:3, outcome:"done"},
+        {id:"wikipedia.org", kind:"4 checks", probes:4, outcome:"slow"},
+        {id:"npmjs.com",     kind:"3 checks", probes:3, outcome:"slow"},
+        {id:"registry-eu",   kind:"3 checks", probes:3, outcome:"fail"},
+        {id:"mirror-remote", kind:"5 checks", probes:5, outcome:"cancel"}
+      ]
+    },
+    llm: {
+      unit: "models", subUnit: "tokens", race: true, bg: 0,
+      sig: '<span class="kw">fn</span> ask<span class="pun">(</span>prompt <span class="ty">str</span><span class="pun">,</span> models <span class="ty">[]Model</span><span class="pun">,</span> budget <span class="ty">Duration</span><span class="pun">)</span> <span class="eff">Net Time Fail</span> <span class="pun">-&gt;</span> <span class="ty">Answer</span>',
+      note: '<b>race / first-wins</b>: промпт уходит всем локальным моделям (Ollama, без ключей) разом — первый пригодный ответ 🏆 побеждает, остальные <b>отменяются в тот же миг</b> (GPU освобождён, <code>0 leaks</code>). Прогресс = реальные токены.',
+      defs: [
+        {id:"llama-8b",   kind:"≈70 tok",  probes:70,  outcome:"done"},
+        {id:"qwen-14b",   kind:"≈90 tok",  probes:90,  outcome:"lost"},
+        {id:"mistral-7b", kind:"≈65 tok",  probes:65,  outcome:"lost"},
+        {id:"gemma-9b",   kind:"≈80 tok",  probes:80,  outcome:"lost"},
+        {id:"phi-4b",     kind:"≈50 tok",  probes:50,  outcome:"fail"},
+        {id:"deep-32b",   kind:"≈120 tok", probes:120, outcome:"lost"}
+      ]
+    }
+  };
+  if(!SCENARIOS[scen]) scen = "weather";
+
+  // real names for the swarm wall (tooltip makes each square a real request)
+  SCENARIOS.weather.bgNames = ("Осло Берлин Париж Мадрид Рим Прага Вена Варшава Хельсинки Стокгольм Копенгаген Амстердам Брюссель Лиссабон Афины Дублин Цюрих Женева Милан Мюнхен Гамбург Барселона Валенсия Порту Краков Гданьск Рига Вильнюс Таллин Минск Белград София Бухарест Будапешт Стамбул Анкара Тбилиси Ереван Баку Алматы Астана Ташкент Бишкек Дубай Доха Эр-Рияд Тель-Авив Каир Касабланка Найроби Кейптаун Лагос Дели Мумбаи Бангалор Ченнаи Пекин Шанхай Гуанчжоу Шэньчжэнь Гонконг Тайбэй Сеул Пусан Осака Киото Нагоя Сингапур Джакарта Бангкок Ханой Манила Куала-Лумпур Сидней Мельбурн Окленд Торонто Ванкувер Монреаль Чикаго Бостон Сиэтл Остин Денвер Майами Хьюстон Мехико Богота Лима Сантьяго Буэнос-Айрес Сан-Паулу Рио Казань Екатеринбург Самара Омск").split(" ");
+  SCENARIOS.health.bgNames = ("google.com youtube.com wikipedia.org reddit.com amazon.com bing.com linkedin.com netflix.com pinterest.com zoom.us discord.com twitch.tv spotify.com apple.com microsoft.com adobe.com salesforce.com oracle.com ibm.com intel.com nvidia.com amd.com dell.com hp.com samsung.com sony.com xiaomi.com stackoverflow.com gitlab.com bitbucket.org docker.com kubernetes.io python.org rust-lang.org golang.org nodejs.org npmjs.org pypi.org crates.io maven.org jetbrains.com vscode.dev mozilla.org opera.com brave.com duckduckgo.com yandex.ru mail.ru vk.com ok.ru avito.ru ozon.ru wildberries.ru sber.ru tinkoff.ru rzd.ru gosuslugi.ru habr.com 2gis.ru kinopoisk.ru ivi.ru rutube.ru dzen.ru lenta.ru rbc.ru tass.ru interfax.ru cloudflare.net fastly.com akamai.com vercel.app netlify.app herokuapp.com digitalocean.com linode.com vultr.com ovh.com hetzner.com telegram.org whatsapp.com signal.org proton.me figma.com notion.so slack.com trello.com asana.com atlassian.com dropbox.com box.com wetransfer.com").split(" ");
+
+  function providers(runMode){
+    var S = SCENARIOS[scen], rnd = runMode==="chaos";
+
+    if(S.race){
+      var totals = runMode==="demo" ? [1.08, 2.60, 1.90, 1.62, 0.50, 2.90]
+                                    : S.defs.map(function(){ return 0.7+rand()*2.2; });
+      var winnerT = Infinity;
+      S.defs.forEach(function(d,i){ var o=rnd?(rand()<0.15?"fail":"race"):d.outcome;
+        if(o!=="fail" && totals[i]<winnerT) winnerT=totals[i]; });
+      winnerT = Math.min(winnerT, DEADLINE);
+      return S.defs.map(function(d,i){
+        var o = rnd ? (rand()<0.15 ? "fail" : "race") : d.outcome;
+        var total = totals[i];
+        if(o==="fail") return {id:d.id, kind:d.kind, probes:d.probes, outcome:"fail",
+          total:total, failAt: Math.min(total*0.6, winnerT*0.9), cancelAt:DEADLINE};
+        if(total<=winnerT+1e-9) return {id:d.id, kind:d.kind, probes:d.probes,
+          outcome:"done", total:total, failAt:Infinity, cancelAt:DEADLINE, winner:true};
+        return {id:d.id, kind:d.kind, probes:d.probes, outcome:"cancel",
+          total:total, failAt:Infinity, cancelAt:winnerT, lost:true};
+      });
+    }
+
+    return S.defs.map(function(d, i){
+      var o=d.outcome;
+      if(rnd){ var r=rand(); o = r<0.14?"fail" : r<0.30?"cancel" : r<0.55?"slow" : "done"; }
+      var total = o==="cancel" ? (DEADLINE+0.4+rand()*0.5)
+                : o==="slow"  ? (1.35+rand()*0.5)
+                : (0.5+rand()*0.8);
+      if(runMode==="demo"){ total = o==="cancel"?2.42 : o==="slow"?(i===3?1.72:1.34) : (i===1?0.62:0.52); }
+      var failAt = o==="fail" ? (runMode==="demo"?0.44:0.3+rand()*0.5) : Infinity;
+      return {id:d.id, kind:d.kind, probes:d.probes, outcome:o, total:total, failAt:failAt, cancelAt:DEADLINE};
+    });
+  }
+
+  /* v9 (Ред.7 №11): эффект-бейдж — источник правды для прогона */
+  function badgeHtml(){
+    if(mode==="demo")  return 'with Net = <b>mock_net(seed = 42)</b>';
+    if(mode==="chaos") return 'with Net = <b>mock_net(seed = ' + seedVal + ')</b>';
+    return 'with Net = <b>real_net()</b>';
+  }
+  function refreshBadge(){
+    var el = document.getElementById("fxNet");
+    el.innerHTML = badgeHtml();
+    el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
+    var hl = document.getElementById("hlNetLine");
+    if(hl){ hl.classList.remove("flash"); void hl.offsetWidth; hl.classList.add("flash"); }
+  }
+
+  function applyScenario(){
+    var S = SCENARIOS[scen];
+    document.getElementById("sigLine").innerHTML = S.sig;
+    document.getElementById("noteLine").innerHTML = S.note;
+    document.getElementById("unitLabel").textContent = S.unit;
+    document.getElementById("s-fanoutK").textContent = S.unit;
+    document.getElementById("s-pagesK").textContent = S.subUnit+" ok";
+  }
+
+  var lanesEl=document.getElementById("lanes");
+  var gridC=document.getElementById("grid"), gtx=gridC.getContext("2d");
+  var fx=document.getElementById("fx"), ctx=fx.getContext("2d");
+  var deadlineEl=document.getElementById("deadline");
+  var raf=0, particles=[], laneObjs=[], bgObjs=[];
+
+  function railGeom(){ var lane=lanesEl.querySelector(".lane"); if(!lane) return null;
+    var rail=lane.querySelector(".rail"); var lr=lanesEl.getBoundingClientRect(), rr=rail.getBoundingClientRect();
+    return { left:rr.left-lr.left, width:rr.width, top:rr.top-lr.top }; }
+  function xFor(t){ var g=railGeom(); return g ? g.left+g.width*(Math.min(t,SPAN)/SPAN) : 0; }
+  function placeDeadline(){ var g=railGeom(); if(!g) return; deadlineEl.style.left=(g.left+g.width*(DEADLINE/SPAN))+"px"; }
+
+  function sizeCanvas(c,tx){ var r=lanesEl.getBoundingClientRect();
+    c.width=r.width*devicePixelRatio; c.height=r.height*devicePixelRatio; c.style.width=r.width+"px"; c.style.height=r.height+"px";
+    tx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0); }
+  function resize(){ sizeCanvas(gridC,gtx); sizeCanvas(fx,ctx); drawGrid(); placeDeadline(); }
+  addEventListener("resize", resize);
+
+  function drawGrid(){ var g=railGeom(); if(!g) return; var r=lanesEl.getBoundingClientRect();
+    gtx.clearRect(0,0,r.width,r.height); gtx.strokeStyle=css("--line"); gtx.globalAlpha=.5; gtx.lineWidth=1;
+    gtx.font="9px "+css("--mono").replace(/"/g,''); gtx.fillStyle=css("--ink-faint");
+    for(var s=0.5;s<SPAN;s+=0.5){ var x=g.left+g.width*(s/SPAN);
+      gtx.beginPath(); gtx.moveTo(x,2); gtx.lineTo(x,r.height-6); gtx.stroke();
+      gtx.globalAlpha=1; gtx.fillText(s.toFixed(1)+"s", x+3, r.height-6); gtx.globalAlpha=.5; }
+    gtx.globalAlpha=1; }
+
+  function build(list){
+    Array.prototype.slice.call(lanesEl.querySelectorAll(".lane")).forEach(function(n){ n.remove(); });
+    laneObjs=[]; var subtotal=0;
+    list.forEach(function(p){
+      subtotal+=p.probes;
+      var lane=document.createElement("div"); lane.className="lane"; lane.dataset.state="idle";
+      var notchN=Math.min(p.probes, 24), notchHtml="";
+      for(var k=1;k<notchN;k++){ notchHtml+='<i style="left:'+(k/notchN*100)+'%"></i>'; }
+      lane.innerHTML =
+        '<div class="name"><span class="id">'+p.id+'</span>'+
+          '<span class="kind">'+p.kind+' · <span class="cnt">0/'+p.probes+'</span></span></div>'+
+        '<div class="rail"><div class="seq-ghost"></div><div class="bar"></div><div class="notches">'+notchHtml+'</div></div>'+
+        '<div class="status">queued</div>';
+      lanesEl.appendChild(lane);
+      laneObjs.push({p:p, lane:lane, cnt:lane.querySelector(".cnt"), status:lane.querySelector(".status"),
+        ghost:lane.querySelector(".seq-ghost"), bar:lane.querySelector(".bar"), settled:false, seqStart:0});
+    });
+    var acc=0; laneObjs.forEach(function(o){ o.seqStart=acc; acc+=Math.min(o.p.total,DEADLINE); });
+    document.getElementById("subtotal").textContent=subtotal;
+
+    var S=SCENARIOS[scen], sw=document.getElementById("swarm"), sg=document.getElementById("swarmGrid");
+    bgObjs=[]; sg.innerHTML="";
+    if(S.bg){
+      sw.style.display="";
+      document.getElementById("swarmCount").textContent=S.bg;
+      var names=S.bgNames||[];
+      for(var b=0;b<S.bg;b++){
+        var el=document.createElement("div"); el.className="sq"; el.dataset.i=b; sg.appendChild(el);
+        var r=rand(), total=0.35+rand()*2.0;
+        var out = r<0.03 ? "fail" : (total>DEADLINE ? "cancel" : "done");
+        bgObjs.push({el:el, total:total, failAt:total*0.5, out:out, st:"idle",
+          name: names.length ? names[b%names.length] : ("req-"+(b+1))});
+      }
+    } else { sw.style.display="none"; }
+    resize();
+  }
+
+  function burst(x,y,color,n){ n=n||22; for(var i=0;i<n;i++){ var a=Math.random()*Math.PI*2, sp=0.5+Math.random()*2.6;
+    particles.push({x:x,y:y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-0.5,life:1,color:color}); } }
+  function drawFx(){ ctx.clearRect(0,0,fx.width,fx.height);
+    for(var i=particles.length-1;i>=0;i--){ var p=particles[i]; p.x+=p.vx; p.y+=p.vy; p.vy+=0.05; p.life-=0.02;
+      if(p.life<=0){ particles.splice(i,1); continue; } ctx.globalAlpha=p.life; ctx.fillStyle=p.color;
+      ctx.beginPath(); ctx.arc(p.x,p.y,1.7,0,7); ctx.fill(); } ctx.globalAlpha=1; }
+
+  var stats;
+  function set(id,v){ document.getElementById(id).textContent=v; }
+  function resetStats(list){ stats={fanout:list.length,done:0,pages:0,fail:0,cancel:0};
+    set("s-fanout",list.length+(SCENARIOS[scen].bg||0)); set("s-done",0); set("s-pages",0); set("s-fail",0); set("s-cancel",0);
+    document.getElementById("s-speed").textContent="—"; document.getElementById("s-cmp").textContent="measuring…";
+    document.getElementById("s-leaks").textContent="0 leaks"; }
+
+  function run(){
+    cancelAnimationFrame(raf); particles=[];
+    /* v9: пере-seed на каждый прогон — demo всегда 42; chaos: из URL при первом
+       заходе, дальше новый на каждый Search (и пишется в адресную строку) */
+    if(mode==="chaos"){
+      if(urlSeedPending){ urlSeedPending=false; }
+      else { seedVal = (Math.random()*4294967296)>>>0; }
+    }
+    rand = mulberry32(mode==="demo" ? 42 : seedVal);
+    refreshBadge();
+    try { history.replaceState(null, "", "?legend="+scen+"&mode="+mode+"&seed="+(mode==="demo"?42:seedVal)); } catch(e){}
+
+    // legend=llm — ВСЕГДА клиентская синтетика (§9.3 п.4); mode=live идёт
+    // отдельным путём (SSE-replay, runLive()) — не через startRun().
+    if(mode==="live"){
+      if(scen!=="llm" && SERVER_AVAILABLE){ runLive(); }
+      else { setDeadline(2.0); startRun(providers("demo")); }   // no live backend/legend — honest no-op fallback
+      return;
+    }
+    if(scen!=="llm" && SERVER_AVAILABLE){
+      fetchRunJson(scen, mode, mode==="demo"?42:seedVal).then(function(json){
+        setDeadline(json.budget_ms/1000);
+        startRun(mapSnapshotToList(json));
+      }).catch(function(){ setDeadline(2.0); startRun(providers(mode)); });
+      return;
+    }
+    setDeadline(2.0);
+    startRun(providers(mode));
+  }
+
+  function startRun(list){
+    build(list); resetStats(list);
+    document.getElementById("hint").textContent = mode==="demo"
+      ? "seed = 42 · воспроизводимый забег"
+      : "seed = "+seedVal+" · эта ссылка воспроизводит забег байт-в-байт";
+    laneObjs.forEach(function(o){ o.lane.dataset.state="live"; o.status.textContent="live"; });
+    var seqTotal=list.reduce(function(a,p){return a+Math.min(p.total,DEADLINE);},0)
+                + bgObjs.reduce(function(a,b){return a+Math.min(b.total,DEADLINE);},0);
+    var t0=performance.now(), SCALE=1500;
+
+    var frozen=false;
+
+    function tick(now){
+      var t=(now-t0)/SCALE;
+
+      if(!frozen){
+        document.getElementById("tclock").textContent=Math.min(t,SPAN).toFixed(2);
+        var g=railGeom();
+        var pagesOk=0;
+        laneObjs.forEach(function(o){
+          var p=o.p;
+          var settleT = p.outcome==="fail" ? p.failAt : p.outcome==="cancel" ? p.cancelAt : p.total;
+          var barT = o.settled ? settleT : Math.min(t, settleT);
+          o.bar.style.width = (Math.min(barT,SPAN)/SPAN*100) + "%";
+          var seqShown = Math.max(0, Math.min(Math.min(o.p.total,DEADLINE), t*2 - o.seqStart));
+          o.ghost.style.width = (Math.min(seqShown,SPAN)/SPAN*100) + "%";
+
+          if(!o.settled){
+            o.bar.classList.add("pulsing");
+            var doneFrac = Math.min(1, barT/p.total);
+            o.cnt.textContent = Math.round(doneFrac*p.probes) + "/" + p.probes;
+            if(p.outcome==="slow" && t>1.3 && t<p.total){ o.lane.dataset.state="slow"; o.status.textContent="⚠ slow"; }
+
+            if(p.outcome==="fail" && t>=p.failAt){ o.settled=true; o.lane.dataset.state="fail"; o.status.textContent="✖ error";
+              o.bar.classList.remove("pulsing");
+              if(g){ var rr=o.lane.querySelector(".rail").getBoundingClientRect(), lr=lanesEl.getBoundingClientRect();
+                burst(xFor(p.failAt), rr.top-lr.top+8, css("--crit"), 14); }
+              stats.fail++; set("s-fail",stats.fail);
+            } else if((p.outcome==="done"||p.outcome==="slow") && t>=p.total){ o.settled=true; o.lane.dataset.state="done";
+              o.status.textContent=(p.winner?"🏆 ":"✔ ")+Math.round(p.total*1000)+"ms"; o.bar.classList.remove("pulsing");
+              o.cnt.textContent=p.probes+"/"+p.probes; stats.done++; set("s-done",stats.done);
+            } else if(p.outcome==="cancel" && t>=p.cancelAt){ o.settled=true; o.lane.dataset.state="cancel";
+              o.status.textContent=p.lost?"⟂ lost":"⟂ cancel";
+              o.bar.classList.remove("pulsing");
+              if(g){ var rr2=o.lane.querySelector(".rail").getBoundingClientRect(), lr2=lanesEl.getBoundingClientRect();
+                burst(xFor(p.cancelAt), rr2.top-lr2.top+8, css("--ghost"), 28); }
+              stats.cancel++; set("s-cancel",stats.cancel); }
+          }
+          var frac = o.settled ? Math.min(1, settleT/p.total) : Math.min(1, barT/p.total);
+          var okP = (o.lane.dataset.state==="done") ? p.probes : Math.round(frac*p.probes);
+          pagesOk += okP;
+        });
+        set("s-pages",pagesOk);
+
+        var bgDone=0,bgFail=0,bgCancel=0;
+        bgObjs.forEach(function(b){
+          var ns = b.out==="fail"   ? (t>=b.failAt ? "fail"   : t>=b.total*0.1 ? "run" : "idle")
+                 : b.out==="cancel" ? (t>=DEADLINE ? "cancel" : t>=b.total*0.1 ? "run" : "idle")
+                 :                    (t>=b.total  ? "done"   : t>=b.total*0.1 ? "run" : "idle");
+          if(ns!==b.st){ b.st=ns; b.el.className = ns==="idle" ? "sq" : "sq "+ns; }
+          if(ns==="done")bgDone++; else if(ns==="fail")bgFail++; else if(ns==="cancel")bgCancel++;
+        });
+        if(bgObjs.length){ set("s-done",stats.done+bgDone); set("s-fail",stats.fail+bgFail); set("s-cancel",stats.cancel+bgCancel); }
+
+        var bgSettled = bgObjs.every(function(b){ return b.st==="done"||b.st==="fail"||b.st==="cancel"; });
+        var allSettled = laneObjs.every(function(o){return o.settled;}) && bgSettled;
+        if(allSettled){ frozen=true; finish(seqTotal); }
+      }
+
+      drawFx();
+      if(!frozen || particles.length){ raf=requestAnimationFrame(tick); }
+      else { ctx.clearRect(0,0,fx.width,fx.height); }
+    }
+    raf=requestAnimationFrame(tick);
+  }
+
+  /* Live: реальный /api/run (real_net()-фан-аут — health = TCP-замер реальных
+     доменов, weather = честно заблокирован diamond-зависимостью tls,
+     [M-187-weather-live-tls-diamond-blocked] в backend/app/live.nv) двигает
+     ТОТ ЖЕ интерполированный tick()-движок, что Demo/Chaos (startRun) —
+     реальные данные бэка от начала до конца. `/api/events` — тоже реальный
+     SSE-replay (curl-проверяем отдельно, см. README «как это тестируется»);
+     здесь просто открывается и логируется, а не построчно ведёт покадровую
+     перерисовку — упрощение этого захода под бюджет времени, НЕ заглушка:
+     сервер отдаёт полноценные t_ms-тайминги, у клиента просто пока один
+     потребитель (интерполированная кривая из /api/run), а не два. */
+  function runLive(){
+    fetchRunJson(scen, "live", 0).then(function(json){
+      setDeadline(Math.max(json.budget_ms/1000, 0.1));
+      startRun(mapSnapshotToList(json));
+      try{
+        var es = new EventSource(apiUrl("/api/events?legend="+encodeURIComponent(scen)+"&mode=live"));
+        es.addEventListener("run_summary", function(){ es.close(); });
+        es.onerror = function(){ es.close(); };
+      }catch(e){}
+    }).catch(function(){
+      document.getElementById("hint").textContent = "live недоступен (сеть/бек) — см. консоль";
+      setDeadline(2.0); startRun(providers("demo"));
+    });
+  }
+
+  function finish(seqTotal){
+    var wall=0, closed=0, okTotal=0;
+    laneObjs.forEach(function(o){ var p=o.p;
+      wall=Math.max(wall, p.outcome==="cancel"?p.cancelAt:Math.min(p.total,DEADLINE));
+      closed+=p.probes;
+      var settleT = p.outcome==="fail" ? p.failAt : p.outcome==="cancel" ? p.cancelAt : p.total;
+      okTotal += (o.lane.dataset.state==="done") ? p.probes : Math.round(Math.min(1,settleT/p.total)*p.probes);
+    });
+    bgObjs.forEach(function(b){ wall=Math.max(wall, Math.min(b.total,DEADLINE)); closed+=1; });
+    set("s-pages", okTotal);
+    document.getElementById("tclock").textContent=wall.toFixed(2);
+    document.getElementById("s-speed").textContent="×"+(seqTotal/wall).toFixed(1)+" ↑";
+    document.getElementById("s-cmp").textContent=wall.toFixed(2)+"s vs "+seqTotal.toFixed(1)+"s seq";
+    document.getElementById("s-leaks").textContent=closed+" reqs closed · 0 leaks";
+  }
+
+  /* Live-кнопка разблокируется только когда есть живой бек И легенда != llm
+     (LLM/Ollama вне MVP, §9.3 п.4 — остаётся disabled навсегда). */
+  function refreshLiveBtn(){
+    var b = document.getElementById("liveBtn");
+    var enabled = SERVER_AVAILABLE && scen!=="llm";
+    b.disabled = !enabled;
+    b.textContent = enabled ? "Live ●" : "Live 🔒";
+    b.title = enabled
+      ? "Тот же aggregate под with Net = real_net() — реальный Nova-бек"
+      : (scen==="llm" ? "LLM — вне MVP, всегда клиентская синтетика" : "Тот же aggregate под with Net = real_net() — включится с живым Nova-беком (Ф.MVP-2)");
+  }
+
+  // scenario switch (weather / health / llm) — own group
+  Array.prototype.slice.call(document.querySelectorAll("#scenSwitch .seg")).forEach(function(b){
+    b.addEventListener("click", function(){
+      document.querySelectorAll("#scenSwitch .seg").forEach(function(x){ x.setAttribute("aria-pressed","false"); });
+      b.setAttribute("aria-pressed","true"); scen=b.dataset.scen; applyScenario(); refreshLiveBtn(); run(); }); });
+
+  // data-mode switch (demo / chaos / live) — own group
+  Array.prototype.slice.call(document.querySelectorAll('.segmented[aria-label="Data mode"] .seg')).forEach(function(b){
+    b.addEventListener("click", function(){ if(b.disabled) return;
+      document.querySelectorAll('.segmented[aria-label="Data mode"] .seg').forEach(function(x){ x.setAttribute("aria-pressed","false"); });
+      b.setAttribute("aria-pressed","true"); mode=b.dataset.mode; run(); }); });
+
+  document.getElementById("run").addEventListener("click", run);
+
+  /* v9: вкладки панели «Код» */
+  Array.prototype.slice.call(document.querySelectorAll("#codeTabs .seg")).forEach(function(b){
+    b.addEventListener("click", function(){
+      document.querySelectorAll("#codeTabs .seg").forEach(function(x){ x.setAttribute("aria-pressed","false"); });
+      b.setAttribute("aria-pressed","true");
+      var t1 = b.dataset.tab === "1";
+      document.getElementById("codeTab1").style.display = t1 ? "" : "none";
+      document.getElementById("codeTab2").style.display = t1 ? "none" : "";
+      document.getElementById("codePath").textContent = t1
+        ? "examples/flagship/aggregator/backend/app/aggregate.nv · фрагмент"
+        : "examples/flagship/aggregator/backend/app/aggregate_test.nv · фрагмент";
+      document.getElementById("codeNote").textContent = t1
+        ? "этот экран порождён вот этим кодом"
+        : "подменили мир, не код — ни одного мок-фреймворка";
+    }); });
+
+  // swarm tooltip: hover a square → source name + status + latency
+  var tip=document.getElementById("tip"), sgEl=document.getElementById("swarmGrid");
+  function bgStatusHtml(b){
+    if(b.st==="done")   return '<span class="st-done">✔ '+Math.round(b.total*1000)+'ms</span>';
+    if(b.st==="fail")   return '<span class="st-fail">✖ 503 @'+Math.round(b.failAt*1000)+'ms</span>';
+    if(b.st==="cancel") return '<span class="st-cancel">⟂ cancelled @ deadline</span>';
+    if(b.st==="run")    return '<span class="st-run">● live…</span>';
+    return '<span class="st-run">queued</span>';
+  }
+  sgEl.addEventListener("mousemove", function(e){
+    var t=e.target;
+    if(!t.classList || !t.classList.contains("sq")){ tip.style.display="none"; return; }
+    var b=bgObjs[+t.dataset.i]; if(!b){ tip.style.display="none"; return; }
+    tip.innerHTML = b.name + " · " + bgStatusHtml(b);
+    tip.style.left=e.clientX+"px"; tip.style.top=e.clientY+"px"; tip.style.display="block";
+  });
+  sgEl.addEventListener("mouseleave", function(){ tip.style.display="none"; });
+
+  /* v9: aria-pressed кнопок — из URL-состояния */
+  document.querySelectorAll("#scenSwitch .seg").forEach(function(b){
+    b.setAttribute("aria-pressed", b.dataset.scen===scen ? "true" : "false"); });
+  document.querySelectorAll('.segmented[aria-label="Data mode"] .seg').forEach(function(b){
+    if(!b.disabled) b.setAttribute("aria-pressed", b.dataset.mode===mode ? "true" : "false"); });
+
+  applyScenario();
+  refreshBadge();
+  refreshLiveBtn();
+  build(providers("demo")); resetStats(providers("demo"));
+  setTimeout(run, 450);   // Ред.6 №10: автозапуск — первые 5 секунд без кликов
+
+  /* Ф.MVP-2 деливерабл 4: серверный пробник. Открыта через file:// — fetch
+     падает (протокол), SERVER_AVAILABLE остаётся false, ничего не меняется
+     (клиентская синтетика, как раньше). Отдана backend/main.nv (embed()) —
+     пробник проходит, Live-кнопка разблокируется (кроме legend=llm), а
+     Demo/Chaos на следующий прогон начинают дёргать /api/run вместо
+     клиентского provider()-генератора. */
+  fetch(apiUrl("/api/snapshot")).then(function(r){
+    if(r.ok){ SERVER_AVAILABLE = true; refreshLiveBtn(); }
+  }).catch(function(){ /* file:// or no backend — stay client-only */ });
+})();
+</script>
