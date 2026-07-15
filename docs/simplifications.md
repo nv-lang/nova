@@ -38417,3 +38417,17 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   КОРНЕВОГО пакета, не для consume ВНУТРИ внешнего пакета (nova-tls). emit_c.rs
   территория (codegen), НЕ резолвер. Изолировано минимальным repro. Затрагивает
   и echo_server.nv. Дом нового маркера — live.nv + docs/plans/tls-diamond-progress.md.
+
+## 187 маркер-гигиена + watchdog-находка (2026-07-15, оркестратор)
+
+- ЗАКРЫТЫ багфикс-волной (сняты из backlog, история — записи выше):
+  [M-187-errorkind-parsejsonerror-variant-collision] (фикс 1791360cf +
+  фикстура) и [M-187-nested-spawn-scope-var-cc-fail] codegen-часть (фикс
+  c687fc2d1 + фикстура; >16 вложенно-порождённых детей = отдельная
+  рантайм-подложка 173.0-R2, не codegen).
+- НОВЫЙ [M-187-watchdog-idle-server-kill] P1: supervised-watchdog (83.11,
+  fibers.h:2871, 5с) валит ЛЮБОЙ idle Nova-сервер (accept-loop park
+  count=0/pending_remote=1 = норма). Обход NOVA_WATCHDOG_DUMP_SECS=0
+  (проверено 15с+). Дом — backlog + runtime 83.x.
+- slot-race [M-187-supervised-nested-fiber-slot-race] закрыт 83.4.5.12
+  (влит a48fc2270, гейт 10/10).
