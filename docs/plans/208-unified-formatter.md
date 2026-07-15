@@ -43,7 +43,7 @@ str-литерал `w.write("...")` через **коэрсию str-литера
 
 ```nova
 export type Write protocol {         // МИНИМАЛЬНЫЙ: только @write; reserve/advance — на StringBuilder (см. §9)
-    mut @write(bytes []u8) -> ()     // параметры ro по умолчанию → уже read-only; str-литерал коэрсится в @bytes() (D176)
+    mut @write(bytes []u8) -> ()     // параметры ro по умолчанию → уже read-only; str-литерал → []u8 коэрсия (D55, §6)
     // reserve/advance — КОНКРЕТНО на StringBuilder (не в протоколе); zero-copy = компилятор через SB
 }
 
@@ -259,8 +259,8 @@ export type Write protocol {
 }
 ```
 **Ревью 2026-07-15: `@write(str)`-overload УБРАН.** str пишется: переменная → `w.write(s.bytes())` (D176, zero-copy
-view, даром); литерал `w.write("Point(")` → **коэрсия str-литерала → `[]u8`** компилятором (str и есть UTF-8-байты;
-мелкая фича, чище protocol-overload'а). Протокол остаётся чисто `@write([]u8)`. (Убирает прежний ⚠syntax
+view, даром); литерал `w.write("Point(")` → **коэрсия str-литерала → `[]u8`** (амендмент **D55**, общее правило)
+компилятором (str и есть UTF-8-байты; чище protocol-overload'а). Протокол остаётся чисто `@write([]u8)`. (Убирает прежний ⚠syntax
 «protocol-default для перегрузки».)
 
 **Ревью-решение (владелец 2026-07-15): `@reserve`/`@advance` УБРАНЫ из протокола `Write`** (Rust-путь). Причины:
