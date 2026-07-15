@@ -1,0 +1,518 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// std.runtime.fmt_buf — Plan 208 Ф.1 (D422 "Unified Formatter", spec/decisions/
+// 02-types.md) buffer-primitives. ADDITIVE ONLY: this module is new and is not
+// wired into anything yet — `${x}` interpolation, `@display`/`@display_fmt`,
+// `str.from_debug` and every existing formatting call-site still go through
+// the pre-existing `nova_rt/conv.h` C helpers untouched. Byte-for-byte current
+// behaviour is preserved; this file exists so Ф.2 (the compiler-side rewrite
+// of `emit_interpolated_str`/`emit_format_spec_value` onto `@display(mut f Fmt)`)
+// has these primitives ready to call into. Exercised for now only by the
+// inline `test { }` blocks at the end of this file — see the comment there
+// for why (module-privacy: a separate `fmt_buf_test.nv` peer would be a
+// genuinely different module, forcing these to be exported).
+//
+// Scope (D422 §5 + §9 "Буфер-примитивы"):
+//   - `int_fmt`/`bool_fmt`/`char_fmt` — zero-alloc digit-loop / UTF-8 encode
+//     directly into a caller-owned `*mut u8` buffer (no `nova_alloc`, no GC
+//     pressure) — the `.nv` replacement for the equivalent int/bool/char
+//     helpers in `conv.h` (`nova_fmt_int_body`/`nova_bool_to_str`/
+//     `nova_char_to_str`), NOT wired in yet (Ф.2/Ф.4 retire the C originals).
+//   - `fmt_f64_into` — the ONE C-extern this design keeps (dtoa/shortest-
+//     round-trip is not portably expressible in `.nv`); D282 literal-name
+//     `extern "C" fn`, body in `nova_rt/nova_rt.h` (next to the existing
+//     `nova_f64_shortest`/`nova_f32_shortest` it reuses). `fmt_f64` is the
+//     `.nv`-side wrapper converting the `FloatKind` enum to the `int` the
+//     C-ABI boundary carries (enums do not cross `extern "C"` directly).
+//   - `Align`/`FloatKind` — the D406 enum-marker types D422 §6 lists; `Align`
+//     is exported here because `StringBuilder.@pad_in_place`/`@write_padded`
+//     (D179 amend, `std/src/runtime/string_builder.nv`) take it directly.
+//     `Sign`/`FmtKind` are NOT introduced here — those are `Fmt`-protocol axis
+//     types, out of Ф.1 scope (Ф.2 wave, when `Fmt`/`Write` themselves change).
+//
+// Everything except `Align`/`FloatKind` stays module-private (no `export`) —
+// D422 §5: "буфер-примитивы — ВНУТРЕННИЕ (.nv, не публичные)".
+//
+// `#no_prelude`: this module needs nothing from the default prelude (only
+// builtin primitive types + pointer intrinsics) and `Align` is imported by
+// `runtime.string_builder`, which already breaks the `prelude → collections →
+// string_builder` cycle via its own `#no_prelude` — staying prelude-free here
+// avoids re-opening that cycle through `fmt_buf → (default prelude) → … →
+// string_builder → fmt_buf`.
+#no_prelude
+module runtime.fmt_buf
+
+// ─── Enums (D406 enum-marker syntax) ───
+
+/// Padding alignment axis — shared by `StringBuilder.@pad_in_place`/
+/// `@write_padded` (D179 amend) today, and by the `Fmt` protocol's
+/// `@align()` axis once Ф.2 lands (D422 §2/§6).
+#unstable
+export type Align enum Left | Right | Center
+
+/// Which float rendering `fmt_f64_into` should produce. Crosses the
+/// `extern "C" fn fmt_f64_into` ABI boundary as a plain `int`
+/// (0=Shortest/1=Fixed/2=Sci, D422 §5) — this enum is the `.nv`-side
+/// convenience the `fmt_f64` wrapper below converts at the boundary.
+#unstable
+export type FloatKind enum Shortest | Fixed | Sci
+
+// ─── FmtSpec — internal spec-slice for `int_fmt` ───
+//
+// Deliberately narrow: only the axes `int_fmt`'s digit-loop needs (radix,
+// zero-pad-to-width, forced `+`, alternate `0x`/`0o`/`0b` prefix). This is
+// NOT the compiler-facing `FormatSpec`/`Fmt` (Ф.2) — no `width` meaning
+// beyond zero-pad target, no fill/precision (those live one layer up, at
+// the `write_padded`/`pad_in_place` StringBuilder level, D422 §4).
+type FmtSpec {
+    width int       // zero-pad target total width (prefix+digits); only
+                    // consulted when `zero_pad` is true
+    radix int       // 10 (decimal) | 16 | 8 | 2 — the only supported radixes
+    upper bool      // uppercase hex digits (A-F); the `0x`/`0o`/`0b` prefix
+                    // itself always stays lowercase (Rust `{:#X}` parity)
+    zero_pad bool   // insert '0' between sign/prefix and digits up to
+                    // `width` (Rust `{:04}` semantics)
+    sign_plus bool  // force a leading '+' for non-negative DECIMAL values
+                    // (no effect on radix != 10 — those never carry a sign,
+                    // D422 mirrors the existing `nova_fmt_int_radix_body`
+                    // two's-complement-bits convention)
+    alt bool        // alternate form: emit the `0x`/`0o`/`0b` prefix
+                    // (radix != 10 only)
+}
+
+/// Default spec: plain decimal, no width/pad/sign/alt.
+fn FmtSpec.new() -> Self => { width: 0, radix: 10, upper: false, zero_pad: false, sign_plus: false, alt: false }
+
+/// Single 0..15 digit value → ASCII byte. `upper` selects `A-F` vs `a-f`
+/// for the 10..15 range; digits 0..9 are unaffected.
+fn hex_digit(d u64, upper bool) -> u8 {
+    if d < 10 {
+        ('0' as u8) + (d as u8)
+    } else if upper {
+        ('A' as u8) + ((d - 10) as u8)
+    } else {
+        ('a' as u8) + ((d - 10) as u8)
+    }
+}
+
+/// `int` → decimal/radix digit string, written directly into `buf[0..cap)`
+/// (zero-alloc — no `nova_alloc`, no heap traffic). Handles the sign (decimal)
+/// or two's-complement-bits reinterpretation (radix != 10, matching Rust
+/// `{:x}` of `-1i64` == `"ff..ff"` — same convention as the existing
+/// `nova_fmt_int_radix_body` in conv.h) and zero-padding between the
+/// sign/prefix and the digits. Returns the number of bytes written — always
+/// `<= cap`; TRUNCATES defensively (never overruns `buf`) if `cap` is smaller
+/// than the full rendered length, mirroring the buffer-safety discipline
+/// `fmt_f64_into` also follows.
+fn int_fmt(v int, buf *mut u8, cap int, spec FmtSpec) -> int
+    requires spec.radix == 10 || spec.radix == 16 || spec.radix == 8 || spec.radix == 2
+{
+    ro radix = spec.radix as u64
+
+    // 1. Magnitude (unsigned) — decimal negates via the INT64_MIN-safe
+    //    "negate-then-widen" idiom (mirrors `nova_fmt_int_body` in conv.h);
+    //    radix formatting reinterprets the raw two's-complement bit pattern
+    //    (`int as u64` is a direct bit-cast — no saturation, D405/[D-int-
+    //    u64-bitcast]).
+    mut neg = false
+    mut mag u64 = 0
+    if spec.radix == 10 {
+        if v < 0 {
+            neg = true
+            mag = ((-(v + 1)) as u64) + 1
+        } else {
+            mag = v as u64
+        }
+    } else {
+        mag = v as u64
+    }
+
+    // 2. Prefix — sign (decimal only) XOR alt-radix marker (radix only);
+    //    never both (decimal has no 0x/0o/0b marker, radix has no sign).
+    mut prefix0 u8 = 0
+    mut prefix1 u8 = 0
+    mut prefix_len = 0
+    if spec.radix == 10 {
+        if neg {
+            prefix0 = '-' as u8
+            prefix_len = 1
+        } else if spec.sign_plus {
+            prefix0 = '+' as u8
+            prefix_len = 1
+        }
+    } else if spec.alt {
+        prefix0 = '0' as u8
+        prefix1 = if spec.radix == 16 { 'x' as u8 } else if spec.radix == 8 { 'o' as u8 } else { 'b' as u8 }
+        prefix_len = 2
+    }
+
+    // 3. Digit count (first pass, no writes) — lets us place zero-padding
+    //    and digits without a reverse-then-flip step.
+    mut probe = mag
+    mut digit_count = 0
+    if probe == 0 {
+        digit_count = 1
+    } else {
+        while probe > 0 {
+            digit_count = digit_count + 1
+            probe = probe / radix
+        }
+    }
+
+    // 4. Zero-pad count (only when requested and the target width exceeds
+    //    what prefix+digits already cover).
+    mut zero_count = 0
+    if spec.zero_pad && spec.width > prefix_len + digit_count {
+        zero_count = spec.width - prefix_len - digit_count
+    }
+
+    ro total = prefix_len + zero_count + digit_count
+    ro n = total.min(cap)
+
+    unsafe {
+        mut pos = 0
+        if prefix_len >= 1 && pos < n { buf.write_at(pos, prefix0); pos = pos + 1 }
+        if prefix_len >= 2 && pos < n { buf.write_at(pos, prefix1); pos = pos + 1 }
+        while pos < prefix_len + zero_count && pos < n {
+            buf.write_at(pos, '0' as u8)
+            pos = pos + 1
+        }
+
+        // 5. Digits — MSB-first placement computed directly from the known
+        //    `digit_count` (no reversal): position `k` (from the most- to
+        //    least-significant) holds `mag / radix^k mod radix`.
+        ro digits_start = prefix_len + zero_count
+        mut k = digit_count - 1
+        mut m = mag
+        while k >= 0 {
+            ro d = m % radix
+            ro idx = digits_start + k
+            if idx < n {
+                buf.write_at(idx, hex_digit(d, spec.upper))
+            }
+            m = m / radix
+            k = k - 1
+        }
+    }
+    n
+}
+
+/// `bool` → `"true"`/`"false"`, written directly into `buf[0..cap)`.
+/// Returns bytes written (`<= cap`; truncates defensively).
+fn bool_fmt(v bool, buf *mut u8, cap int) -> int {
+    unsafe {
+        if v {
+            ro want = 4
+            ro n = want.min(cap)
+            if n >= 1 { buf.write_at(0, 't' as u8) }
+            if n >= 2 { buf.write_at(1, 'r' as u8) }
+            if n >= 3 { buf.write_at(2, 'u' as u8) }
+            if n >= 4 { buf.write_at(3, 'e' as u8) }
+            n
+        } else {
+            ro want = 5
+            ro n = want.min(cap)
+            if n >= 1 { buf.write_at(0, 'f' as u8) }
+            if n >= 2 { buf.write_at(1, 'a' as u8) }
+            if n >= 3 { buf.write_at(2, 'l' as u8) }
+            if n >= 4 { buf.write_at(3, 's' as u8) }
+            if n >= 5 { buf.write_at(4, 'e' as u8) }
+            n
+        }
+    }
+}
+
+/// `char` (codepoint) → UTF-8 bytes, written directly into `buf[0..cap)`.
+/// Invalid codepoints (out of range / surrogate half) are replaced with
+/// U+FFFD, mirroring `nova_char_to_str` (conv.h). Returns bytes written
+/// (1..4; `<= cap`, truncates defensively).
+fn char_fmt(v char, buf *mut u8, cap int) -> int {
+    mut cp = v as int
+    if cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
+        cp = 0xFFFD
+    }
+    mut need = 1
+    if cp >= 0x10000 {
+        need = 4
+    } else if cp >= 0x800 {
+        need = 3
+    } else if cp >= 0x80 {
+        need = 2
+    }
+
+    ro n = need.min(cap)
+    unsafe {
+        if need == 1 {
+            if n >= 1 { buf.write_at(0, cp as u8) }
+        } else if need == 2 {
+            if n >= 1 { buf.write_at(0, (0xC0 | (cp >> 6)) as u8) }
+            if n >= 2 { buf.write_at(1, (0x80 | (cp & 0x3F)) as u8) }
+        } else if need == 3 {
+            if n >= 1 { buf.write_at(0, (0xE0 | (cp >> 12)) as u8) }
+            if n >= 2 { buf.write_at(1, (0x80 | ((cp >> 6) & 0x3F)) as u8) }
+            if n >= 3 { buf.write_at(2, (0x80 | (cp & 0x3F)) as u8) }
+        } else {
+            if n >= 1 { buf.write_at(0, (0xF0 | (cp >> 18)) as u8) }
+            if n >= 2 { buf.write_at(1, (0x80 | ((cp >> 12) & 0x3F)) as u8) }
+            if n >= 3 { buf.write_at(2, (0x80 | ((cp >> 6) & 0x3F)) as u8) }
+            if n >= 4 { buf.write_at(3, (0x80 | (cp & 0x3F)) as u8) }
+        }
+    }
+    n
+}
+
+// ─── float — the sole C-extern (D422 §5) ───
+
+/// `extern "C" fn` — LITERAL C symbol name, no `nova_` prefix (D282). Body:
+/// `nova_rt/nova_rt.h` (`fmt_f64_into`, right after `nova_f32_shortest`),
+/// reusing the existing `nova_f64_shortest` engine for `kind == 0`. Writes at
+/// most `cap` bytes into `buf`, returns bytes written (truncates defensively).
+/// `kind`: 0=Shortest, 1=Fixed (`%.*f`), 2=Sci (`%.*e`) — see `fmt_f64` below
+/// for the enum-typed `.nv`-side wrapper.
+extern "C" fn fmt_f64_into(buf *mut u8, cap int, v f64, kind int, prec int) -> int
+
+/// `.nv`-side wrapper: converts `FloatKind` → the `int` `fmt_f64_into`
+/// carries across the `extern "C"` ABI boundary (D422 §5 — enums don't cross
+/// `extern "C"` directly).
+fn fmt_f64(buf *mut u8, cap int, v f64, kind FloatKind, prec int) -> int {
+    ro k = match kind {
+        FloatKind.Shortest => 0,
+        FloatKind.Fixed => 1,
+        FloatKind.Sci => 2,
+    }
+    fmt_f64_into(buf, cap, v, k, prec)
+}
+
+// ─── Tests (Plan 208 Ф.1 gate) ───
+//
+// INLINE (not a peer `fmt_buf_test.nv`): every primitive above is
+// deliberately non-exported (D422 §5 "не публичные"), and `std/src/runtime/`
+// holds many single-file modules (each file = its OWN module leaf, e.g.
+// `raw_mem.nv` → `runtime.raw_mem`, `sync.nv`/`sync_test.nv` →
+// `runtime.sync`/`runtime.sync_test`) rather than one shared folder-module
+// (unlike `collections/vec/`) — a `fmt_buf_test.nv` peer would be a genuinely
+// SEPARATE module (`runtime.fmt_buf_test`, enforced by E_D78_MODULE_PATH_MISMATCH)
+// that could only reach these symbols via `import`, which would force them
+// `export`ed. Inline `test { }` blocks in the same file (precedented
+// elsewhere in std — `hashmap.nv`/`range.nv`/`vec_iter.nv`/`duration.nv` all
+// mix impl + tests in one file) keep the primitives private while still
+// exercising them directly.
+
+// Scratch buffer: a `Vec[u8]` sized generously for these tests, exposing a
+// raw `*mut u8` via `.ptr()` for the primitives under test. Reads back via
+// `unsafe { buf.ptr().read_at(i) }` — NOT `buf[i]` — since these primitives
+// write through the raw pointer directly, bypassing `Vec`'s own `len`
+// tracking (`buf.len()` stays `0` the whole time).
+fn scratch(cap int) -> []u8 => []u8.new(cap: cap)
+
+test "int_fmt: decimal positive/negative/zero" {
+    mut buf = scratch(24)
+    ro spec = FmtSpec.new()
+
+    ro n1 = int_fmt(42, buf.ptr(), 24, spec)
+    assert(n1 == 2)
+    unsafe {
+        assert(buf.ptr().read_at(0) == ('4' as u8))
+        assert(buf.ptr().read_at(1) == ('2' as u8))
+    }
+
+    ro n2 = int_fmt(-5, buf.ptr(), 24, spec)
+    assert(n2 == 2)
+    unsafe {
+        assert(buf.ptr().read_at(0) == ('-' as u8))
+        assert(buf.ptr().read_at(1) == ('5' as u8))
+    }
+
+    ro n3 = int_fmt(0, buf.ptr(), 24, spec)
+    assert(n3 == 1)
+    unsafe { assert(buf.ptr().read_at(0) == ('0' as u8)) }
+}
+
+test "int_fmt: zero_pad width" {
+    mut buf = scratch(24)
+    ro spec = FmtSpec { ...FmtSpec.new(), width: 4, zero_pad: true }
+
+    ro n = int_fmt(42, buf.ptr(), 24, spec)
+    assert(n == 4)
+    unsafe {
+        assert(buf.ptr().read_at(0) == ('0' as u8))
+        assert(buf.ptr().read_at(1) == ('0' as u8))
+        assert(buf.ptr().read_at(2) == ('4' as u8))
+        assert(buf.ptr().read_at(3) == ('2' as u8))
+    }
+
+    // Negative zero_pad: '0' padding goes BETWEEN the sign and the digits.
+    ro n2 = int_fmt(-7, buf.ptr(), 24, spec)
+    assert(n2 == 4)
+    unsafe {
+        assert(buf.ptr().read_at(0) == ('-' as u8))
+        assert(buf.ptr().read_at(1) == ('0' as u8))
+        assert(buf.ptr().read_at(2) == ('0' as u8))
+        assert(buf.ptr().read_at(3) == ('7' as u8))
+    }
+}
+
+test "int_fmt: hex radix (lower/upper/alt), oct, bin" {
+    mut buf = scratch(24)
+
+    ro hex_lower = FmtSpec { ...FmtSpec.new(), radix: 16 }
+    ro nh = int_fmt(255, buf.ptr(), 24, hex_lower)
+    assert(nh == 2)
+    unsafe {
+        assert(buf.ptr().read_at(0) == ('f' as u8))
+        assert(buf.ptr().read_at(1) == ('f' as u8))
+    }
+
+    ro hex_upper = FmtSpec { ...FmtSpec.new(), radix: 16, upper: true }
+    ro nhu = int_fmt(255, buf.ptr(), 24, hex_upper)
+    assert(nhu == 2)
+    unsafe {
+        assert(buf.ptr().read_at(0) == ('F' as u8))
+        assert(buf.ptr().read_at(1) == ('F' as u8))
+    }
+
+    ro hex_alt = FmtSpec { ...FmtSpec.new(), radix: 16, alt: true }
+    ro nha = int_fmt(255, buf.ptr(), 24, hex_alt)
+    assert(nha == 4)
+    unsafe {
+        assert(buf.ptr().read_at(0) == ('0' as u8))
+        assert(buf.ptr().read_at(1) == ('x' as u8))
+        assert(buf.ptr().read_at(2) == ('f' as u8))
+        assert(buf.ptr().read_at(3) == ('f' as u8))
+    }
+
+    ro oct = FmtSpec { ...FmtSpec.new(), radix: 8 }
+    ro no = int_fmt(8, buf.ptr(), 24, oct)
+    assert(no == 2)
+    unsafe {
+        assert(buf.ptr().read_at(0) == ('1' as u8))
+        assert(buf.ptr().read_at(1) == ('0' as u8))
+    }
+
+    ro bin = FmtSpec { ...FmtSpec.new(), radix: 2 }
+    ro nb = int_fmt(5, buf.ptr(), 24, bin)
+    assert(nb == 3)
+    unsafe {
+        assert(buf.ptr().read_at(0) == ('1' as u8))
+        assert(buf.ptr().read_at(1) == ('0' as u8))
+        assert(buf.ptr().read_at(2) == ('1' as u8))
+    }
+
+    // radix reinterprets negative values as the raw two's-complement bit
+    // pattern (Rust `{:x}` of -1i64 == "ff..ff") — 64-bit `int` on this
+    // platform → 16 hex digits, all 'f'.
+    ro nneg = int_fmt(-1, buf.ptr(), 24, hex_lower)
+    assert(nneg == 16)
+    unsafe {
+        mut i = 0
+        while i < 16 {
+            assert(buf.ptr().read_at(i) == ('f' as u8))
+            i = i + 1
+        }
+    }
+}
+
+test "int_fmt: cap truncation never overruns" {
+    // cap smaller than the rendered length — must not panic/overrun, and
+    // must report the truncated length actually written.
+    mut buf = scratch(4)
+    ro spec = FmtSpec { ...FmtSpec.new(), width: 8, zero_pad: true }
+    ro n = int_fmt(42, buf.ptr(), 2, spec)
+    assert(n == 2)
+}
+
+test "bool_fmt: true/false" {
+    mut buf = scratch(8)
+    ro nt = bool_fmt(true, buf.ptr(), 8)
+    assert(nt == 4)
+    unsafe {
+        assert(buf.ptr().read_at(0) == ('t' as u8))
+        assert(buf.ptr().read_at(1) == ('r' as u8))
+        assert(buf.ptr().read_at(2) == ('u' as u8))
+        assert(buf.ptr().read_at(3) == ('e' as u8))
+    }
+
+    ro nf = bool_fmt(false, buf.ptr(), 8)
+    assert(nf == 5)
+    unsafe {
+        assert(buf.ptr().read_at(0) == ('f' as u8))
+        assert(buf.ptr().read_at(1) == ('a' as u8))
+        assert(buf.ptr().read_at(2) == ('l' as u8))
+        assert(buf.ptr().read_at(3) == ('s' as u8))
+        assert(buf.ptr().read_at(4) == ('e' as u8))
+    }
+}
+
+test "char_fmt: 1/2/3/4-byte UTF-8 encodings" {
+    mut buf = scratch(8)
+
+    ro n1 = char_fmt('A', buf.ptr(), 8)
+    assert(n1 == 1)
+    unsafe { assert(buf.ptr().read_at(0) == ('A' as u8)) }
+
+    ro n2 = char_fmt('\u{E9}', buf.ptr(), 8)   // 'é'
+    assert(n2 == 2)
+    unsafe {
+        assert(buf.ptr().read_at(0) == 0xC3 as u8)
+        assert(buf.ptr().read_at(1) == 0xA9 as u8)
+    }
+
+    ro n3 = char_fmt('\u{4E2D}', buf.ptr(), 8)  // '中'
+    assert(n3 == 3)
+    unsafe {
+        assert(buf.ptr().read_at(0) == 0xE4 as u8)
+        assert(buf.ptr().read_at(1) == 0xB8 as u8)
+        assert(buf.ptr().read_at(2) == 0xAD as u8)
+    }
+
+    ro n4 = char_fmt('\u{1F600}', buf.ptr(), 8)  // grinning face emoji
+    assert(n4 == 4)
+    unsafe {
+        assert(buf.ptr().read_at(0) == 0xF0 as u8)
+        assert(buf.ptr().read_at(1) == 0x9F as u8)
+        assert(buf.ptr().read_at(2) == 0x98 as u8)
+        assert(buf.ptr().read_at(3) == 0x80 as u8)
+    }
+}
+
+test "fmt_f64_into: Shortest/Fixed/Sci kinds" {
+    mut buf = scratch(64)
+
+    // kind 1 = Fixed
+    ro nf = fmt_f64_into(buf.ptr(), 64, 3.14159, 1, 2)
+    assert(nf == 4)
+    unsafe {
+        assert(buf.ptr().read_at(0) == ('3' as u8))
+        assert(buf.ptr().read_at(1) == ('.' as u8))
+        assert(buf.ptr().read_at(2) == ('1' as u8))
+        assert(buf.ptr().read_at(3) == ('4' as u8))
+    }
+
+    // kind 0 = Shortest (round-trip minimal) — same engine as println(float).
+    ro ns = fmt_f64_into(buf.ptr(), 64, 2.5, 0, 0)
+    assert(ns == 3)
+    unsafe {
+        assert(buf.ptr().read_at(0) == ('2' as u8))
+        assert(buf.ptr().read_at(1) == ('.' as u8))
+        assert(buf.ptr().read_at(2) == ('5' as u8))
+    }
+
+    // kind 2 = Sci
+    ro ne = fmt_f64_into(buf.ptr(), 64, 1234.5, 2, 1)
+    assert(ne > 0)
+    unsafe { assert(buf.ptr().read_at(1) == ('.' as u8)) }
+}
+
+test "fmt_f64: FloatKind enum wrapper matches fmt_f64_into" {
+    mut buf = scratch(64)
+    ro n = fmt_f64(buf.ptr(), 64, 3.14159, FloatKind.Fixed, 2)
+    assert(n == 4)
+    unsafe {
+        assert(buf.ptr().read_at(0) == ('3' as u8))
+        assert(buf.ptr().read_at(2) == ('1' as u8))
+        assert(buf.ptr().read_at(3) == ('4' as u8))
+    }
+
+    ro n2 = fmt_f64(buf.ptr(), 64, 2.5, FloatKind.Shortest, 0)
+    assert(n2 == 3)
+}
