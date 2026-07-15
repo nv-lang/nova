@@ -5,6 +5,7 @@ pub mod may_gc;
 pub mod overload_sig;
 pub mod preempt_keep;
 pub mod runtime_registry;
+pub mod split_tu;
 pub mod sum_schema_registry;
 pub mod unicode_data;
 
