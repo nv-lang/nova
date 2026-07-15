@@ -43,6 +43,13 @@ pub(crate) const RUNTIME_DEFINED_TYPES: &[&str] = &[
     "MutexGuard", "ReadGuard", "WriteGuard", "Permit", "OnceGuard",
     // lang-item str → hand-written typedef nova_str (nova_rt.h)
     "str",
+    // Plan 207 [M-cas-return-witnessed-value]: CAS-witness value structs
+    // (`NovaTuple_CasRaw*` in sync_primitives.h) — raw (ok, witness) pair
+    // returned by the private `@__cas_raw` intrinsic; the public
+    // compare_exchange/_weak wrapper (plain .nv fn) builds Result[(), T] from it.
+    "CasRawI8", "CasRawI16", "CasRawI32", "CasRawI64",
+    "CasRawU8", "CasRawU16", "CasRawU32", "CasRawU64",
+    "CasRawInt", "CasRawUint", "CasRawBool",
 ];
 
 /// Plan 39 Issue A: classification of `with`-block trail type for
@@ -14440,6 +14447,40 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         schema.insert(mangled, (param_c_types.clone(), ret));
                     }
                     self.effect_schemas.insert(t.name.clone(), schema);
+                }
+            }
+            // Plan 207: RUNTIME_DEFINED_TYPES named-tuple registration —
+            // mirrors Sum/Effect above. Needed for hand-written value structs
+            // (e.g. CasRaw* CAS-witness carriers) pre-declared directly in a
+            // nova_rt header as `NovaTuple_<Name>`. Struct-body emission is
+            // skipped (already defined in the header), but codegen still
+            // needs the field schema / `NovaTuple_<Name>` C-type alias to
+            // lower field access (`.ok`/`.witness`) and local-var/return
+            // types — without this, an unregistered NamedTuple name falls
+            // back to the generic unknown-type `Nova_<Name>*` pointer-record
+            // convention (wrong ABI vs the value-struct actually declared in
+            // the header).
+            if let TypeDeclKind::NamedTuple(fields) = &t.kind {
+                if !self.record_schemas.contains_key(&t.name) {
+                    let mut schema = HashMap::new();
+                    let mut nt_field_c_tys: Vec<String> = Vec::new();
+                    for f in fields {
+                        let ty_c = self.type_ref_to_c(&f.ty)?;
+                        schema.insert(f.name.clone(), ty_c.clone());
+                        nt_field_c_tys.push(ty_c.clone());
+                    }
+                    self.record_schemas.insert(t.name.clone(), schema);
+                    self.record_field_order.insert(
+                        t.name.clone(),
+                        fields.iter().map(|f| f.name.clone()).collect(),
+                    );
+                    self.value_struct_field_tys
+                        .insert(format!("NovaTuple_{}", t.name), nt_field_c_tys);
+                    let field_defaults: Vec<(String, Option<crate::ast::Expr>)> = fields.iter()
+                        .map(|f| (f.name.clone(), f.default.clone()))
+                        .collect();
+                    self.named_tuple_field_defaults.insert(t.name.clone(), field_defaults);
+                    self.type_aliases.insert(t.name.clone(), format!("NovaTuple_{}", t.name));
                 }
             }
             return Ok(());
