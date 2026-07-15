@@ -2882,7 +2882,25 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
             if (v >= 0) _watchdog_threshold_secs = v;
         }
     }
-    bool _watchdog_enabled = !_nova_on_worker_thread()
+    /* [M-187-sse-live-tls-server-hang] diagnostic-only, opt-in (2026-07-15):
+     * the worker-thread nested-supervised path (this same fn, invoked from
+     * `nova_runtime_worker_pump_scope`'s caller when a `supervised{}` block
+     * runs INSIDE an already-spawned fiber) has NO dump path at all today —
+     * `_nova_on_worker_thread()` unconditionally disables the watchdog there.
+     * That leaves this class of hang (nested supervised deep inside a spawned
+     * connection-handler fiber, aggregator flagship's own shape) completely
+     * undiagnosable via the existing mechanism. Opt-in via a SEPARATE env var
+     * (default off — zero behavior change unless explicitly requested) lets
+     * worker-thread scopes dump too; `_watchdog_active_scope` stays a single
+     * global (cosmetic race across concurrent workers, dump's per-worker/
+     * per-slot fiber detail below is unaffected — that part is what actually
+     * localizes the stuck fiber). Not wired into production defaults. */
+    bool _watchdog_worker_opt_in = false;
+    {
+        const char* wenv = getenv("NOVA_WATCHDOG_WORKER");
+        if (wenv && wenv[0] == '1') _watchdog_worker_opt_in = true;
+    }
+    bool _watchdog_enabled = (!_nova_on_worker_thread() || _watchdog_worker_opt_in)
                               && _watchdog_threshold_secs > 0;
     if (_watchdog_enabled) {
         extern void nova_runtime_set_watchdog_scope(struct NovaFiberQueue* q);
