@@ -38560,3 +38560,16 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   этой волны — идентичная ошибка) баг диспатча вне периметра vendor-ffi, см.
   новый маркер [M-tls-xpkg-decode_utf8-tlsversion-dispatch-broken]
   (backlog-followups.md).
+
+## 187 weather-live real-handshake + SSE-hang находка (2026-07-15, оркестратор)
+
+- Фиксы #3/#4/#5 (watchdog cc0e81d6d / diamond 4ab70a144 / consume 70c4eff02)
+  проверены ЛИЧНО: watchdog держит 9с idle без env; lock=1 tls; echo_server
+  линкуется. weather-live end-to-end через /api/run — 4/4 done, реальный
+  open-meteo HTTPS, 360мс, 0 leaks.
+- live.nv: снят устаревший хардкод-обход weather-live (возвращал «deferred»),
+  заменён на настоящий TlsStream.connect + HTTPS GET + read.
+- НОВОЕ [M-187-sse-live-tls-server-hang] P1: SSE-путь weather-live
+  (/api/events?...mode=live) вешает сервер (2-й запрос); /api/run тот же —
+  ОК 5×5. Клинит SSE+live-TLS-комбинация (remote-park не дренится на закрытии
+  SSE). Демо-обход: браузерный weather-live не открывать.
