@@ -156,6 +156,103 @@ parts даже при абсурдно малом пороге; A3 duplicate-nam
 все 18 тестов зелёные. `cargo build --release` (сам crate, не test) —
 чисто, 0 ошибок, split_tu участвует в обычной сборке.
 
-## Следующие атомы (план)
-- A4: провести флаг + порог (>2МБ/>200 fn) через `emit_module`, back-compat
-  обёртка возврата.
+## A4 — статус: ГОТОВО
+
+`CEmitter::emit_module_multi_tu(self, module, cu_name) -> Result<(EmitOutput, Vec<String>), String>`
+(emit_c.rs, сразу после `emit_module`). **`emit_module` не тронут вообще** —
+back-compat буквально: все существующие вызывающие (main.rs/test_runner.rs/
+bench/run.rs) продолжают звать `emit_module` напрямую и получают ТОЧНО ту
+же форму, что и всегда. `emit_module_multi_tu` — новая, НИКЕМ ПОКА НЕ
+ВЫЗЫВАЕМАЯ обёртка (её будущий вызывающий — Ф.2 тулчейн, вне периметра
+Ф.1): гоняет ту же эмиссию, затем ЕСЛИ `NOVA_MULTI_TU` включён И
+`exceeds_multi_tu_threshold` (>2МБ ИЛИ примерно >200 `") {"`-вхождений,
+дешёвая линейная эвристика — точный подсчёт функций дублировал бы работу
+`split_tu` на большом CU, что и так дорого) — вызывает `split_tu` и
+возвращает `EmitOutput::Split`; иначе — `EmitOutput::Single` (тот же
+`String`, что дал бы `emit_module`). `pub enum EmitOutput { Single(String),
+Split { common_h: String, parts: Vec<String> } }` экспортирован из
+`codegen::mod`.
+
+Байт-идентичность дефолта — ПОДТВЕРЖДЕНА ЭМПИРИЧЕСКИ (не только по
+построению): собран `nova-cli` (release) в этом worktree И отдельно в
+temp-worktree на базовом коммите `ebd11ca4e` (`d:/Sources/nv-lang/nova-209-baseline-tmp`,
+удалён после проверки), оба прогнаны на `examples/getting_started.nv`
+(`NOVA_MULTI_TU` не установлен, `NOVA_CACHE=0`), `.c` вытащены через
+`--keep-artifacts`. `diff` показал ТОЛЬКО reorder 5 строк
+`typedef struct Nova_X Nova_X;` (порядок HashMap-итерации — **pre-existing
+недетерминизм, НЕ вызван Plan 209**: воспроизведён между ДВУМЯ прогонами
+ОДНОГО И ТОГО ЖЕ nova-209f1-бинаря с NOVA_MULTI_TU не установлен — тот же
+разъезд). После нормализации (те же 5 строк как SET, не порядок) — ОСТАЛЬНОЙ
+файл (3970 из 3974 строк) побайтово идентичен baseline. Вердикт: байт-
+идентичность дефолтного пути подтверждена (да), с уже известной
+неродственной оговоркой про typedef-порядок.
+
+## ⚠ КРИТИЧЕСКАЯ НАХОДКА (вне периметра A1-A4, но обязана быть в отчёте)
+
+При сквозной проверке (`NOVA_MULTI_TU=1`, тот же `getting_started.nv`,
+compile+link — **это Ф.2/оркестратор объём, но я прогнал точечно для
+самопроверки A1**) — **линк падает**: `undefined symbol:
+Nova_HashMap_method_merge_from` / `Nova_HashMap_method_values`,
+воспроизводится 3/3 раз (при NOVA_MULTI_TU не установлен — 3/3 успех).
+
+**Корень (найден, НЕ исправлен — вне периметра Ф.1):** `Set[T]` embeds
+`HashMap[...]`; delegated-method wrapper'ы (emit_c.rs, блок
+`target_field`/`base_c_name`, ~emit_type_decl, метод типа "embed
+delegation") **безусловно эмитятся для типа-обёртки** (`Nova_Set_method_
+merge_from`, `Nova_Set_method_values`), вызывая base-метод `HashMap` по
+ИМЕНИ (`base_c_name` из `method_overloads`) — но НИКОГДА явно не
+регистрируют/enqueue'ят monomorphization этого base-метода (или самого
+generic-type-instance `HashMap[...]`) в `mono_worklist`/generic-type
+worklist. Если пользовательская Nova-программа не вызывает `HashMap`-метод
+НАПРЯМУЮ нигде больше — тело `Nova_HashMap_method_merge_from`/`_values`
+НИКОГДА не эмитится. **Раньше это маскировалось `static`+dead-code-
+elimination**: `Nova_Set_method_merge_from` тоже static и (если
+пользовательский код не зовёт `.merge_from()` на Set) недостижим →
+компилятор (`-O2`) целиком выкидывает его ДО того как линкер увидел бы
+ссылку на несуществующий `Nova_HashMap_method_merge_from`. Промоушн в
+external (A1, `top_level_storage()`) убирает эту DCE-защиту: компилятор
+обязан считать функцию потенциально вызываемой из другой TU → тело
+остаётся → линк падает на реально отсутствующем symbol'е.
+
+**Вывод.** Это pre-existing дефект mono-регистрации embedded/delegated
+методов (маскировался static-DCE), НЕ вызван и НЕ специфичен для
+`split_tu`/multi-TU — voзникнет от ЛЮБОГО механизма, снимающего `static` с
+подобных wrapper'ов. Обнаружен ИМЕННО благодаря Plan 209 (промоушн
+делает его наблюдаемым). **НЕ исправлял** — вне периметра Ф.1 (это
+отдельная инвестигация в mono-collector для embedded-полей generic-типов,
+не "codegen split"); попытка блиц-фикса вслепую рискованна (могло быть
+глубже: сам generic-type-instance `HashMap[...]` мог не enqueue'иться, не
+только его метод).
+
+**Рекомендация для Ф.2/Ф.3 (владельцу):** ПЕРЕД широким включением
+`NOVA_MULTI_TU` для реальных CU — либо (а) исправить mono-регистрацию
+embedded/delegated методов (usage-discovery pre-pass должен видеть сквозь
+embed-поля другого generic-типа), либо (б) принять, что
+compile+link-гейт Ф.2/Ф.3 ("линк без multiple-definition") ловит подобные
+кейсы как раз по назначению — но нужно ЗАЛОЖИТЬ ВРЕМЯ на их разбор
+(вероятно НЕ единичный кейс — паттерн "delegated-method wrapper без явного
+enqueue base-метода" может повторяться где угодно, где generic-тип
+embed'ится в другой generic-тип). Split_tu/A1-A4 сама механика — корректна;
+это независимый codegen-дефект, который multi-TU (или ЛЮБОЙ non-static
+рефакторинг) неизбежно вскрывает.
+
+## Итог Ф.1 (сжато)
+- A1: ГОТОВО. ~60 top-level static-сайтов через `top_level_storage()`/
+  `top_level_storage_inline()`. cargo build: 0 ошибок.
+- A2: ГОТОВО. `split_tu` — сегментатор+классификатор+auto-decl+дедуп.
+  18 unit-тестов зелёных (standalone rustc, см. выше почему не cargo test).
+- A3: ГОТОВО. Инвариант уникальности встроен в `split_tu` (`Result<_,
+  String>` на дубликате), + debug_assert на common.h-покрытие.
+- A4: ГОТОВО. `emit_module_multi_tu` back-compat обёртка + порог-гейт;
+  `emit_module` не тронут. Байт-идентичность дефолта подтверждена эмпирически.
+- ⚠ Критическая находка (вне периметра): mono-регистрация embedded/
+  delegated методов имеет pre-existing дыру, маскировавшуюся static-DCE;
+  промоушн (A1) её вскрывает. Задокументировано выше, требует отдельной
+  волны ДО широкого Ф.2/Ф.3 rollout.
+- Полный `nova test`/conformance НЕ гонялся (вне периметра, дорого/долго —
+  явно исключено заданием). Мега-CU split ON — НЕ прогонялся руками на
+  реальном 13Мб CU (тоже вне периметра Ф.1 по заданию); структурная
+  корректность split_tu подтверждена unit-тестами на синтетических .c,
+  покрывающих все классы конструкций, реально присутствующие в emit_c.rs
+  выводе (typedef, decl-only, fn-def, global-def скаляр/brace-init,
+  known-macro, cond-block с/без определения, вложенность).

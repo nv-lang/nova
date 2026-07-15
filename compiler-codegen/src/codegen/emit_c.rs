@@ -1901,6 +1901,45 @@ struct DeferScope {
     is_loop_body: bool,
 }
 
+/// Plan 209 Ф.1 (A4): result of `CEmitter::emit_module_multi_tu`. See that
+/// function's doc for the byte-identity guarantee on the `Single` arm.
+pub enum EmitOutput {
+    /// Multi-TU disabled, or CU under threshold: the single `.c` string,
+    /// byte-identical to what `emit_module` alone would have returned.
+    Single(String),
+    /// Multi-TU enabled AND CU over threshold: one `_common.h` (decl-only)
+    /// + N `_partK.c` bodies (`split_tu`, A2).
+    Split { common_h: String, parts: Vec<String> },
+}
+
+/// Plan 209 Ф.1 (A4), recon-notes §6: multi-TU only pays for CUs above
+/// ~2MB of finalized output OR (approximately) ~200 top-level function
+/// definitions — below that, split+multi-file-link overhead isn't worth
+/// it and the CU stays a single `.c` even with `NOVA_MULTI_TU=1`.
+const MULTI_TU_SIZE_THRESHOLD_BYTES: usize = 2 * 1024 * 1024;
+const MULTI_TU_FN_COUNT_THRESHOLD: usize = 200;
+/// Plan 209 Ф.1 (A2 §3): target bytes per `_partK.c` once split.
+const MULTI_TU_PART_THRESHOLD_BYTES: usize = 500 * 1024;
+
+/// Cheap (single linear scan, no tokenizing) approximation of "is this CU
+/// big enough to bother splitting?" — exact top-level function counting is
+/// `split_tu`'s job (which this function deliberately avoids duplicating
+/// for a CU that may be many MB; that's exactly the cost Plan 209 exists to
+/// amortize, so the GATE deciding whether to pay it must itself stay cheap).
+/// `") {"` is a reasonable proxy for "a function signature's closing paren
+/// immediately followed by its opening brace" — it can only ever
+/// UNDER-count (a `") {"` inside a string/comment would over-count, but
+/// none of this codebase's generated top-level text contains that
+/// particular 3-byte sequence inside a literal/comment in practice) or
+/// slightly over/under vs. the true count; either way it only feeds a
+/// coarse "> 200" threshold decision, never correctness.
+fn exceeds_multi_tu_threshold(finalized: &str) -> bool {
+    if finalized.len() > MULTI_TU_SIZE_THRESHOLD_BYTES {
+        return true;
+    }
+    finalized.matches(") {").count() > MULTI_TU_FN_COUNT_THRESHOLD
+}
+
 impl CEmitter {
     pub fn new() -> Self {
         Self {
@@ -7536,6 +7575,41 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ));
         }
         Ok((self.out, warnings))
+    }
+
+    /// Plan 209 Ф.1 (A4): multi-TU-aware wrapper around `emit_module`.
+    ///
+    /// `emit_module` itself is left COMPLETELY UNCHANGED by Plan 209 — every
+    /// existing caller (`main.rs`, `test_runner.rs`, `bench/run.rs`) keeps
+    /// calling it directly and keeps getting exactly the single-`.c` shape
+    /// it always has (back-compat, per recon-notes.md §8 A4). This wrapper
+    /// is the future Ф.2 toolchain's entry point: it runs the identical
+    /// emission, then — ONLY if multi-TU is enabled (`NOVA_MULTI_TU`) AND
+    /// the resulting CU is over the size/fn-count threshold (recon-notes
+    /// §6) — hands the finalized string to `split_tu` (A2) and returns the
+    /// split shape instead. Nothing in this repo calls this function yet
+    /// (Ф.2 — parallel compile+link — is out of scope for Ф.1); it exists
+    /// so Ф.2 has a stable, already-gated entry point to wire up.
+    ///
+    /// Byte-identity guarantee: when multi-TU is disabled (the default) OR
+    /// the CU is under threshold, this returns `EmitOutput::Single` wrapping
+    /// the EXACT SAME string `emit_module` would have returned — `split_tu`
+    /// is never invoked on that path.
+    pub fn emit_module_multi_tu(
+        self,
+        module: &Module,
+        cu_name: &str,
+    ) -> Result<(EmitOutput, Vec<String>), String> {
+        let multi_tu_enabled = self.multi_tu_enabled;
+        let (finalized, warnings) = self.emit_module(module)?;
+        if !multi_tu_enabled || !exceeds_multi_tu_threshold(&finalized) {
+            return Ok((EmitOutput::Single(finalized), warnings));
+        }
+        let split = super::split_tu::split_tu(&finalized, cu_name, MULTI_TU_PART_THRESHOLD_BYTES)?;
+        Ok((
+            EmitOutput::Split { common_h: split.common_h, parts: split.parts },
+            warnings,
+        ))
     }
 
     /// Mangle a test name and append a numeric suffix to guarantee uniqueness.
