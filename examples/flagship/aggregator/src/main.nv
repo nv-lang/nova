@@ -384,6 +384,18 @@ fn snapshot_body(legend str, mode str, seed int) Time -> ServerResponse {
 // `http.server`/`ServeMux`/`sse_event`), just JSON VALUE text, the same
 // class of code `report_json.nv` itself wrote before deliverable 2's
 // typed-serde migration.
+//
+// RE-VERIFIED 2026-07-16 (empirical, not gone-by-inspection): candidate
+// closure by the serde wave (`98e3663cc` et al.) checked directly — that
+// commit fixes a DIFFERENT bug (`[M-serde-encode-pointer-op-regression]`,
+// type-qualified `fn_ret` for mono blanket methods) and does not touch this
+// collision. Temporarily swapped `snapshot_dto_json(dto)` back to the
+// already-existing typed path (`snapshot_to_json(dto)`, `report_json.nv`)
+// and rebuilt this package (main-branch `nova.exe`, unchanged compiler):
+// IDENTICAL link failure, same undefined symbol, same monomorphization site
+// (`json_encode____NovaValue_SnapshotDto`). Workaround stays.
+
+
 
 fn json_escape(s str) -> str => s.replace("\\", "\\\\").replace("\"", "\\\"")
 
