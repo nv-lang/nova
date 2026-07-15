@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# Plan 201 — Unified Formatter (`@display(mut f Fmt)`, байтовый `Write`, zero-alloc)
+# Plan 208 — Unified Formatter (`@display(mut f Fmt)`, байтовый `Write`, zero-alloc)
 
 **Статус:** ✅ ДИЗАЙН ФИНАЛИЗИРОВАН 2026-07-15 (все развилки закрыты; финальные сигнатуры §9 + карта исполнения
 §10 + гейты/риски §11). **Ждёт owner-go на Фазу 0** (спека D422 + амендменты). Реализация язык-меняющая —
