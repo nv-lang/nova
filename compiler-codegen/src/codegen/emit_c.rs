@@ -36774,6 +36774,42 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
 
+                // D39 embed generic-mono-proxy fix (recon-d39-embed): an
+                // embed-delegated method (`values`/`keys`/`merge_from`/
+                // `filter`/`equal` on `Set[T]` via `use map HashMap[T, ()]`)
+                // has NO own FnDecl on the wrapper — `generic_type_methods
+                // ["Set"]` misses it, so block 5b below (which drives the
+                // already-correct `len()`/`insert()` dispatch) can't find a
+                // `method_decl` and falls through to the coarse single-key
+                // `method_receivers["merge_from"] = ("HashMap", true)`
+                // fallback with an UN-projected receiver — a mono'd
+                // `Nova_Set____T*` gets read through the erased
+                // `Nova_HashMap_method_*` as if it WERE the (layout-
+                // compatible, hence no crash) erased HashMap struct: silent
+                // no-op / empty-iterator mis-dispatch.
+                //
+                // Fix: when `method` is NOT an own method of the receiver's
+                // wrapper base type but IS a real (own) method of an embedded
+                // field's type, rewrite the receiver — and any SAME-WRAPPER-
+                // TYPED argument (facet B: `other Set[T]` param of HashMap's
+                // `merge_from(other HashMap[K,V])`) — to project through the
+                // embed field (`obj.map` / `arg.map`), exactly mirroring what
+                // a hand-written `@map.merge_from(other.map)` body would do.
+                // Block 5b then resolves the MATERIALIZED embedded-field type
+                // and dispatches to the real mono'd method — the same
+                // mechanism `len()`/`insert()` already use. Own-method
+                // override-precedence is preserved (mirrors
+                // `emit_embed_proxies`'s override check): this only fires
+                // when the wrapper itself has no such method.
+                let d39_proxy = self.d39_embed_project(obj, method, args);
+                let obj: &Expr = d39_proxy.as_ref().map(|(o, _)| o).unwrap_or(obj);
+                let args: &[CallArg] = d39_proxy.as_ref().map(|(_, a)| a.as_slice()).unwrap_or(args);
+                // Re-derive `obj_ty` from the (possibly just-projected) `obj`
+                // so block 5b's `rt_trimmed`/`instance_opt` lookups see the
+                // embedded field's own materialized type. No-op (identical
+                // value) whenever the projection above did not fire.
+                let obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
+
                 // 5b. Plan 48 Ф.3: generic type instance method dispatch.
                 // If receiver type is a concrete generic instance (e.g. "Nova_HashMap____nova_str__nova_int*"),
                 // look up the method in generic_type_methods and emit a monomorphized instance.
@@ -49070,6 +49106,81 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         false
     }
 
+    /// D39 embed generic-mono-proxy projection (recon-d39-embed). For a method
+    /// call `obj.method(args)` where `method` is an AUTO-PROXIED embed
+    /// delegation — i.e. the receiver's wrapper base type has NO own FnDecl for
+    /// `method` (`generic_type_methods[base]` misses it) but an embedded field's
+    /// type DOES — rewrite the receiver (and any same-wrapper-typed argument)
+    /// to project through the embed field, exactly as a hand-written
+    /// `@<field>.method(other.<field>)` body would. Returns `Some((new_obj,
+    /// new_args))` when the projection fires, `None` otherwise (identity).
+    ///
+    /// This unifies emit (`emit_call`) and inference (`infer_call_ret_c`) so a
+    /// mono'd wrapper (`Set[int]` embedding `HashMap[int,()]`) dispatches
+    /// delegated methods (`values`/`keys`/`merge_from`/…) through the embedded
+    /// field's OWN mono method — the same generic-instance path `len()`/
+    /// `insert()` already take — instead of the coarse single-key
+    /// `method_receivers` last-wins fallback that reads the whole wrapper
+    /// through a foreign (layout-compatible → silent no-op) erased struct.
+    ///
+    /// `&self` (read-only): safe to call from both the `&mut self` emit path and
+    /// the `&self` inference path.
+    fn d39_embed_project(
+        &self, obj: &Expr, method: &str, args: &[CallArg],
+    ) -> Option<(Expr, Vec<CallArg>)> {
+        let probe_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
+        let stripped = Self::debt_strip_value_or_nova_prefix_opt(&probe_ty)?;
+        let no_ptr = stripped.trim_end_matches('*').trim();
+        let recv_base = no_ptr.split("____").next().unwrap_or(no_ptr).to_string();
+        let method_stripped = method.trim_start_matches('@');
+        // Own method on the wrapper wins (override-precedence): skip projection.
+        let has_own = self.generic_type_methods.get(&recv_base)
+            .map(|ms| ms.iter().any(|m| m.name == method_stripped))
+            .unwrap_or(false);
+        if has_own { return None; }
+        let embeds = self.embed_fields.get(&recv_base)?;
+        for (field_name, embedded_ty, _anon) in embeds {
+            let embed_has_method = self.generic_type_methods.get(embedded_ty)
+                .map(|ms| ms.iter().any(|m| m.name == method_stripped))
+                .unwrap_or(false);
+            if !embed_has_method { continue; }
+            let new_obj = Expr::new(
+                ExprKind::Member {
+                    obj: Box::new(obj.clone()),
+                    name: field_name.clone(),
+                },
+                obj.span,
+            );
+            // Facet B: project a SAME-WRAPPER-TYPED argument through the SAME
+            // embed field (e.g. `other Set[T]` param of HashMap's
+            // `merge_from(other HashMap[K,V])`). Gated on an EXACT static
+            // C-type match against the receiver's own (un-projected) type, so
+            // an already-embedded-typed arg is never double-projected.
+            let new_args: Vec<CallArg> = args.iter().map(|a| {
+                let a_ty = self.infer_expr_c_type(a.expr());
+                if !a_ty.is_empty() && a_ty == probe_ty {
+                    let projected = Expr::new(
+                        ExprKind::Member {
+                            obj: Box::new(a.expr().clone()),
+                            name: field_name.clone(),
+                        },
+                        a.expr().span,
+                    );
+                    match a {
+                        CallArg::Item(_) => CallArg::Item(projected),
+                        CallArg::Spread(_) => CallArg::Spread(projected),
+                        CallArg::Named { name: an, .. } =>
+                            CallArg::Named { name: an.clone(), value: projected },
+                    }
+                } else {
+                    a.clone()
+                }
+            }).collect();
+            return Some((new_obj, new_args));
+        }
+        None
+    }
+
     /// Plan 153.2 Ф.2 (STAGE 2 — generic-over-source adapters): does a COMPOUND
     /// mangled C-type name embed an UNRESOLVED generic-param placeholder? A
     /// type-param `T` lowers to the placeholder C token `Nova_T` (`Nova_T*` when
@@ -49383,6 +49494,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `variant_chain_as_member`.
                     if let Some(member_func) = self.variant_chain_as_member(func) {
                         return self.infer_call_ret_c(expr, &member_func, args);
+                    }
+                    // D39 embed generic-mono-proxy: mirror the emit-side receiver/
+                    // arg projection here so a delegated method's RETURN TYPE (e.g.
+                    // `Set[int].values()` → `ValuesIter[int,()]`, the type that
+                    // drives the `for v in a.values()` loop) resolves through the
+                    // embedded field's OWN mono method rather than the erased
+                    // wrapper. Without this the iterator temp is typed wrong and the
+                    // loop iterates zero times. Re-enter with the projected receiver.
+                    if let ExprKind::Member { obj, name: method } = &func.unwrap_turbofish().kind {
+                        if let Some((new_obj, new_args)) =
+                            self.d39_embed_project(obj, method, args)
+                        {
+                            let new_func = Expr::new(
+                                ExprKind::Member {
+                                    obj: Box::new(new_obj),
+                                    name: method.clone(),
+                                },
+                                func.span,
+                            );
+                            return self.infer_call_ret_c(expr, &new_func, &new_args);
+                        }
                     }
                     // D38 turbofish прозрачен для inference — но extract type_args
                     // ПЕРЕД unwrap чтобы Plan 54 Ф.4 return-type inference (для
