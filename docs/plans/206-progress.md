@@ -1,10 +1,63 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# Plan 206 — прогресс (Ф.0 + Ф.1 + Ф.1b)
+# Plan 206 — прогресс (Ф.0 + Ф.1 + Ф.1b + Ф.2)
 
-**Ветка:** `plan206-overflow` (worktree `d:/Sources/nv-lang/nova-206`, база `9c6af284b`).
-**Статус на 2026-07-15:** Ф.0/Ф.1/Ф.1b ЗАВЕРШЕНЫ и точечно верифицированы. Полный
+**Ветка:** `plan206-overflow` (worktree `d:/Sources/nv-lang/nova-206`, база `9c6af284b`,
+смёржен `main` @ `73ab1c44f` коммитом `9e96817c2`).
+**Статус на 2026-07-15:** Ф.0/Ф.1/Ф.1b/Ф.2 ЗАВЕРШЕНЫ и точечно верифицированы. Полный
 `spec_tests/conformance` мега-CU НЕ гонялся (по заданию — авторитетный гейт у владельца
-при вливании).
+при вливании; см. также находку ниже — этот каталог физически НЕ таргетируем per-файл).
+
+## Ф.2 — три `.nv`-бланкета + миграция overflow-зависимого std (ЗАВЕРШЕНО)
+
+- `std/src/prelude/protocols.nv` (сразу после `type Ints`): `@checked_add/_sub/_mul(rhs T)
+  -> Option[T]`, `@wrapping_add/_sub/_mul(rhs T) -> T`, `@saturating_add/_sub/_mul(rhs T)
+  -> T` (op-специфичная клампинг-формула — см. D423 §R4). Все три вызывают
+  компиляторный `@overflowing_*` (Ф.1) и не дублируют overflow-детект.
+- Тесты: `std/src/math/overflow_policy_test.nv` (8 test-блоков, все receiver'ы —
+  типизированные локали, НЕ inline `TypeName(литерал)` — см. находку ниже). НЕ рядом с
+  `protocols.nv` — `std.prelude.*` имеет auto-import global prelude отключённым (cycle
+  protection), что ломает `assert()`-инфраструктуру (`Nova_StringBuilder` struct-tag
+  CC-FAIL) для ЛЮБОГО теста в этом namespace; до Ф.2 там не было ни одного `*_test.nv`.
+- **Миграция гейт-блокера**: `spec_tests/conformance/inline_xoshiro_determinism.nv`
+  (xoshiro256++/splitmix64 — реальный файл, НЕ `app_effect_basic_t8_1.nv`, как было в
+  исходном задании; последний вообще не содержит PRNG-кода) + производственный
+  `std/src/testing/handlers.nv::seeded`. Было RED (`integer overflow: *`) до Ф.1b
+  trap-default — теперь явный `.wrapping_add`/`.wrapping_mul`.
+- **Аудит std нашёл ещё 5 файлов** с тем же классом бага (mod-2^32/2^64 арифметика по
+  спецификации алгоритма): `std/src/checksums/fnv.nv` (было RED,
+  `RUN-FAIL … integer overflow: *`), `std/src/collections/bloom_filter.nv`,
+  `std/src/crypto/md5.nv`/`sha1.nv`/`sha256.nv` (RFC 1321/FIPS 180-4 compression —
+  скорее всего тоже были бы RED на реалистичных входах, mod-2^32 add почти гарантированно
+  переполняется каждый блок). Все контрольные `*_test.nv` — PASS с идентичными test
+  vectors после миграции (чисто синтаксическая замена, поведение не менялось).
+- **Три pre-existing codegen/checker разрыва найдены** (НЕ фикс в рамках 206 — отдельно
+  трекнутые/задокументированные в D423 §«Неопределённости»):
+  1. Chaining `.checked_add`/… напрямую на primitive type-conversion CALL
+     (`i32(10).checked_add(5)`) -> `[P67-LEGACY] method call return type unknown` ICE
+     (`emit_c.rs:51424`). НЕ бьётся на ident/field/index/cast/free-fn-call receiver.
+     Тот же класс, что остальные `P67-LEGACY` (Plan 196.5 Stage-D — активная отдельная
+     чистка).
+  2. `Option[T] == Some(int-литерал)` для sized не-`int` T не адаптирует литерал к `T` —
+     уже зарегистрированный `[M-option-eq-some-literal-elem-adapt]`
+     (`docs/plans/backlog-followups.md`, OPEN, Plan 172.2, P2).
+  3. `spec_tests/conformance` — 970 файлов ОДНИМ логическим модулем
+     (`module spec_tests.conformance`) → `nova test`/`nova check` на ЛЮБОМ отдельном
+     файле разрешает и компилирует ВЕСЬ каталог (мега-CU, десятки минут) — точечный
+     per-файл прогон физически невозможен. `spec_tests/soundness/**` не страдает (каждый
+     файл — уникальный модуль, ~25-30s прогон). Из-за этого `inline_xoshiro_determinism.nv`
+     верифицирован ТОЛЬКО через `nova check` (type-check) + семантическую эквивалентность
+     мигрированной формулы (доказано через изолированные `wrapping_add`/`wrapping_mul`
+     unit-тесты в `overflow_policy_test.nv`), не через полный `nova test` в этой волне.
+- **D423 дополнен** (не новый D-номер — Ф.2 уже был явно forward-referenced в исходном
+  D423 §R4 как «следующая волна», теперь landed тем же блоком): конкретные сигнатуры,
+  список миграций, три находки выше.
+- Sync: `git merge main` (30 коммитов, включая 196.7 method-dispatch/TLS-диамант/209) —
+  ОДИН конфликт (`spec/decisions/README.md`, обе строки D423/D424 сохранены, D423 текст
+  дополнен); `emit_c.rs`/`types/mod.rs` авто-смёржились без конфликта. Компилятор
+  пересобран начисто (0 ошибок), 15 точечных тестов (8 soundness pin + Ф.1 regression +
+  Ф.2 blanket-тест + 5 мигрированных hash/PRNG модулей) — все PASS после ребилда.
+- Не сделано (следующая волна): `@unchecked_*` (отложен владельцем), Duration-миграция
+  (Ф.3), `[M-206-sized-z3-elision-audit]`.
 
 ## Ф.0 — спека + type-set (ЗАВЕРШЕНО)
 
@@ -96,9 +149,9 @@
   типа неверной арности/типа аргумента при вызове. При переходе на Ф.2 `.nv`-обёртки
   (`@checked_add`/`@saturating_add`/`@wrapping_add`) этот путь можно укрепить.
 
-## Не сделано (в объёме этого захода, следующие волны — Ф.2/Ф.3/206.1)
+## Не сделано (в объёме этого захода, следующие волны — Ф.3/206.1)
 
-- `.nv`-бланкеты `@checked_*`/`@saturating_*`/`@wrapping_*` — Ф.2, следующая волна.
+- `.nv`-бланкеты `@checked_*`/`@saturating_*`/`@wrapping_*` — ✅ Ф.2 ЗАВЕРШЕНО (см. выше).
 - Duration-миграция на общий примитив — Ф.3.
 - `@unchecked_*` — отложен (владелец).
 - `div`/`neg`/`mod` — подплан 206.1 (файл ещё не создан, форвард-ссылка в спеке).
