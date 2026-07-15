@@ -22,7 +22,7 @@
 |---|---|
 | Один метод или два | ОДИН `@display(mut f Fmt)`; `@debug(mut f Fmt)` — сиблинг (как отдельный `Debug` у Rust) |
 | `@display_fmt`/D419 | **RETRACT** — сворачивается в единый `@display(f)` |
-| Sink пишет | `[]u8` (байты), `Fmt extends Write` |
+| Sink пишет | `[]u8` (байты); `Fmt` embeds `Write` через `use` (D145 protocol-embed) |
 | float | **shortest** (существующий C-extern, dtoa/Ryu-класс). round-trippable+красиво; JSON round-trip ок. НЕ голый libc `%g` |
 | Радикс `{:x}`/`{:b}` | ось `f.kind()` в едином `@display` (не плодим трейты как Rust `LowerHex`/…) |
 | pad (width/align/fill) | **компилятор владеет** (auto-pad), тип НЕ обязан звать pad → нет Rust-footgun'а «забыл `f.pad()`» |
@@ -181,7 +181,7 @@ result = sb.into_str()
 ## 6. D-план
 
 **НОВЫЙ:**
-- **D422 (keystone)** — Unified Formatter: единый `@display(mut f Fmt)`; `Fmt` = write-методы + оси/`@pad`/`@kind` (без наследования протокола — см. §9);
+- **D422 (keystone)** — Unified Formatter: единый `@display(mut f Fmt)`; `Fmt` embeds `Write` через `use` (D145 protocol-embed) + оси/`@pad`/`@kind`;
   `pad_consumed` auto-pad; буфер-примитив `(buf,cap)->len`; перенос `conv.h`→`.nv`; float-extern-контракт
   (`extern "C" fn fmt_f64_into(buf,cap,v,kind,prec)` — литеральное имя, D282); энумы `Align`/`Sign`/`FmtKind`.
 
