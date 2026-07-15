@@ -80,7 +80,7 @@ sb.write("hello, ")
 int_display(42, sb)          // ${n}   компилятор ЗНАЕТ sink=конкретный StringBuilder →
                              //        digit-loop прямо в sb.reserve/advance (КОНКРЕТНЫЕ методы SB, zero-COPY)
 sb.write(", ")
-f64_display(3.14, sb)        // ${f}   nova_f64_into(buf,cap,v,Shortest) [C] → sb.write(buf)
+f64_display(3.14, sb)        // ${f}   fmt_f64_into(buf,cap,v,Shortest) [C] → sb.write(buf)
 sb.write(", ")
 Point_display(rec, sb)       // ${rec} компилятор-синтез: "Point(", int_display(@x,sb), ", ", …, ")"
 sb.write(", ")
@@ -130,7 +130,7 @@ sb.write(buf[0..k])
 sb.write(" | ")
 
 // ${f:8.2} — float: тело из C по prec, ширина — через стек, потом write_padded
-buf2[32]; k = nova_f64_into(buf2, 32, f, Fixed, /*prec*/2)   // C: "3.14"  (единственный extern)
+buf2[32]; k = fmt_f64_into(buf2, 32, f, Fixed, /*prec*/2)   // C: "3.14"  (единственный extern)
 write_padded(sb, buf2[0..k], /*w*/8, ' ', Right)             // "    3.14"
 sb.write(" | ")
 
@@ -200,7 +200,7 @@ result = sb.into_str()
 
 Миграция: ~10 примитивных `@display`/`@debug` тел; немногие `@display_fmt`-юзеры; переписать `emit_interpolated_str`
 + `emit_format_spec_value` (pad_in_place); `conv.h` int/bool/char/радикс/pad → `.nv`; `Write.@write` str→[]u8 (+ str-
-overload); `nova_f64_into` C-контракт. Гейты: полный conformance один-CU зелёный; форматные фикстуры (width/align/fill/
+overload); `fmt_f64_into` C-контракт. Гейты: полный conformance один-CU зелёный; форматные фикстуры (width/align/fill/
 sign/radix/precision/alternate/pretty) pos; byte-parity НЕ требуется (вывод тот же, .c меняется законно).
 
 ## 8. Статус развилок
@@ -235,7 +235,7 @@ sign/radix/precision/alternate/pretty) pos; byte-parity НЕ требуется 
 type Align   enum Left | Right | Center
 type Sign    enum Minus | Plus
 type FmtKind enum Display | Debug | Hex | Oct | Bin | Exp
-type FloatKind enum Shortest | Fixed | Sci        // для nova_f64_into
+type FloatKind enum Shortest | Fixed | Sci        // для fmt_f64_into
 ```
 
 **`Write` — байтовый sink форматирования (ИНФАЛЛИБЕЛЬНЫЙ). МИНИМАЛЬНЫЙ (ревью 2026-07-15):**
@@ -337,7 +337,7 @@ fn StringBuilder consume @into_str_checked() -> Result[str, Utf8Error]
 в `spec/decisions/`. **Гейт:** owner sign-off (язык-меняющее).
 
 **Фаза 1 — Фундамент, АДДИТИВНО без смены поведения (sonnet .nv + 1 C-файл).** Буфер-примитивы в .nv
-(`int_fmt`/`bool_fmt`/`char_fmt` + радикс + `pad_in_place`/`write_padded`) РЯДОМ с conv.h; `nova_f64_into` (C-extern
+(`int_fmt`/`bool_fmt`/`char_fmt` + радикс + `pad_in_place`/`write_padded`) РЯДОМ с conv.h; `fmt_f64_into` (C-extern
 буфер-форма) рядом с текущим float; `StringBuilder` аменд (`@reserve`/`@advance`/`@len`/`into_str`). Старый путь ещё
 работает. **Гейт:** unit-тесты примитивов + полный conformance БЕЗ регресса.
 
@@ -377,6 +377,6 @@ width/align/fill/sign/`#`alt/`0`zero-pad/radix(hex/oct/bin)/precision(float+str)
   оркестратор гейтит полным conformance САМ (агенты — только таргетно). Это много ~7-мин серийных гейтов оркестратора —
   Фаза 2 по календарю дольше прочих; это норма, не задержка.
 
-**Следующий шаг:** финализировать сигнатуры (`Fmt`/`Write`/`Display`/`Debug`/буфер-примитив/`nova_f64_into`) +
+**Следующий шаг:** финализировать сигнатуры (`Fmt`/`Write`/`Display`/`Debug`/буфер-примитив/`fmt_f64_into`) +
 карта исполнения (что opus-синтез в компиляторе, что дешёвыми агентами по `.nv`/`conv.h`→`.nv`; порядок; гейты).
 **Реализация не начинается без owner-go** (язык-меняющее).
