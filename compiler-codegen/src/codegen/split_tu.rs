@@ -144,7 +144,22 @@ fn segment_top_level(src: &str) -> Vec<&str> {
         // generic brace/semicolon scan.
         if depth == 0 && i == unit_start {
             let mut k = i;
-            while k < n && (bytes[k] == b' ' || bytes[k] == b'\t') { k += 1; }
+            // Plan 209 Ф.2 finding: skip blank lines too (`\n`/`\r`), not
+            // just spaces/tabs — a directive is virtually ALWAYS preceded
+            // by at least one blank line in this codebase's generated
+            // output (`self.line("")` between constructs). Skipping only
+            // ` `/`\t` left `bytes[k]` pointing at `\n` (not `#`) whenever
+            // a unit started with such a blank line, so this whole
+            // cond-block/directive detection silently never fired for it —
+            // the directive then fell through to the generic brace/`;`
+            // scanner below, which cut a multi-line `#ifdef ... #else ...
+            // #endif` block into THREE separate mis-segmented units at each
+            // `;` (observed: `_nova_handler_Random`'s per-E TLS cond-block
+            // split apart, corrupting both its `_common.h` mirror — a
+            // definition without `extern` — and the part — a `#ifdef`
+            // with no matching `#else`/`#endif`, "unterminated conditional
+            // directive" at the C compiler).
+            while k < n && matches!(bytes[k], b' ' | b'\t' | b'\n' | b'\r') { k += 1; }
             if k < n && bytes[k] == b'#' {
                 let directive_end = k;
                 let is_cond_open = src[directive_end..].starts_with("#if");
@@ -390,16 +405,60 @@ fn trailing_identifier(prefix: &str) -> Option<String> {
 /// `prototype` is the signature (everything up to the first depth-0 `{`)
 /// trimmed and terminated with `;` — a valid forward declaration for
 /// `_common.h` regardless of which part the body ends up in.
+///
+/// Plan 209 Ф.2 finding: `unit` includes any leading doc-comment attached to
+/// the definition — a comment referencing a parenthesized call in prose
+/// (e.g. `/* ...assigned to _nova_supervisor_decide_fn in main()... */`,
+/// or a doc-example like `` `x.method(args)` ``) contains its OWN `(`
+/// BEFORE the real signature's — a plain `sig.find('(')` (the original
+/// implementation) matches THAT one first and misnames the unit (observed:
+/// `_nova_supervisor_decide_impl`'s unit misclassified as name `"main"`,
+/// colliding with the real `int main(...)` and tripping the A3 uniqueness
+/// invariant). `find_first_real_paren` skips comments/strings/chars first
+/// (mirrors `find_top_level_open_brace`'s mode-tracking exactly), so it
+/// lands on the signature's own `(` regardless of what the comment above
+/// it says.
 fn decl_from_fn_def(unit: &str) -> Option<(String, String)> {
     let brace = find_top_level_open_brace(unit)?;
     let sig = unit[..brace].trim_end();
     if !sig.ends_with(')') { return None; } // must look like a fn signature
-    // `RET NAME(PARAMS)`: `RET`/`NAME` never contain parens in this
-    // codebase's generated signatures, so the FIRST '(' is always the one
-    // opening the declared function's own parameter list.
-    let paren = sig.find('(')?;
+    let paren = find_first_real_paren(sig)?;
     let name = trailing_identifier(&sig[..paren])?;
     Some((name, format!("{};", sig)))
+}
+
+/// Find the first `(` that is NOT inside a `//`/`/* */` comment or a
+/// string/char literal — mirrors `find_top_level_open_brace`'s mode-
+/// tracking, scanning for `(` instead of `{`. See `decl_from_fn_def` doc
+/// for why a naive `str::find('(')` is unsound here.
+fn find_first_real_paren(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let n = bytes.len();
+    let mut i = 0usize;
+    #[derive(PartialEq)]
+    enum Mode { Normal, Str, Char, LineComment, BlockComment }
+    let mut mode = Mode::Normal;
+    while i < n {
+        let c = bytes[i];
+        match mode {
+            Mode::LineComment => { if c == b'\n' { mode = Mode::Normal; } i += 1; }
+            Mode::BlockComment => {
+                if c == b'*' && i + 1 < n && bytes[i + 1] == b'/' { mode = Mode::Normal; i += 2; }
+                else { i += 1; }
+            }
+            Mode::Str => { if c == b'\\' && i + 1 < n { i += 2; } else { if c == b'"' { mode = Mode::Normal; } i += 1; } }
+            Mode::Char => { if c == b'\\' && i + 1 < n { i += 2; } else { if c == b'\'' { mode = Mode::Normal; } i += 1; } }
+            Mode::Normal => {
+                if c == b'/' && i + 1 < n && bytes[i + 1] == b'/' { mode = Mode::LineComment; i += 2; }
+                else if c == b'/' && i + 1 < n && bytes[i + 1] == b'*' { mode = Mode::BlockComment; i += 2; }
+                else if c == b'"' { mode = Mode::Str; i += 1; }
+                else if c == b'\'' { mode = Mode::Char; i += 1; }
+                else if c == b'(' { return Some(i); }
+                else { i += 1; }
+            }
+        }
+    }
+    None
 }
 
 fn find_top_level_open_brace(s: &str) -> Option<usize> {
@@ -481,11 +540,62 @@ fn find_top_level_eq(s: &str) -> Option<usize> {
 }
 
 /// For a top-level `TYPE NAME = INIT;` unit, extract (name, extern decl).
+///
+/// Plan 209 Ф.2 finding: an ARRAY-typed global (`TYPE NAME[] = INIT;` or
+/// `TYPE NAME[N] = INIT;` — e.g. the interned string literal byte buffers,
+/// `static const uint8_t _nova_strlit_<hash>_buf[] = "...";`) has its LHS
+/// end in `]`, not the identifier itself — `trailing_identifier` (which
+/// only skips trailing whitespace/`*`) then finds no identifier-shaped
+/// token and returns `None`, so this whole function returned `None` too.
+/// The unit then fell through to `DeclOnly { name: None }` in
+/// `classify_unit` — UNNAMED means the A3 dedup pass can never supersede
+/// it, so it was kept VERBATIM (not `extern`-ified) in `_common.h`; every
+/// part `#include`ing that header then got its own copy of a Plan 209
+/// promoted (non-`static`) definition — `lld-link: error: duplicate
+/// symbol` for every such array global. Strip the trailing `[...]`
+/// bracket group(s) first so `trailing_identifier` sees the true name.
 fn decl_from_global_def(unit: &str) -> Option<(String, String)> {
     let eq = find_top_level_eq(unit)?;
     let lhs = unit[..eq].trim_end();
-    let name = trailing_identifier(lhs)?;
+    let name = trailing_identifier(strip_trailing_array_brackets(lhs))?;
     Some((name, format!("extern {};", lhs)))
+}
+
+/// Strips one or more trailing balanced `[...]` bracket groups (e.g. `[]`,
+/// `[16]`, or multi-dimensional `[4][8]`) plus any whitespace between them,
+/// so a caller can find the identifier that precedes an array declarator's
+/// brackets. Returns the input trimmed-of-trailing-whitespace unchanged if
+/// it doesn't end in `]`, or if the brackets are unbalanced (defensive —
+/// should not happen for this codebase's generated declarators).
+fn strip_trailing_array_brackets(s: &str) -> &str {
+    let mut cur = s.trim_end();
+    loop {
+        if !cur.ends_with(']') {
+            return cur;
+        }
+        let bytes = cur.as_bytes();
+        let mut depth = 0i32;
+        let mut idx = cur.len();
+        let mut balanced = false;
+        while idx > 0 {
+            idx -= 1;
+            match bytes[idx] {
+                b']' => depth += 1,
+                b'[' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        balanced = true;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !balanced {
+            return cur; // unbalanced brackets — give up, defensive only
+        }
+        cur = cur[..idx].trim_end();
+    }
 }
 
 /// Is this unit (trimmed) exactly one of the known part-only macro
@@ -1004,5 +1114,108 @@ mod tests {
         let src = "int dup(void) { return 1; }\nint dup(void) { return 2; }\n";
         let err = split_tu(src, "cu", 1 << 20).expect_err("duplicate definition names must be rejected");
         assert!(err.contains("dup"), "error should name the offending symbol: {}", err);
+    }
+
+    // ---- Plan 209 Ф.2 regressions (found while verifying the toolchain
+    // end-to-end — real generated `.c`, not the synthetic fixtures above,
+    // tripped all three) ----
+
+    #[test]
+    fn classify_fn_def_name_ignores_parens_in_leading_comment() {
+        // A doc-comment mentioning a parenthesized call in prose (real
+        // example: "...assigned to _nova_supervisor_decide_fn in main()...")
+        // has ITS OWN '(' before the real signature's. A naive
+        // `sig.find('(')` matched that one first and misnamed the unit
+        // "main" — colliding with the CU's real `int main(...)` and
+        // tripping the A3 uniqueness guard on a perfectly valid program.
+        let unit = "/* see _nova_other_fn in main(). */\nstatic int _nova_supervisor_decide_impl(void* ctx) {\n    return 0;\n}";
+        match classify_unit(unit) {
+            UnitKind::FnDef { name, proto } => {
+                assert_eq!(name, "_nova_supervisor_decide_impl");
+                assert!(proto.ends_with("_nova_supervisor_decide_impl(void* ctx);"));
+            }
+            other => panic!("expected FnDef named _nova_supervisor_decide_impl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn segment_top_level_recognizes_cond_block_after_blank_lines() {
+        // Every real unit boundary in generated code is preceded by a
+        // blank line (`self.line("")` between constructs). The leading-
+        // whitespace skip before the cond-block/directive check only
+        // skipped ' '/'\t' (not '\n'), so `bytes[k]` still pointed at '\n'
+        // (not '#') and this whole detection silently never fired — a
+        // multi-line `#ifdef ... #else ... #endif` got cut into THREE
+        // mis-segmented pieces at each ';' instead of staying one atomic
+        // unit (observed as "unterminated conditional directive" from the
+        // C compiler once split across parts).
+        let src = "int a(void) { return 1; }\n\n#ifdef _MSC_VER\nint x = 1;\n#else\nint x = 2;\n#endif\n\nint b(void) { return 2; }\n";
+        assert_contiguous(src);
+        let units = segment_top_level(src);
+        // Exactly 3 units: `a`, the WHOLE cond-block (one unit), `b`.
+        assert_eq!(units.len(), 3, "cond-block must stay ONE unit even preceded by a blank line: {:?}", units);
+        let cond_unit = units[1];
+        assert!(cond_unit.trim_start().starts_with("#ifdef"));
+        assert!(cond_unit.contains("#else") && cond_unit.contains("#endif"),
+            "the atomic cond-block unit must carry its OWN #else/#endif: {:?}", cond_unit);
+        match classify_unit(cond_unit) {
+            UnitKind::CondBlockWithDef { .. } => {}
+            other => panic!("expected CondBlockWithDef, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn classify_array_global_def_strips_brackets_for_name() {
+        // An array-typed global (real example: the interned string literal
+        // byte buffer `static const uint8_t _nova_strlit_<hash>_buf[] =
+        // "...";`) has its LHS end in ']', not the identifier —
+        // `trailing_identifier` (which only skips trailing whitespace/'*')
+        // found no identifier there and returned `None`, so the unit fell
+        // through to `DeclOnly { name: None }`. Unnamed means A3 dedup can
+        // never supersede it, so a SECOND occurrence of the identical text
+        // elsewhere (or, for Ф.2, the header-mirror path) surfaced as
+        // `lld-link: error: duplicate symbol` once the definition (kept
+        // verbatim, not `extern`-ified) got `#include`d by every part.
+        let unit = "const uint8_t _nova_strlit_deadbeef_buf[] = \"hi\";";
+        match classify_unit(unit) {
+            UnitKind::GlobalDef { name, extern_decl } => {
+                assert_eq!(name, "_nova_strlit_deadbeef_buf");
+                assert_eq!(extern_decl, "extern const uint8_t _nova_strlit_deadbeef_buf[];");
+            }
+            other => panic!("expected GlobalDef named _nova_strlit_deadbeef_buf, got {:?}", other),
+        }
+        // Multi-dimensional array shape too (defensive — not observed in
+        // practice, but the bracket-stripper must handle it uniformly).
+        let unit2 = "int grid[4][8] = {0};";
+        match classify_unit(unit2) {
+            UnitKind::GlobalDef { name, .. } => assert_eq!(name, "grid"),
+            other => panic!("expected GlobalDef named grid, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn split_tu_array_global_dedups_and_does_not_duplicate_across_parts() {
+        // End-to-end (not just classify_unit): an array global referenced
+        // from TWO definitions big enough to land in different parts must
+        // appear as a real definition in EXACTLY ONE part, `extern`-ified
+        // (only) in `_common.h` — never verbatim-duplicated into the
+        // header, which is what produced the Ф.2 link-time "duplicate
+        // symbol" failure.
+        let filler_a = "b".repeat(40);
+        let filler_b = "c".repeat(40);
+        let src = format!(
+            "const uint8_t _nova_strlit_x_buf[] = \"hi\";\n\
+             int use_a(void) {{ /* {filler_a} */ return (int)_nova_strlit_x_buf[0]; }}\n\
+             int use_b(void) {{ /* {filler_b} */ return (int)_nova_strlit_x_buf[0]; }}\n"
+        );
+        // Tiny per-part threshold forces `use_a`/`use_b` into separate parts.
+        let r = split_tu(&src, "cu", 32).expect("split_tu should succeed");
+        assert!(r.parts.len() >= 2, "fixture must actually exercise >1 part: {:?}", r.parts);
+        let def_occurrences: usize = r.parts.iter()
+            .map(|p| p.matches("_nova_strlit_x_buf[] = \"hi\"").count())
+            .sum();
+        assert_eq!(def_occurrences, 1, "the array global's definition must appear in exactly one part");
+        assert!(r.common_h.contains("extern const uint8_t _nova_strlit_x_buf[];"));
+        assert!(!r.common_h.contains("\"hi\""), "the header mirror must never carry the initializer");
     }
 }

@@ -4706,7 +4706,13 @@ fn cmd_build(
             None
         };
 
-    let c_code: String = match cache_key
+    // Plan 209 Ф.2: `emit_output` replaces the old `c_code: String` binding —
+    // `EmitOutput::Single` is the byte-identical pre-209 shape (cache hit
+    // path below still only ever produces `Single`, since `build_cache` is
+    // single-`.c`-shaped — recon-notes.md §7 B5, deliberately NOT extended
+    // here, same documented remainder as `compile_multi_tu_to_exe`'s runtime-
+    // object cache). `EmitOutput::Split` bypasses the cache entirely.
+    let emit_output: nova_codegen::codegen::EmitOutput = match cache_key
         .as_deref()
         .and_then(|k| build_cache::load_c(&repo, k))
     {
@@ -4714,7 +4720,7 @@ fn cmd_build(
             // Cache hit. Кэш пишется ТОЛЬКО после успешной сборки —
             // байт-идентичный вход уже прошёл type-check и codegen.
             eprintln!("{} build cache hit — reusing generated C", green("note:"));
-            cached
+            nova_codegen::codegen::EmitOutput::Single(cached)
         }
         None => {
             // Cache miss — полный Rust-side пайплайн.
@@ -4804,7 +4810,7 @@ fn cmd_build(
                     Err(_) => build_env,
                 }
             };
-            let (c_code, warnings) = {
+            let (emit_output, warnings) = {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("codegen");
                 let mut emitter = nova_codegen::codegen::CEmitter::new();
                 emitter.set_source_for_annotations(src.clone());
@@ -4835,18 +4841,28 @@ fn cmd_build(
                 emitter.set_proven_index_sites_contract(&build_env.proven_index_sites_contract);
                 emitter.set_resolved_types(&build_env.resolved_types);
                 emitter.set_resolved_callees(&build_env.resolved_callees);
-                emitter.emit_module(&module)
+                // Plan 209 Ф.2: `emit_module_multi_tu` back-compat wrapper —
+                // runs the IDENTICAL emission `emit_module` always ran, then
+                // only if `NOVA_MULTI_TU=1` AND the CU exceeds the Ф.1
+                // threshold does it hand off to `split_tu`; otherwise it
+                // returns `EmitOutput::Single` wrapping the EXACT SAME string
+                // `emit_module` would have produced (Ф.1 A4 doc) — byte-
+                // identical default.
+                let cu_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("cu").to_string();
+                emitter.emit_module_multi_tu(&module, &cu_name)
                     .map_err(|e| anyhow!("codegen error: {}", e))?
             };
             for w in &warnings {
                 eprintln!("{}", w);
             }
             // Записываем `.c` в кэш — только теперь, после успешного
-            // codegen (кэшируем лишь заведомо валидный артефакт).
-            if let Some(k) = &cache_key {
-                build_cache::store_c(&repo, k, &c_code);
+            // codegen (кэшируем лишь заведомо валидный артефакт). Only the
+            // `Single` shape is cacheable (`build_cache` is single-`.c`-
+            // shaped — see the doc above `emit_output`'s binding).
+            if let (Some(k), nova_codegen::codegen::EmitOutput::Single(c)) = (&cache_key, &emit_output) {
+                build_cache::store_c(&repo, k, c);
             }
-            c_code
+            emit_output
         }
     };
 
@@ -4877,8 +4893,14 @@ fn cmd_build(
     let _tmp_guard = TmpDirGuard { path: &tmp_path, keep: keep_artifacts };
     let c_file = tmp_path.join(format!("{}.c", exe_stem.to_string_lossy()));
     let exe_file = tmp_path.join(&exe_name);
-    std::fs::write(&c_file, &c_code)
-        .map_err(|e| anyhow!("write .c file: {}", e))?;
+    // Plan 209 Ф.2: `Single` writes `c_file` exactly as before (byte-
+    // identical default path). `Split` writes NOTHING here — `common_h`/
+    // `parts` are written under `tmp_path` (== `obj_dir` below) by
+    // `compile_multi_tu_to_exe` itself instead.
+    if let nova_codegen::codegen::EmitOutput::Single(c_code) = &emit_output {
+        std::fs::write(&c_file, c_code)
+            .map_err(|e| anyhow!("write .c file: {}", e))?;
+    }
 
     // detect toolchain
     let mode = test_runner::Mode::parse(mode)?;
@@ -4916,7 +4938,16 @@ fn cmd_build(
     };
     {
         let _t = nova_codegen::perf_timer::PerfTimer::new("c-compile");
-        test_runner::compile_c_to_exe(&tc, &build_opts, Duration::from_secs(timeout_secs))?;
+        match &emit_output {
+            nova_codegen::codegen::EmitOutput::Single(_) => {
+                test_runner::compile_c_to_exe(&tc, &build_opts, Duration::from_secs(timeout_secs))?;
+            }
+            nova_codegen::codegen::EmitOutput::Split { common_h, parts } => {
+                // Plan 209 Ф.2: parallel multi-TU compile + link.
+                test_runner::compile_multi_tu_to_exe(
+                    &tc, &build_opts, common_h, parts, Duration::from_secs(timeout_secs))?;
+            }
+        }
     }
 
     // move exe to final destination
