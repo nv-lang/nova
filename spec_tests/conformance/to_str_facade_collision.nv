@@ -1,0 +1,52 @@
+// Plan 196.7 [M-174.1-to-str-name-collision-codegen-bug] — positive.
+// `[]u8 @to_str() -> Result[str, Utf8Error]` (the facade method) co-compiled
+// with a fresh type's own D410 `T @to_str() -> str` AND the bare-T blanket
+// `fn[T] T @to_str() -> str` (both live in the conformance CU). The
+// `bytes.to_str()` call must dispatch to the []u8 body (Result), NOT the
+// name-colliding blanket / user-record `to_str` (which return `str`).
+//
+// The collision is exercised inside REGULAR `fn` bodies — the checker's
+// receiver-resolution (f1_check_call → resolved_callees) records the concrete
+// []u8 callee for a local / pattern-bound receiver there; codegen honors it
+// (types/mod.rs check_instance_overload array-key resolution + emit_c.rs
+// blanket-dispatch guard). A `test { }` body takes a different visitor, so the
+// asserts call helper fns.
+module spec_tests.conformance
+
+type FacadeErr { code int }
+
+fn FacadeErr @to_str() -> str => "facadeerr(${@code})"
+
+// []u8 facade receiver via a LOCAL binding (channel path).
+fn decode_local(bytes []u8) -> str => match bytes.to_str() {
+    Ok(s) => s
+    Err(_) => "ERR"
+}
+
+// []u8 facade receiver via a PATTERN binding inside a nested match
+// (the receiver-inference gap the codegen receiver-type fallback covers).
+fn decode_pattern(src []u8) -> str {
+    ro wrapped Result[[]u8, FacadeErr] = Ok(src)
+    match wrapped {
+        Ok(bytes) => match bytes.to_str() {
+            Ok(s) => s
+            Err(_) => "ERR"
+        }
+        Err(_) => "ERR"
+    }
+}
+
+fn facade_err_str() -> str {
+    ro e = FacadeErr { code: 42 }
+    e.to_str()
+}
+
+test "[]u8.to_str() facade dispatches over colliding T.to_str()/blanket" {
+    ro bytes []u8 = [0x68, 0x69]  // "hi"
+    assert(decode_local(bytes) == "hi")
+    assert(decode_pattern(bytes) == "hi")
+    // The colliding user-record `to_str` still resolves to its own body.
+    assert(facade_err_str() == "facadeerr(42)")
+    // The bare-T blanket `to_str` on a primitive is unaffected.
+    assert(7.to_str() == "7")
+}

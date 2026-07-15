@@ -1,0 +1,28 @@
+// Repro for [M-174.1-to-str-name-collision-codegen-bug] (Plan 196.7).
+// A fresh type with its own `@to_str() -> str` (D410 Display) co-compiled with
+// `[]u8 @to_str() -> Result[str, Utf8Error]`. The `bytes.to_str()` call must
+// dispatch to the []u8 body, NOT the colliding fresh type's C body.
+// NB: the collision reproduces inside a regular `fn` body (the checker's
+// f1_check_call path records the concrete callee there); a `test { }` body
+// takes a different visitor.
+module nova_tests.repro_to_str_collision
+
+type ReproErr { code int }
+
+fn ReproErr @to_str() -> str => "reproerr(${@code})"
+
+fn decode_bytes(bytes []u8) -> str => match bytes.to_str() {
+    Ok(s) => s
+    Err(_) => "ERR"
+}
+
+fn make_reproerr_str() -> str {
+    ro e = ReproErr { code: 7 }
+    e.to_str()
+}
+
+test "bytes.to_str() dispatches to []u8 body, not colliding ReproErr.to_str" {
+    ro decoded = decode_bytes("hi".bytes())
+    assert(decoded == "hi")
+    assert(make_reproerr_str() == "reproerr(7)")
+}

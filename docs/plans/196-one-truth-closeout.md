@@ -253,6 +253,11 @@ symbol-mangling→codegen-читает). Наши отклонения = ТОЛ�
 - **Волна-2 (top-down, D-driven) = [196.3 — wave-2 D-driven](196.3-wave2-d-driven.md)** — по инвентарю
   сиблинг-функций: каждую → D-фиче → полный тест → переписать на новый путь → закрыть (remove/panic); per-D
   цикл отчёт/коммит/план/синк-main. [opus, nova-wave2]. Держит сиблинги ВНЕ 46293-48883 + callnorm/argbind/резолверы.
+- **Точечный dispatch-фикс = [196.7 — method-dispatch через resolved_callees](196.7-method-dispatch-resolved-callees.md)** ✅ ЗАКРЫТ 2026-07-15
+  — конкретный `[]u8 @to_str` фасад мис-диспатчился в чужой same-name (`fn[T] T @to_str` бланкет / D410 `T.to_str`);
+  фикс = method-call читает канал `resolved_callees` + receiver-C-тип (НЕ name-last-wins), чекер пишет callee для
+  array/slice-ресивера. Снят обход `[]u8 @decode_utf8()` (маркер `[M-174.1-to-str-name-collision-codegen-bug]` закрыт).
+  [opus, nova-p196-dispatch]. НЕ трогает frozen `infer_call_ret_c`.
 
 **★ ФОРМАЛЬНО (директива владельца 2026-07-12): полное выполнение ВОЛНЫ-2 = НЕЗАВИСИМЫЙ способ закрыть 196.**
 Если волна-2 закрывает ВСЕ D-фичи через одно окно (каждая фича резолвится в чекере → канал → codegen читает), то

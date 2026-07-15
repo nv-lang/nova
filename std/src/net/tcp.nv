@@ -186,15 +186,11 @@ export fn TcpStream mut @read_to_vec(max int) Net -> Result[[]u8, NetError] {
 ///
 /// Text convenience over the bytes: `[]u8 @to_str() -> Result[str, Utf8Error]`;
 /// invalid UTF-8 surfaces as `NetError.IoError`.
-/// [M-174.1-to-str-name-collision-codegen-bug]: uses `@decode_utf8()` (a
-/// same-body alias of `@to_str()`) — `NetError` (this module) has its own
-/// `@to_str()`, and the two colliding in one compilation unit mis-codegens
-/// (backlog-followups.md marker).
 #stable(since = "0.1")
 export fn TcpStream mut @read_text(max int) Net -> Result[str, NetError] {
     match @read_to_vec(max) {
         Ok(bytes) => {
-            match bytes.decode_utf8() {
+            match bytes.to_str() {
                 Ok(s)  => Ok(s)
                 Err(_) => Err(NetError.IoError("invalid utf-8 in stream"))
             }
