@@ -27200,21 +27200,35 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // (`+=`/`-=`/`*=`) — checked, паника при переполнении (как и
                 // обычные `+`/`-`/`*`, Ф.1.2). Через lvalue-указатель, чтобы
                 // target вычислялся ровно один раз (важно для `arr[f()] += y`).
-                // Только для безграничного `nova_int`; sized-типы — wrap.
+                // Plan 206 Ф.1b (D422): sized-типы ТОЖЕ checked (было — wrap);
+                // см. `sized_checked_helper`/`nova_<T>_checked_*` (effects.h).
                 let checked_helper = match op {
-                    AssignOp::Add => Some("nova_int_checked_add"),
-                    AssignOp::Sub => Some("nova_int_checked_sub"),
-                    AssignOp::Mul => Some("nova_int_checked_mul"),
+                    AssignOp::Add => Some("nova_int_checked_add".to_string()),
+                    AssignOp::Sub => Some("nova_int_checked_sub".to_string()),
+                    AssignOp::Mul => Some("nova_int_checked_mul".to_string()),
                     _ => None,
                 };
                 if let Some(helper) = checked_helper {
-                    if self.infer_expr_c_type(target) == "nova_int"
-                        && self.infer_expr_c_type(value) == "nova_int"
-                    {
+                    let tgt_ty = self.infer_expr_c_type(target);
+                    let val_ty = self.infer_expr_c_type(value);
+                    if tgt_ty == "nova_int" && val_ty == "nova_int" {
                         let p = self.fresh_tmp_named("ca");
                         self.line(&format!("nova_int* {} = &({});", p, tgt));
                         self.line(&format!("*{} = {}(*{}, {});", p, helper, p, val));
                         return Ok(());
+                    }
+                    if tgt_ty == val_ty {
+                        if let Some(sized_helper) = Self::sized_checked_helper(&tgt_ty, match op {
+                            AssignOp::Add => BinOp::Add,
+                            AssignOp::Sub => BinOp::Sub,
+                            AssignOp::Mul => BinOp::Mul,
+                            _ => unreachable!(),
+                        }) {
+                            let p = self.fresh_tmp_named("ca");
+                            self.line(&format!("{}* {} = &({});", tgt_ty, p, tgt));
+                            self.line(&format!("*{} = {}(*{}, {});", p, sized_helper, p, val));
+                            return Ok(());
+                        }
                     }
                 }
                 let op_str = match op {
@@ -28073,19 +28087,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 let l = self.emit_expr_with_target_type(left, target_ty_c)?;
                 let r = self.emit_expr_with_target_type(right, target_ty_c)?;
-                // Plan 33.8 Ф.1.2: знаковая `int` Add/Sub/Mul → checked-форма.
-                if lty == "nova_int" && rty == "nova_int" {
-                    let checked = match op {
-                        BinOp::Add => Some("nova_int_checked_add"),
-                        BinOp::Sub => Some("nova_int_checked_sub"),
-                        BinOp::Mul => Some("nova_int_checked_mul"),
-                        _ => None,
-                    };
-                    if let Some(helper) = checked {
-                        // Plan 140.4: элидировать checked-форму на доказанном сайте.
-                        if !self.overflow_site_elided(expr.span.start) {
-                            return Ok(format!("{}({}, {})", helper, l, r));
-                        }
+                // Plan 33.8 Ф.1.2 / Plan 206 Ф.1b (D422): checked-форма.
+                // `target_ty_c` — гарантированно sized `Ints`-тип (guard в
+                // начале функции исключает `nova_int` — тот идёт через
+                // отдельную ветку в главном `emit_expr`-Binary-арме ниже,
+                // ~L29388); `l`/`r` уже приведены к `target_ty_c` рекурсией
+                // выше, так что дispatch по НЕМУ (не по исходным `lty`/`rty`
+                // до приведения) корректен для обоих операндов.
+                if let Some(helper) = Self::sized_checked_helper(target_ty_c, *op) {
+                    // Plan 140.4: элидировать checked-форму на доказанном сайте.
+                    if !self.overflow_site_elided(expr.span.start) {
+                        return Ok(format!("{}({}, {})", helper, l, r));
                     }
                 }
                 let op_str = match op {
@@ -29382,9 +29394,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         op_src));
                 }
                 // Plan 33.8 Ф.1.2: знаковая `int` Add/Sub/Mul → checked-форма
-                // (паника при переполнении, spec 04-effects.md). Только для
-                // безграничного `nova_int`; sized-типы (wrap, Plan 33.7) и
-                // прочее эмитятся обычным C-оператором.
+                // (паника при переполнении, spec 04-effects.md D13/D422).
+                // Plan 206 Ф.1b (D422, решение A): sized-типы (i8..i64/
+                // u8..u64/uint) ТОЖЕ checked теперь (было — сырой C-оператор,
+                // signed-UB/unsigned-wrap, Plan 33.7 retracted) — см.
+                // `sized_checked_helper` ветку ниже.
                 if lty == "nova_int" && rty == "nova_int" {
                     let checked = match op {
                         BinOp::Add => Some("nova_int_checked_add"),
@@ -29398,6 +29412,43 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // → plain C-оператор ниже (нулевая цена). Иначе always-on.
                         if !self.overflow_site_elided(expr.span.start) {
                             return Ok(format!("{}({}, {})", helper, l, r));
+                        }
+                    }
+                } else if lty == rty {
+                    // Plan 206 Ф.1b (D422): sized `Ints` member (i8..i64/
+                    // u8..u64/uint) — same site-elision channel as `nova_int`
+                    // above (span-based `overflow_site_elided`, Plan 140.4),
+                    // so a Z3-proven in-range sized site degrades to the
+                    // plain C operator identically.
+                    if let Some(helper) = Self::sized_checked_helper(&lty, *op) {
+                        if !self.overflow_site_elided(expr.span.start) {
+                            return Ok(format!("{}({}, {})", helper, l, r));
+                        }
+                    }
+                } else {
+                    // Plan 206 Ф.1b (D422): `i64` literal-coercion gap — `int64_t`
+                    // is (deliberately, pre-existing) excluded from
+                    // `is_typed_integer` (nova_int-erasure precedent, see that
+                    // fn's doc comment), so a bare `IntLit` operand against an
+                    // `i64`-typed other operand (`x - 1`, x: i64) infers as
+                    // `nova_int` (D227 untyped-literal default) rather than
+                    // `int64_t`, missing the `lty == rty` arm above even though
+                    // D405 (`E_MIXED_WIDTH_ARITH`) already guarantees same-
+                    // width/sign arithmetic for two NAMED operands — a mismatch
+                    // reaching here can only be one bare literal defaulting to
+                    // `nova_int`. Pick whichever side is the REAL sized type;
+                    // the literal's raw C text (e.g. `1`) is valid as either
+                    // operand regardless of its Nova-level `nova_int` label.
+                    let sized_ty = match (lty.as_str(), rty.as_str()) {
+                        (t, "nova_int") if t != "nova_int" => Some(lty.clone()),
+                        ("nova_int", t) if t != "nova_int" => Some(rty.clone()),
+                        _ => None,
+                    };
+                    if let Some(ty) = sized_ty {
+                        if let Some(helper) = Self::sized_checked_helper(&ty, *op) {
+                            if !self.overflow_site_elided(expr.span.start) {
+                                return Ok(format!("{}({}, {})", helper, l, r));
+                            }
                         }
                     }
                 }
@@ -35723,6 +35774,49 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                         return Ok(format!("{}({})", c_fn, arg_strs.join(", ")));
                     }
+                }
+                // Plan 206 Ф.1 (D422): `@overflowing_add/_sub/_mul` on any
+                // `Ints` primitive receiver — pure compiler intrinsic (needs a
+                // HW overflow flag, cannot be a `.nv` body). Direct inline
+                // `__builtin_*_overflow`, no named C helper (unlike the
+                // panic-on-overflow `nova_<T>_checked_*` family, Ф.1b) since
+                // this variant must NOT panic — it reports the flag. Builds
+                // the result `(T, bool)` via the SAME `register_mono_tuple`
+                // machinery a Nova tuple LITERAL uses (mirrors the `TupleLit`
+                // arm ~L30097+), so the struct typedef is emitted through the
+                // normal worklist — no header-ordering hazard from hand-
+                // writing a tuple struct name in `effects.h`.
+                if matches!(method.as_str(),
+                    "overflowing_add" | "overflowing_sub" | "overflowing_mul")
+                    && args.len() == 1
+                    && matches!(obj_ty.as_str(),
+                        "nova_int" | "int8_t" | "int16_t" | "int32_t" | "int64_t"
+                            | "nova_byte" | "uint16_t" | "uint32_t" | "uint64_t"
+                            | "nova_uint")
+                {
+                    let builtin = match method.as_str() {
+                        "overflowing_add" => "__builtin_add_overflow",
+                        "overflowing_sub" => "__builtin_sub_overflow",
+                        "overflowing_mul" => "__builtin_mul_overflow",
+                        _ => unreachable!(),
+                    };
+                    let obj_c = self.emit_expr(obj)?;
+                    let rhs_c = self.emit_expr(args[0].expr())?;
+                    let wrapped = self.fresh_tmp();
+                    self.line(&format!("{} {};", obj_ty, wrapped));
+                    let ovf = self.fresh_tmp();
+                    self.line(&format!(
+                        "nova_bool {} = (nova_bool){}({}, {}, &{});",
+                        ovf, builtin, obj_c, rhs_c, wrapped));
+                    let mangled = self.register_mono_tuple(&[obj_ty.clone(), "nova_bool".to_string()]);
+                    let tup = self.fresh_tmp();
+                    self.line(&format!("{} {};", mangled, tup));
+                    self.line(&format!("{}.f0 = {};", tup, wrapped));
+                    self.line(&format!("{}.f1 = {};", tup, ovf));
+                    self.var_types.insert(tup.clone(), mangled.clone());
+                    self.tuple_element_types.insert(
+                        tup.clone(), vec![obj_ty.clone(), "nova_bool".to_string()]);
+                    return Ok(tup);
                 }
                 // 3. String methods: `s.starts_with(...)` → `nova_str_starts_with(s, ...)`
                 if obj_ty == "nova_str" {
@@ -45717,6 +45811,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         ) {
             return true;
         }
+        // Plan 206 Ф.1 (D422): `@overflowing_add/_sub/_mul` — pure compiler
+        // intrinsic (needs a HW overflow flag, cannot be a `.nv` body) on any
+        // `Ints` primitive receiver (protocols.nv `type Ints set …`). D109-class
+        // hardcoded existence (mirrors hash/clone above) — dispatch/return-type
+        // in `emit_call` (~L35744+) / `infer_call_ret_c`.
+        if matches!(prim,
+            "i8" | "i16" | "i32" | "i64" | "int"
+                | "u8" | "byte" | "u16" | "u32" | "u64" | "uint")
+            && matches!(method, "overflowing_add" | "overflowing_sub" | "overflowing_mul")
+        {
+            return true;
+        }
         // [D73/D77 retraction 2026-07-06]: primitives no longer get a blanket
         // `.into()`/`.try_into()` existence pass — those protocols + their
         // auto-derive synthesis are retracted (spec/decisions/08-runtime.md#d73).
@@ -47472,6 +47578,35 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // promotion к знаковому nova_int в смешанной арифметике.
             "nova_uint"
         )
+    }
+
+    /// Plan 206 Ф.1b (D422, решение A): sized-`Ints` checked-helper name for a
+    /// same-typed `+`/`-`/`*` pair, mirroring `nova_int_checked_add` (which
+    /// stays a separate hardcoded arm for `nova_int` — see call sites below).
+    /// `ty_c` — the (identical) C type of BOTH operands. Returns `None` for
+    /// any non-`Ints` C type (e.g. `nova_char` — not an `Ints` member; str/
+    /// struct/ptr; caller falls back to the raw C operator as before) or a
+    /// non-arithmetic `op`.
+    fn sized_checked_helper(ty_c: &str, op: BinOp) -> Option<String> {
+        let base = match ty_c {
+            "int8_t" => "i8",
+            "int16_t" => "i16",
+            "int32_t" => "i32",
+            "int64_t" => "i64",
+            "nova_byte" => "u8",
+            "uint16_t" => "u16",
+            "uint32_t" => "u32",
+            "uint64_t" => "u64",
+            "nova_uint" => "uint",
+            _ => return None,
+        };
+        let opname = match op {
+            BinOp::Add => "add",
+            BinOp::Sub => "sub",
+            BinOp::Mul => "mul",
+            _ => return None,
+        };
+        Some(format!("nova_{}_checked_{}", base, opname))
     }
 
     /// Plan 172.1 [literal-coercion channel] (§0/§1, 2026-06-30): the C-type a numeric
@@ -50546,6 +50681,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.icr_trace("B11e_str_method_ret_type_first");
                                 return rt.into();
                             }
+                        }
+                        // Plan 206 Ф.1 (D422): `@overflowing_add/_sub/_mul` on any
+                        // `Ints` primitive — result is the mono tuple `(T, bool)`,
+                        // mirroring emit_call's inline `__builtin_*_overflow`
+                        // dispatch (~L35744+ `obj_ty == "nova_int"` sibling block).
+                        if matches!(method.as_str(),
+                            "overflowing_add" | "overflowing_sub" | "overflowing_mul")
+                            && matches!(obj_ty.as_str(),
+                                "nova_int" | "int8_t" | "int16_t" | "int32_t" | "int64_t"
+                                    | "nova_byte" | "uint16_t" | "uint32_t" | "uint64_t"
+                                    | "nova_uint")
+                        {
+                            self.icr_trace("B_overflowing_ints_intrinsic");
+                            return self.register_mono_tuple(&[obj_ty.clone(), "nova_bool".to_string()]);
                         }
                         // D109: prim_builtin_method — eq/lt/le/gt/ge на int/bool/f64
                         // возвращают nova_bool, не nova_int. Без этого `if x.lt(y)`
