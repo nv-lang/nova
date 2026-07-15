@@ -12,12 +12,13 @@ Worktree: `d:/Sources/nv-lang/nova-p187` (ветка `bugfix-187-wave`).
 
 | Баг | Приоритет | Статус | Коммит |
 |---|---|---|---|
-| БАГ 0 serde-encode-pointer-op-regression | P0 | ЗАКРЫТ (фикс + красно-зелёная фикстура, standalone-CU) | этим коммитом |
-| БАГ 1 http-serde-setcookie-serialize-collision | P1 | не воспроизведён локально (нет пакета nova-http; 5 минимальных форм — зелёные) | — |
-| БАГ 2 errorkind-parsejsonerror-variant-collision | P2 | фикс + фикстура зелёные (таргетно), коммит следующий | — |
-| БАГ 3 nested-spawn-scope-var-cc-fail | P2 | codegen-половина закрыта (фикс + фикстура); >16 вложенно-порождённых детей на скоуп — за [M-173.0-R2] (рантайм-подложка, вне волны) | — |
-| БАГ 4 monotonic-now-bare-binding-ice | P2 | НЕ воспроизвёлся (закрыт попутно 67717dcb1/747a79c65); регресс-фикстура добавлена | — |
-| БАГ 5 spawn-throw-segfault | P2 (re-verify) | НЕ воспроизвёлся на свежем бинаре; регресс-фикстура добавлена | — |
+| БАГ 0 serde-encode-pointer-op-regression | P0 | ЗАКРЫТ (фикс + красно-зелёная фикстура, standalone-CU) | 98e3663cc |
+| БАГ 1 http-serde-setcookie-serialize-collision | P1 | не воспроизведён локально (нет пакета nova-http на машине; 5 минимальных форм без http — зелёные); фикс БАГ 0 — тот же класс (name-only fallback) и МОГ закрыть и его: перепроверить на flagship-187 после вливания | — |
+| БАГ 2 errorkind-parsejsonerror-variant-collision | P2 | ЗАКРЫТ (фикс + фикстура, таргетно зелёные) | 1791360cf |
+| БАГ 3 nested-spawn-scope-var-cc-fail | P2 | codegen-половина ЗАКРЫТА (фикс + фикстура); >16 вложенно-порождённых детей на скоуп — за [M-173.0-R2] (рантайм-подложка, вне волны) | c687fc2d1 |
+| БАГ 4 monotonic-now-bare-binding-ice | P2 | НЕ воспроизвёлся (закрыт попутно 67717dcb1/747a79c65 — M-176 variant-chain); регресс-фикстура (голая привязка + t0+Duration) | этим коммитом |
+| БАГ 5 spawn-throw-segfault | P2 (re-verify) | НЕ воспроизвёлся на свежем бинаре (мультиполевой enum str×2+int+[]u8, throw из fn в spawn под supervised(deadline:) + with Fail[E]); регресс-фикстура | этим коммитом |
+| попутный d182-turbofish-D102 | — | ЗАКРЫТ (ложный D102 на Type[A,B].new(позиционно) при serde в CU) | 424799fd8 |
 
 ## Диагноз БАГ 0 (одной строкой)
 
