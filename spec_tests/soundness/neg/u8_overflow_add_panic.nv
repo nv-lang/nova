@@ -1,0 +1,13 @@
+// Plan 206 Ф.1b (D422, решение A): переполнение `u8` при сложении → panic
+// (было — сырой C `+`, тихий wrap). Unsigned overflow (переполнение вверх)
+// трапит так же, как signed — `__builtin_add_overflow` ловит его одинаково.
+// EXPECT_RUNTIME_PANIC integer overflow
+
+// SOUNDNESS_REGRESSION — Plan 206 Ф.1b: закрывает sized unsigned silent-wrap дыру.
+module neg.u8_overflow_add_panic
+
+fn add_one(x u8) -> u8 => x + 1
+
+test "u8 + overflow panics" {
+    ro _ = add_one(u8.MAX)
+}

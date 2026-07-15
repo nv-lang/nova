@@ -1,0 +1,71 @@
+// Plan 206 Ф.1/Ф.1b (D422) — POSITIVE regression:
+// (a) ordinary sized-int arithmetic that does NOT overflow still produces
+//     the same result as before (trap-default only fires ON overflow);
+// (b) `@overflowing_add/_sub/_mul` on `Ints` primitives returns the
+//     `(wrapped, overflowed)` pair without panicking, for both the
+//     unbounded `int` and sized members (i32/u8 spot-check per the
+//     verification matrix).
+module soundness.plan206_overflowing_and_sized_arith
+
+test "sized arithmetic without overflow — unchanged results (Ф.1b)" {
+    ro a i8 = 100
+    ro b i8 = 27
+    assert(a + b == 127)
+
+    ro c u8 = 200
+    ro d u8 = 55
+    assert(c + d == 255)
+
+    ro e i32 = 1000
+    ro f i32 = 2000
+    assert(e * f == 2000000)
+
+    ro g u16 = 500
+    ro h u16 = 300
+    assert(g - h == 200)
+
+    ro i i64 = 9_000_000_000
+    ro j i64 = 1
+    assert(i - j == 8_999_999_999)
+}
+
+test "overflowing_add on int — (wrapped, overflowed) pair (Ф.1)" {
+    ro (v1, ovf1) = int.MAX.overflowing_add(1)
+    assert(ovf1)
+    assert(v1 == int.MIN)
+
+    ro (v2, ovf2) = (41).overflowing_add(1)
+    assert(!ovf2)
+    assert(v2 == 42)
+}
+
+test "overflowing_add on sized Ints members — i32/u8 (Ф.1)" {
+    ro x i32 = i32.MAX
+    ro (v3, ovf3) = x.overflowing_add(1)
+    assert(ovf3)
+    assert(v3 == i32.MIN)
+
+    ro y u8 = 250
+    ro (v4, ovf4) = y.overflowing_add(10)
+    assert(ovf4)
+
+    ro z u8 = 10
+    ro (v5, ovf5) = z.overflowing_add(20)
+    assert(!ovf5)
+    assert(v5 == 30)
+}
+
+test "overflowing_sub/_mul on sized Ints — no-overflow + overflow (Ф.1)" {
+    ro p i32 = 10
+    ro (v6, ovf6) = p.overflowing_sub(20)
+    assert(!ovf6)
+    assert(v6 == -10)
+
+    ro q u8 = 5
+    ro (v7, ovf7) = q.overflowing_sub(10)
+    assert(ovf7)
+
+    ro r i8 = 100
+    ro (v8, ovf8) = r.overflowing_mul(2)
+    assert(ovf8)
+}

@@ -1,0 +1,11 @@
+// Plan 206 Ф.1b (D422, решение A): переполнение `i32` при умножении → panic.
+// EXPECT_RUNTIME_PANIC integer overflow
+
+// SOUNDNESS_REGRESSION — Plan 206 Ф.1b.
+module neg.i32_overflow_mul_panic
+
+fn double(x i32) -> i32 => x * 2
+
+test "i32 * overflow panics" {
+    ro _ = double(i32.MAX)
+}

@@ -1,0 +1,11 @@
+// Plan 206 Ф.1b (D422, решение A): переполнение `u16` при сложении → panic.
+// EXPECT_RUNTIME_PANIC integer overflow
+
+// SOUNDNESS_REGRESSION — Plan 206 Ф.1b.
+module neg.u16_overflow_add_panic
+
+fn add_one(x u16) -> u16 => x + 1
+
+test "u16 + overflow panics" {
+    ro _ = add_one(u16.MAX)
+}

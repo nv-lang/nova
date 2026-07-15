@@ -1,0 +1,11 @@
+// Plan 206 Ф.1b (D422, решение A): переполнение `u64` при сложении → panic.
+// EXPECT_RUNTIME_PANIC integer overflow
+
+// SOUNDNESS_REGRESSION — Plan 206 Ф.1b.
+module neg.u64_overflow_add_panic
+
+fn add_one(x u64) -> u64 => x + 1
+
+test "u64 + overflow panics" {
+    ro _ = add_one(u64.MAX)
+}
