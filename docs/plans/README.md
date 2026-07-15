@@ -21,6 +21,11 @@
   Точечный dispatch-фикс: [196.7 — method-dispatch через resolved_callees](196.7-method-dispatch-resolved-callees.md)
   ✅ ЗАКРЫТ 2026-07-15 (фасад `[]u8 @to_str` мис-диспатч по имени → канал+receiver-тип; снят обход `decode_utf8`,
   маркер `[M-174.1-to-str-name-collision-codegen-bug]` закрыт).
+  Точечный dispatch-фикс: [196.8 — primitive receiver bounded blanket](196.8-primitive-receiver-bounded-blanket.md)
+  ✅ ЗАКРЫТ 2026-07-16 (BOUNDED-бланкет `[T Ints]` на примитивном ресивере — `i64.checked_add` — мис-диспатч в
+  concrete-коллизию чужого типа; новый регистр `type_set_members` для D310 type-set bound в guard'е Plan 164 Ф.3;
+  маркер `[M-primitive-receiver-bounded-blanket-dispatch]` закрыт; попутно найден+залогирован
+  `[M-i64-clamp-primitive-collision-dispatch]`, отдельное окно).
 - **187** — Ред.5-v2 готова к запуску Ф.MVP-2: ВСЕ внешние гейты сняты (TLS=nova-tls, 173 закрыт, SSE в main); демо = живой Nova-бек, канон показа Docker; предложена Ред.6-пятёрка витринных улучшений.
 - **173** ✅ семейство закрыто 2026-07-13 (MultiError D414 + propagation-trace per-fiber + suppressed явным параметром); остаток: п.4 semaphore-cap (P3, опция) + [M-173-trace-not-in-child-error] (P3).
 - **193** ✅ закрыт (std/tls → внешний dep `../nova-tls`, ноль Rust в TLS-пути); хвост — vendored mbedTLS.

@@ -1117,6 +1117,15 @@ pub struct CEmitter {
     /// в ambient contexts (bare method call, interpolation). Bound /
     /// coercion остаются structural — gate_on_impl=false.
     type_impl_protocols: HashMap<String, HashSet<String>>,
+    /// Plan 196.8 [M-primitive-receiver-bounded-blanket-dispatch]: D310
+    /// type-set declarations (`type Ints set i8 | i16 | ... | uint`) — maps
+    /// set name (e.g. "Ints") → canonical Nova member names. `type_impl_
+    /// protocols` above ONLY covers `#impl(P)` protocol opt-ins and is NEVER
+    /// populated for primitives, so a bounded blanket whose bound is a
+    /// type-set (not a protocol) could not previously recognize that a
+    /// primitive receiver (e.g. `i64`) satisfies it — see `protocols_match`
+    /// at the Plan 164 Ф.3 guard call site.
+    type_set_members: HashMap<String, Vec<String>>,
     /// Maps local variable name → (param_c_types, return_c_type) for function-typed parameters.
     /// Used to emit proper function pointer calls for `body(args)` where body is a fn param.
     fn_param_sigs: HashMap<String, (Vec<String>, String)>,
@@ -2096,6 +2105,7 @@ impl CEmitter {
             synthesized_default_methods: HashSet::new(),
             synthesizing_default_methods: HashSet::new(),
             type_impl_protocols: HashMap::new(),
+            type_set_members: HashMap::new(),
             fn_param_sigs: HashMap::new(),
             unanno_light_clos: HashMap::new(),
             array_param_fn_sigs: HashMap::new(),
@@ -5510,6 +5520,32 @@ impl CEmitter {
                         t.name.clone(),
                         t.impl_protocols.iter().cloned().collect(),
                     );
+                }
+            }
+        }
+
+        // Plan 196.8 [M-primitive-receiver-bounded-blanket-dispatch]: populate
+        // type_set_members from D310 `type Name set A | B | C` declarations
+        // (e.g. `Ints` in prelude/protocols.nv). A bounded blanket's bound may
+        // be a type-set rather than a protocol — `type_impl_protocols` above
+        // never carries membership for those (primitives get no `#impl`
+        // entry), so the Plan 164 Ф.3 dispatch guard's `protocols_match`
+        // would treat EVERY type-set-bounded blanket as never matching a
+        // primitive receiver. Members are stored under their bare Nova name
+        // (`i64`, `int`, `u8`, ...) — the same vocabulary `debt_nova_type_
+        // name_from_c` produces for a primitive receiver's materialized C type.
+        for item in &module.items {
+            if let Item::Type(t) = item {
+                if let TypeDeclKind::TypeSet(members) = &t.kind {
+                    let names: Vec<String> = members.iter()
+                        .filter_map(|m| match m {
+                            crate::ast::TypeRef::Named { path, .. } => path.last().cloned(),
+                            _ => None,
+                        })
+                        .collect();
+                    if !names.is_empty() {
+                        self.type_set_members.insert(t.name.clone(), names);
+                    }
                 }
             }
         }
@@ -37729,7 +37765,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let recv_is_primitive = matches!(recv_base,
                             "nova_int" | "nova_bool" | "nova_char" | "nova_str"
                             | "nova_f32" | "nova_f64" | "int" | "bool" | "char"
-                            | "str" | "f32" | "f64" | "void")
+                            | "str" | "f32" | "f64" | "void"
+                            // Plan 196.8: sized-int C types (`i64.checked_add(..)` etc.)
+                            // are ALSO primitive receivers — omitted before because no
+                            // bounded blanket could ever match one (see has_typeset_
+                            // match_for_primitive below, which now can).
+                            | "int8_t" | "int16_t" | "int32_t" | "int64_t"
+                            | "uint8_t" | "uint16_t" | "uint32_t" | "uint64_t"
+                            | "nova_byte" | "nova_uint")
                         || recv_base.starts_with("nova_");
                     let has_unconstrained_blanket = self.mono_method_decls.iter()
                         .any(|((tvname, mname), fd)| {
@@ -37741,8 +37784,41 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     .map(|g| g.bounds.is_empty())
                                     .unwrap_or(false)
                         });
+                    // Plan 196.8 [M-primitive-receiver-bounded-blanket-dispatch]:
+                    // a BOUNDED blanket (`fn[T Ints] T @checked_add(rhs T)`) on a
+                    // primitive receiver was NEVER a candidate before — the
+                    // `has_unconstrained_blanket` escape hatch only recognized an
+                    // EMPTY bound list. `i64.checked_add(b)` in a CU that also has
+                    // a concrete `Duration @checked_add` fell straight to the
+                    // name-keyed `method_receivers` last-wins fallback below and
+                    // mis-dispatched into Duration's overload (CC-FAIL). Recognize
+                    // a D310 type-set bound (`Ints`) whose membership the
+                    // receiver's canonical Nova name satisfies — mirrors the
+                    // protocol-bound check `protocols_match` performs further down,
+                    // but must ALSO gate `recv_is_candidate` here or this branch is
+                    // never reached for a primitive receiver at all.
+                    let recv_canon_name = Self::debt_nova_type_name_from_c(recv_base);
+                    let has_typeset_blanket_for_primitive = self.mono_method_decls.iter()
+                        .any(|((tvname, mname), fd)| {
+                            mname == method
+                                && tvname.len() <= 2
+                                && tvname.chars().all(|c| c.is_ascii_uppercase())
+                                && fd.generics.iter()
+                                    .find(|g| &g.name == tvname)
+                                    .map(|g| g.bounds.iter().any(|bound| {
+                                        if let crate::ast::TypeRef::Named { path, .. } = bound {
+                                            path.last().and_then(|p| self.type_set_members.get(p.as_str()))
+                                                .map(|members| members.iter()
+                                                    .any(|m| m == &recv_canon_name))
+                                                .unwrap_or(false)
+                                        } else { false }
+                                    }))
+                                    .unwrap_or(false)
+                        });
                     let recv_is_candidate = !recv_base.is_empty()
-                        && (!recv_is_primitive || has_unconstrained_blanket);
+                        && (!recv_is_primitive
+                            || has_unconstrained_blanket
+                            || has_typeset_blanket_for_primitive);
                     if recv_is_candidate {
                         // Find all bare-typevar blanket entries for this method name.
                         let blanket_key_opt: Option<(String, String)> = self.mono_method_decls
@@ -37765,16 +37841,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         // Unconstrained blanket — always applies.
                                         true
                                     } else {
-                                        // Check each bound: receiver must implement that protocol.
+                                        // Check each bound: receiver must implement that protocol
+                                        // OR — Plan 196.8 — be a MEMBER of a D310 type-set bound
+                                        // (e.g. `Ints`). Type-sets are never in
+                                        // `type_impl_protocols` (that map is #impl(P)-only and
+                                        // primitives never get an #impl entry), so without this
+                                        // branch a bounded blanket over a type-set could NEVER
+                                        // match ANY receiver, primitive or not.
                                         let recv_impls = self.type_impl_protocols.get(recv_base);
                                         recv_g.bounds.iter().all(|bound| {
                                             if let crate::ast::TypeRef::Named { path, .. } = bound {
                                                 if let Some(proto) = path.last() {
-                                                    // type_impl_protocols stores specs like "Next[T]";
-                                                    // use impl_spec_base_name to compare bare names.
-                                                    recv_impls.map(|set| set.iter().any(|s|
-                                                        impl_spec_base_name(s) == proto.as_str()
-                                                    )).unwrap_or(false)
+                                                    if let Some(members) =
+                                                        self.type_set_members.get(proto.as_str())
+                                                    {
+                                                        members.iter().any(|m| m == &recv_canon_name)
+                                                    } else {
+                                                        // type_impl_protocols stores specs like "Next[T]";
+                                                        // use impl_spec_base_name to compare bare names.
+                                                        recv_impls.map(|set| set.iter().any(|s|
+                                                            impl_spec_base_name(s) == proto.as_str()
+                                                        )).unwrap_or(false)
+                                                    }
                                                 } else { false }
                                             } else { false }
                                         })
