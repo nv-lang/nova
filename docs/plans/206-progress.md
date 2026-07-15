@@ -2,11 +2,52 @@
 # Plan 206 — прогресс (Ф.0 + Ф.1 + Ф.1b + Ф.2)
 
 **Ветка:** `plan206-overflow` (worktree `d:/Sources/nv-lang/nova-206`, база `9c6af284b`,
-смёржен `main` @ `73ab1c44f` коммитом `9e96817c2`, затем `main` @ `c65a3ecc4` (watchdog)
-коммитом `8906621e2`).
-**Статус на 2026-07-15:** Ф.0/Ф.1/Ф.1b/Ф.2 ЗАВЕРШЕНЫ и точечно верифицированы. Полный
-`spec_tests/conformance` мега-CU НЕ гонялся (по заданию — авторитетный гейт у владельца
-при вливании; см. также находку ниже — этот каталог физически НЕ таргетируем per-файл).
+смёржен `main` @ `73ab1c44f` (`9e96817c2`), `c65a3ecc4` watchdog (`8906621e2`),
+`ae9dc90a3` vendor-FFI/lock (`c028036aa`)).
+**Статус на 2026-07-15:** Ф.0/Ф.1/Ф.1b/Ф.2 + Ф.3 (Duration-миграция) ЗАВЕРШЕНЫ и точечно
+верифицированы. Полный `spec_tests/conformance` мега-CU НЕ гонялся (по заданию —
+авторитетный гейт у владельца/оркестратора; см. находку ниже — каталог физически НЕ
+таргетируем per-файл).
+
+## Ф.3 раунд-3 — Duration checked_*/saturating_* дедуп D317 (ЗАВЕРШЕНО)
+
+Пере-гейт (полный conformance) вернул 2 падавших блока `spec_tests/conformance/
+d317_duration_overflow_policy.nv`: `checked_* — None on overflow` и `saturating_* clamps
+to ±MAX` — оба `integer overflow: *`. Корень: приватные Duration-хелперы использовали
+СВОЮ i64-арифметику, трапящую под sized-int trap-default (Ф.1b) ДО возврата None/клампа.
+
+- **Корень — `checked_mul_i64` (`std/src/time/duration.nv`).** Считал `ro r = a * b`
+  (голый i64 `*`) и проверял через divide-back `if r / a != b { None }` — классический
+  wrap+divide-back-идиом, ТРЕБУЮЩИЙ wraparound. Под 206 голый `a * b` ТРАПИТ на overflow
+  ДО divide-back → `checked_mul(2)`/`saturating_mul(2)` на `i64::MAX` паниковали вместо
+  None/кламп. (`checked_add_i64`/`checked_sub_i64` были guarded — не трапили; но дублировали
+  overflow-детект вручную.)
+- **Миграция (дедуп D317, план Ф.3):** три хелпера `checked_add_i64`/`checked_sub_i64`/
+  `checked_mul_i64` теперь однострочно делегируют Ints-бланкетам `a.checked_add(b)` /
+  `.checked_sub(b)` / `.checked_mul(b)` (поверх компиляторного `@overflowing_*` =
+  `__builtin_*_overflow`). Ручные i64-range-проверки (add/sub) и wrap+divide-back (mul)
+  УДАЛЕНЫ — overflow-детект теперь один (аппаратный флаг, «одно окно» 196). Поведение
+  байт-идентично (None ⟺ i64-overflow). `checked_neg_i64`/`checked_div_i64`/`clamp_i64`/
+  `sat_*_i64`/трап-обёртки (`add_or_trap` и т.д.) НЕ тронуты — `sat_*_i64` зовут
+  мигрированные `checked_*_i64` и теперь не трапят; `saturating` сохраняет СВОИ Duration-
+  границы `±(2⁶³−1)` (передаются как `lo`/`hi` = `-i64_max()`/`i64_max()`, отличны от
+  i64.MIN бланкета — поэтому НЕ заменял `saturating_*` на бланкет `@saturating_*` напрямую,
+  только overflow-ДЕТЕКТ через `checked_*`, а направление клампа — Duration-специфичное).
+- **f64-пути (`checked_mul_f64`/`f64_nanos_checked`) НЕ тронуты** — там overflow-детект по
+  f64-границам, не целочисленный `__builtin` (план 206 §Ф.3 явно: это конверсия, не
+  дублирование int-примитива).
+- **Duration-конструкторы (`from_secs`: `s * 1e9` и т.п.) НЕ тронуты** — голый `*` там
+  трапит на ЗАВЕДОМО-огромном входе (корректное tier-1 поведение, не намеренный wrap);
+  d317-тесты используют `from_nanos` для граничных значений, конструкторы не хитят.
+- **d317 ДО/ПОСЛЕ:** checked_mul/saturating_mul на `i64::MAX` ДО — `RUN-FAIL … integer
+  overflow: *` (трап внутри хелпера); ПОСЛЕ — `checked_mul(2)` → `None`, `saturating_mul(2)`
+  → кламп к `d317_MAX`, `saturating_mul(-2)` → `-d317_MAX`. Own-CU репро
+  `spec_tests/soundness/plan206_d317_duration_checked_saturating.nv` (точная копия обоих
+  блоков + @abs) — PASS. Peer `std/src/time/overflow_safe_test.nv` (полный публичный
+  surface: Timestamp/Monotonic boundary-saturate, @abs(i64::MIN)) — PASS (нет регрессии).
+- Верификация раунда-3 (после `git merge main` vendor-FFI + пересборка начисто, 0 ошибок):
+  d317-репро + overflow_safe_test PASS; 11-тестовый регресс (Duration units/surface +
+  8-... сокращённые sized-пины + Ф.1/Ф.2/D404/vec-hash/blanket) PASS; soundness зелёные.
 
 ## Ф.2 раунд-2 — corpus-overflow-сайты вскрытые полным conformance-гейтом (ЗАВЕРШЕНО)
 
