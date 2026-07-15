@@ -406,6 +406,46 @@ fn compute_dead_decls_with(module: &Module, enabled: bool) -> DeadDecls {
     let mut methods: Vec<(String, String, HashSet<String>)> = Vec::new();
     // Worklist seed: `main` is always a root.
     let mut worklist: Vec<String> = vec!["main".to_string()];
+    // Plan 209 Ф.2 (HashMap-mono-gap fix): D39 embed-delegation proxies
+    // (`emit_embed_proxies`) are SYNTHESIZED directly in codegen — never AST
+    // `Item::Fn` nodes — so `collect_used_names` above can never see the call
+    // they make into the embedded type's base method (e.g. `Set[T]`'s
+    // auto-generated `merge_from`/`values` proxy calling `HashMap[K,V]`'s own
+    // `merge_from`/`values`). That left the base method's `(type, name)`
+    // reachability firing on the type alone (the wrapper's type decl always
+    // names the embedded type, satisfying the `ty_anchored` half) while the
+    // NAME half could stay unreached whenever nothing in Nova SOURCE TEXT
+    // literally spells the method name (e.g. `for x in some_set {}` reaches
+    // `values()` only via codegen-internal iteration lowering, never as an
+    // AST `Member` node) — the base method's body was then dropped as dead,
+    // while the always-unconditional proxy still called it: `static` linkage
+    // + C-compiler DCE masked this (an unreached proxy was itself stripped
+    // before the linker saw its bad reference); external-linkage promotion
+    // (Plan 209 `top_level_storage()`) makes the proxy survive regardless of
+    // use, turning the gap into `undefined symbol` at link time.
+    //
+    // Fix: any type that is ever embedded (`use <field> <EmbeddedType>[...]`)
+    // has ALL of its instance-method NAMES anchored reachable by name alone —
+    // mirrors the existing over-keep pattern below for concrete-slice
+    // receivers (`ty.starts_with("[]")`): conservative (never over-prune)
+    // rather than precisely replaying `emit_embed_proxies`' own
+    // override-precedence logic here.
+    let embedded_type_names: HashSet<String> = module.items.iter()
+        .filter_map(|it| match it {
+            Item::Type(t) => match &t.kind {
+                TypeDeclKind::Record(fields) => Some(fields.iter()
+                    .filter(|f| f.is_embed)
+                    .filter_map(|f| match &f.ty {
+                        TypeRef::Named { path, .. } => Some(path.join("_")),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .flatten()
+        .collect();
     for item in &module.items {
         let mut refs: HashSet<String> = HashSet::new();
         crate::lints::collect_used_names(std::slice::from_ref(item), &mut refs);
@@ -425,6 +465,11 @@ fn compute_dead_decls_with(module: &Module, enabled: bool) -> DeadDecls {
                 // mono worklist). Anchored to the type∧name intersection below.
                 if f.generics.is_empty() {
                     let ty = f.receiver.as_ref().unwrap().type_name.clone();
+                    // Plan 209 Ф.2: embedded-type method — anchor the NAME half
+                    // unconditionally (see doc above `embedded_type_names`).
+                    if embedded_type_names.contains(&ty) {
+                        worklist.push(f.name.clone());
+                    }
                     methods.push((ty, f.name.clone(), refs));
                 } else {
                     // Generic method: leave its refs as unconditional roots (it
