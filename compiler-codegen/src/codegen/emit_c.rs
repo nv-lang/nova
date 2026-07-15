@@ -1178,7 +1178,7 @@ pub struct CEmitter {
     /// Plan 140.1 Ф.2 (D24/D13 amend): source file display name used as the
     /// `<file>` part of the location-first diagnostic prefix
     /// (`<file>:<line>: <kind> failed: <expr>`) emitted at contract /
-    /// assert / debug_assert violation sites. Set via `set_source_file_name`
+    /// assert violation sites. Set via `set_source_file_name`
     /// from the build driver (main.rs / test_runner.rs). Defaults to
     /// `"<unknown>"` when not set (e.g. internal/test emitters).
     source_file_name: String,
@@ -32564,13 +32564,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if let ExprKind::Ident(name) = &func.kind {
             // D70 `to_str(x)` builtin removed (REPLACED → D73). String
             // conversion now via `str.from(x)` / `x.@into()` (with str-context).
-            // assert(cond) / debug_assert(cond) → nova_assert(cond, "condition text").
-            // По D81: assert — always runtime; debug_assert — debug-only,
-            // в release no-op. В bootstrap'е (single build-mode) оба
-            // эмитятся одинаково; production-runtime добавит conditional
-            // compilation для debug_assert (например, через NDEBUG-style
-            // пре-процессор или codegen-флаг).
-            if name == "assert" || name == "debug_assert" {
+            // assert(cond) → nova_assert(cond, "condition text").
+            // По D81: assert — always runtime. Plan 194 A2.2/A4: dev-only
+            // variant роль теперь у `#debug assert` (mode_erases_debug); тем
+            // самым legacy `debug_assert` intrinsic-имя ретрактировано.
+            if name == "assert" {
                 if let Some(cond_arg) = args.first() {
                     let cond_expr = cond_arg.expr();
                     let cond_val = self.emit_expr(cond_expr)?;
@@ -49943,7 +49941,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // сидированы в scope нигде в этом пути, нужно
                         // отдельное исследование побочных эффектов на другие
                         // handler-walk'и: never-ops/purity/throw-detection).
-                        if name == "println" || name == "print" || name == "assert" || name == "debug_assert" {
+                        // Plan 194 A4: `debug_assert` retracted from this
+                        // NAME-set (role absorbed by `#debug assert`).
+                        if name == "println" || name == "print" || name == "assert" {
                             self.icr_trace("B10a_ident_println_assert");
                             return "nova_unit".into();
                         }

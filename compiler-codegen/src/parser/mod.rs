@@ -10954,10 +10954,11 @@ impl Parser {
             // клауз requires/ensures/invariant). `#`/`debug` — обычные
             // токены (не keyword'ы), lookahead на `debug` ident по образцу
             // `#cfg`/`#stable` (item-level attrs, parse_item).
-            // V1: парсится и Expr.debug_only=true записывается в AST;
-            // codegen erasure-поведение по `--contracts`-режиму — Ф.2
-            // (следующая волна). `debug_assert(...)` НЕ ретрактирован —
-            // сосуществует как отдельная форма до Ф.4 (миграция).
+            // Expr.debug_only=true записывается в AST; codegen erasure-
+            // поведение по `--contracts`-режиму — `mode_erases_debug` (Ф.2,
+            // Plan 194 A2.2). Plan 194 A4: legacy `debug_assert(...)`
+            // intrinsic РЕТРАКТИРОВАН — `#debug assert(...)` единственная
+            // dev-only форма.
             TokenKind::Hash if matches!(&self.peek_at(1).kind, TokenKind::Ident(n) if n == "debug") => {
                 self.bump(); // #
                 self.bump(); // debug
