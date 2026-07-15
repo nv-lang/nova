@@ -1,5 +1,19 @@
 # План 187 — Флагманское демо: конкурентный агрегатор с живой визуализацией
 
+> **Статус: ПРОГОН А ЗАКРЫТ И ВЛИТ В MAIN (2026-07-15).** Запускаемое веб-приложение
+> собирается (`nova build examples/flagship/aggregator/src/main.nv`) и отвечает: smoke
+> `GET /` (HTML мокапа v9) + `GET /api/snapshot` (реальный JSON — `handlers:{net:"mock(seed=42)"}`,
+> `fibers_spawned/closed:12/12` = честный «0 leaks» из интроспекции). В main: src/{main,app,api,domain}
+> + frontend/index.html (v9: панель «Код», эффект-бейдж, seed-в-URL), main.nv на пакете http
+> (ручной HTTP снесён), real-cancel `supervised(deadline:)`, typed-serde, SSE-replay с t_ms,
+> Live health. Багфикс-волна (5 compiler-багов) влита; 6 регресс-фикстур — в
+> `examples/flagship/aggregator/regressions/` (не в spec_tests). **ОСТАЁТСЯ:**
+> (1) 🔴 P1 `[M-187-supervised-nested-fiber-slot-race]` — сервер виснет на 2-3-м последовательном
+> запросе (рантайм-гонка вложенных supervised; свежий процесс+1 запрос надёжен) — ЕДИНСТВЕННЫЙ
+> блокер «живого» демо; (2) прогон Б (витрина 8-11 — часть уже в UI-заготовке, нужны серверные
+> хвосты + снять ручной JSON-рендер, если `[M-187-http-serde-setcookie]` закрыт фиксом serde-волны —
+> проверить); (3) волна 2 — Docker (Linux-пре-гейт → Dockerfile → ghcr). Ниже — исходные Ред.3-9.
+>
 > **Ред.3 (2026-07-13, вечер) — сверка с кодом после дневных слияний; все внешние гейты волны-1 СНЯТЫ:**
 > 1. **TLS-гейт Ф.3b МЁРТВ.** «Plan 116 std/tls (PLANNED, rustls)» не существует — TLS приехал
 >    планами 193/202/203: публичная репа **nv-lang/nova-tls** (mbedTLS-шим, реальные хендшейки
