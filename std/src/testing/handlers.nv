@@ -118,10 +118,14 @@ import std.runtime.vclock
 // splitmix64 для seed init — гарантирует non-zero state даже при seed=0.
 // Note: `mut`-параметр не поддержан парсером (Plan 34 Ф.2), поэтому
 // явная локальная mut переменная.
+// Plan 206 Ф.2 (D423): splitmix64/xoshiro256++ — модульная арифметика ПО
+// ЗАМЫСЛУ (mod 2^64 wraparound часть спецификации PRNG, не баг). После Ф.1b
+// (sized-int trap-default) голый `+`/`*` трапит на overflow -> явный
+// opt-out через `.wrapping_add`/`.wrapping_mul` (см. план §Философия 194).
 fn splitmix64_step(seed u64) -> u64 {
-    mut z = seed + 0x9E3779B97F4A7C15
-    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9
-    z = (z ^ (z >> 27)) * 0x94D049BB133111EB
+    mut z = seed.wrapping_add(0x9E3779B97F4A7C15)
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9)
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB)
     z ^ (z >> 31)
 }
 
@@ -154,7 +158,8 @@ export fn seeded(seed u64) -> Effect[Random] {
     effect Random {
         u64() {
             // xoshiro256++ step.
-            ro result = rotl64(s0 + s3, 23) + s0
+            // Plan 206 Ф.2 (D423): модульная арифметика по замыслу — см. splitmix64_step выше.
+            ro result = rotl64(s0.wrapping_add(s3), 23).wrapping_add(s0)
             ro t = s1 << 17
             s2 = s2 ^ s0
             s3 = s3 ^ s1
@@ -173,7 +178,8 @@ export fn seeded(seed u64) -> Effect[Random] {
             while i < n {
                 if buf_remaining == 0 {
                     // Direct xoshiro256++ step (inlined, без invalidate).
-                    ro result = rotl64(s0 + s3, 23) + s0
+                    // Plan 206 Ф.2 (D423): модульная арифметика по замыслу — см. splitmix64_step выше.
+                    ro result = rotl64(s0.wrapping_add(s3), 23).wrapping_add(s0)
                     ro t = s1 << 17
                     s2 = s2 ^ s0
                     s3 = s3 ^ s1

@@ -121,7 +121,7 @@ export fn Md5.hash_str(data []u8) -> str {
 /// Incremental update — feed bytes в state. Для streamed input.
 #stable(since = "0.1")
 export fn Md5 mut @update(data []u8) -> () {
-    @total_len = @total_len + (data.len() as u64)
+    @total_len = @total_len.wrapping_add(data.len() as u64)
 
     // Прибавляем к buffer и обрабатываем полные 64-байтные блоки.
     for b in data {
@@ -137,8 +137,9 @@ export fn Md5 mut @update(data []u8) -> () {
 #stable(since = "0.1")
 export fn Md5 mut @finalize() -> [16]u8 {
     // Padding: append 0x80, потом 0-bytes до длины ≡ 56 (mod 64),
-    // потом 8 байт длины в битах (little-endian).
-    ro total_bits = @total_len * 8
+    // потом 8 байт длины в битах (little-endian). RFC 1321: длина в битах
+    // берётся mod 2^64 (Plan 206 Ф.2/D423 — явный `.wrapping_mul`).
+    ro total_bits = @total_len.wrapping_mul(8)
 
     @buffer.push(0x80)
     while @buffer.len() % 64 != 56 {
@@ -219,16 +220,20 @@ fn Md5 mut @process_block(block []u8) -> () {
         ro temp = d
         d = c
         c = b
-        ro sum = (a + f + t_constant(k) + m[g]) & 0xFFFFFFFF
-        b = (b + rotl32(sum, s_constant(k))) & 0xFFFFFFFF
+        // Plan 206 Ф.2 (D423): MD5-компрессия — модульная арифметика mod 2^32
+        // ПО СПЕЦИФИКАЦИИ (RFC 1321 §3.4), не баг -> `.wrapping_add` (маска
+        // `& 0xFFFFFFFF` избыточна после wrapping_add на u32, но оставлена
+        // как явная документация домена — совпадает byte-for-byte).
+        ro sum = a.wrapping_add(f).wrapping_add(t_constant(k)).wrapping_add(m[g]) & 0xFFFFFFFF
+        b = b.wrapping_add(rotl32(sum, s_constant(k))) & 0xFFFFFFFF
         a = temp
 
     }
 
-    @a = (@a + a) & 0xFFFFFFFF
-    @b = (@b + b) & 0xFFFFFFFF
-    @c = (@c + c) & 0xFFFFFFFF
-    @d = (@d + d) & 0xFFFFFFFF
+    @a = @a.wrapping_add(a) & 0xFFFFFFFF
+    @b = @b.wrapping_add(b) & 0xFFFFFFFF
+    @c = @c.wrapping_add(c) & 0xFFFFFFFF
+    @d = @d.wrapping_add(d) & 0xFFFFFFFF
 }
 
 fn rotl32(x u32, n int) -> u32 =>

@@ -42,7 +42,10 @@ export fn Fnv.hash32(data []u8) -> u32 {
     mut h = FNV1A_32_OFFSET
     for b in data {
         h = h ^ (b as u32)
-        h = h * FNV1A_32_PRIME
+        // Plan 206 Ф.2 (D423): FNV — модульная арифметика ПО ЗАМЫСЛУ (mod 2^32
+        // multiply — часть спецификации, не баг). Голый `*` трапит после Ф.1b
+        // sized-int trap-default -> явный opt-out через `.wrapping_mul`.
+        h = h.wrapping_mul(FNV1A_32_PRIME)
     }
     h
 }
@@ -54,7 +57,8 @@ export fn Fnv.hash64(data []u8) -> u64 {
     mut h = FNV1A_64_OFFSET
     for b in data {
         h = h ^ (b as u64)
-        h = h * FNV1A_64_PRIME
+        // Plan 206 Ф.2 (D423): модульная арифметика по замыслу — см. hash32.
+        h = h.wrapping_mul(FNV1A_64_PRIME)
     }
     h
 }
@@ -84,7 +88,8 @@ export fn Fnv64.new() -> Fnv64State =>
 export fn Fnv64State mut @update(data []u8) -> () {
     for b in data {
         @h = @h ^ (b as u64)
-        @h = @h * FNV1A_64_PRIME
+        // Plan 206 Ф.2 (D423): модульная арифметика по замыслу — см. hash32.
+        @h = @h.wrapping_mul(FNV1A_64_PRIME)
     }
 }
 

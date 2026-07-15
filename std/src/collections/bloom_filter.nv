@@ -104,7 +104,10 @@ export fn BloomFilter mut @insert(s str) -> () {
     ro h1 = hash1(s)
     ro h2 = hash2(s)
     for i in 0..@num_hashes {
-        ro bit_idx = ((h1 + (i as u64) * h2) as int) % @bits_size
+        // Plan 206 Ф.2 (D423): double-hashing комбинация — модульная
+        // арифметика по замыслу (переполнение mod 2^64 ожидаемо, потом всё
+        // равно `% @bits_size`) -> `.wrapping_mul`/`.wrapping_add`.
+        ro bit_idx = (h1.wrapping_add((i as u64).wrapping_mul(h2)) as int) % @bits_size
         ro safe_idx = if bit_idx < 0 { bit_idx + @bits_size } else { bit_idx }
         @set_bit(safe_idx)
     }
@@ -118,7 +121,8 @@ export fn BloomFilter @contains(s str) -> bool {
     ro h2 = hash2(s)
     mut i = 0
     while i < @num_hashes {
-        ro bit_idx = ((h1 + (i as u64) * h2) as int) % @bits_size
+        // Plan 206 Ф.2 (D423): см. @insert — модульная арифметика по замыслу.
+        ro bit_idx = (h1.wrapping_add((i as u64).wrapping_mul(h2)) as int) % @bits_size
         ro safe_idx = if bit_idx < 0 { bit_idx + @bits_size } else { bit_idx }
         if !@bit(safe_idx) { return false }
         i += 1
@@ -151,11 +155,13 @@ fn BloomFilter @bit(idx int) -> bool {
 // Hash functions — простые (FNV-1a варианты)
 // ──────────────────────────────────────────────────────────────────────────
 
+// Plan 206 Ф.2 (D423): FNV-1a-подобный хэш — модульная арифметика по
+// замыслу (mod 2^64 wraparound часть алгоритма) -> `.wrapping_mul`/`.wrapping_add`.
 fn hash1(s str) -> u64 {
     mut h u64 = 0xCBF29CE484222325        // FNV offset basis
     for c in s.chars() {
         h = h ^ ((c as int) as u64)
-        h = h * 0x100000001B3                  // FNV prime
+        h = h.wrapping_mul(0x100000001B3)        // FNV prime
     }
     h
 }
@@ -163,8 +169,8 @@ fn hash1(s str) -> u64 {
 fn hash2(s str) -> u64 {
     mut h u64 = 0x100000001B3              // другая seed
     for c in s.chars() {
-        h = h * 31
-        h = h + ((c as int) as u64)
+        h = h.wrapping_mul(31)
+        h = h.wrapping_add((c as int) as u64)
     }
     h
 }
