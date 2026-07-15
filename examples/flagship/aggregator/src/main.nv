@@ -163,9 +163,9 @@ fn main() Time {
                     // would be E_CONCURRENT_MUT_CAPTURE.
                     mut lst = match TcpListener.bind(addr) {
                         Ok(l)  => l
-                        Err(_) => panic("Failed to bind: " + str.from(port))
+                        Err(_) => panic("Failed to bind: " + port.to_str())
                     }
-                    println("Nova flagship aggregator listening on http://127.0.0.1:" + str.from(lst.local_port()))
+                    println("Nova flagship aggregator listening on http://127.0.0.1:" + lst.local_port().to_str())
                     mut running = true
                     while running {
                         match lst.accept() {
@@ -297,7 +297,7 @@ fn run_net(legend str, mode str, seed int) Emit Time -> RunResult {
             ro sources = chaos_variant(weather_demo_sources(), seed as u64)
             ro report = with Net = mock_net() { aggregate(sources, Duration.from_millis(WEATHER_BUDGET_MS)) }
             RunResult { report, sources, budget_ms: WEATHER_BUDGET_MS,
-                handlers: { net: "mock(seed=" + str.from(seed) + ")", time: "real" } }
+                handlers: { net: "mock(seed=" + seed.to_str() + ")", time: "real" } }
         } else {
             ro sources = weather_demo_sources()
             ro report = with Net = mock_net() { aggregate(sources, Duration.from_millis(WEATHER_BUDGET_MS)) }
@@ -316,7 +316,7 @@ fn run_net(legend str, mode str, seed int) Emit Time -> RunResult {
             ro sources = chaos_variant(health_demo_sources(), seed as u64)
             ro report = with Net = mock_net() { aggregate(sources, Duration.from_millis(HEALTH_BUDGET_MS)) }
             RunResult { report, sources, budget_ms: HEALTH_BUDGET_MS,
-                handlers: { net: "mock(seed=" + str.from(seed) + ")", time: "real" } }
+                handlers: { net: "mock(seed=" + seed.to_str() + ")", time: "real" } }
         } else {
             ro sources = health_demo_sources()
             ro report = with Net = mock_net() { aggregate(sources, Duration.from_millis(HEALTH_BUDGET_MS)) }
@@ -394,8 +394,8 @@ fn status_dto_json(s StatusDto) -> str {
 
 fn result_dto_json(r ResultDto) -> str {
     "{\"id\":\"" + json_escape(r.id) + "\",\"kind\":\"" + json_escape(r.kind) +
-        "\",\"probes\":" + str.from(r.probes) + ",\"status\":" + status_dto_json(r.status) +
-        ",\"elapsed_ms\":" + str.from(r.elapsed_ms) + "}"
+        "\",\"probes\":" + r.probes.to_str() + ",\"status\":" + status_dto_json(r.status) +
+        ",\"elapsed_ms\":" + r.elapsed_ms.to_str() + "}"
 }
 
 fn handlers_dto_json(h HandlersDto) -> str {
@@ -411,14 +411,14 @@ fn snapshot_dto_json(dto SnapshotDto) -> str {
         first = false
     }
     results_json += "]"
-    "{\"fanout\":" + str.from(dto.fanout) + ",\"done\":" + str.from(dto.done) +
-        ",\"failed\":" + str.from(dto.failed) + ",\"cancelled\":" + str.from(dto.cancelled) +
-        ",\"wall_ms\":" + str.from(dto.wall_ms) + ",\"sequential_ms\":" + str.from(dto.sequential_ms) +
-        ",\"budget_ms\":" + str.from(dto.budget_ms) + ",\"legend\":\"" + dto.legend + "\"" +
-        ",\"mode\":\"" + dto.mode + "\",\"seed\":" + str.from(dto.seed) +
+    "{\"fanout\":" + dto.fanout.to_str() + ",\"done\":" + dto.done.to_str() +
+        ",\"failed\":" + dto.failed.to_str() + ",\"cancelled\":" + dto.cancelled.to_str() +
+        ",\"wall_ms\":" + dto.wall_ms.to_str() + ",\"sequential_ms\":" + dto.sequential_ms.to_str() +
+        ",\"budget_ms\":" + dto.budget_ms.to_str() + ",\"legend\":\"" + dto.legend + "\"" +
+        ",\"mode\":\"" + dto.mode + "\",\"seed\":" + dto.seed.to_str() +
         ",\"handlers\":" + handlers_dto_json(dto.handlers) +
-        ",\"fibers_spawned\":" + str.from(dto.fibers_spawned) +
-        ",\"fibers_closed\":" + str.from(dto.fibers_closed) +
+        ",\"fibers_spawned\":" + dto.fibers_spawned.to_str() +
+        ",\"fibers_closed\":" + dto.fibers_closed.to_str() +
         ",\"results\":" + results_json + "}"
 }
 
@@ -461,8 +461,8 @@ fn emit_record_json(r EmitRecord) -> str {
     } else {
         ""
     }
-    "{\"id\":\"" + json_escape(r.id) + "\",\"elapsed_ms\":" + str.from(r.elapsed_ms) +
-        err_field + ",\"t_ms\":" + str.from(r.t_ms) + "}"
+    "{\"id\":\"" + json_escape(r.id) + "\",\"elapsed_ms\":" + r.elapsed_ms.to_str() +
+        err_field + ",\"t_ms\":" + r.t_ms.to_str() + "}"
 }
 
 /// `Emit` is discharged here (`with Emit = <recorder>`); `Time` stays
@@ -505,7 +505,7 @@ fn events_body(legend str, mode str, seed int) Time -> ServerResponse {
     ro dto = build_snapshot(rr.report, rr.sources, legend, mode, seed_out, rr.budget_ms, rr.handlers)
 
     mut chunks [][]u8 = []
-    chunks.push(sse_event("replay_info", "{\"total_ms\":" + str.from(total_ms) + ",\"time_scale\":1}"))
+    chunks.push(sse_event("replay_info", "{\"total_ms\":" + total_ms.to_str() + ",\"time_scale\":1}"))
     for r in records {
         chunks.push(sse_event(r.kind, emit_record_json(r)))
     }
