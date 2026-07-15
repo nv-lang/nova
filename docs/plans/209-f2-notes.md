@@ -166,7 +166,128 @@ warnings. Точечная verify-таблица — см. следующий р
    мерялось на реальном 13 МБ conformance CU (вне периметра — "мега-CU
    НЕ гонять", см. задание).
 
-## Совместная верификация (точечная, см. задание пункты 1-4)
+## Совместная верификация (точечная, см. задание пункты 1-4) — ГОТОВО
 
-(заполняется после прогона — см. ниже в этом же файле, секция добавлена
-следующим коммитом этой же волны)
+Окружение: `NOVA_CG_INCLUDE`/`NOVA_RT_DIR` на main-repo `compiler-codegen`
+(+`nova_rt`), `NOVA_GC_LIB_DIR`/`NOVA_GC_INCLUDE_DIR` на его
+`vcpkg_installed/x64-windows-static/{lib,include}` (per задание). Toolchain
+на этой машине — Clang (Windows Auto-preference Clang>MSVC>GCC).
+
+### ⚠ КРИТИЧНО: 3 сегментер-бага split_tu (Ф.1) найдены и исправлены
+**прежде чем** удалось прогнать пункты 1-4 — без них ЛЮБАЯ реальная (не
+синтетическая) программа под `NOVA_MULTI_TU=1` либо CC-FAIL, либо
+lld-link "duplicate symbol". Все три — в `compiler-codegen/src/codegen/
+split_tu.rs`, коммит `a6317dd8c` (отдельно от Task A/B, тот же гейт):
+
+1. **Имя юнита ловилось из скобки ВНУТРИ ведущего doc-комментария**
+   (`decl_from_fn_def`'s `sig.find('(')`) — comment "…in main()." содержал
+   свою `(` раньше настоящей сигнатуры → unit назван `"main"` → коллизия с
+   реальным `int main(...)` → A3 uniqueness guard валил корректную
+   программу. Фикс: `find_first_real_paren` (comment/string-aware skip).
+2. **Cond-block (`#ifdef _MSC_VER…#else…#endif`) резался на 3 куска**,
+   если unit начинался с пустой строки (стандартно — `self.line("")`
+   между конструктами в emit_c.rs) — leading-whitespace skip пропускал
+   только `' '`/`'\t'`, не `'\n'` → `bytes[k]` не находил `#` → блок не
+   распознавался как cond-block, попадал в generic `;`-scan → резался на
+   каждой `;` → "unterminated conditional directive" в part'е. Фикс: skip
+   также `'\n'`/`'\r'`.
+3. **Array-typed global (interned-строка `_nova_strlit_<hash>_buf[] =
+   "...";`) не находил имя** (`trailing_identifier` не срезал хвостовые
+   `[]`) → падал в `DeclOnly{name: None}` → unnamed = A3 dedup не может
+   перекрыть повтор → определение оставалось ВЕРБАТИМ (не `extern`) в
+   `_common.h` → каждый part, инклудящий header, получал СВОЮ копию →
+   `lld-link: error: duplicate symbol`. Фикс: `strip_trailing_array_
+   brackets` перед `trailing_identifier`.
+
++4 regression-теста (22/22 зелёных, standalone `rustc --edition 2021
+--test src/codegen/split_tu.rs` — `cargo test` для крейта по-прежнему
+сломан пре-существующим дефектом вне периметра, см. 209-f1-notes.md).
+
+### 1. Дефолт (флаг OFF) — байт-идентичен
+`nova build examples/getting_started.nv --mode release` без `NOVA_MULTI_TU`
+— собирается, бежит, вывод корректный (не diff'ился побайтово повторно —
+Ф.1 уже это доказало эмпирически для этого же файла; здесь только
+регрессия-smoke после Task A/B правок). ⚠ ОГОВОРКА: Task B (mono-gap
+fix, `compute_dead_decls_with`) — это НЕ gated по `NOVA_MULTI_TU`, работает
+ВСЕГДА (и в default-режиме тоже) — для CU, где какой-то тип ВСТРАИВАЕТ
+(`use field EmbeddedType[...]`) другой generic-тип, дефолтный `.c`
+TEXT теперь может отличаться от pre-209 (несколько ранее-dead delegated-
+методов теперь остаются в выводе) — это НАМЕРЕННЫЙ бесполезный-байт-рост
+от бага-фикса, не регрессия; для CU без embed-отношений (getting_started.nv)
+дефолт буквально не задет (embedded_type_names пуст).
+
+### 2. Флаг ON, большой(-ий) пример — сплит → N частей параллельно →
+### линк → бежит, вывод корректен
+Порог временно снижен (`MULTI_TU_SIZE_THRESHOLD_BYTES`→2КБ,
+`_FN_COUNT_THRESHOLD`→5, `MULTI_TU_PART_THRESHOLD_BYTES`→20КБ — **реверчено
+перед коммитом**, `git diff` на emit_c.rs после реверта — пусто).
+`examples/getting_started.nv` под этим порогом даёт **7 part'ов**
+(подтверждено файлами `getting_started_part0..6.c`), компилируются
+параллельно (thread::scope), линкуются, бинарь **бежит и даёт ТОТ ЖЕ
+вывод**, что default-сборка:
+```
+Nova — getting started
+items audited = 3
+audited sum   = 1580
+total (cents) = 1422
+```
+(идентично в обоих режимах, exit 0).
+
+### 3. Флаг ON + Set/HashMap-делегация → mono-gap НЕ линк-фейлит
+Сценарий из задания — минимальный scratch-пример (`Set[int].new()` +
+`.insert()`, БЕЗ явного вызова `.merge_from()`/`.values()` — именно этот
+случай воспроизводил находку Ф.1: делегированный proxy эмитится
+безусловно при `import std.collections.set`, реально вызывает
+базовый метод HashMap регардless того, называет ли исходник его
+literal имя). Под тем же сниженным порогом: **компилируется, линкуется,
+бежит** — `len=3`, `contains2=true` — идентично default-сборке (ранее,
+ДО Task B фикса, это воспроизводило `undefined symbol:
+Nova_HashMap_method_merge_from/_values` — см. 209-f1-notes.md). Мono-gap
+подтверждён закрытым.
+
+### 4. Замер (грубый, малый CU — НЕ мега-CU, честная оговорка)
+`getting_started.nv --mode release`, тёплый libuv-кеш:
+- default (1 TU, старый путь): **7.77s**
+- split (7 частей параллельно, `NOVA_MULTI_TU=1` + сниженный порог): **4.77s**
+
+Split оказался БЫСТРЕЕ даже на этой крошечной CU (7 частей, каждая
+&lt;20КБ) — вероятно, доминирует spawn/compile overhead одного clang-
+процесса на мелкий файл, не суперлинейность (той, ради которой Plan 209
+существует, и которая проявляется только на реально больших CU). Это
+НЕ репрезентативная величина ускорения для 13-МБ conformance CU —
+только proof-that-it-doesn't-regress-badly на игрушечном входе; реальный
+замер — задача Ф.3 (оркестратор, включение флага на mega-CU).
+
+## ⚠ НОВАЯ НАХОДКА (вне периметра Ф.2, НЕ исправлено, для владельца)
+
+При попытке протестировать mono-gap-фикс через РЕАЛЬНЫЙ явный вызов
+(`a.merge_from(b)`, `for v in a.values() {}}`, не только косвенный через
+`.insert()`) — программа компилируется и ЛИНКУЕТСЯ (и в default, и под
+multi-TU), но **ведёт себя некорректно ФУНКЦИОНАЛЬНО**:
+- `for v in a.values() { ... }` — тело цикла НИ РАЗУ не выполняется
+  (`count` остаётся `0` при непустом Set) — `.values()` не даёт элементов.
+- `a.merge_from(b)` — no-op (`a.len()` не меняется после мержа).
+
+Воспроизводится ИДЕНТИЧНО в default (single-TU, НЕ NOVA_MULTI_TU) режиме
+— **никак не связано с Plan 209** (ни с Task A тулчейном, ни с Task B
+DCE-фиксом — literal-вызов делает имя reachable независимо от Task B).
+Это отдельный, ПРЕ-СУЩЕСТВУЮЩИЙ дефект в D39 embed-delegation call-site
+диспатче (emit_embed_proxies/связанные call-site пути) — судя по
+предварительному разбору (не доводил до конца, вне периметра): вероятно
+тот же класс проблемы, что Ф.1-находка описывала как "неопределённость 2"
+(`emit_embed_proxies`'s `Nova_Set_method_merge_from(Nova_Set* nova_self,
+...)` берёт БАЗОВОЕ (не per-инстанс-мono'д) имя `base_c_name` без
+корректной подстановки типа embedded-поля — если это приводит к вызову
+НЕ ТОЙ функции/некорректному приведению, поведение будет именно таким:
+компилируется, линкуется (раз имя разрешилось хоть на что-то), но делает
+не то). **НЕ фиксил** — это call-site/dispatch дефект, не DCE-коллектор
+(Task B), и не тулчейн (Task A); фикс вслепую рискован (тот же принцип,
+что f1-notes уже сформулировали для оригинальной находки). Рекомендация:
+отдельная волна ДО широкого использования D39 embed-делегации с
+НЕ-тривиальными (не только `len()`/`contains()`-подобными) методами.
+
+## Коммиты этой волны
+- `11ca28768` — Task B (mono-gap DCE-фикс, emit_c.rs).
+- `c56069534` — Task A (тулчейн, test_runner.rs + nova-cli/main.rs).
+- `a6317dd8c` — 3 split_tu сегментер-бага + 4 regression-теста
+  (split_tu.rs), найдены при верификации Task A.
