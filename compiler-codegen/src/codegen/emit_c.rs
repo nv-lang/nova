@@ -54063,7 +54063,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 ExprKind::Coalesce(lhs, rhs) => {
                     let lhs_ty = self.infer_expr_c_type(lhs);
                     if lhs_ty.starts_with("NovaOpt_") {
-                        lhs_ty.strip_prefix("NovaOpt_").unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy")).to_string()
+                        // [M-tls-xpkg-tlsversion-value-ptr-dispatch]: the stripped
+                        // segment is the SANITIZED payload identifier (`Nova_X_p`),
+                        // NOT a real C type — reverse the `_p` pointer marker back to
+                        // `Nova_X*`, exactly as the Coalesce EMISSION arm does via
+                        // `desanitize_c_from_ident` (~30988). Idempotent for value
+                        // payloads (`nova_int`/`nova_str`/`NovaValue_…` carry no `_p`
+                        // suffix → unchanged). Without this a cross-package heap
+                        // sum-type payload (`Option[TlsVersion] ?? default`, whose
+                        // checker channel misses so this legacy arm runs) declared the
+                        // `??` local with the never-typedef'd `Nova_TlsVersion_p`,
+                        // which then poisoned method-dispatch mangling
+                        // (`Nova_Nova_TlsVersion_p_method_to_str` + `Nova_TlsVersion_p*`
+                        // receiver) → CC-FAIL "unknown type name". Local same-shape
+                        // sum-types were unaffected (they resolve via the checker
+                        // channel to a clean `Nova_Ver*`).
+                        let sani = lhs_ty.strip_prefix("NovaOpt_")
+                            .unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"));
+                        Self::desanitize_c_from_ident(sani)
                     } else if Self::is_result_like(&lhs_ty) {
                         // Plan 172.1 [M-172.1-coalesce-result-okty] (2026-06-30): `Result[T,E] ?? fb`
                         // yields the Ok type `T`, NOT the fallback `rhs` type — mirror the `Try`/`Bang`
