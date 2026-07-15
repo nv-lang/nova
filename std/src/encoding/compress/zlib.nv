@@ -88,8 +88,7 @@ export type ZlibReader value {
 
 #stable(since = "0.1")
 export fn ZlibReader.new(max_output int) -> ZlibReader {
-    mut _init_header_buf []u8 = []u8.new()
-    _init_header_buf.cap(2)
+    mut _init_header_buf []u8 = []u8.new(cap: 2)
     {
         inner: Inflater.new(max_output),
         header_buf: _init_header_buf,
@@ -139,9 +138,7 @@ export fn ZlibReader mut @read(max_emit int) -> Result[[]u8, CompressError] {
         ro avail = @tail.len() - @tpos
         ro n = avail.min(me)
         if n <= 0 { return Ok([]u8.new()) }
-        mut chunk []u8 = []u8.new()
-        chunk.cap(n)
-        chunk.append(@tail[@tpos..(@tpos + n)])
+        mut chunk []u8 = []u8.new(cap: n).append(@tail[@tpos..(@tpos + n)])
         @tpos = @tpos + n
         return Ok(chunk)
     }
