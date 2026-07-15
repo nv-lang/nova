@@ -287,6 +287,22 @@ byte-parity НЕ требуется (аллокация убрана — `.c` м
 
 ---
 
+## Пункт 9 — `clamp` + scope-local `const` в `shim_error` (nova-tls) — эргономика/DRY
+
+**Статус:** ✅ СДЕЛАНО 2026-07-15. Мелкая читаемость-правка в `../nova-tls/src/stream.nv` (внешний TLS-модуль).
+
+**Что:** в `shim_error` число `256` (ёмкость буфера ошибки шима) встречалось 3× (`resize`/`tls_last_error`-cap/
+верхняя граница), а clamp был ручным `if`-каскадом. Свёл к:
+- **scope-local `const ERR_BUF_CAP = 256`** (функцио-локальный const — поддержан, спека 02-types.md:13790 /
+  03-syntax.md:1117 «module-level + scope-local»);
+- `buf.resize(ERR_BUF_CAP, 0 as u8)` / `tls_last_error(h, buf.ptr(), ERR_BUF_CAP)`;
+- **`ro m = n.clamp(0, ERR_BUF_CAP)`** вместо `if n < 0 { 0 } else if n > 256 { 256 } else { n }`
+  (`int @clamp`, std/runtime/defaults.nv:180).
+
+**Приёмка:** `nova check`/сборка nova-tls зелёная; поведение идентично (clamp(0,256) == прежний каскад).
+
+---
+
 ## Кандидаты на будущее
 
 _(сюда — новые std-эргономические/корректностные улучшения по мере появления; каждый с D-рефом и приёмкой)_
