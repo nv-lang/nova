@@ -29,14 +29,14 @@ test "AtomicPtr swap" {
 
 test "AtomicPtr compare_exchange success" {
     mut a = AtomicPtr.new(5)
-    ro ok = a.compare_exchange(5, 99)
+    ro ok = a.compare_exchange(5, 99).is_ok()
     assert(ok)
     assert(a.load() == 99)
 }
 
 test "AtomicPtr compare_exchange failure" {
     mut a = AtomicPtr.new(5)
-    ro ok = a.compare_exchange(999, 0)
+    ro ok = a.compare_exchange(999, 0).is_ok()
     assert(!ok)
     assert(a.load() == 5)
 }
@@ -49,7 +49,7 @@ test "AtomicPtr store with explicit ordering" {
 
 test "AtomicPtr compare_exchange with ordering" {
     mut a = AtomicPtr.new(10)
-    ro ok = a.compare_exchange(10, 20, SeqCst, Acquire)
+    ro ok = a.compare_exchange(10, 20, SeqCst, Acquire).is_ok()
     assert(ok)
     assert(a.load() == 20)
 }

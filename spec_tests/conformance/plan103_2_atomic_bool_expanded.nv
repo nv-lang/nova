@@ -29,7 +29,7 @@ test "AtomicBool swap with explicit ordering" {
 
 test "AtomicBool compare_exchange with ordering — success" {
     mut a = AtomicBool.new(false)
-    ro ok = a.compare_exchange(false, true, SeqCst, Acquire)
+    ro ok = a.compare_exchange(false, true, SeqCst, Acquire).is_ok()
     assert(ok)
     assert(a.load())
 }
@@ -41,7 +41,7 @@ test "AtomicBool compare_exchange_weak — success path" {
     mut i = 0
     mut ok = false
     while i < 100 {
-        ro r = a.compare_exchange_weak(true, false)
+        ro r = a.compare_exchange_weak(true, false).is_ok()
         if r {
             ok = true
             i = 100

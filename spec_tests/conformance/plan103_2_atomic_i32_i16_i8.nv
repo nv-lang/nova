@@ -20,7 +20,7 @@ test "AtomicI32 fetch_add" {
 
 test "AtomicI32 compare_exchange" {
     mut a = AtomicI32.new(42)
-    ro ok = a.compare_exchange(42, 100)
+    ro ok = a.compare_exchange(42, 100).is_ok()
     assert(ok)
     assert(a.load() == 100)
 }
