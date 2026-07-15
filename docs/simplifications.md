@@ -38393,8 +38393,27 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   (`path ../nova-tls не существует` от `.nova/git/co/nova-http-.../`).
   `[replace]` транзитивный tls НЕ схлопывает. Это ограничение резолвера/D420,
   НЕ быстрый фикс флагмана.
-- ВЕРДИКТ: оставлено path-форма (собирается, health-live жив, weather-live
-  честно деградирует с маркером в live.nv). Настоящий фикс — трек 204/D420:
-  либо резолвер унифицирует одноимённый пакет через `[replace]` в транзите,
-  либо опубликованный nova-http объявляет tls тоже git-формой (тогда один
-  git-tls на весь граф). Дом маркера — live.nv + этот лог.
+- ВЕРДИКТ (промежуточный): оставлено path-форма (собирается, health-live жив,
+  weather-live честно деградирует с маркером в live.nv). Настоящий фикс — трек
+  204/D420: либо резолвер унифицирует одноимённый пакет через `[replace]` в
+  транзите, либо опубликованный nova-http объявляет tls тоже git-формой.
+
+### РАЗРЕШЕНО (2026-07-15, ветка fix-tls-diamond, sonnet) — резолвер, D420 дофикс №3
+
+- ФИКС резолвера: `imports::lookup_dependency` — корневой `[replace]` теперь
+  Cargo-`[patch]`-семантика: перекрывает ЛЮБОЕ вхождение same-named пакета
+  graph-wide (прямое И транзитивное через nova-http), не только прямые рёбра
+  корня (узкий Go-scope дофикса №2). + `examples/nova.toml`'s `tls` переведён на
+  git+version (как у nova-http) → unify по git-URL. `nova.lock`: `tls` **2→1**.
+  Амендмент D420 (09-tooling.md дофикс №3) в том же слиянии. Инвариант
+  `W_REPLACE_IN_DEPENDENCY` (`[replace]` зависимости инертен) сохранён.
+- Побочно: `nova build` теперь мёржит `[ffi]` зависимостей (dependency native
+  shims линкуются — было только у `nova test`; пре-существующий gap).
+- Smoke weather-live: НЕТ строки `tls diamond dependency`, `handlers.net="real"`,
+  запрос завершается — диамант снят (маркер в live.nv переписан).
+- ОСТАВШИЙСЯ ОТДЕЛЬНЫЙ БЛОКЕР (НЕ диамант): `[M-187-tls-cross-pkg-consume-cleanup]`
+  — `TlsStream.connect(tcp,cfg)` из downstream-пакета не линкуется:
+  `Nova_TcpStream_consume_cleanup` (std.net) эмитится только для consume-сайтов
+  КОРНЕВОГО пакета, не для consume ВНУТРИ внешнего пакета (nova-tls). emit_c.rs
+  территория (codegen), НЕ резолвер. Изолировано минимальным repro. Затрагивает
+  и echo_server.nv. Дом нового маркера — live.nv + docs/plans/tls-diamond-progress.md.
