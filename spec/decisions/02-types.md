@@ -9028,7 +9028,38 @@ ro h = unsafe { net_tcp_listen(addr.ptr(), 128, &err) }
 ли extern C-функции, принимающие raw pointers, ДОЛЖНЫ становиться
 `unsafe fn` по умолчанию (Rust-модель: «любой `extern "C"` вызов unsafe»)
 — это language-policy решение владельца, вне рамок этой волны (см. `[M-
-unsafe-cluster-extern-ptr-arg-policy]` followup ниже).
+unsafe-cluster-extern-ptr-arg-policy]` followup ниже). **→ РЕШЕНО D424 (ниже).**
+
+## D424 — raw-ptr `extern`/`external` fn ⇒ `unsafe fn` по инференсу + carve-out `E_UNSAFE_UNUSED` удаляется (Plan 174.6 M4, 2026-07-15, решение владельца)
+
+**Закрывает** открытый вопрос находки выше (net_tcp_listen/tls_cfg_verify_pem) и followup
+`[M-unsafe-cluster-extern-ptr-arg-policy]`. **Amends** D216 §9 (карта unsafe-триггеров, п.10) и D282
+(классификация `extern "C" fn`). Выбран **вариант A** (vs B «externs всегда plain, снести ~35 обёрток»).
+
+**Правило (нормативно):**
+1. **Инференс unsafe.** `extern`/`external "…" fn`, чья сигнатура содержит сырой указатель (`*T` / `*mut T`
+   / `*()` / `CStr`) в **параметре ИЛИ возврате**, классифицируется как **`unsafe fn` по инференсу** —
+   **без keyword** (выводится из `*T` в сигнатуре; дифференциатор FFI «type-driven, без extra keyword»
+   сохранён). Её вызов требует `unsafe { }` (п.5 карты, `E_UNSAFE_CALL_REQUIRES_WRAP`). Scalar/handle-only
+   externs (`tls_client_cfg_new() -> CTlsCfgHandle`, `tls_cfg_verify_system(c)`) — **остаются обычными
+   безопасными** (нет `*T` в сигнатуре → не `unsafe fn`).
+2. **Carve-out удаляется.** Строка-gap п.10 карты (распознавание `extern_fn(...ptr-arg...)` как «unsafe-used»
+   в `E_UNSAFE_UNUSED`) **снимается**: после п.1 такие вызовы требуют обёртки по-настоящему (п.5), поэтому
+   обёртка genuinely-used честно, без спец-распознавания. `E_UNSAFE_UNUSED` (hard error, §выше) остаётся
+   и теперь честен **без исключений**: `unsafe { }`, не покрывающий НИ ОДНОЙ реально-unsafe операции (в т.ч.
+   обёртка над scalar-only extern, или ни над чем), → hard error. Жёсткий принцип владельца: «unused unsafe
+   обязан флагаться, без carve-out».
+
+**Обоснование A.** Сырой указатель в C разыменуется без проверки (валидность/время жизни/алиасинг
+непроверяемы) — настоящий unsafe, честнее пометить, чем объявить безопасным (B недомаркировал бы реальный
+риск, оставив опасные FFI-разыменования без визуального маркера). A даёт **0 churn** существующего кода
+(`std/net`+`std/tls` ~35 сайтов становятся корректными-по-правилу, а не терпимыми по carve-out).
+
+**Статус реализации: PROPOSED 2026-07-15 (спека/дизайн).** Checker-enforcement (инференс unsafe-классификации
+по сигнатуре extern; удаление carve-out; миграция-свип уже-лишних `unsafe { }`; pos-тест raw-ptr-extern-без-
+обёртки → `E_UNSAFE_CALL_REQUIRES_WRAP` + neg-тест обёртка-над-безопасным → `E_UNSAFE_UNUSED`) — **Plan 174.6
+M4**, маркер `[M-174.6-rawptr-extern-unsafe-infer]`. Спек-строки п.10 карты и находки выше остаются как
+исторический контекст (до-D424 поведение), enforcement приходит с M4-реализацией.
 
 #### `E_UNSAFE_ARG_REQUIRES_WRAP` — отдельно, НЕ про «забыл unsafe»
 
