@@ -143,6 +143,18 @@ sentences 512, collation 227800). Размер коммит-фикстуры р�
        http-тест (d358) временно живёт в `nova_tests/http` (library-mode import не триггерит баг);
        миграция — Plan 182.
   3. **В `nova_tests/` НОВЫЕ тесты НЕ пишутся** (корпус заморожен; судьба — Plan 182 санация).
+
+- **Авторитетный merge-гейт = conformance + флагман-examples-build (директива владельца 2026-07-16):**
+  `spec_tests/conformance` покрывает ТОЛЬКО семантику языка+прелюдии → **app-регрессии он НЕ ловит**.
+  Прецедент: Plan 206 trap-default (D423) прошёл conformance 470/0, но уронил
+  `examples/flagship/aggregator/src/scenarios.nv` (`splitmix64` на голом `*` → рантайм `integer overflow: *`) —
+  баг **протёк в main**, потому что авторитетный гейт собирал только conformance, не examples. **Впредь
+  авторитетный пре-merge-гейт (интегратор/оркестратор) для ЛЮБОГО behavior-changing слияния ОБЯЗАН, помимо
+  зелёного conformance, собрать флагман-examples** (минимум `examples/flagship/aggregator` + примеры,
+  затронутые правкой) под `--strict-effects` (конвенция examples-build 2026-07-13). **Красный examples-build =
+  стоп, как красный conformance.** Точечно: не весь examples-corpus, а флагман + релевантные — conformance
+  ловит звучность языка, examples-build ловит регрессии прикладного кода (арифметика/эффекты/линковка), которые
+  корпус не видит.
   **Под конкретный D — ОТДЕЛЬНЫЙ файл** `d<NNN>_<кратко>.nv` (в conformance — `module
   spec_tests.conformance`; рядом с модулем — `d<NNN>_<кратко>_test.nv` с module-декларатором
   модуля); общие типы — в `types_<domain>.nv` пир-файле, объявлены ОДИН раз (folder = один модуль

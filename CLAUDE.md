@@ -8,7 +8,7 @@
 
 **Жёсткие правила (полные — в dev-workflow.md):**
 - Интерпретатора НЕТ: только `nova build`/`check`/`test` (C-codegen). Release-сборка обязательна.
-- Главный гейт: `spec_tests/conformance` ОДНИМ compile-unit'ом; красный = стоп.
+- Главный гейт: `spec_tests/conformance` ОДНИМ compile-unit'ом; красный = стоп. Для behavior-changing слияний авторитетный гейт ОБЯЗАН вдобавок собрать флагман-examples (`examples/flagship/aggregator` + затронутые) под `--strict-effects` — conformance app-регрессии не ловит (test-conventions.md, прецедент 206/splitmix64).
 - Тест авторитетен: чинится компилятор в правильном месте; тесты не ослабляются/не удаляются.
 - Язык-меняющее слияние не пушится без D-амендмента в спеке в том же слиянии.
 - `git add` только по именам файлов; греп конфликт-маркеров ОДНОЙ командой с коммитом; без `git stash`; без AI-co-author-trailer'ов.
