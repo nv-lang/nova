@@ -13,7 +13,7 @@
 
 module runtime.sync_test
 
-import std.runtime.sync.{MemOrdering, fence, AtomicInt, AtomicBool, Mutex, WaitGroup, Once}
+import std.runtime.sync.{MemOrdering, fence, AtomicInt, AtomicBool, AtomicI64, AtomicI32, AtomicUsize, Mutex, WaitGroup, Once}
 
 test "MemOrdering + fence: SeqCst fence is a no-op smoke" {
     fence(MemOrdering.SeqCst)
@@ -34,9 +34,9 @@ test "AtomicInt: new/load/store/fetch_add/fetch_sub/compare_exchange" {
     ro prev2 = c.fetch_sub(3)
     assert(prev2 == 15)
     assert(c.load() == 12)
-    assert(c.compare_exchange(12, 100))
+    assert(c.compare_exchange(12, 100).is_ok())
     assert(c.load() == 100)
-    assert(!c.compare_exchange(12, 200))
+    assert(c.compare_exchange(12, 200).is_err())
     assert(c.load() == 100)
 }
 
@@ -45,11 +45,64 @@ test "AtomicBool: new/load/store/compare_exchange/swap" {
     assert(!f.load())
     f.store(true)
     assert(f.load())
-    assert(f.compare_exchange(true, false))
+    assert(f.compare_exchange(true, false).is_ok())
     assert(!f.load())
     ro prev = f.swap(true)
     assert(!prev)
     assert(f.load())
+}
+
+test "Plan 207 [M-cas-return-witnessed-value]: compare_exchange carries the witness on Err" {
+    // Strong CAS: success -> Ok(()); failure -> Err(actual) with the real
+    // current value (no extra load() needed to retry).
+    mut c = AtomicI64.new(10)
+    match c.compare_exchange(10, 20) {
+        Ok(_) => assert(true),
+        Err(_) => assert(false),
+    }
+    assert(c.load() == 20)
+
+    match c.compare_exchange(999, 30) {
+        Ok(_) => assert(false),
+        Err(actual) => assert(actual == 20),   // witness == real current value
+    }
+    assert(c.load() == 20)   // failed CAS must not have mutated the atomic
+
+    // Explicit-ordering overload builds the same Result shape.
+    mut c32 = AtomicI32.new(5)
+    match c32.compare_exchange(5, 6, MemOrdering.SeqCst, MemOrdering.SeqCst) {
+        Ok(_) => assert(true),
+        Err(_) => assert(false),
+    }
+    match c32.compare_exchange(0, 7, MemOrdering.SeqCst, MemOrdering.SeqCst) {
+        Ok(_) => assert(false),
+        Err(actual) => assert(actual == 6),
+    }
+
+    // compare_exchange_weak: witness is correct even though it may
+    // spuriously report failure on some architectures.
+    mut b = AtomicBool.new(false)
+    match b.compare_exchange_weak(false, true) {
+        Ok(_) => assert(b.load()),
+        Err(actual) => assert(actual == false),
+    }
+
+    // Retry-loop idiom (the motivating use case from the plan): rebuild
+    // `cur` from the witness instead of calling load() again.
+    mut n = AtomicUsize.new(1)
+    mut cur = n.load()
+    mut iterations = 0
+    loop {
+        iterations += 1
+        assert(iterations < 100)   // guard against infinite loop on a bug
+        ro next = cur * 2
+        match n.compare_exchange(cur, next) {
+            Ok(_) => break,
+            Err(actual) => { cur = actual },
+        }
+    }
+    assert(n.load() == 2)
+    assert(cur == 1)
 }
 
 test "Mutex: lock/unlock guard + with_lock" {

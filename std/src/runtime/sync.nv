@@ -88,6 +88,32 @@ export type MemOrdering enum
 #stable(since = "0.1")
 export extern "nova" fn fence(ord MemOrdering)
 
+// ─── CAS-witness raw carriers (Plan 207 [M-cas-return-witnessed-value]) ──
+//
+// `compare_exchange`/`compare_exchange_weak` return `Result[(), T]`: `Ok(())`
+// on success, `Err(actual)` on failure where `actual` is the value the C11
+// atomic op observed (witness) — no extra `load()` needed to retry a CAS
+// loop. The private `@__cas_raw` intrinsic (module-private, not exported)
+// returns the raw (ok, witness) pair from ONE atomic op; each public
+// compare_exchange/_weak method below is a plain (non-extern) wrapper that
+// builds the `Result` from it.
+//
+// These `CasRaw*` types are declared for the type-checker only — the C
+// struct (`NovaTuple_CasRaw*`) is hand-written in `sync_primitives.h` and
+// pre-registered in `RUNTIME_DEFINED_TYPES` (emit_c.rs), so codegen does not
+// re-emit the struct body (same convention as `MutexGuard`/`MemOrdering`).
+type CasRawI64(ok bool, witness i64)
+type CasRawI32(ok bool, witness i32)
+type CasRawI16(ok bool, witness i16)
+type CasRawI8(ok bool, witness i8)
+type CasRawU64(ok bool, witness u64)
+type CasRawU32(ok bool, witness u32)
+type CasRawU16(ok bool, witness u16)
+type CasRawU8(ok bool, witness u8)
+type CasRawInt(ok bool, witness int)
+type CasRawUint(ok bool, witness uint)
+type CasRawBool(ok bool, witness bool)
+
 // ─── AtomicI64 ───────────────────────────────────────────────────
 
 /// Lock-free 64-bit signed atomic integer.
@@ -135,18 +161,37 @@ export extern "nova" fn AtomicI64 mut @swap(v i64, ord MemOrdering) -> i64
 export extern "nova" fn AtomicI64 mut @swap(v i64) -> i64
 
 #realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicI64 mut @compare_exchange(expected i64, desired i64, success MemOrdering, failure MemOrdering) -> bool
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicI64 mut @compare_exchange(expected i64, desired i64) -> bool
+extern "nova" fn AtomicI64 mut @__cas_raw(expected i64, desired i64, weak bool, success MemOrdering, failure MemOrdering) -> CasRawI64
 
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
+/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicI64 mut @compare_exchange_weak(expected i64, desired i64, success MemOrdering, failure MemOrdering) -> bool
+export fn AtomicI64 mut @compare_exchange(expected i64, desired i64, success MemOrdering, failure MemOrdering) -> Result[(), i64] {
+    ro raw = @__cas_raw(expected, desired, false, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicI64 mut @compare_exchange_weak(expected i64, desired i64) -> bool
+export fn AtomicI64 mut @compare_exchange(expected i64, desired i64) -> Result[(), i64] {
+    @compare_exchange(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
+
+/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
+/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
+/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+#realtime
+#stable(since = "0.1")
+export fn AtomicI64 mut @compare_exchange_weak(expected i64, desired i64, success MemOrdering, failure MemOrdering) -> Result[(), i64] {
+    ro raw = @__cas_raw(expected, desired, true, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
+#realtime
+#stable(since = "0.1")
+export fn AtomicI64 mut @compare_exchange_weak(expected i64, desired i64) -> Result[(), i64] {
+    @compare_exchange_weak(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
 
 #realtime
 #stable(since = "0.1")
@@ -240,18 +285,37 @@ export extern "nova" fn AtomicI32 mut @swap(v i32, ord MemOrdering) -> i32
 export extern "nova" fn AtomicI32 mut @swap(v i32) -> i32
 
 #realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicI32 mut @compare_exchange(expected i32, desired i32, success MemOrdering, failure MemOrdering) -> bool
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicI32 mut @compare_exchange(expected i32, desired i32) -> bool
+extern "nova" fn AtomicI32 mut @__cas_raw(expected i32, desired i32, weak bool, success MemOrdering, failure MemOrdering) -> CasRawI32
 
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
+/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicI32 mut @compare_exchange_weak(expected i32, desired i32, success MemOrdering, failure MemOrdering) -> bool
+export fn AtomicI32 mut @compare_exchange(expected i32, desired i32, success MemOrdering, failure MemOrdering) -> Result[(), i32] {
+    ro raw = @__cas_raw(expected, desired, false, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicI32 mut @compare_exchange_weak(expected i32, desired i32) -> bool
+export fn AtomicI32 mut @compare_exchange(expected i32, desired i32) -> Result[(), i32] {
+    @compare_exchange(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
+
+/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
+/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
+/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+#realtime
+#stable(since = "0.1")
+export fn AtomicI32 mut @compare_exchange_weak(expected i32, desired i32, success MemOrdering, failure MemOrdering) -> Result[(), i32] {
+    ro raw = @__cas_raw(expected, desired, true, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
+#realtime
+#stable(since = "0.1")
+export fn AtomicI32 mut @compare_exchange_weak(expected i32, desired i32) -> Result[(), i32] {
+    @compare_exchange_weak(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
 
 #realtime
 #stable(since = "0.1")
@@ -345,18 +409,37 @@ export extern "nova" fn AtomicI16 mut @swap(v i16, ord MemOrdering) -> i16
 export extern "nova" fn AtomicI16 mut @swap(v i16) -> i16
 
 #realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicI16 mut @compare_exchange(expected i16, desired i16, success MemOrdering, failure MemOrdering) -> bool
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicI16 mut @compare_exchange(expected i16, desired i16) -> bool
+extern "nova" fn AtomicI16 mut @__cas_raw(expected i16, desired i16, weak bool, success MemOrdering, failure MemOrdering) -> CasRawI16
 
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
+/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicI16 mut @compare_exchange_weak(expected i16, desired i16, success MemOrdering, failure MemOrdering) -> bool
+export fn AtomicI16 mut @compare_exchange(expected i16, desired i16, success MemOrdering, failure MemOrdering) -> Result[(), i16] {
+    ro raw = @__cas_raw(expected, desired, false, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicI16 mut @compare_exchange_weak(expected i16, desired i16) -> bool
+export fn AtomicI16 mut @compare_exchange(expected i16, desired i16) -> Result[(), i16] {
+    @compare_exchange(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
+
+/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
+/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
+/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+#realtime
+#stable(since = "0.1")
+export fn AtomicI16 mut @compare_exchange_weak(expected i16, desired i16, success MemOrdering, failure MemOrdering) -> Result[(), i16] {
+    ro raw = @__cas_raw(expected, desired, true, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
+#realtime
+#stable(since = "0.1")
+export fn AtomicI16 mut @compare_exchange_weak(expected i16, desired i16) -> Result[(), i16] {
+    @compare_exchange_weak(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
 
 #realtime
 #stable(since = "0.1")
@@ -450,18 +533,37 @@ export extern "nova" fn AtomicI8 mut @swap(v i8, ord MemOrdering) -> i8
 export extern "nova" fn AtomicI8 mut @swap(v i8) -> i8
 
 #realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicI8 mut @compare_exchange(expected i8, desired i8, success MemOrdering, failure MemOrdering) -> bool
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicI8 mut @compare_exchange(expected i8, desired i8) -> bool
+extern "nova" fn AtomicI8 mut @__cas_raw(expected i8, desired i8, weak bool, success MemOrdering, failure MemOrdering) -> CasRawI8
 
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
+/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicI8 mut @compare_exchange_weak(expected i8, desired i8, success MemOrdering, failure MemOrdering) -> bool
+export fn AtomicI8 mut @compare_exchange(expected i8, desired i8, success MemOrdering, failure MemOrdering) -> Result[(), i8] {
+    ro raw = @__cas_raw(expected, desired, false, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicI8 mut @compare_exchange_weak(expected i8, desired i8) -> bool
+export fn AtomicI8 mut @compare_exchange(expected i8, desired i8) -> Result[(), i8] {
+    @compare_exchange(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
+
+/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
+/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
+/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+#realtime
+#stable(since = "0.1")
+export fn AtomicI8 mut @compare_exchange_weak(expected i8, desired i8, success MemOrdering, failure MemOrdering) -> Result[(), i8] {
+    ro raw = @__cas_raw(expected, desired, true, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
+#realtime
+#stable(since = "0.1")
+export fn AtomicI8 mut @compare_exchange_weak(expected i8, desired i8) -> Result[(), i8] {
+    @compare_exchange_weak(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
 
 #realtime
 #stable(since = "0.1")
@@ -555,18 +657,37 @@ export extern "nova" fn AtomicU64 mut @swap(v u64, ord MemOrdering) -> u64
 export extern "nova" fn AtomicU64 mut @swap(v u64) -> u64
 
 #realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicU64 mut @compare_exchange(expected u64, desired u64, success MemOrdering, failure MemOrdering) -> bool
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicU64 mut @compare_exchange(expected u64, desired u64) -> bool
+extern "nova" fn AtomicU64 mut @__cas_raw(expected u64, desired u64, weak bool, success MemOrdering, failure MemOrdering) -> CasRawU64
 
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
+/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicU64 mut @compare_exchange_weak(expected u64, desired u64, success MemOrdering, failure MemOrdering) -> bool
+export fn AtomicU64 mut @compare_exchange(expected u64, desired u64, success MemOrdering, failure MemOrdering) -> Result[(), u64] {
+    ro raw = @__cas_raw(expected, desired, false, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicU64 mut @compare_exchange_weak(expected u64, desired u64) -> bool
+export fn AtomicU64 mut @compare_exchange(expected u64, desired u64) -> Result[(), u64] {
+    @compare_exchange(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
+
+/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
+/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
+/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+#realtime
+#stable(since = "0.1")
+export fn AtomicU64 mut @compare_exchange_weak(expected u64, desired u64, success MemOrdering, failure MemOrdering) -> Result[(), u64] {
+    ro raw = @__cas_raw(expected, desired, true, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
+#realtime
+#stable(since = "0.1")
+export fn AtomicU64 mut @compare_exchange_weak(expected u64, desired u64) -> Result[(), u64] {
+    @compare_exchange_weak(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
 
 #realtime
 #stable(since = "0.1")
@@ -660,18 +781,37 @@ export extern "nova" fn AtomicU32 mut @swap(v u32, ord MemOrdering) -> u32
 export extern "nova" fn AtomicU32 mut @swap(v u32) -> u32
 
 #realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicU32 mut @compare_exchange(expected u32, desired u32, success MemOrdering, failure MemOrdering) -> bool
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicU32 mut @compare_exchange(expected u32, desired u32) -> bool
+extern "nova" fn AtomicU32 mut @__cas_raw(expected u32, desired u32, weak bool, success MemOrdering, failure MemOrdering) -> CasRawU32
 
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
+/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicU32 mut @compare_exchange_weak(expected u32, desired u32, success MemOrdering, failure MemOrdering) -> bool
+export fn AtomicU32 mut @compare_exchange(expected u32, desired u32, success MemOrdering, failure MemOrdering) -> Result[(), u32] {
+    ro raw = @__cas_raw(expected, desired, false, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicU32 mut @compare_exchange_weak(expected u32, desired u32) -> bool
+export fn AtomicU32 mut @compare_exchange(expected u32, desired u32) -> Result[(), u32] {
+    @compare_exchange(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
+
+/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
+/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
+/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+#realtime
+#stable(since = "0.1")
+export fn AtomicU32 mut @compare_exchange_weak(expected u32, desired u32, success MemOrdering, failure MemOrdering) -> Result[(), u32] {
+    ro raw = @__cas_raw(expected, desired, true, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
+#realtime
+#stable(since = "0.1")
+export fn AtomicU32 mut @compare_exchange_weak(expected u32, desired u32) -> Result[(), u32] {
+    @compare_exchange_weak(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
 
 #realtime
 #stable(since = "0.1")
@@ -765,18 +905,37 @@ export extern "nova" fn AtomicU16 mut @swap(v u16, ord MemOrdering) -> u16
 export extern "nova" fn AtomicU16 mut @swap(v u16) -> u16
 
 #realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicU16 mut @compare_exchange(expected u16, desired u16, success MemOrdering, failure MemOrdering) -> bool
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicU16 mut @compare_exchange(expected u16, desired u16) -> bool
+extern "nova" fn AtomicU16 mut @__cas_raw(expected u16, desired u16, weak bool, success MemOrdering, failure MemOrdering) -> CasRawU16
 
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
+/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicU16 mut @compare_exchange_weak(expected u16, desired u16, success MemOrdering, failure MemOrdering) -> bool
+export fn AtomicU16 mut @compare_exchange(expected u16, desired u16, success MemOrdering, failure MemOrdering) -> Result[(), u16] {
+    ro raw = @__cas_raw(expected, desired, false, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicU16 mut @compare_exchange_weak(expected u16, desired u16) -> bool
+export fn AtomicU16 mut @compare_exchange(expected u16, desired u16) -> Result[(), u16] {
+    @compare_exchange(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
+
+/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
+/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
+/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+#realtime
+#stable(since = "0.1")
+export fn AtomicU16 mut @compare_exchange_weak(expected u16, desired u16, success MemOrdering, failure MemOrdering) -> Result[(), u16] {
+    ro raw = @__cas_raw(expected, desired, true, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
+#realtime
+#stable(since = "0.1")
+export fn AtomicU16 mut @compare_exchange_weak(expected u16, desired u16) -> Result[(), u16] {
+    @compare_exchange_weak(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
 
 #realtime
 #stable(since = "0.1")
@@ -870,18 +1029,37 @@ export extern "nova" fn AtomicU8 mut @swap(v u8, ord MemOrdering) -> u8
 export extern "nova" fn AtomicU8 mut @swap(v u8) -> u8
 
 #realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicU8 mut @compare_exchange(expected u8, desired u8, success MemOrdering, failure MemOrdering) -> bool
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicU8 mut @compare_exchange(expected u8, desired u8) -> bool
+extern "nova" fn AtomicU8 mut @__cas_raw(expected u8, desired u8, weak bool, success MemOrdering, failure MemOrdering) -> CasRawU8
 
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
+/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicU8 mut @compare_exchange_weak(expected u8, desired u8, success MemOrdering, failure MemOrdering) -> bool
+export fn AtomicU8 mut @compare_exchange(expected u8, desired u8, success MemOrdering, failure MemOrdering) -> Result[(), u8] {
+    ro raw = @__cas_raw(expected, desired, false, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicU8 mut @compare_exchange_weak(expected u8, desired u8) -> bool
+export fn AtomicU8 mut @compare_exchange(expected u8, desired u8) -> Result[(), u8] {
+    @compare_exchange(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
+
+/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
+/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
+/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+#realtime
+#stable(since = "0.1")
+export fn AtomicU8 mut @compare_exchange_weak(expected u8, desired u8, success MemOrdering, failure MemOrdering) -> Result[(), u8] {
+    ro raw = @__cas_raw(expected, desired, true, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
+#realtime
+#stable(since = "0.1")
+export fn AtomicU8 mut @compare_exchange_weak(expected u8, desired u8) -> Result[(), u8] {
+    @compare_exchange_weak(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
 
 #realtime
 #stable(since = "0.1")
@@ -975,18 +1153,37 @@ export extern "nova" fn AtomicIsize mut @swap(v int, ord MemOrdering) -> int
 export extern "nova" fn AtomicIsize mut @swap(v int) -> int
 
 #realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @compare_exchange(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @compare_exchange(expected int, desired int) -> bool
+extern "nova" fn AtomicIsize mut @__cas_raw(expected int, desired int, weak bool, success MemOrdering, failure MemOrdering) -> CasRawInt
 
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
+/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @compare_exchange_weak(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
+export fn AtomicIsize mut @compare_exchange(expected int, desired int, success MemOrdering, failure MemOrdering) -> Result[(), int] {
+    ro raw = @__cas_raw(expected, desired, false, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @compare_exchange_weak(expected int, desired int) -> bool
+export fn AtomicIsize mut @compare_exchange(expected int, desired int) -> Result[(), int] {
+    @compare_exchange(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
+
+/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
+/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
+/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+#realtime
+#stable(since = "0.1")
+export fn AtomicIsize mut @compare_exchange_weak(expected int, desired int, success MemOrdering, failure MemOrdering) -> Result[(), int] {
+    ro raw = @__cas_raw(expected, desired, true, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
+#realtime
+#stable(since = "0.1")
+export fn AtomicIsize mut @compare_exchange_weak(expected int, desired int) -> Result[(), int] {
+    @compare_exchange_weak(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
 
 #realtime
 #stable(since = "0.1")
@@ -1080,18 +1277,37 @@ export extern "nova" fn AtomicUsize mut @swap(v uint, ord MemOrdering) -> uint
 export extern "nova" fn AtomicUsize mut @swap(v uint) -> uint
 
 #realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @compare_exchange(expected uint, desired uint, success MemOrdering, failure MemOrdering) -> bool
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @compare_exchange(expected uint, desired uint) -> bool
+extern "nova" fn AtomicUsize mut @__cas_raw(expected uint, desired uint, weak bool, success MemOrdering, failure MemOrdering) -> CasRawUint
 
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
+/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @compare_exchange_weak(expected uint, desired uint, success MemOrdering, failure MemOrdering) -> bool
+export fn AtomicUsize mut @compare_exchange(expected uint, desired uint, success MemOrdering, failure MemOrdering) -> Result[(), uint] {
+    ro raw = @__cas_raw(expected, desired, false, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @compare_exchange_weak(expected uint, desired uint) -> bool
+export fn AtomicUsize mut @compare_exchange(expected uint, desired uint) -> Result[(), uint] {
+    @compare_exchange(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
+
+/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
+/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
+/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+#realtime
+#stable(since = "0.1")
+export fn AtomicUsize mut @compare_exchange_weak(expected uint, desired uint, success MemOrdering, failure MemOrdering) -> Result[(), uint] {
+    ro raw = @__cas_raw(expected, desired, true, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
+#realtime
+#stable(since = "0.1")
+export fn AtomicUsize mut @compare_exchange_weak(expected uint, desired uint) -> Result[(), uint] {
+    @compare_exchange_weak(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
 
 #realtime
 #stable(since = "0.1")
@@ -1196,12 +1412,20 @@ export extern "nova" fn AtomicInt mut @fetch_add(delta int) -> int
 #stable(since = "0.1")
 export extern "nova" fn AtomicInt mut @fetch_sub(delta int) -> int
 
-/// Compare-and-swap: если значение == `expected`, записать `desired`.
+#realtime
+extern "nova" fn AtomicInt mut @__cas_raw(expected int, desired int) -> CasRawInt
+
+/// Compare-and-swap: если значение == `expected`, записать `desired`
+/// (Plan 207 [M-cas-return-witnessed-value]).
 ///
-/// Возвращает `true` при успехе. Использует acq_rel ordering.
+/// Возвращает `Ok(())` при успехе; `Err(actual)` при провале, `actual` —
+/// фактически прочитанное значение (witness). Использует acq_rel ordering.
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicInt mut @compare_exchange(expected int, desired int) -> bool
+export fn AtomicInt mut @compare_exchange(expected int, desired int) -> Result[(), int] {
+    ro raw = @__cas_raw(expected, desired)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
 
 // ─── AtomicBool ──────────────────────────────────────────────────
 
@@ -1245,25 +1469,39 @@ export extern "nova" fn AtomicBool mut @store(v bool, ord MemOrdering)
 #stable(since = "0.1")
 export extern "nova" fn AtomicBool mut @store(v bool)
 
-/// Compare-and-swap с explicit orderings.
-/// Возвращает `true` при успехе.
 #realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicBool mut @compare_exchange(expected bool, desired bool, success MemOrdering, failure MemOrdering) -> bool
-/// Compare-and-swap (SeqCst/SeqCst ordering).
-/// Возвращает `true` при успехе.
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicBool mut @compare_exchange(expected bool, desired bool) -> bool
+extern "nova" fn AtomicBool mut @__cas_raw(expected bool, desired bool, weak bool, success MemOrdering, failure MemOrdering) -> CasRawBool
 
-/// Compare-and-swap weak с explicit orderings. Может spuriously fail на ARM.
+/// Compare-and-swap с explicit orderings (Plan 207 [M-cas-return-witnessed-value]).
+/// `Ok(())` — успех. `Err(actual)` — провал, `actual` = witness (фактически
+/// прочитанное значение, даром из C11 op).
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicBool mut @compare_exchange_weak(expected bool, desired bool, success MemOrdering, failure MemOrdering) -> bool
+export fn AtomicBool mut @compare_exchange(expected bool, desired bool, success MemOrdering, failure MemOrdering) -> Result[(), bool] {
+    ro raw = @__cas_raw(expected, desired, false, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
+/// Compare-and-swap (SeqCst/SeqCst ordering).
+#realtime
+#stable(since = "0.1")
+export fn AtomicBool mut @compare_exchange(expected bool, desired bool) -> Result[(), bool] {
+    @compare_exchange(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
+
+/// Compare-and-swap weak с explicit orderings. Может spuriously fail на ARM —
+/// свидетель (`Err(actual)`) корректен и в spurious-failure случае.
+#realtime
+#stable(since = "0.1")
+export fn AtomicBool mut @compare_exchange_weak(expected bool, desired bool, success MemOrdering, failure MemOrdering) -> Result[(), bool] {
+    ro raw = @__cas_raw(expected, desired, true, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
 /// Compare-and-swap weak (SeqCst/SeqCst ordering).
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicBool mut @compare_exchange_weak(expected bool, desired bool) -> bool
+export fn AtomicBool mut @compare_exchange_weak(expected bool, desired bool) -> Result[(), bool] {
+    @compare_exchange_weak(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
 
 /// Атомарно установить `v`, вернуть предыдущее значение с explicit ordering.
 #realtime
@@ -1354,18 +1592,35 @@ export extern "nova" fn AtomicPtr mut @swap(v int, ord MemOrdering) -> int
 export extern "nova" fn AtomicPtr mut @swap(v int) -> int
 
 #realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicPtr mut @compare_exchange(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicPtr mut @compare_exchange(expected int, desired int) -> bool
+extern "nova" fn AtomicPtr mut @__cas_raw(expected int, desired int, weak bool, success MemOrdering, failure MemOrdering) -> CasRawInt
 
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` —
+/// успех. `Err(actual)` — провал, `actual` = witness (даром из C11 op).
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicPtr mut @compare_exchange_weak(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
+export fn AtomicPtr mut @compare_exchange(expected int, desired int, success MemOrdering, failure MemOrdering) -> Result[(), int] {
+    ro raw = @__cas_raw(expected, desired, false, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicPtr mut @compare_exchange_weak(expected int, desired int) -> bool
+export fn AtomicPtr mut @compare_exchange(expected int, desired int) -> Result[(), int] {
+    @compare_exchange(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
+
+/// Compare-and-swap weak — свидетель (`Err(actual)`) корректен и в
+/// spurious-failure случае (ARM).
+#realtime
+#stable(since = "0.1")
+export fn AtomicPtr mut @compare_exchange_weak(expected int, desired int, success MemOrdering, failure MemOrdering) -> Result[(), int] {
+    ro raw = @__cas_raw(expected, desired, true, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
+#realtime
+#stable(since = "0.1")
+export fn AtomicPtr mut @compare_exchange_weak(expected int, desired int) -> Result[(), int] {
+    @compare_exchange_weak(expected, desired, MemOrdering.SeqCst, MemOrdering.SeqCst)
+}
 
 // ─── Plan 103.9 (D174): Consume guard types ──────────────────────
 //
