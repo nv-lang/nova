@@ -993,6 +993,26 @@ fn collect_stmt(s: &Stmt, out: &mut HashSet<String>) {
         // Plan 110 D188: collect referenced names from init expr + body block.
         Stmt::ConsumeScope { init, body, .. } => {
             collect_expr(init, out);
+            // [M-187-tls-cross-pkg-consume-cleanup]: a `consume X = e { … }`
+            // scope-block dispatches the resource type's `@cleanup` method on
+            // every exit path via the SYNTHETIC `Nova_<T>_consume_cleanup`
+            // symbol emitted by codegen (`emit_consume_entry_cleanup`) — the
+            // `.cleanup(…)` selector is NEVER spelled in source, so a pure
+            // syntactic walk would never seed the `cleanup` method NAME. Under
+            // Plan 159 method-DCE a method fires only when its receiver-type
+            // AND its name are both reachable; without this seed the type is
+            // reachable but `cleanup` is not, so `(T, cleanup)` lands in
+            // `dead_method_keys`, its body+fwd are dropped, and the emitted
+            // dispatch call links against a MISSING definition — `undefined
+            // symbol Nova_<T>_consume_cleanup` (surfaced cross-package: the
+            // consume-site lived in an external package's method, e.g.
+            // nova-tls `TlsStream.accept`, whose `consume stream { … }` over a
+            // `std.net TcpStream` had no cleanup-name seed reachable from root).
+            // Seed the name here (mirrors the Plan 209 embed-proxy / contract-
+            // interpolation synthetic-selector seeds); firing still requires
+            // the receiver TYPE reachable, so this only keeps `cleanup` methods
+            // of consume-types actually reached (over-keep, never over-prune).
+            out.insert("cleanup".to_string());
             for stmt in &body.stmts {
                 collect_stmt(stmt, out);
             }

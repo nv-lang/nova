@@ -2921,18 +2921,37 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
              * fiber'ы running на workers. Wait для них. */
             int remote = (int)nova_aint_load(&q->pending_remote);
             if (remote == 0) break;
-            /* Plan 83.11 Phase A: watchdog check — fires once per scope. */
+            /* Plan 83.11 Phase A + Plan 187 [M-187-watchdog-idle-server-kill]:
+             * watchdog check. A supervised scope waiting on `pending_remote`
+             * with local `count == 0` (this branch) is NOT by itself a hang
+             * signature — it's exactly the shape of a healthy long-lived
+             * server's accept-loop fiber, legitimately parked in `uv_accept`
+             * (or any other suspending I/O op) on a worker thread, forever
+             * (until a connection arrives). Only fire the (alarming, full
+             * runtime-state) dump when `nova_runtime_has_stuck_fibers()`
+             * confirms an actual lost-wake/orphaned slot (SUSPENDED but NOT
+             * parked) — the same signature the dump's own per-slot detail
+             * already flags as "STUCK_ALIVE_NOT_PARKED". If everything is
+             * legitimately parked, re-arm (reset the elapsed-time clock)
+             * instead of firing once-and-silent-forever — a scope that's
+             * healthy now but turns genuinely stuck later still gets
+             * diagnosed, just delayed by at most one more threshold window. */
             if (_watchdog_enabled && !_watchdog_fired) {
                 uint64_t now = uv_hrtime();
                 uint64_t elapsed_ns = now - _watchdog_start;
                 if (elapsed_ns / 1000000000ULL >= (uint64_t)_watchdog_threshold_secs) {
-                    _watchdog_fired = true;
-                    extern void nova_runtime_dump_state(const char* reason);
-                    char buf[64];
-                    snprintf(buf, sizeof(buf),
-                             "supervised-watchdog-%ds-remote-%d",
-                             _watchdog_threshold_secs, remote);
-                    nova_runtime_dump_state(buf);
+                    extern bool nova_runtime_has_stuck_fibers(void);
+                    if (nova_runtime_has_stuck_fibers()) {
+                        _watchdog_fired = true;
+                        extern void nova_runtime_dump_state(const char* reason);
+                        char buf[64];
+                        snprintf(buf, sizeof(buf),
+                                 "supervised-watchdog-%ds-remote-%d",
+                                 _watchdog_threshold_secs, remote);
+                        nova_runtime_dump_state(buf);
+                    } else {
+                        _watchdog_start = now;  /* healthy idle-on-IO — re-arm */
+                    }
                 }
             }
             /* Plan 83.10.3 (2026-05-26): nested supervised on worker thread.

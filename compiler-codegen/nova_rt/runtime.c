@@ -415,6 +415,42 @@ void nova_runtime_dump_state(const char* reason) {
     fprintf(stderr, "=== END DUMP ===\n");
     fflush(stderr);
 }
+
+/* Plan 187 [M-187-watchdog-idle-server-kill]: see runtime.h doc-comment.
+ * Deliberately independent of nova_runtime_dump_state's own per-worker loop
+ * above (small, self-contained scan) rather than factored into a shared
+ * helper — keeps the diagnostic dump's existing, already-battle-tested print
+ * path untouched while this only answers "alarm or not". Same lock-free
+ * stale-snapshot caveat as the full dump: a false "false" here (missed
+ * stuck fiber) just delays the eventual real diagnosis by one more
+ * threshold window (the caller re-arms and rechecks), it never permanently
+ * suppresses it. */
+bool nova_runtime_has_stuck_fibers(void) {
+    if (!_workers || _n_workers <= 0) return false;
+    for (int wi = 0; wi < _n_workers; wi++) {
+        NovaWorker* w = &_workers[wi];
+        NovaFiberQueue* s = &w->scope;
+        int count = (int)__atomic_load_n(&s->count, __ATOMIC_ACQUIRE);
+        NovaSchedState* st = s->sched_state;
+        if (!st || st->capacity <= 0) continue;
+        int cap = st->capacity;
+        int detail_max = count < cap ? count : cap;
+        for (int i = 0; i < detail_max; i++) {
+            mco_coro* co = s->fibers ? s->fibers[i] : NULL;
+            if (!co) continue;
+            nova_bool* pk_p = nova_sched_parked_at(st, i);
+            bool pk = pk_p && *pk_p;
+            /* Same "stuck_alive" test as nova_runtime_dump_state's per-slot
+             * detail loop: alive (SUSPENDED) but not cooperatively parked —
+             * a legitimately-idle fiber (e.g. an accept-loop parked in
+             * uv_accept) always has parked==true; lost-wake/orphaned slots
+             * are SUSPENDED with parked==false. */
+            if ((int)mco_status(co) == MCO_SUSPENDED && !pk) return true;
+        }
+    }
+    return false;
+}
+
 /* Plan 83.1 Ф.4: lazy worker-пул. `_armed` — runtime.init() вызван
  * (M:N запрошен); `_materialized` — пул-потоки реально подняты (лениво,
  * на первом worker-bound spawn). `_target_workers` — резолвнутое число

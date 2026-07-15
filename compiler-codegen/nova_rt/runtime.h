@@ -206,4 +206,14 @@ void  nova_spawn_pool_release(void* ctx, size_t size);
 void nova_runtime_dump_state(const char* reason);
 void nova_runtime_set_watchdog_scope(struct NovaFiberQueue* q);
 
+/* Plan 187 [M-187-watchdog-idle-server-kill]: lightweight (no stderr output)
+ * scan reused by the watchdog-check in fibers.h to tell a healthy
+ * long-lived idle scope (remote fiber legitimately parked on external I/O —
+ * e.g. an accept-loop fiber parked in uv_accept, MCO_SUSPENDED && parked)
+ * apart from a genuine stuck-fiber hang (MCO_SUSPENDED but NOT parked —
+ * lost-wake / orphaned slot; same "STUCK_ALIVE_NOT_PARKED" signature
+ * nova_runtime_dump_state's full dump already flags). Returns true only when
+ * at least one worker has such a stuck fiber. */
+bool nova_runtime_has_stuck_fibers(void);
+
 #endif /* NOVA_RT_RUNTIME_H */
