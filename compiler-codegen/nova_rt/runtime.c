@@ -2042,18 +2042,44 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
  *   This is the root cause of the heisenbug where fprintf "fixed" the hang
  *   (fprintf's stdio lock is a full memory fence). */
 void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope) {
-    /* Plan 83.11 Ф.3: legacy cancel path is BYPASSED when driver started.
-     * Driver's CANCEL_SCOPE job handles all sleep-related cancel through
-     * single-mutator armed_sleeps_head walk. Running legacy too creates double-
-     * wake race (legacy bare-wake clears parked before driver close_cb CAS).
+    /* [M-187-sse-live-tls-server-hang] fix (2026-07-15): this function used to
+     * return UNCONDITIONALLY once the driver started (Plan 83.11 Ф.3), on the
+     * theory that "Driver's CANCEL_SCOPE job handles all sleep-related cancel
+     * through single-mutator armed_sleeps_head walk. Running legacy too
+     * creates double-wake race" — true for Time.sleep, but the blanket
+     * early-return ALSO silently dropped cancellation for every OTHER
+     * pending_stop_cb-registered park (TCP connect/read/write, TLS handshake/
+     * read/write, UDP, DNS — every `nova_sched_register_pending` call site in
+     * net.c) once the driver is up, which in this M:N runtime is almost
+     * immediately after the FIRST spawn (`_materialize_pool` calls
+     * `nova_driver_init()` right after worker-pool materialization). A
+     * `supervised(deadline:)` scope whose child is genuinely mid a real
+     * network op (aggregator flagship's live-TLS lanes: DNS resolve → TCP
+     * connect → TLS handshake → read, `examples/flagship/aggregator/src/
+     * app/live.nv`'s `live_fetch_weather`) at deadline-elapse would call
+     * `nova_scope_deliver_cancel` → this fn → no-op → the fiber's async
+     * handle is never closed → `pending_remote` never decrements →
+     * `nova_supervised_run_impl`'s wait loop spins forever (confirmed:
+     * repro'd with an artificially-tightened `LIVE_BUDGET_MS`, 100% CPU on
+     * the worker thread, no watchdog dump — reached `alive==0`/`remote>0`
+     * every iteration but the child fiber was never actually stuck-alive,
+     * just genuinely still parked on a real, uncancelled network op).
      *
-     * Channel/mutex cancel paths still use pending_stop_cb[] — for those, this
-     * function is still useful. But those aren't in iso-cancel race scope.
-     * Ф.5 will migrate them too; until then, legacy stays для bootstrap path. */
-    if (nova_driver_is_started()) {
-        /* Driver owns sleep cancel. Skip legacy walk. */
-        return;
-    }
+     * Root cause was the BLANKET skip, not the sleep-vs-network distinction
+     * itself — `_nova_sleep_via_driver` (fibers.h) never calls
+     * `nova_sched_register_pending` at all (it parks via `armed_sleeps_head`
+     * + a bare `parked[slot]` flag, no stop_cb), so a registered stop_cb
+     * (`cb && hdl` below) can ONLY belong to a net.c-style async op — never
+     * a driver-routed sleep. Running the `cb(hdl)` branch unconditionally is
+     * therefore safe in driver mode: it can never race the driver's own
+     * armed_sleeps_head walk (disjoint fiber sets). The double-wake race the
+     * original comment warned about is specifically the BARE-park fallback
+     * branch (`else if (parked_at)`, no stop_cb) — THAT one still matches a
+     * driver-routed sleeping fiber (bare-parked, no stop_cb, same as a
+     * network op that hasn't registered its pending handle yet) and must
+     * stay driver-exclusive to avoid double-dispatch. Fix: gate only the
+     * bare-park fallback on driver-mode; let the stop_cb branch run always. */
+    bool driver_mode = nova_driver_is_started();
     /* Cast from `struct NovaFiberQueue*` (forward-declared in runtime.h) to
      * `NovaFiberQueue*` (anonymous typedef from fibers.h) for sched helpers. */
     NovaFiberQueue* tscope = (NovaFiberQueue*)target_scope;
@@ -2080,10 +2106,19 @@ void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope) {
             void* hdl = *nova_sched_pending_handle_at(st, j);  /* visible after ACQUIRE on cb */
             if (cb && hdl) {
                 /* ASYNC stop_cb: initiates cross-thread safe uv_close via
-                 * nova_loop_defer_close; close_cb wakes fiber afterward. */
+                 * nova_loop_defer_close; close_cb wakes fiber afterward. Never
+                 * a driver-routed sleep (see fn header) — safe unconditionally,
+                 * including driver mode. This is the actual fix: previously
+                 * unreachable whenever driver_mode was true. */
                 cb(hdl);
-            } else if (j < nova_sched_cap_acq(st) && *nova_sched_parked_at(st, j)) {
-                /* Bare park (no registered stop_cb): direct dispatch_ready. */
+            } else if (!driver_mode && j < nova_sched_cap_acq(st) && *nova_sched_parked_at(st, j)) {
+                /* Bare park (no registered stop_cb): direct dispatch_ready.
+                 * Driver-exclusive when driver_mode — a driver-routed sleep
+                 * is ALSO bare-parked with no stop_cb; touching it here too
+                 * would double-wake against the driver's own CANCEL_SCOPE/
+                 * armed_sleeps_head close_cb CAS (original heisenbug this fn
+                 * documents). Unchanged from pre-fix behavior when driver is
+                 * not started (bootstrap/single-thread mode). */
                 nova_sched_wake(&w->scope, j);
             }
             /* else: fiber not yet parked; FIX 2b in _nova_sleep_via_libuv
