@@ -10581,6 +10581,55 @@ impl<'a> TypeCheckCtx<'a> {
             ));
             return;
         }
+        // Plan 196.7 [M-174.1-to-str-name-collision-codegen-bug]: an Array/slice receiver
+        // normalizes to "Vec" above (D239 `[]T ≡ Vec[T]`, for the pervasive Vec-overload
+        // spelling), but a CONCRETE facade method is registered under the ELEMENT-spelling
+        // key (`fn []u8 @to_str()` → method_table["[]u8"]), invisible to method_table["Vec"].
+        // Without this the checker records NO callee for `bytes.to_str()`, so codegen's
+        // one-window dispatch has nothing to read and the bare-T `to_str()` blanket hijacks
+        // the call → wrong C body (`Nova_Nova_Vec____nova_byte_method_to_str` returning `str`
+        // vs the `[]u8 @to_str -> Result` body) → `->tag` on a `nova_str` CC-FAIL. Resolve
+        // the concrete facade method HERE by the array spelling and record its `FnDecl.span`
+        // (same c1/c2 single/unique-compatible rule as the Vec path below). GATED to methods
+        // ABSENT from the "Vec" table so no Vec-method resolution changes (byte-identical);
+        // fires only for the array-only facade family. D84 "concrete beats generic".
+        // Element of an array/slice/`Vec[E]` receiver, in the `[]E` spelling the
+        // facade method is registered under (both the `[]u8` source form and a
+        // `Vec[u8]`-typed pattern/field binding must reach `[]u8 @to_str`).
+        let array_elem_key: Option<String> = match rt {
+            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) =>
+                Some(format!("[]{}", render_type_ref(inner))),
+            TypeRef::Named { path, generics, .. }
+                if path.len() == 1 && path[0] == "Vec" && generics.len() == 1 =>
+                Some(format!("[]{}", render_type_ref(&generics[0]))),
+            _ => None,
+        };
+        if let Some(array_key) = array_elem_key.filter(|_|
+            self.sig.method_table.get(type_name)
+                .map_or(true, |m| !m.contains_key(method_name)))
+        {
+            if let Some(ov) = self.sig.method_table.get(array_key.as_str())
+                .and_then(|m| m.get(method_name))
+            {
+                let mut compat: Vec<crate::diag::Span> = Vec::new();
+                for f in ov {
+                    if let Some(true) = self.overload_applicability(f, args, gs, scope) {
+                        compat.push(f.span);
+                    }
+                }
+                let chosen = if ov.len() == 1 {
+                    Some(ov[0].span)
+                } else if compat.len() == 1 {
+                    Some(compat[0])
+                } else {
+                    None
+                };
+                if let Some(sp) = chosen {
+                    self.resolved_callees.borrow_mut().insert(call_id, sp);
+                }
+                return;
+            }
+        }
         // Plan 172.1.1 (U.3.2 probe): lift the primitive gate — `method_table.get` below returns
         // None for receivers absent from the checker's table (graceful no-op), so this is SAFE; it
         // RECORDS a callee only when the primitive's method sig IS present. Measures empirically

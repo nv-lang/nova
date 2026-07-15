@@ -285,30 +285,15 @@ export fn []u8 @to_str() -> Result[str, Utf8Error] {
     Err(Utf8Error { byte_offset: off })
 }
 
-// [M-174.1-to-str-name-collision-codegen-bug] (2026-07-08): identical body
-// under a distinct name, as a call-site workaround. Found during this
-// migration: when the SAME compilation unit also defines an UNRELATED type's
-// own `T.to_str() -> str` (the pervasive D410 Display convention — e.g.
-// `NetError.to_str()`, `SocketAddr.to_str()`), some call sites of
-// `bytes.to_str()` mis-codegen — emit_c.rs dispatches to the OTHER type's
-// `to_str` C body instead of this one (`Vec` receiver vs a user-record
-// receiver; reproduced with a fresh minimal type+function, confirmed fixed
-// solely by renaming — nothing else, incl. explicit Result[str,Utf8Error]
-// type ascription, worked around it). Pre-existing, separately-tracked
-// codegen dispatch gap for facade-imported `[]u8`/`Vec[T]` methods (sibling
-// of `[M-174.1-vec-method-chain-elem-erasure]`) — out of scope to fix here.
-// Use THIS name at any call site inside a CU that also uses a colliding
-// `T.to_str()`; std/net/tcp.nv (`NetError.to_str`), std/http/body.nv
-// (`HttpError.to_str`), std/io/buffered.nv (`IoError.to_str`?), std/net/addr.nv
-// (`SocketAddr.to_str`) currently need it. See backlog-followups.md marker.
-export fn []u8 @decode_utf8() -> Result[str, Utf8Error] {
-    ro n = @len()
-    ro off = first_invalid_utf8(@, n)
-    if off < 0 {
-        return Ok(str.alloc_copy(@ptr(), n))
-    }
-    Err(Utf8Error { byte_offset: off })
-}
+// [M-174.1-to-str-name-collision-codegen-bug] RESOLVED 2026-07-15 (Plan 196.7):
+// the `@decode_utf8()` byte-identical alias that used to live here — the call-
+// site workaround for the name-collision mis-dispatch of `[]u8 @to_str()` in a
+// CU that also has a D410 `T.to_str()` / the bare-T `fn[T] T @to_str` blanket —
+// is REMOVED. The dispatch is now correct via the one-window channel: the
+// checker resolves `bytes.to_str()` to THIS `[]u8 @to_str` by the array-spelling
+// key and records it in `resolved_callees`; codegen honors that concrete callee
+// instead of the name-keyed blanket (types/mod.rs `check_instance_overload` +
+// emit_c.rs blanket-dispatch guard). All former call sites use `.to_str()`.
 
 // Plan 174.2 (D410-амендмент, str.from-ретракция): ОДИН публичный вход
 // «скаляр → строка» — `@to_str()`. Bare-T blanket (D145 форма, зеркалит

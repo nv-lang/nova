@@ -215,14 +215,9 @@ export fn StringBuilder mut @write(s str) -> () { @buf.append(s.bytes()) }
 export fn StringBuilder consume @into_str() -> str => unsafe { @buf.to_str_unchecked() }
 
 // Checked twin of `@into_str()` — validates UTF-8 instead of assuming it
-// (Plan 208 Ф.1, D422 §"into_str()"). Delegates to `[]u8 @decode_utf8()`
-// (std/runtime/string/core.nv) — an identical-body, differently-named twin
-// of `[]u8 @to_str()` kept specifically as the collision-safe call site
-// ([M-174.1-to-str-name-collision-codegen-bug]: `bytes.to_str()` mis-codegens
-// whenever the same compilation unit also defines an unrelated `T.to_str()
-// -> str`, which the wider `std` CU does — e.g. `NetError.to_str()` — so this
-// file uses `@decode_utf8()`, the documented workaround, instead).
-export fn StringBuilder consume @into_str_checked() -> Result[str, Utf8Error] => @buf.decode_utf8()
+// (Plan 208 Ф.1, D422 §"into_str()"). Delegates to `[]u8 @to_str()`
+// (std/runtime/string/core.nv).
+export fn StringBuilder consume @into_str_checked() -> Result[str, Utf8Error] => @buf.to_str()
 
 // ─── Plan 208 Ф.1 (D422/D179 amend) — buffer-primitive plumbing ───
 //

@@ -378,9 +378,7 @@ export fn json_decode_with[T Deserialize](s str, max_depth int) -> Result[T, DeE
 /// []u8 (UTF-8) -> T (байт-first вход; Plan 178 Body.@json).
 #unstable
 export fn json_decode_bytes[T Deserialize](b []u8) -> Result[T, DeError] {
-    // decode_utf8 = []u8 @to_str alias — this CU has SerError/DeError @to_str()
-    // ([M-174.1-to-str-name-collision-codegen-bug], backlog-followups.md).
-    match b.decode_utf8() {
+    match b.to_str() {
         Ok(s)  => {
             match Json.parse(s) {
                 Ok(v)  => {
