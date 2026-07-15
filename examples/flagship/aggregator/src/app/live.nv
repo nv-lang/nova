@@ -66,7 +66,7 @@ module src.app
 import ../domain.{Source, SourceData, AggError, TaskStatus, TaskResult, Report}
 import std.net.{SocketAddr, TcpStream, resolve}
 import std.time.duration
-import tls.{ClientConfig}
+import tls.{ClientConfig, TlsStream}
 
 // ── Live target tables ──────────────────────────────────────────────────────
 
@@ -142,29 +142,37 @@ fn live_fetch_tcp(host str) Net Time -> Result[SourceData, AggError] {
 /// -fix), then honestly fails at the handshake step with the marker above —
 /// NOT the retired `tls diamond dependency` message. `lat`/`lon` kept so the
 /// signature doesn't change the day the codegen gap closes.
-fn live_fetch_weather(id str, _lat f64, _lon f64) Net Time -> Result[SourceData, AggError] {
+fn live_fetch_weather(id str, lat f64, lon f64) Net Time -> Result[SourceData, AggError] {
     ro host = "api.open-meteo.com"
     match resolve(host, 443 as u16) {
         Ok(addrs) => {
             if addrs.len() == 0 {
                 Err(AggError.Transport("resolve: no address for " + host))
             } else {
-                // Cross-package `tls` symbol — links cleanly now the diamond
-                // is collapsed (ONE physical `tls`). Proves the fix at the
-                // aggregator level, not just in the resolver unit tests.
-                ro _cfg = ClientConfig.new(host)
+                // Full live HTTPS: TCP connect -> TLS handshake -> GET -> read.
+                // Diamond RESOLVED (Plan 204 дофикс) + cross-package consume-
+                // cleanup CLOSED ([M-187-tls-cross-pkg-consume-cleanup], Plan
+                // 187 wave) — `TlsStream.connect` (consumes the TcpStream inside
+                // nova-tls) now links. This is a REAL open-meteo HTTPS request.
+                ro cfg = ClientConfig.new(host)
                 match TcpStream.connect(addrs[0]) {
                     Err(e) => Err(AggError.Transport(e.to_str()))
-                    Ok(s) => {
-                        mut st = s
-                        st.close()
-                        // Handshake deferred — see doc-comment. TlsStream.connect
-                        // here would reference the undefined cross-package
-                        // Nova_TcpStream_consume_cleanup.
-                        Err(AggError.Transport(
-                            "weather live TLS handshake deferred: " +
-                            "[M-187-tls-cross-pkg-consume-cleanup] cross-package " +
-                            "consume-cleanup codegen gap (dependency diamond RESOLVED)"))
+                    Ok(tcp) => match TlsStream.connect(tcp, cfg) {
+                        Err(e) => Err(AggError.Transport("tls handshake: " + e.to_str()))
+                        Ok(tls) => {
+                            mut stream = tls
+                            ro req = "GET /v1/forecast?latitude=" + lat.to_str() +
+                                "&longitude=" + lon.to_str() +
+                                "&daily=temperature_2m_max&forecast_days=1 HTTP/1.1\r\n" +
+                                "Host: " + host + "\r\nConnection: close\r\n\r\n"
+                            match stream.write_all(req.bytes()) {
+                                Err(e) => { stream.close(); Err(AggError.Transport("tls write: " + e.to_str())) }
+                                Ok(_) => match stream.read_to_vec(8192) {
+                                    Err(e) => { stream.close(); Err(AggError.Transport("tls read: " + e.to_str())) }
+                                    Ok(bytes) => { stream.close(); Ok(SourceData { id, payload: bytes }) }
+                                }
+                            }
+                        }
                     }
                 }
             }
