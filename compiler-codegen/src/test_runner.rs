@@ -79,6 +79,25 @@ fn join_with_timeout(
     rx.recv_timeout(timeout).unwrap_or_default()
 }
 
+/// Plan 209 Ф.2: synthesize a plain success/failure `ExitStatus`. The
+/// multi-TU compile+link path (`compile_multi_tu_to_exe`) runs SEVERAL
+/// subprocesses (N parallel part compiles + a link) folded into one
+/// `anyhow::Result` — this lets `run_one` feed that single verdict into the
+/// SAME `(CapturedOutput, ExitStatus)`-shaped post-cc branching
+/// (`EXPECT_CC_ERROR` matching, run-the-exe, …) that a real single child
+/// process's exit status already drives for the single-TU path, without
+/// duplicating that (large) downstream logic.
+#[cfg(target_os = "windows")]
+fn synth_exit_status(success: bool) -> ExitStatus {
+    use std::os::windows::process::ExitStatusExt;
+    ExitStatus::from_raw(if success { 0 } else { 1 })
+}
+#[cfg(not(target_os = "windows"))]
+fn synth_exit_status(success: bool) -> ExitStatus {
+    use std::os::unix::process::ExitStatusExt;
+    ExitStatus::from_raw(if success { 0 } else { 1 })
+}
+
 /// Капчуренный output после run с timeout. Заменяет `Output` из
 /// `Command::output()` — там нет варианта «убит по таймауту».
 pub struct CapturedOutput {
@@ -1154,7 +1173,15 @@ fn effect_count_define_arg(c_file: &Path, prefix: &str) -> Option<String> {
     let f = std::fs::File::open(c_file).ok()?;
     let mut first = String::new();
     std::io::BufReader::new(f).read_line(&mut first).ok()?;
-    let n: u32 = first
+    effect_count_define_arg_from_line(&first, prefix)
+}
+
+/// Plan 209 Ф.2: same parse as [`effect_count_define_arg`], factored out so the
+/// multi-TU toolchain (which holds `common_h` in memory — the effect-count
+/// marker is ALWAYS its first line, recon-notes.md §1) can reuse the exact
+/// same logic without round-tripping through a file on disk.
+fn effect_count_define_arg_from_line(first_line: &str, prefix: &str) -> Option<String> {
+    let n: u32 = first_line
         .split("nova-effect-count:")
         .nth(1)?
         .trim()
@@ -1280,6 +1307,19 @@ fn detect_brotli(rt_dir: &Path) -> Option<BrotliConfig> {
 ///   - called (brotli_decode / http `br`) → a non-static call-site line  → true
 fn c_file_uses_brotli(c_file: &Path) -> bool {
     let Ok(src) = std::fs::read_to_string(c_file) else { return false; };
+    source_uses_brotli(&src)
+}
+
+/// Plan 209 Ф.2: same scan as [`c_file_uses_brotli`], factored out so the
+/// multi-TU toolchain can run it directly over each in-memory `_partK.c`
+/// string (no round-trip through disk — the parts are already `String`s from
+/// `EmitOutput::Split`). Caveat (over-detection only, never under-detection —
+/// safe): under `NOVA_MULTI_TU=1` the wrapper's own decl/def lines are no
+/// longer `static ` (Plan 209 `top_level_storage()` promotion), so this scan
+/// then treats them as call sites too — `uses_brotli` may go true for a CU
+/// that merely DECLARES the wrapper without calling it. Harmless: it only
+/// adds an unused link of the (already-conditionally-detected) brotli lib.
+fn source_uses_brotli(src: &str) -> bool {
     for line in src.lines() {
         if !line.contains("brotli_decode(") {
             continue;
@@ -1983,6 +2023,442 @@ pub fn compile_c_to_exe(
     Ok(opts.exe_file.to_path_buf())
 }
 
+// ---------- Plan 209 Ф.2: multi-TU parallel compile + link ----------
+
+/// Build a `clang -c <src> -o <obj>` compile-only Command sharing `flags`/
+/// `includes`/`force_includes` with every other part/runtime-object compile
+/// in this CU (ABI-invariant — see `compile_multi_tu_to_exe` doc).
+fn clang_compile_obj_cmd(
+    clang: &Path,
+    env: &[(OsString, OsString)],
+    flags: &[String],
+    includes: &[PathBuf],
+    force_includes: &[PathBuf],
+    src: &Path,
+    obj: &Path,
+) -> Command {
+    let mut c = Command::new(clang);
+    if !env.is_empty() {
+        c.env_clear().envs(env.iter().cloned());
+    }
+    for f in flags {
+        if !f.is_empty() {
+            c.arg(f);
+        }
+    }
+    for inc in includes {
+        c.arg("-I").arg(inc);
+    }
+    for fi in force_includes {
+        c.arg("-include").arg(fi);
+    }
+    c.arg("-c").arg(src);
+    c.arg("-o").arg(obj);
+    c
+}
+
+/// GCC mirror of [`clang_compile_obj_cmd`] (no vcvars env to replay).
+fn gcc_compile_obj_cmd(
+    gcc: &Path,
+    flags: &[String],
+    includes: &[PathBuf],
+    force_includes: &[PathBuf],
+    src: &Path,
+    obj: &Path,
+) -> Command {
+    let mut c = Command::new(gcc);
+    for f in flags {
+        if !f.is_empty() {
+            c.arg(f);
+        }
+    }
+    for inc in includes {
+        c.arg("-I").arg(inc);
+    }
+    for fi in force_includes {
+        c.arg("-include").arg(fi);
+    }
+    c.arg("-c").arg(src);
+    c.arg("-o").arg(obj);
+    c
+}
+
+/// Plan 209 Ф.2 (B1-B4): parallel multi-TU compile + link. Entry point for
+/// the `EmitOutput::Split { common_h, parts }` shape (Ф.1 A4,
+/// `CEmitter::emit_module_multi_tu`) — the `EmitOutput::Single` shape keeps
+/// going through `compile_c_to_exe`/`build_command` UNCHANGED (0 risk to the
+/// default path, recon-notes.md §6 threshold-gate).
+///
+/// Writes `<stem>_common.h` + `<stem>_partK.c` under `opts.obj_dir`, compiles
+/// every part **in parallel** (thread pool sized to
+/// `available_parallelism()`) alongside the runtime/.ffi/.brotli
+/// "compile-once" sources, then links every resulting `.o` into one exe.
+///
+/// **ABI-invariant (recon-notes.md §1, §9.5):** `flags` (built once, below)
+/// is the exact same `Vec<String>` passed to EVERY compile invocation
+/// (parts AND runtime objects) AND to the final link — this is what
+/// guarantees `-DNOVA_MAX_EFFECT_STORAGES=N` and every other `-D` stay
+/// byte-identical across every TU without hand-threading each flag through
+/// N call sites separately.
+///
+/// **MSVC unsupported** (recon-notes.md §9 неопределённость 3): `cl.exe`/
+/// `link.exe`'s two-phase object+link syntax differs enough from
+/// clang/gcc's `-c`/`-o` that it needs its own builder — left as a Ф.2
+/// remainder (documented in 209-f2-notes.md). Callers MUST gate multi-TU
+/// off for `Toolchain::Msvc` (this returns `Err` defensively if reached).
+pub fn compile_multi_tu_to_exe(
+    tc: &Toolchain,
+    opts: &BuildOpts,
+    common_h: &str,
+    parts: &[String],
+    timeout: Duration,
+) -> anyhow::Result<PathBuf> {
+    let is_gcc = matches!(tc, Toolchain::Gcc { .. });
+    let (compiler, env): (PathBuf, Vec<(OsString, OsString)>) = match tc {
+        Toolchain::Clang { clang, env, .. } => (clang.clone(), env.clone()),
+        Toolchain::Gcc { gcc } => (gcc.clone(), vec![]),
+        Toolchain::Msvc { .. } => {
+            return Err(anyhow!(
+                "multi-TU compile+link is not implemented for the MSVC \
+                 toolchain yet (Plan 209 Ф.2 remainder) — pass \
+                 --toolchain=clang, or unset NOVA_MULTI_TU"
+            ));
+        }
+    };
+    let _ = resolve_gc_or_exit(opts.gc_kind, opts.cg_include);
+
+    let stem = opts
+        .c_file
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("cu")
+        .to_string();
+    let obj_dir = opts.obj_dir;
+    std::fs::create_dir_all(obj_dir).map_err(|e| anyhow!("mkdir obj_dir: {}", e))?;
+
+    // Write common.h + part_K.c side by side — parts `#include` the header
+    // by its relative filename, so both must live in the same directory.
+    let common_h_path = obj_dir.join(format!("{}_common.h", stem));
+    std::fs::write(&common_h_path, common_h)
+        .map_err(|e| anyhow!("write {}: {}", common_h_path.display(), e))?;
+    let mut part_paths: Vec<PathBuf> = Vec::with_capacity(parts.len());
+    for (i, part) in parts.iter().enumerate() {
+        let p = obj_dir.join(format!("{}_part{}.c", stem, i));
+        std::fs::write(&p, part).map_err(|e| anyhow!("write {}: {}", p.display(), e))?;
+        part_paths.push(p);
+    }
+
+    // Plan 174.4: effect-registry size, read from common.h's line 1 (recon-
+    // notes.md §1 doc: the marker is ALWAYS moved there by `split_tu`).
+    let effect_arg = common_h.lines().next().and_then(|l| effect_count_define_arg_from_line(l, "-D"));
+
+    // Plan 179 Ф.2: conditional brotli link — same detection as
+    // `build_command`, run over every in-memory part (source_uses_brotli).
+    let uses_brotli = parts.iter().any(|p| source_uses_brotli(p));
+    let brotli_cfg = if uses_brotli { detect_brotli(opts.rt_dir) } else { None };
+
+    let march = march_flag();
+    let boehm_cfg = if opts.gc_kind == GcKind::Boehm {
+        detect_boehm(opts.cg_include)
+    } else {
+        None
+    };
+    let vcpkg_include = boehm_cfg
+        .as_ref()
+        .and_then(|c| c.include_dir.clone())
+        .unwrap_or_else(|| opts.cg_include.join("vcpkg_installed").join("x64-windows-static").join("include"));
+    let vcpkg_lib = boehm_cfg
+        .as_ref()
+        .and_then(|c| c.lib_dir.clone())
+        .unwrap_or_else(|| opts.cg_include.join("vcpkg_installed").join("x64-windows-static").join("lib"));
+
+    // ---- shared flags: IDENTICAL for every compile (-c) AND the final
+    // link — mirrors build_command's Clang/Gcc arms so per-TU codegen
+    // assumptions (target triple, -D defines, section-based DCE) stay
+    // uniform across parts + runtime objects (see fn doc, ABI-invariant).
+    let mut flags: Vec<String> = Vec::new();
+    if !is_gcc && cfg!(target_os = "windows") {
+        flags.push("--target=x86_64-pc-windows-msvc".to_string());
+    }
+    match opts.mode {
+        Mode::Dev => {
+            flags.push("-O0".into());
+            flags.push("-g".into());
+            flags.push(if is_gcc { "-w".into() } else { "-Wno-everything".into() });
+        }
+        Mode::Release => {
+            flags.push("-O3".into());
+            flags.push("-flto".into());
+            flags.push(format!("-march={}", march));
+            flags.push("-DNDEBUG".into());
+            flags.push(if is_gcc { "-w".into() } else { "-Wno-everything".into() });
+        }
+    }
+    flags.push("-ffunction-sections".into());
+    flags.push("-fdata-sections".into());
+    #[cfg(target_os = "windows")]
+    if !is_gcc && matches!(opts.mode, Mode::Release) {
+        flags.push("-fuse-ld=lld".into());
+    }
+    #[cfg(target_os = "windows")]
+    flags.push("-Wl,/stack:0x1000000".into());
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        flags.push("-fstack-clash-protection".into());
+        flags.push("-fstack-protector-strong".into());
+        flags.push("-Wl,--gc-sections".into());
+    }
+    if opts.gc_kind == GcKind::Boehm {
+        flags.push("-DNOVA_GC_BOEHM".into());
+        flags.push("-DGC_THREADS".into());
+    }
+    for da in runtime_define_args(opts.runtime, "-D") {
+        flags.push(da);
+    }
+    if let Some(ea) = &effect_arg {
+        flags.push(ea.clone());
+    }
+
+    // ---- includes (compile-only) ----
+    let mut includes: Vec<PathBuf> = vec![opts.cg_include.to_path_buf()];
+    let libuv_include = opts.libuv.map(|c| c.include_dir.clone());
+    if let Some(inc) = &libuv_include {
+        flags.push("-DNOVA_USE_LIBUV=1".into());
+        includes.push(inc.clone());
+    }
+    let brotli_ready = uses_brotli && brotli_cfg.as_ref().map_or(false, |c| !c.lib_files.is_empty());
+    if brotli_ready {
+        if let Some(cfg) = &brotli_cfg {
+            flags.push("-DNOVA_USE_BROTLI=1".into());
+            includes.push(cfg.include_dir.clone());
+        }
+    }
+    if let Some(ffi) = opts.ffi {
+        for inc in &ffi.include_dirs {
+            includes.push(inc.clone());
+        }
+        for def in ffi_have_defines(ffi) {
+            flags.push(format!("-D{}=1", def));
+        }
+    }
+    if opts.gc_kind == GcKind::Boehm {
+        #[cfg(target_os = "windows")]
+        includes.push(vcpkg_include.clone());
+        #[cfg(not(target_os = "windows"))]
+        if let Some(cfg) = &boehm_cfg {
+            if let Some(inc) = &cfg.include_dir {
+                let s = inc.to_string_lossy();
+                if !s.starts_with("/usr/include") {
+                    includes.push(inc.clone());
+                }
+            }
+        }
+    }
+
+    // ---- force-include headers (compile-only: FFI .h shims) ----
+    let mut force_includes: Vec<PathBuf> = Vec::new();
+    if let Some(ffi) = opts.ffi {
+        for shim in &ffi.c_shims {
+            let ext = shim.extension().and_then(|s| s.to_str()).unwrap_or("");
+            if ext.eq_ignore_ascii_case("h") {
+                force_includes.push(shim.clone());
+            }
+        }
+    }
+
+    // ---- "compile once" extra sources: runtime .c + libuv eventloop +
+    // FFI .c shims + brotli shim. Compiled to `.o` exactly once (not once
+    // per part) — no regression vs. the single-TU path, which also only
+    // ever compiled these once.
+    let mut extra_sources: Vec<PathBuf> = vec![
+        opts.rt_dir.join(opts.gc_kind.alloc_c_name()),
+        opts.rt_dir.join("effects.c"),
+        opts.rt_dir.join("fibers.c"),
+        opts.rt_dir.join("fiber_arena.c"),
+        opts.rt_dir.join("fiber_arena_win.c"),
+        opts.rt_dir.join("fiber_stats.c"),
+        opts.rt_dir.join("runtime.c"),
+        opts.rt_dir.join("driver.c"),
+        opts.rt_dir.join("typeid.c"),
+        opts.rt_dir.join("segv_diag.c"),
+    ];
+    if let Some(libuv) = opts.libuv {
+        extra_sources.push(opts.rt_dir.join("net.c"));
+        extra_sources.push(opts.rt_dir.join("fs.c"));
+        extra_sources.push(libuv.eventloop_src.clone());
+    }
+    if brotli_ready {
+        extra_sources.push(opts.rt_dir.join("brotli_shim.c"));
+    }
+    if let Some(ffi) = opts.ffi {
+        for shim in &ffi.c_shims {
+            let ext = shim.extension().and_then(|s| s.to_str()).unwrap_or("");
+            if ext.eq_ignore_ascii_case("c") {
+                extra_sources.push(shim.clone());
+            }
+        }
+    }
+
+    // ---- job list: (src, obj) for every part + every "once" source ----
+    let mut jobs: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(part_paths.len() + extra_sources.len());
+    for p in &part_paths {
+        let obj = p.with_extension("o");
+        jobs.push((p.clone(), obj));
+    }
+    for (i, src) in extra_sources.iter().enumerate() {
+        let base = src.file_stem().and_then(|s| s.to_str()).unwrap_or("rt");
+        let obj = obj_dir.join(format!("{}_{}.o", base, i));
+        jobs.push((src.clone(), obj));
+    }
+
+    // ---- parallel compile: thread pool sized to available_parallelism,
+    // contiguous static partition (part/runtime .c sizes are comparable —
+    // parts are each ≤ MULTI_TU_PART_THRESHOLD_BYTES, runtime files small).
+    let nthreads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .max(1)
+        .min(jobs.len().max(1));
+    let chunk_size = if jobs.is_empty() { 1 } else { (jobs.len() + nthreads - 1) / nthreads };
+    let mut compile_results: Vec<(PathBuf, PathBuf, std::io::Result<CapturedOutput>)> = Vec::new();
+    {
+        let compiler_ref = &compiler;
+        let env_ref = &env;
+        let flags_ref = &flags;
+        let includes_ref = &includes;
+        let force_includes_ref = &force_includes;
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = jobs
+                .chunks(chunk_size.max(1))
+                .map(|chunk| {
+                    scope.spawn(move || {
+                        let mut out = Vec::with_capacity(chunk.len());
+                        for (src, obj) in chunk {
+                            let cmd = if is_gcc {
+                                gcc_compile_obj_cmd(compiler_ref, flags_ref, includes_ref, force_includes_ref, src, obj)
+                            } else {
+                                clang_compile_obj_cmd(compiler_ref, env_ref, flags_ref, includes_ref, force_includes_ref, src, obj)
+                            };
+                            let r = run_with_timeout(cmd, timeout);
+                            out.push((src.clone(), obj.clone(), r));
+                        }
+                        out
+                    })
+                })
+                .collect();
+            for h in handles {
+                if let Ok(part) = h.join() {
+                    compile_results.extend(part);
+                }
+            }
+        });
+    }
+
+    // Any compile failure (incl. spawn error / timeout) fails the whole
+    // build — report the first one with its captured output.
+    for (src, _obj, r) in &compile_results {
+        match r {
+            Ok(out) if out.status.map(|s| s.success()).unwrap_or(false) => {}
+            Ok(out) => {
+                let stderr = bytes_to_string(&out.stderr);
+                let stdout = bytes_to_string(&out.stdout);
+                let detail = if stderr.is_empty() { stdout } else { stderr };
+                let reason = if out.status.is_none() {
+                    format!("compiler timed out after {:.1}s", timeout.as_secs_f64())
+                } else {
+                    format!("compiler error ({}):\n{}", src.display(), detail.trim())
+                };
+                return Err(anyhow!("{}", reason));
+            }
+            Err(e) => return Err(anyhow!("spawn compiler ({}): {}", src.display(), e)),
+        }
+    }
+
+    // ---- link: same `flags` + every `.o` + libs (mirrors build_command's
+    // tail — objects, then GC, then libuv, then brotli, then FFI) ----
+    let mut link = Command::new(&compiler);
+    if !env.is_empty() {
+        link.env_clear().envs(env.iter().cloned());
+    }
+    for f in &flags {
+        if !f.is_empty() {
+            link.arg(f);
+        }
+    }
+    link.arg("-o").arg(opts.exe_file);
+    for (_src, obj, _r) in &compile_results {
+        link.arg(obj);
+    }
+    if opts.gc_kind == GcKind::Boehm {
+        #[cfg(target_os = "windows")]
+        {
+            link.arg("-L").arg(&vcpkg_lib);
+            link.arg("-lgc");
+            link.arg("-latomic_ops");
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            if let Some(cfg) = &boehm_cfg {
+                if let Some(lib) = &cfg.lib_dir {
+                    link.arg("-L").arg(lib);
+                }
+            }
+            link.arg("-lgc");
+            #[cfg(target_os = "linux")]
+            link.arg("-lpthread");
+        }
+    }
+    if let Some(libuv) = opts.libuv {
+        #[cfg(target_os = "windows")]
+        {
+            link.arg(&libuv.lib_file);
+            for syslib in LIBUV_WIN_SYSLIBS {
+                link.arg(format!("-l{}", syslib.replace(".lib", "")));
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            #[cfg(target_os = "linux")]
+            link.arg("-Wl,--start-group");
+            link.arg(&libuv.lib_file);
+            for syslib in LIBUV_UNIX_SYSLIBS {
+                link.arg(syslib);
+            }
+            #[cfg(target_os = "linux")]
+            link.arg("-Wl,--end-group");
+        }
+    }
+    if brotli_ready {
+        if let Some(cfg) = &brotli_cfg {
+            for lib_path in &cfg.lib_files {
+                link.arg(lib_path);
+            }
+        }
+    }
+    if let Some(ffi) = opts.ffi {
+        for dir in &ffi.lib_dirs {
+            link.arg("-L").arg(dir);
+        }
+        for lib in &ffi.libs {
+            link.arg(format!("-l{}", lib));
+        }
+    }
+    let link_out = run_with_timeout(link, timeout).map_err(|e| anyhow!("spawn linker: {}", e))?;
+    let link_ok = link_out.status.map(|s| s.success()).unwrap_or(false);
+    if !link_ok {
+        let stderr = bytes_to_string(&link_out.stderr);
+        let stdout = bytes_to_string(&link_out.stdout);
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        let reason = if link_out.status.is_none() {
+            format!("linker timed out after {:.1}s", timeout.as_secs_f64())
+        } else {
+            format!("linker error:\n{}", detail.trim())
+        };
+        return Err(anyhow!("{}", reason));
+    }
+    Ok(opts.exe_file.to_path_buf())
+}
+
 // ---------- Plan 27 Ф.6 / Б.2-Б.7: AllocConstraint + helper parsers ----------
 
 /// Tag-enum без данных — используется в AllocConstraint чтобы избежать
@@ -2600,19 +3076,26 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     let contracts_mode = parse_contracts_policy(&src).unwrap_or(opts.contracts_mode);
     let codegen_result = codegen_to_c(opts.nv_file, &src, opts.mono_depth, contracts_mode);
     let codegen_warnings: Vec<String> = match &codegen_result {
-        Ok((ws, _, _)) => ws.clone(),
+        Ok((ws, _, _, _)) => ws.clone(),
         Err(_) => vec![],
     };
     let lint_warnings: Vec<String> = match &codegen_result {
-        Ok((_, ls, _)) => ls.clone(),
+        Ok((_, ls, _, _)) => ls.clone(),
         Err(_) => vec![],
     };
     // [M-runner-testless-units-main-impl]: true когда codegen succeeded И
     // module имеет ≥1 test-блок или явный `fn main()`. `false` на Err (не
     // используется в этом случае — codegen-error path возвращает раньше).
     let has_runnable_entry: bool = match &codegen_result {
-        Ok((_, _, entry)) => *entry,
+        Ok((_, _, entry, _)) => *entry,
         Err(_) => false,
+    };
+    // Plan 209 Ф.2: which shape codegen produced (Single = default/pre-209
+    // path, Split = multi-TU). Extracted here (borrow) — `codegen_result` is
+    // MOVED/consumed a few lines below by `if let Err(msg) = codegen_result`.
+    let codegen_artifact: CodegenArtifact = match &codegen_result {
+        Ok((_, _, _, art)) => art.clone(),
+        Err(_) => CodegenArtifact::Single, // unused on the Err early-return path below
     };
     let cg_warn_str: String = codegen_warnings.join("\n");
 
@@ -2693,7 +3176,11 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     }
 
     let c_file = opts.nv_file.with_extension("c");
-    if !c_file.is_file() {
+    // Plan 209 Ф.2: multi-TU (`CodegenArtifact::Split`) never writes a
+    // single `.c` next to `opts.nv_file` (codegen_to_c doc) — `common_h`/
+    // `parts` are compiled from the per-test `obj_dir` further below
+    // instead. The `NoCFile` sanity-check only applies to the Single shape.
+    if matches!(codegen_artifact, CodegenArtifact::Single) && !c_file.is_file() {
         return Outcome::Fail { stage: Stage::NoCFile, elapsed: start.elapsed() };
     }
 
@@ -2819,6 +3306,30 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     const CC_LOCK_DELAY_MS: u64 = 250;
 
     let (cc_captured, cc_status) = 'cc: {
+        // Plan 209 Ф.2: multi-TU path — parallel per-part compile + link
+        // (`compile_multi_tu_to_exe`), folded into the SAME
+        // `(CapturedOutput, ExitStatus)` shape the single-TU retry loop
+        // below produces, so every downstream branch (EXPECT_CC_ERROR
+        // matching, run-the-exe, …) is reused UNCHANGED for both paths.
+        if let CodegenArtifact::Split { common_h, parts } = &codegen_artifact {
+            let result = compile_multi_tu_to_exe(
+                opts.toolchain, &build_opts, common_h, parts, effective_timeout);
+            let success = result.is_ok();
+            let stderr = match &result {
+                Ok(_) => Vec::new(),
+                Err(e) => e.to_string().into_bytes(),
+            };
+            let status = synth_exit_status(success);
+            break 'cc (
+                CapturedOutput {
+                    status: Some(status),
+                    stdout: Vec::new(),
+                    stderr,
+                    elapsed: Duration::default(),
+                },
+                status,
+            );
+        }
         let mut last_captured;
         let mut last_status;
         let mut attempt = 0u32;
@@ -3196,9 +3707,27 @@ fn is_folder_module_peer(path: &Path) -> bool {
 /// после type-check, ДО desugar — иначе MapLit/RecordLit-узлы уже
 /// заменены на Block'и, и lint check_map_literal_lints не сработает.
 ///
+/// Plan 209 Ф.2: which shape `codegen_to_c` produced.
+///
+/// `Single` — the existing/default behavior, UNCHANGED: a single `.c`
+/// already written to `path.with_extension("c")`, byte-identical to
+/// pre-209 (`NOVA_MULTI_TU` unset, or the CU is under the split threshold).
+///
+/// `Split` — multi-TU (env `NOVA_MULTI_TU=1` AND the CU exceeds the Ф.1
+/// threshold, `CEmitter::emit_module_multi_tu` / `EmitOutput::Split`):
+/// `common_h`/`parts` are held IN MEMORY here — NOT written next to `path`
+/// (there is no single "`the` `.c`" for this CU anymore). `run_one` hands
+/// them to `compile_multi_tu_to_exe`, which writes them under the test's
+/// own per-test `obj_dir` instead.
+#[derive(Clone)]
+enum CodegenArtifact {
+    Single,
+    Split { common_h: String, parts: Vec<String> },
+}
+
 /// Plan 48 Ф.7.6: `mono_depth` — optional CLI override для
 /// CEmitter.mono_depth_limit (None = default из env var или 500).
-fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_mode: ast::ContractsMode) -> Result<(Vec<String>, Vec<String>, bool), String> {
+fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_mode: ast::ContractsMode) -> Result<(Vec<String>, Vec<String>, bool, CodegenArtifact), String> {
     // Plan 57.D.1: PerfTimer wraps вокруг каждого pass. Markers эмитятся
     // если NOVA_PERF_TIMER=1, accumulated если NOVA_PERF_TIMER_AGGREGATE=1.
     let mut module = {
@@ -3480,7 +4009,7 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_mod
         _ => false,
     });
 
-    let (c_code, warnings) = {
+    let (emit_output, warnings) = {
         let _t = crate::perf_timer::PerfTimer::new("codegen");
         let mut emitter = CEmitter::new();
         emitter.set_source_for_annotations(src.to_string());
@@ -3518,18 +4047,34 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_mod
         // Plan 196.5 Stage-A: feed the per-call subst-value channel (mirrors
         // set_resolved_callees above).
         emitter.set_node_substs(&module_env.node_substs);
-        emitter.emit_module(&module)
+        // Plan 209 Ф.2: `emit_module_multi_tu` back-compat wrapper — runs the
+        // IDENTICAL emission `emit_module` always ran, then only if
+        // `NOVA_MULTI_TU=1` AND the CU exceeds the Ф.1 threshold does it hand
+        // off to `split_tu`. Under any other condition it returns
+        // `EmitOutput::Single` wrapping the EXACT SAME string `emit_module`
+        // would have produced (Ф.1 A4 doc) — the `Single` arm below is
+        // therefore byte-identical to the pre-209 write.
+        let cu_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("cu").to_string();
+        emitter.emit_module_multi_tu(&module, &cu_name)
             .map_err(|e| format!("codegen error: {}", e))?
     };
-    let out_path = path.with_extension("c");
-    std::fs::write(&out_path, &c_code).map_err(|e| {
-        format!(
-            "failed to write {}: {}",
-            out_path.display(),
-            e
-        )
-    })?;
-    Ok((warnings, lint_warnings, has_runnable_entry))
+    let artifact = match emit_output {
+        crate::codegen::EmitOutput::Single(c_code) => {
+            let out_path = path.with_extension("c");
+            std::fs::write(&out_path, &c_code).map_err(|e| {
+                format!(
+                    "failed to write {}: {}",
+                    out_path.display(),
+                    e
+                )
+            })?;
+            CodegenArtifact::Single
+        }
+        crate::codegen::EmitOutput::Split { common_h, parts } => {
+            CodegenArtifact::Split { common_h, parts }
+        }
+    };
+    Ok((warnings, lint_warnings, has_runnable_entry, artifact))
 }
 
 // ---------- test-all: walk + summary ----------
