@@ -17051,8 +17051,8 @@ fn check_generic_bound_declarations(
         for item in &module.items {
             let Item::Type(t) = item else { continue; };
             let TypeDeclKind::TypeSet(members) = &t.kind else { continue; };
-            let mut has_signed = false;
-            let mut has_unsigned = false;
+            let mut signed_seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+            let mut unsigned_seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
             for m in members {
                 let TypeRef::Named { path, span, .. } = m else { continue; };
                 let Some(mname) = path.last() else { continue; };
@@ -17071,16 +17071,31 @@ fn check_generic_bound_declarations(
                         ));
                     }
                 }
-                if signed_ints.contains(&mn) { has_signed = true; }
-                if unsigned_ints.contains(&mn) { has_unsigned = true; }
+                if let Some(&s) = signed_ints.iter().find(|&&s| s == mn) { signed_seen.insert(s); }
+                if let Some(&s) = unsigned_ints.iter().find(|&&s| s == mn) { unsigned_seen.insert(s); }
             }
-            // Signedness uniformity (Q6).
-            if has_signed && has_unsigned {
+            // Signedness uniformity (Q6, D310) — amended by Plan 206 (D422):
+            // a PARTIAL signed/unsigned mix stays incompatible-value-domains
+            // unsound (`u64.MAX = 2^64-1 ∉ i64`). A FULL union (every signed
+            // member ∧ every unsigned member, no gaps — exactly `SignedInt ∪
+            // UnsignedInt`) is exempted: per-member monomorphization already
+            // resolves `T.MAX`/`T.MIN` per-instance (D310 §«Семантика тела»),
+            // and sign-agnostic comparisons (`rhs < 0`) are well-defined
+            // (constant-false) for every unsigned member — no cross-domain
+            // value ever needs to compare across the signed/unsigned split.
+            // This is the same case the D310 text's own illustrative
+            // `AnyNumber` example (02-types.md) assumed legal. `Ints`
+            // (protocols.nv) is the stdlib instance of this exemption.
+            let is_full_union = signed_seen.len() == signed_ints.len()
+                && unsigned_seen.len() == unsigned_ints.len();
+            if !signed_seen.is_empty() && !unsigned_seen.is_empty() && !is_full_union {
                 errors.push(Diagnostic::new(
                     format!(
                         "[E_TYPE_SET_MIXED_SIGNEDNESS] type-set `{}` mixes signed and unsigned \
-                         integer members — a single body cannot be sound for both (u64.MAX = 2^64-1 \
-                         ∉ i64). Split into separate signed/unsigned sets (e.g. SignedInt / UnsignedInt) (D310, Q6).",
+                         integer members PARTIALLY — a single body cannot be sound for a partial mix \
+                         (u64.MAX = 2^64-1 ∉ i64). Split into separate signed/unsigned sets (e.g. \
+                         SignedInt / UnsignedInt), or list the FULL union (all of i8/i16/i32/i64/int \
+                         + all of u8/u16/u32/u64/uint — exempted, D310 amend D422).",
                         t.name
                     ),
                     t.span,
