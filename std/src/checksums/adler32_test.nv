@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/checksums/adler32_test.nv — публичный контракт Adler-32 (известные test vectors, RFC 1950 §9).
+
+module checksums.adler32_test
+
+import std.checksums.adler32.{adler32, adler32_init, adler32_update, adler32_finalize}
+
+test "adler32: пустой ввод → 1" {
+    ro empty []u8 = []
+    assert(adler32(empty) == 1)
+}
+
+test "adler32: 'Wikipedia' → 0x11E60398 (RFC 1950 пример)" {
+    assert(adler32("Wikipedia".bytes()) == 0x11E60398)
+}
+
+test "adler32: ASCII '123456789' → 0x091E01DE (классический test vector)" {
+    assert(adler32("123456789".bytes()) == 0x091E01DE)
+}
+
+test "adler32: incremental == монолитный" {
+    ro full = "The quick brown fox jumps over the lazy dog".bytes()
+    ro part1 = "The quick brown ".bytes()
+    ro part2 = "fox jumps over ".bytes()
+    ro part3 = "the lazy dog".bytes()
+
+    ro monolithic = adler32(full)
+
+    mut state = adler32_init()
+    state = adler32_update(state, part1)
+    state = adler32_update(state, part2)
+    state = adler32_update(state, part3)
+    ro incremental = adler32_finalize(state)
+
+    assert(monolithic == incremental)
+}
+
+test "adler32: чувствительность к 1-битной ошибке" {
+    // Изменение одного бита должно полностью изменить checksum
+    ro original = "hello".bytes()
+    mut modified []u8 = []
+    for b in original { modified.push(b) }
+    modified[0] = (modified[0] as u32 ^ 1) as u8    // flip младший бит первого байта
+
+    assert(adler32(original) != adler32(modified))
+}
+
+test "adler32: длинный ввод (1KB нулей) — consistent value" {
+    mut data []u8 = []
+    for i in 0..1024 {
+        data.push(0)
+    }
+    ro result = adler32(data)
+    assert(result == adler32(data))
+}

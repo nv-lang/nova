@@ -8,6 +8,12 @@
 
 module encoding.compress
 
+// adler32-семейство — канон `std.checksums.adler32` (DRY-дедуп 2026-07-15,
+// [M-compress-checksum-cleanup]); `checksum.nv` re-export'ит для внешних
+// потребителей модуля, но peer-import — per-file (D29), поэтому явный
+// import здесь тоже нужен.
+import std.checksums.adler32.{adler32, adler32_init, adler32_update, adler32_finalize}
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // One-shot zlib decode
