@@ -881,13 +881,13 @@ pub struct CEmitter {
     proven_contracts: std::collections::HashSet<(String, usize)>,
     /// Plan 140.2 Part B (D257 / B.4): proven Index-сайты `v[idx]`/`v[a..b]`
     /// (по span.start), доказанные из LOOP/CODE. Codegen элидит inline
-    /// bounds-check ВСЕГДА (unconditional — не через contracts-режим/`#unchecked`).
+    /// bounds-check ВСЕГДА (unconditional — не через contracts-режим).
     proven_index_sites: std::collections::HashSet<usize>,
     /// Plan 140.2 followup §2: Index-сайты, доказанные ТОЛЬКО с fn-`requires`
-    /// (cross-fn). Элидируются ТОЛЬКО при включённых контрактах — под
-    /// `#unchecked(requires)` requires не enforced → элизия unsound (Plan 194
-    /// A2.1: legacy build-level `--contracts=off` retired, `#unchecked` —
-    /// единственный surviving opt-out).
+    /// (cross-fn). Элидируются ТОЛЬКО при включённых контрактах — если
+    /// requires этой fn не enforced, элизия unsound (Plan 194 A2.1: legacy
+    /// build-level `--contracts=off` retired; Plan 194 A4: per-fn/module
+    /// `#unchecked` opt-out тоже retired — requires теперь ВСЕГДА enforced).
     proven_index_sites_contract: std::collections::HashSet<usize>,
     /// Plan 172.1 U.4.1: per-Expr resolved-type annotations (ExprId → ResolvedType)
     /// from the semantic pass — codegen reads them (equivalence-checked in debug)
@@ -932,28 +932,22 @@ pub struct CEmitter {
     /// contracts-режим/`#unchecked`).
     proven_overflow_sites: std::collections::HashSet<usize>,
     /// Plan 140.4: `int`-арифм. сайты, доказанные ТОЛЬКО с fn-`requires`.
-    /// Элидируются ТОЛЬКО при включённых контрактах — под
-    /// `#unchecked(requires)` requires не enforced → элизия была бы unsound
-    /// (Plan 194 A2.1: legacy build-level `--contracts=off` retired).
+    /// Элидируются ТОЛЬКО при включённых контрактах — если requires этой fn
+    /// не enforced, элизия была бы unsound (Plan 194 A2.1: legacy
+    /// build-level `--contracts=off` retired; Plan 194 A4: per-fn/module
+    /// `#unchecked` opt-out тоже retired — requires теперь ВСЕГДА enforced,
+    /// т.е. `contracts_elided_here()` константно `false`).
     proven_overflow_sites_contract: std::collections::HashSet<usize>,
     /// Plan 194 A2.1 (замена Plan 140 Ф.2 / D24 amend `contracts_off: bool`):
     /// build-policy режим `--contracts=checked|optimized|verified`. Legacy
-    /// `off` (глобальный unconditional bypass) убран — ни одно из трёх
-    /// значений больше не элидирует ВСЕ контракт-проверки разом; предикаты
-    /// элизии (`contracts_elided_for` / `invariants_elided_here`) читают
-    /// ТОЛЬКО per-fn/module `#unchecked` opt-out. В этом атоме `mode` сам по
-    /// себе не влияет на элизию (все три значения ведут себя как старый
-    /// default `enforce`) — задел под будущую Z3-driven дифференциацию
-    /// (`optimized`/`verified`, атомы A2.2+/A3).
+    /// `off` (глобальный unconditional bypass) убран. Plan 194 A4: `#unchecked`
+    /// per-fn/module opt-out РЕТРАКТИРОВАН — предикаты элизии
+    /// (`contracts_elided_for` / `invariants_elided_here`) теперь читают
+    /// ТОЛЬКО доказательство (`proven_contracts`) / `#debug`-эрозию
+    /// (`mode_erases_debug`); `mode` сам по себе всё ещё не добавляет
+    /// собственную ветку элизии для requires/ensures/invariant (задел под
+    /// будущую Z3-driven дифференциацию `optimized`/`verified`, атомы A3+).
     contracts_mode: crate::ast::ContractsMode,
-    /// Plan 140 Ф.2 + Plan 140.3 ([M-140-contract-levels]): per-fn contract
-    /// opt-out (`#unchecked` / `#unchecked(kinds)`) для тела ТЕКУЩЕЙ функции,
-    /// УЖЕ объединённый с module-level opt-out. Set на входе в fn-body,
-    /// restored на выходе. Per-kind гейт — `contracts_elided_for(kind)` /
-    /// `invariants_elided_here()`.
-    contract_opt_out_fn: crate::ast::ContractOptOut,
-    /// Plan 140.3: module-level `#unchecked` opt-out (set при входе в module).
-    contract_opt_out_module: crate::ast::ContractOptOut,
     /// Maps array variable name → actual element C type (e.g. "Nova_Box*").
     /// The array always uses nova_int storage but elements may be pointers to records.
     array_element_types: HashMap<String, String>,
@@ -1184,7 +1178,7 @@ pub struct CEmitter {
     /// Plan 140.1 Ф.2 (D24/D13 amend): source file display name used as the
     /// `<file>` part of the location-first diagnostic prefix
     /// (`<file>:<line>: <kind> failed: <expr>`) emitted at contract /
-    /// assert / debug_assert violation sites. Set via `set_source_file_name`
+    /// assert violation sites. Set via `set_source_file_name`
     /// from the build driver (main.rs / test_runner.rs). Defaults to
     /// `"<unknown>"` when not set (e.g. internal/test emitters).
     source_file_name: String,
@@ -1976,8 +1970,6 @@ impl CEmitter {
             proven_overflow_sites: std::collections::HashSet::new(),
             proven_overflow_sites_contract: std::collections::HashSet::new(),
             contracts_mode: crate::ast::ContractsMode::Checked,
-            contract_opt_out_fn: crate::ast::ContractOptOut::default(),
-            contract_opt_out_module: crate::ast::ContractOptOut::default(),
             record_invariants: HashMap::new(),
             array_element_types: HashMap::new(),
             option_inner_types: HashMap::new(),
@@ -4054,9 +4046,9 @@ impl CEmitter {
 
     /// Plan 140.2: можно ли элидировать inline bounds-check Index-сайта `span`?
     /// loop/code-доказанные — всегда; contract-доказанные — только если контракты
-    /// для этой fn НЕ сняты (`#unchecked` оставляет проверку, т.к. requires там
-    /// не enforced → элизия по нему была бы unsound; Plan 194 A2.1: legacy
-    /// build-level `--contracts=off` retired).
+    /// для этой fn enforced (Plan 194 A2.1: legacy build-level `--contracts=off`
+    /// retired; Plan 194 A4: per-fn/module `#unchecked` opt-out тоже retired —
+    /// `contracts_elided_here()` константно `false`, гейт всегда проходит).
     fn index_site_elided(&self, span_start: usize) -> bool {
         self.proven_index_sites.contains(&span_start)
             || (!self.contracts_elided_here()
@@ -4079,11 +4071,11 @@ impl CEmitter {
 
     /// Plan 140.4: можно ли элидировать `nova_int_checked_*` на сайте `span`?
     /// loop/code-доказанные — всегда; contract-доказанные — только если контракты
-    /// (`requires`) для этой fn НЕ сняты (`#unchecked(requires)` оставляет
-    /// проверку, т.к. requires там не enforced → элизия была бы unsound;
-    /// Plan 194 A2.1: legacy build-level `--contracts=off` retired).
+    /// (`requires`) для этой fn enforced (Plan 194 A2.1: legacy build-level
+    /// `--contracts=off` retired; Plan 194 A4: per-fn/module `#unchecked`
+    /// opt-out тоже retired — `contracts_elided_here()` константно `false`).
     /// Та же логика, что `index_site_elided` — overflow-panic = soundness-guard,
-    /// элидируется ТОЛЬКО пруфом, никогда одним лишь `#unchecked`.
+    /// элидируется ТОЛЬКО пруфом.
     fn overflow_site_elided(&self, span_start: usize) -> bool {
         self.proven_overflow_sites.contains(&span_start)
             || (!self.contracts_elided_here()
@@ -4103,49 +4095,37 @@ impl CEmitter {
     /// работает (byte-identical старому поведению без различения режима);
     /// `optimized`/`verified` (release) — `#debug`-клаузы/statement'ы
     /// СТИРАЮТСЯ (не эмитятся, zero-cost). Не-`#debug` контракты этим
-    /// предикатом НЕ гейтятся — они always-on независимо от режима (см.
-    /// `contracts_elided_for` / `invariants_elided_here` — отдельный,
-    /// `#unchecked`-driven путь элизии).
+    /// предикатом НЕ гейтятся — они always-on независимо от режима (сайт-
+    /// specific sound-элизия идёт отдельно через `proven_contracts`).
     fn mode_erases_debug(&self) -> bool {
-        matches!(
-            self.contracts_mode,
-            crate::ast::ContractsMode::Optimized | crate::ast::ContractsMode::Verified
-        )
+        matches!(self.contracts_mode, crate::ast::ContractsMode::Optimized)
     }
 
-    /// Plan 140 Ф.2: контракт-проверки элидируются для тела текущей fn?
-    /// `true` если per-fn `#unchecked` (через `contracts_unchecked_fn`,
-    /// выставленный на входе в fn-body). Используется body-уровневыми
-    /// эмиттерами (`assert_static`/`assume`/record-invariant), у которых нет
-    /// прямого `&FnDecl`.
+    /// Plan 140 Ф.2 / Plan 194 A4 (ретракт `#unchecked`): контракт-проверки
+    /// элидируются для тела текущей fn? Единственный оставшийся per-fn/module
+    /// opt-out (`#unchecked`) убран вместе с языковой фичой — requires/
+    /// ensures/invariant теперь ВСЕГДА enforced (кроме Z3/loop/code-proven
+    /// сайтов, которые гейтятся отдельно через `proven_contracts` /
+    /// `proven_overflow_sites*`). Оставлен как named predicate (а не удалён
+    /// целиком) — вызывающие сайты читаются как «элизия для kind `X`»
+    /// декларативно; будущая mode-based sound-элизия (A3+) заполнит тело.
     fn contracts_elided_here(&self) -> bool {
-        // body-level assert_static/assume — precondition-like → requires-gated.
-        self.contracts_elided_for(crate::ast::ContractKind::Requires)
+        false
     }
 
-    /// Plan 140.3 ([M-140-contract-levels]): элидируется ли контракт-вид `kind`
-    /// здесь? = module-opt-out(kind) ИЛИ fn-opt-out(kind). `Requires` →
-    /// `.requires`; `Ensures`/`EnsuresFail` → `.ensures`.
-    ///
-    /// Plan 194 A2.1: legacy `--contracts=off` (global unconditional bypass)
-    /// убран вместе с флагом — `self.contracts_mode` в этом атоме НЕ
-    /// добавляет сюда собственную ветку (`checked`/`optimized`/`verified`
-    /// поведенчески идентичны старому `enforce`: только `#unchecked`
-    /// элидирует). Различия между режимами — будущие атомы (A2.2+/A3).
-    fn contracts_elided_for(&self, kind: crate::ast::ContractKind) -> bool {
-        let pick = |o: &crate::ast::ContractOptOut| match kind {
-            crate::ast::ContractKind::Requires => o.requires,
-            _ => o.ensures,
-        };
-        pick(&self.contract_opt_out_module) || pick(&self.contract_opt_out_fn)
+    /// Plan 140.3 / Plan 194 A4: элидируется ли контракт-вид `kind` здесь?
+    /// Ретракт `#unchecked` убрал единственный источник элизии этого
+    /// предиката (module/fn opt-out) — константно `false` до будущей
+    /// mode-based Z3-driven дифференциации (`optimized`/`verified`, A3+).
+    fn contracts_elided_for(&self, _kind: crate::ast::ContractKind) -> bool {
+        false
     }
 
-    /// Plan 140.3: элидируется ли type-`invariant`-страховка здесь?
-    /// = module/fn `#unchecked(invariant)` (или bare). Plan 194 A2.1: см.
-    /// `contracts_elided_for` — `contracts_mode` не добавляет глобальный
-    /// bypass в этом атоме.
+    /// Plan 140.3 / Plan 194 A4: элидируется ли type-`invariant`-страховка
+    /// здесь? Ретракт `#unchecked` убрал единственный источник элизии —
+    /// константно `false` (type invariants теперь всегда enforced).
     fn invariants_elided_here(&self) -> bool {
-        self.contract_opt_out_module.invariant || self.contract_opt_out_fn.invariant
+        false
     }
 
     /// Get the Span of a statement (where in source it came from).
@@ -4215,10 +4195,6 @@ impl CEmitter {
     }
 
     pub fn emit_module(mut self, module: &Module) -> Result<(String, Vec<String>), String> {
-        // Plan 140.3 ([M-140-contract-levels]): module-level `#unchecked` opt-out
-        // applies to every fn/type in the module — ORed with per-fn opt-out by
-        // `contracts_elided_for` / `invariants_elided_here`.
-        self.contract_opt_out_module = module.contract_opt_out.clone();
         // [M-consume-rebind-nested-block-shadow] (Plan 172.13): copy the
         // alpha_rename-computed span set so `Stmt::Let` can look up its own
         // span below.
@@ -11142,6 +11118,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
 
+        // [M-187-nested-spawn-scope-var-cc-fail]: a `spawn` LEXICALLY NESTED
+        // inside this spawn's own body (same `supervised` scope, no
+        // intervening nested `supervised`/`parallel for`) needs to register
+        // its own fiber as a child of the SAME scope queue this spawn itself
+        // registers into (`queue`, below) — but `queue`'s C name is a
+        // codegen-internal local (`_nova_scope_q_N`), never an AST `Ident`,
+        // so the ordinary `captures` scan above (`collect_idents_expr`) can
+        // never discover it. Without this, a nested `emit_spawn` call reads
+        // `self.current_scope_queue` unchanged (still the OUTER scope's bare
+        // local name) while emitting into a DIFFERENT C function (this
+        // spawn's own fiber fn, whose only local is `_c`) — CC-FAIL "use of
+        // undeclared identifier". Fix: always thread the active scope queue
+        // through the ctx (one extra pointer field, unconditionally — cheap,
+        // and correct whether or not this spawn's body actually contains a
+        // nested spawn) and repoint `current_scope_queue` at the captured
+        // field for the duration of body emission below, mirroring the
+        // `is_outer_cap` capture-macro treatment user captures already get.
+        // (`queue` is normally computed further down, right before the fiber
+        // is pushed into it — hoisted here, unchanged value, so this capture
+        // assignment can use it too.)
+        let queue = self.current_scope_queue.clone().expect("scope queue must be active");
+        let queue_cap_field = "_nova_captured_scope_q".to_string();
+        self.line(&format!("{ctx}->{field} = &{q};",
+            ctx = ctx_var, field = queue_cap_field, q = queue));
+
         // D71 / Plan 173.1 Ф.2 `parallel for → []T`: clone the parent Sender
         // into the child's ctx AT THE SPAWN SITE — the clone is created in the
         // PARENT (refcount++ happens strictly before the parent tx close that
@@ -11158,7 +11159,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Push the fiber into the scope queue. spawn returns unit (D50/D71):
         // results from concurrent execution come through mut-captures or
         // `parallel for` (homogeneous results), never from spawn itself.
-        let queue = self.current_scope_queue.clone().expect("scope queue must be active");
+        // (`queue` hoisted above, next to the new scope-queue capture field.)
         // Plan 44.5 Layer 5 fix: initialize _nova_worker_slot = -1 explicitly.
         // nova_alloc zero-initializes (slot=0), but 0 is a valid slot index —
         // -1 is required as "not yet set" sentinel for the worker loop restore logic.
@@ -11300,6 +11301,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let _ = writeln!(self.lambda_forward_decls, "    {}* {};", ty, cap);
             }
         }
+        // [M-187-nested-spawn-scope-var-cc-fail]: active scope queue, threaded
+        // through unconditionally so a NESTED `spawn` inside this spawn's own
+        // body can re-register into the same scope (see the assignment above).
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFiberQueue* {};", queue_cap_field);
         // D71 / Plan 173.1 Ф.2 `parallel for → []T`: the child's owned Sender
         // clone (created in the parent at the spawn site, closed by the child
         // on fiber exit). Replaces the indexed-slot pair (_nova_par_idx /
@@ -11380,6 +11386,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         let prev_caps = std::mem::replace(&mut self.current_spawn_captures, Some(cap_set));
         let prev_by_value = std::mem::replace(&mut self.current_spawn_capture_by_value, Some(cap_by_value));
+        // [M-187-nested-spawn-scope-var-cc-fail]: repoint the active scope
+        // queue at the captured ctx field (`&(*_c->_nova_captured_scope_q)` —
+        // a valid `NovaFiberQueue*`-typed address expression, identical in
+        // effect to the bare local it replaces) for the duration of THIS
+        // spawn's own body emission, so a nested `emit_spawn` call picks up
+        // a reference valid inside this fiber fn instead of the outer
+        // function's now-unreachable local.
+        let prev_scope_queue = std::mem::replace(
+            &mut self.current_scope_queue,
+            Some(format!("(*_c->{})", queue_cap_field)),
+        );
 
         // Wrap body in a fail-frame so that `throw` inside fiber is caught here
         // (longjmp lands on THIS fiber's stack — safe). After catch, report the
@@ -11538,6 +11555,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Deactivate capture rewriting before emitting closing brace.
         self.current_spawn_captures = prev_caps;
         self.current_spawn_capture_by_value = prev_by_value;
+        // [M-187-nested-spawn-scope-var-cc-fail]: restore the caller's scope
+        // queue reference now that this spawn's own body is fully emitted.
+        self.current_scope_queue = prev_scope_queue;
         self.indent -= 1;
         self.line("}");
         self.line("");
@@ -21550,6 +21570,44 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         } else {
             self.mono_fwd_decls.push_str(&fwd_decl);
         }
+        // [M-serde-encode-pointer-op-regression] fix: register the SAME
+        // Plan-152.4.3 type-qualified return key (`fn_ret_<recv>_<method>`)
+        // the plain (non-generic-own-param) forward-decl path already writes
+        // (~13908 above) — but keyed by THIS instantiation's CONCRETE C
+        // receiver type (`recv_c`, stripped of any `Nova_`/`NovaValue_`/
+        // `NovaTuple_` prefix and trailing `*`, mirroring `infer_call_ret_c`'s
+        // own read-side normalization of a call site's `obj_ty`), not
+        // present anywhere for a receiver-own-generic method ("bare-T
+        // blanket", `fn[T] T @method()`, e.g. the primitive `@to_str()`
+        // fallback in `std/src/runtime/string/core.nv`): that declaration is
+        // routed entirely through `mono_method_decls`/`method_overloads`
+        // sentinels (~13764 above, gated on `!f.generics.is_empty()`, which
+        // fires FIRST and returns early) and never reaches the ordinary
+        // forward-decl registration at all — so `infer_call_ret_c`'s
+        // type-qualified lookup (`B11ae_type_qualified_fn_ret`) ALWAYS
+        // missed for a primitive receiver relying on this blanket, silently
+        // falling through to the receiver-BLIND name-only fallback
+        // (`B11af_fn_ret_method_nameonly`, last-registered-wins across every
+        // unrelated type sharing the method name). Concretely: `int.to_str()`
+        // / `char.to_str()` (both routed through this exact blanket) picked
+        // up whichever OTHER same-named method registered `fn_ret_to_str`
+        // last in the compile unit — e.g. a co-present `[]u8 @to_str() ->
+        // Result[str, Utf8Error]` — mistyping the primitive's `str` result as
+        // a `Result`-shaped (i.e. raw-pointer-shaped) value; a later `+`
+        // string-concatenation on that mistyped operand then tripped Plan
+        // 70's strict-propagation `E_POINTER_OP_USE_METHOD` guard (the
+        // guard caught the fallout, not the cause). This is the DEFINITION
+        // side of the SAME registry `register_mono_method_instance` already
+        // computes `ret_c` for (per-concrete-instantiation, correctly
+        // substituted) — publishing it here closes the gap directly, with no
+        // change to the read side.
+        {
+            let bare_recv_c = recv_c.trim_end_matches('*');
+            let key_tn = Self::debt_strip_value_nova_tuple_prefix(bare_recv_c);
+            if !key_tn.is_empty() {
+                self.var_types.insert(format!("fn_ret_{}_{}", key_tn, fn_decl.name), ret_c.clone());
+            }
+        }
         // Enqueue for body emission — prefix __method__TYPE::name so worklist drain can route
         let worklist_key = format!("__method__{}::{}", recv_type, fn_decl.name);
         self.mono_worklist.push((worklist_key.clone(), Self::subst_vec_from_c_pairs(&type_subst), mono_name.to_string()));
@@ -21914,13 +21972,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // contract violation on a generic-type method (e.g. `Vec[T] @index`
         // OOB called via dispatch, `Bag[int] @at` OOB) went silently UNCAUGHT
         // — a soundness hole. This ports the exact logic from `emit_fn`
-        // (lines ~14555+): build-/per-fn opt-out folds into `has_contracts`,
-        // Z3-proven contracts elide via `proven_contracts`, quantifiers skip.
-        // Plan 140.3 ([M-140-contract-levels]): per-kind opt-out. Set the fn-level
-        // opt-out (contracts_elided_for ORs it with module-level), then gate
-        // requires and ensures INDEPENDENTLY. Restored at fn-body end below.
-        let prev_mono_contract_opt_out = self.contract_opt_out_fn.clone();
-        self.contract_opt_out_fn = fn_decl.contract_opt_out.clone();
+        // (lines ~14555+): Z3-proven contracts elide via `proven_contracts`,
+        // quantifiers skip. Plan 194 A4 (ретракт `#unchecked`): per-fn/module
+        // opt-out убран — requires/ensures gate только по `contracts_elided_for`
+        // (константно `false` до будущей mode-based элизии, A3+).
         let mono_verifiable = !fn_decl.contracts.is_empty()
             && !matches!(fn_decl.verify_mode, VerifyMode::Unverified);
         let mono_has_contracts = mono_verifiable
@@ -22157,8 +22212,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.current_fn_name = saved_fn_name;
         self.current_fn_param_typerefs = saved_param_typerefs;
         self.expected_record_type = saved_expected;
-        // Plan 140 cgfix: restore per-fn contract opt-out flag after fn body.
-        self.contract_opt_out_fn = prev_mono_contract_opt_out;
         for key in &saved_mono_array_elem_keys {
             self.array_element_types.remove(key);
         }
@@ -23239,8 +23292,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 140 Ф.1 (D24 amend): эмитим безусловно — НЕ под
         // `#ifdef NOVA_CONTRACTS_RUNTIME`. Недоказанные ensures проверяются
         // и в release (enforce-with-elision); Z3-proven уже элидируются ниже
-        // через `continue` на codegen (zero-cost). Per-fn `#unchecked` — Ф.2
-        // (Plan 194 A2.1: legacy build-level `--contracts=off` opt-out retired).
+        // через `continue` на codegen (zero-cost). Plan 194 A2.1/A4: legacy
+        // build-level `--contracts=off` И per-fn/module `#unchecked` opt-out
+        // оба retired — ensures теперь ВСЕГДА enforced.
         // Подставляем `result` → `_nova_result` при emit'е выражения.
         // emit_expr на Ident("result") вернёт "result" (она в var_types),
         // нам нужно "_nova_result". Используем post-process подмену.
@@ -23964,19 +24018,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // контракты эмитятся БЕЗУСЛОВНО (debug И release), Z3-proven
         // элидируются на codegen через `continue` (zero-cost). Прежняя
         // модель «в release стираются» (NDEBUG/assert) — retracted.
-        // Plan 140 Ф.2 (D24 amend): per-fn `#unchecked` элидирует ВСЕ
-        // контракт-проверки в теле этой fn (даже недоказанные; Plan 194 A2.1:
-        // legacy build-policy `--contracts=off` opt-out retired).
-        // `contracts_elided_fn` фолдится в `has_contracts`
-        // (requires/ensures) и в decreases-guard ниже. Также выставляется как
-        // `self.contracts_unchecked_fn` на входе в fn-body для body-уровневых
-        // эмиттеров (assert_static/assume/record-invariant).
-        // Plan 140.3 ([M-140-contract-levels]): set the fn-level opt-out EARLY so
-        // `contracts_elided_for(kind)` (which ORs module-level) drives the per-kind
-        // gates below AND the body-level emitters (assert_static/assume/record-
-        // invariant). Restored after fn-body (parallel to in_realtime).
-        let prev_contract_opt_out_fn = self.contract_opt_out_fn.clone();
-        self.contract_opt_out_fn = f.contract_opt_out.clone();
+        // Plan 194 A4 (ретракт `#unchecked`): per-fn/module opt-out убран —
+        // `contracts_elided_for(kind)` константно `false` (requires/ensures
+        // ВСЕГДА enforced, кроме Z3-proven-elided сайтов через `continue`).
         let verifiable = !f.contracts.is_empty()
             && !matches!(f.verify_mode, VerifyMode::Unverified);
         let has_contracts = verifiable && !self.contracts_elided_for(ContractKind::Requires);
@@ -23985,9 +24029,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // превышает порог (10000) — runtime panic. Это catches infinite
         // recursion в debug. Полный well-founded check (m_new < m_old) —
         // ждёт SMT (Z3 backend).
-        // Plan 140 Ф.2: `#unchecked` элидирует и decreases recursion-guard
-        // (контракт-проверка как и прочие; legacy `--contracts=off` retired,
-        // Plan 194 A2.1).
         let _depth_var = if f.decreases.is_some() && !self.contracts_elided_for(ContractKind::Requires) {
             // Sanitize fn name для C-identifier.
             let san: String = f.name.chars()
@@ -24014,7 +24055,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 140 Ф.1 (D24 amend): эмитим безусловно — НЕ под
         // `#ifdef NOVA_CONTRACTS_RUNTIME`. Недоказанные requires проверяются
         // и в release (enforce-with-elision); Z3-proven элидируются ниже через
-        // `continue` (zero-cost). Build-opt-out / per-fn `#unchecked` — Ф.2.
+        // `continue` (zero-cost). Plan 194 A4: per-fn/module `#unchecked`
+        // opt-out retired.
         if has_contracts {
             for c in &f.contracts {
                 if matches!(c.kind, ContractKind::Requires) {
@@ -24053,10 +24095,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if f.blocking_attr {
             self.in_blocking = true;
         }
-        // Plan 140.3 ([M-140-contract-levels]): per-fn contract opt-out уже
-        // выставлен ВЫШЕ (early, до has_contracts) — для per-kind гейтов И
-        // body-уровневых эмиттеров (assert_static/assume/record-invariant);
-        // restored после fn-body через `prev_contract_opt_out_fn`.
         // Plan 127 Ф.3: track current fn-id for escape-result lookup при
         // emit_let / emit_record_lit. Format must match
         // `escape_analyze::fn_id` (free fn → name; method → `<recv>::<name>`).
@@ -24069,8 +24107,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let prev_promoted_locals = std::mem::take(&mut self.promoted_value_record_locals);
         let prev_promoted_prim_locals = std::mem::take(&mut self.promoted_primitive_locals);
         // emit body — collect into _nova_result if ensures present
-        // Plan 140.3: ensures gated INDEPENDENTLY from requires (has_contracts) —
-        // `#unchecked(requires)` must NOT also drop ensures, and vice-versa.
+        // Plan 140.3: ensures gated INDEPENDENTLY from requires (has_contracts).
         let has_ensures = verifiable
             && !self.contracts_elided_for(ContractKind::Ensures)
             && f.contracts.iter().any(|c| matches!(c.kind, ContractKind::Ensures));
@@ -24148,8 +24185,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 113 (D172): restore in_realtime / in_blocking after fn body.
         self.in_realtime = prev_in_realtime;
         self.in_blocking = prev_in_blocking;
-        // Plan 140 Ф.2: restore per-fn contract opt-out flag after fn body.
-        self.contract_opt_out_fn = prev_contract_opt_out_fn;
         // Plan 127 Ф.3: restore prev fn-id + promoted-locals after fn body.
         self.current_fn_id = prev_fn_id;
         self.promoted_value_record_locals = prev_promoted_locals;
@@ -27656,9 +27691,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 33.3 Ф.9.1: skip runtime check если expr читает
                 // ghost-var (ghost эрейзится в codegen; SMT-verify в Z3
                 // будет работать). assert_static с ghost — pure spec-level.
-                // Plan 140 Ф.2: `#unchecked` элидирует assert_static как и
-                // прочие контракт-проверки (legacy `--contracts=off` retired,
-                // Plan 194 A2.1).
+                // Plan 194 A4: per-fn/module `#unchecked` opt-out retired —
+                // `contracts_elided_here()` константно `false`.
                 if Self::expr_uses_ghost(expr, &self.ghost_vars)
                     || self.contracts_elided_here()
                 {
@@ -27681,9 +27715,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // `#ifdef NOVA_CONTRACTS_RUNTIME`.
             Stmt::Assume { expr, span } => {
                 // Plan 33.3 Ф.9.1: skip если expr читает ghost-var.
-                // Plan 140 Ф.2: `#unchecked` элидирует assume-check как и
-                // прочие контракт-проверки (legacy `--contracts=off` retired,
-                // Plan 194 A2.1).
+                // Plan 194 A4: per-fn/module `#unchecked` opt-out retired —
+                // `contracts_elided_here()` константно `false`.
                 if Self::expr_uses_ghost(expr, &self.ghost_vars)
                     || self.contracts_elided_here()
                 {
@@ -30028,10 +30061,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 continue;
                             }
                             // Получаем поля типа.
-                            // Plan 140 Ф.2 (D24 amend): per-fn/module
-                            // `#unchecked` / `#unchecked(invariant)` элидируют
-                            // invariant-check (legacy build-level
-                            // `--contracts=off` retired, Plan 194 A2.1).
+                            // Plan 194 A4: per-fn/module `#unchecked` opt-out
+                            // retired — `invariants_elided_here()` константно
+                            // `false`, invariant-check теперь ВСЕГДА enforced.
                             if self.invariants_elided_here() {
                                 continue;
                             }
@@ -31061,80 +31093,95 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // или nova_str_slice_panic(obj, from, to). Open-ended границы
                 // подставляются из len-выражения.
                 if let ExprKind::Range { start, end, inclusive } = &index.kind {
+                    // Plan 194 Ф.3 (vrange-роутинг, closes [M-172.14-vrange-nv-route]):
+                    // `v[a..b]` no longer builds the view inline here (was the
+                    // `nova_vec_slice_chk`/`_nochk` codegen intrinsic) — it now
+                    // dispatches to the REAL `.nv` method `Vec[T] @index(r Range)
+                    // -> Self` (std/src/collections/vec/slice.nv), same "one
+                    // window of truth" principle as the rest of D238. The
+                    // bounds-check lives ONLY in that method body now (an
+                    // always-on panic guard, NOT a `requires` contract — see
+                    // slice.nv), so it can no longer be silently elided by
+                    // contract policy; emit_c.rs no longer knows the check
+                    // exists at all.
+                    //
+                    // We synthesize `obj.index(materialized_range)` and re-emit
+                    // through the normal Call/Member path (mirrors the
+                    // `rebuilt`/`iter_call` synthetic-AST idiom used elsewhere in
+                    // this file, e.g. ~26128 / ~40975) — this reuses the
+                    // EXISTING generic-method overload resolution +
+                    // monomorphization + the general sret/`_out` rewrite (Plan
+                    // 172.14, `sret_maybe_rewrite_call`) that already fires for
+                    // ANY Vec-returning Leaf-form mono method, so the zero-alloc
+                    // view-descriptor placement is preserved automatically — no
+                    // Vec-slice-specific sret plumbing is needed here anymore.
+                    // The synthetic outer Call reuses `expr.id` so an armed
+                    // `sret_out_dest` (from `ro view = v[a..b]`) still matches.
+                    //
+                    // Open-ended / inclusive ranges MUST be materialized to a
+                    // concrete `start..end` here: the general `ExprKind::Range`
+                    // value-emission path (used when Range is passed as a plain
+                    // argument) requires BOTH bounds and errors on open-ended
+                    // (that form is only legal in the index-syntax position —
+                    // Plan 96 Ф.2). Missing start -> `0`; missing end ->
+                    // `obj.len()`; inclusive end -> `end + 1`.
+                    //
+                    // Checked BEFORE `o = emit_expr(obj)` below (not after) so
+                    // `obj` is emitted exactly once for the common closed-range
+                    // case (the receiver of the synthesized `.index()` call) —
+                    // computing `o` here too would double-emit `obj` for no
+                    // reason (its text is unused on this path).
+                    if obj_ty.starts_with("Nova_Vec____") {
+                        let start_e: Box<Expr> = match start.clone() {
+                            Some(s) => s,
+                            None => Box::new(Expr::new(ExprKind::IntLit(0), expr.span)),
+                        };
+                        let end_e: Box<Expr> = match (end.clone(), *inclusive) {
+                            (Some(e), false) => e,
+                            (Some(e), true) => Box::new(Expr::new(
+                                ExprKind::Binary {
+                                    op: BinOp::Add,
+                                    left: e,
+                                    right: Box::new(Expr::new(ExprKind::IntLit(1), expr.span)),
+                                },
+                                expr.span,
+                            )),
+                            (None, _) => Box::new(Expr::new(
+                                ExprKind::Call {
+                                    func: Box::new(Expr::new(
+                                        ExprKind::Member { obj: obj.clone(), name: "len".to_string() },
+                                        expr.span,
+                                    )),
+                                    args: Vec::new(),
+                                    trailing: None,
+                                },
+                                expr.span,
+                            )),
+                        };
+                        let range_arg = Expr::new(
+                            ExprKind::Range { start: Some(start_e), end: Some(end_e), inclusive: false },
+                            expr.span,
+                        );
+                        let synthetic_call = Expr {
+                            kind: ExprKind::Call {
+                                func: Box::new(Expr::new(
+                                    ExprKind::Member { obj: obj.clone(), name: "index".to_string() },
+                                    expr.span,
+                                )),
+                                args: vec![CallArg::Item(range_arg)],
+                                trailing: None,
+                            },
+                            span: expr.span,
+                            id: expr.id,
+                            debug_only: expr.debug_only,
+                        };
+                        return self.emit_expr(&synthetic_call);
+                    }
                     let o = self.emit_expr(obj)?;
                     // Plan 96 Ф.4.4 — emit_range_bounds: open-ended → подставить
                     // (0, len) / (start, len) / (0, end) / (start, end[+1]).
-                    // Plan 138 Ф.2: Vec[T] range-slice — inline zero-copy view.
-                    // Layout: { T* data; nova_int len; nova_int cap }.
-                    // Allocate a new Vec struct pointing interior into parent's data.
-                    if obj_ty.starts_with("Nova_Vec____") {
-                        let vec_ty = obj_ty.trim_end_matches('*').trim();
-                        let elem_ty = obj_ty
-                            .strip_prefix("Nova_Vec____")
-                            .unwrap_or_else(|| panic!("[P67] nova_int collapse"))
-                            .trim_end_matches('*')
-                            .trim();
-                        // [M-153.4-vec-value-record-slice-typedef] `elem_ty` here is the
-                        // MANGLED Vec-name element form: a value-record (or Nova_T*)
-                        // element reads as `Nova_Range_p` (`_p` = the `*` mangling used in
-                        // symbol names), which is NOT a declared C typedef — so the cast
-                        // below `(Nova_Range_p*)` hits "undeclared identifier" in clang.
-                        // Restore each trailing `_p` to `*` so the slice cast emits the
-                        // real C type (`Nova_Range**` for the `*mut T` element buffer).
-                        // Primitive elements (`nova_int`) have no `_p` and pass unchanged.
-                        let elem_c = {
-                            let mut base = elem_ty;
-                            let mut stars = 0usize;
-                            while let Some(stem) = base.strip_suffix("_p") {
-                                base = stem;
-                                stars += 1;
-                            }
-                            format!("{}{}", base, "*".repeat(stars))
-                        };
-                        let from_expr = match start.as_deref() {
-                            Some(s) => self.emit_expr(s)?,
-                            None => "((nova_int)0LL)".to_string(),
-                        };
-                        let to_expr_inner = match (end.as_deref(), *inclusive) {
-                            (Some(e), false) => self.emit_expr(e)?,
-                            (Some(e), true) => {
-                                let e_str = self.emit_expr(e)?;
-                                format!("(({}) + ((nova_int)1LL))", e_str)
-                            }
-                            (None, _) => format!("({})->len", o),
-                        };
-                        // Plan 145 — portable Vec slice (MSVC C2059): nova_vec_slice_chk/
-                        // nochk (array.h) вместо GNU statement-expression. Plan 140.2 §2
-                        // элизия bounds-check на proven-in-range сайтах -> _nochk.
-                        // (open-ended `v[a..]` двоично вычисляет `o` как и прежняя форма.)
-                        let slice_helper = if self.index_site_elided(expr.span.start) {
-                            "nova_vec_slice_nochk"
-                        } else {
-                            "nova_vec_slice_chk"
-                        };
-                        // Plan 172.14 (sret/_out §3): armed стек-плейсмент — дескриптор
-                        // конструируется в caller-слоте (*_out-форма хелпера, 0 аллокаций).
-                        // Сверка ExprId — потребляем сигнал ТОЛЬКО для RHS-выражения
-                        // самого Let (не для вложенного среза-аргумента).
-                        if expr.id.is_set() {
-                            if let Some((dest, armed_id)) = self.sret_out_dest.clone() {
-                                if armed_id == expr.id {
-                                    self.sret_out_dest = None;
-                                    return Ok(format!(
-                                        "({vty}*){helper}_out((void*)({o}), ({from}), ({to}), sizeof({ety}), (void*){dest})",
-                                        vty = vec_ty, helper = slice_helper, o = o,
-                                        from = from_expr, to = to_expr_inner, ety = elem_c,
-                                        dest = dest
-                                    ));
-                                }
-                            }
-                        }
-                        return Ok(format!(
-                            "({vty}*){helper}((void*)({o}), ({from}), ({to}), sizeof({ety}))",
-                            vty = vec_ty, helper = slice_helper, o = o,
-                            from = from_expr, to = to_expr_inner, ety = elem_c
-                        ));
-                    }
+                    // (Vec[T] range-slice handled above — dispatches to `.nv`
+                    // `@index(Range)`, Plan 194 Ф.3.)
                     // [M-fixed-array-value-semantics] (регрессия main f2f7f65e2 +
                     // [N]T value-класс, чинится волной 172.14): срез value-массива
                     // `[N]T[a..b]` — КОПИЯ диапазона в свежий `[]T` (value-семантика;
@@ -32596,13 +32643,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if let ExprKind::Ident(name) = &func.kind {
             // D70 `to_str(x)` builtin removed (REPLACED → D73). String
             // conversion now via `str.from(x)` / `x.@into()` (with str-context).
-            // assert(cond) / debug_assert(cond) → nova_assert(cond, "condition text").
-            // По D81: assert — always runtime; debug_assert — debug-only,
-            // в release no-op. В bootstrap'е (single build-mode) оба
-            // эмитятся одинаково; production-runtime добавит conditional
-            // compilation для debug_assert (например, через NDEBUG-style
-            // пре-процессор или codegen-флаг).
-            if name == "assert" || name == "debug_assert" {
+            // assert(cond) → nova_assert(cond, "condition text").
+            // По D81: assert — always runtime. Plan 194 A2.2/A4: dev-only
+            // variant роль теперь у `#debug assert` (mode_erases_debug); тем
+            // самым legacy `debug_assert` intrinsic-имя ретрактировано.
+            if name == "assert" {
                 if let Some(cond_arg) = args.first() {
                     let cond_expr = cond_arg.expr();
                     let cond_val = self.emit_expr(cond_expr)?;
@@ -42172,17 +42217,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             } else if self.record_schemas.contains_key(&struct_name) {
                 None
             } else {
-                // Context-first disambiguation: if the current function's return type
-                // is `Nova_SomeSum*`, prefer that sum's variant over the first registered
-                // one with the same name. Fixes e.g. `Circle { r }` in `-> Shape2` picking
-                // Shape1.Circle when both Shape1 and Shape2 have a Circle variant.
-                let ctx_lookup = self.current_fn_return_ty.as_ref().and_then(|ret_ty| {
-                    let base = Self::debt_strip_nova_prefix_opt(ret_ty.trim_end_matches('*').trim())?;
-                    let entry = self.sum_schema_registry.lookup_sum_schema(base)?;
-                    let v = entry.variants.iter().find(|v| v.variant_name == struct_name)?;
-                    Some((base.to_string(), v.field_c_types.clone()))
-                });
-                ctx_lookup.or_else(|| self.sum_schema_registry.find_variant_compat(&struct_name))
+                // [M-187-errorkind-parsejsonerror-variant-collision]: this used to be
+                // a narrower "context-first" probe that only matched when the
+                // enclosing fn's return type IS the sum directly (`-> Shape2`) — a
+                // fn returning `Result[_, ParseJsonError]` (the realistic error-sum
+                // shape) never matched (the C return type is the `Result` wrapper,
+                // not `ParseJsonError`), silently falling through to
+                // `find_variant_compat`'s first-registered-wins, which picked the
+                // WRONG sum whenever two colliding sums shared a variant name at
+                // different arities (`std.io.ErrorKind.UnexpectedEof` unit vs
+                // `std.encoding.json.ParseJsonError.UnexpectedEof` 2-field record —
+                // `err = Some(UnexpectedEof { @line, @col })`, no `Type.` qualifier).
+                // `debt_find_variant_ctx` (D381) is the general-purpose replacement:
+                // arity filter first (this literal's OWN field count disambiguates
+                // the case above outright), then `expected_sum_hint`/enclosing
+                // return-sum as narrower/wider context fallbacks, then the same
+                // `find_variant_compat` first-wins default — byte-identical to the
+                // old `ctx_lookup` result whenever the variant name is unique.
+                self.debt_find_variant_ctx(&struct_name, Some(fields.len()))
             };
             // D406: for qualified path ["TypeName", "Variant"], use short variant name in constructor.
             let struct_name = if name.len() == 2 && variant_lookup.is_some() {
@@ -49975,7 +50027,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // сидированы в scope нигде в этом пути, нужно
                         // отдельное исследование побочных эффектов на другие
                         // handler-walk'и: never-ops/purity/throw-detection).
-                        if name == "println" || name == "print" || name == "assert" || name == "debug_assert" {
+                        // Plan 194 A4: `debug_assert` retracted from this
+                        // NAME-set (role absorbed by `#debug assert`).
+                        if name == "println" || name == "print" || name == "assert" {
                             self.icr_trace("B10a_ident_println_assert");
                             return "nova_unit".into();
                         }
@@ -51221,6 +51275,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     // with the arm it fed (see docs/plans/196.5-stage-d-notes.md).
 
     fn infer_expr_c_type(&self, expr: &Expr) -> String {
+        // Plan 194 Ф.3 (vrange-роутинг): a bare closed `ExprKind::Range` VALUE
+        // (both bounds present — the only shape that can appear as a plain
+        // argument; open-ended is index-syntax-only, Plan 96 Ф.2) is a
+        // CONCRETE, non-generic type whose C representation doesn't depend on
+        // any checker channel / type-subst context — mirrors the materialize
+        // logic in the `ExprKind::Range` emit arm below. Needed because a
+        // CODEGEN-SYNTHESIZED Range node (e.g. the `v[a..b]` -> `v.index(range)`
+        // vrange dispatch in the `ExprKind::Index` arm) has no checker-assigned
+        // `ExprId`, so Channel 1/2 below can't cover it — without this arm the
+        // overload-resolution call site (`same_name` param-C-type compare,
+        // ~36660) sees an unresolved/default type and can mis-pick a same-arity
+        // sibling overload (e.g. `@index(i int)` instead of `@index(r Range)`).
+        if matches!(&expr.kind, ExprKind::Range { start: Some(_), end: Some(_), .. }) {
+            if self.value_record_names.contains("Range") {
+                return "NovaValue_Range".to_string();
+            } else if self.record_schemas.contains_key("Range") {
+                return "Nova_Range*".to_string();
+            }
+        }
         // Plan 172.1 §0/§1: channels FIRST, legacy LAZY (only when channel cannot cover).
         // Side-effects (typedef/mono registration) that were previously in legacy are a §1
         // violation — they belong in dedicated emit-passes, not in type-inference. We accept

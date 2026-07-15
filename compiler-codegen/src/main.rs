@@ -51,7 +51,7 @@ enum Cmd {
         /// A2.2+/A3). Legacy `off` (глобальный unconditional bypass) убран —
         /// нет отдельного profile-концепта у этой low-level команды, поэтому
         /// default статически `checked` (нет `--mode dev/release` здесь).
-        #[arg(long = "contracts", value_parser = ["checked", "optimized", "verified"], default_value = "checked")]
+        #[arg(long = "contracts", value_parser = ["checked", "optimized"], default_value = "checked")]
         contracts: String,
     },
     /// Plan 13: auto-gen `std/runtime/string.nv` и `std/runtime/math.nv`
@@ -145,7 +145,7 @@ enum Cmd {
         /// атоме поведенчески идентичны `checked`. Legacy `off` убран. Без
         /// значения — дефолт по `--mode`: dev → `checked`, release →
         /// `optimized`.
-        #[arg(long = "contracts", value_parser = ["checked", "optimized", "verified"])]
+        #[arg(long = "contracts", value_parser = ["checked", "optimized"])]
         contracts: Option<String>,
     },
 }

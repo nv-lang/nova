@@ -247,7 +247,6 @@ fn empty_module() -> Module {
         imports: Vec::new(),
         items: Vec::new(),
         attrs: Vec::new(),
-        contract_opt_out: Default::default(),
         doc_attrs: Vec::new(),
         span: Span::default(),
         peer_files: Vec::new(),

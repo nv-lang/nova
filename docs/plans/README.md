@@ -24,7 +24,7 @@
 - **198** ✅ Ф.2 REDO ЗАКРЫТ 2026-07-13: корпус мигрирован в spec_tests по D307 (merged-CU 2585 блоков PASS; гейт 468/0+12skip); вечно-красные в fixtures/known_red; остаток Ф.4c = 9 классов компиляторных находок (198-redo-notes).
 - **201** ✅ ЗАКРЫТ 2026-07-13 (consume-блок D188 v1/v2/multi-var/v3/v3.1 + @share/refcount в nv + M-178 прямой move в consume-поле D133; спек-амендменты в тех же слияниях).
 - **202** ✅ ЗАКРЫТ 2026-07-13 (path-keyed реестр модулей + root peers D78 rev-4 + миграция nova-tls; [M-d78-duplicate-decl-module-swallow] снят).
-- **200** — живой реестр: П1/П2/П4/П5/**П7** (scalar→str `@to_str`, str.from убран, влито) ✅; П6 (Vec.data→ptr) ⏸️ на паузе (ABI-правка); **П8 → [Plan 201](201-unified-formatter.md)** (unified Formatter — дизайн); П3 (As*) — в Q.
+- **200** — живой реестр: П1/П2/П4/П5/**П7** (scalar→str `@to_str`, str.from убран, влито) ✅; П6 (Vec.data→ptr) ⏸️ на паузе (ABI-правка); **П8 → [Plan 208](208-unified-formatter.md)** (unified Formatter — дизайн); П3 (As*) — в Q.
 - **200.1** — [скорость `nova test std`](200.1-std-test-speed.md) 📋 согласован 2026-07-13: папочные CU для std-тестов + кеш + профиль медленных; после 196/198.
 - **203** ✅ ЗАКРЫТ 2026-07-13: http = публичная nv-lang/nova-http (root peers, module-path прежний), std самодостаточен; +2 фикса резолвера.
 - **204** ✅ ЗАКРЫТ 2026-07-13 (D420): 03.x уже дал git+semver+lock+резолвер; дельта = [replace]-секция + W_DEP_PATH_NO_RELEASE + lock-семантика (replace не течёт в lock); nova-http на git-форме v0.1.0 с lock в репе.

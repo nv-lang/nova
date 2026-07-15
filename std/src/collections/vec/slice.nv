@@ -21,31 +21,24 @@ import std.collections.range.{Range}
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Zero-copy sub-range view — the slice `[r.start, r.end)` over the same
-/// backing buffer. Powers `v[a..b]` once range-slice dispatch routes here.
+/// backing buffer. Powers `v[a..b]` (Plan 194 Ф.3 vrange-роутинг, closes
+/// [M-172.14-vrange-nv-route]): `emit_c.rs` synthesizes `v.index(range)` for
+/// `v[a..b]` and dispatches here through the normal method-call path — there
+/// is no more codegen range-slice intrinsic (`nova_vec_slice_chk`/`_nochk`
+/// are retired). Overloads with `@index(i int)` (access.nv).
 ///
-/// Panics on out-of-bounds (`start < 0`, `end < start`, or `end > len`).
-///
-/// NOTE (wiring deferred — [M-172.14-vrange-nv-route], PARTIAL 2026-07-10):
-/// `v[a..b]` is currently intercepted by codegen range-slice magic (emit_c.rs
-/// `ExprKind::Index` + `Range`) which builds the identical view struct inline
-/// and never dispatches to this method. The method is present (and overloads
-/// with `@index(i int)`) so the `Index[Range, Vec[T]]` contract is satisfied as
-/// a real Nova body.
-///
-/// Full routing through this body is BLOCKED on an owner language-semantics
-/// decision (D-amendment), NOT mechanical work — three concrete blockers:
-///   (1) this method's bounds-check is a `requires` precondition → elided under
-///       `--contracts=off`, whereas `nova_vec_slice_chk` (array.h) panics
-///       always-on regardless of contract policy → routing weakens slice
-///       bounds-safety under contracts=off;
-///   (2) the OOB panic message differs (`nova_contract_violation` vs the pinned
-///       `Vec: slice … out of bounds` — nova_tests/plan96/neg_slice_*), a
-///       byte-parity break;
-///   (3) codegen's verifier-proven `_nochk` elision (hot-loop slices) is lost —
-///       this body always checks.
-/// The perf goal (0-alloc view descriptor placement) is ALREADY met via the
-/// sret `_out` mechanism (view_descriptor_stack.nv, δ alloc=0). See
-/// docs/plans/172.14-value-abi-perf-placement.md § [M-172.14-vrange-nv-route].
+/// Slice-bounds are a `requires` precondition (RESTORED per owner 2026-07-15,
+/// revising the earlier Plan-194-Ф.3 always-on-guard stance). Justification:
+/// with `off` AND `verified` modes BOTH removed, a `requires` is never
+/// unsafely elided — enforced at runtime under `checked`, and under
+/// `optimized` sound-elided ONLY when Z3 proves the range in-bounds (else
+/// enforced). So bounds get the ideal profile (zero-cost when provably safe,
+/// checked otherwise) through the SINGLE contract machinery — one window, not
+/// a hand-written guard plus a separate site-elision path. On violation → a
+/// contract panic. The perf goal (0-alloc view-descriptor placement) is met
+/// via the general sret `_out` call-site rewrite (Plan 172.14,
+/// `sret_maybe_rewrite_call`) — any Leaf-form Vec-returning mono method gets
+/// it automatically, so this body needs no special plumbing.
 export fn Vec[T] @index(r Range) -> Self
     requires r.start >= 0 && r.end >= r.start && r.end <= @len
 {

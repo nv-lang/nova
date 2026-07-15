@@ -9,8 +9,9 @@
 //   - 62.A complete: core types (Option/Result/Some/None/Ok/Err/Error/
 //     Ordering) перенесены в std/prelude/core.nv. Bottom-тип `never` —
 //     строчный встроенный примитив (Plan 76), в prelude НЕ объявляется.
-//   - 62.B complete (partial): panic/exit/assert/debug_assert перенесены
-//     в std/prelude/runtime.nv. print/println DEFERRED — variadic +
+//   - 62.B complete (partial): panic/exit/assert перенесены
+//     в std/prelude/runtime.nv (Plan 194 A4: `debug_assert` ретрактирован).
+//     print/println DEFERRED — variadic +
 //     type-polymorphic dispatch, см. std/prelude/runtime.nv DEFER comment.
 //   - 62.C complete: RuntimeError + ReadBufferError + RuntimeNoneError
 //     перенесены в std/prelude/errors.nv. RuntimeNoneError добавлен
@@ -53,14 +54,15 @@ module std.prelude
 export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error, sequence, partition}
 
 // Plan 62.B: re-export runtime functions из std.prelude.runtime.
-// panic / exit / assert / debug_assert / print / println — selective
+// panic / exit / assert / print / println — selective
 // list (см. 62.A note про wildcard и multi-line). Plan 62.B.bis
 // (2026-05-18): print / println добавлены — file-based D69 variadic +
 // `[]any` declarations в canonical D26 form. Codegen special-case
 // сохраняется как bootstrap implementation (см. std/prelude/runtime.nv).
 // Plan 173 Ф.4 #6 (D158 model B): `suppressed()` — free accessor for the
 // caught primary error's suppressed cleanup-failures (`[]any`).
-export import std.prelude.runtime.{panic, exit, unreachable, assert, debug_assert, print, println, suppressed}
+// Plan 194 A4: `debug_assert` ретрактирован (роль — `#debug assert`).
+export import std.prelude.runtime.{panic, exit, unreachable, assert, print, println, suppressed}
 
 // Plan 91.7 (D180): canonical .new() для primitive types.
 // `int.new() => 0`, `bool.new() => false`, `f64.new() => 0.0`, etc.

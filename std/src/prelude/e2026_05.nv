@@ -28,13 +28,17 @@
 // import был бы либо hard compile-error (тип не резолвится), либо
 // молчаливо-нерабочий stub — оба хуже честного удаления. См.
 // spec/decisions/08-runtime.md#d73.
+// [Plan 194 A4 retraction] `debug_assert` удалён из импорта ниже по
+// той же причине: extern-декларация и codegen-dispatch сняты целиком
+// (роль ушла в `#debug assert`, Plan 194 A2.2) — оставлять import дал бы
+// hard compile-error (unresolved name).
 
 module prelude.e2026_05
 
 // Re-export всех items из current sub-modules. Идентично rolling facade
 // на момент создания pin'а (Plan 62.F.bis 2026-05-18).
 export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error, Ordering, Less, Equal, Greater}
-export import std.prelude.runtime.{panic, exit, unreachable, assert, debug_assert}
+export import std.prelude.runtime.{panic, exit, unreachable, assert}
 export import std.prelude.errors.{RuntimeError, DivByZero, Overflow, IndexOutOfBounds, TypeMismatch, AssertFailed, NoHandler, ReadBufferError, UnexpectedEnd}
 export import std.prelude.collections.{Iterable}
 export import std.collections.range.{Range, RangeIter}

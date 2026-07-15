@@ -17,15 +17,18 @@
 //
 // **Bootstrap status (Plan 62.B):**
 //
-// Этот файл объявляет 4 функции; реальная dispatch остаётся в
+// Этот файл объявляет функции; реальная dispatch остаётся в
 // emit_c.rs name-keyed special-case (требуется потому что:
 //   - `panic`/`exit` нужны в expression-position через ?? coalesce /
 //     if-else branches → emit_c.rs использует comma-expression паттерн
 //     `(nv_panic(msg), (nova_int)0LL)` для совместимости с C типизацией.
-//   - `assert`/`debug_assert` имеют **D89 expression-context** семантику
+//   - `assert` имеет **D89 expression-context** семантику
 //     (call в match arm / if-expr branch) + автоматическую генерацию
-//     `cond_text` от display'а expression'а (Plan 11 fix). Эти оба
-//     features требуют AST-level intercept, не runtime fn call).
+//     `cond_text` от display'а expression'а (Plan 11 fix). Эта
+//     feature требует AST-level intercept, не runtime fn call).
+//
+// Plan 194 A4: `debug_assert` РЕТРАКТИРОВАН — dev-only проверка теперь
+// выражается через `#debug assert(...)` (Plan 194 A2.2).
 //
 // Декларации синхронизируют type-checker signatures с фактическим
 // codegen-поведением; cross-file resolve через R27 auto-import (R26
@@ -148,21 +151,6 @@ extern "nova" fn unreachable(reason str) -> never
 extern "nova" fn assert(cond bool) -> ()
 #stable(since = "0.1")
 extern "nova" fn assert(cond bool, msg str) -> ()
-
-/// Debug-only проверка. По D81: в release-сборке должна быть no-op.
-/// В bootstrap'е (single build-mode) эмитится идентично assert;
-/// production-runtime добавит conditional compilation (NDEBUG-style
-/// preprocessor / codegen-флаг).
-///
-/// **Bootstrap:** routes через тот же `nova_assert_loc` C-helper что и
-/// assert (codegen принимает обе name'а одинаково). См. assert — тот же
-/// location-first формат `<file>:<line>: assert failed: ...` и тот же путь
-/// для опционального msg (Plan 140.1 Ф.2). Обе arity-форм (1-arg / 2-arg)
-/// — D84 arity overload, см. assert.
-#stable(since = "0.1")
-extern "nova" fn debug_assert(cond bool) -> ()
-#stable(since = "0.1")
-extern "nova" fn debug_assert(cond bool, msg str) -> ()
 
 /// Печать всех аргументов в stdout без разделителя и без trailing newline.
 /// D26 canonical signature: D69 variadic + `[]any` принимает heterogeneous

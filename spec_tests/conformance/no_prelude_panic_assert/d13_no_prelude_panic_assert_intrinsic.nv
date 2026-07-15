@@ -1,5 +1,5 @@
 // D13/D371 regression ([panic-assert-intrinsic], 2026-07-11): `panic`/
-// `assert`/`debug_assert` must resolve with ZERO import — even under
+// `assert` (+ `#debug assert`) must resolve with ZERO import — even under
 // `#no_prelude` — exactly like the primitive types. Before this fix, a
 // `#no_prelude` module calling any of these bare hit `undefined
 // identifier` at type-check (Plan 62.B had moved them off the compiler's
@@ -12,6 +12,13 @@
 // `extern "nova" fn panic` redeclaration — since removed
 // (closes [M-tls-handshake-test-panic-undefined-multifile]).
 //
+// Plan 194 A4: legacy `debug_assert(...)` intrinsic retracted — its
+// zero-import resolution role is now covered by `#debug assert(...)`
+// (`assert` itself, with the `#debug` prefix — same intrinsic, dev-only
+// erasure flag). Test updated in place (2026-07-15) rather than dropped:
+// the zero-import guarantee under `#no_prelude` still needs coverage for
+// BOTH forms.
+//
 // Own subdirectory (NOT the shared `spec_tests.conformance` folder-module
 // used by every top-level file in `spec_tests/conformance/`): `#no_prelude`
 // is a whole-compile-unit attribute — same isolation rationale as
@@ -21,15 +28,15 @@
 module no_prelude_panic_assert.d13_no_prelude_panic_assert_intrinsic
 
 // No `import std.prelude.*` anywhere in this file — panic/assert/
-// debug_assert must still resolve.
+// `#debug assert` must still resolve.
 fn clamp_positive(n int) -> int {
     assert(n != -1)
-    debug_assert(n != -1, "sentinel -1 not allowed")
+    #debug assert(n != -1, "sentinel -1 not allowed")
     if n < 0 { panic("unreachable: clamp_positive on negative n") }
     n
 }
 
-test "panic/assert/debug_assert resolve with zero import under #no_prelude" {
+test "panic/assert/#debug assert resolve with zero import under #no_prelude" {
     assert(clamp_positive(5) == 5)
-    debug_assert(clamp_positive(0) == 0)
+    #debug assert(clamp_positive(0) == 0)
 }

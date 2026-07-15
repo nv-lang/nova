@@ -449,11 +449,11 @@ enum Cmd {
         /// contract build-policy. `checked` — ничего не элидируется кроме
         /// уже доказанного (default для `--mode dev`). `optimized` (default
         /// для `--mode release`) / `verified` — в этом атоме поведенчески
-        /// идентичны `checked` (Z3-driven различия — атомы A2.2+/A3). Legacy
-        /// `off` (глобальный unconditional bypass) убран — недоказанные
-        /// контракты ВСЕГДА проверяются в runtime под всеми тремя режимами
-        /// (per-fn/module `#unchecked` остаётся единственным opt-out).
-        #[arg(long = "contracts", value_parser = ["checked", "optimized", "verified"])]
+        /// для `--mode release`) сейчас поведенчески идентичен `checked`
+        /// (Z3-driven различия — атомы A2.2+). Legacy `off` и `verified` убраны
+        /// — недоказанные контракты ВСЕГДА проверяются в runtime под обоими
+        /// режимами (статическая верификация — per-fn `#verify`, не build-режим).
+        #[arg(long = "contracts", value_parser = ["checked", "optimized"])]
         contracts: Option<String>,
     },
     /// Run Nova tests from directories or files.
