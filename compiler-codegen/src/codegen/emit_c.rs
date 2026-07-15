@@ -40024,7 +40024,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 if let Some(c_name) = str_from_c {
                                     format!("{}({})", c_name, v)
                                 } else if let Some(c_name) = to_str_c_name {
-                                    format!("{}({})", c_name, v)
+                                    // [M-187-interp-to_str-fallback-valuerecord-recv]
+                                    // Mirrors the display/debug branch fix above (Plan
+                                    // 175 Ф.3(d), line ~39977): the D410 to_str()-fallback
+                                    // synthesized this call as a bare `c_name(v)` without
+                                    // going through `prepare_method_recv`, so a value-record
+                                    // receiver (`NovaValue_<X>`, e.g. CompressError) hit the
+                                    // same pointer/by-value C type-mismatch — `Nova_X_method
+                                    // _to_str(NovaValue_X*)` expects `&obj`, not the bare
+                                    // by-value expr. `e` here is the interpolated expr itself
+                                    // (the receiver), same as the display/debug call site.
+                                    let recv_c = self.prepare_method_recv(&v, &arg_ty, false, Some(e));
+                                    format!("{}({})", c_name, recv_c)
                                 } else {
                                     format!("nova_int_to_str((nova_int)({}))", v)
                                 }
