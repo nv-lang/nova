@@ -38375,3 +38375,24 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   Подозреваемый: слияние scalar-to-str (57e0d91c8; from_scalar.nv удалён,
   string_builder/transform переработаны). Блокирует вливание flagship-187
   (typed-serde report_json). Передан багфикс-волне 187 нулевым приоритетом.
+
+## [M-187-weather-live-tls-diamond-blocked] — расследование (2026-07-15)
+
+- Симптом: weather-live флагмана (open-meteo HTTPS через http→tls) падает
+  `transport error: live weather unavailable ... tls diamond dependency`.
+  Health-live (без TLS) работает. В lock — ДВА `tls`: source=path (examples'
+  прямой dep) + source=git (транзитивно через nova-http). Резолвер не
+  унифицирует path-инстанс и git-инстанс одного пакета → транспорт не
+  видит единый tls.
+- ПОПЫТКА ФИКСА (не сработала, откачена): examples → git-форма tls/http +
+  `[replace]` в nova.local.toml. Вскрыла более глубокое: `http={git}` тянет
+  ОПУБЛИКОВАННЫЙ nova-http с GitHub, чей манифест объявляет tls как path
+  `../nova-tls` ОТНОСИТЕЛЬНО своего git-checkout → не резолвится
+  (`path ../nova-tls не существует` от `.nova/git/co/nova-http-.../`).
+  `[replace]` транзитивный tls НЕ схлопывает. Это ограничение резолвера/D420,
+  НЕ быстрый фикс флагмана.
+- ВЕРДИКТ: оставлено path-форма (собирается, health-live жив, weather-live
+  честно деградирует с маркером в live.nv). Настоящий фикс — трек 204/D420:
+  либо резолвер унифицирует одноимённый пакет через `[replace]` в транзите,
+  либо опубликованный nova-http объявляет tls тоже git-формой (тогда один
+  git-tls на весь граф). Дом маркера — live.nv + этот лог.
