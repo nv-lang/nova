@@ -77,7 +77,8 @@ export type Debug   protocol { @debug(mut f Fmt) }     // REQUIRED
 ```
 sb = StringBuilder.new(cap: estimate)
 sb.write("hello, ")
-int_display(42, sb)          // ${n}   digit-loop → spare-capacity sb (reserve/advance), zero-copy
+int_display(42, sb)          // ${n}   компилятор ЗНАЕТ sink=конкретный StringBuilder →
+                             //        digit-loop прямо в sb.reserve/advance (КОНКРЕТНЫЕ методы SB, zero-COPY)
 sb.write(", ")
 f64_display(3.14, sb)        // ${f}   nova_f64_into(buf,cap,v,Shortest) [C] → sb.write(buf)
 sb.write(", ")
@@ -93,6 +94,14 @@ Vec_display[int](gen, sb)    // ${gen} ЧИСТЫЙ nv-дженерик fn[T Dis
 result = sb.into_str()
 ```
 Вложенные типы рекурсят в ТУ ЖЕ sb (глубина любая, буфер один).
+
+**Два пути записи примитива (ревью 2026-07-15, после выноса reserve/advance из протокола):**
+- **top-level компилятор-путь** (`int_display(42, sb)` где `sb` — КОНКРЕТНЫЙ `StringBuilder`): компилятор эмитит
+  digit-loop прямо в `sb.reserve()`/`sb.advance()` (конкретные методы SB) → **zero-COPY**.
+- **generic-путь** (примитив внутри пользовательского `@display(mut f Fmt)` или внутри композита, где sink виден
+  как `Fmt`/`Write`): рендер в **стек-буфер** + `f.write(buf[0..k])` → **zero-ALLOC** (без кучи), один memcpy
+  стек→sink. Как в Rust: `fmt::Write` минимален, примитивы форматируются в стек и `write`-ятся.
+Оба — без heap-аллокаций; top-level ещё и без копии. reserve/advance НЕ в протоколе — только конкретный SB.
 
 ## 4. Алгоритм — СО спеком (pad_in_place)
 
