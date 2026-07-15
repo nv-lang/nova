@@ -27200,7 +27200,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // (`+=`/`-=`/`*=`) — checked, паника при переполнении (как и
                 // обычные `+`/`-`/`*`, Ф.1.2). Через lvalue-указатель, чтобы
                 // target вычислялся ровно один раз (важно для `arr[f()] += y`).
-                // Plan 206 Ф.1b (D422): sized-типы ТОЖЕ checked (было — wrap);
+                // Plan 206 Ф.1b (D423): sized-типы ТОЖЕ checked (было — wrap);
                 // см. `sized_checked_helper`/`nova_<T>_checked_*` (effects.h).
                 let checked_helper = match op {
                     AssignOp::Add => Some("nova_int_checked_add".to_string()),
@@ -28087,7 +28087,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 let l = self.emit_expr_with_target_type(left, target_ty_c)?;
                 let r = self.emit_expr_with_target_type(right, target_ty_c)?;
-                // Plan 33.8 Ф.1.2 / Plan 206 Ф.1b (D422): checked-форма.
+                // Plan 33.8 Ф.1.2 / Plan 206 Ф.1b (D423): checked-форма.
                 // `target_ty_c` — гарантированно sized `Ints`-тип (guard в
                 // начале функции исключает `nova_int` — тот идёт через
                 // отдельную ветку в главном `emit_expr`-Binary-арме ниже,
@@ -29394,8 +29394,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         op_src));
                 }
                 // Plan 33.8 Ф.1.2: знаковая `int` Add/Sub/Mul → checked-форма
-                // (паника при переполнении, spec 04-effects.md D13/D422).
-                // Plan 206 Ф.1b (D422, решение A): sized-типы (i8..i64/
+                // (паника при переполнении, spec 04-effects.md D13/D423).
+                // Plan 206 Ф.1b (D423, решение A): sized-типы (i8..i64/
                 // u8..u64/uint) ТОЖЕ checked теперь (было — сырой C-оператор,
                 // signed-UB/unsigned-wrap, Plan 33.7 retracted) — см.
                 // `sized_checked_helper` ветку ниже.
@@ -29415,7 +29415,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                 } else if lty == rty {
-                    // Plan 206 Ф.1b (D422): sized `Ints` member (i8..i64/
+                    // Plan 206 Ф.1b (D423): sized `Ints` member (i8..i64/
                     // u8..u64/uint) — same site-elision channel as `nova_int`
                     // above (span-based `overflow_site_elided`, Plan 140.4),
                     // so a Z3-proven in-range sized site degrades to the
@@ -29426,7 +29426,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                 } else {
-                    // Plan 206 Ф.1b (D422): `i64` literal-coercion gap — `int64_t`
+                    // Plan 206 Ф.1b (D423): `i64` literal-coercion gap — `int64_t`
                     // is (deliberately, pre-existing) excluded from
                     // `is_typed_integer` (nova_int-erasure precedent, see that
                     // fn's doc comment), so a bare `IntLit` operand against an
@@ -35775,7 +35775,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         return Ok(format!("{}({})", c_fn, arg_strs.join(", ")));
                     }
                 }
-                // Plan 206 Ф.1 (D422): `@overflowing_add/_sub/_mul` on any
+                // Plan 206 Ф.1 (D423): `@overflowing_add/_sub/_mul` on any
                 // `Ints` primitive receiver — pure compiler intrinsic (needs a
                 // HW overflow flag, cannot be a `.nv` body). Direct inline
                 // `__builtin_*_overflow`, no named C helper (unlike the
@@ -45811,7 +45811,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         ) {
             return true;
         }
-        // Plan 206 Ф.1 (D422): `@overflowing_add/_sub/_mul` — pure compiler
+        // Plan 206 Ф.1 (D423): `@overflowing_add/_sub/_mul` — pure compiler
         // intrinsic (needs a HW overflow flag, cannot be a `.nv` body) on any
         // `Ints` primitive receiver (protocols.nv `type Ints set …`). D109-class
         // hardcoded existence (mirrors hash/clone above) — dispatch/return-type
@@ -47580,7 +47580,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         )
     }
 
-    /// Plan 206 Ф.1b (D422, решение A): sized-`Ints` checked-helper name for a
+    /// Plan 206 Ф.1b (D423, решение A): sized-`Ints` checked-helper name for a
     /// same-typed `+`/`-`/`*` pair, mirroring `nova_int_checked_add` (which
     /// stays a separate hardcoded arm for `nova_int` — see call sites below).
     /// `ty_c` — the (identical) C type of BOTH operands. Returns `None` for
@@ -50682,7 +50682,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 return rt.into();
                             }
                         }
-                        // Plan 206 Ф.1 (D422): `@overflowing_add/_sub/_mul` on any
+                        // Plan 206 Ф.1 (D423): `@overflowing_add/_sub/_mul` on any
                         // `Ints` primitive — result is the mono tuple `(T, bool)`,
                         // mirroring emit_call's inline `__builtin_*_overflow`
                         // dispatch (~L35744+ `obj_ty == "nova_int"` sibling block).

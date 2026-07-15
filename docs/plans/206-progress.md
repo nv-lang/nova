@@ -19,10 +19,10 @@
   не меняет это свойство, полный union — тот же случай, что иллюстративный `AnyNumber` в
   тексте D310). Regression-тест `spec_tests/conformance/neg/mixed_signedness.nv`
   (партиальный `{i32,u32}`) по-прежнему падает с E_TYPE_SET_MIXED_SIGNEDNESS (проверено).
-- **D-блок:** `spec/decisions/04-effects.md` — новый **D422** (в конце файла, после D407).
+- **D-блок:** `spec/decisions/04-effects.md` — новый **D423** (в конце файла, после D407).
   Amends D310 (§R1, full-union exemption) + расширяет trap-дефолт (D13-класс) на все
   `Ints` (§R3). Секция «Неопределённости» — честно документирует Ф.1 dispatch-класс и
-  Z3-элизию sized-путей (см. ниже). `spec/decisions/README.md` — строка D422 добавлена.
+  Z3-элизию sized-путей (см. ниже). `spec/decisions/README.md` — строка D423 добавлена.
 
 ## Ф.1b — sized-int trap-default, решение A (ЗАВЕРШЕНО)
 
@@ -54,7 +54,7 @@
     проходит через ТОТ ЖЕ вызов, что и `nova_int` (тот же `self.overflow_site_elided(...)`
     вызов в обеих новых ветках). Механически покрыт. Полнота Z3-СТОРОНЫ доказательства
     для sized-ширин (кодирует ли verifier sized так же полно, как безграничный int) — НЕ
-    проверена этой волной; см. «Неопределённости» в D422 и followup
+    проверена этой волной; см. «Неопределённости» в D423 и followup
     `[M-206-sized-z3-elision-audit]`.
 - **Пиновые тесты** (`spec_tests/soundness/neg/`, EXPECT_RUNTIME_PANIC, зеркало
   `int_overflow_add_panic.nv`): `i8_overflow_add_panic`, `u8_overflow_add_panic`,
@@ -88,7 +88,7 @@
   → overflow=true, `u8(10).overflowing_add(20)` → `(30, false)`;
   `overflowing_sub`/`overflowing_mul` на i32/u8/i8 — все ветки в
   `plan206_overflowing_and_sized_arith.nv`, **PASS**.
-- **Неопределённость (см. D422 §«Неопределённости»):** checker-уровня return-type/arg-type
+- **Неопределённость (см. D423 §«Неопределённости»):** checker-уровня return-type/arg-type
   checking для `.overflowing_*` СЛАБЕЕ, чем для обычного `.nv`-объявленного метода
   (полагается на codegen-side `infer_expr_c_type`/`emit_call`, не на `method_table`-резолв
   полной сигнатуры). Хватает для прямых вызовов на конкретных примитивах и для
@@ -103,7 +103,7 @@
 - `@unchecked_*` — отложен (владелец).
 - `div`/`neg`/`mod` — подплан 206.1 (файл ещё не создан, форвард-ссылка в спеке).
 - Z3-элизия sized-путей — аудит полноты SMT-кодирования НЕ проведён
-  (`[M-206-sized-z3-elision-audit]`, зафиксирован в D422).
+  (`[M-206-sized-z3-elision-audit]`, зафиксирован в D423).
 
 ## Верификация (точечная, НЕ полный conformance)
 

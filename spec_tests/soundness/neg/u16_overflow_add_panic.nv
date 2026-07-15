@@ -1,4 +1,4 @@
-// Plan 206 Ф.1b (D422, решение A): переполнение `u16` при сложении → panic.
+// Plan 206 Ф.1b (D423, решение A): переполнение `u16` при сложении → panic.
 // EXPECT_RUNTIME_PANIC integer overflow
 
 // SOUNDNESS_REGRESSION — Plan 206 Ф.1b.

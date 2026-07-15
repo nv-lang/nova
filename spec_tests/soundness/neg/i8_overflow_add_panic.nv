@@ -1,4 +1,4 @@
-// Plan 206 Ф.1b (D422, решение A): переполнение `i8` при сложении → panic
+// Plan 206 Ф.1b (D423, решение A): переполнение `i8` при сложении → panic
 // (было — сырой C `+`, signed-UB). Sized-типы теперь трапят на overflow
 // консистентно с безграничным `int` (Plan 33.8).
 // EXPECT_RUNTIME_PANIC integer overflow

@@ -659,12 +659,12 @@ fn Result[T Debug, E Debug] @debug(mut w Write) -> () {
 type SignedInt   set i8 | i16 | i32 | i64 | int
 type UnsignedInt set u8 | u16 | u32 | u64 | uint
 
-// Plan 206 Ф.0 (D422): полное объединение SignedInt ∪ UnsignedInt — единый
+// Plan 206 Ф.0 (D423): полное объединение SignedInt ∪ UnsignedInt — единый
 // bound для `@overflowing_*`/`@checked_*`/`@saturating_*`/`@wrapping_*`
 // (один бланкет на op вместо ×2 через SignedInt/UnsignedInt раздельно).
 // D310 §«Знаковость» запрещает ЧАСТИЧНЫЙ signed/unsigned микс (несоундно —
 // разные value-domains); ПОЛНОЕ объединение (все 5 signed + все 5 unsigned,
-// без пропусков) — отдельно разрешённый случай (D422 amends D310): тело
+// без пропусков) — отдельно разрешённый случай (D423 amends D310): тело
 // использует только per-member-моно `T.MAX`/`T.MIN`-резолв и знак-агностичные
 // сравнения (`rhs < 0` у unsigned константно false), несоундности из
 // частичного микса тут нет. Тот же случай, что иллюстративный `AnyNumber`

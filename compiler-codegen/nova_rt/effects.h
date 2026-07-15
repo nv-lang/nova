@@ -1033,7 +1033,7 @@ static inline void nv_panic(nova_str msg) {
  * математический результат, либо умрёт паникой — ложного (обёрнутого)
  * значения она вернуть не может.
  *
- * Plan 206 Ф.1b (D422, решение A, 2026-07-15, REVISES this comment's old
+ * Plan 206 Ф.1b (D423, решение A, 2026-07-15, REVISES this comment's old
  * claim): sized-типы (u8/u16/u32/u64/uint/i8/i16/i32/i64) БОЛЬШЕ НЕ имеют
  * wrap-around семантику (та была Plan 33.7 — retracted). Trap-дефолт
  * теперь ЕДИНЫЙ для ВСЕХ членов `Ints` (protocols.nv) — консистентность с
@@ -1063,7 +1063,7 @@ static inline nova_int nova_int_checked_mul(nova_int a, nova_int b) {
     return r;
 }
 
-/* Plan 206 Ф.1b (D422): sized-int trap-default (решение A, Swift-модель) —
+/* Plan 206 Ф.1b (D423): sized-int trap-default (решение A, Swift-модель) —
  * `nova_<T>_checked_add/sub/mul` mirror `nova_int_checked_*` above for every
  * OTHER `Ints` member (i8/i16/i32/i64/u8/u16/u32/u64/uint). `emit_c.rs`
  * lowers typed `+`/`-`/`*` into these (was: raw C operator — signed-UB for

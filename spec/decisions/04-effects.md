@@ -7115,7 +7115,7 @@ brotli-decode — **C-FFI к `libbrotlidec`** (НЕ pure-Nova V1: 120 KB вст�
 
 ---
 
-## D422. Арифметическая overflow-политика: примитив `@overflowing_*` + trap-дефолт для ВСЕХ `Ints` (Plan 206 Ф.0, 2026-07-15)
+## D423. Арифметическая overflow-политика: примитив `@overflowing_*` + trap-дефолт для ВСЕХ `Ints` (Plan 206 Ф.0, 2026-07-15)
 
 **Статус:** закреплён 2026-07-15 (owner sign-off, Plan 206 наблюдение 2026-07-14 + решение 2026-07-15). Amends [D310](02-types.md#d310-type-set-bounds-plan-1723) (`Ints` — full-union exemption от `E_TYPE_SET_MIXED_SIGNEDNESS`), расширяет [D13](#) (trap-дефолт `+`/`-`/`*`, ранее только для безграничного `int`) на ВСЕ sized-типы. `div`/`neg`/`mod` — вне рамок, вынесены в подплан [206.1](../../docs/plans/206.1-div-neg-trap.md).
 

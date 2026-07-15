@@ -17074,7 +17074,7 @@ fn check_generic_bound_declarations(
                 if let Some(&s) = signed_ints.iter().find(|&&s| s == mn) { signed_seen.insert(s); }
                 if let Some(&s) = unsigned_ints.iter().find(|&&s| s == mn) { unsigned_seen.insert(s); }
             }
-            // Signedness uniformity (Q6, D310) — amended by Plan 206 (D422):
+            // Signedness uniformity (Q6, D310) — amended by Plan 206 (D423):
             // a PARTIAL signed/unsigned mix stays incompatible-value-domains
             // unsound (`u64.MAX = 2^64-1 ∉ i64`). A FULL union (every signed
             // member ∧ every unsigned member, no gaps — exactly `SignedInt ∪
@@ -17095,7 +17095,7 @@ fn check_generic_bound_declarations(
                          integer members PARTIALLY — a single body cannot be sound for a partial mix \
                          (u64.MAX = 2^64-1 ∉ i64). Split into separate signed/unsigned sets (e.g. \
                          SignedInt / UnsignedInt), or list the FULL union (all of i8/i16/i32/i64/int \
-                         + all of u8/u16/u32/u64/uint — exempted, D310 amend D422).",
+                         + all of u8/u16/u32/u64/uint — exempted, D310 amend D423).",
                         t.name
                     ),
                     t.span,

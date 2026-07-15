@@ -1,4 +1,4 @@
-// Plan 206 Ф.1b (D422, решение A): переполнение `u8` при сложении → panic
+// Plan 206 Ф.1b (D423, решение A): переполнение `u8` при сложении → panic
 // (было — сырой C `+`, тихий wrap). Unsigned overflow (переполнение вверх)
 // трапит так же, как signed — `__builtin_add_overflow` ловит его одинаково.
 // EXPECT_RUNTIME_PANIC integer overflow

@@ -1,4 +1,4 @@
-// Plan 206 Ф.1/Ф.1b (D422) — POSITIVE regression:
+// Plan 206 Ф.1/Ф.1b (D423) — POSITIVE regression:
 // (a) ordinary sized-int arithmetic that does NOT overflow still produces
 //     the same result as before (trap-default only fires ON overflow);
 // (b) `@overflowing_add/_sub/_mul` on `Ints` primitives returns the
