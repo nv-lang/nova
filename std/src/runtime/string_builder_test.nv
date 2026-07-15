@@ -1,0 +1,97 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 208 Ф.1 (D422/D179 amend) — peer test for the new StringBuilder
+// methods (`@reserve`/`@advance`/`@write_padded`/`@pad_in_place`/
+// `@into_str_checked`). A genuinely separate module from `runtime.string_builder`
+// (this folder holds one module per file, [M-fmt-buf-module-path] confirmed by
+// E_D78_MODULE_PATH_MISMATCH — mirrors `sync.nv`/`sync_test.nv`), so it imports
+// what it needs rather than sharing module-private state; every method under
+// test here is `export`ed (public D179-amend API), so this is unproblematic.
+module runtime.string_builder_test
+
+import std.runtime.string_builder.{StringBuilder}
+import std.runtime.fmt_buf.{Align}
+
+test "StringBuilder: @reserve/@advance zero-copy digit-loop protocol" {
+    consume sb = StringBuilder.new()
+    sb.append("abc")
+    ro p = sb.reserve(4)
+    unsafe {
+        p.write_at(0, '1' as u8)
+        p.write_at(1, '2' as u8)
+        p.write_at(2, '3' as u8)
+        p.write_at(3, '4' as u8)
+    }
+    sb.advance(4)
+    assert(sb.byte_len() == 7)
+    ro s = sb.into_str()
+    assert(s == "abc1234")
+}
+
+test "StringBuilder: @write_padded left/right/center" {
+    consume sb1 = StringBuilder.new()
+    sb1.write_padded("hi".bytes(), 8, ' ', Align.Right)
+    assert(sb1.into_str() == "      hi")
+
+    consume sb2 = StringBuilder.new()
+    sb2.write_padded("hi".bytes(), 8, ' ', Align.Left)
+    assert(sb2.into_str() == "hi      ")
+
+    consume sb3 = StringBuilder.new()
+    sb3.write_padded("hi".bytes(), 8, '*', Align.Center)
+    assert(sb3.into_str() == "***hi***")
+
+    // width already satisfied — no padding inserted.
+    consume sb4 = StringBuilder.new()
+    sb4.write_padded("hello".bytes(), 3, ' ', Align.Right)
+    assert(sb4.into_str() == "hello")
+}
+
+test "StringBuilder: @pad_in_place right-aligns a streamed composite" {
+    consume sb = StringBuilder.new()
+    sb.append("| ")
+    ro mark = sb.byte_len()
+    sb.append("Point(1, 2)")   // simulates a streamed record @display body
+    sb.pad_in_place(mark, 20, ' ', Align.Right)
+    sb.append(" |")
+    ro s = sb.into_str()
+    assert(s.byte_len() == 2 + 20 + 2)
+    assert(s.ends_with("Point(1, 2) |"))
+    assert(s.starts_with("|          "))
+}
+
+test "StringBuilder: @pad_in_place left/center variants" {
+    consume sbl = StringBuilder.new()
+    ro markl = sbl.byte_len()
+    sbl.append("ab")
+    sbl.pad_in_place(markl, 5, '-', Align.Left)
+    assert(sbl.into_str() == "ab---")
+
+    consume sbc = StringBuilder.new()
+    ro markc = sbc.byte_len()
+    sbc.append("ab")
+    sbc.pad_in_place(markc, 6, '-', Align.Center)
+    assert(sbc.into_str() == "--ab--")
+
+    // content already >= width — no-op.
+    consume sbn = StringBuilder.new()
+    ro markn = sbn.byte_len()
+    sbn.append("hello")
+    sbn.pad_in_place(markn, 3, ' ', Align.Right)
+    assert(sbn.into_str() == "hello")
+}
+
+test "StringBuilder: @into_str_checked Ok/Err" {
+    consume sb_ok = StringBuilder.new()
+    sb_ok.append("héllo")
+    match sb_ok.into_str_checked() {
+        Ok(s) => assert(s == "héllo"),
+        Err(_) => assert(false),
+    }
+
+    consume sb_bad = StringBuilder.new()
+    sb_bad.append([0xFF as u8])
+    match sb_bad.into_str_checked() {
+        Ok(_) => assert(false),
+        Err(_) => assert(true),
+    }
+}

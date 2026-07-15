@@ -8234,21 +8234,21 @@ impl<'a> TypeCheckCtx<'a> {
                             }
                         } else if matches!(
                             fname.as_str(),
-                            "println" | "print" | "assert" | "debug_assert"
+                            "println" | "print" | "assert"
                         ) && !scope.contains_key(fname)
                         {
                             // [196.5 Stage-D волна-4] B10a producer (intrinsic-scheme
-                            // mirror): `println`/`print`/`assert`/`debug_assert` are
+                            // mirror): `println`/`print`/`assert` are
                             // ALWAYS-Unit-returning compiler intrinsics — `extern "nova"
                             // fn ... -> ()` in std/prelude/runtime.nv, but
                             // `#no_prelude` modules (breaking the prelude→string→
                             // prelude import cycle, `[panic-assert-intrinsic]` above)
                             // never see that declaration reachable, so no static-
                             // return path materializes Channel 2 for these call-sites
-                            // there. codegen's `emit_call` already dispatches all four
+                            // there. codegen's `emit_call` already dispatches all three
                             // NAME-KEYED regardless of declaration visibility
                             // (`emit_c.rs` ~32213 println/print,
-                            // panic-assert-intrinsic doc for assert/debug_assert) —
+                            // panic-assert-intrinsic doc for assert) —
                             // mirror that SAME fact into the checker channel
                             // unconditionally (Unit is invariant for these names
                             // regardless of which declaration, if any, is visible;
@@ -8256,6 +8256,8 @@ impl<'a> TypeCheckCtx<'a> {
                             // the same Unit the extern decl already gave). Legacy
                             // `infer_call_ret_c` B10a_ident_println_assert arm remains
                             // the fallback for any CU shape this producer misses.
+                            // Plan 194 A4: `debug_assert` retracted (role absorbed by
+                            // `#debug assert`, A2.2) — removed from this NAME-set.
                             self.resolved_types_buf
                                 .borrow_mut()
                                 .insert(e.id, ResolvedType::Unit);
@@ -18832,6 +18834,29 @@ impl<'a> BoundCtx<'a> {
         scope: &HashMap<String, TypeRef>,
         arg_count_hint: usize,
     ) -> Option<&FnDecl> {
+        // [M-187-d182-turbofish-new-nameonly-collision]: a TurboFish receiver
+        // (`Type[args].method(...)`, e.g. `D182Pair[int, str].new(5, "x")`)
+        // is a GENERIC-STATIC call, not a value-typed instance — `infer_arg_ty`
+        // below has no `TurboFish` arm, so Попытка 1 (receiver-type inference)
+        // always misses for this shape and falls through to Попытка 2's
+        // receiver-BLIND name-only scan across `self.sig.method_table`. A
+        // receiver-own-generic method (`fn D182Pair[A, B].new(a A, b B)`) is
+        // NOT registered in `self.sig.method_table` at all (separate
+        // generic-method registry) — so that scan can never even see the
+        // TRUE callee, yet still finds and returns whichever UNRELATED
+        // concrete type's arity-compatible `.new()` happens to be the sole
+        // "inherent" match (e.g. serde `DeError.new(kind, path = "")`,
+        // arity 2) — a false-positive D102 keyword-only-default diagnostic
+        // against a signature that was never actually called. This
+        // best-effort check (see this fn's own doc + `check_call_argbind`'s
+        // comment on the by-design "almost always ambiguous → skip" intent
+        // for exactly this shape) is not the codegen dispatch path (that
+        // resolves the REAL generic receiver correctly elsewhere) — bailing
+        // out unconditionally for a TurboFish receiver just means "skip this
+        // diagnostic", never "miss a real error".
+        if matches!(obj.kind, ExprKind::TurboFish { .. }) {
+            return None;
+        }
         // Попытка 1: receiver-type inference.
         // Plan 162 Ф.3: когда тип receiver'а известен, сначала проверяем
         // наследуемые (inherent) методы — методы, объявленные в том же модуле
@@ -21083,8 +21108,9 @@ impl NameResCtx {
             // `RuntimeNoneError` НЕ перенесён — bootstrap parser не
             // поддерживает empty-body sum syntax. Остаётся as
             // string-payload throw в nova_rt/effects.h.
-            // Plan 62.B: `panic`/`exit`/`assert`/`debug_assert` (4 names)
-            // перенесены в std/prelude/runtime.nv (file-based external fn
+            // Plan 62.B: `panic`/`exit`/`assert` (Plan 194 A4: `debug_assert`
+            // retracted, role absorbed by `#debug assert`) перенесены в
+            // std/prelude/runtime.nv (file-based external fn
             // declarations). Type-checker теперь resolves их через
             // cross-file resolve (R27 auto-import + R26 re-export через
             // std/prelude.nv facade). Codegen special-cases в emit_c.rs
@@ -21092,7 +21118,7 @@ impl NameResCtx {
             //   - panic/exit нужны для comma-expression обёртки
             //     `(nv_panic(msg), (nova_int)0LL)` в expression-position
             //     (?? coalesce, if-else branches).
-            //   - assert/debug_assert: D89 expression-context + Plan 11
+            //   - assert: D89 expression-context + Plan 11
             //     auto-derived cond_text (msg arg silently ignored).
             // См. docs/plans/62-prelude-hardcode-migration.md §62.B.
             //
@@ -21160,9 +21186,10 @@ impl NameResCtx {
             // без `import std.runtime.sync`. Dispatch: ExternalRegistry
             // → nova_fn_fence (free_fn_c_name ExternalRegistry-first path).
             "fence",
-            // [panic-assert-intrinsic] (2026-07-11): `panic`/`assert`/
-            // `debug_assert` — ALWAYS-available compiler intrinsics, resolved
-            // in ANY module including `#no_prelude` ones, WITHOUT import or
+            // [panic-assert-intrinsic] (2026-07-11): `panic`/`assert`
+            // (Plan 194 A4: `debug_assert` retracted) — ALWAYS-available
+            // compiler intrinsics, resolved in ANY module including
+            // `#no_prelude` ones, WITHOUT import or
             // per-file redeclaration. Root cause this closes: Plan 62.B moved
             // these off this hardcoded list into a real `extern "nova" fn`
             // declaration in std/prelude/runtime.nv, resolved purely via
@@ -21180,9 +21207,9 @@ impl NameResCtx {
             // was ALREADY declaration-independent (hardcoded `never` arm,
             // see the `matches!(name.as_str(), "panic" | "exit" | "abort" |
             // "unreachable")` check in `infer_expr_type`'s `ExprKind::Call`
-            // arm). Codegen dispatch for `panic`/`assert`/`debug_assert` was
+            // arm). Codegen dispatch for `panic`/`assert` was
             // ALSO already fully name-keyed (emit_c.rs `emit_call`, matches
-            // `name == "panic"` / `"assert"` / `"debug_assert"` directly —
+            // `name == "panic"` / `"assert"` directly —
             // no `ExternalRegistry`/signature lookup involved, per the
             // ExternalRegistry::NAMESPACE_OVERRIDES doc: "panic()/exit()/
             // assert() ... class C compiler intrinsic ... hardcoded в
@@ -21190,14 +21217,16 @@ impl NameResCtx {
             // missing piece — it just teaches the NAME-RESOLUTION pass what
             // codegen already knew.
             //
-            // The canonical `extern "nova" fn panic/assert/debug_assert`
+            // The canonical `extern "nova" fn panic/assert`
             // declarations in std/prelude/runtime.nv are KEPT (not removed):
             // they still drive `nova doc`, the D89 2-arg `assert` overload
             // arity, and W_PRELUDE_SHADOW future warnings for prelude-having
             // modules — this `builtins` entry is a permissive FALLBACK that
             // only matters when no declaration is reachable (`#no_prelude`).
             // See spec/decisions/08-runtime.md D13 amendment (2026-07-11).
-            "panic", "assert", "debug_assert",
+            // Plan 194 A4: `debug_assert` retracted (role absorbed by
+            // `#debug assert`, A2.2) — removed from this list.
+            "panic", "assert",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -34306,7 +34335,6 @@ mod primitive_mut_method_tests {
             imports: Vec::new(),
             items: fns.into_iter().map(Item::Fn).collect(),
             attrs: Vec::new(),
-            contract_opt_out: Default::default(),
             doc_attrs: Vec::new(),
             span: dummy_span(),
             peer_files: Vec::new(),
@@ -34579,7 +34607,6 @@ mod named_tuple_ctor_infer_tests {
             imports: Vec::new(),
             items: types.into_iter().map(Item::Type).collect(),
             attrs: Vec::new(),
-            contract_opt_out: Default::default(),
             doc_attrs: Vec::new(),
             span: dummy_span(),
             peer_files: Vec::new(),
@@ -34861,7 +34888,6 @@ mod named_tuple_ctor_infer_tests {
             imports: Vec::new(),
             items: vec![Item::Type(p), Item::Fn(user_equal)],
             attrs: Vec::new(),
-            contract_opt_out: Default::default(),
             doc_attrs: Vec::new(),
             span: dummy_span(),
             peer_files: Vec::new(),

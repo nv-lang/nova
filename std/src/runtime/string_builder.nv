@@ -21,7 +21,14 @@
 #no_prelude
 module runtime.string_builder
 
-// no explicit imports — #no_prelude breaks all auto-injection.
+// Plan 208 Ф.1 (D422/D179 amend) — additive imports for the new
+// @reserve/@advance/@pad_in_place/@write_padded/@into_str_checked methods
+// below. `Align` (runtime.fmt_buf, also `#no_prelude` — see its header note)
+// does not reopen the prelude cycle this file already breaks out of.
+import std.runtime.fmt_buf.{Align}
+import std.runtime.raw_mem.{RawMem}
+import std.prelude.core.{Result}
+import std.runtime.string.{Utf8Error}
 
 // ─── Type ───
 
@@ -206,3 +213,177 @@ export fn StringBuilder mut @write(s str) -> () { @buf.append(s.bytes()) }
 // marker); correctness is unaffected, only the zero-copy-reuse optimization
 // is foregone for this legacy-array call site.
 export fn StringBuilder consume @into_str() -> str => unsafe { @buf.to_str_unchecked() }
+
+// Checked twin of `@into_str()` — validates UTF-8 instead of assuming it
+// (Plan 208 Ф.1, D422 §"into_str()"). Delegates to `[]u8 @decode_utf8()`
+// (std/runtime/string/core.nv) — an identical-body, differently-named twin
+// of `[]u8 @to_str()` kept specifically as the collision-safe call site
+// ([M-174.1-to-str-name-collision-codegen-bug]: `bytes.to_str()` mis-codegens
+// whenever the same compilation unit also defines an unrelated `T.to_str()
+// -> str`, which the wider `std` CU does — e.g. `NetError.to_str()` — so this
+// file uses `@decode_utf8()`, the documented workaround, instead).
+export fn StringBuilder consume @into_str_checked() -> Result[str, Utf8Error] => @buf.decode_utf8()
+
+// ─── Plan 208 Ф.1 (D422/D179 amend) — buffer-primitive plumbing ───
+//
+// ADDITIVE: these five methods are new zero-copy/zero-alloc surface for the
+// Ф.2 compiler rewrite (`emit_interpolated_str`/`emit_format_spec_value` onto
+// `@display(mut f Fmt)`) to call into. Nothing existing above is touched or
+// re-routed through them yet.
+
+// Expose a pointer into (at least) `n` bytes of SPARE capacity beyond the
+// current live length — the compiler-path zero-COPY digit-loop target (D422
+// §1/§9: "top-level компилятор-путь... digit-loop прямо в sb.reserve()/
+// sb.advance()"). The bytes at `[@byte_len(), @byte_len()+n)` are NOT yet
+// live (`@byte_len()` unchanged) until a matching `@advance(n)` call — the
+// caller's contract is to write at most `n` bytes starting at the returned
+// pointer, then call `@advance` with the number actually written.
+export fn StringBuilder mut @reserve(n int) -> *mut u8
+    requires n >= 0
+{
+    @buf.reserve(n)
+    @buf.ptr().offset(@buf.len())
+}
+
+// Commit `n` bytes of previously-`@reserve`d spare capacity to the live
+// length — the second half of the zero-copy digit-loop protocol. Rebuilds
+// `@buf` via the public `Vec[T].new(ptr, len, cap)` cross-type bridge
+// (std/collections/vec/core.nv) since `data`/`len`/`cap` are `priv` to the
+// `collections.vec` module — this is the sanctioned way to bump the live
+// length after writing directly through the `@reserve`d pointer.
+export fn StringBuilder mut @advance(n int) -> ()
+    requires n >= 0 && n <= @buf.cap() - @buf.len()
+{
+    @buf = []u8.new(@buf.ptr(), @buf.len() + n, @buf.cap())
+}
+
+// UTF-8 codepoint count of a byte run (D422 §"width = кодпоинты") — counts
+// non-continuation bytes (top two bits != 0b10), mirroring `conv.h`'s
+// `nova_fmt_char_count`.
+fn utf8_char_count(bytes []u8) -> int {
+    mut n = 0
+    for b in bytes {
+        if (b & 0xC0) != 0x80 { n = n + 1 }
+    }
+    n
+}
+
+// UTF-8 byte-length (1..4) of a single codepoint's encoding.
+fn char_utf8_len(c char) -> int {
+    ro cp = c as int
+    if cp < 0x80 { 1 } else if cp < 0x800 { 2 } else if cp < 0x10000 { 3 } else { 4 }
+}
+
+// Encode a single codepoint as UTF-8 into a 4-byte fixed array (unused
+// trailing slots stay `0`; caller reads only the first `char_utf8_len(c)`
+// bytes). Mirrors `StringBuilder.@append(c char)`'s own bit-shift encoding —
+// duplicated (not shared) so `@pad_in_place` can write the encoded bytes
+// directly into the main buffer via raw pointer instead of appending.
+fn char_utf8_bytes(c char) -> [4]u8 {
+    ro cp = c as int
+    mut out [4]u8 = [0, 0, 0, 0]
+    if cp < 0x80 {
+        out[0] = cp as u8
+    } else if cp < 0x800 {
+        out[0] = (0xC0 | (cp >> 6)) as u8
+        out[1] = (0x80 | (cp & 0x3F)) as u8
+    } else if cp < 0x10000 {
+        out[0] = (0xE0 | (cp >> 12)) as u8
+        out[1] = (0x80 | ((cp >> 6) & 0x3F)) as u8
+        out[2] = (0x80 | (cp & 0x3F)) as u8
+    } else {
+        out[0] = (0xF0 | (cp >> 18)) as u8
+        out[1] = (0x80 | ((cp >> 12) & 0x3F)) as u8
+        out[2] = (0x80 | ((cp >> 6) & 0x3F)) as u8
+        out[3] = (0x80 | (cp & 0x3F)) as u8
+    }
+    out
+}
+
+// Known-length primitive/str write with width/align/fill padding, WITHOUT a
+// shift (D422 §4 "известная длина... write_padded... без сдвига"): `bytes`
+// has not been written to the main buffer yet, so the fill run and the
+// content can just be appended in the right order directly.
+export fn StringBuilder mut @write_padded(bytes []u8, width int, fill char, align Align) -> ()
+    requires width >= 0
+{
+    ro content_chars = utf8_char_count(bytes)
+    ro pad_chars = if width > content_chars { width - content_chars } else { 0 }
+    match align {
+        Align.Left => {
+            @append(bytes)
+            mut k = 0
+            while k < pad_chars { @append(fill); k = k + 1 }
+        }
+        Align.Right => {
+            mut k = 0
+            while k < pad_chars { @append(fill); k = k + 1 }
+            @append(bytes)
+        }
+        Align.Center => {
+            ro left = pad_chars / 2
+            ro right = pad_chars - left
+            mut k1 = 0
+            while k1 < left { @append(fill); k1 = k1 + 1 }
+            @append(bytes)
+            mut k2 = 0
+            while k2 < right { @append(fill); k2 = k2 + 1 }
+        }
+    }
+}
+
+// Streaming-composite width padding (D422 §4 "pad_in_place"): the body
+// starting at byte offset `mark` has ALREADY been streamed into the main
+// buffer (its length was not known ahead of the render — record/tuple/Vec/
+// sum composites), so reaching `width` codepoints (when short) means
+// memmove-ing that body and splicing in `fill` — right/center shift the body
+// right via an overlap-safe `RawMem.copy` (memmove, not memcpy); left just
+// appends trailing fill (the body is already correctly positioned).
+export fn StringBuilder mut @pad_in_place(mark int, width int, fill char, align Align) -> ()
+    requires mark >= 0 && mark <= @byte_len() && width >= 0
+{
+    ro end = @byte_len()
+    ro content_len = end - mark
+    mut content_chars = 0
+    mut i = mark
+    while i < end {
+        if (@buf[i] & 0xC0) != 0x80 { content_chars = content_chars + 1 }
+        i = i + 1
+    }
+    if content_chars >= width { return }
+    ro pad_chars = width - content_chars
+
+    mut left_chars = 0
+    mut right_chars = 0
+    match align {
+        Align.Left   => { right_chars = pad_chars }
+        Align.Right  => { left_chars = pad_chars }
+        Align.Center => { left_chars = pad_chars / 2; right_chars = pad_chars - left_chars }
+    }
+
+    if left_chars > 0 {
+        ro fill_len = char_utf8_len(fill)
+        ro fill_bytes = char_utf8_bytes(fill)
+        ro left_bytes = left_chars * fill_len
+        @buf.reserve(left_bytes)
+        unsafe {
+            // memmove (overlap-safe) the existing tail right by `left_bytes`.
+            RawMem.copy(@buf.ptr().offset(mark) as *u8, @buf.ptr().offset(mark + left_bytes) as *mut u8, content_len)
+            mut pos = mark
+            mut c = 0
+            while c < left_chars {
+                mut b = 0
+                while b < fill_len {
+                    @buf.ptr().write_at(pos, fill_bytes[b])
+                    pos = pos + 1
+                    b = b + 1
+                }
+                c = c + 1
+            }
+        }
+        @buf = []u8.new(@buf.ptr(), end + left_bytes, @buf.cap())
+    }
+
+    mut k = 0
+    while k < right_chars { @append(fill); k = k + 1 }
+}

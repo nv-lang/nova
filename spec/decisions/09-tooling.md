@@ -38,12 +38,11 @@
 > Кратко: `#unchecked` (per-fn/per-module opt-out, ниже §4 «Опт-ин строгости»)
 > заменяется `#debug`-префиксом (dev-only контракты) + автоматической
 > sound-элизией `--contracts=optimized`; `--contracts=off` (footgun) удалён,
-> три новых значения `checked|optimized|verified` — роль SMT-движка, не
-> вкл/выкл. **Статус этой волны (Ф.0+Ф.1):** только спека + парсер `#debug`
-> (флаг в AST, инертен); `#unchecked`/`--contracts=enforce|off` физически
-> ЕЩЁ РАБОТАЮТ как описано ниже — ретракция/codegen-эрозия по режиму — Ф.2/Ф.4
-> (см. таблицу статуса в D421). Читать §4 «Опт-ин строгости» ниже как
-> ТЕКУЩЕЕ (не целевое) поведение до Ф.4.
+> два значения `checked|optimized` — роль SMT-движка, не вкл/выкл (`verified`
+> тоже удалён 2026-07-15, см. D421 §3-амендмент). **Статус: Plan 194 ЗАКРЫТ
+> (Ф.0-Ф.4, 2026-07-15)** — `#debug`-эрозия и ретракция `#unchecked`/`debug_assert`
+> реализованы; §4 «Опт-ин строгости» ниже описывает УДАЛЁННЫЙ `#unchecked`
+> (историческая справка, не текущее поведение).
 >
 > **AMEND (Plan 140.2 Part A, 2026-06-13) — `@field` self-access в контрактах.**
 > Прежнее ограничение «контракт не может ссылаться на `@field` (self-access);
@@ -3868,12 +3867,17 @@ fn binary_search(arr []int, x int) -> int
 |---|---|---|---|---|---|
 | `checked` | НЕ вызывается | работает (unproven = runtime-check) | работает | быстрая (нет Z3) | dev-дефолт |
 | `optimized` | доказать-избыточные → sound-элизия | недоказанные работают | УБРАНЫ (стёрты) | медленная (Z3 на всё) | release-дефолт |
-| `verified` | доказать ВСЕ не-`#debug` или **compile-error** | доказанные убраны, остальные все доказаны | убраны | медленная | opt-in, формальная гарантия |
 
 `off` (Plan 140 Ф.2) — **RETRACTED**: глобальное «выключить всё» — footgun,
 симметричный C `NDEBUG`. Локальный отказ от проверки в горячем месте — только
 `unsafe`/`get_unchecked` (явно, локально, под ответственность автора кода,
 НЕ ответственность языка).
+
+**★ АМЕНД 2026-07-15 (владелец): режим `verified` УДАЛЁН.** Whole-build «докажи ВСЕ
+не-`#debug` или compile-error» — footgun: половину рантайм-зависимых контрактов пришлось бы
+переносить в ручной `if`/`assert`. Осталось ДВА режима: `checked` (dev) + `optimized` (release).
+Статическая верификация — через per-fn `#verify` (opt-in, правильная гранулярность) +
+команду `nova verify-contracts`, а НЕ через build-режим. CLI `--contracts` = `checked|optimized`.
 
 #### 4. Ретракции (целевая модель — см. §Статус реализации)
 
@@ -3888,16 +3892,19 @@ fn binary_search(arr []int, x int) -> int
   assertion — единый префикс вместо отдельной prelude-функции). `assert(cond)`
   (always-on, D81) — БЕЗ ИЗМЕНЕНИЙ.
 
-#### 5. Bounds/overflow — always-on SAFETY, не контракт
+#### 5. Bounds/overflow — always-on SAFETY (через `requires`, АМЕНД 2026-07-15)
 
-Проверка границ среза/массива (`@index`) и int-overflow (Plan 140.4 amend
-выше / [D272](#d272-элизия-доказуемо-безопасных-int-overflow-проверок)) — это
-memory-safety гарантия языка, НЕ `requires`-контракт → никогда не элидируется
-build-флагом или заменой `#unchecked`; только компилятор может снять её через
-sound-доказательство (та же `optimized`-элизия §3). Следствие: `v[a..b]`
-роутится через `.nv Vec[T] @index(Range)` (единый источник; codegen-магия
-`nova_vec_slice_chk`-интринсик снимается отдельной фазой — Ф.3 Plan 194); не
-меняет модель исполнения контрактов из этого D-блока.
+Проверка границ среза/массива (`@index`) и int-overflow — memory-safety гарантия языка.
+`v[a..b]` роутится через `.nv Vec[T] @index(Range)` (единый источник; codegen-интринсик
+`nova_vec_slice_chk` снят — Ф.3 Plan 194). **АМЕНД 2026-07-15 (владелец): границы выражаются
+`requires`-предусловием** (`requires r.start >= 0 && r.end >= r.start && r.end <= @len`), а НЕ
+ручным `if`-guard'ом (ранняя Ф.3-формулировка отменена). Обоснование: с удалением И `off`, И
+`verified` (§3-амендмент) `requires` **никогда не элидируется небезопасно** — enforced под
+`checked`, sound-элидируется под `optimized` ТОЛЬКО при доказательстве in-range (иначе enforced).
+Т.е. границы получают идеальный профиль (zero-cost при доказуемой безопасности, checked иначе)
+через ЕДИНУЮ контракт-машинерию — одно окно, а не guard + отдельная site-элизия. Это устраняло
+причину прежней формулировки «bounds ≠ requires» (страх перед compile-error в `verified`), которой
+больше нет. int-overflow always-safety — аналогично (Plan 206 расширяет trap на все Ints).
 
 ### Статус реализации (Plan 194)
 
@@ -3905,19 +3912,16 @@ sound-доказательство (та же `optimized`-элизия §3). С�
 |---|---|---|
 | Ф.0 | Эта спека (D-блок + amend-пометки в D24/D81) | ✅ 2026-07-14 |
 | Ф.1 | Парсер: `#debug`-префикс перед `requires`/`ensures`/`invariant` (клаузы fn-сигнатуры, type-invariant, effect-handler и lemma contracts) и `#debug assert(...)` (statement, требует call-форму). AST: `Contract.debug_only: bool`, `Expr.debug_only: bool` (parser/mod.rs `eat_debug_contract_attr`, `parse_stmt_or_expr` Hash-arm) | ✅ парсится, флаг сохранён в AST, 2026-07-14 |
-| Ф.2 | Codegen: эмиссия по режиму (`#debug` эрозия вне `checked`; `optimized` sound-элизия; CLI `--contracts` меняется с `enforce\|off` на `checked\|optimized\|verified`) | ⏳ следующая волна |
-| Ф.3 | vrange-роутинг (`@index(Range)`, снятие `nova_vec_slice_chk`-интринсика) | ⏳ |
-| Ф.4 | Физическая ретракция `#unchecked`/`debug_assert` из парсера + миграция существующих тестов/build_cache-сайтов (13 файлов корпуса, 0 в std-логике) | ⏳ |
+| Ф.2 | Codegen: эмиссия по режиму (`#debug` эрозия вне `checked` через `mode_erases_debug`; `optimized` sound-элизия; CLI `--contracts` = `checked\|optimized`, `enum ContractsMode`, build_cache-ключ v2) | ✅ 2026-07-15 (A2.1+A2.2) |
+| Ф.1b | Sized-int trap-дефолт (вынесено в [Plan 206](../../docs/plans/206-arithmetic-overflow-policy.md), решение A) | ⏳ Plan 206 |
+| Ф.3 | vrange-роутинг (`@index(Range)` через `requires`-границы; `nova_vec_slice_chk`-интринсик снят) | ✅ 2026-07-15 (A3) |
+| Ф.4 | Физическая ретракция `#unchecked`/`debug_assert` из парсера/AST/codegen/std + миграция тестов | ✅ 2026-07-15 (A4) |
 
-**ВАЖНО (эта волна = Ф.0+Ф.1 только):** `#debug`-контракты и `#debug assert`
-парсятся и флаг `debug_only` записан в AST, но **codegen пока НЕ различает**
-`#debug` от обычного контракта — исполнение сегодня byte-identical поведению
-БЕЗ префикса (эрозия по режиму — Ф.2, следующая волна). `#unchecked` и
-`debug_assert(...)` **физически ещё присутствуют** в парсере (не удалены,
-не depreacted-warning) — §4 описывает ЦЕЛЕВУЮ модель, фактическая ретракция —
-Ф.4. CLI-флаг `--contracts` на этой волне **всё ещё** `enforce|off` (не
-`checked|optimized|verified`) — таблица §3 тоже целевая (Ф.2 меняет
-реализацию, включая build_cache-ключ).
+**СТАТУС 2026-07-15: Plan 194 ЗАКРЫТ (Ф.0-Ф.4).** `#debug`-эрозия работает (checked = все
+контракты; optimized/`#debug` стёрты). `#unchecked` и `debug_assert(...)` **физически удалены**
+(парсер/AST/codegen/std). CLI `--contracts` = `checked|optimized` (режим `verified` удалён,
+см. §3-амендмент; статическая верификация — per-fn `#verify`). Границы (`@index`) — `requires`
+(§5-амендмент). Sized-int trap — Plan 206.
 
 ### Почему
 

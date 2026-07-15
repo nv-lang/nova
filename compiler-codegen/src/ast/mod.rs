@@ -21,11 +21,6 @@ pub struct Module {
     /// Plan 42 Sub-plan 42.A: module-level attributes (`#forbid X, Y`).
     /// `#requires` отвергнут — нарушает AI-first explicit principle.
     pub attrs: Vec<ModuleAttr>,
-    /// Plan 140.3 ([M-140-contract-levels]): module-level `#unchecked`
-    /// (`#unchecked` перед `module X`, опц. `(requires/ensures/invariant)`) —
-    /// элидирует контракт-страховку соответствующих видов во ВСЁМ модуле
-    /// (per-fn `#unchecked` ⊔ этим). Default — ничего не элидируется.
-    pub contract_opt_out: ContractOptOut,
     /// Plan 45 Ф.22.1 / D105: module-level doc-attrs
     /// (`#stable`/`#unstable`/`#experimental`/`#deprecated`/`#hide_doc`/etc.).
     /// Семантически: tier propagates на items module'а без явного override.
@@ -207,10 +202,6 @@ pub enum ModuleAttrKind {
     /// (требует generic attribute parser, который пока hardcoded на
     /// `TypeAttr` enum'ы; см. ast::TypeAttr).
     AllowPreludeShadow,
-    /// Plan 140.3 ([M-140-contract-levels]): module-level `#unchecked`
-    /// (+ опц. `(requires/ensures/invariant)`) — элидирует контракт-страховку
-    /// соответствующих видов во ВСЁМ модуле (folded в `Module.contract_opt_out`).
-    Unchecked(ContractOptOut),
     /// **Plan 90.1 D141 amend:** `#allow(view_extend_detach)` before `module`.
     /// Suppresses `W_VIEW_EXTEND_DETACH` warnings emitted by
     /// `lints::lint_view_extend_detach` when a grow-method (append / insert /
@@ -491,60 +482,12 @@ pub struct FnDecl {
     /// которым нужно отличать compiler-generated методы от user-кода.
     /// Default `false` (backward-compat — все распарсенные fns не synthesized).
     pub compiler_generated: bool,
-    /// Plan 140 Ф.2 (D24 amend): `#unchecked` attribute — per-fn opt-out из
-    /// contract enforcement. Codegen НЕ эмитит ни одну контракт-проверку
-    /// (`requires`/`ensures`/`invariant`/`decreases`/`assert_static`/`assume`)
-    /// в теле этой функции — даже недоказанные Z3. Для проверенного hot-path,
-    /// где runtime-стоимость страховки недопустима; разработчик берёт
-    /// недоказанность под свою ответственность. Ортогонально `verify_mode`
-    /// (`#verify`/`#unverified` управляют статическим доказательством;
-    /// `#unchecked` — наличием runtime-страховки). Build-аналог — глобальный
-    /// `--contracts=off`. Default — ничего не элидируется (enforce-with-elision).
-    ///
-    /// Plan 140.3 ([M-140-contract-levels]): `#unchecked` (bare) элидирует ВСЕ
-    /// виды; `#unchecked(requires)` / `#unchecked(ensures)` / `#unchecked(invariant)`
-    /// (комбинируемо) — Eiffel-style раздельная гранулярность.
-    pub contract_opt_out: ContractOptOut,
     /// Plan 170 (D307): `priv(file) fn` — file-private visibility. Символ
     /// помечен «не виден peer-файлам модуля» (visibility-hint, НЕ смена
     /// module-резолва — модуль остаётся один, D29). Аналог Rust `pub(self)`.
     /// Лесенка: `priv(file)` ⊂ module-default ⊂ `export`. Взаимоисключаем с
     /// `is_export`. Default `false`.
     pub file_private: bool,
-}
-
-/// Plan 140.3 ([M-140-contract-levels]): per-kind contract opt-out — Eiffel-style
-/// раздельное отключение runtime-страховки pre/post/invariant. Применяется на
-/// уровне функции (`#unchecked` перед `fn`) И модуля (`#unchecked` перед `module`).
-/// Эффективная элизия вида = build `--contracts=off` ИЛИ module-opt-out(вид) ИЛИ
-/// fn-opt-out(вид). `Default` — всё `false` (полный enforce).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ContractOptOut {
-    /// элидировать `requires` (предусловия).
-    pub requires: bool,
-    /// элидировать `ensures` (постусловия).
-    pub ensures: bool,
-    /// элидировать type-`invariant`.
-    pub invariant: bool,
-}
-
-impl ContractOptOut {
-    /// bare `#unchecked` — все три вида.
-    pub fn all() -> Self {
-        Self { requires: true, ensures: true, invariant: true }
-    }
-    /// есть ли хоть один элидируемый вид.
-    pub fn any(&self) -> bool {
-        self.requires || self.ensures || self.invariant
-    }
-    /// объединение (module ⊔ fn).
-    pub fn merged(&self, other: &Self) -> Self {
-        Self {
-            requires: self.requires || other.requires,
-            ensures: self.ensures || other.ensures,
-            invariant: self.invariant || other.invariant,
-        }
-    }
 }
 
 /// Plan 194 A2.1: build-policy режим флага `--contracts` (замена legacy
@@ -554,7 +497,8 @@ impl ContractOptOut {
 /// В ЭТОМ атоме все три значения производят БАЙТ-ИДЕНТИЧНЫЙ codegen —
 /// поведение старого default `enforce`: недоказанные `requires`/`ensures`/
 /// `invariant` проверяются в runtime (debug И release), Z3/Trivial-proven
-/// элидируются; per-fn/module `#unchecked` opt-out работает как раньше.
+/// элидируются. Plan 194 A4: per-fn/module `#unchecked` opt-out (единственный
+/// прежде существовавший источник элизии сверх пруфа) РЕТРАКТИРОВАН.
 /// Различия между режимами (Z3-driven элизия под `optimized`/`verified`,
 /// `#debug`-эрозия) — последующие атомы волны 2 (A2.2+/A3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -564,22 +508,21 @@ pub enum ContractsMode {
     /// dev-профиля.
     #[default]
     Checked,
-    /// Пока идентично `Checked` (различия — атомы A2.2+/A3). Default для
-    /// release-профиля.
+    /// Z3-driven sound-элизия доказанных + `#debug`-эрозия. Default для
+    /// release-профиля. (Режим `verified` УДАЛЁН 2026-07-15, владелец: whole-build
+    /// «докажи всё или compile-error» — footgun; статическая верификация — через
+    /// per-fn `#verify` + `nova verify-contracts`, не build-режим.)
     Optimized,
-    /// Пока идентично `Checked` (различия — атомы A2.2+/A3).
-    Verified,
 }
 
 impl ContractsMode {
     /// Парсит значение CLI-флага `--contracts`. Clap `value_parser`
-    /// ограничивает вход этими тремя строками — паника здесь означала бы
+    /// ограничивает вход этими двумя строками — паника здесь означала бы
     /// баг в самом парсере, а не пользовательский ввод.
     pub fn parse(s: &str) -> Self {
         match s {
             "checked" => ContractsMode::Checked,
             "optimized" => ContractsMode::Optimized,
-            "verified" => ContractsMode::Verified,
             other => panic!(
                 "invalid --contracts value (CLI value_parser should have rejected this): {other}"
             ),

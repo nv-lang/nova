@@ -1,0 +1,51 @@
+// [M-flagship-spawn-throw-segfault] — RE-VERIFY (Плана 187): свежий бинарь
+// НЕ воспроизводит SIGSEGV. Раньше `throw` мультиполевого (несколько
+// str/[]u8 полей) payload-enum'а, брошенный ИЗ ФУНКЦИИ, вызванной внутри
+// `spawn`, под `with Fail[E] = ... { supervised(deadline:) { spawn { ... }
+// } }`, крашил процесс (SIGSEGV, без вывода вообще — подозрение: GC-roots
+// через longjmp-based unwind). Однополевой (`str`) throwaway-enum той же
+// формой НЕ крашил — только богатые многополевые типы. Регресс-фикстура —
+// заморозить закрытие: multi-field enum (str×2 + int + []u8), throw ИЗ
+// вызываемой функции (не inline в spawn-теле), под
+// `supervised(deadline:)`, с `with Fail[E]` обёрткой снаружи.
+// Единица: folder-module `spec_tests.conformance`.
+module regressions.spawn_throw_multifield_payload
+
+import std.time.duration
+
+type M187Src { id str, latency_ms int }
+type M187Data { id str, payload []u8 }
+
+type M187ThrowErr enum
+    | Upstream(str)
+    | Transport(str)
+    | Multi { id str, detail str, code int, blob []u8 }
+
+fn m187_thrower(id str, detail str) Fail[M187ThrowErr] Time -> M187Data {
+    Time.sleep(0)
+    throw M187ThrowErr.Multi { id, detail, code: 7, blob: [1, 2, 3] as []u8 }
+}
+
+fn m187_guarded(src M187Src, deadline Monotonic) Time -> bool {
+    mut caught = false
+    ro _ = with Fail[M187ThrowErr] = |_e| {
+        caught = true
+        0
+    } {
+        supervised(deadline: deadline) {
+            spawn {
+                ro _r = m187_thrower(src.id, "detail-" + src.id)
+            }
+        }
+        99
+    }
+    caught
+}
+
+test "M-187 throw мультиполевого payload-enum из fn внутри spawn (supervised deadline) не крашит" {
+    ro t0 = Monotonic.now()
+    ro deadline = t0 + Duration.from_millis(2000)
+    ro src = M187Src { id: "s1", latency_ms: 0 }
+    ro caught = m187_guarded(src, deadline)
+    assert(caught)
+}

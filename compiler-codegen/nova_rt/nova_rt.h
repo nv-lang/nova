@@ -397,6 +397,56 @@ static inline int nova_f32_shortest(nova_f32 v, char* buf) {
     return n < 0 ? 0 : n;
 }
 
+/* Plan 208 Ф.1 (D422 §5) — buffer-form float formatter, ADDITIVE alongside the
+ * existing str-returning `nova_f64_to_str`/`nova_fmt_f64_body` (conv.h) — those
+ * keep backing the CURRENT `.nv` prelude / interpolation path unchanged. This
+ * is the SOLE C-extern surface the Unified Formatter design keeps (D422 §5:
+ * "float — ЕДИНСТВЕННЫЙ C-extern, dtoa непортируем"); everything else
+ * (int/bool/char/радикс/pad) moves to `.nv` (`std/src/runtime/fmt_buf.nv`).
+ *
+ * Literal C symbol name (NO `nova_` prefix) — [D282](../../spec/decisions/
+ * 08-runtime.md#d282) `extern "C" fn` contract: the `.nv`-side declaration
+ * (`extern "C" fn fmt_f64_into(...)`) calls this exact name, resolved purely
+ * via header visibility (nova_rt.h is `#include`d into every generated C
+ * translation unit — no separate forward-declaration emitted by codegen for
+ * `extern "C" fn`, Plan 91.12 Ф.-1). Kept `static inline` (like every other
+ * nova_rt.h primitive) so multiple .c translation units that include this
+ * header do NOT collide with duplicate external-linkage definitions.
+ *
+ * kind: 0=Shortest (delegates to `nova_f64_shortest`, the existing
+ *       round-trip-minimal engine — reused verbatim, not reimplemented),
+ *       1=Fixed    (`%.*f` fixed-point, `prec` decimal places),
+ *       2=Sci      (`%.*e` scientific, `prec` decimal places).
+ * `FloatKind` is a `.nv`-side enum (`std/src/runtime/fmt_buf.nv`); the
+ * `.nv`-wrapper `fmt_f64` converts it to this `int` at the ABI boundary
+ * (enums do not cross `extern "C"` directly, D422 §5).
+ *
+ * Writes at most `cap` bytes into `buf` (TRUNCATING defensively if `cap` is
+ * smaller than the rendered length — no overflow, matches the buffer-safety
+ * discipline of `int_fmt`/`bool_fmt`/`char_fmt` in fmt_buf.nv). Returns the
+ * number of bytes actually written. `tmp[400]` covers the worst case: a
+ * `%.*f` render of `DBL_MAX` (~309 integer digits) at the widest clamped
+ * precision (40) plus sign/decimal-point — comfortably under 400. */
+static inline nova_int fmt_f64_into(uint8_t* buf, nova_int cap, double v, nova_int kind, nova_int prec) {
+    char tmp[400];
+    int n;
+    if (kind == 1) {
+        int p = (prec < 0) ? 6 : ((prec > 340) ? 340 : (int)prec);
+        n = snprintf(tmp, sizeof(tmp), "%.*f", p, v);
+    } else if (kind == 2) {
+        int p = (prec < 0) ? 6 : ((prec > 40) ? 40 : (int)prec);
+        n = snprintf(tmp, sizeof(tmp), "%.*e", p, v);
+    } else {
+        n = nova_f64_shortest(v, tmp);
+    }
+    if (n < 0) n = 0;
+    if (cap < 0) cap = 0;
+    nova_int result = (nova_int)n;
+    if (result > cap) result = cap;
+    if (result > 0) memcpy(buf, tmp, (size_t)result);
+    return result;
+}
+
 /* ---- println ---- */
 /* Variadic nova_println is generated per call-site. Each arg is printed
  * with its own helper depending on type. */

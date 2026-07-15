@@ -27,22 +27,21 @@ import std.collections.range.{Range}
 /// is no more codegen range-slice intrinsic (`nova_vec_slice_chk`/`_nochk`
 /// are retired). Overloads with `@index(i int)` (access.nv).
 ///
-/// Panics on out-of-bounds (`r.start < 0`, `r.end < r.start`, or `r.end >
-/// len()`). The bounds-check is an ORDINARY always-on panic guard in the
-/// body — NOT a `requires` precondition — per Plan 194 (D-amendment):
-/// slice-bounds safety is memory-safety, not an elidable contract, so it
-/// must stay in effect under every `--contracts` policy (including a future
-/// `optimized`/`off`-equivalent mode). `_nochk`-style elision of a
-/// proven-in-range site is a job for a future sound-elision compiler pass
-/// over this same body (Plan 194 Ф.2), not a hand-written opt-out here.
-/// The perf goal (0-alloc view descriptor placement) is met via the general
-/// sret `_out` call-site rewrite (Plan 172.14, `sret_maybe_rewrite_call`) —
-/// any Leaf-form Vec-returning mono method gets it automatically, so this
-/// body needs no special plumbing.
-export fn Vec[T] @index(r Range) -> Self {
-    if r.start < 0 || r.end < r.start || r.end > @len {
-        panic("Vec: slice range out of bounds")
-    }
+/// Slice-bounds are a `requires` precondition (RESTORED per owner 2026-07-15,
+/// revising the earlier Plan-194-Ф.3 always-on-guard stance). Justification:
+/// with `off` AND `verified` modes BOTH removed, a `requires` is never
+/// unsafely elided — enforced at runtime under `checked`, and under
+/// `optimized` sound-elided ONLY when Z3 proves the range in-bounds (else
+/// enforced). So bounds get the ideal profile (zero-cost when provably safe,
+/// checked otherwise) through the SINGLE contract machinery — one window, not
+/// a hand-written guard plus a separate site-elision path. On violation → a
+/// contract panic. The perf goal (0-alloc view-descriptor placement) is met
+/// via the general sret `_out` call-site rewrite (Plan 172.14,
+/// `sret_maybe_rewrite_call`) — any Leaf-form Vec-returning mono method gets
+/// it automatically, so this body needs no special plumbing.
+export fn Vec[T] @index(r Range) -> Self
+    requires r.start >= 0 && r.end >= r.start && r.end <= @len
+{
     ro n = r.end - r.start
     Self { data: unsafe { @data.offset(r.start) }, len: n, cap: n }
 }
