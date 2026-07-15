@@ -30,15 +30,30 @@
 Граница «что в компиляторе / что на `.nv`» — по §3 maximize-nv-sourcing: в Rust только
 **непортируемое** (нужен аппаратный флаг переполнения), всё остальное — `.nv`.
 
-- **РОВНО ОДИН интринсик** (в компиляторе): `int @overflowing_add/_sub/_mul() -> (int, bool)`
-  (пара wrapped+flag), прямой лоуэринг на `__builtin_*_overflow`. Нельзя на `.nv` — нужен HW-флаг.
-  Единственный источник overflow-детекта. **Per-type автоматически:** компилятор подставляет
-  `__builtin_sadd`/`uaddl`/… по ширине и знаку `T` — писать по интринсику на каждый тип НЕ надо.
-- **ТРИ `.nv`-бланкет-обёртки** над примитивом (maximize-nv-sourcing), каждая = ОДИН бланкет на
-  type-set `Ints` (не копипаста на i8/…/u64; работает благодаря диспетчу бланкетов над примитивами,
-  D164-фикс): `fn[T Ints] T @checked_add() -> Option[T]` (None при overflow),
-  `@saturating_add() -> T` (клампит по знаку rhs к `T.MAX`/`T.MIN`),
-  `@wrapping_add() -> T` (модульно — берёт wrapped, игнор флага). То же для `-`/`*`.
+- **РОВНО ОДИН интринсик** (в компиляторе), **generic + с операндом**:
+  `fn[T Ints] T @overflowing_add(rhs T) -> (T, bool)` (и `_sub`/`_mul`) — пара wrapped+flag,
+  прямой лоуэринг на `__builtin_*_overflow`. Нельзя на `.nv` — нужен HW-флаг. Единственный источник
+  overflow-детекта. **Per-type автоматически:** компилятор подставляет `__builtin_sadd`/`uaddl`/… по
+  ширине и знаку `T`. (Правка после ревью: подпись именно generic `[T Ints] T` c параметром `rhs T`,
+  НЕ `int @…()` без аргумента — операнд обязателен, и бланкеты зовут его на i8/u32/….)
+- **Type-set `Ints`** нужно ЗАВЕСТИ (Ф.0): сейчас есть только `SignedInt` (`i8|i16|i32|i64|int`) и
+  `UnsignedInt` (`u8|u16|u32|u64|uint`) раздельно (`std/src/prelude/protocols.nv:659`). Ввести
+  `type Ints set i8|i16|i32|i64|int|u8|u16|u32|u64|uint` (объединение) → один бланкет на метод вместо
+  двух. Формулы ниже работают и для signed, и для unsigned в ОДНОМ бланкете (см. §saturating).
+- **ТРИ `.nv`-бланкет-обёртки** над примитивом (maximize-nv-sourcing), каждая = ОДИН бланкет
+  `fn[T Ints]` (не копипаста; диспетч бланкетов над примитивами — D164-фикс):
+  - `fn[T Ints] T @checked_add(rhs T) -> Option[T]` — `overflowed → None; else Some(wrapped)`.
+  - `fn[T Ints] T @wrapping_add(rhs T) -> T` — берёт `wrapped`, флаг игнор (модульно).
+  - `fn[T Ints] T @saturating_add(rhs T) -> T` — при overflow клампит к `T.MAX`/`T.MIN` по
+    **op-специфичной** формуле направления (см. ниже). То же семейство для `_sub`/`_mul`.
+- **`saturating`: направление клампа — ПО ОПЕРАЦИИ, не «по знаку rhs»** (правка после ревью — прежняя
+  формулировка была верна только для add):
+  - **add:** overflow → `rhs > 0 ? T.MAX : T.MIN`.
+  - **sub:** overflow → `rhs < 0 ? T.MAX : T.MIN` (вычли отрицательное → вверх).
+  - **mul:** overflow → `(a < 0) == (rhs < 0) ? T.MAX : T.MIN` (одинаковый знак → произведение вверх).
+  Все три формулы **автоматически корректны и для unsigned**: у unsigned `x < 0` всегда false →
+  ветки схлопываются в правильную сторону (unsigned add/mul → MAX, unsigned sub → MIN=0). Значит один
+  бланкет `fn[T Ints]` на op покрывает и signed, и unsigned.
 - **trap-дефолт (`+`) уже есть** — `nova_int_checked_add` (`__builtin_add_overflow` + паника),
   `effects.h:1044`. Не трогаем.
 - **`unchecked_*` (unsafe) — ОТЛОЖЕН** (владелец 2026-07-14). Это сырой C-`a+b` без trap (UB на
@@ -79,15 +94,50 @@
 пунктом ([M-cas-return-witnessed-value] в backlog), НЕ в 206.
 
 ## Фазы
-- Ф.0 Спека: D-блок (примитив `@overflowing_*`, пять политик, миграция Duration, `unchecked`=unsafe-op).
-- Ф.1 Codegen: интринсик `@overflowing_add/_sub/_mul` → `__builtin_*_overflow` (пара).
-- Ф.2 std: ТРИ `.nv`-бланкета `@checked_*`/`@saturating_*`/`@wrapping_*` на `fn[T Ints]` (`@unchecked_*` — ОТЛОЖЕН, см. Дизайн).
-- Ф.3 Миграция Duration: снять ручное дублирование, делегировать общим; тесты D317 δ0.
-- Ф.4 Тесты: четыре реализуемых исхода на границах (MAX/MIN trap, wrap-round-trip, saturating-clamp, checked→None); unsafe — когда/если введём `unchecked`.
+- Ф.0 Спека + type-set: D-блок (примитив `@overflowing_*`, пять политик, миграция Duration,
+  `unchecked`=unsafe-op, `div`/`neg` вне рамок). **Завести `type Ints set i8|…|u64|int|uint`**
+  (объединение SignedInt+UnsignedInt) в `std/src/prelude/protocols.nv`.
+- Ф.1 Codegen: generic-интринсик `fn[T Ints] T @overflowing_add/_sub/_mul(rhs T) -> (T, bool)` →
+  `__builtin_*_overflow` (пара), per-type подстановка builtin по ширине/знаку `T`.
+- Ф.2 std: ТРИ `.nv`-бланкета `@checked_*`/`@saturating_*`/`@wrapping_*` на `fn[T Ints]`
+  (saturating — op-специфичная формула направления, см. Дизайн; `@unchecked_*` — ОТЛОЖЕН).
+- Ф.3 Миграция Duration (снять ручное дублирование, делегировать общим примитивам):
+  - `std/src/time/duration.nv:371+` приватные `checked_add_i64`/`checked_sub_i64` (ручные
+    `if b>0 && a>i64_max()-b {None}`) → делегируют `i64 @checked_add`/`@checked_sub`.
+    `saturating_*` → `i64 @saturating_*`. Ручные range-проверки диапазона i64 **удаляются**.
+  - `f64_nanos_checked`/`f64_nanos_or_trap` (f64→i64 наносекунды): здесь overflow-детект по f64-границам,
+    НЕ целочисленный `__builtin` — оставить как есть (это конверсия, не int-арифметика); отметить, что
+    это НЕ дублирование overflow-примитива.
+  - Публичные `Duration.checked_add`/`saturating_add`/… — поведение байт-паритет (D317-тесты δ0).
+- Ф.4 Тесты: четыре реализуемых исхода на границах для ADD/SUB/MUL, signed И unsigned (MAX/MIN trap,
+  wrap-round-trip, saturating-clamp по op-формуле в обе стороны, checked→None); unsafe — когда/если
+  введём `unchecked`.
 
 ## Гейты
 conformance + новые фикстуры пяти исходов; Duration-тесты (D317) байт-паритет поведения; std δ0.
 
+## ★ Открытый вопрос (нужно решение владельца): trap-дефолт ТОЛЬКО у `int`
+
+Найдено при ревью 2026-07-15: в `effects.h` есть лишь `nova_int_checked_add/sub/mul`, а emit_c
+(`~27161`/`~28033`) хардкодит `nova_int_checked_*`. **Значит `+`/`-`/`*` трапят на переполнении только
+для `int` (nova_int); у sized-типов (`i8`..`i64`, `u8`..`u64`) переполнение — сырой C-`+`: для signed
+это UB, для unsigned — тихий wrap.** Это **дыра звучности** (философия «overflow = always-on safety»
+нарушена для sized-типов), не просто эргономика.
+
+Развилка:
+- **(A) Закрыть в 206** — расширить trap-дефолт на все Ints: добавить `nova_<T>_checked_*` (или generic
+  через `__builtin_*_overflow` per-type) и лоуэрить типизированный `+`/`-`/`*` в них. Устраняет UB.
+  Стоимость: правка codegen-лоуэринга бинопов + возможные перф/паритет-эффекты (все sized-арифметики
+  становятся checked). Согласуется с always-on-safety.
+- **(B) Отдельным пунктом** — 206 добавляет только методы (`@checked_*` и т.д.), а закрытие
+  sized-trap выносится в свой план/маркер.
+
+Рекомендация: **(A)** — это соундность, и она в духе того же примитива `@overflowing_*` (тот уже
+per-type). Если перф-паритет sized-арифметики станет проблемой — Z3-элизия (optimized) её снимет, как
+для `int`. Но это заметное расширение объёма 206 — **решение за владельцем.**
+
 ## Границы
-Не меняет trap-дефолт обычной арифметики и Z3-элизию. Только ДОБАВЛЯЕТ явные политики + дедуплицирует
-overflow-детект в один примитив.
+Не трогает Z3-элизию. `div`/`neg` — **вне рамок 206** (у `__builtin` нет div-overflow; `div` = спец-кейс
+`INT_MIN/-1` + деление-на-ноль, отдельный путь; `neg(INT_MIN)` — тоже отдельно). 206 ДОБАВЛЯЕТ явные
+политики (методы) + дедуплицирует overflow-детект в один примитив; вопрос trap-дефолта sized-типов —
+см. открытый вопрос выше.
