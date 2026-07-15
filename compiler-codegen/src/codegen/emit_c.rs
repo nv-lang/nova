@@ -11142,6 +11142,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
 
+        // [M-187-nested-spawn-scope-var-cc-fail]: a `spawn` LEXICALLY NESTED
+        // inside this spawn's own body (same `supervised` scope, no
+        // intervening nested `supervised`/`parallel for`) needs to register
+        // its own fiber as a child of the SAME scope queue this spawn itself
+        // registers into (`queue`, below) — but `queue`'s C name is a
+        // codegen-internal local (`_nova_scope_q_N`), never an AST `Ident`,
+        // so the ordinary `captures` scan above (`collect_idents_expr`) can
+        // never discover it. Without this, a nested `emit_spawn` call reads
+        // `self.current_scope_queue` unchanged (still the OUTER scope's bare
+        // local name) while emitting into a DIFFERENT C function (this
+        // spawn's own fiber fn, whose only local is `_c`) — CC-FAIL "use of
+        // undeclared identifier". Fix: always thread the active scope queue
+        // through the ctx (one extra pointer field, unconditionally — cheap,
+        // and correct whether or not this spawn's body actually contains a
+        // nested spawn) and repoint `current_scope_queue` at the captured
+        // field for the duration of body emission below, mirroring the
+        // `is_outer_cap` capture-macro treatment user captures already get.
+        // (`queue` is normally computed further down, right before the fiber
+        // is pushed into it — hoisted here, unchanged value, so this capture
+        // assignment can use it too.)
+        let queue = self.current_scope_queue.clone().expect("scope queue must be active");
+        let queue_cap_field = "_nova_captured_scope_q".to_string();
+        self.line(&format!("{ctx}->{field} = &{q};",
+            ctx = ctx_var, field = queue_cap_field, q = queue));
+
         // D71 / Plan 173.1 Ф.2 `parallel for → []T`: clone the parent Sender
         // into the child's ctx AT THE SPAWN SITE — the clone is created in the
         // PARENT (refcount++ happens strictly before the parent tx close that
@@ -11158,7 +11183,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Push the fiber into the scope queue. spawn returns unit (D50/D71):
         // results from concurrent execution come through mut-captures or
         // `parallel for` (homogeneous results), never from spawn itself.
-        let queue = self.current_scope_queue.clone().expect("scope queue must be active");
+        // (`queue` hoisted above, next to the new scope-queue capture field.)
         // Plan 44.5 Layer 5 fix: initialize _nova_worker_slot = -1 explicitly.
         // nova_alloc zero-initializes (slot=0), but 0 is a valid slot index —
         // -1 is required as "not yet set" sentinel for the worker loop restore logic.
@@ -11300,6 +11325,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let _ = writeln!(self.lambda_forward_decls, "    {}* {};", ty, cap);
             }
         }
+        // [M-187-nested-spawn-scope-var-cc-fail]: active scope queue, threaded
+        // through unconditionally so a NESTED `spawn` inside this spawn's own
+        // body can re-register into the same scope (see the assignment above).
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFiberQueue* {};", queue_cap_field);
         // D71 / Plan 173.1 Ф.2 `parallel for → []T`: the child's owned Sender
         // clone (created in the parent at the spawn site, closed by the child
         // on fiber exit). Replaces the indexed-slot pair (_nova_par_idx /
@@ -11380,6 +11410,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         let prev_caps = std::mem::replace(&mut self.current_spawn_captures, Some(cap_set));
         let prev_by_value = std::mem::replace(&mut self.current_spawn_capture_by_value, Some(cap_by_value));
+        // [M-187-nested-spawn-scope-var-cc-fail]: repoint the active scope
+        // queue at the captured ctx field (`&(*_c->_nova_captured_scope_q)` —
+        // a valid `NovaFiberQueue*`-typed address expression, identical in
+        // effect to the bare local it replaces) for the duration of THIS
+        // spawn's own body emission, so a nested `emit_spawn` call picks up
+        // a reference valid inside this fiber fn instead of the outer
+        // function's now-unreachable local.
+        let prev_scope_queue = std::mem::replace(
+            &mut self.current_scope_queue,
+            Some(format!("(*_c->{})", queue_cap_field)),
+        );
 
         // Wrap body in a fail-frame so that `throw` inside fiber is caught here
         // (longjmp lands on THIS fiber's stack — safe). After catch, report the
@@ -11538,6 +11579,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Deactivate capture rewriting before emitting closing brace.
         self.current_spawn_captures = prev_caps;
         self.current_spawn_capture_by_value = prev_by_value;
+        // [M-187-nested-spawn-scope-var-cc-fail]: restore the caller's scope
+        // queue reference now that this spawn's own body is fully emitted.
+        self.current_scope_queue = prev_scope_queue;
         self.indent -= 1;
         self.line("}");
         self.line("");
