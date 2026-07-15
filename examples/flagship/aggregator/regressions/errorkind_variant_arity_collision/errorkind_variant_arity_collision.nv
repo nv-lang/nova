@@ -21,7 +21,7 @@
 // Минимальный репро БЕЗ std.io/std.encoding.json (два своих sum'а с
 // одноимённым вариантом разной арности).
 // Единица: folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module regressions.errorkind_variant_arity_collision
 
 type M187KindA enum
     | Collide

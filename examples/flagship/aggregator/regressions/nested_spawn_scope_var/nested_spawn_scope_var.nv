@@ -17,7 +17,7 @@
 // capture-macro treatment ordinary captured variables already get.
 //
 // Единица: folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module regressions.nested_spawn_scope_var
 
 test "M-187 spawn nested lexically inside another spawn (one supervised) compiles and runs" {
     mut outer_ran = AtomicInt.new(0)

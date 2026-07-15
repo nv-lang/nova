@@ -16,7 +16,7 @@
 // used by the neighboring @display/@debug branch (Plan 175 Ф.3(d)) and every
 // other value-struct method-call site. No language change — codegen-only.
 
-module standalone.d187_interp_to_str_fallback_valuerecord_recv
+module regressions.interp_to_str_fallback_valuerecord_recv
 
 type D187VErr value { ro code int }
 

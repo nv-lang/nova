@@ -31,7 +31,7 @@
 // `Shape`/`DeError`) в CU — в общем CU это коллидировало бы с
 // одноимёнными placeholder-типами существующих фикстур (bare-name реестр
 // чекера, отдельная известная щель — см. доклад волны 187).
-module standalone.m187_serde_encode_pointer_op_regression
+module regressions.serde_encode_pointer_op
 
 import std.encoding.serde.{Serialize, json_encode}
 

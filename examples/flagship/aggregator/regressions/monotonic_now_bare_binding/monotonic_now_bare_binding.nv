@@ -8,7 +8,7 @@
 // заморозить закрытие: как голая привязка, так и полная форма из
 // `fetch_guarded`/`aggregate` (flagship-187), включая бинарный `t0 + budget`.
 // Единица: folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module regressions.monotonic_now_bare_binding
 
 import std.time.duration
 
