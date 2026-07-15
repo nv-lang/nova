@@ -3215,7 +3215,26 @@ msg/kind/payload/tid, но НЕ throw-site и НЕ propagation-trace ребён�
 accessor (`error_trace() -> []str`?) либо проверка stderr-дампа раннером.
 | `[M-div-neg-overflow-trap]` | Найдено при ревью плана 206 (2026-07-15). `Div`/`Mod` лоуэрятся в СЫРЫЕ C `/`/`%` БЕЗ guard (emit_c ~8204/~28047) → **деление на ноль = UB (x86 #DE → SIGFPE, неконтролируемый крэш, не паника Nova)**; `INT_MIN / -1` тоже UB. `neg(INT_MIN)` — overflow-UB аналогично. Это отдельно от `__builtin_*_overflow`-примитива (у div/neg своего builtin нет). Нужно: (1) div/mod — **всегда трапить деление-на-ноль** чистой паникой (крэш-вектор, приоритет!) + trap `INT_MIN/-1`; (2) `neg` — trap `-INT_MIN`; (3) методы `@checked_div`/`@checked_neg`/`@wrapping_neg`. Вне рамок 206 (иной механизм), но safety-история неполна без этого. div-by-zero = **P1** (частый крэш). **Оформлен подпланом [206.1](206.1-div-neg-trap.md).** | Plan 206.1 | P1 |
 
-## [M-tls-xpkg-tlsversion-value-ptr-dispatch] — cross-package sum-type method value/pointer-ABI mismatch (P1, 2026-07-15)
+## [M-tls-xpkg-tlsversion-value-ptr-dispatch] — cross-package sum-type method value/pointer-ABI mismatch (P1, 2026-07-15) — ✅ РЕШЕНО
+
+**РЕШЕНО 2026-07-15 (opus, verified):** корень — НЕ в receiver-ABI-модели sum-type, а в
+одной точке type-инференса `??`. Legacy-ветка `ExprKind::Coalesce` в
+`infer_expr_c_type` (`emit_c.rs` ~54063) стрипила `NovaOpt_`-префикс и возвращала
+payload-идентификатор `Nova_TlsVersion_p` **ВЕРБАТИМ**, не разворачивая
+sanitized-pointer-маркер `_p` обратно в `Nova_TlsVersion*` (в отличие от
+Coalesce-ЭМИССИИ ~30988, которая уже звала `desanitize_c_from_ident`). Битый тип
+`??`-локала (`Nova_TlsVersion_p version`) отравлял ВНИЗ по потоку receiver-мэнглинг
+метод-диспатча → on-demand эмиссия метода `Nova_Nova_TlsVersion_p_method_to_str` с
+несуществующим типом `Nova_TlsVersion_p*` → CC-FAIL. Локальные однотипные sum-type
+НЕ были задеты — они резолвятся через Channel-2 (чекерский resolved-type →
+чистый `Nova_Ver*`); cross-package падал в эту legacy-ветку (канал промахивался).
+**Фикс:** развернуть маркер через `Self::desanitize_c_from_ident(sani)` (идемпотентно
+для value-payload `nova_int`/`nova_str`/`NovaValue_…` → byte-identical). Runtime/codegen-
+фикс, НЕ язык-меняющий → D-амендмент не нужен. Verified: `echo_client.nv` **линкуется**
+(был C-error), `echo_server.nv` не регрессировал (linked), локальный `Option[enum] ??
+default` + метод собирается. Замечание (вне периметра, не воспроизведено): соседняя
+`Try/Bang`-ветка (~54152) имеет тот же нераскрытый `_p` для cross-package `Option[Sum]?`
+— другой символ/путь, оставлен как наблюдение.
 
 **UPDATE 2026-07-15 (интегратор, verified):** Симптом 1 (decode_utf8) был **устаревшим тегом nova-tls** (lock пинил `510acc25` = v0.1.0, до-196.7) — **СНЯТ** пере-тегом nova-tls **v0.1.1** (`79440c53`, с 196.7 `to_str`) + пере-резолв lock; `echo_server.nv` + weather-live aggregator теперь **линкуются** (verified). Симптом 2 (TlsVersion) — **РЕАЛЬНЫЙ codegen-баг, персистит с v0.1.1**: `echo_client.nv` → `error: passing 'Nova_TlsVersion' (value) to parameter 'Nova_TlsVersion_p*'` — codegen эмитит `Nova_Nova_TlsVersion_p_method_to_str(version)` (передаёт ЗНАЧЕНИЕ), а метод объявлен `(Nova_TlsVersion_p* nova_self)` (ждёт УКАЗАТЕЛЬ). Cross-package sum-type-метод (`TlsVersion.@to_str()`, объявлен nova-tls `config.nv:41`), вызванный из потребителя (entry-пакет echo_client), генерит value-vs-pointer ABI-mismatch на receiver. Блокирует `echo_client.nv` LINK (echo_server/aggregator НЕ задеты — не зовут TlsVersion.@to_str). Класс — родственен D39 (cross-package/mono method-receiver). Зона: `compiler-codegen/src/codegen/emit_c.rs` (receiver value/ptr для sum-type-метода внешнего пакета). Старое: cross-package decode_utf8/tlsversion dispatch — decode-часть была stale-tag, оставлена ниже как контекст.
 
