@@ -38464,3 +38464,49 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   (cleanup диспатчнут ровно раз); (в) pure-std `examples/net/echo_server.nv`
   линкуется (регрессии нет); std/src/net продакшн PASS (3 «FAIL» — это
   ожидаемо-падающие neg/ фикстуры). Полный conformance — оркестратор.
+## ЗАКРЫТ [M-187-watchdog-idle-server-kill] (2026-07-15, ветка fix-watchdog-idle, sonnet)
+
+- Рекон: `nova_runtime_dump_state` (`runtime.c:275-417`) — чистая
+  диагностика (fprintf в stderr + fflush), **НЕТ** ни одного `abort()`/
+  `exit()`/`_exit()` внутри. Watchdog-check (`fibers.h:2924-2937` в
+  прочитанной версии) тоже не содержит фатального пути — `_watchdog_fired`
+  latch гарантирует one-shot per scope. Прочитан целиком, вызовов
+  завершения процесса нет.
+- Эмпирика (worktree `nova-watchdog`, свежесобранный компилятор + aggregator,
+  дефолтный порог 5с, watchdog ВКЛЮЧЁН): idle >25-30с дважды, idle+curl+idle,
+  28 последовательных curl-запросов — **сервер НИ РАЗУ не упал**; дамп
+  печатается ровно один раз (`supervised-watchdog-5s-remote-1`, `count=0
+  pending_remote=1` — accept-loop легитимно запаркован на `uv_accept`,
+  ровно как в описании) и процесс продолжает жить/отвечать. Не смог
+  независимо воспроизвести фатальность из самого dump-пути, несмотря на
+  расширенное тестирование — **честно фиксирую**: возможно смежная
+  вероятностная гонка `[M-187-supervised-nested-fiber-slot-race]`
+  (`main.nv:200-241`, реальная M:N-гонка планировщика слотов под вложенным
+  `supervised`, по коду "закрыта 83.4.5.12", но комментарий в main.nv её всё
+  ещё описывает как smoke-observed) даёт идентичную сигнатуру дампа и была
+  спутана с фатальностью самого watchdog при браузер-смоуке; либо
+  process-tooling артефакт (сам поймал похожий ложный "процесс мёртв" из-за
+  PID-путаницы git-bash/MSYS job-control при ручном тестировании — легко
+  принять за реальную смерть). Развилка на M:N-архитектуру НЕ подтверждена
+  как корень — эскалация на opus не потребовалась.
+- ФИКС (направление 1, минимально-инвазивно): watchdog больше не считает
+  здоровый `pending_remote>0 / count=0` (idle-on-IO — легитимный accept-loop
+  park) сам по себе признаком hang'а. Новый `nova_runtime_has_stuck_fibers()`
+  (`runtime.c`, объявление `runtime.h`) — лёгкий скан (без печати) той же
+  сигнатуры, что дамп уже флагует как `STUCK_ALIVE_NOT_PARKED`
+  (`MCO_SUSPENDED && !parked` — потерянный wake / осиротевший слот). В
+  `fibers.h`'s watchdog-check: дамп печатается ТОЛЬКО если найден
+  реально застрявший fiber; если всё легитимно запарковано — таймер
+  перевзводится (`_watchdog_start = now`), а не гасится навсегда — сервер,
+  здоровый сейчас, но зависший позже, всё ещё будет продиагностирован (с
+  задержкой максимум в одно окно порога). Реальный hang по-прежнему ловится
+  (сигнатура идентична существующей в dump_state, инвариант не ослаблен).
+- Верификация: `nova test std/src/concurrency/supervisor_test.nv
+  std/src/concurrency/supervised_deadline_test.nv` → PASS 2/2 (M:N supervised/
+  deadline не задеты). Aggregator (`AGGREGATOR_PORT` alt-порт, т.к. 8187
+  занят соседним агентом): idle >12с (без запроса) → жив, лог дампа ПУСТ
+  (здоровый idle больше не тревожит); curl `/api/run?legend=health&mode=live`
+  → 200 + валидный JSON; ещё >12с idle → жив; убит, порт освобождён.
+- Зона: `compiler-codegen/nova_rt/{fibers.h,runtime.c,runtime.h}` — чисто
+  рантайм-фикс, НЕ язык-меняющий → D-амендмент спеки 83.11 не требуется.
+- Маркер снят из `docs/plans/backlog-followups.md` (история — эта запись).
