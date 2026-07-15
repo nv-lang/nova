@@ -42,7 +42,7 @@
 
 ```nova
 export type Write protocol {         // МИНИМАЛЬНЫЙ: только @write; reserve/advance — на StringBuilder (см. §9)
-    mut @write(bytes ro []u8) -> ()  // ro — только читает в sink; str-литерал коэрсится в @bytes() (D176 zero-copy)
+    mut @write(bytes []u8) -> ()     // параметры ro по умолчанию → уже read-only; str-литерал коэрсится в @bytes() (D176)
     // reserve/advance — КОНКРЕТНО на StringBuilder (не в протоколе); zero-copy = компилятор через SB
 }
 
@@ -241,7 +241,7 @@ type FloatKind enum Shortest | Fixed | Sci        // для fmt_f64_into
 **`Write` — байтовый sink форматирования (ИНФАЛЛИБЕЛЬНЫЙ). МИНИМАЛЬНЫЙ (ревью 2026-07-15):**
 ```nova
 export type Write protocol {
-    mut @write(bytes ro []u8) -> ()
+    mut @write(bytes []u8) -> ()      // параметры ro по умолчанию → уже read-only (explicit `ro` только на возвратах)
 }
 ```
 **Ревью 2026-07-15: `@write(str)`-overload УБРАН.** str пишется: переменная → `w.write(s.bytes())` (D176, zero-copy
