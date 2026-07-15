@@ -21550,6 +21550,44 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         } else {
             self.mono_fwd_decls.push_str(&fwd_decl);
         }
+        // [M-serde-encode-pointer-op-regression] fix: register the SAME
+        // Plan-152.4.3 type-qualified return key (`fn_ret_<recv>_<method>`)
+        // the plain (non-generic-own-param) forward-decl path already writes
+        // (~13908 above) — but keyed by THIS instantiation's CONCRETE C
+        // receiver type (`recv_c`, stripped of any `Nova_`/`NovaValue_`/
+        // `NovaTuple_` prefix and trailing `*`, mirroring `infer_call_ret_c`'s
+        // own read-side normalization of a call site's `obj_ty`), not
+        // present anywhere for a receiver-own-generic method ("bare-T
+        // blanket", `fn[T] T @method()`, e.g. the primitive `@to_str()`
+        // fallback in `std/src/runtime/string/core.nv`): that declaration is
+        // routed entirely through `mono_method_decls`/`method_overloads`
+        // sentinels (~13764 above, gated on `!f.generics.is_empty()`, which
+        // fires FIRST and returns early) and never reaches the ordinary
+        // forward-decl registration at all — so `infer_call_ret_c`'s
+        // type-qualified lookup (`B11ae_type_qualified_fn_ret`) ALWAYS
+        // missed for a primitive receiver relying on this blanket, silently
+        // falling through to the receiver-BLIND name-only fallback
+        // (`B11af_fn_ret_method_nameonly`, last-registered-wins across every
+        // unrelated type sharing the method name). Concretely: `int.to_str()`
+        // / `char.to_str()` (both routed through this exact blanket) picked
+        // up whichever OTHER same-named method registered `fn_ret_to_str`
+        // last in the compile unit — e.g. a co-present `[]u8 @to_str() ->
+        // Result[str, Utf8Error]` — mistyping the primitive's `str` result as
+        // a `Result`-shaped (i.e. raw-pointer-shaped) value; a later `+`
+        // string-concatenation on that mistyped operand then tripped Plan
+        // 70's strict-propagation `E_POINTER_OP_USE_METHOD` guard (the
+        // guard caught the fallout, not the cause). This is the DEFINITION
+        // side of the SAME registry `register_mono_method_instance` already
+        // computes `ret_c` for (per-concrete-instantiation, correctly
+        // substituted) — publishing it here closes the gap directly, with no
+        // change to the read side.
+        {
+            let bare_recv_c = recv_c.trim_end_matches('*');
+            let key_tn = Self::debt_strip_value_nova_tuple_prefix(bare_recv_c);
+            if !key_tn.is_empty() {
+                self.var_types.insert(format!("fn_ret_{}_{}", key_tn, fn_decl.name), ret_c.clone());
+            }
+        }
         // Enqueue for body emission — prefix __method__TYPE::name so worklist drain can route
         let worklist_key = format!("__method__{}::{}", recv_type, fn_decl.name);
         self.mono_worklist.push((worklist_key.clone(), Self::subst_vec_from_c_pairs(&type_subst), mono_name.to_string()));
