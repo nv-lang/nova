@@ -9,6 +9,12 @@
 
 module encoding.compress
 
+// crc32-семейство — канон `std.checksums.crc32` (DRY-дедуп 2026-07-15,
+// [M-compress-checksum-cleanup]); `checksum.nv` re-export'ит для внешних
+// потребителей модуля, но peer-import — per-file (D29), поэтому явный
+// import здесь тоже нужен.
+import std.checksums.crc32.{crc32, crc32_init, crc32_update, crc32_finalize}
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // Разбор gzip-заголовка (переиспользуется one-shot + streaming)

@@ -4,6 +4,11 @@
 
 module encoding.compress
 
+// crc32/adler32 — канон `std.checksums.{crc32,adler32}` (DRY-дедуп
+// 2026-07-15, [M-compress-checksum-cleanup]); peer-import per-file (D29).
+import std.checksums.crc32.{crc32}
+import std.checksums.adler32.{adler32}
+
 
 fn d336_hex(s str) -> []u8 {
     ro chars = s.bytes()

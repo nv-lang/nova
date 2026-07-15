@@ -1,0 +1,75 @@
+// stdlib/adler32.nv — Adler-32 checksum (zlib).
+//
+// Независимая реализация. Спецификация:
+//   - RFC 1950 (zlib): https://www.rfc-editor.org/rfc/rfc1950 §9
+//
+// Модуль 65521 (наибольший простой < 65536), используется в:
+//   - zlib
+//   - PNG (внутри zlib-контейнера)
+//
+// Алгоритм:
+//   - Два 16-битных аккумулятора `a` (сумма байт + 1) и `b` (сумма
+//     промежуточных `a`), оба mod 65521.
+//   - Финальное значение: `(b << 16) | a`.
+//
+// Pure function, без эффектов. Прямая проверка integrity.
+//
+// API:
+//   fn adler32(data []u8) -> u32
+
+module checksums.adler32
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Public API
+// ──────────────────────────────────────────────────────────────────────────
+
+// Наибольший простой < 65536 (RFC 1950 §9).
+fn adler_base() -> u32 => 65521
+
+/// Adler-32 checksum (RFC 1950 §9) для последовательности байт.
+///
+/// Pure-функция: deterministic, no I/O. Use case — zlib trailer.
+///
+/// # Examples
+/// ```nova
+/// let cs = adler32("Wikipedia".bytes())
+/// assert(cs == 0x11E60398)
+/// ```
+#stable(since = "0.1")
+export fn adler32(data []u8) -> u32 =>
+    adler32_finalize(adler32_update(adler32_init(), data))
+
+/// Init incremental Adler-32 state (a=1, b=0, упаковано `(b<<16)|a` = 0x00000001)
+/// — для streamed input.
+///
+/// # Examples
+/// ```nova
+/// let mut s = adler32_init()
+/// s = adler32_update(s, chunk1)
+/// s = adler32_update(s, chunk2)
+/// let final = adler32_finalize(s)
+/// ```
+#stable(since = "0.1")
+export fn adler32_init() -> u32 => 1
+
+/// Update Adler-32 state с новыми bytes (packed `(b<<16)|a` in/out).
+/// Без финализации (финализация — identity, но метод есть для симметрии с `crc32`).
+#stable(since = "0.1")
+export fn adler32_update(state u32, data []u8) -> u32 {
+    ro m = adler_base()
+    mut a = state & 0xFFFF
+    mut b = (state >> 16) & 0xFFFF
+    for byte in data {
+        a = (a + (byte as u32)) % m
+        b = (b + a) % m
+    }
+    (b << 16) | a
+}
+
+/// Финализирует Adler-32 state — identity (значение уже в финальной форме).
+#stable(since = "0.1")
+export fn adler32_finalize(state u32) -> u32 => state
+
+
+// Тесты — см. peer-файл adler32_test.nv (module checksums.adler32).
