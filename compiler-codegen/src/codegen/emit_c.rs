@@ -42210,17 +42210,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             } else if self.record_schemas.contains_key(&struct_name) {
                 None
             } else {
-                // Context-first disambiguation: if the current function's return type
-                // is `Nova_SomeSum*`, prefer that sum's variant over the first registered
-                // one with the same name. Fixes e.g. `Circle { r }` in `-> Shape2` picking
-                // Shape1.Circle when both Shape1 and Shape2 have a Circle variant.
-                let ctx_lookup = self.current_fn_return_ty.as_ref().and_then(|ret_ty| {
-                    let base = Self::debt_strip_nova_prefix_opt(ret_ty.trim_end_matches('*').trim())?;
-                    let entry = self.sum_schema_registry.lookup_sum_schema(base)?;
-                    let v = entry.variants.iter().find(|v| v.variant_name == struct_name)?;
-                    Some((base.to_string(), v.field_c_types.clone()))
-                });
-                ctx_lookup.or_else(|| self.sum_schema_registry.find_variant_compat(&struct_name))
+                // [M-187-errorkind-parsejsonerror-variant-collision]: this used to be
+                // a narrower "context-first" probe that only matched when the
+                // enclosing fn's return type IS the sum directly (`-> Shape2`) — a
+                // fn returning `Result[_, ParseJsonError]` (the realistic error-sum
+                // shape) never matched (the C return type is the `Result` wrapper,
+                // not `ParseJsonError`), silently falling through to
+                // `find_variant_compat`'s first-registered-wins, which picked the
+                // WRONG sum whenever two colliding sums shared a variant name at
+                // different arities (`std.io.ErrorKind.UnexpectedEof` unit vs
+                // `std.encoding.json.ParseJsonError.UnexpectedEof` 2-field record —
+                // `err = Some(UnexpectedEof { @line, @col })`, no `Type.` qualifier).
+                // `debt_find_variant_ctx` (D381) is the general-purpose replacement:
+                // arity filter first (this literal's OWN field count disambiguates
+                // the case above outright), then `expected_sum_hint`/enclosing
+                // return-sum as narrower/wider context fallbacks, then the same
+                // `find_variant_compat` first-wins default — byte-identical to the
+                // old `ctx_lookup` result whenever the variant name is unique.
+                self.debt_find_variant_ctx(&struct_name, Some(fields.len()))
             };
             // D406: for qualified path ["TypeName", "Variant"], use short variant name in constructor.
             let struct_name = if name.len() == 2 && variant_lookup.is_some() {
