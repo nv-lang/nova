@@ -38431,3 +38431,36 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   (проверено 15с+). Дом — backlog + runtime 83.x.
 - slot-race [M-187-supervised-nested-fiber-slot-race] закрыт 83.4.5.12
   (влит a48fc2270, гейт 10/10).
+
+## 187 cross-package consume-cleanup DCE-дыра ЗАКРЫТА (2026-07-15, opus-фикс)
+
+- ЗАКРЫТ [M-187-tls-cross-pkg-consume-cleanup] P1 (снят из backlog). Корень —
+  НЕ «эмиссия только для корневого пакета» (формулировка маркера) и НЕ резолвер:
+  это дыра в **method-DCE reachability seeding** (Plan 159, compute_dead_decls).
+  Метод `T @cleanup(ScopeOutcome)` firing'ается только когда достижимы И тип `T`,
+  И имя `cleanup`. Блок-форма `consume X = e { … }` диспатчит cleanup через
+  СИНТЕТИЧЕСКИЙ символ `Nova_<T>_consume_cleanup` (emit_consume_entry_cleanup) —
+  селектор `.cleanup(…)` НИКОГДА не пишется в исходнике, поэтому чисто
+  синтаксический `collect_used_names` не сеял имя `cleanup` → `(T,cleanup)` в
+  `dead_method_keys` → тело+forward-decl выброшены → диспатч линкуется против
+  ОТСУТСТВУЮЩЕГО определения = `undefined symbol Nova_<T>_consume_cleanup`.
+- Cross-package проявление: consume-сайт жил в методе внешнего пакета
+  (nova-tls `TlsStream.accept`/`connect`, `consume stream { … }` над
+  `std.net TcpStream`); `close` firing'ался (в теле есть явный `@tcp.close()` =
+  `.close` селектор), а `cleanup` — нет. Root pure-std `consume st = s` (raw
+  D180 linear, БЕЗ блока) линковался, т.к. raw-форма cleanup НЕ диспатчит.
+- Фикс (точечный, аналог Plan 209 embed-proxy / contract-interp synthetic-
+  selector сидов): `collect_used_names`, arm `Stmt::ConsumeScope`
+  (compiler-codegen/src/lints.rs) сеет `out.insert("cleanup")`. Firing по-прежнему
+  требует достижимого типа → keep только для consume-типов, реально
+  используемых (over-keep, never over-prune; G0-консервативно). Zero-impact для
+  программ без consume-scope (сид под условием). Runtime/codegen-фикс, НЕ
+  язык-меняющий → D-амендмент НЕ нужен.
+- Верификация (точечная): (а) `examples/tls/echo_server.nv` build+LINK — было
+  `undefined symbol Nova_TcpStream_consume_cleanup` (реф в
+  `Nova_TlsStream_static_accept`), стало `built` (бинарь 2.28МБ), в сген. C
+  теперь И forward-decl И определение cleanup; (б) минимальный root block-consume
+  (свой тип + `@cleanup`, main) build+RUN → `cleanup ran` / `ok result 42`
+  (cleanup диспатчнут ровно раз); (в) pure-std `examples/net/echo_server.nv`
+  линкуется (регрессии нет); std/src/net продакшн PASS (3 «FAIL» — это
+  ожидаемо-падающие neg/ фикстуры). Полный conformance — оркестратор.
