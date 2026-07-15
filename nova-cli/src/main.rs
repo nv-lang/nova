@@ -4920,8 +4920,35 @@ fn cmd_build(
     // compile .c → .exe
     // Plan 149/115: [runtime]+[ffi] resolved from package nova.toml (find_manifest), mirrors test_runner. env still overrides at runtime.
     let manifest = nova_codegen::manifest::find_manifest(&path);
-    let resolved_ffi: Option<test_runner::ResolvedFfiConfig> =
+    let mut resolved_ffi: Option<test_runner::ResolvedFfiConfig> =
         manifest.as_ref().and_then(test_runner::ResolvedFfiConfig::from_manifest);
+    // Plan 03.1 (ext-dep native/FFI propagation), M-187 diamond-fix
+    // follow-up (2026-07-15): `nova build` only merged the ENTRY package's
+    // OWN `[ffi]` section — a dependency's native shim (e.g. nova-tls's
+    // `native/tls_c_shim.c`, providing `tls_client_cfg_new`/`tls_process`/…)
+    // was never linked in, even though `nova test`'s pipeline
+    // (test_runner.rs's `build_and_run_one`) already merges it via
+    // `imports::resolved_dependency_roots`. Pre-existing gap (confirmed on
+    // unmodified `main`: `nova build examples/tls/echo_server.nv` already
+    // link-FAILs with undefined `tls_*` symbols there too) — orthogonal to
+    // the dependency-graph resolver fix, but it blocks verifying that fix
+    // end-to-end against a REAL `tls`-consuming binary (not just a test
+    // fixture), so it's closed here too. Mirrors test_runner.rs's
+    // dependency-ffi merge loop exactly (own package's `[ffi]` first, see
+    // `ResolvedFfiConfig::merge`).
+    if let Some(m) = &manifest {
+        for dep_root in nova_codegen::imports::resolved_dependency_roots(&m.manifest_dir) {
+            let dep_toml = dep_root.join("nova.toml");
+            if let Some(dep_manifest) = nova_codegen::manifest::parse_manifest(&dep_toml, &dep_root) {
+                if let Some(dep_ffi) = test_runner::ResolvedFfiConfig::from_manifest(&dep_manifest) {
+                    match &mut resolved_ffi {
+                        Some(base) => base.merge(dep_ffi),
+                        None => resolved_ffi = Some(dep_ffi),
+                    }
+                }
+            }
+        }
+    }
     let resolved_runtime: Option<nova_codegen::manifest::RuntimeConfig> =
         manifest.as_ref().and_then(|m| m.runtime.clone());
     let build_opts = test_runner::BuildOpts {

@@ -36,6 +36,17 @@ src = "."
 # демонстрирует native-module dependency pattern, симметрично `std/nova.toml`;
 # Plan 203: nova-http, extracted std/http, `examples/flagship/aggregator`
 # потребляет `http.server` тем же путём).
+#
+# [M-187-weather-live-tls-diamond-blocked] fix (Plan 204 дофикс №3, D420):
+# `tls` объявлен здесь В ТОЙ ЖЕ канонической git+version форме, что и
+# `nova-http/nova.toml`'s собственный `tls`-dep (тот же URL/версия) — оба
+# вхождения пакета `tls` в графе (прямое здесь + транзитивное через `http`)
+# резолвятся к ОДНОМУ git-checkout'у (git_cache пин-таблица ключуется по
+# URL), lock содержит `tls` РОВНО ОДИН раз. `path`-override для локальной
+# разработки (без re-tag/push нового nova-tls на каждой итерации) —
+# `nova.local.toml` (не коммитится) — теперь корректно перекрывает ОБА
+# вхождения (прямое root'а И транзитивное через `http`), см. дофикс №3 в
+# `imports.rs::lookup_dependency` / D420 (09-tooling.md).
 [dependencies]
-tls = { path = "../../nova-tls" }
+tls = { git = "https://github.com/nv-lang/nova-tls", version = "0.1" }
 http = { path = "../../nova-http" }

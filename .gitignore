@@ -44,6 +44,10 @@ venv/
 # Личные рабочие материалы
 docs/.sessions/
 
+# D420 (Plan 204): machine-local [replace] overrides — never committed
+# (dev-only path override on top of a package's release git+version dep).
+nova.local.toml
+
 # Артефакты компиляции примеров
 *.asm
 *.obj
