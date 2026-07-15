@@ -303,6 +303,79 @@ byte-parity НЕ требуется (аллокация убрана — `.c` м
 
 ---
 
+## Пункт 10 — duration.nv: локальные i64-арифм-хелперы → встроенные (Plan 206 бланкеты + i64.MAX/@clamp)
+
+**Статус:** 🔄 В РАБОТЕ 2026-07-15 [haiku, worktree]. Всё в ОДНОМ файле `std/src/time/duration.nv` (37 сайтов, вне
+его — 0). Поведение байт-идентично (на 64-бит-таргете).
+
+**Что (карта):**
+- **Убрать 6 локальных хелперов** (стали редундантны после Plan 206 / встроенных): `i64_max()` (361),
+  `i64_min()` (365), `clamp_i64()` (368), `checked_add_i64()` (379), `checked_sub_i64()` (381),
+  `checked_mul_i64()` (386).
+- **Замены во всех сайтах:** `i64_max()`→`i64.MAX`; `i64_min()`→`i64.MIN`; `clamp_i64(r,lo,hi)`→`r.clamp(lo,hi)`;
+  `checked_add_i64(a,b)`→`a.checked_add(b)` (+ `_sub`/`_mul`). (`i64.MAX/MIN` встроены — verified; `@clamp` на
+  `int`, i64 через коэрсию на 64-бит — verified тип-чеком.)
+- **Оставить** `checked_neg_i64` (383) и `checked_div_i64` (388) — стандартного `@checked_neg`/`@checked_div`
+  бланкета НЕТ (owner 2026-07-15); их внутренние `i64_min()`→`i64.MIN`.
+- **`sat_add/sub/mul_i64` оставить** (доменная сатурация к кастомным `[lo,hi]` ≠ `saturating_add`); внутренности
+  `checked_*_i64(a,b)`→`a.checked_*(b)`.
+
+**Приёмка:** `nova test std/time` зелёный; conformance один-CU δ0 (авторитетный гейт — оркестратор). Модель: haiku.
+
+---
+
+## Пункт 11 — duration.nv: `@as_*()` → голое имя (хвост D410-миграции `[M-d410-as-to-migration]`)
+
+**Статус:** 📋 В ОЧЕРЕДИ — делать **ПОСЛЕ Пункта 10** (тот же файл `duration.nv`; не параллелить с haiku-агентом).
+
+**Почему:** D410 упразднил префикс `as_` ([nv-coding-style.md:33](../nv-coding-style.md)), но 11 методов в
+`duration.nv` остались — пропущенный хвост миграции `[M-d410-as-to-migration]`.
+
+**Какое имя (§1а «четыре направления»):** голое существительное (категория «вид/линза», O(1) i64, без аллокации,
+инфаллибельно — как `byte_len()`/`len()`; НЕ `to_*`, тот для аллоц/fallible/O(n)):
+- `@as_nanos/micros/millis/secs/mins/hours/days()` → `@nanos()`/`@micros()`/`@millis()`/`@secs()`/`@mins()`/
+  `@hours()`/`@days()`;
+- `@as_unix_secs/millis/nanos()` → `@unix_secs()`/`@unix_millis()`/`@unix_nanos()`.
+
+**Проверить:** коллизию `@nanos()` с авто-property приватного поля `nanos` (D84/D409); и не столкнётся ли
+`Duration @nanos() -> i64` (getter) с `int @nanos() -> Duration` (fluent-конструктор, см. обсуждение
+`from_nanos`) — разные ресиверы, но одно имя.
+
+**Приёмка:** `nova test std/time` зелёный; conformance один-CU δ0 (переименование, поведение идентично); греп
+`@as_` в `duration.nv` = 0. **Модель:** дешёвый агент по карте (после 10), CPU-дисциплина, гейт — оркестратор.
+
+---
+
+## Пункт 12 — единицы времени: getter=голое / конструктор=`to_`, ретракт `Duration.from_*` (вбирает Пункт 11)
+
+**Статус:** 📋 СОГЛАСОВАНО 2026-07-15 (владелец). Делать ПОСЛЕ Пункта 10 (тот же файл). **Вбирает Пункт 11.**
+
+**Правило (§1а):** направление задаёт форму. **Единица — полным словом** (nanos/micros/millis/seconds/minutes/
+hours/days).
+- **Getter** (`Duration → i64`, O(1)-скаляр = голое имя): `d.nanos()`/`micros()`/`millis()`/`seconds()`/`minutes()`/
+  `hours()`/`days()`; Timestamp `d.unix_seconds()`/`unix_millis()`/`unix_nanos()` (это = миграция `@as_*` Пункта 11).
+- **Конструктор** (`int → Duration`, конверсия = `to_*`): ретрактировать ВСЕ `Duration.from_*` И переименовать
+  bare-fluent `int @seconds()` → `int @to_seconds()`. → `5.to_seconds()`, `100.to_millis()`, `n.to_nanos()`.
+  Timestamp: `n.to_unix_seconds()` (int→Timestamp = конверсия, вар. (а)).
+- **Float:** `f64 @to_seconds()` (заменяет `from_secs_f`; `1.5.to_seconds()`). Только секунды.
+- **Singular** `int @second()`/`@minute()` — убрать (DRY; `1.to_seconds()`).
+- **Коллизия снята:** getter `d.nanos()` (голое) vs конструктор `5.to_nanos()` (`to_`) — разные имена.
+
+**Приёмка:** `nova test std/time` зелёный; conformance один-CU δ0 (переименование, поведение идентично); греп
+`@as_`/`Duration.from_`/bare-fluent = 0. Модель: дешёвый агент по карте; гейт — оркестратор.
+
+## Пункт 13 — разбить duration.nv: Timestamp/Monotonic в отдельные файлы (D78 co-equal)
+
+**Статус:** 📋 СОГЛАСОВАНО 2026-07-15 (владелец). Делать в связке с Пунктом 10/12 (тот же файл).
+
+**Что:** `duration.nv` содержит `Duration` + `Timestamp` + `Monotonic` в одном файле. Вынести `Timestamp` →
+`timestamp.nv`, `Monotonic` → `monotonic.nv` (co-equal файлы модуля `std/time`; **D78 — папка=один модуль, import-
+пути НЕ меняются**). `Duration` остаётся в `duration.nv`.
+
+**Приёмка:** `nova test std/time` зелёный; import-пути неизменны; conformance δ0. Модель: дешёвый агент по карте.
+
+---
+
 ## Кандидаты на будущее
 
 _(сюда — новые std-эргономические/корректностные улучшения по мере появления; каждый с D-рефом и приёмкой)_
