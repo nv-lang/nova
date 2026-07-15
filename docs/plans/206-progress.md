@@ -2,10 +2,61 @@
 # Plan 206 — прогресс (Ф.0 + Ф.1 + Ф.1b + Ф.2)
 
 **Ветка:** `plan206-overflow` (worktree `d:/Sources/nv-lang/nova-206`, база `9c6af284b`,
-смёржен `main` @ `73ab1c44f` коммитом `9e96817c2`).
+смёржен `main` @ `73ab1c44f` коммитом `9e96817c2`, затем `main` @ `c65a3ecc4` (watchdog)
+коммитом `8906621e2`).
 **Статус на 2026-07-15:** Ф.0/Ф.1/Ф.1b/Ф.2 ЗАВЕРШЕНЫ и точечно верифицированы. Полный
 `spec_tests/conformance` мега-CU НЕ гонялся (по заданию — авторитетный гейт у владельца
 при вливании; см. также находку ниже — этот каталог физически НЕ таргетируем per-файл).
+
+## Ф.2 раунд-2 — corpus-overflow-сайты вскрытые полным conformance-гейтом (ЗАВЕРШЕНО)
+
+Оркестратор прогнал полный conformance после раунда-1 и вернул FAIL: ещё не-мигрированные
+overflow-сайты. Корень оказался НЕ в корпусе, а снова в **std** (пропущен в раунде-1):
+
+- **`std/src/collections/vec/protocols.nv` — `Vec[T Hash] @hash()` (FNV-1a, mod-2^64).**
+  Корневая причина всех 3 падавших блоков `spec_tests/conformance/hash.nv` (`equal vecs
+  hash equal`, `empty + single round-trip`, `content + length distinguish`) — они лишь
+  ЗОВУТ `.hash()`, а `* prime` внутри (строки 151/157) трапил (`integer overflow: *`).
+  Мигрировано на `.wrapping_mul(prime)` (модульно по замыслу). Doc-комментарий про «u64
+  arithmetic wraps on overflow (Nova semantics)» обновлён — под 206 wrap уже НЕ дефолт,
+  wrapping явный. Репро в own-CU: `spec_tests/soundness/plan206_vec_hash_wrapping.nv`
+  (те же 3 блока) — PASS.
+- **`spec_tests/conformance/d404_sized_arith_width.nv` — u8+u8 / u16*u16 test-блоки.**
+  Тест кодировал СТАРУЮ wrap-семантику голого оператора (`u8(200)+u8(100)==44`,
+  `u16(60000)*u16(2)==54464`) — под 206 голый `+`/`*` там ТРАПИТ. Мигрирован на явный
+  `.wrapping_add`/`.wrapping_mul` (тот же различающий D404-сигнал: коллапс в nova_int дал
+  бы 300/120000, u8/u16-ширина → 44/54464). `uint+uint` (2^63<uint.MAX) и `i32+i32`
+  (control) НЕ переполняются — голый `+` там сохранён. НЕ ослабление — та же
+  width-preservation-проверка D404, просто через явный wrapping.
+
+**u16-D404: это СТАЛЫЙ ТЕСТ, НЕ баг Ф.1b (доказано эмпирически).** Ключевой вопрос
+оркестратора — трапит ли `u16*u16` на ПРАВИЛЬНОЙ ширине (u16 >65535), а не на ширине
+nova_int (64-bit). Проверено двумя изолированными тестами:
+  - `spec_tests/soundness/neg/u16_overflow_mul_width_panic.nv` (NEW pin): `u16(60000)*
+    u16(2)` = 120000 → **TRAP** (PASS, runtime-panic). 120000 ВЛЕЗАЕТ в 64-битный
+    nova_int (не переполнил бы широкий слот), но ПЕРЕПОЛНЯЕТ u16 → trap firing ДОКАЗЫВАЕТ,
+    что Ф.1b детектит overflow на u16-ширине через `nova_u16_checked_mul`/
+    `__builtin_mul_overflow` на uint16_t-операндах. Если бы Ф.1b лоуэрил u16*u16 через
+    nova_int-checked, теста не было бы паники (RUN-OK с 120000).
+  - `spec_tests/soundness/plan206_d404_width_wrapping.nv` (NEW): `u16(60000).wrapping_mul(2)
+    == 54464` (не 120000) — wrapping тоже идёт по u16-ширине, тип не схлопнут. PASS.
+  Вывод: Ф.1b sized-trap корректен для u16 (и всех sized) — тест `d404` просто устарел
+  относительно 206-политики, мигрирован (не «починка реализации»).
+
+**Аудит остального std на пропущенные overflow-сайты (раунд-2):** грепнуто
+`* prime|* 0x{6,}|h *|acc *`. Кандидаты и вердикты:
+  - `std/src/identifiers/uuid.nv:322` (`acc*16+d`, hex-parse) — bounded: макс UUID-сегмент
+    12 hex-цифр = 48 бит, `acc*16` никогда не переполняет u64 → голый `*` не трапит
+    ложно, оставлен (trap корректен для malformed over-long input).
+  - `std/src/runtime/string/parse.nv:56/86` — уже ЯВНЫЙ overflow-guard ПЕРЕД умножением
+    (`if acc > (max-d)/radix { Err(Overflow) }`) → checked-parse, никогда не wrap, оставлен.
+  - `std/src/time/civil/{parse,tz}.nv` — `h*3600+m*60`, малые часы/минуты, нет overflow.
+  Единственная реальная миграция — `Vec.hash()` выше.
+
+Верификация раунда-2 (после `git merge main` watchdog + пересборка компилятора начисто,
+0 ошибок): 13 точечных тестов PASS (8 sized-pin + u16-width-pin + Ф.1-regression +
+D404-width-repro + vec-hash-repro + Ф.2 blanket) + 3 std hash-теста (fnv/bloom/sha256)
+PASS. Soundness 8/8 + 1 новый width-pin зелёные.
 
 ## Ф.2 — три `.nv`-бланкета + миграция overflow-зависимого std (ЗАВЕРШЕНО)
 
