@@ -60,3 +60,22 @@ test "M-187 arr[i].to_str() + arr[j].to_str() (unannotated array literal) не �
     assert(s.byte_len() == 2)
 }
 
+// [M-187-d182-turbofish-new-nameonly-collision] (попутная гейт-находка тем же
+// слиянием): `Type[A,B].new(позиционные)` — generic-static через TurboFish —
+// давал ЛОЖНЫЙ D102 ("параметр `path` имеет значение по умолчанию"): best-effort
+// argbind-резолв чекера не имеет TurboFish-ветки в infer_arg_ty, падал в
+// name-only скан по всем типам и находил ЧУЖОЙ арность-совместимый `.new`
+// (serde `DeError.new(kind, path = "")`), которого никто не вызывал.
+// Фикс: TurboFish-ресивер выходит из best-effort диагностики (резолв этой
+// формы — за codegen'ом, как и задумано в check_call_argbind). Красная форма
+// требует serde-типов в CU — потому тест живёт здесь.
+type M187TfPair[A, B] { fst A, snd B }
+
+fn M187TfPair[A, B].new(a A, b B) -> Self => { fst: a, snd: b }
+
+test "M-187 generic-static Type[A,B].new(позиционно) не даёт ложный D102 при serde в CU" {
+    ro p = M187TfPair[int, str].new(5, "x")
+    assert(p.fst == 5)
+    assert(p.snd == "x")
+}
+

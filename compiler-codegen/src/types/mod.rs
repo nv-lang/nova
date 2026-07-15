@@ -18817,6 +18817,29 @@ impl<'a> BoundCtx<'a> {
         scope: &HashMap<String, TypeRef>,
         arg_count_hint: usize,
     ) -> Option<&FnDecl> {
+        // [M-187-d182-turbofish-new-nameonly-collision]: a TurboFish receiver
+        // (`Type[args].method(...)`, e.g. `D182Pair[int, str].new(5, "x")`)
+        // is a GENERIC-STATIC call, not a value-typed instance — `infer_arg_ty`
+        // below has no `TurboFish` arm, so Попытка 1 (receiver-type inference)
+        // always misses for this shape and falls through to Попытка 2's
+        // receiver-BLIND name-only scan across `self.sig.method_table`. A
+        // receiver-own-generic method (`fn D182Pair[A, B].new(a A, b B)`) is
+        // NOT registered in `self.sig.method_table` at all (separate
+        // generic-method registry) — so that scan can never even see the
+        // TRUE callee, yet still finds and returns whichever UNRELATED
+        // concrete type's arity-compatible `.new()` happens to be the sole
+        // "inherent" match (e.g. serde `DeError.new(kind, path = "")`,
+        // arity 2) — a false-positive D102 keyword-only-default diagnostic
+        // against a signature that was never actually called. This
+        // best-effort check (see this fn's own doc + `check_call_argbind`'s
+        // comment on the by-design "almost always ambiguous → skip" intent
+        // for exactly this shape) is not the codegen dispatch path (that
+        // resolves the REAL generic receiver correctly elsewhere) — bailing
+        // out unconditionally for a TurboFish receiver just means "skip this
+        // diagnostic", never "miss a real error".
+        if matches!(obj.kind, ExprKind::TurboFish { .. }) {
+            return None;
+        }
         // Попытка 1: receiver-type inference.
         // Plan 162 Ф.3: когда тип receiver'а известен, сначала проверяем
         // наследуемые (inherent) методы — методы, объявленные в том же модуле
