@@ -737,6 +737,24 @@ typedef struct Nova_Error {
     nova_str msg;
 } Nova_Error;
 
+/* ---- D90 §7 amend / Plan 110 prelude: CancelError — typed cancel-as-error
+ * payload surfaced to a consume `@cleanup(outcome ScopeOutcome)` on a CANCEL
+ * unwind (`err is CancelError` narrowing, D54/174.3). Single `reason: str`
+ * field mirrors the canonical `.nv` declaration (`std/prelude/errors.nv`:
+ * `export type CancelError { ro reason str }`). Hand-written here (like
+ * Error/RuntimeError above) and listed in `RUNTIME_DEFINED_TYPES`
+ * (emit_c.rs §0) so the D314 consume-cleanup codegen desugar
+ * (`assign_scope_outcome_from_frame`) can hand-alloc `Nova_CancelError`
+ * UNCONDITIONALLY on every consume-cleanup CANCEL/FromFrame exit path —
+ * even in a compile unit whose `#prelude(...)` subset selection never
+ * merges `std/prelude/errors.nv` (`ScopeOutcome`, needed for the `@cleanup`
+ * signature itself, lives in the separate, always-on `core.nv` sub-module —
+ * Plan 62.F split decouples the two) — [M-consume-block-cancelerror-bare-cu].
+ */
+typedef struct Nova_CancelError {
+    nova_str reason;
+} Nova_CancelError;
+
 static inline Nova_Error* Nova_Error_static_new(nova_str msg) {
     Nova_Error* e = (Nova_Error*)nova_alloc(sizeof(Nova_Error));
     e->msg = msg;
