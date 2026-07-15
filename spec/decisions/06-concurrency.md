@@ -23,6 +23,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D170](#d170-coordination-primitives--semaphore--barrier--countdownlatch--condvar-plan-1034) | Coordination primitives — `Semaphore` (bounded permits), `Barrier` (reusable N-party rendezvous), `CountDownLatch` (one-shot), `Condvar` (tied to Mutex) |
 | [D172](#d172-realtimeblocking-sync-class-annotation-system-plan-1036) | `realtime { }` / `blocking { }` × sync-primitive enforcement: `#parks` / `#wakes` / `#realtime` annotation system |
 | [D174](#d174-sync-primitives-consume-integration-plan-1039) | Consume guards V2 — `MutexGuard`, `ReadGuard`, `WriteGuard`, `Permit`, `OnceGuard` consume types; guard-returning API; D169–D171 cross-refs updated |
+| [D425](#d425-cas-возвращает-свидетеля-провала-compare_exchange-bool--resultt-plan-207) | CAS возвращает свидетеля провала: `compare_exchange`/`compare_exchange_weak` `bool` → `Result[(), T]` (amends D168 §1) |
 
 ---
 
@@ -4064,10 +4065,10 @@ mutable-ссылку или хранить в heap-структуре.
 | `store(v T, ord MemOrdering)` | ✓ | ✓ | ✓ |
 | `swap(v T) → T` | ✓ | ✓ | ✓ |
 | `swap(v T, ord MemOrdering) → T` | ✓ | ✓ | ✓ |
-| `compare_exchange(expected T, desired T) → bool` | ✓ | ✓ | ✓ |
-| `compare_exchange(exp T, des T, ord MemOrdering) → bool` | ✓ | ✓ | ✓ |
-| `compare_exchange_weak(exp T, des T) → bool` | ✓ | ✓ | — |
-| `compare_exchange_weak(exp T, des T, ord MemOrdering) → bool` | ✓ | ✓ | — |
+| `compare_exchange(expected T, desired T) → Result[(), T]`* | ✓ | ✓ | ✓ |
+| `compare_exchange(exp T, des T, ord MemOrdering) → Result[(), T]`* | ✓ | ✓ | ✓ |
+| `compare_exchange_weak(exp T, des T) → Result[(), T]`* | ✓ | ✓ | — |
+| `compare_exchange_weak(exp T, des T, ord MemOrdering) → Result[(), T]`* | ✓ | ✓ | — |
 | `fetch_add(v T) → T` | ✓ (int/uint только) | — | — |
 | `fetch_add(v T, ord MemOrdering) → T` | ✓ | — | — |
 | `fetch_sub(v T) → T` | ✓ | — | — |
@@ -4088,6 +4089,9 @@ mutable-ссылку или хранить в heap-структуре.
 **Примечание по AtomicPtr:** хранит `int` (адрес GC-объекта как `intptr_t`).
 Арифметика не поддерживается (`fetch_add` нет). Typed generic form `AtomicPtr[T]`
 с GC-root integration — откладывается в Plan 103.9+.
+
+`*` **CAS-строки амендированы [D425](#d425-cas-возвращает-свидетеля-провала-compare_exchange-bool--resultt-plan-207)** (Plan 207, 2026-07-15): возврат
+`bool` → `Result[(), T]` (`Ok(())` успех / `Err(actual)` провал с witness-значением).
 
 #### 2. MemOrdering-aware overloads
 
@@ -4146,7 +4150,8 @@ V1 семантика (Plan 103.2):
 - `load()` → `int` — прочитать адрес как int.
 - `store(v int)` — записать адрес.
 - `swap(v int)` → `int` — атомарный обмен адресов.
-- `compare_exchange(expected int, desired int)` → `bool` — CAS на адресах.
+- `compare_exchange(expected int, desired int)` → `Result[(), int]` — CAS на
+  адресах ([D425](#d425-cas-возвращает-свидетеля-провала-compare_exchange-bool--resultt-plan-207): `Ok(())`/`Err(actual)`, было `bool`).
 - Arithmetic (`fetch_add`) **не поддерживается** — AtomicPtr не счётчик.
 
 **GC safety V1:** приложение несёт ответственность за то, что int-значение
@@ -7011,3 +7016,87 @@ scope продолжает; multi-fail; panic-до-решения), `supervisor_
 `handler_interrupt_neg`, `handler_sleep_neg` (`restart_gated_neg` удалён
 вместе с ретракцией §4 — unknown-variant покрыт общей диагностикой).
 Модульные: `std/concurrency/supervisor_test.nv`.
+
+---
+
+## D425. CAS возвращает свидетеля провала: `compare_exchange` `bool` → `Result[(), T]` (Plan 207)
+
+> **Статус:** ✅ landed (Plan 207, 2026-07-15). Amends [D168](#d168-sized-atomic-types--api-contract-plan-1032) §1 (матрица операций). Retag `[M-cas-return-witnessed-value]`.
+
+### Мотив
+
+`AtomicI*/U*/Isize/Usize/Ptr/Bool` (легаси `AtomicInt` тоже) `compare_exchange`/
+`compare_exchange_weak` возвращали `bool` — при провале **выбрасывали
+свидетеля** (актуально прочитанное значение). C-примитив
+`__atomic_compare_exchange_n(&obj, &expected, desired, weak, ...)` УЖЕ пишет
+фактически прочитанное значение в `expected` при провале (и оставляет
+`expected` неизменным при успехе) — ровно то, что нужно в CAS-retry-цикле,
+чтобы пересчитать без повторного `load()` (лишний барьер + окно гонки).
+Обеднение было неосознанным — witness лежал в `expected` бесплатно (найдено
+при дизайне [206](../plans/206-arithmetic-overflow-policy.md), тот же принцип
+«примитив не теряет информацию»).
+
+### Правило
+
+**Новая сигнатура** (заменяет `bool` во всех строках D168 §1, отмеченных `*`):
+
+```nova
+fn AtomicX mut @compare_exchange(expected T, desired T) -> Result[(), T]
+fn AtomicX mut @compare_exchange(expected T, desired T, success MemOrdering, failure MemOrdering) -> Result[(), T]
+fn AtomicX mut @compare_exchange_weak(expected T, desired T) -> Result[(), T]
+fn AtomicX mut @compare_exchange_weak(expected T, desired T, success MemOrdering, failure MemOrdering) -> Result[(), T]
+```
+
+- `Ok(())` — успех, значение заменено на `desired`.
+- `Err(actual)` — провал; `actual` — фактически прочитанное значение
+  (witness). Для `compare_exchange` (strong) провал гарантирует
+  `actual != expected` (C11: strong CAS не фейлится spuriously). Для
+  `compare_exchange_weak` witness корректен и в spurious-failure случае
+  (`actual == expected`, но своп не произошёл — платформо-зависимая
+  ARM-семантика; вызывающий код должен различать через `Err`, не через
+  сравнение значений).
+- Применяется ко **всем 13** CAS-методам: `AtomicI8/I16/I32/I64`,
+  `AtomicU8/U16/U32/U64`, `AtomicIsize`, `AtomicUsize`, `AtomicPtr`,
+  `AtomicBool`, легаси `AtomicInt` (без ordering/weak-вариантов — как и
+  раньше, единственная сигнатура `compare_exchange(expected int, desired int)`).
+
+**CAS-retry-цикл идиома** (после правки, мотивирующий пример):
+
+```nova
+mut cur = a.load()
+loop {
+    ro next = f(cur)
+    match a.compare_exchange(cur, next) {
+        Ok(_) => break
+        Err(actual) => cur = actual   // без повторного load(), witness даром
+    }
+}
+```
+
+### Лоуэринг (codegen)
+
+Публичный `compare_exchange`/`compare_exchange_weak` — **plain (non-extern)
+`.nv` fn** (не intrinsic): вызывает private `@__cas_raw` intrinsic (module-
+private, не exported), который возвращает raw `(ok bool, witness T)` пару из
+ОДНОГО atomic op (C11 `__atomic_compare_exchange_n`, `weak`-флаг передан
+явным параметром — strong и weak делят один intrinsic), затем строит
+`Ok(())`/`Err(witness)` обычным Nova constructor-синтаксисом. Result[(), T]
+монoморфизируется штатным generic-codegen (как `Vec.binary_search ->
+Result[int,int]`) — hand-written C не участвует в сборке `Result`.
+
+Raw-пара представлена named-tuple типом `CasRaw<W>(ok bool, witness T)`
+(один на каждую witness-ширину: I8/I16/I32/I64/U8/U16/U32/U64/Int/Uint/Bool —
+`Int` разделяют `AtomicIsize`/`AtomicPtr`/легаси `AtomicInt`). C-структура
+(`NovaTuple_CasRaw*`) — hand-written в `sync_primitives.h`, зарегистрирована в
+`RUNTIME_DEFINED_TYPES` (emit_c.rs) — та же конвенция, что `MutexGuard`/
+`MemOrdering`. Потребовалось расширение codegen (`emit_type_decl`,
+RUNTIME_DEFINED_TYPES-ветка): для NamedTuple-типов в этом списке компилятор
+теперь регистрирует field-schema/`NovaTuple_<Name>` type-alias БЕЗ повторной
+эмиссии struct-body (раньше эта ветка обрабатывала только `Sum`/`Effect`
+kind — NamedTuple падал в generic unknown-type fallback, `Nova_<Name>*`
+pointer-record, что не совпадало с реальным value-struct'ом в хедере).
+
+### Границы
+
+Только форма возврата CAS (`bool`→`Result`). НЕ меняет memory-ordering, НЕ
+трогает `fetch_*`/`load`/`store`. Закрывает backlog `[M-cas-return-witnessed-value]`.

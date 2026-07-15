@@ -1,9 +1,34 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # План 207 — `compare_exchange` возвращает свидетеля (bool → Result[unit, T])
 
-**Статус:** 📋 ПРЕДЛОЖЕН 2026-07-15 (владелец: «отдельным планом»). **Приоритет:** P3
+**Статус:** ✅ ЗАКРЫТ 2026-07-15 (sonnet, ветка `plan207-cas`). **Приоритет:** P3
 (эргономика/эффективность CAS-циклов; корректность не нарушена, но теряется бесплатная информация).
-**Не блокирует ничего.** Ломающая правца публичного API `std/src/runtime/sync.nv`.
+**Не блокирует ничего.** Ломающая правка публичного API `std/src/runtime/sync.nv` —
+D-амендмент [D425](../../spec/decisions/06-concurrency.md#d425-cas-возвращает-свидетеля-провала-compare_exchange-bool--resultt-plan-207)
+внесён в том же слиянии. Conformance 150/0; `sync_test` PASS (test-build).
+
+### Итог (что реально сделано)
+
+- **Сигнатура:** как задумано — `Result[(), T]` (Nova unit = `()`, не keyword `unit`).
+- **Лоуэринг — отличается от исходного плана Ф.1:** вместо out-параметра —
+  private `@__cas_raw` extern intrinsic возвращает raw `(ok bool, witness T)`
+  value-struct напрямую (named-tuple `CasRaw*`, D215); strong/weak делят ОДИН
+  intrinsic через явный `weak bool` параметр (не `_MemOrdering`-only suffix
+  ambiguity). Публичный `compare_exchange`/`_weak` — plain (non-extern) `.nv`
+  fn, строит `Ok(())`/`Err(witness)` обычным Nova-конструктором — `Result`
+  монoморфизируется штатным generic-codegen, без hand-written C.
+- **Codegen-фикс потребовался** (не предвиделся в исходном плане): NamedTuple
+  типы в `RUNTIME_DEFINED_TYPES` (emit_c.rs) не регистрировали field-schema —
+  ветка `emit_type_decl` знала только `Sum`/`Effect`. Добавлена зеркальная
+  NamedTuple-ветка (field C-types + `NovaTuple_<Name>` type-alias, без
+  struct-body emission).
+- **Ф.3 (call-site migration):** реальных внутренних CAS-retry-циклов
+  (`rc в tcp.nv`, семафоры) в кодовой базе НЕ нашлось — только
+  `sync_test.nv` (3 сайта) + 10 `spec_tests/conformance/*.nv` (все на
+  `.is_ok()`, минимальный диф).
+- **Ф.4:** новый тест в `sync_test.nv` покрывает success/failure witness,
+  explicit-ordering overload, weak spurious-failure witness, и полную
+  CAS-retry-loop идиому (`Err(actual) => cur = actual`).
 
 ## Мотив (найдено при дизайне [206](206-arithmetic-overflow-policy.md))
 

@@ -61,7 +61,7 @@ test "stress: AtomicI64 1000 compare_exchange retry loop — counter" {
         mut inner = 0
         while inner < 1000 {
             ro cur = a.load()
-            ro ok = a.compare_exchange(cur, cur + 1)
+            ro ok = a.compare_exchange(cur, cur + 1).is_ok()
             if ok {
                 done = true
                 inner = 1000

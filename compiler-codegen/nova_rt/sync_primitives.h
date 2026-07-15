@@ -91,6 +91,39 @@ struct Nova_Permit_s      { nova_int ptr; };  typedef struct Nova_Permit_s     N
 struct Nova_OnceGuard_s   { nova_int ptr; };  typedef struct Nova_OnceGuard_s  Nova_OnceGuard;
 /* ── End Plan 103.9 guard struct definitions ──────────────────────────── */
 
+/* ── Plan 207 [M-cas-return-witnessed-value]: CAS-witness raw structs ────
+ *
+ * `compare_exchange`/`compare_exchange_weak` return `Result[(), T]` at the
+ * Nova level (Ok(()) success / Err(actual) failure, `actual` = witnessed
+ * value read by the C11 atomic op on failure — no second load() needed).
+ *
+ * C11 `__atomic_compare_exchange_n(obj, &expected, desired, weak, ...)`
+ * already writes the observed current value into `expected` on failure
+ * (and leaves it unchanged — i.e. equal to the input — on success). The
+ * private `@__cas_raw` intrinsic below captures that value unconditionally
+ * and returns it alongside the success flag as one of these small value
+ * structs; the PUBLIC `compare_exchange`/`_weak` wrapper is a plain (non-
+ * extern) `.nv` fn that builds `Ok(())`/`Err(witness)` from it via ordinary
+ * Result codegen (no hand-written Result construction here).
+ *
+ * `type CasRaw*(ok bool, witness T)` (named tuple, D215) are declared in
+ * sync.nv for the type-checker only — these C structs are the actual
+ * definition (RUNTIME_DEFINED_TYPES in emit_c.rs skips re-emission, same
+ * convention as the Plan 103.9 guard structs above / MemOrdering below).
+ */
+typedef struct { nova_bool ok; int64_t  witness; } NovaTuple_CasRawI64;
+typedef struct { nova_bool ok; int32_t  witness; } NovaTuple_CasRawI32;
+typedef struct { nova_bool ok; int16_t  witness; } NovaTuple_CasRawI16;
+typedef struct { nova_bool ok; int8_t   witness; } NovaTuple_CasRawI8;
+typedef struct { nova_bool ok; uint64_t witness; } NovaTuple_CasRawU64;
+typedef struct { nova_bool ok; uint32_t witness; } NovaTuple_CasRawU32;
+typedef struct { nova_bool ok; uint16_t witness; } NovaTuple_CasRawU16;
+typedef struct { nova_bool ok; nova_byte witness; } NovaTuple_CasRawU8;
+typedef struct { nova_bool ok; nova_int witness; } NovaTuple_CasRawInt;
+typedef struct { nova_bool ok; nova_uint witness; } NovaTuple_CasRawUint;
+typedef struct { nova_bool ok; nova_bool witness; } NovaTuple_CasRawBool;
+/* ── End Plan 207 CAS-witness raw structs ─────────────────────────────── */
+
 /* ── AtomicInt ─────────────────────────────────────────────────── */
 
 /* AtomicInt wraps nova_atomic_int (int32_t). All accesses go through
@@ -123,10 +156,14 @@ static inline nova_int Nova_AtomicInt_method_fetch_sub(Nova_AtomicInt* a, nova_i
     return (nova_int)__atomic_fetch_sub(&a->value, (int32_t)delta, __ATOMIC_ACQ_REL);
 }
 
-static inline nova_bool Nova_AtomicInt_method_compare_exchange(
+/* Plan 207: raw (ok, witness) pair — public compare_exchange wrapper (plain
+ * .nv fn) builds Result[(), int] from this. No weak/ordering variant existed
+ * publicly for legacy AtomicInt, so the raw intrinsic doesn't take them either. */
+static inline NovaTuple_CasRawInt Nova_AtomicInt_method___cas_raw(
         Nova_AtomicInt* a, nova_int expected_val, nova_int desired) {
     int32_t exp = (int32_t)expected_val;
-    return nova_aint_cas(&a->value, &exp, (int32_t)desired);
+    nova_bool ok = nova_aint_cas(&a->value, &exp, (int32_t)desired);
+    NovaTuple_CasRawInt r; r.ok = ok; r.witness = (nova_int)exp; return r;
 }
 
 /* ── MemOrdering (Plan 103.1, relocated forward for Plan 103.2) ───────
@@ -224,33 +261,15 @@ static inline nova_int Nova_AtomicI64_method_swap_MemOrdering(Nova_AtomicI64* a,
 static inline nova_int Nova_AtomicI64_method_swap_i64(Nova_AtomicI64* a, nova_int v) {
     return (nova_int)__atomic_exchange_n(&a->value, (int64_t)v, __ATOMIC_SEQ_CST);
 }
-/* compare_exchange strong */
-static inline nova_bool Nova_AtomicI64_method_compare_exchange_MemOrdering(
-        Nova_AtomicI64* a, nova_int expected_val, nova_int desired,
+/* compare_exchange (Plan 207: raw ok+witness, one intrinsic for strong+weak —
+ * public compare_exchange/_weak wrappers (plain .nv fn) build Result[(), i64]. */
+static inline NovaTuple_CasRawI64 Nova_AtomicI64_method___cas_raw(
+        Nova_AtomicI64* a, nova_int expected_val, nova_int desired, nova_bool weak,
         const Nova_MemOrdering* success_ord, const Nova_MemOrdering* failure_ord) {
     int64_t exp = (int64_t)expected_val;
-    return (nova_bool)__atomic_compare_exchange_n(&a->value, &exp, (int64_t)desired,
-        false, nova_mo_c(success_ord), nova_mo_c(failure_ord));
-}
-static inline nova_bool Nova_AtomicI64_method_compare_exchange_i64(
-        Nova_AtomicI64* a, nova_int expected_val, nova_int desired) {
-    int64_t exp = (int64_t)expected_val;
-    return (nova_bool)__atomic_compare_exchange_n(&a->value, &exp, (int64_t)desired,
-        false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
-}
-/* compare_exchange weak */
-static inline nova_bool Nova_AtomicI64_method_compare_exchange_weak_MemOrdering(
-        Nova_AtomicI64* a, nova_int expected_val, nova_int desired,
-        const Nova_MemOrdering* success_ord, const Nova_MemOrdering* failure_ord) {
-    int64_t exp = (int64_t)expected_val;
-    return (nova_bool)__atomic_compare_exchange_n(&a->value, &exp, (int64_t)desired,
-        true, nova_mo_c(success_ord), nova_mo_c(failure_ord));
-}
-static inline nova_bool Nova_AtomicI64_method_compare_exchange_weak_i64(
-        Nova_AtomicI64* a, nova_int expected_val, nova_int desired) {
-    int64_t exp = (int64_t)expected_val;
-    return (nova_bool)__atomic_compare_exchange_n(&a->value, &exp, (int64_t)desired,
-        true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &exp, (int64_t)desired,
+        weak, nova_mo_c(success_ord), nova_mo_c(failure_ord));
+    NovaTuple_CasRawI64 r; r.ok = ok; r.witness = exp; return r;
 }
 /* fetch_add */
 static inline nova_int Nova_AtomicI64_method_fetch_add_MemOrdering(Nova_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) { return (nova_int)__atomic_fetch_add(&a->value, (int64_t)v, nova_mo_c(ord)); }
@@ -307,10 +326,10 @@ static inline nova_unit Nova_AtomicI32_method_store_MemOrdering(Nova_AtomicI32* 
 static inline nova_unit Nova_AtomicI32_method_store_i32(Nova_AtomicI32* a, int32_t v) { __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
 static inline int32_t Nova_AtomicI32_method_swap_MemOrdering(Nova_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->value, v, nova_mo_c(ord)); }
 static inline int32_t Nova_AtomicI32_method_swap_i32(Nova_AtomicI32* a, int32_t v) { return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline nova_bool Nova_AtomicI32_method_compare_exchange_MemOrdering(Nova_AtomicI32* a, int32_t e, int32_t d, const Nova_MemOrdering* s, const Nova_MemOrdering* f) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, false, nova_mo_c(s), nova_mo_c(f)); }
-static inline nova_bool Nova_AtomicI32_method_compare_exchange_i32(Nova_AtomicI32* a, int32_t e, int32_t d) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
-static inline nova_bool Nova_AtomicI32_method_compare_exchange_weak_MemOrdering(Nova_AtomicI32* a, int32_t e, int32_t d, const Nova_MemOrdering* s, const Nova_MemOrdering* f) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, true, nova_mo_c(s), nova_mo_c(f)); }
-static inline nova_bool Nova_AtomicI32_method_compare_exchange_weak_i32(Nova_AtomicI32* a, int32_t e, int32_t d) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
+static inline NovaTuple_CasRawI32 Nova_AtomicI32_method___cas_raw(Nova_AtomicI32* a, int32_t e, int32_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
+    NovaTuple_CasRawI32 r; r.ok = ok; r.witness = e; return r;
+}
 static inline int32_t Nova_AtomicI32_method_fetch_add_MemOrdering(Nova_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->value, v, nova_mo_c(ord)); }
 static inline int32_t Nova_AtomicI32_method_fetch_add_i32(Nova_AtomicI32* a, int32_t v) { return __atomic_fetch_add(&a->value, v, __ATOMIC_SEQ_CST); }
 static inline int32_t Nova_AtomicI32_method_fetch_sub_MemOrdering(Nova_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->value, v, nova_mo_c(ord)); }
@@ -354,10 +373,10 @@ static inline nova_unit Nova_AtomicI16_method_store_MemOrdering(Nova_AtomicI16* 
 static inline nova_unit Nova_AtomicI16_method_store_i16(Nova_AtomicI16* a, int16_t v) { __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
 static inline int16_t Nova_AtomicI16_method_swap_MemOrdering(Nova_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->value, v, nova_mo_c(ord)); }
 static inline int16_t Nova_AtomicI16_method_swap_i16(Nova_AtomicI16* a, int16_t v) { return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline nova_bool Nova_AtomicI16_method_compare_exchange_MemOrdering(Nova_AtomicI16* a, int16_t e, int16_t d, const Nova_MemOrdering* s, const Nova_MemOrdering* f) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, false, nova_mo_c(s), nova_mo_c(f)); }
-static inline nova_bool Nova_AtomicI16_method_compare_exchange_i16(Nova_AtomicI16* a, int16_t e, int16_t d) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
-static inline nova_bool Nova_AtomicI16_method_compare_exchange_weak_MemOrdering(Nova_AtomicI16* a, int16_t e, int16_t d, const Nova_MemOrdering* s, const Nova_MemOrdering* f) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, true, nova_mo_c(s), nova_mo_c(f)); }
-static inline nova_bool Nova_AtomicI16_method_compare_exchange_weak_i16(Nova_AtomicI16* a, int16_t e, int16_t d) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
+static inline NovaTuple_CasRawI16 Nova_AtomicI16_method___cas_raw(Nova_AtomicI16* a, int16_t e, int16_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
+    NovaTuple_CasRawI16 r; r.ok = ok; r.witness = e; return r;
+}
 static inline int16_t Nova_AtomicI16_method_fetch_add_MemOrdering(Nova_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->value, v, nova_mo_c(ord)); }
 static inline int16_t Nova_AtomicI16_method_fetch_add_i16(Nova_AtomicI16* a, int16_t v) { return __atomic_fetch_add(&a->value, v, __ATOMIC_SEQ_CST); }
 static inline int16_t Nova_AtomicI16_method_fetch_sub_MemOrdering(Nova_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->value, v, nova_mo_c(ord)); }
@@ -401,10 +420,10 @@ static inline nova_unit Nova_AtomicI8_method_store_MemOrdering(Nova_AtomicI8* a,
 static inline nova_unit Nova_AtomicI8_method_store_i8(Nova_AtomicI8* a, int8_t v) { __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
 static inline int8_t Nova_AtomicI8_method_swap_MemOrdering(Nova_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->value, v, nova_mo_c(ord)); }
 static inline int8_t Nova_AtomicI8_method_swap_i8(Nova_AtomicI8* a, int8_t v) { return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline nova_bool Nova_AtomicI8_method_compare_exchange_MemOrdering(Nova_AtomicI8* a, int8_t e, int8_t d, const Nova_MemOrdering* s, const Nova_MemOrdering* f) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, false, nova_mo_c(s), nova_mo_c(f)); }
-static inline nova_bool Nova_AtomicI8_method_compare_exchange_i8(Nova_AtomicI8* a, int8_t e, int8_t d) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
-static inline nova_bool Nova_AtomicI8_method_compare_exchange_weak_MemOrdering(Nova_AtomicI8* a, int8_t e, int8_t d, const Nova_MemOrdering* s, const Nova_MemOrdering* f) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, true, nova_mo_c(s), nova_mo_c(f)); }
-static inline nova_bool Nova_AtomicI8_method_compare_exchange_weak_i8(Nova_AtomicI8* a, int8_t e, int8_t d) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
+static inline NovaTuple_CasRawI8 Nova_AtomicI8_method___cas_raw(Nova_AtomicI8* a, int8_t e, int8_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
+    NovaTuple_CasRawI8 r; r.ok = ok; r.witness = e; return r;
+}
 static inline int8_t Nova_AtomicI8_method_fetch_add_MemOrdering(Nova_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->value, v, nova_mo_c(ord)); }
 static inline int8_t Nova_AtomicI8_method_fetch_add_i8(Nova_AtomicI8* a, int8_t v) { return __atomic_fetch_add(&a->value, v, __ATOMIC_SEQ_CST); }
 static inline int8_t Nova_AtomicI8_method_fetch_sub_MemOrdering(Nova_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->value, v, nova_mo_c(ord)); }
@@ -448,10 +467,10 @@ static inline nova_unit Nova_AtomicU64_method_store_MemOrdering(Nova_AtomicU64* 
 static inline nova_unit Nova_AtomicU64_method_store_u64(Nova_AtomicU64* a, uint64_t v) { __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
 static inline uint64_t Nova_AtomicU64_method_swap_MemOrdering(Nova_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->value, v, nova_mo_c(ord)); }
 static inline uint64_t Nova_AtomicU64_method_swap_u64(Nova_AtomicU64* a, uint64_t v) { return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline nova_bool Nova_AtomicU64_method_compare_exchange_MemOrdering(Nova_AtomicU64* a, uint64_t e, uint64_t d, const Nova_MemOrdering* s, const Nova_MemOrdering* f) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, false, nova_mo_c(s), nova_mo_c(f)); }
-static inline nova_bool Nova_AtomicU64_method_compare_exchange_u64(Nova_AtomicU64* a, uint64_t e, uint64_t d) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
-static inline nova_bool Nova_AtomicU64_method_compare_exchange_weak_MemOrdering(Nova_AtomicU64* a, uint64_t e, uint64_t d, const Nova_MemOrdering* s, const Nova_MemOrdering* f) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, true, nova_mo_c(s), nova_mo_c(f)); }
-static inline nova_bool Nova_AtomicU64_method_compare_exchange_weak_u64(Nova_AtomicU64* a, uint64_t e, uint64_t d) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
+static inline NovaTuple_CasRawU64 Nova_AtomicU64_method___cas_raw(Nova_AtomicU64* a, uint64_t e, uint64_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
+    NovaTuple_CasRawU64 r; r.ok = ok; r.witness = e; return r;
+}
 static inline uint64_t Nova_AtomicU64_method_fetch_add_MemOrdering(Nova_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->value, v, nova_mo_c(ord)); }
 static inline uint64_t Nova_AtomicU64_method_fetch_add_u64(Nova_AtomicU64* a, uint64_t v) { return __atomic_fetch_add(&a->value, v, __ATOMIC_SEQ_CST); }
 static inline uint64_t Nova_AtomicU64_method_fetch_sub_MemOrdering(Nova_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->value, v, nova_mo_c(ord)); }
@@ -495,10 +514,10 @@ static inline nova_unit Nova_AtomicU32_method_store_MemOrdering(Nova_AtomicU32* 
 static inline nova_unit Nova_AtomicU32_method_store_u32(Nova_AtomicU32* a, uint32_t v) { __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
 static inline uint32_t Nova_AtomicU32_method_swap_MemOrdering(Nova_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->value, v, nova_mo_c(ord)); }
 static inline uint32_t Nova_AtomicU32_method_swap_u32(Nova_AtomicU32* a, uint32_t v) { return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline nova_bool Nova_AtomicU32_method_compare_exchange_MemOrdering(Nova_AtomicU32* a, uint32_t e, uint32_t d, const Nova_MemOrdering* s, const Nova_MemOrdering* f) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, false, nova_mo_c(s), nova_mo_c(f)); }
-static inline nova_bool Nova_AtomicU32_method_compare_exchange_u32(Nova_AtomicU32* a, uint32_t e, uint32_t d) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
-static inline nova_bool Nova_AtomicU32_method_compare_exchange_weak_MemOrdering(Nova_AtomicU32* a, uint32_t e, uint32_t d, const Nova_MemOrdering* s, const Nova_MemOrdering* f) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, true, nova_mo_c(s), nova_mo_c(f)); }
-static inline nova_bool Nova_AtomicU32_method_compare_exchange_weak_u32(Nova_AtomicU32* a, uint32_t e, uint32_t d) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
+static inline NovaTuple_CasRawU32 Nova_AtomicU32_method___cas_raw(Nova_AtomicU32* a, uint32_t e, uint32_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
+    NovaTuple_CasRawU32 r; r.ok = ok; r.witness = e; return r;
+}
 static inline uint32_t Nova_AtomicU32_method_fetch_add_MemOrdering(Nova_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->value, v, nova_mo_c(ord)); }
 static inline uint32_t Nova_AtomicU32_method_fetch_add_u32(Nova_AtomicU32* a, uint32_t v) { return __atomic_fetch_add(&a->value, v, __ATOMIC_SEQ_CST); }
 static inline uint32_t Nova_AtomicU32_method_fetch_sub_MemOrdering(Nova_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->value, v, nova_mo_c(ord)); }
@@ -542,10 +561,10 @@ static inline nova_unit Nova_AtomicU16_method_store_MemOrdering(Nova_AtomicU16* 
 static inline nova_unit Nova_AtomicU16_method_store_u16(Nova_AtomicU16* a, uint16_t v) { __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
 static inline uint16_t Nova_AtomicU16_method_swap_MemOrdering(Nova_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->value, v, nova_mo_c(ord)); }
 static inline uint16_t Nova_AtomicU16_method_swap_u16(Nova_AtomicU16* a, uint16_t v) { return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline nova_bool Nova_AtomicU16_method_compare_exchange_MemOrdering(Nova_AtomicU16* a, uint16_t e, uint16_t d, const Nova_MemOrdering* s, const Nova_MemOrdering* f) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, false, nova_mo_c(s), nova_mo_c(f)); }
-static inline nova_bool Nova_AtomicU16_method_compare_exchange_u16(Nova_AtomicU16* a, uint16_t e, uint16_t d) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
-static inline nova_bool Nova_AtomicU16_method_compare_exchange_weak_MemOrdering(Nova_AtomicU16* a, uint16_t e, uint16_t d, const Nova_MemOrdering* s, const Nova_MemOrdering* f) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, true, nova_mo_c(s), nova_mo_c(f)); }
-static inline nova_bool Nova_AtomicU16_method_compare_exchange_weak_u16(Nova_AtomicU16* a, uint16_t e, uint16_t d) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
+static inline NovaTuple_CasRawU16 Nova_AtomicU16_method___cas_raw(Nova_AtomicU16* a, uint16_t e, uint16_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
+    NovaTuple_CasRawU16 r; r.ok = ok; r.witness = e; return r;
+}
 static inline uint16_t Nova_AtomicU16_method_fetch_add_MemOrdering(Nova_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->value, v, nova_mo_c(ord)); }
 static inline uint16_t Nova_AtomicU16_method_fetch_add_u16(Nova_AtomicU16* a, uint16_t v) { return __atomic_fetch_add(&a->value, v, __ATOMIC_SEQ_CST); }
 static inline uint16_t Nova_AtomicU16_method_fetch_sub_MemOrdering(Nova_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->value, v, nova_mo_c(ord)); }
@@ -589,17 +608,10 @@ static inline nova_unit Nova_AtomicU8_method_store_MemOrdering(Nova_AtomicU8* a,
 static inline nova_unit Nova_AtomicU8_method_store_u8(Nova_AtomicU8* a, nova_byte v) { __atomic_store_n(&a->value, (uint8_t)v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
 static inline nova_byte Nova_AtomicU8_method_swap_MemOrdering(Nova_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) { return (nova_byte)__atomic_exchange_n(&a->value, (uint8_t)v, nova_mo_c(ord)); }
 static inline nova_byte Nova_AtomicU8_method_swap_u8(Nova_AtomicU8* a, nova_byte v) { return (nova_byte)__atomic_exchange_n(&a->value, (uint8_t)v, __ATOMIC_SEQ_CST); }
-static inline nova_bool Nova_AtomicU8_method_compare_exchange_MemOrdering(Nova_AtomicU8* a, nova_byte ev, nova_byte dv, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
-    uint8_t e = (uint8_t)ev; return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, (uint8_t)dv, false, nova_mo_c(s), nova_mo_c(f));
-}
-static inline nova_bool Nova_AtomicU8_method_compare_exchange_u8(Nova_AtomicU8* a, nova_byte ev, nova_byte dv) {
-    uint8_t e = (uint8_t)ev; return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, (uint8_t)dv, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
-}
-static inline nova_bool Nova_AtomicU8_method_compare_exchange_weak_MemOrdering(Nova_AtomicU8* a, nova_byte ev, nova_byte dv, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
-    uint8_t e = (uint8_t)ev; return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, (uint8_t)dv, true, nova_mo_c(s), nova_mo_c(f));
-}
-static inline nova_bool Nova_AtomicU8_method_compare_exchange_weak_u8(Nova_AtomicU8* a, nova_byte ev, nova_byte dv) {
-    uint8_t e = (uint8_t)ev; return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, (uint8_t)dv, true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+static inline NovaTuple_CasRawU8 Nova_AtomicU8_method___cas_raw(Nova_AtomicU8* a, nova_byte ev, nova_byte dv, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
+    uint8_t e = (uint8_t)ev;
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &e, (uint8_t)dv, weak, nova_mo_c(s), nova_mo_c(f));
+    NovaTuple_CasRawU8 r; r.ok = ok; r.witness = (nova_byte)e; return r;
 }
 static inline nova_byte Nova_AtomicU8_method_fetch_add_MemOrdering(Nova_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) { return (nova_byte)__atomic_fetch_add(&a->value, (uint8_t)v, nova_mo_c(ord)); }
 static inline nova_byte Nova_AtomicU8_method_fetch_add_u8(Nova_AtomicU8* a, nova_byte v) { return (nova_byte)__atomic_fetch_add(&a->value, (uint8_t)v, __ATOMIC_SEQ_CST); }
@@ -644,10 +656,10 @@ static inline nova_unit Nova_AtomicIsize_method_store_MemOrdering(Nova_AtomicIsi
 static inline nova_unit Nova_AtomicIsize_method_store_int(Nova_AtomicIsize* a, nova_int v) { __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
 static inline nova_int Nova_AtomicIsize_method_swap_MemOrdering(Nova_AtomicIsize* a, nova_int v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->value, v, nova_mo_c(ord)); }
 static inline nova_int Nova_AtomicIsize_method_swap_int(Nova_AtomicIsize* a, nova_int v) { return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline nova_bool Nova_AtomicIsize_method_compare_exchange_MemOrdering(Nova_AtomicIsize* a, nova_int e, nova_int d, const Nova_MemOrdering* s, const Nova_MemOrdering* f) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, false, nova_mo_c(s), nova_mo_c(f)); }
-static inline nova_bool Nova_AtomicIsize_method_compare_exchange_int(Nova_AtomicIsize* a, nova_int e, nova_int d) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
-static inline nova_bool Nova_AtomicIsize_method_compare_exchange_weak_MemOrdering(Nova_AtomicIsize* a, nova_int e, nova_int d, const Nova_MemOrdering* s, const Nova_MemOrdering* f) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, true, nova_mo_c(s), nova_mo_c(f)); }
-static inline nova_bool Nova_AtomicIsize_method_compare_exchange_weak_int(Nova_AtomicIsize* a, nova_int e, nova_int d) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
+static inline NovaTuple_CasRawInt Nova_AtomicIsize_method___cas_raw(Nova_AtomicIsize* a, nova_int e, nova_int d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
+    NovaTuple_CasRawInt r; r.ok = ok; r.witness = e; return r;
+}
 static inline nova_int Nova_AtomicIsize_method_fetch_add_MemOrdering(Nova_AtomicIsize* a, nova_int v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->value, v, nova_mo_c(ord)); }
 static inline nova_int Nova_AtomicIsize_method_fetch_add_int(Nova_AtomicIsize* a, nova_int v) { return __atomic_fetch_add(&a->value, v, __ATOMIC_SEQ_CST); }
 static inline nova_int Nova_AtomicIsize_method_fetch_sub_MemOrdering(Nova_AtomicIsize* a, nova_int v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->value, v, nova_mo_c(ord)); }
@@ -691,10 +703,10 @@ static inline nova_unit Nova_AtomicUsize_method_store_MemOrdering(Nova_AtomicUsi
 static inline nova_unit Nova_AtomicUsize_method_store_uint(Nova_AtomicUsize* a, uint64_t v) { __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
 static inline uint64_t Nova_AtomicUsize_method_swap_MemOrdering(Nova_AtomicUsize* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->value, v, nova_mo_c(ord)); }
 static inline uint64_t Nova_AtomicUsize_method_swap_uint(Nova_AtomicUsize* a, uint64_t v) { return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline nova_bool Nova_AtomicUsize_method_compare_exchange_MemOrdering(Nova_AtomicUsize* a, uint64_t e, uint64_t d, const Nova_MemOrdering* s, const Nova_MemOrdering* f) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, false, nova_mo_c(s), nova_mo_c(f)); }
-static inline nova_bool Nova_AtomicUsize_method_compare_exchange_uint(Nova_AtomicUsize* a, uint64_t e, uint64_t d) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
-static inline nova_bool Nova_AtomicUsize_method_compare_exchange_weak_MemOrdering(Nova_AtomicUsize* a, uint64_t e, uint64_t d, const Nova_MemOrdering* s, const Nova_MemOrdering* f) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, true, nova_mo_c(s), nova_mo_c(f)); }
-static inline nova_bool Nova_AtomicUsize_method_compare_exchange_weak_uint(Nova_AtomicUsize* a, uint64_t e, uint64_t d) { return (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
+static inline NovaTuple_CasRawUint Nova_AtomicUsize_method___cas_raw(Nova_AtomicUsize* a, uint64_t e, uint64_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
+    NovaTuple_CasRawUint r; r.ok = ok; r.witness = e; return r;
+}
 static inline uint64_t Nova_AtomicUsize_method_fetch_add_MemOrdering(Nova_AtomicUsize* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->value, v, nova_mo_c(ord)); }
 static inline uint64_t Nova_AtomicUsize_method_fetch_add_uint(Nova_AtomicUsize* a, uint64_t v) { return __atomic_fetch_add(&a->value, v, __ATOMIC_SEQ_CST); }
 static inline uint64_t Nova_AtomicUsize_method_fetch_sub_MemOrdering(Nova_AtomicUsize* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->value, v, nova_mo_c(ord)); }
@@ -769,38 +781,16 @@ static inline nova_bool Nova_AtomicBool_method_swap_MemOrdering(Nova_AtomicBool*
     return (nova_bool)__atomic_exchange_n(&a->value, (bool)v, nova_mo_c(ord));
 }
 
-/* compare_exchange_bool (strong, SeqCst) / compare_exchange_MemOrdering. */
-static inline nova_bool Nova_AtomicBool_method_compare_exchange_bool(
-        Nova_AtomicBool* a, nova_bool expected_val, nova_bool desired) {
-    bool exp = (bool)expected_val;
-    return (nova_bool)__atomic_compare_exchange_n(
-        &a->value, &exp, (bool)desired,
-        false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
-}
-static inline nova_bool Nova_AtomicBool_method_compare_exchange_MemOrdering(
-        Nova_AtomicBool* a, nova_bool expected_val, nova_bool desired,
+/* Plan 207: raw (ok, witness) pair, strong+weak share one intrinsic — public
+ * compare_exchange/_weak wrappers (plain .nv fn) build Result[(), bool]. */
+static inline NovaTuple_CasRawBool Nova_AtomicBool_method___cas_raw(
+        Nova_AtomicBool* a, nova_bool expected_val, nova_bool desired, nova_bool weak,
         const Nova_MemOrdering* success, const Nova_MemOrdering* failure) {
     bool exp = (bool)expected_val;
-    return (nova_bool)__atomic_compare_exchange_n(
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(
         &a->value, &exp, (bool)desired,
-        false, nova_mo_c(success), nova_mo_c(failure));
-}
-
-/* compare_exchange_weak_bool / compare_exchange_weak_MemOrdering. */
-static inline nova_bool Nova_AtomicBool_method_compare_exchange_weak_bool(
-        Nova_AtomicBool* a, nova_bool expected_val, nova_bool desired) {
-    bool exp = (bool)expected_val;
-    return (nova_bool)__atomic_compare_exchange_n(
-        &a->value, &exp, (bool)desired,
-        true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
-}
-static inline nova_bool Nova_AtomicBool_method_compare_exchange_weak_MemOrdering(
-        Nova_AtomicBool* a, nova_bool expected_val, nova_bool desired,
-        const Nova_MemOrdering* success, const Nova_MemOrdering* failure) {
-    bool exp = (bool)expected_val;
-    return (nova_bool)__atomic_compare_exchange_n(
-        &a->value, &exp, (bool)desired,
-        true, nova_mo_c(success), nova_mo_c(failure));
+        weak, nova_mo_c(success), nova_mo_c(failure));
+    NovaTuple_CasRawBool r; r.ok = ok; r.witness = (nova_bool)exp; return r;
 }
 
 /* fetch_or_bool / fetch_or_MemOrdering. */
@@ -874,28 +864,14 @@ static inline nova_int Nova_AtomicPtr_method_swap_MemOrdering(Nova_AtomicPtr* a,
     return __atomic_exchange_n(&a->value, v, nova_mo_c(ord));
 }
 
-static inline nova_bool Nova_AtomicPtr_method_compare_exchange_int(
-        Nova_AtomicPtr* a, nova_int expected, nova_int desired) {
-    return (nova_bool)__atomic_compare_exchange_n(
-        &a->value, &expected, desired, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
-}
-static inline nova_bool Nova_AtomicPtr_method_compare_exchange_MemOrdering(
-        Nova_AtomicPtr* a, nova_int expected, nova_int desired,
+/* Plan 207: raw (ok, witness) pair, strong+weak share one intrinsic — public
+ * compare_exchange/_weak wrappers (plain .nv fn) build Result[(), int]. */
+static inline NovaTuple_CasRawInt Nova_AtomicPtr_method___cas_raw(
+        Nova_AtomicPtr* a, nova_int expected, nova_int desired, nova_bool weak,
         const Nova_MemOrdering* success, const Nova_MemOrdering* failure) {
-    return (nova_bool)__atomic_compare_exchange_n(
-        &a->value, &expected, desired, false, nova_mo_c(success), nova_mo_c(failure));
-}
-
-static inline nova_bool Nova_AtomicPtr_method_compare_exchange_weak_int(
-        Nova_AtomicPtr* a, nova_int expected, nova_int desired) {
-    return (nova_bool)__atomic_compare_exchange_n(
-        &a->value, &expected, desired, true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
-}
-static inline nova_bool Nova_AtomicPtr_method_compare_exchange_weak_MemOrdering(
-        Nova_AtomicPtr* a, nova_int expected, nova_int desired,
-        const Nova_MemOrdering* success, const Nova_MemOrdering* failure) {
-    return (nova_bool)__atomic_compare_exchange_n(
-        &a->value, &expected, desired, true, nova_mo_c(success), nova_mo_c(failure));
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(
+        &a->value, &expected, desired, weak, nova_mo_c(success), nova_mo_c(failure));
+    NovaTuple_CasRawInt r; r.ok = ok; r.witness = expected; return r;
 }
 
 /* ── Plan 103.3: TLF timer state (try_lock_for / try_read_for / try_write_for)

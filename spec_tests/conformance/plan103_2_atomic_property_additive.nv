@@ -58,18 +58,18 @@ test "property: u64 fetch_add/sub inverse" {
 test "property: CAS failure leaves value unchanged" {
     mut a = AtomicI64.new(7)
     ro v = a.load()
-    ro ok = a.compare_exchange(v + 1, 0)  // wrong expected
+    ro ok = a.compare_exchange(v + 1, 0).is_ok()  // wrong expected
     assert(!ok)
     assert(a.load() == v)
 }
 
 test "property: CAS success sets expected value" {
     mut a = AtomicI64.new(42)
-    ro ok = a.compare_exchange(42, 99)
+    ro ok = a.compare_exchange(42, 99).is_ok()
     assert(ok)
     assert(a.load() == 99)
     // second CAS with old expected now fails
-    ro ok2 = a.compare_exchange(42, 0)
+    ro ok2 = a.compare_exchange(42, 0).is_ok()
     assert(!ok2)
     assert(a.load() == 99)
 }

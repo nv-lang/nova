@@ -20,7 +20,7 @@ test "AtomicIsize store and fetch_add" {
 
 test "AtomicIsize compare_exchange" {
     mut a = AtomicIsize.new(100)
-    ro ok = a.compare_exchange(100, 200)
+    ro ok = a.compare_exchange(100, 200).is_ok()
     assert(ok)
     assert(a.load() == 200)
 }
@@ -46,7 +46,7 @@ test "AtomicUsize fetch_add" {
 
 test "AtomicUsize compare_exchange failure" {
     mut a = AtomicUsize.new(77)
-    ro ok = a.compare_exchange(0, 999)
+    ro ok = a.compare_exchange(0, 999).is_ok()
     assert(!ok)
     assert(a.load() == 77)
 }

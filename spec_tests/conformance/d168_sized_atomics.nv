@@ -26,10 +26,10 @@ test "AtomicI32/I16/I8: new/load/store/fetch_add (D168)" {
 
 test "AtomicI64: compare_exchange semantics (D168)" {
     mut d168_a = AtomicI64.new(42)
-    ro d168_ok = d168_a.compare_exchange(42, 100)
+    ro d168_ok = d168_a.compare_exchange(42, 100).is_ok()
     assert(d168_ok)
     assert(d168_a.load() == 100)
-    ro d168_no = d168_a.compare_exchange(42, 7)
+    ro d168_no = d168_a.compare_exchange(42, 7).is_ok()
     assert(!d168_no)
     assert(d168_a.load() == 100)
 }

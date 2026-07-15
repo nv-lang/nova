@@ -21,7 +21,7 @@ test "AtomicU64 fetch_add" {
 
 test "AtomicU64 compare_exchange success" {
     mut a = AtomicU64.new(42)
-    ro ok = a.compare_exchange(42, 0)
+    ro ok = a.compare_exchange(42, 0).is_ok()
     assert(ok)
     assert(a.load() == 0)
 }
