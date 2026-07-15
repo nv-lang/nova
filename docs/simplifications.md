@@ -38575,3 +38575,20 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   (/api/events?...mode=live) вешает сервер (2-й запрос); /api/run тот же —
   ОК 5×5. Клинит SSE+live-TLS-комбинация (remote-park не дренится на закрытии
   SSE). Демо-обход: браузерный weather-live не открывать.
+
+## 187 нагрузочный тест + chaos-креш находка (2026-07-15, оркестратор)
+
+- loadtest.ps1 (examples/flagship/aggregator/) — самодостаточный НТ: сам
+  собирает/поднимает/глушит сервер, 7 блоков (base / run 6 комбо / SSE 6 комбо /
+  sustained SSE weather-live xN / concurrency N параллельных / idle 12с /
+  demo-детерминизм). Запуск: .\loadtest.ps1 [-Port -Iterations -Concurrency
+  -Build -SkipLive]. Финал PASS=24 FAIL=0.
+- НАШЁЛ РЕАЛЬНЫЙ БАГ (узкая проверка пропустила): weather/chaos КРЕШИЛ сервер
+  `panic: integer overflow: *`. Корень: scenarios.nv splitmix64_step использовал
+  голые `+`/`*` — не смигрирован на wrapping при приземлении D423 (trap-default
+  overflow, волна 206). splitmix64 модульный по замыслу → .wrapping_add/
+  .wrapping_mul (эталон std/testing/handlers.nv). Фикс — 3 строки в scenarios.nv.
+  Урок: любой hash/PRNG-код в примерах надо ревизнуть на wrapping после D423.
+- Тест-артефакт (не баг): demo-детерминизм сравнивал ПОРЯДОК results[], а
+  parallel for завершается недетерминированно → сравнивать МНОЖЕСТВО id:state
+  (сортированно). Исправлено в loadtest.ps1 BLOCK 7.
