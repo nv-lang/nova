@@ -34,7 +34,8 @@
 
 **Решено 2026-07-15:** буфер-примитив = **внутренний** рендер `int_fmt(v,buf,cap)->len` (не публичный `@to_str`);
 `Write`↔`io.Write` — **СЛИТЬ** (коорд. 176), направления `Read`/`Write` НЕ сливать; str-форма БЕЗ overload'а —
-литерал `w.write("...")` через коэрсию str→`[]u8` (лоуэрится в `@bytes()`, D176 zero-copy), переменная `.bytes()`;
+str-литерал `w.write("...")` через **коэрсию str-литерал→`[]u8`** (амендмент **D55**, ОБЩЕЕ правило для любой
+`[]u8`-позиции, zero-copy), str-переменная → явный `.bytes()` (D176);
 `width` = **кодпоинты** (Rust-парити; графемы/дисплей-колонки — future-ось, у нас уже есть unicode/grapheme-таблицы);
 `str.from_debug` — **ретракт** вместе с `str.from`. **Новое (investigation):** buffer-consolidation — см. §6.
 
@@ -46,8 +47,8 @@ export type Write protocol {         // МИНИМАЛЬНЫЙ: только @wr
     // reserve/advance — КОНКРЕТНО на StringBuilder (не в протоколе); zero-copy = компилятор через SB
 }
 
-export type Fmt protocol {           // Fmt = use Write (@write) + оси спека (reserve/advance НЕ в протоколе)
-    use Write
+export type Fmt protocol {           // Fmt embeds Write (D145 protocol-embed) + оси спека
+    use Write                        // компонует @write([]u8) из Write (D145, parse_protocol_body подтверждает)
     @width()     -> Option[int]
     @precision() -> Option[int]
     @align()     -> Option[Align]
@@ -185,6 +186,11 @@ result = sb.into_str()
   (`extern "C" fn fmt_f64_into(buf,cap,v,kind,prec)` — литеральное имя, D282); энумы `Align`/`Sign`/`FmtKind`.
 
 **АМЕНДИТЬ:**
+- **D55** (literal-coercion) — аменд: str-**литерал** `"..."` коэрсится в `[]u8` в ЛЮБОЙ `[]u8`-позиции (не только
+  `@write` — **общее правило**, владелец 2026-07-15). То же семейство, что int-литерал→newtype (D55): «литерал в
+  типизированной позиции». Узаконивает эту неявную литеральную коэрсию (Nova без implicit-coercion — это carve-out
+  на ЛИТЕРАЛАХ, как для newtype-конструкции; str-значение → всё равно явный `.bytes()`, D176). str = UTF-8-байты →
+  коэрсия zero-copy.
 - **D419** (`Fmt` для `@display_fmt`) — **RETRACT/SUPERSEDED**.
 - **D374** (Write-sink) — аменд ×2: sink Display/Debug = `Fmt`; `Write.@write` → `[]u8`.
 - **D237** (Display/Debug) — аменд: сигнатуры `@display`/`@debug` → `(mut f Fmt)`.
@@ -227,10 +233,16 @@ sign/radix/precision/alternate/pretty) pos; byte-parity НЕ требуется 
 
 ## 9. Финальные сигнатуры (финализирует наброски §2)
 
-> **NB — ⚠syntax-развилки РАЗРЕШЕНЫ 2026-07-15 (владелец):** (1) `@write(str)`-overload **убран** — str через
-> `s.bytes()` (D176) + коэрсия str-литерала→`[]u8`; (2) `Fmt` компонует `Write` через **`use`** (форму embed сверить
-> по `02-types.md`); (3) extern-C = **литеральное имя без `nova_`** (D282, эталон nova-tls). Осталось сверить точные
-> формы `use`-embed и `extern "C"` по спеке ПЕРЕД кодом (Фаза 0/1).
+> **NB — ⚠syntax-развилки СВЕРЕНЫ ПО СПЕКЕ 2026-07-15:** (1) `@write(str)`-overload **убран** — str-значение через
+> `s.bytes()` (D176), str-**литерал**→`[]u8` через **коэрсию (амендмент D55**, то же семейство «литерал в
+> типизированной позиции», где уже int-литерал→newtype; **общее правило** для ЛЮБОЙ `[]u8`-позиции, не только
+> `@write`). (2) **`use Write` — ВЕРНО** (protocol-embed, **D145**): `use TypeName` внутри `protocol {}` = композиция
+> протокола (парсер `parse_protocol_body` подтверждает: leading `use`, comma-list `use Reader, Writer`). ОТДЕЛЬНЫЙ
+> механизм от record-`use` (field-delegation) — одно ключевое слово, контекст (protocol-body vs record-body) различает
+> семантику. Существующий `Fmt` (protocols.nv:241) пока ПОВТОРЯЕТ `@write` (до-D145 стиль); Фаза 2 → `use Write`.
+> (3) extern-C = `extern "C" fn` + **литеральное имя без
+> `nova_`** — ВЕРНО (`08-runtime.md#d282`, эталон nova-tls). **NB:** `Write`/`Fmt` УЖЕ существуют (protocols.nv:206/241),
+> сейчас `@write(s str)` — Фаза 2 амендит на `[]u8` (D374-аменд + миграция юзеров на `.bytes()`/литерал-коэрсию).
 
 **Энумы (D406):**
 ```nova
@@ -263,11 +275,11 @@ spare-capacity). Пользовательские generic-`@display` (над `Fm
 (io-`Write` из Plan 176 — ОТДЕЛЬНЫЙ протокол с `@write([]u8) -> Result[(), IoError]`; тот же байтовый шейп, другая
 сигнатура — «два родственника»; теперь обе минимальны = честно общий шейп.)
 
-**`Fmt` — sink (`use Write`) + оси спека** (композиция протокола через `use` — владелец 2026-07-15; точную форму
-embed сверить по `02-types.md`):
+**`Fmt` — sink (`use Write`, protocol-embed D145) + оси спека** (сверено 2026-07-15: `use TypeName` в `protocol {}`
+= композиция протокола, parse_protocol_body подтверждает):
 ```nova
 export type Fmt protocol {
-    use Write                        // компонует @write([]u8) из Write (⚠syntax: форма use/embed — сверить)
+    use Write                        // protocol-embed (D145) — компонует @write([]u8) из Write
     @width()     -> Option[int]
     @precision() -> Option[int]
     @align()     -> Option[Align]
