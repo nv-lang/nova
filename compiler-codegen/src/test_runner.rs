@@ -2155,7 +2155,6 @@ pub fn parse_contracts_policy(src: &str) -> Option<ast::ContractsMode> {
         match rest.trim() {
             "checked" => return Some(ast::ContractsMode::Checked),
             "optimized" => return Some(ast::ContractsMode::Optimized),
-            "verified" => return Some(ast::ContractsMode::Verified),
             _ => continue,
         }
     }

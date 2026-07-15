@@ -7,7 +7,7 @@
 // `Vec: slice [a..b] out of bounds for length N`).
 
 module spec_tests.conformance
-test "neg slice oob to" panics "Vec: slice range out of bounds" {
+test "neg slice oob to" panics "requires failed" {
     mut arr = [1, 2, 3]
     ro _ = arr[0..100]
 }

@@ -508,22 +508,21 @@ pub enum ContractsMode {
     /// dev-профиля.
     #[default]
     Checked,
-    /// Пока идентично `Checked` (различия — атомы A2.2+/A3). Default для
-    /// release-профиля.
+    /// Z3-driven sound-элизия доказанных + `#debug`-эрозия. Default для
+    /// release-профиля. (Режим `verified` УДАЛЁН 2026-07-15, владелец: whole-build
+    /// «докажи всё или compile-error» — footgun; статическая верификация — через
+    /// per-fn `#verify` + `nova verify-contracts`, не build-режим.)
     Optimized,
-    /// Пока идентично `Checked` (различия — атомы A2.2+/A3).
-    Verified,
 }
 
 impl ContractsMode {
     /// Парсит значение CLI-флага `--contracts`. Clap `value_parser`
-    /// ограничивает вход этими тремя строками — паника здесь означала бы
+    /// ограничивает вход этими двумя строками — паника здесь означала бы
     /// баг в самом парсере, а не пользовательский ввод.
     pub fn parse(s: &str) -> Self {
         match s {
             "checked" => ContractsMode::Checked,
             "optimized" => ContractsMode::Optimized,
-            "verified" => ContractsMode::Verified,
             other => panic!(
                 "invalid --contracts value (CLI value_parser should have rejected this): {other}"
             ),

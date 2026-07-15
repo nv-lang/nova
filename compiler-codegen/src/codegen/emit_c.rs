@@ -4098,10 +4098,7 @@ impl CEmitter {
     /// предикатом НЕ гейтятся — они always-on независимо от режима (сайт-
     /// specific sound-элизия идёт отдельно через `proven_contracts`).
     fn mode_erases_debug(&self) -> bool {
-        matches!(
-            self.contracts_mode,
-            crate::ast::ContractsMode::Optimized | crate::ast::ContractsMode::Verified
-        )
+        matches!(self.contracts_mode, crate::ast::ContractsMode::Optimized)
     }
 
     /// Plan 140 Ф.2 / Plan 194 A4 (ретракт `#unchecked`): контракт-проверки
