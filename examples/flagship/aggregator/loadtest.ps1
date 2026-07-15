@@ -16,8 +16,9 @@
 
 param(
     [int]$Port = 8195,
-    [int]$Iterations = 5,
-    [int]$Concurrency = 8,
+    [int]$Iterations = 50,          # sustained SSE weather-live repeats (10x baseline)
+    [int]$Concurrency = 80,         # parallel /api/run via runspace pool (10x baseline)
+    [int]$Rounds = 10,              # times to repeat the run/SSE combo sweeps
     [switch]$Build,
     [switch]$SkipLive,
     [string]$RepoRoot = "d:\Sources\nv-lang\nova"
@@ -75,20 +76,26 @@ try {
     Write-Host "== BLOCK 1: base endpoints ==" -ForegroundColor Yellow
     foreach ($e in @("/", "/api/snapshot")) { $c = Code "$B$e"; Check ($c -eq 200) "GET $e"; Write-Host "    $e -> $c" }
 
-    # -- BLOCK 2: /api/run every legend x mode -------------------------------
-    Write-Host "== BLOCK 2: /api/run (legend x mode) ==" -ForegroundColor Yellow
+    # -- BLOCK 2: /api/run every legend x mode, x$Rounds rounds --------------
+    Write-Host "== BLOCK 2: /api/run (legend x mode) x$Rounds rounds ==" -ForegroundColor Yellow
     foreach ($l in $legends) { foreach ($m in $modes) {
-        $c = Code "$B/api/run?legend=$l&mode=$m&seed=42" 25; Check ($c -eq 200) "run $l/$m"; Write-Host "    $l/$m -> $c" } }
+        $ok2 = 0
+        for ($r = 0; $r -lt $Rounds; $r++) { if ((Code "$B/api/run?legend=$l&mode=$m&seed=42" 25) -eq 200) { $ok2++ } }
+        Check ($ok2 -eq $Rounds) "run $l/$m ($ok2/$Rounds)"; Write-Host "    $l/$m -> $ok2/$Rounds" } }
     Check (Alive) "alive after BLOCK 2"
 
-    # -- BLOCK 3: /api/events (SSE) every legend x mode ----------------------
-    Write-Host "== BLOCK 3: /api/events SSE (legend x mode) ==" -ForegroundColor Yellow
+    # -- BLOCK 3: /api/events (SSE) every legend x mode, x$Rounds rounds -----
+    Write-Host "== BLOCK 3: /api/events SSE (legend x mode) x$Rounds rounds ==" -ForegroundColor Yellow
     foreach ($l in $legends) { foreach ($m in $modes) {
-        try {
-            $body = (Invoke-WebRequest -Uri "$B/api/events?legend=$l&mode=$m&seed=42" -TimeoutSec 20 -UseBasicParsing).Content
-            $n = ([regex]::Matches($body, "(?m)^event:")).Count
-            Check ($n -ge 2 -and (Alive)) "sse $l/$m ($n events)"; Write-Host "    $l/$m -> events=$n, server=$(AliveStr)"
-        } catch { Check $false "sse $l/$m (exception)" }
+        $ok3 = 0; $lastN = 0
+        for ($r = 0; $r -lt $Rounds; $r++) {
+            try {
+                $body = (Invoke-WebRequest -Uri "$B/api/events?legend=$l&mode=$m&seed=42" -TimeoutSec 20 -UseBasicParsing).Content
+                $lastN = ([regex]::Matches($body, "(?m)^event:")).Count
+                if ($lastN -ge 2) { $ok3++ }
+            } catch { }
+        }
+        Check ($ok3 -eq $Rounds -and (Alive)) "sse $l/$m ($ok3/$Rounds)"; Write-Host "    $l/$m -> $ok3/$Rounds ok (events~$lastN), server=$(AliveStr)"
     } }
 
     # -- BLOCK 4: sustained SSE weather-live xN (historic wedge case) --------
@@ -101,14 +108,21 @@ try {
         }
     }
 
-    # -- BLOCK 5: concurrency -- N parallel /api/run -------------------------
-    Write-Host "== BLOCK 5: concurrency $Concurrency parallel /api/run ==" -ForegroundColor Yellow
-    $jobs = 1..$Concurrency | ForEach-Object {
-        $m = @("demo", "chaos")[($_ % 2)]
-        Start-Job -ScriptBlock { param($u) try { (Invoke-WebRequest -Uri $u -TimeoutSec 25 -UseBasicParsing).StatusCode } catch { 0 } } -ArgumentList "$B/api/run?legend=health&mode=$m&seed=$_"
+    # -- BLOCK 5: concurrency -- N truly-parallel /api/run (runspace pool) ----
+    # Runspaces = lightweight threads INSIDE one process (not Start-Job, which
+    # forks a full powershell.exe per job -> 80 of those would exhaust the box).
+    # This drives N SIMULTANEOUS HTTP connections at the server cheaply.
+    Write-Host "== BLOCK 5: concurrency $Concurrency parallel /api/run (runspace pool) ==" -ForegroundColor Yellow
+    $pool = [runspacefactory]::CreateRunspacePool(1, $Concurrency); $pool.Open()
+    $work = @()
+    for ($k = 1; $k -le $Concurrency; $k++) {
+        $m = @("demo", "chaos")[($k % 2)]
+        $ps = [powershell]::Create(); $ps.RunspacePool = $pool
+        [void]$ps.AddScript({ param($u) try { (Invoke-WebRequest -Uri $u -TimeoutSec 30 -UseBasicParsing).StatusCode } catch { 0 } }).AddArgument("$B/api/run?legend=health&mode=$m&seed=$k")
+        $work += [pscustomobject]@{ ps = $ps; handle = $ps.BeginInvoke() }
     }
-    $codes = $jobs | Wait-Job -Timeout 40 | Receive-Job
-    $jobs | Remove-Job -Force -ErrorAction SilentlyContinue
+    $codes = $work | ForEach-Object { try { $_.ps.EndInvoke($_.handle) } catch { 0 } finally { $_.ps.Dispose() } }
+    $pool.Close(); $pool.Dispose()
     $ok = ($codes | Where-Object { $_ -eq 200 }).Count
     Check ($ok -eq $Concurrency -and (Alive)) "concurrency $ok/$Concurrency"; Write-Host "    200 responses: $ok/$Concurrency, server=$(AliveStr)"
 
