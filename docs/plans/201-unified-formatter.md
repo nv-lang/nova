@@ -1,8 +1,9 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 201 — Unified Formatter (`@display(mut f Fmt)`, байтовый `Write`, zero-alloc)
 
-**Статус:** 📋 ДИЗАЙН (в разработке, интерактивная выработка с владельцем 2026-07-14/15). НЕ реализация —
-сначала полный дизайн-док + D-амендменты, потом исполнение по карте дешёвыми агентами.
+**Статус:** ✅ ДИЗАЙН ФИНАЛИЗИРОВАН 2026-07-15 (все развилки закрыты; финальные сигнатуры §9 + карта исполнения
+§10 + гейты/риски §11). **Ждёт owner-go на Фазу 0** (спека D422 + амендменты). Реализация язык-меняющая —
+без go не начинается.
 **Приоритет:** ниже Plan 196. **Язык-меняющее** → D-амендменты в том же слиянии, что код.
 **Родитель-реестр:** [Plan 200 Пункт 8](200-std-improvements.md).
 
@@ -195,6 +196,137 @@ sign/radix/precision/alternate/pretty) pos; byte-parity НЕ требуется 
    `Write`-шейп, типы не схлопываем.
 
 **Все вопросы закрыты — дизайн-развилок не осталось.**
+
+---
+
+## 9. Финальные сигнатуры (финализирует наброски §2)
+
+> **NB (feedback_nova_syntax):** формы ниже сверить со `spec/decisions/`+`examples/` перед кодом — помечено `⚠syntax`
+> там, где точная форма Nova требует проверки (protocol-default для перегрузки; наследование протокола; extern-C).
+
+**Энумы (D406):**
+```nova
+type Align   enum Left | Right | Center
+type Sign    enum Minus | Plus
+type FmtKind enum Display | Debug | Hex | Oct | Bin | Exp
+type FloatKind enum Shortest | Fixed | Sci        // для nova_f64_into
+```
+
+**`Write` — байтовый sink форматирования (ИНФАЛЛИБЕЛЬНЫЙ):**
+```nova
+export type Write protocol {
+    mut @write(bytes []u8) -> ()
+    mut @write(s str) -> () { @write(s.as_bytes()) }   // ⚠syntax: default-перегрузка; str уже UTF-8 → 0 копий
+    mut @reserve(n int) -> *mut u8                       // гарантировать n свободных, вернуть голову записи (zero-copy)
+    mut @advance(n int) -> ()                            // зафиксировать k записанных байт
+}
+```
+(io-`Write` из Plan 176 — ОТДЕЛЬНЫЙ протокол с `@write([]u8) -> Result[(), IoError]`; тот же байтовый шейп, другая
+сигнатура — «два родственника».)
+
+**`Fmt` — sink + оси спека** (повторяет write-методы + добавляет оси; НЕ полагаемся на наследование протокола `⚠syntax`):
+```nova
+export type Fmt protocol {
+    mut @write(bytes []u8) -> ()
+    mut @write(s str) -> () { @write(s.as_bytes()) }
+    mut @reserve(n int) -> *mut u8
+    mut @advance(n int) -> ()
+    @width()     -> Option[int]
+    @precision() -> Option[int]
+    @align()     -> Option[Align]
+    @fill()      -> char
+    @sign()      -> Sign
+    @alternate() -> bool
+    @kind()      -> FmtKind
+    mut @pad(bytes []u8) -> ()          // тип-управляемый паддинг → ставит pad_consumed
+}
+```
+
+**`Display` / `Debug` — ОДИН метод каждый, инфаллибельный:**
+```nova
+export type Display protocol { @display(mut f Fmt) -> () { f.write(@to_str()) } }   // default через to_str
+export type Debug   protocol { @debug(mut f Fmt) -> () { /* auto-derive / @to_str */ } }
+```
+
+**`FmtCtx` — конкретный реализатор `Fmt`, строит компилятор на каждом `${x:SPEC}`:**
+```nova
+export type FmtCtx {
+    sink Write            // главный SB (или под-регион при pad_in_place)
+    mark int              // старт тела в SB (для pad_in_place)
+    spec FormatSpec       // width/align/fill/sign/alternate/precision/kind
+    mut pad_consumed  bool
+    mut prec_consumed bool
+}
+// @write → sink.@write; @width → spec.width; …; @pad(bytes) → write_padded в sink + pad_consumed=true
+```
+
+**Буфер-примитивы — ВНУТРЕННИЕ (.nv, не публичные), zero-alloc:**
+```nova
+fn int_fmt(v int, buf *mut u8, cap int, spec FmtSpec) -> int      // digit-loop + радикс + zero_pad; вернуть len
+fn bool_fmt(v bool, buf *mut u8, cap int) -> int
+fn char_fmt(v char, buf *mut u8, cap int) -> int                  // UTF-8 encode
+// float — ЕДИНСТВЕННЫЙ C-extern (dtoa непортируем):
+extern fn nova_f64_into(buf *mut u8, cap int, v f64, kind FloatKind, prec int) -> int   // ⚠syntax: форма extern-C по 174.6/195
+```
+
+**`StringBuilder` аменд (D179):**
+```nova
+fn StringBuilder mut @reserve(n int) -> *mut u8
+fn StringBuilder mut @advance(n int) -> ()
+fn StringBuilder @len() -> int
+fn StringBuilder mut @pad_in_place(mark int, width int, fill char, align Align) -> ()   // memmove + fill (right/center)
+fn StringBuilder mut @write_padded(bytes []u8, width int, fill char, align Align) -> ()
+fn StringBuilder consume @into_str() -> str                         // assume-valid UTF-8
+fn StringBuilder consume @into_str_checked() -> Result[str, Utf8Error]
+```
+
+**Бланкет convenience:** `export fn[T Display] T @to_str() -> str` = собрать в свежий SB через `@display`, `into_str()`.
+
+## 10. Карта исполнения (фазы · модели · гейты)
+
+> Модели по [feedback-cheap-models]: **opus** — спека + компилятор-синтез/переписка emit_c (архитектура); **sonnet** —
+> исполнение по карте (.nv-протоколы/дженерики); **haiku** — механическая зачистка. Каждая фаза = свой worktree,
+> суб-агентов не спавнить, checkpoint+resumeFromRunId, греп маркеров с коммитом.
+
+**Фаза 0 — Спека (opus).** D422 (keystone) + амендменты D419(retract)/D374/D237/D229/D179 + ретракт `str.from_debug`
+в `spec/decisions/`. **Гейт:** owner sign-off (язык-меняющее).
+
+**Фаза 1 — Фундамент, АДДИТИВНО без смены поведения (sonnet .nv + 1 C-файл).** Буфер-примитивы в .nv
+(`int_fmt`/`bool_fmt`/`char_fmt` + радикс + `pad_in_place`/`write_padded`) РЯДОМ с conv.h; `nova_f64_into` (C-extern
+буфер-форма) рядом с текущим float; `StringBuilder` аменд (`@reserve`/`@advance`/`@len`/`into_str`). Старый путь ещё
+работает. **Гейт:** unit-тесты примитивов + полный conformance БЕЗ регресса.
+
+**Фаза 2 — КОГЕРЕНТНАЯ ВОЛНА: протоколы + переписка компилятора (opus компилятор + sonnet .nv).** Самая рискованная
+(big-bang, всё вместе, т.к. смена сигнатур взаимозависима):
+- std: `Write`([]u8, инфаллибельно) + `Fmt`(оси) + `FmtCtx` + энумы; `Display`/`Debug` → `(mut f Fmt) -> ()`;
+- компилятор: переписать `emit_interpolated_str` (~39556) + `emit_format_spec_value` (~39944) на единый `@display(f)`/
+  `@debug(f)` + `pad_in_place`; **удалить `@display_fmt`-путь** (~40125); `Write.@write` str→[]u8; примитивы →
+  буфер-примитивы Фазы 1;
+- ретракт `str.from_debug`.
+**Гейт:** полный conformance один-CU зелёный; формат-фикстуры (см. §11); D-амендменты в ТОМ ЖЕ слиянии; byte-parity
+НЕ требуется. **Дробить осторожно, checkpoint.**
+
+**Фаза 3 — Дженерики .nv + auto-derive (sonnet .nv + opus компилятор-синтез).** `[]T`/`Vec[T]`/`Option`/`Result`
+Display/Debug — дженерик-импл в .nv; компилятор auto-derive record/sum/tuple → через `@display(f)`/`@debug(f)`, pretty
+через `f.alternate()`. **Гейт:** derive-фикстуры pos, pretty pos.
+
+**Фаза 4 — Зачистка (haiku/sonnet).** Оставшийся conv.h int/bool/char/радикс/pad → .nv; удалить мёртвый `nova_fmt_*`.
+**Гейт:** conformance; C-поверхность = ТОЛЬКО float-body.
+
+## 11. Гейты и риски
+
+**Гейты (каждая волна):** полный `spec_tests/conformance` один-CU зелёный; НОВЫЕ формат-фикстуры pos —
+width/align/fill/sign/`#`alt/`0`zero-pad/radix(hex/oct/bin)/precision(float+str)/`:?`debug/`:#?`pretty + вложенные
+спеки; byte-parity НЕ требуется (вывод тот же, `.c` меняется законно), но тесты зелёные.
+
+**Риски / координация:**
+- **Plan 176** — io-`Write` байтовый: координация (общий байтовый шейп, направления Read/Write раздельны, `StringBuilder`
+  остаётся);
+- **Plan 196** — НЕ трогать замороженную зону `infer_call_ret_c` (46293–48883); interp/format-codegen ВНЕ её
+  (~2428 / 39xxx / 40xxx) — безопасно;
+- **язык-меняющее** → D-амендмент в том же слиянии (Фаза 0 спека → Фаза 2 код ссылается);
+- **Фаза 2 = big-bang** (сигнатуры взаимозависимы) — главный риск; митигигация: Фаза 1 аддитивна (примитивы готовы
+  заранее), Фаза 2 дробить по под-шагам с checkpoint, полный conformance после каждого под-шага.
 
 **Следующий шаг:** финализировать сигнатуры (`Fmt`/`Write`/`Display`/`Debug`/буфер-примитив/`nova_f64_into`) +
 карта исполнения (что opus-синтез в компиляторе, что дешёвыми агентами по `.nv`/`conv.h`→`.nv`; порядок; гейты).
