@@ -1,0 +1,23 @@
+// Plan 206 Ф.2 (D423) — репро spec_tests/conformance/hash.nv в own-CU (тот
+// корпус — 970-файловый мега-CU, точечно не гоняется). Vec[T Hash].hash()
+// использует FNV-1a mod-2^64 умножение ПО ЗАМЫСЛУ; под sized-int trap-default
+// голый `*` трапил бы (`integer overflow: *`) — мигрировано на wrapping_mul
+// (std/src/collections/vec/protocols.nv). Здесь проверяем, что hash() больше
+// НЕ паникует и сохраняет контракт Hash+Equal.
+module soundness.plan206_vec_hash_wrapping
+
+test "equal vecs hash equal" {
+    ro a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of(1, 2, 3)
+    assert(a.hash() == b.hash())
+}
+
+test "empty + single round-trip" {
+    assert(Vec[int].new().hash() == Vec[int].new().hash())
+    assert(Vec[int].of(42).hash() == Vec[int].of(42).hash())
+}
+
+test "content + length distinguish (FNV, no collision for these)" {
+    assert(Vec[int].of(1, 2, 3).hash() != Vec[int].of(1, 2, 4).hash())
+    assert(Vec[int].of(1, 2).hash() != Vec[int].of(1, 2, 0).hash())
+}

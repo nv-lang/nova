@@ -1,0 +1,20 @@
+// Plan 206 Ф.1b (D423, решение A): переполнение `u16` при умножении ДЕТЕКТИТСЯ
+// НА ШИРИНЕ u16 (max 65535), а НЕ на ширине signed nova_int (64-bit). Ключевая
+// проверка: 60000*2 = 120000 влезает в nova_int (не переполнил бы 64-битный
+// слот), но ПЕРЕПОЛНЯЕТ u16 → trap. Если бы Ф.1b лоуэрил u16*u16 через
+// nova_int-checked (широкий), overflow НЕ был бы задетектен и вернулось бы
+// 120000 без паники — этот тест поймал бы такой баг ширины (был бы RUN-OK
+// вместо RUNTIME_PANIC). Trap здесь = ДОКАЗАТЕЛЬСТВО правильной u16-ширины
+// детекта.
+// EXPECT_RUNTIME_PANIC integer overflow
+
+// SOUNDNESS_REGRESSION — Plan 206 Ф.1b (u16-width overflow detection).
+module neg.u16_overflow_mul_width_panic
+
+fn mul_u16(a u16, b u16) -> u16 => a * b
+
+test "u16 * overflow (120000 > 65535) panics НА ШИРИНЕ u16, не nova_int" {
+    ro p u16 = 60000
+    ro q u16 = 2
+    ro _ = mul_u16(p, q)
+}

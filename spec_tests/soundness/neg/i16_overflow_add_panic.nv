@@ -1,0 +1,11 @@
+// Plan 206 Ф.1b (D423, решение A): переполнение `i16` при сложении → panic.
+// EXPECT_RUNTIME_PANIC integer overflow
+
+// SOUNDNESS_REGRESSION — Plan 206 Ф.1b.
+module neg.i16_overflow_add_panic
+
+fn add_one(x i16) -> i16 => x + 1
+
+test "i16 + overflow panics" {
+    ro _ = add_one(i16.MAX)
+}

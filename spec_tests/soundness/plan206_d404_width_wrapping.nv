@@ -1,0 +1,44 @@
+// Plan 206 Ф.2 (D423) — верификация: sized-int trap-default (Ф.1b) детектит
+// overflow НА ПРАВИЛЬНОЙ ШИРИНЕ типа, а wrapping_* сохраняет width-семантику
+// D404 (тип операнда НЕ схлопывается в signed nova_int).
+//
+// Позитивная сторона D404-миграции: под 206 голый `*`/`+` на sized-типах
+// ТРАПИТ на overflow (см. neg-пины u16_overflow_add_panic и т.д.), поэтому
+// D404-проверка «ширина/знак сохранены» переезжает на `.wrapping_*`:
+//   - если бы u16 схлопнулся в 64-bit nova_int, wrapping_mul дал бы 120000;
+//   - u16-ширина сохранена → wrapping_mul по 16 битам → 54464.
+module soundness.plan206_d404_width_wrapping
+
+test "u16 wrapping_mul сохраняет 16-битную ширину (D404 под 206)" {
+    ro p u16 = 60000
+    ro q u16 = 2
+    // 60000*2 = 120000; u16-wrap: 120000 mod 65536 = 54464.
+    // nova_int-коллапс дал бы полное 120000.
+    assert(p.wrapping_mul(q) == 54464)
+    assert(p.wrapping_mul(q) < 65536)
+}
+
+test "u8 wrapping_add сохраняет 8-битную ширину (D404 под 206)" {
+    ro x u8 = 200
+    ro y u8 = 100
+    // 300 mod 256 = 44; nova_int-коллапс дал бы 300.
+    assert(x.wrapping_add(y) == 44)
+    assert(x.wrapping_add(y) != 300)
+}
+
+test "uint high-bit сумма читается позитивом (D404, без overflow — 2^63 < 2^64)" {
+    ro a uint = 0x4000000000000000   // 2^62
+    ro b uint = 0x4000000000000000   // 2^62
+    // 2^62 + 2^62 = 2^63 < uint.MAX (2^64-1) — НЕ overflow, голый `+` не трапит.
+    ro got = a + b
+    assert(got > 100)
+    assert(!(got < 0))
+}
+
+test "i32 control: signed round-trip без overflow (D404)" {
+    ro m i32 = -1000000
+    ro n i32 = 5
+    ro got = m + n
+    assert(got == -999995)
+    assert(got < 0)
+}

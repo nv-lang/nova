@@ -368,31 +368,22 @@ fn i64_min() -> i64 => -9_223_372_036_854_775_807 - 1
 fn clamp_i64(x i64, lo i64, hi i64) -> i64 =>
     if x < lo { lo } else if x > hi { hi } else { x }
 
-fn checked_add_i64(a i64, b i64) -> Option[i64] {
-    if b > 0 && a > i64_max() - b { return None }
-    if b < 0 && a < i64_min() - b { return None }
-    Some(a + b)
-}
+// Plan 206 Ф.3 (D423): дедуп D317 — `checked_add/_sub/_mul` делегируют
+// Ints-бланкетам `@checked_*` (std/src/prelude/protocols.nv, поверх
+// компиляторного `@overflowing_*` = `__builtin_*_overflow`). Ручные
+// i64-range-проверки (add/sub) и wrap+divide-back (mul) удалены: под
+// sized-int trap-default (Ф.1b) старый `checked_mul_i64` ТРАПИЛ на голом
+// `a * b` (до divide-back-проверки), а ручные проверки дублировали overflow-
+// детект (нарушение «одно окно», 196). Поведение байт-идентично (None ⟺
+// overflow i64), но overflow-детект теперь один — аппаратный флаг.
+fn checked_add_i64(a i64, b i64) -> Option[i64] => a.checked_add(b)
 
-fn checked_sub_i64(a i64, b i64) -> Option[i64] {
-    if b < 0 && a > i64_max() + b { return None }
-    if b > 0 && a < i64_min() + b { return None }
-    Some(a - b)
-}
+fn checked_sub_i64(a i64, b i64) -> Option[i64] => a.checked_sub(b)
 
 fn checked_neg_i64(a i64) -> Option[i64] =>
     if a == i64_min() { None } else { Some(-a) }
 
-fn checked_mul_i64(a i64, b i64) -> Option[i64] {
-    if a == 0 || b == 0 { return Some(0) }
-    // -1 special-cases first: они дают overflow ровно на i64::MIN и делают
-    // divide-back-проверку ниже валидной (a ∉ {0, -1}).
-    if a == -1 { return checked_neg_i64(b) }
-    if b == -1 { return checked_neg_i64(a) }
-    ro r = a * b
-    if r / a != b { return None }
-    Some(r)
-}
+fn checked_mul_i64(a i64, b i64) -> Option[i64] => a.checked_mul(b)
 
 fn checked_div_i64(a i64, b i64) -> Option[i64] {
     if b == 0 { return None }

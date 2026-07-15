@@ -1,0 +1,14 @@
+// Plan 206 Ф.1b (D423, решение A): переполнение `i64` при вычитании → panic
+// (`i64.MIN - 1` уходит ниже representable range). `i64` != `int` (D129:
+// `int`=`nova_int`=`intptr_t`, `i64`=`int64_t` — отдельный C-тип), поэтому
+// это НЕ то же самое покрытие, что `int_overflow_*` соседи.
+// EXPECT_RUNTIME_PANIC integer overflow
+
+// SOUNDNESS_REGRESSION — Plan 206 Ф.1b.
+module neg.i64_overflow_sub_panic
+
+fn sub_one(x i64) -> i64 => x - 1
+
+test "i64 - overflow panics" {
+    ro _ = sub_one(i64.MIN)
+}

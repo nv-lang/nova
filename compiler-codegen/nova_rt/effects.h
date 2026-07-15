@@ -1033,8 +1033,14 @@ static inline void nv_panic(nova_str msg) {
  * математический результат, либо умрёт паникой — ложного (обёрнутого)
  * значения она вернуть не может.
  *
- * Sized-типы (u8/u16/u32/u64/i8/i16/i32) сюда НЕ идут — у них семантика
- * wrap-around (Plan 33.7), эмитятся обычным C-оператором.
+ * Plan 206 Ф.1b (D423, решение A, 2026-07-15, REVISES this comment's old
+ * claim): sized-типы (u8/u16/u32/u64/uint/i8/i16/i32/i64) БОЛЬШЕ НЕ имеют
+ * wrap-around семантику (та была Plan 33.7 — retracted). Trap-дефолт
+ * теперь ЕДИНЫЙ для ВСЕХ членов `Ints` (protocols.nv) — консистентность с
+ * уже-трапящим `int`, закрывает signed-C-UB И тихий unsigned-wrap.
+ * Z3-элизия (`--contracts=optimized`, D140.4) снимает доказуемо-безопасные
+ * проверки, как и для `int` — safety без rustового release-wrap-налога.
+ * См. `NOVA_DEFINE_CHECKED_OPS` ниже для sized-вариантов.
  *
  * `__builtin_*_overflow` пишут результат в `*r` всегда (даже при
  * переполнении — обёрнутое значение), поэтому `return r` определён. */
@@ -1056,6 +1062,41 @@ static inline nova_int nova_int_checked_mul(nova_int a, nova_int b) {
     if (__builtin_mul_overflow(a, b, &r)) NOVA_INT_OVF_PANIC("integer overflow: *");
     return r;
 }
+
+/* Plan 206 Ф.1b (D423): sized-int trap-default (решение A, Swift-модель) —
+ * `nova_<T>_checked_add/sub/mul` mirror `nova_int_checked_*` above for every
+ * OTHER `Ints` member (i8/i16/i32/i64/u8/u16/u32/u64/uint). `emit_c.rs`
+ * lowers typed `+`/`-`/`*` into these (was: raw C operator — signed-UB for
+ * i8..i64, silent wrap for u8..u64/uint). Unsigned overflow (wrap upward)
+ * traps too — `__builtin_add_overflow` detects it identically to signed. */
+#define NOVA_DEFINE_CHECKED_OPS(NAME, CTYPE) \
+    static inline CTYPE nova_##NAME##_checked_add(CTYPE a, CTYPE b) { \
+        CTYPE r; \
+        if (__builtin_add_overflow(a, b, &r)) NOVA_INT_OVF_PANIC("integer overflow: +"); \
+        return r; \
+    } \
+    static inline CTYPE nova_##NAME##_checked_sub(CTYPE a, CTYPE b) { \
+        CTYPE r; \
+        if (__builtin_sub_overflow(a, b, &r)) NOVA_INT_OVF_PANIC("integer overflow: -"); \
+        return r; \
+    } \
+    static inline CTYPE nova_##NAME##_checked_mul(CTYPE a, CTYPE b) { \
+        CTYPE r; \
+        if (__builtin_mul_overflow(a, b, &r)) NOVA_INT_OVF_PANIC("integer overflow: *"); \
+        return r; \
+    }
+
+NOVA_DEFINE_CHECKED_OPS(i8,   int8_t)
+NOVA_DEFINE_CHECKED_OPS(i16,  int16_t)
+NOVA_DEFINE_CHECKED_OPS(i32,  int32_t)
+NOVA_DEFINE_CHECKED_OPS(i64,  int64_t)
+NOVA_DEFINE_CHECKED_OPS(u8,   nova_byte)
+NOVA_DEFINE_CHECKED_OPS(u16,  uint16_t)
+NOVA_DEFINE_CHECKED_OPS(u32,  uint32_t)
+NOVA_DEFINE_CHECKED_OPS(u64,  uint64_t)
+NOVA_DEFINE_CHECKED_OPS(uint, nova_uint)
+
+#undef NOVA_DEFINE_CHECKED_OPS
 
 /* nv_exit(code, msg) — D13: смерть всего процесса.
  *

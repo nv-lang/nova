@@ -133,9 +133,12 @@ export fn Vec[T Clone] @clone() -> Self {
 /// same length, element-wise `==` — produce equal hashes, because the fold reads
 /// the same length then the same per-element `@hash()` sequence.
 ///
-/// u64 arithmetic wraps on overflow (Nova semantics), which IS the FNV mixing
-/// step; the offset basis is a hex literal because its decimal form exceeds
-/// `i64::MAX` (a bare decimal would be parsed as `int` first and overflow).
+/// FNV mixing is MODULAR (mod 2^64 wraparound) BY DESIGN — that IS the hash
+/// step. Plan 206 Ф.2 (D423): after the sized-int trap-default, a bare `*`
+/// on u64 traps on overflow, so the mixing multiply is expressed via the
+/// explicit `.wrapping_mul` opt-out (modular arithmetic). The offset basis is
+/// a hex literal because its decimal form exceeds `i64::MAX` (a bare decimal
+/// would be parsed as `int` first and overflow).
 ///
 /// # Examples
 ///
@@ -146,15 +149,16 @@ export fn Vec[T Clone] @clone() -> Self {
 /// ```
 export fn Vec[T Hash] @hash() -> u64 {
     // FNV-1a (64-bit): offset basis, then `h = (h ^ x) * prime` per step.
+    // `.wrapping_mul` — модульное умножение по замыслу (Plan 206 Ф.2/D423).
     ro prime = 0x100000001b3 as u64
     mut h = 0xcbf29ce484222325 as u64
-    h = (h ^ (@len as u64)) * prime
+    h = (h ^ (@len as u64)).wrapping_mul(prime)
     for i in 0..@len {
         // Typed local first — `.hash()` on a raw deref kept *inside* the `unsafe`
         // block misresolves in codegen (same idiom as `@equal`/`@compare`).
         ro e = unsafe { @data.read_at(i) }
         ro eh = e.hash()
-        h = (h ^ eh) * prime
+        h = (h ^ eh).wrapping_mul(prime)
     }
     h
 }
