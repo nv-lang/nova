@@ -33,21 +33,21 @@
 | `into_str()` | **assume-valid-UTF-8** (писатели гарантируют) + checked-вариант `Result[str,Utf8Error]` для сырого байт-sink |
 
 **Решено 2026-07-15:** буфер-примитив = **внутренний** рендер `int_fmt(v,buf,cap)->len` (не публичный `@to_str`);
-`Write`↔`io.Write` — **СЛИТЬ** (коорд. 176), направления `Read`/`Write` НЕ сливать; str-форма = **default-метод**
-`@write(s str) => @write(s.as_bytes())` (один required байтовый + бесплатный default, не двойной бойлерплейт);
+`Write`↔`io.Write` — **СЛИТЬ** (коорд. 176), направления `Read`/`Write` НЕ сливать; str-форма БЕЗ overload'а —
+литерал `w.write("...")` через коэрсию str→`[]u8` (лоуэрится в `@bytes()`, D176 zero-copy), переменная `.bytes()`;
 `width` = **кодпоинты** (Rust-парити; графемы/дисплей-колонки — future-ось, у нас уже есть unicode/grapheme-таблицы);
 `str.from_debug` — **ретракт** вместе с `str.from`. **Новое (investigation):** buffer-consolidation — см. §6.
 
 ## 2. Протоколы sink
 
 ```nova
-export type Write protocol {         // МИНИМАЛЬНЫЙ (ревью 2026-07-15): reserve/advance УБРАНЫ (см. §9)
-    mut @write(bytes []u8) -> ()
-    mut @write(s str) -> () { @write(s.as_bytes()) }   // str-overload поверх байтового
+export type Write protocol {         // МИНИМАЛЬНЫЙ: только @write; reserve/advance — на StringBuilder (см. §9)
+    mut @write(bytes ro []u8) -> ()  // ro — только читает в sink; str-литерал коэрсится в @bytes() (D176 zero-copy)
     // reserve/advance — КОНКРЕТНО на StringBuilder (не в протоколе); zero-copy = компилятор через SB
 }
 
-export type Fmt protocol {           // Fmt = @write + оси спека (reserve/advance НЕ в протоколе)
+export type Fmt protocol {           // Fmt = use Write (@write) + оси спека (reserve/advance НЕ в протоколе)
+    use Write
     @width()     -> Option[int]
     @precision() -> Option[int]
     @align()     -> Option[Align]
@@ -241,7 +241,7 @@ type FloatKind enum Shortest | Fixed | Sci        // для fmt_f64_into
 **`Write` — байтовый sink форматирования (ИНФАЛЛИБЕЛЬНЫЙ). МИНИМАЛЬНЫЙ (ревью 2026-07-15):**
 ```nova
 export type Write protocol {
-    mut @write(bytes []u8) -> ()
+    mut @write(bytes ro []u8) -> ()
 }
 ```
 **Ревью 2026-07-15: `@write(str)`-overload УБРАН.** str пишется: переменная → `w.write(s.bytes())` (D176, zero-copy
