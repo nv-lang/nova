@@ -15191,7 +15191,7 @@ extern "C" fn fmt_f64_into(buf *mut u8, cap int, v f64, kind int, prec int) -> i
 ```
 
 `extern "C" fn` + **литеральное имя** (без `nova_`-префикса) — по
-[D282](08-runtime.md#d282-new--extern-nova-fn--extern-c-fn--двух-абi-синтаксис-для-ffi-plan-9112-ф-1)
+[D282](08-runtime.md#d282-new--extern-nova-fn--extern-c-fn--двух-abi-синтаксис-для-ffi-plan-9112-ф-1)
 (`extern "nova" fn` добавляет `nova_fn_`-prefix; `extern "C" fn` — нет, литеральный C-symbol).
 `FloatKind` пересекает C-ABI как int (`0=Shortest/1=Fixed/2=Sci`), `.nv`-wrapper конвертит
 enum→int на границе.
@@ -15278,7 +15278,7 @@ fn StringBuilder consume @into_str_checked() -> Result[str, Utf8Error]
   механизма (`use Write` внутри `Fmt`), без изменений.
 - [D406](#d406-sum-type-синтаксис-enum-маркер-2026-07-01) — `enum`-маркер для
   `Align`/`Sign`/`FmtKind`/`FloatKind`.
-- [D282](08-runtime.md#d282-new--extern-nova-fn--extern-c-fn--двух-абi-синтаксис-для-ffi-plan-9112-ф-1) —
+- [D282](08-runtime.md#d282-new--extern-nova-fn--extern-c-fn--двух-abi-синтаксис-для-ffi-plan-9112-ф-1) —
   `extern "C" fn fmt_f64_into` литеральное имя.
 - [D176](#d176-ro-t--тип-модификатор) — `.bytes()` на str-переменной = `ro []u8` zero-copy view.
 - str.from_debug/str.from ретракция (Plan 174.2, [D73](08-runtime.md#d73-from--into-protocol-пара-с-авто-выводом))
