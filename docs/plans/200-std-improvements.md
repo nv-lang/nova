@@ -305,8 +305,11 @@ byte-parity НЕ требуется (аллокация убрана — `.c` м
 
 ## Пункт 10 — duration.nv: локальные i64-арифм-хелперы → встроенные (Plan 206 бланкеты + i64.MAX/@clamp)
 
-**Статус:** 🔄 В РАБОТЕ 2026-07-15 [haiku, worktree]. Всё в ОДНОМ файле `std/src/time/duration.nv` (37 сайтов, вне
-его — 0). Поведение байт-идентично (на 64-бит-таргете).
+**Статус:** ⏸️ ЗАБЛОКИРОВАН 2026-07-15 — dispatch-баг `[M-primitive-receiver-bounded-blanket-dispatch]`. haiku
+сделал правки (коммит `155cff2a8`, worktree `nova-p200dur`), но `checked_*_i64(a,b)`→`a.checked_add(b)` **разбудил
+мис-диспатч** `i64.checked_add`→`Duration.checked_add` в одном CU → CC-FAIL `duration` (int64_t→NovaValue_Duration).
+Коммит КРАСНЫЙ, **в main НЕ влит**. Будет **доделан в СВЯЗКЕ 10+13+12 одним проходом ПОСЛЕ фикса 196.8** (владелец
+2026-07-15). Всё в ОДНОМ файле `std/src/time/duration.nv` (37 сайтов). Поведение байт-идентично (на 64-бит-таргете).
 
 **Что (карта):**
 - **Убрать 6 локальных хелперов** (стали редундантны после Plan 206 / встроенных): `i64_max()` (361),
@@ -354,11 +357,15 @@ byte-parity НЕ требуется (аллокация убрана — `.c` м
 hours/days).
 - **Getter** (`Duration → i64`, O(1)-скаляр = голое имя): `d.nanos()`/`micros()`/`millis()`/`seconds()`/`minutes()`/
   `hours()`/`days()`; Timestamp `d.unix_seconds()`/`unix_millis()`/`unix_nanos()` (это = миграция `@as_*` Пункта 11).
-- **Конструктор** (`int → Duration`, конверсия = `to_*`): ретрактировать ВСЕ `Duration.from_*` И переименовать
-  bare-fluent `int @seconds()` → `int @to_seconds()`. → `5.to_seconds()`, `100.to_millis()`, `n.to_nanos()`.
-  Timestamp: `n.to_unix_seconds()` (int→Timestamp = конверсия, вар. (а)).
-- **Float:** `f64 @to_seconds()` (заменяет `from_secs_f`; `1.5.to_seconds()`). Только секунды.
+- **Конструктор** (`int → Duration`, конверсия = `to_*`): ретрактировать ВСЕ `Duration.from_*` И заменить bare-fluent
+  `int @seconds()` на **ДЖЕНЕРИК-бланкет** `fn[T Ints] T @to_seconds() -> Duration` (владелец 2026-07-15: один вход на
+  ВСЕ int-ширины i8..i64/u*, DRY, зеркалит Plan 206 `checked_add`). → `5.to_seconds()`, `100.to_millis()`,
+  `n.to_nanos()`. Timestamp: `n.to_unix_seconds()` (int→Timestamp, вар. (а)).
+- **Float — отдельно** (f64 ∉ Ints, в бланкет не входит): `f64 @to_seconds()` (заменяет `from_secs_f`;
+  `1.5.to_seconds()`). Только секунды.
 - **Singular** `int @second()`/`@minute()` — убрать (DRY; `1.to_seconds()`).
+- **⚠ Зависимость:** `[T Ints] @to_seconds()` на примитивном ресивере — ровно механизм
+  `[M-primitive-receiver-bounded-blanket-dispatch]` (dispatch-баг). Делать **ПОСЛЕ** его фикса (196.8).
 - **Коллизия снята:** getter `d.nanos()` (голое) vs конструктор `5.to_nanos()` (`to_`) — разные имена.
 
 **Приёмка:** `nova test std/time` зелёный; conformance один-CU δ0 (переименование, поведение идентично); греп
