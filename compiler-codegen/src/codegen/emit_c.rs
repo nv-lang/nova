@@ -6772,6 +6772,60 @@ impl CEmitter {
         // Single named binding only (Ident, or a single-segment unit Variant for
         // the UPPER_CASE constant-name form), non-ghost. Thread-safety of
         // first-touch init: see `[M-lazy-static-thread-safety]`.
+        //
+        // Plan 209 Ф.3 finding: a `ro NAME = some_free_fn()` initializer with
+        // NO explicit type annotation infers its C storage type via
+        // `infer_expr_c_type` → `infer_call_ret_c` → the `user_fn_sigs`
+        // lookup (B10f, the authoritative source for a bare free-fn call's
+        // return type). But `user_fn_sigs` is populated ONLY inside
+        // `emit_fn_forward_decl` (§2 below, "Forward declarations for all
+        // functions") — which runs AFTER this loop. So at this point
+        // `user_fn_sigs` is still EMPTY for every free fn in the module, the
+        // lookup misses, every other inference channel also misses (the
+        // checker does not annotate a module-level `ro` initializer's callee
+        // the same way it does inside a fn body), and `ty_c` ends up the
+        // empty string. The emitted storage line
+        // (`{top_level_storage()}{ty_c} _nova_const_{name}_value;`) then has
+        // NO type before the name — in single-TU/`static` mode this
+        // compiles anyway (C's legacy "implicit int" backward-compat quirk
+        // silently treats bare `static  x;` as `static int x;`), which
+        // masked the gap; under Plan 209's multi-TU promotion the same
+        // malformed, TYPELESS declarator can't be safely promoted to
+        // `extern` (`split_tu`'s `decl_from_uninitialized_global` correctly
+        // refuses — an `extern` with no type would be nonsense C) and so
+        // stays a verbatim tentative definition duplicated into every part
+        // via `_common.h` → `lld-link: error: duplicate symbol` (observed:
+        // `_nova_const_module_dim_value` / `_nova_const_module_len_value`,
+        // `spec_tests/conformance/const_init_runtime_ok_test.nv`'s
+        // `ro module_dim = compute_dim()` / `ro module_len = alloc_len()`).
+        // Fix: pre-seed `user_fn_sigs` for every eligible top-level free fn
+        // (mirrors the real registration at `emit_fn_forward_decl`'s
+        // `user_fn_sigs.insert`, `f.receiver.is_none() && f.generics.is_empty()`)
+        // BEFORE this loop runs, so the very same authoritative B10f lookup
+        // that already exists succeeds here too. Best-effort (`.ok()` — a
+        // function whose param/return type doesn't translate is simply
+        // skipped, exactly as it already is skipped implicitly today; this
+        // is only a re-ordering of an existing registration, not new
+        // fallback logic). The REAL pass at §2 re-inserts the identical
+        // value later — idempotent, zero functional change for every
+        // already-working case.
+        for item in &module.items {
+            if let Item::Fn(f) = item {
+                if f.receiver.is_none() && f.generics.is_empty()
+                    && !self.user_fn_sigs.contains_key(&f.name)
+                {
+                    if let Some(param_c_tys) = f.params.iter()
+                        .map(|p| self.type_ref_to_c(&p.ty))
+                        .collect::<Result<Vec<_>, _>>()
+                        .ok()
+                    {
+                        if let Ok(ret_c) = self.return_type_c(f) {
+                            self.user_fn_sigs.insert(f.name.clone(), (param_c_tys, ret_c));
+                        }
+                    }
+                }
+            }
+        }
         for item in &module.items {
             if let Item::Let(l) = item {
                 if l.is_ghost { continue; }
