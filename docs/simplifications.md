@@ -38464,3 +38464,53 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   (cleanup диспатчнут ровно раз); (в) pure-std `examples/net/echo_server.nv`
   линкуется (регрессии нет); std/src/net продакшн PASS (3 «FAIL» — это
   ожидаемо-падающие neg/ фикстуры). Полный conformance — оркестратор.
+
+## `nova build` теперь автособирает vendor-FFI из исходников (2026-07-15, ветка fix-build-vendor-ffi, sonnet)
+
+- ЗАВЕДЁН-И-ЗАКРЫТ [M-nova-build-vendor-ffi-no-autobuild] P1: `nova test`
+  (`test_runner.rs::build_and_run_one`) build-and-кэширует `[ffi]
+  vendor_src_dirs` (напр. mbedTLS в nova-tls) из исходников ДО линковки; `nova
+  build` (`nova-cli::cmd_build`) этот шаг НИКОГДА не звал — только мёржил
+  `[ffi] libs`/`lib_dirs` и шёл прямо на линк. На чистом чекауте (без
+  вручную-скопированных прекомпилированных `.lib`) `nova build` любого
+  примера с vendor-source native-депом (echo_server/echo_client) не
+  собирался — приходилось вручную копировать либы (обход).
+- Фикс (минимальный, без дублирования): `build_missing_vendor_ffi_libs`
+  (`compiler-codegen/src/test_runner.rs`) переведена в `pub fn` (была
+  module-private); `cmd_build` (`nova-cli/src/main.rs`, сразу после мёржа
+  `[ffi]` своего пакета + зависимостей, до `BuildOpts`/`compile_c_to_exe`)
+  зовёт её — зеркалит вызов `build_and_run_one`. No-op/never-fatal контракт
+  функции не тронут (falls through к обычному линку с честной ошибкой, если
+  либа реально всё ещё не собралась).
+- Побочный дефект в ТОЙ ЖЕ функции, вскрытый ПРИ верификации (репро
+  ОБЯЗАТЕЛЬНО удаляет вручную-положенные mbedTLS-либы, чтобы прогнать
+  build-from-source путь, который до сих пор НИКОГДА реально не выполнялся
+  на этой машине — ни через `nova test`, ни тем более через `nova build`):
+  `build_vendor_ffi_lib`'s cl.exe/lib.exe response-файлы писались как голый
+  UTF-8 БЕЗ BOM → на профиле с кириллицей в имени пользователя (`C:\Users\
+  Евгений\...`, откуда резолвится git-кэш nova-tls) cl.exe читает `.rsp` в
+  ANSI-кодовой странице процесса (тут cp1251) и коверкает путь →
+  `C1083: file not found` на КАЖДОМ `.c`-файле mbedTLS. Фикс: `\u{FEFF}`
+  (UTF-8 BOM) префикс на обоих `.rsp` (compile + lib/archive) — cl.exe/
+  link.exe читают UTF-8 rsp-файлы по BOM независимо от активной кодовой
+  страницы консоли. Не language-changing, D-амендмент не нужен.
+- Верификация (точечная, `NOVA_CACHE=0` где важно избежать кэш-путаницы):
+  вручную-скопированные `mbedcrypto/mbedtls/mbedx509.lib` убраны из ОБОИХ
+  `~/.nova/git/co/nova-tls-*/…/native/lib` резолвленных чекаутов (backup в
+  scratchpad, не восстановлены — автосборка теперь единственный путь и она
+  рабочая). **ДО** (main HEAD 73ab1c44f + `fix-consume-cleanup` смёржена,
+  vendor-ffi-патч временно откачен для контраста): `nova build
+  examples/tls/echo_server.nv` падает БЕЗ единого упоминания vendor-FFI —
+  сразу на compile-стадии. **ПОСЛЕ** (тот же коммит + фикс): `nova: FFI
+  lib(s) ["mbedtls", "mbedx509", "mbedcrypto"] not found in …native/lib,
+  building from vendored source (108 files, one-time)...` → `nova: vendor
+  FFI lib(s) […] built (108 files)` — три `.lib` реально созданы на диске
+  (подтверждено `ls`). `examples/flagship/aggregator/src/main.nv` (не имеет
+  реальной TLS-зависимости в рантайме — `http.server` без TLS-терминации) —
+  чистый build+LINK, `built: main.exe` (46.12s), без регрессии. `nova test
+  std/src/net` — `PASS 1/0` (не задет). Финальный LINK
+  `echo_server.nv`/`echo_client.nv` НЕ достигнут — блокирует ОТДЕЛЬНЫЙ,
+  пред-существующий (подтверждено на исходном pre-session бинаре ДО начала
+  этой волны — идентичная ошибка) баг диспатча вне периметра vendor-ffi, см.
+  новый маркер [M-tls-xpkg-decode_utf8-tlsversion-dispatch-broken]
+  (backlog-followups.md).
