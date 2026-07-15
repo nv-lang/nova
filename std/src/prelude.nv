@@ -212,7 +212,7 @@ export import std.prelude.concurrency.{CancelToken}
 // need this re-export to be visible without an explicit `import
 // std.runtime.string` — hence added here.
 // std.runtime.string имеет #no_prelude — cycle protection (prelude→string→prelude).
-export import std.runtime.string.{pad_left, pad_right, repeat, replace, compare, bytes, to_int, to_i64, to_u64, to_u32, to_u8, to_f64, to_str, to_str_lossy, to_str_unchecked, into_str_unchecked, decode_utf8}
+export import std.runtime.string.{pad_left, pad_right, repeat, replace, compare, bytes, to_int, to_i64, to_u64, to_u32, to_u8, to_f64, to_str, to_str_lossy, to_str_unchecked, into_str_unchecked}
 
 // Plan 169.2.1 (D303): char Unicode-aware methods (`'a'.is_alphabetic()` etc.)
 // are NOT re-exported here. A bare `export import std.unicode.{is_alphabetic,…}`

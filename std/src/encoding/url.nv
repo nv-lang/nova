@@ -383,10 +383,9 @@ export fn Url.decode_query(s str) -> Result[str, ParseUrlError] {
         }
     }
     // [M-174.1-vec-method-chain-elem-erasure]: explicit `[]u8` local — see
-    // backlog-followups.md marker. decode_utf8 = []u8 @to_str alias — this CU
-    // also has `Url @to_str()` ([M-174.1-to-str-name-collision-codegen-bug]).
+    // backlog-followups.md marker.
     ro bytes []u8 = buf.into() // [M-lint-findings-writebuffer-into]
-    match bytes.decode_utf8() {
+    match bytes.to_str() {
         Ok(t)  => Ok(t)
         Err(_) => Err(InvalidPercentEncoding { position: i })
     }

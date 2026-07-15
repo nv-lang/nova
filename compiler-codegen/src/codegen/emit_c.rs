@@ -37461,6 +37461,101 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
 
+                // Plan 196.7 [M-174.1-to-str-name-collision-codegen-bug]: ONE-WINDOW
+                // method dispatch. The protocol-aware blanket dispatch below (and the
+                // single-key `method_receivers` fallback after it) route by method NAME —
+                // an unconstrained bare-T blanket (`fn[T] T @to_str() -> str`) HIJACKS a
+                // `Vec`/`[]u8` facade receiver whose CONCRETE method is
+                // `[]u8 @to_str() -> Result[str, Utf8Error]` (registered under the array
+                // C-ident key, invisible to the blanket / `generic_type_methods[Vec]`).
+                // Emitted `Nova_Nova_Vec____nova_byte_method_to_str` (the str blanket) in
+                // place of `Nova_NovaArray_nova_byte_method_to_str` (the Result body) →
+                // wrong return type → `->tag` on a `nova_str` CC-FAIL.
+                //
+                // The checker ALREADY resolved THIS call-site to a concrete FnDecl by
+                // RECEIVER (`resolved_callees[call_id] -> FnDecl.span`, `check_instance_
+                // overload`, D84 "concrete beats generic"). Honor that fact FIRST: if the
+                // channel points at a CONCRETE instance method, lower ITS registered
+                // mangled c_name — the same span-consulting dispatch already used at c2.2
+                // (~36726) / 5b (~36840), NOT another name-guard (D164). `fn_ret_by_span`
+                // holds ONLY concrete (non-generic) callees — the generic blanket span is
+                // absent — so a genuine blanket dispatch (`int.to_str()`, checker chose the
+                // blanket) has no entry here and falls through untouched (byte-identical).
+                {
+                    // Resolve the concrete facade callee by TWO complementary receiver-
+                    // truthful sources (never by method-name last-wins):
+                    //  (A) the checker channel — `resolved_callees[call_id]` points at the
+                    //      concrete FnDecl.span (recorded for a local/`self` receiver whose
+                    //      type the checker inferred; gated to `fn_ret_by_span` = concrete
+                    //      non-generic callees, so a genuine blanket dispatch is untouched);
+                    //  (B) the receiver's own concrete C-TYPE — a `Nova_Vec____<E>*` /
+                    //      `NovaArray_<E>*` receiver with a CONCRETE `[]E @<method>` registered
+                    //      under the array C-ident key. This covers the shapes the checker's
+                    //      STATIC receiver-inference (`infer_arg_ty`) does not reach — a
+                    //      `@field` / expression receiver (e.g. `@buf.to_str()`), where the
+                    //      channel is empty. Both find the SAME concrete sig; (A) is precise
+                    //      (span), (B) is the type-directed fallback. Scoped to elements that
+                    //      HAVE a concrete facade method → `[]int.to_str()` (none) still uses
+                    //      the bare-T blanket, byte-identical.
+                    let sig_hit: Option<(String, MethodSig)> = self.resolved_callees
+                        .get(&call_id)
+                        .filter(|sp| self.fn_ret_by_span.contains_key(sp))
+                        .and_then(|&chosen_span| self.method_overloads.iter()
+                            .filter(|((_, m), _)| m == method)
+                            .find_map(|((t, _), sigs)| sigs.iter()
+                                .find(|s| s.fn_span == Some(chosen_span)
+                                    && s.is_instance && !s.is_delegated)
+                                .map(|s| (t.clone(), s.clone()))))
+                        .or_else(|| {
+                            // (B) fires ONLY when an unconstrained bare-T blanket for this
+                            // method exists — i.e. the ONLY situation in which the blanket
+                            // dispatch below would hijack the facade receiver. Absent a
+                            // blanket, the existing array-ext / method_receivers paths already
+                            // dispatch the facade correctly → leave them (byte-identical).
+                            let has_blanket = self.mono_method_decls.iter().any(
+                                |((tvname, mname), fd)| mname == method
+                                    && tvname.len() <= 2
+                                    && tvname.chars().all(|c| c.is_ascii_uppercase())
+                                    && fd.generics.iter()
+                                        .find(|g| &g.name == tvname)
+                                        .map(|g| g.bounds.is_empty())
+                                        .unwrap_or(false));
+                            if !has_blanket {
+                                return None;
+                            }
+                            let recv_c = self.recv_c_type_materialized(obj).unwrap_or_default();
+                            let stripped = recv_c.trim_end_matches('*').trim();
+                            let elem = stripped.strip_prefix("Nova_Vec____")
+                                .or_else(|| stripped.strip_prefix("NovaArray_"))?;
+                            let array_key = format!("NovaArray_{}", elem);
+                            self.method_overloads
+                                .get(&(array_key.clone(), method.to_string()))
+                                .and_then(|sigs| sigs.iter()
+                                    .find(|s| s.is_instance && !s.is_delegated))
+                                .map(|s| (array_key, s.clone()))
+                        });
+                    if let Some((sig_type, sig)) = sig_hit {
+                        // Concrete callee → NOT a generic-type key → no arg void*-boxing
+                        // (mirrors the general instance path's non-generic branch). Apply
+                        // the SAME `[M-172.14]` by-ref arg wrapping the general path uses so
+                        // a large ro value-struct arg lowers byte-identically.
+                        let obj_c = self.emit_expr(obj)?;
+                        let obj_ty_local = self.recv_c_type_materialized(obj)
+                            .unwrap_or_default();
+                        let obj_c = self.prepare_method_recv(
+                            &obj_c, &obj_ty_local, sig.recv_mutable, Some(obj));
+                        let mut arg_strs = vec![obj_c];
+                        let method_wrapped =
+                            self.synthesize_method_byref_args(&sig_type, method, args);
+                        let call_args: &[CallArg] =
+                            method_wrapped.as_deref().unwrap_or(args);
+                        for a in call_args {
+                            arg_strs.push(self.emit_expr(a.expr())?);
+                        }
+                        return Ok(format!("{}({})", sig.c_name, arg_strs.join(", ")));
+                    }
+                }
+
                 // Plan 164 Ф.3: protocol-aware blanket dispatch.
                 // Before falling into the single-key method_receivers fallback (last-wins),
                 // check whether any bare-typevar blanket in mono_method_decls matches this
@@ -51745,6 +51840,50 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // concrete element and yields the correct `nova_byte*`.
                         if !self.debt_is_generic_stub_c(ch_ret) {
                             return ch_ret.clone();
+                        }
+                    }
+                }
+            }
+        }
+        // Channel 1b (Plan 196.7 [M-174.1-to-str-name-collision-codegen-bug]):
+        // return C-type of a facade method call on a `Vec[E]`/`[]E` receiver whose
+        // concrete callee the checker could NOT channel — a pattern-bound (`Ok(bytes)
+        // => bytes.to_str()`) / field / expression receiver, which the checker's
+        // static receiver-inference does not reach, so Channel 1 above found no
+        // `resolved_callees` entry and the legacy `infer_call_ret_c` re-derives the
+        // return by NAME → the bare-T `to_str` blanket's `nova_str` (WRONG) instead of
+        // `[]E @to_str`'s `Result`. This is the RETURN-TYPE twin of the receiver-type-
+        // directed DISPATCH fallback (~37374): resolve the concrete facade sig by the
+        // receiver's own C-type and return ITS declared return C-type, keeping the two
+        // windows consistent WITHOUT touching `infer_call_ret_c`. Gated to a bare-T
+        // blanket collision + channel-less call → byte-identical elsewhere.
+        if expr.id.is_set() && self.resolved_callees.get(&expr.id).is_none() {
+            if let ExprKind::Call { func, .. } = &expr.kind {
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    let has_blanket = self.mono_method_decls.iter().any(
+                        |((tvname, mname), fd)| mname == name
+                            && tvname.len() <= 2
+                            && tvname.chars().all(|c| c.is_ascii_uppercase())
+                            && fd.generics.iter()
+                                .find(|g| &g.name == tvname)
+                                .map(|g| g.bounds.is_empty())
+                                .unwrap_or(false));
+                    if has_blanket {
+                        let recv_c = self.recv_c_type_materialized(obj).unwrap_or_default();
+                        let stripped = recv_c.trim_end_matches('*').trim();
+                        if let Some(elem) = stripped.strip_prefix("Nova_Vec____")
+                            .or_else(|| stripped.strip_prefix("NovaArray_"))
+                        {
+                            let array_key = format!("NovaArray_{}", elem);
+                            if let Some(sig) = self.method_overloads
+                                .get(&(array_key, name.clone()))
+                                .and_then(|sigs| sigs.iter()
+                                    .find(|s| s.is_instance && !s.is_delegated))
+                            {
+                                if !sig.return_c_type.is_empty() {
+                                    return sig.return_c_type.clone();
+                                }
+                            }
                         }
                     }
                 }
