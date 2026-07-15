@@ -182,7 +182,7 @@ result = sb.into_str()
 **НОВЫЙ:**
 - **D422 (keystone)** — Unified Formatter: единый `@display(mut f Fmt)`; `Fmt` = write-методы + оси/`@pad`/`@kind` (без наследования протокола — см. §9);
   `pad_consumed` auto-pad; буфер-примитив `(buf,cap)->len`; перенос `conv.h`→`.nv`; float-extern-контракт
-  (`nova_f64_into(buf,cap,v,kind,prec)`); энумы `Align`/`Sign`/`FmtKind`.
+  (`extern "C" fn fmt_f64_into(buf,cap,v,kind,prec)` — литеральное имя, D282); энумы `Align`/`Sign`/`FmtKind`.
 
 **АМЕНДИТЬ:**
 - **D419** (`Fmt` для `@display_fmt`) — **RETRACT/SUPERSEDED**.
@@ -225,8 +225,10 @@ sign/radix/precision/alternate/pretty) pos; byte-parity НЕ требуется 
 
 ## 9. Финальные сигнатуры (финализирует наброски §2)
 
-> **NB (feedback_nova_syntax):** формы ниже сверить со `spec/decisions/`+`examples/` перед кодом — помечено `⚠syntax`
-> там, где точная форма Nova требует проверки (protocol-default для перегрузки; наследование протокола; extern-C).
+> **NB — ⚠syntax-развилки РАЗРЕШЕНЫ 2026-07-15 (владелец):** (1) `@write(str)`-overload **убран** — str через
+> `s.bytes()` (D176) + коэрсия str-литерала→`[]u8`; (2) `Fmt` компонует `Write` через **`use`** (форму embed сверить
+> по `02-types.md`); (3) extern-C = **литеральное имя без `nova_`** (D282, эталон nova-tls). Осталось сверить точные
+> формы `use`-embed и `extern "C"` по спеке ПЕРЕД кодом (Фаза 0/1).
 
 **Энумы (D406):**
 ```nova
@@ -240,9 +242,13 @@ type FloatKind enum Shortest | Fixed | Sci        // для nova_f64_into
 ```nova
 export type Write protocol {
     mut @write(bytes []u8) -> ()
-    mut @write(s str) -> () { @write(s.as_bytes()) }   // ⚠syntax: default-перегрузка; str уже UTF-8 → 0 копий
 }
 ```
+**Ревью 2026-07-15: `@write(str)`-overload УБРАН.** str пишется: переменная → `w.write(s.bytes())` (D176, zero-copy
+view, даром); литерал `w.write("Point(")` → **коэрсия str-литерала → `[]u8`** компилятором (str и есть UTF-8-байты;
+мелкая фича, чище protocol-overload'а). Протокол остаётся чисто `@write([]u8)`. (Убирает прежний ⚠syntax
+«protocol-default для перегрузки».)
+
 **Ревью-решение (владелец 2026-07-15): `@reserve`/`@advance` УБРАНЫ из протокола `Write`** (Rust-путь). Причины:
 (1) `@reserve -> *mut u8` реализуем только буфером — стриминговый/io-sink не даёт указатель на будущие байты, т.е.
 это разъезжается с io-`Write`-родственником; (2) сырой `*mut u8` не должен течь в общий протокол. **Zero-copy
@@ -255,11 +261,11 @@ spare-capacity). Пользовательские generic-`@display` (над `Fm
 (io-`Write` из Plan 176 — ОТДЕЛЬНЫЙ протокол с `@write([]u8) -> Result[(), IoError]`; тот же байтовый шейп, другая
 сигнатура — «два родственника»; теперь обе минимальны = честно общий шейп.)
 
-**`Fmt` — sink + оси спека** (повторяет `@write` + добавляет оси; НЕ полагаемся на наследование протокола `⚠syntax`):
+**`Fmt` — sink (`use Write`) + оси спека** (композиция протокола через `use` — владелец 2026-07-15; точную форму
+embed сверить по `02-types.md`):
 ```nova
 export type Fmt protocol {
-    mut @write(bytes []u8) -> ()
-    mut @write(s str) -> () { @write(s.as_bytes()) }
+    use Write                        // компонует @write([]u8) из Write (⚠syntax: форма use/embed — сверить)
     @width()     -> Option[int]
     @precision() -> Option[int]
     @align()     -> Option[Align]
@@ -303,8 +309,9 @@ export type FmtCtx {
 fn int_fmt(v int, buf *mut u8, cap int, spec FmtSpec) -> int      // digit-loop + радикс + zero_pad; вернуть len
 fn bool_fmt(v bool, buf *mut u8, cap int) -> int
 fn char_fmt(v char, buf *mut u8, cap int) -> int                  // UTF-8 encode
-// float — ЕДИНСТВЕННЫЙ C-extern (dtoa непортируем):
-extern fn nova_f64_into(buf *mut u8, cap int, v f64, kind FloatKind, prec int) -> int   // ⚠syntax: форма extern-C по 174.6/195
+// float — ЕДИНСТВЕННЫЙ C-extern (dtoa непортируем). D282: extern "C" fn + ЛИТЕРАЛЬНОЕ имя, БЕЗ nova_-префикса:
+extern "C" fn fmt_f64_into(buf *mut u8, cap int, v f64, kind int, prec int) -> int
+// FloatKind пересекает C-ABI как int (0=Shortest/1=Fixed/2=Sci); .nv-wrapper конвертит enum→int. C-имя = литеральное.
 ```
 
 **`StringBuilder` аменд (D179):**
