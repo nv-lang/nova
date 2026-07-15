@@ -12223,6 +12223,16 @@ V2.1 closes 3 [M-124.8-*] markers landed 2026-06-03:
 
 ### D229 — Debug protocol + format spec `${expr:?}`
 
+> **AMEND (Plan 208 Ф.0, 2026-07-15) — диспетч `${expr:?}` через `@debug(mut f Fmt)`, радикс
+> через `f.kind()`.** [D422](#d422-unified-formatter--единый-displaymut-f-fmt--debug-байтовый-write-zero-alloc-pad-plan-208-2026-07-15)
+> заменяет `@debug(mut w Write)` на `@debug(mut f Fmt)` (тот же sink-embed, что и `@display`,
+> см. D374-аменд); радикс-спеки (`:x`/`:o`/`:b`) для user-типов, ранее `E_BAD_FORMAT_SPEC`,
+> теперь читаются типом через ЕДИНУЮ ось `f.kind() -> FmtKind` внутри `@display`/`@debug` (не
+> отдельные Rust-подобные трейты `LowerHex`/…). Default-body synthesis (`inject_synthesized_methods`)
+> и derived-форма меняются на compact/named различие — см. D422 §5. Целевая модель,
+> **Ф.1-4 pending**; текст ниже (сигнатура `@debug(mut w Write)`, memberwise-body с `w.write_str`)
+> читать как ТЕКУЩЕЕ (до-D422) поведение.
+>
 **Plan 91.14** (2026-06-05). New protocol parallel к D183 Display — debug-specific representation.
 
 #### Rationale
@@ -12437,6 +12447,13 @@ promise. То же codegen применяется к остальным auto-der
 
 ## D237. Protocol naming convention: method-name capitalized (Plan 137, 2026-06-09)
 
+> **AMEND (Plan 208 Ф.0, 2026-07-15) — сигнатуры `@display`/`@debug` → `(mut f Fmt)`.**
+> Имена протоколов/методов (`Display`/`@display`, `Debug`/`@debug` — таблица переименований
+> ниже) остаются БЕЗ ИЗМЕНЕНИЙ; меняется только сигнатура параметра под
+> [D422](#d422-unified-formatter--единый-displaymut-f-fmt--debug-байтовый-write-zero-alloc-pad-plan-208-2026-07-15):
+> `(mut w Write)` → `(mut f Fmt)` (единый sink+спек-контекст вместо голого `Write`). Целевая
+> модель, **Ф.1-4 pending**.
+>
 **Status:** ACTIVE
 
 Prelude-протоколы именуются по принципу **«имя протокола = заглавная форма имени метода»**.
@@ -13042,6 +13059,15 @@ C-макросы `fmin`/`fmax` (нет специальной NaN-семанти
 
 ## D374. Write-sink протокол — декаплинг Display/Debug от StringBuilder (Plan 152.7.1)
 
+> **AMEND ×2 (Plan 208 Ф.0, 2026-07-15) — [D422](#d422-unified-formatter--единый-displaymut-f-fmt--debug-байтовый-write-zero-alloc-pad-plan-208-2026-07-15).**
+> (1) Sink для `Display`/`Debug` меняется с `Write` на **`Fmt`** (embeds `Write` через `use`,
+> D145) — `@display`/`@debug` получают `(mut f Fmt)`, не `(mut w Write)` напрямую (Fmt даёт
+> доступ и к `@write`, и к осям спека). (2) `Write.@write_str(s str)` меняется на
+> **`Write.@write(bytes []u8) -> ()`** — байтовый sink, не строковый; str-значение → явный
+> `.bytes()` (D176), str-**литерал** → коэрсия в `[]u8` (D55-аменд). Целевая модель, **Ф.1-4
+> pending** (см. D422 §Статус) — текст ниже (сигнатуры `@write_str(s str)`, `w Write` на
+> `@display`/`@debug`) читать как ТЕКУЩЕЕ (до-D422) поведение.
+>
 **Status:** CLOSED 2026-06-16 (Plan 152.7.1, commits `a313926b` + `3d0e30fa`).
 **Depends on:** [D183](#d183-canonical-comparison-protocols--default-method-bodies-plan-918a) (`Display`/`Debug` протоколы),
 [D229](#d229) (`Debug` протокол), Plan 137 (protocol naming convention).
@@ -14871,6 +14897,17 @@ closure-значения.
 
 ## D419. `Fmt` protocol — format-spec context для `@display_fmt` (Plan 152.7.2, 2026-07-13)
 
+> **AMEND (Plan 208 Ф.0, 2026-07-15) — RETRACT/SUPERSEDED целиком → [D422](#d422-unified-formatter--единый-displaymut-f-fmt--debug-байтовый-write-zero-alloc-pad-plan-208-2026-07-15).**
+> Два опциональных метода (`@display(mut w Write)` + отдельный `@display_fmt(mut f Fmt)`)
+> сворачиваются в ОДИН required-примитив `@display(mut f Fmt)`; `@display_fmt`-путь удаляется
+> целиком (не остаётся вторым методом рядом). `Fmt` из D419 (`@write(s str)` + `alternate`/
+> `precision` — «Fmt поверх Write», два метода) заменена на D422-`Fmt` (`use Write` protocol-embed,
+> D145, + полный набор осей `width`/`align`/`fill`/`sign`/`alternate`/`kind`/`pad`). Диспетч
+> «`@display_fmt` есть → зовём его, иначе прежний `@display`+внешний pad» (§«Правило диспетча»
+> ниже) заменяется единым «`@display(f)` ВСЕГДА диспетчится, `pad_consumed` решает — внешний
+> pad или нет» (D422 §«Инвариант»). **Статус: целевая модель (Ф.1-4 pending, см. D422 §Статус) —
+> текст ниже читать как ИСТОРИЮ (что было ДО D422), не текущее/будущее поведение.**
+>
 **Закрывает** [Q-format-spec-to-display](../open-questions.md#q-format-spec-to-display--передача-формат-спека-в-displaydebug-pretty-и-др--движок-интерполяции-без-промежуточных-аллокаций--🟡-open-2026-07-13)
 и обновляет протухший followup-маркер `[M-91.14-format-dsl-extensions]`
 (перечислял уже реализованное — 152.7-B закрыл `:hex`/`:pad-N`/`:.3` до этого
@@ -14997,3 +15034,224 @@ sink (Plan 175 Ф.3(d)); примитивы/fallback-путь (`nova_int_to_str`
   followup обновлён; реальный остаток формализован здесь).
 - Q-format-spec-to-display (`spec/open-questions.md`) — RESOLVED → D419.
 - Plan 152.7.2 (докладной подплан 152.7 — интерполяция и форматирование; this D-block's home plan).
+
+---
+
+## D422. Unified Formatter — единый `@display(mut f Fmt)` + `@debug`, байтовый `Write`, zero-alloc pad (Plan 208, 2026-07-15)
+
+**Keystone.** Решение владельца 2026-07-15 (все развилки закрыты, полная карта —
+[docs/plans/208-unified-formatter.md](../../docs/plans/208-unified-formatter.md)). Сворачивает
+D419's двух-методную схему (`@display`/`@display_fmt`) в ОДИН required-примитив на тип, унифицирует
+`Write` с байтовым `io.Write` (Plan 176), убирает C-поверхность форматирования до одного
+float-extern.
+
+### Мотивация
+
+Одна поверхность форматирования вместо дублей: **один метод** `@display(mut f Fmt)` (не пара
+`@display`+`@display_fmt`, как в D419); `Write` пишет `[]u8`, не `str` — фундаментальнее,
+унифицирует с `io.Write`; буфер-примитивы (`int`/`bool`/`char`/радикс/pad) переезжают в `.nv`,
+C остаётся ТОЛЬКО на float-body (dtoa/Ryu-класс непортируем). Максимизирует nv-sourcing (§3
+compiler-conventions).
+
+### Правило
+
+#### 1. `Write` — байтовый sink, минимальный, инфаллибельный
+
+```nova
+export type Write protocol {
+    mut @write(bytes []u8) -> ()      // параметры ro по умолчанию
+}
+```
+
+Единственный метод. Никакого `@write(str)`-overload'а: str-значение → `w.write(s.bytes())`
+(явный `.bytes()`, [D176](#d176-ro-t--тип-модификатор)); str-**литерал** `w.write("...")` →
+**коэрсия литерала в `[]u8`** (амендмент [D55](#d55-literal-coercion-в-позиции-с-явным-типом-sum-конструкторы-и-record-литералы),
+§2 ниже). `@reserve`/`@advance` **НЕ** в протоколе (были рассмотрены и отклонены — сырой
+`*mut u8` не течёт в общий протокол, io-sink не может дать указатель на будущие байты) — эти
+два метода остаются **конкретными** методами `StringBuilder` (см. §5); компилятор, зная что
+sink конкретно `StringBuilder`, использует их напрямую для zero-**copy** top-level рендера;
+generic-`@display`/`@debug` (sink видим только как `Fmt`/`Write`) рендерят примитив в
+стек-буфер + один `@write(slice)` → zero-**alloc** (без кучи), без copy на sink-стороне, как
+`fmt::Write` у Rust.
+
+io-`Write` (Plan 176) — ОТДЕЛЬНЫЙ протокол-РОДСТВЕННИК: тот же байтовый шейп `@write([]u8)`,
+но фаллибельная сигнатура `-> Result[(), IoError]` (std=Result, не `Fail`-эффект, конвенция
+[D325](04-effects.md#d325)). Направления `Read`/`Write` НЕ сливаются. Мост fmt→io: собрать в
+`StringBuilder` (инфаллибельно) → `file.write(sb.bytes())?`.
+
+#### 2. `Fmt` — sink + оси спека, embeds `Write` через `use` (D145 protocol-embed)
+
+```nova
+export type Fmt protocol {
+    use Write                        // компонует @write([]u8) из Write (D145 protocol composition)
+    @width()     -> Option[int]
+    @precision() -> Option[int]
+    @align()     -> Option[Align]
+    @fill()      -> char
+    @sign()      -> Sign
+    @alternate() -> bool
+    @kind()      -> FmtKind
+    mut @pad(bytes []u8) -> ()       // тип-управляемый паддинг → ставит pad_consumed
+}
+```
+
+`use Write` — та же протокольная композиция, что [D145](#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101)
+§«Protocol composition» (`use A, B` внутри `protocol {}`, парсер `parse_protocol_body`,
+type-check flatten): `Fmt` получает `@write([]u8)` из `Write` в свой method-set, а не
+переопределяет его отдельным именем (`@write_str`, как в до-D422 D419-версии) — любой `Fmt`
+структурно satisfies и `Write`.
+
+`FmtCtx` — конкретный реализатор, компилятор строит его на каждом `${x:SPEC}`:
+
+```nova
+export type FmtCtx {
+    sink Write            // главный StringBuilder (или под-регион при pad_in_place)
+    mark int              // старт тела в sink (для pad_in_place)
+    spec FormatSpec        // width/align/fill/sign/alternate/precision/kind
+    mut pad_consumed  bool
+    mut prec_consumed bool
+}
+```
+
+#### 3. `Display`/`Debug` — REQUIRED-примитив, без to_str-дефолта, без цикла
+
+```nova
+export type Display protocol { @display(mut f Fmt) -> () }   // REQUIRED — нет дефолта
+export type Debug   protocol { @debug(mut f Fmt) -> () }     // REQUIRED
+```
+
+**Инвариант «нет циклической ловушки»:**
+
+1. `@display`/`@debug` — **required-примитив**; дефолта, который бы звал `@to_str`, НЕТ (это
+   и была ловушка D419-эпохи: to_str-дефолт мог рекурсивно звать себя).
+2. `@to_str` — бланкет **bounded `Display`** (`fn[T Display] T @to_str() -> str`) — вызывается
+   ТОЛЬКО на типе, уже реализующем `Display` (уже имеющем реальный `@display`) → зовёт
+   настоящий примитив, не себя. Цикл структурно невозможен.
+3. **Auto-derive** структурных типов (record/sum/tuple): компилятор синтезирует реальный
+   `@display`/`@debug` по требованию → структурный тип Display-способен без ручного impl.
+4. Тип без `@display` и не-деривируемый (опак без полей) → **не Display** → `${x}` =
+   **compile-error** «type X не реализует Display», не бесконечная рекурсия.
+
+#### 4. Derived Display vs Debug — различаются формой
+
+Auto-derive синтезирует ОБА метода, но с разной формой (владелец 2026-07-15, намеренный отход
+от Rust — Rust деривит только `Debug`):
+
+- **derived `@debug`** (`${x:?}`) — техдамп С ИМЕНАМИ полей: `Point { x: 1, y: 2 }`;
+  sum: `Some(5)` / `Err(IoError { kind: NotFound, ... })`; pretty (`:#?`) — многострочно
+  через `f.alternate()`.
+- **derived `@display`** (`${x}`) — компактная «значенческая» форма БЕЗ имён полей:
+  `Point(1, 2)`; sum: `Some(5)` (payload как значение).
+- Примитивы: Display и Debug совпадают (`42`, `true`) — различие только для структурных типов.
+  Кастомный `@display` перекрывает derived-форму.
+
+#### 5. Буфер-примитивы — внутренние (`.nv`, не публичные), zero-alloc
+
+```nova
+fn int_fmt(v int, buf *mut u8, cap int, spec FmtSpec) -> int   // digit-loop + радикс + zero_pad
+fn bool_fmt(v bool, buf *mut u8, cap int) -> int
+fn char_fmt(v char, buf *mut u8, cap int) -> int               // UTF-8 encode
+// float — ЕДИНСТВЕННЫЙ C-extern (dtoa непортируем):
+extern "C" fn fmt_f64_into(buf *mut u8, cap int, v f64, kind int, prec int) -> int
+```
+
+`extern "C" fn` + **литеральное имя** (без `nova_`-префикса) — по
+[D282](08-runtime.md#d282-new--extern-nova-fn--extern-c-fn--двух-абi-синтаксис-для-ffi-plan-9112-ф-1)
+(`extern "nova" fn` добавляет `nova_fn_`-prefix; `extern "C" fn` — нет, литеральный C-symbol).
+`FloatKind` пересекает C-ABI как int (`0=Shortest/1=Fixed/2=Sci`), `.nv`-wrapper конвертит
+enum→int на границе.
+
+#### 6. Энумы (D406 `enum`-маркер)
+
+```nova
+type Align     enum Left | Right | Center
+type Sign      enum Minus | Plus
+type FmtKind   enum Display | Debug | Hex | Oct | Bin | Exp
+type FloatKind enum Shortest | Fixed | Sci        // для fmt_f64_into (C-ABI int, не пересекает границу как enum)
+```
+
+Все — `enum`-маркер синтаксис ([D406](#d406-sum-type-синтаксис-enum-маркер-2026-07-01)), не
+leading-`|`.
+
+#### 7. `StringBuilder` — аменд API (см. [D179](08-runtime.md#d179-stringbuilder--pure-nova-consume-type--plan-91-ф26))
+
+```nova
+fn StringBuilder mut @reserve(n int) -> *mut u8
+fn StringBuilder mut @advance(n int) -> ()
+fn StringBuilder @len() -> int
+fn StringBuilder mut @pad_in_place(mark int, width int, fill char, align Align) -> ()
+fn StringBuilder mut @write_padded(bytes []u8, width int, fill char, align Align) -> ()
+fn StringBuilder consume @into_str() -> str                          // assume-valid UTF-8
+fn StringBuilder consume @into_str_checked() -> Result[str, Utf8Error]
+```
+
+`@reserve`/`@advance` — компилятор-приватный zero-copy путь (§1); `@pad_in_place` — width-
+композит без известной длины заранее (streaming-композит: record/tuple/Vec/sum), memmove
+тела + fill-вставка (right/center), left — без сдвига; `@write_padded` — известная-длина
+примитивы (int/float/bool/char/str), рендер в стек-буфер/расчёт, потом padded-запись без
+сдвига. `pad_consumed`: если тип сам вызвал `f.pad(...)` внутри своего `@display`/`@debug`,
+компилятор внешний pad НЕ навешивает (зеркало прежнего `precision_consumed`).
+
+### Статус реализации
+
+**Дизайн финализирован 2026-07-15** (все развилки закрыты — Ф.0-4 карта исполнения, гейты,
+риски — см. [docs/plans/208-unified-formatter.md](../../docs/plans/208-unified-formatter.md)
+§9-§11). Реализация — **Ф.1-4, pending** (как D421 wave-1 — это целевая модель, НЕ текущее
+поведение компилятора):
+
+| Фаза | Что | Статус |
+|---|---|---|
+| Ф.0 | Эта спека (D422 keystone + amend-пометки D419/D374/D237/D229/D179 + D55-аменд) | ✅ 2026-07-15 (этот коммит) |
+| Ф.1 | Буфер-примитивы `.nv` (аддитивно, рядом с `conv.h`); `fmt_f64_into` C-extern; `StringBuilder`-аменд | ⏳ pending |
+| Ф.2 | Когерентная волна: `Write`/`Fmt`/`FmtCtx`/энумы в std; компилятор — переписка `emit_interpolated_str`/`emit_format_spec_value` на `@display(f)`/`@debug(f)`; удаление `@display_fmt`-пути; ретракт `str.from_debug` | ⏳ pending |
+| Ф.3 | Дженерики `.nv` (`[]T`/`Vec[T]`/`Option`/`Result` Display/Debug) + auto-derive record/sum/tuple | ⏳ pending |
+| Ф.4 | Зачистка: оставшийся `conv.h` → `.nv`; удаление мёртвого `nova_fmt_*` | ⏳ pending |
+
+До Ф.2 текущее поведение — D419-эпоха (см. amend-пометки в D419/D374/D237/D229/D179 — читать их
+докризисный текст как «пока ещё так»).
+
+### Почему
+
+- **Один метод, не два** — Rust-прецедент `Display::fmt(&self, f: &mut Formatter)`; D419's
+  `@display`+`@display_fmt` пара выглядела «некрасиво» (претензия владельца) и держала
+  to_str-дефолт (ловушка цикла).
+- **Байтовый `Write`** — фундаментальнее строкового; унифицирует с `io.Write` (Plan 176) без
+  слияния самих типов направлений.
+- **`use Write` protocol-embed, не переименованный метод** — сохраняет «`Fmt` поверх `Write`»
+  буквально (тот же `@write`), убирая D419's дублирующее «структурное расширение без embed».
+- **required-примитив + bounded-`to_str`** — устраняет структурную возможность цикла раз и
+  навсегда (не полагается на runtime cycle-guard, как в D419-эпохе `str.from_debug`/default-body
+  synthesis).
+- **Derived Display ≠ Debug формой** — иначе `${x}` и `${x:?}` дают тождественный вывод, теряя
+  смысл различия («значение» vs «для разработчика»).
+
+### Связь
+
+- [D419](#d419-Fmt-protocol--format-spec-context-для-display_fmt-plan-15272-2026-07-13) —
+  RETRACT/SUPERSEDED целиком (двух-методная схема + узкая `Fmt` с двумя осями).
+- [D374](#d374-write-sink-протокол--декаплинг-displaydebug-от-stringbuilder-plan-15271) —
+  амендится ×2 (sink `Write`→`Fmt`, `@write_str(str)`→`@write([]u8)`).
+- [D237](#d237-protocol-naming-convention-method-name-capitalized-plan-137-2026-06-09) —
+  амендится (сигнатура `@display`/`@debug` → `(mut f Fmt)`, имена протоколов без изменений).
+- [D229](#d229--Debug-protocol--format-spec-expr) — амендится (диспетч `${expr:?}` через
+  `@debug(f)`, радикс через `f.kind()`).
+- [D179](08-runtime.md#d179-stringbuilder--pure-nova-consume-type--plan-91-ф26) — амендится
+  (байтовый append + `@reserve`/`@advance`/`@len`/`@pad_in_place`/`@write_padded`).
+- [D55](#d55-literal-coercion-в-позиции-с-явным-типом-sum-конструкторы-и-record-литералы) —
+  амендится (str-литерал→`[]u8` коэрсия, общее правило для любой `[]u8`-позиции).
+- [D145](#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101) — источник protocol-embed
+  механизма (`use Write` внутри `Fmt`), без изменений.
+- [D406](#d406-sum-type-синтаксис-enum-маркер-2026-07-01) — `enum`-маркер для
+  `Align`/`Sign`/`FmtKind`/`FloatKind`.
+- [D282](08-runtime.md#d282-new--extern-nova-fn--extern-c-fn--двух-абi-синтаксис-для-ffi-plan-9112-ф-1) —
+  `extern "C" fn fmt_f64_into` литеральное имя.
+- [D176](#d176-ro-t--тип-модификатор) — `.bytes()` на str-переменной = `ro []u8` zero-copy view.
+- str.from_debug/str.from ретракция (Plan 174.2, [D73](08-runtime.md#d73-from--into-protocol-пара-с-авто-выводом))
+  — `str.from_debug(@)` в Debug-протокола default-body (`std/prelude/protocols.nv`) остаётся
+  мёртвым/нереализованным символом ДО D422 (174.2 явно оставил его вне scope — см.
+  `docs/plans/174.2-scalar-to-str-notes.md`); D422 Ф.2 удаляет этот default-body ПОЛНОСТЬЮ
+  вместе с переходом на compiler-synthesized `@debug(f)` — `str.from_debug` окончательно
+  устраняется, не остаётся даже мёртвым текстом.
+- Plan 208 (докладной план — [docs/plans/208-unified-formatter.md](../../docs/plans/208-unified-formatter.md), this D-block's home plan).
+- Plan 176 (`io.Write` — координация байтового шейпа, направления раздельны).
+- Plan 196 — НЕ пересекается (замороженная зона `infer_call_ret_c` вне scope форматирования).
