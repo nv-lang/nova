@@ -174,10 +174,9 @@ result = sb.into_str()
 - **D179** (`StringBuilder`) — аменд: байтовый append + `@reserve`/`@advance`/`@len` + `pad_in_place`/`write_padded`.
 - **ретракт `str.from_debug`** вместе с `str.from` (Plan 174.2) — Debug идёт через derive/`@to_str`, как Display.
 
-**Investigation (коорд. Plan 176) — buffer-consolidation:** сверить API `ReadBuffer`/`WriteBuffer`/`StringBuilder`;
-кандидат — schlop `StringBuilder`→`Vec[u8]` (реализующий `Write`) + `into_str` (модель Rust `Vec<u8>`/`String`), минус
-один тип; `ReadBuffer`/`WriteBuffer` остаются **адаптерами** (буферизация) на едином `Read`/`Write`. НЕ сливать
-направления Read/Write.
+**buffer-consolidation — РЕШЕНО 2026-07-15 (owner): `StringBuilder` ОСТАЁТСЯ** отдельным типом (не схлопываем в
+`Vec[u8]`). Консолидация = только единый **байтовый шейп** `Write` для fmt и io; сами типы не сливаем.
+`ReadBuffer`/`WriteBuffer` остаются адаптерами на едином `Read`/`Write`; направления Read/Write раздельны.
 
 ## 7. Миграция / гейты (набросок)
 
@@ -192,7 +191,10 @@ sign/radix/precision/alternate/pretty) pos; byte-parity НЕ требуется 
 1. ✅ **Fallibility** — fmt-`Write` инфаллибельно (`-> ()`), io-`Write` — `Result[(), IoError]`; два байтовых
    родственника, не эффект (`Fail` запрещён конвенцией 177 для std). См. таблицу §1.
 2. ✅ **`into_str()`** — assume-valid-UTF-8 + checked-вариант.
-3. 🔎 **buffer-consolidation** (§6) — investigation, не блокер; решится при дизайне (коорд. Plan 176).
+3. ✅ **buffer-consolidation** (§6) — `StringBuilder` ОСТАЁТСЯ (owner); консолидация = только единый байтовый
+   `Write`-шейп, типы не схлопываем.
+
+**Все вопросы закрыты — дизайн-развилок не осталось.**
 
 **Следующий шаг:** финализировать сигнатуры (`Fmt`/`Write`/`Display`/`Debug`/буфер-примитив/`nova_f64_into`) +
 карта исполнения (что opus-синтез в компиляторе, что дешёвыми агентами по `.nv`/`conv.h`→`.nv`; порядок; гейты).
