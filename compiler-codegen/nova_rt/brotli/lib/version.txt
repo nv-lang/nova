@@ -1,4 +1,0 @@
-google/brotli v1.2.0 (decoder only: common/ + dec/)
-commit 27cc9fe9a4aa8901be3b3ba29f2f09eaddb08f97
-built: MSVC x64 /MT /O2 (x64-windows-static)
-sources: common/{constants,context,dictionary,platform,shared_dictionary,transform}.c dec/{bit_reader,decode,huffman,prefix,state,static_init}.c

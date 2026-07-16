@@ -27,13 +27,7 @@ jobs:
         # 2.28.8 (пакет libmbedtls-dev), НЕ 3.6.x — шим version-guard'ed через
         # MBEDTLS_VERSION_NUMBER под обе ветки API (cigreen-fix, было падение
         # CC-FAIL на undeclared 3.x-символах).
-        # libbrotli-dev: detect_brotli (test_runner.rs) находит /usr/include/brotli/
-        # + libbrotlidec.a/libbrotlicommon.a под multiarch-lib-dir → std/encoding/
-        # compress/brotli собирается с реальным декодером (не Q11-stub) — иначе
-        # ЛЮБОЙ brotli-тест (вкл. decode пустого потока) падал с UnsupportedMethod
-        # (cigreen-fix: раньше для non-Windows не было ни vendored .a, ни system-
-        # package пробы — detect_brotli всегда возвращал None).
-        run: sudo apt-get install -y libgc-dev libmbedtls-dev libbrotli-dev
+        run: sudo apt-get install -y libgc-dev libmbedtls-dev
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
       # Plan 196 Ф.4c — регресс-гард пути `nova build`. Он молча НЕ кормил
@@ -70,13 +64,7 @@ jobs:
         # 2.28.8 (пакет libmbedtls-dev), НЕ 3.6.x — шим version-guard'ed через
         # MBEDTLS_VERSION_NUMBER под обе ветки API (cigreen-fix, было падение
         # CC-FAIL на undeclared 3.x-символах).
-        # libbrotli-dev: detect_brotli (test_runner.rs) находит /usr/include/brotli/
-        # + libbrotlidec.a/libbrotlicommon.a под multiarch-lib-dir → std/encoding/
-        # compress/brotli собирается с реальным декодером (не Q11-stub) — иначе
-        # ЛЮБОЙ brotli-тест (вкл. decode пустого потока) падал с UnsupportedMethod
-        # (cigreen-fix: раньше для non-Windows не было ни vendored .a, ни system-
-        # package пробы — detect_brotli всегда возвращал None).
-        run: sudo apt-get install -y libgc-dev libmbedtls-dev libbrotli-dev
+        run: sudo apt-get install -y libgc-dev libmbedtls-dev
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
       # nova_tests/ non-blocking (см. positive-fast) — отчёт для трекинга дрейфа.

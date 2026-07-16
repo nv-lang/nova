@@ -1221,149 +1221,6 @@ fn effect_count_define_arg_from_line(first_line: &str, prefix: &str) -> Option<S
     Some(format!("{}NOVA_MAX_EFFECT_STORAGES={}", prefix, n))
 }
 
-/// Plan 179 Ф.2 (D337): vendored brotli decoder location (headers + static lib).
-/// Unlike libuv (mandatory, built-on-demand from a submodule), brotli is vendored
-/// as headers + a prebuilt lib and linked CONDITIONALLY on use. All paths are
-/// rt_dir-relative (like os_env.h / io_console.h), so no repo_root is threaded in.
-///
-/// [cigreen-fix, CI std-green batch]: `lib_files` (plural) — the vendored
-/// Windows `.lib` is a single FAT archive (`nova_rt/brotli/lib/version.txt`:
-/// "decoder only: common/ + dec/" compiled together into one file), but the
-/// Ubuntu/Debian `libbrotli-dev` SYSTEM package (the CI fallback added below,
-/// since no `.a` was ever vendored for non-Windows — see the old doc comment
-/// this replaces) ships `libbrotlidec.a` and `libbrotlicommon.a` as TWO
-/// separate archives that must both be linked (dec calls into common). One
-/// field, one or two entries, in link order — every call site just iterates.
-pub struct BrotliConfig {
-    pub include_dir: PathBuf,   // has brotli/decode.h
-    pub lib_files: Vec<PathBuf>, // one (vendored fat lib) or two (system dec+common), in link order
-}
-
-/// Resolve the brotli decoder for this host. Order:
-///   1) target/brotli-cache build artifact (rt_dir/../../target — owner's cache).
-///   2) tracked vendor copy under nova_rt/brotli/lib (Windows fat `.lib` today).
-///   3) [cigreen-fix] non-Windows SYSTEM package (`apt install libbrotli-dev` on
-///      CI, same system-package-fallback shape TLS used to have before Plan 193
-///      Ф.2 retired the compiler-built-in mbedTLS auto-link): CI's Linux build
-///      previously had NO brotli source at all (no vendored `.a`, no cache) →
-///      detect_brotli always returned None → the shim silently compiled its
-///      Q11 feature-gate stub path → every brotli_test.nv assertion that
-///      expects a REAL decode got `Err(UnsupportedMethod)` instead — the
-///      actual root cause of the "brotli RFC 7932 vector decode" CI RUN-FAILs
-///      (NOT a decoder logic bug — this reproduced on every single case
-///      including the trivial empty-stream one, which only makes sense if
-///      brotli was never really linked at all).
-/// Returns None when nothing is found for this host (→ Q11 runtime
-/// feature-gate: UnsupportedMethod, never a link error).
-fn detect_brotli(rt_dir: &Path) -> Option<BrotliConfig> {
-    let include_dir = rt_dir.join("brotli").join("include");
-    if include_dir.join("brotli").join("decode.h").is_file() {
-        let lib_name = if cfg!(target_os = "windows") {
-            "libbrotlidec.lib"
-        } else {
-            "libbrotlidec.a"
-        };
-        // 1) build-cache: <repo>/target/brotli-cache (rt_dir = <repo>/compiler-codegen/nova_rt)
-        let cache_lib = rt_dir
-            .parent()
-            .and_then(|p| p.parent())
-            .map(|repo| repo.join("target").join("brotli-cache").join(lib_name));
-        if let Some(cl) = &cache_lib {
-            if cl.is_file() {
-                return Some(BrotliConfig { include_dir, lib_files: vec![cl.clone()] });
-            }
-        }
-        // 2) tracked vendor copy: nova_rt/brotli/lib/<lib>
-        let vendor_lib = rt_dir.join("brotli").join("lib").join(lib_name);
-        if vendor_lib.is_file() {
-            return Some(BrotliConfig { include_dir, lib_files: vec![vendor_lib] });
-        }
-    }
-    // 3) [cigreen-fix] non-Windows system package: Ubuntu/Debian's
-    // `libbrotli-dev` installs headers at /usr/include/brotli/ and static
-    // archives under the multiarch lib dir — `libbrotlidec.a` (decoder,
-    // must come FIRST — single-pass Unix linkers resolve left-to-right) then
-    // `libbrotlicommon.a` (its dependency).
-    #[cfg(not(target_os = "windows"))]
-    {
-        let sys_headers = [
-            Path::new("/usr/include/brotli/decode.h"),
-            Path::new("/usr/local/include/brotli/decode.h"),
-        ];
-        for hp in sys_headers {
-            if !hp.is_file() {
-                continue;
-            }
-            let sys_include = match hp.parent().and_then(|p| p.parent()) {
-                Some(p) => p.to_path_buf(),
-                None => continue,
-            };
-            let lib_dirs = [
-                "/usr/lib/x86_64-linux-gnu",
-                "/usr/lib/aarch64-linux-gnu",
-                "/usr/lib",
-                "/usr/local/lib",
-            ];
-            for ld in lib_dirs {
-                let dec = Path::new(ld).join("libbrotlidec.a");
-                let common = Path::new(ld).join("libbrotlicommon.a");
-                if dec.is_file() && common.is_file() {
-                    return Some(BrotliConfig {
-                        include_dir: sys_include,
-                        lib_files: vec![dec, common],
-                    });
-                }
-            }
-        }
-    }
-    None
-}
-
-/// True iff the generated `.c` actually CALLS the brotli decoder wrapper — the
-/// precise "does this CU use brotli?" test that drives the conditional link.
-///
-/// The wrapper `brotli_decode` (and its `brotli_*` extern calls) is emitted
-/// even when unreachable: std module free-fns are kept in the output regardless of
-/// use, so a bare `brotli_` substring scan over-detects (a program that only
-/// imports `gzip_decode` still carries the dead brotli body). What is unique to a
-/// program that genuinely uses brotli is a CALL SITE to the mangled wrapper — an
-/// occurrence of `...brotli_decode(` that is neither the wrapper's forward
-/// declaration nor its definition header (both are `static …(…);` / `static …(…) {`
-/// lines). This is robust whether or not reachability-DCE prunes the dead body:
-///   - body pruned (unused)      → no `brotli_decode(` at all           → false
-///   - body kept but not called  → only the static decl/def header lines → false
-///   - called (brotli_decode / http `br`) → a non-static call-site line  → true
-fn c_file_uses_brotli(c_file: &Path) -> bool {
-    let Ok(src) = std::fs::read_to_string(c_file) else { return false; };
-    source_uses_brotli(&src)
-}
-
-/// Plan 209 Ф.2: same scan as [`c_file_uses_brotli`], factored out so the
-/// multi-TU toolchain can run it directly over each in-memory `_partK.c`
-/// string (no round-trip through disk — the parts are already `String`s from
-/// `EmitOutput::Split`). Caveat (over-detection only, never under-detection —
-/// safe): under `NOVA_MULTI_TU=1` the wrapper's own decl/def lines are no
-/// longer `static ` (Plan 209 `top_level_storage()` promotion), so this scan
-/// then treats them as call sites too — `uses_brotli` may go true for a CU
-/// that merely DECLARES the wrapper without calling it. Harmless: it only
-/// adds an unused link of the (already-conditionally-detected) brotli lib.
-fn source_uses_brotli(src: &str) -> bool {
-    for line in src.lines() {
-        if !line.contains("brotli_decode(") {
-            continue;
-        }
-        // Skip the wrapper's own prototype / definition header.
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("static ") {
-            let end = line.trim_end();
-            if end.ends_with(");") || end.ends_with('{') {
-                continue;
-            }
-        }
-        return true;
-    }
-    false
-}
 
 /// Возвращает command, готовую к запуску. Для Clang/MSVC на Windows
 /// инкапсулирует cmd /c "vcvars && actual-cmd" — иначе headers/libs
@@ -1400,38 +1257,6 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     let rt_net = opts.rt_dir.join("net.c");
     // Plan 176 Ф.2: fs.c — std/fs async uv_fs_* backend, same libuv gating as net.c.
     let rt_fs = opts.rt_dir.join("fs.c");
-    // Plan 179 Ф.2 (D337): brotli_shim.c — libbrotlidec C-FFI backend. Unlike libuv
-    // (mandatory, always linked), brotli is CONDITIONAL on USE: it is compiled and
-    // its lib linked ONLY when the generated .c actually calls a `brotli_*`
-    // symbol (extern "C" fns emit call sites only, D82 — no forward decls — so the
-    // marker appears iff a brotli codec is reached). This is the "module→library"
-    // conditional-link mechanism the owner requires; libuv behaviour is unchanged.
-    let rt_brotli_shim = opts.rt_dir.join("brotli_shim.c");
-    let uses_brotli = c_file_uses_brotli(opts.c_file);
-    // Resolve the vendored decoder (headers + libbrotlidec.lib), rt_dir-relative
-    // (target/brotli-cache build-cache is preferred, else the tracked vendor copy).
-    // None → not built for this host → the CU falls back to UnsupportedMethod at
-    // runtime (Q11 feature-gate); we simply do not add brotli to the link line.
-    let brotli_cfg = if uses_brotli { detect_brotli(opts.rt_dir) } else { None };
-    let brotli_include = brotli_cfg.as_ref().map(|c| c.include_dir.clone());
-    let brotli_libs: Vec<PathBuf> = brotli_cfg.as_ref()
-        .map(|c| c.lib_files.clone())
-        .unwrap_or_default();
-    // Diagnostic (NOVA_DEBUG_BROTLI_LINK=1): make the conditional-link decision
-    // observable — proves brotli is linked ONLY for a CU that decodes brotli.
-    if std::env::var("NOVA_DEBUG_BROTLI_LINK").as_deref() == Ok("1") {
-        if brotli_libs.is_empty() {
-            eprintln!(
-                "nova/brotli-link: {} uses_brotli={} → NO brotli lib",
-                opts.c_file.display(), uses_brotli);
-        } else {
-            let names: Vec<String> = brotli_libs.iter()
-                .map(|p| p.display().to_string()).collect();
-            eprintln!(
-                "nova/brotli-link: {} uses_brotli={} → LINK {}",
-                opts.c_file.display(), uses_brotli, names.join(", "));
-        }
-    }
     let march = march_flag();
 
     // Plan 27 Ф.1+Ф.D: Boehm paths resolved via detect_boehm (env overrides
@@ -1613,24 +1438,6 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     }
                     #[cfg(target_os = "linux")]
                     c.arg("-Wl,--end-group");
-                }
-            }
-            // Plan 179 Ф.2 (D337): brotli — CONDITIONAL link (only when used). The
-            // shim TU is added only for a CU that decodes brotli; the real decoder
-            // lib(s) are added only when found for this host — vendored `.lib`
-            // (Windows), the cache, or [cigreen-fix] the non-Windows system
-            // package (else the shim compiles as Q11 feature-gate stubs — no
-            // link error, see detect_brotli doc).
-            if uses_brotli {
-                c.arg(&rt_brotli_shim);
-                if let Some(inc_path) = &brotli_include {
-                    if !brotli_libs.is_empty() {
-                        c.arg("-DNOVA_USE_BROTLI=1");
-                        c.arg("-I").arg(inc_path);
-                        for lib_path in &brotli_libs {
-                            c.arg(lib_path);
-                        }
-                    }
                 }
             }
             // Plan 27 Ф.1+Ф.D: Boehm link flags for Clang.
@@ -1818,25 +1625,6 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg(syslib);
                 }
             }
-            // Plan 179 Ф.2 (D337): brotli — CONDITIONAL link (only when used). Shim
-            // TU only for a brotli-decoding CU; real decoder + libbrotlidec.lib only
-            // when the vendored lib is present (else Q11 stubs — no link error).
-            if uses_brotli {
-                if let Some(inc_path) = &brotli_include {
-                    if !brotli_libs.is_empty() {
-                        c.arg("/DNOVA_USE_BROTLI=1");
-                        c.arg(format!("/I{}", inc_path.display()));
-                        c.arg(&rt_brotli_shim);
-                        for lib_path in &brotli_libs {
-                            c.arg(lib_path);
-                        }
-                    } else {
-                        c.arg(&rt_brotli_shim);
-                    }
-                } else {
-                    c.arg(&rt_brotli_shim);
-                }
-            }
             c.arg(opts.c_file);
             c.arg(&rt_alloc);
             c.arg(&rt_effects);
@@ -1937,24 +1725,6 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
                 for syslib in LIBUV_UNIX_SYSLIBS {
                     c.arg(syslib);
-                }
-            }
-            // Plan 179 Ф.2 (D337): brotli — CONDITIONAL link (only when used).
-            // [cigreen-fix] detect_brotli now ALSO probes the non-Windows system
-            // package (Ubuntu/Debian `libbrotli-dev`) when no vendored/cached
-            // `.a` is found — on a host with neither, the shim still compiles
-            // as Q11 feature-gate stubs (UnsupportedMethod at runtime), never a
-            // link error.
-            if uses_brotli {
-                c.arg(&rt_brotli_shim);
-                if let Some(inc_path) = &brotli_include {
-                    if !brotli_libs.is_empty() {
-                        c.arg("-DNOVA_USE_BROTLI=1");
-                        c.arg("-I").arg(inc_path);
-                        for lib_path in &brotli_libs {
-                            c.arg(lib_path);
-                        }
-                    }
                 }
             }
             // Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI shim flags (GCC).
@@ -2119,7 +1889,7 @@ fn gcc_compile_obj_cmd(
 ///
 /// Writes `<stem>_common.h` + `<stem>_partK.c` under `opts.obj_dir`, compiles
 /// every part **in parallel** (thread pool sized to
-/// `available_parallelism()`) alongside the runtime/.ffi/.brotli
+/// `available_parallelism()`) alongside the runtime/.ffi
 /// "compile-once" sources, then links every resulting `.o` into one exe.
 ///
 /// **ABI-invariant (recon-notes.md §1, §9.5):** `flags` (built once, below)
@@ -2179,11 +1949,6 @@ pub fn compile_multi_tu_to_exe(
     // Plan 174.4: effect-registry size, read from common.h's line 1 (recon-
     // notes.md §1 doc: the marker is ALWAYS moved there by `split_tu`).
     let effect_arg = common_h.lines().next().and_then(|l| effect_count_define_arg_from_line(l, "-D"));
-
-    // Plan 179 Ф.2: conditional brotli link — same detection as
-    // `build_command`, run over every in-memory part (source_uses_brotli).
-    let uses_brotli = parts.iter().any(|p| source_uses_brotli(p));
-    let brotli_cfg = if uses_brotli { detect_brotli(opts.rt_dir) } else { None };
 
     let march = march_flag();
     let boehm_cfg = if opts.gc_kind == GcKind::Boehm {
@@ -2254,13 +2019,6 @@ pub fn compile_multi_tu_to_exe(
         flags.push("-DNOVA_USE_LIBUV=1".into());
         includes.push(inc.clone());
     }
-    let brotli_ready = uses_brotli && brotli_cfg.as_ref().map_or(false, |c| !c.lib_files.is_empty());
-    if brotli_ready {
-        if let Some(cfg) = &brotli_cfg {
-            flags.push("-DNOVA_USE_BROTLI=1".into());
-            includes.push(cfg.include_dir.clone());
-        }
-    }
     if let Some(ffi) = opts.ffi {
         for inc in &ffi.include_dirs {
             includes.push(inc.clone());
@@ -2295,7 +2053,7 @@ pub fn compile_multi_tu_to_exe(
     }
 
     // ---- "compile once" extra sources: runtime .c + libuv eventloop +
-    // FFI .c shims + brotli shim. Compiled to `.o` exactly once (not once
+    // FFI .c shims. Compiled to `.o` exactly once (not once
     // per part) — no regression vs. the single-TU path, which also only
     // ever compiled these once.
     let mut extra_sources: Vec<PathBuf> = vec![
@@ -2314,9 +2072,6 @@ pub fn compile_multi_tu_to_exe(
         extra_sources.push(opts.rt_dir.join("net.c"));
         extra_sources.push(opts.rt_dir.join("fs.c"));
         extra_sources.push(libuv.eventloop_src.clone());
-    }
-    if brotli_ready {
-        extra_sources.push(opts.rt_dir.join("brotli_shim.c"));
     }
     if let Some(ffi) = opts.ffi {
         for shim in &ffi.c_shims {
@@ -2403,7 +2158,7 @@ pub fn compile_multi_tu_to_exe(
     }
 
     // ---- link: same `flags` + every `.o` + libs (mirrors build_command's
-    // tail — objects, then GC, then libuv, then brotli, then FFI) ----
+    // tail — objects, then GC, then libuv, then FFI) ----
     let mut link = Command::new(&compiler);
     if !env.is_empty() {
         link.env_clear().envs(env.iter().cloned());
@@ -2454,13 +2209,6 @@ pub fn compile_multi_tu_to_exe(
             }
             #[cfg(target_os = "linux")]
             link.arg("-Wl,--end-group");
-        }
-    }
-    if brotli_ready {
-        if let Some(cfg) = &brotli_cfg {
-            for lib_path in &cfg.lib_files {
-                link.arg(lib_path);
-            }
         }
     }
     if let Some(ffi) = opts.ffi {
