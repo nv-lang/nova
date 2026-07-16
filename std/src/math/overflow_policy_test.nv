@@ -122,3 +122,129 @@ test "Ф.2: saturating_mul — клампит по знаку операндов
     ro e u8 = 100
     assert(e.saturating_mul(3) == u8.MAX)
 }
+
+// ── Plan 206.1 (D426): div/rem/neg policy wrappers ──────────────────────
+
+test "206.1: checked_div — Some при no-overflow, None на /0 и MIN/-1 (signed+unsigned)" {
+    ro a i32 = 10
+    ro five i32 = 5
+    assert(a.checked_div(2) == Some(five))
+    ro amin i32 = i32.MIN
+    assert(amin.checked_div(-1) == None)
+    assert(a.checked_div(0) == None)
+    ro b u32 = 10
+    ro bfive u32 = 5
+    assert(b.checked_div(2) == Some(bfive))
+    assert(b.checked_div(0) == None)
+}
+
+test "206.1: checked_rem — Some при no-overflow, None на /0 и MIN/-1 (signed+unsigned)" {
+    ro a i32 = 10
+    ro zero i32 = 0
+    assert(a.checked_rem(2) == Some(zero))
+    ro one i32 = 1
+    assert(a.checked_rem(3) == Some(one))
+    ro amin i32 = i32.MIN
+    assert(amin.checked_rem(-1) == None)
+    assert(a.checked_rem(0) == None)
+    ro b u32 = 10
+    ro btwo u32 = 2
+    assert(b.checked_rem(4) == Some(btwo))
+    assert(b.checked_rem(0) == None)
+}
+
+test "206.1: wrapping_div — MIN/-1 wraps к MIN вместо паники; обычное деление байт-паритет" {
+    ro a i32 = 10
+    assert(a.wrapping_div(2) == 5)
+    ro amin i32 = i32.MIN
+    assert(amin.wrapping_div(-1) == i32.MIN)
+    ro b u32 = 10
+    assert(b.wrapping_div(2) == 5)
+}
+
+test "206.1: wrapping_rem — MIN/-1 wraps к 0 (истинный остаток); обычное деление байт-паритет" {
+    ro a i32 = 10
+    assert(a.wrapping_rem(3) == 1)
+    ro amin i32 = i32.MIN
+    assert(amin.wrapping_rem(-1) == 0)
+    ro b u32 = 10
+    assert(b.wrapping_rem(4) == 2)
+}
+
+test "206.1: checked_neg — signed None только на MIN, unsigned None кроме 0" {
+    ro a i32 = 5
+    ro neg_five i32 = -5
+    assert(a.checked_neg() == Some(neg_five))
+    ro amin i32 = i32.MIN
+    assert(amin.checked_neg() == None)
+    ro b u32 = 0
+    assert(b.checked_neg() == Some(b))
+    ro c u32 = 5
+    assert(c.checked_neg() == None)
+}
+
+test "206.1: wrapping_neg — не паникует никогда; signed MIN -> MIN, unsigned two's-complement wraparound" {
+    ro a i32 = 5
+    assert(a.wrapping_neg() == -5)
+    ro amin i32 = i32.MIN
+    assert(amin.wrapping_neg() == i32.MIN)
+    ro b u32 = 0
+    assert(b.wrapping_neg() == 0)
+    ro c u8 = 1
+    ro u255 u8 = 255
+    assert(c.wrapping_neg() == u255)
+}
+
+// ── Raw-operator always-on trap (D426 §R1/§R2) — pin-тесты паники ──────
+
+test "206.1: raw `/` — division by zero panics (int)" panics "division by zero" {
+    ro a = 10
+    ro b = 0
+    ro _r = a / b
+}
+
+test "206.1: raw `/` — division by zero panics (sized i32, не только безграничный int)" panics "division by zero" {
+    ro a i32 = 10
+    ro b i32 = 0
+    ro _r = a / b
+}
+
+test "206.1: raw `/` — division by zero panics (unsigned u32)" panics "division by zero" {
+    ro a u32 = 10
+    ro b u32 = 0
+    ro _r = a / b
+}
+
+test "206.1: raw `/` — MIN/-1 division overflow panics (int)" panics "division overflow" {
+    ro a = int.MIN
+    ro b = -1
+    ro _r = a / b
+}
+
+test "206.1: raw `/` — MIN/-1 division overflow panics (sized i32)" panics "division overflow" {
+    ro a i32 = i32.MIN
+    ro b i32 = -1
+    ro _r = a / b
+}
+
+test "206.1: raw `%` — MIN/-1 remainder overflow panics identically to `/` (x86 idiv fault)" panics "division overflow" {
+    ro a i32 = i32.MIN
+    ro b i32 = -1
+    ro _r = a % b
+}
+
+test "206.1: raw `/=` compound-assign — division by zero panics" panics "division by zero" {
+    mut a i32 = 10
+    ro b i32 = 0
+    a /= b
+}
+
+test "206.1: raw unary `-` — negation overflow panics on signed MIN" panics "negation overflow" {
+    ro a i32 = i32.MIN
+    ro _r = -a
+}
+
+test "206.1: raw unary `-` — unsigned negation does NOT panic (still raw wraparound, D426 §R2)" {
+    ro a u32 = 5
+    ro _r = -a
+}
