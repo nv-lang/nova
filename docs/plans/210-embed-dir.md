@@ -10,6 +10,12 @@
 > `210-impl-progress.md`). **В main НЕ вливалось** — авторитетный гейт
 > (мега-CU conformance + флагман-examples под `--strict-effects`) делает
 > оркестратор при вливании. Прогресс/детали — [210-impl-progress.md](210-impl-progress.md).
+> **Ф.5 (остаток, владелец 2026-07-16): user-facing дока** — `docs/embed.md`
+> (гайд по обоим интринсикам: `embed("file")` D412 + `embed_dir("dir")`): как
+> использовать, API `EmbeddedDir` (`get/has/paths/len/entries`), детерминизм,
+> dot/symlink-skip, коды E_/W_ (§4.3), NFC/NFD-ловушка non-ASCII имён
+> (`W_EMBED_DIR_NON_ASCII_PATH` — почему), rodata-мина `[M-d412-blob-view-mut-write]`,
+> взаимодействие с 209 (×5.3 hex-рендер, порог `W_EMBED_DIR_LARGE` 16 MiB).
 > ---
 > *(Ниже — оригинальный дизайн-документ, сохранён как есть для истории решений.)*
 > **Статус: ✅ ДИЗАЙН ФИНАЛИЗИРОВАН 2026-07-16 (вариант A + материализация Option R, ревиз. R″ — единая метка: R′=ревью-1, R″=ревью-2/9.1/ревью-3).**
