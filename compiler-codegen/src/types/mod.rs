@@ -10783,7 +10783,34 @@ impl<'a> TypeCheckCtx<'a> {
                         // CHOSEN overload with the receiver's concrete type-args substituted
                         // in (`Vec[u32].push(0x80)` → `exp_ty = u32`), so the literal arg
                         // carries the sized element type instead of collapsing to `nova_int`.
-                        self.materialize_literal_coercion(arg.expr(), &exp_ty);
+                        //
+                        // [M-instance-method-closure-arg-generic-return] (mirrors the
+                        // [196.5 closure-lowering fix] applied to the free-fn/static-method
+                        // call site, ~11343 below): `subst` above is RECEIVER-level only
+                        // (`build_recv_subst`) — it never binds METHOD-level generics
+                        // (`f.generics`, e.g. `RetryPolicy @execute[T, E](body fn() Fail[E]
+                        // -> T)` on a non-generic receiver). A `exp_ty` that still mentions
+                        // one of `callee_gs` (`T`) is therefore NOT the truth for this call;
+                        // materializing against it stamps an ERASED `Func{ret: Named("T")}`
+                        // into `resolved_types` (`Named` with empty args PASSES the
+                        // `ConcreteNamedNoArgs` gate in `materialize_literal_coercion`'s
+                        // ClosureLight arm — structurally indistinguishable from a genuine
+                        // concrete no-arg record type at that layer) — codegen's channel-
+                        // first `closure_channel_ret_c` then trusts it and emits the lambda
+                        // body with a bogus `Nova_T*` C return (CC-FAIL: retry_test.nv,
+                        // `policy.execute(|| { ...; "success" })`, T=str — `Nova_T*` isn't
+                        // even a real generic-erasure convention here, just the catch-all
+                        // "unknown Named type" fallback in `resolved_named_to_c` colliding
+                        // with `Vec[T]`'s OWN erasure placeholder of the same letter). No
+                        // receiver-subst-style unification is attempted here (method-level
+                        // generics, not receiver-level) — absence is honest: skip
+                        // materialization so the consumer falls back to the legacy
+                        // body-walk (`infer_lambda_return_type_with_params`), which
+                        // correctly infers the concrete return by walking the closure's
+                        // own (possibly multi-statement) body.
+                        if !typeref_mentions_any(&exp_ty, &callee_gs) {
+                            self.materialize_literal_coercion(arg.expr(), &exp_ty);
+                        }
                         if let Compat::Narrowing { from, to } =
                             self.assignable(arg.expr(), &exp_ty, gs, &callee_gs, scope)
                         {
