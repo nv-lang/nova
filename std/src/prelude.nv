@@ -191,6 +191,13 @@ export import std.prelude.effects.{Fail, Time, Mem}
 // nova_rt/fibers.h) — см. заголовок std/prelude/concurrency.nv.
 export import std.prelude.concurrency.{CancelToken}
 
+// Plan 210 (D412-амендмент): re-export EmbeddedDir/EmbeddedEntry из
+// std.prelude.embed — обязаны быть prelude-видимы, т.к. `embed_dir("dir")`
+// резолвер (embed_resolve.rs, ДО type-check) синтезирует
+// `EmbeddedDir.new([EmbeddedEntry{...}, …])` внутри ПОЛЬЗОВАТЕЛЬСКОГО кода,
+// который ссылается на эти типы по имени без явного import.
+export import std.prelude.embed.{EmbeddedDir, EmbeddedEntry}
+
 // Plan 91 Ф.2.5 (D177) + Ф.2.6 (D178): str Nova-body methods auto-available без explicit import.
 // Nova bodies в std/runtime/string.nv; Plan 54 Ф.2 dispatch (!is_external filter).
 // D178: parse_int_radix → parse_int(radix=10); to_bytes/to_chars/compare added.
@@ -308,5 +315,12 @@ export import std.runtime.string.{pad_left, pad_right, repeat, replace, compare,
 ///     whitelist. Auto-available without explicit import (unchanged
 ///     surface); codegen emission (`f64_method_to_c`/`int_method_to_c`)
 ///     unaffected.
+///   - 18 = Plan 210 done (2026-07-16, D412-амендмент): `EmbeddedDir` /
+///     `EmbeddedEntry` formally declared в std/prelude/embed.nv +
+///     re-exported через facade — `embed_dir("dir")` компайл-тайм
+///     интринсик (резолвер embed_resolve.rs синтезирует
+///     `EmbeddedDir.new([EmbeddedEntry{...}, …])`, отсортировано по path).
+///     Payload'ы — zero-copy static rodata (существующая HexBlobLit-арм,
+///     emit_c.rs НЕ менялся).
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 17
+export const PRELUDE_VERSION int = 18

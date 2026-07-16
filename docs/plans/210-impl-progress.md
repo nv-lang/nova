@@ -1,0 +1,61 @@
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+# Plan 210 — чекпоинт прогресса реализации (embed_dir)
+
+> Рабочий файл исполнителя (worktree `nova-210`, ветка `p210-embed-dir`). Обновляется ПЕРЕД
+> каждым коммитом. Карта — [210-embed-dir.md](210-embed-dir.md).
+
+## Статус фаз
+
+- **Ф.1 (std-тип)** — ГОТОВО. `std/src/prelude/embed.nv` (EmbeddedEntry/EmbeddedDir +
+  `.new`/`@len`/`@paths`/`@has`/`@entries`/`@get`) + re-export в `std/src/prelude.nv`
+  (`PRELUDE_VERSION` 17→18) + `std/src/prelude/embed_test.nv` (7 тестов, включая 2
+  `panics "sorted"` на несортированном/дубликате пути + алиас-защита). Гейт:
+  `nova check std/src/prelude/embed.nv std/src/prelude/embed_test.nv` — PASS;
+  `nova test std/src/prelude/embed_test.nv` — 7/7 PASS.
+- **Ф.0 (спека)** — ГОТОВО. D412-амендмент дописан в конец `spec/decisions/03-syntax.md`
+  (после существующего D412) — форма `embed_dir`, контракт `EmbeddedDir`, детерминизм,
+  dot/symlink-skip, W_EMBED_DIR_LARGE (16 MiB, §9.2 ревью-3 порог), backslash-запрет,
+  non-ASCII warning, CRLF/autocrlf док-строка, Option E (C23 `#embed`) как future.
+- **Ф.2 (резолвер)** — ГОТОВО. `compiler-codegen/src/embed_resolve.rs`:
+  `try_replace_embed_dir` (зеркало `try_replace_embed`) + свободная `walk_embed_dir_rec`
+  (рекурсивный обход, dot-skip, symlink-skip+warn, non-ASCII-warn) + синтез
+  `Call{EmbeddedDir.new([RecordLit{EmbeddedEntry,...}, …])}`. `resolve_embeds` теперь
+  возвращает `(Vec<PathBuf>, Vec<LintWarning>)` вместо голого `Vec<PathBuf>` — warning-канал
+  был реально пуст на success-пути (подтверждено эмпирически ДО фикса), пофикшено во ВСЕХ 4
+  call-сайтах (nova-cli check/build, compiler-codegen check/compile, test_runner
+  codegen_to_c). Добавлены `E_EMBED_IS_A_DIR` (в `try_replace_embed`, симметрия) +
+  `E_EMBED_PATH_BACKSLASH` (общий helper `check_path_backslash`, оба интринсика).
+  compiler-codegen + nova-cli release собираются чисто (0 новых warning после чистки
+  ложного "value never read").
+- **Ф.4 (фикстуры)** — ГОТОВО. pos (`d412d_embed_dir.nv` + `d412d_dir/{alpha.txt,beta.txt,
+  nested/gamma.txt,.hidden}`) — merged в `spec_tests.conformance` CU. 6 neg в `neg/`
+  (not_found/not_a_dir/escape/not_literal/embed_on_dir + бонус backslash) — все PASS
+  таргетно. 2 standalone (`W_EMBED_DIR_EMPTY` на `d412d_dir_empty/.gitkeep`;
+  `W_EMBED_DIR_NON_ASCII_PATH` на `d412d_dir_unicode/café.txt`) — PASS, warning подтверждён.
+- **Верификация Ф.2 (спот-грепы)** — ГОТОВО. `.c` для `d412d_embed_dir_nonascii` (test-build
+  --keep-artifacts): `nova_blob_view(nova_blob_0bd47e37eb578d59, 10)` — zero-copy view,
+  БЕЗ memcpy; путь `café.txt` интернирован как static `nova_str` (9 байт UTF-8, `é` НЕ
+  нормализован). Два прогона того же файла → diff ТОЛЬКО в порядке generic-типа
+  forward-decl (`Nova_T/S/U/E`) — известная ПРЕ-EXISTING nondeterminism
+  (`[M-codegen-emission-nondeterminism]`, подтверждена сверкой на НЕТРОНУТОМ
+  `standalone/n6_opaque_literal_warning.nv` — тот же класс diff). Весь embed_dir-related
+  контент (blob-байты, entries-порядок, interned-строки) — БАЙТ-В-БАЙТ идентичен между
+  прогонами.
+- **δ-нейтральность `nova check std`** — подтверждена: 4 FAIL (`std/src/time/civil/*`,
+  `E_STR_NO_LEN`) — ПРЕ-EXISTING на НЕТРОНУТОМ main-репо (проверено отдельно бинарём
+  main-репо на его собственном std/src/time/civil — идентичные 4 фейла). Не связано с
+  Plan 210.
+- **Ф.3 (флагман, опционально)** — см. ниже.
+
+## Коммиты (ветка `p210-embed-dir`)
+
+(заполняется по мере коммитов)
+
+## Открытые мелочи / отклонения от плана
+
+- `embed_dir(".")`/`""` (self-embed корня пакета, §9.2 ревью-3 п.3) — НЕ реализовано.
+  Это была ОТКРЫТАЯ развилка владельца в плане (§9.2.3: «решение владельца; дефолт —
+  запретить»), не входящая в закрытую таблицу кодов §4.3 и не перечисленная в
+  Ф.2-списке кодов top-level задания. Оставлено как есть (текущее поведение:
+  `embed_dir(".")` резолвится и работает как обычный каталог — НЕ запрещено явно).
+  Не блокер (не в объёме §4.3).
