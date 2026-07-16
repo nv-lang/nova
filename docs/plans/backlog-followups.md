@@ -3308,14 +3308,80 @@ default` + метод собирается. Замечание (вне пери�
   содержит → soundness-фикстуры больше не гоняются через реальные backend'ы
   (jobs non-blocking). Anti-delete ratchet работает; content-верификация — нет.
 
-- **[M-time-folder-coequal-mismatch]** (2026-07-16, P2, найден 208-фикс-волной после
-  П13 file-split) — `std/src/time/` содержит module `time.duration` в 3 co-equal
-  файлах (duration/timestamp/monotonic.nv) РЯДОМ с `time.cron` (cron.nv):
-  `is_folder_module_peer` (imports.rs:1999-2053) требует ЕДИНУЮ декларацию на папку
-  с последним сегментом == имя папки — не выполняется ни одно условие →
-  `E_D78_MODULE_PATH_MISMATCH` при компиляции monotonic/timestamp как прямых
-  test-энтри. Обычный import-путь работает (как и до сплита с cron.nv рядом).
-  Смежный [M-folder-module-detector] (P3) НЕ покрывает эту форму. Решить:
-  либо амендмент D78 (папка может нести НЕСКОЛЬКО co-equal модулей), либо
-  вынос cron.nv/подпапки. Попутная улика того же прогона: ICE emit_c.rs:52222
-  [P67-LEGACY] method=now — разобрать после разблокировки модуля.
+- **[M-time-folder-coequal-mismatch]** — **✅ РЕШЕНО 2026-07-17 (Plan 211, ветка
+  `fix-module-layout-orphan`, worktree `nova-modlayout`).** Layout-фикс: `git mv
+  std/src/time/duration.nv → std/src/time/duration/core.nv` +
+  `timestamp.nv`/`monotonic.nv` → `std/src/time/duration/{timestamp,monotonic}.nv`
+  (чистые renames, `module time.duration` не менялся, import-путь
+  `std.time.duration` не менялся). Теперь `duration/` — настоящая папка-модуль
+  (D78 «файл ИЛИ папка»): `is_folder_module_peer` (imports.rs:1999-2053) видит
+  ЕДИНУЮ декларацию на папку с последним сегментом == имя папки (`duration` ==
+  `duration`) → условие выполняется. Подтверждено: `nova check` на
+  `std/src/time/duration/timestamp.nv` и `.../monotonic.nv` как ПРЯМЫХ entry —
+  чисто (было `E_D78_MODULE_PATH_MISMATCH`). Попутно откачен маскирующий фикс
+  `[M-blanket-crossmodule-scattered-peer-drop]` (59f22a85b, противоречил букве
+  D78 — «сколько угодно co-equal файлов в общей папке» вместо «файл ИЛИ папка»)
+  и заведена громкая диагностика `[M-module-file-submodule-split-silent-orphan]`
+  (см. ниже) на месте того класса тихого сиротения, который маскирующий фикс
+  пытался обойти silent-мёржем. `std/src/time/civil/parse_test.nv` (исходный
+  cross-module репро) — `to_unix_seconds`/`to_unix_nanos` E_UNKNOWN_METHOD
+  исчезли, остаётся только НЕСВЯЗАННЫЙ pre-existing `[E7301]` FmtKind/Month в
+  `tz.nv` (чинится параллельно, не тронут). Попутная улика (ICE emit_c.rs:52222
+  `[P67-LEGACY]` method=now/to_nanos) РАЗОБРАНА и заведена ОТДЕЛЬНО —
+  `[M-checker-path-call-chain-unknown-ret-type]` (см. ниже) — НЕ то же самое,
+  что layout-баг, была лишь попутно замечена в той же волне-208. Было
+  (исходный OPEN-контекст, 2026-07-16, P2, найден 208-фикс-волной после П13
+  file-split): `std/src/time/` содержал module `time.duration` в 3 co-equal
+  файлах (duration/timestamp/monotonic.nv), разбросанных РЯДОМ с `time.cron`
+  (cron.nv) прямо в `std/src/time/` — `is_folder_module_peer` требовал ЕДИНУЮ
+  декларацию на папку с последним сегментом == имя папки, что не выполнялось
+  ни для одного файла → `E_D78_MODULE_PATH_MISMATCH` при компиляции
+  monotonic/timestamp как прямых test-энтри.
+
+- **[M-module-file-submodule-split-silent-orphan]** — **✅ РЕШЕНО 2026-07-17
+  (Plan 211, ветка `fix-module-layout-orphan`).** Резолвер модулей
+  (`compiler-codegen/src/imports.rs::resolve_module_paths`, зона резолвера, НЕ
+  frozen emit_c) теперь громко диагностирует тихое сиротение file-submodule:
+  если plain-импорт резолвится в единственный head-файл `<Y>.nv` (файловый
+  модуль, D78), но в ТОЙ ЖЕ директории лежат ещё `.nv`-файлы, объявляющие ТОТ
+  ЖЕ `module X.Y` (co-equal peers, разбросанные напрямую в общем родителе
+  вместо выделенной папки-модуля `Y/`) — раньше это было тихим сиротением (до
+  Plan 202 peer-декларации молча выпадали из любого внешнего резолва; после
+  временного маскирующего фикса `[M-blanket-crossmodule-scattered-peer-drop]`
+  — молча подмешивались без диагностики). Теперь `ResolveErr::FileOrphan` →
+  `[E_MODULE_FILE_ORPHAN]` compile error, 4 части (какой файл+что объявил /
+  почему не входит / следствие-невидимость / fix-подсказки папка-модуль).
+  Neg-фикстура `spec_tests/conformance/neg/module_file_orphan.nv` (+
+  `module_file_orphan_repro/{core,scattered}.nv`) — package-scale репро
+  реального std/time-бага, подтверждено `nova test ... --full` → PASS
+  (negative). 4 существующих юнит-теста imports.rs (`entry_folder_module_tests`)
+  — зелены, не задеты (диагностика — отдельная ветка кода, unrelated к
+  entry-sibling-scan).
+
+- **[M-checker-path-call-chain-unknown-ret-type]** (2026-07-17, P2, найден Plan
+  211 при верификации `nova test std/src/time` после layout-фикса, разблокировавшего
+  `std/src/time/duration/monotonic.nv` для реальной компиляции извне) —
+  `nova: internal error at compiler-codegen/src/codegen/emit_c.rs:52222:
+  [P67-LEGACY] Path call return type unknown for method=<name> — checker must
+  annotate`. Триггер — метод, вызванный ЦЕПОЧКОЙ сразу на РЕЗУЛЬТАТЕ вызова
+  функции/статик-пути (`<free_fn_or_static_call>(...).method()`), а НЕ на
+  переменной/литерале: конкретно `monotonic.nv:105`
+  `sat_sub_i64(@nanos, other.nanos, i64.MIN, i64.MAX).to_nanos()` внутри
+  `Monotonic @elapsed_since` (и транзитивно `@minus`/`@checked_duration_since`)
+  — чекер не аннотирует тип возврата promежуточного «Path call» до чейн-метода.
+  Репро: `nova test std/src/time/overflow_safe_test.nv --full` (тест
+  «Ф.1c/D318: Monotonic non-regression», вызывающий `elapsed_since`) — ICE.
+  Контраст: изолированная копия `d317_duration_overflow_policy.nv` (не
+  трогает Monotonic, только Duration/Timestamp через литералы/переменные,
+  НЕ через промежуточный free-fn-call-чейн) — PASS чисто. Значит баг НЕ в
+  layout-фиксе и НЕ в свежесвязанной cross-module видимости per se — это
+  ортогональный, ранее НИКОГДА не упражнявшийся codegen/checker-гэп в самой
+  реализации `Monotonic.elapsed_since`, вскрытый ТЕМ, что модуль наконец
+  компилируется извне целиком (был анонсирован тем же 208-фикс-волна попутно
+  найденным «ICE emit_c.rs:52222 method=now» в предшественнике этой строки,
+  `[M-time-folder-coequal-mismatch]` — та же общая природа: return-type
+  inference для «Path call» перед чейн-методом; возможно другой конкретный
+  call-сайт с `.now()`, не найден в текущей волне, не искали specifically).
+  Не чинить в рамках layout-волны (out of scope, отдельный checker/codegen
+  заход) — зона: `types/mod.rs` return-type inference для call-expression
+  ИЛИ `emit_c.rs` P67-LEGACY fallback-путь (~52222).

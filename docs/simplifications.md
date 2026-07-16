@@ -38859,3 +38859,68 @@ nested/type-changing) — новых файлов там не требовало
 собственный gap-анализ уже это фиксирует). D52/D407/D406 доп. сверено против
 `196.5-perd-d52-verification.md`: `infer_method_level_return_for_sum` Option/Result-
 часть уже пиннится `d119_option_result_method_level_generic.nv`.
+
+## Plan 211: layout-фикс std/time + откат маскирующего фикса + E_MODULE_FILE_ORPHAN (2026-07-17)
+
+**Раскладка (`[M-time-folder-coequal-mismatch]` ✅ РЕШЕНО).** `std/src/time/duration.nv`
++ `timestamp.nv` + `monotonic.nv` объявляли один файловый под-модуль `module
+time.duration`, разбросанный тремя co-equal файлами прямо в `std/src/time/` —
+по букве D78 (папка = один модуль, головной файл `<path>/<Y>.nv` ИЛИ выделенная
+папка `<path>/<Y>/`) это ни то ни другое: `is_folder_module_peer` требует
+последний сегмент декларации == имя папки, что не выполнялось (папка
+называлась `time`, не `duration`). Симптом: `E_D78_MODULE_PATH_MISMATCH` при
+компиляции `timestamp.nv`/`monotonic.nv` как ПРЯМЫХ test-энтри (imports.rs
+уже правильно резолвил обычный import-путь). Фикс — чистый layout: `git mv
+duration.nv → duration/core.nv`, `timestamp.nv`/`monotonic.nv` →
+`duration/{timestamp,monotonic}.nv` (renames, `module`-декларации и
+import-путь `std.time.duration` не менялись; `core.nv`, не `duration.nv`,
+потому что файл+папка одного имени запрещены — прецеденты `time.civil`,
+`collections.vec`). Подтверждено: direct-entry `nova check` на обоих
+переехавших файлах — чисто.
+
+**Откат маскирующего фикса `[M-blanket-crossmodule-scattered-peer-drop]`
+(59f22a85b).** Тот фикс закрывал СИМПТОМ (E_UNKNOWN_METHOD на
+`to_unix_seconds`/`to_unix_nanos` при импорте `std.time.duration` ИЗВНЕ —
+`std/src/time/civil/parse_test.nv`), но противоречил букве D78: научил
+`resolve_module_paths` молча домёрживать ЛЮБЫЕ co-equal файлы в общей
+родительской папке по совпадению `module X.Y`, т.е. фактически разрешил
+«папка может нести файловый под-модуль россыпью» — ровно то, что D78 не
+предполагает. Раз корень (раскладка) устранён, обходной scan больше не
+нужен — `git revert --no-commit 59f22a85b`, применился чисто. 4 существующих
+юнит-теста `imports.rs::entry_folder_module_tests` — не задеты (другая ветка
+кода: entry-sibling-scan, не `resolve_module_paths`'s single-file branch).
+
+**Новая диагностика `[M-module-file-submodule-split-silent-orphan]` ✅
+РЕШЕНО.** Симптом маскирующего фикса не был случайным — это ОБЩИЙ класс:
+любой раз, когда файловый под-модуль реализован scattered co-equal файлами
+(не в выделенной папке), внешний импортёр молча видит только head-файл, а
+peer-декларации тихо сиротеют (видны ТОЛЬКО когда peer сам — compile-entry,
+через отдельный entry-sibling scan). `resolve_module_paths`'s `file_exists`
+branch теперь сканирует директорию head-файла на такие peers и, если найдены,
+возвращает `ResolveErr::FileOrphan` → `[E_MODULE_FILE_ORPHAN]` — 4-частная
+диагностика (какой файл+что объявил / почему файловый-модуль не берёт
+peer / следствие-невидимость методов импортёру / fix-подсказки: папка-модуль
+`<dir>/<Y>/` — рекомендуется, либо поправить декларацию, либо переместить
+файл). Neg-репро package-scale копия реального бага:
+`spec_tests/conformance/neg/module_file_orphan.nv` (+
+`module_file_orphan_repro/{core,scattered}.nv`) — `nova test ... --full` →
+PASS (negative), подтверждена точная триггер-цепочка.
+
+**Побочная находка (НЕ фикс — вне периметра волны), `[M-checker-path-call-chain-unknown-ret-type]`.**
+Разблокировав `std/src/time/duration/monotonic.nv` для реальной внешней
+компиляции, `nova test std/src/time/overflow_safe_test.nv --full` упёрся в
+ICE `emit_c.rs:52222 [P67-LEGACY] Path call return type unknown for
+method=to_nanos`. Локализовано до конкретной строки —
+`monotonic.nv:105`: `sat_sub_i64(@nanos, other.nanos, i64.MIN,
+i64.MAX).to_nanos()` внутри `Monotonic @elapsed_since` — чейн-метод
+`.to_nanos()` вызван НЕПОСРЕДСТВЕННО на результате вызова свободной функции
+(`sat_sub_i64(...)`), а не на переменной/литерале; чекер не аннотирует тип
+возврата такого промежуточного «Path call» перед чейн-методом. Контрольный
+негативный сигнал: изолированная копия `d317_duration_overflow_policy.nv`
+(упражняет Duration/Timestamp через переменные/литералы, БЕЗ
+Monotonic/без промежуточного free-fn-call-чейна) компилируется и проходит
+чисто — подтверждает, что баг ортогонален и layout-фиксу, и cross-module
+видимости per se; это ранее НИКОГДА не упражнявшийся codegen/checker-гэп в
+самой реализации `Monotonic.elapsed_since`, вскрытый только тем, что модуль
+теперь целиком компилируется извне. Не чинить в этой волне — заведён
+отдельным floating-маркером (P2) в `backlog-followups.md`.
