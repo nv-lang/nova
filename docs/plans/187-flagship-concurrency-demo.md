@@ -7,12 +7,20 @@
 > + frontend/index.html (v9: панель «Код», эффект-бейдж, seed-в-URL), main.nv на пакете http
 > (ручной HTTP снесён), real-cancel `supervised(deadline:)`, typed-serde, SSE-replay с t_ms,
 > Live health. Багфикс-волна (5 compiler-багов) влита; 6 регресс-фикстур — в
-> `examples/flagship/aggregator/regressions/` (не в spec_tests). **ОСТАЁТСЯ:**
-> (1) 🔴 P1 `[M-187-supervised-nested-fiber-slot-race]` — сервер виснет на 2-3-м последовательном
-> запросе (рантайм-гонка вложенных supervised; свежий процесс+1 запрос надёжен) — ЕДИНСТВЕННЫЙ
-> блокер «живого» демо; (2) прогон Б (витрина 8-11 — часть уже в UI-заготовке, нужны серверные
-> хвосты + снять ручной JSON-рендер, если `[M-187-http-serde-setcookie]` закрыт фиксом serde-волны —
-> проверить); (3) волна 2 — Docker (Linux-пре-гейт → Dockerfile → ghcr). Ниже — исходные Ред.3-9.
+> `examples/flagship/aggregator/regressions/` (не в spec_tests).
+>
+> **АПДЕЙТ 2026-07-16 — ВСЕ рантайм/codegen-блокеры живого демо ЗАКРЫТЫ** (каждый проверен
+> оркестратором лично, нагрузочный гейт `loadtest.ps1` 10×: 67 PASS): slot-race ✅ (83.4.5.12),
+> watchdog-idle ✅ + SSE-live-TLS-hang ✅ (a59800994), tls-diamond ✅ + cross-pkg consume ✅ +
+> TlsVersion-ABI ✅, chaos-креш splitmix64/D423 ✅, setcookie-serialize ✅ (корень: cmd_build не
+> звал синтез Serialize; обход снят — main.nv снова typed-serde), weather-live ✅ (реальный
+> open-meteo HTTPS 4/4). High-concurrency-wedge — МИТИГИРОВАН bounded-accept (admission MAX=2,
+> сервер выживает P80/P200, лишнее честно сбрасывается); глубокий рейс (порог = 3 одновременных
+> nested-supervised fan-out'а) — **Plan 211** (park-join research). Нагрузочный тест —
+> `loadtest.ps1` (самодостаточный, 7 блоков, 10× дефолты). **ОСТАЁТСЯ по 187:** волна 2 —
+> Docker (Linux-пре-гейт → Dockerfile → ghcr-образ «одной командой»); опц. хвосты витрины
+> (прогон Б фактически покрыт: панель «Код»/бейдж/seed-URL в UI, typed-serde возвращён).
+> Ниже — исходные Ред.3-9.
 >
 > **Ред.3 (2026-07-13, вечер) — сверка с кодом после дневных слияний; все внешние гейты волны-1 СНЯТЫ:**
 > 1. **TLS-гейт Ф.3b МЁРТВ.** «Plan 116 std/tls (PLANNED, rustls)» не существует — TLS приехал
