@@ -13658,6 +13658,61 @@ impl<'a> TypeCheckCtx<'a> {
             }
             _ => {}
         }
+        // [M-208-fmtkind-bare-variant-shadow-v2] (2026-07-17, regression follow-up):
+        // universal bare-enum-variant disambiguation, applied HERE — the ONE
+        // canonical choke point every call shape (free fn, method, static ctor
+        // `Type.new(...)`, return, let-init, match-arm) funnels through for its
+        // compatibility check — instead of only at the specific call-arg-binding
+        // site that `materialize_literal_coercion` patches. That earlier fix
+        // ([M-208-fmtkind-bare-variant-shadow], same date) covered ordinary
+        // free-function calls (`nth_sunday_epoch_day(y, Oct)`) but a regression
+        // report showed `Date.new(2026, Oct, 4)` (a STATIC method/ctor call —
+        // different callee-resolution path, never reaches that materialize call
+        // site) still mis-resolved `Oct` to `FmtKind.Oct` — proving per-call-site
+        // coverage is fundamentally incomplete; fixing the ONE shared checkpoint
+        // both paths already converge on removes the whack-a-mole entirely.
+        //
+        // Root cause recap: `infer_expr_type`'s bare-variant "last resort"
+        // fallback ([M-hashmap-order-bare-variant-flake], 2026-07-13) picks among
+        // ALL sum types sharing a variant NAME via a context-free
+        // lexicographic-smallest-typename tie-break — deterministic, but blind to
+        // the actual call-site `expected` type, so it is deterministically WRONG
+        // whenever the alphabetically-smaller candidate isn't the one the
+        // position actually wants ("FmtKind" < "Month", both declare `Oct`).
+        // `expected` — RIGHT HERE, as this function's own parameter — is exactly
+        // the missing signal. If it names a concrete (non-generic) Sum type that
+        // owns a unit-variant spelled exactly like this bare Ident, the value
+        // denotes THAT variant unambiguously, full stop — no tie-break needed,
+        // no dependence on how many other files/types happen to be in this
+        // compile-unit or in what order they got registered into `self.types`.
+        // Also seed `resolved_types_buf` so codegen's OWN later lookup (which
+        // reads that cache FIRST, before ever re-deriving via `infer_expr_type`)
+        // sees the same correct answer — a passing check alone, without this,
+        // would just move the wrong-type bug from a compile error to a silent
+        // runtime type-confusion.
+        if let ExprKind::Ident(name) = &expr.kind {
+            if !scope.contains_key(name) {
+                if let TypeRef::Named { path, generics, .. } = expected {
+                    if generics.is_empty() {
+                        if let Some(tname) = path.last() {
+                            if let Some(td) = self.types.get(tname) {
+                                if td.generics.is_empty() {
+                                    if let TypeDeclKind::Sum(variants) = &td.kind {
+                                        if variants.iter().any(|v| &v.name == name) {
+                                            if expr.id.is_set() {
+                                                let rt = ResolvedType::from_type_ref(expected);
+                                                self.resolved_types_buf.borrow_mut().insert(expr.id, rt);
+                                            }
+                                            return Compat::Ok;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         // Не-литерал: вывести тип; не вышло → Unknown (skip, не ошибка).
         let Some(found_tr) = self.infer_expr_type(expr, scope) else {
             return Compat::Unknown;
