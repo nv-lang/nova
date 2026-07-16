@@ -13779,7 +13779,29 @@ impl<'a> TypeCheckCtx<'a> {
                 };
                 TypeRef::Pointer(Box::new(wrapped), span)
             }
-            R::Unit | R::Readonly(_)
+            // [M-result-ok-unit-inference-mismatch] (2026-07-16): `R::Unit` used to
+            // fall into the catch-all `return None` below. That is SAFE at the TOP
+            // level (an un-annotatable unit-typed expression — callers treat `None`
+            // as "leave unbound", never wrong), but the SAME `resolved_to_typeref`
+            // is also called PER-ARG inside the `R::Named` arm below via
+            // `.filter_map(...)`, to rebuild a generic type's arg LIST positionally
+            // (`Result[T, E]` → `args: [T, E]`). `filter_map` SILENTLY DROPS any arg
+            // that resolves to `None` — so a `Result[(), E]` (`args: [R::Unit,
+            // R::Named(E)]`) round-tripped to `TypeRef::Named{Result, generics:
+            // [E]}` — a ONE-ARG list with `E` SHIFTED INTO THE `T` SLOT. Downstream
+            // generic substitution (`build_recv_subst`/`.ok()`'s `Result[T,E] ->
+            // Option[T]`) then bound `T→E` (arity-mismatch on the structural path
+            // falls back to a positional zip, which just pairs `T` with the only
+            // surviving arg) — mistyping `.ok()` on unit-ok `Result` as `Option[E]`
+            // instead of `Option[()]` (CC-FAIL: codegen's OWN mono correctly picks
+            // `NovaOpt_nova_unit`, checker names the binding `NovaOpt_<E>`).
+            // `()` IS representable (`TypeRef::Unit`), so round-trip it instead of
+            // dropping it — preserves position for `Named`/`Tuple` args without
+            // touching the top-level bail behavior other callers rely on (a
+            // top-level `Some(Unit)` merely lets a `()`-typed expr bind `()` in
+            // scope, which is correct, not a regression).
+            R::Unit => TypeRef::Unit(span),
+            R::Readonly(_)
             | R::Any | R::Ptr | R::Func { .. } => return None,
         })
     }
