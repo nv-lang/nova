@@ -301,6 +301,11 @@ fn Option[T] @or(other Option[T]) -> Option[T] => match @ { Some(v) => Some(v), 
 /// отдельного метода. Имя `flat_map` (не `and_then`/`then`) — сиблинг к `map`,
 /// без булевого багажа `and`/`or` и без коллизии с Promise-`then`/`bool::then`.
 /// Param-name `flat_map_fn` (не `f`) — см. `map` выше (shadowing).
+///
+/// Fallible-шаг (замыкание возвращает `Result`): канон — явная `.ok()` на
+/// месте вызова, `opt.flat_map(|v| do_thing(v).ok())` — сброс ошибки виден
+/// глазами там, где происходит. Кросс-carrier перегрузки НЕТ намеренно
+/// (владелец 2026-07-16: тихое глотание Err + вторая дверь D9).
 #stable(since = "0.1")
 fn Option[T] @flat_map[U](flat_map_fn fn(T) -> Option[U]) -> Option[U]
   => match @ { Some(v) => flat_map_fn(v), None => None }
