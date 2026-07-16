@@ -38924,3 +38924,28 @@ Monotonic/без промежуточного free-fn-call-чейна) комп�
 самой реализации `Monotonic.elapsed_since`, вскрытый только тем, что модуль
 теперь целиком компилируется извне. Не чинить в этой волне — заведён
 отдельным floating-маркером (P2) в `backlog-followups.md`.
+
+## Plan 196 Zone GEN (sonnet, worktree `nova-196gen`, ветка `p196-zone-gen`) — `[M-novavtable-read-write-pointer-collision]` ЗАКРЫТ
+
+`[M-novavtable-read-write-pointer-collision]` (найдено Зоной TEST 2026-07-16, backlog P2) —
+guard на входе в `B11d_typed_pointer_methods` (`emit_c.rs`, ДВА места: эмиссия ~36083 +
+инференс-двойник ~51490) исключал `NovaArray_`-префикс, но не `NovaVtable_`
+(`"NovaVtable_X*".starts_with("Nova_")` == false — символ на позиции 4 внутри `NovaVtable`
+это `V`, не `_`, та же дыра, что уже была закрыта для `NovaArray_`). Нуль-арный `.read()`/
+одноарный `.write(v)` на ЛЮБОМ handler-ЗНАЧЕНИИ (`NovaVtable_<Eff>*`) молча мисдиспатчился
+в typed-pointer-deref (эмиссия давала голый `(*(h))` вместо `h->read(h->ctx)`) вместо
+корректного `B11ac_novavtable_effect` (~51900, `effect_schemas`-lookup) / direct-handler-call
+эмиссии (~36410). Фикс: явное `!obj_ty.starts_with("NovaVtable_")` в ОБОИХ guard'ах,
+мирроринг существующего `NovaArray_`-исключения.
+
+Пин: `spec_tests/conformance/d61_effect_handler_direct_call.nv` расширен `D61Guard` effect
+(буквально `read()`/`write(v int)` op-имена) + тест, вызывающий обе операции напрямую на
+handler-значении — до фикса ловился B11d, после — корректно диспетчится через vtable.
+Верификация (изолированно, без полного conformance-гейта — тот при этой сессии красный на
+ДВУХ ПРЕДСУЩЕСТВУЮЩИХ файлах `d229_debug_format_spec.nv`/`d422_generic_container_derive.nv`,
+`[E_IMPL_WRONG_SIGNATURE]` на auto-derived `Debug`/`Display` `mut f Fmt` — регрессия недавнего
+`fix-param-mut-enforcement` (`4d6b15363`), НЕ связана с этим фиксом, оставлена владельцу как
+отдельная стоп-волна, не тронута): conformance-папка минус `d229` → PASS 472 FAIL 12 (12 —
+тот же класс `mut Fmt` derive-регрессия на других файлах + pre-existing TIMEOUT-флаки/host
+contention + одна pre-existing NEG-NO-ERROR, ни один не касается d61/NovaVtable). Коммит
+`c7c7f127e` на `p196-zone-gen`. Маркер снят из `backlog-followups.md` (lifecycle §2).
