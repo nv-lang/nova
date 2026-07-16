@@ -1,0 +1,36 @@
+// D412-амендмент (Plan 210 Ф.6а, AMEND 2026-07-17) — NFC-нормализация путей
+// embed_dir. Фикстура d412d_dir_nfc_normalize/ содержит ОДИН файл, чьё имя на
+// диске записано в NFD (decomposed): "cafe" + U+0301 COMBINING ACUTE ACCENT +
+// ".txt" (байты: 63 61 66 65 CC 81 2E 74 78 74) — типичный macOS-чекаут.
+// Ключ таблицы embed_dir нормализуется в NFC при обходе, поэтому `get`/`has`
+// с ОБЫЧНЫМ (предкомпонованным, NFC) строковым литералом "café.txt" из ЭТОГО
+// исходника ("é" = U+00E9, один кодпоинт) находит запись — до Ф.6а такой
+// lookup давал бы None (ключ хранился как есть, в NFD). Non-ASCII имя всё
+// ещё даёт W_EMBED_DIR_NON_ASCII_PATH (текст предупреждения обновлён Ф.6а:
+// файл встраивается под NFC-ключом, не «как есть»). Standalone — маркер-
+// warning относится к целому TU (см. прецедент standalone/n6_opaque_literal_warning.nv).
+// EXPECT_COMPILE_WARNING W_EMBED_DIR_NON_ASCII_PATH
+
+module standalone.d412d_embed_dir_nfc_normalize
+
+test "embed_dir NFC-normalizes an on-disk NFD file name — NFC-literal lookup hits (D412-amendment Ф.6а)" {
+    ro d = embed_dir("d412d_dir_nfc_normalize")
+    assert(d.len() == 1)
+
+    // NFC-литерал ("é" = U+00E9) — находит запись, чьё исходное имя на диске
+    // было NFD (e + U+0301). Без нормализации (V1-статус-кво) это было бы None.
+    assert(d.has("café.txt"))
+    ro got = d.get("café.txt")
+    assert(got.is_some())
+    ro bytes = got.unwrap()
+    ro want = x"6E 66 63 2D 6F 6B"   // "nfc-ok"
+    assert(bytes.len() == want.len())
+    mut i = 0
+    while i < bytes.len() {
+        assert(bytes[i] == want[i])
+        i = i + 1
+    }
+
+    // paths() тоже возвращает NFC-форму ключа.
+    assert(d.paths() == ["café.txt"])
+}
