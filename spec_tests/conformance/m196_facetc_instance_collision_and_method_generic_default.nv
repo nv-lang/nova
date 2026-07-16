@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 196 Facet C (callnorm/argbind convergence) -- continuation, wave after
+// the generic-static ctor default-backfill fix (`[M-vec-new-cap-default-arg-
+// backfill]`, see d372_canonical_new_defaults.nv / d102_static_generic_static_
+// defaults.nv). Two NEW matrix intersections this file pins, neither
+// previously exercised by any conformance fixture:
+//
+// 1. Cross-type instance-method NAME COLLISION where ONE of the colliding
+//    methods has a DEFAULT arg (facet-c-map §1's `instance_by_name` risk --
+//    that table drops ANY method name shared by >=2 types module-wide; this
+//    proves the 196.5 `resolved_callees` channel fast path in `try_normalize_
+//    call` rescues it correctly for well-typed code -- each call resolves to
+//    the RIGHT type's overload, not a cross-type mismatch).
+// 2. Method-level generic type-param `U` (D119, independent of receiver-level
+//    `T`) COMBINED with a default arg on the SAME method, called WITHOUT an
+//    explicit turbofish (U inferred bidirectionally from the arg, same as
+//    d119_method_level_type_params.nv) -- neither d119 (no defaults) nor
+//    d102/d372 (no method-level generics) exercise this intersection.
+//
+// [M-196-method-turbofish-block-rewrite-ice] (found alongside, callnorm.rs
+// `try_normalize_call`): the SAME method-level-generic + default-arg call
+// WITH an explicit turbofish (`pb.wrap[str]("hi")`, Plan 91.1 `M-91.1-method-
+// turbofish-dispatch` shape `TurboFish{base: Member}`) crashed the compiler
+// (`[P67-LEGACY] Ident 'tag'/'note' not in var_types`) -- this pass's
+// two-phase Block rewrite synthesizes fresh local `let`-bindings for the
+// backfilled/named args, and codegen's method-turbofish return/mono
+// resolution (`infer_call_ret_c` -> `resolve_instance_call_subst`, Plan
+// 91.1/172.1 -- frozen zone, not this pass's) infers each arg's C type
+// EAGERLY, before this rewrite's own `let`s are emitted (`var_types` empty
+// for the synthesized names at that point). Fixed by leaving calls in that
+// AST shape (`TurboFish{base: Member}`) UNTOUCHED -- same "not covered"
+// bucket as every other shape this pass already declines (bottom `_ =>
+// return None`); the turbofish form is NOT exercised here (still an open
+// gap, tracked in docs/plans/backlog-followups.md, owned by the frozen
+// infer_call_ret_c/resolve_instance_call_subst zone -- out of this pass's
+// reach). This file only pins the two WORKING intersections above.
+module spec_tests.conformance
+
+type M196PA { x int }
+fn M196PA @tag(suffix str = "!") -> str => "PA" + suffix
+
+type M196PB { y int }
+fn M196PB @tag(suffix str = "?") -> str => "PB" + suffix
+
+test "cross-type instance-method name collision + default-arg resolves per-receiver-type (Plan 196 Facet C)" {
+    ro a = M196PA { x: 1 }
+    ro b = M196PB { y: 2 }
+    // 0-arg (default backfilled) -- each receiver must reach ITS OWN type's
+    // overload, not the other type's (the class of bug `instance_by_name`
+    // would silently create if the resolved_callees channel missed).
+    assert(a.tag() == "PA!")
+    assert(b.tag() == "PB?")
+    // Named override -- same per-type resolution, non-default path.
+    assert(a.tag(suffix: "-X") == "PA-X")
+    assert(b.tag(suffix: "-Y") == "PB-Y")
+}
+
+type M196Box[T] { slot T }
+fn M196Box[T].new(v T) -> M196Box[T] => { slot: v }
+fn M196Box[T] @wrap[U](tag U, note str = "n") -> str => note
+
+test "method-level generic U (D119) + default-arg on the same method, U inferred without turbofish (Plan 196 Facet C)" {
+    ro pb = M196Box[int].new(9)
+    // 0-arg for `note` -- default MUST backfill; U inferred from `tag`'s arg type.
+    assert(pb.wrap("hi") == "n")
+    // Named override of the default.
+    assert(pb.wrap("hi", note: "m") == "m")
+    // Different U per call-site (D119 mono independence) -- both still
+    // backfill/override `note` correctly.
+    assert(pb.wrap(7) == "n")
+    assert(pb.wrap(7, note: "seven") == "seven")
+}

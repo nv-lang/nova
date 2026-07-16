@@ -508,6 +508,42 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
         ExprKind::TurboFish { base, .. } => base,
         _ => func.as_ref(),
     };
+    // [M-196-method-turbofish-block-rewrite-ice] (Plan 196 Facet C, wave
+    // continuation): an EXPLICIT method-level-generic turbofish call —
+    // `obj.method[U,...](...)` (Plan 91.1 `M-91.1-method-turbofish-dispatch`)
+    // — parses to a TOP-level `TurboFish{base: Member{obj, name}}`: the
+    // structural MIRROR-IMAGE of the generic-static-ctor shape handled below
+    // (`Member{obj: TurboFish{base: Ident(Type)}}`, TurboFish one level
+    // INSIDE `obj`). The unwrap just above strips this top-level TurboFish so
+    // `base.kind` is a plain `Member`, and the heuristics below (in
+    // particular `sigs.instance_by_name`) then happily resolve+rewrite it
+    // like an ordinary instance call, discarding no information syntactically
+    // — but codegen's method-turbofish return/mono resolution for THIS
+    // receiver shape (`infer_call_ret_c` → `resolve_instance_call_subst`,
+    // Plan 91.1/172.1, outside this pass's zone) infers each arg's C type
+    // EAGERLY (`infer_expr_c_type`) to bind the method's own generic
+    // parameter(s), and does so BEFORE this pass's synthesized two-phase
+    // Block (fresh `let <param> = ...` locals, fresh `ExprId::UNSET` Ident
+    // refs) has been emitted — so `var_types` has no entry yet for the
+    // synthesized name and the checker never annotated it either (it never
+    // existed pre-rewrite) → `[P67-LEGACY] Ident '<param>' not in var_types`
+    // ICE (compiler-conventions.md §0), not a wrong answer. Repro: `type
+    // Box[T]{slot T} fn Box[T] @wrap[U](tag U, note str = "n") -> str` called
+    // `b.wrap[str]("hi")` (0-arg omitted default `note`) — crashes; the SAME
+    // call WITHOUT the explicit turbofish (`b.wrap("hi")`, U inferred
+    // bidirectionally, D119) desugars and runs correctly (proven by
+    // `spec_tests/conformance/m196_facetc_instance_collision_and_method_
+    // generic_default.nv`), so the gap is narrowly this AST shape, not
+    // default-arg backfill in general. Until codegen's
+    // method-turbofish dispatch threads a channel this pass's synthesized
+    // locals can satisfy (owned by the frozen `infer_call_ret_c`/
+    // `resolve_instance_call_subst` zone, not this one), leave calls in this
+    // shape UNTOUCHED — same "not covered" bucket as the bottom `_ => return
+    // None` (codegen sees the original args raw: an omitted default becomes
+    // a plain arity mismatch — a diagnosed compile error, never a crash).
+    if matches!(func.kind, ExprKind::TurboFish { .. }) && matches!(base.kind, ExprKind::Member { .. }) {
+        return None;
+    }
     // [M-vec-new-cap-default-arg-backfill] fix: a GENERIC static-ctor call —
     // `Type[Args].method(...)` or the D38/D239 slice-sugar `[]T.method(...)`
     // — parses to `Member{obj, name}` too (the `TurboFish`/`__array`-Path
