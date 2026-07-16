@@ -1,0 +1,27 @@
+// Plan 196.9 [M-primitive-concrete-overload-receiver-dispatch] — positive
+// control. A pattern-bound receiver whose concrete type DOES have the
+// method (`int`/`f64 @clamp`, both real overloads, no blanket) must still
+// dispatch by TYPE, not silently collide — proves the match-arm scope fix
+// (reusing `match_arm_bindings`) does not regress the legitimate-overload
+// case: `int`-bound `r` reaches `Nova_int_method_clamp`, `f64`-bound `r`
+// reaches `Nova_f64_method_clamp`, never cross-cast through the other.
+module spec_tests.conformance
+
+fn p196_9_clamp_some_int(x int, lo int, hi int) -> int =>
+    match Some(x) {
+        Some(r) => r.clamp(lo, hi),
+        None => lo,
+    }
+
+fn p196_9_clamp_some_f64(x f64, lo f64, hi f64) -> f64 =>
+    match Some(x) {
+        Some(r) => r.clamp(lo, hi),
+        None => lo,
+    }
+
+test "196.9: pattern-bound int/f64 receiver still dispatches @clamp by its own type" {
+    assert(p196_9_clamp_some_int(15, 0, 10) == 10)
+    assert(p196_9_clamp_some_int(-5, 0, 10) == 0)
+    assert(p196_9_clamp_some_f64(1.5, 0.0, 1.0) == 1.0)
+    assert(p196_9_clamp_some_f64(-0.5, 0.0, 1.0) == 0.0)
+}

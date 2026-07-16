@@ -8777,12 +8777,36 @@ impl<'a> TypeCheckCtx<'a> {
                     if let Some(g) = &arm.guard {
                         self.f1_expr(g, gs, scope, errors);
                     }
+                    // Plan 196.9 [M-primitive-concrete-overload-receiver-dispatch]: extend
+                    // `scope` with the arm's pattern-bound names (same conservative subset as
+                    // `match_arm_bindings`, reused from Plan 172.1 tally АТОМ 2a) BEFORE walking
+                    // the arm body. Without this, a method call on a pattern-bound receiver
+                    // (`Some(r) => r.clamp(lo, hi)`) reached `f1_check_call` ->
+                    // `check_instance_overload` with `r` ABSENT from scope —
+                    // `BoundCtx::infer_arg_ty` returned `None` and the whole function silently
+                    // no-op'd (no `[E_UNKNOWN_METHOD]`, no `resolved_callees` write) for EVERY
+                    // call on such a receiver. Codegen then had nothing to read and fell back to
+                    // name-keyed dispatch (last-registered same-name method wins regardless of
+                    // the receiver's real type) — e.g. an `i64` receiver silently mis-dispatching
+                    // into `f64 @clamp` (implicit int64_t<->double cast, precision loss at i64
+                    // extremes, no CC-FAIL since both sides are scalar).
+                    let binds = self.match_arm_bindings(&arm.pattern, scrut_ty.as_ref());
+                    let mut saved: Vec<(String, Option<TypeRef>)> = Vec::new();
+                    for (n, t) in &binds {
+                        saved.push((n.clone(), scope.insert(n.clone(), t.clone())));
+                    }
                     match &arm.body {
                         MatchArmBody::Expr(e) => {
                             self.f1_expr(e, gs, scope, errors)
                         }
                         MatchArmBody::Block(b) => {
                             self.f1_block(b, gs, scope, errors)
+                        }
+                    }
+                    for (n, prev) in saved {
+                        match prev {
+                            Some(t) => { scope.insert(n, t); }
+                            None => { scope.remove(&n); }
                         }
                     }
                 }
