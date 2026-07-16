@@ -21,7 +21,7 @@ fn alloc_len() -> int {
     // Аллокация в ro-init — легальна (single-threaded до арминга воркеров).
     // (module-ro слот V1 надёжно типизируется для скаляров — str-слоты из
     // fn-возврата пока int-дефолтятся, pre-existing module-init ограничение.)
-    ro v = Vec[int].of(1, 2, 3)
+    ro v = [1, 2, 3]
     v.len()
 }
 
