@@ -1,0 +1,17 @@
+// D412-амендмент (Plan 210) — edge case: папка существует, но после
+// dot-skip встраивать нечего (только `.gitkeep`, git-placeholder) →
+// W_EMBED_DIR_EMPTY («навёлся не туда» — но легально, пустой
+// `EmbeddedDir`). Standalone (не в основном spec_tests.conformance CU) —
+// маркер-warning относится к целому TU (см. test-conventions.md,
+// прецедент standalone/n6_opaque_literal_warning.nv).
+// EXPECT_COMPILE_WARNING W_EMBED_DIR_EMPTY
+
+module standalone.d412d_embed_dir_empty
+
+test "embed_dir on dir with only dot-files resolves to empty EmbeddedDir (D412-amendment)" {
+    ro d = embed_dir("d412d_dir_empty")
+    assert(d.len() == 0)
+    assert(d.paths() == [])
+    assert(!d.has("anything"))
+    assert(d.get("anything") == None)
+}
