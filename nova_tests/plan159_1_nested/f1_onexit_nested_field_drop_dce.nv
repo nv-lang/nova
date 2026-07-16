@@ -1,0 +1,36 @@
+// EXPECT_RUNTIME_PANIC P1591InnerBoom.cleanup fired via nested field scope-exit only
+//
+// Plan 159.1 Ф.1 probe (isolated, pre-conformance validation) —
+// [M-159.1-onexit-drop-overprune], "recursively over droppable fields"
+// sub-case. `P1591Outer.cleanup` is reachable ONLY via the outer
+// `consume o = e { … }` scope-exit; INSIDE it, the consume-field `inner`
+// is disposed via a NESTED `consume tmp = @inner { … }` scope-block —
+// itself just another `Stmt::ConsumeScope` AST node, so the SAME bare-name
+// `"cleanup"` seed (lints.rs, `Stmt::ConsumeScope` arm) must generalize to
+// this nesting without any additional per-type code. `P1591Outer.cleanup`
+// itself does NOT panic (only the nested `P1591InnerBoom.cleanup` does) so
+// the panic message unambiguously proves the NESTED dispatch specifically
+// fired (not just the outer one).
+module nova_tests.plan159_1_nested
+
+type P1591InnerBoom consume { id int }
+
+fn P1591InnerBoom consume @cleanup(_outcome ScopeOutcome) -> () {
+    panic("P1591InnerBoom.cleanup fired via nested field scope-exit only")
+}
+
+type P1591Outer consume { consume inner P1591InnerBoom }
+
+fn P1591Outer consume @cleanup(_outcome ScopeOutcome) -> () {
+    consume tmp = @inner {
+        ro _n = tmp.id
+    }
+}
+
+fn p1591_outer(v int) -> P1591Outer => { inner: P1591InnerBoom { id: v } }
+
+fn main() Io -> () {
+    consume o = p1591_outer(2) {
+        ro _m = 0
+    }
+}

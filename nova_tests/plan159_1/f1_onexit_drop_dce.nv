@@ -1,0 +1,29 @@
+// EXPECT_RUNTIME_PANIC P1591Boom.cleanup fired via scope-exit only
+//
+// Plan 159.1 Ф.1 probe (isolated, pre-conformance validation) —
+// [M-159.1-onexit-drop-overprune]. `P1591Boom.cleanup` is reachable ONLY
+// via the `consume b = e { … }` scope-exit desugar (Stmt::ConsumeScope,
+// D188) — no `.cleanup()` call is ever spelled in source. Uses the legacy
+// standalone `EXPECT_RUNTIME_PANIC` + `fn main()` convention (D348) instead
+// of a peer-file `test "..." panics` block, because `has_main` (and thus
+// reachability-DCE, `compute_dead_decls_with`) is evaluated PER COMPILE
+// UNIT from `module.items` only — a `test` block or peer-file `fn main`
+// elsewhere in the SAME folder does not merge into this file's own
+// candidate set for a plain (non-conformance) nova_tests folder. This
+// standalone-process form guarantees the `consume` scope is reachable from
+// THIS file's own literal `main`.
+module nova_tests.plan159_1
+
+type P1591Boom consume { id int }
+
+fn P1591Boom consume @cleanup(_outcome ScopeOutcome) -> () {
+    panic("P1591Boom.cleanup fired via scope-exit only")
+}
+
+fn p1591_boom(v int) -> P1591Boom => { id: v }
+
+fn main() Io -> () {
+    consume b = p1591_boom(1) {
+        ro _n = b.id
+    }
+}
