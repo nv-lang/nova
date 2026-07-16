@@ -83,9 +83,41 @@ import std.os.{env, real_os}
 import http.server.{ServeMux, ServerRequest, ServerResponse, StreamBody, handler_fn, sse_event}
 import http.servernet.{handle_connection}
 import std.time.duration
+import std.runtime.sync.{AtomicI64}
 
 // Loopback port: env override (`AGGREGATOR_PORT`) or this default.
 const DEFAULT_PORT u16 = 8187
+
+// [M-187-high-concurrency-connection-wedge] mitigation (bounded-accept,
+// owner decision, 2026-07-16): max number of connections handled
+// CONCURRENTLY at once (over budget: closed immediately, no queue — see
+// the accept loop below). Architectural NOTE this constant's value pins
+// down empirically: the wedge is NOT primarily about raw connection
+// *count* (the OLD code already served connections one-at-a-time,
+// sequentially, and still wedged around ~80 per
+// `docs/plans/backlog-followups.md`) — it is about how many `aggregate()`
+// calls' OWN internal fan-out (`parallel for` + `fetch_guarded`'s nested
+// `supervised(deadline:)`, several fibers each) are alive in the scheduler
+// AT THE SAME TIME. Measured directly on this machine (repeated
+// `xargs -P80`/`-P200` bursts against this binary, `NOVA_WATCHDOG_DUMP_SECS`
+// dumps on the wedged runs showing multiple workers'
+// `STUCK_ALIVE_NOT_PARKED` fibers under `[supervised] ... pending_remote=1`
+// — the same stale-slot symptom as the pre-existing marker below `main`):
+// `MAX_INFLIGHT_CONNS = 1` survives (partial admission, ~2-5/80 accepted,
+// rest honestly rejected, server alive after); `= 2` also survives
+// (reproduced clean across repeated back-to-back 80-way bursts on one
+// live server, and separately against a 200-way burst — see this
+// package's README for the recorded transcripts); `= 3` and `= 4`
+// reproduced the SAME permanent wedge (0/80 admitted, dead afterward) on
+// this machine. `16` (this constant's first guess, matching the runtime's
+// own worker-pool size) was **wrong** — genuinely concurrent bounded
+// handling at that width is not a fix, it recreates the exact failure
+// mode via `aggregate()`'s own fan-out multiplying the effective
+// concurrently-alive-fiber count far past the connection bound itself.
+// `2` is kept (not `1`) for a little extra throughput at the same observed
+// safety margin — this is an empirical cliff, not a formula; do not raise
+// this constant without re-running the `xargs -P80`/`-P200` gate above.
+const MAX_INFLIGHT_CONNS i64 = 2
 
 // Live legends use a wall-clock (not simulated) budget — generous enough for
 // a handful of real round-trips, still bounded (the real-cancel race,
@@ -140,17 +172,44 @@ fn resolve_port() Os -> u16 {
 // `emit_c.rs`'s spawn-context-capture pass + `fibers.h`'s scope/slot
 // bookkeeping — out of this package's remit). WORKAROUND (this shape):
 // exactly ONE `spawn` (matching every proven precedent) holds bind + the
-// WHOLE accept loop; each connection is handled SEQUENTIALLY, inline,
-// inside that same fiber (`handle_connection` called directly, no nested
-// spawn) — the ONE known-good shape given the two failure modes above.
-// Trade-off, explicit: connections are served one at a time, not
-// concurrently — acceptable for this flagship's own traffic shape (a single
-// browser tab's `fetch`/`EventSource` calls; the interesting concurrency
-// this package demonstrates is INSIDE `aggregate()`'s fan-out, per request,
-// not across simultaneous HTTP connections). A concurrent accept loop is
-// exactly the shape `[M-187-nested-spawn-scope-var-cc-fail]` blocks —
-// revisit once that's fixed upstream.
-fn main() Time {
+// WHOLE accept loop — the ONE known-good shape given the two failure modes
+// above. Per-connection handling itself no longer needs a SECOND `spawn`
+// nested under this one (see `[M-187-high-concurrency-connection-wedge]`
+// mitigation note below — `detach { }` is used instead, a different
+// codegen path with no `supervised`-scope-var to thread through, so this
+// CC-fail plainly does not apply to it).
+//
+// [M-187-high-concurrency-connection-wedge] mitigation (bounded-accept,
+// app-level, owner decision 2026-07-16): the OPEN architectural scheduler
+// issue (`docs/plans/backlog-followups.md`, `examples/flagship/aggregator/
+// README.md` "Известные ограничения") is that this binary's M:N runtime
+// wedges PERMANENTLY (never recovers, not merely slow) once too many
+// connections are in flight at once (~80 simultaneous reproduces it every
+// time; ~40 shows transient backpressure that still recovers; ~20 is
+// clean). The real fix is a scheduler-level park/join rework — tried in a
+// separate research track, shelved there because it introduced memory
+// corruption; the CURRENT runtime (busy-poll baseline, unchanged by this
+// commit) is memory-safe, just has this concurrency ceiling. Mitigation
+// (this file only, no runtime/compiler change): admission control BEFORE
+// a connection is ever handed to a handler fiber at all — an
+// `AtomicI64` permit counter (`MAX_INFLIGHT_CONNS`, see its own doc-comment
+// above) is checked right after `accept()` returns; within budget, the
+// connection is handled CONCURRENTLY via `detach { }` (D50 fire-and-forget
+// — under this binary's armed M:N runtime that is a REAL worker-pool
+// dispatch, `spec/decisions/06-concurrency.md` line ~426, not the
+// synchronous `SyncDetach` test-only handler); over budget, the connection
+// is closed immediately (honest reject — no unbounded queue, no attempt to
+// read/respond, so none of the banned "hand-rolled HTTP" applies to the
+// reject path either). This directly replaces the OLD per-connection
+// `supervised { spawn { ... } }` shape (was: strictly SEQUENTIAL — see the
+// retained `[M-187-sequential-2nd-request-hang]` note inside the loop below
+// for why that shape existed) with bounded CONCURRENT handling — a real
+// behavior change, empirically gated (this commit's own `loadtest.ps1` +
+// concurrent-curl run, see the package README for the recorded before/
+// after) precisely because trading "always safe, sometimes wedges dead at
+// high connection counts" for "bounded-concurrent, verified to survive the
+// same load" is the whole point of this mitigation.
+fn main() Time Detach {
     with Os = real_os() {
         ro port = resolve_port()
         with Net = real_net() {
@@ -166,24 +225,48 @@ fn main() Time {
                         Err(_) => panic("Failed to bind: " + port.to_str())
                     }
                     println("Nova flagship aggregator listening on http://127.0.0.1:" + lst.local_port().to_str())
+                    // Bounded-accept permit counter (see the marker note
+                    // above `fn main`) — `AtomicI64` is `#share` (D415), so
+                    // capturing it (by reference) into the per-connection
+                    // `detach { }` below to `fetch_sub` on completion is a
+                    // legal cross-fiber capture without a `consume`/channel
+                    // dance, same exemption `sync_test.nv`'s own fixtures
+                    // rely on.
+                    mut inflight = AtomicI64.new(0)
                     mut running = true
                     while running {
                         match lst.accept() {
                             Ok(stream) => {
-                                // [M-187-sequential-2nd-request-hang]: each
-                                // connection gets its OWN, SELF-CONTAINED
-                                // `supervised { spawn { ... } } }` (not a
-                                // bare direct call, not a spawn nested in the
-                                // OUTER `supervised` above) — see that
-                                // marker's own note (below `main`) for why.
-                                supervised {
-                                    spawn {
+                                if inflight.load() >= MAX_INFLIGHT_CONNS {
+                                    // Over budget: honest reject, no queue —
+                                    // close immediately, no read/response
+                                    // attempted (not "manual HTTP", nothing
+                                    // is parsed/routed/serialized on this
+                                    // path at all).
+                                    ro _ = stream.close()
+                                } else {
+                                    ro _ = inflight.fetch_add(1)
+                                    // [M-187-sequential-2nd-request-hang]'s
+                                    // OLD per-connection `supervised {
+                                    // spawn { ... } }` (strictly sequential
+                                    // — accept loop blocked on this
+                                    // connection's own join before the next
+                                    // `accept()`) is replaced by `detach { }`
+                                    // here: bounded CONCURRENT handling, see
+                                    // `[M-187-high-concurrency-connection-
+                                    // wedge]` mitigation note above `fn
+                                    // main`. The permit is released inside
+                                    // the detached body itself (fiber that
+                                    // finishes the connection is the one
+                                    // that frees its own slot).
+                                    detach {
                                         // `routes()` is cheap (a handful of
                                         // ServeMux entries) — rebuilt per
                                         // connection, same shape as
                                         // nova-http's own
                                         // servernet/rt/handle_connection_smoke.nv.
                                         ro _ = handle_connection(stream, routes())
+                                        ro _ = inflight.fetch_sub(1)
                                     }
                                 }
                             }
@@ -197,7 +280,17 @@ fn main() Time {
     }
 }
 
-// [M-187-supervised-nested-fiber-slot-race]: **runtime bug (fiber
+// [M-187-supervised-nested-fiber-slot-race]: **UPDATE 2026-07-16 — this
+// specific bug (the sequential-request hang described below) is CLOSED ✅
+// (README "Стабильность сервера": 83.4.5.12, a runtime-side fix, unrelated
+// to this file's own shape). The per-connection `supervised { spawn {
+// ... } }` wrapper this note originally justified is GONE (bounded-accept
+// mitigation above `fn main` replaced it with `detach { }`) — the
+// narrative below is kept as history (why sequential-per-connection was
+// ever the shape, and why the wrapper existed) but no longer describes
+// live code in this file.** Historical text follows, unedited.**
+//
+// runtime bug (fiber
 // scheduler, `nova_rt/fibers.h`-family — NOT a `compiler-codegen` codegen
 // bug, NOT worked around in-place, NOT fully eliminated — MITIGATED only,
 // disclosed honestly.** With THIS file serving many SEQUENTIAL HTTP
