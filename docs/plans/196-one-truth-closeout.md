@@ -258,6 +258,14 @@ symbol-mangling→codegen-читает). Наши отклонения = ТОЛ�
   фикс = method-call читает канал `resolved_callees` + receiver-C-тип (НЕ name-last-wins), чекер пишет callee для
   array/slice-ресивера. Снят обход `[]u8 @decode_utf8()` (маркер `[M-174.1-to-str-name-collision-codegen-bug]` закрыт).
   [opus, nova-p196-dispatch]. НЕ трогает frozen `infer_call_ret_c`.
+- **Точечный dispatch-фикс = [196.8 — primitive receiver bounded blanket](196.8-primitive-receiver-bounded-blanket.md)** ✅ ЗАКРЫТ 2026-07-16
+  — BOUNDED-бланкет (`fn[T Ints] T @checked_add`, D310 type-set bound) на примитивном ресивере (`i64.checked_add`)
+  мис-диспатчился в concrete-коллизию чужого типа (`Duration @checked_add`) — Plan 164 Ф.3 guard не признавал ни
+  примитив-кандидата с BOUNDED бланкетом, ни type-set membership (`protocols_match` знал только `#impl(Protocol)`).
+  Фикс = новый регистр `type_set_members` (из `TypeDeclKind::TypeSet`), консультируется в ОБОИХ местах guard'а.
+  Маркер `[M-primitive-receiver-bounded-blanket-dispatch]` закрыт; попутно найден+залогирован НОВЫЙ P1
+  `[M-i64-clamp-primitive-collision-dispatch]` (concrete-vs-concrete коллизия `@clamp`, отдельное окно).
+  [sonnet, nova-p196-8]. НЕ трогает frozen `infer_call_ret_c`.
 
 **★ ФОРМАЛЬНО (директива владельца 2026-07-12): полное выполнение ВОЛНЫ-2 = НЕЗАВИСИМЫЙ способ закрыть 196.**
 Если волна-2 закрывает ВСЕ D-фичи через одно окно (каждая фича резолвится в чекере → канал → codegen читает), то

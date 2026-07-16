@@ -1,0 +1,41 @@
+// Plan 196.8 [M-primitive-receiver-bounded-blanket-dispatch] — positive.
+// `i64.checked_add(b)` (primitive receiver) dispatches to the BOUNDED blanket
+// `fn[T Ints] T @checked_add(rhs T) -> Option[T]` (std/src/prelude/
+// protocols.nv:697, bound = D310 type-set `Ints`) in a CU where a fresh
+// CONCRETE type ALSO declares its own `@checked_add` of the same name. The
+// checker already resolves the primitive-receiver call-site to the i64
+// blanket instance (D84 concrete-beats-generic doesn't even apply here —
+// there is no OTHER concrete i64 overload, only Foo's unrelated one); before
+// the 196.8 fix, codegen's protocol-aware blanket-dispatch guard (Plan 164
+// Ф.3) never recognized that a PRIMITIVE receiver satisfies a BOUNDED
+// (non-empty-bound) blanket at all, and — even when it did look — the bound
+// check (`protocols_match`) only understood `#impl(Protocol)` opt-ins, never
+// D310 type-set membership (`Ints`), so it fell through to the name-keyed
+// `method_receivers` last-wins fallback and mis-dispatched into the foreign
+// concrete `Foo @checked_add` → CC-FAIL (`passing 'int64_t' ... incompatible
+// ... 'NovaValue_Foo'`).
+module spec_tests.conformance
+
+type BlanketDispatchFoo value { n i64 }
+
+fn BlanketDispatchFoo @checked_add(rhs i64) -> Option[BlanketDispatchFoo] {
+    Some(BlanketDispatchFoo { n: @n + rhs })
+}
+
+fn add_i64_via_blanket(a i64, b i64) -> Option[i64] => a.checked_add(b)
+
+test "i64.checked_add() dispatches to the Ints blanket, not a colliding concrete @checked_add" {
+    match add_i64_via_blanket(3, 4) {
+        Some(v) => assert(v == 7)
+        None => assert(false)
+    }
+    match i64.MAX.checked_add(1) {
+        Some(_) => assert(false)
+        None => assert(true)
+    }
+    ro f = BlanketDispatchFoo { n: 1 }
+    match f.checked_add(2) {
+        Some(g) => assert(g.n == 3)
+        None => assert(false)
+    }
+}

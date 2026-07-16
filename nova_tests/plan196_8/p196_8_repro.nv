@@ -1,0 +1,26 @@
+// Plan 196.8 [M-primitive-receiver-bounded-blanket-dispatch] — minimal repro.
+// Bounded blanket `fn[T Ints] T @checked_add(rhs T) -> Option[T]` (real
+// std/src/prelude/protocols.nv:697) co-compiled with a fresh CONCRETE type's
+// own same-name `@checked_add` — the primitive-receiver call must dispatch
+// to the i64 blanket instance, NOT the concrete Foo overload.
+module plan196_8.p196_8_repro
+
+type Foo value { n i64 }
+
+fn Foo @checked_add(rhs i64) -> Option[Foo] {
+    Some(Foo { n: @n + rhs })
+}
+
+fn add_i64(a i64, b i64) -> Option[i64] => a.checked_add(b)
+
+test "i64.checked_add() dispatches to the Ints blanket, not Foo.checked_add" {
+    match add_i64(3, 4) {
+        Some(v) => assert(v == 7)
+        None => assert(false)
+    }
+    ro f = Foo { n: 1 }
+    match f.checked_add(2) {
+        Some(g) => assert(g.n == 3)
+        None => assert(false)
+    }
+}

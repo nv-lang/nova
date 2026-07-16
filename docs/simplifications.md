@@ -38605,3 +38605,46 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   так что P1. Repro: loadtest.ps1 (BLOCK 5) либо seq 1 80|xargs -P80 curl /api/run.
 - loadtest.ps1 усилен 10×: Iterations 5→50, Concurrency 8→80 (runspace pool, не
   Start-Job — лёгкие потоки в одном процессе), +Rounds=10 (повтор комбо-свипов).
+
+## Plan 196.8 — фикс `[M-primitive-receiver-bounded-blanket-dispatch]` (2026-07-16, sonnet)
+
+- Root cause (`emit_c.rs`, Plan 164 Ф.3 guard, ~37744-37888): двойной пробел.
+  (1) `recv_is_candidate` признавал примитив-ресивер кандидатом на blanket-dispatch
+  ТОЛЬКО если у метода есть UNCONSTRAINED бланкет (`g.bounds.is_empty()`) — BOUNDED
+  бланкет (`fn[T Ints] T @checked_add`) на примитиве не проходил гейт вообще.
+  (2) `protocols_match` умел проверять bound ТОЛЬКО как `#impl(Protocol)` через
+  `type_impl_protocols` —D310 type-set bound (`Ints` = `type Ints set i8|…|uint`)
+  никогда там не появляется (примитивы не получают `#impl`-запись), так что
+  ЛЮБОЙ бланкет с type-set bound не матчился НИ ДЛЯ КОГО, не только для примитива.
+  Итог: `i64.checked_add(b)` в CU с `Duration @checked_add` (Пункт 10/200) падал
+  в name-keyed `method_receivers` last-wins → чужой Duration-оверлоад → CC-FAIL.
+- Фикс (НЕ name-guard, минимальный дифф в конкурентном emit_c.rs): новое поле
+  `type_set_members: HashMap<String, Vec<String>>` (популяция из
+  `TypeDeclKind::TypeSet` деклараций, рядом с `type_impl_protocols`-циклом) +
+  (a) `recv_is_candidate` расширен флагом `has_typeset_blanket_for_primitive`
+  (примитив-ресивер, чьё каноническое Nova-имя — `debt_nova_type_name_from_c`,
+  УЖЕ существующий helper — является членом type-set бланкета); (b)
+  `protocols_match` для НЕ-пустого bound сперва проверяет `type_set_members`
+  (membership), и только если bound — НЕ type-set, падает на старую
+  `type_impl_protocols`-ветку. Оба места растут из ОДНОГО источника данных.
+- Верификация: своя фикстура (`Foo value {n i64}` + собственный `@checked_add`
+  + bounded-бланкет `Ints`-коллизия) — CC-FAIL на непатченном main-бинаре,
+  чистая сборка+PASS на патченном. Реальный репро — worktree `nova-p200dur`
+  (`duration.nv` после Пункта 10): `nova test std/src/time` — CC-FAIL `duration`
+  ИСЧЕЗ (было `passing 'int64_t' … 'NovaValue_Duration'`).
+- НАЙДЕНО ПОПУТНО (вне объёма 196.8, НЕ фикшу здесь): `duration` теперь
+  RUN-FAIL (не CC-FAIL) — `Ф.1c/D317` тест на `saturating_add` падает по
+  значению. Root — ОТДЕЛЬНЫЙ баг той же СЕМЬИ, но другой формы: `sat_add_i64`
+  зовёт `r.clamp(lo,hi)` на i64 (pattern-bound из `Option[T]`-деструктуризации),
+  а `@clamp` существует ТОЛЬКО для `int`/`f64` (ни i64-оверлоада, ни бланкета) —
+  codegen молча мис-диспатчит в `Nova_f64_method_clamp` (implicit int64_t↔double
+  на границе вызова, НЕ CC-FAIL, но f64-мантисса режет точность на i64-крайних
+  значениях) → RUN-FAIL. Чекер не флагает `E_UNKNOWN_METHOD` в pattern-bound
+  форме (изолированный `ro r i64 = …; r.clamp(...)` ВНЕ pattern-контекста
+  корректно даёт `E_UNKNOWN_METHOD` — подтверждено). Залогировано как НОВЫЙ
+  P1-маркер `[M-i64-clamp-primitive-collision-dispatch]` (backlog-followups.md);
+  масштаб — codegen + checker pattern-bound receiver gap, отдельное окно.
+- Артефакты: `nova_tests/plan196_8/p196_8_repro.nv` (своя фикстура, PASS);
+  `spec_tests/conformance/primitive_bounded_blanket_dispatch.nv` (позитив-фикстура
+  для мега-CU гейта — НЕ прогнана локально, оркестратор). `docs/plans/196.8-
+  primitive-receiver-bounded-blanket.md` (подплан).
