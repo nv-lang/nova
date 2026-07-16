@@ -4895,6 +4895,17 @@ D85 ломает текущий идиоматический Nova-стиль:
 > ошибке — 0 использований; когда ошибка нужна — явный `match`. Миграция
 > `[M-unwrap-twins-retraction]` (волна-2 §4а): `.unwrap_or(v)` → `?? v`.
 
+> **AMEND (2026-07-16, Plan 200 Пункт 14):** та же философия отбора применена
+> в **обратную** сторону — `flat_map` (Option + Result) и `filter` (Option)
+> **добавлены** в `std/prelude/core.nv`, т.к. это единственные канонические
+> комбинаторы, невыразимые через `??`/`!!`/`.map`/`match` (bind без ручного
+> снятия вложенности `M[M[U]]`; отбрасывание `Some` по предикату).
+> `or_else`/`unwrap_or[_else]`/`map_or[_else]` — рассмотрены и **отклонены**,
+> тот же класс, что unwrap-twins выше (выразимы `?? v` / `?? f()` /
+> `.map(f) ?? d`). См. полный каталог и разбор —
+> [08-runtime.md → D26 AMEND 2026-07-16](08-runtime.md#d26-базовая-stdlib-и-prelude),
+> research `docs/research/2026-07-16-option-result-combinators.md`.
+
 ### Что
 
 `expr ?? fallback` — **coalesce-оператор**: если `expr` это `Some(v)`
