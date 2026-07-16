@@ -771,3 +771,115 @@ export fn[T Ints] T @saturating_mul(rhs T) -> T {
         wrapped
     }
 }
+
+// ── Plan 206.1 (D426): div/rem/neg policy wrappers ──────────────────────
+//
+// `div`/`mod`/`neg` have NO `__builtin_*_overflow` (unlike add/sub/mul) — the
+// compiler-side guard (emit_c.rs, raw `/`/`%`/unary `-` lowering) is a plain
+// comparison, not a HW flag (see `nova_<T>_checked_div/_rem/_neg`,
+// nova_rt/effects.h). The `.nv` policy wrappers below can't reuse THAT
+// panicking C helper directly (a `.nv` body can't catch its own panic to
+// build `Option`) — instead they detect the SAME two conditions in `.nv`
+// using ONLY constructs already proven to compile inside a `fn[T Ints]`
+// blanket body:
+//   - `rhs == 0` — a bare literal comparison (no signedness pitfall, 0 is
+//     valid for any T).
+//   - the one quotient-overflow case (`@ == T.MIN && rhs == -1`) — CANNOT be
+//     written as a literal `-1` comparison: the checker hard-rejects a
+//     negative literal assigned/compared against an UNSIGNED monomorphized
+//     T (D227 Rule 4), so `rhs == -1` would fail to compile for the
+//     unsigned members of a single `Ints` blanket (confirmed empirically,
+//     Plan 206.1 progress log). Reformulated as `rhs.negate() == 1` via the
+//     ALREADY-hardware-checked `@overflowing_sub` intrinsic (`0 - rhs`,
+//     receiver built from `rhs - rhs` to avoid a second generic-cast
+//     receiver) — for unsigned T this can never be `1` with `ovf == false`
+///    (unsigned `checked_neg` only ever succeeds at 0), so the extra guard
+//     is provably a no-op for unsigned members, matching the plan's
+//     "unsigned div: только b==0-guard" design exactly, in ONE shared body.
+// Calling ANOTHER `.nv` blanket (e.g. `@checked_sub`) from inside one of
+// these bodies hits a separate, pre-existing generic-return-type-inference
+// gap ([P67-LEGACY] "return type unknown" — confirmed empirically, NOT
+// specific to div/neg) — worked around by calling the compiler INTRINSIC
+// `@overflowing_sub` directly (the same call the shipped `@checked_sub`/
+// `@wrapping_sub` above already make), never another hand-rolled `.nv` fn.
+
+/// `checked_div` — `None` when `rhs == 0` (division by zero — a domain
+/// error, not an overflow) or when `@ == T.MIN && rhs == -1` (the one
+/// quotient-overflow case), else `Some(@ / rhs)`. Unsigned `T` only ever
+/// hits the `rhs == 0` arm — division can never overflow for unsigned.
+#stable(since = "0.1")
+export fn[T Ints] T @checked_div(rhs T) -> Option[T] {
+    if rhs == 0 { return None }
+    if @ == T.MIN {
+        ro zero = rhs - rhs
+        ro (negated, ovf) = zero.overflowing_sub(rhs)
+        if !ovf && negated == 1 { return None }
+    }
+    Some(@ / rhs)
+}
+
+/// `checked_rem` — same domain as `checked_div` (`None` on the identical two
+/// conditions): on x86 `idiv` computes quotient AND remainder together and
+/// faults on quotient overflow regardless, so `%` needs the same guard as
+/// `/` even though the true mathematical remainder for `MIN % -1` is 0.
+#stable(since = "0.1")
+export fn[T Ints] T @checked_rem(rhs T) -> Option[T] {
+    if rhs == 0 { return None }
+    if @ == T.MIN {
+        ro zero = rhs - rhs
+        ro (negated, ovf) = zero.overflowing_sub(rhs)
+        if !ovf && negated == 1 { return None }
+    }
+    Some(@ % rhs)
+}
+
+/// `wrapping_div` — **panics on `rhs == 0`** (division by zero has no wrap
+/// semantics — same as the raw `/` operator, D426); the one overflow case
+/// (`T.MIN / -1`) wraps to `T.MIN` instead of trapping.
+#stable(since = "0.1")
+export fn[T Ints] T @wrapping_div(rhs T) -> T {
+    if @ == T.MIN {
+        ro zero = rhs - rhs
+        ro (negated, ovf) = zero.overflowing_sub(rhs)
+        if !ovf && negated == 1 { return T.MIN }
+    }
+    @ / rhs
+}
+
+/// `wrapping_rem` — **panics on `rhs == 0`**; `T.MIN % -1` wraps to `0` (the
+/// true mathematical remainder — never actually computed via the trapping
+/// hardware `idiv`, short-circuited here instead).
+#stable(since = "0.1")
+export fn[T Ints] T @wrapping_rem(rhs T) -> T {
+    if @ == T.MIN {
+        ro zero = rhs - rhs
+        ro (negated, ovf) = zero.overflowing_sub(rhs)
+        if !ovf && negated == 1 { return @ - @ }
+    }
+    @ % rhs
+}
+
+/// `checked_neg` — signed: `None` iff `@ == T.MIN` (two's-complement
+/// asymmetry). Unsigned: `None` unless `@ == 0` (negating any nonzero
+/// unsigned value has no representation). Both derived from the SAME
+/// `__builtin_sub_overflow`-backed `@overflowing_sub` flag (`0 - @`, receiver
+/// built from `@ - @` — always exactly representable, never overflows) — one
+/// body is sound for both signednesses, no separate branch needed.
+#stable(since = "0.1")
+export fn[T Ints] T @checked_neg() -> Option[T] {
+    ro zero = @ - @
+    ro (wrapped, overflowed) = zero.overflowing_sub(@)
+    if overflowed { None } else { Some(wrapped) }
+}
+
+/// `wrapping_neg` — modular negation, never panics (unlike the raw unary `-`
+/// operator, which traps on signed `T.MIN` — D426). Signed `T.MIN` maps to
+/// itself (two's-complement asymmetry); unsigned negation is the standard
+/// `(2ⁿ − x) mod 2ⁿ` wraparound. Same `0 - @` computation as `checked_neg`,
+/// flag ignored.
+#stable(since = "0.1")
+export fn[T Ints] T @wrapping_neg() -> T {
+    ro zero = @ - @
+    ro (wrapped, _overflowed) = zero.overflowing_sub(@)
+    wrapped
+}
