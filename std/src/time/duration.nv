@@ -659,23 +659,25 @@ export fn Duration @to_str() -> str {
     }
 }
 
-/// Display (Plan 175 Ф.3(d)/Ф.4, D237) — delegates to [`to_str`] (ASCII
-/// auto-scale short form, e.g. `"2s"`/`"500ns"`/`"150us"`). **Byte-exact
-/// ASCII** — no bytes > 0x7F (fixes the U+03BC "μs" regression, Q12; the
-/// underlying `to_str` already emits ASCII `"us"`, Ф.1c).
+/// Display (Plan 175 Ф.3(d)/Ф.4, D237; signature migrated to `Fmt` — Plan 208
+/// Ф.2/D422, [M-208-time-display-fmt-migration-gap]) — delegates to
+/// [`to_str`] (ASCII auto-scale short form, e.g. `"2s"`/`"500ns"`/`"150us"`).
+/// **Byte-exact ASCII** — no bytes > 0x7F (fixes the U+03BC "μs" regression,
+/// Q12; the underlying `to_str` already emits ASCII `"us"`, Ф.1c).
 #stable(since = "0.1")
-export fn Duration @display(mut w Write) -> () { w.write(@to_str().bytes()) }
+export fn Duration @display(mut f Fmt) -> () { f.write(@to_str().bytes()) }
 
-/// Debug (D237) — diagnostic form showing the exact raw nanoseconds
-/// alongside the human short form (unambiguous for overflow/precision
-/// debugging, unlike the auto-scaled `@display`).
+/// Debug (D237; signature migrated to `Fmt` — Plan 208 Ф.2/D422) —
+/// diagnostic form showing the exact raw nanoseconds alongside the human
+/// short form (unambiguous for overflow/precision debugging, unlike the
+/// auto-scaled `@display`).
 #stable(since = "0.1")
-export fn Duration @debug(mut w Write) -> () {
-    w.write("Duration(")
-    w.write(@to_str().bytes())
-    w.write(", ")
-    w.write(@nanos.to_str().bytes())
-    w.write("ns)")
+export fn Duration @debug(mut f Fmt) -> () {
+    f.write("Duration(")
+    f.write(@to_str().bytes())
+    f.write(", ")
+    f.write(@nanos.to_str().bytes())
+    f.write("ns)")
 }
 
 /// Human-readable форматирование с декомпозицией на компоненты.
@@ -1133,21 +1135,22 @@ test "Ф.3(d)/D237/Q12: @display Duration/Monotonic — byte-exact ASCII (нет
 }
 
 test "Ф.3(d): @debug Duration/Timestamp/Monotonic — диагностическая форма" {
-    // Проверяем ОБА пути: `"${x:?}"`-сахар (interp) и явный `.debug(sb)`
-    // Write-sink (D374-паттерн) — оба чинятся ОДНИМ и тем же codegen-фиксом
-    // выше (value-record-aware strip + prepare_method_recv), sink-agnostic.
+    // Проверяем ОБА пути: `"${x:?}"`-сахар (interp, всегда строит настоящий
+    // FmtCtx) и явный `.debug(FmtCtx.bare(sink, 0, true))` call form (Plan 208
+    // Ф.2/D422 — `@debug` требует `Fmt`, не голый `Write`/`StringBuilder`;
+    // тот же call-shape что и `std/src/collections/vec/protocols_test.nv`).
     assert("${2.to_seconds():?}".contains("Duration("))
 
     consume sb1 = StringBuilder.new()
-    2.to_seconds().debug(sb1)
+    2.to_seconds().debug(FmtCtx.bare(sb1, 0, true))
     assert(sb1.into_str().contains("Duration("))
 
     consume sb2 = StringBuilder.new()
-    1_700_000_000_000.to_unix_millis().debug(sb2)
+    1_700_000_000_000.to_unix_millis().debug(FmtCtx.bare(sb2, 0, true))
     assert(sb2.into_str().contains("Timestamp(unix_ns="))
 
     consume sb3 = StringBuilder.new()
-    Monotonic.now().debug(sb3)
+    Monotonic.now().debug(FmtCtx.bare(sb3, 0, true))
     assert(sb3.into_str().contains("Monotonic(+"))
 }
 

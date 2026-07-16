@@ -140,11 +140,13 @@ export fn Timestamp @compare(other Timestamp) -> int =>
 /// datetime) live в `std/time/civil/format.nv` (Plan 175.1, вне scope этой
 /// волны — civil-time уже сделан, не трогаем). `@debug` здесь — raw-ns
 /// diagnostic form (не зависит от civil-слоя): `Timestamp(unix_ns=...)`.
+/// Signature migrated to `Fmt` — Plan 208 Ф.2/D422,
+/// [M-208-time-display-fmt-migration-gap].
 #stable(since = "0.1")
-export fn Timestamp @debug(mut w Write) -> () {
-    w.write("Timestamp(unix_ns=")
-    w.write(@nanos.to_str().bytes())
-    w.write(")")
+export fn Timestamp @debug(mut f Fmt) -> () {
+    f.write("Timestamp(unix_ns=")
+    f.write(@nanos.to_str().bytes())
+    f.write(")")
 }
 
 /// True если `self` уже в прошлом относительно текущего `Time.now_unix_ms()`.
