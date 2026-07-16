@@ -1,0 +1,28 @@
+// Plan 207 cmpxchg-lint волна B (D425 амендмент) — W_CAS_FAILURE_STRONGER.
+//
+// `success = Relaxed, failure = SeqCst`: strength(failure=SeqCst=3) >
+// strength(success=Relaxed=0) — валидно с C++17, но почти всегда ошибка
+// намерения (failure-путь требует БОЛЬШЕ синхронизации, чем success-путь).
+// Non-fatal — компиляция и исполнение продолжаются, только warning.
+//
+// EXPECT_COMPILE_WARNING W_CAS_FAILURE_STRONGER
+
+module neg.plan207_cas_failure_stronger_warn
+
+test "compare_exchange with failure stronger than success — warns, still runs" {
+    mut a = AtomicI64.new(41)
+    ro r = a.compare_exchange(41, 42, success: MemOrdering.Relaxed, failure: MemOrdering.SeqCst)
+    assert(r.is_ok())
+    assert(a.load() == 42)
+}
+
+// Plan 207 cmpxchg-rename: `failure` OMITTED entirely (default `MemOrdering.SeqCst`,
+// strength 3) with explicit weak `success: Relaxed` (strength 0) — the omitted
+// default participates in the strength comparison same as an explicit literal
+// (3 > 0), so this warns too, not just the explicit-literal case above.
+test "compare_exchange with failure omitted (default SeqCst) stronger than explicit weak success — warns" {
+    mut a = AtomicI64.new(43)
+    ro r = a.compare_exchange(43, 44, success: MemOrdering.Relaxed)
+    assert(r.is_ok())
+    assert(a.load() == 44)
+}

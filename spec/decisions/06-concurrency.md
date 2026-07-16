@@ -7132,6 +7132,55 @@ pointer-record, что не совпадало с реальным value-struct'
 Только форма возврата CAS (`bool`→`Result`). НЕ меняет memory-ordering, НЕ
 трогает `fetch_*`/`load`/`store`. Закрывает backlog `[M-cas-return-witnessed-value]`.
 
+### Амендмент (cmpxchg-lint волна B, 2026-07-16) — компиляторная диагностика success/failure ordering
+
+> **Решение владельца:** compile-time варн на `failure`-ordering сильнее `success`-ordering — ОК.
+
+Call-сайты `compare_exchange`/`compare_exchange_weak` (все `Atomic*`-типы, 4-арная
+explicit-ordering overload) с **литеральными** `MemOrdering`-аргументами получают
+две проверки. Не-литеральные (runtime-переменная) `success`/`failure` не
+диагностируются — компилятору неизвестно значение.
+
+1. **Hard-error `E_CAS_FAILURE_ORDER_INVALID`**: `failure ∈ {Release, AcqRel}`.
+   Семантически невалидно — failure-путь CAS это чистый **load** (сравниваемое
+   значение НЕ изменилось), у него нет release-семантики. C11/C++11
+   `atomic_compare_exchange_*` явно запрещали `Release`/`AcqRel` как
+   failure-memory-order (UB/ill-formed); это правило переносит запрет в
+   compile-time диагностику Nova вместо тихого UB/undefined C-поведения.
+
+2. **Warning `W_CAS_FAILURE_STRONGER`**: `strength(failure) > strength(success)`
+   по тотальному порядку `Relaxed < Acquire ≈ Release < AcqRel < SeqCst`
+   (`Acquire`/`Release` — ничья: разнонаправленная синхронизация, ни один не
+   «сильнее»). С C++17 такая комбинация формально валидна (ограничение
+   «`failure` не сильнее `success`» из C++11 снято), но почти всегда ошибка
+   намерения — failure-путь (CAS не удался) обычно не должен требовать БОЛЬШЕ
+   синхронизации, чем success-путь. Non-fatal — компиляция продолжается.
+
+**Легальные (нет диагностики) пары** `(success, failure)`: `SeqCst/SeqCst`,
+`AcqRel/Acquire`, `Release/Relaxed` — и любая пара с `strength(failure) <=
+strength(success)` и `failure ∉ {Release, AcqRel}`.
+
+Реализация: чекер (`compiler-codegen/src/types/mod.rs::check_cas_ordering`,
+вызывается из `BoundCtx::walk_expr` — hard-error, `errors`-sink) + AST-lint
+(`compiler-codegen/src/lints.rs::lint_cas_failure_stronger`, вызывается из
+`walk_expr_lints` — non-fatal `LintWarning`-sink, тот же split что
+`W_PRELUDE_SHADOW`). Receiver распознаётся по **префиксу** `Atomic` (не список
+конкретных ширин) — новые sized-варианты семейства подхватываются без правки
+диагностики.
+
+**Замечание (после merge с [D426](#d426-atomic-семейство-консолидация-имён-atomicisizeatomicusize--atomicintatomicuint-легаси-atomicint-и-atomicptr-сняты-plan-207)):**
+`compare_exchange`/`compare_exchange_weak` — ОДНА сигнатура с default-параметрами
+(`success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst`),
+не отдельные 2-арг/4-арг overload'ы. Параметры с default — **keyword-only** (D102):
+`success`/`failure`, если переданы, ОБЯЗАНЫ передаваться по имени
+(`a.compare_exchange(cur, next, success: MemOrdering.Relaxed, failure:
+MemOrdering.Acquire)`) — позиционная передача (даже полная, все 4 арг-та) — compile
+error, не диагностика этого амендмента. Каждый из `success`/`failure` может быть
+пропущен независимо (например только `failure: X` при пропущенном `success`) — тогда
+его значение — известный литерал `MemOrdering.SeqCst` (тот же default, что в
+сигнатуре), участвующий в обеих проверках наравне с explicit литералом, а не молча
+пропускаемый.
+
 ---
 
 ## D426. Atomic-семейство: консолидация имён — `AtomicIsize`/`AtomicUsize` → `AtomicInt`/`AtomicUint`, легаси `AtomicInt` и `AtomicPtr` сняты (Plan 207)

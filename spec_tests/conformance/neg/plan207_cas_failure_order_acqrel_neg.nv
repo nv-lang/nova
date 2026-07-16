@@ -1,0 +1,20 @@
+// Plan 207 cmpxchg-lint волна B (D425 амендмент) negative — `failure = AcqRel`
+// на `compare_exchange_weak` семантически невалидно: failure-путь CAS — чистый
+// load (значение НЕ изменено), у него нет release-семантики. Проверяет ВТОРОЙ
+// метод (`compare_exchange_weak`) и bare-variant написание (`SeqCst`/`AcqRel`
+// без `MemOrdering.` — реальный стиль sync_test.nv/conformance).
+//
+// EXPECT_COMPILE_ERROR E_CAS_FAILURE_ORDER_INVALID
+
+module neg.plan207_cas_failure_order_acqrel_neg
+
+fn bad() {
+    mut a = AtomicI32.new(0)
+    ro r = a.compare_exchange_weak(0, 1, success: SeqCst, failure: AcqRel)
+    assert(r.is_ok())
+}
+
+test "should not compile" {
+    bad()
+    assert(true)
+}
