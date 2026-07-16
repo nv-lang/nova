@@ -1,0 +1,155 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/fs/readfs_test.nv — ReadFs protocol conformance (Plan 210 Ф.6б,
+// D323-амендмент). Module-beside-module (мирроит d323_mock_fs_rw_test.nv /
+// d302_neterror_iokind_test.nv — spec_tests/conformance остаётся
+// cross-domain-only, std-module D-покрытие живёт рядом с модулем).
+//
+// R1 (главный риск дизайна, docs/plans/210-embed-dir.md §6б.7): структурная
+// conformance по generic-bound `[F ReadFs]` обязана видеть EXTENSION-методы
+// `EmbeddedDir @read_file`/`@try_exists` (объявлены в std.fs, НЕ в родном
+// prelude.embed модуле EmbeddedDir) — не только inherent. Тесты ниже —
+// ЗЕЛЁНЫЙ R1: extension-путь подтверждён, wrapper-newtype-fallback
+// (`EmbeddedFs`, пред-специфицирован в дизайне) НЕ понадобился.
+
+module std.fs
+
+import std.io.{ErrorKind}
+
+// ─── Generic helpers over the ReadFs bound (§6б.2/§6б.4 — the whole point:
+// ONE body, mono'd against a pure conformer and an effectful one) ───
+
+fn read_file_via[F ReadFs](f F, path str) -> Result[[]u8, IoError] => f.read_file(path)
+fn exists_via[F ReadFs](f F, path str) -> Result[bool, IoError] => f.try_exists(path)
+
+test "EmbeddedDir @read_file/@try_exists (extension methods, direct call) — sanity before R1" {
+    ro data = "x-bytes".bytes()
+    ro dir = EmbeddedDir.new([EmbeddedEntry { path: "f.txt", data }])
+    match dir.read_file("f.txt") {
+        Ok(b)  => assert(unsafe { b.to_str_unchecked() } == "x-bytes")
+        Err(_) => assert(false)
+    }
+    match dir.read_file("missing.txt") {
+        Ok(_)  => assert(false)
+        Err(e) => match e.kind { ErrorKind.NotFound => assert(true), _ => assert(false) }
+    }
+    match dir.try_exists("f.txt")       { Ok(b) => assert(b),      Err(_) => assert(false) }
+    match dir.try_exists("missing.txt") { Ok(b) => assert(!b),     Err(_) => assert(false) }
+}
+
+test "R1: [F ReadFs] generic dispatches to EmbeddedDir's EXTENSION conformance (pure, no effect)" {
+    ro data = "hello".bytes()
+    ro dir = EmbeddedDir.new([EmbeddedEntry { path: "a.txt", data }])
+    match read_file_via(dir, "a.txt") {
+        Ok(b)  => assert(unsafe { b.to_str_unchecked() } == "hello")
+        Err(_) => assert(false)
+    }
+    match read_file_via(dir, "missing.txt") {
+        Ok(_)  => assert(false)
+        Err(e) => match e.kind { ErrorKind.NotFound => assert(true), _ => assert(false) }
+    }
+    match exists_via(dir, "a.txt")       { Ok(b) => assert(b),  Err(_) => assert(false) }
+    match exists_via(dir, "missing.txt") { Ok(b) => assert(!b), Err(_) => assert(false) }
+}
+
+test "R1: [F ReadFs] generic dispatches to DirFs (Fs effect surfaces transitively at THIS mono)" {
+    mut fs = MemFs.new()
+    ro root = Path.posix("/r1_assets")
+    with Fs = mock_fs(fs) {
+        ro _ = create_dir(root)
+        ro _ = write(root.join("a.txt"), "hello".bytes())
+        ro dfs = DirFs.new(root)
+        match read_file_via(dfs, "a.txt") {
+            Ok(b)  => assert(unsafe { b.to_str_unchecked() } == "hello")
+            Err(_) => assert(false)
+        }
+        match exists_via(dfs, "a.txt")       { Ok(b) => assert(b),  Err(_) => assert(false) }
+        match exists_via(dfs, "missing.txt") { Ok(b) => assert(!b), Err(_) => assert(false) }
+    }
+}
+
+// ─── DirFs: escape / not-found (mock_fs — deterministic, no disk) ───
+
+test "DirFs: read_file hit + miss (within root) — NotFound for an absent file" {
+    mut fs = MemFs.new()
+    ro root = Path.posix("/df_hitmiss")
+    with Fs = mock_fs(fs) {
+        ro _ = create_dir(root)
+        ro _ = write(root.join("a.txt"), "payload".bytes())
+        ro dfs = DirFs.new(root)
+        match dfs.read_file("a.txt") {
+            Ok(b)  => assert(unsafe { b.to_str_unchecked() } == "payload")
+            Err(_) => assert(false)
+        }
+        match dfs.read_file("nope.txt") {
+            Ok(_)  => assert(false)
+            Err(e) => match e.kind { ErrorKind.NotFound => assert(true), _ => assert(false) }
+        }
+    }
+}
+
+test "DirFs: lexical `..`-escape rejected -> PermissionDenied (never touches canonicalize)" {
+    mut fs = MemFs.new()
+    ro root = Path.posix("/df_escape")
+    with Fs = mock_fs(fs) {
+        ro _ = create_dir(root)
+        ro dfs = DirFs.new(root)
+        match dfs.read_file("../secret") {
+            Ok(_)  => assert(false)
+            Err(e) => match e.kind { ErrorKind.PermissionDenied => assert(true), _ => assert(false) }
+        }
+        match dfs.read_file("../../../etc/passwd") {
+            Ok(_)  => assert(false)
+            Err(e) => match e.kind { ErrorKind.PermissionDenied => assert(true), _ => assert(false) }
+        }
+    }
+}
+
+test "DirFs: absolute-path request rejected -> PermissionDenied" {
+    mut fs = MemFs.new()
+    ro root = Path.posix("/df_abs")
+    with Fs = mock_fs(fs) {
+        ro _ = create_dir(root)
+        ro dfs = DirFs.new(root)
+        match dfs.read_file("/etc/passwd") {
+            Ok(_)  => assert(false)
+            Err(e) => match e.kind { ErrorKind.PermissionDenied => assert(true), _ => assert(false) }
+        }
+    }
+}
+
+test "DirFs: try_exists true/false; NotFound-escape from @resolve maps to Ok(false)" {
+    mut fs = MemFs.new()
+    ro root = Path.posix("/df_exists")
+    with Fs = mock_fs(fs) {
+        ro _ = create_dir(root)
+        ro _ = write(root.join("here.txt"), "y".bytes())
+        ro dfs = DirFs.new(root)
+        match dfs.try_exists("here.txt")  { Ok(b) => assert(b),  Err(_) => assert(false) }
+        match dfs.try_exists("absent.txt") { Ok(b) => assert(!b), Err(_) => assert(false) }
+    }
+}
+
+// ─── §6б.4 — dev/prod unification: ONE generic body, mono'd against both ───
+
+fn pick_bytes[F ReadFs](assets F, key str) -> Result[[]u8, IoError] => assets.read_file(key)
+
+test "dev/prod (§6б.4): same generic ReadFs-bounded fn serves EmbeddedDir (prod) and DirFs (dev)" {
+    // prod: vshito v binar' — chistiy (bespotokovyy) conformer.
+    ro prod = EmbeddedDir.new([EmbeddedEntry { path: "index.html", data: "prod-bytes".bytes() }])
+    match pick_bytes(prod, "index.html") {
+        Ok(b)  => assert(unsafe { b.to_str_unchecked() } == "prod-bytes")
+        Err(_) => assert(false)
+    }
+    // dev: real (mocked) FS — Fs effect surfaces transitively at THIS mono only.
+    mut fs = MemFs.new()
+    ro root = Path.posix("/devfrontend")
+    with Fs = mock_fs(fs) {
+        ro _ = create_dir(root)
+        ro _ = write(root.join("index.html"), "dev-bytes".bytes())
+        ro dev = DirFs.new(root)
+        match pick_bytes(dev, "index.html") {
+            Ok(b)  => assert(unsafe { b.to_str_unchecked() } == "dev-bytes")
+            Err(_) => assert(false)
+        }
+    }
+}
