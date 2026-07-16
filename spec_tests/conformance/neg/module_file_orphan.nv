@@ -1,0 +1,25 @@
+// EXPECT_COMPILE_ERROR E_MODULE_FILE_ORPHAN
+//
+// [M-module-file-submodule-split-silent-orphan]: `module_file_orphan_repro/`
+// (sibling directory in this same `neg/`) holds TWO co-equal files
+// declaring the identical file-submodule `module_file_orphan_repro.core`:
+// `core.nv` (head — its own name matches the last import segment `core`)
+// and `scattered.nv` (orphan — scattered directly beside it, own filename
+// doesn't match, no dedicated `core/` folder exists either). Importing the
+// module from here must resolve to `core.nv` alone and raise a loud
+// `[E_MODULE_FILE_ORPHAN]` naming `scattered.nv` as an orphaned peer —
+// NOT silently drop it (pre-Plan-202 behaviour) and NOT silently merge it
+// in without diagnostic (the reverted masking fix
+// `[M-blanket-crossmodule-scattered-peer-drop]`).
+//
+// Real-world precedent this repro is a package-scale copy of:
+// `std/src/time/{duration,timestamp,monotonic}.nv` all declared
+// `module time.duration` scattered directly in `std/src/time/` — fixed by
+// moving them into the dedicated folder-module `std/src/time/duration/`
+// (Plan 211 layout fix, same package this test lives beside).
+
+module neg.module_file_orphan
+
+import module_file_orphan_repro.core.{head_value}
+
+fn main() -> int => head_value()

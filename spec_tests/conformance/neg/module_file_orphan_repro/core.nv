@@ -1,0 +1,24 @@
+// [M-module-file-submodule-split-silent-orphan] repro fixture, head half.
+//
+// Head file of the file-submodule `module_file_orphan_repro.core` — the
+// ONLY file in this directory whose OWN name matches the last segment of
+// the module path (`core`). `resolve_module_paths` resolves a plain
+// `import module_file_orphan_repro.core` to exactly this file.
+//
+// `scattered.nv` (its sibling in THIS SAME directory) declares the
+// IDENTICAL `module module_file_orphan_repro.core` but is scattered
+// directly beside this file instead of living in a dedicated `core/`
+// folder-module (D78 "file OR folder") — this repros the historical
+// `std/src/time/{duration,timestamp,monotonic}.nv` bug (fixed by moving
+// those three files into `std/src/time/duration/`, Plan 211) at package
+// scale. See `../module_file_orphan.nv` — the actual EXPECT_COMPILE_ERROR
+// test — for the E_MODULE_FILE_ORPHAN repro this pair exists to trigger.
+//
+// This file has no `test` blocks — `is_folder_module_dir` groups it with
+// `scattered.nv` (identical declaration) as a library folder-module, which
+// the test-runner's directory walk skips (`folder_module_has_tests` ==
+// false) — neither file is ever compiled as a standalone entry; both are
+// reachable only via explicit `import`.
+module module_file_orphan_repro.core
+
+export fn head_value() -> int => 1
