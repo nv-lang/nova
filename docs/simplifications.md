@@ -38605,3 +38605,47 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   так что P1. Repro: loadtest.ps1 (BLOCK 5) либо seq 1 80|xargs -P80 curl /api/run.
 - loadtest.ps1 усилен 10×: Iterations 5→50, Concurrency 8→80 (runspace pool, не
   Start-Job — лёгкие потоки в одном процессе), +Rounds=10 (повтор комбо-свипов).
+
+## [M-187-high-concurrency-connection-wedge] bounded-accept mitigation (2026-07-16, ветка fix-bounded-accept)
+
+- Настоящий scheduler-фикс (park/join) отложен в research — вносил memory
+  corruption; baseline (busy-poll, main) memory-safe, но виснет насмерть на
+  ~80 одновременных соединениях (см. находку выше). Владелец: app-level
+  bounded-accept mitigation ПОВЕРХ неизменного baseline-рантайма (не трогать
+  runtime/компилятор).
+- Реализация (`examples/flagship/aggregator/src/main.nv`): accept-loop теперь
+  admission-control — `AtomicI64`-счётчик `inflight` (std.runtime.sync),
+  проверяется срузу после `lst.accept()`; в пределах `MAX_INFLIGHT_CONNS` —
+  `detach { handle_connection(...); fetch_sub }` (D50 fire-and-forget; под
+  armed M:N этого бинаря — РЕАЛЬНЫЙ worker-pool dispatch, не синхронный
+  test-only `SyncDetach`); сверх лимита — честный `stream.close()` немедленно,
+  без очереди, без чтения/ответа (не «ручной HTTP»).
+- Замена OLD-шейпа: старый код на каждое соединение открывал СВОЙ
+  `supervised { spawn { handle_connection(...) } }`, что блокировало accept-
+  loop до завершения (де-факто последовательно, `[M-187-sequential-2nd-
+  request-hang]`). `detach` — другой codegen-путь (нет `supervised`-scope-var
+  для threading) → не задет `[M-187-nested-spawn-scope-var-cc-fail]`.
+- Подбор `MAX_INFLIGHT_CONNS` — ЧИСТО эмпирический, НЕ формула. Проверено
+  прямыми `xargs -P80`/`-P200` бёрстами на этой машине с
+  `NOVA_WATCHDOG_DUMP_SECS`-дампами на висящих прогонах (дамп показывал
+  `STUCK_ALIVE_NOT_PARKED` fibers на нескольких воркерах, `[supervised]
+  pending_remote=1` — тот же stale-slot симптом, что и в исходной находке):
+  `= 1` переживает (частичный admit, ~2-5/80, остальное честно отбито,
+  сервер жив после); `= 2` тоже переживает (повторено дважды подряд на одном
+  живом сервере под -P80, отдельно под -P200); `= 3` и `= 4` ВОСПРОИЗВЕЛИ
+  ТОТ ЖЕ permanent-wedge (0/80 admitted, сервер мёртв после) — НЕ частичная
+  деградация, тот же баг. `16` (первая гипотеза — под размер worker-pool
+  этого рантайма) тоже воспроизвела wedge: реальная конкурентность на этой
+  ширине пересобирает ту же поломку через `aggregate()`'s собственный
+  fan-out (несколько fiber'ов на каждый inflight-хендлер). Финал: `2`.
+- Гейт: `loadtest.ps1 -Concurrency 80` — BLOCK 5 сервер ЖИВ после (200), BLOCK
+  6 idle ЖИВ (200), BLOCK 1-4/7 без регрессий (2 независимых прогона, PASS
+  66-67/67-68; единственный FAIL — BLOCK 5's строгий `$ok -eq 80` — ожидаемо,
+  часть 80 честно отбита by design, критерий живучести из этой волны
+  выполнен). Прямой `seq 1 80|xargs -P80 curl` и `seq 1 200|xargs -P200 curl`
+  — часть 200, часть 000 (честный reject), single-req ПОСЛЕ = 200 (не
+  permanent-000) — раньше на этой нагрузке было permanent-000 навсегда.
+- Маркер `[M-187-high-concurrency-connection-wedge]` ОСТАЁТСЯ OPEN в
+  backlog-followups.md (P1) — сам scheduler-баг не тронут, только окружён
+  admission control'ом. Ветка `fix-bounded-accept` НЕ смёржена в main этой
+  волной (гейт+вливание — оркестратор).
