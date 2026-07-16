@@ -8,14 +8,14 @@ module spec_tests.conformance
 
 test "compare_exchange SeqCst/SeqCst — legal, no diagnostic" {
     mut a = AtomicI64.new(1)
-    ro r = a.compare_exchange(1, 2, MemOrdering.SeqCst, MemOrdering.SeqCst)
+    ro r = a.compare_exchange(1, 2, success: MemOrdering.SeqCst, failure: MemOrdering.SeqCst)
     assert(r.is_ok())
     assert(a.load() == 2)
 }
 
 test "compare_exchange AcqRel/Acquire — legal, no diagnostic" {
     mut a = AtomicI32.new(1)
-    ro r = a.compare_exchange(1, 2, MemOrdering.AcqRel, MemOrdering.Acquire)
+    ro r = a.compare_exchange(1, 2, success: MemOrdering.AcqRel, failure: MemOrdering.Acquire)
     assert(r.is_ok())
     assert(a.load() == 2)
 }
@@ -25,7 +25,7 @@ test "compare_exchange_weak Release/Relaxed — legal, no diagnostic" {
     mut ok = false
     mut i = 0
     while i < 100 {
-        ro r = a.compare_exchange_weak(1, 2, MemOrdering.Release, MemOrdering.Relaxed)
+        ro r = a.compare_exchange_weak(1, 2, success: MemOrdering.Release, failure: MemOrdering.Relaxed)
         if r.is_ok() {
             ok = true
             i = 100
@@ -38,6 +38,28 @@ test "compare_exchange_weak Release/Relaxed — legal, no diagnostic" {
 
 test "compare_exchange bare-variant spelling — legal, no diagnostic" {
     mut a = AtomicI64.new(5)
-    ro r = a.compare_exchange(5, 6, SeqCst, Acquire)
+    ro r = a.compare_exchange(5, 6, success: SeqCst, failure: Acquire)
     assert(r.is_ok())
+}
+
+test "compare_exchange omitted failure (default SeqCst) with matching success — legal, no diagnostic" {
+    // Plan 207 cmpxchg-rename: `failure` omitted here -> default
+    // `MemOrdering.SeqCst` (strength 3). `success: SeqCst` is ALSO strength 3
+    // -> 3 > 3 is false, no warning; SeqCst is not in {Release, AcqRel}, no
+    // hard-error. Confirms an omitted (default-valued) `failure` participates
+    // in the strength comparison instead of being silently skipped.
+    mut a = AtomicI64.new(7)
+    ro r = a.compare_exchange(7, 8, success: MemOrdering.SeqCst)
+    assert(r.is_ok())
+    assert(a.load() == 8)
+}
+
+test "compare_exchange omitted success (default SeqCst) named-only failure — legal, no diagnostic" {
+    // `success` omitted -> default `SeqCst` (strength 3); explicit `failure:
+    // SeqCst` (strength 3) -> 3 > 3 false, no warning; SeqCst not in
+    // {Release, AcqRel} -> no hard-error.
+    mut a = AtomicI64.new(9)
+    ro r = a.compare_exchange(9, 10, failure: MemOrdering.SeqCst)
+    assert(r.is_ok())
+    assert(a.load() == 10)
 }

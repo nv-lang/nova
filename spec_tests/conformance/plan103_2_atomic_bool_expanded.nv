@@ -29,7 +29,7 @@ test "AtomicBool swap with explicit ordering" {
 
 test "AtomicBool compare_exchange with ordering — success" {
     mut a = AtomicBool.new(false)
-    ro ok = a.compare_exchange(false, true, SeqCst, Acquire).is_ok()
+    ro ok = a.compare_exchange(false, true, success: SeqCst, failure: Acquire).is_ok()
     assert(ok)
     assert(a.load())
 }

@@ -10,7 +10,7 @@ module neg.plan207_cas_failure_order_acqrel_neg
 
 fn bad() {
     mut a = AtomicI32.new(0)
-    ro r = a.compare_exchange_weak(0, 1, SeqCst, AcqRel)
+    ro r = a.compare_exchange_weak(0, 1, success: SeqCst, failure: AcqRel)
     assert(r.is_ok())
 }
 

@@ -2028,8 +2028,8 @@ fn walk_view_extend_expr(
 /// diagnosable — skipped.
 ///
 /// Receiver-type gate: **method name only** (`compare_exchange`/
-/// `compare_exchange_weak`, 4-arg explicit-ordering overload) — deliberately NOT
-/// gated on an `Atomic*`-receiver type check here. Unlike the hard-error twin
+/// `compare_exchange_weak`) — deliberately NOT gated on an `Atomic*`-receiver type
+/// check here. Unlike the hard-error twin
 /// (`types::check_cas_ordering`), this is a pure-AST lint pass (`lint_module`'s
 /// `Vec<LintWarning>` sink has no type-checker state — no `self.sig`/
 /// `infer_expr_type`/`resolved_types_buf` available in this file). The method-name
@@ -2045,11 +2045,18 @@ fn lint_cas_failure_stronger(call_expr: &Expr, func: &Expr, args: &[CallArg], ou
     if method_name != "compare_exchange" && method_name != "compare_exchange_weak" {
         return;
     }
-    if args.len() != 4 { return; }
-    let Some(success_arg) = cas_lint_arg(args, "success", 2) else { return; };
-    let Some(failure_arg) = cas_lint_arg(args, "failure", 3) else { return; };
-    let Some(success) = crate::types::mem_ordering_variant(success_arg) else { return; };
-    let Some(failure) = crate::types::mem_ordering_variant(failure_arg) else { return; };
+    if args.len() < 2 { return; }
+    // Plan 207 cmpxchg-rename: single default-param signature, not 2-arg/4-arg
+    // overloads — an omitted `success`/`failure` arg is the known literal `SeqCst`
+    // default (still diagnosable), not a "can't tell" skip.
+    let success: &str = match cas_lint_arg(args, "success", 2) {
+        Some(a) => match crate::types::mem_ordering_variant(a) { Some(v) => v, None => return },
+        None => "SeqCst",
+    };
+    let failure: &str = match cas_lint_arg(args, "failure", 3) {
+        Some(a) => match crate::types::mem_ordering_variant(a) { Some(v) => v, None => return },
+        None => "SeqCst",
+    };
     // Hard-error territory — не дублируем warning поверх E_CAS_FAILURE_ORDER_INVALID.
     if matches!(failure, "Release" | "AcqRel") { return; }
     if crate::types::mem_ordering_strength(failure) > crate::types::mem_ordering_strength(success) {

@@ -8,7 +8,7 @@ module neg.plan207_cas_failure_order_release_neg
 
 fn bad() {
     mut a = AtomicI64.new(0)
-    ro r = a.compare_exchange(0, 1, MemOrdering.SeqCst, MemOrdering.Release)
+    ro r = a.compare_exchange(0, 1, success: MemOrdering.SeqCst, failure: MemOrdering.Release)
     assert(r.is_ok())
 }
 

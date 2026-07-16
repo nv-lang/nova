@@ -18342,19 +18342,33 @@ impl<'a> BoundCtx<'a> {
         if method_name != "compare_exchange" && method_name != "compare_exchange_weak" {
             return;
         }
-        // Только 4-арная explicit-ordering overload — 2-арная (expected, desired)
-        // делегирует на `MemOrdering.SeqCst, MemOrdering.SeqCst` литералы внутри
-        // sync.nv (всегда валидная пара) — там нечего проверять.
-        if args.len() != 4 { return; }
+        // `expected`+`desired` обязательны — что-то с меньшей arity не является
+        // компилируемым CAS-вызовом вообще (другие проверки поймают отдельно).
+        if args.len() < 2 { return; }
         let Some(recv_ty) = Self::infer_arg_ty(obj, scope) else { return; };
         let TypeRef::Named { path, .. } = &recv_ty else { return; };
         let Some(tname) = path.last() else { return; };
         if !tname.starts_with("Atomic") { return; }
 
-        let Some(failure_arg) = Self::cas_call_arg(args, "failure", 3) else { return; };
-        let Some(failure) = mem_ordering_variant(failure_arg) else { return; }; // runtime value — skip
+        // Plan 207 cmpxchg-rename (влито в main ПОСЛЕ первой версии этого чекера):
+        // `compare_exchange`/`_weak` — ОДНА сигнатура с default-параметрами
+        // (`success MemOrdering = MemOrdering.SeqCst, failure MemOrdering =
+        // MemOrdering.SeqCst`), больше НЕТ отдельных 2-арг/4-арг overload'ов. Опущенный
+        // `failure` (arity < 4 позиционно, или именованный `failure:` вообще не указан)
+        // — известный литерал `SeqCst` (сам по себе всегда легален: SeqCst не входит в
+        // {Release, AcqRel}, поэтому ветка ошибки ниже никогда не сработает для
+        // default-значения — `failure_arg` гарантированно `Some` внутри неё).
+        let failure_arg = Self::cas_call_arg(args, "failure", 3);
+        let failure: &str = match failure_arg {
+            Some(expr) => match mem_ordering_variant(expr) {
+                Some(v) => v,
+                None => return, // runtime-переменная — не диагностируем
+            },
+            None => "SeqCst", // arg опущен — default-параметр
+        };
 
         if matches!(failure, "Release" | "AcqRel") {
+            let span = failure_arg.map(|a| a.span).unwrap_or(e.span);
             errors.push(
                 Diagnostic::new(
                     format!(
@@ -18364,11 +18378,11 @@ impl<'a> BoundCtx<'a> {
                          Разрешены: Relaxed, Acquire, SeqCst.",
                         E_CAS_FAILURE_ORDER_INVALID, failure, method_name
                     ),
-                    failure_arg.span,
+                    span,
                 )
                 .with_suggestion(crate::diag::Suggestion {
                     message: "замените на Acquire (или SeqCst для simplicity)".to_string(),
-                    span: failure_arg.span,
+                    span,
                     replacement: "MemOrdering.Acquire".to_string(),
                     applicability: crate::diag::Applicability::MaybeIncorrect,
                 })
@@ -19178,18 +19192,34 @@ impl<'a> BoundCtx<'a> {
             // sync_test.nv/spec_tests/conformance) populate `scope["a"]` so the
             // CAS-ordering checker (`check_cas_ordering`) can see the receiver type
             // on the very next statement's `a.compare_exchange(...)`.
+            //
+            // [debug-verified] `AtomicI64.new(0)` parses as `ExprKind::Path(["AtomicI64",
+            // "new"])`, NOT `Member{obj:Ident,name}` — the parser recognizes `AtomicI64`
+            // as a KNOWN type name at parse time (like the primitive-static-call shape
+            // documented at `~14047`'s `is_primitive_type_name` comment, but this applies
+            // to any parser-known type, not only primitives) and emits `Path` instead of
+            // `Member`. Match BOTH shapes — `Member` kept as a defensive fallback in case
+            // a differently-resolved call site (e.g. via a type-alias) takes that path.
             ExprKind::Call { func, .. } => {
-                if let ExprKind::Member { obj, name } = &func.kind {
+                let member_shape = if let ExprKind::Member { obj, name } = &func.kind {
                     if name == "new" {
                         if let ExprKind::Ident(type_name) = &obj.kind {
-                            if type_name.starts_with("Atomic") {
-                                return Some(TypeRef::Named {
-                                    path: vec![type_name.clone()],
-                                    generics: Vec::new(),
-                                    span: e.span,
-                                });
-                            }
-                        }
+                            Some(type_name.clone())
+                        } else { None }
+                    } else { None }
+                } else { None };
+                let path_shape = if let ExprKind::Path(parts) = &func.kind {
+                    if parts.len() == 2 && parts[1] == "new" {
+                        Some(parts[0].clone())
+                    } else { None }
+                } else { None };
+                if let Some(type_name) = member_shape.or(path_shape) {
+                    if type_name.starts_with("Atomic") {
+                        return Some(TypeRef::Named {
+                            path: vec![type_name],
+                            generics: Vec::new(),
+                            span: e.span,
+                        });
                     }
                 }
                 None

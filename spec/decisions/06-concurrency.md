@@ -7171,11 +7171,15 @@ strength(success)` и `failure ∉ {Release, AcqRel}`.
 **Замечание (после merge с [D426](#d426-atomic-семейство-консолидация-имён-atomicisizeatomicusize--atomicintatomicuint-легаси-atomicint-и-atomicptr-сняты-plan-207)):**
 `compare_exchange`/`compare_exchange_weak` — ОДНА сигнатура с default-параметрами
 (`success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst`),
-не отдельные 2-арг/4-арг overload'ы. Диагностика учитывает это: если `success`/
-`failure` не переданы явно (позиционно ИЛИ именованным `failure: ...` при
-пропущенном `success`), их значение — известный литерал `MemOrdering.SeqCst`
-(тот же default, что в сигнатуре) — участвует в обеих проверках наравне с explicit
-литералом, а не молча пропускается.
+не отдельные 2-арг/4-арг overload'ы. Параметры с default — **keyword-only** (D102):
+`success`/`failure`, если переданы, ОБЯЗАНЫ передаваться по имени
+(`a.compare_exchange(cur, next, success: MemOrdering.Relaxed, failure:
+MemOrdering.Acquire)`) — позиционная передача (даже полная, все 4 арг-та) — compile
+error, не диагностика этого амендмента. Каждый из `success`/`failure` может быть
+пропущен независимо (например только `failure: X` при пропущенном `success`) — тогда
+его значение — известный литерал `MemOrdering.SeqCst` (тот же default, что в
+сигнатуре), участвующий в обеих проверках наравне с explicit литералом, а не молча
+пропускаемый.
 
 ---
 
