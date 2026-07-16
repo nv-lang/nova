@@ -21409,13 +21409,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// рекурсивно вызывая debt_compute_field_array_elem_type на каждом уровне.
     /// Возвращает element type для **самого внутреннего** array.
     ///
-    /// Plan 196.3 wave-2 (D239, one-window) status: every caller of this fn
-    /// OUTSIDE `infer_call_ret_c` now tries `channel_array_elem_c` FIRST (this
-    /// stays a fallback for a channel miss). It CANNOT be removed or replaced
-    /// with a `panic!` marker — it is still called DIRECTLY (no channel probe)
-    /// from `infer_call_ret_c`'s `"get"` arm (~48401, inside the wave-1
-    /// 46293-48883 region that this window's discipline forbids touching) —
-    /// genuinely SHARED with an out-of-scope caller, not dead legacy code.
+    /// Plan 196.3 wave-2 (D239, one-window) status, re-verified: the stale claim
+    /// this doc comment used to carry — a direct caller inside `infer_call_ret_c`'s
+    /// `"get"` arm (frozen wave-1 zone) — no longer matches the code (grepped: 0
+    /// hits inside the current frozen-zone line range). Whatever caller that
+    /// referred to is gone (removed by wave-1's own sweep, or the coordinates
+    /// drifted as the file grew — either way it's not there now). The **sole**
+    /// remaining caller is the Channel-6k fallback inside `infer_expr_c_type`
+    /// (`channel_array_elem_c` miss → this fn), itself OUTSIDE `infer_call_ret_c` —
+    /// so this fn is SEP, not SHARED, as of this verification. NOT yet proven
+    /// 0-hit at that one call site (deep non-self field-access chain,
+    /// `obj.f1.f2.field[i]`, is a real remaining gap in `channel_array_elem_c`'s
+    /// coverage — it only reads `resolved_types[obj.id]` for the immediate `obj`,
+    /// not a recursive field chain) — kept as a live fallback, not pruned.
     fn compute_array_elem_type_for_obj(&self, obj: &Expr) -> Option<String> {
         match &obj.kind {
             ExprKind::Ident(n) => self.array_element_types.get(n).cloned(),
@@ -53891,137 +53897,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     panic!("[P67-LEGACY] Ident `{}` not in var_types / not a sum-variant — unknown type (compiler-conventions.md §0)", name)
                 }
-                ExprKind::Index { obj, index } => {
-                    // Plan 96 Ф.3 — dispatch по типу index:
-                    //   arr[Range] → []T (тот же NovaArray-pointer тип что у obj)
-                    //   str[Range] → str
-                    //   arr[int]   → T (element)
-                    //   str[int]   → char (если char-indexing уже есть, иначе caller-side error)
-                    let obj_ty_pre = self.infer_expr_c_type(obj);
-                    if matches!(index.kind, ExprKind::Range { .. }) {
-                        // Slice path — result type совпадает с obj (single-type design,
-                        // D-single-type). Для str — тот же "nova_str", для []T —
-                        // тот же "NovaArray_T*".
-                        return obj_ty_pre;
-                    }
-                    // arr[i] → element type of arr.
-                    // Check array_element_types first (pointer-stomped elements override)
-                    // — BUT only when `obj_ty_pre` is NOT a self-describing mono Vec/
-                    // array name. The side-table is keyed by bare var name and is
-                    // last-wins across peer files of a folder-module: a `v` declared
-                    // `[]byte` in one test poisons the entry for a `v` declared
-                    // `[]str` in another → wrong element type (nova_byte vs nova_str)
-                    // → e.g. `v[0] == v[2]` mis-emits a raw struct `==`. The mono name
-                    // `Nova_Vec____nova_str*` is authoritative; prefer decoding it
-                    // (handled below) and consult the side-table only for non-self-
-                    // describing obj types (pointer-stomped raw buffers).
-                    let obj_ty_self_describing = obj_ty_pre.starts_with("Nova_Vec____")
-                        || obj_ty_pre.starts_with("NovaArray_");
-                    if obj_ty_self_describing {
-                        // Decode element type DIRECTLY from the authoritative mono name,
-                        // bypassing every name-keyed side-table (array_element_types,
-                        // compute_array_elem_type_for_obj) — all of which are last-wins
-                        // across folder-module peers and can be poisoned by a same-named
-                        // var of a different element type in another file.
-                        if let Some(elem) = Self::debt_strip_novaarray_prefix_opt(&obj_ty_pre) {
-                            let elem = elem.trim_end_matches('*').trim();
-                            if !elem.is_empty() { return elem.to_string(); }
-                        }
-                        if obj_ty_pre.starts_with("Nova_Vec____") && !obj_ty_pre.trim_end().ends_with("**") {
-                            let mangled = obj_ty_pre.trim_end_matches('*').trim().to_string();
-                            if let Some(elem) = self.generic_type_instance_info.borrow()
-                                .get(&mangled).and_then(|(_, a)| a.first().map(|rt| self.arg_c(rt)))
-                            {
-                                if !elem.is_empty() { return elem; }
-                            }
-                            let elem = obj_ty_pre.strip_prefix("Nova_Vec____")
-                                .unwrap_or("").trim_end_matches('*').trim();
-                            if !elem.is_empty() { return elem.to_string(); }
-                        }
-                    } else if let ExprKind::Ident(name) = &obj.kind {
-                        if let Some(et) = self.array_element_types.get(name) {
-                            return et.clone();
-                        }
-                    }
-                    // @field access (nova_self->field) — check by synthesized C-expression key.
-                    if let ExprKind::Member { obj: inner, name: field } = &obj.kind {
-                        if matches!(inner.kind, ExprKind::SelfAccess) {
-                            let key = format!("(nova_self->{})", Self::mangle_field_name(field));
-                            if let Some(et) = self.array_element_types.get(&key) {
-                                return et.clone();
-                            }
-                        }
-                    }
-                    // Plan 196.3 wave-2 (D239 one-window): checker channel first.
-                    if let Some(elem) = self.channel_array_elem_c(obj) {
-                        if !elem.is_empty() && elem != "nova_int" {
-                            return elem;
-                        }
-                    }
-                    // Plan 56 followup: deep field-access chain — obj.f1.f2.field[i].
-                    // Compute real element type from record schema / template + subst.
-                    if let Some(elem) = self.compute_array_elem_type_for_obj(obj) {
-                        if !elem.is_empty() && elem != "nova_int" {
-                            return elem;
-                        }
-                    }
-                    // Если obj — NovaArray_T*, элемент имеет тип T (из имени).
-                    if let Some(elem) = Self::debt_strip_novaarray_prefix_opt(&obj_ty_pre) {
-                        let elem = elem.trim_end_matches('*').trim();
-                        return elem.to_string();
-                    }
-                    // Plan 138 Ф.3 (D238): str[i] → char.
-                    if obj_ty_pre == "nova_str" {
-                        return "nova_char".to_string();
-                    }
-                    // Plan 138 Ф.2 (D238): Vec[T] indexing — `Nova_Vec____<T>*[i]` → element type T.
-                    // `Nova_Vec____nova_int*` → `nova_int`
-                    // `Nova_Vec____Nova_Foo__*` → `Nova_Foo__*`
-                    // Pattern: `Nova_Vec____<T>*` where `<T>` is the monomorphized element type.
-                    // Plan 138.1 Ф.3: exclude `Nova_Vec____<T>**` (a `*mut Vec[T]`
-                    // raw buffer, e.g. the `data` field of `Vec[Vec[T]]`) — that is
-                    // a typed pointer, so indexing yields a `Vec[T]` value
-                    // (`Nova_Vec____<T>*`), handled by the raw-pointer-deref arm
-                    // below. Recover the precise element C type from the registry.
-                    if obj_ty_pre.starts_with("Nova_Vec____")
-                        && !obj_ty_pre.trim_end().ends_with("**")
-                    {
-                        let mangled = obj_ty_pre.trim_end_matches('*').trim().to_string();
-                        if let Some(elem) = self.generic_type_instance_info.borrow()
-                            .get(&mangled).and_then(|(_, a)| a.first().map(|rt| self.arg_c(rt)))
-                        {
-                            if !elem.is_empty() {
-                                return elem;
-                            }
-                        }
-                        let suffix = obj_ty_pre.strip_prefix("Nova_Vec____").unwrap_or("");
-                        // Strip one trailing `*` only for scalar types; nested Nova_ element types
-                        // (Vec[Vec[T]], Vec[Record]) are pointers — preserve their `*`.
-                        let elem = if suffix.starts_with("Nova_") {
-                            suffix
-                        } else {
-                            suffix.trim_end_matches('*').trim()
-                        };
-                        if !elem.is_empty() {
-                            return elem.to_string();
-                        }
-                    }
-                    // [M-118-ptr-index-unsafe] Plan 118 D216 §8: typed pointer
-                    // `*mut T` / `*T` — ptr[i] ≡ *(ptr+i). Element type = pointee
-                    // (C type obtained by stripping trailing `*` from pointer type).
-                    // Mirror exact logic as UnOp::Deref inference (line ~29113).
-                    // Must come AFTER NovaArray_ check to avoid false-firing on
-                    // `NovaArray_nova_int*` (those use the NovaArray_ path above).
-                    if obj_ty_pre.ends_with('*') && !obj_ty_pre.starts_with("NovaArray_") {
-                        if let Some(pointee) = obj_ty_pre.strip_suffix('*') {
-                            let pointee = pointee.trim();
-                            if !pointee.is_empty() {
-                                return pointee.to_string();
-                            }
-                        }
-                    }
-                    panic!("[P67-LEGACY] Index element type unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0); expr.span={:?} expr.id={:?} src={}", obj_ty_pre, expr.span, expr.id, self.source_file_name)
-                }
+                // Plan 196.3 wave-2 (D239 one-window, tail-arm prune): `ExprKind::Index`
+                // REMOVED here — structurally unreachable, not just empirically 0-hit.
+                // "Channel 6k" above (~52488, `if let ExprKind::Index { obj, index } =
+                // &expr.kind { .. }`) is an EXHAUSTIVE verbatim copy of this exact arm's
+                // body (every branch inside it ends in `return` or the terminal
+                // `panic!("[P67-LEGACY] Index element type unknown …")`) — for ANY
+                // `Index`-shaped `expr`, control flow always returns/panics from inside
+                // Channel 6k and can never fall through to reach this outer `match`, let
+                // alone this arm. This is a control-flow proof (Rust's `if let` + always-
+                // terminating body), not a corpus measurement — the arm was a leftover
+                // byte-identical duplicate from the 2026-07-04 Channel-6k verbatim-lift
+                // (the lift copies the legacy body earlier but historically left the
+                // original arm in place). Removing it also drops the second (dead) call
+                // site of `compute_array_elem_type_for_obj` — see that fn's doc comment,
+                // now updated to reflect a single remaining (live, Channel-6k) caller.
                 // Plan 196 stage1: HandlerLit + ProtocolLit arms RETIRED (checker materializes
                 // Effect[<E>] / NovaBox_<P> → Channel 2 answers first; §0 materialize-not-rederive).
                 // Plan 172.12 §14.19 (коллапс триплификации): тело было
