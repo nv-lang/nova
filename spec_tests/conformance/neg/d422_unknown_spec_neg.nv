@@ -1,0 +1,22 @@
+// Plan 208 Ф.2 (D422) NEG — unknown format-spec SYNTAX is still rejected
+// regardless of what a type's own `@display(mut f Fmt)` does. This was
+// D419's "softening" clarification (semantics — `#`/`.N` reaching a type via
+// the now-retracted optional `@display_fmt` hook — never touched
+// E_FORMAT_SPEC_UNKNOWN for a genuinely-unknown type-char; the parser has no
+// type information at all, spec/decisions/02-types.md#d422). Still no
+// regression from pre-D419 behavior (nova_tests/plan91_14/t3_neg_unknown_format_spec.nv).
+// (Was `d419_unknown_spec_neg.nv` — renamed off the retracted D419 name.)
+//
+// EXPECT_COMPILE_ERROR E_FORMAT_SPEC_UNKNOWN
+
+module neg.d422_unknown_spec_neg
+
+type TaggedFmt { s str }
+
+fn TaggedFmt @display(mut f Fmt) -> () { f.write(@s.bytes()) }
+
+test "unknown format spec type-char still rejected regardless of a type's own @display" {
+    ro t = TaggedFmt { s: "x" }
+    ro out = "${t:zz}"
+    assert(out == "x")
+}

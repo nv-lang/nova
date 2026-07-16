@@ -1248,16 +1248,29 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
             out.insert("from".to_string());
             out.insert("from_debug".to_string());
             out.insert("to_str".to_string());
-            // D419 (Plan 152.7.2): rich `${x:SPEC}` dispatches to a type's
-            // `@display_fmt(mut f Fmt)` (when present) via a hand-emitted
-            // `Nova_FmtCtx_static_new(...)` + `Nova_<T>_method_display_fmt(...)`
-            // call in `emit_format_spec_value` — same class of invisible-to-AST
-            // selector as the seeds above. Without seeding these, method-DCE
-            // prunes `FmtCtx`'s own methods and any user `@display_fmt` body
+            // Plan 208 Ф.2 (D422, was D419/Plan 152.7.2): EVERY `${x}`/
+            // `${x:?}`/`${x:SPEC}` now wraps the sink in a `FmtCtx` (bare or
+            // rich) via a hand-emitted `Nova_FmtCtx_static_bare(...)`/
+            // `Nova_FmtCtx_static_rich(...)` call (`emit_bare_fmtctx`/
+            // `emit_format_spec_value`) before dispatching to
+            // `Nova_<T>_method_display`/`_debug` — same class of
+            // invisible-to-AST selector as the seeds above. Without seeding
+            // these, method-DCE prunes `FmtCtx.bare`/`FmtCtx.rich` (and its
+            // getter methods, reached from user `@display`/`@debug` bodies)
             // whenever the rest of the program never spells these names.
+            // `display_fmt` (D419's optional hook) is GONE — no codegen path
+            // emits it anymore (D422 retracts it entirely), so it is no
+            // longer seeded here.
             out.insert("FmtCtx".to_string());
             out.insert("new".to_string());
-            out.insert("display_fmt".to_string());
+            out.insert("bare".to_string());
+            out.insert("rich".to_string());
+            out.insert("width".to_string());
+            out.insert("align".to_string());
+            out.insert("fill".to_string());
+            out.insert("sign".to_string());
+            out.insert("kind".to_string());
+            out.insert("pad".to_string());
             out.insert("alternate".to_string());
             out.insert("precision".to_string());
             out.insert("write".to_string());

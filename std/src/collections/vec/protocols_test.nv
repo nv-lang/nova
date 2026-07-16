@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std.collections.vec (protocols tests) — Display/Debug (Plan 208 Ф.3, D422).
+//
+// Uses the direct `.display(FmtCtx.bare(...))`/`.debug(...)` call form (same
+// shape as `protocols.nv`'s own doc-comment example) rather than bare `${v}`
+// interpolation: bare interpolation of a GENERIC container's hand-written
+// `@display`/`@debug` hits a separate, PRE-EXISTING codegen dispatch gap
+// (`emit_interpolated_str`'s `all_methods` lookup is keyed by the exact
+// mono-mangled C type name, e.g. `Vec____nova_int`, but the impl below is
+// registered under the generic base name `Vec` — the lookup misses and
+// falls through to a numeric-cast fallback that prints the pointer value).
+// This predates Plan 208 (confirmed: no fixture anywhere ever exercised
+// `${vec}`/`${vec:?}` before this test file was added) and is orthogonal to
+// the Ф.3 signature migration below — tracked as a follow-up, not fixed
+// here (see docs/plans/208-impl-progress.md).
+#prelude(core, runtime, collections, protocols)
+module collections.vec
+
+test "Vec[T] Display: Vec[e0, e1, ...] via direct .display(FmtCtx.bare(...))" {
+    ro v = Vec[int].of(1, 2, 3)
+    consume sb = StringBuilder.new()
+    v.display(FmtCtx.bare(sb, 0, false))
+    assert(sb.into_str() == "Vec[1, 2, 3]")
+}
+
+test "Vec[T] Debug: same shape as Display (no field names to diverge over)" {
+    ro v = Vec[int].of(1, 2, 3)
+    consume sb = StringBuilder.new()
+    v.debug(FmtCtx.bare(sb, 0, true))
+    assert(sb.into_str() == "Vec[1, 2, 3]")
+}
+
+test "Vec[T] Display: empty vector" {
+    ro empty = Vec[int].new()
+    consume sb = StringBuilder.new()
+    empty.display(FmtCtx.bare(sb, 0, false))
+    assert(sb.into_str() == "Vec[]")
+}
+
+test "Vec[T] Display: nested — elements format via their OWN @display (str quoted only under Debug)" {
+    ro v = Vec[str].of("a", "b")
+    consume sb = StringBuilder.new()
+    v.display(FmtCtx.bare(sb, 0, false))
+    assert(sb.into_str() == "Vec[a, b]")
+
+    consume sb2 = StringBuilder.new()
+    v.debug(FmtCtx.bare(sb2, 0, true))
+    assert(sb2.into_str() == "Vec[\"a\", \"b\"]")
+}

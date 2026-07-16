@@ -205,7 +205,7 @@ test "pretty: формат с отступами" {
     assert(Json.parse(p)!! == v)
 }
 
-test "D419: ${v:#} = to_str_pretty(), ${v} = to_str() (@display_fmt)" {
+test "D422: ${v:#} = to_str_pretty(), ${v} = to_str() (unified @display)" {
     mut m = HashMap[str, JsonValue].new()
     m.insert("name", JsonValue.Str("alice"))
     ro v = JsonValue.Object(m)

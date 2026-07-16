@@ -1,0 +1,83 @@
+// Plan 208 Ф.2 (D422) POS — the unified `@display(mut f Fmt)` receives
+// alternate/precision/width/align directly for ANY spec (bare `${x}` or
+// rich `${x:SPEC}`) — ONE required method, no optional second hook.
+// Supersedes D419's two-method scheme (`@display(mut w Write)` + optional
+// `@display_fmt(mut f Fmt)`, RETRACTED) — a type that used to rely on
+// `@display_fmt` now folds that logic straight into `@display`; a type that
+// never reacted to any axis keeps the exact same output (width/align
+// auto-pad stays compiler-owned regardless of which shape a type's own
+// `@display` takes).
+//
+// See spec/decisions/02-types.md#d422 for the protocol/dispatch rule.
+// (Was `d419_display_fmt_dispatch.nv` — renamed so the file name doesn't
+// keep pointing at the retracted D419 mechanism it used to exercise.)
+
+module spec_tests.conformance
+
+// Type whose `@display` reacts to `f.alternate()`/`f.precision()` itself.
+type TaggedFmt { s str }
+
+fn TaggedFmt @to_str() -> str => @s
+
+fn TaggedFmt @display(mut f Fmt) -> () {
+    if f.alternate() {
+        f.write("<".bytes())
+        f.write(@s.bytes())
+        f.write(">".bytes())
+    } else {
+        match f.precision() {
+            Some(p) => f.write("${@s}#${p}".bytes())
+            None    => f.write(@s.bytes())
+        }
+    }
+}
+
+// Type whose `@display` ignores alternate/precision entirely — compiler
+// still applies width/align auto-pad externally regardless (D422: padding
+// is compiler-owned by default, a type never HAS to know how to pad
+// itself).
+type Plain { s str }
+
+fn Plain @display(mut f Fmt) -> () {
+    f.write(@s.bytes())
+}
+
+test "TaggedFmt: bare interpolation (no spec at all) dispatches straight to @display" {
+    ro t = TaggedFmt { s: "hi" }
+    assert("${t}" == "hi")
+}
+
+test "TaggedFmt: `#` (alternate) reaches the type" {
+    ro t = TaggedFmt { s: "hi" }
+    assert("${t:#}" == "<hi>")
+}
+
+test "TaggedFmt: `.N` (precision) reaches the type" {
+    ro t = TaggedFmt { s: "hi" }
+    assert("${t:.3}" == "hi#3")
+}
+
+test "TaggedFmt: width/align still auto-padded externally by the compiler" {
+    ro t = TaggedFmt { s: "x" }
+    assert("${t:>4}" == "   x")
+}
+
+test "Plain: `#` has no effect (type never reads f.alternate())" {
+    ro p = Plain { s: "y" }
+    assert("${p:#}" == "y")
+}
+
+// D422 semantic CHANGE from D419 (owner-approved 2026-07-16, see
+// docs/plans/208-impl-progress.md "СТОП-кандидат"): D419 auto-truncated a
+// type's rendered string by `.N` precision EXTERNALLY whenever the type had
+// no `@display_fmt` hook to react to it itself. D422 drops that fallback
+// entirely — `Fmt` gives `@precision()` as a plain (non-mutating) getter
+// with no way for a type to signal "I looked at it", and Rust itself never
+// auto-truncates Debug/derive output by precision either. A type that wants
+// precision semantics reads `@precision()` itself (as `TaggedFmt` above
+// does) — `Plain` doesn't, so precision is now simply IGNORED, not silently
+// enforced behind its back.
+test "Plain: precision no longer auto-truncates externally (D422 drops the D419 fallback)" {
+    ro p = Plain { s: "abcdef" }
+    assert("${p:.3}" == "abcdef")
+}

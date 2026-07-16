@@ -54,3 +54,20 @@ test "newtype-coercion: литерал И переменная → newtype бе�
     assert((a as int) == 100)
     assert((b as int) == 100)
 }
+
+// Plan 208 Ф.3 (owner instruction 2026-07-16): str-литерал → `[]u8` coercion
+// в `.write(...)`-call-arg позиции (D55 amend "Str-литерал → []u8 coercion",
+// см. spec/decisions/02-types.md "Статус реализации" — codegen support для
+// ИМЕННО этой формы, `emit_c.rs::synthesize_write_str_lit_bytes_coercion`).
+type D55WriteSink { s str }
+
+fn D55WriteSink @display(mut f Fmt) -> () {
+    f.write("[")               // str-литерал, БЕЗ `.bytes()` — коэрсия (D55)
+    f.write(@s.bytes())        // str-ПЕРЕМЕННАЯ (поле) — явный `.bytes()` всё ещё нужен
+    f.write("]")
+}
+
+test "str-литерал → []u8 без .bytes() в Fmt.write(...) call-arg (D55 amend, Plan 208 Ф.3)" {
+    ro w = D55WriteSink { s: "mid" }
+    assert("${w}" == "[mid]")
+}
