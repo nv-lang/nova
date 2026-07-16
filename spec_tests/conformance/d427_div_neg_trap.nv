@@ -1,12 +1,12 @@
-// d426_div_neg_trap.nv — D426: div/mod/unary-neg always-on trap-guard
+// d427_div_neg_trap.nv — D427: div/mod/unary-neg always-on trap-guard
 // (Plan 206.1, P1 fix — division-by-zero was raw C `/` → SIGFPE, an
 // uncontrolled process crash). Mirrors d317_duration_overflow_policy.nv's
 // style for the same class of int-arithmetic (this file covers `Ints`
 // primitives directly, not the `Duration` wrapper — D317 is unaffected/not
-// migrated, see D426 §R5).
+// migrated, see D427 §R5).
 module spec_tests.conformance
 
-test "d426: raw `/`/`%` in-range — byte-parity with plain division" {
+test "d427: raw `/`/`%` in-range — byte-parity with plain division" {
     ro a i32 = 17
     ro five i32 = 5
     ro three i32 = 3
@@ -21,72 +21,72 @@ test "d426: raw `/`/`%` in-range — byte-parity with plain division" {
     assert(c % 5 == 2)
 }
 
-test "d426: raw `/` panics on division by zero (int, sized signed, unsigned)" panics "division by zero" {
+test "d427: raw `/` panics on division by zero (int, sized signed, unsigned)" panics "division by zero" {
     ro a = 5
     ro b = 0
     ro _r = a / b
 }
 
-test "d426: raw `/` panics on division by zero (sized i32)" panics "division by zero" {
+test "d427: raw `/` panics on division by zero (sized i32)" panics "division by zero" {
     ro a i32 = 5
     ro b i32 = 0
     ro _r = a / b
 }
 
-test "d426: raw `/` panics on division by zero (unsigned u32)" panics "division by zero" {
+test "d427: raw `/` panics on division by zero (unsigned u32)" panics "division by zero" {
     ro a u32 = 5
     ro b u32 = 0
     ro _r = a / b
 }
 
-test "d426: raw `%` panics on division by zero" panics "division by zero" {
+test "d427: raw `%` panics on division by zero" panics "division by zero" {
     ro a i32 = 5
     ro b i32 = 0
     ro _r = a % b
 }
 
-test "d426: raw `/` panics on T.MIN / -1 quotient overflow (int)" panics "division overflow" {
+test "d427: raw `/` panics on T.MIN / -1 quotient overflow (int)" panics "division overflow" {
     ro a = int.MIN
     ro b = -1
     ro _r = a / b
 }
 
-test "d426: raw `/` panics on T.MIN / -1 quotient overflow (sized i32)" panics "division overflow" {
+test "d427: raw `/` panics on T.MIN / -1 quotient overflow (sized i32)" panics "division overflow" {
     ro a i32 = i32.MIN
     ro b i32 = -1
     ro _r = a / b
 }
 
-test "d426: raw `%` panics on T.MIN % -1 (x86 idiv faults on quotient regardless of true 0 remainder)" panics "division overflow" {
+test "d427: raw `%` panics on T.MIN % -1 (x86 idiv faults on quotient regardless of true 0 remainder)" panics "division overflow" {
     ro a i32 = i32.MIN
     ro b i32 = -1
     ro _r = a % b
 }
 
-test "d426: unsigned division/remainder never hits the MIN/-1 case (no overflow possible)" {
+test "d427: unsigned division/remainder never hits the MIN/-1 case (no overflow possible)" {
     ro a u32 = 0
     ro five u32 = 5
     assert(a / five == 0)
     assert(a % five == 0)
 }
 
-test "d426: raw `/=` compound-assign panics on division by zero" panics "division by zero" {
+test "d427: raw `/=` compound-assign panics on division by zero" panics "division by zero" {
     mut a i32 = 5
     ro b i32 = 0
     a /= b
 }
 
-test "d426: raw unary `-` panics on signed T.MIN (negation overflow), unsigned unaffected" panics "negation overflow" {
+test "d427: raw unary `-` panics on signed T.MIN (negation overflow), unsigned unaffected" panics "negation overflow" {
     ro a i32 = i32.MIN
     ro _r = -a
 }
 
-test "d426: raw unary `-` on int.MIN also panics (not just sized types)" panics "negation overflow" {
+test "d427: raw unary `-` on int.MIN also panics (not just sized types)" panics "negation overflow" {
     ro a = int.MIN
     ro _r = -a
 }
 
-test "d426: raw unary `-` in-range does NOT panic (byte-parity)" {
+test "d427: raw unary `-` in-range does NOT panic (byte-parity)" {
     ro a i32 = 5
     ro neg_five i32 = -5
     assert(-a == neg_five)
@@ -95,7 +95,7 @@ test "d426: raw unary `-` in-range does NOT panic (byte-parity)" {
     assert(-b == u32_wrap)
 }
 
-test "d426: checked_div/checked_rem — None on /0 and MIN/-1, Some otherwise" {
+test "d427: checked_div/checked_rem — None on /0 and MIN/-1, Some otherwise" {
     ro a i32 = 17
     ro three i32 = 3
     assert(a.checked_div(5) == Some(three))
@@ -108,7 +108,7 @@ test "d426: checked_div/checked_rem — None on /0 and MIN/-1, Some otherwise" {
     assert(a.checked_rem(0) == None)
 }
 
-test "d426: wrapping_div/wrapping_rem — wraps MIN/-1 instead of trapping, still panics on /0" {
+test "d427: wrapping_div/wrapping_rem — wraps MIN/-1 instead of trapping, still panics on /0" {
     ro amin i32 = i32.MIN
     assert(amin.wrapping_div(-1) == i32.MIN)
     assert(amin.wrapping_rem(-1) == 0)
@@ -117,7 +117,7 @@ test "d426: wrapping_div/wrapping_rem — wraps MIN/-1 instead of trapping, stil
     assert(a.wrapping_div(5) == three)
 }
 
-test "d426: checked_neg/wrapping_neg — signed None only at MIN, unsigned None unless 0" {
+test "d427: checked_neg/wrapping_neg — signed None only at MIN, unsigned None unless 0" {
     ro a i32 = 5
     ro neg_five i32 = -5
     assert(a.checked_neg() == Some(neg_five))

@@ -7156,10 +7156,10 @@ brotli-decode — **C-FFI к `libbrotlidec`** (НЕ pure-Nova V1: 120 KB вст�
 
 ### Связь
 
-[D310](02-types.md#d310-type-set-bounds-plan-1723) (type-set bounds, amended §R1) · [D13](#) (int overflow trap, расширен §R3 на все `Ints`) · [D317](#d317) (Duration overflow 3-tier — параллельная, отдельная от int-примитива область, мигрирует в Ф.3 §R5) · [D140.4/194](09-tooling.md#d421) (Z3-элизия `--contracts=optimized`, §R3/§«Неопределённости») · [D129](02-types.md#d129)/[reference-nova-int-intptr-not-i64] (`int`=`nova_int`=`intptr_t` ≠ `i64`=`int64_t`, оба члены `Ints`) · Plan [206](../../docs/plans/206-arithmetic-overflow-policy.md) · Plan [206.1](../../docs/plans/206.1-div-neg-trap.md) (div/neg — реализовано в [D426](#d426) ниже).
+[D310](02-types.md#d310-type-set-bounds-plan-1723) (type-set bounds, amended §R1) · [D13](#) (int overflow trap, расширен §R3 на все `Ints`) · [D317](#d317) (Duration overflow 3-tier — параллельная, отдельная от int-примитива область, мигрирует в Ф.3 §R5) · [D140.4/194](09-tooling.md#d421) (Z3-элизия `--contracts=optimized`, §R3/§«Неопределённости») · [D129](02-types.md#d129)/[reference-nova-int-intptr-not-i64] (`int`=`nova_int`=`intptr_t` ≠ `i64`=`int64_t`, оба члены `Ints`) · Plan [206](../../docs/plans/206-arithmetic-overflow-policy.md) · Plan [206.1](../../docs/plans/206.1-div-neg-trap.md) (div/neg — реализовано в [D427](#d427) ниже).
 - Plan 174.6 M1 (`E_FFI_NON_C_ABI_TYPE`), Plan 178 (закрывает `br`-ветку auto-decompress — LANDED, `Content-Encoding: br` → `brotli_decode`; `Accept-Encoding` дополнен `br`).
 
-## D426. `div`/`mod`/unary-`neg` always-on trap-guard + `.nv`-бланкеты политик (Plan 206.1, 2026-07-16)
+## D427. `div`/`mod`/unary-`neg` always-on trap-guard + `.nv`-бланкеты политик (Plan 206.1, 2026-07-16)
 
 **Статус:** закреплён 2026-07-16 (owner go, P1 — деление на ноль ранее было сырым C `/` → SIGFPE, неконтролируемый крэш процесса). **Amends** D423 (расширяет trap-дисциплину на `div`/`mod`/unary-`neg`, которые D423 §R6 явно вынес за рамки) и D13 (int overflow trap — теперь div-by-zero/div-overflow/neg-overflow тоже всегда-on для `int`, не только `+`/`-`/`*`). **Другой механизм, чем D423:** у `__builtin_*_overflow` нет div/neg-варианта — guard пишется как обычное сравнение, не аппаратный флаг.
 

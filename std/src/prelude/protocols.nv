@@ -772,7 +772,7 @@ export fn[T Ints] T @saturating_mul(rhs T) -> T {
     }
 }
 
-// ── Plan 206.1 (D426): div/rem/neg policy wrappers ──────────────────────
+// ── Plan 206.1 (D427): div/rem/neg policy wrappers ──────────────────────
 //
 // `div`/`mod`/`neg` have NO `__builtin_*_overflow` (unlike add/sub/mul) — the
 // compiler-side guard (emit_c.rs, raw `/`/`%`/unary `-` lowering) is a plain
@@ -834,7 +834,7 @@ export fn[T Ints] T @checked_rem(rhs T) -> Option[T] {
 }
 
 /// `wrapping_div` — **panics on `rhs == 0`** (division by zero has no wrap
-/// semantics — same as the raw `/` operator, D426); the one overflow case
+/// semantics — same as the raw `/` operator, D427); the one overflow case
 /// (`T.MIN / -1`) wraps to `T.MIN` instead of trapping.
 #stable(since = "0.1")
 export fn[T Ints] T @wrapping_div(rhs T) -> T {
@@ -873,7 +873,7 @@ export fn[T Ints] T @checked_neg() -> Option[T] {
 }
 
 /// `wrapping_neg` — modular negation, never panics (unlike the raw unary `-`
-/// operator, which traps on signed `T.MIN` — D426). Signed `T.MIN` maps to
+/// operator, which traps on signed `T.MIN` — D427). Signed `T.MIN` maps to
 /// itself (two's-complement asymmetry); unsigned negation is the standard
 /// `(2ⁿ − x) mod 2ⁿ` wraparound. Same `0 - @` computation as `checked_neg`,
 /// flag ignored.
