@@ -6525,7 +6525,7 @@ mod tests {
             return;
         }
         let src = std::fs::read_to_string(&nv_path).expect("read p0 fixture");
-        let result = codegen_to_c(&nv_path, &src, None, false);
+        let result = codegen_to_c(&nv_path, &src, None, ast::ContractsMode::Checked);
         assert!(result.is_ok(), "P3-B vtable dispatch: codegen должен успешно скомпилировать, но: {:?}", result.err());
     }
 

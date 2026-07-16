@@ -55394,6 +55394,75 @@ mod dce_tests {
     }
 
     #[test]
+    fn consume_scope_exit_seeds_cleanup_method() {
+        // Plan 159.1 Ф.1 regression guard ([M-159.1-onexit-drop-overprune]).
+        // `consume b = e { … }` scope-exit dispatches the resource type's
+        // `@cleanup` method via a SYNTHETIC C symbol
+        // (`Nova_<T>_consume_cleanup`, `emit_consume_entry_cleanup`) — the
+        // `.cleanup(…)` selector is NEVER spelled as an AST `Member`/`Call`
+        // node anywhere in this source. Without the `Stmt::ConsumeScope`
+        // bare-name seed (`lints::collect_used_names`, closes
+        // [M-187-tls-cross-pkg-consume-cleanup], commit 70c4eff02) the
+        // `(Boom, cleanup)` intersection never fires and the method is
+        // wrongly pruned.
+        let dm = dead_methods(
+            "module t\n\
+             type Boom consume { id int }\n\
+             fn Boom consume @cleanup(_o ScopeOutcome) -> () => ()\n\
+             fn mk(v int) -> Boom => { id: v }\n\
+             fn main() -> () => {\n\
+               consume b = mk(1) {\n\
+                 ro _n = b.id\n\
+               }\n\
+             }\n",
+            true,
+        );
+        assert!(
+            !dm.contains(&("Boom".to_string(), "cleanup".to_string())),
+            "cleanup method reached only via consume-scope-exit (no explicit \
+             `.cleanup()` call) must survive method-DCE"
+        );
+    }
+
+    #[test]
+    fn consume_scope_exit_seeds_cleanup_for_nested_consume_field() {
+        // Plan 159.1 Ф.1: the SAME bare-name seed generalizes to arbitrary
+        // nesting depth because it is NAME-based, not per-type — a consume-
+        // field disposed inside the OUTER type's own `@cleanup` via a NESTED
+        // `consume tmp = @field { … }` scope-block is just another
+        // `Stmt::ConsumeScope` AST node, walked the same way. `Inner`'s
+        // `cleanup` method is reached ONLY through `Outer.cleanup`'s body,
+        // which itself is reached only through the test's own consume-scope.
+        let dm = dead_methods(
+            "module t\n\
+             type Inner consume { id int }\n\
+             fn Inner consume @cleanup(_o ScopeOutcome) -> () => ()\n\
+             type Outer consume { consume inner Inner }\n\
+             fn Outer consume @cleanup(_o ScopeOutcome) -> () => {\n\
+               consume tmp = @inner {\n\
+                 ro _n = tmp.id\n\
+               }\n\
+             }\n\
+             fn mk(v int) -> Outer => { inner: Inner { id: v } }\n\
+             fn main() -> () => {\n\
+               consume o = mk(1) {\n\
+                 ro _m = 0\n\
+               }\n\
+             }\n",
+            true,
+        );
+        assert!(
+            !dm.contains(&("Outer".to_string(), "cleanup".to_string())),
+            "outer cleanup reached only via scope-exit must survive"
+        );
+        assert!(
+            !dm.contains(&("Inner".to_string(), "cleanup".to_string())),
+            "inner (nested-field) cleanup reached only via the outer \
+             cleanup's own nested consume-scope must survive"
+        );
+    }
+
+    #[test]
     fn interpolation_seeds_stringbuilder_methods() {
         // Plan 159 Ф.2: string interpolation `"…${x}…"` desugars to a
         // `StringBuilder` pipeline whose method selectors (`with_capacity`,

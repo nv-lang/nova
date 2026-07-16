@@ -1,0 +1,23 @@
+// Plan 159.1 Ф.1 probe (isolated, pre-conformance validation).
+module nova_tests.plan159_1
+
+type P1591Boom consume { id int }
+
+fn P1591Boom consume @cleanup(_outcome ScopeOutcome) -> () {
+    panic("P1591Boom.cleanup fired via scope-exit only")
+}
+
+fn p1591_boom(v int) -> P1591Boom => { id: v }
+
+// A literal `fn main` is required in the compile unit for reachability-DCE
+// to engage at all (`compute_dead_decls_with`'s `!has_main` guard returns
+// `DeadDecls::default()` — DCE fully OFF — for any main-less module/CU).
+// `spec_tests/conformance` gets this for free (~974-file CU, main exists
+// somewhere else in it); this STANDALONE probe needs its own.
+fn main() -> () => ()
+
+test "onexit-only cleanup survives DCE" panics "P1591Boom.cleanup fired via scope-exit only" {
+    consume b = p1591_boom(1) {
+        ro _n = b.id
+    }
+}
