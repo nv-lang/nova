@@ -2,4 +2,4 @@ module cm_box
 
 export type Box[T] { v T }
 
-export fn Box[T].of(value T) -> Box[T] => { v: value }
+export fn Box[T].new(value T) -> Box[T] => { v: value }
