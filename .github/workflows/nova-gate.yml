@@ -161,11 +161,11 @@ jobs:
       # $GITHUB_WORKSPACE/../nova-http — то есть РОВНО сиблингом каталога,
       # в который зачекаучен сам `nova` (тот же трюк, что checkout'ы
       # нескольких репозиториев в один job).
-      - name: Checkout nova-http sibling (path-dependency of examples/nova.toml)
-        uses: actions/checkout@v4
-        with:
-          repository: nv-lang/nova-http
-          path: ../nova-http
+      # actions/checkout запрещает path вне GITHUB_WORKSPACE (проверено живым
+      # прогоном run 29514085351) — сиблинга кладём обычным git clone.
+      - name: Clone nova-http sibling (path-dependency of examples/nova.toml)
+        run: |
+          git clone --depth 1 https://github.com/nv-lang/nova-http "${GITHUB_WORKSPACE}/../nova-http"
 
       - name: Flagship examples gate — build under --strict-effects (5 targets)
         run: |
