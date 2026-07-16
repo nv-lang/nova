@@ -1,10 +1,16 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # План 210 — `embed_dir(...)`: вшить папку в бинарь (расширение D412)
 
-> **Статус: ✅ ДИЗАЙН ФИНАЛИЗИРОВАН 2026-07-16 (вариант A + материализация Option R).**
+> **Статус: ✅ ДИЗАЙН ФИНАЛИЗИРОВАН 2026-07-16 (вариант A + материализация Option R, ревиз. R′).**
 > Развилки закрыты (§2), сигнатуры зафиксированы (§4), карта исполнения §6, гейты/риски §7.
 > **Ждёт owner-go на Ф.0** (спека D412-амендмент §9). Реализация язык-меняющая — без go не стартует.
 > **Q1/Q2/Q3 РЕШЕНЫ владельцем 2026-07-16 по рекомендациям:** Q1=Option R · Q2=dot-skip · Q3=`entries_of()`.
+> **Ревью-правки 2026-07-16 (оркестратор, внесены по указанию владельца) — Option R → R′:** синтез =
+> `Call` на статик-ктор `EmbeddedDir.from_entries(...)` (НЕ `RecordLit`) + поле `priv entries` → sorted-инвариант
+> ЗАЩИЩЁН (нельзя сконструировать несортированным извне; тихий None в `get()` исключён); Q3 пересмотрен —
+> `entries_of()` НЕ нужен, публичный аксессор = явный `@entries()` над priv-полем (D117-прецедент `Vec @ptr()`,
+> нет «двух дверей» D9); +`W_EMBED_DIR_EMPTY`, +`W_EMBED_DIR_NON_ASCII_PATH` (NFD/NFC-портируемость),
+> +`E_EMBED_IS_A_DIR` (симметричная подсказка в `embed`); в спеку пин «порядок сортировки == `str.compare`».
 > Источник дизайна: [research 2026-07-15 embed-dir](../research/2026-07-15-embed-dir-proposal.md)
 > (§3 вариант A + cross-language survey). Маркер: `[M-embed-dir]` (backlog, APPROVED/queued).
 > Родитель: [D412](../../spec/decisions/03-syntax.md#d412) (`embed("file")`, single-file, Plan 186).
@@ -52,11 +58,11 @@
 |---|---|---|---|
 | **а** | Форма/семантика | `embed_dir("relative/dir")` — компайл-тайм интринсик класса C, аргумент **только str-литерал**. **Рекурсивен по умолчанию** (весь поддеревья). **Glob/фильтр — вне объёма** (future). | Go `//go:embed dir` рекурсивен; Rust `include_dir!` рекурсивен. Литерал — паритет single-embed (путь известен на компиляции). |
 | **а'** | Детерминизм | Записи **сортируются по POSIX-пути** (UTF-8 байтовый лексикографический порядок) при синтезе → воспроизводимый `.c`. | ФС-обход недетерминирован по ОС; `resolve_embeds` уже сортирует `files` (стр. 91). Два билда → идентичный `.c` (гейт §7). |
-| **б** | Тип `EmbeddedDir` | **Вариант A** (owner-принят): `get(path str)->Option[[]u8]`, `paths()->[]str`, `len()->int`, `has(path str)->bool`, `entries_of()->[]EmbeddedEntry` (итерация пар без двойного lookup). Иммутабелен (нет `mut`-методов). | Go `embed.FS`: `ReadFile`/`ReadDir`. Rust `rust-embed`: `.get()`. Минимум для «раздать mux'ом» = get+paths; `entries_of()`/`has()` — эргономика. |
+| **б** | Тип `EmbeddedDir` | **Вариант A** (owner-принят; ревиз. R′): `get(path str)->Option[[]u8]`, `paths()->[]str`, `len()->int`, `has(path str)->bool`, `entries()->[]EmbeddedEntry` (явный аксессор над `priv`-полем — итерация пар без двойного lookup; `entries_of()` снят, см. §8-Q3′). Иммутабелен (нет `mut`-методов); поле `priv` → sorted-инвариант защищён. | Go `embed.FS`: `ReadFile`/`ReadDir`. Rust `rust-embed`: `.get()`. Минимум для «раздать mux'ом» = get+paths; `entries()`/`has()` — эргономика. |
 | **в** | Нулевая копия в C | **payload'ы** (байты файлов) → static rodata через существующую `HexBlobLit`-арм (view, `len==cap==N`, БЕЗ копии). **Таблица** (пути + view-headers) — маленький one-time GC-alloc при вычислении выражения (§3 Option R). | Payload = крупные данные, они zero-copy (главное). Таблица = O(N) мелочь (≈40 байт/файл + interned path). Полностью-static таблица = Option N (§3, future-опт). |
 | **г** | Lookup | **Бинарный поиск** по отсортированным записям (O(log N)). Perfect-hash — **не оправдан** (типичный N — десятки–сотни). | Go `embed.FS` хранит файлы отсортированными и бинарит. Инвариант «entries отсортированы по path» в контракте (§9); единственный конструктор (`embed_dir`) его держит. Fallback — линейный скан (проще, для малых N нормально). |
 | **д** | Пути | Ключ = путь **относительно embed-корня**, разделитель POSIX `/` (Windows `\` → `/` при обходе), без ведущего `./`. **Кейс-чувствительность = байт-точная** (case-SENSITIVE lookup). | Go `embed.FS` — POSIX-слэши, case-sensitive. Кросс-платформенная воспроизводимость ключа. |
-| **е** | Лимиты / шум | (1) **Скип dot-файлов и dot-папок** (скрытые, имя с `.`) по умолчанию — не попадают в `EmbeddedDir`. (2) **Скип симлинков** (файлы и папки) + build-**WARNING** `W_EMBED_DIR_SYMLINK_SKIPPED`. (3) **Мягкий WARNING** `W_EMBED_DIR_LARGE` при суммарном размере > 64 MiB ИЛИ > 4096 файлов. Жёсткого size-error нет. | Go по умолчанию исключает `.`/`_`-префиксные (эталон). Берём только `.` (скрытые — универсально; `_` в Nova не спец — НЕ исключаем, чтобы не удивлять). Скип симлинков = safety (циклы + escape). Warning ловит «наведён не на ту папку» без падения. |
+| **е** | Лимиты / шум | (1) **Скип dot-файлов и dot-папок** (скрытые, имя с `.`) по умолчанию — не попадают в `EmbeddedDir`. (2) **Скип симлинков** (файлы и папки) + build-**WARNING** `W_EMBED_DIR_SYMLINK_SKIPPED`. (3) **Мягкий WARNING** `W_EMBED_DIR_LARGE` при суммарном размере > 64 MiB ИЛИ > 4096 файлов. Жёсткого size-error нет. (4) **`W_EMBED_DIR_EMPTY`** (ревью R′): папка существует, но после dot/symlink-скипа встраивать нечего — ловит «навёлся на пустую соседку» (опечатка в пути даёт `E_EMBED_DIR_NOT_FOUND`, а этот случай раньше молчал; симметрично мотивации LARGE). (5) **`W_EMBED_DIR_NON_ASCII_PATH`** (ревью R′): не-ASCII имя файла — предупредить о непортируемом ключе (macOS хранит имена в NFD, Windows/Linux обычно NFC → один репозиторий даёт РАЗНЫЕ байтовые ключи и разный `.c` на разных ОС; `get("é")` в NFC промахнётся по NFD-ключу). Ключ = байты имени КАК ЕСТЬ, без Unicode-нормализации (пин в §9). | Go по умолчанию исключает `.`/`_`-префиксные (эталон). Берём только `.` (скрытые — универсально; `_` в Nova не спец — НЕ исключаем, чтобы не удивлять). Скип симлинков = safety (циклы + escape). Warning'и ловят «наведён не на ту папку»/непортируемость без падения; NFD/NFC — Go молчит, мы честнее. |
 | **ж** | Инкрементальность | Все обойдённые файлы → в `Vec<PathBuf>` из `resolve_embeds` → `compute_c_key` (хэш путь+содержимое). **add/rm/change** любого файла → другой ключ → пересборка. Обход БЕЗУСЛОВЕН и ДО ключа кэша (main.rs 4662<4728). | Проверено: `compute_c_key` хэширует `count` + путь + байты (build_cache.rs 128–131). Новый файл → set растёт → ключ меняется. Удаление → set сжимается. Корректно. |
 | **з** | Пакеты / D78 | `embed_dir` внутри folder-module или пакета-зависимости резолвится **относительно .nv-файла вызова**, граница — `per_file_embed_root` этого файла (Plan 193 gap-2). Папка вне package-root вызова → `E_EMBED_OUTSIDE_PROJECT`. | Наследование single-embed без изменений: `embed_dir` в зависимости видит СВОЁ дерево, потребитель зависимости не ловит ложный escape. |
 | **и** | Безопасность | (1) Escape `..` выше корня → `E_EMBED_OUTSIDE_PROJECT` — проверяется для аргумента-папки И для КАЖДОГО обойдённого файла (симлинк внутри мог бы указать наружу — но симлинки скипаются, §е). (2) Папка не найдена → `E_EMBED_DIR_NOT_FOUND`; путь есть, но это файл → `E_EMBED_NOT_A_DIR`. (3) Пустая папка → пустой `EmbeddedDir` (легально). | Паритет D412 + skip-симлинков закрывает escape-через-линк и циклы. |
@@ -72,14 +78,22 @@
 `.rodata`-блобов + статическую таблицу + сконструировать `EmbeddedDir`». Разведка (§1) показала:
 это можно получить **с НУЛЁМ изменений в `emit_c`**.
 
-### Option R — переписать в `RecordLit` из `HexBlobLit` (РЕКОМЕНДОВАНО)
+### Option R′ — переписать в `Call` статик-конструктора из `HexBlobLit`-элементов (РЕКОМЕНДОВАНО; ревиз. R)
 
-`resolve_embeds` переписывает `embed_dir("frontend")` в обычный Nova-литерал (все узлы уже
+> **Ревью-правка 2026-07-16 (было: голый `RecordLit{EmbeddedDir}`).** Проблема исходного R:
+> `RecordLit` по имени поля требует ПУБЛИЧНОЕ поле `entries` → пользователь может сам написать
+> `EmbeddedDir { entries: [несортированные] }`, и `get()` (бинарный поиск) **тихо вернёт None на
+> существующий путь** — sorted-инвариант ничем не защищён (Ф.1-тест сам конструировал вручную =
+> дверь открыта by design). Фикс: синтезировать **`Call` на публичный статик-ктор** — Call не
+> нарушает приватность полей → поле становится `priv`, инвариант защищён конструктивно.
+> «0 правок emit_c» сохраняется: Call на Nova-метод — обычный узел.
+
+`resolve_embeds` переписывает `embed_dir("frontend")` в обычный Nova-вызов (все узлы уже
 существуют в AST):
 
 ```
-RecordLit { type_name: Some(["EmbeddedDir"]), fields: [
-  entries: ArrayLit([                                  // отсортировано по path
+Call { func: Path(["EmbeddedDir", "from_entries"]), args: [
+  ArrayLit([                                           // отсортировано по path (резолвером)
     RecordLit { type_name: Some(["EmbeddedEntry"]), fields: [
       path: StrLit("app.js"),                          // → interned static nova_str
       data: HexBlobLit(<байты app.js>),                // → nova_blob_view(static, N) — ZERO-COPY
@@ -90,18 +104,26 @@ RecordLit { type_name: Some(["EmbeddedDir"]), fields: [
 ]}
 ```
 
-Дальше **весь существующий конвейер** обрабатывает это как рукописный литерал:
+(`EmbeddedEntry` остаётся публично-конструируемым `RecordLit`-ом — у него инвариантов нет;
+инвариант сортировки живёт на `EmbeddedDir` и охраняется `from_entries` + `priv entries`.)
+
+Дальше **весь существующий конвейер** обрабатывает это как рукописный код:
 - каждый `data: HexBlobLit` → `emit_c` арм 28579 → `nova_blob_view` над static rodata (**нулевая
   копия payload'а, ничего нового**);
 - каждый `path: StrLit` → interned `static const nova_str` (Plan 139);
-- `EmbeddedDir`/`EmbeddedEntry` — обычные std-record'ы; `get`/`paths`/`len` — обычные Nova-методы.
+- `EmbeddedDir`/`EmbeddedEntry` — обычные std-record'ы; `from_entries`/`get`/`paths`/`len` —
+  обычные Nova-методы (Call → обычный static-dispatch).
 
 **Свойства:**
-- **emit_c — НЕ меняется.** Чекер — НЕ меняется (типы выводятся: `data:[]u8`, `path:str`). Вся Ф.2
-  = обход папки + синтез узлов в `embed_resolve.rs`.
+- **emit_c — НЕ меняется.** Чекер — НЕ меняется (типы выводятся: `data:[]u8`, `path:str`;
+  `from_entries` — обычный static). Вся Ф.2 = обход папки + синтез узлов в `embed_resolve.rs`.
 - Payload'ы — zero-copy static (главное для «нулевой копии»).
+- **Sorted-инвариант защищён:** поле `priv entries` (D281 module-boundary) → извне `EmbeddedDir`
+  конструируем ТОЛЬКО через `from_entries`, который verify-sorted за O(N) (для synth-пути резолвер
+  уже отсортировал → проверка пробегает даром; пользовательский несортированный вход → panic с
+  внятным сообщением, не тихий None).
 - Таблица `entries` (`[]EmbeddedEntry`) строится один раз при вычислении выражения: O(N) мелких
-  GC-alloc (Vec-буфер + N view-headers). Для `ro`/module-level биндинга — единожды за запуск.
+  GC-alloc (Vec-буфер + N view-headers) + O(N) verify. Для `ro`/module-level биндинга — единожды.
 - **Риск минимальный** — та же стратегия, что D412 (переписать AST, переиспользовать pipeline).
 
 **Стоимость таблицы и рекомендация по использованию:** `embed_dir(...)` — выражение;
@@ -123,8 +145,9 @@ future-опт компилятора (не в этом плане). Тот же 
   когда-нибудь покажет, что one-time сборка таблицы значима (нереалистично для front-ассетов) —
   это чистая codegen-оптимизация поверх готового API, семантику не меняет. **Не в 210.**
 
-> Решение: **Option R.** «Нулевая копия» в контракте = про payload'ы файлов; таблица —
-> пренебрежимые метаданные. Owner-развилка §8-Q1 фиксирует это (рекомендация R, альтернатива N).
+> Решение: **Option R′** (R + Call/priv-ревизия). «Нулевая копия» в контракте = про payload'ы
+> файлов; таблица — пренебрежимые метаданные. Owner-развилка §8-Q1 фиксирует это (рекомендация R,
+> альтернатива N); Call/priv-ревизия внесена по ревью 2026-07-16 (владелец: «внеси правки»).
 
 ---
 
@@ -144,10 +167,25 @@ export type EmbeddedEntry {
 }
 
 /// Иммутабельная встроенная папка: карта путь→байты. Записи отсортированы по
-/// `path` (инвариант держит `embed_dir` — §9). Нулевая копия payload'ов.
+/// `path` (инвариант охраняет `from_entries` + priv-поле — §9). Нулевая копия payload'ов.
 #stable(since = "0.1")
 export type EmbeddedDir {
-    entries []EmbeddedEntry     // ОТСОРТИРОВАНЫ по path (для бинарного поиска)
+    priv entries []EmbeddedEntry   // ОТСОРТИРОВАНЫ по path (бинарный поиск); priv (D281) —
+                                   // извне только через from_entries → инвариант ненарушим
+}
+
+/// Единственный публичный конструктор (его же синтезирует `embed_dir` — §3).
+/// Требует отсортированность по `path` (UTF-8 bytewise == порядок `str.compare`);
+/// verify за O(N), нарушение → panic (честная ошибка, не тихий None в get).
+export fn EmbeddedDir.from_entries(entries []EmbeddedEntry) -> Self {
+    mut i = 1
+    while i < entries.len() {
+        if entries[i - 1].path.compare(entries[i].path) >= 0 {
+            panic("EmbeddedDir.from_entries: entries must be sorted by path, unique")
+        }
+        i = i + 1
+    }
+    Self { entries }
 }
 
 /// Число встроенных файлов.
@@ -163,18 +201,22 @@ export fn EmbeddedDir @paths() -> []str {
 /// Есть ли файл по пути.
 export fn EmbeddedDir @has(path str) -> bool => @get(path).is_some()
 
-/// Итерация пар (path, data) без двойного lookup.
-export fn EmbeddedDir @entries_of() -> []EmbeddedEntry => @entries
+/// Итерация пар (path, data) без двойного lookup — явный property-read
+/// priv-поля (D117-прецедент `Vec @ptr()` над полем `data`).
+export fn EmbeddedDir @entries() -> []EmbeddedEntry => @entries
 
 /// Байты файла по пути, `None` если нет. Бинарный поиск по отсортированным
-/// entries (O(log N)); опирается на sorted-инвариант (§9).
+/// entries (O(log N)); опирается на sorted-инвариант (§9). Ключ — точная
+/// байтовая форма (§2д): без ведущего `./`, `..` не нормализуется —
+/// `get("./app.js")` честно даёт None.
 export fn EmbeddedDir @get(path str) -> Option[[]u8] {
     mut lo = 0
     mut hi = @entries.len()
     while lo < hi {
         ro mid = lo + (hi - lo) / 2
-        ro c = @entries[mid].path.compare(path)     // str.compare (D178), <0/0/>0
-        if c == 0 { return Some(@entries[mid].data) }
+        ro e = @entries[mid]                // одно чтение на итерацию
+        ro c = e.path.compare(path)         // str.compare (D178), <0/0/>0
+        if c == 0 { return Some(e.data) }
         if c < 0 { lo = mid + 1 } else { hi = mid }
     }
     None
@@ -183,8 +225,11 @@ export fn EmbeddedDir @get(path str) -> Option[[]u8] {
 
 > **Точная форма методов** сверена по `std/src/collections/deque.nv` (record + `@field`-property +
 > `fn Type @method() -> …`), `str.compare` — по prelude re-export (`std.runtime.string.{…, compare}`).
-> `entries_of` (не `entries`) — чтобы не коллидировать с одноимённым полем-property (D117: поле
-> `entries` уже даёт `@entries()` арности-0). **Owner-развилка §8-Q3:** имя аксессора пар.
+> **Q3 пересмотрен ревью 2026-07-16:** `entries_of()` снят — с `priv`-полем публичный аксессор =
+> явный `fn EmbeddedDir @entries()` (по D117-амендменту/D84/D409 явный аксессор И ЕСТЬ property-read
+> поля — прецедент `Vec @ptr()` над `data`); «двух дверей» (property + `_of`-дубль) не возникает (D9).
+> Ф.1-тест конструирует через `from_entries` (позитив) + проверяет panic на несортированном (негатив);
+> co-equal `embed_test.nv` в том же модуле при необходимости может читать priv-поле напрямую (D281).
 
 **Прелюд-facade (`std/src/prelude.nv`):** добавить строку
 `export import std.prelude.embed.{EmbeddedDir, EmbeddedEntry}` + bump `PRELUDE_VERSION` (→ 18) с
@@ -206,11 +251,13 @@ fn try_replace_embed_dir(&mut self, e) -> bool:
     # 4. walk рекурсивно (собственный обход, НЕ follow symlinks):
     #      - пропустить записи с именем, начинающимся на '.'  (§2е dot-skip)
     #      - симлинк (файл|папка) → skip + push W_EMBED_DIR_SYMLINK_SKIPPED
+    #      - не-ASCII байты в имени → push W_EMBED_DIR_NON_ASCII_PATH (§2е NFD/NFC)
     #      - файл → (rel_posix_path, bytes) ; each file: escape-recheck + push в self.files
-    # 5. отсортировать пары по rel_posix_path (UTF-8 bytewise)  (§2а' детерминизм)
-    # 6. size/count warning (§2е)
-    # 7. синтез: e.kind = RecordLit{EmbeddedDir, entries: ArrayLit[ RecordLit{EmbeddedEntry,
-    #      path:StrLit, data:HexBlobLit} … ]}  (spans = span вызова embed_dir)
+    # 5. отсортировать пары по rel_posix_path (UTF-8 bytewise; == порядок str.compare — §9)
+    # 6. size/count warning (§2е); пусто после скипов → W_EMBED_DIR_EMPTY (§2е)
+    # 7. синтез (R′): e.kind = Call{ Path(EmbeddedDir::from_entries),
+    #      args: [ ArrayLit[ RecordLit{EmbeddedEntry, path:StrLit, data:HexBlobLit} … ] ] }
+    #      (spans = span вызова embed_dir; НЕ голый RecordLit{EmbeddedDir} — поле priv, §3)
     # 8. return true
 ```
 
@@ -227,8 +274,11 @@ fn try_replace_embed_dir(&mut self, e) -> bool:
 | `E_EMBED_DIR_NOT_FOUND` | error (**новый**) | путь не резолвится / не существует |
 | `E_EMBED_NOT_A_DIR` | error (**новый**) | путь существует, но это файл (подсказать `embed(...)`) |
 | `E_EMBED_OUTSIDE_PROJECT` | error (reuse) | папка (или обойдённый файл) вне package-root вызова |
+| `E_EMBED_IS_A_DIR` | error (**новый**, ревью R′) | симметрия: `embed("папка")` — путь ведёт на директорию (подсказать `embed_dir(...)`; сейчас падает невнятным read-fail; правка в `try_replace_embed`, та же зона) |
 | `W_EMBED_DIR_SYMLINK_SKIPPED` | warning (**новый**) | симлинк пропущен при обходе (перечислить пути) |
 | `W_EMBED_DIR_LARGE` | warning (**новый**) | суммарно > 64 MiB или > 4096 файлов |
+| `W_EMBED_DIR_EMPTY` | warning (**новый**, ревью R′) | папка существует, но после dot/symlink-скипа встраивать нечего («навёлся не туда») |
+| `W_EMBED_DIR_NON_ASCII_PATH` | warning (**новый**, ревью R′) | не-ASCII имя файла — непортируемый байтовый ключ (macOS NFD vs NFC; §2е) |
 
 ---
 
@@ -293,11 +343,13 @@ size-warning, коды ошибок. **Гейт:** owner sign-off (язык-ме
 **Ф.4 — тесты (haiku).** Фикстуры по образцу D412 (folder-module §116):
 - **pos** (`d412d_embed_dir.nv` + папка `d412d_dir/` из 3 файлов + `.hidden` для dot-skip):
   `embed_dir` → `get` каждого → байты совпадают; `paths()` == отсортированные 3 (без `.hidden`);
-  `len()==3`; `has("x")` true/false; `get("нет")==None`.
+  `len()==3`; `has("x")` true/false; `get("нет")==None`; `get("./a.txt")==None` (ключ без `./`, §4.1).
 - **neg**: `neg/d412d_dir_not_found_neg.nv` (`E_EMBED_DIR_NOT_FOUND`); `neg/d412d_not_a_dir_neg.nv`
   (указан файл → `E_EMBED_NOT_A_DIR`); `neg/d412d_dir_escape_neg.nv` (`../..` → `E_EMBED_OUTSIDE_PROJECT`);
-  `neg/d412d_dir_not_literal_neg.nv` (`E_EMBED_ARG_NOT_STR_LITERAL`).
-- **edge**: пустая папка → `len()==0`.
+  `neg/d412d_dir_not_literal_neg.nv` (`E_EMBED_ARG_NOT_STR_LITERAL`); `neg/d412d_embed_on_dir_neg.nv`
+  (`embed("папка")` → `E_EMBED_IS_A_DIR`, симметрия R′).
+- **runtime-neg (Ф.1-тест, не фикстура):** `from_entries` на несортированном → panic (verify-инвариант R′).
+- **edge**: пустая папка → `len()==0` + `W_EMBED_DIR_EMPTY` в выводе сборки.
 **Гейт:** точечно зелёные; порядок в `paths()` детерминирован (два прогона — один вывод).
 
 **Порядок:** Ф.0 ∥ Ф.1 → Ф.2 → Ф.4 → (Ф.3 опц.). Ф.0 и Ф.2 сливаются ВМЕСТЕ (язык-меняющее).
@@ -325,8 +377,10 @@ emit_c). Ф.4 ≈ 6 фикстур + бинарные файлы. Спека ≈
 
 | Риск | Митигация |
 |---|---|
-| Синтезированный `RecordLit` не типизируется (EmbeddedDir не виден на type-check) | Ф.1 делает типы prelude-видимыми ДО Ф.2; Ф.1-тест конструирует `EmbeddedDir` вручную → доказывает видимость независимо от резолвера |
-| `RecordLit`-синтез с неверными spans → плохие диагностики | Все узлы берут span вызова `embed_dir` (зеркало `HexBlobLit`-замены, стр. 236) |
+| Синтезированный `Call`/`RecordLit` не типизируется (EmbeddedDir/from_entries не видны на type-check) | Ф.1 делает типы+ктор prelude-видимыми ДО Ф.2; Ф.1-тест конструирует через `from_entries` → доказывает видимость независимо от резолвера |
+| ~~Пользовательский несортированный `EmbeddedDir` ломает `get()` тихим None~~ | **СНЯТ (R′):** поле `priv` + единственный ктор `from_entries` с O(N)-verify → нарушение = panic, не тихий None |
+| Synth-узлы с неверными spans → плохие диагностики | Все узлы берут span вызова `embed_dir` (зеркало `HexBlobLit`-замены, стр. 236) |
+| NFD/NFC-расхождение ключей между ОС (не-ASCII имена) | `W_EMBED_DIR_NON_ASCII_PATH` + пин в спеке «байты как есть, без нормализации» (§2е); детерминизм-гейт §7.3 ловит расхождение `.c` |
 | Недетерминированный обход ФС между ОС | Явная сортировка пар по POSIX-байтам (§2а'); гейт §7.3 сверяет два билда |
 | Большая папка раздувает `.c`/heap | payload'ы в rodata (не heap); `W_EMBED_DIR_LARGE` предупреждает; Option N — future-опт если таблица когда-то станет узкой |
 | Симлинк-цикл в папке | Скип всех симлинков (§2е) — обход конечен |
@@ -346,10 +400,9 @@ emit_c). Ф.4 ≈ 6 фикстур + бинарные файлы. Спека ≈
   умолчанию (Go-эталон, ловит `.git`/`.DS_Store`). Это тихо исключает часть файлов — потому выношу.
   Альтернатива — встраивать ВСЁ (тогда `.git` в ассет-папке попадёт в бинарь). *Рекомендация: dot-skip;
   opt-in «включить скрытые» — future-флаг.* → §2е.
-- **Q3 — имя аксессора пар.** `entries_of()` (поле `entries` уже занимает `@entries()` property по
-  D117). Альтернатива — переименовать поле (напр. `items`) и отдать `entries()` наружу. *Рекомендация:
-  поле `entries`, аксессор `entries_of()` (или вовсе не экспонировать пары в v1 — get/paths/len/has
-  достаточно).* → §4.1.
+- **Q3 — имя аксессора пар. ПЕРЕСМОТРЕН ревью 2026-07-16 (снят):** с `priv entries` (R′) публичный
+  аксессор = явный `fn EmbeddedDir @entries()` — по D117-амендменту явный аксессор и есть property-read
+  поля (прецедент `Vec @ptr()`); `entries_of()` не нужен, «двух дверей» нет (D9). → §4.1.
 
 *(Если owner молчит по §8 — вести по рекомендациям R / dot-skip / `entries_of`; это дефолт задания
 «работай/твоё решение».)*
@@ -374,26 +427,35 @@ emit_c). Ф.4 ≈ 6 фикстур + бинарные файлы. Спека ≈
    - **Обход:** рекурсивный. **Скрытые** записи (имя с `.`) — пропускаются. **Символические
      ссылки** (файлы и папки) — НЕ следуются, пропускаются с предупреждением
      W_EMBED_DIR_SYMLINK_SKIPPED (защита от escape и циклов). Предупреждение W_EMBED_DIR_LARGE при
-     суммарном размере > 64 MiB или > 4096 файлов (совет, не ошибка).
+     суммарном размере > 64 MiB или > 4096 файлов (совет, не ошибка). Папка существует, но после
+     скипов пуста → W_EMBED_DIR_EMPTY. Не-ASCII имя файла → W_EMBED_DIR_NON_ASCII_PATH
+     (непортируемый ключ: macOS хранит имена в NFD, Windows/Linux — обычно NFC).
+   - Симметрия: `embed("папка")` (одиночный embed на директорию) — E_EMBED_IS_A_DIR (используй
+     `embed_dir`).
    - **Ключ** записи = путь относительно embed-корня, разделитель POSIX `/`, case-sensitive, без
-     ведущего `./`. **Записи отсортированы** по ключу (UTF-8 байтовый порядок) — воспроизводимый
-     `.c` и корректность бинарного поиска в `get`.
+     ведущего `./`; **байты имени как есть, БЕЗ Unicode-нормализации**. `get` не нормализует
+     аргумент (`get("./x")` → None). **Записи отсортированы** по ключу (UTF-8 байтовый порядок ==
+     порядок `str.compare` — предпосылка корректности бинарного поиска) — воспроизводимый `.c`.
    - **Fingerprint:** все обойдённые файлы — зависимости сборки (add/rm/change → пересборка).
    - Glob-фильтр, mime/Content-Type, сжатие — вне объёма (future).
 
 **Тип `EmbeddedDir` (prelude):**
-- `EmbeddedEntry { path str, data []u8 }` — путь + байты (нулевая копия, вид над .rodata).
-- `EmbeddedDir { entries []EmbeddedEntry }` — записи ОТСОРТИРОВАНЫ по `path` (инвариант).
+- `EmbeddedEntry { path str, data []u8 }` — путь + байты (нулевая копия, вид над .rodata);
+  публично конструируем (инвариантов не несёт).
+- `EmbeddedDir { priv entries []EmbeddedEntry }` — записи ОТСОРТИРОВАНЫ по `path`; поле priv —
+  инвариант охраняет ЕДИНСТВЕННЫЙ публичный конструктор `EmbeddedDir.from_entries(entries)`
+  (O(N) verify-sorted; нарушение → panic, не тихий промах поиска).
 - API: `@get(path str) -> Option[[]u8]` (бинарный поиск, O(log N)), `@paths() -> []str`
-  (отсортированы), `@len() -> int`, `@has(path str) -> bool`, `@entries_of() -> []EmbeddedEntry`.
-  Иммутабелен (нет мутирующих методов).
+  (отсортированы), `@len() -> int`, `@has(path str) -> bool`, `@entries() -> []EmbeddedEntry`
+  (явный property-read priv-поля, прецедент `Vec @ptr()`). Иммутабелен (нет мутирующих методов).
 
-**Материализация (Option R):** `embed_dir("dir")` переписывается компилятором (пасс
-`embed_resolve`, ДО type-check) в литерал `EmbeddedDir { entries: [EmbeddedEntry{path: "…",
-data: x"…"}, …] }`. Каждый `data` — hex-блоб (п.1/D412) → zero-copy вид над `static const uint8_t
-nova_blob_<h>[]` (.rodata); пути — interned static-строки. Таблица `entries` строится один раз при
-вычислении выражения (совет: биндить `embed_dir` единожды, не в горячем пути). Никаких новых
-codegen-примитивов: payload'ы наследуют модель материализации D412.
+**Материализация (Option R′):** `embed_dir("dir")` переписывается компилятором (пасс
+`embed_resolve`, ДО type-check) в вызов `EmbeddedDir.from_entries([EmbeddedEntry{path: "…",
+data: x"…"}, …])` (отсортировано резолвером; verify конструктора пробегает даром). Каждый `data` —
+hex-блоб (п.1/D412) → zero-copy вид над `static const uint8_t nova_blob_<h>[]` (.rodata); пути —
+interned static-строки. Таблица `entries` строится один раз при вычислении выражения (совет:
+биндить `embed_dir` единожды, не в горячем пути). Никаких новых codegen-примитивов: payload'ы
+наследуют модель материализации D412.
 
 **Прецеденты:** Go `//go:embed dir` + `embed.FS` (эталон: рекурсия, сортировка, бинарный поиск,
 исключение скрытых, POSIX-пути), Rust `rust-embed`/`include_dir!`.
