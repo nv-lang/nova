@@ -32,7 +32,7 @@
   биндингами арма, из-за чего `check_instance_overload` вообще не видел ресивер → ни диагностики, ни
   `resolved_callees`; фикс переиспользует `match_arm_bindings` (172.1 АТОМ 2a) — ОДНО окно чинит и диспетч-по-типу
   (196.7 канал), и честный `[E_UNKNOWN_METHOD]` (177 Ф.3) разом; маркер `[M-primitive-concrete-overload-receiver-dispatch]`).
-- **187** — Ред.5-v2 готова к запуску Ф.MVP-2: ВСЕ внешние гейты сняты (TLS=nova-tls, 173 закрыт, SSE в main); демо = живой Nova-бек, канон показа Docker; предложена Ред.6-пятёрка витринных улучшений.
+- **187** — ✅ Ф.MVP-2 ВЛИТА (2026-07-15/16): живое веб-приложение работает (все легенды/режимы вкл. weather-live HTTPS; typed-serde возвращён; все рантайм/codegen-блокеры закрыты, wedge митигирован bounded-accept → глубина в [Plan 211](211-park-join-nested-supervised.md)); нагрузочный гейт `examples/flagship/aggregator/loadtest.ps1` (10×, 67 PASS). Остаток: волна 2 — Docker (Linux-пре-гейт → ghcr «одной командой»).
 - **173** ✅ семейство закрыто 2026-07-13 (MultiError D414 + propagation-trace per-fiber + suppressed явным параметром); остаток: п.4 semaphore-cap (P3, опция) + [M-173-trace-not-in-child-error] (P3).
 - **193** ✅ закрыт (std/tls → внешний dep `../nova-tls`, ноль Rust в TLS-пути); хвост — vendored mbedTLS.
 - **198** ✅ Ф.2 REDO ЗАКРЫТ 2026-07-13: корпус мигрирован в spec_tests по D307 (merged-CU 2585 блоков PASS; гейт 468/0+12skip); вечно-красные в fixtures/known_red; остаток Ф.4c = 9 классов компиляторных находок (198-redo-notes).

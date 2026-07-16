@@ -73,10 +73,12 @@ accept-loop функции, только одноразовый `handle_connecti
 
 `mode=live`: `health` — реальный TCP-замер (`std.net.resolve` +
 `TcpStream.connect`, порт 443) против 5 настоящих доменов; `weather` —
-**честно заблокирован** (не подделывает данные) маркером
-`[M-187-weather-live-tls-diamond-blocked]` — diamond-зависимость `tls`
-(этот пакет тянет её путём, `nova-http` — через `git`+version, две разные
-физические копии) — подробности в `src/app/live.nv`.
+**настоящий HTTPS к `api.open-meteo.com`** (`TlsStream.connect` +
+GET + read, `src/app/live.nv`) — работает после закрытия tls-диаманта
+(D420 `[replace]` graph-wide) и cross-package consume-cleanup; проверено
+нагрузочным гейтом (`loadtest.ps1`: weather/live 10/10, SSE weather-live 50×).
+Для локальной разработки path-deps нужен `examples/nova.local.toml` с
+`[replace]` на `../../nova-tls` / `../../nova-http` (gitignored, D420).
 
 ## Как это тестируется
 
@@ -177,9 +179,13 @@ examples/flagship/aggregator/
 
 ## Известные ограничения этого прогона
 
-- **Live-погода заблокирована** (`[M-187-weather-live-tls-diamond-blocked]`) —
-  diamond tls-зависимость между этим пакетом и `nova-http`; каждый лан
-  честно проваливается с текстом-подсказкой, не подделывает данные.
+- ~~Live-погода заблокирована~~ **РАЗБЛОКИРОВАНА** (диамант + cross-pkg
+  consume-cleanup закрыты 2026-07-15): реальный open-meteo HTTPS, 4/4 done
+  в гейте. Историю см. `src/app/live.nv` (doc-comment).
+- **Высокая одновременная нагрузка — admission control**: сверх MAX=2
+  одновременных fan-out'ов соединения честно закрываются (bounded-accept,
+  митигация `[M-187-high-concurrency-connection-wedge]`; сервер выживает
+  P80/P200). Глубинный фикс (park-join) — Plan 211.
 - **`/api/events` — replay, не живой стрим.** Первая запись содержит полный
   таймлайн уже завершённого прогона (с реальными `t_ms`-метками), не
   push по мере выполнения (`[M-187-sse-live-stream]`, решение владельца —
