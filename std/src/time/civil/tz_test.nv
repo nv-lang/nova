@@ -72,7 +72,7 @@ test "dst_overlap_named: NY fall-back 2026-11-01 01:30 → earlier -04:00" {
     ro later Disambiguation = Later
     ro zl = in_ovl.to_zoned(ny, later)!!
     assert(zl.offset().to_seconds() == -18_000)
-    assert(zl.to_timestamp()!! - z.to_timestamp()!! == 1.hour())
+    assert(zl.to_timestamp()!! - z.to_timestamp()!! == 1.to_hours())
 }
 
 test "London BST: последнее воскресенье марта 2026 (29-е) 01:00Z gap" {
@@ -124,7 +124,7 @@ test "dst_roundtrip: instant-переход через wall-арифметику
     ro after = before + Period.of_days(1)
     // wall 12:00 сохранена, elapsed 23h (короткий день)
     assert(after.datetime().hour() == 12)
-    assert(after.to_timestamp()!! - before.to_timestamp()!! == 23.hours())
+    assert(after.to_timestamp()!! - before.to_timestamp()!! == 23.to_hours())
     // to_iso несёт [America/New_York]
     assert(before.to_iso() == "2026-03-07T12:00:00-05:00[America/New_York]")
     assert(after.to_iso() == "2026-03-08T12:00:00-04:00[America/New_York]")
@@ -190,9 +190,9 @@ fn push_i64(b mut []u8, v i64) {
 test "TZif v2: parse синтетических байт → корректные rules" {
     ro tz = TimeZone.from_tzif("Test/Zone", build_tzif_v2())!!
     // До перехода (instant < 1_000_000) — std -18000
-    assert(tz.offset_at(Timestamp.from_unix_secs(999_999)).to_seconds() == -18_000)
+    assert(tz.offset_at(999_999.to_unix_seconds()).to_seconds() == -18_000)
     // После — dst -14400
-    assert(tz.offset_at(Timestamp.from_unix_secs(1_000_000)).to_seconds() == -14_400)
+    assert(tz.offset_at(1_000_000.to_unix_seconds()).to_seconds() == -14_400)
     assert(tz.to_str() == "Test/Zone")
 }
 

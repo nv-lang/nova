@@ -42,7 +42,7 @@ fn is_timeout_error(e any) -> bool => e is TimeoutError
 // 1. Тело укладывается в срок → нормальный проход, TimeoutError НЕ летит.
 test "within-budget: тело успевает — срок не срабатывает" {
     mut done = false
-    supervised(timeout: Duration.from_secs(30)) {
+    supervised(timeout: 30.to_seconds()) {
         spawn { Time.sleep(5) }
     }
     done = true
@@ -64,7 +64,7 @@ test "timeout fires: TimeoutError caught, sleep interrupted early" {
         caught_typed = is_timeout_error(e)
         0
     } {
-        supervised(timeout: Duration.from_millis(100)) {
+        supervised(timeout: 100.to_millis()) {
             spawn { Time.sleep(5000) }
         }
         99
@@ -86,7 +86,7 @@ test "deadline (absolute Monotonic) fires TimeoutError" {
         caught = true
         0
     } {
-        supervised(deadline: Monotonic.now() + Duration.from_millis(100)) {
+        supervised(deadline: Monotonic.now() + 100.to_millis()) {
             spawn { Time.sleep(5000) }
         }
         7
@@ -105,8 +105,8 @@ test "nested: inner deadline cannot extend outer" {
         caught = true
         0
     } {
-        supervised(timeout: Duration.from_millis(100)) {
-            supervised(timeout: Duration.from_secs(30)) {
+        supervised(timeout: 100.to_millis()) {
+            supervised(timeout: 30.to_seconds()) {
                 spawn { Time.sleep(5000) }
             }
         }
@@ -128,7 +128,7 @@ test "deadline+cancel: cancel earlier — no TimeoutError" {
         timed_out = true
         0
     } {
-        supervised(cancel: tok, timeout: Duration.from_secs(30)) {
+        supervised(cancel: tok, timeout: 30.to_seconds()) {
             spawn { Time.sleep(20); tok.cancel() }
             spawn { Time.sleep(5000) }
         }
@@ -147,7 +147,7 @@ test "deadline+cancel: deadline earlier — TimeoutError" {
         timed_out = true
         0
     } {
-        supervised(cancel: tok, timeout: Duration.from_millis(100)) {
+        supervised(cancel: tok, timeout: 100.to_millis()) {
             spawn { Time.sleep(5000); tok.cancel() }
         }
         5
@@ -165,7 +165,7 @@ test "zero timeout: immediate TimeoutError" {
         caught = true
         0
     } {
-        supervised(timeout: Duration.from_millis(0)) {
+        supervised(timeout: 0.to_millis()) {
             spawn { Time.sleep(5000) }
         }
         3
@@ -192,7 +192,7 @@ test "deadline cancels a spawned child's in-flight sleep (no leaked marker)" {
         caught = true
         0
     } {
-        supervised(timeout: Duration.from_millis(100)) {
+        supervised(timeout: 100.to_millis()) {
             spawn {
                 Time.sleep(3000)
                 // Reachable only if the child was NOT actually cancelled.

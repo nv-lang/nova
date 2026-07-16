@@ -1,9 +1,10 @@
 //! Plan 65 Ф.4: lexer-based migration tool — `Time.after(<arg>)` →
-//! `ChanReader.close_after(Duration.from_*(<arg>))`.
+//! `ChanReader.close_after(<arg>.to_millis())` / `.to_seconds()`.
 //!
-//! Rewrite rules (Plan 65 AD11):
-//!   `Time.after(<INT_LIT>)`           → `ChanReader.close_after(Duration.from_millis(<INT_LIT>))`
-//!   `Time.after(<FLOAT_LIT>)`         → `ChanReader.close_after(Duration.from_secs_f64(<FLOAT_LIT>))`
+//! Rewrite rules (Plan 65 AD11; forms updated Plan 200 Step 2 — `Duration.from_*`
+//! retracted in favor of the `to_*` fluent blanket, D410/D317 amend):
+//!   `Time.after(<INT_LIT>)`           → `ChanReader.close_after((<INT_LIT>).to_millis())`
+//!   `Time.after(<FLOAT_LIT>)`         → `ChanReader.close_after((<FLOAT_LIT>).to_seconds())`
 //!   `Time.after(<other-expression>)`  → leave as-is + emit comment
 //!                                       `// MIGRATE_MANUAL: Plan 65 — non-literal arg`
 //!                                       (CI dry-run gate exits 1 on this).
@@ -170,8 +171,8 @@ struct RewriteResult {
 ///
 /// Strategy: find `Ident("Time") Dot Ident("after") LParen <arg-tokens> RParen`
 /// patterns. The arg-tokens are scanned to detect:
-///   * exactly one IntLit  → wrap with Duration.from_millis(N)
-///   * exactly one FloatLit → wrap with Duration.from_secs_f64(N)
+///   * exactly one IntLit  → wrap with N.to_millis()
+///   * exactly one FloatLit → wrap with N.to_seconds()
 ///   * anything else        → emit MIGRATE_MANUAL comment, leave call.
 fn rewrite_nova(src: &str) -> Result<RewriteResult> {
     let tokens = match lex(src) {
@@ -250,14 +251,14 @@ fn rewrite_tokens(src: &str, tokens: &[Token]) -> Result<RewriteResult> {
                                                 match classification {
                                                     ArgKind::Int(lit_text) => {
                                                         out.push_str(&format!(
-                                                            "ChanReader.close_after(Duration.from_millis({}))",
+                                                            "ChanReader.close_after(({}).to_millis())",
                                                             lit_text
                                                         ));
                                                         changes += 1;
                                                     }
                                                     ArgKind::Float(lit_text) => {
                                                         out.push_str(&format!(
-                                                            "ChanReader.close_after(Duration.from_secs_f64({}))",
+                                                            "ChanReader.close_after(({}).to_seconds())",
                                                             lit_text
                                                         ));
                                                         changes += 1;
@@ -268,7 +269,7 @@ fn rewrite_tokens(src: &str, tokens: &[Token]) -> Result<RewriteResult> {
                                                         // comment on the same line.
                                                         out.push_str(&format!(
                                                             "/* MIGRATE_MANUAL: Plan 65 — non-literal Time.after arg; \
-                                                             rewrite manually to ChanReader.close_after(Duration.<...>) */ {}",
+                                                             rewrite manually to ChanReader.close_after(<expr>.to_millis()) */ {}",
                                                             &src[call_start..call_end]
                                                         ));
                                                         manual_markers += 1;
@@ -475,7 +476,7 @@ mod tests {
     fn rewrites_int_literal() {
         let src = "test \"t\" { let _ = Time.after(50) }\n";
         let r = rewrite_nova(src).unwrap();
-        assert!(r.text.contains("ChanReader.close_after(Duration.from_millis(50))"));
+        assert!(r.text.contains("ChanReader.close_after((50).to_millis())"));
         assert_eq!(r.changes, 1);
         assert_eq!(r.manual_markers, 0);
     }
@@ -484,7 +485,7 @@ mod tests {
     fn rewrites_float_literal() {
         let src = "let _ = Time.after(2.5)\n";
         let r = rewrite_nova(src).unwrap();
-        assert!(r.text.contains("ChanReader.close_after(Duration.from_secs_f64(2.5))"));
+        assert!(r.text.contains("ChanReader.close_after((2.5).to_seconds())"));
     }
 
     #[test]
@@ -509,7 +510,7 @@ let s = "Time.after(50)"  // string literal
 
     #[test]
     fn idempotent_on_already_migrated() {
-        let src = "let _ = ChanReader.close_after(Duration.from_millis(50))\n";
+        let src = "let _ = ChanReader.close_after((50).to_millis())\n";
         let r1 = rewrite_nova(src).unwrap();
         assert_eq!(r1.text, src);
         assert_eq!(r1.changes, 0);
@@ -521,14 +522,14 @@ let s = "Time.after(50)"  // string literal
         // mechanically so user can verify intent.
         let src = "let _ = Time.after(-1)\n";
         let r = rewrite_nova(src).unwrap();
-        assert!(r.text.contains("Duration.from_millis(-1)"));
+        assert!(r.text.contains("(-1).to_millis()"));
     }
 
     #[test]
     fn underscore_int_literal() {
         let src = "let _ = Time.after(10_000)\n";
         let r = rewrite_nova(src).unwrap();
-        assert!(r.text.contains("Duration.from_millis(10_000)"));
+        assert!(r.text.contains("(10_000).to_millis()"));
     }
 
     #[test]

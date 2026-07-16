@@ -10,5 +10,5 @@ test "Duration @times(NaN) → trap" {
     // NaN построен во runtime (0.0/0.0) — избегаем const-fold.
     ro z = 0.0
     ro nan = z / z
-    ro _ = 5.seconds() * nan            // ← trap: non-finite f64
+    ro _ = 5.to_seconds() * nan            // ← trap: non-finite f64
 }

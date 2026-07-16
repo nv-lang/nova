@@ -175,7 +175,7 @@ fn fetch_one(id str, latency_ms int, should_fail bool, idx int) Net Time -> Resu
 fn deadline_elapsed_ms(t0 Monotonic) Time -> int {
     ro now Monotonic = Monotonic.now()
     ro elapsed = now.elapsed_since(t0)
-    elapsed.as_millis() as int
+    elapsed.millis() as int
 }
 
 /// One source, raced against the SHARED absolute deadline via a REAL
@@ -194,7 +194,7 @@ fn fetch_guarded(source Source, shared_deadline Monotonic, idx int) Net Time Emi
     // checker apparently needs an expected-type hint (a declared LHS type,
     // or the call used directly as an argument, as in
     // std/concurrency/supervised_deadline_test.nv's
-    // `Monotonic.now() + Duration.from_millis(100)`) to resolve the return
+    // `Monotonic.now() + 100.to_millis()`) to resolve the return
     // type of this specific overloaded static-path call. Reproduced in
     // isolation (bare 5-line probe, no other code). Workaround: explicit
     // `Monotonic` annotation on every such binding, throughout this file.

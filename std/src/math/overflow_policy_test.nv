@@ -247,4 +247,38 @@ test "206.1: raw unary `-` — negation overflow panics on signed MIN" panics "n
 test "206.1: raw unary `-` — unsigned negation does NOT panic (still raw wraparound, D427 §R2)" {
     ro a u32 = 5
     ro _r = -a
+
+// Plan 200 Step 0 (D74 amend): `@clamp` — бланкет над `Ints`, вытесняет старый
+// конкретный `int @clamp` (std/runtime/defaults.nv). Multi-width + lo>hi edge.
+test "Step 0/D74: clamp — Ints-бланкет multi-width (i64/u32/i8), в диапазоне/выше/ниже" {
+    ro a i64 = 15
+    assert(a.clamp(0, 10) == 10)          // выше hi -> hi
+    ro b i64 = 5
+    assert(b.clamp(0, 10) == 5)           // в диапазоне -> сам
+    ro c i64 = -3
+    assert(c.clamp(0, 10) == 0)           // ниже lo -> lo
+
+    ro d u32 = 300
+    assert(d.clamp(0, 255) == 255)        // unsigned: выше hi -> hi
+    ro e u32 = 100
+    assert(e.clamp(50, 255) == 100)       // в диапазоне -> сам
+    ro f u32 = 10
+    assert(f.clamp(50, 255) == 50)        // ниже lo -> lo
+
+    ro g i8 = i8.MAX
+    assert(g.clamp(0, 100) == 100)        // i8-ширина: выше hi -> hi (не overflow)
+    ro h i8 = i8.MIN
+    assert(h.clamp(-100, 0) == -100)      // ниже lo -> lo
+}
+
+test "Step 0/D74: clamp — lo>hi edge (контракт 1:1 со старым int @clamp)" {
+    // lo>hi: `@ < lo` проверяется первым -> для @ в (hi, lo) результат = @ сам
+    // (не паника, не lo/hi) — тот же порядок проверок, что был у конкретного
+    // int @clamp до ретракта.
+    ro a i64 = 5
+    assert(a.clamp(10, 0) == 5)           // 5 не < 10 и не > 0 -> сам
+    ro b i64 = 20
+    assert(b.clamp(10, 0) == 0)           // 20 не < 10, но > 0 -> hi=0
+    ro c i64 = -5
+    assert(c.clamp(10, 0) == 10)          // -5 < 10 -> lo=10
 }

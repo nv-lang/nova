@@ -961,8 +961,8 @@ export fn[T Ints] T @saturating_mul(rhs T) -> T {
 //     unsigned members of a single `Ints` blanket (confirmed empirically,
 //     Plan 206.1 progress log). Reformulated as `rhs.negate() == 1` via the
 //     ALREADY-hardware-checked `@overflowing_sub` intrinsic (`0 - rhs`,
-//     receiver built from `rhs - rhs` to avoid a second generic-cast
-//     receiver) — for unsigned T this can never be `1` with `ovf == false`
+//     receiver built from `0 as T` (D227-safe: `0` is non-negative, the cast
+//     is valid for every Ints member) — for unsigned T this can never be `1` with `ovf == false`
 ///    (unsigned `checked_neg` only ever succeeds at 0), so the extra guard
 //     is provably a no-op for unsigned members, matching the plan's
 //     "unsigned div: только b==0-guard" design exactly, in ONE shared body.
@@ -981,7 +981,7 @@ export fn[T Ints] T @saturating_mul(rhs T) -> T {
 export fn[T Ints] T @checked_div(rhs T) -> Option[T] {
     if rhs == 0 { return None }
     if @ == T.MIN {
-        ro zero = rhs - rhs
+        ro zero = 0 as T
         ro (negated, ovf) = zero.overflowing_sub(rhs)
         if !ovf && negated == 1 { return None }
     }
@@ -996,7 +996,7 @@ export fn[T Ints] T @checked_div(rhs T) -> Option[T] {
 export fn[T Ints] T @checked_rem(rhs T) -> Option[T] {
     if rhs == 0 { return None }
     if @ == T.MIN {
-        ro zero = rhs - rhs
+        ro zero = 0 as T
         ro (negated, ovf) = zero.overflowing_sub(rhs)
         if !ovf && negated == 1 { return None }
     }
@@ -1009,7 +1009,7 @@ export fn[T Ints] T @checked_rem(rhs T) -> Option[T] {
 #stable(since = "0.1")
 export fn[T Ints] T @wrapping_div(rhs T) -> T {
     if @ == T.MIN {
-        ro zero = rhs - rhs
+        ro zero = 0 as T
         ro (negated, ovf) = zero.overflowing_sub(rhs)
         if !ovf && negated == 1 { return T.MIN }
     }
@@ -1022,7 +1022,7 @@ export fn[T Ints] T @wrapping_div(rhs T) -> T {
 #stable(since = "0.1")
 export fn[T Ints] T @wrapping_rem(rhs T) -> T {
     if @ == T.MIN {
-        ro zero = rhs - rhs
+        ro zero = 0 as T
         ro (negated, ovf) = zero.overflowing_sub(rhs)
         if !ovf && negated == 1 { return 0 as T }
     }
@@ -1033,7 +1033,7 @@ export fn[T Ints] T @wrapping_rem(rhs T) -> T {
 /// asymmetry). Unsigned: `None` unless `@ == 0` (negating any nonzero
 /// unsigned value has no representation). Both derived from the SAME
 /// `__builtin_sub_overflow`-backed `@overflowing_sub` flag (`0 - @`, receiver
-/// built from `@ - @` — always exactly representable, never overflows) — one
+/// built from `0 as T` — always exactly representable, never overflows) — one
 /// body is sound for both signednesses, no separate branch needed.
 #stable(since = "0.1")
 export fn[T Ints] T @checked_neg() -> Option[T] {
@@ -1053,3 +1053,20 @@ export fn[T Ints] T @wrapping_neg() -> T {
     ro (wrapped, _overflowed) = zero.overflowing_sub(@)
     wrapped
 }
+
+// Plan 200 Step 0 (D74 amend, владелец 2026-07-16): `clamp` над `Ints` — один
+// бланкет вместо ×10 per-width конкретных методов (та же экономия, что
+// checked_*/saturating_*/wrapping_* выше). Вытесняет старый конкретный
+// `int @clamp` (std/runtime/defaults.nv) — теперь i8..i64/u8..u64/int/uint все
+// получают `@clamp` через ЭТОТ бланкет. `f64 @clamp` НЕ входит (float ∉ Ints)
+// и остаётся отдельным конкретным методом в defaults.nv.
+
+/// `clamp` — ограничивает значение диапазоном `[lo, hi]`: при `@ < lo` -> `lo`;
+/// при `@ > hi` -> `hi`; иначе -> `@` без изменений. Контракт скопирован 1:1 со
+/// старого конкретного `int @clamp` (std/runtime/defaults.nv, до Plan 200 Step
+/// 0): порядок проверок фиксирован (`@ < lo` первым), поэтому при `lo > hi`
+/// метод НЕ паникует — просто ведёт себя по той же формуле (для `@` строго
+/// между `hi` и `lo` результат — необрезанный `@`).
+#stable(since = "0.1")
+export fn[T Ints] T @clamp(lo T, hi T) -> T =>
+    if @ < lo { lo } else if @ > hi { hi } else { @ }

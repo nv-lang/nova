@@ -96,7 +96,7 @@ export fn SnowflakeGen mut @next() Time -> Result[i64, SnowflakeError] {
         @sequence = @sequence + 1
         if @sequence >= 4096 {
             // Sequence overflow в одной ms — busy-wait до следующей ms.
-            // В production-runtime — Time.sleep(1.millis()), но bootstrap
+            // В production-runtime — Time.sleep(1.to_millis()), но bootstrap
             // не имеет sleep handler, поэтому assert.
             // Workaround: бампим last_ms.
             @last_ms = @last_ms + 1

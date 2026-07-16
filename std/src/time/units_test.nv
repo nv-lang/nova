@@ -17,15 +17,15 @@ import std.testing.handlers as th
 
 test "Timestamp.now() работает как раньше после переименования Time-опов" {
     with Time = th.fixed_ms(1_700_000_000_000) {
-        assert(Timestamp.now().as_unix_millis() == 1_700_000_000_000)
+        assert(Timestamp.now().unix_millis() == 1_700_000_000_000)
     }
 }
 
 test "Timestamp.now() — mut_clock тоже совместим" {
     with Time = th.mut_clock(1000 as u64) {
-        assert(Timestamp.now().as_unix_millis() == 1000)
+        assert(Timestamp.now().unix_millis() == 1000)
         Time.sleep(500)
-        assert(Timestamp.now().as_unix_millis() == 1500)
+        assert(Timestamp.now().unix_millis() == 1500)
     }
 }
 
@@ -35,10 +35,10 @@ test "Timestamp.now() — mut_clock тоже совместим" {
 // снизу — строгий (никогда не должен доспать МЕНЬШЕ запрошенного).
 test "Duration.@sleep() спит не меньше запрошенного (замер по Monotonic)" {
     ro t0 = Monotonic.now()
-    50.millis().sleep()
+    50.to_millis().sleep()
     ro t1 = Monotonic.now()
     ro elapsed = t1.elapsed_since(t0)
-    assert(elapsed.as_millis() >= 50)
+    assert(elapsed.millis() >= 50)
 }
 
 // `Duration.@sleep()` под mock: продвигает виртуальные часы `mut_clock`
@@ -46,9 +46,9 @@ test "Duration.@sleep() спит не меньше запрошенного (з�
 // зовёт переименованную `sleep`-операцию корректно (не сломан рефакторингом).
 test "Duration.@sleep() под mut_clock продвигает виртуальное время" {
     with Time = th.mut_clock(0 as u64) {
-        assert(Timestamp.now().as_unix_millis() == 0)
-        100.millis().sleep()
-        assert(Timestamp.now().as_unix_millis() == 100)
+        assert(Timestamp.now().unix_millis() == 0)
+        100.to_millis().sleep()
+        assert(Timestamp.now().unix_millis() == 100)
     }
 }
 
@@ -56,8 +56,8 @@ test "Duration.@sleep() под mut_clock продвигает виртуальн
 // положительной длительности) — доказывает ceil, не truncate.
 test "Duration.@sleep() округляет sub-ms длительность вверх под mock" {
     with Time = th.mut_clock(0 as u64) {
-        Duration.from_micros(500).sleep()   // 0.5ms → должно спать 1ms, не 0
-        assert(Timestamp.now().as_unix_millis() == 1)
+        500.to_micros().sleep()   // 0.5ms → должно спать 1ms, не 0
+        assert(Timestamp.now().unix_millis() == 1)
     }
 }
 
@@ -70,7 +70,7 @@ test "Duration.@sleep() округляет sub-ms длительность вв�
 // Это и есть детектор дефекта: до фикса default-путь возвращал
 // _nova_monotonic_ms() и тест падал бы (uptime ms << epoch ms).
 test "Timestamp.now() без with-обработчика — настоящее wall-clock время (не monotonic uptime)" {
-    ro ms = Timestamp.now().as_unix_millis()
+    ro ms = Timestamp.now().unix_millis()
     assert(ms > 1_700_000_000_000)
 }
 
@@ -79,5 +79,5 @@ test "Timestamp.now() без with-обработчика — настоящее 
 test "Monotonic.now() всё ещё монотонно растёт после фикса wall-clock" {
     ro t0 = Monotonic.now()
     ro t1 = Monotonic.now()
-    assert(t1.elapsed_since(t0).as_nanos() >= 0)
+    assert(t1.elapsed_since(t0).nanos() >= 0)
 }

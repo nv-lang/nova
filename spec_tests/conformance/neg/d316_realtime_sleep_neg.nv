@@ -11,7 +11,7 @@ module neg.d316_realtime_sleep_neg
 import std.time.duration
 
 #realtime fn d316_neg_rt_sleep() Time {
-    sleep(1.millis())
+    sleep(1.to_millis())
 }
 
 test "probe" {

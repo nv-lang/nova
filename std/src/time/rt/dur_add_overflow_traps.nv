@@ -7,6 +7,6 @@ module rt.dur_add_overflow_traps
 import std.time.duration
 
 test "Duration @plus overflow → trap" {
-    ro top = Duration.from_nanos(9_223_372_036_854_775_807)  // i64::MAX
-    ro _ = top + Duration.from_nanos(1)                       // ← trap
+    ro top = 9_223_372_036_854_775_807.to_nanos()  // i64::MAX
+    ro _ = top + 1.to_nanos()                       // ← trap
 }

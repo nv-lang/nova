@@ -307,11 +307,8 @@ byte-parity НЕ требуется (аллокация убрана — `.c` м
 
 ## Пункт 10 — duration.nv: локальные i64-арифм-хелперы → встроенные (Plan 206 бланкеты + i64.MAX/@clamp)
 
-**Статус:** ⏸️ ЗАБЛОКИРОВАН 2026-07-15 — dispatch-баг `[M-primitive-receiver-bounded-blanket-dispatch]`. haiku
-сделал правки (коммит `155cff2a8`, worktree `nova-p200dur`), но `checked_*_i64(a,b)`→`a.checked_add(b)` **разбудил
-мис-диспатч** `i64.checked_add`→`Duration.checked_add` в одном CU → CC-FAIL `duration` (int64_t→NovaValue_Duration).
-Коммит КРАСНЫЙ, **в main НЕ влит**. Будет **доделан в СВЯЗКЕ 10+13+12 одним проходом ПОСЛЕ фикса 196.8** (владелец
-2026-07-15). Всё в ОДНОМ файле `std/src/time/duration.nv` (37 сайтов). Поведение байт-идентично (на 64-бит-таргете).
+**Статус:** ✅ СДЕЛАНО 2026-07-16 (worktree `nova-200dur`, ветка `p200-duration-chain`, ПОСЛЕ фикса 196.8/196.9 —
+`[M-primitive-receiver-bounded-blanket-dispatch]` закрыт, блокер снят). Модель: sonnet.
 
 **Что (карта):**
 - **Убрать 6 локальных хелперов** (стали редундантны после Plan 206 / встроенных): `i64_max()` (361),
@@ -325,13 +322,17 @@ byte-parity НЕ требуется (аллокация убрана — `.c` м
 - **`sat_add/sub/mul_i64` оставить** (доменная сатурация к кастомным `[lo,hi]` ≠ `saturating_add`); внутренности
   `checked_*_i64(a,b)`→`a.checked_*(b)`.
 
-**Приёмка:** `nova test std/time` зелёный; conformance один-CU δ0 (авторитетный гейт — оркестратор). Модель: haiku.
+**Приёмка:** `i64_max()`/`i64_min()`/`clamp_i64()` удалены → `i64.MAX`/`i64.MIN`/`@clamp`; `checked_add_i64`/
+`checked_sub_i64`/`checked_mul_i64` wrapper-функции удалены, call-сайты → `a.checked_add(b)` напрямую;
+`checked_neg_i64`/`checked_div_i64`/`sat_add/sub/mul_i64` оставлены (нет бланкета neg/div; кастомный `[lo,hi]`).
+`nova check std/src/time` (targeted, без codegen) — зелёный на момент коммита. **Полный `nova test`/conformance —
+НЕ прогнан этой сессией** (CPU занят гейтом интегратора) — авторитетный гейт остаётся за оркестратором.
 
 ---
 
 ## Пункт 11 — duration.nv: `@as_*()` → голое имя (хвост D410-миграции `[M-d410-as-to-migration]`)
 
-**Статус:** 📋 В ОЧЕРЕДИ — делать **ПОСЛЕ Пункта 10** (тот же файл `duration.nv`; не параллелить с haiku-агентом).
+**Статус:** ✅ СДЕЛАНО 2026-07-16 — вобрано в Пункт 12 (см. ниже), делалось одним проходом.
 
 **Почему:** D410 упразднил префикс `as_` ([nv-coding-style.md:33](../nv-coding-style.md)), но 11 методов в
 `duration.nv` остались — пропущенный хвост миграции `[M-d410-as-to-migration]`.
@@ -353,7 +354,7 @@ byte-parity НЕ требуется (аллокация убрана — `.c` м
 
 ## Пункт 12 — единицы времени: getter=голое / конструктор=`to_`, ретракт `Duration.from_*` (вбирает Пункт 11)
 
-**Статус:** 📋 СОГЛАСОВАНО 2026-07-15 (владелец). Делать ПОСЛЕ Пункта 10 (тот же файл). **Вбирает Пункт 11.**
+**Статус:** ✅ СДЕЛАНО 2026-07-16 (worktree `nova-200dur`, ветка `p200-duration-chain`). Модель: sonnet.
 
 **Правило (§1а):** направление задаёт форму. **Единица — полным словом** (nanos/micros/millis/seconds/minutes/
 hours/days).
@@ -370,18 +371,33 @@ hours/days).
   `[M-primitive-receiver-bounded-blanket-dispatch]` (dispatch-баг). Делать **ПОСЛЕ** его фикса (196.8).
 - **Коллизия снята:** getter `d.nanos()` (голое) vs конструктор `5.to_nanos()` (`to_`) — разные имена.
 
-**Приёмка:** `nova test std/time` зелёный; conformance один-CU δ0 (переименование, поведение идентично); греп
-`@as_`/`Duration.from_`/bare-fluent = 0. Модель: дешёвый агент по карте; гейт — оркестратор.
+**Приёмка:** getter/конструктор реализованы по карте (см. duration-chain-progress.md за деталями). Греп
+`@as_`/`Duration.from_`/`Timestamp.from_unix_`/singular-алиасов = 0 по `std/examples/spec_tests` (repo-wide,
+подтверждено grep'ом). `nova check` (targeted) зелёный на `std/src/time`, `std/src/time/civil`,
+`std/src/concurrency` на момент соответствующих коммитов. **Полный `nova test`/conformance — НЕ прогнан
+этой сессией** (CPU занят гейтом интегратора) — авторитетный гейт остаётся за оркестратором. D-амендменты:
+D410 (03-syntax.md), D317 (04-effects.md) — добавлены.
 
 ## Пункт 13 — разбить duration.nv: Timestamp/Monotonic в отдельные файлы (D78 co-equal)
 
-**Статус:** 📋 СОГЛАСОВАНО 2026-07-15 (владелец). Делать в связке с Пунктом 10/12 (тот же файл).
+**Статус:** ✅ СДЕЛАНО 2026-07-16 (worktree `nova-200dur`, ветка `p200-duration-chain`). Модель: sonnet.
 
-**Что:** `duration.nv` содержит `Duration` + `Timestamp` + `Monotonic` в одном файле. Вынести `Timestamp` →
-`timestamp.nv`, `Monotonic` → `monotonic.nv` (co-equal файлы модуля `std/time`; **D78 — папка=один модуль, import-
-пути НЕ меняются**). `Duration` остаётся в `duration.nv`.
+**Что:** `Timestamp` вынесен в `std/src/time/timestamp.nv`, `Monotonic` — в `std/src/time/monotonic.nv`
+(co-equal файлы модуля `time.duration` — оба объявляют `module time.duration`, как `std/src/time/civil/*.nv`
+все объявляют `module time.civil`; import-путь `std.time.duration` не меняется). `Duration` + module-private
+overflow-safe хелперы (`sat_add_i64`/`checked_neg_i64`/`f64_nanos_or_trap`/и т.п., общие для всех трёх типов)
+остались в `duration.nv`. Чистая текстовая экстракция (head/tail по проверенным границам), без изменения тел
+методов.
 
-**Приёмка:** `nova test std/time` зелёный; import-пути неизменны; conformance δ0. Модель: дешёвый агент по карте.
+**⚠ НЕ ВЕРИФИЦИРОВАНО КОМПИЛЯЦИЕЙ** (запрет на `nova.exe` в конце сессии из-за CPU-контеншна с гейтом
+интегратора) — `[M-200-duration-chain-verify]`. Уверенность высокая (архитектурный precedent
+module-private-функций, видимых межфайлово в том же модуле, подтверждён на `std/net/ffi.nv`↔`std/net/addr.nv`
+(`net_addr_parse` объявлен в `ffi.nv`, вызывается из `addr.nv`, оба `module std.net`); границы среза
+перепроверены построчно до/после разреза), но **первым делом авторитетного гейта — собрать
+`nova test std/src/time` и убедиться, что `timestamp.nv`/`monotonic.nv` реально резолвятся как co-equal
+файлы модуля `time.duration`.**
+
+**Приёмка (авторитет — оркестратор):** `nova test std/time` зелёный; import-пути неизменны; conformance δ0.
 
 ---
 

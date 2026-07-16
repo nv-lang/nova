@@ -196,13 +196,13 @@ test "TimeOfDay.new: hour-25 / minute-60 / second-60 → InvalidField" {
 }
 
 test "TimeOfDay @plus: явный day-carry (не молчит)" {
-    ro (t, carry) = TimeOfDay.new(23, 30)!!.plus(1.hour())
+    ro (t, carry) = TimeOfDay.new(23, 30)!!.plus(1.to_hours())
     assert(t.hour() == 0 && t.minute() == 30)
     assert(carry == 1)
-    ro (t2, carry2) = TimeOfDay.new(0, 30)!!.minus(1.hour())
+    ro (t2, carry2) = TimeOfDay.new(0, 30)!!.minus(1.to_hours())
     assert(t2.hour() == 23 && t2.minute() == 30)
     assert(carry2 == -1)
-    ro (t3, carry3) = TimeOfDay.new(12, 0)!!.plus(30.minutes())
+    ro (t3, carry3) = TimeOfDay.new(12, 0)!!.plus(30.to_minutes())
     assert(t3.hour() == 12 && t3.minute() == 30 && carry3 == 0)
 }
 
@@ -223,19 +223,19 @@ test "DateTime: сборка + компоненты + Date @at сахар" {
 
 test "DateTime @plus(Duration): day-carry через границу года" {
     ro dt = Date.new(2026, Dec, 31)!!.at(TimeOfDay.new(23, 30)!!)
-    ro dt2 = dt.plus(1.hour())
+    ro dt2 = dt.plus(1.to_hours())
     assert(dt2.year() == 2027 && dt2.month() == Jan && dt2.day() == 1)
     assert(dt2.hour() == 0 && dt2.minute() == 30)
     // Обратно
-    ro dt3 = dt2.minus(1.hour())
+    ro dt3 = dt2.minus(1.to_hours())
     assert(dt3.compare(dt) == 0)
 }
 
 test "DateTime @duration_until (elapsed по plain-шкале)" {
     ro a = Date.new(2026, Jul, 10)!!.at_midnight()
     ro b = Date.new(2026, Jul, 11)!!.at(TimeOfDay.new(6, 0)!!)
-    assert(a.duration_until(b) == 30.hours())
-    assert(b.duration_until(a) == (Duration.from_nanos(0) - 30.hours()))
+    assert(a.duration_until(b) == 30.to_hours())
+    assert(b.duration_until(a) == (0.to_nanos() - 30.to_hours()))
 }
 
 test "DateTime compare: дата приоритетнее времени" {

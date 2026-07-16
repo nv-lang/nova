@@ -87,7 +87,7 @@ export fn DateTime @weekday() -> Weekday => @date.weekday()
 // Арифметика: Duration (elapsed, инстант-семантика с day-carry).
 // Period-арифметика (календарная) — в period.nv (Ф.2).
 //
-// Wall-vs-elapsed (D320 R4): `dt.plus(Duration.from_hours(24))` — ровно
+// Wall-vs-elapsed (D320 R4): `dt.plus(24.to_hours())` — ровно
 // 24h elapsed; `dt.plus(Period.of_days(1))` — та же wall-time завтра
 // (различие проявляется на Zoned через DST; для plain DateTime обе
 // формы совпадают, но типовая дисциплина едина по ladder).
@@ -98,7 +98,7 @@ export fn DateTime @weekday() -> Weekday => @date.weekday()
 /// # Examples
 /// ```nova
 /// ro dt = Date.new(2026, Dec, 31)!!.at(TimeOfDay.new(23, 30)!!)
-/// ro dt2 = dt.plus(1.hour())
+/// ro dt2 = dt.plus(1.to_hours())
 /// assert(dt2.year() == 2027 && dt2.hour() == 0)
 /// ```
 #stable(since = "0.1")
@@ -110,7 +110,7 @@ export fn DateTime @plus(d Duration) -> DateTime {
 /// Сдвиг назад на Duration.
 #stable(since = "0.1")
 export fn DateTime @minus(d Duration) -> DateTime =>
-    @plus(Duration.from_nanos(0) - d)
+    @plus(0.to_nanos() - d)
 
 /// Elapsed-разность двух plain DateTime (`other - self`), как если бы оба
 /// были на одной непрерывной шкале (день = 86400s, Q5).
@@ -121,7 +121,7 @@ export fn DateTime @minus(d Duration) -> DateTime =>
 export fn DateTime @duration_until(other DateTime) -> Duration {
     ro day_diff = other.date().to_epoch_day() - @date.to_epoch_day()
     ro nano_diff = other.time().to_nanos_of_day() - @time.to_nanos_of_day()
-    Duration.from_days(day_diff) + Duration.from_nanos(nano_diff)
+    day_diff.to_days() + nano_diff.to_nanos()
 }
 
 
