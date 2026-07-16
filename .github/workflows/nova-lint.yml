@@ -21,13 +21,15 @@ name: nova-lint
 #     конвенционный дрейф в std/ на PR (не только W_LEADING_BINOP).
 #   - Полный `nova lint spec_tests` (ВСЕ правила) — ЖЁСТКИЙ ГЕЙТ:
 #     подтверждено 0 находок. `neg/`-фикстуры (намеренно неканоничный код
-#     EXPECT_COMPILE_ERROR) автоматически скипаются lint-walker'ом
-#     (nova-cli/src/main.rs cmd_lint: `is_neg_fixture`), гейтить их не надо.
-#   - Самотест реестра (conv_pos.nv/conv_clean.nv, nova_tests/lint/) —
-#     ЖЁСТКИЙ ГЕЙТ: регресс-гвард на сам МЕХАНИЗМ (правило перестало
-#     срабатывать / фикстура сломана), не на корпус. conv_pos.nv НАМЕРЕННО
-#     содержит находки — исключается из корпусных гейтов через
-#     `--skip nova_tests/lint`.
+#     EXPECT_COMPILE_ERROR) и `lint/`-фикстуры (spec_tests/conformance/lint/,
+#     Plan 198) автоматически скипаются lint-walker'ом (nova-cli/src/main.rs
+#     cmd_lint: `is_neg_fixture` / `is_lint_fixture`), гейтить их не надо.
+#   - Самотест реестра (conv_pos.nv/conv_clean.nv,
+#     spec_tests/conformance/lint/) — ЖЁСТКИЙ ГЕЙТ: регресс-гвард на сам
+#     МЕХАНИЗМ (правило перестало срабатывать / фикстура сломана), не на
+#     корпус. conv_pos.nv НАМЕРЕННО содержит находки — вызывается напрямую
+#     по точному пути к файлу, что обходит авто-скип `is_lint_fixture`
+#     (тот действует только при рекурсивном обходе директории).
 #   - Полный `nova lint nova_tests` — НЕ гейт (`continue-on-error`):
 #     legacy-корпус (полу-сломанный, дублированный, помечен на удаление —
 #     см. spec_tests/nova.toml) несёт pre-existing находки по правилам вне
@@ -106,15 +108,15 @@ jobs:
       - name: conv_pos.nv must still trigger findings (registry fires)
         run: |
           set +e
-          ./nova-cli/target/release/nova lint nova_tests/lint/conv_pos.nv
+          ./nova-cli/target/release/nova lint spec_tests/conformance/lint/conv_pos.nv
           code=$?
           set -e
           if [ "$code" -eq 0 ]; then
-            echo "::error::nova_tests/lint/conv_pos.nv expected lint findings (exit 1) but got exit 0 — a conv rule stopped firing (see nova_tests/lint/conv_pos.nv header for the expected-findings list)"
+            echo "::error::spec_tests/conformance/lint/conv_pos.nv expected lint findings (exit 1) but got exit 0 — a conv rule stopped firing (see spec_tests/conformance/lint/conv_pos.nv header for the expected-findings list)"
             exit 1
           fi
       - name: conv_clean.nv must stay clean (no false positives)
-        run: ./nova-cli/target/release/nova lint nova_tests/lint/conv_clean.nv
+        run: ./nova-cli/target/release/nova lint spec_tests/conformance/lint/conv_clean.nv
 
   nova-lint-nova-tests-full-debt:
     name: nova lint nova_tests full (informational — legacy corpus debt, non-blocking)
