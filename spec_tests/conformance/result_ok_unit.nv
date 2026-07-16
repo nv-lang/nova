@@ -1,0 +1,63 @@
+// [M-result-ok-unit-inference-mismatch] pinning-тест (2026-07-16, найден при
+// lint-sanitation/починке W_RESULT_DISCARDED в std/tls/stream.nv) — `.ok()` на
+// `Result[(), E]` (unit-ok) раньше типизировался ЧЕКЕРОМ как `Option[E]`
+// (Option ОШИБКИ!) вместо `Option[()]`, хотя codegen корректно эмитил вызов
+// `Result_method_ok_nova_unit_<E>`, возвращающий `NovaOpt_nova_unit` →
+// CC-FAIL «initializing NovaOpt_<E>_p with NovaOpt_nova_unit».
+//
+// Корень: `resolved_to_typeref` (compiler-codegen/src/types/mod.rs) — базовый
+// case `R::Unit => return None` (top-level bail, само по себе безобидно), НО
+// та же функция вызывается ПОЗИЦИОННО внутри `R::Named`-арма через
+// `.filter_map(...)` для перестройки generics-листа (`Result[T, E]` →
+// `args: [T, E]`). `filter_map` ТИХО РОНЯЛ arg, резолвящийся в `None` — так
+// `Result[(), E]` (`args: [R::Unit, R::Named(E)]`) терял T-слот и генерик-лист
+// схлопывался в ОДНОЭЛЕМЕНТНЫЙ `[E]`, сдвигая E НА МЕСТО T. Даунстрим
+// генерик-subst (`build_recv_subst`/`.ok()`: `Result[T,E] -> Option[T]`)
+// биндил `T→E` (структурный unify по arity падал → fallback на позиционный
+// zip, который просто спаривал T с единственным уцелевшим arg) → `.ok()`
+// типизировался как `Option[E]`. Фикс — `()` ПРЕДСТАВИМ (`TypeRef::Unit`),
+// round-trip'им вместо дропа: `R::Unit => TypeRef::Unit(span)`.
+//
+// Пиннинг (docs/test-conventions.md «Пиннинг-тест для silent-wrong-value
+// багов»): assert проверяет КОНКРЕТНОЕ значение в точке бага (не только
+// round-trip) — под старым (баговым) кодом эти тесты падали бы CC-FAIL, не
+// просто неверным значением, но норма та же: явная проверка, не декорация.
+module spec_tests.conformance
+
+type ResultOkUnitErr enum
+  | Bad
+
+fn result_ok_unit_maybe_fail(x int) -> Result[(), ResultOkUnitErr] {
+    if x < 0 { Err(ResultOkUnitErr.Bad) } else { Ok(()) }
+}
+
+test "unit-ok Result.ok(): Ok(()) даёт Some(()), не Option ошибки (pinning)" {
+    ro r = result_ok_unit_maybe_fail(1)
+    ro o = r.ok()
+    assert(o == Some(()))
+}
+
+test "unit-ok Result.ok(): Err даёт None" {
+    ro r = result_ok_unit_maybe_fail(-1)
+    ro o = r.ok()
+    assert(o == None)
+}
+
+// Регресс-защита от перекоса в другую сторону (D325 сосед — `.ok()` на
+// НЕ-unit ok-типе, `Result[[]u8, E]`, работал штатно и ДО фикса; остаётся
+// корректным ПОСЛЕ).
+fn result_ok_unit_maybe_bytes(x int) -> Result[[]u8, ResultOkUnitErr] {
+    if x < 0 { Err(ResultOkUnitErr.Bad) } else { Ok([1 as u8, 2 as u8]) }
+}
+
+test "non-unit ok-type Result.ok(): регресс-защита ([]u8 payload)" {
+    ro r = result_ok_unit_maybe_bytes(1)
+    ro o = r.ok()
+    assert(o == Some([1 as u8, 2 as u8]))
+}
+
+test "non-unit ok-type Result.ok(): Err даёт None" {
+    ro r = result_ok_unit_maybe_bytes(-1)
+    ro o = r.ok()
+    assert(o == None)
+}
