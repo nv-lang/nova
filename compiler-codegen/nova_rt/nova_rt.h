@@ -406,7 +406,7 @@ static inline int nova_f32_shortest(nova_f32 v, char* buf) {
  *
  * Literal C symbol name (NO `nova_` prefix) — [D282](../../spec/decisions/
  * 08-runtime.md#d282) `extern "C" fn` contract: the `.nv`-side declaration
- * (`extern "C" fn fmt_f64_into(...)`) calls this exact name, resolved purely
+ * (`extern "C" fn f64_fmt_into(...)`) calls this exact name, resolved purely
  * via header visibility (nova_rt.h is `#include`d into every generated C
  * translation unit — no separate forward-declaration emitted by codegen for
  * `extern "C" fn`, Plan 91.12 Ф.-1). Kept `static inline` (like every other
@@ -427,7 +427,7 @@ static inline int nova_f32_shortest(nova_f32 v, char* buf) {
  * number of bytes actually written. `tmp[400]` covers the worst case: a
  * `%.*f` render of `DBL_MAX` (~309 integer digits) at the widest clamped
  * precision (40) plus sign/decimal-point — comfortably under 400. */
-static inline nova_int fmt_f64_into(uint8_t* buf, nova_int cap, double v, nova_int kind, nova_int prec) {
+static inline nova_int f64_fmt_into(uint8_t* buf, nova_int cap, double v, nova_int kind, nova_int prec) {
     char tmp[400];
     int n;
     if (kind == 1) {

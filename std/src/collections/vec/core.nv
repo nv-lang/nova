@@ -108,6 +108,18 @@ export fn Vec[T].new(cap int = 0) -> Self
     requires cap >= 0
     => { data: alloc_buf[T](cap.max(1)), len: 0, cap }
 
+/// VIEW-форма (владелец 2026-07-17): zero-copy read-only вид над чужим
+/// буфером — `cap == len` (не растёт), возврат `ro Self` (L2: push/index-
+/// write = compile error). Арность-сиблинг `new(cap)` (0/1-арг) и
+/// `new(ptr,len,cap)` (3-арг owned). `unsafe fn` (D216 §8, Rust-парити
+/// `slice::from_raw_parts`): call-сайт несёт обязательство — источник
+/// ПЕРЕЖИВАЕТ view (для GC-буфера поле data держит его reachable), запись
+/// через view запрещена контрактом источника. Каст `*T → *mut T` спрятан в
+/// теле — ro-возврат не даёт им воспользоваться.
+export unsafe fn Vec[T].new(ptr *T, len int) -> ro Self
+    requires len >= 0
+    => { data: unsafe { ptr as *mut T }, len, cap: len }
+
 /// Build a `Vec[T]` directly from its three raw components — the element
 /// buffer pointer, the live-element count, and the allocated capacity.
 ///
@@ -157,28 +169,12 @@ export fn Vec[T].new(ptr *mut T, len int, cap int) -> Self
     requires len >= 0 && cap >= len
 => { data: ptr, len, cap }
 
-/// Consume this `Vec[T]`, surrendering ownership of its raw element buffer and
-/// returning the writable `*mut T` data pointer. The exact inverse of
-/// `from_raw_parts` and the analogue of Rust's `Vec::into_raw_parts` (here just
-/// the pointer; `len`/`cap` must be snapshotted via `@len()`/`@cap()` BEFORE
-/// the call, since the receiver is consumed).
-///
-/// This is the *only* sanctioned way for another module to absorb a `Vec`'s
-/// backing allocation without a copy: the `consume` receiver discharges the
-/// Vec's ownership (D133), and the returned `*mut T` lets the new owner reuse
-/// the buffer in place. Used by `unsafe { bytes.into_str_unchecked() }`
-/// (`[]u8 consume @into_str_unchecked()`, std/runtime/string/core.nv) to steal
-/// a `[]u8`'s buffer into a `str` (zero-copy when spare capacity holds the NUL
-/// terminator).
-///
-/// # Contract / unsafety
-/// The returned pointer aliases the (now-consumed) buffer; the caller becomes
-/// its sole owner and is responsible for its lifetime. For a GC-tracked buffer
-/// the pointer keeps the allocation reachable as long as the new owner holds
-/// it. Dereferencing still needs `unsafe { }` (raw pointer). Yielding the
-/// pointer value is itself safe — it is not a dereference — so no `unsafe`
-/// wraps the `=> @data` body.
-export fn Vec[T] consume @into_raw() -> *mut T => @data
+// (`consume @into_raw()` ретрактирован 2026-07-16, владелец: передача
+// владения буфером выражается consume-ресивером ПОТРЕБИТЕЛЯ (напр. `[]u8
+// consume @into_str_unchecked()`, runtime/string/core.nv), а указатель
+// берётся обычным `mut @ptr()` (access.nv) — отдельный consume-посредник
+// был лишней сущностью. Обратная операция осталась: `Vec[T].new(ptr, len,
+// cap)` — конструктор-поглотитель.)
 
 /// Build a `Vec[T]` by copying every element of an iterable source — a
 /// `clone`-like **conversion** of an existing collection.
