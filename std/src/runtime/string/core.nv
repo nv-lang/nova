@@ -183,7 +183,7 @@ fn str.alloc_copy(src *u8, n int) -> Self
 // (per-overload энфорс): сейчас A11 ключует статики (тип,имя) БЕЗ арности —
 // атрибут потребовал бы unsafe у safe `str.new()` 0-арг (живой сайт: d372-
 // фикстура conformance). Добавить атрибут ВМЕСТЕ с фиксом карты.
-fn str.wrap_owned(buf *u8, len int) -> Self {
+fn str.new(buf *u8, len int) -> Self {
     str { ptr: buf, len }
 }
 
@@ -272,7 +272,7 @@ export unsafe fn []u8 consume @into_str_unchecked() -> str {
     // `str.new(buf *u8, len)` (arg-binding не сужает *mut→*ro при подборе
     // оверлоада — см. E_UNKNOWN_STATIC_METHOD-фолбэк, вскрыто 2026-07-17).
     ro buf = @ptr()
-    str.wrap_owned(buf, n)
+    str.new(buf, n)
 }
 
 // Plan 176 Ф.0.5 (D322, D325): fallible byte→str decode.

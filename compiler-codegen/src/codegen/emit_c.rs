@@ -39112,11 +39112,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // last-wins проблему когда ≥2 типов имеют одноимённый
                     // static с разной сигнатурой.
                     let key = (recv_seg.clone(), method_name.clone());
+                    if std::env::var("NOVA_DEBUG_STATIC").is_ok() && method_name == "new" && recv_seg == "str" {
+                        eprintln!("[DEBUG_STATIC] key={:?} found={:?}", key, self.method_overloads.get(&key));
+                    }
                     if let Some(overloads) = self.method_overloads.get(&key).cloned() {
                         // Только static-overloads (is_instance == false).
                         let static_overloads: Vec<MethodSig> = overloads.into_iter()
                             .filter(|s| !s.is_instance)
                             .collect();
+                        if std::env::var("NOVA_DEBUG_STATIC").is_ok() && method_name == "new" && recv_seg == "str" {
+                            eprintln!("[DEBUG_STATIC] static_overloads={:?}", static_overloads);
+                        }
                         if !static_overloads.is_empty() {
                             // [M-172.14-methods-byref]: большой ro value-struct
                             // аргумент static-метода — RefArg-обёртка (mirror
@@ -39232,6 +39238,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             for a in args {
                                 arg_types.push(self.infer_expr_c_type(a.expr()));
                                 arg_strs.push(self.emit_expr(a.expr())?);
+                            }
+                            if std::env::var("NOVA_DEBUG_STATIC").is_ok() && method_name == "new" && recv_seg == "str" {
+                                eprintln!("[DEBUG_STATIC] arg_types={:?} call_id={:?} resolved={:?}",
+                                    arg_types, call_id, self.resolved_callees.get(&call_id));
                             }
                             // Single-overload: short-circuit.
                             let chosen = if static_overloads.len() == 1 {
