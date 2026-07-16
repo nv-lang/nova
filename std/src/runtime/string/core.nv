@@ -63,22 +63,16 @@ export extern "nova" fn str @hash() -> u64
 // priv fields `ptr *u8` / `len int`; this method's receiver is `str`, so it has
 // type-method priv access (privacy is type-based, not module-based) and can read
 // `@ptr` / `@len` (the fields) directly. The zero-copy view is built via the
-// public cross-type bridge `Vec[u8].new(ptr, len, cap)` 3-arg overload with
-// `cap == len` (cap == len signals read-only / no growth, matching the retired
-// nova_str_as_bytes). The `ro` binding on the result enforces L2 read-only — a
-// push/index-write on the view is a compile error (E_*), preserving the str
-// buffer immutability contract (R8). `@ptr` is `*u8` (str's ro pointee); the
-// 3-arg `new` param is `*mut T` directly (D372-amend1 fold, [M-vec-new-static-
-// arity-overload] — closed 2026-07-12), so the call site casts explicitly
-// (`unsafe { @ptr as *mut u8 }`) — but the `ro []u8` return type still forbids
-// any write through the resulting view.
+// 2-arg VIEW-overload `[]u8.new(ptr *u8, len)` (владелец 2026-07-17): `unsafe
+// fn`, `cap == len`, `-> ro` — call-сайт несёт unsafe-обязательство (источник
+// переживает view), каст в *mut спрятан в new, а `ro []u8`-возврат запрещает
+// любую запись через view (L2), сохраняя иммутабельность str-буфера (R8).
+// Прежняя форма — 3-арг `Vec[u8].new(@ptr as *mut u8, n, n)` с явным кастом.
 // `@len` is spelled `@len()` (the method, = `nova_str_byte_len` = the `len`
 // field, O(1)): the bare field read `@len` trips D117 (E_SIZE_ACCESSOR_FIELD —
 // size-like accessors are method-only). `@ptr` is not a size accessor, so the
 // direct priv-field read is allowed.
-export fn str @bytes() -> ro []u8 {
-    Vec[u8].new(unsafe { @ptr as *mut u8 }, @byte_len(), @byte_len())
-}
+export fn str @bytes() -> ro []u8 => unsafe { []u8.new(@ptr, @byte_len()) }
 
 // Raw pointer to the first byte of the UTF-8 data (like Rust `str::as_ptr`).
 // The pointer is valid for @byte_len() bytes. Caller must not write through it
@@ -162,12 +156,14 @@ fn str.alloc_copy(src *u8, n int) -> Self {
 // retired statics; only the receiver moved from a `bytes []u8` PARAMETER to
 // the implicit `@` receiver.
 
-// Module-private: wrap an already-owned, NUL-terminated buffer as a str value
-// (zero-copy, no allocation/copy). Receiver `str` ⇒ type-based privacy to
-// construct `str{...}` directly (Plan 139.1/D220, same rationale as
-// `str.alloc_copy` above) — needed because `[]u8 @into_str_unchecked()`
-// (below) has receiver `[]u8`, not `str`, so it cannot build the literal itself.
-fn str.wrap_owned(buf *mut u8, len int) -> Self {
+// Module-private ctor-overload (арность-сиблинг `str.new()` выше; канон
+// «конструктор-поглотитель = Type.new», ex-`wrap_owned`, владелец 2026-07-16):
+// wrap an already-owned, NUL-terminated buffer as a str value (zero-copy, no
+// allocation/copy). Receiver `str` ⇒ type-based privacy to construct
+// `str{...}` directly (Plan 139.1/D220, same rationale as `str.alloc_copy`
+// above) — needed because `[]u8 @into_str_unchecked()` (below) has receiver
+// `[]u8`, not `str`, so it cannot build the literal itself.
+fn str.new(buf *mut u8, len int) -> Self {
     str { ptr: buf, len }
 }
 
@@ -240,14 +236,16 @@ export fn []u8 @to_str_lossy() -> str {
 // Plan 199 Ф.3 (D418, retracts D26 §Nul-termination): a `str` no longer
 // reserves a trailing NUL, so there is nothing to write past `len` and no
 // `cap > len` room requirement. The stolen buffer is ALWAYS reused in place
-// (`@into_raw()` + `str.wrap_owned`), regardless of capacity — the former
+// (`@ptr()` + `str.new(buf, len)`), regardless of capacity — the former
 // `cap == len` alloc+copy fallback (which existed solely to make room for the
 // terminator) is gone. `str` is a pure `ptr[len]` view over the consumed bytes.
+// (2026-07-16, владелец: `Vec @into_raw()` ретрактирован — передача владения
+// живёт ЗДЕСЬ, в consume-ресивере; указатель берётся обычным `mut @ptr()`.)
 export unsafe fn []u8 consume @into_str_unchecked() -> str {
     ro n = @len()
-    // Consume self, taking ownership of its raw buffer, and wrap it directly.
-    mut buf = @into_raw()
-    str.wrap_owned(buf, n)
+    // Consume self discharges ownership; the raw buffer pointer wraps directly.
+    mut buf = @ptr()
+    str.new(buf, n)
 }
 
 // Plan 176 Ф.0.5 (D322, D325): fallible byte→str decode.
