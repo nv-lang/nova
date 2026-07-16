@@ -53,9 +53,9 @@
 | 1 | Резолв функции → `FnDecl` | чекер-резолверы + `external_registry` (кросс-мод) | нет | ⚠ generic-static+кросс-мод неполон |
 | 2 | Тип ВОЗВРАТА | `resolved_types` ← 114 веток | **ДА = 114 (196.2)** | 🔄 W1 идёт |
 | 3 | Аргументы (arg↔param) | `callnorm`/`argbind` | нет | ⚠ зависит от (1) |
-| 4 | Generic-аргументы (вывод type-arg) | generic-инференс чекера + `callnorm` | нет | ⚠ gaps (generic-static не пробрасывает type-arg; `[M-153-vec-of-variadic]`) |
-| 5 | Default-арги | `callnorm` backfill (`:485`) | нет | 🔴 generic-static+кросс-мод (`[M-vec-new-cap-default-arg-backfill]`, чинится) |
-| 6 | Generic default-арги | пересечение (4)+(5) | нет | 🔴 `Vec.new(cap int=0)` — чинится + регресс-тест на пересечение |
+| 4 | Generic-аргументы (вывод type-arg) | generic-инференс чекера + `callnorm` | нет | ⚠ method-turbofish (`obj.method[U](...)`) × default-arg крашил (ICE) — **закрыто 2026-07-16** (guard в `try_normalize_call`, см. 196.5-facet-c-map §6); свободный free-fn overload-arity gap открыт (`[M-196-freefn-arity-overload-default-ret-mismatch]`) |
+| 5 | Default-арги | `callnorm` backfill (`:485`) | нет | ✅ generic-static+кросс-мод ЗАКРЫТО 2026-07-12 (`[M-vec-new-cap-default-arg-backfill]`, main `bdf880c10`/`6d0c24447`, Plan 200 п.1) — сверено по коду 2026-07-16, было стале здесь |
+| 6 | Generic default-арги | пересечение (4)+(5) | нет | ✅ `Vec.new(cap int=0)` + HashMap/Queue/Set/StringBuilder/WriteBuffer ЗАКРЫТО тем же коммитом (d372_generic_static_default_cap.nv) — сверено 2026-07-16, было стале здесь |
 
 **Строки 3-6 (args/generic-args/defaults/generic-defaults) = сиблинг-окно `callnorm`/`argbind`, НЕ в 114**, и
 ВСЕ зависят от строки 1 (резолв): без `FnDecl` нет ни аргументов, ни default'ов. **Приватные (форма)** —
