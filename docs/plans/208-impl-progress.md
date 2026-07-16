@@ -7,7 +7,7 @@ main). Модель: sonnet. Суб-агенты НЕ спавнились (пр
 верификация облегчена: одна таргет-фикстура вместо широких прогонов; полный
 `nova test`/conformance — гейт оркестратора, не мой).
 
-## Статус на момент ЭТОГО чекпоинта (шаг 2/N): Ф.0/Ф.1 были в main; Ф.2 std-сигнатуры (шаг 1) + emit_c.rs диспатч (шаг 2, ЭТОТ коммит) — СДЕЛАНЫ и таргет-верифицированы; json.nv/@display_fmt-фикстуры — ЕЩЁ НЕ мигрированы (шаг 3, следующий)
+## Статус на момент ЭТОГО чекпоинта (шаг 3/N): шаги 1+2 сделаны; шаг 3 (json.nv + d419→d422 фикстуры + display_fmt-остатки по всему репо) — СДЕЛАН, ЭТОТ коммит. Остаётся: Ф.4 (снос legacy conv.h-путей туда, где реально не тронуто) + широкая верификация оркестратором.
 
 ### Решение владельца по СТОП-кандидату (получено, 2026-07-16)
 
@@ -272,48 +272,117 @@ assert'а в `d419_display_fmt_dispatch.nv` = легитимная миграц�
   целиком в каждом чекпоинте; авторитетный гейт = оркестраторский полный
   conformance).
 
-### Ф.2 шаг 3 — ОСТАЁТСЯ (json.nv + d419-фикстуры миграция на D422)
+### Ф.2 шаг 3 (ЭТОТ коммит) — json.nv + d419→d422 фикстуры мигрированы; display_fmt-остатки по всему репо добиты
 
-- `spec_tests/conformance/d419_display_fmt_dispatch.nv` — `TaggedD419
-  @display_fmt(mut f Fmt)` + `Plain @display(mut w Write)` — ОБА сломаны
-  сигнатурой (Write убран, @display_fmt-путь снесён). План миграции 1:1
-  (тесты НЕ ослабляются):
-  - `TaggedD419` → ОДИН `@display(mut f Fmt)`, тело = union старого
-    `@display_fmt` + учёт `f.alternate()`/`f.precision()` (см. разбор ниже).
-  - `Plain` → `@display(mut f Fmt) { f.write(@s.bytes()) }`.
-  - Ожидаемые assert'ы, ТРЕБУЮЩИЕ пересмотра (не техническая ошибка, а
-    легитимное изменение семантики D419→D422, ОДОБРЕНО владельцем
-    2026-07-16 — см. «Решение владельца» в шапке чекпоинта):
-    - `"${p:.3}" == "abc"` (`Plain{s: "abcdef"}`, precision truncates
-      externally под D419) — под D422 (precision auto-truncate ДРОПНУТ для
-      composite/user-type ветки — реализовано в шаге 2, `precision_consumed`
-      теперь безусловно `true` в `emit_format_spec_value`'s "else" ветке)
-      ожидание МЕНЯЕТСЯ на `"${p:.3}" == "abcdef"` (БЕЗ обрезки — `Plain`
-      никогда не читает `f.precision()`, и компилятор больше не обрезает
-      СНАРУЖИ композит-путь). Owner-approved, реализовать при миграции
-      фикстуры.
-    - `"${t:>4}" == "   x"` (auto-pad) — остаётся зелёным (внешний
-      `nova_fmt_pad`, не меняется — подтверждено изолированным смоуком в
-      шаге 2, тот же механизм).
-    - `"${t:#}"`/`"${t:.3}"` (TaggedD419 читает `f.alternate()`/
-      `f.precision()` сама в своём объединённом `@display`) — остаются
-      зелёными (тип сам решает, `FmtCtx.rich` доносит обе оси корректно —
-      подтверждено smoke-тестом в шаге 2 на структурно эквивалентном коде).
-  - Owner-note: при переименовании — заголовок теста ("D419: ...") и,
-    возможно, имя файла (`d419_display_fmt_dispatch.nv` →
-    `d422_unified_display_dispatch.nv`?) переписать под D422-ожидание,
-    чтобы имя не врало про ретрактированный D419 (явно запрошено
-    владельцем).
-  - `spec_tests/conformance/neg/d419_unknown_spec_neg.nv` — `@display_fmt`
-    → `@display(mut f Fmt)`, EXPECT_COMPILE_ERROR не меняется (парсер
-    отвергает `:zz` до типов); возможно тоже переименовать файл под D422.
-- `std/src/encoding/json.nv:902` `@display_fmt` → `@display(mut f Fmt)`
-  (тело идентично: `if f.alternate() { f.write(@to_str_pretty().bytes()) }
-  else { f.write(@to_str().bytes()) }`).
-- `std/src/encoding/json_test.nv:208` — тест-имя/комментарий "D419:
-  ...(@display_fmt)" → переименовать под D422, assert'ы (`${v:#}` /
-  `${v}`) остаются идентичными (JsonValue ТЕПЕРЬ имеет `@display`
-  напрямую, не через отдельный display_fmt-хук — то же поведение).
+**1. `std/src/encoding/json.nv`** — `JsonValue.@display_fmt(mut f Fmt)` →
+`#impl(Display) fn JsonValue @display(mut f Fmt)` (тело идентично по
+логике, `.bytes()` добавлен на оба `f.write(...)` — `@write` теперь
+`[]u8`). Doc-comment переписан: больше не "D419 first consumer", а "the ONE
+required Display primitive… was the D419-era optional hook". `#impl(Display)`
+добавлен явно (соответствует прецеденту примитивов в `protocols.nv`).
+**`std/src/encoding/json_test.nv`** — тест-заголовок "D419: … (@display_fmt)"
+→ "D422: … (unified @display)"; assert'ы (`${v:#}`/`${v}`) НЕ изменились
+(то же поведение — теперь через ОДИН метод, было через
+`@display_fmt`-хук + default-`@display`).
+
+**2. `spec_tests/conformance/`** — переименовал ФАЙЛЫ (не только контент, per
+запрос владельца — имя не должно врать про ретрактированную семантику):
+- `d419_display_fmt_dispatch.nv` → **`d422_unified_display_dispatch.nv`**.
+  `TaggedD419` (renamed → `TaggedFmt`) `@display_fmt` + `@to_str` →
+  ОДИН `@display(mut f Fmt)` (тело = union старой alternate/precision-
+  логики). `Plain @display(mut w Write)` → `@display(mut f Fmt)`. Все 6
+  test-блоков переименованы (без "D419"/"@display_fmt" в заголовках).
+  Assert на `Plain`'s precision (owner-approved дроп auto-truncate,
+  реализовано в шаге 2) обновлён: `"${p:.3}" == "abc"` (D419, truncates)
+  → **`"${p:.3}" == "abcdef"`** (D422, no auto-truncate — `Plain` никогда
+  не читает `f.precision()`). Остальные 5 assert'ов — БЕЗ ИЗМЕНЕНИЙ
+  (bare/alternate/precision-self-read/width-auto-pad/`#`-no-effect — все
+  подтверждены зелёными).
+- `neg/d419_unknown_spec_neg.nv` → **`neg/d422_unknown_spec_neg.nv`**
+  (+ `module neg.d419_unknown_spec_neg` → `module neg.d422_unknown_spec_neg`,
+  D78 module-path требует совпадения с именем файла). `TaggedD419
+  @display_fmt` → `TaggedFmt @display(mut f Fmt)`. EXPECT_COMPILE_ERROR
+  `E_FORMAT_SPEC_UNKNOWN` — БЕЗ ИЗМЕНЕНИЙ (парсер отвергает `:zz` до типов,
+  не зависит от какой @display у типа).
+
+**3. НЕОЖИДАННАЯ находка при верификации — ДВА ДОПОЛНИТЕЛЬНЫХ файла в
+`spec_tests/conformance` (та же folder-module, ОДИН CU) ТОЖЕ использовали
+старую `Write(str)`/`@display(mut w Write)` сигнатуру и падали бы CODEGEN-FAIL
+(обнаружено ИМЕННО потому, что `spec_tests/conformance` — один CU: пробовал
+таргет-тест на новый d422-файл, компилятор утянул ВЕСЬ CU и упал на другом,
+не тронутом мной файле):**
+- **`d374_write_sink_decouple.nv`** (D374 — АМЕНДИРУЕТСЯ, не ретрактируется,
+  имя файла НЕ переименовывал, только контент): `D374Pair @display(mut w
+  Write)` → `@display(mut w Fmt)`, все `w.write(...)`/`sb.write(...)` через
+  `.bytes()`. **Существенная находка**: тест 2 ("StringBuilder satisfies
+  Write — pass raw StringBuilder as the sink param") БОЛЬШЕ НЕ работает как
+  было — `@display` теперь принимает `Fmt` (строго БОГАЧЕ, чем `Write`:
+  `use Write` + 7 doc осей + `@pad`), а голый `StringBuilder` реализует
+  ТОЛЬКО `Write`, не полный `Fmt` — передать `sb` напрямую там, где
+  ожидается `Fmt`, НЕ типизируется. Мигрировал тест на явную обёртку
+  `FmtCtx.bare(sb, 0, false)` (тот же конструктор, что компилятор сам
+  hand-synth'ит для голой `${x}`) — сохраняет ДОКАЗАТЕЛЬНУЮ СИЛУ теста
+  (sink-agnostic body, внешне сконструированный синк даёт тот же текст),
+  просто через явный wrapper вместо прямой передачи. Это ЕСТЕСТВЕННОЕ
+  следствие D422 (Fmt строго не совпадает с Write), не баг — задокументировано
+  инлайн в фикстуре.
+- **`d229_debug_format_spec.nv`** (D229 — АМЕНДИРУЕТСЯ, имя не менял):
+  `D229Tagged @display(mut w Write)`/`@debug(mut w Write)` →
+  `(mut w Fmt)`, `.bytes()` на все `w.write(...)`; `@label.debug(w)`
+  (forwards `w` вниз в `str`'s `@debug`) — БЕЗ изменений в форме (просто
+  `w` теперь `Fmt`-typed, `str.@debug` тоже мигрирован в шаге 1). Все 5
+  test-блоков (str quoted-vs-bare, primitive debug==display, distinct
+  display-vs-debug, `#impl(Debug)` auto-derive memberwise, Option/Result
+  debug) — БЕЗ ИЗМЕНЕНИЙ в ожиданиях (только сигнатура/`.bytes()`).
+
+**4. Грепнул `display_fmt` по ВСЕМУ репо** (std/examples/spec_tests/
+compiler-codegen) — остальные хиты (после миграции выше) — ТОЛЬКО
+исторические комментарии, явно помеченные "was"/"retracted"/"D419-era" (НЕ
+живой код): `std/src/prelude/protocols.nv:196` (шапка секции, объясняет ЧТО
+ретрактировано), `std/src/runtime/fmt_buf.nv` (обновил на явную "fully
+retracted" формулировку), `std/src/encoding/json.nv:892` (doc-comment
+"was the D419-era optional hook"), `compiler-codegen/src/codegen/emit_c.rs`
++ `lints.rs` (комментарии, объясняющие снос — из шага 2). Единственный
+НЕ-doc/plans файл вне std/spec_tests с упоминанием —
+`examples/flagship/aggregator/src/api/report_json.nv:157` — поправил
+`@display_fmt` → `@display` в комментарии (не код, doc-only).
+`examples/flagship/aggregator/PROGRESS-run-A.md` — оставил как есть
+(прогресс-лог, аналог docs/plans-истории — владелец разрешил их не трогать).
+Ни одного ЖИВОГО объявления/вызова `@display_fmt` в коде не осталось нигде
+в репо.
+
+### Ф.2 шаг 3 — верификация (изолированные копии, CPU перегружен — full-CU прогон НЕ уложился)
+
+- Попытка `nova test` НАПРЯМУЮ на 3 файла внутри `spec_tests/conformance/`
+  (d422/d374/d229) — **не уложилась в 590с** (спустя ~10 мин всё ещё шла
+  компиляция + несколько `nova.exe`-воркеров активны) — подтверждает
+  CLAUDE.md: `spec_tests/conformance` действительно ОДИН CU (весь folder,
+  не только переданные файлы), и гонять его целиком — дорого. НЕ мой гейт
+  (авторитетный полный conformance — оркестраторский); оставил процессы
+  доедать фоном, не убивал (не destructive).
+- Вместо этого — скопировал 4 мигрированных файла (d422 pos, d374, d229,
+  d422 neg) во ВРЕМЕННУЮ изолированную директорию с ПЕРЕИМЕНОВАННЫМ
+  `module` (не `spec_tests.conformance`/`neg.*` → отдельные модули), чтобы
+  проверить СИНТАКСИС/СЕМАНТИКУ мигрированного кода без затрат full-CU.
+  Временные копии УДАЛЕНЫ перед коммитом (не часть репо). Результат — ВСЕ 4
+  PASS изолированно:
+  - `d422_unified_display_dispatch` (6 тестов) — PASS.
+  - `d374_write_sink_decouple` (3 теста, включая новый `FmtCtx.bare`-wrapper
+    тест) — PASS.
+  - `d229_debug_format_spec` (5 тестов) — PASS.
+  - `neg/d422_unknown_spec_neg` (EXPECT_COMPILE_ERROR) — PASS (repoted as
+    "(negative)").
+- `std/src/encoding/json_test.nv` (реальный путь в репо, НЕ изолированная
+  копия — этот файл САМ по себе одномодульный, не часть spec_tests-CU) —
+  PASS.
+- **НЕ проверено**: полный `spec_tests/conformance` как один CU (дорого,
+  см. выше — оркестраторский гейт), полный `nova test std` (аналогично
+  дорого — пробовал в шаге 2, не уложился). Изолированное копирование
+  снимает риск синтаксических/логических ошибок В МОЕМ КОДЕ, но НЕ
+  подтверждает отсутствие конфликтов ИМЁН/типов с ОСТАЛЬНЫМИ ~50+ файлами
+  того же CU (маловероятно — `TaggedFmt`/`Plain`/`D374Pair`/`D229*`
+  D-префиксные/уникальные имена, тот же паттерн, что был у оригиналов) —
+  указано явно для оркестраторского финального гейта.
 
 ### ✅ СТОП-кандидат — РЕШЁН владельцем 2026-07-16 (был открыт в шаге 1)
 
@@ -357,8 +426,8 @@ assert'а в `d419_display_fmt_dispatch.nv` = легитимная миграц�
   auto_derive.rs Write→Fmt + `.bytes()`-обёртки. Компилятор (Rust) собирается
   чисто; `nova test` на std ОЖИДАЕМО красный на тот момент (emit_c.rs ещё не
   переписан).
-- (готовится, ЭТОТ коммит) — Ф.2 шаг 2: `emit_c.rs` (`emit_interpolated_str`
-  + `emit_format_spec_value`) переписан на `FmtCtx.bare`/`FmtCtx.rich`;
+- `18eebbdb9` — Ф.2 шаг 2: `emit_c.rs` (`emit_interpolated_str` +
+  `emit_format_spec_value`) переписан на `FmtCtx.bare`/`FmtCtx.rich`;
   `@display_fmt`-путь снесён; `lints.rs` DCE seed-list обновлён
   (bare/rich вместо display_fmt). Три `protocols.nv`-фикса, найденные
   компиляцией (многострочный fn-сигнатуры/record-литерал, `@.method()` →
@@ -366,4 +435,21 @@ assert'а в `d419_display_fmt_dispatch.nv` = легитимная миграц�
   изолированной фикстурой (6 тестов, все PASS) — bare/rich Display/Debug на
   примитивах (не тронуты) и user-типах (новый путь), Option/Result Debug,
   width/align auto-pad. `std/src/encoding/json.nv`/`json_test.nv` и
-  `spec_tests/conformance/d419_*` — ещё сломаны, шаг 3 (следующий).
+  `spec_tests/conformance/d419_*` — ещё сломаны на тот момент, шаг 3.
+- (готовится, ЭТОТ коммит) — Ф.2 шаг 3: `json.nv`
+  `@display_fmt`→`@display(mut f Fmt)` (+ `json_test.nv` заголовок);
+  `spec_tests/conformance/d419_display_fmt_dispatch.nv` →
+  **переименован** в `d422_unified_display_dispatch.nv` (контент мигрирован,
+  precision-composite assert изменён per owner-approved дефолт);
+  `neg/d419_unknown_spec_neg.nv` → **переименован** в
+  `neg/d422_unknown_spec_neg.nv`. НЕОЖИДАННО обнаружены (тот же
+  spec_tests/conformance CU) ещё 2 файла на старой Write/Fmt-сигнатуре —
+  `d374_write_sink_decouple.nv` (контент мигрирован, ОДИН тест переписан на
+  явный `FmtCtx.bare`-wrapper — раньше передавал голый `StringBuilder` как
+  `Write`, теперь `@display` ждёт `Fmt`, строго богаче) и
+  `d229_debug_format_spec.nv` (контент мигрирован, ожидания без изменений).
+  Финальный грep `display_fmt` по репо — только исторические комментарии
+  остались (плюс doc-фикс в `examples/flagship/aggregator/report_json.nv`).
+  Верификация: 4 мигрированные фикстуры + json_test.nv PASS в изоляции
+  (полный `spec_tests/conformance` CU не уложился в CPU-бюджет — тот же
+  паттерн, что в шаге 2, оркестраторский гейт).

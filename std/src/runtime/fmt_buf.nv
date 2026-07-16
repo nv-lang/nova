@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // std.runtime.fmt_buf — Plan 208 Ф.1 (D422 "Unified Formatter", spec/decisions/
-// 02-types.md) buffer-primitives. ADDITIVE ONLY: this module is new and is not
-// wired into anything yet — `${x}` interpolation, `@display`/`@display_fmt`,
-// `str.from_debug` and every existing formatting call-site still go through
-// the pre-existing `nova_rt/conv.h` C helpers untouched. Byte-for-byte current
-// behaviour is preserved; this file exists so Ф.2 (the compiler-side rewrite
-// of `emit_interpolated_str`/`emit_format_spec_value` onto `@display(mut f Fmt)`)
-// has these primitives ready to call into. Exercised for now only by the
-// inline `test { }` blocks at the end of this file — see the comment there
-// for why (module-privacy: a separate `fmt_buf_test.nv` peer would be a
-// genuinely different module, forcing these to be exported).
+// 02-types.md) buffer-primitives. Written ADDITIVELY (Ф.1): at the time this
+// module was created, nothing called into it yet — `${x}` interpolation went
+// entirely through the pre-existing `nova_rt/conv.h` C helpers. Ф.2 has since
+// landed `@display(mut f Fmt)`/`@debug(mut f Fmt)` (the D419-era
+// `@display_fmt` optional hook is fully retracted, not merely superseded) and
+// rewired `emit_interpolated_str`/`emit_format_spec_value` onto the unified
+// `FmtCtx` dispatch — but PRIMITIVE int/bool/char/radix/width formatting
+// still goes through `conv.h` directly (a deliberate Ф.2 simplification, not
+// wired to these buffer-primitives yet — see docs/plans/208-impl-progress.md
+// "Осознанные упрощения" #1); `conv.h` retirement in favor of these is Ф.4
+// scope. Exercised for now only by the inline `test { }` blocks at the end of
+// this file — see the comment there for why (module-privacy: a separate
+// `fmt_buf_test.nv` peer would be a genuinely different module, forcing
+// these to be exported).
 //
 // Scope (D422 §5 + §9 "Буфер-примитивы"):
 //   - `int_fmt`/`bool_fmt`/`char_fmt` — zero-alloc digit-loop / UTF-8 encode

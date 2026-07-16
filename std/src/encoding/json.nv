@@ -885,10 +885,14 @@ fn format_object(m HashMap[str, JsonValue]) -> str {
 #stable(since = "0.1")
 export fn JsonValue @to_str_pretty() -> str => pretty_at(@, 0)
 
-/// D419 first consumer: `${v:#}` (alternate/pretty-flag) routes here and
-/// renders the same output as [`to_str_pretty`]; any other spec on a
-/// `JsonValue` (bare `${v}`, `.N` precision, etc.) falls back to the
-/// existing compact `@to_str()` — `#` is the only axis this type reacts to.
+/// Plan 208 Ф.2 (D422): the ONE required `Display` primitive for `JsonValue`
+/// — `${v:#}` (alternate/pretty-flag) renders the same output as
+/// [`to_str_pretty`]; any other spec (bare `${v}`, `.N` precision, etc.)
+/// falls back to the compact `@to_str()` — `#` is the only axis this type
+/// reacts to. Was the D419-era optional `@display_fmt` hook (a second method
+/// alongside `@display`'s to_str-calling default); D422 retracts that split
+/// — this IS `@display` now, unconditionally dispatched for every
+/// `${v[:SPEC]}` site (bare included), not a rich-spec-only opt-in.
 ///
 /// # Examples
 /// ```nova
@@ -899,11 +903,12 @@ export fn JsonValue @to_str_pretty() -> str => pretty_at(@, 0)
 /// assert("${v}" == v.to_str())
 /// ```
 #stable(since = "0.1")
-export fn JsonValue @display_fmt(mut f Fmt) -> () {
+#impl(Display)
+fn JsonValue @display(mut f Fmt) -> () {
     if f.alternate() {
-        f.write(@to_str_pretty())
+        f.write(@to_str_pretty().bytes())
     } else {
-        f.write(@to_str())
+        f.write(@to_str().bytes())
     }
 }
 

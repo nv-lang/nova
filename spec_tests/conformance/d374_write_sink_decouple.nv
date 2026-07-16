@@ -1,29 +1,33 @@
 // D374 — Write-sink protocol: decouple Display/Debug from the concrete StringBuilder.
-// Norm (spec/decisions/02-types.md §D374, Plan 152.7.1): a thin sink protocol `Write`
-// with the single method `mut @write(s str) -> ()` is introduced; `Display.@display`
-// and `Debug.@debug` take a `Write` sink (NOT a concrete `StringBuilder`), and
-// `StringBuilder` satisfies `Write` via its `@write` method. The decoupling is
-// runtime-observable: a user type's `@display(mut w Write)` body — which knows ONLY
-// `w.write(...)` — is sink-agnostic, so it yields the SAME text whether driven by
-// (a) the implicit interpolation sink (`"${x}"`) or (b) an explicitly-constructed
-// `StringBuilder` passed as the `Write` argument (`x.display(sb)`). The latter is the
-// load-bearing D374 angle: `StringBuilder` is accepted where a `Write` is expected,
-// proving the parameter is the protocol, not the concrete sink.
+// Norm (spec/decisions/02-types.md §D374, AMENDED ×2 by D422/Plan 208 Ф.2): a thin
+// sink protocol `Write` with the single method `mut @write(bytes []u8) -> ()` (was
+// `s str` pre-D422); `Display.@display`/`Debug.@debug` take a `Fmt` sink (D422 — was
+// bare `Write` pre-D422, `Fmt` embeds `Write` via `use Write`, D145), NOT a concrete
+// `StringBuilder`, and `StringBuilder` satisfies `Write` via its `@write` method. The
+// decoupling is runtime-observable: a user type's `@display(mut w Fmt)` body — which
+// knows ONLY `w.write(...)` — is sink-agnostic, so it yields the SAME text whether
+// driven by (a) the implicit interpolation sink (`"${x}"`) or (b) an
+// explicitly-constructed `StringBuilder` passed as the `Write` argument (`x.display(sb)`
+// — `StringBuilder` also satisfies `Fmt`'s `use Write` requirement structurally). The
+// latter is the load-bearing D374 angle: `StringBuilder` is accepted where a `Write`/
+// `Fmt` is expected, proving the parameter is the protocol, not the concrete sink.
 // Part of the SINGLE `spec_tests.conformance` folder-module; D-prefixed unique type
 // names avoid duplicate-top-level-name clashes.
 module spec_tests.conformance
 
-// User type with a MANUAL @display written against the `Write` sink protocol (D374).
-// The body never names `StringBuilder` — it only calls `w.write(...)`, so it is
-// sink-agnostic by construction. This is exactly the decoupling D374 introduces.
+// User type with a MANUAL @display written against the `Fmt`/`Write` sink protocols
+// (D374 amended by D422). The body never names `StringBuilder` — it only calls
+// `w.write(...)` — so it is sink-agnostic by construction. This is exactly the
+// decoupling D374 introduces (D422 just changes the parameter's protocol from bare
+// `Write` to `Fmt`, and the payload from `str` to `[]u8`).
 type D374Pair { lo int, hi int }
 
-fn D374Pair @display(mut w Write) -> () {
-    w.write("[")
-    w.write(@lo.to_str())
-    w.write("..")
-    w.write(@hi.to_str())
-    w.write("]")
+fn D374Pair @display(mut w Fmt) -> () {
+    w.write("[".bytes())
+    w.write(@lo.to_str().bytes())
+    w.write("..".bytes())
+    w.write(@hi.to_str().bytes())
+    w.write("]".bytes())
 }
 
 test "Display.@display routes through the Write sink — interpolation drives `w.write` (D374)" {
@@ -34,13 +38,21 @@ test "Display.@display routes through the Write sink — interpolation drives `w
     assert("${q}" == "[0..0]")
 }
 
-test "StringBuilder satisfies Write — same @display body driven by an explicit sink (D374)" {
+test "StringBuilder satisfies Write — same @display body driven by an explicit Fmt sink (D374/D422)" {
     ro p = D374Pair { lo: 3, hi: 9 }
-    // Build a concrete StringBuilder and pass IT where a `Write` is expected.
-    // This compiles only because `StringBuilder` satisfies `Write` (via `@write`),
-    // and `@display`'s parameter is the `Write` protocol — the D374 decoupling.
+    // D422: `@display` takes `Fmt` (width/precision/align/fill/sign/alternate/kind
+    // + `use Write`), a STRICTLY RICHER protocol than bare `Write` — a raw
+    // `StringBuilder` alone satisfies `Write` but not the full `Fmt` interface, so it
+    // can no longer be passed AS `Fmt` directly (pre-D422 it could, since `@display`
+    // took bare `Write` then). `FmtCtx.bare` is the same wrapper-constructor the
+    // compiler itself hand-synthesizes for a spec-less `${x}` (`emit_bare_fmtctx`,
+    // emit_c.rs) — calling it explicitly here is the user-facing equivalent, and
+    // still proves the D374 decoupling: the SAME @display body, driven by an
+    // explicitly-constructed sink instead of the implicit interpolation one, yields
+    // identical output.
     consume sb = StringBuilder.new()
-    p.display(sb)
+    ro fmt_ctx = FmtCtx.bare(sb, 0, false)
+    p.display(fmt_ctx)
     ro got = sb.into_str()
     // Identical to the interpolation result above ⇒ sink-agnostic body.
     assert(got == "[3..9]")
@@ -50,10 +62,11 @@ test "StringBuilder satisfies Write — same @display body driven by an explicit
 test "Write.@write appends in order — StringBuilder is a faithful Write sink (D374)" {
     // Drive the Write protocol method directly on the concrete sink: each `@write`
     // appends its argument in order, matching the byte-sink delegation in the norm.
+    // D422: `@write` now takes `[]u8`, not `str` — `.bytes()` on each literal.
     consume sb = StringBuilder.new()
-    sb.write("a")
-    sb.write("bc")
-    sb.write("")
-    sb.write("d")
+    sb.write("a".bytes())
+    sb.write("bc".bytes())
+    sb.write("".bytes())
+    sb.write("d".bytes())
     assert(sb.into_str() == "abcd")
 }
