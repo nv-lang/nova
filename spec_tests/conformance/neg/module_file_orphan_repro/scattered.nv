@@ -1,0 +1,18 @@
+// [M-module-file-submodule-split-silent-orphan] repro fixture, orphan half.
+//
+// Declares the SAME `module module_file_orphan_repro.core` as `core.nv`,
+// but sits directly beside it under its OWN name (`scattered.nv`) — not
+// inside a dedicated `core/` folder-module. Its own filename does not
+// match the module's last segment (`core`), so it can never be the
+// resolved head-file of a plain `import module_file_orphan_repro.core`,
+// and there is no `core/` folder for it to be a legitimate folder-module
+// peer of either. This is the orphan: any importer of
+// `module_file_orphan_repro.core` other than this file itself resolves to
+// `core.nv` alone — `scattered_value` below is invisible to them, which
+// `resolve_module_paths` must now catch as `[E_MODULE_FILE_ORPHAN]`
+// instead of silently dropping it (pre-Plan-202 behaviour) or silently
+// merging it in without diagnostic (reverted masking fix
+// `[M-blanket-crossmodule-scattered-peer-drop]`).
+module module_file_orphan_repro.core
+
+export fn scattered_value() -> int => 2
