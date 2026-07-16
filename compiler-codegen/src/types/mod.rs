@@ -4148,6 +4148,13 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
 
+        // Plan 161 Ф.2 (D355 §4/§5): blanket-protocol-receiver invariants.
+        // Independent of the two `#impl` passes above (those are opt-in
+        // annotations; these fire on STRUCTURAL shape alone, same as
+        // blanket dispatch itself does at codegen time, D285).
+        self.check_duplicate_protocol_impl(errors);
+        self.check_blanket_conflict(module, errors);
+
         // [D73/D77 retraction 2026-07-06]: E_BLANKET_IDENTITY_OVERRIDE removed.
         // It rejected an explicit `fn TypeName.from(t TypeName) -> TypeName`
         // identity declaration because it would "override" the compiler-
@@ -12207,6 +12214,131 @@ impl<'a> TypeCheckCtx<'a> {
         ("Printable",      "Display"),
         ("DebugPrintable", "Debug"),
     ];
+
+    /// Plan 161 Ф.2 (D355 §4): ≤1-impl invariant for `Next[T]`-shaped
+    /// protocols (any protocol with exactly ONE generic param and exactly
+    /// ONE required method — the shape blanket-dispatch, D355, relies on;
+    /// `Next[T]` is the only stdlib instance today, but the check is not
+    /// hardcoded to that name). Detected STRUCTURALLY (independent of
+    /// `#impl(...)` — that annotation is opt-in per D186/D268, and its
+    /// absence is never itself an error, see `verify_method_impl_protocols`
+    /// doc-comment above): if a type declares 2+ overloads of the
+    /// protocol's method whose signatures instantiate the protocol's
+    /// generic param to DIFFERENT concrete types, the type would
+    /// simultaneously implement `Proto[A]` and `Proto[B]` (A ≠ B) — an
+    /// irreconcilable double-impl (blanket dispatch could never pick a
+    /// single T) → `E_DUPLICATE_PROTOCOL_IMPL`.
+    fn check_duplicate_protocol_impl(&self, errors: &mut Vec<Diagnostic>) {
+        let candidate_protocols: Vec<(&str, &str, &crate::ast::EffectMethod)> = self
+            .types
+            .values()
+            .filter_map(|td| {
+                if let TypeDeclKind::Protocol { methods, .. } = &td.kind {
+                    if td.generics.len() == 1 && methods.len() == 1 {
+                        return Some((td.name.as_str(), td.generics[0].name.as_str(), &methods[0]));
+                    }
+                }
+                None
+            })
+            .collect();
+        if candidate_protocols.is_empty() {
+            return;
+        }
+        for (type_name, methods_by_name) in self.sig.method_table.iter() {
+            for (proto_name, generic_name, proto_method) in &candidate_protocols {
+                if type_name == proto_name {
+                    continue;
+                }
+                let Some(overloads) = methods_by_name.get(&proto_method.name) else { continue; };
+                if overloads.len() < 2 {
+                    continue;
+                }
+                // Infer, per overload, the concrete binding of the protocol's
+                // generic param. `None` = this overload doesn't structurally
+                // match the protocol shape at some FIXED (non-generic)
+                // position — silently not a candidate impl (e.g. an
+                // unrelated same-named method with a different signature).
+                let mut distinct: Vec<(String, &FnDecl)> = Vec::new();
+                for fd in overloads {
+                    let Some(binding) =
+                        infer_protocol_generic_binding(fd, proto_method, generic_name, type_name)
+                    else { continue; };
+                    if !distinct.iter().any(|(b, _)| *b == binding) {
+                        distinct.push((binding, fd));
+                    }
+                }
+                if distinct.len() >= 2 {
+                    let variants = distinct
+                        .iter()
+                        .map(|(b, _)| format!("`{}[{}]`", proto_name, b))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    // Point at the LAST conflicting declaration (the one that
+                    // actually introduces the conflict; the first stands),
+                    // matching the convention of the neighboring dup-checks.
+                    let span = distinct.last().unwrap().1.span;
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_DUPLICATE_PROTOCOL_IMPL] тип `{}` реализует протокол `{}` \
+                             сразу для нескольких разных типовых аргументов: {} — метод \
+                             `@{}` объявлен с разными конкретными T. Тип не может \
+                             реализовывать `{}[T]` для двух разных T одновременно (D355 §4). \
+                             Оставь ровно одну реализацию `@{}` (для второго варианта — \
+                             отдельный newtype).",
+                            type_name, proto_name, variants, proto_method.name,
+                            proto_name, proto_method.name,
+                        ),
+                        span,
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Plan 161 Ф.2 (D355 §5 / D285 §5b): two blanket methods
+    /// (`fn[I Proto[T]] I @name`) declared for the SAME protocol with the
+    /// SAME method name conflict — dispatch (D285 §3) scans for "a" blanket
+    /// candidate by name and cannot tell which of two applies once a
+    /// receiver type satisfies the shared bound → `E_BLANKET_CONFLICT`.
+    /// A blanket decl is detected structurally (mirrors
+    /// `blanket_method_names` detection in `TypeCheckCtx::build` above):
+    /// receiver present AND receiver's type-name IS one of the fn's own
+    /// generic params, that param carrying a protocol bound. Grouping key is
+    /// `(protocol base name, method name)` — NOT the literal bound-typevar
+    /// spelling (`fn[I Next[T]] I @m` and `fn[J Next[T]] J @m` are the SAME
+    /// conflict even though "I" ≠ "J"; the generic key-based duplicate-
+    /// signature check elsewhere in this file keys on the literal receiver
+    /// name and misses exactly this case).
+    fn check_blanket_conflict(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
+        let mut seen: HashMap<(String, String), &FnDecl> = HashMap::new();
+        for item in &module.items {
+            let Item::Fn(fd) = item else { continue; };
+            let Some(recv) = &fd.receiver else { continue; };
+            let Some(gp) = fd.generics.iter().find(|g| g.name == recv.type_name) else { continue; };
+            let Some(bound) = gp.first_bound() else { continue; };
+            let Some(proto_base) = Self::typeref_named_base(bound) else { continue; };
+            let key = (proto_base.to_string(), fd.name.clone());
+            match seen.get(&key) {
+                Some(prev) if prev.span != fd.span => {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_BLANKET_CONFLICT] два blanket-метода `@{}` объявлены для \
+                             одного протокола `{}` — конфликт (D355 §5): диспетч `x.{}()` \
+                             для любого типа, реализующего `{}[T]`, не может однозначно \
+                             выбрать между двумя blanket-реализациями. Переименуй один из \
+                             методов или объедини реализации в одну.",
+                            fd.name, proto_base, fd.name, proto_base,
+                        ),
+                        fd.span,
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    seen.insert(key, fd);
+                }
+            }
+        }
+    }
 
     fn verify_impl_protocols(&self, td: &TypeDecl, errors: &mut Vec<Diagnostic>) {
         for proto_name in &td.impl_protocols {
@@ -22261,6 +22393,128 @@ fn normalize_type_str(s: &str) -> String {
 /// Like `check_signature_match` but applies `subst` to the protocol method's
 /// types before comparison. If `subst` is empty, falls back to the original
 /// behaviour (for backward compat with non-generic `#impl(Display)`).
+/// Plan 161 Ф.2 (D355 §4): structural inference — does `fd`'s signature
+/// match `proto_method`'s shape (arity + every non-generic-typed position)
+/// for SOME concrete binding of `generic_name`? If so, return the rendered
+/// concrete type bound to `generic_name` (all occurrences across params +
+/// return must agree on the same binding). `recv_type_name` allows the
+/// `Self` ↔ receiver-type equivalence used by the sibling `#impl`-checks.
+/// Returns `None` when `fd` doesn't conform to the protocol shape at all
+/// (arity mismatch, a fixed position disagrees, or the generic param would
+/// have to bind to two different things within one signature) — such an
+/// overload is silently excluded from the duplicate-impl check rather than
+/// mis-flagged (conservative: false negatives over false positives here).
+fn infer_protocol_generic_binding(
+    fd: &FnDecl,
+    proto_method: &crate::ast::EffectMethod,
+    generic_name: &str,
+    recv_type_name: &str,
+) -> Option<String> {
+    if fd.params.len() != proto_method.params.len() {
+        return None;
+    }
+    let mut bindings: Vec<String> = Vec::new();
+    for (fp, pp) in fd.params.iter().zip(proto_method.params.iter()) {
+        match_protocol_type_position(&fp.ty, &pp.ty, generic_name, recv_type_name, &mut bindings)?;
+    }
+    let is_unit_or_none = |r: Option<&TypeRef>| matches!(r, None | Some(TypeRef::Unit(_)));
+    match (fd.return_type.as_ref(), proto_method.return_type.as_ref()) {
+        (a, b) if is_unit_or_none(a) && is_unit_or_none(b) => {}
+        (Some(a), Some(b)) => {
+            match_protocol_type_position(a, b, generic_name, recv_type_name, &mut bindings)?;
+        }
+        _ => return None,
+    }
+    if bindings.is_empty() {
+        // Protocol method never mentions its own generic param in a
+        // params/return position (e.g. it only appears in an `effects`
+        // clause, like `Cleanup[E]`'s `Fail[E]`) — no signal to bind from,
+        // so this check has nothing to say about such a protocol.
+        return None;
+    }
+    let first = &bindings[0];
+    if bindings.iter().all(|b| b == first) {
+        Some(first.clone())
+    } else {
+        None
+    }
+}
+
+/// One param/return position of `infer_protocol_generic_binding`: `proto_ty`
+/// is the protocol's declared type at this position (may reference
+/// `generic_name` — the protocol's sole generic param — or `Self`);
+/// `concrete_ty` is the candidate implementation's type at the same
+/// position. Pushes the inferred binding into `bindings` when `proto_ty`
+/// contains exactly one whole-word occurrence of `generic_name`; requires
+/// an exact (mod `Self`) structural match otherwise. `None` = structural
+/// mismatch at this position (multiple occurrences of the generic param in
+/// one position, e.g. `(T, T)`, are also treated as `None` — unsupported
+/// unification depth for V1, same spirit as D355 §6's other V1 limits).
+fn match_protocol_type_position(
+    concrete_ty: &TypeRef,
+    proto_ty: &TypeRef,
+    generic_name: &str,
+    recv_type_name: &str,
+    bindings: &mut Vec<String>,
+) -> Option<()> {
+    let proto_str = render_type_ref(proto_ty);
+    let concrete_str = render_type_ref(concrete_ty);
+    let occurrences = find_whole_word_occurrences(&proto_str, generic_name);
+    if occurrences.is_empty() {
+        if normalize_type_str(&proto_str) == normalize_type_str(&concrete_str) {
+            return Some(());
+        }
+        if proto_str == "Self" && concrete_str == recv_type_name {
+            return Some(());
+        }
+        return None;
+    }
+    if occurrences.len() != 1 {
+        return None;
+    }
+    let (s, e) = occurrences[0];
+    let prefix = &proto_str[..s];
+    let suffix = &proto_str[e..];
+    if concrete_str.len() < prefix.len() + suffix.len()
+        || !concrete_str.starts_with(prefix)
+        || !concrete_str.ends_with(suffix)
+    {
+        return None;
+    }
+    let binding = &concrete_str[prefix.len()..concrete_str.len() - suffix.len()];
+    if binding.is_empty() {
+        return None;
+    }
+    bindings.push(binding.to_string());
+    Some(())
+}
+
+/// Whole-word occurrences of `word` in `haystack` (byte offset ranges),
+/// mirroring the tokenizer in `apply_subst_to_type_str` below.
+fn find_whole_word_occurrences(haystack: &str, word: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    if word.is_empty() {
+        return out;
+    }
+    let bytes = haystack.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i..].starts_with(word.as_bytes()) {
+            let end = i + word.len();
+            let before_ok = i == 0 || !is_ident(bytes[i - 1]);
+            let after_ok = end >= bytes.len() || !is_ident(bytes[end]);
+            if before_ok && after_ok {
+                out.push((i, end));
+                i = end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 fn check_signature_match_with_subst(
     t_method: &FnDecl,
     proto_method: &crate::ast::EffectMethod,
