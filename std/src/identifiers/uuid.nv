@@ -234,7 +234,7 @@ export fn Uuid @to_str() -> str {
     buf.into_str()
 }
 
-fn write_hex_u32(buf mut StringBuilder, v u32) {
+fn write_hex_u32(mut buf StringBuilder, v u32) {
     mut shift = 28
     while shift >= 0 {
         buf.append(hex_digit(((v >> shift) & 0xF) as u8))
@@ -242,7 +242,7 @@ fn write_hex_u32(buf mut StringBuilder, v u32) {
     }
 }
 
-fn write_hex_u16(buf mut StringBuilder, v u16) {
+fn write_hex_u16(mut buf StringBuilder, v u16) {
     mut shift = 12
     while shift >= 0 {
         buf.append(hex_digit(((v >> shift) & 0xF) as u8))

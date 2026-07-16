@@ -173,7 +173,7 @@ fn parse_weekday_name(s str, pos int) -> Result[int, ParseDateTimeError] {
 }
 
 // Один item на позиции → новая позиция (поля мутируются).
-fn apply_item(item FmtItem, s str, pos int, f mut FmtFields) -> Result[int, ParseDateTimeError] {
+fn apply_item(item FmtItem, s str, pos int, mut f FmtFields) -> Result[int, ParseDateTimeError] {
     match item {
         FYear4 => {
             mut p = pos

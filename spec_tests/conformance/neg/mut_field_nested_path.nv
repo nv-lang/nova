@@ -15,7 +15,7 @@ type Outer {
     inner Inner
 }
 
-fn leak_nested(o mut Outer) -> () {
+fn leak_nested(mut o Outer) -> () {
     supervised {
         spawn {
             ro _view = o

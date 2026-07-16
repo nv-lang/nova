@@ -96,7 +96,7 @@ export fn SeekFrom.current(n int) -> SeekFrom => Current(n) // [M-lint-findings-
 /// retrying `Interrupted`. `Ok(0)` before the buffer is full → `UnexpectedEof`.
 /// Rust `Read::read_exact`.
 #stable(since = "0.1")
-export fn read_exact[R Read](r mut R, buf mut []u8) -> Result[(), IoError] {
+export fn read_exact[R Read](mut r R, buf mut []u8) -> Result[(), IoError] {
     ro total = buf.len()
     mut filled = 0
     mut chunk []u8 = []u8.new()
@@ -125,7 +125,7 @@ export fn read_exact[R Read](r mut R, buf mut []u8) -> Result[(), IoError] {
 /// Read to EOF, returning all bytes. Grows a `[]u8`; retries `Interrupted`.
 /// Rust `Read::read_to_end`.
 #stable(since = "0.1")
-export fn read_to_end[R Read](r mut R) -> Result[[]u8, IoError] {
+export fn read_to_end[R Read](mut r R) -> Result[[]u8, IoError] {
     mut out []u8 = []u8.new()
     mut chunk []u8 = []u8.new()
     chunk.resize(DEFAULT_CHUNK, 0 as u8)
@@ -145,7 +145,7 @@ export fn read_to_end[R Read](r mut R) -> Result[[]u8, IoError] {
 /// (Q11 — fallible, no silent `U+FFFD` like Node). Uses `[]u8 @to_str()`
 /// (Plan 174.1). Forwards to `read_to_end` (bound carries).
 #stable(since = "0.1")
-export fn read_to_string[R Read](r mut R) -> Result[str, IoError] {
+export fn read_to_string[R Read](mut r R) -> Result[str, IoError] {
     match read_to_end(r) {
         Ok(out) => match out.to_str() {
             Ok(s)  => Ok(s)
@@ -160,7 +160,7 @@ export fn read_to_string[R Read](r mut R) -> Result[str, IoError] {
 /// Write the whole of `data`, looping over partial writes and retrying
 /// `Interrupted`. `Ok(0)` mid-write → `WriteZero`. Rust `Write::write_all`.
 #stable(since = "0.1")
-export fn write_all[W Write](w mut W, data []u8) -> Result[(), IoError] {
+export fn write_all[W Write](mut w W, data []u8) -> Result[(), IoError] {
     ro total = data.len()
     mut done = 0
     while done < total {
@@ -182,7 +182,7 @@ export fn write_all[W Write](w mut W, data []u8) -> Result[(), IoError] {
 /// Forwards to `write_all` — the bound is carried through the generic forward
 /// ([M-generic-bound-forwarding] closed, Plan 172.13 batch 3/4).
 #stable(since = "0.1")
-export fn write_str[W Write](w mut W, s str) -> Result[(), IoError] =>
+export fn write_str[W Write](mut w W, s str) -> Result[(), IoError] =>
     write_all(w, s.bytes())
 
 // ─── Read → Write ───
@@ -191,7 +191,7 @@ export fn write_str[W Write](w mut W, s str) -> Result[(), IoError] =>
 /// Reads a chunk, writes it fully (via `write_all` — the bound forwards),
 /// repeats. Rust `io::copy`.
 #stable(since = "0.1")
-export fn copy[R Read, W Write](r mut R, w mut W) -> Result[int, IoError] {
+export fn copy[R Read, W Write](mut r R, mut w W) -> Result[int, IoError] {
     mut moved = 0
     mut chunk []u8 = []u8.new()
     chunk.resize(DEFAULT_CHUNK, 0 as u8)
@@ -222,7 +222,7 @@ export fn copy[R Read, W Write](r mut R, w mut W) -> Result[int, IoError] {
 /// separator (Q7 — delegates to `str.@lines`). Invalid UTF-8 →
 /// `IoError{InvalidData}`. Forwards to `read_to_end` (bound carries through).
 #stable(since = "0.1")
-export fn lines[R Read](r mut R) -> Result[[]str, IoError] {
+export fn lines[R Read](mut r R) -> Result[[]str, IoError] {
     match read_to_end(r) {
         Ok(out) => match out.to_str() {
             Ok(s)  => Ok(s.lines())
@@ -237,7 +237,7 @@ export fn lines[R Read](r mut R) -> Result[[]str, IoError] {
 /// without a trailing `\n` is yielded. Forwards to `read_to_end` (bound carries
 /// through).
 #stable(since = "0.1")
-export fn byte_lines[R Read](r mut R) -> Result[[][]u8, IoError] {
+export fn byte_lines[R Read](mut r R) -> Result[[][]u8, IoError] {
     match read_to_end(r) {
         Ok(data) => {
             // Срез-вид (§18а): границы строк находятся сканом на `\n`, каждая

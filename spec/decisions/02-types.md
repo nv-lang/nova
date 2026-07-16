@@ -13170,6 +13170,37 @@ C-макросы `fmin`/`fmax` (нет специальной NaN-семанти
 > pending** (см. D422 §Статус) — текст ниже (сигнатуры `@write_str(s str)`, `w Write` на
 > `@display`/`@debug`) читать как ТЕКУЩЕЕ (до-D422) поведение.
 >
+
+> **AMEND ×3 (owner decision 2026-07-17, канон mut-параметров, обе позиции).**
+> Канон записи sink/`mut`-параметров (`@display(mut f Fmt)`, `mut w Write`, и
+> `mut`-параметров вообще) — **ПРЕФИКСНАЯ форма**: `mut <имя> <Тип>`. Есть ДВЕ
+> позиции, куда исторически можно поставить `mut`, и они значат РАЗНОЕ:
+> позиция ПЕРЕД именем — канон (D176/Plan 108.1: opt-in на мутацию, default —
+> read-only); позиция ПОСЛЕ имени, ПЕРЕД типом (`<имя> mut <Тип>`, D6
+> legacy-спеллинг) — парсер принимает её как ПОЛНЫЙ поведенческий синоним
+> префиксной формы (эмпирика: `i mut int` реассайнится в теле идентично
+> `mut i int`) — НЕ более узкая семантика, просто исторический альт-спеллинг.
+> Голая постфиксная форма (без явного `ro` перед именем) для НЕ-slice/НЕ-fixed-
+> array типов — под запретом lint'а `W_PARAM_TYPE_POS_MUT` (unconditional
+> pipeline, `compiler-codegen/src/lints.rs`); позиция ПОСЛЕ имени остаётся
+> легитимной ИСКЛЮЧИТЕЛЬНО за view-слайсами (`[]u8` и родня, io-канон,
+> `buf mut []u8`) и fixed-size массивами (`[N]u8`, hash-digest out-буферы,
+> `std/crypto/sha256.nv` и родня). Явный **R2-split** `ro <имя> mut <Тип>`
+> (D246 P6, Plan 118.5 V3 amend) — санкционированное, НЕ каноническое,
+> исключение (самодокументирует «пишу в содержимое, не подменяю биндинг»);
+> lint её не флагует. Для sink-типов (`Fmt`/`Write`) семантика `mut` на
+> кучевом handle — «в него ПИШУТ, видно вызывающему» (Plan 184 Р2/Р10: sink
+> ВСЕГДА кучевой handle, `mut x T` не вводит in-out `T*` для handle-типов —
+> `param_is_inout_ptr`=false в `emit_c.rs`; запись идёт через shared handle,
+> переприсваивание биндинга локально/невидимо), НЕ «sink можно подменить» —
+> см. также исследование 2026-07-16 (ветка `research-mut-canon`,
+> `docs/research/2026-07-16-mut-param-sink-canon.md`) для полного разбора
+> R2-split-vs-канон trade-off'а и латентной лености чекера на protocol-typed
+> handle-параметрах (закрыта тем же owner-decision: `[M-checker-protocol-param-mut-lenient]`
+> + `[M-conformance-param-mode-check]`, `types/mod.rs`). Полный текст канона
+> и примеры — `nv-coding-style.md §18б`. Bare `f Fmt` (без `mut` вовсе) для
+> sink остаётся запрещён отдельно (§18 `E_PARAM_NOT_MUT`).
+>
 **Status:** CLOSED 2026-06-16 (Plan 152.7.1, commits `a313926b` + `3d0e30fa`).
 **Depends on:** [D183](#d183-canonical-comparison-protocols--default-method-bodies-plan-918a) (`Display`/`Debug` протоколы),
 [D229](#d229) (`Debug` протокол), Plan 137 (protocol naming convention).

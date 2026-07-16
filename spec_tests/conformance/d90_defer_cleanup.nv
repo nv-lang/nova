@@ -8,18 +8,18 @@ module spec_tests.conformance
 type D90Cnt { val int }
 fn D90Cnt.zero() -> D90Cnt => { val: 0 }
 
-fn d90_run_defer(c mut D90Cnt) {
+fn d90_run_defer(mut c D90Cnt) {
     defer { c.val = c.val + 1 }
     c.val = 10
 }
 
-fn d90_lifo(c mut D90Cnt) {
+fn d90_lifo(mut c D90Cnt) {
     defer { c.val = c.val * 10 }   // 3rd: 2 * 10 = 20
     defer { c.val = c.val + 1 }    // 2nd: 1 + 1 = 2
     defer { c.val = 1 }             // 1st: sets c.val = 1
 }
 
-fn d90_early_return(c mut D90Cnt, flag bool) {
+fn d90_early_return(mut c D90Cnt, flag bool) {
     defer { c.val = c.val + 100 }
     c.val = 5
     if flag {

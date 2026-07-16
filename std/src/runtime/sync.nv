@@ -2307,21 +2307,21 @@ export extern "nova" fn Condvar.new() -> Self
 /// Panics unconditionally if `m` is not locked.
 #parks
 #stable(since = "0.1")
-export extern "nova" fn Condvar @wait(m mut Mutex)
+export extern "nova" fn Condvar @wait(mut m Mutex)
 
 /// ReentrantMutex overload: same semantics as `wait(Mutex)`, but
 /// releases ALL recursive lock levels on enter and re-acquires as
 /// count=1 on wake. W_REENTRANT_CONDVAR_RECOMMEND lint is emitted.
 #parks
 #stable(since = "0.1")
-export extern "nova" fn Condvar @wait(m mut ReentrantMutex)
+export extern "nova" fn Condvar @wait(mut m ReentrantMutex)
 
 /// Wait with timeout. Atomically release `m`, park up to `timeout`,
 /// re-acquire `m` before return. Returns `WaitResult.Notified` if woken
 /// by notify, `WaitResult.TimedOut` if timeout expired.
 #parks
 #stable(since = "0.1")
-export extern "nova" fn Condvar @wait_for(m mut Mutex, timeout Duration) -> WaitResult
+export extern "nova" fn Condvar @wait_for(mut m Mutex, timeout Duration) -> WaitResult
 
 /// Predicate-loop helper. Calls `wait(m)` in a loop until `predicate()`
 /// returns true. Handles spurious wakeup automatically.
@@ -2331,7 +2331,7 @@ export extern "nova" fn Condvar @wait_for(m mut Mutex, timeout Duration) -> Wait
 /// ```
 #parks
 #stable(since = "0.1")
-export extern "nova" fn Condvar @wait_until(m mut Mutex, predicate fn() -> bool)
+export extern "nova" fn Condvar @wait_until(mut m Mutex, predicate fn() -> bool)
 
 /// Wake one waiting fiber (FIFO — oldest waiter first).
 /// No-op if no waiters. Safe to call without holding the mutex.

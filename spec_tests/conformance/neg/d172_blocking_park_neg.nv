@@ -3,7 +3,7 @@
 // threadpool-worker недопустим — worker не участвует в M:N-планировании).
 module neg.d172_blocking_park_neg
 
-#blocking fn blk_lock(m mut Mutex) {
+#blocking fn blk_lock(mut m Mutex) {
     m.lock()
 }
 

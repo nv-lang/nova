@@ -3523,6 +3523,11 @@ impl Parser {
         // Сочетания с `consume`/`readonly` запрещены parser-level —
         // E_PARAM_MOD_CONFLICT.
         let mut is_mut = false;
+        // [M-canon-mut-param-position]: set below only for the bare postfix
+        // `name mut Type` legacy synonym (never for the canonical prefix form
+        // parsed in this very branch, nor for the sanctioned R2-split
+        // `ro name mut Type`) — see the postfix branch after `parse_ident`.
+        let mut mut_type_pos_legacy = false;
         if matches!(self.peek().kind, TokenKind::KwMut) {
             if is_const_param {
                 return Err(Diagnostic::new(
@@ -3610,6 +3615,15 @@ impl Parser {
         let (name, name_span) = self.parse_ident()?;
         // D6: mut-маркер после имени — `name mut type` (legacy form).
         // Plan 108.1: тоже принимаем, помечаем is_mut.
+        //
+        // [M-canon-mut-param-position] (2026-07-17): canon mut-параметров —
+        // ПРЕФИКСНАЯ форма `mut name Type`. Голая постфиксная `name mut Type`
+        // (без предшествующего `ro`, без предшествующего prefix `mut`) — полный
+        // поведенческий синоним, зафиксирован под запрет lint'ом
+        // `W_PARAM_TYPE_POS_MUT` (lints.rs) для НЕ-slice типов; `mut_type_pos_legacy`
+        // отмечает ИМЕННО этот случай. Санкционированный D246 R2-split
+        // `ro name mut Type` (has_readonly_prefix уже true здесь) — НЕ отмечается.
+        let bare_before_postfix_mut = !has_readonly_prefix && !is_mut;
         if matches!(self.peek().kind, TokenKind::KwMut) {
             if is_consume {
                 return Err(Diagnostic::new(
@@ -3630,6 +3644,7 @@ impl Parser {
             // flag is set additionally — downstream type-checker reads both.)
             self.bump();
             is_mut = true;
+            mut_type_pos_legacy = bare_before_postfix_mut;
         }
         let ty = {
             let inner = self.parse_type()?;
@@ -3692,6 +3707,7 @@ impl Parser {
             consume: is_consume,
             is_mut,
             is_const: is_const_param,
+            mut_type_pos_legacy,
         })
     }
 
