@@ -312,26 +312,31 @@ export fn FmtCtx.bare(sink Write, mark int, is_debug bool) -> Self => {
 /// `FormatSpecParsed`, mirroring the pre-existing `nova_fmt_pad(...)`
 /// call-site convention). `align_code`: 0=Left/1=Right/2=Center/other=unset;
 /// `fill_cp`: Unicode scalar value of the fill char.
-export fn FmtCtx.rich(
-    sink Write, mark int,
+export fn FmtCtx.rich(sink Write, mark int,
     has_width bool, width int,
     has_precision bool, precision int,
     align_code int, fill_cp int,
-    sign_plus bool, alternate bool, is_debug bool,
-) -> Self => {
-    sink, mark,
-    width: if has_width { Some(width) } else { None },
-    precision: if has_precision { Some(precision) } else { None },
-    align:
-        if align_code == 0 { Some(Align.Left) }
-        else if align_code == 1 { Some(Align.Right) }
-        else if align_code == 2 { Some(Align.Center) }
-        else { None },
-    fill: fill_cp as char,
-    sign: if sign_plus { Sign.Plus } else { Sign.Minus },
-    alternate,
-    kind: if is_debug { FmtKind.Debug } else { FmtKind.Display },
-    pad_consumed: false, prec_consumed: false,
+    sign_plus bool, alternate bool, is_debug bool) -> Self {
+    // D54: `int as char` is banned (unchecked) — `fill_cp` is always a valid
+    // Unicode scalar value (round-tripped from a real `char`, `spec.fill as
+    // u32 as i64` on the Rust side), so the `Err` arm is unreachable in
+    // practice; ' ' fallback only for the exhaustive match (same pattern as
+    // `std/src/encoding/hex.nv`'s `digit()`).
+    ro fill_c = match fill_cp.to_char() { Ok(c) => c, Err(_) => ' ' }
+    {
+        sink, mark,
+        width: if has_width { Some(width) } else { None },
+        precision: if has_precision { Some(precision) } else { None },
+        align: if align_code == 0 { Some(Align.Left) }
+            else if align_code == 1 { Some(Align.Right) }
+            else if align_code == 2 { Some(Align.Center) }
+            else { None },
+        fill: fill_c,
+        sign: if sign_plus { Sign.Plus } else { Sign.Minus },
+        alternate,
+        kind: if is_debug { FmtKind.Debug } else { FmtKind.Display },
+        pad_consumed: false, prec_consumed: false,
+    }
 }
 
 export fn FmtCtx mut @write(bytes []u8) -> () { @sink.write(bytes) }
@@ -677,7 +682,7 @@ fn char @display(mut f Fmt) -> () { f.write("${@}".bytes()) }
 fn char @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
 
 #impl(Display)
-fn str @display(mut f Fmt) -> () { f.write(@.bytes()) }
+fn str @display(mut f Fmt) -> () { f.write(@bytes()) }
 #impl(Debug)
 fn str @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
 
