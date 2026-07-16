@@ -1,7 +1,9 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 155 — `std/encoding/json` production-grade performance rewrite
 
-> **Создан:** 2026-06-14. **Статус:** 📋 PLANNED, P1. **Эстимат:** ~2–3 dev-day.
+> **Создан:** 2026-06-14. **Статус:** 🟡 ЧАСТИЧНО ЗАКРЫТ ПОБОЧНО — P1 (O(n²)-лексер) закрыт
+> json-санацией 2026-07-07 (коммит `09b051165`, byte-cursor lexer + `\b`/`\f`-escape); остаток
+> P3-P5 (аллокации/бенчмарк/прочее) НЕ начат. **Эстимат:** ~2–3 dev-day.
 > **Model:** Opus + Thinking ON (perf-critical + benchmark-driven).
 > **Владеет:** D270 (+ Q-json-perf, Q-json-order). **Родитель:** Plan 91 (std MVP) /
 > Plan 18 (stdlib roadmap). **Зависит от:** 152.1 (`as_bytes` O(1) byte-lens),
