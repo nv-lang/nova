@@ -32617,6 +32617,74 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         ))
     }
 
+    /// Plan 208 Ф.3 (D55 amend — owner instruction 2026-07-16): a bare str-
+    /// LITERAL argument to a `.write(...)` call — the fmt/io `Write` family's
+    /// single positional `bytes []u8` parameter (D374 AMEND ×2 / D422 §1) —
+    /// is written in source as `f.write("Ok(")`, matching the spec's own
+    /// documented example (`w.write("Point(")`, `02-types.md`) and the
+    /// `Write`/`Fmt` doc-comments' claimed str-literal→`[]u8` coercion.
+    /// Empirically this was NOT implemented at the codegen layer: the
+    /// checker accepts the call (no diagnostic — `overload_applicability`'s
+    /// permissive category probe treats a single-overload method call as
+    /// "skip, codegen resolves the exact C type"), but codegen previously
+    /// emitted the bare `nova_str` literal constant where the callee expects
+    /// the `[]u8` Vec-pointer C representation → CC-FAIL (`passing 'const
+    /// nova_str' to parameter of incompatible type 'Nova_Vec____nova_byte
+    /// *'`) on EVERY `f.write("literal")` call site (this plan's own Ф.3
+    /// `Vec`/`Option`/`Result` `@display`/`@debug` bodies included).
+    ///
+    /// Fix: rewrite the argument AST, in the SAME style as the sibling pre-
+    /// passes above (`synthesize_inout_refargs` et al., all applied at the
+    /// top of `emit_call`) — `"Ok("` becomes `"Ok(".bytes()`, an ordinary
+    /// (already-correct, zero-copy) method call. Reuses the EXISTING
+    /// `.bytes()` codegen path instead of hand-emitting a raw view
+    /// expression, so this fix carries zero new C-formatting surface.
+    ///
+    /// Scope, deliberately narrow (NOT a general "any `[]u8` position" D55
+    /// carve-out — that is a substantially larger surface than this call
+    /// shape, out of this wave's budget): gated on the method name being
+    /// exactly `write`, exactly one positional argument, that argument being
+    /// a bare `StrLit`, AND the receiver having a REGISTERED `write`
+    /// instance method at all (`all_methods` — excludes coercing an
+    /// unrelated same-named method on a type that never declared a `write`
+    /// method, however unlikely). Every `@write(<single positional arg>)`
+    /// across `std` today takes `[]u8` (`Write`/`Fmt`/`FmtCtx`/
+    /// `StringBuilder`, io's `Write` family, `fs`/`net` — verified by a
+    /// repo-wide grep before adding this) — `OpenOptions.@write(v bool)` and
+    /// `RwLock.@write()` differ in ARITY (1 bool arg / 0 args), so the
+    /// `args.len() == 1` + `StrLit` gate below never reaches them.
+    fn synthesize_write_str_lit_bytes_coercion(
+        &self,
+        func: &Expr,
+        args: &[CallArg],
+    ) -> Option<Vec<CallArg>> {
+        let ExprKind::Member { obj, name } = &func.kind else { return None; };
+        if name != "write" || args.len() != 1 {
+            return None;
+        }
+        let CallArg::Item(inner) = &args[0] else { return None; };
+        if !matches!(inner.kind, ExprKind::StrLit(_)) {
+            return None;
+        }
+        let recv_c = self.infer_expr_c_type(obj);
+        let recv_name = Self::debt_strip_value_prefix_or_nova_trim_start(&recv_c);
+        if !self.all_methods.contains(&(recv_name, "write".to_string())) {
+            return None;
+        }
+        let bytes_call = Expr::new(
+            ExprKind::Call {
+                func: Box::new(Expr::new(
+                    ExprKind::Member { obj: Box::new(inner.clone()), name: "bytes".to_string() },
+                    inner.span,
+                )),
+                args: vec![],
+                trailing: None,
+            },
+            inner.span,
+        );
+        Some(vec![CallArg::Item(bytes_call)])
+    }
+
     /// Plan 172.14 Ф.1: аргумент можно передать по прямому адресу БЕЗ копии?
     /// Строго: только bare-Ident НЕмутабельного локала со value-struct
     /// C-типом — его хранилище лежит в кадре вызывающего и не может быть
@@ -32678,6 +32746,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let record_lit_wrapped: Option<Vec<CallArg>> =
             self.synthesize_record_lit_typed_call_args(func, args);
         let args: &[CallArg] = record_lit_wrapped.as_deref().unwrap_or(args);
+        // Plan 208 Ф.3 (D55 amend): `f.write("literal")` — str-literal
+        // argument to a `.write(...)` call — see
+        // `synthesize_write_str_lit_bytes_coercion` doc comment for why this
+        // is needed (codegen previously emitted a bare `nova_str` where the
+        // `[]u8` sink expects a Vec-pointer C representation → CC-FAIL).
+        let write_lit_wrapped: Option<Vec<CallArg>> =
+            self.synthesize_write_str_lit_bytes_coercion(func, args);
+        let args: &[CallArg] = write_lit_wrapped.as_deref().unwrap_or(args);
         // Plan 174.3 (D54 v1): `x.try_as[T]()` — optional downcast of a boxed
         // `any` to `Option[T]`. Runtime type_id check on the erased value: match
         // → `Some(*(T*)payload)`, mismatch → `None`. Intercepted here (before the
