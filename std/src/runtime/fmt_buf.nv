@@ -57,6 +57,22 @@ export type Align enum Left | Right | Center
 #unstable
 export type FloatKind enum Shortest | Fixed | Sci
 
+/// Plan 208 Ф.2 (D422 §2/§6): the `Fmt` protocol's `@sign()` axis — whether
+/// a non-negative numeric value forces a leading `+` (`{:+}` Rust parity).
+/// Lives here (not `prelude.protocols`) so it sits next to `Align`/`FloatKind`
+/// — one home for every format-axis enum.
+#unstable
+export type Sign enum Minus | Plus
+
+/// Plan 208 Ф.2 (D422 §2/§6): the `Fmt` protocol's `@kind()` axis — which
+/// representation `${x:SPEC}` requested. `Display`/`Debug` are the two a
+/// type's own `@display`/`@debug` body is invoked under today; `Hex`/`Oct`/
+/// `Bin`/`Exp` are reserved for when radix/exponential specs route through
+/// `@kind()` instead of the compiler's direct `conv.h` fast path (not yet —
+/// Ф.2 keeps that fast path for primitives, see `emit_format_spec_value`).
+#unstable
+export type FmtKind enum Display | Debug | Hex | Oct | Bin | Exp
+
 // ─── FmtSpec — internal spec-slice for `int_fmt` ───
 //
 // Deliberately narrow: only the axes `int_fmt`'s digit-loop needs (radix,

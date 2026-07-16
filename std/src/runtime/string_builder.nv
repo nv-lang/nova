@@ -189,10 +189,11 @@ export fn StringBuilder mut @truncate(len int) -> @
     requires len >= 0
 { @buf.truncate(len) }
 
-// Plan 152.7.1 (D374 AMEND, ex-D374) — Write protocol implementation.
-// Delegates to @buf.append directly (same UTF-8 bytes path as @append(s str)).
-// Returns () — satisfies Write protocol contract.
-export fn StringBuilder mut @write(s str) -> () { @buf.append(s.bytes()) }
+// Plan 152.7.1 (D374 AMEND, ex-D374) + Plan 208 Ф.2 (D422 §1, D374 AMEND
+// ×2) — Write protocol implementation. `@write` now takes `[]u8` directly
+// (was `str`) — delegates straight to `@buf.append`, one fewer indirection
+// than the old `s.bytes()` unwrap. Returns () — satisfies Write contract.
+export fn StringBuilder mut @write(bytes []u8) -> () { @buf.append(bytes) }
 
 // ─── Consume ───
 

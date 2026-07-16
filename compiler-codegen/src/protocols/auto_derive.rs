@@ -612,6 +612,18 @@ fn member_call(obj: Expr, method: &str, args: Vec<Expr>) -> Expr {
     call(func, args)
 }
 
+/// Plan 208 Ф.2 (D422 §1, D374 AMEND ×2): `Write.@write` now takes `[]u8`,
+/// not `str` — every synthesized `w.write(<str-expr>)` below needs an
+/// explicit `.bytes()` (D176) rather than relying on the D55 literal→`[]u8`
+/// coercion (which only covers a BARE string-literal argument expression,
+/// not `str.from(x)`'s call-result — and this helper is used for both
+/// shapes uniformly, so it always emits the explicit conversion rather than
+/// depending on which of the two shapes the coercion mechanism does or does
+/// not reach).
+fn to_bytes(e: Expr) -> Expr {
+    member_call(e, "bytes", vec![])
+}
+
 fn binop(op: BinOp, l: Expr, r: Expr) -> Expr {
     ex(ExprKind::Binary {
         op,
@@ -948,12 +960,21 @@ fn synth_compare_record_body(fields: &[DerivedField]) -> FnBody {
     FnBody::Block(block_with_trailing(stmts, ex(ExprKind::IntLit(0))))
 }
 
-/// Synthesize `@display(w Write) -> ()` — memberwise format.
+/// Synthesize `@display(w Fmt) -> ()` — memberwise format.
 /// D237: renamed from synthesize_fmt (Printable → Display, @fmt → @display).
 /// Plan 152.7.1 (D374 AMEND): param changed from `sb StringBuilder` to `w Write`.
+/// Plan 208 Ф.2 (D422 §3): param changed AGAIN, `w Write` → `w Fmt` (D374
+/// AMEND ×2) — `Display`/`Debug` are now REQUIRED (no to_str-calling default,
+/// D422 §3 invariant), so auto-derive is the ONLY source of a `@display`/
+/// `@debug` body for a structural type that never hand-writes one — this
+/// synthesizer's output signature must match the (now Fmt-typed) protocol
+/// exactly or the synthesized method fails to satisfy `Display`/`Debug`.
 ///
-/// Output form: `TypeName { f1: <display_f1>, f2: <display_f2> }`.
-/// Empty type-body → `w.write_str("TypeName")`.
+/// Output form: `TypeName { f1: <display_f1>, f2: <display_f2> }` —
+/// UNCHANGED shape (Ф.2 is a signature migration only; D422 §4's compact
+/// `TypeName(f1, f2)` positional Display form — distinct from Debug's named
+/// form — is Ф.3 scope, not done here, see `docs/plans/208-impl-progress.md`).
+/// Empty type-body → `w.write("TypeName".bytes())`.
 /// Sum-type → V1 placeholder (writes type name).
 pub fn synthesize_display<Q: DeriveQuery>(
     _ctx: &mut AutoDeriveCtx<'_, Q>,
@@ -976,15 +997,17 @@ pub fn synthesize_display<Q: DeriveQuery>(
     Ok(make_synth_method(
         &type_decl.name,
         "display",
-        vec![make_param("w", type_ref_named("Write"))],
+        vec![make_param("w", type_ref_named("Fmt"))],
         Some(TypeRef::Unit(span_dummy())),
         body,
     ))
 }
 
-/// Synthesize `@debug(w Write) -> ()` — memberwise debug format.
+/// Synthesize `@debug(w Fmt) -> ()` — memberwise debug format.
 /// D237: renamed from synthesize_debug_fmt (DebugPrintable → Debug, @debug_fmt → @debug).
 /// Plan 152.7.1 (D374 AMEND): param changed from `sb StringBuilder` to `w Write`.
+/// Plan 208 Ф.2 (D422 §3): param changed AGAIN, `w Write` → `w Fmt` — see
+/// `synthesize_display` doc comment above (same rationale, required-no-default).
 ///
 /// Output form: `TypeName { f1: <debug_f1>, f2: <debug_f2> }`.
 /// Empty type-body → `w.write_str("TypeName")`.
@@ -1010,7 +1033,7 @@ pub fn synthesize_debug<Q: DeriveQuery>(
     Ok(make_synth_method(
         &type_decl.name,
         "debug",
-        vec![make_param("w", type_ref_named("Write"))],
+        vec![make_param("w", type_ref_named("Fmt"))],
         Some(TypeRef::Unit(span_dummy())),
         body,
     ))
@@ -1021,7 +1044,7 @@ fn simple_display_block(type_name: &str) -> Block {
         stmts: vec![Stmt::Expr(member_call(
             ident("w"),
             "write",
-            vec![ex(ExprKind::StrLit(type_name.to_string()))],
+            vec![to_bytes(ex(ExprKind::StrLit(type_name.to_string())))],
         ))],
         trailing: None,
         span: span_dummy(),
@@ -1035,14 +1058,14 @@ fn synth_display_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody
         stmts.push(Stmt::Expr(member_call(
             ident("w"),
             "write",
-            vec![ex(ExprKind::StrLit(type_name.to_string()))],
+            vec![to_bytes(ex(ExprKind::StrLit(type_name.to_string())))],
         )));
     } else {
-        // w.write_str("TypeName { ")
+        // w.write("TypeName { ".bytes())
         stmts.push(Stmt::Expr(member_call(
             ident("w"),
             "write",
-            vec![ex(ExprKind::StrLit(format!("{} {{ ", type_name)))],
+            vec![to_bytes(ex(ExprKind::StrLit(format!("{} {{ ", type_name))))],
         )));
         for (i, f) in fields.iter().enumerate() {
             let prefix = if i == 0 {
@@ -1050,11 +1073,11 @@ fn synth_display_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody
             } else {
                 format!(", {}: ", f.name)
             };
-            // [race-198 / 196.6] `write` (NOT `write_str`): the `w: Write`
-            // param lowers to the CONCRETE `Nova_StringBuilder*`
-            // (type_ref_to_c special case), and StringBuilder has
-            // `mut @write(s str)` but NO `write_str` — a `write_str` call
-            // here fell through to the single-key `method_receivers`
+            // [race-198 / 196.6] `write` (NOT `write_str`): the `w: Fmt`
+            // param (Plan 208 Ф.2 — was `w: Write`) lowers to a CONCRETE
+            // sink (type_ref_to_c special case), and StringBuilder has
+            // `mut @write(bytes []u8)` but NO `write_str` — a `write_str`
+            // call here fell through to the single-key `method_receivers`
             // name-only fallback (documented last-wins) and dispatched to
             // whichever OTHER type in the CU happened to register
             // `write_str` last: WriteBuffer in a small CU (accidentally
@@ -1067,15 +1090,15 @@ fn synth_display_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody
             stmts.push(Stmt::Expr(member_call(
                 ident("w"),
                 "write",
-                vec![ex(ExprKind::StrLit(prefix))],
+                vec![to_bytes(ex(ExprKind::StrLit(prefix)))],
             )));
             if is_primitive_field(&f.ty) {
                 // Primitive field: no `.display()` method on scalars — route via
-                // `w.write(str.from(@field))` (Display path).
+                // `w.write(str.from(@field).bytes())` (Display path).
                 stmts.push(Stmt::Expr(member_call(
                     ident("w"),
                     "write",
-                    vec![member_call(ident("str"), "from", vec![self_field(&f.name)])],
+                    vec![to_bytes(member_call(ident("str"), "from", vec![self_field(&f.name)]))],
                 )));
             } else {
                 // Record / nested field: recurse into its synthesized @display.
@@ -1089,7 +1112,7 @@ fn synth_display_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody
         stmts.push(Stmt::Expr(member_call(
             ident("w"),
             "write",
-            vec![ex(ExprKind::StrLit(" }".to_string()))],
+            vec![to_bytes(ex(ExprKind::StrLit(" }".to_string())))],
         )));
     }
     FnBody::Block(Block {
@@ -1106,13 +1129,13 @@ fn synth_debug_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
         stmts.push(Stmt::Expr(member_call(
             ident("w"),
             "write",
-            vec![ex(ExprKind::StrLit(type_name.to_string()))],
+            vec![to_bytes(ex(ExprKind::StrLit(type_name.to_string())))],
         )));
     } else {
         stmts.push(Stmt::Expr(member_call(
             ident("w"),
             "write",
-            vec![ex(ExprKind::StrLit(format!("{} {{ ", type_name)))],
+            vec![to_bytes(ex(ExprKind::StrLit(format!("{} {{ ", type_name))))],
         )));
         for (i, f) in fields.iter().enumerate() {
             let prefix = if i == 0 {
@@ -1126,7 +1149,7 @@ fn synth_debug_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
             stmts.push(Stmt::Expr(member_call(
                 ident("w"),
                 "write",
-                vec![ex(ExprKind::StrLit(prefix))],
+                vec![to_bytes(ex(ExprKind::StrLit(prefix)))],
             )));
             // All fields (primitive or record) implement Debug — call @debug(w) uniformly.
             stmts.push(Stmt::Expr(member_call(
@@ -1138,7 +1161,7 @@ fn synth_debug_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
         stmts.push(Stmt::Expr(member_call(
             ident("w"),
             "write",
-            vec![ex(ExprKind::StrLit(" }".to_string()))],
+            vec![to_bytes(ex(ExprKind::StrLit(" }".to_string())))],
         )));
     }
     FnBody::Block(Block {
@@ -1473,7 +1496,7 @@ fn synth_fmt_sum_body(variants: &[SumVariant], is_debug: bool) -> FnBody {
         return FnBody::Block(Block { stmts: vec![], trailing: None, span: span_dummy(), is_unsafe: false });
     }
     let write_lit = |s: String| -> Stmt {
-        Stmt::Expr(member_call(ident("w"), "write", vec![ex(ExprKind::StrLit(s))]))
+        Stmt::Expr(member_call(ident("w"), "write", vec![to_bytes(ex(ExprKind::StrLit(s)))]))
     };
     // Emit one payload value into `w`.
     let emit_value = |bind: &str, ty: &TypeRef| -> Stmt {
@@ -1484,7 +1507,7 @@ fn synth_fmt_sum_body(variants: &[SumVariant], is_debug: bool) -> FnBody {
             // synth_display_record_body (StringBuilder has no write_str).
             Stmt::Expr(member_call(
                 ident("w"), "write",
-                vec![member_call(ident("str"), "from", vec![ident(bind)])],
+                vec![to_bytes(member_call(ident("str"), "from", vec![ident(bind)]))],
             ))
         } else {
             Stmt::Expr(member_call(ident(bind), "display", vec![ident("w")]))
@@ -1520,7 +1543,7 @@ fn synth_fmt_sum_body(variants: &[SumVariant], is_debug: bool) -> FnBody {
                         // [race-198 / 196.6] `write` (NOT `write_str`) — см.
                         // synth_display_record_body.
                         stmts.push(Stmt::Expr(member_call(
-                            ident("w"), "write", vec![ex(ExprKind::StrLit(prefix))])));
+                            ident("w"), "write", vec![to_bytes(ex(ExprKind::StrLit(prefix)))])));
                         stmts.push(emit_value(bind, ty));
                     }
                     stmts.push(write_lit(" }".to_string()));

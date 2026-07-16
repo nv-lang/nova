@@ -52,6 +52,16 @@ module prelude.protocols
 // Plan 91.8a (D183): Ordering sum-type удалён; Compare.compare возвращает int
 // (memcmp-style: < 0 / 0 / > 0). Никаких imports из core не требуется.
 
+// Plan 208 Ф.2 (D422): `Fmt`'s `@align()` axis reuses the SAME `Align` enum
+// `StringBuilder.@pad_in_place`/`@write_padded` already take (D179 amend,
+// Ф.1) — one type, not a second one. `Sign`/`FmtKind` are new (Ф.2 scope,
+// not introduced in Ф.1) but live in the SAME file (`runtime.fmt_buf`) for
+// a single format-enum home. `runtime.fmt_buf` is `#no_prelude` (only
+// builtin primitives) so this import does not reopen the
+// `prelude → collections → string_builder` cycle `protocols.nv` itself
+// otherwise stays clear of.
+import std.runtime.fmt_buf.{Align, Sign, FmtKind}
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // Equality / Hashing / Ordering protocols (D109)
@@ -179,136 +189,215 @@ export type Clone protocol {
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 152.7.1 (D374 AMEND, ex-D374) — Write sink protocol
+// Plan 208 Ф.2 (D422) — Write / Fmt / FmtCtx — Unified Formatter
 // ──────────────────────────────────────────────────────────────────────────
+//
+// D419 RETRACT/SUPERSEDED (spec/decisions/02-types.md#d419): the two-method
+// `@display(mut w Write)` + optional `@display_fmt(mut f Fmt)` scheme is
+// gone. ONE required primitive per type — `@display(mut f Fmt)` /
+// `@debug(mut f Fmt)` — below. `Fmt` embeds `Write` (D145 protocol-embed,
+// `use Write`) and adds the full spec-axis surface (width/precision/align/
+// fill/sign/alternate/kind) plus type-owned `@pad`. See D422 §1-§3.
 
-/// Sink protocol for text output — decouples Display/Debug from concrete
-/// StringBuilder (Plan 152.7.1, D374 AMEND, ex-D374).
+/// Byte sink for formatting — minimal, infallible (Plan 208 Ф.2, D422 §1,
+/// D374 AMEND ×2). `@write` takes `[]u8`, not `str`: more fundamental,
+/// unifies the shape with `io.Write` (Plan 176) without merging the two
+/// protocols (fmt-`Write` is infallible; io-`Write` returns
+/// `Result[(), IoError]` — "two byte relatives", D325).
 ///
-/// Implementors: `StringBuilder` (str sink), `WriteBuffer` (byte sink, via
-/// UTF-8 pass-through). At the C ABI level Write currently lowers to
-/// `Nova_StringBuilder*` (V1; vtable upgrade is a future followup).
+/// str-VALUE arguments need an explicit `.bytes()` (D176, zero-copy view);
+/// str-LITERAL arguments coerce to `[]u8` automatically (D55 amend — the
+/// same "literal in a typed position" carve-out as int-literal→newtype).
 ///
-/// Precedents: Rust `fmt::Write`, Go `io.Writer`, Java `Appendable`.
+/// `@reserve`/`@advance` are deliberately NOT here (design review 2026-07-15,
+/// D422 §1): a raw `*mut u8` doesn't belong in a shared protocol, and an
+/// io-sink cannot hand out a pointer to bytes it hasn't received yet. They
+/// stay concrete methods on `StringBuilder` (D179 amend) — the compiler uses
+/// them directly for the zero-COPY top-level interpolation path; generic
+/// `@display`/`@debug` bodies (sink typed only as `Fmt`/`Write`) render a
+/// primitive into a stack buffer and make one `@write` call — zero-ALLOC,
+/// no heap, mirroring Rust's minimal `fmt::Write`.
 ///
 /// # Examples
 ///
 /// ```nova
-/// // StringBuilder satisfies Write:
 /// consume sb = StringBuilder.new()
-/// sb.write("hello")
-///
-/// // WriteBuffer satisfies Write:
-/// mut wb = WriteBuffer.new()
-/// wb.write("world")
+/// sb.write("hello".bytes())
 /// ```
 #stable(since = "0.1")
 export type Write protocol {
-    mut @write(s str) -> ()
+    mut @write(bytes []u8) -> ()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// D419 (Plan 152.7.2) — Fmt protocol: format-spec context for `@display_fmt`
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Format context passed to the optional `@display_fmt(mut f Fmt)` hook
-/// (D419, spec/decisions/02-types.md#d419). `Fmt` extends `Write` — same
-/// `@write` method, same sink semantics — with the two format-spec axes a
-/// type is allowed to react to: `alternate` (canonical pretty-flag, `#`) and
-/// `precision` (`.N`). Width/fill/align stay caller-side post-processing
-/// (D419 §в) — a type must not know how to pad itself.
+/// Format-spec context — sink (`use Write`, D145 protocol-embed) + the axes
+/// a `${x:SPEC}` rich spec carries (Plan 208 Ф.2, D422 §2). Every
+/// `@display`/`@debug` implementor receives one of these (never a bare
+/// `Write`) so a type CAN react to width/align/fill/sign/alternate/kind/
+/// precision — but padding itself is compiler-owned by default (§`@pad`).
 ///
-/// **Dispatch rule (D419):** `${x:SPEC}` calls `@display_fmt` only when the
-/// type defines it; otherwise it falls back to `Display.@display` plus the
-/// existing external post-processing — byte-identical to pre-D419 behavior
-/// for every type that doesn't opt in. No signature change to
-/// `@display`/`@debug` (D374 not re-broken a second time).
+/// `use Write` composes `@write([]u8)` into `Fmt`'s method-set (same
+/// mechanism as any other `protocol { use A, B }`, D145) — any `Fmt`
+/// structurally satisfies `Write` too.
 ///
 /// # Examples
 ///
 /// ```nova
-/// fn MyType @display_fmt(mut f Fmt) -> () {
-///     if f.alternate() {
-///         f.write(@to_str_pretty())
-///     } else {
-///         f.write(@to_str())
-///     }
+/// fn MyType @display(mut f Fmt) -> () {
+///     if f.alternate() { f.write("<".bytes()) }
+///     f.write(@to_str().bytes())
+///     if f.alternate() { f.write(">".bytes()) }
 /// }
-/// // "${v}"  -> Display.@display (unaffected, if declared) / to_str fallback
-/// // "${v:#}" -> @display_fmt(f) with f.alternate() == true
 /// ```
 #stable(since = "0.1")
 export type Fmt protocol {
-    mut @write(s str) -> ()
-    @alternate() -> bool
+    use Write
+    @width()     -> Option[int]
     @precision() -> Option[int]
+    @align()     -> Option[Align]
+    @fill()      -> char
+    @sign()      -> Sign
+    @alternate() -> bool
+    @kind()      -> FmtKind
+    mut @pad(bytes []u8) -> ()
 }
 
-/// Concrete `Fmt` implementor constructed internally by the interpolation
-/// codegen at each `${x:SPEC}` call site that dispatches to a type's
-/// `@display_fmt` (D419). Not intended for direct user construction — the
-/// compiler wires `sink`/`alt`/`has_prec`/`prec` from the parsed rich format
-/// spec (`FormatSpecParsed`, compiler-codegen/src/ast/format_spec.rs).
+/// Concrete `Fmt` implementor the compiler constructs at every `${x[:SPEC]}`
+/// call site (Plan 208 Ф.2, D422 §2). Not intended for direct user
+/// construction — `FmtCtx.bare`/`FmtCtx.rich` below are the two shapes the
+/// codegen hand-synthesizes (bare interpolation has no spec at all; a rich
+/// `${x:SPEC}` carries the parsed axes). Primitive int/bool/etc fields only
+/// (no Nova enum literals cross the hand-synthesized C call boundary) —
+/// `.rich`'s constructor does the int/bool → `Option[T]`/enum mapping on the
+/// `.nv` side.
+///
+/// `mark` — the sink's byte length just BEFORE the type's `@display`/
+/// `@debug` body runs, needed by `@pad_in_place` (composite/streaming render
+/// whose length is only known AFTER the body streams into `sink`, D422 §4).
+/// `pad_consumed`/`prec_consumed` mirror each other: `pad_consumed` flips
+/// true when the type calls `@pad` itself (compiler then skips its own
+/// auto-pad); `prec_consumed` is NOT flip-able via any `Fmt` method (no
+/// setter in the protocol, D422 §2 lists none) — it exists on the struct for
+/// symmetry/future use but Ф.2 leaves it permanently `false` (see
+/// `docs/plans/208-impl-progress.md` for why the D419-era "did the type look
+/// at precision" auto-truncation fallback is NOT carried forward for the
+/// composite/user-type path — Rust's own Debug/derive ignores `.N` the same
+/// way; a type that wants precision semantics reads `@precision()` itself).
 #stable(since = "0.1")
 export type FmtCtx {
     sink Write
-    alt bool
-    has_prec bool
-    prec int
+    mark int
+    width Option[int]
+    precision Option[int]
+    align Option[Align]
+    fill char
+    sign Sign
+    alternate bool
+    kind FmtKind
+    mut pad_consumed bool
+    mut prec_consumed bool
 }
 
-export fn FmtCtx.new(sink Write, alt bool, has_prec bool, prec int) -> Self =>
-    { sink, alt, has_prec, prec }
+/// Bare `${x}` / `${x:?}` — no spec at all: every axis empty/default.
+/// `is_debug` selects `@kind()` (`Debug` vs `Display`); nothing else reacts.
+export fn FmtCtx.bare(sink Write, mark int, is_debug bool) -> Self => {
+    sink, mark,
+    width: None, precision: None, align: None,
+    fill: ' ', sign: Sign.Minus, alternate: false,
+    kind: if is_debug { FmtKind.Debug } else { FmtKind.Display },
+    pad_consumed: false, prec_consumed: false,
+}
 
-export fn FmtCtx mut @write(s str) -> () { @sink.write(s) }
+/// Rich `${x:SPEC}` — full parsed axes, primitive-typed params only (the
+/// codegen call site hand-formats ints/bools straight from
+/// `FormatSpecParsed`, mirroring the pre-existing `nova_fmt_pad(...)`
+/// call-site convention). `align_code`: 0=Left/1=Right/2=Center/other=unset;
+/// `fill_cp`: Unicode scalar value of the fill char.
+export fn FmtCtx.rich(
+    sink Write, mark int,
+    has_width bool, width int,
+    has_precision bool, precision int,
+    align_code int, fill_cp int,
+    sign_plus bool, alternate bool, is_debug bool,
+) -> Self => {
+    sink, mark,
+    width: if has_width { Some(width) } else { None },
+    precision: if has_precision { Some(precision) } else { None },
+    align:
+        if align_code == 0 { Some(Align.Left) }
+        else if align_code == 1 { Some(Align.Right) }
+        else if align_code == 2 { Some(Align.Center) }
+        else { None },
+    fill: fill_cp as char,
+    sign: if sign_plus { Sign.Plus } else { Sign.Minus },
+    alternate,
+    kind: if is_debug { FmtKind.Debug } else { FmtKind.Display },
+    pad_consumed: false, prec_consumed: false,
+}
 
-export fn FmtCtx @alternate() -> bool => @alt
+export fn FmtCtx mut @write(bytes []u8) -> () { @sink.write(bytes) }
+export fn FmtCtx @width() -> Option[int] => @width
+export fn FmtCtx @precision() -> Option[int] => @precision
+export fn FmtCtx @align() -> Option[Align] => @align
+export fn FmtCtx @fill() -> char => @fill
+export fn FmtCtx @sign() -> Sign => @sign
+export fn FmtCtx @alternate() -> bool => @alternate
+export fn FmtCtx @kind() -> FmtKind => @kind
 
-export fn FmtCtx @precision() -> Option[int] =>
-    if @has_prec { Some(@prec) } else { None }
+/// Type-owned padding (D422 §2/§4): a type that wants to pad ITSELF (rather
+/// than let the compiler's auto-`@pad_in_place` run after the fact) writes
+/// through this instead of `@write`, then the compiler sees `pad_consumed`
+/// and does not double-pad. V1: delegates straight to the sink (no width-
+/// aware behavior yet beyond what the caller already computed into `bytes`)
+/// — full type-driven pad composition is a future refinement; today's
+/// primary auto-pad path is the compiler's own `@pad_in_place` (D179 amend).
+export fn FmtCtx mut @pad(bytes []u8) -> () {
+    @sink.write(bytes)
+    @pad_consumed = true
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Plan 137 (D237) — Display + Debug protocols (renamed from Display/Debug)
+// Plan 208 Ф.2 (D422 §3) — ONE required primitive, no to_str-calling default
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Форматирование в строку (для println, str.from, etc).
 /// D237 rename: Display → Display, @display → @display.
-/// D374 AMEND (Plan 152.7.1): sink parameter changed from `StringBuilder`
-/// to `Write` protocol — decouples Display from concrete string sink.
-///
-/// Метод `@display(w)` пишет representation в любой `Write` sink.
-/// Возвращает `()`; вся работа — побочный effect на `w`.
+/// D422 (Plan 208 Ф.2): sink parameter changed from `Write` to `Fmt`
+/// (D374 AMEND ×2) — a `Fmt` gives width/align/fill/sign/alternate/kind
+/// axes on top of the same `@write`. **REQUIRED, no default body**
+/// (D422 §3 invariant): a `to_str()`-calling default was the D419-era
+/// cycle trap (`to_str`'s own blanket body is `"${@}"`, which for a type
+/// with no real `@display` would recurse into the very default calling it).
+/// `@to_str()` is now a bounded-`Display` blanket instead (only callable on
+/// a type that ALREADY has a real `@display`, std/runtime/string/core.nv)
+/// — no cycle is structurally possible. Auto-derive (record/sum/tuple)
+/// synthesizes a real `@display` on demand, so structural types stay
+/// Display-capable without a hand-written impl; a non-derivable opaque type
+/// with no `@display` is a compile error at the `${x}` call site, not an
+/// infinite loop (D422 §3 point 4).
 ///
 /// # Examples
 ///
 /// ```nova
 /// type Point { x int, y int }
-/// fn Point @display(mut w Write) -> () {
-///     w.write("Point(")
-///     w.write(@x.to_str())
-///     w.write(", ")
-///     w.write(@y.to_str())
-///     w.write(")")
+/// fn Point @display(mut f Fmt) -> () {
+///     f.write("Point(".bytes())
+///     f.write(@x.to_str().bytes())
+///     f.write(", ".bytes())
+///     f.write(@y.to_str().bytes())
+///     f.write(")".bytes())
 /// }
 /// ```
-/// Plan 174.2 (str.from-ретракция, было Plan 91.8a.2/D183): default body
-/// использует `@.to_str()` — bare-T blanket (`fn[T] T @to_str() -> str =>
-/// "${@}"`, std/runtime/string/core.nv) для primitives, или
-/// user-declared `@to_str()` override для custom types. Implementer пишет
-/// @display явно для perf (no intermediate string), либо предоставляет
-/// `fn MyType @to_str() -> str` override.
 #stable(since = "0.1")
-export type Display protocol {
-    @display(mut w Write) {
-        w.write(@to_str())
-    }
-}
+export type Display protocol { @display(mut f Fmt) -> () }
 
 
 /// Protocol для отладочного представления — sibling к Display (D229; D237 rename).
-/// D237 rename: Debug → Debug, @debug → @debug.
-/// D374 AMEND (Plan 152.7.1): sink parameter changed from `StringBuilder`
-/// to `Write` protocol.
+/// D422 (Plan 208 Ф.2): sink parameter `Write` → `Fmt`; **REQUIRED, no
+/// default body** — same D422 §3 rationale as `Display` above. The old
+/// default (`w.write(str.from_debug(@))`) is retracted along with
+/// `str.from_debug` itself (Plan 174.2 left it an unimplemented symbol;
+/// D422 removes even the dead reference — see D422 §"Связь").
 ///
 /// **Distinction от Display:**
 /// - `Display.@display` — user-facing display (e.g., `Point(1, 2)`, `"hello"`).
@@ -320,36 +409,21 @@ export type Display protocol {
 /// Bare `${expr}` (no `:?`) routes к Display.@display (unchanged).
 ///
 /// **Auto-derive:** synthesized on-demand при первом encounter `${x:?}`.
-/// Future explicit form `#impl(Debug)` — [M-91.14-derive-debug].
 ///
 /// # Examples
 ///
 /// ```nova
 /// type Point { x int, y int }
-/// // Auto-synthesized:
-/// //   @debug(w) := w.write("Point { x: ${@x:?}, y: ${@y:?} }")
-///
-/// ro p = Point { x: 1, y: 2 }
-/// println("p = ${p:?}")  // "p = Point { x: 1, y: 2 }"
-/// ```
-///
-/// Manual impl (override default):
-///
-/// ```nova
-/// fn Point @debug(mut w Write) -> () {
-///     w.write("Point(")
-///     w.write(@x.to_str())
-///     w.write(", ")
-///     w.write(@y.to_str())
-///     w.write(")")
+/// fn Point @debug(mut f Fmt) -> () {
+///     f.write("Point(".bytes())
+///     f.write(@x.to_str().bytes())
+///     f.write(", ".bytes())
+///     f.write(@y.to_str().bytes())
+///     f.write(")".bytes())
 /// }
 /// ```
 #stable(since = "0.1")
-export type Debug protocol {
-    @debug(mut w Write) {
-        w.write(str.from_debug(@))
-    }
-}
+export type Debug protocol { @debug(mut f Fmt) -> () }
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -545,23 +619,42 @@ export type AsSlice[T] protocol {
 // the f64 formatter; `@append(f32)` casts to f64; interp-map routes `${f32}`
 // directly to conv.h. Numeric debug == display (no escaping).
 
-// Plan 174.2 (str.from-ретракция): тела ниже пишут через интерполяцию
-// ("${@}" / "${@:?}") НАПРЯМУЮ — НЕ через `.to_str()` (инвариант рекурсии:
-// `.to_str()`'s blanket-тело САМО есть `"${@}"`; примитив-путь `${@}`
-// лоуэрится в emit_c.rs::emit_interpolated_str прямо в
-// nova_int_to_str/nova_f64_to_str/… — цикла нет ни в одну, ни в другую
-// сторону). Debug-тело численных примитивов идентично display (D229 —
+// Plan 174.2 (str.from-ретракция) + Plan 208 Ф.2 (D422 signature migration):
+// тела ниже пишут через интерполяцию ("${@}" / "${@:?}") НАПРЯМУЮ — НЕ через
+// `.to_str()` (инвариант рекурсии: `.to_str()`'s blanket-тело САМО есть
+// `"${@}"`; примитив-путь `${@}` лоуэрится в emit_c.rs::emit_interpolated_str
+// прямо в nova_int_to_str/nova_f64_to_str/… — цикла нет ни в одну, ни в
+// другую сторону). Debug-тело численных примитивов идентично display (D229 —
 // numbers don't need escaping), спеллинг через `:?` — та же C-функция
 // (nova_*_to_debug_str == nova_*_to_str, conv.h).
+//
+// `.bytes()` on the interpolated-string RESULT (a runtime `str` VALUE, not a
+// literal) is required now that `Write.@write` takes `[]u8` (D374 aменд ×2)
+// — D55's literal→[]u8 coercion only covers literal `"..."` positions, not
+// an interpolated expression's result (D176 explicit-.bytes() rule).
+//
+// These bodies are the STRUCTURAL-satisfaction primitive for `Display`/
+// `Debug` (required, no default per D422 §3) — the compiler's OWN
+// interpolation codegen (`emit_interpolated_str`/`emit_format_spec_value`)
+// never actually CALLS them for a bare or rich-spec primitive (it keeps its
+// pre-existing direct `conv.h` fast path, unchanged byte-for-byte). They are
+// exercised only when a primitive is dispatched to POLYMORPHICALLY through a
+// generic `Fmt`-typed sink — e.g. `Option[T Debug]`/`Result[T Debug, E Debug]`
+// below calling `v.debug(f)` where `T`/`E` monomorphizes to a primitive, or a
+// future `Vec[T]`/`[]T` generic Display (Ф.3). Radix/width/alternate axes on
+// `f` are therefore NOT read here (`f.kind()` stays unconsulted) — a nested
+// `${container:x}` hex-formatting its primitive elements is out of THIS
+// phase's scope (no existing call site exercises it; documented follow-up,
+// see `docs/plans/208-impl-progress.md`).
 #impl(Display)
-fn int @display(mut w Write) -> () { w.write("${@}") }
+fn int @display(mut f Fmt) -> () { f.write("${@}".bytes()) }
 #impl(Debug)
-fn int @debug(mut w Write) -> () { w.write("${@:?}") }
+fn int @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
 
 #impl(Display)
-fn f64 @display(mut w Write) -> () { w.write("${@}") }
+fn f64 @display(mut f Fmt) -> () { f.write("${@}".bytes()) }
 #impl(Debug)
-fn f64 @debug(mut w Write) -> () { w.write("${@:?}") }
+fn f64 @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
 
 // Plan 180: f32 display/debug — f32-precise shortest-round-trip formatter
 // (nova_f32_to_str, strtof-based), routed directly by the interp `${f32}`
@@ -569,24 +662,24 @@ fn f64 @debug(mut w Write) -> () { w.write("${@:?}") }
 // (`@ as f64` before interpolating) would surface the f32→f64 mantissa tail
 // (0.1f → "0.10000000149011612"); the direct f32 interp path keeps "0.1".
 #impl(Display)
-fn f32 @display(mut w Write) -> () { w.write("${@}") }
+fn f32 @display(mut f Fmt) -> () { f.write("${@}".bytes()) }
 #impl(Debug)
-fn f32 @debug(mut w Write) -> () { w.write("${@:?}") }
+fn f32 @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
 
 #impl(Display)
-fn bool @display(mut w Write) -> () { w.write("${@}") }
+fn bool @display(mut f Fmt) -> () { f.write("${@}".bytes()) }
 #impl(Debug)
-fn bool @debug(mut w Write) -> () { w.write("${@:?}") }
+fn bool @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
 
 #impl(Display)
-fn char @display(mut w Write) -> () { w.write("${@}") }
+fn char @display(mut f Fmt) -> () { f.write("${@}".bytes()) }
 #impl(Debug)
-fn char @debug(mut w Write) -> () { w.write("${@:?}") }
+fn char @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
 
 #impl(Display)
-fn str @display(mut w Write) -> () { w.write(@) }
+fn str @display(mut f Fmt) -> () { f.write(@.bytes()) }
 #impl(Debug)
-fn str @debug(mut w Write) -> () { w.write("${@:?}") }
+fn str @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -612,14 +705,14 @@ fn str @debug(mut w Write) -> () { w.write("${@:?}") }
 /// assert("${Some("hi"):?}" == "Some(\"hi\")")
 /// ```
 #impl(Debug)
-fn Option[T Debug] @debug(mut w Write) -> () {
+fn Option[T Debug] @debug(mut f Fmt) -> () {
     match @ {
         Some(v) => {
-            w.write("Some(")
-            v.debug(w)
-            w.write(")")
+            f.write("Some(".bytes())
+            v.debug(f)
+            f.write(")".bytes())
         }
-        None => w.write("None")
+        None => f.write("None".bytes())
     }
 }
 
@@ -633,17 +726,17 @@ fn Option[T Debug] @debug(mut w Write) -> () {
 /// assert("${Err("oops"):?}" == "Err(\"oops\")")
 /// ```
 #impl(Debug)
-fn Result[T Debug, E Debug] @debug(mut w Write) -> () {
+fn Result[T Debug, E Debug] @debug(mut f Fmt) -> () {
     match @ {
         Ok(v) => {
-            w.write("Ok(")
-            v.debug(w)
-            w.write(")")
+            f.write("Ok(".bytes())
+            v.debug(f)
+            f.write(")".bytes())
         }
         Err(e) => {
-            w.write("Err(")
-            e.debug(w)
-            w.write(")")
+            f.write("Err(".bytes())
+            e.debug(f)
+            f.write(")".bytes())
         }
     }
 }
