@@ -17650,6 +17650,9 @@ impl<'a> BoundCtx<'a> {
         self.check_call_bounds(e, scope, errors);
         // Plan 46 (D102): argument binding diagnostics.
         self.check_call_argbind(e, scope, errors);
+        // Plan 207 cmpxchg-lint волна B (D425 амендмент): compare_exchange(_weak)
+        // failure-ordering hard-error (E_CAS_FAILURE_ORDER_INVALID).
+        self.check_cas_ordering(e, scope, errors);
         // Plan 97.1 hardening: `box.method()` для protocol-typed var —
         // method обязан быть в protocol_specs[<Proto>].
         self.check_protocol_method_call(e, scope, errors);
@@ -18301,6 +18304,93 @@ impl<'a> BoundCtx<'a> {
                     &concrete_t, bound, &gp.name, method_name, span, errors,
                 );
             }
+        }
+    }
+
+    /// Plan 207 cmpxchg-lint волна B (D425 амендмент): `compare_exchange`/
+    /// `compare_exchange_weak` call-site validation on `Atomic*` receivers with a
+    /// LITERAL (compile-time-known) `failure` `MemOrdering` argument. Non-literal
+    /// (runtime variable) orderings are not diagnosable at compile time — skipped
+    /// (per spec: only literal args are checked).
+    ///
+    /// Hard error only (`E_CAS_FAILURE_ORDER_INVALID`): `failure ∈ {Release, AcqRel}`
+    /// is semantically invalid — the failure path of a CAS is a pure load (the
+    /// compared value did NOT change), so it carries no release semantics (C11/C++11
+    /// treated this as UB/forbidden).
+    ///
+    /// The companion **warning** (`W_CAS_FAILURE_STRONGER` — `strength(failure) >
+    /// strength(success)`; valid since C++17 but almost always an intent bug) lives
+    /// in `lints.rs` (`lint_cas_failure_stronger`), NOT here: this checker's `errors`
+    /// sink is hard-errors-only (fatal), mirroring the existing `errors`/`LintWarning`
+    /// split used by `W_PRELUDE_SHADOW` (silent classification here, structured
+    /// warning emitted separately by `lints::lint_prelude_shadow` — see the Plan
+    /// 62.F.bis Ф.2 comment above `check_module`).
+    ///
+    /// Receiver-type gate: `Atomic*` **prefix** match (not an enumerated type-name
+    /// list — new sized/family variants are recognized for free). Best-effort: if the
+    /// receiver type doesn't resolve (`infer_arg_ty` is a lightweight, non-full-inference
+    /// helper — see its `Atomic*.new(...)` ctor arm above), the check is silently
+    /// skipped, same posture as `check_method_call_bounds`.
+    fn check_cas_ordering(
+        &self,
+        e: &Expr,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let ExprKind::Call { func, args, .. } = &e.kind else { return; };
+        let ExprKind::Member { obj, name: method_name } = &func.kind else { return; };
+        if method_name != "compare_exchange" && method_name != "compare_exchange_weak" {
+            return;
+        }
+        // Только 4-арная explicit-ordering overload — 2-арная (expected, desired)
+        // делегирует на `MemOrdering.SeqCst, MemOrdering.SeqCst` литералы внутри
+        // sync.nv (всегда валидная пара) — там нечего проверять.
+        if args.len() != 4 { return; }
+        let Some(recv_ty) = Self::infer_arg_ty(obj, scope) else { return; };
+        let TypeRef::Named { path, .. } = &recv_ty else { return; };
+        let Some(tname) = path.last() else { return; };
+        if !tname.starts_with("Atomic") { return; }
+
+        let Some(failure_arg) = Self::cas_call_arg(args, "failure", 3) else { return; };
+        let Some(failure) = mem_ordering_variant(failure_arg) else { return; }; // runtime value — skip
+
+        if matches!(failure, "Release" | "AcqRel") {
+            errors.push(
+                Diagnostic::new(
+                    format!(
+                        "[{}] `MemOrdering.{}` запрещён как failure-ordering для `{}`; \
+                         failure-путь compare_exchange — чистый load (значение НЕ \
+                         изменено), Release/AcqRel не имеют release-семантики на load. \
+                         Разрешены: Relaxed, Acquire, SeqCst.",
+                        E_CAS_FAILURE_ORDER_INVALID, failure, method_name
+                    ),
+                    failure_arg.span,
+                )
+                .with_suggestion(crate::diag::Suggestion {
+                    message: "замените на Acquire (или SeqCst для simplicity)".to_string(),
+                    span: failure_arg.span,
+                    replacement: "MemOrdering.Acquire".to_string(),
+                    applicability: crate::diag::Applicability::MaybeIncorrect,
+                })
+            );
+        }
+    }
+
+    /// Plan 207 cmpxchg-lint: достать call-arg для именованного параметра
+    /// `param_name` на позиции `pos`. Именованный аргумент (`CallArg::Named`) с
+    /// совпадающим именем побеждает независимо от позиции; иначе — позиционный
+    /// arg на `pos` (Nova не допускает позиционный аргумент ПОСЛЕ именованного,
+    /// так что чистая позиционная последовательность всегда занимает leading-
+    /// префикс — `args.get(pos)` безопасен, если сам не `Named`).
+    fn cas_call_arg<'x>(args: &'x [CallArg], param_name: &str, pos: usize) -> Option<&'x Expr> {
+        for a in args {
+            if let CallArg::Named { name, value } = a {
+                if name == param_name { return Some(value); }
+            }
+        }
+        match args.get(pos) {
+            Some(CallArg::Named { .. }) | None => None,
+            Some(a) => Some(a.expr()),
         }
     }
 
@@ -19079,6 +19169,31 @@ impl<'a> BoundCtx<'a> {
                 path: vec!["str".to_string()], generics: vec![], span: e.span }),
             ExprKind::CharLit(_) => Some(TypeRef::Named {
                 path: vec!["char".to_string()], generics: vec![], span: e.span }),
+            // Plan 207 cmpxchg-lint волна B: `Atomic*.new(...)` static ctor → `Self`.
+            // Narrowly scoped to the `Atomic` type family (NOT a general `Type.new()`
+            // inference — that would widen this best-effort bound-checker's blast
+            // radius to unrelated call sites out of scope for this fix). Lets
+            // `mut a = AtomicI64.new(0)` (the overwhelmingly common real-code shape —
+            // no explicit `let a AtomicI64 = ...` annotation anywhere in
+            // sync_test.nv/spec_tests/conformance) populate `scope["a"]` so the
+            // CAS-ordering checker (`check_cas_ordering`) can see the receiver type
+            // on the very next statement's `a.compare_exchange(...)`.
+            ExprKind::Call { func, .. } => {
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    if name == "new" {
+                        if let ExprKind::Ident(type_name) = &obj.kind {
+                            if type_name.starts_with("Atomic") {
+                                return Some(TypeRef::Named {
+                                    path: vec![type_name.clone()],
+                                    generics: Vec::new(),
+                                    span: e.span,
+                                });
+                            }
+                        }
+                    }
+                }
+                None
+            }
             _ => None,
         }
     }
@@ -32494,8 +32609,11 @@ fn infer_unified_type<'e>(
 // Error codes (no central registry exists; embedded in Diagnostic message):
 //   E_INVALID_ORDERING_LOAD  — Release/AcqRel on load (only Relaxed/Acquire/SeqCst valid)
 //   E_INVALID_ORDERING_STORE — Acquire/AcqRel on store (only Relaxed/Release/SeqCst valid)
+//   E_CAS_FAILURE_ORDER_INVALID — Release/AcqRel as compare_exchange(_weak) failure-ordering
+//     (Plan 207 cmpxchg-lint волна B, D425 амендмент): failure-путь CAS — чистый load
+//     (значение НЕ изменено), у него нет release-семантики (C11/C++11 запрещали это как UB).
 //
-// See D167 (spec/decisions/06-concurrency.md) for semantics rationale.
+// See D167/D425 (spec/decisions/06-concurrency.md) for semantics rationale.
 
 /// Error code for forbidden ordering on atomic load operation.
 /// Release and AcqRel are invalid for load (they provide no acquire synchronization).
@@ -32505,16 +32623,52 @@ pub const E_INVALID_ORDERING_LOAD: &str = "E_INVALID_ORDERING_LOAD";
 /// Acquire and AcqRel are invalid for store (they provide no release synchronization).
 pub const E_INVALID_ORDERING_STORE: &str = "E_INVALID_ORDERING_STORE";
 
-/// Plan 103.1 Ф.4: Extract the variant name from a MemOrdering path expression.
-/// Returns Some("Acquire") for `MemOrdering.Acquire`, None for runtime values.
-fn mem_ordering_variant(ord_expr: &Expr) -> Option<&str> {
+/// Error code for forbidden failure-ordering on `compare_exchange`/`compare_exchange_weak`
+/// (Plan 207 cmpxchg-lint волна B). `Release`/`AcqRel` are invalid: the failure path of a
+/// CAS is a pure load (the value was NOT changed) — it carries no release semantics.
+pub const E_CAS_FAILURE_ORDER_INVALID: &str = "E_CAS_FAILURE_ORDER_INVALID";
+
+/// Plan 103.1 Ф.4: Extract the variant name from a MemOrdering literal expression.
+/// Returns Some("Acquire") for `MemOrdering.Acquire` (qualified path form), None for
+/// runtime values (variables — not diagnosable at compile time).
+///
+/// Plan 207 cmpxchg-lint волна B extension: also recognizes the **bare** enum-variant
+/// sugar `Acquire` (`ExprKind::Ident`) — real call sites (`sync_test.nv`,
+/// `spec_tests/conformance/plan103_2_*`) overwhelmingly write orderings unqualified
+/// (`a.compare_exchange(1, 2, SeqCst, Acquire)`), relying on the checker's expected-type
+/// bare-variant resolution (mirrors `infer_expr_type`'s `ExprKind::Ident` fallback at
+/// `~13672`). Gated on the fixed 5-name `MemOrdering` variant set — no ambiguity with
+/// other sum types' same-named variants for THIS purpose (we only care whether the
+/// literal spells one of these 5 words, not which enum a general bare-Ident resolves to).
+pub(crate) fn mem_ordering_variant(ord_expr: &Expr) -> Option<&str> {
     use crate::ast::ExprKind;
-    if let ExprKind::Path(parts) = &ord_expr.kind {
-        if parts.len() == 2 && parts[0] == "MemOrdering" {
-            return Some(&parts[1]);
+    match &ord_expr.kind {
+        ExprKind::Path(parts) if parts.len() == 2 && parts[0] == "MemOrdering" => {
+            Some(&parts[1])
         }
+        ExprKind::Ident(name) if matches!(
+            name.as_str(),
+            "Relaxed" | "Acquire" | "Release" | "AcqRel" | "SeqCst"
+        ) => Some(name.as_str()),
+        _ => None,
     }
-    None
+}
+
+/// Plan 207 cmpxchg-lint волна B: total strength order over `MemOrdering` used to compare
+/// CAS success/failure orderings — `Relaxed < Acquire ≈ Release < AcqRel < SeqCst`
+/// (`Acquire`/`Release` tie: neither is "stronger" than the other, they synchronize
+/// different directions). Callers only ever compare `failure` against `success`, and
+/// `failure` is already restricted to `{Relaxed, Acquire, SeqCst}` by
+/// `E_CAS_FAILURE_ORDER_INVALID` (Release/AcqRel are hard errors there) — the tie only
+/// matters for `success`, which is unrestricted.
+pub(crate) fn mem_ordering_strength(variant: &str) -> u8 {
+    match variant {
+        "Relaxed" => 0,
+        "Acquire" | "Release" => 1,
+        "AcqRel" => 2,
+        "SeqCst" => 3,
+        _ => 0,
+    }
 }
 
 /// Plan 103.1 Ф.4: Validate MemOrdering argument for an atomic **load** operation.

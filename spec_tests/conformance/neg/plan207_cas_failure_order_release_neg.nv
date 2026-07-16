@@ -1,0 +1,18 @@
+// Plan 207 cmpxchg-lint волна B (D425 амендмент) negative — `failure = Release`
+// на `compare_exchange` семантически невалидно: failure-путь CAS — чистый load
+// (значение НЕ изменено), у него нет release-семантики.
+//
+// EXPECT_COMPILE_ERROR E_CAS_FAILURE_ORDER_INVALID
+
+module neg.plan207_cas_failure_order_release_neg
+
+fn bad() {
+    mut a = AtomicI64.new(0)
+    ro r = a.compare_exchange(0, 1, MemOrdering.SeqCst, MemOrdering.Release)
+    assert(r.is_ok())
+}
+
+test "should not compile" {
+    bad()
+    assert(true)
+}

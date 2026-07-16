@@ -1,0 +1,43 @@
+// Plan 207 cmpxchg-lint волна B (D425 амендмент) positive — legal literal
+// success/failure `MemOrdering` pairs on `compare_exchange`/
+// `compare_exchange_weak`: NEITHER E_CAS_FAILURE_ORDER_INVALID (hard-error)
+// NOR W_CAS_FAILURE_STRONGER (warning) fires. Covers the three pairs named in
+// the D425 амендмент: SeqCst/SeqCst, AcqRel/Acquire, Release/Relaxed.
+
+module spec_tests.conformance
+
+test "compare_exchange SeqCst/SeqCst — legal, no diagnostic" {
+    mut a = AtomicI64.new(1)
+    ro r = a.compare_exchange(1, 2, MemOrdering.SeqCst, MemOrdering.SeqCst)
+    assert(r.is_ok())
+    assert(a.load() == 2)
+}
+
+test "compare_exchange AcqRel/Acquire — legal, no diagnostic" {
+    mut a = AtomicI32.new(1)
+    ro r = a.compare_exchange(1, 2, MemOrdering.AcqRel, MemOrdering.Acquire)
+    assert(r.is_ok())
+    assert(a.load() == 2)
+}
+
+test "compare_exchange_weak Release/Relaxed — legal, no diagnostic" {
+    mut a = AtomicU32.new(1)
+    mut ok = false
+    mut i = 0
+    while i < 100 {
+        ro r = a.compare_exchange_weak(1, 2, MemOrdering.Release, MemOrdering.Relaxed)
+        if r.is_ok() {
+            ok = true
+            i = 100
+        }
+        i = i + 1
+    }
+    assert(ok)
+    assert(a.load() == 2)
+}
+
+test "compare_exchange bare-variant spelling — legal, no diagnostic" {
+    mut a = AtomicI64.new(5)
+    ro r = a.compare_exchange(5, 6, SeqCst, Acquire)
+    assert(r.is_ok())
+}

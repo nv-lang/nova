@@ -2018,6 +2018,75 @@ fn walk_view_extend_expr(
     }
 }
 
+/// Plan 207 cmpxchg-lint волна B (D425 амендмент) — `W_CAS_FAILURE_STRONGER`.
+///
+/// Warns when `strength(failure) > strength(success)` on a LITERAL
+/// `compare_exchange`/`compare_exchange_weak` call: `Relaxed < Acquire ≈ Release <
+/// AcqRel < SeqCst`. Valid since C++17, but almost always an intent bug — the
+/// failure path (CAS did NOT happen) usually should not demand MORE synchronization
+/// than the success path. Non-literal orderings (runtime variables) are not
+/// diagnosable — skipped.
+///
+/// Receiver-type gate: **method name only** (`compare_exchange`/
+/// `compare_exchange_weak`, 4-arg explicit-ordering overload) — deliberately NOT
+/// gated on an `Atomic*`-receiver type check here. Unlike the hard-error twin
+/// (`types::check_cas_ordering`), this is a pure-AST lint pass (`lint_module`'s
+/// `Vec<LintWarning>` sink has no type-checker state — no `self.sig`/
+/// `infer_expr_type`/`resolved_types_buf` available in this file). The method-name
+/// signature is unique to the `Atomic*` family in the entire language/stdlib (no
+/// other type defines `compare_exchange(expected, desired, success, failure)`), so
+/// the narrower gate is unnecessary here — false-positive risk is effectively nil.
+///
+/// `failure ∈ {Release, AcqRel}` is EXCLUDED here (that's the hard-error's job —
+/// `E_CAS_FAILURE_ORDER_INVALID` in `types.rs`; a call site failing that check would
+/// otherwise not compile at all, so double-reporting a warning on it is moot).
+fn lint_cas_failure_stronger(call_expr: &Expr, func: &Expr, args: &[CallArg], out: &mut Vec<LintWarning>) {
+    let ExprKind::Member { name: method_name, .. } = &func.kind else { return; };
+    if method_name != "compare_exchange" && method_name != "compare_exchange_weak" {
+        return;
+    }
+    if args.len() != 4 { return; }
+    let Some(success_arg) = cas_lint_arg(args, "success", 2) else { return; };
+    let Some(failure_arg) = cas_lint_arg(args, "failure", 3) else { return; };
+    let Some(success) = crate::types::mem_ordering_variant(success_arg) else { return; };
+    let Some(failure) = crate::types::mem_ordering_variant(failure_arg) else { return; };
+    // Hard-error territory — не дублируем warning поверх E_CAS_FAILURE_ORDER_INVALID.
+    if matches!(failure, "Release" | "AcqRel") { return; }
+    if crate::types::mem_ordering_strength(failure) > crate::types::mem_ordering_strength(success) {
+        out.push(LintWarning {
+            rule: "W_CAS_FAILURE_STRONGER",
+            diag: crate::diag::Diagnostic::new(
+                format!(
+                    "W_CAS_FAILURE_STRONGER: `{method}` — failure-ordering \
+                     `MemOrdering.{failure}` строже success-ordering \
+                     `MemOrdering.{success}` (Relaxed < Acquire≈Release < AcqRel < \
+                     SeqCst); валидно с C++17, но почти всегда ошибка намерения — \
+                     failure-путь (CAS не удался, значение не изменено) обычно не \
+                     должен требовать БОЛЬШЕ синхронизации, чем success-путь.",
+                    method = method_name, failure = failure, success = success,
+                ),
+                call_expr.span,
+            ),
+        });
+    }
+}
+
+/// Plan 207 cmpxchg-lint: достать call-arg для именованного параметра `param_name`
+/// на позиции `pos` (см. `types::check_cas_ordering`'s `cas_call_arg` — то же
+/// правило, отдельная копия: разные файлы/сигнатуры `CallArg`-обхода, не стоит
+/// городить кросс-модульный `pub(crate)` ради 8 строк).
+fn cas_lint_arg<'x>(args: &'x [CallArg], param_name: &str, pos: usize) -> Option<&'x Expr> {
+    for a in args {
+        if let CallArg::Named { name, value } = a {
+            if name == param_name { return Some(value); }
+        }
+    }
+    match args.get(pos) {
+        Some(CallArg::Named { .. }) | None => None,
+        Some(a) => Some(a.expr()),
+    }
+}
+
 /// Plan 52 Ф.2: рекурсивный обход выражения. На каждом `MapLit` запускает
 /// map-литерал lints; рекурсивно спускается во все под-выражения.
 fn walk_expr_lints(e: &Expr, out: &mut Vec<LintWarning>) {
@@ -2049,6 +2118,8 @@ fn walk_expr_lints(e: &Expr, out: &mut Vec<LintWarning>) {
             }
         }
         ExprKind::Call { func, args, trailing } => {
+            // Plan 207 cmpxchg-lint волна B: W_CAS_FAILURE_STRONGER.
+            lint_cas_failure_stronger(e, func, args, out);
             walk_expr_lints(func, out);
             for a in args { walk_expr_lints(a.expr(), out); }
             if let Some(t) = trailing {
