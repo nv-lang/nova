@@ -38760,3 +38760,48 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   backlog-followups.md (P1) — сам scheduler-баг не тронут, только окружён
   admission control'ом. Ветка `fix-bounded-accept` НЕ смёржена в main этой
   волной (гейт+вливание — оркестратор).
+
+## ЗАКРЫТ [M-nova-linux-build] (2026-07-16, ветка p-linux-build, sonnet)
+
+- Верифицировал Linux-сборку Nova напрямую на WSL2 Ubuntu 26.04 (не
+  Docker — Plan 40 уже валидировал через Docker 2026-05-12, этот заход
+  проверяет ту же цепочку в другой среде). Все 4 шага зелёные: `cargo
+  build --release` (compiler-codegen + nova-cli), runtime C (libuv
+  build-from-source + системный Boehm), `nova build` hello-world,
+  `nova test std/src/checksums` (PASS 3 / FAIL 0 / SKIP 3). Новый
+  документ — [docs/linux-build.md](linux-build.md).
+- **Находка:** системный (apt/tarball) `rustc 1.93.1` на Ubuntu 26.04
+  **ICE'ит** на `compiler-codegen/src/codegen/emit_c.rs`
+  (`check_liveness` query, `slice index starts at N but ends at N-1` —
+  апстрим-баг rustc, не Nova; воспроизведено дважды байт-в-байт).
+  Обход: `rustup` (без sudo) + `rust-version` MSRV `1.85.0` — собирается
+  чисто (`nova-cli` `Finished ... in 6m 47s`). GitHub CI
+  (`nova-test-regression.yml`, `ubuntu-latest`) не задет — там другой
+  rustc-билд. НЕ трогал `rust-toolchain.toml` (repo-wide pin задел бы и
+  Windows-путь — решение владельца, не моё).
+- **Находка (WSL2-специфика, не Nova-баг):** `nova build`/`nova test`
+  резолвят workspace (`std/`) рекурсивным directory walk; на
+  `/mnt/<drive>` (9p) это упирается в `p9_client_rpc` на МИНУТЫ даже для
+  hello-world (подтверждено `/proc/<pid>/task/*/wchan`). Фикс — копия
+  `nova.toml`+`std/`+`nova_rt` (без `libuv/test`+`libuv/docs`, ~300M
+  balласта) на native ext4 перед `nova build`/`test`; `cargo build` сам
+  по себе не задет (точечные reads, не directory walk). `du` через 9p
+  вдобавок сильно завышает размеры (282M репортед / 3.8M реальных при
+  идентичном файл-каунте) — не доверять.
+- **Бонус (TSan smoke, spawn+supervised):** ручной `clang -fsanitize=thread`
+  на generated `.c` + `nova_rt/*.c` + `libuv.a` (вне обычного CLI —
+  `test_runner.rs` не имеет `--tsan` флага) — компилируется/линкуется
+  чисто, работает до конца, **нашёл 2 реальных data race** с первого
+  прогона: `fiber_arena.c` `_sigsegv_installed` (install-once
+  check-then-set без atomic/mutex) и `runq.h` init/grab (visibility gap
+  между `_materialize_pool`'ным init под mutex M0 и первым
+  `nova_runq_steal` воркера) — второй ближе к сути Плана 211
+  (nested-supervised wedge при N=3+), заметки переданы в отчёт для
+  Плана 211 (файл плана не тронут этой волной).
+- Обновлены `[M-tsan-race-detector]` и `[M-83.11-f2-arm-tsan]` в
+  backlog-followups.md — блокер снят, ссылка на linux-build.md.
+  `[M-nova-linux-build]` строка удалена из backlog-followups.md (по
+  конвенции — resolved-маркеры не остаются в OPEN-view).
+  fiber_arena POSIX (`fiber_arena.c`) уже существовал — порт не
+  потребовался. Правок Rust/C кода НЕ было — всё уже работало на
+  правильном toolchain'е.
