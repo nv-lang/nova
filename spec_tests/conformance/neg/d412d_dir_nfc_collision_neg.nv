@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_EMBED_DIR_NFC_COLLISION
+//
+// D412-амендмент (Plan 210 Ф.6а, AMEND 2026-07-17) — NEG.
+// Фикстура d412d_dir_nfc_collision/ содержит ДВА РАЗНЫХ файла на уровне ФС
+// (разные байты имени, оба легально сосуществуют в одной папке), визуально
+// одинаковых: "café.txt" предкомпонованный (é = U+00E9, NFC) и "café.txt"
+// разложенный (e + U+0301 COMBINING ACUTE ACCENT, NFD). После NFC-
+// нормализации оба дают ОДИН И ТОТ ЖЕ ключ таблицы — жёсткая ошибка
+// компиляции (не тихая перезапись одной записи другой). Спека:
+// spec/decisions/03-syntax.md D412-амендмент, AMEND Ф.6а.
+
+module neg.d412d_dir_nfc_collision_neg
+
+fn d412d_nfc_collision() -> int {
+    ro d = embed_dir("d412d_dir_nfc_collision")   // ✗ NFC/NFD форм-коллизия — E_EMBED_DIR_NFC_COLLISION
+    d.len()
+}
