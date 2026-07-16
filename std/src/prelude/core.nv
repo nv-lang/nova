@@ -290,6 +290,31 @@ fn Option[T] @ok_or[E](err E) -> Result[T, E]
 #stable(since = "0.1")
 fn Option[T] @or(other Option[T]) -> Option[T] => match @ { Some(v) => Some(v), None => other }
 
+/// Bind/monadic chain: `Some(v) -> flat_map_fn(v)`, `None -> None`. В отличие
+/// от `@map`, `flat_map_fn` сам возвращает `Option[U]` — вложенность
+/// `Option[Option[U]]` не образуется (снимать было бы нечем).
+///
+/// **Plan 200 Пункт 14** (research `docs/research/2026-07-16-option-result-
+/// combinators.md`): единственный из канонических комбинаторов, невыразимый
+/// через `??`/`!!`/`.map`/`match` — value-fallback у Nova операторный (D86),
+/// но bind-цепочка fallible-шагов без ручного снятия вложенности требует
+/// отдельного метода. Имя `flat_map` (не `and_then`/`then`) — сиблинг к `map`,
+/// без булевого багажа `and`/`or` и без коллизии с Promise-`then`/`bool::then`.
+/// Param-name `flat_map_fn` (не `f`) — см. `map` выше (shadowing).
+#stable(since = "0.1")
+fn Option[T] @flat_map[U](flat_map_fn fn(T) -> Option[U]) -> Option[U]
+  => match @ { Some(v) => flat_map_fn(v), None => None }
+
+/// `Some(v) -> Some(v)` если `pred(v)`, иначе `None`. `None` остаётся `None`.
+///
+/// **Plan 200 Пункт 14**: `??`/`.map` не отбрасывают `Some` по предикату —
+/// единственный способ вернуть `None` из `Some`, не зная заранее значения,
+/// без явного `match`. Param-name `pred` — паритет с `Vec`/`Iter`
+/// `@filter(pred fn(T) -> bool)` (`std/collections/*`).
+#stable(since = "0.1")
+fn Option[T] @filter(pred fn(T) -> bool) -> Option[T]
+  => match @ { Some(v) => if pred(v) { Some(v) } else { None }, None => None }
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // Result[T, E] methods (D26 §283-306)
@@ -360,6 +385,18 @@ fn Result[T, E] @map[U](map_fn fn(T) -> U) -> Result[U, E]
 #stable(since = "0.1")
 fn Result[T, E] @map_err[F](err_fn fn(E) -> F) -> Result[T, F]
   => match @ { Ok(v) => Ok(v), Err(e) => Err(err_fn(e)) }
+
+/// Bind/monadic chain: `Ok(v) -> flat_map_fn(v)`, `Err(e) -> Err(e)`. В
+/// отличие от `@map`, `flat_map_fn` сам возвращает `Result[U, E]` —
+/// вложенность `Result[Result[U,E], E]` не образуется.
+///
+/// **Plan 200 Пункт 14** (research `docs/research/2026-07-16-option-result-
+/// combinators.md`): зеркало `Option.flat_map` — та же мотивация (D86:
+/// value-fallback операторный, но bind-цепочка fallible-шагов невыразима
+/// `??`/`.map`). Param-name `flat_map_fn` — см. `Option.flat_map`.
+#stable(since = "0.1")
+fn Result[T, E] @flat_map[U](flat_map_fn fn(T) -> Result[U, E]) -> Result[U, E]
+  => match @ { Ok(v) => flat_map_fn(v), Err(e) => Err(e) }
 
 /// `Ok(v) -> Some(v)`, `Err(_) -> None`. Discards error.
 ///

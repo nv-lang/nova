@@ -385,28 +385,45 @@ hours/days).
 
 ---
 
-## Пункт 14 — комбинаторы Option/Result: `flat_map` ×2 + `Option.filter`
+## Пункт 14 — комбинаторы `Option`/`Result`: `flat_map` (обе стороны) + `filter` (Option)
 
-**Статус:** 📋 СОГЛАСОВАНО 2026-07-16 (владелец; имя `flat_map` — не `and_then`/`then`; `or_else` НЕ вводить).
-**Источник:** [research 2026-07-16](../research/2026-07-16-option-result-combinators.md) — полный разбор семейства
-(что покрыто операторами `??`/`!!`/`?` и D86-философией, что нет).
+**Статус:** ✅ РЕАЛИЗОВАНО этим заходом 2026-07-16 [sonnet, worktree `nova-200p14`]. Research-основание —
+`docs/research/2026-07-16-option-result-combinators.md` (владелец, коммиты `f74cea01c` + `c24c5cae4`).
 
-Добавить ровно три метода (операторами НЕвыразимы), `std/src/prelude/core.nv` рядом с `map`/`ok`/`or`:
+**Что:** три Nova-body метода в `std/src/prelude/core.nv` (рядом с `map`/`ok_or`/`or`/`map_err`):
+- `fn Option[T] @flat_map[U](flat_map_fn fn(T) -> Option[U]) -> Option[U]`
+- `fn Result[T, E] @flat_map[U](flat_map_fn fn(T) -> Result[U, E]) -> Result[U, E]`
+- `fn Option[T] @filter(pred fn(T) -> bool) -> Option[T]`
 
-```nova
-fn Option[T]   @flat_map[U](f fn(T) -> Option[U])   -> Option[U]    // bind: map + флэттен
-fn Result[T,E] @flat_map[U](f fn(T) -> Result[U,E]) -> Result[U,E]
-fn Option[T]   @filter(pred fn(T) -> bool) -> Option[T]             // Some→None по предикату
-```
+**Почему именно эти три (D86-философия отбора, в обратную сторону от ретракта unwrap-twins —
+Пункт `[M-unwrap-twins-retraction]`):** value-fallback у Nova принципиально операторный (`??`/`!!`),
+поэтому в prelude добавляется ТОЛЬКО то, что операторами и `.map`/`match` невыразимо:
+- **`flat_map`** — единственный канонический комбинатор, снимающий вложенность `M[M[U]]` (bind
+  fallible-шагов); `.map` этого не даёт.
+- **`filter`** — единственный способ вернуть `None` из `Some` по предикату без явного `match`.
+- **НЕ добавлены** (тот же класс, что ретрактированные `unwrap_or`/`unwrap_or_else`, выразимы
+  существующими средствами): `or_else` (`?? f()`, `??` эмпирически право-ассоциативен — плоская
+  цепочка `a ?? b ?? c` без вложенности), `unwrap_or[_else]` (уже ретрактированы D86), `map_or[_else]`
+  (`.map(f) ?? d`). Имя **`flat_map`**, не `and_then`/`then` (сиблинг `map`, без булевого багажа
+  `and`/`or`, без коллизии с Promise-`then`/`bool::then`) — решение владельца, зафиксировано в research.
 
-**НЕ вводить** (решение владельца, D86-философия «оператор > метод-дубль»): `or_else` (мульти-fallback =
-плоский право-ассоциативный `a ?? b ?? c ?? default`; «остаться в Option» — редкость, канон = `match`),
-`unwrap_or`/`unwrap_or_else` (ретракт D86-AMEND), `map_or`/`map_or_else` (= `.map(f) ?? d`).
+**Спека:** амендмент-нота тем же коммитом — [D26 (08-runtime.md)](../../spec/decisions/08-runtime.md#d26-базовая-stdlib-и-prelude)
+(канонический каталог методов + закрытие «Q-monadic-api» частично) и [D86 (04-effects.md)](../../spec/decisions/04-effects.md#d86-coalesce-оператор--fallback-для-resultoption)
+(cross-ref на философию отбора). Не язык-меняющее (методы над существующими типами, без нового
+синтаксиса/семантики) — но амендмент-нота внесена по конвенции std-API-добавлений.
 
-**Приёмка:** тела — тривиальные match (чистый .nv, no-effect); тесты рядом с модулем; первый потребитель —
-`resolve_port` флагмана (`env(...).flat_map(|s| s.to_int().ok()).map(|n| n as u16) ?? DEFAULT_PORT`) —
-мигрировать демонстрацией. Не язык-меняющее (методы над существующими типами) — D-амендмент не нужен.
-Исполнитель: haiku/sonnet (механика по готовым сигнатурам).
+**Тесты:** `spec_tests/conformance/plan200_14_option_result_flat_map_filter.nv` (13 test-блоков:
+flat_map Some/None/short-circuit/type-changing на Option и Result, filter pass/fail/None,
+композиция `filter().flat_map()`, `?? default` цепочка через `flat_map`).
+
+**Приёмка:** функционально верифицировано min-фикстурой (nova build + запуск, exit 0: flat_map
+Some/None, filter pass/fail, Result short-circuit); conformance-фикстура закоммичена и прогоняется
+авторитетным гейтом интегратора (мега-CU в заходе агента не гонялся — CPU-дисциплина).
+**Остаток приёмки (из согласования владельца):** первый потребитель — `resolve_port` флагмана
+(`env(...).flat_map(|s| s.to_int().ok()).map(|n| n as u16) ?? DEFAULT_PORT`) — мигрировать
+демонстрацией; отдельный мелкий заход.
+
+---
 
 ## Кандидаты на будущее
 
