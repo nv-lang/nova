@@ -156,19 +156,21 @@ export fn Monotonic @compare(other Monotonic) -> int =>
 // (unlike `Timestamp`, whose `@display` is RFC-3339 — std/time/civil/format.nv)
 // — reading `Monotonic(+1.234s)` must never look like a wall-clock value.
 
-/// Offset form, ASCII (`"+1.234s"`) — never a date.
+/// Offset form, ASCII (`"+1.234s"`) — never a date. Signature migrated to
+/// `Fmt` — Plan 208 Ф.2/D422, [M-208-time-display-fmt-migration-gap].
 #stable(since = "0.1")
-export fn Monotonic @display(mut w Write) -> () {
-    w.write("+")
-    w.write(@nanos.to_nanos().to_str().bytes())
+export fn Monotonic @display(mut f Fmt) -> () {
+    f.write("+")
+    f.write(@nanos.to_nanos().to_str().bytes())
 }
 
 /// Diagnostic form: `Monotonic(+1.234s)` — explicitly NOT a date (D124/D318).
+/// Signature migrated to `Fmt` — Plan 208 Ф.2/D422.
 #stable(since = "0.1")
-export fn Monotonic @debug(mut w Write) -> () {
-    w.write("Monotonic(+")
-    w.write(@nanos.to_nanos().to_str().bytes())
-    w.write(")")
+export fn Monotonic @debug(mut f Fmt) -> () {
+    f.write("Monotonic(+")
+    f.write(@nanos.to_nanos().to_str().bytes())
+    f.write(")")
 }
 
 
