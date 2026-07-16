@@ -664,7 +664,7 @@ export fn Duration @to_str() -> str {
 /// ASCII** — no bytes > 0x7F (fixes the U+03BC "μs" regression, Q12; the
 /// underlying `to_str` already emits ASCII `"us"`, Ф.1c).
 #stable(since = "0.1")
-export fn Duration @display(mut w Write) -> () { w.write(@to_str()) }
+export fn Duration @display(mut w Write) -> () { w.write(@to_str().bytes()) }
 
 /// Debug (D237) — diagnostic form showing the exact raw nanoseconds
 /// alongside the human short form (unambiguous for overflow/precision
@@ -672,9 +672,9 @@ export fn Duration @display(mut w Write) -> () { w.write(@to_str()) }
 #stable(since = "0.1")
 export fn Duration @debug(mut w Write) -> () {
     w.write("Duration(")
-    w.write(@to_str())
+    w.write(@to_str().bytes())
     w.write(", ")
-    w.write(@nanos.to_str())
+    w.write(@nanos.to_str().bytes())
     w.write("ns)")
 }
 
