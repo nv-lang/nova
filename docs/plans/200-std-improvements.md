@@ -485,6 +485,30 @@ Some/None, filter pass/fail, Result short-circuit); conformance-фикстура
 
 ---
 
+## Пункт 17 — инлайн-тесты в файлах имплементации → пир-файлы `*_test.nv` (конвенция)
+
+**Статус:** 📋 СОГЛАСОВАНО 2026-07-17 (владелец: «найти все и исправить»). Нарушение
+[test-conventions.md:125](../test-conventions.md): позитив-тесты std-модуля живут ПИР-файлом
+`<имя>_test.nv` (тот же module-декларатор), НЕ инлайном в имплементации.
+
+**Инвентарь (греп `^test "` вне `*_test.nv`, std/src): 16 файлов имплементации.**
+`collections/`: hashmap, range, set, vec_iter, vec_lazy, vec_seq · `encoding/`: base64,
+compress/{checksum,deflate,gzip,inflate,zlib} · `runtime/`: fmt_buf · `testing/`: handlers (20),
+property (6) · `time/`: duration (**33** теста). **НЕ нарушители** (легальны по конвенции):
+`neg/`-фикстуры (standalone-CU `module neg.*`, :133-136) и `rt/`-trap-фикстуры (тот же standalone-класс —
+сверить формулировку в конвенции, при отсутствии — дописать).
+
+**Карта (per-file, механика):** вырезать `^test "`-блоки → пир `<имя>_test.nv` с ТЕМ ЖЕ `module`-
+деклараторов + перенести только нужные тестам import'ы; имплементация без тестов. **Секвенс:**
+`time/duration.nv` — ПОСЛЕ приземления folder-split (`time/duration/{core,timestamp,monotonic}.nv`,
+ветка orphan-фикса) — иначе двойной конфликт.
+
+**Приёмка:** греп `^test "` вне `*_test.nv`/`neg/`/`rt/` = 0 по std/src; `nova test std/<затронутые>`
+таргетно зелёные; полный гейт — CI. **Модель:** haiku по списку (механика вырезать-перенести), duration —
+sonnet (координация со split).
+
+---
+
 ## Кандидаты на будущее
 
 _(сюда — новые std-эргономические/корректностные улучшения по мере появления; каждый с D-рефом и приёмкой)_
