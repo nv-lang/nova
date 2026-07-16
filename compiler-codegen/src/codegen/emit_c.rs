@@ -50,6 +50,28 @@ pub(crate) const RUNTIME_DEFINED_TYPES: &[&str] = &[
     "CasRawI8", "CasRawI16", "CasRawI32", "CasRawI64",
     "CasRawU8", "CasRawU16", "CasRawU32", "CasRawU64",
     "CasRawInt", "CasRawUint", "CasRawBool",
+    // [M-consume-block-cancelerror-bare-cu]: `CancelError` — the D314
+    // consume-cleanup codegen desugar (`assign_scope_outcome_from_frame`,
+    // below) hand-emits `Nova_CancelError`/`nova_alloc(sizeof(Nova_CancelError))`
+    // UNCONDITIONALLY on every CANCEL/FromFrame exit path of ANY consume-
+    // cleanup (`@cleanup(outcome ScopeOutcome)`), regardless of whether the
+    // fn body ever narrows `err is CancelError`. `ScopeOutcome` (needed for
+    // the `@cleanup` signature itself) lives in `std/prelude/core.nv` — a
+    // separate, always-on prelude sub-module (Plan 62.F split) from
+    // `CancelError` (`std/prelude/errors.nv`, opt-in via `#prelude(errors)`).
+    // A `#prelude(core, ...)` compile unit that never selects `errors` (or
+    // never otherwise merges it) never gets the `.nv` struct decl, so
+    // codegen's hardcoded C reference had no typedef → CC-FAIL (`use of
+    // undeclared identifier 'Nova_CancelError'`). Listing it here — mirrors
+    // Error/RuntimeError — makes the C layout (`nova_rt/array.h`) the
+    // always-available source regardless of prelude-subset selection;
+    // `emit_type_decl`/the fwd-decl loop skip the `.nv`-driven emission when
+    // (as in the default full prelude) the type IS ALSO merged, so no
+    // redefinition. `err is CancelError` narrowing is unaffected — the
+    // checker still requires the `.nv` `CancelError` name to be visible
+    // (via the `errors` prelude sub-module) to type-check that syntax at
+    // all; this entry only guarantees the C layout backing it.
+    "CancelError",
 ];
 
 /// Plan 39 Issue A: classification of `with`-block trail type for
@@ -25786,7 +25808,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     ///   * PANIC                       → `Panic(msg)` (Panic остаётся `str`);
     ///   * CANCEL                      → `Failure(any = CancelError{reason=msg})`
     ///     (типизированный — `err is CancelError`; D90 §7 amend, префикс `"cancel: "`
-    ///     убран); `Nova_CancelError` — force-emitted prelude-тип, всегда доступен;
+    ///     убран); `Nova_CancelError` в `RUNTIME_DEFINED_TYPES` (§0, C layout
+    ///     hand-written в `nova_rt/array.h`, [M-consume-block-cancelerror-bare-cu])
+    ///     — ВСЕГДА доступен независимо от prelude-подмножества (`.nv`-декларация
+    ///     в `std/prelude/errors.nv` нужна ТОЛЬКО для `err is CancelError`
+    ///     type-check, не для этого C-layout'а);
     ///   * USER_TYPED (payload != NULL) → `Failure(any)` усыновляет throw-site box
     ///     (`error_user_payload`) + его runtime tid → `err is <ThrownType>`;
     ///   * USER (голый `str`)          → `Failure(any = str)`.
