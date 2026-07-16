@@ -38605,3 +38605,72 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   так что P1. Repro: loadtest.ps1 (BLOCK 5) либо seq 1 80|xargs -P80 curl /api/run.
 - loadtest.ps1 усилен 10×: Iterations 5→50, Concurrency 8→80 (runspace pool, не
   Start-Job — лёгкие потоки в одном процессе), +Rounds=10 (повтор комбо-свипов).
+
+## [M-187-http-serde-setcookie-serialize-collision] — закрыт (2026-07-16, sonnet, ветка fix-serde-dispatch)
+
+- Задание предполагало dispatch-баг в `emit_c.rs` (mono-инстанциация generic
+  fn `json_encode[T]` резолвит `.serialize()` по имени, та же семья что
+  196.7/98e3663cc). Эмпирическая проверка (минимальная фикстура: один CU,
+  `Dto` с `#impl(Serialize)` + `FooCookie` с ручным `@serialize() -> str`,
+  `nova build`) показала, что root-cause лежит СОВСЕМ не там.
+- Root-cause: `nova-cli/src/main.rs::cmd_build` (используется `nova build`)
+  никогда не вызывал `auto_derive::inject_synthesized_methods_filtered` для
+  `#impl(Serialize)`/`#impl(Deserialize)` — в отличие от `test_runner.rs`
+  (`nova test`) и `nova-codegen`'s собственного `cmd_compile`, оба вызывают
+  это ПЕРЕД numbering/type-check. Чекер (`check_module`) валидирует
+  `v.serialize(s)` через ON-DEMAND bridge (`AutoDeriveQueryBridge`/
+  `synthesize_method`, `types/mod.rs`) — ВИРТУАЛЬНО, не мутируя
+  `module.items`. Type-check проходит зелёным, но codegen (`emit_c.rs`),
+  сканируя `module.items` для построения `method_overloads`/
+  `mono_method_decls`, не находит НИКАКОГО `FnDecl` для derived
+  `<Record>.serialize` — запись под ключом `(RecordType, "serialize")`
+  попросту пуста. Вызов `v.serialize(s)` внутри mono'нного generic
+  `json_encode[T]` проходит ВСЕ receiver-typed dispatch-окна (concrete-key
+  `method_overloads`, generic-instance 5b, Ф.3 protocol-blanket, 196.7 facade
+  — все впустую) и падает в единственный оставшийся путь: single-key
+  name-only `method_receivers` last-wins fallback → берёт ЛЮБОЙ ДРУГОЙ
+  конкретный `@serialize`, зарегистрированный последним в CU (в проде —
+  `http`'s `SetCookie @serialize() -> str`, arity/type-несовместимый; в
+  изолированной фикстуре без http — `[]T @serialize`-сентинел или
+  `FooCookie`).
+- Подтверждено: убрать коллизию (только `Dto`, без другого `@serialize` в
+  CU) — баг НЕ пропадает, просто ломается на `__mono_method__[]T__serialize`
+  (unresolved sentinel identifier) — т.е. это НЕ per-call mis-dispatch
+  эвристика, а ПОЛНОЕ отсутствие регистрации derived-метода на `nova
+  build`-пути. Доп. проба: тип, объявленный ВНУТРИ `std/src/encoding/serde/`
+  (тот же модуль, что `json_encode`), собранный через `nova build` — ТА ЖЕ
+  поломка; `nova test` того же файла — PASS. Переменная — не «модуль
+  записи типа», а «build vs test_runner.rs pipeline».
+- Существующий комментарий в `cmd_build` (~строка 4826, "Ф.4c") УЖЕ
+  документировал этот же класс истории для ДРУГИХ каналов
+  (`resolved_types`/`resolved_callees`): "the `nova build` path had silently
+  omitted" то, что `test_runner.rs`/`main.rs` уже кормили. Для serde
+  auto-derive injection это было просто ещё не зачинено.
+- Фикс: один вызов `inject_synthesized_methods_filtered(&mut module, |p| p
+  == "Serialize" || p == "Deserialize")` добавлен в `cmd_build` перед
+  alpha-rename (точная позиция, что в `test_runner.rs`). `emit_c.rs` НЕ
+  тронут — существующие type-directed dispatch-окна уже резолвят корректно,
+  как только FnDecl реально зарегистрирован. НЕ добавлен unfiltered
+  `inject_synthesized_methods` (Equal/Clone/Compare/Hash/Display/Debug) —
+  вне заявленного скоупа (Serialize/json_encode), отдельный потенциальный
+  follow-up.
+- Реальный репро: `examples/flagship/aggregator` (http+tls в CU) собран
+  СВОИМ компилятором через `nova build --strict-effects` (диамант через
+  gitignored `examples/nova.local.toml` `[replace] tls = { path =
+  "../../nova-tls" }`; http уже `path`-dep в `examples/nova.toml`). `main.nv`
+  переведён на typed serde (`snapshot_to_json`, `report_json.nv`) — hand-
+  written `snapshot_dto_json`/`status_dto_json`/`result_dto_json`/
+  `handlers_dto_json` + весь WORKAROUND-комментарий-блок удалены.
+  `emit_record_json`/`EmitRecord` (SSE per-event) сознательно остался
+  hand-written — wire-shape решение (условно опускает `"error"` когда
+  `kind != lane_failed`; plain derive эмитил бы поле всегда), НЕ баг-обход,
+  follow-up отдельно.
+- curl-smoke: `/api/snapshot`, `/api/run?legend=health&mode=chaos&seed=7`,
+  `/api/events` (SSE replay, `run_summary`-event несёт typed JSON) — все
+  корректны. `tls/echo_server`+`echo_client` (тот же `nova build`-путь)
+  собраны и прогнаны — TLS 1.3 handshake + echo не регрессировали.
+  `std/src/encoding/serde/*_test.nv` (6 файлов, `nova test`) — PASS,
+  byte-identical (эти шли через `test_runner.rs`, фикс их не касается).
+- Коммиты (ветка `fix-serde-dispatch`, worktree `nova-serdefix`, НЕ влита —
+  интегратор): `a095b961d` (nova-cli фикс), `5f80b7b1b` (main.nv-снятие
+  обхода), `eb24ae1ab` (backlog-followups.md закрытие маркера).
