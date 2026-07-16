@@ -688,7 +688,7 @@ fn str @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Option[T] / Result[T,E] — Debug impl
+// Option[T] / Result[T,E] — Debug + Display impl (Plan 208 Ф.3: Display added)
 // ──────────────────────────────────────────────────────────────────────────
 // Plan 91.15 Ф.2 originally declared these in `std/prelude/core.nv`, next to the
 // Option/Result type declarations. Plan 169.2.1 (D303) moved them HERE because
@@ -698,6 +698,18 @@ fn str @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
 // implement keeps `core` self-contained (its "ZERO imports" architecture rule)
 // and lets `#prelude(core, runtime)` compile. The `Option`/`Result` types are
 // visible here via the prelude auto-import (re-exported from `prelude.core`).
+// Plan 208 Ф.3 (D422 §4): `@display` counterparts added below (Debug-only
+// before this phase — see the note ahead of them for why that was a real
+// gap, not a stylistic omission). String literals below (`"Some("`, `"Ok("`,
+// …) are passed BARE, no `.bytes()` — the D55 str-literal→`[]u8` coercion
+// (spec/decisions/02-types.md, "Str-литерал → []u8 coercion") landed as
+// codegen support in this same Ф.3 wave for exactly this shape (a literal
+// argument to a call named `write`); see that spec section's "Статус
+// реализации" note for the precise (narrower-than-originally-drafted)
+// scope. NOTE: this does NOT apply to the interpolated-string bodies further
+// up this file (`f.write("${@}".bytes())` for `int`/`f64`/…) — those are
+// `ExprKind::InterpolatedStr`, not a bare literal, so they still need the
+// explicit `.bytes()`.
 
 /// Debug representation for Option[T]: `Some(value)` or `None`.
 /// Requires `[T Debug]` — propagates the bound to the inner value.
@@ -713,11 +725,11 @@ fn str @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
 fn Option[T Debug] @debug(mut f Fmt) -> () {
     match @ {
         Some(v) => {
-            f.write("Some(".bytes())
+            f.write("Some(")
             v.debug(f)
-            f.write(")".bytes())
+            f.write(")")
         }
-        None => f.write("None".bytes())
+        None => f.write("None")
     }
 }
 
@@ -734,14 +746,74 @@ fn Option[T Debug] @debug(mut f Fmt) -> () {
 fn Result[T Debug, E Debug] @debug(mut f Fmt) -> () {
     match @ {
         Ok(v) => {
-            f.write("Ok(".bytes())
+            f.write("Ok(")
             v.debug(f)
-            f.write(")".bytes())
+            f.write(")")
         }
         Err(e) => {
-            f.write("Err(".bytes())
+            f.write("Err(")
             e.debug(f)
-            f.write(")".bytes())
+            f.write(")")
+        }
+    }
+}
+
+// Plan 208 Ф.3 (D422 §4): Display counterparts — were missing entirely
+// before Ф.3 (only `@debug` existed above), so bare `${some_option}` /
+// `${some_result}` (no `:?`) failed to compile (`E_BAD_FORMAT_SPEC`/
+// "does not implement Display") for ANY `Option`/`Result` value. Body shape
+// is IDENTICAL to the `@debug` twins above — `Some`/`Ok`/`Err` are tuple
+// payloads (no field names to begin with), so there is nothing for D422 §4's
+// compact-vs-named split to diverge over here (that split matters for
+// record-shaped output, e.g. auto-derive below / `synth_fmt_sum_body`'s
+// Record-kind variant arm). The only real difference from `@debug` is the
+// inner call: `.display(f)` instead of `.debug(f)` — e.g. a `str` payload
+// renders bare (`Some(hi)`) under Display vs quoted (`Some("hi")`) under
+// Debug, matching `Debug`/`Display`'s existing str behavior everywhere else.
+
+/// Display representation for Option[T]: `Some(value)` or `None`.
+/// Requires `[T Display]` — propagates the bound to the inner value.
+///
+/// # Examples
+///
+/// ```nova
+/// assert("${Some(42)}" == "Some(42)")
+/// assert("${None}" == "None")
+/// assert("${Some("hi")}" == "Some(hi)")
+/// ```
+#impl(Display)
+fn Option[T Display] @display(mut f Fmt) -> () {
+    match @ {
+        Some(v) => {
+            f.write("Some(")
+            v.display(f)
+            f.write(")")
+        }
+        None => f.write("None")
+    }
+}
+
+/// Display representation for Result[T,E]: `Ok(value)` or `Err(error)`.
+/// Requires `[T Display, E Display]`.
+///
+/// # Examples
+///
+/// ```nova
+/// assert("${Ok(1)}" == "Ok(1)")
+/// assert("${Err("oops")}" == "Err(oops)")
+/// ```
+#impl(Display)
+fn Result[T Display, E Display] @display(mut f Fmt) -> () {
+    match @ {
+        Ok(v) => {
+            f.write("Ok(")
+            v.display(f)
+            f.write(")")
+        }
+        Err(e) => {
+            f.write("Err(")
+            e.display(f)
+            f.write(")")
         }
     }
 }

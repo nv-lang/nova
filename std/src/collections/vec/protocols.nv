@@ -164,37 +164,57 @@ export fn Vec[T Hash] @hash() -> u64 {
 }
 
 // ─── Display / Debug ───────────────────────────────────────────
+//
+// Plan 208 Ф.3 (D422 §4): migrated from the pre-D422 `(mut w Write)`
+// signature to `(mut f Fmt)` — `Display`/`Debug` are REQUIRED protocols now
+// (D422 §3, no default body), so a stale `Write`-typed impl does not
+// structurally satisfy them at all (a bare `Write` is strictly poorer than
+// `Fmt`: no width/precision/align/fill/sign/alternate/kind/`@pad`, D422 §2).
+// This impl was left on the old signature by the Ф.2 (D422 keystone)
+// migration wave — that wave's repo-wide `display_fmt` grep did not catch a
+// hand-written `@display`/`@debug` naming its param `Write` (only the
+// retracted `@display_fmt` name), so it went unnoticed until Ф.3 (found by
+// grepping every `@display`/`@debug` impl in std for the OLD signature).
+// String LITERALS below are passed BARE to `f.write(...)` — D55 amend
+// (str-literal → `[]u8` coercion) landed as part of this same Ф.3 wave
+// (owner instruction 2026-07-16; `emit_c.rs::synthesize_write_str_lit_bytes_coercion`)
+// specifically for this shape (a literal argument to a call named `write`).
+// `[]T` is a syntactic alias for `Vec[T]` (reference-nova-slice-vec-alias)
+// so this single impl covers both.
 
-/// Append a human-readable representation of `self` to `w`.
+/// Append a human-readable representation of `self` to `f`.
 ///
 /// Format: `Vec[e0, e1, ..., eN-1]` where each element is formatted via
-/// `elem.display(w)` directly (no intermediate string allocation).
+/// `elem.display(f)` directly (no intermediate string allocation). Display
+/// and Debug share this exact shape — a `Vec[T]` has no field names to
+/// diverge over (D422 §4's compact-vs-named split applies to record/sum
+/// derive, not to a container's own hand-written impl).
 ///
 /// # Examples
 ///
 /// ```nova
 /// let v = Vec[int].from([1, 2, 3])
 /// consume sb = StringBuilder.new()
-/// v.display(sb)
+/// v.display(FmtCtx.bare(sb, 0, false))
 /// assert(sb.into_str() == "Vec[1, 2, 3]")
 /// ```
-export fn Vec[T Display] @display(mut w Write) -> () {
-    w.write("Vec[")
+export fn Vec[T Display] @display(mut f Fmt) -> () {
+    f.write("Vec[")
     for i in 0..@len {
-        if i > 0 { w.write(", ") }
-        unsafe { @data.read_at(i) }.display(w)
+        if i > 0 { f.write(", ") }
+        unsafe { @data.read_at(i) }.display(f)
     }
-    w.write("]")
+    f.write("]")
 }
 
-/// Append a debug representation of `self` to `w`.
+/// Append a debug representation of `self` to `f`.
 ///
 /// Provided so that `${v:?}` interp-string syntax works for `Vec[T]`.
-export fn Vec[T Debug] @debug(mut w Write) -> () {
-    w.write("Vec[")
+export fn Vec[T Debug] @debug(mut f Fmt) -> () {
+    f.write("Vec[")
     for i in 0..@len {
-        if i > 0 { w.write(", ") }
-        unsafe { @data.read_at(i) }.debug(w)
+        if i > 0 { f.write(", ") }
+        unsafe { @data.read_at(i) }.debug(f)
     }
-    w.write("]")
+    f.write("]")
 }
