@@ -26,6 +26,7 @@ pub mod lexer;
 pub mod lints;
 pub mod lockfile;
 pub mod manifest;
+pub mod nfc;
 pub mod number_exprs;
 pub mod parser;
 pub mod perf_timer;

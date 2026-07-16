@@ -80,12 +80,19 @@ pub fn resolve_embeds(
         }
     }
     let entry_root = per_file_embed_root(entry_path, &canon_root);
+    // Plan 210 Ф.6а (D412-амендмент): std-корень для NFC-таблиц (`crate::nfc`)
+    // — та же функция, что резолвит std для ЛЮБОГО другого потребителя этого
+    // `project_root` (nova-cli/main.rs, compiler-codegen/main.rs — см.
+    // call-сайты `resolve_std_path`), так что `embed_resolve` не вводит
+    // отдельного механизма поиска std.
+    let std_src = crate::manifest::resolve_std_path(project_root);
 
     let mut ctx = EmbedCtx {
         dirs,
         entry_dir,
         roots,
         entry_root,
+        std_src,
         files: Vec::new(),
         diags: Vec::new(),
         warnings: Vec::new(),
@@ -149,6 +156,11 @@ struct EmbedCtx {
     /// `entry_root`.
     roots: HashMap<FileId, PathBuf>,
     entry_root: Option<PathBuf>,
+    /// Plan 210 Ф.6а: std SOURCE root (`manifest::resolve_std_path`), для
+    /// `crate::nfc::normalize_nfc` — `embed_dir`'s NFC-путь-нормализация
+    /// читает `<std_src>/unicode/norm_data.nv` (уже сгенерированные Unicode
+    /// 16.0 таблицы, Plan 152.4.1) вместо новой Cargo-зависимости.
+    std_src: PathBuf,
     files: Vec<PathBuf>,
     diags: Vec<Diagnostic>,
     /// Plan 210 (D412-амендмент): non-fatal `W_EMBED_DIR_*` findings,
@@ -408,6 +420,42 @@ impl EmbedCtx {
         let mut non_ascii_names: Vec<String> = Vec::new();
         walk_embed_dir_rec(&canon, &canon, &mut collected, &mut symlinks_skipped, &mut non_ascii_names);
 
+        // Plan 210 Ф.6а (D412-амендмент): NFC-нормализация КАЖДОГО пути записи
+        // — воспроизводимость между macOS (обычно отдаёт NFD) и Windows/Linux
+        // (обычно NFC): один и тот же чекаут раньше давал разные байтовые
+        // ключи (и разный `.c`) на разных ОС; теперь ключ всегда канонический
+        // NFC. Коллизия форм (два РАЗНЫХ исходных пути → одна NFC-форма) —
+        // `E_EMBED_DIR_NFC_COLLISION` (жёсткая ошибка — тихая перезапись одной
+        // записи другой в отсортированной таблице была бы хуже молчаливого
+        // предупреждения). Нормализуется ЦЕЛИКОМ относительный POSIX-путь, не
+        // по компоненту: `/` не участвует ни в одной canonical
+        // decomposition/composition паре Unicode, так что оба варианта дают
+        // идентичный результат — целиком проще (`crate::nfc::normalize_nfc`).
+        let mut nfc_seen: HashMap<String, String> = HashMap::new(); // nfc_key -> первый увиденный raw-путь
+        let mut nfc_normalized: Vec<(String, PathBuf)> = Vec::with_capacity(collected.len());
+        for (raw, abs) in &collected {
+            let nfc_key = crate::nfc::normalize_nfc(&self.std_src, raw);
+            match nfc_seen.get(&nfc_key) {
+                Some(prev_raw) if prev_raw != raw => {
+                    self.diags.push(Diagnostic::new(
+                        format!(
+                            "[E_EMBED_DIR_NFC_COLLISION] embed_dir(\"{}\") has two different \
+                             entries that normalize to the same NFC path `{}`: `{}` and `{}` — \
+                             rename one of them (D412-amendment, Plan 210)",
+                            rel, nfc_key, prev_raw, raw
+                        ),
+                        e.span,
+                    ));
+                    return true;
+                }
+                _ => {
+                    nfc_seen.insert(nfc_key.clone(), raw.clone());
+                }
+            }
+            nfc_normalized.push((nfc_key, abs.clone()));
+        }
+        let collected = nfc_normalized;
+
         // Per-file escape re-check (§2и: симлинк внутри мог бы указать
         // наружу — симлинки уже скипнуты выше, это defense-in-depth раз
         // обход итерирует строго под `canon`).
@@ -477,8 +525,11 @@ impl EmbedCtx {
                 diag: Diagnostic::new(
                     format!(
                         "[W_EMBED_DIR_NON_ASCII_PATH] non-ASCII file name in \
-                         embed_dir(\"{}\"): `{}` — byte-key is NOT Unicode-normalized \
-                         (macOS NFD vs Windows/Linux NFC may disagree across OSes)",
+                         embed_dir(\"{}\"): `{}` — key is normalized to NFC for cross-OS \
+                         reproducibility (macOS commonly gives NFD, Windows/Linux NFC); a \
+                         form-collision with another entry is a hard error \
+                         (E_EMBED_DIR_NFC_COLLISION), not a silent overwrite \
+                         (D412-amendment, Plan 210 Ф.6а)",
                         rel, name
                     ),
                     e.span,
