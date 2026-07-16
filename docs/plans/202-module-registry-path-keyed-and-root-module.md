@@ -1,10 +1,10 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # План 202 — D78: реестр модулей по пути + корневой модуль пакета
 
-> **Статус: ✅ ЗАКРЫТ 2026-07-13 (Ф.1+Ф.1b+Ф.2+Ф.3 — path-keyed реестр D78 rev-4 + root peers +
+> **Статус:** ✅ ЗАКРЫТ 2026-07-13 (Ф.1+Ф.1b+Ф.2+Ф.3 — path-keyed реестр D78 rev-4 + root peers +
 > миграция nova-tls; `[M-d78-duplicate-decl-module-swallow]` снят). Ф.4 (опциональная ретракция
 > rev-3.1 `internal/`) НЕ выполнена — см. backlog `[M-d78-duplicate-decl-module-swallow]` (rev-3.1
-> отмечена как отдельный followup, не блокирует закрытие).**
+> отмечена как отдельный followup, не блокирует закрытие).
 > Источник: [research 2026-07-13 module-naming](../research/2026-07-13-module-naming-two-segment-review.md)
 > (эксперимент §2а + кейс `tls.tls` §7) и решения владельца в той же сессии.
 > Маркер-дом: `[M-d78-duplicate-decl-module-swallow]` (P1, backlog) — закрывается Ф.1.
