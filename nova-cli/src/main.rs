@@ -2520,6 +2520,17 @@ fn cmd_lint(
                 if is_neg_fixture {
                     continue;
                 }
+                // `lint/`-фикстуры (spec_tests/conformance/lint/…) — намеренные
+                // находки/чистые эталоны для самого линт-реестра (Plan 198),
+                // конвенции к ним не применяются при рекурсивном обходе.
+                // Явный вызов `nova lint <файл>` (ветка `p.is_file()` выше)
+                // этот фильтр обходит — self-test job линтует их напрямую.
+                let is_lint_fixture = f.components().any(|c| {
+                    c.as_os_str().to_str().map_or(false, |s| s == "lint")
+                });
+                if is_lint_fixture {
+                    continue;
+                }
                 if !should_skip_path_full(&f, include_runtime, skip, std_runtime_dir.as_deref()) {
                     files.push(f);
                 }
