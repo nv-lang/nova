@@ -27570,10 +27570,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // target вычислялся ровно один раз (важно для `arr[f()] += y`).
                 // Plan 206 Ф.1b (D423): sized-типы ТОЖЕ checked (было — wrap);
                 // см. `sized_checked_helper`/`nova_<T>_checked_*` (effects.h).
+                // Plan 206.1 (D423.1): `/=` ТОЖЕ guarded теперь (было — сырой
+                // C `/=`, тот же div-by-zero/MIN-overflow крэш-вектор как
+                // голый `/`; НЕТ `%=` в языке — `AssignOp` не имеет варианта
+                // Mod, только `Div`).
                 let checked_helper = match op {
                     AssignOp::Add => Some("nova_int_checked_add".to_string()),
                     AssignOp::Sub => Some("nova_int_checked_sub".to_string()),
                     AssignOp::Mul => Some("nova_int_checked_mul".to_string()),
+                    AssignOp::Div => Some("nova_int_checked_div".to_string()),
                     _ => None,
                 };
                 if let Some(helper) = checked_helper {
@@ -27590,6 +27595,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             AssignOp::Add => BinOp::Add,
                             AssignOp::Sub => BinOp::Sub,
                             AssignOp::Mul => BinOp::Mul,
+                            AssignOp::Div => BinOp::Div,
                             _ => unreachable!(),
                         }) {
                             let p = self.fresh_tmp_named("ca");
@@ -28427,6 +28433,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 // Иначе рекурсивно с тем же target.
                 let inner = self.emit_expr_with_target_type(operand, target_ty_c)?;
+                // Plan 206.1 (D423.1): sized-SIGNED target — same neg-guard as
+                // the main `emit_expr` Unary arm (`x == T.MIN` traps). `target_ty_c`
+                // is guaranteed a sized type here (the `is_typed_integer` gate
+                // above excludes `nova_int`); unsigned targets fall through to
+                // the raw `-` unchanged (`sized_checked_neg_helper` → `None`).
+                if let Some(helper) = Self::sized_checked_neg_helper(target_ty_c) {
+                    if !self.overflow_site_elided(expr.span.start) {
+                        return Ok(format!("{}({})", helper, inner));
+                    }
+                }
                 Ok(format!("(-{})", inner))
             }
             ExprKind::Binary { op, left, right } => {
@@ -29764,18 +29780,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 206 Ф.1b (D423, решение A): sized-типы (i8..i64/
                 // u8..u64/uint) ТОЖЕ checked теперь (было — сырой C-оператор,
                 // signed-UB/unsigned-wrap, Plan 33.7 retracted) — см.
-                // `sized_checked_helper` ветку ниже.
+                // `sized_checked_helper` ветку ниже. Plan 206.1 (D423.1):
+                // Div/Mod ТОЖЕ always-on guard теперь (было — сырой C `/`/`%`,
+                // div-by-zero = SIGFPE-крэш процесса, `MIN/-1` = overflow-UB) —
+                // `nova_int_checked_div`/`_rem` (effects.h), тот же guard-стиль
+                // (b==0 → "division by zero"; MIN/-1 → "division overflow").
                 if lty == "nova_int" && rty == "nova_int" {
                     let checked = match op {
                         BinOp::Add => Some("nova_int_checked_add"),
                         BinOp::Sub => Some("nova_int_checked_sub"),
                         BinOp::Mul => Some("nova_int_checked_mul"),
+                        BinOp::Div => Some("nova_int_checked_div"),
+                        BinOp::Mod => Some("nova_int_checked_rem"),
                         _ => None,
                     };
                     if let Some(helper) = checked {
                         // Plan 140.4 ([M-opt-elide-proven-overflow-checks]): на
                         // SMT-доказанных in-range сайтах элидируем checked-форму
                         // → plain C-оператор ниже (нулевая цена). Иначе always-on.
+                        // Plan 206.1: Div/Mod NOT currently fed by the Z3 proof
+                        // pass (`prove_int_overflow_sites` — verify/pipeline.rs
+                        // ~4379 — filters to `Add|Sub|Mul` only), so this hook
+                        // is a no-op for div/mod today (guard always emitted);
+                        // wired here so the elision channel is ready if/when
+                        // div-safety proof obligations are added (honest gap,
+                        // not silently dropped — see 206.1-progress.md).
                         if !self.overflow_site_elided(expr.span.start) {
                             return Ok(format!("{}({}, {})", helper, l, r));
                         }
@@ -29975,6 +30004,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             .map(|s| s.c_name.clone())
                         {
                             return Ok(format!("({}({}))", c_name, v));
+                        }
+                    }
+                }
+                // Plan 206.1 (D423.1): unary `-x` on a SIGNED `Ints` primitive
+                // (nova_int or sized i8..i64) — `x == T.MIN` traps "negation
+                // overflow" (was raw C `-x` = overflow-UB for i64::MIN etc).
+                // Unsigned receivers fall through unchanged below (raw C `-x`
+                // is well-defined two's-complement wraparound, never UB — see
+                // `sized_checked_neg_helper`'s doc comment).
+                if matches!(op, UnOp::Neg) {
+                    let operand_ty = self.infer_expr_c_type(operand);
+                    let neg_helper = if operand_ty == "nova_int" {
+                        Some("nova_int_checked_neg".to_string())
+                    } else {
+                        Self::sized_checked_neg_helper(&operand_ty)
+                    };
+                    if let Some(helper) = neg_helper {
+                        // Plan 140.4-style elision hook — currently a no-op
+                        // (the Z3 proof pass doesn't feed neg-sites yet, same
+                        // honest gap as Div/Mod above), wired for consistency/
+                        // future-readiness.
+                        if !self.overflow_site_elided(expr.span.start) {
+                            return Ok(format!("{}({})", helper, v));
                         }
                     }
                 }
@@ -48144,13 +48196,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         )
     }
 
-    /// Plan 206 Ф.1b (D423, решение A): sized-`Ints` checked-helper name for a
-    /// same-typed `+`/`-`/`*` pair, mirroring `nova_int_checked_add` (which
-    /// stays a separate hardcoded arm for `nova_int` — see call sites below).
-    /// `ty_c` — the (identical) C type of BOTH operands. Returns `None` for
-    /// any non-`Ints` C type (e.g. `nova_char` — not an `Ints` member; str/
-    /// struct/ptr; caller falls back to the raw C operator as before) or a
-    /// non-arithmetic `op`.
+    /// Plan 206 Ф.1b (D423, решение A) / Plan 206.1 (D423.1): sized-`Ints`
+    /// checked-helper name for a same-typed `+`/`-`/`*`/`/`/`%` pair, mirroring
+    /// `nova_int_checked_add`/`nova_int_checked_div` (which stay separate
+    /// hardcoded arms for `nova_int` — see call sites below). `ty_c` — the
+    /// (identical) C type of BOTH operands. Returns `None` for any non-`Ints`
+    /// C type (e.g. `nova_char` — not an `Ints` member; str/struct/ptr; caller
+    /// falls back to the raw C operator as before) or a non-arithmetic `op`.
+    /// `Div`/`Mod` resolve to `nova_<T>_checked_div`/`_rem` for EVERY sized
+    /// type (signed AND unsigned) — the underlying C helper bodies differ
+    /// (unsigned skips the MIN/-1 check, effects.h `NOVA_DEFINE_CHECKED_
+    /// UNSIGNED_DIVMOD` vs `..._SIGNED_DIVMODNEG`), but the naming scheme is
+    /// uniform so this dispatch stays signedness-agnostic.
     fn sized_checked_helper(ty_c: &str, op: BinOp) -> Option<String> {
         let base = match ty_c {
             "int8_t" => "i8",
@@ -48168,9 +48225,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             BinOp::Add => "add",
             BinOp::Sub => "sub",
             BinOp::Mul => "mul",
+            BinOp::Div => "div",
+            BinOp::Mod => "rem",
             _ => return None,
         };
         Some(format!("nova_{}_checked_{}", base, opname))
+    }
+
+    /// Plan 206.1 (D423.1): sized-SIGNED-`Ints` checked-neg helper name for
+    /// raw unary `-x`. Signed-only by construction (returns `None` for any
+    /// unsigned C type or non-`Ints` type) — unsigned negation is well-defined
+    /// two's-complement wraparound per the C standard (never UB), so it keeps
+    /// the raw C `-x` operator unchanged; only signed `x == T.MIN` traps.
+    fn sized_checked_neg_helper(ty_c: &str) -> Option<String> {
+        let base = match ty_c {
+            "int8_t" => "i8",
+            "int16_t" => "i16",
+            "int32_t" => "i32",
+            "int64_t" => "i64",
+            _ => return None,
+        };
+        Some(format!("nova_{}_checked_neg", base))
     }
 
     /// Plan 172.1 [literal-coercion channel] (§0/§1, 2026-06-30): the C-type a numeric

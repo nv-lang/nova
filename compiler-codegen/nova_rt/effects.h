@@ -1098,6 +1098,86 @@ NOVA_DEFINE_CHECKED_OPS(uint, nova_uint)
 
 #undef NOVA_DEFINE_CHECKED_OPS
 
+/* Plan 206.1 (D423.1): `/`/`%`/unary-neg trap-guard helpers. Sibling of the
+ * `nova_<T>_checked_add/sub/mul` family above but a DIFFERENT failure mode —
+ * there is no `__builtin_*_overflow` for division (D423.1 §Мотив: "@overflowing_*
+ * сюда НЕ применим напрямую"), so the guard is a plain comparison, not a HW
+ * flag:
+ *   - `b == 0`               → panic "division by zero" (ALWAYS, domain error,
+ *     not an overflow — fires for both `/` and `%`, signed AND unsigned).
+ *   - signed `a == T.MIN && b == -1` → panic "division overflow" (quotient
+ *     doesn't fit; on x86 this is the SAME hardware fault as div-by-zero —
+ *     `idiv` traps `#DE` for both, so both must be guarded before the C `/`/
+ *     `%` operator ever executes). Mathematically the true remainder for this
+ *     exact pair IS representable (0) but the trap fires anyway — x86 `idiv`
+ *     computes quotient+remainder in one instruction and faults on the
+ *     quotient overflow regardless, so `%` needs the identical guard as `/`.
+ *   - unsigned division/remainder CANNOT overflow (mathematically always
+ *     representable) — only the `b == 0` guard applies, no MIN/-1 case exists.
+ *   - unary `-x` (signed only — unsigned negation is well-defined two's-
+ *     complement wraparound per the C standard, never UB, so it keeps the
+ *     raw C operator unchanged): `x == T.MIN` → panic "negation overflow".
+ * See spec/decisions/04-effects.md D423.1 + docs/plans/206.1-div-neg-trap.md. */
+static inline nova_int nova_int_checked_div(nova_int a, nova_int b) {
+    if (b == 0) NOVA_INT_OVF_PANIC("division by zero");
+    if (a == INTPTR_MIN && b == -1) NOVA_INT_OVF_PANIC("division overflow");
+    return a / b;
+}
+static inline nova_int nova_int_checked_rem(nova_int a, nova_int b) {
+    if (b == 0) NOVA_INT_OVF_PANIC("division by zero");
+    if (a == INTPTR_MIN && b == -1) NOVA_INT_OVF_PANIC("division overflow");
+    return a % b;
+}
+static inline nova_int nova_int_checked_neg(nova_int a) {
+    if (a == INTPTR_MIN) NOVA_INT_OVF_PANIC("negation overflow");
+    return -a;
+}
+
+/* Signed sized types: full guard (b==0 + MIN/-1) on div/rem, plus neg-guard
+ * (x==MIN) for the raw unary `-` operator. */
+#define NOVA_DEFINE_CHECKED_SIGNED_DIVMODNEG(NAME, CTYPE, MINVAL) \
+    static inline CTYPE nova_##NAME##_checked_div(CTYPE a, CTYPE b) { \
+        if (b == 0) NOVA_INT_OVF_PANIC("division by zero"); \
+        if (a == (MINVAL) && b == -1) NOVA_INT_OVF_PANIC("division overflow"); \
+        return a / b; \
+    } \
+    static inline CTYPE nova_##NAME##_checked_rem(CTYPE a, CTYPE b) { \
+        if (b == 0) NOVA_INT_OVF_PANIC("division by zero"); \
+        if (a == (MINVAL) && b == -1) NOVA_INT_OVF_PANIC("division overflow"); \
+        return a % b; \
+    } \
+    static inline CTYPE nova_##NAME##_checked_neg(CTYPE a) { \
+        if (a == (MINVAL)) NOVA_INT_OVF_PANIC("negation overflow"); \
+        return -a; \
+    }
+
+NOVA_DEFINE_CHECKED_SIGNED_DIVMODNEG(i8,  int8_t,  INT8_MIN)
+NOVA_DEFINE_CHECKED_SIGNED_DIVMODNEG(i16, int16_t, INT16_MIN)
+NOVA_DEFINE_CHECKED_SIGNED_DIVMODNEG(i32, int32_t, INT32_MIN)
+NOVA_DEFINE_CHECKED_SIGNED_DIVMODNEG(i64, int64_t, INT64_MIN)
+
+#undef NOVA_DEFINE_CHECKED_SIGNED_DIVMODNEG
+
+/* Unsigned sized types: `b == 0`-guard only (overflow impossible — no MIN/-1
+ * case, no neg-guard — raw unsigned negation never traps, see comment above). */
+#define NOVA_DEFINE_CHECKED_UNSIGNED_DIVMOD(NAME, CTYPE) \
+    static inline CTYPE nova_##NAME##_checked_div(CTYPE a, CTYPE b) { \
+        if (b == 0) NOVA_INT_OVF_PANIC("division by zero"); \
+        return a / b; \
+    } \
+    static inline CTYPE nova_##NAME##_checked_rem(CTYPE a, CTYPE b) { \
+        if (b == 0) NOVA_INT_OVF_PANIC("division by zero"); \
+        return a % b; \
+    }
+
+NOVA_DEFINE_CHECKED_UNSIGNED_DIVMOD(u8,   nova_byte)
+NOVA_DEFINE_CHECKED_UNSIGNED_DIVMOD(u16,  uint16_t)
+NOVA_DEFINE_CHECKED_UNSIGNED_DIVMOD(u32,  uint32_t)
+NOVA_DEFINE_CHECKED_UNSIGNED_DIVMOD(u64,  uint64_t)
+NOVA_DEFINE_CHECKED_UNSIGNED_DIVMOD(uint, nova_uint)
+
+#undef NOVA_DEFINE_CHECKED_UNSIGNED_DIVMOD
+
 /* nv_exit(code, msg) — D13: смерть всего процесса.
  *
  * exit это финальная точка — НЕ routes через fail-frame (handler-ом не
