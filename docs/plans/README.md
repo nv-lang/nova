@@ -26,6 +26,12 @@
   concrete-коллизию чужого типа; новый регистр `type_set_members` для D310 type-set bound в guard'е Plan 164 Ф.3;
   маркер `[M-primitive-receiver-bounded-blanket-dispatch]` закрыт; попутно найден+залогирован
   `[M-i64-clamp-primitive-collision-dispatch]`, отдельное окно).
+  Точечный dispatch-фикс: [196.9 — concrete-vs-concrete на разных примитивах](196.9-primitive-concrete-overload.md)
+  🔧 В РАБОТЕ 2026-07-16 (два CONCRETE `@clamp` на `int`/`f64`, `i64`-ресивер без своего оверлоада тихо мис-диспатчился
+  в `f64` через pattern-bound `match`-биндинг; корень — `f1_expr_inner`'s `ExprKind::Match` не расширял `scope`
+  биндингами арма, из-за чего `check_instance_overload` вообще не видел ресивер → ни диагностики, ни
+  `resolved_callees`; фикс переиспользует `match_arm_bindings` (172.1 АТОМ 2a) — ОДНО окно чинит и диспетч-по-типу
+  (196.7 канал), и честный `[E_UNKNOWN_METHOD]` (177 Ф.3) разом; маркер `[M-primitive-concrete-overload-receiver-dispatch]`).
 - **187** — Ред.5-v2 готова к запуску Ф.MVP-2: ВСЕ внешние гейты сняты (TLS=nova-tls, 173 закрыт, SSE в main); демо = живой Nova-бек, канон показа Docker; предложена Ред.6-пятёрка витринных улучшений.
 - **173** ✅ семейство закрыто 2026-07-13 (MultiError D414 + propagation-trace per-fiber + suppressed явным параметром); остаток: п.4 semaphore-cap (P3, опция) + [M-173-trace-not-in-child-error] (P3).
 - **193** ✅ закрыт (std/tls → внешний dep `../nova-tls`, ноль Rust в TLS-пути); хвост — vendored mbedTLS.
