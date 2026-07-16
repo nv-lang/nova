@@ -3156,21 +3156,37 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   `resolved_cat_of`, types/mod.rs). Не расследовано глубже (вне периметра
   lint-sanitation волны) — чинить отдельным заходом compiler-codegen.
 
-- **[M-result-ok-unit-inference-mismatch]** (2026-07-10, P2, найден при
-  lint-sanitation/починке `W_RESULT_DISCARDED` в std/tls/stream.nv) —
-  `.ok()` на `Result[(), E]` (unit-ok тип) даёт checker/codegen рассинхрон:
-  чекер типизирует биндинг как `Option[E]` (Option ОШИБКИ), а codegen
-  корректно эмитит вызов `Result_method_ok_nova_unit_<E>` возвращающий
-  `NovaOpt_nova_unit` (Option[()]) → CC-FAIL «initializing `NovaOpt_<E>_p`
-  with an expression of incompatible type `NovaOpt_nova_unit`». Минимальный
-  повод: best-effort `flush_out(tcp, session).ok()`, где
-  `flush_out -> Result[(), TlsError]`. `.ok()` на Result с НЕ-unit ok-типом
-  (напр. `Result[[]u8, E]` в std/time/civil/tzif.nv) работает штатно —
-  дефект специфичен для unit-ok. Обход (в std/tls/stream.nv ×2): вместо
-  `.ok()` — именованный discard-биндинг `ro _sent = flush_out(...)` (не
-  swallow-match, lint-clean: `flush_out` вне RESULT_CALLEES-списка правила).
-  Чинить в чекере (вывод типа `Result[(), E].ok()` → `Option[()]`, не
-  `Option[E]`) отдельным заходом compiler-codegen.
+- **[M-result-ok-unit-inference-mismatch]** ✅ **CLOSED 2026-07-16** (ветка
+  `fix-result-ok-unit`, sonnet) — найден 2026-07-10 при lint-sanitation/починке
+  `W_RESULT_DISCARDED` в std/tls/stream.nv: `.ok()` на `Result[(), E]`
+  (unit-ok тип) давал checker/codegen рассинхрон — чекер типизировал биндинг
+  как `Option[E]` (Option ОШИБКИ), а codegen корректно эмитил вызов
+  `Result_method_ok_nova_unit_<E>`, возвращающий `NovaOpt_nova_unit`
+  (Option[()]) → CC-FAIL «initializing `NovaOpt_<E>_p` with an expression of
+  incompatible type `NovaOpt_nova_unit`». **Корень — НЕ в generic-subst
+  `.ok()`-резолюции** (та подставляла T/E корректно), а в
+  `resolved_to_typeref` (`compiler-codegen/src/types/mod.rs`): базовый case
+  `R::Unit => return None` (безобидный на ВЕРХНЕМ уровне) вызывается и
+  ПОЗИЦИОННО внутри `R::Named`-арма через `.filter_map(...)` для перестройки
+  generics-листа (`Result[T, E]` → `args: [T, E]`) — `filter_map` ТИХО РОНЯЛ
+  `R::Unit`-arg, схлопывая `Result[(), E]` (`args: [Unit, E]`) в
+  ОДНОЭЛЕМЕНТНЫЙ `Result[E]`, сдвигая E в T-слот; даунстрим subst
+  (`build_recv_subst`) биндил `T→E` через arity-mismatch-fallback (позиционный
+  zip) → `.ok()` типизировался как `Option[E]`. Фикс: `()` ПРЕДСТАВИМ
+  (`TypeRef::Unit`) — round-trip'им вместо дропа (`R::Unit =>
+  TypeRef::Unit(span)`, отдельный арм вместо catch-all `return None`).
+  RED: изолированный repro (`Result[(), MyErr].ok()` в биндинге) —
+  дословно тот же CC-FAIL, что в диагнозе. GREEN после фикса (compile +
+  runtime). Regression-guard: `.ok()` на НЕ-unit ok-типе (`Result[[]u8, E]`)
+  остался корректен. Тест: `spec_tests/conformance/result_ok_unit.nv`
+  (unit-ok pinning ×2 + non-unit регресс-защита ×2; PASS в изолированном
+  прогоне до слияния в общий пир-модуль, per test-conventions workflow).
+  Обход в nova-tls (`src/stream.nv`, отдельный репозиторий) снят ×2 — вернул
+  `.ok()`-форму на ветке `fix-result-ok-unit` (репо nova-tls), проверено
+  `nova check src/stream.nv` против пропатченного nova: байт-идентичный
+  список pre-existing `W_CONSUME_KEYWORD_UNNECESSARY`-ошибок (несвязанный
+  D180-долг, чинится параллельно на ветке `fix-d180-consume-tests`) до/после
+  правки — ноль новых диагностик.
 
 ## [M-strict-effects-conformance-sweep] — `--strict-effects` debt snapshot: std/ + examples/ ЧИСТЫ (2026-07-13, Plan 197)
 
