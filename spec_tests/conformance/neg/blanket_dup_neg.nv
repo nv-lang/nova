@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_DUPLICATE_PROTOCOL_IMPL
+//
+// D355 §4 (Plan 161 Ф.2): a type cannot implement `Next[T]` for two
+// different T at once. `Dual` here declares TWO `@next()` overloads that
+// each structurally match the `Next[T]` shape (`mut @next() -> Option[T]`)
+// but bind T to different concrete types (`int` vs `str`) — an
+// irreconcilable double-impl; blanket dispatch could never pick a single T.
+// (Precedent: this file previously carried ONLY the `int` overload and was
+// silently flipped to a positive test — restored as a genuine negative per
+// Plan 161 audit 2026-07-16.)
+module neg.blanket_dup_neg
+
+type Dual value { x int }
+
+fn Dual mut @next() -> Option[int] { Option.none() }
+fn Dual mut @next() -> Option[str] { Option.none() }

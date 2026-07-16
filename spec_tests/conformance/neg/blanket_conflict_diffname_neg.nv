@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_BLANKET_CONFLICT
+//
+// D355 §5 (Plan 161 Ф.2): same conflict as `blanket_conflict_neg.nv` — two
+// blanket methods on the SAME protocol (`Next`) with the SAME method name
+// (`take_second`) — but here the bound-receiver typevar is spelled
+// DIFFERENTLY (`I` vs `J`). The generic key-based duplicate-signature check
+// elsewhere keys on the literal receiver-type name (`"I.take_second"` vs
+// `"J.take_second"`) and would NOT catch this — only the protocol-aware
+// `E_BLANKET_CONFLICT` check (grouping by protocol base name, not literal
+// typevar spelling) does.
+module neg.blanket_conflict_diffname_neg
+
+import std.prelude.collections.{Next}
+
+fn[I Next[T]] I mut @take_second() -> Option[T] { @next() }
+fn[J Next[U]] J mut @take_second() -> Option[U] { @next() }

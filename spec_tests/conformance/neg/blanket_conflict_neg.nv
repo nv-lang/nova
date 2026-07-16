@@ -1,4 +1,11 @@
-// EXPECT_COMPILE_ERROR duplicate definition
+// EXPECT_COMPILE_ERROR E_BLANKET_CONFLICT
+//
+// D355 §5 (Plan 161 Ф.2): two blanket methods declared for the SAME
+// protocol (`Next`) with the SAME method name (`take_first`) — dispatch
+// cannot pick between them. (This exact pair also collides on the generic
+// duplicate-signature check, since both use the same bound-typevar spelling
+// `I` — see `blanket_conflict_diffname_neg.nv` for the case that ONLY
+// `E_BLANKET_CONFLICT` catches.)
 module neg.blanket_conflict_neg
 
 import std.prelude.collections.{Next}

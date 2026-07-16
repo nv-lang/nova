@@ -14,6 +14,23 @@
 > (`@zfold`/`@zcount`/`@zfor_each`/`@zany`/`@zall`), 10/10 plan161 PASS. V2 followup:
 > параметрический return type T/Option[T]/Vec[T] → `[M-161-parametric-return]`.
 >
+> **AMEND (2026-07-16, аудит Plan 212 → branch `p161-blanket-diag`, sonnet):**
+> Ф.2 «CLOSED» был неполным на практике — `E_DUPLICATE_PROTOCOL_IMPL`/`E_BLANKET_CONFLICT`
+> из спеки (D355 §4/§5) не имели реализации в компиляторе (0 совпадений в
+> `compiler-codegen/src`), а негативная фикстура `blanket_dup_neg.nv` была молча
+> превращена в позитивную (комментарий «positive test, not a negative test»). Обе
+> диагностики РЕАЛИЗОВАНЫ в чекере (`compiler-codegen/src/types/mod.rs`, см. §2 ниже
+> for деталей): `check_duplicate_protocol_impl` / `check_blanket_conflict` +
+> helper'ы `infer_protocol_generic_binding` / `match_protocol_type_position` /
+> `find_whole_word_occurrences`, вызываются из `TypeCheckCtx::check_module`. Негатив
+> восстановлен в `spec_tests/conformance/neg/blanket_dup_neg.nv` (честный дубль-impl,
+> EXPECT_COMPILE_ERROR E_DUPLICATE_PROTOCOL_IMPL); `blanket_conflict_neg.nv` маркер
+> уточнён на `E_BLANKET_CONFLICT`; новый `blanket_conflict_diffname_neg.nv` доказывает
+> gap, который старый generic dup-check пропускал (разные имена bound-typevar `I`/`J`).
+> Верификация: 3/3 свои neg PASS, positive `d355_blanket_protocol.nv` не сломан,
+> `nova check std/src/collections` 20/20 PASS (0 реальных дублей в stdlib). Ф.2 теперь
+> реально закрыта.
+>
 > **Lineage:**
 > - **Plan 153.2** zero-cost lazy iterators (Phase A ✅) — мотивация; закрывает
 >   `[M-153.2-generic-over-source-zerocost]` (Stage 3: blanket chain-entry methods).
