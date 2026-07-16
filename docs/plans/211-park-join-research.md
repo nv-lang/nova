@@ -81,7 +81,10 @@ nested-supervised fan-out'ов в планировщике. Порог 3 — м�
    неинициализированную/частично видимую runq при steal (родня главной гипотезы §2: publish
    без транзитивного упорядочения). Использовать как ВХОДНУЮ точку happens-before разбора п.3.
    (Второй TSan-улов — `fiber_arena.c` `_sigsegv_installed` check-then-set — НЕ 211-родня,
-   отдельный маркер `[M-fiber-arena-sigsegv-install-race]` в backlog.)
+   отдельный маркер `[M-fiber-arena-sigsegv-install-race]` в backlog, ✅ **CLOSED 2026-07-16**
+   (`pthread_once`, ветка `fix-fiber-sigsegv-race`, коммит `579691aef`) — TSan-ресмоук
+   подтвердил: race по `_sigsegv_installed` исчез, `runq.h` init/grab race из строки выше
+   остался виден в том же прогоне.)
 5. **Орфан/unwind-взаимодействие:** краш коррелировал с реальными deadline-fire →
    `nova_throw_scope_timeout` longjmp — проверить, не трогает ли unwind соседний scope,
    чей drive-фибер в этот момент в park-join.
