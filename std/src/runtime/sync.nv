@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Plan 18 std.sync: fiber-aware synchronization primitives.
 //
-// AtomicInt   — lock-free atomic integer (int32 precision, nova_int width).
+// AtomicInt   — lock-free address-sized atomic integer (nova_int width,
+//               intptr_t — Plan 133). Plan 207 (2026-07-16): consolidated
+//               name — absorbs the former int32-precision legacy AtomicInt
+//               (its subset API is covered by this type's SeqCst defaults)
+//               and the former Isize spelling.
+// AtomicUint  — lock-free address-sized unsigned atomic integer (nova_uint
+//               width, uintptr_t). Plan 207: consolidated from Usize spelling.
 // AtomicBool  — lock-free atomic boolean; swap() useful for one-shot ownership.
 // Mutex       — fair FIFO fiber-aware mutex; park/wake via nova_sched.
 // WaitGroup   — counter-based rendezvous; wait() parks until count == 0.
@@ -128,7 +134,8 @@ type CasRawBool(ok bool, witness bool)
 ///
 /// # See Also
 ///
-/// - `[AtomicInt]` — deprecated alias; migrate to `AtomicI64`
+/// - `[AtomicInt]` — address-sized (`intptr_t`) atomic; use when the width
+///   must track the platform word (indexes/offsets), not a fixed 64 bits
 /// - `[AtomicBool]` — atomic boolean
 /// - `[MemOrdering]` — ordering parameter enum
 #stable(since = "0.1")
@@ -1037,253 +1044,20 @@ export extern "nova" fn AtomicU8 mut @fetch_nand(v u8, ord MemOrdering) -> u8
 #stable(since = "0.1")
 export extern "nova" fn AtomicU8 mut @fetch_nand(v u8) -> u8
 
-// ─── AtomicIsize ─────────────────────────────────────────────────
+// ─── AtomicInt ───────────────────────────────────────────────────
 
 /// Lock-free platform-word signed atomic integer.
 ///
-/// `int` = `i64` (Plan 70.4 D129). Platform-word signed atomic.
+/// `int` = `nova_int` = `intptr_t` (address-sized, Plan 133; на x64
+/// совпадает по ширине с `int64_t`). Platform-word signed atomic.
 /// Useful for signed indexes and offsets.
-#stable(since = "0.1")
-#share
-export type AtomicIsize(*())
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize.new(v int) -> Self
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize @load(ord MemOrdering) -> int
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize @load() -> int
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @store(v int, ord MemOrdering)
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @store(v int)
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @swap(v int, ord MemOrdering) -> int
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @swap(v int) -> int
-
-#realtime
-extern "nova" fn AtomicIsize mut @cmpxchg(expected int, desired int, weak bool, success MemOrdering, failure MemOrdering) -> CasRawInt
-
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
-/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
-/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
-#realtime
-#stable(since = "0.1")
-export fn AtomicIsize mut @compare_exchange(expected int, desired int, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), int] {
-    ro raw = @cmpxchg(expected, desired, false, success, failure)
-    if raw.ok { Ok(()) } else { Err(raw.witness) }
-}
-
-/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
-/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
-/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
-#realtime
-#stable(since = "0.1")
-export fn AtomicIsize mut @compare_exchange_weak(expected int, desired int, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), int] {
-    ro raw = @cmpxchg(expected, desired, true, success, failure)
-    if raw.ok { Ok(()) } else { Err(raw.witness) }
-}
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @fetch_add(v int, ord MemOrdering) -> int
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @fetch_add(v int) -> int
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @fetch_sub(v int, ord MemOrdering) -> int
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @fetch_sub(v int) -> int
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @fetch_or(v int, ord MemOrdering) -> int
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @fetch_or(v int) -> int
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @fetch_and(v int, ord MemOrdering) -> int
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @fetch_and(v int) -> int
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @fetch_xor(v int, ord MemOrdering) -> int
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @fetch_xor(v int) -> int
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @fetch_max(v int, ord MemOrdering) -> int
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @fetch_max(v int) -> int
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @fetch_min(v int, ord MemOrdering) -> int
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @fetch_min(v int) -> int
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @fetch_nand(v int, ord MemOrdering) -> int
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicIsize mut @fetch_nand(v int) -> int
-
-// ─── AtomicUsize ─────────────────────────────────────────────────
-
-/// Lock-free platform-word unsigned atomic integer.
 ///
-/// `uint` = `u64` (Plan 70.5). Platform-word unsigned atomic.
-/// Useful for array indexes, buffer sizes.
-#stable(since = "0.1")
-#share
-export type AtomicUsize(*())
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize.new(v uint) -> Self
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize @load(ord MemOrdering) -> uint
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize @load() -> uint
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @store(v uint, ord MemOrdering)
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @store(v uint)
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @swap(v uint, ord MemOrdering) -> uint
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @swap(v uint) -> uint
-
-#realtime
-extern "nova" fn AtomicUsize mut @cmpxchg(expected uint, desired uint, weak bool, success MemOrdering, failure MemOrdering) -> CasRawUint
-
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
-/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
-/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
-#realtime
-#stable(since = "0.1")
-export fn AtomicUsize mut @compare_exchange(expected uint, desired uint, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), uint] {
-    ro raw = @cmpxchg(expected, desired, false, success, failure)
-    if raw.ok { Ok(()) } else { Err(raw.witness) }
-}
-
-/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
-/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
-/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
-#realtime
-#stable(since = "0.1")
-export fn AtomicUsize mut @compare_exchange_weak(expected uint, desired uint, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), uint] {
-    ro raw = @cmpxchg(expected, desired, true, success, failure)
-    if raw.ok { Ok(()) } else { Err(raw.witness) }
-}
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @fetch_add(v uint, ord MemOrdering) -> uint
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @fetch_add(v uint) -> uint
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @fetch_sub(v uint, ord MemOrdering) -> uint
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @fetch_sub(v uint) -> uint
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @fetch_or(v uint, ord MemOrdering) -> uint
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @fetch_or(v uint) -> uint
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @fetch_and(v uint, ord MemOrdering) -> uint
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @fetch_and(v uint) -> uint
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @fetch_xor(v uint, ord MemOrdering) -> uint
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @fetch_xor(v uint) -> uint
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @fetch_max(v uint, ord MemOrdering) -> uint
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @fetch_max(v uint) -> uint
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @fetch_min(v uint, ord MemOrdering) -> uint
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @fetch_min(v uint) -> uint
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @fetch_nand(v uint, ord MemOrdering) -> uint
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicUsize mut @fetch_nand(v uint) -> uint
-
-// ─── AtomicInt ───────────────────────────────────────────────────
-
-/// Lock-free атомарный целочисленный счётчик.
-///
-/// Использует acquire/release ordering для всех операций.
-/// Ширина соответствует `nova_int` (platform word size).
-///
-/// # Examples
-///
-/// ```nova
-/// let mut counter = AtomicInt.new(0)
-/// counter.fetch_add(1)
-/// assert(counter.load() == 1)
-/// ```
-///
-/// # See Also
-///
-/// - `[AtomicBool]` — атомарный boolean
-/// - `[Mutex]` — fiber-aware mutex для non-atomic критических секций
+/// Plan 207 (2026-07-16 консолидация имён): раньше назывался `Atomic` +
+/// `Isize` — переименован в `AtomicInt`, поглотив место прежнего legacy
+/// `AtomicInt` (int32-backed урезанный API без `MemOrdering`-параметров,
+/// снят целиком; его вызовы (`new/load/store/fetch_add/fetch_sub/
+/// compare_exchange` без ordering) покрываются дефолтными
+/// SeqCst-перегрузками этого типа один-в-один).
 #stable(since = "0.1")
 #share
 export type AtomicInt(*())
@@ -1292,40 +1066,223 @@ export type AtomicInt(*())
 #stable(since = "0.1")
 export extern "nova" fn AtomicInt.new(v int) -> Self
 
-/// Загрузить текущее значение (acquire ordering).
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicInt @load(ord MemOrdering) -> int
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn AtomicInt @load() -> int
 
-/// Записать новое значение (release ordering).
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicInt mut @store(v int, ord MemOrdering)
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn AtomicInt mut @store(v int)
 
-/// Атомарно добавить `delta`, вернуть предыдущее значение (acq_rel).
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicInt mut @fetch_add(delta int) -> int
-
-/// Атомарно вычесть `delta`, вернуть предыдущее значение (acq_rel).
+export extern "nova" fn AtomicInt mut @swap(v int, ord MemOrdering) -> int
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn AtomicInt mut @fetch_sub(delta int) -> int
+export extern "nova" fn AtomicInt mut @swap(v int) -> int
 
 #realtime
-extern "nova" fn AtomicInt mut @cmpxchg(expected int, desired int) -> CasRawInt
+extern "nova" fn AtomicInt mut @cmpxchg(expected int, desired int, weak bool, success MemOrdering, failure MemOrdering) -> CasRawInt
 
-/// Compare-and-swap: если значение == `expected`, записать `desired`
-/// (Plan 207 [M-cas-return-witnessed-value]).
-///
-/// Возвращает `Ok(())` при успехе; `Err(actual)` при провале, `actual` —
-/// фактически прочитанное значение (witness). Использует acq_rel ordering.
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
+/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
 #stable(since = "0.1")
-export fn AtomicInt mut @compare_exchange(expected int, desired int) -> Result[(), int] {
-    ro raw = @cmpxchg(expected, desired)
+export fn AtomicInt mut @compare_exchange(expected int, desired int, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), int] {
+    ro raw = @cmpxchg(expected, desired, false, success, failure)
     if raw.ok { Ok(()) } else { Err(raw.witness) }
 }
+
+/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
+/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
+/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+#realtime
+#stable(since = "0.1")
+export fn AtomicInt mut @compare_exchange_weak(expected int, desired int, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), int] {
+    ro raw = @cmpxchg(expected, desired, true, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicInt mut @fetch_add(v int, ord MemOrdering) -> int
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicInt mut @fetch_add(v int) -> int
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicInt mut @fetch_sub(v int, ord MemOrdering) -> int
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicInt mut @fetch_sub(v int) -> int
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicInt mut @fetch_or(v int, ord MemOrdering) -> int
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicInt mut @fetch_or(v int) -> int
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicInt mut @fetch_and(v int, ord MemOrdering) -> int
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicInt mut @fetch_and(v int) -> int
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicInt mut @fetch_xor(v int, ord MemOrdering) -> int
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicInt mut @fetch_xor(v int) -> int
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicInt mut @fetch_max(v int, ord MemOrdering) -> int
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicInt mut @fetch_max(v int) -> int
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicInt mut @fetch_min(v int, ord MemOrdering) -> int
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicInt mut @fetch_min(v int) -> int
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicInt mut @fetch_nand(v int, ord MemOrdering) -> int
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicInt mut @fetch_nand(v int) -> int
+
+// ─── AtomicUint ──────────────────────────────────────────────────
+
+/// Lock-free platform-word unsigned atomic integer.
+///
+/// `uint` = `nova_uint` = `uintptr_t` (address-sized, Plan 133/70.5; на
+/// x64 совпадает по ширине с `uint64_t`). Platform-word unsigned atomic.
+/// Useful for array indexes, buffer sizes.
+///
+/// Plan 207 (2026-07-16 консолидация имён): раньше назывался `Atomic` +
+/// `Usize` — переименован в `AtomicUint`.
+#stable(since = "0.1")
+#share
+export type AtomicUint(*())
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint.new(v uint) -> Self
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint @load(ord MemOrdering) -> uint
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint @load() -> uint
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @store(v uint, ord MemOrdering)
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @store(v uint)
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @swap(v uint, ord MemOrdering) -> uint
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @swap(v uint) -> uint
+
+#realtime
+extern "nova" fn AtomicUint mut @cmpxchg(expected uint, desired uint, weak bool, success MemOrdering, failure MemOrdering) -> CasRawUint
+
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
+/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
+#realtime
+#stable(since = "0.1")
+export fn AtomicUint mut @compare_exchange(expected uint, desired uint, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), uint] {
+    ro raw = @cmpxchg(expected, desired, false, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
+
+/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
+/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
+/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+#realtime
+#stable(since = "0.1")
+export fn AtomicUint mut @compare_exchange_weak(expected uint, desired uint, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), uint] {
+    ro raw = @cmpxchg(expected, desired, true, success, failure)
+    if raw.ok { Ok(()) } else { Err(raw.witness) }
+}
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @fetch_add(v uint, ord MemOrdering) -> uint
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @fetch_add(v uint) -> uint
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @fetch_sub(v uint, ord MemOrdering) -> uint
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @fetch_sub(v uint) -> uint
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @fetch_or(v uint, ord MemOrdering) -> uint
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @fetch_or(v uint) -> uint
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @fetch_and(v uint, ord MemOrdering) -> uint
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @fetch_and(v uint) -> uint
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @fetch_xor(v uint, ord MemOrdering) -> uint
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @fetch_xor(v uint) -> uint
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @fetch_max(v uint, ord MemOrdering) -> uint
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @fetch_max(v uint) -> uint
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @fetch_min(v uint, ord MemOrdering) -> uint
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @fetch_min(v uint) -> uint
+
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @fetch_nand(v uint, ord MemOrdering) -> uint
+#realtime
+#stable(since = "0.1")
+export extern "nova" fn AtomicUint mut @fetch_nand(v uint) -> uint
 
 // ─── AtomicBool ──────────────────────────────────────────────────
 
@@ -1339,8 +1296,8 @@ export fn AtomicInt mut @compare_exchange(expected int, desired int) -> Result[(
 ///
 /// # See Also
 ///
-/// - `[AtomicInt]` — deprecated integer atomic
-/// - `[AtomicI64]` — preferred integer atomic
+/// - `[AtomicInt]` — address-sized integer atomic
+/// - `[AtomicI64]` — fixed 64-bit integer atomic
 /// - `[Once]` — barrier для exactly-once execution
 /// - `[MemOrdering]` — ordering parameter enum
 #stable(since = "0.1")
@@ -1428,77 +1385,6 @@ export extern "nova" fn AtomicBool mut @fetch_xor(v bool, ord MemOrdering) -> bo
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn AtomicBool mut @fetch_xor(v bool) -> bool
-
-// ─── AtomicPtr ───────────────────────────────────────────────────
-
-/// Lock-free atomic pointer (GC-managed reference).
-///
-/// Stores a GC-managed reference atomically. Supports CAS-based
-/// first-writer-wins patterns.
-///
-/// Note: Generic type parameter [T] planned for 103.7; current impl
-/// uses `int` as pointer-sized proxy (stores address as integer).
-/// GC tracking: AtomicPtr registers its value with GC roots on store.
-///
-/// Operations: load/store/swap/compare_exchange/compare_exchange_weak.
-/// **No** fetch_add/sub/or/and/xor (pointer arithmetic is unsafe).
-///
-/// # See Also
-///
-/// - `[AtomicI64]` — integer atomic
-/// - `[MemOrdering]` — ordering enum
-#stable(since = "0.1")
-#share
-export type AtomicPtr(*())
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicPtr.null() -> Self
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicPtr.new(v int) -> Self
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicPtr @load(ord MemOrdering) -> int
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicPtr @load() -> int
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicPtr mut @store(v int, ord MemOrdering)
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicPtr mut @store(v int)
-
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicPtr mut @swap(v int, ord MemOrdering) -> int
-#realtime
-#stable(since = "0.1")
-export extern "nova" fn AtomicPtr mut @swap(v int) -> int
-
-#realtime
-extern "nova" fn AtomicPtr mut @cmpxchg(expected int, desired int, weak bool, success MemOrdering, failure MemOrdering) -> CasRawInt
-
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` —
-/// успех. `Err(actual)` — провал, `actual` = witness (даром из C11 op).
-#realtime
-#stable(since = "0.1")
-export fn AtomicPtr mut @compare_exchange(expected int, desired int, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), int] {
-    ro raw = @cmpxchg(expected, desired, false, success, failure)
-    if raw.ok { Ok(()) } else { Err(raw.witness) }
-}
-
-/// Compare-and-swap weak — свидетель (`Err(actual)`) корректен и в
-/// spurious-failure случае (ARM).
-#realtime
-#stable(since = "0.1")
-export fn AtomicPtr mut @compare_exchange_weak(expected int, desired int, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), int] {
-    ro raw = @cmpxchg(expected, desired, true, success, failure)
-    if raw.ok { Ok(()) } else { Err(raw.witness) }
-}
 
 // ─── Plan 103.9 (D174): Consume guard types ──────────────────────
 //
