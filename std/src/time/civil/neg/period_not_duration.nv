@@ -2,7 +2,7 @@
 // `Date` принимает ТОЛЬКО `Period`; перегрузки `Date @plus(Duration)` НЕТ →
 // «add hours to a Date» = ошибка типов (бьёт Temporal runtime-RangeError).
 //
-// ⚠ Операторная форма `d + 2.hours()` НЕ ловится: резолв оператора
+// ⚠ Операторная форма `d + 2.to_hours()` НЕ ловится: резолв оператора
 // arg-type-blind (подбирает @plus по имени, тип аргумента не сверяет) —
 // [M-175.1-operator-arg-type-blind], та же природа, что
 // [M-175.1-minus-overload-arg-type]. Гейт D320 держит МЕТОД-форма.
@@ -16,5 +16,5 @@ import std.time.duration
 
 test "date.plus(duration) — type-error (D320)" {
     ro d = Date.new(2026, Jul, 10)!!
-    ro _x = d.plus(2.hours())   // ← Duration на Date: перегрузки нет
+    ro _x = d.plus(2.to_hours())   // ← Duration на Date: перегрузки нет
 }

@@ -65,9 +65,9 @@ export fn RetryPolicy.exponential(max_attempts int) -> Self =>
     {
         max_attempts,
         backoff: Exponential {
-            initial: 100.millis(),
+            initial: 100.to_millis(),
             multiplier: 2.0,
-            max_delay: 30.seconds(),
+            max_delay: 30.to_seconds(),
         },
         jitter: FullJitter,
     }

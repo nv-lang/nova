@@ -114,7 +114,7 @@ test "compare по инстанту: одна точка в двух зонах 
     ro b = ts.to_zoned(Fixed(Offset.from_hm(5, 30)!!))
     assert(a.compare(b) == 0)
     assert(a.datetime().compare(b.datetime()) != 0)   // wall-time разная
-    ro c = (ts + 1.seconds()).to_zoned(Utc)
+    ro c = (ts + 1.to_seconds()).to_zoned(Utc)
     assert(a.compare(c) < 0)
 }
 
@@ -205,7 +205,7 @@ test "dst overlap: Compatible=earlier, Later=later, Reject → Err" {
     assert(zl.offset().to_seconds() == -18_000)
     // Один wall-момент, два инстанта: later на час позже
     ro d = zl.to_timestamp()!! - z.to_timestamp()!!
-    assert(d == 1.hour())
+    assert(d == 1.to_hours())
     assert(match in_ovl.to_zoned(tz, d_reject) {
         Err(Ambiguous(_)) => true
         _ => false
@@ -236,11 +236,11 @@ test "wall-vs-elapsed: +P1D через spring-forward = 23h elapsed" {
     assert(next_wall.datetime().hour() == 12)
     assert(next_wall.date() == Date.new(2026, Mar, 8)!!)
     ro elapsed = next_wall.to_timestamp()!! - before.to_timestamp()!!
-    assert(elapsed == 23.hours())   // короткий день (spring-forward съел час)
+    assert(elapsed == 23.to_hours())   // короткий день (spring-forward съел час)
     // Elapsed 24h: wall-time сдвинулась на 13:00
-    ro exact = before.plus_duration(24.hours())
+    ro exact = before.plus_duration(24.to_hours())
     assert(exact.datetime().hour() == 13)
-    assert(exact.to_timestamp()!! - before.to_timestamp()!! == 24.hours())
+    assert(exact.to_timestamp()!! - before.to_timestamp()!! == 24.to_hours())
 }
 
 
