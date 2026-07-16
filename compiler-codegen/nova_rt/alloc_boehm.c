@@ -27,7 +27,18 @@
 #include <stdint.h>
 
 /* Monotonic alloc counter — incremented on every nova_alloc call.
- * Used by nova_gc_alloc_count() and nova_gc_reset_stats(). */
+ * Used by nova_gc_alloc_count() and nova_gc_reset_stats().
+ *
+ * [M-211-alloc-count-rmw-race] (2026-07-17, TSan-confirmed via Plan 211
+ * mn_smoke): armed M:N spawns nova_alloc concurrently from multiple worker
+ * threads (nova_scope_alloc_slot on fiber preamble) — a plain `_alloc_count++`
+ * is a non-atomic read-modify-write raced by every concurrent allocator
+ * thread. Not GC-correctness-affecting (Boehm's own bookkeeping is unrelated
+ * to this stat), but formally UB and lost increments are possible under
+ * contention. Fixed with relaxed atomics — same discipline as
+ * `_nova_runq_diag_inc` (runq.h): counter value ordering doesn't matter,
+ * only that the RMW itself is atomic. Zero cost (single instruction on
+ * x86/ARM, no barrier needed for RELAXED). */
 static size_t _alloc_count = 0;
 
 /* Plan 57.C.2: last GC pause длительность в наносекундах (monotonic timer
@@ -107,7 +118,7 @@ void* nova_alloc(size_t size) {
         fprintf(stderr, "nova: out of memory\n");
         abort();
     }
-    _alloc_count++;
+    __atomic_fetch_add(&_alloc_count, 1, __ATOMIC_RELAXED);
     return p;
 }
 
@@ -132,7 +143,7 @@ void* nova_alloc_uncollectable(size_t size) {
         fprintf(stderr, "nova: out of memory (uncollectable)\n");
         abort();
     }
-    _alloc_count++;
+    __atomic_fetch_add(&_alloc_count, 1, __ATOMIC_RELAXED);
     return p;
 }
 
@@ -156,10 +167,10 @@ void nova_release(void* ptr) { (void)ptr; }
 /* Stat functions required by alloc.h. Boehm does not expose per-object
  * freed/live counts without finalizers; we use heap_size as a proxy.
  * Conservative: nova_gc_free_count returns 0 (never overclaims). */
-size_t nova_gc_alloc_count(void) { return _alloc_count; }
+size_t nova_gc_alloc_count(void) { return __atomic_load_n(&_alloc_count, __ATOMIC_RELAXED); }
 size_t nova_gc_free_count(void)  { return 0; /* conservative: GC freed count unavailable */ }
-size_t nova_gc_live_count(void)  { return _alloc_count; /* upper bound; GC may have freed some */ }
-void   nova_gc_reset_stats(void) { _alloc_count = 0; }
+size_t nova_gc_live_count(void)  { return __atomic_load_n(&_alloc_count, __ATOMIC_RELAXED); /* upper bound; GC may have freed some */ }
+void   nova_gc_reset_stats(void) { __atomic_store_n(&_alloc_count, 0, __ATOMIC_RELAXED); }
 
 /* Plan 32: introspection — under Boehm full GC support.
  * Plan 57.C.2: nova_gc_collect timed; last_pause_ns updated. */

@@ -69,17 +69,38 @@ struct NovaWorker {
      * thread читает его, и если worker крутит одну fiber'у дольше
      * NOVA_PREEMPT_SLICE_NS — выставляет `preempt_flag = 1`.
      *
-     * `preempt_flag` — plain `volatile int`, НЕ снапшот: codegen safepoint
-     * (nova_preempt_check) читает его ВЖИВУЮ через TLS-указатель
-     * `_nova_preempt_ptr`, выставленный в _worker_main на &w->preempt_flag.
-     * Снапшот не годится — worker thread застревает внутри mco_resume на
-     * весь CPU-loop и не может перечитать флаг; sysmon выставляет его уже
-     * после старта fiber'ы. Single producer (sysmon) + single consumer
-     * (бегущая на этом worker'е fiber) для 0/1 флага — volatile достаточно
-     * (Go так же делает non-atomic write в stackguard0). `current_fiber_start`
-     * — torn-read safe через __atomic_* (sysmon читает, worker пишет). */
+     * `preempt_flag` — НЕ снапшот: codegen safepoint (nova_preempt_check)
+     * читает его ВЖИВУЮ через TLS-указатель `_nova_preempt_ptr`,
+     * выставленный в _worker_main на &w->preempt_flag. Снапшот не годится —
+     * worker thread застревает внутри mco_resume на весь CPU-loop и не может
+     * перечитать флаг; sysmon выставляет его уже после старта fiber'ы.
+     *
+     * [M-211-preempt-flag-plain-race] (2026-07-17, TSan-confirmed via
+     * Plan 211 mn_smoke — runtime.c:615 write vs runtime.c:1082 write,
+     * "as if synchronized via sleep" i.e. NO real happens-before, only
+     * incidental ordering from sysmon's 10ms poll): the prior comment here
+     * claimed "single producer (sysmon) + single consumer (текущий
+     * worker'а fiber), volatile достаточно (Go делает non-atomic write в
+     * stackguard0)" — TSan disagrees: sysmon (producer) and the worker's
+     * OWN thread (consumer, clearing to 0 in _worker_main + the
+     * nova_preempt_check safepoint) are DIFFERENT OS threads with no fence
+     * between them, so it is a genuine data race under the C11 memory
+     * model even though the field is `volatile` and single-word (volatile
+     * prevents compiler reordering/elision, not cross-thread visibility
+     * ordering — TSan correctly does not special-case it). Risk in
+     * practice is low (worst case: one missed/extra preemption tick,
+     * self-corrects on sysmon's next 10ms pass — no correctness impact on
+     * fiber scheduling), but it is UB and pollutes TSan output, potentially
+     * masking the real [M-211-runq-init-steal-visibility-gap] race in the
+     * same run. Fixed by using explicit RELAXED atomics on every read/write
+     * site (runtime.c:615/1082/1568/1945, fibers.h nova_preempt_check) —
+     * zero cost (RELAXED load/store compiles to the same plain mov as the
+     * old volatile access on x86/ARM; ordering between producer and
+     * consumer was never required, only that the access itself not be a
+     * formal race). `current_fiber_start` — torn-read safe через __atomic_*
+     * (sysmon читает, worker пишет), same discipline, already correct. */
     uint64_t          current_fiber_start;  /* __atomic_* accessed */
-    volatile int      preempt_flag;
+    volatile int      preempt_flag;         /* __atomic_*(RELAXED) accessed */
     /* Plan 83-go-cmn Ф.4 (safe subset): per-worker scheduler scratch, owner-only
      * (read/written ONLY by this worker's own thread in the find-work loop) →
      * plain, no atomics. steal_rng = xorshift32 state for randomized steal-victim
@@ -289,7 +310,7 @@ void nova_runtime_dump_state(const char* reason) {
         fprintf(stderr,
             "[worker %d] runnext=%p wake_pending=%d preempt_flag=%d stop=%d\n",
             wi, (void*)w->runnext, w->wake_pending_count,
-            (int)w->preempt_flag,
+            (int)__atomic_load_n(&w->preempt_flag, __ATOMIC_RELAXED),
             (int)nova_abool_load(&w->stop));
         NovaFiberQueue* s = &w->scope;
         int count = (int)__atomic_load_n(&s->count, __ATOMIC_ACQUIRE);
@@ -612,7 +633,9 @@ static void _sysmon_main(void* arg) {
                                                __ATOMIC_RELAXED);
             /* started == 0 → worker idle / между fiber'ами — не trip. */
             if (started != 0 && (now - started) > NOVA_PREEMPT_SLICE_NS) {
-                w->preempt_flag = 1;  /* живой флаг — fiber перечитает */
+                /* [M-211-preempt-flag-plain-race] relaxed atomic — see field
+                 * comment above (NovaWorker.preempt_flag). */
+                __atomic_store_n(&w->preempt_flag, 1, __ATOMIC_RELAXED);
             }
         }
     }
@@ -1079,7 +1102,7 @@ static void _worker_main(void* arg) {
          * sysmon can detect an overrun. The running fiber reads the LIVE
          * flag via `_nova_preempt_ptr` (set once in _worker_main) at every
          * codegen safepoint — no stale snapshot. */
-        w->preempt_flag = 0;
+        __atomic_store_n(&w->preempt_flag, 0, __ATOMIC_RELAXED);  /* [M-211-preempt-flag-plain-race] */
         __atomic_store_n(&w->current_fiber_start, uv_hrtime(), __ATOMIC_RELAXED);
 
         /* Plan 83.4.5.7 (2026-05-23): atomic state guard для double-resume race.
@@ -1564,8 +1587,11 @@ static void _materialize_pool(void) {
         w->id = i;
         nova_abool_init(&w->stop, false);
         nova_aint_init(&w->pending_count, 0);
-        /* Plan 44.7: preemption state — calloc'нуто в 0, инициализируем явно. */
-        w->preempt_flag = 0;
+        /* Plan 44.7: preemption state — calloc'нуто в 0, инициализируем явно.
+         * Single-threaded here (before this worker's uv_thread_create) — no
+         * race yet, but atomic for consistency with the other 3 touch-sites
+         * ([M-211-preempt-flag-plain-race]). */
+        __atomic_store_n(&w->preempt_flag, 0, __ATOMIC_RELAXED);
         w->current_fiber_start = 0;
         nova_scope_init(&w->scope);
         /* Plan 83-go-cmn Ф.1: per-worker fixed ring (inline, cannot fail). */
@@ -1942,7 +1968,7 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
         }
     }
 
-    w->preempt_flag = 0;
+    __atomic_store_n(&w->preempt_flag, 0, __ATOMIC_RELAXED);  /* [M-211-preempt-flag-plain-race] */
     __atomic_store_n(&w->current_fiber_start, uv_hrtime(), __ATOMIC_RELAXED);
 
     bool _nova_state_owned = true;

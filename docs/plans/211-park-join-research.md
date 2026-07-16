@@ -2,7 +2,12 @@
 # Plan 211 — Park-join для nested supervised (research: остаточный race)
 
 **Статус:** 📋 RESEARCH (заведён 2026-07-16, решение владельца: «митигация сейчас + park-join в
-research-план»). НЕ в очереди реализации, пока не локализован остаточный race.
+research-план»). НЕ в очереди реализации, пока не локализован остаточный race. **2026-07-17
+(sonnet, §7):** из 3 TSan-подтверждённых M:N-гонок субстрата 2 закрыты (мелкие атомик-фиксы,
+TSan-верифицировано 0/6 после), 1 (runq init↔steal) — дизайн готов, ждёт решения владельца
+(архитектурная, только дизайн в §7.3). Ни одна из 3 НЕ доказана причиной park-join ~17%-корапта
+(§4) — та гипотеза (migration parked drive-фибера под steal) остаётся отдельной, неисследованной
+в этом заходе; см. §7.1 карту гонок.
 **Ветка-кандидат:** `fix-high-conc-wedge` @ worktree `nova-concwedge`, коммит `f5531fa46`
 (**НЕ МЁРЖИТЬ** — вносит memory corruption ~17% под sustained-нагрузкой).
 **Хронология расследования:** `docs/plans/park-join-progress.md` (в ветке; честная, шаги 1-13).
@@ -94,3 +99,216 @@ nested-supervised fan-out'ов в планировщике. Порог 3 — м�
 Изолированный sustained-репро: **0 отказов / ≥100 прогонов** (baseline-уровень надёжности) +
 wedge-гейт P80/P200 + loadtest.ps1 все блоки + std/concurrency PASS + полный conformance
 + флагман-examples (конвенция 696556c86). До того — ветка живёт как research.
+
+## 7. Ход расследования 2026-07-17 (sonnet, worktree `nova-211r` @ `p211-races`)
+
+Задача этого захода: разобрать 3 TSan-подтверждённые гонки субстрата (накопленные с
+2026-07-16, см. §5 п.4 и `docs/plans/linux-build-progress.md` §«Бонус»), починить нементальные
+безопасно (с TSan-до/после), спроектировать фикс для архитектурной (runq), сверить с картой
+park-join (§4). Без тяжёлых стресс-прогонов на Windows-хосте — TSan-верификация только на WSL
+(`~/nova-work`, скрипт `~/tsan_build.sh`, минимальный `mn_smoke.c`-репро: `supervised { spawn{};
+spawn{} }`).
+
+### 7.1 Карта гонок — одна ли это гонка в разных одеждах? Нет, три разные
+
+| Гонка | Локация | Фаза жизни рантайма | Родня park-join §4? |
+|---|---|---|---|
+| **runq init↔steal** | `runq.h:131` (`nova_runq_init`, write) ↔ `runq.h:273` (`nova_runq_grab`, read) | **Startup only** — окно между `_materialize_pool` создающим воркер `i` (`uv_thread_create`) и инициализацией воркеров `i+1..N-1` | **Нет** — другой механизм и другая фаза (см. ниже) |
+| **sysmon↔worker preempt_flag** | `runtime.c:615` (write, sysmon-поток) ↔ `runtime.c:1082` (write, воркер-поток) | Steady-state, каждые ~10мс, весь lifetime пула | Нет — preemption-тикер, не пересекается с `drain_waiter_co`/`pending_remote`/scope |
+| **`_alloc_count` RMW** | `alloc_boehm.c:110`/`:135` (`nova_alloc`/`nova_alloc_uncollectable`) | Steady-state, любой конкурентный alloc | Нет — чистый stats-счётчик, не участвует в scheduling/wake |
+
+Все три — **подтверждены TSan** (см. §7.2), все три — **в одном подсистемном соседстве**
+(M:N-рантайм, тот же `nova_rt`), но **механически независимы** друг от друга и от гипотезы §4
+(миграция запаркованного drive-фибера под work-stealing в СТАЦИОНАРНОМ, уже поднятом пуле).
+`runq init↔steal` ближе всего по духу к §4 (тот же класс «visibility gap в work-stealing»,
+тот же файл `runq.h`), но это **STARTUP-time** окно (между `_materialize_pool` и первым
+`uv_thread_create`), а park-join corruption — **steady-state** явление (после полного подъёма
+пула, под sustained-нагрузкой, коррелирующее с реальными deadline-fire/cancel). Закрытие
+runq-гонки (§7.3) не предсказывает закрытие park-join corruption — это по-прежнему требует
+отдельной happens-before работы по §5.2/5.3/5.5. **Итог: НЕ одна гонка в разных одеждах — три
+разных дефекта, объединённых только инструментом обнаружения (TSan) и подсистемой (nova_rt M:N).**
+
+### 7.2 TSan-верификация — точная методология и цифры
+
+Среда: WSL2 Ubuntu, `~/nova-work` (native-fs копия `compiler-codegen/nova_rt` + `libuv`),
+`~/tsan_build.sh` (пересобирает `mn_smoke_tsan` из уже сгенерированного `mn_smoke.c` +
+core `nova_rt/*.c` через `clang -O0 -g -fsanitize=thread`), `TSAN_OPTIONS="halt_on_error=0"`
+(не останавливаться на первой гонке — считать ВСЕ уникальные сигнатуры за прогон).
+
+**Baseline (немодифицированный `nova_rt`, 3 прогона):**
+
+| # | exit | warnings | races found |
+|---|---|---|---|
+| 1 | 66 | 2 | (варьируется: подмножество из {runq, sysmon, alloc_count}) |
+| 2 | 66 | 1 | |
+| 3 | 66 | 2 | |
+
+Все 3 — `mn_smoke done` (программа завершается штатно; `exit=66` — TSan-код «гонки найдены»,
+не крах). Число уникальных гонок за прогон варьируется (1-2 из 3 возможных) — ожидаемо для
+вероятностных гонок (playbook Group F, «background rate varies»).
+
+**После фикса §7.4 (6 прогонов подряд, одинаковый бинарь, без пересборки между прогонами):**
+
+```
+RUN 1: exit=66 warnings=1 races=[runq.h:273:22 in nova_runq_grab] last=[mn_smoke done]
+RUN 2: exit=66 warnings=1 races=[runq.h:273:22 in nova_runq_grab] last=[mn_smoke done]
+RUN 3: exit=66 warnings=1 races=[runq.h:273:22 in nova_runq_grab] last=[mn_smoke done]
+RUN 4: exit=66 warnings=1 races=[runq.h:273:22 in nova_runq_grab] last=[mn_smoke done]
+RUN 5: exit=66 warnings=1 races=[runq.h:273:22 in nova_runq_grab] last=[mn_smoke done]
+RUN 6: exit=66 warnings=1 races=[runq.h:273:22 in nova_runq_grab] last=[mn_smoke done]
+```
+
+**6/6 — ровно ОДНА гонка (runq, ожидаемо — архитектурная, не тронута), 0/6 — sysmon, 0/6 —
+alloc_count.** Гонки sysmon и alloc_count TSan-подтверждённо ЗАКРЫТЫ (не одно «повезло»,
+а устойчивый ноль на 6 независимых прогонах). Как бонус — теперь, когда шум от двух других
+гонок убран, runq-гонка стала **детерминированно воспроизводимой в 100% прогонов** (была
+1-2-из-3 в baseline из-за конкуренции сигнатур) — упрощает будущую верификацию её фикса
+(TSan 0 warnings станет однозначным критерием, а не «стало меньше»).
+
+**Побочное наблюдение (не приписано фиксу):** один фоновый прогон патченного бинаря завис на
+~400+с (все 19 потоков в `futex_wait_queue`, 0 прироста CPU-time между опросами) и был убит
+вручную. Ретрест (restore original → 3 прогона baseline, restore patched → 6 прогонов patched,
+все — чистые) НЕ воспроизвёл зависание ни разу (0/9 повторных прогонов). Правдоподобная причина —
+конкурентные диагностические `wsl.exe`-вызовы (`ps`/`cat`) той же сессии, отъедавшие CPU у
+ограниченной WSL2-VM во время TSan-инструментированного прогона (TSan даёт огромный оверхед —
+уже задокументировано в `docs/linux-build.md`: «~55s CPU на два пустых spawn»), а не логический
+баг патча — оба изменённых места (§7.4) семантически идентичны исходному коду (та же control-flow,
+только atomic-операции вместо plain), не добавляют ни одной блокировки/ожидания. Не переисследовано
+глубже (не воспроизводится, не в скоупе targeted-smoke) — если всплывёт снова со стабильным
+репро, заводить отдельный маркер.
+
+### 7.3 Архитектурный фикс runq init↔steal — ДИЗАЙН (решение владельца, НЕ применено)
+
+**Корневая причина (подтверждена TSan-стеком, `docs/plans/linux-build-progress.md` + этот
+заход):** `_materialize_pool` (runtime.c) — ОДИН цикл `for (i = 0; i < n_workers; i++)`, который
+и инициализирует `_workers[i]` (id/stop/pending_count/preempt_flag/`nova_scope_init`/
+`nova_runq_init`/`nova_scope_grow`/`nova_sched_get_state`/dispatch-hooks/wake_mu/runnext/
+uv_loop_init/uv_async_init/close_queue/call_queue), И запускает его OS-поток
+(`uv_thread_create(&w->thread, _worker_main, w)`) — **в ТОЙ ЖЕ итерации**. `_n_workers` уже
+выставлен в полное целевое число ДО цикла. Поэтому воркер `0` (запущенный в итерации `i=0`)
+немедленно входит в `_worker_main`'s find-work loop и на первой же попытке steal (`runtime.c`,
+шаг «(3) idle — try steal», `nova_runq_steal(&w->runq, &_workers[k].runq)` для `k` по всем
+`_n_workers`) может обратиться к `_workers[k]` для `k > 0` — который(ые) main-поток **ещё не
+дошёл инициализировать** (или как раз инициализирует ПРЯМО СЕЙЧАС). TSan это и поймал: write
+`nova_runq_init` (main, `runtime.c:1572`/`1598`, под mutex M0 — но M0 защищает только повторный
+вход в `_ensure_materialized`, воркер его вообще не трогает) vs atomic-read `nova_runq_grab`
+(воркер 0, БЕЗ упоминания mutex в TSan-отчёте — подтверждает: M0 НЕ синхронизирует с воркером).
+
+Сейчас безобидно ТОЛЬКО потому, что `_workers = calloc(...)` уже занулил память ДО цикла —
+`nova_runq_init`'ные значения (`head=0, tail=0`, все `slots[i]=NULL`) совпадают с calloc'ным
+нулём. Steal на непроинициализированную-но-нулевую runq видит `n = t - h = 0` → возвращает
+`NULL` → безобидно ФУНКЦИОНАЛЬНО. Но это НЕ спроектированный инвариант, а везение по совпадению
+начальных значений — формальный data race остаётся (TSan прав), и он же ближайший кандидат на
+причину `[M-linux-mn-conformance-red]` (§7.5).
+
+**Дизайн фикса — расщепить цикл на 2 фазы (тот же приём, что Go `procresize()` — строит ВЕСЬ
+`allp[]` под STW ДО того, как любой `G` может встать на новый `P`; Tokio строит весь
+`Vec<Worker>` до `thread::spawn` любого из них):**
+
+```c
+/* Фаза 1: инициализировать КАЖДЫЙ _workers[i] — ни один OS-поток ещё
+ * не существует ни для одного воркера → ничто не может гоняться с этими
+ * записями. */
+for (int i = 0; i < n_workers; i++) {
+    NovaWorker* w = &_workers[i];
+    w->id = i;
+    nova_abool_init(&w->stop, false);
+    /* ...весь текущий блок инициализации, БЕЗ uv_thread_create... */
+    nova_call_queue_init(&w->call_queue);
+}
+
+/* Фаза 2: только теперь стартуют OS-потоки. К этому моменту КАЖДЫЙ
+ * _workers[i] полностью инициализирован — гарантия pthread_create
+ * («запись создателя ДО create() видна новому потоку») теперь покрывает
+ * ВЕСЬ _workers[] для КАЖДОГО воркера, т.к. все записи произошли строго
+ * до ПЕРВОГО создания потока. */
+for (int i = 0; i < n_workers; i++) {
+    NovaWorker* w = &_workers[i];
+    int rc = uv_thread_create(&w->thread, _worker_main, w);
+    if (rc != 0) { fprintf(stderr, ...); abort(); }
+}
+```
+
+Свойства: **нулевая цена** (тот же объём работы, просто пересортирован — не новый барьер, не
+новый атомик, не runtime-check); закрывает race ПОЛНОСТЬЮ (нет окна, где воркер жив, а
+`_workers[]` ещё пишется); НЕ требует трогать M0 или добавлять синхронизацию в `nova_runq_grab`/
+`nova_runq_init` — гонка не в отсутствующем барьере между «правильной» producer/consumer парой,
+а в том, что компонент стал наблюдаем ДО завершения конструктора.
+
+**Почему классифицирован архитектурным (не применён автономно в этом заходе):**
+1. Меняет форму control-flow в `_materialize_pool` — стартовый путь КАЖДОЙ M:N-программы;
+   корректность держится на транзитивности pthread_create-гарантии через N потоков — стоит
+   проверить TSan-ресмоуком с `NOVA_MAXPROCS>=4` явно (mn_smoke.c гоняет только 2 spawn'а,
+   число реальных воркеров = `uv_available_parallelism()`-зависимо, не факт что уже N≥3
+   параллельных воркеров одновременно стартовали в текущем репро).
+2. Error-path у `uv_thread_create` меняет форму (после расщепления фейл на воркере `i` в
+   Фазе 2 оставляет `0..i-1` уже запущенными — сейчас и так `abort()` рушит процесс целиком,
+   так что семантически то же самое, но стоит явного ревью).
+3. По playbook (`docs/debugging-races.md` §1 шаг 5) и `test-conventions-strict`: нужен
+   негативный regression-тест (TSan-smoke фикстура, ассертящая 0 warnings) + стресс на пороге
+   N=3 (§4.1 — там, где wedge воспроизводится минимально) — это уже выходит за «targeted smoke»
+   этого захода (явно исключено заданием: «БЕЗ тяжёлых стресс-прогонов на Windows-хосте»).
+
+**Рекомендация:** отдельная волна (после решения владельца читать этот дизайн) — применить
+расщепление, TSan-ресмоук (ожидание: 0 warnings на mn_smoke), затем стресс P80/P200 +
+`[M-linux-mn-conformance-red]` фикстуры индивидуально на Linux CI.
+
+### 7.4 Применённые мелкие фиксы (в этом заходе, TSan-верифицировано выше)
+
+1. **`alloc_boehm.c` — `_alloc_count` RMW-гонка.** `_alloc_count++` (в `nova_alloc` и
+   `nova_alloc_uncollectable`) — non-atomic read-modify-write, гоняется КАЖДЫМ конкурентным
+   alloc с разных worker-потоков (`nova_scope_alloc_slot` на fiber preamble). Не задевает
+   GC-корректность (это только stats-счётчик для `nova_gc_alloc_count()`/`reset_stats()`), но
+   формальный UB + возможна потеря инкремента под контеншном. Фикс: `__atomic_fetch_add(...,
+   __ATOMIC_RELAXED)` на инкрементах, `__atomic_load_n`/`__atomic_store_n` на читателях/reset —
+   та же дисциплина, что `_nova_runq_diag_inc` (`runq.h`). Нулевая цена (relaxed = обычная
+   инструкция, порядок между инкрементами не важен, важна только атомарность самого RMW).
+
+2. **`preempt_flag` — sysmon↔worker гонка.** Поле было документировано как «single producer
+   (sysmon) + single consumer (текущий воркер), volatile достаточно (Go делает non-atomic write
+   в stackguard0)» — TSan с этим не согласен: sysmon (producer) и воркер (consumer, clearing to 0
+   в `_worker_main` + в hot-path `nova_preempt_check`) — РАЗНЫЕ OS-потоки без барьера между ними,
+   формальная гонка под C11 memory model (аннотация TSan: «as if synchronized via sleep» — т.е.
+   НЕТ настоящего happens-before, только случайный порядок от `uv_sleep(10)`). Риск на практике
+   низкий (худший случай — один пропущенный/лишний preemption-тик, самокорректируется на
+   следующем 10мс-проходе sysmon'а — на fiber-scheduling-корректность не влияет), но UB засоряет
+   TSan-вывод (могло маскировать настоящую runq-гонку в том же прогоне). Фикс: явные
+   `__atomic_load_n`/`__atomic_store_n(..., __ATOMIC_RELAXED)` на ВСЕХ точках доступа —
+   `runtime.c:615` (sysmon write), `:1082`/`:1594`/`:1971` (воркер clear ×3, включая init-time
+   точку — там гонки не было, атомик добавлен для единообразия), `:313` (diagnostic dump read),
+   и hot-path `fibers.h::nova_preempt_check` (safepoint read+clear — вызывается на КАЖДОМ
+   function-prologue + loop-backedge). Нулевая цена (RELAXED load/store компилируется в тот же
+   `mov`, что и старый plain-доступ на x86/ARM — не hot-path-изменение, только TSan-чистота).
+   Поле `preempt_flag` остаётся `volatile int` (тип не менялся — только операции доступа).
+
+**Файлы:** `compiler-codegen/nova_rt/alloc_boehm.c`, `compiler-codegen/nova_rt/runtime.c`,
+`compiler-codegen/nova_rt/fibers.h` (все три — в worktree `nova-211r` @ `p211-races`).
+
+### 7.5 Судьба known-red-списка nova-gate (`[M-linux-mn-conformance-red]`)
+
+**Список ОСТАЁТСЯ без изменений.** `.github/workflows/nova-gate.yml:138` (`known_red` regex на
+`app_effect_basic_t8_1` + `standalone/supervisor_parfor_test`) завязан явно на «гонки runq
+init↔steal + sysmon↔worker закрываются вместе со снятием списка» (`backlog-followups.md`:
+«снять список ВМЕСТЕ с фиксом гонок в 211»). Этот заход закрыл sysmon-гонку (TSan 0/6), но
+**runq-гонка — архитектурная, дизайн §7.3, НЕ применена** — список снимать преждевременно.
+Более того: связь «эти 3 TSan-гонки → именно ЭТИ 2 конкретных Linux-фикстуры» — **пока
+классовая, не индивидуально доказанная** (`backlog-followups.md` сам формулирует как «класс =
+подтверждённые TSan-гонки», не как конкретный stack trace, ведущий именно к
+`app_effect_basic_t8_1`'s «падает на выходе» или к `supervisor_parfor_test`). Прямая проверка
+(TSan-прогон ИМЕННО этих 2 фикстур, не синтетического `mn_smoke.c`) не сделана в этом заходе —
+`app_effect_basic_t8_1` компилируется как большой merged-CU (сотни файлов, ~60-1000+с сборки в
+разных режимах, см. `docs/plans/198-redo-notes.md`) — вне бюджета «targeted smoke» этой волны.
+**Следующий шаг (не сделан):** после применения §7.3 — TSan-прогон именно этих 2 фикстур
+напрямую (не только синтетики), затем снятие known-red-строк из `nova-gate.yml` ОДНОЙ волной
+с фиксом.
+
+### 7.6 Обновление программы §5
+
+- П.4 (TSan): продвинуто — 3 гонки идентифицированы (было 2 в §5), 2 закрыты, 1 (runq)
+  спроектирована. См. §7.1-7.4.
+- П.1-3, 5 (изоляция wake-источников, happens-before drain_waiter_co/park_state/pending_remote,
+  orphan/unwind) — **НЕ тронуты этим заходом**, остаются открытыми для park-join corruption
+  (§4) — §7.1 явно показывает, что закрытые/спроектированные гонки этого захода НЕ являются
+  причиной park-join ~17%-корапта (другая фаза жизни рантайма, другой механизм). Следующая
+  волна по park-join должна начинать именно с п.1-3 §5, не считать runq-фикс прогрессом по
+  этому фронту.

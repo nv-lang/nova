@@ -3352,10 +3352,19 @@ static inline nova_unit nova_vclock_park_until(nova_int deadline_ms) {
  *
  * Safe outside a fiber (main thread, single-thread mode): _nova_preempt_ptr
  * is NULL there → pure no-op. `nova_fiber_yield()` itself also no-ops if
- * `mco_running()` is NULL — double safety. */
+ * `mco_running()` is NULL — double safety.
+ *
+ * [M-211-preempt-flag-plain-race] (2026-07-17): the pointee (sysmon's
+ * producer thread vs this consumer thread) is TSan-confirmed racy as a
+ * plain access — see NovaWorker.preempt_flag field comment in runtime.c.
+ * `__atomic_*(RELAXED)` here compiles to the exact same load/store
+ * instruction as the old plain deref on x86/ARM (relaxed needs no fence) —
+ * this is a correctness/TSan-cleanliness fix only, NOT a hot-path cost
+ * change. */
 static inline void nova_preempt_check(void) {
-    if (NOVA_UNLIKELY(_nova_preempt_ptr != NULL) && *_nova_preempt_ptr) {
-        *_nova_preempt_ptr = 0;
+    if (NOVA_UNLIKELY(_nova_preempt_ptr != NULL) &&
+        __atomic_load_n(_nova_preempt_ptr, __ATOMIC_RELAXED)) {
+        __atomic_store_n(_nova_preempt_ptr, 0, __ATOMIC_RELAXED);
         nova_fiber_yield();
     }
 }
