@@ -38805,3 +38805,55 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   fiber_arena POSIX (`fiber_arena.c`) уже существовал — порт не
   потребовался. Правок Rust/C кода НЕ было — всё уже работало на
   правильном toolchain'е.
+
+## Plan 196 Зона TEST — пин-фикстуры census-пробелов (2026-07-16, sonnet, worktree `nova-196test`)
+
+Опережающее покрытие ПЕРЕД миграцией волны CH/GEN/RET (docs/plans/196-campaign-map.md §Зона TEST):
+три новых pir-файла в `spec_tests/conformance/`, каждый верифицирован изолированным
+standalone-прогоном (temp `module standalone.zz_wip_*`, PASS) ДО мержа в общий
+`spec_tests.conformance` folder-module (полный ~300-файловый CU не гонялся — задание
+явно исключало; батч-гейт остаётся за оркестратором).
+
+- **`d61_effect_handler_direct_call.nv`** — D61 §8 "`Effect[E].op(args)`" (прямой вызов
+  операции на handler-значении, минуя with-стек) — пиннит `B11ac_novavtable_effect`
+  (`emit_c.rs` ~51777, `effect_schemas`-lookup). До этого файла упражнялось ТОЛЬКО
+  `examples/effects/effects_d61.nv` (вне быстрого conformance-гейта; census
+  `196.5-stage-d-census.md` §3.2, трафик=1).
+- **`self_recursive_generic_method_return.nv`** — `[M-generic-method-self-recursive-return]`
+  / `B11ak_self_recursive_generic_method` (`emit_c.rs` ~51913): генерик-метод с
+  method-level `U`, чьё тело рекурсивно зовёт СЕБЯ на значении своего receiver-типа
+  (`RmGaugeList[T] @map[U]`). Census трафик=5 (std collections/data/encoding), в
+  conformance не было.
+- **`dispatch_free_fn_vs_method_name.nv`** — `B10f_user_fn_sigs` (`emit_c.rs` ~50956):
+  bare free-fn call vs одноимённый instance-метод на другом типе — регресс-гард на
+  порядок (free-fn-специфичный `user_fn_sigs` ПЕРЕД receiver-blind legacy-fallback).
+  Census трафик=44.
+
+**Побочная находка (латентный баг, НЕ фикс — вне Зоны TEST):** при разработке
+d61-теста с операциями `read()`/`label()` компилятор дал CC-FAIL — сгенерированный C
+для `gauge.read()` оказался `NovaVtable_D61Gauge r = (*(gauge));` (структурная COPY
+vtable) вместо вызова `gauge->read(gauge->ctx)`. Root: нуль-арный `.read()` (и
+одноарный `.write(v)`) на ЛЮБОМ `NovaVtable_<Eff>*`-ресивере ошибочно проходит guard
+СОВЕРШЕННО НЕСВЯЗАННОЙ ветки `B11d_typed_pointer_methods` (typed-pointer deref,
+`emit_c.rs` ~51368) РАНЬШЕ, чем управление доходит до `B11ac` — guard
+`!obj_ty.starts_with("Nova_")` не исключает префикс `NovaVtable_` (нет подчёркивания
+сразу после `Nova`). Живых call-сайтов нет (census не видел `read`/`write` среди имён
+эффект-операций) — чисто латентно, пойман только потому, что пин-тест сознательно
+перебирал разные имена операций (методология «мысленно прогнать против старой
+версии» / silent-wrong-value-пиннинг, test-conventions.md). Тест переименовал
+операции на `peek`/`tag`, находка задокументирована `[M-novavtable-read-write-pointer-collision]`
+в backlog-followups.md (P2, однострочный fix вне scope Зоны TEST — принадлежит
+Зоне GEN/frozen).
+
+По каждому D из очереди волны-2, указанному в задании (D30/D85/D52/D182/D16/D53/D239) —
+сверка ПО КОДУ подтвердила: существующие фикстуры (`d30_try_op_unwrap_pair.nv`,
+`d30_result_option_ret_generic.nv`, `d30_closure_return_generic.nv`,
+`d85_question_return.nv`, `d85_result_payload_width.nv`, `d52_sumint.nv`,
+`d52_type_forms.nv`, `d182_self_return_parametric_static.nv`,
+`d16_generics_brackets.nv`, `d53_type_protocol_kind_token.nv`,
+`d239_slice_vec_alias.nv`, `d239_elem_type.nv`) УЖЕ пиннят конкретные
+типы/значения (не happy-path-заглушки) по всей матрице форм (generic/cross-module/
+nested/type-changing) — новых файлов там не требовалось (196.3-wave2-d-driven.md
+собственный gap-анализ уже это фиксирует). D52/D407/D406 доп. сверено против
+`196.5-perd-d52-verification.md`: `infer_method_level_return_for_sum` Option/Result-
+часть уже пиннится `d119_option_result_method_level_generic.nv`.

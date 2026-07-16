@@ -1,0 +1,55 @@
+// D61 rule 8 — `Effect[E].op(args)`: прямой вызов операции на handler-
+// ЗНАЧЕНИИ, минуя with-стек целиком (spec/decisions/04-effects.md D61 §8,
+// пункт 8: «`Effect[E].op(args)` — прямой вызов операции на handler-значении,
+// минуя with-стек»). Сегодня упражняется ТОЛЬКО examples/effects/effects_d61.nv
+// (`switcher.flip()`) — тот файл вне быстрого conformance-гейта. Пиннит
+// компилятор-внутренний fallback (`B11ac_novavtable_effect`, emit_c.rs ~51777:
+// receiver C-тип `NovaVtable_<Eff>*` → `effect_schemas[Eff]` lookup возврата
+// операции), достижимый СЕГОДНЯ только из examples — Plan 196.5 Stage-D census
+// (docs/plans/196.5-stage-d-census.md §3.2, трафик=1).
+module spec_tests.conformance
+
+type D61Switch effect {
+    flip() -> bool
+}
+
+type D61Gauge effect {
+    // NB: намеренно НЕ `read`/`write` — `NovaVtable_*` (эффект-handler vtable)
+    // получатель с нуль-арным `read()` ошибочно ловится ДРУГОЙ, НЕСВЯЗАННОЙ
+    // legacy-веткой `B11d_typed_pointer_methods` (emit_c.rs ~51368: guard
+    // `!obj_ty.starts_with("Nova_")` не исключает префикс `NovaVtable_`,
+    // из-за чего `.read()`/`.write(v)` на ЛЮБОМ handler-значении молча
+    // мисдиспатчится в typed-pointer-deref семантику вместо vtable-диспетча)
+    // — репро+находка задокументированы в backlog-followups.md
+    // ([M-novavtable-read-write-pointer-collision]); ЭТОТ файл пиннит
+    // ИМЕННО B11ac (`NovaVtable_<Eff>*` → `effect_schemas` op-return lookup),
+    // не ту отдельную находку, поэтому — нейтральные имена операций.
+    peek() -> int
+    tag() -> str
+}
+
+test "D61 §8: прямой вызов на handler-значении, минуя with (bool op)" {
+    ro switcher = effect D61Switch {
+        flip() => true
+    }
+    ro b = switcher.flip()          // прямой вызов, минуя with
+    assert(b == true)
+}
+
+test "D61 §8: прямой вызов резолвит ВЕРНЫЙ возврат операции — int и str на ОДНОМ handler-значении" {
+    ro d61_gauge_h = effect D61Gauge {
+        peek() => 42
+        tag() => "temp"
+    }
+    ro r = d61_gauge_h.peek()       // прямой вызов — int, не str
+    ro l = d61_gauge_h.tag()         // прямой вызов — str, не int
+    assert(r == 42)
+    assert(l == "temp")
+}
+
+test "D61 §8: два независимо связанных handler-ЗНАЧЕНИЯ одного эффекта остаются различны при прямом вызове" {
+    ro a = effect D61Switch { flip() => true }
+    ro b = effect D61Switch { flip() => false }
+    assert(a.flip() == true)
+    assert(b.flip() == false)
+}
