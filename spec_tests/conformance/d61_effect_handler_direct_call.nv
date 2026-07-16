@@ -14,18 +14,32 @@ type D61Switch effect {
 }
 
 type D61Gauge effect {
-    // NB: намеренно НЕ `read`/`write` — `NovaVtable_*` (эффект-handler vtable)
-    // получатель с нуль-арным `read()` ошибочно ловится ДРУГОЙ, НЕСВЯЗАННОЙ
-    // legacy-веткой `B11d_typed_pointer_methods` (emit_c.rs ~51368: guard
-    // `!obj_ty.starts_with("Nova_")` не исключает префикс `NovaVtable_`,
-    // из-за чего `.read()`/`.write(v)` на ЛЮБОМ handler-значении молча
-    // мисдиспатчится в typed-pointer-deref семантику вместо vtable-диспетча)
-    // — репро+находка задокументированы в backlog-followups.md
-    // ([M-novavtable-read-write-pointer-collision]); ЭТОТ файл пиннит
-    // ИМЕННО B11ac (`NovaVtable_<Eff>*` → `effect_schemas` op-return lookup),
-    // не ту отдельную находку, поэтому — нейтральные имена операций.
+    // NB: намеренно НЕ `read`/`write` — до фикса ниже `NovaVtable_*`
+    // (эффект-handler vtable) получатель с нуль-арным `read()` ошибочно
+    // ловился ДРУГОЙ, НЕСВЯЗАННОЙ legacy-веткой `B11d_typed_pointer_methods`
+    // (emit_c.rs ~51490: guard `!obj_ty.starts_with("Nova_")` не исключал
+    // префикс `NovaVtable_`, из-за чего `.read()`/`.write(v)` на ЛЮБОМ
+    // handler-значении молча мисдиспатчился в typed-pointer-deref семантику
+    // вместо vtable-диспетча) — этот блок остаётся нейтральным (пиннит
+    // ИМЕННО B11ac, `NovaVtable_<Eff>*` → `effect_schemas` op-return lookup),
+    // отдельно от коллизии — см. `D61Guard` ниже, который ИМЕННО ЕЁ пиннит.
     peek() -> int
     tag() -> str
+}
+
+// [M-novavtable-read-write-pointer-collision] (Plan 196 Zone GEN, closed):
+// эффект с ОПЕРАЦИЯМИ, буквально названными `read`/`write` — раньше оба
+// guard'а (эмиссия ~36083 + инференс ~51490) исключали `NovaArray_` префикс,
+// но НЕ `NovaVtable_` (`"NovaVtable_X".starts_with("Nova_")` == false, т.к.
+// символ на позиции 4 — 'V', не '_' — совпадает с той же "дырой", что и
+// `NovaArray_`), так что нуль-арный `.read()`/одноарный `.write(v)` на
+// handler-ЗНАЧЕНИИ мисдиспатчился в B11d typed-pointer-deref (эмиссия давала
+// голый `(*(guard_h))` вместо `guard_h->read(guard_h->ctx)`) вместо B11ac
+// vtable-диспетча. Фикс: явное исключение `!obj_ty.starts_with("NovaVtable_")`
+// в ОБОИХ guard'ах (мирроринг существующего `NovaArray_`-исключения).
+type D61Guard effect {
+    read() -> int
+    write(v int) -> bool
 }
 
 test "D61 §8: прямой вызов на handler-значении, минуя with (bool op)" {
@@ -52,4 +66,15 @@ test "D61 §8: два независимо связанных handler-ЗНАЧЕ
     ro b = effect D61Switch { flip() => false }
     assert(a.flip() == true)
     assert(b.flip() == false)
+}
+
+test "[M-novavtable-read-write-pointer-collision]: read()/write(v) op-имена на handler-значении дispatch'атся через vtable, не через B11d typed-pointer-deref" {
+    ro guard_h = effect D61Guard {
+        read() => 7
+        write(v) => v == 7
+    }
+    ro r = guard_h.read()           // прямой вызов read() — до фикса ловился B11d
+    ro w = guard_h.write(7)         // прямой вызов write(v) — до фикса ловился B11d
+    assert(r == 7)
+    assert(w == true)
 }
