@@ -34,13 +34,13 @@ fn D122FCounter mut @next_val() -> int {
 }
 
 // Leaf: drives the bound method directly (the "primitive loop").
-fn d122f_leaf[S D122FSource](s mut S) -> int => s.next_val()
+fn d122f_leaf[S D122FSource](mut s S) -> int => s.next_val()
 
 // Mid: forwards its bounded typevar into the leaf — THE forward under test.
-fn d122f_mid[S D122FSource](s mut S) -> int => d122f_leaf(s) + d122f_leaf(s)
+fn d122f_mid[S D122FSource](mut s S) -> int => d122f_leaf(s) + d122f_leaf(s)
 
 // Outer: forwards through TWO layers (transitive bound-forwarding).
-fn d122f_outer[S D122FSource](s mut S) -> int => d122f_mid(s) + d122f_leaf(s)
+fn d122f_outer[S D122FSource](mut s S) -> int => d122f_mid(s) + d122f_leaf(s)
 
 test "bound forwards through one generic layer (D122 / M-generic-bound-forwarding)" {
     mut c = D122FCounter { n: 0 }

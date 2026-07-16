@@ -35,7 +35,7 @@ type Ctr {
 fn Ctr.make() -> Ctr => { n: AtomicInt.new(0) }
 
 // (1) fn с эффектом Detach — detach разрешён (не флагается).
-fn spawn_bg(c mut Ctr) Detach -> () {
+fn spawn_bg(mut c Ctr) Detach -> () {
     detach {
         c.n.fetch_add(1)
     }

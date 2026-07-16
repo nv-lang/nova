@@ -700,6 +700,7 @@ fn make_param(name: &str, ty: TypeRef) -> Param {
         consume: false,
         is_mut: false,
         is_const: false,
+        mut_type_pos_legacy: false,
     }
 }
 
@@ -1998,6 +1999,7 @@ fn make_serde_method(
             consume: false,
             is_mut: true,
             is_const: false,
+            mut_type_pos_legacy: false,
         }],
         effects: vec![],
         return_type: Some(return_type),

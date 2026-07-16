@@ -37,7 +37,7 @@ fn MemSrc mut @pull(buf mut []u8) -> Result[int, VErr] {
 
 // Generic helper: drives r.pull() (Result[int, VErr]) through a protocol bound and
 // forwards Err(VErr) out — the exact shape of io's read_to_end/copy loops.
-fn drain_p176[R Src](r mut R) -> Result[int, VErr] {
+fn drain_p176[R Src](mut r R) -> Result[int, VErr] {
     mut total = 0
     mut chunk []u8 = []u8.new()
     chunk.resize(4, 0 as u8)

@@ -12,11 +12,11 @@ module spec_tests.conformance
 
 // ── #realtime: только leaf-операции без scheduler-взаимодействия ──
 
-#realtime fn d172_rt_try_lock(d172_m mut Mutex) -> bool {
+#realtime fn d172_rt_try_lock(mut d172_m Mutex) -> bool {
     d172_m.try_lock()
 }
 
-#realtime fn d172_rt_atomic(d172_a mut AtomicI64, delta int) -> int {
+#realtime fn d172_rt_atomic(mut d172_a AtomicI64, delta int) -> int {
     d172_a.fetch_add(delta)
 }
 
@@ -51,11 +51,11 @@ test "#realtime: OnceCell.get разрешён (D172)" {
 
 // ── #blocking: threadpool-offload; #realtime и #wakes операции разрешены ──
 
-#blocking fn d172_blk_fetch_add(d172_a mut AtomicI64, delta int) -> int {
+#blocking fn d172_blk_fetch_add(mut d172_a AtomicI64, delta int) -> int {
     d172_a.fetch_add(delta)
 }
 
-#blocking fn d172_blk_unlock(d172_m mut Mutex) {
+#blocking fn d172_blk_unlock(mut d172_m Mutex) {
     d172_m.unlock()
 }
 

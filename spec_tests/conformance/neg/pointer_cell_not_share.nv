@@ -12,7 +12,7 @@ type RawCell {
     p *int
 }
 
-fn leak_cell(c mut RawCell) -> () {
+fn leak_cell(mut c RawCell) -> () {
     supervised {
         spawn {
             ro _alias = c.p

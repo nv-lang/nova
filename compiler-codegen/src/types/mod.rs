@@ -22554,6 +22554,22 @@ fn check_signature_match(
                 tp.name, render_type_ref(tt), render_type_ref(pt),
             ));
         }
+        // [M-conformance-param-mode-check] fix (2026-07-16): see companion
+        // check in `check_signature_match_with_subst` — param binding-mode
+        // (`mut`/`consume`) must match the protocol declaration exactly, not
+        // just the type (research-mut-canon пробой D: bare impl param quietly
+        // satisfied a `mut`-declared protocol param).
+        if tp.is_mut != pp.is_mut || tp.consume != pp.consume {
+            let tp_prefix = if tp.consume { "consume " } else if tp.is_mut { "mut " } else { "" };
+            let pp_prefix = if pp.consume { "consume " } else if pp.is_mut { "mut " } else { "" };
+            return Some(format!(
+                "param `{}`: T declares `{}{} {}`, protocol `#impl` requires `{}{} {}` \
+                 (parameter binding-mode `mut`/`consume` must match the protocol \
+                 declaration exactly, not just the type)",
+                tp.name, tp_prefix, tp.name, render_type_ref(tt),
+                pp_prefix, pp.name, render_type_ref(pt),
+            ));
+        }
     }
     let t_ret = t_method.return_type.as_ref();
     let p_ret = proto_method.return_type.as_ref();
@@ -22821,6 +22837,22 @@ fn check_signature_match_with_subst(
                     tp.name, tt_str, pt_str,
                 ));
             }
+        }
+        // [M-conformance-param-mode-check] fix (2026-07-16): protocol-conformance
+        // compared param TYPES only — a param's L1 `mut`/`consume` qualifier
+        // (`Param.is_mut`/`Param.consume`) was never cross-checked against the
+        // protocol declaration. An impl providing `f Fmt` (bare, ro) satisfied
+        // `#impl(Display)` even though `Display` declares `@display(mut f Fmt)`
+        // — decl and impl silently diverge in mode (research-mut-canon пробой D).
+        if tp.is_mut != pp.is_mut || tp.consume != pp.consume {
+            let tp_prefix = if tp.consume { "consume " } else if tp.is_mut { "mut " } else { "" };
+            let pp_prefix = if pp.consume { "consume " } else if pp.is_mut { "mut " } else { "" };
+            return Some(format!(
+                "param `{}`: T declares `{}{} {}`, protocol `#impl` requires `{}{} {}` \
+                 (parameter binding-mode `mut`/`consume` must match the protocol \
+                 declaration exactly, not just the type)",
+                tp.name, tp_prefix, tp.name, tt_str, pp_prefix, pp.name, pt_str,
+            ));
         }
     }
     let t_ret = t_method.return_type.as_ref();
@@ -24976,6 +25008,66 @@ impl ConsumeRegistry {
                     recv_returning.insert((recv.to_string(), f.name.to_string()));
                     recv_returning_arity.insert(
                         (recv.to_string(), f.name.to_string(), f.params.len()));
+                }
+            }
+        }
+
+        // 1b. Protocol declarations (`type P protocol { mut @m(...) / @m(...) }`):
+        //     register method receiver-mutability под именем PROTOCOL'а (не
+        //     concrete impl-типа) — иначе параметр/local статического
+        //     protocol-типа (`f Fmt`, `w Write`) не резолвится в
+        //     mut_methods/ro_methods (там раньше попадал только concrete impl,
+        //     напр. `FmtCtx`, через source 2 ниже) → E_PARAM_NOT_MUT /
+        //     E_LOCAL_NOT_MUT молчали на protocol-typed handle-параметрах
+        //     ([M-checker-protocol-param-mut-lenient], зафиксировано
+        //     2026-07-16 research-mut-canon пробой A: bare `f Fmt` вызывал
+        //     `mut @write` без диагностики). Embedded protocols (`use Write`
+        //     внутри `Fmt`, D145) флэттенятся DFS'ом (mirror BoundCtx::build
+        //     `flatten_dfs`) — методы embedded-протокола приписываются И
+        //     самому embedded-протоколу, И outer (композитному) протоколу.
+        {
+            let mut direct: HashMap<String, (Vec<&EffectMethod>, Vec<&TypeRef>)> = HashMap::new();
+            for item in &module.items {
+                if let Item::Type(td) = item {
+                    if let TypeDeclKind::Protocol { methods, embeds } = &td.kind {
+                        direct.insert(
+                            td.name.clone(),
+                            (methods.iter().collect(), embeds.iter().collect()),
+                        );
+                    }
+                }
+            }
+            fn flatten<'m>(
+                name: &str,
+                direct: &HashMap<String, (Vec<&'m EffectMethod>, Vec<&'m TypeRef>)>,
+                seen: &mut HashSet<String>,
+                out: &mut Vec<&'m EffectMethod>,
+            ) {
+                if !seen.insert(name.to_string()) {
+                    return;
+                }
+                let Some((methods, embeds)) = direct.get(name) else { return; };
+                out.extend(methods.iter().copied());
+                for e in embeds {
+                    if let TypeRef::Named { path, .. } = e {
+                        if let Some(emb_name) = path.last() {
+                            flatten(emb_name, direct, seen, out);
+                        }
+                    }
+                }
+            }
+            for name in direct.keys() {
+                let mut out: Vec<&EffectMethod> = Vec::new();
+                let mut seen: HashSet<String> = HashSet::new();
+                flatten(name, &direct, &mut seen, &mut out);
+                for m in out {
+                    if m.receiver_mut {
+                        mut_methods.insert((name.clone(), m.name.clone()));
+                        mut_methods_arity.insert((name.clone(), m.name.clone(), m.params.len()));
+                    } else {
+                        ro_methods.insert((name.clone(), m.name.clone()));
+                        ro_methods_arity.insert((name.clone(), m.name.clone(), m.params.len()));
+                    }
                 }
             }
         }
@@ -36080,6 +36172,197 @@ fn run(mut b Body) {{
         assert!(!has_diag_tag(&diags, "E_PARAM_NOT_MUT"),
             "fn(mut b Body) → b.v.set_x() — НЕ должен fire E_PARAM_NOT_MUT; \
              diagnostics: {:#?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>());
+    }
+
+    // ─── [M-checker-protocol-param-mut-lenient] fix (2026-07-16) ───────────
+    // Bug (research-mut-canon пробой A): a bare (non-`mut`) parameter typed
+    // by a PROTOCOL (`f Fmt`) could call the protocol's `mut @method(...)`
+    // without E_PARAM_NOT_MUT — `mut_methods`/`ro_methods` registered
+    // methods only under the CONCRETE impl type name (`FmtCtx`), never
+    // under the protocol name itself (`Fmt`/`Write`), so the exact-type
+    // lookup for a protocol-typed receiver always missed.
+
+    const PROTO_HELPER: &str = r#"
+module test_helpers_proto
+
+type FmtCtx { dummy int }
+
+type Write protocol {
+    mut @write(bytes []u8) -> ()
+}
+
+type Fmt protocol {
+    use Write
+    mut @pad(bytes []u8) -> ()
+}
+
+fn FmtCtx mut @write(bytes []u8) -> () {}
+fn FmtCtx mut @pad(bytes []u8) -> () {}
+"#;
+
+    #[test]
+    fn e2e_bare_protocol_param_direct_mut_method_rejected() {
+        // `f Fmt` (bare) calling `.pad(...)` — declared DIRECTLY on `Fmt`
+        // (no embed involved) — must fire E_PARAM_NOT_MUT.
+        let src = format!(r#"
+{PROTO_HELPER}
+
+fn run(f Fmt) {{
+    f.pad([1])
+}}
+"#);
+        let diags = check_src(&src);
+        assert!(has_diag_tag(&diags, "E_PARAM_NOT_MUT"),
+            "fn(f Fmt) → f.pad(...) (direct protocol method) — должен fire \
+             E_PARAM_NOT_MUT; diagnostics: {:#?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn e2e_bare_protocol_param_embedded_mut_method_rejected() {
+        // `f Fmt` (bare) calling `.write(...)` — inherited via `use Write`
+        // embed, NOT declared directly on `Fmt` — must ALSO fire
+        // E_PARAM_NOT_MUT (embed-flatten must attribute Write's methods to
+        // Fmt too, mirroring the real std `Fmt use Write` shape, D145).
+        let src = format!(r#"
+{PROTO_HELPER}
+
+fn run(f Fmt) {{
+    f.write([1])
+}}
+"#);
+        let diags = check_src(&src);
+        assert!(has_diag_tag(&diags, "E_PARAM_NOT_MUT"),
+            "fn(f Fmt) → f.write(...) (embedded protocol method via `use Write`) \
+             — должен fire E_PARAM_NOT_MUT; diagnostics: {:#?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn e2e_mut_protocol_param_mut_method_allowed() {
+        // `mut f Fmt` — НЕ должен fire E_PARAM_NOT_MUT (positive control).
+        let src = format!(r#"
+{PROTO_HELPER}
+
+fn run(mut f Fmt) {{
+    f.write([1])
+    f.pad([2])
+}}
+"#);
+        let diags = check_src(&src);
+        assert!(!has_diag_tag(&diags, "E_PARAM_NOT_MUT"),
+            "fn(mut f Fmt) → f.write()/f.pad() — НЕ должен fire E_PARAM_NOT_MUT; \
+             diagnostics: {:#?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn e2e_ro_local_protocol_type_mut_method_rejected() {
+        // Bonus regression: `ro`-local (not param) of a PROTOCOL type calling
+        // a protocol mut-method — same registry powers E_LOCAL_NOT_MUT too.
+        let src = format!(r#"
+{PROTO_HELPER}
+
+fn get_fmt() -> Fmt {{ return FmtCtx{{ dummy: 0 }} }}
+
+fn run() {{
+    ro f = get_fmt()
+    f.write([1])
+}}
+"#);
+        let diags = check_src(&src);
+        assert!(has_diag_tag(&diags, "E_LOCAL_NOT_MUT"),
+            "ro f (Fmt) → f.write(...) — должен fire E_LOCAL_NOT_MUT; \
+             diagnostics: {:#?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>());
+    }
+
+    // ─── [M-conformance-param-mode-check] fix (2026-07-16) ─────────────────
+    // Bug (research-mut-canon пробой D): protocol-conformance compared param
+    // TYPES only — an impl providing a BARE param satisfied a protocol
+    // declaring that same param `mut`, silently. `check_signature_match(_with_subst)`
+    // now also compares `Param.is_mut`/`Param.consume`.
+
+    #[test]
+    fn e2e_impl_param_mode_mismatch_rejected() {
+        // Protocol declares `@display(mut f Fmt)`; impl provides bare `f Fmt`
+        // — must fire a signature-mismatch diagnostic (type-level #impl).
+        let src = format!(r#"
+{PROTO_HELPER}
+
+type Pt {{ x int }}
+
+type Display protocol {{
+    @display(mut f Fmt) -> ()
+}}
+
+#impl(Display)
+fn Pt @display(f Fmt) -> () {{}}
+"#);
+        let diags = check_src(&src);
+        // `#impl(Display)` directly above `fn Pt @display(...)` is a
+        // METHOD-level impl marker (same style as std, e.g. json.nv:906-907)
+        // → routed through `verify_method_impl_protocols` → E_IMPL_SIGNATURE_MISMATCH
+        // (the type-level `#impl(P) type T {}` form would instead route through
+        // `verify_impl_protocols` → E_IMPL_WRONG_SIGNATURE; both call the same
+        // `check_signature_match(_with_subst)` fixed here).
+        assert!(has_diag_tag(&diags, "E_IMPL_SIGNATURE_MISMATCH")
+            && diags.iter().any(|d| d.message.contains("binding-mode")),
+            "impl @display(f Fmt) vs protocol @display(mut f Fmt) — должен fire \
+             E_IMPL_SIGNATURE_MISMATCH с упоминанием binding-mode; diagnostics: {:#?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn e2e_impl_param_mode_match_allowed() {
+        // Protocol AND impl both declare `mut f Fmt` — no signature-mismatch.
+        let src = format!(r#"
+{PROTO_HELPER}
+
+type Pt {{ x int }}
+
+type Display protocol {{
+    @display(mut f Fmt) -> ()
+}}
+
+#impl(Display)
+fn Pt @display(mut f Fmt) -> () {{
+    f.write([1])
+}}
+"#);
+        let diags = check_src(&src);
+        assert!(!has_diag_tag(&diags, "E_IMPL_SIGNATURE_MISMATCH")
+            && !has_diag_tag(&diags, "E_IMPL_WRONG_SIGNATURE"),
+            "impl @display(mut f Fmt) vs protocol @display(mut f Fmt) — НЕ должен \
+             fire signature-mismatch; diagnostics: {:#?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn e2e_type_level_impl_param_mode_mismatch_rejected() {
+        // Same [M-conformance-param-mode-check] gap, exercised through the
+        // OTHER call-site of the shared fix: TYPE-level `#impl(P) type T {}`
+        // annotation → `verify_impl_protocols` → E_IMPL_WRONG_SIGNATURE
+        // (vs. the method-level annotation's E_IMPL_SIGNATURE_MISMATCH above).
+        let src = format!(r#"
+{PROTO_HELPER}
+
+type Display protocol {{
+    @display(mut f Fmt) -> ()
+}}
+
+#impl(Display)
+type Pt {{ x int }}
+
+fn Pt @display(f Fmt) -> () {{}}
+"#);
+        let diags = check_src(&src);
+        assert!(has_diag_tag(&diags, "E_IMPL_WRONG_SIGNATURE")
+            && diags.iter().any(|d| d.message.contains("binding-mode")),
+            "type-level #impl(Display) + bare impl @display(f Fmt) vs protocol \
+             @display(mut f Fmt) — должен fire E_IMPL_WRONG_SIGNATURE с \
+             упоминанием binding-mode; diagnostics: {:#?}",
             diags.iter().map(|d| &d.message).collect::<Vec<_>>());
     }
 
