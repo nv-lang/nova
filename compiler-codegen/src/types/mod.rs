@@ -15572,7 +15572,7 @@ impl<'a> TypeCheckCtx<'a> {
             .or_else(|| {
                 // 172.1.2 arg-binding (2026-07-03): method-level generic (`map[U]`)
                 // выводится из closure-аргумента при известном carrier-subst.
-                self.resolve_method_return_with_closure_args(&recv_ty, name, call_args, scope)
+                self.resolve_method_return_with_closure_args(&recv_ty, name, call_args, scope, call_id)
             })
     }
 
@@ -15721,6 +15721,13 @@ impl<'a> TypeCheckCtx<'a> {
         method: &str,
         args: &[CallArg],
         scope: &HashMap<String, TypeRef>,
+        // [M-196.5-node-substs, Zone CH B1] call-site `ExprId` — key for the
+        // `node_substs` write at the tail of this fn (mirrors the threading
+        // `resolve_instance_method_return_arity`/`resolve_return_channel` already do).
+        // `None` (no call-site, e.g. a hypothetical future 0-arity wrapper) makes the
+        // write below a no-op — byte-identical to this fn's behavior before the
+        // parameter existed.
+        call_id: Option<crate::ast::ExprId>,
     ) -> Option<TypeRef> {
         let mut peeled = recv_ty;
         loop {
@@ -15787,6 +15794,11 @@ impl<'a> TypeCheckCtx<'a> {
         if method_names.is_empty() {
             return None; // покрыто базовой resolve_instance_method_return
         }
+        // [M-196.5-node-substs] Declaration-order twin of `method_names` (mirrors
+        // `resolve_return_channel`'s `method_names_ordered`) — the `HashSet` above has
+        // no stable order, but the `node_substs` write at the tail needs positional order.
+        let method_names_ordered: Vec<String> =
+            f.generics.iter().map(|g| g.name.clone()).collect();
         let mut subst = build_recv_subst(recv, recv_ty);
         // Plan 186 [bug-1 audit-197 fix]: `build_recv_subst` extracts the
         // carrier-binding names ONLY from `recv.generics` (the `Type[T,U]`
@@ -15871,6 +15883,58 @@ impl<'a> TypeCheckCtx<'a> {
         let out = crate::const_fn_trampoline::subst_type_ref_pub(ret, &subst);
         if typeref_mentions_any(&out, &method_names) {
             return None; // U так и не выведен → честный legacy
+        }
+        // [M-196.5-node-substs, Zone CH B1] Producer B-closure-arg: `subst` above is
+        // EXACTLY the per-name substitution this fn already used to materialize `out`
+        // (carrier via `build_recv_subst`/receiver_ty unify, method-level generics via
+        // the closure-body-return peek a few lines up) — reading it here is not new
+        // inference. This fn exists BECAUSE `resolve_return_channel` (Producer
+        // B-method-residual, `f1_check_call`-adjacent) sometimes bails for a closure-
+        // LITERAL arg (`infer_expr_type` has no arm for it, and the `rt_respells_names`
+        // poison-guard drops a re-spelled name rather than risk a wrong bind) — exactly
+        // the `sum=Result method=map resolved=false` class documented at
+        // `infer_method_level_return_for_sum` (emit_c.rs). Until now THIS fn's success
+        // fed Channel 2 (`resolved_types`, via the caller in `f1_expr_inner`) but never
+        // `node_substs` — a real coverage gap for per-name consumers (Zone GEN:
+        // `resolve_mono_type_args_ch` / `resolve_method_level_subst`), not merely an
+        // intentional conservative bail. Declaration order = carrier names
+        // (`recv.generics`, receiver order) then method-level (`method_names_ordered`,
+        // `f.generics` order) — mirrors `resolve_return_channel`'s `names.chain(
+        // method_names_ordered)` / `resolve_generic_static_return`'s `carrier_names`
+        // convention. Whole-map completeness gate (same contract as every other
+        // producer in this file): a residual/unbound name anywhere in the declared set
+        // leaves the channel UNWRITTEN for this call-site.
+        if let Some(cid) = call_id {
+            let carrier_names: Vec<String> = recv
+                .generics
+                .iter()
+                .filter_map(|g| match g {
+                    TypeRef::Named { path, generics, .. }
+                        if path.len() == 1 && generics.is_empty() =>
+                    {
+                        Some(path[0].clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+            let decl_order: Vec<&String> =
+                carrier_names.iter().chain(method_names_ordered.iter()).collect();
+            let ordered: Vec<(String, ResolvedType)> = decl_order
+                .iter()
+                .filter_map(|n| {
+                    subst.get(n.as_str())
+                        .map(|tr| ((*n).clone(), ResolvedType::from_type_ref(tr)))
+                })
+                .collect();
+            if !decl_order.is_empty() && ordered.len() == decl_order.len() {
+                if std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some() {
+                    eprintln!(
+                        "[NODE_SUBSTS] producer=B-closure-arg call_id={:?} method={} n={}",
+                        cid, method, ordered.len()
+                    );
+                }
+                self.node_substs.borrow_mut().insert(cid, ordered);
+            }
         }
         Some(out)
     }
