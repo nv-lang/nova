@@ -160,14 +160,14 @@ export fn Monotonic @compare(other Monotonic) -> int =>
 #stable(since = "0.1")
 export fn Monotonic @display(mut w Write) -> () {
     w.write("+")
-    w.write(@nanos.to_nanos().to_str())
+    w.write(@nanos.to_nanos().to_str().bytes())
 }
 
 /// Diagnostic form: `Monotonic(+1.234s)` — explicitly NOT a date (D124/D318).
 #stable(since = "0.1")
 export fn Monotonic @debug(mut w Write) -> () {
     w.write("Monotonic(+")
-    w.write(@nanos.to_nanos().to_str())
+    w.write(@nanos.to_nanos().to_str().bytes())
     w.write(")")
 }
 
