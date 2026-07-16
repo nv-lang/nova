@@ -1,0 +1,189 @@
+name: nova-gate
+
+# Директива владельца (2026-07-16): АВТОРИТЕТНЫЙ merge-гейт (conformance +
+# флагман-examples-build) переезжает с локальной машины на GitHub CI.
+# Plan 197 Ф.5 (docs/plans/197-examples-revision.md), расширено под
+# test-conventions.md §«Авторитетный merge-гейт» (2026-07-16).
+#
+# Состав (см. docs/test-conventions.md):
+#   1. spec_tests/conformance — ЧИСТЫЙ языковой сигнал (один CU, pos+neg).
+#      Не ловит app-регрессии (прецедент Plan 206: trap-default D423 прошёл
+#      conformance 470/0, но уронил examples/flagship/aggregator — splitmix64
+#      на голом `*` → рантайм integer overflow; протекло в main именно
+#      потому, что тогдашний авторитетный гейт собирал только conformance).
+#   2. Флагман-examples-build под --strict-effects (aggregator + echo_server/
+#      echo_client, net и tls пары) — ловит app-регрессии (арифметика/
+#      эффекты/линковка), которые conformance не видит.
+#
+# ЧТО НЕ ВХОДИТ (сознательно): `nova test std` — 5 std-тестов на Linux
+# документированы КРАСНЫМИ (docs/linux-build.md §«Known gap»,
+# pre-existing, не по этому гейту) — они std-специфичны, conformance/
+# флагмана не касаются; вешать их сюда значило бы гейтить заведомо-красным.
+#
+# Сборка — по верифицированному рецепту docs/linux-build.md (2026-07-16,
+# WSL2 Ubuntu 26.04): пакеты apt (clang cmake make libgc-dev build-essential)
+# + rustup-toolchain 1.85 (MSRV обеих Rust-crate — nova-cli/Cargo.toml,
+# compiler-codegen/Cargo.toml). В репозитории НЕТ rust-toolchain.toml
+# (проверено — linux-build.md прямо это отмечает: пин через toolchain.toml
+# затронул бы и Windows-воркфлоу, поэтому решение отложено). GitHub-hosted
+# ubuntu-latest НЕ бьётся в тот rustc-ICE, что бьёт distro-rustc на голом
+# Linux (linux-build.md §«Known issue») — но explicit rustup-пин (тот же
+# идиом, что уже в bench-regression.yml: `dtolnay/rust-toolchain@stable` +
+# `toolchain: 1.85`) даёт детерминизм независимо от того, какой rustc когда-
+# нибудь окажется в образе GH-раннера.
+#
+# ВАЖНАЯ НАХОДКА (не в исходном тех-задании): examples/nova.toml объявляет
+# `http = { path = "../../nova-http" }` — это НЕ git-зависимость (в отличие
+# от `tls`/`compress`, которые `{ git = ..., version = "0.1" }` и тянутся
+# нашим же резолвером из GitHub по тегам «из коробки», см. examples/
+# nova.lock: source="git" для tls/compress, source="path" для http). Путь
+# `../../nova-http` резолвится относительно `examples/nova.toml`, то есть
+# ожидает `nova-http` СИБЛИНГОМ каталога `nova` на диске — ровно так, как
+# лежат рабочие копии у автора локально (d:/Sources/nv-lang/{nova,nova-http,
+# nova-tls,...}). Поскольку `examples` — один workspace-package, ЛЮБАЯ
+# сборка чего-либо внутри examples/ (включая echo_server.nv/echo_client.nv,
+# которые `http` даже не импортируют) требует, чтобы манифест целиком
+# зарезолвился — то есть требует физического наличия `../nova-http` рядом с
+# чекаутом `nova`. Поэтому шаг «Checkout nova-http sibling» ниже — не
+# опциональная деталь, а обязательное условие, без которого весь
+# flagship-job упадёт на резолве манифеста ДО первой строки кода. Ref не
+# пиннится (нет version у path-зависимости) — берётся дефолтная ветка
+# (`main`), как и локальный sibling-чекаут у разработчика.
+#
+# `--strict-effects` — clap-флаг `global = true` (nova-cli/src/main.rs),
+# валиден и до, и после сабкоманды; здесь — после (см. прецедент
+# `nova test flagship/aggregator --strict-effects` в examples/flagship/
+# aggregator/README.md).
+#
+# `nova build`/`nova test` для `tls`/`compress` НЕ требуют системных
+# libmbedtls-dev/libbrotli-dev: оба пакета — Plan 193 Ф.2 gate-3 / Plan 205
+# followup — вендорят исходники (mbedTLS/brotli-decoder) и сами собирают их
+# через generic FFI vendor-pipeline (`build_missing_vendor_ffi_libs`,
+# compiler-codegen/src/test_runner.rs:942, вызывается из cmd_build И из
+# test-раннера одинаково — nova-cli/src/main.rs:4997) — нужен только
+# компилятор C (clang, уже ставится). Поэтому апт-набор здесь — РОВНО
+# как в docs/linux-build.md, без доп. TLS/brotli пакетов (в отличие от
+# nova-test-regression.yml, где они нужны СТАРОМУ std/tls + std/encoding/
+# compress/brotli, не затронутым этим гейтом).
+#
+# Один job, шаги последовательно (не два параллельных job): общий кэш
+# cargo/target без artifact-передачи между job'ами, собранный бинарь `nova`
+# нужен обеим половинам гейта. Конкурренси: PR — cancel-in-progress (новый
+# пуш отменяет предыдущий прогон того же PR); push в main — НЕ отменяется
+# (каждый коммит в main должен быть проверен до конца).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: nova-gate-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('push-{0}', github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gate:
+    name: nova-gate (conformance + flagship examples)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout nova (submodules recursive — compiler-codegen/nova_rt/libuv)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # rust-toolchain.toml отсутствует в репо (проверено) — явный пин на
+      # MSRV (1.85, см. nova-cli/Cargo.toml + compiler-codegen/Cargo.toml
+      # `rust-version`), тот же идиом, что bench-regression.yml.
+      - name: Setup Rust toolchain (rustup, pinned to MSRV 1.85)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Install system deps (docs/linux-build.md recipe)
+        run: sudo apt-get update && sudo apt-get install -y clang cmake make libgc-dev build-essential
+
+      - name: Cache cargo registry + nova-cli target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            nova-cli/target
+          key: ${{ runner.os }}-nova-gate-cargo-${{ hashFiles('nova-cli/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-nova-gate-cargo-
+
+      - name: Build nova-cli (release)
+        run: cargo build --release --manifest-path nova-cli/Cargo.toml
+
+      # ── Конформанс — ЯЗЫК + ПРЕЛЮДИЯ, один CU, pos+neg ──────────────────
+      - name: Conformance gate — spec_tests/conformance (pos + neg, single CU)
+        run: |
+          set -uo pipefail
+          log="$(mktemp)"
+          ./nova-cli/target/release/nova test --positive --compile-error \
+              --timeout 300 --jobs 4 spec_tests/conformance \
+              > "${log}" 2>&1
+          code=$?
+          cat "${log}"
+          if [ "${code}" -ne 0 ]; then
+            {
+              echo "### ❌ FAILED: spec_tests/conformance"
+              echo '```'
+              tail -n 100 "${log}"
+              echo '```'
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi
+          exit "${code}"
+
+      # ── Флагман-examples — app-регрессии, которые conformance не ловит ─
+      # examples/nova.toml -> `http = { path = "../../nova-http" }` требует
+      # физического сиблинга на диске (см. header-комментарий выше).
+      # `path: ../nova-http` у actions/checkout кладёт чекаут в
+      # $GITHUB_WORKSPACE/../nova-http — то есть РОВНО сиблингом каталога,
+      # в который зачекаучен сам `nova` (тот же трюк, что checkout'ы
+      # нескольких репозиториев в один job).
+      - name: Checkout nova-http sibling (path-dependency of examples/nova.toml)
+        uses: actions/checkout@v4
+        with:
+          repository: nv-lang/nova-http
+          path: ../nova-http
+
+      - name: Flagship examples gate — build under --strict-effects (5 targets)
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/nova-gate-bin
+          targets=(
+            "aggregator|examples/flagship/aggregator/src/main.nv"
+            "echo_server_net|examples/net/echo_server.nv"
+            "echo_client_net|examples/net/echo_client.nv"
+            "echo_server_tls|examples/tls/echo_server.nv"
+            "echo_client_tls|examples/tls/echo_client.nv"
+          )
+          failed=""
+          for entry in "${targets[@]}"; do
+            name="${entry%%|*}"
+            src="${entry#*|}"
+            echo "::group::build ${name} (${src})"
+            log="/tmp/nova-gate-bin/${name}.log"
+            ./nova-cli/target/release/nova build "${src}" --strict-effects \
+                -o "/tmp/nova-gate-bin/${name}" > "${log}" 2>&1
+            code=$?
+            cat "${log}"
+            echo "::endgroup::"
+            if [ "${code}" -ne 0 ]; then
+              failed="${failed} ${name}"
+              {
+                echo "### ❌ FAILED: flagship build — ${name} (${src})"
+                echo '```'
+                tail -n 100 "${log}"
+                echo '```'
+              } >> "${GITHUB_STEP_SUMMARY}"
+            fi
+          done
+          if [ -n "${failed}" ]; then
+            echo "::error::flagship examples build failed for:${failed}"
+            exit 1
+          fi

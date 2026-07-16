@@ -5,8 +5,50 @@
 поверхности выполнены, см. [197-audit-progress.md](197-audit-progress.md). Ф.3
 (канонический showcase-набор) — не начата. Ф.4 (дом 187) — дизайн решён И
 ИСПОЛНЕН фактически (`examples/flagship/aggregator/` — реализованный проект
-с src/frontend/тестами, Plan 187). Ф.5 (CI-гейт `examples-compile`) — явно НЕ
-сделан (джоба в `.github/workflows/` отсутствует).
+с src/frontend/тестами, Plan 187). **Ф.5 (CI-гейт) — ГОТОВ (2026-07-16, ветка
+`ci-gate-workflow`):** `.github/workflows/nova-gate.yml` — расширенный CI-гейт
+(директива владельца 2026-07-16, «авторитетный гейт переезжает с локальной
+машины на CI»), не только `examples-compile` из исходного Ф.5-описания, а ОБЕ
+половины авторитетного merge-гейта (test-conventions.md §«Авторитетный
+merge-гейт», прецедент Plan 206): (1) `spec_tests/conformance` (`--positive
+--compile-error --timeout 300 --jobs 4`, один CU) + (2) флагман-examples-build
+под `--strict-effects` (`examples/flagship/aggregator` + `examples/net` и
+`examples/tls` echo_server/echo_client пары, 5 целей). Триггеры: `push`
+(main) + `pull_request` + `workflow_dispatch`; один job, кэш cargo по
+`nova-cli/Cargo.lock`; последние 100 строк упавшего лога — в
+`GITHUB_STEP_SUMMARY`. **Первая верификация — на живом пуше** (не прогонялось
+локально: задача была yml-only, без сборок). Находка при построении: `examples/
+nova.toml`'s `http = { path = "../../nova-http" }` — НЕ git-зависимость (в
+отличие от `tls`/`compress`) → на чистом CI-чекауте нужен sibling-checkout
+`nova-http` рядом с `nova` (шаг `Checkout nova-http sibling` в воркфлоу),
+иначе весь flagship-job падает на резолве манифеста `examples` (пакет один,
+резолвится целиком даже для `echo_server.nv`, который `http` не импортирует).
+`nova test std` (5 pre-existing Linux-red — `docs/linux-build.md` §«Known
+gap») сознательно НЕ в этом гейте (std-специфично, conformance/флагмана не
+касается).
+
+### Бейдж для README (черновик — владелец/интегратор переносит в README.md
+### при включении гейта)
+
+```md
+[![nova-gate](https://github.com/nv-lang/nova/actions/workflows/nova-gate.yml/badge.svg)](https://github.com/nv-lang/nova/actions/workflows/nova-gate.yml)
+```
+
+### Тир-гейты (черновик — переносится в `docs/test-conventions.md` при включении)
+
+Авторитетность гейта зависит от того, ЧТО меняет слияние — три тира:
+
+| Тир | Что меняется | Гейт |
+|---|---|---|
+| **docs-only** | Только `*.md`/doc-комментарии, без `.nv`/Rust | Без гейта (CI не запускается вовсе, либо только markdown-lint при наличии) |
+| **`.nv`-only** | Только `.nv`-файлы (std/examples/spec_tests/nova_tests) | Таргетно ЛОКАЛЬНО у исполнителя: `nova test spec_tests/conformance` (+ затронутый `std`-модуль/`examples`-цель под `--strict-effects` при необходимости) — не весь CI-гейт, целевой прогон дешевле полного CI-цикла |
+| **Rust (`compiler-codegen`/`nova-cli`)** | Компилятор/раннер/кодоген | **CI-авторитет + постоянный мониторинг**: `nova-gate.yml` ОБЯЗАТЕЛЕН зелёным перед merge (conformance + флагман-examples-build); мониторинг — badge в README + `workflow_dispatch` для ad-hoc перепрогона на подозрении о флаке |
+
+Правило перехода: любое Rust-слияние, меняющее поведение (не чисто-рефакторинг
+с byte-identical выходом), обязано дождаться зелёного `nova-gate` (push на
+main) ПЕРЕД тем, как считаться влитым-и-проверенным — красный `nova-gate` на
+main = стоп-сигнал уровня «красный conformance», немедленно чинить или
+откатывать.
 **Приоритет:** P2 (user-facing витрина).
 **Связано:** [187](187-flagship-concurrency-demo.md) (флагман — куда его селить),
 [193](193-nova-tls-repo.md)/[195](195-native-modules-c-not-rust.md) (паттерн отдельной
@@ -68,16 +110,26 @@ compiler-багами вне скоупа этого плана (`.map()` generi
   showcase-репа (как nova-tls/193), если хотим «скачал одну репу и запустил» без
   моно-репы; но флагман тесно завязан на неустоявшийся std → in-repo надёжнее до
   стабилизации. Sign-off владельца в §Открытые.
-- **Ф.5 — CI-гейт компиляции:** новый job `examples-compile` — `nova build` по всем
-  `examples/**` (кроме `_wip/`) должен быть зелёным. Anti-rot: пример, переставший
-  компилиться, валит PR. (Не гейт корректности рантайма — только компиляция + для
-  помеченных `// EXAMPLE_RUN` быстрый прогон.)
+- **Ф.5 — CI-гейт компиляции:** ✅ ГОТОВО (2026-07-16, ветка `ci-gate-workflow`,
+  `.github/workflows/nova-gate.yml`) — реализовано ШИРЕ исходного описания: не
+  отдельный `examples-compile` по ВСЕМУ `examples/**`, а флагман-таргетная
+  часть авторитетного merge-гейта (директива владельца 2026-07-16, см.
+  «Статус» вверху) — `nova build --strict-effects` по 5 целям
+  (`flagship/aggregator` + `net`/`tls` echo_server/echo_client пары), в одном
+  workflow вместе с `spec_tests/conformance`. Остальной `examples/**` (basics/
+  effects/ffi/real_world/…) полным `examples-compile`-обходом пока НЕ
+  покрыт — если понадобится anti-rot гейт на ВЕСЬ каталог (не только
+  флагман-таргеты), это отдельное расширение `nova-gate.yml` (новый шаг,
+  `nova build`/`nova check` по всем `.nv` в `examples/` кроме `_wip/`), не
+  сделанное этой волной. Не гейт корректности рантайма — только компиляция.
 
 ## Гейты
 
 Каждый оставленный/новый пример компилится через C-codegen (`nova build`); ноль
 мёртвой поверхности (grep `with Detach`/retracted/`str.len` = 0 в examples вне `_wip`);
-doc-ссылки на examples целы; `examples-compile` CI-job зелёный; conformance δ0.
+doc-ссылки на examples целы; флагман-таргеты `nova-gate.yml` CI-job зелёные
+(2026-07-16 — см. «Статус»; полный `examples/**`-обход вне флагмана — открытый
+follow-up, не сделан); conformance δ0.
 
 ## Открытые решения (sign-off до старта)
 
