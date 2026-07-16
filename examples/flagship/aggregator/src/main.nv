@@ -127,15 +127,8 @@ const LIVE_BUDGET_MS int = 4000
 
 fn frontend_html() -> []u8 => embed("../frontend/index.html")
 
-fn resolve_port() Os -> u16 {
-    match env("AGGREGATOR_PORT") {
-        Some(s) => match s.to_int() {
-            Ok(n) => n as u16
-            Err(_) => DEFAULT_PORT
-        }
-        None => DEFAULT_PORT
-    }
-}
+fn resolve_port() Os -> u16 =>
+    env("AGGREGATOR_PORT").flat_map(|s| s.to_int().ok()).map(|n| n as u16) ?? DEFAULT_PORT
 
 // ── fn main: accept-loop (the only legitimately hand-rolled part — see the
 //    file-header note: http.servernet has no reusable accept-loop function
