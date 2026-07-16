@@ -367,6 +367,11 @@ hours/days).
 - **Float — отдельно** (f64 ∉ Ints, в бланкет не входит): `f64 @to_seconds()` (заменяет `from_secs_f`;
   `1.5.to_seconds()`). Только секунды.
 - **Singular** `int @second()`/`@minute()` — убрать (DRY; `1.to_seconds()`).
+- **Свободные обёртки-дубли убрать** (владелец 2026-07-16): `fn sleep(d Duration)` (duration.nv:263 — однострочный
+  делегат в `d.sleep()`) и `fn sleep_until(deadline Monotonic)` (:280 → метод `Monotonic @sleep_until()`) — §3
+  nv-coding-style (surface = методы) + D9; канон `5.to_seconds().sleep()` / `deadline.sleep_until()`. Effect-op
+  `Time.sleep(ms int)` (prelude/effects) НЕ трогать — слой примитива, не пользовательский surface. Мигрировать
+  немногие call-сайты свободных форм (std/examples, единицы).
 - **⚠ Зависимость:** `[T Ints] @to_seconds()` на примитивном ресивере — ровно механизм
   `[M-primitive-receiver-bounded-blanket-dispatch]` (dispatch-баг). Делать **ПОСЛЕ** его фикса (196.8).
 - **Коллизия снята:** getter `d.nanos()` (голое) vs конструктор `5.to_nanos()` (`to_`) — разные имена.
