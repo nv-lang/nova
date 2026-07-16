@@ -77,7 +77,7 @@ import ./domain.{Source, Report}
 import ./app.{Emit, null_emit}
 import ./app.{aggregate, weather_demo_sources, WEATHER_BUDGET_MS, health_demo_sources, HEALTH_BUDGET_MS, chaos_variant}
 import ./app.{aggregate_live_health, aggregate_live_weather, health_live_sources, weather_live_sources}
-import ./api.{build_snapshot, SnapshotDto, ResultDto, StatusDto, HandlersDto}
+import ./api.{build_snapshot, HandlersDto, snapshot_to_json}
 import std.net.{SocketAddr, TcpListener, real_net, mock_net}
 import std.os.{env, real_os}
 import http.server.{ServeMux, ServerRequest, ServerResponse, StreamBody, handler_fn, sse_event}
@@ -336,103 +336,37 @@ fn snapshot_body(legend str, mode str, seed int) Time -> ServerResponse {
     ro rr = with Emit = null_emit() { run_net(legend, mode, seed) }
     ro seed_out = if mode == "live" { 0 } else { seed }
     ro dto = build_snapshot(rr.report, rr.sources, legend, mode, seed_out, rr.budget_ms, rr.handlers)
-    ServerResponse.bytes(200, "application/json", snapshot_dto_json(dto).bytes())
+    ServerResponse.bytes(200, "application/json", snapshot_to_json(dto).bytes())
 }
 
-// ── JSON rendering: hand-written, NOT `std.encoding.serde.json_encode` ─────
+// ── JSON rendering: typed `std.encoding.serde.json_encode` ─────────────────
 //
-// [M-187-http-serde-setcookie-serialize-collision]: **compiler codegen bug,
-// NOT worked around by touching `http`/`std.encoding.serde` (out of remit) —
-// worked around by NOT routing this file's JSON output through the generic
-// `json_encode[T]`/`#impl(Serialize)` machinery at all.** `report_json.nv`'s
-// own typed-serde deliverable (`build_snapshot` -> `SnapshotDto` +
-// `json_encode`/`json_encode_pretty`) is UNCHANGED and still fully typed —
-// this file still calls `build_snapshot` for ALL the field-population logic
-// (id-keyed `kind`/`probes` lookup, structural fiber counting, `TaskStatus`
-// -> `{state,error}` mapping) and only renders the ALREADY-BUILT `SnapshotDto`
-// to text by hand below. Discovered wiring this file's SSE/JSON handlers
-// through `http.server`/`http.servernet` (this rewrite's whole point):
-// `nova build`/`test` LINK-FAILs (not a compile error — codegen and `clang -c`
-// both succeed) — `lld-link: error: undefined symbol:
-// Nova_SetCookie_method_serialize`, referenced from THREE independent
-// `json_encode[T]` monomorphizations (`SnapshotDto`, and this file's own
-// `ReplayInfoDto`/`EmitRecordDto` before this fix). `http.cookie`'s
-// `SetCookie @serialize(self) -> str` (nova-http, RFC 6265bis Set-Cookie
-// header serialization — an ordinary method, UNRELATED to the `Serialize`
-// protocol, just coincidentally named `serialize` too) is pulled into this
-// file's compile unit transitively by ANY `http.*` import (`cookie.nv` is a
-// peer file in the top-level `module http` folder-module, D78 — importing
-// `http.server` for `Method`/`StatusCode`/etc. pulls the WHOLE `http` module
-// in, `SetCookie` included, regardless of whether cookies are ever used).
-// Bisected: `report_json.nv`'s OWN isolated compile unit (no `http` import
-// at all) links fine — the SAME `json_encode[SnapshotDto]` call, unchanged,
-// works there; a minimal probe (single trivial `#impl(Serialize)` type +
-// one `http.server` import, no other code) reproduces the exact same
-// undefined-symbol link failure. Root cause (not investigated further,
-// compiler-side, out of this package's remit): `json_encode[T]`'s generated
-// dispatch for the type parameter's `@serialize()` call appears to resolve
-// through a NAME-only lookup (ignoring which concrete `T`/receiver type is
-// bound) once ANY other `serialize`-named method exists in the same compile
-// unit — same bug FAMILY as `[M-187-errorkind-parsejsonerror-variant-
-// collision]` (`report_json_test.nv`) and nova-http's own already-fixed
-// `recv_returning` name-only registry (`server.nv` header) — a class of
-// "same-named symbol across unrelated types, not properly type/arity-scoped"
-// codegen defects, this one specifically NOT yet fixed. WORKAROUND below:
-// plain string-building renderers for the (already fully-typed, already
-// business-logic-correct) DTOs — not "manual HTTP" (no status lines,
-// headers, routing, or wire framing here, all of that still goes through
-// `http.server`/`ServeMux`/`sse_event`), just JSON VALUE text, the same
-// class of code `report_json.nv` itself wrote before deliverable 2's
-// typed-serde migration.
-//
-// RE-VERIFIED 2026-07-16 (empirical, not gone-by-inspection): candidate
-// closure by the serde wave (`98e3663cc` et al.) checked directly — that
-// commit fixes a DIFFERENT bug (`[M-serde-encode-pointer-op-regression]`,
-// type-qualified `fn_ret` for mono blanket methods) and does not touch this
-// collision. Temporarily swapped `snapshot_dto_json(dto)` back to the
-// already-existing typed path (`snapshot_to_json(dto)`, `report_json.nv`)
-// and rebuilt this package (main-branch `nova.exe`, unchanged compiler):
-// IDENTICAL link failure, same undefined symbol, same monomorphization site
-// (`json_encode____NovaValue_SnapshotDto`). Workaround stays.
-
-
+// [M-187-http-serde-setcookie-serialize-collision]: RESOLVED — root cause was
+// NOT a per-call dispatch mis-resolution in `emit_c.rs` (the family this
+// marker's name suggested, cf. 196.7/98e3663cc). `nova build` (`cmd_build`,
+// nova-cli/src/main.rs) never called `auto_derive::inject_synthesized_
+// methods_filtered` for `#impl(Serialize)` — unlike `nova test`'s
+// `test_runner.rs` pipeline, which already did. The checker validates
+// `v.serialize(s)` against a derived signature computed ON-DEMAND
+// (`AutoDeriveQueryBridge`) without ever adding a real `FnDecl` to
+// `module.items` on the build path — so codegen's method registration
+// (`method_overloads`/`mono_method_decls`) had NOTHING under
+// `(RecordType, "serialize")`, and the call fell through every receiver-
+// typed dispatch window straight into the single-key, name-only
+// `method_receivers` last-wins fallback, which picked whatever OTHER
+// concrete `@serialize` was registered last in the compile unit — `http`'s
+// unrelated `SetCookie @serialize() -> str` (RFC 6265bis Set-Cookie
+// serialization), pulled in transitively by any `http.*` import. Fixed by
+// adding the same injection call to `cmd_build` (mirrors `test_runner.rs`);
+// no `emit_c.rs` change needed — the existing type-directed dispatch already
+// resolves correctly once the derived method is a real, registered `FnDecl`.
+// This file now routes `SnapshotDto` through `snapshot_to_json` (already
+// typed, `report_json.nv`) instead of the hand-written string renderers this
+// workaround used. `EmitRecord`'s SSE payload (`emit_record_json` below)
+// stays hand-written — a deliberate wire-shape choice, not a workaround; see
+// that function's own note.
 
 fn json_escape(s str) -> str => s.replace("\\", "\\\\").replace("\"", "\\\"")
-
-fn status_dto_json(s StatusDto) -> str {
-    ro err = match s.error { Some(e) => "\"" + json_escape(e) + "\"", None => "null" }
-    "{\"state\":\"" + s.state + "\",\"error\":" + err + "}"
-}
-
-fn result_dto_json(r ResultDto) -> str {
-    "{\"id\":\"" + json_escape(r.id) + "\",\"kind\":\"" + json_escape(r.kind) +
-        "\",\"probes\":" + r.probes.to_str() + ",\"status\":" + status_dto_json(r.status) +
-        ",\"elapsed_ms\":" + r.elapsed_ms.to_str() + "}"
-}
-
-fn handlers_dto_json(h HandlersDto) -> str {
-    "{\"net\":\"" + json_escape(h.net) + "\",\"time\":\"" + json_escape(h.time) + "\"}"
-}
-
-fn snapshot_dto_json(dto SnapshotDto) -> str {
-    mut results_json = "["
-    mut first = true
-    for r in dto.results {
-        if !first { results_json += "," }
-        results_json += result_dto_json(r)
-        first = false
-    }
-    results_json += "]"
-    "{\"fanout\":" + dto.fanout.to_str() + ",\"done\":" + dto.done.to_str() +
-        ",\"failed\":" + dto.failed.to_str() + ",\"cancelled\":" + dto.cancelled.to_str() +
-        ",\"wall_ms\":" + dto.wall_ms.to_str() + ",\"sequential_ms\":" + dto.sequential_ms.to_str() +
-        ",\"budget_ms\":" + dto.budget_ms.to_str() + ",\"legend\":\"" + dto.legend + "\"" +
-        ",\"mode\":\"" + dto.mode + "\",\"seed\":" + dto.seed.to_str() +
-        ",\"handlers\":" + handlers_dto_json(dto.handlers) +
-        ",\"fibers_spawned\":" + dto.fibers_spawned.to_str() +
-        ",\"fibers_closed\":" + dto.fibers_closed.to_str() +
-        ",\"results\":" + results_json + "}"
-}
 
 // ── GET /api/events: SSE replay of the run's Emit timeline ─────────────────
 
@@ -462,11 +396,16 @@ type EmitRecord {
     ro t_ms       int
 }
 
-// Wire payload for one replayed event (SSE `data:` line). Hand-rendered
-// (`json_escape`/`str.from`, `snapshot_dto_json`'s own neighbours above) —
-// see `[M-187-http-serde-setcookie-serialize-collision]` above for why this
-// is NOT `#impl(Serialize)` + `json_encode` (this file's own earlier attempt
-// hit the exact same link failure on this DTO too).
+// Wire payload for one replayed event (SSE `data:` line). Hand-rendered —
+// NOT `#impl(Serialize)` + `json_encode`, unlike `SnapshotDto` above
+// (`[M-187-http-serde-setcookie-serialize-collision]` — RESOLVED, that WAS
+// the compiler bug this file used to work around). Kept hand-written here on
+// PURPOSE, not as a bug workaround: the wire shape conditionally OMITS
+// `"error"` unless `kind == "lane_failed"` (plain record-derive would always
+// emit it, e.g. `"error":""`, changing the SSE contract the frontend
+// consumes) — follow-up (not this fix's scope): migrate to typed serde via
+// an `Option[str]` err field / a custom `#impl(Serialize)` body once one of
+// those shapes is confirmed frontend-compatible.
 fn emit_record_json(r EmitRecord) -> str {
     ro err_field = if r.kind == "lane_failed" {
         ",\"error\":\"" + json_escape(r.err) + "\""
@@ -521,6 +460,6 @@ fn events_body(legend str, mode str, seed int) Time -> ServerResponse {
     for r in records {
         chunks.push(sse_event(r.kind, emit_record_json(r)))
     }
-    chunks.push(sse_event("run_summary", snapshot_dto_json(dto)))
+    chunks.push(sse_event("run_summary", snapshot_to_json(dto)))
     ServerResponse.sse(StreamBody.from_chunks(chunks))
 }

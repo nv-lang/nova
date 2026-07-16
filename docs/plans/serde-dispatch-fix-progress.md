@@ -70,14 +70,54 @@ runs: `{"x":42,"y":"hi"}sess=1` (оба serialize правильно диспе�
 раздельные C-символы `Nova_Dto_method_serialize____Nova_JsonSerializer_p` /
 `Nova_FooCookie_method_serialize`).
 
-## Следующие шаги
+## Реальный репро (examples/flagship/aggregator) — ПРОЙДЕНО
 
-1. Реальный репро: examples/flagship/aggregator (SnapshotDto + http в CU) —
-   переключить main.nv::snapshot_body() на typed путь, собрать через
-   `nova build` (diamond nova.local.toml [replace] tls/http → ../../nova-tls,
-   ../../nova-http), curl-smoke.
-2. Снять обход (WORKAROUND-маркер) из main.nv насовсем.
-3. Таргетные regress: std/src/encoding/serde, tls/echo_server, echo_client.
-4. Закрыть маркер [M-187-http-serde-setcookie-serialize-collision] в
-   docs/plans/backlog-followups.md.
-5. simplifications.md запись.
+`examples/nova.local.toml` создан (gitignored) — `[replace] tls = { path =
+"../../nova-tls" }` (http уже `path`-dep в `examples/nova.toml` самом,
+../../nova-http). `examples/flagship/aggregator/src/main.nv`:
+- `snapshot_body`/`events_body`'s `run_summary` теперь — `snapshot_to_json(dto)`
+  (typed, `report_json.nv`) вместо hand-written `snapshot_dto_json`.
+- Удалены hand-written renderer'ы `status_dto_json`/`result_dto_json`/
+  `handlers_dto_json`/`snapshot_dto_json` + весь WORKAROUND-комментарий-блок
+  (был "[M-187-...] compiler codegen bug... WORKAROUND below") — заменён на
+  короткую RESOLVED-заметку с точным root-cause + ссылкой на фикс.
+- `emit_record_json`/`EmitRecord` (SSE per-event payload) СОЗНАТЕЛЬНО оставлен
+  hand-written — НЕ баг-обход, а wire-shape решение (условно опускает
+  `"error"` при kind != lane_failed; plain derive всегда эмитил бы поле) —
+  follow-up отмечен в комментарии, не в scope этого фикса.
+- `json_escape` восстановлен (используется только `emit_record_json`
+  теперь). Импорты подчищены (`ResultDto`/`StatusDto`/`SnapshotDto` больше не
+  нужны в main.nv; добавлен `snapshot_to_json` из `./api`).
+
+Собрано СВОИМ компилятором (`nova build`, worktree, `NOVA_CACHE=0`,
+`--strict-effects`) — **built** без ошибок (http+tls оба в CU). Запущено и
+проверено curl'ом:
+- `/api/snapshot` — корректный typed JSON (все поля `SnapshotDto`, вложенные
+  `ResultDto`/`StatusDto`/`HandlersDto`, `Option[str]` error → `null`/строка).
+- `/api/run?legend=health&mode=chaos&seed=7` — корректный typed JSON.
+- `/api/events` (SSE replay) — работает, `run_summary` event несёт тот же
+  typed JSON, per-event payload (`emit_record_json`, ручной) не тронут.
+
+Порт 8187 освобождён после smoke (`taskkill` по PID из netstat).
+
+## Регрессы
+
+- `std/src/encoding/serde/*_test.nv` (все 6 файлов, каждый отдельно через
+  `nova test`) — PASS, без изменений (эти уже шли через `test_runner.rs`,
+  которая ВСЕГДА вызывала inject — фикс их не касается, byte-identical).
+- `examples/tls/echo_server.nv` + `examples/tls/echo_client.nv` — оба собраны
+  через `nova build` (тот же путь, что чиню) — **built** без ошибок; smoke
+  прогон (server фон + client) — `TLS established (tls 1.3)` + `Echo:
+  echo_ok`. Порт 7778 освобождён.
+
+## nova.lock
+
+`examples/nova.lock` показывал `M` в git status, но побайтовое сравнение с
+HEAD — IDENTICAL (CRLF-шум git, не реальное изменение) — НЕ застейджен.
+
+## Осталось
+
+1. Закрыть маркер [M-187-http-serde-setcookie-serialize-collision] в
+   docs/plans/backlog-followups.md (✅ РЕШЕНО + root-cause + коммит-хэш).
+2. Запись в docs/simplifications.md.
+3. Коммит main.nv (typed serde + снятый обход).
