@@ -3077,10 +3077,10 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   wire.nv и `head_slice()` в servernet.nv. Детали: docs/simplifications.md
   (2026-07-10 std-hygiene), коммит f2f7f65e2.
 
-- **[M-lint-findings-writebuffer-into]** (2026-07-09, P3, Wave: вместе с D410-хвостом;
-  источник: план 185) — `WriteBuffer consume @into() -> []u8` — голое `into` против
-  канона `into_*` (§1а: `into_bytes`). Переименование затрагивает ~140 вызовов в
-  nova_tests + 8 в std (on-line маркеры) — механическая волна отдельным заходом.
+- ✅ **[M-lint-findings-writebuffer-into]** (2026-07-09, P3, Wave: вместе с D410-хвостом;
+  источник: план 185) — ✅ ЗАКРЫТ (2026-07-17): `WriteBuffer consume @into() -> []u8`
+  переименован в `@into_bytes()` (канон §1а), мигрировано 96 call-сайтов в spec_tests
+  и std/src/encoding/url.nv. nova lint spec_tests: 103→7 findings.
 
 - **[M-lint-findings-param-no-contract]** (2026-07-09, P3, Wave: контракт-волна §5;
   источник: план 185) — параметры index/len-класса без `requires` там, где домен

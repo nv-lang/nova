@@ -10,7 +10,7 @@ test "write_zero — n нулевых байт" {
     wb.write_byte(0xFF)
     wb.write_zero(3)
     wb.write_byte(0xAA)
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a.len() == 5)
     assert(a[0] == 0xFF)
     assert(a[1] == 0)
@@ -29,7 +29,7 @@ test "write_zero(0) — ничего не пишет" {
 test "write_zero — большой блок" {
     mut wb = WriteBuffer.new()
     wb.write_zero(100)
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a.len() == 100)
     assert(a[0] == 0)
     assert(a[99] == 0)
@@ -42,7 +42,7 @@ test "write_bytes — append массива" {
     mut wb = WriteBuffer.new()
     ro src []u8 = [0x10, 0x20, 0x30]
     wb.write_bytes(src)
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a.len() == 3)
     assert(a[0] == 0x10)
     assert(a[1] == 0x20)
@@ -63,7 +63,7 @@ test "write_bytes — несколько вызовов" {
     ro p2 []u8 = [3, 4, 5]
     wb.write_bytes(p1)
     wb.write_bytes(p2)
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a.len() == 5)
     assert(a[0] == 1)
     assert(a[4] == 5)
@@ -75,7 +75,7 @@ test "write_bytes — несколько вызовов" {
 test "write_char ASCII — 1 байт" {
     mut wb = WriteBuffer.new()
     wb.write_char('A')
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a.len() == 1)
     assert(a[0] == 65)
 }
@@ -83,7 +83,7 @@ test "write_char ASCII — 1 байт" {
 test "write_char Cyrillic — 2 байта UTF-8" {
     mut wb = WriteBuffer.new()
     wb.write_char('Я')            // U+042F → D0 AF
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a.len() == 2)
     assert(a[0] == 0xD0)
     assert(a[1] == 0xAF)
@@ -92,7 +92,7 @@ test "write_char Cyrillic — 2 байта UTF-8" {
 test "write_char CJK — 3 байта UTF-8" {
     mut wb = WriteBuffer.new()
     wb.write_char('中')           // U+4E2D → E4 B8 AD
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a.len() == 3)
     assert(a[0] == 0xE4)
     assert(a[1] == 0xB8)
@@ -102,7 +102,7 @@ test "write_char CJK — 3 байта UTF-8" {
 test "write_char emoji — 4 байта UTF-8" {
     mut wb = WriteBuffer.new()
     wb.write_char('😀')           // U+1F600 → F0 9F 98 80
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a.len() == 4)
     assert(a[0] == 0xF0)
     assert(a[1] == 0x9F)
@@ -116,7 +116,7 @@ test "write_char emoji — 4 байта UTF-8" {
 test "write_str ASCII" {
     mut wb = WriteBuffer.new()
     wb.write_str("ABC")
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a.len() == 3)
     assert(a[0] == 65)
     assert(a[2] == 67)
@@ -125,7 +125,7 @@ test "write_str ASCII" {
 test "write_str Unicode — UTF-8 байты" {
     mut wb = WriteBuffer.new()
     wb.write_str("Я中")          // 2 + 3 байта
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a.len() == 5)
     assert(a[0] == 0xD0)
     assert(a[2] == 0xE4)
@@ -145,7 +145,7 @@ test "write_char + write_str + write_byte вперемешку" {
     wb.write_char('A')
     wb.write_str("BC")
     wb.write_byte(0x44)
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a.len() == 4)
     assert(a[0] == 65)
     assert(a[1] == 66)

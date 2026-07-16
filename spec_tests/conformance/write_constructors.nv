@@ -46,7 +46,7 @@ test "from([]u8) — append продолжает после готовых ба�
     ro bytes []u8 = [0xAA]
     mut wb = WriteBuffer.from(bytes)
     wb.write_byte(0xBB)
-    ro arr = wb.into()
+    ro arr = wb.into_bytes()
     assert(arr.len() == 2)
     assert(arr[0] == 0xAA)
     assert(arr[1] == 0xBB)
@@ -91,12 +91,12 @@ test "clone — содержимое идентично на момент коп
     mut a = WriteBuffer.new()
     a.write_str("hello")
     ro b = a.clone()
-    assert(a.into() == b.into())
+    assert(a.into_bytes() == b.into_bytes())
 }
 
 test "clone пустого буфера" {
     mut a = WriteBuffer.new()
     ro b = a.clone()
     assert(b.len() == 0)
-    assert(b.into().len() == 0)
+    assert(b.into_bytes().len() == 0)
 }

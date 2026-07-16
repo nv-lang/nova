@@ -10,42 +10,42 @@ module spec_tests.conformance
 test "read_f32_le — точное значение" {
     mut wb = WriteBuffer.new()
     wb.write_f32_le(0.5)
-    mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_f32_le()!! == 0.5)
 }
 
 test "read_f32_be — точное значение" {
     mut wb = WriteBuffer.new()
     wb.write_f32_be(0.25)
-    mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_f32_be()!! == 0.25)
 }
 
 test "read_f64_le — точное значение" {
     mut wb = WriteBuffer.new()
     wb.write_f64_le(3.14159265)
-    mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_f64_le()!! == 3.14159265)
 }
 
 test "read_f64_be — точное значение" {
     mut wb = WriteBuffer.new()
     wb.write_f64_be(-2.5)
-    mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_f64_be()!! == -2.5)
 }
 
 test "read_f64 — нулевое значение" {
     mut wb = WriteBuffer.new()
     wb.write_f64_le(0.0)
-    mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_f64_le()!! == 0.0)
 }
 
 test "read_f64 — отрицательное большое значение" {
     mut wb = WriteBuffer.new()
     wb.write_f64_be(-987654321.5)
-    mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_f64_be()!! == -987654321.5)
 }
 
@@ -56,7 +56,7 @@ test "read_f32_le / be Ok" {
     mut wb = WriteBuffer.new()
     wb.write_f32_le(1.0)
     wb.write_f32_be(2.0)
-    mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_f32_le().is_ok())
     assert(rb.read_f32_be().is_ok())
 }
@@ -65,7 +65,7 @@ test "read_f64_le / be Ok" {
     mut wb = WriteBuffer.new()
     wb.write_f64_le(1.5)
     wb.write_f64_be(2.5)
-    mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_f64_le().is_ok())
     assert(rb.read_f64_be().is_ok())
 }
@@ -102,7 +102,7 @@ test "f64.from_bits + read_f64_be round-trip" {
     // закрыт. Тест переписан под прямой f64 unwrap.
     mut wb = WriteBuffer.new()
     wb.write_f64_be(2.71828)
-    mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into_bytes())
     ro r = rb.read_f64_be()
     assert(r.is_ok())
     ro d = r ?? 0.0

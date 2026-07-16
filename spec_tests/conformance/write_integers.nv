@@ -10,7 +10,7 @@ test "write_byte — порядок и значения" {
     mut wb = WriteBuffer.new()
     wb.write_byte(0x41)
     wb.write_byte(0xFF)
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a.len() == 2)
     assert(a[0] == 0x41)
     assert(a[1] == 0xFF)
@@ -20,7 +20,7 @@ test "write_u8" {
     mut wb = WriteBuffer.new()
     wb.write_u8(0x00)
     wb.write_u8(0xFF)
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a[0] == 0x00)
     assert(a[1] == 0xFF)
 }
@@ -29,7 +29,7 @@ test "write_i8 — отрицательное значение" {
     mut wb = WriteBuffer.new()
     wb.write_i8(-1)               // 0xFF
     wb.write_i8(-128)             // 0x80
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a[0] == 0xFF)
     assert(a[1] == 0x80)
 }
@@ -40,7 +40,7 @@ test "write_i8 — отрицательное значение" {
 test "write_u16_le — младший байт первым" {
     mut wb = WriteBuffer.new()
     wb.write_u16_le(0x1234)
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a[0] == 0x34)
     assert(a[1] == 0x12)
 }
@@ -48,7 +48,7 @@ test "write_u16_le — младший байт первым" {
 test "write_u16_be — старший байт первым" {
     mut wb = WriteBuffer.new()
     wb.write_u16_be(0x1234)
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a[0] == 0x12)
     assert(a[1] == 0x34)
 }
@@ -59,7 +59,7 @@ test "write_u16_be — старший байт первым" {
 test "write_i16_le — отрицательное" {
     mut wb = WriteBuffer.new()
     wb.write_i16_le(-1)           // 0xFFFF
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a[0] == 0xFF)
     assert(a[1] == 0xFF)
 }
@@ -67,7 +67,7 @@ test "write_i16_le — отрицательное" {
 test "write_i16_be — отрицательное" {
     mut wb = WriteBuffer.new()
     wb.write_i16_be(-2)           // 0xFFFE
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a[0] == 0xFF)
     assert(a[1] == 0xFE)
 }
@@ -78,7 +78,7 @@ test "write_i16_be — отрицательное" {
 test "write_u32_le 0xDEADBEEF" {
     mut wb = WriteBuffer.new()
     wb.write_u32_le(0xDEADBEEF)
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a[0] == 0xEF)
     assert(a[1] == 0xBE)
     assert(a[2] == 0xAD)
@@ -88,7 +88,7 @@ test "write_u32_le 0xDEADBEEF" {
 test "write_u32_be 0xDEADBEEF" {
     mut wb = WriteBuffer.new()
     wb.write_u32_be(0xDEADBEEF)
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a[0] == 0xDE)
     assert(a[1] == 0xAD)
     assert(a[2] == 0xBE)
@@ -101,7 +101,7 @@ test "write_u32_be 0xDEADBEEF" {
 test "write_i32_le -1 — все байты 0xFF" {
     mut wb = WriteBuffer.new()
     wb.write_i32_le(-1)
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a[0] == 0xFF)
     assert(a[1] == 0xFF)
     assert(a[2] == 0xFF)
@@ -111,7 +111,7 @@ test "write_i32_le -1 — все байты 0xFF" {
 test "write_i32_be -1 — все байты 0xFF" {
     mut wb = WriteBuffer.new()
     wb.write_i32_be(-1)
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a[0] == 0xFF)
     assert(a[3] == 0xFF)
 }
@@ -122,7 +122,7 @@ test "write_i32_be -1 — все байты 0xFF" {
 test "write_u64_le — 8 байт, порядок LE" {
     mut wb = WriteBuffer.new()
     wb.write_u64_le(0x0102030405060708)
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a.len() == 8)
     assert(a[0] == 0x08)
     assert(a[7] == 0x01)
@@ -131,7 +131,7 @@ test "write_u64_le — 8 байт, порядок LE" {
 test "write_u64_be — 8 байт, порядок BE" {
     mut wb = WriteBuffer.new()
     wb.write_u64_be(0x0102030405060708)
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a.len() == 8)
     assert(a[0] == 0x01)
     assert(a[7] == 0x08)
@@ -143,7 +143,7 @@ test "write_u64_be — 8 байт, порядок BE" {
 test "write_i64_le — отрицательное" {
     mut wb = WriteBuffer.new()
     wb.write_i64_le(-1)
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a.len() == 8)
     assert(a[0] == 0xFF)
     assert(a[7] == 0xFF)
@@ -152,7 +152,7 @@ test "write_i64_le — отрицательное" {
 test "write_i64_be — отрицательное" {
     mut wb = WriteBuffer.new()
     wb.write_i64_be(-1)
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a.len() == 8)
     assert(a[0] == 0xFF)
     assert(a[7] == 0xFF)
@@ -167,7 +167,7 @@ test "несколько integer-записей подряд — суммарн�
     wb.write_u16_be(0x0203)       // 2
     wb.write_u32_be(0x04050607)   // 4
     wb.write_u64_be(0x08090A0B0C0D0E0F)  // 8
-    ro a = wb.into()
+    ro a = wb.into_bytes()
     assert(a.len() == 15)
     assert(a[0] == 0x01)
     assert(a[1] == 0x02)

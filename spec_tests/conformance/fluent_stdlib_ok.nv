@@ -11,6 +11,6 @@ test "StringBuilder fluent chain через -> @" {
 
 test "WriteBuffer fluent chain через -> @" {
     mut wb = WriteBuffer.new()
-    ro bytes = wb.write_byte(1).write_byte(2).write_byte(3).into()
+    ro bytes = wb.write_byte(1).write_byte(2).write_byte(3).into_bytes()
     assert(bytes.len() == 3)
 }

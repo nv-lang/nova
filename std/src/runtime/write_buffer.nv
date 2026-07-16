@@ -8,7 +8,7 @@
 //   @write_byte/bytes/zero/char/str
 //   @write_{u8,i8,u16_le,u16_be,...,u64_be,f32_le,f32_be,f64_le,f64_be}
 //   @len, @capacity, @clone
-//   consume @into -> []u8
+//   consume @into_bytes -> []u8
 
 // #no_prelude — break import cycle (prelude → collections → write_buffer).
 // Explicit imports cover only what we need.
@@ -267,6 +267,6 @@ export fn WriteBuffer mut @write_f64_be(v f64) -> @ => @write_u64_be(v.to_bits()
 
 // ─── Finalize ───
 
-// Финализировать в []u8. После @into() WriteBuffer consumed.
+// Финализировать в []u8. После @into_bytes() WriteBuffer consumed.
 // Ownership transfer — возвращает внутренний buf напрямую (no copy).
-export fn WriteBuffer consume @into() -> []u8 => @buf
+export fn WriteBuffer consume @into_bytes() -> []u8 => @buf

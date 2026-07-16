@@ -83,7 +83,7 @@ test "has_remaining + try_read согласованы" {
 test "read_str Err — больше codepoint'ов чем есть" {
     mut wb = WriteBuffer.new()
     wb.write_str("xy")
-    mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_str(99).is_err())
 }
 
