@@ -76,6 +76,12 @@ nested-supervised fan-out'ов в планировщике. Порог 3 — м�
    (два РАЗНЫХ по смыслу барьера могут не быть транзитивно упорядочены — подозрение агента).
 4. **TSan:** clang `-fsanitize=thread` рантайма на Linux/WSL-сборке (MSVC-TSan ограничен) —
    изолированный `.nv`-репро уже есть (детач-цикл nested supervised(timeout) × 20-80 конкурентных).
+   **Первые данные УЖЕ ЕСТЬ (2026-07-16, Linux-build волна, ручной TSan-смоук на минимальном
+   spawn+supervised):** TSan нашёл `runq.h` **init/grab visibility gap** — воркер может увидеть
+   неинициализированную/частично видимую runq при steal (родня главной гипотезы §2: publish
+   без транзитивного упорядочения). Использовать как ВХОДНУЮ точку happens-before разбора п.3.
+   (Второй TSan-улов — `fiber_arena.c` `_sigsegv_installed` check-then-set — НЕ 211-родня,
+   отдельный маркер `[M-fiber-arena-sigsegv-install-race]` в backlog.)
 5. **Орфан/unwind-взаимодействие:** краш коррелировал с реальными deadline-fire →
    `nova_throw_scope_timeout` longjmp — проверить, не трогает ли unwind соседний scope,
    чей drive-фибер в этот момент в park-join.

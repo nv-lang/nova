@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 154 (umbrella) — No silent no-op dispatch
 
-> **Создан:** 2026-06-13. **Статус:** 🟡 IN PROGRESS (154.0 ✅ CLOSED; 154.1 в работе).
+> **Создан:** 2026-06-13. **Статус:** ✅ ЗАКРЫТ (154.0 ✅ CLOSED 2026-06-13; 154.1 ✅ CLOSED 2026-06-13,
+> Ф.1-Ф.5; f32 Display/Debug отложен `[M-154.1-f32-display-debug]`).
 > **P1** (correctness/footgun). **Тема:** ни один вызов метода не должен **молча**
 > резолвиться в no-op / чужую реализацию — каждый такой случай — **громкая ошибка**
 > или явный механизм.
@@ -28,7 +29,7 @@
 | Sub-plan | Тема | D-блоки | Статус |
 |---|---|---|---|
 | [154.0](154.0-method-override-coherence.md) | **cross-module override** метода → `E_METHOD_REDEFINITION` (type-check) | D267 | ✅ **CLOSED** 2026-06-13 |
-| [154.1](154.1-impl-conformance-primitive-format.md) | **primitive-element** mis-dispatch (codegen) + opt-in `#impl(P)` конформность + конкретные Display/Debug примитивов | D268, D269 | 🟡 IN PROGRESS |
+| [154.1](154.1-impl-conformance-primitive-format.md) | **primitive-element** mis-dispatch (codegen) + opt-in `#impl(P)` конформность + конкретные Display/Debug примитивов | D268, D269 | ✅ CLOSED 2026-06-13 |
 
 ## D-резерв
 

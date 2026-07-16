@@ -45,8 +45,7 @@ test "static method []int.new() creates empty array (D38)" {
 }
 
 test "static method []int.new().cap(n) creates pre-allocated array (D38 / D372 amend)" {
-    mut cap []int = []int.new()
-    cap.cap(8)
+    mut cap []int = []int.new(cap: 8)
     assert(cap.len() == 0)
     cap.push(1)
     cap.push(2)
@@ -58,8 +57,7 @@ test "static method []int.new().cap(n) creates pre-allocated array (D38 / D372 a
 test "[]str.new() and []str.new().cap(n) work (D38 / D372 amend)" {
     ro empty []str = []
     assert(empty.len() == 0)
-    mut words []str = []str.new()
-    words.cap(4)
+    mut words []str = []str.new(cap: 4)
     words.push("alpha")
     words.push("beta")
     assert(words.len() == 2)
@@ -111,8 +109,7 @@ test "[]Rec.new() with ANONYMOUS record literal push — values survive 2nd push
 }
 
 test "[]Rec.new().cap(n) (ex-with_capacity) with record literals (D38 / D372 amend)" {
-    mut out = []D38Kv.new()
-    out.cap(4)
+    mut out = []D38Kv.new(cap: 4)
     out.push(D38Kv { key: "c", val: 3 })
     out.push({ key: "d", val: 4 })
     assert(out.len() == 2)

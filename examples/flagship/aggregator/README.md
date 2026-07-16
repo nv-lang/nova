@@ -73,10 +73,12 @@ accept-loop функции, только одноразовый `handle_connecti
 
 `mode=live`: `health` — реальный TCP-замер (`std.net.resolve` +
 `TcpStream.connect`, порт 443) против 5 настоящих доменов; `weather` —
-**честно заблокирован** (не подделывает данные) маркером
-`[M-187-weather-live-tls-diamond-blocked]` — diamond-зависимость `tls`
-(этот пакет тянет её путём, `nova-http` — через `git`+version, две разные
-физические копии) — подробности в `src/app/live.nv`.
+**настоящий HTTPS к `api.open-meteo.com`** (`TlsStream.connect` +
+GET + read, `src/app/live.nv`) — работает после закрытия tls-диаманта
+(D420 `[replace]` graph-wide) и cross-package consume-cleanup; проверено
+нагрузочным гейтом (`loadtest.ps1`: weather/live 10/10, SSE weather-live 50×).
+Для локальной разработки path-deps нужен `examples/nova.local.toml` с
+`[replace]` на `../../nova-tls` / `../../nova-http` (gitignored, D420).
 
 ## Как это тестируется
 
@@ -177,9 +179,13 @@ examples/flagship/aggregator/
 
 ## Известные ограничения этого прогона
 
-- **Live-погода заблокирована** (`[M-187-weather-live-tls-diamond-blocked]`) —
-  diamond tls-зависимость между этим пакетом и `nova-http`; каждый лан
-  честно проваливается с текстом-подсказкой, не подделывает данные.
+- ~~Live-погода заблокирована~~ **РАЗБЛОКИРОВАНА** (диамант + cross-pkg
+  consume-cleanup закрыты 2026-07-15): реальный open-meteo HTTPS, 4/4 done
+  в гейте. Историю см. `src/app/live.nv` (doc-comment).
+- **Высокая одновременная нагрузка — admission control**: сверх MAX=2
+  одновременных fan-out'ов соединения честно закрываются (bounded-accept,
+  митигация `[M-187-high-concurrency-connection-wedge]`; сервер выживает
+  P80/P200). Глубинный фикс (park-join) — Plan 211.
 - **`/api/events` — replay, не живой стрим.** Первая запись содержит полный
   таймлайн уже завершённого прогона (с реальными `t_ms`-метками), не
   push по мере выполнения (`[M-187-sse-live-stream]`, решение владельца —
@@ -230,18 +236,15 @@ examples/flagship/aggregator/
   поднимает/глушит сервер, 7 блоков); BLOCK 5's строгий `$ok -eq $Concurrency`
   теперь ожидаемо не проходит (часть 80 честно отбита по design) — критерий
   живучести (сервер отвечает 200 ПОСЛЕ BLOCK 5/6) выполняется.
-- **JSON рендерится вручную в `main.nv`**, не через
-  `std.encoding.serde.json_encode` (хотя `report_json.nv` ПОЛНОСТЬЮ typed-
-  serde, деливерабл 2 не откачен) — `[M-187-http-serde-setcookie-serialize-
-  collision]`: компилятор линкует `json_encode[T]` НЕПРАВИЛЬНО (undefined
-  symbol) стоит `http`-пакету (тянет `SetCookie.serialize()`,
-  RFC 6265bis-метод, случайно тёзка) и любому `#impl(Serialize)`-типу
-  оказаться в ОДНОМ compile unit. `build_snapshot` (typed DTO + вся
-  бизнес-логика — id-lookup, structural fiber-count, `TaskStatus`-маппинг)
-  ПОЛНОСТЬЮ переиспользуется; рендерится в текст вручную (`json_escape` +
-  конкатенация) только сам ФИНАЛЬНЫЙ шаг — не «ручной HTTP» (ни статус-строк,
-  ни роутинга, ни wire-framing — всё это по-прежнему `http.server`/`ServeMux`/
-  `sse_event`).
+- **✅ РЕШЕНО 2026-07-16** (`[M-187-http-serde-setcookie-serialize-collision]`,
+  коммит `96ce6249e`): ручной JSON-обход снят — `main.nv` теперь рендерит
+  снапшот через `snapshot_to_json` (typed `std.encoding.serde.json_encode`,
+  `report_json.nv`). Корень был НЕ в codegen-диспатче: `nova build`
+  (`cmd_build`) не вызывал `inject_synthesized_methods_filtered` для
+  `#impl(Serialize)` (в отличие от `nova test`) → mono `json_encode[T]`
+  падал в name-only fallback → подхватывал чужой `SetCookie.serialize()`.
+  Фикс — один вызов в `cmd_build`. `EmitRecord`'s SSE payload
+  (`emit_record_json`) остаётся ручным по design (wire-shape выбор, не обход).
 - **HTTP JSON-снапшот не байт-в-байт детерминирован** между прогонами с
   одним `seed` — см. «Как это тестируется → Детерминизм» выше (реальные
   часы, не симуляция).

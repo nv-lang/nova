@@ -32,11 +32,14 @@ pub(crate) const RUNTIME_DEFINED_TYPES: &[&str] = &[
     // of Time (Q1). Direct-C dispatch (Nova_TimerMetrics_timer_*, no vtable),
     // like Mem. Schema built from its .nv decl (single source).
     "Fail", "Time", "Mem", "TimerMetrics",
-    // sync (sync_primitives.h): MemOrdering + sized atomics + AtomicPtr
+    // sync (sync_primitives.h): MemOrdering + sized atomics.
+    // Plan 207 (2026-07-16 consolidation): AtomicPtr removed (int-proxy
+    // duplicate, no generic [T] yet — Plan 103.7); Isize/Usize spellings
+    // renamed to AtomicInt/AtomicUint (Nova has no isize/usize types).
     "MemOrdering",
     "AtomicI8", "AtomicI16", "AtomicI32", "AtomicI64",
     "AtomicU8", "AtomicU16", "AtomicU32", "AtomicU64",
-    "AtomicIsize", "AtomicUsize", "AtomicPtr",
+    "AtomicInt", "AtomicUint",
     // sync sum-types pre-declared (OnceState, WaitResult)
     "OnceState", "WaitResult",
     // consume guard types (sync_primitives.h `_s`-suffix structs)
@@ -45,7 +48,7 @@ pub(crate) const RUNTIME_DEFINED_TYPES: &[&str] = &[
     "str",
     // Plan 207 [M-cas-return-witnessed-value]: CAS-witness value structs
     // (`NovaTuple_CasRaw*` in sync_primitives.h) — raw (ok, witness) pair
-    // returned by the private `@__cas_raw` intrinsic; the public
+    // returned by the private `@cmpxchg` intrinsic; the public
     // compare_exchange/_weak wrapper (plain .nv fn) builds Result[(), T] from it.
     "CasRawI8", "CasRawI16", "CasRawI32", "CasRawI64",
     "CasRawU8", "CasRawU16", "CasRawU32", "CasRawU64",
@@ -3509,7 +3512,12 @@ impl CEmitter {
             "Barrier", "CountDownLatch", "Semaphore",
             "AtomicI64", "AtomicI32", "AtomicI16", "AtomicI8",
             "AtomicU64", "AtomicU32", "AtomicU16", "AtomicU8",
-            "AtomicIsize", "AtomicUsize", "AtomicInt", "AtomicBool", "AtomicPtr",
+            // Plan 207 (2026-07-16 consolidation): AtomicInt absorbs the
+            // former Isize spelling AND the former int32-backed legacy
+            // AtomicInt (both removed as separate names); AtomicUint
+            // absorbs the former Usize spelling; AtomicPtr removed
+            // (int-proxy duplicate, no generic [T] yet — Plan 103.7).
+            "AtomicInt", "AtomicUint", "AtomicBool",
         ];
         RUNTIME_BACKED_NEWTYPES.contains(&name)
     }
@@ -5486,11 +5494,16 @@ impl CEmitter {
                 // Named forward decl `typedef struct Nova_MemOrdering Nova_MemOrdering;`
                 // would conflict with the pre-declared typedef struct.
                 "MemOrdering",
-                // Plan 103.2: sized integer atomics + AtomicPtr, all pre-declared
-                // in sync_primitives.h. No local fwd-decl needed.
+                // Plan 103.2: sized integer atomics, all pre-declared in
+                // sync_primitives.h. No local fwd-decl needed. Plan 207
+                // (2026-07-16 consolidation): AtomicPtr removed (int-proxy
+                // duplicate, Plan 103.7 pending); AtomicUint here is the
+                // former Usize spelling (AtomicInt already listed above,
+                // absorbing both the former Isize spelling and the former
+                // int32-backed legacy AtomicInt).
                 "AtomicI8", "AtomicI16", "AtomicI32", "AtomicI64",
                 "AtomicU8", "AtomicU16", "AtomicU32", "AtomicU64",
-                "AtomicIsize", "AtomicUsize", "AtomicPtr",
+                "AtomicUint",
                 // Plan 103.9 (D174): consume guard types pre-declared in sync_primitives.h
                 // with a `_s`-suffix anonymous struct. Named fwd-decl `typedef struct
                 // Nova_MutexGuard Nova_MutexGuard;` conflicts (different tag). Skip.
@@ -49515,7 +49528,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "RwLock", "ReentrantMutex", "Timestamp", "MemOrdering",
             "AtomicI8", "AtomicI16", "AtomicI32", "AtomicI64",
             "AtomicU8", "AtomicU16", "AtomicU32", "AtomicU64",
-            "AtomicIsize", "AtomicUsize", "AtomicPtr",
+            // Plan 207 (2026-07-16 consolidation): AtomicUint = former Usize
+            // spelling (AtomicInt above already covers former Isize + the
+            // removed int32-backed legacy AtomicInt); AtomicPtr removed.
+            "AtomicUint",
             "MutexGuard", "ReadGuard", "WriteGuard", "Permit", "OnceGuard",
             "Barrier", "Condvar", "WaitResult", "CountDownLatch", "Semaphore",
         ];

@@ -1,51 +1,53 @@
-// Plan 103.2 Ф.9 positive — AtomicIsize / AtomicUsize (platform-word atomics).
+// Plan 103.2 Ф.9 positive — AtomicInt / AtomicUint (platform-word atomics).
+// Plan 207 (2026-07-16 консолидация): AtomicIsize → AtomicInt, AtomicUsize →
+// AtomicUint (имена типов Nova — int/uint; изolированных isize/usize нет).
 //
-// AtomicIsize wraps `int` (int64_t on 64-bit targets),
-// AtomicUsize wraps `uint` (uint64_t on 64-bit targets).
+// AtomicInt wraps `int` (`nova_int` = `intptr_t`, address-sized — Plan 133),
+// AtomicUint wraps `uint` (`nova_uint` = `uintptr_t`, address-sized).
 // These are the recommended types for platform-native counters.
 
 module spec_tests.conformance
-test "AtomicIsize new and load" {
-    mut a = AtomicIsize.new(42)
+test "AtomicInt new and load" {
+    mut a = AtomicInt.new(42)
     assert(a.load() == 42)
 }
 
-test "AtomicIsize store and fetch_add" {
-    mut a = AtomicIsize.new(0)
+test "AtomicInt store and fetch_add" {
+    mut a = AtomicInt.new(0)
     a.store(10)
     ro prev = a.fetch_add(5)
     assert(prev == 10)
     assert(a.load() == 15)
 }
 
-test "AtomicIsize compare_exchange" {
-    mut a = AtomicIsize.new(100)
+test "AtomicInt compare_exchange" {
+    mut a = AtomicInt.new(100)
     ro ok = a.compare_exchange(100, 200).is_ok()
     assert(ok)
     assert(a.load() == 200)
 }
 
-test "AtomicIsize swap" {
-    mut a = AtomicIsize.new(7)
+test "AtomicInt swap" {
+    mut a = AtomicInt.new(7)
     ro old = a.swap(99)
     assert(old == 7)
     assert(a.load() == 99)
 }
 
-test "AtomicUsize new and load" {
-    mut a = AtomicUsize.new(1000)
+test "AtomicUint new and load" {
+    mut a = AtomicUint.new(1000)
     assert(a.load() == 1000)
 }
 
-test "AtomicUsize fetch_add" {
-    mut a = AtomicUsize.new(5)
+test "AtomicUint fetch_add" {
+    mut a = AtomicUint.new(5)
     ro prev = a.fetch_add(10)
     assert(prev == 5)
     assert(a.load() == 15)
 }
 
-test "AtomicUsize compare_exchange failure" {
-    mut a = AtomicUsize.new(77)
+test "AtomicUint compare_exchange failure" {
+    mut a = AtomicUint.new(77)
     ro ok = a.compare_exchange(0, 999).is_ok()
     assert(!ok)
     assert(a.load() == 77)

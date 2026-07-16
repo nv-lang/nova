@@ -1,6 +1,6 @@
 # Plan 166 — net.c send_to TOCTOU fix + UDP socket split
 
-**Status:** ✅ CLOSED 2026-06-17  
+**Статус:** ✅ CLOSED 2026-06-17  
 **D-блоки:** D377 (ex-D298, renumber 2026-07-03)  
 **Зависит от:** Plan 91.12 ✅ (std/net V2 algebraic effects, UdpSocket)
 
@@ -136,5 +136,5 @@ UDP Socket Split: UdpSendHalf + UdpRecvHalf consume value types + TOCTOU fix.
 
 | Маркер | Описание | Приоритет |
 |---|---|---|
-| `[M-91.14-tcp-split]` | TcpReadHalf/TcpWriteHalf — аналог UDP split для TcpStream | P2 open → Plan 91.14 |
+| `[M-91.16-tcp-split]` | TcpReadHalf/TcpWriteHalf — аналог UDP split для TcpStream | ✅ CLOSED 2026-06-17 (Plan 91.16, D301) — реальный номер маркера был 91.16, не 91.14 |
 | `[M-91.12-double-close-static]` | Double-close через effect-dispatch не ловится checker'ом для mut-binding | P3 open |

@@ -1,7 +1,9 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 153 (umbrella) — Production-grade `Vec[T]` / `[]T`: API-паритет, итераторы, слайсы
 
-> **Создан:** 2026-06-13.  **Статус:** 🟡 **IN PROGRESS** — **153.0 ✅ ЗАКРЫТ** (2026-06-13,
+> **Создан:** 2026-06-13.  **Статус:** ✅ **ЗАКРЫТ** — все под-планы 153.0–153.6 закрыты
+> (остаток — P3 perf-only маркеры `[M-153.2-closure-as-mono-type]`/`[M-153.2-Z-closure-devirt]`,
+> не блокируют). **153.0 ✅ ЗАКРЫТ** (2026-06-13,
 > branch `plan-153`, commit `2a5df8e4`; см. «Статус 153.0» ниже); **153.1 ✅ ЗАКРЫТ**
 > (core API + fluent + AsSlice[T] D299, 2026-06-17); **153.2 ✅ ЗАКРЫТ (Phase A)** (ленивые
 > итераторы, `plan-153.2-mono-closures`, commits `996ca01a`+`caf56226`, D260); **153.3

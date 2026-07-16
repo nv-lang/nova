@@ -112,11 +112,13 @@ D262 и весь std + conformance). Требует отдельного реш�
 
 ## Пункт 4 — полная миграция на `.new(cap int=0)` (D9 «один путь») — НАЙДЕНО 94 сайта
 
-**Статус:** ✅ СОГЛАСОВАНО 2026-07-12, В РАБОТЕ [sonnet, фон] (владелец: «сделай в фоне, не останавливаясь»).
+**Статус:** 🔧 В РАБОТЕ [haiku, локально] — мигрировано 9/9 кодовых сайтов в spec_tests/conformance (2026-07-16).
 **Не блокер** (chain `.new().cap(n)` легален по D372-amend2), приводим к единой канонической форме.
 
-**Найдено:** **94× `.new().cap(...)` в 42 файлах** (std/tests/conformance). НЕ все Vec — много HashMap(13)/
-Set/Queue/StringBuilder/WriteBuffer.
+**Найдено (по grep):** **94 упоминания `.new().cap(...)` в 30 файлах**, из них:
+- **9 кодовых сайтов в spec_tests/conformance** (затронуто: d38_array_creation.nv, dispatch_receiver_type_vs_name.nv, write_constructors.nv, d372_canonical_new_defaults.nv) — ✅ МИГРИРОВАНО
+- **14 в комментариях/документации std/** (примеры/docstrings в hashmap.nv, queue.nv, set.nv, vec/core.nv, string_builder.nv, write_buffer.nv и т.д.) — НЕ трогаем (история)
+- Остальные в spec_decisions/, docs/plans/, docs/prompts/ (reference/примеры)
 
 **Два шага к D9 «один путь»:**
 1. **Расширить `new(cap int=0)`** на остальные cap-типы: `StringBuilder`, `WriteBuffer`, `HashMap[K,V]`,
@@ -380,6 +382,46 @@ hours/days).
 пути НЕ меняются**). `Duration` остаётся в `duration.nv`.
 
 **Приёмка:** `nova test std/time` зелёный; import-пути неизменны; conformance δ0. Модель: дешёвый агент по карте.
+
+---
+
+## Пункт 14 — комбинаторы `Option`/`Result`: `flat_map` (обе стороны) + `filter` (Option)
+
+**Статус:** ✅ РЕАЛИЗОВАНО этим заходом 2026-07-16 [sonnet, worktree `nova-200p14`]. Research-основание —
+`docs/research/2026-07-16-option-result-combinators.md` (владелец, коммиты `f74cea01c` + `c24c5cae4`).
+
+**Что:** три Nova-body метода в `std/src/prelude/core.nv` (рядом с `map`/`ok_or`/`or`/`map_err`):
+- `fn Option[T] @flat_map[U](flat_map_fn fn(T) -> Option[U]) -> Option[U]`
+- `fn Result[T, E] @flat_map[U](flat_map_fn fn(T) -> Result[U, E]) -> Result[U, E]`
+- `fn Option[T] @filter(pred fn(T) -> bool) -> Option[T]`
+
+**Почему именно эти три (D86-философия отбора, в обратную сторону от ретракта unwrap-twins —
+Пункт `[M-unwrap-twins-retraction]`):** value-fallback у Nova принципиально операторный (`??`/`!!`),
+поэтому в prelude добавляется ТОЛЬКО то, что операторами и `.map`/`match` невыразимо:
+- **`flat_map`** — единственный канонический комбинатор, снимающий вложенность `M[M[U]]` (bind
+  fallible-шагов); `.map` этого не даёт.
+- **`filter`** — единственный способ вернуть `None` из `Some` по предикату без явного `match`.
+- **НЕ добавлены** (тот же класс, что ретрактированные `unwrap_or`/`unwrap_or_else`, выразимы
+  существующими средствами): `or_else` (`?? f()`, `??` эмпирически право-ассоциативен — плоская
+  цепочка `a ?? b ?? c` без вложенности), `unwrap_or[_else]` (уже ретрактированы D86), `map_or[_else]`
+  (`.map(f) ?? d`). Имя **`flat_map`**, не `and_then`/`then` (сиблинг `map`, без булевого багажа
+  `and`/`or`, без коллизии с Promise-`then`/`bool::then`) — решение владельца, зафиксировано в research.
+
+**Спека:** амендмент-нота тем же коммитом — [D26 (08-runtime.md)](../../spec/decisions/08-runtime.md#d26-базовая-stdlib-и-prelude)
+(канонический каталог методов + закрытие «Q-monadic-api» частично) и [D86 (04-effects.md)](../../spec/decisions/04-effects.md#d86-coalesce-оператор--fallback-для-resultoption)
+(cross-ref на философию отбора). Не язык-меняющее (методы над существующими типами, без нового
+синтаксиса/семантики) — но амендмент-нота внесена по конвенции std-API-добавлений.
+
+**Тесты:** `spec_tests/conformance/plan200_14_option_result_flat_map_filter.nv` (13 test-блоков:
+flat_map Some/None/short-circuit/type-changing на Option и Result, filter pass/fail/None,
+композиция `filter().flat_map()`, `?? default` цепочка через `flat_map`).
+
+**Приёмка:** функционально верифицировано min-фикстурой (nova build + запуск, exit 0: flat_map
+Some/None, filter pass/fail, Result short-circuit); conformance-фикстура закоммичена и прогоняется
+авторитетным гейтом интегратора (мега-CU в заходе агента не гонялся — CPU-дисциплина).
+**Остаток приёмки (из согласования владельца):** первый потребитель — `resolve_port` флагмана
+(`env(...).flat_map(|s| s.to_int().ok()).map(|n| n as u16) ?? DEFAULT_PORT`) — мигрировать
+демонстрацией; отдельный мелкий заход.
 
 ---
 

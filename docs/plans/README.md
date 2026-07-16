@@ -26,7 +26,13 @@
   concrete-коллизию чужого типа; новый регистр `type_set_members` для D310 type-set bound в guard'е Plan 164 Ф.3;
   маркер `[M-primitive-receiver-bounded-blanket-dispatch]` закрыт; попутно найден+залогирован
   `[M-i64-clamp-primitive-collision-dispatch]`, отдельное окно).
-- **187** — Ред.5-v2 готова к запуску Ф.MVP-2: ВСЕ внешние гейты сняты (TLS=nova-tls, 173 закрыт, SSE в main); демо = живой Nova-бек, канон показа Docker; предложена Ред.6-пятёрка витринных улучшений.
+  Точечный dispatch-фикс: [196.9 — concrete-vs-concrete на разных примитивах](196.9-primitive-concrete-overload.md)
+  🔧 В РАБОТЕ 2026-07-16 (два CONCRETE `@clamp` на `int`/`f64`, `i64`-ресивер без своего оверлоада тихо мис-диспатчился
+  в `f64` через pattern-bound `match`-биндинг; корень — `f1_expr_inner`'s `ExprKind::Match` не расширял `scope`
+  биндингами арма, из-за чего `check_instance_overload` вообще не видел ресивер → ни диагностики, ни
+  `resolved_callees`; фикс переиспользует `match_arm_bindings` (172.1 АТОМ 2a) — ОДНО окно чинит и диспетч-по-типу
+  (196.7 канал), и честный `[E_UNKNOWN_METHOD]` (177 Ф.3) разом; маркер `[M-primitive-concrete-overload-receiver-dispatch]`).
+- **187** — ✅ Ф.MVP-2 ВЛИТА (2026-07-15/16): живое веб-приложение работает (все легенды/режимы вкл. weather-live HTTPS; typed-serde возвращён; все рантайм/codegen-блокеры закрыты, wedge митигирован bounded-accept → глубина в [Plan 211](211-park-join-research.md)); нагрузочный гейт `examples/flagship/aggregator/loadtest.ps1` (10×, 67 PASS). Остаток: волна 2 — Docker (Linux-пре-гейт → ghcr «одной командой»).
 - **173** ✅ семейство закрыто 2026-07-13 (MultiError D414 + propagation-trace per-fiber + suppressed явным параметром); остаток: п.4 semaphore-cap (P3, опция) + [M-173-trace-not-in-child-error] (P3).
 - **193** ✅ закрыт (std/tls → внешний dep `../nova-tls`, ноль Rust в TLS-пути); хвост — vendored mbedTLS.
 - **198** ✅ Ф.2 REDO ЗАКРЫТ 2026-07-13: корпус мигрирован в spec_tests по D307 (merged-CU 2585 блоков PASS; гейт 468/0+12skip); вечно-красные в fixtures/known_red; остаток Ф.4c = 9 классов компиляторных находок (198-redo-notes).
@@ -36,11 +42,12 @@
 - **200.1** — [скорость `nova test std`](200.1-std-test-speed.md) 📋 согласован 2026-07-13: папочные CU для std-тестов + кеш + профиль медленных; после 196/198.
 - **203** ✅ ЗАКРЫТ 2026-07-13: http = публичная nv-lang/nova-http (root peers, module-path прежний), std самодостаточен; +2 фикса резолвера.
 - **204** ✅ ЗАКРЫТ 2026-07-13 (D420): 03.x уже дал git+semver+lock+резолвер; дельта = [replace]-секция + W_DEP_PATH_NO_RELEASE + lock-семантика (replace не течёт в lock); nova-http на git-форме v0.1.0 с lock в репе.
-- **194** — [модель исполнения контрактов: `#debug` + `--contracts`](194-contract-execution-model.md) ✅ СОГЛАСОВАН 2026-07-14 (сверка против D81/D24/Plan-140): `#unchecked` РЕТРАКТ, `debug_assert`→`#debug assert`, три режима checked|optimized|verified, bounds/overflow=always-on-safety; готов к очереди на реализацию.
-- **206** — [арифметическая политика: 5 исходов из 1 overflow-примитива](206-arithmetic-overflow-policy.md) ✅ ЗАКРЫТ 2026-07-15 (D423): trap-дефолт sized-int + `@overflowing_*` интринсик (Ф.1/Ф.1b) + `.nv`-бланкеты checked/saturating/wrapping на `Ints` (Ф.2) + Duration/Timestamp D317-миграция (Ф.3); conformance 470/0; в main. Остаток 206.1 (`unchecked_*`) — отдельный план.
-- **207** ✅ ЗАКРЫТ 2026-07-15 — [`compare_exchange` возвращает свидетеля](207-atomic-cas-witnessed-value.md) (bool → `Result[(), T]`, D425 amends D168 §1); все 13 CAS-методов (`AtomicI8..I64`/`U8..U64`/`Isize`/`Usize`/`Ptr`/`Bool`/legacy `AtomicInt`); private `@__cas_raw` intrinsic + plain-`.nv` wrapper (без hand-written Result C); codegen-фикс `RUNTIME_DEFINED_TYPES` NamedTuple-схема (emit_c.rs); закрывает `[M-cas-return-witnessed-value]`; conformance 150/0.
+- **194** — [модель исполнения контрактов: `#debug` + `--contracts`](194-contract-execution-model.md) ✅ ЗАКРЫТ 2026-07-15 (Ф.0-Ф.4): `#unchecked` РЕТРАКТ, `debug_assert`→`#debug assert`, два режима checked|optimized (verified тоже удалён), bounds/overflow=always-on-safety, vrange-роутинг через `.nv @index`.
+- **206** — [арифметическая политика: 5 исходов из 1 overflow-примитива](206-arithmetic-overflow-policy.md) ✅ ЗАКРЫТ 2026-07-15 (D423): trap-дефолт sized-int + `@overflowing_*` интринсик (Ф.1/Ф.1b) + `.nv`-бланкеты checked/saturating/wrapping на `Ints` (Ф.2) + Duration/Timestamp D317-миграция (Ф.3); conformance 470/0; в main. Два разных остатка: `@unchecked_*` (отложен владельцем 2026-07-14, живёт внутри самого 206, НЕ отдельный план) и **[206.1](206.1-div-neg-trap.md)** (div/mod/neg trap — отдельный подплан, 📋 ПРЕДЛОЖЕН, P1, не начат: div-by-zero сейчас = неконтролируемый крэш).
+- **207** ✅ ЗАКРЫТ 2026-07-15 — [`compare_exchange` возвращает свидетеля](207-atomic-cas-witnessed-value.md) (bool → `Result[(), T]`, D425 amends D168 §1); все 13 CAS-методов (`AtomicI8..I64`/`U8..U64`/`Isize`/`Usize`/`Ptr`/`Bool`/legacy `AtomicInt`); private `@cmpxchg` intrinsic + plain-`.nv` wrapper (без hand-written Result C); codegen-фикс `RUNTIME_DEFINED_TYPES` NamedTuple-схема (emit_c.rs); закрывает `[M-cas-return-witnessed-value]`; conformance 150/0.
 - **205** — [компрессия из nova_rt → nv-lang/nova-compress](205-compress-out-of-nova-rt.md) 📋 согласован 2026-07-13 (nova_rt = только рантайм; brotli 7МБ уезжает пакетом по школе nova-tls; после гейтов 203).
 - **152.7.2** — [формат-контекст в Display (D419) + интерполяция прямо-в-sink](152.7.2-format-context.md) 🔨 в работе 2026-07-13 (Fmt-протокол, `#`=pretty, str.from уходит из движка интерполяции).
+- **209** — [multi-TU codegen: большой CU → N `.c`-единиц](209-multi-tu-codegen.md) 🚧 P1, Ф.0-Ф.3 влиты (opt-in `NOVA_MULTI_TU=1`, дефолт байт-идентичен off; ~16% на мега-CU замер); Ф.4 (part-size тюнинг)/Ф.5 (DCE-аудит как прожектор скрытых codegen-багов)/Ф.6 (default-on) — запланированы, не начаты.
 - Гейт: conformance (мега-CU 2585 блоков + корпус) **468/0 + 12 SKIP** (2026-07-13); язык-меняющее — только со спек-амендментом в том же слиянии.
 
 ## Схема нумерации
