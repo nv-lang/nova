@@ -690,6 +690,10 @@ fn make_synth_method(
     }
 }
 
+fn make_param_mut(name: &str, ty: TypeRef) -> Param {
+    Param { is_mut: true, ..make_param(name, ty) }
+}
+
 fn make_param(name: &str, ty: TypeRef) -> Param {
     Param {
         name: name.to_string(),
@@ -1010,7 +1014,7 @@ pub fn synthesize_display<Q: DeriveQuery>(
     Ok(make_synth_method(
         &type_decl.name,
         "display",
-        vec![make_param("w", type_ref_named("Fmt"))],
+        vec![make_param_mut("w", type_ref_named("Fmt"))],
         Some(TypeRef::Unit(span_dummy())),
         body,
     ))
@@ -1049,7 +1053,7 @@ pub fn synthesize_debug<Q: DeriveQuery>(
     Ok(make_synth_method(
         &type_decl.name,
         "debug",
-        vec![make_param("w", type_ref_named("Fmt"))],
+        vec![make_param_mut("w", type_ref_named("Fmt"))],
         Some(TypeRef::Unit(span_dummy())),
         body,
     ))
