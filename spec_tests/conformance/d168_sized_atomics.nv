@@ -1,11 +1,14 @@
-// D168 — Sized atomic types: API contract (Plan 103.2, final).
-// Норма (spec/decisions/06-concurrency.md §D168): 12 sized-атомиков с
-// детерминированной шириной (AtomicI8..I64, AtomicU8..U64, Isize/Usize,
-// AtomicBool, AtomicPtr); операции new/load/store/swap/fetch_add/fetch_sub/
-// compare_exchange; value-типы в Nova. Покрытие: репрезентативные ширины —
-// signed I8/I16/I32/I64, unsigned U8/U64, AtomicBool; ширины НЕ схлопываются
-// (u8-атомик держит 255, i8 — 127). Шаблоны сверены с nova_tests/atomics.
-// Один folder-module `spec_tests.conformance`.
+// D168 — Sized atomic types: API contract (Plan 103.2, final; Plan 207
+// 2026-07-16 консолидация имён).
+// Норма (spec/decisions/06-concurrency.md §D168 + Plan-207-амендмент):
+// 11 атомиков с детерминированной шириной (AtomicI8..I64, AtomicU8..U64,
+// AtomicInt/AtomicUint — address-sized, AtomicBool); операции
+// new/load/store/swap/fetch_add/fetch_sub/compare_exchange; value-типы в
+// Nova. AtomicPtr снят (int-proxy дубль без generic [T], Plan 103.7).
+// Покрытие: репрезентативные ширины — signed I8/I16/I32/I64, unsigned
+// U8/U64, AtomicBool; ширины НЕ схлопываются (u8-атомик держит 255, i8 —
+// 127). Шаблоны сверены с nova_tests/atomics. Один folder-module
+// `spec_tests.conformance`.
 module spec_tests.conformance
 
 test "AtomicI32/I16/I8: new/load/store/fetch_add (D168)" {

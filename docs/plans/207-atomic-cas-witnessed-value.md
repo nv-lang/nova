@@ -11,7 +11,7 @@ D-амендмент [D425](../../spec/decisions/06-concurrency.md#d425-cas-во
 
 - **Сигнатура:** как задумано — `Result[(), T]` (Nova unit = `()`, не keyword `unit`).
 - **Лоуэринг — отличается от исходного плана Ф.1:** вместо out-параметра —
-  private `@__cas_raw` extern intrinsic возвращает raw `(ok bool, witness T)`
+  private `@cmpxchg` extern intrinsic возвращает raw `(ok bool, witness T)`
   value-struct напрямую (named-tuple `CasRaw*`, D215); strong/weak делят ОДИН
   intrinsic через явный `weak bool` параметр (не `_MemOrdering`-only suffix
   ambiguity). Публичный `compare_exchange`/`_weak` — plain (non-extern) `.nv`

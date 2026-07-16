@@ -16,7 +16,7 @@
      `PointerErrorLike` heap-ABI для произвольных `(ok,err)`, а генерация
      struct'а компилятором происходит ПОСЛЕ `#include nova_rt.h` — hand-написанная
      C-функция внутри заголовка не может ссылаться на компилятор-сгенерированный
-     тип). Решение: private extern intrinsic (`@__cas_raw`) возвращает raw
+     тип). Решение: private extern intrinsic (`@cmpxchg`) возвращает raw
      `(ok bool, witness T)` value-struct (named-tuple `CasRaw*`, D215,
      `NovaTuple_CasRaw*`), а публичный `compare_exchange`/`_weak` — **plain
      (non-extern) `.nv` fn**, строящий `Ok(())`/`Err(witness)` обычным
@@ -43,12 +43,12 @@
    - `compiler-codegen/nova_rt/sync_primitives.h`: новый блок
      `NovaTuple_CasRaw{I8,I16,I32,I64,U8,U16,U32,U64,Int,Uint,Bool}` (11 struct'ов,
      `Int` разделяют `AtomicIsize`/`AtomicPtr`/legacy `AtomicInt`) + 13
-     `Nova_AtomicX_method___cas_raw` функций (по одной на атомик-тип; strong+weak
+     `Nova_AtomicX_method_cmpxchg` функций (по одной на атомик-тип; strong+weak
      делят один intrinsic через `nova_bool weak` параметр — старые 4
      bool-возвращающие функции на тип УДАЛЕНЫ, не оставлены dead).
    - `std/src/runtime/sync.nv`: 11 `type CasRaw*(ok bool, witness T)`
      (module-private, не export — только для type-checker'а, C-структура
-     живёт в хедере); `extern "nova" fn AtomicX mut @__cas_raw(...)` (private);
+     живёт в хедере); `extern "nova" fn AtomicX mut @cmpxchg(...)` (private);
      `compare_exchange`/`compare_exchange_weak` (все 4 overload-формы × 13
      типов, кроме legacy `AtomicInt` — 1 форма как раньше) — теперь plain `fn`,
      строят `Result[(), T]` из raw-пары.
