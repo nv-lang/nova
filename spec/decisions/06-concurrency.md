@@ -7076,7 +7076,7 @@ loop {
 ### Лоуэринг (codegen)
 
 Публичный `compare_exchange`/`compare_exchange_weak` — **plain (non-extern)
-`.nv` fn** (не intrinsic): вызывает private `@__cas_raw` intrinsic (module-
+`.nv` fn** (не intrinsic): вызывает private `@cmpxchg` intrinsic (module-
 private, не exported), который возвращает raw `(ok bool, witness T)` пару из
 ОДНОГО atomic op (C11 `__atomic_compare_exchange_n`, `weak`-флаг передан
 явным параметром — strong и weak делят один intrinsic), затем строит

@@ -45,7 +45,7 @@ pub(crate) const RUNTIME_DEFINED_TYPES: &[&str] = &[
     "str",
     // Plan 207 [M-cas-return-witnessed-value]: CAS-witness value structs
     // (`NovaTuple_CasRaw*` in sync_primitives.h) — raw (ok, witness) pair
-    // returned by the private `@__cas_raw` intrinsic; the public
+    // returned by the private `@cmpxchg` intrinsic; the public
     // compare_exchange/_weak wrapper (plain .nv fn) builds Result[(), T] from it.
     "CasRawI8", "CasRawI16", "CasRawI32", "CasRawI64",
     "CasRawU8", "CasRawU16", "CasRawU32", "CasRawU64",
