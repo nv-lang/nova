@@ -12,6 +12,7 @@ on:
     paths:
       - "compiler-codegen/src/verify/**"
       - "nova_tests/contracts/**"
+      - "spec_tests/soundness/**"
       - ".github/workflows/contracts-z3.yml"
   push:
     branches: [main]
@@ -60,6 +61,12 @@ jobs:
   # soundness-дыры. Они исполняются в задачах contracts-* выше; этот
   # job — анти-удаление: число guard-тестов не должно убывать.
   # При добавлении нового soundness-теста — поднять порог.
+  #
+  # 2026-07-16: 198 Ф.2 волна-2 (коммит eb792db7b) перенесла KEEP-SPECIAL
+  # soundness-фикстуры nova_tests/* -> spec_tests/soundness/ (folder-module
+  # CU) без перевешивания этого grep-пути (сознательно отложено — см.
+  # docs/plans/198-triage-progress.md). Путь ниже сверен с фактическим
+  # расположением маркера.
   soundness-regression-guard:
     name: contracts / soundness-regression guard
     runs-on: ubuntu-latest
@@ -67,7 +74,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Soundness-regression suite must not shrink
         run: |
-          COUNT=$(grep -rl "SOUNDNESS_REGRESSION" nova_tests/ | wc -l)
+          COUNT=$(grep -rl "SOUNDNESS_REGRESSION" spec_tests/soundness/ | wc -l)
           echo "soundness-regression guard tests: $COUNT"
           MIN=12
           if [ "$COUNT" -lt "$MIN" ]; then
