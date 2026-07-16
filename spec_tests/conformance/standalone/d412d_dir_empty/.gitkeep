@@ -1,0 +1,3 @@
+placeholder — keeps this otherwise-empty directory tracked by git.
+Dot-prefixed name means embed_dir's dot-skip ignores it, so the directory
+resolves to ZERO embedded entries (W_EMBED_DIR_EMPTY, Plan 210 Ф.4 edge case).

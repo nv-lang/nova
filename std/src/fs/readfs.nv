@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/fs/readfs.nv — read-only VFS-протокол над реальной ФС и встроенной
+// папкой (Plan 210 Ф.6б, D323-амендмент).
+//
+// `ReadFs` унифицирует «dev = с диска (live-reload), prod = вшито в бинарь»
+// под ОДНИМ протоколом (Go `embed.FS`+`fs.FS` эргономика). Эффект-АГНОСТИЧЕН
+// (модель io.Read, std/io/core.nv): методы протокола БЕЗ аннотации эффекта —
+// конформер несёт СВОЙ (`DirFs`→`Fs`, `EmbeddedDir`→чистый), всплывающий
+// транзитивно при mono (Q15/D122). Диспатч — mono-only (vtable для
+// effectful-bound'ов нет), поэтому dev/prod-выбор — ветка над двумя
+// mono-инстансами, а не dyn-значение (docs/plans/210-embed-dir.md §6б.1/6б.4).
+//
+// EmbeddedDir конформит ЧЕРЕЗ EXTENSION-МЕТОДЫ (D286/D287): EmbeddedDir живёт
+// в prelude.embed, ЭТИ методы — здесь, в std.fs. Родной Option-API
+// (@get/@has/@paths) не тронут. R1-риск (структурная conformance по
+// generic-bound видит extension-методы) доказан ЗЕЛЁНЫМ тестом в
+// readfs_test.nv — extension-путь подтверждён, wrapper-fallback не понадобился.
+
+module std.fs
+
+import std.io.{IoError, ErrorKind}
+
+// ─── Протокол ───
+
+/// Read-only виртуальная ФС: карта относительный-POSIX-путь → байты.
+/// Ключ — POSIX `/`, case-sensitive, без ведущего `./` (общая конвенция с
+/// `embed_dir`, D412-амендмент §2д).
+#stable(since = "0.1")
+export type ReadFs protocol {
+    // Байты файла по пути. `Err(IoError{NotFound})` — файла нет; прочие
+    // `Err` — реальный сбой I/O (только у эффектных impl'ов). Чистый impl
+    // инфаллибелен, кроме `NotFound`.
+    @read_file(path str) -> Result[[]u8, IoError]
+
+    // Существует ли путь. `Ok(true/false)`; `Err` — не-`NotFound` сбой
+    // (эффектные impl'ы). Имя `@try_exists` (не `@exists` — reserved-квантор;
+    // паритет free-fn `try_exists`, fs.nv).
+    @try_exists(path str) -> Result[bool, IoError]
+}
+
+// ─── EmbeddedDir conformance (extension-методы, D287) ───
+// EmbeddedDir/@get/@has приезжают из prelude (D286) — родной API не трогается.
+
+/// `ReadFs`: байты встроенного файла. Чистый (без эффекта) — `EmbeddedDir`
+/// конформит `ReadFs` как pure conformer (прецедент `BytesReader`/`io.Read`).
+#stable(since = "0.1")
+export fn EmbeddedDir @read_file(path str) -> Result[[]u8, IoError] =>
+    match @get(path) {
+        Some(b) => Ok(b)
+        None    => Err(IoError.new(ErrorKind.NotFound, "read_file"))
+    }
+
+/// `ReadFs`: существование встроенного пути.
+#stable(since = "0.1")
+export fn EmbeddedDir @try_exists(path str) -> Result[bool, IoError] => Ok(@has(path))
+
+// ─── DirFs — обёртка над реальной ФС с корнем-префиксом ───
+
+/// Read-only вид на поддерево реальной ФС с корнем `root`. Все чтения
+/// ограничены поддеревом `root` (защита от escape — зеркалит решение
+/// `embed_dir` D412-амендмент §2и): лексический `..`-escape отвергается,
+/// симлинк-escape ловится `canonicalize`. `value`-тип (иммутабелен, дёшев в
+/// передаче). Главный кейс — dev-режим (live-reload с диска), тогда как prod
+/// = `EmbeddedDir` тем же кодом (§6б.4).
+#stable(since = "0.1")
+export type DirFs value {
+    priv root Path
+}
+
+/// Корень поддерева (обычно `Path.from_str("./frontend")`). Канонизацию НЕ
+/// делаем в кторе — это `Fs`-эффект, а ктор держим чистым; проверка escape —
+/// на каждом чтении (root мог не существовать в момент конструирования — dev).
+#stable(since = "0.1")
+export fn DirFs.new(root Path) -> DirFs => { root }
+
+// Компонент-граничная prefix-проверка: `full` равен `root` ИЛИ начинается с
+// `root` + разделитель НА ГРАНИЦЕ КОМПОНЕНТА (не голый str-prefix: "/a/b" vs
+// "/a/bc" — §6б.3/§9.2 ревью-3). Проверяем ОБА возможных разделителя байтами
+// строки (не canonical_sep(style)): `canonicalize` под `mock_fs` всегда
+// возвращает POSIX-ключи независимо от host-style-тега на `Path`
+// (`Path.from_bytes` тегирует host-стилем байты как есть, mock.nv:98 —
+// `mem_key` форсит Posix на сырых байтах), тогда как реальный диск на
+// Windows отдаёт `\`. Строковая граница по обоим байтам покрывает оба случая
+// без привязки к (потенциально несовпадающему) style-тегу.
+fn boundary_ok(root str, full str) -> bool {
+    if full == root { return true }
+    if !full.starts_with(root) { return false }
+    ro rest = full[root.byte_len()..full.byte_len()]
+    rest.starts_with("/") || rest.starts_with("\\")
+}
+
+/// Разрешить ключ запроса в ОГРАНИЧЕННЫЙ корнем абсолютный путь, или `Err`.
+/// Инвариант «результат всегда внутри `realpath(root)`»:
+///   1) лексически: `normalize` (схлопнуть `.`/`..`); отвергнуть абсолютный и
+///      сохранившийся ведущий `..` (относительный путь может унести `..`
+///      вверх — path.nv `@normalize`);
+///   2) симлинк-hard: `canonicalize(root)` и `canonicalize(join)` → требуем
+///      component-граничный префикс (симлинк внутри дерева, указывающий
+///      наружу, отсекается — realpath его резолвит).
+/// `canonicalize` `NotFound` на несуществующем пробрасывается как `NotFound`
+/// (→ 404 у потребителя).
+fn DirFs @resolve(path str) Fs -> Result[Path, IoError] {
+    ro rel = Path.posix(path).normalize()
+    if rel.is_absolute() {
+        return Err(IoError.new(ErrorKind.PermissionDenied, "read_file"))
+    }
+    ro comps = rel.components()
+    if comps.len() > 0 && comps[0] == ".." {          // escape над корнем
+        return Err(IoError.new(ErrorKind.PermissionDenied, "read_file"))
+    }
+    ro joined = @root.join_path(rel)
+    ro croot = match canonicalize(@root)  { Ok(p) => p, Err(e) => return Err(e) }
+    ro cfull = match canonicalize(joined) { Ok(p) => p, Err(e) => return Err(e) }
+    match (croot.to_str(), cfull.to_str()) {
+        (Some(r), Some(f)) =>
+            if boundary_ok(r, f) { Ok(cfull) }
+            else { Err(IoError.new(ErrorKind.PermissionDenied, "read_file")) }
+        _ => Err(IoError.new(ErrorKind.InvalidData, "read_file"))
+    }
+}
+
+/// `ReadFs`: байты файла (эффект `Fs` — всплывает при mono; протокол его НЕ
+/// объявляет).
+#stable(since = "0.1")
+export fn DirFs @read_file(path str) Fs -> Result[[]u8, IoError] {
+    match @resolve(path) { Ok(p) => read(p), Err(e) => Err(e) }
+}
+
+/// `ReadFs`: существование (NotFound-escape → `Ok(false)`, прочее — `Err`).
+#stable(since = "0.1")
+export fn DirFs @try_exists(path str) Fs -> Result[bool, IoError] {
+    match @resolve(path) {
+        Ok(p)  => try_exists(p)
+        Err(e) => match e.kind { ErrorKind.NotFound => Ok(false), _ => Err(e) }
+    }
+}

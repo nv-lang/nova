@@ -133,6 +133,26 @@ formatting, D258/D374). Merging them would import text semantics into byte I/O �
 the exact confusion Java's `Writer` vs `OutputStream` split exists to avoid. The
 bridge is the explicit `write_str(w, s)`.
 
+### `ReadFs` — one VFS protocol over the disk and an embedded directory
+
+`ReadFs` (`std.fs`, D323 amendment, Plan 210 Ф.6б) is a read-only virtual
+filesystem — `@read_file(path) -> Result[[]u8, IoError]` +
+`@try_exists(path) -> Result[bool, IoError]` — conformed by **`DirFs`** (a
+root-scoped view over the real disk, `Fs` effect) and by **`EmbeddedDir`**
+(the `embed_dir("dir")` result, pure). The classic "dev serves from disk with
+live-reload, prod serves the binary-embedded copy" case becomes one generic
+function, `fn serve[F ReadFs](assets F, ...)`, mono'd twice — no runtime `dyn`
+switch, because Nova has no effectful-vtable dispatch (D122 amendment) to carry
+`DirFs`'s `Fs` effect through an existential `ReadFs` value. The branch between
+`DirFs`/`EmbeddedDir` lives at the call site (which mono to instantiate), not
+in a variable. `EmbeddedDir`'s conformance is an **extension method** (D287,
+declared in `std.fs`, not in `EmbeddedDir`'s home module `prelude.embed`) —
+structural conformance through a generic `[F ReadFs]` bound sees it exactly
+like an inherent one (`std/src/fs/readfs_test.nv`). `list`/directory-index is
+deliberately **not** in the protocol (a real-FS scan is effectful, expensive,
+and non-deterministic where the embedded side is free and stable) — see
+[`docs/plans/210-embed-dir.md`](plans/210-embed-dir.md) §6б for the full design.
+
 ## Cross-language comparison (7 languages)
 
 | Aspect | Go | Rust | TS/Node | Kotlin | Java | Zig | Swift |

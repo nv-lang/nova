@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_EMBED_OUTSIDE_PROJECT
+//
+// D412-амендмент (Plan 210, `embed_dir("dir")`) — NEG.
+// Путь выше корня проекта — запрещено (симметрично одиночному `embed`).
+// Спека: spec/decisions/03-syntax.md D412-амендмент («Выход наружу
+// (папка ИЛИ любой обойдённый файл) — E_EMBED_OUTSIDE_PROJECT»).
+
+module neg.d412d_dir_escape_neg
+
+fn d412d_escape() -> int {
+    // Достаточно `..`-сегментов, чтобы гарантированно выйти за пределы
+    // package/project root независимо от глубины чекаута.
+    ro d = embed_dir("../../../../../../../../../../../..")   // ✗ вне проекта — E_EMBED_OUTSIDE_PROJECT
+    d.len()
+}

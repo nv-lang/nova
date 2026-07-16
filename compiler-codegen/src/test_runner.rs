@@ -3842,19 +3842,25 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_mod
     // Plan 186 (D412): `embed("path")` → HexBlobLit. После import-inline
     // (пути peer-файлов известны через span.file_id → peer_files), ДО
     // type-check — чекер никогда не видит вызов неизвестной fn `embed`.
-    {
+    // Plan 210: `embed_dir("dir")` resolves alongside it; its W_EMBED_DIR_*
+    // warnings are captured here and merged into `lint_warnings` below
+    // (this is the ONLY channel `nova test`'s EXPECT_COMPILE_WARNING
+    // matcher reads — see doc-comment above `codegen_to_c`).
+    let embed_dir_warnings: Vec<crate::lints::LintWarning> = {
         let _t = crate::perf_timer::PerfTimer::new("embed-resolve");
         let project_root = find_repo_root_from(path)
             .unwrap_or_else(|| path.parent().map(|p| p.to_path_buf()).unwrap_or_default());
-        if let Err(diags) = crate::embed_resolve::resolve_embeds(&mut module, path, &project_root)
-        {
-            return Err(diags
-                .iter()
-                .map(|d| d.render_with_map(&source_map))
-                .collect::<Vec<_>>()
-                .join("\n"));
+        match crate::embed_resolve::resolve_embeds(&mut module, path, &project_root) {
+            Ok((_files, warns)) => warns,
+            Err(diags) => {
+                return Err(diags
+                    .iter()
+                    .map(|d| d.render_with_map(&source_map))
+                    .collect::<Vec<_>>()
+                    .join("\n"));
+            }
         }
-    }
+    };
 
     // Plan 180: inject SERDE synthesized methods (`#impl(Serialize/Deserialize)`)
     // BEFORE numbering + type-check so their bodies are type-checked + annotated
@@ -3921,6 +3927,12 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_mod
             .map(|w| w.diag.render_with_map(&source_map))
             .collect()
     };
+    // Plan 210: embed_dir's W_EMBED_DIR_* (captured earlier, before this
+    // pipeline point) join the same lint_warnings stream — this is what
+    // `EXPECT_COMPILE_WARNING` matches against (§9.1 warning-канал fix).
+    for w in &embed_dir_warnings {
+        lint_warnings.push(w.diag.render_with_map(&source_map));
+    }
     // Ф.7.4 (Plan 33.6): verify-warnings (W2401/W2402) тоже dispatch'им в lint stream.
     // Plan 140 Ф.3: proven contracts уже получены через `module_env` выше
     // (check_module → VerificationPipeline). Этот вызов остаётся ТОЛЬКО ради

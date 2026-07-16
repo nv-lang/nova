@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_EMBED_DIR_NOT_FOUND
+//
+// D412-амендмент (Plan 210, `embed_dir("dir")`) — NEG.
+// Несуществующая папка — ошибка КОМПИЛЯЦИИ. Спека:
+// spec/decisions/03-syntax.md D412-амендмент («Папка не найдена —
+// E_EMBED_DIR_NOT_FOUND»).
+
+module neg.d412d_dir_not_found_neg
+
+fn d412d_missing_dir() -> int {
+    ro d = embed_dir("no_such_dir_d412d")   // ✗ папки нет — E_EMBED_DIR_NOT_FOUND
+    d.len()
+}

@@ -6863,6 +6863,58 @@ fn File consume @close() Fs -> Result[(), IoError]   // ЕДИНСТВЕННАЯ
 4. **`IoError.path`/`source`** (§3b full-shape) — отложены: io↔path module-cycle + value-`Option[Path]`-mono
    blast-radius на io-core baseline; `kind`(NotFound/…) сохранён (все тесты/§8.3 на нём). Followup.
 
+### Амендмент D323 (2026-07-16, Plan 210 Ф.6б): `ReadFs` — read-only VFS-протокол
+
+**Решение.** `ReadFs` (`std/src/fs/readfs.nv`) — read-only виртуальная ФС, объединяющая
+чтение из реальной ФС (`DirFs`) и из вшитой папки (`EmbeddedDir`, D412-амендмент, `03-syntax.md`)
+под ОДНИМ generic-bound. Главный кейс: статика веб-сервера «dev = с диска (live-reload),
+prod = embedded» — один и тот же generic-код `fn serve[F ReadFs](assets F, ...)`, мономорфизуемый
+дважды.
+
+**Протокол эффект-АГНОСТИЧЕН** (модель `io.Read`, тот же D322): методы объявлены БЕЗ аннотации
+эффекта — конформер несёт СВОЙ (`DirFs` → `Fs`, `EmbeddedDir` → чистый), всплывающий транзитивно
+при mono (Q15). Subsumption эффектов не нужен — протокол никогда не объявляет `Fs`, поэтому
+ситуации «impl имеет МЕНЬШЕ эффектов, чем протокол» не возникает.
+
+```nova
+export type ReadFs protocol {
+    @read_file(path str) -> Result[[]u8, IoError]
+    @try_exists(path str) -> Result[bool, IoError]
+}
+```
+
+- `@read_file` — `Err(IoError{NotFound})` = файла нет; прочие `Err` — реальный I/O-сбой (только
+  эффектные impl). `@try_exists` — паритет free-fn `try_exists` (`@exists` недоступно: reserved-квантор).
+  Ключ — POSIX `/`, case-sensitive, без ведущего `./` (конвенция `embed_dir`).
+- `list`/directory-index **вне протокола**: у реальной ФС обход дорог (`Fs`-эффект),
+  недетерминирован между вызовами (dev live-reload) и выводит наружу symlink/dot-ловушки; у
+  `EmbeddedDir` — дёшево, но дробление протокола («минимальный протокол», как `io.Read`/`io.Write`/
+  `io.Seek`) не платит обходом там, где нужно только чтение. Future — отдельный `ListFs`.
+- **`EmbeddedDir` конформит EXTENSION-методами** (D287): `@read_file`/`@try_exists` объявлены в
+  `std.fs` (не в `EmbeddedDir`'s home-модуле `prelude.embed`); родной Option-API (`@get`/`@has`/
+  `@paths`) не тронут. **Эмпирически подтверждено** (`std/src/fs/readfs_test.nv`): структурная
+  conformance по generic-bound `[F ReadFs]` видит extension-метод НАРАВНЕ с inherent — wrapper-
+  newtype fallback (предусмотренный на случай провала) не понадобился.
+- **`DirFs { priv root Path }`** — read-only вид на поддерево реальной ФС с корнем `root`.
+  `DirFs.new(root)` — чистый конструктор (канонизация root — НЕ в кторе, это `Fs`-эффект; root
+  может не существовать в момент конструирования — dev). Чтения ограничены `realpath(root)`:
+  (1) лексически — `Path.normalize()` отвергает абсолютный путь и сохранившийся ведущий `..`;
+  (2) symlink-hard — `canonicalize(root)`/`canonicalize(join)` + component-граничная prefix-
+  проверка (строковая граница по ОБОИМ разделителям `/`/`\`, не единственному `canonical_sep`:
+  `canonicalize` под `mock_fs` всегда отдаёт POSIX-ключи независимо от host-style-тега на `Path`,
+  тогда как реальный диск на Windows — `\`). Нарушение → `PermissionDenied`; отсутствующий файл
+  (после успешного лексического/symlink-чека) → `NotFound` от `canonicalize`/`read`, транзитом
+  наружу.
+- **`DirFs`/`EmbeddedDir` дают ОДИН и тот же ключ на один и тот же относительный путь** (dev==prod
+  паритет путей, конвенция с `embed_dir`).
+- **dev/prod-выбор — ветка на точке инстанциации, НЕ dyn-значение**: effectful-vtable-dispatch не
+  поддержан (D122-амендмент выше) — существential `ReadFs` с эффектным методом (`DirFs.read_file`
+  несёт `Fs`) потребовал бы vtable, которого нет. `if dev_mode { serve(mut mux, DirFs.new(...)) }
+  else { serve(mut mux, embed_dir("...")) }` — один `if` мономорфизует `serve` дважды.
+
+**Аддитивно, НЕ язык-меняюще**: `ReadFs` — ещё один std-протокол поверх готовой structural-protocol
++ mono-dispatch машины (та же, что несёт `io.Read`); новых языковых конструкций нет.
+
 ## D324 — os: `Os` effect (env / args / cwd / dirs / process) (Plan 176 Ф.3, 2026-07-06)
 
 **Статус:** IMPLEMENTED (Ф.3). Модуль `std/os`. Тот же паттерн, что `Fs` (D323): тонкий int/str-primitive

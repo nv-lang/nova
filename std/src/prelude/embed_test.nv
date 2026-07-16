@@ -1,0 +1,110 @@
+// std/prelude/embed_test.nv — публичный контракт EmbeddedDir/EmbeddedEntry.
+// Plan 210 (D412-амендмент). Ручная конструкция через `EmbeddedDir.new` —
+// доказывает тип ДО того, как резолвер (`embed_resolve.rs`) умеет его
+// синтезировать (Ф.1 не зависит от компилятора).
+//
+// Байтовые ожидаемые значения биндятся через явно аннотированные `ro ... []u8`
+// (а не голый `[1, 2, 3]` внутри `Some(...)`/`==`) — untyped array-литерал
+// внутри `Some(...)` инферится по умолчанию как `Vec[int]`, не `Vec[u8]`
+// (мономорфизация тогда даёт C-type mismatch на сравнении с `Option[[]u8]`
+// из `@get`). Явная `[]u8`-аннотация на let-биндинге снимает двусмысленность.
+
+module prelude.embed_test
+
+test "get/paths/len/has — happy path (3 отсортированных entries)" {
+    ro app_js []u8 = [1, 2, 3]
+    ro index_html []u8 = [4, 5]
+    ro style_css []u8 = [6]
+    ro d = EmbeddedDir.new([
+        EmbeddedEntry { path: "app.js", data: app_js },
+        EmbeddedEntry { path: "index.html", data: index_html },
+        EmbeddedEntry { path: "style.css", data: style_css },
+    ])
+
+    assert(d.len() == 3)
+    assert(d.paths() == ["app.js", "index.html", "style.css"])
+
+    assert(d.has("app.js"))
+    assert(d.has("index.html"))
+    assert(d.has("style.css"))
+    assert(!d.has("missing.txt"))
+
+    assert(d.get("app.js") == Some(app_js))
+    assert(d.get("index.html") == Some(index_html))
+    assert(d.get("style.css") == Some(style_css))
+    assert(d.get("missing.txt") == None)
+}
+
+test "get — бинарный поиск на границах (first/last/middle/before/after)" {
+    ro a []u8 = [1]
+    ro m []u8 = [2]
+    ro z []u8 = [3]
+    ro d = EmbeddedDir.new([
+        EmbeddedEntry { path: "a", data: a },
+        EmbeddedEntry { path: "m", data: m },
+        EmbeddedEntry { path: "z", data: z },
+    ])
+
+    assert(d.get("a") == Some(a))   // first
+    assert(d.get("m") == Some(m))   // middle
+    assert(d.get("z") == Some(z))   // last
+    assert(d.get("0") == None)      // до первого (байтовый порядок)
+    assert(d.get("zz") == None)     // после последнего
+    assert(d.get("b") == None)      // между записями
+}
+
+test "empty EmbeddedDir — len/paths/get/has на пустом каталоге" {
+    ro d = EmbeddedDir.new([])
+    assert(d.len() == 0)
+    assert(d.paths() == [])
+    assert(!d.has("x"))
+    assert(d.get("x") == None)
+}
+
+test "entries() — ro-итерация пар path/data" {
+    ro a_bytes []u8 = [9]
+    ro b_bytes []u8 = [8]
+    ro d = EmbeddedDir.new([
+        EmbeddedEntry { path: "a.txt", data: a_bytes },
+        EmbeddedEntry { path: "b.txt", data: b_bytes },
+    ])
+    ro pairs = d.entries()
+    assert(pairs.len() == 2)
+    assert(pairs[0].path == "a.txt")
+    assert(pairs[0].data == a_bytes)
+    assert(pairs[1].path == "b.txt")
+    assert(pairs[1].data == b_bytes)
+}
+
+test "EmbeddedDir.new — защитная копия: мутация исходного вектора после new не влияет на dir" {
+    ro a_bytes []u8 = [1]
+    ro b_bytes []u8 = [2]
+    ro z_bytes []u8 = [9]
+    mut src []EmbeddedEntry = [
+        EmbeddedEntry { path: "a", data: a_bytes },
+        EmbeddedEntry { path: "b", data: b_bytes },
+    ]
+    ro d = EmbeddedDir.new(src)
+    src.push(EmbeddedEntry { path: "z", data: z_bytes })   // мутация ПОСЛЕ new
+    assert(d.len() == 2)                                    // dir не видит push
+    assert(d.paths() == ["a", "b"])
+    assert(!d.has("z"))
+}
+
+test "EmbeddedDir.new panics on unsorted entries" panics "sorted" {
+    ro one []u8 = [1]
+    ro two []u8 = [2]
+    EmbeddedDir.new([
+        EmbeddedEntry { path: "z", data: one },
+        EmbeddedEntry { path: "a", data: two },
+    ])
+}
+
+test "EmbeddedDir.new panics on duplicate path (сортировка требует уникальности)" panics "sorted" {
+    ro one []u8 = [1]
+    ro two []u8 = [2]
+    EmbeddedDir.new([
+        EmbeddedEntry { path: "dup", data: one },
+        EmbeddedEntry { path: "dup", data: two },
+    ])
+}

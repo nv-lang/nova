@@ -1,0 +1,96 @@
+// std/prelude/embed.nv — file-based source of truth для prelude-типа
+// `EmbeddedDir`/`EmbeddedEntry`. Plan 210 (D412-амендмент): `embed_dir("dir")`
+// — компайл-тайм интринсик, вшивающий ВСЮ папку (рекурсивно) в бинарь.
+//
+// `embed_dir("dir")` резолвер (`compiler-codegen/src/embed_resolve.rs`,
+// `try_replace_embed_dir`) переписывает вызов В КОМПАЙЛ-ТАЙМ в
+// `EmbeddedDir.new([EmbeddedEntry{path:"…", data: x"…"}, …])` (отсортировано
+// по path). Оба типа обязаны быть prelude-видимы — синтезированный код
+// ссылается на них по имени (см. std/prelude.nv re-export).
+//
+// Payload'ы (`data`) материализуются через существующую `HexBlobLit`-арм
+// (`emit_c.rs` 28579) — zero-copy вид над `static const uint8_t
+// nova_blob_*[]` (.rodata), БЕЗ копии. Эта декларация НЕ меняет emit_c —
+// `EmbeddedDir.new`/`@get`/`@paths`/`@len`/`@has`/`@entries` — обычные
+// Nova-методы (static dispatch), типы выводятся штатно.
+
+module prelude.embed
+
+/// Одна встроенная запись: относительный POSIX-путь + байты файла (zero-copy
+/// вид над static rodata). Конструируется ТОЛЬКО компилятором (`embed_dir`) —
+/// сам по себе инвариантов не несёт, поле публично.
+#stable(since = "0.1")
+export type EmbeddedEntry {
+    path str      // относительный POSIX-путь от embed-корня, case-sensitive
+    data []u8     // содержимое файла, нулевая копия (вид над .rodata)
+}
+
+/// Иммутабельная встроенная папка: карта путь→байты. Записи отсортированы по
+/// `path` (инвариант охраняет `EmbeddedDir.new` + priv-поле — D412-амендмент
+/// Plan 210). Нулевая копия payload'ов.
+#stable(since = "0.1")
+export type EmbeddedDir {
+    priv entries []EmbeddedEntry   // ОТСОРТИРОВАНЫ по path (бинарный поиск); priv (D281) —
+                                   // извне только через EmbeddedDir.new → инвариант ненарушим
+}
+
+/// Единственный публичный конструктор (его же синтезирует `embed_dir`).
+/// Конвенция «конструкторы = Type.new» (прецедент `Vec.new`).
+/// Требует отсортированность по `path` (UTF-8 bytewise == порядок `str.compare`);
+/// verify за O(N), нарушение → panic (честная ошибка, не тихий None в get).
+/// Хранит ЗАЩИТНУЮ мелкую копию входа (loop-push тех же указателей на записи, НЕ
+/// `.clone()` — тот требует `T Clone`-bound, ненужный EmbeddedEntry) —
+/// пост-конструкционная мутация исходного вектора вызывающим не ломает инвариант
+/// (сами записи иммутабельны: поля EmbeddedEntry объявлены без `mut`).
+/// Публичность НАМЕРЕННА: легально строить СВОЙ (не встроенный) каталог в
+/// тестах/моках — инвариант всё равно охраняется verify.
+export fn EmbeddedDir.new(entries []EmbeddedEntry) -> Self {
+    mut i = 1
+    while i < entries.len() {
+        if entries[i - 1].path.compare(entries[i].path) >= 0 {
+            panic("EmbeddedDir.new: entries must be sorted by path, unique")
+        }
+        i = i + 1
+    }
+    mut own []EmbeddedEntry = []        // защитная мелкая копия (алиас-защита)
+    for e in entries { own.push(e) }
+    Self { entries: own }
+}
+
+/// Число встроенных файлов.
+export fn EmbeddedDir @len() -> int => @entries.len()
+
+/// Все встроенные пути (в детерминированном отсортированном порядке).
+export fn EmbeddedDir @paths() -> []str {
+    mut ps []str = []
+    for e in @entries { ps.push(e.path) }
+    ps
+}
+
+/// Есть ли файл по пути.
+export fn EmbeddedDir @has(path str) -> bool => @get(path).is_some()
+
+/// Итерация пар (path, data) без двойного lookup — явный property-read
+/// priv-поля (прецедент `Vec @ptr()`). Возврат `ro` — read-only view (L2,
+/// прецедент `str @bytes() -> ro []u8`): мутация результата = compile
+/// error → инвариант не разъедается через выходной алиас.
+export fn EmbeddedDir @entries() -> ro []EmbeddedEntry => @entries
+
+/// Байты файла по пути, `None` если нет. Бинарный поиск по отсортированным
+/// entries (O(log N)); опирается на sorted-инвариант. Ключ — точная
+/// байтовая форма: без ведущего `./`, `..` не нормализуется — `get("./app.js")`
+/// честно даёт None. Данные — вид над .rodata: НЕ мутировать
+/// (см. [M-d412-blob-view-mut-write], унаследовано от D412); для мутации —
+/// `.clone()`.
+export fn EmbeddedDir @get(path str) -> Option[[]u8] {
+    mut lo = 0
+    mut hi = @entries.len()
+    while lo < hi {
+        ro mid = lo + (hi - lo) / 2
+        ro e = @entries[mid]                // одно чтение на итерацию
+        ro c = e.path.compare(path)         // str.compare (D178), <0/0/>0
+        if c == 0 { return Some(e.data) }
+        if c < 0 { lo = mid + 1 } else { hi = mid }
+    }
+    None
+}

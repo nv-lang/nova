@@ -245,14 +245,23 @@ fn resolve_embeds_or_err(
 ) -> Result<()> {
     let root = nova_codegen::test_runner::find_repo_root_from(path)
         .unwrap_or_else(|| path.parent().map(|p| p.to_path_buf()).unwrap_or_default());
-    nova_codegen::embed_resolve::resolve_embeds(module, path, &root).map_err(|diags| {
-        let messages: Vec<String> = diags
-            .iter()
-            .map(|d| d.render(src, &path.to_string_lossy()))
-            .collect();
-        anyhow!("{}", messages.join("
+    let (_files, warnings) =
+        nova_codegen::embed_resolve::resolve_embeds(module, path, &root).map_err(|diags| {
+            let messages: Vec<String> = diags
+                .iter()
+                .map(|d| d.render(src, &path.to_string_lossy()))
+                .collect();
+            anyhow!("{}", messages.join("
 "))
-    })?;
+        })?;
+    // Plan 210: embed_dir's W_EMBED_DIR_* warning channel — this internal
+    // dev binary (nova-codegen check/compile) has no structured
+    // warnings-array like nova-cli's CheckResult, so print directly
+    // (mirrors the Rev1Deprecated `eprintln!("warning: {}", msg)` pattern
+    // already used elsewhere in this codebase, e.g. test_runner.rs:3775).
+    for w in &warnings {
+        eprintln!("warning: {} [{}]", w.diag.message, w.rule);
+    }
     Ok(())
 }
 
