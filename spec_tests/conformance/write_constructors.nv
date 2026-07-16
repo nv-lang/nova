@@ -16,13 +16,13 @@ test "new — пустой, capacity >= 16" {
 // ── new().cap(n) ───────────────────────────────────────────────────
 
 test "new().cap(0) — валиден, len 0" {
-    mut wb = WriteBuffer.new().cap(0)
+    mut wb = WriteBuffer.new(cap: 0)
     assert(wb.len() == 0)
     assert(wb.cap() >= 0)
 }
 
 test "new().cap(256) — capacity >= 256" {
-    mut wb = WriteBuffer.new().cap(256)
+    mut wb = WriteBuffer.new(cap: 256)
     assert(wb.len() == 0)
     assert(wb.cap() >= 256)
 }
@@ -68,7 +68,7 @@ test "len растёт с каждым write" {
 // ── @capacity ──────────────────────────────────────────────────────
 
 test "capacity >= len, растёт при переполнении" {
-    mut wb = WriteBuffer.new().cap(4)
+    mut wb = WriteBuffer.new(cap: 4)
     wb.write_u64_le(0)             // 8 байт > cap 4
     assert(wb.len() == 8)
     assert(wb.cap() >= 8)

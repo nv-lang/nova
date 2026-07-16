@@ -112,11 +112,13 @@ D262 и весь std + conformance). Требует отдельного реш�
 
 ## Пункт 4 — полная миграция на `.new(cap int=0)` (D9 «один путь») — НАЙДЕНО 94 сайта
 
-**Статус:** ✅ СОГЛАСОВАНО 2026-07-12, В РАБОТЕ [sonnet, фон] (владелец: «сделай в фоне, не останавливаясь»).
+**Статус:** 🔧 В РАБОТЕ [haiku, локально] — мигрировано 9/9 кодовых сайтов в spec_tests/conformance (2026-07-16).
 **Не блокер** (chain `.new().cap(n)` легален по D372-amend2), приводим к единой канонической форме.
 
-**Найдено:** **94× `.new().cap(...)` в 42 файлах** (std/tests/conformance). НЕ все Vec — много HashMap(13)/
-Set/Queue/StringBuilder/WriteBuffer.
+**Найдено (по grep):** **94 упоминания `.new().cap(...)` в 30 файлах**, из них:
+- **9 кодовых сайтов в spec_tests/conformance** (затронуто: d38_array_creation.nv, dispatch_receiver_type_vs_name.nv, write_constructors.nv, d372_canonical_new_defaults.nv) — ✅ МИГРИРОВАНО
+- **14 в комментариях/документации std/** (примеры/docstrings в hashmap.nv, queue.nv, set.nv, vec/core.nv, string_builder.nv, write_buffer.nv и т.д.) — НЕ трогаем (история)
+- Остальные в spec_decisions/, docs/plans/, docs/prompts/ (reference/примеры)
 
 **Два шага к D9 «один путь»:**
 1. **Расширить `new(cap int=0)`** на остальные cap-типы: `StringBuilder`, `WriteBuffer`, `HashMap[K,V]`,

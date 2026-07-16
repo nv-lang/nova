@@ -23,7 +23,7 @@ test "[]u8.new().cap(n) chained dispatches to the array's cap, not a same-name t
     // `[]u8.new()` infers to the legacy `NovaArray_nova_byte` C-type; the
     // chained `.cap(4)` must set the Vec/array capacity, not route to
     // CapWidget's getter.
-    mut b []u8 = []u8.new().cap(4)
+    mut b []u8 = []u8.new(cap: 4)
     b.push(1)
     b.push(2)
     b.push(3)
@@ -39,8 +39,7 @@ test "[]u8.new().cap(n) chained dispatches to the array's cap, not a same-name t
 test "untyped-local array constructor + cap setter dispatches by receiver type" {
     // `mut c = []u8.new()` gives `c` the NovaArray spelling too; the later
     // `.cap(n)` / `.push` / `.len` must all dispatch on that receiver type.
-    mut c = []u8.new()
-    c.cap(8)
+    mut c = []u8.new(cap: 8)
     c.push(7)
     assert(c.len() == 1)
     assert(c.cap() >= 8)

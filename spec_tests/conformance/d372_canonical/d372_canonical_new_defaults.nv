@@ -38,8 +38,7 @@ test "[]T.new() возвращает empty array; push после new работ
 }
 
 test "[]T.new().cap(n) — empty (len 0) с pre-allocated capacity (D372 amend)" {
-    mut a []int = []int.new()
-    a.cap(8)
+    mut a []int = []int.new(cap: 8)
     assert(a.len() == 0)
     a.push(42)
     assert(a.len() == 1)
