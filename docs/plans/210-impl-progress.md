@@ -89,3 +89,53 @@
   Ф.2-списке кодов top-level задания. Оставлено как есть (текущее поведение:
   `embed_dir(".")` резолвится и работает как обычный каталог — НЕ запрещено явно).
   Не блокер (не в объёме §4.3).
+
+## Ф.6(б) — ReadFs (VFS-унификация, 2026-07-16, sonnet, отдельная волна)
+
+- **R1 (главный риск §6б.7) — ЗЕЛЁНЫЙ эмпирически, ПЕРВОЙ ФАЗОЙ по указанию задания.**
+  Написан `std/src/fs/readfs.nv` (`ReadFs` протокол + `EmbeddedDir`-extension-методы +
+  `DirFs`) целиком (нужен независимо от исхода R1 — только conformance-путь EmbeddedDir
+  мог бы измениться), затем `std/src/fs/readfs_test.nv` с двумя R1-тестами
+  (`[F ReadFs]`-generic над `EmbeddedDir` и над `DirFs`). `nova check`/`nova test`
+  (обычный и `--strict-effects`) — PASS: структурная conformance по generic-bound
+  видит EXTENSION-метод `EmbeddedDir @read_file`/`@try_exists` (объявлен в `std.fs`,
+  НЕ в родном `prelude.embed`) наравне с inherent. **Вывод: extension-путь, БЕЗ
+  wrapper-newtype `EmbeddedFs`** (fallback из дизайна не понадобился).
+- **Файлы:** `std/src/fs/readfs.nv` (протокол `ReadFs` + `EmbeddedDir @read_file`/
+  `@try_exists` extension + `DirFs`/`DirFs.new`/`@resolve`(priv)/`@read_file`/
+  `@try_exists`), `std/src/fs/readfs_test.nv` (9 тестов).
+- **Гейт:** `nova check std/src/fs/readfs.nv std/src/fs/readfs_test.nv` — 2/2 PASS
+  (тот же систематический "unused import"-шум, что и на любом файле fs-модуля —
+  подтверждено сверкой на нетронутом `fs.nv`, не регрессия). `nova test
+  std/src/fs/readfs_test.nv` — PASS (9/9 test-блоков, включая `--strict-effects`
+  на обеих командах).
+- **Отклонение от дизайн-черновика (§6б.3):** `DirFs @resolve`'ская prefix-проверка
+  реализована как component-граничная строковая проверка по ОБОИМ разделителям
+  (`rest.starts_with("/") || rest.starts_with("\\")`), а НЕ буквальный
+  `f.starts_with(r + "/")` из черновика. Причина: `canonicalize` под `mock_fs`
+  (`std/src/fs/mock.nv:97-100`, `mem_key`) всегда возвращает POSIX-ключи независимо
+  от host-style-тега на возвращаемом `Path` (`Path.from_bytes` тегирует host-стилем
+  байты КАК ЕСТЬ — на этом (Windows) хосте тег будет `Windows`, но фактические байты
+  от mock — с `/`), тогда как реальный диск на Windows отдаёт `\`. Черновик сам
+  оставлял выбор реализации открытым (§9.2 ревью-3 п.2: «либо этот guard, либо
+  сравнение `@components()`») — выбрана строковая граница по обоим байтам как более
+  простая и одинаково переносимая на mock/реальный диск, без привязки к
+  (потенциально не совпадающему с фактическими байтами) style-тегу.
+- **Спека:** D323-амендмент дописан в конец секции D323 (`spec/decisions/04-effects.md`,
+  перед D324) — протокол `ReadFs`, `DirFs`, extension-conformance `EmbeddedDir`, dev/prod-
+  выбор веткой на инстанциации. `docs/io-fs.md` — абзац «`ReadFs` — one VFS protocol over
+  the disk and an embedded directory» в разделе Protocols vs the text sink. Одна строка
+  «См. также» в D412-амендменте (`spec/decisions/03-syntax.md`), ссылающаяся на D323-
+  амендмент.
+- **НЕ реализовано этой волной (по плану, опционально):** Ф.6б.4 — флагман-потребитель
+  (`examples/flagship/aggregator` на `serve_assets(embedded_assets())`) — карта есть
+  в дизайне (§6б.4/6б.6), реализация явно отложена («НЕ реализуется этой волной»
+  в самом дизайне).
+- **Symlink-hard escape у `DirFs`** покрыт СТРУКТУРНО (переиспользует `canonicalize`/
+  `realpath` из `fs.nv`, уже протестированный там своими юнит-тестами) — отдельного
+  теста «реальный symlink наружу корня» в `readfs_test.nv` НЕТ: `mock_fs`
+  (`mem_realpath`) не дереференсит symlink-цели вообще (просто проверяет узел по
+  ключу), а создание РЕАЛЬНОГО symlink на Windows требует привилегий, которых нет
+  прецедента запрашивать в этом test suite (ни один существующий `_test.nv` в
+  `std/src/fs` не создаёт symlink реальным `Fs.symlink`). Задокументировано как
+  осознанный, а не пропущенный, пробел.
