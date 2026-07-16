@@ -1449,6 +1449,59 @@ fn resolve_one(
                     importing,
                     actual,
                 ),
+                ResolveErr::FileOrphan { head, module_path, orphans } => {
+                    let dir = head
+                        .parent()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "<?>".to_string());
+                    let target_seg = module_path
+                        .rsplit('.')
+                        .next()
+                        .unwrap_or(module_path.as_str())
+                        .to_string();
+                    let head_str = head.display().to_string();
+                    let suffix = if orphans.len() == 1 { "ий" } else { "ие" };
+                    let orphans_list = orphans
+                        .iter()
+                        .map(|p| format!("    - {} — объявляет `module {}`", p.display(), module_path))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    anyhow!(
+                        "[E_MODULE_FILE_ORPHAN] module `{module_path}`: у файлового \
+                         head-модуля есть осиротевш{suffix} co-equal peer-файл(ы) — \
+                         они не подключаются к резолву этого импорта\n  \
+                         imported from: module `{importing}`\n  \
+                         head-файл (единственный, чьё имя совпадает с последним \
+                         сегментом импорта): {head_str}\n  \
+                         осиротевш{suffix} файл(ы) в той же директории `{dir}`, \
+                         объявляющие тот же `module {module_path}`:\n{orphans_list}\n  \
+                         почему: `module {module_path}` — файловый модуль (D78 \
+                         «файл ИЛИ папка»); его каноничный (головной) файл — \
+                         единственный `.nv`, чьё ИМЯ совпадает с последним \
+                         сегментом `{target_seg}` пути импорта. Альтернативная \
+                         легальная форма — выделенная папка-модуль \
+                         `{dir}/{target_seg}/`, содержащая ВСЕ co-equal peer-файлы \
+                         модуля — но такой папки здесь нет: файлы лежат прямо в \
+                         `{dir}`, рядом с head-файлом, а не в `{target_seg}/`.\n  \
+                         следствие: типы/функции/методы, объявленные в \
+                         осиротевш{suffix} файл(ах), невидимы для `{importing}` и \
+                         для любого другого импортёра `{module_path}` — \
+                         единственное исключение — если осиротевший файл САМ \
+                         является compile-entry (тогда его видит отдельный \
+                         entry-sibling scan). Типичный downstream-симптом — \
+                         честный, но неверный [E_UNKNOWN_METHOD] на методе, \
+                         объявленном только в осиротевшем файле.\n  \
+                         fix:\n  \
+                         \x20 - сделай папку-модуль `{dir}/{target_seg}/` и \
+                         перенеси head-файл И все осиротевшие peer-файлы внутрь \
+                         неё (D78, прецеденты std/time/civil, std/collections/vec) \
+                         — рекомендуемый путь;\n  \
+                         \x20 - либо поправь `module`-декларацию осиротевшего \
+                         файла, если она была скопирована по ошибке;\n  \
+                         \x20 - либо перенеси осиротевший файл в директорию, \
+                         действительно соответствующую его собственному модулю."
+                    )
+                }
             }
         })?;
 
@@ -2352,6 +2405,33 @@ pub(crate) enum ResolveErr {
     /// файла/папки на диске. На case-insensitive ФС (Windows, macOS
     /// default) такой импорт резолвится, но код непортируем на Linux.
     CaseMismatch { requested: String, actual: String },
+    /// [M-module-file-submodule-split-silent-orphan]: import резолвится в
+    /// единственный файл `head` (файловый модуль, D78 «файл ИЛИ папка»),
+    /// но в ТОЙ ЖЕ директории лежат ещё `.nv`-файл(ы), объявляющие ТОТ ЖЕ
+    /// `module <parts>` — co-equal peers, разбросанные напрямую в общей
+    /// родительской папке вместо выделенной папки-модуля `<Y>/`.
+    ///
+    /// До Plan 202-диагностики такие peer-файлы либо (a) молча выпадали из
+    /// любого резолва этого импорта извне — их декларации были невидимы
+    /// ЛЮБОМУ импортёру, кроме случая когда peer-файл сам являлся
+    /// compile-entry (через отдельный entry-sibling scan в
+    /// `resolve_imports_inline_ex`) — реальный кейс-баг
+    /// `std/src/time/{duration,timestamp,monotonic}.nv`; либо (b), после
+    /// временного маскирующего фикса `[M-blanket-crossmodule-scattered-peer-drop]`
+    /// (откачен), молча подмешивались в резолв без диагностики. Оба
+    /// поведения тихие; это variant делает их ГРОМКИМ, actionable
+    /// compile-error вместо того чтобы либо теряться, либо мёржиться без
+    /// следа.
+    FileOrphan {
+        /// Головной файл, в который резолвится импорт (единственный файл,
+        /// чьё ИМЯ совпадает с последним сегментом импортируемого пути).
+        head: PathBuf,
+        /// Запрошенный путь модуля (dotted, как в `import`/`module`).
+        module_path: String,
+        /// Sibling-файл(ы) в той же директории, объявляющие тот же
+        /// `module_path`, но не входящие в резолв (alphabetically sorted).
+        orphans: Vec<PathBuf>,
+    },
 }
 
 /// Plan 81 Ф.4: сверка регистра резолвнутого пути с запрошенным.
@@ -2937,6 +3017,53 @@ fn resolve_module_paths(
                 verify_case(&single_file, verify_parts, true)
             {
                 return Err(ResolveErr::CaseMismatch { requested, actual });
+            }
+            // [M-module-file-submodule-split-silent-orphan]: этот import
+            // резолвится в единственный `single_file` (файловый модуль —
+            // головной файл `<Y>.nv`). Если в ТОЙ ЖЕ директории лежат ещё
+            // `.nv`-файлы, объявляющие ТОТ ЖЕ `module <verify_parts>`, —
+            // это co-equal peers, разбросанные напрямую в общей папке
+            // вместо выделенной папки-модуля `<Y>/` (D78). Такие peers
+            // никогда не попадут в этот и любой другой внешний резолв
+            // импорта (только entry-sibling scan видит их, когда peer сам
+            // является compile-entry) — тихое сиротение вместо ошибки.
+            // Раньше это либо молча теряло декларации (pre-Plan-202), либо
+            // (после отменённого маскирующего фикса) молча подмешивало их
+            // без диагностики. Громкая ошибка вместо обоих тихих исходов.
+            if let Some(dir) = single_file.parent() {
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    let target = current_target_os();
+                    let mut orphans: Vec<PathBuf> = entries
+                        .filter_map(|e| e.ok())
+                        .map(|e| e.path())
+                        .filter(|p| {
+                            p.is_file()
+                                && p.extension().and_then(|s| s.to_str()) == Some("nv")
+                                && p != &single_file
+                        })
+                        .filter(|p| {
+                            if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                                let core = stem.strip_suffix("_test").unwrap_or(stem);
+                                if !include_test_peers && core != stem {
+                                    return false;
+                                }
+                                if !peer_active_for_target(core, target) {
+                                    return false;
+                                }
+                            }
+                            true
+                        })
+                        .filter(|p| read_module_decl(p).as_deref() == Some(verify_parts))
+                        .collect();
+                    if !orphans.is_empty() {
+                        orphans.sort();
+                        return Err(ResolveErr::FileOrphan {
+                            head: single_file.clone(),
+                            module_path: verify_parts.join("."),
+                            orphans,
+                        });
+                    }
+                }
             }
             return Ok(vec![single_file]);
         }
