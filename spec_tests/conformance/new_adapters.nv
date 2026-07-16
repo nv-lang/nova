@@ -90,22 +90,22 @@ test "min on empty is None" {
     assert(v.iter().min() == None)
 }
 
-// ── nth ──────────────────────────────────────────────────────────────────────
+// ── skip(n).next() (was `nth`, retracted — W_RETIRED_NAME) ───────────────────
 
-test "nth returns 0-based element" {
+test "skip(n).next() returns 0-based element" {
     ro v = Vec[int].of(10, 20, 30, 40)
-    assert(v.iter().nth(0) == Some(10))
-    assert(v.iter().nth(2) == Some(30))
+    assert(v.iter().skip(0).next() == Some(10))
+    assert(v.iter().skip(2).next() == Some(30))
 }
 
-test "nth out of bounds is None" {
+test "skip(n).next() out of bounds is None" {
     ro v = Vec[int].of(1, 2)
-    assert(v.iter().nth(5) == None)
+    assert(v.iter().skip(5).next() == None)
 }
 
-test "nth after map" {
+test "skip(n).next() after map" {
     ro v = Vec[int].of(1, 2, 3, 4, 5)
-    assert(v.iter().map(|x| x * 100).nth(3) == Some(400))
+    assert(v.iter().map(|x| x * 100).skip(3).next() == Some(400))
 }
 
 // ── last ──────────────────────────────────────────────────────────────────────
