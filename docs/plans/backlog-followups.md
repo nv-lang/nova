@@ -3307,3 +3307,15 @@ default` + метод собирается. Замечание (вне пери�
   `nova test . --filter contracts` подстрокой пути; `spec_tests/soundness/` её не
   содержит → soundness-фикстуры больше не гоняются через реальные backend'ы
   (jobs non-blocking). Anti-delete ratchet работает; content-верификация — нет.
+
+- **[M-time-folder-coequal-mismatch]** (2026-07-16, P2, найден 208-фикс-волной после
+  П13 file-split) — `std/src/time/` содержит module `time.duration` в 3 co-equal
+  файлах (duration/timestamp/monotonic.nv) РЯДОМ с `time.cron` (cron.nv):
+  `is_folder_module_peer` (imports.rs:1999-2053) требует ЕДИНУЮ декларацию на папку
+  с последним сегментом == имя папки — не выполняется ни одно условие →
+  `E_D78_MODULE_PATH_MISMATCH` при компиляции monotonic/timestamp как прямых
+  test-энтри. Обычный import-путь работает (как и до сплита с cron.nv рядом).
+  Смежный [M-folder-module-detector] (P3) НЕ покрывает эту форму. Решить:
+  либо амендмент D78 (папка может нести НЕСКОЛЬКО co-equal модулей), либо
+  вынос cron.nv/подпапки. Попутная улика того же прогона: ICE emit_c.rs:52222
+  [P67-LEGACY] method=now — разобрать после разблокировки модуля.
