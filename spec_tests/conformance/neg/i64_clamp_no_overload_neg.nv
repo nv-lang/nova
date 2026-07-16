@@ -1,0 +1,30 @@
+// EXPECT_COMPILE_ERROR E_UNKNOWN_METHOD
+
+// Plan 196.9 [M-primitive-concrete-overload-receiver-dispatch] — minimal
+// repro. `i64 @clamp` has NO overload — std/src/runtime/defaults.nv:180,182
+// declare ONLY `int @clamp` / `f64 @clamp` (concrete-vs-concrete, no
+// blanket). A pattern-bound i64 receiver (`match a.checked_add(b) {
+// Some(r) => r.clamp(..) }` — the real shape in `sat_add_i64`,
+// std/src/time/duration.nv:378-382) used to mis-dispatch SILENTLY into
+// `Nova_f64_method_clamp` (implicit int64_t<->double cast at the C call
+// boundary — both scalar, no CC-FAIL, but the f64 mantissa clips precision
+// at i64 extremes). Root cause: the checker's match-arm walk (`f1_expr_inner`,
+// `ExprKind::Match`) never extended `scope` with a pattern-bound name (`r`),
+// so `check_instance_overload`'s `infer_arg_ty` saw nothing and silently
+// no-op'd (no diagnostic, no `resolved_callees` write) — for EVERY method
+// call on such a receiver, not just this one. Fixed: the arm now sees
+// `r: i64` in scope (via `match_arm_bindings`, reused from Plan 172.1's
+// tally АТОМ 2a) → the SAME `[E_UNKNOWN_METHOD]` gate the isolated
+// `ro r i64 = ...; r.clamp(...)` form already gave now fires here too.
+
+module neg.i64_clamp_no_overload_neg
+
+fn sat_add_i64_neg(a i64, b i64, lo i64, hi i64) -> i64 =>
+    match a.checked_add(b) {
+        Some(r) => r.clamp(lo, hi),
+        None => if b > 0 { hi } else { lo },
+    }
+
+test "196.9: i64.clamp() on a pattern-bound receiver is rejected — no i64 overload exists" {
+    ro _ = sat_add_i64_neg(1, 1, -10, 10)
+}
