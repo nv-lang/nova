@@ -49,7 +49,10 @@ if ($Build -or -not (Test-Path $bin)) {
         "[replace]`ntls = { path = `"../../nova-tls`" }`nhttp = { path = `"../../nova-http`" }" | Out-File -Encoding utf8 $localToml
     }
     Push-Location $RepoRoot
-    & (Join-Path $RepoRoot "nova-cli\target\release\nova.exe") build "examples\flagship\aggregator\src\main.nv" -o $bin
+    # cmd /c + 2>&1: PowerShell 5.1 wraps native stderr lines (even warnings)
+    # into NativeCommandError records, which $ErrorActionPreference="Stop"
+    # escalates into a script abort — route through cmd to keep them as text.
+    cmd /c "`"$(Join-Path $RepoRoot 'nova-cli\target\release\nova.exe')`" build examples\flagship\aggregator\src\main.nv -o `"$bin`" 2>&1" | Out-Host
     Pop-Location
     if (-not (Test-Path $bin)) { Write-Host "Build failed" -ForegroundColor Red; exit 1 }
 }
@@ -124,7 +127,14 @@ try {
     $codes = $work | ForEach-Object { try { $_.ps.EndInvoke($_.handle) } catch { 0 } finally { $_.ps.Dispose() } }
     $pool.Close(); $pool.Dispose()
     $ok = ($codes | Where-Object { $_ -eq 200 }).Count
-    Check ($ok -eq $Concurrency -and (Alive)) "concurrency $ok/$Concurrency"; Write-Host "    200 responses: $ok/$Concurrency, server=$(AliveStr)"
+    # Criterion = SURVIVAL, not throughput: bounded-accept (admission control,
+    # [M-187-high-concurrency-connection-wedge] mitigation) intentionally sheds
+    # load above MAX inflight with an honest close. PASS = at least one request
+    # served AND the server is alive AND a follow-up single request succeeds
+    # (i.e. no wedge). Shed count is informational.
+    $post = Code "$B/api/run?legend=weather&mode=demo&seed=42" 20
+    Check ($ok -ge 1 -and (Alive) -and $post -eq 200) "concurrency survival (served=$ok/$Concurrency, post=$post)"
+    Write-Host "    served: $ok/$Concurrency (rest honestly shed), post-single: $post, server=$(AliveStr)"
 
     # -- BLOCK 6: idle survival (watchdog-idle regression) -------------------
     Write-Host "== BLOCK 6: 12s idle (watchdog-idle) ==" -ForegroundColor Yellow
