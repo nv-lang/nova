@@ -13065,6 +13065,48 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
+            // [M-208-fmtkind-bare-variant-shadow] (2026-07-17): general sibling of
+            // the `None`/`Option[T]` arm above, for any OTHER bare enum-variant
+            // Ident against a concrete (non-generic) user Sum type. Root cause:
+            // `infer_expr_type`'s bare-variant "last resort" fallback
+            // ([M-hashmap-order-bare-variant-flake], 2026-07-13) picks among ALL
+            // sum types that declare a variant of this NAME via a context-free
+            // lexicographic-smallest-typename tie-break — correct only when
+            // there's truly no better signal. Plan 208 Ф.2 added `FmtKind` (variant
+            // `Oct`, std/runtime/fmt_buf.nv) which happens to sort before the
+            // pre-existing `Month` (also variant `Oct`, std/time/civil) — so any
+            // bare `Oct` passed as a call arg/return/let-init/match-arm against an
+            // expected `Month` silently mis-resolved to `FmtKind.Oct`
+            // (`nth_sunday_epoch_day(y, Oct)` etc, std/time/civil/tz.nv → E7301).
+            // Here we DO have a better signal: `expected` (this exact position)
+            // names a concrete Sum type; if THAT type owns a unit-variant spelled
+            // exactly `n`, the bare Ident denotes THAT variant unambiguously
+            // (mirrors Rust's own expected-type-directed enum-variant resolution).
+            // Materializing into `resolved_types_buf` here fixes the resolution AT
+            // THE SOURCE for every consumer — the `assignable` compat check AND
+            // codegen's own lowering both read `resolved_types_buf` FIRST, before
+            // `infer_expr_type`'s ambiguous fallback ever runs — instead of only
+            // papering over the downstream E7301 symptom.
+            ExprKind::Ident(n) if n != "None" => {
+                if value.id.is_set() {
+                    if let TypeRef::Named { path, generics, .. } = expected {
+                        if generics.is_empty() {
+                            if let Some(tname) = path.last() {
+                                if let Some(td) = self.types.get(tname) {
+                                    if td.generics.is_empty() {
+                                        if let TypeDeclKind::Sum(variants) = &td.kind {
+                                            if variants.iter().any(|v| &v.name == n) {
+                                                let rt = ResolvedType::from_type_ref(expected);
+                                                self.resolved_types_buf.borrow_mut().insert(value.id, rt);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             // `Some(inner)` / `Ok(inner)` / `Err(inner)` against `Option[T]` / `Result[T,E]`.
             ExprKind::Call { func, args, .. } if args.len() == 1 => {
                 if let ExprKind::Ident(ctor) = &func.kind {
