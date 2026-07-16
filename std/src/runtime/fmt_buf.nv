@@ -22,7 +22,7 @@
 //     pressure) — the `.nv` replacement for the equivalent int/bool/char
 //     helpers in `conv.h` (`nova_fmt_int_body`/`nova_bool_to_str`/
 //     `nova_char_to_str`), NOT wired in yet (Ф.2/Ф.4 retire the C originals).
-//   - `fmt_f64_into` — the ONE C-extern this design keeps (dtoa/shortest-
+//   - `f64_fmt_into` — the ONE C-extern this design keeps (dtoa/shortest-
 //     round-trip is not portably expressible in `.nv`); D282 literal-name
 //     `extern "C" fn`, body in `nova_rt/nova_rt.h` (next to the existing
 //     `nova_f64_shortest`/`nova_f32_shortest` it reuses). `fmt_f64` is the
@@ -54,8 +54,8 @@ module runtime.fmt_buf
 #unstable
 export type Align enum Left | Right | Center
 
-/// Which float rendering `fmt_f64_into` should produce. Crosses the
-/// `extern "C" fn fmt_f64_into` ABI boundary as a plain `int`
+/// Which float rendering `f64_fmt_into` should produce. Crosses the
+/// `extern "C" fn f64_fmt_into` ABI boundary as a plain `int`
 /// (0=Shortest/1=Fixed/2=Sci, D422 §5) — this enum is the `.nv`-side
 /// convenience the `fmt_f64` wrapper below converts at the boundary.
 #unstable
@@ -123,7 +123,7 @@ fn hex_digit(d u64, upper bool) -> u8 {
 /// sign/prefix and the digits. Returns the number of bytes written — always
 /// `<= cap`; TRUNCATES defensively (never overruns `buf`) if `cap` is smaller
 /// than the full rendered length, mirroring the buffer-safety discipline
-/// `fmt_f64_into` also follows.
+/// `f64_fmt_into` also follows.
 fn int_fmt(v int, buf *mut u8, cap int, spec FmtSpec) -> int
     requires spec.radix == 10 || spec.radix == 16 || spec.radix == 8 || spec.radix == 2
 {
@@ -284,14 +284,14 @@ fn char_fmt(v char, buf *mut u8, cap int) -> int {
 // ─── float — the sole C-extern (D422 §5) ───
 
 /// `extern "C" fn` — LITERAL C symbol name, no `nova_` prefix (D282). Body:
-/// `nova_rt/nova_rt.h` (`fmt_f64_into`, right after `nova_f32_shortest`),
+/// `nova_rt/nova_rt.h` (`f64_fmt_into`, right after `nova_f32_shortest`),
 /// reusing the existing `nova_f64_shortest` engine for `kind == 0`. Writes at
 /// most `cap` bytes into `buf`, returns bytes written (truncates defensively).
 /// `kind`: 0=Shortest, 1=Fixed (`%.*f`), 2=Sci (`%.*e`) — see `fmt_f64` below
 /// for the enum-typed `.nv`-side wrapper.
-extern "C" fn fmt_f64_into(buf *mut u8, cap int, v f64, kind int, prec int) -> int
+extern "C" fn f64_fmt_into(buf *mut u8, cap int, v f64, kind int, prec int) -> int
 
-/// `.nv`-side wrapper: converts `FloatKind` → the `int` `fmt_f64_into`
+/// `.nv`-side wrapper: converts `FloatKind` → the `int` `f64_fmt_into`
 /// carries across the `extern "C"` ABI boundary (D422 §5 — enums don't cross
 /// `extern "C"` directly).
 fn fmt_f64(buf *mut u8, cap int, v f64, kind FloatKind, prec int) -> int {
@@ -300,7 +300,7 @@ fn fmt_f64(buf *mut u8, cap int, v f64, kind FloatKind, prec int) -> int {
         FloatKind.Fixed => 1,
         FloatKind.Sci => 2,
     }
-    fmt_f64_into(buf, cap, v, k, prec)
+    f64_fmt_into(buf, cap, v, k, prec)
 }
 
 // ─── Tests (Plan 208 Ф.1 gate) ───
@@ -495,11 +495,11 @@ test "char_fmt: 1/2/3/4-byte UTF-8 encodings" {
     }
 }
 
-test "fmt_f64_into: Shortest/Fixed/Sci kinds" {
+test "f64_fmt_into: Shortest/Fixed/Sci kinds" {
     mut buf = scratch(64)
 
     // kind 1 = Fixed
-    ro nf = fmt_f64_into(buf.ptr(), 64, 3.14159, 1, 2)
+    ro nf = f64_fmt_into(buf.ptr(), 64, 3.14159, 1, 2)
     assert(nf == 4)
     unsafe {
         assert(buf.ptr().read_at(0) == ('3' as u8))
@@ -509,7 +509,7 @@ test "fmt_f64_into: Shortest/Fixed/Sci kinds" {
     }
 
     // kind 0 = Shortest (round-trip minimal) — same engine as println(float).
-    ro ns = fmt_f64_into(buf.ptr(), 64, 2.5, 0, 0)
+    ro ns = f64_fmt_into(buf.ptr(), 64, 2.5, 0, 0)
     assert(ns == 3)
     unsafe {
         assert(buf.ptr().read_at(0) == ('2' as u8))
@@ -518,12 +518,12 @@ test "fmt_f64_into: Shortest/Fixed/Sci kinds" {
     }
 
     // kind 2 = Sci
-    ro ne = fmt_f64_into(buf.ptr(), 64, 1234.5, 2, 1)
+    ro ne = f64_fmt_into(buf.ptr(), 64, 1234.5, 2, 1)
     assert(ne > 0)
     unsafe { assert(buf.ptr().read_at(1) == ('.' as u8)) }
 }
 
-test "fmt_f64: FloatKind enum wrapper matches fmt_f64_into" {
+test "fmt_f64: FloatKind enum wrapper matches f64_fmt_into" {
     mut buf = scratch(64)
     ro n = fmt_f64(buf.ptr(), 64, 3.14159, FloatKind.Fixed, 2)
     assert(n == 4)
