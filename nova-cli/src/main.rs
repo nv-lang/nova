@@ -4673,6 +4673,38 @@ fn cmd_build(
         )?
     };
 
+    // [M-187-http-serde-setcookie-serialize-collision] fix: inject SERDE
+    // synthesized methods (`#impl(Serialize/Deserialize)`) BEFORE numbering +
+    // type-check — mirrors `test_runner.rs`'s `codegen_to_c` (the `nova test`
+    // path), which already does this. `cmd_build` (`nova build`) had silently
+    // OMITTED this pass entirely (same class of `nova build`-lags-behind-
+    // `test_runner.rs` gap already fixed for the resolved_types/resolved_
+    // callees channels below, per the Ф.4c comment) — a `#impl(Serialize)`
+    // record's `@serialize` was NEVER a real `FnDecl` in `module.items` on
+    // this path, only virtually satisfied by the checker's on-demand
+    // `synthesize_method` bridge (`types/mod.rs` `AutoDeriveQueryBridge`),
+    // which type-checks the call but adds nothing for codegen's method-
+    // registration scan (`method_overloads`/`mono_method_decls`) to find.
+    // A generic `json_encode[T Serialize](v T)`'s `v.serialize(s)` therefore
+    // had ZERO type-directed candidates and fell through every receiver-
+    // typed dispatch window all the way to the single-key, name-only
+    // `method_receivers` last-wins fallback — silently mis-dispatching to
+    // WHATEVER OTHER type's concrete `@serialize` was registered last in the
+    // compile unit (`http`'s `SetCookie @serialize() -> str`, when `http` is
+    // in the CU — an unrelated 0-arg method, arity/type-incompatible with
+    // the Serialize contract's `@serialize(s Serializer)`). Injecting here
+    // gives `Dto`/`SnapshotDto`'s own derived method a real `FnDecl` + span,
+    // so the EXISTING type-keyed dispatch (`method_overloads.get(&(recv_
+    // type, method))`, `has_sentinel_here` → `mono_method_decls` mono) finds
+    // and monomorphizes the CORRECT receiver-typed callee — no emit_c.rs
+    // dispatch-heuristic change needed; the family fix (196.7/98e3663cc) is
+    // "route by the checker's/registry's fact instead of by name", but here
+    // the fact was simply never registered on this build path. Must run
+    // BEFORE alpha-rename (synthesized bodies share the uniquify invariant,
+    // same ordering `test_runner.rs` uses).
+    nova_codegen::protocols::auto_derive::inject_synthesized_methods_filtered(
+        &mut module, |p| p == "Serialize" || p == "Deserialize");
+
     // Plan 181 (D347): same-scope re-binding alpha-rename on the fully-assembled
     // module (post import-inline), BEFORE the build cache key / type-check /
     // codegen — so cached `.c` and the checked module agree on unique C-names
