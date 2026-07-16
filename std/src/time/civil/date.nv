@@ -359,7 +359,7 @@ fn format_year(y i64) -> str {
     ro neg = y < 0
     ro a = if neg { -y } else { y }
     ro digits = a.to_str()
-    ro padded = if digits.len() >= 4 { digits } else { digits.pad_start(4, '0') }
+    ro padded = if digits.byte_len() >= 4 { digits } else { digits.pad_start(4, '0') }
     if neg { "-" + padded } else { padded }
 }
 
