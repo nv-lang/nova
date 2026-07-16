@@ -185,14 +185,14 @@ export fn Metadata @permissions() -> Permissions => Permissions.from_mode(@mode)
 
 /// Last-modification time, or `None` when unavailable.
 #stable(since = "0.1")
-export fn Metadata @modified() -> Option[Timestamp] => Some(Timestamp.from_unix_nanos(@mtime_ns))
+export fn Metadata @modified() -> Option[Timestamp] => Some(@mtime_ns.to_unix_nanos())
 /// Last-access time, or `None` when unavailable.
 #stable(since = "0.1")
-export fn Metadata @accessed() -> Option[Timestamp] => Some(Timestamp.from_unix_nanos(@atime_ns))
+export fn Metadata @accessed() -> Option[Timestamp] => Some(@atime_ns.to_unix_nanos())
 /// Creation/birth time, or `None` when the platform does not record it.
 #stable(since = "0.1")
 export fn Metadata @created() -> Option[Timestamp] {
-    if @ctime_ns > (0 as i64) { Some(Timestamp.from_unix_nanos(@ctime_ns)) } else { None }
+    if @ctime_ns > (0 as i64) { Some(@ctime_ns.to_unix_nanos()) } else { None }
 }
 
 // ─── DirEntry ──

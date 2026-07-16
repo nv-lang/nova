@@ -47,7 +47,7 @@ fn status_of(results []TaskResult, id str) -> TaskStatus {
 test "aggregate: done/failed/cancelled settle correctly on a mixed fan-out" {
     with Net = mock_net() {
         with Emit = null_emit() {
-            ro report = aggregate(tiny_sources(), Duration.from_millis(120))
+            ro report = aggregate(tiny_sources(), 120.to_millis())
             println("DEBUG len=" + report.results.len().to_str() + " done=" + report.done.to_str() +
                 " failed=" + report.failed.to_str() + " cancelled=" + report.cancelled.to_str() +
                 " wall_ms=" + report.wall_ms.to_str() + " seq_ms=" + report.sequential_ms.to_str())
@@ -84,7 +84,7 @@ test "aggregate: done/failed/cancelled settle correctly on a mixed fan-out" {
 test "aggregate: wall time beats sequential sum (speedup > 1)" {
     with Net = mock_net() {
         with Emit = null_emit() {
-            ro report = aggregate(tiny_sources(), Duration.from_millis(120))
+            ro report = aggregate(tiny_sources(), 120.to_millis())
             // sequential_ms sums every lane's OWN elapsed time (~15+30+120+10ish);
             // wall_ms is bounded by the shared budget — must be clearly smaller.
             assert(report.wall_ms < report.sequential_ms)
@@ -97,8 +97,8 @@ test "aggregate: wall time beats sequential sum (speedup > 1)" {
 test "aggregate: same code, two source lists (handler/source swap only)" {
     with Net = mock_net() {
         with Emit = null_emit() {
-            ro a = aggregate(tiny_sources(), Duration.from_millis(120))
-            ro b = aggregate([Source.new("only-one", "", 1, 15, false)], Duration.from_millis(120))
+            ro a = aggregate(tiny_sources(), 120.to_millis())
+            ro b = aggregate([Source.new("only-one", "", 1, 15, false)], 120.to_millis())
             assert(a.results.len() == 4)
             assert(b.results.len() == 1)
             assert(b.done == 1)
@@ -120,7 +120,7 @@ test "aggregate: source past deadline is cancelled early — wall_ms bounded by 
     with Net = mock_net() {
         with Emit = null_emit() {
             ro srcs []Source = [Source.new("slow", "", 1, 300, false)]
-            ro report = aggregate(srcs, Duration.from_millis(40))
+            ro report = aggregate(srcs, 40.to_millis())
             assert(report.cancelled == 1)
             assert(report.done == 0)
             // Generous slack (CI jitter/scheduler overhead) but strictly well
@@ -137,7 +137,7 @@ test "aggregate: upstream failure surfaces as Failed, run completes" {
     with Net = mock_net() {
         with Emit = null_emit() {
             ro srcs []Source = [Source.new("bad", "", 1, 10, true)]
-            ro report = aggregate(srcs, Duration.from_millis(200))
+            ro report = aggregate(srcs, 200.to_millis())
             assert(report.failed == 1)
             assert(report.done == 0)
             assert(report.cancelled == 0)
@@ -155,7 +155,7 @@ test "aggregate: all sources over budget -> all cancelled" {
                 Source.new("b", "", 1, 400, false),
                 Source.new("c", "", 1, 500, false),
             ]
-            ro report = aggregate(srcs, Duration.from_millis(30))
+            ro report = aggregate(srcs, 30.to_millis())
             assert(report.done == 0)
             assert(report.failed == 0)
             assert(report.cancelled == 3)
@@ -169,7 +169,7 @@ test "aggregate: empty source list -> empty report, no panic" {
     with Net = mock_net() {
         with Emit = null_emit() {
             ro srcs []Source = []
-            ro report = aggregate(srcs, Duration.from_millis(100))
+            ro report = aggregate(srcs, 100.to_millis())
             assert(report.results.len() == 0)
             assert(report.done == 0)
             assert(report.failed == 0)
@@ -186,7 +186,7 @@ test "aggregate: 0 fiber-slot leak after cascading cancellation" {
         with Net = mock_net() {
             with Emit = null_emit() {
                 ro before = fibers.slots_active()
-                ro _ = aggregate(tiny_sources(), Duration.from_millis(120))
+                ro _ = aggregate(tiny_sources(), 120.to_millis())
                 ro after = fibers.slots_active()
                 assert(after == before)
             }
@@ -242,7 +242,7 @@ test "aggregate: Emit fires lane_started exactly once per source" {
             lane_cancelled(_id str, _elapsed_ms int) {}
             swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) {}
         } {
-            ro _ = aggregate(tiny_sources(), Duration.from_millis(120))
+            ro _ = aggregate(tiny_sources(), 120.to_millis())
         }
     }
     tx.close()
@@ -271,7 +271,7 @@ test "aggregate: Emit lane outcomes tally exactly like the settled Report" {
             lane_cancelled(_id str, _elapsed_ms int)        { ro _ = tx.try_send(3) }   // cancelled
             swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) {}
         } {
-            ro report = aggregate(tiny_sources(), Duration.from_millis(120))
+            ro report = aggregate(tiny_sources(), 120.to_millis())
             tx.close()
             mut done = 0
             mut failed = 0
@@ -326,7 +326,7 @@ test "aggregate: Emit swarm_done matches the returned Report, fires once" {
                 sequential_ms = s
             }
         } {
-            ro report = aggregate(tiny_sources(), Duration.from_millis(120))
+            ro report = aggregate(tiny_sources(), 120.to_millis())
             assert(fired == 1)
             assert(fanout == report.results.len())
             assert(done == report.done)
@@ -351,7 +351,7 @@ test "aggregate: source past deadline fires lane_cancelled, nothing else" {
             swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) {}
         } {
             ro srcs []Source = [Source.new("slow", "", 1, 300, false)]
-            ro _ = aggregate(srcs, Duration.from_millis(40))
+            ro _ = aggregate(srcs, 40.to_millis())
             tx.close()
             match rx.try_recv() {
                 Some(evt) => assert(evt == 3)   // cancelled

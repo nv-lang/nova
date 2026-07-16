@@ -175,7 +175,7 @@ fn fetch_one(id str, latency_ms int, should_fail bool, idx int) Net Time -> Resu
 fn deadline_elapsed_ms(t0 Monotonic) Time -> int {
     ro now Monotonic = Monotonic.now()
     ro elapsed = now.elapsed_since(t0)
-    elapsed.as_millis() as int
+    elapsed.millis() as int
 }
 
 /// One source, raced against the SHARED absolute deadline via a REAL

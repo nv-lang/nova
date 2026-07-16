@@ -66,7 +66,7 @@ export fn TokenBucket.new(capacity i64, refill_per_sec f64) Time -> Self =>
 // (полное ведро, не переполнение).
 fn TokenBucket mut @refill() Time -> () {
     ro now = Monotonic.now()
-    ro elapsed_secs = now.elapsed_since(@last_refill).as_secs_f64()
+    ro elapsed_secs = now.elapsed_since(@last_refill).seconds_f64()
     ro to_add = elapsed_secs * @refill_per_sec
     @tokens = @tokens + to_add
     if @tokens > (@capacity as f64) {

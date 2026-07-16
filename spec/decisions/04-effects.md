@@ -6581,11 +6581,34 @@ effect-операции, same-module `to_str()`-коллизия на `int`-rece
 
 - **`Duration`** = знаковый `i64` ns, диапазон **±(2⁶³−1) ns ≈ ±292 года**.
 - **`Timestamp`** = unix-epoch ns, окно **1677-09-21 .. 2262-04-11** (i64 ±292y, Q16) — контракт задокументирован. Zig `nanoTimestamp() -> i128` не имеет 2262-горизонта; Nova принимает i64 **осознанно** (i128 ломает Q2 single-i64 scalar-bridge и value-ABI ради горизонта >2262). `from_unix_nanos(i64::MAX)` + `checked_add` → `None`; `@plus` → saturate (НЕ wrap в 1677) — pos-фикстура d317.
-- **Отложено:** публичные консты `Duration.MAX`/`Duration.MIN` (Plan 178 запрашивал `@timeout(Duration.MAX)`) НЕ введены — user type-const с именем `MAX`/`MIN` **шэдоуит builtin numeric `.MAX`/`.MIN`** в type-set-bound generics (`fn[T Ints] f(x T) => x == T.MAX`, `spec_tests` d310) → мис-типизация `T.MAX` как record + CC-FAIL. Фикс — в checker member-const-резолюции (172-зона, owner-gated). Follow-up `[M-175-type-const-max-shadows-builtin]`. Saturation-границы доступны через internal `i64_max()`/`i64_min()` — функциональность D317 полная без публичной консты.
+- **Отложено:** публичные консты `Duration.MAX`/`Duration.MIN` (Plan 178 запрашивал `@timeout(Duration.MAX)`) НЕ введены — user type-const с именем `MAX`/`MIN` **шэдоуит builtin numeric `.MAX`/`.MIN`** в type-set-bound generics (`fn[T Ints] f(x T) => x == T.MAX`, `spec_tests` d310) → мис-типизация `T.MAX` как record + CC-FAIL. Фикс — в checker member-const-резолюции (172-зона, owner-gated). Follow-up `[M-175-type-const-max-shadows-builtin]`. Saturation-границы доступны через builtin `i64.MAX`/`i64.MIN` (Plan 200 Step 1 — заменили internal `i64_max()`/`i64_min()` fn-хелперы, тот же контракт) — функциональность D317 полная без публичной консты.
 
 ### Почему
 
 Silent two's-complement wrap на ±292y — это ровно Go-ловушка; Rust/Java/Kotlin/Temporal/Swift детектят overflow. Nova достигает паритета Rust/Java/Swift и обходит Go (silent-wrap) и Zig (UB-в-ReleaseFast, build-mode-зависимость). Trap-default безопасен by construction; `checked_*` — Rust-эскейп для восстановления; `saturating_*` — для «no timeout»-семантики (Plan 178).
+
+> **AMEND (2026-07-16, Plan 200 Step 2, владелец) — конструкторы `from_*` →
+> `to_*`-бланкет.** `Duration.from_nanos/micros/millis/secs/mins/hours/days/
+> weeks/secs_f64` и `Timestamp.from_unix_secs/millis/nanos` — **ретрактированы**
+> вместе с per-width bare-fluent (`int @seconds()`, singular `1.second()` и
+> т.п.). Заменены единым `fn[T Ints] T @to_nanos/to_micros/to_millis/to_seconds/
+> to_minutes/to_hours/to_days/to_weeks() -> Duration` (и симметричный
+> `to_unix_seconds/to_unix_millis/to_unix_nanos() -> Timestamp`) — один бланкет
+> вместо ×8 почти-идентичных конкретных методов, зеркалит Plan 206
+> `checked_*`-бланкеты (D423). Приёмник `@` явно widen'ится в `i64` до
+> арифметики (иначе узкие ширины типа `i8` переполнились бы на `* 1_000` до
+> приведения). `f64 @to_seconds()` — единственный float-конструктор («только
+> секунды», остальные f64-юниты retracted без замены — repo-wide grep на
+> использование = 0); `Duration.try_from_secs_f64` (fallible) сохранён без
+> изменений имени (не `from_*`-паттерн конструктора, отдельная Option-семья).
+> Singular-алиасы (`1.second()`, `1.hour()`, ...) убраны без замены — DRY,
+> `1.to_seconds()`/`1.to_hours()`. Getter/constructor коллизия имён снята:
+> `d.nanos()` (голое, `Duration → i64`) vs `5.to_nanos()` (`to_`, `int →
+> Duration`) — разные имена, один и тот же тип-набор `Ints` работает на обеих
+> сторонах моста без дублирования тела. Зависело от `[M-primitive-receiver-
+> bounded-blanket-dispatch]` (Plan 196.8/196.9, закрыт) — примитивный ресивер
+> (`i8`..`u64`) должен честно резолвиться в bounded-бланкет, а не мис-
+> диспатчиться в конкретный одноимённый метод постороннего типа в том же CU.
 
 ## D318 — Monotonic: non-regression + clock-source contract (Plan 175 Ф.1c, 2026-07-06)
 

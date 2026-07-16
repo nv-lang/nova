@@ -16,7 +16,7 @@ test "execute: первая попытка успешна" {
 }
 
 test "execute: retry до успеха" {
-    ro policy = RetryPolicy.fixed(5, 10.millis())
+    ro policy = RetryPolicy.fixed(5, 10.to_millis())
     mut attempts = 0
     with Time = th.fixed_ms(0), Random = th.seeded(0) {
         ro result = policy.execute(|| {
@@ -30,7 +30,7 @@ test "execute: retry до успеха" {
 }
 
 test "execute: исчерпание попыток" {
-    ro policy = RetryPolicy.fixed(3, 10.millis())
+    ro policy = RetryPolicy.fixed(3, 10.to_millis())
     // Flag-idiom (см. std/crypto/jwt_test.nv) вместо `interrupt Some(e)` +
     // `match Some(..)` — второе даёт CC-FAIL на generic-E инференс
     // (см. [M-exp-promotion-blockers: retry] в docs/plans/backlog-followups.md).
@@ -49,18 +49,18 @@ test "exponential backoff: правильные delay'и" {
     ro policy = RetryPolicy.custom(
         5,
         Exponential {
-            initial: 100.millis(),
+            initial: 100.to_millis(),
             multiplier: 2.0,
-            max_delay: 1.hour(),
+            max_delay: 1.to_hours(),
         },
         NoJitter,
     )
     // attempt 1: 100ms, 2: 200ms, 3: 400ms, 4: 800ms
     with Random = th.seeded(0) {
-        assert(policy.compute_delay(1) == 100.millis())
-        assert(policy.compute_delay(2) == 200.millis())
-        assert(policy.compute_delay(3) == 400.millis())
-        assert(policy.compute_delay(4) == 800.millis())
+        assert(policy.compute_delay(1) == 100.to_millis())
+        assert(policy.compute_delay(2) == 200.to_millis())
+        assert(policy.compute_delay(3) == 400.to_millis())
+        assert(policy.compute_delay(4) == 800.to_millis())
     }
 }
 
@@ -68,20 +68,20 @@ test "max_delay ограничивает exponential" {
     ro policy = RetryPolicy.custom(
         20,
         Exponential {
-            initial: 1.second(),
+            initial: 1.to_seconds(),
             multiplier: 10.0,
-            max_delay: 30.seconds(),
+            max_delay: 30.to_seconds(),
         },
         NoJitter,
     )
     with Random = th.seeded(0) {
         // attempt 5: 1*10^4 = 10000s ≫ 30s, должен capped
-        assert(policy.compute_delay(5) == 30.seconds())
+        assert(policy.compute_delay(5) == 30.to_seconds())
     }
 }
 
 test "jitter детерминистичен через seeded Random" {
-    ro policy = RetryPolicy.custom(3, Fixed { delay: 1.second() }, FullJitter)
+    ro policy = RetryPolicy.custom(3, Fixed { delay: 1.to_seconds() }, FullJitter)
     ro d1 = with Random = th.seeded(42) { policy.compute_delay(1) }
     ro d2 = with Random = th.seeded(42) { policy.compute_delay(1) }
     assert(d1 == d2)                               // тот же seed → тот же jitter

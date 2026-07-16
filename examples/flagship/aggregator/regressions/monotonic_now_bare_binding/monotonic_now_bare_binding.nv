@@ -16,14 +16,14 @@ fn m187_monotonic_bare() -> int {
     ro t0 = Monotonic.now()
     ro t1 = Monotonic.now()
     ro elapsed = t1.elapsed_since(t0)
-    elapsed.as_millis() as int
+    elapsed.millis() as int
 }
 
 fn m187_monotonic_bare_plus_duration(budget Duration) -> int {
     ro t0 = Monotonic.now()
     ro deadline = t0 + budget
     ro elapsed = deadline.elapsed_since(t0)
-    elapsed.as_millis() as int
+    elapsed.millis() as int
 }
 
 test "M-187 голая привязка Monotonic.now() (без аннотации) не ICE-ит" {
@@ -32,6 +32,6 @@ test "M-187 голая привязка Monotonic.now() (без аннотаци
 }
 
 test "M-187 голая привязка + t0 + Duration (без аннотации) не ICE-ит" {
-    ro ms = m187_monotonic_bare_plus_duration(Duration.from_millis(1000))
+    ro ms = m187_monotonic_bare_plus_duration(1000.to_millis())
     assert(ms >= 0)
 }

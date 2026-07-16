@@ -44,7 +44,7 @@ fn m187_guarded(src M187Src, deadline Monotonic) Time -> bool {
 
 test "M-187 throw мультиполевого payload-enum из fn внутри spawn (supervised deadline) не крашит" {
     ro t0 = Monotonic.now()
-    ro deadline = t0 + Duration.from_millis(2000)
+    ro deadline = t0 + 2000.to_millis()
     ro src = M187Src { id: "s1", latency_ms: 0 }
     ro caught = m187_guarded(src, deadline)
     assert(caught)

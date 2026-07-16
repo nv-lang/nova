@@ -198,7 +198,7 @@ export fn str @to_timestamp() -> Result[Timestamp, ParseDateTimeError] {
         return Err(InvalidValue(0, FieldKind.Year, d.year() as i64))
     }
     ro nano = t.to_nanos_of_day() % 1_000_000_000
-    Ok(Timestamp.from_unix_nanos(inst_sec * 1_000_000_000 + nano))
+    Ok((inst_sec * 1_000_000_000 + nano).to_unix_nanos())
 }
 
 /// RFC-9557: `"...T14:30:00-04:00[America/New_York]".to_zoned_datetime()`.

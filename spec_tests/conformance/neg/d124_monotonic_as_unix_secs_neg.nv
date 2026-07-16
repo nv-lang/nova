@@ -1,6 +1,6 @@
 // EXPECT_COMPILE_ERROR no field or method
 
-// D124 — `Monotonic` не представим в Unix epoch; `.as_unix_secs()` и родня
+// D124 — `Monotonic` не представим в Unix epoch; `.unix_seconds()` и родня
 // существуют только на `Timestamp`. Monotonic — process-local, epoch
 // undefined вне процесса.
 module neg.d124_monotonic_as_unix_secs_neg
@@ -8,5 +8,5 @@ module neg.d124_monotonic_as_unix_secs_neg
 import std.time.duration
 
 fn d124_neg_as_unix(d124_m Monotonic) -> i64 {
-    d124_m.as_unix_secs()
+    d124_m.unix_seconds()
 }

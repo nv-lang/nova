@@ -142,7 +142,7 @@ export type Fail[E] effect {
 /// **Plan 175 (D316 amend, 2026-07-06, owner-approved unit-rename side-task,
 /// вне формальной Ф-нумерации плана):** операции переименованы с единицей в
 /// имени — `now()` → `now_unix_ms()` (факт-единица: миллисекунды unix
-/// epoch, см. `Timestamp.from_unix_millis` в std/time/duration.nv);
+/// epoch, см. `int @to_unix_millis()` в std/time/duration.nv);
 /// `now_monotonic()` → `now_monotonic_ns()` (факт-единица: наносекунды —
 /// `_nova_monotonic_ns()` в nova_rt/fibers.h оборачивает `uv_hrtime()`
 /// БЕЗ деления). Чисто переименование wire-op, поведение не меняется.

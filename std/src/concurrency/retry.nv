@@ -171,15 +171,15 @@ fn apply_jitter(j Jitter, d Duration) Random -> Duration => match j {
     NoJitter => d
     FullJitter => {
         // 0..d uniform random
-        ro max_ns = d.as_nanos()
+        ro max_ns = d.nanos()
         ro ns = (Random.u64() % (max_ns as u64)) as i64
-        Duration.from_nanos(ns)
+        ns.to_nanos()
     }
     EqualJitter => {
         // d/2 + random(0..d/2)
         ro half = d / 2
-        ro max_ns = half.as_nanos()
+        ro max_ns = half.nanos()
         ro ns = (Random.u64() % (max_ns as u64)) as i64
-        half + Duration.from_nanos(ns)
+        half + ns.to_nanos()
     }
 }

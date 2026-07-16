@@ -87,7 +87,7 @@ export fn TimeZone @offset_at(ts Timestamp) -> Offset =>
     match @ {
         Utc => Offset.utc(),
         Fixed(off) => off,
-        Iana(z) => { seconds: rules_offset_at(z.rules, ts.as_unix_nanos() / 1_000_000_000) },
+        Iana(z) => { seconds: rules_offset_at(z.rules, ts.unix_nanos() / 1_000_000_000) },
     }
 
 

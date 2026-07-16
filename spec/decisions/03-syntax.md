@@ -11454,6 +11454,21 @@ Rust C-CONV — источник старого правила (итератор
 > НЕ через `.to_str()` повторно; для не-примитива — через `Display.@display`.
 > Детали миграции — `[M-d410-str-from-retraction]`, `docs/plans/174.2-scalar-to-str-notes.md`.
 
+> **AMEND (2026-07-16, Plan 200 Step 2) — хвост `std/time/duration.nv` закрыт.**
+> Последний оставшийся `as_*`-остров (`Duration`/`Timestamp`/`Monotonic` — не входил
+> в исходную ~380-site волну `[M-d410-as-to-migration]`, т.к. `time.duration`
+> компилировался до волны) мигрирован: `@as_nanos/micros/millis/secs/mins/hours/
+> days()` → голые виды `@nanos/micros/millis/seconds/minutes/hours/days()`;
+> `@as_secs_f64/millis_f64()` → `@seconds_f64/millis_f64()`; Timestamp
+> `@as_unix_secs/millis/nanos()` → `@unix_seconds/unix_millis/unix_nanos()`
+> (полное слово `seconds`, не `secs` — согласовано с общим правилом «единица
+> полным словом»); Monotonic `@as_nanos()` → `@nanos()`. Одновременно ретрактированы
+> per-width **конструкторы** `Duration.from_*`/`Timestamp.from_unix_*` и bare-fluent
+> `int/f64 @seconds()` и т.п. (не виды, а трансформации `T → Duration`) — заменены
+> единым `to_*`-бланкетом над `Ints` + `f64 @to_seconds()` (см. D317 амендмент
+> ниже, `[M-primitive-receiver-bounded-blanket-dispatch]`-зависимость закрыта
+> 196.8/196.9). Грепы `@as_` = 0 в `std/time/duration.nv`.
+
 ## D411. Record-деструктуризация в биндингах `ro`/`mut` (2026-07-07)
 
 > **Status:** ✅ IMPLEMENTED 2026-07-07 (решение владельца, предложено на живом коде —

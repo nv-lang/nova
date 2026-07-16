@@ -13,37 +13,37 @@ const d317_MAX = 9_223_372_036_854_775_807
 const d317_MIN = -9_223_372_036_854_775_807 - 1
 
 test "d317: checked_* — None on overflow, Some in range" {
-    assert(Duration.from_nanos(d317_MAX).checked_add(1.nanos()).is_none())
-    assert(Duration.from_nanos(d317_MIN).checked_sub(1.nanos()).is_none())
+    assert(d317_MAX.to_nanos().checked_add(1.to_nanos()).is_none())
+    assert(d317_MIN.to_nanos().checked_sub(1.to_nanos()).is_none())
     // mul: i64::MAX*2 overflows; i64::MIN*-1 overflows (two's-complement)
-    assert(Duration.from_nanos(d317_MAX).checked_mul(2).is_none())
-    assert(Duration.from_nanos(d317_MIN).checked_mul(-1).is_none())
+    assert(d317_MAX.to_nanos().checked_mul(2).is_none())
+    assert(d317_MIN.to_nanos().checked_mul(-1).is_none())
     // div: /0 и i64::MIN/-1
-    assert(Duration.from_nanos(10).checked_div(0).is_none())
-    assert(Duration.from_nanos(d317_MIN).checked_div(-1).is_none())
+    assert(10.to_nanos().checked_div(0).is_none())
+    assert(d317_MIN.to_nanos().checked_div(-1).is_none())
     // in-range → Some(exact)
-    match (1.hour()).checked_add(30.minutes()) {
-        Some(r) => assert(r == 90.minutes()),
+    match (1.to_hours()).checked_add(30.to_minutes()) {
+        Some(r) => assert(r == 90.to_minutes()),
         None => assert(false),
     }
     // in-range mul → Some(exact)
-    match (5.seconds()).checked_mul(3) {
-        Some(r) => assert(r == 15.seconds()),
+    match (5.to_seconds()).checked_mul(3) {
+        Some(r) => assert(r == 15.to_seconds()),
         None => assert(false),
     }
 }
 
 test "d317: saturating_* clamps to ±MAX (never wraps)" {
-    ro top = Duration.from_nanos(d317_MAX)
-    assert(top.saturating_add(1.seconds()).as_nanos() == d317_MAX)
-    assert(top.saturating_mul(2).as_nanos() == d317_MAX)
-    assert(top.saturating_mul(-2).as_nanos() == -d317_MAX)
-    assert(Duration.from_nanos(-d317_MAX).saturating_sub(1.seconds()).as_nanos() == -d317_MAX)
+    ro top = d317_MAX.to_nanos()
+    assert(top.saturating_add(1.to_seconds()).nanos() == d317_MAX)
+    assert(top.saturating_mul(2).nanos() == d317_MAX)
+    assert(top.saturating_mul(-2).nanos() == -d317_MAX)
+    assert((-d317_MAX).to_nanos().saturating_sub(1.to_seconds()).nanos() == -d317_MAX)
     // in-range saturating → exact (no clamp)
-    assert((1.hour()).saturating_add(30.minutes()) == 90.minutes())
+    assert((1.to_hours()).saturating_add(30.to_minutes()) == 90.to_minutes())
 }
 
 test "d317: @abs(i64::MIN) saturates to MAX (asymmetry, no UB)" {
-    assert(Duration.from_nanos(d317_MIN).abs().as_nanos() == d317_MAX)
-    assert((-7.seconds()).abs() == 7.seconds())
+    assert(d317_MIN.to_nanos().abs().nanos() == d317_MAX)
+    assert((-7.to_seconds()).abs() == 7.to_seconds())
 }

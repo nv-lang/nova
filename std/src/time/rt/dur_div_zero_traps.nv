@@ -6,6 +6,6 @@ module rt.dur_div_zero_traps
 import std.time.duration
 
 test "Duration @div(0) → trap" {
-    ro d = Duration.from_secs(10)
+    ro d = 10.to_seconds()
     ro _ = d / 0                        // ← trap: division by zero
 }
