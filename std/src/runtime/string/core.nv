@@ -166,14 +166,24 @@ fn str.alloc_copy(src *u8, n int) -> Self
 // retired statics; only the receiver moved from a `bytes []u8` PARAMETER to
 // the implicit `@` receiver.
 
-// Module-private ctor-overload (арность-сиблинг `str.new()` выше; канон
-// «конструктор-поглотитель = Type.new», ex-`wrap_owned`, владелец 2026-07-16):
+// Module-private ctor. ЦЕЛЕВОЕ имя — `str.new(buf, len)` (арность-сиблинг
+// `str.new()`, канон «конструктор-поглотитель = Type.new», владелец
+// 2026-07-16), но rename ЗАБЛОКИРОВАН компилятором: primitive-static резолв
+// арность-СЛЕПОЙ — 2-арг `str.new` рядом с 0-арг не разрешается
+// (E_UNKNOWN_STATIC_METHOD-фолбэк; generic-типы починены П5/pick_static_params,
+// primitive-путь — нет). Переименовать после
+// [M-str-primitive-static-arity-overload]. Пока — `wrap_owned`:
 // wrap an already-owned, NUL-terminated buffer as a str value (zero-copy, no
 // allocation/copy). Receiver `str` ⇒ type-based privacy to construct
 // `str{...}` directly (Plan 139.1/D220, same rationale as `str.alloc_copy`
 // above) — needed because `[]u8 @into_str_unchecked()` (below) has receiver
 // `[]u8`, not `str`, so it cannot build the literal itself.
-fn str.new(buf *mut u8, len int) -> Self {
+// Параметр `*u8` (владелец 2026-07-17): поле `str.ptr` — ro-pointee, mut-каст
+// был лишним. `unsafe`-атрибут ОТЛОЖЕН до [M-d216-unsafe-map-single-file-gaps]
+// (per-overload энфорс): сейчас A11 ключует статики (тип,имя) БЕЗ арности —
+// атрибут потребовал бы unsafe у safe `str.new()` 0-арг (живой сайт: d372-
+// фикстура conformance). Добавить атрибут ВМЕСТЕ с фиксом карты.
+fn str.wrap_owned(buf *u8, len int) -> Self {
     str { ptr: buf, len }
 }
 
@@ -192,6 +202,10 @@ export unsafe fn []u8 @to_str_unchecked() -> str {
 // output to the retired C nova_str_from_bytes_lossy.
 export fn []u8 @to_str_lossy() -> str {
     ro n = @len()
+    // FAST-PATH (перф, НЕ валидация — медленный путь ниже самодостаточен и сам
+    // чинит FFFD): валидный вход (типовой) = один скан + один memcpy, вместо
+    // цикла + cap(n*3)-над-аллокации + второй копии. Rust-парити from_utf8_lossy.
+    // Сознательно НЕ удалять как «дубль» (владелец-ревью 2026-07-17).
     if validate_utf8(@, n) {
         return str.alloc_copy(@ptr(), n)
     }
@@ -254,8 +268,11 @@ export fn []u8 @to_str_lossy() -> str {
 export unsafe fn []u8 consume @into_str_unchecked() -> str {
     ro n = @len()
     // Consume self discharges ownership; the raw buffer pointer wraps directly.
-    mut buf = @ptr()
-    str.new(buf, n)
+    // `ro`-биндинг → ro-оверлоад `@ptr() -> *u8` — точный тип параметра
+    // `str.new(buf *u8, len)` (arg-binding не сужает *mut→*ro при подборе
+    // оверлоада — см. E_UNKNOWN_STATIC_METHOD-фолбэк, вскрыто 2026-07-17).
+    ro buf = @ptr()
+    str.wrap_owned(buf, n)
 }
 
 // Plan 176 Ф.0.5 (D322, D325): fallible byte→str decode.
