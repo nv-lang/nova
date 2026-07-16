@@ -245,13 +245,13 @@ export fn DateTime @to_zoned(tz TimeZone, disamb Disambiguation) -> Result[Zoned
                 Earlier => {
                     // Назад на длину gap, интерпретация before-offset.
                     ro gap_len = (after.to_seconds() - before.to_seconds()) as i64
-                    ro shifted = @minus(Duration.from_secs(gap_len))
+                    ro shifted = @minus(gap_len.to_seconds())
                     Ok({ dt: shifted, offset: before, zone: tz })
                 }
                 _ => {
                     // Compatible | Later: push-forward, after-offset.
                     ro gap_len = (after.to_seconds() - before.to_seconds()) as i64
-                    ro shifted = @plus(Duration.from_secs(gap_len))
+                    ro shifted = @plus(gap_len.to_seconds())
                     Ok({ dt: shifted, offset: after, zone: tz })
                 }
             }
@@ -288,7 +288,7 @@ export fn ZonedDateTime.now(tz TimeZone) Time -> ZonedDateTime =>
 #stable(since = "0.1")
 export fn Timestamp @to_zoned(tz TimeZone) -> ZonedDateTime {
     ro off = tz.offset_at(@)
-    ro total_ns = @as_unix_nanos()
+    ro total_ns = @unix_nanos()
     // floor-division на отрицательных ns
     ro sec0 = total_ns / 1_000_000_000
     ro rem0 = total_ns % 1_000_000_000
@@ -318,7 +318,7 @@ export fn ZonedDateTime @to_timestamp() -> Result[Timestamp, DateError] {
     if inst_sec > 9_223_372_035 || inst_sec < -9_223_372_036 {
         return Err(RangeOverflow("ZonedDateTime out of Timestamp ±292y window"))
     }
-    Ok(Timestamp.from_unix_nanos(inst_sec * 1_000_000_000 + nano))
+    Ok((inst_sec * 1_000_000_000 + nano).to_unix_nanos())
 }
 
 /// Тот же момент в другой зоне → `Result` (Err вне окна Timestamp).

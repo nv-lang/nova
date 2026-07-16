@@ -33653,11 +33653,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let suggestion = if let Some(first) = args.first() {
                             let arg_repr = Self::expr_to_display(first.expr());
                             format!(
-                                "ChanReader.close_after(Duration.from_millis({}))",
+                                "ChanReader.close_after(({}).to_millis())",
                                 arg_repr
                             )
                         } else {
-                            "ChanReader.close_after(Duration.from_millis(<ms>))".into()
+                            "ChanReader.close_after(<ms>.to_millis())".into()
                         };
                         return Err(format!(
                             "[E5101] `Time.after` was removed in Plan 65 (D94 revision). \
@@ -35070,7 +35070,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // nova_chan_reader_close_after_ns(d.nanos). Duration unpacks
                     // inline (AD4 — zero-alloc field access).
                     //
-                    // Const-folding (AD4 / Ф.8): literal Duration.from_secs(N)
+                    // Const-folding (AD4 / Ф.8): literal N.to_seconds()
                     // — handled by the recursive emit_expr call below, which
                     // resolves Duration construction into an i64 expression that
                     // the C compiler can fold.
@@ -35088,7 +35088,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if arg_c != "NovaValue_Duration" {
                                 return Err(format!(
                                     "ChanReader.close_after(): expected Duration argument, got {} \
-                                     — use Duration.from_millis(N) / Duration.from_secs(N) \
+                                     — use N.to_millis() / N.to_seconds() \
                                      (Plan 65 / D94 revision)",
                                     arg_c
                                 ));
@@ -38495,11 +38495,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let suggestion = if let Some(first) = args.first() {
                         let arg_repr = Self::expr_to_display(first.expr());
                         format!(
-                            "ChanReader.close_after(Duration.from_millis({}))",
+                            "ChanReader.close_after(({}).to_millis())",
                             arg_repr
                         )
                     } else {
-                        "ChanReader.close_after(Duration.from_millis(<ms>))".into()
+                        "ChanReader.close_after(<ms>.to_millis())".into()
                     };
                     return Err(format!(
                         "[E5101] `Time.after` was removed in Plan 65 (D94 revision). \
@@ -38594,7 +38594,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if arg_c != "NovaValue_Duration" {
                             return Err(format!(
                                 "ChanReader.close_after(): expected Duration argument, got {} \
-                                 — use Duration.from_millis(N) / Duration.from_secs(N) \
+                                 — use N.to_millis() / N.to_seconds() \
                                  (Plan 65 / D94 revision)",
                                 arg_c
                             ));

@@ -2312,6 +2312,15 @@ ro n = magnitude.abs()
 `@clamp(lo int, hi int)`, `@is_negative()`, `@is_positive()`. Тригонометрия
 и логарифмы — только на float-типах.
 
+> **Амендмент (Plan 200 Step 0, 2026-07-16, владелец): `@clamp` — бланкет над
+> `Ints`.** Конкретный `int @clamp(lo int, hi int)` retracted; заменён на
+> `fn[T Ints] T @clamp(lo T, hi T) -> T` (std/src/prelude/protocols.nv, тот же
+> D310 type-set `Ints`, что и Plan 206 `@checked_*`/`@saturating_*`/
+> `@wrapping_*` — D423) — один бланкет вместо per-width конкретных методов,
+> покрывает i8..i64/u8..u64/int/uint. Контракт байт-идентичен старому: `@ <
+> lo -> lo`, `@ > hi -> hi`, иначе `@`. `f64 @clamp` НЕ входит (float ∉ `Ints`)
+> и остаётся отдельным конкретным методом.
+
 #### Static-функции на типе (не методы)
 
 Для констант и операций без естественного receiver'а — обычные

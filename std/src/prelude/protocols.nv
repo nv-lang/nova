@@ -771,3 +771,20 @@ export fn[T Ints] T @saturating_mul(rhs T) -> T {
         wrapped
     }
 }
+
+// Plan 200 Step 0 (D74 amend, владелец 2026-07-16): `clamp` над `Ints` — один
+// бланкет вместо ×10 per-width конкретных методов (та же экономия, что
+// checked_*/saturating_*/wrapping_* выше). Вытесняет старый конкретный
+// `int @clamp` (std/runtime/defaults.nv) — теперь i8..i64/u8..u64/int/uint все
+// получают `@clamp` через ЭТОТ бланкет. `f64 @clamp` НЕ входит (float ∉ Ints)
+// и остаётся отдельным конкретным методом в defaults.nv.
+
+/// `clamp` — ограничивает значение диапазоном `[lo, hi]`: при `@ < lo` -> `lo`;
+/// при `@ > hi` -> `hi`; иначе -> `@` без изменений. Контракт скопирован 1:1 со
+/// старого конкретного `int @clamp` (std/runtime/defaults.nv, до Plan 200 Step
+/// 0): порядок проверок фиксирован (`@ < lo` первым), поэтому при `lo > hi`
+/// метод НЕ паникует — просто ведёт себя по той же формуле (для `@` строго
+/// между `hi` и `lo` результат — необрезанный `@`).
+#stable(since = "0.1")
+export fn[T Ints] T @clamp(lo T, hi T) -> T =>
+    if @ < lo { lo } else if @ > hi { hi } else { @ }

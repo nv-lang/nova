@@ -20,7 +20,7 @@ module time.civil
 // redeclaration needed.
 
 /// Календарная величина: годы/месяцы/дни. НЕ длительность: `Period.of_days(1)`
-/// через DST — та же wall-time (23/25h elapsed), `Duration.from_hours(24)` —
+/// через DST — та же wall-time (23/25h elapsed), `24.to_hours()` —
 /// ровно 24h (D320 R4).
 #stable(since = "0.1")
 export type Period value {

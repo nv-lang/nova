@@ -1,7 +1,7 @@
 // Plan 65 R18 f1: ChanReader.close_after rejects bare int argument.
 // EXPECT_COMPILE_ERROR expected Duration argument
 //
-// Migration path documented in the diagnostic: use Duration.from_millis(N)
+// Migration path documented in the diagnostic: use N.to_millis()
 // instead of raw int — Plan 65 / D94 revision.
 
 module neg.f1_close_after_int_neg
