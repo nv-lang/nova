@@ -1,6 +1,6 @@
 # Plan 165 — Value-record iterator types + codegen generic-forward-decl fix
 
-**Status:** ✅ CLOSED 2026-06-16  
+**Статус:** ✅ CLOSED 2026-06-16  
 **Commits:** `1f92f106` (codegen fix) · `3cec7a23` (stdlib value types) · `20d4ee8b` (docs + backlog)  
 **Branch:** main (коммиты уже в main)  
 **Зависит от:** Plan 153.2 ✅ (VecIter, lazy-iter layer), Plan 153 ✅ (Vec value-record), Plan 124.8 ✅ (value-record syntax `value`), Plan 162 ✅ (EnumerateIter)

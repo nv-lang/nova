@@ -161,7 +161,7 @@
 | [83.4.5.9](83.4.5.9-rename-noautoarm-env.md) | Plan 83.4.5.9: rename NOVA_NO_AUTOARM → NOVA_AUTOARM (inverted env-name) | 📋 in-progress. |
 | [83.4.5.10](83.4.5.10-mn-perf-quick-wins.md) | Plan 83.4.5.10: M:N runtime performance quick wins (Go-style mcache + smaller stack + inline parallel-for) | 🟡 PARTIAL — Ф.3 ✅ DONE (≥1× speedup acceptance MET); Ф.1 + Ф.2 deferred (cancellation_test stack overflow на 1MB; per-worker pool complex). |
 | [83.4.5.11](83.4.5.11-test-races-cleanup.md) | Plan 83.4.5.11: Concurrency test race cleanup — rewrite shared-mut к race-free patterns | 🟢 V1 IMPLEMENTED 2026-05-26 — 4 tests fixed, 63/12 → 68/7. |
-| [83.4.5.12](83.4.5.12-supervised-nested-fiber-slot-race.md) | Plan 83.4.5.12 — Supervised nested-fiber slot-race (сервер виснет на 2-3-м запросе) | 🔴 В РАБОТЕ (opus-рекон+фикс идёт). **Приоритет: P1** (блокер непрерывной работы флагман-сервера). |
+| [83.4.5.12](83.4.5.12-supervised-nested-fiber-slot-race.md) | Plan 83.4.5.12 — Supervised nested-fiber slot-race (сервер виснет на 2-3-м запросе) | ✅ ЗАКРЫТ 2026-07-15 (opus-рекон+фикс). **Приоритет: P1** (блокер непрерывной работы флагман-сервера). |
 | [83.5](83.5-boehm-thread-local-alloc.md) | Plan 83.5: Boehm THREAD_LOCAL_ALLOC — ❌ REJECTED (wrong hypothesis) | ❌ **REJECTED 2026-05-24 same-day** — wrong hypothesis. |
 | [83.6](83.6-spawn-ctx-pool.md) | Plan 83.6: Per-worker SpawnCtx free-list pool (Go P-mcache аналог) | 🟡 **V1 IMPLEMENTED 2026-05-25** — pool active, gc_no_leak |
 | [83.7](83.7-runnext-lifo-slot.md) | Plan 83.7: runnext LIFO slot — cache-warm handler chains (Go/Tokio parity) | 🟡 **V1 IMPLEMENTED 2026-05-25** — runnext priority slot |
@@ -437,18 +437,18 @@
 | [152.7.2](152.7.2-format-context.md) | План 152.7.2 — формат-контекст в Display (D419) + интерполяция прямо-в-sink | 🔨 В РАБОТЕ (2026-07-13, владелец: «делай»; волна запущена — ветка |
 | [152.8](152.8-char-u32-codepoint.md) | Plan 152.8 — char и code-point буферы: переход на 32-бит (оптимизация памяти) | ✅ ЗАКРЫТ 2026-06-16. Слой 1 + Слой 2 в ветке `plan-152.8`. |
 | [153](153-compiler-bugs-phase-b.md) | Plan 153 — Compiler Bug Fixes (Phase B blockers) | ✅ ЗАКРЫТ 2026-06-16 (коммиты `d505c0e5` + `542a3db8` + тесты) |
-| [153](153-vec-production-model.md) | Plan 153 (umbrella) — Production-grade Vec[T] / []T: API-паритет, итераторы, слайсы | 🟡 **IN PROGRESS** — **153.0 ✅ ЗАКРЫТ** (2026-06-13, |
-| [153.2](153.2-Z-zero-alloc-lazy.md) | План 153.2-Z — Zero-allocation ленивый конвейер Vec[T].lazy() | 🟡 IN PROGRESS — Ступень 1 ✅, Ступень 2 🔄 (ветка `plan-153.2-zerocost`), |
+| [153](153-vec-production-model.md) | Plan 153 (umbrella) — Production-grade Vec[T] / []T: API-паритет, итераторы, слайсы | ✅ **ЗАКРЫТ** — все под-планы 153.0–153.6 закрыты |
+| [153.2](153.2-Z-zero-alloc-lazy.md) | План 153.2-Z — Zero-allocation ленивый конвейер Vec[T].lazy() | 🟡 ЧАСТИЧНО ЗАКРЫТ — Ступень 1 ✅, Ступень 2 ✅ (`515de5742`, generic-over-source), |
 | [153.3.1](153.3.1-pdqsort.md) | Plan 153.3.1 — pdqsort: замена heapsort в @sort_unstable* | ✅ CLOSED 2026-06-18. |
-| [154](154-no-silent-dispatch.md) | Plan 154 (umbrella) — No silent no-op dispatch | 🟡 IN PROGRESS (154.0 ✅ CLOSED; 154.1 в работе). |
+| [154](154-no-silent-dispatch.md) | Plan 154 (umbrella) — No silent no-op dispatch | ✅ ЗАКРЫТ (154.0 ✅ CLOSED 2026-06-13; 154.1 ✅ CLOSED 2026-06-13, |
 | [154.0](154.0-method-override-coherence.md) | Plan 154 — Method coherence: запрет silent no-op переопределения метода | ✅ **CLOSED 2026-06-13** (commit `809e8605` + |
 | [154.1](154.1-impl-conformance-primitive-format.md) | Plan 154.1 — Явная opt-in конформность протоколов (#impl) + конкретные Display/Debug примитивов | ✅ **CLOSED 2026-06-13** (ветка `plan-154.1`, |
-| [155](155-json-performance.md) | Plan 155 — std/encoding/json production-grade performance rewrite | 📋 PLANNED, P1. **Эстимат:** ~2–3 dev-day. |
+| [155](155-json-performance.md) | Plan 155 — std/encoding/json production-grade performance rewrite | 🟡 ЧАСТИЧНО ЗАКРЫТ ПОБОЧНО — P1 (O(n²)-лексер) закрыт |
 | [156](156-test-runner-slow-lane.md) | Plan 156 — Slow-test lane: большие тесты в репо, вне дефолт-регресса ([M-test-runner-large-test-lane]) | ✅ IMPLEMENTED (suffix-only механизм `_slow.nv` + флаги |
 | [157](157-interpreter-unsupported.md) | Plan 157: Tree-walking interpreter — UNSUPPORTED (C-codegen only) | ✅ DONE (2026-06-14) — `nova run` громко ошибается, мёртвые interp-тесты |
 | [158](158-test-runner-worker-stack.md) | Plan 158 — Test-runner worker-thread stack size ([M-codegen-conformance-stack-overflow]) | ✅ **DONE** (ветка `plan-cgstack`, worktree nova-p156). |
 | [159](159-reachability-codegen.md) | Plan 159 — Reachability-based codegen (dead-code elimination на эмиссии) | ✅ IMPLEMENTED (Ф.1–Ф.4 green; см. «Статус по завершении»). P2. |
-| [159.1](159.1-method-reachability-dce.md) | Plan 159.1 — Method-reachability DCE: точность + звучность-как-МОДЕЛЬ | — (нет Статус-строки) |
+| [159.1](159.1-method-reachability-dce.md) | Plan 159.1 — Method-reachability DCE: точность + звучность-как-МОДЕЛЬ | 📋 PLANNED, не начат. Риск P1: DCE может срезать метод, достижимый только через |
 | [160](160-module-privacy.md) | Plan 160 — Module-level field privacy (type X priv { … }) | ✅ ЗАКРЫТ (Ф.1–Ф.3 + Ф.4 симметрия, 2026-06-15). |
 | [161](161-blanket-protocol-receiver.md) | Plan 161 — Blanket protocol-receiver methods (fn[I Next[T]] I @m) | ✅ CLOSED Ф.0-Ф.4 2026-06-15 (branch plan-161). |
 | [162](162-enumerate-zc.md) | Plan 162 — EnumerateIter: zero-cost enumerate adapter | ✅ CLOSED+MERGED 2026-06-16 (merge `08a3db41`, branch plan-162). |
@@ -456,44 +456,44 @@
 | [162.1](162.1-resolver-split-lazy-bodies.md) | Plan 162.1 — Полный split резолвера: collect-signatures → lazy-bodies | ✅ CLOSED (2026-06-16). P2. |
 | [162.2](162.2-sig-table-wiring.md) | Plan 162.2 — Wiring sig_table в compile path + lazy cross-module fn lookup | ✅ CLOSED (2026-06-16). P2. |
 | [163](163-import-export-glob-hygiene.md) | Plan 163 — Гигиена import/export: запрет glob-форм (named + alias only) | ✅ CLOSED+AMENDED (2026-06-16). P3 (мелкий, шипится независимо). |
-| [164](164-method-resolution-blanket-and-impl-attr.md) | Plan 164 — Method resolution: blanket dispatch fix + #impl(P[T]) + vec_iter rename | — (нет Статус-строки) |
-| [165](165-value-iter-types.md) | Plan 165 — Value-record iterator types + codegen generic-forward-decl fix | — (нет Статус-строки) |
-| [166](166-udp-split.md) | Plan 166 — net.c send_to TOCTOU fix + UDP socket split | — (нет Статус-строки) |
+| [164](164-method-resolution-blanket-and-impl-attr.md) | Plan 164 — Method resolution: blanket dispatch fix + #impl(P[T]) + vec_iter rename | ✅ CLOSED (Ф.1–Ф.4, 2026-06-16). **Branch:** plan-zfix. **Worktree:** D:\Sources\nv-lang\nova-p-zfix. |
+| [165](165-value-iter-types.md) | Plan 165 — Value-record iterator types + codegen generic-forward-decl fix | ✅ CLOSED 2026-06-16 |
+| [166](166-udp-split.md) | Plan 166 — net.c send_to TOCTOU fix + UDP socket split | ✅ CLOSED 2026-06-17 |
 | [167](167-type-name-too-short.md) | Plan 167 — E_TYPE_NAME_TOO_SHORT: запрет однобуквенных имён типов | ✅ CLOSED 2026-06-17. **Приоритет:** M. |
 | [168](168-vec-body-forward-decl.md) | Plan 168 — Vec generic forward-decl missing for body-only instantiations (D300) | ✅ CLOSED 2026-06-17. **P1**; Sonnet 4.6. |
-| [169](169-test-suite-health.md) | Plan 169 — Test-suite health (umbrella) | 🟡 В РАБОТЕ. |
+| [169](169-test-suite-health.md) | Plan 169 — Test-suite health (umbrella) | ⛔ SUPERSEDED — рамка «nova_tests = гейт шиппинга» отменена |
 | [169.1](169.1-test-suite-profiling-and-speedup.md) | Plan 169.1 — Test-suite profiling + speedup | ✅ ЗАКРЫТ 2026-06-17 (followups closed 2026-06-17). |
 | [169.1.1](169.1.1-test-lane-flags-and-ci.md) | Plan 169.1.1 — CLI category-селекторы + CI авто-регресс | ✅ CLOSED 2026-06-19. Реализовано Ф.1 (TestSelection + CLI флаги) + Ф.2 (CI workflow). |
 | [169.1.2](169.1.2-consolidate-tests.md) | Plan 169.1.2 — Консолидация тестов по темам | ✅ Level-2 ВЫПОЛНЕНО 2026-06-20 (−51 CU, 8 семейств; итого консолидация ~−102 CU). Остаток: gated на 172 (красные суб-папки) + plan118/70 (merge-conflict). Метод доказан plan103_2. |
-| [169.2](169.2-nova-tests-fix-sweep.md) | Plan 169.2 — nova_tests fix-sweep (folder-module name-collision class) | 🟡 В РАБОТЕ (начато 2026-06-18). |
+| [169.2](169.2-nova-tests-fix-sweep.md) | Plan 169.2 — nova_tests fix-sweep (folder-module name-collision class) | ⛔ SUPERSEDED — рамка «nova_tests = гейт шиппинга» отменена конвенцией |
 | [169.2](169.2-red-audit.md) | Plan 169.2 — Red folder-module audit (2026-06-20) | — (нет Статус-строки) |
-| [169.2.1](169.2.1-core-unicode-decouple.md) | Plan 169.2.1 — Развязать prelude.core от std.unicode | ✅ CLOSED 2026-06-19 (branch |
+| [169.2.1](169.2.1-core-unicode-decouple.md) | Plan 169.2.1 — Развязать prelude.core от std.unicode | ✅ CLOSED 2026-06-19, MERGED в main (коммит `729ac6b66`; |
 | [170](170-file-private-visibility.md) | Plan 170 — priv(file): file-private видимость для peer-модулей | ✅ **CLOSED 2026-06-19** (ветка `plan-170-priv-file`). |
 | [172](172-closure-roadmap.md) | Plan 172 — единый секвенированный roadmap закрытия (синтез 2026-06-28) | — (нет Статус-строки) |
-| [172](172-compiler-rework.md) | Plan 172 — Переработка компилятора (umbrella) | 📋 proposed 2026-06-19 (umbrella) |
+| [172](172-compiler-rework.md) | Plan 172 — Переработка компилятора (umbrella) | 🔄 ПОГЛОЩЁН [Plan 196](196-one-truth-closeout.md) («Умбрелла над: 172.1, 172.12, 172.13») — координируется, не дублируется отдельным треком. |
 | [172](172-d-conformance-checklist.md) | Plan 172 — D-conformance closure-checklist (V-трек = U.7 расширенный) | — (нет Статус-строки) |
 | [172](172-spec-tests-salvage-state.md) | spec_tests salvage-state — batch-workflow w8w3huvrz (2026-06-29) | — (нет Статус-строки) |
 | [172.1](172.1-d-status.md) | Plan 172.1 — Статус всех D-блоков по конвенции | — (нет Статус-строки) |
 | [172.1](172.1-p67-phase2-map.md) | P67 ФАЗА 2 — channel-completeness карта (de-risk, workflow wf_0cd92c6b 2026-06-29) | — (нет Статус-строки) |
 | [172.1](172.1-reg-execution.md) | REG-трек execution-план — единый реестр методов/stdlib (§0.6, ultracode recon 2026-06-28) | — (нет Статус-строки) |
 | [172.1](172.1-tally-audit-2026-07-02.md) | Workflow digest 2026-07-02: tally audit + clusters | — (нет Статус-строки) |
-| [172.1](172.1-unified-type-engine.md) | Plan 172.1 — Unified type engine | 📋 proposed 2026-06-19 |
+| [172.1](172.1-unified-type-engine.md) | Plan 172.1 — Unified type engine | 🔄 ПОГЛОЩЁН [Plan 196](196-one-truth-closeout.md) («Умбрелла над: 172.1 (U-хвосты), 172.12, 172.13») — координируется, не дублируется отдельным треком. |
 | [172.1.1](172.1.1-generic-mono-erased-stub-lowering.md) | Plan 172.1.1 — Generic-mono / erased-stub lowering reconciliation (U.4.5 substrate) | 📋 proposed 2026-06-27 (выделено из 172.1 U.4.5 — решение владельца) |
 | [172.2](172.2-method-arg-type-checking.md) | Plan 172.2 — Method-argument type-checking + scalar-narrowing enforcement | ✅ closed 2026-06-26 (реализовано — checker-side method-arg narrowing через `check_instance_overload` + миграция unicode на `codepoint = u32` (D327); гейт зелёный). Closure — §10. |
 | [172.3](172.3-type-set-bounds.md) | Plan 172.3 — Type-set bounds (Go-style generic constraints) | ✅ **CLOSED 2026-06-28** (Ф.0–Ф.5; 9/9 тестов; 0-new-FAIL vs clean baseline). 2 осознанных отложения (§5, не soundness-долг). |
 | [172.4](172.4-value-abi-auto-placement.md) | Plan 172.4 — Единый value-ABI + автоматический placement (by-ref / heap↔stack) | ✅ CLOSED 2026-07-04 (correctness-core Ф.1-Ф.3 = owner-acceptance выполнен: fluent `mut @ -> @` + структурное `==` + единый receiver-ABI VR+NT; §0-консолидация предиката f8d6bfaa). P3-perf Ф.4-Ф.6 ВЫНЕСЕНЫ → [172.14](172.14-value-abi-perf-placement.md) (ре… |
 | [172.5](172.5-inout-ref-params.md) | Plan 172.5 — In-out ref-параметры (safe by-ref borrow) + формализация @/-> @ | ⛔ СУПЕРСЕДЕД Plan 184 (2026-07-06/08) — весь дизайн этого плана («`ref` — режим параметра, НЕ тип»; `mut ref x T`/`ro ref x T`; call-site маркер `ref x`) РЕТРАКТИРОВАН заходом-1/5 Плана 184 в пользу «`ref T` — ограни… |
-| [172.6](172.6-cli-test-require-path.md) | Plan 172.6 — nova test требует явный путь | — (нет Статус-строки) |
+| [172.6](172.6-cli-test-require-path.md) | Plan 172.6 — nova test требует явный путь | ✅ DONE (см. «## Статус» ниже — все пункты выполнены, коммит в plan-172-unified-type-engine). |
 | [172.12](172.12-typed-ir-mono.md) | Plan 172.12 — Typed-IR mono path | 🔧 ✅ ЗАКРЫТ 2026-07-09 (A1-A8 + коллапс триплификации §14.19; [N]T value-семантика — заморожена отдельно) (заход 1: Ф.0 карта закрыта; заход 2: A1 попытка → нулевой итог, карта пересеквенирована;… |
 | [172.13](172.13-constraint-inference.md) | Plan 172.13 — Constraint-based inference core | 🚧 in-progress (снята пауза 2026-07-10, [sonnet]). Ф.0 (инвентарь) + Ф.1 (ядро-скелет: unify/occurs-check/type-set, 16 юнитов) + Ф.2 (миграция пакета C — literal-coercion семья на Constraint/TypeSet/Solver, byte-parity подтверждён: conformance 91… |
 | [172.14](172.14-value-abi-perf-placement.md) | Plan 172.14 — Value-ABI perf: авто by-ref / heap↔stack / copy-elision (P3) | 🟢 CORE LANDED 2026-07-10 (волна value-abi-172-14, см. «Итог волны» ниже) — Ф.1 авто by-ref для free-fn (>16Б C-ABI ro value-struct: NovaValue_/NovaTuple_/`[N]T`-inline) + Ф.3-дёшево (элизия temp) + фикс регрессии main «срез `[N]T`» (тип среза =… |
-| [173](173-error-system-unify-harden.md) | Plan 173 — Система ошибок и cleanup: унификация + hardening (panic/fail/defer/on_exit), production-grade | 📋 READY — Ф.0 закрыта (sign-off 2026-06-20; пересмотры §3a/§3b 2026-06-26 внесены в текст); |
+| [173](173-error-system-unify-harden.md) | Plan 173 — Система ошибок и cleanup: унификация + hardening (panic/fail/defer/on_exit), production-grade | ✅ ЗАКРЫТ — все фазы Ф.0R-Ф.6 закрыты по телу файла (Ф.0R 2026-07-09, Ф.1 2026-07-04, |
 | [173](173-f2-derisk-map.md) | Plan 173 Ф.2 (defer-kernel) — де-риск-карта (ultracode Workflow, 2026-07-04) | — (нет Статус-строки) |
 | [173.0](173.0-concurrency-runtime-substrate.md) | Plan 173.0 — Рантайм-субстрат для structured concurrency (гейт) | ✅ ЗАКРЫТО 2026-07-08 [sonnet, ветка substrate-173-0/nova-unders]. Ф.1 (drain-race, рантайм+deliverable) закрыта предыдущей волной; Ф.2 (per-slot `child_error[]` retention) + Ф.3 (serialized decision-loop + ctx-pinning/R1-guard) закрыты этой волной. Гей… |
 | [173.1](173.1-parallel-collect-and-supervised-value.md) | Plan 173.1 — parallel for → []T (сбор через канал+consume) + supervised как значение | ✅ **DONE ядро 2026-07-09** (ветка `parallel-collect-173-1`; spec = D414 §4 + D71-amend). |
 | [173.2](173.2-supervision-as-effect.md) | Plan 173.2 — Supervision как эффект (Supervisor / on_child_fail / Decision) | ✅ ЗАКРЫТО ПРОД-РЕДИ 2026-07-10. **Амендмент 2026-07-10 (владелец): Restart-семейство |
 | [173.3](173.3-data-race-freedom-share.md) | Plan 173.3 — Data-race-freedom: атрибут #share + capture-check + consume-в-spawn | ✅ ЗАКРЫТ 2026-07-10 (sonnet, ветка `drf-173-3`, worktree nova-p182; D-блок = **D415** |
-| [174](174-lang-ffi-features.md) | Plan 174 — Language & FFI features on the unified type engine (umbrella) | — (нет Статус-строки) |
+| [174](174-lang-ffi-features.md) | Plan 174 — Language & FFI features on the unified type engine (umbrella) | 📋 READY (umbrella). Создан 2026-06-27; **Ред. 2 — 2026-07-03**: полная сверка семейства |
 | [174.1](174.1-primitive-parse-api.md) | Plan 174.1 — Primitive parse API (One-Engine, radix-only parse) | ✅ ПОВЕРХНОСТЬ SHIPPED 2026-07-08 (ветка `parse-174-1`) — итоговый канон ОТЛИЧАЕТСЯ от черновика ниже, см. §0-ИТОГ. Остаток (codegen-хардкод `T.try_from(str)`, float-канон) — `[M-174.1-parse-engine-structural]`. |
 | [174.2](174.2-question-mark-return-only.md) | Plan 174.2 — ? строго return-only (Rust-стиль) + чистка spec | ✅ **CODEGEN-ЧАСТЬ РЕАЛИЗОВАНА** (Plan 173 Ф.1 #3, |
 | [174.2](174.2-scalar-to-str-prompt.md) | Промт-задание: единая поверхность «скаляр → строка» (str.from → @to_str) + прямо-в-sink | — (нет Статус-строки) |
@@ -505,8 +505,8 @@
 | [175.1](175.1-civil-time.md) | Plan 175.1 — Гражданское (календарное) время: Date/TimeOfDay/DateTime/ZonedDateTime/Period + ISO-8601/RFC-3339 | ✅ SHIPPED 2026-07-10 (ветка `civil-time-175-1`, `std/time/civil/` folder-module; D319/D320/D321 внесены; отступления реализации — D321 §impl-отступления + маркеры `[M-175.1-*]`; полный IANA-snapshot — `[M-175.1-full-tzdb-embed]`). `Offset.local()`/`[M-175.… |
 | [176](176-io-fs-os.md) | Plan 176 — I/O + Filesystem + OS: io-core (Read/Write/Seek) + Fs-эффект + Os (env/args/cwd) | 🟢 **Ф.0.5 + Ф.1 + Ф.2 (fs+Path) + Ф.3 (os) + Ф.4 (net-миграции) + Ф.5 (тесты/spec/docs/Q-sweep) — ВСЕ DONE (Ф.4/Ф.5: 2026-07-09). Plan 176 ЗАКРЫТ.** **Маркер:** `[M-176-io-fs-os]` (CLOSED — см. `docs/plans/backlog-followups.md`). |
 | [177](177-fallible-result-everywhere.md) | Plan 177 — Единый fallible-контракт std: Result-everywhere (no bare-throws convention) | ✅ **CLOSED 2026-07-04** (D325-конвенция полностью в спеке + guard + conformance 41/0; stable-std in-scope мигрирована; остаток — явные маркеры, см. §14) — **D325 ✅ committed** + **amend-пакет §4a ✅ внесён** (`04-effects.md`: R0/R4-крите… |
-| [178](178-std-http.md) | Plan 178 — std/http: message-model + URL + HTTP/1.1 (client+server) + HTTPS + HTTP/2 | — (нет Статус-строки) |
-| [179](179-std-encoding-compress.md) | Plan 179 — std/encoding/compress (DEFLATE / zlib / gzip / brotli) | — (нет Статус-строки) |
+| [178](178-std-http.md) | Plan 178 — std/http: message-model + URL + HTTP/1.1 (client+server) + HTTPS + HTTP/2 | 📋 READY (**Ред. 2 — 2026-07-03**: renumber → D357–D362 выполнен; стейл-номера сняты; siblings-дыры закрыты: Monotonic/from_secs, cancel-семантика, ErrSource-export, write-backpressure, 1xx-loop, NO_PROXY-матрица, TE-trailers). |
+| [179](179-std-encoding-compress.md) | Plan 179 — std/encoding/compress (DEFLATE / zlib / gzip / brotli) | 🟢 Ф.1 + Ф.3 + Ф.2(decode) LANDED — inflate/gzip/zlib **decode** (pure-Nova) + deflate/gzip/zlib **encode** (pure-Nova, levels + streaming) + **brotli decode (C-FFI, 2026-07-06)** готовы. **Ф.2 итог (2026-07-06):** vendored google/brotli v1.2.0 decoder (headers+lib, стиль libuv, БЕЗ исход… |
 | [180](180-serde-derive.md) | Plan 180 — std/encoding/serde (Serialize/Deserialize + компиляторный auto-derive) | `✅ ВЫПОЛНЕН (record-path, honest-complete) — 2026-07-05`. **Completeness-аудит close-out (2026-07-05):** adversarial-аудит нашёл 6 реальных дыр полноты record-path — ВСЕ починены (не отложены): `Option[value-record]` + `HashMap[str,value-record]` mono-… |
 | [181](181-same-scope-rebinding.md) | Plan 181 — Same-scope re-binding (ro x = ... повторно, тип может меняться) | ✅ **РЕАЛИЗОВАН (2026-07-04)** — R1–R7 + B1/B2/B3 закрыты; D347 в спеке; conformance 38/0 (d347 + amend d90/d131/d133/d22/d34); pos/neg `nova_tests/rebind/` 4/4; zero-regression vs d97c0dbe delta 0 (~135 тестов). Ф.4 R5-lint `W_SHADOW_UNRELATED` — реализован как **пр… |
 | [182](182-test-suite-sanation.md) | Plan 182 — Санация тестового корпуса nova_tests/ (черновик) | `📋 ✅ ЗАКРЫТ 2026-07-09 (санация выполнена волнами 2026-07-06..08; довливные классы раннера — маркерами в backlog) (аудит-карта + план фаз; правок в nova_tests НЕ вносилось)`. |
@@ -520,7 +520,7 @@
 | [190](190-full-tzdb-embed.md) | Plan 190 — Полный вшитый tzdb (#embed_tzdata-флаг) (вынос из 175.1) | 📋 PROPOSED 2026-07-10 (решение владельца — отдельный план). |
 | [191](191-bcrypt-security-hardening.md) | Plan 191 — bcrypt: закрыть security-surface (демо-KDF под именем bcrypt) | ✅ **Вариант A (де-риск) ЗАКРЫТ 2026-07-10** (ветка `bcrypt-derisk-191`, |
 | [193](193-nova-tls-repo.md) | Plan 193 — nova-tls: вынос TLS в отдельную репу + examples + доки | 🚧 Ф.1 ✅ ЗАКРЫТА, Ф.2 BLOCKED 2026-07-12 — файловый вынос |
-| [194](194-contract-execution-model.md) | Plan 194 — Модель исполнения контрактов: #debug + переопределение --contracts | ✅ СОГЛАСОВАН 2026-07-14 (дизайн + сверка против D81/D24/Plan-140 подтверждены владельцем; готов к очереди на реализацию). **Приоритет:** P1 (язык-семантика; разблокирует vrange-роутинг). |
+| [194](194-contract-execution-model.md) | Plan 194 — Модель исполнения контрактов: #debug + переопределение --contracts | ✅ ЗАКРЫТ 2026-07-15 (Ф.0-Ф.4; спека `09-tooling.md` D24-амендмент сама фиксирует закрытие; коммиты `eff4f080d..36d82ddac`). **Приоритет:** P1 (язык-семантика; разблокирует vrange-роутинг). |
 | [195](195-native-modules-c-not-rust.md) | Plan 195 — src/ layout std-миграция (общий native-модуль-паттерн → доки) | 🟢 ЗАВЕРШЁН 2026-07-13 — Ф.1-2 (mbedTLS-своп TLS, Rust удалён, T40) И |
 | [196](196-one-truth-closeout.md) | Plan 196 — «Одна правда»: удалить второе окно infer_expr_c_type | 🔥 IN PROGRESS, **КУРС-КОРРЕКТИРОВАН 2026-07-12**. **Приоритет:** P0 (ключевая |
 | [196](196-retracted.md) | Plan 196-retracted — тупики и мисдиагнозы миграции «одного окна» | — (нет Статус-строки) |
@@ -528,23 +528,27 @@
 | [196.3](196.3-wave2-d-driven.md) | Plan 196.3 — Волна-2: встречная D-driven миграция сиблингов второго окна | 🔄 в работе [opus, worktree `nova-wave2`]. |
 | [196.4](196.4-call-resolvedtype-channel.md) | Plan 196.4 — Канал Call-expr ResolvedType: фундамент Tier-2 | 🔄 ДИЗАЙН (opus-разведка, worktree `nova-spike`, ветка `spike-196`). **Это ДИЗАЙН, НЕ реализация — |
 | [196.5](196.5-facet-c-map.md) | Plan 196.5 Facet C — карта callnorm.rs/argbind.rs (волна-5 разведка) | — (нет Статус-строки) |
-| [196.5](196.5-node-substs-channel.md) | Plan 196.5 — Канал node_substs: per-call значения подстановки generic-параметров | 🔄 ДИЗАЙН (opus-разведка, worktree `nova-spike`, ветка `node-substs-design`). |
+| [196.5](196.5-node-substs-channel.md) | Plan 196.5 — Канал node_substs: per-call значения подстановки generic-параметров | ✅ ДИЗАЙН РЕАЛИЗОВАН (сверка по коду 2026-07-16, см. |
 | [196.5](196.5-perd-d30-verification.md) | Plan 196.5 §196.3 — пер-D верификация d30/d85 (Result/Option-класс) после Stage-A..B5 | — (нет Статус-строки) |
 | [196.5](196.5-perd-d52-verification.md) | Plan 196.5 §196.3 — пер-D верификация кластера D52/D407/D406 (infer_method_level_return_for_sum) | — (нет Статус-строки) |
 | [196.5](196.5-perd-verification.md) | Plan 196.3 / 196.5 — пер-D верификация каналa node_substs для d119/d122 (флип-готовность) | — (нет Статус-строки) |
 | [196.5](196.5-stage-d-census.md) | Plan 196.5 Stage-D — перепись (census) остаточных 54 веток infer_call_ret_c (волна-3 prep) | — (нет Статус-строки) |
+| [196.7](196.7-method-dispatch-resolved-callees.md) | 196.7 — Method-dispatch через resolved_callees (одно окно для диспетча метода по ресиверу) | ✅ ЗАКРЫТ 2026-07-15 (ветка `p196-dispatch`, worktree `nova-196-7`; в main вливает оркестратор ПОСЛЕ 206/209Ф.3/D39 — `emit_c.rs` конкурентно правится). |
+| [196.8](196.8-primitive-receiver-bounded-blanket.md) | 196.8 — Bounded-бланкет на примитивном ресивере (одно окно для D310 type-set bound) | ✅ ЗАКРЫТ 2026-07-16 (ветка `p196-8-dispatch`, worktree `nova-p196-8`; в main вливает оркестратор — `emit_c.rs` конкурентно правится). |
 | [197](197-examples-revision.md) | Plan 197 — examples/ ревизия: снести устаревшее, пересобрать канон, дом для 187 | 🚧 Ф.1/Ф.2 ГОТОВЫ (2026-07-12) — аудит всех 29 файлов + чистка мёртвой |
 | [198](198-nova-tests-triage.md) | Plan 198 — nova_tests/ триаж: keep-and-migrate ценное, снести stale (не оптом) | 📋 PROPOSED 2026-07-11 (решение владельца: «возможно там есть реально |
 | [199](199-str-drop-nul-termination.md) | Plan 199 — снять NUL-termination инвариант str (модель Rust/Go) | ✅ CLOSED 2026-07-12 — ВСЕ 4 фазы СЛИТЫ в main (Ф.1 retract D26 `c4f446477`, Ф.2 `to_cstr` |
 | [200](200-std-improvements.md) | Plan 200 — зонтичный план улучшений std | 📋 ЖИВОЙ РЕЕСТР — **НЕ закрывать** (владелец 2026-07-12: «будем добавлять много новых штук»). |
 | [200.1](200.1-std-test-speed.md) | План 200.1 — скорость nova test std (подплан плана 200) | 📋 СОГЛАСОВАН 2026-07-13 (владелец: «оформи отдельным подпланом»). |
-| [201](201-consume-block-expression-and-share.md) | Plan 201 — consume X { } как выражение + @share()-канон (alias vs Clone) | 🔄 В РАБОТЕ 2026-07-13 [sonnet, worktree `nova-174`, ветка `d188-consume-block`]. |
+| [201](201-consume-block-expression-and-share.md) | Plan 201 — consume X { } как выражение + @share()-канон (alias vs Clone) | ✅ ЗАКРЫТ 2026-07-13 [sonnet, worktree `nova-174`, ветка `d188-consume-block`] (D188 v1/v2/multi-var/v3/v3.1 + `@share`/refcount в nv + M-178 прямой move в consume-поле; спек-амендменты в тех же слияниях; conformance 104/0). |
 | [202](202-module-registry-path-keyed-and-root-module.md) | План 202 — D78: реестр модулей по пути + корневой модуль пакета | — (нет Статус-строки) |
 | [203](203-http-out-of-std.md) | План 203 — вынос http из std в nv-lang/nova-http | ✅ ЗАКРЫТ 2026-07-13 (Ф.1-Ф.3 влиты — `b6818a137`: http выехал из std в репу-сиблинг nova-http по root peers D78 rev-4, std снова самодостаточен, +2 фикса резолвера). |
 | [204](204-dependency-versioning.md) | План 204 — версии зависимостей: git + semver + nova.lock | ✅ ЗАКРЫТ 2026-07-13 (D420; Ф.1-Ф.3 влиты — `00c0d085f`+`1e14481b8`: [replace]-секция + W_DEP_PATH_NO_RELEASE + lock-семантика (replace не течёт в lock); nova-http на git-форме v0.1.0 с lock в репе). |
 | [205](205-compress-out-of-nova-rt.md) | План 205 — компрессия из nova_rt в пакет nv-lang/nova-compress | 📋 СОГЛАСОВАН 2026-07-13 (владелец: «ОК»). **После:** гейты 203 (не гнать две |
-| [206](206-arithmetic-overflow-policy.md) | План 206 — Арифметическая политика: пять исходов из одного overflow-примитива | 📋 СОГЛАСОВАН 2026-07-14 (наблюдение + дизайн подтверждены владельцем). **После:** [194](194-contract-execution-model.md). |
+| [206](206-arithmetic-overflow-policy.md) | План 206 — Арифметическая политика: пять исходов из одного overflow-примитива | 📋 СОГЛАСОВАН 2026-07-14 (наблюдение + дизайн подтверждены владельцем). **После:** [194](194-contract-execution-model.md). Ф.0/Ф.1/Ф.1b — см. [206-progress.md](206-progress.md) (статус актуален в [README.md](README.md), не здесь). |
 | [206.1](206.1-div-neg-trap.md) | План 206.1 — Trap для div/mod/neg (подплан 206) | 📋 ПРЕДЛОЖЕН 2026-07-15 (владелец: «оформи подпланом 206»). **Часть:** [206](206-arithmetic-overflow-policy.md) |
-| [207](207-atomic-cas-witnessed-value.md) | План 207 — compare_exchange возвращает свидетеля (bool → Result[unit, T]) | 📋 ПРЕДЛОЖЕН 2026-07-15 (владелец: «отдельным планом»). **Приоритет:** P3 |
+| [207](207-atomic-cas-witnessed-value.md) | План 207 — compare_exchange возвращает свидетеля (bool → Result[unit, T]) | ✅ ЗАКРЫТ 2026-07-15 (sonnet, ветка `plan207-cas`). **Приоритет:** P3 |
 | [208](208-unified-formatter.md) | Plan 208 — Unified Formatter (@display(mut f Fmt), байтовый Write, zero-alloc) | ✅ ДИЗАЙН ФИНАЛИЗИРОВАН 2026-07-15 (все развилки закрыты; финальные сигнатуры §9 + карта исполнения |
-| [209](209-multi-tu-codegen.md) | План 209 — Multi-TU codegen: большой CU → N .c-единиц (параллельная компиляция) | 🚧 В РАБОТЕ. Ф.0 (рекон) + Ф.1 (codegen split) + Ф.2 (тулчейн) ЗАКРЫТЫ и влиты |
+| [209](209-multi-tu-codegen.md) | План 209 — Multi-TU codegen: большой CU → N .c-единиц (параллельная компиляция) | 🚧 В РАБОТЕ. Ф.0 (рекон) + Ф.1 (codegen split) + Ф.2 (тулчейн) + Ф.3 (const-value |
+| [210](210-embed-dir.md) | План 210 — embed_dir(...): вшить папку в бинарь (расширение D412) | — (нет Статус-строки) |
+| [211](211-park-join-research.md) | Plan 211 — Park-join для nested supervised (research: остаточный race) | 📋 RESEARCH (заведён 2026-07-16, решение владельца: «митигация сейчас + park-join в |
