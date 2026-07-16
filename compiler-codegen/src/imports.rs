@@ -2938,7 +2938,55 @@ fn resolve_module_paths(
             {
                 return Err(ResolveErr::CaseMismatch { requested, actual });
             }
-            return Ok(vec![single_file]);
+            // [M-blanket-crossmodule-scattered-peer-drop]: a folder-module can be
+            // realized as CO-EQUAL files scattered directly in a shared parent
+            // directory (not a dedicated `<mod>/` sub-folder) — e.g.
+            // `std/src/time/duration.nv` + `timestamp.nv` + `monotonic.nv` all
+            // declare `module time.duration` (Plan 200 Step 3, D78). The entry-file
+            // path (`resolve_imports_inline_ex`) already scans its own directory
+            // for such same-module siblings — see the `SiblingPeer` collection
+            // above — but a plain `import std.time.duration` written by SOME OTHER
+            // module reached only this single `single_file` and returned, silently
+            // dropping every co-equal peer's items (types/fns/METHODS — including
+            // `fn[T Ints] T @to_unix_seconds()` in timestamp.nv). The checker's
+            // `method_table` then genuinely lacks the blanket for any importer that
+            // isn't the module's own entry file → honest `[E_UNKNOWN_METHOD]` on
+            // `1_700_000_000.to_unix_seconds()` (std/src/time/civil/parse_test.nv).
+            // Fix: mirror the entry-sibling scan here — same directory, same
+            // `_test`/target-suffix filters, same exact-module-declaration match
+            // (`verify_parts`) — so an IMPORTED multi-file module gets the SAME
+            // complete file set the module gets when it is the entry.
+            let mut resolved = vec![single_file.clone()];
+            if let Some(dir) = single_file.parent() {
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    let target = current_target_os();
+                    let mut peers: Vec<PathBuf> = entries
+                        .filter_map(|e| e.ok())
+                        .map(|e| e.path())
+                        .filter(|p| {
+                            p.is_file()
+                                && p.extension().and_then(|s| s.to_str()) == Some("nv")
+                                && p != &single_file
+                        })
+                        .filter(|p| {
+                            if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                                let core = stem.strip_suffix("_test").unwrap_or(stem);
+                                if !include_test_peers && core != stem {
+                                    return false;
+                                }
+                                if !peer_active_for_target(core, target) {
+                                    return false;
+                                }
+                            }
+                            true
+                        })
+                        .filter(|p| read_module_decl(p).as_deref() == Some(verify_parts))
+                        .collect();
+                    peers.sort();
+                    resolved.extend(peers);
+                }
+            }
+            return Ok(resolved);
         }
 
         if folder_exists {
