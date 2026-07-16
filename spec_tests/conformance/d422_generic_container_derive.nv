@@ -1,0 +1,71 @@
+// Plan 208 Ф.3 (D422 §4) — generic Display/Debug for containers
+// (Option/Result — []T/Vec[T] covered separately, see
+// std/src/collections/vec/protocols_test.nv) + auto-derive
+// compact-vs-named form divergence for record/sum types.
+//
+// Norm: D422 §4 — derived `@display` (bare `${x}`) is a COMPACT positional
+// form (`TypeName(v1, v2)`, no field names); derived `@debug` (`${x:?}`)
+// stays the NAMED diagnostic form (`TypeName { f1: v1, f2: v2 }`,
+// unchanged since Ф.2/D229). Primitives coincide (no fields to diverge
+// over); sum Unit/Tuple-kind variants coincide too (a tuple payload never
+// had field names); ONLY a record-shaped type or a sum's Record-kind
+// variant actually diverges.
+//
+// Option[T]/Result[T,E] also gained a `@display` counterpart this phase
+// (previously Debug-only — bare `${some_option}`/`${some_result}` used to
+// fail to compile entirely, `E_BAD_FORMAT_SPEC` "does not implement
+// Display"). Their shape is identical under Display/Debug (tuple payload,
+// nothing to diverge) — the real difference is the INNER call
+// (`.display`/`.debug`), visible on a `str` payload (bare vs quoted).
+//
+// See spec/decisions/02-types.md#d422 for the full rule.
+module spec_tests.conformance
+
+test "Option[T]/Result[T,E] @display (D422 Ф.3 — was Debug-only before)" {
+    ro some = Some(42)
+    assert("${some}" == "Some(42)")
+    ro none = None as Option[int]
+    assert("${none}" == "None")
+    ro some_s = Some("hi")
+    assert("${some_s}" == "Some(hi)")           // Display: bare str
+    assert("${some_s:?}" == "Some(\"hi\")")     // Debug: quoted str — same distinction as D229
+
+    ro ok = Ok(7) as Result[int, str]
+    assert("${ok}" == "Ok(7)")
+    ro err = Err("oops") as Result[int, str]
+    assert("${err}" == "Err(oops)")
+    assert("${err:?}" == "Err(\"oops\")")
+}
+
+// Auto-derive record: BOTH protocols on the same type — Display gets the
+// NEW compact positional form, Debug keeps the pre-existing named form
+// (D229's `d229_debug_format_spec.nv` already covers Debug alone; this adds
+// the Display side of the same type to prove the two diverge).
+#impl(Display + Debug)
+type D422gPoint { x int, y int }
+
+test "auto-derive record: @display compact positional, @debug named (D422 §4)" {
+    ro p = D422gPoint { x: 1, y: 2 }
+    assert("${p}" == "D422gPoint(1, 2)")
+    assert("${p:?}" == "D422gPoint { x: 1, y: 2 }")
+}
+
+// Auto-derive sum: Unit/Tuple-kind variants keep ONE shape under both
+// protocols (no field names to diverge, ever); the Record-kind variant is
+// where D422 §4's split actually shows up.
+#impl(Display + Debug)
+type D422gShape enum Dot | Pair(int, int) | Ring { r int }
+
+test "auto-derive sum: Unit/Tuple unchanged, Record-kind variant diverges (D422 §4)" {
+    ro d = D422gShape.Dot
+    assert("${d}" == "Dot")
+    assert("${d:?}" == "Dot")
+
+    ro pr = D422gShape.Pair(3, 4)
+    assert("${pr}" == "Pair(3, 4)")            // tuple payload — same both ways
+    assert("${pr:?}" == "Pair(3, 4)")
+
+    ro ring = D422gShape.Ring { r: 5 }
+    assert("${ring}" == "Ring(5)")             // Display: positional (NEW split)
+    assert("${ring:?}" == "Ring { r: 5 }")     // Debug: named (unchanged)
+}

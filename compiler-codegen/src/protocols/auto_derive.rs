@@ -970,12 +970,24 @@ fn synth_compare_record_body(fields: &[DerivedField]) -> FnBody {
 /// synthesizer's output signature must match the (now Fmt-typed) protocol
 /// exactly or the synthesized method fails to satisfy `Display`/`Debug`.
 ///
-/// Output form: `TypeName { f1: <display_f1>, f2: <display_f2> }` —
-/// UNCHANGED shape (Ф.2 is a signature migration only; D422 §4's compact
-/// `TypeName(f1, f2)` positional Display form — distinct from Debug's named
-/// form — is Ф.3 scope, not done here, see `docs/plans/208-impl-progress.md`).
-/// Empty type-body → `w.write("TypeName".bytes())`.
-/// Sum-type → V1 placeholder (writes type name).
+/// Output form (Plan 208 Ф.3, D422 §4): **compact/positional**
+/// `TypeName(f1_value, f2_value)` — NO field names, distinct from Debug's
+/// named `TypeName { f1: v1, f2: v2 }` (see `synth_debug_record_body`). This
+/// is the divergence D422 §4 calls for; Ф.2 left both forms identical
+/// (named) as a signature-migration-only interim step — see
+/// `docs/plans/208-impl-progress.md`.
+/// Empty type-body → `w.write("TypeName".bytes())` (nothing to diverge with
+/// zero fields — matches Rust's unit-struct Debug output too).
+/// Field values are emitted via a UNIFORM `field.display(w)` call — every
+/// type (primitive or composite) now implements `Display` (Plan 208 Ф.2
+/// primitives, `std/prelude/protocols.nv`), so there is no special-case for
+/// primitive fields as before. (The old primitive branch called the now-
+/// retracted `str.from(x)` static method — Plan 174.2 — which had been dead
+/// code since it was never covered by any field-eligible fixture; this
+/// synth's Debug counterpart already used the equivalent uniform
+/// `field.debug(w)` call, so Display now mirrors it.)
+/// Sum-type → variant-aware (`synth_fmt_sum_body`), same compact-vs-named
+/// divergence for `Record`-kind variants.
 pub fn synthesize_display<Q: DeriveQuery>(
     _ctx: &mut AutoDeriveCtx<'_, Q>,
     type_decl: &TypeDecl,
@@ -1009,9 +1021,12 @@ pub fn synthesize_display<Q: DeriveQuery>(
 /// Plan 208 Ф.2 (D422 §3): param changed AGAIN, `w Write` → `w Fmt` — see
 /// `synthesize_display` doc comment above (same rationale, required-no-default).
 ///
-/// Output form: `TypeName { f1: <debug_f1>, f2: <debug_f2> }`.
-/// Empty type-body → `w.write_str("TypeName")`.
-/// Sum-type → V1 placeholder (writes type name).
+/// Output form: **named** `TypeName { f1: <debug_f1>, f2: <debug_f2> }` —
+/// UNCHANGED since Ф.2 (this is the "diagnostic, with field names" half of
+/// D422 §4's divergence; `synthesize_display` above got the Ф.3 positional
+/// rewrite, this one was already the target shape).
+/// Empty type-body → `w.write("TypeName".bytes())`.
+/// Sum-type → variant-aware (`synth_fmt_sum_body`).
 pub fn synthesize_debug<Q: DeriveQuery>(
     _ctx: &mut AutoDeriveCtx<'_, Q>,
     type_decl: &TypeDecl,
@@ -1052,6 +1067,13 @@ fn simple_display_block(type_name: &str) -> Block {
     }
 }
 
+/// Plan 208 Ф.3 (D422 §4): compact/positional form — `TypeName(v1, v2)`, no
+/// field names, unlike `synth_debug_record_body`'s named `{ f: v }` form.
+/// Every field (primitive or composite) dispatches uniformly via
+/// `field.display(w)` — primitives are `Display` too now (Plan 208 Ф.2), so
+/// there is nothing left to special-case (see `synthesize_display` doc
+/// comment for why the old primitive branch, which called the retracted
+/// `str.from(x)`, is gone).
 fn synth_display_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
     let mut stmts: Vec<Stmt> = Vec::new();
     if fields.is_empty() {
@@ -1061,58 +1083,46 @@ fn synth_display_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody
             vec![to_bytes(ex(ExprKind::StrLit(type_name.to_string())))],
         )));
     } else {
-        // w.write("TypeName { ".bytes())
+        // w.write("TypeName(".bytes())
         stmts.push(Stmt::Expr(member_call(
             ident("w"),
             "write",
-            vec![to_bytes(ex(ExprKind::StrLit(format!("{} {{ ", type_name))))],
+            vec![to_bytes(ex(ExprKind::StrLit(format!("{}(", type_name))))],
         )));
         for (i, f) in fields.iter().enumerate() {
-            let prefix = if i == 0 {
-                format!("{}: ", f.name)
-            } else {
-                format!(", {}: ", f.name)
-            };
-            // [race-198 / 196.6] `write` (NOT `write_str`): the `w: Fmt`
-            // param (Plan 208 Ф.2 — was `w: Write`) lowers to a CONCRETE
-            // sink (type_ref_to_c special case), and StringBuilder has
-            // `mut @write(bytes []u8)` but NO `write_str` — a `write_str`
-            // call here fell through to the single-key `method_receivers`
-            // name-only fallback (documented last-wins) and dispatched to
-            // whichever OTHER type in the CU happened to register
-            // `write_str` last: WriteBuffer in a small CU (accidentally
-            // layout-compatible `{buf Vec[u8]}` → silently "worked"),
-            // TcpStream in a merged CU with std.net (foreign struct
-            // offset read → 0xC0000005, the Plan 198 floating-AV blocker;
-            // see docs/plans/196.6-race-state-dump-notes.md). The sibling
-            // open/close-brace writes in this SAME body already use
-            // `write` and dispatch correctly.
-            stmts.push(Stmt::Expr(member_call(
-                ident("w"),
-                "write",
-                vec![to_bytes(ex(ExprKind::StrLit(prefix)))],
-            )));
-            if is_primitive_field(&f.ty) {
-                // Primitive field: no `.display()` method on scalars — route via
-                // `w.write(str.from(@field).bytes())` (Display path).
+            if i > 0 {
+                // [race-198 / 196.6] `write` (NOT `write_str`): the `w: Fmt`
+                // param (Plan 208 Ф.2 — was `w: Write`) lowers to a CONCRETE
+                // sink (type_ref_to_c special case), and StringBuilder has
+                // `mut @write(bytes []u8)` but NO `write_str` — a `write_str`
+                // call here fell through to the single-key `method_receivers`
+                // name-only fallback (documented last-wins) and dispatched to
+                // whichever OTHER type in the CU happened to register
+                // `write_str` last: WriteBuffer in a small CU (accidentally
+                // layout-compatible `{buf Vec[u8]}` → silently "worked"),
+                // TcpStream in a merged CU with std.net (foreign struct
+                // offset read → 0xC0000005, the Plan 198 floating-AV blocker;
+                // see docs/plans/196.6-race-state-dump-notes.md).
                 stmts.push(Stmt::Expr(member_call(
                     ident("w"),
                     "write",
-                    vec![to_bytes(member_call(ident("str"), "from", vec![self_field(&f.name)]))],
-                )));
-            } else {
-                // Record / nested field: recurse into its synthesized @display.
-                stmts.push(Stmt::Expr(member_call(
-                    self_field(&f.name),
-                    "display",
-                    vec![ident("w")],
+                    vec![to_bytes(ex(ExprKind::StrLit(", ".to_string())))],
                 )));
             }
+            // Uniform dispatch — every type implements Display (Plan 208 Ф.2
+            // gave int/f64/f32/bool/char/str their own `@display`), so a
+            // plain `field.display(w)` works whether `f.ty` is primitive or
+            // composite. No more `str.from(x)` (retracted, Plan 174.2).
+            stmts.push(Stmt::Expr(member_call(
+                self_field(&f.name),
+                "display",
+                vec![ident("w")],
+            )));
         }
         stmts.push(Stmt::Expr(member_call(
             ident("w"),
             "write",
-            vec![to_bytes(ex(ExprKind::StrLit(" }".to_string())))],
+            vec![to_bytes(ex(ExprKind::StrLit(")".to_string())))],
         )));
     }
     FnBody::Block(Block {
@@ -1485,10 +1495,20 @@ fn synth_compare_sum_body(variants: &[SumVariant]) -> FnBody {
     FnBody::Block(block_with_trailing(stmts, tail))
 }
 
-/// Sum `@display`/`@debug`: variant-aware output. `Unit` → `"V"`; `Tuple` →
-/// `"V(x, y)"`; `Record` → `"V { f: x, g: y }"`. `is_debug` routes primitives:
-/// display uses `w.write_str(str.from(x))` (no scalar `.display`), debug uses
-/// uniform `x.debug(w)` (scalars implement Debug).
+/// Sum `@display`/`@debug`: variant-aware output. `Unit` → `"V"` (both).
+/// `Tuple` → `"V(x, y)"` (both — a tuple payload has no field names to begin
+/// with, so there's nothing for Display/Debug to diverge over). `Record` →
+/// Plan 208 Ф.3 (D422 §4) divergence: Debug keeps the named
+/// `"V { f: x, g: y }"`; Display drops the field names, `"V(x, y)"` (mirrors
+/// `synth_display_record_body`'s top-level-record positional form). Payload
+/// values dispatch UNIFORMLY via `x.display(w)`/`x.debug(w)` regardless of
+/// primitive-vs-composite (Plan 208 Ф.2 gave every primitive its own
+/// `@display`/`@debug`) — the old Display-primitive branch called the
+/// retracted `str.from(x)` (Plan 174.2), which was dead/broken code (no
+/// existing fixture exercised a sum-type Display auto-derive with a
+/// primitive payload); this fixes it in the same pass that adds the
+/// Record-variant divergence, per zero-tolerance-bugs (found in code this
+/// same change touches).
 fn synth_fmt_sum_body(variants: &[SumVariant], is_debug: bool) -> FnBody {
     if variants.is_empty() {
         // No variants — emit nothing writable; write empty type marker is odd,
@@ -1498,20 +1518,11 @@ fn synth_fmt_sum_body(variants: &[SumVariant], is_debug: bool) -> FnBody {
     let write_lit = |s: String| -> Stmt {
         Stmt::Expr(member_call(ident("w"), "write", vec![to_bytes(ex(ExprKind::StrLit(s)))]))
     };
-    // Emit one payload value into `w`.
-    let emit_value = |bind: &str, ty: &TypeRef| -> Stmt {
-        if is_debug {
-            Stmt::Expr(member_call(ident(bind), "debug", vec![ident("w")]))
-        } else if is_primitive_field(ty) {
-            // [race-198 / 196.6] `write` (NOT `write_str`) — см.
-            // synth_display_record_body (StringBuilder has no write_str).
-            Stmt::Expr(member_call(
-                ident("w"), "write",
-                vec![to_bytes(member_call(ident("str"), "from", vec![ident(bind)]))],
-            ))
-        } else {
-            Stmt::Expr(member_call(ident(bind), "display", vec![ident("w")]))
-        }
+    // Emit one payload value into `w` — uniform dispatch, no primitive
+    // special-case (every type implements both Display and Debug now).
+    let emit_value = |bind: &str| -> Stmt {
+        let method = if is_debug { "debug" } else { "display" };
+        Stmt::Expr(member_call(ident(bind), method, vec![ident("w")]))
     };
     let arms = variants
         .iter()
@@ -1524,29 +1535,43 @@ fn synth_fmt_sum_body(variants: &[SumVariant], is_debug: bool) -> FnBody {
                 }
                 SumVariantKind::Tuple(_) => {
                     stmts.push(write_lit(format!("{}(", v.name)));
-                    for (i, (bind, ty)) in binds.iter().enumerate() {
+                    for (i, (bind, _ty)) in binds.iter().enumerate() {
                         if i > 0 {
                             stmts.push(write_lit(", ".to_string()));
                         }
-                        stmts.push(emit_value(bind, ty));
+                        stmts.push(emit_value(bind));
                     }
                     stmts.push(write_lit(")".to_string()));
                 }
                 SumVariantKind::Record(fields) => {
-                    stmts.push(write_lit(format!("{} {{ ", v.name)));
-                    for (i, ((bind, ty), f)) in binds.iter().zip(fields).enumerate() {
-                        let prefix = if i == 0 {
-                            format!("{}: ", f.name)
-                        } else {
-                            format!(", {}: ", f.name)
-                        };
-                        // [race-198 / 196.6] `write` (NOT `write_str`) — см.
-                        // synth_display_record_body.
-                        stmts.push(Stmt::Expr(member_call(
-                            ident("w"), "write", vec![to_bytes(ex(ExprKind::StrLit(prefix)))])));
-                        stmts.push(emit_value(bind, ty));
+                    if is_debug {
+                        // Named form — unchanged from pre-Ф.3.
+                        stmts.push(write_lit(format!("{} {{ ", v.name)));
+                        for (i, ((bind, _ty), f)) in binds.iter().zip(fields).enumerate() {
+                            let prefix = if i == 0 {
+                                format!("{}: ", f.name)
+                            } else {
+                                format!(", {}: ", f.name)
+                            };
+                            // [race-198 / 196.6] `write` (NOT `write_str`) —
+                            // см. synth_display_record_body.
+                            stmts.push(Stmt::Expr(member_call(
+                                ident("w"), "write", vec![to_bytes(ex(ExprKind::StrLit(prefix)))])));
+                            stmts.push(emit_value(bind));
+                        }
+                        stmts.push(write_lit(" }".to_string()));
+                    } else {
+                        // Plan 208 Ф.3 (D422 §4): positional form — field
+                        // names dropped, same shape as a Tuple-kind variant.
+                        stmts.push(write_lit(format!("{}(", v.name)));
+                        for (i, (bind, _ty)) in binds.iter().enumerate() {
+                            if i > 0 {
+                                stmts.push(write_lit(", ".to_string()));
+                            }
+                            stmts.push(emit_value(bind));
+                        }
+                        stmts.push(write_lit(")".to_string()));
                     }
-                    stmts.push(write_lit(" }".to_string()));
                 }
             }
             match_arm_block(pat, Block { stmts, trailing: None, span: span_dummy(), is_unsafe: false })
