@@ -106,12 +106,12 @@ export fn TimeOfDay @to_nanos_of_day() -> i64 => @nanos_of_day
 ///
 /// # Examples
 /// ```nova
-/// ro (t, carry) = TimeOfDay.new(23, 30)!!.plus(1.hour())
+/// ro (t, carry) = TimeOfDay.new(23, 30)!!.plus(1.to_hours())
 /// assert(t.hour() == 0 && carry == 1)
 /// ```
 #stable(since = "0.1")
 export fn TimeOfDay @plus(d Duration) -> (TimeOfDay, i64) {
-    ro total = @nanos_of_day + d.as_nanos()
+    ro total = @nanos_of_day + d.nanos()
     ro nd = nanos_per_day()
     ro q = total / nd
     ro r = total % nd
@@ -124,12 +124,12 @@ export fn TimeOfDay @plus(d Duration) -> (TimeOfDay, i64) {
 /// Сдвиг назад — эквивалент `@plus(-d)`; тот же явный day-carry.
 #stable(since = "0.1")
 export fn TimeOfDay @minus(d Duration) -> (TimeOfDay, i64) =>
-    @plus(Duration.from_nanos(0) - d)
+    @plus(0.to_nanos() - d)
 
 /// Duration от `self` до `other` внутри суток (signed).
 #stable(since = "0.1")
 export fn TimeOfDay @duration_until(other TimeOfDay) -> Duration =>
-    Duration.from_nanos(other.nanos_of_day - @nanos_of_day)
+    (other.nanos_of_day - @nanos_of_day).to_nanos()
 
 
 // ──────────────────────────────────────────────────────────────────────────

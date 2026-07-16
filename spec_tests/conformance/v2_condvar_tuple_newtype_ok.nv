@@ -17,7 +17,7 @@ test "Condvar: wait_for with timeout returns TimedOut" {
     mut cv = Condvar.new()
     mut mu = Mutex.new()
     mu.lock()
-    ro result = cv.wait_for(mu, Duration.from_millis(50))
+    ro result = cv.wait_for(mu, 50.to_millis())
     match result {
         WaitResult.TimedOut => {}
         WaitResult.Notified => assert(false)  // shouldn't notify

@@ -22,7 +22,7 @@ test "TimerMetrics.timer_alloc_total increments on close_after alloc" {
     ro before = TimerMetrics.timer_alloc_total()
     supervised {
         spawn {
-            ro t = ChanReader.close_after(Duration.from_millis(1))
+            ro t = ChanReader.close_after(1.to_millis())
             ro _ = t.recv()
         }
     }
@@ -53,5 +53,5 @@ test "Time int-провод сохранён: now_unix_ms() -> int, sleep(0) н�
 test "Monotonic.now() (builtin) не задет Ф.1 — non-regression" {
     ro m0 = Monotonic.now()
     ro m1 = Monotonic.now()
-    assert(m1.as_nanos() >= m0.as_nanos())
+    assert(m1.nanos() >= m0.nanos())
 }

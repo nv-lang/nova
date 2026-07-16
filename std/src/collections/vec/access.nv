@@ -36,10 +36,10 @@ export fn Vec[T] @index(i int) -> T
 
 /// Element at `i` by value, or `None` if out of bounds.
 export fn Vec[T] @get(i int) -> Option[T] {
-    if i < 0 || i >= @len {
-        return None
+    if 0 <= i && i < @len {
+        return Some(unsafe { @data.read_at(i) })
     }
-    Some(unsafe { @data.read_at(i) })
+    None
 }
 
 /// Write `v[i] = val` — panics on OOB. Powers `v[i] = val` (D240 `MutIndex`
@@ -64,13 +64,8 @@ export fn Vec[T] mut @index(i int, val T) -> ()
 /// First element by value, or `None` if empty.
 export fn Vec[T] @first() -> Option[T] => @get(0)
 
-/// Last element by value, or `None` if empty.
-export fn Vec[T] @last() -> Option[T] {
-    if @len == 0 {
-        return None
-    }
-    @get(@len - 1)
-}
+/// Last element by value, or `None` if empty (`@get` guards OOB, incl. `-1` on empty).
+export fn Vec[T] @last() -> Option[T] => @get(@len - 1)
 
 /// `true` if any element equals `v` — a linear O(n) scan via `==`. Works for any
 /// element type with `==` defined (all primitives + `Equal` types); opaque types
@@ -255,7 +250,7 @@ export fn Vec[T] @binary_search_by_key[K Compare](key fn(T) -> K, k K) -> Result
 ///   - Only `[0, len())` element slots are live; never read past `len()`.
 ///   - The pointer is INVALIDATED by any reallocating mutation
 ///     (`push`/`reserve`/`insert`/`new().cap(n)` growth). Re-fetch after such.
-///   - On an empty `Vec` (`cap == 0`) `@data` is the `null_buf` placeholder —
+///   - On an empty `Vec` (`cap == 0`) `@data` is the 1-slot placeholder (ex-null_buf) —
 ///     non-null but a single never-live slot; do not dereference it.
 ///
 /// The recv-mut companion `mut @ptr() -> *mut T` (below) yields a writable

@@ -1602,7 +1602,7 @@ export extern "nova" fn Mutex.new_unfair() -> Self
 ///
 /// ```nova
 /// let mut mu = Mutex.new()
-/// if mu.try_lock_for(Duration.from_millis(100)) {
+/// if mu.try_lock_for(100.to_millis()) {
 ///     defer mu.unlock()
 ///     // critical section
 /// }

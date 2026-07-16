@@ -174,6 +174,20 @@ legacy жив. **Оценка:** 3-5 сессий. **Зависит от:** Зо
 - Read-only reachability-trace prep для frozen-агента (re-инструментация `icr_trace` под env-флагом — ВРЕМЕННО, вычистить).
 **Риски:** тесты компилятор НЕ трогают → параллельно-безопасны. **Оценка:** непрерывно, опережая. **Файлы:** `spec_tests/conformance/`, `std/**/*_test.nv`.
 
+**Прогресс (2026-07-16, sonnet, worktree `nova-196test`, ветка `p196-zone-test`):** census-пробелы
+B11ac/B11ak/B10f запинены — `d61_effect_handler_direct_call.nv` (D61 §8 direct-call-on-handler-value,
+до этого только `examples/effects/effects_d61.nv`, вне гейта), `self_recursive_generic_method_return.nv`
+(`[M-generic-method-self-recursive-return]`, генерик-метод рекурсивно зовёт себя на своём receiver-типе),
+`dispatch_free_fn_vs_method_name.nv` (`B10f_user_fn_sigs` порядок free-fn vs same-named метод). Все три —
+изолированный standalone-прогон PASS (полный CU не гонялся, задание исключало). Побочная находка (НЕ
+фикс, вне зоны): `[M-novavtable-read-write-pointer-collision]` (backlog-followups.md, P2) — нуль-арный
+`.read()`/`.write(v)` на `NovaVtable_<Eff>*` мисдиспатчится в `B11d_typed_pointer_methods` (guard не
+исключает префикс `NovaVtable_`). Per-D сверка D30/D85/D52/D182/D16/D53/D239 (задание Зоны TEST) — ПО КОДУ
+подтверждено: существующие фикстуры уже пиннят конкретные типы/значения по всей матрице (см.
+`196.3-wave2-d-driven.md` собственный gap-анализ + `196.5-perd-d52-verification.md` для D52/D407/D406) —
+новых файлов не требовалось, дублирования не создавал. Коммит `570879d55` (ветка `p196-zone-test`, НЕ
+смёржена в main — на решение оркестратора).
+
 ### Зона FROZEN — emit_c 49943-52037 (капстоун В-1/Stage-D, СЕРИЙНО, монопольно) — sonnet
 
 **Объём:** слить 50 живых веток ПО МЕРЕ насыщения канала зонами CH/RET/GEN (`resolve_instance_call_subst` +

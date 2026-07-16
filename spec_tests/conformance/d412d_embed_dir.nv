@@ -1,0 +1,56 @@
+// D412-амендмент (Plan 210) — `embed_dir("dir")` встраивает ВСЮ папку
+// (рекурсивно) в бинарь как иммутабельный `EmbeddedDir`.
+// Фикстура: d412d_dir/ содержит alpha.txt ("ABC"), beta.txt ("XY"),
+// nested/gamma.txt ("WXYZ") + .hidden (должен быть пропущен, dot-skip).
+// Пути ключей — POSIX (`/`), без ведущего `./`, отсортированы байтово.
+// См. spec/decisions/03-syntax.md D412-амендмент. Часть ЕДИНОГО
+// folder-module spec_tests.conformance; имена D-префиксованы.
+module spec_tests.conformance
+
+test "embed_dir(\"d412d_dir\") round-trips bytes, sorted paths, len/has/get (D412-amendment)" {
+    ro d412d_all = embed_dir("d412d_dir")
+
+    // len/has: .hidden не считается — только 3 файла.
+    assert(d412d_all.len() == 3)
+    assert(d412d_all.has("alpha.txt"))
+    assert(d412d_all.has("beta.txt"))
+    assert(d412d_all.has("nested/gamma.txt"))
+    assert(!d412d_all.has(".hidden"))
+    assert(!d412d_all.has("missing.txt"))
+
+    // paths() — отсортированы по POSIX-байтам (a < b < n).
+    assert(d412d_all.paths() == ["alpha.txt", "beta.txt", "nested/gamma.txt"])
+
+    // Байты совпадают точно (round-trip).
+    ro d412d_alpha = d412d_all.get("alpha.txt")
+    ro d412d_want_alpha = x"41 42 43"                 // "ABC"
+    assert(d412d_alpha.is_some())
+    ro d412d_alpha_bytes = d412d_alpha.unwrap()
+    assert(d412d_alpha_bytes.len() == d412d_want_alpha.len())
+    mut d412d_i = 0
+    while d412d_i < d412d_alpha_bytes.len() {
+        assert(d412d_alpha_bytes[d412d_i] == d412d_want_alpha[d412d_i])
+        d412d_i = d412d_i + 1
+    }
+
+    ro d412d_beta = d412d_all.get("beta.txt").unwrap()
+    ro d412d_want_beta = x"58 59"                     // "XY"
+    assert(d412d_beta.len() == d412d_want_beta.len())
+    assert(d412d_beta[0] == d412d_want_beta[0])
+    assert(d412d_beta[1] == d412d_want_beta[1])
+
+    // Рекурсия: вложенный nested/gamma.txt тоже встроен.
+    ro d412d_gamma = d412d_all.get("nested/gamma.txt").unwrap()
+    ro d412d_want_gamma = x"57 58 59 5A"              // "WXYZ"
+    assert(d412d_gamma.len() == d412d_want_gamma.len())
+    mut d412d_j = 0
+    while d412d_j < d412d_gamma.len() {
+        assert(d412d_gamma[d412d_j] == d412d_want_gamma[d412d_j])
+        d412d_j = d412d_j + 1
+    }
+
+    // Ключ без ведущего `./` — точная байтовая форма (§4.1): `get("./…")`
+    // честно даёт None (никакой нормализации).
+    assert(d412d_all.get("./alpha.txt") == None)
+    assert(d412d_all.get("нет") == None)
+}

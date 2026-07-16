@@ -1,0 +1,40 @@
+// Regression guard for a bare free-fn call vs a same-named INSTANCE METHOD
+// on a co-compiled type (compiler-internal `B10f_user_fn_sigs`, emit_c.rs
+// ~50956): "a method with the same name on some type (`Point7.scale`)
+// overwrites the free fn's entry (`scale`)... mistyping the free call's
+// result (Nova_Point7* instead of Nova_Point1*)." `user_fn_sigs` is a
+// registry populated ONLY for non-generic free fns and MUST be consulted
+// BEFORE any name-keyed (bare-name, receiver-blind) legacy fallback that a
+// same-named method could have last-written. Plan 196.5 Stage-D census
+// §3.2 (docs/plans/196.5-stage-d-census.md, трафик=44, conformance+std) —
+// exercised pervasively, but no conformance file pins the EXACT collision
+// shape before this one.
+module spec_tests.conformance
+
+// Free function named `gauge` — returns `str`.
+fn gauge(reading int) -> str => "reading:" + reading.to_str()
+
+// Unrelated type with an INSTANCE METHOD of the exact SAME bare name
+// `gauge`, returning a DIFFERENT type (`int`) — the collision shape the
+// legacy bare-name-keyed table is vulnerable to.
+type GaugeWidget { mut level int }
+fn GaugeWidget @gauge() -> int => @level * 100
+
+test "bare free-fn call gauge(n) resolves to the free fn's OWN str return, not the same-named method's int (dispatch)" {
+    ro r = gauge(7)
+    assert(r == "reading:7")
+}
+
+test "same-named instance method .gauge() still dispatches to ITS OWN return type, unaffected by the free fn (dispatch)" {
+    mut w = GaugeWidget { level: 3 }
+    assert(w.gauge() == 300)
+}
+
+test "both forms remain distinct across repeated calls in the same scope (dispatch)" {
+    mut w = GaugeWidget { level: 1 }
+    assert(gauge(1) == "reading:1")
+    assert(w.gauge() == 100)
+    w.level = 5
+    assert(w.gauge() == 500)
+    assert(gauge(1) == "reading:1")   // free fn unaffected by the widget's mutation
+}

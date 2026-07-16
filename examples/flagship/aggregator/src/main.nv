@@ -127,15 +127,8 @@ const LIVE_BUDGET_MS int = 4000
 
 fn frontend_html() -> []u8 => embed("../frontend/index.html")
 
-fn resolve_port() Os -> u16 {
-    match env("AGGREGATOR_PORT") {
-        Some(s) => match s.to_int() {
-            Ok(n) => n as u16
-            Err(_) => DEFAULT_PORT
-        }
-        None => DEFAULT_PORT
-    }
-}
+fn resolve_port() Os -> u16 =>
+    env("AGGREGATOR_PORT").flat_map(|s| s.to_int().ok()).map(|n| n as u16) ?? DEFAULT_PORT
 
 // ── fn main: accept-loop (the only legitimately hand-rolled part — see the
 //    file-header note: http.servernet has no reusable accept-loop function
@@ -384,16 +377,16 @@ fn run_net(legend str, mode str, seed int) Emit Time -> RunResult {
     if legend == "weather" {
         if mode == "live" {
             ro sources = weather_live_sources()
-            ro report = with Net = real_net() { aggregate_live_weather(Duration.from_millis(LIVE_BUDGET_MS)) }
+            ro report = with Net = real_net() { aggregate_live_weather(LIVE_BUDGET_MS.to_millis()) }
             RunResult { report, sources, budget_ms: LIVE_BUDGET_MS, handlers: { net: "real", time: "real" } }
         } else if mode == "chaos" {
             ro sources = chaos_variant(weather_demo_sources(), seed as u64)
-            ro report = with Net = mock_net() { aggregate(sources, Duration.from_millis(WEATHER_BUDGET_MS)) }
+            ro report = with Net = mock_net() { aggregate(sources, WEATHER_BUDGET_MS.to_millis()) }
             RunResult { report, sources, budget_ms: WEATHER_BUDGET_MS,
                 handlers: { net: "mock(seed=" + seed.to_str() + ")", time: "real" } }
         } else {
             ro sources = weather_demo_sources()
-            ro report = with Net = mock_net() { aggregate(sources, Duration.from_millis(WEATHER_BUDGET_MS)) }
+            ro report = with Net = mock_net() { aggregate(sources, WEATHER_BUDGET_MS.to_millis()) }
             RunResult { report, sources, budget_ms: WEATHER_BUDGET_MS,
                 handlers: { net: "mock(seed=42)", time: "real" } }
         }
@@ -403,16 +396,16 @@ fn run_net(legend str, mode str, seed int) Emit Time -> RunResult {
         // param typo shouldn't 500 the demo).
         if mode == "live" {
             ro sources = health_live_sources()
-            ro report = with Net = real_net() { aggregate_live_health(Duration.from_millis(LIVE_BUDGET_MS)) }
+            ro report = with Net = real_net() { aggregate_live_health(LIVE_BUDGET_MS.to_millis()) }
             RunResult { report, sources, budget_ms: LIVE_BUDGET_MS, handlers: { net: "real", time: "real" } }
         } else if mode == "chaos" {
             ro sources = chaos_variant(health_demo_sources(), seed as u64)
-            ro report = with Net = mock_net() { aggregate(sources, Duration.from_millis(HEALTH_BUDGET_MS)) }
+            ro report = with Net = mock_net() { aggregate(sources, HEALTH_BUDGET_MS.to_millis()) }
             RunResult { report, sources, budget_ms: HEALTH_BUDGET_MS,
                 handlers: { net: "mock(seed=" + seed.to_str() + ")", time: "real" } }
         } else {
             ro sources = health_demo_sources()
-            ro report = with Net = mock_net() { aggregate(sources, Duration.from_millis(HEALTH_BUDGET_MS)) }
+            ro report = with Net = mock_net() { aggregate(sources, HEALTH_BUDGET_MS.to_millis()) }
             RunResult { report, sources, budget_ms: HEALTH_BUDGET_MS,
                 handlers: { net: "mock(seed=42)", time: "real" } }
         }
@@ -516,19 +509,19 @@ fn events_body(legend str, mode str, seed int) Time -> ServerResponse {
     ro { tx, rx } = Channel.new(256)
     ro rr = with Emit = effect Emit {
         lane_started(id str, idx int) {
-            ro t_ms = Monotonic.now().elapsed_since(t0).as_millis() as int
+            ro t_ms = Monotonic.now().elapsed_since(t0).millis() as int
             ro _ = tx.try_send(EmitRecord { kind: "lane_started", id, elapsed_ms: 0, err: "", t_ms })
         }
         lane_done(id str, elapsed_ms int) {
-            ro t_ms = Monotonic.now().elapsed_since(t0).as_millis() as int
+            ro t_ms = Monotonic.now().elapsed_since(t0).millis() as int
             ro _ = tx.try_send(EmitRecord { kind: "lane_done", id, elapsed_ms, err: "", t_ms })
         }
         lane_failed(id str, err str, elapsed_ms int) {
-            ro t_ms = Monotonic.now().elapsed_since(t0).as_millis() as int
+            ro t_ms = Monotonic.now().elapsed_since(t0).millis() as int
             ro _ = tx.try_send(EmitRecord { kind: "lane_failed", id, elapsed_ms, err, t_ms })
         }
         lane_cancelled(id str, elapsed_ms int) {
-            ro t_ms = Monotonic.now().elapsed_since(t0).as_millis() as int
+            ro t_ms = Monotonic.now().elapsed_since(t0).millis() as int
             ro _ = tx.try_send(EmitRecord { kind: "lane_cancelled", id, elapsed_ms, err: "", t_ms })
         }
         swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) {}
@@ -544,7 +537,7 @@ fn events_body(legend str, mode str, seed int) Time -> ServerResponse {
             None    => { draining = false }
         }
     }
-    ro total_ms = Monotonic.now().elapsed_since(t0).as_millis() as int
+    ro total_ms = Monotonic.now().elapsed_since(t0).millis() as int
     ro seed_out = if mode == "live" { 0 } else { seed }
     ro dto = build_snapshot(rr.report, rr.sources, legend, mode, seed_out, rr.budget_ms, rr.handlers)
 

@@ -1,5 +1,5 @@
 module spec_tests.conformance
-// Plan 91.7 Part D: []T.new() и []T.with_capacity(n) canonical default.
+// Plan 91.7 Part D: []T.new() и []T.new(cap: n) canonical default.
 
 test "[]int.new() == []" {
     mut a = []int.new()
@@ -17,14 +17,14 @@ test "[]u8.new() works для byte buffers" {
     assert(a.len() == 0)
 }
 
-test "[]int.with_capacity(16) — len=0, capacity reserved" {
+test "[]int.new(cap: 16) — len=0, capacity reserved" {
     mut a []int = []int.new()
     a.cap(16)
     assert(a.len() == 0)
     assert(a.is_empty())
 }
 
-test "[]int.with_capacity(0) — empty" {
+test "[]int.new(cap: 0) — empty" {
     mut a []int = []int.new()
     a.cap(0)
     assert(a.len() == 0)

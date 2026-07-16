@@ -3,7 +3,7 @@
 // D316/Q6 (Ред. 2 anti-Zig-footgun) — `sleep` требует typed `Duration`,
 // НЕ голый int (unit-ambiguous: ms? ns? seconds?). В отличие от
 // `Zig sleep(u64 ns)`, Nova не даёт implicit int→Duration conversion —
-// unit должен быть явным на call-site (`100.millis()`, не `100`).
+// unit должен быть явным на call-site (`100.to_millis()`, не `100`).
 module neg.d316_sleep_bare_int_neg
 
 import std.time.duration

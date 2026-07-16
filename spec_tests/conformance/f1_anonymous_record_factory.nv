@@ -15,11 +15,11 @@ module spec_tests.conformance
 
 export type Box1[T] { v T }
 
-export fn Box1[T].of(value T) -> Box1[T] => { v: value }
+export fn Box1[T].new(value T) -> Box1[T] => { v: value }
 
 // Intermediate helper: factory calls factory.
 export fn Box1[T].twin(v1 T, v2 T) -> Box1[T] {
-    if v1 == v2 { Box1[T].of(v1) } else { Box1[T].of(v2) }
+    if v1 == v2 { Box1[T].new(v1) } else { Box1[T].new(v2) }
 }
 
 export type Pair1[A, B] { first A; second B }
@@ -30,13 +30,13 @@ type Holder1[T] { value T; count int }
 
 fn Holder1[T].new_with(v T, n int) -> Holder1[T] => { value: v, count: n }
 
-test "Box1[int].of — simplest case" {
-    ro m = Box1[int].of(42)
+test "Box1[int].new — simplest case" {
+    ro m = Box1[int].new(42)
     assert(m.v == 42, "single-field int")
 }
 
-test "Box1[str].of — str type-arg" {
-    ro s = Box1[str].of("hi")
+test "Box1[str].new — str type-arg" {
+    ro s = Box1[str].new("hi")
     assert(s.v == "hi", "single-field str")
 }
 
@@ -52,9 +52,9 @@ test "Holder1[str].new_with — T-field + concrete-type field" {
     assert(h.count == 99, "concrete int count")
 }
 
-test "Box1[Box1[int]].of — nested generic" {
-    ro inner = Box1[int].of(42)
-    ro outer = Box1[Box1[int]].of(inner)
+test "Box1[Box1[int]].new — nested generic" {
+    ro inner = Box1[int].new(42)
+    ro outer = Box1[Box1[int]].new(inner)
     assert(outer.v.v == 42, "nested unwrap")
 }
 

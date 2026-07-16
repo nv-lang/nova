@@ -22,7 +22,7 @@ import std.net.{mock_net}
 test "aggregate_live_health: mock_net — fans out across all live hosts, settles" {
     with Net = mock_net() {
         with Emit = null_emit() {
-            ro report = aggregate_live_health(Duration.from_secs(5))
+            ro report = aggregate_live_health(5.to_seconds())
             assert(report.results.len() == health_live_hosts().len())
             // mock_net's connect always succeeds — every lane should settle Done
             // well within a 5s budget.
@@ -37,7 +37,7 @@ test "aggregate_live_health: mock_net — a tiny budget cancels every lane" {
     with Net = mock_net() {
         with Emit = null_emit() {
             // 0ns budget: every lane's deadline has already elapsed at spawn.
-            ro report = aggregate_live_health(Duration.from_millis(0))
+            ro report = aggregate_live_health(0.to_millis())
             assert(report.results.len() == health_live_hosts().len())
             assert(report.done + report.failed + report.cancelled == health_live_hosts().len())
         }
@@ -49,7 +49,7 @@ test "aggregate_live_health: mock_net — a tiny budget cancels every lane" {
 test "aggregate_live_weather: every lane fails with the documented blocker hint" {
     with Net = mock_net() {
         with Emit = null_emit() {
-            ro report = aggregate_live_weather(Duration.from_secs(5))
+            ro report = aggregate_live_weather(5.to_seconds())
             assert(report.results.len() == weather_live_cities().len())
             assert(report.done == 0)
             assert(report.failed == weather_live_cities().len())

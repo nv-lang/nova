@@ -307,11 +307,8 @@ byte-parity НЕ требуется (аллокация убрана — `.c` м
 
 ## Пункт 10 — duration.nv: локальные i64-арифм-хелперы → встроенные (Plan 206 бланкеты + i64.MAX/@clamp)
 
-**Статус:** ⏸️ ЗАБЛОКИРОВАН 2026-07-15 — dispatch-баг `[M-primitive-receiver-bounded-blanket-dispatch]`. haiku
-сделал правки (коммит `155cff2a8`, worktree `nova-p200dur`), но `checked_*_i64(a,b)`→`a.checked_add(b)` **разбудил
-мис-диспатч** `i64.checked_add`→`Duration.checked_add` в одном CU → CC-FAIL `duration` (int64_t→NovaValue_Duration).
-Коммит КРАСНЫЙ, **в main НЕ влит**. Будет **доделан в СВЯЗКЕ 10+13+12 одним проходом ПОСЛЕ фикса 196.8** (владелец
-2026-07-15). Всё в ОДНОМ файле `std/src/time/duration.nv` (37 сайтов). Поведение байт-идентично (на 64-бит-таргете).
+**Статус:** ✅ СДЕЛАНО 2026-07-16 (worktree `nova-200dur`, ветка `p200-duration-chain`, ПОСЛЕ фикса 196.8/196.9 —
+`[M-primitive-receiver-bounded-blanket-dispatch]` закрыт, блокер снят). Модель: sonnet.
 
 **Что (карта):**
 - **Убрать 6 локальных хелперов** (стали редундантны после Plan 206 / встроенных): `i64_max()` (361),
@@ -325,13 +322,17 @@ byte-parity НЕ требуется (аллокация убрана — `.c` м
 - **`sat_add/sub/mul_i64` оставить** (доменная сатурация к кастомным `[lo,hi]` ≠ `saturating_add`); внутренности
   `checked_*_i64(a,b)`→`a.checked_*(b)`.
 
-**Приёмка:** `nova test std/time` зелёный; conformance один-CU δ0 (авторитетный гейт — оркестратор). Модель: haiku.
+**Приёмка:** `i64_max()`/`i64_min()`/`clamp_i64()` удалены → `i64.MAX`/`i64.MIN`/`@clamp`; `checked_add_i64`/
+`checked_sub_i64`/`checked_mul_i64` wrapper-функции удалены, call-сайты → `a.checked_add(b)` напрямую;
+`checked_neg_i64`/`checked_div_i64`/`sat_add/sub/mul_i64` оставлены (нет бланкета neg/div; кастомный `[lo,hi]`).
+`nova check std/src/time` (targeted, без codegen) — зелёный на момент коммита. **Полный `nova test`/conformance —
+НЕ прогнан этой сессией** (CPU занят гейтом интегратора) — авторитетный гейт остаётся за оркестратором.
 
 ---
 
 ## Пункт 11 — duration.nv: `@as_*()` → голое имя (хвост D410-миграции `[M-d410-as-to-migration]`)
 
-**Статус:** 📋 В ОЧЕРЕДИ — делать **ПОСЛЕ Пункта 10** (тот же файл `duration.nv`; не параллелить с haiku-агентом).
+**Статус:** ✅ СДЕЛАНО 2026-07-16 — вобрано в Пункт 12 (см. ниже), делалось одним проходом.
 
 **Почему:** D410 упразднил префикс `as_` ([nv-coding-style.md:33](../nv-coding-style.md)), но 11 методов в
 `duration.nv` остались — пропущенный хвост миграции `[M-d410-as-to-migration]`.
@@ -353,7 +354,7 @@ byte-parity НЕ требуется (аллокация убрана — `.c` м
 
 ## Пункт 12 — единицы времени: getter=голое / конструктор=`to_`, ретракт `Duration.from_*` (вбирает Пункт 11)
 
-**Статус:** 📋 СОГЛАСОВАНО 2026-07-15 (владелец). Делать ПОСЛЕ Пункта 10 (тот же файл). **Вбирает Пункт 11.**
+**Статус:** ✅ СДЕЛАНО 2026-07-16 (worktree `nova-200dur`, ветка `p200-duration-chain`). Модель: sonnet.
 
 **Правило (§1а):** направление задаёт форму. **Единица — полным словом** (nanos/micros/millis/seconds/minutes/
 hours/days).
@@ -366,22 +367,42 @@ hours/days).
 - **Float — отдельно** (f64 ∉ Ints, в бланкет не входит): `f64 @to_seconds()` (заменяет `from_secs_f`;
   `1.5.to_seconds()`). Только секунды.
 - **Singular** `int @second()`/`@minute()` — убрать (DRY; `1.to_seconds()`).
+- **Свободные обёртки-дубли убрать** (владелец 2026-07-16): `fn sleep(d Duration)` (duration.nv:263 — однострочный
+  делегат в `d.sleep()`) и `fn sleep_until(deadline Monotonic)` (:280 → метод `Monotonic @sleep_until()`) — §3
+  nv-coding-style (surface = методы) + D9; канон `5.to_seconds().sleep()` / `deadline.sleep_until()`. Effect-op
+  `Time.sleep(ms int)` (prelude/effects) НЕ трогать — слой примитива, не пользовательский surface. Мигрировать
+  немногие call-сайты свободных форм (std/examples, единицы).
 - **⚠ Зависимость:** `[T Ints] @to_seconds()` на примитивном ресивере — ровно механизм
   `[M-primitive-receiver-bounded-blanket-dispatch]` (dispatch-баг). Делать **ПОСЛЕ** его фикса (196.8).
 - **Коллизия снята:** getter `d.nanos()` (голое) vs конструктор `5.to_nanos()` (`to_`) — разные имена.
 
-**Приёмка:** `nova test std/time` зелёный; conformance один-CU δ0 (переименование, поведение идентично); греп
-`@as_`/`Duration.from_`/bare-fluent = 0. Модель: дешёвый агент по карте; гейт — оркестратор.
+**Приёмка:** getter/конструктор реализованы по карте (см. duration-chain-progress.md за деталями). Греп
+`@as_`/`Duration.from_`/`Timestamp.from_unix_`/singular-алиасов = 0 по `std/examples/spec_tests` (repo-wide,
+подтверждено grep'ом). `nova check` (targeted) зелёный на `std/src/time`, `std/src/time/civil`,
+`std/src/concurrency` на момент соответствующих коммитов. **Полный `nova test`/conformance — НЕ прогнан
+этой сессией** (CPU занят гейтом интегратора) — авторитетный гейт остаётся за оркестратором. D-амендменты:
+D410 (03-syntax.md), D317 (04-effects.md) — добавлены.
 
 ## Пункт 13 — разбить duration.nv: Timestamp/Monotonic в отдельные файлы (D78 co-equal)
 
-**Статус:** 📋 СОГЛАСОВАНО 2026-07-15 (владелец). Делать в связке с Пунктом 10/12 (тот же файл).
+**Статус:** ✅ СДЕЛАНО 2026-07-16 (worktree `nova-200dur`, ветка `p200-duration-chain`). Модель: sonnet.
 
-**Что:** `duration.nv` содержит `Duration` + `Timestamp` + `Monotonic` в одном файле. Вынести `Timestamp` →
-`timestamp.nv`, `Monotonic` → `monotonic.nv` (co-equal файлы модуля `std/time`; **D78 — папка=один модуль, import-
-пути НЕ меняются**). `Duration` остаётся в `duration.nv`.
+**Что:** `Timestamp` вынесен в `std/src/time/timestamp.nv`, `Monotonic` — в `std/src/time/monotonic.nv`
+(co-equal файлы модуля `time.duration` — оба объявляют `module time.duration`, как `std/src/time/civil/*.nv`
+все объявляют `module time.civil`; import-путь `std.time.duration` не меняется). `Duration` + module-private
+overflow-safe хелперы (`sat_add_i64`/`checked_neg_i64`/`f64_nanos_or_trap`/и т.п., общие для всех трёх типов)
+остались в `duration.nv`. Чистая текстовая экстракция (head/tail по проверенным границам), без изменения тел
+методов.
 
-**Приёмка:** `nova test std/time` зелёный; import-пути неизменны; conformance δ0. Модель: дешёвый агент по карте.
+**⚠ НЕ ВЕРИФИЦИРОВАНО КОМПИЛЯЦИЕЙ** (запрет на `nova.exe` в конце сессии из-за CPU-контеншна с гейтом
+интегратора) — `[M-200-duration-chain-verify]`. Уверенность высокая (архитектурный precedent
+module-private-функций, видимых межфайлово в том же модуле, подтверждён на `std/net/ffi.nv`↔`std/net/addr.nv`
+(`net_addr_parse` объявлен в `ffi.nv`, вызывается из `addr.nv`, оба `module std.net`); границы среза
+перепроверены построчно до/после разреза), но **первым делом авторитетного гейта — собрать
+`nova test std/src/time` и убедиться, что `timestamp.nv`/`monotonic.nv` реально резолвятся как co-equal
+файлы модуля `time.duration`.**
+
+**Приёмка (авторитет — оркестратор):** `nova test std/time` зелёный; import-пути неизменны; conformance δ0.
 
 ---
 
@@ -422,6 +443,45 @@ Some/None, filter pass/fail, Result short-circuit); conformance-фикстура
 **Остаток приёмки (из согласования владельца):** первый потребитель — `resolve_port` флагмана
 (`env(...).flat_map(|s| s.to_int().ok()).map(|n| n as u16) ?? DEFAULT_PORT`) — мигрировать
 демонстрацией; отдельный мелкий заход.
+
+---
+
+## Пункт 15 — type-set'ы: единое множественное число (`UnsignedInt` → `UnsignedInts`) + doc «Ints включает unsigned»
+
+**Статус:** 📋 СОГЛАСОВАНО 2026-07-16 (владелец). Дешёвая правка, дешёвый агент.
+
+**Что:** в `std/src/prelude/protocols.nv` два сета с рассогласованными именами: `UnsignedInt` (ед. число, :830)
+и `Ints` (мн., :842). D310-сет — буквально МНОЖЕСТВО типов → семейство во множественном числе:
+- **переименовать `UnsignedInt` → `UnsignedInts`** (+ все bound-сайты `[T UnsignedInt]`);
+- **doc-строка к `Ints`**: явно «включает unsigned» (ловушка читателя: по аналогии с `int` можно решить, что
+  только знаковые; Go-прецедент `constraints.Integer` — тоже все целые);
+- будущие сеты — тем же паттерном: `SignedInts`, `Floats`. Голое `Signed` (Rust/Go) НЕ брать — float'ы тоже
+  знаковые, имя вводит в заблуждение.
+
+**Сверка с другими языками:** Go `constraints.Integer/Signed/Unsigned` (ед., trait-стиль); Swift
+`SignedInteger/UnsignedInteger`; Rust num `PrimInt/Signed/Unsigned`. У них bound = trait (способность) → ед.
+число; у нас D310-сет (перечень типов) → мн. число честнее и короче: `[T Ints]` = «T из целых».
+
+**Приёмка:** греп `UnsignedInt\b` = 0 (кроме исторических доков); conformance δ0 (переименование);
+`nova test std` без новых фейлов. **Модель:** haiku по карте (греп+переименование+doc), гейт — оркестратор.
+
+---
+
+## Пункт 16 — ретракт `Vec[T].from(items []T)` (пятая дверь §1а) с развязкой типо-направленной роли
+
+**Статус:** 📋 СОГЛАСОВАНО 2026-07-16 (владелец) — **ПОЛНЫЙ ретракт**. Каждая роль `from` уже покрыта каноном
+(core.nv:210, маркер `[M-lint-findings-static-conversion]` уже висит):
+1. **same-T копия** — дубль `items.clone()` (D9);
+2. **типизированный литерал** — `Vec[f32].from([1, 2])` = НЕЦЕЛЕВОЕ использование (владелец): канон —
+   вариадик **`Vec[f32].of(1, 2)`** (правило «of = вариадик-коллекции»);
+3. **element-width конверсия** `Vec[u8].from(int-vec)` (NOTE в коде) — явной поэлементной формой (map/`as`),
+   тихое сужение в конструкторе — не канон.
+
+**Карта миграции 95 сайтов** (nova_tests заморожен — не мигрировать): литеральные → `.of(...)`; same-T →
+`.clone()`; width — явно; затем снести декл. Закрывает `[M-lint-findings-static-conversion]`-часть про Vec.from.
+
+**Приёмка:** греп `Vec[…].from(` = 0 вне nova_tests; conformance δ0; `nova test std/collections` зелёный.
+Модель: sonnet по карте (роль-2 требует суждения по месту), гейт — оркестратор.
 
 ---
 

@@ -307,13 +307,13 @@ export type CancelError {
 ///
 /// ```nova
 /// fn fetch_bounded() Fail[TimeoutError] -> () {
-///     supervised(timeout: 5.seconds()) {
+///     supervised(timeout: 5.to_seconds()) {
 ///         spawn { slow_download() }  // если > 5s — TimeoutError
 ///     }
 /// }
 ///
 /// with Fail[TimeoutError] = |_| interrupt handle_timeout() {
-///     supervised(deadline: Monotonic.now() + 200.millis()) {
+///     supervised(deadline: Monotonic.now() + 200.to_millis()) {
 ///         spawn { poll_until_ready() }
 ///     }
 /// }

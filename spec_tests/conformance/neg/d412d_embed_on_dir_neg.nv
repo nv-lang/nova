@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_EMBED_IS_A_DIR
+//
+// D412-амендмент (Plan 210) — NEG. Симметрия: одиночный `embed("папка")`
+// — путь ведёт на директорию, нужен `embed_dir(...)`. Реюз позитивной
+// фикстуры `../d412d_dir` (Plan 210 Ф.4 pos). Спека:
+// spec/decisions/03-syntax.md D412-амендмент («Симметрия: embed("папка")
+// … — E_EMBED_IS_A_DIR (используй embed_dir)»).
+
+module neg.d412d_embed_on_dir_neg
+
+fn d412d_dir_not_file() -> int {
+    ro b = embed("../d412d_dir")   // ✗ папка, не файл — E_EMBED_IS_A_DIR
+    b.len()
+}

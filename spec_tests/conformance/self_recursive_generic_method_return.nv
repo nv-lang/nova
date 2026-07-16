@@ -1,0 +1,67 @@
+// Regression guard for [M-generic-method-self-recursive-return] (Plan 186
+// recursive-mono era; compiler-internal `B11ak_self_recursive_generic_method`,
+// emit_c.rs ~51913): a GENERIC method whose method-level type-param `U`
+// appears in its OWN return type, and whose mono'd body calls itself
+// recursively on a value of its OWN receiver type (`rest.map(f)` inside
+// `@map[U]`'s own body) — the checker deliberately does not channel this
+// return (in-scope type-param, `resolved_types` gate skips it per
+// `typeref_mentions_any`), and the legacy per-mono `fn_ret_<recv>_<method>`
+// registry has no entry yet either (THIS exact mono instance is what is
+// BEING built while its own body emits). Resolved via
+// `current_fn_name`/`current_receiver_type`/`current_fn_return_ty` — the
+// enclosing mono's own already-known return C-type is sound for exact
+// self-recursion. Exercised pervasively by std (collections/data/encoding,
+// via `.map`, per Plan 196.5 Stage-D census §3.2, трафик=5) but absent from
+// spec_tests/conformance before this file.
+module spec_tests.conformance
+
+type RmGaugeList[T] enum
+    | RmGaugeNil
+    | RmGaugeCons(T, RmGaugeList[T])
+
+// Method-level generic U (independent of receiver's T) — return type
+// `RmGaugeList[U]` mentions U, a type-param in scope only for THIS mono
+// instantiation; body calls itself recursively on `rest` (same receiver
+// type `RmGaugeList[T]`, same method name `map`) — self-recursion by
+// construction, exactly the B11ak shape.
+fn RmGaugeList[T] @map[U](f fn(T) -> U) -> RmGaugeList[U] => match @ {
+    RmGaugeNil => RmGaugeNil
+    RmGaugeCons(v, rest) => RmGaugeCons(f(v), rest.map(f))
+}
+
+// Recursive helpers used only to extract an observable value from the
+// resulting list (both non-generic; the self-recursive GENERIC path being
+// pinned is `@map[U]` above, exercised in the test bodies).
+fn rm_gauge_join(l RmGaugeList[str], sep str) -> str => match l {
+    RmGaugeNil => ""
+    RmGaugeCons(v, rest) => {
+        ro tail = rm_gauge_join(rest, sep)
+        if tail == "" { v } else { v + sep + tail }
+    }
+}
+
+fn rm_gauge_sum_int(l RmGaugeList[int]) -> int => match l {
+    RmGaugeNil => 0
+    RmGaugeCons(v, rest) => v + rm_gauge_sum_int(rest)
+}
+
+test "self-recursive generic @map[U]: type-changing int -> str across a 3-element list, no erasure, order preserved" {
+    ro l = RmGaugeCons(1, RmGaugeCons(2, RmGaugeCons(3, RmGaugeNil)))
+    ro mapped = l.map(|x| "n" + x.to_str())   // RmGaugeList[str] — the mono BEING built calls itself
+    assert(rm_gauge_join(mapped, ",") == "n1,n2,n3")
+}
+
+test "self-recursive generic @map[U]: empty list — recursion bottoms out at RmGaugeNil" {
+    ro l RmGaugeList[int] = RmGaugeNil
+    ro mapped = l.map(|x| x * 2)
+    match mapped {
+        RmGaugeNil => assert(true)
+        RmGaugeCons(_, _) => assert(false)
+    }
+}
+
+test "self-recursive generic @map[U]: U resolves to a concrete width-correct int, not erased placeholder" {
+    ro l = RmGaugeCons(10, RmGaugeCons(20, RmGaugeNil))
+    ro mapped = l.map(|x| x + 1)
+    assert(rm_gauge_sum_int(mapped) == 32)   // (10+1) + (20+1) = 32
+}

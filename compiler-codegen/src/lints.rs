@@ -4004,7 +4004,7 @@ const CONV_RETIRED_PATTERNS: &[(&str, &str)] = &[
     (".to_bytes(", "`to_bytes` ретрактирован (D410) — `bytes().clone()`"),
     (".to_chars(", "`to_chars` ретрактирован (D410) — `chars().collect()`"),
     (".into()", "голый `.into()` ретрактирован (D73 retraction) — явный `to_*`/`into_*`"),
-    (".with_capacity(", "`with_capacity` ретрактирован (D372 amend) — `.new()` + `.cap(n)`"),
+    (".with_capacity(", "`with_capacity` ретрактирован (D372 amend + 200 П4) — `.new(cap: n)`"),
     (".from_raw_parts(", "`from_raw_parts` ретрактирован — типизированные конструкторы"),
 ];
 

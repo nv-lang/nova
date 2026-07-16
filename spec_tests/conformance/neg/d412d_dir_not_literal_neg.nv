@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_EMBED_ARG_NOT_STR_LITERAL
+//
+// D412-амендмент (Plan 210, `embed_dir("dir")`) — NEG.
+// Аргумент `embed_dir` — ТОЛЬКО строковый ЛИТЕРАЛ: путь должен быть
+// известен на компиляции (модель одиночного `embed`). Переменная —
+// ошибка. Спека: spec/decisions/03-syntax.md D412-амендмент.
+
+module neg.d412d_dir_not_literal_neg
+
+fn d412d_dynamic_dir() -> int {
+    ro p = "d412d_dir"
+    ro d = embed_dir(p)          // ✗ не литерал — E_EMBED_ARG_NOT_STR_LITERAL
+    d.len()
+}

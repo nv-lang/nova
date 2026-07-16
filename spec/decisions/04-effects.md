@@ -6592,11 +6592,34 @@ effect-операции, same-module `to_str()`-коллизия на `int`-rece
 
 - **`Duration`** = знаковый `i64` ns, диапазон **±(2⁶³−1) ns ≈ ±292 года**.
 - **`Timestamp`** = unix-epoch ns, окно **1677-09-21 .. 2262-04-11** (i64 ±292y, Q16) — контракт задокументирован. Zig `nanoTimestamp() -> i128` не имеет 2262-горизонта; Nova принимает i64 **осознанно** (i128 ломает Q2 single-i64 scalar-bridge и value-ABI ради горизонта >2262). `from_unix_nanos(i64::MAX)` + `checked_add` → `None`; `@plus` → saturate (НЕ wrap в 1677) — pos-фикстура d317.
-- **Отложено:** публичные консты `Duration.MAX`/`Duration.MIN` (Plan 178 запрашивал `@timeout(Duration.MAX)`) НЕ введены — user type-const с именем `MAX`/`MIN` **шэдоуит builtin numeric `.MAX`/`.MIN`** в type-set-bound generics (`fn[T Ints] f(x T) => x == T.MAX`, `spec_tests` d310) → мис-типизация `T.MAX` как record + CC-FAIL. Фикс — в checker member-const-резолюции (172-зона, owner-gated). Follow-up `[M-175-type-const-max-shadows-builtin]`. Saturation-границы доступны через internal `i64_max()`/`i64_min()` — функциональность D317 полная без публичной консты.
+- **Отложено:** публичные консты `Duration.MAX`/`Duration.MIN` (Plan 178 запрашивал `@timeout(Duration.MAX)`) НЕ введены — user type-const с именем `MAX`/`MIN` **шэдоуит builtin numeric `.MAX`/`.MIN`** в type-set-bound generics (`fn[T Ints] f(x T) => x == T.MAX`, `spec_tests` d310) → мис-типизация `T.MAX` как record + CC-FAIL. Фикс — в checker member-const-резолюции (172-зона, owner-gated). Follow-up `[M-175-type-const-max-shadows-builtin]`. Saturation-границы доступны через builtin `i64.MAX`/`i64.MIN` (Plan 200 Step 1 — заменили internal `i64_max()`/`i64_min()` fn-хелперы, тот же контракт) — функциональность D317 полная без публичной консты.
 
 ### Почему
 
 Silent two's-complement wrap на ±292y — это ровно Go-ловушка; Rust/Java/Kotlin/Temporal/Swift детектят overflow. Nova достигает паритета Rust/Java/Swift и обходит Go (silent-wrap) и Zig (UB-в-ReleaseFast, build-mode-зависимость). Trap-default безопасен by construction; `checked_*` — Rust-эскейп для восстановления; `saturating_*` — для «no timeout»-семантики (Plan 178).
+
+> **AMEND (2026-07-16, Plan 200 Step 2, владелец) — конструкторы `from_*` →
+> `to_*`-бланкет.** `Duration.from_nanos/micros/millis/secs/mins/hours/days/
+> weeks/secs_f64` и `Timestamp.from_unix_secs/millis/nanos` — **ретрактированы**
+> вместе с per-width bare-fluent (`int @seconds()`, singular `1.second()` и
+> т.п.). Заменены единым `fn[T Ints] T @to_nanos/to_micros/to_millis/to_seconds/
+> to_minutes/to_hours/to_days/to_weeks() -> Duration` (и симметричный
+> `to_unix_seconds/to_unix_millis/to_unix_nanos() -> Timestamp`) — один бланкет
+> вместо ×8 почти-идентичных конкретных методов, зеркалит Plan 206
+> `checked_*`-бланкеты (D423). Приёмник `@` явно widen'ится в `i64` до
+> арифметики (иначе узкие ширины типа `i8` переполнились бы на `* 1_000` до
+> приведения). `f64 @to_seconds()` — единственный float-конструктор («только
+> секунды», остальные f64-юниты retracted без замены — repo-wide grep на
+> использование = 0); `Duration.try_from_secs_f64` (fallible) сохранён без
+> изменений имени (не `from_*`-паттерн конструктора, отдельная Option-семья).
+> Singular-алиасы (`1.second()`, `1.hour()`, ...) убраны без замены — DRY,
+> `1.to_seconds()`/`1.to_hours()`. Getter/constructor коллизия имён снята:
+> `d.nanos()` (голое, `Duration → i64`) vs `5.to_nanos()` (`to_`, `int →
+> Duration`) — разные имена, один и тот же тип-набор `Ints` работает на обеих
+> сторонах моста без дублирования тела. Зависело от `[M-primitive-receiver-
+> bounded-blanket-dispatch]` (Plan 196.8/196.9, закрыт) — примитивный ресивер
+> (`i8`..`u64`) должен честно резолвиться в bounded-бланкет, а не мис-
+> диспатчиться в конкретный одноимённый метод постороннего типа в том же CU.
 
 ## D318 — Monotonic: non-regression + clock-source contract (Plan 175 Ф.1c, 2026-07-06)
 
@@ -6839,6 +6862,58 @@ fn File consume @close() Fs -> Result[(), IoError]   // ЕДИНСТВЕННАЯ
    `copy_file` (не `read_to_string`/`write_str`/`copy` — те резолвятся в `std.io.*[Path]` mono).
 4. **`IoError.path`/`source`** (§3b full-shape) — отложены: io↔path module-cycle + value-`Option[Path]`-mono
    blast-radius на io-core baseline; `kind`(NotFound/…) сохранён (все тесты/§8.3 на нём). Followup.
+
+### Амендмент D323 (2026-07-16, Plan 210 Ф.6б): `ReadFs` — read-only VFS-протокол
+
+**Решение.** `ReadFs` (`std/src/fs/readfs.nv`) — read-only виртуальная ФС, объединяющая
+чтение из реальной ФС (`DirFs`) и из вшитой папки (`EmbeddedDir`, D412-амендмент, `03-syntax.md`)
+под ОДНИМ generic-bound. Главный кейс: статика веб-сервера «dev = с диска (live-reload),
+prod = embedded» — один и тот же generic-код `fn serve[F ReadFs](assets F, ...)`, мономорфизуемый
+дважды.
+
+**Протокол эффект-АГНОСТИЧЕН** (модель `io.Read`, тот же D322): методы объявлены БЕЗ аннотации
+эффекта — конформер несёт СВОЙ (`DirFs` → `Fs`, `EmbeddedDir` → чистый), всплывающий транзитивно
+при mono (Q15). Subsumption эффектов не нужен — протокол никогда не объявляет `Fs`, поэтому
+ситуации «impl имеет МЕНЬШЕ эффектов, чем протокол» не возникает.
+
+```nova
+export type ReadFs protocol {
+    @read_file(path str) -> Result[[]u8, IoError]
+    @try_exists(path str) -> Result[bool, IoError]
+}
+```
+
+- `@read_file` — `Err(IoError{NotFound})` = файла нет; прочие `Err` — реальный I/O-сбой (только
+  эффектные impl). `@try_exists` — паритет free-fn `try_exists` (`@exists` недоступно: reserved-квантор).
+  Ключ — POSIX `/`, case-sensitive, без ведущего `./` (конвенция `embed_dir`).
+- `list`/directory-index **вне протокола**: у реальной ФС обход дорог (`Fs`-эффект),
+  недетерминирован между вызовами (dev live-reload) и выводит наружу symlink/dot-ловушки; у
+  `EmbeddedDir` — дёшево, но дробление протокола («минимальный протокол», как `io.Read`/`io.Write`/
+  `io.Seek`) не платит обходом там, где нужно только чтение. Future — отдельный `ListFs`.
+- **`EmbeddedDir` конформит EXTENSION-методами** (D287): `@read_file`/`@try_exists` объявлены в
+  `std.fs` (не в `EmbeddedDir`'s home-модуле `prelude.embed`); родной Option-API (`@get`/`@has`/
+  `@paths`) не тронут. **Эмпирически подтверждено** (`std/src/fs/readfs_test.nv`): структурная
+  conformance по generic-bound `[F ReadFs]` видит extension-метод НАРАВНЕ с inherent — wrapper-
+  newtype fallback (предусмотренный на случай провала) не понадобился.
+- **`DirFs { priv root Path }`** — read-only вид на поддерево реальной ФС с корнем `root`.
+  `DirFs.new(root)` — чистый конструктор (канонизация root — НЕ в кторе, это `Fs`-эффект; root
+  может не существовать в момент конструирования — dev). Чтения ограничены `realpath(root)`:
+  (1) лексически — `Path.normalize()` отвергает абсолютный путь и сохранившийся ведущий `..`;
+  (2) symlink-hard — `canonicalize(root)`/`canonicalize(join)` + component-граничная prefix-
+  проверка (строковая граница по ОБОИМ разделителям `/`/`\`, не единственному `canonical_sep`:
+  `canonicalize` под `mock_fs` всегда отдаёт POSIX-ключи независимо от host-style-тега на `Path`,
+  тогда как реальный диск на Windows — `\`). Нарушение → `PermissionDenied`; отсутствующий файл
+  (после успешного лексического/symlink-чека) → `NotFound` от `canonicalize`/`read`, транзитом
+  наружу.
+- **`DirFs`/`EmbeddedDir` дают ОДИН и тот же ключ на один и тот же относительный путь** (dev==prod
+  паритет путей, конвенция с `embed_dir`).
+- **dev/prod-выбор — ветка на точке инстанциации, НЕ dyn-значение**: effectful-vtable-dispatch не
+  поддержан (D122-амендмент выше) — существential `ReadFs` с эффектным методом (`DirFs.read_file`
+  несёт `Fs`) потребовал бы vtable, которого нет. `if dev_mode { serve(mut mux, DirFs.new(...)) }
+  else { serve(mut mux, embed_dir("...")) }` — один `if` мономорфизует `serve` дважды.
+
+**Аддитивно, НЕ язык-меняюще**: `ReadFs` — ещё один std-протокол поверх готовой structural-protocol
++ mono-dispatch машины (та же, что несёт `io.Read`); новых языковых конструкций нет.
 
 ## D324 — os: `Os` effect (env / args / cwd / dirs / process) (Plan 176 Ф.3, 2026-07-06)
 

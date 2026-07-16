@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_EMBED_PATH_BACKSLASH
+//
+// D412-амендмент (Plan 210, ревью-2 §9.1) — NEG. Путь с `\`-разделителем
+// (Windows-стиль) — непортируемый исходник, запрещён у `embed`/
+// `embed_dir` (путь пишется POSIX `/` независимо от ОС компиляции).
+// Спека: spec/decisions/03-syntax.md D412-амендмент.
+
+module neg.d412d_dir_backslash_neg
+
+fn d412d_backslash_path() -> int {
+    ro d = embed_dir("d412d_dir\\nested")   // ✗ backslash — E_EMBED_PATH_BACKSLASH
+    d.len()
+}

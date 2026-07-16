@@ -2269,25 +2269,40 @@ fn check_one_file(path: &Path, verbose: bool, conv_lint: bool) -> CheckResult {
     }
 
     // Plan 186 (D412): `embed("path")` -> HexBlobLit до type-check (parity
-    // с `nova build`/`nova test`; чекер не знает fn `embed`).
+    // с `nova build`/`nova test`; чекер не знает fn `embed`). Plan 210:
+    // `embed_dir("dir")` resolves alongside it; embed_warnings (§9.1
+    // warning-канал W_EMBED_DIR_*) merged into the final `warnings` field
+    // below (embed-resolve runs before `lint_warnings` exists yet).
+    let embed_warnings: Vec<String>;
     {
         let root = nova_codegen::test_runner::find_repo_root_from(path)
             .unwrap_or_else(|| path.parent().map(|p| p.to_path_buf()).unwrap_or_default());
-        if let Err(diags) = nova_codegen::embed_resolve::resolve_embeds(&mut module, path, &root)
-        {
-            return CheckResult {
-                file: path.to_path_buf(),
-                error: Some(
-                    diags
-                        .iter()
-                        .map(|d| d.render(&src, &path.to_string_lossy()))
-                        .collect::<Vec<_>>()
-                        .join("
+        match nova_codegen::embed_resolve::resolve_embeds(&mut module, path, &root) {
+            Ok((_files, warns)) => {
+                embed_warnings = warns
+                    .into_iter()
+                    .map(|w| {
+                        let (line, col) =
+                            nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
+                        format!("{}:{}:{}: {} [{}]", path.display(), line, col, w.diag.message, w.rule)
+                    })
+                    .collect();
+            }
+            Err(diags) => {
+                return CheckResult {
+                    file: path.to_path_buf(),
+                    error: Some(
+                        diags
+                            .iter()
+                            .map(|d| d.render(&src, &path.to_string_lossy()))
+                            .collect::<Vec<_>>()
+                            .join("
 "),
-                ),
-                warnings: Vec::new(),
-                elapsed_ms: measure(t0),
-            };
+                    ),
+                    warnings: Vec::new(),
+                    elapsed_ms: measure(t0),
+                };
+            }
         }
     }
 
@@ -2353,6 +2368,9 @@ fn check_one_file(path: &Path, verbose: bool, conv_lint: bool) -> CheckResult {
             format!("{}:{}:{}: {} [{}]", path.display(), line, col, msg, w.rule)
         })
         .collect();
+    // Plan 210: embed_dir's W_EMBED_DIR_* (captured earlier, before
+    // lint_warnings existed) join the same reported-warnings surface.
+    lint_warnings.extend(embed_warnings);
 
     // 6. Plan 185: `--lint` — конвенционные W_*-правила поверх ТОГО ЖЕ
     // реестра, что и `nova lint`. Прогоняем по СВЕЖЕМУ per-file parse
@@ -4658,10 +4676,13 @@ fn cmd_build(
     // Plan 186 (D412): `embed("path")` -> HexBlobLit (байты файла в AST).
     // После import-inline (пути peer-файлов известны), ДО ключа кэша и
     // type-check. Список встроенных файлов уходит в fingerprint кэша ниже -
-    // правка встроенного файла инвалидирует кэш пересборки.
+    // правка встроенного файла инвалидирует кэш пересборки. Plan 210:
+    // `embed_dir("dir")` resolves alongside it; W_EMBED_DIR_* warnings
+    // (§9.1 warning-канал) printed here — same style as manifest_warnings
+    // above (non-fatal, doesn't block the build).
     let embed_files: Vec<std::path::PathBuf> = {
         let _t = nova_codegen::perf_timer::PerfTimer::new("embed-resolve");
-        nova_codegen::embed_resolve::resolve_embeds(&mut module, &path, &repo).map_err(
+        let (files, embed_warnings) = nova_codegen::embed_resolve::resolve_embeds(&mut module, &path, &repo).map_err(
             |diags| {
                 let msgs: Vec<String> = diags
                     .iter()
@@ -4670,7 +4691,15 @@ fn cmd_build(
                 anyhow!("{}", msgs.join("
 "))
             },
-        )?
+        )?;
+        for w in &embed_warnings {
+            let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
+            eprintln!(
+                "  {} {}:{}:{}: {} [{}]",
+                bold(&yellow("warning:")), path_str, line, col, w.diag.message, w.rule
+            );
+        }
+        files
     };
 
     // [M-187-http-serde-setcookie-serialize-collision] fix: inject SERDE

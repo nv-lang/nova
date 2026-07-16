@@ -42,11 +42,11 @@ test "iso_roundtrip: DateTime + Period" {
 }
 
 test "rfc3339_roundtrip: Timestamp" {
-    ro ts = Timestamp.from_unix_secs(1_700_000_000)
+    ro ts = 1_700_000_000.to_unix_seconds()
     assert(ts.to_rfc3339() == "2023-11-14T22:13:20Z")
     assert(ts.to_rfc3339().to_timestamp()!! == ts)
     // Дробная часть
-    ro ts2 = Timestamp.from_unix_nanos(1_700_000_000_250_000_000)
+    ro ts2 = 1_700_000_000_250_000_000.to_unix_nanos()
     assert(ts2.to_rfc3339().to_timestamp()!! == ts2)
     // Offset-формы нормализуются к тому же инстанту
     assert("2023-11-15T01:13:20+03:00".to_timestamp()!! == ts)
@@ -124,7 +124,7 @@ test "OffsetConflict: рассогласованный offset — RejectMismatch
     ro used = drifted.to_zoned_datetime(Use)!!
     assert(used.offset().to_seconds() == -18_000)
     ro canon = "2026-07-10T14:30:00-04:00[America/New_York]".to_zoned_datetime()!!
-    assert(used.to_timestamp()!! - canon.to_timestamp()!! == 1.hour())
+    assert(used.to_timestamp()!! - canon.to_timestamp()!! == 1.to_hours())
     // Ignore: пересчитать по правилам зоны (wall та же, offset корректный)
     ro ignored = drifted.to_zoned_datetime(Ignore)!!
     assert(ignored.offset().to_seconds() == -14_400)
@@ -189,7 +189,7 @@ test "@display-тела: ISO/RFC-3339 строковый вид (не сырые
     ro dt = Date.new(2026, Jul, 10)!!.at(TimeOfDay.new(14, 30)!!)
     assert(dt.to_str() == "2026-07-10T14:30:00")
     assert(Period.new(years: 1, days: 2).to_str() == "P1Y2D")
-    ro ts = Timestamp.from_unix_secs(1_700_000_000)
+    ro ts = 1_700_000_000.to_unix_seconds()
     assert(ts.to_rfc3339() == "2023-11-14T22:13:20Z")   // закрывает зависимость 175
     ro z = dt.to_zoned(Utc)!!
     assert(z.to_str() == "2026-07-10T14:30:00Z")

@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_EMBED_NOT_A_DIR
+//
+// D412-амендмент (Plan 210, `embed_dir("dir")`) — NEG.
+// Путь ведёт на ФАЙЛ (не папку) — использовать `embed(...)`. Реюз
+// существующей single-embed фикстуры `../d412_embed_fixture.bin` (D412
+// Plan 186). Спека: spec/decisions/03-syntax.md D412-амендмент («путь
+// ведёт на файл — E_EMBED_NOT_A_DIR (используй embed)»).
+
+module neg.d412d_not_a_dir_neg
+
+fn d412d_file_not_dir() -> int {
+    ro d = embed_dir("../d412_embed_fixture.bin")   // ✗ файл, не папка — E_EMBED_NOT_A_DIR
+    d.len()
+}

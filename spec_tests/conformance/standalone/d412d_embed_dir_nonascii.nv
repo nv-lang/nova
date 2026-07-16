@@ -1,0 +1,24 @@
+// D412-амендмент (Plan 210, ревью-2 §9.1) — не-ASCII имя файла внутри
+// embed_dir даёт W_EMBED_DIR_NON_ASCII_PATH (непортируемый байтовый ключ:
+// macOS NFD vs Windows/Linux NFC), но файл ВСТРАИВАЕТСЯ и находится по
+// точному байтовому ключу (никакой нормализации). Standalone — см.
+// прецедент standalone/n6_opaque_literal_warning.nv.
+// EXPECT_COMPILE_WARNING W_EMBED_DIR_NON_ASCII_PATH
+
+module standalone.d412d_embed_dir_nonascii
+
+test "embed_dir finds non-ASCII file name by exact byte key (D412-amendment)" {
+    ro d = embed_dir("d412d_dir_unicode")
+    assert(d.len() == 1)
+    assert(d.has("café.txt"))
+    ro got = d.get("café.txt")
+    assert(got.is_some())
+    ro bytes = got.unwrap()
+    ro want = x"75 6E 69 63 6F 64 65 2D 6F 6B"   // "unicode-ok"
+    assert(bytes.len() == want.len())
+    mut i = 0
+    while i < bytes.len() {
+        assert(bytes[i] == want[i])
+        i = i + 1
+    }
+}

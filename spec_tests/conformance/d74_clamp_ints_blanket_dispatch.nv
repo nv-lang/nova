@@ -1,0 +1,60 @@
+// D74 amend (Plan 200 Step 0, 2026-07-16) — positive dispatch + collision guard
+// for `fn[T Ints] T @clamp(lo T, hi T) -> T` (std/src/prelude/protocols.nv),
+// which retracts the old concrete `int @clamp` (std/runtime/defaults.nv).
+// Mirrors the `[M-primitive-receiver-bounded-blanket-dispatch]` regression
+// fixture (primitive_bounded_blanket_dispatch.nv, Plan 196.8/196.9): a fresh
+// CONCRETE type declares its OWN `@clamp` of the same name in the same CU —
+// primitive receivers (i64/u32/i8/int) must still resolve to the Ints
+// blanket instance, not mis-dispatch into the foreign concrete method.
+// One folder-module CU spec_tests.conformance.
+module spec_tests.conformance
+
+type D74ClampFoo value { n i64 }
+
+// Same method NAME as the blanket, different receiver type and different
+// (non-clamping) body — a codegen blanket-dispatch guard that mis-resolves
+// by name alone would silently produce the WRONG arithmetic here.
+fn D74ClampFoo @clamp(lo i64, hi i64) -> D74ClampFoo {
+    D74ClampFoo { n: @n + lo + hi }
+}
+
+fn clamp_i64_via_blanket(x i64, lo i64, hi i64) -> i64 => x.clamp(lo, hi)
+
+test "i64/u32/i8/int.clamp() dispatches to the Ints blanket, not a colliding concrete @clamp" {
+    assert(clamp_i64_via_blanket(15, 0, 10) == 10)
+    assert(clamp_i64_via_blanket(-3, 0, 10) == 0)
+    assert(clamp_i64_via_blanket(5, 0, 10) == 5)
+
+    ro w u32 = 300
+    assert(w.clamp(0, 255) == 255)
+
+    ro n i8 = i8.MAX
+    assert(n.clamp(0, 100) == 100)
+
+    ro k int = -7
+    assert(k.clamp(0, 10) == 0)
+
+    // The concrete D74ClampFoo.clamp is untouched — proves the blanket
+    // dispatch above didn't accidentally route through it (it would give a
+    // DIFFERENT, additive result, not a clamp).
+    ro foo = D74ClampFoo { n: 1 }
+    ro clamped = foo.clamp(2, 3)
+    assert(clamped.n == 6)
+}
+
+test "clamp width boundaries — i64/u32/i8 MAX/MIN edges (D74 amend)" {
+    ro top i64 = i64.MAX
+    assert(top.clamp(0, i64.MAX) == i64.MAX)
+    ro bottom i64 = i64.MIN
+    assert(bottom.clamp(i64.MIN, 0) == i64.MIN)
+
+    ro umax u32 = u32.MAX
+    assert(umax.clamp(0, u32.MAX) == u32.MAX)
+    ro uzero u32 = 0
+    assert(uzero.clamp(0, u32.MAX) == 0)
+
+    ro imax i8 = i8.MAX
+    assert(imax.clamp(i8.MIN, i8.MAX) == i8.MAX)
+    ro imin i8 = i8.MIN
+    assert(imin.clamp(i8.MIN, i8.MAX) == i8.MIN)
+}

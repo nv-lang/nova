@@ -98,7 +98,7 @@ export type Vec[T] priv {
 /// slots (`len == 0`), no rounding (spec D372-amend2). `cap == 0` (default,
 /// `Vec[T].new()`): logically empty (`@cap() == 0`) but backed by a 1-slot
 /// placeholder buffer — same non-null-pointer-always invariant the old
-/// `null_buf` path gave, just folded into this one expression; the slot is
+/// placeholder (ex-null_buf) path gave, just folded into this one expression; the slot is
 /// never read/written until the first `@push`/`@reserve` grows it. `cap: n`
 /// (`n > 0`): exactly `n` pre-allocated element slots. Equivalent to
 /// `Vec[T].new().cap(n)` but one call, one allocation — the canonical
@@ -281,7 +281,9 @@ export fn Vec[T] mut @cap(n int) -> @
 {
     if n == @cap { return }
     if n == 0 {
-        @data = null_buf[T]()
+        // 1-slot non-null placeholder (как в `new(cap=0)`): никогда не
+        // разыменовывается — `len`/`cap` гардят каждый доступ.
+        @data = alloc_buf[T](1)
         @cap = 0
         return
     }
@@ -338,12 +340,7 @@ fn alloc_buf[T](n int) -> *mut T {
     }
 }
 
-// The empty (capacity-0) buffer. A 1-slot allocation acts as a non-null,
-// never-dereferenced placeholder so that `data` always has a valid `*mut T`
-// value; `len`/`cap` guard every access.
-fn null_buf[T]() -> *mut T {
-    unsafe {
-        RawMem.alloc(size_of[T]()) as *mut T
-    }
-}
+// (null_buf удалён 2026-07-16 — был дубль-близнец `alloc_buf(1)`; empty-cap
+// placeholder = `alloc_buf[T](1)` напрямую: non-null, never-dereferenced,
+// `len`/`cap` гардят каждый доступ.)
 
