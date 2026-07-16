@@ -704,6 +704,29 @@ fn make_param(name: &str, ty: TypeRef) -> Param {
     }
 }
 
+/// [fix-autoderive-fmt-mut-param] `mut`-binding twin of [`make_param`]. The
+/// `Fmt`/`Write` protocols declare their sink parameter as `mut f Fmt`
+/// (canon established by `fix-param-mut-enforcement`, D374/nv-coding-style
+/// §18б) — a synthesized `@display`/`@debug` method whose own param is bare
+/// (`is_mut: false`, `make_param`'s default) no longer satisfies
+/// `#impl(Display)`/`#impl(Debug)` once the checker verifies the parameter's
+/// BINDING MODE against the protocol declaration, not just its type
+/// (`E_PARAM_NOT_MUT`/`E_IMPL_WRONG_SIGNATURE`). This was previously silently
+/// tolerated (mode wasn't checked) — a latent mismatch, not a new one.
+fn make_mut_param(name: &str, ty: TypeRef) -> Param {
+    Param {
+        name: name.to_string(),
+        ty,
+        span: span_dummy(),
+        is_variadic: false,
+        default: None,
+        consume: false,
+        is_mut: true,
+        is_const: false,
+        mut_type_pos_legacy: false,
+    }
+}
+
 fn is_primitive_field(t: &TypeRef) -> bool {
     matches!(t.strip_modifiers(), TypeRef::Named { path, .. }
         if path.len() == 1 && is_primitive_type(&path[0]))
@@ -1010,7 +1033,7 @@ pub fn synthesize_display<Q: DeriveQuery>(
     Ok(make_synth_method(
         &type_decl.name,
         "display",
-        vec![make_param("w", type_ref_named("Fmt"))],
+        vec![make_mut_param("w", type_ref_named("Fmt"))],
         Some(TypeRef::Unit(span_dummy())),
         body,
     ))
@@ -1049,7 +1072,7 @@ pub fn synthesize_debug<Q: DeriveQuery>(
     Ok(make_synth_method(
         &type_decl.name,
         "debug",
-        vec![make_param("w", type_ref_named("Fmt"))],
+        vec![make_mut_param("w", type_ref_named("Fmt"))],
         Some(TypeRef::Unit(span_dummy())),
         body,
     ))
