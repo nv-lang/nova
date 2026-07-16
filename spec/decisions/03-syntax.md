@@ -11668,3 +11668,9 @@ debug, rust-embed-стиль — ОТКЛОНЁН явно: ломает «од�
 **Прецеденты:** Go `//go:embed dir` + `embed.FS` (эталон: рекурсия, сортировка, бинарный
 поиск, исключение скрытых, POSIX-пути, case-sensitive), Rust `rust-embed`/`include_dir!`
 (`.get(path) -> Option`, debug=disk режим НЕ заимствован).
+
+**См. также:** [D323-амендмент](04-effects.md#d323) (`spec/decisions/04-effects.md`,
+Plan 210 Ф.6б) — `ReadFs`: `EmbeddedDir` конформит
+read-only VFS-протоколу `ReadFs` через extension-методы (D287) в `std.fs`, наравне с
+`DirFs` (root-scoped вид на реальную ФС) — единый generic-код «dev с диска / prod
+embedded».
