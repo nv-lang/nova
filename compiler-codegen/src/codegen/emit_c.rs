@@ -36080,9 +36080,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // T = Option[U]), so — unlike `Nova_` (heap record, whose
                 // VALUE repr IS single-star, hence only `Nova_X**` qualifies)
                 // — these four are NOT excluded at all here.
+                // [M-novavtable-read-write-pointer-collision]: `NovaVtable_<Eff>*`
+                // (effect-handler vtable pointer, e.g. `NovaVtable_Write*`) does NOT
+                // start with "Nova_" (position 4 is 'V', not '_') so it slips past the
+                // `!obj_ty.starts_with("Nova_")` half of this guard exactly like
+                // `NovaArray_*` would — a zero-arg `.read()`/one-arg `.write(v)` op
+                // name on a handler value must dispatch through the vtable (§4 below,
+                // `NovaVtable_` branch, B11ac inference twin), not deref as a raw typed
+                // pointer. Exclude explicitly, mirroring the existing `NovaArray_` guard.
                 if obj_ty.ends_with('*')
                     && (!obj_ty.starts_with("Nova_") || obj_ty.ends_with("**"))
                     && !obj_ty.starts_with("NovaArray_")
+                    && !obj_ty.starts_with("NovaVtable_")
                     && obj_ty != "void*"
                 {
                     let is_const = obj_ty.starts_with("const ");
@@ -51487,9 +51496,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // over a record/generic-T element) — mirrors the
                         // emission-side guard above; a single `Nova_X*` (record
                         // value handle) stays excluded.
+                        // [M-novavtable-read-write-pointer-collision]: same guard-gap as
+                        // the emission-side twin (~36083) — `NovaVtable_<Eff>*` does not
+                        // start with "Nova_" (char 4 is 'V') so it fell through into this
+                        // typed-pointer inference arm for the `read`/`write` op names,
+                        // shadowing the correct `B11ac_novavtable_effect` schema lookup
+                        // below. Excluded explicitly, mirroring `NovaArray_`.
                         if obj_ty.ends_with('*')
                             && (!obj_ty.starts_with("Nova_") || obj_ty.ends_with("**"))
                             && !obj_ty.starts_with("NovaArray_")
+                            && !obj_ty.starts_with("NovaVtable_")
                             && obj_ty != "void*"
                         {
                             self.icr_trace("B11d_typed_pointer_methods");
