@@ -535,13 +535,14 @@
 | [196.5](196.5-stage-d-census.md) | Plan 196.5 Stage-D — перепись (census) остаточных 54 веток infer_call_ret_c (волна-3 prep) | — (нет Статус-строки) |
 | [196.7](196.7-method-dispatch-resolved-callees.md) | 196.7 — Method-dispatch через resolved_callees (одно окно для диспетча метода по ресиверу) | ✅ ЗАКРЫТ 2026-07-15 (ветка `p196-dispatch`, worktree `nova-196-7`; в main вливает оркестратор ПОСЛЕ 206/209Ф.3/D39 — `emit_c.rs` конкурентно правится). |
 | [196.8](196.8-primitive-receiver-bounded-blanket.md) | 196.8 — Bounded-бланкет на примитивном ресивере (одно окно для D310 type-set bound) | ✅ ЗАКРЫТ 2026-07-16 (ветка `p196-8-dispatch`, worktree `nova-p196-8`; в main вливает оркестратор — `emit_c.rs` конкурентно правится). |
+| [196.9](196.9-primitive-concrete-overload.md) | 196.9 — Concrete-vs-concrete на РАЗНЫХ примитивах (одно окно для pattern-bound receiver scope) | ✅ ЗАКРЫТ 2026-07-16 (ветка `p196-9-overload`, worktree `nova-p196-9`; в main вливает оркестратор — `types/mod.rs` конкурентно правится семьёй 196.7/196.8). |
 | [197](197-examples-revision.md) | Plan 197 — examples/ ревизия: снести устаревшее, пересобрать канон, дом для 187 | 🚧 Ф.1/Ф.2 ГОТОВЫ (2026-07-12) — аудит всех 29 файлов + чистка мёртвой |
 | [198](198-nova-tests-triage.md) | Plan 198 — nova_tests/ триаж: keep-and-migrate ценное, снести stale (не оптом) | 📋 PROPOSED 2026-07-11 (решение владельца: «возможно там есть реально |
 | [199](199-str-drop-nul-termination.md) | Plan 199 — снять NUL-termination инвариант str (модель Rust/Go) | ✅ CLOSED 2026-07-12 — ВСЕ 4 фазы СЛИТЫ в main (Ф.1 retract D26 `c4f446477`, Ф.2 `to_cstr` |
 | [200](200-std-improvements.md) | Plan 200 — зонтичный план улучшений std | 📋 ЖИВОЙ РЕЕСТР — **НЕ закрывать** (владелец 2026-07-12: «будем добавлять много новых штук»). |
 | [200.1](200.1-std-test-speed.md) | План 200.1 — скорость nova test std (подплан плана 200) | 📋 СОГЛАСОВАН 2026-07-13 (владелец: «оформи отдельным подпланом»). |
 | [201](201-consume-block-expression-and-share.md) | Plan 201 — consume X { } как выражение + @share()-канон (alias vs Clone) | ✅ ЗАКРЫТ 2026-07-13 [sonnet, worktree `nova-174`, ветка `d188-consume-block`] (D188 v1/v2/multi-var/v3/v3.1 + `@share`/refcount в nv + M-178 прямой move в consume-поле; спек-амендменты в тех же слияниях; conformance 104/0). |
-| [202](202-module-registry-path-keyed-and-root-module.md) | План 202 — D78: реестр модулей по пути + корневой модуль пакета | — (нет Статус-строки) |
+| [202](202-module-registry-path-keyed-and-root-module.md) | План 202 — D78: реестр модулей по пути + корневой модуль пакета | ✅ ЗАКРЫТ 2026-07-13 (Ф.1+Ф.1b+Ф.2+Ф.3 — path-keyed реестр D78 rev-4 + root peers + |
 | [203](203-http-out-of-std.md) | План 203 — вынос http из std в nv-lang/nova-http | ✅ ЗАКРЫТ 2026-07-13 (Ф.1-Ф.3 влиты — `b6818a137`: http выехал из std в репу-сиблинг nova-http по root peers D78 rev-4, std снова самодостаточен, +2 фикса резолвера). |
 | [204](204-dependency-versioning.md) | План 204 — версии зависимостей: git + semver + nova.lock | ✅ ЗАКРЫТ 2026-07-13 (D420; Ф.1-Ф.3 влиты — `00c0d085f`+`1e14481b8`: [replace]-секция + W_DEP_PATH_NO_RELEASE + lock-семантика (replace не течёт в lock); nova-http на git-форме v0.1.0 с lock в репе). |
 | [205](205-compress-out-of-nova-rt.md) | План 205 — компрессия из nova_rt в пакет nv-lang/nova-compress | 📋 СОГЛАСОВАН 2026-07-13 (владелец: «ОК»). **После:** гейты 203 (не гнать две |
@@ -552,3 +553,4 @@
 | [209](209-multi-tu-codegen.md) | План 209 — Multi-TU codegen: большой CU → N .c-единиц (параллельная компиляция) | 🚧 В РАБОТЕ. Ф.0 (рекон) + Ф.1 (codegen split) + Ф.2 (тулчейн) + Ф.3 (const-value |
 | [210](210-embed-dir.md) | План 210 — embed_dir(...): вшить папку в бинарь (расширение D412) | — (нет Статус-строки) |
 | [211](211-park-join-research.md) | Plan 211 — Park-join для nested supervised (research: остаточный race) | 📋 RESEARCH (заведён 2026-07-16, решение владельца: «митигация сейчас + park-join в |
+| [212](212-audit-150plus-closeout.md) | Plan 212 — доделки по аудиту планов ≥150 (сверка «статус ↔ код», 2026-07-16) | 🔨 В РАБОТЕ 2026-07-16 (аудит выполнен 5 агентами по срезам 150-159 / 160-172 / 173-179 / |
