@@ -175,7 +175,15 @@ static void _arena_register_pthread_key(void) {
  * TLS arena не содержит fault. */
 
 static struct sigaction _prev_sigsegv;
-static bool _sigsegv_installed = false;
+/* [M-fiber-arena-sigsegv-install-race]: было `static bool _sigsegv_installed`
+ * с голым check-then-set в _arena_install_sigsegv_handler — два потока,
+ * конкурентно проходящие nova_fiber_arena_init(), могли оба увидеть false
+ * и оба вызвать sigaction() (гонка по записи _prev_sigsegv + двойной
+ * install), подтверждено TSan. pthread_once — тот же идиом, что уже
+ * используется в этом файле для _arena_key_once, и парен с Windows-
+ * стороной (fiber_arena_win.c использует INIT_ONCE/InitOnceExecuteOnce
+ * для ровно того же process-global one-time install). */
+static pthread_once_t _sigsegv_once = PTHREAD_ONCE_INIT;
 
 static void _arena_sigsegv_handler(int sig, siginfo_t* info, void* uctx) {
     void* fault_addr = info ? info->si_addr : NULL;
@@ -245,14 +253,16 @@ static void _arena_sigsegv_handler(int sig, siginfo_t* info, void* uctx) {
 }
 
 static void _arena_install_sigsegv_handler(void) {
-    if (_sigsegv_installed) return;
+    /* Вызывается ровно один раз за процесс — через pthread_once в
+     * nova_fiber_arena_init(). Внутренний check-then-set больше не
+     * нужен (и был источником гонки — см. комментарий у
+     * _sigsegv_once). */
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction = _arena_sigsegv_handler;
     sa.sa_flags     = SA_SIGINFO | SA_NODEFER;  /* allow re-entry для re-raise */
     sigemptyset(&sa.sa_mask);
     sigaction(SIGSEGV, &sa, &_prev_sigsegv);
-    _sigsegv_installed = true;
 }
 
 /* ── Plan 149 Ф.1/Ф.4: config parse + round/clamp helpers ───────────
@@ -391,9 +401,10 @@ void nova_fiber_arena_init(void) {
     if (_t_arena && _t_arena->base) return;
 
     pthread_once(&_arena_key_once, _arena_register_pthread_key);
-    /* P41-6: pretty stack overflow diagnostic. Idempotent — выполнится
-     * один раз для процесса (не per-thread). */
-    _arena_install_sigsegv_handler();
+    /* P41-6: pretty stack overflow diagnostic. Ровно один раз для
+     * процесса (не per-thread) — pthread_once, а не бинарный флаг
+     * (см. [M-fiber-arena-sigsegv-install-race]). */
+    pthread_once(&_sigsegv_once, _arena_install_sigsegv_handler);
 
     /* Plan 149 Ф.1: resolve runtime config (env ∨ -D/toml ∨ builtin) with
      * auto-round-UP + clamp. Garbage env → warn + default (helpers). */
