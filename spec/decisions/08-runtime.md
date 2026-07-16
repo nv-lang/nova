@@ -533,6 +533,33 @@ fn critical(...) -> Result =>
 > актуальный список методов не включает эти три; вызовы мигрированы на
 > `x!!` / `x ?? v`.
 
+> **AMEND (2026-07-16, Plan 200 Пункт 14, research
+> `docs/research/2026-07-16-option-result-combinators.md`):** добавлены
+> **три** Nova-body метода — closes «Q-monadic-api» (§Открытые вопросы
+> ниже) для этой части поверхности:
+> - `fn Option[T] @flat_map[U](flat_map_fn fn(T) -> Option[U]) -> Option[U]`
+> - `fn Result[T, E] @flat_map[U](flat_map_fn fn(T) -> Result[U, E]) -> Result[U, E]`
+> - `fn Option[T] @filter(pred fn(T) -> bool) -> Option[T]`
+>
+> Отбор — та же D86-философия, что и ретракт unwrap-twins выше, только в
+> обратную сторону: **добавляем** ТОЛЬКО то, что операторами (`??`/`!!`/`?`)
+> и `.map`/`match` **невыразимо**. `flat_map` — единственный канонический
+> комбинатор, который снимает вложенность `M[M[U]]` (bind-цепочка
+> fallible-шагов); `filter` — единственный способ вернуть `None` из `Some`
+> по предикату без явного `match`. Имя **`flat_map`** (не `and_then`/`then`,
+> вопреки идиоме `and_then` в примере ниже, которая была
+> аспирационной — метод не существовал до этого AMEND'а): сиблинг `map`,
+> без булевого багажа `and`/`or`, без коллизии с Promise-`then`/`bool::then`.
+> **НЕ добавлены** (тот же класс, что unwrap-twins — выразимы `??`/`match`):
+> `or_else` (`?? f()` для value-fallback; «остаться в монаде» — редкий
+> случай, канон — `match`), `unwrap_or[_else]` (уже ретрактированы выше),
+> `map_or[_else]` (`.map(f) ?? d`). `flatten`/`inspect`/`zip`/`is_some_and`/
+> `ok_or_else` — не рассматривались (низкий приоритет / ниша), остаются
+> открытыми в Q-monadic-api. Реализация — `std/prelude/core.nv` (рядом с
+> `map`/`ok_or`/`or`/`map_err`), Nova-body (`match @`), без изменений
+> codegen (routing через `init_prelude_decls_from_items` →
+> `MethodRouting::DeclaredBody`, как и соседние методы).
+
 #### Что в prelude (v1.0)
 
 **Типы:**
@@ -556,6 +583,8 @@ fn Option[T] @is_none() -> bool
 fn Option[T] @map[U](f fn(T) -> U) -> Option[U]
 fn Option[T] @ok_or[E](err E) -> Result[T, E]        // None → Err(err)
 fn Option[T] @or(other Option[T]) -> Option[T]
+fn Option[T] @flat_map[U](f fn(T) -> Option[U]) -> Option[U]  // bind; Plan 200 §14
+fn Option[T] @filter(pred fn(T) -> bool) -> Option[T]         // Plan 200 §14
 ```
 
 **Базовые методы `Result[T, E]`:**
@@ -569,6 +598,7 @@ fn Result[T, E] @err() -> Option[E]                  // Err(e) → Some(e); Ok �
 // см. AMEND выше. Канон — операторы `!!` / `??` (D85/D86).
 fn Result[T, E] @map[U](f fn(T) -> U) -> Result[U, E]
 fn Result[T, E] @map_err[F](f fn(E) -> F) -> Result[T, F]
+fn Result[T, E] @flat_map[U](f fn(T) -> Result[U, E]) -> Result[U, E]  // bind; Plan 200 §14
 ```
 
 `??` — основной идиоматический путь безопасного доступа к значению
@@ -579,8 +609,9 @@ fn Result[T, E] @map_err[F](f fn(E) -> F) -> Result[T, F]
 ro n int = s.parse_int_opt() ?? 0                      // на ошибке — 0 (Plan 91.18: parse_int → int Fail)
 ro cfg = config ?? default_config()                     // lazy default (RHS матч-arm, не вычисляется на Some)
 
-// Идиома: цепочка через and_then / ??:
-ro port int = env.get("PORT").and_then(|s| s.parse_int_opt()) ?? 8080
+// Идиома: цепочка через flat_map / ?? (Plan 200 §14; было `and_then` —
+// имя не прижилось, метод не существовал; актуальное имя — `flat_map`):
+ro port int = env.get("PORT").flat_map(|s| s.parse_int_opt()) ?? 8080
 ```
 
 `!!` — assertion-style: throw'ает Fail если None/Err. Идиома
@@ -1473,8 +1504,14 @@ passing» (Plan 128 Ф.2) для allowed `mut @` paths (named tuples + value rec
   базовые методы (`is_some`/`is_none`/`unwrap`/`unwrap_or`/`unwrap_or_else`/
   `map`/`ok_or`/`or` для Option; `is_ok`/`is_err`/`ok`/`err`/`unwrap`/
   `unwrap_or`/`unwrap_or_else`/`map`/`map_err` для Result) описаны в
-  prelude выше. Расширенный API (`and_then`, `flatten`, etc.) —
-  отдельная задача (Q-monadic-api).
+  prelude выше (замечание: `unwrap_or`/`unwrap_or_else` позже
+  ретрактированы, см. AMEND 2026-07-07 выше). **Q-monadic-api частично
+  закрыт (2026-07-16, Plan 200 §14):** `flat_map` (Option + Result, имя
+  НЕ `and_then`) и `filter` (Option) добавлены — см. AMEND 2026-07-16
+  выше. Остаток (`flatten`, `inspect`/`inspect_err`, `zip`,
+  `is_some_and`, `ok_or_else`) — низкий приоритет, остаётся открытым;
+  `or_else`/`map_or[_else]` рассмотрены и **отклонены** (выразимы `??`/
+  `.map` — тот же D86-класс, что unwrap-twins).
 - ~~Семантика `?` для `Option`~~ — закрыто
   [D67](04-effects.md#d67): ранний `return None` из текущей функции.
 - `Error` как универсальный тип — что в нём (поддержка `str.from(e)`,

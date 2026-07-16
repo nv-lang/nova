@@ -709,8 +709,9 @@ impl<'a> Lexer<'a> {
             // "apply" — контекстуальный keyword (не резервируем глобально, чтобы не ломать идентификаторы)
             // Plan 115 D214: `null` тоже контекстуально recognized (только в
             // expression-position в комбинации `null ptr`). НЕ резервируем
-            // глобально чтобы не ломать `JsonValue.null()`, `AtomicPtr.null()`
-            // и подобные method names.
+            // глобально чтобы не ломать `JsonValue.null()` и подобные method
+            // names (Plan 207: бывший пример `AtomicPtr.null()` — тип снят
+            // 2026-07-16, до generic AtomicPtr[T] Plan 103.7).
             _ => TokenKind::Ident(text.to_string()),
         };
         Ok(Token::new(kind, span))

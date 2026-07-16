@@ -1,6 +1,6 @@
 # Plan 164 — Method resolution: blanket dispatch fix + #impl(P[T]) + vec_iter rename
 
-**Status:** ✅ CLOSED (Ф.1–Ф.4, 2026-06-16). **Branch:** plan-zfix. **Worktree:** D:\Sources\nv-lang\nova-p-zfix.
+**Статус:** ✅ CLOSED (Ф.1–Ф.4, 2026-06-16). **Branch:** plan-zfix. **Worktree:** D:\Sources\nv-lang\nova-p-zfix.
 
 **Commits:**
 - Ф.1: `3846a976` — `#impl(P[T])` parser + `impl_spec_base_name`/`impl_spec_args_text` helpers + verify_impl_protocols + vec_iter_zc annotations + fixtures

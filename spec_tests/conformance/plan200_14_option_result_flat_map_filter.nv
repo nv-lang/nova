@@ -1,0 +1,124 @@
+// Plan 200 Пункт 14 (research `docs/research/2026-07-16-option-result-
+// combinators.md`): `Option[T].flat_map[U]` / `Result[T,E].flat_map[U]` /
+// `Option[T].filter` — новые Nova-body комбинаторы в `std/prelude/core.nv`.
+// D86-философия отбора в обратную сторону: добавлены ТОЛЬКО комбинаторы,
+// невыразимые `??`/`!!`/`.map`/`match` (bind без ручного снятия
+// вложенности `M[M[U]]`; отбрасывание `Some` по предикату). Спека:
+// spec/decisions/08-runtime.md D26 AMEND 2026-07-16,
+// spec/decisions/04-effects.md D86 AMEND 2026-07-16.
+module spec_tests.conformance
+
+fn p200_14_parse_int_opt(s str) -> Option[int] {
+    match s {
+        "1"  => Some(1),
+        "2"  => Some(2),
+        "42" => Some(42),
+        _    => None,
+    }
+}
+
+fn p200_14_check_positive(n int) -> Result[int, str] {
+    if n > 0 { Ok(n) } else { Err("not positive") }
+}
+
+type P200_14Wrapped { n int }
+
+fn p200_14_wrap(n int) -> P200_14Wrapped => { n: n * 10 }
+
+test "Option.flat_map[U]: Some -> f(v), no nested Option[Option[U]] (Plan 200 §14)" {
+    ro a = Some(41)
+    ro b = a.flat_map(|x| Some(x + 1))
+    assert(b == Some(42))
+}
+
+test "Option.flat_map[U]: None short-circuits, f never called" {
+    ro n = None as Option[int]
+    mut called = false
+    ro r = n.flat_map(|x| { called = true; Some(x + 1) })
+    assert(r == None)
+    assert(!called)
+}
+
+test "Option.flat_map[U]: f itself can return None (real bind, not just map)" {
+    ro a = Some(0)
+    ro r = a.flat_map(|x| if x == 0 { None } else { Some(x) })
+    assert(r == None)
+}
+
+test "Option.flat_map[U]: chained through env-like lookup, resolves via ?? default" {
+    ro env_val = Some("42")
+    ro port = env_val.flat_map(|s| p200_14_parse_int_opt(s)) ?? 8080
+    assert(port == 42)
+
+    ro env_missing = None as Option[str]
+    ro port2 = env_missing.flat_map(|s| p200_14_parse_int_opt(s)) ?? 8080
+    assert(port2 == 8080)
+
+    ro env_bad = Some("not-a-number")
+    ro port3 = env_bad.flat_map(|s| p200_14_parse_int_opt(s)) ?? 8080
+    assert(port3 == 8080)
+}
+
+test "Option.flat_map[U]: type-changing T -> record U (D119 method-level generic)" {
+    ro o = Some(4)
+    ro w = o.flat_map(|x| Some(p200_14_wrap(x)))
+    assert(w.unwrap().n == 40)
+}
+
+test "Option.filter: Some passing predicate stays Some" {
+    ro a = Some(4)
+    ro r = a.filter(|x| x % 2 == 0)
+    assert(r == Some(4))
+}
+
+test "Option.filter: Some failing predicate becomes None" {
+    ro a = Some(3)
+    ro r = a.filter(|x| x % 2 == 0)
+    assert(r == None)
+}
+
+test "Option.filter: None stays None, predicate never called" {
+    ro n = None as Option[int]
+    mut called = false
+    ro r = n.filter(|x| { called = true; x > 0 })
+    assert(r == None)
+    assert(!called)
+}
+
+test "Option.filter then flat_map chain composes" {
+    ro a = Some(10)
+    ro r = a.filter(|x| x > 5).flat_map(|x| Some(x * 2))
+    assert(r == Some(20))
+
+    ro b = Some(2)
+    ro r2 = b.filter(|x| x > 5).flat_map(|x| Some(x * 2))
+    assert(r2 == None)
+}
+
+test "Result.flat_map[U]: Ok -> f(v), no nested Result[Result[U,E],E] (Plan 200 §14)" {
+    ro r = p200_14_check_positive(6)
+    ro w = r.flat_map(|x| p200_14_check_positive(x - 10))
+    assert(w.is_err())
+    assert(w.err().unwrap() == "not positive")
+}
+
+test "Result.flat_map[U]: Ok -> f(v) -> Ok stays Ok, value transformed" {
+    ro r = p200_14_check_positive(6)
+    ro w = r.flat_map(|x| p200_14_check_positive(x + 100))
+    assert(w.unwrap() == 106)
+}
+
+test "Result.flat_map[U]: Err short-circuits, f never called, E untouched" {
+    ro r = p200_14_check_positive(-3)
+    mut called = false
+    ro w = r.flat_map(|x| { called = true; p200_14_check_positive(x) })
+    assert(w.is_err())
+    assert(w.err().unwrap() == "not positive")
+    assert(!called)
+}
+
+test "Result.flat_map[U]: type-changing T -> record U (D119 method-level generic)" {
+    ro r = p200_14_check_positive(4)
+    ro w = r.flat_map(|x| Ok(p200_14_wrap(x)) as Result[P200_14Wrapped, str])
+    assert(w.unwrap().n == 40)
+}

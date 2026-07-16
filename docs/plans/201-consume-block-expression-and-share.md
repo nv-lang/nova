@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 201 — `consume X { }` как выражение + `@share()`-канон (alias vs Clone)
 
-**Статус:** 🔄 В РАБОТЕ 2026-07-13 [sonnet, worktree `nova-174`, ветка `d188-consume-block`].
+**Статус:** ✅ ЗАКРЫТ 2026-07-13 [sonnet, worktree `nova-174`, ветка `d188-consume-block`] (D188 v1/v2/multi-var/v3/v3.1 + `@share`/refcount в nv + M-178 прямой move в consume-поле; спек-амендменты в тех же слияниях; conformance 104/0).
 **Приоритет:** СРОЧНО (владелец 2026-07-13). **Спека:** амендмент D188 + share-переименование —
 В ТЕХ ЖЕ слияниях (язык-меняющее).
 

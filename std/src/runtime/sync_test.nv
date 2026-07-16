@@ -13,7 +13,7 @@
 
 module runtime.sync_test
 
-import std.runtime.sync.{MemOrdering, fence, AtomicInt, AtomicBool, AtomicI64, AtomicI32, AtomicUsize, Mutex, WaitGroup, Once}
+import std.runtime.sync.{MemOrdering, fence, AtomicInt, AtomicBool, AtomicI64, AtomicI32, AtomicUint, Mutex, WaitGroup, Once}
 
 test "MemOrdering + fence: SeqCst fence is a no-op smoke" {
     fence(MemOrdering.SeqCst)
@@ -89,7 +89,7 @@ test "Plan 207 [M-cas-return-witnessed-value]: compare_exchange carries the witn
 
     // Retry-loop idiom (the motivating use case from the plan): rebuild
     // `cur` from the witness instead of calling load() again.
-    mut n = AtomicUsize.new(1)
+    mut n = AtomicUint.new(1)
     mut cur = n.load()
     mut iterations = 0
     loop {

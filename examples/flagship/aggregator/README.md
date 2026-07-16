@@ -230,18 +230,15 @@ examples/flagship/aggregator/
   поднимает/глушит сервер, 7 блоков); BLOCK 5's строгий `$ok -eq $Concurrency`
   теперь ожидаемо не проходит (часть 80 честно отбита по design) — критерий
   живучести (сервер отвечает 200 ПОСЛЕ BLOCK 5/6) выполняется.
-- **JSON рендерится вручную в `main.nv`**, не через
-  `std.encoding.serde.json_encode` (хотя `report_json.nv` ПОЛНОСТЬЮ typed-
-  serde, деливерабл 2 не откачен) — `[M-187-http-serde-setcookie-serialize-
-  collision]`: компилятор линкует `json_encode[T]` НЕПРАВИЛЬНО (undefined
-  symbol) стоит `http`-пакету (тянет `SetCookie.serialize()`,
-  RFC 6265bis-метод, случайно тёзка) и любому `#impl(Serialize)`-типу
-  оказаться в ОДНОМ compile unit. `build_snapshot` (typed DTO + вся
-  бизнес-логика — id-lookup, structural fiber-count, `TaskStatus`-маппинг)
-  ПОЛНОСТЬЮ переиспользуется; рендерится в текст вручную (`json_escape` +
-  конкатенация) только сам ФИНАЛЬНЫЙ шаг — не «ручной HTTP» (ни статус-строк,
-  ни роутинга, ни wire-framing — всё это по-прежнему `http.server`/`ServeMux`/
-  `sse_event`).
+- **✅ РЕШЕНО 2026-07-16** (`[M-187-http-serde-setcookie-serialize-collision]`,
+  коммит `96ce6249e`): ручной JSON-обход снят — `main.nv` теперь рендерит
+  снапшот через `snapshot_to_json` (typed `std.encoding.serde.json_encode`,
+  `report_json.nv`). Корень был НЕ в codegen-диспатче: `nova build`
+  (`cmd_build`) не вызывал `inject_synthesized_methods_filtered` для
+  `#impl(Serialize)` (в отличие от `nova test`) → mono `json_encode[T]`
+  падал в name-only fallback → подхватывал чужой `SetCookie.serialize()`.
+  Фикс — один вызов в `cmd_build`. `EmitRecord`'s SSE payload
+  (`emit_record_json`) остаётся ручным по design (wire-shape выбор, не обход).
 - **HTTP JSON-снапшот не байт-в-байт детерминирован** между прогонами с
   одним `seed` — см. «Как это тестируется → Детерминизм» выше (реальные
   часы, не симуляция).

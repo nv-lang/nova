@@ -24,6 +24,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D172](#d172-realtimeblocking-sync-class-annotation-system-plan-1036) | `realtime { }` / `blocking { }` × sync-primitive enforcement: `#parks` / `#wakes` / `#realtime` annotation system |
 | [D174](#d174-sync-primitives-consume-integration-plan-1039) | Consume guards V2 — `MutexGuard`, `ReadGuard`, `WriteGuard`, `Permit`, `OnceGuard` consume types; guard-returning API; D169–D171 cross-refs updated |
 | [D425](#d425-cas-возвращает-свидетеля-провала-compare_exchange-bool--resultt-plan-207) | CAS возвращает свидетеля провала: `compare_exchange`/`compare_exchange_weak` `bool` → `Result[(), T]` (amends D168 §1) |
+| [D426](#d426-atomic-семейство-консолидация-имён-atomicisizeatomicusize--atomicintatomicuint-легаси-atomicint-и-atomicptr-сняты-plan-207) | Atomic-семейство: консолидация имён — `AtomicIsize`/`AtomicUsize` → `AtomicInt`/`AtomicUint`, легаси `AtomicInt` и `AtomicPtr` сняты (amends D168, D425) |
 
 ---
 
@@ -4026,7 +4027,7 @@ ARM64 — более explicit барьеры (DMB LD/ST/ISH); Relaxed vs Acquire
 
 ### Что
 
-Nova предоставляет **12 sized atomic типов** с детерминированной шириной:
+Nova предоставляет **11 sized atomic типов**<sup>†</sup> с детерминированной шириной:
 
 | Тип | Ширина | Диапазон | C-репрезентация |
 |---|---|---|---|
@@ -4038,10 +4039,18 @@ Nova предоставляет **12 sized atomic типов** с детерми
 | `AtomicU16` | 16 бит | 0..65535 | `uint16_t` |
 | `AtomicU32` | 32 бит | 0..2³²−1 | `uint32_t` |
 | `AtomicU64` | 64 бит | 0..2⁶⁴−1 | `uint64_t` |
-| `AtomicIsize` | платформенная | −2^(W−1)..2^(W−1)−1 | `nova_int` (= `intptr_t`) |
-| `AtomicUsize` | платформенная | 0..2^W−1 | `nova_uint` (= `uintptr_t`) |
+| `AtomicInt` | платформенная | −2^(W−1)..2^(W−1)−1 | `nova_int` (= `intptr_t`) |
+| `AtomicUint` | платформенная | 0..2^W−1 | `nova_uint` (= `uintptr_t`) |
 | `AtomicBool` | 1 логический бит | `false`/`true` | `bool` (8-битное хранение) |
-| `AtomicPtr` | платформенная | адрес | `nova_int` (GC proxy) |
+
+<sup>†</sup> **Амендировано [D426](#d426-atomic-семейство-консолидация-имён-atomicisizeatomicusize--atomicintatomicuint-легаси-atomicint-и-atomicptr-сняты-plan-207)**
+(Plan 207, 2026-07-16): было 12 типов под именами `AtomicIsize`/`AtomicUsize`/`AtomicPtr`
+(плюс отдельный легаси `AtomicInt`, int32-precision, вне этой таблицы). Консолидация:
+`AtomicIsize`→`AtomicInt`, `AtomicUsize`→`AtomicUint` (Nova не вводит типы
+`isize`/`usize` — `int`/`uint` уже address-sized, Plan 133); легаси `AtomicInt`
+снят (API-подмножество покрыто новым `AtomicInt`); `AtomicPtr` снят целиком
+(int-proxy дубль без generic `[T]`, GC-root integration не реализована —
+см. D426).
 
 Все типы являются **value types в Nova**, копируются по значению при передаче в
 функцию / возврате. Семантически — **ячейки с атомарным доступом**, не
@@ -4052,41 +4061,41 @@ mutable-ссылку или хранить в heap-структуре.
 
 #### 1. Матрица операций
 
-Все 12 типов поддерживают следующие операции (обозначение: `T` — тип значения,
-`Bool` — `bool`, `Int` — `int`):
+Все 11 типов поддерживают следующие операции (обозначение: `T` — тип значения,
+`Bool` — `bool`, `Int` — `int`). Столбец `AtomicPtr` **снят** ([D426](#d426-atomic-семейство-консолидация-имён-atomicisizeatomicusize--atomicintatomicuint-легаси-atomicint-и-atomicptr-сняты-plan-207),
+Plan 207, 2026-07-16) — см. §4 ниже:
 
-| Операция | AtomicI*/U*/Isize/Usize | AtomicBool | AtomicPtr |
-|---|---|---|---|
-| `new(v T) → AtomicX` | ✓ | ✓ (`v bool`) | ✓ (`v int`) |
-| `null() → AtomicPtr` | — | — | ✓ |
-| `load() → T` | ✓ | ✓ | ✓ → `int` |
-| `load(ord MemOrdering) → T` | ✓ | ✓ | ✓ |
-| `store(v T)` | ✓ | ✓ | ✓ |
-| `store(v T, ord MemOrdering)` | ✓ | ✓ | ✓ |
-| `swap(v T) → T` | ✓ | ✓ | ✓ |
-| `swap(v T, ord MemOrdering) → T` | ✓ | ✓ | ✓ |
-| `compare_exchange(expected T, desired T) → Result[(), T]`* | ✓ | ✓ | ✓ |
-| `compare_exchange(exp T, des T, ord MemOrdering) → Result[(), T]`* | ✓ | ✓ | ✓ |
-| `compare_exchange_weak(exp T, des T) → Result[(), T]`* | ✓ | ✓ | — |
-| `compare_exchange_weak(exp T, des T, ord MemOrdering) → Result[(), T]`* | ✓ | ✓ | — |
-| `fetch_add(v T) → T` | ✓ (int/uint только) | — | — |
-| `fetch_add(v T, ord MemOrdering) → T` | ✓ | — | — |
-| `fetch_sub(v T) → T` | ✓ | — | — |
-| `fetch_sub(v T, ord MemOrdering) → T` | ✓ | — | — |
-| `fetch_or(v T) → T` | ✓ | ✓ (`v bool`) | — |
-| `fetch_or(v T, ord MemOrdering) → T` | ✓ | ✓ | — |
-| `fetch_and(v T) → T` | ✓ | ✓ | — |
-| `fetch_and(v T, ord MemOrdering) → T` | ✓ | ✓ | — |
-| `fetch_xor(v T) → T` | ✓ | ✓ | — |
-| `fetch_xor(v T, ord MemOrdering) → T` | ✓ | ✓ | — |
-| `fetch_nand(v T) → T` | ✓ | — | — |
-| `fetch_nand(v T, ord MemOrdering) → T` | ✓ | — | — |
-| `fetch_max(v T) → T` | ✓ | — | — |
-| `fetch_max(v T, ord MemOrdering) → T` | ✓ | — | — |
-| `fetch_min(v T) → T` | ✓ | — | — |
-| `fetch_min(v T, ord MemOrdering) → T` | ✓ | — | — |
+| Операция | AtomicI*/U*/Int/Uint | AtomicBool |
+|---|---|---|
+| `new(v T) → AtomicX` | ✓ | ✓ (`v bool`) |
+| `load() → T` | ✓ | ✓ |
+| `load(ord MemOrdering) → T` | ✓ | ✓ |
+| `store(v T)` | ✓ | ✓ |
+| `store(v T, ord MemOrdering)` | ✓ | ✓ |
+| `swap(v T) → T` | ✓ | ✓ |
+| `swap(v T, ord MemOrdering) → T` | ✓ | ✓ |
+| `compare_exchange(expected T, desired T) → Result[(), T]`* | ✓ | ✓ |
+| `compare_exchange(exp T, des T, ord MemOrdering) → Result[(), T]`* | ✓ | ✓ |
+| `compare_exchange_weak(exp T, des T) → Result[(), T]`* | ✓ | ✓ |
+| `compare_exchange_weak(exp T, des T, ord MemOrdering) → Result[(), T]`* | ✓ | ✓ |
+| `fetch_add(v T) → T` | ✓ (int/uint только) | — |
+| `fetch_add(v T, ord MemOrdering) → T` | ✓ | — |
+| `fetch_sub(v T) → T` | ✓ | — |
+| `fetch_sub(v T, ord MemOrdering) → T` | ✓ | — |
+| `fetch_or(v T) → T` | ✓ | ✓ (`v bool`) |
+| `fetch_or(v T, ord MemOrdering) → T` | ✓ | ✓ |
+| `fetch_and(v T) → T` | ✓ | ✓ |
+| `fetch_and(v T, ord MemOrdering) → T` | ✓ | ✓ |
+| `fetch_xor(v T) → T` | ✓ | ✓ |
+| `fetch_xor(v T, ord MemOrdering) → T` | ✓ | ✓ |
+| `fetch_nand(v T) → T` | ✓ | — |
+| `fetch_nand(v T, ord MemOrdering) → T` | ✓ | — |
+| `fetch_max(v T) → T` | ✓ | — |
+| `fetch_max(v T, ord MemOrdering) → T` | ✓ | — |
+| `fetch_min(v T) → T` | ✓ | — |
+| `fetch_min(v T, ord MemOrdering) → T` | ✓ | — |
 
-**Примечание по AtomicPtr:** хранит `int` (адрес GC-объекта как `intptr_t`).
+**Примечание по AtomicPtr (снят, [D426](#d426-atomic-семейство-консолидация-имён-atomicisizeatomicusize--atomicintatomicuint-легаси-atomicint-и-atomicptr-сняты-plan-207)):** ранее хранил `int` (адрес GC-объекта как `intptr_t`).
 Арифметика не поддерживается (`fetch_add` нет). Typed generic form `AtomicPtr[T]`
 с GC-root integration — откладывается в Plan 103.9+.
 
@@ -4139,12 +4148,20 @@ integers (2's complement, no-panic overflow — Plan 101 решение).
 бесполезен для counters, spinlocks, sequence numbers. Caller несёт
 ответственность за выбор ширины типа, достаточной для его диапазона.
 
-#### 4. AtomicPtr — proxy для GC-адресов
+#### 4. AtomicPtr — СНЯТ (Plan 207, 2026-07-16 — см. [D426](#d426-atomic-семейство-консолидация-имён-atomicisizeatomicusize--atomicintatomicuint-легаси-atomicint-и-atomicptr-сняты-plan-207))
 
-`AtomicPtr` хранит `int` (= `intptr_t`) как GC-безопасный адрес. Это
-**не typed generic** — Plan 103.7 вводит `AtomicPtr[T]` с proper GC-tracing.
+> Секция ниже — **историческая** (V1 API, Plan 103.2). `AtomicPtr` снят
+> целиком: несмотря на заявленное ниже «GC safety», реализация в
+> `sync_primitives.h` НИКОГДА не регистрировала GC roots (голый
+> `__atomic_*` над `nova_int`) — чистый int-proxy дубль `AtomicInt` под
+> другим именем. До появления настоящего typed generic `AtomicPtr[T]` с
+> GC-tracing (Plan 103.7) тип не существует; заменить на `AtomicInt`.
 
-V1 семантика (Plan 103.2):
+`AtomicPtr` хранил `int` (= `intptr_t`) как GC-безопасный адрес (заявлено;
+де-факто без root-регистрации). Это **не typed generic** — Plan 103.7
+вводит `AtomicPtr[T]` с proper GC-tracing.
+
+V1 семантика (Plan 103.2, снята):
 - `AtomicPtr.new(v int)` — создать из raw int (адрес).
 - `AtomicPtr.null()` — создать с значением 0 (null-адрес).
 - `load()` → `int` — прочитать адрес как int.
@@ -4154,9 +4171,11 @@ V1 семантика (Plan 103.2):
   адресах ([D425](#d425-cas-возвращает-свидетеля-провала-compare_exchange-bool--resultt-plan-207): `Ok(())`/`Err(actual)`, было `bool`).
 - Arithmetic (`fetch_add`) **не поддерживается** — AtomicPtr не счётчик.
 
-**GC safety V1:** приложение несёт ответственность за то, что int-значение
-в `AtomicPtr` остаётся живым GC-объектом. V2 (Plan 103.9+): `AtomicPtr[T]`
-с типизированным GC-root — откладывается (typed generic в codegen non-trivial).
+**GC safety V1 (заявленная, не реализованная):** приложение несёт
+ответственность за то, что int-значение в `AtomicPtr` остаётся живым
+GC-объектом. V2 (Plan 103.7+): `AtomicPtr[T]` с типизированным GC-root —
+откладывается (typed generic в codegen non-trivial); до его прихода
+типа `AtomicPtr` в Nova нет.
 
 #### 5. compare_exchange vs compare_exchange_weak
 
@@ -4197,9 +4216,10 @@ LL/SC — no spurious fails). На ARM различие значительно.
    непригодными для cyclic counters. Поведение консистентно с Nova integer
    semantics.
 
-4. **AtomicPtr как `int` в V1.** Typed `AtomicPtr[T]` требует GC root integration
-   в codegen — это non-trivial и откладывается в Plan 103.9+. `int`-proxy достаточен
-   для lock-free pointer swapping где объект удерживается через другую ссылку.
+4. **AtomicPtr как `int` в V1 (снят, [D426](#d426-atomic-семейство-консолидация-имён-atomicisizeatomicusize--atomicintatomicuint-легаси-atomicint-и-atomicptr-сняты-plan-207)).** Typed `AtomicPtr[T]` требует GC root integration
+   в codegen — это non-trivial и откладывается в Plan 103.7+. `int`-proxy без
+   root-регистрации оказался дублем `AtomicInt` под другим именем — снят
+   целиком до прихода typed generic формы.
 
 5. **compare_exchange_weak — отдельная операция.** На ARM разница ~30% на
    retry-heavy workloads. Наличие обеих форм позволяет писать переносимый код с
@@ -4261,13 +4281,18 @@ LL/SC — no spurious fails). На ARM различие значительно.
 ### Эволюция
 
 D168 введён как draft (Plan 103.2, 2026-05-25). Финализирован в Plan 103.7.
+Амендирован [D426](#d426-atomic-семейство-консолидация-имён-atomicisizeatomicusize--atomicintatomicuint-легаси-atomicint-и-atomicptr-сняты-plan-207) (Plan 207, 2026-07-16) — консолидация имён.
 
-**Backward compatibility note:** `AtomicInt` — deprecated alias на `AtomicI64`
-(если существовал в pre-103.2 code). Все новые коды должны использовать
-`AtomicI64` напрямую.
+**Backward compatibility note (устарела, см. D426):** формулировка ниже была
+неточна уже на момент написания — pre-103.2 legacy `AtomicInt` был int32-
+precision типом без `MemOrdering`, НЕ алиасом `AtomicI64`. Оба факта разошлись
+с реальностью; D426 снимает legacy `AtomicInt` и переиспользует имя `AtomicInt`
+для бывшего `AtomicIsize` (address-sized, `intptr_t`) — актуальное состояние
+см. в таблице §Что выше.
 
-Отложено в Plan 103.9+:
-- `AtomicPtr[T]` typed generic с GC root integration.
+Отложено в Plan 103.7+:
+- `AtomicPtr[T]` typed generic с GC root integration (сам нетипизированный
+  `AtomicPtr` снят D426 — см. §4).
 - Lint `W_NARROW_ATOMIC_OVERFLOW_RISK` для подозрительного использования
   narrow types (AtomicI8/U8) с большими константами.
 - ARM CI validation для `compare_exchange_weak` spurious-fail paths.
@@ -5281,7 +5306,10 @@ Nova `runtime.sync` содержит 12+ sync-примитивов. Выбор �
 │
 ├── ДА, one-shot ownership / «первый побеждает»:
 │       ┌── bool flag (first caller wins)         → AtomicBool.swap(true) == false → winner
-│       └── pointer publish (first-to-publish)    → AtomicPtr.compare_exchange(0, ptr, SeqCst)
+│       └── pointer publish (first-to-publish)    → см. ниже (AtomicPtr снят D426)
+│               `AtomicPtr` снят (Plan 207, D426) — до `AtomicPtr[T]` (Plan 103.7)
+│               использовать `Mutex`/`OnceCell[T]` для publish-once указателя;
+│               голый int-адрес без GC-root — только через `unsafe`-эскейп.
 │
 ├── ДА, exclusive access к complex state:
 │       ┌── short critical section, general       → Mutex + with_lock(fn)  [D169]
@@ -7055,10 +7083,11 @@ fn AtomicX mut @compare_exchange_weak(expected T, desired T, success MemOrdering
   (`actual == expected`, но своп не произошёл — платформо-зависимая
   ARM-семантика; вызывающий код должен различать через `Err`, не через
   сравнение значений).
-- Применяется ко **всем 13** CAS-методам: `AtomicI8/I16/I32/I64`,
-  `AtomicU8/U16/U32/U64`, `AtomicIsize`, `AtomicUsize`, `AtomicPtr`,
-  `AtomicBool`, легаси `AtomicInt` (без ordering/weak-вариантов — как и
-  раньше, единственная сигнатура `compare_exchange(expected int, desired int)`).
+- Применяется ко **всем 11** CAS-методам (было 13 на момент landing 2026-07-15:
+  [D426](#d426-atomic-семейство-консолидация-имён-atomicisizeatomicusize--atomicintatomicuint-легаси-atomicint-и-atomicptr-сняты-plan-207),
+  2026-07-16, снял легаси `AtomicInt` и `AtomicPtr`, переименовал Isize/Usize
+  → Int/Uint): `AtomicI8/I16/I32/I64`, `AtomicU8/U16/U32/U64`, `AtomicInt`,
+  `AtomicUint`, `AtomicBool`.
 
 **CAS-retry-цикл идиома** (после правки, мотивирующий пример):
 
@@ -7076,7 +7105,7 @@ loop {
 ### Лоуэринг (codegen)
 
 Публичный `compare_exchange`/`compare_exchange_weak` — **plain (non-extern)
-`.nv` fn** (не intrinsic): вызывает private `@__cas_raw` intrinsic (module-
+`.nv` fn** (не intrinsic): вызывает private `@cmpxchg` intrinsic (module-
 private, не exported), который возвращает raw `(ok bool, witness T)` пару из
 ОДНОГО atomic op (C11 `__atomic_compare_exchange_n`, `weak`-флаг передан
 явным параметром — strong и weak делят один intrinsic), затем строит
@@ -7086,7 +7115,9 @@ Result[int,int]`) — hand-written C не участвует в сборке `Re
 
 Raw-пара представлена named-tuple типом `CasRaw<W>(ok bool, witness T)`
 (один на каждую witness-ширину: I8/I16/I32/I64/U8/U16/U32/U64/Int/Uint/Bool —
-`Int` разделяют `AtomicIsize`/`AtomicPtr`/легаси `AtomicInt`). C-структура
+`CasRawInt` общий для `AtomicInt`; до [D426](#d426-atomic-семейство-консолидация-имён-atomicisizeatomicusize--atomicintatomicuint-легаси-atomicint-и-atomicptr-сняты-plan-207)
+(2026-07-16) его также разделяли `AtomicPtr` и легаси `AtomicInt`, оба сняты).
+C-структура
 (`NovaTuple_CasRaw*`) — hand-written в `sync_primitives.h`, зарегистрирована в
 `RUNTIME_DEFINED_TYPES` (emit_c.rs) — та же конвенция, что `MutexGuard`/
 `MemOrdering`. Потребовалось расширение codegen (`emit_type_decl`,
@@ -7136,3 +7167,145 @@ strength(success)` и `failure ∉ {Release, AcqRel}`.
 `W_PRELUDE_SHADOW`). Receiver распознаётся по **префиксу** `Atomic` (не список
 конкретных ширин) — новые sized-варианты семейства подхватываются без правки
 диагностики.
+
+**Замечание (после merge с [D426](#d426-atomic-семейство-консолидация-имён-atomicisizeatomicusize--atomicintatomicuint-легаси-atomicint-и-atomicptr-сняты-plan-207)):**
+`compare_exchange`/`compare_exchange_weak` — ОДНА сигнатура с default-параметрами
+(`success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst`),
+не отдельные 2-арг/4-арг overload'ы. Диагностика учитывает это: если `success`/
+`failure` не переданы явно (позиционно ИЛИ именованным `failure: ...` при
+пропущенном `success`), их значение — известный литерал `MemOrdering.SeqCst`
+(тот же default, что в сигнатуре) — участвует в обеих проверках наравне с explicit
+литералом, а не молча пропускается.
+
+---
+
+## D426. Atomic-семейство: консолидация имён — `AtomicIsize`/`AtomicUsize` → `AtomicInt`/`AtomicUint`, легаси `AtomicInt` и `AtomicPtr` сняты (Plan 207)
+
+> **Статус:** ✅ landed (Plan 207, 2026-07-16). Amends [D168](#d168-sized-atomic-types--api-contract-plan-1032) (таблица типов, §1 матрица, §4 AtomicPtr, Эволюция) и [D425](#d425-cas-возвращает-свидетеля-провала-compare_exchange-bool--resultt-plan-207) (список CAS-методов, CasRaw witness-width). Решение владельца 2026-07-16.
+
+### Что
+
+До этого амендмента atomic-семейство содержало имена, не соответствующие
+типам Nova: `isize`/`usize` **не существуют** как типы языка (`int`/`uint` уже
+address-sized, `intptr_t`/`uintptr_t` — Plan 133), а `AtomicPtr` был
+нетипизированным int-proxy — дублем `AtomicInt` под другим именем, причём его
+собственный doc-comment заявлял GC-root-регистрацию, которой в
+`sync_primitives.h` не было (голый `__atomic_*` над `nova_int`, без единого
+вызова root-API). Параллельно существовал отдельный legacy `AtomicInt`
+(int32-precision, без `MemOrdering`-параметров, добавлен раньше Plan 103.2 и
+никогда не обновлённый) — узкое подмножество API нового address-sized типа.
+
+Три независимых изменения одним коммитом:
+
+1. **`AtomicIsize` → `AtomicInt`.** Legacy `AtomicInt` (int32-backed, узкий
+   API: `new/load/store/fetch_add/fetch_sub/compare_exchange` — все без
+   `MemOrdering`) снят целиком; его вызовы покрываются 1:1 дефолтными
+   SeqCst-перегрузками переименованного типа (все параметры с ordering у
+   нового типа имеют `= MemOrdering.SeqCst` дефолт — Plan 207 cmpxchg-rename,
+   тот же коммит-серия). Имя `AtomicInt` высвобождено под переименование.
+2. **`AtomicUsize` → `AtomicUint`.** Прямое переименование, без конфликта
+   имён (legacy `AtomicUint` не существовало).
+3. **`AtomicPtr` — снят.** До появления typed generic `AtomicPtr[T]` (Plan
+   103.7, требует GC-root integration в codegen — non-trivial) тип не
+   существует в Nova. Потребители — только тесты (3 spec_tests файла);
+   продакшн-кода, хранящего GC-managed адреса через `AtomicPtr`, не найдено.
+   `AtomicInt` — прямая замена там, где нужен голый platform-word int-proxy
+   (без каких-либо GC-гарантий, которых `AtomicPtr` и не давал).
+
+### Правило
+
+- `AtomicInt` (было `AtomicIsize`) — platform-word signed atomic, `int` =
+  `nova_int` = `intptr_t`. Полный API: `new/load/store/swap/fetch_add/
+  fetch_sub/fetch_or/fetch_and/fetch_xor/fetch_max/fetch_min/fetch_nand/
+  compare_exchange/compare_exchange_weak`, все с default-SeqCst и
+  explicit-`MemOrdering` перегрузками (2-арг / 3-арг с позиционным override
+  `success` / 4-арг с явными `success`+`failure` — дефолт-параметры, не
+  отдельные overload-декларации после Plan 207 cmpxchg-rename).
+- `AtomicUint` (было `AtomicUsize`) — тот же API, `uint` = `nova_uint` =
+  `uintptr_t`.
+- `AtomicPtr` — **не существует**. Call-сайты, хранящие адрес как int-proxy —
+  мигрировать на `AtomicInt`. Typed `AtomicPtr[T]` с GC-tracing — Plan 103.7
+  (не переиспользует C-реализацию снятого V1; будет отдельный дизайн).
+- `RUNTIME_DEFINED_TYPES`/`debt_is_runtime_backed_newtype`/
+  `BUILTIN_RUNTIME_TYPES`/`RUNTIME_NATIVE_CONCRETE_TYPES` (4 независимых
+  name-list'а в `emit_c.rs`, историческая accretion — не консолидированы в
+  этом амендменте, вне scope) обновлены синхронно: `AtomicIsize`/`AtomicUsize`
+  переименованы, `AtomicPtr` удалён, дубликат `AtomicInt`-записи (legacy +
+  Isize) схлопнут в одну.
+
+### Почему
+
+1. **Имена типов Nova — `int`/`uint`, не `isize`/`usize`.** Rust-стиль
+   именование (`Isize`/`Usize`) вводило читателя в заблуждение — предполагало
+   существование отдельных типов `isize`/`usize`, которых в Nova нет (Plan
+   133 сделал `int`/`uint` address-sized универсально). Имя atomic-типа
+   обязано отражать имя wrapped-типа.
+2. **`AtomicPtr` был дублем, не отдельной абстракцией.** Ни один production
+   потребитель не зависел от заявленной (и не реализованной) GC-root
+   семантики — удерживать нетипизированный int-proxy под отдельным именем
+   до появления настоящего `AtomicPtr[T]` не давало преимущества над
+   `AtomicInt` и создавало ложное впечатление GC-безопасности.
+3. **Legacy `AtomicInt` (int32) был исторической случайностью, не
+   дизайн-решением.** Добавлен до формализации Plan 103.2 sized-atomics,
+   никогда не расширялся (нет `MemOrdering`, нет `swap`/`fetch_or/and/xor`),
+   его собственный doc-comment уже помечал его как «deprecated alias»
+   (ошибочно — не алиас `AtomicI64`, а отдельный int32 тип). Держать имя
+   занятым под мёртвый API блокировало переиспользование под
+   address-sized тип.
+
+### Что отвергнуто
+
+- **Оставить `AtomicPtr` как есть, просто задокументировав отсутствие
+  GC-root.** Живой тип с ложной семантикой в имени (`Ptr` подразумевает
+  указатель-специфичные гарантии) хуже, чем явное отсутствие типа до
+  прихода корректной typed generic формы.
+- **Переименовать legacy `AtomicInt` во что-то другое вместо снятия.**
+  Узкий API (без ordering) не нёс уникальной ценности — 100% его
+  вызовов покрывается дефолт-параметрами нового типа; держать две
+  параллельные реализации одного и того же концепта (address-sized atomic
+  int) — чистый долг.
+
+### Связь
+
+- [D168](#d168-sized-atomic-types--api-contract-plan-1032) — sized atomic
+  types API contract (амендированная таблица типов).
+- [D425](#d425-cas-возвращает-свидетеля-провала-compare_exchange-bool--resultt-plan-207)
+  — CAS witness value (амендированный список методов/CasRaw).
+- [reference-nova-int-intptr-not-i64.md] (проектная память) — `int` =
+  `nova_int` = `intptr_t` (address-sized), НЕ `int64_t`; тот же принцип
+  применён к `uint`/`nova_uint`/`uintptr_t`.
+- Plan 103.7 — typed generic `AtomicPtr[T]` с GC-root integration (deferred;
+  не переиспользует V1 C-реализацию, снятую этим амендментом).
+- Plan 207 — cmpxchg-rename (тот же коммит-серия): `@__cas_raw` → `@cmpxchg`
+  intrinsic rename + схлопывание ordering-перегрузок в default-параметры —
+  предпосылка для п.1 (дефолты покрывают legacy 2-арг вызовы).
+
+### Реализация
+
+- `std/src/runtime/sync.nv`: legacy `AtomicInt`-секция и `AtomicPtr`-секция
+  удалены; `AtomicIsize`/`AtomicUsize` → `AtomicInt`/`AtomicUint`
+  (идентификатор + doc-comments + cross-ref «See Also» в `AtomicI64`/
+  `AtomicBool`).
+- `compiler-codegen/nova_rt/sync_primitives.h`: те же три изменения на
+  C-уровне (`Nova_AtomicInt`/`Nova_AtomicPtr` legacy-структуры удалены,
+  `Nova_AtomicIsize`/`Nova_AtomicUsize` → `Nova_AtomicInt`/`Nova_AtomicUint`).
+- `compiler-codegen/src/codegen/emit_c.rs`: 4 name-list'а обновлены
+  (`RUNTIME_DEFINED_TYPES`, `debt_is_runtime_backed_newtype`'s
+  `RUNTIME_BACKED_NEWTYPES`, `BUILTIN_RUNTIME_TYPES`,
+  `RUNTIME_NATIVE_CONCRETE_TYPES`).
+- Тесты: `std/src/runtime/sync_test.nv`,
+  `spec_tests/conformance/plan103_2_atomic_isize_usize.nv`,
+  `spec_tests/conformance/neg/plan103_2_atomic_isize_no_such_method_neg.nv`
+  мигрированы 1:1 (переименование идентификаторов, не ослабление).
+  `spec_tests/conformance/plan103_2_atomic_ptr_basic.nv` и
+  `spec_tests/conformance/neg/plan103_2_atomic_ptr_no_such_op_neg.nv`
+  удалены вместе со снятым типом (не ослабление — тип снят решением
+  владельца, тестировать нечего).
+
+### Границы
+
+Только переименование/снятие в atomic-семействе. НЕ меняет memory-ordering,
+`fetch_*`/`load`/`store`/`compare_exchange` семантику сохранённых типов
+(D425 остаётся в силе). НЕ вводит `AtomicPtr[T]` (Plan 103.7 — отдельная
+работа). НЕ консолидирует 4 отдельных name-list'а в `emit_c.rs` в единый
+источник (историческая accretion, вне scope этого амендмента).
