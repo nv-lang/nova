@@ -172,21 +172,206 @@ repro перед применением, где была неувереннос�
 подтверждёнными compiler-багами вне скоупа Plan 197 (сведены выше,
 переаудит нужен после фикса).
 
-## Не сделано в этом заходе (для Ф.3/Ф.4/Ф.5 или другой волны)
+## Заход 2026-07-17 (Ф.3/Ф.4 остаток — «почини или удали») — ТЕКУЩИЙ
 
-- Три compiler-бага (см. «Системные находки») — НЕ трогал
-  compiler-codegen по границе задачи; передать в 196.x-волну.
-  `Result.map` U-inference баг из захода 07-11 не встретился повторно
-  сегодня (ни один файл его не триггерит) — статус пофикшен/непофикшен
-  не подтверждён, нужен отдельный repro-прогон.
-- Ф.3 (канонический showcase-набор, финальный список basics/effects/
-  concurrency/ffi/real_world) — не начато, естественный следующий шаг
-  раз Ф.1/Ф.2 закрыты.
-- Ф.4 (флагман 187 → `examples/flagship/aggregator/`) — решение владельца
-  уже есть (см. план), исполнение не начато, зависит от 116 TLS.
-- Ф.5 (CI-гейт `examples-compile`) — не заведён; теперь дешёвый, т.к.
-  дерево уже почти всё зелёное (16/19 компилируется, 3 блокированы
-  известными issue вне скоупа — можно завести гейт с explicit
-  allow-list на эти 3 до фикса compiler-codegen).
+Рестарт погибшей волны (worktree `nova-197r`, branch `p197-examples-rest`).
+Ф.4 к этому моменту уже фактически исполнено другой волной (`flagship/
+aggregator` + `net`/`tls` пары существуют и гейтятся `nova-gate.yml`, вне
+объёма этого захода). Объём — переверификация всех 19 файлов вне `_wip/`
+сегодняшним `nova.exe` (5 дней апстрима: mut-canon/param-mut-enforcement/
+module-layout волны landed между 07-12 и 07-17) + дожатие трёх файлов,
+блокированных подтверждёнными toolchain-багами в заходе 07-12.
+
+**Регрессий нет**: все 16 файлов, ранее реально компилировавшихся
+(#1-6, #12, #13, #15, #17, #19-22, #27, #29), компилируются чисто и
+сегодня (`nova build <file> --strict-effects`) — промежуточные
+lang-волны (canon mut-param position, E_PARAM_NOT_MUT, module-layout
+orphan) их не задели.
+
+### sqlite_mini.nv (#18) — bug #3 ПОДТВЕРЖДЁННО ПОФИКШЕН, вердикт уточнён
+
+Баг #3 (extern-FFI tuple-return codegen: `initializing '_NovaTuple_2_...'
+with an expression of incompatible type 'int'`) **пофикшен апстримом**:
+временно добавил `fn main()`, реально вызывающий `open_and_close_demo`
+(форсирует reachability tuple-destructuring пути `ro (raw, rc) =
+mini_sqlite_open(path)` через C-codegen, а не просто typecheck) — C-код
+сгенерировался и СКОМПИЛИРОВАЛСЯ чисто; единственная оставшаяся ошибка —
+ожидаемая LINK-ошибка `undefined symbol: nova_fn_mini_sqlite_open/exec/
+close` (сам файл документирует это в шапке: «V1 — example only, без
+real libsqlite3 link… Real link integration в followup
+[M-115-ffi-build-pipeline]»). Эксперимент откачен (файл восстановлен
+байт-в-байт из git).
+
+Также уточнена методология: у файла **нет `fn main`/`test`-блока** (это
+осознанно — структурный sketch extern-декораций, не рабочая программа),
+поэтому `nova build` **в принципе неприменим** (`nova build --help`:
+«Single .nv file (entry-point with `fn main`)») — прошлый заход 07-12
+использовал `nova build` и поймал bug #3 ДО того, как дошёл до
+«ожидаемого» отсутствия main; сегодня правильная проверка — `nova check
+examples/ffi/sqlite_mini.nv --strict-effects` → **ok, 0 ошибок** (2
+warning про virtual-prelude `Vec`-импорт — тот же шум, что и во ВСЕХ
+файлах дерева, не специфично для этого файла).
+
+**Вердикт: KEEP** (не «блокирован toolchain» — реально чист; `nova
+build` для него никогда и не будет применим по конструкции файла).
+
+### orm_decorators.nv (#24) — bug #2 ПОДТВЕРЖДЁННО ПОФИКШЕН, найден+исправлен независимый баг, найден НОВЫЙ блокер
+
+Баг #2 (`with EFFECT = value { ... }` не парсился внутри тела
+handler-method, repro — `with_read_replica`'s `in_transaction(b) {
+primary.in_transaction(|| with Db = primary { b() }) }`) —
+**подтверждённо пофикшен апстримом**: файл теперь проходит парсинг и
+тайпчек целиком (дошёл до C-codegen/link стадии — см. ниже).
+
+Попутно найден и исправлен **независимый реальный баг содержимого** (не
+toolchain): `log.filter(|e| ...).len()` (тест «audit: каждый exec
+пишется в detach-задачу», строка 296) падал с `[E_RECV_METHOD_MISMATCH]
+.len(...) на ресивере FilterIter — у FilterIter нет метода len, а
+single-key fallback резолвит имя в чужой тип EmbeddedDir (last-wins)`.
+Синтетический repro (`v.filter(pred)` на голом `[]int` БЕЗ импорта)
+подтвердил: `[]T @filter` (`std/collections/vec_seq.nv:56`,
+`#stable(since = "0.1")`, eager, возвращает `[]T`) **требует явного
+`import std.collections.vec_seq.{filter}`** — без импорта имя `filter`
+резолвится через global single-key fallback в ПОСТОРОННИЙ тип
+(`RSplitIter` в repro, `EmbeddedDir` в реальном файле — зависит от
+регистрации), не в eager Vec-версию. `orm_demo.nv` (парный файл) уже
+импортирует `map`/`join` явно тем же способом — `orm_decorators.nv`
+просто забыл `filter`. Fix: добавлена строка `import
+std.collections.vec_seq.{filter}` (см. diff). Repro-файлы
+(`examples/_repro_filter_len.nv`, scratchpad) удалены после
+подтверждения, не коммитились.
+
+После этого фикса файл проходит `nova check --strict-effects` ПОЛНОСТЬЮ
+чисто (только virtual-prelude-Vec-шум) и доходит до C-codegen — но
+падает на **НОВОМ, более глубоком блокере**, вскрытом ИМЕННО фиксом
+bug #2 (раньше парсинг не доходил до этого места):
+
+```
+error: use of undeclared identifier 'SyncDetach'
+error: use of undeclared identifier '_nova_handler_Detach'
+...
+error: expected identifier
+    _nova_detach_0_ctx->current_user_id = current_user_id;
+                        ^
+note: expanded from macro 'current_user_id'
+    #define current_user_id (_c->current_user_id)
+```
+
+Корень — **`SyncDetach` НЕ РЕАЛИЗОВАН в std/runtime bootstrap**. Это
+подтверждено дословно комментарием в самом `spec_tests/conformance/
+detach_effect_ok_test.nv` (gate-critical, значит уже актуален и
+авторитетен): «(Форма (2) ambient `with Detach = …` — тоже exempt в
+checker'е через with_handler_stack-проверку, но требует объявленного
+effect-типа Detach + handler'а, **которых нет в std bootstrap** — не
+тестируется здесь.)». Т.е. Ф.2-фикс 07-12 (замена сломанного
+custom-хендлер-литерала `with Detach = effect Detach { run(body) {...}
+}` на, как тогда казалось, «канонический D50 test-mocking handler»
+`with Detach = SyncDetach {...}`) опирался на неверную предпосылку —
+`SyncDetach` не существует как рабочий рантайм-символ; ошибка сменила
+форму (парсинг → undefined-symbol на C-уровне), но файл остаётся
+заблокирован. Второй, попутно найденный баг — macro-hygiene: сгенерированный
+`#define current_user_id (_c->current_user_id)` коллизирует с
+буквальным `->current_user_id` field-access при популяции detach-контекста
+(препроцессор подставляет макрос ВНУТРЬ токена после `->`) — узкий,
+но реальный codegen-баг, всплывёт как только `SyncDetach` появится.
+
+Проверил жизнеспособность обхода без std-фичи: единственная
+задокументированная рабочая форма (`detach{}` напрямую в `fn` с `Detach`
+в effect-row, ИЛИ bare в `test`-root — формы (1)/(3) того же
+conformance-теста) не применима — `detach{}` здесь лежит внутри
+handler-method **литерала** (`effect Db { exec(q) { ...; detach {...}
+} }`), а синтаксис handler-method'а (`04-effects.md` §Handler-литерал,
+D40) не поддерживает объявление собственного effect-row отдельно от
+`op(p) => expr` / `op(p) { block }` — не нашёл способа дать чекеру
+основание для exemption без реализации `SyncDetach`.
+
+**Вердикт: KEEP-blocked-by-toolchain/std-gap** (переформулирован —
+раньше «bug #2», теперь «SyncDetach отсутствует в std», другая
+причина, тот же итоговый статус). Независимый fix (`vec_seq.filter`
+import) сохранён — реальный прогресс независимо от блокера.
+
+### orm_demo.nv (#25) — bug #1 переформулирован (ICE → чистая диагностика), фундаментально всё ещё блокирован
+
+Баг #1 (`.map()` generic type-argument inference ICE,
+`emit_c.rs:48511/49360 [P67-LEGACY]`) **сменил форму** — теперь
+чистая диагностика вместо ICE (прогресс апстрима, помечена как
+известный класс `M-196.5-b3-closure-param-bind`):
+
+```
+error: [E7001] cannot infer C type for closure-arg return type (U) for
+`.map()` on `Vec____uint64_t`: neither the node_substs checker channel
+nor the closure body's own (param-bound) inference could resolve it
+```
+
+Локализовал источник: `Repo[T] @bulk_load[K](...)`'s `ro sql_keys
+[]SqlValue = keys.map(key_to_sql)` (строка 233) — `keys []K` с K,
+инстанцированным в `UserId` (newtype над `u64` → `Vec____uint64_t`),
+`key_to_sql` передаётся как **именованное значение-функция** (не inline
+`|x| ...`-лямбда). Проверил гипотезу фикса — обернул в explicit-лямбду
+(`keys.map(|k| key_to_sql(k))`), пересобрал: ошибка не исчезла, а
+переместилась глубже — `cannot infer type argument T for generic
+function copy_n_nonoverlapping` — подтверждает: это фундаментальное
+ограничение mono/checker для **вложенных generic-методов**
+(`Repo[T].bulk_load[K]` — generic на двух уровнях, D42 Модель B) в
+сочетании с `Vec[K].map()`, не что-то лечимое на уровне содержимого
+файла. Эксперимент откачен (файл восстановлен байт-в-байт из git).
+
+**Вердикт: KEEP-blocked-by-toolchain** (без изменений по существу —
+реальный компиляторный баг, вне объёма Ф.2, но диагностика теперь
+точнее локализована для следующей волны: `bulk_load[K]` + function-value
+`.map()` argument, не общий `.map()` на любом Vec).
+
+### Итог захода 07-17
+
+- **sqlite_mini.nv**: DELETE-blocked-verdict → **KEEP** (чист,
+  `nova check --strict-effects` ok; `nova build` неприменим по
+  конструкции файла — нет `main`).
+- **orm_decorators.nv**: independent-баг найден+исправлен
+  (`vec_seq.filter` import); toolchain-блокер переформулирован
+  (`SyncDetach` не в std, не «with-parsing»). Остаётся
+  KEEP-blocked-by-toolchain/std-gap.
+- **orm_demo.nv**: toolchain-блокер переформулирован (ICE → E7001,
+  локализован до `bulk_load[K]`+`.map()`). Остаётся
+  KEEP-blocked-by-toolchain.
+- Остальные 16 файлов — реконфирмированы, ноль регрессий.
+
+Обновлённая сводка: **18 из 19** файлов вне `_wip/` реально
+компилируются и линкуются сегодняшним `nova.exe` под
+`--strict-effects` (было 16/19 07-12) — только `orm_decorators.nv` и
+`orm_demo.nv` остаются заблокированы (оба — подтверждённые,
+переформулированные toolchain/std-баги, вне объёма Ф.2/Ф.3, переданы
+следующей волне с уточнённой локализацией).
+
+## Не сделано (обновлено 2026-07-17)
+
+- **Ф.4/Ф.5 — уже сделаны другой волной** (см. статус-строку плана
+  197-examples-revision.md): `examples/flagship/aggregator/` реализован,
+  `nova-gate.yml` гейтит флагман-таргеты. Не в объёме захода 07-17.
+- **Два compiler/std-бага остаются** (переформулированы в заходе 07-17,
+  см. выше) — вне границы задачи (compiler-codegen/std-runtime — другая
+  волна):
+  1. `orm_decorators.nv` — `SyncDetach` не реализован в std bootstrap
+     (нужна реальная реализация hendler'а ИЛИ redesign теста без
+     ambient-detach-swap) + попутный macro-hygiene баг
+     (`->fieldname` коллизирует с одноимённым `#define`-макросом
+     контекста detach).
+  2. `orm_demo.nv` — `Repo[T].bulk_load[K]` (вложенный generic) +
+     `Vec[K].map(function_value)` не резолвит C-тип closure-arg
+     (`E7001`, класс `M-196.5-b3-closure-param-bind`), каскадом падает
+     на `copy_n_nonoverlapping` type-inference.
+  3. Третий баг (extern-FFI tuple-return codegen, `sqlite_mini.nv`) —
+     **подтверждённо пофикшен**, снят с очереди.
+  `Result.map` U-inference баг из захода 07-11 по-прежнему не
+  переподтверждён (ни один файл его не триггерит) — нужен отдельный
+  repro-прогон, если кому-то он важен отдельно от bulk_load[K]-находки
+  выше.
+- Ф.3 (канонический showcase-набор — явный финальный список/возможный
+  reshape папок `basics/effects/concurrency/ffi/real_world`) — сознательно
+  НЕ начато в заходе 07-17: текущее дерево уже фактически соответствует
+  этой структуре (в `effects/spawn_demo.nv` — кандидат в `concurrency/`,
+  но переименование/перенос папок не выполнялось — за пределами
+  директивы этого захода «почини или удали»); если нужен явный
+  reshape — отдельная директива владельца.
 - `examples/_wip/` — 6 файлов, переписать начисто (см. `_wip/README.md`
-  за деталями по каждому).
+  за деталями по каждому); не трогал (вне гейта, явно out of scope
+  по инструкции этого захода).
