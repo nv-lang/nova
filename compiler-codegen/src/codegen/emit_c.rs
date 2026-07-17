@@ -52031,48 +52031,40 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // vec_iter/vec_lazy (docs/plans/196.5-stage-d-census.md §3.1,
                         // re-confirmed post-wave-2 spot-check: docs/plans/
                         // 196.5-stage-d-wave3-notes.md).
-                        // Plan 180: the `Serialize` contract fixes `@x.serialize(s)`
-                        // to `Result[(), SerError]` for EVERY receiver. Inside a
-                        // generic container-conformance mono (e.g.
-                        // `Option[Vec[str]]@serialize` → `v.serialize(s)`, v:
-                        // Vec[str]) the re-emitted call can arrive here unannotated;
-                        // the return type is receiver-invariant, so resolve it
-                        // directly instead of ICE-ing (§6). Guarded on the exact
-                        // serde `Result[(),SerError]` C mono being in use.
-                        // [196.5 Stage-D волна-5] PARTIAL producer landed
-                        // (types/mod.rs f1_expr Member-arm, `method == "serialize"`,
-                        // ~7960): a receiver that is a bare in-scope generic
-                        // (`Named{path:["T"]}`, `gs.contains("T")`) resolved via
-                        // `infer_expr_type`/`resolved_types_buf` now channels
-                        // `Result[(), SerError]` straight from the `Serialize`
-                        // protocol decl — confirmed closing the FOR-LOOP-receiver
-                        // class (`fn[T Serialize] []T @serialize(...) { for v in @
-                        // { v.serialize(s) } }`, `NOVA_B11AI_TRACE`-style probe:
-                        // every for-loop call-site now channels
-                        // `Ok("NovaRes_nova_unit_NovaValue_SerError*")` byte-
-                        // identical to this arm's own hardcoded string). REMAINS
-                        // live for a DIFFERENT receiver class: a MATCH-ARM-BOUND
-                        // variable (`Option[T]@serialize`'s `Some(v) => v.serialize
-                        // (s)` — `v` bound by `Pattern::Variant`, not a `for`-loop
-                        // var) is not present in `scope` NOR `resolved_types_buf`
-                        // at the point `f1_expr` visits the arm body (`ExprKind::
-                        // Match` in types/mod.rs does not seed pattern-bound names
-                        // into `scope` before walking `arm.body` — confirmed by
-                        // direct trace: `recv_ty` lookup fails silently, the new
-                        // producer's outer `if let Some(recv_ty)` is never entered
-                        // for this call class). Fixing THAT is a broader change
-                        // (enum-variant pattern-bind → scope/channel registration,
-                        // touching every match arm, not just Serialize) — out of
-                        // this point-fix's narrow blast radius; left live,
-                        // documented here for the next wave.
-                        if method == "serialize"
-                            && self.novares_typedefs_buf
-                                .borrow()
-                                .contains("NovaRes_nova_unit_NovaValue_SerError")
-                        {
-                            self.icr_trace("B11ai_serialize_contract");
-                            return "NovaRes_nova_unit_NovaValue_SerError*".to_string();
-                        }
+                        // [196-capstone] B11ai_serialize_contract REMOVED.
+                        // Former: Plan 180's `Serialize` contract fixed
+                        // `@x.serialize(s)` to `Result[(), SerError]` for every
+                        // receiver — a guard on the exact serde
+                        // `Result[(),SerError]` C mono, hardcoded as a fallback for
+                        // calls arriving here unannotated. Stage-D волна-5 landed a
+                        // PARTIAL checker producer (types/mod.rs f1_expr Member-arm,
+                        // `method == "serialize"`, ~7960) that closed the FOR-LOOP-
+                        // receiver class but left one live reason for this arm: a
+                        // MATCH-ARM-BOUND receiver (`Option[T]@serialize`'s `Some(v)
+                        // => v.serialize(s)`) was not present in `scope`/
+                        // `resolved_types_buf` when `f1_expr` visited the arm body —
+                        // `ExprKind::Match` did not seed pattern-bound names into
+                        // `scope` before walking `arm.body`.
+                        // Plan 196.9's match-arm scope fix (`de15478d1`,
+                        // `[M-primitive-concrete-overload-receiver-dispatch]`,
+                        // merged for an UNRELATED reason — i64.clamp primitive
+                        // dispatch) extends `scope` with `match_arm_bindings(
+                        // arm.pattern, scrut_ty)` BEFORE walking `arm.body` in
+                        // `ExprKind::Match` (types/mod.rs ~8780) — this closes the
+                        // exact gap above as a side effect: the Serialize producer's
+                        // `infer_expr_type(mo, scope)` now sees the pattern-bound
+                        // receiver's type. Confirmed empirically (icr_trace, debug
+                        // binary, docs/plans/196-capstone-notes.md): std/src/encoding
+                        // (full serde suite) PASS 8/0/7skip; examples/flagship/
+                        // aggregator (`StatusDto.error Option[str]`,
+                        // `#impl(Serialize)` memberwise `@error.serialize(s)`) builds
+                        // clean under --strict-effects; dedicated regression pin
+                        // (`spec_tests/conformance/standalone/
+                        // m196_serde_option_match_arm.nv`, the exact match-arm-bound
+                        // Some/None shape) compiles+runs correctly (`{"note":"hi",
+                        // "tag":"a"}` / `{"note":null,"tag":"b"}`) — 0 hits on all
+                        // three, no panic on a detach+panic trial run first. NO-HIT
+                        // ⟹ structurally unreachable (§5).
                         // Plan 196.2 W1 [gate-1]: B11aj_bench_opaque REMOVED.
                         // `bench.opaque(x)` compiler black-box identity intrinsic
                         // (mirror of emit_expr's NOVA_BENCH_OPAQUE_PRIM, which stays —
