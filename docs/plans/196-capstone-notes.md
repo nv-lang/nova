@@ -13,12 +13,18 @@
 3-4, **+1** `B_overflowing_ints_intrinsic` — не из 196-census, добавлен НЕСВЯЗАННЫМ Plan 206 Ф.1/Ф.1b уже ПОСЛЕ
 census; арифметика сходится, регрессии нет). Архивная работа (Stage-D волны 1-5, W1-i, Zone CH/GEN/RET — все уже
 на main) исчерпала «лёгкие» кандидаты почти полностью — Zone GEN/RET's собственные сессии СЕГОДНЯ (2026-07-17)
-не нашли НИЧЕГО дополнительного снимаемого в своих зонах. Единственная новая находка этой сессии:
-**`B11ai_serialize_contract` СНЯТА** — Plan 196.9's фикс `de15478d1` (`[M-primitive-concrete-overload-receiver-
-dispatch]`, смёржен ДЛЯ ДРУГОЙ причины — i64.clamp primitive dispatch) закрыл КАК ПОБОЧНЫЙ ЭФФЕКТ ровно тот
-match-arm-bound-receiver пробел, что волна-5 задокументировала как последнюю живую причину существования этой
-ветки. Детач+panic-пробный прогон НЕ сработал (0 panics на 3 независимых корпусах) → снос в следующем коммите той
-же сессии. **Реестр: 50 → 49.**
+не нашли НИЧЕГО дополнительного снимаемого в своих зонах. **Найден и подтверждён НОВЫЙ класс: несвязанный merge
+закрывает документированный gap как побочный эффект** — 2 находки этого класса, ОБЕ сняты по протоколу
+детач+panic (пробный снос → верификация → полный снос тем же заходом):
+1. **`B11ai_serialize_contract`** — Plan 196.9's фикс `de15478d1` (`[M-primitive-concrete-overload-receiver-
+   dispatch]`, смёржен ДЛЯ ДРУГОЙ причины — i64.clamp primitive dispatch) закрыл match-arm-bound-receiver пробел
+   (волна-5's задокументированная последняя причина жизни).
+2. **`B11m_stringbuilder_instance`** — Plan 208 Ф.2 (D374 AMEND, Unified Formatter) + Plan 198/196.6 (`[race-198]`
+   name-only-fallback AV фикс) вместе закрыли ОБЕ причины (derive-тело больше не зовёт StringBuilder; `write_str`
+   заменён на `write`) — волна-3's задокументированный блокер.
+
+Детач+panic-пробные прогоны НЕ сработали НИ РАЗУ (0 panics на всех целевых корпусах, обе ветки) → полный снос
+обеих в тех же заходах. **Реестр: 50 → 49 → 48.**
 
 ---
 
@@ -58,9 +64,9 @@ match-arm-bound-receiver пробел, что волна-5 задокумент�
 гонялся прошлыми волнами и дал НЕ-0).
 
 **0-хитов на МОЁМ сэмпле, ранее НЕ доказанных мёртвыми (не кандидаты — уже документированы как живые в другом
-корпусе прошлыми волнами):** B03 (std/os,fs), B11i (nova_tests/concurrency), B11m (см. §3.2 — новая гипотеза,
-не подтверждена), B11ac/B11ak (уже подтверждены живыми в census на examples/effects и collections/data/encoding
-соответственно — просто не в МОЁМ узком сэмпле).
+корпусе прошлыми волнами):** B03 (std/os,fs), B11i (nova_tests/concurrency), B11ac/B11ak (уже подтверждены
+живыми в census на examples/effects и collections/data/encoding соответственно — просто не в МОЁМ узком сэмпле).
+(`B11m` был в этом списке до §2b — снят этой сессией, см. ниже.)
 
 ---
 
@@ -105,7 +111,31 @@ substring (не whole-string — JSON key order оказался HashMap-driven 
 
 ---
 
-## 3. Осталось (49 веток) — классификация
+## 2b. Снесено — Батч 2: `B11m_stringbuilder_instance`
+
+**Находка:** волна-3 (`196.5-stage-d-wave3-notes.md` §3, микро-композиция) держала ветку живой на **kill-switch
+A/B .c-diff** — синтезированное Debug-тело (D229) звало `write_str` на `Nova_StringBuilder*`-ресивере, fallthrough
+менял unit-вердикт statement-эмиссии (`(void)`-обёртка). Прочитал текущий `auto_derive.rs`
+(`synth_debug_record_body`/`synth_display_record_body`, строки 1082-1170ish) — доккомментарии там ФИКСИРУЮТ ДВЕ
+несвязанные правки с тех пор: (1) Plan 208 Ф.2 (D374 AMEND) перетипизировал синтезируемый параметр `sb
+StringBuilder` → `w Fmt`; (2) `[race-198 / 196.6]` заменил `write_str` на `write` (несвязанная причина —
+name-only-fallback мисдиспатч, AV-баг Plan 198). Комбинация: derive-тела сегодня НЕ вызывают НИЧЕГО на
+`Nova_StringBuilder*`-ресивере вообще — мотивирующий кейс волны-3 структурно исчез.
+
+**Верификация (детач+panic, НЕ сработал):**
+1. `std/src/runtime/string_builder_test.nv` (единственный ДРУГОЙ класс трафика этой ветки — прямое использование
+   StringBuilder вне derive: `.len()`/`.append()`/`.into()`/…) — PASS, 0 hits, panic не сработал.
+2. `std/src/collections` + `std/src/time` + `std/src/encoding` (--skip lru_test) — PASS 26/0/14skip, 0 hits.
+3. `d229_debug_format_spec.nv` + `d422_generic_container_derive.nv` (оба зовут auto-derive `@debug`/`@display` —
+   ТОЧНЫЙ мотивирующий класс волны-3) — компилируются и запускаются (2 ПРЕ-СУЩЕСТВУЮЩИХ несвязанных RUN-FAIL на
+   `Vec.from().into_str()`, задокументированных Zone RET сегодня же, `196-ret-notes.md` §0 — не регрессия, тот
+   же паттерн ошибки byte-в-byte).
+
+**Реестр:** 49 → **48**. `git diff --stat`: +27/-19.
+
+---
+
+## 3. Осталось (48 веток) — классификация
 
 ### 3.1 Терминалы (не атомы, уходят с финальным сносом функции) — 4
 `B11al_panic_method_p67`, `B12q_panic_path_p67`, `B12r_panic_path_no_method_seg`, `B12s_panic_path_no_parts`.
@@ -126,24 +156,10 @@ substring (не whole-string — JSON key order оказался HashMap-driven 
 `B03_protocol_default_body_synth` (std/os,fs), `B11i_canceltoken_instance` (nova_tests/concurrency),
 `B11ac_novavtable_effect` (examples/effects), `B11ak_self_recursive_generic_method` (collections/data/encoding —
 и в МОЁМ сэмпле хитнула, subs подтверждаю), `B10a_ident_println_assert` (2 остаточных хита — эффект-handler-body
-assert, см. §3.4 — НЕ переоткрывал, НЕ фиксил, вне scope: `types/mod.rs` правка).
+assert; `f1_expr`'s `ExprKind::With { body, .. }` всё ещё игнорирует `bindings[i].handler` — проверил по коду,
+де15478d1 НЕ трогал `With`-арм, только `Match` — НЕ переоткрывал, НЕ фиксил, вне scope: `types/mod.rs` правка).
 
-### 3.4 Возможная НЕПОДТВЕРЖДЁННАЯ зацепка для следующей волны — `B11m_stringbuilder_instance`
-Волна-3 задокументировала блокер как «унификация unit-вердикта statement-эмиссии для синтезированных Debug-тел»
-(синтезированное `@debug` зовёт `write_str` на `StringBuilder`-ресивере). Git-log между волной-3 и текущим HEAD
-показывает **Plan 208** (Unified Formatter) сделал ИМЕННО такую унификацию — снос `@display_fmt`-пути, единый
-`FmtCtx.bare/.rich` диспатч для `@display(f)`/`@debug(f)` (коммиты `18eebbdb9`, `0eca63b8f`, `1f5dbe387` и др.,
-июль 2026). **Это ТА ЖЕ КЛАССА находка, что закрыла B11ai** (несвязанный merge как побочный эффект) — но я НЕ
-довёл до конца: точечный прогон `d229_debug_format_spec.nv` НЕ хитнул B11m (но этот файл использует
-`Vec[T].debug`, не тип со StringBuilder-полем — не мотивирующая форма), а полноценная kill-switch A/B (byte-diff,
-методология волны-3, `feedback-codegen-dce-verification`) НЕ проводилась — riskier and requires more rigor than
-a quick icr_trace count (byte-level statement-emission diff, not just hit/no-hit). **Честно оставляю НЕ-снятой**
-(не half-done — просто не рискнул снимать без полноценной A/B-верификации в оставшееся время сессии).
-**Рекомендация следующей волне:** повторить точную методологию волны-3 (`NOVA_ICR_DETACH` kill-switch,
-byte-diff нормализатор) на corpus, реально exercising синтезированный `@debug`/`@display` на типе с
-StringBuilder-полем (не Vec), после Plan 208's Fmt-унификации.
-
-### 3.5 Core (не снимаемо без Zone CH channel-расширения — не в моей власти, types/mod.rs запрещён) — 33
+### 3.4 Core (не снимаемо без Zone CH channel-расширения — не в моей власти, types/mod.rs запрещён) — 33
 `B01`, `B02`, `B05`, `B06`, `B06a`, `B06b`, `B06c`, `B06d`, `B07`, `B07r`, `B08`, `B08r`, `B10e`, `B10f`, `B10h`,
 `B10j`×2, `B10l`, `B10m`, `B11a`, `B11ae`, `B11af`, `B11d`, `B11e`, `B11f`, `B11j`, `B11k`, `B12b`, `B12h`,
 `B12l`, `B12o`, `B12p`, `B_overflowing_ints_intrinsic`. Все подтверждены живыми на моём сэмпле (collections/time/
@@ -177,28 +193,30 @@ standalone/d182/encoding/aggregator) — консистентно с прошл�
 
 ---
 
-## 5. Коммиты сессии
+## 5. Коммиты сессии (ветка `p196-capstone`, worktree `nova-196cap`)
 
-1. `fix(codegen): [196-capstone] B11ai_serialize_contract — detach+panic пробный снос (не сработал), полный снос
-   в следующем коммите той же сессии` — либо один совмещённый коммит (детач сразу зафиксирован как удаление,
-   т.к. panic не сработал синхронно в рамках сессии) — см. фактический хэш в `git log` этой ветки.
-2. `test(conformance): m196_serde_option_match_arm — регресс-пин match-arm-bound Option[T]@serialize`.
-3. `docs(196): capstone — перепись + Батч-1 (B11ai снята) + инфра-находки (SHADOW mismatch ICE, B11m-зацепка)`.
+1. `df0e0ea53` — `fix(codegen): [196-capstone] B11ai_serialize_contract снята — de15478d1 закрыл match-arm-bound
+   gap побочно` (детач+panic пробный снос → panic не сработал → полный снос, ОДИН коммит) + регресс-пин
+   `spec_tests/conformance/standalone/m196_serde_option_match_arm.nv` + этот notes-файл (первая версия).
+2. `18be31441` — `fix(codegen): [196-capstone] B11m_stringbuilder_instance снята — Plan 208/196.6 закрыли обе
+   причины жизни` (детач+panic пробный снос → panic не сработал → полный снос, ОДИН коммит).
+3. (этот коммит) — `docs(196): capstone — Батч 2 (B11m) в notes, финальная классификация 48 веток`.
 
-**В main НЕ мёржено** (ветка `p196-capstone`, worktree `nova-196cap`). Push запрещён по заданию — интегратор
-вливает батчами и гоняет CI/полный conformance сам.
+**В main НЕ мёржено.** Push запрещён по заданию — интегратор вливает батчами и гоняет CI/полный conformance сам.
 
 ---
 
 ## 6. Рекомендация следующей волне (если сессия продолжится)
 
-1. **B11m** (§3.4) — самый перспективный следующий кандидат: повторить kill-switch A/B волны-3 на корпусе,
-   реально бьющем synthesized `@debug`/`@display` на StringBuilder-содержащем типе, ПОСЛЕ Plan 208 Fmt-унификации.
-2. **SHADOW mismatch ICE** (§4.4) — сообщить Zone CH/владельцу; debug-only, но подрывает доверие к
+1. **SHADOW mismatch ICE** (§4.4) — сообщить Zone CH/владельцу; debug-only, но подрывает доверие к
    `node_substs`-каналу для LinkedList-generic-K класса; НЕ в scope frozen-зоны, но нашёл честно.
-3. **Ядро (§3.5, 33 ветки)** — не снимаемо без Zone CH channel-расширения на erased/mono-клон call-site'ы
+2. **Ядро (§3.4, 33 ветки)** — не снимаемо без Zone CH channel-расширения на erased/mono-клон call-site'ы
    (тот же владелец-гейтед развилка «ExprId-coverage», что документирована с самого начала кампании).
-4. Продолжать грепать git log между волнами на предмет «несвязанный merge закрыл undocumented gap» — ЭТОТ
-   паттерн (не «снос дублирующего легаси», а «сторонний фикс попутно насытил канал») дал 100% находок этой
-   сессии (B11ai подтверждена, B11m — вероятная, недоверифицированная) и НЕ покрывается стандартным icr_trace-
-   счётчиком на узком сэмпле — нужен именно git-archaeology заход, не только измерение.
+3. **Продолжать грепать git log между волнами на предмет «несвязанный merge закрыл undocumented gap»** — ЭТОТ
+   паттерн (не «снос дублирующего легаси», а «сторонний фикс попутно насытил канал») дал **100% находок этой
+   сессии** (обе — B11ai и B11m, подтверждены, сняты) и НЕ покрывается стандартным icr_trace-счётчиком на узком
+   сэмпле — нужен именно git-archaeology заход (читать доккомментарии живых веток → искать соответствующий
+   `[M-...]`-маркер/план в `git log -S<term> -- types/mod.rs` и `auto_derive.rs` между базой прошлой волны и
+   текущим HEAD), не только измерение. Кандидаты для следующего захода этим методом: §3.2/3.3 ветки, чьи
+   доккомментарии называют конкретный внешний блокер (`B10a` — `With`-арм handler-walk; `B03`/`B11ac`/`B11ai`-типа
+   формулировки, если появятся новые в будущих волнах).
