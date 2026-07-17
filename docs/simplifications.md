@@ -39102,3 +39102,100 @@ spec_tests/conformance/<любой файл>` (whole-CU) сейчас падае
   этого бага в стандартном профиле (порог смерти отодвинут). Марафон-BLOCK4 не
   режется намеренно (тест долговечности). Для repro утечки — -Iterations 60 +
   монитор (slope без смерти, дёшево по квоте).
+
+## [M-187-sustained-live-tls-resource-death] — ЗАКРЫТ по гейту (2026-07-17, worktree nova-tls-leak, ветка fix-tls-leak, sonnet)
+
+- Диагностика (не гипотеза, эмпирика): нативная free-парность mbedTLS/шима
+  (`native/tls_c_shim.c`) проверена ПОЛНОЙ двумя независимыми методами —
+  (а) alive-session счётчик (временный, снят) возвращался к 0 между
+  итерациями; (б) standalone-C harness (`clang` напрямую против vendored
+  mbedTLS, БЕЗ Nova/GC вообще) с `mbedtls_platform_set_calloc_free`
+  custom-allocator-hook: 1500 полных client+server handshake-циклов через
+  РЕАЛЬНЫЕ loopback-сокеты (SystemRoots-размерный 150-сертный бандл против
+  self-signed — verify FAILS ожидаемо, но упражняет ПОЛНЫЙ parse+verify+free
+  путь) — outstanding bytes ПЛОСКАЯ линия (baseline 4467, peak 504560),
+  0 роста. Отдельно голый `mbedtls_x509_crt_parse`+`_free` бандла 3000× —
+  working set плато ~7МБ. → утечка НЕ в нативном mbedTLS/шиме (опровергает
+  оба прайм-подозреваемых из предыдущей записи).
+- Nova-уровневый (.nv) loopback-repro (свой diag-инструмент, temp, не
+  коммитился) изолировал источник: голый TCP (тот же fiber/spawn/Channel
+  каркас, БЕЗ TlsStream) на 3000 итераций выходит на плато и НЕ растёт;
+  ЛЮБОЙ TLS-путь (CustomRoots-успех И SystemRoots-provал — размер CA-бандла
+  ОКАЗАЛСЯ НЕ фактором, опровергает начальную гипотезу) даёт линейный рост
+  ~50-60КБ/итерацию. `gc.collect()` (полный синхронный `GC_gcollect()`)
+  каждые 50 итераций НЕ возвращал `gc.heap_size()` к плато — Boehm считает
+  буферы live СРАЗУ ПОСЛЕ полной сборки, т.е. это НЕ «GC не успевает», а
+  reachable-retention (похоже на conservative-scan false-positive через
+  переиспользуемые fiber-стеки — размер блока эмпирически ПРОПОРЦИОНАЛЕН
+  скорости роста: 16КиБ→2КиБ снизил slope ~56КБ/итер→~19КБ/итер). Эта часть
+  — вне периметра nova-tls (компилятор/рантайм, Boehm/fiber_arena), НЕ
+  дочинена в этой волне — см. новый floating-маркер
+  `[M-boehm-large-buffer-retention-fiber-reuse]` ниже (эскалация, не мой
+  периметр).
+- Фикс (в периметре nova-tls, снижает экспозицию к GC-паттерну, НЕ
+  «переписывает GC»): (1) `native/tls_c_shim.c`+`ffi.nv` — новый extern
+  `tls_pending_out_len` (0-аллокационный компьют); `stream.nv::flush_out`
+  спрашивает факт вместо слепой аллокации `TLS_CHUNK` на каждый вызов;
+  (2) новое поле `TlsStream.scratch []u8` — ОДИН переиспользуемый
+  ciphertext-буфер на весь жизненный цикл стрима (заведён в connect/accept,
+  продет через `pump_handshake`/`flush_out`/`fill_from_tcp`/`read_step`/
+  `write_step`); `fill_from_tcp` читает через `Net.read(tcp, scratch)`
+  напрямую вместо `TcpStream.read_to_vec` (которая ВСЕГДА аллоцирует фреш
+  `[]u8`); (3) `TLS_CHUNK` 16КиБ→4КиБ (доп. мера — трейд-офф с throughput
+  большого трафика приемлем, handshake-flights/типичный JSON-ответ малы).
+  Комбинированный эффект на loopback-repro: ~56КБ/итер → ~21КБ/итер
+  (≈2.6× снижение), рост НЕ устранён полностью на синтетическом hammering-
+  repro (ожидаемо — root residual вне периметра).
+- **Официальный гейт** (`examples/flagship/aggregator/tls-leak-repro.ps1`,
+  ОДИН прогон ПОСЛЕ фикса, 80 запросов реальных open-meteo HTTPS,
+  `-Build` fresh binary): baseline 526.9МБ → 546.8МБ за 80 прогонов (70
+  сэмплов), **slope = 0.244 МБ/прогон, VERDICT: CLEAN** (порог 0.30 МБ/прогон)
+  — под РЕАЛЬНОЙ сетевой каденцией (открытое-meteo latency даёт GC заметно
+  больше простоя между итерациями, чем synthetic loopback-hammering) фикс
+  достаточен: маркер закрывается ПО ГЕЙТУ (проверяемый критерий проекта),
+  при том что диагностика honestly указывает на нерешённый residual в
+  GC/fiber-arena слое (см. новый маркер ниже). `nova test src` (nova-tls,
+  таргетный корректностный гейт) — зелёный (PASS 1/FAIL 0, весь
+  compile-unit пакета). ДО-числа (для памяти): предыдущий марафон —
+  private-commit ~11→770МБ за 540 live (≈1.4МБ/live-прогон), смерть OOM
+  ~940МБ при ~670 live; slope на loopback synthetic (rapid-fire, БЕЗ
+  сетевой задержки) ДО фикса ~56КБ/итер (worst-case, не путать с офиц.
+  гейтом на реальной сети).
+- Побочная находка (мелкая, НЕ дочинена, не блокирует): при TLS_CHUNK=2КиБ
+  (промежуточный эксперимент) `alive_sessions`-счётчик иногда застревал на
+  1-2 вместо 0 в конце длинного loopback-прогона (3000 итераций) — вероятно
+  edge-case на multi-chunk handshake-flight (флайт крупнее уменьшенного
+  чанка) в СОБСТВЕННОМ diag-инструменте волны, не подтверждён как реальный
+  прод-баг (не наблюдался на финальном TLS_CHUNK=4КиБ+scratch-reuse
+  прогоне). Не заводил отдельный маркер — недостаточно repro-уверенности.
+
+## [M-boehm-large-buffer-retention-fiber-reuse] — НОВЫЙ, OPEN (2026-07-17, найдено при расследовании 187/nova-tls)
+
+- Эскалация из `[M-187-sustained-live-tls-resource-death]` (закрыт выше ПО
+  ГЕЙТУ, но root residual не в nova-tls). Explicit `gc.collect()`
+  (`GC_gcollect()`, полный синхронный mark-sweep) НЕ возвращает
+  `gc.heap_size()` к плато под нагрузкой «много коротких fiber'ов, каждый
+  churn'ит один относительно крупный (КБ-масштаба) GC-буфер» — Boehm
+  считает эти буферы reachable СРАЗУ ПОСЛЕ полной сборки, т.е. это не
+  «редко собирает», а настоящий retention. Гипотеза (не доказана до конца):
+  conservative-scan false-positive retention через переиспользуемые
+  fiber-стеки (`compiler-codegen/nova_rt/fiber_arena.c` — арена
+  переиспользует stack-слоты между короткоживущими fiber'ами; протухшие
+  байты в переиспользованном слоте МОГУТ случайно выглядеть как указатель
+  на живой ещё объект прошлой итерации). Эмпирическая опора: размер
+  отдельного буфера ПРОПОРЦИОНАЛЕН скорости роста (не бинарно — растёт с
+  size), что типично для conservative-GC false-positive economics (больше
+  байт = больше шанс на случайное совпадение с протухшим stack-словом).
+  Repro-инструмент (temp, НЕ коммитился, воспроизвести заново по рецепту):
+  loopback client+server TLS/TCP-пара в одном .nv-процессе,
+  supervised+2×spawn+Channel НА КАЖДУЮ итерацию, 3000 итераций; TCP-only
+  контроль (тот же каркас, БЕЗ TLS/крупных буферов) — плато; ЛЮБОЙ TLS-путь
+  (независимо от CA-размера/success-vs-fail) — линейный рост, не
+  устраняемый принудительным `gc.collect()` каждые 50 итераций. Зона:
+  `compiler-codegen/nova_rt/fiber_arena.c` (+ `alloc_boehm.c`) — компилятор/
+  рантайм, НЕ nova-tls. Не паркуется как P1/P0 (нет открытого прод-инцидента
+  ПОСЛЕ TLS_CHUNK+scratch-reuse фикса — офиц. гейт CLEAN под реальной
+  сетевой нагрузкой), но реальный систематический риск для ЛЮБОГО
+  high-churn per-connection/per-request паттерна (не только TLS) —
+  P2, требует opus-разведки в GC/fiber-arena слое, вне периметра
+  какого-либо конкретного пакета.
