@@ -1427,12 +1427,12 @@ export type WriteGuard consume { ptr int }
 #stable(since = "0.1")
 export type Permit consume { ptr int }
 
-/// Guard returned by `Once.try_start()`. Consume-typed: must call `.commit()` or `.abort()`.
+/// Guard returned by `Once.start()`. Consume-typed: must call `.commit()` or `.abort()`.
 ///
 /// # Examples
 ///
 /// ```nova
-/// match once.try_start() {
+/// match once.start() {
 ///     Some(consume g) => {
 ///         setup()
 ///         g.commit()    // Once → DONE
@@ -1598,11 +1598,18 @@ export extern "nova" fn Mutex.new_unfair() -> Self
 /// Возвращает `true` если lock захвачен, `false` если истёк timeout.
 /// timeout <= 0 — эквивалентно `try_lock()`.
 ///
+/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
+/// переименован из `try_lock_for` — `try_`-префикс легален только как
+/// fallible-половина одноимённого infallible (`from`/`try_from`, D77);
+/// `lock_for` не имеет infallible-сиблинга с этим именем (`lock()` — другая
+/// арность/семантика, не тайм-аутный вариант) — соло-операция без Result
+/// берёт обычное имя (R3 D325, nv-coding-style §1). Возврат `bool` не менялся.
+///
 /// # Examples
 ///
 /// ```nova
 /// let mut mu = Mutex.new()
-/// if mu.try_lock_for(100.to_millis()) {
+/// if mu.lock_for(100.to_millis()) {
 ///     defer mu.unlock()
 ///     // critical section
 /// }
@@ -1611,12 +1618,14 @@ export extern "nova" fn Mutex.new_unfair() -> Self
 /// # Note (realtime)
 ///
 /// Inside `realtime { }` blocks the compiler emits W_REALTIME_TRY_LOCK_FOR_TIMER
-/// because try_lock_for uses a libuv timer that may park even for short timeouts.
+/// because lock_for uses a libuv timer that may park even for short timeouts.
 /// Annotated `#realtime` (not `#parks`) because failure path is non-parking;
-/// compiler enforces via dedicated warning, not an error.
+/// compiler enforces via dedicated warning, not an error. (Diagnostic ID kept
+/// as `W_REALTIME_TRY_LOCK_FOR_TIMER` — a spec-level rename would need its own
+/// D-amendment; scope here is the method name only.)
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn Mutex mut @try_lock_for(timeout Duration) -> bool
+export extern "nova" fn Mutex mut @lock_for(timeout Duration) -> bool
 
 /// Best-effort проверка состояния. НЕ для CAS-паттернов.
 ///
@@ -1720,9 +1729,14 @@ export extern "nova" fn RwLock mut @read_unlock()
 export extern "nova" fn RwLock mut @try_read() -> bool
 
 /// Попытаться захватить read lock в течение timeout.
+///
+/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
+/// переименован из `try_read_for` — `try_`-префикс легален только как
+/// fallible-половина одноимённого infallible (D77); `read_for` без
+/// infallible-сиблинга с этим именем — обычное имя, без `try_` (R3 D325).
 #parks
 #stable(since = "0.1")
-export extern "nova" fn RwLock mut @try_read_for(timeout Duration) -> bool
+export extern "nova" fn RwLock mut @read_for(timeout Duration) -> bool
 
 /// Захватить write lock. Ждёт завершения всех читателей и других писателей.
 ///
@@ -1746,9 +1760,12 @@ export extern "nova" fn RwLock mut @write_unlock()
 export extern "nova" fn RwLock mut @try_write() -> bool
 
 /// Попытаться захватить write lock в течение timeout.
+///
+/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
+/// переименован из `try_write_for` — та же ретракция, что у `read_for` выше.
 #parks
 #stable(since = "0.1")
-export extern "nova" fn RwLock mut @try_write_for(timeout Duration) -> bool
+export extern "nova" fn RwLock mut @write_for(timeout Duration) -> bool
 
 /// Текущее количество активных читателей. Best-effort.
 #realtime
@@ -1835,9 +1852,12 @@ export extern "nova" fn ReentrantMutex mut @unlock()
 export extern "nova" fn ReentrantMutex mut @try_lock() -> bool
 
 /// Попытаться захватить в течение timeout.
+///
+/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
+/// переименован из `try_lock_for` — та же ретракция, что у `Mutex.lock_for`.
 #parks
 #stable(since = "0.1")
-export extern "nova" fn ReentrantMutex mut @try_lock_for(timeout Duration) -> bool
+export extern "nova" fn ReentrantMutex mut @lock_for(timeout Duration) -> bool
 
 /// Recursion depth для текущего fiber. 0 если не owner.
 #realtime

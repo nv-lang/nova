@@ -43,13 +43,18 @@ export type WriteBuffer {
 const INITIAL_CAPACITY = 16
 
 // Пустой WriteBuffer с pre-allocated capacity 16.
-export fn WriteBuffer.new(cap int = INITIAL_CAPACITY) -> Self => { buf: []u8.new(cap: cap) }
+export fn WriteBuffer.new(cap int = INITIAL_CAPACITY) -> Self
+    requires cap >= 0
+    => { buf: []u8.new(cap: cap) }
 
 // WriteBuffer из существующих байт (deep copy — append через memmove).
-// Param `b` is readonly by default (D176 amend, Plan 108.1).
-export fn WriteBuffer.from(b []u8) -> Self {
-    mut wb WriteBuffer = { buf: []u8.new(cap: b.len()) }
-    wb.buf.append(b)
+//
+// W_STATIC_CONVERSION AMEND (2026-07-17, lint-разкраснение, владелец):
+// static-конверсия `WriteBuffer.from(b)` — запрещённая «пятая дверь»
+// (nv-coding-style §1а, ретракция 2026-07-09). Канон: метод на источнике.
+export fn []u8 @to_writebuffer() -> WriteBuffer {
+    mut wb WriteBuffer = { buf: []u8.new(cap: @len()) }
+    wb.buf.append(@)
     wb
 }
 
@@ -93,7 +98,9 @@ export fn WriteBuffer mut @write_bytes(src []u8) -> @ { @buf.append(src) }
 // Plan 90 followup `[]T.append_zero(n)` — bulk memset extension; O(1)
 // growth amortized + single memset(0) для всего сегмента (vs наивный
 // push-loop с amortized realloc'ами).
-export fn WriteBuffer mut @write_zero(n int) -> @ {
+export fn WriteBuffer mut @write_zero(n int) -> @
+    requires n >= 0
+{
     if n <= 0 { return }
     @buf.append_zero(n)
 }

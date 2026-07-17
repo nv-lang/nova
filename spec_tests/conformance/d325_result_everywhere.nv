@@ -71,11 +71,11 @@ test "D325: канал `.ok()` — Result -> Option (genuine absence, R4/D85)" {
 
 test "D325: read_u32_le — обычное имя, Result-форма; `!!` и `.ok()` (R1/R2/D85)" {
     ro bytes []u8 = [0x78, 0x56, 0x34, 0x12]        // little-endian → 0x12345678
-    mut rb = ReadBuffer.from(bytes)
+    mut rb = bytes.to_readbuffer()
     ro n = rb.read_u32_le()!!
     assert(n == 305419896)                          // 0x12345678
 
-    mut empty = ReadBuffer.from([])
+    mut empty = [].to_readbuffer()
     assert(empty.read_u32_le().ok() == None)        // за границей → Err → None
 }
 

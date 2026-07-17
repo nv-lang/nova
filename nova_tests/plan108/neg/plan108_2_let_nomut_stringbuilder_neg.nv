@@ -5,7 +5,7 @@
 module neg.plan108_2_let_nomut_stringbuilder_neg
 
 test "let no-mut + StringBuilder.append → error" {
-    consume sb = StringBuilder.from("x")
+    consume sb = "x".to_stringbuilder()
     ro other = sb.clone()
     other.append("y")
 }

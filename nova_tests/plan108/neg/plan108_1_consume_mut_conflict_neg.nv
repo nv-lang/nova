@@ -8,6 +8,6 @@ module neg.plan108_1_consume_mut_conflict_neg
 fn bad(consume mut sb StringBuilder) -> str => sb.into_str()
 
 test "consume + mut → parser error" {
-    consume sb = StringBuilder.from("x")
+    consume sb = "x".to_stringbuilder()
     ro _ = bad(sb)
 }

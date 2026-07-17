@@ -5,7 +5,7 @@
 // Теперь: Nova record; все методы на Nova-body над []u8 primitives.
 //
 // API contract (Plan 177 / D325 — единый fallible-контракт):
-//   ReadBuffer.from(b []u8) -> Self
+//   []u8 @to_readbuffer() -> ReadBuffer
 //   @position, @remaining, @has_remaining, @remaining_bytes
 //   @read_X -> Result[T, ReadBufferError], X ∈
 //     { byte, bytes, u8, i8, u16_le, u16_be, u32_le, u32_be, u64_le, u64_be,
@@ -36,8 +36,12 @@ export type ReadBuffer {
 
 // Создать ReadBuffer из []u8 (view + position 0). Data копируется как
 // readonly handle — slice-view внутри cursor'а без отдельной alloc'и
-// сверх ReadBuffer struct. Param `b` readonly by default (D176 amend).
-export fn ReadBuffer.from(b []u8) -> Self => { data: b, pos: 0 }
+// сверх ReadBuffer struct. Receiver readonly by default (D176 amend).
+//
+// W_STATIC_CONVERSION AMEND (2026-07-17, lint-разкраснение, владелец):
+// static-конверсия `ReadBuffer.from(b)` — запрещённая «пятая дверь»
+// (nv-coding-style §1а, ретракция 2026-07-09). Канон: метод на источнике.
+export fn []u8 @to_readbuffer() -> ReadBuffer => { data: @, pos: 0 }
 
 // ─── Cursor metadata ───
 
@@ -48,8 +52,9 @@ export fn ReadBuffer @position() -> int => @pos
 export fn ReadBuffer @remaining() -> int => @data.len() - @pos
 
 // True если осталось ≥ n байт.
-export fn ReadBuffer @has_remaining(n int) -> bool {
-    if n < 0 { return false }
+export fn ReadBuffer @has_remaining(n int) -> bool
+    requires n >= 0
+{
     @data.len() - @pos >= n
 }
 

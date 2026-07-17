@@ -15,6 +15,6 @@
 module neg.neg_read_oob
 fn main() Io Fail[ReadBufferError] -> () {
     ro bytes []u8 = []
-    mut rb = ReadBuffer.from(bytes)
+    mut rb = bytes.to_readbuffer()
     ro _ = rb.read_byte()!!            // ← throw: буфер пуст
 }

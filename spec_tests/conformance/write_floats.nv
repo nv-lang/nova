@@ -36,28 +36,28 @@ test "write_f64_be — 8 байт" {
 test "write_f64_le -> read_f64_le round-trip" {
     mut wb = WriteBuffer.new()
     wb.write_f64_le(2.718281828)
-    mut rb = ReadBuffer.from(wb.into_bytes())
+    mut rb = wb.into_bytes().to_readbuffer()
     assert(rb.read_f64_le()!! == 2.718281828)
 }
 
 test "write_f64_be -> read_f64_be round-trip" {
     mut wb = WriteBuffer.new()
     wb.write_f64_be(-0.5)
-    mut rb = ReadBuffer.from(wb.into_bytes())
+    mut rb = wb.into_bytes().to_readbuffer()
     assert(rb.read_f64_be()!! == -0.5)
 }
 
 test "write_f32_le -> read_f32_le round-trip" {
     mut wb = WriteBuffer.new()
     wb.write_f32_le(0.25)
-    mut rb = ReadBuffer.from(wb.into_bytes())
+    mut rb = wb.into_bytes().to_readbuffer()
     assert(rb.read_f32_le()!! == 0.25)
 }
 
 test "write_f32_be -> read_f32_be round-trip" {
     mut wb = WriteBuffer.new()
     wb.write_f32_be(0.5)
-    mut rb = ReadBuffer.from(wb.into_bytes())
+    mut rb = wb.into_bytes().to_readbuffer()
     assert(rb.read_f32_be()!! == 0.5)
 }
 
@@ -86,13 +86,13 @@ test "f64 LE и BE — обратный порядок байт" {
 test "f64 нулевое значение round-trip" {
     mut wb = WriteBuffer.new()
     wb.write_f64_le(0.0)
-    mut rb = ReadBuffer.from(wb.into_bytes())
+    mut rb = wb.into_bytes().to_readbuffer()
     assert(rb.read_f64_le()!! == 0.0)
 }
 
 test "f64 большое значение round-trip" {
     mut wb = WriteBuffer.new()
     wb.write_f64_be(1234567890.123)
-    mut rb = ReadBuffer.from(wb.into_bytes())
+    mut rb = wb.into_bytes().to_readbuffer()
     assert(rb.read_f64_be()!! == 1234567890.123)
 }
