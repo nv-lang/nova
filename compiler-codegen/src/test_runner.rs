@@ -4767,6 +4767,47 @@ impl TestSelection {
     }
 }
 
+/// [M-d376-slow-suffix-folder-module-peer-merge]: process-wide "this `nova
+/// test` invocation was asked to include `_slow` tests" flag, set ONCE by
+/// `run_all` from `opts.selection.include_slow` before any entry is
+/// compiled, read by `imports.rs`'s entry-sibling peer-merge.
+///
+/// Why this exists (in addition to inferring "is the entry itself `_slow`"
+/// from its filename, which alone handles the SlowLane-based walker's
+/// `SlowLane::Only` grouping — see `walk_nv_filtered_ex` — used only by
+/// `nova check`/internal tests): `nova test`'s actual walker,
+/// `walk_nv_selected`, groups a folder-module's peers (co-equal `.nv` files
+/// declaring the same `module X`, e.g. nova-tls's `src/` root-peers) into
+/// ONE compile-unit represented by a SINGLE alphabetically-first file —
+/// `_slow`/non-`_slow` status of individual peers never changes WHICH file
+/// is picked as that representative, only whether `_slow` peers are even
+/// eligible to join the group's candidate pool. So for a folder-module, the
+/// picked representative is (almost) never itself `_slow`, and a
+/// per-entry-filename check alone would mean `--slow`/`--include-slow` can
+/// never actually pull a folder-module's `_slow` peers into its CU. This
+/// flag is the run-level signal that closes that gap: when the whole test
+/// run opted into slow tests, ANY folder-module's peer-merge — not just one
+/// whose representative happens to be `_slow` — includes its `_slow`
+/// siblings too.
+static TEST_RUN_INCLUDE_SLOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Set once by `run_all` before test compilation starts. Thread-safe process
+/// global — `nova test` compiles every selected entry within ONE process
+/// (worker threads, not subprocesses), and `include_slow` is a single
+/// run-wide decision from CLI flags, so a plain `AtomicBool` (no per-file
+/// variance) is the correct, minimal mechanism — no need to thread a new
+/// parameter through `codegen_to_c` and its many non-test callers (`nova
+/// build`/`nova check`/IDE tooling), none of which have any notion of
+/// "slow" at all.
+pub fn set_test_run_include_slow(v: bool) {
+    TEST_RUN_INCLUDE_SLOW.store(v, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Read by `imports.rs`'s entry-sibling peer-merge predicate.
+pub fn test_run_include_slow() -> bool {
+    TEST_RUN_INCLUDE_SLOW.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Plan 156: per-file slow-test suffix. A test file whose stem ends in
 /// `_slow` (e.g. `collation_conformance_slow.nv`) is a large/slow test,
 /// excluded from the default run, included only via --include-slow/--slow-only.
@@ -5250,6 +5291,12 @@ fn save_results(path: &Path, records: &[ResultRecord]) -> std::io::Result<()> {
 pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
     // Plan 26 Ф.13: install Ctrl+C handler один раз.
     install_cancel_handler();
+
+    // [M-d376-slow-suffix-folder-module-peer-merge]: latch the run-wide
+    // slow-inclusion decision BEFORE any entry is walked/compiled — see
+    // `set_test_run_include_slow`'s doc-comment for why this is needed in
+    // addition to the entry-itself-is-`_slow` check.
+    set_test_run_include_slow(opts.selection.include_slow);
 
     // Plan 27 Ф.D (audit 2026-05-12): early Boehm detection с graceful exit
     // если backend = Boehm и gc.lib/libgc не найден. Без этого юзер получает

@@ -784,19 +784,25 @@ pub fn resolve_imports_inline_ex(
     {
         let entry_canon = entry_path.canonicalize().ok();
         let target = current_target_os();
-        // [M-d376-slow-suffix-folder-module-peer-merge]: is the entry ITSELF
-        // a `_slow` file (i.e. this compile-unit was picked by
-        // `--include-slow`/`--slow-only`)? If so its own module peers merge
-        // exactly as before this fix — including other `_slow` siblings. If
-        // the entry is a plain (non-`_slow`) file, `_slow` siblings must be
-        // excluded here or D376's slow-lane is defeated for folder-modules:
-        // a `_slow.nv` peer's `Item::Test` would otherwise be merged into —
-        // and run as part of — every other entry's default `nova test` CU.
+        // [M-d376-slow-suffix-folder-module-peer-merge]: `_slow` siblings
+        // merge iff EITHER (a) the entry ITSELF is a `_slow` file (the shape
+        // `nova check`'s SlowLane-based walker / internal tests use for a
+        // dedicated slow-only group), OR (b) the whole `nova test` run
+        // opted into slow tests (`--slow`/`--include-slow`) — needed
+        // because `nova test`'s actual walker (`walk_nv_selected`) groups a
+        // folder-module's peers under ONE alphabetically-first
+        // representative regardless of slow/non-slow composition, so that
+        // representative is (almost) never itself `_slow`; see
+        // `test_run_include_slow`'s doc-comment for the full reasoning.
+        // Otherwise (plain `nova test`, no slow flag) `_slow` siblings are
+        // excluded — a `_slow.nv` peer's `Item::Test` would otherwise be
+        // merged into, and run as part of, every other entry's default CU.
         let entry_is_slow = entry_path
             .file_stem()
             .and_then(|s| s.to_str())
             .map(crate::test_runner::is_slow_file_stem)
-            .unwrap_or(false);
+            .unwrap_or(false)
+            || crate::test_runner::test_run_include_slow();
         if let Ok(entries) = std::fs::read_dir(&entry_dir) {
             let mut sib_paths: Vec<PathBuf> = entries
                 .filter_map(|e| e.ok())
