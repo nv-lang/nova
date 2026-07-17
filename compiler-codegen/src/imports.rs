@@ -784,6 +784,25 @@ pub fn resolve_imports_inline_ex(
     {
         let entry_canon = entry_path.canonicalize().ok();
         let target = current_target_os();
+        // [M-d376-slow-suffix-folder-module-peer-merge]: `_slow` siblings
+        // merge iff EITHER (a) the entry ITSELF is a `_slow` file (the shape
+        // `nova check`'s SlowLane-based walker / internal tests use for a
+        // dedicated slow-only group), OR (b) the whole `nova test` run
+        // opted into slow tests (`--slow`/`--include-slow`) — needed
+        // because `nova test`'s actual walker (`walk_nv_selected`) groups a
+        // folder-module's peers under ONE alphabetically-first
+        // representative regardless of slow/non-slow composition, so that
+        // representative is (almost) never itself `_slow`; see
+        // `test_run_include_slow`'s doc-comment for the full reasoning.
+        // Otherwise (plain `nova test`, no slow flag) `_slow` siblings are
+        // excluded — a `_slow.nv` peer's `Item::Test` would otherwise be
+        // merged into, and run as part of, every other entry's default CU.
+        let entry_is_slow = entry_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(crate::test_runner::is_slow_file_stem)
+            .unwrap_or(false)
+            || crate::test_runner::test_run_include_slow();
         if let Ok(entries) = std::fs::read_dir(&entry_dir) {
             let mut sib_paths: Vec<PathBuf> = entries
                 .filter_map(|e| e.ok())
@@ -801,16 +820,11 @@ pub fn resolve_imports_inline_ex(
                 })
                 .filter(|p| {
                     // Mirror `resolve_module_paths` peer filters: `_test`
-                    // peers only in test mode; OS-suffix peers only for the
+                    // peers only in test mode; `_slow` peers only when the
+                    // entry itself is `_slow`; OS-suffix peers only for the
                     // current target.
                     if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                        let core = stem.strip_suffix("_test").unwrap_or(stem);
-                        if !include_test_peers && core != stem {
-                            return false;
-                        }
-                        if !peer_active_for_target(core, target) {
-                            return false;
-                        }
+                        return peer_file_included(stem, include_test_peers, entry_is_slow, target);
                     }
                     true
                 })
@@ -2067,8 +2081,13 @@ pub fn is_folder_module_peer(path: &Path) -> bool {
                     return false;
                 }
                 if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                    let core_stem = stem.strip_suffix("_test").unwrap_or(stem);
-                    if !peer_active_for_target(core_stem, target) {
+                    // [M-d376-slow-suffix-folder-module-peer-merge]: peel
+                    // `_slow` too (canonical order) before the OS-target
+                    // check — this detector never gated on test/slow mode,
+                    // only classifies peer-group membership, so `_test` and
+                    // `_slow` peers both stay unconditionally in scope here;
+                    // only the OS-suffix classification needed the fix.
+                    if !peer_active_for_target(peer_core_stem(stem), target) {
                         return false;
                     }
                 }
@@ -2169,11 +2188,14 @@ fn collect_root_peers(
                 return false;
             }
             if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                let core_stem = stem.strip_suffix("_test").unwrap_or(stem);
-                if !include_test_peers && core_stem != stem {
-                    return false;
-                }
-                if !peer_active_for_target(core_stem, target) {
+                // [M-d376-slow-suffix-folder-module-peer-merge]: this
+                // collects root-peers for an IMPORTED package (never for
+                // compiling that package's own entry — that path is the
+                // separate entry-sibling scan in `resolve_imports_inline_ex`,
+                // which has its own `_slow`-aware predicate) — so `_slow`
+                // peers are always excluded here, same as `include_test_peers
+                // = false` would exclude `_test` peers.
+                if !peer_file_included(stem, include_test_peers, false, target) {
                     return false;
                 }
             }
@@ -2377,6 +2399,65 @@ fn peer_active_for_target(stem: &str, target: &str) -> bool {
         Some("unix") | Some("posix") => target == "linux" || target == "macos" || target == "unix",
         Some(_) => true,
     }
+}
+
+/// [M-d376-slow-suffix-folder-module-peer-merge]: shared peer-inclusion
+/// predicate. Every folder/root-peer scan in this file used to re-derive
+/// the same `_test`-strip + OS-target check inline (5 call sites) and NONE
+/// of them knew about D376's `_slow` suffix — a `*_slow.nv` peer sitting
+/// beside a folder-module (co-equal peer files, e.g. nova-tls's `src/`
+/// root-peers) was pulled into every other entry's compile-unit and its
+/// `Item::Test` ran on every plain `nova test`, defeating the slow-lane
+/// entirely for folder-modules (the discovery walker,
+/// `test_runner::walk_nv_filtered_ex`, already excludes `_slow` entries
+/// correctly — this predicate is the peer-merge-side counterpart, reusing
+/// `test_runner::is_slow_file_stem` as the single source of truth for what
+/// "_slow" means rather than re-deriving it here).
+///
+/// Peels suffixes in the canonical outermost-to-innermost order
+/// `<core>[_<os>][_test][_slow]` (`_slow` peeled FIRST, matching
+/// `walk_nv_filtered_ex`), then `_test`, then resolves the OS-suffix on
+/// whatever core remains.
+///
+/// - `include_test_peers`: Plan 42 правило F gate for `_test`-suffixed peers.
+/// - `include_slow_peers`: D376 gate for `_slow`-suffixed peers. Pass `true`
+///   only when the CU's own entry file is itself `_slow` (its module peers
+///   then merge exactly as before this fix — "peers merge as usual"); pass
+///   `false` for every *import/library* resolution path (a `_slow` file is
+///   a self-contained slow-lane entry, never a legitimate dependency of
+///   someone else's compile-unit).
+///
+/// Peel both the `_slow` (outermost) and `_test` peer suffixes, in the
+/// canonical order, leaving `core[_<os>]` — the part `peer_active_for_target`
+/// classifies. Factored out of [`peer_file_included`] so call sites that
+/// classify peer-group *membership* unconditionally (e.g.
+/// `is_folder_module_peer`, which never gated on test/slow mode) can reach
+/// the correctly-peeled core for the OS-suffix check without adopting
+/// `peer_file_included`'s inclusion/exclusion gating. Fixes a latent gap
+/// found alongside D376: an OS-suffixed slow file (`repro_windows_slow.nv`)
+/// previously reached `peer_active_for_target` with `_slow` still attached
+/// (only `_test` was stripped), so `_windows`/`_linux`/etc gating silently
+/// no-op'd for any peer combining an OS suffix with `_slow`.
+fn peer_core_stem(stem: &str) -> &str {
+    let stem_no_slow = crate::test_runner::strip_slow_suffix(stem);
+    stem_no_slow.strip_suffix("_test").unwrap_or(stem_no_slow)
+}
+
+/// Returns `true` iff the peer should be INCLUDED in the scan.
+fn peer_file_included(
+    stem: &str,
+    include_test_peers: bool,
+    include_slow_peers: bool,
+    target: &str,
+) -> bool {
+    let stem_no_slow = crate::test_runner::strip_slow_suffix(stem);
+    if !include_slow_peers && stem_no_slow != stem {
+        return false;
+    }
+    if !include_test_peers && stem_no_slow.strip_suffix("_test").unwrap_or(stem_no_slow) != stem_no_slow {
+        return false;
+    }
+    peer_active_for_target(peer_core_stem(stem), target)
 }
 
 /// Plan 42 Ф.2: resolve module to **list** of peer files (folder-module)
@@ -3042,14 +3123,13 @@ fn resolve_module_paths(
                                 && p != &single_file
                         })
                         .filter(|p| {
+                            // [M-d376-slow-suffix-folder-module-peer-merge]:
+                            // external import resolve (per comment above) —
+                            // never the entry-sibling scan — so `_slow`
+                            // peers are always excluded, same treatment as
+                            // `_test` peers in build mode.
                             if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                                let core = stem.strip_suffix("_test").unwrap_or(stem);
-                                if !include_test_peers && core != stem {
-                                    return false;
-                                }
-                                if !peer_active_for_target(core, target) {
-                                    return false;
-                                }
+                                return peer_file_included(stem, include_test_peers, false, target);
                             }
                             true
                         })
@@ -3073,6 +3153,12 @@ fn resolve_module_paths(
             // Plan 42 правило F: filter `*_test.nv` peers если
             // !include_test_peers (build mode).
             // Plan 42.12 Ф.1: filter peers по filename suffix vs current target.
+            // [M-d376-slow-suffix-folder-module-peer-merge]: this resolves an
+            // IMPORTED folder-module (`import X.Y` style) — external
+            // consumer, never the package's own compile-entry (that's the
+            // entry-sibling scan in `resolve_imports_inline_ex`) — so
+            // `_slow` peers are always excluded, mirroring how `_test` peers
+            // are excluded in build mode.
             let target = current_target_os();
             let entries = match std::fs::read_dir(&folder) {
                 Ok(e) => e,
@@ -3089,18 +3175,7 @@ fn resolve_module_paths(
                         return false;
                     }
                     if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                        // Strip `_test` suffix first для test-peer filter.
-                        let core_stem = stem.strip_suffix("_test").unwrap_or(stem);
-                        if !include_test_peers && core_stem != stem {
-                            // `_test` peer, build mode → skip.
-                            return false;
-                        }
-                        // Target filter: применяем к stem БЕЗ `_test` suffix'а
-                        // (чтобы `tls_windows_test.nv` правильно ассоциировался
-                        // с windows target).
-                        if !peer_active_for_target(core_stem, target) {
-                            return false;
-                        }
+                        return peer_file_included(stem, include_test_peers, false, target);
                     }
                     true
                 })
@@ -3528,6 +3603,130 @@ mod entry_folder_module_tests {
         assert!(
             fn_names.contains("c_fn"),
             "c's REAL c_fn merged via root's [replace] override, not b's broken declared path"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// [M-d376-slow-suffix-folder-module-peer-merge]: symmetric counterpart
+    /// of `entry_folder_module_collects_siblings_with_per_peer_isolation`
+    /// for D376's `_slow` suffix. A `*_slow.nv` peer sitting beside a
+    /// folder-module (co-equal peer files, e.g. nova-tls's `src/`
+    /// root-peers) must NOT be merged into a plain (non-`_slow`) entry's
+    /// compile-unit — before this fix, the entry-sibling scan only knew
+    /// about `_test`, so a `_slow` peer's items (and its `Item::Test`, were
+    /// it a test) were pulled into every other entry in the same
+    /// folder-module and effectively ran on every default `nova test`,
+    /// defeating the slow-lane (Plan 156 D376) for folder-modules — the
+    /// discovery walker (`test_runner::walk_nv_filtered_ex`,
+    /// `plan156_slow_lane_tests::walk_nv_filtered_slow_lanes`) already
+    /// excluded `_slow` correctly; only this peer-merge side lagged.
+    #[test]
+    fn entry_folder_module_excludes_slow_peer_for_non_slow_entry() {
+        let root = unique_tmp("d376a");
+        let proj = root.join("proj");
+        let app = proj.join("m").join("app.nv");
+        let helper = proj.join("m").join("helper.nv");
+        let helper_slow = proj.join("m").join("helper_slow.nv");
+
+        write_file(&app, "module m\n\nfn main() -> int => 0\n");
+        write_file(&helper, "module m\n\nfn helper() -> int => 1\n");
+        write_file(
+            &helper_slow,
+            "module m\n\nfn heavy_slow_check() -> int => 2\n",
+        );
+
+        let src = std::fs::read_to_string(&app).expect("read entry");
+        let mut module = parser::parse(&src).expect("entry parses");
+        let stdlib = root.join("no_stdlib");
+
+        resolve_imports_inline_ex(&app, &mut module, &proj, &stdlib, false)
+            .expect("non-slow entry resolves");
+
+        let entry_peers: Vec<&PeerFile> = module
+            .peer_files
+            .iter()
+            .filter(|p| p.is_entry_module)
+            .collect();
+        assert_eq!(
+            entry_peers.len(),
+            2,
+            "expected entry + helper.nv ONLY — helper_slow.nv must be excluded, got {:?}",
+            entry_peers.iter().map(|p| p.path.clone()).collect::<Vec<_>>()
+        );
+        assert!(
+            !entry_peers.iter().any(|p| p.path.ends_with("helper_slow.nv")),
+            "helper_slow.nv must NOT be registered as a peer of a non-slow entry"
+        );
+
+        let fn_names: HashSet<String> = module
+            .items
+            .iter()
+            .filter_map(|it| match it {
+                Item::Fn(f) => Some(f.name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(fn_names.contains("helper"), "normal sibling still merges");
+        assert!(
+            !fn_names.contains("heavy_slow_check"),
+            "`_slow` sibling's items must NOT be merged into a non-slow entry's CU \
+             (this is the D376 peer-merge bug: a slow peer used to be compiled AND \
+             run on every ordinary `nova test`)"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// [M-d376-slow-suffix-folder-module-peer-merge]: when the compiled
+    /// entry is ITSELF a `_slow` file (the shape a `--include-slow` /
+    /// `--slow-only` run compiles), its own module peers — including OTHER
+    /// `_slow` siblings — merge exactly as before this fix ("peers merge as
+    /// usual"); the exclusion in the sibling test above applies only when a
+    /// `_slow` file is a peer of SOMEONE ELSE'S (non-slow) entry.
+    #[test]
+    fn entry_folder_module_includes_slow_peers_when_entry_is_itself_slow() {
+        let root = unique_tmp("d376b");
+        let proj = root.join("proj");
+        let app_slow = proj.join("m").join("app_slow.nv");
+        let helper = proj.join("m").join("helper.nv");
+        let other_slow = proj.join("m").join("other_slow.nv");
+
+        write_file(&app_slow, "module m\n\nfn main() -> int => 0\n");
+        write_file(&helper, "module m\n\nfn helper() -> int => 1\n");
+        write_file(&other_slow, "module m\n\nfn other_task() -> int => 2\n");
+
+        let src = std::fs::read_to_string(&app_slow).expect("read entry");
+        let mut module = parser::parse(&src).expect("entry parses");
+        let stdlib = root.join("no_stdlib");
+
+        resolve_imports_inline_ex(&app_slow, &mut module, &proj, &stdlib, false)
+            .expect("slow entry resolves");
+
+        let entry_peers: Vec<&PeerFile> = module
+            .peer_files
+            .iter()
+            .filter(|p| p.is_entry_module)
+            .collect();
+        assert_eq!(
+            entry_peers.len(),
+            3,
+            "slow entry must collect ALL module peers incl. other _slow siblings, got {:?}",
+            entry_peers.iter().map(|p| p.path.clone()).collect::<Vec<_>>()
+        );
+
+        let fn_names: HashSet<String> = module
+            .items
+            .iter()
+            .filter_map(|it| match it {
+                Item::Fn(f) => Some(f.name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(fn_names.contains("helper"), "normal sibling merges");
+        assert!(
+            fn_names.contains("other_task"),
+            "another `_slow` sibling merges normally when the entry itself is `_slow`"
         );
 
         let _ = std::fs::remove_dir_all(&root);
