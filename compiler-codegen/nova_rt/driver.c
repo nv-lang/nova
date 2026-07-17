@@ -346,7 +346,31 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
 
     NovaFiberQueue* sc = st->scope;
     int sl = st->slot;
-    mco_coro* actual_co = (sc && sl >= 0 && sl < sc->count) ? sc->fibers[sl] : NULL;
+    /* [M-mn-spawnctx-corruption-cancel-wake] fix (Plan 211 family): ACQUIRE-load
+     * `count` BEFORE indexing `fibers[]`. This driver-thread read raced against
+     * the WORKER thread's nova_scope_grow (fibers.h) — an unsynchronized
+     * realloc-style swap of the `fibers`/`fiber_ctx`/... array pointers, run
+     * under the worker's `slot_lock`, which is invisible to THIS unlocked
+     * cross-thread reader. Under a shower of concurrent spawns (e.g. 2000
+     * fibers all racing array growth while a 30ms sleep's close_cb already
+     * fires on the driver thread), a plain (non-atomic) read of `sc->count`
+     * has no happens-before edge with the grow's plain store of `sc->fibers`
+     * — this thread could observe a FRESH (post-grow) `count` alongside a
+     * STALE (pre-grow, since-abandoned, smaller) `fibers` array pointer,
+     * indexing `sl` past that old buffer's bounds into adjacent heap memory
+     * (gdb: `_nova_fiber_scope`/free-list garbage matches exactly this OOB
+     * read). Mirrors the ALREADY-CORRECT pattern used by
+     * nova_runtime_worker_pump_scope's cancel-delivery path (runtime.c):
+     * "ACQUIRE-load on count pairs with the RELEASE-store in
+     * nova_scope_alloc_slot, ensuring we see fibers[slot]=co when we observe
+     * count=slot+1" — that site had it right; this one didn't. The RELEASE
+     * store on `scope->count` (nova_scope_alloc_slot, fibers.h) happens
+     * program-order-after nova_scope_grow's array-pointer writes on the
+     * worker thread, so an ACQUIRE-load here that observes `sl < sc_count`
+     * is guaranteed to also observe the fully-grown, correctly-sized
+     * `fibers` array — no OOB read possible. */
+    int sc_count = sc ? __atomic_load_n(&sc->count, __ATOMIC_ACQUIRE) : 0;
+    mco_coro* actual_co = (sc && sl >= 0 && sl < sc_count) ? sc->fibers[sl] : NULL;
 
     if (actual_co != st->expected_co) {
         /* WRONG-FIBER: scope->fibers[slot] does not match expected_co.
