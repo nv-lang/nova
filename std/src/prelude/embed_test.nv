@@ -108,3 +108,49 @@ test "EmbeddedDir.new panics on duplicate path (сортировка требу�
         EmbeddedEntry { path: "dup", data: two },
     ])
 }
+
+// --- Plan 210 Ф.7.4 (Go-паритет+, 2026-07-17): @merge -----------------
+
+test "merge — отсортированная склейка двух непересекающихся EmbeddedDir" {
+    ro a_bytes []u8 = [1]
+    ro b_bytes []u8 = [2]
+    ro c_bytes []u8 = [3]
+    ro d_bytes []u8 = [4]
+    ro left = EmbeddedDir.new([
+        EmbeddedEntry { path: "a.txt", data: a_bytes },
+        EmbeddedEntry { path: "c.txt", data: c_bytes },
+    ])
+    ro right = EmbeddedDir.new([
+        EmbeddedEntry { path: "b.txt", data: b_bytes },
+        EmbeddedEntry { path: "d.txt", data: d_bytes },
+    ])
+    ro merged = left.merge(right)
+    assert(merged.len() == 4)
+    assert(merged.paths() == ["a.txt", "b.txt", "c.txt", "d.txt"])
+    assert(merged.get("a.txt") == Some(a_bytes))
+    assert(merged.get("b.txt") == Some(b_bytes))
+    assert(merged.get("c.txt") == Some(c_bytes))
+    assert(merged.get("d.txt") == Some(d_bytes))
+}
+
+test "merge — один вход пуст (обе стороны: left-empty, right-empty)" {
+    ro x_bytes []u8 = [9]
+    ro non_empty = EmbeddedDir.new([EmbeddedEntry { path: "x.txt", data: x_bytes }])
+    ro empty = EmbeddedDir.new([])
+
+    ro merged_left_empty = empty.merge(non_empty)
+    assert(merged_left_empty.len() == 1)
+    assert(merged_left_empty.paths() == ["x.txt"])
+
+    ro merged_right_empty = non_empty.merge(empty)
+    assert(merged_right_empty.len() == 1)
+    assert(merged_right_empty.paths() == ["x.txt"])
+}
+
+test "merge panics on a path present in both directories" panics "duplicate" {
+    ro one []u8 = [1]
+    ro two []u8 = [2]
+    ro left = EmbeddedDir.new([EmbeddedEntry { path: "shared.txt", data: one }])
+    ro right = EmbeddedDir.new([EmbeddedEntry { path: "shared.txt", data: two }])
+    left.merge(right)
+}

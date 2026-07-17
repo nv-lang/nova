@@ -13,6 +13,12 @@
 // nova_blob_*[]` (.rodata), БЕЗ копии. Эта декларация НЕ меняет emit_c —
 // `EmbeddedDir.new`/`@get`/`@paths`/`@len`/`@has`/`@entries` — обычные
 // Nova-методы (static dispatch), типы выводятся штатно.
+//
+// Plan 210 Ф.7.4 (Go-паритет+, 2026-07-17, D412-амендмент): `@merge` —
+// чистая Nova-body функция (0 правок компилятора), сливающая два
+// EmbeddedDir в один (отсортированная склейка, panic на дубль пути).
+// `glob:`/`hidden:` (Ф.7.1/Ф.7.3) и `embed_str` (Ф.7.2) — резолвер-стороннее
+// расширение (`embed_resolve.rs`), не касается ЭТОГО файла.
 
 module prelude.embed
 
@@ -93,4 +99,42 @@ export fn EmbeddedDir @get(path str) -> Option[[]u8] {
         if c < 0 { lo = mid + 1 } else { hi = mid }
     }
     None
+}
+
+/// Plan 210 Ф.7.4 (Go-паритет+, 2026-07-17): слить `self` с `other` в один
+/// новый `EmbeddedDir` — отсортированная склейка двух уже отсортированных
+/// таблиц (O(N+M) merge, как шаг mergesort), НЕ конкатенация+пересорт.
+/// Совпадающий путь в ОБОИХ входах — `panic` (тот же контракт, что
+/// `EmbeddedDir.new` на несортированном/дублирующемся входе — конфликт двух
+/// встроенных деревьев с одинаковым относительным путём это программная
+/// ошибка автора, а не runtime-случай "взять любую из версий"). Типичный
+/// кейс: `embed_dir("frontend").merge(embed_dir("generated_assets"))` —
+/// собрать один `EmbeddedDir` из НЕСКОЛЬКИХ каталогов встраивания.
+export fn EmbeddedDir @merge(other EmbeddedDir) -> EmbeddedDir {
+    ro a = @entries
+    ro b = other.entries()
+    mut out []EmbeddedEntry = []
+    mut i = 0
+    mut j = 0
+    while i < a.len() && j < b.len() {
+        ro c = a[i].path.compare(b[j].path)
+        if c < 0 {
+            out.push(a[i])
+            i = i + 1
+        } else if c > 0 {
+            out.push(b[j])
+            j = j + 1
+        } else {
+            panic("EmbeddedDir.merge: duplicate path `" + a[i].path + "` present in both directories")
+        }
+    }
+    while i < a.len() {
+        out.push(a[i])
+        i = i + 1
+    }
+    while j < b.len() {
+        out.push(b[j])
+        j = j + 1
+    }
+    EmbeddedDir.new(out)
 }
