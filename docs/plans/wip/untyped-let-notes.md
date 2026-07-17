@@ -62,9 +62,34 @@ Worktree: `d:/Sources/nv-lang/nova-untypedlet`, ветка `p-fix-untyped-let-ch
 - annotated (`ro mapped []int = ...`) — был GREEN (контроль, не трогали),
   остался GREEN.
 
-## Дальше по плану
+## Дальше по плану — ЗАКРЫТО
 
-- nova_tests/generics/mono_basic (plan101_1_vec_chained.nv:20 my_filter_ch)
-- spec_tests/conformance/v3_user_generic_newtype_ok.nv (chained .debug/.display)
-- δ0 std/src/collections + checksums + char_test/sync_test пины
-- пин-фикстура standalone в conformance
+- `nova check nova_tests/generics/mono_basic.nv` (несёт `plan101_1_vec_chained.nv:20`
+  `my_filter_ch`) — GREEN. Полный `nova test` на этой folder-module остаётся
+  CODEGEN-FAIL, но по ДРУГОЙ orthogonal причине: co-equal-пир
+  `plan101_1_vec_map_int_str.nv` зовёт ретрактированный (Plan 174.2) `str.from(x)`.
+  Пробовал тривиально мигрировать на `.to_str()` — вскрыло ЕЩЁ один, глубже и не
+  связанный с этим маркером codegen-баг (byte/str confusion в generic-closure-теле,
+  `Nova_Vec____nova_byte*` вместо `nova_str`) — правку ОТКАТИЛ, файл не трогал,
+  вне объёма этой волны.
+- ВАЖНАЯ ПОПРАВКА: "v3_user_generic_newtype_ok.nv (chained .debug/.display на
+  Vec[f32].from)" из исходного задания — МИСАТРИБУЦИЯ. Реальный файл
+  `v3_user_generic_newtype_ok.nv` не содержит такого контента вообще (только
+  newtype-тесты, коммит 99f0021f9 был чисто unsafe-обёрточной гигиеной). Текст
+  "chained .debug/.display на Vec[f32]" на самом деле принадлежит
+  `spec_tests/conformance/vec_f32_chained_debug.nv` — но ЭТО отдельный,
+  уже триажированный P1-маркер `[M-208-vec-chained-debug-display-red]`
+  ("208-волна", Vec Fmt-миграция), НЕ пересекается корнем с этим фиксом
+  (codegen Display/Debug-диспетч, не checker E7320/method-registration).
+  Прогнал его с моим фиксом — остаётся RED (ожидаемо, не в моей зоне, не трогал).
+- δ0 GREEN: `std/src/collections` (vec_seq.nv, реальный прод-риск),
+  `std/src/checksums/{adler32,crc32,fnv}_test.nv`,
+  `std/src/runtime/{char,sync}_test.nv`.
+- Пин-фикстура standalone в conformance:
+  `spec_tests/conformance/vec_ext_method_untyped_let_chain_ok.nv` (реальные
+  `std.collections.vec_seq.map/filter`) — верифицирована через изолированную
+  module-renamed копию (spec_tests/conformance — ОДИН CU, любой файл внутри
+  тянет весь каталог; приём уже задокументирован в M-208-generic-interp-
+  display-dispatch-gap записи simplifications.md) — PASS 1/0.
+- Маркер закрыт: `docs/plans/backlog-followups.md` + `docs/simplifications.md`.
+- Коммиты: `7f397016f` (фикс + чекпоинт), `d13c24e0a` (пин-фикстура + docs).
