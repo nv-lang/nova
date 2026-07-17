@@ -2872,6 +2872,20 @@ pub const CONV_RULES: &[ConvRule] = &[
         ast: Some(conv_redundant_of),
         text: None,
     },
+    ConvRule {
+        id: "W_NON_COMPOUND_ASSIGN",
+        summary: "`x = x OP e` при существующем компаунде `x OP= e` \
+                  (`+=`/`-=`/`*=`/`/=` — nv-coding-style §29)",
+        ast: Some(conv_non_compound_assign),
+        text: None,
+    },
+    ConvRule {
+        id: "W_WHILE_COUNTER_FOR_RANGE",
+        summary: "счётчиковый `while i < end { ...; i += 1 }` — канон \
+                  `for i in start..end` (nv-coding-style §10)",
+        ast: Some(conv_while_counter_for_range),
+        text: None,
+    },
 ];
 
 /// id всех правил реестра (для валидации `--rule` и `--list-rules`).
@@ -3096,6 +3110,31 @@ fn conv_ty_last_name(tr: &TypeRef) -> Option<&str> {
         path.last().map(String::as_str)
     } else {
         None
+    }
+}
+
+/// Каноническая строка-идентичность «простого места» (lvalue без побочных
+/// эффектов у receiver'а): голый `ident`, `@` (self), либо цепочка полей
+/// `obj.field`/`@field`/`@a.b` НАД такой же базой. `None` для всего
+/// остального (Index, Call, произвольные выражения) — используется В ОБОИХ
+/// направлениях: как «легальная LHS-форма» (гейт на побочные эффекты) И как
+/// синтаксическое сравнение LHS/RHS-операнда (двух мест на строковое
+/// равенство, W_NON_COMPOUND_ASSIGN / W_WHILE_COUNTER_FOR_RANGE).
+fn conv_place_key(e: &Expr) -> Option<String> {
+    match &e.kind {
+        ExprKind::Ident(n) => Some(n.clone()),
+        ExprKind::SelfAccess => Some("@".to_string()),
+        ExprKind::Member { obj, name } => {
+            let base = conv_place_key(obj)?;
+            // `@field` (self) — БЕЗ разделительной точки (Nova-синтаксис
+            // самого поля, `@x`, не `@.x`); дальше вглубь (`@a.b`) — точка.
+            if base == "@" {
+                Some(format!("@{name}"))
+            } else {
+                Some(format!("{base}.{name}"))
+            }
+        }
+        _ => None,
     }
 }
 
@@ -3927,16 +3966,23 @@ fn conv_immutable_rebuild_setter(m: &Module, _o: &ConvLintOptions, out: &mut Vec
 // точно строковая). `n += 1` и числовые аккумуляторы не флагуются.
 // ---------------------------------------------------------------------------
 
-fn conv_str_concat_loop(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
-    fn is_stringish(e: &Expr) -> bool {
-        match &e.kind {
-            ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => true,
-            ExprKind::Binary { op: crate::ast::BinOp::Add, left, right } => {
-                is_stringish(left) || is_stringish(right)
-            }
-            _ => false,
+/// `true`, если `e` синтаксически «строкоподобно» — литерал/интерполяция,
+/// или `+`-конкатенация, у которой хотя бы один операнд строкоподобен.
+/// File-scope (не только `conv_str_concat_loop`): используется ТАКЖЕ
+/// `conv_non_compound_assign` для дедупа с этим правилом (один и тот же
+/// сайт `buf = buf + "..."` в цикле не должен получить оба warning'а —
+/// канон там StringBuilder, здесь — просто `+=`).
+fn conv_is_stringish(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => true,
+        ExprKind::Binary { op: crate::ast::BinOp::Add, left, right } => {
+            conv_is_stringish(left) || conv_is_stringish(right)
         }
+        _ => false,
     }
+}
+
+fn conv_str_concat_loop(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
     for f in conv_all_fns(m) {
         conv_walk_fn(
             f,
@@ -3948,15 +3994,15 @@ fn conv_str_concat_loop(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarn
                 let ExprKind::Ident(tname) = &target.kind else { return };
                 let flagged = match op {
                     // `buf += "..."` / `buf += "${x}"`.
-                    crate::ast::AssignOp::Add => is_stringish(value),
+                    crate::ast::AssignOp::Add => conv_is_stringish(value),
                     // `buf = buf + x` где участвует строковый литерал/интерп.
                     crate::ast::AssignOp::Assign => {
                         matches!(&value.kind,
                             ExprKind::Binary { op: crate::ast::BinOp::Add, left, right }
-                                if is_stringish(left) || is_stringish(right)
+                                if conv_is_stringish(left) || conv_is_stringish(right)
                                     || matches!(&left.kind, ExprKind::Ident(l) if l == tname)
-                                        && is_stringish(right))
-                            && is_stringish(value)
+                                        && conv_is_stringish(right))
+                            && conv_is_stringish(value)
                     }
                     _ => false,
                 };
@@ -3978,6 +4024,544 @@ fn conv_str_concat_loop(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarn
             },
             &mut |_e, _| {},
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_NON_COMPOUND_ASSIGN — `x = x OP e` там, где Nova поддерживает компаунд-
+// форму `x OP= e` (nv-coding-style §29). Компаунд-операторы Nova — ТОЛЬКО
+// `+=`/`-=`/`*=`/`/=` (`AssignOp` — варианты `Add`/`Sub`/`Mul`/`Div`; НЕТ
+// `Mod`, НЕТ битовых — парсер лексирует лишь эти четыре compound-токена,
+// `%=`/`&=`/`|=`/`^=`/`<<=`/`>>=` в языке не существуют, ср. emit_c.rs
+// комментарий у `checked_helper` — «НЕТ `%=` в языке»). Правило флагует
+// РОВНО эти четыре бинарных оператора; `x = x % e` и битовые — молчит (нет
+// компаунда, предлагать нечего).
+//
+// LHS ограничен «простым местом» без побочных эффектов у receiver'а — голый
+// `ident` / `@field` / цепочка полей поверх них (`conv_place_key`). Index-
+// места (`x[i] = x[i] + e`) НАМЕРЕННО исключены: компаунд-присваивание на
+// Index-таргете (`x[i] += e`) в кодогене идёт ДРУГИМ путём, чем `x[i] = v`
+// (emit_c.rs Stmt::Assign — ветки bounds-checked Vec-write / struct-value
+// memcpy-write / fixed-array-write гейтятся `if *op == AssignOp::Assign`
+// буквально, `+=`/`-=`/… на Index падают в общий `emit_expr(target)`
+// fallback, НЕ через эти проверенные ветки) — легальность/корректность
+// компаунда по индексу для нескалярных элементов не подтверждена, поэтому
+// НЕ флагуем (правило консервативно — «не уверен → молчи»).
+//
+// НЕ дублирует W_STR_CONCAT_LOOP: тот же сайт (в цикле, `+`, строкоподобный
+// RHS) там уже флагуется — канон там StringBuilder, не `+=`; здесь молчит.
+// ---------------------------------------------------------------------------
+
+/// Компаунд-эквивалент бинарного оператора — `Some` ТОЛЬКО для четырёх
+/// существующих в Nova компаунд-форм (`Add`/`Sub`/`Mul`/`Div`).
+fn conv_binop_to_compound(op: crate::ast::BinOp) -> Option<&'static str> {
+    use crate::ast::BinOp;
+    match op {
+        BinOp::Add => Some("+="),
+        BinOp::Sub => Some("-="),
+        BinOp::Mul => Some("*="),
+        BinOp::Div => Some("/="),
+        _ => None,
+    }
+}
+
+fn conv_non_compound_assign(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    for f in conv_all_fns(m) {
+        conv_walk_fn(
+            f,
+            &mut |s, in_loop| {
+                let Stmt::Assign { target, op: crate::ast::AssignOp::Assign, value, span } = s
+                else {
+                    return;
+                };
+                let Some(target_key) = conv_place_key(target) else { return };
+                let ExprKind::Binary { op: bin_op, left, .. } = &value.kind else { return };
+                let Some(compound) = conv_binop_to_compound(*bin_op) else { return };
+                let Some(left_key) = conv_place_key(left) else { return };
+                if left_key != target_key {
+                    return;
+                }
+                // Дедуп с W_STR_CONCAT_LOOP (только эта ветка того правила
+                // формально пересекается — она тоже гейтит `op == Assign`).
+                if in_loop
+                    && matches!(bin_op, crate::ast::BinOp::Add)
+                    && conv_is_stringish(value)
+                {
+                    return;
+                }
+                let symbol = compound.trim_end_matches('=');
+                out.push(LintWarning {
+                    rule: "W_NON_COMPOUND_ASSIGN",
+                    diag: Diagnostic::new(
+                        format!(
+                            "`{p} = {p} {sym} ...` повторяет LHS в RHS — Nova поддерживает \
+                             компаунд `{p} {cmp} ...`: короче и не рискует рассинхроном \
+                             LHS/RHS-аккумулятора при копипасте (nv-coding-style §29).",
+                            p = target_key, sym = symbol, cmp = compound
+                        ),
+                        *span,
+                    ),
+                });
+            },
+            &mut |_e, _| {},
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_WHILE_COUNTER_FOR_RANGE — счётчиковый `while` → `for in` (nv-coding-style
+// §10, канон уже словами зафиксирован владельцем: «Итерация по диапазону —
+// всегда for in, не while со счётчиком» — это МАШИННАЯ проверка того же
+// правила). Паттерн:
+//
+//     mut i = START            // непосредственно перед while, тот же блок
+//     while i < END { ...; i += 1 }     // i += 1 — ПОСЛЕДНИЙ statement тела
+//
+// → `for i in START..END { ... }` (`i <= END` → `START..=END`, Nova имеет
+// inclusive-range, D-блок `03-syntax.md:1989` — `a..=b` нормализуется в
+// `Range{start:a, end:b+1}`, семантически идентично).
+//
+// КОНСЕРВАТИВНО (нулевые ложные срабатывания важнее полноты) — молчит, если
+// нарушено ЛЮБОЕ:
+//   - `mut i = START` — НЕ непосредственно перед `while` в том же блоке
+//     (`Stmt::Let` на позиции `[j]`, `while` на `[j+1]`, либо `while` —
+//     `trailing`-выражение блока, если `[j]` последний statement);
+//   - условие `while` — НЕ строго `i < END` / `i <= END` (сложное условие
+//     `&&`/`||` и любой другой бинарный оператор — молчим, «строго»);
+//   - тело `while` имеет `trailing`-выражение (yield-значение — не наш
+//     статement-only паттерн) — молчим;
+//   - инкремент `i += 1` / `i = i + 1` — НЕ последний statement тела;
+//   - `i` присваивается ГДЕ-ТО ЕЩЁ в теле (кроме этого последнего
+//     инкремента) — на ЛЮБОЙ глубине вложенности (over-conservative:
+//     реассайн ВНУТРИ вложенного цикла своей ТЕНЕВОЙ переменной с тем же
+//     именем тоже молчит — ложноотрицательно, но безопасно);
+//   - `END` — не «простое место» (`conv_place_key`: ident/`@field`/цепочка
+//     полей) — вызов/индексация переоценивались бы КАЖДУЮ итерацию в
+//     `while` (может меняться), но РОВНО ОДИН раз в `for`-range — реальная
+//     семантическая разница, поэтому голый Call/Index как `END` — молчим;
+//   - `END`-место мутируется где-либо в теле (та же причина — for-range
+//     снимает `END` ОДИН раз, `while` — каждую итерацию);
+//   - `continue` встречается ГДЕ-ЛИБО в теле (any depth, включая вложенные
+//     циклы — over-conservative: `continue` во ВЛОЖЕННОМ цикле относится к
+//     НЕМУ, но Nova без label'ов не даёт дёшево различить «этого уровня»
+//     от «того уровня», а лишний silence безопасен) — `continue` в `while`
+//     прыгает МИМО инкремента (семантика сохраняется), но в `for` инкремент
+//     неявный — тот же `continue` перескочил бы его ТОЖЕ одинаково, однако
+//     мы сознательно занижаем recall здесь, а не рискуем;
+//   - `i` используется ПОСЛЕ `while` в остатке того же блока (siblings
+//     после `while` + `trailing` блока) — `for`-переменная не переживает
+//     цикл (D58 scope), `while`-переменная — переживает (объявлена ДО).
+//   - `while` несёт `invariants`/`decreases` (Plan 33.4 D.0.3 SMT-контракты)
+//     — механическая замена потеряла бы их, не мигрируя — молчим.
+// ---------------------------------------------------------------------------
+
+/// `Stmt::Assign` — канонiчный инкремент-на-1 переменной `name`: либо
+/// `name += 1`, либо `name = name + 1` (обе формы встречаются в std).
+fn conv_is_increment_by_one(s: &Stmt, name: &str) -> bool {
+    match s {
+        Stmt::Assign { target, op: crate::ast::AssignOp::Add, value, .. } => {
+            matches!(&target.kind, ExprKind::Ident(n) if n == name)
+                && matches!(value.kind, ExprKind::IntLit(1))
+        }
+        Stmt::Assign { target, op: crate::ast::AssignOp::Assign, value, .. } => {
+            matches!(&target.kind, ExprKind::Ident(n) if n == name)
+                && matches!(&value.kind,
+                    ExprKind::Binary { op: crate::ast::BinOp::Add, left, right }
+                        if matches!(&left.kind, ExprKind::Ident(n) if n == name)
+                            && matches!(right.kind, ExprKind::IntLit(1)))
+        }
+        _ => false,
+    }
+}
+
+/// `true`, если где-то в `stmts` (любая глубина — includes вложенные
+/// блоки/циклы/ветвления) есть `Stmt::Assign`/`Stmt::TupleAssign`,
+/// присваивающий имени `name`. Используется, чтобы убедиться, что счётчик
+/// `i` не мутируется НИГДЕ, кроме проверенного последнего инкремента
+/// (который вызывающая сторона исключает из среза `stmts`).
+fn conv_body_reassigns_ident(stmts: &[Stmt], name: &str) -> bool {
+    let mut found = false;
+    for s in stmts {
+        conv_walk_stmt(
+            s,
+            false,
+            &mut |st, _| match st {
+                Stmt::Assign { target, .. } => {
+                    if matches!(&target.kind, ExprKind::Ident(n) if n == name) {
+                        found = true;
+                    }
+                }
+                Stmt::TupleAssign { lhs, .. } => {
+                    if lhs.iter().any(|e| matches!(&e.kind, ExprKind::Ident(n) if n == name)) {
+                        found = true;
+                    }
+                }
+                _ => {}
+            },
+            &mut |_, _| {},
+        );
+    }
+    found
+}
+
+/// `true`, если где-то в `stmts` есть `Stmt::Assign`, чей target имеет тот
+/// же `conv_place_key`, что `key` — используется для «END не мутируется».
+fn conv_body_reassigns_place(stmts: &[Stmt], key: &str) -> bool {
+    let mut found = false;
+    for s in stmts {
+        conv_walk_stmt(
+            s,
+            false,
+            &mut |st, _| {
+                if let Stmt::Assign { target, .. } = st {
+                    if conv_place_key(target).as_deref() == Some(key) {
+                        found = true;
+                    }
+                }
+            },
+            &mut |_, _| {},
+        );
+    }
+    found
+}
+
+/// `true`, если где-то в `stmts` (любая глубина) есть `continue`.
+/// Over-conservative по дизайну — см. блок-комментарий правила выше
+/// («continue во вложенном цикле» тоже гасит находку).
+fn conv_body_has_continue(stmts: &[Stmt]) -> bool {
+    let mut found = false;
+    for s in stmts {
+        conv_walk_stmt(
+            s,
+            false,
+            &mut |st, _| {
+                if matches!(st, Stmt::Continue(_)) {
+                    found = true;
+                }
+            },
+            &mut |_, _| {},
+        );
+    }
+    found
+}
+
+/// `true`, если `name` встречается как `Ident` где-либо в `stmts`.
+fn conv_stmts_reference_ident(stmts: &[Stmt], name: &str) -> bool {
+    let mut found = false;
+    for s in stmts {
+        conv_walk_stmt(
+            s,
+            false,
+            &mut |_, _| {},
+            &mut |e, _| {
+                if matches!(&e.kind, ExprKind::Ident(n) if n == name) {
+                    found = true;
+                }
+            },
+        );
+    }
+    found
+}
+
+/// `true`, если `name` встречается как `Ident` где-либо в `e`.
+fn conv_expr_references_ident(e: &Expr, name: &str) -> bool {
+    let mut found = false;
+    conv_walk_expr(
+        e,
+        false,
+        &mut |_, _| {},
+        &mut |ex, _| {
+            if matches!(&ex.kind, ExprKind::Ident(n) if n == name) {
+                found = true;
+            }
+        },
+    );
+    found
+}
+
+/// `END` — голый int-литерал (опционально унарный `-`)? Литерал стабилен по
+/// конструкции (нечего мутировать) — не нуждается в `conv_body_reassigns_place`.
+/// Возвращает текстовое представление для сообщения (`"3"`, `"-1"`).
+fn conv_end_int_literal(e: &Expr) -> Option<String> {
+    match &e.kind {
+        ExprKind::IntLit(n) => Some(n.to_string()),
+        ExprKind::Unary { op: crate::ast::UnOp::Neg, operand } => {
+            if let ExprKind::IntLit(n) = operand.kind {
+                Some(format!("-{n}"))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Проверяет один кандидат (`mut name = start` непосредственно перед
+/// `while`) по всем критериям правила; `Some(warning)` — все критерии
+/// выполнены, `None` — молчим (см. блок-комментарий правила).
+fn conv_check_while_counter(
+    name: &str,
+    while_expr: &Expr,
+    after_stmts: &[Stmt],
+    after_trailing: Option<&Expr>,
+) -> Option<LintWarning> {
+    let ExprKind::While { cond, body, invariants, decreases } = &while_expr.kind else {
+        return None;
+    };
+    if !invariants.is_empty() || decreases.is_some() {
+        return None;
+    }
+    let ExprKind::Binary { op, left, right } = &cond.kind else { return None };
+    let inclusive = match op {
+        crate::ast::BinOp::Lt => false,
+        crate::ast::BinOp::Le => true,
+        _ => return None,
+    };
+    if !matches!(&left.kind, ExprKind::Ident(n) if n == name) {
+        return None;
+    }
+    // END — либо простое место (ident/`@field`/цепочка полей, проверяется
+    // ниже на не-мутацию), либо int-литерал (стабилен по конструкции —
+    // литерал нечего мутировать, `while c < 3` — обычный случай, не только
+    // именованная граница).
+    let end_is_literal = conv_end_int_literal(right).is_some();
+    let end_key = if end_is_literal {
+        conv_end_int_literal(right).unwrap()
+    } else {
+        conv_place_key(right)?
+    };
+
+    if body.trailing.is_some() || body.stmts.is_empty() {
+        return None;
+    }
+    let last = body.stmts.last().unwrap();
+    if !conv_is_increment_by_one(last, name) {
+        return None;
+    }
+    let rest = &body.stmts[..body.stmts.len() - 1];
+    if conv_body_reassigns_ident(rest, name) {
+        return None;
+    }
+    if !end_is_literal && conv_body_reassigns_place(&body.stmts, &end_key) {
+        return None;
+    }
+    if conv_body_has_continue(&body.stmts) {
+        return None;
+    }
+    if conv_stmts_reference_ident(after_stmts, name) {
+        return None;
+    }
+    if let Some(t) = after_trailing {
+        if conv_expr_references_ident(t, name) {
+            return None;
+        }
+    }
+
+    let range_op = if inclusive { "..=" } else { ".." };
+    let cmp = if inclusive { "<=" } else { "<" };
+    Some(LintWarning {
+        rule: "W_WHILE_COUNTER_FOR_RANGE",
+        diag: Diagnostic::new(
+            format!(
+                "счётчиковый `while {name} {cmp} {end_key}` (`mut {name} = ...` перед циклом, \
+                 `{name} += 1` последним statement'ом тела) — канон `for {name} in \
+                 <start>{range_op}{end_key} {{ ... }}` (nv-coding-style §10): исключает \
+                 off-by-one/забытый инкремент, `i` не переживает цикл.",
+            ),
+            while_expr.span,
+        ),
+    })
+}
+
+/// Сканирует `stmts` (+ опциональный `trailing` блока) на пары `mut i =
+/// start` непосредственно перед `while`. `while` может быть либо
+/// `Stmt::Expr` на позиции `[j+1]`, либо самим `trailing` блока (если
+/// `Stmt::Let` — последний statement).
+fn conv_scan_stmts_for_while_counter(stmts: &[Stmt], trailing: Option<&Expr>, out: &mut Vec<LintWarning>) {
+    let n = stmts.len();
+    for i in 0..n {
+        let Stmt::Let(d) = &stmts[i] else { continue };
+        if !d.mutable || d.is_ghost || d.consume {
+            continue;
+        }
+        let Pattern::Ident { name, .. } = &d.pattern else { continue };
+
+        let (while_expr, after_stmts, after_trailing): (&Expr, &[Stmt], Option<&Expr>) =
+            if i + 1 < n {
+                let Stmt::Expr(e) = &stmts[i + 1] else { continue };
+                if !matches!(e.kind, ExprKind::While { .. }) {
+                    continue;
+                }
+                (e, &stmts[i + 2..], trailing)
+            } else if let Some(t) = trailing {
+                if !matches!(t.kind, ExprKind::While { .. }) {
+                    continue;
+                }
+                (t, &[], None)
+            } else {
+                continue;
+            };
+
+        if let Some(w) = conv_check_while_counter(name, while_expr, after_stmts, after_trailing) {
+            out.push(w);
+        }
+    }
+}
+
+fn conv_while_counter_for_range(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    for f in conv_all_fns(m) {
+        match &f.body {
+            FnBody::Block(b) => conv_walk_block_for_while_counter(b, out),
+            FnBody::Expr(_) | FnBody::External => {}
+        }
+    }
+}
+
+fn conv_walk_block_for_while_counter(b: &Block, out: &mut Vec<LintWarning>) {
+    conv_scan_stmts_for_while_counter(&b.stmts, b.trailing.as_deref(), out);
+    for s in &b.stmts {
+        conv_walk_stmt_for_while_counter(s, out);
+    }
+    if let Some(t) = &b.trailing {
+        conv_walk_expr_for_while_counter(t, out);
+    }
+}
+
+fn conv_walk_stmt_for_while_counter(s: &Stmt, out: &mut Vec<LintWarning>) {
+    match s {
+        Stmt::Let(d) => conv_walk_expr_for_while_counter(&d.value, out),
+        Stmt::Const(d) => conv_walk_expr_for_while_counter(&d.value, out),
+        Stmt::Expr(e) => conv_walk_expr_for_while_counter(e, out),
+        Stmt::Assign { target, value, .. } => {
+            conv_walk_expr_for_while_counter(target, out);
+            conv_walk_expr_for_while_counter(value, out);
+        }
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs {
+                conv_walk_expr_for_while_counter(e, out);
+            }
+            for e in rhs {
+                conv_walk_expr_for_while_counter(e, out);
+            }
+        }
+        Stmt::Return { value: Some(v), .. } => conv_walk_expr_for_while_counter(v, out),
+        Stmt::Throw { value, .. } => conv_walk_expr_for_while_counter(value, out),
+        Stmt::Defer { body, .. } => conv_walk_expr_for_while_counter(body, out),
+        Stmt::ConsumeScope { init, body, .. } => {
+            conv_walk_expr_for_while_counter(init, out);
+            conv_walk_block_for_while_counter(body, out);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            conv_walk_expr_for_while_counter(expr, out);
+        }
+        _ => {}
+    }
+}
+
+fn conv_walk_expr_for_while_counter(e: &Expr, out: &mut Vec<LintWarning>) {
+    match &e.kind {
+        ExprKind::If { cond, then, else_ } => {
+            conv_walk_expr_for_while_counter(cond, out);
+            conv_walk_block_for_while_counter(then, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => conv_walk_block_for_while_counter(b, out),
+                    ElseBranch::If(ie) => conv_walk_expr_for_while_counter(ie, out),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            conv_walk_expr_for_while_counter(scrutinee, out);
+            conv_walk_block_for_while_counter(then, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => conv_walk_block_for_while_counter(b, out),
+                    ElseBranch::If(ie) => conv_walk_expr_for_while_counter(ie, out),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            conv_walk_expr_for_while_counter(scrutinee, out);
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    conv_walk_expr_for_while_counter(g, out);
+                }
+                match &arm.body {
+                    MatchArmBody::Expr(e) => conv_walk_expr_for_while_counter(e, out),
+                    MatchArmBody::Block(b) => conv_walk_block_for_while_counter(b, out),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            conv_walk_expr_for_while_counter(iter, out);
+            conv_walk_block_for_while_counter(body, out);
+        }
+        ExprKind::While { cond, body, .. } => {
+            conv_walk_expr_for_while_counter(cond, out);
+            conv_walk_block_for_while_counter(body, out);
+        }
+        ExprKind::WhileLet { scrutinee, guard, body, .. } => {
+            conv_walk_expr_for_while_counter(scrutinee, out);
+            if let Some(g) = guard {
+                conv_walk_expr_for_while_counter(g, out);
+            }
+            conv_walk_block_for_while_counter(body, out);
+        }
+        ExprKind::Loop { body, .. } => conv_walk_block_for_while_counter(body, out),
+        ExprKind::Block(b) => conv_walk_block_for_while_counter(b, out),
+        ExprKind::Call { func, args, trailing } => {
+            conv_walk_expr_for_while_counter(func, out);
+            for a in args {
+                conv_walk_expr_for_while_counter(a.expr(), out);
+            }
+            if let Some(t) = trailing {
+                match t {
+                    crate::ast::Trailing::Block(b) => conv_walk_block_for_while_counter(b, out),
+                    crate::ast::Trailing::LegacyBlockWithParams(tb) => {
+                        conv_walk_block_for_while_counter(&tb.body, out)
+                    }
+                    crate::ast::Trailing::Fn(sb) => match &sb.body {
+                        FnBody::Expr(e) => conv_walk_expr_for_while_counter(e, out),
+                        FnBody::Block(b) => conv_walk_block_for_while_counter(b, out),
+                        FnBody::External => {}
+                    },
+                }
+            }
+        }
+        ExprKind::ClosureFull(sb) => match &sb.body {
+            FnBody::Expr(e) => conv_walk_expr_for_while_counter(e, out),
+            FnBody::Block(b) => conv_walk_block_for_while_counter(b, out),
+            FnBody::External => {}
+        },
+        ExprKind::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(e) => conv_walk_expr_for_while_counter(e, out),
+            ClosureBody::Block(b) => conv_walk_block_for_while_counter(b, out),
+        },
+        ExprKind::Lambda { body, .. } => conv_walk_expr_for_while_counter(body, out),
+        ExprKind::Spawn(x) | ExprKind::Throw(x) => conv_walk_expr_for_while_counter(x, out),
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => conv_walk_block_for_while_counter(b, out),
+        ExprKind::Supervised { body, cancel, deadline } => {
+            if let Some(c) = cancel {
+                conv_walk_expr_for_while_counter(c, out);
+            }
+            if let Some(dl) = deadline {
+                conv_walk_expr_for_while_counter(&dl.expr, out);
+            }
+            conv_walk_block_for_while_counter(body, out);
+        }
+        ExprKind::With { bindings: _, body } => conv_walk_block_for_while_counter(body, out),
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            conv_walk_block_for_while_counter(body, out)
+        }
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    conv_walk_expr_for_while_counter(g, out);
+                }
+                conv_walk_block_for_while_counter(&arm.body, out);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -5387,6 +5971,253 @@ mod tests {
             ws.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
     }
+
+    // Plan 185 (заказ владельца 2026-07-17): W_NON_COMPOUND_ASSIGN.
+
+    #[test]
+    fn warns_on_non_compound_add() {
+        let src = "module foo\nfn run() -> () {\n    mut x = 0\n    x = x + 1\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_NON_COMPOUND_ASSIGN"),
+            "expected W_NON_COMPOUND_ASSIGN, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn warns_on_non_compound_self_field() {
+        let src = "module foo\n\
+             type Counter { mut count int }\n\
+             export fn Counter mut @bump() -> () {\n    @count = @count + 1\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_NON_COMPOUND_ASSIGN"),
+            "expected W_NON_COMPOUND_ASSIGN on `@count = @count + 1`, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_on_non_compound_when_lhs_rhs_differ() {
+        // `x = y + 1` — RHS не читает `x` первым операндом, компаунд `x += 1`
+        // изменил бы СЕМАНТИКУ (не эквивалентная замена) — молчим.
+        let src = "module foo\nfn run() -> () {\n    mut x = 0\n    ro y = 1\n    x = y + 1\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_NON_COMPOUND_ASSIGN"),
+            "must NOT fire when LHS != RHS-left operand, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_on_non_compound_for_operator_without_compound_form() {
+        // `%` не имеет компаунд-формы в Nova (`AssignOp` без `Mod`) — молчим.
+        let src = "module foo\nfn run() -> () {\n    mut x = 5\n    x = x % 2\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_NON_COMPOUND_ASSIGN"),
+            "must NOT fire for an operator without a compound form, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_on_non_compound_index_target() {
+        // Index-места намеренно исключены (компаунд по индексу — другой,
+        // непроверенный путь кодогена) — молчим.
+        let src = "module foo\nfn run() -> () {\n    mut arr = [1, 2, 3]\n    arr[0] = arr[0] + 1\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_NON_COMPOUND_ASSIGN"),
+            "must NOT fire on an Index target, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_on_non_compound_dedup_with_str_concat_loop() {
+        // Тот же сайт, что и W_STR_CONCAT_LOOP (в цикле, `+`, строкоподобный
+        // RHS) — не дублируем.
+        let src = "module foo\nfn run() -> () {\n    mut buf = \"\"\n    \
+             for i in 0..3 {\n        buf = buf + \"x\"\n    }\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_STR_CONCAT_LOOP"),
+            "sanity: expected W_STR_CONCAT_LOOP on this site, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_NON_COMPOUND_ASSIGN"),
+            "must NOT duplicate W_STR_CONCAT_LOOP on the same site, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn warns_on_non_compound_str_concat_outside_loop() {
+        // Тот же shape, но ВНЕ цикла — W_STR_CONCAT_LOOP не применяется
+        // (требует `in_loop`), W_NON_COMPOUND_ASSIGN — применяется.
+        let src = "module foo\nfn run() -> () {\n    mut buf = \"a\"\n    buf = buf + \"x\"\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_STR_CONCAT_LOOP"),
+            "sanity: W_STR_CONCAT_LOOP must NOT fire outside a loop, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+        assert!(
+            ws.iter().any(|w| w.rule == "W_NON_COMPOUND_ASSIGN"),
+            "expected W_NON_COMPOUND_ASSIGN outside a loop, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // Plan 185 (заказ владельца 2026-07-17): W_WHILE_COUNTER_FOR_RANGE.
+
+    #[test]
+    fn warns_on_basic_while_counter() {
+        let src = "module foo\nfn run() -> () {\n    mut i = 0\n    \
+             while i < 10 {\n        i = i + 1\n    }\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_WHILE_COUNTER_FOR_RANGE"),
+            "expected W_WHILE_COUNTER_FOR_RANGE, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn warns_on_inclusive_while_counter_with_compound_increment() {
+        let src = "module foo\nfn run() -> () {\n    mut i = 0\n    \
+             while i <= 10 {\n        i += 1\n    }\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_WHILE_COUNTER_FOR_RANGE"),
+            "expected W_WHILE_COUNTER_FOR_RANGE (inclusive), got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_on_while_counter_when_continue_in_body() {
+        // `continue` перепрыгнул бы инкремент — семантика при замене на
+        // `for` иная — молчим.
+        let src = "module foo\nfn run() -> () {\n    mut i = 0\n    \
+             while i < 10 {\n        if i == 5 { continue }\n        i = i + 1\n    }\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_WHILE_COUNTER_FOR_RANGE"),
+            "must NOT fire when body contains `continue`, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_on_while_counter_when_used_after_loop() {
+        // `i` используется ПОСЛЕ while (trailing-значение блока) — `for`-
+        // переменная не пережила бы цикл — молчим.
+        let src = "module foo\nfn run() -> int {\n    mut i = 0\n    \
+             while i < 10 {\n        i = i + 1\n    }\n    i\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_WHILE_COUNTER_FOR_RANGE"),
+            "must NOT fire when `i` is used after the loop, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_on_while_counter_when_reassigned_elsewhere_in_body() {
+        // `i` присваивается ЕЩЁ РАЗ внутри тела (не только последний
+        // инкремент) — молчим.
+        let src = "module foo\nfn run() -> () {\n    mut i = 0\n    \
+             while i < 10 {\n        if i == 3 { i = 100 }\n        i = i + 1\n    }\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_WHILE_COUNTER_FOR_RANGE"),
+            "must NOT fire when `i` is reassigned elsewhere in the body, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_on_while_counter_when_end_mutated_in_body() {
+        // `END` (`n`) мутируется в теле — `for`-range снял бы `n` ОДИН раз,
+        // `while` — перечитывает каждую итерацию — реальная разница, молчим.
+        let src = "module foo\nfn run() -> () {\n    mut n = 10\n    mut i = 0\n    \
+             while i < n {\n        n = n - 1\n        i = i + 1\n    }\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_WHILE_COUNTER_FOR_RANGE"),
+            "must NOT fire when END is mutated in the body, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_on_while_counter_when_end_is_a_call() {
+        // `END` — вызов (`xs.len()`), переоценивается бы КАЖДУЮ итерацию
+        // `while`, но РОВНО ОДИН раз в `for`-range — молчим.
+        let src = "module foo\nfn run(xs []int) -> () {\n    mut i = 0\n    \
+             while i < xs.len() {\n        i = i + 1\n    }\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_WHILE_COUNTER_FOR_RANGE"),
+            "must NOT fire when END is a call, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_on_while_counter_when_increment_not_last_stmt() {
+        let src = "module foo\nfn run() -> () {\n    mut i = 0\n    \
+             while i < 10 {\n        i = i + 1\n        log(i)\n    }\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_WHILE_COUNTER_FOR_RANGE"),
+            "must NOT fire when the increment is not the last statement, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn while_counter_nested_pos_case_flags_c_and_b_not_pos() {
+        // Реальный std-паттерн (string_builder.nv `@pad_in_place`): внешний
+        // `c`-while и внутренний `b`-while — оба счётчиковые, подпадают под
+        // критерии; `pos` растёт СКВОЗЬ оба уровня (не `mut pos = ...`
+        // непосредственно перед while — между ним и любым while всегда есть
+        // другой `mut`-let) — под критерии НЕ подпадает, не флагуется.
+        let src = "module foo\nfn run(fill_len int) -> () {\n    \
+             mut pos = 0\n    mut c = 0\n    while c < 3 {\n        \
+             mut b = 0\n        while b < fill_len {\n            \
+             pos = pos + 1\n            b = b + 1\n        }\n        \
+             c = c + 1\n    }\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hits: Vec<_> = ws.iter().filter(|w| w.rule == "W_WHILE_COUNTER_FOR_RANGE").collect();
+        assert_eq!(
+            hits.len(),
+            2,
+            "expected exactly 2 hits (c-loop + b-loop), got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
 }
 
 // ============================================================================
@@ -5474,5 +6305,292 @@ mod cancel_unsafe_tests {
             !ws.iter().any(|w| w.rule == "W_FFI_CANCEL_UNSAFE"),
             "plain Nova fn call from cleanup must be silent (not FFI)"
         );
+    }
+}
+
+// ============================================================================
+// TEMPORARY (Plan 185 style-lints sweep, 2026-07-17): span-precise edit
+// finders backing `nova-cli/src/bin/fix_p185_style.rs`, the one-shot codemod
+// used to bring `nova lint std spec_tests examples` to 0 under the two new
+// rules above (precedent: migrate_plan60/65 — same one-shot-tool pattern).
+// REMOVE both this block and the bin once the sweep is committed — these are
+// not a permanent public API, just plumbing so the fixer reuses the exact
+// same detection logic as the lints instead of re-deriving it (drift risk).
+// ============================================================================
+
+/// One `x = x OP e` → `x OP= e` edit, as byte-ranges into the ORIGINAL source
+/// (caller slices `target`/`right` text itself — this module has no `src`).
+pub struct NonCompoundAssignEdit {
+    pub whole_start: usize,
+    pub whole_end: usize,
+    pub target_start: usize,
+    pub target_end: usize,
+    pub compound: &'static str,
+    pub right_start: usize,
+    pub right_end: usize,
+}
+
+pub fn find_non_compound_assign_edits(m: &Module) -> Vec<NonCompoundAssignEdit> {
+    let mut edits = Vec::new();
+    for f in conv_all_fns(m) {
+        conv_walk_fn(
+            f,
+            &mut |s, in_loop| {
+                let Stmt::Assign { target, op: crate::ast::AssignOp::Assign, value, span } = s
+                else {
+                    return;
+                };
+                let Some(target_key) = conv_place_key(target) else { return };
+                let ExprKind::Binary { op: bin_op, left, right } = &value.kind else { return };
+                let Some(compound) = conv_binop_to_compound(*bin_op) else { return };
+                let Some(left_key) = conv_place_key(left) else { return };
+                if left_key != target_key {
+                    return;
+                }
+                if in_loop && matches!(bin_op, crate::ast::BinOp::Add) && conv_is_stringish(value) {
+                    return;
+                }
+                edits.push(NonCompoundAssignEdit {
+                    whole_start: span.start,
+                    whole_end: span.end,
+                    target_start: target.span.start,
+                    target_end: target.span.end,
+                    compound,
+                    right_start: right.span.start,
+                    right_end: right.span.end,
+                });
+            },
+            &mut |_e, _| {},
+        );
+    }
+    edits
+}
+
+/// One `mut i = start; while i < end { ...; i += 1 }` → `for i in
+/// start..end { ... }` edit, as byte-ranges into the ORIGINAL source.
+pub struct WhileCounterEdit {
+    pub whole_start: usize,
+    pub whole_end: usize,
+    pub name: String,
+    pub start_start: usize,
+    pub start_end: usize,
+    pub range_op: &'static str,
+    pub end_start: usize,
+    pub end_end: usize,
+    pub body_start: usize,
+    pub body_end: usize,
+    pub last_stmt_start: usize,
+    pub last_stmt_end: usize,
+}
+
+pub fn find_while_counter_edits(m: &Module) -> Vec<WhileCounterEdit> {
+    let mut edits = Vec::new();
+    for f in conv_all_fns(m) {
+        if let FnBody::Block(b) = &f.body {
+            collect_while_counter_edits_block(b, &mut edits);
+        }
+    }
+    edits
+}
+
+fn collect_while_counter_edits_block(b: &Block, out: &mut Vec<WhileCounterEdit>) {
+    let n = b.stmts.len();
+    for i in 0..n {
+        let Stmt::Let(d) = &b.stmts[i] else { continue };
+        if !d.mutable || d.is_ghost || d.consume {
+            continue;
+        }
+        let Pattern::Ident { name, .. } = &d.pattern else { continue };
+        let while_expr: &Expr = if i + 1 < n {
+            let Stmt::Expr(e) = &b.stmts[i + 1] else { continue };
+            if !matches!(e.kind, ExprKind::While { .. }) {
+                continue;
+            }
+            e
+        } else if let Some(t) = &b.trailing {
+            if !matches!(t.kind, ExprKind::While { .. }) {
+                continue;
+            }
+            t
+        } else {
+            continue;
+        };
+        let after_stmts: &[Stmt] = if i + 1 < n { &b.stmts[i + 2..] } else { &[] };
+        let after_trailing: Option<&Expr> = if i + 1 < n { b.trailing.as_deref() } else { None };
+        if conv_check_while_counter(name, while_expr, after_stmts, after_trailing).is_some() {
+            let ExprKind::While { cond, body, .. } = &while_expr.kind else { unreachable!() };
+            let ExprKind::Binary { right, .. } = &cond.kind else { unreachable!() };
+            let last = body.stmts.last().unwrap();
+            // Гарантировано `Stmt::Assign` (conv_is_increment_by_one) — обе
+            // формы (`i += 1` / `i = i + 1`) несут `span` напрямую.
+            let Stmt::Assign { span: last_span, .. } = last else { unreachable!() };
+            let range_op = if matches!(cond.kind, ExprKind::Binary { op: crate::ast::BinOp::Le, .. }) {
+                "..="
+            } else {
+                ".."
+            };
+            out.push(WhileCounterEdit {
+                whole_start: d.span.start,
+                whole_end: while_expr.span.end,
+                name: name.clone(),
+                start_start: d.value.span.start,
+                start_end: d.value.span.end,
+                range_op,
+                end_start: right.span.start,
+                end_end: right.span.end,
+                body_start: body.span.start,
+                body_end: body.span.end,
+                last_stmt_start: last_span.start,
+                last_stmt_end: last_span.end,
+            });
+        }
+    }
+    // Recurse into ALL nested blocks (mирrors conv_walk_block_for_while_counter's
+    // reach) so nested candidates (e.g. c/b string_builder-shaped loops) are
+    // found too — the caller (fixer) resolves nesting via innermost-first
+    // iterative rounds (re-parse between rounds), so no ordering care needed here.
+    for s in &b.stmts {
+        collect_while_counter_edits_stmt(s, out);
+    }
+    if let Some(t) = &b.trailing {
+        collect_while_counter_edits_expr(t, out);
+    }
+}
+
+fn collect_while_counter_edits_stmt(s: &Stmt, out: &mut Vec<WhileCounterEdit>) {
+    match s {
+        Stmt::Let(d) => collect_while_counter_edits_expr(&d.value, out),
+        Stmt::Const(d) => collect_while_counter_edits_expr(&d.value, out),
+        Stmt::Expr(e) => collect_while_counter_edits_expr(e, out),
+        Stmt::Assign { target, value, .. } => {
+            collect_while_counter_edits_expr(target, out);
+            collect_while_counter_edits_expr(value, out);
+        }
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs {
+                collect_while_counter_edits_expr(e, out);
+            }
+            for e in rhs {
+                collect_while_counter_edits_expr(e, out);
+            }
+        }
+        Stmt::Return { value: Some(v), .. } => collect_while_counter_edits_expr(v, out),
+        Stmt::Throw { value, .. } => collect_while_counter_edits_expr(value, out),
+        Stmt::Defer { body, .. } => collect_while_counter_edits_expr(body, out),
+        Stmt::ConsumeScope { init, body, .. } => {
+            collect_while_counter_edits_expr(init, out);
+            collect_while_counter_edits_block(body, out);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            collect_while_counter_edits_expr(expr, out);
+        }
+        _ => {}
+    }
+}
+
+fn collect_while_counter_edits_expr(e: &Expr, out: &mut Vec<WhileCounterEdit>) {
+    match &e.kind {
+        ExprKind::If { cond, then, else_ } => {
+            collect_while_counter_edits_expr(cond, out);
+            collect_while_counter_edits_block(then, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => collect_while_counter_edits_block(b, out),
+                    ElseBranch::If(ie) => collect_while_counter_edits_expr(ie, out),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            collect_while_counter_edits_expr(scrutinee, out);
+            collect_while_counter_edits_block(then, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => collect_while_counter_edits_block(b, out),
+                    ElseBranch::If(ie) => collect_while_counter_edits_expr(ie, out),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            collect_while_counter_edits_expr(scrutinee, out);
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    collect_while_counter_edits_expr(g, out);
+                }
+                match &arm.body {
+                    MatchArmBody::Expr(e) => collect_while_counter_edits_expr(e, out),
+                    MatchArmBody::Block(b) => collect_while_counter_edits_block(b, out),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            collect_while_counter_edits_expr(iter, out);
+            collect_while_counter_edits_block(body, out);
+        }
+        ExprKind::While { cond, body, .. } => {
+            collect_while_counter_edits_expr(cond, out);
+            collect_while_counter_edits_block(body, out);
+        }
+        ExprKind::WhileLet { scrutinee, guard, body, .. } => {
+            collect_while_counter_edits_expr(scrutinee, out);
+            if let Some(g) = guard {
+                collect_while_counter_edits_expr(g, out);
+            }
+            collect_while_counter_edits_block(body, out);
+        }
+        ExprKind::Loop { body, .. } => collect_while_counter_edits_block(body, out),
+        ExprKind::Block(b) => collect_while_counter_edits_block(b, out),
+        ExprKind::Call { func, args, trailing } => {
+            collect_while_counter_edits_expr(func, out);
+            for a in args {
+                collect_while_counter_edits_expr(a.expr(), out);
+            }
+            if let Some(t) = trailing {
+                match t {
+                    crate::ast::Trailing::Block(b) => collect_while_counter_edits_block(b, out),
+                    crate::ast::Trailing::LegacyBlockWithParams(tb) => {
+                        collect_while_counter_edits_block(&tb.body, out)
+                    }
+                    crate::ast::Trailing::Fn(sb) => match &sb.body {
+                        FnBody::Expr(e) => collect_while_counter_edits_expr(e, out),
+                        FnBody::Block(b) => collect_while_counter_edits_block(b, out),
+                        FnBody::External => {}
+                    },
+                }
+            }
+        }
+        ExprKind::ClosureFull(sb) => match &sb.body {
+            FnBody::Expr(e) => collect_while_counter_edits_expr(e, out),
+            FnBody::Block(b) => collect_while_counter_edits_block(b, out),
+            FnBody::External => {}
+        },
+        ExprKind::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(e) => collect_while_counter_edits_expr(e, out),
+            ClosureBody::Block(b) => collect_while_counter_edits_block(b, out),
+        },
+        ExprKind::Lambda { body, .. } => collect_while_counter_edits_expr(body, out),
+        ExprKind::Spawn(x) | ExprKind::Throw(x) => collect_while_counter_edits_expr(x, out),
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => collect_while_counter_edits_block(b, out),
+        ExprKind::Supervised { body, cancel, deadline } => {
+            if let Some(c) = cancel {
+                collect_while_counter_edits_expr(c, out);
+            }
+            if let Some(dl) = deadline {
+                collect_while_counter_edits_expr(&dl.expr, out);
+            }
+            collect_while_counter_edits_block(body, out);
+        }
+        ExprKind::With { bindings: _, body } => collect_while_counter_edits_block(body, out),
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            collect_while_counter_edits_block(body, out)
+        }
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    collect_while_counter_edits_expr(g, out);
+                }
+                collect_while_counter_edits_block(&arm.body, out);
+            }
+        }
+        _ => {}
     }
 }
