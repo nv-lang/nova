@@ -3416,3 +3416,12 @@ default` + метод собирается. Замечание (вне пери�
   Не чинить в рамках layout-волны (out of scope, отдельный checker/codegen
   заход) — зона: `types/mod.rs` return-type inference для call-expression
   ИЛИ `emit_c.rs` P67-LEGACY fallback-путь (~52222).
+
+- **[M-static-conv-array-record-mono-cc-fail]** (2026-07-17, P2, найден rtlint-волной
+  при W_STATIC_CONVERSION-ретракции) — mono-коллектор падает CC-FAIL на
+  extension-методе с ресивером `[]u8` и user-record телом: `fn []u8
+  @to_readbuffer() -> ReadBuffer { ReadBuffer { ... } }` (симметрично
+  to_writebuffer). Из-за этого канон-переименования `ReadBuffer.from`/
+  `WriteBuffer.from` → `x.to_*()` ОТКАЧЕНЫ и стоят под `nova:allow
+  W_STATIC_CONVERSION` (read_buffer.nv:54, write_buffer.nv:60). После фикса —
+  вернуть переименования и снять оба подавления. Детали: wip/lint-zero-notes.md.
