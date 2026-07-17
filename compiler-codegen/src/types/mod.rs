@@ -8419,6 +8419,37 @@ impl<'a> TypeCheckCtx<'a> {
                             self.resolved_types_buf
                                 .borrow_mut()
                                 .insert(e.id, ResolvedType::Unit);
+                        } else if !scope.contains_key(fname) {
+                            // [M-196-rtbuf-producers] Q1/static-return producer: bare
+                            // free-fn call (`name(args)`, not Some/println/print/assert
+                            // above) — channel the callee's OWN DECLARED return type
+                            // directly, mirroring legacy `user_fn_sigs` (emit_c.rs
+                            // B10f_user_fn_sigs doc: "registered ONLY for non-generic
+                            // free fns — the authoritative source for a bare call's
+                            // return type"). Gated: exactly ONE arity-matching overload
+                            // (same single-candidate discipline as the free-fn-turbofish
+                            // Producer D above, `sig.fn_decls`) and NO generics (a
+                            // generic free fn's return may depend on inferred/turbofish
+                            // type-args — that is Producer D's/B10j's job, not this
+                            // plain declared-return producer) — an ambiguous or generic
+                            // callee is honestly left to legacy.
+                            if let Some(overloads) = self.sig.fn_decls.get(fname.as_str()) {
+                                let arity_matches: Vec<&&FnDecl> = overloads.iter()
+                                    .filter(|f| f.generics.is_empty() && f.params.len() == args.len())
+                                    .collect();
+                                if let [callee] = arity_matches.as_slice() {
+                                    let rt = match &callee.return_type {
+                                        Some(ret_tr) if !typeref_mentions_any(ret_tr, gs) => {
+                                            Some(ResolvedType::from_type_ref(ret_tr))
+                                        }
+                                        Some(_) => None,
+                                        None => Some(ResolvedType::Unit),
+                                    };
+                                    if let Some(rt) = rt {
+                                        self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
