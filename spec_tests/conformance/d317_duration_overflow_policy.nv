@@ -40,11 +40,11 @@ test "d317: @abs(i64::MIN) saturates to MAX (asymmetry, no UB)" {
     assert((-7.to_seconds()).abs() == 7.to_seconds())
 }
 
-test "d317: f64 conversions reject NaN/inf/out-of-range (try_* → None)" {
+test "d317: f64 conversions reject NaN/inf/out-of-range (checked_* → None)" {
     ro g = 1_000_000_000.0
-    assert(Duration.try_from_secs_f64(g * g).is_none())        // 1e27 ns ≫ i64
+    assert((g * g).checked_to_seconds().is_none())        // 1e27 ns ≫ i64
     assert(d317_MAX.to_nanos().checked_mul_f64(g).is_none())
-    match Duration.try_from_secs_f64(1.5) {
+    match 1.5.checked_to_seconds() {
         Some(r) => assert(r.millis() == 1500),
         None => assert(false),
     }

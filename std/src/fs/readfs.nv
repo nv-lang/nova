@@ -33,9 +33,10 @@ export type ReadFs protocol {
     @read_file(path str) -> Result[[]u8, IoError]
 
     // Существует ли путь. `Ok(true/false)`; `Err` — не-`NotFound` сбой
-    // (эффектные impl'ы). Имя `@try_exists` (не `@exists` — reserved-квантор;
-    // паритет free-fn `try_exists`, fs.nv).
-    @try_exists(path str) -> Result[bool, IoError]
+    // (эффектные impl'ы). Имя `@path_exists` (не `@exists` — reserved-квантор):
+    // соло-fallible-операция без инфаллибельного сиблинга — обычное имя +
+    // `Result`, без `try_`-префикса (R3 D325, W_TRY_WITHOUT_SIBLING).
+    @path_exists(path str) -> Result[bool, IoError]
 }
 
 // ─── EmbeddedDir conformance (extension-методы, D287) ───
@@ -52,7 +53,7 @@ export fn EmbeddedDir @read_file(path str) -> Result[[]u8, IoError] =>
 
 /// `ReadFs`: существование встроенного пути.
 #stable(since = "0.1")
-export fn EmbeddedDir @try_exists(path str) -> Result[bool, IoError] => Ok(@has(path))
+export fn EmbeddedDir @path_exists(path str) -> Result[bool, IoError] => Ok(@has(path))
 
 // ─── DirFs — обёртка над реальной ФС с корнем-префиксом ───
 
@@ -128,7 +129,7 @@ export fn DirFs @read_file(path str) Fs -> Result[[]u8, IoError] {
 
 /// `ReadFs`: существование (NotFound-escape → `Ok(false)`, прочее — `Err`).
 #stable(since = "0.1")
-export fn DirFs @try_exists(path str) Fs -> Result[bool, IoError] {
+export fn DirFs @path_exists(path str) Fs -> Result[bool, IoError] {
     match @resolve(path) {
         Ok(p)  => try_exists(p)
         Err(e) => match e.kind { ErrorKind.NotFound => Ok(false), _ => Err(e) }

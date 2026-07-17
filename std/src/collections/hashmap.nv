@@ -127,7 +127,9 @@ fn hashmap_bucket_count_for(min_capacity int) -> int {
 /// assert(m.is_empty())
 /// ```
 #stable(since = "0.1")
-export fn HashMap[K, V].new(cap int = 16) -> HashMap[K, V] {
+export fn HashMap[K, V].new(cap int = 16) -> HashMap[K, V]
+    requires cap >= 0
+{
     HashMap {
         buckets: new_buckets[K, V](hashmap_bucket_count_for(cap)),
         count: 0,

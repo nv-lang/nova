@@ -137,7 +137,7 @@ bridge is the explicit `write_str(w, s)`.
 
 `ReadFs` (`std.fs`, D323 amendment, Plan 210 Ф.6б) is a read-only virtual
 filesystem — `@read_file(path) -> Result[[]u8, IoError]` +
-`@try_exists(path) -> Result[bool, IoError]` — conformed by **`DirFs`** (a
+`@path_exists(path) -> Result[bool, IoError]` — conformed by **`DirFs`** (a
 root-scoped view over the real disk, `Fs` effect) and by **`EmbeddedDir`**
 (the `embed_dir("dir")` result, pure). The classic "dev serves from disk with
 live-reload, prod serves the binary-embedded copy" case becomes one generic

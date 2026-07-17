@@ -6586,7 +6586,7 @@ effect-операции, same-module `to_str()`-коллизия на `int`-rece
 - **(R2) `checked_*` → `Option[T]`.** `@checked_add`/`@checked_sub`/`@checked_mul`/`@checked_div` на `Duration`; `@checked_add`/`@checked_sub` на `Timestamp`; `@checked_duration_since` на `Monotonic` (D318). `None` на overflow/`÷0`/`i64::MIN÷-1`.
 - **(R3) `saturating_*` → clamp.** `@saturating_add`/`@saturating_sub`/`@saturating_mul` на `Duration` → clamp к **±(2⁶³−1)** (симметрично; `i64::MIN` = `-2⁶³` исключён, домен симметричен → `@neg`/`@abs` тотальны). Инстанты `Timestamp`/`Monotonic` `@plus(Duration)`/`@minus(Duration)`/`@minus(инстант)` → **saturate at i64-boundary** (зеркало Go `addSec`-clamp).
 - **(R4) Асимметрия two's-complement.** `@abs(i64::MIN)` **saturate к `i64::MAX`** (НЕ UB/wrap; `|i64::MIN| > i64::MAX`). `@neg(i64::MIN)` → trap. `@div(0)` и `@div(i64::MIN, -1)` → trap.
-- **(R5) f64-конверсии.** `from_secs_f64`/`@times(f64)`/`@div(f64)` (в т.ч. `÷0.0`→`±inf`) — trap на `NaN`/`±inf`/out-of-`i64`-range; non-trapping варианты `try_from_secs_f64`/`@try_mul_f64`/`@try_div_f64` → `Option`. Не молчаливый мусор-cast (Rust `mul_f64(NaN)` паникует = прецедент).
+- **(R5) f64-конверсии.** `@to_seconds()`/`@times(f64)`/`@div(f64)` (в т.ч. `÷0.0`→`±inf`) — trap на `NaN`/`±inf`/out-of-`i64`-range; non-trapping варианты `@checked_to_seconds()`/`@checked_mul_f64`/`@checked_div_f64` → `Option`. Не молчаливый мусор-cast (Rust `mul_f64(NaN)` паникует = прецедент).
 
 ### Границы / честные уступки (Q11/Q16)
 
@@ -6610,8 +6610,10 @@ Silent two's-complement wrap на ±292y — это ровно Go-ловушка
 > арифметики (иначе узкие ширины типа `i8` переполнились бы на `* 1_000` до
 > приведения). `f64 @to_seconds()` — единственный float-конструктор («только
 > секунды», остальные f64-юниты retracted без замены — repo-wide grep на
-> использование = 0); `Duration.try_from_secs_f64` (fallible) сохранён без
-> изменений имени (не `from_*`-паттерн конструктора, отдельная Option-семья).
+> использование = 0); `Duration.try_from_secs_f64` (fallible) на момент ЭТОГО
+> амендмента (2026-07-16) был сохранён без изменений имени (не `from_*`-
+> паттерн конструктора, отдельная Option-семья) — см. AMEND 2026-07-17 ниже,
+> статик впоследствии тоже ретрактирован.
 > Singular-алиасы (`1.second()`, `1.hour()`, ...) убраны без замены — DRY,
 > `1.to_seconds()`/`1.to_hours()`. Getter/constructor коллизия имён снята:
 > `d.nanos()` (голое, `Duration → i64`) vs `5.to_nanos()` (`to_`, `int →
@@ -6620,6 +6622,19 @@ Silent two's-complement wrap на ±292y — это ровно Go-ловушка
 > bounded-blanket-dispatch]` (Plan 196.8/196.9, закрыт) — примитивный ресивер
 > (`i8`..`u64`) должен честно резолвиться в bounded-бланкет, а не мис-
 > диспатчиться в конкретный одноимённый метод постороннего типа в том же CU.
+
+> **AMEND (2026-07-17, lint-разкраснение, владелец) — `Duration.try_from_secs_f64`
+> RETRACTED, заменён `f64 @checked_to_seconds()`.** `W_TRY_WITHOUT_SIBLING`
+> (`try_`-префикс легален только как fallible-половина инфаллибельной пары —
+> `from`/`try_from`, D77/R3 D325) поймал этот статик-метод без сиблинга.
+> Решение владельца — не exception, а снос статики целиком, тем же курсом,
+> что уже убрал `Duration.from_*` (амендмент выше): "мы убрали все
+> `Duration.from_*`". Ресиверная форма на ИСТОЧНИКЕ (`f64 @checked_to_seconds()
+> -> Option[Duration]`), зеркалящая non-trapping half пары `@to_seconds()`/
+> `@checked_to_seconds()` — тот же паттерн, что `@times(f64)`/`@checked_mul_f64`
+> на `Duration`. Сигнатура/семантика (`None` на `NaN`/`±inf`/out-of-`i64`-range)
+> не изменились, только форма вызова: `Duration.try_from_secs_f64(s)` →
+> `s.checked_to_seconds()`.
 
 ## D318 — Monotonic: non-regression + clock-source contract (Plan 175 Ф.1c, 2026-07-06)
 
@@ -6879,18 +6894,24 @@ prod = embedded» — один и тот же generic-код `fn serve[F ReadFs]
 ```nova
 export type ReadFs protocol {
     @read_file(path str) -> Result[[]u8, IoError]
-    @try_exists(path str) -> Result[bool, IoError]
+    @path_exists(path str) -> Result[bool, IoError]
 }
 ```
 
 - `@read_file` — `Err(IoError{NotFound})` = файла нет; прочие `Err` — реальный I/O-сбой (только
-  эффектные impl). `@try_exists` — паритет free-fn `try_exists` (`@exists` недоступно: reserved-квантор).
-  Ключ — POSIX `/`, case-sensitive, без ведущего `./` (конвенция `embed_dir`).
+  эффектные impl). `@path_exists` — соло fallible-операция без инфаллибельного сиблинга: обычное
+  имя + `Result`, без `try_`-префикса (R3 D325; `@exists` недоступно — reserved-квантор). Ключ —
+  POSIX `/`, case-sensitive, без ведущего `./` (конвенция `embed_dir`).
+
+  **AMEND (2026-07-17, lint-разкраснение, владелец):** метод переименован `@try_exists` →
+  `@path_exists` — `W_TRY_WITHOUT_SIBLING` (`try_`-префикс легален только как fallible-половина
+  инфаллибельной пары, `from`/`try_from`, D77); одиночная fallible-операция не подходит под это
+  правило (R3 D325, `nv-coding-style` §1). Сигнатура/возврат `Result` не меняются, только имя.
 - `list`/directory-index **вне протокола**: у реальной ФС обход дорог (`Fs`-эффект),
   недетерминирован между вызовами (dev live-reload) и выводит наружу symlink/dot-ловушки; у
   `EmbeddedDir` — дёшево, но дробление протокола («минимальный протокол», как `io.Read`/`io.Write`/
   `io.Seek`) не платит обходом там, где нужно только чтение. Future — отдельный `ListFs`.
-- **`EmbeddedDir` конформит EXTENSION-методами** (D287): `@read_file`/`@try_exists` объявлены в
+- **`EmbeddedDir` конформит EXTENSION-методами** (D287): `@read_file`/`@path_exists` объявлены в
   `std.fs` (не в `EmbeddedDir`'s home-модуле `prelude.embed`); родной Option-API (`@get`/`@has`/
   `@paths`) не тронут. **Эмпирически подтверждено** (`std/src/fs/readfs_test.nv`): структурная
   conformance по generic-bound `[F ReadFs]` видит extension-метод НАРАВНЕ с inherent — wrapper-

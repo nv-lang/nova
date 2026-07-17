@@ -6,7 +6,7 @@
 //
 // R1 (главный риск дизайна, docs/plans/210-embed-dir.md §6б.7): структурная
 // conformance по generic-bound `[F ReadFs]` обязана видеть EXTENSION-методы
-// `EmbeddedDir @read_file`/`@try_exists` (объявлены в std.fs, НЕ в родном
+// `EmbeddedDir @read_file`/`@path_exists` (объявлены в std.fs, НЕ в родном
 // prelude.embed модуле EmbeddedDir) — не только inherent. Тесты ниже —
 // ЗЕЛЁНЫЙ R1: extension-путь подтверждён, wrapper-newtype-fallback
 // (`EmbeddedFs`, пред-специфицирован в дизайне) НЕ понадобился.
@@ -19,9 +19,9 @@ import std.io.{ErrorKind}
 // ONE body, mono'd against a pure conformer and an effectful one) ───
 
 fn read_file_via[F ReadFs](f F, path str) -> Result[[]u8, IoError] => f.read_file(path)
-fn exists_via[F ReadFs](f F, path str) -> Result[bool, IoError] => f.try_exists(path)
+fn exists_via[F ReadFs](f F, path str) -> Result[bool, IoError] => f.path_exists(path)
 
-test "EmbeddedDir @read_file/@try_exists (extension methods, direct call) — sanity before R1" {
+test "EmbeddedDir @read_file/@path_exists (extension methods, direct call) — sanity before R1" {
     ro data = "x-bytes".bytes()
     ro dir = EmbeddedDir.new([EmbeddedEntry { path: "f.txt", data }])
     match dir.read_file("f.txt") {
@@ -32,8 +32,8 @@ test "EmbeddedDir @read_file/@try_exists (extension methods, direct call) — sa
         Ok(_)  => assert(false)
         Err(e) => match e.kind { ErrorKind.NotFound => assert(true), _ => assert(false) }
     }
-    match dir.try_exists("f.txt")       { Ok(b) => assert(b),      Err(_) => assert(false) }
-    match dir.try_exists("missing.txt") { Ok(b) => assert(!b),     Err(_) => assert(false) }
+    match dir.path_exists("f.txt")       { Ok(b) => assert(b),      Err(_) => assert(false) }
+    match dir.path_exists("missing.txt") { Ok(b) => assert(!b),     Err(_) => assert(false) }
 }
 
 test "R1: [F ReadFs] generic dispatches to EmbeddedDir's EXTENSION conformance (pure, no effect)" {
@@ -117,15 +117,15 @@ test "DirFs: absolute-path request rejected -> PermissionDenied" {
     }
 }
 
-test "DirFs: try_exists true/false; NotFound-escape from @resolve maps to Ok(false)" {
+test "DirFs: path_exists true/false; NotFound-escape from @resolve maps to Ok(false)" {
     mut fs = MemFs.new()
     ro root = Path.posix("/df_exists")
     with Fs = mock_fs(fs) {
         ro _ = create_dir(root)
         ro _ = write(root.join("here.txt"), "y".bytes())
         ro dfs = DirFs.new(root)
-        match dfs.try_exists("here.txt")  { Ok(b) => assert(b),  Err(_) => assert(false) }
-        match dfs.try_exists("absent.txt") { Ok(b) => assert(!b), Err(_) => assert(false) }
+        match dfs.path_exists("here.txt")  { Ok(b) => assert(b),  Err(_) => assert(false) }
+        match dfs.path_exists("absent.txt") { Ok(b) => assert(!b), Err(_) => assert(false) }
     }
 }
 

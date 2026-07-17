@@ -38949,3 +38949,62 @@ handler-значении — до фикса ловился B11d, после —
 тот же класс `mut Fmt` derive-регрессия на других файлах + pre-existing TIMEOUT-флаки/host
 contention + одна pre-existing NEG-NO-ERROR, ни один не касается d61/NovaVtable). Коммит
 `c7c7f127e` на `p196-zone-gen`. Маркер снят из `backlog-followups.md` (lifecycle §2).
+## Финал разкраснения nova-lint (2026-07-17, ветка fix-lint-final, sonnet)
+
+Закрыты последние два floating-маркера lint-волны (план 185): `nova lint std`
+5 находок → 0.
+
+**[M-lint-findings-param-no-contract] ЗАКРЫТ.** Три оставшихся сайта
+`W_PARAM_NO_CONTRACT` — `HashMap[K, V].new(cap int = 16)`
+(std/src/collections/hashmap.nv), `Queue[T].new(cap int = 0)`
+(std/src/collections/queue.nv), `Set[T].new(cap int = 16)`
+(std/src/collections/set.nv) — получили `requires cap >= 0` (владелец:
+«requires n >= 0 — ДА»). Форма/имя параметра сверены с прецедентом
+`Vec[T].new(cap int = 0) requires cap >= 0` (std/src/collections/vec/core.nv)
+— контракт доказуемый (Z3 элидирует на литеральных аргументах, zero-cost).
+`nova check` трёх файлов чист; таргетные `nova test` (doctests
+hashmap/set, `queue_test.nv`) зелёные.
+
+**[M-lint-findings-try-without-sibling] ЗАКРЫТ.** Две отдельные владельческие
+правки:
+
+1. `ReadFs`-протокол + `DirFs`/`EmbeddedDir` `@try_exists`
+   (std/src/fs/readfs.nv) → `@path_exists` (владелец: «path_exists — ДА»;
+   сигнатура/`Result`-возврат не менялись — соло-fallible без
+   инфаллибельного сиблинга легален под обычным именем, R3 D325). Охват
+   переименования: 3 декларации (protocol + `EmbeddedDir` + `DirFs`),
+   `std/src/fs/readfs_test.nv` (call-сайты + заголовки тестов + докстрока),
+   `docs/io-fs.md`, D323-амендмент `ReadFs` в spec/decisions/04-effects.md
+   (добавлен AMEND-абзац 2026-07-17). Свободная fn `try_exists`
+   (std/src/fs/fs.nv, отдельный символ, НЕ протокольный метод) не тронута —
+   вне периметра этого решения.
+2. `Duration.try_from_secs_f64(s f64) -> Option[Duration]` (static ctor,
+   std/src/time/duration/core.nv) СНЕСЁН целиком (владелец: «мы убрали все
+   Duration.from_*» — не exception к правилу, а снос статики тем же курсом,
+   что уже убрал `Duration.from_*`/per-width fluent, Plan 200 Step 2).
+   Заменён ресиверной формой на источнике — `f64 @checked_to_seconds() ->
+   Option[Duration]` (то же тело/семантика: `None` на `NaN`/`±inf`/out-of-
+   `i64`-range), зеркалящей non-trapping half пары `@to_seconds()`/
+   `@checked_to_seconds()` (тот же паттерн, что `@times(f64)`/
+   `@checked_mul_f64` на `Duration`). Call-сайты мигрированы на
+   `x.checked_to_seconds()`: inline-тест в core.nv, `spec_tests/conformance/
+   d317_duration_overflow_policy.nv`. D317-амендмент (R5 f64-конверсии, заодно
+   поправлена уже стухшая `@try_mul_f64`/`@try_div_f64` → `@checked_mul_f64`/
+   `@checked_div_f64` в том же предложении) + новый AMEND-абзац 2026-07-17 в
+   spec/decisions/04-effects.md. `nova check`/`nova test` core.nv таргетно —
+   зелёные; d317-фикстура синтаксически/типово чиста (полный
+   `spec_tests/conformance` не гонялся — не мой гейт в этой волне, см. ниже).
+
+**Побочная находка (НЕ фикс — вне периметра волны).** `nova check
+spec_tests/conformance/<любой файл>` (whole-CU) сейчас падает на
+ПРЕДСУЩЕСТВУЮЩИХ `E_IMPL_WRONG_SIGNATURE` в `d229_debug_format_spec.nv`,
+`d422_generic_container_derive.nv`, `pos_impl_debug.nv` — `debug`/`display`
+конформеры объявлены с `w Fmt` вместо канон `mut f Fmt` (свежее слияние
+`fix-param-mut-enforcement`, e160918da..4d6b15363, теперь сверяет РЕЖИМ
+параметра). Ни одна ошибка не адресована в `d317_duration_overflow_policy.nv`
+— моя правка в этом файле подтверждена чистой отсутствием upstream-ошибок по
+ней; сама фикстура-регрессия ортогональна этой волне, не чинилась (владелец
+не просил, конформанс целиком не гонялся по инструкции волны).
+
+Итог: `nova lint std` → 0 находок (было 5); `nova lint spec_tests` → 0
+находок (было 0, не регрессировало).
