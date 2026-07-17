@@ -136,6 +136,79 @@ async fn pos3_1000_debouncer_schedule_calls_under_budget() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Plan 213 Ф.1: open-documents recheck vs full-workspace recheck
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Plan 213 Ф.1 regression guard: `check_open_documents` (the new per-edit
+/// recheck strategy used by `schedule_recheck`) must be dramatically cheaper
+/// than `check_workspace` (the *old* per-edit strategy — every `.nv` file
+/// under the workspace root, re-parsed + import-resolved + type-checked, on
+/// every debounced edit) on a real, large workspace. That gap is the whole
+/// point of the fix (diagnosed: nova-lsp was burning ~27 CPU-hours/day
+/// because every keystroke triggered a `check_workspace` over the entire
+/// Nova repo — 3000+ files across std/examples/spec_tests/nova_tests).
+///
+/// `#[ignore]`d because it runs against the *actual* repo checkout (not a
+/// synthetic fixture) so it is unsuitable for a fast default `cargo test`
+/// run; execute manually with:
+/// `cargo test --release --test perf -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn check_open_documents_much_cheaper_than_check_workspace_on_real_repo() {
+    use nova_lsp::compiler::check_open_documents;
+
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("nova-lsp has a parent")
+        .to_path_buf();
+
+    let t0 = Instant::now();
+    let workspace_results = check_workspace(&repo_root);
+    let workspace_elapsed = t0.elapsed();
+    eprintln!(
+        "check_workspace(real repo, {} files): {}ms",
+        workspace_results.len(),
+        workspace_elapsed.as_millis()
+    );
+
+    // Simulate a realistic edit session: 2 open documents, resolved against
+    // the same workspace root (exactly what `schedule_recheck_for` now does
+    // on every debounced edit).
+    let docs: Vec<(Url, String)> = (0..2)
+        .map(|i| {
+            let uri = Url::parse(&format!("file:///open_doc_{i}.nv")).unwrap();
+            (uri, valid_nv(i))
+        })
+        .collect();
+
+    let t1 = Instant::now();
+    let open_results = check_open_documents(&docs, &repo_root);
+    let open_elapsed = t1.elapsed();
+    eprintln!(
+        "check_open_documents(2 open docs, same repo): {}ms",
+        open_elapsed.as_millis()
+    );
+
+    assert_eq!(open_results.len(), 2);
+    assert!(
+        workspace_results.len() > 100,
+        "sanity: the real repo must have >100 .nv files for this comparison to \
+         be meaningful (found {}) — run from within the Nova repo checkout",
+        workspace_results.len()
+    );
+    assert!(
+        open_elapsed.saturating_mul(3) < workspace_elapsed,
+        "open-documents recheck ({}ms) must be dramatically (>=3x) cheaper than \
+         a full workspace recheck ({}ms) over {} files — this ratio IS the Plan \
+         213 Ф.1 fix; a regression here means schedule_recheck is back to \
+         O(workspace size) per edit",
+        open_elapsed.as_millis(),
+        workspace_elapsed.as_millis(),
+        workspace_results.len(),
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // neg1: file > 1 MB — performance degradation measured, no strict assertion
 // ─────────────────────────────────────────────────────────────────────────────
 
