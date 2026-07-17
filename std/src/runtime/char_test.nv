@@ -1,0 +1,51 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Регрессия [M-char-blanket-shadowed-by-sig-complete] (2026-07-17, стоп-волна
+// fix-runtime-lint-debt): `char` не имел НИ ОДНОГО конкретного receiver-метода
+// в `builtin_sig_modules()` (checker's SIG-COMPLETE registry, compiler-codegen/
+// src/codegen/external_registry.rs) до появления `char @to_stringbuilder()`
+// (std/runtime/string_builder.nv). Как только тип получил ЛЮБОЙ конкретный
+// receiver-метод там, checker'а `check_instance_overload` (types/mod.rs)
+// признавал метод-набор типа "SIG-COMPLETE" ЦЕЛИКОМ — включая методы, которые
+// реально резолвятся ТОЛЬКО через bare-T blanket (`fn[T] T @to_str() -> str`,
+// std/runtime/string/core.nv, D145-форма) — и бил ложный E7320
+// (`no field or method to_str on type char`) на std/src/runtime/sync_test.nv
+// (defaults.nv/string/core.nv/string/transform.nv все звали `c.to_str()`).
+//
+// Этот файл — standalone peer-test для `runtime.char` (beside-module
+// convention, sync_test.nv/string_builder_test.nv precedent): пин co-existence
+// bare-T blanket метода И конкретного receiver-метода на ОДНОМ И ТОМ ЖЕ
+// примитиве в одном CU — именно комбинация, что взорвала sync_test.
+module runtime.char_test
+
+import std.runtime.string_builder.{StringBuilder}
+
+// `char @to_str()` НЕ конкретный — резолвится через bare-T blanket
+// (`fn[T] T @to_str() -> str => "${@}"`, string/core.nv). Должен продолжать
+// резолвиться даже когда `char` уже имеет конкретный receiver-метод
+// (`@to_stringbuilder()` ниже) в SIG-COMPLETE builtin_sig_modules-реестре.
+test "char @to_str(): bare-T blanket resolves alongside a concrete char method" {
+    ro a = 'A'.to_str()
+    assert(a == "A")
+
+    // Multi-byte codepoint (UTF-8 encode путь совпадает с интерполяцией).
+    ro heart = '\u{2764}'.to_str()
+    assert(heart.byte_len() == 3)
+}
+
+// Конкретный extension-метод на `char` (не через blanket) — регистрируется в
+// builtin_sig_modules (string_builder.nv → BUILTIN_SIG_MODULES), делая `char`
+// SIG-COMPLETE. Должен резолвиться нормально И не затенять @to_str() выше.
+test "char @to_stringbuilder(): concrete method coexists with the blanket" {
+    consume sb = 'A'.to_stringbuilder()
+    ro s = sb.into_str()
+    assert(s == "A")
+}
+
+// Оба метода на одном значении в одном выражении — прямой репро исходного
+// бага (blanket .to_str() рядом со звонком, доказывающим SIG-COMPLETE char).
+test "char: to_str() and to_stringbuilder() together on the same value" {
+    ro c = 'x'
+    ro viastr = c.to_str()
+    consume sb = c.to_stringbuilder()
+    assert(viastr == sb.into_str())
+}

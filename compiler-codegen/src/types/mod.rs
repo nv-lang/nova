@@ -10679,12 +10679,28 @@ impl<'a> TypeCheckCtx<'a> {
             // Полнота = ПОЛНЫЙ метод-набор типа приходит из builtin_sig_modules
             // (у extern-типов вроде AtomicU64 нет Item::Type — только extern fns
             // с receiver'ом; свидетель полноты — наличие таких fns).
+            //
+            // [M-char-blanket-shadowed-by-sig-complete] (2026-07-17, стоп-волна
+            // fix-runtime-lint-debt-регресс): "SIG-COMPLETE" — неправда для
+            // примитива, у которого ЕСТЬ bare-T blanket (`fn[T] T @m`, D145) —
+            // builtin_sig_modules описывает только КОНКРЕТНЫЕ receiver-методы,
+            // blanket живёт в ОТДЕЛЬНОЙ книге (method_table keyed по generic-
+            // parameter-имени, см. `prefix_generic_method_exists`). Как только
+            // тип получает ЛЮБОЙ конкретный receiver-метод в builtin_sig_modules
+            // (напр. `char @to_stringbuilder()` в string_builder.nv), sig_complete
+            // становится true для ЭТОГО типа целиком — включая методы, реально
+            // резолвящиеся ТОЛЬКО через blanket (`char.to_str()` → bare-T
+            // `fn[T] T @to_str()`, std/runtime/string/core.nv). Без доп. проверки
+            // — ложный E7320 (было: std/src/runtime/sync_test.nv CODEGEN-FAIL
+            // после добавления `char @to_stringbuilder`). Тот же guard, что и на
+            // раннем primitive-gate (line ~10599) — «конкретное после проверки
+            // на blanket», не наоборот.
             let sig_complete_builtin = crate::codegen::external_registry::builtin_sig_modules()
                 .iter()
                 .flat_map(|m| m.items.iter())
                 .any(|it| matches!(it, Item::Fn(f)
                     if f.receiver.as_ref().map(|r| r.type_name.as_str()) == Some(type_name)));
-            if sig_complete_builtin {
+            if sig_complete_builtin && !self.prefix_generic_method_exists(rt, method_name) {
                 errors.push(Diagnostic::new(
                     format!(
                         "[E7320] no field or method `{}` on type `{}`",
