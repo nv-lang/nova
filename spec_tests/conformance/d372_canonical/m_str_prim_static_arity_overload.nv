@@ -1,0 +1,33 @@
+// [M-str-primitive-static-arity-overload] regression guard. Sibling of
+// `types_generic_static_ctor.nv` (folder-module co-equal peer, D29 —
+// `spec_tests/conformance` is one folder-module, no import needed) — same
+// pattern, PRIMITIVE-receiver twin of the generic-static-ctor arity-overload
+// class that guard fixes ([M-vec-new-cap-default-arg-backfill]).
+//
+// `std/runtime/string/core.nv` declares TWO static overloads of `str.new`:
+//   - `export fn str.new() -> Self => ""` (D372 canonical default, 0-arg)
+//   - module-private `fn str.new(buf *u8, len int) -> Self` (owning-buffer
+//     ctor, used internally by `[]u8 consume @into_str_unchecked()`)
+// Before the fix, codegen's static-method Path-form dispatch
+// (`emit_c.rs`, `Type.method(args)` branch) resolved `str.new` name-first
+// against a strict C-type-string match that was blind to a Nova-type-
+// equivalent-but-differently-serialized C string (a `*u8` ro-pointee param
+// renders as `"const nova_byte*"`; the ro-bound call-site argument infers as
+// `"nova_byte*"`, no `const` — same Nova type, different C spelling) AND the
+// checker's own `resolved_callees` channel never got populated for ANY
+// primitive-receiver static call (a blanket `is_primitive_recv { return; }`
+// gate in `types/mod.rs`'s `f1_check_call`, historically added to dodge a
+// DIFFERENT false-positive class — Plan 91.8a.2, single-known-overload
+// arg-check against an incomplete view). Net effect: as soon as BOTH
+// overloads existed side by side, every 2-arg `str.new(buf, len)` call-site
+// fell into `[E_UNKNOWN_STATIC_METHOD]` at codegen. The private overload is
+// module-private, so it cannot be called directly from here — exercise it
+// through its one real caller, the exported `into_str_unchecked()`.
+module conformance.d372_canonical
+
+test "into_str_unchecked() round-trip exercises the private 2-arg str.new overload" {
+    mut bytes []u8 = Vec[u8].of(0x48, 0x69, 0x21) // "Hi!"
+    ro s = unsafe { bytes.into_str_unchecked() }
+    assert(s == "Hi!")
+    assert(s.byte_len() == 3)
+}
