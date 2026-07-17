@@ -117,6 +117,17 @@ Nova уже прячет безопасные zero-cost конверсии (sing
   sig-скане; ключ (I,O) + FnDecl) + валидации E_COERCE_NOT_UNARY / NOT_ZERO_COST / DUPLICATE_PAIR;
   вставка в accept-путь (там же, где single-wrapper `single_wrap_candidates`) + АСТ-rewrite
   в `try_wrap_leaf`-проходе. Позиции — п.6. Exact>coercion — до кандидатов коэрсии.
+  **Стартовый материал (интегратор 2026-07-18):** ветка `p-fix-d55-type-directed`
+  (worktree `nova-d55coerce`, НЕ влита — реализовывала ретрактированное D55-направление, но
+  эмпирически прощупала ровно эти позиции; заметки `docs/plans/wip/d55-coercion-notes.md`):
+  accept-гейт = `assignable_direct` (закрывает call-arg + let/const + element одним армом);
+  ловушки — 4 отдельных trailing-return-гейта в emit_c (contracts/non-contracts/handler-op),
+  type-punning `[][]u8`-литерала (elem-тип с первого str-элемента → `Vec[str]` под `Vec[[]u8]`),
+  `const` идёт мимо choke-point через `emit_const_expr_typed`
+  (`[M-d55-const-bytes-lit-not-constexpr]` P3 — покрыть или явно исключить const из позиций).
+  **Обязательный пункт приёмки Ф.1: rewrite channel-clean** — синтез-узлы с ExprId + записями
+  в `resolved_types` (не плодить UNSET-desugar-дыры [M-104.10]); `NOVA_TRACE_ICR=1` на
+  фикстурах Ф.4 = 0 НОВЫХ legacy-хитов (не кормить второе окно, которое сносит План 196).
 - **Ф.2 Codegen:** НОВОГО НЕТ (rewrite = обычный вызов метода). Снос
   `synthesize_write_str_lit_bytes_coercion` + его call-site в emit_call pre-pass.
 - **Ф.3 std:** view-полоса: `#coerce` на `str @bytes()`; finalize-полоса: `#coerce` на
@@ -150,7 +161,7 @@ Nova уже прячет безопасные zero-cost конверсии (sing
 
 | Риск | Митигация |
 |---|---|
-| Расползание неявности (урок Scala implicit) | правила 2-5 + V1-охват std-only (п.9) |
+| Расползание неявности (урок Scala implicit) | правила 2-5 (zero-cost + one-per-pair + один уровень + exact>coercion); std-only-гейт СНЯТ решением владельца (п.9) — сдерживание правилами, не охватом |
 | Перф sig-скана (реестр) | атрибут редкий; сбор при существующем скане деклараций, O(декл) |
 | Конфликт с overload-резолвом (`env(str)`/`env_bytes([]u8)`) | exact>coercion (п.5) — `env("K")` берёт str-перегрузку, коэрсия не пробуется |
 | АСТ-rewrite в горячем проходе | вставка только при типовом мисматче ro-позиции — холодная ветка |
