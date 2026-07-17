@@ -8420,20 +8420,49 @@ impl<'a> TypeCheckCtx<'a> {
                                 .borrow_mut()
                                 .insert(e.id, ResolvedType::Unit);
                         } else if !scope.contains_key(fname) {
-                            // [M-196-rtbuf-producers] Q1/static-return producer: bare
-                            // free-fn call (`name(args)`, not Some/println/print/assert
-                            // above) — channel the callee's OWN DECLARED return type
-                            // directly, mirroring legacy `user_fn_sigs` (emit_c.rs
-                            // B10f_user_fn_sigs doc: "registered ONLY for non-generic
-                            // free fns — the authoritative source for a bare call's
-                            // return type"). Gated: exactly ONE arity-matching overload
-                            // (same single-candidate discipline as the free-fn-turbofish
-                            // Producer D above, `sig.fn_decls`) and NO generics (a
-                            // generic free fn's return may depend on inferred/turbofish
-                            // type-args — that is Producer D's/B10j's job, not this
-                            // plain declared-return producer) — an ambiguous or generic
-                            // callee is honestly left to legacy.
-                            if let Some(overloads) = self.sig.fn_decls.get(fname.as_str()) {
+                            // [M-196-rtbuf-producers] Q1/static-return producer:
+                            // `TypeName(args)` newtype/named-tuple CONSTRUCTOR call
+                            // (bare `Ident` callee resolving to a registered type, not
+                            // a fn) — mirrors legacy B10h_newtype_constructor /
+                            // B10l_named_tuple_constructor (both keyed off codegen's
+                            // OWN `type_aliases` C-string table). The checker's type
+                            // registry (`self.types`) already knows a bare name is one
+                            // of these two ctor-shaped kinds WITHOUT any C-string
+                            // lookup — the call's result is simply the nominal type
+                            // itself (`Named{name, args:[]}`); `resolved_type_to_c`
+                            // resolves the concrete C representation for either kind
+                            // by name the same way every other Channel-2-covered
+                            // constructor already does (record/sum/generic ctors).
+                            // Checked FIRST (before the free-fn lookup below): a type
+                            // name and a free-fn name never collide in Nova's
+                            // namespace, but checking type identity first is the
+                            // cheaper, more direct match for a ctor call.
+                            let is_newtype_or_tuple_ctor = self.types.get(fname.as_str())
+                                .map(|td| matches!(&td.kind, TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_)))
+                                .unwrap_or(false);
+                            if is_newtype_or_tuple_ctor {
+                                self.resolved_types_buf.borrow_mut().insert(
+                                    e.id,
+                                    ResolvedType::Named {
+                                        name: fname.clone(),
+                                        module: vec![],
+                                        args: vec![],
+                                    },
+                                );
+                            } else if let Some(overloads) = self.sig.fn_decls.get(fname.as_str()) {
+                                // Q1/static-return producer: bare free-fn call
+                                // (`name(args)`) — channel the callee's OWN DECLARED
+                                // return type directly, mirroring legacy `user_fn_sigs`
+                                // (emit_c.rs B10f_user_fn_sigs doc: "registered ONLY
+                                // for non-generic free fns — the authoritative source
+                                // for a bare call's return type"). Gated: exactly ONE
+                                // arity-matching overload (same single-candidate
+                                // discipline as the free-fn-turbofish Producer D above)
+                                // and NO generics (a generic free fn's return may
+                                // depend on inferred/turbofish type-args — that is
+                                // Producer D's/B10j's job, not this plain declared-
+                                // return producer) — an ambiguous or generic callee is
+                                // honestly left to legacy.
                                 let arity_matches: Vec<&&FnDecl> = overloads.iter()
                                     .filter(|f| f.generics.is_empty() && f.params.len() == args.len())
                                     .collect();
