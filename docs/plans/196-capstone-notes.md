@@ -208,6 +208,23 @@ standalone/d182/encoding/aggregator) — консистентно с прошл�
 
 ---
 
+## 7. БАТЧ-2 (2026-07-17, sonnet, worktree `nova-196cap2`, ветка `p196-capstone2`)
+
+Полный отчёт: [wip/196-capstone2-notes.md](wip/196-capstone2-notes.md). Кратко: синк с main `726e734af`
+(p196-rtbuf-producers, 4 новых Q1/Q6-продюсера в `types/mod.rs`) подтвердил все 6 предсказанных изменений
+трафика по свежей переписи. Детач+panic батч (B10f/B10h/B10l/B10m): **B10h_newtype_constructor** и
+**B10l_named_tuple_constructor СНЯТЫ** (0 паник на std/src/math+collections/time/encoding+standalone+
+aggregator); **B10f_user_fn_sigs** паника СРАБОТАЛА на `examples/flagship/aggregator` (`splitmix64_step`,
+206/splitmix64-прецедент) — откат, ЖИВАЯ, не снижена; **B10m_ident_empty_fallback** оставлена нетронутой —
+легитимный phase-1c pre-scan caller (собственный doc-комментарий), 0-хит на обычном корпусе не то же
+доказательство мёртвости, что для остальных armов. **Реестр: 48 → 46.** Коммит `bd797d770`.
+
+**Побочная находка, СРОЧНО сообщена координатору (НЕ моя зона — types/mod.rs):** синк вскрыл регрессию,
+введённую именно `726e734af` (коммит `ba9a8a2f3`) — `spec_tests/conformance/d45_inferred_return_type.nv`
+теперь CODEGEN-FAIL изолированно (`assert(d45_is_positive(1))` → `E_NO_MATCHING_OVERLOAD`, expression-body
+без `->` ложно канализируется как `Unit`). Блокирует авторитетный gate (весь top-level `spec_tests/
+conformance/*.nv` — один mega-CU, контаминирован). `standalone/` — отдельный CU, НЕ затронут.
+
 ## 6. Рекомендация следующей волне (если сессия продолжится)
 
 1. **SHADOW mismatch ICE** (§4.4) — сообщить Zone CH/владельцу; debug-only, но подрывает доверие к
