@@ -393,6 +393,23 @@ export NOVA_INCLUDE_DIR=/d/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed
    (и standalone, и merged) — регрессия после census (Jul 11 → Jul 12 бинарь).
 7. **extern "nova" fn + tuple-return**: t4_sqlite_e2e_ok CC-FAIL (`_NovaTuple_2_6_void_p_8_nova_int`
    инициализируется int) — красный и standalone = pre-existing регрессия Plan 115 FFI.
+
+> **Пере-проверено 2026-07-17 (Plan 212 пункт 7, sonnet, бинарь 696d834b4).** Находки
+> (1)/(2) выше — ЖИВЫЕ, репро подтверждено на актуальном компиляторе (см.
+> `[M-198-f4c-1-privfile-type-not-discriminated]` / `[M-198-f4c-2-local-not-shadow-crossfile-topfn]`
+> в backlog-followups.md). (3)/(4) (alias-import folder-peer, handler-литерал match-arm capture) —
+> НЕ воспроизводятся ни в изоляции, ни как genuine peer; исторически уже PASS на полном
+> merged CU (FIN-6, 2026-07-13) — закрыты без маркера. (5) (std-internal `classify` capture) —
+> не переверено на заявленном ~1000-файловом масштабе (полный conformance запрещён этой
+> волной), изолированный репро чист, статус НЕОПРЕДЕЛЁН — `[M-198-f4c-5-std-internal-symbol-capture]`.
+> (6)/(7) — ЖИВЫЕ, ICE/CC-FAIL подтверждены на существующих quarantine-фикстурах —
+> `[M-198-f4c-6-bench-intrinsic-test-block-ice]` / `[M-198-f4c-7-extern-nova-tuple-return-ccfail]`.
+> Далее в этом файле — «4 детерминированные жертвы» (priv(file)-fn bleed ×2, file-scoped
+> `#unchecked` ×2): priv(file)-fn bleed ЗАКРЫТ фиксом `7542e0013` (2026-07-14, до этой
+> волны); `#unchecked` MOOT — полностью ретрактирован Plan 194 (`#unchecked` больше не
+> парсится). Полная таблица вердиктов — `docs/simplifications.md` (запись 2026-07-17,
+> `[M-198-f4c-compiler-findings]`).
+
 8. **Merged CU ~1010 файлов / 2589 test-блоков: два runtime-блокера:**
    a) **stack overflow 0xC00000FD на старте** — main_impl держит 2589 NovaTestFrame/setjmp
       (адресозависимы, clang не переиспользует слоты) → кадр >1МБ дефолтного стека Windows.
