@@ -159,9 +159,11 @@ name-only-fallback мисдиспатч, AV-баг Plan 198). Комбинаци
 assert; `f1_expr`'s `ExprKind::With { body, .. }` всё ещё игнорирует `bindings[i].handler` — проверил по коду,
 де15478d1 НЕ трогал `With`-арм, только `Match` — НЕ переоткрывал, НЕ фиксил, вне scope: `types/mod.rs` правка).
 
-### 3.4 Core (не снимаемо без Zone CH channel-расширения — не в моей власти, types/mod.rs запрещён) — 33
+### 3.4 Core (не снимаемо без Zone CH channel-расширения) — 32
+> **Реклассификация 2026-07-17 (Q2-волна, wip/196-q2-notes.md):** `B12h` перенесён в класс
+> B11q/B11r §3.2 — блокер Plan 59 Ф.7.5 D3 (typed-Result mono интринсика), НЕ Zone CH.
 `B01`, `B02`, `B05`, `B06`, `B06a`, `B06b`, `B06c`, `B06d`, `B07`, `B07r`, `B08`, `B08r`, `B10e`, `B10f`, `B10h`,
-`B10j`×2, `B10l`, `B10m`, `B11a`, `B11ae`, `B11af`, `B11d`, `B11e`, `B11f`, `B11j`, `B11k`, `B12b`, `B12h`,
+`B10j`×2, `B10l`, `B10m`, `B11a`, `B11ae`, `B11af`, `B11d`, `B11e`, `B11f`, `B11j`, `B11k`, `B12b`,
 `B12l`, `B12o`, `B12p`, `B_overflowing_ints_intrinsic`. Все подтверждены живыми на моём сэмпле (collections/time/
 standalone/d182/encoding/aggregator) — консистентно с прошлыми волнами, регрессий не найдено.
 
