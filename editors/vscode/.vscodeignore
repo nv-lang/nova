@@ -14,7 +14,8 @@ tsconfig*.json
 # Dev artifacts
 .nyc_output
 coverage/
-node_modules/
+# node_modules НУЖЕН (vscode-languageclient — рантайм-зависимость клиента);
+# vsce сам отфильтрует dev-пакеты по package.json dependencies
 *.vsix
 
 # Version control
