@@ -1447,6 +1447,20 @@ pub struct CEmitter {
     /// `/*__INTERNED_STR_LITERALS__*/` preamble marker (appended after the
     /// str literals). Ordered for deterministic emitted-C output.
     interned_blob_emit: Vec<(String, Vec<u8>)>,
+    /// Plan 210 Ф.8 (Go-паритет+, 2026-07-17, OPT-IN): when `Some(dir)`, blob
+    /// statics are emitted as C23 `#embed "<sym>.bin"` (sidecar file written
+    /// under `dir`) instead of the default `0x%02X,` hex-text array (~5.3x
+    /// smaller-than-payload `.c` text, ~×5.3 expansion avoided entirely —
+    /// see `render_interned_blob_literals`). `None` (default — set ONLY when
+    /// the caller opts in via `NOVA_C23_EMBED=1`, `nova-cli/src/main.rs`'s
+    /// `build` command) keeps the existing hex behavior byte-identical — ZERO
+    /// change to any pipeline that doesn't explicitly ask for this. Even when
+    /// `Some`, a cached runtime feature-probe (`embed_c23_supported`,
+    /// test_runner.rs) gates the actual `#embed` emission — CI's clang 18
+    /// (verified via `docker run ubuntu:24.04`) does NOT support C23 `#embed`
+    /// (`invalid preprocessing directive`), so probe failure silently falls
+    /// back to hex regardless of this field.
+    blob_sidecar_dir: Option<std::path::PathBuf>,
     /// Plan 70.1: set of imported-module prefix names visible в this module
     /// (alias + last-segment of import path). Used в emit_call Member dispatch
     /// чтобы распознать `<alias>.func(args)` или `<module>.func(args)` pattern
@@ -2217,6 +2231,7 @@ impl CEmitter {
             interned_str_emit: Vec::new(),
             interned_blob_literals: HashMap::new(),
             interned_blob_emit: Vec::new(),
+            blob_sidecar_dir: None,
             imported_modules: HashSet::new(),
             fn_module_map: HashMap::new(),
             private_const_c_names: HashMap::new(),
@@ -2547,6 +2562,17 @@ impl CEmitter {
     pub fn set_source_for_annotations(&mut self, src: String) {
         self.annotation_source = Some(src);
         self.annotation_enabled = true;
+    }
+
+    /// Plan 210 Ф.8 (Go-паритет+, OPT-IN): directory the blob sidecar `.bin`
+    /// files should be written to (must be the SAME directory the caller
+    /// will write the resulting `.c` file to — C23 `#embed "foo.bin"`
+    /// resolves relative to the including file, same rule as `#include
+    /// "foo.h"`). Caller opts in explicitly (`NOVA_C23_EMBED=1`); when never
+    /// called, `blob_sidecar_dir` stays `None` and `render_interned_blob_literals`
+    /// keeps emitting the existing hex-text array — zero behavior change.
+    pub fn set_blob_sidecar_dir(&mut self, dir: std::path::PathBuf) {
+        self.blob_sidecar_dir = Some(dir);
     }
 
     /// Plan 140.1 Ф.2 (D24/D13 amend): set the source file display name used
@@ -55055,14 +55081,42 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
     /// Plan 186 (D412): render all interned blob statics (one shared rodata
     /// buffer per distinct content) for the preamble marker.
+    ///
+    /// Plan 210 Ф.8 (Go-паритет+, 2026-07-17, OPT-IN): when `blob_sidecar_dir`
+    /// is set AND the auto-detected clang passes the `#embed` behavior-probe
+    /// (`test_runner::embed_c23_supported`, cached process-wide), each blob
+    /// is written to a sidecar `<sym>.bin` file next to the `.c` and rendered
+    /// as `#embed "<sym>.bin"` instead of the `0x%02X,` hex-text array —
+    /// measured ~40900x smaller `.c` text and ~28-30x faster `clang -c` on a
+    /// 1 MiB synthetic payload (docs/plans/210-embed-dir.md §Ф.8.2), byte-
+    /// identical resulting `.o`. ANY failure on this path (sidecar write
+    /// error, feature unsupported, no `blob_sidecar_dir` set at all — the
+    /// default) falls back to the ORIGINAL hex rendering, unconditionally
+    /// and per-blob (a partial sidecar-write failure on blob N doesn't lose
+    /// blob N's data — it just renders as hex instead, same as if the
+    /// feature were off entirely).
     fn render_interned_blob_literals(&self) -> String {
         if self.interned_blob_emit.is_empty() {
             return String::new();
         }
+        let use_embed = self.blob_sidecar_dir.is_some() && crate::test_runner::embed_c23_supported();
         let mut out = String::new();
         out.push_str("/* Plan 186 (D412): interned hex-blob/embed literals (rodata dedup). */\n");
         for (sym, bytes) in &self.interned_blob_emit {
             // Empty blobs never reach here (emit sites pass NULL/0 directly).
+            if use_embed {
+                if let Some(sidecar_path) = self.try_write_blob_sidecar(sym, bytes) {
+                    out.push_str(&format!(
+                        "{}const uint8_t {}[] = {{\n#embed \"{}\"\n}};\n",
+                        self.top_level_storage(),
+                        sym,
+                        sidecar_path
+                    ));
+                    continue;
+                }
+                // Sidecar write failed (disk full, permissions, ...) — fall
+                // through to the hex rendering below for THIS blob only.
+            }
             out.push_str(&format!("{}const uint8_t {}[] = {{", self.top_level_storage(), sym));
             for (i, b) in bytes.iter().enumerate() {
                 if i % 16 == 0 {
@@ -55073,6 +55127,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             out.push_str("\n};\n");
         }
         out
+    }
+
+    /// Plan 210 Ф.8: write `bytes` to `<blob_sidecar_dir>/<sym>.bin` and
+    /// return the FILE NAME (not full path — `#embed "…"` is resolved
+    /// relative to the including `.c` file's own directory, same rule as
+    /// `#include "…"`; sidecar and `.c` are written to the SAME directory by
+    /// contract of `set_blob_sidecar_dir`'s caller). `None` on any I/O error
+    /// (caller falls back to hex for this one blob).
+    fn try_write_blob_sidecar(&self, sym: &str, bytes: &[u8]) -> Option<String> {
+        let dir = self.blob_sidecar_dir.as_ref()?;
+        let file_name = format!("{}.bin", sym);
+        std::fs::write(dir.join(&file_name), bytes).ok()?;
+        Some(file_name)
     }
 
     /// Plan 186 (D412): make sure the `Vec[u8]` mono instance

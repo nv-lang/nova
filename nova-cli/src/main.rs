@@ -4978,10 +4978,35 @@ fn cmd_build(
                     Err(_) => build_env,
                 }
             };
+            // Plan 210 Ф.8 (Go-паритет+, OPT-IN, 2026-07-17): `NOVA_C23_EMBED=1`
+            // hands the emitter the SAME tmp dir the `.c` file will land in
+            // below (`path_hash`/`default_tmp_dir` are pure given `path` +
+            // this process's pid, so computing them here and again at the
+            // existing `tmp_path` binding further down yields byte-identical
+            // paths within this one process) so blob statics can sidecar
+            // `#embed` files next to the `.c` instead of inlining hex text.
+            // Default (env unset) — this whole block is a no-op, ZERO change
+            // to the existing `nova build` hot path (the early hash/mkdir
+            // work only happens when the operator explicitly opts in).
+            let embed_sidecar_dir: Option<std::path::PathBuf> =
+                if std::env::var("NOVA_C23_EMBED").ok().as_deref() == Some("1") {
+                    let early_hash = path_hash(&path);
+                    let dir = default_tmp_dir()
+                        .join(format!("build-{}", &early_hash[..early_hash.len().min(12)]));
+                    match std::fs::create_dir_all(&dir) {
+                        Ok(()) => Some(dir),
+                        Err(_) => None, // fall back to hex — same as unset
+                    }
+                } else {
+                    None
+                };
             let (emit_output, warnings) = {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("codegen");
                 let mut emitter = nova_codegen::codegen::CEmitter::new();
                 emitter.set_source_for_annotations(src.clone());
+                if let Some(dir) = embed_sidecar_dir.clone() {
+                    emitter.set_blob_sidecar_dir(dir);
+                }
                 if let Some(n) = mono_depth {
                     emitter.set_mono_depth_limit(n);
                 }
