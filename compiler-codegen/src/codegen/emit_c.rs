@@ -40560,6 +40560,56 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         fmt_ctx
     }
 
+    /// [M-208-generic-interp-display-dispatch-gap] (Plan 208 followup, D422):
+    /// resolve a bare `${x}`/`${x:?}` interp dispatch target when `x`'s C type
+    /// is a monomorphized user GENERIC container instance (`Vec[T]`,
+    /// `HashMap[K,V]`, …) whose `@display`/`@debug` is a real Nova body on the
+    /// generic template. `all_methods` (the caller's `has_explicit` lookup)
+    /// is keyed by the template's BASE name ("Vec"), never by a mono'd
+    /// instance name ("Vec____nova_int") — so it always misses here, and
+    /// `try_synthesize_default_method` also misses (containers aren't
+    /// record/sum types), so without this the call fell through all the way
+    /// to the numeric-cast fallback (`nova_int_to_str((nova_int)(ptr))`) —
+    /// printing the receiver's raw heap pointer as an integer.
+    ///
+    /// `arg_type` is already `Nova_`-stripped + `*`-stripped (the caller's
+    /// `debt_strip_value_prefix_or_nova_trim_start` result, e.g.
+    /// `"Vec____nova_int"`). Mirrors the general method-call dispatch path's
+    /// (5b, ~line 37260) instance lookup + mono naming EXACTLY
+    /// (`"{rt_trimmed}_method_{name}"`, `register_mono_method_instance`) so a
+    /// direct `.display(...)` call elsewhere in the same compile unit and a
+    /// bare `${v}` here converge on the identical C symbol — no duplicate
+    /// emission (`register_mono_method_instance`'s own `mono_instantiated`
+    /// guard no-ops the second caller). Returns `None` (unchanged fallback
+    /// behavior) when `arg_type` isn't a registered generic mono instance, or
+    /// the base template has no Nova body for `method_name`.
+    fn try_generic_mono_interp_dispatch(
+        &mut self,
+        arg_type: &str,
+        method_name: &str,
+    ) -> Option<String> {
+        if !Self::debt_contains_mono_sep(arg_type) {
+            return None;
+        }
+        let mangled = format!("Nova_{}", arg_type);
+        let (base_name, type_args_rt) =
+            self.generic_type_instance_info.borrow().get(&mangled).cloned()?;
+        let fn_decl = self.generic_type_methods.get(&base_name)
+            .and_then(|ms| ms.iter().find(|m| m.name == method_name))
+            .cloned()?;
+        let tmpl = self.generic_type_templates.get(&base_name).cloned()?;
+        if tmpl.generics.len() != type_args_rt.len() {
+            return None;
+        }
+        let type_subst: Vec<(String, String)> = tmpl.generics.iter()
+            .zip(type_args_rt.iter())
+            .map(|(g, rt)| (g.name.clone(), self.arg_c(rt)))
+            .collect();
+        let mono_name = format!("{}_method_{}", arg_type, method_name);
+        self.register_mono_method_instance(&fn_decl, type_subst, &mono_name, arg_type);
+        Some(mono_name)
+    }
+
     fn emit_interpolated_str(
         &mut self,
         parts: &[InterpStrPart],
@@ -40773,6 +40823,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let method_c_fn: Option<String> = if has_explicit {
                             let safe = Self::sanitize_c_for_ident(&arg_type);
                             Some(format!("Nova_{}_method_{}", safe, method_name))
+                        } else if let Some(fn_name) =
+                            self.try_generic_mono_interp_dispatch(&arg_type, method_name)
+                        {
+                            // [M-208-generic-interp-display-dispatch-gap]: `all_methods`
+                            // is keyed by the generic type's BASE name (e.g. "Vec"),
+                            // never by a mono'd instance name (e.g. "Vec____nova_int") —
+                            // so `has_explicit` above always misses for a generic
+                            // container even when its `@display`/`@debug` body exists.
+                            // `try_synthesize_default_method` below is also a miss
+                            // (Vec/HashMap/… aren't record/sum types), so bare
+                            // `${vec}`/`${vec:?}` fell all the way through to the
+                            // numeric-cast fallback — printing the receiver's raw
+                            // pointer as an int. Mirror the Option/Result
+                            // `DeclaredBody` routing above (which is special-cased for
+                            // those two builtin sums only): resolve the mono'd
+                            // instance via `generic_type_instance_info`, find the
+                            // method on the generic template, and register/name the
+                            // mono instance exactly like the general method-call
+                            // dispatch path (5b, ~line 37260) would — so the two
+                            // paths converge on the SAME C symbol when both fire in
+                            // one compile unit.
+                            Some(fn_name)
                         } else {
                             // Plan 91.14 Ф.4 / decision #4 (implicit auto-derive):
                             // bypass D186 #impl gate via gate_on_impl=false для
