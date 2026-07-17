@@ -5270,6 +5270,123 @@ mod tests {
             assert!(ws.is_empty(), "prelude self-module must be skipped");
         }
     }
+
+    // Owner decision (2026-07-17): W_WITH_MUTATOR closure-param exception —
+    // scope-guard `with_*(body fn() -> R)` must stay silent; field-copy
+    // `with_*(v T)` must still warn.
+
+    #[test]
+    fn no_warning_on_with_mutator_closure_param() {
+        let src = "module foo\n\
+             type Mutex { mut locked bool }\n\
+             export fn Mutex mut @with_lock[R](body fn() -> R) -> R {\n\
+                 @locked = true\n\
+                 ro r = body()\n\
+                 @locked = false\n\
+                 r\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_WITH_MUTATOR"),
+            "scope-guard with_* (closure param) must NOT warn, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn warns_on_with_mutator_value_param() {
+        let src = "module foo\n\
+             type Widget { mut label str }\n\
+             export fn Widget mut @with_label(v str) -> () {\n\
+                 @label = v\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_WITH_MUTATOR"),
+            "value-param with_* (field-copy shape) must still warn, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // Plan 185 Ф.N (owner decision 2026-07-17): `// nova:allow W_CODE --
+    // причина` inline suppression mechanism.
+
+    #[test]
+    fn nova_allow_with_reason_suppresses_finding() {
+        let src = "module foo\n\
+             type Widget { ro kind int }\n\
+             // nova:allow W_STATIC_CONVERSION -- test reason\n\
+             export fn Widget.from(x int) -> Widget => { kind: x }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_STATIC_CONVERSION"),
+            "nova:allow with a reason must suppress the finding, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+        assert!(
+            !ws.iter().any(|w| w.rule == "E_LINT_ALLOW_NO_REASON"),
+            "well-formed nova:allow must not itself be a finding, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn nova_allow_without_reason_does_not_suppress_and_errors() {
+        let src = "module foo\n\
+             type Widget { ro kind int }\n\
+             // nova:allow W_STATIC_CONVERSION\n\
+             export fn Widget.from(x int) -> Widget => { kind: x }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_STATIC_CONVERSION"),
+            "no-reason nova:allow must NOT suppress, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+        assert!(
+            ws.iter().any(|w| w.rule == "E_LINT_ALLOW_NO_REASON"),
+            "no-reason nova:allow must itself be a finding, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn nova_allow_wrong_rule_id_does_not_suppress_other_rule() {
+        // Комментарий гасит W_PARAM_NO_CONTRACT, но не W_STATIC_CONVERSION —
+        // находка другого правила на той же строке должна остаться.
+        let src = "module foo\n\
+             type Widget { ro kind int }\n\
+             // nova:allow W_PARAM_NO_CONTRACT -- unrelated reason\n\
+             export fn Widget.from(x int) -> Widget => { kind: x }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_STATIC_CONVERSION"),
+            "allow of a DIFFERENT rule id must not suppress this finding, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn nova_allow_not_on_line_immediately_before_does_not_suppress() {
+        // Пустая строка между `nova:allow` и декларацией — контракт «на
+        // строке ПЕРЕД» не соблюдён, находка должна остаться.
+        let src = "module foo\n\
+             type Widget { ro kind int }\n\
+             // nova:allow W_STATIC_CONVERSION -- test reason\n\
+             \n\
+             export fn Widget.from(x int) -> Widget => { kind: x }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_STATIC_CONVERSION"),
+            "nova:allow must only suppress the very next line, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
 }
 
 // ============================================================================
@@ -5356,45 +5473,6 @@ mod cancel_unsafe_tests {
         assert!(
             !ws.iter().any(|w| w.rule == "W_FFI_CANCEL_UNSAFE"),
             "plain Nova fn call from cleanup must be silent (not FFI)"
-        );
-    }
-
-    // Owner decision (2026-07-17): W_WITH_MUTATOR closure-param exception —
-    // scope-guard `with_*(body fn() -> R)` must stay silent; field-copy
-    // `with_*(v T)` must still warn.
-
-    #[test]
-    fn no_warning_on_with_mutator_closure_param() {
-        let src = "module foo\n\
-             type Mutex { mut locked bool }\n\
-             export fn Mutex mut @with_lock[R](body fn() -> R) -> R {\n\
-                 @locked = true\n\
-                 ro r = body()\n\
-                 @locked = false\n\
-                 r\n\
-             }\n";
-        let m = parse(src);
-        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
-        assert!(
-            !ws.iter().any(|w| w.rule == "W_WITH_MUTATOR"),
-            "scope-guard with_* (closure param) must NOT warn, got: {:?}",
-            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn warns_on_with_mutator_value_param() {
-        let src = "module foo\n\
-             type Widget { mut label str }\n\
-             export fn Widget mut @with_label(v str) -> () {\n\
-                 @label = v\n\
-             }\n";
-        let m = parse(src);
-        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
-        assert!(
-            ws.iter().any(|w| w.rule == "W_WITH_MUTATOR"),
-            "value-param with_* (field-copy shape) must still warn, got: {:?}",
-            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
     }
 }
