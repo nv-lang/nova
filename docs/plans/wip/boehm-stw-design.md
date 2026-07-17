@@ -1,10 +1,20 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # [M-187-docker-linux-runtime-hang] слой 2 — архитектурный диагноз + дизайн фикса
 
+Статус: **РЕАЛИЗОВАНО (2026-07-17, worktree `nova-boehmfix`, ветка
+`p-fix-boehm-mark`, WSL2 Ubuntu).** Фикс A внедрён и гейт зелёный (см. §10).
+Фикс B — целевая репро-попытка ПОСЛЕ Фикса A не воспроизвела Дефект B;
+задокументирован как «латентен, не проявился» (§10), НЕ внедрён (не вслепую,
+по явному указанию §5 Фикс B).
+
+<details><summary>Исходный статус (ДО реализации, для истории)</summary>
+
 Статус: **ДИАГНОЗ ЗАВЕРШЁН (root cause доказан по коду), фикс НЕ компактен →
 дизайн + стоп.** Реализация — отдельной волной в WSL/Linux-окружении (гейт
 требует Linux-валидации, из Windows-сессии путь `fiber_arena.c` даже не
 компилируется — `#if defined(__linux__) || defined(__APPLE__)`).
+
+</details>
 
 Автор диагноза: opus-архитектор (эскалация слоя 2). Опирается на
 `docs/plans/wip/linux-server-progress.md` (gdb-дамп 34 потоков) + чтение
@@ -324,3 +334,160 @@ curl через 10с).
   сперва подтвердить репро (§7.1), затем внедрить.
 - Строго под POSIX-гейтом; Windows не трогать.
 - Гейт §7. Push запрещён без зелёного авторитетного гейта.
+
+---
+
+## 10. Реализация (2026-07-17, worktree `nova-boehmfix`, ветка `p-fix-boehm-mark`)
+
+### 10.1 Репро ДО фикса (§7.1)
+
+WSL2 Ubuntu, `~/nova-work` (rsync-копия, main-база `cb409a927` — уже
+содержит слой 1, `f6bb896da`), бинарь `~/nova-target/release/nova` (сборка
+из `nova-linuxsrv`-веток Rust-кода, идентичного main вне `emit_c.rs`/
+`types/mod.rs`, не относящихся к Boehm/fiber). Aggregator собран
+(`nova build flagship/aggregator/src/main.nv -o ~/aggregator
+--strict-effects`), запущен под gdb:
+
+```
+handle SIGPWR SIGXCPU nostop noprint pass
+run
+(отложенный curl / через 8-10с)
+thread apply all bt
+```
+
+Дословный результат:
+
+```
+Nova flagship aggregator listening on http://127.0.0.1:8187
+
+Thread 4 "GC-marker-2" received signal SIGSEGV, Segmentation fault.
+[Switching to Thread 0x7ffff69fd6c0 (LWP 693)]
+0x00007ffff7dd504b in ?? () from /usr/lib/x86_64-linux-gnu/libgc.so.1
+```
+
+Стек `Thread 4` (крашнувшийся GC-marker):
+
+```
+Thread 4 (Thread 0x7ffff69fd6c0 (LWP 693) "GC-marker-2"):
+#0  0x00007ffff7dd504b in ?? () from /usr/lib/x86_64-linux-gnu/libgc.so.1
+#1  0x00007ffff7dea093 in ?? () from /usr/lib/x86_64-linux-gnu/libgc.so.1
+#2  0x00007ffff7dea38d in ?? () from /usr/lib/x86_64-linux-gnu/libgc.so.1
+#3  0x00007ffff7dea4af in ?? () from /usr/lib/x86_64-linux-gnu/libgc.so.1
+#4  0x00007ffff7aa40da in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:454
+#5  0x00007ffff7b377ac in __GI___clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+```
+
+Остальные 14 `GC-marker-N`-потоков — идентичный PC (`0x...dd504b`, тот же
+кадр parallel-mark-функции) — все синхронно внутри mark-фазы в момент
+STW. `grep "nova:" gdb_repro_before.log` — 0 совпадений: наш
+`_arena_sigsegv_handler` НЕ сработал (marker-поток не владеет `_t_arena`;
+`_nova_find_arena_for` явно исключает guard-диапазон — `p >= base +
+NOVA_FIBER_GUARD_SIZE`), фолт делегирован в `_prev_sigsegv`
+(Boehm не ставит свой) → `SIG_DFL`+`raise` → смерть без диагностики. Это
+ТОЧНО предсказанный §3 путь «фолтит marker-поток», отделяет реальный фолт
+mark-фазы от suspend-артефакта (сервер успел напечатать «listening», Thread
+1 жив в `uv_run` на момент фолта).
+
+### 10.2 Фикс A — применено как в §5, без отклонений
+
+`compiler-codegen/nova_rt/fiber_arena.c`, весь новый код внутри `#if
+defined(__linux__)||defined(__APPLE__)` (файловый guard) + `#ifdef
+NOVA_GC_BOEHM`:
+
+- Добавлен `#include <gc/gc_mark.h>` — на Ubuntu `libgc-dev` 1:8.2.12-1
+  `GC_push_all_eager`/`GC_set_push_other_roots` объявлены в
+  `/usr/include/gc/gc_mark.h`, НЕ в верхнеуровневом compat-шиме
+  `/usr/include/gc.h` (`#include <gc/gc.h>`) — подтверждено `dpkg -L
+  libgc-dev`. Path-less (тот же system include path, `detect_boehm` не
+  добавляет `-I` на Linux) — симметрично Windows (`<gc/gc.h>` +
+  `<gc/gc_mark.h>`).
+- `_nova_gc_push_other_roots` + `_gc_roots_once`/`_arena_install_gc_roots`
+  — код ровно по §5 (перемещены ВЫШЕ `nova_fiber_arena_init`, рядом с
+  `_arena_install_sigsegv_handler`, т.к. C требует объявление до
+  использования в `pthread_once`-вызове внутри init — единственное
+  отличие от порядка изложения в §5, не от содержания).
+- Удалена `_arena_register_active_range` (обе ветки, `NOVA_GC_BOEHM` и
+  `#else`-стаб) + поле-трекер `_registered_high_water`; вызов на
+  bump'е `high_water` в `nova_fiber_alloc` снят (не оставлен no-op'ом —
+  ничего не остаётся регистрировать явно).
+- Убран мёртвый `GC_remove_roots`-вызов в `_arena_thread_exit_cleanup`
+  (rootless-модель: retired-арена видна колбэку через `base==NULL`-skip,
+  явный unregister избыточен).
+
+Символы в пересобранном бинаре подтверждены (`objdump -t`):
+`_nova_gc_push_other_roots`, `_arena_install_gc_roots`,
+`GC_set_push_other_roots` (undefined, резолвится из `libgc.so.1`).
+
+### 10.3 Гейт после Фикса A (§7.2/§7.3) — дословно
+
+Бинарь пересобран (`nova build ... --strict-effects`, 4.82s, build cache
+hit на generated C — ожидаемо, C-рантайм не кэшируется отдельно от
+пересборки object-файлов).
+
+```
+--- curl / ---                                          HTTP=200
+--- curl /api/run?legend=demo ---                        HTTP=200
+--- 5 requests in a row ---
+req HTTP=200
+req HTTP=200
+req HTTP=200
+req HTTP=200
+req HTTP=200
+--- proc alive check ---                                 ALIVE
+--- after 15s idle ---
+idle-check HTTP=200                                       ALIVE
+```
+
+`GC_MARKERS=1` (parallel-mark выключен, восстановленный отдельный запуск
+после явного `kill -9` старого инстанса на порту):
+
+```
+curl-root HTTP=200
+curl-api HTTP=200
+req-1..5 HTTP=200 (все 5)
+post-idle HTTP=200
+ALIVE
+```
+
+Оба режима (дефолт parallel-mark и `GC_MARKERS=1`) — зелены.
+
+### 10.4 Фикс B — целевая репро-попытка, НЕ воспроизвелась
+
+После Фикса A: тот же gdb-репро-рецепт (`handle SIGPWR SIGXCPU nostop
+noprint pass`), но нагрузка усилена — 6 раундов по 20 параллельных `curl
+/api/run?legend=demo` (120 попыток) за ~40с под ptrace. Побочная находка:
+`[M-187-high-concurrency-connection-wedge]` (`MAX_INFLIGHT_CONNS=2`, уже
+известный отдельный маркер) реально ограничил конкурентность до 2/20
+успешных `HTTP=200` за раунд (остальные `000`, честный admission-control
+отказ, не крах) — но 40с непрерывной нагрузки дали много циклов GC поверх
+активно исполняющихся fiber'ов. `grep "received signal\|SIGSEGV"
+gdb_repro_B.log` — 0 совпадений. Процесс пережил весь прогон.
+
+Итог по явному указанию §5 Фикс B («если после A не воспроизводится —
+задокументировать latent, не внедрять вслепую»): **Дефект B архитектурно
+реален** (анализ §3 не опровергнут — GC_get_stack_base/mco_resume-механика
+не изменилась), **но не проявился** в доступном тестовом окружении
+(WSL2 Ubuntu, эта адресная раскладка/эта нагрузка) после Фикса A. Фикс B
+(`GC_set_stackbottom` на `mco_resume`) **не внедрён** в эту волну — маркер
+оставлен как есть: если проявится под другой нагрузкой/платформой (docker,
+другое ядро/ASLR-раскладка, больше воркеров), чинить по рецепту §5
+Фикс B вариант 1.
+
+### 10.5 Windows-регресс
+
+Тот же worktree (`fiber_arena_win.c` не тронут; POSIX-фикс строго под
+`#if defined(__linux__)||defined(__APPLE__)`, Windows TU — тот же пустой
+stub, что и до фикса):
+
+- `cargo build --release --manifest-path nova-cli/Cargo.toml` — exit 0,
+  2m30s, только warnings (dead_code/unused, pre-existing).
+- `nova test std/src/concurrency` — `PASS: 4 FAIL: 0 SKIP: 5` (совпадает
+  с ожиданием гейта).
+
+### 10.6 Не сделано в эту волну
+
+- Docker-прогон (§7 гейт п.2 в родственном `linux-server-progress.md`) —
+  WSL-гейта было достаточно по явному заданию волны; докер — отдельный
+  follow-up.
+- macOS smoke (§7.5) — нет доступа к macOS-машине в этой волне; фикс
+  применим (тот же POSIX-файл), не верифицирован отдельно.
