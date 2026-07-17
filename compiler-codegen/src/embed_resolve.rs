@@ -186,6 +186,104 @@ fn check_path_backslash(rel: &str, intrinsic: &str) -> Option<String> {
     }
 }
 
+/// Plan 210 Ф.7.1 (D412-амендмент, Go-паритет+): один "atom" разобранного
+/// glob-паттерна для `embed_dir("dir", glob: "...")`. Работает на `char`, не
+/// байтах — безопасно для non-ASCII POSIX-ключей (NFC-нормализованных, Ф.6а).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum GlobAtom {
+    /// Буквальный символ (включая `/` — можно написать явный сепаратор).
+    Lit(char),
+    /// `?` — РОВНО один символ, НЕ `/`.
+    Any,
+    /// `*` — ноль или больше символов, НИ ОДИН не `/` (не пересекает границу).
+    Star,
+    /// `**` — ноль или больше символов, МОГУТ включать `/` (пересекает).
+    StarStar,
+}
+
+fn glob_tokenize(pattern: &str) -> Vec<GlobAtom> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut atoms = Vec::with_capacity(chars.len());
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '*' => {
+                if i + 1 < chars.len() && chars[i + 1] == '*' {
+                    atoms.push(GlobAtom::StarStar);
+                    i += 2;
+                } else {
+                    atoms.push(GlobAtom::Star);
+                    i += 1;
+                }
+            }
+            '?' => {
+                atoms.push(GlobAtom::Any);
+                i += 1;
+            }
+            c => {
+                atoms.push(GlobAtom::Lit(c));
+                i += 1;
+            }
+        }
+    }
+    atoms
+}
+
+/// Plan 210 Ф.7.1: простой glob-матчер, БЕЗ новых зависимостей (собственная
+/// DP над `char`-массивами, O(P*T) — patterns/paths коротки, N файлов
+/// ограничен `W_EMBED_DIR_LARGE`-порядком, ни backtracking-взрыва, ни
+/// перформанс-риска). Маска сверяется с ОТНОСИТЕЛЬНЫМ POSIX-путём вхождения
+/// (тем же ключом, что идёт в `EmbeddedEntry.path` — уже NFC-нормализован,
+/// Ф.6а). Семантика (Go-паритет+, задание владельца 2026-07-17):
+/// - `*` — ноль+ символов, НЕ пересекает `/` (как `path.Match`/bash без
+///   globstar);
+/// - `**` — ноль+ символов, ПЕРЕСЕКАЕТ `/` (bash globstar-стиль);
+/// - `?` — ровно один символ, не `/`;
+/// - любой другой символ — буквальный (включая явный `/` в паттерне).
+/// **Известное упрощение** (документировано в плане/спеке): `**` не даёт
+/// bash'овского "нулевой-каталог" сокращения — `"**/*.png"` требует
+/// буквальный `/` в тексте и НЕ матчит файл в корне (`a.png`); для матча и
+/// корня, и вложенности используйте `"*.png"` (не пересекает, но зато сам
+/// корень — это "нулевая глубина") или разделяйте на два вызова.
+fn glob_match_posix(pattern: &str, text: &str) -> bool {
+    let atoms = glob_tokenize(pattern);
+    let t: Vec<char> = text.chars().collect();
+    let n = t.len();
+    // dp[j] == atoms[0..i] matches t[0..j] (i — текущая обрабатываемая
+    // строка, живёт только в `dp`/`new_dp`, не материализуется как 2D-массив).
+    let mut dp = vec![false; n + 1];
+    dp[0] = true; // atoms[0..0] (пустой паттерн) матчит только пустой текст.
+    for atom in &atoms {
+        let mut new_dp = vec![false; n + 1];
+        match *atom {
+            GlobAtom::Lit(c) => {
+                for j in 1..=n {
+                    new_dp[j] = dp[j - 1] && t[j - 1] == c;
+                }
+            }
+            GlobAtom::Any => {
+                for j in 1..=n {
+                    new_dp[j] = dp[j - 1] && t[j - 1] != '/';
+                }
+            }
+            GlobAtom::Star => {
+                new_dp[0] = dp[0];
+                for j in 1..=n {
+                    new_dp[j] = dp[j] || (t[j - 1] != '/' && new_dp[j - 1]);
+                }
+            }
+            GlobAtom::StarStar => {
+                new_dp[0] = dp[0];
+                for j in 1..=n {
+                    new_dp[j] = dp[j] || new_dp[j - 1];
+                }
+            }
+        }
+        dp = new_dp;
+    }
+    dp[n]
+}
+
 impl EmbedCtx {
     fn base_dir(&self, file_id: FileId) -> &Path {
         self.dirs
@@ -314,6 +412,137 @@ impl EmbedCtx {
         true
     }
 
+    /// Plan 210 Ф.7.2 (Go-паритет+, D412-амендмент, 2026-07-17): `embed_str("file")`
+    /// — компайл-тайм интринсик, содержимое файла как `str` (UTF-8-валидированное).
+    /// Зеркало `try_replace_embed` (not_found/is_dir/escape/backslash — ТЕ ЖЕ коды);
+    /// собственная валидация — файл ОБЯЗАН быть валидным UTF-8 (`str`-инвариант
+    /// компилятора требует этого; невалидный байт → `E_EMBED_NOT_UTF8` с offset'ом
+    /// первого битого байта). Синтез — `ExprKind::StrLit(text)`: та же интернирующая
+    /// инфраструктура строковых литералов (`intern_str_literal`, emit_c.rs 55020),
+    /// что и любой рукописный `"..."` — 0 правок emit_c (симметрично `embed`/
+    /// `embed_dir`'s `HexBlobLit`-переиспользованию, §1 плана).
+    fn try_replace_embed_str(&mut self, e: &mut Expr) -> bool {
+        let ExprKind::Call { func, args, trailing } = &e.kind else {
+            return false;
+        };
+        let ExprKind::Ident(name) = &func.kind else {
+            return false;
+        };
+        if name != "embed_str" {
+            return false;
+        }
+        if trailing.is_some() || args.len() != 1 {
+            self.diags.push(Diagnostic::new(
+                "[E_EMBED_ARG_NOT_STR_LITERAL] `embed_str` takes exactly one string-literal \
+                 argument: embed_str(\"relative/path\") (D412-amendment, Plan 210 Ф.7.2)",
+                e.span,
+            ));
+            return true;
+        }
+        let rel: String = match &args[0] {
+            CallArg::Item(a) => match &a.kind {
+                ExprKind::StrLit(s) => s.clone(),
+                _ => {
+                    self.diags.push(Diagnostic::new(
+                        "[E_EMBED_ARG_NOT_STR_LITERAL] the argument of `embed_str` must be a \
+                         string LITERAL — the path is resolved at compile time \
+                         (D412-amendment, Plan 210 Ф.7.2)",
+                        a.span,
+                    ));
+                    return true;
+                }
+            },
+            _ => {
+                self.diags.push(Diagnostic::new(
+                    "[E_EMBED_ARG_NOT_STR_LITERAL] the argument of `embed_str` must be a \
+                     plain string literal (no spread/named args) (D412-amendment, Plan 210 Ф.7.2)",
+                    e.span,
+                ));
+                return true;
+            }
+        };
+        if let Some(msg) = check_path_backslash(&rel, "embed_str") {
+            self.diags.push(Diagnostic::new(msg, e.span));
+            return true;
+        }
+        let base = self.base_dir(e.span.file_id).to_path_buf();
+        let candidate = base.join(&rel);
+        let canon = match candidate.canonicalize() {
+            Ok(c) => c,
+            Err(_) => {
+                self.diags.push(Diagnostic::new(
+                    format!(
+                        "[E_EMBED_NOT_FOUND] embedded file not found: `{}` (resolved \
+                         relative to `{}`)",
+                        rel,
+                        base.display()
+                    ),
+                    e.span,
+                ));
+                return true;
+            }
+        };
+        if canon.is_dir() {
+            self.diags.push(Diagnostic::new(
+                format!(
+                    "[E_EMBED_IS_A_DIR] `{}` is a directory, not a file — use \
+                     `embed_dir(...)` instead of `embed_str(...)` (D412-amendment, Plan 210 Ф.7.2)",
+                    canon.display()
+                ),
+                e.span,
+            ));
+            return true;
+        }
+        if let Some(root) = self.root_for(e.span.file_id) {
+            if !canon.starts_with(root) {
+                self.diags.push(Diagnostic::new(
+                    format!(
+                        "[E_EMBED_OUTSIDE_PROJECT] embedded file `{}` escapes the project \
+                         root `{}` — paths above the project tree are forbidden (D412)",
+                        canon.display(),
+                        root.display()
+                    ),
+                    e.span,
+                ));
+                return true;
+            }
+        }
+        let bytes = match std::fs::read(&canon) {
+            Ok(b) => b,
+            Err(err) => {
+                self.diags.push(Diagnostic::new(
+                    format!(
+                        "[E_EMBED_NOT_FOUND] cannot read embedded file `{}`: {}",
+                        canon.display(),
+                        err
+                    ),
+                    e.span,
+                ));
+                return true;
+            }
+        };
+        match String::from_utf8(bytes) {
+            Ok(text) => {
+                e.kind = ExprKind::StrLit(text);
+                self.files.push(canon);
+            }
+            Err(err) => {
+                let offset = err.utf8_error().valid_up_to();
+                self.diags.push(Diagnostic::new(
+                    format!(
+                        "[E_EMBED_NOT_UTF8] embedded file `{}` is not valid UTF-8 (first \
+                         invalid byte at offset {}) — `embed_str` requires text content; use \
+                         `embed(...)` for raw bytes (D412-amendment, Plan 210 Ф.7.2)",
+                        canon.display(),
+                        offset
+                    ),
+                    e.span,
+                ));
+            }
+        }
+        true
+    }
+
     /// Plan 210 (D412-амендмент): `embed_dir("dir")` → синтезированный
     /// `Call{ EmbeddedDir.new([RecordLit{EmbeddedEntry, path, data}, …]) }`
     /// (Option R′, §3/§4.2 плана). Зеркало `try_replace_embed`, вызывается
@@ -331,10 +560,12 @@ impl EmbedCtx {
         if name != "embed_dir" {
             return false;
         }
-        if trailing.is_some() || args.len() != 1 {
+        if trailing.is_some() || args.is_empty() {
             self.diags.push(Diagnostic::new(
-                "[E_EMBED_ARG_NOT_STR_LITERAL] `embed_dir` takes exactly one string-literal \
-                 argument: embed_dir(\"relative/dir\") (D412-amendment, Plan 210)",
+                "[E_EMBED_ARG_NOT_STR_LITERAL] `embed_dir` takes one string-literal path \
+                 argument, plus optional named args `glob`/`hidden`: \
+                 embed_dir(\"relative/dir\", glob: \"*.png\", hidden: true) \
+                 (D412-amendment, Plan 210 Ф.7)",
                 e.span,
             ));
             return true;
@@ -354,8 +585,9 @@ impl EmbedCtx {
             },
             _ => {
                 self.diags.push(Diagnostic::new(
-                    "[E_EMBED_ARG_NOT_STR_LITERAL] the argument of `embed_dir` must be a \
-                     plain string literal (no spread/named args) (D412-amendment, Plan 210)",
+                    "[E_EMBED_ARG_NOT_STR_LITERAL] the first argument of `embed_dir` must be a \
+                     plain positional string literal (no spread/named for the path) \
+                     (D412-amendment, Plan 210)",
                     e.span,
                 ));
                 return true;
@@ -364,6 +596,90 @@ impl EmbedCtx {
         if let Some(msg) = check_path_backslash(&rel, "embed_dir") {
             self.diags.push(Diagnostic::new(msg, e.span));
             return true;
+        }
+        // Plan 210 Ф.7.1/Ф.7.3 (Go-паритет+, 2026-07-17): именованные аргументы
+        // `glob`/`hidden` после позиционного пути. И.7.7 обеих: любой аргумент
+        // ПОСЛЕ индекса 0 обязан быть `CallArg::Named` с известным именем;
+        // лишний позиционный / spread / неизвестное имя / дубль имени —
+        // `E_EMBED_DIR_BAD_ARG` (единый код для этой малой семьи форм-ошибок,
+        // симметрично тому, как `E_EMBED_ARG_NOT_STR_LITERAL` уже покрывает
+        // несколько сценариев одним кодом).
+        let mut glob_pat: Option<String> = None;
+        let mut hidden_flag: bool = false;
+        let mut glob_seen = false;
+        let mut hidden_seen = false;
+        for extra in &args[1..] {
+            match extra {
+                CallArg::Named { name: arg_name, value } => match arg_name.as_str() {
+                    "glob" => {
+                        if glob_seen {
+                            self.diags.push(Diagnostic::new(
+                                "[E_EMBED_DIR_BAD_ARG] `embed_dir`: named argument `glob` \
+                                 given more than once (D412-amendment, Plan 210 Ф.7.1)",
+                                e.span,
+                            ));
+                            return true;
+                        }
+                        glob_seen = true;
+                        match &value.kind {
+                            ExprKind::StrLit(s) => glob_pat = Some(s.clone()),
+                            _ => {
+                                self.diags.push(Diagnostic::new(
+                                    "[E_EMBED_ARG_NOT_STR_LITERAL] `embed_dir`'s `glob:` \
+                                     argument must be a string LITERAL (matched at compile \
+                                     time) (D412-amendment, Plan 210 Ф.7.1)",
+                                    value.span,
+                                ));
+                                return true;
+                            }
+                        }
+                    }
+                    "hidden" => {
+                        if hidden_seen {
+                            self.diags.push(Diagnostic::new(
+                                "[E_EMBED_DIR_BAD_ARG] `embed_dir`: named argument `hidden` \
+                                 given more than once (D412-amendment, Plan 210 Ф.7.3)",
+                                e.span,
+                            ));
+                            return true;
+                        }
+                        hidden_seen = true;
+                        match &value.kind {
+                            ExprKind::BoolLit(b) => hidden_flag = *b,
+                            _ => {
+                                self.diags.push(Diagnostic::new(
+                                    "[E_EMBED_DIR_BAD_ARG] `embed_dir`'s `hidden:` argument \
+                                     must be a bool LITERAL (`true`/`false`) \
+                                     (D412-amendment, Plan 210 Ф.7.3)",
+                                    value.span,
+                                ));
+                                return true;
+                            }
+                        }
+                    }
+                    other => {
+                        self.diags.push(Diagnostic::new(
+                            format!(
+                                "[E_EMBED_DIR_BAD_ARG] `embed_dir`: unknown named argument \
+                                 `{}` — expected `glob` or `hidden` (D412-amendment, \
+                                 Plan 210 Ф.7)",
+                                other
+                            ),
+                            e.span,
+                        ));
+                        return true;
+                    }
+                },
+                CallArg::Item(_) | CallArg::Spread(_) => {
+                    self.diags.push(Diagnostic::new(
+                        "[E_EMBED_DIR_BAD_ARG] `embed_dir` takes exactly one POSITIONAL \
+                         argument (the path) — extra arguments must be named (`glob:`/`hidden:`) \
+                         (D412-amendment, Plan 210 Ф.7)",
+                        e.span,
+                    ));
+                    return true;
+                }
+            }
         }
         let base = self.base_dir(e.span.file_id).to_path_buf();
         let candidate = base.join(&rel);
@@ -418,7 +734,17 @@ impl EmbedCtx {
         let mut collected: Vec<(String, PathBuf)> = Vec::new();
         let mut symlinks_skipped: Vec<String> = Vec::new();
         let mut non_ascii_names: Vec<String> = Vec::new();
-        walk_embed_dir_rec(&canon, &canon, &mut collected, &mut symlinks_skipped, &mut non_ascii_names);
+        // Plan 210 Ф.7.3 (Go-паритет+): `hidden: true` отключает dot-skip для
+        // ЗАПИСЕЙ ВНУТРИ обхода (симлинки продолжают скипаться безусловно —
+        // `walk_embed_dir_rec` не принимает флага для этого, см. его doc).
+        walk_embed_dir_rec(
+            &canon,
+            &canon,
+            &mut collected,
+            &mut symlinks_skipped,
+            &mut non_ascii_names,
+            hidden_flag,
+        );
 
         // Plan 210 Ф.6а (D412-амендмент): NFC-нормализация КАЖДОГО пути записи
         // — воспроизводимость между macOS (обычно отдаёт NFD) и Windows/Linux
@@ -455,6 +781,20 @@ impl EmbedCtx {
             nfc_normalized.push((nfc_key, abs.clone()));
         }
         let collected = nfc_normalized;
+
+        // Plan 210 Ф.7.1 (Go-паритет+): `glob:` фильтрует результат обхода
+        // ПОСЛЕ dot/symlink-skip и NFC-нормализации — маска сверяется с
+        // ФИНАЛЬНЫМ POSIX-ключом (тем же, что попадёт в `EmbeddedEntry.path`).
+        // `glob` и `hidden` НЕЗАВИСИМЫ: `hidden` решает, что ПОПАДАЕТ в обход;
+        // `glob` фильтрует уже собранный результат — dot-skipped записи (когда
+        // `hidden` не включён) glob не может "вернуть".
+        let collected: Vec<(String, PathBuf)> = match &glob_pat {
+            Some(pat) => collected
+                .into_iter()
+                .filter(|(path, _)| glob_match_posix(pat, path))
+                .collect(),
+            None => collected,
+        };
 
         // Per-file escape re-check (§2и: симлинк внутри мог бы указать
         // наружу — симлинки уже скипнуты выше, это defense-in-depth раз
@@ -562,8 +902,13 @@ impl EmbedCtx {
                 diag: Diagnostic::new(
                     format!(
                         "[W_EMBED_DIR_EMPTY] embed_dir(\"{}\") resolved to zero files after \
-                         dot/symlink skip — check the path",
-                        rel
+                         dot/symlink skip{} — check the path{}",
+                        rel,
+                        if glob_pat.is_some() { " and glob filter" } else { "" },
+                        match &glob_pat {
+                            Some(g) => format!(" (glob: \"{}\")", g),
+                            None => String::new(),
+                        }
                     ),
                     e.span,
                 ),
@@ -690,6 +1035,9 @@ impl EmbedCtx {
             return;
         }
         if self.try_replace_embed_dir(e) {
+            return;
+        }
+        if self.try_replace_embed_str(e) {
             return;
         }
         match &mut e.kind {
@@ -936,9 +1284,14 @@ impl EmbedCtx {
 ///   (файл или папка) — правило касается записей ВНУТРИ обхода, не самого
 ///   `root` (тот уже канонизирован и принят вызывающим до этого обхода —
 ///   `embed_dir(".assets")` со явно названным dot-корнем встраивается).
+///   Plan 210 Ф.7.3 (Go-паритет+): `hidden` (параметр, из `embed_dir(...,
+///   hidden: true)`) ОТКЛЮЧАЕТ этот скип целиком для записей внутри обхода —
+///   дефолт `false` = поведение не меняется.
 /// - Symlink-skip: `DirEntry::metadata()` не следует symlink'ам (эквивалент
 ///   `symlink_metadata`) — файл/папка-симлинк пропускается, путь копится в
-///   `symlinks_skipped` для `W_EMBED_DIR_SYMLINK_SKIPPED`.
+///   `symlinks_skipped` для `W_EMBED_DIR_SYMLINK_SKIPPED`. `hidden` НЕ влияет
+///   на это правило — симлинки скипаются БЕЗУСЛОВНО (задание владельца
+///   2026-07-17: hidden касается только dot-skip).
 /// - Non-ASCII-skip НЕ означает пропуск встраивания — файл ВСТРАИВАЕТСЯ,
 ///   но его имя копится в `non_ascii` для `W_EMBED_DIR_NON_ASCII_PATH`
 ///   (непортируемый байтовый ключ, NFD/NFC — §2е).
@@ -953,6 +1306,7 @@ fn walk_embed_dir_rec(
     out: &mut Vec<(String, PathBuf)>,
     symlinks_skipped: &mut Vec<String>,
     non_ascii: &mut Vec<String>,
+    hidden: bool,
 ) {
     let Ok(read_dir) = std::fs::read_dir(dir) else {
         return;
@@ -962,13 +1316,13 @@ fn walk_embed_dir_rec(
     for entry in children {
         let name_os = entry.file_name();
         let name = name_os.to_string_lossy().into_owned();
-        // Dot-skip (§2е): скрытые файлы/папки не попадают в EmbeddedDir.
-        if name.starts_with('.') {
+        // Dot-skip (§2е) — если НЕ отключён `hidden: true` (Ф.7.3).
+        if !hidden && name.starts_with('.') {
             continue;
         }
         // Symlink-skip (§2е): DirEntry::metadata() не следует symlink'ам —
         // эквивалент symlink_metadata (Rust std contract), портируемо
-        // между Windows/Unix.
+        // между Windows/Unix. Безусловно — `hidden` этого не затрагивает.
         let Ok(meta) = entry.metadata() else { continue };
         if meta.file_type().is_symlink() {
             symlinks_skipped.push(entry.path().display().to_string());
@@ -979,7 +1333,7 @@ fn walk_embed_dir_rec(
         }
         let path = entry.path();
         if meta.is_dir() {
-            walk_embed_dir_rec(root, &path, out, symlinks_skipped, non_ascii);
+            walk_embed_dir_rec(root, &path, out, symlinks_skipped, non_ascii, hidden);
         } else if meta.is_file() {
             let rel = path.strip_prefix(root).unwrap_or(&path);
             // POSIX-путь: компоненты соединяются `/` независимо от ОС

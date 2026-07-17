@@ -1,0 +1,50 @@
+// D412-амендмент (Plan 210 Ф.7.1, Go-паритет+, 2026-07-17) —
+// `embed_dir("dir", glob: "pattern")`: именованный аргумент-литерал,
+// фильтрующий результат обхода по маске на ОТНОСИТЕЛЬНЫЙ POSIX-путь записи
+// (тот же ключ, что идёт в `EmbeddedEntry.path`). Простой матчер, без новых
+// зависимостей: `*` — ноль+ символов, НЕ пересекает `/`; `**` — ноль+
+// символов, ПЕРЕСЕКАЕТ `/`; `?` — ровно один символ, не `/`.
+// Фикстура: d412e_glob_dir/ = a.png, b.txt, nested/c.png, nested/d.txt.
+// Часть ЕДИНОГО folder-module spec_tests.conformance; имена D-префиксованы.
+module spec_tests.conformance
+
+test "embed_dir(glob: \"*.png\") — '*' does not cross '/' (top-level only, D412-amendment Ф.7.1)" {
+    ro d412e_top_pngs = embed_dir("d412e_glob_dir", glob: "*.png")
+    assert(d412e_top_pngs.len() == 1)
+    assert(d412e_top_pngs.has("a.png"))
+    assert(!d412e_top_pngs.has("nested/c.png"))
+    assert(!d412e_top_pngs.has("b.txt"))
+
+    // Round-trip byte-check on the one surviving entry.
+    ro d412e_bytes = d412e_top_pngs.get("a.png").unwrap()
+    ro d412e_want []u8 = [0x50, 0x4E, 0x47, 0x54, 0x4F, 0x50]   // "PNGTOP"
+    assert(d412e_bytes.len() == d412e_want.len())
+    mut d412e_i = 0
+    while d412e_i < d412e_bytes.len() {
+        assert(d412e_bytes[d412e_i] == d412e_want[d412e_i])
+        d412e_i = d412e_i + 1
+    }
+}
+
+test "embed_dir(glob: \"**.png\") — '**' crosses '/' (matches at every depth, D412-amendment Ф.7.1)" {
+    ro d412e_all_pngs = embed_dir("d412e_glob_dir", glob: "**.png")
+    assert(d412e_all_pngs.len() == 2)
+    assert(d412e_all_pngs.has("a.png"))
+    assert(d412e_all_pngs.has("nested/c.png"))
+    assert(!d412e_all_pngs.has("b.txt"))
+    assert(!d412e_all_pngs.has("nested/d.txt"))
+}
+
+test "embed_dir(glob: \"nested/*\") — literal '/' segments the mask explicitly (D412-amendment Ф.7.1)" {
+    ro d412e_nested_only = embed_dir("d412e_glob_dir", glob: "nested/*")
+    assert(d412e_nested_only.len() == 2)
+    assert(d412e_nested_only.has("nested/c.png"))
+    assert(d412e_nested_only.has("nested/d.txt"))
+    assert(!d412e_nested_only.has("a.png"))
+}
+
+test "embed_dir(glob: \"*\") without a dot keeps everything at the top level plus '**' still needs no dot (sanity)" {
+    // glob absent == no filter (backward-compat default).
+    ro d412e_unfiltered = embed_dir("d412e_glob_dir")
+    assert(d412e_unfiltered.len() == 4)
+}

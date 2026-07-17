@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_EMBED_NOT_UTF8
+//
+// D412-амендмент (Plan 210 Ф.7.2, Go-паритет+) — NEG. `embed_str` требует
+// валидный UTF-8 (str-инвариант компилятора) — invalid byte at offset 3
+// (0xFF right after the ASCII "Hi " prefix) rejects with the offset of the
+// first bad byte. Реюз `../d412e_str_invalid_utf8.bin` (byte layout:
+// "Hi " + 0xFF 0xFE + "end").
+
+module neg.d412e_str_not_utf8_neg
+
+fn d412e_str_bad_utf8() -> int {
+    ro s = embed_str("../d412e_str_invalid_utf8.bin")   // ✗ invalid UTF-8 — E_EMBED_NOT_UTF8
+    s.len()
+}

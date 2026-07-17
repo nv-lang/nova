@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_EMBED_IS_A_DIR
+//
+// D412-амендмент (Plan 210 Ф.7.2, Go-паритет+) — NEG. Путь ведёт на ПАПКУ, не
+// файл — использовать `embed_dir(...)`. Симметрична `embed`'s
+// `E_EMBED_IS_A_DIR` (см. neg/d412d_embed_on_dir_neg.nv). Реюз позитивной
+// фикстуры `../d412e_glob_dir` (Ф.7.1 pos).
+
+module neg.d412e_str_on_dir_neg
+
+fn d412e_str_dir_not_file() -> int {
+    ro s = embed_str("../d412e_glob_dir")   // ✗ папка, не файл — E_EMBED_IS_A_DIR
+    s.len()
+}
