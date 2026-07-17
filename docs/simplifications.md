@@ -710,8 +710,6 @@ type, `tok.cancel()`/`is_cancelled()`/`bind()` методы. Реализова�
 
 ---
 
-## Закрытые
-
 ## 2026-05-11: name-resolution фаза в типчекере (NameResCtx)
 
 ### Что упрощено
@@ -4541,8 +4539,6 @@ type, `tok.cancel()`/`is_cancelled()`/`bind()` методы. Реализова�
 - **Приоритет:** M (после стабилизации языка)
 
 ---
-
-## Закрытые
 
 ## 2026-05-11: name-resolution фаза в типчекере (NameResCtx)
 
@@ -8975,157 +8971,65 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
 - **[sync-fix-d322, 2026-07-05] Пост-reconcile: два codegen-факта + d323 в conformance.** (1) **Bug 2 RESOLVED (codegen-фикс):** `[M-176-conformance-cu-map-closure]` — `emit_fn` скоупит `var_mutable` per-fn-body (устраняет лик `mut`-классификации через границы функций, ломавший `BoxIter.map`-лямбду когда std.fs в CU). d323-фикстуры возвращены в `spec_tests/conformance` (директива владельца): d323_file_must_consume/path_bytes/write_atomic + neg — PASS при них ВНУТРИ CU; `spec_tests/d323` удалён. (2) **Bug 1 = `[M-sync-crossmodule-samename-type-collision]` (НЕ codegen-hunk, как гипотезировалось — pre-existing language-gap):** merge 178/179 свёл в один positive-CU три разных `ErrorKind` (io/http/compress) с простым C-именем `Nova_ErrorKind` → коллизия → ICE при io `kind_from_errno`. Target-form = module-qualified type-naming (крупно, НЕ sync-fix). **Sound-обход §0:** http (d358) → `spec_tests/http`, compress (d333/334/335/336) → `spec_tests/compress` — свои module-CU (d323-паттерн). Гейт: conformance 53/0 (1 aggregate-pos incl d322+d323 + 52 neg), zero-regress delta 0 (все падения — pre-existing на 8958b6fe: basics/control_flow, effects/basic, concurrency/_repro_p110, modules/priority_queue, map_literals/positive_clone_merge), features (io/fs/http/time/ffi/rebind/any_is/effect_registry) PASS. `[M-178-conformance-d357-d360-forwarddecl-bug]` — ДРУГОЙ root (forward-decl return-type unit-closure-call), НЕ тронут.
 - **[codegen-конвенции, выявлены Ф.2]** value-record литералы: typed-форма (`Path{…}`) в блок-позиции, anon (`{…}`) в `=>`-теле (checker: typed redundant в `=>`, codegen: anon-inference только для heap-`Nova_X*`, не value). std.fs free-fn имена НЕ коллидят с std.io generic-хелперами (coarse-by-name резолв): `read_text`/`write_text`/`copy_file`. Резерв. слова: `exists`/`forall` (квантор), `readonly` (kw) — переименованы (`try_exists`, field `read_only`). Multi-line import/`FileType`-enum-variant-vs-`File`-type коллизия → `FileType value{k int}`.
 
-## 2026-07-06 — D381 collision-aware module-qualified nominal-type mangling (ветка fix-nominal-mangling)
-
-**[дизайн]** Cross-module same-name type collision (`ErrorKind` × std.io/std.http/std.encoding.compress
-в одном CU) закрыт **collision-aware** квалификацией, а НЕ always-qualify. Выбор обоснован фактами
-(§7 blast-radius map): always-qualify = massive churn всех `.c` + слом extern-контрактов
-`Nova_str_*`-класса; collision-aware = квалифицируем ТОЛЬКО имена, объявленные в ≥2 модулях
-(`Nova_<modpath>_<Name>`), всё прочее байт-идентично (`colliding_type_names` пуст → хелперы no-op →
-`.c` не меняется). НЕ сокращение кода (добавлены карты коллизий + пара mint-хелперов + арность/
-контекст-дизамбигуация bare-варианта) — дизайн-выбор минимального-churn sound-фикса. Единая пара
-`def_type_base`/`ref_type_base` (identity для не-коллидирующего) на всех mint-сайтах вместо зеркал.
-Область: plain-Sum + heap-Record (pointer-identity); newtype/value-record/generic/opaque — followup.
-Спека — D381 (08-runtime.md). Гейт: conformance PASS N/0 (фикстуры d358/d333-336 возвращены в
-conformance); zero-regression byte-identical (content) на не-коллидирующем корпусе. Закрывает
-`[M-sync-crossmodule-samename-type-collision]` + `[M-codegen-nominal-type-name-collision]`.
-**НЕ** закрыл `[M-codegen-cross-module-ctor-emission]` (victim NetError.IoError — variant↔type
-name-clash, отдельный root, репро идентичен на baseline).
-
----
-
-**[178 Ф.2-enh, 2026-07-06] Auto-decompress landed + `[M-codegen-cross-module-ctor-emission]` FIXED (keystone) + live-socket smoke restored (link-unblocked, runtime-gated).**
-
-**Codegen-фикс (keystone, разблокировал остальное).** Root уточнён репро (прошлый диагноз неточен):
-explicit-receiver **payload-variant CALL** `Sum.Variant(x)` (`NetError.IoError(msg)`) парсится как
-2-сегментный `Path` → в `emit_call` диспатчится через `method_overloads`-static-ветку, где payload-вариант
-зарегистрирован КАК pseudo-static-overload с `c_name = Nova_<Sum>_static_<Variant>` (никогда не определён;
-определён лишь `nova_make_<Sum>_<Variant>`). **НЕ** зависит от co-present одноимённого ТИПА (`IoError`) —
-репро идентичен с/без `import std.io` (это НЕ variant↔type clash, а **universal** explicit-receiver
-payload-variant misroute). Unit-варианты (`NetError.ConnectionReset` — member-access, не call) не задеты.
-**Fix:** хелпер `try_emit_explicit_variant_ctor(recv_type, variant, args)` — когда receiver=сумма,
-владеющая payload-вариантом `variant` подходящей арности (не generic; collision-aware base через
-`ref_type_base`), эмитит `nova_make_<sum>_<variant>(args)`. Вставлен в ОБА static-emit-сайта (Path-арм
-до `method_overloads`-lookup + Member `method_receivers`-арм). Вариант всегда бьёт одноимённый
-static/тип-в-скоупе (контекст однозначен). Доказано: servernet CU эмитит `nova_make_NetError_IoError`
-(0 undefined static-ref; baseline=1) → net+http линкуются. НЕ сокращение — целевой sound-фикс роутинга.
-
-**Auto-decompress (`[M-178-autodecompress-needs-179]` CLOSED).** `std.http.client`: default
-`Accept-Encoding: gzip, deflate` (opt-out `@no_decompress()`); `finalize_response` прозрачно декодит
-`Content-Encoding` gzip/`x-gzip` (`gzip_decode`) + `deflate` (`zlib_decode`→raw `inflate` fallback для
-не-zlib-сендеров), снимает `Content-Encoding`+переписывает `Content-Length` на декод-длину. Bomb-guard
-`max_decompressed` (64 MiB default, D334; `@max_decompressed(n)`, `<0`=без cap) прокинут как `max_output`
-→ `Err(BodyTooLarge)`, НЕ OOM. Decode-fail → `HttpError{Protocol}` + типизированный
-`ErrSource.Compress(CompressError)` (`HttpError.from_compress`; OPEN enum, non-breaking). `br` закрыт —
-нет кодека `[M-178-autodecompress-br]`. Добавлен `CompressError.@is_bomb()` (bomb-детект без импорта OPEN
-`ErrorKind`-вариантов, чей `Other` коллидировал бы с http). Разблокировано **D381** (collision-aware
-mangling: compress+http `ErrorKind` co-present линкуемы — работает и на merge-base baseline).
-Тесты `nova_tests/http_decompress/decompress_test.nv`: gzip+deflate круговой round-trip (mock-encode 179 →
-клиент декодит back to original), opt-out (тело остаётся compressed), neg bomb→`BodyTooLarge` — все PASS.
-
-**Live-socket smoke (Task 3, честный gate — НЕ упрощение).** `nova_tests/http_servernet/servernet_smoke_test.nv`
-(loopback GET /health через `handle_connection`) восстановлен. LINK-препятствие снято (см. codegen-фикс).
-**RUNTIME-блок — pre-existing net-substrate segfault** `[M-178-servernet-live-net-substrate-segfault]`:
-чистый net две-fibers loopback тест (ZERO http, ZERO codegen-change) сегфолтит ДЕТЕРМИНИРОВАННО (5/5,
-~100ms) на merge-base baseline И current. Также plan83_12 net-тесты ICE `[P67-LEGACY] method=bind` +
-`.unwrap()` на `Result[_,NetError]` эмитит `Nova_Fail_fail(NetError*)` vs `nova_str`. Net live-socket
-substrate в этом worktree широко сломан — не Plan 178. Смоук хранится (как plan83_12 соседи) — не в
-быстрой regress-выборке; зазеленеет с фиксом net-runtime. Server-ЛОГИКА полностью mock-покрыта (9 PASS).
-
-**Гейт:** сборка Rust чистая; conformance **54/0** (не тронут); http/compress/io/fs delta-0 (baseline vs
-current, byte-behaviour). Спека: 02-types §D358 Ф.2-амендмент (`ErrSource.Compress` + auto-decompress
-инварианты).
-## Plan 173.2 — supervision-as-effect: `Supervisor`/`Decision` (D416) (2026-07-10)
-
-- **СНЯТО 2026-07-10 (решение владельца): Restart-семейство РЕТРАКТИРОВАНО из словаря
-  `Decision` целиком** (D416 §1/§4 амендмент) — не «MVP за гейтом», а прод-реди полный
-  словарь `Escalate | Stop`. Мотив: рестарт — идиома акторных систем, не структурной
-  конкуренции (Kotlin coroutineScope / Swift TaskGroup / Java Joiner рестарта не имеют);
-  повтор попытки — `std/concurrency/retry` внутри тела ребёнка. Гейт
-  `E_SUPERVISOR_RESTART_GATED`, runtime-abort и neg-тест `restart_gated_neg` удалены;
-  `[M-173.2-restart-all-rest]` и `attempt`-вопрос закрыты ретракцией.
-- (истор.) MVP-объём §3b (owner 2026-06-26): исполнялись `Escalate`/`Stop`;
-  Restart-варианты держались в словаре за `E_SUPERVISOR_RESTART_GATED` до изоляции
-  D415/173.3; `attempt`-параметр был отложен вместе с Restart.
-- **Периметр: remote-дети armed M:N** (child_error[]-субстрат 173.0 заполняет только
-  remote-путь; auto-arm делает его дефолтным). Bootstrap/single-thread
-  (`NOVA_NO_AUTOARM=1`) и implicit main-scope (top-level `detach`) — дефолтный
-  Escalate-all; задокументировано в D416 §5 и в докстринге эффекта.
-- **Suspend-запрет в хендлере — компилируемое приближение V1:** прямой `Time.sleep`
-  в теле хендлера (`E_SUPERVISOR_HANDLER_SUSPEND`) + `interrupt`
-  (`E_SUPERVISOR_HANDLER_INTERRUPT`); транзитивный suspend через вызов функции —
-  followup эффект-row-анализом (Q-блок D416 §3).
-- **Механика без упрощений:** deferred-decision режим (хендлер есть → падение пишет
-  ТОЛЬКО свой per-slot с release-publish, без CAS-primary/cancel-бродкаста); решения
-  serialized на drive-потоке ВО ВРЕМЯ drain'а (Escalate успевает отменить siblings,
-  Stop оставляет их доживать) + финальный catch-up под pending_remote==0-гейтом;
-  throw хендлера огорожен fail-frame'ом моста = Escalate-with-handler-error;
-  индуцированные CANCEL siblings хендлеру не показываются. Дефолт (нет хендлера) —
-  байт-паритет: ни одна новая ветка не активируется.
-- **Гейты:** cargo оба чистые; conformance 82/0; err173_0 (retention ×5 стаб. после
-  одиночного TIMEOUT-флейка под параллельной сборкой 4 CU) / err173_2 / err173_3 +
-  все neg зелёные; std/concurrency 7/0. Известный MAIN-side красный (не эта ветка):
-  err173_1/parfor_diag — D415-гейт `E_CONCURRENT_MUT_CAPTURE` бьёт mut-захват в
-  supervised_value_smoke.nv (файл 173.1, гейт 173.3) — чинить волне 173.1/173.3.
-
-## [M-closure-trailing-scalar-coercion-no-typecheck] (2026-07-10, ветка destructure-lint)
-
-- **Гейт — именно скаляр** (`bool`/int-family/float/голый `char`), не «любой не-fn тип»
-  из первоначальной формулировки маркера. `str`/`Any`/произвольный `Named` в область
-  ЭТОГО фикса намеренно не входят — подтверждённый репро был про `bool`; расширение
-  до общего closure-vs-non-fn-type mismatch — отдельный follow-up при необходимости.
-- **Явный `return` внутри `detach`/`spawn`/`parallel for`/вложенных closures — НЕ
-  проверяется** (зеркалит существующее ограничение `materialize_returns_in_block`):
-  `return` там принадлежит ДРУГОМУ execution-context, коэрсия к return-типу
-  ОБЪЕМЛЮЩЕЙ fn была бы неверной по построению — тот же дизайн, не новый пробел.
-- **`assignable`/call-arg позиции не тронуты** — closure-литерал, переданный АРГУМЕНТОМ
-  в HOF-параметр скалярного типа, УЖЕ отвергается существующей сверкой (arity/сигнатура);
-  дыра была именно в return-позиции (`assignable` там никогда не вызывался).
-
 ## [M-detach-forbid-test] (2026-07-11)
 
 - `forbid Detach` заявлен дизайном (D63×D50), механика в check_callee_effects есть,
   но тестов 0. Добавить pos/neg; после транзитивности — глубокий кейс.
 
-## [M-178-server-typed-body] ЗАКРЫТ (2026-07-12, баг-фиксер Plan 196, sonnet)
+## Plan 174 (заход 2026-07-06 — 174.2 spec-closure/cross-carrier, 174.1 truncation, 174.5 eval)
 
-- Заявленный «serde-в-http-CU codegen-дефект» (typed `#impl(Deserialize)` request-
-  bodies на сервере) оказался ДВУМЯ реальными компиляторными багами, оба
-  проявляются только когда `std.http.server` и `std.http.client` (транзитивно
-  через `std.http.serdejson`'s `json_decode_body[T]`) попадают в ОДИН CU:
-  1. **types/mod.rs** — chain-receiver mut-check: реестр `recv_returning`
-     (fluent `-> @`, Plan 77/D132) был name-only, БЕЗ arity. Одноимённый `-> @`
-     метод другого типа/арности (`ServeMux mut @post(pattern, handler) -> @`,
-     arity 2) ложно поражал НЕСВЯЗАННЫЙ вызов `HttpClient.new().post(url).body(b)`
-     (arity 1) → ложный `E_RECEIVER_BINDING_NOT_MUT`. Фикс: arity-aware компаньон
-     `recv_returning_arity`, зеркалит существующий `mut_methods_arity`/
-     `ro_methods_arity` прецедент (`[M-172.5-chain-gating-ro-at]`).
-  2. **emit_c.rs** (3 места) — mangling/registration свободных функций считали
-     голое имя уникальным по ВСЕЙ CU: `fn_module_map`/`file_priv_fn_c_names`,
-     D84 `method_overloads`-регистрация, D29 shadow-skip `should_skip_fn`.
-     Module-private (без `export`) одноимённая fn в ДВУХ разных модулях
-     (`std.http.client`'s private `serialize_response(status, headers, body)
-     -> str` vs `std.http.server`'s exported `serialize_response(resp) ->
-     []u8`) — НЕСВЯЗАННЫЕ функции, не overload-пара — либо коллизировали в один
-     C-символ, либо (после первого фикса) тихо ВЫПАДАЛИ из вывода вообще
-     (implicit-decl CC-FAIL). Расширил существующую cross-module collision-
-     detection (была только identical-signature, прецедент uuid_namespace
-     duplicate-symbol) на different-signature-но-не-все-exported случай,
-     прокинул через все 3 места.
-- Repro: `std/http/serdejson/typed_body_repro_test.nv` — сознательно в папке
-  serdejson, НЕ в `std/http/server/`: черновик внутри `std/http/server/`
-  тянул serde в модуль `http.server` целиком и ломал `nova test
-  std/http/servernet` (`E_EXTENSION_METHOD_NEEDS_IMPORT` на
-  `HashMap.serialize()`) — тот же leanness-принцип, что и у самого
-  serdejson.nv (см. его баннер).
-- Маркер снят из `server.nv` (заменён на DONE-описание) и из
-  `backlog-followups.md`; `187-flagship-concurrency-demo.md` обновлён —
-  typed `.json[T]` теперь доступен, dynamic-JSON workaround не нужен.
-- **Гейты:** `nova test std/http std/encoding` 14/0 (+8 SKIP, ожидаемо —
-  no-test-block модули); `nova test std/crypto` 5/0 (rotl32 identical-sig
-  прецедент не сломан); `nova test --positive --compile-error
-  spec_tests/conformance --timeout 300 --jobs 4` 95/0. Rust rebuild clean
-  (`cargo build --release` nova-cli, ~4м каждый из 6 rebuild-циклов).
-- Branch `typed-body-fix` (worktree `nova-nt`), commit `56b00e808`; НЕ
-  смёржен в main.
+- **174.2 Ф.B cross-carrier `?` — консервативная детекция, не полная.** Диагностики
+  `E_TRY_OPTION_IN_RESULT_FN`/`E_TRY_RESULT_IN_OPTION_FN` срабатывают только когда носитель операнда
+  ВЫВОДИТСЯ (`infer_expr_type`), не несёт generics и ПРОТИВОПОЛОЖЕН носителю return-типа. При
+  невыводимом/generic операнде — молчим (safe false-negative): мисматч всё равно поймается как
+  type-error на синтезированном `return None`/`Err`. НЕ может превратить компилирующийся код в
+  падающий. Третья диагностика (E1≠E2 `.map_err`-hint) НЕ реализована — требует sum-extension
+  compat-проверки (172.1), иначе false-positive на легальном widening. `[M-174.2-try-err-type-mismatch-hint]`.
+- **174.1 truncation-фикс — в существующей хардкод-архитектуре, не структурный.** `emit_parse_range_check`
+  добавляет sub-width range-check ПЕРЕД narrowing-кастом в обе codegen-хардкод-ветки (try_from/try_parse).
+  Это фиксит named-acceptance баг (`i8.try_from("999")` → Err вместо Ok(-25)) как изолированный
+  корректностный фикс. Полный структурный вариант-B (generic-движок в .nv, удаление хардкода, typed
+  errors вместо flat-string, float-канон, radix-поверхность) — отложен под координацию 172.1-hardcode ×
+  177 (`[M-174.1-parse-engine-structural]`). Err-тип у sub-width try_from остаётся flat-string (не
+  typed ParseIntError) — pre-existing, закрывается structural-заходом. value-equality на sub-width
+  Result-payload (`unwrap_or(0)==N`) имеет отдельный pre-existing лимит (Ok=nova_int/Err=nova_str
+  bootstrap-Result) — тесты проверяют классификацию (is_err/is_none), не значение.
+- **174.5 — только §7.7-оценка, без кода.** Write-cap-баг подтверждён живым по символам; checker/codegen/
+  spec-amend отложены (02-types = зона 172, координация). Символы зафиксированы для turnkey-resume.
 
+## Plan 173.1 — supervised-value + канальный `parallel for → []T` (D414 §4, D71-amend) (2026-07-09)
+
+- **`supervised { … v }` — value-expression:** bootstrap-заглушка «возвращает unit» СНЯТА;
+  trailing вычисляется ПОСЛЕ join детей. Упрощение сохранено сознательно: unit-типизированный
+  trailing остаётся eager/pre-join (байт-паритет — `spawn {…}` последним стейтментом это
+  trailing по грамматике, откладывать его за пределы активного scope нельзя).
+- **`parallel for → []T` — v1-упрощения РЕТИРОВАНЫ** (slot-запись `result.data[idx]`,
+  примитив-whitelist {int,bool,f64,str}, итераторы Range/ArrayLit/Ident, guard
+  `[E_PARFOR_RESULT_UNSUPPORTED]` + visitor-семейство ~200 строк в чекере): сбор через канал
+  (Sender-клон в родителе на spawn → send из ребёнка: int-скаляры прямо / heap по ссылке /
+  value-типы boxed → close на любом выходе; drain-fiber; K=min(len,16)). Порядок = completion
+  order (плотный) — iteration-order-гарантия убрана из спеки и корпуса (sort/set-equality).
+- **Остаточные упрощения (голова у гейтов):** Stop-стратегия — 173.2; `parallel(timeout:)` —
+  после 175; Semaphore-cap живых fiber'ов (память O(N) fiber'ов при O(CAP) канале) — опц.
+  Ф.3, не делался; поверхностный `consume`-синтаксис в spawn — 173.3 (лоуэринг семантики
+  клон→move→close уже в codegen напрямую).
+- **Попутные закрытия (вскрыты сбором при N≥1000 armed M:N):** [M-chan-spurious-wake-retry]
+  (plain send/recv не ретраили spurious wake — потери значений / ложный None; select ретраил),
+  [M-chan-close-phantom-zero] (close-wake ставил fired=1 без значения → фантомный Some(0)),
+  [M-spawn-module-const-capture] (module-const захватывался по сырому имени в spawn/detach/
+  blocking), [M-bare-result-try-annotation] (bare `Result` + `?` аннотировался целым Result →
+  указательная арифметика на int-payload).
+
+## [M-fixed-array-value-semantics] (2026-07-10, ветка fixed-array-value)
+
+- **Category-key `resolved_cat_of` НЕ переведён на FixedArray-вариант** — намеренно:
+  совместимость присваивания `[]T`/`[N]T` — отдельная ось от C-представления;
+  внутренний ключ никогда не лоуэрится в C. Складывание категорий — ортогональный follow-up.
+- **len-mismatch / spread в [N]T-литерале** ловятся codegen loud-fail (осмысленная
+  диагностика, не тихий мискомпил); checker-уровневый E-код — followup.
+- **serde-derive не научен [N]T** (auto_derive строит Vec-выражения) — живых
+  пользователей [N]T-полей в serde-типах нет; followup в маркере.
+- **field_cache index-write барьер при отключённом IPA** (`--no-field-cache-ipa`) —
+  консервативный (нет ref_typed-оракула): корректность > байты в нестандартном режиме.
+- **`[0; N]`-repeat литерал** (Rust-style) по-прежнему не поддержан парсером
+  ([M-sha256-array-repeat-literal-parser]) — не взято в эту волну.

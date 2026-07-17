@@ -2326,7 +2326,6 @@ grade fix'ами (5 коммитов):
 - ✅ Plan 20 Ф.8 (все 4 issue) ЗАКРЫТЫ.
 - Tests: 12/12 defer-relevant + 10/10 effects + 17/17 concurrency PASS.
 
-
 ═══════════════════════════════════════════════════════════════════
 Plan 22 Ф.8 reopened — close-cb state-machine — 2026-05-11 late
 
@@ -2357,7 +2356,6 @@ Verification:
   имеет PS quoting + parallel race issues). Individual filter PASS.
 
 Commit: e94d2bc9 plan-22 Ф.8: close-cb state-machine + D93 sync/async stop_cb contract
-
 
 ═══════════════════════════════════════════════════════════════════
 Plan 25 honest pass: default malloc-only обнаружено — 2026-05-11
@@ -2404,7 +2402,6 @@ Plan 25 honest pass: default malloc-only обнаружено — 2026-05-11
 - **vcpkg vendored** = clean path к решению. Plan 27 ~1 день работы.
 
 Commit: d2c6a7b3 plan-25 honest pass + plan-27 GC switch
-
 
 ═══════════════════════════════════════════════════════════════════
 Plan 22 verification pass — declared vs measured — 2026-05-11 late
@@ -2754,7 +2751,6 @@ delay.
 
 **Приоритет:** P3 — текущая реализация покрывает 99% use-cases.
 
-
 ---
 
 ## Cross-file resolve Plan 35 Ф.1 MVP — inline AST expansion (2026-05-12)
@@ -2881,7 +2877,6 @@ single-target compile.
 - `std/collections/range.nv` — Range.inclusive constructor блокирован
 - Любой future numeric stdlib (clamp, bounded, saturating ops)
 
-
 ---
 
 ## Iter[T] resolution в codegen — partial D58 implementation (Plan 39 Issue D, 2026-05-12)
@@ -2938,7 +2933,6 @@ Open:
 - int.BITS / i64.BITS (Rust convention) — не в spec D26, отложено.
 - Custom type constants на user types (D41 territory) — отдельная фича.
 
-
 ---
 
 ## Iter[T] D58 partial FIXED (Plan 39 Issue D, 2026-05-12)
@@ -2960,7 +2954,6 @@ Open:
   для nova build, не для nova test (test_runner отдельный pipeline).
 
 Priority P2 для Issue A.
-
 
 ---
 
@@ -2987,7 +2980,6 @@ Verified: nova test с `import std.collections.range` + `(0..10).step_by(2)` PAS
   test_runner version. nova-cli ищет первый nova.toml (legacy). Это
   работает но возможны edge cases. Sub-plan 35.B unified
   ManifestResolver — full AD6 (4 nested nova.toml) cleanup.
-
 
 ---
 
@@ -3105,7 +3097,6 @@ Detail: [docs/plans/44.1-channel-hardening.md](plans/44.1-channel-hardening.md).
   non-ghost reading ghost-var выдаёт compile-error с понятным сообщением
   (раньше — undeclared identifier на C-level).
 
-
 ---
 
 ## Каналы: Plan 44.1 Ф.1 (M:N safety) отложено с Plan 23 (2026-05-12)
@@ -3131,7 +3122,6 @@ compound-literal storage в emit'е, Go-style selectdone CAS,
 doubly-linked waiter list.
 
 **Приоритет:** P1 prerequisite для Plan 23.
-
 
 ---
 
@@ -3167,7 +3157,6 @@ positive, доказательство no-cap.
 
 **Commit:** c9611a59a4.
 
-
 ---
 
 ## Import cycle detection ✅ FIXED (Plan 35 Ф.1 D29, 2026-05-12)
@@ -3190,7 +3179,6 @@ import обратно на entry не detect'ится).
 
 3 negative tests PASS: modules/cycle_a, modules/cycle_b,
 negative_capability/import_cycle_rejected. Full regression 261/261.
-
 
 ---
 
@@ -3236,7 +3224,6 @@ Itanium/SPARC.
 
 Detail: [docs/plans/44.1-channel-hardening.md](plans/44.1-channel-hardening.md).
 
-
 ---
 
 ## minicoro fixed-size 56KB stacks — `MCO_USE_VMEM_ALLOCATOR` не включён (2026-05-12)
@@ -3263,7 +3250,6 @@ calloc'd blocks**. 100k fibers = 5GB physical memory.
 workloads невозможны без растущих стеков (5GB physical).
 
 Detail: [docs/plans/44.2-fiber-arena-posix.md](plans/44.2-fiber-arena-posix.md).
-
 
 ---
 
@@ -3322,7 +3308,6 @@ invariant, не от disable).
   на dealloc. Spec D97 описывает это нормативно.
 - `_NOVA_GC_DISABLE` удалён **на обеих платформах** — Plan 44.2 Этап 2.
   Это был мёртвый scaffolding (никогда не вызывался в реальном коде).
-
 
 ---
 
@@ -3583,7 +3568,6 @@ sync_waitgroup.nv (5), sync_once.nv (7) + все предыдущие тесты
   +regress closure: `concurrency/fn_array_generic_smoke` теперь PASS
   (был FAIL c .len()==4 для T=int).
 - **Параллель:** Go `[]func()`, Rust `Vec<Box<dyn Fn>>`, TS `(()=>T)[]`.
-
 
 ### [Ф.5b match-arm pattern_inner_type] ✅ ЗАКРЫТО (Plan 55 Ф.2, 2026-05-16)
 - **Где:** `compiler-codegen/src/codegen/emit_c.rs::emit_match` +
@@ -7897,7 +7881,6 @@ grade fix'ами (5 коммитов):
 - ✅ Plan 20 Ф.8 (все 4 issue) ЗАКРЫТЫ.
 - Tests: 12/12 defer-relevant + 10/10 effects + 17/17 concurrency PASS.
 
-
 ═══════════════════════════════════════════════════════════════════
 Plan 22 Ф.8 reopened — close-cb state-machine — 2026-05-11 late
 
@@ -7928,7 +7911,6 @@ Verification:
   имеет PS quoting + parallel race issues). Individual filter PASS.
 
 Commit: e94d2bc9 plan-22 Ф.8: close-cb state-machine + D93 sync/async stop_cb contract
-
 
 ═══════════════════════════════════════════════════════════════════
 Plan 25 honest pass: default malloc-only обнаружено — 2026-05-11
@@ -7975,7 +7957,6 @@ Plan 25 honest pass: default malloc-only обнаружено — 2026-05-11
 - **vcpkg vendored** = clean path к решению. Plan 27 ~1 день работы.
 
 Commit: d2c6a7b3 plan-25 honest pass + plan-27 GC switch
-
 
 ═══════════════════════════════════════════════════════════════════
 Plan 22 verification pass — declared vs measured — 2026-05-11 late
@@ -8325,7 +8306,6 @@ delay.
 
 **Приоритет:** P3 — текущая реализация покрывает 99% use-cases.
 
-
 ---
 
 ## Cross-file resolve Plan 35 Ф.1 MVP — inline AST expansion (2026-05-12)
@@ -8452,7 +8432,6 @@ single-target compile.
 - `std/collections/range.nv` — Range.inclusive constructor блокирован
 - Любой future numeric stdlib (clamp, bounded, saturating ops)
 
-
 ---
 
 ## Iter[T] resolution в codegen — partial D58 implementation (Plan 39 Issue D, 2026-05-12)
@@ -8509,7 +8488,6 @@ Open:
 - int.BITS / i64.BITS (Rust convention) — не в spec D26, отложено.
 - Custom type constants на user types (D41 territory) — отдельная фича.
 
-
 ---
 
 ## Iter[T] D58 partial FIXED (Plan 39 Issue D, 2026-05-12)
@@ -8531,7 +8509,6 @@ Open:
   для nova build, не для nova test (test_runner отдельный pipeline).
 
 Priority P2 для Issue A.
-
 
 ---
 
@@ -8558,7 +8535,6 @@ Verified: nova test с `import std.collections.range` + `(0..10).step_by(2)` PAS
   test_runner version. nova-cli ищет первый nova.toml (legacy). Это
   работает но возможны edge cases. Sub-plan 35.B unified
   ManifestResolver — full AD6 (4 nested nova.toml) cleanup.
-
 
 ---
 
@@ -8676,7 +8652,6 @@ Detail: [docs/plans/44.1-channel-hardening.md](plans/44.1-channel-hardening.md).
   non-ghost reading ghost-var выдаёт compile-error с понятным сообщением
   (раньше — undeclared identifier на C-level).
 
-
 ---
 
 ## Каналы: Plan 44.1 Ф.1 (M:N safety) отложено с Plan 23 (2026-05-12)
@@ -8702,7 +8677,6 @@ compound-literal storage в emit'е, Go-style selectdone CAS,
 doubly-linked waiter list.
 
 **Приоритет:** P1 prerequisite для Plan 23.
-
 
 ---
 
@@ -8738,7 +8712,6 @@ positive, доказательство no-cap.
 
 **Commit:** c9611a59a4.
 
-
 ---
 
 ## Import cycle detection ✅ FIXED (Plan 35 Ф.1 D29, 2026-05-12)
@@ -8761,7 +8734,6 @@ import обратно на entry не detect'ится).
 
 3 negative tests PASS: modules/cycle_a, modules/cycle_b,
 negative_capability/import_cycle_rejected. Full regression 261/261.
-
 
 ---
 
@@ -8807,7 +8779,6 @@ Itanium/SPARC.
 
 Detail: [docs/plans/44.1-channel-hardening.md](plans/44.1-channel-hardening.md).
 
-
 ---
 
 ## minicoro fixed-size 56KB stacks — `MCO_USE_VMEM_ALLOCATOR` не включён (2026-05-12)
@@ -8834,7 +8805,6 @@ calloc'd blocks**. 100k fibers = 5GB physical memory.
 workloads невозможны без растущих стеков (5GB physical).
 
 Detail: [docs/plans/44.2-fiber-arena-posix.md](plans/44.2-fiber-arena-posix.md).
-
 
 ---
 
@@ -8893,7 +8863,6 @@ invariant, не от disable).
   на dealloc. Spec D97 описывает это нормативно.
 - `_NOVA_GC_DISABLE` удалён **на обеих платформах** — Plan 44.2 Этап 2.
   Это был мёртвый scaffolding (никогда не вызывался в реальном коде).
-
 
 ---
 
@@ -9154,7 +9123,6 @@ sync_waitgroup.nv (5), sync_once.nv (7) + все предыдущие тесты
   +regress closure: `concurrency/fn_array_generic_smoke` теперь PASS
   (был FAIL c .len()==4 для T=int).
 - **Параллель:** Go `[]func()`, Rust `Vec<Box<dyn Fn>>`, TS `(()=>T)[]`.
-
 
 ### [Ф.5b match-arm pattern_inner_type] ✅ ЗАКРЫТО (Plan 55 Ф.2, 2026-05-16)
 - **Где:** `compiler-codegen/src/codegen/emit_c.rs::emit_match` +
@@ -11746,7 +11714,6 @@ control flow + recursion + mixed-args + generic + first-class alias.
 4. **V1 fixture removal** — V2 relaxation semantics → V1 negatives
    become invalid. Delete is correct path; documenting в plan doc.
 
-
 ---
 
 ## Plan 59.1 — Generic anonymous tuple monomorphization (2026-06-01)
@@ -12320,7 +12287,6 @@ callee-non-self-mutation IPA, отдельный followup.
   для `[]T.push(self mut)` non-invalidation recognition.
 
 🎯 **Plan 123 V1 family — все markers closed.**
-
 
 ---
 
@@ -14085,7 +14051,6 @@ Plan 20 (D90 defer/errdefer) закрыт полностью — 7 фаз, 9 к�
 - ⏸️ CI на Linux — отдельная задача.
 - Tests: `cargo test --lib` 77/77 PASS (было 65 + 12 от test_runner).
 
-
 ═══════════════════════════════════════════════════════════════════
 Plan 22 production upgrades — 2026-05-11
 
@@ -14107,7 +14072,6 @@ Trade-offs:
   Park-based вариант = UB (повторный mco_yield после wake).
 - SIGINT handler через uv_signal_t — отложен в D92 Правило 7 (future).
 - Leak verification — manual; CI Valgrind отдельной задачей.
-
 
 ═══════════════════════════════════════════════════════════════════
 Plan 22 hardening Ф.7-Ф.11 — 2026-05-11
@@ -14269,7 +14233,6 @@ captured_stderr в verbose mode, не нужен новый branch. Предуп
 
 **Regression:** 91/91 PASS.
 
-
 ---
 
 ## "gc" namespace в builtin list — Plan 34 follow-up (2026-05-12)
@@ -14317,7 +14280,6 @@ bare-names при resolve. После этого:
 **Приоритет:** P2 — текущий compromise работает корректно, double
 source of truth manually synced. Cleanup-приоритет, не функциональный.
 
-
 ---
 
 ## Spec sync после Plan 34 Ф.7 — manual cross-check (2026-05-12)
@@ -14354,7 +14316,6 @@ guard) — те же ideas applied к loop iterations.
 - AI-friendly diagnostic — D24 §107 acceptance criterion now satisfied
   в TrivialBackend mode. Z3 backend будет давать concrete counterexample
   values; trivial-mode даёт honest hint.
-
 
 ---
 
@@ -14397,7 +14358,6 @@ docs/, либо вообще ничего не staged.
 subject lines в чужих commit'ах inaccurate но diff виден). Полное
 решение требует Git workflow договорённости с пользователем.
 
-
 ---
 
 ## README + spec docs sync (2026-05-12)
@@ -14415,7 +14375,6 @@ subject lines в чужих commit'ах inaccurate но diff виден). Пол
 Open: open-questions.md не trogал — большой документ, потенциально
 содержит ответы которые уже стали решениями. Отдельный audit pass —
 post-bootstrap work.
-
 
 ---
 
@@ -14751,7 +14710,6 @@ Plan 33.3 Ф.9 / Plan 33.4 P1-5, записаны в spec/decisions/.
 - Реализовано (Plan 33.3 Ф.10): D110, D111, D112.
 - Запланировано (Plan 33.4 V2): D113 (`#must_verify_module`), D114 (cache + parallel).
 
-
 ---
 
 ## Итоговый статус (2026-05-15 EOD)
@@ -15070,7 +15028,6 @@ Rust (нет stdlib merge).
 - Beyond state-of-the-art фичи: tok.merge + typed CancelToken[T] +
   USER-precedence — Nova строго лучше Go/Rust/TS в cancellation modeling.
 
-
 **Где:** lints.rs::lint_item — Rule №2.
 **Что упрощено:** Error message содержит full canonical order list. Может быть
 ~150 chars message.
@@ -15140,7 +15097,6 @@ inference engine through generic-call return types.
 
 - [M-reason-per-T-unbox] — silent UB fixed для T≠str.
 - [M-cross-type-from-cascade] — implemented через D73/D77 From + tests.
-
 
 ---
 
@@ -15407,7 +15363,6 @@ Rust (нет stdlib merge).
 - Beyond state-of-the-art фичи: tok.merge + typed CancelToken[T] +
   USER-precedence — Nova строго лучше Go/Rust/TS в cancellation modeling.
 
-
 **Где:** lints.rs::lint_item — Rule №2.
 **Что упрощено:** Error message содержит full canonical order list. Может быть
 ~150 chars message.
@@ -15575,7 +15530,6 @@ Plan 54 — codegen follow-ups от Plan 48/49 audit. Закрыто 5 из 8 it
 
 - **[M-array-of-func-mono]** — `[]fn->T` type_ref_to_c.
 - **Ф.5b match-arm pattern inference** — pattern_inner_type helper.
-
 
 ---
 
@@ -18363,7 +18317,6 @@ Plan 20 (D90 defer/errdefer) закрыт полностью — 7 фаз, 9 к�
 - ⏸️ CI на Linux — отдельная задача.
 - Tests: `cargo test --lib` 77/77 PASS (было 65 + 12 от test_runner).
 
-
 ═══════════════════════════════════════════════════════════════════
 Plan 22 production upgrades — 2026-05-11
 
@@ -18385,7 +18338,6 @@ Trade-offs:
   Park-based вариант = UB (повторный mco_yield после wake).
 - SIGINT handler через uv_signal_t — отложен в D92 Правило 7 (future).
 - Leak verification — manual; CI Valgrind отдельной задачей.
-
 
 ═══════════════════════════════════════════════════════════════════
 Plan 22 hardening Ф.7-Ф.11 — 2026-05-11
@@ -18547,7 +18499,6 @@ captured_stderr в verbose mode, не нужен новый branch. Предуп
 
 **Regression:** 91/91 PASS.
 
-
 ---
 
 ## "gc" namespace в builtin list — Plan 34 follow-up (2026-05-12)
@@ -18595,7 +18546,6 @@ bare-names при resolve. После этого:
 **Приоритет:** P2 — текущий compromise работает корректно, double
 source of truth manually synced. Cleanup-приоритет, не функциональный.
 
-
 ---
 
 ## Spec sync после Plan 34 Ф.7 — manual cross-check (2026-05-12)
@@ -18632,7 +18582,6 @@ guard) — те же ideas applied к loop iterations.
 - AI-friendly diagnostic — D24 §107 acceptance criterion now satisfied
   в TrivialBackend mode. Z3 backend будет давать concrete counterexample
   values; trivial-mode даёт honest hint.
-
 
 ---
 
@@ -18675,7 +18624,6 @@ docs/, либо вообще ничего не staged.
 subject lines в чужих commit'ах inaccurate но diff виден). Полное
 решение требует Git workflow договорённости с пользователем.
 
-
 ---
 
 ## README + spec docs sync (2026-05-12)
@@ -18693,7 +18641,6 @@ subject lines в чужих commit'ах inaccurate но diff виден). Пол
 Open: open-questions.md не trogал — большой документ, потенциально
 содержит ответы которые уже стали решениями. Отдельный audit pass —
 post-bootstrap work.
-
 
 ---
 
@@ -19029,7 +18976,6 @@ Plan 33.3 Ф.9 / Plan 33.4 P1-5, записаны в spec/decisions/.
 - Реализовано (Plan 33.3 Ф.10): D110, D111, D112.
 - Запланировано (Plan 33.4 V2): D113 (`#must_verify_module`), D114 (cache + parallel).
 
-
 ---
 
 ## Итоговый статус (2026-05-15 EOD)
@@ -19348,7 +19294,6 @@ Rust (нет stdlib merge).
 - Beyond state-of-the-art фичи: tok.merge + typed CancelToken[T] +
   USER-precedence — Nova строго лучше Go/Rust/TS в cancellation modeling.
 
-
 **Где:** lints.rs::lint_item — Rule №2.
 **Что упрощено:** Error message содержит full canonical order list. Может быть
 ~150 chars message.
@@ -19418,7 +19363,6 @@ inference engine through generic-call return types.
 
 - [M-reason-per-T-unbox] — silent UB fixed для T≠str.
 - [M-cross-type-from-cascade] — implemented через D73/D77 From + tests.
-
 
 ---
 
@@ -19685,7 +19629,6 @@ Rust (нет stdlib merge).
 - Beyond state-of-the-art фичи: tok.merge + typed CancelToken[T] +
   USER-precedence — Nova строго лучше Go/Rust/TS в cancellation modeling.
 
-
 **Где:** lints.rs::lint_item — Rule №2.
 **Что упрощено:** Error message содержит full canonical order list. Может быть
 ~150 chars message.
@@ -19853,7 +19796,6 @@ Plan 54 — codegen follow-ups от Plan 48/49 audit. Закрыто 5 из 8 it
 
 - **[M-array-of-func-mono]** — `[]fn->T` type_ref_to_c.
 - **Ф.5b match-arm pattern inference** — pattern_inner_type helper.
-
 
 ---
 
@@ -22738,7 +22680,6 @@ faults.
 на ветке (`f30998fa940` feat / `421f295c454` fix / `0bcb61636dd` docs).
 Branch merged into main по user request.
 
-
 ---
 
 ## Plan 83.11 §11.6 — [M-83.11-gc-cancel-token-alias] CLOSED (2026-06-01)
@@ -22951,7 +22892,6 @@ sub-plan + umbrella-level. Documented в
    provides false sense of encapsulation. Compile-time `priv` reveals
    real API boundary при refactoring.
 
-
 ---
 
 ## Plan 124.1 V1 — Per-field visibility priv keyword (parser/AST/lexer infrastructure, 2026-06-02)
@@ -23050,8 +22990,6 @@ follow-up.
    message включает hint («Choose one: priv OR pub») + context
    reference («redundant без type-level priv {} flip») + spec link
    (D220).
-
-
 
 ---
 
@@ -24156,7 +24094,6 @@ Q7 V4.2+ closure note.
 работоспособен в runtime (т.к. fully-const fn body состоит из выражений
 валидных и в runtime). Cheap pattern, избегает invasive codegen изменений.
 
-
 ---
 
 ## Plan 114.4.4.4 V4.3 — closure-from-const-fn landed (2026-06-02)
@@ -24223,7 +24160,6 @@ synchronized test fixture updates. Recurring issue (see prior
 baseline fix 2d7115c9334). Long-term fix: builder pattern for test
 fixtures OR `..Default::default()` spread syntax.
 
-
 ---
 
 ## Plan 114.4.4 V4.4 followups bundle (2026-06-02)
@@ -24267,7 +24203,6 @@ instantiation genuinely cross-cutting (parser OR type-inference OR
 annotation) — design questions surface при scope expansion; не shipped
 half-baked, deferred с clear rationale.
 
-
 ---
 
 ## Rename `sizeof` → `size_of` для Rust-style consistency (2026-06-02)
@@ -24297,7 +24232,6 @@ No deprecation shim — clean rename. Future code uses `size_of[T]()`.
 inconsistency после V4.4 Ф.1/Ф.2 ship. Rule: at intrinsic naming
 decisions, audit ВСЁ family (size_of + align_of + future offset_of /
 type_name etc) для одного pattern. Rust convention = `<verb>_of` form.
-
 
 ═══════════════════════════════════════════════════════════════════════════
 2026-06-02 (PM): Plan 123 V*.2+ umbrella simplifications landed.
@@ -24364,7 +24298,6 @@ ahead of per-chain lets. Subsequent per-chain lets reference
 ident.tail (via Member expressions on Ident, not SelfAccess).
 Composition unchanged: prefix lets count toward max_per_fn budget.
 
-
 ═══════════════════════════════════════════════════════════════════════════
 2026-06-02 (post-merge): V3.2 codegen sanitizer — hash key vs identifier
 discipline.
@@ -24402,7 +24335,6 @@ that produces strings used as identifiers, add at least one runtime
 fixture exercising the full pipeline (parse → encode → codegen →
 clang → run) BEFORE end-of-phase verification.
 
-
 ---
 
 ## size_of/align_of user-facing concept doc + A38 (2026-06-02)
@@ -24430,7 +24362,6 @@ ported в proper user-facing doc + test fixture. Two artifacts:
 **explanation** (doc) для human reader + **assertions** (fixture)
 для compile-time verification. Это «documentation as test»: layout
 semantics проверяется на каждом build.
-
 
 ---
 
@@ -24567,8 +24498,6 @@ orphan-branch history a la Plan 57 `nova bench history-add`);
 `[M-123.6.2.1-weight-calibration]` (V6.2.3 — empirical recalibration
 of LOAD/CALL/LOOP_ITERS cycle weights via least-squares fit).
 
-
-
 ---
 
 ## Plan 114.4.4 V4.6 M1+M2+M3+M4 final-followups LANDED (2026-06-03)
@@ -24670,7 +24599,6 @@ nova-cli + clang. plan123_4 10/10 + plan123_4_2 1/1 + field_cache lib
 - `[M-123.4.3-mut-prefix]` — V4.5 mut-root prefix (currently inherits
   V4 V4.1 skip-when-body-writes constraint).
 
-
 ---
 
 ## Plan 110.2-110.8 metadata status headers ✅ ЗАКРЫТ (2026-06-03)
@@ -24699,7 +24627,6 @@ session, ~3-4 dev-day.
 Easy для miss sub-plans when umbrella close spans multiple commits over
 weeks. Routine audit pattern: at family closure, grep `**Статус:** 🆕`
 across docs/plans/<family>* — flip stragglers.
-
 
 ---
 
@@ -24751,7 +24678,6 @@ release cargo test — zero regressions.
   (benefits только при interleaved changes, rare в practice).
 - `[M-123.5.5-snapshot-eviction]` — V5.5.2 LRU/size-cap eviction
   для long-running server sessions.
-
 
 ---
 
@@ -24871,7 +24797,6 @@ V5.5 + V7.4 закрыты в одной сессии 2026-06-03 (~1610 LOC delt
   hits/misses fields.
 - `[M-123.7.4-auto-enable]` — V7.4.3 opportunistic auto-enable
   in LSP runtime context.
-
 
 ---
 
@@ -25465,10 +25390,6 @@ have `_chain_root_<N>_buf = (nova_self->buf)` once + per-push uses.
 
 🎯 **Umbrella `123-followups-2026-06-04` — все 5 sub-plans CLOSED.**
 
-
-
-
-
 ---
 
 ## Plan 110.9.5.a + M-110-deadline-fire-fixture ✅ closed (2026-06-05)
@@ -25596,7 +25517,6 @@ Plan-docs updated с downstream followup notes pointing к новые sub-plans:
 **Total scope:** 3 new umbrella plan-docs + 6 existing plan-doc cross-refs.
 13 open `[M-110-*]` markers now have explicit owner plan assignment.
 Все markers — explicit extractions, не silent simplifications.
-
 
 ---
 
@@ -26105,7 +26025,6 @@ Plan 118.1.6 closes [M-118.1.5-unsafe-fn-pointer-type] production-grade.
 Side bug fix: typeref_equal Pointer/Mut/Unsafe arms — был silent gap (returned
 false для Pointer/Mut/Unsafe equality). Plan 118.1.6 fix resolves.
 Zero new simplifications introduced.
-
 
 ### 2026-06-08 — Plan 83.11 §11.6 V2 — proper GC pin fix (no token leak)
 
@@ -29145,28 +29064,6 @@ Deps-in-main проверены эмпирически; ниже — что за
   префикс `"cancel: "` (bootstrap-дискриминатор) убран — дискриминация теперь `err is CancelError`.
 ---
 
-## Plan 174 (заход 2026-07-06 — 174.2 spec-closure/cross-carrier, 174.1 truncation, 174.5 eval)
-
-- **174.2 Ф.B cross-carrier `?` — консервативная детекция, не полная.** Диагностики
-  `E_TRY_OPTION_IN_RESULT_FN`/`E_TRY_RESULT_IN_OPTION_FN` срабатывают только когда носитель операнда
-  ВЫВОДИТСЯ (`infer_expr_type`), не несёт generics и ПРОТИВОПОЛОЖЕН носителю return-типа. При
-  невыводимом/generic операнде — молчим (safe false-negative): мисматч всё равно поймается как
-  type-error на синтезированном `return None`/`Err`. НЕ может превратить компилирующийся код в
-  падающий. Третья диагностика (E1≠E2 `.map_err`-hint) НЕ реализована — требует sum-extension
-  compat-проверки (172.1), иначе false-positive на легальном widening. `[M-174.2-try-err-type-mismatch-hint]`.
-- **174.1 truncation-фикс — в существующей хардкод-архитектуре, не структурный.** `emit_parse_range_check`
-  добавляет sub-width range-check ПЕРЕД narrowing-кастом в обе codegen-хардкод-ветки (try_from/try_parse).
-  Это фиксит named-acceptance баг (`i8.try_from("999")` → Err вместо Ok(-25)) как изолированный
-  корректностный фикс. Полный структурный вариант-B (generic-движок в .nv, удаление хардкода, typed
-  errors вместо flat-string, float-канон, radix-поверхность) — отложен под координацию 172.1-hardcode ×
-  177 (`[M-174.1-parse-engine-structural]`). Err-тип у sub-width try_from остаётся flat-string (не
-  typed ParseIntError) — pre-existing, закрывается structural-заходом. value-equality на sub-width
-  Result-payload (`unwrap_or(0)==N`) имеет отдельный pre-existing лимит (Ok=nova_int/Err=nova_str
-  bootstrap-Result) — тесты проверяют классификацию (is_err/is_none), не значение.
-- **174.5 — только §7.7-оценка, без кода.** Write-cap-баг подтверждён живым по символам; checker/codegen/
-  spec-amend отложены (02-types = зона 172, координация). Символы зафиксированы для turnkey-resume.
----
-
 ## 2026-07-06 — Пакет 4 codegen-дыр (ветка plan-176-io-fs-os)
 
 Четыре независимых codegen-дыры закрыты, каждая отдельным коммитом; zero-regression
@@ -29429,30 +29326,6 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   plan153_4/chunks_windows P67-LEGACY). Сборка Rust чистая (compiler-codegen + nova-cli).
 ---
 
-## Plan 173.1 — supervised-value + канальный `parallel for → []T` (D414 §4, D71-amend) (2026-07-09)
-
-- **`supervised { … v }` — value-expression:** bootstrap-заглушка «возвращает unit» СНЯТА;
-  trailing вычисляется ПОСЛЕ join детей. Упрощение сохранено сознательно: unit-типизированный
-  trailing остаётся eager/pre-join (байт-паритет — `spawn {…}` последним стейтментом это
-  trailing по грамматике, откладывать его за пределы активного scope нельзя).
-- **`parallel for → []T` — v1-упрощения РЕТИРОВАНЫ** (slot-запись `result.data[idx]`,
-  примитив-whitelist {int,bool,f64,str}, итераторы Range/ArrayLit/Ident, guard
-  `[E_PARFOR_RESULT_UNSUPPORTED]` + visitor-семейство ~200 строк в чекере): сбор через канал
-  (Sender-клон в родителе на spawn → send из ребёнка: int-скаляры прямо / heap по ссылке /
-  value-типы boxed → close на любом выходе; drain-fiber; K=min(len,16)). Порядок = completion
-  order (плотный) — iteration-order-гарантия убрана из спеки и корпуса (sort/set-equality).
-- **Остаточные упрощения (голова у гейтов):** Stop-стратегия — 173.2; `parallel(timeout:)` —
-  после 175; Semaphore-cap живых fiber'ов (память O(N) fiber'ов при O(CAP) канале) — опц.
-  Ф.3, не делался; поверхностный `consume`-синтаксис в spawn — 173.3 (лоуэринг семантики
-  клон→move→close уже в codegen напрямую).
-- **Попутные закрытия (вскрыты сбором при N≥1000 armed M:N):** [M-chan-spurious-wake-retry]
-  (plain send/recv не ретраили spurious wake — потери значений / ложный None; select ретраил),
-  [M-chan-close-phantom-zero] (close-wake ставил fired=1 без значения → фантомный Some(0)),
-  [M-spawn-module-const-capture] (module-const захватывался по сырому имени в spawn/detach/
-  blocking), [M-bare-result-try-annotation] (bare `Result` + `?` аннотировался целым Result →
-  указательная арифметика на int-payload).
----
-
 ## Plan 173 Ф.5+Ф.6 — hygiene + panics-клаузула (2026-07-10, ветка err-173-f56)
 
 **Ф.5 — отступления/границы (не упрощения):**
@@ -29484,21 +29357,6 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
 - **Contract-диагностика в folder-module CU** печатает file:line entry-файла CU (loc_for_span от
   annotation_source) — panics-паттерны мигрантов ослаблены (без file:line-префикса). Точность
   file:line в multi-file CU — известная ось (span→peer-файл маппинг), не регресс этой волны.
----
-
-## [M-fixed-array-value-semantics] (2026-07-10, ветка fixed-array-value)
-
-- **Category-key `resolved_cat_of` НЕ переведён на FixedArray-вариант** — намеренно:
-  совместимость присваивания `[]T`/`[N]T` — отдельная ось от C-представления;
-  внутренний ключ никогда не лоуэрится в C. Складывание категорий — ортогональный follow-up.
-- **len-mismatch / spread в [N]T-литерале** ловятся codegen loud-fail (осмысленная
-  диагностика, не тихий мискомпил); checker-уровневый E-код — followup.
-- **serde-derive не научен [N]T** (auto_derive строит Vec-выражения) — живых
-  пользователей [N]T-полей в serde-типах нет; followup в маркере.
-- **field_cache index-write барьер при отключённом IPA** (`--no-field-cache-ipa`) —
-  консервативный (нет ref_typed-оракула): корректность > байты в нестандартном режиме.
-- **`[0; N]`-repeat литерал** (Rust-style) по-прежнему не поддержан парсером
-  ([M-sha256-array-repeat-literal-parser]) — не взято в эту волну.
 ---
 
 ## Plan 192 — native-backed module pattern ([ffi.staticlib])
@@ -30664,3 +30522,158 @@ spec_tests/conformance/<любой файл>` (whole-CU) сейчас падае
   high-churn per-connection/per-request паттерна (не только TLS) —
   P2, требует opus-разведки в GC/fiber-arena слое, вне периметра
   какого-либо конкретного пакета.
+
+---
+
+## 2026-07-06 — D381 collision-aware module-qualified nominal-type mangling (ветка fix-nominal-mangling)
+
+**[дизайн]** Cross-module same-name type collision (`ErrorKind` × std.io/std.http/std.encoding.compress
+в одном CU) закрыт **collision-aware** квалификацией, а НЕ always-qualify. Выбор обоснован фактами
+(§7 blast-radius map): always-qualify = massive churn всех `.c` + слом extern-контрактов
+`Nova_str_*`-класса; collision-aware = квалифицируем ТОЛЬКО имена, объявленные в ≥2 модулях
+(`Nova_<modpath>_<Name>`), всё прочее байт-идентично (`colliding_type_names` пуст → хелперы no-op →
+`.c` не меняется). НЕ сокращение кода (добавлены карты коллизий + пара mint-хелперов + арность/
+контекст-дизамбигуация bare-варианта) — дизайн-выбор минимального-churn sound-фикса. Единая пара
+`def_type_base`/`ref_type_base` (identity для не-коллидирующего) на всех mint-сайтах вместо зеркал.
+Область: plain-Sum + heap-Record (pointer-identity); newtype/value-record/generic/opaque — followup.
+Спека — D381 (08-runtime.md). Гейт: conformance PASS N/0 (фикстуры d358/d333-336 возвращены в
+conformance); zero-regression byte-identical (content) на не-коллидирующем корпусе. Закрывает
+`[M-sync-crossmodule-samename-type-collision]` + `[M-codegen-nominal-type-name-collision]`.
+**НЕ** закрыл `[M-codegen-cross-module-ctor-emission]` (victim NetError.IoError — variant↔type
+name-clash, отдельный root, репро идентичен на baseline).
+
+---
+
+**[178 Ф.2-enh, 2026-07-06] Auto-decompress landed + `[M-codegen-cross-module-ctor-emission]` FIXED (keystone) + live-socket smoke restored (link-unblocked, runtime-gated).**
+
+**Codegen-фикс (keystone, разблокировал остальное).** Root уточнён репро (прошлый диагноз неточен):
+explicit-receiver **payload-variant CALL** `Sum.Variant(x)` (`NetError.IoError(msg)`) парсится как
+2-сегментный `Path` → в `emit_call` диспатчится через `method_overloads`-static-ветку, где payload-вариант
+зарегистрирован КАК pseudo-static-overload с `c_name = Nova_<Sum>_static_<Variant>` (никогда не определён;
+определён лишь `nova_make_<Sum>_<Variant>`). **НЕ** зависит от co-present одноимённого ТИПА (`IoError`) —
+репро идентичен с/без `import std.io` (это НЕ variant↔type clash, а **universal** explicit-receiver
+payload-variant misroute). Unit-варианты (`NetError.ConnectionReset` — member-access, не call) не задеты.
+**Fix:** хелпер `try_emit_explicit_variant_ctor(recv_type, variant, args)` — когда receiver=сумма,
+владеющая payload-вариантом `variant` подходящей арности (не generic; collision-aware base через
+`ref_type_base`), эмитит `nova_make_<sum>_<variant>(args)`. Вставлен в ОБА static-emit-сайта (Path-арм
+до `method_overloads`-lookup + Member `method_receivers`-арм). Вариант всегда бьёт одноимённый
+static/тип-в-скоупе (контекст однозначен). Доказано: servernet CU эмитит `nova_make_NetError_IoError`
+(0 undefined static-ref; baseline=1) → net+http линкуются. НЕ сокращение — целевой sound-фикс роутинга.
+
+**Auto-decompress (`[M-178-autodecompress-needs-179]` CLOSED).** `std.http.client`: default
+`Accept-Encoding: gzip, deflate` (opt-out `@no_decompress()`); `finalize_response` прозрачно декодит
+`Content-Encoding` gzip/`x-gzip` (`gzip_decode`) + `deflate` (`zlib_decode`→raw `inflate` fallback для
+не-zlib-сендеров), снимает `Content-Encoding`+переписывает `Content-Length` на декод-длину. Bomb-guard
+`max_decompressed` (64 MiB default, D334; `@max_decompressed(n)`, `<0`=без cap) прокинут как `max_output`
+→ `Err(BodyTooLarge)`, НЕ OOM. Decode-fail → `HttpError{Protocol}` + типизированный
+`ErrSource.Compress(CompressError)` (`HttpError.from_compress`; OPEN enum, non-breaking). `br` закрыт —
+нет кодека `[M-178-autodecompress-br]`. Добавлен `CompressError.@is_bomb()` (bomb-детект без импорта OPEN
+`ErrorKind`-вариантов, чей `Other` коллидировал бы с http). Разблокировано **D381** (collision-aware
+mangling: compress+http `ErrorKind` co-present линкуемы — работает и на merge-base baseline).
+Тесты `nova_tests/http_decompress/decompress_test.nv`: gzip+deflate круговой round-trip (mock-encode 179 →
+клиент декодит back to original), opt-out (тело остаётся compressed), neg bomb→`BodyTooLarge` — все PASS.
+
+**Live-socket smoke (Task 3, честный gate — НЕ упрощение).** `nova_tests/http_servernet/servernet_smoke_test.nv`
+(loopback GET /health через `handle_connection`) восстановлен. LINK-препятствие снято (см. codegen-фикс).
+**RUNTIME-блок — pre-existing net-substrate segfault** `[M-178-servernet-live-net-substrate-segfault]`:
+чистый net две-fibers loopback тест (ZERO http, ZERO codegen-change) сегфолтит ДЕТЕРМИНИРОВАННО (5/5,
+~100ms) на merge-base baseline И current. Также plan83_12 net-тесты ICE `[P67-LEGACY] method=bind` +
+`.unwrap()` на `Result[_,NetError]` эмитит `Nova_Fail_fail(NetError*)` vs `nova_str`. Net live-socket
+substrate в этом worktree широко сломан — не Plan 178. Смоук хранится (как plan83_12 соседи) — не в
+быстрой regress-выборке; зазеленеет с фиксом net-runtime. Server-ЛОГИКА полностью mock-покрыта (9 PASS).
+
+**Гейт:** сборка Rust чистая; conformance **54/0** (не тронут); http/compress/io/fs delta-0 (baseline vs
+current, byte-behaviour). Спека: 02-types §D358 Ф.2-амендмент (`ErrSource.Compress` + auto-decompress
+инварианты).
+---
+
+## Plan 173.2 — supervision-as-effect: `Supervisor`/`Decision` (D416) (2026-07-10)
+
+- **СНЯТО 2026-07-10 (решение владельца): Restart-семейство РЕТРАКТИРОВАНО из словаря
+  `Decision` целиком** (D416 §1/§4 амендмент) — не «MVP за гейтом», а прод-реди полный
+  словарь `Escalate | Stop`. Мотив: рестарт — идиома акторных систем, не структурной
+  конкуренции (Kotlin coroutineScope / Swift TaskGroup / Java Joiner рестарта не имеют);
+  повтор попытки — `std/concurrency/retry` внутри тела ребёнка. Гейт
+  `E_SUPERVISOR_RESTART_GATED`, runtime-abort и neg-тест `restart_gated_neg` удалены;
+  `[M-173.2-restart-all-rest]` и `attempt`-вопрос закрыты ретракцией.
+- (истор.) MVP-объём §3b (owner 2026-06-26): исполнялись `Escalate`/`Stop`;
+  Restart-варианты держались в словаре за `E_SUPERVISOR_RESTART_GATED` до изоляции
+  D415/173.3; `attempt`-параметр был отложен вместе с Restart.
+- **Периметр: remote-дети armed M:N** (child_error[]-субстрат 173.0 заполняет только
+  remote-путь; auto-arm делает его дефолтным). Bootstrap/single-thread
+  (`NOVA_NO_AUTOARM=1`) и implicit main-scope (top-level `detach`) — дефолтный
+  Escalate-all; задокументировано в D416 §5 и в докстринге эффекта.
+- **Suspend-запрет в хендлере — компилируемое приближение V1:** прямой `Time.sleep`
+  в теле хендлера (`E_SUPERVISOR_HANDLER_SUSPEND`) + `interrupt`
+  (`E_SUPERVISOR_HANDLER_INTERRUPT`); транзитивный suspend через вызов функции —
+  followup эффект-row-анализом (Q-блок D416 §3).
+- **Механика без упрощений:** deferred-decision режим (хендлер есть → падение пишет
+  ТОЛЬКО свой per-slot с release-publish, без CAS-primary/cancel-бродкаста); решения
+  serialized на drive-потоке ВО ВРЕМЯ drain'а (Escalate успевает отменить siblings,
+  Stop оставляет их доживать) + финальный catch-up под pending_remote==0-гейтом;
+  throw хендлера огорожен fail-frame'ом моста = Escalate-with-handler-error;
+  индуцированные CANCEL siblings хендлеру не показываются. Дефолт (нет хендлера) —
+  байт-паритет: ни одна новая ветка не активируется.
+- **Гейты:** cargo оба чистые; conformance 82/0; err173_0 (retention ×5 стаб. после
+  одиночного TIMEOUT-флейка под параллельной сборкой 4 CU) / err173_2 / err173_3 +
+  все neg зелёные; std/concurrency 7/0. Известный MAIN-side красный (не эта ветка):
+  err173_1/parfor_diag — D415-гейт `E_CONCURRENT_MUT_CAPTURE` бьёт mut-захват в
+  supervised_value_smoke.nv (файл 173.1, гейт 173.3) — чинить волне 173.1/173.3.
+---
+
+## [M-closure-trailing-scalar-coercion-no-typecheck] (2026-07-10, ветка destructure-lint)
+
+- **Гейт — именно скаляр** (`bool`/int-family/float/голый `char`), не «любой не-fn тип»
+  из первоначальной формулировки маркера. `str`/`Any`/произвольный `Named` в область
+  ЭТОГО фикса намеренно не входят — подтверждённый репро был про `bool`; расширение
+  до общего closure-vs-non-fn-type mismatch — отдельный follow-up при необходимости.
+- **Явный `return` внутри `detach`/`spawn`/`parallel for`/вложенных closures — НЕ
+  проверяется** (зеркалит существующее ограничение `materialize_returns_in_block`):
+  `return` там принадлежит ДРУГОМУ execution-context, коэрсия к return-типу
+  ОБЪЕМЛЮЩЕЙ fn была бы неверной по построению — тот же дизайн, не новый пробел.
+- **`assignable`/call-arg позиции не тронуты** — closure-литерал, переданный АРГУМЕНТОМ
+  в HOF-параметр скалярного типа, УЖЕ отвергается существующей сверкой (arity/сигнатура);
+  дыра была именно в return-позиции (`assignable` там никогда не вызывался).
+---
+
+## [M-178-server-typed-body] ЗАКРЫТ (2026-07-12, баг-фиксер Plan 196, sonnet)
+
+- Заявленный «serde-в-http-CU codegen-дефект» (typed `#impl(Deserialize)` request-
+  bodies на сервере) оказался ДВУМЯ реальными компиляторными багами, оба
+  проявляются только когда `std.http.server` и `std.http.client` (транзитивно
+  через `std.http.serdejson`'s `json_decode_body[T]`) попадают в ОДИН CU:
+  1. **types/mod.rs** — chain-receiver mut-check: реестр `recv_returning`
+     (fluent `-> @`, Plan 77/D132) был name-only, БЕЗ arity. Одноимённый `-> @`
+     метод другого типа/арности (`ServeMux mut @post(pattern, handler) -> @`,
+     arity 2) ложно поражал НЕСВЯЗАННЫЙ вызов `HttpClient.new().post(url).body(b)`
+     (arity 1) → ложный `E_RECEIVER_BINDING_NOT_MUT`. Фикс: arity-aware компаньон
+     `recv_returning_arity`, зеркалит существующий `mut_methods_arity`/
+     `ro_methods_arity` прецедент (`[M-172.5-chain-gating-ro-at]`).
+  2. **emit_c.rs** (3 места) — mangling/registration свободных функций считали
+     голое имя уникальным по ВСЕЙ CU: `fn_module_map`/`file_priv_fn_c_names`,
+     D84 `method_overloads`-регистрация, D29 shadow-skip `should_skip_fn`.
+     Module-private (без `export`) одноимённая fn в ДВУХ разных модулях
+     (`std.http.client`'s private `serialize_response(status, headers, body)
+     -> str` vs `std.http.server`'s exported `serialize_response(resp) ->
+     []u8`) — НЕСВЯЗАННЫЕ функции, не overload-пара — либо коллизировали в один
+     C-символ, либо (после первого фикса) тихо ВЫПАДАЛИ из вывода вообще
+     (implicit-decl CC-FAIL). Расширил существующую cross-module collision-
+     detection (была только identical-signature, прецедент uuid_namespace
+     duplicate-symbol) на different-signature-но-не-все-exported случай,
+     прокинул через все 3 места.
+- Repro: `std/http/serdejson/typed_body_repro_test.nv` — сознательно в папке
+  serdejson, НЕ в `std/http/server/`: черновик внутри `std/http/server/`
+  тянул serde в модуль `http.server` целиком и ломал `nova test
+  std/http/servernet` (`E_EXTENSION_METHOD_NEEDS_IMPORT` на
+  `HashMap.serialize()`) — тот же leanness-принцип, что и у самого
+  serdejson.nv (см. его баннер).
+- Маркер снят из `server.nv` (заменён на DONE-описание) и из
+  `backlog-followups.md`; `187-flagship-concurrency-demo.md` обновлён —
+  typed `.json[T]` теперь доступен, dynamic-JSON workaround не нужен.
+- **Гейты:** `nova test std/http std/encoding` 14/0 (+8 SKIP, ожидаемо —
+  no-test-block модули); `nova test std/crypto` 5/0 (rotl32 identical-sig
+  прецедент не сломан); `nova test --positive --compile-error
+  spec_tests/conformance --timeout 300 --jobs 4` 95/0. Rust rebuild clean
+  (`cargo build --release` nova-cli, ~4м каждый из 6 rebuild-циклов).
+- Branch `typed-body-fix` (worktree `nova-nt`), commit `56b00e808`; НЕ
+  смёржен в main.

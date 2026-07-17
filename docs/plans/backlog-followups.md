@@ -4,9 +4,10 @@
 > **Роль.** Единый **OPEN-view** — что из `[M-…]`-followup'ов **реально открыто** прямо сейчас
 > (actionable «что живо»), по всему проекту. Каждая строка указывает свой **home** (план или floating).
 >
-> **Чем НЕ является.** Это **не** полная история — она в [`docs/simplifications.md`](../simplifications.md)
-> (append-only log, ~573 записи). Backlog = только живой OPEN-срез + индекс. Детали plan-bound маркера
-> живут в Followups его плана; здесь — индекс с home.
+> **Чем НЕ является.** Это не история закрытых упрощений — с 2026-07-18 (чистка) закрытое живёт в
+> [`docs/history/simplifications-closed.md`](../history/simplifications-closed.md); в
+> [`docs/simplifications.md`](../simplifications.md) — только ДЕЙСТВУЮЩИЕ упрощения. Backlog = только
+> живой OPEN-срез + индекс. Детали plan-bound маркера живут в Followups его плана; здесь — индекс с home.
 >
 > **Lifecycle (для агентов):**
 > 1. Новый floating-маркер → **добавить строку сюда** + залогировать в `simplifications.md` (house style).
