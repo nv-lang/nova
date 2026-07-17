@@ -51359,6 +51359,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let Some((_, ret_ty)) = self.user_fn_sigs.get(name) {
                             if !ret_ty.is_empty() && ret_ty != "void*" && !self.debt_is_generic_stub_c(ret_ty) {
                                 self.icr_trace("B10f_user_fn_sigs");
+                                // [196-capstone2] Детач+panic ПРОБОВАЛСЯ (2026-07-17) — panic
+                                // СРАБОТАЛ на examples/flagship/aggregator: name="splitmix64_step"
+                                // ret_ty="uint64_t" (тот самый 206/splitmix64 прецедент из
+                                // CLAUDE.md — conformance не ловит app-регрессии). p196-rtbuf-
+                                // producers' bare-free-fn producer НЕ покрывает этот call-сайт
+                                // (вероятно gs-гейт/single-candidate-дисциплина отклоняет форму) —
+                                // легаси остаётся ЕДИНСТВЕННЫМ верным источником здесь. ЖИВАЯ,
+                                // не трогать. Реестр НЕ снижен для этой ветки.
                                 return ret_ty.clone();
                             }
                         }
@@ -51373,15 +51381,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // arm was a redundant second read of the same fact. NO-HIT across
                         // conformance + std/src/collections + std/src/data + std/src/net
                         // (docs/plans/196.5-stage-d-notes.md) ⟹ structurally unreachable (§5).
-                        // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)`
-                        // newtype constructor — return type = aliased C type.
-                        // Mirror emit_call newtype intercept (single-arg only).
-                        if args.len() == 1 {
-                            if let Some(aliased_c) = self.type_aliases.get(name).cloned() {
-                                self.icr_trace("B10h_newtype_constructor");
-                                return aliased_c;
-                            }
-                        }
+                        // [196-capstone2] B10h_newtype_constructor REMOVED (was: Plan 115
+                        // D214 `Type(value)` newtype constructor — return type = aliased
+                        // C type, mirroring emit_call's newtype intercept, single-arg only).
+                        // p196-rtbuf-producers (726e734af, commit 90328e908, Producer Q1
+                        // "newtype/named-tuple ctor") channels `TypeDeclKind::Newtype`/
+                        // `NamedTuple` bare-ctor calls into `resolved_types_buf` ahead of
+                        // this legacy arm. Detach+panic trial (this session): 0 fires across
+                        // std/src/math (documented primary traffic, rtbuf-notes §4),
+                        // std/src/collections+time+encoding, standalone corpus, AND
+                        // examples/flagship/aggregator (`--strict-effects`, release) — the
+                        // aggregator run is significant here because a SIBLING branch
+                        // (B10f) DID still fire there (splitmix64_step, the 206/splitmix64
+                        // app-regression precedent) on the SAME cascade, proving the
+                        // flagship corpus actually exercises this code path family and
+                        // would have caught a live B10h call too. NO-HIT ⟹ structurally
+                        // unreachable (§5).
                         // [196.5 Stage-D] B10i_external_registry_free_fn REMOVED. Free
                         // external-fn (`ExternalRegistry.by_key(("", name))`) return-type
                         // fallback — same by-key registry lookup as the removed
@@ -51603,14 +51618,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // still fires) — this second, later check in the cascade is NO-HIT ⟹
                         // structurally unreachable (§5), same redundant-second-check pattern as
                         // the already-removed B11z_prim_builtin_method_second.
-                        // Plan 120 (D215): named tuple constructor — "Point" → "NovaTuple_Point".
-                        if let Some(c_ty) = self.type_aliases.get(name.as_str()) {
-                            if c_ty.starts_with("NovaTuple_") {
-                                self.icr_trace("B10l_named_tuple_constructor");
-                                return c_ty.clone();
-                            }
-                        }
+                        // [196-capstone2] B10l_named_tuple_constructor REMOVED (was: Plan 120
+                        // D215 named tuple constructor — "Point" → "NovaTuple_Point"). Same
+                        // p196-rtbuf-producers newtype/named-tuple ctor producer (726e734af,
+                        // commit 90328e908) that closed sibling B10h above channels this form
+                        // too. Detach+panic trial: 0 fires across std/src/math (documented
+                        // primary traffic, rtbuf-notes §4), collections+time+encoding,
+                        // standalone, and examples/flagship/aggregator (release,
+                        // --strict-effects — the same run where sibling B10f DID still fire,
+                        // proving this corpus exercises the cascade family). NO-HIT ⟹
+                        // structurally unreachable (§5).
                         self.icr_trace("B10m_ident_empty_fallback");
+                        // [196-capstone2] Детач+panic ПРОБОВАЛСЯ — 0 fires across collections/
+                        // time/encoding/math/standalone/aggregator. NOT removed: this arm's
+                        // OWN comment documents a legitimate (non-malformed-input) reason for
+                        // the silent degrade — a phase-1c pre-scan caller where the fn/type
+                        // registries this whole cascade depends on (user_fn_sigs/type_aliases/
+                        // generic_fns/…) are not yet populated BY CONSTRUCTION, not by bug.
+                        // My corpus exercises the normal full-pipeline order, which may not
+                        // specifically stress the phase-1c pre-scan calling convention — a
+                        // 0-hit there is not proof of dead-ness the way it is for the OTHER
+                        // arms in this cascade (whose registries ARE populated in every run).
+                        // Left alive pending a phase-1c-targeted repro (not attempted this
+                        // session — would need to call this path from the actual pre-scan
+                        // phase, not just run ordinary test files).
                         // In phase-1c pre-scan the function registry is not yet
                         // populated — return empty so callers degrade to nova_unit.
                         String::new()
