@@ -791,6 +791,20 @@ pub struct CEmitter {
     /// invariant: a bare type name is unambiguous within a file). Only populated
     /// for names in `colliding_type_names`. Built in `emit_module`.
     file_type_module: HashMap<(crate::diag::FileId, String), Vec<String>>,
+    /// [M-198-f4c-1-privfile-type-not-discriminated]: file-discriminated C base
+    /// for a `priv(file) type` whose simple name collides with ANOTHER
+    /// declaration (any visibility) in a peer file of the SAME folder-module —
+    /// D381 above only qualifies collisions across DISTINCT modules; two peer
+    /// files sharing one `module` declaration (folder-module, D281 Rule C) were
+    /// unhandled, so both `priv(file) type Rect` decls emitted the SAME bare
+    /// `Nova_Rect` C struct -> C "redefinition" (mirrors the analogous
+    /// `private_const_c_names` file-keyed map for `priv(file) const`, Plan
+    /// 170/D307). Keyed `(declaring file_id, source name) -> mangled base`
+    /// (unprefixed, e.g. `Rect_f7` -- callers still add `Nova_`/`NOVA_TAG_`/etc.
+    /// themselves). Consulted FIRST by `def_type_base`/`ref_type_base`, before
+    /// the D381 module check -- empty for every non-colliding name, so byte-
+    /// identical outside this specific collision.
+    file_priv_type_c_names: HashMap<(crate::diag::FileId, String), String>,
     /// [M-172.1-self-ref-slice-variant-erasure] sum types currently mid-emission
     /// in `emit_sum_type`. A self-referential variant payload (`Node([]Self)`,
     /// e.g. json `JsonValue.Array([]JsonValue)`) lowers its slice element via
@@ -2088,6 +2102,7 @@ impl CEmitter {
             colliding_fn_names: HashSet::new(),
             emit_file_module: HashMap::new(),
             file_type_module: HashMap::new(),
+            file_priv_type_c_names: HashMap::new(),
             being_defined_sum_types: HashSet::new(),
             being_defined_record_types: HashSet::new(),
             effect_schemas: HashMap::new(),
@@ -3827,6 +3842,20 @@ impl CEmitter {
     /// [M-sync-crossmodule-samename-type-collision] (D381) — module-qualified
     /// C base for a colliding user type; `name` unchanged for every other type
     /// (byte-identical). `module` must be the DEFINING module path.
+    /// [M-198-f4c-1-privfile-type-not-discriminated]: true when EITHER type-
+    /// collision map is non-empty (D381 cross-module `colliding_type_names`,
+    /// or this fixture's same-module per-file `file_priv_type_c_names`). Every
+    /// `current_emit_file_id`-setting gate below used to check only
+    /// `colliding_type_names` — a CU with ONLY a same-module priv(file) type
+    /// collision (no cross-module collision) never set `current_emit_file_id`
+    /// during forward-decl / type-def / mono-body emission, so `ref_type_base`
+    /// (which reads `current_emit_file_id`) never saw a chance to resolve the
+    /// per-file name — bare `Nova_<Name>` kept leaking into signatures. Both
+    /// maps are empty for the overwhelming common case → byte-identical.
+    fn any_type_file_collision(&self) -> bool {
+        !self.colliding_type_names.is_empty() || !self.file_priv_type_c_names.is_empty()
+    }
+
     fn qualify_type_base(&self, name: &str, module: &[String]) -> String {
         if self.colliding_type_names.contains(name) && !module.is_empty() {
             format!("{}_{}", module.join("_"), name)
@@ -3840,6 +3869,14 @@ impl CEmitter {
     /// bare `name` (byte-identical). Used by every type-DEFINITION emitter so
     /// the struct/tag/ctor/schema key of a colliding type is unique per module.
     fn def_type_base(&self, name: &str, file_id: crate::diag::FileId) -> String {
+        // [M-198-f4c-1-privfile-type-not-discriminated]: same-module, per-FILE
+        // collision (checked first — narrower than the cross-module D381 check
+        // below, and `colliding_type_names` never includes these same-module
+        // names since D381's own collision pass only compares DISTINCT
+        // modules).
+        if let Some(mangled) = self.file_priv_type_c_names.get(&(file_id, name.to_string())) {
+            return mangled.clone();
+        }
         if !self.colliding_type_names.contains(name) {
             return name.to_string();
         }
@@ -3854,6 +3891,16 @@ impl CEmitter {
     /// the syntactic `module` (or bare `name`) when the collision cannot be
     /// resolved (non-colliding names always return bare `name`, byte-identical).
     fn ref_type_base(&self, name: &str, syntactic_module: &[String]) -> String {
+        // [M-198-f4c-1-privfile-type-not-discriminated]: same-module, per-FILE
+        // collision — checked first, via the CURRENT emission file (a
+        // reference to a `priv(file) type` can only legally occur in its own
+        // declaring file — resolver enforces this — so `current_emit_file_id`
+        // always matches the declaring file_id when set).
+        if let Some(fid) = self.current_emit_file_id {
+            if let Some(mangled) = self.file_priv_type_c_names.get(&(fid, name.to_string())) {
+                return mangled.clone();
+            }
+        }
         if !self.colliding_type_names.contains(name) {
             return name.to_string();
         }
@@ -4243,7 +4290,18 @@ impl CEmitter {
                 // COLLIDING simple name, qualify by the DEFINING module resolved
                 // from the referencing file (`ref_type_base`); every other name
                 // keeps the exact legacy `full` (byte-identical).
-                if self.colliding_type_names.contains(name) {
+                //
+                // [M-198-f4c-1-privfile-type-not-discriminated]: `colliding_type_names`
+                // is D381's CROSS-MODULE collision set only — a same-module,
+                // per-file `priv(file) type` collision (this fixture's `Rect`)
+                // never enters it, so the gate must ALSO fire when the current
+                // emission file has a `file_priv_type_c_names` entry for `name`
+                // (checked first, internally, by `ref_type_base`). Non-colliding
+                // names hit neither condition — byte-identical `full`.
+                let file_priv_collision = self.current_emit_file_id.map_or(false, |fid| {
+                    self.file_priv_type_c_names.contains_key(&(fid, name.to_string()))
+                });
+                if self.colliding_type_names.contains(name) || file_priv_collision {
                     format!("Nova_{}*", self.ref_type_base(name, module))
                 } else {
                     format!("Nova_{}*", full)
@@ -4869,6 +4927,48 @@ impl CEmitter {
                         }
                         if let Some(m) = hit {
                             self.file_type_module.insert((pf.file_id, name.clone()), m);
+                        }
+                    }
+                }
+            }
+        }
+
+        // [M-198-f4c-1-privfile-type-not-discriminated]: file-discriminated
+        // naming for a `priv(file) type` colliding with ANOTHER declaration in
+        // a peer file of the SAME folder-module (the D381 block just above
+        // only detects collisions across DISTINCT modules — two peer files
+        // sharing one `module` declaration never populate `colliding_type_names`
+        // for their shared-name types). Detected per physical peer-group
+        // (`effective_modpath`, same physical-identity axis as the fn/type
+        // blocks above): a simple name declared >=2 times within one group is
+        // a collision; every FILE-PRIVATE declaration among those gets a
+        // file-keyed mangled base (`<Name>_f<file_id>`) via
+        // `file_priv_type_c_names`, consulted first by `def_type_base`/
+        // `ref_type_base`. A name declared only once per group (the
+        // overwhelming common case for `priv(file) type`) never enters this
+        // map — byte-identical C output.
+        {
+            let mut group_type_name_counts: HashMap<Vec<String>, HashMap<String, u32>> =
+                HashMap::new();
+            for pf in &module.peer_files {
+                let modpath = effective_modpath(pf);
+                let counts = group_type_name_counts.entry(modpath).or_default();
+                for item in &pf.items_here {
+                    if let Item::Type(td) = item {
+                        *counts.entry(td.name.clone()).or_insert(0) += 1;
+                    }
+                }
+            }
+            for pf in &module.peer_files {
+                let modpath = effective_modpath(pf);
+                let Some(counts) = group_type_name_counts.get(&modpath) else { continue; };
+                for item in &pf.items_here {
+                    if let Item::Type(td) = item {
+                        if td.file_private && counts.get(&td.name).copied().unwrap_or(0) >= 2 {
+                            let mangled = format!("{}_f{}", td.name, pf.file_id);
+                            self.file_priv_type_c_names
+                                .entry((pf.file_id, td.name.clone()))
+                                .or_insert(mangled);
                         }
                     }
                 }
@@ -13933,7 +14033,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // left it (None here) so file-private fn-name resolution — and thus every
         // emitted byte — is unchanged. The next fn/body pass re-sets it, and an
         // `?`-error aborts compilation, so no explicit per-return restore.
-        if !self.colliding_type_names.is_empty() {
+        if self.any_type_file_collision() {
             self.current_emit_file_id = Some(f.span.file_id);
         }
         // Plan 184 Р10: record which positional params of this FREE fn use the
@@ -14857,7 +14957,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // module-qualified struct/tag base for a colliding struct-like type, else
         // the bare `t.name`. Restored after the match (errors abort compilation).
         let saved_emit_file = self.current_emit_file_id;
-        if !self.colliding_type_names.is_empty() {
+        if self.any_type_file_collision() {
             self.current_emit_file_id = Some(t.span.file_id);
         }
         let def_base = self.def_type_base(&t.name, t.span.file_id);
@@ -22049,7 +22149,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // ctor/tag to match the qualified definition. GATED (byte-identical for
         // non-colliding CUs). Restored with the type-subst at the end.
         let saved_emit_file_id_mono = self.current_emit_file_id;
-        if !self.colliding_type_names.is_empty() {
+        if self.any_type_file_collision() {
             self.current_emit_file_id = Some(fn_decl.span.file_id);
         }
         // Set type substitution (A1‴: worklist carries RT — seed current_type_subst directly)
@@ -23329,7 +23429,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // monomorphized free-fn body under its declaring file (gated; byte-
         // identical for non-colliding CUs). Restored with the type-subst.
         let saved_emit_file_id_mono = self.current_emit_file_id;
-        if !self.colliding_type_names.is_empty() {
+        if self.any_type_file_collision() {
             self.current_emit_file_id = Some(fn_decl.span.file_id);
         }
         // Set type substitution (A1‴: worklist carries RT — seed current_type_subst directly)
@@ -24062,7 +24162,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // resolution stays exactly as before → byte-identical. `saved_emit_file_id`
         // captures the TRUE original for the end-of-body restore.
         let saved_emit_file_id = self.current_emit_file_id;
-        if !self.colliding_type_names.is_empty() {
+        if self.any_type_file_collision() {
             self.current_emit_file_id = Some(f.span.file_id);
         }
         // Set receiver type FIRST so Self resolves correctly in return_type_c/params_c
@@ -43143,6 +43243,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 } else {
                     struct_name
                 }
+            } else {
+                struct_name
+            };
+            // [M-198-f4c-1-privfile-type-not-discriminated]: a BARE (single-
+            // segment) record-literal name — `Rect { w: 3, h: 4 }` — resolves
+            // to its file-qualified C base when it collides with a peer
+            // file's `priv(file) type` of the same name. D381's own
+            // qualification below only fires for the EXPLICIT `Type.Variant
+            // { … }` 2-segment sum-ctor form (`ref_type_base` call a few
+            // lines down) — a plain single-segment record literal was never
+            // routed through it, so BOTH peer files' `Rect{…}` literals fell
+            // through the (now correctly split, per-file) `record_schemas`
+            // lookup — registered under `Rect_f0`/`Rect_f1`, never bare
+            // `Rect` — and hit the "unknown type" null-stub fallback
+            // (`void* … = NULL`), producing a NULL receiver and a runtime
+            // crash on first field access. No-op when neither collision map
+            // has an entry for this name (byte-identical, mirrors
+            // `ref_type_base`'s own no-op guarantee for the common case).
+            let struct_name = if name.len() == 1 {
+                self.ref_type_base(&struct_name, &[])
             } else {
                 struct_name
             };
