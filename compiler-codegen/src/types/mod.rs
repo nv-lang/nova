@@ -8472,7 +8472,20 @@ impl<'a> TypeCheckCtx<'a> {
                                             Some(ResolvedType::from_type_ref(ret_tr))
                                         }
                                         Some(_) => None,
-                                        None => Some(ResolvedType::Unit),
+                                        // D45: no `-> T` annotation. Block/external body
+                                        // → `nova_unit` is the spec-guaranteed reading
+                                        // (03-syntax.md D45 "Реализация": block-body
+                                        // без аннотации → nova_unit, inference in
+                                        // block-body explicitly rejected by design).
+                                        // Expr-body (`=> expr`), however, INFERS its
+                                        // real return from the expression itself — this
+                                        // producer doesn't do that inference, so it must
+                                        // stay silent (None) rather than lie Unit and
+                                        // shadow the true inferred type downstream.
+                                        None => match &callee.body {
+                                            FnBody::Expr(_) => None,
+                                            _ => Some(ResolvedType::Unit),
+                                        },
                                     };
                                     if let Some(rt) = rt {
                                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
