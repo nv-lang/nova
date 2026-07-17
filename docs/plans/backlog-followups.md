@@ -3083,17 +3083,28 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   переименован в `@into_bytes()` (канон §1а), мигрировано 96 call-сайтов в spec_tests
   и std/src/encoding/url.nv. nova lint spec_tests: 103→7 findings.
 
-- **[M-lint-findings-param-no-contract]** (2026-07-09, P3, Wave: контракт-волна §5;
-  источник: план 185) — параметры index/len-класса без `requires` там, где домен
-  ТОТАЛЕН по дизайну: `Vec @truncate(n)` / `@first_n(n)` / `@last_n(n)` (clamp-семантика,
-  задокументирована), `SeekFrom.end/current(n)` (отрицательные легальны). Решить:
-  зафиксировать clamp/total как канон-исключение §5 или перевести на `requires` с
-  правкой вызовов. On-line маркеры на месте.
+- ✅ **[M-lint-findings-param-no-contract]** (2026-07-09, P3, Wave: контракт-волна §5;
+  источник: план 185) — ✅ ЗАКРЫТ (2026-07-17): трём оставшимся сайтам без контракта —
+  `HashMap[K, V].new(cap int = 16)`, `Queue[T].new(cap int = 0)`, `Set[T].new(cap int = 16)`
+  (std/src/collections/{hashmap,queue,set}.nv) — дописан `requires cap >= 0` (владелец:
+  "requires n >= 0 — ДА"; форма/имя параметра сверены с прецедентом `Vec[T].new(cap int = 0)
+  requires cap >= 0`, std/src/collections/vec/core.nv). `nova check` трёх файлов чист;
+  таргетные `nova test` (doctests hashmap/set, queue_test.nv) зелёные. nova lint std: 5→2
+  находки (на момент этого закрытия; остальное закрыто соседним закрытием ниже).
 
-- **[M-lint-findings-try-without-sibling]** (2026-07-09, P3, Wave: D325-R3 хвост;
-  источник: план 185) — `fs try_exists` (Rust-имя; голое `exists` — зарезервированное
-  слово квантора, переименовать нельзя — carve-out задокументирован в докстроке).
-  Решить: канон-исключение или новое имя (`path_exists`).
+- ✅ **[M-lint-findings-try-without-sibling]** (2026-07-09, P3, Wave: D325-R3 хвост;
+  источник: план 185) — ✅ ЗАКРЫТ (2026-07-17), решён ДВУМЯ отдельными правками владельца:
+  (1) `ReadFs`-протокол/`DirFs`/`EmbeddedDir` `@try_exists` (std/src/fs/readfs.nv) переименован
+  в `@path_exists` (владелец: "path_exists — ДА"; сигнатура/`Result`-возврат не менялись) —
+  call-сайты (readfs_test.nv, docs/io-fs.md), D323-амендмент `ReadFs` в
+  spec/decisions/04-effects.md обновлены в том же слиянии; (2) `Duration.try_from_secs_f64`
+  (static ctor, std/src/time/duration/core.nv) СНЕСЁН целиком (владелец: "мы убрали все
+  Duration.from_*" — не exception к правилу, а снос статики), заменён ресиверной формой
+  `f64 @checked_to_seconds() -> Option[Duration]` (зеркалит `@times(f64)`/`@checked_mul_f64`
+  на `Duration`); call-сайты (core.nv inline-тест, spec_tests/conformance/
+  d317_duration_overflow_policy.nv) мигрированы на `x.checked_to_seconds()`; D317-амендмент
+  (R5 f64-конверсии) в spec/decisions/04-effects.md обновлён в том же слиянии. nova lint std:
+  5→0 находок; nova lint spec_tests: 0 находок.
 
 - **[M-lint-findings-result-discarded-lenient-parse]** (2026-07-09, P3;
   источник: план 185) — swallow-арм `Err(_) => ()` в lenient-парсерах
