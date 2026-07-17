@@ -21,7 +21,7 @@ use tower_lsp::lsp_types::{notification, request};
 use tower_lsp::{Client, LanguageServer};
 
 use crate::code_actions::compute_code_actions_with_stdlib;
-use crate::compiler::{check_file_with_root, check_workspace, run_with_large_stack};
+use crate::compiler::{check_file_with_root, check_open_documents, check_workspace, run_with_large_stack};
 use crate::completion;
 use crate::diagnostic_mapping::to_lsp;
 use crate::document_highlight::compute_document_highlights;
@@ -139,31 +139,56 @@ impl Backend {
         }
     }
 
-    /// Schedule a debounced recompile for `uri`.
-    ///
-    /// Strategy (V1):
-    /// - If workspace root is set: full workspace recheck via `check_workspace`.
-    ///   Publishes diagnostics for every .nv file found.
-    /// - Otherwise: single-file check via `check_file`.
-    ///
-    /// V2 (future): per-module dep-graph to avoid rechecking unrelated files.
+    /// Schedule a debounced recompile for `uri`. Thin wrapper around
+    /// [`schedule_recheck_for`] (a free function, Plan 213 Ф.2) so the
+    /// debounced `did_change_watched_files` burst handler — which has no
+    /// `&Backend` — can trigger the same recheck logic.
     fn schedule_recheck(&self, uri: Url, version: i32) {
-        let client = self.client.clone();
-        let state = Arc::clone(&self.state);
-        let workspace_root = self.state.workspace_root();
+        schedule_recheck_for(self.client.clone(), Arc::clone(&self.state), uri, version);
+    }
+}
 
-        self.state.debouncer.schedule(uri.clone(), move |token| async move {
+/// Schedule a debounced recompile for `uri` (free-function body of
+/// `Backend::schedule_recheck`).
+///
+/// Strategy:
+/// - If workspace root is set: recheck every **currently open** document
+///   (Plan 213 Ф.1/Ф.2 — previously this called `check_workspace(&root)`, a
+///   full re-parse + type-check of **every** `.nv` file under the workspace
+///   root on every debounced edit; on the main Nova repo that is 3000+ files,
+///   each with its own import/prelude resolution, and was the primary cause
+///   of the LSP burning ~27 CPU-hours/day. `check_open_documents` reuses the
+///   same per-file resolution machinery but only over open buffers —
+///   typically single digits). Publishes diagnostics for every open document.
+/// - Otherwise: single-file check via `check_file`.
+///
+/// V2 (future): per-module dep-graph to avoid rechecking unrelated open
+/// buffers too — see docs/plans/213-nova-lsp-performance.md Ф.4.
+fn schedule_recheck_for(client: Client, state: Arc<WorkspaceState>, uri: Url, version: i32) {
+    let workspace_root = state.workspace_root();
+    // Clone the (cheap, `Arc`-backed) debouncer handle out first: calling
+    // `.schedule()` directly on `state.debouncer` would hold a borrow of
+    // `state` for the receiver while the `move` closure argument tries to
+    // move the whole `state` into itself in the same expression (E0505).
+    let debouncer = state.debouncer.clone();
+
+    debouncer.schedule(uri.clone(), move |token| async move {
             if token.is_cancelled() {
                 return;
             }
 
             if let Some(root) = workspace_root {
-                // ── Full workspace recheck ────────────────────────────────────
-                tracing::debug!(root = %root.display(), "workspace recheck triggered");
+                // ── Open-documents recheck (Plan 213 Ф.1) ─────────────────────
+                tracing::debug!(root = %root.display(), "open-documents recheck triggered");
 
+                let open_docs: Vec<(Url, String)> = state
+                    .docs
+                    .iter()
+                    .map(|e| (e.key().clone(), e.value().text.to_string()))
+                    .collect();
                 let root_clone = root.clone();
                 let results = tokio::task::spawn_blocking(move || {
-                    run_with_large_stack(move || check_workspace(&root_clone))
+                    run_with_large_stack(move || check_open_documents(&open_docs, &root_clone))
                 })
                 .await;
 
@@ -190,13 +215,13 @@ impl Backend {
                             tracing::debug!(
                                 file = %cr.file_uri,
                                 count = lsp_diags.len(),
-                                "publishing workspace diagnostics"
+                                "publishing open-document diagnostics"
                             );
                             client.publish_diagnostics(cr.file_uri, lsp_diags, ver).await;
                         }
                     }
                     Err(e) => {
-                        tracing::error!(err = %e, "workspace recheck spawn_blocking failed");
+                        tracing::error!(err = %e, "open-documents recheck spawn_blocking failed");
                     }
                 }
             } else {
@@ -250,8 +275,9 @@ impl Backend {
                 }
             }
         });
-    }
+}
 
+impl Backend {
     /// Publish empty diagnostics for a URI (used on didClose to clear the editor).
     async fn publish_empty_diagnostics(&self, uri: Url) {
         self.client
@@ -283,56 +309,80 @@ impl Backend {
 
     /// Recompute diagnostics for currently-open documents (used after an external
     /// change / rename so results refresh without the user editing the buffer).
-    /// When a workspace root is set, one recheck republishes the whole workspace,
-    /// so a single open document suffices as the trigger.
+    /// Thin wrapper around [`recheck_open_documents_for`] (Plan 213 Ф.2 free
+    /// function) so the debounced watch-batch handler in
+    /// `did_change_watched_files` — which has no `&Backend` — can trigger the
+    /// same logic.
     async fn recheck_open_documents(&self) {
-        // Prefer a single workspace-wide recheck when a root is known.
-        if self.state.workspace_root().is_some() {
-            if let Some(entry) = self.state.docs.iter().next() {
-                let uri = entry.key().clone();
-                let version = entry.value().version;
-                drop(entry);
-                self.schedule_recheck(uri, version);
-            }
-            return;
-        }
-        // No root: recheck each open document individually.
-        let open: Vec<(Url, i32)> = self
-            .state
-            .docs
-            .iter()
-            .map(|e| (e.key().clone(), e.value().version))
-            .collect();
-        for (uri, version) in open {
-            self.schedule_recheck(uri, version);
-        }
+        recheck_open_documents_for(&self.client, &self.state).await;
     }
 
     /// Push server→client refresh notifications so already-rendered semantic
     /// tokens / code lenses / inlay hints re-pull after a background reindex
-    /// (Ф.18 sub-feature 4). `inlayHint/refresh` is included now that Ф.9
-    /// advertises an inlay-hint provider — the freshly-built `expr_types` can
-    /// change the hint set, so cold hints rendered before the index completed
-    /// must re-request. Errors are swallowed (a client lacking the capability is
-    /// fine).
+    /// (Ф.18 sub-feature 4). Thin wrapper around [`refresh_client_hints_for`]
+    /// (Plan 213 Ф.2 free function).
     async fn refresh_client_hints(&self) {
-        // Each is a server→client *request*; a non-responsive client must not
-        // stall us, so each is bounded by a short timeout (a real client answers
-        // in milliseconds).
-        let st = self.client.semantic_tokens_refresh();
-        if let Ok(Err(e)) = tokio::time::timeout(Duration::from_secs(2), st).await {
-            tracing::debug!(err = %e, "semanticTokens/refresh not honoured");
-        }
-        let cl = self.client.code_lens_refresh();
-        if let Ok(Err(e)) = tokio::time::timeout(Duration::from_secs(2), cl).await {
-            tracing::debug!(err = %e, "codeLens/refresh not honoured");
-        }
-        let ih = self.client.inlay_hint_refresh();
-        if let Ok(Err(e)) = tokio::time::timeout(Duration::from_secs(2), ih).await {
-            tracing::debug!(err = %e, "inlayHint/refresh not honoured");
-        }
+        refresh_client_hints_for(&self.client).await;
     }
+}
 
+/// Free-function body of `Backend::recheck_open_documents` (Plan 213 Ф.2).
+///
+/// When a workspace root is set, one recheck republishes diagnostics for
+/// every open document ([`schedule_recheck_for`]'s open-documents strategy,
+/// Plan 213 Ф.1), so a single open document suffices as the trigger.
+/// Otherwise every open document is rechecked individually.
+async fn recheck_open_documents_for(client: &Client, state: &Arc<WorkspaceState>) {
+    if state.workspace_root().is_some() {
+        if let Some(entry) = state.docs.iter().next() {
+            let uri = entry.key().clone();
+            let version = entry.value().version;
+            drop(entry);
+            schedule_recheck_for(client.clone(), Arc::clone(state), uri, version);
+        }
+        return;
+    }
+    let open: Vec<(Url, i32)> = state
+        .docs
+        .iter()
+        .map(|e| (e.key().clone(), e.value().version))
+        .collect();
+    for (uri, version) in open {
+        schedule_recheck_for(client.clone(), Arc::clone(state), uri, version);
+    }
+}
+
+/// Free-function body of `Backend::refresh_client_hints` (Plan 213 Ф.2).
+/// Each notification is a server→client *request*; a non-responsive client
+/// must not stall the caller, so each is bounded by a short timeout (a real
+/// client answers in milliseconds). Errors are swallowed (a client lacking
+/// the capability is fine).
+async fn refresh_client_hints_for(client: &Client) {
+    let st = client.semantic_tokens_refresh();
+    if let Ok(Err(e)) = tokio::time::timeout(Duration::from_secs(2), st).await {
+        tracing::debug!(err = %e, "semanticTokens/refresh not honoured");
+    }
+    let cl = client.code_lens_refresh();
+    if let Ok(Err(e)) = tokio::time::timeout(Duration::from_secs(2), cl).await {
+        tracing::debug!(err = %e, "codeLens/refresh not honoured");
+    }
+    let ih = client.inlay_hint_refresh();
+    if let Ok(Err(e)) = tokio::time::timeout(Duration::from_secs(2), ih).await {
+        tracing::debug!(err = %e, "inlayHint/refresh not honoured");
+    }
+}
+
+/// Fixed debounce key (Plan 213 Ф.2) for coalescing `didChangeWatchedFiles`
+/// bursts. Not a real document URI — just a stable map key so the per-URI
+/// `Debouncer` mechanism (already used for interactive edits) collapses a
+/// rapid run of watcher notifications into one apply-pass + one recheck,
+/// matching how gopls/rust-analyzer absorb git-checkout / branch-switch
+/// storms.
+fn watch_batch_key() -> Url {
+    Url::parse("nova-lsp-internal://watch-batch").expect("static URL is valid")
+}
+
+impl Backend {
     /// Run the cold initial workspace scan wrapped in a `$/progress` token so the
     /// IDE shows a determinate spinner (begin → report → end) instead of looking
     /// hung. Indexes every `.nv` file for `workspace/symbol`, publishes initial
@@ -822,45 +872,107 @@ impl LanguageServer for Backend {
     /// `workspace/didChangeWatchedFiles` — react to *external* file changes
     /// (git checkout/pull, edits outside the editor, codegen output).
     ///
-    /// Each event is classified + applied to the caches by
-    /// [`apply_watched_event`] (real invalidation of the Ф.1 resolved cache and
-    /// the Ф.12 symbol index — not a server restart). A `.nv` change additionally
-    /// invalidates every open document's resolved build (reverse-dependency
-    /// superset, `[M-104.10-watch-reverse-deps]`). If anything relevant changed,
+    /// Plan 213 Ф.2: a git checkout / branch switch / build can deliver
+    /// **many** separate notifications in rapid succession (one per touched
+    /// file, or chunked batches) — previously each notification synchronously
+    /// applied its events (disk read + parse per file, directly on the async
+    /// task, never `spawn_blocking`) and then unconditionally triggered
+    /// `invalidate_all_resolved()` + a full recheck, with no coalescing across
+    /// notifications. Now: events are only cheaply classified here (no I/O),
+    /// buffered into `state.pending_watch_events`, and the actual apply-pass +
+    /// recheck is scheduled on `state.watch_debouncer` (400ms, separate from
+    /// the 200ms interactive-edit debouncer so a burst of N notifications
+    /// inside that window collapses into exactly ONE apply-pass + ONE recheck
+    /// — the parse/apply work itself also moves to `spawn_blocking` so it
+    /// never blocks the async runtime.
+    ///
+    /// Each buffered event is applied to the caches by [`apply_watched_event`]
+    /// (real invalidation of the Ф.1 resolved cache and the Ф.12 symbol index
+    /// — not a server restart). A `.nv` change additionally invalidates every
+    /// open document's resolved build (reverse-dependency superset,
+    /// `[M-104.10-watch-reverse-deps]`). If anything relevant changed,
     /// diagnostics for open documents are recomputed and semanticTokens/codeLens
     /// refreshes are pushed so stale hints re-pull.
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
-        let mut any_relevant = false;
-        let mut any_nv = false;
-        for event in &params.changes {
-            let target = classify_watch_uri(&event.uri);
-            if target == WatchTarget::Ignore {
-                // NEG: a watch event on a non-.nv / non-manifest file is ignored.
-                tracing::trace!(uri = %event.uri, "watched-file event ignored (not .nv/nova.toml)");
-                continue;
-            }
-            if target == WatchTarget::Nv {
-                any_nv = true;
-            }
-            let outcome = apply_watched_event(&self.state, event);
-            any_relevant |= outcome.relevant;
-            tracing::debug!(uri = %event.uri, ?target, "watched-file event applied");
-        }
-
-        if !any_relevant {
+        // Cheap filter (no I/O): drop events the watchers should not even have
+        // sent (defensive — see `classify_watch_uri` doc comment).
+        let relevant: Vec<FileEvent> = params
+            .changes
+            .into_iter()
+            .filter(|e| {
+                let target = classify_watch_uri(&e.uri);
+                if target == WatchTarget::Ignore {
+                    // NEG: a watch event on a non-.nv / non-manifest file is ignored.
+                    tracing::trace!(uri = %e.uri, "watched-file event ignored (not .nv/nova.toml)");
+                }
+                target != WatchTarget::Ignore
+            })
+            .collect();
+        if relevant.is_empty() {
             return;
         }
 
-        // A changed peer file may invalidate any open importer's cached build.
-        // Clear the whole resolved cache (correct superset; rebuilt lazily).
-        if any_nv {
-            self.state.invalidate_all_resolved();
+        {
+            let mut pending = self.state.pending_watch_events.lock().unwrap();
+            pending.extend(relevant);
         }
 
-        // Recompute diagnostics for open documents so external changes surface
-        // without the user touching the buffer, then refresh push-based hints.
-        self.recheck_open_documents().await;
-        self.refresh_client_hints().await;
+        let client = self.client.clone();
+        let state = Arc::clone(&self.state);
+        self.state
+            .watch_debouncer
+            .schedule(watch_batch_key(), move |token| async move {
+                if token.is_cancelled() {
+                    return;
+                }
+
+                let events: Vec<FileEvent> = {
+                    let mut pending = state.pending_watch_events.lock().unwrap();
+                    std::mem::take(&mut *pending)
+                };
+                if events.is_empty() {
+                    return;
+                }
+
+                // Apply on a blocking thread: disk reads + parsing (symbol /
+                // references indexing) must never block the async runtime,
+                // especially for a large burst (e.g. a branch switch touching
+                // thousands of files across std/examples/spec_tests).
+                let state_for_apply = Arc::clone(&state);
+                let (any_relevant, any_nv) = tokio::task::spawn_blocking(move || {
+                    let mut any_relevant = false;
+                    let mut any_nv = false;
+                    for event in &events {
+                        let target = classify_watch_uri(&event.uri);
+                        if target == WatchTarget::Nv {
+                            any_nv = true;
+                        }
+                        let outcome = apply_watched_event(&state_for_apply, event);
+                        any_relevant |= outcome.relevant;
+                        tracing::debug!(uri = %event.uri, ?target, "watched-file event applied");
+                    }
+                    (any_relevant, any_nv)
+                })
+                .await
+                .unwrap_or((false, false));
+
+                if !any_relevant || token.is_cancelled() {
+                    return;
+                }
+
+                // A changed peer file may invalidate any open importer's cached
+                // build. Clear the whole resolved cache (correct superset;
+                // rebuilt lazily).
+                if any_nv {
+                    state.invalidate_all_resolved();
+                }
+
+                // Recompute diagnostics for open documents so external changes
+                // surface without the user touching the buffer, then refresh
+                // push-based hints.
+                recheck_open_documents_for(&client, &state).await;
+                refresh_client_hints_for(&client).await;
+            });
     }
 
     /// `workspace/willRenameFiles` — return a `WorkspaceEdit` that rewrites the
@@ -2436,28 +2548,9 @@ fn find_decl_location(uri: &Url, src: &str, symbol_name: &str) -> Option<Locatio
 
 /// Plan 104.6: collect .nv files under `root` for cross-file rename.
 ///
-/// Excludes `target/` and hidden directories.
+/// Plan 213 Ф.1: delegates to [`crate::compiler::collect_nv_paths`] — the
+/// shared, filtered walk (target/vendor dirs + nested-repository-root guard)
+/// that replaced this function's own copy of the recursion.
 fn collect_nv_files_for_rename(root: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
-    let mut files = Vec::new();
-    collect_nv_files_rec(root, &mut files);
-    Ok(files)
-}
-
-fn collect_nv_files_rec(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if name == "target" || name.starts_with('.') {
-                continue;
-            }
-            collect_nv_files_rec(&path, out);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("nv") {
-            out.push(path);
-        }
-    }
+    Ok(crate::compiler::collect_nv_paths(root))
 }

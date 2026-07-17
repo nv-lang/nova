@@ -33,11 +33,33 @@ struct Args {
     stdio: bool,
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     // Parse CLI args first — `--version` / `--help` exit here before async code.
     let _args = Args::parse();
 
+    // Plan 213 Ф.2: bound the tokio blocking-pool concurrency instead of the
+    // default (512 threads). Every `check_file`/`check_workspace` invocation
+    // runs on a `spawn_blocking` task and, inside it, a dedicated 64 MiB-stack
+    // OS thread (`run_with_large_stack`); an unbounded blocking pool means a
+    // burst of concurrent recheck requests (many open documents edited close
+    // together, or a watched-file storm) could spawn far more OS threads than
+    // the machine has cores, each reserving 64 MiB of stack. Capping at
+    // `cores / 4` (min 2) keeps background type-checking from competing with
+    // the editor/OS for CPU under contention — the LSP is a background aide,
+    // not the foreground workload.
+    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let max_blocking = (cores / 4).max(2);
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .max_blocking_threads(max_blocking)
+        .build()
+        .expect("failed to build tokio runtime");
+
+    runtime.block_on(async_main(max_blocking));
+}
+
+async fn async_main(max_blocking_threads: usize) {
     // Structured logging to stderr (stdout = JSON-RPC transport).
     // NOVA_LSP_LOG env var controls verbosity; default is INFO + dep warnings.
     let filter = EnvFilter::try_from_env("NOVA_LSP_LOG")
@@ -51,6 +73,7 @@ async fn main() {
 
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
+        max_blocking_threads,
         "nova-lsp starting"
     );
 
