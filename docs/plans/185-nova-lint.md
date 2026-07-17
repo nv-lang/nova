@@ -55,6 +55,51 @@
 > `nova:allow` с причиной, 2 — канон-фиксом, 5 — сужением правила, 2 — обходом
 > по прецеденту d145).
 
+> **АМЕНДМЕНТ 2026-07-17/18 (два новых стилевых линта, заказ владельца):**
+> реестр вырос до 21 правила-единицы.
+> - **W_NON_COMPOUND_ASSIGN**: `x = x OP e` при существующем компаунде `x
+>   OP= e` — только `+=`/`-=`/`*=`/`/=` (`AssignOp` без `Mod`/битовых; парсер
+>   лексирует ровно 4 compound-токена). LHS — простое место (ident/`@field`/
+>   цепочка полей); Index-места намеренно исключены (компаунд по индексу в
+>   кодогене — другой, непроверенный путь codegen'а, `emit_c.rs` гейтит
+>   bounds-checked/struct-value/fixed-array write-ветки буквально `if *op ==
+>   AssignOp::Assign`). Дедуп с W_STR_CONCAT_LOOP на пересекающихся сайтах
+>   (тот же `in_loop && Add && стрингиш`). Канон — nv-coding-style §29.
+> - **W_WHILE_COUNTER_FOR_RANGE**: `mut i = start; while i < end { …; i +=
+>   1 }` → `for i in start..end { … }` — машинная проверка канона §10
+>   (владелец уже словами зафиксировал этот принцип). Консервативные
+>   критерии (любое нарушение → молчим): `mut i = start` НЕПОСРЕДСТВЕННО
+>   перед `while` в том же блоке; условие строго `i < END`/`i <= END`
+>   (`<=` → inclusive-range `..=`); тело без trailing-expr; инкремент —
+>   ПОСЛЕДНИЙ statement тела; `i` больше нигде не присваивается (any depth,
+>   over-conservative); `END` — простое место или int-литерал, не
+>   мутируется в теле (голый Call/Index как `END` переоценивался бы каждую
+>   итерацию `while`, но один раз в `for` — реальная разница); нет
+>   `continue` где-либо в теле (over-conservative — вложенный цикл со своим
+>   `continue` тоже гасит); `i` не используется после `while`; нет
+>   `invariants`/`decreases` (SMT-контракты потерялись бы). Проверено на
+>   реальном std-кейсе (`string_builder.nv::@pad_in_place` c/b/pos — c и b
+>   подпадают, pos структурно не подпадает, между `mut pos=...` и любым
+>   `while` всегда есть другой `mut`-let).
+> - **Разкраснение волной**: 178 файлов std/spec_tests/examples — 72
+>   while-counter + 304 compound-assign фикса (временный span-precise
+>   codemod-фиксер `nova-cli/src/bin/fix_p185_style.rs`, применён и удалён —
+>   прецедент migrate_plan60/65). 26 conformance-фикстур Plan123/LICM/IPA-
+>   семьи (`licm_*`/`ipa_*`/`prop_licm_*`/`prop_ipa_*`/`plan123_*`/`v2_1_*`/
+>   `v72_*`/`m5_*`) + `standalone/perf_contract_hot_loop_slow.nv` получили
+>   `nova:allow W_WHILE_COUNTER_FOR_RANGE` с причиной — их СОБСТВЕННЫЙ
+>   docstring подтверждает, что они пин'ят поведение LICM/field-cache-
+>   оптимизатора (или изолируют перф контракт-оверхеда) ИМЕННО на
+>   `while`-форме цикла; `for`-in идёт через iterator-protocol десугар
+>   (D58) — другой codegen-путь, автопереписывание рискнуло бы тихо начать
+>   тестировать не то. 16 юнит-тестов (7 compound-assign + 9 while-counter
+>   pos/neg, включая continue-в-теле/i-после-цикла/reassign-в-теле/END-
+>   мутируется/END-call/nested c-b-pos кейс).
+>
+> **Итог: `nova lint --rule W_NON_COMPOUND_ASSIGN,W_WHILE_COUNTER_FOR_RANGE
+> std spec_tests examples` = 0 находок.** Спек-амендмент НЕ требовался —
+> оба правила чисто стилевые (не меняют язык).
+
 ## Цель
 
 Каждое принятое конвенционное правило получает машинную проверку: предупреждение чекера
