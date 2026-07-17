@@ -2,6 +2,10 @@
 # Plan 104 — Production-grade IDE integration (LSP server + tree-sitter + editor distributions)
 
 > **Статус:** ✅ **ЗАКРЫТ 2026-06-17** — все 9 sub-plans (104.0–104.9) выполнены.
+> **Продолжение (2026-07-17):** производительность/инкрементальность LSP-сервера —
+> [План 213](213-nova-lsp-performance.md) (сервер сжигал CPU полной переиндексацией
+> workspace на каждое файловое событие; выключен владельцем, чинится и включается там).
+> Протокольные фичи V2 — по-прежнему [104.10](104.10-lsp-v2-production.md).
 > **Приоритет:** master закрывает «без LSP боль высокая для внешних пользователей» (см. memory `project-plan101-status` + Plan 01-roadmap-v0.1 §165 «LSP-сервер v0.5»).
 > **Оценка:** ~33 dev-day (8 sub-plans, scoped 2-5 dev-day каждый; 6-7 недель calendar при single-developer pace).
 > **Зависимости:**
