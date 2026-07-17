@@ -3318,11 +3318,30 @@ default` + метод собирается. Замечание (вне пери�
 | `[M-198-f5-conformance-subdir-verdict]` | **Найдено аудитом планов ≥150 (2026-07-16).** `docs/plans/wip/198-redo-notes.md` §«Ф.5 — ревизия подпапок `spec_tests/conformance/`» (задание владельца 2026-07-14): инвентарь каждой подпапки `conformance/*/` → вердикт одной из трёх категорий (законный отдельный CU / вернуть плоскими пирами в merged-CU / карантин-бага) с таблицей-вердиктом «в этот файл». Задание НЕ выполнено — файл обрывается на списке «кандидатов под подозрением» (`any_is/`, `cm_box/`, `d372_canonical/`, `lint/`, `plan70_1/`, `plan84/`, `consume_fixtures/`), таблицы-вердикта нет. | Plan 198 Ф.5 | P3 |
 | `[M-d412-blob-view-mut-write]` | Найдено ревью-2 Плана 210 (2026-07-16): blob-view над .rodata (одиночный `embed()` D412 и будущий `embed_dir`) при mut-биндинге ЗНАЧЕНИЯ (не литерала) не копируется — D412-копия (emit_c ~26599) ловит только биндинг блоб-ЛИТЕРАЛА. `mut d = f_returning_blob(); d[0]=5` → запись в read-only страницу = SEGV. Push безопасен (realloc уводит в кучу), опасна in-place запись. Фикс-кандидаты: чекер-запрет in-place записи в blob-view / рантайм-метка view+copy-on-write / документированный контракт. | D412 / Plan 210 ревью | **P2** |
 
+- **[M-mn-spawnctx-corruption-cancel-wake]** (2026-07-18, **P1**, opus-раскопка
+  gdb/ASLR-off, полный разбор `docs/plans/wip/boehm-eager-cost-notes.md`
+  §ОКОНЧАТЕЛЬНЫЙ КОРЕНЬ) — порча памяти SpawnCtx (128-байтный uncollectable
+  класс) в concurrent spawn+wake+cancel шторме (2000 файберов, NOVA_MAXPROCS=1):
+  32-битная запись усекает high-half free-list-линка (`rcx=0xf7d30880` =
+  trunc(0x7ffff7d30880)) → SIGSEGV в `GC_generic_malloc_uncollectable` «вне
+  арены»; мусорный `base->_nova_fiber_scope`/`_nova_saved_fail_top` → рваная
+  fail-frame-цепочка → abort «cancel-throw outside any supervised scope».
+  Поверхность гонки: `nova_goready`/`nova_sched_wake`/`_nova_driver_sleep_close_cb`
+  (nova_sched.h, driver.c:397) + жизненный цикл SpawnCtx (fibers.h). Латентна
+  всегда; была маскирована случайным GC-подавлением (плоский GC_add_roots
+  арены задирал порог сборки → 0 сборок за тест), вскрыта КОРРЕКТНЫМ
+  Boehm-mark-фиксом ea85229e0 (parent+форс-GC = 6/6 FAIL — доказательство
+  независимости от fiber_arena). Роняет `standalone/supervisor_stop_test` +
+  `standalone/pos_max_fibers_concurrent` (в known-red гейта с 2026-07-18);
+  вероятно тот же корень у [M-187-high-concurrency-wedge]. TSan-рецепт:
+  `~/tsan_build.sh` (WSL). Фикс-волна запущена 2026-07-18.
 - **[M-linux-mn-conformance-red]** (2026-07-16, P1, найден ПЕРВЫМ Linux-прогоном
   conformance — nova-gate CI, run 29513225018) — 2 фикстуры RUN-FAIL только на
   Linux (Windows зелёные): `app_effect_basic_t8_1` (63s, тесты внутри PASS,
   процесс падает на выходе) и `standalone/supervisor_parfor_test` (2-й тест
-  supervisor+parallel-for). Класс = подтверждённые TSan-гонки M:N baseline
+  supervisor+parallel-for). **2026-07-18: known-red-список расширен ещё двумя
+  фикстурами того же семейства — см. [M-mn-spawnctx-corruption-cancel-wake]
+  выше (точный gdb-корень).** Класс = подтверждённые TSan-гонки M:N baseline
   (runq init↔steal visibility gap; sysmon↔worker `runtime.c:615/1082`) — см.
   План 211 §5 (там же алгоритм). CI-гейт nova-gate.yml несёт known-red-список
   с этими 2 путями (НЕ ослабление тестов: любой другой FAIL = красный);
