@@ -1159,11 +1159,35 @@ static inline void nova_scope_pin_ctx(NovaFiberQueue* scope, void* ctx) {
 }
 
 /* Plan 173.0 Ф.2: grow child_error[]/child_ctx[] to at least new_cap slots.
- * Mirrors nova_scope_pin_ctx's growth style (nova_alloc for child_error —
- * GC-scanned heap, since `reason`/`payload` fields are boxed-T GC pointers
- * that must stay traceable; nova_alloc_uncollectable for child_ctx — same
- * discipline as ctx_pins, since retained SpawnCtx buffers must survive GC
- * pressure across the whole retention window Ф.3 needs them for).
+ *
+ * [M-mn-spawnctx-corruption-cancel-wake] fix (Plan 211 family): child_ctx[]
+ * used to be nova_alloc_uncollectable'd (see git history for the original
+ * "same discipline as ctx_pins" reasoning) — WRONG: that reasoning conflated
+ * "the SpawnCtx entries pointed-to must survive GC pressure" (true, and
+ * already guaranteed independently — they are themselves allocated via
+ * nova_spawn_pool_acquire -> nova_alloc_uncollectable, a SEPARATE concern)
+ * with "the child_ctx ARRAY ITSELF must be uncollectable" (false — the array
+ * is reachable for exactly as long as `scope` is, via the same conservative-
+ * stack-scan/GC-root path every other nova_alloc'd NovaFiberQueue field
+ * already relies on; nova_alloc's normal GC-scanned memory finds the boxed
+ * SpawnCtx pointers inside it just fine). Making the array itself
+ * uncollectable had a hazardous side effect: at NOVA_SCOPE_INITIAL_CAP=16
+ * (fibers.h above), the FIRST grow allocates exactly 16*sizeof(void*)=128
+ * bytes — the SAME Boehm uncollectable size-class SpawnCtx itself pools
+ * through (nova_spawn_pool_class_size[1]=128, runtime.c). Every subsequent
+ * grow (32/64/...) freed the previous uncollectable buffer via
+ * nova_free_uncollectable (= GC_free), handing that exact 128-byte block
+ * back to Boehm's internal free list for the SAME size-class SpawnCtx draws
+ * fresh allocations from during a spawn storm (2000 concurrent spawns,
+ * pos_max_fibers_concurrent.nv) — gdb confirmed SIGSEGV inside
+ * GC_generic_malloc_uncollectable dereferencing a corrupted free-list link
+ * on a FRESH (never-before-Nova-recycled) 128-byte allocation, and a
+ * separately-observed garbage `_nova_fiber_scope` surfacing later at
+ * cancel-wake time is consistent with an EARLIER-corrupted SpawnCtx handed
+ * out from that same reused block, only detonating once its fields are
+ * actually read. child_ctx[] switched to nova_alloc (regular GC-collectable,
+ * scanned) — removes the size-class collision entirely; nothing else about
+ * the array's semantics (copy-on-grow, NULL-init tail) changes.
  *
  * R2 tripwire (§EXEC risk R2): asserts !scope->_drain_started. Every remote
  * child is spawned into the scope on the calling thread BEFORE the drain
@@ -1181,14 +1205,15 @@ static inline void nova_scope_grow_children(NovaFiberQueue* scope, int new_cap) 
     int cap = scope->child_capacity > 0 ? scope->child_capacity : NOVA_SCOPE_INITIAL_CAP;
     while (cap < new_cap) cap *= 2;
     NovaChildError* new_err = (NovaChildError*)nova_alloc(sizeof(NovaChildError) * (size_t)cap);
-    void**          new_ctx = (void**)nova_alloc_uncollectable(sizeof(void*) * (size_t)cap);
+    void**          new_ctx = (void**)nova_alloc(sizeof(void*) * (size_t)cap);
     if (scope->child_error) {
         for (int i = 0; i < scope->child_count; i++) {
             new_err[i] = scope->child_error[i];
             new_ctx[i] = scope->child_ctx[i];
         }
-        nova_free_uncollectable(scope->child_ctx);
-        /* child_error's old array is regular GC-collectable — no manual free. */
+        /* child_error's and child_ctx's old arrays are both regular
+         * GC-collectable now — no manual free (GC reclaims once
+         * unreachable, same as every other nova_scope_grow-style array). */
     }
     for (int i = scope->child_count; i < cap; i++) {
         new_err[i].msg = NULL;

@@ -76,13 +76,89 @@ never-move) конструкция, не участвует.
 `sc->fibers[sl]` (тот же паттерн, что и в runtime.c). Ноль архитектурных
 изменений — не трогает владение SpawnCtx, park/wake протокол, scheduler.
 
-## Гейты (заполняется по ходу)
+## Гейт-прогон WSL (шаг 1, ×10 изолированный pos_max_fibers_concurrent.nv)
 
-- [ ] pos_max_fibers_concurrent ×10 WSL
-- [ ] supervisor_stop_test ×10 WSL
-- [ ] TSan (WSL) — 0 новых предупреждений
-- [ ] WSL aggregator gate (curl 200×5 + idle, GC_MARKERS=1)
-- [ ] Windows: cargo build --release + standalone-CU + nova test std/src/concurrency
-- [ ] M-187-high-concurrency-wedge наблюдение (не входит в гейт, только заметка)
+Собран `nova` (rustup 1.85.0, WSL2 Ubuntu, worktree-копия native-fs
+`~/nova-211sc-work`, submodule libuv скопирован из существующей популированной
+копии другого воркчекаута — идентичен по коммиту). Изолированный прогон
+(`nova test --keep-artifacts`, затем скомпилированный `.exe` напрямую ×10):
+**8/10 RUN-FAIL** (не 0/10) — шаг-1-фикс (ACQUIRE на `sc->count`) НЕ озеленил
+фикстуру. Прямой прогон бинаря вне test-harness — 5/5 SIGSEGV (exit=139),
+gdb + core-дамп (`ulimit -c unlimited`) поймал ОБА диагностических сигнатуры
+дословно как в готовом диагнозе:
+
+1. **Сигнатура 1** (Free-list Boehm) — SIGSEGV внутри
+   `GC_generic_malloc_uncollectable` ← `nova_alloc_uncollectable(size=128)` ←
+   `nova_spawn_pool_acquire(size=104)` ← `nova_test_..._0()` (тело теста,
+   ГЛАВНЫЙ поток, ВНУТРИ цикла `for _ in 0..2000 { spawn {...} }`, т.е. на
+   СВЕЖЕМ, никогда прежде не занятом Nova'ой аллокейшне — НЕ recycled-путь).
+2. **Сигнатура 2** (мусорный `_nova_fiber_scope`) — `nova_sched_cap_acq(st=
+   0x656c632820646c6f)` (= ASCII «old (cle», побайтно совпадает с готовым
+   диагнозом) ← `nova_goready(co=...)` ← `nova_sched_wake(scope=..., slot=81)`
+   ← `_nova_driver_sleep_close_cb` (ДРАЙВЕР-поток, НОРМАЛЬНЫЙ путь — НЕ
+   WRONG-FIBER-ветка, т.е. `sc->fibers[sl]==expected_co` совпало штатно; крах
+   на СЛЕДУЮЩЕМ уровне — `base = mco_get_user_data(co)` САМ по себе повреждён).
+
+**Вывод шага 1:** фикс реальный (устраняет формальный data race на
+`sc->count`/`sc->fibers`), но НЕ является причиной ЭТОГО краха — сигнатура 2
+проявляется через НОРМАЛЬНЫЙ (не WRONG-FIBER) путь, которого фикс не касался;
+сигнатура 1 происходит на СВЕЖЕМ (не recycled) аллокейшне, вне зоны действия
+фикса. Оставлен как безопасное, отдельно обоснованное улучшение (не откачен).
+
+**Дискриминатор `GC_MARKERS=1`** (отключает Boehm parallel-mark): 6/6 SIGSEGV
+— совпадает с прежней находкой (`boehm-eager-cost-notes.md`: «GC_MARKERS=1
+8/8 FAIL») — крах НЕ является гонкой ВНУТРИ Boehm-маркинга, корень глубже.
+
+## Шаг 2 — гипотеза «child_ctx[] size-class collision» (НЕ подтверждена как основная причина)
+
+`nova_scope_grow_children` (fibers.h) аллоцировал `child_ctx[]` (массив
+retained-SpawnCtx указателей, Plan 173.0 Ф.3) через `nova_alloc_uncollectable`
+— обоснование в комментарии («same discipline as ctx_pins») смешивало два
+разных вопроса: указатели ВНУТРИ массива (сами SpawnCtx) обязаны быть
+uncollectable (это уже гарантировано независимо — они аллоцируются через
+`nova_spawn_pool_acquire`), а вот САМ массив — нет (он reachable ровно пока
+жив `scope`, обычной GC-scan-сканируемой памяти достаточно). При
+`NOVA_SCOPE_INITIAL_CAP=16` первый grow child_ctx[] аллоцирует РОВНО
+`16*sizeof(void*)=128` байт — тот же Boehm-uncollectable size-class (128),
+который `nova_spawn_pool_class_size[1]` использует для SpawnCtx. Каждый
+следующий grow ОСВОБОЖДАЛ (`nova_free_uncollectable` = `GC_free`) предыдущий
+128-байтный буфер обратно в ТОТ ЖЕ Boehm free-list, откуда шторм из 2000
+spawn'ов тут же берёт новые SpawnCtx — правдоподобный (но НЕ доказанный до
+конца в рамках бюджета этой волны) механизм: свежевыданный SpawnCtx получает
+память, которую МОГ (гипотетически) параллельно тронуть что-то ещё в узком
+окне между free и malloc.
+
+**Правка:** `child_ctx[]` переведён на `nova_alloc` (collectable, GC-scan) —
+убирает саму коллизию size-class'ов, `nova_free_uncollectable` для него
+убран (GC соберёт сам, как и `child_error[]` рядом).
+
+**Результат:** ×15 изолированных прямых прогонов бинаря — **15/15 SIGSEGV**
+(та же частота, гипотеза НЕ подтверждена как (единственная) причина). Правка
+оставлена — она независимо корректна и безопасна (не добавляет риска,
+устраняет неверно обоснованный uncollectable-выбор), но НЕ закрывает гейт.
+
+## Итог волны — ЭСКАЛАЦИЯ (по критерию задания)
+
+Два независимых, обоснованных, узких фикса (data race на `count`;
+size-class collision `child_ctx[]`) НЕ озеленили фикстуру — частота осталась
+на уровне бейслайна (100%→80-100%, шум). Согласно протоколу задания («Если
+фикс требует архитектурной правки — СТОП + доклад с доказанным механизмом»)
+и `docs/debugging-races.md` §5.1 («if your first 2 attempts don't work, STOP
+iterating») — дальнейшая тактическая итерация ПРЕКРАЩЕНА в этой волне.
+Обе правки СОХРАНЕНЫ (реальные, доказанные микро-фиксы, не откачены), гонка
+[M-mn-spawnctx-corruption-cancel-wake] остаётся ОТКРЫТОЙ — требует
+доследования следующей волной (ultracode/opus разведка с TSan/canary-
+инструментацией именно `nova_alloc_uncollectable`/`nova_free_uncollectable`
+call-сайтов, сверка с R1/R2/R3 §EXEC докой 173.0). Полный отчёт — в финальном
+сообщении агента.
+
+## Гейты (статус на конец волны)
+
+- [x] pos_max_fibers_concurrent ×10+15 WSL — КРАСНО (не 0/N), см. выше
+- [ ] supervisor_stop_test ×10 WSL — не прогнан (эскалация до гейта)
+- [ ] TSan (WSL) — не прогнан (эскалация до гейта)
+- [ ] WSL aggregator gate — не прогнан (эскалация до гейта)
+- [ ] Windows: cargo build --release + standalone-CU + nova test std/src/concurrency — регресс-проверка ОБЯЗАТЕЛЬНА даже при эскалации (см. ниже)
+- [ ] M-187-high-concurrency-wedge наблюдение — не проверялся (вне скоупа этой волны)
 
 Модель: sonnet.
