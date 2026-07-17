@@ -7975,6 +7975,34 @@ impl<'a> TypeCheckCtx<'a> {
                                     ResolvedType::from_type_ref(&tr), gs);
                                 self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                             }
+                        } else if let ExprKind::Path(parts) = &mo.kind {
+                            // [M-196-rtbuf-producers] Q1/static-return producer:
+                            // `[]T` slice-sugar static receiver — parses to
+                            // `Member{obj: Path(["__array", elem]), name}`
+                            // (`generic_static_receiver`'s doc, D216-era helper) — the
+                            // SAME identity as `Vec[elem].method(...)` (mirrors the
+                            // TurboFish arm just above), but a DIFFERENT AST shape the
+                            // checker's static-ctor arms in `infer_expr_type` ALSO
+                            // already resolve for the ctor names (`new`/
+                            // `with_capacity`/`from`/`default`/`filled`/`of`) — just
+                            // never channeled into `resolved_types_buf`, so every such
+                            // call fell through Channel-1/2 at emit time straight to
+                            // legacy `infer_call_ret_c`'s OWN `[]T`→`Vec[T]` re-
+                            // synthesis (a SEPARATE Expr with `id: ExprId::UNSET`,
+                            // which is why Channel 1/2 — both `expr.id.is_set()`-gated
+                            // — could never have covered it even if THIS site had
+                            // channeled: the synthesized node has no id to look up).
+                            // Channeling HERE, keyed by the ORIGINAL call's `e.id`
+                            // (still set), lets Channel 2 answer before the
+                            // re-synthesis path ever runs. Same `infer_expr_type`
+                            // source as the TurboFish arm — no new lowering logic.
+                            if parts.len() == 2 && parts[0] == "__array" {
+                                if let Some(tr) = self.infer_expr_type(e, scope) {
+                                    let rt = Self::mark_type_params(
+                                        ResolvedType::from_type_ref(&tr), gs);
+                                    self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                                }
+                            }
                         } else if let ExprKind::Member { obj: mod_obj, name: tyname } = &mo.kind {
                             // [196.5 Stage-D волна-4] B11ag producer (module-qualified
                             // static extern call, external_registry feeds the checker):
