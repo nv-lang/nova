@@ -22,8 +22,8 @@ fn d176_sum(b []u8) -> int {
     mut acc = 0
     mut i = 0
     while i < b.len() {
-        acc = acc + (b[i] as int)
-        i = i + 1
+        acc += b[i] as int
+        i += 1
     }
     acc
 }

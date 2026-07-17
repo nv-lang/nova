@@ -35,31 +35,29 @@ fn Vec[T] mut @msort(cmp fn(T, T) -> int) -> @ {
                 ro eb = unsafe { @data.read_at(b) }
                 if cmp(ea, eb) <= 0 {
                     buf.push(ea)
-                    a = a + 1
+                    a += 1
                 } else {
                     buf.push(eb)
-                    b = b + 1
+                    b += 1
                 }
             }
             while a < mid {
                 ro ea = unsafe { @data.read_at(a) }
                 buf.push(ea)
-                a = a + 1
+                a += 1
             }
             while b < hi {
                 ro eb = unsafe { @data.read_at(b) }
                 buf.push(eb)
-                b = b + 1
+                b += 1
             }
             i = i + width + width
         }
-        mut j = 0
-        while j < n {
+        for j in 0..n {
             ro bj = unsafe { buf.data.read_at(j) }
             unsafe { @data.write_at(j, bj) }
-            j = j + 1
         }
-        width = width + width
+        width += width
     }
 }
 
@@ -98,12 +96,12 @@ fn Vec[T] mut @heapsort(cmp fn(T, T) -> int) -> @ {
     }
     mut start = n / 2
     while start > 0 {
-        start = start - 1
+        start -= 1
         @sift_down(start, n, cmp)
     }
     mut end = n
     while end > 1 {
-        end = end - 1
+        end -= 1
         @swap(0, end)
         @sift_down(0, end, cmp)
     }
@@ -111,18 +109,16 @@ fn Vec[T] mut @heapsort(cmp fn(T, T) -> int) -> @ {
 
 // Internal: insertion sort for small slices [lo, hi).
 fn Vec[T] mut @ins_sort_range(lo int, hi int, cmp fn(T, T) -> int) -> @ {
-    mut i = lo + 1
-    while i < hi {
+    for i in lo + 1..hi {
         ro key = unsafe { @data.read_at(i) }
         mut j = i - 1
         while j >= lo {
             ro ej = unsafe { @data.read_at(j) }
             if cmp(ej, key) <= 0 { break }
             unsafe { @data.write_at(j + 1, ej) }
-            j = j - 1
+            j -= 1
         }
         unsafe { @data.write_at(j + 1, key) }
-        i = i + 1
     }
 }
 
@@ -131,8 +127,8 @@ fn pdq_ilog2(n int) -> int {
     mut result = 0
     mut m = n
     while m > 1 {
-        m = m / 2
-        result = result + 1
+        m /= 2
+        result += 1
     }
     result
 }
@@ -166,10 +162,8 @@ fn Vec[T] mut @pdqsort(cmp fn(T, T) -> int) -> @ {
                         } else if stack.len >= depth_limit {
                             // depth guard: heapsort this range via temp Vec
                             mut tmp = Vec[T].new(cap: size)
-                            mut ci = lo
-                            while ci < hi {
+                            for ci in lo..hi {
                                 tmp.push(unsafe { @data.read_at(ci) })
-                                ci = ci + 1
                             }
                             tmp.heapsort(cmp)
                             mut wi = lo
@@ -177,8 +171,8 @@ fn Vec[T] mut @pdqsort(cmp fn(T, T) -> int) -> @ {
                             while wi < hi {
                                 ro tv = unsafe { tmp.data.read_at(ti) }
                                 unsafe { @data.write_at(wi, tv) }
-                                wi = wi + 1
-                                ti = ti + 1
+                                wi += 1
+                                ti += 1
                             }
                         } else {
                             // median-of-3 pivot to position hi-1
@@ -194,9 +188,9 @@ fn Vec[T] mut @pdqsort(cmp fn(T, T) -> int) -> @ {
                                     if i != j {
                                         @swap(i, j)
                                     }
-                                    i = i + 1
+                                    i += 1
                                 }
-                                j = j + 1
+                                j += 1
                             }
                             @swap(i, hi - 1)
                             ro p = i
@@ -266,7 +260,7 @@ export fn Vec[T] mut @dedup() -> @ {
             if write != read {
                 unsafe { @data.write_at(write, cur) }
             }
-            write = write + 1
+            write += 1
         }
     }
     @len = write
@@ -285,7 +279,7 @@ export fn Vec[T] mut @dedup_by(eq fn(T, T) -> bool) -> @ {
             if write != read {
                 unsafe { @data.write_at(write, cur) }
             }
-            write = write + 1
+            write += 1
         }
     }
     @len = write
@@ -306,7 +300,7 @@ export fn Vec[T] mut @dedup_by_key[K Equal](key fn(T) -> K) -> @ {
             if write != read {
                 unsafe { @data.write_at(write, cur) }
             }
-            write = write + 1
+            write += 1
         }
     }
     @len = write
@@ -323,7 +317,7 @@ export fn Vec[T] mut @partition(pred fn(T) -> bool) -> int {
             if i != j {
                 @swap(i, j)
             }
-            i = i + 1
+            i += 1
         }
     }
     i
@@ -360,7 +354,7 @@ fn Vec[T] mut @partition_range(lo int, hi int, cmp fn(T, T) -> int) -> int {
             if i != j {
                 @swap(i, j)
             }
-            i = i + 1
+            i += 1
         }
     }
     @swap(i, hi - 1)
@@ -379,7 +373,7 @@ fn Vec[T] mut @qselect(lo_in int, hi_in int, k int, depth_in int, cmp fn(T, T) -
             @heapsort(cmp)
             return
         }
-        depth = depth - 1
+        depth -= 1
         ro p = @partition_range(lo, hi, cmp)
         if k == p {
             return
@@ -403,8 +397,8 @@ export fn Vec[T Compare] mut @select_nth_unstable(k int) -> T
     mut lim = 0
     mut m = n
     while m > 1 {
-        m = m / 2
-        lim = lim + 1
+        m /= 2
+        lim += 1
     }
     lim = lim + lim + 2
     @qselect(0, n, k, lim, |a, b| a.compare(b))

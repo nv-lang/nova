@@ -8,7 +8,7 @@ type Counter4_plan12371ipamutinvalidatesonwritingcallok {
 
 // This method WRITES @value.
 fn Counter4_plan12371ipamutinvalidatesonwritingcallok mut @increment() -> () {
-    @value = @value + 1
+    @value += 1
 }
 
 fn Counter4_plan12371ipamutinvalidatesonwritingcallok mut @work() -> int {

@@ -15,7 +15,7 @@ fn CountUp mut @next() -> Option[int] {
         None
     } else {
         ro v = @cur
-        @cur = @cur + 1
+        @cur += 1
         Some(v)
     }
 }

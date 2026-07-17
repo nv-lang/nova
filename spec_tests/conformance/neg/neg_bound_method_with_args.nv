@@ -8,7 +8,7 @@ type Counter { mut value int }
 
 fn Counter.new() -> Self => { value: 0 }
 fn Counter @get() -> int => @value
-fn Counter @add(n int) -> () { @value = @value + n }
+fn Counter @add(n int) -> () { @value += n }
 
 fn main() {
     mut c = Counter.new()

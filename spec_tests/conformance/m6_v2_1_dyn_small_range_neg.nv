@@ -16,7 +16,7 @@ fn Cv13_1 @small_range_no_promote() -> int {
     // or may not cache; observable correctness must hold either way.
     mut acc = 0
     for i in 0..3 {
-        acc = acc + @z
+        acc += @z
     }
     acc
 }

@@ -14,7 +14,7 @@ fn Counter4_3.new() -> Counter4_3 => { n: 0 }
 // User fluent builder: `-> @` return marker → registered в
 // FluentMethodRegistry.
 fn Counter4_3 mut @step(by int) -> @ {
-    @n = @n + by
+    @n += by
 }
 
 fn Counter4_3 @get() -> int => @n

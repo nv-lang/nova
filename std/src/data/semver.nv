@@ -377,11 +377,9 @@ export fn Version @compare(other Version) -> int {
 // Покомпонентное pre-release сравнение (§ 11.4). Returns <0, 0, >0.
 fn pre_compare(a []str, b []str) -> int {
     ro n = if a.len() < b.len() { a.len() } else { b.len() }
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         ro result = compare_ident(a[i], b[i])
         if result != 0 { return result }
-        i += 1
     }
     // Все общие компоненты равны — у кого меньше длина, тот меньше.
     if a.len() < b.len() { -1 } else if a.len() > b.len() { 1 } else { 0 }

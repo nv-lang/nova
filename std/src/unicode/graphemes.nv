@@ -99,7 +99,7 @@ export fn GraphemesIter mut @next() -> Option[str] {
     ro start = @pos
     // First codepoint of the cluster (GB1: no break at start).
     ro (cp0, step0) = decode_at(@buf, @pos)
-    @pos = @pos + step0
+    @pos += step0
     mut prev = gcb(cp0)
     mut ri_count = if prev == GCB_RI { 1 } else { 0 }
     mut ext_run = is_ext_pict(cp0)   // in an `ExtPict Extend*` run
@@ -115,7 +115,7 @@ export fn GraphemesIter mut @next() -> Option[str] {
         if is_grapheme_break(prev, cur, gb11, cur_ep, ri_count, incb_run && incb_linker, cur_incb == INCB_CONSONANT) {
             going = false
         } else {
-            @pos = @pos + step1
+            @pos += step1
             if cur == GCB_RI {
                 if prev == GCB_RI { ri_count += 1 } else { ri_count = 1 }
             } else {

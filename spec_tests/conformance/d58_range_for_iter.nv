@@ -37,7 +37,7 @@ test "range.contains checks membership (D58)" {
 
 fn d58_sum_range(r Range) -> int {
     mut s = 0
-    for x in r { s = s + x }
+    for x in r { s += x }
     s
 }
 

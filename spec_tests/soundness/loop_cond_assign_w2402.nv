@@ -20,8 +20,8 @@ fn cond_accumulate(n int) -> int
         invariant x >= 0
         decreases n - i
     {
-        if i > 5 { x = x + 1 }
-        i = i + 1
+        if i > 5 { x += 1 }
+        i += 1
     }
     x
 }

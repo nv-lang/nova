@@ -272,7 +272,7 @@ export fn StringBuilder mut @advance(n int) -> ()
 fn utf8_char_count(bytes []u8) -> int {
     mut n = 0
     for b in bytes {
-        if (b & 0xC0) != 0x80 { n = n + 1 }
+        if (b & 0xC0) != 0x80 { n += 1 }
     }
     n
 }
@@ -321,22 +321,18 @@ export fn StringBuilder mut @write_padded(bytes []u8, width int, fill char, alig
     match align {
         Align.Left => {
             @append(bytes)
-            mut k = 0
-            while k < pad_chars { @append(fill); k = k + 1 }
+            for k in 0..pad_chars { @append(fill) }
         }
         Align.Right => {
-            mut k = 0
-            while k < pad_chars { @append(fill); k = k + 1 }
+            for k in 0..pad_chars { @append(fill) }
             @append(bytes)
         }
         Align.Center => {
             ro left = pad_chars / 2
             ro right = pad_chars - left
-            mut k1 = 0
-            while k1 < left { @append(fill); k1 = k1 + 1 }
+            for k1 in 0..left { @append(fill) }
             @append(bytes)
-            mut k2 = 0
-            while k2 < right { @append(fill); k2 = k2 + 1 }
+            for k2 in 0..right { @append(fill) }
         }
     }
 }
@@ -354,10 +350,8 @@ export fn StringBuilder mut @pad_in_place(mark int, width int, fill char, align 
     ro end = @byte_len()
     ro content_len = end - mark
     mut content_chars = 0
-    mut i = mark
-    while i < end {
-        if (@buf[i] & 0xC0) != 0x80 { content_chars = content_chars + 1 }
-        i = i + 1
+    for i in mark..end {
+        if (@buf[i] & 0xC0) != 0x80 { content_chars += 1 }
     }
     if content_chars >= width { return }
     ro pad_chars = width - content_chars
@@ -379,20 +373,15 @@ export fn StringBuilder mut @pad_in_place(mark int, width int, fill char, align 
             // memmove (overlap-safe) the existing tail right by `left_bytes`.
             RawMem.copy(@buf.ptr().offset(mark) as *u8, @buf.ptr().offset(mark + left_bytes) as *mut u8, content_len)
             mut pos = mark
-            mut c = 0
-            while c < left_chars {
-                mut b = 0
-                while b < fill_len {
+            for c in 0..left_chars {
+                for b in 0..fill_len {
                     @buf.ptr().write_at(pos, fill_bytes[b])
-                    pos = pos + 1
-                    b = b + 1
+                    pos += 1
                 }
-                c = c + 1
             }
         }
         @buf = []u8.new(@buf.ptr(), end + left_bytes, @buf.cap())
     }
 
-    mut k = 0
-    while k < right_chars { @append(fill); k = k + 1 }
+    for k in 0..right_chars { @append(fill) }
 }

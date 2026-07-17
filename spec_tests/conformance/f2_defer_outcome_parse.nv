@@ -8,8 +8,8 @@ module spec_tests.conformance
 fn run_defer_outcome() -> str {
     mut trail = ""
     {
-        defer(o ScopeOutcome) { trail = trail + "A" }    // outcome-defer, LIFO last
-        defer(o ScopeOutcome) { trail = trail + "B" }    // LIFO first
+        defer(o ScopeOutcome) { trail += "A" }    // outcome-defer, LIFO last
+        defer(o ScopeOutcome) { trail += "B" }    // LIFO first
     }
     trail
 }

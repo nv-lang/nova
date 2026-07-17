@@ -13,9 +13,9 @@ fn Buf2 @scan_for(target int) -> int {
     mut count = 0
     mut i = 0
     while i < @size() {
-        if i == target { count = count + 1 }
-        if i < @size() / 2 { count = count + 0 }
-        i = i + 1
+        if i == target { count += 1 }
+        if i < @size() / 2 { count += 0 }
+        i += 1
     }
     count + @size()
 }

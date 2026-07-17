@@ -125,7 +125,7 @@ export fn Vec[T] @position(pred fn(T) -> bool) -> Option[int] {
 export fn Vec[T] @rposition(pred fn(T) -> bool) -> Option[int] {
     mut i = @len
     while i > 0 {
-        i = i - 1
+        i -= 1
         ro e = unsafe { @data.read_at(i) }
         if pred(e) {
             return Some(i)

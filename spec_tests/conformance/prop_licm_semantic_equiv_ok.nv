@@ -11,9 +11,10 @@ type Calc5_2 {
 fn Calc5_2 @while_form(n int) -> int {
     mut total = 0
     mut i = 0
+    // nova:allow W_WHILE_COUNTER_FOR_RANGE -- Plan 123 LICM/field-cache conformance fixture: pins the optimizer behavior specifically on a while-shaped loop; for-in desugars through the iterator protocol (D58), a different codegen path — rewriting would risk silently exercising something else
     while i < n {
         total = total + @base + @step
-        i = i + 1
+        i += 1
     }
     total
 }
@@ -32,7 +33,7 @@ fn Calc5_2 @loop_form(n int) -> int {
     loop {
         if i >= n { break }
         total = total + @base + @step
-        i = i + 1
+        i += 1
     }
     total
 }

@@ -26,7 +26,7 @@ fn D224Account.new(n str) -> D224Account =>
     { name: n, balance: 0.0 }
 
 fn D224Account mut @deposit(amount f64) {
-    @balance = @balance + amount
+    @balance += amount
 }
 
 // ── §2 multi-type target ───────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ fn D224Vault.new(i str) -> D224Vault =>
     { id: i, amount: 0.0 }
 
 fn D224Vault mut @fund(x f64) {
-    @amount = @amount + x
+    @amount += x
 }
 
 // Free fn (NOT a method of D224Account) — reads the priv `balance`. Compiles+runs
@@ -70,7 +70,7 @@ fn D224Wallet.new(o str) -> D224Wallet =>
     { owner: o, funds: 0.0 }
 
 fn D224Wallet mut @add(x f64) {
-    @funds = @funds + x
+    @funds += x
 }
 
 type D224Auditor {

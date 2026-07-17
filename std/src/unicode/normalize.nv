@@ -84,8 +84,7 @@ fn canonical_order(arr []u32) -> []u32 {
     a.cap(arr.len())
     for x in arr { a.push(x) }
     ro n = a.len()
-    mut i = 1
-    while i < n {
+    for i in 1..n {
         ro cc = ccc_of(a[i])
         if cc != 0 {
             mut j = i
@@ -96,7 +95,6 @@ fn canonical_order(arr []u32) -> []u32 {
                 j -= 1
             }
         }
-        i += 1
     }
     a
 }
@@ -135,8 +133,7 @@ fn compose(cps []u32) -> []u32 {
         mut last_ccc = ccc_of(cps[0])
         // A non-starter first char can never compose (no starter precedes it).
         if last_ccc != 0 { last_ccc = 256 }
-        mut i = 1
-        while i < n {
+        for i in 1..n {
             ro ch = cps[i]
             ro cc = ccc_of(ch)
             // compose_pair → Option[u32] (D327, no `-1` sentinel): Some(comp) AND
@@ -162,7 +159,6 @@ fn compose(cps []u32) -> []u32 {
                 last_ccc = cc
                 out.push(ch)
             }
-            i += 1
         }
         out
     }

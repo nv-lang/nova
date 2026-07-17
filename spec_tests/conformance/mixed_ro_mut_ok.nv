@@ -12,7 +12,7 @@ fn Config3_1 mut @tick() -> int {
     // mut @counter — 2 reads prefix → first-region cache; @counter = ...
     // → boundary; reads after stay direct.
     ro pre = @factor + @factor + @counter + @counter
-    @counter = @counter + 1
+    @counter += 1
     @factor * @counter + pre
 }
 

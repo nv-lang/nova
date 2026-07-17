@@ -9,7 +9,7 @@ fn empty_loop_bad(n int) -> int {
     while i < n
         invariant i < 0   // явно ложно от 0-й итерации
     {
-        i = i + 1
+        i += 1
     }
     i
 }

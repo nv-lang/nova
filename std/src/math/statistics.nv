@@ -35,7 +35,7 @@ export type StatsError enum
 export fn Stats.mean(xs []f64) -> Result[f64, StatsError] {
     if xs.len() == 0 { return Err(EmptyInput) }
     mut sum = 0.0
-    for x in xs { sum = sum + x }
+    for x in xs { sum += x }
     Ok(sum / (xs.len() as f64))
 }
 
@@ -48,7 +48,7 @@ export fn Stats.variance(xs []f64) -> Result[f64, StatsError] {
     mut sum_sq = 0.0
     for x in xs {
         ro diff = x - m
-        sum_sq = sum_sq + diff * diff
+        sum_sq += diff * diff
     }
     Ok(sum_sq / ((xs.len() - 1) as f64))        // sample variance (n-1)
 }
@@ -107,7 +107,7 @@ export fn Stats.min_max(xs []f64) -> Result[(f64, f64), StatsError] {
 #stable(since = "0.1")
 export fn Stats.sum(xs []f64) -> f64 {
     mut s = 0.0
-    for x in xs { s = s + x }
+    for x in xs { s += x }
     s
 }
 
@@ -173,9 +173,9 @@ export fn StreamingStats mut @add(x f64) -> () {
         if x > @max_val { @max_val = x }
     }
     ro delta = x - @mean_val
-    @mean_val = @mean_val + delta / (@count as f64)
+    @mean_val += delta / (@count as f64)
     ro delta2 = x - @mean_val
-    @m2 = @m2 + delta * delta2
+    @m2 += delta * delta2
 }
 
 

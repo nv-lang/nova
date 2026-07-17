@@ -12,7 +12,7 @@ fn Cell1 @snapshot() -> int => @value
 fn Cell1 mut @update_and_double() -> int {
     // body has @value = ... → pure cache skipped полностью.
     ro before = @snapshot()
-    @value = @value + 1
+    @value += 1
     ro after = @snapshot()
     before + after
 }

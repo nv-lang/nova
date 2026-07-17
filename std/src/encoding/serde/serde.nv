@@ -307,11 +307,9 @@ fn[T Serialize] []T @serialize[S Serializer](mut s S) -> Result[(), SerError] {
 fn[T Deserialize] []T.deserialize[D Deserializer](mut d D) -> Result[[]T, DeError] {
     ro n = d.seq_len()?
     mut out []T = []
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         mut sub = d.enter_index(i)?
         out.push(T.deserialize(sub)?)
-        i = i + 1
     }
     Ok(out)
 }

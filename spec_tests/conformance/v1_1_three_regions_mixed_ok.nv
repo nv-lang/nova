@@ -10,7 +10,7 @@ type State4_2 {
 fn State4_2.new() -> State4_2 => { x: 1 }
 
 fn State4_2 mut @bump_x() -> () {
-    @x = @x + 1
+    @x += 1
 }
 
 fn State4_2 mut @triple() -> int {

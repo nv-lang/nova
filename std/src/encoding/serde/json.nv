@@ -80,7 +80,7 @@ fn JsonSerializer mut @set_pending(key str) -> Result[(), SerError] {
 }
 
 fn JsonSerializer mut @finish_obj() -> Result[(), SerError] {
-    @depth = @depth - 1
+    @depth -= 1
     match @stack.pop() {
         None    => Err(SerError.new(SerOther("end without begin")))
         Some(fr) => @put(JsonValue.object(fr.obj))
@@ -119,7 +119,7 @@ fn JsonSerializer mut @serialize_unit() -> Result[(), SerError] => @put(JsonValu
 fn JsonSerializer mut @serialize_none() -> Result[(), SerError] => @put(JsonValue.null())
 
 fn JsonSerializer mut @begin_struct(name str, len int) -> Result[(), SerError] {
-    @depth = @depth + 1
+    @depth += 1
     if @depth > @max_depth { return Err(SerError.new(SerDepthLimit)) }
     @stack.push(SerFrame.obj_frame())
     Ok(())
@@ -128,7 +128,7 @@ fn JsonSerializer mut @struct_field(key str) -> Result[(), SerError] => @set_pen
 fn JsonSerializer mut @end_struct() -> Result[(), SerError] => @finish_obj()
 
 fn JsonSerializer mut @begin_map(len int) -> Result[(), SerError] {
-    @depth = @depth + 1
+    @depth += 1
     if @depth > @max_depth { return Err(SerError.new(SerDepthLimit)) }
     @stack.push(SerFrame.obj_frame())
     Ok(())
@@ -137,13 +137,13 @@ fn JsonSerializer mut @map_key(key str) -> Result[(), SerError] => @set_pending(
 fn JsonSerializer mut @end_map() -> Result[(), SerError] => @finish_obj()
 
 fn JsonSerializer mut @begin_seq(len int) -> Result[(), SerError] {
-    @depth = @depth + 1
+    @depth += 1
     if @depth > @max_depth { return Err(SerError.new(SerDepthLimit)) }
     @stack.push(SerFrame.arr_frame())
     Ok(())
 }
 fn JsonSerializer mut @end_seq() -> Result[(), SerError] {
-    @depth = @depth - 1
+    @depth -= 1
     match @stack.pop() {
         None     => Err(SerError.new(SerOther("end_seq without begin")))
         Some(fr) => @put(JsonValue.array(fr.arr))

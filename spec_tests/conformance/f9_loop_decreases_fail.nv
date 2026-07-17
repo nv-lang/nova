@@ -10,7 +10,7 @@ fn f9_loop_decreases_fail_bad_loop(n int) -> int {
         decreases i
     {
         // i не меняется → decreases не уменьшается → violation.
-        iter = iter + 1
+        iter += 1
     }
     i
 }

@@ -101,10 +101,8 @@ fn first_invalid_utf8(bytes []u8, n int) -> int {
         else if (c & 0xF8) == 0xF0 && c <= 0xF4 { seq = 4 }
         else { return i }
         // Continuation bytes present + well-formed.
-        mut k = 1
-        while k < seq {
+        for k in 1..seq {
             if i + k >= n || !is_cont(bytes[i + k] as int) { return i }
-            k += 1
         }
         // Overlong / surrogate / range guards (mirror C lossy validator).
         if seq == 3 {
@@ -234,10 +232,8 @@ export fn []u8 @to_str_lossy() -> str {
             else if c == 0xF4 && (@[i+1] as int) >= 0x90 { valid = false }
         }
         if valid {
-            mut k = 0
-            while k < seq {
+            for k in 0..seq {
                 out.push(@[i + k])
-                k += 1
             }
             i += seq
         } else {
@@ -414,10 +410,8 @@ export fn str @eq_ignore_ascii_case(other str) -> bool {
     ro n = @byte_len()
     if n != other.byte_len() { return false }
     ro (a, b) = (@bytes(), other.bytes())
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         if ascii_lower_byte(a[i] as int) != ascii_lower_byte(b[i] as int) { return false }
-        i += 1
     }
     true
 }

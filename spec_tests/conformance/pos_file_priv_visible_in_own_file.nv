@@ -12,7 +12,7 @@ priv(file) type SelfAcc {
 priv(file) fn self_helper(n int) -> int => n * 2
 
 fn SelfAcc.new() -> SelfAcc => { total: 0 }
-fn SelfAcc @add(n int) -> () { @total = @total + n }
+fn SelfAcc @add(n int) -> () { @total += n }
 fn SelfAcc @get() -> int => @total
 
 test "file-private fn visible in own file" {

@@ -46,7 +46,7 @@ fn d281_make(start int, by int) -> D281Counter =>
 
 // WRITE a module-private field from a free fn taking `mut` (same module, D281 §3).
 fn d281_bump(mut c D281Counter) {
-    c.value = c.value + c.step
+    c.value += c.step
 }
 
 // ── §5.5 Layering: pub / priv(type) / bare-priv coexist in one `priv {}` type ───

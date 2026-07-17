@@ -9,7 +9,7 @@ fn Counter12.new() -> Counter12 => { n: 0 }
 
 // fluent-метод: мутирует; возврат receiver'а — implicit (D409).
 fn Counter12 mut @bump() -> @ {
-    @n = @n + 1
+    @n += 1
 }
 
 fn Counter12 @value() -> int => @n

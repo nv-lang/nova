@@ -61,7 +61,7 @@ fn d179_fmt_object(keys []str, vals []str) -> str {
         buf.append(d179_fmt_leaf(k))
         buf.append(":")
         buf.append(d179_fmt_list([]str.of(vals[i])))
-        i = i + 1
+        i += 1
     }
     buf.append("}")
     buf.into_str()

@@ -96,11 +96,9 @@ export fn str @to_ascii_lower() -> str {
     mut out []u8 = []u8.new()
     out.cap(n)
     out.append(bytes)
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         ro b = out[i] as int
         if b >= 65 && b <= 90 { out[i] = (b + 32) as u8 }
-        i += 1
     }
     str.alloc_copy(out.ptr(), out.len())
 }
@@ -113,11 +111,9 @@ export fn str @to_ascii_upper() -> str {
     mut out []u8 = []u8.new()
     out.cap(n)
     out.append(bytes)
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         ro b = out[i] as int
         if b >= 97 && b <= 122 { out[i] = (b - 32) as u8 }
-        i += 1
     }
     str.alloc_copy(out.ptr(), out.len())
 }

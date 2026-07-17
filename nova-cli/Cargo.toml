@@ -27,15 +27,6 @@ path = "src/bin/migrate_plan65.rs"
 # Retained after Plan 65 closure as reference for similar future
 # atomic-API-rename plans.
 
-[[bin]]
-name = "fix_p185_style"
-path = "src/bin/fix_p185_style.rs"
-# TEMPORARY (Plan 185 style-lints sweep, 2026-07-17): one-shot codemod —
-# W_NON_COMPOUND_ASSIGN / W_WHILE_COUNTER_FOR_RANGE lint-zero sweep for
-# std/spec_tests/examples. DELETE this entry + src/bin/fix_p185_style.rs +
-# the `pub fn find_*_edits` plumbing in compiler-codegen/src/lints.rs once
-# the sweep is committed.
-
 [features]
 # Plan 33 V1: forward z3-backend во вложенный nova_codegen.
 # Build: `cargo build --release --features z3-backend` из nova-cli/.

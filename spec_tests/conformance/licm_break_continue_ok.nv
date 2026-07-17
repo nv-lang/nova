@@ -11,11 +11,11 @@ fn UpperBound3_1 @sum_partial(skip int) -> int {
     mut i = 0
     while i < @hi {
         if i == skip {
-            i = i + 1
+            i += 1
             continue
         }
         total = total + @hi + i
-        i = i + 1
+        i += 1
     }
     total
 }

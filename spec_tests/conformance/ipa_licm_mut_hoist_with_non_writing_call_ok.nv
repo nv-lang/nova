@@ -9,19 +9,20 @@ type Worker4_1 {
 
 // Writes ONLY @log — IPA write_set = {"log"}.
 fn Worker4_1 mut @bump_log() -> () {
-    @log = @log + 1
+    @log += 1
 }
 
 fn Worker4_1 mut @work(n int) -> int {
     mut accum = 0
     mut i = 0
+    // nova:allow W_WHILE_COUNTER_FOR_RANGE -- Plan 123 LICM/field-cache conformance fixture: pins the optimizer behavior specifically on a while-shaped loop; for-in desugars through the iterator protocol (D58), a different codegen path — rewriting would risk silently exercising something else
     while i < n {
         // Loop body: 2 reads of @total + call @bump_log() (writes @log,
         // not @total). V7 conservative would skip mut LICM here.
         // V7.1 IPA: @bump_log doesn't write @total → can hoist.
         accum = accum + @total + @total
         @bump_log()
-        i = i + 1
+        i += 1
     }
     accum
 }

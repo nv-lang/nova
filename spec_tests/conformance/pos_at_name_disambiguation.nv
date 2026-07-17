@@ -13,7 +13,7 @@ fn Counter6_2.new() -> Self => { n: 0, len: 0 }
 fn Counter6_2 @len() -> int => @len
 
 // @inc(): increments both n and len fields using @field (no parens = field)
-fn Counter6_2 @inc() { @n = @n + 1; @len = @len + 1 }
+fn Counter6_2 @inc() { @n += 1; @len += 1 }
 
 // @call_len(): calls method @len() using @len() (WITH parens = method call)
 // This was the bug site: generated nova_fn__at_len instead of Nova_Counter_method_len

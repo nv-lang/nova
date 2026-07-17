@@ -10,7 +10,7 @@ type Inner4_1 {
 }
 
 fn Inner4_1.new() -> Inner4_1 => { count: 0 }
-fn Inner4_1 mut @bump() -> () { @count = @count + 1 }
+fn Inner4_1 mut @bump() -> () { @count += 1 }
 fn Inner4_1 @get() -> int => @count
 
 type Outer3_4 {

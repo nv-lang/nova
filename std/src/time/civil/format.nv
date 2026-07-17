@@ -123,7 +123,7 @@ export fn DateTimeFormat @format(dt DateTime) -> str {
             FOptStart => "",
             FOptEnd => "",
         }
-        out = out + piece
+        out += piece
     }
     out
 }
@@ -151,11 +151,9 @@ type FmtFields {
 fn parse_month_name(s str, pos int) -> Result[(i64, int), ParseDateTimeError] {
     if pos + 3 > s.byte_len() { return Err(FormatMismatch(pos, "month name")) }
     ro name = s[pos..pos + 3]
-    mut n = 1
-    while n <= 12 {
+    for n in 1..=12 {
         ro m = match Month.from_number(n) { Ok(x) => x, Err(_) => return Err(FormatMismatch(pos, "month name")) }
         if m.to_str() == name { return Ok((n as i64, pos + 3)) }
-        n += 1
     }
     Err(FormatMismatch(pos, "month name"))
 }
@@ -163,11 +161,9 @@ fn parse_month_name(s str, pos int) -> Result[(i64, int), ParseDateTimeError] {
 fn parse_weekday_name(s str, pos int) -> Result[int, ParseDateTimeError] {
     if pos + 3 > s.byte_len() { return Err(FormatMismatch(pos, "weekday name")) }
     ro name = s[pos..pos + 3]
-    mut n = 1
-    while n <= 7 {
+    for n in 1..=7 {
         ro w = match Weekday.from_number(n) { Ok(x) => x, Err(_) => return Err(FormatMismatch(pos, "weekday name")) }
         if w.to_str() == name { return Ok(pos + 3) }
-        n += 1
     }
     Err(FormatMismatch(pos, "weekday name"))
 }

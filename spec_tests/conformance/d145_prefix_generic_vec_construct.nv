@@ -18,7 +18,7 @@ fn[T] []T @d145vc_reversed() -> []T {
     mut i = @len()
     loop {
         if i == 0 { break }
-        i = i - 1
+        i -= 1
         // Reverses (walks DESCENDING) — NOT a contiguous-range copy, so the
         // `x[a..b]` slice-view canon (W_MANUAL_SLICE_COPY) doesn't apply here;
         // local var breaks the textual `push(x[i])` false-positive match.

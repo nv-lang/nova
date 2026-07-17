@@ -8,7 +8,7 @@ type Buf1 { mut n int }
 fn Buf1.new() -> Buf1 => { n: 0 }
 
 fn Buf1 mut @write() -> @ {
-    @n = @n + 1
+    @n += 1
 }
 
 // Правильно: wrapper объявлен `-> @`, делегирует во fluent `-> @`.

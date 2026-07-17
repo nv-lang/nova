@@ -10,7 +10,7 @@ type Inner4_plan123followups20260605m1v76heaprecordfieldok {
 }
 
 fn Inner4_plan123followups20260605m1v76heaprecordfieldok.new() -> Inner4_plan123followups20260605m1v76heaprecordfieldok => { count: 0 }
-fn Inner4_plan123followups20260605m1v76heaprecordfieldok mut @bump() -> () { @count = @count + 1 }
+fn Inner4_plan123followups20260605m1v76heaprecordfieldok mut @bump() -> () { @count += 1 }
 fn Inner4_plan123followups20260605m1v76heaprecordfieldok @get() -> int => @count
 
 type Outer3_plan123followups20260605m1v76heaprecordfieldok {

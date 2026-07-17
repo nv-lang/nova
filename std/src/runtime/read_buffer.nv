@@ -92,7 +92,7 @@ export fn ReadBuffer mut @read_byte() -> Result[u8, ReadBufferError] {
         return Err(UnexpectedEnd { wanted: 1, available: @data.len() - @pos })
     }
     ro v = @data[@pos]
-    @pos = @pos + 1
+    @pos += 1
     Ok(v)
 }
 
@@ -108,7 +108,7 @@ export fn ReadBuffer mut @read_bytes(n int) -> Result[[]u8, ReadBufferError] {
     if n > 0 {
         out.append(@data[@pos..(@pos + n)])
     }
-    @pos = @pos + n
+    @pos += n
     Ok(out)
 }
 
@@ -118,7 +118,7 @@ export fn ReadBuffer mut @read_u8() -> Result[u8, ReadBufferError] {
         return Err(UnexpectedEnd { wanted: 1, available: @data.len() - @pos })
     }
     ro v = @data[@pos]
-    @pos = @pos + 1
+    @pos += 1
     Ok(v)
 }
 
@@ -128,7 +128,7 @@ export fn ReadBuffer mut @read_i8() -> Result[i8, ReadBufferError] {
         return Err(UnexpectedEnd { wanted: 1, available: @data.len() - @pos })
     }
     ro v = @data[@pos]
-    @pos = @pos + 1
+    @pos += 1
     Ok(v as i8)
 }
 
@@ -417,7 +417,7 @@ export fn ReadBuffer mut @read_char() -> Result[char, ReadBufferError] =>
     match @decode_utf8_at(@pos) {
         Ok(tup) => match (tup.0).to_char() {
             Ok(c) => {
-                @pos = @pos + tup.1
+                @pos += tup.1
                 Ok(c)
             }
             Err(_) => Err(UnexpectedEnd { wanted: tup.1, available: 0 })
@@ -434,7 +434,7 @@ export fn ReadBuffer mut @read_str(n int) -> Result[str, ReadBufferError] {
     mut walked = start
     for i in 0..n {
         match @decode_utf8_at(walked) {
-            Ok(tup) => { walked = walked + tup.1 }
+            Ok(tup) => { walked += tup.1 }
             Err(e) => return Err(e)
         }
     }

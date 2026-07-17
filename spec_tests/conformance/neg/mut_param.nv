@@ -13,7 +13,7 @@ module neg.mut_param
 type Counter { mut value int }
 
 fn bump(mut c Counter) -> () {
-    c.value = c.value + 1
+    c.value += 1
 }
 
 test "P1-A — mut-параметр функции принимается парсером и мутирует поле" {

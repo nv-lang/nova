@@ -23,7 +23,7 @@ type Inner10 {
 
 // IPA: write_set = {"other"} → does NOT invalidate @counter.
 fn Box7 mut @bump_other() -> () {
-    @other = @other + 1
+    @other += 1
 }
 
 // pure method — no side effects, can be cached.
@@ -36,11 +36,12 @@ fn Box7 @double() -> int {
 fn Box7 mut @loop_use() -> int {
     mut total = 0
     mut i = 0
+    // nova:allow W_WHILE_COUNTER_FOR_RANGE -- Plan 123 LICM/field-cache conformance fixture: pins the optimizer behavior specifically on a while-shaped loop; for-in desugars through the iterator protocol (D58), a different codegen path — rewriting would risk silently exercising something else
     while i < 3 {
-        total = total + @counter
+        total += @counter
         @bump_other()
-        total = total + @counter
-        i = i + 1
+        total += @counter
+        i += 1
     }
     total
 }

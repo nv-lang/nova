@@ -105,10 +105,8 @@ export fn read_exact[R Read](mut r R, buf mut []u8) -> Result[(), IoError] {
         match r.read(chunk) {
             Ok(0)  => return Err(IoError.new(ErrorKind.UnexpectedEof, "read_exact"))
             Ok(n)  => {
-                mut i = 0
-                while i < n {
+                for i in 0..n {
                     buf[filled + i] = chunk[i]
-                    i += 1
                 }
                 filled += n
                 chunk.resize(total - filled, 0 as u8)
@@ -245,13 +243,11 @@ export fn byte_lines[R Read](mut r R) -> Result[[][]u8, IoError] {
             ro n = data.len()
             mut out [][]u8 = []
             mut line_start = 0
-            mut i = 0
-            while i < n {
+            for i in 0..n {
                 if (data[i] as int) == 10 {
                     out.push(data[line_start..i])
                     line_start = i + 1
                 }
-                i += 1
             }
             if n > line_start { out.push(data[line_start..n]) }
             Ok(out)

@@ -131,11 +131,9 @@ fn wb_starts(cps []u32, cats []int) -> []int {
         // ri_run = consecutive RI effective-bases ending at i-1 (WB15/16 parity),
         // threaded forward in O(1) per step instead of a backward rescan.
         mut ri_run = wb_ri_step(cats[0], 0)
-        mut i = 1
-        while i < n {
+        for i in 1..n {
             if wb_is_break(cps, cats, i, ri_run) { starts.push(i) }
             ri_run = wb_ri_step(cats[i], ri_run)
-            i += 1
         }
         starts
     }
@@ -292,17 +290,14 @@ export fn to_titlecase(s str) -> str {
     // is_start[i] ⟺ cp i begins a new word (reset the first-cased tracker).
     mut is_start []bool = []bool.new()
     is_start.cap(n)
-    mut z = 0
-    while z < n {
+    for z in 0..n {
         is_start.push(false)
-        z += 1
     }
     for st in starts { is_start[st] = true }
     mut out []u32 = []u32.new()
     out.cap(n)
     mut seen_cased = false
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         ro cp = cps[i]
         if is_start[i] { seen_cased = false }
         ro mapped = if (!seen_cased) && is_cased(cp) {
@@ -314,7 +309,6 @@ export fn to_titlecase(s str) -> str {
         }
         if is_cased(cp) { seen_cased = true }
         for d in mapped { out.push(d) }
-        i += 1
     }
     cps_to_str(out)
 }

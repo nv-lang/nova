@@ -60,15 +60,13 @@ fn rules_america_new_york() -> ZoneRules {
     mut transitions []i64 = []
     mut offsets []i32 = []
     offsets.push(-18_000)   // до первого перехода (январь 2007) — EST
-    mut y i32 = 2007
-    while y <= 2100 {
+    for y in 2007..=2100 {
         ro spring = nth_sunday_epoch_day(y, Mar, 2) * 86_400 + 2 * 3_600 + 18_000
         ro fall = nth_sunday_epoch_day(y, Nov, 1) * 86_400 + 2 * 3_600 + 14_400
         transitions.push(spring)
         offsets.push(-14_400)
         transitions.push(fall)
         offsets.push(-18_000)
-        y += 1
     }
     { transitions, offsets }
 }
@@ -81,15 +79,13 @@ fn rules_europe_london() -> ZoneRules {
     mut transitions []i64 = []
     mut offsets []i32 = []
     offsets.push(0)   // январь 1996 — GMT
-    mut y i32 = 1996
-    while y <= 2100 {
+    for y in 1996..=2100 {
         ro spring = last_sunday_epoch_day(y, Mar) * 86_400 + 3_600
         ro fall = last_sunday_epoch_day(y, Oct) * 86_400 + 3_600
         transitions.push(spring)
         offsets.push(3_600)
         transitions.push(fall)
         offsets.push(0)
-        y += 1
     }
     { transitions, offsets }
 }
@@ -106,15 +102,13 @@ fn rules_australia_sydney() -> ZoneRules {
     mut transitions []i64 = []
     mut offsets []i32 = []
     offsets.push(11 * 3_600)   // январь 2008 — лето, AEDT
-    mut y i32 = 2008
-    while y <= 2100 {
+    for y in 2008..=2100 {
         ro apr_end = nth_sunday_epoch_day(y, Apr, 1) * 86_400 + 3 * 3_600 - 11 * 3_600
         ro oct_start = nth_sunday_epoch_day(y, Oct, 1) * 86_400 + 2 * 3_600 - 10 * 3_600
         transitions.push(apr_end)
         offsets.push(10 * 3_600)
         transitions.push(oct_start)
         offsets.push(11 * 3_600)
-        y += 1
     }
     { transitions, offsets }
 }

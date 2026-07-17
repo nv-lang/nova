@@ -174,8 +174,8 @@ fn int_fmt(v int, buf *mut u8, cap int, spec FmtSpec) -> int
         digit_count = 1
     } else {
         while probe > 0 {
-            digit_count = digit_count + 1
-            probe = probe / radix
+            digit_count += 1
+            probe /= radix
         }
     }
 
@@ -191,11 +191,11 @@ fn int_fmt(v int, buf *mut u8, cap int, spec FmtSpec) -> int
 
     unsafe {
         mut pos = 0
-        if prefix_len >= 1 && pos < n { buf.write_at(pos, prefix0); pos = pos + 1 }
-        if prefix_len >= 2 && pos < n { buf.write_at(pos, prefix1); pos = pos + 1 }
+        if prefix_len >= 1 && pos < n { buf.write_at(pos, prefix0); pos += 1 }
+        if prefix_len >= 2 && pos < n { buf.write_at(pos, prefix1); pos += 1 }
         while pos < prefix_len + zero_count && pos < n {
             buf.write_at(pos, '0' as u8)
-            pos = pos + 1
+            pos += 1
         }
 
         // 5. Digits — MSB-first placement computed directly from the known
@@ -210,8 +210,8 @@ fn int_fmt(v int, buf *mut u8, cap int, spec FmtSpec) -> int
             if idx < n {
                 buf.write_at(idx, hex_digit(d, spec.upper))
             }
-            m = m / radix
-            k = k - 1
+            m /= radix
+            k -= 1
         }
     }
     n

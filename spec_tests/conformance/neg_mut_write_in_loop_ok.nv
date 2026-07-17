@@ -8,9 +8,10 @@ type Counter10_1 {
 
 fn Counter10_1 mut @increment_n(n int) -> int {
     mut i = 0
+    // nova:allow W_WHILE_COUNTER_FOR_RANGE -- Plan 123 LICM/field-cache conformance fixture: pins the optimizer behavior specifically on a while-shaped loop; for-in desugars through the iterator protocol (D58), a different codegen path — rewriting would risk silently exercising something else
     while i < n {
-        @value = @value + 1   // ← write to @value inside loop
-        i = i + 1
+        @value += 1   // ← write to @value inside loop
+        i += 1
     }
     @value
 }

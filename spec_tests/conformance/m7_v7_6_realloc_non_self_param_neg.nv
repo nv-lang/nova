@@ -12,7 +12,7 @@ fn Acc8_1.new() -> Acc8_1 => { total: 0 }
 
 // `mut` receiver + only non-Self params (int) ⇒ NOT marked replaces_self.
 fn Acc8_1 mut @bump_by(by int) -> () {
-    @total = @total + by
+    @total += by
 }
 
 // `mut` receiver + no params ⇒ NOT marked replaces_self.

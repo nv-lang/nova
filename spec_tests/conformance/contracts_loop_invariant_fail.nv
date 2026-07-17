@@ -7,7 +7,7 @@ fn bad_loop(n int) -> int {
     while i < n
         invariant i < 0   // явно ложно (i стартует с 0)
     {
-        i = i + 1
+        i += 1
     }
     i
 }

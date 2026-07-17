@@ -17,7 +17,7 @@ fn run_loop_iterations1(n int) -> int {
     for i in 0..n {
         consume r = LoopRes3.new(i) {
             // Body counts iterations via outer accumulation.
-            sum = sum + 1
+            sum += 1
         }
         // r.cleanup fires per iteration (R2 exactly-once).
     }

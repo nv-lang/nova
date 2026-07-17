@@ -133,8 +133,7 @@ export fn TimeZone @resolve_local(dt DateTime) -> LocalResolution {
             // интервал действия offsets[i].
             mut valid_before i64 = -1   // индекс первого валидного
             mut valid_after i64 = -1
-            mut i = 0
-            while i <= n {
+            for i in 0..=n {
                 ro off = rules.offsets[i] as i64
                 ro inst = l - off
                 ro lo_ok = if i == 0 { true } else { inst >= rules.transitions[i - 1] }
@@ -143,7 +142,6 @@ export fn TimeZone @resolve_local(dt DateTime) -> LocalResolution {
                     if valid_before < 0 { valid_before = i as i64 }
                     else { valid_after = i as i64 }
                 }
-                i += 1
             }
             if valid_before >= 0 && valid_after >= 0 {
                 // Два валидных интерпретирования → overlap (earlier = меньший индекс).
@@ -157,8 +155,7 @@ export fn TimeZone @resolve_local(dt DateTime) -> LocalResolution {
             }
             // 0 валидных → gap: найти переход, «съевший» wall-time
             // (l между граничными wall-time до/после перехода).
-            mut j = 0
-            while j < n {
+            for j in 0..n {
                 ro before = rules.offsets[j] as i64
                 ro after = rules.offsets[j + 1] as i64
                 ro t = rules.transitions[j]
@@ -167,7 +164,6 @@ export fn TimeZone @resolve_local(dt DateTime) -> LocalResolution {
                     ro ga Offset = { seconds: rules.offsets[j + 1] }
                     return Gap(gb, ga)
                 }
-                j += 1
             }
             // Недостижимо для корректной таблицы; трактуем как Unique(первый).
             ro fb Offset = { seconds: rules.offsets[0] }

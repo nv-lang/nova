@@ -14,8 +14,8 @@ fn ResZ3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 fn use_mixed() -> int {
     mut counter = 0
     consume r = ResZ3.new(5) {
-        defer { counter = counter + 100 }
-        counter = counter + r.id
+        defer { counter += 100 }
+        counter += r.id
         // Exit order: defer body runs (counter += 100),
         // then cleanup (no observable side effect here).
     }

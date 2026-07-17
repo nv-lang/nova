@@ -8,8 +8,8 @@ module spec_tests.conformance
 fn observe_normal() -> str {
     mut trail = ""
     {
-        defer { trail = trail + "A" }            // LIFO: runs last
-        defer { trail = trail + "B" }            // LIFO: runs first
+        defer { trail += "A" }            // LIFO: runs last
+        defer { trail += "B" }            // LIFO: runs first
     }
     trail
 }
@@ -17,10 +17,10 @@ fn observe_normal() -> str {
 fn observe_early_return() -> str {
     mut trail = ""
     {
-        defer { trail = trail + "A" }            // LIFO: runs last
-        defer { trail = trail + "B" }            // LIFO: runs first
+        defer { trail += "A" }            // LIFO: runs last
+        defer { trail += "B" }            // LIFO: runs first
         if trail == "" {
-            trail = trail + "R"
+            trail += "R"
             // early exit of inner block via labelled-free path is not needed;
             // the block simply ends — defers fire at block close.
         }

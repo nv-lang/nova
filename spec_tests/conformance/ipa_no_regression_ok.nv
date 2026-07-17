@@ -11,7 +11,7 @@ type WS1 {
 fn WS1.helper(x int) -> int { x * 2 }
 
 fn WS1 mut @increment() -> () {
-    @count = @count + 1
+    @count += 1
 }
 
 fn WS1 @double_x() -> int {

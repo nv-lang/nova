@@ -39,16 +39,14 @@ module std.sort
 #stable(since = "0.1")
 export fn []int mut @sort() -> @ {
     ro n = @len()
-    mut i = 1
-    while i < n {
+    for i in 1..n {
         ro key = @[i]
         mut j = i - 1
         while j >= 0 && @[j] > key {
             @[j + 1] = @[j]
-            j = j - 1
+            j -= 1
         }
         @[j + 1] = key
-        i = i + 1
     }
 }
 
@@ -69,16 +67,14 @@ export fn []int mut @sort() -> @ {
 #stable(since = "0.1")
 export fn []int mut @sort_by(cmp fn(int, int) -> int) -> @ {
     ro n = @len()
-    mut i = 1
-    while i < n {
+    for i in 1..n {
         ro key = @[i]
         mut j = i - 1
         while j >= 0 && cmp(@[j], key) > 0 {
             @[j + 1] = @[j]
-            j = j - 1
+            j -= 1
         }
         @[j + 1] = key
-        i = i + 1
     }
 }
 
@@ -124,13 +120,11 @@ export fn []int @min() -> Option[int] {
         return None
     }
     mut m = @[0]
-    mut i = 1
-    while i < n {
+    for i in 1..n {
         ro v = @[i]
         if v < m {
             m = v
         }
-        i = i + 1
     }
     Some(m)
 }
@@ -151,13 +145,11 @@ export fn []int @max() -> Option[int] {
         return None
     }
     mut m = @[0]
-    mut i = 1
-    while i < n {
+    for i in 1..n {
         ro v = @[i]
         if v > m {
             m = v
         }
-        i = i + 1
     }
     Some(m)
 }
@@ -183,11 +175,9 @@ export fn[T Compare] []T @min_of() -> Option[T] {
     ro n = @len()
     if n == 0 { return None }
     mut m = @[0]
-    mut i = 1
-    while i < n {
+    for i in 1..n {
         ro v = @[i]
         if v.compare(m) < 0 { m = v }
-        i = i + 1
     }
     Some(m)
 }
@@ -198,11 +188,9 @@ export fn[T Compare] []T @max_of() -> Option[T] {
     ro n = @len()
     if n == 0 { return None }
     mut m = @[0]
-    mut i = 1
-    while i < n {
+    for i in 1..n {
         ro v = @[i]
         if v.compare(m) > 0 { m = v }
-        i = i + 1
     }
     Some(m)
 }
@@ -218,18 +206,16 @@ export fn[T Compare] []T @max_of() -> Option[T] {
 #stable(since = "0.1")
 export fn[T Compare] []T mut @sort_of() -> @ {
     ro n = @len()
-    mut i = 1
-    while i < n {
+    for i in 1..n {
         ro key = @[i]
         mut j = i - 1
         mut cur = @[j]
         while j >= 0 && cur > key {
             @[j + 1] = cur
-            j = j - 1
+            j -= 1
             if j >= 0 { cur = @[j] }
         }
         @[j + 1] = key
-        i = i + 1
     }
 }
 
@@ -250,11 +236,9 @@ export fn[T] []T @min_by_of(cmp fn(T, T) -> int) -> Option[T] {
     ro n = @len()
     if n == 0 { return None }
     mut m = @[0]
-    mut i = 1
-    while i < n {
+    for i in 1..n {
         ro v = @[i]
         if cmp(v, m) < 0 { m = v }
-        i = i + 1
     }
     Some(m)
 }
@@ -265,11 +249,9 @@ export fn[T] []T @max_by_of(cmp fn(T, T) -> int) -> Option[T] {
     ro n = @len()
     if n == 0 { return None }
     mut m = @[0]
-    mut i = 1
-    while i < n {
+    for i in 1..n {
         ro v = @[i]
         if cmp(v, m) > 0 { m = v }
-        i = i + 1
     }
     Some(m)
 }
@@ -291,8 +273,8 @@ export fn[T] []T mut @reverse_of() -> @ {
         ro tmp = @[i]
         @[i] = @[j]
         @[j] = tmp
-        i = i + 1
-        j = j - 1
+        i += 1
+        j -= 1
     }
 }
 
@@ -308,10 +290,8 @@ export fn[T] []T mut @reverse_of() -> @ {
 export fn []int @sum() -> int {
     ro n = @len()
     mut s = 0
-    mut i = 0
-    while i < n {
-        s = s + @[i]
-        i = i + 1
+    for i in 0..n {
+        s += @[i]
     }
     s
 }
@@ -321,10 +301,8 @@ export fn []int @sum() -> int {
 export fn []int @product() -> int {
     ro n = @len()
     mut p = 1
-    mut i = 0
-    while i < n {
-        p = p * @[i]
-        i = i + 1
+    for i in 0..n {
+        p *= @[i]
     }
     p
 }
@@ -341,11 +319,9 @@ export fn []int @product() -> int {
 #stable(since = "0.1")
 export fn[T] []T @position_of(pred fn(T) -> bool) -> Option[int] {
     ro n = @len()
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         ro v = @[i]
         if pred(v) { return Some(i) }
-        i = i + 1
     }
     None
 }
@@ -361,11 +337,9 @@ export fn[T] []T @position_of(pred fn(T) -> bool) -> Option[int] {
 export fn[T] []T @count_of(pred fn(T) -> bool) -> int {
     ro n = @len()
     mut count = 0
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         ro v = @[i]
-        if pred(v) { count = count + 1 }
-        i = i + 1
+        if pred(v) { count += 1 }
     }
     count
 }
@@ -380,11 +354,9 @@ export fn[T] []T @count_of(pred fn(T) -> bool) -> int {
 #stable(since = "0.1")
 export fn[T] []T @find_of(pred fn(T) -> bool) -> Option[T] {
     ro n = @len()
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         ro v = @[i]
         if pred(v) { return Some(v) }
-        i = i + 1
     }
     None
 }
@@ -400,18 +372,16 @@ export fn[T] []T @find_of(pred fn(T) -> bool) -> Option[T] {
 #stable(since = "0.1")
 export fn[T] []T mut @sort_by_of(cmp fn(T, T) -> int) -> @ {
     ro n = @len()
-    mut i = 1
-    while i < n {
+    for i in 1..n {
         ro key = @[i]
         mut j = i - 1
         mut cur = @[j]
         while j >= 0 && cmp(cur, key) > 0 {
             @[j + 1] = cur
-            j = j - 1
+            j -= 1
             if j >= 0 { cur = @[j] }
         }
         @[j + 1] = key
-        i = i + 1
     }
 }
 

@@ -116,7 +116,7 @@ export fn Vec[Vec[T]] @flatten() -> Vec[T] {
     // appends below never reallocate (each `@append` would otherwise ×2-grow).
     mut total = 0
     for inner in @ {
-        total = total + inner.len()
+        total += inner.len()
     }
     mut out = Vec[T].new(cap: total)
     // Bulk-copy each inner row onto the end of `out` (the `@append(Vec[T])`
@@ -236,7 +236,7 @@ export fn Vec[T] mut @drain(range Range) -> Vec[T]
             RawMem.copy(@data.offset(end) as *u8, @data.offset(start) as *mut u8, tail * size_of[T]())
         }
     }
-    @len = @len - count
+    @len -= count
     out
 }
 

@@ -11,12 +11,13 @@ fn Acc_plan12312v12nestedwhilebodyok.new() -> Acc_plan12312v12nestedwhilebodyok 
 
 fn Acc_plan12312v12nestedwhilebodyok mut @run(n int) -> int {
     mut i = 0
+    // nova:allow W_WHILE_COUNTER_FOR_RANGE -- Plan 123 LICM/field-cache conformance fixture: pins the optimizer behavior specifically on a while-shaped loop; for-in desugars through the iterator protocol (D58), a different codegen path — rewriting would risk silently exercising something else
     while i < n {
         // 2 reads pre-write → nested cache.
         ro a = @x
         ro b = @x
         @x = a + b + 1
-        i = i + 1
+        i += 1
     }
     @x
 }

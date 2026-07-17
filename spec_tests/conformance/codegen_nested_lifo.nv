@@ -19,11 +19,11 @@ fn LayerRes3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 fn use_three_nested() -> int {
     mut sum = 0
     consume a = LayerRes3.new(1) {
-        sum = sum + a.depth                          // 1
+        sum += a.depth                          // 1
         consume b = LayerRes3.new(2) {
-            sum = sum + b.depth                      // +2 = 3
+            sum += b.depth                      // +2 = 3
             consume c = LayerRes3.new(3) {
-                sum = sum + c.depth                  // +3 = 6
+                sum += c.depth                  // +3 = 6
             }
             // c.cleanup fires here (innermost first per LIFO).
         }

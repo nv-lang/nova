@@ -11,7 +11,7 @@ type Cv {
 }
 
 fn Cv mut @bump() -> () {
-    @value = @value + 1
+    @value += 1
 }
 
 type Bv {

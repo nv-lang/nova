@@ -31,20 +31,15 @@ export fn Diff.compute(a []str, b []str) -> []DiffOp {
     ro n = a.len()
     ro m = b.len()
     mut lcs [][]int = []
-    mut i = 0
-    while i <= n {
+    for i in 0..=n {
         mut row []int = []
-        mut j = 0
-        while j <= m { row.push(0); j += 1 }
+        for j in 0..=m { row.push(0) }
         lcs.push(row)
-        i += 1
     }
 
     // Заполняем DP-таблицу
-    mut ii = 1
-    while ii <= n {
-        mut jj = 1
-        while jj <= m {
+    for ii in 1..=n {
+        for jj in 1..=m {
             if a[ii - 1] == b[jj - 1] {
                 lcs[ii][jj] = lcs[ii - 1][jj - 1] + 1
             } else {
@@ -52,9 +47,7 @@ export fn Diff.compute(a []str, b []str) -> []DiffOp {
                 ro left = lcs[ii][jj - 1]
                 lcs[ii][jj] = up.max(left)
             }
-            jj += 1
         }
-        ii += 1
     }
 
     // Backtrack

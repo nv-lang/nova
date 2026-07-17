@@ -11,7 +11,7 @@ fn CountDown mut @next() -> Option[int] {
         None
     } else {
         ro v = @current
-        @current = @current - 1
+        @current -= 1
         Some(v)
     }
 }
