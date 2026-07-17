@@ -48,7 +48,6 @@ All of the above is verified working end-to-end (see
 | C toolchain | `clang build-essential` | `clang gcc` | `clang base-devel` |
 | Boehm GC | `libgc-dev` | `gc-devel` | `gc` |
 | (optional, for `std/tls`) | `libmbedtls-dev` | — | — |
-| (optional, for `std/encoding/compress/brotli`) | `libbrotli-dev` | — | — |
 | cmake/make | `cmake make` | `cmake make` | `cmake make` |
 
 `libuv` is **not** a system package dependency — it's vendored as a git
