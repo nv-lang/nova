@@ -1,0 +1,41 @@
+// [M-174.6-rawptr-extern-unsafe-infer] (D424 rule 1/2, Plan 174.6 M4,
+// 2026-07-17) — POSITIVE. Own scoped package (own `nova.toml` +
+// `d424_ffi_shim.h`, mirrors `plan143_2/`) because — unlike the flat
+// `neg/d424_*_neg.nv` companions, which stop at a compile error before ever
+// reaching codegen/link — these tests actually EXECUTE their extern calls,
+// so they need a real, linkable C symbol behind each one.
+//
+// Covers both halves of D424's rule:
+//   1. A raw-ptr `extern "C" fn` (`*u8` param) is `unsafe fn` BY INFERENCE —
+//      calling it wrapped in `unsafe { }` is accepted (no
+//      `E_UNSAFE_CALL_REQUIRES_WRAP`) and the wrap is genuinely used (no
+//      `E_UNSAFE_UNUSED` either — the call IS the D216 §9 "calling an
+//      unsafe fn" map entry).
+//   2. A scalar-only `extern "C" fn` (no pointer anywhere in its signature)
+//      is NOT inferred unsafe — calling it with no wrap at all is plain,
+//      ordinary, safe code.
+//
+// Neg companions (same rule, wrong side): `neg/d424_rawptr_extern_unwrapped_
+// neg.nv` (case 1 without the wrap → `E_UNSAFE_CALL_REQUIRES_WRAP`) and
+// `neg/d424_scalar_extern_unused_unsafe_neg.nv` (case 2 wrapped anyway →
+// `E_UNSAFE_UNUSED`, carve-out removed by D424 rule 2).
+module d424_rawptr_unsafe.d424_rawptr_unsafe_pos
+
+// Raw-ptr param (`*u8`) — D424 rule 1 infers `unsafe fn`, no `#unsafe`
+// keyword written here.
+extern "C" fn d424_ptr_first_byte(p *u8, len int) -> int
+
+// Scalar-only (no pointer anywhere in the signature) — stays an ordinary
+// safe extern fn; D424 rule 1 does not apply.
+extern "C" fn d424_scalar_add(a int, b int) -> int
+
+test "wrapped call to a raw-ptr extern (inferred unsafe) is accepted" {
+    ro buf []u8 = [42, 2, 3]
+    ro first = unsafe { d424_ptr_first_byte(buf.ptr(), 3) }
+    assert(first == 42)
+}
+
+test "unwrapped call to a scalar-only extern (not inferred unsafe) is accepted" {
+    ro sum = d424_scalar_add(3, 4)
+    assert(sum == 7)
+}

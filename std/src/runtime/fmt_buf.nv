@@ -300,7 +300,9 @@ fn fmt_f64(buf *mut u8, cap int, v f64, kind FloatKind, prec int) -> int {
         FloatKind.Fixed => 1,
         FloatKind.Sci => 2,
     }
-    f64_fmt_into(buf, cap, v, k, prec)
+    // [M-174.6-rawptr-extern-unsafe-infer] (D424 rule 1): `buf *mut u8` param
+    // — inferred `unsafe fn`, call requires the wrap.
+    unsafe { f64_fmt_into(buf, cap, v, k, prec) }
 }
 
 // ─── Tests (Plan 208 Ф.1 gate) ───
@@ -499,7 +501,8 @@ test "f64_fmt_into: Shortest/Fixed/Sci kinds" {
     mut buf = scratch(64)
 
     // kind 1 = Fixed
-    ro nf = f64_fmt_into(buf.ptr(), 64, 3.14159, 1, 2)
+    // [M-174.6-rawptr-extern-unsafe-infer] (D424 rule 1): inferred `unsafe fn`.
+    ro nf = unsafe { f64_fmt_into(buf.ptr(), 64, 3.14159, 1, 2) }
     assert(nf == 4)
     unsafe {
         assert(buf.ptr().read_at(0) == ('3' as u8))
@@ -509,7 +512,7 @@ test "f64_fmt_into: Shortest/Fixed/Sci kinds" {
     }
 
     // kind 0 = Shortest (round-trip minimal) — same engine as println(float).
-    ro ns = f64_fmt_into(buf.ptr(), 64, 2.5, 0, 0)
+    ro ns = unsafe { f64_fmt_into(buf.ptr(), 64, 2.5, 0, 0) }
     assert(ns == 3)
     unsafe {
         assert(buf.ptr().read_at(0) == ('2' as u8))
@@ -518,7 +521,7 @@ test "f64_fmt_into: Shortest/Fixed/Sci kinds" {
     }
 
     // kind 2 = Sci
-    ro ne = f64_fmt_into(buf.ptr(), 64, 1234.5, 2, 1)
+    ro ne = unsafe { f64_fmt_into(buf.ptr(), 64, 1234.5, 2, 1) }
     assert(ne > 0)
     unsafe { assert(buf.ptr().read_at(1) == ('.' as u8)) }
 }

@@ -1,0 +1,23 @@
+// [M-174.6-rawptr-extern-unsafe-infer] (D424 rule 1, Plan 174.6 M4,
+// 2026-07-17) — the raw pointer need not be the return type ITSELF: it can
+// be nested one level down, inside an anonymous tuple return (the D214/
+// Plan 115 FFI multi-value-return convention, e.g. `examples/ffi/
+// sqlite_mini.nv`'s `mini_sqlite_open(path str) -> (*(), int)`).
+// `fn_sig_has_raw_ptr` recurses into `Tuple` elements precisely so this
+// case is caught — this fixture pins that recursion as a regression
+// guard. Never linked (compile stops at the checker diagnostic below, well
+// before codegen/link; mirrors `neg/d424_rawptr_extern_unwrapped_neg.nv`).
+//
+// EXPECT_COMPILE_ERROR E_UNSAFE_CALL_REQUIRES_WRAP
+
+module neg.d424_rawptr_extern_tuple_return_unwrapped_neg
+
+extern "C" fn d424_open_handle_neg(code int) -> (*(), int)
+
+test "calling an extern fn whose raw pointer is nested in a tuple return, without unsafe wrap — rejected" {
+    // The pointer lives in position 0 of the `(*(), int)` return tuple, not
+    // in the return type itself — must still be caught.
+    ro (h, rc) = d424_open_handle_neg(1)
+    assert(rc == 0)
+    ro _h = h
+}

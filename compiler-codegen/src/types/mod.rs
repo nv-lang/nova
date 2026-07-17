@@ -33959,33 +33959,42 @@ fn static_overload_arity_range(fd: &FnDecl) -> (usize, Option<usize>) {
 /// **[M-174.6-rawptr-extern-unsafe-infer] (D424 rule 1, Plan 174.6 M4,
 /// 2026-07-17):** does this fn's signature — any PARAMETER type, or the
 /// RETURN type — carry a raw pointer (`*T`/`*mut T`/`*()`) or `CStr`,
-/// SHALLOWLY (i.e. at the type's own top level, after stripping the
-/// transparent `ro`/`mut`/`uninit` modifier wrappers — `TypeRef::is_pointer`
-/// already does exactly this stripping)? Used ONLY to decide whether an
+/// after stripping the transparent `ro`/`mut`/`uninit` modifier wrappers
+/// (`TypeRef::is_pointer` already does exactly this stripping) and
+/// recursing into plain VALUE aggregates (`Tuple`, `FixedArray`) that carry
+/// no ABI/allocation semantics of their own? Used ONLY to decide whether an
 /// `extern`/`external` fn is classified `unsafe fn` BY INFERENCE (no keyword)
 /// per D424 rule 1 — NOT a general C-ABI validator (that's
 /// `check_ffi_c_abi_signatures`/`ffi_c_abi_violation`, a much deeper
 /// recursive walk for a completely different diagnostic, `E_FFI_NON_C_ABI_
-/// TYPE`).
+/// TYPE`, which ALSO resolves user-declared records/newtypes — this
+/// predicate deliberately does not, see below).
 ///
-/// Deliberately SHALLOW, not recursive into tuples/records/generics
-/// (`Option[*T]`, a tuple field, a value-record field): every current
-/// `extern "C" fn` declaration across `std/net`+`std/os`+`std/fs` (D424's own
-/// motivating corpus) spells its raw pointers directly as a top-level param/
-/// return type (`*u8`, `*mut u8`, `*()`) — never nested one level down. If a
-/// nested-raw-pointer extern signature appears later, that is a real gap in
-/// THIS predicate (widen it then, with a fixture) — not something to
-/// preemptively over-generalize now without a live example to verify against.
+/// Recurses into `Tuple` elements and `FixedArray` elements (own live
+/// example: `examples/ffi/sqlite_mini.nv`'s `mini_sqlite_open(path str) ->
+/// (*(), int)` — the pointer is the FIRST tuple element of the return type,
+/// not the return type itself; a shallow top-level-only check misses it).
+/// Deliberately stops at `Array`/`Named` (`[]T`/`Vec[T]` is GC-managed with
+/// its OWN allocation semantics — not itself a raw pointer even if its
+/// element type is one; a user-declared record/newtype would need type-
+/// declaration resolution this syntactic collect-phase pass doesn't have
+/// available, mirroring why `check_ffi_c_abi_signatures` is a wholly
+/// separate, later pass with its own `types: HashMap<String, &TypeDecl>`)
+/// and `Option[X]`/other generics (no live example yet exercises `Option[*T]`
+/// on an `extern`/`external` fn — if one appears, that's a real gap here,
+/// widen with a fixture then, same spirit as this doc note already proved
+/// out once for `Tuple`).
 fn fn_sig_has_raw_ptr(fd: &FnDecl) -> bool {
     fn ty_is_raw_ptr_or_cstr(ty: &TypeRef) -> bool {
-        if ty.is_pointer() {
-            return true;
+        match ty.strip_modifiers() {
+            TypeRef::Pointer(..) => true,
+            TypeRef::Named { path, generics, .. } => {
+                generics.is_empty() && path.last().map_or(false, |n| n == "CStr")
+            }
+            TypeRef::Tuple(elems, _) => elems.iter().any(ty_is_raw_ptr_or_cstr),
+            TypeRef::FixedArray(_, inner, _) => ty_is_raw_ptr_or_cstr(inner),
+            _ => false,
         }
-        matches!(
-            ty.strip_modifiers(),
-            TypeRef::Named { path, generics, .. }
-                if generics.is_empty() && path.last().map_or(false, |n| n == "CStr")
-        )
     }
     fd.params.iter().any(|p| ty_is_raw_ptr_or_cstr(&p.ty))
         || fd.return_type.as_ref().map_or(false, ty_is_raw_ptr_or_cstr)
