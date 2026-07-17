@@ -4054,13 +4054,23 @@ fn conv_str_concat_loop(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarn
 
 /// Компаунд-эквивалент бинарного оператора — `Some` ТОЛЬКО для четырёх
 /// существующих в Nova компаунд-форм (`Add`/`Sub`/`Mul`/`Div`).
+// SEMANTIC-UPGRADE (2026-07-18, regression found by this rule's own sweep —
+// `std/src/concurrency/retry.nv`'s `d = d * multiplier` on a `Duration`
+// value-record): `*=`/`/=` are DELIBERATELY excluded here even though
+// `AssignOp` has `Mul`/`Div` variants. `emit_c.rs`'s compound-assign
+// operator-overload dispatch (`is_overloaded_add_ty`, ~line 27650) is
+// EXPLICITLY `Add`/`Sub`-only — "`Add`/`Sub` are overloadable operators;
+// `*=`/`/=` are not" — so `x *= y` / `x /= y` on ANY type overloading `*`/`/`
+// (e.g. `Duration * f64` scaling) falls through to a raw C `*=`/`/=` on a
+// struct, a hard CC-FAIL. We have no type info here (AST-only) to tell a
+// primitive `int`/`f64` LHS from an operator-overloaded record — so, unlike
+// `Add`/`Sub` (which at least partially dispatch overloads for pointer-form
+// value-records, `Nova_X*`), `Mul`/`Div` compound-assign is NEVER suggested.
 fn conv_binop_to_compound(op: crate::ast::BinOp) -> Option<&'static str> {
     use crate::ast::BinOp;
     match op {
         BinOp::Add => Some("+="),
         BinOp::Sub => Some("-="),
-        BinOp::Mul => Some("*="),
-        BinOp::Div => Some("/="),
         _ => None,
     }
 }
@@ -4301,6 +4311,7 @@ fn conv_end_int_literal(e: &Expr) -> Option<String> {
 /// выполнены, `None` — молчим (см. блок-комментарий правила).
 fn conv_check_while_counter(
     name: &str,
+    counter_ty: &Option<TypeRef>,
     while_expr: &Expr,
     after_stmts: &[Stmt],
     after_trailing: Option<&Expr>,
@@ -4359,14 +4370,35 @@ fn conv_check_while_counter(
 
     let range_op = if inclusive { "..=" } else { ".." };
     let cmp = if inclusive { "<=" } else { "<" };
+    // Plan 87 `for x TYPE in iter` — если у счётчика была явная аннотация
+    // типа (`mut y i32 = ...`), она ОБЯЗАНА перейти на for-переменную:
+    // `for y in a..b` инферит тип из границ диапазона (обычно голый `int`),
+    // МОЛЧА расширяя/сужая относительно исходного `i32`/`u8`/… — реальный
+    // регресс (найден этой же волной на std/time/civil/tz.nv: `mut y i32 =
+    // 2007`-счётчик, переданный в `fn(y i32)`, без аннотации на for стал
+    // `int` → E_IMPLICIT_NARROWING на вызове). Суффикс с типом в
+    // предложении — не декоративный, это ОБЯЗАТЕЛЬНАЯ часть корректной
+    // замены при explicit-типе.
+    let ty_suffix = counter_ty
+        .as_ref()
+        .and_then(conv_ty_last_name)
+        .map(|t| format!(" {t}"))
+        .unwrap_or_default();
     Some(LintWarning {
         rule: "W_WHILE_COUNTER_FOR_RANGE",
         diag: Diagnostic::new(
             format!(
-                "счётчиковый `while {name} {cmp} {end_key}` (`mut {name} = ...` перед циклом, \
-                 `{name} += 1` последним statement'ом тела) — канон `for {name} in \
-                 <start>{range_op}{end_key} {{ ... }}` (nv-coding-style §10): исключает \
-                 off-by-one/забытый инкремент, `i` не переживает цикл.",
+                "счётчиковый `while {name} {cmp} {end_key}` (`mut {name}{ty_suffix} = ...` перед \
+                 циклом, `{name} += 1` последним statement'ом тела) — канон `for {name}{ty_suffix} \
+                 in <start>{range_op}{end_key} {{ ... }}` (nv-coding-style §10): исключает \
+                 off-by-one/забытый инкремент, `i` не переживает цикл.{ty_note}",
+                ty_note = if ty_suffix.is_empty() {
+                    ""
+                } else {
+                    " ВАЖНО: явная аннотация типа счётчика ОБЯЗАНА перейти на for-переменную \
+                     (Plan 87 `for x TYPE in iter`) — иначе for-range инферит тип из границ \
+                     диапазона, молча расширяя/сужая относительно исходного типа."
+                }
             ),
             while_expr.span,
         ),
@@ -4402,7 +4434,9 @@ fn conv_scan_stmts_for_while_counter(stmts: &[Stmt], trailing: Option<&Expr>, ou
                 continue;
             };
 
-        if let Some(w) = conv_check_while_counter(name, while_expr, after_stmts, after_trailing) {
+        if let Some(w) =
+            conv_check_while_counter(name, &d.ty, while_expr, after_stmts, after_trailing)
+        {
             out.push(w);
         }
     }
@@ -6215,6 +6249,80 @@ mod tests {
             hits.len(),
             2,
             "expected exactly 2 hits (c-loop + b-loop), got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // Regression (2026-07-18, found by this rule's own sweep on
+    // std/time/civil/tz.nv): an explicit counter type annotation
+    // (`mut y i32 = ...`) MUST be called out in the suggestion — `for y in
+    // a..b` infers the element type from the range bounds (bare int
+    // literals default to `int`), silently widening away the original
+    // `i32` and breaking a narrower-param call downstream
+    // (E_IMPLICIT_NARROWING). The message must mention the type so anyone
+    // applying the suggestion writes `for y i32 in a..b` (Plan 87).
+
+    #[test]
+    fn while_counter_message_carries_explicit_counter_type() {
+        let src = "module foo\nfn run() -> () {\n    mut y i32 = 0\n    \
+             while y <= 10 {\n        y += 1\n    }\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = ws
+            .iter()
+            .find(|w| w.rule == "W_WHILE_COUNTER_FOR_RANGE")
+            .unwrap_or_else(|| {
+                panic!(
+                    "expected W_WHILE_COUNTER_FOR_RANGE, got: {:?}",
+                    ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+                )
+            });
+        assert!(
+            hit.diag.message.contains("i32"),
+            "suggestion must mention the explicit counter type `i32`, got: {}",
+            hit.diag.message
+        );
+    }
+
+    #[test]
+    fn while_counter_message_silent_on_type_when_none_declared() {
+        // Sanity: no explicit type on the counter → no spurious type-carry
+        // note (keeps the common-case message clean).
+        let src = "module foo\nfn run() -> () {\n    mut i = 0\n    \
+             while i < 10 {\n        i += 1\n    }\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = ws
+            .iter()
+            .find(|w| w.rule == "W_WHILE_COUNTER_FOR_RANGE")
+            .expect("expected W_WHILE_COUNTER_FOR_RANGE");
+        assert!(
+            !hit.diag.message.contains("ВАЖНО"),
+            "must NOT emit the type-carry note when no explicit type was declared, got: {}",
+            hit.diag.message
+        );
+    }
+
+    // Regression (2026-07-18, found by this rule's own sweep on
+    // std/concurrency/retry.nv): `d = d * multiplier` on a `Duration`
+    // value-record must NOT be suggested as `d *= multiplier` — Nova's
+    // compound-assign codegen dispatches operator overloads ONLY for
+    // `Add`/`Sub` (`emit_c.rs` — "`Add`/`Sub` are overloadable operators;
+    // `*=`/`/=` are not"); `*=`/`/=` on an operator-overloaded type falls
+    // through to a raw C `*=`/`/=` on a struct — a hard CC-FAIL. Since this
+    // rule has no type info, `Mul`/`Div` compound-assign is never suggested
+    // at all (conservative — see `conv_binop_to_compound`).
+
+    #[test]
+    fn no_warning_on_non_compound_mul_or_div() {
+        let src = "module foo\nfn run() -> () {\n    mut d = 1.0\n    d = d * 2.0\n    \
+             mut e = 8.0\n    e = e / 2.0\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_NON_COMPOUND_ASSIGN"),
+            "must NOT suggest `*=`/`/=` (compound-assign never overload-dispatches Mul/Div, \
+             CC-FAIL risk on operator-overloaded types), got: {:?}",
             ws.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
     }

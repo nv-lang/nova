@@ -150,7 +150,7 @@ fn RetryPolicy @compute_delay(attempt int) Random -> Duration {
             mut d = initial
             mut i = 1
             while i < attempt {
-                d *= multiplier
+                d = d * multiplier
                 if d.nanos > max_delay.nanos { d = max_delay; i = attempt }
                 i += 1
             }
