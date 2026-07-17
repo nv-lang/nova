@@ -4775,6 +4775,15 @@ impl TestSelection {
 /// `walk_nv_filtered` — the file body is never read at default discovery.
 pub fn is_slow_file_stem(stem: &str) -> bool { stem.ends_with("_slow") }
 
+/// Peel the outermost `_slow` suffix (see [`is_slow_file_stem`] doc-comment
+/// for the canonical suffix order). Shared by every `_slow`-aware peer/entry
+/// scan in this crate ([M-d376-slow-suffix-folder-module-peer-merge]) —
+/// `imports.rs`'s peer-merge predicate calls this instead of re-deriving its
+/// own `strip_suffix("_slow")`.
+pub fn strip_slow_suffix(stem: &str) -> &str {
+    stem.strip_suffix("_slow").unwrap_or(stem)
+}
+
 /// Read the EXPECT_* marker from the first 30 lines of a .nv file.
 /// Returns TestType based on the first matching marker found.
 pub fn detect_test_type(path: &Path) -> TestType {
@@ -4871,7 +4880,7 @@ fn walk_nv_filtered_ex(
                     SlowLane::Only    => { if !is_slow { continue; } }
                     SlowLane::Include => {}
                 }
-                let stem_no_slow = stem.strip_suffix("_slow").unwrap_or(stem);
+                let stem_no_slow = strip_slow_suffix(stem);
                 let core_stem = stem_no_slow.strip_suffix("_test").unwrap_or(stem_no_slow);
                 if !crate::imports::peer_active_for_target_pub(core_stem, target) {
                     continue;
@@ -4947,7 +4956,7 @@ pub fn walk_nv_selected(root: &Path, out: &mut Vec<PathBuf>, sel: &TestSelection
                 if stem == "_module" { continue; }
                 let is_slow = is_slow_file_stem(stem);
                 if is_slow && !sel.include_slow { continue; }
-                let stem_no_slow = stem.strip_suffix("_slow").unwrap_or(stem);
+                let stem_no_slow = strip_slow_suffix(stem);
                 let core_stem = stem_no_slow.strip_suffix("_test").unwrap_or(stem_no_slow);
                 if !crate::imports::peer_active_for_target_pub(core_stem, target) { continue; }
             }
