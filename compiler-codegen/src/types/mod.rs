@@ -9954,6 +9954,54 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
+    /// [M-196-ch-widen] SHADOW-ICE root fix: does `rt` contain NO residual bare-name
+    /// leaf that could be an UNSUBSTITUTED generic-parameter spelling leaked from an
+    /// ENCLOSING (still-abstract) generic body? Nova's `TypeRef` has no dedicated
+    /// type-parameter carrier (see `infer_method_call_channel_type`'s "K"-class doc
+    /// comment, ~7982: "`self.types.get(\"T\")` finds nothing; \"T\" is not a
+    /// registered type") — so `ResolvedType::from_type_ref` lowers a bare
+    /// `Named{path:["K"]}` the SAME way whether "K" is a genuine 0-arg concrete type
+    /// or an unbound carrier from an OUTER FnDecl the solver never saw (it only mints
+    /// vars for THIS call's own `recv.generics`/`method_names` — `rt_respells_names`
+    /// above catches a same-call collision, but is BLIND to an outer scope's carrier
+    /// arriving as a plain, not-in-`vars` `Ty::Named`). Repro (found via git-archaeology
+    /// triage per capstone §4.4): `Lru[K,V]`'s `put` body (still generic, K/V abstract
+    /// at CHECK time) calls `@order.len()` where `@order []K` — `resolve_return_channel`
+    /// unifies Vec.len()'s OWN carrier var against `Vec[Named("K")]` (K not in `vars`,
+    /// since `vars` only knows Vec.len()'s "T") and reports `T = Named("K")` as if
+    /// concrete — `shadow_check_node_substs` caught the resulting mismatch against
+    /// codegen's mono-correct `T = str` (`node_substs[…][T]` lowered to the erased stub
+    /// `Nova_K*`). A bare `Named{name, args:[]}` (no module qualifier) is residual
+    /// UNLESS `name` is a REGISTERED type (`self.types` — every Record/Sum/Protocol/
+    /// Effect/alias/newtype declaration, including std types like `Vec`/`HashMap`);
+    /// `ResolvedType::TypeParam` is unconditionally residual (that is its entire
+    /// purpose). Recurses structurally (mirrors `rt_respells_names`/`mentions_slot`)
+    /// so a leak buried in `Vec[K]`/`(K,V)`/`fn(K)->V` is caught too. Same completeness-
+    /// gate discipline as the length check below: an unclosed value means the WHOLE
+    /// map (or `rt`) stays unwritten, caller falls back to legacy — never a silent
+    /// wrong materialization (propose-then-verify, card §5).
+    fn rt_is_closed(&self, rt: &ResolvedType) -> bool {
+        use ResolvedType as R;
+        match rt {
+            R::TypeParam(_) => false,
+            R::Named { name, module, args } => {
+                if module.is_empty() && args.is_empty() && !self.types.contains_key(name) {
+                    return false;
+                }
+                args.iter().all(|a| self.rt_is_closed(a))
+            }
+            R::Tuple(items) => items.iter().all(|i| self.rt_is_closed(i)),
+            R::Array(inner) | R::Readonly(inner) | R::TypedPtr(_, inner) => {
+                self.rt_is_closed(inner)
+            }
+            R::FixedArray(_, inner) => self.rt_is_closed(inner),
+            R::Func { params, ret, .. } => {
+                params.iter().all(|p| self.rt_is_closed(p)) && self.rt_is_closed(ret)
+            }
+            _ => true,
+        }
+    }
+
     fn ty_from_resolved_vars(
         rt: &ResolvedType,
         vars: &HashMap<String, constraint_solver::TypeVar>,
@@ -10186,6 +10234,14 @@ impl<'a> TypeCheckCtx<'a> {
         }
         let resolved_ret = solver.resolve(&ret_template);
         let rt = solver.as_concrete_leaf(&resolved_ret)?;
+        // [M-196-ch-widen] SHADOW-ICE fix: the return itself must be genuinely closed
+        // too (see `rt_is_closed` doc) — an outer-scope carrier leaking into the
+        // RETURN position is the same hazard as leaking into a per-name `ordered`
+        // entry, just not observed empirically for `len()`-shaped returns (a fixed
+        // primitive) — defense in depth, same gate.
+        if !self.rt_is_closed(&rt) {
+            return None;
+        }
         // [M-196.5-node-substs] Producer B: `solver.subst` (via `solver.resolve`/
         // `as_concrete_leaf` per-var) already has EVERY carrier + method-level binding —
         // Stage-1a minted a fresh `Var` for each (`vars`, above) and unified them. Read the
@@ -10207,7 +10263,10 @@ impl<'a> TypeCheckCtx<'a> {
                 })
             })
             .collect();
-        let ordered = if !decl_order.is_empty() && ordered.len() == decl_order.len() {
+        let ordered = if !decl_order.is_empty()
+            && ordered.len() == decl_order.len()
+            && ordered.iter().all(|(_, v)| self.rt_is_closed(v))
+        {
             ordered
         } else {
             Vec::new()
@@ -10700,7 +10759,26 @@ impl<'a> TypeCheckCtx<'a> {
                 .flat_map(|m| m.items.iter())
                 .any(|it| matches!(it, Item::Fn(f)
                     if f.receiver.as_ref().map(|r| r.type_name.as_str()) == Some(type_name)));
-            if sig_complete_builtin && !self.prefix_generic_method_exists(rt, method_name) {
+            // [M-char-blanket-shadowed-by-sig-complete] follow-up (2026-07-17, found
+            // widening node_substs producers — d109_primitive_builtin_methods.nv
+            // CODEGEN-FAIL blocking the WHOLE conformance mega-CU, char/eq/lt): the
+            // just-landed fix above only re-checked the bare-T BLANKET channel
+            // (`prefix_generic_method_exists`, D145 `.nv`-declared) — it missed the
+            // THIRD channel the early primitive-gate above (~10655-10658) ALSO
+            // consults: `primitive_instance_method_known` (D109 compiler-INTRINSIC
+            // eq/lt/le/gt/ge/hash, emitted directly by `prim_builtin_method` in
+            // emit_c.rs — never declared in ANY `.nv` source, so neither
+            // `builtin_sig_modules` nor `prefix_generic_method_exists` can see it).
+            // `char` becoming sig-complete (same trigger as the parent fix —
+            // `char @to_stringbuilder()`) shadows `char.eq()`/`char.lt()`/etc the
+            // SAME way it shadowed `char.to_str()` — same guard pattern, third
+            // channel added for symmetry with the early gate.
+            if sig_complete_builtin
+                && !self.prefix_generic_method_exists(rt, method_name)
+                && !crate::codegen::emit_c::CEmitter::primitive_instance_method_known(
+                    type_name, method_name,
+                )
+            {
                 errors.push(Diagnostic::new(
                     format!(
                         "[E7320] no field or method `{}` on type `{}`",
@@ -15079,7 +15157,18 @@ impl<'a> TypeCheckCtx<'a> {
                 subst.get(n.as_str()).map(|ta| ((*n).clone(), ResolvedType::from_type_ref(ta)))
             })
             .collect();
-        let ordered = if !decl_order.is_empty() && ordered.len() == decl_order.len() {
+        // [M-196-ch-widen] SHADOW-ICE fix (see `rt_is_closed` doc): `type_args` is the
+        // CALL-SITE's own turbofish literal (`Vec[K].new()`) — this fn has no `gs`
+        // (enclosing FnDecl's generic scope) to check against, so a turbofish written
+        // INSIDE a still-generic body (`Vec[K].new()` where `K` is the ENCLOSING
+        // method's own abstract carrier, e.g. `Lru[K,V]`'s own body) would otherwise
+        // materialize `K` as if concrete — the SAME hazard `resolve_return_channel`
+        // had (Producer B). Same registry-based closedness gate, same degrade-to-
+        // unwritten contract.
+        let ordered = if !decl_order.is_empty()
+            && ordered.len() == decl_order.len()
+            && ordered.iter().all(|(_, v)| self.rt_is_closed(v))
+        {
             ordered
         } else {
             Vec::new()
@@ -16089,7 +16178,18 @@ impl<'a> TypeCheckCtx<'a> {
                         .map(|tr| ((*n).clone(), ResolvedType::from_type_ref(tr)))
                 })
                 .collect();
-            if !decl_order.is_empty() && ordered.len() == decl_order.len() {
+            // [M-196-ch-widen] SHADOW-ICE fix (see `rt_is_closed` doc): `subst` is seeded
+            // from the RECEIVER's actual type at the call-site (`build_recv_subst`/
+            // structural unify) — same class of hazard as `resolve_return_channel`
+            // (Producer B-method-residual): if the receiver's carrier is itself an
+            // ENCLOSING generic body's own still-abstract type-param (e.g. `@order.map(..)`
+            // where `@order []K` inside a generic `Lru[K,V]` method), `subst` would carry
+            // that bare name as if concrete. This fn has no `gs` either — same registry-
+            // based closedness gate.
+            if !decl_order.is_empty()
+                && ordered.len() == decl_order.len()
+                && ordered.iter().all(|(_, v)| self.rt_is_closed(v))
+            {
                 if std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some() {
                     eprintln!(
                         "[NODE_SUBSTS] producer=B-closure-arg call_id={:?} method={} n={}",
