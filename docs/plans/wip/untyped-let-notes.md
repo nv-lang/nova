@@ -1,0 +1,70 @@
+# [M-vec-ext-method-untyped-let-breaks-chain-dispatch] — фикс-заметки
+
+Worktree: `d:/Sources/nv-lang/nova-untypedlet`, ветка `p-fix-untyped-let-chain`.
+
+## Корень (найден)
+
+`compiler-codegen/src/types/mod.rs`, функция `f3_check_member_ctx`, блок
+"Метод?" (было ~11951-11983, после патча см. текущие номера строк —
+патч вставлен между `slice_elem_has_method` и `has_method`).
+
+Механизм — представленческое рассогласование канала (196-территория),
+ТРИ разные конвенции регистрации slice-методов, из которых чекер знал
+только про две:
+
+1. `t_provides_method(tname="Vec", name)` — bare "Vec"-key (native
+   `Vec[T]`-методы).
+2. `slice_elem_has_method` — литеральный ключ `"[]<конкретный-элемент>"`
+   (напр. `"[]str"`), для КОНКРЕТНЫХ slice-ресиверов (`fn []str @join(...)`).
+3. **ОТСУТСТВОВАЛА (найдена сейчас):** литеральный ключ `"[]T"` — где `T`
+   это СОБСТВЕННЫЙ generic-параметр декларации (`fn[T] []T @method(...)`,
+   пример — ровно `std/src/collections/vec_seq.nv`'s `@map[U]`/`@filter`/
+   `@fold[Acc]`, и наш mini-repro `my_map_ch`/`my_filter_ch`).
+
+Почему аннотация чинит, а без неё — ломает:
+- `ro x []int = v.map(f)` — `d.ty` (аннотация) даёт `TypeRef::Array(int)`
+  НАПРЯМУЮ. `f3_check_member_ctx`'s `let TypeRef::Named{..} = &obj_tr else
+  {return;}` (строка ~11703) НЕ матчит `Array` → функция бейлится РАНЬШЕ
+  метод-чека — проверка вообще не выполняется (permissive).
+- `ro x = v.map(f)` (без аннотации) — тип биндинга материализуется через
+  КАНАЛ (`f1_stmt`'s `chain_ty`, читает `resolved_types_buf`, который
+  `f1_expr` заполнил через `infer_method_call_channel_type` →
+  `ResolvedType::from_type_ref` на `[]int`). `from_type_ref` КАНОНИЗИРУЕТ
+  `TypeRef::Array` → `ResolvedType::Named{"Vec", [int]}` (D239, "единое
+  каноническое представление"). `resolved_to_typeref_tp` конвертирует
+  ОБРАТНО в TypeRef — и восстанавливает `TypeRef::Named{["Vec"],[int]}`
+  (НЕ `Array`!) — другую форму TypeRef для СЕМАНТИЧЕСКИ того же типа.
+  Эта форма ДОХОДИТ до метод-чека (матчит `TypeRef::Named` на 11703) —
+  и там падает, т.к. `my_filter_ch` зарегистрирован под "[]T", а чекер
+  пробовал только "Vec" и "[]int".
+
+## Фикс
+
+Добавлен третий гейт `prefix_generic_slice_method` рядом с
+`slice_elem_has_method` в `f3_check_member_ctx`: когда `tname=="Vec"` и
+`recv_type_args` несёт ровно один конкретный элемент — реконструируем
+`TypeRef::Array(elem)` и зовём уже существующую (и уже протестированную,
+0 false-positives/707K вызовов корпуса, Plan 177 Ф.3)
+`self.prefix_generic_method_exists(&synthetic_array, name)`. Она уже умеет
+искать `"[]<T>"`-ключи method_table, где T — генерик-параметр самой
+декларации.
+
+Никаких изменений в frozen-зоне `infer_call_ret_c` (emit_c.rs) — фикс
+целиком в checker (`types/mod.rs`), в стороне от codegen return-inference.
+
+## RED → GREEN
+
+Мини-репро (scratchpad, 3 файла — unannotated/chained-one-expr/annotated):
+- unannotated (`ro mapped = v.my_map_ch(f); mapped.my_filter_ch(p)`) —
+  RED (`[E7320] no field or method my_filter_ch on type Vec`) → GREEN.
+- chained-one-expr (`v.my_map_ch(f).my_filter_ch(p)`) — тот же симптом,
+  RED → GREEN.
+- annotated (`ro mapped []int = ...`) — был GREEN (контроль, не трогали),
+  остался GREEN.
+
+## Дальше по плану
+
+- nova_tests/generics/mono_basic (plan101_1_vec_chained.nv:20 my_filter_ch)
+- spec_tests/conformance/v3_user_generic_newtype_ok.nv (chained .debug/.display)
+- δ0 std/src/collections + checksums + char_test/sync_test пины
+- пин-фикстура standalone в conformance

@@ -11974,7 +11974,38 @@ impl<'a> TypeCheckCtx<'a> {
                 } else {
                     false
                 };
-                let has_method = self.t_provides_method(tname, name) || slice_elem_has_method;
+                // [M-vec-ext-method-untyped-let-breaks-chain-dispatch]: a THIRD slice
+                // method-registration convention, sibling to the two above — a
+                // PREFIX-GENERIC slice-extension method (`fn[T] []T @method(...)`, the
+                // pervasive std/user idiom, e.g. `vec_seq.nv`'s own `@map[U]`/`@filter`/
+                // `@fold[Acc]`) registers in `method_table` under the LITERAL key
+                // "[]T" — the DECLARATION's own generic param name, not a concrete
+                // element name — so neither the bare `t_provides_method(tname, name)`
+                // ("Vec" key) NOR `slice_elem_has_method` ("[]<concrete-elem>" key,
+                // built for `fn []str @join`-style CONCRETE receivers) above finds it.
+                // A receiver that reaches THIS branch as `Named{"Vec", [elem]}` is
+                // reconstructed from the CHANNEL — an unannotated `ro x = v.map(f)`
+                // binding materializes its type via `ResolvedType::from_type_ref`'s
+                // D239 canonicalization (`[]T` → `Named{Vec,[T]}`, see `f1_stmt`'s
+                // `chain_ty`) — a genuine `TypeRef::Array` receiver (e.g. a DIRECT
+                // annotation `ro x []int = ...`) never reaches here at all (bails at
+                // the `TypeRef::Named` destructure above), so this gap fired ONLY for
+                // the channel-sourced shape: any subsequent extension-method call on
+                // such an unannotated binding (`x.filter(...)`) fell straight through
+                // to the false [E7320] below. Reuse `prefix_generic_method_exists`
+                // (the existing tested existence-check for exactly this receiver
+                // class, Plan 177 Ф.3 — 0 false-positives across a 707K-call corpus)
+                // by reconstructing the `TypeRef::Array` shape it expects from the
+                // single concrete element carried in `recv_type_args`.
+                let prefix_generic_slice_method = tname == "Vec"
+                    && recv_type_args.len() == 1
+                    && self.prefix_generic_method_exists(
+                        &TypeRef::Array(Box::new(recv_type_args[0].clone()), span),
+                        name,
+                    );
+                let has_method = self.t_provides_method(tname, name)
+                    || slice_elem_has_method
+                    || prefix_generic_slice_method;
                 if has_method {
                     // Plan 162 Ф.5: extension method policy.
                     self.check_extension_method_policy(tname, name, span, errors);
