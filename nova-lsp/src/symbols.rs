@@ -957,37 +957,25 @@ fn ranges_overlap(a: Range, b: Range) -> bool {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Workspace file discovery (reused from compiler.rs pattern)
+// Workspace file discovery
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Collect all `.nv` files under `root` recursively.
+/// Collect all `.nv` files under `root` recursively, with their text.
+///
+/// Plan 213 Ф.1: the directory walk (with the target/vendor/nested-repo-root
+/// filtering) is shared with `compiler::check_workspace` and
+/// `server::collect_nv_files_for_rename` via [`crate::compiler::collect_nv_paths`]
+/// — previously three independent copies of this walk existed, one of them
+/// (this one) missing the vendor-directory skip list.
 pub fn collect_nv_files(root: &Path) -> Vec<(Url, String)> {
-    let mut out = Vec::new();
-    collect_nv_files_rec(root, &mut out);
-    out
-}
-
-fn collect_nv_files_rec(dir: &Path, out: &mut Vec<(Url, String)>) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if name == "target" || name.starts_with('.') {
-                continue;
-            }
-            collect_nv_files_rec(&path, out);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("nv") {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                if let Ok(uri) = Url::from_file_path(&path) {
-                    out.push((uri, text));
-                }
-            }
-        }
-    }
+    crate::compiler::collect_nv_paths(root)
+        .into_iter()
+        .filter_map(|path| {
+            let text = std::fs::read_to_string(&path).ok()?;
+            let uri = Url::from_file_path(&path).ok()?;
+            Some((uri, text))
+        })
+        .collect()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
