@@ -1582,13 +1582,37 @@ static void _materialize_pool(void) {
                  (char*)_workers + (size_t)n_workers * sizeof(NovaWorker));
 #endif
 
+    /* Plan 211 §7.3 [M-runq-init-steal-race]: расщеплено на 2 фазы (было один
+     * цикл init+spawn на итерацию). Воркер i, запущенный uv_thread_create
+     * в старой единой итерации, немедленно входит в _worker_main и на первой
+     * же попытке steal (nova_runq_steal по всем _n_workers) мог обратиться
+     * к _workers[k] для k>i — которые main-поток ещё НЕ дошёл инициализировать
+     * (или инициализирует ПРЯМО СЕЙЧАС). TSan подтвердил: write nova_runq_init
+     * (main) vs atomic-read nova_runq_grab (уже запущенный воркер), БЕЗ
+     * синхронизирующего mutex между ними (runq.h:131↔273). Было безобидно
+     * только потому, что calloc уже занулил память ДО цикла (head=0,tail=0,
+     * slots=NULL совпадают с nova_runq_init'ными значениями) — везение по
+     * совпадению начальных значений, не спроектированный инвариант.
+     *
+     * Фикс (тот же приём, что Go procresize() строит allp[] под STW ДО
+     * того, как любой G встанет на новый P; Tokio строит весь Vec<Worker>
+     * до thread::spawn любого из них): Фаза 1 инициализирует КАЖДЫЙ
+     * _workers[i] — ни один OS-поток ещё не существует ни для одного
+     * воркера, поэтому ничто не может гоняться с этими записями. Фаза 2
+     * стартует OS-потоки — к этому моменту весь _workers[] полностью
+     * инициализирован, поэтому pthread_create-гарантия («запись создателя
+     * ДО create() видна новому потоку») покрывает ВЕСЬ массив для КАЖДОГО
+     * воркера, т.к. все записи произошли строго до ПЕРВОГО создания потока.
+     * Нулевая цена — тот же объём работы, просто пересортирован. */
+
+    /* Фаза 1: инициализировать КАЖДЫЙ _workers[i]. */
     for (int i = 0; i < n_workers; i++) {
         NovaWorker* w = &_workers[i];
         w->id = i;
         nova_abool_init(&w->stop, false);
         nova_aint_init(&w->pending_count, 0);
         /* Plan 44.7: preemption state — calloc'нуто в 0, инициализируем явно.
-         * Single-threaded here (before this worker's uv_thread_create) — no
+         * Single-threaded here (before ANY worker's uv_thread_create) — no
          * race yet, but atomic for consistency with the other 3 touch-sites
          * ([M-211-preempt-flag-plain-race]). */
         __atomic_store_n(&w->preempt_flag, 0, __ATOMIC_RELAXED);
@@ -1628,8 +1652,13 @@ static void _materialize_pool(void) {
         /* [M-183-net2-loop-affinity-cross-thread-op] fix: per-worker
          * deferred-call queue. */
         nova_call_queue_init(&w->call_queue);
+    }
 
-        rc = uv_thread_create(&w->thread, _worker_main, w);
+    /* Фаза 2: только теперь стартуют OS-потоки — каждый _workers[i] уже
+     * полностью инициализирован (см. комментарий выше). */
+    for (int i = 0; i < n_workers; i++) {
+        NovaWorker* w = &_workers[i];
+        int rc = uv_thread_create(&w->thread, _worker_main, w);
         if (rc != 0) {
             fprintf(stderr, "nova: uv_thread_create failed: %s\n", uv_strerror(rc));
             abort();
