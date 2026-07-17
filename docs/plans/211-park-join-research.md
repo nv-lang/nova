@@ -106,7 +106,7 @@ wedge-гейт P80/P200 + loadtest.ps1 все блоки + std/concurrency PASS 
 ## 7. Ход расследования 2026-07-17 (sonnet, worktree `nova-211r` @ `p211-races`)
 
 Задача этого захода: разобрать 3 TSan-подтверждённые гонки субстрата (накопленные с
-2026-07-16, см. §5 п.4 и `docs/plans/linux-build-progress.md` §«Бонус»), починить нементальные
+2026-07-16, см. §5 п.4 и чекпоинт волны (удалён при закрытии, см. git-историю)), починить нементальные
 безопасно (с TSan-до/после), спроектировать фикс для архитектурной (runq), сверить с картой
 park-join (§4). Без тяжёлых стресс-прогонов на Windows-хосте — TSan-верификация только на WSL
 (`~/nova-work`, скрипт `~/tsan_build.sh`, минимальный `mn_smoke.c`-репро: `supervised { spawn{};
@@ -182,7 +182,7 @@ alloc_count.** Гонки sysmon и alloc_count TSan-подтверждённо 
 
 ### 7.3 Архитектурный фикс runq init↔steal — ✅ РЕАЛИЗОВАНО (2026-07-17, sonnet, §7.3 продолжение)
 
-**Корневая причина (подтверждена TSan-стеком, `docs/plans/linux-build-progress.md` + этот
+**Корневая причина (подтверждена TSan-стеком, чекпоинт волны (удалён при закрытии, см. git-историю) + этот
 заход):** `_materialize_pool` (runtime.c) — ОДИН цикл `for (i = 0; i < n_workers; i++)`, который
 и инициализирует `_workers[i]` (id/stop/pending_count/preempt_flag/`nova_scope_init`/
 `nova_runq_init`/`nova_scope_grow`/`nova_sched_get_state`/dispatch-hooks/wake_mu/runnext/
@@ -335,7 +335,7 @@ for (int i = 0; i < n_workers; i++) {
 `app_effect_basic_t8_1`'s «падает на выходе» или к `supervisor_parfor_test`). Прямая проверка
 (TSan-прогон ИМЕННО этих 2 фикстур, не синтетического `mn_smoke.c`) не сделана и в этом заходе —
 `app_effect_basic_t8_1` компилируется как большой merged-CU (сотни файлов, ~60-1000+с сборки в
-разных режимах, см. `docs/plans/198-redo-notes.md`) — вне бюджета «targeted smoke» этой волны.
+разных режимах, см. `docs/plans/wip/198-redo-notes.md`) — вне бюджета «targeted smoke» этой волны.
 
 **Следующий шаг (за интегратором, не эта волна):** после мержа §7.3 в `main` — TSan-прогон
 именно этих 2 фикстур напрямую (не только синтетики) на живом CI/Linux-окружении; **снятие

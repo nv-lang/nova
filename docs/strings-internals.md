@@ -22,7 +22,7 @@ std/runtime/
   string_builder.nv        ← `runtime.string_builder`: тонкий consume-wrapper над Vec[u8]
 ```
 
-> **`_buffer` ≡ `Vec[u8]`** (D-R5, [findings](plans/152-findings.md)). Отдельный
+> **`_buffer` ≡ `Vec[u8]`** (D-R5, [findings](plans/wip/152-findings.md)). Отдельный
 > `string_buffer.nv`/`StrBuf` НЕ вводится — `Vec[u8]` уже RawMem-буфер (Plan 131), а
 > `StringBuilder` уже обёртка над ним. Дублировать grow/alloc Vec'а = нарушить DRY.
 
@@ -34,7 +34,7 @@ std/runtime/
 `module runtime.string` и сливаются (прецедент: `sync.nv`+`sync_test.nv` =
 `runtime.sync`). Следствие: `import std.runtime.string.{X}` и prelude
 `export import std.runtime.string.{…}` работают без изменений — модуль тот же.
-(См. [docs/plans/152-findings.md](plans/152-findings.md) F4.)
+(См. [docs/plans/wip/152-findings.md](plans/wip/152-findings.md) F4.)
 
 ### Видимость / internal
 
@@ -81,4 +81,4 @@ str-Nova-body записи удалены в Plan 152.0 Ф.2.5 как вести
 лишь: операторы `==`/`!=`/`+`/`<`/`<=`/`>`/`>=` → C `nova_str_eq`/`concat`/`lt`/…
 (`emit_c.rs`, маркер `[M-139.1-operator-lowered-methods]` — декомиссия в Plan 152.5a) +
 `@hash` (`nova_str_hash` — SipHash с DoS-стойким per-process seed, намеренно в C). См.
-[docs/plans/152-findings.md](plans/152-findings.md) F2/D-R2..D-R4.
+[docs/plans/wip/152-findings.md](plans/wip/152-findings.md) F2/D-R2..D-R4.

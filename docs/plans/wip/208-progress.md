@@ -43,7 +43,7 @@ Worktree: `d:/Sources/nv-lang/nova-208`, branch `plan208-spec` (from `899ae7ab7`
 
 ## Неопределённости / находки (для отчёта владельцу)
 
-- **str.from_debug**: 174.2-notes (`docs/plans/174.2-scalar-to-str-notes.md` секция «ВАЖНАЯ
+- **str.from_debug**: 174.2-notes (`docs/plans/wip/174.2-scalar-to-str-notes.md` секция «ВАЖНАЯ
   находка вне карты») явно оставили `str.from_debug(@)` (Debug-протокол default-body,
   `std/prelude/protocols.nv`) НЕТРОНУТЫМ и, похоже, мёртвым/нереализованным символом (нет
   dispatch-ветки в emit_c.rs). Существующий D73-баннер (08-runtime.md ~1768) утверждает

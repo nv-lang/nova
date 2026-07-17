@@ -3805,7 +3805,7 @@ test "index out of bounds panics" panics "index out of bounds" {
    независимо от активных локальных оверрайдов.
 5. **Разрешение версий** — backtracking semver-unify (03.2) СОХРАНЁН как канон
    (доминирует MVS: находит решение всегда, когда оно существует; конфликт
-   мажоров — диагностика с цепочкой ограничений). Обоснование: docs/plans/204-progress.md.
+   мажоров — диагностика с цепочкой ограничений). Обоснование: чекпоинт волны удалён при закрытии, см. git-историю.
 
 ### Дофикс №3 (2026-07-15, [M-187] diamond) — `[replace]` = Cargo-`[patch]`-семантика (graph-wide), НЕ узкий Go-scope
 
@@ -3856,10 +3856,7 @@ lock не затронута.
 - Q-dependency-versioning (open-questions) — RESOLVED → D420.
 - [D78](07-modules.md) — пакет/модуль-модель; Plan 203 (nova-http — первый
   git-потребитель после миграции Ф.4); Plans 03.1/03.2/03.4 — фундамент.
-- docs/plans/204-progress.md — дофикс №2 session notes (owner corrections,
-  test tally); дофикс №3 ([M-187] diamond, graph-wide `[replace]`).
-- docs/plans/tls-diamond-progress.md — дофикс №3 checkpoint (диагноз, repro,
-  cross-package consume-cleanup codegen gap tracked separately).
+- Дофикс №2 (owner corrections, test tally) и дофикс №3 ([M-187] diamond, graph-wide `[replace]`; диагноз, repro, cross-package consume-cleanup codegen gap tracked separately) — чекпоинты волн удалены при закрытии, см. git-историю.
 
 ## D421. Contract execution model — `#debug` dev-only префикс + `--contracts`-уровни; ретракция `#unchecked`/`debug_assert` (Plan 194, 2026-07-14)
 

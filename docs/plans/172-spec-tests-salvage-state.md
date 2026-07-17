@@ -70,4 +70,4 @@ spec-секция D) + явный список retired-API (`byte_at`/`len`/`@sl
 
 **Реальные base-gaps для двусторонней конвергенции — НЕ из этого батча, а из V-трека** (adversarial-reviewed):
 d55.1 sum-coercion, d156 consume-checker generic-return subst, D53 anon-protocol-param, D277 generic-value-record
-mono, D55.4 field-range-check. См. 172-d-conformance-checklist.md.
+mono, D55.4 field-range-check. (чекпоинт волны удалён при закрытии, см. git-историю)

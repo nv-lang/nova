@@ -11261,7 +11261,7 @@ sink-протокол `Write`, сигнатуры Display/Debug переломл
 ## D314. Единое ядро cleanup — `defer` как примитив (defer-kernel)
 
 > **Plan 173 Ф.2 (defer-kernel unification). Статус:** 🔨 SPEC-FIRST (2026-07-04, написан ДО codegen;
-> реализация — под-атомы Ф.2, см. [173-f2-derisk-map.md](../../docs/plans/173-f2-derisk-map.md)).
+> реализация — под-атомы Ф.2 (де-риск-карта: чекпоинт волны удалён при закрытии, см. git-историю)).
 > **Закрывает** несведённость трёх cleanup-поверхностей (`defer` / `Consumable.on_exit`+`consume{}` /
 > `with Fail[E]`) из двух непримирённых эпох (Plan 173 §1). **Модель:** MODEL 1 «`defer` — ядро»
 > (sign-off 2026-06-20). **Нормативы:** [§3a](../../docs/plans/173-error-system-unify-harden.md)
@@ -11452,7 +11452,7 @@ Rust C-CONV — источник старого правила (итератор
 > примитива лоуэрится напрямую в Display-хелпер (emit_c.rs
 > `emit_interpolated_str` primitive dispatch: `nova_int_to_str`/`nova_f64_to_str`/…),
 > НЕ через `.to_str()` повторно; для не-примитива — через `Display.@display`.
-> Детали миграции — `[M-d410-str-from-retraction]`, `docs/plans/174.2-scalar-to-str-notes.md`.
+> Детали миграции — `[M-d410-str-from-retraction]`, `docs/plans/wip/174.2-scalar-to-str-notes.md`.
 
 > **AMEND (2026-07-16, Plan 200 Step 2) — хвост `std/time/duration.nv` закрыт.**
 > Последний оставшийся `as_*`-остров (`Duration`/`Timestamp`/`Monotonic` — не входил

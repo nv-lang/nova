@@ -31,7 +31,7 @@ assert'а в `d419_display_fmt_dispatch.nv` = легитимная миграц�
   - `compiler-codegen/nova_rt/nova_rt.h` — `fmt_f64_into` C-функция.
   - `std/src/runtime/string_builder.nv` — АДДИТИВНО: `@reserve`/`@advance`/
     `@write_padded`/`@pad_in_place`/`@into_str_checked` (старый API нетронут).
-  - Заметки: `docs/plans/208-f1-notes.md` (уже в main, читал перед стартом).
+  - Заметки: `docs/plans/wip/208-f1-notes.md` (уже в main, читал перед стартом).
   - **Вывод координации 152.7.2**: в main из «двух-методной D419» реально
     влиты — `Fmt`(2-осевой: `write(str)`+`alternate`+`precision`)/`FmtCtx`/
     `@display_fmt` в `protocols.nv` (docs+код), И РЕАЛЬНЫЙ потребитель

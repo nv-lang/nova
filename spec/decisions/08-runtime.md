@@ -1826,7 +1826,7 @@ fn main() {
 > `"${@}"` для примитива лоуэрится напрямую в Display-хелпер
 > (`nova_int_to_str`/`nova_f64_to_str`/…), не через `.to_str()` повторно.
 > Детали — [D410 AMEND](03-syntax.md#d410-ретракция-as_to_-близнецов-голые-имена-виды-копия-на-месте-вызова-2026-07-06),
-> `docs/plans/174.2-scalar-to-str-notes.md`.
+> `docs/plans/wip/174.2-scalar-to-str-notes.md`.
 
 > **Ревизия (2026-07-01, согласовано с [D325](04-effects.md#d325) Plan 177):** D73 и D77 —
 > **две отдельные иерархии** по модели Rust. `From`/`Into` строго инфаллибельны (возвращают T).
@@ -7832,7 +7832,7 @@ Plan 139.1). Этот блок — **umbrella** над per-фазовыми amen
 > (бэкают operator-lowering `emit_c.rs:17302`) + `@hash`. Декомиссия operator-lowering
 > (→ только `@hash`) — Plan 152.5a (D-R4, `[M-139.1-operator-lowered-methods]`). Stub-gen
 > из реестра НЕ запускать (перезатрёт hand-written `.nv`). См.
-> [Plan 152 findings F2/D-R2](../../docs/plans/152-findings.md).
+> [Plan 152 findings F2/D-R2](../../docs/plans/wip/152-findings.md).
 
 ### Ключевая переоценка privacy (исправляет пессимизм Plan 139.1 Ф.B)
 
