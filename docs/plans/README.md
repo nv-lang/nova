@@ -2,7 +2,9 @@
 
 В этой директории — только **планы** (что и когда делаем). Справочные
 материалы (таблицы сравнений, research-заметки, бенчмарки) живут в
-[docs/research/](../research/).
+[docs/research/](../research/). Рабочие файлы живых волн (чекпоинты/progress/notes/карты/
+verification) — в [wip/](wip/); при закрытии волны — удаляются (история в git), см.
+[dev-workflow.md §4](../dev-workflow.md#4-как-организована-работа-план-ориентированная-разработка).
 
 > **Открытые followup'ы** (`[M-…]`-маркеры): живой project-wide OPEN-view —
 > [backlog-followups.md](backlog-followups.md) (только актуальное). Plan-bound детали — в Followups
