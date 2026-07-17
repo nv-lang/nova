@@ -3421,8 +3421,8 @@ default` + метод собирается. Замечание (вне пери�
   ИЛИ `emit_c.rs` P67-LEGACY fallback-путь (~52222).
 
 - **[M-static-conv-array-record-mono-cc-fail]** (2026-07-17, P2, найден rtlint-волной
-  при W_STATIC_CONVERSION-ретракции) — mono-коллектор падает CC-FAIL на
-  extension-методе с ресивером `[]u8` и user-record телом: `fn []u8
+  при W_STATIC_CONVERSION-ретракции; РАЗВЕДКА-волна 2026-07-17 НЕ закрыла) —
+  extension-метод с ресивером `[]u8` и user-record телом: `fn []u8
   @to_readbuffer() -> ReadBuffer { ReadBuffer { ... } }` (симметрично
   to_writebuffer). Из-за этого канон-переименования `ReadBuffer.from`/
   `WriteBuffer.from` → `x.to_*()` ОТКАЧЕНЫ и стоят под `nova:allow
@@ -3434,3 +3434,26 @@ default` + метод собирается. Замечание (вне пери�
   вскрывается codegen-путаница byte/str (глубже, чем сам retract); правка откачена,
   файл не тронут. Разобрать отдельным заходом; блокирует полную миграцию
   nova_tests/generics на пост-174.2 API.
+  to_writebuffer) ломает НЕСВЯЗАННУЮ типизацию в том же compile unit
+  (воспроизведено дословно: `[E7320] no field or method ptr/len on []u8` в
+  СОВЕРШЕННО другом файле `string/core.nv`, метод `to_str_unchecked`; в
+  других запусках — `[E_RECV_METHOD_MISMATCH]` на ресивере `HashMap`/
+  `WriteBuffer` — см. ниже про нестабильность). Разведка-волна (worktree
+  `nova-slicemono`) прочесала `emit_c.rs` is_array_ext-регистрацию,
+  `check_instance_overload`'s `array_elem_key` (196.7-класс), Channel 1/1b в
+  `infer_expr_c_type`, `sig_registry.rs::merge_module_fns`'s per-type
+  «already known» гейт (точечный фикс на per-(type,method) ПРИМЕНЁН И
+  ПЕРЕПРОВЕРЕН — не помог, откачен) — корень НЕ локализован до одной строки.
+  КРИТИЧЕСКАЯ методологическая находка: `external_registry.rs`'s
+  `include_str!("../../../std/src/runtime/read_buffer.nv")` не всегда
+  корректно инвалидируется Cargo incremental build при правке ТОЛЬКО .nv-файла
+  — обязателен `touch compiler-codegen/src/codegen/external_registry.rs` перед
+  каждым rebuild после правки read_buffer.nv/write_buffer.nv/etc., иначе
+  результаты недостоверны (без этого 3 разных rebuild дали 3 разных ложных
+  симптома). Полный протокол расследования, отвергнутые/неподтверждённые
+  кандидаты, карта для следующей волны, владелец-директива по финальной форме
+  API (to_*/into_* dual-form) — **docs/plans/wip/slice-ext-record-notes.md**.
+  Канон-переименования `ReadBuffer.from`/`WriteBuffer.from` → `x.to_*()`
+  ОСТАЮТСЯ откачены, стоят под `nova:allow W_STATIC_CONVERSION`
+  (read_buffer.nv:54, write_buffer.nv:60). После фикса — вернуть
+  переименования (dual-form to_*/into_*, см. notes) и снять оба подавления.
