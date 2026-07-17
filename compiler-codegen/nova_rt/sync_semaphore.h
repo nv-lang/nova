@@ -18,10 +18,10 @@
 
 /* ── Semaphore TLF (timer) handle ─────────────────────────────────────────
  *
- * Used by try_acquire_for(Duration): raw-malloc'd (NOT GC-managed).
- * Lifecycle: allocated in try_acquire_for before park; freed in close_cb.
+ * Used by acquire_for(Duration): raw-malloc'd (NOT GC-managed).
+ * Lifecycle: allocated in acquire_for before park; freed in close_cb.
  * Protocol (under sem->mu):
- *  - try_acquire_for: alloc handle, enqueue timed waiter, start timer, park.
+ *  - acquire_for: alloc handle, enqueue timed waiter, start timer, park.
  *  - On acquire (release transfers permits): set handle->waiter=NULL, wake.
  *    Timer fires later, sees waiter==NULL, calls uv_close.
  *  - On timeout (timer fires first): remove waiter from queue,
@@ -225,7 +225,7 @@ static inline nova_bool Nova_Semaphore_method_try_acquire(Nova_Semaphore* s) {
     return false;
 }
 
-/* ── try_acquire_for(Duration) ─────────────────────────────────────────────
+/* ── acquire_for(Duration) ─────────────────────────────────────────────
  *
  * Attempt to acquire within timeout. Returns true if acquired, false if
  * timeout expired. timeout <= 0 → behaves as try_acquire().
@@ -234,7 +234,7 @@ static inline nova_bool Nova_Semaphore_method_try_acquire(Nova_Semaphore* s) {
  *
  * timeout is Nova_Duration* — void* avoids include-order dependency;
  * first field is int64_t nanos. */
-static inline nova_bool Nova_Semaphore_method_try_acquire_for(Nova_Semaphore* s,
+static inline nova_bool Nova_Semaphore_method_acquire_for(Nova_Semaphore* s,
                                                                void* timeout) {
     int64_t nanos = *(int64_t*)timeout;
     if (nanos <= 0) return Nova_Semaphore_method_try_acquire(s);
@@ -272,7 +272,7 @@ static inline nova_bool Nova_Semaphore_method_try_acquire_for(Nova_Semaphore* s,
     NovaSemaphoreTLFHandle* handle = (NovaSemaphoreTLFHandle*)malloc(sizeof(NovaSemaphoreTLFHandle));
     if (!handle) {
         nova_mutex_unlock(&s->mu);
-        fprintf(stderr, "nova: Semaphore.try_acquire_for: malloc failed\n");
+        fprintf(stderr, "nova: Semaphore.acquire_for: malloc failed\n");
         abort();
     }
     handle->sem        = (void*)s;
@@ -328,7 +328,7 @@ static inline nova_int Nova_Semaphore_method_available_permits(const Nova_Semaph
     return (nova_int)__atomic_load_n(&s->permits, __ATOMIC_RELAXED);
 }
 
-/* ── Timer callback (fires when try_acquire_for timeout expires) ───────────
+/* ── Timer callback (fires when acquire_for timeout expires) ───────────
  *
  * Defined after Nova_Semaphore (used Nova_Semaphore* via handle->sem void*). */
 static void _nova_sem_tlf_timer_cb(uv_timer_t* h) {

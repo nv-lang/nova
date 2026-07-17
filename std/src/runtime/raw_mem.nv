@@ -107,7 +107,9 @@ export extern "nova" unsafe fn RawMem.free_uncollectable(ptr *mut u8) -> ()
 /// `size_of[T]()` at every call site; this wrapper does that once, here.
 ///
 /// Caller wraps in `unsafe { }` block — raw pointer operation.
-export unsafe fn RawMem.copy_n[T](src *T, dst *mut T, count int) -> () {
+export unsafe fn RawMem.copy_n[T](src *T, dst *mut T, count int) -> ()
+    requires count >= 0
+{
     RawMem.copy(src as *u8, dst as *mut u8, count * size_of[T]())
 }
 
@@ -118,6 +120,8 @@ export unsafe fn RawMem.copy_n[T](src *T, dst *mut T, count int) -> () {
 /// bytes.
 ///
 /// Caller wraps in `unsafe { }` block — raw pointer operation.
-export unsafe fn RawMem.copy_n_nonoverlapping[T](src *T, dst *mut T, count int) -> () {
+export unsafe fn RawMem.copy_n_nonoverlapping[T](src *T, dst *mut T, count int) -> ()
+    requires count >= 0
+{
     RawMem.copy_nonoverlapping(src as *u8, dst as *mut u8, count * size_of[T]())
 }

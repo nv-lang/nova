@@ -11,6 +11,6 @@ fn add_suffix(sb StringBuilder) -> int {
 }
 
 test "no-mut + StringBuilder append → error" {
-    consume sb = StringBuilder.from("hi")
+    consume sb = "hi".to_stringbuilder()
     ro _ = add_suffix(sb)
 }

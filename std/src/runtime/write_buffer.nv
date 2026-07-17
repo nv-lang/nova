@@ -43,10 +43,20 @@ export type WriteBuffer {
 const INITIAL_CAPACITY = 16
 
 // Пустой WriteBuffer с pre-allocated capacity 16.
-export fn WriteBuffer.new(cap int = INITIAL_CAPACITY) -> Self => { buf: []u8.new(cap: cap) }
+export fn WriteBuffer.new(cap int = INITIAL_CAPACITY) -> Self
+    requires cap >= 0
+    => { buf: []u8.new(cap: cap) }
 
 // WriteBuffer из существующих байт (deep copy — append через memmove).
 // Param `b` is readonly by default (D176 amend, Plan 108.1).
+//
+// [M-static-conv-array-record-mono-cc-fail] (2026-07-17, НЕ мигрирован):
+// та же ретракция, что у `ReadBuffer.from` (read_buffer.nv) — extension-
+// метод `[]u8 @to_writebuffer()`, строящий user-record тела, воспроизводимо
+// ломает mono-коллектор (см. read_buffer.nv коммент, идентичный класс бага:
+// `Nova_NovaArray_nova_int_method_to_X` undefined на линковке). Оставлено
+// как static `.from` до фикса; W_STATIC_CONVERSION находка сохранена
+// намеренно.
 export fn WriteBuffer.from(b []u8) -> Self {
     mut wb WriteBuffer = { buf: []u8.new(cap: b.len()) }
     wb.buf.append(b)
@@ -93,7 +103,9 @@ export fn WriteBuffer mut @write_bytes(src []u8) -> @ { @buf.append(src) }
 // Plan 90 followup `[]T.append_zero(n)` — bulk memset extension; O(1)
 // growth amortized + single memset(0) для всего сегмента (vs наивный
 // push-loop с amortized realloc'ами).
-export fn WriteBuffer mut @write_zero(n int) -> @ {
+export fn WriteBuffer mut @write_zero(n int) -> @
+    requires n >= 0
+{
     if n <= 0 { return }
     @buf.append_zero(n)
 }

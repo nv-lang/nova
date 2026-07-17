@@ -783,14 +783,14 @@ static inline nova_bool Nova_AtomicBool_method_fetch_xor_MemOrdering(Nova_Atomic
     return (nova_bool)__atomic_fetch_xor(&a->value, (bool)v, nova_mo_c(ord));
 }
 
-/* ── Plan 103.3: TLF timer state (try_lock_for / try_read_for / try_write_for)
+/* ── Plan 103.3: TLF timer state (lock_for / read_for / write_for)
  *
  * NovaMutexTLFHandle is raw-malloc'd (NOT GC-managed). Lifecycle:
- *   allocated in try_lock_for() before park.
+ *   allocated in lock_for() before park.
  *   timer_cb or close_cb frees it (via _nova_mutex_tlf_close_cb).
  *
  * Protocol (all under lock's internal mu for serialization):
- *   - try_lock_for(): alloc handle, enqueue timed waiter, start timer, park.
+ *   - lock_for(): alloc handle, enqueue timed waiter, start timer, park.
  *   - On acquire (unlock transfers lock to waiter): set handle->waiter=NULL,
  *     wake fiber. Timer will eventually fire, see waiter==NULL, call uv_close.
  *   - On timeout (timer fires first): remove waiter from queue, set
@@ -814,7 +814,7 @@ typedef struct NovaMutexWaiter {
     int                     slot;
     struct NovaMutexWaiter* next;
     struct NovaMutexWaiter* prev;
-    /* Plan 103.3: extended fields for try_lock_for(). Zero-init for lock(). */
+    /* Plan 103.3: extended fields for lock_for(). Zero-init for lock(). */
     bool                    timed_out;   /* set by timer_cb before wake */
     NovaMutexTLFHandle*     tlf_handle;  /* NULL for plain lock() waiters */
 } NovaMutexWaiter;
@@ -838,7 +838,7 @@ typedef struct {
     NovaMutexWaiter*  tail;
 } Nova_Mutex;
 
-/* ── Mutex timer callback (fires when try_lock_for timeout expires) ─
+/* ── Mutex timer callback (fires when lock_for timeout expires) ─
  * Defined after Nova_Mutex so we can use it by name (forward-compat: we used
  * void* in NovaMutexTLFHandle.mutex, so no circular-struct issue). */
 
@@ -944,12 +944,12 @@ static inline Nova_MutexGuard* Nova_Mutex_method_lock(Nova_Mutex* m) {
     return _g;
 }
 
-/* Plan 103.3: try_lock_for(Duration) — attempt to acquire within timeout.
+/* Plan 103.3: lock_for(Duration) — attempt to acquire within timeout.
  * Returns true if acquired, false if timeout expired.
  * Timeout <= 0: behaves as try_lock() (non-blocking).
  * Fiber path: arms a libuv timer; parks until lock acquired or timer fires.
  * Non-fiber path: spin-poll until deadline. */
-static inline nova_bool Nova_Mutex_method_try_lock_for(Nova_Mutex* m,
+static inline nova_bool Nova_Mutex_method_lock_for(Nova_Mutex* m,
                                                         void* timeout) {
     /* timeout is Nova_Duration* — void* avoids include-order dep;
      * first field is int64_t nanos. */
@@ -989,7 +989,7 @@ static inline nova_bool Nova_Mutex_method_try_lock_for(Nova_Mutex* m,
     NovaMutexTLFHandle* handle = (NovaMutexTLFHandle*)malloc(sizeof(NovaMutexTLFHandle));
     if (!handle) {
         nova_mutex_unlock(&m->mu);
-        fprintf(stderr, "nova: Mutex.try_lock_for: malloc failed\n");
+        fprintf(stderr, "nova: Mutex.lock_for: malloc failed\n");
         abort();
     }
     handle->mutex      = (void*)m;
@@ -1271,7 +1271,7 @@ static inline nova_bool Nova_RwLock_method_try_read(Nova_RwLock* rw) {
     return false;
 }
 
-static inline nova_bool Nova_RwLock_method_try_read_for(Nova_RwLock* rw, void* timeout) {
+static inline nova_bool Nova_RwLock_method_read_for(Nova_RwLock* rw, void* timeout) {
     /* timeout is Nova_Duration* — void* avoids include-order dep. */
     int64_t tnanos = *(int64_t*)timeout;
     if (tnanos <= 0) return Nova_RwLock_method_try_read(rw);
@@ -1376,7 +1376,7 @@ static inline nova_bool Nova_RwLock_method_try_write(Nova_RwLock* rw) {
     return false;
 }
 
-static inline nova_bool Nova_RwLock_method_try_write_for(Nova_RwLock* rw, void* timeout) {
+static inline nova_bool Nova_RwLock_method_write_for(Nova_RwLock* rw, void* timeout) {
     /* timeout is Nova_Duration* — void* avoids include-order dep. */
     int64_t tnanos = *(int64_t*)timeout;
     if (tnanos <= 0) return Nova_RwLock_method_try_write(rw);
@@ -1600,7 +1600,7 @@ static inline nova_bool Nova_ReentrantMutex_method_try_lock(Nova_ReentrantMutex*
     return false;
 }
 
-static inline nova_bool Nova_ReentrantMutex_method_try_lock_for(
+static inline nova_bool Nova_ReentrantMutex_method_lock_for(
         Nova_ReentrantMutex* rm, void* timeout) {
     /* timeout is Nova_Duration* — void* avoids include-order dep. */
     int64_t tnanos = *(int64_t*)timeout;
@@ -2255,16 +2255,16 @@ static inline nova_unit Nova_Permit_consume_cleanup(Nova_Permit* p, void* outcom
 
 /* ── OnceGuard ──────────────────────────────────────────────────────────── */
 
-/* Nova_Once_method_try_start: returns true if this fiber won the race.
+/* Nova_Once_method_start: returns true if this fiber won the race.
  * Equivalent to Nova_Once_method_run() — same state machine.
- * D174: In Nova, try_start() is implemented as a Nova-body fn that calls
- * @try_start_won() (external) and constructs an OnceGuard on the heap when true. */
-static inline nova_bool Nova_Once_method_try_start_won(Nova_Once* o) {
+ * D174: In Nova, start() is implemented as a Nova-body fn that calls
+ * @start_won() (external) and constructs an OnceGuard on the heap when true. */
+static inline nova_bool Nova_Once_method_start_won(Nova_Once* o) {
     return Nova_Once_method_run(o);
 }
 
 /* Nova_Once_method_make_guard: allocate an OnceGuard for this Once.
- * Called by Nova try_start() body after try_start_won() returns true. */
+ * Called by Nova start() body after start_won() returns true. */
 static inline Nova_OnceGuard* Nova_Once_method_make_guard(Nova_Once* o) {
     Nova_OnceGuard* g = (Nova_OnceGuard*)nova_alloc(sizeof(Nova_OnceGuard));
     g->ptr = (nova_int)(uintptr_t)o;

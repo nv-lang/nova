@@ -9,7 +9,7 @@ module spec_tests.conformance
 test "abort transitions Once to Poisoned state" {
     mut once = Once.new()
 
-    if once.try_start_won() {
+    if once.start_won() {
         consume g = once.make_guard()
         g.abort()   // init failed; Once → POISONED
     }
@@ -21,7 +21,7 @@ test "abort: once guard abort path works" {
     mut once = Once.new()
     mut aborted = AtomicInt.new(0)
 
-    if once.try_start_won() {
+    if once.start_won() {
         consume g = once.make_guard()
         aborted.fetch_add(1)
         g.abort()

@@ -103,10 +103,13 @@ export fn str @split(sep str) -> SplitIter =>
 fn is_ascii_ws(b int) -> bool => b == 32 || (b >= 9 && b <= 13)
 
 // Plan 152.2 Ф.1 (D251), lazy since Plan 199: split into AT MOST `n` parts;
-// the last part is the unsplit remainder (Rust `splitn`). `n <= 0` → empty
-// iterator; `n == 1` / empty sep → whole string (one element).
-export fn str @splitn(n int, sep str) -> SplitIter =>
-    { src: @, sep, start: 0, done: false, limit: if n <= 0 { 0 } else { n }, splits: 0, terminator: false }
+// the last part is the unsplit remainder (Rust `splitn`). `n == 0` → empty
+// iterator; `n == 1` / empty sep → whole string (one element). `n < 0` —
+// contract violation (W_PARAM_NO_CONTRACT AMEND, 2026-07-17, владелец):
+// negative part-count is a caller bug, not a graceful degenerate case.
+export fn str @splitn(n int, sep str) -> SplitIter
+    requires n >= 0
+    => { src: @, sep, start: 0, done: false, limit: if n <= 0 { 0 } else { n }, splits: 0, terminator: false }
 
 // Split from the RIGHT, parts in REVERSE order (Rust `rsplit`), lazy since
 // Plan 199. Empty sep → whole (one element).
@@ -114,9 +117,11 @@ export fn str @rsplit(sep str) -> RSplitIter =>
     { src: @, sep, end: @byte_len(), done: false, limit: -1, splits: 0 }
 
 // `rsplit` into AT MOST `n` parts (reverse order), lazy since Plan 199.
-// `n <= 0` → empty iterator; `n == 1` / empty sep → whole.
-export fn str @rsplitn(n int, sep str) -> RSplitIter =>
-    { src: @, sep, end: @byte_len(), done: false, limit: if n <= 0 { 0 } else { n }, splits: 0 }
+// `n == 0` → empty iterator; `n == 1` / empty sep → whole. `n < 0` —
+// contract violation (W_PARAM_NO_CONTRACT AMEND, 2026-07-17, владелец).
+export fn str @rsplitn(n int, sep str) -> RSplitIter
+    requires n >= 0
+    => { src: @, sep, end: @byte_len(), done: false, limit: if n <= 0 { 0 } else { n }, splits: 0 }
 
 // Split at the FIRST occurrence of `sep` → `Some((before, after))`, `None` if
 // not found. Byte-offsets, zero-copy views (Rust `split_once`).

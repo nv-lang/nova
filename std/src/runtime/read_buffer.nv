@@ -37,6 +37,20 @@ export type ReadBuffer {
 // Создать ReadBuffer из []u8 (view + position 0). Data копируется как
 // readonly handle — slice-view внутри cursor'а без отдельной alloc'и
 // сверх ReadBuffer struct. Param `b` readonly by default (D176 amend).
+//
+// [M-static-conv-array-record-mono-cc-fail] (2026-07-17, НЕ мигрирован):
+// канон §1а требует `[]u8 @to_readbuffer()` (метод на источнике) вместо
+// static `.from`, но эта форма — extension-метод на `[]u8`, ВОЗВРАЩАЮЩИЙ
+// user-record (`ReadBuffer { data: @, ... }`) — воспроизводимо ломает
+// линковку CC-стадии в spec_tests/conformance/read_nav.nv: `lld-link:
+// undefined symbol: Nova_NovaArray_nova_int_method_to_readbuffer` (mono-
+// коллектор мономорфизирует `to_readbuffer` для ЛЮБОЙ `[]T`-инстанциации,
+// встреченной в compile unit — не только `[]u8`, — и падает на T=int).
+// Существующие `[]u8 @to_str()`/`@to_str_unchecked()` (string/core.nv)
+// НЕ триггерят баг — тело у них не строит user-record через `{ field: @ }`.
+// Оставлено как static `.from` (W_STATIC_CONVERSION лint-находка сохранена
+// НАМЕРЕННО) до отдельного фикса mono-коллектора; см. отчёт задачи
+// fix-runtime-lint-debt. НЕ мигрировать call-сайты обратно без этого фикса.
 export fn ReadBuffer.from(b []u8) -> Self => { data: b, pos: 0 }
 
 // ─── Cursor metadata ───
@@ -48,8 +62,9 @@ export fn ReadBuffer @position() -> int => @pos
 export fn ReadBuffer @remaining() -> int => @data.len() - @pos
 
 // True если осталось ≥ n байт.
-export fn ReadBuffer @has_remaining(n int) -> bool {
-    if n < 0 { return false }
+export fn ReadBuffer @has_remaining(n int) -> bool
+    requires n >= 0
+{
     @data.len() - @pos >= n
 }
 

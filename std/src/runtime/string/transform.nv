@@ -179,8 +179,12 @@ export fn str @pad_center(width int, fill char) -> str {
     StringBuilder.new(cap: @byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, left).append(@).append_repeat(fill_s, right).into_str()
 }
 
-// Повторение строки n раз. n <= 0 → пустая строка.
-export fn str @repeat(n int) -> str {
+// Повторение строки n раз. n == 0 → пустая строка. n < 0 — contract
+// violation (W_PARAM_NO_CONTRACT AMEND, 2026-07-17, владелец): negative
+// repeat-count — caller bug, не graceful degenerate case.
+export fn str @repeat(n int) -> str
+    requires n >= 0
+{
     if n <= 0 { return "" }
     StringBuilder.new(cap: @byte_len() * n).append_repeat(@, n).into_str()
 }
@@ -215,8 +219,11 @@ export fn str @replace(from str, to str) -> str {
 }
 
 // Заменить первые `n` non-overlapping вхождений `from` на `to` (Rust `replacen`).
-// O(n) via StringBuilder: single scan with find.
-export fn str @replacen(from str, to str, n int) -> str {
+// O(n) via StringBuilder: single scan with find. n == 0 → s unchanged; n < 0 —
+// contract violation (W_PARAM_NO_CONTRACT AMEND, 2026-07-17, владелец).
+export fn str @replacen(from str, to str, n int) -> str
+    requires n >= 0
+{
     ro fn_len = from.byte_len()
     if n <= 0 || fn_len == 0 { return @ }
     consume sb = StringBuilder.new()

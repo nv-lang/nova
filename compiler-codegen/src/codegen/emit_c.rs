@@ -5969,7 +5969,7 @@ impl CEmitter {
                     // mono-канал: call-sites уходили с C-runtime имён
                     // (`Nova_OnceCell____…`) на mono-имена + эмитились ПУСТЫЕ
                     // дубль-определения (redefinition/UB). Nova-body методы sync
-                    // (with_lock/try_start) регистрируются как раньше.
+                    // (with_lock/start) регистрируются как раньше.
                     let is_generic = !f.is_external
                         && self.generic_types.contains(&recv.type_name);
                     let is_builtin_mono_sum = !f.is_external
@@ -13965,8 +13965,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // the checker also consumes, §0/§3). extern fns get NO forward decl (the real
             // impl is a C trampoline / `nova_rt` header), so they skip the MAIN span-index
             // at the bottom of this fn (line ~9579); without THIS, an INLINED library body
-            // calling `self.<extern>()` — e.g. the Nova-body `Once.try_start()` calling
-            // `self.try_start_won() -> bool` — finds NO channel entry at the U.4.5(a) flip
+            // calling `self.<extern>()` — e.g. the Nova-body `Once.start()` calling
+            // `self.start_won() -> bool` — finds NO channel entry at the U.4.5(a) flip
             // site and re-derives the return in legacy, which guesses `nova_int` (§0/§1
             // re-derive bug → `if condition must be bool, got nova_int`). The PRIMITIVE gate
             // is the safety: a primitive's C name is the SAME regardless of mono/tuple/Result
@@ -13997,7 +13997,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         //       erasure: `Some(self.<extern>())` where the extern returns e.g.
                         //       `OnceGuard` (`Nova_OnceGuard*`) — without the channel the extern
                         //       return erased to `nova_int` → `NovaOpt_nova_int` vs declared
-                        //       `NovaOpt_Nova_OnceGuard_p` (sync `Once.try_start`).
+                        //       `NovaOpt_Nova_OnceGuard_p` (sync `Once.start`).
                         let channel_safe = rt.is_primitive_lowerable() || matches!(
                             rt.peel_view(),
                             crate::types::ResolvedType::Named { name, args, .. }
@@ -28671,7 +28671,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // the receiver. The checker resolves it as self (Gap A, `31ed22b7`); codegen
                 // must lower it to the C receiver param `nova_self`, mirroring the SelfAccess
                 // arm — else an inlined Nova-body method using `self.m()` (e.g. sync
-                // `Once.try_start` → `self.try_start_won()`, exposed by U.1.3b sync-inline)
+                // `Once.start` → `self.start_won()`, exposed by U.1.3b sync-inline)
                 // emits `Nova_..._method_m(self)` with an undeclared C identifier `self`.
                 // `self` is reserved (never a user variable), so this is unambiguous. The
                 // value-record-by-pointer deref mirrors the SelfAccess arm exactly.
@@ -35075,11 +35075,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     {
                                         use crate::ast::SyncClass;
                                         let sync_class = decl.sync_class;
-                                        // W_REALTIME_TRY_LOCK_FOR_TIMER: try_lock_for in realtime
-                                        if self.in_realtime && recv_ty == "Mutex" && method == "try_lock_for" {
+                                        // W_REALTIME_TRY_LOCK_FOR_TIMER: lock_for in realtime.
+                                        // Method renamed `try_lock_for` -> `lock_for` (W_TRY_WITHOUT_SIBLING
+                                        // AMEND, 2026-07-17, owner decision, std/src/runtime/sync.nv) — the
+                                        // diagnostic id is kept unchanged (spec-level rename needs its own
+                                        // D-amendment; scope of that change was the method name only).
+                                        if self.in_realtime && recv_ty == "Mutex" && method == "lock_for" {
                                             self.warnings.borrow_mut().push(format!(
                                                 "[W_REALTIME_TRY_LOCK_FOR_TIMER] \
-                                                 `Mutex.try_lock_for()` uses a libuv timer (potential \
+                                                 `Mutex.lock_for()` uses a libuv timer (potential \
                                                  suspend) and may block even with a short timeout. \
                                                  Suggestion: use `try_lock()` for non-blocking attempt \
                                                  or move outside the `#realtime` context."
@@ -40077,7 +40081,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // divergence-скан — PRE-PASS (block_trailing_diverges бежит
                         // ДО эмиссии стейтментов ветки), полный re-derive Ident-ресивера
                         // бьётся в P67-пробу на ещё-не-зарегистрированном локале
-                        // (`match once.try_start() { Some(g2) => g2.commit() ... }`).
+                        // (`match once.start() { Some(g2) => g2.commit() ... }`).
                         // Ident: только материализованные источники; неизвестен →
                         // кандидаты по C-форме пропускаем (ниже остаётся прямой
                         // static-lookup по имени типа).
@@ -53178,7 +53182,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // U.1.3b Gap A (infer-половина, 2026-07-02): explicit `self` —
                     // ресивер (parser даёт Ident("self"), не SelfAccess); тип = C-тип
                     // receiver-параметра `nova_self` (зеркало emit-arm'а `self`).
-                    // Всплывает при inline sync-Nova-body (`self.try_start_won()`).
+                    // Всплывает при inline sync-Nova-body (`self.start_won()`).
                     if name == "self" {
                         if let Some(t) = self.var_types.get("nova_self") {
                             return t.clone();
@@ -54210,7 +54214,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // U.1.3b Gap A (infer-половина, 2026-07-02): explicit `self` —
                     // ресивер (parser даёт Ident("self"), не SelfAccess); тип = C-тип
                     // receiver-параметра `nova_self` (зеркало emit-arm'а `self`).
-                    // Всплывает при inline sync-Nova-body (`self.try_start_won()`).
+                    // Всплывает при inline sync-Nova-body (`self.start_won()`).
                     if name == "self" {
                         if let Some(t) = self.var_types.get("nova_self") {
                             return t.clone();

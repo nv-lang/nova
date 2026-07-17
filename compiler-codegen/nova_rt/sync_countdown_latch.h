@@ -9,7 +9,7 @@
 // Design mirrors WaitGroup waiter model:
 //  - doubly-linked list of parked fibers (NovaCDLWaiter, stack-allocated)
 //  - all waiters woken when count reaches 0 (WakeAll semantics)
-//  - try_await_for: libuv timer + NovaCDLTLFHandle (malloc'd, freed in close_cb)
+//  - await_for: libuv timer + NovaCDLTLFHandle (malloc'd, freed in close_cb)
 //
 // GC-race fix (M:N Windows): Nova_CountDownLatch allocated via
 // nova_alloc_uncollectable (same as Mutex — Plan 103.3 Discovery).
@@ -31,20 +31,20 @@
 //   CountDownLatch @count_down_n(n)  → Nova_CountDownLatch_method_count_down_n
 //   CountDownLatch @await()          → Nova_CountDownLatch_method_await
 //   CountDownLatch @try_await()      → Nova_CountDownLatch_method_try_await
-//   CountDownLatch @try_await_for(t) → Nova_CountDownLatch_method_try_await_for
+//   CountDownLatch @await_for(t) → Nova_CountDownLatch_method_await_for
 //   CountDownLatch @current_count()  → Nova_CountDownLatch_method_current_count
 
 #ifndef NOVA_RT_SYNC_COUNTDOWN_LATCH_H
 #define NOVA_RT_SYNC_COUNTDOWN_LATCH_H
 
-/* ── TLF handle (try_await_for timer state) ─────────────────────── */
+/* ── TLF handle (await_for timer state) ─────────────────────── */
 
 /* NovaCDLTLFHandle is raw-malloc'd (NOT GC-managed). Lifecycle:
- *   allocated in try_await_for() before park.
+ *   allocated in await_for() before park.
  *   timer_cb or close_cb frees it (via _nova_cdl_tlf_close_cb).
  *
  * Protocol (all under cdl->mu for serialization):
- *   - try_await_for(): alloc handle, enqueue timed waiter, start timer, park.
+ *   - await_for(): alloc handle, enqueue timed waiter, start timer, park.
  *   - count reaches 0 (wake path): nullify handle->waiter, wake fiber.
  *     Timer fires next but sees waiter==NULL → no-op.
  *   - timer fires first: remove waiter from queue, set timed_out=true,
@@ -124,7 +124,7 @@ static inline void _nova_cdl_wake_all(Nova_CountDownLatch* cdl) {
     cdl->head = NULL;
     cdl->tail = NULL;
     nova_mutex_unlock(&cdl->mu);
-    /* Walk waiter list and wake each. For try_await_for waiters: nullify
+    /* Walk waiter list and wake each. For await_for waiters: nullify
      * handle->waiter so timer_cb becomes a no-op when it eventually fires. */
     while (w) {
         NovaCDLWaiter* nxt = w->next;
@@ -254,14 +254,14 @@ static inline nova_bool Nova_CountDownLatch_method_try_await(Nova_CountDownLatch
     return done;
 }
 
-/* ── try_await_for(Duration) ────────────────────────────────────── */
+/* ── await_for(Duration) ────────────────────────────────────── */
 
 /* Park up to timeout waiting for count to reach 0.
  * Returns true if count reached 0, false if timeout expired.
  * timeout <= 0: behaves as try_await() (non-blocking).
  * Fiber path: arms a libuv timer; parks until count==0 or timer fires.
  * Non-fiber path: spin-poll until deadline. */
-static inline nova_bool Nova_CountDownLatch_method_try_await_for(Nova_CountDownLatch* cdl,
+static inline nova_bool Nova_CountDownLatch_method_await_for(Nova_CountDownLatch* cdl,
                                                                    void* timeout) {
     /* timeout is Nova_Duration* — void* avoids include-order dep;
      * first field is int64_t nanos. */
@@ -300,7 +300,7 @@ static inline nova_bool Nova_CountDownLatch_method_try_await_for(Nova_CountDownL
         (NovaCDLTLFHandle*)malloc(sizeof(NovaCDLTLFHandle));
     if (!handle) {
         nova_mutex_unlock(&cdl->mu);
-        fprintf(stderr, "nova: CountDownLatch.try_await_for: malloc failed\n");
+        fprintf(stderr, "nova: CountDownLatch.await_for: malloc failed\n");
         abort();
     }
     handle->cdl        = (void*)cdl;

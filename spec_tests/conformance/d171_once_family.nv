@@ -1,6 +1,6 @@
 // D171 — Once / OnceCell / Lazy: single-initialization (Plan 103.5, final).
 // Норма (spec/decisions/06-concurrency.md §D171): Once — одноразовое исполнение
-// (extern-пара try_start_won/make_guard — ядро в d174; is_completed);
+// (extern-пара start_won/make_guard — ядро в d174; is_completed);
 // OnceCell[T] — записываемая один раз ячейка (get→None до set, set-первый
 // побеждает, get→Some после); Lazy — отложенная инициализация (is_forced).
 // Single-fiber-safe подмножество. Шаблоны сверены с nova_tests/plan103_5 и
@@ -21,10 +21,10 @@ test "OnceCell: get None → set → get Some; повторный set не пе�
 test "Once: is_completed до/после commit (D171)" {
     mut d171_o = Once.new()
     assert(d171_o.is_completed() == false)
-    if d171_o.try_start_won() {
+    if d171_o.start_won() {
         consume d171_g = d171_o.make_guard()
         d171_g.commit()
     }
     assert(d171_o.is_completed() == true)
-    assert(d171_o.try_start_won() == false)
+    assert(d171_o.start_won() == false)
 }

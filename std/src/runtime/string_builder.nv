@@ -69,18 +69,26 @@ fn sb_clone_buf(src []u8) -> []u8 {
 }
 
 // Пустой StringBuilder с pre-allocated capacity 16.
-export fn StringBuilder.new(cap int = INITIAL_CAPACITY) -> Self => { buf: sb_init_buf(cap) }
+export fn StringBuilder.new(cap int = INITIAL_CAPACITY) -> Self
+    requires cap >= 0
+    => { buf: sb_init_buf(cap) }
 
 // StringBuilder из существующей строки (copy UTF-8 bytes).
-export fn StringBuilder.from(s str) -> Self => StringBuilder.new().append(s)
+//
+// W_STATIC_CONVERSION AMEND (2026-07-17, lint-разкраснение, владелец):
+// static-конверсия `StringBuilder.from(s)` — запрещённая «пятая дверь»
+// (nv-coding-style §1а, ретракция 2026-07-09). Канон: метод на источнике.
+export fn str @to_stringbuilder() -> StringBuilder => StringBuilder.new().append(@)
 
 // StringBuilder из одного codepoint (UTF-8 encode).
-// Plan 73.1 D180: delegate to from(str) — старый pattern `let mut sb = StringBuilder.new()
+// Plan 73.1 D180: delegate to to_stringbuilder() (str) — старый pattern `let mut sb = StringBuilder.new()
 // + sb.append(c)` нарушал D180 (sb consume-obligation не satisfied при
 // implicit fluent-return). [M-91.11-from-char-direct] ✅ RESOLVED/verified:
-// `new().append(c)` fluent chain совместим с D180 — реализован
-// строкой ниже (StringBuilder.from(c char)), str.from(c) не нужен.
-export fn StringBuilder.from(c char) -> Self => StringBuilder.new().append(c)
+// `new().append(c)` fluent chain совместим с D180.
+//
+// W_STATIC_CONVERSION AMEND (2026-07-17, lint-разкраснение, владелец): та же
+// ретракция, что у `str @to_stringbuilder()` выше — метод на источнике `char`.
+export fn char @to_stringbuilder() -> StringBuilder => StringBuilder.new().append(@)
 
 // ─── Query methods ───
 
@@ -161,7 +169,12 @@ export fn StringBuilder mut @append(arr []u8) -> @ { @buf.append(arr) }
 // intermediate; `int`/`f64` route through `@to_str()` (bare-T blanket,
 // `"${@}"` — same conv.h formatters the interp path uses), avoiding the temp
 // StringBuilder an interp-string body would otherwise allocate.
-export fn StringBuilder mut @append(n int) -> @ { @append(n.to_str()) }
+// Параметр `x` (не `n`, 2026-07-17): это ЗНАЧЕНИЕ для форматирования,
+// не count/index/len — прежнее имя `n` ложно матчило W_PARAM_NO_CONTRACT
+// (линт по имени параметра, не по семантике); `requires n >= 0` было бы
+// НЕВЕРНО (запрещало бы append отрицательных чисел). Rename на `x` —
+// консистентно с f64/f32-сиблингами ниже — снимает false-positive.
+export fn StringBuilder mut @append(x int) -> @ { @append(x.to_str()) }
 export fn StringBuilder mut @append(x f64) -> @ { @append(x.to_str()) }
 export fn StringBuilder mut @append(b bool) -> @ { if b { @append("true") } else { @append("false") } }
 // Plan 154.1 [M-154.1-f32-display-debug] + Plan 180: f32 via `@to_str()` →
