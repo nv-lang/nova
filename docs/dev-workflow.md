@@ -22,7 +22,9 @@
 - **Жёсткие правила:** никакого `git stash`; `git add` только по именам файлов; `git commit -s` (DCO),
   без `Co-Authored-By`; пересобрать `nova-cli` после правок `.rs`; тесты только через C-codegen.
 - **После большой задачи:** обновить `docs/project-creation.txt`, `docs/simplifications.md` и discussion-log
-  в **отдельном** репо `nova-private`.
+  в **отдельном** репо `nova-private`. В `simplifications.md` — только ДЕЙСТВУЮЩЕЕ упрощение (rationale + условие
+  снятия); закрытое сразу переносится в [docs/history/simplifications-closed.md](history/simplifications-closed.md),
+  диагнозы/хроники фиксов туда не пишутся вовсе (см. шапку файла).
 
 ---
 
