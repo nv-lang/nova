@@ -39199,3 +39199,66 @@ spec_tests/conformance/<любой файл>` (whole-CU) сейчас падае
   high-churn per-connection/per-request паттерна (не только TLS) —
   P2, требует opus-разведки в GC/fiber-arena слое, вне периметра
   какого-либо конкретного пакета.
+
+## [M-d55-str-literal-coercion-name-gated] ЗАКРЫТ (2026-07-18, ветка p-fix-d55-type-directed, sonnet по карте)
+
+- D55-амендмент «str-литерал → `[]u8`» (spec/decisions/02-types.md) специфицирован
+  ТИПО-направленно, но был реализован ИМЯ-направленно (`emit_c.rs::
+  synthesize_write_str_lit_bytes_coercion` — гейт на метод буквально `write` +
+  `all_methods`-safety-gate, §3 name-keyed анти-паттерн). Спека была правильная →
+  D-амендмент не нужен, чинилась реализация.
+- **Два окна** (найдены по коду, не выдуманы): (1) чекер ACCEPT-side —
+  `types/mod.rs::assignable_direct`'s `StrLit`-арм, доп. `is_bytes_slice_rt`
+  (структурная проверка `ResolvedType::Array(Scalar{width:8,signed:false})`) —
+  ОДИН choke-point, закрывающий ACCEPT для call-arg/let/array-element сразу
+  (заодно закрыл задокументированную асимметрию: protocol-receiver раньше тихо
+  проходил, конкретный receiver падал `[E_NO_MATCHING_OVERLOAD]` — теперь оба
+  принимают одинаково). (2) codegen resolved-C-type choke point —
+  `emit_c.rs::emit_expr_with_target_type` (уже был общим choke-point для
+  target-typed literal coercion — numeric/NovaOpt_/tuple; добавлен StrLit→`[]u8`
+  арм) — закрывает let/return/array-element ОДНИМ edit'ом. Call-arg (единственная
+  позиция, которую `emit_expr_with_target_type` не покрывает — обычная
+  call-arg emission не вызывает её для не-ArrayLit аргументов) — отдельный
+  pre-pass `synthesize_bytes_lit_call_args` (переименован из retired
+  `synthesize_write_str_lit_bytes_coercion`), ключ — `method_overloads` registry
+  (`(recv_type_name, method_name) → param_c_types[i]`, тот же registry что
+  `call_consume_arg_idxs`, populated на ТОМ ЖЕ сайте что старый `all_methods` —
+  покрытие строго совпадает со старым гейтом, БЕЗ привязки к имени метода).
+  Safety-gate «receiver с зарегистрированным write» снят полностью — тип уже
+  даёт позицию однозначно.
+- **2 доп. бага найдены изолированным scratch-прогоном** (не были очевидны из
+  чтения кода заранее): (a) return-position — 4 отдельных «trailing →
+  target-typed» гейта (contracts/non-contracts/handler-op пути в emit_c.rs)
+  гейтовались на `NovaOpt_`/`_NovaFixArr_`/typed-int, не знали про `[]u8` —
+  добавлен `is_bytes_slice_c_ty` в каждый; (b) `[][]u8` array-literal element —
+  `try_emit_typed_vec_literal` брал `elem_c` из ПЕРВОГО элемента
+  (`nova_str` для str-литерала), молча pointer-cast'я построенный `Vec[str]`
+  в `Vec[[]u8]` (реальный C type-punning баг, не просто пропущенная коэрсия) —
+  добавлен `all_str_lits`-override-арм, зеркалящий существующий
+  `all_numeric_lits` (f32/f64 hint-override).
+- Покрыты все 4 позиции спеки: call-arg (любой метод/free-fn/static-ctor, не
+  только `write`), `let` (ro/mut) с `[]u8`-аннотацией, return (arrow-body И
+  explicit `return`-stmt), element `[][]u8`. **Честный неполный кусок**: scope-
+  local `Stmt::Const`/module-level `Item::Const` с `[]u8`-аннотацией НЕ
+  покрыты — `emit_const_expr_typed`/`emit_const_expr` (constexpr-only emission)
+  не проходят через `emit_expr_with_target_type` вообще; `[]u8` как
+  compile-time constexpr (heap-Vec, не scalar) — отдельный архитектурный вопрос,
+  не связанный со str-литерал-гейтом конкретно. Новый floating-маркер
+  `[M-d55-const-bytes-lit-not-constexpr]` заведён в backlog-followups.md (P3,
+  честный под-маркер, не тихий пропуск).
+- **Тесты**: изолированный dev-модуль (test-conventions.md workflow) → PASS →
+  merged в `spec_tests/conformance/d55_bytes_lit_type_directed.nv` (pos, все 4
+  позиции + 2 non-regression: str-литерал в НЕ-`[]u8`-позиции остаётся str;
+  str-ПЕРЕМЕННАЯ всё ещё требует явный `.bytes()`) + `spec_tests/conformance/
+  neg/d55_bytes_lit_var_not_coerced_neg.nv` (E7301, D176 не сломан). Существующие
+  `d55_literal_coercion.nv`/`d374_write_sink_decouple.nv` верифицированы копией
+  в том же isolated-модуле — зелёные, без изменений в самих файлах.
+- **Приёмка**: `spec_tests/conformance/standalone --jobs 4` PASS 68/0 (byte-
+  identical к main — main САМ сейчас 68/0, не 69/0 как в исходном тексте
+  задачи — число сдвинулось естественно, не регрессия); `nova check
+  std/src/runtime` чист (PASS 17/0, warnings — pre-existing unused-import
+  noise, не мои); `examples/flagship/aggregator --strict-effects` — built
+  (только pre-existing warnings). Мега-CU (988-файловый `spec_tests.
+  conformance`) сознательно НЕ гонялся в этой волне (владелец: «мега-CU НЕ
+  гонять» в тексте задачи) — авторитетная проверка за оркестратором на
+  слиянии.

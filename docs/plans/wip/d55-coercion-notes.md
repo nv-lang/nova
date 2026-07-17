@@ -138,17 +138,14 @@ Safety-gate «приёмник с зарегистрированным write» �
 5. Флагман: `examples/flagship/aggregator/src/main.nv --strict-effects` —
    зелёный.
 
-## Статус на момент чекпоинта (сетевой обрыв)
+## Статус — ЗАКРЫТО (2026-07-18)
 
-- ✅ `cargo build --release` — зелёный (compiler-codegen + nova-cli).
-- ✅ Правки в emit_c.rs / types/mod.rs — написаны, компилируются.
-- 🔄 Изолированный scratch-фикстур файл — написан, дорабатывался
-  (упрощение position 1c/1d на prelude-экспортированный `WriteBuffer`
-  вместо выдуманного типа `D55ScratchWrap`), ЕЩЁ НЕ прогнан через `nova
-  test`.
-- ⏳ Следующий шаг: прогнать `nova test docs/plans/wip/d55-scratch` (env
-  `NOVA_GC_LIB_DIR`/`NOVA_GC_INCLUDE_DIR` на main-репо, см. AGENTS.md), чинить
-  до PASS, затем перенести в `spec_tests/conformance/` (pos) +
-  `spec_tests/conformance/neg/` (neg), затем пункты приёмки 3-5, затем
-  честный под-маркер в backlog-followups.md про `const []u8`, затем commit
-  + удаление scratch-директории.
+Все 5 пунктов приёмки зелёные (подробный вердикт + числа — `docs/simplifications.md`
+запись `[M-d55-str-literal-coercion-name-gated] ЗАКРЫТ`). Изолированный scratch
+доведён до PASS (2 доп. бага найдены и исправлены по пути — return-position
+target-typed-гейт не знал про `[]u8`, `[][]u8`-array-literal elem_c type-punning),
+фикстуры перенесены в `spec_tests/conformance/d55_bytes_lit_type_directed.nv` +
+`spec_tests/conformance/neg/d55_bytes_lit_var_not_coerced_neg.nv`, scratch-
+директория удалена. Честный под-маркер `[M-d55-const-bytes-lit-not-constexpr]`
+(P3) заведён в `backlog-followups.md` за `const []u8`-позицию. Эта заметка
+оставлена как рабочий журнал расследования (не требуется для дальнейшей работы).
