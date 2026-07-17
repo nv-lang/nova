@@ -196,8 +196,9 @@ enum Cmd {
     ///
     /// Прогоняет реестр конвенционных правил (lints.rs::CONV_RULES) по
     /// .nv-файлам БЕЗ type-check/codegen. Вывод — формат check
-    /// (`файл:строка:кол: warning: текст [W_ID]`). Exit-код: 0 — чисто,
-    /// 1 — есть находки.
+    /// (`файл:строка:кол: warning: текст [W_ID]`). Без `--deny` находки —
+    /// информационные (`warning`, exit 0); с `--deny` — CI/приёмочный
+    /// жёсткий гейт (`error`, exit 1 при любом хите).
     Lint {
         /// Paths (files or directories). If empty, uses workspace root.
         #[arg(num_args = 0..)]
@@ -217,6 +218,20 @@ enum Cmd {
         /// Показать только находки и summary (без per-file ok).
         #[arg(long, short = 'q')]
         quiet: bool,
+        /// Plan 185 Ф.3 ([M-185-lint-deny-gate]): CI/приёмочный гейт (W→E).
+        /// Без значения — денай ВСЕ правила; `--deny=W_X,W_Y` — только
+        /// перечисленные (остальные находки остаются info-`warning`, не
+        /// валят прогон). Денай-находки печатаются как `error` и переводят
+        /// exit-код в 1. Требует `=` для значения (`--deny=W_X`), иначе
+        /// следующий токен ушёл бы в `paths`.
+        #[arg(
+            long = "deny",
+            value_name = "W_ID[,W_ID...]",
+            num_args = 0..=1,
+            require_equals = true,
+            default_missing_value = ""
+        )]
+        deny: Option<String>,
     },
     /// [UNSUPPORTED] Run a Nova file via the interpreter — the
     /// tree-walking interpreter is currently NOT supported; use
@@ -2478,7 +2493,10 @@ fn conv_lint_options_for(path: &Path) -> nova_codegen::lints::ConvLintOptions {
 }
 
 /// Plan 185: `nova lint [paths]` — прогон реестра конвенционных правил
-/// по .nv-файлам без type-check/codegen. Exit 0 — чисто, 1 — находки.
+/// по .nv-файлам без type-check/codegen. Без `--deny` находки —
+/// информационные (exit 0 даже если есть находки, как rustc warn-lints).
+/// Ф.3 ([M-185-lint-deny-gate]): `--deny` — CI/приёмочный гейт (W→E):
+/// денай-находки печатаются как `error` и переводят exit-код в 1.
 fn cmd_lint(
     paths: &[PathBuf],
     rule: Option<&str>,
@@ -2486,8 +2504,39 @@ fn cmd_lint(
     include_runtime: bool,
     skip: &[String],
     quiet: bool,
+    deny: Option<&str>,
 ) -> Result<()> {
     use std::collections::HashSet;
+
+    // Ф.3: режим --deny. Без значения — денай ВСЕХ правил реестра;
+    // `--deny=W_X,W_Y` — только перечисленные (валидация id как у --rule).
+    enum DenyMode {
+        Off,
+        All,
+        Rules(HashSet<String>),
+    }
+    let deny_mode = match deny {
+        None => DenyMode::Off,
+        Some(spec) if spec.trim().is_empty() => DenyMode::All,
+        Some(spec) => {
+            let known: HashSet<&str> =
+                nova_codegen::lints::conv_rule_ids().into_iter().collect();
+            let mut set = HashSet::new();
+            for id in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                if !known.contains(id) {
+                    return Err(usage_err(format!(
+                        "unknown lint rule `{}` in --deny; see `nova lint --list-rules`",
+                        id
+                    )));
+                }
+                set.insert(id.to_string());
+            }
+            if set.is_empty() {
+                return Err(usage_err("--deny: empty rule list"));
+            }
+            DenyMode::Rules(set)
+        }
+    };
 
     if list_rules {
         println!("Реестр конвенционных правил (план 185):");
@@ -2594,6 +2643,7 @@ fn cmd_lint(
     }
 
     let mut findings = 0usize;
+    let mut deny_hits = 0usize;
     let mut parse_failures = 0usize;
     for f in &files {
         let src = match read_file(f) {
@@ -2629,9 +2679,20 @@ fn cmd_lint(
         for w in &warnings {
             let (line, col) =
                 nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
+            // Ф.3: денай-хиты печатаются как `error` (W→E), остальное как
+            // `warning` — тот же текстовый формат, что и check.
+            let is_denied = match &deny_mode {
+                DenyMode::Off => false,
+                DenyMode::All => true,
+                DenyMode::Rules(set) => set.contains(w.rule),
+            };
+            if is_denied {
+                deny_hits += 1;
+            }
+            let level = if is_denied { "error" } else { "warning" };
             println!(
-                "{}:{}:{}: warning: {} [{}]",
-                f.display(), line, col, w.diag.message, w.rule
+                "{}:{}:{}: {}: {} [{}]",
+                f.display(), line, col, level, w.diag.message, w.rule
             );
         }
         findings += warnings.len();
@@ -2640,9 +2701,14 @@ fn cmd_lint(
     if !quiet || findings > 0 {
         println!();
         println!(
-            "lint: {} file(s), {} finding(s){}",
+            "lint: {} file(s), {} finding(s){}{}",
             files.len(),
             findings,
+            if !matches!(deny_mode, DenyMode::Off) {
+                format!(", {} denied (--deny, exit 1)", deny_hits)
+            } else {
+                String::new()
+            },
             if parse_failures > 0 {
                 format!(", {} parse-failure(s) (text-rules only)", parse_failures)
             } else {
@@ -2650,8 +2716,10 @@ fn cmd_lint(
             }
         );
     }
-    if findings > 0 {
-        Err(anyhow!("{} lint finding(s)", findings))
+    // Без --deny находки информационные (exit 0) — CI/приёмка обязана
+    // явно попросить гейт `--deny` (Ф.3, [M-185-lint-deny-gate]).
+    if deny_hits > 0 {
+        Err(anyhow!("{} lint finding(s) denied (--deny)", deny_hits))
     } else {
         Ok(())
     }
@@ -6428,8 +6496,8 @@ fn run() -> ExitCode {
             telemetry_gate_caches_drop,
             lint,
         ),
-        Cmd::Lint { paths, rule, list_rules, include_runtime, skip, quiet } => {
-            cmd_lint(&paths, rule.as_deref(), list_rules, include_runtime, &skip, quiet)
+        Cmd::Lint { paths, rule, list_rules, include_runtime, skip, quiet, deny } => {
+            cmd_lint(&paths, rule.as_deref(), list_rules, include_runtime, &skip, quiet, deny.as_deref())
         }
         Cmd::Run { file } => cmd_run(&file),
         Cmd::Add { name, path, git, tag, branch, rev, version, allow_external_path } => cmd_add(
