@@ -75,8 +75,10 @@ jobs:
         run: sudo apt-get install -y libgc-dev
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
-      - name: nova lint std (all conv rules — 0 findings required)
-        run: ./nova-cli/target/release/nova lint std
+      # Plan 185 Ф.3-хвост / Plan 212 №6 (2026-07-18): --deny включён — W→E,
+      # ненулевые находки = жёсткий exit≠0 самим CLI (не парсингом вывода).
+      - name: nova lint --deny std (all conv rules — 0 findings required)
+        run: ./nova-cli/target/release/nova lint --deny std
 
   nova-lint-spec-tests-gate:
     name: nova lint spec_tests full (all rules — HARD GATE, must be clean)
@@ -90,8 +92,9 @@ jobs:
         run: sudo apt-get install -y libgc-dev
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
-      - name: nova lint spec_tests (all conv rules — 0 findings required; neg/ auto-skipped)
-        run: ./nova-cli/target/release/nova lint spec_tests
+      # Plan 185 Ф.3-хвост / Plan 212 №6 (2026-07-18): --deny включён.
+      - name: nova lint --deny spec_tests (all conv rules — 0 findings required; neg/ auto-skipped)
+        run: ./nova-cli/target/release/nova lint --deny spec_tests
 
   nova-lint-registry-self-test:
     name: nova lint self-test (conv_pos/conv_clean regression guard)

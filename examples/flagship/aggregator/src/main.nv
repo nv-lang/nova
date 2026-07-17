@@ -244,6 +244,10 @@ fn main() Time Detach {
                                     // attempted (not "manual HTTP", nothing
                                     // is parsed/routed/serialized on this
                                     // path at all).
+                                    // best-effort close при сбросе сверх-лимитного
+                                    // соединения (admission control shed): ошибку
+                                    // закрытия некуда репортить и незачем.
+                                    // nova:allow W_RESULT_DISCARDED -- намеренный дроп: best-effort close при shed
                                     ro _ = stream.close()
                                 } else {
                                     ro _ = inflight.fetch_add(1)

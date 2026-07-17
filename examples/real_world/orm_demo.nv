@@ -144,7 +144,7 @@ export fn Repo[T] @list_all() Db Fail[RepoError] -> []T =>
 // list_with — выполнить произвольный SELECT, парсить каждую строку.
 export fn Repo[T] @list_with(q Sql) Db Fail[RepoError] -> []T {
     ro rows = Db.query(q)
-    mut out []T = []T.with_capacity(rows.len())
+    mut out []T = []T.new(cap: rows.len())
     for r in rows {
         out.push(@from_row(r))
     }

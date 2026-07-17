@@ -115,12 +115,18 @@ export type Report value {
 /// Build a `Report` from settled task results + measured wall time. The
 /// sequential estimate is the sum of every lane's own elapsed time (what a
 /// one-source-at-a-time loop would have cost) — the "×N faster" HUD figure.
+/// Канон nv-coding-style §1а (2026-07-18): метод на источнике вместо
+/// статик-конверсии `Report.from` (W_STATIC_CONVERSION).
 #stable(since = "0.1")
-export fn Report.from(results []TaskResult, wall_ms int) -> Report {
+export fn []TaskResult @to_report(wall_ms int) -> Report {
     mut done = 0
     mut failed = 0
     mut cancelled = 0
     mut sequential_ms = 0
+    // Аннотированный биндинг ресивера вместо прямого `for r in @`:
+    // [M-slice-ext-receiver-for-in-elem-type] — итерация голого `@` на
+    // slice-расширении роняет тип элемента в nova_int-fallback (196-семья).
+    ro results []TaskResult = @
     for r in results {
         sequential_ms += r.elapsed_ms
         match r.status {
@@ -129,5 +135,5 @@ export fn Report.from(results []TaskResult, wall_ms int) -> Report {
             Cancelled  => { cancelled += 1 }
         }
     }
-    { results, wall_ms, sequential_ms, done, failed, cancelled }
+    { results: @, wall_ms, sequential_ms, done, failed, cancelled }
 }

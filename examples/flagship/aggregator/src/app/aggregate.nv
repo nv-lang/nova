@@ -256,7 +256,7 @@ export fn aggregate(sources []Source, budget Duration) Net Time Emit -> Report {
         fetch_guarded(sources[idx], shared_deadline, idx)
     }
     ro wall_ms = deadline_elapsed_ms(t0)
-    ro report = Report.from(results, wall_ms)
+    ro report = results.to_report(wall_ms)
     Emit.swarm_done(report.results.len(), report.done, report.failed, report.cancelled,
         report.wall_ms, report.sequential_ms)
     report

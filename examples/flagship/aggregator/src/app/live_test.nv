@@ -9,8 +9,13 @@
 // they do NOT reach `github.com`/etc for real; a manual `nova build` +
 // run against real `real_net()` (see PROGRESS-run-A.md for the transcript)
 // is how the ACTUAL live network path was verified this session.
-// `aggregate_live_weather` is BLOCKED (`[M-187-weather-live-tls-diamond-
-// blocked]`, live.nv) — its own test just pins the honest-fail contract.
+// `aggregate_live_weather` was BLOCKED (`[M-187-weather-live-tls-diamond-
+// blocked]`) until 2026-07-17 — its test used to pin the honest-fail
+// contract. The diamond is RESOLVED (live.nv header; tls v0.1.2 lock bump):
+// the weather path now runs the REAL TLS pipeline, so under mock_net lanes
+// fail at the TLS layer (mock TCP can't handshake), NOT with the old
+// blocker hint — the test below pins exactly that: settled lanes, no
+// resurrected blocker marker.
 
 module src.app
 
@@ -44,19 +49,22 @@ test "aggregate_live_health: mock_net — a tiny budget cancels every lane" {
     }
 }
 
-// ── live weather: honest-fail contract (blocked, not fabricated) ───────────
+// ── live weather: diamond resolved — real TLS path, offline-safe shape ─────
 
-test "aggregate_live_weather: every lane fails with the documented blocker hint" {
+test "aggregate_live_weather: mock_net — lanes settle; blocker hint is gone (diamond resolved)" {
     with Net = mock_net() {
         with Emit = null_emit() {
             ro report = aggregate_live_weather(5.to_seconds())
             assert(report.results.len() == weather_live_cities().len())
-            assert(report.done == 0)
-            assert(report.failed == weather_live_cities().len())
+            // Every lane settles one way or another (fan-out contract holds)…
+            assert(report.done + report.failed + report.cancelled == weather_live_cities().len())
+            // …and NO lane resurrects the retired blocker marker: the weather
+            // path runs the real TLS pipeline now (mock TCP fails the
+            // handshake honestly, message is a TLS/transport error).
             for r in report.results {
                 match r.status {
-                    Failed(m) => assert(m.contains("M-187-weather-live-tls-diamond-blocked"))
-                    _         => assert(false)
+                    Failed(m) => assert(!m.contains("M-187-weather-live-tls-diamond-blocked"))
+                    _         => {}
                 }
             }
         }
