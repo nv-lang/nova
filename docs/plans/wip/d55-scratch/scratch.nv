@@ -5,10 +5,14 @@
 module wip.d55scratch
 
 // ─── position 1: call-arg, method name != "write" ───
-type D55ScratchSink { mut sb StringBuilder }
+// `WriteBuffer` is a plain (non-consume) record — `mut buf WriteBuffer`
+// field avoids the D133 consume-field-marker question entirely (orthogonal
+// to this fix); it just carries a []u8 param one level further so the
+// receiver isn't WriteBuffer/StringBuilder directly.
+type D55ScratchSink { mut buf WriteBuffer }
 
 fn D55ScratchSink mut @absorb(bytes []u8) -> () {
-    @sb.write(bytes)
+    @buf.write_bytes(bytes)
 }
 
 fn d55_scratch_free_len(bytes []u8) -> int => bytes.len()
@@ -34,14 +38,14 @@ test "position 1a: free-fn []u8 param (not `write`) — str-литерал coerc
 }
 
 test "position 1b: instance method []u8 param (not `write`) — str-литерал coerces" {
-    mut sink = D55ScratchSink { sb: StringBuilder.new() }
+    mut sink = D55ScratchSink { buf: WriteBuffer.new() }
     sink.absorb("Ok(")
     sink.absorb("done")
-    assert(sink.sb.byte_len() == 7)
+    assert(sink.buf.len() == 7)
 }
 
 test "position 1c: static-ctor []u8 param (real std WriteBuffer.from, not `write`) — str-литерал coerces" {
-    consume wb = WriteBuffer.from("st")
+    ro wb = WriteBuffer.from("st")
     assert(wb.len() == 2)
 }
 
@@ -79,7 +83,7 @@ test "position 4: [][]u8 array-literal element — str-литерал элеме
 test "non-regression: str-литерал в НЕ-[]u8 позиции остаётся str (D55 unaffected)" {
     ro s str = "plain"
     assert(s == "plain")
-    assert(s.len() == 5)
+    assert(s.byte_len() == 5)
 }
 
 test "non-regression: str-ПЕРЕМЕННАЯ в []u8-позиции всё ещё требует явный .bytes() call-site (D176)" {

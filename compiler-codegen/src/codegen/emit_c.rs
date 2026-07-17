@@ -22614,7 +22614,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (named-
                     // priority int-collapse → CC-FAIL, surfaced by d86_coalesce_width). Gated on
                     // the NovaOpt_/typed-int ret surface so the common path keeps `emit_expr`.
-                    let val = if ret_c.starts_with("NovaOpt_") || ret_c.starts_with("_NovaFixArr_") || Self::is_typed_integer(&ret_c) {
+                    // [M-d55-str-literal-coercion-name-gated] fix: a `[]u8`
+                    // return type ALSO needs target-typed routing (D55 amend
+                    // str-literal→[]u8 — the arm inside `emit_expr_with_
+                    // target_type` rewrites a bare `StrLit` trailing return
+                    // into `.bytes()`; the plain `emit_expr` fallback below
+                    // does not know about this coercion at all).
+                    let val = if ret_c.starts_with("NovaOpt_") || ret_c.starts_with("_NovaFixArr_")
+                        || Self::is_typed_integer(&ret_c) || Self::is_bytes_slice_c_ty(&ret_c) {
                         self.emit_expr_with_target_type(trailing, &ret_c)?
                     } else {
                         self.emit_expr(trailing)?
@@ -23579,7 +23586,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (named-
                     // priority int-collapse → CC-FAIL, surfaced by d86_coalesce_width). Gated on
                     // the NovaOpt_/typed-int ret surface so the common path keeps `emit_expr`.
-                    let val = if ret_c.starts_with("NovaOpt_") || ret_c.starts_with("_NovaFixArr_") || Self::is_typed_integer(&ret_c) {
+                    // [M-d55-str-literal-coercion-name-gated] fix: a `[]u8`
+                    // return type ALSO needs target-typed routing (D55 amend
+                    // str-literal→[]u8 — the arm inside `emit_expr_with_
+                    // target_type` rewrites a bare `StrLit` trailing return
+                    // into `.bytes()`; the plain `emit_expr` fallback below
+                    // does not know about this coercion at all).
+                    let val = if ret_c.starts_with("NovaOpt_") || ret_c.starts_with("_NovaFixArr_")
+                        || Self::is_typed_integer(&ret_c) || Self::is_bytes_slice_c_ty(&ret_c) {
                         self.emit_expr_with_target_type(trailing, &ret_c)?
                     } else {
                         self.emit_expr(trailing)?
@@ -24605,7 +24619,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // so `=> Some(<int-literal>)` in `-> Option[uint]` builds NovaOpt_nova_uint,
                 // not the literal-default NovaOpt_nova_int (named-priority int-collapse →
                 // CC-FAIL, surfaced by d86_coalesce_width). Common path keeps `emit_expr`.
-                let val = if ret.starts_with("NovaOpt_") || ret.starts_with("_NovaFixArr_") || Self::is_typed_integer(&ret) {
+                // [M-d55-str-literal-coercion-name-gated] fix: `[]u8` return
+                // also routes through target-typed emission (D55 amend).
+                let val = if ret.starts_with("NovaOpt_") || ret.starts_with("_NovaFixArr_")
+                    || Self::is_typed_integer(&ret) || Self::is_bytes_slice_c_ty(&ret) {
                     self.emit_expr_with_target_type(e, &ret)?
                 } else {
                     self.emit_expr(e)?
@@ -26305,7 +26322,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 172.1 [M-172.1-some-target-coerce]: NovaOpt_<X>/typed-int return coerces
             // the trailing to the return type — `Some(<int-literal>) -> Option[uint]` builds
             // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (int-collapse).
-            let val = if ret_ty.starts_with("NovaOpt_") || ret_ty.starts_with("_NovaFixArr_") || Self::is_typed_integer(ret_ty) {
+            // [M-d55-str-literal-coercion-name-gated] fix: a `[]u8` return
+            // type also needs target-typed routing (D55 amend, mirrors the
+            // sibling gate above in the non-contract `FnBody::Block` arm).
+            let val = if ret_ty.starts_with("NovaOpt_") || ret_ty.starts_with("_NovaFixArr_")
+                || Self::is_typed_integer(ret_ty) || Self::is_bytes_slice_c_ty(ret_ty) {
                 self.emit_expr_with_target_type(trailing, ret_ty)?
             } else {
                 self.emit_expr(trailing)?
@@ -44324,9 +44345,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let all_numeric_lits = !elems.is_empty() && elems.iter().all(|e| matches!(e,
                 ArrayElem::Item(ex) if matches!(&ex.kind,
                     ExprKind::FloatLit(_) | ExprKind::IntLit(_))));
+            // [M-d55-str-literal-coercion-name-gated] fix: `["ab", "cd"]` against
+            // an outer `[][]u8` context — the first item's OWN inferred type is
+            // `nova_str` (a bare `StrLit`'s natural type), which is NOT the erased
+            // `nova_int` default the `hint_overrides_int` branch below guards on,
+            // so without this arm the hint was silently ignored and the literal
+            // built a `Vec[str]` reinterpreted (pointer-cast) as `Vec[[]u8]` — a
+            // real C type-punning bug, not just a missed coercion. Mirrors the
+            // `all_numeric_lits` arm immediately above: guarded to ALL-str-LITERAL
+            // arrays (D55 — never overrides a str VARIABLE element, D176 still
+            // requires an explicit `.bytes()` for those) whose hint names `[]u8`.
+            let all_str_lits = !elems.is_empty() && elems.iter().all(|e| matches!(e,
+                ArrayElem::Item(ex) if matches!(&ex.kind, ExprKind::StrLit(_))));
             if all_numeric_lits
                 && matches!(self.current_array_elem_hint.as_deref(),
                     Some("nova_f32") | Some("nova_f64"))
+            {
+                self.current_array_elem_hint.clone().unwrap()
+            } else if all_str_lits
+                && c == "nova_str"
+                && self.current_array_elem_hint.as_deref()
+                    .map(Self::is_bytes_slice_c_ty).unwrap_or(false)
             {
                 self.current_array_elem_hint.clone().unwrap()
             } else if c == "nova_int" {
