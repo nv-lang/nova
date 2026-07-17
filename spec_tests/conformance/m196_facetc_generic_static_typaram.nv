@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 196 Facet C (callnorm/argbind convergence) — probe of the LAST
+// unprobed cell from 196.5-facet-c-map.md §1: `T.deserialize(d)`-shape —
+// a generic type-param used as the call TARGET of a static method (D35),
+// e.g. serde.nv's `T.deserialize(d)`/`V.deserialize(sub)` inside
+// `Option[T Deserialize].deserialize`/`[]T.deserialize`.
+//
+// `parts[0]` ("T") is NEVER a key in either `types/mod.rs`'s
+// `method_overloads` table or `callnorm.rs`'s `static_methods` table — both
+// are keyed by CONCRETE declared type names, and a generic type-param is
+// resolved to its concrete instantiation only LATER, at codegen/mono time
+// (`emit_c.rs`'s `subst_c`/`recv_seg`, Plan 88 Ф.1). This is an
+// ARCHITECTURAL limit, not a missing heuristic: callnorm runs before
+// monomorphization, so it cannot normalize (named-arg reorder / default
+// backfill) a call it cannot yet resolve to a concrete signature. This file
+// pins the forms that DO work correctly today — all of them PLAIN
+// POSITIONAL calls, the only shape serde.nv's real usage ever exercises:
+//  - minimal static dispatch through a bound type-param
+//  - chain call immediately after the generic-static dispatch
+//  - T used inside a SEPARATE generic type's own static-ctor body (mirrors
+//    `Option[T Deserialize].deserialize` calling `T.deserialize(d)`
+//    internally)
+//
+// The risk this probe found (named args through this same call shape were a
+// SILENT MISDISPATCH — no diagnostic, no crash, just the WRONG C args in the
+// WRONG C parameters) is now a clean compile error
+// ([E_GENERIC_STATIC_NAMED_ARG_UNSUPPORTED], guard added in `types/mod.rs`
+// `f1_check_call`'s Path arm) — pinned as a negative test in
+// `neg/m196_facetc_generic_static_named_arg.nv`. Plain default-arg OMISSION
+// through this same shape (no named args, just fewer positional args) was
+// ALREADY a loud C-compile-time arity error before this probe (accepted
+// "honest arity error" outcome, same class as the method-turbofish fix in
+// this facet's §6) — unaffected by this session's guard, not pinned here.
+module spec_tests.conformance
+
+type M196PFactory protocol {
+    .make(tag str, note str) -> Self
+}
+
+type M196PWidget { name str, note str }
+fn M196PWidget.make(tag str, note str) -> M196PWidget => { name: tag, note }
+
+fn[T M196PFactory] m196_pbuild(tag str, note str) -> T => T.make(tag, note)
+fn[T M196PFactory] m196_pbuild_chain(tag str, note str) -> str => T.make(tag, note).name
+
+type M196PBox[T M196PFactory] { item T }
+fn M196PBox[T M196PFactory].build(tag str, note str) -> M196PBox[T] => { item: T.make(tag, note) }
+
+test "generic type-param as static-method call target — T.make(args), plain positional (Plan 196 Facet C)" {
+    ro w M196PWidget = m196_pbuild[M196PWidget]("hi", "n")
+    assert(w.name == "hi")
+    assert(w.note == "n")
+}
+
+test "chain call immediately after generic-static dispatch through T (Plan 196 Facet C)" {
+    ro s = m196_pbuild_chain[M196PWidget]("chained", "x")
+    assert(s == "chained")
+}
+
+test "T used inside a generic container's own static-ctor body (Plan 196 Facet C)" {
+    ro pb M196PBox[M196PWidget] = M196PBox[M196PWidget].build("boxed", "y")
+    assert(pb.item.name == "boxed")
+    assert(pb.item.note == "y")
+}

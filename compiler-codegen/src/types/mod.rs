@@ -11089,6 +11089,47 @@ impl<'a> TypeCheckCtx<'a> {
                 if is_primitive_recv && !matches!(overloads, Some(m) if m.len() >= 2) {
                     return;
                 }
+                // [M-196-facetc-generic-static-named-arg-misdispatch] (Plan 196 Facet C,
+                // T.deserialize(d)-shape probe, last cell): `parts[0]` is a GENERIC
+                // TYPE-PARAMETER in scope (`T.method(...)` static dispatch through a
+                // protocol-bound type-param, D35 — e.g. serde's `T.deserialize(d)`) —
+                // never a key in `method_table` (keyed by CONCRETE declared types only),
+                // so `overloads` is unconditionally `None` here. `callnorm.rs`'s
+                // `try_normalize_call` (facet-c-map §1, `Path(len==2)` arm) keys
+                // `static_methods` by the SAME literal `type_name` and ALSO finds nothing
+                // for "T" — so NEITHER layer can validate or reorder this call's args; a
+                // `CallArg::Named` reaches codegen's Path-form static-dispatch emission
+                // (`emit_c.rs` ~39268, the `method_overloads` branch) UNNORMALIZED, which
+                // zips `args` positionally against the (by-then mono-resolved) concrete
+                // signature WITHOUT consulting the Named label. Confirmed empirically: a
+                // REORDERED named-arg call (`T.make(note: b, tag: a)` against `.make(tag
+                // str, note str) -> Self`) silently returns the SWAPPED result (no
+                // diagnostic, no crash) — even a misspelled arg NAME compiles clean. Plain
+                // default-arg OMISSION (no Named args, just fewer positional args) already
+                // fails LOUDLY at C-compile-time (arity mismatch) — an accepted "honest
+                // arity error" outcome per this facet's established precedent (§6
+                // method-turbofish fix) — so this guard narrowly targets the SILENT case:
+                // any `Named` arg through an unresolvable generic-type-param static
+                // receiver. Zero blast radius on the existing corpus — std's only user of
+                // this call shape (`serde.nv`'s `T.deserialize(d)`/`V.deserialize(sub)`)
+                // never uses named args (196.5-facet-c-map.md §1/probe notes).
+                if overloads.is_none()
+                    && gs.contains(parts[0].as_str())
+                    && args.iter().any(|a| matches!(a, CallArg::Named { .. }))
+                {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_GENERIC_STATIC_NAMED_ARG_UNSUPPORTED] named arguments are \
+                             not supported when calling a static method through a generic \
+                             type-parameter receiver (`{}.{}(...)`) — the compiler cannot \
+                             verify or reorder them until monomorphization, when the \
+                             concrete type is known; pass positional arguments instead",
+                            parts[0], parts[1],
+                        ),
+                        base.span,
+                    ));
+                    return;
+                }
                 match overloads {
                     // Reached by a primitive receiver only when `overloads` has
                     // ≥2 entries (guard above) — `[single]` never matches that,
