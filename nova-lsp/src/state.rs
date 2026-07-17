@@ -8,10 +8,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use dashmap::DashMap;
 use ropey::Rope;
-use tower_lsp::lsp_types::Url;
+use tower_lsp::lsp_types::{FileEvent, Url};
 
 use std::path::Path;
 
@@ -86,8 +87,25 @@ pub struct WorkspaceState {
     /// Open document cache: file URI → last-known (text, version).
     pub docs: DashMap<Url, ParsedFile>,
 
-    /// Debouncer for compile tasks — coalesces rapid edits per URI.
+    /// Debouncer for compile tasks — coalesces rapid interactive edits per URI
+    /// (200ms, gopls/rust-analyzer default — kept snappy for typing).
     pub debouncer: Debouncer,
+
+    /// Plan 213 Ф.2: separate, longer-delay debouncer for
+    /// `workspace/didChangeWatchedFiles` bursts (git checkout / branch switch
+    /// / build can each deliver hundreds to thousands of notifications in a
+    /// few milliseconds). 400ms — long enough to absorb a realistic burst
+    /// without feeling laggy for the rare single external edit. Kept separate
+    /// from `debouncer` (interactive edits) so the two delays can be tuned
+    /// independently and neither workload starves the other's key space.
+    pub watch_debouncer: Debouncer,
+
+    /// Plan 213 Ф.2: events buffered between `did_change_watched_files`
+    /// notification arrivals and the debounced apply-pass. Drained (taken)
+    /// by the scheduled work closure each time `watch_debouncer` fires, so a
+    /// burst of notifications inside the debounce window contributes to ONE
+    /// apply-pass instead of one per notification.
+    pub pending_watch_events: Mutex<Vec<FileEvent>>,
 
     /// Workspace root path, set from `initialize` rootUri / workspaceFolders.
     /// `None` until `initialize` is received.
@@ -154,6 +172,8 @@ impl Default for WorkspaceState {
         Self {
             docs: DashMap::new(),
             debouncer: Debouncer::default(),
+            watch_debouncer: Debouncer::new(Duration::from_millis(400)),
+            pending_watch_events: Mutex::new(Vec::new()),
             workspace_root: Mutex::new(None),
             semantic_tokens_cache: DashMap::new(),
             semantic_tokens_counter: AtomicU64::new(0),
@@ -172,6 +192,7 @@ impl WorkspaceState {
     /// Cancel all pending debounce tasks — called on shutdown.
     pub fn cancel_all(&self) {
         self.debouncer.cancel_all();
+        self.watch_debouncer.cancel_all();
     }
 
     /// Get workspace root, if set.

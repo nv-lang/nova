@@ -84,11 +84,26 @@ pub fn check_file_with_root(uri: &Url, text: &str, workspace_root: Option<&Path>
 /// skipped with a warning log.  The workspace root itself is not checked (it
 /// is not a `.nv` file).
 ///
-/// V1 strategy: **full workspace recheck** — every file is re-parsed and
-/// type-checked independently.  Per-module incremental dep-graph is V2.
+/// **Cost warning (Plan 213 Ф.1 diagnosis):** this is an `O(workspace size)`
+/// operation — every `.nv` file under `root` is independently re-parsed +
+/// import-resolved + type-checked, with no cross-file caching between calls.
+/// On the main Nova repo this is 3000+ files (std/examples/spec_tests/
+/// nova_tests). It is appropriate for the **one-time** cold startup scan
+/// (`run_initial_scan_with_progress`) and for tests against small temp
+/// workspaces, but must never be called on the interactive per-edit path —
+/// `schedule_recheck` uses [`check_open_documents`] instead, which is
+/// `O(open buffers)`. See docs/plans/213-nova-lsp-performance.md.
+///
+/// Each file is checked on the *same* thread as the caller (no per-file
+/// thread spawn — Plan 213 Ф.1 found the previous per-file
+/// `run_with_large_stack` call here spawned one 64 MiB-stack OS thread per
+/// file, i.e. 3000+ thread creations per invocation, on top of the O(n) parse
+/// cost). Callers that need a large stack (recursive compiler passes) must
+/// wrap the *whole* `check_workspace` call in `run_with_large_stack`, as
+/// `run_initial_scan_with_progress` already does.
 pub fn check_workspace(workspace_root: &Path) -> Vec<CheckResult> {
     let t = PerfTimer::start("check_workspace");
-    let nv_files = collect_nv_files(workspace_root);
+    let nv_files = collect_nv_paths(workspace_root);
     tracing::debug!(files = nv_files.len(), root = %workspace_root.display(), "workspace scan");
     let mut results = Vec::with_capacity(nv_files.len());
 
@@ -109,15 +124,43 @@ pub fn check_workspace(workspace_root: &Path) -> Vec<CheckResult> {
             }
         };
 
-        let source_clone = source.clone();
-        let path_clone = path.clone();
-        let root_clone = workspace_root.to_path_buf();
-        let diagnostics = run_with_large_stack(move || {
-            check_source(&source_clone, Some(&path_clone), Some(&root_clone))
-        });
+        let diagnostics = check_source(&source, Some(&path), Some(workspace_root));
         results.push(CheckResult { file_uri: uri, diagnostics, source });
     }
 
+    t.finish();
+    results
+}
+
+/// Check only `docs` (a caller-supplied set of `(uri, text)` pairs), each
+/// resolved against `workspace_root` for prelude/peer/nova.toml lookup — Plan
+/// 213 Ф.2's replacement for the interactive per-edit recheck path.
+///
+/// Previously `schedule_recheck` called [`check_workspace`] (the entire
+/// repository — 3000+ files) on **every** debounced edit to **any** open
+/// document. This is the incremental fix: only currently-open buffers are
+/// rechecked, each via the same per-file resolution machinery
+/// (`check_source` → nearest `nova.toml` / folder-module peers / prelude) used
+/// by [`check_file_with_root`]. Cost is `O(open documents)`, typically single
+/// digits, instead of `O(workspace size)`.
+///
+/// A real per-module dependency graph (rechecking only the edited file's
+/// module + its reverse-dependents) is deferred — see
+/// `[M-104.10-dependent-invalidation]` in `state.rs` and
+/// docs/plans/213-nova-lsp-performance.md Ф.4. Rechecking *all* open buffers
+/// on every edit is the documented interim step endorsed by that plan.
+pub fn check_open_documents(docs: &[(Url, String)], workspace_root: &Path) -> Vec<CheckResult> {
+    let t = PerfTimer::start("check_open_documents");
+    let mut results = Vec::with_capacity(docs.len());
+    for (uri, source) in docs {
+        let path = uri.to_file_path().ok();
+        let diagnostics = check_source(source, path.as_deref(), Some(workspace_root));
+        results.push(CheckResult {
+            file_uri: uri.clone(),
+            diagnostics,
+            source: source.clone(),
+        });
+    }
     t.finish();
     results
 }
@@ -289,14 +332,45 @@ fn resolve_for_check(
     Some(sig_table)
 }
 
-/// Collect all `.nv` files recursively under `root`.
-fn collect_nv_files(root: &Path) -> Vec<PathBuf> {
+/// Directory names that are never part of a Nova module graph: build output
+/// and vendored third-party trees. Skipping them by name (in addition to the
+/// dotdir skip below) avoids walking — and `read_dir`-syscalling — tens of
+/// thousands of unrelated files on every workspace scan (Plan 213 Ф.1
+/// diagnosis: `compiler-codegen/vcpkg_installed/` alone is a large vendored
+/// include/lib tree with zero `.nv` files but a deep directory structure).
+const SKIP_DIR_NAMES: &[&str] = &[
+    "target",
+    "target_alt",
+    "target_test",
+    "vcpkg_installed",
+    "node_modules",
+];
+
+/// Collect all `.nv` files recursively under `root`, shared by every LSP
+/// entry point that needs a workspace-wide file list (`check_workspace`,
+/// `symbols::collect_nv_files`, rename's `collect_nv_files_for_rename`) —
+/// Plan 213 Ф.1/Ф.2 consolidated three near-duplicate walkers into this one so
+/// the filtering below is applied everywhere consistently.
+///
+/// Filters, beyond the `.nv` extension check:
+/// - dot-directories (`.git`, `.vscode`, …) and [`SKIP_DIR_NAMES`] are never
+///   descended into;
+/// - a subdirectory that itself contains a `.git` entry (dir or worktree
+///   pointer file) is treated as a **distinct repository root** and is not
+///   descended into, even though it is reachable under the open workspace
+///   folder. This matters for a "fleet" setup where several Nova `git
+///   worktree` checkouts are opened as sibling folders and the owner
+///   sometimes opens their common parent directory in the editor — without
+///   this guard, `d:/…/nova-lspfix`, `d:/…/nova-206`, etc. would each be
+///   walked and fully rechecked as if they were part of *this* workspace's
+///   module graph (`[M-213-nested-worktree-scan]`).
+pub fn collect_nv_paths(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
-    collect_nv_files_rec(root, &mut files);
+    collect_nv_paths_rec(root, root, &mut files);
     files
 }
 
-fn collect_nv_files_rec(dir: &Path, out: &mut Vec<PathBuf>) {
+fn collect_nv_paths_rec(dir: &Path, root: &Path, out: &mut Vec<PathBuf>) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) => {
@@ -307,12 +381,18 @@ fn collect_nv_files_rec(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            // Skip target/ and hidden dirs to avoid scanning build artefacts.
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if name == "target" || name.starts_with('.') {
+            if name.starts_with('.') || SKIP_DIR_NAMES.contains(&name) {
                 continue;
             }
-            collect_nv_files_rec(&path, out);
+            // Repository-boundary guard: never descend into another nested
+            // git root (see doc comment above). The top-level `root` itself
+            // is exempt (it commonly *is* a git checkout).
+            if path != root && path.join(".git").exists() {
+                tracing::debug!(dir = %path.display(), "skipping nested repository root");
+                continue;
+            }
+            collect_nv_paths_rec(&path, root, out);
         } else if path.extension().and_then(|e| e.to_str()) == Some("nv") {
             out.push(path);
         }
@@ -343,6 +423,12 @@ fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
 ///
 /// **Must be called from within `tokio::task::spawn_blocking`** (the spawned
 /// thread is synchronous and will block until `f` completes).
+///
+/// Plan 213 Ф.2: the spawned thread's OS scheduling priority is lowered
+/// (best-effort, Windows-only — no-op elsewhere) so background type-checking
+/// never competes with the editor's own UI thread for CPU time when the
+/// machine is under load. This is a background aide, not the foreground
+/// workload.
 pub fn run_with_large_stack<F, T>(f: F) -> T
 where
     F: FnOnce() -> T + Send + 'static,
@@ -351,8 +437,47 @@ where
     std::thread::Builder::new()
         .name("nova-check".to_string())
         .stack_size(64 * 1024 * 1024)
-        .spawn(f)
+        .spawn(move || {
+            worker_priority::lower_current_thread_priority();
+            f()
+        })
         .expect("spawn nova-check thread")
         .join()
         .unwrap_or_else(|_| panic!("nova-check thread panicked (already caught above)"))
+}
+
+/// Best-effort OS thread-priority lowering for `nova-check` worker threads
+/// (Plan 213 Ф.2). Windows-only real implementation (kernel32 is always
+/// linked on Windows targets — no new crate dependency needed); a no-op stub
+/// on other platforms keeps the call site portable.
+#[cfg(windows)]
+mod worker_priority {
+    // Minimal raw FFI surface — avoids pulling in a full `windows`/`winapi`
+    // dependency for two calls.
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentThread() -> isize;
+        fn SetThreadPriority(h_thread: isize, n_priority: i32) -> i32;
+    }
+
+    /// `THREAD_PRIORITY_BELOW_NORMAL` (winbase.h) — one step below the
+    /// process's normal priority class, enough to yield to the editor's own
+    /// threads under contention without starving the check entirely.
+    const THREAD_PRIORITY_BELOW_NORMAL: i32 = -1;
+
+    pub fn lower_current_thread_priority() {
+        // Safety: both calls are simple, argument-free (besides the returned
+        // handle) Win32 APIs; failure is silently ignored (best-effort — a
+        // check that runs at normal priority is still correct, just not as
+        // considerate of the foreground UI).
+        unsafe {
+            let handle = GetCurrentThread();
+            SetThreadPriority(handle, THREAD_PRIORITY_BELOW_NORMAL);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod worker_priority {
+    pub fn lower_current_thread_priority() {}
 }
