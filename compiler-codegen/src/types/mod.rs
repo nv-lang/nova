@@ -10934,9 +10934,24 @@ impl<'a> TypeCheckCtx<'a> {
                 // на arg типа char, не зная про external `str.from(c char)`.
                 //
                 // Фикс: для primitive-receiver'ов (str/int/char/bool/f*/u*/i*/uint)
-                // **никогда** не делать arg-check на single-overload в Path-форме.
-                // Codegen overload resolution в `external_registry` +
+                // **никогда** не делать arg-check на SINGLE-known-overload в
+                // Path-форме. Codegen overload resolution в `external_registry` +
                 // `method_overloads` корректно резолвит за нас.
+                //
+                // [M-str-primitive-static-arity-overload] AMEND (2026-07-17):
+                // гейт НЕ распространяется на multi-known-overload — когда
+                // чекеру видны ≥2 РЕАЛЬНЫХ кандидата (оба объявлены в одном
+                // модуле, полный набор виден целиком — не "часть", риск
+                // Plan 91.8a.2 неполноты сюда не относится), arity+type-compat
+                // resolution в ветке `Some(multi)` ниже безопасна ТОЧНО так же,
+                // как для non-primitive receiver'ов (тот же
+                // `overload_applicability` + `resolved_callees` механизм, §0).
+                // Без этого канала codegen (emit_c.rs) остаётся один на один со
+                // строгим C-type-string `==`, слепым к Nova-типо-эквивалентным
+                // разным сериализациям (`*u8` ro-pointee: `"nova_byte*"` arg vs
+                // `"const nova_byte*"` param) — multi-overload primitive
+                // Path-вызов (`str.new(buf, len)` рядом с 0-арг `str.new()`)
+                // ложно проваливается в `E_UNKNOWN_STATIC_METHOD`.
                 let is_primitive_recv = matches!(
                     parts[0].as_str(),
                     "str" | "int" | "char" | "bool" | "f32" | "f64"
@@ -10950,14 +10965,22 @@ impl<'a> TypeCheckCtx<'a> {
                 // For primitive receivers: skip arg-check (false-positives from
                 // external overloads unknown to checker). Annotation is done on the
                 // codegen side via var_types fallback in infer_expr_c_type.
-                if is_primitive_recv {
+                if is_primitive_recv && !matches!(overloads, Some(m) if m.len() >= 2) {
                     return;
                 }
                 match overloads {
+                    // Reached by a primitive receiver only when `overloads` has
+                    // ≥2 entries (guard above) — `[single]` never matches that,
+                    // so this arm's behavior for non-primitive receivers is
+                    // untouched (byte-identical).
                     Some([single]) => single,
                     Some(multi) => {
-                        // Plan 172.1 U.3.3 + U.3.2 (172.1.1): arity-aware overload resolution in the
-                        // CHECKER for non-primitive `Type.method(args)`. Fire E_NO_MATCHING_OVERLOAD
+                        // Plan 172.1 U.3.3 + U.3.2 (172.1.1) [+ M-str-primitive-
+                        // static-arity-overload 2026-07-17: now also reached by
+                        // primitive receivers with ≥2 known overloads — same
+                        // resolution, no primitive-specific branching needed]:
+                        // arity-aware overload resolution in the CHECKER for
+                        // `Type.method(args)`. Fire E_NO_MATCHING_OVERLOAD
                         // when ≥1 overload binds by arity but NONE is category-compatible (unchanged).
                         // 172.1.1 ADDITION: RECORD the callee when EXACTLY ONE overload is type-
                         // compatible (the unambiguous choice → resolved_callees → Call-channel, §0/§1

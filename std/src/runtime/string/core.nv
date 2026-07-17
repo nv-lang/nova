@@ -166,13 +166,15 @@ fn str.alloc_copy(src *u8, n int) -> Self
 // retired statics; only the receiver moved from a `bytes []u8` PARAMETER to
 // the implicit `@` receiver.
 
-// Module-private ctor. ЦЕЛЕВОЕ имя — `str.new(buf, len)` (арность-сиблинг
-// `str.new()`, канон «конструктор-поглотитель = Type.new», владелец
-// 2026-07-16), но rename ЗАБЛОКИРОВАН компилятором: primitive-static резолв
-// арность-СЛЕПОЙ — 2-арг `str.new` рядом с 0-арг не разрешается
-// (E_UNKNOWN_STATIC_METHOD-фолбэк; generic-типы починены П5/pick_static_params,
-// primitive-путь — нет). Переименовать после
-// [M-str-primitive-static-arity-overload]. Пока — `wrap_owned`:
+// Module-private ctor `str.new(buf, len)` (арность-сиблинг `str.new()`,
+// канон «конструктор-поглотитель = Type.new», владелец 2026-07-16). Rename
+// от временного `wrap_owned` — было ЗАБЛОКИРОВАНО primitive-static
+// арность-слепым резолвом (2-арг `str.new` рядом с 0-арг падал в
+// E_UNKNOWN_STATIC_METHOD); закрыто [M-str-primitive-static-arity-overload]
+// (2026-07-17, checker `f1_check_call` теперь пропускает multi-known-overload
+// primitive Path-статики через тот же arity+compat resolved_callees-канал,
+// что и non-primitive типы + emit_c.rs channel-first lookup перед
+// C-type-string strict match — см. docs/simplifications.md).
 // wrap an already-owned, NUL-terminated buffer as a str value (zero-copy, no
 // allocation/copy). Receiver `str` ⇒ type-based privacy to construct
 // `str{...}` directly (Plan 139.1/D220, same rationale as `str.alloc_copy`

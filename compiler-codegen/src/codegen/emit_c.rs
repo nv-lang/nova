@@ -39112,17 +39112,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // last-wins проблему когда ≥2 типов имеют одноимённый
                     // static с разной сигнатурой.
                     let key = (recv_seg.clone(), method_name.clone());
-                    if std::env::var("NOVA_DEBUG_STATIC").is_ok() && method_name == "new" && recv_seg == "str" {
-                        eprintln!("[DEBUG_STATIC] key={:?} found={:?}", key, self.method_overloads.get(&key));
-                    }
                     if let Some(overloads) = self.method_overloads.get(&key).cloned() {
                         // Только static-overloads (is_instance == false).
                         let static_overloads: Vec<MethodSig> = overloads.into_iter()
                             .filter(|s| !s.is_instance)
                             .collect();
-                        if std::env::var("NOVA_DEBUG_STATIC").is_ok() && method_name == "new" && recv_seg == "str" {
-                            eprintln!("[DEBUG_STATIC] static_overloads={:?}", static_overloads);
-                        }
                         if !static_overloads.is_empty() {
                             // [M-172.14-methods-byref]: большой ro value-struct
                             // аргумент static-метода — RefArg-обёртка (mirror
@@ -39239,21 +39233,49 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 arg_types.push(self.infer_expr_c_type(a.expr()));
                                 arg_strs.push(self.emit_expr(a.expr())?);
                             }
-                            if std::env::var("NOVA_DEBUG_STATIC").is_ok() && method_name == "new" && recv_seg == "str" {
-                                eprintln!("[DEBUG_STATIC] arg_types={:?} call_id={:?} resolved={:?}",
-                                    arg_types, call_id, self.resolved_callees.get(&call_id));
-                            }
                             // Single-overload: short-circuit.
                             let chosen = if static_overloads.len() == 1 {
                                 Some(static_overloads[0].clone())
                             } else {
-                                // Multi-overload: strict match по arity + types.
-                                static_overloads.iter()
-                                    .filter(|s| s.param_c_types.len() == arg_types.len())
-                                    .filter(|s| s.param_c_types.iter().zip(arg_types.iter())
-                                        .all(|(w, g)| w == g))
-                                    .next()
+                                // [M-str-primitive-static-arity-overload] fix
+                                // (2026-07-17): prefer the CHECKER's own resolution
+                                // first — `resolved_callees[call_id]` → match by
+                                // `fn_span` (types/mod.rs `f1_check_call`'s
+                                // `Type.method(args)` arm now ALSO records this for
+                                // primitive receivers with ≥2 known overloads, mirror
+                                // of the non-primitive Path site). The checker picked
+                                // the overload by full Nova-level arg-type binding
+                                // (`overload_applicability`), which is strictly more
+                                // precise than this C-type STRING equality
+                                // re-derivation below — the string form is blind to
+                                // Nova-type-equivalent-but-differently-serialized C
+                                // types (e.g. a `*u8` ro-pointee param: `"const
+                                // nova_byte*"` vs an inferred ro-bound arg surfacing
+                                // as `"nova_byte*"`, no `const` — same Nova type,
+                                // different C spelling, so the strict `==` below
+                                // wrongly finds 0 matches). Mirrors the identical
+                                // `fn_span`-match idiom already used at
+                                // `call_consume_arg_idxs` (~26297) and the facade
+                                // instance dispatch (~37847). Falls through to the
+                                // pre-existing arity+string-type heuristic when the
+                                // channel has no entry (call_id unset, synthesized
+                                // call-site, or the checker itself couldn't
+                                // disambiguate) — UNCHANGED, byte-identical for
+                                // every caller that hit this path before.
+                                self.resolved_callees.get(&call_id)
+                                    .and_then(|chosen_span| static_overloads.iter()
+                                        .find(|s| s.fn_span == Some(*chosen_span)))
                                     .cloned()
+                                    .or_else(|| {
+                                        // Multi-overload, no checker channel hit:
+                                        // strict match по arity + types (pre-existing).
+                                        static_overloads.iter()
+                                            .filter(|s| s.param_c_types.len() == arg_types.len())
+                                            .filter(|s| s.param_c_types.iter().zip(arg_types.iter())
+                                                .all(|(w, g)| w == g))
+                                            .next()
+                                            .cloned()
+                                    })
                             };
                             if let Some(sig) = chosen {
                                 return Ok(format!("{}({})", sig.c_name, arg_strs.join(", ")));
