@@ -35,9 +35,22 @@ Nova уже прячет безопасные zero-cost конверсии (sing
 
 1. **Унарность.** Ровно один входной тип: метод-без-параметров ИЛИ статик-с-одним-параметром.
    Иначе — compile error `E_COERCE_NOT_UNARY`.
-2. **Неявная вставка ТОЛЬКО при `ro`-возврате** (zero-cost view; скрытых аллокаций не бывает).
-   `#coerce` на функции с не-`ro` возвратом — error `E_COERCE_NOT_RO` (жёстче, чем «молча не
-   вставлять»: атрибут без эффекта = ловушка).
+2. **Неявная вставка — только zero-cost, ДВЕ полосы** (скрытых аллокаций не бывает):
+   - **view**: не-consume форма с `ro`-возвратом (zero-cost view) — `#coerce fn str @bytes()
+     -> ro []u8`;
+   - **finalize** (владелец 2026-07-17): `consume`-метод с владеющим возвратом (zero-cost
+     MOVE — кража буфера, не копия) — `#coerce fn StringBuilder consume @into_str() -> str`,
+     `#coerce fn WriteBuffer consume @into_bytes() -> []u8`. Позиции — те же, что у view
+     (ВСЕ типизированные, вкл. call-arg: `log(sb)` → `log(sb.into_str())`, sb разряжен).
+     Опасности рантайма нет ни в одной ветке: линейность отслеживается всегда — «нецелевое»
+     использование (use-after) = немедленный compile error (решение владельца: громко-на-
+     компиляции = норма; return-only-срез отвергнут как перестраховка). **Обязательное
+     качество диагностики:** use-after-consume после неявной вставки ОБЯЗАН указывать точку
+     вставки — «потреблён неявной #coerce-финализацией `into_str()` в вызове … (строка N);
+     для чтения без потребления — явный view-метод».
+   `#coerce` на форме вне этих двух полос (не-consume с владеющим возвратом = скрытая
+   аллокация) — error `E_COERCE_NOT_ZERO_COST` (жёстче, чем «молча не вставлять»: атрибут
+   без эффекта = ловушка).
 3. **Один `#coerce` на пару (I, O) на программу.** Дубль (в т.ч. с двух сторон) — error
    `E_COERCE_DUPLICATE_PAIR` с указанием обеих деклараций.
 4. **Один уровень.** Цепочка `I→O→P` не разворачивается (паритет single-wrapper D55
@@ -84,17 +97,22 @@ Nova уже прячет безопасные zero-cost конверсии (sing
   альтернативы одной строкой каждая); **РЕТРАКТ D55-подсекции «Str-литерал → []u8»**
   (`RETRACTED → D429`, §2); амендмент-ссылка D176 (ro-view — носитель коэрсии). README-индекс.
 - **Ф.1 Чекер (sonnet):** реестр `#coerce`-деклараций (собирается из деклараций при
-  sig-скане; ключ (I,O) + FnDecl) + валидации E_COERCE_NOT_UNARY / NOT_RO / DUPLICATE_PAIR;
+  sig-скане; ключ (I,O) + FnDecl) + валидации E_COERCE_NOT_UNARY / NOT_ZERO_COST / DUPLICATE_PAIR;
   вставка в accept-путь (там же, где single-wrapper `single_wrap_candidates`) + АСТ-rewrite
   в `try_wrap_leaf`-проходе. Позиции — п.6. Exact>coercion — до кандидатов коэрсии.
 - **Ф.2 Codegen:** НОВОГО НЕТ (rewrite = обычный вызов метода). Снос
   `synthesize_write_str_lit_bytes_coercion` + его call-site в emit_call pre-pass.
-- **Ф.3 std:** `#coerce` на `str @bytes()`. Грепом снять `.bytes()` на горячих call-сайтах
-  НЕ нужно (явная форма остаётся канонной и валидной) — миграцию сайтов не делаем.
-- **Ф.4 Тесты (haiku по списку):** pos: str-значение/литерал в `[]u8` call-arg / let / return
-  / element; exact-wins (перегрузка f(str)); neg: НЕ-унарная #coerce, не-ro возврат,
-  дубль пары, mut-позиция не коэрсится, двухуровневая цепочка не коэрсится.
-  Конвенция §116, standalone-прогон, EXPECT_COMPILE_ERROR для neg.
+- **Ф.3 std:** view-полоса: `#coerce` на `str @bytes()`; finalize-полоса: `#coerce` на
+  `StringBuilder consume @into_str()` и `WriteBuffer consume @into_bytes()`. Грепом снять
+  `.bytes()`/`.into_str()` на существующих call-сайтах НЕ нужно (явная форма остаётся
+  канонной и валидной) — миграцию сайтов не делаем.
+- **Ф.4 Тесты (haiku по списку):** pos view: str-значение/литерал в `[]u8` call-arg / let /
+  return / element; exact-wins (перегрузка f(str)). pos finalize: `sb` в str-позиции
+  (return И call-arg) → финализация, значение корректно. neg: НЕ-унарная #coerce; не-consume
+  с владеющим возвратом (NOT_ZERO_COST); дубль пары; mut-позиция не коэрсится; двухуровневая
+  цепочка не коэрсится; **finalize use-after**: `log(sb); sb.write(...)` → compile error,
+  текст пинует «потреблён неявной #coerce-финализацией … (строка N)» (качество диагностики —
+  нормативное, §1 п.2). Конвенция §116, standalone-прогон, EXPECT_COMPILE_ERROR для neg.
 - **Ф.5 Закрытие:** маркер `[M-d55-str-literal-coercion-name-gated]` закрыт; лог в
   simplifications; D55-подсекция «Статус реализации» обновлена (реализация = D429-механизм).
 
