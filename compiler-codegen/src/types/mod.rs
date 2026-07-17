@@ -450,7 +450,7 @@ mod resolved_type_tests {
         for n in ["int", "i64", "i8", "u32", "uint", "u64", "f64", "f32", "str", "bool"] {
             assert!(prim(n).is_primitive_lowerable(), "primitive `{n}` must gate true");
         }
-        // `char` is the one `Named` that gates true (no `Ty` variant — `try_start_won`'s
+        // `char` is the one `Named` that gates true (no `Ty` variant — `start_won`'s
         // sibling class: a primitive whose C name `nova_char` is fixed).
         assert!(prim("char").is_primitive_lowerable());
         // `unit` → true.

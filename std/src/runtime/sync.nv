@@ -1510,7 +1510,7 @@ export extern "nova" fn OnceGuard consume @commit()
 /// Mark once body as failed → Once transitions to POISONED.
 ///
 /// Wakes all parked waiters. They unblock and re-panic (OncePoisoned).
-/// After abort, subsequent `try_start()` calls also panic.
+/// After abort, subsequent `start()` calls also panic.
 #wakes
 #stable(since = "0.1")
 export extern "nova" fn OnceGuard consume @abort()
@@ -1997,8 +1997,8 @@ export extern "nova" fn Once @state() -> OnceState
 /// (Deprecated) Attempt to begin once execution.
 ///
 /// Returns `true` if this fiber should execute the once-body.
-/// Deprecated: use `call_once(fn)` or `try_start()` instead (guard API).
-#deprecated(since = "0.1", note = "use call_once(fn) or try_start() instead (Plan 103.9 guard API)")
+/// Deprecated: use `call_once(fn)` or `start()` instead (guard API).
+#deprecated(since = "0.1", note = "use call_once(fn) or start() instead (Plan 103.9 guard API)")
 #parks
 #stable(since = "0.1")
 export extern "nova" fn Once mut @run() -> bool
@@ -2006,8 +2006,8 @@ export extern "nova" fn Once mut @run() -> bool
 /// (Deprecated) Mark once body as complete.
 ///
 /// Must be called exactly once by the fiber whose `run()` returned `true`.
-/// Deprecated: use `OnceGuard.commit()` (via `try_start()` guard API) instead.
-#deprecated(since = "0.1", note = "use OnceGuard.commit() via try_start() instead (Plan 103.9 guard API)")
+/// Deprecated: use `OnceGuard.commit()` (via `start()` guard API) instead.
+#deprecated(since = "0.1", note = "use OnceGuard.commit() via start() instead (Plan 103.9 guard API)")
 #wakes
 #stable(since = "0.1")
 export extern "nova" fn Once mut @done()
@@ -2016,15 +2016,19 @@ export extern "nova" fn Once mut @done()
 
 /// (Internal) Returns `true` if this fiber won the race to initialize.
 ///
-/// Same state machine as `run()`. Used by `try_start()` body to check
-/// whether to allocate an `OnceGuard`. Not for direct use — prefer `try_start()`.
+/// Same state machine as `run()`. Used by `start()` body to check
+/// whether to allocate an `OnceGuard`. Not for direct use — prefer `start()`.
+///
+/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
+/// переименован из `try_start_won` — соло racy-операция без infallible-
+/// сиблинга берёт обычное имя, без `try_`-префикса (R3 D325).
 #parks
 #stable(since = "0.1")
-export extern "nova" fn Once mut @try_start_won() -> bool
+export extern "nova" fn Once mut @start_won() -> bool
 
 /// (Internal) Allocate a `OnceGuard` referencing this `Once`.
 ///
-/// Called by `try_start()` after `try_start_won()` returns `true`.
+/// Called by `start()` after `start_won()` returns `true`.
 /// Not for direct use — the guard is opaque; call `.commit()` or `.abort()`.
 #realtime
 #stable(since = "0.1")
@@ -2033,11 +2037,14 @@ export extern "nova" fn Once mut @make_guard() -> OnceGuard consume
 /// Attempt to start once initialization. Returns `Some(guard)` to the winning
 /// fiber; `None` to subsequent callers (who park until DONE or re-panic if POISONED).
 ///
+/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
+/// переименован из `try_start` — та же ретракция, что у `start_won` выше.
+///
 /// # Examples
 ///
 /// ```nova
 /// let mut once = Once.new()
-/// match once.try_start() {
+/// match once.start() {
 ///     Some(consume g) => {
 ///         // This fiber won — do the work
 ///         setup_resources()
@@ -2052,7 +2059,7 @@ export extern "nova" fn Once mut @make_guard() -> OnceGuard consume
 /// If the winning fiber panics before calling `g.commit()` or `g.abort()`,
 /// the `OnceGuard` is not consumed — the consume-checker enforces an explicit
 /// call to `commit()` or `abort()` on every code path.
-/// `abort()` transitions Once to POISONED; subsequent `try_start()` callers
+/// `abort()` transitions Once to POISONED; subsequent `start()` callers
 /// will re-panic.
 ///
 /// # See Also
@@ -2060,8 +2067,8 @@ export extern "nova" fn Once mut @make_guard() -> OnceGuard consume
 /// - `[Once.call_once]` — closure-based API with automatic panic safety
 #parks
 #stable(since = "0.1")
-export fn Once mut @try_start() -> Option[OnceGuard consume] {
-    if self.try_start_won() {
+export fn Once mut @start() -> Option[OnceGuard consume] {
+    if self.start_won() {
         Some(self.make_guard())
     } else {
         None
@@ -2450,9 +2457,14 @@ export extern "nova" fn CountDownLatch @try_await() -> bool
 /// Returns `true` if count reached 0 within the timeout,
 /// `false` if the timeout expired first.
 /// timeout <= 0 is equivalent to `try_await()`.
+///
+/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
+/// переименован из `try_await_for` — `await_for` не имеет infallible-
+/// сиблинга с этим именем (`await()` — другая арность/семантика) — обычное
+/// имя, без `try_`-префикса (R3 D325).
 #parks
 #stable(since = "0.1")
-export extern "nova" fn CountDownLatch @try_await_for(timeout Duration) -> bool
+export extern "nova" fn CountDownLatch @await_for(timeout Duration) -> bool
 
 /// Best-effort current count. May be stale by the time the caller reads it.
 ///
@@ -2533,11 +2545,16 @@ export extern "nova" fn Semaphore mut @try_acquire() -> bool
 /// Returns `false` if the timeout expires before a permit becomes available.
 /// `timeout <= Duration.zero` behaves as `try_acquire()`.
 ///
+/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
+/// переименован из `try_acquire_for` — `acquire_for` не имеет infallible-
+/// сиблинга с этим именем (`acquire()` — другая арность/семантика) —
+/// обычное имя, без `try_`-префикса (R3 D325).
+///
 /// # Realtime
 /// Forbidden inside `realtime { }` — may park the fiber.
 #parks
 #stable(since = "0.1")
-export extern "nova" fn Semaphore mut @try_acquire_for(timeout Duration) -> bool
+export extern "nova" fn Semaphore mut @acquire_for(timeout Duration) -> bool
 
 /// Best-effort query of available permit count. NOT for synchronization.
 ///

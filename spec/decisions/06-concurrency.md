@@ -4600,6 +4600,20 @@ thread.
 
 ### Правило
 
+**AMEND (2026-07-17, lint-разкраснение W_TRY_WITHOUT_SIBLING, владелец):**
+`Mutex.lock_for`/`ReentrantMutex.lock_for` (ex-`try_lock_for`), `RwLock.read_for`/
+`RwLock.write_for` (ex-`try_read_for`/`try_write_for`), `Once.start`/`Once.start_won`
+(ex-`try_start`/`try_start_won`), `CountDownLatch.await_for` (ex-`try_await_for`),
+`Semaphore.acquire_for` (ex-`try_acquire_for`) переименованы — сняли `try_`-префикс.
+Правило (R3 D325, nv-coding-style §1): `try_` легален ТОЛЬКО как fallible-половина
+ОДНОИМЁННОГО infallible (`from`/`try_from`, D77); ни у одного из этих timeout/racy-
+методов нет infallible-сиблинга с ТЕМ ЖЕ именем (`lock()`/`read()`/`write()`/`await()`/
+`acquire()` — другая арность/семантика, не тайм-аутный/racy вариант) — соло-операция
+без такого сиблинга берёт обычное имя. Сигнатуры/возвраты (`bool`/`Option[OnceGuard]`)
+не менялись, только имена. Все примеры/таблицы ниже в этом разделе обновлены на новые
+имена; диагностика `W_REALTIME_TRY_LOCK_FOR_TIMER` (§ realtime/blocking ниже) СОХРАНИЛА
+свой id (переименование самого id — отдельный D-амендмент, вне периметра этой правки).
+
 #### 1. Mutex API
 
 ```nova
@@ -4626,7 +4640,7 @@ export external fn Mutex mut @try_lock() -> bool
 /// true — acquired; false — timeout истёк.
 /// Использует libuv uv_timer_t (Plan 22 / Plan 103.3 pattern).
 #stable(since = "0.1")
-export external fn Mutex mut @try_lock_for(timeout Duration) -> bool
+export external fn Mutex mut @lock_for(timeout Duration) -> bool
 
 /// Best-effort observability. НЕ atomic test-and-set — может гонка.
 #stable(since = "0.1")
@@ -4666,7 +4680,7 @@ export external fn RwLock mut @read_unlock()
 #stable(since = "0.1")
 export external fn RwLock mut @try_read() -> bool
 #stable(since = "0.1")
-export external fn RwLock mut @try_read_for(timeout Duration) -> bool
+export external fn RwLock mut @read_for(timeout Duration) -> bool
 
 #stable(since = "0.1")
 export external fn RwLock mut @write()
@@ -4675,7 +4689,7 @@ export external fn RwLock mut @write_unlock()
 #stable(since = "0.1")
 export external fn RwLock mut @try_write() -> bool
 #stable(since = "0.1")
-export external fn RwLock mut @try_write_for(timeout Duration) -> bool
+export external fn RwLock mut @write_for(timeout Duration) -> bool
 
 /// best-effort снимок (не синхронизирован с reader_count)
 #stable(since = "0.1")
@@ -4731,7 +4745,7 @@ export external fn ReentrantMutex mut @unlock()
 #stable(since = "0.1")
 export external fn ReentrantMutex mut @try_lock() -> bool
 #stable(since = "0.1")
-export external fn ReentrantMutex mut @try_lock_for(timeout Duration) -> bool
+export external fn ReentrantMutex mut @lock_for(timeout Duration) -> bool
 
 /// Глубина рекурсии для текущего fiber'а; 0 если не locked этим fiber'ом.
 #stable(since = "0.1")
@@ -4788,8 +4802,8 @@ defense-in-depth. **Инвариант (M:N):** каждый root-bearing native
 
 #### 5. Realtime context ban
 
-Методы `lock()` / `read()` / `write()` и `try_lock_for` / `try_read_for` /
-`try_write_for` — **запрещены в `realtime { }` блоках** (Plan 103.6):
+Методы `lock()` / `read()` / `write()` и `lock_for` / `read_for` /
+`write_for` — **запрещены в `realtime { }` блоках** (Plan 103.6):
 они могут park fiber, нарушая realtime-гарантию. `try_lock()` / `try_read()`
 / `try_write()` без timeout разрешены (no park, return bool немедленно).
 
@@ -4864,7 +4878,7 @@ fn Semaphore.new(permits int) -> Self     /* permits >= 0 */
 fn Semaphore mut @acquire()                /* parks until permit available */
 fn Semaphore mut @release()                /* incr permits, wake FIFO head */
 fn Semaphore mut @try_acquire() -> bool
-fn Semaphore mut @try_acquire_for(timeout Duration) -> bool
+fn Semaphore mut @acquire_for(timeout Duration) -> bool
 fn Semaphore mut @acquire_n(n int)         /* batch */
 fn Semaphore mut @release_n(n int)
 fn Semaphore @available_permits() -> int   /* best-effort */
@@ -4878,7 +4892,7 @@ fn Semaphore mut @with_permit[R](body fn() -> R) -> R  /* M15 V1 helper */
 - **Negative init permits** → runtime panic.
 - **`with_permit(fn)`** — preferred V1 pattern (M15); V2 → `Permit consume`
   guard ([Plan 103.9](../../docs/plans/103.9-consume-guards-migration.md)).
-- **`acquire`/`acquire_n`/`try_acquire_for`/`with_permit`** — park-ing methods,
+- **`acquire`/`acquire_n`/`acquire_for`/`with_permit`** — park-ing methods,
   banned в `realtime { }` (Plan 103.6 enforcement; M12).
 
 #### Barrier — reusable N-party rendezvous (CyclicBarrier-style)
@@ -4919,7 +4933,7 @@ fn CountDownLatch mut @count_down()                /* saturating: count==0 -> no
 fn CountDownLatch mut @count_down_n(n int)         /* batch saturating */
 fn CountDownLatch @await()                         /* park until count == 0 */
 fn CountDownLatch @try_await() -> bool
-fn CountDownLatch @try_await_for(timeout Duration) -> bool
+fn CountDownLatch @await_for(timeout Duration) -> bool
 fn CountDownLatch @current_count() -> int          /* best-effort */
 ```
 
@@ -4930,7 +4944,7 @@ fn CountDownLatch @current_count() -> int          /* best-effort */
   Java parity.
 - **`count_down_n(n)`:** `n <= 0` → no-op; `n > current count` → saturates на 0.
 - **`CountDownLatch.new(0)`** → runtime panic (`count > 0`).
-- **`await`/`try_await_for`** — park-ing, banned в `realtime { }`.
+- **`await`/`await_for`** — park-ing, banned в `realtime { }`.
 
 #### Condvar — condition variable tied to Mutex (M10)
 
@@ -5017,7 +5031,7 @@ fn Condvar mut @notify_all()        /* wake all FIFO order */
 ### Тестовое покрытие
 
 `nova_tests/plan103_4/` — 25 tests:
-- **Semaphore (7):** bounded_concurrency, batch_n, try_acquire_for_timeout,
+- **Semaphore (7):** bounded_concurrency, batch_n, acquire_for_timeout,
   with_permit_panic_safety, no_overcommit_prop, release_more_than_acquired_neg,
   negative_init_permits_neg.
 - **Barrier (5):** n_party_rendezvous, cyclic_reusable, wait_with_action,
@@ -5135,7 +5149,7 @@ export external fn Mutex mut @unlock()
 |---|---|---|---|---|
 | `Mutex` | `lock()` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
 | `Mutex` | `try_lock()` | `#realtime` | ✅ | ✅ |
-| `Mutex` | `try_lock_for(d)` | `#realtime` ¹ | ⚠️ W_REALTIME_TRY_LOCK_FOR_TIMER | ✅ |
+| `Mutex` | `lock_for(d)` | `#realtime` ¹ | ⚠️ W_REALTIME_TRY_LOCK_FOR_TIMER | ✅ |
 | `Mutex` | `unlock()` | `#wakes` | ❌ E_REALTIME_SYNC_WAKE | ✅ |
 | `RwLock` | `read()` / `write()` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
 | `RwLock` | `try_read()` / `try_write()` | `#realtime` | ✅ | ✅ |
@@ -5159,7 +5173,7 @@ export external fn Mutex mut @unlock()
 | `fence(ord)` | — | `#realtime` | ✅ | ✅ |
 | `AtomicX.*` | все методы | `#realtime` | ✅ | ✅ |
 
-¹ `try_lock_for` является `#realtime` технически (не парков fiber),
+¹ `lock_for` является `#realtime` технически (не парков fiber),
   но использует libuv timer → W_REALTIME_TRY_LOCK_FOR_TIMER предупреждает
   об overhead таймера внутри realtime-блока.
 
@@ -5175,7 +5189,7 @@ export external fn Mutex mut @unlock()
 | `E_REALTIME_SYNC_WAKE` | error | `#wakes`-метод вызван внутри `realtime { }` |
 | `E_REALTIME_NESTED_SYNC_VIA_FN` | error | user-fn с `#parks`-аннотацией вызвана из `realtime { }` |
 | `E_BLOCKING_SYNC_PARK` | error | `#parks`-метод вызван внутри `blocking { }` |
-| `W_REALTIME_TRY_LOCK_FOR_TIMER` | warning | `Mutex.try_lock_for` в `realtime { }` |
+| `W_REALTIME_TRY_LOCK_FOR_TIMER` | warning | `Mutex.lock_for` в `realtime { }` |
 | `W_BLOCKING_NOTIFY_RISK` | warning | `#wakes`-метод в `blocking { }` |
 
 #### §4. User-defined function propagation (V1)
@@ -5232,7 +5246,7 @@ Add #parks / #realtime annotation to declare intent.
 2. **Compile-time enforcement**: `in_realtime` / `in_blocking` flags в CEmitter.
 3. **Conservative default**: unannotated method inside realtime{} → E_REALTIME_SYNC_PARK.
 4. **User fns**: explicit `#parks` annotation triggers E_REALTIME_NESTED_SYNC_VIA_FN.
-5. **try_lock_for**: `#realtime` (no park) + W_REALTIME_TRY_LOCK_FOR_TIMER (timer overhead).
+5. **lock_for**: `#realtime` (no park) + W_REALTIME_TRY_LOCK_FOR_TIMER (timer overhead).
 
 ### Тесты
 
@@ -5244,7 +5258,7 @@ blocking_{atomic_fetch_add,mutex_unlock}_ok
 condvar_wait,countdown_await,semaphore_acquire,lazy_force,once_call_once,
 oncecell_get_or_init}_neg, realtime_via_user_fn_neg,
 blocking_{mutex_lock,condvar_wait}_neg,
-realtime_{try_lock_for_zero_warn,mutex_try_lock_for_neg} (warnings)
+realtime_{lock_for_zero_warn,mutex_lock_for_neg} (warnings)
 
 ### Связь
 
@@ -5650,24 +5664,24 @@ C mangling (Plan 100.6 D164):
 
 | Метод | Сигнатура | Примечание |
 |---|---|---|
-| `try_start()` | `Once mut @try_start() -> Option[OnceGuard consume]` | Nova body; Some = won race |
+| `start()` | `Once mut @start() -> Option[OnceGuard consume]` | Nova body; Some = won race |
 | `OnceGuard.commit()` | `OnceGuard @commit(consume self)` | Once → DONE; wakes waiters |
 | `OnceGuard.abort()` | `OnceGuard @abort(consume self)` | Once → POISONED; wakes waiters (re-panic on resume) |
 | `call_once(fn)` | `Once mut @call_once(body fn() -> ())` | V1 external; kept as-is |
 | `run()` (bare) | `Once mut @run() -> bool` | Deprecated V1 |
 | `done()` (bare) | `Once mut @done()` | Deprecated V1 |
 
-`try_start()` is implemented as a Nova body:
+`start()` is implemented as a Nova body:
 ```nova
-export fn Once mut @try_start() -> Option[OnceGuard consume] {
-    if self.try_start_won() {
+export fn Once mut @start() -> Option[OnceGuard consume] {
+    if self.start_won() {
         Some(self.make_guard())
     } else {
         None
     }
 }
 ```
-Where `try_start_won()` is the internal external fn (`Nova_Once_method_try_start_won` = alias to `run()`),
+Where `start_won()` is the internal external fn (`Nova_Once_method_start_won` = alias to `run()`),
 and `make_guard()` allocates the guard heap object (`Nova_Once_method_make_guard`).
 
 ### Guard type declarations
@@ -5713,7 +5727,7 @@ semantics require single-owner transfer — incompatible with Atomic's sharing m
 
 **M-D174-7. OnceGuard.abort() → POISONED.** When the winning fiber aborts
 initialization, Once transitions to POISONED (not back to NEW). Subsequent callers
-of `try_start()` / `call_once()` re-panic with `OncePoisoned`. Rationale: abort
+of `start()` / `call_once()` re-panic with `OncePoisoned`. Rationale: abort
 means the resource initialization failed — retrying typically fails again for the same reason.
 If retry-after-failure is needed, use `OnceCell[T]` which allows re-initialization after `take()`.
 

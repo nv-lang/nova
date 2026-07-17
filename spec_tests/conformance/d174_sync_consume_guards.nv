@@ -2,13 +2,13 @@
 // Норма (spec/decisions/06-concurrency.md §D174): `lock()/read()/write()/acquire()`
 // возвращают linear guard (`MutexGuard/ReadGuard/WriteGuard/Permit consume`,
 // must-be-consumed D133) — забытый unlock/double-unlock ловятся СТАТИЧЕСКИ;
-// `Once.try_start() -> Option[OnceGuard]` — commit()/abort() потребляют guard;
+// `Once.start() -> Option[OnceGuard]` — commit()/abort() потребляют guard;
 // `with_lock(fn)` — thin-wrapper (backward compat). Негативы (guard-leak /
 // double-unlock) — neg/d174_*.nv (класс D133/D131 на guard-типах). Шаблоны сверены
 // с nova_tests/plan103_9. Один folder-module `spec_tests.conformance`.
 module spec_tests.conformance
 
-// Явный import — Nova-body методы sync (with_lock/try_start) инлайнятся
+// Явный import — Nova-body методы sync (with_lock/start) инлайнятся
 // в CU (D289 inline-merge); §3: sync — библиотека, требует import.
 import std.runtime.sync
 
@@ -51,27 +51,27 @@ test "ReadGuard/WriteGuard: раздельные guard-типы RwLock (D174)" {
     d174_rw.read_unlock()
 }
 
-test "OnceGuard: try_start_won у победителя, commit → DONE (D174)" {
+test "OnceGuard: start_won у победителя, commit → DONE (D174)" {
     mut d174_once = Once.new()
     mut d174_won = false
-    if d174_once.try_start_won() {
+    if d174_once.start_won() {
         consume d174_og = d174_once.make_guard()
         d174_og.commit()
         d174_won = true
     }
     assert(d174_won)
     // повторный заход после DONE — false
-    assert(!d174_once.try_start_won())
+    assert(!d174_once.start_won())
 }
 
-test "Once.try_start() -> Option[OnceGuard]: Nova-body обёртка (D174, U.1.3b sync-inline)" {
+test "Once.start() -> Option[OnceGuard]: Nova-body обёртка (D174, U.1.3b sync-inline)" {
     mut d174_once2 = Once.new()
-    match d174_once2.try_start() {
+    match d174_once2.start() {
         Some(d174_og2) => d174_og2.commit()
         None => assert(false)
     }
     assert(d174_once2.is_completed())
-    match d174_once2.try_start() {
+    match d174_once2.start() {
         Some(d174_og3) => {
             d174_og3.abort()
             assert(false)
