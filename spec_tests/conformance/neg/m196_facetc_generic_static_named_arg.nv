@@ -1,0 +1,34 @@
+// EXPECT_COMPILE_ERROR E_GENERIC_STATIC_NAMED_ARG_UNSUPPORTED
+//
+// Plan 196 Facet C (T.deserialize(d)-shape probe, last cell of
+// 196.5-facet-c-map.md §1): named arguments through a generic type-param
+// static-dispatch call (`T.method(name: value, ...)`) used to be a SILENT
+// MISDISPATCH — neither the checker (`method_overloads` keyed by concrete
+// type names only — "T" never matches) nor `callnorm.rs` (`static_methods`
+// keyed the same way) can validate or reorder named args for this shape, so
+// a REORDERED named-arg call reached codegen's Path-form static dispatch
+// (`emit_c.rs`, `method_overloads` branch, ~39268) UNNORMALIZED — that code
+// zips `args` positionally against the (by-then mono-resolved) concrete
+// signature WITHOUT consulting the `Named` label. Confirmed empirically
+// before this fix: `T.make(note: b, tag: a)` against `.make(tag str, note
+// str) -> Self` silently returned the SWAPPED result (`name=b note=a`, no
+// diagnostic, no crash) — even a genuine typo in the arg name compiled
+// clean. Guard added in `types/mod.rs` `f1_check_call`'s Path arm: an
+// unresolvable generic-type-param receiver + any `Named` arg is now a clean
+// compile error instead of a silent wrong answer.
+
+module neg.m196_facetc_generic_static_named_arg
+
+type M196NPFactory protocol {
+    .make(tag str, note str) -> Self
+}
+
+type M196NPWidget { name str, note str }
+fn M196NPWidget.make(tag str, note str) -> M196NPWidget => { name: tag, note }
+
+fn[T M196NPFactory] m196n_pbuild(a str, b str) -> T => T.make(note: b, tag: a)
+
+fn main() {
+    ro w M196NPWidget = m196n_pbuild[M196NPWidget]("A", "B")
+    print(w.name)
+}
