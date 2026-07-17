@@ -1,0 +1,16 @@
+// D412-амендмент (Plan 210 Ф.7.1, Go-паритет+, 2026-07-17) — glob-фильтр,
+// не совпавший ни с одной записью после обхода, даёт тот же W_EMBED_DIR_EMPTY
+// warning что и dot/symlink-only опустошение (симметрично, "навёлся не туда").
+// Standalone — warning относится к целому TU (прецедент
+// standalone/d412d_embed_dir_empty.nv / n6_opaque_literal_warning.nv).
+//
+// EXPECT_COMPILE_WARNING W_EMBED_DIR_EMPTY
+
+module standalone.d412e_embed_dir_glob_empty
+
+test "embed_dir(glob: ...) matching nothing resolves to empty EmbeddedDir (D412-amendment Ф.7.1)" {
+    ro d = embed_dir("d412e_glob_dir_for_empty", glob: "*.zzz")
+    assert(d.len() == 0)
+    assert(d.paths() == [])
+    assert(!d.has("only.txt"))
+}

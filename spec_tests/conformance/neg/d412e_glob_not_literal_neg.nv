@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_EMBED_ARG_NOT_STR_LITERAL
+//
+// D412-амендмент (Plan 210 Ф.7.1, Go-паритет+) — NEG. `glob:` обязан быть
+// строковым ЛИТЕРАЛОМ (фильтр применяется на компиляции, как и путь) —
+// переменная/выражение отвергается тем же кодом, что не-литеральный путь.
+
+module neg.d412e_glob_not_literal_neg
+
+fn d412e_glob_not_literal() -> int {
+    ro pat = "*.png"
+    ro d = embed_dir("d412e_glob_dir", glob: pat)   // ✗ glob не литерал
+    d.len()
+}

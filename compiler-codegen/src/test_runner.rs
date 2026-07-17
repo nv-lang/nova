@@ -364,7 +364,7 @@ fn which(name: &str) -> Option<PathBuf> {
     None
 }
 
-fn find_clang_path(explicit: Option<&Path>) -> Option<PathBuf> {
+pub(crate) fn find_clang_path(explicit: Option<&Path>) -> Option<PathBuf> {
     if let Some(p) = explicit {
         if p.is_file() {
             return Some(p.to_path_buf());
@@ -399,6 +399,64 @@ fn find_clang_path(explicit: Option<&Path>) -> Option<PathBuf> {
         }
     }
     which("clang")
+}
+
+/// Plan 210 Ф.8 (Go-паритет+, 2026-07-17): runtime feature-probe for C23
+/// `#embed`. NOT a version-string check — verified empirically that this is
+/// necessary: on THIS machine `clang --version` reports 22.1.5 and `#embed`
+/// compiles cleanly; a `docker run ubuntu:24.04` matching GitHub's
+/// `ubuntu-latest` (the base `nova-gate.yml`'s `apt-get install clang` runs
+/// on) gives clang **18.1.3**, where `#embed` is rejected outright
+/// (`error: invalid preprocessing directive`, both `-std=c23` and
+/// `-std=c2x` — the preprocessor doesn't recognize the token, this isn't a
+/// semantic/type error). Different vendors/platforms number clang
+/// differently (Apple clang is a well-known example) — a behavior probe is
+/// the only portable answer. Cached process-wide (`OnceLock`) — the probe
+/// itself is cheap (`-fsyntax-only`, no object file) but there is no reason
+/// to repeat it per-blob or per-file within one compiler invocation.
+static EMBED_C23_SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Returns true iff the auto-detected clang can compile a minimal `#embed`
+/// probe. `false` for every non-clang toolchain (MSVC/GCC — `#embed` sidecar
+/// emission is a clang-only fast path; other toolchains keep the existing
+/// hex-array rendering unconditionally) and for any clang that rejects the
+/// probe (older clang, or the probe's own I/O failing for any reason —
+/// fails closed to the always-correct hex fallback, never fails open).
+pub(crate) fn embed_c23_supported() -> bool {
+    *EMBED_C23_SUPPORTED.get_or_init(|| {
+        let Some(clang) = find_clang_path(None) else {
+            return false;
+        };
+        let probe_dir = std::env::temp_dir().join(format!(
+            "nova_embed_c23_probe_{}",
+            std::process::id()
+        ));
+        if std::fs::create_dir_all(&probe_dir).is_err() {
+            return false;
+        }
+        let bin_path = probe_dir.join("p.bin");
+        let c_path = probe_dir.join("p.c");
+        let ok = std::fs::write(&bin_path, [0x2Au8])
+            .and_then(|_| {
+                std::fs::write(
+                    &c_path,
+                    "static const unsigned char p[] = {\n#embed \"p.bin\"\n};\nint _use(void){return p[0];}\n",
+                )
+            })
+            .is_ok();
+        let supported = ok
+            && Command::new(&clang)
+                .arg("-std=c23")
+                .arg("-fsyntax-only")
+                .arg(&c_path)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+        let _ = std::fs::remove_dir_all(&probe_dir);
+        supported
+    })
 }
 
 fn find_gcc_path() -> Option<PathBuf> {

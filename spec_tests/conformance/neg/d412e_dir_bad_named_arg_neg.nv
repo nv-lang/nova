@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E_EMBED_DIR_BAD_ARG
+//
+// D412-амендмент (Plan 210 Ф.7, Go-паритет+) — NEG. `embed_dir` recognizes
+// only `glob:`/`hidden:` named arguments — anything else is rejected before
+// the path is even resolved.
+
+module neg.d412e_dir_bad_named_arg_neg
+
+fn d412e_unknown_named_arg() -> int {
+    ro d = embed_dir("d412e_glob_dir", filter: "*.png")   // ✗ unknown named arg — E_EMBED_DIR_BAD_ARG
+    d.len()
+}

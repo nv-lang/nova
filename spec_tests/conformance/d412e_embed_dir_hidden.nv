@@ -1,0 +1,35 @@
+// D412-амендмент (Plan 210 Ф.7.3, Go-паритет+, 2026-07-17) —
+// `embed_dir("dir", hidden: true)`: отключает dot-skip для записей ВНУТРИ
+// обхода (симлинки ПРОДОЛЖАЮТ скипаться безусловно). Дефолт `false` =
+// текущее поведение (dot-skip как раньше, D412-амендмент §2е). Фикстура:
+// d412e_hidden_dir/ = visible.txt + .secret.
+// Часть ЕДИНОГО folder-module spec_tests.conformance; имена D-префиксованы.
+module spec_tests.conformance
+
+test "embed_dir default (hidden omitted) still dot-skips — no regression (D412-amendment Ф.7.3)" {
+    ro d412e_default = embed_dir("d412e_hidden_dir")
+    assert(d412e_default.len() == 1)
+    assert(d412e_default.has("visible.txt"))
+    assert(!d412e_default.has(".secret"))
+}
+
+test "embed_dir(hidden: false) explicit — same as default (D412-amendment Ф.7.3)" {
+    ro d412e_explicit_false = embed_dir("d412e_hidden_dir", hidden: false)
+    assert(d412e_explicit_false.len() == 1)
+    assert(!d412e_explicit_false.has(".secret"))
+}
+
+test "embed_dir(hidden: true) includes dot-files opt-in (Go-паритет+, D412-amendment Ф.7.3)" {
+    ro d412e_shown = embed_dir("d412e_hidden_dir", hidden: true)
+    assert(d412e_shown.len() == 2)
+    assert(d412e_shown.has("visible.txt"))
+    assert(d412e_shown.has(".secret"))
+    ro d412e_secret_bytes = d412e_shown.get(".secret").unwrap()
+    ro d412e_want []u8 = [0x53, 0x45, 0x43, 0x52, 0x45, 0x54]   // "SECRET"
+    assert(d412e_secret_bytes.len() == d412e_want.len())
+    mut d412e_i = 0
+    while d412e_i < d412e_secret_bytes.len() {
+        assert(d412e_secret_bytes[d412e_i] == d412e_want[d412e_i])
+        d412e_i = d412e_i + 1
+    }
+}

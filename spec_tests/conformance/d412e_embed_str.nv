@@ -1,0 +1,15 @@
+// D412-амендмент (Plan 210 Ф.7.2, Go-паритет+, 2026-07-17) —
+// `embed_str("file")`: содержимое файла как `str` (компайл-тайм
+// UTF-8-валидация; невалидный байт → E_EMBED_NOT_UTF8 с offset'ом первого
+// битого байта). Симметрия диагностик с `embed` (not_found/is_dir/escape/
+// backslash — те же коды, см. neg/d412e_str_*). Синтез — интернированный
+// str-литерал (та же инфраструктура `intern_str_literal`, что и любой
+// рукописный `"..."`). Фикстура: d412e_str_fixture.txt = "Hello, Nova! Ω"
+// (валидный UTF-8, включает non-ASCII 2-байтовый символ).
+// Часть ЕДИНОГО folder-module spec_tests.conformance; имена D-префиксованы.
+module spec_tests.conformance
+
+test "embed_str(\"file\") round-trips UTF-8 text exactly as str (D412-amendment Ф.7.2)" {
+    ro d412e_text = embed_str("d412e_str_fixture.txt")
+    assert(d412e_text == "Hello, Nova! Ω")
+}

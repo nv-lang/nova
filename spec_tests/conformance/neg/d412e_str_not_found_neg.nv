@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E_EMBED_NOT_FOUND
+//
+// D412-амендмент (Plan 210 Ф.7.2, Go-паритет+) — NEG. `embed_str` симметрична
+// `embed` на not_found (тот же код).
+
+module neg.d412e_str_not_found_neg
+
+fn d412e_str_missing() -> int {
+    ro s = embed_str("no_such_file_d412e.txt")   // ✗ файла нет — E_EMBED_NOT_FOUND
+    s.len()
+}
