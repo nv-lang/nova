@@ -1,0 +1,70 @@
+// [M-vec-ext-method-untyped-let-breaks-chain-dispatch] pin (P1, triaged
+// 2026-07-17 diag-span wave, fixed same day).
+//
+// `ro x = v.method[U](...)` — an instance call to a PREFIX-GENERIC slice
+// extension method (`fn[T] []T @method[U](...)`, the exact
+// `std/src/collections/vec_seq.nv` shape — `@map[U]`/`@filter`/`@fold[Acc]`)
+// — WITHOUT an explicit binding-type annotation used to break ANY
+// subsequent extension-method call on `x`: `[E7320] no field or method
+// 'Y' on type Vec`, even though `Y` is a perfectly valid method that works
+// fine on the original receiver. An explicit annotation (`ro x []T = ...`)
+// masked the bug (it takes a different, unchecked code path) — so
+// `vec_seq.nv`'s OWN inline tests never caught this: none of them chain a
+// `.map()` result into `.filter()` (each test uses a fresh `v`).
+//
+// Root (`compiler-codegen/src/types/mod.rs`, `f3_check_member_ctx`):
+// an unannotated `ro`-binding's type is materialized from the CHANNEL
+// (`f1_stmt`'s `chain_ty`), which round-trips the call's return TypeRef
+// through `ResolvedType` — `from_type_ref` canonicalizes `TypeRef::Array`
+// to `Named{"Vec", [elem]}` (D239), and `resolved_to_typeref_tp` converts
+// it back to that SAME `Named` shape (not the original `Array`). A
+// receiver reconstructed this way DOES reach the member/method-existence
+// check (unlike a genuine `TypeRef::Array`, from a direct annotation,
+// which bails the whole check early — permissive gap, untouched here).
+// The method-existence check only knew TWO of the THREE slice-method
+// registration conventions — bare "Vec" (native `Vec[T]` methods) and
+// literal "[]<concrete-elem>" (`fn []str @join(...)`-style CONCRETE
+// receivers) — not literal "[]T" (the declaration's OWN generic param
+// name — `vec_seq.nv`'s idiom). Fixed by reusing the existing, separately-
+// tested `prefix_generic_method_exists` (Plan 177 Ф.3) as a third gate.
+//
+// Единица: standalone (module `spec_tests.conformance`, folder-module with
+// its neighbors — no name collisions with this file's own top-level items).
+module spec_tests.conformance
+
+import std.collections.vec.{Vec}
+import std.collections.vec_seq.{map, filter}
+
+test "unannotated let binding a vec_seq map[U] result, then chaining filter" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    // Was: [E7320] no field or method `filter` on type `Vec` — `mapped`'s
+    // binding type materializes through the channel described above.
+    ro mapped = v.map(|x| x * 2)
+    ro filtered = mapped.filter(|x| x > 4)
+    assert(filtered.len() == 3)
+    assert(filtered[0] == 6)
+    assert(filtered[1] == 8)
+    assert(filtered[2] == 10)
+}
+
+test "same shape, one expression (no intermediate binding at all)" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    ro filtered = v.map(|x| x * 2).filter(|x| x > 4)
+    assert(filtered.len() == 3)
+    assert(filtered[0] == 6)
+    assert(filtered[1] == 8)
+    assert(filtered[2] == 10)
+}
+
+// Control: an EXPLICIT binding-type annotation already worked before the fix
+// (it never reaches the buggy code path) — pinned so a future regression in
+// THIS path is caught too.
+test "control: explicit binding-type annotation already worked" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    ro mapped []int = v.map(|x| x * 2)
+    ro filtered = mapped.filter(|x| x > 4)
+    assert(filtered.len() == 3)
+    assert(filtered[0] == 6)
+    assert(filtered[1] == 8)
+    assert(filtered[2] == 10)
+}
