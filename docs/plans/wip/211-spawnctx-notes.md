@@ -155,10 +155,27 @@ call-сайтов, сверка с R1/R2/R3 §EXEC докой 173.0). Полны
 ## Гейты (статус на конец волны)
 
 - [x] pos_max_fibers_concurrent ×10+15 WSL — КРАСНО (не 0/N), см. выше
-- [ ] supervisor_stop_test ×10 WSL — не прогнан (эскалация до гейта)
-- [ ] TSan (WSL) — не прогнан (эскалация до гейта)
+- [x] supervisor_stop_test ×10 WSL (прямой прогон собранного бинаря, вне
+      test-harness) — **10/10 PASS** (как и раньше — локально не
+      воспроизводится, известно тайминг-зависимо от CI-профиля)
+- [ ] TSan (WSL) — не прогнан (эскалация до гейта, вне бюджета волны после
+      2 неудачных фикс-попыток)
 - [ ] WSL aggregator gate — не прогнан (эскалация до гейта)
-- [ ] Windows: cargo build --release + standalone-CU + nova test std/src/concurrency — регресс-проверка ОБЯЗАТЕЛЬНА даже при эскалации (см. ниже)
-- [ ] M-187-high-concurrency-wedge наблюдение — не проверялся (вне скоупа этой волны)
+- [x] **Windows regression** (обязательна даже при эскалации): `cargo build
+      --release --manifest-path nova-cli/Cargo.toml` (NOVA_GC_LIB_DIR=
+      d:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/lib,
+      NOVA_GC_INCLUDE_DIR/NOVA_INCLUDE_DIR=.../include, libuv скопирован из
+      main при пустом submodule) — чисто, 2m05s. Standalone-CU
+      (`spec_tests/conformance/standalone`, --jobs 4): **69 PASS / 0 FAIL**
+      (включая `pos_max_fibers_concurrent` и `supervisor_stop_test` — на
+      Windows всегда были зелёными, регрессии нет). `nova test
+      std/src/concurrency`: **4 PASS / 0 FAIL / 5 SKIP** (compiled-only,
+      без `fn main`) — без изменений от базлайна.
+- [ ] M-187-high-concurrency-wedge наблюдение — не проверялся (вне скоупа
+      этой волны; для его закрытия отдельная приёмка, см. задание п.5)
+
+**Итог: обе правки (шаг 1 + шаг 2) НЕ регрессируют Windows и не ослабляют ни
+один тест; гонка [M-mn-spawnctx-corruption-cancel-wake] на Linux/WSL остаётся
+ОТКРЫТОЙ (красная фикстура) — эскалация по критерию задания.**
 
 Модель: sonnet.
