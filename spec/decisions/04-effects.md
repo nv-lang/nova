@@ -6879,18 +6879,24 @@ prod = embedded» — один и тот же generic-код `fn serve[F ReadFs]
 ```nova
 export type ReadFs protocol {
     @read_file(path str) -> Result[[]u8, IoError]
-    @try_exists(path str) -> Result[bool, IoError]
+    @path_exists(path str) -> Result[bool, IoError]
 }
 ```
 
 - `@read_file` — `Err(IoError{NotFound})` = файла нет; прочие `Err` — реальный I/O-сбой (только
-  эффектные impl). `@try_exists` — паритет free-fn `try_exists` (`@exists` недоступно: reserved-квантор).
-  Ключ — POSIX `/`, case-sensitive, без ведущего `./` (конвенция `embed_dir`).
+  эффектные impl). `@path_exists` — соло fallible-операция без инфаллибельного сиблинга: обычное
+  имя + `Result`, без `try_`-префикса (R3 D325; `@exists` недоступно — reserved-квантор). Ключ —
+  POSIX `/`, case-sensitive, без ведущего `./` (конвенция `embed_dir`).
+
+  **AMEND (2026-07-17, lint-разкраснение, владелец):** метод переименован `@try_exists` →
+  `@path_exists` — `W_TRY_WITHOUT_SIBLING` (`try_`-префикс легален только как fallible-половина
+  инфаллибельной пары, `from`/`try_from`, D77); одиночная fallible-операция не подходит под это
+  правило (R3 D325, `nv-coding-style` §1). Сигнатура/возврат `Result` не меняются, только имя.
 - `list`/directory-index **вне протокола**: у реальной ФС обход дорог (`Fs`-эффект),
   недетерминирован между вызовами (dev live-reload) и выводит наружу symlink/dot-ловушки; у
   `EmbeddedDir` — дёшево, но дробление протокола («минимальный протокол», как `io.Read`/`io.Write`/
   `io.Seek`) не платит обходом там, где нужно только чтение. Future — отдельный `ListFs`.
-- **`EmbeddedDir` конформит EXTENSION-методами** (D287): `@read_file`/`@try_exists` объявлены в
+- **`EmbeddedDir` конформит EXTENSION-методами** (D287): `@read_file`/`@path_exists` объявлены в
   `std.fs` (не в `EmbeddedDir`'s home-модуле `prelude.embed`); родной Option-API (`@get`/`@has`/
   `@paths`) не тронут. **Эмпирически подтверждено** (`std/src/fs/readfs_test.nv`): структурная
   conformance по generic-bound `[F ReadFs]` видит extension-метод НАРАВНЕ с inherent — wrapper-
