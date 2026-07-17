@@ -1,5 +1,12 @@
 // EXPECT_COMPILE_ERROR E_UNKNOWN_METHOD
 
+// АМЕНДМЕНТ 2026-07-17: исходный репро звал `r.clamp(..)` — но D74-аменд
+// (Plan 200 Шаг 0) ввёл бланкет `fn[T Ints] T @clamp`, и `i64.clamp` стал
+// ЛЕГАЛЬНЫМ (гейт честно поймал устаревание NEG-NO-ERROR'ом). Смысл пина
+// 196.9 сохранён на заведомо несуществующем имени `clamp_within`:
+// pattern-bound ресивер ОБЯЗАН быть видим чекеру, а неизвестный метод —
+// давать E_UNKNOWN_METHOD, не тихий no-op.
+//
 // Plan 196.9 [M-primitive-concrete-overload-receiver-dispatch] — minimal
 // repro. `i64 @clamp` has NO overload — std/src/runtime/defaults.nv:180,182
 // declare ONLY `int @clamp` / `f64 @clamp` (concrete-vs-concrete, no
@@ -21,10 +28,10 @@ module neg.i64_clamp_no_overload_neg
 
 fn sat_add_i64_neg(a i64, b i64, lo i64, hi i64) -> i64 =>
     match a.checked_add(b) {
-        Some(r) => r.clamp(lo, hi),
+        Some(r) => r.clamp_within(lo, hi),
         None => if b > 0 { hi } else { lo },
     }
 
-test "196.9: i64.clamp() on a pattern-bound receiver is rejected — no i64 overload exists" {
+test "196.9: unknown method on a pattern-bound i64 receiver is rejected (was i64.clamp until D74-blanket)" {
     ro _ = sat_add_i64_neg(1, 1, -10, 10)
 }
