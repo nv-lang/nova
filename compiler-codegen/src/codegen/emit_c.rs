@@ -2019,7 +2019,16 @@ pub enum EmitOutput {
 const MULTI_TU_SIZE_THRESHOLD_BYTES: usize = 2 * 1024 * 1024;
 const MULTI_TU_FN_COUNT_THRESHOLD: usize = 200;
 /// Plan 209 Ф.1 (A2 §3): target bytes per `_partK.c` once split.
-const MULTI_TU_PART_THRESHOLD_BYTES: usize = 500 * 1024;
+/// Plan 209 Ф.4 (замер, `docs/plans/wip/209-f4-measures.md`): было 500КБ (→26 частей на
+/// conformance mega-CU, 13МБ) — каждая часть инклудит ВЕСЬ `_common.h`, N лишних перепарсов
+/// огромного заголовка съедали выигрыш параллели. Замер {500КБ, 1.5МБ, 4МБ} на 3 целях
+/// (aggregator/conformance mega-CU/std-collections) показал 1.5МБ (~7-9 частей) БЫСТРЕЕ обеих
+/// соседних точек на ОБОИХ multi-part таргетах — conformance 134.14s→108.52s (24→8 частей,
+/// -19.1%), aggregator 33.25s→23.22s (4→2 части, -30.2%); 4МБ (мало/большие части — 3 части)
+/// РЕГРЕССИРУЕТ на conformance (266.32s, компилятор-суперлинейность внутри большой TU
+/// перевешивает экономию на заголовке). std/collections (per-file CU, всегда 1 часть,
+/// negative-контроль) не показал влияния порога, как и ожидалось.
+const MULTI_TU_PART_THRESHOLD_BYTES: usize = 1536 * 1024;
 
 /// Cheap (single linear scan, no tokenizing) approximation of "is this CU
 /// big enough to bother splitting?" — exact top-level function counting is
