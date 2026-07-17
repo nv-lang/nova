@@ -9,26 +9,26 @@ module spec_tests.conformance
 
 test "read_byte Err — пустой буфер" {
     ro bytes []u8 = []
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.read_byte().is_err())
 }
 
 test "read_byte Err — после исчерпания" {
     ro bytes []u8 = [0x01]
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.read_byte().is_ok())   // 1-й — ок
     assert(rb.read_byte().is_err())  // 2-й — буфер пуст
 }
 
 test "read_bytes Err — запрошено больше доступного" {
     ro bytes []u8 = [0x01, 0x02]
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.read_bytes(5).is_err())
 }
 
 test "read_bytes Ok — ровно по размеру" {
     ro bytes []u8 = [0x01, 0x02, 0x03]
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     ro r = rb.read_bytes(3)
     assert(r.is_ok())
 }
@@ -38,25 +38,25 @@ test "read_bytes Ok — ровно по размеру" {
 
 test "read_u32_le Err — буфер короче 4 байт" {
     ro bytes []u8 = [0xFF]
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.read_u32_le().is_err())
 }
 
 test "read_u64_be Err — буфер короче 8 байт" {
     ro bytes []u8 = [0x01, 0x02, 0x03, 0x04]
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.read_u64_be().is_err())
 }
 
 test "read_u16_le Err — ровно 1 байт" {
     ro bytes []u8 = [0xAB]
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.read_u16_le().is_err())
 }
 
 test "read_i32_be Err — пустой буфер" {
     ro bytes []u8 = []
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.read_i32_be().is_err())
 }
 
@@ -65,14 +65,14 @@ test "read_i32_be Err — пустой буфер" {
 
 test "OOB после успешного чтения — граница точная" {
     ro bytes []u8 = [0x01, 0x02, 0x03]
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.read_u16_le().is_ok())   // потребили 2
     assert(rb.read_u16_le().is_err())  // остался 1 — мало
 }
 
 test "has_remaining + try_read согласованы" {
     ro bytes []u8 = [0x01, 0x02]
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     assert(!rb.has_remaining(4))
     assert(rb.read_u32_le().is_err())
 }
@@ -83,12 +83,12 @@ test "has_remaining + try_read согласованы" {
 test "read_str Err — больше codepoint'ов чем есть" {
     mut wb = WriteBuffer.new()
     wb.write_str("xy")
-    mut rb = wb.into_bytes().to_readbuffer()
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_str(99).is_err())
 }
 
 test "read_char Err — пустой буфер" {
     ro bytes []u8 = []
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.read_char().is_err())
 }

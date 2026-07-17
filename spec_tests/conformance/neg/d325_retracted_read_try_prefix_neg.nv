@@ -19,7 +19,7 @@ module neg.d325_retracted_read_try_prefix_neg
 
 fn d325_retracted_read() -> u32 {
     ro bytes []u8 = [0x78, 0x56, 0x34, 0x12]
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     // ✗ E_UNKNOWN_METHOD — `try_read_u32_le` ретрактирован (D325); используйте
     //   `rb.read_u32_le()`.
     match rb.try_read_u32_le() {

@@ -32,19 +32,19 @@ test "new().cap(256) — capacity >= 256" {
 
 test "from([]u8) — преднаполненный буфер" {
     ro bytes []u8 = [0x11, 0x22, 0x33]
-    mut wb = bytes.to_writebuffer()
+    mut wb = WriteBuffer.from(bytes)
     assert(wb.len() == 3)
 }
 
 test "from([]u8) — пустой массив" {
     ro bytes []u8 = []
-    mut wb = bytes.to_writebuffer()
+    mut wb = WriteBuffer.from(bytes)
     assert(wb.len() == 0)
 }
 
 test "from([]u8) — append продолжает после готовых байт" {
     ro bytes []u8 = [0xAA]
-    mut wb = bytes.to_writebuffer()
+    mut wb = WriteBuffer.from(bytes)
     wb.write_byte(0xBB)
     ro arr = wb.into_bytes()
     assert(arr.len() == 2)

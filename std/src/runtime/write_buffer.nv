@@ -48,13 +48,18 @@ export fn WriteBuffer.new(cap int = INITIAL_CAPACITY) -> Self
     => { buf: []u8.new(cap: cap) }
 
 // WriteBuffer из существующих байт (deep copy — append через memmove).
+// Param `b` is readonly by default (D176 amend, Plan 108.1).
 //
-// W_STATIC_CONVERSION AMEND (2026-07-17, lint-разкраснение, владелец):
-// static-конверсия `WriteBuffer.from(b)` — запрещённая «пятая дверь»
-// (nv-coding-style §1а, ретракция 2026-07-09). Канон: метод на источнике.
-export fn []u8 @to_writebuffer() -> WriteBuffer {
-    mut wb WriteBuffer = { buf: []u8.new(cap: @len()) }
-    wb.buf.append(@)
+// [M-static-conv-array-record-mono-cc-fail] (2026-07-17, НЕ мигрирован):
+// та же ретракция, что у `ReadBuffer.from` (read_buffer.nv) — extension-
+// метод `[]u8 @to_writebuffer()`, строящий user-record тела, воспроизводимо
+// ломает mono-коллектор (см. read_buffer.nv коммент, идентичный класс бага:
+// `Nova_NovaArray_nova_int_method_to_X` undefined на линковке). Оставлено
+// как static `.from` до фикса; W_STATIC_CONVERSION находка сохранена
+// намеренно.
+export fn WriteBuffer.from(b []u8) -> Self {
+    mut wb WriteBuffer = { buf: []u8.new(cap: b.len()) }
+    wb.buf.append(b)
     wb
 }
 

@@ -7,14 +7,14 @@ module spec_tests.conformance
 
 test "from([]u8) — начальная позиция 0" {
     ro bytes []u8 = [0x11, 0x22, 0x33]
-    ro rb = bytes.to_readbuffer()
+    ro rb = ReadBuffer.from(bytes)
     assert(rb.position() == 0)
     assert(rb.remaining() == 3)
 }
 
 test "from([]u8) — пустой буфер" {
     ro bytes []u8 = []
-    ro rb = bytes.to_readbuffer()
+    ro rb = ReadBuffer.from(bytes)
     assert(rb.position() == 0)
     assert(rb.remaining() == 0)
     assert(rb.has_remaining(1) == false)
@@ -26,7 +26,7 @@ test "from([]u8) — пустой буфер" {
 
 test "position продвигается после read_byte" {
     ro bytes []u8 = [0xAA, 0xBB, 0xCC]
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.position() == 0)
     ro _ = rb.read_byte()!!
     assert(rb.position() == 1)
@@ -36,7 +36,7 @@ test "position продвигается после read_byte" {
 
 test "position продвигается на ширину типа" {
     ro bytes []u8 = [0, 0, 0, 0, 0, 0]
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     ro _ = rb.read_u16_le()!!
     assert(rb.position() == 2)
     ro _ = rb.read_u32_le()!!
@@ -48,7 +48,7 @@ test "position продвигается на ширину типа" {
 
 test "remaining уменьшается по мере чтения" {
     ro bytes []u8 = [1, 2, 3, 4]
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.remaining() == 4)
     ro _ = rb.read_byte()!!
     assert(rb.remaining() == 3)
@@ -60,7 +60,7 @@ test "remaining уменьшается по мере чтения" {
 
 test "position + remaining = общая длина" {
     ro bytes []u8 = [1, 2, 3, 4, 5]
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     ro _ = rb.read_byte()!!
     ro _ = rb.read_byte()!!
     assert(rb.position() + rb.remaining() == 5)
@@ -71,7 +71,7 @@ test "position + remaining = общая длина" {
 
 test "has_remaining — точная граница" {
     ro bytes []u8 = [1, 2, 3]
-    ro rb = bytes.to_readbuffer()
+    ro rb = ReadBuffer.from(bytes)
     assert(rb.has_remaining(0))
     assert(rb.has_remaining(1))
     assert(rb.has_remaining(3))
@@ -80,7 +80,7 @@ test "has_remaining — точная граница" {
 
 test "has_remaining — после чтения" {
     ro bytes []u8 = [1, 2, 3, 4]
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     ro _ = rb.read_u16_le()!!
     assert(rb.has_remaining(2))
     assert(!rb.has_remaining(3))
@@ -91,7 +91,7 @@ test "has_remaining — после чтения" {
 
 test "remaining_bytes — весь буфер до чтения" {
     ro bytes []u8 = [0x10, 0x20, 0x30]
-    ro rb = bytes.to_readbuffer()
+    ro rb = ReadBuffer.from(bytes)
     ro rest = rb.remaining_bytes()
     assert(rest.len() == 3)
     assert(rest[0] == 0x10)
@@ -100,7 +100,7 @@ test "remaining_bytes — весь буфер до чтения" {
 
 test "remaining_bytes — после частичного чтения" {
     ro bytes []u8 = [0x11, 0x22, 0x33]
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     ro _ = rb.read_byte()!!
     ro rest = rb.remaining_bytes()
     assert(rest.len() == 2)
@@ -110,7 +110,7 @@ test "remaining_bytes — после частичного чтения" {
 
 test "remaining_bytes — после полного чтения пуст" {
     ro bytes []u8 = [0x99]
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     ro _ = rb.read_byte()!!
     ro rest = rb.remaining_bytes()
     assert(rest.len() == 0)

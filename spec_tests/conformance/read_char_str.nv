@@ -9,28 +9,28 @@ module spec_tests.conformance
 test "read_char ASCII" {
     mut wb = WriteBuffer.new()
     wb.write_char('A')
-    mut rb = wb.into_bytes().to_readbuffer()
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_char()!! == 'A')
 }
 
 test "read_char Cyrillic — 2-байтовый codepoint" {
     mut wb = WriteBuffer.new()
     wb.write_char('Я')
-    mut rb = wb.into_bytes().to_readbuffer()
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_char()!! == 'Я')
 }
 
 test "read_char CJK — 3-байтовый codepoint" {
     mut wb = WriteBuffer.new()
     wb.write_char('中')
-    mut rb = wb.into_bytes().to_readbuffer()
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_char()!! == '中')
 }
 
 test "read_char emoji — 4-байтовый codepoint" {
     mut wb = WriteBuffer.new()
     wb.write_char('😀')
-    mut rb = wb.into_bytes().to_readbuffer()
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_char()!! == '😀')
 }
 
@@ -39,7 +39,7 @@ test "read_char — несколько подряд, разная ширина" 
     wb.write_char('A')
     wb.write_char('Я')
     wb.write_char('中')
-    mut rb = wb.into_bytes().to_readbuffer()
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_char()!! == 'A')
     assert(rb.read_char()!! == 'Я')
     assert(rb.read_char()!! == '中')
@@ -52,26 +52,26 @@ test "read_char — несколько подряд, разная ширина" 
 test "read_char Ok" {
     mut wb = WriteBuffer.new()
     wb.write_char('Z')
-    mut rb = wb.into_bytes().to_readbuffer()
+    mut rb = ReadBuffer.from(wb.into_bytes())
     ro r = rb.read_char()
     assert(r.is_ok())
 }
 
 test "read_char Err — пустой буфер" {
     ro bytes []u8 = []
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.read_char().is_err())
 }
 
 test "read_char Err — невалидный UTF-8 lead-байт" {
     ro bytes []u8 = [0xFF]
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.read_char().is_err())
 }
 
 test "read_char Err — оборванный многобайтный codepoint" {
     ro bytes []u8 = [0xD0]          // lead 2-байтового, без continuation
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.read_char().is_err())
 }
 
@@ -81,28 +81,28 @@ test "read_char Err — оборванный многобайтный codepoint"
 test "read_str ASCII — n codepoint'ов" {
     mut wb = WriteBuffer.new()
     wb.write_str("Hello")
-    mut rb = wb.into_bytes().to_readbuffer()
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_str(5)!! == "Hello")
 }
 
 test "read_str Unicode — n codepoint'ов (не байт)" {
     mut wb = WriteBuffer.new()
     wb.write_str("Привет")
-    mut rb = wb.into_bytes().to_readbuffer()
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_str(6)!! == "Привет")
 }
 
 test "read_str — пустая строка n=0" {
     mut wb = WriteBuffer.new()
     wb.write_str("data")
-    mut rb = wb.into_bytes().to_readbuffer()
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_str(0)!! == "")
 }
 
 test "read_str — частичное чтение" {
     mut wb = WriteBuffer.new()
     wb.write_str("abcdef")
-    mut rb = wb.into_bytes().to_readbuffer()
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_str(3)!! == "abc")
     assert(rb.read_str(3)!! == "def")
 }
@@ -113,7 +113,7 @@ test "read_str — частичное чтение" {
 test "read_str Ok" {
     mut wb = WriteBuffer.new()
     wb.write_str("ok")
-    mut rb = wb.into_bytes().to_readbuffer()
+    mut rb = ReadBuffer.from(wb.into_bytes())
     ro r = rb.read_str(2)
     assert(r.is_ok())
 }
@@ -121,12 +121,12 @@ test "read_str Ok" {
 test "read_str Err — запрошено больше чем есть" {
     mut wb = WriteBuffer.new()
     wb.write_str("ab")
-    mut rb = wb.into_bytes().to_readbuffer()
+    mut rb = ReadBuffer.from(wb.into_bytes())
     assert(rb.read_str(10).is_err())
 }
 
 test "read_str Err — невалидный UTF-8" {
     ro bytes []u8 = [0xFF, 0xFE]
-    mut rb = bytes.to_readbuffer()
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.read_str(1).is_err())
 }

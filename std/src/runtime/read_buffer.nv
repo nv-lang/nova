@@ -5,7 +5,7 @@
 // Теперь: Nova record; все методы на Nova-body над []u8 primitives.
 //
 // API contract (Plan 177 / D325 — единый fallible-контракт):
-//   []u8 @to_readbuffer() -> ReadBuffer
+//   ReadBuffer.from(b []u8) -> Self
 //   @position, @remaining, @has_remaining, @remaining_bytes
 //   @read_X -> Result[T, ReadBufferError], X ∈
 //     { byte, bytes, u8, i8, u16_le, u16_be, u32_le, u32_be, u64_le, u64_be,
@@ -36,12 +36,22 @@ export type ReadBuffer {
 
 // Создать ReadBuffer из []u8 (view + position 0). Data копируется как
 // readonly handle — slice-view внутри cursor'а без отдельной alloc'и
-// сверх ReadBuffer struct. Receiver readonly by default (D176 amend).
+// сверх ReadBuffer struct. Param `b` readonly by default (D176 amend).
 //
-// W_STATIC_CONVERSION AMEND (2026-07-17, lint-разкраснение, владелец):
-// static-конверсия `ReadBuffer.from(b)` — запрещённая «пятая дверь»
-// (nv-coding-style §1а, ретракция 2026-07-09). Канон: метод на источнике.
-export fn []u8 @to_readbuffer() -> ReadBuffer => { data: @, pos: 0 }
+// [M-static-conv-array-record-mono-cc-fail] (2026-07-17, НЕ мигрирован):
+// канон §1а требует `[]u8 @to_readbuffer()` (метод на источнике) вместо
+// static `.from`, но эта форма — extension-метод на `[]u8`, ВОЗВРАЩАЮЩИЙ
+// user-record (`ReadBuffer { data: @, ... }`) — воспроизводимо ломает
+// линковку CC-стадии в spec_tests/conformance/read_nav.nv: `lld-link:
+// undefined symbol: Nova_NovaArray_nova_int_method_to_readbuffer` (mono-
+// коллектор мономорфизирует `to_readbuffer` для ЛЮБОЙ `[]T`-инстанциации,
+// встреченной в compile unit — не только `[]u8`, — и падает на T=int).
+// Существующие `[]u8 @to_str()`/`@to_str_unchecked()` (string/core.nv)
+// НЕ триггерят баг — тело у них не строит user-record через `{ field: @ }`.
+// Оставлено как static `.from` (W_STATIC_CONVERSION лint-находка сохранена
+// НАМЕРЕННО) до отдельного фикса mono-коллектора; см. отчёт задачи
+// fix-runtime-lint-debt. НЕ мигрировать call-сайты обратно без этого фикса.
+export fn ReadBuffer.from(b []u8) -> Self => { data: b, pos: 0 }
 
 // ─── Cursor metadata ───
 
