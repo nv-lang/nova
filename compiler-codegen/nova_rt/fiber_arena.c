@@ -42,6 +42,14 @@
 
 #ifdef NOVA_GC_BOEHM
 #include <gc.h>
+/* [M-187-docker-linux-runtime-hang] Ф.2: GC_push_all_eager/
+ * GC_set_push_other_roots — на system libgc-dev (apt) объявлены в
+ * gc/gc_mark.h, НЕ в верхнеуровневом compat-шиме gc.h (проверено:
+ * /usr/include/gc/gc_mark.h, Ubuntu libgc-dev 1:8.2.12-1). Path-less —
+ * тот же system include path, что уже резолвит <gc.h> (detect_boehm не
+ * добавляет -I на Linux). Симметрично Windows-стороне (fiber_arena_win.c
+ * подключает оба <gc/gc.h> + <gc/gc_mark.h>). */
+#include <gc/gc_mark.h>
 #endif
 
 /* ── Per-thread arena state ────────────────────────────────────── */
@@ -135,14 +143,13 @@ static void _arena_thread_exit_cleanup(void* arg) {
     struct NovaFiberArena* a = (struct NovaFiberArena*)arg;
     if (!a || !a->base) return;
 
-#ifdef NOVA_GC_BOEHM
-    /* Unregister GC roots для этой arena before unmapping. Boehm
-     * GC_remove_roots takes (start, end). Safe to call даже если
-     * range never registered (no-op then). */
-    if (a->high_water > 0) {
-        GC_remove_roots(a->base, a->base + a->high_water * a->slot_size);
-    }
-#endif
+    /* [M-187-docker-linux-runtime-hang] Ф.2: раньше здесь был явный
+     * GC_remove_roots — рудимент плоской GC_add_roots-регистрации.
+     * Теперь GC roots читаются live колбэком _nova_gc_push_other_roots
+     * (см. ниже); retire arena'ы он и так пропускает по `base == NULL`
+     * (симметрия с Windows _nova_fw_gc_push_other_roots). Явного
+     * unregister не нужно — RELEASE-store base=NULL ниже это и есть
+     * unregister. */
 
     munmap(a->base, a->virtual_size);
 
@@ -268,6 +275,53 @@ static void _arena_install_sigsegv_handler(void) {
     sigemptyset(&sa.sa_mask);
     sigaction(SIGSEGV, &sa, &_prev_sigsegv);
 }
+
+/* ── GC integration — precise push_other_roots (root-cause fix) ─────
+ *
+ * [M-187-docker-linux-runtime-hang] слой 2, Дефект A (docs/plans/wip/
+ * boehm-stw-design.md §3/§5): раньше _arena_register_active_range
+ * регистрировала статический root GC_add_roots(base, base +
+ * high_water*slot_size) — диапазон НАЧИНАЕТСЯ ровно с guard-страницы
+ * слота 0 (PROT_NONE) и включает guard каждого следующего слота. Boehm
+ * без incremental-mode сканирует статические roots линейным чтением
+ * без fault-recovery → первое же чтение guard'а → SIGSEGV внутри
+ * mark-фазы (наблюдалось как "нежить" aggregator на первом HTTP-
+ * запросе, growing WriteBuffer триггерит GC).
+ *
+ * Фикс — порт точной Windows-модели (fiber_arena_win.c::
+ * _nova_fw_gc_push_other_roots): GC_set_push_other_roots-колбэк,
+ * вызываемый Boehm ВНУТРИ mark-фазы (мир уже остановлен) — обходит
+ * arena-list и пушит ТОЛЬКО usable-регион (+NOVA_FIBER_GUARD_SIZE)
+ * ЗАНЯТЫХ слотов через GC_push_all_eager (не GC_push_all — тот лишь
+ * кладёт дескриптор на mark-stack и переполняет его на тысячах fiber'ов,
+ * Windows-сторона нашла это же на Ф.1). Guard-страницы и свободные/
+ * никогда-не-тронутые слоты не читаются вовсе. */
+#ifdef NOVA_GC_BOEHM
+/* Mark-фаза, мир остановлен → arena-list append-only + bitmap/high_water
+ * стабильны; обход без лока безопасен (симметрия с Windows). */
+static void _nova_gc_push_other_roots(void) {
+    for (struct NovaFiberArena* a =
+             __atomic_load_n(&_nova_arena_list_head, __ATOMIC_ACQUIRE);
+         a; a = a->next_arena) {
+        char* base = __atomic_load_n(&a->base, __ATOMIC_ACQUIRE);
+        if (!base) continue;                     /* retired */
+        size_t hw = a->high_water;               /* мир остановлен — стабильно */
+        for (size_t slot = 0; slot < hw; slot++) {
+            uint64_t w = __atomic_load_n(&a->free_bits[slot >> 6], __ATOMIC_ACQUIRE);
+            if (!((w >> (slot & 63)) & 1)) continue;   /* слот свободен */
+            char* usable_lo = base + slot * a->slot_size + NOVA_FIBER_GUARD_SIZE;
+            char* usable_hi = base + (slot + 1) * a->slot_size;
+            GC_push_all_eager(usable_lo, usable_hi);   /* guard исключён */
+        }
+    }
+}
+
+static pthread_once_t _gc_roots_once = PTHREAD_ONCE_INIT;
+
+static void _arena_install_gc_roots(void) {
+    GC_set_push_other_roots(_nova_gc_push_other_roots);
+}
+#endif /* NOVA_GC_BOEHM */
 
 /* ── Plan 149 Ф.1/Ф.4: config parse + round/clamp helpers ───────────
  *
@@ -502,6 +556,13 @@ void nova_fiber_arena_init(void) {
      * процесса (не per-thread) — pthread_once, а не бинарный флаг
      * (см. [M-fiber-arena-sigsegv-install-race]). */
     pthread_once(&_sigsegv_once, _arena_install_sigsegv_handler);
+#ifdef NOVA_GC_BOEHM
+    /* [M-187-docker-linux-runtime-hang] Ф.2: точный push_other_roots
+     * колбэк вместо плоского GC_add_roots — см. design doc §5. Once-
+     * per-process, до первого alloc'а слота (симметрия с Windows
+     * _nova_fw_global_init/INIT_ONCE). */
+    pthread_once(&_gc_roots_once, _arena_install_gc_roots);
+#endif
 
     /* Plan 149 Ф.1: resolve runtime config (env ∨ -D/toml ∨ builtin) with
      * auto-round-UP + clamp. Garbage env → warn + default (helpers). */
@@ -641,36 +702,17 @@ void nova_fiber_arena_init(void) {
 
     _t_arena = a;
 
-    /* Plan 44.2 P41-11: НЕ register full arena как GC root now —
-     * active-range registration: lazy, on first slot alloc bumping
-     * high_water. См. _arena_register_active_range. */
+    /* Plan 44.2 P41-11 (обновлено [M-187-docker-linux-runtime-hang] Ф.2):
+     * НЕ регистрируем статический GC root вообще — push_other_roots-
+     * колбэк (_nova_gc_push_other_roots, зарегистрирован выше) читает
+     * a->high_water/a->free_bits LIVE во время mark-фазы, никакой
+     * явной регистрации на bump'е high_water не требуется. */
 
     /* Plan 82.2: pthread_setspecific принимает heap pointer (не &_t_arena).
      * Cleanup-callback получит указатель на heap struct — корректно
      * munmap + NULL base + сохранение next_arena в list. */
     pthread_setspecific(_arena_cleanup_key, a);
 }
-
-/* ── Active-range GC root management (P41-11) ──────────────────── */
-
-#ifdef NOVA_GC_BOEHM
-/* Plan 44.2 audit R8 P0 (2026-05-13): __thread — per-thread tracker. */
-static __thread size_t _registered_high_water = 0;
-
-static void _arena_register_active_range(struct NovaFiberArena* a, size_t new_high) {
-    if (new_high <= _registered_high_water) return;
-
-    if (_registered_high_water > 0) {
-        GC_remove_roots(a->base, a->base + _registered_high_water * a->slot_size);
-    }
-    GC_add_roots(a->base, a->base + new_high * a->slot_size);
-    _registered_high_water = new_high;
-}
-#else
-static inline void _arena_register_active_range(struct NovaFiberArena* a, size_t h) {
-    (void)a; (void)h;
-}
-#endif
 
 /* ── Bitmap allocate / free ─────────────────────────────────────── */
 
@@ -742,7 +784,9 @@ void* nova_fiber_alloc(size_t size, void* allocator_data) {
     __atomic_add_fetch(&a->slots_active, 1, __ATOMIC_RELAXED);
     if (slot + 1 > a->high_water) {
         a->high_water = slot + 1;
-        _arena_register_active_range(a, a->high_water);
+        /* [M-187-docker-linux-runtime-hang] Ф.2: раньше здесь звали
+         * _arena_register_active_range (GC_add_roots bump) — снято,
+         * push_other_roots-колбэк читает high_water live (см. выше). */
     }
 
     /* Usable region: slot_base + guard_size .. slot_base + slot_size.
