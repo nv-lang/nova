@@ -5,7 +5,7 @@
 погибшей волны, worktree `nova-197r`/branch `p197-examples-rest`) — аудит
 всех 29 файлов + чистка мёртвой поверхности + переверификация 19
 не-`_wip`-файлов сегодняшним `nova.exe` (ноль регрессий от промежуточных
-lang-волн), см. [197-audit-progress.md](197-audit-progress.md) §«Заход
+lang-волн), см. [197-audit-progress.md](wip/197-audit-progress.md) §«Заход
 2026-07-17». Итог 07-17: **18 из 19** файлов реально компилируются
 (`--strict-effects`) — было 16/19; один из трёх известных toolchain-багов
 (extern-FFI tuple-return codegen, `sqlite_mini.nv`) подтверждённо
@@ -98,12 +98,12 @@ sql-tag `SqlValue`-обёртки, multi-line-signature/leading-operator фик�
 теперь содержательно чисты, но заблокированы ДВУМЯ НОВЫМИ подтверждёнными
 compiler-багами вне скоупа этого плана (`.map()` generic-inference ICE, `with`
 внутри handler-method body не парсится — оба с synthetic repro, см.
-[197-audit-progress.md](197-audit-progress.md)). Мёртвая поверхность в оставшемся
+[197-audit-progress.md](wip/197-audit-progress.md)). Мёртвая поверхность в оставшемся
 дереве (вне `_wip/`) = 0; 16 из 19 файлов реально компилируются сегодняшним
 `nova.exe`, 3 — блокированы известными compiler-issue.
 
 **Обновление 2026-07-17 (дожатие Ф.3/Ф.4-остатка, см. «Статус» вверху и
-[197-audit-progress.md](197-audit-progress.md) §«Заход 2026-07-17»):**
+[197-audit-progress.md](wip/197-audit-progress.md) §«Заход 2026-07-17»):**
 переверификация сегодняшним `nova.exe` — ноль регрессий на 16 ранее
 зелёных файлах; extern-FFI tuple-return баг (был #3) подтверждённо
 пофикшен, `sqlite_mini.nv` → KEEP; в `orm_decorators.nv` найден+исправлен
@@ -122,7 +122,7 @@ compiler-багами вне скоупа этого плана (`.map()` generi
 
 - **Ф.1 — аудит per-file (read-only):** ✅ ГОТОВО (2026-07-12, полный переаудит
   после фикса toolchain-багов апстримом). Таблица — [197-audit-progress.md](
-  197-audit-progress.md). Doc-ссылки проверены (grep `examples/` в docs/ +
+  wip/197-audit-progress.md). Doc-ссылки проверены (grep `examples/` в docs/ +
   `www`) — удалённые/перемещённые файлы упоминались только в исторических
   plan-докax/spec-history, не на лендинге/гайдах.
 - **Ф.2 — исполнить триаж:** ✅ ГОТОВО (2026-07-12). FIX-CHEAP починены на канон

@@ -242,7 +242,7 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
    убрать `strategy:/max_restarts:/period:` (оставить `deadline:/timeout:/cancel:`) — эхо отменённого решения.
 2. **[173.2](173.2-supervision-as-effect.md)**: superseded-врезка per §3b-резолюция (MVP = Escalate/Stop;
    `Restart(single)` за гейтом изоляции; расширить гард п.7 до shared-mut).
-3. **D-нумерация verify:** D314 зарезервирован за 173 (`172.1-d-status.md:411`) — подтвердить свободу;
+3. **D-нумерация verify:** D314 зарезервирован за 173 (`wip/172.1-d-status.md:411`) — подтвердить свободу;
    Ф.6 D-блок = **D348** (D340-D346 serde, D347 Plan 181; D348+ свободны — проверено 2026-07-03). NB
    попутная находка: Plan 178 претендует на D327-D332, а D327 уже занят в спеке — коллизия НЕ наша,
    передать владельцу Plan 178 (заметка в discussion-log).
@@ -322,7 +322,7 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
 > 🔨 **Ф.2.0 ЗАКРЫТ (D314-spec + де-риск-карта):** D314 написан spec-first в
 > [spec/decisions/03-syntax.md](../../spec/decisions/03-syntax.md#d314); полная де-риск-карта
 > (ultracode Workflow, 4 агента) + **скорректированная последовательность под-атомов** —
-> [docs/plans/173-f2-derisk-map.md](173-f2-derisk-map.md). **🔴 КРИТИЧЕСКИЕ НАХОДКИ де-риска:**
+> (чекпоинт волны удалён при закрытии, см. git-историю). **🔴 КРИТИЧЕСКИЕ НАХОДКИ де-риска:**
 > (1) **D194-элизия §3.5 ПРЕМИСА ЛОЖНА** — код НЕ элидит (полный frame-bearing путь безусловно);
 > Ф.2 acceptance = PARITY (не регрессировать), §perf-элизия → followup `[M-173-d194-perf-elision]`.
 > (2) **`nova_scope_exit` нужен policy-параметр** `{CATCH,TRANSPARENT}` (with-Fail USER→swallow vs
@@ -371,7 +371,7 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
   std/+docs/ = 0 вне historical); хаб переписан; disasm hot-path ≡; **без упрощений**.
 - ✅ **Закрыта.** Все под-атомы (A0/R1 43f9ee5bd/R2 ffb76506e/B1 e0d95a313/B2 23f512d84/B3-merge a23579f3e
   (разблокирован D314 §4a `501adb50e`)/C `c6254274e`/D194 `66a29f63a`/E `0636a9edd`) уже в `main` —
-  подтверждено де-риск-картой (`173-f2-derisk-map.md` §«СВОДКА Ф.2», ПОЛНОСТЬЮ ЗАКРЫТА). Исполнение-заход
+  подтверждено де-риск-картой (чекпоинт волны удалён при закрытии, см. git-историю; §«СВОДКА Ф.2», ПОЛНОСТЬЮ ЗАКРЫТА). Исполнение-заход
   2026-07-08 (sonnet, ветка `defer-kernel-173-f2`, worktree nova-p173) — новых пунктов не осталось,
   подтверждающий прогон гейтов: `cargo build --release` оба крейта чисто; conformance
   `spec_tests/conformance` **70/0**; defer/errdefer/cleanup корпус (err173, err173_0, plan110, plan103_9,

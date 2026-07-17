@@ -7,9 +7,9 @@
 > прямым сравнением с main: FAIL 21==21 байт-в-байт; targeted-фикстуры pos/neg/
 > standalone — все PASS; спот-грепом `.c` подтверждён zero-copy + 0 правок
 > emit_c.rs). Ф.3 (флагман-демо) — ПРОПУЩЕНА (опционально/не блокер, см.
-> `210-impl-progress.md`). **В main НЕ вливалось** — авторитетный гейт
+> `wip/210-impl-progress.md`). **В main НЕ вливалось** — авторитетный гейт
 > (мега-CU conformance + флагман-examples под `--strict-effects`) делает
-> оркестратор при вливании. Прогресс/детали — [210-impl-progress.md](210-impl-progress.md).
+> оркестратор при вливании. Прогресс/детали — [210-impl-progress.md](wip/210-impl-progress.md).
 > **Ф.5 (остаток, владелец 2026-07-16): user-facing дока** — `docs/embed.md`
 > (гайд по обоим интринсикам: `embed("file")` D412 + `embed_dir("dir")`): как
 > использовать, API `EmbeddedDir` (`get/has/paths/len/entries`), детерминизм,

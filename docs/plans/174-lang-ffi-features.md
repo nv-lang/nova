@@ -220,7 +220,7 @@ snapshot ~:7877-8039, 8698. Зонт-исключение: 174.4 НЕ завис
   (дизамбиг до renumber-решения §6).
 
 ### 3.7 Кросс-файловые мелочи
-- `172.2-method-arg-type-checking.md:6` — подпись «D309=171» → «D309=174.1»; `172.1-d-status.md:410`
+- `172.2-method-arg-type-checking.md:6` — подпись «D309=171» → «D309=174.1»; `wip/172.1-d-status.md:410`
   (строка D309; НЕ :411 — там D314/173) — из ярлыка убрать «Method arg narrowing», оставить
   «primitive parse API» (сейчас содержит оба).
 - ~~Plan 173:353 stale-строки (1139/1155 → 1241/1249)~~ — ✅ поправлено 2026-07-03 (Ред. 2 этого зонта).
@@ -297,7 +297,7 @@ Go cgo pointer-rules / Zig extern struct / Swift @convention(c) / Java Panama.
 
 ## 6. D-номера семейства (verify 2026-07-03)
 
-- **174.1 = D309** (свободен; зарезервирован кросс-ссылками 172.2:6 и 172.1-d-status:410 — оставить,
+- **174.1 = D309** (свободен; зарезервирован кросс-ссылками 172.2:6 и wip/172.1-d-status:410 — оставить,
   поправить stale-ярлыки §3.7). Остальные 174.x новых D пока не резервируют (амендменты D53/D54/D85/
   D216/D282) — коллизий с занятыми (D314, D327, D333-D339, D340-D346, D347, D348-D349) НЕТ.
 - **Резерв семьи: D350-D356** (D350-D399 свободны, выше — серия D400+ занята 172.1): D350 = 174.2
@@ -309,7 +309,7 @@ Go cgo pointer-rules / Zig extern struct / Swift @convention(c) / Java Panama.
   anon-tuple-mono **D216 → D354** (typed-pointers сохраняет D216 — цепочка V2/V3-амендментов,
   D246, 174.5); blanket-protocols **D282 → D355** (extern-ABI сохраняет D282 — канон README-индекса,
   амендится 174.6). Обновлены: заголовки блоков + Эволюция-ноты (02-types.md), все anchor-ссылки
-  (06-concurrency/10-overloading/03-syntax/README), planы 59.1/161/162/172.1-d-status/p67/checklist,
+  (06-concurrency/10-overloading/03-syntax/README), planы 59.1/161/162/wip/172.1-d-status/p67/checklist,
   conformance-файлы переименованы `d354_generic_anon_tuple_mono.nv` / `d355_blanket_protocol.nv`
   (включая внутренние идентификаторы). Бонус: nova_tests/plan163 ссылались на D282 ошибочно →
   исправлено на D288. **Гейт 174.5/174.6-M0 снят.**

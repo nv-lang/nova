@@ -15404,13 +15404,13 @@ fn StringBuilder consume @into_str_checked() -> Result[str, Utf8Error]
 | Ф.0 | Эта спека (D422 keystone + amend-пометки D419/D374/D237/D229/D179 + D55-аменд) | ✅ 2026-07-15 |
 | Ф.1 | Буфер-примитивы `.nv` (аддитивно, рядом с `conv.h`); `fmt_f64_into` C-extern; `StringBuilder`-аменд | ✅ 2026-07-15 (`std/src/runtime/fmt_buf.nv`, `string_builder.nv` — merge `b6ee6f40a`) |
 | Ф.2 | Когерентная волна: `Write`/`Fmt`/`FmtCtx`/энумы в std; компилятор — переписка `emit_interpolated_str`/`emit_format_spec_value` на `@display(f)`/`@debug(f)`; удаление `@display_fmt`-пути; ретракт `str.from_debug` | ✅ 2026-07-16 (ветка `p208-impl`) — **с тремя V1-упрощениями, см. подсекцию ниже** |
-| Ф.3 | Дженерики `.nv` (`[]T`/`Vec[T]`/`Option`/`Result` Display/Debug) + auto-derive record/sum/tuple (компактная `TypeName(a, b)` форма Display, отличная от именованной Debug-формы) | ✅ 2026-07-16 (ветка `p208-impl`, волна 2) — см. `docs/plans/208-impl-progress.md` §"Ф.3 — генерики .nv + auto-derive" |
-| Ф.4 | Зачистка: оставшийся `conv.h` → `.nv`; удаление мёртвого `nova_fmt_*` | ⏳ pending — **заблокирована** (разведка волны 2 подтвердила и УГЛУБИЛА блокер Ф.2's V1-упрощения #1, см. ниже): примитивный форматный путь (bare + rich-spec, `emit_interpolated_str`/`emit_format_spec_value`) сознательно НЕ перевязан на буфер-примитивы Ф.1 — `conv.h`'s `nova_fmt_*`/`nova_*_to_str`/`nova_*_to_debug_str` остаются ЖИВЫМИ (не мёртвыми), так что «удалить мёртвый nova_fmt_*» пока буквально нечего удалять. Волна 2 нашла ДОПОЛНИТЕЛЬНЫЙ блокер: буфер-примитивы Ф.1 не имеют quote/escape-логики для Debug str/char (нужна с нуля) — см. `208-impl-progress.md` §"Ф.4 — статус: РАЗВЕДКА" |
+| Ф.3 | Дженерики `.nv` (`[]T`/`Vec[T]`/`Option`/`Result` Display/Debug) + auto-derive record/sum/tuple (компактная `TypeName(a, b)` форма Display, отличная от именованной Debug-формы) | ✅ 2026-07-16 (ветка `p208-impl`, волна 2) — см. `docs/plans/wip/208-impl-progress.md` §"Ф.3 — генерики .nv + auto-derive" |
+| Ф.4 | Зачистка: оставшийся `conv.h` → `.nv`; удаление мёртвого `nova_fmt_*` | ⏳ pending — **заблокирована** (разведка волны 2 подтвердила и УГЛУБИЛА блокер Ф.2's V1-упрощения #1, см. ниже): примитивный форматный путь (bare + rich-spec, `emit_interpolated_str`/`emit_format_spec_value`) сознательно НЕ перевязан на буфер-примитивы Ф.1 — `conv.h`'s `nova_fmt_*`/`nova_*_to_str`/`nova_*_to_debug_str` остаются ЖИВЫМИ (не мёртвыми), так что «удалить мёртвый nova_fmt_*» пока буквально нечего удалять. Волна 2 нашла ДОПОЛНИТЕЛЬНЫЙ блокер: буфер-примитивы Ф.1 не имеют quote/escape-логики для Debug str/char (нужна с нуля) — см. `wip/208-impl-progress.md` §"Ф.4 — статус: РАЗВЕДКА" |
 
 Ф.2 реализована на ветке `p208-impl` (3 шага: std-сигнатуры, `emit_c.rs`-диспатч,
 миграция потребителей — json.nv + `spec_tests/conformance/d374_*`/`d229_*`/бывшие
 `d419_*`→`d422_*`). Полный разбор по шагам, файлам, коммитам — см.
-[docs/plans/208-impl-progress.md](../../docs/plans/208-impl-progress.md). Три
+[docs/plans/wip/208-impl-progress.md](../../docs/plans/wip/208-impl-progress.md). Три
 намеренных V1-упрощения относительно этого нормативного текста (НЕ противоречат
 D422 — заполняют места, где D422 либо молчит, либо описывает алгоритм, для
 которого V1 выбрал более простую/менее рискованную реализацию с идентичным
@@ -15455,7 +15455,7 @@ D422 — заполняют места, где D422 либо молчит, ли�
    `nova_str_to_debug_str` в `conv.h` дают `'c'`/`"a\nb"` с escaping; `fmt_buf.nv`
    ничего эквивалентного не содержит). Полная Ф.4-перевязка требует ЭТУ логику
    написать с нуля (не просто "подключить существующее") — см.
-   `docs/plans/208-impl-progress.md` §"Ф.4 — статус: РАЗВЕДКА" (волна 2) для
+   `docs/plans/wip/208-impl-progress.md` §"Ф.4 — статус: РАЗВЕДКА" (волна 2) для
    полного разбора (там же — вторая находка: `int_fmt`/`bool_fmt`/`char_fmt`
    module-private по D422 §5 → единственный корректный способ их звать из
    hand-synth C — через method-dispatch на переписанных примитивных
@@ -15511,7 +15511,7 @@ vs remaining-tail) — за владельцем/интегратором.
 - str.from_debug/str.from ретракция (Plan 174.2, [D73](08-runtime.md#d73-from--into-protocol-пара-с-авто-выводом))
   — `str.from_debug(@)` в Debug-протокола default-body (`std/prelude/protocols.nv`) остаётся
   мёртвым/нереализованным символом ДО D422 (174.2 явно оставил его вне scope — см.
-  `docs/plans/174.2-scalar-to-str-notes.md`); D422 Ф.2 удаляет этот default-body ПОЛНОСТЬЮ
+  `docs/plans/wip/174.2-scalar-to-str-notes.md`); D422 Ф.2 удаляет этот default-body ПОЛНОСТЬЮ
   вместе с переходом на compiler-synthesized `@debug(f)` — `str.from_debug` окончательно
   устраняется, не остаётся даже мёртвым текстом.
 - Plan 208 (докладной план — [docs/plans/208-unified-formatter.md](../../docs/plans/208-unified-formatter.md), this D-block's home plan).

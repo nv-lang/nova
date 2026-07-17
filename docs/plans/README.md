@@ -35,7 +35,7 @@
 - **187** — ✅ Ф.MVP-2 ВЛИТА (2026-07-15/16): живое веб-приложение работает (все легенды/режимы вкл. weather-live HTTPS; typed-serde возвращён; все рантайм/codegen-блокеры закрыты, wedge митигирован bounded-accept → глубина в [Plan 211](211-park-join-research.md)); нагрузочный гейт `examples/flagship/aggregator/loadtest.ps1` (10×, 67 PASS). Остаток: волна 2 — Docker (Linux-пре-гейт → ghcr «одной командой»).
 - **173** ✅ семейство закрыто 2026-07-13 (MultiError D414 + propagation-trace per-fiber + suppressed явным параметром); остаток: п.4 semaphore-cap (P3, опция) + [M-173-trace-not-in-child-error] (P3).
 - **193** ✅ закрыт (std/tls → внешний dep `../nova-tls`, ноль Rust в TLS-пути); хвост — vendored mbedTLS.
-- **198** ✅ Ф.2 REDO ЗАКРЫТ 2026-07-13: корпус мигрирован в spec_tests по D307 (merged-CU 2585 блоков PASS; гейт 468/0+12skip); вечно-красные в fixtures/known_red; остаток Ф.4c = 9 классов компиляторных находок (198-redo-notes).
+- **198** ✅ Ф.2 REDO ЗАКРЫТ 2026-07-13: корпус мигрирован в spec_tests по D307 (merged-CU 2585 блоков PASS; гейт 468/0+12skip); вечно-красные в fixtures/known_red; остаток Ф.4c = 9 классов компиляторных находок ([198-redo-notes](wip/198-redo-notes.md)).
 - **201** ✅ ЗАКРЫТ 2026-07-13 (consume-блок D188 v1/v2/multi-var/v3/v3.1 + @share/refcount в nv + M-178 прямой move в consume-поле D133; спек-амендменты в тех же слияниях).
 - **202** ✅ ЗАКРЫТ 2026-07-13 (path-keyed реестр модулей + root peers D78 rev-4 + миграция nova-tls; [M-d78-duplicate-decl-module-swallow] снят).
 - **200** — живой реестр: П1/П2/П4/П5/**П7** (scalar→str `@to_str`, str.from убран, влито) ✅; П6 (Vec.data→ptr) ⏸️ на паузе (ABI-правка); **П8 → [Plan 208](208-unified-formatter.md)** (unified Formatter — дизайн); П3 (As*) — в Q.

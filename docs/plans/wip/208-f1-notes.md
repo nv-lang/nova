@@ -117,7 +117,7 @@ nova_rt.h (driver.c/effects.c/eventloop.c/runtime.c).
 - `std/src/runtime/fmt_buf.nv` (новый)
 - `std/src/runtime/string_builder.nv` (аддитивно)
 - `std/src/runtime/string_builder_test.nv` (новый)
-- `docs/plans/208-f1-notes.md` (этот файл)
+- `docs/plans/wip/208-f1-notes.md` (этот файл)
 
 ## Неопределённости / открытые вопросы для Ф.2
 

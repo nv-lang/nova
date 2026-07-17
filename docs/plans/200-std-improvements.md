@@ -229,7 +229,7 @@ D299-вариантности `*T`/`*mut T`.
 починен ОТДЕЛЬНО оркестратором в main — D164, коммит `106ae7207` (guard Plan 164 Ф.3 расширен на примитивы;
 регресс `d164_primitive_blanket_dispatch.nv`); neg-тест `int_to_str_effect_collision_neg` конвертирован в
 позитив `int_to_str_effect_op_blanket`. Остаток: `nova_tests/**` (str.from) — оставлен Plan 198 (заморожен,
-удаляется). Полная запись — `docs/plans/174.2-scalar-to-str-notes.md`.
+удаляется). Полная запись — `docs/plans/wip/174.2-scalar-to-str-notes.md`.
 
 **Решение владельца 2026-07-14:** `str.from(scalar)` **УБРАТЬ** полностью (не прятать в приватный движок) —
 публичная поверхность = только `@to_str()`, ради цепочных вызовов (`x.to_str().pad(…)`; `str.from(x)` не
@@ -274,7 +274,7 @@ D299-вариантности `*T`/`*mut T`.
 
 **Приёмка (оркестратор):** conformance полный без `--jobs` (мега-CU ~450с); `std/src/encoding + time + data` δ0;
 byte-parity НЕ требуется (аллокация убрана — `.c` меняется законно), тесты зелёные; D-амендмент в том же слиянии;
-греп конфликт-маркеров одной командой с коммитом. **Checkpoint при обрыве:** `docs/plans/174.2-scalar-to-str-notes.md`.
+греп конфликт-маркеров одной командой с коммитом. **Checkpoint при обрыве:** `docs/plans/wip/174.2-scalar-to-str-notes.md`.
 
 ---
 

@@ -423,7 +423,7 @@ MIR / оптимизации (SSA/DCE) — Стадия 2, отдельный г
 ## ⏸️ ОТЛОЖЕНО (фасет B, точечно) — priv(file) free-fn generic-mono bleed (2026-07-14)
 
 **Статус:** диагноз завершён, фикс отложен решением владельца (не срочно: 2 теста в `standalone/`,
-merged-CU зелёный). Полный рецепт + локализация — [196-facetB-privfile-notes.md](196-facetB-privfile-notes.md).
+merged-CU зелёный). Полный рецепт + локализация — [196-facetB-privfile-notes.md](wip/196-facetB-privfile-notes.md).
 **Первопричина:** `priv(file)` generic free-fn (`fn[T] pick`) в merged-CU (а) выигрывает overload-резолв
 у более специфичной file-local КОНКРЕТНОЙ перегрузки (наруш. D84 specificity), (б) mono-именуется по
 `file_id` ВЫЗЫВАЮЩЕГО, не файла generic'а. Сайт: `emit_c.rs` generic-mono dispatch (~21530/22812).

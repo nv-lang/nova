@@ -349,7 +349,7 @@ export NOVA_INCLUDE_DIR=/d/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed
 2. Полный `nova test spec_tests/conformance --full` БЕЗ `--jobs` (один процесс). Гуляющие TIMEOUT (66s-kill на тривиальных тестах: consume_fixtures/, lint/, any_is/ — environmental под конкурентной нагрузкой) — точечный ре-ран, НЕ чинить.
 3. Прогоны затронутых std-папок НЕ нужны (std не трогали), но `std_hygiene`-пара уехала в conformance ранее — покрыта общим прогоном.
 4. Известные stable-red (НЕ ослаблять, доложить владельцу): `standalone/view_descriptor_stack.nv` (регрессия 172.14?), `standalone/permit_balanced_prop.nv` (EXPECT_TIMEOUT_MS 30000, стабильно ~47-50s — подозрение на race в permit-scheduling M:N).
-5. Обновить статус-таблицу выше + docs/plans/198-triage-progress.md, коммит.
+5. Обновить статус-таблицу выше + docs/plans/wip/198-triage-progress.md, коммит.
 
 ## Журнал чекпойнтов
 

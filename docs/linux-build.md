@@ -38,8 +38,7 @@ echo 'fn main() Io -> () => println("hello")' > /tmp/hello.nv
 ./nova-cli/target/release/nova test std/src/checksums
 ```
 
-All of the above is verified working end-to-end (see
-`docs/plans/linux-build-progress.md` for the raw session log).
+All of the above is verified working end-to-end (checkpoint deleted on wave closure; see git history for the raw session log).
 
 ## Packages
 
@@ -192,7 +191,7 @@ doesn't either.
 | Boehm GC detection/link | PASS, system `libgc-dev`, no overrides |
 | `nova build` hello-world | PASS, `built: .../hello (12.09s)`, ran, correct stdout |
 | `nova test std/src/checksums` | PASS: 3 FAIL: 0 SKIP: 3 |
-| TSan smoke (spawn+supervised, manual `clang -fsanitize=thread`) | Compiles+links clean, runs to completion, **found 2 real data races** — see `docs/plans/linux-build-progress.md` §Бонус and the closing task report for Plan 211 |
+| TSan smoke (spawn+supervised, manual `clang -fsanitize=thread`) | Compiles+links clean, runs to completion, **found 2 real data races** — checkpoint deleted on wave closure, see git history, and the closing task report for Plan 211 |
 
 ## Known gap (out of scope here, found via existing CI, not by this task)
 
@@ -218,7 +217,7 @@ flag); Plan 40's `docker/Dockerfile` drives sanitizer builds by using
 `clang` directly with sanitizer flags outside the normal `nova`-CLI
 compile path — this doc's TSan smoke did the same (manually recompiled
 the CLI-generated `.c` + `nova_rt/*.c` + `libuv.a` with `-fsanitize=thread`,
-see `docs/plans/linux-build-progress.md`). No suppression file was needed
+checkpoint deleted on wave closure, see git history). No suppression file was needed
 for a minimal 2-spawn smoke test with stock system `libgc` (no special
 Boehm build flags) — heavier stress tests may still hit the
 Boehm/TSan interaction documented in `docker/README.md` (`THREAD_LOCAL_ALLOC=0

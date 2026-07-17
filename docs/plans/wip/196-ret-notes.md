@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 196 — Зона RET: чекпойнт (sonnet, worktree `nova-196ret`, ветка `p196-zone-ret`)
 
-**Родитель:** [196-campaign-map.md](196-campaign-map.md) §«Зона RET — emit_c 17838-19000 + 46381-47700 + 49352».
+**Родитель:** [196-campaign-map.md](wip/196-campaign-map.md) §«Зона RET — emit_c 17838-19000 + 46381-47700 + 49352».
 **Задание:** Q1 (D182 static-return) + Q2 (D52/D407/D406 sum-методы) + Q5 (D30/D85/D325 Result/Option) + Q+lambda
 (closure-residual). Дисциплина: тест-пин уже должен существовать (Зона TEST сверила) → миграция → закрытие →
 ледер → коммит → трекер; чекпоинт-коммит после каждого D; честный красный вместо расширения канала (types/mod.rs
@@ -64,9 +64,9 @@ CH/GEN/RET/TEST/FROZEN эту зону явно не держит.
 
 ## 1. Q1 (D182, `infer_static_method_ret`) — ✅ ЗАКРЫТ (сверка по коду; физический снос — Stage-D, раньше)
 
-Полная деталь — `196.wave2-progress.md` §«D182». Кратко: функция **удалена целиком** (не detach/panic) в
-`docs/plans/196.5-stage-d-notes.md` (Stage-D терминал 3 batch E, main `9b63fd145`, давно на main, задолго до
-`196-campaign-map.md`). Оба caller'а (Member/Ident-twin + Path-twin) сняты как NO-HIT ДО удаления хелпера.
+Полная деталь — `wip/196.wave2-progress.md` §«D182». Кратко: функция **удалена целиком** (не detach/panic) в
+`docs/plans/wip/196.5-stage-d-notes.md` (Stage-D терминал 3 batch E, main `9b63fd145`, давно на main, задолго до
+`wip/196-campaign-map.md`). Оба caller'а (Member/Ident-twin + Path-twin) сняты как NO-HIT ДО удаления хелпера.
 Трекер `196.3-wave2-d-driven.md` физически не был обновлён по факту (другая линия работ, другой план-документ) —
 эта сессия синхронизировала план с реальностью кода. Флип 🔍→✅ в `196.3-wave2-d-driven.md` сделан.
 
@@ -98,7 +98,7 @@ nova.exe test spec_tests/conformance/d182_self_return_parametric_static.nv \
 d422_generic_container_derive) ПОСЛЕ фикса §0** и **отдельный solo-прогон `d422_generic_container_derive.nv`** —
 оба запущены в фоне этой сессией; хост под сильной конкуренцией (множество параллельных `nova.exe test` из
 других 196-campaign worktree — тот же класс контеншна, что документирован в `196.3-wave2-d-driven.md` D239-строке,
-`196.5-stage-d-wave2-notes.md` net/addr-флейке и Zone CH B1's собственном коммит-сообщении «диск 100% полон»/
+`wip/196.5-stage-d-wave2-notes.md` net/addr-флейке и Zone CH B1's собственном коммит-сообщении «диск 100% полон»/
 non-determinism mega-CU под контеншном). Оба НЕ завершились в разумное время (>300с каждый, при том, что ДО
 фикса solo-прогон `d229` уложился в ~110-190с) — не блокирую отчёт ради них. Фикс УЖЕ верифицирован независимо:
 solo `d229` (до/после фикса, приведено выше) — прямое, единичное, детерминированное доказательство перехода
@@ -111,12 +111,12 @@ solo `d229` (до/после фикса, приведено выше) — пря
 ## 3. Q2/Q5 — честные красные (блокеры вне моей зоны, НЕ half-done — доведено до предела возможного)
 
 - **Q2 (D52/D407/D406, `infer_method_level_return_for_sum`):** НЕ закрыт. Массивный прогресс на смежной линии
-  работ (Stage-D волна-2, `196.5-stage-d-wave2-notes.md`) убрал легаси-трафик кластера на conformance **35→0**
+  работ (Stage-D волна-2, `wip/196.5-stage-d-wave2-notes.md`) убрал легаси-трафик кластера на conformance **35→0**
   (3 чекер-продюсер фикса, все — ancestor main). Остаток — **16 хитов в std/src/data**, структурный класс
   `u64.try_from(a)` (D77-интринсик, намеренно стёртая репрезентация `NovaRes_nova_int_nova_str*` — чекер честно
   отказывается материализовать точный `Result[u64,ParseError]`, иначе сломан byte-parity). Снятие функции
   сегодня сломало бы РЕАЛЬНЫЙ std/data трафик. Follow-up — отдельный, не Zone CH/не Zone RET (нужен typed-Result
-  mono для ИМЕННО этого интринсика). Детали — `196.wave2-progress.md` §«D52/D407/D406».
+  mono для ИМЕННО этого интринсика). Детали — `wip/196.wave2-progress.md` §«D52/D407/D406».
 - **Q5 (D30/D85/D325, `resolve_result_option_ret` + `infer_result_type_params`):** НЕ закрыт, но природа блокера
   уточнена. `resolve_result_option_ret` САМА — законный Plan-180 lowering (subst→mono-C-имя маппинг, НЕ
   инференция) — мигрировать в ней нечего. Настоящий остаток — `infer_result_type_params`'s legacy
@@ -125,7 +125,7 @@ solo `d229` (до/после фикса, приведено выше) — пря
   **Зона CH пока НЕ доставила** заявленное в карте расширение «сперва sum/Result-return» — единственная её
   доставка на сегодня (B1, `a36d2caed`) чисто аддитивна к `node_substs`, `resolved_types`-поведение НЕ меняет
   (сверено диффом коммита). Границы задания («types/mod.rs — только читать, расширение канала — честный красный
-  как D239») напрямую запрещают мне строить это расширение самому. Детали — `196.wave2-progress.md` §«D30/D85».
+  как D239») напрямую запрещают мне строить это расширение самому. Детали — `wip/196.wave2-progress.md` §«D30/D85».
 
 ## 4. Q+lambda (`infer_lambda_return_type_with_params`) — верифицирован необходимый residual, снос невозможен
 
