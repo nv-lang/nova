@@ -51733,25 +51733,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // Channel-2 ahead of this legacy. NO-HIT across
                             // conformance+std ⟹ structurally unreachable (§5).
                         }
-                        // Plan 04 + Plan 13 Ф.9.1: instance-method type inference.
-                        // Self-return для chaining (mut @append, all @write_*, @clone).
-                        // [196.5 Stage-D волна-3 replay] B11m: НЕ дубликат — kill-switch
-                        // A/B дал .c-диф на conformance CU: синтезированное Debug-тело
-                        // (D229) зовёт write_str на StringBuilder-ресивере, fall-through
-                        // меняет unit-вердикт statement-эмиссии ((void)-обёртка).
-                        // Уникальный легаси-трафик.
-                        if obj_ty == "Nova_StringBuilder*" {
-                            self.icr_trace("B11m_stringbuilder_instance");
-                            return match method.as_str() {
-                                // byte_len — Plan 13 Ф.9 fix: codepoint vs byte split.
-                                "len" | "byte_len" | "capacity" => "nova_int".into(),
-                                "clone" => "Nova_StringBuilder*".into(),
-                                "into" => "nova_str".into(),
-                                // Self-return: @append(s|c), @plus(s|c) — Plan 13 Ф.9.2.
-                                "append" | "plus" => "Nova_StringBuilder*".into(),
-                                _ => "nova_int".into(),
-                            };
-                        }
+                        // [196-capstone] B11m_stringbuilder_instance REMOVED.
+                        // Former: instance-method type inference for a
+                        // `Nova_StringBuilder*` receiver (`len`/`byte_len`/
+                        // `capacity`/`clone`/`into`/`append`/`plus`). Wave-3's
+                        // replay comment blocked removal on a kill-switch A/B
+                        // .c-diff: a synthesized Debug body (D229) called
+                        // `write_str` on a `Nova_StringBuilder*` receiver, whose
+                        // fallthrough changed statement-emission's unit-verdict
+                        // `(void)`-wrapping. Since then, TWO unrelated fixes
+                        // removed BOTH reasons this arm could be hit:
+                        // (1) Plan 208 Ф.2 (D374 AMEND, `auto_derive.rs`
+                        // `synth_debug_record_body`/`synth_display_record_body`)
+                        // retyped the synthesized param from `sb StringBuilder` to
+                        // `w Fmt` — derived bodies no longer call ANYTHING on a
+                        // `Nova_StringBuilder*` receiver;
+                        // (2) the same functions' own doc-comment (`[race-198 /
+                        // 196.6]`) records `write_str` itself was replaced by
+                        // `write` for an unrelated reason (name-only-fallback
+                        // mis-dispatch AV, Plan 198/196.6). Direct (non-derive)
+                        // StringBuilder usage (`.len()`/`.append()`/`.into()`/…)
+                        // — this arm's other traffic per census — re-verified
+                        // 0-hit on its own dedicated corpus
+                        // (`std/src/runtime/string_builder_test.nv`) + std/src/
+                        // {collections,time,encoding} + d229/d422 derive fixtures
+                        // (docs/plans/196-capstone-notes.md); detach+panic trial
+                        // run first, did not fire. NO-HIT ⟹ structurally
+                        // unreachable (§5).
                         // Plan 196.2 W1 [gate-1]: B11n_writebuffer_instance + B11o_readbuffer_instance
                         // REMOVED. WriteBuffer/ReadBuffer instance methods (len/capacity/clone/into/
                         // write_*/position/remaining/read_*/…) are Nova-body/Result-form methods whose
