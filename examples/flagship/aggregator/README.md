@@ -48,6 +48,61 @@ AGGREGATOR_PORT=9000 ./aggregator
 Открой `http://127.0.0.1:8187/` в браузере — страница сама запускает
 демо-прогон в первые секунды (без кликов).
 
+## Docker
+
+Живое демо «скачал/собрал и запустил одной командой» (Plan 187, волна 2,
+§9.4 п.7 / Ред.6 п.3) — multi-stage `Dockerfile` рядом с этим README:
+стадия 1 (`builder`) компилирует `nova-cli` (release) и собирает бинарь
+`aggregator` через `nova build`; стадия 2 (`runtime`) — минимальный
+`ubuntu:22.04` + сам бинарь (без Rust/clang-тулчейна в финальном образе).
+
+```sh
+# один раз — submodule (build context собирается из git-checkout'а,
+# submodule НЕ чекаутится автоматически):
+git submodule update --init compiler-codegen/nova_rt/libuv
+
+# сборка (контекст = корень репозитория nova; nova-http — сиблинг-каталог
+# на диске, см. "Sibling-зависимости" ниже) + запуск:
+docker build -f examples/flagship/aggregator/Dockerfile \
+    --build-context nova-http=../nova-http \
+    -t aggregator-demo:local .
+docker run --rm -p 8187:8187 aggregator-demo:local
+```
+
+Открой `http://127.0.0.1:8187/` — то же демо, что и при локальном запуске.
+
+Опубликованный образ (цель Ред.6 п.3 — публикацию делает владелец):
+`ghcr.io/nv-lang/aggregator-demo:0.1.0`; после публикации запуск —
+`docker run --rm -p 8187:8187 ghcr.io/nv-lang/aggregator-demo:0.1.0`.
+
+**Bind-адрес и порт.** `src/main.nv` по умолчанию слушает `127.0.0.1`
+(локальная разработка, без изменений) — внутри контейнера это не даст
+`-p 8187:8187` достучаться снаружи, поэтому образ переопределяет бинд
+переменной окружения `AGGREGATOR_BIND=0.0.0.0` (устанавливается в самом
+`Dockerfile`, `ENV AGGREGATOR_BIND=0.0.0.0`); `AGGREGATOR_PORT` — тот же
+env-override, что и при локальном запуске (по умолчанию `8187`).
+
+**Sibling-зависимости.** `examples/nova.toml` объявляет
+`http = { path = "../../nova-http" }` (path-зависимость, Plan 203/204) —
+резолвится относительно `examples/` как физический сиблинг каталога `nova`
+на диске (`d:/Sources/nv-lang/{nova,nova-http}` у автора). В образ она
+попадает через именованный build-context Buildx
+(`--build-context nova-http=../nova-http` + `COPY --from=nova-http` в
+`Dockerfile`, `# syntax=docker/dockerfile:1`) — **не** `git clone` с
+GitHub: на 2026-07-17 в `nova-http`'s GitHub-репозитории нет ещё не
+запушенного локального коммита `WriteBuffer .into() → .into_bytes()`
+(std-переименование), без которого флагман не собирается; `--build-context`
+берёт локальное рабочее дерево as-is. Когда тот коммит попадёт в GitHub —
+кандидат на упрощение обратно до `git clone --depth 1` (симметрично
+`nova-gate.yml`). `tls`/`compress` — git-зависимости (`{ git = ...,
+version = "0.1" }`, `examples/nova.lock`) — резолвятся АВТОМАТИЧЕСКИ самим
+компилятором Nova при первом обращении, sibling/clone им не нужен.
+
+Известные ограничения (bounded-accept `MAX_INFLIGHT_CONNS = 2`, replay-SSE
+и т.д. — см. «Известные ограничения этого прогона» ниже) действуют
+одинаково локально и в контейнере — Docker меняет только upstream/сеть
+доставки, не рантайм-семантику самого бинаря.
+
 ## Эндпоинты
 
 | Метод + путь | Что отдаёт |
@@ -248,7 +303,9 @@ examples/flagship/aggregator/
 - **HTTP JSON-снапшот не байт-в-байт детерминирован** между прогонами с
   одним `seed` — см. «Как это тестируется → Детерминизм» выше (реальные
   часы, не симуляция).
-- **Docker — не в этом прогоне** (волна 2 плана 187).
+- ~~**Docker — не в этом прогоне**~~ **ЗАКРЫТО** (волна 2 плана 187) —
+  см. раздел «Docker» выше: `Dockerfile` + `docker build`/`docker run`
+  smoke-гейт зелёный.
 
 ## См. также
 

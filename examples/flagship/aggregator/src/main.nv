@@ -130,6 +130,14 @@ fn frontend_html() -> []u8 => embed("../frontend/index.html")
 fn resolve_port() Os -> u16 =>
     env("AGGREGATOR_PORT").flat_map(|s| s.to_int().ok()).map(|n| n as u16) ?? DEFAULT_PORT
 
+// Bind address: env override (`AGGREGATOR_BIND`, e.g. "0.0.0.0" for Docker —
+// `-p host:container` can't reach a loopback-bound listener) or the local
+// dev default `127.0.0.1` (unchanged — see `docker/README.md`'s Dockerfile
+// for the container-side override, `ENV AGGREGATOR_BIND=0.0.0.0`). A
+// malformed value falls back to loopback too (honest default over a crash).
+fn resolve_addr(port u16) Os -> SocketAddr =>
+    env("AGGREGATOR_BIND").flat_map(|host| SocketAddr.from_str(host + ":" + port.to_str()).ok()) ?? SocketAddr.loopback(port)
+
 // ── fn main: accept-loop (the only legitimately hand-rolled part — see the
 //    file-header note: http.servernet has no reusable accept-loop function
 //    yet) ────────────────────────────────────────────────────────────────
@@ -206,7 +214,7 @@ fn main() Time Detach {
     with Os = real_os() {
         ro port = resolve_port()
         with Net = real_net() {
-            ro addr = SocketAddr.loopback(port)
+            ro addr = resolve_addr(port)
             supervised {
                 spawn {
                     // Plan 173.3 (D415 §2): listener lives ENTIRELY inside
@@ -217,7 +225,7 @@ fn main() Time Detach {
                         Ok(l)  => l
                         Err(_) => panic("Failed to bind: " + port.to_str())
                     }
-                    println("Nova flagship aggregator listening on http://127.0.0.1:" + lst.local_port().to_str())
+                    println("Nova flagship aggregator listening on http://" + addr.ip() + ":" + lst.local_port().to_str())
                     // Bounded-accept permit counter (see the marker note
                     // above `fn main`) — `AtomicI64` is `#share` (D415), so
                     // capturing it (by reference) into the per-connection
