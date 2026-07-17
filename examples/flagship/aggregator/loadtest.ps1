@@ -18,11 +18,17 @@ param(
     [int]$Port = 8195,
     [int]$Iterations = 50,          # sustained SSE weather-live repeats (10x baseline)
     [int]$Concurrency = 80,         # parallel /api/run via runspace pool (10x baseline)
-    [int]$Rounds = 10,              # times to repeat the run/SSE combo sweeps
+    [int]$Rounds = 10,              # times to repeat the run/SSE combo sweeps (demo/chaos)
+    [int]$LiveRounds = 0,           # live-combo rounds cap; 0 = min(Rounds, 10).
+                                    # Live rounds hit REAL external hosts (open-meteo has a
+                                    # 10k req/day free limit) — scale demo/chaos freely, keep
+                                    # live polite. BLOCK 4 (Iterations) is intentionally NOT
+                                    # capped: it IS the sustained-live marathon (mind the quota).
     [switch]$Build,
     [switch]$SkipLive,
     [string]$RepoRoot = "d:\Sources\nv-lang\nova"
 )
+if ($LiveRounds -le 0) { $LiveRounds = [Math]::Min($Rounds, 10) }
 
 $ErrorActionPreference = "Stop"
 $bin   = Join-Path $RepoRoot "aggregator_demo.exe"
@@ -65,7 +71,14 @@ Start-Sleep 1
 
 $env:NOVA_GC_LIB_DIR = $gcLib; $env:AGGREGATOR_PORT = "$Port"
 Write-Host "Launching server on $B ..." -ForegroundColor Cyan
-$srv = Start-Process -FilePath $bin -WorkingDirectory $RepoRoot -PassThru -WindowStyle Hidden
+# Server output goes to log files — the ONLY post-mortem evidence when a
+# marathon kills the server mid-run ([M-187-sustained-live-tls-resource-death]:
+# died forever at sustained-SSE #274 with no log to diagnose).
+$srvOut = Join-Path $env:TEMP "aggregator-loadtest-$Port.out.log"
+$srvErr = Join-Path $env:TEMP "aggregator-loadtest-$Port.err.log"
+Remove-Item $srvOut, $srvErr -Force -ErrorAction SilentlyContinue
+$srv = Start-Process -FilePath $bin -WorkingDirectory $RepoRoot -PassThru -WindowStyle Hidden `
+    -RedirectStandardOutput $srvOut -RedirectStandardError $srvErr
 $ready = $false
 for ($i = 0; $i -lt 30; $i++) { Start-Sleep -Milliseconds 500; if (Alive) { $ready = $true; break } }
 if (-not $ready) { Write-Host "Server did not come up" -ForegroundColor Red; if (-not $srv.HasExited) { Stop-Process -Id $srv.Id -Force }; exit 1 }
@@ -79,26 +92,28 @@ try {
     Write-Host "== BLOCK 1: base endpoints ==" -ForegroundColor Yellow
     foreach ($e in @("/", "/api/snapshot")) { $c = Code "$B$e"; Check ($c -eq 200) "GET $e"; Write-Host "    $e -> $c" }
 
-    # -- BLOCK 2: /api/run every legend x mode, x$Rounds rounds --------------
-    Write-Host "== BLOCK 2: /api/run (legend x mode) x$Rounds rounds ==" -ForegroundColor Yellow
+    # -- BLOCK 2: /api/run every legend x mode (live combos capped at $LiveRounds) --
+    Write-Host "== BLOCK 2: /api/run (legend x mode) x$Rounds rounds (live x$LiveRounds) ==" -ForegroundColor Yellow
     foreach ($l in $legends) { foreach ($m in $modes) {
+        $n2 = if ($m -eq "live") { $LiveRounds } else { $Rounds }
         $ok2 = 0
-        for ($r = 0; $r -lt $Rounds; $r++) { if ((Code "$B/api/run?legend=$l&mode=$m&seed=42" 25) -eq 200) { $ok2++ } }
-        Check ($ok2 -eq $Rounds) "run $l/$m ($ok2/$Rounds)"; Write-Host "    $l/$m -> $ok2/$Rounds" } }
+        for ($r = 0; $r -lt $n2; $r++) { if ((Code "$B/api/run?legend=$l&mode=$m&seed=42" 25) -eq 200) { $ok2++ } }
+        Check ($ok2 -eq $n2) "run $l/$m ($ok2/$n2)"; Write-Host "    $l/$m -> $ok2/$n2" } }
     Check (Alive) "alive after BLOCK 2"
 
-    # -- BLOCK 3: /api/events (SSE) every legend x mode, x$Rounds rounds -----
-    Write-Host "== BLOCK 3: /api/events SSE (legend x mode) x$Rounds rounds ==" -ForegroundColor Yellow
+    # -- BLOCK 3: /api/events (SSE) every legend x mode (live capped) --------
+    Write-Host "== BLOCK 3: /api/events SSE (legend x mode) x$Rounds rounds (live x$LiveRounds) ==" -ForegroundColor Yellow
     foreach ($l in $legends) { foreach ($m in $modes) {
+        $n3 = if ($m -eq "live") { $LiveRounds } else { $Rounds }
         $ok3 = 0; $lastN = 0
-        for ($r = 0; $r -lt $Rounds; $r++) {
+        for ($r = 0; $r -lt $n3; $r++) {
             try {
                 $body = (Invoke-WebRequest -Uri "$B/api/events?legend=$l&mode=$m&seed=42" -TimeoutSec 20 -UseBasicParsing).Content
                 $lastN = ([regex]::Matches($body, "(?m)^event:")).Count
                 if ($lastN -ge 2) { $ok3++ }
             } catch { }
         }
-        Check ($ok3 -eq $Rounds -and (Alive)) "sse $l/$m ($ok3/$Rounds)"; Write-Host "    $l/$m -> $ok3/$Rounds ok (events~$lastN), server=$(AliveStr)"
+        Check ($ok3 -eq $n3 -and (Alive)) "sse $l/$m ($ok3/$n3)"; Write-Host "    $l/$m -> $ok3/$n3 ok (events~$lastN), server=$(AliveStr)"
     } }
 
     # -- BLOCK 4: sustained SSE weather-live xN (historic wedge case) --------
@@ -164,5 +179,13 @@ finally {
 Write-Host "`n====================================" -ForegroundColor Cyan
 $color = if ($script:fail -eq 0) { "Green" } else { "Red" }
 Write-Host "RESULT: PASS=$($script:pass)  FAIL=$($script:fail)" -ForegroundColor $color
+if ($script:fail -gt 0) {
+    Write-Host "-- server log tails (post-mortem) --" -ForegroundColor Yellow
+    foreach ($f in @($srvOut, $srvErr)) {
+        if ((Test-Path $f) -and (Get-Item $f).Length -gt 0) {
+            Write-Host "[$f]:"; Get-Content $f -Tail 15 | ForEach-Object { Write-Host "    $_" }
+        } else { Write-Host "[$f]: empty" }
+    }
+}
 if ($script:fail -gt 0) { Write-Host "Failed: $($script:failed -join '; ')" -ForegroundColor Red; exit 1 }
 Write-Host "All load blocks green." -ForegroundColor Green
