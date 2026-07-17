@@ -24,6 +24,7 @@
 module real_world.orm_decorators
 
 import std.data.sql.{Sql, Db, DbRow, DbError}
+import std.collections.vec_seq.{filter}
 
 
 // ──────────────────────────────────────────────────────────────────────────
