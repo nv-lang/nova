@@ -707,9 +707,43 @@ compact-vs-named форма (D422 §4):
 - `spec_tests/conformance/d55_literal_coercion.nv` — +1 тест (D55
   write-коэрсия, см. п.0).
 
-**НАХОДКА (важно, НЕ фикс в этой волне — отдельный, orthogonal, pre-existing
-gap): bare `${vec}`/`${vec:?}` interpolation НЕ дозвонивается до Vec[T]'s
-собственного `@display`/`@debug`.** Обнаружено при первой попытке написать
+**НАХОДКА — `[M-208-generic-interp-display-dispatch-gap]` — ✅ РЕШЕНО (2026-07-17,
+ветка `p-interp-generic-dispatch`, sonnet).** Фикс: `try_generic_mono_interp_dispatch`
+(compiler-codegen/src/codegen/emit_c.rs, рядом с `emit_interpolated_str`) —
+зеркалит существующую Option/Result `DeclaredBody`-ветку той же функции
+(строки ~40672-40757: `sum_schema_registry`/`generic_type_methods`-роутинг),
+обобщённую на ЛЮБОЙ user-generic контейнер: по мано-мангленному `arg_type`
+(уже `Nova_`-strip'нутому, напр. `Vec____nova_int`) ищет инстанс в
+`generic_type_instance_info` → базовое имя (`Vec`) + type-args → метод
+`display`/`debug` на generic-темплейте (`generic_type_methods[base]`) →
+`register_mono_method_instance` с ТЕМ ЖЕ mono-именем (`{rt_trimmed}_method_
+{name}`), что и общий call-путь дженерик-метода (5b, ~37225) — оба пути
+сходятся на одном C-символе (`mono_instantiated`-гвард не даёт дубля).
+Подключён в `has_explicit`-промахе, ПЕРЕД `try_synthesize_default_method`
+(которая всё равно мисс для Vec/HashMap — не record/sum). Ранний `return
+None` на первой строке (нет `____` в имени) делает ветку строгим no-op для
+ЛЮБОГО НЕ-generic типа — байт-паритет вне generic-mono гарантирован
+конструктивно, спот-подтверждён на изолированных копиях
+`d422_unified_display_dispatch`/`d229_debug_format_spec`/
+`d374_write_sink_decouple` (3/0 PASS). Новая фикстура
+`spec_tests/conformance/d422_generic_interp_dispatch.nv` (4 теста: bare
+`${v}`/`${v:?}` на Vec[int]/Vec[str] с quoting-различием, пустой vec,
+вложенный `Vec[Vec[str]]`) — red (изолированная копия, ДО фикса, тем же
+временно-отключённым бинарём: все 4 assert падают) → green (ПОСЛЕ, 4/4
+PASS). Обходные фикстуры `std/src/collections/vec/protocols_test.nv`
+(Ф.3) апгрейжены: тесты 2-4 переведены на bare-интерполяцию (был workaround,
+теперь настоящий путь); тест 1 (прямой `.display(FmtCtx.bare(...))`) оставлен
+как отдельный контракт (реальный, отличный от interp, код-путь — не
+workaround). δ0: `nova test std/src/collections/vec` (1/0, весь модуль-CU) +
+`std/src/checksums` (3/0) зелёные. Вторично найденный смежный дефект
+(numeric-cast fallback молча печатает pointer-as-int для ЛЮБОГО типа без
+Display/Debug/to_str, не только generic-контейнеров) НЕ чинился в этой
+волне (риск задевает намеренно-принятый `*T`-pointer debug-путь,
+`[M-91.14-ptr-auto-derive]`) — зафиксирован floating-маркером
+`[M-interp-numeric-fallback-silent-garbage]` (`docs/plans/backlog-
+followups.md`, P2).
+
+Исходная находка (для истории, до фикса): Обнаружено при первой попытке написать
 `assert("${v}" == "Vec[1, 2, 3]")` — реально вывелось огромное число
 (похоже на raw pointer, напечатанный как int, — конкретно `1401505058784`).
 Диагностика: `v.display(FmtCtx.bare(sb, 0, false))` (ПРЯМОЙ вызов метода)
