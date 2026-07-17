@@ -24,6 +24,37 @@
 > Исходный статус: ПРИНЯТ (владелец, 2026-07-07: «конвенция не существует, пока не
 > проверяется автоматически» — conventions-governance).
 
+> **АМЕНДМЕНТ 2026-07-17 (финальное разкраснение `nova lint std` → 0, решение
+> владельца):** реестр вырос до 19 правил-единиц (см. `CONV_RULES`). Прогон
+> `nova lint std` вскрыл 12 остаточных находок пяти классов, закрыты той же
+> волной:
+> - **W_WITH_MUTATOR (5×, sync.nv)**: `with_lock`/`with_read`/`with_write`/
+>   `with_permit` — ЛЕГИТИМНЫЙ mut-приёмник (scope-guard/RAII, Kotlin
+>   `withLock`-прецедент), не field-copy. Правило получило структурный
+>   различитель — fn-типовый параметр (замыкание) в сигнатуре гасит находку
+>   (`conv_with_mutator` + `conv_type_is_closure`); задокументировано в
+>   nv-coding-style.md рядом с существующим `with_`-разделом.
+> - **W_MANUAL_SLICE_COPY (4×, prelude/embed.nv `EmbeddedDir.merge`)**: 2 —
+>   генуинная contiguous-копия остатка после merge-drain → канон-фикс
+>   `.append(a[i..a.len()])`; 2 — merge-interleave (не copy, comparison-driven
+>   alternation) → false-positive, обход прецедентом d145 (индексация в
+>   локаль перед `push`, рвёт синтаксический матч).
+> - **W_STATIC_CONVERSION (2×, read_buffer.nv/write_buffer.nv `.from`)** и
+>   **W_PARAM_NO_CONTRACT (1×, string/core.nv `is_char_boundary`)**: намеренные
+>   постоянные отклонения (mono-баг блокирует rename; total-предикат по
+>   D251) — не подходят под «остаток под `[M-...]`-маркером» (не backlog, не
+>   временное). Новый механизм: **`// nova:allow W_CODE -- причина`** — inline
+>   именованное подавление РОВНО правила РОВНО на следующей строке, причина
+>   ОБЯЗАТЕЛЬНА (пустая → сама находка `E_LINT_ALLOW_NO_REASON`). Спека:
+>   D428 в [spec/decisions/09-tooling.md](../../spec/decisions/09-tooling.md).
+>   Реализация: `lints.rs::apply_nova_allow_suppressions` (+ 4 юнит-теста;
+>   всего `lints::tests` 39/39 зелёные).
+>
+> **Итог: `nova lint std` = 0 находок, `nova lint spec_tests` = 0 находок**
+> (оба гейта — 0 без единого «слепого» подавления: 3 находки погашены
+> `nova:allow` с причиной, 2 — канон-фиксом, 5 — сужением правила, 2 — обходом
+> по прецеденту d145).
+
 ## Цель
 
 Каждое принятое конвенционное правило получает машинную проверку: предупреждение чекера

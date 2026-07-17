@@ -16,6 +16,18 @@ export fn Widget mut @label(v str) -> @ {
     @label = v
 }
 
+// Канон-исключение (owner 2026-07-17, nv-coding-style «with_»-раздел):
+// `with_*`, принимающий ЗАМЫКАНИЕ — scope-guard (RAII: «выполнить body под
+// ресурсом», прецедент Kotlin `withLock`), НЕ field-copy — mut-приёмник
+// здесь легитимен, W_WITH_MUTATOR молчит (сигнатура — fn-типовый параметр).
+export fn Widget mut @with_label_scope[R](body fn() -> R) -> R {
+    ro saved = @label
+    @label = "locked:" + saved
+    ro r = body()
+    @label = saved
+    r
+}
+
 // Канон §26 (D411): деструктуризация одним биндингом вместо полевых снапшотов.
 fn describe(w Widget) -> str {
     ro { kind, label } = w
@@ -54,6 +66,7 @@ fn main() -> () {
     mut w = Widget.new(1)
     w.label("x")
     ro _lbl = w.label_view()
+    ro _scope = w.with_label_scope(|| 1)
     ro _s = join(["a", "b"])
     ro _d = describe(w)
     ro _letter = is_ascii_letter_trailing(70)

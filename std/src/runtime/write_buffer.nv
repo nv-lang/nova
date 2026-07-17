@@ -57,6 +57,7 @@ export fn WriteBuffer.new(cap int = INITIAL_CAPACITY) -> Self
 // `Nova_NovaArray_nova_int_method_to_X` undefined на линковке). Оставлено
 // как static `.from` до фикса; W_STATIC_CONVERSION находка сохранена
 // намеренно.
+// nova:allow W_STATIC_CONVERSION -- rename заблокирован [M-static-conv-array-record-mono-cc-fail] (mono-баг extension-на-[]u8-с-record-телом); вернуть to_* после фикса
 export fn WriteBuffer.from(b []u8) -> Self {
     mut wb WriteBuffer = { buf: []u8.new(cap: b.len()) }
     wb.buf.append(b)

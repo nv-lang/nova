@@ -14,7 +14,7 @@ use crate::ast::{
     HandlerMethodBody, Import, Item, MatchArmBody, Module, Pattern, ReceiverKind,
     Stmt, TypeDeclKind, TypeRef,
 };
-use crate::diag::{Diagnostic, Span};
+use crate::diag::{byte_to_line_col, Diagnostic, Span};
 use std::collections::HashSet;
 
 /// Один lint-warning.
@@ -2905,6 +2905,12 @@ pub fn run_conv_rules(
     // исходника несёт `[M-...]`-маркер (ссылку на идущую работу / backlog),
     // не выводится — цель приёмки «0 находок или все остатки под маркерами».
     out.retain(|w| !conv_span_line_has_marker(src, w.diag.span.start));
+    // Plan 185 Ф.N (owner decision 2026-07-17): именованное inline-подавление
+    // `// nova:allow W_CODE -- причина` — единственный легальный люк под
+    // будущим `--deny` (в отличие от `[M-...]`-маркера выше, который молчит
+    // «пока не готово»; `nova:allow` — «читал, оставляю НАМЕРЕННО», causa
+    // обязательна и грепаема).
+    apply_nova_allow_suppressions(src, &mut out);
     out
 }
 
@@ -2916,6 +2922,111 @@ fn conv_span_line_has_marker(src: &str, offset: usize) -> bool {
     let line_start = src[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let line_end = src[offset..].find('\n').map(|i| offset + i).unwrap_or(src.len());
     src[line_start..line_end].contains("[M-")
+}
+
+// ---------------------------------------------------------------------------
+// `nova:allow` — inline-подавление находок (Plan 185 Ф.N, owner decision
+// 2026-07-17). Механизм диагностики, не языковая фича — работает по сырому
+// тексту исходника (как `conv_span_line_has_marker` выше), НЕ по AST-атрибуту.
+//
+// Синтаксис (СТРОГО, дословно):
+//
+//     // nova:allow W_CODE -- причина
+//     <декларация/сайт находки — на СЛЕДУЮЩЕЙ строке>
+//
+// - Комментарий — на СВОЕЙ строке, НЕПОСРЕДСТВЕННО перед строкой находки
+//   (line - 1). Гасит РОВНО перечисленные rule id, РОВНО на этой строке —
+//   не файл, не блок.
+// - Несколько кодов через запятую: `// nova:allow W_A, W_B -- причина`.
+// - Причина ОБЯЗАТЕЛЬНА (непустой текст после `--`, trim). Пустая/
+//   отсутствующая причина НЕ подавляет находку И сама становится находкой
+//   `E_LINT_ALLOW_NO_REASON` (не суппрессируется ничем — иначе `nova:allow`
+//   без причины был бы тихой дырой под `--deny`).
+// ---------------------------------------------------------------------------
+
+/// Один разобранный `// nova:allow` комментарий.
+struct NovaAllowEntry {
+    /// Строка комментария, 1-based.
+    line: usize,
+    rule_ids: HashSet<String>,
+    has_reason: bool,
+}
+
+/// Разобрать все `// nova:allow ...` строки исходника. Строки, где после
+/// `nova:allow` нет ни одного rule-id (случайное текстовое совпадение),
+/// молча игнорируются — не создают ни находку, ни суппрессию.
+fn parse_nova_allow_comments(src: &str) -> Vec<NovaAllowEntry> {
+    let mut out = Vec::new();
+    for (idx, line) in src.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("//") {
+            continue;
+        }
+        let after_slashes = trimmed.trim_start_matches('/').trim_start();
+        let Some(rest) = after_slashes.strip_prefix("nova:allow") else { continue };
+        let rest = rest.trim_start();
+        let (ids_part, reason_part): (&str, Option<&str>) = match rest.find("--") {
+            Some(p) => (rest[..p].trim(), Some(rest[p + 2..].trim())),
+            None => (rest.trim(), None),
+        };
+        let rule_ids: HashSet<String> = ids_part
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if rule_ids.is_empty() {
+            continue;
+        }
+        let has_reason = reason_part.is_some_and(|r| !r.is_empty());
+        out.push(NovaAllowEntry { line: idx + 1, rule_ids, has_reason });
+    }
+    out
+}
+
+/// Byte-offset начала строки `line` (1-based).
+fn conv_line_start_offset(src: &str, line: usize) -> usize {
+    if line <= 1 {
+        return 0;
+    }
+    src.match_indices('\n').nth(line - 2).map(|(i, _)| i + 1).unwrap_or(0)
+}
+
+/// Применяет `nova:allow`-суппрессию к `out` (in-place) + добавляет
+/// `E_LINT_ALLOW_NO_REASON` для комментариев без причины.
+fn apply_nova_allow_suppressions(src: &str, out: &mut Vec<LintWarning>) {
+    let allows = parse_nova_allow_comments(src);
+    if allows.is_empty() {
+        return;
+    }
+    for a in &allows {
+        if !a.has_reason {
+            let offset = conv_line_start_offset(src, a.line);
+            let mut ids: Vec<&String> = a.rule_ids.iter().collect();
+            ids.sort();
+            let ids_disp = ids.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
+            out.push(LintWarning {
+                rule: "E_LINT_ALLOW_NO_REASON",
+                diag: Diagnostic::new(
+                    format!(
+                        "`nova:allow {}` без причины: канон — `// nova:allow {} -- \
+                         причина` (причина обязательна — единственный легальный \
+                         люк под `--deny`, грепаемый).",
+                        ids_disp, ids_disp
+                    ),
+                    Span::new(offset, offset),
+                ),
+            });
+        }
+    }
+    out.retain(|w| {
+        if w.rule == "E_LINT_ALLOW_NO_REASON" {
+            return true;
+        }
+        let (line, _) = byte_to_line_col(src, w.diag.span.start);
+        !allows.iter().any(|a| {
+            a.has_reason && a.line + 1 == line && a.rule_ids.contains(w.rule)
+        })
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -3372,6 +3483,19 @@ fn conv_with_mutator(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning
     for f in conv_all_fns(m) {
         let Some(recv) = &f.receiver else { continue };
         if recv.mutable && f.name.starts_with("with_") && f.name.len() > "with_".len() {
+            // Owner decision (2026-07-17): `with_*` has TWO canonical meanings,
+            // distinguished by SIGNATURE (nv-coding-style, `with_`-section):
+            //   - `with_x(value)`  → returns a NEW copy (field-copy withXXX) —
+            //     mut-receiver here is the bug this rule catches.
+            //   - `with_x(closure)` → run the closure UNDER the resource
+            //     (scope-guard / RAII: lock, run `body`, unlock — precedent:
+            //     Kotlin `withLock { ... }`) — mut-receiver is REQUIRED here
+            //     (lock/unlock IS the mutation), and the return value is the
+            //     closure's result `R`, not "a new Self". A fn-typed parameter
+            //     is the syntactic tell: skip.
+            if f.params.iter().any(|p| conv_type_is_closure(&p.ty)) {
+                continue;
+            }
             out.push(LintWarning {
                 rule: "W_WITH_MUTATOR",
                 diag: Diagnostic::new(
@@ -3386,6 +3510,22 @@ fn conv_with_mutator(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning
                 ),
             });
         }
+    }
+}
+
+/// `true` если `ty` — fn-тип (замыкание/fn-pointer), под любым числом
+/// «прозрачных» type-wrapper'ов (`*T`/`ro T`/`mut T`/`uninit T`/`ref T`).
+/// Используется [`conv_with_mutator`] чтобы отличить scope-guard `with_*`
+/// (принимает closure) от field-copy `with_*` (принимает значение).
+fn conv_type_is_closure(ty: &TypeRef) -> bool {
+    match ty {
+        TypeRef::Func { .. } => true,
+        TypeRef::Pointer(inner, _)
+        | TypeRef::Readonly(inner, _)
+        | TypeRef::Mut(inner, _)
+        | TypeRef::Uninit(inner, _)
+        | TypeRef::Ref(inner, _) => conv_type_is_closure(inner),
+        _ => false,
     }
 }
 
@@ -5129,6 +5269,123 @@ mod tests {
             let ws = lint_prelude_shadow(&m);
             assert!(ws.is_empty(), "prelude self-module must be skipped");
         }
+    }
+
+    // Owner decision (2026-07-17): W_WITH_MUTATOR closure-param exception —
+    // scope-guard `with_*(body fn() -> R)` must stay silent; field-copy
+    // `with_*(v T)` must still warn.
+
+    #[test]
+    fn no_warning_on_with_mutator_closure_param() {
+        let src = "module foo\n\
+             type Mutex { mut locked bool }\n\
+             export fn Mutex mut @with_lock[R](body fn() -> R) -> R {\n\
+                 @locked = true\n\
+                 ro r = body()\n\
+                 @locked = false\n\
+                 r\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_WITH_MUTATOR"),
+            "scope-guard with_* (closure param) must NOT warn, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn warns_on_with_mutator_value_param() {
+        let src = "module foo\n\
+             type Widget { mut label str }\n\
+             export fn Widget mut @with_label(v str) -> () {\n\
+                 @label = v\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_WITH_MUTATOR"),
+            "value-param with_* (field-copy shape) must still warn, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // Plan 185 Ф.N (owner decision 2026-07-17): `// nova:allow W_CODE --
+    // причина` inline suppression mechanism.
+
+    #[test]
+    fn nova_allow_with_reason_suppresses_finding() {
+        let src = "module foo\n\
+             type Widget { ro kind int }\n\
+             // nova:allow W_STATIC_CONVERSION -- test reason\n\
+             export fn Widget.from(x int) -> Widget => { kind: x }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_STATIC_CONVERSION"),
+            "nova:allow with a reason must suppress the finding, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+        assert!(
+            !ws.iter().any(|w| w.rule == "E_LINT_ALLOW_NO_REASON"),
+            "well-formed nova:allow must not itself be a finding, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn nova_allow_without_reason_does_not_suppress_and_errors() {
+        let src = "module foo\n\
+             type Widget { ro kind int }\n\
+             // nova:allow W_STATIC_CONVERSION\n\
+             export fn Widget.from(x int) -> Widget => { kind: x }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_STATIC_CONVERSION"),
+            "no-reason nova:allow must NOT suppress, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+        assert!(
+            ws.iter().any(|w| w.rule == "E_LINT_ALLOW_NO_REASON"),
+            "no-reason nova:allow must itself be a finding, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn nova_allow_wrong_rule_id_does_not_suppress_other_rule() {
+        // Комментарий гасит W_PARAM_NO_CONTRACT, но не W_STATIC_CONVERSION —
+        // находка другого правила на той же строке должна остаться.
+        let src = "module foo\n\
+             type Widget { ro kind int }\n\
+             // nova:allow W_PARAM_NO_CONTRACT -- unrelated reason\n\
+             export fn Widget.from(x int) -> Widget => { kind: x }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_STATIC_CONVERSION"),
+            "allow of a DIFFERENT rule id must not suppress this finding, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn nova_allow_not_on_line_immediately_before_does_not_suppress() {
+        // Пустая строка между `nova:allow` и декларацией — контракт «на
+        // строке ПЕРЕД» не соблюдён, находка должна остаться.
+        let src = "module foo\n\
+             type Widget { ro kind int }\n\
+             // nova:allow W_STATIC_CONVERSION -- test reason\n\
+             \n\
+             export fn Widget.from(x int) -> Widget => { kind: x }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_STATIC_CONVERSION"),
+            "nova:allow must only suppress the very next line, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
     }
 }
 

@@ -51,6 +51,7 @@ export type ReadBuffer {
 // Оставлено как static `.from` (W_STATIC_CONVERSION лint-находка сохранена
 // НАМЕРЕННО) до отдельного фикса mono-коллектора; см. отчёт задачи
 // fix-runtime-lint-debt. НЕ мигрировать call-сайты обратно без этого фикса.
+// nova:allow W_STATIC_CONVERSION -- rename заблокирован [M-static-conv-array-record-mono-cc-fail] (mono-баг extension-на-[]u8-с-record-телом); вернуть to_* после фикса
 export fn ReadBuffer.from(b []u8) -> Self => { data: b, pos: 0 }
 
 // ─── Cursor metadata ───

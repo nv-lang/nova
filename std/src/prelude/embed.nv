@@ -119,22 +119,32 @@ export fn EmbeddedDir @merge(other EmbeddedDir) -> EmbeddedDir {
     while i < a.len() && j < b.len() {
         ro c = a[i].path.compare(b[j].path)
         if c < 0 {
-            out.push(a[i])
+            // Merge-interleave (mergesort-шаг), НЕ contiguous copy — false-
+            // positive для W_MANUAL_SLICE_COPY (эвристика видит `push(x[i])`
+            // в цикле, не отличая alternating merge от straight drain: какой
+            // из двух источников следующий определяет сравнение путей, не
+            // порядок исходного массива). Обход (прецедент d145 — вынести
+            // индексацию в локаль): `av` рвёт синтаксический матч
+            // `push(<obj>[<ident>])`, оставляя семантику неизменной.
+            ro av = a[i]
+            out.push(av)
             i = i + 1
         } else if c > 0 {
-            out.push(b[j])
+            ro bv = b[j]
+            out.push(bv)
             j = j + 1
         } else {
             panic("EmbeddedDir.merge: duplicate path `" + a[i].path + "` present in both directories")
         }
     }
-    while i < a.len() {
-        out.push(a[i])
-        i = i + 1
+    // Contiguous drain остатка (один из входов исчерпан) — канон
+    // W_MANUAL_SLICE_COPY: `[]T`-вид среза (D262) + `.append`, не поэлементный
+    // цикл (nv-coding-style §18а).
+    if i < a.len() {
+        out.append(a[i..a.len()])
     }
-    while j < b.len() {
-        out.push(b[j])
-        j = j + 1
+    if j < b.len() {
+        out.append(b[j..b.len()])
     }
     EmbeddedDir.new(out)
 }
