@@ -1,0 +1,26 @@
+// [M-d216-unsafe-map-single-file-gaps] (2026-07-17): calling the `unsafe fn`
+// 2-arg VIEW overload of `Vec[T].new(ptr *T, len int) -> ro Self`
+// (std/collections/vec/core.nv) via its generic-static receiver spelling
+// WITHOUT an `unsafe { }` wrap must be rejected — `E_UNSAFE_CALL_REQUIRES_WRAP`
+// (D216 §9). This call shape parses to `Member{ obj: TurboFish{ base:
+// Ident("Vec"), .. }, name: "new" }`, which the checker now resolves to the
+// CONCRETE 2-arg overload by ARG COUNT (`Vec.new`'s 0/1-arg ctor, 2-arg
+// unsafe VIEW ctor, and 3-arg owned ctor occupy disjoint arg-count ranges —
+// not the safe 0/1-arg or 3-arg siblings sharing the same `(type, name)`
+// key) — the enforcement this neg fixture exercises is precise
+// per-overload, not name/arity-blind. Companion pos fixture:
+// d216_unused_unsafe_pos.nv ("... calling the unsafe Vec[T].new(ptr, len)
+// view overload — legitimately used").
+//
+// EXPECT_COMPILE_ERROR E_UNSAFE_CALL_REQUIRES_WRAP
+
+module neg.d216_generic_static_unsafe_overload_neg
+
+import std.collections.vec.{Vec}
+
+test "calling unsafe Vec[T].new(ptr, len) without unsafe wrap" {
+    mut buf []u8 = [1, 2, 3]
+    ro p = buf.ptr()
+    ro v = Vec[u8].new(p, 3)   // ERROR: missing unsafe { } wrap
+    assert(v.len() == 3)
+}

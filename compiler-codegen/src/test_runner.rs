@@ -4746,6 +4746,33 @@ pub fn walk_nv(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
 /// without ever reading their bodies; `--include-slow` / `--slow-only` route
 /// through [`SlowLane::Include`] / [`SlowLane::Only`].
 pub fn walk_nv_filtered(root: &Path, out: &mut Vec<PathBuf>, lane: SlowLane) -> Result<()> {
+    walk_nv_filtered_ex(root, out, lane, false)
+}
+
+/// [M-check-folder-enumerator-skips-no-prelude] (2026-07-17): like [`walk_nv`],
+/// but does NOT drop a folder-module purely because none of its peers contain a
+/// local `test "..."` block. `walk_nv`'s "skip untested folder-modules" gate
+/// (below) is correct for `nova test`'s TEST-DISCOVERY purpose — a folder-module
+/// with no local test has nothing to run standalone. `nova check <dir>` wants
+/// the opposite guarantee: verify every REAL module compiles, tested or not.
+/// Repro before this fix: `nova check std/src/runtime/string` silently reported
+/// "no .nv files to check" — the folder-module (`chars.nv`/`core.nv`/`parse.nv`/
+/// `search.nv`/`slice.nv`/`transform.nv`, all `module runtime.string`) has zero
+/// local `_test.nv` peers (its coverage lives in `spec_tests/conformance`), so
+/// the untested-folder-module gate dropped it to a silent empty walk.
+pub fn walk_nv_for_check(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    walk_nv_filtered_ex(root, out, SlowLane::Include, true)
+}
+
+/// Shared implementation behind [`walk_nv_filtered`] / [`walk_nv_for_check`].
+/// `include_untested_folder_modules` — see [`walk_nv_for_check`] doc; `false`
+/// preserves the original `walk_nv_filtered` test-discovery behavior exactly.
+fn walk_nv_filtered_ex(
+    root: &Path,
+    out: &mut Vec<PathBuf>,
+    lane: SlowLane,
+    include_untested_folder_modules: bool,
+) -> Result<()> {
     if !root.is_dir() {
         return Ok(());
     }
@@ -4800,8 +4827,12 @@ pub fn walk_nv_filtered(root: &Path, out: &mut Vec<PathBuf>, lane: SlowLane) -> 
         // Plan 169.1 Ф.8: folder-module с test-блоками → один compile unit.
         // Первый файл (по алфавиту) — entry; resolver подтянет остальных peers
         // через resolve_imports_inline_ex (include_test_peers=true).
-        // Folder-module без test-блоков — библиотека, пропускаем как раньше.
-        if folder_module_has_tests(&direct_nv) {
+        // Folder-module без test-блоков — библиотека, пропускаем как раньше
+        // (test-discovery semantics) — ЕСЛИ вызывающий не запросил
+        // `include_untested_folder_modules` (`nova check`'s walk_nv_for_check,
+        // [M-check-folder-enumerator-skips-no-prelude]: check must still verify
+        // a tested-less library folder-module compiles).
+        if include_untested_folder_modules || folder_module_has_tests(&direct_nv) {
             let mut sorted = direct_nv;
             sorted.sort();
             out.push(sorted.into_iter().next().unwrap());
@@ -4817,7 +4848,7 @@ pub fn walk_nv_filtered(root: &Path, out: &mut Vec<PathBuf>, lane: SlowLane) -> 
     // в самом walk_nv (defensive: можно skip здесь чтобы избежать syscalls,
     // но centralized check внутри walk_nv — единственная точка истины).
     for sub in sub_dirs {
-        walk_nv_filtered(&sub, out, lane)?;
+        walk_nv_filtered_ex(&sub, out, lane, include_untested_folder_modules)?;
     }
     Ok(())
 }

@@ -33896,6 +33896,66 @@ fn is_raw_pointer_intrinsic_method(name: &str) -> bool {
     )
 }
 
+/// [M-d216-unsafe-map-single-file-gaps] (2026-07-17): best-effort callee
+/// display name for a `Call { func, .. }` expression, for the SOFT
+/// `any_unsafe_overload_names` used-tracking fallback. Works regardless of
+/// receiver shape (bare free-fn `Ident`, plain static/instance `Member`,
+/// generic-static `Member{ obj: TurboFish{..} }`, slice-sugar
+/// `Member{ obj: Path(["__array", elem]) }`, or a bare `Path` — the LAST
+/// segment is always the method/fn name for every shape the parser produces).
+fn call_callee_name(func: &Expr) -> Option<String> {
+    use crate::ast::ExprKind;
+    match &func.kind {
+        ExprKind::Ident(n) => Some(n.clone()),
+        ExprKind::Member { name, .. } => Some(name.clone()),
+        ExprKind::Path(segs) => segs.last().cloned(),
+        _ => None,
+    }
+}
+
+/// [M-d216-unsafe-map-single-file-gaps] (2026-07-17): does `func` spell a
+/// generic-static (`Vec[T].new(...)`, parses `Member{ obj: TurboFish{ base:
+/// Ident(Type)/Path([Type]), .. }, name }`) or `[]T` slice-sugar
+/// (`[]u8.new(...)`, parses `Member{ obj: Path(["__array", elem]), name }`)
+/// receiver? Returns `(type_name, method_name)` — mirrors `callnorm.rs`'s
+/// `static_key` derivation (the "`[]T` ≡ `Vec[T]`, same `\"Vec\"` key"
+/// convention documented there) so the SAME `(type, method)` identity is used
+/// on both sides. `None` for every other call shape (free-fn `Ident`, plain
+/// `Path`/`Member` static call — those are already exact-matched by
+/// `unsafe_callee_name` above and never reach this helper).
+fn generic_static_receiver(func: &Expr) -> Option<(String, String)> {
+    use crate::ast::ExprKind;
+    let ExprKind::Member { obj, name } = &func.kind else { return None; };
+    match &obj.kind {
+        ExprKind::TurboFish { base, .. } => match &base.kind {
+            ExprKind::Ident(n) => Some((n.clone(), name.clone())),
+            ExprKind::Path(parts) if parts.len() == 1 => Some((parts[0].clone(), name.clone())),
+            _ => None,
+        },
+        ExprKind::Path(parts) if parts.len() == 2 && parts[0] == "__array" => {
+            Some(("Vec".to_string(), name.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// [M-d216-unsafe-map-single-file-gaps]: this overload's ACCEPTED positional
+/// arg-count range — `(min_required, max_accepted)`, `max_accepted = None`
+/// meaning unbounded (variadic last param). `min_required` = count of leading
+/// params with neither a default nor `is_variadic` (Nova convention: defaults
+/// strictly trail required params, so a `take_while` from the front is exact).
+fn static_overload_arity_range(fd: &FnDecl) -> (usize, Option<usize>) {
+    let required = fd.params.iter()
+        .take_while(|p| p.default.is_none() && !p.is_variadic)
+        .count();
+    let max = if fd.params.last().map_or(false, |p| p.is_variadic) {
+        None
+    } else {
+        Some(fd.params.len())
+    };
+    (required, max)
+}
+
 /// Plan 118 D216 §8 (D2 amend): Walk fn bodies, emit E_UNSAFE_REQUIRED
 /// для AddrOf (`&value`) / Deref (`*expr`) used вне `unsafe { ... }` block
 /// или `#unsafe fn` body context.
@@ -33947,13 +34007,56 @@ pub(crate) fn check_unsafe_context_in_module(
     // sites; it does NOT newly require `unsafe {{ }}` anywhere (no enforcement
     // added — see the D216 §21 note).
     let mut extern_fns: HashSet<String> = HashSet::new();
+    // [M-d216-unsafe-map-single-file-gaps] fix (2026-07-17): (type_name,
+    // method_name) → every STATIC-receiver overload's arg-count range +
+    // `unsafe_attr` — the per-overload precision the bare `unsafe_fns`/
+    // `unsafe_static_methods` name/(type,name)-keyed sets above cannot give.
+    // A generic-static receiver (`Vec[T].new(...)`) or the `[]T` slice-sugar
+    // spelling (`[]u8.new(...)`) parses to `Member{ obj: TurboFish{ base:
+    // Ident(Type), .. } | Path(["__array", elem]), name }` (see
+    // `generic_static_receiver`'s doc / `callnorm.rs`'s `static_key`
+    // derivation) — a shape NONE of the `unsafe_callee_name` match arms below
+    // recognise (they only match a bare-`Ident` receiver or a 2-segment
+    // `Path`). Worse, `Vec.new` has THREE arities under the SAME `(type,
+    // name)` key — only the 2-arg VIEW overload (`std/collections/vec/
+    // core.nv`) is `unsafe fn` — so even extending the syntactic match to
+    // cover TurboFish/`__array`-Path receivers would be arity-blind and
+    // wrongly demand `unsafe { }` at every 0/1/3-arg `Vec.new`/`Vec.of` call
+    // site. Fix: disambiguate the CONCRETE overload the call resolves to by
+    // its POSITIONAL ARG COUNT (`static_overload_arity_range` per overload) —
+    // `Vec.new`'s three overloads occupy disjoint ranges ([0,1]/[2,2]/[3,3]),
+    // so a 2-arg call site is unambiguous. A genuine same-range ambiguity (two
+    // overloads sharing an arg-count) is left unresolved (`None`), same
+    // conservative behavior as before this fix.
+    let mut static_arities: HashMap<(String, String), HashSet<(usize, Option<usize>, bool)>> =
+        HashMap::new();
     let collect_from = |item: &Item,
                         unsafe_fns: &mut HashSet<String>,
                         unsafe_static_methods: &mut HashSet<(String, String)>,
                         fail_fns: &mut HashSet<String>,
                         effect_fns: &mut HashMap<String, String>,
-                        extern_fns: &mut HashSet<String>| {
+                        extern_fns: &mut HashSet<String>,
+                        static_arities: &mut HashMap<(String, String), HashSet<(usize, Option<usize>, bool)>>| {
         if let Item::Fn(fd) = item {
+            if let Some(r) = &fd.receiver {
+                if r.kind == crate::ast::ReceiverKind::Static {
+                    let (required, max) = static_overload_arity_range(fd);
+                    // [M-d216-unsafe-map-single-file-gaps]: `HashSet`, not
+                    // `Vec` — `collect_from` runs over BOTH `module.items`
+                    // AND `module.peer_files[*].items_here`, which see the
+                    // SAME declarations for a folder-module (by design — every
+                    // OTHER set here is a `HashSet`/`HashMap` for exactly this
+                    // reason, so the natural double-collection dedupes for
+                    // free). A plain `Vec` would double every overload's
+                    // entry, corrupting the arity-uniqueness check below
+                    // (identical `(required, max, unsafe_attr)` from the same
+                    // overload counted as 2 "candidates" → false ambiguity).
+                    static_arities
+                        .entry((r.type_name.clone(), fd.name.clone()))
+                        .or_default()
+                        .insert((required, max, fd.unsafe_attr));
+                }
+            }
             if fd.unsafe_attr {
                 match &fd.receiver {
                     Some(r) if r.kind == crate::ast::ReceiverKind::Static => {
@@ -33987,13 +34090,25 @@ pub(crate) fn check_unsafe_context_in_module(
         }
     };
     for item in &module.items {
-        collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns, &mut extern_fns);
+        collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns, &mut extern_fns, &mut static_arities);
     }
     for pf in &module.peer_files {
         for item in &pf.items_here {
-            collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns, &mut extern_fns);
+            collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns, &mut extern_fns, &mut static_arities);
         }
     }
+    // [M-d216-unsafe-map-single-file-gaps]: SOFT used-tracking fallback name
+    // set — union of every collected unsafe fn/method NAME regardless of
+    // receiver kind (asymmetric with the precise per-overload path above: a
+    // call the arity resolver couldn't disambiguate still gets its wrap
+    // recognised as "plausibly used" if ANY overload sharing its callee name
+    // is unsafe ANYWHERE in scope — never used for enforcement, see the
+    // `Call` arm).
+    let any_unsafe_overload_names: HashSet<String> = unsafe_fns
+        .iter()
+        .cloned()
+        .chain(unsafe_static_methods.iter().map(|(_, name)| name.clone()))
+        .collect();
     let mut state = UnsafeCtx {
         depth: 0,
         unsafe_fns,
@@ -34001,6 +34116,8 @@ pub(crate) fn check_unsafe_context_in_module(
         fail_fns,
         effect_fns,
         extern_fns,
+        static_arities,
+        any_unsafe_overload_names,
         in_realtime: false,
         ptr_vars: vec![HashSet::new()],
         unsafe_t_vars: vec![HashSet::new()],
@@ -34093,6 +34210,27 @@ struct UnsafeCtx {
     /// tracking ONLY — see the `extern_fns` check at the Call arm
     /// (`expr_is_typed_pointer` on each argument).
     extern_fns: HashSet<String>,
+    /// [M-d216-unsafe-map-single-file-gaps] (2026-07-17): `(type_name,
+    /// method_name)` → every STATIC-receiver overload's `(min_required,
+    /// max_accepted, unsafe_attr)` — see the collection-site doc
+    /// (`static_overload_arity_range`). Looked up in the `Call` arm (via
+    /// `generic_static_receiver`) to identify the CONCRETE overload a
+    /// generic-static (`Vec[T].new(...)`) or slice-sugar (`[]u8.new(...)`)
+    /// call site resolves to BY ARG COUNT — precise per-overload
+    /// enforcement/used-tracking without the name/(type,name)-keyed
+    /// arity-blindness `unsafe_fns`/`unsafe_static_methods` would have for a
+    /// multi-arity callee like `Vec.new` (0/1-arg ctor, 2-arg unsafe VIEW
+    /// ctor, 3-arg owned ctor — three disjoint arg-count ranges).
+    static_arities: HashMap<(String, String), HashSet<(usize, Option<usize>, bool)>>,
+    /// [M-d216-unsafe-map-single-file-gaps]: union of every unsafe fn/method
+    /// NAME collected above, regardless of receiver kind — the SOFT used-
+    /// tracking fallback for a call whose arity didn't disambiguate to a
+    /// single overload (see the `Call` arm). NEVER used for enforcement (that
+    /// would reintroduce the arity-blind false-positive the per-overload path
+    /// above exists to avoid) — only to avoid flagging a legitimately-
+    /// necessary `unsafe { }` wrap as E_UNSAFE_UNUSED when precise resolution
+    /// isn't available.
+    any_unsafe_overload_names: HashSet<String>,
     /// Plan 118 A33 enforcement: currently walking body #realtime fn.
     /// Pointer ops (AddrOf, Deref) inside #realtime fn → E_REALTIME_POINTER_OP
     /// — deref может GC trigger (allocation), violates realtime guarantee
@@ -34626,6 +34764,105 @@ impl UnsafeCtx {
                         self.mark_unsafe_used();
                     }
                 }
+                // [M-d216-unsafe-map-single-file-gaps] fix (2026-07-17): precise
+                // per-overload resolution by ARG COUNT for generic-static/
+                // slice-sugar receivers — call shapes the syntactic
+                // `unsafe_callee_name` match above cannot reach. A generic-
+                // static receiver (`Vec[T].new(ptr, len)`) or the `[]T`
+                // slice-sugar spelling (`[]u8.new(ptr, len)`) parses to
+                // `Member{ obj: TurboFish{ base: Ident("Vec"), .. } |
+                // Path(["__array", elem]), name }` (`generic_static_receiver`'s
+                // doc / `callnorm.rs`'s `static_key` derivation), neither of
+                // which is a bare `Ident` receiver or a 2-segment `Path` — the
+                // two shapes the match above knows. Repro: `str @bytes()`'s
+                // `unsafe { []u8.new(@ptr, @byte_len()) }` (std/runtime/
+                // string/core.nv) resolves to `Vec[T].new(ptr *T, len int) ->
+                // ro Self`, an `unsafe fn` (std/collections/vec/core.nv) —
+                // nothing recognised the call, so the wrap was flagged
+                // E_UNSAFE_UNUSED even in a real whole-program compile.
+                //
+                // Deliberately NOT folded into the `unsafe_callee_name` match
+                // above by widening it to any `Member`/`Path` shape AND
+                // deliberately NOT using the checker's `resolved_callees`
+                // channel (tried first; empirically empty for THIS call shape
+                // — generic-static/slice-sugar ctor calls are arg-validated by
+                // a wholly separate, non-channel-writing path, `check_call_
+                // argbind`'s `Member{obj,..}` arm explicitly bails on a
+                // static/type receiver, see its own comment) — `Vec.new` has
+                // THREE arities sharing the same `(type, name)` key (0/1-arg
+                // ctor, the 2-arg unsafe VIEW ctor this repro calls, 3-arg
+                // owned ctor) occupying DISJOINT arg-count ranges ([0,1]/
+                // [2,2]/[3,3]), so resolving by this call's OWN positional arg
+                // count (`static_arities`) is unambiguous here — no re-
+                // guessing by name, no re-deriving argument TYPES (arity
+                // alone suffices to separate these three; a genuine same-arity
+                // ambiguity elsewhere just falls through to `None` below,
+                // same conservative behavior as an unresolvable call).
+                if unsafe_callee_name.is_none() {
+                    let resolved_unsafe = generic_static_receiver(func).and_then(|(tn, mn)| {
+                        let candidates = self.static_arities.get(&(tn, mn))?;
+                        let mut matches = candidates.iter().filter(|(req, max, _)| {
+                            args.len() >= *req && max.map_or(true, |m| args.len() <= m)
+                        });
+                        let first = matches.next()?;
+                        if matches.next().is_some() {
+                            return None; // ambiguous — 2+ overloads accept this arg count
+                        }
+                        Some(first.2)
+                    });
+                    match resolved_unsafe {
+                        // Resolved to a CONCRETE unsafe overload — enforce/mark
+                        // exactly like the syntactic match above.
+                        Some(true) => {
+                            if self.depth == 0 {
+                                let name = call_callee_name(func)
+                                    .unwrap_or_else(|| "?".to_string());
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_UNSAFE_CALL_REQUIRES_WRAP] calling \
+                                         `#unsafe fn {}` requires `unsafe {{ ... }}` \
+                                         block wrap (Plan 118 D216 §9; overload \
+                                         identified by arg count — [M-d216-\
+                                         unsafe-map-single-file-gaps]). #unsafe \
+                                         fn body содержит pointer ops без \
+                                         unsafe-block gating; callers must \
+                                         explicitly opt-in к unsafe context \
+                                         (Rust pattern — no effect propagation \
+                                         up the call stack).",
+                                        name,
+                                    ),
+                                    func.span,
+                                ));
+                            } else {
+                                self.mark_unsafe_used();
+                            }
+                        }
+                        // Resolved to a SPECIFIC overload that is itself SAFE
+                        // (e.g. `Vec.new(cap)` / `Vec.new(ptr, len, cap)`) —
+                        // definitively nothing to flag or mark. Skip the soft
+                        // name-fallback below too: marking this exact call
+                        // "used" would be WRONG (this overload needs no unsafe
+                        // context at all).
+                        Some(false) => {}
+                        // Unresolved (not a generic-static/slice-sugar receiver
+                        // shape at all, its `(type, name)` isn't in
+                        // `static_arities` — e.g. cross-module-only visibility
+                        // gap — or its arg count is genuinely ambiguous between
+                        // ≥2 overloads) — stay conservative: no NEW enforcement
+                        // here. Used-tracking only: soft name-based fallback
+                        // (asymmetric — see `any_unsafe_overload_names` doc —
+                        // never used for enforcement).
+                        None => {
+                            if self.depth > 0 {
+                                if let Some(name) = call_callee_name(func) {
+                                    if self.any_unsafe_overload_names.contains(&name) {
+                                        self.mark_unsafe_used();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // unsafe-cluster / E_UNSAFE_UNUSED (D216 §21 «cross-module
                 // unsafe-fn gap»): `unsafe_fns`/`unsafe_static_methods` are
                 // collected ONLY from `module.items`/`module.peer_files` —
@@ -34874,6 +35111,36 @@ impl UnsafeCtx {
                         if path.last().map_or(false, |s| s == "char") {
                             self.mark_unsafe_used();
                         }
+                    }
+                }
+                // unsafe-cluster / E_UNSAFE_UNUSED (D216 §21 map addendum,
+                // [M-d216-unsafe-map-single-file-gaps] fix, 2026-07-17): a
+                // pointer-TARGET cast (`expr as *T`/`*mut T`/`*uninit T`) is
+                // the canonical way to obtain a typed pointer from a raw
+                // source (e.g. `@ptr as *mut u8` inside `Vec[T].new`'s VIEW
+                // ctor body) — the checker's own §21 map already treats a
+                // pointer-shaped cast target as "produces a typed pointer"
+                // for OTHER gates (`expr_is_typed_pointer`'s `As` arm, used by
+                // the deref/index/order-compare/interpolation checks above),
+                // but the used-TRACKER never mirrored that recognition — an
+                // `unsafe { p as *mut T }` wrap wrapping ONLY such a cast (no
+                // other gated op inside) was flagged E_UNSAFE_UNUSED despite
+                // being the textbook reason to open the block at all (repro:
+                // the historical 3-arg `Vec[u8].new(unsafe { @ptr as *mut u8 },
+                // n, n)` VIEW-ctor form). Same `depth > 0` / `mark_unsafe_used`
+                // shape as the `char`-target check just above — mirrored
+                // predicate to `expr_is_typed_pointer`'s own `As` arm (no
+                // `strip_modifiers`: `*mut T` parses `Pointer(Mut(T))` —
+                // `Pointer` is already the outer node; `Mut`/`Uninit` cover the
+                // rarer bare-modifier-target spellings).
+                if self.depth > 0 {
+                    if matches!(
+                        ty,
+                        crate::ast::TypeRef::Pointer(_, _)
+                            | crate::ast::TypeRef::Mut(_, _)
+                            | crate::ast::TypeRef::Uninit(_, _)
+                    ) {
+                        self.mark_unsafe_used();
                     }
                 }
                 // Plan 118 A24+A25: cast `expr as *fn(...)` checks:

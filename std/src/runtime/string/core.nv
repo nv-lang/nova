@@ -72,11 +72,6 @@ export extern "nova" fn str @hash() -> u64
 // field, O(1)): the bare field read `@len` trips D117 (E_SIZE_ACCESSOR_FIELD —
 // size-like accessors are method-only). `@ptr` is not a size accessor, so the
 // direct priv-field read is allowed.
-// NB (2026-07-17): single-file `nova check` этого файла — ЛАТЕНТНО красный
-// (E_UNSAFE_UNUSED) для ЛЮБОЙ формы @bytes: §21-карта не знает ни `as`-каста
-// указателя (историческая 3-арг форма), ни вызова unsafe-fn через
-// generic-static оверлоад (эта форма) — [M-d216-unsafe-map-single-file-gaps].
-// Реальные пути компиляции (CU через импорты, тесты, CI) — зелёные.
 export fn str @bytes() -> ro []u8 => unsafe { []u8.new(@ptr, @byte_len()) }
 
 // Raw pointer to the first byte of the UTF-8 data (like Rust `str::as_ptr`).

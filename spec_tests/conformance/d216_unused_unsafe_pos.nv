@@ -10,6 +10,8 @@
 // neg/d216_unused_unsafe_neg.nv.
 module spec_tests.conformance
 
+import std.collections.vec.{Vec}
+
 unsafe fn double_174_5(x i64) -> i64 {
     x * 2
 }
@@ -48,4 +50,45 @@ test "unsafe block narrow-casting a `uninit T` binding — legitimately used" {
     mut slot uninit int = 5
     ro v = unsafe { slot as int }
     assert(v == 5)
+}
+
+// [M-d216-unsafe-map-single-file-gaps] (2026-07-17): a pointer-TARGET cast
+// (`expr as *T`) is now recognised for E_UNSAFE_UNUSED used-tracking (used to
+// be un-mapped — only the `char`-target cast was). Isolated case: the ONLY
+// thing inside the block is the cast itself — deliberately no `.read()`/
+// `.write()` call alongside it (those are ALREADY recognised independently,
+// which would pass even without this fix and defeat the isolation).
+// `&x` itself is safe (D216 §4 amend), so it does not separately gate the
+// block.
+test "unsafe block containing only a pointer-target cast — legitimately used" {
+    ro x = 7
+    ro p = unsafe { (&x) as *int }
+    ro _ = p
+}
+
+// [M-d216-unsafe-map-single-file-gaps]: generic-static receiver
+// (`Vec[T].new(ptr, len)`) resolving to the `unsafe fn` 2-arg VIEW overload
+// (std/collections/vec/core.nv) — this call shape parses to `Member{ obj:
+// TurboFish{ base: Ident("Vec"), .. }, name: "new" }`, which the syntactic
+// `unsafe_callee_name` match cannot reach; recognised now by disambiguating
+// the CONCRETE overload by ARG COUNT (`Vec.new`'s 0/1-arg ctor, 2-arg unsafe
+// VIEW ctor, and 3-arg owned ctor occupy disjoint arg-count ranges).
+test "unsafe block calling the unsafe Vec[T].new(ptr, len) view overload — legitimately used" {
+    mut buf []u8 = [1, 2, 3]
+    ro p = buf.ptr()
+    ro v = unsafe { Vec[u8].new(p, 3) }
+    assert(v.len() == 3)
+}
+
+// [M-d216-unsafe-map-single-file-gaps]: the `[]T` slice-sugar spelling of the
+// SAME call (`[]u8.new(ptr, len)` ≡ `Vec[u8].new(ptr, len)`, D239) — parses to
+// `Member{ obj: Path(["__array", "u8"]), name: "new" }`, a DIFFERENT AST shape
+// from the TurboFish form above; both must resolve through the same
+// arg-count-based disambiguation. Repro site: `str @bytes()`
+// (std/runtime/string/core.nv).
+test "unsafe block calling the unsafe []u8.new(ptr, len) slice-sugar view overload — legitimately used" {
+    mut buf []u8 = [1, 2, 3]
+    ro p = buf.ptr()
+    ro v = unsafe { []u8.new(p, 3) }
+    assert(v.len() == 3)
 }
