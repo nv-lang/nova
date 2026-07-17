@@ -28420,6 +28420,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         {
             return self.emit_divergent_with_target_125(expr, target_ty_c);
         }
+        // [M-d55-str-literal-coercion-name-gated] fix (2026-07-17): D55 amend
+        // (spec/decisions/02-types.md §Str-литерал→[]u8) — a bare str-LITERAL
+        // (never a variable/`InterpolatedStr` — D176 still requires an explicit
+        // `.bytes()` for those) at a position whose RESOLVED expected C type is
+        // `[]u8` coerces to a `.bytes()`-view, zero-copy (str is already UTF-8
+        // bytes). This function IS the checker-independent "resolved expected
+        // C type" choke point every OTHER target-typed literal-coercion rule in
+        // this function keys on (let/const `ty_c`, return `ret_ty`, assign
+        // `lhs_ty`, array-literal-element `elem_c`, tuple/record-field, if/match
+        // tail) — replaces the retired `synthesize_write_str_lit_bytes_coercion`
+        // name-gate (method literally spelled `write`, receiver required a
+        // REGISTERED `write` method) for these positions; the call-arg position
+        // is covered by the sibling `synthesize_bytes_lit_call_args` pre-pass in
+        // `emit_call` (this function is never reached for a bare, un-target-typed
+        // call argument). Rewrites AST and re-enters `emit_expr` so the EXISTING,
+        // already-correct `.bytes()` codegen path builds the view — zero new
+        // C-formatting surface.
+        if let ExprKind::StrLit(_) = &expr.kind {
+            if Self::is_bytes_slice_c_ty(target_ty_c) {
+                let bytes_call = Self::wrap_str_lit_as_bytes_call(expr);
+                return self.emit_expr(&bytes_call);
+            }
+        }
         // Plan 48: `None` initializer should match target NovaOpt_X type when target is known.
         // Otherwise None falls back to NovaOpt_nova_int (per current_fn_return_ty), which
         // breaks `let mut result NovaOpt_nova_str = None` in mono'd generic bodies.
@@ -32823,61 +32846,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         ))
     }
 
-    /// Plan 208 Ф.3 (D55 amend — owner instruction 2026-07-16): a bare str-
-    /// LITERAL argument to a `.write(...)` call — the fmt/io `Write` family's
-    /// single positional `bytes []u8` parameter (D374 AMEND ×2 / D422 §1) —
-    /// is written in source as `f.write("Ok(")`, matching the spec's own
-    /// documented example (`w.write("Point(")`, `02-types.md`) and the
-    /// `Write`/`Fmt` doc-comments' claimed str-literal→`[]u8` coercion.
-    /// Empirically this was NOT implemented at the codegen layer: the
-    /// checker accepts the call (no diagnostic — `overload_applicability`'s
-    /// permissive category probe treats a single-overload method call as
-    /// "skip, codegen resolves the exact C type"), but codegen previously
-    /// emitted the bare `nova_str` literal constant where the callee expects
-    /// the `[]u8` Vec-pointer C representation → CC-FAIL (`passing 'const
-    /// nova_str' to parameter of incompatible type 'Nova_Vec____nova_byte
-    /// *'`) on EVERY `f.write("literal")` call site (this plan's own Ф.3
-    /// `Vec`/`Option`/`Result` `@display`/`@debug` bodies included).
-    ///
-    /// Fix: rewrite the argument AST, in the SAME style as the sibling pre-
-    /// passes above (`synthesize_inout_refargs` et al., all applied at the
-    /// top of `emit_call`) — `"Ok("` becomes `"Ok(".bytes()`, an ordinary
-    /// (already-correct, zero-copy) method call. Reuses the EXISTING
-    /// `.bytes()` codegen path instead of hand-emitting a raw view
-    /// expression, so this fix carries zero new C-formatting surface.
-    ///
-    /// Scope, deliberately narrow (NOT a general "any `[]u8` position" D55
-    /// carve-out — that is a substantially larger surface than this call
-    /// shape, out of this wave's budget): gated on the method name being
-    /// exactly `write`, exactly one positional argument, that argument being
-    /// a bare `StrLit`, AND the receiver having a REGISTERED `write`
-    /// instance method at all (`all_methods` — excludes coercing an
-    /// unrelated same-named method on a type that never declared a `write`
-    /// method, however unlikely). Every `@write(<single positional arg>)`
-    /// across `std` today takes `[]u8` (`Write`/`Fmt`/`FmtCtx`/
-    /// `StringBuilder`, io's `Write` family, `fs`/`net` — verified by a
-    /// repo-wide grep before adding this) — `OpenOptions.@write(v bool)` and
-    /// `RwLock.@write()` differ in ARITY (1 bool arg / 0 args), so the
-    /// `args.len() == 1` + `StrLit` gate below never reaches them.
-    fn synthesize_write_str_lit_bytes_coercion(
-        &self,
-        func: &Expr,
-        args: &[CallArg],
-    ) -> Option<Vec<CallArg>> {
-        let ExprKind::Member { obj, name } = &func.kind else { return None; };
-        if name != "write" || args.len() != 1 {
-            return None;
-        }
-        let CallArg::Item(inner) = &args[0] else { return None; };
-        if !matches!(inner.kind, ExprKind::StrLit(_)) {
-            return None;
-        }
-        let recv_c = self.infer_expr_c_type(obj);
-        let recv_name = Self::debt_strip_value_prefix_or_nova_trim_start(&recv_c);
-        if !self.all_methods.contains(&(recv_name, "write".to_string())) {
-            return None;
-        }
-        let bytes_call = Expr::new(
+    /// [M-d55-str-literal-coercion-name-gated] fix (2026-07-17, owner-ordered
+    /// P2): `[]u8`'s canonical resolved C-type spelling (the mono `Vec[u8]`
+    /// instance — `ensure_vec_u8_instance`/`compute_generic_type_c_name("Vec",
+    /// ["nova_byte"])` — used verbatim, so this stays in sync with however
+    /// that mono name is computed elsewhere). Every D55 str-literal→`[]u8`
+    /// coercion site in this file compares its resolved expected C type
+    /// against THIS, replacing the retired name-gate on a method literally
+    /// spelled `write`. Strips an optional `const ` qualifier (a `ro`-view/
+    /// `.bytes()`-returned pointer is const-qualified) and the trailing `*`
+    /// so both the plain- and const-pointer spellings match.
+    fn is_bytes_slice_c_ty(target_ty_c: &str) -> bool {
+        let s = target_ty_c.trim();
+        let s = s.strip_prefix("const ").unwrap_or(s).trim();
+        s.trim_end_matches('*').trim() == "Nova_Vec____nova_byte"
+    }
+
+    /// Shared AST rewrite for the D55 str-literal→`[]u8` coercion: `"lit"` →
+    /// `"lit".bytes()`, an ordinary (already-correct, zero-copy) method call.
+    /// Reuses the EXISTING `.bytes()` codegen path instead of hand-emitting a
+    /// raw view expression — zero new C-formatting surface.
+    fn wrap_str_lit_as_bytes_call(inner: &Expr) -> Expr {
+        Expr::new(
             ExprKind::Call {
                 func: Box::new(Expr::new(
                     ExprKind::Member { obj: Box::new(inner.clone()), name: "bytes".to_string() },
@@ -32887,8 +32877,104 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 trailing: None,
             },
             inner.span,
-        );
-        Some(vec![CallArg::Item(bytes_call)])
+        )
+    }
+
+    /// [M-d55-str-literal-coercion-name-gated] fix (2026-07-17, owner-ordered
+    /// P2): D55 amend (spec/decisions/02-types.md §Str-литерал→[]u8) is
+    /// specified TYPE-directed — coercion in ANY `[]u8`-typed position — but
+    /// was implemented NAME-directed: only a call-arg to a method literally
+    /// spelled `write`, on a receiver with a REGISTERED `write` method
+    /// (Plan 208 Ф.3, `all_methods` gate) — a §3 name-keyed anti-pattern
+    /// (same family as `resolved_cat_of`/196.x dispatch-by-name).
+    ///
+    /// This generalizes the call-arg position: keys on the CALLEE's resolved
+    /// `param_c_types` (`method_overloads` — the SAME receiver-aware registry
+    /// `call_consume_arg_idxs` above reads, populated at the identical
+    /// registration site as `all_methods`, so it has IDENTICAL coverage, just
+    /// richer per-param C-type info) instead of a method-name string compare.
+    /// `method_overloads` is keyed by `(receiver_type_name, method_name)` —
+    /// NOT a global method-name index — so `StringBuilder.write` /
+    /// `TcpStream.write` / a free `fn emit(bytes []u8)` / `Type.new(bytes
+    /// []u8)` each resolve to THEIR OWN signature; no receiver needs a
+    /// "write" name at all. The old safety-gate ("receiver has a registered
+    /// `write` method") is now REDUNDANT — the resolved param C type already
+    /// makes a false coercion on an unrelated type impossible — so it is
+    /// dropped, not ported.
+    ///
+    /// `resolved_callees[call_id]` (checker's chosen overload, when recorded)
+    /// disambiguates a genuine multi-overload method/fn; a SINGLE registered
+    /// overload needs no such disambiguation (mirrors the `chosen_span`
+    /// c1/c2 pattern used throughout this file's own call dispatch).
+    ///
+    /// Fires ONLY on a bare POSITIONAL str-LITERAL arg (`CallArg::Item`,
+    /// `ExprKind::StrLit`) at a position whose resolved param C type is
+    /// `[]u8` — named/spread args (out of scope, mirrors
+    /// `synthesize_record_lit_typed_call_args`'s identical restriction) and
+    /// non-literal str VALUES (`Ident` — D176's own explicit-`.bytes()`
+    /// carve-out) are untouched. The `let`/const-annotation, return, and
+    /// array-literal-element positions are covered separately by the type-
+    /// directed branch in `emit_expr_with_target_type` (this call-arg
+    /// position is the one shape that function's callers never route a bare,
+    /// un-target-typed argument through).
+    fn synthesize_bytes_lit_call_args(
+        &self,
+        func: &Expr,
+        args: &[CallArg],
+        call_id: crate::ast::ExprId,
+    ) -> Option<Vec<CallArg>> {
+        let key: (String, String) = match &func.kind {
+            ExprKind::Member { obj, name } => {
+                let recv_c = self.infer_expr_c_type(obj);
+                let recv_name = Self::debt_strip_value_prefix_or_nova_trim_start(&recv_c);
+                (recv_name, name.clone())
+            }
+            ExprKind::Ident(fname) => (String::new(), fname.clone()),
+            ExprKind::Path(parts) if parts.len() == 2 => (parts[0].clone(), parts[1].clone()),
+            ExprKind::Path(parts) => match parts.last() {
+                Some(last) => (String::new(), last.clone()),
+                None => return None,
+            },
+            _ => return None,
+        };
+        let sigs = self.method_overloads.get(&key)?;
+        let chosen: &MethodSig = match self.resolved_callees.get(&call_id)
+            .and_then(|sp| sigs.iter().find(|s| s.fn_span == Some(*sp)))
+        {
+            Some(s) => s,
+            None if sigs.len() == 1 => &sigs[0],
+            None => return None,
+        };
+        let mut any = false;
+        let mut out: Vec<CallArg> = Vec::with_capacity(args.len());
+        for (i, a) in args.iter().enumerate() {
+            let rewritten = match a {
+                CallArg::Item(inner) if matches!(inner.kind, ExprKind::StrLit(_)) => {
+                    // Skip the trailing variadic slot — `param_c_types[last]`
+                    // there names the COLLECTOR array type, not a per-argument
+                    // `[]u8` element (variadic-arg collection into a synthesized
+                    // `ArrayLit` happens LATER/deeper in `emit_call`, not before
+                    // this early pre-pass — args here are still raw positional).
+                    let in_variadic_tail = chosen.variadic_last
+                        && i + 1 >= chosen.param_c_types.len();
+                    let is_bytes = !in_variadic_tail
+                        && chosen.param_c_types.get(i)
+                            .map(|c| Self::is_bytes_slice_c_ty(c))
+                            .unwrap_or(false);
+                    if is_bytes {
+                        Some(CallArg::Item(Self::wrap_str_lit_as_bytes_call(inner)))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            match rewritten {
+                Some(r) => { any = true; out.push(r); }
+                None => out.push(a.clone()),
+            }
+        }
+        if any { Some(out) } else { None }
     }
 
     /// Plan 172.14 Ф.1: аргумент можно передать по прямому адресу БЕЗ копии?
@@ -32952,14 +33038,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let record_lit_wrapped: Option<Vec<CallArg>> =
             self.synthesize_record_lit_typed_call_args(func, args);
         let args: &[CallArg] = record_lit_wrapped.as_deref().unwrap_or(args);
-        // Plan 208 Ф.3 (D55 amend): `f.write("literal")` — str-literal
-        // argument to a `.write(...)` call — see
-        // `synthesize_write_str_lit_bytes_coercion` doc comment for why this
-        // is needed (codegen previously emitted a bare `nova_str` where the
-        // `[]u8` sink expects a Vec-pointer C representation → CC-FAIL).
-        let write_lit_wrapped: Option<Vec<CallArg>> =
-            self.synthesize_write_str_lit_bytes_coercion(func, args);
-        let args: &[CallArg] = write_lit_wrapped.as_deref().unwrap_or(args);
+        // [M-d55-str-literal-coercion-name-gated] fix (2026-07-17, generalized
+        // from Plan 208 Ф.3): a bare str-literal call-arg at a resolved `[]u8`
+        // param position — ANY method/free-fn/static-ctor, not only `.write(...)`
+        // — see `synthesize_bytes_lit_call_args` doc comment.
+        let bytes_lit_wrapped: Option<Vec<CallArg>> =
+            self.synthesize_bytes_lit_call_args(func, args, call_id);
+        let args: &[CallArg] = bytes_lit_wrapped.as_deref().unwrap_or(args);
         // Plan 174.3 (D54 v1): `x.try_as[T]()` — optional downcast of a boxed
         // `any` to `Option[T]`. Runtime type_id check on the erased value: match
         // → `Some(*(T*)payload)`, mismatch → `None`. Intercepted here (before the

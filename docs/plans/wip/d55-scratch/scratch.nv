@@ -1,0 +1,89 @@
+// [M-d55-str-literal-coercion-name-gated] fix — ISOLATED dev/verify module
+// (test-conventions.md workflow: new D-test developed isolated → PASS →
+// merged into spec_tests/conformance). NOT part of any conformance CU —
+// scratch only, deleted before commit.
+module wip.d55scratch
+
+// ─── position 1: call-arg, method name != "write" ───
+type D55ScratchSink { mut sb StringBuilder }
+
+fn D55ScratchSink mut @absorb(bytes []u8) -> () {
+    @sb.write(bytes)
+}
+
+fn d55_scratch_free_len(bytes []u8) -> int => bytes.len()
+
+// ─── position 3: return ───
+fn d55_scratch_ret_bytes() -> []u8 => "ret!"
+
+fn d55_scratch_ret_bytes_stmt() -> []u8 {
+    if true {
+        return "early"
+    }
+    "unreached"
+}
+
+// ─── decode helper (mirrors to_str_facade_collision.nv pattern) ───
+fn d55_scratch_decode(bytes []u8) -> str => match bytes.to_str() {
+    Ok(s) => s
+    Err(_) => "ERR"
+}
+
+test "position 1a: free-fn []u8 param (not `write`) — str-литерал coerces" {
+    assert(d55_scratch_free_len("hello") == 5)
+}
+
+test "position 1b: instance method []u8 param (not `write`) — str-литерал coerces" {
+    mut sink = D55ScratchSink { sb: StringBuilder.new() }
+    sink.absorb("Ok(")
+    sink.absorb("done")
+    assert(sink.sb.byte_len() == 7)
+}
+
+test "position 1c: static-ctor []u8 param (real std WriteBuffer.from, not `write`) — str-литерал coerces" {
+    consume wb = WriteBuffer.from("st")
+    assert(wb.len() == 2)
+}
+
+test "position 1d: instance method []u8 param (real std WriteBuffer.write_bytes, not `write`) — str-литерал coerces" {
+    mut wb2 = WriteBuffer.new()
+    wb2.write_bytes("Ok(")
+    wb2.write_bytes("done")
+    assert(wb2.len() == 7)
+}
+
+test "position 2: let with explicit []u8-annotation — str-литерал coerces" {
+    ro b []u8 = "Ok("
+    assert(b.len() == 3)
+    assert(d55_scratch_decode(b) == "Ok(")
+    mut m []u8 = "mut-lit"
+    assert(m.len() == 7)
+}
+
+test "position 3: return-position []u8 (arrow-body + explicit return stmt) — str-литерал coerces" {
+    assert(d55_scratch_ret_bytes().len() == 4)
+    assert(d55_scratch_decode(d55_scratch_ret_bytes()) == "ret!")
+    assert(d55_scratch_ret_bytes_stmt().len() == 5)
+    assert(d55_scratch_decode(d55_scratch_ret_bytes_stmt()) == "early")
+}
+
+test "position 4: [][]u8 array-literal element — str-литерал элементы coerce" {
+    ro parts [][]u8 = ["ab", "cd", "e"]
+    assert(parts.len() == 3)
+    assert(parts[0].len() == 2)
+    assert(parts[1].len() == 2)
+    assert(parts[2].len() == 1)
+    assert(d55_scratch_decode(parts[0]) == "ab")
+}
+
+test "non-regression: str-литерал в НЕ-[]u8 позиции остаётся str (D55 unaffected)" {
+    ro s str = "plain"
+    assert(s == "plain")
+    assert(s.len() == 5)
+}
+
+test "non-regression: str-ПЕРЕМЕННАЯ в []u8-позиции всё ещё требует явный .bytes() call-site (D176)" {
+    ro s = "var-not-lit"
+    // Explicit .bytes() still the required spelling for a non-literal value.
+    assert(d55_scratch_free_len(s.bytes()) == 11)
+}
