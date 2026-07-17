@@ -82,4 +82,35 @@ _slow — entry — его собственные peers мёржатся как 
 - spec_tests/conformance/standalone --jobs 4 = PASS 69/0.
 - std/src/checksums смоук (обычный folder-module с _test, peer-merge не сломан).
 
-## Статус: фикс ЕЩЁ НЕ НАПИСАН (разведка завершена, приступаю к правке imports.rs).
+## Статус: ЗАКРЫТО
+
+Оба коммита в nova-d376fix (branch p-fix-d376-peer-slow):
+- 252d81872 — общий предикат `peer_file_included`/`peer_core_stem` в
+  imports.rs (5 мест) + `strip_slow_suffix` в test_runner.rs (dedup 2
+  внутренних среза) + 2 новых юнит-теста.
+- 8b431372e — дообнаружено на верификации: `nova test`'s реальный walker
+  (`walk_nv_selected`) группирует folder-модуль под ОДНИМ alphabetически-
+  первым представителем независимо от slow-состава → entry-filename-only
+  эвристика не могла включить slow-peer'ы через `--slow`. Добавлен
+  process-wide `TEST_RUN_INCLUDE_SLOW` (AtomicBool), взводится в `run_all()`
+  из `opts.selection.include_slow`, читается peer-merge (OR с
+  entry-is-slow эвристикой).
+
+Верификация nova-tls-d376 (branch fix-d376-move-back) — оба теста перенесены
+ОБРАТНО в src/ (module tls, обход снят):
+- `nova test src` (default): PASS 1 (cert_modes_test), slow НЕ в CU.
+- `nova test src --slow --verbose`: 31/31, включая оба slow-теста
+  (loopback 23084.8/35000 threshold; live 80/80 хостов, 10694.6/60000).
+  Live-хосты задеты РОВНО один раз.
+- spec_tests/conformance/standalone --jobs 4: PASS 68/0 (не 69 — тот же
+  68/0 подтверждён на НЕИЗМЕНЁННОМ main; расхождение с ожиданием "69" —
+  устаревшее число, не регрессия; один транзиентный TIMEOUT на
+  neg_stack_clamp в первом прогоне не воспроизвёлся при повторе —
+  контеншн ресурсов, не связан с фиксом).
+- std/src/checksums: PASS 3 SKIP 3 (peer-merge обычных folder-модулей
+  не сломан).
+
+compiler-codegen --lib: 1047/1047 (искл. 4 pre-existing failures,
+идентично воспроизведённых на неизменённом main).
+
+Файл можно удалить после приёмки интегратором.
