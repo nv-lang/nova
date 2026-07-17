@@ -8097,6 +8097,83 @@ impl<'a> TypeCheckCtx<'a> {
                                     }
                                 }
                             }
+                        } else if is_raw_pointer_intrinsic_method(method) {
+                            // [M-196-rtbuf-producers] Q6/elem producer: raw-pointer
+                            // (`*T`/`*mut T`/`*ro T`) intrinsic method family
+                            // (read/write/offset/dist/copy_*, `is_raw_pointer_
+                            // intrinsic_method` table, D216 §21) — the "elem" flavor
+                            // of a declared-return producer, generalized to the
+                            // POINTEE of a pointer rather than a container's element.
+                            // Mirrors legacy `emit_c.rs` B11d_typed_pointer_methods
+                            // (obj_ty C-string strip: `T*` → pointee `T`), but derives
+                            // the pointee from the CHECKER's own `TypedPtr`
+                            // representation — Nova's `TypeRef::Pointer` structurally
+                            // IS the pointee type at CHECK time, no C-string parsing
+                            // needed. Gated: receiver resolves to a genuinely CLOSED
+                            // (`rt_is_closed`) `TypedPtr` — an erased/still-abstract
+                            // pointee (generic body, e.g. `fn[T] unsafe fn foo(p *T)
+                            // { p.read() }`) falls through to legacy unchanged, same
+                            // discipline as every other `gs`-gated producer in this
+                            // cascade. `*()` (void*) pointee excluded (mirrors legacy's
+                            // `obj_ty != "void*"` guard — no defined pointee to read).
+                            if let Some(obj_tr) = self.infer_expr_type(mo, scope).or_else(|| {
+                                if !mo.id.is_set() { return None; }
+                                let buf = self.resolved_types_buf.borrow();
+                                let rt = buf.get(&mo.id)?.clone();
+                                drop(buf);
+                                Self::resolved_to_typeref_tp(&rt, e.span)
+                            }) {
+                                let obj_rt = Self::mark_type_params(
+                                    ResolvedType::from_type_ref(&obj_tr), gs);
+                                if let ResolvedType::TypedPtr(_, inner) = &obj_rt {
+                                    if !matches!(inner.as_ref(), ResolvedType::Unit)
+                                        && self.rt_is_closed(&obj_rt)
+                                    {
+                                        let result_rt: Option<ResolvedType> = match method.as_str() {
+                                            "read" | "read_unaligned" | "read_volatile"
+                                                if args.is_empty() =>
+                                            {
+                                                Some((**inner).clone())
+                                            }
+                                            "read_at" if args.len() == 1 => {
+                                                Some((**inner).clone())
+                                            }
+                                            "write" | "write_unaligned" | "write_volatile"
+                                                if args.len() == 1 =>
+                                            {
+                                                Some(ResolvedType::Unit)
+                                            }
+                                            "write_at" if args.len() == 2 => {
+                                                Some(ResolvedType::Unit)
+                                            }
+                                            "copy_from" | "copy_from_nonoverlapping"
+                                            | "copy_to" | "copy_to_nonoverlapping"
+                                                if args.len() == 2 =>
+                                            {
+                                                Some(ResolvedType::Unit)
+                                            }
+                                            "offset" if args.len() == 1 => {
+                                                Some(obj_rt.clone())
+                                            }
+                                            "dist" if args.len() == 1 => {
+                                                Some(ResolvedType::Scalar {
+                                                    width: 64, signed: true, wide_default: true,
+                                                })
+                                            }
+                                            _ => None,
+                                        };
+                                        if let Some(rt) = result_rt {
+                                            if std::env::var_os("NOVA_RTBUF_PTR_TRACE").is_some() {
+                                                eprintln!(
+                                                    "[RTBUF-PTR] producer=Q6-typed-ptr id={:?} method={} rt={:?}",
+                                                    e.id, method, rt,
+                                                );
+                                            }
+                                            self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                                        }
+                                    }
+                                }
+                            }
                         }
                     } else if let ExprKind::Path(parts) = &func.kind {
                         // 196.5 Stage-D волна-3 п.2 (P67-LEGACY panic
