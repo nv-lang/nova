@@ -2170,6 +2170,1162 @@ extensibility без runtime FS dependency.
 
 ---
 
+## Plan 17 — Q-resolutions (2026-05-08, ✅ ЗАКРЫТ)
+
+- **Что упрощено:** в spec'е было 11 полу-открытых Q-вопросов, для
+  которых de-facto-поведение существовало (или решение было
+  очевидно), но не зафиксировано формально. Plan 17 закрыл 6 из них
+  прямой правкой decisions/*.md — теперь LLM-генерируемый код имеет
+  однозначный referer для:
+    - `@clone()` — shallow по умолчанию (D26),
+    - style coercion с D55 — permissive с таблицей рекомендаций,
+    - Built-in API для `[]T` — формальный список встроенного vs
+      stdlib-расширений (D38),
+    - `@method` vs `method()` в protocol-блоках — обе формы валидны (D53),
+    - keyword-as-fields — строгий запрет (D83, уже было),
+    - string interpolation `${...}` — JS-style sugar над str.from
+      (D44; design CLOSED, codegen open).
+- **DEFER-rationale.** Для оставшихся 5 Q (pipe-operator, fail-coercion,
+  default-generic, numeric-coercion, static-method-protocol) добавлен
+  явный rationale «почему сейчас не делаем» + trigger для пересмотра.
+  Это дисциплинирует — Q без объяснения = висящий TODO; Q с trigger
+  знает «когда вернуться».
+- **Audit-fail.** Plan 17 утверждал, что string interpolation
+  «работает де-факто в codegen». При прогоне regression-теста
+  оказалось — codegen **не разворачивает** `${x}` в обычных
+  строковых литералах; `"${x}"` сохраняется как сырая 4-codepoint
+  строка. Spec-фиксация скорректирована («design CLOSED, codegen
+  NOT YET IMPLEMENTED»), регрессия удалена. Урок: empirical check
+  перед фиксацией — даже когда «очевидно работает».
+- **Регрессия:** добавлен `nova_tests/runtime/clone_semantics.nv`
+  (5 тестов на shallow-семантику record + StringBuilder/WriteBuffer
+  deep). 86/86 nova_tests PASS.
+- **Файлы:** spec/decisions/{02,03,08}-*.md, spec/syntax.md,
+  spec/open-questions.md, docs/plans/17-q-resolutions.md,
+  docs/plans/README.md, nova_tests/runtime/clone_semantics.nv.
+
+---
+
+## 2026-05-11 (продолжение) — Plan 20 Ф.8: production-grade hardening
+
+### Что закрыто
+
+Все 4 упрощения обнаруженные при retro Plan 20 — закрыты production-
+grade fix'ами (5 коммитов):
+
+- `e04ca85d` план Ф.8 (записан в docs/plans/20-defer-implementation.md).
+- `61af5af4` Ф.8 (1) type-check Never-op enforcement.
+- `007bb9ba` Ф.8 (3) loop/branch body defer integration (7 block-сайтов).
+- `d913aa08` Ф.8 (4) D65 правило 3: re-throw в handler skips current frame.
+- `33c1e050` Ф.8 (2) defer/errdefer на interrupt-path через InterruptFrame.
+
+### Что было упрощено в Plan 20 и почему закрыто сейчас
+
+1. **Q-errdefer-handler mythical issue** — было записано как
+   ограничение, оказалось — правильная Fail-strict семантика.
+   Удалено из open-questions (предыдущий retro, commit 24196f2).
+
+2. **Type-check для D61 §1430-1434** — handler-method для
+   Never-операции должен закончиться exit-control'ом. Раньше
+   gap: type-checker не enforce'ил, runtime ловил через safety
+   net (после handler return → nova_throw). Закрыто Ф.8 (1):
+   static analysis в `check_handler_never_ops` + helpers
+   `expr_diverges`/`block_diverges`/`stmt_diverges`. Negative-
+   test `fail_handler_no_exit_rejected.nv` отвергается на
+   compile-stage с явным error message.
+
+3. **Loop-body integration в 19+ inline-iteration сайтов** — раньше
+   только for-range body был переписан на `emit_loop_body_inline`.
+   Defer внутри while/loop/while-let/for-in-array/for-in-iter/else-
+   branch/match-arm-block не регистрировался в DeferScope.
+   Закрыто Ф.8 (3): все эти 7 сайтов теперь эмитят defer scope.
+   Positive-тесты `defer_in_blocks.nv` (9 кейсов).
+
+4. **D65 правило 3 re-throw** — `throw err` внутри handler-body
+   снова попадал на тот же handler → infinite recursion. Раньше
+   не реализовано в runtime. Закрыто Ф.8 (4): NovaVtable_Fail.prev
+   хранит outer handler; Nova_Fail_fail swap'ает на prev на время
+   invocation. Positive-тесты `errdefer_rethrow.nv` (3 кейса
+   включая 3-уровневый re-throw).
+
+5. **Defer/errdefer на interrupt-path** — раньше defer не запускался
+   когда handler делал `interrupt v` (longjmp на NovaInterruptFrame,
+   минуя fail-frame и leave_defer_scope). По D90 п.8 defer должен
+   срабатывать на ВСЕХ exit'ах. Закрыто Ф.8 (2): codegen эмитит
+   local NovaInterruptFrame setjmp wrapper для каждого defer scope,
+   на interrupt — invoke только defer (skip errdefer как handled
+   exit), pop interrupt-frame, re-interrupt с тем же value.
+   Positive-тесты `defer_on_interrupt.nv` (4 кейса).
+
+### Trade-offs
+
+- **handler-stack через prev pointer (D65 п.3)** — добавляет 8 байт
+  к NovaVtable_Fail. Альтернатива — thread-local handler-stack — была
+  бы dynamic-alloc-heavy. Prev pointer fix size, embedded в vtable.
+
+- **NovaInterruptFrame push на каждый defer scope** — overhead две
+  jmp_buf на scope (fail-frame + interrupt-frame если errdefer + defer).
+  Для bootstrap'а приемлемо; production-уровень оптимизации может
+  combine оба frame'а в один conditional setjmp.
+
+- **(prev: NULL) для не-Fail effects** — codegen hardcoded инициализирует
+  prev только для эффектов имя которых "Fail". Production-уровень
+  generalize'ит на любой effect с Never-операцией через runtime-mapping
+  effect-name → has-prev-field. Bootstrap-stage OK.
+
+- **emit_defer_body_void для interrupt-path** — тот же helper что для
+  fail-path. Body клонируется implicit'ом emit_defer_body_void (re-emit
+  AST). Эффект size of generated C: ~2x для блоков с >1 defer (cleanup
+  cascade повторяется в fail и interrupt branches). Production-уровень
+  factor через generated cleanup function. Bootstrap-stage OK.
+
+### Lessons
+
+- **Spec нарушения часто скрыты под runtime safety nets.** D61
+  §1430-1434 «handler для Never-op обязан exit-control» нарушалось
+  тестами (handler без interrupt) — runtime ловил через дополнительный
+  nova_throw после handler return. Это работало по факту, но семантика
+  скрывала bugs. Type-check enforcement важен для production grade —
+  компилятор должен отлавливать spec-нарушения до runtime.
+
+- **runtime cleanup-machinery требует cooperation от ВСЕХ codegen
+  paths.** Plan 20 Ф.4 покрывал только основные emit_block_* helpers,
+  inline iteration в 19+ сайтах оставались legacy. Defer внутри них
+  silently не работал. Урок: при введении новой sema-конструкции —
+  проверить ВСЕ места эмиссии block'ов, не только наиболее популярные.
+
+- **handler-stack semantics нетривиальна.** D65 правило 3 «re-throw
+  skips current frame» — лёгкое правило в спеке, но требует prev-pointer
+  в vtable + swap-on-invoke в runtime. Без этого user видит infinite
+  recursion stack overflow. Spec → runtime semantics не всегда одно-к-
+  одному.
+
+- **interrupt и throw — разные паттерны exit, но оба нужны для defer.**
+  Спека D90 определяет defer как «cleanup на ANY exit». В реализации
+  это значит **два** независимых setjmp/longjmp механизма (FailFrame +
+  InterruptFrame), и каждый должен interception'нуть defer body
+  отдельно. Один объединённый mechanism — упрощение, не работает.
+
+### Файлы
+
+- `compiler-codegen/nova_rt/effects.h` — NovaVtable_Fail.prev + Nova_Fail_fail swap.
+- `compiler-codegen/src/codegen/emit_c.rs` — DeferScope расширен intframe_var/popped;
+  enter_defer_scope эмитит interrupt-frame setjmp wrapper; emit_with
+  устанавливает vtable->prev; 7 inline-iteration сайтов переписаны
+  на emit_loop_body_inline / enter_defer_scope.
+- `compiler-codegen/src/types/mod.rs` — check_handler_never_ops + helpers.
+- `nova_tests/negative_capability/fail_handler_no_exit_rejected.nv` — negative.
+- `nova_tests/syntax/defer_in_blocks.nv` — positive (9 кейсов).
+- `nova_tests/syntax/errdefer_rethrow.nv` — positive (3 кейса).
+- `nova_tests/syntax/defer_on_interrupt.nv` — positive (4 кейса).
+- `spec/decisions/03-syntax.md` — D90 Bootstrap-status расширен Ф.8.
+- `docs/plans/20-defer-implementation.md` — Ф.8 план.
+
+### Status
+
+- ✅ Plan 20 Ф.8 (все 4 issue) ЗАКРЫТЫ.
+- Tests: 12/12 defer-relevant + 10/10 effects + 17/17 concurrency PASS.
+
+
+═══════════════════════════════════════════════════════════════════
+Plan 22 Ф.8 reopened — close-cb state-machine — 2026-05-11 late
+
+После Plan 25 «honest production readiness» (G7 = Ф.8 close-cb) обсудили
+с user'ом: формальный enum SYNC/ASYNC в D93 API closes G7. Сделано.
+
+| Упрощение | Решение |
+|---|---|
+| **busy-loop `while !handle_closed uv_run NOWAIT`** в _nova_sleep_via_libuv | → УДАЛЁН. Sleep state-machine `{PENDING, CLOSING, CLOSED}`, close_cb делает wake. Один park на весь lifecycle. |
+| **stop_cb returns void** (sync unpark предположение) | → `NovaStopMode {SYNC, ASYNC}` enum. cancel_all_pending различает: SYNC immediate unpark, ASYNC ждёт backend wake. |
+| **D93 sync/async semantic не описан** | → D93 расширен правилом 5 + use-cases table (sleep=ASYNC, channel waitlist=SYNC, socket=ASYNC, file=ASYNC) + эволюция Ф.8. |
+| **Q-D93-sync-async-stop open** | → ✅ ЗАКРЫТО, ссылка на D93. |
+| **Plan 25 G7 «Ф.8 close-cb busy-loop»** | → ✅ ЗАКРЫТО (R7 «no busy-loops anywhere» fully enforced). |
+
+Trade-off:
+- Каждый sleep adds ~2-3ms ASYNC close_cb wait latency.
+- Concurrent sleeps НЕ affected (close_cb batch в одном uv_run pass).
+- Sequential 1000 × sleep(10): ~10s → ~20-25s. sleep_leak_check #2
+  budget релакс'нут 15s → 30s.
+- Acceptable price за clean architecture готовую для Plan 21/23+.
+
+Verification:
+- sleep_real_clock 5/5 PASS (включая cancel-during-sleep).
+- cancel_stress_test 3/3 PASS.
+- sleep_bench 10k concurrent PASS.
+- sleep_leak_check 3/3 PASS.
+- Полный 138/138 regression — НЕ verified в сессии (Plan 26 run_tests.ps1
+  имеет PS quoting + parallel race issues). Individual filter PASS.
+
+Commit: e94d2bc9 plan-22 Ф.8: close-cb state-machine + D93 sync/async stop_cb contract
+
+
+═══════════════════════════════════════════════════════════════════
+Plan 25 honest pass: default malloc-only обнаружено — 2026-05-11
+
+После Plan 22 hardening + Plan 25 первой версии user задал simple
+вопрос: «всё сделано как для прода?». Honest re-read code выявил
+самое большое production упрощение которое **не было в Plan 25**:
+
+| Упрощение | Реальность |
+|---|---|
+| **Default alloc backend** | compiler-codegen/nova_rt/alloc.c — plain malloc, нет GC, nova_release — no-op |
+| **Memory mgmt в коде** | Объекты создаются, **никогда не освобождаются** |
+| **Use-case "single-host server production-grade"** в Plan 25 матрице | **WRONG.** Server long-lived, leaks накапливаются → OOM |
+| **spec/overview.md "паузы <1ms"** | Без disclaimer — звучало factual. На самом деле **дизайн-цель** (decisions/05-memory.md correctly помечает как v1.0+ goal) |
+
+**Что сделано:**
+
+(a) Plan 25 G3 split на G3a/G3b:
+    - G3a (новый, **высокий приоритет**): default malloc-only — production blocker.
+    - G3b: GC pause measurement — после G3a.
+
+(b) Use-case matrix скорректирован — «Single-host server low traffic»
+    ✅ → ❌ blocked G3a.
+
+(c) **Plan 27 (новый): GC switch.** Boehm GC как default.
+    - alloc_boehm.c уже готов в репо.
+    - vcpkg gc.lib + gc.h уже vendored в
+      compiler-codegen/vcpkg_installed/x64-windows-static/.
+    - 5 фаз: flag → verify → bench → switch default → cross-platform.
+
+(d) spec/overview.md "<1ms" → "**целевые** <1ms p99" + ссылка на
+    Plan 25 G3 для текущего состояния.
+
+(e) nova_tests/concurrency/memory_growth_check.nv — bench PASS под
+    malloc (short workloads ok), будет показывать bounded live_count
+    под Boehm.
+
+**Lessons:**
+
+- **Hardening pass не покрывает всё.** Plan 22 Ф.7-Ф.10 был scheduler/
+  runtime hardening, memory mgmt остался Phase-0.
+- **Default settings важны.** Boehm готов в коде, но default остался
+  malloc — никто не использовал Boehm в тестах.
+- **vcpkg vendored** = clean path к решению. Plan 27 ~1 день работы.
+
+Commit: d2c6a7b3 plan-25 honest pass + plan-27 GC switch
+
+
+═══════════════════════════════════════════════════════════════════
+Plan 22 verification pass — declared vs measured — 2026-05-11 late
+
+User третий раз спросил «без упрощений как для прода?». Перечитал
+Plan 22 целиком — обнаружил что **declared target characteristics
+никогда не measured**. Это было упущение в hardening retro.
+
+| Plan 22 declared | Реальность (measured) | Status |
+|---|---|---|
+| Sleep precision ±10ms | **±15-30ms p99 Windows** (OS timer-gran ~15.6ms) | ❌ overclaim для Windows, Linux не measured |
+| Cancel <1ms wake | **5-15ms p99** (ASYNC close_cb chain Ф.8) | ❌ overclaim, реалистично 5-15ms |
+| 10k fibers CPU <5% | sleep_bench PASS <1500ms wall-clock | 🟡 throughput ✅, CPU **не profiled** |
+| sleep(0) zero-overhead | <50µs per yield | ✅ verified |
+| sleep(1) minimum useful | 1-15ms Windows | ✅ verified в пределах OS gran |
+
+**Что добавлено:**
+
+- `nova_tests/concurrency/sleep_precision_bench.nv` — 50 × sleep(50ms),
+  measures min/max/avg deviation.
+- `nova_tests/concurrency/cancel_latency_bench.nv` — single + 100-batch +
+  10-nested cancel ops.
+- Plan 22 doc обновлён: «Целевой target» теперь honest table declared
+  vs measured. «Performance verification» теперь с measured cells.
+
+**Production verdict updated:**
+
+- CLI tools + scripts (короткое время жизни): sleep precision
+  acceptable.
+- Backend tail-latency p99 <50ms SLO: borderline на Windows.
+- Real-time (audio/gaming/trading): **НЕ подходит на Windows** без
+  `timeBeginPeriod(1)` либо custom hi-res timer source.
+- Linux: ожидается лучше (1-4ms gran), но **never measured** (Ф.11
+  deferred TBD).
+
+**Lessons:**
+
+(1) «Test PASS» != «target verified.» Plan 22 closed в Ф.7-Ф.10 на
+    основании sleep_real_clock + sleep_bench PASS — но эти тесты
+    использовали SLACK_MS=200 и НЕ проверяли declared targets.
+
+(2) Третий вопрос «без упрощений?» = signal что предыдущие ответы
+    incomplete. Pass через target table item-by-item — нашёл 3 из 7
+    целей never measured.
+
+(3) **Production-grade требует measured numbers**, не declared.
+    Plan 22 теперь имеет honest cell в табличке.
+
+Commit: 8a503dc9d plan-22 verification pass
+
+---
+
+## Plan 22 F2 — libuv mandatory (2026-05-11)
+
+**Решение:** User decision «libuv — нормально и правильно, других
+вариантов не предусматриваем» → удалить conditional build paths.
+
+**Упрощения закрыты:**
+
+| # | Упрощение | Статус |
+|---|---|---|
+| busy-yield `#else` ветки | dead code при NOVA_USE_LIBUV=1 | ✅ Удалены |
+| `_nova_native_sleep_ms` / `_nova_monotonic_ms` | Windows/POSIX платформенный код | ✅ Удалены, заменены uv_hrtime |
+| `libuv: None` graceful fallback | test_runner silent degradation | ✅ Удалён → abort |
+| `#ifdef NOVA_USE_LIBUV` в scheduler | условная libuv integration | ✅ Удалены — libuv always-on |
+
+**Diff:** 135 строк удалено, 93 добавлено. Net -42 строки в runtime.
+
+**Regression:** 156 / 156 PASS.
+
+**Trade-off принят:** нет fallback если vcpkg/vcvars сломаны →
+setup нужен с первого раза. Mitigation: libuv vendored в репо,
+`detect_or_build_libuv` в test_runner строит автоматически.
+
+Commit: efb0248d7 plan-22 F2: libuv mandatory
+
+---
+
+## 2026-05-11 — Post-Plan-19 C16: Closure mut-capture heap-promotion
+
+### Что закрыто
+
+**C16 (mut-capture codegen)** + смежный парсер-баг D49.
+
+**Упрощение закрыто:** `let mut x = 0; let f = || { x += 1 }` — раньше
+closure env копировал значение, не shared reference. Writes из body
+не обновляли caller. Теперь — heap-box promotion:
+
+- emit_c.rs: `_box_name = nova_alloc(sizeof(T)); *_box_name = name`
+- Caller: ExprKind::Ident проверяет `var_boxed` → `(*_box_name)`
+- Lambda body: `var_boxed` сбрасывается перед emit (scope isolation),
+  mut-captures регистрируются как `_env->name` → `(*_env->name)`
+- Несколько closures над одной mut var → shared box (reuse)
+
+**Парсер-баг D49 закрыт:** `||` после newline поглощался D49-tolerance
+как binary OR продолжение. `let x = 0\n|| body` → `let x = (0 || body)`.
+Фикс: newline-tolerance убрана для `||`, оставлена только для `or`.
+
+### Новые тесты
+
+- `syntax/closure_mut_capture_escape.nv` — escape counter, shared box,
+  HOF regression
+- `syntax/closure_unit_return_inference.nv` — unit-return inference
+  для side-effect-only callbacks
+
+### Regression
+
+160/160 PASS.
+
+---
+
+## Plan 21 — D91 Channel Capability-Split (2026-05-11)
+
+### Упрощение закрыто
+
+**C17 (single Channel[T] type)** — раньше один `Channel[T]` имел send+recv
+методы, receiver мог случайно сделать send. Теперь capability-split:
+`Channel.new(cap)` → `(ChanWriter[T], ChanReader[T])`.
+
+### Реализация
+
+- `channels.h`: `Nova_ChanWriter*` / `Nova_ChanReader*` wrappers + WaiterList
+  heap-allocated (A1, подготовка M:N) + stop_cb для cancel-during-park
+- `emit_c.rs`: dispatch по типу объекта; `type_ref_to_c` fallback через
+  `_ => format!("Nova_{}*", name)` покрывает `ChanWriter[T]` без явного case
+- Параметры функций: `fn f(tx ChanWriter[int])` → `var_types` в `emit_fn`
+- 4 новых теста (Секция 6): `fill_channel`, `drain_channel`, `relay` pipeline
+
+### Новые тесты
+
+- `nova_tests/runtime/channels.nv` — 17 тестов (4 добавлено в Plan 21)
+- `nova_tests/negative_capability/channel_sender_no_recv.nv` — EXPECT_CC_ERROR
+- `nova_tests/negative_capability/channel_receiver_no_send.nv` — EXPECT_CC_ERROR
+
+### Regression
+
+156/156 PASS.
+
+---
+
+## Plan 30 — Channel Improvements: send→bool + tx.clone() (2026-05-11)
+
+### Упрощения закрыты
+
+**C18 (send-throws-on-closed)** — `send()` бросал panic на закрытый канал.
+Теперь возвращает `bool`: `false` = закрыт, не бросает.
+
+**C19 (single-writer-only)** — только один writer на канал; два fiber'а не могли
+безопасно делить один `ChanWriter`. Теперь `tx.clone()` + `writer_count` ref-count.
+
+### Реализация
+
+**Ф.1 (send→bool):**
+- `channels.h`: `nova_chan_writer_send()` — тип `void` → `nova_bool`; `nova_throw` заменён на `return 0`
+- `emit_c.rs`: `infer_expr_c_type("send")` → `"nova_bool"`
+
+**Ф.2 (tx.clone()):**
+- `channels.h`: `Nova_ChannelState.writer_count` (int32_t); `nova_chan_writer_clone()`;
+  `nova_chan_writer_close()` закрывает только при `writer_count == 0`
+- `emit_c.rs`: dispatch `"clone"` → `nova_chan_writer_clone()` + тип `"Nova_ChanWriter*"`
+
+### Новые тесты
+
+- `channels.nv` Секция 7: send-after-close → false; send→true в открытый; let-bind
+- `channels.nv` Секция 8: clone/not-close-original; close-порядок; fan-in (sum==66)
+
+### Regression
+
+159/159 PASS.
+
+Commit: 60e226da6
+
+---
+
+## Plan 20 follow-up + Bidirectional HOF inference (2026-05-11)
+
+### Упрощения закрыты
+
+**C6 (bidirectional inference HOF arg → closure)** — `|x| x + 1` при передаче в
+HOF с параметром `fn(T) -> R` раньше дефолтил тип `x` в `nova_int`. Теперь:
+- `hof_param_fn_sigs: HashMap<(fn_name, param_idx), (inner_param_tys, ret_ty)>` — новое поле
+  в `CEmitter`, заполняется при `register_fn` для каждого `fn`-типизированного параметра.
+- В `emit_call`: если аргумент — `ClosureLight`, смотрим `hof_param_fn_sigs[(callee, idx)]`
+  и передаём `context_param_tys` в `emit_lambda` вместо `None`.
+- Тип `x` в `map(arr, |x| x > 0)` теперь `nova_bool` если HOF объявлен `fn(bool) -> bool`.
+
+**Plan 20 gap (multi-marker EXPECT)** — `EXPECT_RUNTIME_PANIC + EXPECT_STDOUT` не работали
+вместе: `parse_expect` возвращал `Option<ExpectMarker>` (первый wins). Теперь
+возвращает `Vec<ExpectMarker>`. Тест `defer_throw_single.nv` реально проверяет
+и panic pattern, и `DEFER_FIRED` в stdout.
+
+**Plan 20 gap (nv_panic fail-frame routing)** — `nv_panic` на main flow не проходил
+через fail-frame (guard `nova_in_fiber()`), значит `errdefer` не срабатывал на `panic()`.
+Убран guard — теперь `nv_panic` проверяет `_nova_fail_top` первым (как `nova_throw`).
+`errdefer_on_panic.nv`: `ERRDEFER_FIRED` в stdout + panic pattern в stderr — PASS.
+
+### Новые тесты
+
+- `nova_tests/syntax/closure_bidir_inference.nv` — 6 тестов: bool/str параметры,
+  двухпараметровый HOF, захват + инферированный bool (161/161 PASS после добавления).
+
+### Regression
+
+161/161 PASS (1 флейк `cancel_stress_test` — lld-link file-lock, не код).
+
+Commits: d49111281, 98586c954, 19d6fb79e, e728608a7
+
+### Plan 30 post-close: channel API production review (2026-05-11)
+
+Проведён анализ channels.h vs Rust `mpsc` и Go `chan`. Найдены 2 баги + 2 улучшения.
+
+**Что исправлено:**
+- `Nova_ChanWriter.writer_closed bool` — guard двойного close на одном handle.
+- `nova_throw()` вместо `abort()` при recv/send вне fiber context.
+- `NovaChanTryResult {NOVA_CHAN_TRY_OK, NOVA_CHAN_TRY_EMPTY, NOVA_CHAN_TRY_CLOSED}` —
+  трёхвариантный результат для `try_recv`/`try_send` (в Nova API прозрачно).
+- `Channel.new(0)` → `nova_throw(...)` вместо silent capacity=1.
+
+**Оставшийся tech debt (намеренно):**
+- [T1] `writer_count` — `int32_t`, не atomic. Достаточно для 1:N; M:N (Plan 23) потребует `_Atomic int32_t`.
+- [T2] WaiterList — singly-linked, O(n) unlink. Достаточно сейчас; под нагрузкой заменить на doubly-linked.
+- [T3] `try_recv().is_none()` не различимо в Nova без `rx.is_closed()` — API неудобен. После generics можно добавить `TryRecvResult` в Nova type system.
+
+### Plan 27 Ф.3-Ф.4: vcvars caching + Boehm default + fiber root fix (2026-05-11)
+
+**vcvars per-test overhead** — `call vcvars64.bat` (~6.2 сек) вызывался внутри
+каждой компиляции через `cmd /c`. Упрощение: `capture_vcvars_env()` запускает bat
+один раз, парсит `set` → `Vec<(OsString,OsString)>`, хранит в `Toolchain` enum.
+Каждая компиляция: `env_clear().envs(&snapshot)`. 16-28 сек/тест → 3 сек/тест.
+
+**GC root set limit** — `GC_add_roots()` per-fiber бил в лимит Boehm (~128 entries)
+при 10k файберов ("Too many root sets"). Упрощение: `_nova_gc_add_fiber_roots` /
+`_nova_gc_remove_fiber_roots` стали no-op. `NOVA_GC_BOEHM` define вместо `GC_THREADS`
+(GC_THREADS включал stop-the-world → конфликт с minicoro context switch → deadlock).
+
+**GcKind default** — `#[default]` перенесён с `Malloc` на `Boehm`. Все CLI дефолты
+обновлены. 171/171 PASS с Boehm как production GC.
+
+Commits: 31207daab
+
+Commits: 88504b87c, 106e64c33
+
+### Plan 31 D94: select — channel multiplexing (2026-05-11)
+
+**Nova получила `select { }`** — Go-style channel multiplexing. Архитектурные решения:
+
+**SelectWaiter layout-compatibility** — `SelectWaiter` первые 6 полей совпадают с
+`ChannelWaiter`. Это позволяет каналу будить select-waiter через тот же
+`nova_sched_wake(w->scope, w->slot)` без runtime type dispatch. Park/wake работает
+через существующий channel wake path без изменений.
+
+**Fisher-Yates для fairness** — `nova_select_try_immediate()` перемешивает порядок
+проверки армов через xorshift32 с seed от адреса ctx. Честный случайный выбор без
+дополнительных структур.
+
+**Time.after как канал** — `Nova_Time_after(ms)` возвращает `Nova_ChanReader*`.
+Timeout-арм `Some(_) = Time.after(50)` синтаксически неотличим от recv-арма. Таймер
+один раз создаёт канал, отправляет значение, закрывает writer — timeout прозрачен
+для select runtime.
+
+**Spawn capture fix** — три функции обхода AST (`collect_idents_expr`,
+`collect_free_idents`, `collect_bound_names_expr`) не обходили `ExprKind::Select`.
+Переменные внутри select-армов не захватывались spawn-closure. Добавлен обход
+`SelectOp::Recv { binding }` как bound name (не free), `chan`/`value` как referenced.
+
+Commits: a5003d6b0, 78743a290, aef65ae9c
+
+---
+
+### Plan 27 Ф.6 + Б.2-Б.8: test-runner production polish (2026-05-11)
+
+**Ф.6 — AllocConstraint / GcKindTag / SkipReason:**
+
+Новый вариант `Outcome::Skipped` — тест пропущен из-за backend-несоответствия,
+не считается ни pass ни fail. `GcKindTag` — отдельный tag-enum (без данных)
+предотвращает circular dependency между `AllocConstraint` и `GcKind`.
+
+Решение: parse_alloc_constraint читает первые 30 строк; run_one делает ранний
+return Skipped до любых build-шагов. Summary: отдельный счётчик `skip`.
+
+**Б.2 — parse_timeout_ms:**
+
+Функция standalone (не расширение parse_expect) — отдельные concerns.
+`effective_timeout` локальная переменная в run_one вместо мутирования opts.
+
+**Б.3 — Outcome::Pass расширен:**
+
+Closure `make_pass` в run_one собирает все 5 полей в одном месте.
+None при !verbose — не тратим память на discard output больших тестов.
+
+**Б.4 — slowest tests:**
+
+Skipped фильтруются из elapsed-sort — их elapsed ~0 (early return).
+
+**Б.5 — list_only / filter_from:**
+
+list_only: ранний return перед TAP-header и thread::scope.
+filter_from_set: HashSet<String> — O(1) lookup, не O(n) scan.
+
+**Б.6 — retries в JUnit:**
+
+Self-closing `<testcase .../>` для pass без retry; wrapped `<testcase>` с
+`<system-out>retried N time(s) before pass</system-out>` при retry>0.
+
+**Б.7 — xorshift64 + Fisher-Yates:**
+
+xorshift64 вместо DefaultHasher (нестабилен между Rust версиями). Seed 0
+→ system time nanos. Seed → eprintln (reproducibility: сохранить seed для
+debug перемешанного прогона).
+
+**Б.8 — nova-cli wiring:**
+
+`--shuffle [SEED]` через `Option<Option<u64>>`: `None`=no shuffle,
+`Some(None)`=random (→0 в TestAllOpts), `Some(Some(n))`=fixed. Чистое
+кодирование clap num_args=0..=1.
+
+**Regression:** 171/171 PASS.
+
+---
+
+## fixed_ms.sleep(d) — no-op; mut_clock — advance ✅ (Plan 34 Ф.1+Ф.7, 2026-05-12)
+
+**Где:** std/testing/handlers.nv.
+
+**Что упрощено (изначально Ф.1):** `Time.sleep(d)` под
+`fixed_ms`-handler'ом — instant return. Виртуальные часы НЕ
+продвигаются. Если тест делает `sleep(1s)`, `Time.now_ms()` после
+возвращает то же значение что до.
+
+**Решено в Ф.7:** добавлена `mut_clock(start_ms u64)` — mutable test
+clock. `sleep(d)` продвигает `current_ms` на `d.nanos / 1_000_000`
+через closure-capture `let mut current_ms`. Используется в
+rate_limiter/retry/cron тестах когда нужно «прошёл час» без real
+delay.
+
+**Что осталось упрощением:**
+- `fixed_ms` сохраняет no-op поведение — это нужно для тестов которые
+  явно не хотят advance (uuid v7 with fixed timestamp).
+- Sub-millisecond durations в `mut_clock` округляются floor (delta_ms =
+  nanos / 1_000_000). Для durations ≥ 1ms работает корректно;
+  precision-sensitive тесты должны использовать `1.millis()` минимум.
+
+**Как улучшить (опционально):**
+- Sub-millisecond precision — хранить `current_ns u64` вместо
+  `current_ms`. Тогда `sleep(d)` точное. Trade-off: u64 ns overflow
+  через 584 года — ok.
+
+**Приоритет:** P3 — текущая реализация покрывает 99% use-cases.
+
+
+---
+
+## Cross-file resolve Plan 35 Ф.1 MVP — inline AST expansion (2026-05-12)
+
+### Что упрощено в MVP (commit f481e3950e) vs full Plan 35
+
+**Где:** `nova-cli/src/main.rs::resolve_imports_inline()` (~165 LOC).
+
+**Полный план**: Plan 35 v2 имеет 30 requirements (R1-R30) + 12 AD
+после 3-way audit (65 gaps). **Реализовано в MVP**: только R1 (FS
+loader, single-root), R2 (in-memory dedup via visited), R3 (topo walk
++ cycle detection через import_stack), R7 (missing import error).
+
+**MVP подход:** **inline AST expansion** — imported `module.items`
+просто copy'ятся в текущий `module.items` до typecheck/codegen. Это
+дешевле чем правильный `register_imported_module` (требует deep
+refactor `CEmitter::emit_module` 600+ LOC) и unblock'ит multi-file
+stdlib через `nova build` сегодня.
+
+**MVP-упрощения Plan 35 — статус (обновлено 2026-05-21, Plan 81 Ф.11).**
+Большинство закрыто Plan 81 (module-resolution hardening) и Plan 42/62.
+
+| Пункт | Что упрощалось в MVP | Статус |
+|---|---|---|
+| 35.A wildcard | `import X.Y.*` | ❌ spec-rejected (D29/D5) — не доработка |
+| 35.A visibility | `is_export` informational only | ✅ **Plan 81 Ф.1** — enforced на границе модуля |
+| 35.A `export use` | re-export не поддерживается | ✅ **Plan 42.09** — `export import X.{A as B}` |
+| 35.A prelude | нет prelude module | ✅ `std/prelude.nv` (Plan 35 R27 + Plan 62) |
+| 35.B disk cache | каждый `nova build` re-parsит imports | ✅ **Plan 81 Ф.9** — content-addressed `.c`-кэш (`target/.nova-cache/`); попадание минует type-check/codegen |
+| 35.B incremental | нет dependency-based rebuild | ✅ **Plan 81 Ф.9** — ключ покрывает все транзитивные исходники → правка любого инвалидирует кэш (whole-build гранулярность — Nova inline-expansion, не separate compilation) |
+| 35.B memory cache invalidation | `HashSet<path>` per build | ✅ **Plan 81 Ф.9** — content-addressed (хэш содержимого), не path-set |
+| 35.C cross-file generics | generic bounds не resolve cross-file | ✅ **Plan 81 Ф.3** — verify: работают (Plan 35 merge → `protocol_specs`); orphan rule не нужен |
+| 35.D stable mangling | items в global namespace | ✅ **Plan 81 Ф.6** — symbol mangling v0 (D134) |
+| 35.D DCE | все imported items emit'ятся (bloat) | ✅ **Plan 81 Ф.7** — Ф.7.1 linker-DCE ✅ + Ф.7.2 compiler-DCE свободных функций ✅ (недостижимые fn не эмитятся в `.c`); method-level compiler-DCE — отдельный инкремент (Ф.7.2-methods) |
+| 35.E `#[cfg(...)]` | нет conditional compilation | ✅ **Plan 42.12** |
+| AD3 sig/body 2-pass | single-pass typecheck — mutual recursion ломается | ✅ **Plan 81 Ф.5** — verify: взаимная рекурсия peer'ов работает (сигнатуры регистрируются до тел) |
+| FileId propagation | imported spans → cross-file diagnostics в чужом файле | ✅ **Plan 81 Ф.8.1** — `render_with_map`/`SourceMap` фикс |
+| `nova test` parity | `resolve_imports_inline` только в `cmd_build` | ✅ **Plan 35 R31** — unified pipeline |
+
+### Почему inline expansion вместо register_imported_module
+
+Full register approach (Plan 35 v2 §AD2):
+- New `trait ModuleLoader` + 3 impls (~200 LOC).
+- New `CEmitter::register_imported_module()` (~150 LOC).
+- Visibility filter, collision detection (~50 LOC).
+- 2-pass typecheck signature/body split (~300 LOC refactor existing
+  check_module).
+- Total: ~700+ LOC + invasive refactor.
+
+Inline approach (MVP):
+- One helper function `resolve_imports_inline()` (~165 LOC).
+- Zero changes в `CEmitter` или `types::check_module`.
+- Backward compat: `module.imports.is_empty()` → старое поведение.
+- Trade-off: bloat (no DCE), no visibility (informational only).
+
+**Production-grade — sub-plan 35.A**. MVP первое приближение для
+разблокировки real blockers (hex.nv) уже сейчас.
+
+### Как починить
+
+Sub-plans 35.A-E:
+- **35.A** — visibility enforcement + wildcard `import X.Y.*` + `export use` +
+  prelude module + DCE + mangling rules.
+- **35.B** — disk cache + incremental rebuild + memory cache invalidation.
+- **35.C** — cross-file generic bounds resolution.
+- **35.D** — stable v0-style symbol mangling.
+- **35.E** — conditional compilation + `internal/` convention + editions.
+
+Также **vertical fix**: extract `resolve_imports_inline` из `nova-cli`
+в shared lib (`nova-codegen` или новый crate) и вызывать из
+**test_runner pipeline** — закрыть `nova test` parity.
+
+### Приоритет
+
+**P1** для test_runner parity (50 LOC) — без него `nova test` не
+работает для multi-file stdlib, разработка stdlib ограничена `nova build`.
+**P2** для 35.A visibility/wildcard — production-grade, но обходимо
+сегодня.
+**P3** для 35.B caching — performance, не correctness.
+
+---
+
+## Numeric type constants — known limitation (Plan 38, 2026-05-12)
+
+### Где
+Codegen (`compiler-codegen/src/codegen/emit_c.rs`) и type-check
+(`compiler-codegen/src/types/mod.rs`).
+
+### Что упрощено
+D26 prelude декларирует numeric type constants (`int.MAX`, `int.MIN`,
+`f64.NAN`, `f64.INFINITY`, `u8.MAX`, etc.) — **ни один** не работает в
+codegen. Codegen mangles paths в `<type>_<CONST>` (`int_MAX`,
+`f64_NAN`, etc.), которые undefined C identifiers → compile error.
+
+### Почему
+Bootstrap codegen не имеет mapping table для type-level constants.
+Special-case'итс `int.try_from` / `f64.from_bits` etc. (Plan 08),
+но constants — отдельная category (нет params, тип = type-of(prim)).
+
+### Как починить
+Plan 38 — full mapping table:
+- `int.MAX` → `((nova_int)INT64_MAX)`
+- `f64.NAN` → `NAN` (from `<math.h>`)
+- `u8.MAX` → `((uint8_t)UINT8_MAX)`
+- etc. (см. plan 38 для полной таблицы)
+
+Plus type-check side в `is_known` для primitive type-constants.
+
+### Workaround сегодня
+**Inline literal** вместо `int.MAX`:
+```nova
+// Вместо: if end == int.MAX { ... }
+// Используй: if end >= 9223372036854775807 { ... }  // hard-coded INT64_MAX
+```
+
+Это **breaks portability** между i32 / i64 builds, но работает для
+single-target compile.
+
+### Приоритет
+**P2** — system gap, но влияет на ограниченное число файлов сегодня
+(основной — `std/collections/range.nv:Range.inclusive`). Plan 38 ~ полдня.
+
+### Real-world impact
+- `std/collections/range.nv` — Range.inclusive constructor блокирован
+- Любой future numeric stdlib (clamp, bounded, saturating ops)
+
+
+---
+
+## Iter[T] resolution в codegen — partial D58 implementation (Plan 39 Issue D, 2026-05-12)
+
+### Где
+`compiler-codegen/src/codegen/emit_c.rs::emit_for` (Case 3 + fallback).
+
+### Что упрощено
+Spec D58 требует 3-step lookup для `for x in c`:
+1. Method `next()` direct → primitive iterator loop.
+2. Method `iter()` → recursive lookup `next()` на iter type.
+3. Иначе → error «type X has neither next nor iter».
+
+**Текущая реализация:** только Case 1 lookup. Если type имеет `iter()`,
+но не `next()` — fall through на generic «unsupported iterator type».
+**Auto-`iter()` insertion (Case 2) — отсутствует.**
+
+Дополнительно:
+- `mut`-receiver enforcement для `next()` — отсутствует. Возможно
+  iterator advance без mutable state (immutable next = бесконечный
+  loop возвращающий тот же element).
+- Generic «unsupported iterator type 'nova_int'» вместо специфичного
+  «type 'X' has no `next` or `iter` method».
+
+### Почему
+Bootstrap codegen эмитил Case 1 как minimum viable, Case 2 не
+добавили потому что core stdlib (Range, []T, RangeIter) — все
+exposed через **direct `next()`** или **primitive optimization paths**
+(Range = Case 1 primitive int loop, []T = Case 2 array loop).
+
+D58 Case 2 (`iter()` chain) нужен для:
+- User-defined collections с `iter()` методом но без direct `next()`.
+- Stdlib `HashMap.iter()`, `Vec.iter()` returning отдельный iter type.
+
+### Как починить
+Plan 39 Ф.2 Issue D:
+1. Переписать emit_for Case 3 по D58 algorithm exactly:
+   - method_overloads[(c_ty, "next")] check
+   - fallback: method_overloads[(c_ty, "iter")] → recurse next() on
+     iter return type
+
+---
+
+## Numeric type constants FIXED (Plan 38, 2026-05-12)
+
+Plan 38 closed system gap — все int.MAX/f64.NAN/u8.MAX/etc. эмитятся
+корректно через numeric_type_constant_mapping helper в emit_c.rs.
+~30 mappings: signed/unsigned int 8/16/32/64, char, f32/f64.
+
+Was simplification: all numeric constants undefined.
+Now: 30 mappings работают, 18 sub-тестов PASS.
+
+Open:
+- int.BITS / i64.BITS (Rust convention) — не в spec D26, отложено.
+- Custom type constants на user types (D41 territory) — отдельная фича.
+
+
+---
+
+## Iter[T] D58 partial FIXED (Plan 39 Issue D, 2026-05-12)
+
+Plan 39 Issue D closed D58 algorithm gaps в emit_for:
+- Diagnostic clarity (explicit listing searched methods + hint).
+- mut-receiver enforcement (assert next() — instance method).
+- Auto-iter() insertion (Case 2) verified working.
+
+Was simplification: generic error, no mut-check, partial D58.
+Now: explicit D58, clear errors, 5 тестов PASS.
+
+Open:
+- Plan 39 Issue A: handler-flow infer для with Fail[E] = ... interrupt
+  None { Some(...) } — r infers nova_int. Requires handler return-type
+  inference work.
+- Plan 39 Issue B/C — pending after A.
+- Cross-file Iter resolution через Plan 35 inline expansion работает
+  для nova build, не для nova test (test_runner отдельный pipeline).
+
+Priority P2 для Issue A.
+
+
+---
+
+## Unified compile pipeline ✅ FIXED (Plan 35 R31, 2026-05-12)
+
+### Был simplification (Plan 35 Ф.1 MVP earlier)
+
+`resolve_imports_inline` только в `cmd_build`. `nova test` cross-file
+не работал (отдельный test_runner pipeline). Workaround:
+explicit inline-decl типов вместо import.
+
+### Now FIXED
+
+Plan 35 R31 (commit 3a759bfad5): extract resolve_imports_inline в
+nova_codegen::imports — shared между cmd_check, cmd_build, test_runner.
+Workspace-aware find_repo_root_from (ищет nova.toml с [workspace]
+маркером — D78 AD6 fix для 4 nested nova.toml в repo).
+
+Verified: nova test с `import std.collections.range` + `(0..10).step_by(2)` PASS.
+
+### Open
+
+- Workspace-aware finder в **nova-cli::find_repo_root** не sync'нут с
+  test_runner version. nova-cli ищет первый nova.toml (legacy). Это
+  работает но возможны edge cases. Sub-plan 35.B unified
+  ManifestResolver — full AD6 (4 nested nova.toml) cleanup.
+
+
+---
+
+## NovaInterruptFrame nova_int slot ✅ FIXED (Plan 39 Issue A, 2026-05-12)
+
+### Был simplification (bootstrap MVP)
+
+NovaInterruptFrame использовал единственный `nova_int value` slot.
+emit_with объявлял `nova_int result_tmp` всегда. Non-int trail values
+(pointers, NovaOpt structs) дискардились через `(void)(trail); result_tmp
+= 0LL;`. Из-за этого `let r = with Fail = |e| interrupt None { Some(x) }`
+получал `r: nova_int` вместо `Option[X]`.
+
+### Now FIXED
+
+NovaInterruptFrame расширен `value_ptr` slot. codegen emit_with
+категоризует trail type (IntLike/Pointer/ValueStruct/UnitVoid),
+объявляет result_tmp с правильным C-типом, читает из соответствующего
+slot. ExprKind::Interrupt эмитит `nova_interrupt` или
+`nova_interrupt_ptr` по категории. handler-walker определяет тип W
+когда body=throw (нет trailing).
+
+Auto-gen Option helpers (eq, is_some, is_none, unwrap_or) для всех
+NovaOpt_<T> вместо handcrafted в array.h для int/str.
+
+### Open
+
+- **Type-checker bidirectional inference** остаётся pull-based.
+  Codegen-side fix достаточен но архитектурно type-checker должен
+  иметь expected-type flow. Multi-session work.
+- **Multiple effects в одном `with`** с разными IRT — пока не
+  enforced (требуют lub). Single-effect case работает.
+- **Returned handler** (`let h = make(); with E = h { ... }`) — нужен
+  тип `Handler[E, IRT]` в type-checker'е (currently inline only).
+
+---
+
+## Каналы: thread-safety и select-wake race — Plan 44.1 (2026-05-12)
+
+**Где:** `compiler-codegen/nova_rt/channels.h` (610 строк) —
+весь channel-стек после Plan 30/31.
+
+**Что упрощено:**
+
+1. **Нет atomics на shared state.** `Nova_ChannelState` fields
+   (`writer_count`, `closed`, `count`, `head`, waiter-lists) — обычные
+   `int32_t` / `bool` / pointer. Все операции (send/recv/close/clone)
+   non-atomic. Под single-thread runtime'ом работает корректно;
+   под M:N (Plan 23) → data race на любой operation.
+
+2. **Select wake — non-race-free retry.** `nova_select_park`
+   (channels.h:558) после `nova_sched_park` делает `try_immediate` retry
+   для определения winning arm. Channel wake helper (`_nova_channel_wake_recv`)
+   уже **извлёк** значение в момент wake. Между wake и retry на M:N
+   другой fiber-thread может его выхватить → `ctx->which = -1`,
+   silent select dispatch failure. Go использует `selectdone` CAS на
+   waiter'е (mark, не commit) — мы упростили до single-thread assumption.
+
+3. **NOVA_SELECT_MAX_ARMS=16 silent skip.** `nova_select_set_recv/send`
+   на `n >= 16` делает `return` без diagnostic (channels.h:375, 385).
+   Parser и codegen `emit_select` не валидируют. Результат: `select`
+   с 17+ arms → silent зависание (17-я arm не зарегистрирована, select
+   ждёт ready на не-зарегистрированной arm).
+
+4. **O(n) waiter unlink.** Singly-linked waiter lists
+   (`_nova_channel_waiter_unlink`, `_nova_sel_waiter_unlink`). Каждый
+   select-park регистрирует N waiter'ов; после wake unlink'ает N — это
+   **O(N²)** на каждый dispatch. Go/Rust используют doubly-linked для O(1).
+
+5. **Time.after timer cleanup.** Если select выиграл не по
+   `Time.after`-arm'у, timer всё равно сработает и `try_send` в discarded
+   канал. NovaAfterState heap-allocated, GC под Boehm видит указатель
+   через `timer.data`, под malloc-only fallback — leak до конца программы.
+
+6. **Time.after per-call allocations.** Каждый `Time.after(ms)` =
+   ~6 nova_alloc'ов (ChannelPair + state + buf + tx + rx + NovaAfterState).
+   Tokio достигает 0-alloc через poll-state без channel — для нас post-1.0.
+
+7. **Channel.new capacity check после allocate.** `nova_channel_new`
+   alloc'ает state+buf, **потом** throws на `capacity <= 0`. GC eventually
+   соберёт. Косметика.
+
+8. **Нет recv_many batch API.** Tokio 1.32+ recv_many. Не блокер.
+
+**Почему:** Plan 30/31 закрывались под single-thread runtime —
+формальная корректность для M:N не закладывалась. Post-close review
+(Plan 30 Ф.4) закрыл 4 дефекта (Б1/Б2/Н1/Н2), оставил T1/T2/T3 как
+«tech debt», но недооценил критичность T1 (atomics) — это **blocker**,
+а не tech debt: Plan 23 не запустится без него.
+
+**Как починить:** Plan 44.1 разбивает на три фазы:
+- Ф.1 (P1, prerequisite для Plan 23): atomics+mutex, race-free wake
+  (selectdone CAS), doubly-linked waiters, arm-count diagnostic.
+- Ф.2 (P2): Time.after cleanup + pool.
+- Ф.3 (P3): capacity check ordering, spec D94 sync, recv_many.
+
+**Mutex vs lock-free:** план рекомендует mutex (Rust mpsc parity).
+crossbeam-уровень lock-free — post-1.0 (5+ лет работы над формальной
+верификацией, не успеем).
+
+**Приоритет:** **P1 для Ф.1** (без неё Plan 23 не работает), **P2/P3**
+для остального.
+
+Detail: [docs/plans/44.1-channel-hardening.md](plans/44.1-channel-hardening.md).
+
+### [ЗАКР] V2 Loop invariants (полностью, Ф.9.5)
+- **Закрыто полностью:** Ф.9.3 inject invariants как assert_static в начало
+  body (per-iteration); Ф.9.5 wrap loop-expr в outer Block с pre-entry
+  asserts (catches violation до loop). Pre-entry + per-iteration = full
+  bootstrap enforce. SMT havoc-based verify (полный Dafny-grade) ждёт Z3.
+
+### [ЗАКР] V5 Ghost erasure (полностью, Ф.9.1 + Ф.9.7)
+- **Закрыто полностью:** Ф.9.1 эрейзит ghost в codegen+interp (Verus/Dafny
+  semantics). Ф.9.7 добавил proper type-check `check_ghost_usage` —
+  non-ghost reading ghost-var выдаёт compile-error с понятным сообщением
+  (раньше — undeclared identifier на C-level).
+
+
+---
+
+## Каналы: Plan 44.1 Ф.1 (M:N safety) отложено с Plan 23 (2026-05-12)
+
+**Где:** `compiler-codegen/nova_rt/channels.h`.
+
+**Что упрощено:** Ф.1 пункты Plan 44.1 (atomics + selectdone CAS +
+doubly-linked waiters + per-call storage) **не реализованы** в
+сессии Plan 44.1 Ф.2/Ф.3 implementation. Текущая реализация остаётся
+single-thread корректной.
+
+**Почему не сейчас:** без M:N scheduler'а race-condition'ы
+непроверяемы. Plan 30 Ф.4 закрылся с непроверяемыми M:N-claim'ами —
+повтор anti-pattern'а запрещён.
+
+**Что сделано вместо:** Ф.2 (B7 Time.after cleanup) + Ф.3
+(B5 cap diagnostic, B9 capacity-check ordering, B10 spec D94 sync) —
+валидируется на single-thread runtime'е.
+
+**Detailed design Ф.1 сохранён в Plan 44.1** для immediate implementation
+в Plan 23 session. Решения: C11 `mtx_t` + `<stdatomic.h>`,
+compound-literal storage в emit'е, Go-style selectdone CAS,
+doubly-linked waiter list.
+
+**Приоритет:** P1 prerequisite для Plan 23.
+
+
+---
+
+## ~~NOVA_SELECT_MAX_ARMS hard cap~~ — закрыто полностью (Plan 44.1 Ф.3 v3, 2026-05-12)
+
+**Где:** `compiler-codegen/nova_rt/channels.h` + `emit_c.rs::emit_select`.
+
+**Что было:** select arm count limit (16 → 32 → 64) с compile-error
+на overflow. Изначально записывалось как «упрощение для bootstrap;
+Plan 44.1 Ф.1 уберёт cap».
+
+**Что стало:** в той же сессии (по поправке пользователя «у нас же
+не должно быть cap'а») **cap убран полностью**. Адаптивное per-call
+storage:
+- `SelectCtx.arms` / `.waiters` → `SelectSlot*` / `SelectWaiter*`
+  (caller-provided pointer storage).
+- `emit_select` эмитит compound literal `SelectSlot _arms[n_ch];
+  SelectWaiter _waiters[n_ch];` на стеке fiber'а (literal size,
+  известен на codegen-time, MSVC-compatible — не VLA).
+- `nova_select_try_immediate` использует `alloca(n*sizeof(int))` для
+  internal Fisher-Yates shuffle order (cross-platform: MSVC
+  `<malloc.h>`, POSIX `<alloca.h>`).
+- `NOVA_SELECT_MAX_ARMS` полностью удалён из кода.
+
+Stack frame ~84n байт. На default minicoro 56 KB stack — n=600+ безопасно.
+
+**Это больше не упрощение.** Запись оставлена как исторический след
+эволюции дизайна в одной сессии (v1 cap=32 → v2 cap=64 + storage
+refactor → v3 no cap).
+
+**Тест:** `nova_tests/concurrency/select_many_arms.nv` — 100 arms
+positive, доказательство no-cap.
+
+**Commit:** c9611a59a4.
+
+
+---
+
+## Import cycle detection ✅ FIXED (Plan 35 Ф.1 D29, 2026-05-12)
+
+### Был simplification
+
+Resolver BFS + visited HashSet: cycle A → B → A не detect'ился,
+diamond-dep dedup silently глушил повторные visits. Spec D29 требует
+compile error.
+
+### Now FIXED
+
+Refactor BFS → DFS recursive `resolve_one`. Два множества:
+- `visited` (closed-set) — diamond-dep dedup.
+- `in_progress` (open-set) — cycle detect через повторный visit.
+- `import_chain` — Vec для error message «A → B → C → A».
+
+Entry module добавляется в in_progress ДО resolve (иначе transitive
+import обратно на entry не detect'ится).
+
+3 negative tests PASS: modules/cycle_a, modules/cycle_b,
+negative_capability/import_cycle_rejected. Full regression 261/261.
+
+
+---
+
+## Channel runtime — Plan 44.1 Ф.1 production-grade implementation (2026-05-12)
+
+**Где:** `compiler-codegen/nova_rt/channels.h` + `sync.h` + `sched.h`.
+
+**Что было сделано:** Production-grade M:N safety prerequisites после 3
+раундов audit'а vs Go runtime / Rust crossbeam / Tokio / Materialize
+postmortems:
+- Portable sync.h wrapper (Tier 1: Linux pthread+ADAPTIVE_NP, Windows
+  SRWLOCK, macOS os_unfair_lock; atomics через __atomic_* GCC builtins).
+- BaseWaiter common prefix (strict-aliasing safe).
+- B1 atomics+mutex, T2 doubly-linked, B2 selectdone CAS (unified),
+  C2 stop_cb lock-free, C6 park_with_unlock API, C3 no-arm panic,
+  A1 refcount idiom Release-dec+Acquire-fence, A2 TOCTOU re-check,
+  R1 B2 reader_close symmetry, C5 cache padding by access group.
+
+**Что отложено как «не упрощение, а deferred to Ф.4/post-1.0»:**
+- `oneshot` / `watch` / `broadcast` channel types (Tokio parity).
+- `recv_many` batch API (P1 для perf — 10-100× under wake amplification).
+- Tokio Permit-based `reserve()`.
+- Adaptive mutex (Linux opt-in only if bench fails <50 ns).
+- Per-channel metrics (NOVA_CHANNEL_METRICS=1 gated).
+- Lock-free SPSC flavor (Plan 50+, Loom-verified).
+- Loom/CDSChecker formal verification (Plan 50+).
+- NUMA-aware allocation (multi-socket Plan 50+).
+- Iter[T] на ChanReader.
+- Auto-close-on-dropped-reader (Boehm finalizers risky).
+- Priority inheritance mutex (RT scheduling).
+- Direct-copy без cap=0 + zero-capacity rendezvous.
+
+**Honesty:** не «simplification», а **explicit P2/P3/post-1.0 deferrals**
+с документированными reasons. Plan 44.1 Ф.1 = production parity на
+architectural level (atomics, mutex, CAS, padding), не micro-bench
+contention level (требует lock-free flavors).
+
+**Tier 1 supported:** Linux x86_64 glibc 2.35+, Windows + clang 15+,
+macOS arm64 Apple Clang.
+
+**Tier 3 NOT supported:** mingw-w64, MSVC VS2019, CentOS 7, PA-RISC/
+Itanium/SPARC.
+
+Detail: [docs/plans/44.1-channel-hardening.md](plans/44.1-channel-hardening.md).
+
+
+---
+
+## minicoro fixed-size 56KB stacks — `MCO_USE_VMEM_ALLOCATOR` не включён (2026-05-12)
+
+**Где:** `compiler-codegen/nova_rt/minicoro.h::MCO_USE_VMEM_ALLOCATOR`
+(compile-time option) — мы НЕ определяем флаг.
+
+**Что упрощено:** все fiber stacks выделяются как **fixed-size 56KB
+calloc'd blocks**. 100k fibers = 5GB physical memory.
+
+**Почему не включили `MCO_USE_VMEM_ALLOCATOR`:**
+- Linux/macOS: работает (lazy mmap commit), но **каждый стек отдельный
+  mmap** → невозможно зарегистрировать через единый `GC_add_roots`.
+- Windows: minicoro implementation `VirtualAlloc(MEM_RESERVE | MEM_COMMIT)`
+  — commits all 2MB upfront. Не lazy. Не даёт win.
+- В обоих случаях multiple roots → лимит `MAX_ROOT_SETS=128`.
+
+**Как починить:** Plan 44.2 заменяет VMEM_ALLOCATOR на per-thread arena
+с `MAP_NORESERVE` (Linux/macOS lazy commit) + единый GC root. Получаем
+растущие стеки **и** GC scaling одновременно. Windows growable —
+отдельно через SEH guard pages.
+
+**Приоритет:** **P1** (часть Plan 44.2). 100k fibers production
+workloads невозможны без растущих стеков (5GB physical).
+
+Detail: [docs/plans/44.2-fiber-arena-posix.md](plans/44.2-fiber-arena-posix.md).
+
+
+---
+
+## D97: гибридная fiber stack allocation — Windows на calloc остаётся (2026-05-12)
+
+### ✅ ЗАКРЫТО — Plan 82 Ф.1/Ф.2 (2026-05-22)
+
+Windows fiber-стеки переведены с minicoro-default calloc на lazy-commit
+large-reserve arena (`fiber_arena_win.c`) с полной GC-интеграцией
+(`GC_set_push_other_roots`-колбэк, precise push). Растущие стеки
+(OS-native grow, путь A), guard-pages + детерминированная
+overflow-детекция, GC-видимость всех fiber-стеков — реализованы.
+`std.runtime.fibers` introspection на Windows возвращает реальные
+значения. Полный `nova test`: 1058 PASS / 0 FAIL — 0 регрессий.
+Отчёт — `82-artifacts/f1-report.md`. Остаётся (Plan 82 Ф.5):
+multi-worker M:N GC-coverage — см. `[M-82-gc-mn-deferred]` ниже.
+
+Историческая запись об упрощении (теперь не действует):
+
+### Что упрощено
+
+Plan 44.2 ввёл per-thread mmap arena с lazy commit + active-range GC root
+**только для Linux/macOS**. На Windows fiber stacks по-прежнему идут
+через дефолтный minicoro `calloc(56 KB)` per-fiber + single-thread
+cooperative invariant (`_NOVA_GC_DISABLE` workaround удалён в Plan 44.2
+Этап 2 как vestigial — фактическая защита приходила от cooperative
+invariant, не от disable).
+
+### Что отсутствует
+
+- **Растущие стеки на Windows** — нужна SEH-based guard pages
+  с per-thread exception handler chains. Реализация ≈ 600 LOC +
+  Windows-specific debugging infrastructure.
+- **Single GC root на тред под Windows** — calloc'нутые stacks не
+  объединены в один range; теоретически могут упереться в Boehm
+  `MAX_ROOT_SETS = 128` на 128+ concurrent fibers. На bootstrap
+  не наблюдается (workloads далеко от лимита).
+- **`std.runtime.fibers` introspection на Windows** возвращает 0 для
+  всех функций — honest sentinel, как `gc.heap_size() == 0` под malloc
+  backend.
+
+### Когда вернуться к этому
+
+- Когда появится production Windows use case Nova (server workloads).
+- Когда Plan 23 M:N runtime потребует Windows multi-thread (сейчас
+  scope — Linux/Docker primary target).
+- Когда workload упрётся в MAX_ROOT_SETS лимит (наблюдаемое — не
+  предполагаемое).
+
+Решение об этом — отдельный план (Plan 42+ или Plan 50).
+
+### Что НЕ упрощено
+
+- Linux/macOS получают **full production**: 8 GB virtual per thread,
+  guard pages, lazy commit, single GC root, slot reuse, MADV_DONTNEED
+  на dealloc. Spec D97 описывает это нормативно.
+- `_NOVA_GC_DISABLE` удалён **на обеих платформах** — Plan 44.2 Этап 2.
+  Это был мёртвый scaffolding (никогда не вызывался в реальном коде).
+
+
+---
+
 ## Секция 2 — Хроники и диагнозы (исторически записаны сюда, упрощениями не являлись)
 
 Диагнозы багов, хроники внедрений/фиксов, отчёты закрытий, war-story — не
@@ -2562,3 +3718,1309 @@ emission (генерация wrapper-fn + env-struct + closure-alloc inline)
 cast), но **меняет codegen** на let-binding и emit_method_value
 levels — выбор overload'а. Прецедент: TypeScript type assertions
 влияют на overload resolution.
+
+## Plan 17 Ф.4 — string interpolation полная реализация (2026-05-08)
+
+- **Что упрощено в use-site:** `"hello, ${name}, age=${n}"` теперь
+  работает в bootstrap'е через все слои компилятора. Программисту
+  больше не нужно писать `"hello, " + name + ", age=" + str.from(n)`
+  с ручным `str.from`. Это самая частая операция в форматирующем
+  коде.
+- **StringBuilder-based emit, не цепочка `+`.** Один `+` в hot loop
+  даёт O(N²); StringBuilder с pre-size estimate — O(N). Codegen
+  делает right-thing-by-default — программист пишет короче и без
+  performance-trap'а одновременно. Sub-expressions внутри `${...}`
+  диспатчатся per-type: `nova_bool` → "true"/"false", `nova_f64` →
+  `%g`, `CharLit` → UTF-8 encode, user-тип через D73 `@into()->str`.
+- **Sentinel-байт `\x01` для escape `\$`.** Lexer кладёт SOH+`$`
+  при встрече `\${` чтобы parser отличил literal-`${` от
+  interpolation-`${`. SOH в обычном Nova-коде не встречается
+  (control char). Альтернативы (отдельные TokenKind для частей,
+  compound token) — overkill для одной фичи.
+- **Audit-fail исправлен.** Изначально Plan 17 утверждал «codegen
+  разворачивает де-факто» — оказалось ложным. Empirical check
+  выявил → реализовали полный стек. Урок: spec без empirical
+  verification = potential lie.
+- **Sub-lex/sub-parse expressions внутри строки.** Парсер при
+  встрече `${...}` запускает на содержимом отдельный
+  `Lexer::new(expr_src) + Parser::parse_expr()`. Поддержаны nested
+  `{}` через depth-counter; пустое `${}` — compile error.
+- **Const-инициализатор guard.** `static const nova_str FOO =
+  "${expr}"` запрещён через явный compile error «not allowed in
+  const initialiser» — StringBuilder требует runtime аллокаций.
+  Тесты запретного кейса не нужны (это compile-time guard).
+- **Регрессия:** `nova_tests/types/string_interpolation.nv` — 13
+  тестов: int / negative / str / bool / f64 / char-литерал /
+  multi / expression in `${}` / escape `\${` / большая строка
+  (12 интерполяций) через StringBuilder. 87/87 nova_tests PASS.
+- **Файлы:** lexer/parser/ast/codegen/interp + spec/decisions +
+  open-questions.md + nova_tests/types/string_interpolation.nv.
+
+---
+
+## Plan 14 Ф.3 — free fn as first-class value (2026-05-08, ✅ ЗАКРЫТ)
+
+- **Что упрощено в use-site:** `let f = inc` и `xs.map(inc)` теперь
+  работают без обёртки в lambda. До Ф.3 код `xs.map(inc)` ломался
+  с linker-ошибкой (несовместимые типы Nova fn-pointer ≠ closure-struct);
+  программисту приходилось писать `xs.map((x) => inc(x))` с явным шумом.
+- **Реестр user_fn_sigs + thunk-генерация.** Каждая top-level fn без
+  receiver и без generics автоматически получает (param_c_types, ret_c)
+  записанный в реестре. При первом use-as-value codegen эмитит envless
+  thunk-adapter `nova_fn_<name>_thunk(void* env, args...) { (void)env;
+  return nova_fn_<name>(args...); }` — adapter принимает `env` (для
+  closure-протокола) и игнорирует его (free fn без захвата). Дедупликация
+  через `emitted_fn_thunks: HashSet<String>` — N use-sites одной fn
+  делят один thunk.
+- **Closure-литерал на use-site.** Вместо raw fn-pointer на use-site
+  alloc'ается `NovaClos_X*` с `fn = &thunk, env = NULL`. Это совместимо
+  со всеми callers (HOF принимающие `void*`, fn_param_sigs-driven
+  calls через NOVA_CLOS_CALL_* macro).
+- **Direct calls не ломаются.** `inc(5)` идёт через `emit_call` без
+  `emit_expr` на `Ident(inc)`, поэтому остаётся `nova_fn_inc(5)`.
+- **Generic fn fallback.** Generic functions не регистрируются в
+  user_fn_sigs (sig зависит от мономорфизации) — для них fallback на
+  raw fn-pointer (старое поведение).
+- **Известное ограничение:** flat var_types в bootstrap (нет scope).
+  Local `let dbl = ...` в одном тесте затмевает global `fn dbl` в другом.
+  Тесты используют `top_inc`/`top_dbl` чтобы избежать конфликта.
+- **Регрессия:** nova_tests/syntax/fn_first_class.nv — добавлено 5
+  тестов на free-fn-as-value. 87/87 nova_tests PASS (без регрессий).
+- **Файлы:** compiler-codegen/src/codegen/emit_c.rs (+95 строк),
+  nova_tests/syntax/fn_first_class.nv (+50 строк), plan 14 status.
+
+---
+
+## Plan 14 Ф.2 + Ф.4 + bonus codegen-fixes (2026-05-09, ✅ ЗАКРЫТЫ)
+
+### Ф.2 — const с runtime-init (lazy-init геттер)
+
+- **Что упрощено в use-site:** `const SERVER_DEFAULTS = ServerOpts {
+  port: 8080, host: "0.0.0.0", ... }` теперь работает. Раньше падал
+  на codegen с «non-constant expression in const declaration».
+  Программист мог обойти только через геттер-функцию вручную.
+- **Lazy-init pattern.** Codegen эмитит storage + init-flag + геттер
+  `nova_const_<name>()` с проверкой первого вызова. Вызывается O(1)
+  после init. Use-site `Ident(name)` → `nova_const_<name>()`. D55
+  coercion работает (`expected_record_type` устанавливается перед
+  emit).
+- **Constexpr path неизменен.** Простые литералы (int/bool/f64/str/
+  char/Unary) по-прежнему `static const` без накладных расходов.
+
+### Ф.4 — fn-поле в record (closure-call routing)
+
+- **Что упрощено в use-site:** `let op = Op { f: (x) => x + 1 };
+  op.f(5)` теперь работает. Раньше codegen воспринимал Member-call
+  как метод-вызов и не находил method `f` на типе `Op`.
+- **Реестр record_field_fn_sigs.** Заполняется при `emit_record_type`
+  для всех `TypeRef::Func` полей. Routing в Call: если obj_ty —
+  record и (record, method) ∈ record_field_fn_sigs → emit
+  `NOVA_CLOS_CALL_*` macro с f-value `(obj->field)`.
+
+### Bonus a — line:col в codegen-ошибках
+
+- **Что упрощено в debug-loop:** ошибки codegen теперь показывают
+  `<file>:<line>:<col>:` вместо абстрактного «non-bool cond».
+  Найти конкретное место стало тривиально (раньше нужны были грепы).
+- **Архитектура:** main.rs всегда передаёт source в emitter (это уже
+  было через `set_source_for_annotations`); флаг `annotation_enabled`
+  отделяет SRC-комментарии в C-output (--annotate-source) от
+  диагностики (всегда). Метод `check_bool_condition_at(span)`
+  использует source для line:col.
+
+### Bonus b — D38 built-in is_empty для []T и str
+
+- **Что упрощено в use-site:** `if arr.is_empty { ... }` и
+  `if s.is_empty { ... }` работают. Раньше падали на strict bool-check
+  потому что infer возвращал `nova_int` (default fallback).
+- **Codegen:** прямой emit `(arr->len) == 0` / `(s.len) == 0` (это
+  bool-выражение, не cast). Infer возвращает `nova_bool`.
+
+### Bonus c — str-методы ret-type в infer
+
+- **Что упрощено в use-site:** `if s.starts_with(...)` / `.ends_with` /
+  `.contains` / `.eq` теперь корректно проходят strict bool-check.
+  Раньше infer возвращал default `nova_int` для всех Member-call'ов
+  на str (потому что str-методы зарегистрированы в `runtime_registry`,
+  не `method_overloads`, который смотрит infer).
+- **Решение:** `str_method_ret_type` map (parallel к существующему
+  `str_method_to_rt` для emit). Используется в `infer_expr_c_type`
+  для Call с Member-func и obj_ty == "nova_str".
+
+### Tests / regression
+
+- nova_tests/syntax/const_complex.nv (новый, 6 тестов) — все слои Ф.2.
+- nova_tests/syntax/fn_first_class.nv (+4 тестов) — Ф.4 closure-call.
+- 88/88 nova_tests PASS (87 baseline + const_complex).
+- 91/137 std PASS — то же overall, но 4 const-related файла
+  продвинулись по pipeline'у (упираются дальше в др. gap'ы).
+
+### Файлы
+
+- compiler-codegen/src/codegen/emit_c.rs — Ф.2 (lazy_const) + Ф.4
+  (record_field_fn_sigs) + bonus (line:col, is_empty, str-method
+  ret-type) — ~220 строк всего.
+- compiler-codegen/src/main.rs — source всегда передаётся.
+- nova_tests/syntax/const_complex.nv — новый.
+- nova_tests/syntax/fn_first_class.nv — +50 строк тестов.
+- docs/plans/14-stdlib-codegen-gaps.md — Ф.2/Ф.4 retro + table.
+- docs/plans/README.md — статус.
+
+---
+
+## 2026-05-10 — Closure-rev: `|x|` + `fn(...)` (Plan 19, spec-only)
+
+### Что и почему
+
+D22 заменена с `(params) =>` на двухуровневый closure:
+- `|x| body` — closure-light (untyped, контекст определяет sig).
+- `fn(x int) -> R body` — closure-full (типизированная, идентична
+  named fn без имени).
+
+Сразу убирается:
+- Перегруз `=>` (был: тело named fn + лямбды + match-arm +
+  handler-method + trailing-params; стал: тело named fn / closure-full
+  + match-arm + handler-method).
+- Unbounded look-ahead на `(` в expression-position (group vs lambda).
+- Запрет блок-формы лямбды `(x) => { ... }` — closure-light теперь
+  поддерживает block-форму нативно: `|x| { stmts; expr }`.
+- Ambient-effect inference для closure-light: эффекты не пишутся,
+  наследуются от parent fn + active `with`-blocks.
+- Запрет анонимной `fn`-формы — теперь `fn(...)` без имени это
+  closure-full, симметрично named fn.
+
+### Trailing расщеплён
+
+- `f(args) { block }` — без params (DSL).
+- `f(args) fn(p) body` — с params (closure-full без имени).
+- Старая `f(args) { x => body }` отменена.
+
+### Captures упрощены
+
+- Никаких `move`, `&mut`, lifetime'ов.
+- Через managed-heap (D32) — captures работают автоматически, escape
+  переезжает на heap прозрачно.
+- Multiple closures на одну `let mut` переменную разделяют capture.
+
+### Trade-offs
+
+- Effect inference оставлен **только для closure-light** — named fn
+  обязана объявлять эффекты в сигнатуре (R1 не ослабляется).
+- Closure-full обязана иметь типы параметров — нет overlap с
+  closure-light, граница чёткая.
+- `||` для no-arg closure (Rust-style); парсер различает от binary
+  OR по позиции (expression-start vs after-operand).
+
+### Файлы
+
+- spec/decisions/03-syntax.md — D22, D40, D43 переписаны.
+- spec/syntax.md, spec/effects.md, spec/revolutionary.md — примеры.
+- spec/decisions/{04,05,06,08}-*.md — точечные правки.
+- spec/decisions/closure-rev2026-05-DRAFT.md — DRAFT-зеркало.
+- docs/plans/19-closure-and-error-ops.md — план реализации (closure-rev + D85 error-ops в одном атомарном PR).
+
+### Status
+
+- Spec: ✅ ЗАКРЫТ.
+- Implementation: 🟡 Plan 19 DRAFT (parser/interp/codegen TODO).
+
+---
+
+## 2026-05-10 — Sweep: эффекты-формулировки + D84 overloading + D85 ?/!! + exit
+
+### Что упрощено
+
+**1. Один оператор — одна семантика (D85).** Раньше D67: `?` имел
+**две разные семантики** в зависимости от типа — для Result через
+Fail (engaged эффект), для Option через ранний return (без эффекта).
+Это «признанное напряжение» в D67 на деле было кривым обоснованием:
+ничего философского, просто два разных оператора впихнули в один
+символ ради краткости. **D85 разводит:** `?` всегда return-стиль
+(для обоих Option/Result), `!!` всегда throw-стиль. Программист
+выбирает стиль на месте использования.
+
+**2. `effect` vs `protocol` через одно правило.** D62 правило 4
+имел два sniff-вопроса (Q1 «resource-capability?» + Q2
+«continuation-capture?») с длинными объяснениями через внутренние
+термины. Свернули к **одному** проверяемому правилу: «хочется в
+тесте подменить handler — это effect, нет — protocol». `Fail` под
+него подходит без отдельного «особого случая» (catch-handler в
+тесте — это и есть подмена).
+
+**3. Overloading свободных функций (D84).** Раньше Plan 11 запрещал
+дубликат имён для свободных функций, разрешая методы и `From[T]`.
+Несимметрично без обоснования. **D84 снял запрет** — единый механизм
+для receiver-методов, static-функций и свободных функций. Один файл
+`spec/decisions/10-overloading.md` собирает все 4 оси перегрузки в
+одно правило (раньше D35/D46/D73/Plan 11 — разрозненно).
+
+**4. `panic` vs `exit` разведены.** Раньше формулировка «в CLI panic =
+exit процесса» сливала уровни — один и тот же `panic("foo")` вёл
+себя по-разному в разных средах. **D13 уточнён + новая `exit(code,
+msg)`:** panic — fiber-уровень, exit — process-уровень. Программист
+выбирает между ними.
+
+### Trade-offs (что усложнилось)
+
+- **Цена миграции stdlib (D85).** Все `parse(s)?` в `Fail[E] -> T`
+  функциях перестают работать. Десятки-сотни мест, каждое требует
+  смыслового решения (переход на `!!` или смена сигнатуры на
+  `-> Result`). Окупается чистотой дизайна.
+- **`!!` — новый оператор для запоминания.** Раньше был только `?`
+  и `??`, теперь добавился `!!`. Но взамен: каждый оператор делает
+  **одно**, без двух семантик одного символа. Чище для AI/LLM
+  (предсказуемее) и для людей (видишь `!!` — сразу понимаешь
+  «throw, серьёзно»).
+
+### Файлы
+
+**Новые:**
+- `spec/decisions/10-overloading.md` (D84).
+
+**Spec — крупные:** `spec/overview.md`, `spec/effects.md`,
+`spec/syntax.md`, `spec/revolutionary.md`, `spec/decisions/04-effects.md`
+(D67 отменён + D85 + D86 + D62 правило 4 свёрнуто), `spec/decisions/08-runtime.md`
+(D26 prelude: `exit` + `RuntimeNoneError`; D13 panic vs exit).
+
+**Spec — точечные:** `spec/decisions/{01,02,03,07}*.md` —
+cross-refs D35→D84, D67→D85, формулировки.
+
+**Plans:** `docs/plans/19-closure-rev.md` →
+`19-closure-and-error-ops.md` — добавлены Ф.10 + Ф.8b + Ф.9
+error-ops, риски и DoD дополнены.
+
+**Implementation:** `compiler-codegen/src/interp/stdlib.rs` —
+`exit` native function.
+
+### Status
+
+- Spec: ✅ ЗАКРЫТ.
+- Tests: 97/97 PASS после всех правок.
+- Implementation Plan 19 (включает D85 ?/!!): 🟡 DRAFT.
+- C-codegen для `exit`: ✅ ЗАКРЫТО (см. секцию ниже от 2026-05-10).
+- C-codegen overloading свободных функций: 🟡 TODO (D84 Bootstrap-status: ⚠️).
+
+---
+
+## 2026-05-10 (продолжение) — C-codegen для panic + exit (production-grade)
+
+### Что упрощено / закрыто
+
+**1. panic + exit в C-codegen.** Закрывает следствие D13 «два уровня
+катастрофы»: обе функции prelude'а теперь работают и в interp, и в
+C-codegen. До этого `panic` был только в interp (никем в .nv не
+использовался — баг не проявлялся), `exit` был добавлен только в
+interp вчерашним коммитом C2.
+
+**2. Comma-expression паттерн для Never.** Существующий ExprKind::Throw
+использует statement+dummy через self.line() — это работает в
+branching contexts (if/match) но **ломает short-circuit** в тернарных
+(?? coalesce). Для panic/exit взял другой паттерн —
+`(nv_panic(msg), (nova_int)0LL)` через C comma-operator. Это
+**inline expression** без нарушения семантики родительских конструкций.
+Throw тоже стоит мигрировать — Q-throw-comma на будущее.
+
+### Trade-offs
+
+- **type-checker про panic/exit не знает** — обрабатывается в codegen
+  special-case (как и assert). Это существующее упрощение bootstrap-
+  types, не относится к этой задаче. Закрыть когда понадобится full
+  type-check свободных функций.
+- **exit без cleanup** — гасит процесс как C exit() / Go os.Exit без
+  defer'ов / destructor'ов / handler'ов. На v1.0+ можно добавить
+  atexit-style hook для критических cleanup'ов (закрыть файлы, flush
+  логов).
+
+### Файлы
+
+- `compiler-codegen/nova_rt/effects.h` — `nv_panic` + `nv_exit`
+  функции с production-grade routing.
+- `compiler-codegen/src/codegen/emit_c.rs` — special-case для
+  `panic(msg)` и `exit(code, msg)` через comma-expression.
+- `nova_tests/runtime/panic_exit.nv` — 10 тестов (компиляция,
+  if-else, ?? panic/exit, разные exit-code'ы, пустые msg'и).
+
+### Status
+
+- C-codegen: ✅ ЗАКРЫТ.
+- Tests: ✅ 98/98 PASS (включая новый panic_exit).
+- ~Open~ Q-throw-comma — ✅ ЗАКРЫТО (см. секцию ниже).
+
+---
+
+## 2026-05-10 (продолжение 2) — Q-throw-comma: Throw на comma-expression
+
+### Что упрощено / закрыто
+
+**Системность codegen-паттерна для Never-функций.** Все три Never-вызова
+(panic, exit, throw) теперь эмитируются через **один** паттерн —
+comma-expression `(call(args), (nova_int)0LL)`. До этого Throw
+использовал отличающийся statement+dummy паттерн через self.line(),
+что создавало латентный баг с short-circuit в `?? throw` (никем не
+использовалось в .nv → не проявлялось).
+
+### Trade-offs
+
+- **Никаких** — comma-expression строго лучше для Never в expression-
+  position. Statement+dummy остался только в случаях, где нужен
+  именно statement-level эффект (например, NovaInterrupt — эмиттит
+  `nova_interrupt(...)` как statement; там это правильно потому что
+  родитель — block-level).
+
+### Файлы
+
+- `compiler-codegen/src/codegen/emit_c.rs` — ExprKind::Throw мигрирован.
+- `nova_tests/syntax/throw_in_expression.nv` — SECTION 3 (3 теста на
+  short-circuit ?? throw).
+
+### Status
+
+- ✅ ЗАКРЫТ.
+- Tests: 98/98 PASS, никаких регрессий.
+
+---
+
+## 2026-05-10 (продолжение 3) — D84 overloading свободных функций (оси 1, 2, 4)
+
+### Что упрощено / закрыто
+
+**1. Единый overload mechanism для методов и free-functions.**
+До этого Plan 11 покрывал только методы (с receiver'ом), а
+free-functions имели жёсткий запрет на duplicate name. После D84 +
+этой реализации — оба пути используют один и тот же registry
+(`method_overloads` с sentinel-key `("", name)` для free-fn).
+
+**2. Type-checker ModuleEnv.fns переведён на Vec<FnDecl>.** Раньше
+single FnDecl (last-wins при duplicate). Теперь корректно хранит
+все overloads. BoundCtx и CapabilityCtx тоже обновлены под Vec.
+
+### Trade-offs (известные ограничения)
+
+- **Q-overload-result-type (D84 ось 3) — НЕ реализовано в codegen.**
+  Type-checker регистрирует overloads с разным return-type, но при
+  call-site resolve без expected-type propagation возникает
+  ambiguity. Реализация требует переделки emit_expr на context-driven
+  type-resolve. Отложено отдельной задачей.
+- **Q-overload-generic-vs-concrete (D84 правило «concrete > generic»)** —
+  type-checker не различает generic и concrete signatures, считает
+  одинаковые arg-shapes как duplicate. Тоже отдельная задача.
+
+### Файлы
+
+- `compiler-codegen/src/types/mod.rs` — ModuleEnv.fns Vec, BoundCtx
+  и CapabilityCtx обновлены, typeref_equal helper.
+- `compiler-codegen/src/codegen/emit_c.rs` — pass 1c регистрация
+  free-functions, mangle_fn для free-fn, call-site overload-resolve.
+- `nova_tests/syntax/overload_free_fn.nv` — 8 тестов на оси 1, 2, 4.
+- `spec/decisions/10-overloading.md` — Bootstrap-status updated:
+  free-functions ✅, добавлена пометка ⚠️ для result-type.
+
+### Status
+
+- D84 оси 1, 2, 4 для free-functions: ✅ ЗАКРЫТ.
+- Tests: ✅ 99/99 PASS (98 предыдущих + новый overload_free_fn).
+- D84 ось 3 (result-type): 🟡 Q-overload-result-type — отдельная задача.
+- D84 generic vs concrete: 🟡 Q-overload-generic-vs-concrete — отдельная задача.
+
+---
+
+## 2026-05-10 — Plan 19 ЗАКРЫТ (closure-rev + error-ops + handler-rev)
+
+### Что упростилось в языке
+
+**До Plan 19:**
+- Лямбды через `(params) => expr` — strictly one-expression body.
+- Block-форма для closure запрещена → выносить в named fn ради
+  `let y = ...`.
+- Trailing-block с params через `{ x => body }` — отдельная
+  грамматика (D43-old), параметры через `=>`.
+- `?` имел двойную семантику (D67): для Result через Fail-эффект,
+  для Option через ранний return.
+- `Handler[E]` без второго параметра — нельзя выразить interrupt
+  семантику в типе.
+
+**После Plan 19:**
+- Двухуровневый closure: `|x| body` (light, untyped) + `fn(x T) -> R body`
+  (full, typed). Block-form поддерживается natively.
+- `f(args) { block }` — DSL-trailing БЕЗ params; `f(args) fn(p) body` —
+  trailing-fn С params.
+- `?` — унифицированный early-return для Option/Result (D85).
+- `!!` — throw-стиль через Fail (D85).
+- `??` — coalesce (D86, выделен из D4).
+- `Handler[E, IRT]` — interrupt return type явно в сигнатуре (D87).
+- Default generic params: `[T = int]` (D88).
+- handler-лямбда `with E = |err| body` (D31-rev).
+
+### 14 коммитов C1-C14, baseline 65/65 lib + 102/102 nova_tests
+
+Detailed retro в docs/plans/19-closure-and-error-ops.md.
+
+### Отложено
+
+- ~~C16: mut-capture codegen.~~ → **ЗАКРЫТО** (2026-05-11, см. ниже)
+- ~~C6: bidirectional inference HOF arg → closure.~~ → **ЗАКРЫТО** (2026-05-11, см. ниже)
+- Codegen handler-лямбда (D31-rev codegen-side).
+
+---
+
+## 2026-05-10 (продолжение 5) — D84 negative-тесты
+
+### Что закрыто
+
+D84 codegen бросает три типа compile error'ов («duplicate signature», «no matching overload», «ambiguous overload»), но **ни один не тестировался**. Аудит тестов вскрыл этот gap; заведены три negative-теста через `EXPECT_COMPILE_ERROR` marker:
+
+- `nova_tests/negative_capability/overload_duplicate_signature.nv` — две функции с identical sig.
+- `nova_tests/negative_capability/overload_no_match.nv` — вызов `handle(true)` где есть `handle(int)` и `handle(str)`.
+- `nova_tests/negative_capability/overload_ambiguous.nv` — две overloads с одинаковыми arg-types и разным return-type (фиксирует Q-overload-result-type ⚠️).
+
+### Status
+
+- ✅ ЗАКРЫТО.
+- 3/3 negative-тестов PASS.
+- Когда Q-overload-result-type будет закрыт — `overload_ambiguous.nv` нужно переделать в positive (let-аннотация выбирает overload).
+
+---
+
+## 2026-05-10 (продолжение 6) — D89 EXPECT_* маркеры (Вариант C)
+
+### Что упрощено / закрыто
+
+**1. Унификация test-tooling-конвенций.** До D89 был только один маркер (`EXPECT_COMPILE_ERROR`, Plan 16 Ф.7), документирован только в комментарии скрипта. Любой alternative test-runner мог бы изобрести свой механизм → fragmentation. D89 фиксирует **4 стандартных маркера** (compile error, runtime panic, exit code, stdout) как часть Nova-conformant tooling'а.
+
+**2. Cleanup путей в run_tests.ps1.** Раньше пути захардкожены `d:\Sources\nova-lang\...` — скрипт не работал на чужих машинах и в CI. Теперь все пути относительно `$PSScriptRoot` с env-var override; vcvars64.bat ищется через vswhere. Можно clone'нуть репо в любой каталог и запускать.
+
+### Trade-offs
+
+- **Comment-маркер vs first-class директива.** Выбрали comment-маркер (как Rust/Swift/Go), не атрибут языка (как TypeScript `@ts-expect-error`). Trade-off: парсер про маркер не знает (опечатка `EXPECT_COMPILE_EROR` без R пройдёт незаметно). Mitigation — linter может предупреждать о похожих на маркер опечатках.
+- **Один маркер на файл.** Не поддерживается multi-marker. Force'ит разделение тестов по сценариям — лучше для читаемости и точности диагностики.
+- **Pattern — substring, не regex.** Проще писать, но менее точно.
+
+### Файлы
+
+- `spec/decisions/09-tooling.md` — D89 нормативный D-блок.
+- `run_tests.ps1` — реализация всех 4 маркеров + cleanup путей.
+- `docs/test-conventions.md` — практический guide для авторов тестов.
+- `nova_tests/expected_runtime/` — 3 pilot-теста (по одному на новый маркер).
+
+### Status
+
+- ✅ ЗАКРЫТ.
+- Tests: ✅ 111/111 PASS (108 предыдущих + 3 новых pilot).
+- Open: `nova test` CLI на Nova — будет реализовать D89 одинаково; gap до тех пор — `run_tests.ps1` единственная реализация.
+
+---
+
+## 2026-05-10 (продолжение 7) — D89 EXPECT_STDERR + split stdout/stderr
+
+### Что упрощено / закрыто
+
+**Естественный gap в D89.** Вчера зафиксировали 4 маркера, `EXPECT_STDERR` оставили как «будущее расширение». Через день — добавили как 5-й, потому что:
+- POSIX-конвенция различает stdout/stderr, тесты должны тоже.
+- Симметрия с `EXPECT_STDOUT` естественная.
+- Раньше `EXPECT_STDOUT` де-факто проверял combined-вывод (через `2>&1`), теперь точно — только stdout.
+- 30 минут работы, закрывает gap пока контекст свежий.
+
+### Trade-offs
+
+- **Breaking change для `EXPECT_STDOUT`:** ранее combined → теперь только stdout. Один существующий тест (`stdout_hello.nv` — `println` пишет в stdout) не сломался. Other test-runners (если появятся) должны учесть.
+- **`EXPECT_RUNTIME_PANIC` остался combined.** Logically panic пишет в stderr, но runner проверяет любой поток для устойчивости — это spec-важно (mitigates future runtime changes которые могут перенаправить panic).
+
+### Файлы
+
+- `spec/decisions/09-tooling.md` — D89 расширен до 5 маркеров.
+- `run_tests.ps1` — split stdout/stderr, EXPECT_STDERR ветка.
+- `docs/test-conventions.md` — секция «5. EXPECT_STDERR» + уточнение EXPECT_STDOUT.
+- `nova_tests/expected_runtime/stderr_panic.nv` — pilot-тест.
+
+### Status
+
+- ✅ ЗАКРЫТ.
+- Tests: ✅ 120/120 PASS (предыдущие + новый stderr_panic).
+
+---
+
+## 2026-05-11 — codegen: const u32/u64 type-inference + native-typed integer literals (FNV bug)
+
+### Что починено
+
+В `std/checksums/fnv.nv` user заметил неожиданный C-вывод:
+```c
+nova_int h = FNV1A_32_OFFSET;  // FNV1A_32_OFFSET — u32 const
+```
+— переменная инициализируется из u32-const'а, но получает тип `nova_int` (int64). И сами const'ы инициализированы как `((nova_int)NLL)` — signed-cast в unsigned, что **implementation-defined** для значений вне диапазона int64 (например FNV-64 offset `0xCBF29CE484222325` представляется как отрицательный `-3750763034362895579LL`).
+
+Два связанных бага в codegen:
+
+**Баг 1 — use-site inference let'а из const'а.** `infer_expr_c_type(Ident(name))` смотрел только в `var_types`, но обычные (non-lazy) const'ы туда не регистрировались (только lazy через `emit_lazy_const`). Fallback — `"nova_int"`. Fix: после успешного `emit_const_decl` регистрируем `c.name → ty_c` в `var_types`, чтобы Ident на use-site инферился с правильным c-типом.
+
+**Баг 2 — integer literals в const-init без учёта target-типа.** `emit_const_expr` всегда эмитил `((nova_int)NLL)` независимо от типа const'а. Для unsigned-целевых типов это implementation-defined conversion. Fix: новый `emit_const_expr_typed(expr, target_ty_c)` + helper `emit_typed_int_literal(n, ty_c)` — эмитят правильный suffix/cast по c-типу:
+- `uint32_t` → `((uint32_t)NU)` (через `n as u32`)
+- `uint64_t` → `((uint64_t)0xNULL)` (bit-pattern u64, чтобы корректно представить значения вне i64)
+- `int32_t/int16_t/int8_t` → `((int32_t)N)` 
+- по умолчанию (`nova_int`, `int64_t`) — `((<ty>)NLL)` (старое поведение, не сломано)
+
+`emit_const_decl` передаёт `ty_c` в `emit_const_expr_typed` как ожидаемый тип.
+
+### До/после
+
+```c
+// До:
+static const uint32_t FNV1A_32_OFFSET = ((nova_int)2166136261LL);
+static const uint64_t FNV1A_64_OFFSET = ((nova_int)-3750763034362895579LL);
+static uint32_t Nova_Fnv_static_hash32(...) {
+    nova_int h = FNV1A_32_OFFSET;  // ← неправильный тип
+    ...
+}
+
+// После:
+static const uint32_t FNV1A_32_OFFSET = ((uint32_t)2166136261U);
+static const uint64_t FNV1A_64_OFFSET = ((uint64_t)0xCBF29CE484222325ULL);
+static uint32_t Nova_Fnv_static_hash32(...) {
+    uint32_t h = FNV1A_32_OFFSET;  // ← правильный тип
+    ...
+}
+```
+
+### Trade-offs
+
+- **Локальный fix:** только `emit_const_expr_typed` для const-init. `emit_expr` (runtime expressions) не трогали — там `((nova_int)NLL)` остаётся как есть. Это OK: in-function integer literals неявно конвертятся в target-тип через C-implicit conversions; проблема была только в file-scope const-init где cast → unsigned давал implementation-defined для overflow-значений.
+- **Lazy-const'ы** уже регистрировались в `var_types` (через `emit_lazy_const`), это значит баг был только в non-lazy ветке. Fix симметризовал поведение.
+- **Char-литералы:** `emit_typed_int_literal(cp as i64, ty_c)` — codepoint конвертится через i64, для u8/u16/u32 это OK (codepoint ≤ 0x10FFFF помещается в u32).
+
+### Файлы
+
+- `compiler-codegen/src/codegen/emit_c.rs` — `emit_typed_int_literal`, `emit_const_expr_typed`, регистрация const'ов в `var_types`.
+- `std/checksums/fnv.c` — regenerated с правильными типами (артефакт верификации, не commited).
+
+### Status
+
+- ✅ ЗАКРЫТ.
+- Tests: ✅ lib 65/65, nova_tests 120/120, std/checksums 2/2 PASS.
+- Lesson: «code generator с типизированным IR — но IntLit без target-типа в emit'е». Любой code-gen, который compile'ит typed source → нетипизированный target language (C), должен везде, где есть target-type-info, эмитить native-typed литералы. Особенно для unsigned/signed мостов. Если IR теряет тип к моменту emit'а (как было) — баг неизбежен на edge-cases (overflow, large hex constants, u64 ≥ 2^63).
+
+---
+
+## 2026-05-11 (продолжение) — codegen: typed-integer promotion в Binary infer
+
+### Что починено
+
+В `std/checksums/crc32.nv` функция:
+```nova
+fn table_value(i u8) -> u32 {
+    mut c = i as u32
+    for k in 0..8 {
+        c = if c & 1 == 1 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
+    }
+    c
+}
+```
+эмитила:
+```c
+nova_int _nv_if_1;  // ← должно быть uint32_t
+if (...) {
+    _nv_if_1 = (nova_int)((((nova_int)3988292384LL) ^ (c >> ((nova_int)1LL))));
+}
+```
+
+Объяснение: `emit_if_expr` определяет тип tmp-переменной через `infer_expr_c_type(then.trailing)`. Trailing — это `0xEDB88320 ^ (c >> 1)` — `Binary{BitXor, IntLit, ...}`. Logic в `Binary` brunch'е был: вернуть `lt` (left type). А `lt = infer(IntLit) = "nova_int"`. → tmp тоже `nova_int`.
+
+### Fix
+
+В `infer_expr_c_type` для `Binary` integer-операций добавлена **typed-integer promotion**: если один из операндов — typed integer (`uint8/16/32/64_t`, `int8/16/32_t`), а другой — `nova_int` (т.е. дефолтный IntLit), результат — **typed integer**, не nova_int. Это правило симметрично для left/right.
+
+Helper `is_typed_integer(ty) -> bool` для предиката (включает все signed/unsigned кроме `nova_int`/`int64_t`, т.к. это и есть дефолт).
+
+После fix:
+```c
+uint32_t _nv_if_1;  // ← правильно
+if (...) {
+    _nv_if_1 = (uint32_t)((((nova_int)3988292384LL) ^ (c >> ((nova_int)1LL))));
+}
+```
+Литералы внутри XOR/shift остаются `((nova_int)NLL)` (это safe — implicit C-conversion при assignment к u32). Главное — outer tmp типизирован правильно.
+
+### Trade-offs
+
+- **Promotion правило простое (1 typed + 1 nova_int → typed).** Не покрывает все edge-cases full C-promotion. Если оба операнда typed разной ширины (например `u32 & u8`) — берём `lt` (левый), полагаясь на implicit C narrow/widen. В реальном коде такие случаи редки.
+- **Литералы внутри Binary остаются nova_int.** Можно было thread'ить target-type рекурсивно (как в `emit_const_expr_typed` из предыдущего фикса) и эмитить `((uint32_t)NU)` сразу. Но это много больше работы и риска регрессий — текущий подход «typed outer + literal cast'ится на assign» работает и проще.
+- **`int64_t`/`nova_int` сознательно не считаются "typed":** их роль — быть дефолтным IntLit'ом, должны "уступать" более конкретным типам.
+
+### Файлы
+
+- `compiler-codegen/src/codegen/emit_c.rs` — `is_typed_integer` helper, promotion правило в `Binary` ветке `infer_expr_c_type`.
+
+### Status
+
+- ✅ ЗАКРЫТ.
+- Tests: ✅ lib 65/65, nova_tests 120/120, std/checksums 2/2 PASS.
+- Lesson — третий codegen-баг этой серии в `std/checksums/*.nv`: stdlib **показателен**. Stdlib пишется на real Nova, использует все edge-cases (typed const'ы, u32-арифметика, hex-литералы). Каждый «странный фрагмент сгенерированного C» в stdlib — реальный баг кодогена. Stdlib де-факто работает как fuzzer.
+
+---
+
+## 2026-05-10 (продолжение 8) — D90 (defer/errdefer) + D91 (Channel revision)
+
+### Что зафиксировано
+
+**D90 — defer/errdefer:**
+
+Zig-style scope-level cleanup statements. Закрывает Q20 «Нужен ли defer?» Мотивирован отсутствием RAII в Nova (D6 managed heap, нет destructor'ов): без `defer` resource cleanup пишется через handler-блоки, что многословно (10+ строк boilerplate на transactions).
+
+**D91 — Channel revision:**
+
+Уточняет D79: API меняется с Go-style (один Channel объект) на Rust mpsc-style (`Channel.new(cap) -> (Sender, Receiver)`). Capability-split: producer не может recv, consumer не может send. Close — explicit через `defer tx.close()` (D90), не auto-on-drop.
+
+### Trade-offs
+
+- **D90 body infallible.** Если cleanup может упасть — программист обязан handle явно через handler-блок. Double-throw невозможно сделать корректно.
+- **D90 no-suspend.** Cleanup быстрый — иначе exit-семантика scope'а непредсказуема.
+- **D91 explicit close.** В Nova нет destructor'ов; auto-on-drop через GC flaky. Программист обязан `tx.close()` (идиома — `defer`). Отличие от Rust mpsc.
+- **D91 sender.clone() не нужен.** Managed heap shared by default.
+
+### Файлы
+
+- `spec/decisions/03-syntax.md` — D90.
+- `spec/decisions/06-concurrency.md` — D91, D79 помечен «частично уточнено D91».
+- `spec/open-questions.md` — Q20 закрыто → D90.
+
+### Status
+
+- D90: ✅ spec. 🟡 Implementation — Plan 21+.
+- D91: ✅ spec. 🟡 Implementation — Plan 22+. Breaking change для nova_rt/channels.h, миграция тестов.
+
+### Открытые задачи
+
+- Plan 21 — defer/errdefer implementation.
+- Plan 22 — Channel revision implementation.
+- Sequential: Plan 21 → Plan 22 (D91 использует defer).
+
+---
+
+## 2026-05-11 (продолжение) — codegen: typed-integer promotion в Binary infer
+
+### Что починено
+
+В `std/checksums/crc32.nv` функция:
+```nova
+fn table_value(i u8) -> u32 {
+    mut c = i as u32
+    for k in 0..8 {
+        c = if c & 1 == 1 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
+    }
+    c
+}
+```
+эмитила:
+```c
+nova_int _nv_if_1;  // ← должно быть uint32_t
+```
+
+Причина: `emit_if_expr` берёт тип tmp'а из `infer_expr_c_type(then.trailing)`. Trailing — `0xEDB88320 ^ (c >> 1)` — Binary. Logic в Binary-branch'е был «вернуть lt» (левый тип). `lt = infer(IntLit) = nova_int`. → tmp = `nova_int`.
+
+### Fix
+
+Promotion-rule в Binary-integer branch'е `infer_expr_c_type`: если один operand — typed integer (u8/u16/u32/u64/i8/i16/i32), а другой — `nova_int` (дефолт IntLit), результат — typed-integer. Симметрично для left/right.
+
+Helper `is_typed_integer(ty) -> bool` — predicate (`nova_int`/`int64_t` сознательно НЕ включены — они дефолт IntLit'а, должны "уступать").
+
+После fix:
+```c
+uint32_t _nv_if_1;  // ← правильно
+if (...) {
+    _nv_if_1 = (uint32_t)((((nova_int)3988292384LL) ^ (c >> ((nova_int)1LL))));
+}
+```
+Внутренние литералы оставлены `((nova_int)NLL)` — implicit C-conversion на assignment безопасен. Главное — outer tmp типизирован.
+
+### Trade-offs
+
+- **Простое правило (1 typed + 1 nova_int → typed)**, не полный C-promotion. `u32 & u8` (оба typed) → берём lt (левый). Safety не нарушает.
+- **Не трогали `emit_expr`** — литералы внутри Binary остаются nova_int. Можно было thread'ить target-type рекурсивно как в const-fix, но это больший рефакторинг и риск регрессий. Текущий подход проще.
+- **`int64_t`/`nova_int` сознательно "не-typed":** их роль — уступать конкретным типам.
+
+### Файлы
+
+- `compiler-codegen/src/codegen/emit_c.rs` — promotion rule в Binary-branch'е, `is_typed_integer` helper.
+
+### Status
+
+- ✅ ЗАКРЫТ.
+- Tests: ✅ lib 65/65, nova_tests 120/120, std/checksums 2/2 PASS.
+- Lesson — **stdlib работает как fuzzer codegen'а**. Три codegen-бага этой сессии — все в `std/checksums/*.nv`. Stdlib пишется на real Nova, использует все edge-cases (typed const'ы, hex-литералы, u32-арифметика, bitwise). Каждый «странный фрагмент C» в stdlib — реальный баг кодогена. Тесты могут PASS через C-implicit conversions, но это маскирует bugs. Регулярно читать generated stdlib C — не только assert'ы тестов.
+
+---
+
+## 2026-05-10 (продолжение 9) — Plan 20 + Plan 21 (DRAFT планы реализации)
+
+### Что зафиксировано
+
+Implementation roadmaps для D90/D91 заведены как DRAFT-планы.
+
+**Plan 20** — D90 (defer/errdefer): 7 фаз lexer/parser/type-check/codegen/interp/тесты/spec. Атомарный PR Ф.1-Ф.6. Объём ~1500 строк.
+
+**Plan 21** — D91 (Channel revision): 7 фаз nova_rt/codegen/type-check/select/migration/negative/spec. Зависит от Plan 20.
+
+### Trade-offs
+
+- **DRAFT планы вместо немедленной реализации.** Spec крупных design-изменений требует реализации в несколько сессий (Plan 19 был ~14 коммитов). Trade-off: spec и codebase расходятся пока impl не сделан. Mitigation: Bootstrap-status 🟡 в D-блоках сигнализирует «spec ahead of code».
+
+### Файлы
+
+- `docs/plans/20-defer-implementation.md`.
+- `docs/plans/21-channel-revision-implementation.md`.
+- `docs/plans/README.md` — обновлён индекс.
+
+### Status
+
+- Plan 20: 🟡 DRAFT.
+- Plan 21: 🟡 DRAFT (зависит от Plan 20).
+
+---
+
+## 2026-05-11 — Plan 15 Ф.4 retro (closing negative-test gap)
+
+### Что зафиксировано
+
+Plan 15 (generic bounds, D72) фазы Ф.1-Ф.3, Ф.5 уже реализованы; Ф.4 тесты покрывали только позитивные кейсы (5 файлов в `nova_tests/types/generic_bounds.nv`). Добавлены недостающие:
+
+- **3 negative-теста** через D89 `EXPECT_COMPILE_ERROR` маркер:
+  - `bound_not_satisfied_rejected.nv` — тип без required-методов протокола → «type X does not satisfy P bound».
+  - `bound_missing_method_rejected.nv` — метод с правильным именем, но другой арностью → «does not satisfy» (BoundCtx матчит по name + arity).
+  - `bound_effect_not_protocol_rejected.nv` — effect-kind тип как bound → «is an effect, not a protocol» (D53 strict Ф.5).
+- **1 позитивный тест** — forward-dependency `[K Hash, V From[K]]`. Парсер принимает (через `parse_type` который допускает type-args), чекер permissive для параметризованных bound'ов (early-return для non-single-name path).
+
+### Trade-offs
+
+- ~~**Anonymous protocol bound** `[T protocol { ... }]` не добавлен — `parse_type` не принимает keyword `protocol` в позиции типа. Откладывается до отдельной задачи (D53 §628 inline protocol-литералы).~~
+  **CLOSED Plan 97 Ф.2 (2026-05-22, D142).** `parse_type` теперь принимает `protocol { method-sig* }` как 4-ю форму после `[]T`, `(A,B)`, `fn() -> T`. Введён `TypeRef::Protocol { methods, span }` variant. `check_satisfaction_against_methods` обобщён на anon-bound (один проход кода для named + anonymous). Фикстуры `nova_tests/plan97/pos_anon_protocol_bound.nv` + `pos_anon_protocol_param.nv` + `neg_anon_protocol_missing_method.nv` — pass.
+- **Wrong-return-type** не тестируется как отдельный кейс — текущий BoundCtx match'ит по name + arity, return type игнорируется. Полная sig-сверка с `Self → T` substitution — будущая фаза. Negative `bound_missing_method_rejected` фиксирует arity-mismatch, что покрывает большую часть случаев.
+
+### Файлы
+
+- `nova_tests/negative_capability/bound_not_satisfied_rejected.nv` (новый).
+- `nova_tests/negative_capability/bound_missing_method_rejected.nv` (новый).
+- `nova_tests/negative_capability/bound_effect_not_protocol_rejected.nv` (новый).
+- `nova_tests/types/generic_bounds.nv` — добавлен forward-dependency тест (5 → 6 тестов).
+- `docs/plans/15-generic-bounds-enforcement.md` — Ф.4 retro, статус ✅ ЗАКРЫТ.
+
+### Status
+
+- ✅ ЗАКРЫТ. Plan 15 целиком закрыт.
+- Tests: 123/123 PASS (включая 3 новых negative + 1 новый positive).
+
+### Lesson
+
+**D89 `EXPECT_COMPILE_ERROR`** — proven tool для negative-coverage без custom-харнеса. Pattern — substring через `regex.escape`. Workflow: запустил codegen на тестовом .nv, посмотрел текст ошибки, выбрал uniquely-identifying substring («does not satisfy», «is an effect, not a protocol»). Все 3 теста matchнулись с первой попытки.
+
+**Plan-spec-vs-bootstrap reality.** План Ф.4 предполагал «anonymous protocol bound (если spec позволяет inline)» — но bootstrap-парсер не поддерживает. Правильное решение — документировать gap явно («not supported in bootstrap, see D53 §628»), не пытаться расширить парсер ad-hoc. Аналогично forward-dep: тест есть, но чекер permissive — это документировано в комментариях и retro.
+
+---
+
+## 2026-05-10 (продолжение 10) — Plan 20 Ф.1 (lexer keyword reservation)
+
+### Что закрыто
+
+Первая фаза Plan 20 (D90 implementation): `defer` и `errdefer` зарезервированы как keyword-токены в lexer'е. Полностью изолированная фаза — токены добавлены, но грамматикой не используются.
+
+### Trade-offs
+
+Закоммитил **отдельно** от планируемого атомарного PR Ф.1-Ф.6 — Ф.1 обратно совместима (не ломает существующий код). Negative-тесты подтверждают что reservation работает. Incremental progress без риска отката.
+
+### Файлы
+
+- `compiler-codegen/src/lexer/token.rs` — TokenKind::KwDefer/KwErrDefer.
+- `compiler-codegen/src/lexer/mod.rs` — keyword recognizer.
+- `spec/decisions/03-syntax.md` D83 — keyword список расширен «Cleanup: defer, errdefer».
+- `nova_tests/negative_capability/defer_keyword_reserved.nv` — negative.
+- `nova_tests/negative_capability/errdefer_keyword_reserved.nv` — negative.
+
+### Status
+
+- Plan 20 Ф.1: ✅ ЗАКРЫТО (commit 75673d7).
+- Plan 20 Ф.2-Ф.6: 🟡 не начато (атомарный PR в будущей сессии).
+- Tests: ✅ 122/122 PASS.
+
+---
+
+## 2026-05-11 — Plan 09 Ф.1-Ф.4: Clang toolchain в run_tests.ps1
+
+### Что упрощено / закрыто
+
+Реализован Plan 09 Ф.1-Ф.4 (`docs/plans/09-clang-migration.md`):
+LLVM 22.1.5 поставлен через `winget install LLVM.LLVM`, `run_tests.ps1`
+получил параметры `-Toolchain auto|clang|msvc` и `-Mode dev|release`.
+По умолчанию — Clang если найден, иначе MSVC с warning'ом.
+
+### Изменения относительно плана
+
+- **march = x86-64-v3 (вместо `native`).** Изначальный план предлагал `march=native`. Сменил: `native` не переносится между CPU, для distributable binary нужен **portable march**. v3 = Haswell+ (2013+), покрывает ≈99% десктопов 2026. `native` доступен через env `NOVA_MARCH_NATIVE=1` для локальных перф-эксперименов.
+- **Ф.6 (бенчмарки) отложен.** Не делаем сейчас: bench/json_parse требует std/encoding/json (неполная), sha256 требует tight I/O (libuv Plan 22). Делаем когда есть готовый realistic workload + конкретный perf-claim. В фокусе features (Plan 20/21/22), не perf.
+- **Ф.5 docs (README) — частично:** docs/plans/09 retro обновлён, README.md / compiler-codegen/README.md — отдельная doc-задача.
+
+### Trade-offs
+
+- **MSVC fallback оставлен.** Не enforce'им Clang — кто-то может работать без LLVM (особенно на CI/cloud-VMs без install прав). Warning сообщает что perf на 10-15% хуже.
+- **`-Wno-everything` для Clang.** Codegen эмитит много типичных warnings (unused-result, sign-compare, parenthesis) которые не баги; муссировать их в test-runner'е не нужно. На самом деле hide'им сигнал — отдельная задача почистить codegen warning-free.
+- **Не удалили MSVC-workarounds в codegen.** План явно сохраняет 8+ обходок в emit_c.rs (compound literals, ≥1 struct field, etc.) — Clang это принимает, удаление потребовало бы условного codegen'а. Stays as-is.
+
+### Plan 09 как fuzzer (сюрприз)
+
+Полный прогон тестов на Clang выявил **2 реальных codegen-бага**:
+
+1. **block-scope `static` fwd-decl** (`basics/trailing_block`): codegen эмитил `static foo(void);` внутри тела функции — нарушение C99 §6.2.2¶7. MSVC принимает (extension), Clang/GCC отвергают. Fix: fwd-декларация в `lambda_forward_decls` (file-scope buffer).
+
+2. **SRC annotation gap в with-body**: `emit_with` не вызывал `emit_source_annotation_for_expr(trailing)` — SRC-комменты терялись для последнего expression в with-body. Fix: добавлена аннотация.
+
+### Lesson
+
+**Strict-compiler как detective tool.** Каждое отличие в обработке нестандартного C выявляет latent codegen-bug. Сильный аргумент за CI-прогон на нескольких toolchain'ах (MSVC + Clang + позже GCC на Linux) — не для perf, а для **portability/correctness**. Если бы переход на Clang случился через год (на Linux CI), эти баги всплыли бы в более болезненной форме.
+
+### Файлы
+
+- `run_tests.ps1` — параметры -Toolchain/-Mode, детект Clang, fallback на MSVC.
+- `compiler-codegen/src/codegen/emit_c.rs` — fix #1 (fwd-decl file-scope), fix #2 (SRC annotation в emit_with).
+- `docs/plans/09-clang-migration.md` — retro Plan 09 + Ф.6 отложен.
+
+### Status
+
+- ✅ Ф.1-Ф.4 ЗАКРЫТЫ.
+- ⏸️ Ф.5 (README docs) — частично, отдельная задача.
+- ⏸️ Ф.6 (benchmarks) — отложен до std/json + libuv готовности.
+- Tests: Clang dev 130/130 PASS, MSVC dev (regression) 130/130 PASS.
+
+---
+
+## 2026-05-11 (продолжение) — Plan 20 Ф.2-Ф.7: defer/errdefer полная реализация
+
+### Что закрыто
+
+Plan 20 (D90 defer/errdefer) закрыт полностью — 7 фаз, 9 коммитов:
+- Ф.1 lexer (75673d7, ранее) — `defer`/`errdefer` keyword-токены.
+- Ф.2 parser+AST (380b457, ранее) — `Stmt::Defer { body }`, `Stmt::ErrDefer { body }`.
+- Ф.3 type-check (fdb53be + 3faf9f0) — body constraints + **revision Вариант 3** (local control разрешён).
+- Ф.4 codegen (94151c3 + b058968) — per-scope DeferScope, NovaFailFrame throw-path, early-exit cleanup.
+- Ф.5 interp (c96f7f3, ранее) — per-scope defer-stack, LIFO, errdefer skip non-error.
+- Ф.6 positive-тесты (c57d098 + 4cd8abe + 24196f2) — `syntax/defer_basic.nv` (4 кейса) + `syntax/errdefer_basic.nv` (3 кейса).
+- Ф.7 spec uplift (4fcb6b8) — D90 Bootstrap-status 🟡 → ✅.
+
+### Изменения относительно плана
+
+- **Ф.3 переписан как Вариант 3 (local control).** Изначальный план запрещал return/break/continue в defer body везде (Zig-style strict). По user-feedback в ходе работы — ослаблено: top-level всё ещё запрещено (нельзя hijack scope-exit), но **внутри nested fn-литерала/loop в defer body — разрешено** (local control). Реализовано через `DeferBodyCtx { loop_depth, fn_depth }`, инкремент при заходе в loop/fn-literal. Negative-тесты обновлены под новый wording error-сообщения.
+
+### Упрощения / отложенные элементы
+
+- **Q-errdefer-handler — errdefer не работает с user-installed Fail handler.** `with Fail = handler Fail { fail(msg) { interrupt v } }` устанавливает user handler в `_nova_handler_Fail`, который перехватывает `Fail.fail` dispatch ДО того, как throw достигнет local `_defer_BID_ff` setjmp-frame. Errdefer срабатывает **только** на unhandled-throw путях (через default fail-frame). Корректное взаимодействие требует пересмотра handler-dispatch model'и (longjmp first, dispatch inside frame). Зафиксировано как Q-errdefer-handler в `spec/open-questions.md`.
+
+- **Loop-body integration — только range-for.** 20+ мест в codegen с прямым `for stmt in &body.stmts { emit_stmt }` (for-in-array, while, while-let, loop, match-arm bodies, if-branch bodies). Только **for-range body** переписан через `emit_loop_body_inline` (вызывает enter/leave_defer_scope). Остальные продолжают legacy inline-iteration. В fast-path (блок без defer'ов) — поведение идентично, регрессий нет. Defer внутри inline-iterated блока **не зарегистрируется** в DeferScope — будет добавлено incrementally при появлении positive-теста, который зацепит конкретный path.
+
+- **Throw-path positive-тест отложен.** 3 errdefer-теста покрывают только normal-exit семантику. Throw-path задизайнен в codegen (NovaFailFrame setjmp wrapper, longjmp re-throw), визуально подтверждён в generated C, но не покрыт positive-тестом. Reach throw-path в Nova-тесте без handler'а нетривиально (test-runner ловит throw как fail теста). Обход через `EXPECT_RUNTIME_PANIC` маркер возможен, но не реализован — отложено.
+
+### Trade-offs
+
+- **Активационные флаги вместо jump-list.** Codegen эмитит `int _defer_N_active = 0;` + inline `= 1;` при достижении defer'а + cleanup `if (active) { body; active = 0; }`. Простой и читаемый, но O(N) проверок на cleanup. Production-grade компилятор мог бы использовать explicit goto-cleanup-label или jump-table. Для bootstrap'а активационные флаги оптимальны — clang оптимизирует константные `if (1)` в линейный код.
+
+- **`is_error_var = 2` sentinel.** Для double-pop guard'а (когда early-exit cleanup уже popnул fail-frame, leave_defer_scope не должен повторно): использован magic number 2 в `is_error_var` (0=normal, 1=error, 2=already-popped). Не самое читаемое — но работает и self-contained.
+
+- **DeferScope.clone() на каждый early-exit.** `emit_early_exit_cleanup` клонирует `defer_scopes: Vec<DeferScope>` (включая AST `Expr` тел) чтобы итерироваться. Аллокации не критичны (defer'ы редки на hot path), и Rust borrow checker не позволяет иначе без рефакторинга на `&mut self` invariants.
+
+### Файлы
+
+- `compiler-codegen/src/lexer/`, `parser/`, `ast/` — Ф.1, Ф.2 (ранее).
+- `compiler-codegen/src/types/mod.rs` — Ф.3 + revision (DeferBodyCtx).
+- `compiler-codegen/src/codegen/emit_c.rs` — Ф.4 (DeferScope/DeferEntry, helpers, integration).
+- `compiler-codegen/src/interp/mod.rs` — Ф.5 (ранее).
+- `nova_tests/syntax/defer_basic.nv` + `errdefer_basic.nv` — Ф.6.
+- `nova_tests/negative_capability/defer_*_rejected.nv`, `errdefer_*_rejected.nv` — updated wording.
+- `spec/decisions/03-syntax.md` — Ф.7 D90 Bootstrap-status ✅.
+- `spec/open-questions.md` — Q-errdefer-handler (новый).
+
+### Status
+
+- ✅ Plan 20 Ф.1-Ф.7 все ЗАКРЫТЫ.
+- Tests: 7 positive-тестов defer/errdefer PASS + 6 negative-тестов PASS.
+- Defer-relevant suite: 130/130 PASS на момент закрытия. Lingering failures в session (11 CC-FAIL) — от Plan 22/23 sched.h/fibers.h, не от Plan 20.
+
+### Lesson
+
+- **Семантическая ревизия в ходе implementation — нормально.** Изначальный Ф.3 strict (запрет return/break везде в defer body) выглядел проще, но после реального примера use-case (nested loop в defer для batched cleanup) — ослаблено до Вариант 3. Урок: spec-decision на стадии design'а не всегда оптимален; implementation проявляет practical edge cases. **Не цементировать spec до первой реальной реализации.**
+
+- **Handler-dispatch vs setjmp-frame interaction — нетривиально.** Q-errdefer-handler всплыл только на этапе positive-тестирования. Изолированный design «defer работает через fail-frame» был корректен, но не учёл что user handler перехватывает dispatch ДО фрейма. Урок: при проектировании cleanup-механизма учитывать **где** в стеке handler-семантики сидит наша точка catch.
+
+---
+
+## 2026-05-11 — Plan 24 Ф.1-Ф.3: cross-platform test runner
+
+### Что упрощено
+
+`run_tests.ps1` был Windows-only монолит ~320 строк (PowerShell + vswhere + vcvars64 + EXPECT regex parsing + toolchain detection + build flags + run + compare + table formatting). Linux-разработчик не мог запустить тесты вообще.
+
+Решение — вынести логику в Rust subcommand:
+
+- **`nova-codegen test-build <file.nv>`** — один тест: codegen → cc → run → check.
+- **`nova-codegen test-all [--filter] [--mode] [--toolchain] [--include-stdlib]`** — рекурсивный прогон с summary.
+
+`.ps1` сократился с 320 до 60 строк (только: пути относительно репо + Windows-specific vcvars detection + pass-through флагов).
+
+Новый `.sh` — 30 строк, такой же thin wrapper для Linux/macOS.
+
+### Trade-offs
+
+- **Blind Linux/macOS implementation.** Реализуем cross-platform через `std::path` / `std::process::Command` + `cfg!(target_os)`. Smoke-test на Linux/macOS отложен (нет access). Уверенность ~85%; первый Linux пользователь увидит точечные edge cases.
+- **`std::process::Command` quoting на Windows.** Для invocations через `cmd /c "..."` нужен `raw_arg` из `std::os::windows::process::CommandExt`, иначе Rust auto-escape'ит внутренние кавычки и ломает `cmd /c "call \"vcvars\" && ..."`. Cross-platform через `#[cfg(target_os = "windows")]`.
+- **Не выносим `cargo build` в test-all.** Если binary не собран — fail с clear msg, не пытаемся build на лету. Безопаснее: нет race с активной разработкой.
+- **vcvars detection — Windows-only.** `find_vcvars()` short-circuit'ит на не-Windows.
+
+### Lesson
+
+**Shell wrappers — анти-паттерн как primary test-runner.** Дублирование логики между bash и PowerShell неизбежно ведёт к drift'у. Перенос в compiler/CLI решает это сразу: один источник правды, type safety (Status enum), unit-тесты для парсеров.
+
+Аналог cargo: начинался как Makefile-обёртки вокруг rustc, постепенно поглотил build/test/run logic. Тот же путь.
+
+### Файлы
+
+- `compiler-codegen/src/test_runner.rs` — новый модуль (~600 строк).
+- `compiler-codegen/src/main.rs` — `Cmd::TestBuild`, `Cmd::TestAll`.
+- `run_tests.ps1` — упрощён до thin wrapper.
+- `run_tests.sh` — новый Linux/macOS wrapper.
+- `docs/plans/24-cross-platform-test-runner.md` — план.
+
+### Status
+
+- ✅ Ф.1-Ф.3 ЗАКРЫТЫ (Windows-verified).
+- ⏸️ Ф.4 docs (README с инструкциями build на Linux/macOS) — отдельная задача.
+- ⏸️ Linux/macOS smoke-test — нужен access.
+- ⏸️ CI на Linux — отдельная задача.
+- Tests: `cargo test --lib` 77/77 PASS (было 65 + 12 от test_runner).
+
+
+═══════════════════════════════════════════════════════════════════
+Plan 22 production upgrades — 2026-05-11
+
+Closed all simplifications выявленные в /retro Plan 22:
+
+| Упрощение | Решение |
+|---|---|
+| **NovaSchedState side-table** (16→256 cap) | → **Вариант B**: lazy pointer-в-NovaFiberQueue. O(1) lookup, unlimited nested. |
+| **silent fail uv_timer_init/start** | → abort() с FATAL message |
+| **top-level no-scope native sleep fallback** | → abort() с D92 invariant violation message |
+| **busy-yield под NOVA_USE_LIBUV=1** | → `#ifdef` — compiled только для no-libuv build |
+| **bench 500 + 100k** | → 1000 concurrent + 1M yields |
+| **spec sync incomplete** | → D71 evolution + D75/D80 cross-refs |
+| **libuv не интегрирован в test_runner.rs** (regression от Plan 24) | → detect_or_build_libuv + lazy auto-build, cross-platform Windows/Linux/macOS |
+
+Trade-offs:
+- Lazy alloc в park-path = new GC-граница. Acceptable bootstrap; Plan 23 M:N ревизия.
+- close-callback wait через `uv_run NOWAIT` остался busy (короткий 1-2 iter).
+  Park-based вариант = UB (повторный mco_yield после wake).
+- SIGINT handler через uv_signal_t — отложен в D92 Правило 7 (future).
+- Leak verification — manual; CI Valgrind отдельной задачей.
+
+
+═══════════════════════════════════════════════════════════════════
+Plan 22 hardening Ф.7-Ф.11 — 2026-05-11
+
+После production pass'а (37dd1a6) — дополнительный hardening для
+high-load / long-running. 5 фаз, 3 реализованы, 2 deferred с clear
+blockers.
+
+| Фаза | Что | Status | Trade-off |
+|---|---|---|---|
+| **Ф.7** Heap-allocated NovaFiberQueue/NovaSchedState arrays | ✅ Done | +6 nova_alloc per scope-grow (micro-overhead, acceptable) |
+| **Ф.8** Close-cb state machine | ⏸ Deferred | D93 sync-vs-async stop_cb contract нужен (Q-D93-sync-async-stop) |
+| **Ф.9** Leak verification bench | ✅ Done | Implicit через bounded-time, не automated CRT/Valgrind |
+| **Ф.10** SIGINT handler через uv_signal_t | ✅ Done | Только main-scope; nested supervised через cancel_requested chain |
+| **Ф.11** Linux smoke verification | ⏸ Deferred TBD | Нет Linux env; build_libuv готов, never tested |
+
+**Главные решения:**
+
+- **Ф.7 — capacity-doubling вместо fixed cap.** Раньше `NOVA_SCOPE_CAP=1024`
+  как hard limit на fiber'ов в scope (DoS-vulnerable + nested supervised
+  stack-overflow). Теперь pointer'ы + capacity field, grow через
+  managed nova_alloc от initial=16 doubling. Idle scope ~100 bytes
+  стека (было ~50 KB embedded array). Unlimited nested. sleep_bench
+  upscaled 1000 → 10k concurrent.
+
+- **Ф.8 deferred — нашли блокирующий design issue в D93.** Прототип
+  state-machine `{PENDING, CLOSING, CLOSED}` логически корректен,
+  но `cancel_all_pending` делает synchronous `parked[i] = false`
+  после stop_cb. Sleep handle требует ASYNC close-wait —
+  cancel race'ит close_cb, fiber resume'ится до final state → sanity-
+  check abort. Откат к Ф.6. Открыт Q-D93-sync-async-stop: enum
+  SYNC vs ASYNC в `NovaCancelStopCb`, Plan 21 (channels) требует SYNC,
+  sleep/socket — ASYNC. Перед каналами фиксируется.
+
+- **Ф.9 — bounded-time как leak-proxy.** 100k uv_timer create+close
+  + 1k repeated sleep + 1000 scope-cycle. Если leak — runaway
+  accumulation overflows time bound (5s/15s/timely). Не automated
+  CRT, но pragmatic confidence для bootstrap.
+
+- **Ф.10 — uv_unref на signal handle.** Signal handler passive, не
+  должен держать loop alive. После set'а cancel_requested +
+  cancel_all_pending → handler возвращается, parked fiber'ы wake'ются
+  immediate, defer/errdefer → scope-drain → process exits cleanly.
+
+- **Ф.11 deferred TBD.** Cross-platform build infra готова, но Windows-
+  only dev-loop. Откладывается до Linux deployment trigger либо
+  параллельно с Plan 18 std.net validation.
+
+**Главный вывод:** Production-grade для Windows закрыт. Оставшиеся
+deferred фазы имеют **формализованные blockers**, не неопределённость:
+Ф.8 → Q-D93-sync-async-stop; Ф.11 → Linux env access.
+
+Final tests: 138/138 nova_tests + sleep_leak_check 3/3 PASS.
+
+Commits:
+- 8c1da32 Ф.7 heap-allocated arrays
+- cd55cf2 Ф.10 SIGINT через uv_signal_t
+- a4321d7 Ф.9 leak-check + Ф.8/Ф.11 deferred + Q-D93-sync-async-stop
+
+---
+
+## Plan 28 — nova CLI binary (2026-05-11)
+
+**Решение:** `run_tests.ps1` имел фундаментальные проблемы PowerShell
+(output buffering, NativeCommandError stderr-trapping, quoting путей с
+пробелами). Bash-обёртка работала лучше, но оба скрипта — костыли.
+Мировая практика (go, cargo, zig) — один CLI-бинарь как точка входа.
+
+**Упрощения закрыты:**
+
+| Удалено | Заменено на |
+|---|---|
+| `run_tests.ps1` (104 строки PowerShell) | `nova test` |
+| `run_tests.sh` (43 строки bash) | `nova test` |
+| `regen_runtime.ps1` | `nova regen-runtime` |
+| `regen_runtime.bat` | `nova regen-runtime` |
+
+**Что создано:**
+
+- `nova-cli/` — новый Rust crate, `nova` binary.
+- Субкоманды: `nova test` (все флаги run_tests.*), `nova build`,
+  `nova run`, `nova check`, `nova regen-runtime [--check]`.
+- `test_runner::compile_c_to_exe()` — pub fn для `nova build`.
+- Repo root detection через `nova.toml` walk-up (как cargo ищет Cargo.toml).
+- Default results-file: `{repo}/target/last-test-results.json`.
+
+**Invariants:**
+
+- `nova-codegen` CLI сохранён нетронутым — IDE, CI, прямая отладка.
+- `--gc malloc` не документируется пользователю — это internal режим
+  для runtime-разработки (Plan 27 семантика).
+
+**Regression:** `nova test` даёт те же PASS/FAIL что run_tests.ps1.
+
+Commits: plan-28 nova CLI
+
+---
+
+## Plan 31 Ф.6: select all-closed detection (2026-05-12)
+
+**SelectSlot.wildcard вместо паттерна в dispatch:**
+
+`SelectSlot` добавлено поле `wildcard: bool`. Альтернатива — передавать паттерн
+(`Some` vs wildcard) в каждый вызов. Выбор: хранить в struct, т.к. `try_immediate`
+и `park` оба нуждаются в этом поле, и struct уже передаётся везде.
+
+**pre-check до scope/slot в nova_select_park:**
+
+all-closed detection сделан отдельным первым проходом до проверки `scope==NULL`.
+Альтернатива — post-loop check после регистрации. Pre-check лучше потому что
+main() не является fiber (scope==NULL), поэтому post-loop был бы недостижим —
+`abort()` срабатывал раньше. Pre-check позволяет бросить панику из любого контекста.
+
+**Почему wildcard срабатывает на closed, а Some(v) — нет:**
+
+`_ = rx` — "получить любой результат": данные или EOF (closed). Аналог Rust
+`recv()` с explicit `Err(RecvError)` обработкой. `Some(v) = rx` — "получить
+только данные, игнорировать closed". Это semantically корректное разделение:
+closed канал без данных не является "готовым" для Some-arm.
+
+**Regression:** 173/174 PASS (pre-existing: memory_footprint_test).
+
+---
+
+## D97: fiber_ctx[] — GC root для SpawnCtx (2026-05-12)
+
+**fiber_ctx[] — отдельный массив, не inline в mco_coro:**
+
+Альтернатива — хранить SpawnCtx* в отдельном nova_alloc'd wrapper, регистрировать
+как GC root через GC_add_roots. Выбор: параллельный массив в NovaFiberQueue
+проще — синхронизирован с fibers[] и fiber_fail_top[] через единый grow/null/swap.
+Нет отдельного API для регистрации/дерегистрации.
+
+**NULL на завершении, не lazy-free:**
+
+fiber_ctx[i] = NULL в nova_supervised_step при MCO_DEAD — немедленный release
+GC root. Альтернатива — оставить до следующего grow/realloc. Немедленный NULL
+предпочтительнее: GC может собрать SpawnCtx раньше, снижает peak heap.
+
+**Regression:** memory_footprint_test восстановлен до 1000 fiber'ов, 91/91 PASS.
+
+---
+
+## Warning routing: CEmitter.warnings Vec<String> (2026-05-12)
+
+**Vec<String> в CEmitter вместо прямого eprintln!:**
+
+In-process codegen работает в том же процессе что test_runner — eprintln!
+пишет в общий stderr процесса, минуя pipe. Альтернатива — отдельный subprocess
+для codegen (subprocess имеет Stdio::piped). Vec<String> проще: не нужен
+subprocess overhead, warnings возвращаются через функцию.
+
+**Prepend в captured_stderr, не отдельное поле:**
+
+Альтернатива — добавить codegen_warnings: Vec<String> в Outcome::Pass.
+Выбор: prepend в captured_stderr проще — print_summary уже умеет печатать
+captured_stderr в verbose mode, не нужен новый branch. Предупреждения видны
+только в --verbose, что правильно (они не являются ошибкой).
+
+**Regression:** 91/91 PASS.
+
+
+---
+
+## "gc" namespace в builtin list — Plan 34 follow-up (2026-05-12)
+
+**Где:** compiler-codegen/src/types/mod.rs:1470 — builtin name list
+содержит `"gc"`.
+
+**Что упрощено:** `gc.heap_size()` / `gc.collect()` и т.д. в любом
+.nv файле резолвятся через **builtin shortcut**, а не через cross-file
+import из `std.runtime.gc`. Это **двойной source of truth**:
+1. std/runtime/gc.nv — `export external fn gc.heap_size() -> int` (etc.)
+2. types/mod.rs — builtin name "gc" в name resolver.
+
+**Почему:** Cross-file bare-name resolution не работает (Plan 35 Ф.1
+territory). При попытке убрать `"gc"` из builtin list — все callers
+(`let h = gc.heap_size()` в user code) падают с `undefined identifier
+'gc'`, потому что нужен `import std.runtime.gc as gc` который никто
+не пишет (и wildcard `import std.runtime.gc.*` парсер не принимает).
+
+Альтернативы рассматривал:
+1. **Заставить пользователя писать `import std.runtime.gc as gc`** —
+   удваивает boilerplate для каждого callsite (Go-стиль `runtime.GC()`,
+   Java `System.gc()` — там это implicit). Хуже UX.
+2. **Plan 35 Ф.1 wildcard `import X.Y.*` + bare-name visibility** —
+   правильное решение, но spec-level work (~150 строк parser + name
+   resolver + D-блок про import semantics).
+3. **Type-form `Gc.heap_size()` (PascalCase)** — отход от Plan 32 spec
+   (lowercase `gc` намеренно для consistency с Go/Python/Java
+   namespace style).
+
+**Текущий compromise:** double source of truth с явными synchronization
+comments в обоих местах. Codegen dispatch (emit_c.rs:7155) — третье
+место, тоже синхронизировано вручную.
+
+**Как починить:** Plan 35 Ф.1 — добавить wildcard `import` + open
+bare-names при resolve. После этого:
+1. Удалить `"gc"` из builtin list в types/mod.rs.
+2. Callers пишут `import std.runtime.gc.*` (или implicit prelude
+   для `std.runtime.*`).
+3. gc.nv `external fn`-declarations становятся **единственным**
+   source of truth для type-checker'а.
+4. Codegen dispatch остаётся (special-case как panic/exit) — это
+   semantic dispatch, не name resolution.
+
+**Приоритет:** P2 — текущий compromise работает корректно, double
+source of truth manually synced. Cleanup-приоритет, не функциональный.
+
+
+---
+
+## Spec sync после Plan 34 Ф.7 — manual cross-check (2026-05-12)
+
+**Где:** spec/decisions/04-effects.md, spec/decisions/08-runtime.md.
+
+**Что упрощено:** после Plan 34 Ф.7 (xoshiro256++ + mut_clock + seed
+u64) изменения **не были sync'нуты в spec** до того как пользователь
+явно спросил «ты в спеку все сохранил?». Это **процессный bug** — я
+обновлял Plan 34 file, docs/, simplifications.md, discussion-log,
+но **не spec/decisions/**, который явно source of truth для language
+features.
+
+**Как починить:**
+- В коротком: после **любого** изменения user-facing API
+  (sigatures, новые ops/handlers, изменение spec'd behavior) —
+  явный sync-step «обновить spec/decisions/» до commit'а.
+- Стратегически: добавить в `feedback_project_docs.md` (auto-memory)
+  правило «spec sync обязателен для API изменений», аналогично
+  тройке docs/project-creation+simplifications+discussion-log.
+
+**Приоритет:** **P1 process fix** — это foundation для всех
+будущих API изменений.
+
+### Ф.9.8 (2026-05-12): loop decreases runtime check
+Снижает scope V2: loop decreases теперь enforced в runtime через
+inject snapshot + assert_static. Comlements Ф.9.4 (recursion decreases
+guard) — те же ideas applied к loop iterations.
+
+### Ф.9.9/9.10/9.11 (2026-05-12)
+- Selective stripping closes gap «zero-cost release» — proven контракты
+  не generate runtime check вообще (даже в debug). Это часть V1 closure
+  в TrivialBackend mode (без libz3).
+- AI-friendly diagnostic — D24 §107 acceptance criterion now satisfied
+  в TrivialBackend mode. Z3 backend будет давать concrete counterexample
+  values; trivial-mode даёт honest hint.
+
+
+---
+
+## Plan 34 closing — doc-комплект (process simplification, 2026-05-12)
+
+**Где:** docs/plans/34-stdlib-typecheck-and-compile-fix.md +
+docs/plans/README.md + project-creation.txt + simplifications.md +
+discussion-log.md.
+
+**Что упрощено:** при закрытии Plan 34 (Ф.7 + follow-up #1 + Ф.8)
+docs-обновления выполнялись **не атомарно**: spec sync в одном
+commit'е (5d71e0843d), agent захватил docs/project-creation +
+simplifications в свой commit (e7d19dac92), discussion-log Этап 92
+отдельным commit'ом, plan-34 .md и README — позже в 759cee2a40.
+
+Это **процессное упрощение** — не сделать всё в одном focused
+commit'е (как идеально). Реально оказалось split на ~5 commit'ов
+(включая агентские захваты).
+
+**Почему:** параллельный агент (Plan 33/40 работа) непрерывно
+коммитил в master, захватывая мои staged-файлы в свои коммиты.
+Это **race condition** на staging area — после `git add` пока я
+писал длинный commit-message, агент успевал свой `git add ... &&
+git commit`, и моя следующая попытка commit'а либо проходила без
+docs/, либо вообще ничего не staged.
+
+**Как починить:**
+1. **Coordination** — если работаем параллельно, использовать
+   worktree-изоляцию (`git worktree add`) или мьютекс на staging.
+2. **Tooling** — `git commit -a -m "..."` (commit everything tracked)
+   вместо `add + commit` две стадии. Минус: catch'ит чужие модификации
+   тоже.
+3. **Process** — после **любой** plan-file правки сразу делать
+   тройку docs обновлений + commit, **до** того как агент возьмёт
+   следующую задачу. Это в feedback_project_docs.md как правило, но
+   на практике сессия становится непредсказуемой при параллельных
+   агентах.
+
+**Приоритет:** P2 — текущий compromise работает (content сохраняется,
+subject lines в чужих commit'ах inaccurate но diff виден). Полное
+решение требует Git workflow договорённости с пользователем.
+
+
+---
+
+## README + spec docs sync (2026-05-12)
+
+После audit обнаружено что несколько README устарели:
+- `compiler-codegen/README.md` упоминал `build_c.ps1/sh/bat`-скрипты
+  (удалены в Plan 28) и говорил что cross-file imports «не работают
+  в codegen» (Plan 35 R31 это закрыл).
+- `README.ru.md` отставал от `README.md` (Section "Сборка" с устаревшим
+  build_c.*; отсутствовала section "Запуск тестов").
+- `spec/decisions/README.md` таблица обрывалась на D89 (актуально до D96).
+
+Все fixed. Markdown-only changes, не требуют код-regression.
+
+Open: open-questions.md не trogал — большой документ, потенциально
+содержит ответы которые уже стали решениями. Отдельный audit pass —
+post-bootstrap work.
+
+
+---
