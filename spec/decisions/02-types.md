@@ -9028,6 +9028,74 @@ codegen: `emit_c.rs` безусловно (независимо от unsafe-wrap
 | 9 | Вызов cross-module `unsafe fn` static-метода (напр. `RawMem.alloc(...)` из другого модуля) | `unsafe_fns`/`unsafe_static_methods` собираются ТОЛЬКО из `module.items`/`module.peer_files` — деклараций того же модуля/co-equal-файлов; `import`-нутые модули не просматриваются. Найдено этой волной (repro: `unsafe { RawMem.alloc(n) }` в `std/collections/vec/*.nv`, где `RawMem` объявлен в `runtime.raw_mem`, ложно флагуется `E_UNSAFE_UNUSED` — а до этой волны звонки `RawMem.alloc(...)` ВООБЩЕ БЕЗ unsafe-обёртки нигде не ловились `E_UNSAFE_CALL_REQUIRES_WRAP`). | `E_UNSAFE_UNUSED`-heuristic узко распознаёт `RawMem.*` (единственный известный кросс-модульный unsafe-namespace — весь его surface `unsafe fn`, см. `std/runtime/raw_mem.nv`) как unsafe-used независимо от модуля. Полноценный fix коллектора (собирать `unsafe_fns` по всем импортированным модулям) — отдельный, больший followup. |
 | 10 | Передача raw-pointer-аргумента (`.ptr()`/`.as_ptr()`/`&x`/cast к `*T`) в НЕ-`unsafe`-помеченный `extern`/`external` fn | Ничего не требует этого — extern fn без `unsafe fn` keyword просто безопасен для вызова (см. п.5: gate только по `unsafe_attr`); передача `*T`-значения аргументом НЕ входит в карту вообще. | Наблюдаемое, но НЕ officially required соглашение по всему `std/net`+`std/tls` (см. находку ниже). `E_UNSAFE_UNUSED` распознаёт `extern_fn(...ptr-ish-arg...)` как unsafe-used, чтобы не флагать ~35 существующих сайтов, но НЕ добавляет новый required-wrap gate. |
 
+#### D216 §21 AMENDMENT (2026-07-17, [M-d216-unsafe-map-single-file-gaps] закрыт)
+
+Владельческое репро: `nova check std/src/runtime/string/core.nv` (single-file) был
+ЛАТЕНТНО красным (`E_UNSAFE_UNUSED`) на `str @bytes() => unsafe { []u8.new(@ptr,
+@byte_len()) }` — единственная строка, где реальный CU (импорты/тесты/CI) шёл
+зелёным, а изолированный single-file check ловил ложный "unused unsafe". Два
+независимых пробела карты, оба закрыты этой волной:
+
+**(а) Cast к pointer-типу не входил в used-tracking карту.** `expr as *T`/`*mut
+T`/`*uninit T` — канонический способ получить typed pointer из сырого источника
+(напр. `@ptr as *mut u8` в исторической 3-арг форме VIEW-конструктора). §21-карта
+уже узнаёт pointer-target cast для ДРУГИХ гейтов (`expr_is_typed_pointer`'s `As`
+arm — используется deref/index/order-compare/interpolation проверками), но
+used-tracker (`E_UNSAFE_UNUSED`) это распознавание не зеркалировал — `unsafe { p
+as *mut T }`, не содержащий больше НИЧЕГО из карты, ложно флагуется. Заодно
+backfilled пропущенную запись для `char`-target cast (строка была в коде с
+2026-07-11, в карту не попала — тот же класс проблемы, drift между кодом и
+спекой). Обе записи — used-tracking ONLY (см. `E_UNSAFE_UNUSED` ниже), новый
+required-wrap gate НЕ добавляют (значение выражения было и остаётся safe вне
+unsafe-контекста для этих кастов).
+
+**(б) Generic-static/`[]T`-slice-sugar unsafe-fn оверлоад не резолвился ни для
+used-tracking, ни для enforcement.** `Vec[T].new(ptr, len)` / `[]u8.new(ptr,
+len)` парсятся `Member{ obj: TurboFish{ base: Ident(Type), .. } | Path(["__array",
+elem]), name }` — форма, которую П.5-карта (`unsafe_callee_name` match в
+`check_unsafe_context_in_module`) не распознавала вообще (знает только bare-`Ident`
+ресивер и 2-сегментный `Path`, напр. `RawMem.alloc(...)`). Наивное расширение
+матча на ЛЮБОЙ `Member`/`Path`-ресивер было бы arity-blind: у `Vec.new` ТРИ
+арности под ОДНИМ `(тип, имя)` ключом (`new(cap: int = 0)` 0/1-арг, `new(ptr *T,
+len int)` 2-арг **unsafe** VIEW-конструктор, `new(ptr *mut T, len int, cap int)`
+3-арг owned) — потребовать `unsafe { }` у ВСЕХ них означало бы тысячи ложных
+срабатываний на safe-арностях по всему `std/`.
+
+Фикс — резолв КОНКРЕТНОГО оверлоада по ARG COUNT (`static_arities` в
+`check_unsafe_context_in_module`, `types/mod.rs`): для static-ресивер `Item::Fn`
+собирается `(min_required, max_accepted, unsafe_attr)` каждого оверлоада под тем
+же `(тип, имя)` ключом; на call-сайте фактическое число позиционных аргументов
+проверяется против всех оверлоадов — если РОВНО ОДИН диапазон включает это число,
+его `unsafe_attr` резолвится однозначно (для `Vec.new` диапазоны `[0,1]`/`[2,2]`/
+`[3,3]` не пересекаются — 2-арг вызов однозначен). Genuine same-arity ambiguity
+(два оверлоада с ОДИНАКОВЫМ диапазоном) оставляется неразрешённой (консервативно,
+как раньше). Попытка резолвить через checker-канал `resolved_callees` (Plan 172.1
+U.3.4 / 196.7-семья) была отклонена ПОСЛЕ эмпирической проверки — канал остаётся
+ПУСТЫМ для этой формы вызова: `check_call_argbind`'s `Member{obj,..}` arm явно
+делает bail-out для static/type-ресивера (`resolve_instance_method` ожидает
+VALUE-ресивер), так что arg-валидация generic-static ctor-вызовов идёт через
+СОВСЕМ другой, не пишущий в канал путь (codegen-side arity+C-type dispatch,
+`generic_type_methods[base].find(name)`, "1b" turbofish-ветка `emit_c.rs`) — канал
+`resolved_callees` покрывает free-fn/instance-method/2-сегментный-`Path`
+резолв, но НЕ generic-static ctor-форму; экземпляр (б) — из этой волны.
+
+**Enforcement** (новая строка П.5-семьи, не отдельный номер — расширяет П.5):
+резолв по arg-count применяется И к enforcement (`E_UNSAFE_CALL_REQUIRES_WRAP`
+при depth==0), И к used-tracking (asymmetric fallback при неразрешённой арности:
+used-tracking мягкий — засчитывает "used", если вызванное ИМЯ имеет ХОТЬ ОДИН
+unsafe-оверлоад где-либо в scope; enforcement строгий — только при однозначном
+arity-резолве). До фикса `unsafe fn Vec[T].new(ptr, len)` был семантически
+заявлен владельцем, но вызов БЕЗ `unsafe { }` НЕ ловился вообще ни для одной
+static-generic/slice-sugar формы в языке.
+
+Фикстуры: `spec_tests/conformance/d216_unused_unsafe_pos.nv` (позитив: cast-only
+used-tracking + оба call-shape'а с обёрткой), `spec_tests/conformance/neg/
+d216_generic_static_unsafe_overload_neg.nv` + `neg/
+d216_slice_sugar_unsafe_overload_neg.nv` (негатив: enforcement без обёртки, обе
+формы). Реализация: `compiler-codegen/src/types/mod.rs`
+(`check_unsafe_context_in_module`, `generic_static_receiver`,
+`static_overload_arity_range`, `call_callee_name`).
+
 #### Находка (владелец спрашивал 3×): `net_tcp_listen(addr.ptr(), ...)` — требует ли `unsafe { }`?
 
 ```nova
