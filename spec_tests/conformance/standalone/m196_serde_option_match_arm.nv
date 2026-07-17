@@ -1,0 +1,44 @@
+// [196-capstone] regression pin: `B11ai_serialize_contract` (compiler-codegen/src/
+// codegen/emit_c.rs, legacy `infer_call_ret_c`) documented ONE remaining live reason
+// to exist — a MATCH-ARM-BOUND receiver (`Option[T]@serialize`'s own `Some(v) =>
+// v.serialize(s)`, std/src/encoding/serde/serde.nv:268-270) whose pattern-bound `v`
+// was not present in `scope`/`resolved_types_buf` when the checker's `f1_expr`
+// visited the arm body (`ExprKind::Match` did not seed pattern-bound names into
+// `scope` before walking `arm.body`). Plan 196.9's match-arm scope fix (`de15478d1`,
+// `[M-primitive-concrete-overload-receiver-dispatch]`, merged for an UNRELATED
+// reason — i64.clamp primitive dispatch) extends `scope` with the arm's
+// pattern-bound names before walking the body — closing this gap as a side effect.
+// This fixture pins the exact motivating shape (a record with an `Option[str]`
+// field under `#impl(Serialize)`, forcing the auto-derived memberwise
+// `@field.serialize(s)` to route through `Option[str]@serialize`'s match arm for
+// BOTH `Some`/`None`) so a future regression in match-arm scope seeding fails
+// loudly here instead of silently reviving the removed legacy branch.
+// STANDALONE (not in the general conformance mega-CU): importing
+// `std.encoding.serde` pulls its test-peer files' local placeholder types into the
+// CU (same caveat documented in
+// `examples/flagship/aggregator/regressions/serde_encode_pointer_op`).
+module standalone.m196_serde_option_match_arm
+
+import std.encoding.serde.{Serialize, json_encode}
+
+#impl(Serialize)
+type M196Rec { ro tag str, ro note Option[str] }
+
+// Key order in the emitted JSON object is not declaration-order-stable across
+// runs (HashMap-backed field registry — same class of non-determinism already
+// documented for other synthesized-code orderings, e.g. typedef fwd-decl order
+// in `docs/plans/196.5-stage-d-wave3-notes.md`); assert on substring presence
+// per field rather than the whole-string literal so this pin isn't flaky.
+test "Option[str]@serialize match-arm-bound receiver — Some(v) (196-capstone B11ai)" {
+    ro r = M196Rec { tag: "a", note: Some("hi") }
+    ro j = json_encode(r).unwrap()
+    assert(j.contains("\"tag\":\"a\""))
+    assert(j.contains("\"note\":\"hi\""))
+}
+
+test "Option[str]@serialize match-arm-bound receiver — None (196-capstone B11ai)" {
+    ro r = M196Rec { tag: "b", note: None }
+    ro j = json_encode(r).unwrap()
+    assert(j.contains("\"tag\":\"b\""))
+    assert(j.contains("\"note\":null"))
+}
