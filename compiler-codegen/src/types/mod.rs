@@ -15391,7 +15391,58 @@ impl<'a> TypeCheckCtx<'a> {
         }
         // 172.1.2 (fluent-return, 2026-07-03): `-> @` (returns_receiver) — тип
         // эха = тип ресивера (D132/D181-факт); return_type при этом None.
+        //
+        // [M-196-ch-coverage2, Producer B-fluent-generic] The `-> @` echo above
+        // is BY CONSTRUCTION independent of whether `f` ALSO declares its OWN
+        // method-level generics (`Vec[T] mut @append[S AsSlice[T]](other S) ->
+        // @`) — `S` is bound purely from the call's ARGUMENTS, never from the
+        // return. Before this fix, that meant every fluent-with-own-generics
+        // call-site NEVER reached `resolve_return_channel` at all (this fn
+        // returned two lines below, before any method-generic resolution ran)
+        // — a permanent, structural `node_substs` miss for the WHOLE class,
+        // regardless of how concrete the call-site actually was. Empirically
+        // confirmed the dominant Stage-B2 (`resolve_method_level_subst`)
+        // `reason=miss` class on the std/collections corpus (`docs/plans/
+        // wip/196-ch-coverage2-notes.md` baseline): `Vec[byte].append`
+        // alone ~300/311 raw fallback hits. Route through the SAME
+        // constraint-solver channel (`resolve_return_channel`) the non-fluent
+        // branches below already use, passing `peeled` itself as the `ret`
+        // template — its own role is only to seed `ret_template` (unused here,
+        // `rt` is discarded: this fn's return stays the unconditional receiver
+        // echo, byte-parity preserved) so the SAME solver call also unifies
+        // `extra_eqs` (method-generic param↔arg) and resolves `ordered` — the
+        // per-declared-name (carrier ++ method) map `resolve_method_level_subst`
+        // needs. Gate: `f.generics` non-empty (nothing to gain otherwise) +
+        // args available (`args_scope` — the 0-arity wrapper has no args to
+        // bind from, mirrors every other producer's contract) + the solver
+        // INDEPENDENTLY closes EVERY carrier AND method-level name
+        // (`resolve_return_channel`'s own whole-map + `rt_is_closed` gates,
+        // `ordered` stays empty on ANY residual — propose-then-verify, no new
+        // trust surface, zero risk to the unconditional echo below).
         if f.returns_receiver {
+            if !f.generics.is_empty() {
+                if let (Some(cid), Some(_)) = (call_id, args_scope) {
+                    let method_names: HashSet<String> =
+                        f.generics.iter().map(|g| g.name.clone()).collect();
+                    let method_names_ordered: Vec<String> =
+                        f.generics.iter().map(|g| g.name.clone()).collect();
+                    if let Some((_, ordered)) = self.resolve_return_channel(
+                        recv, recv_ty, peeled, peeled, &method_names,
+                        &method_names_ordered, &f.params, args_scope,
+                    ) {
+                        if !ordered.is_empty() {
+                            if std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some() {
+                                eprintln!(
+                                    "[NODE_SUBSTS] producer=B-fluent-generic call_id={:?} \
+                                     method={} n={}",
+                                    cid, f.name, ordered.len()
+                                );
+                            }
+                            self.node_substs.borrow_mut().insert(cid, ordered);
+                        }
+                    }
+                }
+            }
             return Some(peeled.clone());
         }
         // [196.5 Stage-D волна-4] B11ag producer (external_registry feeds the
