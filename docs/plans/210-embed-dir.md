@@ -1150,10 +1150,61 @@ clang 18 не знает директиву вообще (это НЕ ошибк
 существующий hex-рендер, **байт-в-байт то же поведение**, что было (нулевое
 изменение для CI, снятие пользы только там, где технически невозможно).
 
-### Ф.8.3 — Реализация (feature-probe + sidecar + fallback)
+### Ф.8.3 — Реализация (feature-probe + sidecar + fallback) — ✅ ГОТОВО
 
-*(Если это поле пусто на момент чтения — значит sonnet ещё не закоммитил
-код; смотри `docs/plans/wip/210-goparity-notes.md` за текущим статусом.)*
+**Рантайм-проб** (`compiler-codegen/src/test_runner.rs`, `embed_c23_supported()`):
+кэшированный (`OnceLock<bool>`, один раз за процесс) — компилирует крошечный
+`#embed`-пробник через `clang -std=c23 -fsyntax-only` (без объектного файла,
+дёшево); `false` для не-clang тулчейнов и для clang, отвергающего пробник.
+`find_clang_path` повышена до `pub(crate)` для переиспользования.
+
+**Sidecar-эмиссия** (`compiler-codegen/src/codegen/emit_c.rs`): новое поле
+`CEmitter.blob_sidecar_dir: Option<PathBuf>` (+ сеттер `set_blob_sidecar_dir`,
+по образцу существующих `set_mono_depth_limit`/`set_source_for_annotations`).
+`render_interned_blob_literals` — когда `blob_sidecar_dir` задан И
+`embed_c23_supported()` — каждый блоб пишется в `<sym>.bin` РЯДОМ с `.c`
+(через новый `try_write_blob_sidecar`) и рендерится `#embed "<sym>.bin"`
+вместо `0x%02X,`-массива. **Per-blob fallback:** сбой sidecar-записи одного
+блоба не теряет данные — этот ОДИН блоб рендерится hex'ом, остальные (если
+проб/директория ок) — по-прежнему `#embed`. Дефолт (`blob_sidecar_dir ==
+None`) — ЗАДОКУМЕНТИРОВАННОЕ и ПРОВЕРЕННОЕ (см. верификация ниже)
+byte-identical поведение с pre-Ф.8 кодом.
+
+**Wiring — OPT-IN, один call-site** (`nova-cli/src/main.rs`, `build`-команда):
+`NOVA_C23_EMBED=1` — единственный переключатель. Env var, не CLI-флаг
+(`clap`) — потому что `emit_module`/`CEmitter` вызывается из ТРЁХ разных
+бинарей/файлов (`nova-cli/main.rs`, `compiler-codegen/main.rs`,
+`test_runner.rs`) и проброс через сигнатуры задел бы все три; env
+var — ортогонально, нулевой сигнатурный след. Директория sidecar вычисляется
+РАНЬШЕ обычного места (`path_hash`/`default_tmp_dir` чисты от `path`+pid
+процесса → байт-в-байт совпадают с уже существующим `tmp_path`, вычисляемым
+позже в той же функции для записи `.c`) — **дефолт (env unset) не меняет ни
+одной строки в горячем пути** `nova build` (ранний блок — чистый no-op,
+условие на `env::var` даже не читает `path_hash` если var не установлена).
+
+**НЕ wired этой волной:** `test_runner.rs`'s `nova test`-путь (карта
+симметрична, несложный follow-up — не сделано из-за бюджета времени после
+сетевого обрыва в процессе исполнения). `compiler-codegen/main.rs`
+(standalone `nova-codegen` CLI) — тоже не wired (секондари тулза).
+
+**Верификация E2E** (300 КБ `embed("asset.bin")`, `--keep-artifacts`,
+локальный clang 22.1.5):
+
+| | `NOVA_C23_EMBED` unset (дефолт) | `NOVA_C23_EMBED=1` |
+|---|---|---|
+| `.c` размер | 1 774 947 байт (18752× `0x`, 0× `#embed`) | 181 237 байт (0× `0x` для этого блоба, 1× `#embed`) |
+| sidecar-файл | нет | `nova_blob_<hash>.bin`, 300 000 байт — точное совпадение с `asset.bin` |
+| `.exe` вывод | `300000` | `300000` (байт-в-байт идентичный рантайм-результат) |
+
+Регрессия исключена (дефолт-путь не тронут ни байтом); прирост подтверждён
+на реальном (не только синтетическом) файле сквозным прогоном компилятора.
+
+**Таргетный regression-check после Ф.8** (не мега-CU): `nova test
+std/src/prelude/embed_test.nv` (10/10) + 3 разноплановых `d412d_*`/`d412e_*`
+фикстуры (neg not_found, standalone warning, neg not_utf8) — все PASS,
+эмиттер общий код (`render_interned_blob_literals`) не сломал существующий
+hex-путь ни для одного из них (все три собирались с дефолтным `blob_sidecar_dir
+== None`).
 
 ### Ф.8.4 — Стык с Планом 209 (взаимная ссылка)
 
