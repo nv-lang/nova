@@ -51381,22 +51381,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // arm was a redundant second read of the same fact. NO-HIT across
                         // conformance + std/src/collections + std/src/data + std/src/net
                         // (docs/plans/196.5-stage-d-notes.md) ⟹ structurally unreachable (§5).
-                        // [196-capstone2] B10h_newtype_constructor REMOVED (was: Plan 115
-                        // D214 `Type(value)` newtype constructor — return type = aliased
-                        // C type, mirroring emit_call's newtype intercept, single-arg only).
-                        // p196-rtbuf-producers (726e734af, commit 90328e908, Producer Q1
-                        // "newtype/named-tuple ctor") channels `TypeDeclKind::Newtype`/
-                        // `NamedTuple` bare-ctor calls into `resolved_types_buf` ahead of
-                        // this legacy arm. Detach+panic trial (this session): 0 fires across
-                        // std/src/math (documented primary traffic, rtbuf-notes §4),
-                        // std/src/collections+time+encoding, standalone corpus, AND
-                        // examples/flagship/aggregator (`--strict-effects`, release) — the
-                        // aggregator run is significant here because a SIBLING branch
-                        // (B10f) DID still fire there (splitmix64_step, the 206/splitmix64
-                        // app-regression precedent) on the SAME cascade, proving the
-                        // flagship corpus actually exercises this code path family and
-                        // would have caught a live B10h call too. NO-HIT ⟹ structurally
-                        // unreachable (§5).
+                        // [196-capstone2] B10h снос ОТМЕНЁН тем же днём (2026-07-17,
+                        // интегратор): перепись-доказательство было невалидным для
+                        // d45_inferred_return_type.nv — параллельная d45-регрессия
+                        // (E_NO_MATCHING_OVERLOAD, ba9a8a2f3) резала фикстуру на чекере
+                        // ДО codegen, её трафик по этой ветке был замаскирован. После
+                        // d45-фикса (fc06bdee2) снос дал CC-FAIL: у GENERIC newtype-
+                        // конструктора (Counter16[T](v)) продюсер Q1 честно молчит
+                        // (generics-гейт) — легаси-ветка остаётся единственным
+                        // источником. Урок протокола: детач+panic валиден только на
+                        // корпусе, где КАЖДАЯ фикстура доходит до codegen.
+                        // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)`
+                        // newtype constructor — return type = aliased C type.
+                        // Mirror emit_call newtype intercept (single-arg only).
+                        if args.len() == 1 {
+                            if let Some(aliased_c) = self.type_aliases.get(name).cloned() {
+                                self.icr_trace("B10h_newtype_constructor");
+                                return aliased_c;
+                            }
+                        }
                         // [196.5 Stage-D] B10i_external_registry_free_fn REMOVED. Free
                         // external-fn (`ExternalRegistry.by_key(("", name))`) return-type
                         // fallback — same by-key registry lookup as the removed
@@ -51618,16 +51621,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // still fires) — this second, later check in the cascade is NO-HIT ⟹
                         // structurally unreachable (§5), same redundant-second-check pattern as
                         // the already-removed B11z_prim_builtin_method_second.
-                        // [196-capstone2] B10l_named_tuple_constructor REMOVED (was: Plan 120
-                        // D215 named tuple constructor — "Point" → "NovaTuple_Point"). Same
-                        // p196-rtbuf-producers newtype/named-tuple ctor producer (726e734af,
-                        // commit 90328e908) that closed sibling B10h above channels this form
-                        // too. Detach+panic trial: 0 fires across std/src/math (documented
-                        // primary traffic, rtbuf-notes §4), collections+time+encoding,
-                        // standalone, and examples/flagship/aggregator (release,
-                        // --strict-effects — the same run where sibling B10f DID still fire,
-                        // proving this corpus exercises the cascade family). NO-HIT ⟹
-                        // structurally unreachable (§5).
+                        // [196-capstone2] B10l снос ОТМЕНЁН тем же днём (2026-07-17,
+                        // интегратор) — та же причина, что у B10h выше: перепись шла при
+                        // d45-регрессии, резавшей d45_inferred_return_type.nv на чекере
+                        // до codegen (трафик ветки замаскирован); после d45-фикса generic
+                        // named-tuple ctor (продюсер молчит по generics-гейту) снова
+                        // нуждается в этой легаси-ветке — CC-FAIL undeclared identifier.
+                        // Plan 120 (D215): named tuple constructor — "Point" → "NovaTuple_Point".
+                        if let Some(c_ty) = self.type_aliases.get(name.as_str()) {
+                            if c_ty.starts_with("NovaTuple_") {
+                                self.icr_trace("B10l_named_tuple_constructor");
+                                return c_ty.clone();
+                            }
+                        }
                         self.icr_trace("B10m_ident_empty_fallback");
                         // [196-capstone2] Детач+panic ПРОБОВАЛСЯ — 0 fires across collections/
                         // time/encoding/math/standalone/aggregator. NOT removed: this arm's
