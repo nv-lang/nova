@@ -1,7 +1,30 @@
 # План 205 — компрессия из nova_rt в пакет nv-lang/nova-compress
 
-**Статус:** 📋 СОГЛАСОВАН 2026-07-13 (владелец: «ОК»). **После:** гейты 203 (не гнать две
-миграции http-стека одновременно).
+**Статус:** ✅ ЗАКРЫТ 2026-07-17. Ф.0-Ф.1 (репа `nv-lang/nova-compress`, тег `v0.1.0`,
+паритет с монорепо сверен файл-к-файлу) и Ф.3 (публикация) были сделаны раньше;
+Ф.2 (потребители + вычистка монорепо) закрыт этим заходом (ветка `p205-dedup`,
+коммит `899347db4`): грепом по `std/`+`examples/`+`spec_tests/`+`nova_tests/`
+подтверждено НОЛЬ прочих потребителей `std.encoding.compress` (только два
+spec_tests-фикстуры — `d337_brotli_ffi.nv`, удалён вместе с эквивалентом,
+он же живой в nova-compress; `xmodule_struct_variant_ctor_*` — общий
+регресс-кейс cross-module type-collision, не привязан к compress, оставлен);
+удалены `std/src/encoding/compress/**` (модуль+тесты+neg) и
+`nova_rt/brotli_shim.{c,h}` + `nova_rt/brotli/**` (7 МБ vendored); в
+`test_runner.rs` retired `BrotliConfig`/`detect_brotli`/`c_file_uses_brotli`/
+`source_uses_brotli` + все conditional-link сайты (build_command clang/msvc/gcc
++ multi-TU) — generic `[ffi] vendor_src_dirs`/`build_missing_vendor_ffi_libs`
+(прецедент nova-tls/mbedTLS) полностью покрывает use-case, nova-compress уже
+на него переехал. `nova-test-regression.yml` — `libbrotli-dev` снят из
+apt-install (два джоба); `docs/linux-build.md` — brotli-строка снята из
+таблицы пакетов. Гейты: `cargo build --release` чист; `nova check std` —
+дельта ровно исчезнувший compress (18 pre-existing FAIL, все neg-фикстуры/
+известный single-file `prelude/protocols.nv` артефакт, ноль новых); `nova test
+std/src/encoding` 8/0/7skip; `nova test src` в nova-compress (та же
+модифицированная тулчейн-сборка) — весь функциональный набор (checksum/
+deflate/gzip/zlib/brotli d333-d337, реальный RFC 7932 decode через
+generic-FFI-собранный libbrotlidec) зелёный; греп `brotli` по
+`compiler-codegen/**` = 0 кроме двух historical "retired"-комментариев.
+`std/tls`/`libmbedtls-dev` НЕ тронуты (отдельный precedent/scope).
 
 ## Мотив
 
