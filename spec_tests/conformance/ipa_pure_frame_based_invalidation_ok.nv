@@ -18,7 +18,7 @@ fn Shape4_1 mut @draw_twice() -> int {
     // V3.1 IPA: @area_approx reads only @radius; write to @color
     // doesn't invalidate.
     ro a = @area_approx() + @area_approx()
-    @color = @color + 1
+    @color += 1
     a + @area_approx() + @area_approx()
 }
 

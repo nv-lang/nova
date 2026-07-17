@@ -320,7 +320,7 @@ export fn Vec[T] mut @reserve(additional int) -> @ {
     mut new_cap = if @cap == 0 { 8 } else { @cap * 2 }
     // KEEP as while: non-unit-step (×2 doubling), not a `0..@len` index loop.
     while new_cap < needed {
-        new_cap = new_cap * 2
+        new_cap *= 2
     }
     @cap(new_cap)
 }

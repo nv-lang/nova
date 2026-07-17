@@ -16,7 +16,7 @@ fn d69_first(...items []int) -> int =>
 fn d69_sum(...items []int) -> int {
     mut total = 0
     for x in items {
-        total = total + x
+        total += x
     }
     total
 }
@@ -24,7 +24,7 @@ fn d69_sum(...items []int) -> int {
 fn d69_join(...items []str) -> int {
     mut total = 0
     for s in items {
-        total = total + s.byte_len()
+        total += s.byte_len()
     }
     total
 }

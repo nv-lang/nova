@@ -30,8 +30,8 @@ fn D35Vec2 @sum_from_accessors() -> f64 => @x_val() + @y_val()
 
 // Mutating method: fn Type mut @method(...)
 fn D35Vec2 mut @scale(factor f64) {
-    @x = @x * factor
-    @y = @y * factor
+    @x *= factor
+    @y *= factor
 }
 
 fn D35Vec2 mut @reset() {
@@ -51,11 +51,11 @@ fn D35Counter.zero() -> D35Counter => D35Counter.new(0)
 fn D35Counter @value() -> int => @_count
 
 fn D35Counter mut @increment() {
-    @_count = @_count + 1
+    @_count += 1
 }
 
 fn D35Counter mut @add(n int) {
-    @_count = @_count + n
+    @_count += n
 }
 
 

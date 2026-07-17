@@ -98,11 +98,9 @@ export fn CharsIter @iter() -> CharsIter => @
 export fn CharsIter @count() -> int {
     ro (bytes, n) = (@buf.bytes(), @buf.byte_len())
     mut count = 0
-    mut i = @pos
-    while i < n {
+    for i in @pos..n {
         ro b = bytes[i] as int
         if (b & 0xC0) != 0x80 { count += 1 }
-        i += 1
     }
     count
 }

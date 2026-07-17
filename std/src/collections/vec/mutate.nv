@@ -24,7 +24,7 @@ export fn Vec[T] mut @push(v T) -> @ {
     unsafe {
         @data.write_at(@len, v)
     }
-    @len = @len + 1
+    @len += 1
 }
 
 /// Remove and return the last element, or `None` if empty.
@@ -32,7 +32,7 @@ export fn Vec[T] mut @pop() -> Option[T] {
     if @len == 0 {
         return None
     }
-    @len = @len - 1
+    @len -= 1
     Some(unsafe { @data.read_at(@len) })
 }
 
@@ -52,7 +52,7 @@ export fn Vec[T] mut @insert(i int, v T) -> @
         }
         @data.write_at(i, v)
     }
-    @len = @len + 1
+    @len += 1
 }
 
 /// Bulk-insert (splice) every element of `other` at index `i`, shifting the
@@ -93,7 +93,7 @@ export fn Vec[T] mut @splice(i int, other Vec[T]) -> @
             }
             RawMem.copy(src_data as *u8, @data.offset(i) as *mut u8, src_len * size_of[T]())
         }
-        @len = @len + src_len
+        @len += src_len
     }
 }
 
@@ -111,7 +111,7 @@ export fn Vec[T] mut @remove(i int) -> T
             RawMem.copy(@data.offset(i + 1) as *u8, @data.offset(i) as *mut u8, tail * size_of[T]())
         }
     }
-    @len = @len - 1
+    @len -= 1
     removed
 }
 
@@ -127,7 +127,7 @@ export fn Vec[T] mut @swap_remove(i int) -> T
             @data.write_at(i, @data.read_at(last))
         }
     }
-    @len = @len - 1
+    @len -= 1
     removed
 }
 
@@ -161,8 +161,8 @@ export fn Vec[T] mut @reverse() -> @ {
             @data.write_at(lo, @data.read_at(hi))
             @data.write_at(hi, tmp)
         }
-        lo = lo + 1
-        hi = hi - 1
+        lo += 1
+        hi -= 1
     }
 }
 
@@ -273,7 +273,7 @@ export fn Vec[T] mut @append[S AsSlice[T]](other S) -> @ {
         unsafe {
             RawMem.copy(other.ptr() as *u8, @data.offset(@len) as *mut u8, m * size_of[T]())
         }
-        @len = @len + m
+        @len += m
     }
 }
 
@@ -293,7 +293,7 @@ export fn Vec[T] mut @retain(pred fn(T) -> bool) -> @ {
                     @data.write_at(write, v)
                 }
             }
-            write = write + 1
+            write += 1
         }
     }
     @len = write
@@ -421,7 +421,7 @@ export fn Vec[T] mut @append_zero(n int) -> @
     unsafe {
         RawMem.fill(@data.offset(@len) as *mut u8, 0 as u8, n * size_of[T]())
     }
-    @len = @len + n
+    @len += n
 }
 
 // NOTE: `@compare` (the `Compare` protocol impl) lives in `protocols.nv`, not

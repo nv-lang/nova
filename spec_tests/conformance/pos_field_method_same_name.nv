@@ -7,7 +7,7 @@ module spec_tests.conformance
 type Buf4 { priv mut data int, priv mut len int }
 
 fn Buf4.new() -> Self => { data: 0, len: 0 }
-fn Buf4 @push(v int) { @data = @data + v; @len = @len + 1 }
+fn Buf4 @push(v int) { @data += v; @len += 1 }
 // @len() returns the field value — @len (no parens) = field
 fn Buf4 @len() -> int => @len
 

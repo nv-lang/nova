@@ -31,7 +31,7 @@ type D411RecCounter {
 fn D411RecCounter.new() -> D411RecCounter => { n: 0 }
 
 fn d411r_bump(mut c D411RecCounter) {
-    c.n = c.n + 1
+    c.n += 1
 }
 
 fn d411r_make_outer(mut c D411RecCounter) -> D411RecOuter {

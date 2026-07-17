@@ -16,9 +16,9 @@ fn b2_run_success() -> str {
     {
         defer(o ScopeOutcome) {
             match o {
-                Success    => { trail = trail + "S" }
-                Failure(_) => { trail = trail + "F" }
-                Panic(_)   => { trail = trail + "P" }
+                Success    => { trail += "S" }
+                Failure(_) => { trail += "F" }
+                Panic(_)   => { trail += "P" }
             }
         }
     }
@@ -31,9 +31,9 @@ fn b2_run_failure() -> str {
     with Fail = effect Fail { fail(_m) { interrupt () } } {
         defer(o ScopeOutcome) {
             match o {
-                Success    => { trail = trail + "S" }
-                Failure(_) => { trail = trail + "F" }
-                Panic(_)   => { trail = trail + "P" }
+                Success    => { trail += "S" }
+                Failure(_) => { trail += "F" }
+                Panic(_)   => { trail += "P" }
             }
         }
         b2_throws()

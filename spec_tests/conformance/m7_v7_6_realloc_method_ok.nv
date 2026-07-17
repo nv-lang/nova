@@ -20,7 +20,7 @@ fn Slot5_1 mut @replace_with(other Slot5_1) -> () {
 
 // `mut` receiver + non-Self param (int) ⇒ NOT marked replaces_self.
 fn Slot5_1 mut @bump(by int) -> () {
-    @count = @count + by
+    @count += by
 }
 
 fn Slot5_1 @get() -> int => @count

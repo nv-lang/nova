@@ -9,7 +9,7 @@ type Box4_plan12371ipamutsurvivesnonwritingcallok {
 
 // This method writes ONLY @other — IPA write_set = {"other"}.
 fn Box4_plan12371ipamutsurvivesnonwritingcallok mut @bump_other() -> () {
-    @other = @other + 1
+    @other += 1
 }
 
 fn Box4_plan12371ipamutsurvivesnonwritingcallok mut @use_counter() -> int {

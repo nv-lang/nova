@@ -141,11 +141,9 @@ export fn BufReader[R Read] mut @read(buf mut []u8) -> Result[int, IoError] {
     }
     if avail == 0 { return Ok(0) }
     ro n = want.min(avail)
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         buf[i] = @buf[@pos + i]
-        i += 1
     }
-    @pos = @pos + n
+    @pos += n
     Ok(n)
 }

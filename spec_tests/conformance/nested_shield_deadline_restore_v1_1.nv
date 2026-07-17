@@ -47,7 +47,7 @@ fn run_nested() -> int {
         // Outer body now sleeps 50ms — pre-fix this would fire
         // bogus watchdog-варн (ист. CleanupTimeoutError; 50ms > 5ms inner's stale budget).
         Time.sleep(50)
-        result = result + outer.id
+        result += outer.id
     }
     return result
 }

@@ -11,7 +11,7 @@ import std.collections.vec.{Vec}
 fn sum_all(v Vec[int]) -> int {
     mut s = 0
     for i in 0..v.len() {
-        s = s + v[i]
+        s += v[i]
     }
     s
 }

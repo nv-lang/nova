@@ -15,13 +15,15 @@ fn Cv6_1 mut @sum_nested(n int, m int) -> int {
     // V2.1 LICM weighted: nested while bodies inflate read count.
     mut acc = 0
     mut i = 0
+    // nova:allow W_WHILE_COUNTER_FOR_RANGE -- Plan 123 LICM/field-cache conformance fixture: pins the optimizer behavior specifically on a while-shaped loop; for-in desugars through the iterator protocol (D58), a different codegen path — rewriting would risk silently exercising something else
     while i < n {
         mut j = 0
+        // nova:allow W_WHILE_COUNTER_FOR_RANGE -- Plan 123 LICM/field-cache conformance fixture: pins the optimizer behavior specifically on a while-shaped loop; for-in desugars through the iterator protocol (D58), a different codegen path — rewriting would risk silently exercising something else
         while j < m {
-            acc = acc + @x
-            j = j + 1
+            acc += @x
+            j += 1
         }
-        i = i + 1
+        i += 1
     }
     acc
 }

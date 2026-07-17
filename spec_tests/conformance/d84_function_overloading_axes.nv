@@ -38,7 +38,7 @@ fn str @d84_repeat() -> str => @ + @
 fn str @d84_repeat(n int) -> str {
     mut r = ""
     for _ in 0..n {
-        r = r + @
+        r += @
     }
     r
 }

@@ -36,7 +36,7 @@ fn Counter3_3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 fn use_single() -> int {
     mut sum = 0
     consume c = Counter3_3.new(7) {
-        sum = sum + c.id
+        sum += c.id
     }
     sum
 }
@@ -44,9 +44,9 @@ fn use_single() -> int {
 fn use_nested() -> int {
     mut sum = 0
     consume outer = Counter3_3.new(10) {
-        sum = sum + outer.id
+        sum += outer.id
         consume inner = Counter3_3.new(3) {
-            sum = sum + inner.id
+            sum += inner.id
         }
     }
     sum

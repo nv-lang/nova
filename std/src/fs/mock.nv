@@ -111,7 +111,7 @@ fn MemFs @find(key str) -> Option[int] {
 }
 
 fn MemFs mut @tick() -> i64 {
-    @clock = @clock + (1 as i64)
+    @clock += 1 as i64
     @clock
 }
 
@@ -172,7 +172,7 @@ fn MemFs mut @mem_open(path []u8, flags int, mode int) -> int {
     if (flags & OPEN_TRUNC) != 0 { @datas[idx] = []u8.new() }
     ro start = if appending { @datas[idx].len() } else { 0 }
     ro fd = @next_fd
-    @next_fd = @next_fd + 1
+    @next_fd += 1
     @fds.push(fd)
     @fd_keys.push(key)
     @fd_pos.push(start)
@@ -219,8 +219,7 @@ fn MemFs @read_common(key str, buf mut []u8, pos int) -> int {
             ro rem = data.len() - pos
             if rem <= 0 { return 0 }
             ro n = cap.min(rem)
-            mut j = 0
-            while j < n { buf[j] = data[pos + j]; j += 1 }
+            for j in 0..n { buf[j] = data[pos + j] }
             n
         }
     }
@@ -384,12 +383,12 @@ fn MemFs mut @mem_scandir_open(path []u8) -> int {
     @scan_kinds = kinds
     @scan_pos = 0
     ro h = @next_fd
-    @next_fd = @next_fd + 1
+    @next_fd += 1
     h
 }
 
 fn MemFs mut @mem_scandir_next(h int) -> int {
-    if @scan_pos < @scan_names.len() { @scan_pos = @scan_pos + 1; 1 } else { 0 }
+    if @scan_pos < @scan_names.len() { @scan_pos += 1; 1 } else { 0 }
 }
 
 fn MemFs @mem_scandir_name(h int) -> str {

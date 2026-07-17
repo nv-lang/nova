@@ -8,6 +8,6 @@ module neg.neg_range_open_in_for
 fn main() -> () {
     mut sum = 0
     for x in 3.. {
-        sum = sum + x
+        sum += x
     }
 }

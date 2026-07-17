@@ -149,7 +149,7 @@ export fn BoxIter[T] @enumerate() -> BoxIter[(int, T)] {
     { step: || match src.next() {
         Some(x) => {
             ro idx = i
-            i = i + 1
+            i += 1
             Some((idx, x))
         },
         None => None,
@@ -164,7 +164,7 @@ export fn BoxIter[T] @take(n int) -> BoxIter[T]
     mut left = n
     { step: || {
         if left <= 0 { return None }
-        left = left - 1
+        left -= 1
         src.next()
     } }
 }
@@ -177,7 +177,7 @@ export fn BoxIter[T] @skip(n int) -> BoxIter[T]
     mut to_drop = n
     { step: || {
         while to_drop > 0 {
-            to_drop = to_drop - 1
+            to_drop -= 1
             match src.next() {
                 Some(_) => {},
                 None => return None,
@@ -209,7 +209,7 @@ export fn BoxIter[T] @step_by(n int) -> BoxIter[T]
         }
         mut i = to_skip
         while i > 0 {
-            i = i - 1
+            i -= 1
             match src.next() {
                 Some(_) => {},
                 None => return None,
@@ -362,7 +362,7 @@ export fn Vec[T] @chunks(n int) -> BoxIter[Self]
         }
         ro end = if i + n < total { i + n } else { total }
         ro w = src[i..end]
-        i = i + n
+        i += n
         Some(w)
     } }
 }
@@ -393,7 +393,7 @@ export fn Vec[T] @chunks_exact(n int) -> BoxIter[Self]
             return done
         }
         ro w = src[i..(i + n)]
-        i = i + n
+        i += n
         Some(w)
     } }
 }
@@ -457,7 +457,7 @@ export fn Vec[T] @windows(n int) -> BoxIter[Self]
             return done
         }
         ro w = src[i..(i + n)]
-        i = i + 1
+        i += 1
         Some(w)
     } }
 }
@@ -544,7 +544,7 @@ export fn BoxIter[T] mut @count() -> int {
     mut n = 0
     while true {
         match @next() {
-            Some(_) => { n = n + 1 },
+            Some(_) => { n += 1 },
             None => return n,
         }
     }
@@ -558,7 +558,7 @@ export fn BoxIter[T] mut @sum(zero T) -> T {
     mut acc = zero
     while true {
         match @next() {
-            Some(x) => { acc = acc + x },
+            Some(x) => { acc += x },
             None => return acc,
         }
     }

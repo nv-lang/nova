@@ -98,24 +98,20 @@ fn parse_tzif_block(b []u8, pos0 int, h TzifHeader, time_size int) -> Result[Zon
     // ttinfo: { utoff i32 BE, isdst u8, desigidx u8 } — 6 байт.
     // offsets[0] — первый non-DST тип (конвенция TZif), иначе тип 0.
     mut first_std i64 = -1
-    mut t = 0
-    while t < typecnt {
+    for t in 0..typecnt {
         ro isdst = b[types_at + t * 6 + 4]
         if first_std < 0 && isdst == 0 { first_std = t as i64 }
-        t += 1
     }
     ro init_type = if first_std >= 0 { first_std as int } else { 0 }
     offsets.push(be_i32(b, types_at + init_type * 6) as i32)
 
-    mut i = 0
-    while i < timecnt {
+    for i in 0..timecnt {
         ro tt = if time_size == 8 { be_i64(b, times_at + i * 8) }
             else { be_i32(b, times_at + i * 4) }
         ro ti = b[idx_at + i] as int
         if ti >= typecnt { return Err(BadTzData("type index out of range")) }
         transitions.push(tt)
         offsets.push(be_i32(b, types_at + ti * 6) as i32)
-        i += 1
     }
     Ok({ transitions, offsets })
 }

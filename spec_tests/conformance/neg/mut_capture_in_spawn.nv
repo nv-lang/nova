@@ -11,8 +11,8 @@ module neg.mut_capture_in_spawn
 fn racy_sum() -> int {
     mut acc = 0
     supervised {
-        spawn { acc = acc + 1 }
-        spawn { acc = acc + 2 }
+        spawn { acc += 1 }
+        spawn { acc += 2 }
     }
     acc
 }

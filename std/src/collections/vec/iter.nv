@@ -38,6 +38,6 @@ export fn Vec[T] @iter() -> VecIter[T] =>
 export fn VecIter[T] mut @next() -> Option[T] {
     if @idx >= @len { return None }
     ro v = unsafe { @data.read_at(@idx) }
-    @idx = @idx + 1
+    @idx += 1
     Some(v)
 }

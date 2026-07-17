@@ -40,10 +40,11 @@ fn sq_plus(x int) -> int
 fn main() Io -> () {
     mut acc = 0
     mut i = 0
+    // nova:allow W_WHILE_COUNTER_FOR_RANGE -- perf-isolation fixture (Plan 140 Ф.5): measures contract-check overhead in a raw loop; for-in's iterator-protocol desugar (D58) would add overhead of its own and dilute the exact signal this fixture isolates
     while i < 20000000 {
         ro v = sq_plus(i % 1000)
         acc = (acc + v) % 1000000007
-        i = i + 1
+        i += 1
     }
     if acc >= 0 {
         println("PERF_DONE")

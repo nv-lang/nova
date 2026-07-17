@@ -9,7 +9,7 @@ type Box4_1 {
 
 // This method writes ONLY @other — IPA write_set = {"other"}.
 fn Box4_1 mut @bump_other() -> () {
-    @other = @other + 1
+    @other += 1
 }
 
 fn Box4_1 mut @use_counter() -> int {

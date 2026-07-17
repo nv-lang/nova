@@ -14,7 +14,7 @@ fn Cv10_1 mut @sum_range_5() -> int {
     // Range expr `0..5` вЂ” literal bound 5 parsed via parse_loop_iter_count.
     mut acc = 0
     for i in 0..5 {
-        acc = acc + @y
+        acc += @y
     }
     acc
 }
@@ -23,7 +23,7 @@ fn Cv10_1 mut @sum_range_inclusive_3() -> int {
     // Range expr `1..=3` вЂ” literal inclusive, 3 iterations (1,2,3).
     mut acc = 0
     for i in 1..=3 {
-        acc = acc + @y
+        acc += @y
     }
     acc
 }

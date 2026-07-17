@@ -13,7 +13,7 @@ fn d43_combine(a int, b int, f fn(int, int) -> int) -> int => f(a, b)
 fn d43_twice(x int, f fn(int) -> int) -> int => f(f(x))
 fn d43_filter_count(xs []int, pred fn(int) -> bool) -> int {
     mut cnt = 0
-    for x in xs { if pred(x) { cnt = cnt + 1 } }
+    for x in xs { if pred(x) { cnt += 1 } }
     cnt
 }
 // Plan 196.3 (D43 one-window): `infer_trailing_block_sig` reads the trailing

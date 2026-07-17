@@ -103,8 +103,7 @@ export fn to_lowercase(s str) -> str {
     ro n = cps.len()
     mut out []u32 = []u32.new()
     out.cap(n)
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         ro cp = cps[i]
         if cp == CAP_SIGMA {
             // Σ → ς word-finally, σ otherwise — fluent `out.push(..)` tail in the
@@ -116,7 +115,6 @@ export fn to_lowercase(s str) -> str {
                 None => out.push(cp)
             }
         }
-        i += 1
     }
     cps_to_str(out)
 }

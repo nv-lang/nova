@@ -45,12 +45,10 @@ export fn BytesReader mut @read(buf mut []u8) -> Result[int, IoError] {
     ro rem = @data.len() - @pos
     if rem <= 0 { return Ok(0) }
     ro n = cap.min(rem)
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         buf[i] = @data[@pos + i]
-        i += 1
     }
-    @pos = @pos + n
+    @pos += n
     Ok(n)
 }
 

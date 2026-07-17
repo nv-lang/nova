@@ -11,9 +11,10 @@ type Polynomial2 {
 fn Polynomial2 @value() -> int {
     mut r = 1
     mut i = 0
+    // nova:allow W_WHILE_COUNTER_FOR_RANGE -- Plan 123 LICM/field-cache conformance fixture: pins the optimizer behavior specifically on a while-shaped loop; for-in desugars through the iterator protocol (D58), a different codegen path — rewriting would risk silently exercising something else
     while i < @power {
-        r = r * @coeff
-        i = i + 1
+        r *= @coeff
+        i += 1
     }
     r
 }

@@ -42,7 +42,7 @@ fn d32_clobber(mut v D32Vec3) {
 
 // In-out accumulation through repeated writes (Plan 184 Р10).
 fn d32_add_into(mut acc int, delta int) {
-    acc = acc + delta
+    acc += delta
 }
 
 test "mut record param: caller sees the field mutation (D32, by reference)" {

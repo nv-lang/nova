@@ -18,8 +18,8 @@ fn sum_in_let(n int) -> int
         while i < n
             invariant s >= 0
         {
-            if i > 0 { s = s + 1 }
-            i = i + 1
+            if i > 0 { s += 1 }
+            i += 1
         }
         s
     }

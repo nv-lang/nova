@@ -17,7 +17,7 @@ type DeErr value { ro code int }
 type VDec value { mut pos int }
 
 fn VDec mut @take[T](x T) -> Result[T, DeErr] {
-    @pos = @pos + 1
+    @pos += 1
     Ok(x)
 }
 

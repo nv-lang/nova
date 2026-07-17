@@ -12,7 +12,7 @@ priv(file) type Box_C_Inner {
 }
 
 fn Box_C3_1 mut @bump_and_read() -> int {
-    @count = @count + 1
+    @count += 1
     // Body has @count = ... → chain cache for @inner.x skipped.
     @inner.x + @inner.x
 }

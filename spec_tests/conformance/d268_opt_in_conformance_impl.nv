@@ -28,7 +28,7 @@ fn d268_describe_all[T D268Describe](items []T) -> str {
 fn d268_total[T D268Measure](items []T) -> int {
     mut sum = 0
     for item in items {
-        sum = sum + item.measure()
+        sum += item.measure()
     }
     sum
 }

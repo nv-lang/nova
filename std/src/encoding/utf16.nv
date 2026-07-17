@@ -86,12 +86,12 @@ export fn str.from_utf16(units []u16) -> Result[str, Utf16Error] {
             ro lo = units[i + 1] as int
             if !is_low_surrogate(lo) { return Err(LoneHighSurrogate(u)) }
             cps.push(decode_surrogate_pair(u, lo))
-            i = i + 2
+            i += 2
         } else if is_low_surrogate(u) {
             return Err(LoneLowSurrogate(u))
         } else {
             cps.push(u)             // BMP scalar (validated: не surrogate)
-            i = i + 1
+            i += 1
         }
     }
     // Все code units валидны → строим str. StringBuilder создаётся ПОСЛЕ всех

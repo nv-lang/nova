@@ -90,14 +90,12 @@ export fn Sha1 mut @finalize() -> [20]u8 {
         0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0,
     ]
-    mut k = 0
-    while k < 5 {
+    for k in 0..5 {
         ro v = @h[k]
         out[k * 4]     = ((v >> 24) & 0xFF) as u8
         out[k * 4 + 1] = ((v >> 16) & 0xFF) as u8
         out[k * 4 + 2] = ((v >> 8) & 0xFF) as u8
         out[k * 4 + 3] = (v & 0xFF) as u8
-        k += 1
     }
     out
 }

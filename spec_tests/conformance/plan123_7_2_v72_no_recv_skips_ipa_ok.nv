@@ -10,7 +10,7 @@ type Counter_plan12372v72norecvskipsipaok {
 
 // Method exists so write_sets is non-empty in the module.
 fn Counter_plan12372v72norecvskipsipaok mut @inc() -> () {
-    @n = @n + 1
+    @n += 1
 }
 
 // Free fn — `f.receiver == None` → build_ipa returns None → V1 fallback.

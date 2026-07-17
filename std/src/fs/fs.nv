@@ -206,14 +206,14 @@ export fn File.options() -> OpenOptions => OpenOptions.new()
 #stable(since = "0.1")
 export fn File mut @read(buf mut []u8) Fs -> Result[int, IoError] {
     ro rc = Fs.read_at(@fd, buf, @pos)
-    if rc < 0 { Err(IoError.from_os(0 - rc, "read")) } else { @pos = @pos + rc; Ok(rc) }
+    if rc < 0 { Err(IoError.from_os(0 - rc, "read")) } else { @pos += rc; Ok(rc) }
 }
 
 /// io.Write: write `data` at the file's tracked position, advancing it.
 #stable(since = "0.1")
 export fn File mut @write(data []u8) Fs -> Result[int, IoError] {
     ro rc = Fs.write_at(@fd, data, @pos)
-    if rc < 0 { Err(IoError.from_os(0 - rc, "write")) } else { @pos = @pos + rc; Ok(rc) }
+    if rc < 0 { Err(IoError.from_os(0 - rc, "write")) } else { @pos += rc; Ok(rc) }
 }
 
 /// io.Write: no-op — a `File` is unbuffered on the Nova side (wrap in `BufWriter`

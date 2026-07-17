@@ -16,7 +16,7 @@ fn Outer3_3 mut @sum_with_tag_bump() -> int {
     // V4.1 per-root: @tag write doesn't touch @inner subtree →
     // chain @inner.v survives.
     ro a = @inner.v + @inner.v
-    @tag = @tag + 1
+    @tag += 1
     a + @inner.v + @inner.v
 }
 

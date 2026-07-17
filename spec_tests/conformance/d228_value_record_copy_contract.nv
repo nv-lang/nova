@@ -24,9 +24,9 @@ fn D228Vec3.new(a f64, b f64, c f64) -> D228Vec3 =>
 
 // `@`-MUT method receiver — pointer to the caller's stack slot: writes are visible to the caller.
 fn D228Vec3 mut @scale_inplace(k f64) -> () {
-    @x = @x * k
-    @y = @y * k
-    @z = @z * k
+    @x *= k
+    @y *= k
+    @z *= k
 }
 
 // Free function taking a `mut` value-record param. Under Plan 184 Р10 the param is a by-pointer

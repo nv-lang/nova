@@ -158,10 +158,8 @@ export fn Sha256 mut @finalize() -> [32]u8 {
         0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0,
     ]
-    mut k = 0
-    while k < 8 {
+    for k in 0..8 {
         write_be_u32(out, k * 4, @h[k])
-        k += 1
     }
     out
 }

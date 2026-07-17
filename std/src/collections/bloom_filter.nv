@@ -119,13 +119,11 @@ export fn BloomFilter mut @insert(s str) -> () {
 export fn BloomFilter @contains(s str) -> bool {
     ro h1 = hash1(s)
     ro h2 = hash2(s)
-    mut i = 0
-    while i < @num_hashes {
+    for i in 0..@num_hashes {
         // Plan 206 Ф.2 (D423): см. @insert — модульная арифметика по замыслу.
         ro bit_idx = (h1.wrapping_add((i as u64).wrapping_mul(h2)) as int) % @bits_size
         ro safe_idx = if bit_idx < 0 { bit_idx + @bits_size } else { bit_idx }
         if !@bit(safe_idx) { return false }
-        i += 1
     }
     true
 }

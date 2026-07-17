@@ -68,7 +68,7 @@ fn TokenBucket mut @refill() Time -> () {
     ro now = Monotonic.now()
     ro elapsed_secs = now.elapsed_since(@last_refill).seconds_f64()
     ro to_add = elapsed_secs * @refill_per_sec
-    @tokens = @tokens + to_add
+    @tokens += to_add
     if @tokens > (@capacity as f64) {
         @tokens = @capacity as f64
     }
@@ -89,7 +89,7 @@ export fn TokenBucket mut @acquire_n(n int) Time -> bool
 {
     @refill()
     if @tokens >= (n as f64) {
-        @tokens = @tokens - (n as f64)
+        @tokens -= n as f64
         true
     } else {
         false

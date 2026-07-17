@@ -299,10 +299,8 @@ fn collation_elements(s str) -> []u32 {
     ro n = cps.len()
     mut used []int = []int.new()
     used.cap(n)
-    mut z = 0
-    while z < n {
+    for z in 0..n {
         used.push(0)
-        z += 1
     }
     mut acc []u32 = []u32.new()
     acc.cap(n * 8)
@@ -354,8 +352,7 @@ export fn collate_sort_key(s str) -> []u32 {
     mut quat []u32 = []u32.new()
     quat.cap(m + 1)
     mut after_variable = false
-    mut j = 0
-    while j < m {
+    for j in 0..m {
         ro variable = ce[j * 4]
         ro p = ce[j * 4 + 1]
         ro s2 = ce[j * 4 + 2]
@@ -383,7 +380,6 @@ export fn collate_sort_key(s str) -> []u32 {
             quat.push(L4_MAX)
             after_variable = false
         }
-        j += 1
     }
     mut key []u32 = []u32.new()
     key.cap(prim.len() + sec.len() + tert.len() + quat.len() + 4)

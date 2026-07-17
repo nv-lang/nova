@@ -20,7 +20,7 @@ fn doubling(n int) -> int
         decreases n - i
     {
         x *= 2
-        i = i + 1
+        i += 1
     }
     x
 }

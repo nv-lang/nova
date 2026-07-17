@@ -14,7 +14,7 @@ fn Acc4_1 mut @sum_n(n int) -> int {
     while i < n {
         // call inside loop body → no LICM hoist для mut @total.
         s = s + @total + @total + Acc4_1.adjust(i)
-        i = i + 1
+        i += 1
     }
     s
 }

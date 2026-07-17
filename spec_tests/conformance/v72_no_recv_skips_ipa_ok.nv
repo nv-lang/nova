@@ -10,7 +10,7 @@ type Counter18 {
 
 // Method exists so write_sets is non-empty in the module.
 fn Counter18 mut @inc() -> () {
-    @n = @n + 1
+    @n += 1
 }
 
 // Free fn — `f.receiver == None` → build_ipa returns None → V1 fallback.

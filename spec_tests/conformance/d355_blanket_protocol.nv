@@ -28,7 +28,7 @@ type D355IntCount {
 
 fn D355IntCount mut @pull() -> Option[int] {
     if @n <= 0 { None }
-    else { @n = @n - 1; Some(@n) }
+    else { @n -= 1; Some(@n) }
 }
 
 // Concrete implementor #2: a DIFFERENT concrete type implementing D355Source[str] —
@@ -40,7 +40,7 @@ type D355StrFeed {
 
 fn D355StrFeed mut @pull() -> Option[str] {
     if @rest <= 0 { None }
-    else { @rest = @rest - 1; Some("x") }
+    else { @rest -= 1; Some("x") }
 }
 
 // BLANKET declaration (§1): typevar receiver `I` bounded by `D355Source[T]`; `T` is
@@ -51,7 +51,7 @@ fn[I D355Source[T]] I mut @d355_drain() -> int {
     mut count = 0
     while true {
         match @pull() {
-            Some(_) => { count = count + 1 },
+            Some(_) => { count += 1 },
             None => return count,
         }
     }

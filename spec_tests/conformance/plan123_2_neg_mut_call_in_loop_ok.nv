@@ -14,7 +14,7 @@ fn Acc4_plan1232negmutcallinloopok mut @sum_n(n int) -> int {
     while i < n {
         // call inside loop body → no LICM hoist для mut @total.
         s = s + @total + @total + Acc4_plan1232negmutcallinloopok.adjust(i)
-        i = i + 1
+        i += 1
     }
     s
 }

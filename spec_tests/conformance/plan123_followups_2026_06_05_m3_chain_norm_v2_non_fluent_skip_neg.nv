@@ -12,7 +12,7 @@ fn Acc3_plan123followups20260605m3chainnormv2nonfluentskipneg.new() -> Acc3_plan
 
 // `-> int` return type — NOT fluent. V2 registry skips.
 fn Acc3_plan123followups20260605m3chainnormv2nonfluentskipneg mut @add_and_read(by int) -> int {
-    @total = @total + by
+    @total += by
     @total
 }
 

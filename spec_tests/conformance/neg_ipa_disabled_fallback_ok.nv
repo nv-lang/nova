@@ -8,7 +8,7 @@ type Counter8_1 {
 }
 
 fn Counter8_1 mut @bump_log() -> () {
-    @log = @log + 1
+    @log += 1
 }
 
 fn Counter8_1 mut @work() -> int {

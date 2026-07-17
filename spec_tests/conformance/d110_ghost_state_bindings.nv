@@ -15,7 +15,7 @@ fn d110_sum(xs []int) -> int {
     ghost ro len_hint = xs.len()   // ghost for spec documentation; erased
     mut total = 0
     for i in 0..xs.len() {
-        total = total + xs[i]
+        total += xs[i]
     }
     total
 }

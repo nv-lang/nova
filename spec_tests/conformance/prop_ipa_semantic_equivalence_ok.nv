@@ -8,19 +8,20 @@ type Acc4_2 {
 }
 
 fn Acc4_2 mut @inc_count() -> () {
-    @count = @count + 1
+    @count += 1
 }
 
 fn Acc4_2 mut @compute(n int) -> int {
     // Multiple reads/writes pattern.
     mut total = @factor + @factor
     mut i = 0
+    // nova:allow W_WHILE_COUNTER_FOR_RANGE -- Plan 123 LICM/field-cache conformance fixture: pins the optimizer behavior specifically on a while-shaped loop; for-in desugars through the iterator protocol (D58), a different codegen path — rewriting would risk silently exercising something else
     while i < n {
         // ro @factor — D217 cache.
         // mut @count — V7.1 IPA-aware (inc_count writes @count → barrier).
         total = total + @factor + @factor
         @inc_count()
-        i = i + 1
+        i += 1
     }
     total
 }

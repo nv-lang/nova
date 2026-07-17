@@ -12,7 +12,7 @@ fn Acc3_1.new() -> Acc3_1 => { total: 0 }
 
 // `-> int` return type — NOT fluent. V2 registry skips.
 fn Acc3_1 mut @add_and_read(by int) -> int {
-    @total = @total + by
+    @total += by
     @total
 }
 

@@ -34,7 +34,7 @@ priv(file) fn d307_double(n int) -> int => n * 2   // free fn не виден pe
 // per §«Применимость»: priv(file) не применим к методам), used here only to exercise
 // the file-private TYPE from its own file.
 fn D307Acc.new() -> D307Acc => { total: 0 }
-fn D307Acc @add(n int) -> () { @total = @total + n }
+fn D307Acc @add(n int) -> () { @total += n }
 fn D307Acc @get() -> int => @total
 
 // ── §5.5 layering: module-default (no-modifier) fn coexists with file-private ones ──

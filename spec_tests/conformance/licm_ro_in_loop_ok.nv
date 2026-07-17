@@ -10,6 +10,7 @@ type Image3_1 {
 fn Image3_1 @sum_pixels_for(times int) -> int {
     mut total = 0
     mut i = 0
+    // nova:allow W_WHILE_COUNTER_FOR_RANGE -- Plan 123 LICM/field-cache conformance fixture: pins the optimizer behavior specifically on a while-shaped loop; for-in desugars through the iterator protocol (D58), a different codegen path — rewriting would risk silently exercising something else
     while i < times {
         // 2 reads of ro @pixels внутри loop body → LICM hoists.
         total += @pixels + @pixels

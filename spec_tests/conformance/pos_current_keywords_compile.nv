@@ -11,7 +11,7 @@ priv(file) fn sum_to(n int) -> int {
         if i == 0 {
             continue
         }
-        total = total + i
+        total += i
     }
     return total
 }

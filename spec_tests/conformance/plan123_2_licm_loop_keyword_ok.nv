@@ -9,7 +9,7 @@ fn Wrap3_plan1232licmloopkeywordok @find_first() -> int {
     mut x = 0
     loop {
         if x >= @limit + @limit { break }
-        x = x + 1
+        x += 1
     }
     x
 }

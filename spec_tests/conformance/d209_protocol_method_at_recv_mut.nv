@@ -22,7 +22,7 @@ fn D209Counter mut @next() -> Option[int] {
         None
     } else {
         ro v = @cur
-        @cur = @cur + 1
+        @cur += 1
         Some(v)
     }
 }
@@ -50,7 +50,7 @@ type D209Box2 { mut n int }
 
 fn D209Box2 @weight() -> int => @n
 fn D209Box2 mut @bump() -> () {
-    @n = @n + 1
+    @n += 1
 }
 
 test "protocol mut @next: impl совпадает, for-in итерирует (D209)" {

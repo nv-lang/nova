@@ -52,10 +52,8 @@ fn os_wrap_unit(rc int, op str) -> Result[(), IoError] {
 export fn args() Os -> []str {
     ro n = Os.arg_count()
     mut out []str = []
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         out.push(Os.arg_at(i))
-        i += 1
     }
     out
 }
@@ -116,10 +114,8 @@ export fn remove_env(key str) Os -> Result[(), IoError] =>
 export fn vars() Os -> []EnvVar {
     ro n = Os.env_len()
     mut out []EnvVar = []
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         out.push(EnvVar { key: Os.env_key_at(i), value: Os.env_val_at(i) })
-        i += 1
     }
     out
 }

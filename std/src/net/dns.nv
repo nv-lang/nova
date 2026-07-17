@@ -55,12 +55,10 @@ fn err_lookup(code int) -> Result[(int, int), NetError] => Err(NetError.from_cod
 // (`[0; N]`) is a known compiler gap — tracked for a later sweep.
 fn build_addrs(base int, count int) -> []SocketAddr {
     mut addrs []SocketAddr = []SocketAddr.new()
-    mut i = 0
-    while i < count {
+    for i in 0..count {
         mut img []u8 = addr_image()
         unsafe { net_addr_copy_at(base as *(), i, img.ptr()) }
         addrs.push(SocketAddr.from_image(img))
-        i = i + 1
     }
     addrs
 }

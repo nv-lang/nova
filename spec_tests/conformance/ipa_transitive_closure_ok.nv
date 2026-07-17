@@ -9,7 +9,7 @@ type Stack5_1 {
 
 // Indirectly writes @top through @raw_inc.
 fn Stack5_1 mut @raw_inc() -> () {
-    @top = @top + 1
+    @top += 1
 }
 
 // Calls @raw_inc → transitively writes @top.

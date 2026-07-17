@@ -16,25 +16,25 @@ fn StressRes3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 fn use_deep_nested() -> int {
     mut sum = 0
     consume r1 = StressRes3.new(1) {
-        sum = sum + r1.depth
+        sum += r1.depth
         consume r2 = StressRes3.new(2) {
-            sum = sum + r2.depth
+            sum += r2.depth
             consume r3 = StressRes3.new(3) {
-                sum = sum + r3.depth
+                sum += r3.depth
                 consume r4 = StressRes3.new(4) {
-                    sum = sum + r4.depth
+                    sum += r4.depth
                     consume r5 = StressRes3.new(5) {
-                        sum = sum + r5.depth
+                        sum += r5.depth
                         consume r6 = StressRes3.new(6) {
-                            sum = sum + r6.depth
+                            sum += r6.depth
                             consume r7 = StressRes3.new(7) {
-                                sum = sum + r7.depth
+                                sum += r7.depth
                                 consume r8 = StressRes3.new(8) {
-                                    sum = sum + r8.depth
+                                    sum += r8.depth
                                     consume r9 = StressRes3.new(9) {
-                                        sum = sum + r9.depth
+                                        sum += r9.depth
                                         consume r10 = StressRes3.new(10) {
-                                            sum = sum + r10.depth
+                                            sum += r10.depth
                                         }
                                     }
                                 }
