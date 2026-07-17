@@ -1,0 +1,60 @@
+// Plan 208 followup (D422) — [M-208-generic-interp-display-dispatch-gap].
+//
+// Bare `${v}`/`${v:?}` interpolation of a monomorphized GENERIC container
+// (Vec[T]) now dispatches to the container's OWN `@display`/`@debug` Nova
+// body, not the numeric-cast fallback. Root cause: `emit_interpolated_str`'s
+// `all_methods` lookup (`has_explicit`) is keyed by a type's EXACT C name —
+// for a non-generic user type that is the type's own name, but for a
+// generic container it is the MONO-mangled instance name (e.g.
+// `Vec____nova_int`), while the container's `@display`/`@debug` is
+// registered once under the GENERIC TEMPLATE'S base name (`Vec`). The
+// lookup always missed; `try_synthesize_default_method` also missed
+// (Vec/HashMap/… aren't record/sum types) — so bare interpolation of a
+// container fell all the way through to the last fallback arm
+// (`nova_int_to_str((nova_int)(v))`), printing the receiver's raw heap
+// pointer as an integer. A DIRECT `.display(FmtCtx.bare(...))` call always
+// worked (it goes through the general method-call dispatch path, which
+// already resolves generic-mono instances correctly) — only the
+// `${...}`-sugar's OWN dispatch arm had the gap.
+//
+// Fix: `try_generic_mono_interp_dispatch` (compiler-codegen/src/codegen/
+// emit_c.rs) mirrors the pre-existing Option/Result `DeclaredBody` routing
+// in the very same function (which never had this gap, since Option/Result
+// route through `sum_schema_registry`/`generic_type_methods` directly,
+// bypassing `all_methods` entirely) — generalized to ANY user generic
+// container: resolve the mono instance via `generic_type_instance_info`,
+// find the method on the generic template, and register/name the mono
+// instance exactly like the general method-call dispatch path (5b) would,
+// so both paths converge on the identical C symbol.
+//
+// Standalone (NOT part of the folder-CU conformance run) — isolates the
+// generic-mono interp dispatch path specifically. See
+// std/src/collections/vec/protocols_test.nv for the co-located module test
+// (now upgraded to bare interpolation too) and the retained direct-
+// `.display(...)`-call contract (kept as its own test — not a workaround
+// once this gap closed, but still a distinct code path worth covering).
+//
+// See docs/plans/208-impl-progress.md §НАХОДКА for the original root-cause
+// writeup (this fixture closes that follow-up).
+module spec_tests.conformance
+
+test "Vec[T] bare ${v} interpolation dispatches to Vec's own @display (D422 followup)" {
+    ro v = Vec[int].of(1, 2, 3)
+    assert("${v}" == "Vec[1, 2, 3]")
+}
+
+test "Vec[T] bare ${v:?} interpolation on Vec[str] shows quoted elements (Debug), bare Display stays unquoted" {
+    ro v = Vec[str].of("a", "b")
+    assert("${v}" == "Vec[a, b]")
+    assert("${v:?}" == "Vec[\"a\", \"b\"]")
+}
+
+test "Vec[T] bare ${v} on an empty vector" {
+    ro empty = Vec[int].new()
+    assert("${empty}" == "Vec[]")
+}
+
+test "Vec[Vec[str]] nested container — bare ${v} recurses through the outer Vec's own @display into each inner Vec[str]'s own @display" {
+    ro nested = Vec[Vec[str]].of(["a", "b"], ["c"])
+    assert("${nested}" == "Vec[Vec[a, b], Vec[c]]")
+}
