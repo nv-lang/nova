@@ -3229,6 +3229,19 @@ struct TypeCheckCtx<'a> {
     /// E_UNKNOWN_TYPE-гейт (RecordLit variant-ctor) обязан видеть variant-имя
     /// вне зависимости от того, чья одноимённая сумма победила слот в `types`.
     sum_variant_names: HashSet<String>,
+    /// [M-198-f4c-1-privfile-type-not-discriminated]: lossless per-file overlay
+    /// for `priv(file) type` declarations — same collision class as
+    /// `sum_variant_names` above (`types` last-write-wins on name), но для
+    /// TYPE SHAPE resolution. D307 already file-discriminates fn/method
+    /// symbols (`sig.fn_decls: Vec<&FnDecl>` + caller-file filter в
+    /// `f1_check_call`, fix 2d5f64e91) — types had no analogous multi-candidate
+    /// registry, so two peer files declaring their OWN `priv(file) type Rect`
+    /// (different shapes) collapsed onto ONE slot in `types`; whichever file's
+    /// decl was inserted LAST won for BOTH files' field-access checks. Keyed
+    /// by declaring file_id → name → decl; empty for every non-colliding name
+    /// (the common case) — byte-parity preserved for callers that don't
+    /// consult it. Read via `types_get_for_file`.
+    file_local_types: HashMap<crate::diag::FileId, HashMap<String, &'a TypeDecl>>,
     /// Plan 81 Ф.2: префиксы импортированных модулей (alias + последний
     /// сегмент пути import'а) — для резолва module-qualified вызовов
     /// `alias.func(...)`.
@@ -3563,6 +3576,10 @@ impl<'a> TypeCheckCtx<'a> {
         // U.2.3.3: fn_decls/method_table read from `sig` (shared base registry);
         // only `types` is still collected here (needed locally below).
         let mut types: HashMap<String, &'a TypeDecl> = HashMap::new();
+        // [M-198-f4c-1-privfile-type-not-discriminated]: lossless per-file
+        // overlay populated alongside `types` below — see field doc.
+        let mut file_local_types: HashMap<crate::diag::FileId, HashMap<String, &'a TypeDecl>> =
+            HashMap::new();
         // [M-blanket-method-resolve]: names of blanket methods (`fn[T] T @m`).
         let mut blanket_method_names: HashSet<String> = HashSet::new();
         // [M-compress-checksum-structvariant-ctor-xmodule] (Plan 173 P1): ВСЕ
@@ -3593,6 +3610,17 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 Item::Type(td) => {
                     types.insert(td.name.clone(), td);
+                    // [M-198-f4c-1-privfile-type-not-discriminated]: record EVERY
+                    // `priv(file) type` decl под своим file_id — `types.insert`
+                    // above just overwrote a same-name peer-file collision (if
+                    // any), losing it for any file-oblivious reader; this
+                    // side-table keeps it recoverable by declaring file.
+                    if td.file_private {
+                        file_local_types
+                            .entry(td.span.file_id)
+                            .or_default()
+                            .insert(td.name.clone(), td);
+                    }
                     if let TypeDeclKind::Sum(vs) = &td.kind {
                         for v in vs {
                             sum_variant_names.insert(v.name.clone());
@@ -3932,7 +3960,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
 
-        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types, sum_variant_names, imported_modules,
+        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types, sum_variant_names, file_local_types, imported_modules,
             entry_imported_modules,
             entry_file_ids,
             const_fn_names,
@@ -3991,6 +4019,24 @@ impl<'a> TypeCheckCtx<'a> {
     fn is_known_type(&self, name: &str) -> bool {
         self.types.contains_key(name)
             || !self.sig_table.find_type_modules(name).is_empty()
+    }
+
+    /// [M-198-f4c-1-privfile-type-not-discriminated]: file-aware type lookup —
+    /// mirrors 2d5f64e91's caller-file candidate filter for `sig.fn_decls`
+    /// (D307 §1/§3), applied to TYPE shape resolution. `self.types` collapses
+    /// same-name declarations onto one slot (last `module.items` write wins);
+    /// when the name is a `priv(file) type` that collides across peer files of
+    /// the same folder-module CU, this prefers the declaration belonging to
+    /// `use_file_id` (the use-site's own file) via `file_local_types`, falling
+    /// back to the legacy global slot otherwise. Non-colliding names never
+    /// populate `file_local_types` (empty per-file map lookup, O(1) miss) —
+    /// byte-identical to `self.types.get(name)` outside the collision case.
+    fn types_get_for_file(&self, name: &str, use_file_id: crate::diag::FileId) -> Option<&'a TypeDecl> {
+        self.file_local_types
+            .get(&use_file_id)
+            .and_then(|m| m.get(name))
+            .copied()
+            .or_else(|| self.types.get(name).copied())
     }
 
     /// Plan 162.1 Step 2: returns `true` if `name` is a known free function in
@@ -11786,7 +11832,12 @@ impl<'a> TypeCheckCtx<'a> {
         if self.blanket_method_names.contains(name) {
             return;
         }
-        let Some(td) = self.types.get(tname) else { return; };
+        // [M-198-f4c-1-privfile-type-not-discriminated]: file-aware lookup —
+        // `span` is the member-access expr's own span, so `span.file_id` is
+        // the USE-SITE's file; a colliding `priv(file) type` resolves to ITS
+        // OWN file's shape instead of whichever peer-file decl won the global
+        // `types` slot (mirrors 2d5f64e91's caller-file fn-candidate filter).
+        let Some(td) = self.types_get_for_file(tname, span.file_id) else { return; };
         match &td.kind {
             TypeDeclKind::Record(fields) => {
                 // embed (`use`) проксирует поля/методы вложенного типа — резолв
@@ -14357,7 +14408,13 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 if let TypeRef::Named { path, generics, .. } = &obj_tr {
                     if let Some(type_name) = path.last() {
-                        if let Some(td) = self.types.get(type_name) {
+                        // [M-198-f4c-1-privfile-type-not-discriminated]: same
+                        // file-aware lookup as f3_check_member_ctx — `expr` is
+                        // this Member access itself, `expr.span.file_id` its
+                        // use-site file, so a colliding `priv(file) type`
+                        // yields ITS OWN file's field shape/types for
+                        // inference (not whichever peer-file decl won `types`).
+                        if let Some(td) = self.types_get_for_file(type_name, expr.span.file_id) {
                             if let TypeDeclKind::Record(fields) = &td.kind {
                                 if td.generics.is_empty() && generics.is_empty() {
                                     return fields

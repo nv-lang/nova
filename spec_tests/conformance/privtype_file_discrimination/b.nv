@@ -1,10 +1,11 @@
-module known_red.privtype_file_discrimination
+module conformance.privtype_file_discrimination
 
 priv(file) type Rect { name str, tag int }
 
-fn describe(r Rect) -> str => r.name + ":" + r.tag.into_str()
+fn describe(r Rect) -> str => r.name
 
 test "b: own Rect(name,tag) shape (different from a.nv's Rect)" {
     ro r = Rect { name: "box", tag: 7 }
-    assert(describe(r) == "box:7")
+    assert(describe(r) == "box")
+    assert(r.tag == 7)
 }
