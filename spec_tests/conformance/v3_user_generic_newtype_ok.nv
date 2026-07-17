@@ -27,28 +27,28 @@ type MultiParam[T, U](*())
 extern "nova" fn p115_int_to_ptr(value int) -> *()
 
 test "generic newtype — construct + .0 для int" {
-    ro raw = p115_int_to_ptr(42)
+    ro raw = unsafe { p115_int_to_ptr(42) }
     ro h = MyHandle[int](raw)
     ro back = h.0
     assert(back == raw)
 }
 
 test "generic newtype — construct + .0 для str" {
-    ro raw = p115_int_to_ptr(100)
+    ro raw = unsafe { p115_int_to_ptr(100) }
     ro h = MyHandle[str](raw)
     ro back = h.0
     assert(back == raw)
 }
 
 test "generic newtype — distinct T'ы share same C ABI (nova_ptr)" {
-    ro raw = p115_int_to_ptr(1)
+    ro raw = unsafe { p115_int_to_ptr(1) }
     ro hi = MyHandle[int](raw)
     ro hs = MyHandle[str](raw)
     assert(hi.0 == hs.0)  // same underlying ptr value
 }
 
 test "multi-param generic newtype — `type X[T, U](*())`" {
-    ro raw = p115_int_to_ptr(7)
+    ro raw = unsafe { p115_int_to_ptr(7) }
     ro h = MultiParam[int, str](raw)
     assert(h.0 == raw)
 }
@@ -59,9 +59,9 @@ test "generic newtype + (0 as *())" {
 }
 
 test "multiple instances — independent values" {
-    ro h1 = MyHandle[int](p115_int_to_ptr(1))
-    ro h2 = MyHandle[int](p115_int_to_ptr(2))
-    ro h3 = MyHandle[str](p115_int_to_ptr(3))
+    ro h1 = MyHandle[int](unsafe { p115_int_to_ptr(1) })
+    ro h2 = MyHandle[int](unsafe { p115_int_to_ptr(2) })
+    ro h3 = MyHandle[str](unsafe { p115_int_to_ptr(3) })
     assert(h1.0 != h2.0)
     assert(h2.0 != h3.0)
 }
