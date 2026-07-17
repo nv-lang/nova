@@ -44,8 +44,13 @@ extern "nova" fn mini_sqlite_finalize(stmt *()) -> int
 
 // Layer 2: typed wrappers.
 
+// [M-174.6-rawptr-extern-unsafe-infer] (D424 rule 1, Plan 174.6 M4): every
+// `mini_sqlite_*` extern above carries a raw pointer (`*()`) in a param or
+// (for `mini_sqlite_open`, nested in its `(*(), int)` tuple return) the
+// return type — each is `unsafe fn` BY INFERENCE, calls wrapped below.
+
 fn Db.open(path str) Fail[DbError] -> Db {
-    ro (raw, rc) = mini_sqlite_open(path)
+    ro (raw, rc) = unsafe { mini_sqlite_open(path) }
     if rc != SQLITE_OK {
         throw DbError.OpenFailed(rc)
     }
@@ -53,14 +58,14 @@ fn Db.open(path str) Fail[DbError] -> Db {
 }
 
 fn Db @exec(sql str) Fail[DbError] -> () {
-    ro rc = mini_sqlite_exec(self.value, sql)
+    ro rc = unsafe { mini_sqlite_exec(self.value, sql) }
     if rc != SQLITE_OK {
         throw DbError.ExecFailed(rc)
     }
 }
 
 fn Db @prepare(sql str) Fail[DbError] -> Stmt {
-    ro (raw, rc) = mini_sqlite_prepare(self.value, sql)
+    ro (raw, rc) = unsafe { mini_sqlite_prepare(self.value, sql) }
     if rc != SQLITE_OK {
         throw DbError.PrepareFailed(rc)
     }
@@ -68,21 +73,21 @@ fn Db @prepare(sql str) Fail[DbError] -> Stmt {
 }
 
 fn Db consume @close() -> () {
-    mini_sqlite_close(self.value)
+    unsafe { mini_sqlite_close(self.value) }
 }
 
 // Stmt methods.
 
 fn Stmt @step_to_int(col int) Fail[DbError] -> int {
-    ro rc = mini_sqlite_step(self.value)
+    ro rc = unsafe { mini_sqlite_step(self.value) }
     if rc != SQLITE_ROW && rc != SQLITE_DONE {
         throw DbError.StepFailed(rc)
     }
-    mini_sqlite_column_int(self.value, col)
+    unsafe { mini_sqlite_column_int(self.value, col) }
 }
 
 fn Stmt consume @close() -> () {
-    mini_sqlite_finalize(self.value)
+    unsafe { mini_sqlite_finalize(self.value) }
 }
 
 // Example usage. Would actually exercise libsqlite3 if shim is wired up

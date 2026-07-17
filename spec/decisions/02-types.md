@@ -9159,11 +9159,31 @@ unsafe-cluster-extern-ptr-arg-policy]` followup ниже). **→ РЕШЕНО D4
 риск, оставив опасные FFI-разыменования без визуального маркера). A даёт **0 churn** существующего кода
 (`std/net`+`std/tls` ~35 сайтов становятся корректными-по-правилу, а не терпимыми по carve-out).
 
-**Статус реализации: PROPOSED 2026-07-15 (спека/дизайн).** Checker-enforcement (инференс unsafe-классификации
-по сигнатуре extern; удаление carve-out; миграция-свип уже-лишних `unsafe { }`; pos-тест raw-ptr-extern-без-
-обёртки → `E_UNSAFE_CALL_REQUIRES_WRAP` + neg-тест обёртка-над-безопасным → `E_UNSAFE_UNUSED`) — **Plan 174.6
-M4**, маркер `[M-174.6-rawptr-extern-unsafe-infer]`. Спек-строки п.10 карты и находки выше остаются как
-исторический контекст (до-D424 поведение), enforcement приходит с M4-реализацией.
+**Статус реализации: РЕАЛИЗОВАНО (Plan 174.6 M4, 2026-07-17, sonnet).** Checker-enforcement закрыт:
+`check_unsafe_context_in_module`'s collect-фаза (`compiler-codegen/src/types/mod.rs`) фолдит
+`extern`/`external` fn с `fn_sig_has_raw_ptr(fd)` (проверяет каждый параметр И возврат — рекурсивно в
+`Tuple`/`FixedArray`, чтобы поймать указатель, вложенный на один уровень, напр. multi-value-return
+конвенции `(*(), int)`; НЕ рекурсирует в `Array`/`Named`/generics — `[]T`/`Vec[T]` GC-управляем, не сам
+по себе raw-ptr, а user-декларированный record/newtype требует резолва типа, недоступного на этом
+синтаксическом проходе) прямо в `unsafe_fns` на месте сбора — без keyword, зеркалит существующую
+`fd.unsafe_attr`-ветку. Бывший carve-out `E_UNSAFE_UNUSED` (D216 §21, `extern_fns`-сет used-tracking) снят
+целиком (п.2) — обычный `E_UNSAFE_CALL_REQUIRES_WRAP`-гейт + used-tracking теперь покрывают такие вызовы
+через тот же `unsafe_callee_name`-матч, отдельная эвристика не нужна.
+
+Фикстуры: 2 pos-теста (`spec_tests/conformance/d424_rawptr_unsafe/d424_rawptr_unsafe_pos.nv`, свой пакет +
+`d424_ffi_shim.h` — реальный линкуемый C-шим, т.к. позитивные conformance-тесты реально исполняются: (1)
+wrapped-вызов raw-ptr extern принят, (2) unwrapped-вызов scalar-only extern принят) + 3 neg-теста
+(`spec_tests/conformance/neg/d424_rawptr_extern_unwrapped_neg.nv` → `E_UNSAFE_CALL_REQUIRES_WRAP`;
+`d424_scalar_extern_unused_unsafe_neg.nv` → `E_UNSAFE_UNUSED`, carve-out снят;
+`d424_rawptr_extern_tuple_return_unwrapped_neg.nv` → тот же код на tuple-nested указателе, регресс-фиксация
+`Tuple`-рекурсии).
+
+Взрыв-оценка (`nova check std/` + `examples/ffi`): 12 сайтов на 3 файлах вскрылись и почтены добавлением
+`unsafe { }` (смысл M4) — `std/src/net/mock.nv` (1: `net_addr_loopback` возвращает `*()`),
+`std/src/runtime/fmt_buf.nv` (4: `f64_fmt_into`, `buf *mut u8` параметр), `examples/ffi/sqlite_mini.nv` (7:
+все `mini_sqlite_*` externs; `mini_sqlite_open` — указатель вложен в tuple-возврат `(*(), int)`, живой
+пример, подтвердивший необходимость `Tuple`-рекурсии). После фикса — дельта 0 (`nova check std` /
+`nova check examples/ffi` чисты по `E_UNSAFE_*`).
 
 #### `E_UNSAFE_ARG_REQUIRES_WRAP` — отдельно, НЕ про «забыл unsafe»
 

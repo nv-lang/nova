@@ -1,0 +1,24 @@
+// [M-174.6-rawptr-extern-unsafe-infer] (D424 rule 2, Plan 174.6 M4,
+// 2026-07-17) — the D216 §21 carve-out that used to recognise "any call to a
+// plain extern fn" as `E_UNSAFE_UNUSED`-exempt used-tracking is RETRACTED.
+// A scalar/handle-only extern (NO raw pointer anywhere in its signature) is
+// NOT unsafe-by-inference (D424 rule 1 only fires on a `*T`/`*mut T`/`*()`/
+// `CStr` param or return) — wrapping a call to one in `unsafe { }` is now
+// genuinely dead weight, same as wrapping ordinary arithmetic
+// (`neg/d216_unused_unsafe_neg.nv`). Never linked (compile stops at the
+// checker diagnostic below, well before codegen/link).
+//
+// EXPECT_COMPILE_ERROR E_UNSAFE_UNUSED
+
+module neg.d424_scalar_extern_unused_unsafe_neg
+
+extern "C" fn d424_scalar_only_neg(x int) -> int
+
+test "unsafe wrap over a scalar-only extern call — no longer exempt, unused" {
+    // No raw pointer anywhere in `d424_scalar_only_neg`'s signature — D424
+    // rule 1 does not infer `unsafe fn` for it. The `unsafe { }` wrap below
+    // gates nothing from the D216 §21 map — carve-out removed (D424 rule 2)
+    // means this is now honestly flagged, not silently tolerated.
+    ro n = unsafe { d424_scalar_only_neg(5) }
+    assert(n == 6)
+}

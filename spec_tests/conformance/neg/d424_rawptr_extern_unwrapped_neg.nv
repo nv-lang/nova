@@ -1,0 +1,21 @@
+// [M-174.6-rawptr-extern-unsafe-infer] (D424 rule 1, Plan 174.6 M4,
+// 2026-07-17) — `extern "C" fn` whose signature carries a raw pointer (`*T`)
+// in a parameter is classified `unsafe fn` BY INFERENCE, no `#unsafe` keyword
+// needed. Calling it outside `unsafe { }` now requires the wrap exactly like
+// any other `unsafe fn` (D216 §9) — this declaration is never linked (compile
+// stops at the checker diagnostic below, well before codegen/link; mirrors
+// `neg/d282_vec_param_neg.nv`'s uncalled/unbacked extern pattern).
+//
+// EXPECT_COMPILE_ERROR E_UNSAFE_CALL_REQUIRES_WRAP
+
+module neg.d424_rawptr_extern_unwrapped_neg
+
+extern "C" fn d424_take_ptr_neg(p *u8, len int) -> int
+
+test "calling a raw-ptr extern fn without unsafe wrap — rejected" {
+    ro buf []u8 = [1, 2, 3]
+    // Direct call to a raw-ptr extern fn outside `unsafe { }` — must be
+    // rejected: D424 infers `unsafe fn` from the `*u8` parameter alone.
+    ro n = d424_take_ptr_neg(buf.ptr(), 3)
+    assert(n == 3)
+}

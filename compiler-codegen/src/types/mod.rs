@@ -33956,6 +33956,50 @@ fn static_overload_arity_range(fd: &FnDecl) -> (usize, Option<usize>) {
     (required, max)
 }
 
+/// **[M-174.6-rawptr-extern-unsafe-infer] (D424 rule 1, Plan 174.6 M4,
+/// 2026-07-17):** does this fn's signature — any PARAMETER type, or the
+/// RETURN type — carry a raw pointer (`*T`/`*mut T`/`*()`) or `CStr`,
+/// after stripping the transparent `ro`/`mut`/`uninit` modifier wrappers
+/// (`TypeRef::is_pointer` already does exactly this stripping) and
+/// recursing into plain VALUE aggregates (`Tuple`, `FixedArray`) that carry
+/// no ABI/allocation semantics of their own? Used ONLY to decide whether an
+/// `extern`/`external` fn is classified `unsafe fn` BY INFERENCE (no keyword)
+/// per D424 rule 1 — NOT a general C-ABI validator (that's
+/// `check_ffi_c_abi_signatures`/`ffi_c_abi_violation`, a much deeper
+/// recursive walk for a completely different diagnostic, `E_FFI_NON_C_ABI_
+/// TYPE`, which ALSO resolves user-declared records/newtypes — this
+/// predicate deliberately does not, see below).
+///
+/// Recurses into `Tuple` elements and `FixedArray` elements (own live
+/// example: `examples/ffi/sqlite_mini.nv`'s `mini_sqlite_open(path str) ->
+/// (*(), int)` — the pointer is the FIRST tuple element of the return type,
+/// not the return type itself; a shallow top-level-only check misses it).
+/// Deliberately stops at `Array`/`Named` (`[]T`/`Vec[T]` is GC-managed with
+/// its OWN allocation semantics — not itself a raw pointer even if its
+/// element type is one; a user-declared record/newtype would need type-
+/// declaration resolution this syntactic collect-phase pass doesn't have
+/// available, mirroring why `check_ffi_c_abi_signatures` is a wholly
+/// separate, later pass with its own `types: HashMap<String, &TypeDecl>`)
+/// and `Option[X]`/other generics (no live example yet exercises `Option[*T]`
+/// on an `extern`/`external` fn — if one appears, that's a real gap here,
+/// widen with a fixture then, same spirit as this doc note already proved
+/// out once for `Tuple`).
+fn fn_sig_has_raw_ptr(fd: &FnDecl) -> bool {
+    fn ty_is_raw_ptr_or_cstr(ty: &TypeRef) -> bool {
+        match ty.strip_modifiers() {
+            TypeRef::Pointer(..) => true,
+            TypeRef::Named { path, generics, .. } => {
+                generics.is_empty() && path.last().map_or(false, |n| n == "CStr")
+            }
+            TypeRef::Tuple(elems, _) => elems.iter().any(ty_is_raw_ptr_or_cstr),
+            TypeRef::FixedArray(_, inner, _) => ty_is_raw_ptr_or_cstr(inner),
+            _ => false,
+        }
+    }
+    fd.params.iter().any(|p| ty_is_raw_ptr_or_cstr(&p.ty))
+        || fd.return_type.as_ref().map_or(false, ty_is_raw_ptr_or_cstr)
+}
+
 /// Plan 118 D216 §8 (D2 amend): Walk fn bodies, emit E_UNSAFE_REQUIRED
 /// для AddrOf (`&value`) / Deref (`*expr`) used вне `unsafe { ... }` block
 /// или `#unsafe fn` body context.
@@ -33996,17 +34040,17 @@ pub(crate) fn check_unsafe_context_in_module(
     // `E_CALLBACK_THROWS_OVER_C_ABI` path fires for BOTH `*fn` and
     // `*extern "C" fn`, unchanged from Plan 118).
     let mut effect_fns: HashMap<String, String> = HashMap::new();
-    // unsafe-cluster / D216 §21 (2026-07-11): free-fn names of ANY `extern`/
-    // `external` declaration (C-ABI or nova-ABI, unsafe or not). Used ONLY
-    // by the E_UNSAFE_UNUSED used-tracking heuristic (§21 «known convention,
-    // not enforced»): a call to a plain (non-`unsafe`) extern fn with a
-    // raw-pointer-shaped argument matches the widespread std/net + std/tls
-    // FFI convention of defensively wrapping such calls in `unsafe {{ }}`
-    // even though no EXISTING rule requires it. Recognising the convention
-    // here avoids E_UNSAFE_UNUSED flagging ~35 pre-existing, deliberate call
-    // sites; it does NOT newly require `unsafe {{ }}` anywhere (no enforcement
-    // added — see the D216 §21 note).
-    let mut extern_fns: HashSet<String> = HashSet::new();
+    // [M-174.6-rawptr-extern-unsafe-infer] (D424, Plan 174.6 M4, 2026-07-17):
+    // the former `extern_fns` set (D216 §21 carve-out — "recognise plain
+    // extern+rawptr-arg call as used, without requiring `unsafe {}`") is
+    // RETRACTED by D424 rule 2. It is no longer collected: D424 rule 1 makes
+    // a raw-ptr extern/external fn genuinely `unsafe fn` BY INFERENCE (folded
+    // straight into `unsafe_fns`/`unsafe_static_methods` at the collection
+    // site below, via `fn_sig_has_raw_ptr`), so the ordinary
+    // `E_UNSAFE_CALL_REQUIRES_WRAP` gate + used-tracking already covers every
+    // call site precisely — no separate carve-out heuristic is needed, and
+    // keeping it would silently un-flag a now-genuinely-required wrap as
+    // "already fine" for the wrong reason.
     // [M-d216-unsafe-map-single-file-gaps] fix (2026-07-17): (type_name,
     // method_name) → every STATIC-receiver overload's arg-count range +
     // `unsafe_attr` — the per-overload precision the bare `unsafe_fns`/
@@ -34035,7 +34079,6 @@ pub(crate) fn check_unsafe_context_in_module(
                         unsafe_static_methods: &mut HashSet<(String, String)>,
                         fail_fns: &mut HashSet<String>,
                         effect_fns: &mut HashMap<String, String>,
-                        extern_fns: &mut HashSet<String>,
                         static_arities: &mut HashMap<(String, String), HashSet<(usize, Option<usize>, bool)>>| {
         if let Item::Fn(fd) = item {
             if let Some(r) = &fd.receiver {
@@ -34068,8 +34111,22 @@ pub(crate) fn check_unsafe_context_in_module(
                     }
                 }
             }
-            if (fd.is_external || fd.extern_abi.is_some()) && fd.receiver.is_none() {
-                extern_fns.insert(fd.name.clone());
+            // [M-174.6-rawptr-extern-unsafe-infer] (D424 rule 1, Plan 174.6
+            // M4, 2026-07-17): `extern`/`external` fn (always receiverless —
+            // see the `fd.receiver.is_none()` guard) whose signature carries
+            // a raw pointer (`*T`/`*mut T`/`*()`/`CStr`) in a PARAM or the
+            // RETURN type is classified `unsafe fn` BY INFERENCE — no `#unsafe`
+            // keyword needed (mirrors the `fd.unsafe_attr` branch above,
+            // which still wins if the keyword IS present — `!fd.unsafe_attr`
+            // guard just avoids a redundant double-insert into the same set).
+            // Scalar/handle-only externs (no raw pointer anywhere in the
+            // signature) are unaffected — stay ordinary safe fns.
+            if (fd.is_external || fd.extern_abi.is_some())
+                && fd.receiver.is_none()
+                && !fd.unsafe_attr
+                && fn_sig_has_raw_ptr(fd)
+            {
+                unsafe_fns.insert(fd.name.clone());
             }
             // Plan 118 A25: detect Fail effect через TypeRef::Named { path }
             // где last segment == "Fail". Fn с Fail effect = throwable —
@@ -34090,11 +34147,11 @@ pub(crate) fn check_unsafe_context_in_module(
         }
     };
     for item in &module.items {
-        collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns, &mut extern_fns, &mut static_arities);
+        collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns, &mut static_arities);
     }
     for pf in &module.peer_files {
         for item in &pf.items_here {
-            collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns, &mut extern_fns, &mut static_arities);
+            collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns, &mut static_arities);
         }
     }
     // [M-d216-unsafe-map-single-file-gaps]: SOFT used-tracking fallback name
@@ -34115,7 +34172,6 @@ pub(crate) fn check_unsafe_context_in_module(
         unsafe_static_methods,
         fail_fns,
         effect_fns,
-        extern_fns,
         static_arities,
         any_unsafe_overload_names,
         in_realtime: false,
@@ -34205,11 +34261,6 @@ struct UnsafeCtx {
     /// `*fn` still carries the handler stack, so non-`Fail` effects are allowed
     /// there (matches the un-retracted Plan 118 `*fn` behaviour).
     effect_fns: HashMap<String, String>,
-    /// unsafe-cluster / D216 §21 (2026-07-11): free-fn names of any
-    /// `extern`/`external` declaration (see collection-site doc). Used-
-    /// tracking ONLY — see the `extern_fns` check at the Call arm
-    /// (`expr_is_typed_pointer` on each argument).
-    extern_fns: HashSet<String>,
     /// [M-d216-unsafe-map-single-file-gaps] (2026-07-17): `(type_name,
     /// method_name)` → every STATIC-receiver overload's `(min_required,
     /// max_accepted, unsafe_attr)` — see the collection-site doc
@@ -34938,27 +34989,23 @@ impl UnsafeCtx {
                         }
                     }
                 }
-                // unsafe-cluster / E_UNSAFE_UNUSED (D216 §21 «observed
-                // convention, not enforced»): std/net + std/tls uniformly
-                // wrap calls to plain (non-`unsafe`) `extern`/`external` fns
-                // in `unsafe {{ }}` whenever an argument is raw-pointer-
-                // shaped (`.ptr()`/`.as_ptr()` getter, `&x`, cast к `*T`,
-                // an existing `ptr_vars` binding) — crossing into un-audited
-                // C memory with a raw pointer, even though NO rule currently
-                // requires the wrap (the callee isn't `unsafe fn` — see the
-                // D216 §21 write-up of the `net_tcp_listen`/`addr.ptr()`
-                // finding). Recognised here for used-tracking ONLY so
-                // E_UNSAFE_UNUSED doesn't flag this widespread, deliberate
-                // pattern; does NOT newly require the wrap anywhere.
-                if unsafe_callee_name.is_none() && self.depth > 0 {
-                    if let ExprKind::Ident(fname) = &func.kind {
-                        if self.extern_fns.contains(fname)
-                            && args.iter().any(|a| self.expr_is_typed_pointer(a.expr()))
-                        {
-                            self.mark_unsafe_used();
-                        }
-                    }
-                }
+                // [M-174.6-rawptr-extern-unsafe-infer] (D424 rule 2, Plan
+                // 174.6 M4, 2026-07-17): the D216 §21 "observed convention,
+                // not enforced" carve-out that used to live here (recognise
+                // a plain-extern + raw-ptr-argument call as used-tracking
+                // ONLY, without requiring `unsafe {{ }}`) is RETRACTED. Every
+                // raw-ptr extern/external fn is now collected straight into
+                // `unsafe_fns` at the collection site (`fn_sig_has_raw_ptr`),
+                // so such a call is already caught by the ordinary
+                // `unsafe_callee_name` match above (Ident/Member/Path arms) —
+                // both enforcement (`E_UNSAFE_CALL_REQUIRES_WRAP`) and
+                // used-tracking (`mark_unsafe_used`) fall out of that SAME
+                // path with no separate heuristic needed. A leftover
+                // `unsafe {{ }}` wrap around a call to a SCALAR/HANDLE-ONLY
+                // extern (no raw pointer anywhere in its signature) no longer
+                // gets a free pass here — per D424 rule 2 that wrap is
+                // genuinely unused and `E_UNSAFE_UNUSED` is now honest about
+                // it (`unused unsafe обязан флагаться, без carve-out`).
                 self.walk_expr(func, errors);
                 // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]: walk args в
                 // in_call_arg mode — defers unsafe-T Ident read check к

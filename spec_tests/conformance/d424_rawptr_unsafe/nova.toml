@@ -1,0 +1,35 @@
+# nova.toml — scoped FFI manifest for [M-174.6-rawptr-extern-unsafe-infer]
+# (D424 rule 1/2, Plan 174.6 M4) positive fixtures.
+#
+# Force-includes the header-only `d424_ffi_shim.h` shim so the positive
+# fixture (`d424_rawptr_unsafe_pos.nv`) has REAL linkable extern targets for
+# both cases it must actually execute (not just type-check):
+#   - `d424_ptr_first_byte` (raw-ptr param) called WITH an `unsafe { }` wrap
+#     — proves D424 rule 1's inferred-unsafe call is accepted once wrapped.
+#   - `d424_scalar_add` (scalar-only, no pointer anywhere in signature)
+#     called WITHOUT any wrap — proves D424 rule 1 does NOT fire on a
+#     pointer-free signature (still an ordinary safe extern fn).
+# Pattern mirrors plan143_2/nova.toml (Plan 143.2
+# [M-opt-leaf-preempt-entry-elision]) and plan115/nova.toml (Plan 115 D214
+# [M-115-ffi-build-pipeline]): scoped here so the shim does not leak into the
+# main merged conformance CU.
+#
+# package name = "d424_rawptr_unsafe" matches
+# `module d424_rawptr_unsafe.<file>` (D78: package + src="." → module
+# identity unchanged).
+
+[package]
+name = "d424_rawptr_unsafe"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+description = "D424 M4 (raw-ptr extern/external fn unsafe-by-inference) positive fixtures"
+
+[lib]
+src = "."
+
+[dependencies]
+
+[ffi]
+c_shims      = ["d424_ffi_shim.h"]
+include_dirs = []
+libs         = []
