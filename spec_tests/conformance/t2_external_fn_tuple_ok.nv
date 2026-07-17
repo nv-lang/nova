@@ -17,27 +17,27 @@ extern "nova" fn p115_make_triple(seed int) -> (*(), int, int)
 extern "nova" fn p115_ptr_to_int(p *()) -> int
 
 test "extern nova fn returns 2-tuple (*(), int)" {
-    ro (h, code) = p115_make_pair(42)
-    ro h_int = p115_ptr_to_int(h)
+    ro (h, code) = unsafe { p115_make_pair(42) }
+    ro h_int = unsafe { p115_ptr_to_int(h) }
     assert(h_int == 42 + 0x100)
     assert(code == 84)
 }
 
 test "extern nova fn returns 3-tuple (*(), int, int)" {
-    ro (h, a, b) = p115_make_triple(10)
-    ro h_int = p115_ptr_to_int(h)
+    ro (h, a, b) = unsafe { p115_make_triple(10) }
+    ro h_int = unsafe { p115_ptr_to_int(h) }
     assert(h_int == 10 + 0x200)
     assert(a == 30)
     assert(b == 1010)
 }
 
 test "extern nova fn tuple result destructured multiple times" {
-    ro pair1 = p115_make_pair(1)
-    ro pair2 = p115_make_pair(2)
+    ro pair1 = unsafe { p115_make_pair(1) }
+    ro pair2 = unsafe { p115_make_pair(2) }
     ro (h1, c1) = pair1
     ro (h2, c2) = pair2
-    assert(p115_ptr_to_int(h1) == 1 + 0x100)
-    assert(p115_ptr_to_int(h2) == 2 + 0x100)
+    assert(unsafe { p115_ptr_to_int(h1) } == 1 + 0x100)
+    assert(unsafe { p115_ptr_to_int(h2) } == 2 + 0x100)
     assert(c1 == 2)
     assert(c2 == 4)
 }

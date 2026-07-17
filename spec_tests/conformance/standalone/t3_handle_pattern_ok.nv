@@ -15,14 +15,14 @@ type CurlHandle(*())
 extern "nova" fn p115_int_to_ptr(value int) -> *()
 
 test "tuple newtype — constructor + .0 destructure" {
-    ro raw = p115_int_to_ptr(42)
+    ro raw = unsafe { p115_int_to_ptr(42) }
     ro h = SqHandle(raw)
     ro back = h.0
     assert(back == raw)
 }
 
 test "distinct handle types — same underlying *(), different Nova type" {
-    ro raw = p115_int_to_ptr(100)
+    ro raw = unsafe { p115_int_to_ptr(100) }
     ro sq = SqHandle(raw)
     ro png = PngHandle(raw)
     // Inner *() is the same, but the wrapping types are nominally distinct.
@@ -35,9 +35,9 @@ test "handle construction from (0 as *())" {
 }
 
 test "multiple handles — independent values" {
-    ro h1 = SqHandle(p115_int_to_ptr(1))
-    ro h2 = SqHandle(p115_int_to_ptr(2))
-    ro h3 = CurlHandle(p115_int_to_ptr(3))
+    ro h1 = SqHandle(unsafe { p115_int_to_ptr(1) })
+    ro h2 = SqHandle(unsafe { p115_int_to_ptr(2) })
+    ro h3 = CurlHandle(unsafe { p115_int_to_ptr(3) })
     assert(h1.0 != h2.0)
     assert(h2.0 != h3.0)
 }
