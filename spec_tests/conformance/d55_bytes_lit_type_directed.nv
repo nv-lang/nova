@@ -1,0 +1,106 @@
+// [M-d55-str-literal-coercion-name-gated] fix (2026-07-17, P2, backlog-followups.md).
+// D55 amend "Str-литерал → []u8 coercion" (spec/decisions/02-types.md) is specified
+// TYPE-directed — coercion in ANY position with an explicit expected `[]u8` type
+// (call-arg on any parameter, `let`/`const` annotation, return-position, `[][]u8`
+// element) — but was implemented NAME-directed: only a call-arg to a method
+// literally spelled `write`, on a receiver with a registered `write` method
+// (Plan 208 Ф.3, `emit_c.rs::synthesize_write_str_lit_bytes_coercion`, retired by
+// this file's companion fix). This suite exercises the GENERALIZED, type-directed
+// rule across all 4 spec positions, using methods/functions NOT named `write`
+// (proving the coercion is keyed on the resolved `[]u8` type, not the name) —
+// including real `std` call sites (`WriteBuffer.from`/`WriteBuffer.write_bytes`).
+// The pre-existing `d55_literal_coercion.nv` (write-named case) and
+// `d374_write_sink_decouple.nv` stay green unchanged (verified in an isolated
+// dev module before this merge, test-conventions.md workflow — the 988-file
+// `spec_tests.conformance` mega-CU is NOT re-run per this fix, per owner
+// instruction; the orchestrator's merge-time gate covers it).
+module spec_tests.conformance
+
+// ─── position 1: call-arg, ANY []u8 param — method/free-fn NOT named `write` ───
+
+type D55BytesSink { mut buf WriteBuffer }
+
+fn D55BytesSink mut @absorb(bytes []u8) -> () {
+    @buf.write_bytes(bytes)
+}
+
+fn d55_bytes_free_len(bytes []u8) -> int => bytes.len()
+
+// ─── position 3: return ───
+
+fn d55_bytes_ret_bytes() -> []u8 => "ret!"
+
+fn d55_bytes_ret_bytes_stmt() -> []u8 {
+    if true {
+        return "early"
+    }
+    "unreached"
+}
+
+// ─── decode helper ([]u8 → str, mirrors to_str_facade_collision.nv) ───
+
+fn d55_bytes_decode(bytes []u8) -> str => match bytes.to_str() {
+    Ok(s) => s
+    Err(_) => "ERR"
+}
+
+test "D55 position 1a: free-fn []u8 param (not `write`) — str-литерал coerces (type-directed)" {
+    assert(d55_bytes_free_len("hello") == 5)
+}
+
+test "D55 position 1b: instance method []u8 param (not `write`) — str-литерал coerces" {
+    mut sink = D55BytesSink { buf: WriteBuffer.new() }
+    sink.absorb("Ok(")
+    sink.absorb("done")
+    assert(sink.buf.len() == 7)
+}
+
+test "D55 position 1c: static-ctor []u8 param (std WriteBuffer.from, not `write`) — str-литерал coerces" {
+    ro wb = WriteBuffer.from("st")
+    assert(wb.len() == 2)
+}
+
+test "D55 position 1d: instance method []u8 param (std WriteBuffer.write_bytes, not `write`) — str-литерал coerces" {
+    mut wb2 = WriteBuffer.new()
+    wb2.write_bytes("Ok(")
+    wb2.write_bytes("done")
+    assert(wb2.len() == 7)
+}
+
+test "D55 position 2: let with explicit []u8-annotation — str-литерал coerces" {
+    ro b []u8 = "Ok("
+    assert(b.len() == 3)
+    assert(d55_bytes_decode(b) == "Ok(")
+    mut m []u8 = "mut-lit"
+    assert(m.len() == 7)
+}
+
+test "D55 position 3: return-position []u8 (arrow-body + explicit return stmt) — str-литерал coerces" {
+    assert(d55_bytes_ret_bytes().len() == 4)
+    assert(d55_bytes_decode(d55_bytes_ret_bytes()) == "ret!")
+    assert(d55_bytes_ret_bytes_stmt().len() == 5)
+    assert(d55_bytes_decode(d55_bytes_ret_bytes_stmt()) == "early")
+}
+
+test "D55 position 4: [][]u8 array-literal element — str-литерал элементы coerce" {
+    ro parts [][]u8 = ["ab", "cd", "e"]
+    assert(parts.len() == 3)
+    assert(parts[0].len() == 2)
+    assert(parts[1].len() == 2)
+    assert(parts[2].len() == 1)
+    assert(d55_bytes_decode(parts[0]) == "ab")
+}
+
+test "D55 non-regression: str-литерал в НЕ-[]u8 позиции остаётся str (D55 unaffected)" {
+    ro s str = "plain"
+    assert(s == "plain")
+    assert(s.byte_len() == 5)
+}
+
+test "D55 non-regression: str-ПЕРЕМЕННАЯ в []u8-позиции всё ещё требует явный .bytes() (D176)" {
+    ro s = "var-not-lit"
+    // Explicit .bytes() still the required spelling for a non-literal value —
+    // see spec_tests/conformance/neg/d55_bytes_lit_var_not_coerced_neg.nv for
+    // the compile-error case (bare variable, no `.bytes()`).
+    assert(d55_bytes_free_len(s.bytes()) == 11)
+}

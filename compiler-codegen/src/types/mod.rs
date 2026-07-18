@@ -14070,7 +14070,36 @@ impl<'a> TypeCheckCtx<'a> {
                     Compat::Bad { found: "bool".to_string() }
                 };
             }
-            ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => {
+            // [M-d55-str-literal-coercion-name-gated] fix (2026-07-17, generalized):
+            // D55 amend (spec/decisions/02-types.md §Str-литерал→[]u8) — a bare
+            // str-LITERAL at an expected `[]u8` position coerces (compile-time-known
+            // UTF-8 bytes, zero-copy — the SAME "obvious literal" carve-out as the
+            // numeric/single-wrapper literal coercions elsewhere in this fn). This is
+            // the type-directed ACCEPT-side half; the previous implementation gated
+            // entirely on the method being literally named `write` — a §3 name-keyed
+            // anti-pattern that ALSO left a checker asymmetry: a protocol-erased
+            // receiver (`w Fmt`) type-checked (permissive `overload_applicability`
+            // skip) while a CONCRETE receiver (`sb StringBuilder`) hit
+            // `[E_NO_MATCHING_OVERLOAD]` for the identical `w.write("lit")` shape.
+            // Reached from EVERY position `assignable`/`assignable_direct` already
+            // gates — call-arg (any method/free-fn, `overload_applicability`/
+            // `f1_check_call`), let/const annotation (`f1_check_assign_let`), and
+            // array-element (the `ArrayLit` arm above, which recurses element-wise
+            // through `assignable`) — no separate per-position wiring needed. Return
+            // position is NOT checked via `assignable` at all (documented gap,
+            // unrelated to this fix — see the `materialize_returns_in_*` comments).
+            // `ExprKind::Ident` (a str VARIABLE) never reaches this arm — D176 still
+            // requires an explicit `.bytes()` for a non-literal str value.
+            ExprKind::StrLit(_) => {
+                if matches!(exp_rt, ResolvedType::Str) {
+                    return Compat::Ok;
+                }
+                if is_bytes_slice_rt(&exp_rt) {
+                    return Compat::Ok;
+                }
+                return Compat::Bad { found: "str".to_string() };
+            }
+            ExprKind::InterpolatedStr { .. } => {
                 return if matches!(exp_rt, ResolvedType::Str) {
                     Compat::Ok
                 } else {
@@ -17209,6 +17238,22 @@ fn array_elem_type(expected: &TypeRef) -> Option<&TypeRef> {
         }
         _ => None,
     }
+}
+
+/// [M-d55-str-literal-coercion-name-gated] fix: is the (already category-
+/// resolved) `rt` the `[]u8` category — i.e. `Array(Scalar{width:8,
+/// signed:false})`? `resolved_cat_of`/`resolved_cat_of_depth` canonicalize
+/// BOTH `[]u8` sugar and `Vec[u8]` to this exact shape (D239 `[]T ≡
+/// Vec[T]`), so a single structural check here covers both spellings —
+/// the key every str-literal→`[]u8` coercion site (`assignable_direct`'s
+/// `StrLit` arm) compares against, replacing the retired name-gate on the
+/// method literally spelled `write`.
+fn is_bytes_slice_rt(rt: &ResolvedType) -> bool {
+    matches!(
+        rt,
+        ResolvedType::Array(inner)
+            if matches!(**inner, ResolvedType::Scalar { width: 8, signed: false, .. })
+    )
 }
 
 /// Plan 200 (sql-autoconv) D55 amend — "obvious single-wrapper coercion":
