@@ -168,9 +168,14 @@ Nova уже прячет безопасные zero-cost конверсии (sing
   / GENERIC_UNSUPPORTED (R14) / ON_PROTOCOL (R15) / EFFECTFUL (R12) / RECEIVER_FORM_DEFERRED (R1);
   вставка в accept-путь (там же, где single-wrapper `single_wrap_candidates`) + АСТ-rewrite
   в `try_wrap_leaf`-проходе. Позиции — п.6. Exact>coercion — до кандидатов коэрсии.
-  **Стартовый материал (интегратор 2026-07-18):** ветка `p-fix-d55-type-directed`
-  (worktree `nova-d55coerce`, НЕ влита — реализовывала ретрактированное D55-направление, но
-  эмпирически прощупала ровно эти позиции; заметки `docs/plans/wip/d55-coercion-notes.md`):
+  **Стартовый материал — ✅ MERGED 2026-07-18 (интегратор):** ветка `p-fix-d55-type-directed`
+  (worktree `nova-d55coerce`, **ВЛИТА** в `main` — реализовывала ретрактированное D55-направление, но
+  эмпирически прощупала ровно эти позиции; заметки `docs/plans/wip/d55-coercion-notes.md`).
+  **Закрыто:** `[M-d55-str-literal-coercion-name-gated]` — type-directed коэрсия str-литерала
+  → `[]u8` теперь работает в 4 позициях (call-arg, let/const, return, element) через
+  `emit_expr_with_target_type`. **Открыт под-маркер:** `[M-d55-const-bytes-lit-not-constexpr]`
+  (P3) — const-инициализатор `const c []u8 = "hi"` идёт мимо choke-point через
+  `emit_const_expr_typed`; закрывается Ф.1. Подробности — см. `docs/simplifications.md`.
   accept-гейт = `assignable_direct` (закрывает call-arg + let/const + element одним армом);
   ловушки — 4 отдельных trailing-return-гейта в emit_c (contracts/non-contracts/handler-op),
   type-punning `[][]u8`-литерала (elem-тип с первого str-элемента → `Vec[str]` под `Vec[[]u8]`),
