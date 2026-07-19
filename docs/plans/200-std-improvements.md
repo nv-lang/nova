@@ -522,18 +522,27 @@ sonnet (координация со split).
 - `runtime/defaults.nv:100` — та же длина-лестница;
 - `runtime/write_buffer.nv:120` — ещё одно кодирование.
 
-D9/DRY: один модуль-приватный источник (кандидат: `std/runtime/utf8.nv` — `utf8_len(cp int)
--> int` + `utf8_encode(cp int) -> [4]u8`; точная форма/имя — по месту, сверить с unicode-
-модулем на предмет уже существующего) и четыре сайта на него. `#no_prelude`-зона — проверить
-импорт-циклы (string_builder/write_buffer/defaults все в runtime).
+**Дизайн (владелец 2026-07-18, кортеж + находка про len_utf8):** `defaults.nv:100` — это
+ПУБЛИЧНЫЙ `char @len_utf8()` (Rust-парити), т.е. приватник string_builder дублирует public
+API. Единственный носитель лестницы:
+- `export fn char @encode_utf8() -> (int, [4]u8)` — (len, bytes) кортежем (ветка, записавшая
+  байты, сама знает длину — отдельного вычисления не остаётся); Rust-парити
+  `char::encode_utf8`; прецеденты кортежа: `decode_utf8 -> (int, int)`, `ro (a, b) =`;
+- `export fn char @len_utf8() -> int => @encode_utf8().0` — публичная len-дверь становится
+  делегатом (цена на len-only сайтах — стековые 4 байта, холодно);
+- дом — `defaults.nv` рядом с `len_utf8` (методы char; отдельный utf8.nv НЕ нужен);
+- `char_utf8_len`/`char_utf8_bytes` (string_builder) сносятся целиком; `@append`/
+  `pad_in_place`/write_buffer → `ro (n, b) = c.encode_utf8()` (один проход лестницы вместо
+  двух). `#no_prelude`-зона — проверить импорт-циклы (string_builder/write_buffer → defaults).
 
 **Координация (обязательно):** 208 Ф.4 (снос conv.h → буфер-примитивы) работает в ТОЙ ЖЕ зоне
 — выполнять ЛИБО как подготовку Ф.4, ЛИБО после неё, не параллельно (иначе двойная правка
 одних тел).
 
-**Приёмка:** греп лестницы `< 0x800` вне единого источника = 0 (кроме first_invalid_utf8 —
-это ДЕКОДЕР, другая ось); таргетно `nova test std/src/runtime` string_builder/write_buffer
-тесты + checksums-CU; байт-паритет вывода pad/append на существующих фикстурах.
+**Приёмка:** греп лестницы `< 0x800` вне `char @encode_utf8()` = 0 (кроме first_invalid_utf8
+— это ДЕКОДЕР, другая ось); `char_utf8_len|char_utf8_bytes` грепом = 0; таргетно
+string_builder/write_buffer тесты + checksums-CU; байт-паритет вывода pad/append на
+существующих фикстурах.
 **Модель:** haiku по этому списку (механика), координацию с 208 Ф.4 решает интегратор.
 
 ---
