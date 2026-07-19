@@ -38,7 +38,7 @@ fn encode_with(data []u8, upper bool) -> str {
         buf.append(digit(hi as u8, upper))
         buf.append(digit(lo as u8, upper))
     }
-    buf.into_str()
+    buf
 }
 
 // Plan 34 Ф.5.2: `int as char` запрещён D54, используем `n.to_char()?`.

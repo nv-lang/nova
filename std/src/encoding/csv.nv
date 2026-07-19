@@ -118,7 +118,7 @@ export fn Csv.encode(records [][]str) -> str {
         }
         buf.append('\n')
     }
-    buf.into_str()
+    buf
 }
 
 // [M-closure-trailing-scalar-coercion-no-typecheck] follow-up (2026-07-10):

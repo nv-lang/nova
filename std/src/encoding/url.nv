@@ -294,7 +294,7 @@ export fn Url @to_str() -> str {
         None => ()
     }
 
-    buf.into_str()
+    buf
 }
 
 
@@ -337,7 +337,7 @@ export fn Url.encode_query(s str) -> str {
             }
         }
     }
-    buf.into_str()
+    buf
 }
 
 // Декодирует percent-encoded строку.

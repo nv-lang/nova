@@ -218,7 +218,7 @@ fn TomlParser mut @parse_bare_key() -> str {
             _ => { done = true }
         }
     }
-    buf.into_str()
+    buf
 }
 
 fn is_bare_key_char(c char) -> bool {

@@ -804,7 +804,7 @@ fn format_string(s str) -> str {
         buf.append(escape_char(c))
     }
     buf.append("\"")
-    buf.into_str()
+    buf
 }
 
 fn escape_char(c char) -> str => match c {
@@ -843,7 +843,7 @@ fn format_array(xs []JsonValue) -> str {
         first = false
     }
     buf.append("]")
-    buf.into_str()
+    buf
 }
 
 fn format_object(m HashMap[str, JsonValue]) -> str {
@@ -861,7 +861,7 @@ fn format_object(m HashMap[str, JsonValue]) -> str {
         first = false
     }
     buf.append("}")
-    buf.into_str()
+    buf
 }
 
 
@@ -935,7 +935,7 @@ fn pretty_array(xs []JsonValue, depth int) -> str {
     buf.append("\n")
     buf.append(outer_indent)
     buf.append("]")
-    buf.into_str()
+    buf
 }
 
 fn pretty_object(m HashMap[str, JsonValue], depth int) -> str {
@@ -958,11 +958,11 @@ fn pretty_object(m HashMap[str, JsonValue], depth int) -> str {
     buf.append("\n")
     buf.append(outer_indent)
     buf.append("}")
-    buf.into_str()
+    buf
 }
 
 fn indent(depth int) -> str {
     consume buf = StringBuilder.new()
     for i in 0..depth { buf.append("  ") }
-    buf.into_str()
+    buf
 }

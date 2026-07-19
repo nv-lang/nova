@@ -231,7 +231,7 @@ export fn Uuid @to_str() -> str {
     write_hex_u32(buf, ((@lo >> 16) & 0xFFFFFFFF) as u32)
     write_hex_u16(buf, (@lo & 0xFFFF) as u16)
 
-    buf.into_str()
+    buf
 }
 
 fn write_hex_u32(mut buf StringBuilder, v u32) {
