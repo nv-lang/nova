@@ -9,13 +9,32 @@ module spec_tests.conformance
 // comment at `/*__MONO_TUPLE_TYPEDEFS__*/` for the fix (unified topo sort
 // across both families, spliced together at one location).
 
-fn f() -> (int, [4]u8) {
+// [M-callnorm-free-fn-name-collision] (2026-07-19, closure-megacu regression):
+// top-level names here MUST be unique across the WHOLE flat `spec_tests.conformance`
+// folder-module namespace — this is ONE compile unit with every root-level `.nv`
+// file's top-level decls sharing ONE symbol table. Bare single-letter names
+// (`f`/`g`/`h`) previously used here collided with UNRELATED files' LOCAL
+// closure variables/params of the SAME name (`d22_closure_full_unannotated_let.nv`'s
+// `f fn(int)->int` param, `d402_closure_return_width.nv`'s `ro f = |v| v`):
+// `callnorm.rs::try_normalize_call`'s coarse `Ident(name) => sigs.free.get(name)?`
+// fallback (used whenever the checker's `resolved_callees` has no entry for a
+// call-site — true for calls to a LOCAL variable of fn type, which has no
+// `Item::Fn` decl span to resolve to) matches call-site identifiers by NAME
+// ONLY, with no scope/shadowing awareness — it silently rewrote `f(x)`/`f(big)`
+// (calling the LOCAL param/closure) as if calling THIS file's 0-arg top-level
+// `fn f()`, producing "too many positional arguments: expected 0, got 1"
+// CODEGEN-FAIL. `try_normalize_call`'s coarse fallback has no scope-stack to
+// fix this at the source — see docs/plans/wip/closure-megacu-fix-notes.md for
+// the followup marker. Same convention already documented in D402's own
+// header ("все top-level имена D402-prefixed во избежание клэша") — applied
+// here with a file-scoped `tft_` prefix.
+fn tft_f() -> (int, [4]u8) {
     mut out [4]u8 = [7, 0, 0, 0]
     (1, out)
 }
 
 test "(int, [4]u8) tuple-of-fixarr — typedef order" {
-    ro (n, b) = f()
+    ro (n, b) = tft_f()
     assert(n == 1)
     assert(b[0] == 7)
     assert(b[1] == 0)
@@ -25,12 +44,12 @@ test "(int, [4]u8) tuple-of-fixarr — typedef order" {
 // topo sort already correctly required the tuple typedef first (only the
 // other direction was broken) — kept here as a same-class regression guard
 // so a future change to the unified sort can't silently re-break it.
-fn g() -> [2](int, int) {
+fn tft_g() -> [2](int, int) {
     [(1, 2), (3, 4)]
 }
 
 test "[2](int,int) fixarr-of-tuple — typedef order" {
-    ro pairs = g()
+    ro pairs = tft_g()
     assert(pairs[0].0 == 1)
     assert(pairs[0].1 == 2)
     assert(pairs[1].0 == 3)
@@ -38,12 +57,12 @@ test "[2](int,int) fixarr-of-tuple — typedef order" {
 }
 
 // Nested mix — tuple embeds a fixarr-of-tuples: `(T, [N](A,B))`.
-fn h() -> (int, [2](int, int)) {
+fn tft_h() -> (int, [2](int, int)) {
     (9, [(1, 2), (3, 4)])
 }
 
 test "(int, [2](int,int)) nested tuple-fixarr-tuple — typedef order" {
-    ro (tag, pairs) = h()
+    ro (tag, pairs) = tft_h()
     assert(tag == 9)
     assert(pairs[0].0 == 1)
     assert(pairs[1].1 == 4)
