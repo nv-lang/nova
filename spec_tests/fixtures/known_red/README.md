@@ -16,3 +16,14 @@
   fn — CC-FAIL (`assigning to 'nova_unit' from incompatible type
   'nova_int'`). Детали: docs/plans/wip/196-probes-notes.md (Plan 196
   волна-1 разведка-зонд).
+- `p196_b11al_terminal_probe.nv` / `p196_b12q_terminal_probe.nv` /
+  `p196_b12r_terminal_probe.nv` / `p196_b12s_terminal_probe.nv` —
+  `[M-196-probes-terminal-*]`: red-зонды для 4 терминалов `infer_call_ret_c`
+  (`B11al_panic_method_p67`/`B12q_panic_path_p67`/`B12r_panic_path_no_method_seg`/
+  `B12s_panic_path_no_parts`) — ЖЁСТКИЕ ПАНИКИ компилятора (`nova: internal
+  error`, exit=101), НЕ перехватываются `nova test`'ом (весь процесс
+  обрывается без summary, даже для одного файла) — **никогда не гонять эти
+  4 файла в одном вызове `nova test` с другими файлами** (сама паника молча
+  съедает результаты остальных). Детали механики каждого + нужный
+  чекер-фикс: docs/plans/wip/196-probes-notes.md §2 (Plan 196 волна-1
+  разведка-зонд).
