@@ -2894,6 +2894,26 @@ pub const CONV_RULES: &[ConvRule] = &[
         ast: Some(conv_coerce_explicit_redundant),
         text: None,
     },
+    // W_MANUAL_CLAMP перечислен рядом с W_MANUAL_MIN_MAX (не порядково
+    // значимо — min/max дедупит свои находки самостоятельным прогоном
+    // `conv_collect_clamp_consumed_spans`, не завися от позиции в реестре;
+    // см. блок-комментарий у `conv_manual_min_max`).
+    ConvRule {
+        id: "W_MANUAL_CLAMP",
+        summary: "ручной трёхветочный `if x < lo {lo} else if x > hi {hi} else {x}` \
+                  — канон `x.clamp(lo, hi)` (nv-coding-style §30, прецедент clippy \
+                  manual_clamp)",
+        ast: Some(conv_manual_clamp),
+        text: None,
+    },
+    ConvRule {
+        id: "W_MANUAL_MIN_MAX",
+        summary: "ручной `if a > b {a} else {b}` (и зеркала `</>=/<=`, statement-форма \
+                  `if x > hi {x = hi}`) — канон `a.max(b)`/`a.min(b)` (nv-coding-style \
+                  §30, прецедент clippy manual_min/manual_max)",
+        ast: Some(conv_manual_min_max),
+        text: None,
+    },
 ];
 
 /// id всех правил реестра (для валидации `--rule` и `--list-rules`).
@@ -4604,6 +4624,379 @@ fn conv_walk_expr_for_while_counter(e: &Expr, out: &mut Vec<LintWarning>) {
             }
         }
         _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_MANUAL_CLAMP / W_MANUAL_MIN_MAX — ручной if/else вместо @clamp/@max/@min
+// (Plan 185, заказ владельца 2026-07-20, стилевой линт семейства). Прецедент
+// — clippy `manual_clamp`/`manual_min`/`manual_max`/`comparison_chain`.
+//
+// SEMANTIC-UPGRADE: без типов не знаем, есть ли у операндов метод
+// `@clamp`/`@max`/`@min` вовсе (нужен Comparable/Ints-бланкет) — гейт
+// консервативен синтаксически: обе ветви возвращают РОВНО операнды
+// сравнения (или int/float-литерал, буквально совпадающий с операндом
+// сравнения) — значит побочных эффектов нет (`conv_operand_key` признаёт
+// только «простое место»/литерал), переупорядочивание вычислений безопасно.
+//
+// Самоссылочный сайт: `@min`/`@max`/`@clamp` (std/runtime/defaults.nv,
+// std/prelude/protocols.nv Ints-бланкет, std/time/duration/core.nv) САМИ
+// реализованы РОВНО этим if/else-паттерном (`export fn int @min(other int)
+// -> int => if @ < other { @ } else { other }` и т.п.) — предложение
+// «замени на `.max(...)`» внутри тела `@max` было бы рекурсией на себя. Оба
+// правила молчат внутри любой fn с ИМЕНЕМ буквально `min`/`max`
+// (W_MANUAL_MIN_MAX) / `clamp` (W_MANUAL_CLAMP) — узко по имени, НЕ по
+// receiver'у (гасит и свободные функции-реализации:
+// `spec_tests/conformance/standalone/f11_corpus_06_pattern_regression.nv`
+// содержит `fn max(a int, b int) -> int => if a > b { a } else { b }` —
+// пиновая регрессия ИМЕННО этой формы, легитимно остаётся нетронутой).
+//
+// W_MANUAL_CLAMP НАМЕРЕННО не покрывает вложенные вызовы-цепочки
+// `x.min(hi).max(lo)` / `x.max(lo).min(hi)` (упомянутые как альтернативная
+// форма в задании) — они РАСХОДЯТСЯ с `@clamp` на инвертированном диапазоне
+// (`lo > hi`): `@clamp` определён как `if @ < lo { lo } else if @ > hi {
+// hi } else { @ }` — при `lo > hi` для `@ < lo` возвращает `lo`, тогда как
+// ОБЕ цепочки `x.max(lo).min(hi)`/`x.min(hi).max(lo)` при том же `lo > hi`
+// для `x < lo` вернули бы `hi` (проверено алгебраически: `max(x,lo)=lo`
+// т.к. `x<lo`, затем `min(lo,hi)=hi` т.к. `lo>hi`, — разное значение).
+// Синтаксический линт не может исключить `lo > hi` во время сборки, значит
+// подсказка была бы ПОВЕДЕНЧЕСКИ рискованной в этом крайнем случае; корпус
+// (std/spec_tests/examples) не содержит ни одного реального сайта такой
+// цепочки — сужение критериев без потери охвата (никого не подавляем).
+// ---------------------------------------------------------------------------
+
+/// Операнд, безопасный для линтов семейства min/max/clamp: «простое место»
+/// (`conv_place_key` — ident/`@field`/цепочка полей, без побочных эффектов у
+/// receiver'а) ИЛИ голый int/float-литерал (опционально унарный `-`).
+/// Литералы НЕ префиксируются — идентификатор Nova не может состоять
+/// только из цифр, коллизий с `conv_place_key` нет; строка одновременно
+/// служит ключом равенства И читаемым текстом для сообщения диагностики.
+fn conv_operand_key(e: &Expr) -> Option<String> {
+    if let Some(k) = conv_place_key(e) {
+        return Some(k);
+    }
+    match &e.kind {
+        ExprKind::IntLit(n) => Some(n.to_string()),
+        ExprKind::FloatLit(f) => Some(conv_format_float(*f)),
+        ExprKind::Unary { op: crate::ast::UnOp::Neg, operand } => match &operand.kind {
+            ExprKind::IntLit(n) => Some(format!("-{n}")),
+            ExprKind::FloatLit(f) => Some(format!("-{}", conv_format_float(*f))),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// `f64` → короткая однозначная текстовая форма для сообщения (`0.0`, не
+/// `0`) — иллюстративная, не обязана байт-в-байт воспроизводить исходный
+/// литерал.
+fn conv_format_float(f: f64) -> String {
+    if f.is_finite() && f == f.trunc() {
+        format!("{f:.1}")
+    } else {
+        f.to_string()
+    }
+}
+
+/// Единственное значение блока — trailing-выражение ИЛИ единственный
+/// `return`-statement (то же расширение формы, что и в
+/// `lint_value_record_unnecessary_promote::rec_lit` выше в этом файле).
+fn conv_block_single_value(b: &Block) -> Option<&Expr> {
+    match (&b.stmts[..], &b.trailing) {
+        ([], Some(t)) => Some(t),
+        ([Stmt::Return { value: Some(v), .. }], None) => Some(v),
+        _ => None,
+    }
+}
+
+/// Символ бинарного сравнения для текста диагностики.
+fn conv_cmp_symbol(op: crate::ast::BinOp) -> &'static str {
+    use crate::ast::BinOp;
+    match op {
+        BinOp::Lt => "<",
+        BinOp::Le => "<=",
+        BinOp::Gt => ">",
+        BinOp::Ge => ">=",
+        _ => "?",
+    }
+}
+
+/// Дано `L OP R` (одна из четырёх форм сравнения) и значение, которое ветвь
+/// возвращает при истинном условии (`v_true`) и при ложном (`v_false`) —
+/// ОБА непременно равны (по `conv_operand_key`) либо `l_key`, либо `r_key`.
+/// Возвращает `"max"`/`"min"`, если пара однозначно соответствует канону;
+/// `None` — вырожденный случай (ни один операнд не совпал / оба совпали).
+fn conv_minmax_method(
+    op: crate::ast::BinOp,
+    l_key: &str,
+    r_key: &str,
+    v_true: &str,
+    v_false: &str,
+) -> Option<&'static str> {
+    use crate::ast::BinOp;
+    let is_gt = matches!(op, BinOp::Gt | BinOp::Ge);
+    let is_lt = matches!(op, BinOp::Lt | BinOp::Le);
+    if !is_gt && !is_lt {
+        return None;
+    }
+    if v_true == l_key && v_false == r_key {
+        Some(if is_gt { "max" } else { "min" })
+    } else if v_true == r_key && v_false == l_key {
+        Some(if is_gt { "min" } else { "max" })
+    } else {
+        None
+    }
+}
+
+/// Одна попытка сматчить `if` под W_MANUAL_MIN_MAX — либо expr-форма
+/// (`if a > b { a } else { b }`), либо statement-форма без `else`
+/// (`if x > hi { x = hi }`, ограничение на месте одной границей).
+fn conv_manual_min_max_check(e: &Expr) -> Option<LintWarning> {
+    let ExprKind::If { cond, then, else_ } = &e.kind else { return None };
+    let ExprKind::Binary { op, left, right } = &cond.kind else { return None };
+    if !matches!(
+        op,
+        crate::ast::BinOp::Lt | crate::ast::BinOp::Le | crate::ast::BinOp::Gt | crate::ast::BinOp::Ge
+    ) {
+        return None;
+    }
+    let l_key = conv_operand_key(left)?;
+    let r_key = conv_operand_key(right)?;
+    if l_key == r_key {
+        return None; // вырожденное сравнение места с самим собой
+    }
+    match else_ {
+        Some(ElseBranch::Block(else_block)) => {
+            let then_key = conv_operand_key(conv_block_single_value(then)?)?;
+            let else_key = conv_operand_key(conv_block_single_value(else_block)?)?;
+            let method = conv_minmax_method(*op, &l_key, &r_key, &then_key, &else_key)?;
+            Some(LintWarning {
+                rule: "W_MANUAL_MIN_MAX",
+                diag: Diagnostic::new(
+                    format!(
+                        "ручной `if {l} {cmp} {r} {{ ... }} else {{ ... }}` вычисляет \
+                         {word} двух операндов — канон `{l}.{method}({r})` (nv-coding-style \
+                         §30, прецедент clippy manual_min/manual_max).",
+                        l = l_key,
+                        cmp = conv_cmp_symbol(*op),
+                        r = r_key,
+                        word = if method == "max" { "максимум" } else { "минимум" },
+                        method = method,
+                    ),
+                    e.span,
+                ),
+            })
+        }
+        // `else if` — потенциальный трёхветочный W_MANUAL_CLAMP, не наш
+        // двухоперандный случай; тот линт проверяет ту же ноду отдельно.
+        Some(ElseBranch::If(_)) => None,
+        None => {
+            if then.trailing.is_some() {
+                return None;
+            }
+            let [Stmt::Assign { target, op: crate::ast::AssignOp::Assign, value, .. }] = &then.stmts[..]
+            else {
+                return None;
+            };
+            let target_key = conv_place_key(target)?;
+            if target_key != l_key && target_key != r_key {
+                return None; // цель присваивания — не операнд сравнения
+            }
+            let value_key = conv_operand_key(value)?;
+            let method = conv_minmax_method(*op, &l_key, &r_key, &value_key, &target_key)?;
+            Some(LintWarning {
+                rule: "W_MANUAL_MIN_MAX",
+                diag: Diagnostic::new(
+                    format!(
+                        "ручной `if {l} {cmp} {r} {{ {t} = ... }}` ограничивает `{t}` на \
+                         месте одной границей — канон `{t} = {t}.{method}({v})` \
+                         (nv-coding-style §30).",
+                        l = l_key,
+                        cmp = conv_cmp_symbol(*op),
+                        r = r_key,
+                        t = target_key,
+                        method = method,
+                        v = value_key,
+                    ),
+                    e.span,
+                ),
+            })
+        }
+    }
+}
+
+fn conv_manual_min_max(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    // Дедуп с W_MANUAL_CLAMP: внутренний `if` трёхветочного clamp-паттерна
+    // (вторая проверка — `else if`/вложенный `if`) сам по себе валидный
+    // 2-операндный min/max-шейп; синтаксический walker посещает его ОТДЕЛЬНЫМ
+    // узлом (pre-order обход заходит и в `ElseBranch::If`, и во вложенный
+    // блок). Если это ИМЕННО тот внутренний `if`, который W_MANUAL_CLAMP уже
+    // разобрал как половину валидного трёхветочного паттерна — не дублируем
+    // тем же сайтом половинчатой min/max-подсказкой (clamp покрывает ОБЕ
+    // границы разом).
+    //
+    // ВАЖНО: сравнение по СОДержИМому span'а внешнего `if`-узла НЕ работает
+    // здесь — `parser::parse_if` считает span if-выражения как `start(if
+    // keyword)..end(then-блока)`, `else`-цепочка в него НЕ включена (см.
+    // `parse_if`), значит span внешнего clamp-узла НЕ содержит span
+    // вложенного `if` физически (они формально НЕ во вложенности, хотя
+    // AST-узел вложен). Поэтому дедуп — по ТОЧНОМУ совпадению span'а
+    // ВНУТРЕННЕГО узла (`conv_manual_clamp_check` возвращает его как часть
+    // своего результата) — этот span у обоих правил вычисляется на ОДНОМ и
+    // том же распарсенном узле, совпадает байт-в-байт.
+    let consumed = conv_collect_clamp_consumed_spans(m);
+    for f in conv_all_fns(m) {
+        if f.name == "min" || f.name == "max" {
+            continue; // само-ссылочный сайт — см. блок-комментарий выше
+        }
+        conv_walk_fn(
+            f,
+            &mut |_s, _in_loop| {},
+            &mut |e, _in_loop| {
+                if consumed.contains(&(e.span.start, e.span.end)) {
+                    return;
+                }
+                if let Some(w) = conv_manual_min_max_check(e) {
+                    out.push(w);
+                }
+            },
+        );
+    }
+}
+
+/// Множество span'ов «внутренних» if-узлов, уже разобранных
+/// `conv_manual_clamp_check` как вторая половина валидного трёхветочного
+/// clamp-паттерна где-то в модуле — используется ТОЛЬКО для дедупа
+/// W_MANUAL_MIN_MAX (см. блок-комментарий там). Не зависит от порядка
+/// правил в `CONV_RULES` (реестра) — прогоняется отдельно.
+fn conv_collect_clamp_consumed_spans(m: &Module) -> HashSet<(usize, usize)> {
+    let mut consumed = HashSet::new();
+    for f in conv_all_fns(m) {
+        if f.name == "clamp" {
+            continue;
+        }
+        conv_walk_fn(
+            f,
+            &mut |_s, _in_loop| {},
+            &mut |e, _in_loop| {
+                if let Some((_w, inner_span)) = conv_manual_clamp_check(e) {
+                    consumed.insert((inner_span.start, inner_span.end));
+                }
+            },
+        );
+    }
+    consumed
+}
+
+/// Внутренний `if`, скрытый ЛИБО за сахаром `else if ...` (`ElseBranch::If`),
+/// ЛИБО за буквальным вложенным блоком `else { if ... }` (семантически то
+/// же самое — прецедент `spec_tests/conformance/method_with_args_ok.nv`).
+/// Обе формы равноценны для W_MANUAL_CLAMP.
+fn conv_nested_if(else_: &ElseBranch) -> Option<&Expr> {
+    match else_ {
+        ElseBranch::If(inner) => Some(inner),
+        ElseBranch::Block(b) => {
+            let v = conv_block_single_value(b)?;
+            if matches!(v.kind, ExprKind::If { .. }) {
+                Some(v)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Матч трёхветочного clamp-паттерна на ОДНОМ `if`-узле — байт-в-байт та же
+/// форма, что и каноническая реализация `@clamp` (`if @ < lo { lo } else if
+/// @ > hi { hi } else { @ } }`), с точностью до имён операндов/направления
+/// (`>`-проверка может идти первой). Возвращает находку И span вложенного
+/// `if`-узла (вторая проверка) — используется `conv_collect_clamp_consumed_
+/// spans` для дедупа с W_MANUAL_MIN_MAX (см. там).
+fn conv_manual_clamp_check(e: &Expr) -> Option<(LintWarning, Span)> {
+    let ExprKind::If { cond: cond1, then: then1, else_: else1 } = &e.kind else { return None };
+    let ExprKind::Binary { op: op1, left: l1, right: r1 } = &cond1.kind else { return None };
+    if !matches!(
+        op1,
+        crate::ast::BinOp::Lt | crate::ast::BinOp::Le | crate::ast::BinOp::Gt | crate::ast::BinOp::Ge
+    ) {
+        return None;
+    }
+    let x_key = conv_operand_key(l1)?;
+    let b1_key = conv_operand_key(r1)?;
+    if x_key == b1_key {
+        return None;
+    }
+    let v1_key = conv_operand_key(conv_block_single_value(then1)?)?;
+    if v1_key != b1_key {
+        return None;
+    }
+
+    let inner = conv_nested_if(else1.as_ref()?)?;
+    let ExprKind::If { cond: cond2, then: then2, else_: else2 } = &inner.kind else { return None };
+    let ExprKind::Binary { op: op2, left: l2, right: r2 } = &cond2.kind else { return None };
+    if !matches!(
+        op2,
+        crate::ast::BinOp::Lt | crate::ast::BinOp::Le | crate::ast::BinOp::Gt | crate::ast::BinOp::Ge
+    ) {
+        return None;
+    }
+    if conv_operand_key(l2)? != x_key {
+        return None; // сравнивается не тот же операнд, что снаружи
+    }
+    let b2_key = conv_operand_key(r2)?;
+    let v2_key = conv_operand_key(conv_block_single_value(then2)?)?;
+    if v2_key != b2_key {
+        return None;
+    }
+
+    let ElseBranch::Block(final_block) = else2.as_ref()? else { return None };
+    let v3_key = conv_operand_key(conv_block_single_value(final_block)?)?;
+    if v3_key != x_key {
+        return None; // финальная ветвь обязана вернуть исходный операнд
+    }
+
+    let is_lo1 = matches!(op1, crate::ast::BinOp::Lt | crate::ast::BinOp::Le);
+    let is_lo2 = matches!(op2, crate::ast::BinOp::Lt | crate::ast::BinOp::Le);
+    if is_lo1 == is_lo2 || b1_key == b2_key {
+        return None; // обе проверки в одну сторону / одна и та же граница
+    }
+    let (lo_key, hi_key) = if is_lo1 { (b1_key, b2_key) } else { (b2_key, b1_key) };
+
+    Some((
+        LintWarning {
+            rule: "W_MANUAL_CLAMP",
+            diag: Diagnostic::new(
+                format!(
+                    "ручной трёхветочный if/else-if ограничивает `{x}` диапазоном \
+                     `[{lo}, {hi}]` — канон `{x}.clamp({lo}, {hi})` (nv-coding-style §30, \
+                     прецедент clippy manual_clamp). Направление границ у clamp'а легко \
+                     перепутать вручную — machine-applicable подсказка ловит именно этот \
+                     класс багов.",
+                    x = x_key,
+                    lo = lo_key,
+                    hi = hi_key,
+                ),
+                e.span,
+            ),
+        },
+        inner.span,
+    ))
+}
+
+fn conv_manual_clamp(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    for f in conv_all_fns(m) {
+        if f.name == "clamp" {
+            continue; // само-ссылочный сайт — см. блок-комментарий выше
+        }
+        conv_walk_fn(
+            f,
+            &mut |_s, _in_loop| {},
+            &mut |e, _in_loop| {
+                if let Some((w, _inner_span)) = conv_manual_clamp_check(e) {
+                    out.push(w);
+                }
+            },
+        );
     }
 }
 
@@ -6479,6 +6872,314 @@ mod tests {
             !ws.iter().any(|w| w.rule == "W_NON_COMPOUND_ASSIGN"),
             "must NOT suggest `*=`/`/=` (compound-assign never overload-dispatches Mul/Div, \
              CC-FAIL risk on operator-overloaded types), got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // Plan 185 (заказ владельца 2026-07-20): W_MANUAL_MIN_MAX / W_MANUAL_CLAMP.
+
+    fn min_max_rule_hits<'a>(ws: &'a [LintWarning], rule: &str) -> Vec<&'a LintWarning> {
+        ws.iter().filter(|w| w.rule == rule).collect()
+    }
+
+    #[test]
+    fn manual_min_max_gt_then_left() {
+        // if a > b { a } else { b } -> a.max(b)
+        let src = "module foo\nfn run(a int, b int) -> int => if a > b { a } else { b }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_MANUAL_MIN_MAX");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        assert!(hit[0].diag.message.contains("a.max(b)"), "got: {}", hit[0].diag.message);
+    }
+
+    #[test]
+    fn manual_min_max_gt_then_right_is_min() {
+        // if a > b { b } else { a } -> a.min(b)
+        let src = "module foo\nfn run(a int, b int) -> int => if a > b { b } else { a }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_MANUAL_MIN_MAX");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        assert!(hit[0].diag.message.contains("a.min(b)"), "got: {}", hit[0].diag.message);
+    }
+
+    #[test]
+    fn manual_min_max_lt_then_left_is_min() {
+        // if a < b { a } else { b } -> a.min(b)
+        let src = "module foo\nfn run(a int, b int) -> int => if a < b { a } else { b }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_MANUAL_MIN_MAX");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        assert!(hit[0].diag.message.contains("a.min(b)"), "got: {}", hit[0].diag.message);
+    }
+
+    #[test]
+    fn manual_min_max_lt_then_right_is_max() {
+        // if a < b { b } else { a } -> a.max(b)
+        let src = "module foo\nfn run(a int, b int) -> int => if a < b { b } else { a }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_MANUAL_MIN_MAX");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        assert!(hit[0].diag.message.contains("a.max(b)"), "got: {}", hit[0].diag.message);
+    }
+
+    #[test]
+    fn manual_min_max_ge_and_le_mirrors() {
+        let src = "module foo\n\
+             fn m1(a int, b int) -> int => if a >= b { a } else { b }\n\
+             fn m2(a int, b int) -> int => if a <= b { a } else { b }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_MANUAL_MIN_MAX");
+        assert_eq!(hit.len(), 2, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        assert!(hit.iter().any(|w| w.diag.message.contains("a.max(b)")));
+        assert!(hit.iter().any(|w| w.diag.message.contains("a.min(b)")));
+    }
+
+    #[test]
+    fn manual_min_max_return_form() {
+        // Block form with a single `return` statement (not bare trailing expr).
+        let src = "module foo\nfn run(a int, b int) -> int {\n    if a > b { return a }\n    b\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        // Здесь else-ветви нет вовсе (это if-statement с одиночным
+        // return в then, а не if/else-выражение) — statement-форма (без
+        // else) не матчит, т.к. тело — `return`, не присваивание. Значит
+        // находки НЕ ожидается; тест фиксирует, что мы не ломаем на этой
+        // форме (не паникуем на несовпадающем then-теле).
+        let hit = min_max_rule_hits(&ws, "W_MANUAL_MIN_MAX");
+        assert!(hit.is_empty(), "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn manual_min_max_literal_bound() {
+        // if n > 0 { n } else { 0 } -> n.max(0) (io/mem.nv-style idiom).
+        let src = "module foo\nfn run(n int) -> int => if n > 0 { n } else { 0 }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_MANUAL_MIN_MAX");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        assert!(hit[0].diag.message.contains("n.max(0)"), "got: {}", hit[0].diag.message);
+    }
+
+    #[test]
+    fn manual_min_max_statement_form_cap_at_hi() {
+        // if x > hi { x = hi } -> x = x.min(hi) (одна верхняя граница).
+        let src = "module foo\nfn run(hi int) -> int {\n    mut x = 0\n    \
+             if x > hi { x = hi }\n    x\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_MANUAL_MIN_MAX");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        assert!(hit[0].diag.message.contains("x = x.min(hi)"), "got: {}", hit[0].diag.message);
+    }
+
+    #[test]
+    fn manual_min_max_statement_form_mirrored_running_max() {
+        // if deadline_ms > current_ms { current_ms = deadline_ms } (running-max
+        // tracking, testing/handlers.nv-style — target на ПРАВОЙ стороне cond).
+        let src = "module foo\nfn run(deadline_ms int) -> int {\n    mut current_ms = 0\n    \
+             if deadline_ms > current_ms { current_ms = deadline_ms }\n    current_ms\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_MANUAL_MIN_MAX");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        assert!(
+            hit[0].diag.message.contains("current_ms = current_ms.max(deadline_ms)"),
+            "got: {}",
+            hit[0].diag.message
+        );
+    }
+
+    #[test]
+    fn manual_min_max_statement_form_mirrored_running_min() {
+        // if x < lo { lo = x } (running-min tracking, statistics.nv-style).
+        let src = "module foo\nfn run(x int) -> int {\n    mut lo = 0\n    \
+             if x < lo { lo = x }\n    lo\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_MANUAL_MIN_MAX");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        assert!(
+            hit[0].diag.message.contains("lo = lo.min(x)"),
+            "got: {}",
+            hit[0].diag.message
+        );
+    }
+
+    #[test]
+    fn no_warning_manual_min_max_different_operands() {
+        // Ветви возвращают операнды, НЕ участвующие в сравнении — не min/max.
+        let src = "module foo\nfn run(a int, b int, c int) -> int => if a > b { a } else { c }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_MANUAL_MIN_MAX").is_empty(),
+            "got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_manual_min_max_side_effect_branch() {
+        // Ветвь — вызов (потенциальный побочный эффект), не голое место/литерал.
+        let src = "module foo\nfn run(a int, b int) -> int => if a > b { compute() } else { b }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_MANUAL_MIN_MAX").is_empty(),
+            "got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_manual_min_max_unrelated_assign_target() {
+        // Statement-форма: цель присваивания — НЕ операнд сравнения.
+        let src = "module foo\nfn run(a int, b int) -> int {\n    mut other = 0\n    \
+             if a > b { other = b }\n    other\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_MANUAL_MIN_MAX").is_empty(),
+            "got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // Регрессия-предохранитель: `@min`/`@max` (std/runtime/defaults.nv) сами
+    // реализованы РОВНО этим if/else-паттерном — предложение заменить на
+    // `.max(...)`/`.min(...)` внутри тела `@max` было бы рекурсией на себя.
+    // Гейт — по ИМЕНИ функции (`min`/`max`), не по receiver'у: свободная
+    // функция `fn max(...)` (как `spec_tests/conformance/standalone/
+    // f11_corpus_06_pattern_regression.nv`) тоже обязана молчать.
+    #[test]
+    fn no_warning_manual_min_max_self_referential_definition() {
+        let src = "module foo\n\
+             export fn int @min(other int) -> int => if @ < other { @ } else { other }\n\
+             export fn int @max(other int) -> int => if @ > other { @ } else { other }\n\
+             fn max(a int, b int) -> int => if a > b { a } else { b }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_MANUAL_MIN_MAX").is_empty(),
+            "must NOT fire inside the very definition of @min/@max/free `max`, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn manual_clamp_canonical_lo_first() {
+        // if x < lo { lo } else if x > hi { hi } else { x } -> x.clamp(lo, hi)
+        // (буквальная форма @clamp, std/prelude/protocols.nv — здесь имя fn
+        // намеренно НЕ `clamp`, чтобы не задеть само-ссылочный гейт).
+        let src = "module foo\n\
+             fn bound(x int, lo int, hi int) -> int =>\n    \
+             if x < lo { lo } else if x > hi { hi } else { x }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_MANUAL_CLAMP");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        assert!(hit[0].diag.message.contains("x.clamp(lo, hi)"), "got: {}", hit[0].diag.message);
+        // Дедуп: внутренний `if x > hi { hi } else { x }` НЕ должен ТАКЖЕ
+        // всплыть как отдельный W_MANUAL_MIN_MAX на том же сайте.
+        assert!(
+            min_max_rule_hits(&ws, "W_MANUAL_MIN_MAX").is_empty(),
+            "clamp finding must suppress the nested half-pattern min/max finding, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn manual_clamp_hi_first_order() {
+        // if x > hi { hi } else if x < lo { lo } else { x } -> x.clamp(lo, hi)
+        // (проверка-на-верхнюю-границу идёт первой — зеркальный порядок).
+        let src = "module foo\n\
+             fn bound(x int, lo int, hi int) -> int =>\n    \
+             if x > hi { hi } else if x < lo { lo } else { x }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_MANUAL_CLAMP");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        assert!(hit[0].diag.message.contains("x.clamp(lo, hi)"), "got: {}", hit[0].diag.message);
+    }
+
+    #[test]
+    fn manual_clamp_nested_block_form() {
+        // else { if x > hi { hi } else { x } } — буквально вложенный if,
+        // не `else if`-сахар (прецедент method_with_args_ok.nv).
+        let src = "module foo\n\
+             fn bound(x int, lo int, hi int) -> int {\n    \
+             if x < lo { lo } else { if x > hi { hi } else { x } }\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_MANUAL_CLAMP");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        assert!(hit[0].diag.message.contains("x.clamp(lo, hi)"), "got: {}", hit[0].diag.message);
+    }
+
+    #[test]
+    fn no_warning_manual_clamp_three_way_comparator() {
+        // cmp()-стиль -1/0/1 (semver.nv/period.nv-класс) — ветви возвращают
+        // литералы, НЕ равные границам сравнения — не clamp.
+        let src = "module foo\n\
+             fn cmp3(a int, b int) -> int =>\n    \
+             if a < b { -1 } else if a > b { 1 } else { 0 }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_MANUAL_CLAMP").is_empty(),
+            "got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_manual_clamp_final_else_not_original() {
+        let src = "module foo\n\
+             fn bound(x int, lo int, hi int) -> int =>\n    \
+             if x < lo { lo } else if x > hi { hi } else { lo }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_MANUAL_CLAMP").is_empty(),
+            "final else must return the original unclamped operand, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_manual_clamp_same_direction_checks() {
+        // Обе проверки — нижняя граница (не lo/hi пара) — не clamp-форма.
+        let src = "module foo\n\
+             fn bound(x int, lo int, lo2 int) -> int =>\n    \
+             if x < lo { lo } else if x < lo2 { lo2 } else { x }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_MANUAL_CLAMP").is_empty(),
+            "got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // Регрессия-предохранитель: `@clamp` (std/prelude/protocols.nv Ints-
+    // бланкет, std/runtime/defaults.nv f32/f64) сам реализован РОВНО этим
+    // трёхветочным паттерном — предложение заменить на `.clamp(...)` внутри
+    // тела `@clamp` было бы рекурсией на себя.
+    #[test]
+    fn no_warning_manual_clamp_self_referential_definition() {
+        let src = "module foo\n\
+             export fn f64 @clamp(lo f64, hi f64) -> f64 =>\n    \
+             if @ < lo { lo } else if @ > hi { hi } else { @ }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_MANUAL_CLAMP").is_empty(),
+            "must NOT fire inside the very definition of @clamp, got: {:?}",
             ws.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
     }
