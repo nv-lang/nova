@@ -1,0 +1,138 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/runtime/string_test.nv — beside-module test for the folder-module
+// `std.runtime.string` (std/src/runtime/string/{chars,core,parse,search,
+// slice,transform}.nv, all co-equal `module runtime.string`, `#no_prelude`).
+// Same shape as `std/time/units_test.nv` importing `std.time.duration`
+// (another folder-module) — a genuinely separate peer module, NOT a
+// co-equal file inside the `string/` folder itself (that would just extend
+// `runtime.string`'s own `#no_prelude` namespace and lose ordinary
+// `assert()`/prelude access for no reason).
+//
+// [Числовой паритет-2, 2026-07-20]: covers the `str @to_*` widths added
+// this wave (`to_i8`/`to_i16`/`to_i32`/`to_u16`/`to_uint`,
+// std/runtime/string/parse.nv) — completing the SignedInt/UnsignedInt set
+// that Plan 174.1 originally left partial by owner decision. Pre-existing
+// `to_int`/`to_i64`/`to_u64`/`to_u32`/`to_u8` already have conformance
+// coverage (spec_tests/conformance/parse_int_*.nv) — not duplicated here.
+module runtime.string_test
+
+import std.runtime.string.{ParseIntError}
+
+test "Числовой паритет-2: str.to_i8 — в диапазоне / overflow / мусор" {
+    match "100".to_i8() {
+        Ok(n)  => { ro hundred i8 = 100; assert(n == hundred) }
+        Err(_) => assert(false, "expected Ok(100)")
+    }
+    match "-100".to_i8() {
+        Ok(n)  => { ro neg_hundred i8 = -100; assert(n == neg_hundred) }
+        Err(_) => assert(false, "expected Ok(-100)")
+    }
+    match "200".to_i8() {
+        Ok(_)          => assert(false, "expected Err(Overflow) — 200 > i8.MAX(127)")
+        Err(Overflow)  => {}
+        Err(_)         => assert(false, "expected Overflow variant")
+    }
+    match "-200".to_i8() {
+        Ok(_)          => assert(false, "expected Err(Overflow) — -200 < i8.MIN(-128)")
+        Err(Overflow)  => {}
+        Err(_)         => assert(false, "expected Overflow variant")
+    }
+    match "abc".to_i8() {
+        Ok(_)             => assert(false, "expected Err(InvalidDigit)")
+        Err(InvalidDigit) => {}
+        Err(_)            => assert(false, "expected InvalidDigit variant")
+    }
+}
+
+test "Числовой паритет-2: str.to_i16 — в диапазоне / overflow / мусор" {
+    match "30000".to_i16() {
+        Ok(n)  => { ro thirty_k i16 = 30000; assert(n == thirty_k) }
+        Err(_) => assert(false, "expected Ok(30000)")
+    }
+    match "40000".to_i16() {
+        Ok(_)          => assert(false, "expected Err(Overflow) — 40000 > i16.MAX(32767)")
+        Err(Overflow)  => {}
+        Err(_)         => assert(false, "expected Overflow variant")
+    }
+    match "xyz".to_i16() {
+        Ok(_)             => assert(false, "expected Err(InvalidDigit)")
+        Err(InvalidDigit) => {}
+        Err(_)            => assert(false, "expected InvalidDigit variant")
+    }
+}
+
+test "Числовой паритет-2: str.to_i32 — в диапазоне / overflow / мусор" {
+    match "2000000000".to_i32() {
+        Ok(n)  => { ro two_b i32 = 2000000000; assert(n == two_b) }
+        Err(_) => assert(false, "expected Ok(2000000000)")
+    }
+    match "9999999999".to_i32() {
+        Ok(_)          => assert(false, "expected Err(Overflow) — > i32.MAX")
+        Err(Overflow)  => {}
+        Err(_)         => assert(false, "expected Overflow variant")
+    }
+    match "!!".to_i32() {
+        Ok(_)             => assert(false, "expected Err(InvalidDigit)")
+        Err(InvalidDigit) => {}
+        Err(_)            => assert(false, "expected InvalidDigit variant")
+    }
+    match "".to_i32() {
+        Ok(_)         => assert(false, "expected Err(Empty)")
+        Err(Empty)    => {}
+        Err(_)        => assert(false, "expected Empty variant")
+    }
+}
+
+test "Числовой паритет-2: str.to_u16 — в диапазоне / overflow / мусор / '-' (unsigned InvalidDigit)" {
+    match "60000".to_u16() {
+        Ok(n)  => { ro sixty_k u16 = 60000; assert(n == sixty_k) }
+        Err(_) => assert(false, "expected Ok(60000)")
+    }
+    match "70000".to_u16() {
+        Ok(_)          => assert(false, "expected Err(Overflow) — 70000 > u16.MAX(65535)")
+        Err(Overflow)  => {}
+        Err(_)         => assert(false, "expected Overflow variant")
+    }
+    match "-1".to_u16() {
+        Ok(_)             => assert(false, "expected Err(InvalidDigit) — unsigned engine, no negation")
+        Err(InvalidDigit) => {}
+        Err(_)            => assert(false, "expected InvalidDigit variant")
+    }
+    match "zz".to_u16() {
+        Ok(_)             => assert(false, "expected Err(InvalidDigit)")
+        Err(InvalidDigit) => {}
+        Err(_)            => assert(false, "expected InvalidDigit variant")
+    }
+}
+
+test "Числовой паритет-2: str.to_uint — обычные значения / мусор / пусто (нет узкого range-check — сама ширина движка)" {
+    match "123456789".to_uint() {
+        Ok(n)  => { ro v uint = 123456789; assert(n == v) }
+        Err(_) => assert(false, "expected Ok(123456789)")
+    }
+    match "0".to_uint() {
+        Ok(n)  => { ro zero uint = 0; assert(n == zero) }
+        Err(_) => assert(false, "expected Ok(0)")
+    }
+    match "garbage".to_uint() {
+        Ok(_)             => assert(false, "expected Err(InvalidDigit)")
+        Err(InvalidDigit) => {}
+        Err(_)            => assert(false, "expected InvalidDigit variant")
+    }
+    match "".to_uint() {
+        Ok(_)      => assert(false, "expected Err(Empty)")
+        Err(Empty) => {}
+        Err(_)     => assert(false, "expected Empty variant")
+    }
+}
+
+test "Числовой паритет-2: radix-N работает для новых широт (hex to_i32, to_u16)" {
+    match "ff".to_i32(radix: 16) {
+        Ok(n)  => { ro v i32 = 255; assert(n == v) }
+        Err(_) => assert(false, "expected Ok(255)")
+    }
+    match "ff".to_u16(radix: 16) {
+        Ok(n)  => { ro v u16 = 255; assert(n == v) }
+        Err(_) => assert(false, "expected Ok(255)")
+    }
+}

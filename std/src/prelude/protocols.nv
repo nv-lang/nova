@@ -1098,3 +1098,189 @@ export fn[T SignedInt] T @is_negative() -> bool => @ < 0
 /// `is_positive` — строгая проверка знака: `true` iff `@ > 0`.
 #stable(since = "0.1")
 export fn[T SignedInt] T @is_positive() -> bool => @ > 0
+
+// [Числовой паритет-2, 2026-07-20] `saturating_neg` над `SignedInt` — Rust
+// даёт `saturating_neg` ТОЛЬКО signed-типам (`int_macros.rs`; unsigned
+// `uNN::saturating_neg` не существует в Rust std — в отличие от
+// `checked_neg`/`wrapping_neg` выше, которые Rust даёт ОБОИМ знакам и
+// которые здесь остаются `Ints`-бланкетами). Единственный непредставимый
+// случай — `@ == T.MIN` (тот же, что у `checked_neg`) — клампится к `T.MAX`;
+// иначе обычный `-@` (никогда не трапит вне `MIN`, т.к. диапазон signed
+// симметричен всюду кроме `MIN`).
+/// `saturating_neg` — при `@ == T.MIN` клампит к `T.MAX`, иначе `-@`.
+#stable(since = "0.1")
+export fn[T SignedInt] T @saturating_neg() -> T =>
+    if @ == T.MIN { T.MAX } else { -@ }
+
+// [Числовой паритет-2, 2026-07-20] `abs`/`checked_abs`/`wrapping_abs`/
+// `saturating_abs` над `SignedInt` — раньше единственный конкретный `int
+// @abs()` (std/runtime/math.nv, `extern "nova"` -> C `llabs`, D109-хардкод
+// в `runtime_registry.rs`/`emit_c.rs::int_method_to_c`) был UB на `T.MIN`
+// (`llabs(LLONG_MIN)` не определён C-стандартом — `-LLONG_MIN` не
+// представим в `long long`). Узкие signed (i8/i16/i32/i64) не имели `abs`
+// вовсе. И то, и другое заменено ОДНИМ `.nv`-бланкетом на `SignedInt`
+// (охватывает `int` тоже — старый extern-хардкод RETRACTED, см.
+// runtime_registry.rs/emit_c.rs): `abs` = `if @ < 0 { -@ } else { @ }` —
+// унарный `-@` УЖЕ трапит на `T.MIN` компиляторным guard'ом (D427 §R2,
+// landed до этой волны, сообщение "negation overflow") → трап на `MIN`
+// это НЕ новая overflow-политика, а прямое следствие уже действующего
+// trap-guard'а на `-`, тот же принцип, что trap-дефолт для `+`/`-`/`*`
+// (D423 §R3) — bare `abs` наследует ту же дисциплину, что bare-операторы.
+// `checked_abs`/`saturating_abs`/`wrapping_abs` — та же тройка политик,
+// что `checked_neg`/`saturating_neg`/`wrapping_neg` выше (Rust-паритет:
+// `iNN::checked_abs`/`saturating_abs`/`wrapping_abs` — все существуют
+// только для signed). Прямая `@ == T.MIN` ветка (не `(0).checked_sub`-
+// reformulation, как у `checked_neg`) корректна здесь, т.к. бланкет
+// ТОЛЬКО над `SignedInt`, не над полным `Ints` — знаковой инверсии
+// условия overflow между signed/unsigned (D427 §R4.2) тут нет, потому что
+// unsigned не в охвате вовсе. `UnsignedInt` НЕ входит — как и в Rust,
+// unsigned `.abs()` не существует (identity, искусственное расширение
+// охвата эталона).
+
+/// `abs` — модуль значения; трапит на `T.MIN` ("negation overflow" — тот
+/// же trap, что голый унарный `-@`, НЕ новая политика).
+#stable(since = "0.1")
+export fn[T SignedInt] T @abs() -> T =>
+    if @ < 0 { -@ } else { @ }
+
+/// `checked_abs` — `None` iff `@ == T.MIN` (единственный непредставимый
+/// случай — `|T.MIN|` не влезает в `T`), иначе `Some(|@|)`.
+#stable(since = "0.1")
+export fn[T SignedInt] T @checked_abs() -> Option[T] {
+    if @ == T.MIN { return None }
+    Some(if @ < 0 { -@ } else { @ })
+}
+
+/// `saturating_abs` — при `@ == T.MIN` клампит к `T.MAX`, иначе `|@|`.
+#stable(since = "0.1")
+export fn[T SignedInt] T @saturating_abs() -> T =>
+    if @ == T.MIN { T.MAX } else if @ < 0 { -@ } else { @ }
+
+/// `wrapping_abs` — модульно: `T.MIN` отображается сам в себя (тот же
+/// two's-complement-эффект, что `wrapping_neg(T.MIN) == T.MIN`), иначе `|@|`.
+#stable(since = "0.1")
+export fn[T SignedInt] T @wrapping_abs() -> T =>
+    if @ == T.MIN { T.MIN } else if @ < 0 { -@ } else { @ }
+
+// [Числовой паритет-2, 2026-07-20] Целочисленный `pow`/`checked_pow`/
+// `saturating_pow`/`wrapping_pow` над `Ints` — Rust-паритет сигнатуры:
+// `exp` фиксированно `u32` (`Self::pow(self, exp: u32) -> Self`,
+// `checked_pow`/`wrapping_pow`/`saturating_pow` — та же сигнатура), для
+// ЛЮБОГО `Self` (signed или unsigned) — отрицательных степеней у целых
+// нет, `u32` с запасом покрывает любой не-мгновенно-overflow'ящий exp.
+// Реализация — exponentiation by squaring (стандартный алгоритм, Rust
+// core `checked_pow` как референс: quadratic base-squaring ТОЛЬКО пока
+// экспонента не исчерпана — избегает лишнего squaring-шага на последней
+// итерации, которого не требует финальный результат). `pow` использует
+// СЫРЫЕ `*` (трапит на overflow — D423 §R3, тот же trap-дефолт, что у
+// `+`/`-`/`*`, никакой новой политики). `checked_pow`/`saturating_pow`/
+// `wrapping_pow` используют компиляторный интринсик `@overflowing_mul`
+// НАПРЯМУЮ на локалях (`acc`/`base`, ТИПА `T`) — НЕ вызывают `.nv`-бланкет
+// `@checked_mul`/`@wrapping_mul` изнутри (nested-.nv-blanket-call ICE,
+// `[P67-LEGACY]` — задокументировано D427 §R4.3: вызов ОДНОГО `.nv`-written
+// generic-blanket-метода ИЗНУТРИ ДРУГОГО generic-blanket-тела падает
+// независимо от вида receiver'а). Локальный `T`-receiver для
+// `@overflowing_mul` — тот же паттерн, что `zero.overflowing_sub(rhs)` в
+// `checked_div`/`checked_neg` выше (не только `@`-self receiver).
+// `saturating_pow` — направление насыщения ЗАВИСИТ ТОЛЬКО от знака
+// ИСХОДНОГО `@` и чётности `exp` (истинный математический знак результата),
+// НЕ от того, на каком шаге алгоритма произошёл overflow — тот же
+// однократный post-hoc выбор, что делает Rust `saturating_pow`
+// (`match checked_pow { Some(x) => x, None if self<0 && exp%2==1 => MIN,
+// None => MAX }`); `@ < 0` константно `false` для unsigned-членов `Ints`
+// → формула автоматически схлопывается в «всегда MAX» для unsigned, тот
+// же приём, что `saturating_mul`/`saturating_add` выше.
+
+/// `pow` — целочисленное возведение в степень (exponentiation by
+/// squaring). Трапит на overflow (сырой `*`, D423 §R3 trap-дефолт).
+/// `exp` — `u32` (Rust-паритет: отрицательных степеней для целых нет).
+/// `pow(0) == 1` (включая `0.pow(0) == 1`, математическая конвенция).
+#stable(since = "0.1")
+export fn[T Ints] T @pow(exp u32) -> T {
+    if exp == 0 { return 1 as T }
+    mut base = @
+    mut e = exp
+    mut acc = 1 as T
+    while true {
+        if e % 2 == 1 {
+            acc = acc * base
+            if e == 1 { return acc }
+        }
+        e = e / 2
+        base = base * base
+    }
+    acc
+}
+
+/// `checked_pow` — `None`, если overflow на любом шаге squaring, иначе
+/// `Some(result)`.
+#stable(since = "0.1")
+export fn[T Ints] T @checked_pow(exp u32) -> Option[T] {
+    if exp == 0 { return Some(1 as T) }
+    mut base = @
+    mut e = exp
+    mut acc = 1 as T
+    while true {
+        if e % 2 == 1 {
+            ro (wrapped, overflowed) = acc.overflowing_mul(base)
+            if overflowed { return None }
+            acc = wrapped
+            if e == 1 { return Some(acc) }
+        }
+        e = e / 2
+        ro (wrapped2, overflowed2) = base.overflowing_mul(base)
+        if overflowed2 { return None }
+        base = wrapped2
+    }
+    None
+}
+
+/// `saturating_pow` — при overflow клампит к `T.MAX`/`T.MIN` по знаку
+/// ИСТИННОГО (непереполнённого) результата: `@ < 0 && exp` нечётный ->
+/// `T.MIN`, иначе `T.MAX` (Rust-паритет формулы). Для unsigned `@ < 0`
+/// константно `false` -> всегда `T.MAX`, корректно.
+#stable(since = "0.1")
+export fn[T Ints] T @saturating_pow(exp u32) -> T {
+    if exp == 0 { return 1 as T }
+    mut base = @
+    mut e = exp
+    mut acc = 1 as T
+    while true {
+        if e % 2 == 1 {
+            ro (wrapped, overflowed) = acc.overflowing_mul(base)
+            if overflowed {
+                return if @ < 0 && exp % 2 == 1 { T.MIN } else { T.MAX }
+            }
+            acc = wrapped
+            if e == 1 { return acc }
+        }
+        e = e / 2
+        ro (wrapped2, overflowed2) = base.overflowing_mul(base)
+        if overflowed2 {
+            return if @ < 0 && exp % 2 == 1 { T.MIN } else { T.MAX }
+        }
+        base = wrapped2
+    }
+    acc
+}
+
+/// `wrapping_pow` — модульная арифметика на каждом шаге squaring, флаг
+/// overflow игнорируется; никогда не паникует.
+#stable(since = "0.1")
+export fn[T Ints] T @wrapping_pow(exp u32) -> T {
+    if exp == 0 { return 1 as T }
+    mut base = @
+    mut e = exp
+    mut acc = 1 as T
+    while true {
+        if e % 2 == 1 {
+            ro (wrapped, _overflowed) = acc.overflowing_mul(base)
+            acc = wrapped
+            if e == 1 { return acc }
+        }
+        e = e / 2
+        ro (wrapped2, _overflowed2) = base.overflowing_mul(base)
+        base = wrapped2
+    }
+    acc
+}

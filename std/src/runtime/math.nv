@@ -173,8 +173,3 @@ export extern "nova" fn f32 @is_finite() -> bool
 // True если ±∞ (single precision).
 export extern "nova" fn f32 @is_infinite() -> bool
 
-// ─── int ───
-
-// Модуль (|x|) — 64-битный целочисленный abs (long long abs).
-export extern "nova" fn int @abs() -> int
-
