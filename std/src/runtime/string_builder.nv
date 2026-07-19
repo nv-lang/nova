@@ -140,21 +140,9 @@ export fn StringBuilder mut @append(s str) -> @ { @buf.append(s.bytes()) }
 // Append codepoint как UTF-8 (1-4 байта). Fluent push chain (D181)
 // + multi-line continuation (Plan 91 followup parser fix).
 export fn StringBuilder mut @append(c char) -> @ {
-    ro cp = c as int
-    if cp < 0x80 {
-        @buf.push(cp as u8)
-    } else if cp < 0x800 {
-        @buf.push((0xC0 | (cp >> 6)) as u8)
-            .push((0x80 | (cp & 0x3F)) as u8)
-    } else if cp < 0x10000 {
-        @buf.push((0xE0 | (cp >> 12)) as u8)
-            .push((0x80 | ((cp >> 6) & 0x3F)) as u8)
-            .push((0x80 | (cp & 0x3F)) as u8)
-    } else {
-        @buf.push((0xF0 | (cp >> 18)) as u8)
-            .push((0x80 | ((cp >> 12) & 0x3F)) as u8)
-            .push((0x80 | ((cp >> 6) & 0x3F)) as u8)
-            .push((0x80 | (cp & 0x3F)) as u8)
+    ro (n, b) = c.encode_utf8()
+    for i in 0..n {
+        @buf.push(b[i])
     }
 }
 
@@ -277,37 +265,6 @@ fn utf8_char_count(bytes []u8) -> int {
     n
 }
 
-// UTF-8 byte-length (1..4) of a single codepoint's encoding.
-fn char_utf8_len(c char) -> int {
-    ro cp = c as int
-    if cp < 0x80 { 1 } else if cp < 0x800 { 2 } else if cp < 0x10000 { 3 } else { 4 }
-}
-
-// Encode a single codepoint as UTF-8 into a 4-byte fixed array (unused
-// trailing slots stay `0`; caller reads only the first `char_utf8_len(c)`
-// bytes). Mirrors `StringBuilder.@append(c char)`'s own bit-shift encoding —
-// duplicated (not shared) so `@pad_in_place` can write the encoded bytes
-// directly into the main buffer via raw pointer instead of appending.
-fn char_utf8_bytes(c char) -> [4]u8 {
-    ro cp = c as int
-    mut out [4]u8 = [0, 0, 0, 0]
-    if cp < 0x80 {
-        out[0] = cp as u8
-    } else if cp < 0x800 {
-        out[0] = (0xC0 | (cp >> 6)) as u8
-        out[1] = (0x80 | (cp & 0x3F)) as u8
-    } else if cp < 0x10000 {
-        out[0] = (0xE0 | (cp >> 12)) as u8
-        out[1] = (0x80 | ((cp >> 6) & 0x3F)) as u8
-        out[2] = (0x80 | (cp & 0x3F)) as u8
-    } else {
-        out[0] = (0xF0 | (cp >> 18)) as u8
-        out[1] = (0x80 | ((cp >> 12) & 0x3F)) as u8
-        out[2] = (0x80 | ((cp >> 6) & 0x3F)) as u8
-        out[3] = (0x80 | (cp & 0x3F)) as u8
-    }
-    out
-}
 
 // Known-length primitive/str write with width/align/fill padding, WITHOUT a
 // shift (D422 §4 "известная длина... write_padded... без сдвига"): `bytes`
@@ -365,8 +322,7 @@ export fn StringBuilder mut @pad_in_place(mark int, width int, fill char, align 
     }
 
     if left_chars > 0 {
-        ro fill_len = char_utf8_len(fill)
-        ro fill_bytes = char_utf8_bytes(fill)
+        ro (fill_len, fill_bytes) = fill.encode_utf8()
         ro left_bytes = left_chars * fill_len
         @buf.reserve(left_bytes)
         unsafe {
