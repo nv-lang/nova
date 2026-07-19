@@ -32938,6 +32938,43 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// directed branch in `emit_expr_with_target_type` (this call-arg
     /// position is the one shape that function's callers never route a bare,
     /// un-target-typed argument through).
+    ///
+    /// **Plan 214 (D429) Ф.2 — KEPT, deviation from the plan's literal text
+    /// ("снос synthesize_write_str_lit_bytes_coercion"), empirically
+    /// justified.** Plan 214 declares `str @bytes() -> ro []u8` as a
+    /// `#coerce` pair and expects the general mechanism (AST-rewrite in
+    /// `types/mod.rs::MapLitAnnotator::try_coerce_leaf`) to subsume this
+    /// call-arg pre-pass entirely, on the theory that "rewrite = an ordinary
+    /// method call, no new codegen needed". Verified FALSE by direct
+    /// experiment (temporarily stubbing this fn to `None` and re-running the
+    /// `d55_literal_coercion.nv`-equivalent `f.write("[")` scratch fixture,
+    /// `docs/plans/wip/214-scratch/scratch.nv`): CC-FAIL (`nova_str` passed
+    /// where `Nova_Vec____nova_byte*` expected). Root cause: the AST-rewrite
+    /// pass's call-arg `expected`-type propagation
+    /// (`MapLitCtx::resolve_call_params` → `unique_method_param_types`) is
+    /// GLOBAL-METHOD-NAME-KEYED and refuses to resolve a name declared on
+    /// ≥2 different receiver types (ambiguous by construction, same
+    /// limitation the pre-existing single-wrapper rewrite already has) — and
+    /// `write` is declared on `WriteBuffer`/`StringBuilder`/`TcpStream`/
+    /// `Stdout`/`Stderr`/`BytesWriter`/`File`/`FmtCtx`/… (protocol `Write`,
+    /// D374/D422) — EXACTLY the protocol-erased/overloaded-receiver shape
+    /// this pre-pass was written for in the first place (Plan 208 Ф.3). So
+    /// the AST-rewrite genuinely cannot reach this shape; deleting this
+    /// codegen pre-pass would silently regress it. This function is ALREADY
+    /// type-directed (not name-gated — see the fix note above; it dispatches
+    /// on ANY receiver/method via `method_overloads`, never compares a method
+    /// NAME) — the remaining §3-adjacent concern is narrower than the plan
+    /// assumed: it is scoped to the ONE (str, []u8) pair (via
+    /// `is_bytes_slice_c_ty`, a structural C-type predicate, not a Rust
+    /// hardcoded PAIR literal), which is acceptable company for
+    /// `emit_expr_with_target_type`'s own analogous structural check. A
+    /// deeper generalization (drive this pre-pass off the `#coerce` registry
+    /// for arbitrary future pairs, bridging Nova-canonical `coerce_type_key`
+    /// to C-type predicates) is a legitimate follow-up but out of THIS
+    /// wave's scope — no second #coerce pair needs a call-arg-literal path
+    /// today (the two finalize pairs are Ident-typed values, not literals,
+    /// and are covered by `try_coerce_leaf` + the `ConsumeRegistry` D133
+    /// credit, not this fn).
     fn synthesize_bytes_lit_call_args(
         &self,
         func: &Expr,

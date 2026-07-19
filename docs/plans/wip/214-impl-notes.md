@@ -74,17 +74,44 @@
 
 ## Внутренний смоук (docs/plans/wip/214-scratch/scratch.nv, standalone module)
 
-Итеративно чинился реальными компиляторными багами (не гипотезами) —
-хронология выше. Статус на момент последней проверки: return-position фикс
-собран, билд запущен, результат — следующий шаг после отчёта.
+**ЗАКРЫТ ✅.** После return-position фикса + R7-диагностики: `scratch.nv`
+(3 seed-пары x 4 позиции, view+finalize) — PASS; `neg_use_after.nv`
+(use-after-consume neg) — корректно падает с R7-текстом ("потреблён неявной
+#coerce-финализацией `into_str()` в вызове … (D429 R7); для чтения без
+потребления используйте явный view-метод"). Итерации чинились РЕАЛЬНЫМИ
+компиляторными багами (не гипотезами) — полная хронология выше в п.1-7.
 
-## Открытые вопросы / TODO перед переходом к Ф.2/Ф.3-миграции/Ф.3b
+## Ф.2 — РЕШЕНИЕ (эмпирически подтверждено экспериментом)
 
-- [ ] Досмотреть смоук после return-fix (свежий билд).
-- [ ] Byte-parity: `d55_literal_coercion.nv`/`d374_write_sink_decouple.nv` —
-  сравнить .c ДО/ПОСЛЕ (сохранение костыля vs снос vs обобщение).
-- [ ] use-after-consume neg фикстура (обязательный пункт внутреннего гейта).
-- [ ] Ф.2 решение зафиксировать (снос vs обобщение) + реализовать.
+`emit_c.rs::synthesize_bytes_lit_call_args` **СОХРАНЁН**, НЕ снесён (отклонение
+от буквального текста плана "снос ... + call-site", обосновано эмпирически —
+см. развёрнутый doc-comment на функции, добавленный этим же слиянием).
+Эксперимент: временно застабил `bytes_lit_wrapped` в `None`, пересобрал,
+прогнал `scratch.nv` — тест "call-arg: str-литерал -> []u8 через
+protocol-erased Fmt.write" (зеркалит `d55_literal_coercion.nv`'s
+`f.write("[")`) сломался: CC-FAIL `passing 'const nova_str' to parameter of
+incompatible type 'Nova_Vec____nova_byte *'`. Корень: AST-rewrite
+(`MapLitCtx::resolve_call_params` → `unique_method_param_types`) резолвит
+call-arg expected-тип ТОЛЬКО для ГЛОБАЛЬНО-уникального имени метода — `write`
+объявлен на WriteBuffer/StringBuilder/TcpStream/Stdout/Stderr/BytesWriter/
+File/FmtCtx (protocol `Write`, D374/D422) → НЕ уникален → rewrite молчит на
+ИМЕННО той форме (protocol-erased/overloaded receiver), для которой этот
+codegen pre-pass изначально писался (Plan 208 Ф.3). Мех-м УЖЕ type-directed
+(не name-gated — диспатчит по `method_overloads`, никогда не сравнивает имя
+метода) — остаточный §3-хардкод УЖЕ гораздо уже, чем в тексте плана: одна
+пара (str,[]u8) через структурный C-тип предикат `is_bytes_slice_c_ty`
+(тот же паттерн, что `emit_expr_with_target_type`). Полное обобщение на
+БУДУЩИЕ произвольные #coerce-пары на этом уровне (мост Nova-canonical-key ->
+C-тип-предикат) — легитимный follow-up, вне этой волны (сегодня НЕТ второй
+пары, которой бы этот путь понадобился — обе finalize-пары это Ident-значения,
+не литералы, покрыты try_coerce_leaf + ConsumeRegistry-кредитом).
+Эксперимент откачен (функция восстановлена байт-в-байт + расширенный doc).
+
+## Открытые вопросы / TODO перед переходом к Ф.3-миграции/Ф.3b
+
+- [ ] Byte-parity гейт: `d55_literal_coercion.nv`/`d374_write_sink_decouple.nv`
+  — .c ДО (main, костыль-версия старой волны) vs ПОСЛЕ (эта ветка, #coerce
+  + сохранённый обобщённый костыль) — байт-в-байт.
 - [ ] Ф.3 миграция std-сайтов (после Ф.3b линта).
 - [ ] Ф.3b линт W_COERCE_EXPLICIT_REDUNDANT.
 - [ ] Целевые гейты (checksums/vec/lint --deny/флагман/standalone-CU).
