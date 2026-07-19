@@ -4805,8 +4805,20 @@ fn conv_coerce_explicit_redundant(m: &Module, _o: &ConvLintOptions, out: &mut Ve
     }
 
     for f in conv_all_fns(m) {
-        if let (FnBody::Expr(e), Some(ret)) = (&f.body, &f.return_type) {
-            check_value(e, ret, out);
+        match (&f.body, &f.return_type) {
+            (FnBody::Expr(e), Some(ret)) => check_value(e, ret, out),
+            // Block body's OWN trailing expr (no `return` keyword — implicit
+            // return, the pervasive std idiom: `fn f() -> str { ...;
+            // buf.into_str() }`). Mirrors `MapLitAnnotator::walk_fn_body_block`
+            // (types/mod.rs) — same "outermost block only" scope (a nested
+            // if/match arm's own trailing is only a return in tail position,
+            // not tracked here either, consistent with that rewrite-side fix).
+            (FnBody::Block(b), Some(ret)) => {
+                if let Some(t) = &b.trailing {
+                    check_value(t, ret, out);
+                }
+            }
+            _ => {}
         }
         conv_walk_fn(
             f,
