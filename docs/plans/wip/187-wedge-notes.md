@@ -87,7 +87,45 @@ off 88:  mco_coro*        schedlink                (8)
     close_cb ставит CLOSED ПОТОМ wake — но cancel-путь (cancel_wake_all/
     goready на том же co) мог разбудить фибер РАНЬШЕ close_cb.
 
-СЛЕДУЮЩИЙ ШАГ: дочитать _nova_sleep_via_driver хвост (4000-4130) + net.c
-socket park (wedge = socket I/O, не sleep!), затем WSL-сборка + gdb watchpoint.
-Wedge — это aggregator server: каждое соединение спавнит хендлер, парк на
-socket-read, НЕ sleep. Проверить nova_net read/accept park-путь.
+## Точный паттерн репро pos_max_fibers_concurrent (прочитан)
+
+```
+supervised(cancel: tok) {
+    for _ in 0..2000 { spawn { Time.sleep(10_000) } }  // 2000 фиберов, парк на 10с
+    spawn { Time.sleep(30); tok.cancel() }             // через 30мс — cancel ВСЕХ
+}
+```
+NOVA_MAXPROCS=1 (1 воркер), NOVA_MAX_FIBERS=20000.
+- Main-поток (wid<0) аллоцирует 2000 SpawnCtx через ПРЯМОЙ Boehm uncollectable(128).
+- Через 30мс cancel-триггер будит все 2000 → CANCEL_SCOPE job → driver walk
+  armed_sleeps → 2000 uv_close → 2000 close_cb → wake → фиберы бросают cancel →
+  epilogue → free_slot + pool_release (на ВОРКЕРЕ, wid>=0 → P-local pool).
+- **Spawn-цикл (main, аллокация Boehm) ПЕРЕКРЫВАЕТСЯ с cancel-штормом** (2000
+  спавнов ещё идут на 30мс-отметке). Сигнатура 1 = main аллоцирует свежий
+  SpawnCtx из Boehm-списка ИМЕННО в этом окне.
+- «30мс-таймер будит умерший SpawnCtx» из диагноза = это sleep(30) cancel-триггера.
+
+Разные free-list: main→Boehm; worker-release→P-local (пока не capped
+NOVA_SPAWN_POOL_MAX_PER_CLASS, потом excess→Boehm). Значит связь между списками
+= через cap-overflow ИЛИ через прямой UAF-write в released блок.
+
+## WSL-окружение (готово)
+
+gdb/clang/cargo есть. nproc, libgc-dev установлены. Пред-собранные:
+`~/nova-target/release/nova` (и -185, -fix, -211sc). Источник для tsan:
+`~/nova-work` (tsan_build.sh компилит mn_smoke с nova_rt из ~/nova-work).
+`~/nova-211sc-work` = НЕ git (native-копия). `~/tsan_build.sh` готов.
+
+## ПЛАН (playbook §1 урок #17: gdb ground-truth > гипотезы)
+
+1. Синкнуть p187 nova_rt в WSL native, собрать release nova.
+2. Репро pos_max_fibers ×N, поймать SIGSEGV в gdb (ASLR off).
+3. **HW-watchpoint на порченый блок** — поймать WRITER (это чего 211-волна НЕ
+   сделала: они поймали READ-сайты обеих сигнатур, но не WRITE-порчу).
+4. От ground-truth — точный фикс владения SpawnCtx.
+
+Wedge (реальный P1) = aggregator server, socket I/O park (net.c
+_nn2_stream read/accept: тот же (scope,slot)→parked_co→goready паттерн).
+pos_max_fibers = быстрый прокси того же корня.
+
+СЛЕДУЮЩИЙ ШАГ: WSL-сборка p187 + gdb watchpoint.
