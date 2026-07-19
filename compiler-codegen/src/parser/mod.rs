@@ -1344,6 +1344,17 @@ impl Parser {
         // стоять перед `external`). Дополнительный pass позже подберёт
         // attribute если он был между `external` и `fn`.
         let pre_cancel_safe = self.parse_cancel_safe_attr();
+        // Plan 214 (D429): pre-parse `#coerce` here too — mirrors
+        // `pre_cancel_safe` exactly. Authors write `#coerce` on its own line
+        // BEFORE `export` (matching the `#realtime`/doc-attr convention seen
+        // throughout std, e.g. `#realtime\nexport extern "nova" fn …`); without
+        // this pre-parse, `#coerce` sitting before `export` would strand the
+        // parser at the `#` token (neither `parse_type_attrs` nor the
+        // subsequent `is_export = eat(KwExport)` consume an unrecognized
+        // leading `#`-attribute), silently losing `is_export` AND misfiring
+        // "`#coerce` is only valid before `fn`" once the post-export loop
+        // finally consumes it with `export` now stuck in between.
+        let pre_coerce = self.parse_coerce_attr();
 
         // Plan 170 (D307): `priv(file)` top-level visibility modifier — file-private.
         // Parsed BEFORE `export` (mutually exclusive). Forms:
@@ -1480,6 +1491,9 @@ impl Parser {
         let mut realtime_attr = self.parse_realtime_attr()?;
         let mut blocking_attr = self.parse_blocking_attr();
         let mut cancel_safe_attr = pre_cancel_safe || self.parse_cancel_safe_attr();
+        // Plan 214 (D429): `#coerce` — declares an implicit zero-cost conversion.
+        // Parsed alongside the other leading `#`-attributes (any order, same loop).
+        let mut coerce_attr = pre_coerce || self.parse_coerce_attr();
         loop {
             let mut progressed = false;
             if matches!(realtime_attr, RealtimeAttr::None) {
@@ -1495,6 +1509,10 @@ impl Parser {
             }
             if !cancel_safe_attr && self.parse_cancel_safe_attr() {
                 cancel_safe_attr = true;
+                progressed = true;
+            }
+            if !coerce_attr && self.parse_coerce_attr() {
+                coerce_attr = true;
                 progressed = true;
             }
             if !progressed { break; }
@@ -1516,6 +1534,16 @@ impl Parser {
             let span = self.peek().span;
             return Err(Diagnostic::new(
                 "`#blocking` is only valid before `fn`",
+                span,
+            ));
+        }
+        if coerce_attr
+            && !matches!(self.peek().kind, TokenKind::KwFn)
+            && !matches!(self.peek().kind, TokenKind::Hash)
+        {
+            let span = self.peek().span;
+            return Err(Diagnostic::new(
+                "`#coerce` is only valid before `fn`",
                 span,
             ));
         }
@@ -1616,7 +1644,7 @@ impl Parser {
             ));
         }
         let parsed = match self.peek().kind {
-            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, extern_abi, realtime_attr, blocking_attr, cancel_safe_attr, impl_protocols, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone(), file_private)?),
+            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, extern_abi, realtime_attr, blocking_attr, cancel_safe_attr, coerce_attr, impl_protocols, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone(), file_private)?),
             TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, zero_on_move_attr, pub_to_attr, serde_attrs, pending_doc.clone(), pending_doc_attrs.clone(), file_private)?),
             TokenKind::KwLet => {
                 if let Some(d) = &pending_doc {
@@ -1803,6 +1831,25 @@ impl Parser {
             TokenKind::Ident(n) if n == "cancel_safe" => {
                 self.bump(); // #
                 self.bump(); // cancel_safe
+                self.skip_newlines();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Plan 214 (D429): parse `#coerce` attribute перед fn-declaration.
+    /// `coerce` — обычный identifier (не keyword в lexer'е), парсится
+    /// контекстно после `#`, как `cancel_safe`/`blocking` выше. Returns
+    /// true if the attribute was present.
+    fn parse_coerce_attr(&mut self) -> bool {
+        if !matches!(self.peek().kind, TokenKind::Hash) {
+            return false;
+        }
+        match &self.peek_at(1).kind {
+            TokenKind::Ident(n) if n == "coerce" => {
+                self.bump(); // #
+                self.bump(); // coerce
                 self.skip_newlines();
                 true
             }
@@ -2947,7 +2994,7 @@ impl Parser {
 
     // ─── fn ──────────────────────────────────────────────────────────────
 
-    fn parse_fn(&mut self, is_export: bool, is_external: bool, extern_abi: Option<String>, realtime_attr: RealtimeAttr, blocking_attr: bool, cancel_safe_attr: bool, impl_protocols: Vec<String>, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>, file_private: bool) -> Result<FnDecl, Diagnostic> {
+    fn parse_fn(&mut self, is_export: bool, is_external: bool, extern_abi: Option<String>, realtime_attr: RealtimeAttr, blocking_attr: bool, cancel_safe_attr: bool, coerce_attr: bool, impl_protocols: Vec<String>, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>, file_private: bool) -> Result<FnDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwFn)?;
 
@@ -3401,6 +3448,8 @@ impl Parser {
             realtime_attr,
             blocking_attr,
             cancel_safe_attr,
+            // Plan 214 (D429): `#coerce` ведущий атрибут перед `fn`.
+            coerce_attr,
             // Plan 154.1 (D268): `#impl(P)` ведущий атрибут на методе.
             impl_protocols,
             // Plan 33.1 (D24): contracts + verify attributes.
@@ -5043,6 +5092,28 @@ impl Parser {
                      signatures. In effect bodies `use` is not allowed at all.",
                     sp,
                 ));
+            }
+            // Plan 214 (D429 R15): `#coerce` on a protocol/effect method REQUIREMENT
+            // is rejected outright — an attribute on a requirement would hand a pair
+            // to EVERY implementor (mass R3/R11 conflicts). `#coerce` is only legal on
+            // a concrete `fn`/extension-method declaration (parsed in `parse_fn`,
+            // which threads its OWN `coerce_attr` bool onto `FnDecl` — protocol/effect
+            // requirements never become a `FnDecl`, so this is the only checkpoint).
+            if matches!(self.peek().kind, TokenKind::Hash) {
+                if let TokenKind::Ident(n) = &self.peek_at(1).kind {
+                    if n == "coerce" {
+                        let sp = self.peek().span.merge(self.peek_at(1).span);
+                        return Err(Diagnostic::new(
+                            "[E_COERCE_ON_PROTOCOL] `#coerce` is not valid on a \
+                             protocol/effect method REQUIREMENT (D429 R15) — it would \
+                             implicitly hand an (I,O) pair to every implementing type, \
+                             guaranteeing mass duplicate-pair conflicts. Declare `#coerce` \
+                             on a concrete `fn`/extension-method instead (the type that \
+                             should coerce, not the protocol it conforms to).",
+                            sp,
+                        ));
+                    }
+                }
             }
             // Plan 33.3 Ф.9 (refactor): `#pure` атрибут перед operation.
             // Раньше использовался keyword `pure_view` — заменили на `#pure`

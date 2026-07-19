@@ -282,7 +282,7 @@ export fn Ulid @to_str() -> str {
         shift2 -= 5
     }
 
-    buf.into_str()
+    buf
 }
 
 

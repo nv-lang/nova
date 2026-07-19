@@ -128,7 +128,7 @@ export fn Markdown.to_html(md str) -> str {
     if in_list { buf.append("</ul>\n") }
     if in_code_block { buf.append("</code></pre>\n") }
 
-    buf.into_str()
+    buf
 }
 
 
@@ -244,7 +244,7 @@ fn render_inline(s str) -> str {
         }
         i += 1
     }
-    buf.into_str()
+    buf
 }
 
 
@@ -277,7 +277,7 @@ fn escape_html(s str) -> str {
             _   => buf.append(c)
         }
     }
-    buf.into_str()
+    buf
 }
 
 

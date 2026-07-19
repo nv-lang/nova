@@ -114,7 +114,7 @@ fn cps_to_str(cps []u32) -> str {
         ro c = match (cp as int).to_char() { Ok(c) => c, Err(_) => '\u{FFFD}' }
         sb.append(c)
     }
-    sb.into_str()
+    sb
 }
 
 // UTF-8 decode at byte offset `i`: returns (codepoint, byte_step). R-UTF8 (D26)

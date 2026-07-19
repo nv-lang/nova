@@ -326,7 +326,7 @@ fn join_dots(parts []str) -> str {
         sb.append(p)
         first = false
     }
-    sb.into_str()
+    sb
 }
 
 

@@ -45,6 +45,6 @@ export fn []str @join(sep str) -> str {
         sb.append(sep).append(@[i])
         i += 1
     }
-    sb.into_str()
+    sb
 }
 

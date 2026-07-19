@@ -2886,6 +2886,14 @@ pub const CONV_RULES: &[ConvRule] = &[
         ast: Some(conv_while_counter_for_range),
         text: None,
     },
+    ConvRule {
+        id: "W_COERCE_EXPLICIT_REDUNDANT",
+        summary: "явный `.bytes()`/`.into_str()`/`.into_bytes()` в позиции с \
+                  явным ожидаемым типом — голое значение скоэрсировалось бы в \
+                  ТО ЖЕ САМОЕ через `#coerce` (D429 R9, Plan 214)",
+        ast: Some(conv_coerce_explicit_redundant),
+        text: None,
+    },
 ];
 
 /// id всех правил реестра (для валидации `--rule` и `--list-rules`).
@@ -4698,6 +4706,154 @@ fn conv_result_discarded(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWar
                 diag: Diagnostic::new(msg, sp),
             });
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_COERCE_EXPLICIT_REDUNDANT — explicit call to a `#coerce`-registered
+// method (Plan 214, D429 R9) where a bare value would coerce to the exact
+// same result at this position.
+// ---------------------------------------------------------------------------
+
+/// Plan 214 (D429 R9): the O-shape a seed `#coerce` method's zero-arg call
+/// must land on for the call to be flagged redundant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CoerceSeedShape {
+    Str,
+    BytesSlice,
+}
+
+fn conv_coerce_explicit_redundant(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    // SEMANTIC-UPGRADE: `nova lint` is a syntactic, per-file, no-import-
+    // resolution pass (see module doc at the top of this file) — it cannot
+    // resolve a receiver's real type, so it cannot consult the ACTUAL
+    // `#coerce` registry (`types/mod.rs::collect_coerce_pairs`, built from
+    // the checker's module-merged AST) for arbitrary USER-declared pairs
+    // (D429 R8: `#coerce` covers all types, not just std). This is a
+    // CONSERVATIVE approximation scoped to the THREE std seed pairs Plan 214
+    // Ф.3 introduces (`str.bytes()` view; `StringBuilder.into_str()` /
+    // `WriteBuffer.into_bytes()` finalize) — flags a bare zero-arg call to
+    // one of these well-known method names sitting at a SYNTACTICALLY
+    // explicit-type position (`let`/`const` annotation, or a fn's arrow-body
+    // / `return` matching its OWN declared return type). Deliberately
+    // conservative: call-arg positions (need callee signature resolution —
+    // out of reach without imports/types) are NOT flagged — false-negative-
+    // safe, never risking a false positive beyond the (unlikely) case of an
+    // UNRELATED type also spelling one of these three names with the exact
+    // same shape. A full semantic version (reading the real registry) belongs
+    // in a type-aware pass run inside the build pipeline with import
+    // resolution (`lint_module`) — a legitimate follow-up, not a silent gap.
+    const COERCE_SEED_METHODS: &[(&str, CoerceSeedShape)] = &[
+        ("bytes", CoerceSeedShape::BytesSlice),
+        ("into_bytes", CoerceSeedShape::BytesSlice),
+        ("into_str", CoerceSeedShape::Str),
+    ];
+
+    fn shape_of(method: &str) -> Option<CoerceSeedShape> {
+        COERCE_SEED_METHODS.iter().find(|(n, _)| *n == method).map(|(_, s)| *s)
+    }
+
+    fn ty_matches(ty: &TypeRef, shape: CoerceSeedShape) -> bool {
+        match shape {
+            CoerceSeedShape::Str => matches!(ty,
+                TypeRef::Named { path, generics, .. }
+                    if generics.is_empty() && path.len() == 1 && path[0] == "str"),
+            CoerceSeedShape::BytesSlice => match ty {
+                TypeRef::Array(inner, _) => matches!(&**inner,
+                    TypeRef::Named { path, generics, .. }
+                        if generics.is_empty() && path.len() == 1 && path[0] == "u8"),
+                TypeRef::Named { path, generics, .. }
+                    if path.len() == 1 && path[0] == "Vec" && generics.len() == 1 =>
+                {
+                    matches!(&generics[0], TypeRef::Named { path, generics, .. }
+                        if generics.is_empty() && path.len() == 1 && path[0] == "u8")
+                }
+                _ => false,
+            },
+        }
+    }
+
+    // Bare `x.method()` — zero-arg method call on a LEAF receiver (plain
+    // `Ident` or a str literal) ONLY. Found empirically (running this rule
+    // over std): a fluent-chain receiver (`StringBuilder.new(...).append(y)
+    // .into_str()`) also matches the method-name+use-site-type shape, but
+    // stripping `.into_str()` there would NOT actually become coercible —
+    // the AST-rewrite this lint's advice relies on
+    // (`MapLitAnnotator::try_coerce_leaf`, types/mod.rs) is ITSELF leaf-only
+    // (mirrors the pre-existing D55 `try_wrap_leaf` scope), so a bare
+    // `StringBuilder.new(...).append(y)` left at a `str`-typed position would
+    // NOT get rewritten back to `.into_str()` — CC-FAIL (`Nova_StringBuilder*`
+    // where `nova_str` expected). Restricting to the SAME leaf shapes the
+    // rewrite handles keeps this lint's advice always safe to apply.
+    fn bare_seed_call(e: &Expr) -> Option<(&str, Span)> {
+        let ExprKind::Call { func, args, .. } = &e.kind else { return None };
+        if !args.is_empty() {
+            return None;
+        }
+        let ExprKind::Member { obj, name } = &func.kind else { return None };
+        if !matches!(&obj.kind, ExprKind::Ident(_) | ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. }) {
+            return None;
+        }
+        Some((name.as_str(), e.span))
+    }
+
+    fn check_value(value: &Expr, expected: &TypeRef, out: &mut Vec<LintWarning>) {
+        let Some((method, span)) = bare_seed_call(value) else { return };
+        let Some(shape) = shape_of(method) else { return };
+        if !ty_matches(expected, shape) {
+            return;
+        }
+        out.push(LintWarning {
+            rule: "W_COERCE_EXPLICIT_REDUNDANT",
+            diag: Diagnostic::new(
+                format!(
+                    "явный вызов `.{method}()` в позиции с явным ожидаемым типом — \
+                     голое значение скоэрсировалось бы в ТО ЖЕ САМОЕ через `#coerce` \
+                     (D429 R9). Уберите явный вызов — действует `#coerce`."
+                ),
+                span,
+            ),
+        });
+    }
+
+    for f in conv_all_fns(m) {
+        match (&f.body, &f.return_type) {
+            (FnBody::Expr(e), Some(ret)) => check_value(e, ret, out),
+            // Block body's OWN trailing expr (no `return` keyword — implicit
+            // return, the pervasive std idiom: `fn f() -> str { ...;
+            // buf.into_str() }`). Mirrors `MapLitAnnotator::walk_fn_body_block`
+            // (types/mod.rs) — same "outermost block only" scope (a nested
+            // if/match arm's own trailing is only a return in tail position,
+            // not tracked here either, consistent with that rewrite-side fix).
+            (FnBody::Block(b), Some(ret)) => {
+                if let Some(t) = &b.trailing {
+                    check_value(t, ret, out);
+                }
+            }
+            _ => {}
+        }
+        conv_walk_fn(
+            f,
+            &mut |s, _| match s {
+                Stmt::Let(d) => {
+                    if let Some(ty) = &d.ty {
+                        check_value(&d.value, ty, out);
+                    }
+                }
+                Stmt::Const(d) => {
+                    if let Some(ty) = &d.ty {
+                        check_value(&d.value, ty, out);
+                    }
+                }
+                Stmt::Return { value: Some(v), .. } => {
+                    if let Some(ret) = &f.return_type {
+                        check_value(v, ret, out);
+                    }
+                }
+                _ => {}
+            },
+            &mut |_, _| {},
+        );
     }
 }
 
