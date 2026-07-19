@@ -101,7 +101,7 @@ fn live_fetch_tcp(host str) Net Time -> Result[SourceData, AggError] {
                 Err(AggError.Transport("resolve: no address for " + host))
             } else {
                 match TcpStream.connect(addrs[0]) {
-                    Ok(s)  => { mut st = s; st.close(); Ok(SourceData { id: host, payload: []u8.new() }) }
+                    Ok(consume s)  => { consume st = s; st.close(); Ok(SourceData { id: host, payload: []u8.new() }) }
                     Err(e) => Err(AggError.Transport(e.to_str()))
                 }
             }
@@ -157,10 +157,10 @@ fn live_fetch_weather(id str, lat f64, lon f64) Net Time -> Result[SourceData, A
                 ro cfg = ClientConfig.new(host)
                 match TcpStream.connect(addrs[0]) {
                     Err(e) => Err(AggError.Transport(e.to_str()))
-                    Ok(tcp) => match TlsStream.connect(tcp, cfg) {
+                    Ok(consume tcp) => match TlsStream.connect(tcp, cfg) {
                         Err(e) => Err(AggError.Transport("tls handshake: " + e.to_str()))
-                        Ok(tls) => {
-                            mut stream = tls
+                        Ok(consume tls) => {
+                            consume stream = tls
                             ro req = "GET /v1/forecast?latitude=" + lat.to_str() +
                                 "&longitude=" + lon.to_str() +
                                 "&daily=temperature_2m_max&forecast_days=1 HTTP/1.1\r\n" +

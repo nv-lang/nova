@@ -2079,6 +2079,7 @@ impl Interpreter {
                     name: decl.name.clone(),
                     span: decl.span,
                     is_mut: false,
+                    is_consume: false,
                 };
                 let local = env.clone();
                 if !self.match_pattern(&pat, &v, &local) {

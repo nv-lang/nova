@@ -937,6 +937,7 @@ fn synth_compare_record_body(fields: &[DerivedField]) -> FnBody {
                 name: var_name.clone(),
                 span: span_dummy(),
                 is_mut: false,
+                is_consume: false,
             },
             ty: Some(type_ref_named("int")),
             value: cmp_call,
@@ -1220,7 +1221,7 @@ fn match_arm_block(pattern: Pattern, body: Block) -> MatchArm {
 }
 
 fn ident_pat(name: &str) -> Pattern {
-    Pattern::Ident { name: name.to_string(), span: span_dummy(), is_mut: false }
+    Pattern::Ident { name: name.to_string(), span: span_dummy(), is_mut: false, is_consume: false }
 }
 
 fn wildcard_pat() -> Pattern {
@@ -1611,7 +1612,7 @@ fn let_stmt(name: &str, mutable: bool, ty: Option<TypeRef>, value: Expr) -> Stmt
     Stmt::Let(crate::ast::LetDecl {
         mutable,
         pattern: crate::ast::Pattern::Ident {
-            name: name.to_string(), span: span_dummy(), is_mut: mutable,
+            name: name.to_string(), span: span_dummy(), is_mut: mutable, is_consume: false,
         },
         ty,
         value,
@@ -2399,7 +2400,7 @@ fn result_pat(ctor: &str, bind: &str, mutable: bool) -> Pattern {
     Pattern::Variant {
         path: vec![ctor.to_string()],
         kind: VariantPatternKind::Tuple {
-            patterns: vec![Pattern::Ident { name: bind.to_string(), span: span_dummy(), is_mut: mutable }],
+            patterns: vec![Pattern::Ident { name: bind.to_string(), span: span_dummy(), is_mut: mutable, is_consume: false }],
             rest: false,
         },
         span: span_dummy(),

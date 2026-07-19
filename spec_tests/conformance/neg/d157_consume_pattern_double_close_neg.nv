@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR использование потреблённой переменной `tcp`
+//
+// Consume-волна А (D157-амендмент, 2026-07-19, Plan 73.2): двойной
+// consume-вызов на pattern-bound `tcp` (из `Ok(consume tcp)`) — обычная
+// D131 use-after-consume дисциплина, теперь фактически enforced на
+// pattern-bound payload'ах (до этой волны `tcp` вообще не входил в
+// consume_obligations — double-close статически не ловился).
+
+module neg.d157_consume_pattern_double_close_neg
+
+type D157DblStream consume {
+    id int,
+}
+
+fn D157DblStream consume @close() -> () { () }
+
+fn dial() -> Result[D157DblStream, str] => Ok(D157DblStream { id: 1 })
+
+test "двойной close после consume-паттерна — use-after-consume" {
+    match dial() {
+        Ok(consume tcp) => {
+            tcp.close()
+            tcp.close()
+        },
+        Err(_e) => {},
+    }
+}

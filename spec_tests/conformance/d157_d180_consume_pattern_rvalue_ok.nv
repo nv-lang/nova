@@ -1,0 +1,62 @@
+// Consume-волна А (D157/D180-амендмент, 2026-07-19, Plan 73.2):
+// pattern-биндинг Ok(consume x)/Some(consume x) над must-consume
+// Ok/Some-inner типом (D156-пропагация) — позитив.
+//
+// Полный "TcpStream-подобный" цикл на ЛОКАЛЬНОМ consume-типе без сети
+// (репро исходного [M-d180-consume-propagation-match-payload-mut-rebind]
+// сценария): match rvalue-скрутини { Ok(consume tcp) => tcp.touch();
+// tcp.close() }. Плюс: consume-биндинг mut-capable без доп. keyword'а
+// (D180); place-скрутини (именная Result-переменная) — тот же путь;
+// view-default place-match НЕ сломан (Option[int] payload — plain
+// биндинг остаётся legal, D157 unaffected).
+
+module spec_tests.conformance
+
+type ConsumeAWaveStream consume {
+    id int,
+}
+
+fn ConsumeAWaveStream consume @close() -> () { () }
+fn ConsumeAWaveStream mut @touch() -> () { () }
+
+fn dial_consume_a(v int) -> Result[ConsumeAWaveStream, str] => Ok(ConsumeAWaveStream { id: v })
+
+fn maybe_consume_a(v int) -> Option[int] => Some(v)
+
+test "rvalue match Ok(consume x) — ownership явный, mut-capable, consume-до-exit" {
+    match dial_consume_a(1) {
+        Ok(consume tcp) => {
+            tcp.touch()          // mut-метод без доп. `mut`-keyword (D180)
+            tcp.close()          // consume-обязательство выполнено (D133)
+        },
+        Err(_e) => {},
+    }
+}
+
+test "place-скрутини — именная Result-переменная, тот же consume-паттерн" {
+    // `Result` (голый, вне generic-контекста присвоения) сам по себе НЕ
+    // must-consume (D133 generic-заразность на этой гранулярности — вне
+    // объёма этой волны, честный pre-existing predел); consume-волна А
+    // резолвит unwrapped-тип payload'а из RHS независимо от `ro`/`consume`
+    // на самом binding'е.
+    ro attempt = dial_consume_a(2)
+    match attempt {
+        Ok(consume tcp) => { tcp.close() },
+        Err(_e) => {},
+    }
+}
+
+test "if-let rvalue Ok(consume x) — ownership явный" {
+    if Ok(consume tcp) = dial_consume_a(3) {
+        tcp.close()
+    }
+}
+
+test "view-default place-match НЕ сломан — Option[int] payload остаётся plain" {
+    match maybe_consume_a(4) {
+        Some(x) => {
+            assert x == 4
+        },
+        None => {},
+    }
+}

@@ -5122,7 +5122,7 @@ fn build_at_field_let(fname: &str, local_name: &str,
         pattern: Pattern::Ident {
             name: local_name.to_string(),
             span,
-            is_mut: false,
+            is_mut: false, is_consume: false,
         },
         ty: None,
         value: access,
@@ -6094,7 +6094,7 @@ fn make_hoist_let(local_name: &str, fname: &str, span: crate::diag::Span) -> Stm
         pattern: Pattern::Ident {
             name: local_name.to_string(),
             span,
-            is_mut: false,
+            is_mut: false, is_consume: false,
         },
         ty: None,
         value: access,
@@ -7227,7 +7227,7 @@ fn pure_cache_fn_impl(
                 pattern: Pattern::Ident {
                     name: local_name.clone(),
                     span: *span,
-                    is_mut: false,
+                    is_mut: false, is_consume: false,
                 },
                 ty: None,
                 value: call_expr,
@@ -8851,7 +8851,7 @@ fn chain_cache_fn_impl(
                 pattern: Pattern::Ident {
                     name: info.name.clone(),
                     span: info.span,
-                    is_mut: false,
+                    is_mut: false, is_consume: false,
                 },
                 ty: None,
                 value: access,
@@ -8878,7 +8878,7 @@ fn chain_cache_fn_impl(
                 pattern: Pattern::Ident {
                     name: local_name.clone(),
                     span: *span,
-                    is_mut: false,
+                    is_mut: false, is_consume: false,
                 },
                 ty: None,
                 value: access,

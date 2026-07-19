@@ -10037,7 +10037,7 @@ impl Parser {
         // Synthesize: let _nova_decr_old = <d>
         let snapshot_let = Stmt::Let(LetDecl {
             mutable: false,
-            pattern: Pattern::Ident { name: "_nova_decr_old".into(), span, is_mut: false },
+            pattern: Pattern::Ident { name: "_nova_decr_old".into(), span, is_mut: false, is_consume: false },
             ty: None,
             value: d.clone(),
             span,
@@ -11102,12 +11102,43 @@ impl Parser {
         // Запрет group-mut `let mut (a, b)` обрабатывается parse_let'ом
         // на верхнем уровне (E_PATTERN_GROUP_MUT).
         let pat_is_mut = self.eat(&TokenKind::KwMut).is_some();
+        // Plan 73.2 (D157/D180-амендмент, consume-волна А, 2026-07-19):
+        // `consume name` sub-pattern — ownership-transfer биндинг для
+        // must-consume пейлоада внутри single-arg tuple-variant
+        // (`Ok(consume tcp)`, `Some(consume f)`). Взаимоисключающе с `mut`
+        // (D131 «consume и mut на одном receiver/binding» — parse error
+        // в обе стороны написания).
+        if pat_is_mut && matches!(self.peek().kind, TokenKind::KwConsume) {
+            return Err(Diagnostic::new(
+                "[E_PATTERN_CONSUME_MUT_CONFLICT] `mut` и `consume` на одном \
+                 pattern-биндинге взаимоисключающие (D131/D157-амендмент) — \
+                 `consume` уже несёт права мутации (D180).".to_string(),
+                start,
+            ));
+        }
+        let pat_is_consume = if pat_is_mut { false } else {
+            self.eat(&TokenKind::KwConsume).is_some()
+        };
+        if pat_is_consume && matches!(self.peek().kind, TokenKind::KwMut) {
+            return Err(Diagnostic::new(
+                "[E_PATTERN_CONSUME_MUT_CONFLICT] `consume` и `mut` на одном \
+                 pattern-биндинге взаимоисключающие (D131/D157-амендмент) — \
+                 `consume` уже несёт права мутации (D180).".to_string(),
+                start,
+            ));
+        }
         match self.peek().kind.clone() {
             TokenKind::Ident(s) if s == "_" => {
                 self.bump();
                 if pat_is_mut {
                     return Err(Diagnostic::new(
                         "[E_PATTERN_GROUP_MUT] `mut _` бессмысленно (wildcard не bind'ит).",
+                        start,
+                    ));
+                }
+                if pat_is_consume {
+                    return Err(Diagnostic::new(
+                        "[E_PATTERN_GROUP_MUT] `consume _` бессмысленно (wildcard не bind'ит).",
                         start,
                     ));
                 }
@@ -11228,7 +11259,7 @@ impl Parser {
                             span: start,
                         })
                     } else {
-                        Ok(Pattern::Ident { name, span: start, is_mut: pat_is_mut })
+                        Ok(Pattern::Ident { name, span: start, is_mut: pat_is_mut, is_consume: pat_is_consume })
                     }
                 } else {
                     Ok(Pattern::Variant {

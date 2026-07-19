@@ -222,7 +222,7 @@ fn main() Time Detach {
                     // mut-capture of an outer listener from spawn's body
                     // would be E_CONCURRENT_MUT_CAPTURE.
                     mut lst = match TcpListener.bind(addr) {
-                        Ok(l)  => l
+                        Ok(consume l)  => l
                         Err(_) => panic("Failed to bind: " + port.to_str())
                     }
                     println("Nova flagship aggregator listening on http://" + addr.ip() + ":" + lst.local_port().to_str())
@@ -237,7 +237,7 @@ fn main() Time Detach {
                     mut running = true
                     while running {
                         match lst.accept() {
-                            Ok(stream) => {
+                            Ok(consume stream) => {
                                 if inflight.load() >= MAX_INFLIGHT_CONNS {
                                     // Over budget: honest reject, no queue —
                                     // close immediately, no read/response

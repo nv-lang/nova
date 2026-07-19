@@ -1574,7 +1574,7 @@ mod tests {
             vec![],
             vec![Stmt::Let(LetDecl {
                 mutable: false,
-                pattern: Pattern::Ident { name: "f".to_string(), span: sp(), is_mut: false },
+                pattern: Pattern::Ident { name: "f".to_string(), span: sp(), is_mut: false, is_consume: false },
                 ty: None,
                 value: e(ExprKind::ClosureLight {
                     params: vec![ClosureLightParam { name: "x".to_string(), span: sp() }],
@@ -1600,7 +1600,7 @@ mod tests {
             vec![],
             vec![Stmt::Let(LetDecl {
                 mutable: false,
-                pattern: Pattern::Ident { name: "y".to_string(), span: sp(), is_mut: false },
+                pattern: Pattern::Ident { name: "y".to_string(), span: sp(), is_mut: false, is_consume: false },
                 ty: None,
                 value: int_lit(3),
                 span: sp(),

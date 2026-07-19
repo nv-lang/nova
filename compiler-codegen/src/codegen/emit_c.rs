@@ -7978,7 +7978,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         };
         Stmt::Let(LetDecl {
             mutable: false,
-            pattern: Pattern::Ident { name: name.to_string(), span, is_mut: false },
+            pattern: Pattern::Ident { name: name.to_string(), span, is_mut: false, is_consume: false },
             ty: None,
             value: int_lit,
             span,
@@ -42749,7 +42749,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     for f in fields {
                         let ty = field_types.get(&f.name).cloned().unwrap_or_else(|| "nova_int".into());
                         let inner_pat = f.pattern.clone()
-                            .unwrap_or_else(|| Pattern::Ident { name: f.name.clone(), span: f.span, is_mut: false });
+                            .unwrap_or_else(|| Pattern::Ident { name: f.name.clone(), span: f.span, is_mut: false, is_consume: false });
                         out.extend(Self::collect_pattern_inner_bindings(&inner_pat, &ty, this));
                     }
                     return out;
@@ -42770,7 +42770,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let Some(field_c) = field_c {
                             // `field: pat` — recurse pat; `field` shorthand — bind directly.
                             let inner_pat = f.pattern.clone()
-                                .unwrap_or_else(|| Pattern::Ident { name: f.name.clone(), span: f.span, is_mut: false });
+                                .unwrap_or_else(|| Pattern::Ident { name: f.name.clone(), span: f.span, is_mut: false, is_consume: false });
                             out.extend(Self::collect_pattern_inner_bindings(&inner_pat, &field_c, this));
                         } else if f.pattern.is_none() {
                             // Shorthand field без type info — bind как scr_ty (fallback).

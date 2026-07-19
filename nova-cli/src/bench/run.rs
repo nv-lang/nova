@@ -726,6 +726,7 @@ pub fn expand_bench_sweeps(module: &mut nova_codegen::ast::Module) {
                             name: params.var_name.clone(),
                             span: params.span,
                             is_mut: false,
+                            is_consume: false,
                         },
                         ty: None,
                         value: int_lit,
