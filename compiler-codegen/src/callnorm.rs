@@ -791,7 +791,7 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
 fn let_stmt(name: &str, value: Expr, span: Span) -> Stmt {
     Stmt::Let(LetDecl {
         mutable: false,
-        pattern: Pattern::Ident { name: name.to_string(), span, is_mut: false },
+        pattern: Pattern::Ident { name: name.to_string(), span, is_mut: false, is_consume: false },
         ty: None,
         value,
         span,
@@ -804,7 +804,7 @@ fn let_stmt(name: &str, value: Expr, span: Span) -> Stmt {
 fn let_stmt_typed(name: &str, value: Expr, ty: Option<crate::ast::TypeRef>, span: Span) -> Stmt {
     Stmt::Let(LetDecl {
         mutable: false,
-        pattern: Pattern::Ident { name: name.to_string(), span, is_mut: false },
+        pattern: Pattern::Ident { name: name.to_string(), span, is_mut: false, is_consume: false },
         ty,
         value,
         span,

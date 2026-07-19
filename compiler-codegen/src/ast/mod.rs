@@ -3086,10 +3086,17 @@ pub enum Pattern {
     /// `name` — связывает (или enum unit-variant без скобок).
     /// Plan 108.3 (D36 amend): `is_mut` — `mut name` форма (per-name
     /// в pattern: `let (mut a, b) = ...`; для loop-var `for mut x in ...`).
+    /// Plan 73.2 (D157/D180-амендмент, consume-волна А, 2026-07-19):
+    /// `is_consume` — `consume name` форма, ТОЛЬКО как sub-pattern внутри
+    /// single-arg tuple-variant (`Ok(consume tcp)`, `Some(consume f)`) —
+    /// explicit ownership-transfer биндинг для must-consume пейлоада
+    /// (D156 propagation). Взаимоисключающе с `is_mut` (parse error,
+    /// симметрия D131 «consume и mut на одном биндинге»).
     Ident {
         name: String,
         span: Span,
         is_mut: bool,
+        is_consume: bool,
     },
     /// `Variant`, `Variant(p1, p2)`, `Cons(h, ..)` — D59
     Variant {

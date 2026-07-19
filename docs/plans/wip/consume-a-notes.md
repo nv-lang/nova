@@ -5,7 +5,34 @@
 вариант А (enforce по букве). Worktree: `d:/Sources/nv-lang/nova-consumeA`,
 ветка `p-consume-enforce-a` (от `main` @ `b2bfa0505`).
 
-## Статус: исследование завершено, начинаю реализацию (checker + parser)
+## Статус: AST+парсер сделаны, чекер в работе (несколько сетевых обрывов подряд — коммичу мелко)
+
+### Сделано
+- `Pattern::Ident` получил `is_consume: bool` (`ast/mod.rs`), все ~20
+  construction sites обновлены (`is_consume: false` синтетически).
+- `parse_pattern()` (`parser/mod.rs`): symmetric `consume`-префикс к
+  `mut`-префиксу; `E_PATTERN_CONSUME_MUT_CONFLICT` при конфликте в обе
+  стороны написания (`mut consume x` / `consume mut x`); `E_PATTERN_GROUP_MUT`
+  для `consume _`. Итоговый Ident-биндинг несёт `is_consume: pat_is_consume`.
+- Компиляция ЕЩЁ НЕ проверена (`cargo build` не запускался после этих
+  правок) — следующий шаг.
+
+### Дальше (чекер, types/mod.rs)
+- `ConsumeCtx::var_unwrapped_types: HashMap<String,String>` — новое поле;
+  заполнение (a) explicit-annotation `Option[T]`/`Result[T,E]` через уже
+  существующий `unwrap_result_option_name()` (строка ~25472) на Stmt::Let
+  и fn-параметрах (регистрация параметров — `check_consume`,
+  `compiler-codegen/src/types/mod.rs:~27511` цикл `for p in &f.params`);
+  (b) из RHS через `ctx.infer_unwrapped_call_type(&decl.value)`.
+- Helper `scrutinee_unwrapped_type(ctx, scrutinee)`: Ident → lookup;
+  иначе → `infer_unwrapped_call_type` (уже покрывает rvalue Call).
+- `ExprKind::Match`/`IfLet` (~30114-30152): для arm pattern
+  `Variant{path:[.., "Ok"|"Some"], Tuple{[Ident], rest:false}}` с
+  must-consume unwrapped-типом — E_CONSUME_PATTERN_REQUIRED (нет
+  `is_consume`) ИЛИ declare_consume_binding+local_mut=true (есть).
+- `@field`-скрутини (SelfAccess/Member) — honest defer (нет готовой
+  field-type registry в ConsumeCtx для этого; конкретный дефект из
+  маркера — чисто rvalue Call, покрыт).
 
 ## Корневая причина (подтверждено чтением кода)
 

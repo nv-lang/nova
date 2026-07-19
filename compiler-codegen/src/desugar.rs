@@ -249,7 +249,7 @@ impl DesugarCtx {
         );
         stmts.push(Stmt::Let(LetDecl {
             mutable: true,
-            pattern: Pattern::Ident { name: tmp.clone(), span, is_mut: false },
+            pattern: Pattern::Ident { name: tmp.clone(), span, is_mut: false, is_consume: false },
             ty: None,
             value: new_call,
             span,
@@ -406,7 +406,7 @@ impl DesugarCtx {
         );
         stmts.push(Stmt::Let(LetDecl {
             mutable: true,
-            pattern: Pattern::Ident { name: tmp.clone(), span, is_mut: false },
+            pattern: Pattern::Ident { name: tmp.clone(), span, is_mut: false, is_consume: false },
             ty: None,
             value: new_call,
             span,
@@ -438,7 +438,7 @@ impl DesugarCtx {
                     let v_tmp = format!("{}_v{}", tmp, idx);
                     stmts.push(Stmt::Let(LetDecl {
                         mutable: false,
-                        pattern: Pattern::Ident { name: k_tmp.clone(), span, is_mut: false },
+                        pattern: Pattern::Ident { name: k_tmp.clone(), span, is_mut: false, is_consume: false },
                         ty: None,
                         value: k,
                         span,
@@ -447,7 +447,7 @@ impl DesugarCtx {
                     }));
                     stmts.push(Stmt::Let(LetDecl {
                         mutable: false,
-                        pattern: Pattern::Ident { name: v_tmp.clone(), span, is_mut: false },
+                        pattern: Pattern::Ident { name: v_tmp.clone(), span, is_mut: false, is_consume: false },
                         ty: None,
                         value: v,
                         span,
@@ -494,7 +494,7 @@ impl DesugarCtx {
                     let src_tmp = format!("{}_spr{}", tmp, idx);
                     stmts.push(Stmt::Let(LetDecl {
                         mutable: false,
-                        pattern: Pattern::Ident { name: src_tmp.clone(), span, is_mut: false },
+                        pattern: Pattern::Ident { name: src_tmp.clone(), span, is_mut: false, is_consume: false },
                         ty: None,
                         value: src_map,
                         span,
@@ -548,7 +548,7 @@ impl DesugarCtx {
                     );
                     let v_let = Stmt::Let(LetDecl {
                         mutable: false,
-                        pattern: Pattern::Ident { name: v_name.clone(), span, is_mut: false },
+                        pattern: Pattern::Ident { name: v_name.clone(), span, is_mut: false, is_consume: false },
                         ty: None,
                         value: unwrap_call,
                         span,
@@ -579,7 +579,7 @@ impl DesugarCtx {
                     };
                     let for_expr = Expr::new(
                         ExprKind::For {
-                            pattern: Pattern::Ident { name: k_name, span, is_mut: false },
+                            pattern: Pattern::Ident { name: k_name, span, is_mut: false, is_consume: false },
                             iter: Box::new(keys_call),
                             body: for_body,
                             elem_type: None,
@@ -608,7 +608,7 @@ impl DesugarCtx {
             let typed = format!("{}_typed", tmp);
             stmts.push(Stmt::Let(LetDecl {
                 mutable: false,
-                pattern: Pattern::Ident { name: typed.clone(), span, is_mut: false },
+                pattern: Pattern::Ident { name: typed.clone(), span, is_mut: false, is_consume: false },
                 ty: Some(TypeRef::Named {
                     path: vec![target_for_hint],
                     generics: vec![k_ty, v_ty],
