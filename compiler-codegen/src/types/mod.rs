@@ -33513,6 +33513,7 @@ pub fn annotate_map_literals(module: &mut Module) {
         ctx,
         fn_generics: HashSet::new(),
         var_types: HashMap::new(),
+        current_fn_return_ty: None,
     };
     ann.walk_module(module);
     // Plan 42.4 / Plan 52 Ф.7: peer_files несут per-peer копии items для
@@ -33535,6 +33536,21 @@ struct MapLitAnnotator {
     /// аннотации: чтобы отличить map-spread от array-spread, нужен тип
     /// spread-источника. Сбрасывается на границе каждого item'а.
     var_types: HashMap<String, TypeRef>,
+    /// Plan 214 (D429): the CURRENT function's declared return type — set on
+    /// `Item::Fn` entry, cleared on exit. Lets `Stmt::Return { value: Some(v)
+    /// }` propagate `expected` (found empirically: without this, `return sb`
+    /// in a `-> str` fn never reached `try_coerce_leaf` at all — the walk
+    /// unconditionally passed `None` for return-position, so a bare finalize-
+    /// lane return compiled straight through to a raw C `return sb;` — type
+    /// mismatch, `Nova_StringBuilder*` where `nova_str` is expected). An
+    /// explicit `return X` ALWAYS targets the enclosing FUNCTION's return
+    /// type regardless of nesting depth (if/match/loop bodies), so this is
+    /// unconditionally correct for that shape. Deliberately NOT threaded into
+    /// nested blocks' OWN trailing-expr propagation (an `if`/`match` arm's
+    /// trailing expr is only the function's return value when that whole
+    /// construct is itself in tail position — full tail-position tracking
+    /// through arbitrary nesting is out of scope for this fix; see Ф.4).
+    current_fn_return_ty: Option<TypeRef>,
 }
 
 impl MapLitAnnotator {
@@ -33563,11 +33579,16 @@ impl MapLitAnnotator {
                         self.var_types.insert(p.name.clone(), p.ty.clone());
                     }
                     let return_ty = f.return_type.clone();
+                    // Plan 214 (D429): set/clear for the duration of this fn's
+                    // body walk — consumed by `Stmt::Return` (any nesting depth)
+                    // and by `walk_fn_body_block`'s own top-level trailing expr.
+                    self.current_fn_return_ty = return_ty.clone();
                     match &mut f.body {
                         FnBody::Expr(e) => self.walk_expr(e, return_ty.as_ref()),
-                        FnBody::Block(b) => self.walk_block(b),
+                        FnBody::Block(b) => self.walk_fn_body_block(b),
                         FnBody::External => {}
                     }
+                    self.current_fn_return_ty = None;
                 }
                 Item::Test(t) => {
                     self.fn_generics.clear();
@@ -33609,6 +33630,27 @@ impl MapLitAnnotator {
         }
         if let Some(t) = &mut b.trailing {
             self.walk_expr(t, None);
+        }
+    }
+
+    /// Plan 214 (D429): identical to `walk_block`, EXCEPT the block's own
+    /// trailing expression is propagated `current_fn_return_ty` — used ONLY
+    /// for a `FnBody::Block`'s OUTERMOST block (called once, from `walk_items`'
+    /// `Item::Fn` arm), where a fall-through trailing expr genuinely IS the
+    /// function's return value (implicit return, no `return` keyword). NOT
+    /// used for any nested block (if/match/loop bodies, etc. — those keep
+    /// calling plain `walk_block`, unchanged) — a nested block's OWN trailing
+    /// is only the function's return value when the whole enclosing construct
+    /// is itself in tail position, which this fix does not attempt to track
+    /// (see field doc; explicit `return X` — handled in `walk_stmt` instead —
+    /// has no such ambiguity, at ANY nesting depth).
+    fn walk_fn_body_block(&mut self, b: &mut Block) {
+        for s in &mut b.stmts {
+            self.walk_stmt(s);
+        }
+        if let Some(t) = &mut b.trailing {
+            let ret_ty = self.current_fn_return_ty.clone();
+            self.walk_expr(t, ret_ty.as_ref());
         }
     }
 
@@ -33679,7 +33721,18 @@ impl MapLitAnnotator {
                 self.walk_expr(value, assign_expected.as_ref());
             }
             Stmt::Return { value, .. } => {
-                if let Some(v) = value { self.walk_expr(v, None); }
+                // Plan 214 (D429): propagate the enclosing FUNCTION's return
+                // type — `return X` always targets it regardless of nesting
+                // depth (unlike a block's OWN trailing expr, which is only
+                // the fn's return value in actual tail position — see
+                // `current_fn_return_ty` field doc). Found empirically: a
+                // bare `return sb` (finalize lane) compiled straight to a
+                // raw C `return sb;` without this — CC-FAIL (`Nova_
+                // StringBuilder*` where `nova_str` expected).
+                if let Some(v) = value {
+                    let ret_ty = self.current_fn_return_ty.clone();
+                    self.walk_expr(v, ret_ty.as_ref());
+                }
             }
             Stmt::Throw { value, .. } => self.walk_expr(value, None),
             Stmt::Break(_) | Stmt::Continue(_) => {}

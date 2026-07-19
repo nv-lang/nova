@@ -3,70 +3,90 @@
 Базовая ревизия: 6411de6f3 (main). Карта — `docs/plans/214-coerce-attribute.md`
 (ревью-7, финал), спека — D429 `spec/decisions/02-types.md:15547`.
 
-## Статус: разведка инфраструктуры (in progress), реализация ещё не начата
+## Статус: Ф.1 механизм реализован, внутренний смоук в процессе (итеративная доводка)
 
-### Найденные choke-points (сверено с d55-coercion-notes.md, ветка p-fix-d55-type-directed, уже влита в main)
+### Сделано (коммиты в этой ветке, хронологически)
 
-- **Accept-side (checker):** `compiler-codegen/src/types/mod.rs::assignable_direct`
-  (~13939) — единый choke-point для call-arg/let-const/element (element — через
-  `ArrayLit`-арм внутри `assignable_direct`, рекурсирует `assignable` per-элемент,
-  ~13968). Литерал-армы (StrLit и т.д.) — с 14093. `is_bytes_slice_rt` helper ~17251,
-  `array_elem_type` ~17231. `assignable` (~13881) — обёртка над `assignable_direct`,
-  добавляет single-wrapper fallback через `single_wrap_candidates` (~17295) +
-  `wrap_kind_of_expr`/`wrap_kind_of`. `assignable_direct` НЕ покрывает return —
-  задокументированный пробел (return не идёт через `assignable` вообще, комментарий
-  ~6843 "No `assignable` runs here").
-- **Rewrite-side (AST):** `MapLitAnnotator` (~33002), `walk_expr` (~33281) — уже
-  прокидывает `expected: Option<&TypeRef>` через call-arg/let/const/return(частично)/
-  array-element/record-field/if-else/match-arm позиции (общий D55-проход). Вызывает
-  `try_wrap_leaf` (~33224) для sum-variant/newtype leaf-обёртки. **Кандидат для моей
-  вставки:** добавить `try_coerce_leaf` рядом, вызываемую из `walk_expr` СРАЗУ ПОСЛЕ
-  `try_wrap_leaf` (single-wrapper первичен — R11 — должен матчить/блокировать раньше,
-  но R11 на самом деле проверяется на этапе ДЕКЛАРАЦИИ #coerce, не на call-сайте: если
-  пара уже покрыта single-wrapper, #coerce на неё не зарегистрируется вовсе → на
-  call-сайте конфликта в рантайме проверки нет, окна просто НЕ пересекаются по паре).
-  Note: `try_wrap_leaf` работает только на ЛИСТЬЯХ (IntLit/FloatLit/BoolLit/StrLit/
-  Ident-с-известным-типом) — `#coerce` должен работать на ЛЮБОМ expr с типом I, не
-  только на листьях (значение `sb` — Ident произвольного типа, `foo().bar` — Member
-  expr и т.п.) — нужен `infer_expr_type`, не только `var_types`-lookup.
-- **Return-position codegen:** `emit_c.rs::emit_expr_with_target_type` (~28408) — уже
-  общий choke-point для let/return/assign/array-elem C-target-typed emission (per
-  d55-notes). Для #coerce НЕ нужен новый codegen — rewrite вставляет обычный
-  `Call`-node (`s.bytes()`), который эмитится СУЩЕСТВУЮЩИМ путём метод-вызова — значит
-  рецепт "codegen ничего нового" (§Ф.2 плана) означает: rewrite ДОЛЖЕН случиться ДО
-  emit_c (т.е. в types/mod.rs AST-mutating проходе, тот же, что MapLitAnnotator), не
-  внутри emit_c.
+1. `#coerce` атрибут: AST-поле `FnDecl.coerce_attr`, парсер (`parse_coerce_attr`,
+   контекстный ident по образцу `#cancel_safe`/`#blocking`) + `pre_coerce`
+   pre-export парс (ОБЯЗАТЕЛЕН — авторы пишут `#coerce` ДО `export`, конвенция
+   `#realtime`). R15: `#coerce` на protocol/effect-требовании — parse-time
+   `E_COERCE_ON_PROTOCOL` (protocol-методы это `EffectMethod`, не `FnDecl`).
+2. `CoercePairEntry` + `collect_coerce_pairs(module, lookup)` — sig-скан +
+   ПОЛНЫЙ набор валидаций (NOT_UNARY/RECEIVER_FORM_DEFERRED R1,
+   NOT_ZERO_COST R2 [mut-receiver/view-без-ro/finalize-с-ro],
+   DUPLICATE_PAIR R3+R11 через `single_wrap_candidates`, GENERIC_UNSUPPORTED
+   R14, EFFECTFUL R12). Дедуп по `Span` (module.items ∩ peer_files —
+   найдено эмпирически, self-collision).
+3. Accept-путь: `assignable()` — coerce-fallback ПОСЛЕ single-wrap fallback
+   (`coerce_expr_input_name` — литералы напрямую, иначе `infer_expr_type`).
+4. Rewrite: `try_coerce_leaf` в `MapLitAnnotator` (try_wrap_leaf-семья),
+   вызывается из `walk_expr` сразу после `try_wrap_leaf`. Leaf-only (литерал/
+   Ident-с-известным-var_type) — СИММЕТРИЧНО ограничению try_wrap_leaf.
+   `simple_expr_type` расширен арм'ом `Type.new(...)` (D372 canonical ctor) —
+   иначе `let sb = StringBuilder.new()` (без явной аннотации, ТИПИЧНАЯ форма)
+   не даёт var_types запись → try_coerce_leaf молчит на самом частом кейсе.
+5. std: `#coerce` на `str @bytes()`, `StringBuilder consume @into_str()`,
+   `WriteBuffer consume @into_bytes()`. Тронут external_registry.rs (include_str
+   snapshot-trap).
+6. **ConsumeRegistry D133-интеграция (найдено эмпирически, НЕ было в карте
+   плана явно):** finalize-lane bare-Ident в call-arg свободной функции
+   (`log(sb)` где `sb StringBuilder`, callee `log(v str)`) БЕЗ этого фикса
+   давал ложный `D133-not-consumed` — consume-чекер работает на ДО-rewrite
+   дереве и не знал, что позиция получит implicit `.into_str()`. Добавлены
+   `ConsumeRegistry.fn_param_output_keys` (fname → per-position
+   `coerce_type_key`) + `coerce_finalize_output_keys` (I → set O, только
+   finalize) + кредит `mark_consumed` в `consume_walk_expr`'s free-fn-call
+   ветке. **Scope: ТОЛЬКО free-fn call-arg.** Method-call-arg (`obj.method(sb)`)
+   и record-literal-field НЕ покрыты — не встретились в 3 seed-парах,
+   задокументированный gap для Ф.4/будущей волны, если найдётся кейс.
+7. **Return-position rewrite gap (найдено эмпирически):** `MapLitAnnotator`
+   ВООБЩЕ не прокидывал expected-тип в `Stmt::Return` (было `walk_expr(v,
+   None)` безусловно) — `return sb` в `-> str` функции компилировался в сырой
+   `return sb;` (CC-FAIL, `Nova_StringBuilder*` vs `nova_str`). Добавлено поле
+   `current_fn_return_ty`, `Stmt::Return` прокидывает его (ЛЮБАЯ глубина
+   вложенности — `return X` всегда целится в функцию, однозначно). Отдельный
+   `walk_fn_body_block` (только ДЛЯ ВЕРХНЕГО блока тела функции) прокидывает
+   его же в trailing-выражение (неявный return без keyword). **Scope:
+   вложенный tail-position (`if`/`match` как последнее выражение функции) НЕ
+   протянут** — вне охвата этой волны, задокументированный gap (аналог
+   существующего "return не идёт через assignable" пробела).
 
-### Name-gated костыль (Ф.2 снос)
+### Choke-points (для справки, актуальны)
 
-`synthesize_write_str_lit_bytes_coercion` (переименован в d55-волне в
-`synthesize_bytes_lit_call_args`) — pre-pass в `emit_call`, `emit_c.rs`. Читает
-`method_overloads`-реестр (recv_type_name, method_name)->Vec<MethodSig>. Снести
-ПОСЛЕ того, как #coerce-rewrite покрывает call-arg-позицию (то есть #coerce
-call-arg вставка обязана произойти РАНЬШЕ этого pre-pass либо вместо него — рекомендованный
-путь: #coerce rewrite в types/mod.rs (pre-codegen AST pass) переписывает
-`w.write("literal")` в `w.write("literal".bytes())` ДО того, как emit_c вообще видит
-call — тогда `synthesize_bytes_lit_call_args` становится мёртвым кодом, сносим.
+- Accept: `assignable`/`assignable_direct` (types/mod.rs, ~13897/13939).
+- Rewrite: `MapLitAnnotator::walk_expr`/`try_wrap_leaf`/`try_coerce_leaf`
+  (~33700+), `walk_fn_body_block` (новый).
+- Consume/D133: `ConsumeRegistry::build` + `consume_walk_expr` free-fn-arm
+  (~30450+).
+- Ф.2 костыль: `emit_c.rs::synthesize_bytes_lit_call_args` (call-arg pre-pass,
+  keyed по `method_overloads` (recv_type, method_name) — УЖЕ type-directed,
+  НЕ name-gated — единственный оставшийся хардкод — пара (str,[]u8) и StrLit-
+  only условие). **РЕШЕНИЕ (эмпирически подтверждённое):** см. ниже —
+  вероятна НЕ прямая отмена, а обобщение, т.к. `resolve_call_params`/
+  `unique_method_param_types` (MapLitAnnotator's call-arg expected-type
+  propagation) НЕ резолвит ИМЯ метода, зарегистрированное на ≥2 разных типах
+  (напр. `write` — WriteBuffer/StringBuilder/TcpStream/Stdout/... все имеют
+  `@write`) — именно ТАКОЙ protocol-erased/overloaded-receiver сценарий
+  (`f.write("[")`, `f Fmt`) — исходный целевой кейс костыля. Прямой снос БЕЗ
+  замены регрессирует `d55_literal_coercion.nv`. Проверка — следующий шаг
+  (byte-parity гейт).
 
-### #coerce атрибут — парсинг
+## Внутренний смоук (docs/plans/wip/214-scratch/scratch.nv, standalone module)
 
-TODO: проверить, как парсер обрабатывает произвольные `#foo`-атрибуты на fn (есть ли
-общий механизм `Item::Fn.attrs: Vec<Attr>` или каждый атрибут захардкожен отдельным
-полем). Следующий шаг разведки.
+Итеративно чинился реальными компиляторными багами (не гипотезами) —
+хронология выше. Статус на момент последней проверки: return-position фикс
+собран, билд запущен, результат — следующий шаг после отчёта.
 
-## План действий (обновляется по ходу)
+## Открытые вопросы / TODO перед переходом к Ф.2/Ф.3-миграции/Ф.3b
 
-1. Атрибут `#coerce` — парсер + AST-поле на FnDecl.
-2. Реестр CoercePair (I,O)->FnDecl, sig-scan (аналог существующих sig-scan проходов).
-3. Валидации (см. план) — где строится реестр (вероятно отдельная фаза в types/mod.rs
-   до основного f1-чекера, т.к. нужен ДО assignable/walk_expr).
-4. Accept-side: assignable_direct/assignable — общий expr (не только литерал) с типом I
-   в позиции O, через реестр.
-5. Rewrite-side: try_coerce_leaf в MapLitAnnotator (или отдельный проход).
-6. Ф.2 снос костыля.
-7. Ф.3 std pометки + миграция сайтов.
-8. Ф.3b линт.
-9. Гейты.
+- [ ] Досмотреть смоук после return-fix (свежий билд).
+- [ ] Byte-parity: `d55_literal_coercion.nv`/`d374_write_sink_decouple.nv` —
+  сравнить .c ДО/ПОСЛЕ (сохранение костыля vs снос vs обобщение).
+- [ ] use-after-consume neg фикстура (обязательный пункт внутреннего гейта).
+- [ ] Ф.2 решение зафиксировать (снос vs обобщение) + реализовать.
+- [ ] Ф.3 миграция std-сайтов (после Ф.3b линта).
+- [ ] Ф.3b линт W_COERCE_EXPLICIT_REDUNDANT.
+- [ ] Целевые гейты (checksums/vec/lint --deny/флагман/standalone-CU).
 
-Чекпоинт-коммиты — после каждого пункта, в этот файл дописываю вердикт перед
-коммитом (per задание).
+Чекпоинт-коммиты — после каждого логического шага (см. git log ветки).

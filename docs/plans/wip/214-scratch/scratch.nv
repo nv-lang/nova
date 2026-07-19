@@ -1,0 +1,75 @@
+// Plan 214 isolated smoke — #coerce mechanism, 3 seed pairs, 4 positions +
+// the protocol-erased/overloaded-callee call-arg shape (`f.write("[")` on
+// `mut f Fmt`) that the OLD name-gated `synthesize_bytes_lit_call_args`
+// codegen pre-pass specifically targeted — checking whether the new
+// declarative #coerce mechanism (types/mod.rs AST-rewrite + accept-path)
+// alone covers it, or whether the codegen pre-pass is still load-bearing.
+module wip.d214scratch
+
+type D214WriteSink { s str }
+
+fn D214WriteSink @display(mut f Fmt) -> () {
+    f.write("[")               // str-литерал, protocol-erased receiver, overloaded method name
+    f.write(@s.bytes())        // explicit call — should NOT be touched
+    f.write("]")
+}
+
+test "call-arg: str-литерал -> []u8 через protocol-erased Fmt.write (regression guard, ex-D55/Ф.2)" {
+    ro w = D214WriteSink { s: "mid" }
+    assert("${w}" == "[mid]")
+}
+
+test "call-arg view: str variable -> []u8 (bare, #coerce)" {
+    ro s = "hello"
+    ro b = D214BytesTaker.take(s)
+    assert(b == 5)
+}
+
+fn D214BytesTaker.take(v []u8) -> int => v.len()
+
+test "let/const view: str -> ro []u8 bare binding" {
+    ro b []u8 = "hello"
+    assert(b.len() == 5)
+}
+
+test "return view: str -> []u8 bare return" {
+    assert(d214_ret_bytes().len() == 3)
+}
+fn d214_ret_bytes() -> []u8 => "abc"
+
+test "element view: [][]u8 with bare str literal elements" {
+    ro xs [][]u8 = ["a", "bc"]
+    assert(xs.len() == 2)
+    assert(xs[0].len() == 1)
+    assert(xs[1].len() == 2)
+}
+
+test "finalize call-arg: StringBuilder -> str bare (consume)" {
+    consume sb = StringBuilder.new()
+    sb.append("hi")
+    assert(d214_take_str(sb) == 2)
+}
+fn d214_take_str(v str) -> int => v.byte_len()
+
+test "finalize let: WriteBuffer -> []u8 bare let" {
+    mut wb = WriteBuffer.new()
+    wb.write_u8(65)
+    ro bytes []u8 = wb
+    assert(bytes.len() == 1)
+    assert(bytes[0] == 65)
+}
+
+test "finalize return: StringBuilder -> str bare return" {
+    assert(d214_ret_str().byte_len() == 2)
+}
+fn d214_ret_str() -> str {
+    consume sb = StringBuilder.new()
+    sb.append("hi")
+    return sb
+}
+
+test "use-after-consume neg guard (documented, not compiled here)" {
+    // Real neg-fixture is a SEPARATE compile-error test (EXPECT_COMPILE_ERROR),
+    // not runnable inline — see 214-scratch/neg_use_after.nv.
+    assert(true)
+}
