@@ -74,14 +74,53 @@
 
 ## Статус выполнения (обновляю по ходу)
 
-- [ ] Cargo.toml: добавить `serde` explicit dep
-- [ ] symbols.rs: derive Serialize/Deserialize на WorkspaceSymbolEntry + install_file/export_file
+- [x] Cargo.toml: добавить `serde` explicit dep
+- [x] symbols.rs: derive Serialize/Deserialize на WorkspaceSymbolEntry + install_file/export_file
       на WorkspaceIndex и ReferencesIndex
-- [ ] новый модуль index_cache.rs (load/save/fingerprint, версия, атомарная запись)
-- [ ] server.rs: переписать run_initial_scan_with_progress под тёплый/холодный путь + throttle
-- [ ] lib.rs: зарегистрировать модуль
-- [ ] юнит-тесты: round-trip, mtime/size invalidation, corrupt/version-mismatch → fallback
-- [ ] лог холодный/тёплый + замер на реальном workspace
-- [ ] cargo build --release + cargo test зелёные
+- [x] новый модуль index_cache.rs (load/save/fingerprint, версия, атомарная запись) — 9 тестов
+- [x] server.rs: переписать run_initial_scan_with_progress под тёплый/холодный путь + throttle
+- [x] lib.rs: зарегистрировать модуль
+- [x] юнит-тесты: round-trip, mtime/size invalidation, corrupt/version-mismatch → fallback
+- [x] **найден и зафикшен реальный баг во время замера**: `ReferencesIndex::export_file`
+      исходно фильтровал ОБЩИЙ `by_name`-бакет (записи всех файлов workspace) на каждый файл —
+      для широко общих идентификаторов (`fn`, `module`, ...) это O(workspace²). Первый холодный
+      замер после фикса: 57.7с → 42.4с (фикс), но заодно доказал что сам scan (без бага) даёт
+      разумный порядок величины. Фикс: `by_file` теперь хранит `(name, ranges)` целиком
+      (не только имена) — export_file/remove_file больше не трогают by_name сверх необходимого.
+      +3 юнит-теста (round-trip, install≡index_file по ответам find(), регресс-guard на сам баг
+      — 4000 файлов с общим идентификатором, export одного файла <50мс).
+- [x] лог холодный/тёплый + замер на реальном workspace (3093-3094 файлов, см. ниже)
+- [x] cargo test --lib зелёные (RUST_MIN_STACK=67108864 — обходит ПРЕДСУЩЕСТВУЮЩИЙ
+      Windows-default-stack overflow у `code_lens::tests::non_test_fn_has_no_run_lens`,
+      воспроизведён идентично на main — НЕ регрессия этой волны). 415/417 + 1 pre-existing
+      overflow + 2 pre-existing "std.io does not exist" (тоже воспроизведены на main).
+- [x] cargo build --release — собирается чисто
 - [ ] docs/plans/215-lsp-index-cache.md
-- [ ] коммит(ы)
+- [ ] финальный коммит(ы) + очистка временных тестовых артефактов
+
+### Замеры (после фикса O(N²), release-бинарь, workspace = сам worktree nova-lspcache, ~3093 .nv)
+
+| Прогон | total_files | warm_hits | stale | total_elapsed_ms | initialized→ready |
+|---|---|---|---|---|---|
+| cold (кэша нет) | 3093 | 0 | 3093 | 42438 | 42.9с |
+| warm (ничего не менялось) | 3093 | 3093 | 0 | 6995 | 7.5с |
+| warm + 1 намеренная правка (+1 случайный stray-файл задет моими же ручными тестами) | 3094 | 3092 | 2 | 1078 | 1.6с |
+
+Тёплый старт без изменений: **~6x быстрее холодного** (7.0с vs 42.4с), доминанта — чтение+парсинг
+42МБ JSON-кэша (`fingerprint_pass_ms=6806` из 6995мс). Точечная инвалидация подтверждена: тронул
+РОВНО 1 файл (`examples/basics/hello.nv`, впоследствии `git checkout --` откачен) — лог показал
+`stale=2` (второй — случайно задетый мной же ранее пустой stray-файл `std/prelude.nv`, НЕ
+относящийся к тесту и не отслеживаемый git; удалён) при `warm_hits=3092`: реиндексация не тронула
+ни одного из 3092 неизменённых файлов. total_elapsed при 2 stale = 1.08с (доминанта та же — чтение
+кэша, реиндексация 2 файлов пренебрежимо мала).
+
+Артефакты замера очищены: `git checkout -- examples/basics/hello.nv`, удалён stray
+`std/prelude.nv`, `target/nova-lsp-cache/` — disposable (в .gitignore через `target/`).
+
+### Известный компромисс v1 (не блокер, для плана)
+
+Кэш-файл сериализован как ОДИН JSON-документ (`serde_json`, уже зависимость) — на этом workspace
+получилось ~42МБ. Работает и укладывается в цель «тёплый = секунды», но компактный бинарный формат
+(bincode/postcard) уменьшил бы и размер на диске, и время чтения/парсинга ещё в разы — оставляю как
+задел на будущее (не требуется для закрытия этой волны, JSON достаточен и не требует новой
+зависимости).
