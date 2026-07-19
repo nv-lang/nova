@@ -1,6 +1,87 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # [M-mn-spawnctx-corruption-cancel-wake] — чекпоинт
 
+## ✅ КОРЕНЬ НАЙДЕН И ЗАКРЫТ (2026-07-19, opus-волна, worktree nova-187w, ветка p-spawnctx-root)
+
+**Вердикт: «порча SpawnCtx» была СИМПТОМОМ, не корнем. Корень — потеря
+GC-рутов стеков потоков на Linux: `GC_set_push_other_roots(...)` (ea85229e0,
+fiber_arena.c) ЗАМЕЩАЕТ дефолтный колбэк bdwgc, который на pthreads-сборке
+(`GC_default_push_other_roots` → `GC_push_all_stacks()`) — единственный
+канал сканирования СТЕКОВ И РЕГИСТРОВ всех зарегистрированных потоков.
+Linux-порт Windows-модели перенёс из трёх слагаемых Windows-колбэка
+(fiber_arena_win.c) только занятые fiber-слоты, потеряв native-стеки
+потоков и стек main. Итог: всё рутованное только стеком — stack-локальный
+supervised-scope `q` и его child_error[]/child_ctx[], локали воркерского
+шедулера, cancel-токен — собиралось GC ЖИВЫМ; страницы перекраивались под
+другие объекты (в т.ч. carve 128Б uncollectable-freelist, из которого
+шторм берёт SpawnCtx) → обе gdb-сигнатуры и рваный fail-top.**
+
+### Доказательная матрица этой волны (изолированный pos_max, WSL, dev+release)
+
+| Эксперимент | Результат | Вывод |
+|---|---|---|
+| базлайн (main HEAD) | 0/30 PASS | репро 100% |
+| R1-poison+карантин SpawnCtx-пула (`NOVA_SPAWN_POOL_DIAG=1`) | 7/10 SIGSEGV, НИ ОДНОГО срабатывания | порча НЕ через manual-free пула |
+| карантин ВСЕХ `nova_free_uncollectable` (`NOVA_UNCOLL_QUAR=1`) | 9/10 SIGSEGV | и не через какой-либо ручной uncollectable-free |
+| mmap-вынос scope-массивов из GC-кучи + PROT_READ-ловушка старых | 10/10 PASS, ловушка писателя НИ РАЗУ не сработала | стейл-ПИСАТЕЛЯ нет; массивы должны переживать GC |
+| PIN старых массивов (живы навсегда, куча GC) | 0/10 PASS | реюз СТАРЫХ массивов ни при чём |
+| **PIN2: дубль-достижимость ТЕКУЩИХ массивов через uncollectable-цепь** | **10/10 PASS** | **GC теряет ЖИВЫЕ массивы → потерян рут-канал (стек)** |
+| наивный чейнинг дефолтного колбэка | SIGSEGV в GC-маркере | суспенд ловит sp внутри коро-стека → диапазон [коро-sp, native-bottom] через PROT_NONE guard'ы; чейнинг «в лоб» невозможен |
+| **ФИКС: оверрайд + полная компенсация (см. ниже)** | **30/30 PASS (dev) + 30/30 PASS (release)** | закрыто |
+
+Расшифровка сигнатур: «32-битное усечение» указателей — легитимные
+int32-записи рантайма (`published=true/false`, `decided`, NULL-init) в СВОЙ
+ЖЕ преждевременно отобранный массив, чья страница уже перекроена под
+free-list/чужие объекты; ASCII «old (cle» в SpawnCtx — страница ушла под
+строковые данные. gdb dev-сборки поймал и третью форму напрямую:
+`base->_nova_init_snapshot = 0x00000000f7d3baf0` (верхняя половина
+обнулена) и `child_ctx[i] = 0x7fff00000001` (нижняя затёрта int32 `1`).
+
+### Фикс (fiber_arena.c) — порт ПОЛНОЙ Windows-модели
+
+`_nova_gc_push_other_roots` теперь пушит ТРИ слагаемых (как
+`_nova_fw_gc_push_other_roots` на Windows с Plan 151/Ф.2):
+1. **main-стек**: probe-адрес фиксируется `nova_fiber_arena_set_main_stack`
+   (из `_materialize_pool`; bootstrap-страховка — в `nova_fiber_arena_init`,
+   если поток главный); на каждой сборке текущая VMA main-стека берётся из
+   `/proc/self/maps` (стриминговый разбор без аллокаций — maps огромен из-за
+   guard-VMA арены) и пушится целиком (`GC_push_all`).
+2. **native-стеки потоков рантайма**: новый реестр
+   `nova_fiber_arena_register_native_stack()` / `..._unregister_...` —
+   зовётся на входе/выходе воркеров (runtime.c::_worker_main) и драйвера
+   (driver.c::_nova_driver_main). NPTL маппит стек целиком → пуш полного
+   диапазона безопасен (guard исключён самим pthread_getattr_np).
+3. **занятые fiber-слоты арен** — как было (GC_push_all_eager).
+
+Windows (`fiber_arena_win.c`) поведенчески не тронут (там компенсация была
+полной изначально; добавлены только no-op экспорты нового API).
+
+Диагностический инструментарий волны ОСТАВЛЕН как opt-in (ноль оверхеда
+без env): R1-трипваер пула (`NOVA_SPAWN_POOL_DIAG=1` — poison+канарейка+
+карантин+double-release-abort+live-проверки в goready/resume/sweep/driver)
+и дискриминатор `NOVA_UNCOLL_QUAR=1` (alloc_boehm.c).
+
+### Гейты волны (все зелёные)
+- pos_max_fibers_concurrent: **30/30 PASS release + 30/30 dev** (было 0/30)
+- supervisor_stop_test: **10/10 PASS** (прямые прогоны)
+- supervisor_parfor_test (known-red CI): **10/10 PASS**
+- `spec_tests/conformance/standalone` WSL (весь CU): **PASS 68 / FAIL 0**
+- `spec_tests/conformance/standalone` Windows (фикс-бинарь, --jobs 4): **PASS 68 / FAIL 0** — регрессии нет (Windows-поведение не менялось: fiber_arena_win.c поведенчески не тронут, лишь no-op экспорты нового API).
+- TSan: НЕ применим — корень не data-race (GC-root-loss; `GC_MARKERS=1` в прежних волнах не лечил — согласуется).
+
+### Развод с [M-187-high-concurrency-connection-wedge] (параллельная ветка nova-wedge)
+M-187 — WINDOWS-симптом (permanent-000, loadtest.ps1). Мой фикс POSIX-only
+(fiber_arena.c); Windows-колбэк уже пушил все 3 слагаемых → GC-рутов на Windows
+не терялось → корня МОЕГО типа на Windows НЕТ. Значит M-187 wedge — ОТДЕЛЬНЫЙ
+баг (scheduler park/join под connection-concurrency, fibers.h — территория
+nova-wedge). Развод чистый: разные слои/платформы/файлы ядра (fiber_arena.c vs
+fibers.h). Единственное касание fibers.h здесь — 8 строк env-gated диагностики
+в nova_scope_sweep_dead_child (НИ строки логики планировщика).
+
+Прежние заходы ниже сохранены как история (двумя волнами sonnet до этого).
+
+---
+
 Worktree: `d:/Sources/nv-lang/nova-211sc`, ветка `p211-spawnctx`. В main НЕ мёржить,
 push не делать (решение интегратора после гейтов).
 
