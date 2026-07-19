@@ -4773,15 +4773,27 @@ fn conv_coerce_explicit_redundant(m: &Module, _o: &ConvLintOptions, out: &mut Ve
         }
     }
 
-    // Bare `x.method()` — zero-arg method call. The receiver shape itself is
-    // NOT checked (no type info available here) — only the method NAME +
-    // the USE-SITE's declared type, per the doc comment above.
+    // Bare `x.method()` — zero-arg method call on a LEAF receiver (plain
+    // `Ident` or a str literal) ONLY. Found empirically (running this rule
+    // over std): a fluent-chain receiver (`StringBuilder.new(...).append(y)
+    // .into_str()`) also matches the method-name+use-site-type shape, but
+    // stripping `.into_str()` there would NOT actually become coercible —
+    // the AST-rewrite this lint's advice relies on
+    // (`MapLitAnnotator::try_coerce_leaf`, types/mod.rs) is ITSELF leaf-only
+    // (mirrors the pre-existing D55 `try_wrap_leaf` scope), so a bare
+    // `StringBuilder.new(...).append(y)` left at a `str`-typed position would
+    // NOT get rewritten back to `.into_str()` — CC-FAIL (`Nova_StringBuilder*`
+    // where `nova_str` expected). Restricting to the SAME leaf shapes the
+    // rewrite handles keeps this lint's advice always safe to apply.
     fn bare_seed_call(e: &Expr) -> Option<(&str, Span)> {
         let ExprKind::Call { func, args, .. } = &e.kind else { return None };
         if !args.is_empty() {
             return None;
         }
-        let ExprKind::Member { name, .. } = &func.kind else { return None };
+        let ExprKind::Member { obj, name } = &func.kind else { return None };
+        if !matches!(&obj.kind, ExprKind::Ident(_) | ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. }) {
+            return None;
+        }
         Some((name.as_str(), e.span))
     }
 
