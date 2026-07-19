@@ -576,6 +576,7 @@ dependencies = [
  "dashmap",
  "nova-codegen",
  "ropey",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
