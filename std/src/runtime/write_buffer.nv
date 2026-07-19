@@ -114,21 +114,9 @@ export fn WriteBuffer mut @write_zero(n int) -> @
 // UTF-8 encode codepoint (1-4 байта). Returns self.
 // Логика повторяет StringBuilder.@append(char) — Plan 109 / D179.
 export fn WriteBuffer mut @write_char(c char) -> @ {
-    ro cp = c as int
-    if cp < 0x80 {
-        @buf.push(cp as u8)
-    } else if cp < 0x800 {
-        @buf.push((0xC0 | (cp >> 6)) as u8)
-            .push((0x80 | (cp & 0x3F)) as u8)
-    } else if cp < 0x10000 {
-        @buf.push((0xE0 | (cp >> 12)) as u8)
-            .push((0x80 | ((cp >> 6) & 0x3F)) as u8)
-            .push((0x80 | (cp & 0x3F)) as u8)
-    } else {
-        @buf.push((0xF0 | (cp >> 18)) as u8)
-            .push((0x80 | ((cp >> 12) & 0x3F)) as u8)
-            .push((0x80 | ((cp >> 6) & 0x3F)) as u8)
-            .push((0x80 | (cp & 0x3F)) as u8)
+    ro (n, b) = c.encode_utf8()
+    for i in 0..n {
+        @buf.push(b[i])
     }
 }
 
