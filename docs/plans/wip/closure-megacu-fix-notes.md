@@ -132,9 +132,80 @@ tuple_fixarr_typedef.nv В ОДИНОЧКУ (без d22/d402) — если ICE �
 f/g/h тоже бы ICE'нул, просто МЫ не дошли до этой точки в тех прогонах,
 потому что раньше ошибка была РАНЬШЕ в пайплайне (callnorm ДО codegen)).
 
-## Хэши на момент чекпоинта
+## Второй баг (НАЙДЕН + ЗАФИКСИРОВАН) — [P67] nova_int collapse ICE
+
+Изоляция: `tuple_fixarr_typedef.nv` В ОДИНОЧКУ (без d22/d402) ТОЖЕ ICE'ил —
+не связан с closure-коллизией, чисто codegen-баг, ранее МАСКИРОВАННЫЙ тем, что
+callnorm-коллизия обрывала компиляцию РАНЬШЕ (до codegen). Дальнейшая изоляция
+по функциям (`tft_f`/`tft_g`/`tft_h` порознь) → виновник ТОЛЬКО `tft_h`:
+
+```
+fn tft_h() -> (int, [2](int, int)) {
+    (9, [(1, 2), (3, 4)])   // ← implicit trailing return
+}
+```
+
+`return (9, [...])` (ЯВНЫЙ `return`) — РАБОТАЕТ. Implicit trailing (без
+`return`) — ICE. Корень: `emit_c.rs` эмитит trailing/arrow-body return через
+УЗКИЙ whitelist-гейт (`ret.starts_with("NovaOpt_") || ret.starts_with(
+"_NovaFixArr_") || is_typed_integer(ret) || is_bytes_slice_c_ty(ret)`) —
+только ЭТИ случаи роутятся через `emit_expr_with_target_type` (type-directed
+coercion); всё остальное идёт через НЕТИПИЗИРОВАННЫЙ `emit_expr`. Тип `(int,
+[2](int,int))` мангленный как `_NovaTuple_...` НЕ входил ни в один из
+вариантов whitelist'а → нетипизированный `emit_expr` на литерал `[(1,2),
+(3,4)]` внутри tuple-литерала теряет element-type hint → падает в legacy
+array-literal path (`current_array_elem_hint` не установлен) → panic.
+`Stmt::Return` (явный `return`) использует ДРУГОЙ, ШИРОКИЙ гейт (`ret_ty !=
+"nova_int" && ret_ty != "nova_unit"` — emit_c.rs, `Stmt::Return` арм,
+~line 27967 до правки) → уже безусловно типизированный, багу не подвержен.
+
+Этот whitelist-гейт ДУБЛИРОВАН 4 РАЗА в файле (типичный паттерн этого
+кодогена — тот же класс правки уже задевал все 4 копии в недавнем D55-амендменте
+str-literal→[]u8, коммит 9dac463be, судя по идентичному комментарию "mirrors
+the sibling gate above"):
+- `compiler-codegen/src/codegen/emit_c.rs` (метод-body / generic-mono-body
+  trailing, 2 копии, были ~22705 и ~23677 до правки)
+- то же (top-level `FnBody::Expr` arrow-body `=> expr`, была ~24706/24732)
+- `emit_block_stmts` (top-level `FnBody::Block` implicit trailing —
+  ИМЕННО этот сайт стрельнул на `tft_h`, была ~26410/26442)
+
+**Фикс:** во ВСЕХ 4 местах добавлено `|| ret.starts_with("_NovaTuple_")` (имя
+переменной — `ret`/`ret_c`/`ret_ty` по месту) к тому же whitelist. Безопасность:
+`emit_expr_with_target_type`'s `TupleLit`-ветка (уже существующая, используется
+явным `return`/`?? (0,0)`-коалесингом) либо (а) `expr.kind == TupleLit` И
+`parse_mono_tuple_elements(target)` успешно декодирует arity-match → типизированная
+коэрсия по элементам (то, что нужно); либо (б) любое несовпадение → падает на
+`return self.emit_expr(expr)` — БАЙТ-В-БАЙТ то же самое, что вызывающий код делал
+бы и без этой ветки. Т.е. для любого return-выражения, которое НЕ является
+буквальным tuple-литералом (например tuple, возвращаемый ИЗ ВЫЗОВА функции),
+поведение НЕ меняется вообще.
+
+**Верификация:**
+- `solo_h` (только `tft_h`) — PASS (было ICE).
+- Полный изолированный репро (`d22` + `d402` + `tuple_fixarr_typedef` с
+  rename) — PASS (было CODEGEN-FAIL).
+- Расширенная (но НЕ мега-CU) sanity-партия — 45 файлов
+  `spec_tests/conformance/*.nv` с tuple-возвратами/consume/defer/protocol-
+  контентом, собранная как ОДИН CU через временный пакет ВНУТРИ воркти
+  (`nova-clfix/spec_tests_sanity_tmp/` — создан, прогнан, УДАЛЁН, не закоммичен;
+  нужен был внутри репо, а не в scratchpad, чтобы `std/` резолвился корректно
+  через `find_repo_root`) — PASS: 1 FAIL: 0 (весь merged CU зелёный).
+
+## Итог
+
+ОБА бага (callnorm name-collision + emit_c.rs `_NovaTuple_` gate) зафиксированы
+точечно, без отката. Полный мега-CU НЕ гонялся (дисциплина задания) — увеpенность
+из: (1) точной причинно-следственной трассировки по коду с чтением конкретных
+строк, НЕ гадания; (2) изолированного репро 1:1 воспроизводящего ОБЕ исходные
+CI-ошибки и подтверждающего их устранение; (3) 45-файлового sanity-прогона
+тематически близкого корпуса.
+
+## Хэши
 
 - main / worktree HEAD на старте волны: `134248143c023ad3464184a8b78bdb4e11ca93c`
-- bdae7f4e9238a495fbaacef6b8bf8635a4b30a91 (encode_utf8 refactor)
-- 2f51283675089257db39db839a0cb1f79c7af091 (tuple+fixarr topo-sort + фикстура)
+- bdae7f4e9238a495fbaacef6b8bf8635a4b30a91 (encode_utf8 refactor — НЕ виновник)
+- 2f51283675089257db39db839a0cb1f79c7af091 (tuple+fixarr topo-sort + фикстура —
+  фикстура была виновником коллизии; сам topo-sort фикс в emit_c.rs — НЕ трогали,
+  корректен; ОБНАРУЖЕН отдельный pre-existing gap в ДРУГОЙ части emit_c.rs,
+  экспонированный только после снятия коллизии)
 - Модель: sonnet.

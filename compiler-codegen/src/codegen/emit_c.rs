@@ -22702,7 +22702,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // target_type` rewrites a bare `StrLit` trailing return
                     // into `.bytes()`; the plain `emit_expr` fallback below
                     // does not know about this coercion at all).
+                    // [M-callnorm-free-fn-name-collision] followup (closure-megacu
+                    // regression, 2026-07-19): `_NovaTuple_` target added — a tuple
+                    // RETURN type whose trailing literal embeds a `_NovaFixArr_`
+                    // element (e.g. `(int, [N]T)`) needs the SAME target-typed
+                    // routing as a bare fixarr return, or the nested array-literal
+                    // inside the tuple literal gets emitted with NO element-type
+                    // hint and panics `[P67] nova_int collapse` in the legacy
+                    // array-literal path (`current_array_elem_hint` never set).
+                    // `emit_expr_with_target_type`'s `TupleLit` arm already handles
+                    // this correctly (decodes `_NovaTuple_` elem types, recurses
+                    // per element) — it just wasn't reached from here. See
+                    // docs/plans/wip/closure-megacu-fix-notes.md.
                     let val = if ret_c.starts_with("NovaOpt_") || ret_c.starts_with("_NovaFixArr_")
+                        || ret_c.starts_with("_NovaTuple_")
                         || Self::is_typed_integer(&ret_c) || Self::is_bytes_slice_c_ty(&ret_c) {
                         self.emit_expr_with_target_type(trailing, &ret_c)?
                     } else {
@@ -23674,7 +23687,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // target_type` rewrites a bare `StrLit` trailing return
                     // into `.bytes()`; the plain `emit_expr` fallback below
                     // does not know about this coercion at all).
+                    // [M-callnorm-free-fn-name-collision] followup (closure-megacu
+                    // regression, 2026-07-19): `_NovaTuple_` target added — a tuple
+                    // RETURN type whose trailing literal embeds a `_NovaFixArr_`
+                    // element (e.g. `(int, [N]T)`) needs the SAME target-typed
+                    // routing as a bare fixarr return, or the nested array-literal
+                    // inside the tuple literal gets emitted with NO element-type
+                    // hint and panics `[P67] nova_int collapse` in the legacy
+                    // array-literal path (`current_array_elem_hint` never set).
+                    // `emit_expr_with_target_type`'s `TupleLit` arm already handles
+                    // this correctly (decodes `_NovaTuple_` elem types, recurses
+                    // per element) — it just wasn't reached from here. See
+                    // docs/plans/wip/closure-megacu-fix-notes.md.
                     let val = if ret_c.starts_with("NovaOpt_") || ret_c.starts_with("_NovaFixArr_")
+                        || ret_c.starts_with("_NovaTuple_")
                         || Self::is_typed_integer(&ret_c) || Self::is_bytes_slice_c_ty(&ret_c) {
                         self.emit_expr_with_target_type(trailing, &ret_c)?
                     } else {
@@ -24703,7 +24729,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // CC-FAIL, surfaced by d86_coalesce_width). Common path keeps `emit_expr`.
                 // [M-d55-str-literal-coercion-name-gated] fix: `[]u8` return
                 // also routes through target-typed emission (D55 amend).
+                // [M-callnorm-free-fn-name-collision] followup (closure-megacu
+                // regression, 2026-07-19): `_NovaTuple_` target — see the sibling
+                // gate above (`emit_block_stmts` trailing) for the full rationale;
+                // same tuple-embeds-fixarr nested-literal `[P67] nova_int collapse`
+                // ICE, same fix (docs/plans/wip/closure-megacu-fix-notes.md).
                 let val = if ret.starts_with("NovaOpt_") || ret.starts_with("_NovaFixArr_")
+                    || ret.starts_with("_NovaTuple_")
                     || Self::is_typed_integer(&ret) || Self::is_bytes_slice_c_ty(&ret) {
                     self.emit_expr_with_target_type(e, &ret)?
                 } else {
@@ -26407,7 +26439,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // [M-d55-str-literal-coercion-name-gated] fix: a `[]u8` return
             // type also needs target-typed routing (D55 amend, mirrors the
             // sibling gate above in the non-contract `FnBody::Block` arm).
+            // [M-callnorm-free-fn-name-collision] followup (closure-megacu
+            // regression, 2026-07-19): `_NovaTuple_` target — a tuple RETURN
+            // type embedding a `_NovaFixArr_` element (`(int, [N]T)`) needs the
+            // same target-typed routing, or the nested array-literal inside the
+            // tuple literal loses its element-type hint and panics `[P67]
+            // nova_int collapse` (legacy array-literal path). This is THE site
+            // that fired for `tft_h() -> (int, [2](int,int)) { (9, [(1,2),(3,4)]) }`
+            // (implicit trailing return of a `{}`-block body) — an explicit
+            // `return (9, [...])` did NOT hit this bug: `Stmt::Return`'s own
+            // emission (~line 27960, `ret_ty != "nova_int" && ret_ty != "nova_unit"`)
+            // is unconditional for any non-erased return type, no narrow
+            // whitelist — only the trailing/arrow-body sites were under-gated.
+            // `emit_expr_with_target_type`'s `TupleLit` arm already decodes
+            // `_NovaTuple_` elem types and recurses correctly; it just wasn't
+            // reached from here. See docs/plans/wip/closure-megacu-fix-notes.md.
             let val = if ret_ty.starts_with("NovaOpt_") || ret_ty.starts_with("_NovaFixArr_")
+                || ret_ty.starts_with("_NovaTuple_")
                 || Self::is_typed_integer(ret_ty) || Self::is_bytes_slice_c_ty(ret_ty) {
                 self.emit_expr_with_target_type(trailing, ret_ty)?
             } else {
