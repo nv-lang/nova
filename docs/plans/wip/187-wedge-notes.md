@@ -371,3 +371,29 @@ teardown-free.
 cross-worker deadlock, доказан MAXPROCS-дискриминатором + анализом кода 4b),
 НЕ GC. Проверяю: воспроизводится ли wedge на main ПОСЛЕ GC-root фикса → если да,
 pump-фикс нужен поверх.
+
+## ФИНАЛ: merge main + верификация (2026-07-20)
+
+- Смёржил main (b77bdd957); **дропнул child-arrays+hoist** (f52c7b978) —
+  `git checkout main -- fibers.h` (GC-root фикс из main закрывает corruption
+  правильно). Оставил ТОЛЬКО pump-фикс (runtime.c).
+- Собрал merged nova (rustup **1.85.0** — системный 1.93.1 даёт rustc-ICE на
+  merged emit_c.rs; nova-бинарь dev, тесты clang --mode release).
+
+**Гейты на merged (main GC-root + мой pump, child-arrays дропнут):**
+| Гейт | Результат |
+|---|---|
+| Corruption pmf ×20 (2112/256K) | **20/20 PASS** (GC-root фикс один закрывает — child-arrays верно дропнут) |
+| scope_multierror_test | **PASS 1/0** (teardown-free убран → регресс ушёл) |
+| Wedge -P80×2 + -P200×2 @MAXPROCS=4, MAX_INFLIGHT=16 | **served=16, post-single=200, final=200, alive=200 — БЕЗ permanent-000** |
+| **Дискриминатор: wedge БЕЗ pump (main runtime.c)** | MAXPROCS=1 выживает; **MAXPROCS=2/4 permanent-000** → **pump НЕОБХОДИМ** |
+| TSan MAXPROCS=2 (merged) | pump добавил экспозицию pre-existing M:N-гонок (fail_pop/gopark/mco_status/_worker_main), **0 новых race-САЙТОВ в pump_scope**; baseline(no-pump)=21, pump=43 (те же сайты, больше фиберов бежит инлайн) |
+
+**Вывод:** маркер [M-187] закрыт ДВУМЯ независимыми фиксами разных слоёв:
+(1) spawnctx GC-root (main, чужой agent) — corruption; (2) мой pump_scope
+work-conserving — cross-worker scheduler deadlock (wedge). Дискриминатор
+доказал независимость: GC-root фикс ОДИН НЕ чинит wedge.
+
+MAX_INFLIGHT_CONNS в worktree = 2 (не трогал; defense-in-depth). Wedge теперь
+закрыт на scheduler-уровне → лимит можно поднять в followup после широкой
+валидации (док main.nv:112 обновить отдельно).
