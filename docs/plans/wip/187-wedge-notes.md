@@ -269,5 +269,43 @@ payload/SpawnCtx-указатели внутри остаются живы), н�
 
 pmf_fix ×30 = **30/30 PASS** (было 5/30). Хэш C-правки — в коммите волны.
 
-СЛЕДУЮЩИЙ ШАГ: гейты (pos_max_fibers/supervisor_stop реальные фикстуры ×10,
-TSan, wedge -P80/-P200, Boehm-aggregator, Windows).
+## ГЕЙТ-РЕЗУЛЬТАТЫ (фикс child-arrays uncollectable)
+
+- pos_max_fibers_concurrent (реальный, 20000/4MB) ×10: **10/10 PASS** (было ~2/10).
+- supervisor_stop_test (retention-путь) ×10: **10/10 PASS** — семантика Stop цела.
+- TSan (pmf, ×6): corruption-гонки (nova_scope_grow/child_error/park_mark_slot/
+  memset алиасинг) **УСТРАНЕНЫ**. Остались 4× `mco_status` (minicoro.h:1842) —
+  в `nova_goready`(nova_sched.h) ← driver close_cb, чтение plain-int co->state
+  vs mco_yield запись. Коммит 80c0476fe трогает ТОЛЬКО fibers.h → эти файлы
+  (nova_sched.h/minicoro.h) НЕ тронуты ⇒ pre-existing minicoro-артефакт, всплыл
+  лишь потому что процесс теперь ВЫЖИВАЕТ (раньше крашился до этого пути). 0 НОВЫХ.
+
+## РАССЛОЕНИЕ: ДВА НЕЗАВИСИМЫХ БАГА
+
+Фикс child-arrays закрывает **corruption** (SpawnCtx/GC-порча, pos_max_fibers,
+supervisor_stop, TSan). НО wedge аггрегатора (permanent-000) при MAX_INFLIGHT=16
+**ОСТАЛСЯ** — это ВТОРОЙ, независимый механизм: НЕ порча памяти, а
+**scheduler lost-wake под высокой connection-concurrency**.
+
+Доказательство (сервер НЕ крашится — ЗАВИСАЕТ; watchdog-дамп NOVA_WATCHDOG_DUMP_SECS):
+```
+[supervised] scope=0x7ffe... count=0 pending_remote=1 cancel_req=0 armed_sleeps_head=(nil)
+[supervised.summary] slots=0 alive=0 dead=0 null=0
+[w.3.fiber.s1] co=... mco_status=3(SUSPENDED) parked=0 pstate=0 hdl=0x... stop_cb=0x... ⚠ STUCK_ALIVE_NOT_PARKED
+[w.3.fiber.s2] ... ⚠ STUCK_ALIVE_NOT_PARKED
+[w.3] ⚠ 2 alive-but-not-parked fibers (potential lost-wake or stuck-completion)
+[w.3.deque] size=5 runnext=(nil)
+```
+`pending_remote=1` + `count=0` (supervised ждёт 1 remote-ребёнка, которого нет в
+слотах) + `STUCK_ALIVE_NOT_PARKED` (фибер SUSPENDED с зарегистрированным net-hdl+
+stop_cb, но parked=0/pstate=NIL — wake потерян, не резюмится, хотя в deque size=5)
+= сигнатура маркера [M-187-high-concurrency-connection-wedge] дословно. Родня
+83.x pending_remote/accept-park lost-wake, НЕ corruption. Фикс — ОТДЕЛЬНЫЙ, НЕ в
+fibers.h (park/wake/dispatch scheduler).
+
+Wedge задокументирован в main.nv:112 как pre-existing (16 «recreates the exact
+failure mode» — до моей волны), маскируется MAX_INFLIGHT_CONNS=2.
+
+СЛЕДУЮЩИЙ ШАГ: (1) подтвердить wedge pre-existing (baseline-16 тоже клинит →
+мой фикс не регресс); (2) точная диагностика lost-wake (какой wake потерян);
+(3) фикс или доклад. Boehm-серверный/Windows-гейты для corruption-фикса.
