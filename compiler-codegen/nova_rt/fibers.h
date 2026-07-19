@@ -1204,16 +1204,33 @@ static inline void nova_scope_grow_children(NovaFiberQueue* scope, int new_cap) 
            "see §EXEC risk R2 in docs/plans/173.0-concurrency-runtime-substrate.md");
     int cap = scope->child_capacity > 0 ? scope->child_capacity : NOVA_SCOPE_INITIAL_CAP;
     while (cap < new_cap) cap *= 2;
-    NovaChildError* new_err = (NovaChildError*)nova_alloc(sizeof(NovaChildError) * (size_t)cap);
-    void**          new_ctx = (void**)nova_alloc(sizeof(void*) * (size_t)cap);
+    /* [M-187-high-concurrency-connection-wedge] fix (2026-07-19): child_error[]
+     * and child_ctx[] are UNCOLLECTABLE (GC_malloc_uncollectable: scanned for
+     * pointers, but never reclaimed by sweep). Same established discipline as
+     * ctx_pins[] (§11.6 V2 [M-83.11-cancel-token-bound-race-2k]): these retention
+     * arrays are reached ONLY through the pointer-chain `stack-scope → array`.
+     * Under a spawn storm (2000+ concurrent spawns) that array-grow triggers many
+     * GC cycles, and Boehm's CONSERVATIVE mark could miss that stack-scope→array
+     * link during a worker-triggered STW while the scope struct is momentarily
+     * only reachable through a not-yet-scanned frame → the still-live array was
+     * reclaimed and its 0x7fff-region block handed to a concurrent nova_alloc
+     * (worker fiber_ctx grow / parked_co chunk), aliasing two live objects →
+     * pointer high-half truncation → SIGSEGV (TSan-confirmed aliasing;
+     * GC_DONT_GC / huge GC_INITIAL_HEAP_SIZE both suppress it 20/20). child_error
+     * was collectable since Plan 173.0 (latent, exposed by the ea85229e0 Boehm
+     * push_other_roots narrowing); child_ctx regressed to collectable in Plan 211
+     * (a8c0a2184). Both reverted to uncollectable here. Old arrays freed on grow;
+     * the final ones freed at scope teardown (nova_supervised_run_impl, next to
+     * the ctx_pins free) — no leak. */
+    NovaChildError* new_err = (NovaChildError*)nova_alloc_uncollectable(sizeof(NovaChildError) * (size_t)cap);
+    void**          new_ctx = (void**)nova_alloc_uncollectable(sizeof(void*) * (size_t)cap);
+    NovaChildError* old_err = scope->child_error;
+    void**          old_ctx = scope->child_ctx;
     if (scope->child_error) {
         for (int i = 0; i < scope->child_count; i++) {
             new_err[i] = scope->child_error[i];
             new_ctx[i] = scope->child_ctx[i];
         }
-        /* child_error's and child_ctx's old arrays are both regular
-         * GC-collectable now — no manual free (GC reclaims once
-         * unreachable, same as every other nova_scope_grow-style array). */
     }
     for (int i = scope->child_count; i < cap; i++) {
         new_err[i].msg = NULL;
@@ -1228,6 +1245,13 @@ static inline void nova_scope_grow_children(NovaFiberQueue* scope, int new_cap) 
     scope->child_error    = new_err;
     scope->child_ctx      = new_ctx;
     scope->child_capacity = cap;
+    /* [M-187] free the swapped-out old uncollectable arrays. Safe: grow is a
+     * spawn-time, single-mutator op on this scope (R2 drain-freeze tripwire
+     * asserts !_drain_started above), and every reader indexes the CURRENT
+     * scope->child_error/child_ctx (re-loaded per access), never a cached base
+     * across a grow. */
+    if (old_err) nova_free_uncollectable(old_err);
+    if (old_ctx) nova_free_uncollectable(old_ctx);
 }
 
 /* Plan 173.0 Ф.2/A2.2: allocate a fresh per-child retention slot for a
@@ -3124,6 +3148,19 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
         q->ctx_pins_count = 0;
         q->ctx_pins_cap   = 0;
     }
+    /* [M-187-high-concurrency-connection-wedge] fix (2026-07-19): free the
+     * UNCOLLECTABLE child_error[]/child_ctx[] retention arrays on scope exit —
+     * same lifetime/rationale as the ctx_pins free just above. Runs STRICTLY
+     * AFTER the Ф.3 decision loop (above, ~3074-3097) has read every child_error
+     * entry and released every retained child_ctx SpawnCtx back to its pool, so
+     * nothing dereferences these arrays past this point. Old (grown-out) arrays
+     * were already freed in nova_scope_grow_children; this frees the final live
+     * ones — no per-scope leak (matters for long-lived servers spinning many
+     * supervised scopes, e.g. the aggregator connection wedge). */
+    if (q->child_error) { nova_free_uncollectable(q->child_error); q->child_error = NULL; }
+    if (q->child_ctx)   { nova_free_uncollectable(q->child_ctx);   q->child_ctx   = NULL; }
+    q->child_capacity = 0;
+    q->child_count    = 0;
     /* Plan 174 (D349): restore the enclosing active scope on EVERY exit path
      * (normal + interrupt + CANCEL-return + re-throw + TimeoutError longjmp).
      * Codegen's post-run `_nova_active_scope = prev` covers only the normal

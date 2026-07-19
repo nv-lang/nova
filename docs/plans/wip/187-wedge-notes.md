@@ -227,6 +227,47 @@ supervised scope — stack-local в nova_fn_main_impl (main stack сканиру
 Коллизия ctx_pins/child-128 = ПОДТВЕРЖДЁННЫЙ red herring (порча в
 collectable 0x7fff-mmap, не в 128-uncollectable free-list как таковом).
 
-СЛЕДУЮЩИЙ ШАГ: дискриминатор — большой GC_INITIAL_HEAP_SIZE (без сборок за
-тест) → если 0 крахов, подтверждён GC-collect-класс; затем пиннинг
-теряющего корень массива (grow-order fix ИЛИ явный корень).
+## ДИСКРИМИНАТОР (решающий) + ФИКС
+
+pmf ~256KB стек / 2112 слотов, ×20-30:
+| Вариант | PASS/FAIL |
+|---|---|
+| baseline (clean nova_rt) | 2/20, 5/30 (~85% крах) |
+| GC_INITIAL_HEAP_SIZE=2G (нет сборок) | **20/20** |
+| GC_DONT_GC=1 | **20/20** |
+| child_error+child_ctx UNCOLLECTABLE | **30/30** |
+
+⇒ КОРЕНЬ ОКОНЧАТЕЛЬНО: **преждевременная GC-сборка живых collectable
+retention-массивов supervised-scope (`child_error[]`/`child_ctx[]`).**
+
+**Механизм** (совпадает дословно с санкционированным паттерном кодбейза —
+комментарий ctx_pins fibers.h:1123 §11.6 V2 [M-83.11-cancel-token-bound-race-2k]):
+эти массивы достижимы ТОЛЬКО по цепочке `stack-scope → array`. При spawn-шторме
+(2000+ спавнов) рост массива триггерит много GC-циклов; Boehm-консервативный mark
+под worker-triggered STW может ПРОПУСТИТЬ связь stack-scope→array (кадр момент не
+просканирован) → ещё-живой массив reclaim'ится → его 0x7fff-блок отдаётся
+concurrent `nova_alloc` (worker fiber_ctx grow / parked_co chunk) → алиас двух
+живых объектов → усечение high-half указателя → SIGSEGV. TSan подтвердил алиасинг
+(child_error ↔ fiber_ctx ↔ parked_co, один адрес).
+
+**История латентности:** `child_error` был collectable с Plan 173.0 (латентный
+баг); `child_ctx` регрессировал в collectable в Plan 211 (a8c0a2184). Оба
+вскрыты boehm-регрессией ea85229e0 (push_other_roots сузил root-охват → GC стал
+реально запускаться в spawn-тяжёлых тестах, где родитель с плоским гигант-root
+не собирал НИ РАЗУ). Коллизия ctx_pins/child-128 = ПОДТВЕРЖДЁННЫЙ red herring.
+
+**ФИКС** (fibers.h, 3 точки, зеркалит ctx_pins-дисциплину):
+1. `nova_scope_grow_children`: `child_error`/`child_ctx` → `nova_alloc_uncollectable`;
+   старые массивы `nova_free_uncollectable` на каждом grow.
+2. `nova_supervised_run_impl` teardown (рядом с free ctx_pins, СТРОГО ПОСЛЕ
+   Ф.3 decision-loop 3074-3097): free финальных `child_error`/`child_ctx` →
+   ноль лика (важно для долгоживущего сервера — wedge).
+
+Уровень корректности: uncollectable-память Boehm'ом СКАНИРУЕТСЯ (msg/reason/
+payload/SpawnCtx-указатели внутри остаются живы), но никогда не reclaim'ится →
+цепочка stack-scope→array больше не нужна для выживания массива.
+
+pmf_fix ×30 = **30/30 PASS** (было 5/30). Хэш C-правки — в коммите волны.
+
+СЛЕДУЮЩИЙ ШАГ: гейты (pos_max_fibers/supervisor_stop реальные фикстуры ×10,
+TSan, wedge -P80/-P200, Boehm-aggregator, Windows).
