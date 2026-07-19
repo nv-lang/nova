@@ -293,3 +293,121 @@ AST-переписывающий пасс `normalize_module(module, resolved_cal
 4. **byte-parity:** снос эвристик (Ф.C-2) обязан быть byte-identical (те же decl-picks, что эвристики давали для
    покрытых кейсов) — канал СТРОГИЙ супер-сет для покрытого + фикс для пропущенного. Расхождение = чинить продюсер
    `resolved_callees` (чекер), не эвристику.
+
+---
+
+## 4. Очередь per-D волн + готовые брифы (зона · файлы · фикстуры · приёмка)
+
+### 4.1 Карта коллизий с идущими ветками (для выбора порядка)
+
+| Идущая ветка | Зона кода | Что избегать |
+|---|---|---|
+| consume-А | `types/mod.rs` consume-flow | продюсер-правки в types/mod.rs рядом с consume |
+| 214 / D429 #coerce | `types/mod.rs` `assignable` (13906/13964) + `emit_c` `try_wrap_leaf` (33249) | не трогать accept-path 13906-14000 + emit 31966-33249 |
+| p196-facetC | `callnorm.rs`/`argbind.rs` | Ф.C зону не раздавать, пока агент активен (свериться) |
+| slice-ext-2 | `emit_c` for-in (~30575) | **ВЛИТ** — коллизии нет |
+
+**Непересекающиеся зоны для ПЕРВЫХ волн** (ниже) выбраны так, чтобы НЕ трогать types/mod.rs (consume-А/214) и НЕ
+трогать emit_c 30575/31966-33249 (for-in/try_wrap_leaf) и НЕ трогать callnorm (facetC).
+
+### 4.2 ПЕРВЫЕ 3 ВОЛНЫ (готовы к раздаче СЕЙЧАС, дешёвые модели, непересекающиеся)
+
+---
+
+**ВОЛНА-A (haiku) — TEST: per-D пиннинг + верификация трекера.** Зона: `spec_tests/conformance/**`, `std/**/*_test.nv`
+(ТОЛЬКО тест-файлы, НОЛЬ кода компилятора → параллельно-безопасна всем).
+- **Файлы/задача:** (1) прогнать 🔍-строки трекера 196.3 (~287) грепом по коду — верифицировать «coverage-ok» (не
+  по отчёту), пометить дрейф. (2) Пиннинг-скелеты для миграционных D перед их волной: D30/D85/D52/D182/D16/D53/D239
+  — assert ИМЕННО тип/значение, что резолвит ветка (ловит регресс миграции). Механическая near-copy проверенного
+  синтаксиса (`Vec[T].of(...)`, ctor=`Type.new`, поля=методы-свойства).
+- **Приёмка:** файлы компилятся изолированно (standalone-CU); НЕ ослаблять существующие; НЕ чинить компилятор.
+- **Оценка:** непрерывно, опережая миграцию. **Коллизий нет.**
+
+---
+
+**ВОЛНА-B (sonnet) — Q10-GEN: дожать `resolve_mono_type_args`→`_ch`, снести legacy-движки.** Зона: `emit_c.rs`
+19803-21096 (+ консумер `_ch` 20232). D119/D122/D123/D277/D354.
+- **Файлы:** ТОЛЬКО `emit_c.rs`. **НЕ трогать** types/mod.rs (канал node_substs УЖЕ построен, читать).
+- **Задача:** (1) убедиться `resolve_mono_type_args_ch` (20232) читает node_substs на всех mono-сайтах; (2) снести
+  legacy-движок `resolve_mono_type_args` (19803) + `resolve_method_level_subst` (21096) ПО МЕРЕ 0-hit fallback;
+  (3) census-ловушка: «три hand-duplicated inference engines» (Source 4 doc) — свести ВСЕ три, грепом убедиться,
+  что параллельного legacy той же фичи нет.
+- **Фикстуры:** d119_method_level_type_params, d122_bound_method_mono_dispatch/_generic_bound_forwarding,
+  d123_tuple_mono, d277_generic_value_record_mono, d354_generic_anon_tuple_mono (все существуют).
+- **Приёмка (0)-(5) ПО КОДУ:** legacy `resolve_mono_type_args`/`resolve_method_level_subst` физически мёртв ИЛИ
+  fallback 0-hit по мега-CU; SHADOW node_substs 0-mismatch; byte-parity; мега-CU зелёный + флагман `--strict-effects`.
+- **Риск:** остаточные ~49 fallback-хита (`resolve_method_level_subst` после Producer B-fluent-generic) — если не
+  0, снос требует доп. продюсера (Zone CH) → снять сперва покрытое (byte-parity), fallback-снос после расширения.
+  **Коллизий нет** (emit_c 19803-21096 вне 214/for-in).
+
+---
+
+**ВОЛНА-C (haiku) — хардкод-зеркала §3: dead-dup аудит `f64_method_to_c`/`int_method_to_c`.** Зона: `emit_c.rs`
+46832-46957. D74/D109 методы примитивов.
+- **Задача:** грепнуть `f64_method_to_c` (46832) + `int_method_to_c` (46913) — являются ли мёртвым дублем
+  `.nv`-деклараций (как str-методы до D109-пруна `0830664d6`) ИЛИ обоснованным bootstrap/extern-интринсиком
+  (как f64.sqrt через ExternalRegistry). Механический греп + чтение, БЕЗ правок в этой волне (только вердикт+notes).
+- **Приёмка:** wip-заметка с классификацией каждого метода (dead-dup → в очередь пруна; обоснован → doc-коммент).
+  Прецедент: удаление f64-ветки давало `[E_UNKNOWN_METHOD]` на `(9.0).sqrt()` — значит НЕ дубль.
+- **Оценка:** 1 haiku-сессия. **Коллизий нет.**
+
+### 4.3 ПОСЛЕДУЮЩИЕ ВОЛНЫ (зависят от Zone CH — types/mod.rs продюсеры, СЕРИАЛИЗОВАТЬ с consume-А/214)
+
+**ВОЛНА-CH (sonnet, types/mod.rs, ФУНДАМЕНТ) — продюсеры Call-return для Q2/Q5/Q+ctor.** Дописать покрытие
+Call-`ExprId` для форм, что чекер пропускает (`typeref_mentions_any`-guard ~10478 «skip generic-возврат»):
+generic-ctor (кормит Q+ctor/B10h/B10l), sum-return (Q2), Result/Option-return (Q5). **propose-then-verify**
+(материализация только при согласии solver-канала — прецедент 196.4). Порядок: sum/Result-return → generic-ctor →
+static-return. **Риск:** правка рядом с `assignable` (13906, зона 214) + consume-flow (consume-А) → ADDITIVE,
+SHADOW-assert 0-mismatch, НЕ флипать authoritative без cross-check. **Координировать с consume-А/214** (общий файл).
+
+**ВОЛНА-RET (sonnet, emit_c 17838-19000 + 46381-48281 + 49951) — Q5+Q2+Q+lambda.** Зависит от ВОЛНА-CH.
+- `resolve_result_te_strict` (48190, обе outside) + `infer_result_type_params_legacy` (18005) — можно РАНЬШЕ (не frozen).
+- `resolve_result_te` (48177, 1 frozen) + `infer_method_level_return_for_sum` (47531, 2 frozen) → detach+panic.
+- `infer_lambda_return_type_with_params` (49951) → верифицировать residual, снести если 0-hit.
+- **Приёмка:** SHARED → detach+panic, НЕ delete (физ. снос = капстоун); byte-parity ПОКА legacy жив.
+
+**ВОЛНА-GEN2 (sonnet, emit_c 2855+17838-20707) — Q9 generics/протоколы.** `infer_result_type_params` добить
+`_channel` → снести `_legacy`; `infer_protocol_structural_binding` (5) + `infer_type_param_binding`×3 (47+) → чекер.
+Крупная, дробить. Зависит частично от Zone CH.
+
+**ВОЛНА-Q6 (sonnet, emit_c 21576) — D239 elem дожать.** Снять Channel-6k fallback ТОЛЬКО после расширения канала
+на контейнер-cap/deep-field-chain (Zone CH) И проверки на ПОЛНОМ мега-CU (не 4-site — история отката 93/2).
+
+**ВОЛНА-Q+ctor (sonnet, Zone CH + emit_c 19623) — generic-ctor продюсер + снос B10h/B10l.** Расширить rtbuf-продюсер
+Q1 static-ctor на generic-формы (сейчас generics-гейт роняет) → `infer_generic_static_ctor_ret` через канал → снос
+frozen B10h/B10l (урок capstone-2: ТОЛЬКО на зелёном мега-CU).
+
+**ВОЛНА-ФC (sonnet, main.rs + callnorm.rs) — Ф.C доводка.** Ф.C-1 (подключить `resolved_callees` в main.rs:340) →
+Ф.C-2 (снять грубые эвристики). Свериться, свободна ли зона (p196-facetC).
+
+**ВОЛНА-КАПСТОУН B6 (sonnet, СЕРИЙНО, монопольно, emit_c frozen 50542-52681) — критический путь.** Слить 48 живых
+веток по мере насыщения канала → удалить `infer_call_ret_c` + оба call-сайта → `infer_expr_c_type` схлоп в Кан.1-2.
++ 2 pre-P67-паники (deserialize Path-return / str.until) чинить в ЧЕКЕРЕ. **Финал-гейт §1д кампании.** ~6-10 сессий.
+
+### 4.4 Порядок по зависимостям
+
+```
+[СЕЙЧАС, параллельно, непересекающиеся]
+  ВОЛНА-A (TEST, haiku)  ─┐
+  ВОЛНА-B (Q10-GEN, sonnet) ─┼─ независимы
+  ВОЛНА-C (хардкод-аудит, haiku) ─┘
+        │
+        ▼
+[ФУНДАМЕНТ — types/mod.rs, координировать с consume-А/214]
+  ВОЛНА-CH (продюсеры Call-return)
+        │
+        ├──► ВОЛНА-RET (Q5/Q2/lambda)     ┐
+        ├──► ВОЛНА-Q6 (D239 дожать)        ├─ параллельно после CH
+        ├──► ВОЛНА-Q+ctor (B10h/B10l)      ┘
+  ВОЛНА-GEN2 (Q9) ── SEP, частично после CH
+  ВОЛНА-ФC (main.rs+callnorm) ── SEP, свериться с facetC
+        │
+        ▼
+[КРИТИЧЕСКИЙ ПУТЬ, серийно, монопольно]
+  ВОЛНА-КАПСТОУН B6 (48 веток → снос infer_call_ret_c → финал-гейт)
+```
+
+**Приёмка КАЖДОЙ волны (из 196.3 §ПРИЁМКА + кампания §4, ПО КОДУ не по отчёту):** (0) одно окно в ПРАВИЛЬНОМ месте
+(чекер/канал, НЕ новый codegen-сайт); (1) legacy для D физически мёртв (грепом); (2) разбросанное сведено в одно;
+(3) полное покрытие ВСЕХ ситуаций матрицы; (4) гейты зелёные (мега-CU + byte-parity + флагман `--strict-effects`);
+(5) node_substs cross-check без mismatch. Синк per-D/батч: fetch main → merge → merge закрытия → push.
