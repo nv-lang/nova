@@ -33479,14 +33479,34 @@ fn simple_expr_type(e: &Expr) -> Option<TypeRef> {
             // `sb` → CC-FAIL, `Nova_StringBuilder*` assigned to `nova_str`):
             // a fluent method-call CHAIN (`X.new(...).method1(...)
             // .method2(...)`) — assume it preserves its ROOT's type. Sound
-            // enough here: nearly every builder method in this codebase is
-            // `-> @` fluent (D117/D409 convention — `mut @x(v) -> @`,
-            // `with_*`, StringBuilder/WriteBuffer's OWN `@append`/`@write_*`
-            // family), and a WRONG guess is harmless — the ONLY consumer is
-            // `try_coerce_leaf`'s pair lookup, which still requires an EXACT
-            // registered (I,O) match; a mistaken type here just yields a
-            // missed rewrite opportunity (silent no-op), never a wrong one.
-            ExprKind::Member { obj, .. } => simple_expr_type(obj),
+            // for MOST builder methods (D117/D409 fluent convention —
+            // `mut @x(v) -> @`, `with_*`, StringBuilder/WriteBuffer's OWN
+            // `@append`/`@write_*` family).
+            //
+            // EXCEPT the `#coerce`-registered methods THEMSELVES — a second
+            // empirical find (`std/src/checksums/*_test.nv` CODEGEN-FAIL,
+            // `E_RECV_METHOD_MISMATCH … Vec has no method bytes`, one
+            // rebuild after the fix above): `"lit".bytes()` recursed into
+            // `simple_expr_type(StrLit)` = `str` — WRONG, `.bytes()` returns
+            // `[]u8`, not `str` — so an unannotated `ro full = "…".bytes()`
+            // got `var_types["full"] = str` (should be `[]u8`); `full` used
+            // LATER at a `[]u8`-typed position then looked "already str" to
+            // `try_coerce_leaf`, which happily inserted a SECOND `.bytes()`
+            // — `full.bytes()` on an ALREADY-`[]u8` (`Vec`) value → no such
+            // method. This is the ONE class of `simple_expr_type` mis-guess
+            // that is NOT harmless: `str`/`StringBuilder`/`WriteBuffer` are
+            // exactly the registered `#coerce` I's, so a wrong guess landing
+            // on one of them can trigger a REAL (wrong) insertion, not just a
+            // missed one. `bytes`/`into_str`/`into_bytes` are non-fluent by
+            // construction (D429 R2 view/finalize — they never return `@`),
+            // so excluding them by name is exact, not a heuristic gap.
+            ExprKind::Member { obj, name } => {
+                if matches!(name.as_str(), "bytes" | "into_str" | "into_bytes") {
+                    None
+                } else {
+                    simple_expr_type(obj)
+                }
+            }
             _ => None,
         },
         _ => None,
