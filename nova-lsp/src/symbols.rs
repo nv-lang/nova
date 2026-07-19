@@ -193,7 +193,21 @@ pub struct RefOccurrence {
 #[derive(Debug, Default)]
 pub struct ReferencesIndex {
     by_name: DashMap<String, Vec<RefOccurrence>>,
-    by_file: DashMap<Url, Vec<String>>,
+    /// `uri` → this file's exact `(name, occurrence ranges)` contribution.
+    ///
+    /// Plan 215: this is *also* the source `export_file` reads from to
+    /// persist a file's contribution to the on-disk index cache. It
+    /// deliberately stores the ranges, not just the distinct names — an
+    /// earlier version of `export_file` re-derived a file's ranges by
+    /// filtering `by_name`'s (cross-file, potentially huge) bucket for a
+    /// widely-shared identifier — every `.nv` file contains `fn`/`module`/etc.
+    /// tokens, so that bucket can hold tens of thousands of entries across a
+    /// 3000+-file workspace — making `export_file` (called once per file
+    /// during the initial scan) effectively `O(workspace²)`. Storing the
+    /// per-file detail directly makes both `export_file` and `remove_file`'s
+    /// bucket lookups `O(names in this file)`, independent of how many other
+    /// files share those names.
+    by_file: DashMap<Url, Vec<(String, Vec<Range>)>>,
     /// Whether the one-shot cold workspace scan has populated the index. Set by
     /// the background `initialized` scan (or the lazy prime in the references
     /// handler) so the full-FS scan happens at most once, not per request.
@@ -203,22 +217,13 @@ pub struct ReferencesIndex {
 impl ReferencesIndex {
     /// (Re)index all identifier occurrences in `src` for `uri`.
     ///
-    /// Removes any prior contribution from `uri` first, so calling this on every
-    /// `didChange` keeps the index exact with no duplicate or stale entries.
+    /// Tokenizes, then delegates to [`install_file`](Self::install_file) for
+    /// the bookkeeping (which itself drops any prior contribution from `uri`
+    /// first), so calling this on every `didChange` keeps the index exact
+    /// with no duplicate or stale entries.
     pub fn index_file(&self, uri: Url, src: &str) {
-        // Drop this file's previous contribution before re-adding.
-        self.remove_file(&uri);
-
-        let occ = tokenize_ref_occurrences(src);
-        let mut names: Vec<String> = Vec::with_capacity(occ.len());
-        for (name, ranges) in occ {
-            let mut entry = self.by_name.entry(name.clone()).or_default();
-            for range in ranges {
-                entry.value_mut().push(RefOccurrence { uri: uri.clone(), range });
-            }
-            names.push(name);
-        }
-        self.by_file.insert(uri, names);
+        let occ: Vec<(String, Vec<Range>)> = tokenize_ref_occurrences(src).into_iter().collect();
+        self.install_file(uri, occ);
     }
 
     /// Remove every occurrence contributed by `uri` (on delete/rename/close).
@@ -226,10 +231,10 @@ impl ReferencesIndex {
     /// EDGE (deleted file → entries gone): after this call no `find` can return a
     /// location in `uri`, and empty name buckets are pruned to bound memory.
     pub fn remove_file(&self, uri: &Url) {
-        let Some((_, names)) = self.by_file.remove(uri) else {
+        let Some((_, detail)) = self.by_file.remove(uri) else {
             return;
         };
-        for name in names {
+        for (name, _ranges) in detail {
             // Filter out this uri's occurrences under the entry lock, then release
             // it *before* touching the map again (remove_if re-locks the shard —
             // holding the guard across it could deadlock on a shared shard).
@@ -307,42 +312,28 @@ impl ReferencesIndex {
 
     /// Plan 215: install pre-computed `(name, occurrence ranges)` pairs for
     /// `uri` without re-parsing — the persistent index cache's warm-start
-    /// path when the file's on-disk fingerprint is unchanged. Mirrors
-    /// [`index_file`](Self::index_file)'s bookkeeping (clears any prior
-    /// contribution first, so a repeated install is idempotent) but skips the
-    /// tokenizer entirely.
+    /// path when the file's on-disk fingerprint is unchanged, and the shared
+    /// implementation [`index_file`](Self::index_file) delegates to after
+    /// tokenizing. Clears any prior contribution first (via `remove_file`),
+    /// so a repeated install is idempotent.
     pub fn install_file(&self, uri: Url, refs: Vec<(String, Vec<Range>)>) {
         self.remove_file(&uri);
-        let mut names: Vec<String> = Vec::with_capacity(refs.len());
-        for (name, ranges) in refs {
+        for (name, ranges) in &refs {
             let mut entry = self.by_name.entry(name.clone()).or_default();
             for range in ranges {
-                entry.value_mut().push(RefOccurrence { uri: uri.clone(), range });
+                entry.value_mut().push(RefOccurrence { uri: uri.clone(), range: *range });
             }
-            names.push(name);
         }
-        self.by_file.insert(uri, names);
+        self.by_file.insert(uri, refs);
     }
 
     /// Plan 215: read back this file's current `(name, occurrence ranges)`
     /// contribution (for persisting to the on-disk cache after a (re)index).
-    /// Empty `Vec` if the file isn't indexed.
+    /// Empty `Vec` if the file isn't indexed. `O(names in this file)` — reads
+    /// straight from `by_file`'s own per-file detail, never rescans a shared
+    /// `by_name` bucket (see the perf note on the `by_file` field above).
     pub fn export_file(&self, uri: &Url) -> Vec<(String, Vec<Range>)> {
-        let Some(names) = self.by_file.get(uri) else { return Vec::new() };
-        names
-            .value()
-            .iter()
-            .filter_map(|name| {
-                let entry = self.by_name.get(name)?;
-                let ranges: Vec<Range> = entry
-                    .value()
-                    .iter()
-                    .filter(|o| &o.uri == uri)
-                    .map(|o| o.range)
-                    .collect();
-                Some((name.clone(), ranges))
-            })
-            .collect()
+        self.by_file.get(uri).map(|e| e.value().clone()).unwrap_or_default()
     }
 }
 
@@ -1479,6 +1470,80 @@ mod tests {
         assert!(
             idx_dur < scan_dur,
             "index lookup ({idx_dur:?}) should beat the full scan ({scan_dur:?})"
+        );
+    }
+
+    // ── Plan 215: install_file/export_file (persistent index cache support) ──
+
+    // pos: export_file round-trips exactly what index_file computed — the
+    // property the on-disk cache's save path depends on.
+    #[test]
+    fn p215_pos_export_file_roundtrips_index_file() {
+        let index = ReferencesIndex::default();
+        let uri = make_uri("a.nv");
+        index.index_file(uri.clone(), "fn foo() => foo()\n");
+        let exported = index.export_file(&uri);
+        let names: Vec<&str> = exported.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"foo"), "exported detail must include `foo`: {names:?}");
+        let (_, ranges) = exported.iter().find(|(n, _)| n == "foo").unwrap();
+        assert_eq!(ranges.len(), 2, "two occurrences of `foo` (decl + call)");
+    }
+
+    // pos: install_file (the cache warm-start path) reproduces the exact same
+    // `find` answers as a real `index_file` parse of the same source — the
+    // property that makes a warm cache hit indistinguishable from a reparse.
+    #[test]
+    fn p215_pos_install_file_matches_index_file() {
+        let src = "fn shared() => ()\nfn use_it() => shared()\n";
+        let parsed = ReferencesIndex::default();
+        let a = make_uri("a.nv");
+        parsed.index_file(a.clone(), src);
+        let exported = parsed.export_file(&a);
+
+        let installed = ReferencesIndex::default();
+        installed.install_file(a.clone(), exported);
+
+        assert_eq!(
+            parsed.find("shared", None, true).len(),
+            installed.find("shared", None, true).len(),
+            "install_file must answer `find` identically to index_file"
+        );
+    }
+
+    // edge/perf: export_file's cost does not grow with how many OTHER files
+    // share a common identifier (`fn`, `module`, …). This is a regression
+    // guard for a real bug caught during Plan 215 development: an earlier
+    // `export_file` re-derived a file's ranges by filtering the shared
+    // `by_name` bucket, which made exporting every file during a cold scan
+    // effectively O(workspace²) for any identifier common to most files —
+    // exactly the kind of background CPU cost Plan 213 already had to fix
+    // once. `by_file` must store each file's own detail directly so
+    // `export_file` is O(names in this one file), independent of `n`.
+    #[test]
+    fn p215_edge_export_file_cost_independent_of_shared_bucket_size() {
+        let index = ReferencesIndex::default();
+        // Many files all sharing the identifier `fn_marker` (simulates a
+        // token, like a Nova keyword-as-identifier, common to nearly every
+        // file in a large workspace).
+        let n = 4000;
+        for i in 0..n {
+            let uri = make_uri(&format!("shared{i}.nv"));
+            index.index_file(uri, "fn_marker fn_marker fn_marker\n");
+        }
+        // One more file — export_file on it must be cheap regardless of `n`.
+        let target = make_uri("target.nv");
+        index.index_file(target.clone(), "fn_marker only_here\n");
+
+        let t0 = std::time::Instant::now();
+        let exported = index.export_file(&target);
+        let elapsed = t0.elapsed();
+
+        let names: Vec<&str> = exported.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"fn_marker"));
+        assert!(names.contains(&"only_here"));
+        assert!(
+            elapsed.as_millis() < 50,
+            "export_file for one file must not scale with the {n}-file shared bucket, took {elapsed:?}"
         );
     }
 
