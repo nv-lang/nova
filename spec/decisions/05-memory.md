@@ -632,6 +632,41 @@ zero lifetime annotations, dangling-view-impossible by construction
   возврат-types помечены явно (D163 FFI consume); если нет — assumes
   non-consume. → followup `[M-73.1-cross-module-flow]`.
 
+### Амендмент (consume-волна А, 2026-07-19) — Rule 2 подтверждена для pattern-bound значений; D156-пропагация enforced
+
+> **Решение владельца 2026-07-18** (маркер
+> `[M-d180-consume-propagation-match-payload-mut-rebind]`,
+> `docs/plans/backlog-followups.md` §P1) — **вариант А: enforce по букве**.
+> Кросс-ref: [D131](#d131-consume--квалификатор-логической-линейности),
+> [D133](02-types.md#d133), [D156](02-types.md#d156),
+> [D157-амендмент](#d157-implicit-view-default--closure-capture-analysis--match-consume),
+> [D184](03-syntax.md#d184).
+
+Найдена (и закрыта тем же слиянием) дыра: `mut stream = tcp` /
+`ro stream = tcp`, где `tcp` — pattern-bound payload из
+`match TcpStream.connect(...) { Ok(tcp) => … }`, компилировалось
+вопреки Rule 2 (`E_VIEW_BINDING_FORBIDDEN`), потому что `tcp` никогда не
+входил в `consume_obligations`/`var_types` с корректным типом — match/if-let
+arm-биндинги регистрировались голым `ctx.declare(n, None)`.
+
+**Уточнение — НЕ new rule.** Rule 2 её текст и код не менялись: как
+только payload корректно входит в `consume_obligations` с известным
+типом (см. [D157-амендмент](#d157-implicit-view-default--closure-capture-analysis--match-consume)
+— `Ok(consume tcp)` / D156-пропагация через Option/Result), `mut stream
+= tcp` детектируется СУЩЕСТВУЮЩИМ Rule 2 кодом БЕЗ единой строки
+изменений в нём самом (`compiler-codegen/src/types/mod.rs`,
+`consume_walk_stmt`/`Stmt::Let`, alias_obligated-проверка). Баг был
+исключительно в upstream-пропагации (D157-амендмент), не в самом Rule 2
+— зафиксировано здесь как явное историческое подтверждение (маркер
+изначально держал это как отдельный, третий пункт разбора).
+
+**Практический эффект:** `Ok(consume tcp)` payload-биндинг теперь имеет
+идентичную дисциплину с `consume X = expr`: mut-capable без доп.
+keyword'а (D180 Rule 4: `consume mut` избыточен — consume уже несёт
+права мутации), must-consume-до-scope-exit (D133), alias запрещён без
+явного `consume` (Rule 2, теперь фактически enforced и на этом пути),
+double-consume → use-after (D131).
+
 ---
 
 ## D157. Implicit view default + closure capture analysis + `match consume`
@@ -827,6 +862,109 @@ borrow-checker exclusive-mut rules.
   keyword нет смысла. Alias через `let alias = tx` (default view-alias
   Plan 73).
 
+### Амендмент (consume-волна А, 2026-07-19) — rvalue-скрутини pattern payload, `E_CONSUME_PATTERN_REQUIRED`
+
+> **Решение владельца 2026-07-18** (маркер
+> `[M-d180-consume-propagation-match-payload-mut-rebind]`,
+> `docs/plans/backlog-followups.md` §P1) — **вариант А: enforce по букве**
+> (философия D180 «visible ownership transfer на каждом binding-site»).
+> Кросс-ref: [D131](#d131-consume--квалификатор-логической-линейности),
+> [D133](02-types.md#d133), [D156](02-types.md#d156),
+> [D180](#d180-consume-binding-syntax-plan-731), [D184](03-syntax.md#d184).
+
+**Дырка (пред-амендмент).** D157 (выше) специфицировал только
+**place-match** ownership — `match consume @expr` / `Some(consume f)` над
+receiver-полем (`@file`). Владение pattern-биндингом payload при
+**rvalue-скрутини** (`match TcpStream.connect(addr) { Ok(tcp) => … }`,
+`if Some(x) = maybe_call() { … }`) нигде не было специфицировано, и
+чекер (`ConsumeCtx`) не пропагировал consume-обязательство через
+`Result[T,E]`/`Option[T]`-пейлоад ни для rvalue, ни фактически для
+place — pattern-биндинги регистрировались без типа. Итог: `Ok(tcp)`
+получал `tcp` живым, но НЕ consume-obligated → нижестоящий
+`mut stream = tcp` тихо проходил мимо [D180](#d180-consume-binding-syntax-plan-731)
+Rule 2, и double-close/use-after-close на этом пути не ловились
+статически (исполнение оставалось корректным — реальный move, память
+под GC — линейность лишь молчала).
+
+**Правило (нормативное).** Payload-биндинг pattern'а `Ok(x)` / `Some(x)`
+(single-arg tuple-variant над `Result[T,E]`/`Option[T]`, D156
+generic-заразность) **обязан** нести явный `consume`-sub-pattern
+(`Ok(consume x)` / `Some(consume x)`), когда `T` (Ok/Some-инвариант) —
+must-consume тип (D133), **независимо** от того, rvalue скрутини
+(`match f() { … }`) или place (именованная переменная типа
+`Result[T,E]`/`Option[T]`, `match sess { … }`). Симметрично для
+`if let`. Plain `Ok(x)` в этом случае — **ошибка**:
+
+```nova
+type TcpStream consume { fd i32 }
+fn TcpStream consume @close() -> () { … }
+
+fn TcpStream.connect(addr str) -> Result[TcpStream, IoErr]
+
+// ❌ E_CONSUME_PATTERN_REQUIRED
+match TcpStream.connect(addr) {
+    Ok(tcp) => { tcp.close() },
+    Err(e) => {},
+}
+
+// ✅ явный ownership transfer на pattern-site
+match TcpStream.connect(addr) {
+    Ok(consume tcp) => {
+        tcp.close()                 // tcp — mut-capable (D180), must-consume (D133)
+    },
+    Err(e) => {},
+}
+```
+
+`Ok(consume tcp)` / `Some(consume f)` вводят `tcp`/`f` в те же
+`consume_obligations`, что и `consume X = expr` (D180): mut-capable
+без доп. keyword'а (consume уже несёт права мутации — D180 Rule 4:
+`consume mut` избыточен), must-be-consumed-до-scope-exit (D133),
+alias без `consume` — [D180](#d180-consume-binding-syntax-plan-731)
+Rule 2 `E_VIEW_BINDING_FORBIDDEN` (см. её амендмент ниже), double-consume
+— use-after (D131).
+
+**Для НЕ-must-consume пейлоада поведение НЕ меняется** — `Ok(x)`/`Some(x)`
+остаётся legal view-default биндингом (пример: `Option[int]`), без
+`consume`-keyword'а и без предупреждения.
+
+**Синтаксис.** `consume` — новый sub-pattern qualifier на `Pattern::Ident`,
+симметричный существующему `mut` (D36/Plan 108.3): взаимоисключающи на
+одном биндинге (`consume mut x` / `mut consume x` — parse error
+`E_PATTERN_CONSUME_MUT_CONFLICT`, зеркало D131 «consume и mut на одном
+receiver'е»). Допустим ТОЛЬКО как элемент внутри single-arg
+tuple-variant (`Ok(consume x)`); это ОРТОГОНАЛЬНО top-level `consume`
+перед scrutinee (`match consume @expr`, разрешён; `if consume Pat = e`
+— уже отдельно retracted, [D184](03-syntax.md#d184)
+`E_CONSUME_IN_CONDITION`) — разные позиции грамматики, не конфликтуют.
+
+**Error code.**
+
+| Код | Когда | Suggestion (machine-applicable) |
+|---|---|---|
+| `E_CONSUME_PATTERN_REQUIRED` | `Ok(x)`/`Some(x)` payload — must-consume тип, sub-pattern без `consume` | Insert `consume ` перед именем биндинга |
+
+Format Plan 50 D102 (header + code + span + note + suggestion), см.
+[D102](03-syntax.md#d102-именованные-аргументы-и-значения-параметров-по-умолчанию).
+
+**Область (bootstrap, honest defer).**
+- Только `Ok(..)`/`Some(..)` (успех-ветка) — Err-пейлоад (`Result[T,E]`,
+  `E` тоже must-consume) НЕ покрыт: сегодня нет unwrapped-E-type карты
+  (компаньон `unwrapped_method_return_types` хранит только Ok/Some-inner,
+  D86-followup). → followup `[M-73.2-err-payload-consume]`.
+- Place-скрутини резолвится ТОЛЬКО для голого `Ident` (переменная с
+  known `Result[T,E]`/`Option[T]`-аннотацией ИЛИ RHS с известным
+  unwrapped-return-type). `@field`/`recv.field`-скрутини (Member) — не
+  резолвится (нет field-type registry в `ConsumeCtx` для generic-типов
+  сегодня) — sound false-negative. → followup `[M-73.2-field-scrutinee-unwrap]`.
+- Nested/record/tuple payload внутри `Ok(..)` (`Ok({ a, b })`,
+  `Ok((a, b))`) — не покрыт, unchanged fallback.
+
+Реализация: `Pattern::Ident.is_consume` (`compiler-codegen/src/ast/mod.rs`),
+`parse_pattern()` (`compiler-codegen/src/parser/mod.rs`),
+`ConsumeCtx::var_unwrapped_types` / `scrutinee_unwrapped_type` /
+`consume_declare_arm_pattern` (`compiler-codegen/src/types/mod.rs`).
+
 ### Связь
 
 - [D131](#d131) — affine consume foundation.
@@ -838,5 +976,8 @@ borrow-checker exclusive-mut rules.
   family для cleanup-on-failure (Plan 100.4 family).
 - [D75](06-concurrency.md#d75) — почему borrow-checker отвергнут.
 - [D122](02-types.md#d122) — hybrid dispatch / NovaClosBase foundation.
+- [D180 амендмент](#d180-consume-binding-syntax-plan-731) (consume-волна А) —
+  Rule 2 подтверждена для pattern-bound consume-значений, введённых этим
+  амендментом.
 
 ---
