@@ -637,6 +637,7 @@ fn build_chain_block(chain: FluentChain, counter: &mut ChainCounter) -> Expr {
             name: local_name.clone(),
             span,
             is_mut: false,
+            is_consume: false,
         },
         ty: None,
         value: chain.root,
