@@ -238,3 +238,58 @@ Q+ctor/Q+lambda + хвосты). **Было в плане M≈30 «строк и
 callers передают `type_name`-строку. Generic-subst внутри УЖЕ через `resolved_type_to_c`. Retire запланирован в
 «receiver-aware `resolved_type_to_c`» (U.4.5/FIN). «No new window §3» запрещает синтетический канал. **НЕ трогать
 в волне-2** (36/36 юнит-тестов + doc уже на месте).
+
+---
+
+## 3. callnorm.rs / argbind.rs — переезд в чекер-фазу (Ф.C): состояние, вехи, риски
+
+**СОСТОЯНИЕ (сверка по коду 78503bf5d):** переезд **ЧАСТИЧНО СОСТОЯЛСЯ**. `callnorm.rs` (819 стр) —
+AST-переписывающий пасс `normalize_module(module, resolved_callees)`, работает ПОСЛЕ type-check, ПЕРЕД codegen.
+Уже **читает канал `resolved_callees`** через fast-path `by_span` (строки 566-598): если чекер резолвил call-site
+(`resolved_callees[e.id] → decl.span → by_span[span]`), params берутся из ТОЧНОЙ decl, что выбрал чекер — НЕ
+ре-резолв. `argbind.rs` (279 стр, `bind_call_args`) — механический биндер arg↔param, вызывается из callnorm и
+`pick_static_params`.
+
+### ★ КРИТИЧЕСКИЙ ПРОБЕЛ — канал НЕ подключён в build-пути
+
+`normalize_module` зовётся из **ТРЁХ** мест (греп):
+1. `test_runner.rs:3800` — `normalize_module(&mut module, &module_env.resolved_callees)` — **канал ЖИВОЙ** (nova test).
+2. `main.rs:340` — `normalize_module(&mut module, &HashMap::new())` — **ПУСТОЙ канал** (`nova build`!).
+3. `doc/test_runner.rs:192` — `normalize_module(&mut module, &HashMap::new())` — пустой (doc-тесты).
+
+**Следствие:** в реальном `nova build` канал-fast-path МЁРТВ → callnorm падает на грубые эвристики
+(`free`/`static_methods`/`instance_by_name`), которые ре-резолвят identity вслепую (арность/bind-success, БЕЗ типов;
+`instance_by_name` роняет ЛЮБОЕ имя метода, разделяемое ≥2 типами). Это **противоречит целевой архитектуре Ф.C**
+(«callnorm ЧИТАЕТ resolved_callees, не ре-резолвит») ровно в самом важном пути. Пробел не пойман, потому что
+авторитетный гейт = `nova test` (канал там жив); `nova build`-смоук грубых эвристик не стрессует.
+
+### Вехи (Ф.C доводка)
+
+- **Ф.C-1 (подключить канал в build):** `main.rs:340` должен передать `module_env.resolved_callees` (как
+  `test_runner.rs:3800`). Требует, чтобы build-путь удержал `ModuleEnv` после `check_module` до `normalize_module`.
+  Класс **B/C** (проверить порядок фаз в main.rs; ModuleEnv-lifetime). **Первый и самый дешёвый шаг Ф.C.**
+- **Ф.C-2 (снять грубые эвристики):** когда канал в ОБОИХ путях (test+build), эвристики `free`/`static_methods`/
+  `instance_by_name` + `pick_static_params` становятся fallback-only. Замерить residual (0-hit по мега-CU?) →
+  снести эвристики, оставив ТОЛЬКО `by_span`-путь. Класс **C**. Приёмка: грепом убедиться, что ре-резолва identity
+  в callnorm не осталось (одно окно = чекер).
+- **Ф.C-3 (перенос в чекер-фазу physically):** целевая арх — нормализация внутри чекер-фазы (AST-инвариант ПОСЛЕ
+  чекера). Сейчас это отдельный пасс между check и codegen — АРХИТЕКТУРНО близко (читает канал), но формально не
+  «в чекере». Требует решения владельца: оставить пассом (прагматично, читает канал) ИЛИ вкатить в чекер-обход.
+  Класс **арх (opus-флаг)** — не блокирует финал 196 (одно окно достигается на Ф.C-2).
+
+### Риски
+
+1. **ModuleEnv-lifetime в build (Ф.C-1):** если main.rs роняет ModuleEnv до callnorm — нужен рефактор порядка;
+   не «просто передать». Проверить, что `resolved_callees` не пуст на момент вызова.
+2. **`self_type` RefCell + `ExprId::UNSET` синтез:** callnorm синтезирует `let`-локали с `ExprId::UNSET` (строки
+   713/780/818). method-turbofish-форма (`obj.method[U](...)`) при этом крашила ICE (`[M-196-method-turbofish-block-
+   rewrite-ice]`) — guard `return None` на строке 544 её ОБХОДИТ (оставляет raw). Снос эвристик НЕ должен снять
+   этот guard, пока frozen-зона (`resolve_instance_call_subst`) не протянет канал под синтез-локали.
+2а. **Named-args через generic type-param** (`T.deserialize(named: v)`) — ТИХИЙ мисдиспатч закрыт guard'ом
+   `E_GENERIC_STATIC_NAMED_ARG_UNSUPPORTED` в `f1_check_call` (`0deef6247`); плейн-позиционная форма работает.
+3. **Зона коллизии:** `callnorm.rs`/`argbind.rs` — ОТДЕЛЬНЫЕ файлы (не emit_c, не types/mod.rs) → **НЕ пересекаются**
+   с consume-А/214/GEN/RET/frozen. Ф.C-1/Ф.C-2 можно вести ПАРАЛЛЕЛЬНО любой другой волне. **NB: кампания-карта
+   держала p196-facetC активным агентом — свериться, не занята ли зона, перед раздачей.**
+4. **byte-parity:** снос эвристик (Ф.C-2) обязан быть byte-identical (те же decl-picks, что эвристики давали для
+   покрытых кейсов) — канал СТРОГИЙ супер-сет для покрытого + фикс для пропущенного. Расхождение = чинить продюсер
+   `resolved_callees` (чекер), не эвристику.
