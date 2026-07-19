@@ -33472,6 +33472,21 @@ fn simple_expr_type(e: &Expr) -> Option<TypeRef> {
                     span: e.span,
                 })
             }
+            // Plan 214 follow-up (found empirically — `std/text.nv`'s `[]str
+            // @join`: `consume sb = StringBuilder.new(cap: n).append(x)` left
+            // `sb` untyped in `var_types`, so `try_coerce_leaf` silently
+            // skipped the finalize rewrite on the function's bare trailing
+            // `sb` → CC-FAIL, `Nova_StringBuilder*` assigned to `nova_str`):
+            // a fluent method-call CHAIN (`X.new(...).method1(...)
+            // .method2(...)`) — assume it preserves its ROOT's type. Sound
+            // enough here: nearly every builder method in this codebase is
+            // `-> @` fluent (D117/D409 convention — `mut @x(v) -> @`,
+            // `with_*`, StringBuilder/WriteBuffer's OWN `@append`/`@write_*`
+            // family), and a WRONG guess is harmless — the ONLY consumer is
+            // `try_coerce_leaf`'s pair lookup, which still requires an EXACT
+            // registered (I,O) match; a mistaken type here just yields a
+            // missed rewrite opportunity (silent no-op), never a wrong one.
+            ExprKind::Member { obj, .. } => simple_expr_type(obj),
             _ => None,
         },
         _ => None,
