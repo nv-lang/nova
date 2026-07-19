@@ -142,12 +142,43 @@ E_SELF_DOT_INVALID, `spec_tests/conformance/neg/neg_self_dot_invalid.nv`; зад
 
 ## Файлы
 
-- Фикс: `compiler-codegen/src/types/mod.rs` (`f1_check_fn`, инъекция scope["@"]).
-- Фикстура (red→green): `spec_tests/conformance/slice_ext_receiver_for_in_elem_ok.nv`.
+- Фикс P1 (чекер): `compiler-codegen/src/types/mod.rs` (`f1_check_fn`, инъекция
+  scope["@"]) — коммит `71938307a` (влит в main мержем `e0d03c6f9`).
+- Фикс P2 (codegen): `compiler-codegen/src/codegen/emit_c.rs` (`receiver_c_type`,
+  ветка `[]<elem>`, Plan 101.1 arm) — коммит `cd114d0d5` (ветка
+  `p-fix-slice-ext-forin2`).
+- Фикстура (red→green): `spec_tests/conformance/slice_ext_receiver_for_in_elem_ok.nv`
+  (влита в main вместе с P1; изолированная копия-прогон подтвердила P1-only —
+  всё ещё CC-FAIL, P1+P2 — PASS).
 - Гейт-носитель: `examples/flagship/aggregator/src/domain/domain.nv` +
   call sites (`aggregate.nv`, `live.nv`, `report_json_test.nv`) — миграция
-  `Report.from` → `[]TaskResult @to_report`, ПРЯМОЙ `for r in @` (без обхода).
+  `Report.from` → `[]TaskResult @to_report`, ПРЯМОЙ `for r in @` (без обхода) —
+  уже в main (влито вместе с P1).
+
+## Приёмка (P2, бинарь `p-fix-slice-ext-forin2`@cd114d0d5, оба фикса)
+
+- Изолированная копия фикстуры (`spec_tests/_iso_slice_ext_forin/`, отдельный
+  module, не коммичена): `PASS: 1 FAIL: 0` (было `CC-FAIL` на P1-only).
+- `nova build examples/flagship/aggregator/src/main.nv --strict-effects`:
+  `built: main.exe` (только pre-existing warnings — unused imports, W_PARAM_TYPE_POS_MUT).
+- `nova test examples/flagship/aggregator`: `PASS: 7 FAIL: 1 SKIP: 1`. Единственный
+  FAIL — `src/app/aggregate` (`report.done == 2`, `wall_ms < sequential_ms`) —
+  ИЗВЕСТНЫЙ таймингово-чувствительный concurrency-тест (реальный `supervised(deadline:)`
+  fan-out), предупреждён заданием как "не твой", не относится к slice-ext.
+- `nova test spec_tests/conformance/standalone --jobs 4`: `PASS: 68 FAIL: 0`
+  (эквивалент "standalone-CU 69/0" из задания — счёт по документированному
+  прецеденту плавает 68↔69 в зависимости от состава ветки, 0 failures — критерий
+  выполнен).
+- `nova test std/src/collections` (vec_seq `@map`/`@filter` slice-расширения):
+  `PASS: 13 FAIL: 0 SKIP: 6` — без регрессии.
+- Полный мега-CU (`spec_tests/conformance`, 988 файлов) НЕ гонялся повторно на
+  P2-бинаре по указанию координатора (авторитет — CI); один прогон на P1-only
+  бинаре (до кодогена-фикса) дал `PASS: 123 FAIL: 1` — единственный FAIL
+  (`app_effect_basic_t8_1`, файл БЕЗ единого `@`-ресивера/slice-extension) —
+  похоже на pre-existing/несвязанный шум, НЕ доисследован дальше (не гонять
+  мега-CU повторно — прямое указание координатора); флаг для CI.
 
 ## Статус
 
-В процессе — см. TodoWrite сессии.
+P1+P2 закрыты (коммиты влиты в ветку `p-fix-slice-ext-forin2`, main НЕ
+затронут — по дисциплине задания). Не язык-меняющее — D-амендмент не требуется.
