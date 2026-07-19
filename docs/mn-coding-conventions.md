@@ -478,6 +478,46 @@ void deliver_cancel(mco_coro* co) {
 за N ARMED-прогонов cancel-шторма = инвариант держится. НЕ конвертируй abort в
 тихий return (это скрыло бы гонку).
 
+### §12. Pump work-conserving — не отталкивай готовый файбер по принадлежности scope
+
+**НОРМА.** Когда воркер извлёк ГОТОВЫЙ файбер из своей deque, он ОБЯЗАН выполнить
+его inline (восстановив outer active-scope/slot TLS для чужого), а НЕ «этот
+файбер не моего scope — толкну обратно и подожду своего». Планировщик
+work-conserving: пока в системе есть готовая работа, ни один воркер не
+простаивает из-за принадлежности задачи. Global progress > local ownership.
+
+**ПОЧЕМУ.** [M-187-high-concurrency-connection-wedge] (runtime.c pump-фикс,
+2026-07-20). Под connection-storm (MAXPROCS≥2, MAX_INFLIGHT>2) каждый воркер
+блокировался в nested `supervised_run_impl` pump, гоняя ТОЛЬКО файберы своего
+scope, а ready-child СОСЕДНЕГО scope лежал в его deque нетронутым → взаимный
+strand всех воркеров (`count=0 pending_remote=1` + `STUCK_ALIVE_NOT_PARKED`) →
+`permanent-000`. Симптом-обманка: выглядит как lost-wake/park-deadlock, а корень —
+non-work-conserving жадность к своему scope. Дискриминатор: без фикса MAXPROCS 2/4
+клинят, 1 воркер выживает (нет соседа-жертвы); с фиксом — все живут.
+
+**ПЛОХО**
+```c
+mco_coro* co = deque_pop(self->run_q);
+if (co->scope != self->active_scope) {
+    deque_push(self->run_q, co);   /* «не мой scope» — жду своего → взаимный strand */
+    continue;
+}
+run_inline(co);
+```
+
+**ХОРОШО**
+```c
+mco_coro* co = deque_pop(self->run_q);
+Scope* prev = self->active_scope; Slot* prev_slot = self->active_slot;
+self->active_scope = co->scope; self->active_slot = co->slot;  /* foreign TLS restore */
+run_inline(co);                    /* work-conserving: гоним ЛЮБОЙ готовый */
+self->active_scope = prev; self->active_slot = prev_slot;
+```
+
+**ПРОВЕРКА.** `xargs -P80`/`-P200` connection-storm против сервера (MAXPROCS≥2,
+MAX_INFLIGHT>2): сервер жив, БЕЗ permanent-000, single-req после = 200.
+Дискриминатор «без pump клинит / с pump живёт» на MAXPROCS 2 и 4.
+
 ---
 
 ## §12. Обязательные трипваеры для нового nova_rt-кода
