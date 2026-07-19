@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use dashmap::DashMap;
@@ -165,6 +165,34 @@ pub struct WorkspaceState {
     /// both default **on**. Set from the client's `initializationOptions` at
     /// `initialize` and updated on `workspace/didChangeConfiguration`.
     pub inlay_config: Mutex<crate::inlay_hints::InlayHintConfig>,
+
+    /// LSP write-after-destroyed fix (2026-07-20): set once when `shutdown`
+    /// is received. Every background task — the cold initial workspace scan
+    /// (`Backend::run_initial_scan_with_progress`), the debounced recheck
+    /// worker (`schedule_recheck_for`), the watched-files batch handler, and
+    /// the push-based hint refresher — must check `is_shutting_down()`
+    /// before every `client.*` notification/request call and return early
+    /// once set.
+    ///
+    /// Why this is needed: tower-lsp's `Server::serve()` (`transport.rs`)
+    /// `join!`s on a `buffer_unordered` pool draining every dispatched
+    /// request/notification future to completion — `shutdown`/`exit` are
+    /// answered promptly by tower-lsp's own state machine, but that does
+    /// **not** cancel an already-dispatched handler future such as
+    /// `initialized()` (which awaits the cold scan directly). So the whole
+    /// process cannot actually exit until the scan finishes on its own —
+    /// possibly minutes on a large workspace, since it deliberately throttles
+    /// itself (`REINDEX_SLEEP_EVERY`) to stay CPU-friendly. If the client
+    /// (vscode-languageclient's `LanguageClient.stop()`) force-kills the
+    /// process after its own grace period while the scan is still running,
+    /// the client's own stdin writer to that now-dead process is destroyed;
+    /// any notification the client still tries to *send* afterward (e.g.
+    /// `textDocument/didClose` for each remaining open document as the
+    /// editor window tears down) then fails with "Cannot call write after a
+    /// stream was destroyed" — repeated once per document. Checking this
+    /// flag lets background tasks notice `shutdown` and return promptly, so
+    /// the process exits before the client's grace period expires.
+    pub shutting_down: AtomicBool,
 }
 
 impl Default for WorkspaceState {
@@ -184,6 +212,7 @@ impl Default for WorkspaceState {
             resolved_build_count: AtomicU64::new(0),
             stdlib_index_cache: DashMap::new(),
             inlay_config: Mutex::new(crate::inlay_hints::InlayHintConfig::default()),
+            shutting_down: AtomicBool::new(false),
         }
     }
 }
@@ -193,6 +222,20 @@ impl WorkspaceState {
     pub fn cancel_all(&self) {
         self.debouncer.cancel_all();
         self.watch_debouncer.cancel_all();
+    }
+
+    /// Mark the server as shutting down (called once, from the `shutdown`
+    /// LSP lifecycle handler). See the `shutting_down` field doc for why
+    /// this exists — every background task must check `is_shutting_down()`
+    /// before sending further client notifications.
+    pub fn mark_shutting_down(&self) {
+        self.shutting_down.store(true, Ordering::Relaxed);
+    }
+
+    /// True once `shutdown` has been received. Background tasks must check
+    /// this before every notification/progress send and return early.
+    pub fn is_shutting_down(&self) -> bool {
+        self.shutting_down.load(Ordering::Relaxed)
     }
 
     /// Get workspace root, if set.

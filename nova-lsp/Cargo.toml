@@ -63,6 +63,14 @@ tokio = { version = "1", features = ["full"] }
 serde_json = "1"
 # Temporary directories for workspace tests (Plan 104.1)
 tempfile = "3"
+# `Stream::next()` on tower-lsp's `ClientSocket` loopback — write-after-
+# destroyed shutdown-gate test drains the real server→client channel to
+# prove background tasks stop sending once `shutting_down` is set.
+futures = "0.3"
+# `ServiceExt::ready()` to drive the real `LspService` through `initialize`
+# in the same test (tower-lsp's `Client` no-ops every send until the server
+# state machine reaches `Initialized`).
+tower = { version = "0.4", features = ["util"] }
 
 [profile.release]
 opt-level = 2
