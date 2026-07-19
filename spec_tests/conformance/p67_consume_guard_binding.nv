@@ -1,0 +1,44 @@
+// [M-runtime-sync-guard-consume-p67] regression: `nova test std/src/runtime/
+// sync_test.nv` (standalone) crashed the compiler PROCESS with `internal
+// error … [P67-LEGACY] Ident 'guard' not in var_types / not a sum-variant —
+// unknown type`. Root cause was NOT the test's own explicit `consume guard =
+// mu.lock(); …; guard.unlock()` (that path is fine — ordinary sequential
+// `Stmt::Let` registers `guard` in `var_types` before it is read back) — it
+// was `Mutex.with_lock[R]`'s OWN body (std/src/runtime/sync.nv):
+//   consume guard = self.lock()
+//   defer guard.unlock()
+//   body()
+// `enter_defer_scope` (emit_c.rs) hoists a raw C forward-declaration for any
+// `consume`-bound local referenced by a `defer` body in the SAME block (so
+// the fail-path defer replay, emitted a few lines later — still inside
+// `enter_defer_scope`, i.e. BEFORE the block's own `Stmt::Let` loop reaches
+// the real `consume guard = …` — has a C symbol to reference) but forgot to
+// also register that name in the Rust-side `var_types` map. The very same
+// fail-path pre-emission immediately calls `emit_expr` on `guard.unlock()`,
+// which needs `infer_expr_c_type(Ident("guard"))` to dispatch the method —
+// var_types comes up empty → ICE. Fixed by seeding `var_types` alongside the
+// C hoist declaration (the real `Stmt::Let`, later, still overwrites it with
+// the precise inferred type — byte-identical for every already-working
+// case). Standalone-фикстура минимального репро (образец —
+// std/src/runtime/sync_test.nv:108-113, `test "Mutex: lock/unlock guard +
+// with_lock"` — same shape, joins the shared `spec_tests.conformance`
+// folder-module CU per the existing `d174_sync_consume_guards.nv` peer).
+module spec_tests.conformance
+
+import std.runtime.sync
+
+test "P67: Mutex consume-guard lock/unlock + with_lock (regression [M-runtime-sync-guard-consume-p67])" {
+    mut p67_mu = Mutex.new()
+    assert(!p67_mu.is_locked())
+    consume p67_guard = p67_mu.lock()
+    assert(p67_mu.is_locked())
+    p67_guard.unlock()
+    assert(!p67_mu.is_locked())
+
+    assert(p67_mu.try_lock())
+    assert(p67_mu.is_locked())
+    p67_mu.unlock()
+
+    ro p67_doubled = p67_mu.with_lock(|| 21 * 2)
+    assert(p67_doubled == 42)
+}

@@ -30789,3 +30789,78 @@ current, byte-behaviour). Спека: 02-types §D358 Ф.2-амендмент (`
   гонять» в тексте задачи) — авторитетная проверка за оркестратором на
   слиянии.
 
+## [M-runtime-sync-guard-consume-p67] ЗАКРЫТ (2026-07-20, ветка p-fix-sync-guard-p67, sonnet по карте)
+
+- ICE компилятора (`internal error … [P67-LEGACY] Ident 'guard' not in
+  var_types / not a sum-variant — unknown type`, emit_c.rs) на
+  `nova test std/src/runtime/sync_test.nv` — репро подтверждён на двух
+  независимых бинарях (main `d9af43662`, П18-мёрж `703b525b7`), последний
+  хвост задачи П18/200.
+- **Root-cause**: НЕ в тестовом `consume guard = mu.lock(); …; guard.unlock()`
+  (обычный `Stmt::Let` — `guard` регистрируется в `var_types` унифицированной
+  веткой `emit_c.rs::emit_stmt` ~27136, тем же путём что `ro`/`mut`, до любого
+  чтения) — а в `Mutex.with_lock[R]` СОБСТВЕННОМ теле (std/src/runtime/
+  sync.nv:1659-1663): `consume guard = self.lock(); defer guard.unlock();
+  body()`. Отладочный eprintln перед паникой (временный, снят перед коммитом)
+  показал `current_fn_name=Some("with_lock")` — падение не в тесте, а в
+  generic-mono-эмиссии `with_lock`. `enter_defer_scope` (emit_c.rs ~25359)
+  делает pre-pass по блоку: для `consume`-локали, на которую ссылается тело
+  `defer` В ТОМ ЖЕ блоке, hoist'ит raw C forward-декларацию (`Nova_MutexGuard*
+  guard = NULL; /* hoisted for errdefer */`) — чтобы C-символ существовал ДО
+  setjmp-обвязки — и СРАЗУ ЖЕ (всё ещё внутри `enter_defer_scope`, строки
+  ~25459-25486, ДО того как блочный statement-loop дойдёт до РЕАЛЬНОГО
+  `Stmt::Let` для `guard`) эмитит fail-path replay тела дефера
+  (`emit_defer_body_with_outcome` → `emit_defer_body_void` →
+  `self.emit_expr(body)` на `guard.unlock()`), которому для method-dispatch
+  нужен `infer_expr_c_type(Ident("guard"))` — а `self.var_types` для "guard"
+  ещё пуст: hoist регистрировал C-декларацию, но НЕ Rust-side `var_types`
+  entry. Провал сквозь все фоллбеки (closure-override / pattern-override /
+  var_types / sum-variant / self / user_fn_sigs / resolved_types /
+  imported_modules) → паника. Явный «уже почти починенный» комментарий на
+  месте hoist'а (`[M-172.1-d174-sync-consume-registry] phase-safety (§0c)`)
+  подтверждает, что канал `resolved_types` уже был продуман как безопасный
+  источник C-типа для forward-decl — не хватало только прокинуть тот же
+  результат в `var_types`.
+- **Почему конкретно `with_lock`, а не явный `consume guard = mu.lock();
+  guard.unlock()` теста** — отличие ИМЕННО в `defer`: явный вызов
+  `guard.unlock()` — обычный `Stmt::Expr`, идёт строго ПОСЛЕ реального
+  `Stmt::Let`, `var_types` уже populated. `defer guard.unlock()` уникально
+  триггерит fail-path pre-emission pre-pass, который бежит РАНЬШЕ.
+- **Регрессия НЕ подтверждена / не искалась глубже** — root-cause найден
+  прямой статической разведкой (без бисекта): hoist-код с комментарием про
+  ТОЧНО этот сценарий уже существовал (значит окно старое, не свежерегрессия
+  окна 2026-07-17..19 из чернового пункта записи backlog); реальный дефект —
+  недостающая строка `var_types.insert`, а не порча существующего пути.
+- **Фикс** (`compiler-codegen/src/codegen/emit_c.rs`, `enter_defer_scope`
+  hoist-блок, ~25429-25454): сразу после hoist'а C forward-decl добавлена
+  `self.var_types.insert(name.clone(), c_ty.clone())` — тот же `c_ty`, что уже
+  шёл в C-декларацию (аннотация ИЛИ `resolved_types`-канал ИЛИ safe `void*`
+  fallback). Реальный `Stmt::Let`, когда до него доходит блочный loop,
+  безусловно перезаписывает эту запись точным inferred-типом (существующая
+  строка `var_types.insert(binding.clone(), ty_c.clone())`, emit_c.rs ~27136)
+  — фикс безопасен byte-identical для всех УЖЕ рабочих путей (просто закрывает
+  узкое окно между hoist и реальным Let). Frozen-зона `infer_call_ret_c`
+  (46293-48883) не тронута — фикс целиком в `enter_defer_scope`.
+- **Тесты**: standalone-фикстура `spec_tests/conformance/
+  p67_consume_guard_binding.nv` (стандалон-прогон, §116-конвенция; в мега-CU
+  `spec_tests.conformance` — та же test-shape что уже была видна в
+  `d174_sync_consume_guards.nv:83-90`, теперь ловится изолированным
+  standalone-прогоном тоже) — PASS до/после фикса: ICE ДО, PASS ПОСЛЕ.
+  `nova test`-эквивалент (`nova-codegen test-build`) `std/src/runtime/
+  sync_test.nv` — PASS (был ICE). `string_builder_test.nv` — PASS.
+  `std/src/checksums/{adler32,crc32,fnv}_test.nv` — PASS (δ0, консume-
+  independent соседи не задеты). Consume-соседи: мега-CU `spec_tests.
+  conformance` прогнан ЦЕЛИКОМ (через standalone-прогон p67-фикстуры,
+  folder-module тянет весь каталог) — без ICE, `d188_multivar_reconsume.nv` и
+  прочие consume-фикстуры в том же прогоне не показали новых провалов.
+- **Побочная находка (НЕ моя, вне scope маркера)**: тот же мега-CU прогон
+  (и ДО, и ПОСЛЕ фикса — идентичный текст, не регрессия от этой волны)
+  показывает `RUN-FAIL` с 4 unrelated assertion-провалами
+  (`Vec[f32].from([...]).into_str()`/`Vec[int]…` chained `.debug`/`.display`
+  формат мисматч) — pre-existing дефект где-то в `spec_tests/conformance`
+  float/int Vec-debug-форматировании, НЕ связан с consume/guard/P67. Не
+  тронут (вне scope этой волны); оркестратору на заметку для авторитетного
+  гейта.
+- **Маркер**: строка `[M-runtime-sync-guard-consume-p67]` убрана из
+  `docs/plans/backlog-followups.md` (P1 закрыт).
+

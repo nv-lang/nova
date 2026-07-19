@@ -25433,6 +25433,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.line(&format!("{} {} = {};  /* hoisted for errdefer */",
                                     c_ty, Self::mangle_field_name(name), init));
                                 self.hoisted_let_vars.insert(name.clone());
+                                // [M-runtime-sync-guard-consume-p67] fix: the C-level
+                                // forward-decl above is not enough — the FAIL-path
+                                // defer body for THIS SAME entry is emitted a few
+                                // lines below (`emit_defer_body_with_outcome`, still
+                                // inside `enter_defer_scope`, i.e. BEFORE the block's
+                                // sequential `Stmt::Let` loop ever reaches the real
+                                // `consume <name> = …` and registers it). Without a
+                                // matching `var_types` entry, any expr in the defer
+                                // body that references `<name>` as a bare Ident
+                                // (receiver of a method call, e.g. `guard.unlock()`)
+                                // falls through `infer_expr_c_type`'s Ident arm all
+                                // the way to the `[P67-LEGACY]` ICE — witnessed via
+                                // `Mutex.with_lock[R]`'s own body (`consume guard =
+                                // self.lock(); defer guard.unlock(); body()`) during
+                                // its generic mono-instantiation. The real `Stmt::Let`
+                                // unconditionally overwrites this entry with the
+                                // precise inferred type once it actually runs (see
+                                // the plain `self.var_types.insert(binding.clone(),
+                                // ty_c.clone())` in the `Stmt::Let` arm below) — this
+                                // is only a placeholder for the narrow FAIL-path
+                                // pre-emission window.
+                                self.var_types.insert(name.clone(), c_ty.clone());
                             }
                         }
                     }
