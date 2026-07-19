@@ -306,6 +306,45 @@ fibers.h (park/wake/dispatch scheduler).
 Wedge задокументирован в main.nv:112 как pre-existing (16 «recreates the exact
 failure mode» — до моей волны), маскируется MAX_INFLIGHT_CONNS=2.
 
-СЛЕДУЮЩИЙ ШАГ: (1) подтвердить wedge pre-existing (baseline-16 тоже клинит →
-мой фикс не регресс); (2) точная диагностика lost-wake (какой wake потерян);
-(3) фикс или доклад. Boehm-серверный/Windows-гейты для corruption-фикса.
+## WEDGE — МЕХАНИЗМ ДОКАЗАН + ЗАКРЫТ (второй фикс)
+
+**Дискриминатор MAXPROCS (aggregator, MAX_INFLIGHT=16, -P80):**
+| MAXPROCS | до фикса | после фикса |
+|---|---|---|
+| 1 | 17/80, alive=200 (выживает — нет sibling'а) | 16/80, alive=200 |
+| 2 | 0/80, **permanent-000** | 16/80, alive=200 |
+| 4 | 0/80, **permanent-000** | 4/80, alive=200 |
+
+⇒ wedge = **cross-worker (M:N≥2) nested-supervised stuck-completion deadlock**.
+
+**Механизм (по коду `nova_runtime_worker_pump_scope`, runtime.c):** воркер,
+заблокированный в nested `supervised_run_impl` (ждёт pending_remote>0), качал
+свой deque, но шаг (4b) для фибера ЧУЖОГО scope ПУШИЛ ЕГО ОБРАТНО в тот же ring
+и спинил. При шторме соединений ВСЕ воркеры застревают в таких pump'ах, каждый
+держит sibling-ребёнка в СВОЁМ deque → никто не запускает чужого ребёнка → ни
+один ребёнок не завершается → ни один pending_remote не падает → вечный клин.
+Watchdog: `[supervised] count=0 pending_remote=1` + `STUCK_ALIVE_NOT_PARKED`
+(фибер с net-hdl не запущен в deque size>0). MAXPROCS=1 не клинит (нет sibling'а
+чтобы застрять).
+
+**ФИКС (runtime.c `nova_runtime_worker_pump_scope`, отдельный коммит):** шаг (4)
+стал **work-conserving** — запускать ЛЮБОЙ вытянутый фибер инлайн
+(`_worker_run_one_fiber`, он же save/restore outer-scope TLS), без спецкейса
+«только мой scope». Запуск чужого фибера всегда безопасен и всегда двигает
+систему: его park/завершение декрементит pending_remote ЕГО родителя → тот
+выходит из pump'а → цикл разматывается. Та же дисциплина, что у `_worker_main`
+(он запускает что вытянул, без scope-фильтра). Это lost-wake, НЕ corruption —
+ортогонально фиксу child_error[].
+
+**Гейты (оба фикса вместе):**
+- Wedge -P80×2 + -P200×2 @MAXPROCS=4, MAX_INFLIGHT=16: сервер ЖИВ,
+  post-single=200, final=200, БЕЗ permanent-000. **ГЛАВНЫЙ ГЕЙТ ЗЕЛЁНЫЙ.**
+- pos_max_fibers ×10: 10/10; supervisor_stop ×10: 10/10 (nested-supervised
+  семантика цела с pump-фиксом).
+
+## ИТОГ: ДВА НЕЗАВИСИМЫХ ФИКСА (маркер [M-187] закрыт обоими)
+
+1. **fibers.h** — child_error[]/child_ctx[] uncollectable: устраняет SpawnCtx/GC
+   corruption (pos_max_fibers/supervisor_stop/TSan). Коммит 80c0476fe.
+2. **runtime.c** — pump_scope work-conserving: устраняет cross-worker
+   nested-supervised deadlock (wedge). Отдельный коммит.
