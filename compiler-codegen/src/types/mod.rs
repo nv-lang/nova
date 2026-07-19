@@ -25980,6 +25980,17 @@ struct ConsumeCtx<'a> {
     /// receiver'у. Неизвестный тип → метод не трактуется как consuming
     /// (sound: false-negative, не false-positive).
     var_types: HashMap<String, String>,
+    /// Consume-волна А (D157-амендмент, 2026-07-19): best-effort Ok/Some-
+    /// INNER type имя переменной, когда её тип — `Result[T,E]`/`Option[T]`
+    /// (companion of `var_types`, которая хранит только плоское имя ВНЕШНЕГО
+    /// типа, без generic-аргументов). Заполняется из explicit-annotation
+    /// (`unwrap_result_option_name`) на `let`/param, и из RHS через
+    /// `infer_unwrapped_call_type`. Используется `scrutinee_unwrapped_type`
+    /// для D156-пропагации consume-обязательства через Option/Result-пейлоад
+    /// в match/if-let (rvalue Call — через `infer_unwrapped_call_type`
+    /// напрямую; place Ident — через эту карту). Неизвестно → None (sound:
+    /// false-negative, не false-positive).
+    var_unwrapped_types: HashMap<String, String>,
     /// Plan 73 followup: alias-карта. `let a = b` -> `aliases[a] = b`
     /// (b — каноническое имя). Обе переменные ссылаются на ОДИН
     /// heap-объект; consume любой -> consume всего alias-класса.
@@ -26065,6 +26076,7 @@ impl<'a> ConsumeCtx<'a> {
             rebind_shadows,
             states: HashMap::new(),
             var_types: HashMap::new(),
+            var_unwrapped_types: HashMap::new(),
             aliases: HashMap::new(),
             consume_obligations: HashSet::new(),
             all_declared_consume: HashSet::new(),
@@ -27523,6 +27535,12 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                     if matches!(&p.ty, TypeRef::Readonly(..)) {
                         ctx.readonly_locals.insert(p.name.clone());
                     }
+                    // Consume-волна А (D157-амендмент): `Option[T]`/`Result[T,E]`
+                    // param-annotation → Ok/Some-inner тип для match/if-let
+                    // D156-пропагации на именной place-скрутини (параметр).
+                    if let Some(inner) = unwrap_result_option_name(&p.ty, "") {
+                        ctx.var_unwrapped_types.insert(p.name.clone(), inner);
+                    }
                     let pty = match &p.ty {
                         TypeRef::Named { path, .. } if path.len() == 1 =>
                             Some(path[0].clone()),
@@ -28230,8 +28248,25 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
             if let Some(canon) = alias_src {
                 let ty = ctx.var_types.get(&canon).cloned();
                 ctx.declare_alias(&names[0], &canon, ty);
+                // Consume-волна А: alias наследует известный unwrapped-тип.
+                if let Some(u) = ctx.var_unwrapped_types.get(&canon).cloned() {
+                    ctx.var_unwrapped_types.insert(names[0].clone(), u);
+                }
             } else {
                 let ty = ctx.infer_let_type(decl);
+                // Consume-волна А (D157-амендмент, 2026-07-19): best-effort
+                // Ok/Some-inner тип для D156-пропагации через match/if-let на
+                // именной place-скрутини (`ro sess Result[TcpStream, E] = …`
+                // / `consume opt = maybe_connect()`). Явная generic-аннотация
+                // приоритетна над RHS-инференсом (точнее).
+                if names.len() == 1 {
+                    let unwrapped = decl.ty.as_ref()
+                        .and_then(|t| unwrap_result_option_name(t, ctx.self_type.as_deref().unwrap_or("")))
+                        .or_else(|| ctx.infer_unwrapped_call_type(&decl.value));
+                    if let Some(u) = unwrapped {
+                        ctx.var_unwrapped_types.insert(names[0].clone(), u);
+                    }
+                }
                 // Plan 100.3 (D157): detect consume-closures.
                 // If the RHS is a closure that calls consume-methods on outer
                 // consume-obligation vars, it becomes a consume-closure (FnOnce).
