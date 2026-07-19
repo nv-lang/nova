@@ -34568,6 +34568,11 @@ pub(crate) fn check_unsafe_context_in_module(
     // decl-спаны ВСЕХ unsafe fn/методов — точная per-overload истина для
     // channel-first проверки в Call/Member-арме (имя — только fallback).
     let mut unsafe_decl_spans: HashSet<Span> = HashSet::new();
+    // [2026-07-20] имена, у которых ЕСТЬ safe-декларация (free/instance) —
+    // на канал-промахе имя-fallback энфорсит ТОЛЬКО однозначно-unsafe имена
+    // (safe-тёзка где-то => промах НЕ флагается: erased/protocol-ресиверы
+    // не пишутся в resolved_callees, cross-type ложняк недопустим).
+    let mut safe_fn_names: HashSet<String> = HashSet::new();
     // Plan 138.2 [M-138-vec-bulk-parity] sharper A11 precision (the Ф.3.5
     // receiver-aware-lookup followup noted at the match site below): unsafe
     // STATIC methods (`fn Type.m()` — e.g. `RawMem.fill` / `RawMem.compare`)
@@ -34626,6 +34631,7 @@ pub(crate) fn check_unsafe_context_in_module(
     let collect_from = |item: &Item,
                         unsafe_fns: &mut HashSet<String>,
                         unsafe_decl_spans: &mut HashSet<Span>,
+                        safe_fn_names: &mut HashSet<String>,
                         unsafe_static_methods: &mut HashSet<(String, String)>,
                         fail_fns: &mut HashSet<String>,
                         effect_fns: &mut HashMap<String, String>,
@@ -34649,6 +34655,14 @@ pub(crate) fn check_unsafe_context_in_module(
                         .or_default()
                         .insert((required, max, fd.unsafe_attr));
                 }
+            }
+            if !fd.unsafe_attr
+                && !((fd.is_external || fd.extern_abi.is_some())
+                    && fd.receiver.is_none()
+                    && fn_sig_has_raw_ptr(fd))
+                && !matches!(&fd.receiver, Some(r) if r.kind == crate::ast::ReceiverKind::Static)
+            {
+                safe_fn_names.insert(fd.name.clone());
             }
             if fd.unsafe_attr {
                 unsafe_decl_spans.insert(fd.span);
@@ -34699,11 +34713,11 @@ pub(crate) fn check_unsafe_context_in_module(
         }
     };
     for item in &module.items {
-        collect_from(item, &mut unsafe_fns, &mut unsafe_decl_spans, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns, &mut static_arities);
+        collect_from(item, &mut unsafe_fns, &mut unsafe_decl_spans, &mut safe_fn_names, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns, &mut static_arities);
     }
     for pf in &module.peer_files {
         for item in &pf.items_here {
-            collect_from(item, &mut unsafe_fns, &mut unsafe_decl_spans, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns, &mut static_arities);
+            collect_from(item, &mut unsafe_fns, &mut unsafe_decl_spans, &mut safe_fn_names, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns, &mut static_arities);
         }
     }
     // [M-d216-unsafe-map-single-file-gaps]: SOFT used-tracking fallback name
@@ -34723,6 +34737,7 @@ pub(crate) fn check_unsafe_context_in_module(
         unsafe_fns,
         unsafe_decl_spans,
         resolved_calls: resolved_calls.clone(),
+        safe_fn_names,
         unsafe_static_methods,
         fail_fns,
         effect_fns,
@@ -34810,6 +34825,8 @@ struct UnsafeCtx {
     /// НЕ гейтить, даже если имя совпадает с чужим unsafe-методом).
     unsafe_decl_spans: HashSet<Span>,
     resolved_calls: HashMap<crate::ast::ExprId, Span>,
+    /// [2026-07-20] имена с хотя бы одной SAFE-декларацией — гейт имени-fallback.
+    safe_fn_names: HashSet<String>,
     /// Plan 118 A25 enforcement: names of fns с Fail effect — cast к *fn
     /// → E_CALLBACK_THROWS_OVER_C_ABI (Nova exceptions cannot cross C ABI).
     fail_fns: HashSet<String>,
@@ -35350,7 +35367,13 @@ impl UnsafeCtx {
                     ExprKind::Member { name: mname, .. } if self.unsafe_fns.contains(mname) => {
                         match self.resolved_calls.get(&e.id) {
                             Some(ds) if !self.unsafe_decl_spans.contains(ds) => None,
-                            _ => Some(mname.clone()),
+                            Some(_) => Some(mname.clone()),
+                            // канал пуст (erased/protocol/complex-ресивер, [M-172.1-
+                            // instance-complex-recv]): энфорсим ТОЛЬКО однозначно-
+                            // unsafe имя; safe-тёзка => молчим (soft-used покрывает
+                            // any_unsafe_overload_names-ветка).
+                            None if self.safe_fn_names.contains(mname) => None,
+                            None => Some(mname.clone()),
                         }
                     }
                     // Plan 118.1.6 (2026-06-08): indirect call через
