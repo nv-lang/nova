@@ -163,11 +163,35 @@
   (folder = 1 CU) — это ЖЕ подтверждает полноту миграционного списка (одна проверка = все 300+ файлов).
   После миграции — PASS:1 FAIL:0 (только pre-existing unused-import warnings из чужих файлов).
 
+## Статус (2-й апдейт): миграция nova + nova-tls готова, флагман --strict-effects зелёный
+
+- examples/tls, examples/net, examples/flagship/aggregator — мигрированы,
+  все чисты (nova check per-file).
+- std/src/net/*_test.nv (6 файлов), std/src/fs/fs.nv + d323_*_test.nv
+  (3 файла) — мигрированы. std/src/runtime/sync.nv, string_builder.nv,
+  std/src/io/buffered.nv — уже были чисты (нет Ok(/Some( паттернов на
+  consume-типах — MutexGuard/ReadGuard/WriteGuard/Permit возвращаются
+  напрямую, не через Result/Option; BufWriter конструируется напрямую).
+- Флагман: `nova build --strict-effects examples/flagship/aggregator/src/main.nv`
+  — ЗЕЛЁНЫЙ (только pre-existing warnings, 0 ошибок).
+- nova-tls (worktree `d:/Sources/nv-lang/nova-tls-consumeA`, ветка
+  `consume-a`) — 5 test-файлов мигрированы (cert_modes_test, handshake_test,
+  mtls_test, stream_leak_test_slow, stream_leak_live_test_slow). Библиотека
+  (client.nv/server.nv/stream.nv) была УЖЕ корректна. nova check —
+  PASS:1 FAIL:0 (module tls = одна CU). nova test src (не-slow) —
+  PASS:1 FAIL:0. nova test src --slow — флакует между прогонами
+  (GC-heap-slope реальной сети, НЕ consume; финальный прогон зелёный).
+- Известный ПРЕ-EXISTING (не мой) красный: spec_tests/conformance ПОЛНЫЙ
+  CU (`nova test spec_tests/conformance` без --filter) — CC-FAIL
+  "assert identifier undeclared" в C-кодогене (НЕ consume-related,
+  подтверждено кросс-чеком: main ветка САМА красная на этом же
+  агрегат-тесте, для СВОЕЙ другой причины — E_UNSAFE_CALL_REQUIRES_WRAP
+  в pos_protocol_lit_closure_capture.nv). standalone-CU подмножество
+  (авторитетный acceptance-бар задания) — чисто: PASS 69 FAIL 0.
+
 ## Дальше по плану
-- Закоммитить фикстуры+миграцию, прогнать `nova test` (полный EXPECT-раннер) для верификации.
-- Миграция examples/tls, examples/net, examples/flagship/aggregator, std/**.
-- nova-tls / nova-http worktree + миграция + тесты.
-- Финальная приёмка (standalone-CU N/0, флагман --strict-effects).
+- nova-http worktree + грепнуть Ok(-паттерны на consume-типах + миграция + тесты.
+- Финальный отчёт (хэши веток, таблица миграции).
 
 ## Сетевые обрывы
 Несколько сетевых/авторизационных обрывов за сессию — по инструкции
