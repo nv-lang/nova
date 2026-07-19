@@ -17545,16 +17545,30 @@ fn collect_coerce_pairs(
     let mut errors: Vec<Diagnostic> = Vec::new();
     let mut seen_pairs: HashMap<(String, String), Span> = HashMap::new();
 
+    // Dedup by declaration span: `module.items` (fully-merged view) and
+    // `module.peer_files[*].items_here` (per-peer copies, Plan 42.4/52 Ф.7)
+    // overlap for a folder-module's OWN declarations — a #coerce fn declared
+    // in `std/runtime/string/core.nv` shows up in BOTH, which without dedup
+    // would self-collide against R3's `seen_pairs` (a fn "duplicating" its
+    // own pair with itself, found empirically: `str @bytes()` tripped
+    // E_COERCE_DUPLICATE_PAIR against its OWN declaration on the very first
+  // #coerce smoke run). `Span` is `Eq+Hash` (file_id+start+end) — the same
+    // source declaration always carries the identical span in both copies.
+    let mut seen_spans: HashSet<Span> = HashSet::new();
     let mut fns: Vec<&FnDecl> = Vec::new();
     for item in &module.items {
         if let Item::Fn(f) = item {
-            fns.push(f);
+            if seen_spans.insert(f.span) {
+                fns.push(f);
+            }
         }
     }
     for pf in &module.peer_files {
         for item in &pf.items_here {
             if let Item::Fn(f) = item {
-                fns.push(f);
+                if seen_spans.insert(f.span) {
+                    fns.push(f);
+                }
             }
         }
     }
@@ -25883,6 +25897,27 @@ struct ConsumeRegistry {
     /// ЕДИНСТВЕННЫЙ среди всех записей, чей field-set покрывает имена
     /// литерала. Неоднозначность → None (без действия — консервативно).
     record_field_names: HashMap<String, HashSet<String>>,
+    /// Plan 214 (D429): free-fn name → per-position canonical `coerce_type_key`
+    /// of each declared param's type (see `coerce_type_key` doc). Lets the
+    /// call-arg walk (`ExprKind::Ident(fname)` case) tell "same type, plain
+    /// view-borrow" (param's own key) apart from "type MISMATCH resolved via a
+    /// registered `#coerce` finalize pair" (param's key ∈
+    /// `coerce_finalize_output_keys[arg's type]`) — the latter must credit the
+    /// consume obligation (the checker already accepted the call type-wise via
+    /// `assignable`'s `#coerce` fallback; without this, the implicit
+    /// `sb.into_str()` the AST-rewrite pass installs later would leave `sb`
+    /// looking never-consumed — a false `D133-not-consumed` on the plan's own
+    /// headline finalize example, `log(sb)` → `log(sb.into_str())`). Overload-
+    /// imprecise (last-decl-wins per name) — mirrors this registry's existing
+    /// `fn_return_types`/`fn_view_params` precision level, not a NEW gap.
+    fn_param_output_keys: HashMap<String, Vec<String>>,
+    /// Plan 214 (D429): I type name → set of O canonical keys for
+    /// FINALIZE-lane `#coerce` pairs only (view-lane pairs never consume
+    /// anything — their I is never a `LinearityRegistry.consume_types`
+    /// member in the first place, so they need no entry here). Built via
+    /// `collect_coerce_pairs` (same collector the checker accept-path /
+    /// AST-rewrite use — R9 "one window"), filtered to `is_finalize`.
+    coerce_finalize_output_keys: HashMap<String, HashSet<String>>,
 }
 
 /// D86-followup (2026-07-14): if `rt` is `Result[T,E]` / `Option[T]` with a
@@ -25919,6 +25954,8 @@ impl ConsumeRegistry {
     fn build(module: &Module) -> Self {
         let mut methods: HashSet<(String, String)> = HashSet::new();
         let mut fn_params: HashMap<String, Vec<usize>> = HashMap::new();
+        // Plan 214 (D429): see field doc.
+        let mut fn_param_output_keys: HashMap<String, Vec<String>> = HashMap::new();
         let mut method_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
         let mut fn_return_types: HashMap<String, String> = HashMap::new();
         // D86-followup: unwrapped (Ok/Some-inner) companion maps — see field docs.
@@ -26198,10 +26235,47 @@ impl ConsumeRegistry {
                         if !view_idx.is_empty() {
                             fn_view_params.insert(fd.name.clone(), view_idx);
                         }
+                        // Plan 214 (D429): per-position canonical param-type key —
+                        // needed by the call-arg walk to credit an implicit
+                        // `#coerce` finalize insertion as a consuming use (see
+                        // field doc). Unconditional (every free fn, not just
+                        // consume-type-touching ones) — cheap (one key string per
+                        // param) and the ONLY way the call-site can later tell
+                        // "same type" from "type mismatch #coerce resolved".
+                        fn_param_output_keys.insert(
+                            fd.name.clone(),
+                            fd.params.iter().map(|p| coerce_type_key(&p.ty)).collect(),
+                        );
                     }
                 }
             }
         }
+
+        // Plan 214 (D429): finalize-lane `#coerce` pairs, I → set of O keys.
+        // Independent parallel scan (same pattern as `MapLitCtx`/`TypeCheckCtx`'s
+        // own copies — see `collect_coerce_pairs` doc); diagnostics discarded
+        // here (already surfaced via `MapLitCtx::check_module`).
+        let mut coerce_types_lookup: HashMap<String, TypeDeclKind> = HashMap::new();
+        for item in &module.items {
+            if let Item::Type(td) = item {
+                coerce_types_lookup.entry(td.name.clone()).or_insert_with(|| td.kind.clone());
+            }
+        }
+        let (coerce_by_input, _coerce_errors_dup) = collect_coerce_pairs(
+            module,
+            &|n: &str| coerce_types_lookup.get(n).cloned(),
+        );
+        let coerce_finalize_output_keys: HashMap<String, HashSet<String>> = coerce_by_input
+            .into_iter()
+            .filter_map(|(input_name, pairs)| {
+                let keys: HashSet<String> = pairs
+                    .into_iter()
+                    .filter(|p| p.is_finalize)
+                    .map(|p| p.output_key)
+                    .collect();
+                if keys.is_empty() { None } else { Some((input_name, keys)) }
+            })
+            .collect();
 
         ConsumeRegistry {
             methods, fn_params, method_params, fn_return_types, recv_returning,
@@ -26211,6 +26285,7 @@ impl ConsumeRegistry {
             fn_non_unsafe_params, method_non_unsafe_params,
             record_consume_fields, record_field_names,
             unwrapped_method_return_types, unwrapped_fn_return_types,
+            fn_param_output_keys, coerce_finalize_output_keys,
         }
     }
 
@@ -30464,6 +30539,31 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                     if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
                     if !consume_idxs.is_empty() {
                         ctx.consume_args(args, &consume_idxs, e.span);
+                    }
+                    // Plan 214 (D429): credit an implicit `#coerce` FINALIZE
+                    // insertion as a consuming use (see `fn_param_output_keys`/
+                    // `coerce_finalize_output_keys` field docs on `ConsumeRegistry`).
+                    // Leaf-only (plain `Ident` arg), mirroring `try_coerce_leaf`'s
+                    // own scope: if the arg's OWN var type is a finalize-lane
+                    // `#coerce` I and the callee's declared param type at THIS
+                    // position is one of that I's registered O's, the AST-rewrite
+                    // pass (types/mod.rs `MapLitAnnotator`, runs AFTER this check)
+                    // will splice in the consuming call (`sb` → `sb.into_str()`) —
+                    // credit it NOW, since diagnostics run on the PRE-rewrite tree
+                    // and would otherwise spuriously flag `sb` as never consumed
+                    // (the plan's own headline example: `log(sb)` → `log(sb.into_str())`).
+                    if let Some(param_keys) = ctx.reg.fn_param_output_keys.get(fname.as_str()) {
+                        for (i, a) in args.iter().enumerate() {
+                            if consume_idxs.contains(&i) {
+                                continue; // already credited via consume_args above
+                            }
+                            let ExprKind::Ident(arg_name) = &a.expr().kind else { continue };
+                            let Some(arg_ty) = ctx.var_types.get(arg_name).cloned() else { continue };
+                            let Some(finalize_keys) = ctx.reg.coerce_finalize_output_keys.get(&arg_ty) else { continue };
+                            if matches!(param_keys.get(i), Some(pk) if finalize_keys.contains(pk)) {
+                                ctx.mark_consumed(arg_name, a.expr().span);
+                            }
+                        }
                     }
                     if is_consume_closure_call {
                         // Invoke: mark captured outer vars + closure itself Consumed.
