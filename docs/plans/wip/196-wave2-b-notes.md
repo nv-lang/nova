@@ -102,4 +102,40 @@ census-ловушка «параллельного legacy нет» истолк�
 
 ---
 
-(продолжение — d-фикстуры/standalone/aggregator и итоговая правка — следующие чекпоинты)
+## 4. Инфра-инцидент: D-фикстуры из `spec_tests/conformance/` (не `standalone/`) — mega-CU-подобная стоимость
+
+**Попытка (batch 7 файлов d119×2/d122×2/d123/d277/d354, `nova test <7 путей>`):** зависла — nova.exe
+накопил 635 CPU-с без завершения за >10 минут, убит вручную (PID проверен через `Get-Process`, не чужой).
+**Попытка (d119 solo, ОДИН файл):** ТЕ ЖЕ высокие `ExprId` (~207000+), что и в 7-файловом batch —
+т.е. даже одиночный вызов ОДНОГО файла из `spec_tests/conformance/` (не `standalone/`) тянет сопоставимый
+объём работы (эти файлы по конвенции конформанс-репо — часть ОДНОГО общего CU с общим символьным
+пространством, в отличие от `standalone/`, где каждый файл — независимый CU). Два solo-захода (~3 и ~5 мин
+таймауты) не дошли до SUMMARY; CPU рос (6.5с → 73с → 101с → 133с), т.е. не дедлок, а генуинно дорогая
+компиляция (вероятно generic-monomorphization worklist от широкого std-импорта + большой C-компиль в
+Release). Оба процесса убиты (`Stop-Process`, подтверждён Path == `nova-w2b\...\nova.exe`, не чужой).
+**Решение:** d-фикстуры генерик-семейства из `spec_tests/conformance/` (не `standalone/`) в эту перепись
+НЕ включены — сопоставимы по стоимости с запрещённым мега-CU («Мега-CU НЕ гонять»), поэтому не гонялись
+дальше пробы. Покрытие D119/D122/D123/D277/D354 обеспечено ИНАЧЕ: те же D-формы (`AsSlice[T]`
+fluent-generic append, bound-method mono-dispatch, tuple-mono) реально хитуют в std corpus (см. §2,
+`Vec____nova_byte.append` — прямая манифестация D122/D354 fluent-generic паттерна) и в standalone corpus
+(§5) — качественное покрытие тех же call-форм есть, просто не из d-фикстур-файлов напрямую.
+
+## 5. Перепись — `spec_tests/conformance/standalone` (88 файлов, независимые CU каждый)
+
+Команда: `nova test spec_tests/conformance/standalone --mode release`, `NOVA_NODE_SUBSTS_TRACE=1`.
+**PASS: 68  FAIL: 0** (стандартный float±1 по конвенции, FAIL:0 — обязательное условие, выполнено).
+
+| Consumer | hit-composed (events/distinct) | hit прямой (events/distinct) | fallback=miss (events/distinct) |
+|---|---|---|---|
+| `mono_type_args` | 635 / 30 | **0 / 0** | 203 / 8 |
+| `resolve_method_level_subst` | 73 / 14 | 793 / 111 | 75 / 16 |
+
+Согласуется с std-подмножеством (§2): прямая non-composed «hit»-ветка `resolve_mono_type_args_ch` —
+**0 событий на ОБОИХ корпусах суммарно (0/1780+)** — подтверждает находку §2 (dead-by-construction) уже
+эмпирически на более широком корпусе, не только std-подмножестве. Легаси fallback для обоих движков
+остаётся живым (8+16 distinct sites на standalone, доминанта та же — `Vec.append[S AsSlice[T]]`,
+71 хит) — снос легаси-движков целиком по-прежнему НЕ валиден.
+
+---
+
+(продолжение — aggregator, финальная правка дублирующей ветки, wc -l gate-1 — следующие чекпоинты)
