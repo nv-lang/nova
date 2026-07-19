@@ -1344,6 +1344,17 @@ impl Parser {
         // стоять перед `external`). Дополнительный pass позже подберёт
         // attribute если он был между `external` и `fn`.
         let pre_cancel_safe = self.parse_cancel_safe_attr();
+        // Plan 214 (D429): pre-parse `#coerce` here too — mirrors
+        // `pre_cancel_safe` exactly. Authors write `#coerce` on its own line
+        // BEFORE `export` (matching the `#realtime`/doc-attr convention seen
+        // throughout std, e.g. `#realtime\nexport extern "nova" fn …`); without
+        // this pre-parse, `#coerce` sitting before `export` would strand the
+        // parser at the `#` token (neither `parse_type_attrs` nor the
+        // subsequent `is_export = eat(KwExport)` consume an unrecognized
+        // leading `#`-attribute), silently losing `is_export` AND misfiring
+        // "`#coerce` is only valid before `fn`" once the post-export loop
+        // finally consumes it with `export` now stuck in between.
+        let pre_coerce = self.parse_coerce_attr();
 
         // Plan 170 (D307): `priv(file)` top-level visibility modifier — file-private.
         // Parsed BEFORE `export` (mutually exclusive). Forms:
@@ -1482,7 +1493,7 @@ impl Parser {
         let mut cancel_safe_attr = pre_cancel_safe || self.parse_cancel_safe_attr();
         // Plan 214 (D429): `#coerce` — declares an implicit zero-cost conversion.
         // Parsed alongside the other leading `#`-attributes (any order, same loop).
-        let mut coerce_attr = self.parse_coerce_attr();
+        let mut coerce_attr = pre_coerce || self.parse_coerce_attr();
         loop {
             let mut progressed = false;
             if matches!(realtime_attr, RealtimeAttr::None) {
