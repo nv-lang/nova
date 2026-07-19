@@ -73,3 +73,17 @@ test "use-after-consume neg guard (documented, not compiled here)" {
     // not runnable inline — see 214-scratch/neg_use_after.nv.
     assert(true)
 }
+
+// Regression guard (found empirically via std/text.nv []str @join CC-FAIL,
+// commit 15bff5558): fluent-chain construction (`Type.new(...).method(...)`)
+// bound via `consume`, then returned BARE via block-trailing (no `return`
+// keyword) — the pervasive std builder idiom. Exercises simple_expr_type's
+// Member-chain recursion (types/mod.rs).
+test "finalize bare trailing (block-trailing, no return keyword) after fluent chain" {
+    assert(d214_fluent_chain_trailing().byte_len() == 2)
+}
+fn d214_fluent_chain_trailing() -> str {
+    consume sb = StringBuilder.new(cap: 8).append("h")
+    sb.append("i")
+    sb
+}
