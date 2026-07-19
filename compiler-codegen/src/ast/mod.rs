@@ -408,6 +408,17 @@ pub struct FnDecl {
     /// the cancel-unsafe lint (W_FFI_CANCEL_UNSAFE) fires at the call site
     /// when the call appears inside an cleanup body. Default `false`.
     pub cancel_safe_attr: bool,
+    /// Plan 214 (D429): `#coerce` attribute перед `fn` — declares an implicit
+    /// zero-cost conversion `I → O` (`I` = receiver type, `O` = return type).
+    /// V1 legal shapes: instance method with zero params (view — non-`consume`
+    /// + `ro`-return, or finalize — `consume` + owning return); a static
+    /// one-param form parses too but is rejected at check-time
+    /// (`E_COERCE_RECEIVER_FORM_DEFERRED`, R1). Checker (`types/mod.rs
+    /// collect_coerce_pairs`) validates shape/zero-cost/effect-freedom/
+    /// generics/duplicates and builds the accept+rewrite+lint-shared pair
+    /// registry. `#coerce` is rejected on protocol/effect method REQUIREMENTS
+    /// at parse-time (R15) — never reaches an `EffectMethod`/`FnDecl` here.
+    pub coerce_attr: bool,
     /// Plan 33.1 (D24): контракты после сигнатуры, до тела.
     /// Пустой вектор у функций без контрактов (backward-compat).
     pub contracts: Vec<Contract>,
