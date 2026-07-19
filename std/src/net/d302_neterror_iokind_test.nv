@@ -56,7 +56,7 @@ test "TcpStream structurally conforms to io.Read/io.Write (mono-dispatch over mo
         supervised {
             spawn {
                 mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
-                    Ok(c) => c
+                    Ok(consume c) => c
                     Err(_) => panic_d302("connect")
                 }
                 // Generic io-bound helpers (std.io.write_all/read_exact take a
@@ -83,7 +83,7 @@ test "TcpStream io-conformance surfaces IoError (not NetError) on the wire" {
         supervised {
             spawn {
                 mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
-                    Ok(c) => c
+                    Ok(consume c) => c
                     Err(_) => panic_d302("connect")
                 }
                 mut buf []u8 = []u8.new()

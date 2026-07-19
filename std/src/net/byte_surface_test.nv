@@ -13,7 +13,7 @@ test "TcpStream.write / write_all return byte count" {
         supervised {
             spawn {
                 mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
-                    Ok(c) => c, Err(_) => panic("connect")
+                    Ok(consume c) => c, Err(_) => panic("connect")
                 }
                 // Payload incl. embedded NUL + non-UTF-8 lead byte.
                 ro n = match s.write(Vec[u8].of(0x48, 0x69, 0x00, 0xFF)) {
@@ -32,7 +32,7 @@ test "TcpStream.read_to_vec materialises []u8" {
         supervised {
             spawn {
                 mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
-                    Ok(c) => c, Err(_) => panic("connect")
+                    Ok(consume c) => c, Err(_) => panic("connect")
                 }
                 ro bytes = match s.read_to_vec(64) { Ok(b) => b, Err(_) => panic("read_to_vec") }
                 // mock read returns "mock-reply" (10 bytes).
@@ -49,7 +49,7 @@ test "TcpReadHalf.read / TcpWriteHalf.write over split" {
         supervised {
             spawn {
                 mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
-                    Ok(c) => c, Err(_) => panic("connect")
+                    Ok(consume c) => c, Err(_) => panic("connect")
                 }
                 mut (rdh, wrh) = s.split()
                 ro n = match wrh.write(Vec[u8].of(9, 8, 7, 6, 5)) {
@@ -72,7 +72,7 @@ test "UdpSocket.send_to / recv_from_vec (mock)" {
         supervised {
             spawn {
                 mut sock = match UdpSocket.bind(SocketAddr.loopback(0)) {
-                    Ok(s) => s, Err(_) => panic("bind")
+                    Ok(consume s) => s, Err(_) => panic("bind")
                 }
                 ro n = match sock.send_to(Vec[u8].of(0xDE, 0xAD, 0xBE, 0xEF), SocketAddr.loopback(9999)) {
                     Ok(n) => n, Err(_) => panic("send_to")

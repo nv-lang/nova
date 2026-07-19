@@ -21,7 +21,7 @@ test "TCP split: server + client exchange via read/write halves _slow" {
             spawn {
                 ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
                 mut conn = match TcpStream.connect(SocketAddr.loopback(port)) {
-                    Ok(s) => s
+                    Ok(consume s) => s
                     Err(_) => panic("connect failed")
                 }
                 mut (cli_rd, cli_wr) = conn.split()
@@ -45,12 +45,12 @@ test "TCP split: server + client exchange via read/write halves _slow" {
             // Server fiber: bind + accept в одном файбере, listener не покидает его.
             spawn {
                 mut lst = match TcpListener.bind(SocketAddr.loopback(0)) {
-                    Ok(l) => l
+                    Ok(consume l) => l
                     Err(_) => panic("bind failed")
                 }
                 ch.tx.send(lst.local_port())
                 mut srv = match lst.accept() {
-                    Ok(s) => s
+                    Ok(consume s) => s
                     Err(_) => panic("accept failed")
                 }
                 mut (srv_rd, srv_wr) = srv.split()
@@ -78,7 +78,7 @@ test "split mock stream — read half + write half" {
         supervised {
             spawn {
                 mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
-                    Ok(c) => c
+                    Ok(consume c) => c
                     Err(_) => panic("connect")
                 }
                 mut (rdh, wrh) = s.split()

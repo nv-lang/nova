@@ -56,7 +56,7 @@ test "bind result is always classified (no panic, typed error) _slow" {
         // well-formed Ok/Err with a typed NetError — never a panic or raw string.
         ro r = TcpListener.bind(SocketAddr.loopback(1))
         ro ok = match r {
-            Ok(l) => {
+            Ok(consume l) => {
                 l.close()
                 true
             }

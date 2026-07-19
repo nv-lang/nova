@@ -131,7 +131,7 @@ test "net2/tcp: connect to a refused port yields Err (closed socket → NetError
                 // ConnectionRefused. A failing op must surface a typed NetError,
                 // not crash or hang.
                 match TcpStream.connect(SocketAddr.loopback(1)) {
-                    Ok(s)  => { s.close() assert(false) }   // must not connect
+                    Ok(consume s)  => { s.close() assert(false) }   // must not connect
                     Err(_) => { assert(true) }              // refused / unreachable
                 }
             }
