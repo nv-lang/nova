@@ -156,13 +156,7 @@ export fn Vec[T] @split_last() -> Option[(T, Self)] {
 /// assert(v.first_n(0).len() == 0)
 /// ```
 export fn Vec[T] @first_n(n int) -> Self { // [M-lint-findings-param-no-contract]
-    mut k = n
-    if k < 0 {
-        k = 0
-    }
-    if k > @len {
-        k = @len
-    }
+    ro k = n.clamp(0, @len)
     { @data, len: k, cap: k }
 }
 
@@ -177,13 +171,7 @@ export fn Vec[T] @first_n(n int) -> Self { // [M-lint-findings-param-no-contract
 /// assert(v.last_n(0).len() == 0)
 /// ```
 export fn Vec[T] @last_n(n int) -> Self { // [M-lint-findings-param-no-contract]
-    mut k = n
-    if k < 0 {
-        k = 0
-    }
-    if k > @len {
-        k = @len
-    }
+    ro k = n.clamp(0, @len)
     ro start = @len - k
     { data: unsafe { @data.offset(start) }, len: k, cap: k }
 }

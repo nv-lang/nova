@@ -81,7 +81,7 @@ export fn chaos_variant(base []Source, seed u64) -> []Source {
         ro fail = fail_roll < 15
         ro jitter = (jitter_roll as int) - 200
         ro latency = s.latency_ms + jitter
-        ro latency_clamped = if latency < 30 { 30 } else { latency }
+        ro latency_clamped = latency.max(30)
         out.push(Source.new(s.id, s.detail, s.sub_count, latency_clamped, fail))
     }
     out

@@ -33,7 +33,7 @@ export fn BytesReader @position() -> int => @pos
 #stable(since = "0.1")
 export fn BytesReader @remaining() -> int {
     ro rem = @data.len() - @pos
-    if rem > 0 { rem } else { 0 }
+    rem.max(0)
 }
 
 /// io.Read: copy up to `buf.len()` bytes into `buf`, advancing the cursor.

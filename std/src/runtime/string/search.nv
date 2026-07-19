@@ -109,7 +109,7 @@ fn is_ascii_ws(b int) -> bool => b == 32 || (b >= 9 && b <= 13)
 // negative part-count is a caller bug, not a graceful degenerate case.
 export fn str @splitn(n int, sep str) -> SplitIter
     requires n >= 0
-    => { src: @, sep, start: 0, done: false, limit: if n <= 0 { 0 } else { n }, splits: 0, terminator: false }
+    => { src: @, sep, start: 0, done: false, limit: n.max(0), splits: 0, terminator: false }
 
 // Split from the RIGHT, parts in REVERSE order (Rust `rsplit`), lazy since
 // Plan 199. Empty sep → whole (one element).
@@ -121,7 +121,7 @@ export fn str @rsplit(sep str) -> RSplitIter =>
 // contract violation (W_PARAM_NO_CONTRACT AMEND, 2026-07-17, владелец).
 export fn str @rsplitn(n int, sep str) -> RSplitIter
     requires n >= 0
-    => { src: @, sep, end: @byte_len(), done: false, limit: if n <= 0 { 0 } else { n }, splits: 0 }
+    => { src: @, sep, end: @byte_len(), done: false, limit: n.max(0), splits: 0 }
 
 // Split at the FIRST occurrence of `sep` → `Some((before, after))`, `None` if
 // not found. Byte-offsets, zero-copy views (Rust `split_once`).
