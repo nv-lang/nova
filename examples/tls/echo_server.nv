@@ -40,24 +40,24 @@ fn main() {
                 // mut-capture of either across the spawn boundary would be
                 // E_CONCURRENT_MUT_CAPTURE).
                 mut lst = match TcpListener.bind(addr) {
-                    Ok(l)  => l
+                    Ok(consume l)  => l
                     Err(_) => panic("Failed to bind: " + PORT.to_str())
                 }
                 println("Listening on 127.0.0.1:" + lst.local_port().to_str())
 
                 match lst.accept() {
                     Err(_) => println("Accept failed")
-                    Ok(tcp) => {
+                    Ok(consume tcp) => {
                         println("Client connected from port " + tcp.peer_port().to_str())
                         match TlsStream.accept(tcp, cfg) {
                             Err(e) => println("TLS handshake failed: " + e.to_str())
-                            Ok(session) => {
+                            Ok(consume session) => {
                                 // NB: don't name this binding `tls` — it would
                                 // shadow the imported package alias (`tls.*`)
                                 // and turn `stream.read_to_vec(...)` below into
                                 // an (invalid) module-qualified call instead of
                                 // a method call (E7401).
-                                mut stream = session
+                                consume stream = session
                                 match stream.read_to_vec(4096) {
                                     Err(_) => println("Read failed")
                                     Ok(_data) => {
