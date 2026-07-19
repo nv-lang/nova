@@ -2713,3 +2713,146 @@ fn find_decl_location(uri: &Url, src: &str, symbol_name: &str) -> Option<Locatio
 fn collect_nv_files_for_rename(root: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
     Ok(crate::compiler::collect_nv_paths(root))
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LSP write-after-destroyed fix — shutdown-gate tests
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// 2026-07-20: the owner reported a repeated client-side error, "Cannot call
+// write after a stream was destroyed", when sending `textDocument/didClose`.
+// Root cause (see `WorkspaceState::shutting_down` doc + the fix commit):
+// background tasks (chiefly `run_initial_scan_with_progress`, Plan 215) kept
+// sending client notifications/requests with no awareness of `shutdown`,
+// which — via tower-lsp's own `Server::serve()` `join!` semantics — kept the
+// whole process alive until the client's grace period expired and it
+// force-killed the process, destroying its own transport mid-teardown.
+//
+// These tests drain the *real* `ClientSocket` loopback (the exact channel
+// every `client.*` call writes into — not a mock) to prove background paths
+// actually stop producing messages once `WorkspaceState::mark_shutting_down`
+// has been called, instead of merely asserting on the flag itself.
+#[cfg(test)]
+mod shutdown_gate_tests {
+    use super::*;
+    use futures::StreamExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex as StdMutex;
+    use tower_lsp::LspService;
+
+    /// Build a `(Client, receive-count handle)` pair backed by a real
+    /// `ClientSocket` loopback, continuously drained in the background (like
+    /// an always-connected client that never answers) so every `client.*`
+    /// call's *send* completes without blocking on a response, and each
+    /// arrival is counted.
+    ///
+    /// Also drives the service through a real `initialize` call: tower-lsp's
+    /// `Client::send_request`/`send_notification` silently no-op outside
+    /// `State::Initialized`/`State::ShutDown` (`service/client.rs`), so an
+    /// un-initialized service would make every assertion below vacuous.
+    async fn client_with_drain() -> (Client, Arc<AtomicUsize>) {
+        let captured: Arc<StdMutex<Option<Client>>> = Arc::new(StdMutex::new(None));
+        let captured2 = Arc::clone(&captured);
+        let (mut service, socket) = LspService::new(move |client| {
+            *captured2.lock().unwrap() = Some(client.clone());
+            Backend::new(client)
+        });
+        let client = captured.lock().unwrap().clone().expect("init closure ran synchronously");
+
+        {
+            use tower::{Service, ServiceExt};
+            let init = tower_lsp::jsonrpc::Request::build("initialize")
+                .params(serde_json::json!({ "capabilities": {} }))
+                .id(1i64)
+                .finish();
+            let _ = service.ready().await.unwrap().call(init).await;
+            // `service`/`client` share the same `Arc<ServerState>` (set up in
+            // `LspService::build`), so the `Initialized` transition above is
+            // visible through `client` regardless of `service`'s lifetime —
+            // dropping it here is fine, no need to keep it around.
+        }
+
+        let received = Arc::new(AtomicUsize::new(0));
+        let received2 = Arc::clone(&received);
+        tokio::spawn(async move {
+            let mut socket = socket;
+            while socket.next().await.is_some() {
+                received2.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        (client, received)
+    }
+
+    /// Spawn `refresh_client_hints_for(client, state)` as an owned,
+    /// `'static` task (it takes `&Client`/`&WorkspaceState`, which aren't
+    /// `'static` themselves — the async block owns clones so it can be
+    /// spawned) and don't await it: each inner call is wrapped in a 2s
+    /// timeout waiting for a response nobody sends in this test, but the
+    /// *send* into the loopback channel we're asserting on completes near-
+    /// instantly, so the test doesn't need to wait out those timeouts.
+    fn spawn_refresh(client: &Client, state: &Arc<WorkspaceState>) {
+        let client = client.clone();
+        let state = Arc::clone(state);
+        tokio::spawn(async move {
+            refresh_client_hints_for(&client, &state).await;
+        });
+    }
+
+    /// neg: once `shutting_down` is set, `refresh_client_hints_for` must not
+    /// send anything further through the real client channel — proving the
+    /// gate actually stops outgoing traffic, not just that a flag got set.
+    #[tokio::test]
+    async fn neg_refresh_client_hints_sends_nothing_after_shutdown() {
+        let (client, received) = client_with_drain().await;
+        let state = Arc::new(WorkspaceState::default());
+
+        // Before shutdown: the 3 refresh requests are sent (fire-and-forget
+        // from the drain's point of view — nobody answers them, but the
+        // *send* into the loopback channel happens immediately; we don't
+        // await the call itself so the test isn't gated on its 2s timeouts).
+        spawn_refresh(&client, &state);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let before = received.load(Ordering::SeqCst);
+        assert!(before > 0, "expected ≥1 client request before shutdown, got {before}");
+
+        // After shutdown: must send nothing further.
+        state.mark_shutting_down();
+        spawn_refresh(&client, &state);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let after = received.load(Ordering::SeqCst);
+        assert_eq!(after, before, "shutting_down must suppress every further client send");
+    }
+
+    /// neg: `recheck_open_documents_for` (used by both `did_rename_files`
+    /// and the watched-files batch handler) must likewise send nothing once
+    /// `shutting_down` is set, even with an open document and a workspace
+    /// root present (the code path that would otherwise schedule a real
+    /// recheck + `publish_diagnostics`).
+    #[tokio::test]
+    async fn neg_recheck_open_documents_sends_nothing_after_shutdown() {
+        let (client, received) = client_with_drain().await;
+        let state = Arc::new(WorkspaceState::default());
+        state.docs.insert(
+            Url::parse("file:///shutdown_gate_test.nv").unwrap(),
+            ParsedFile { text: Rope::from_str("fn f() => ()"), version: 1 },
+        );
+        state.mark_shutting_down();
+
+        recheck_open_documents_for(&client, &state).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert_eq!(
+            received.load(Ordering::SeqCst),
+            0,
+            "recheck_open_documents_for must not touch the client once shutting_down is set"
+        );
+    }
+
+    /// pos: `WorkspaceState::is_shutting_down` reflects `mark_shutting_down`
+    /// — the flag semantics every gate above relies on.
+    #[test]
+    fn pos_mark_shutting_down_flips_flag() {
+        let state = WorkspaceState::default();
+        assert!(!state.is_shutting_down());
+        state.mark_shutting_down();
+        assert!(state.is_shutting_down());
+    }
+}

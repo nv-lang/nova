@@ -116,3 +116,114 @@ spawned task (конкурентно с продолжающимся чтени�
 единственный фоновый путь без cancellation-гейта вообще. Требуется
 подтверждение через п.1-4 выше прежде чем фиксировать в отчёте как
 окончательный вердикт.
+
+---
+
+## ПОДТВЕРЖДЕНО (финал)
+
+Прочитан vendored `tower-lsp-0.20.0` (`src/transport.rs`, `src/service.rs`,
+`src/service/client.rs`, `src/service/state.rs`) — механизм подтверждён
+буквально по коду, не по догадке:
+
+`Server::serve()` (`transport.rs`) держит
+`join!(print_output, read_input, process_server_tasks)`, где
+`process_server_tasks = server_tasks_rx.buffer_unordered(max_concurrency=4)`
+— пул уже ЗАПУЩЕННЫХ futures хендлеров. `shutdown`/`exit` отвечают быстро
+(отдельная futura внутри того же пула), но НЕ отменяют уже
+диспетчеризованный `initialized()`-таск — `run_initial_scan_with_progress`
+awaited НАПРЯМУЮ внутри `initialized()`, без единой проверки отмены. Пока
+скан не доработает сам (растянут REINDEX_SLEEP_EVERY-паузами под CPU-щадящий
+режим Plan 213/215 — на большом воркспейсе реально десятки секунд/минуты),
+`process_server_tasks` не осушается → весь `join!` не резолвится → `serve()`
+не возвращается → `main()` не завершается → OS-процесс физически жив дольше,
+чем клиент готов ждать.
+
+`vscode-languageclient`: `client.stop()` шлёт `shutdown`→`exit`, затем (по
+стандартному поведению `LanguageClient`) форс-килляет child-процесс, если
+тот не завершился за grace-период. Форс-килл рвёт СТОРОНУ КЛИЕНТА (Node
+`ChildProcess.stdin` writer уничтожается в ответ на смерть child'а) — и
+КАЖДАЯ последующая попытка клиента отправить notification (напр.
+`textDocument/didClose` по каждому ещё открытому документу при закрытии
+окна VSCode) валится с "Cannot call write after a stream was destroyed" —
+повтор на документ ⇒ спам из лога владельца. Это СЕРВЕР-ОБУСЛОВЛЕННАЯ
+клиентская ошибка: корень на нашей стороне (никогда не отпускает процесс
+вовремя), симптом — на стороне клиента.
+
+### Фикс (закоммичен 0c12dc70e)
+`WorkspaceState::shutting_down: AtomicBool` (+ `mark_shutting_down()` /
+`is_shutting_down()`) — единая точка правды, видимая и `Backend`-методам, и
+свободным функциям без `&Backend` (`schedule_recheck_for`,
+`recheck_open_documents_for`, `refresh_client_hints_for`, watch-batch
+closure). `Backend::shutdown()` выставляет флаг ДО `cancel_all()`. Гейт
+вставлен в 7 точек `run_initial_scan_with_progress` + все `token.is_cancelled()`
+точки debounce-путей + начало `recheck_open_documents_for`/
+`refresh_client_hints_for` + orphan-таск регистрации watcher'ов в
+`initialized()`. `Backend.shutdown_requested` (писался, но НИГДЕ не
+читался — сам был дырой) удалён в пользу общего флага.
+
+### ro/let doc-comment warning — навязчивость: ДА, но вне scope write-спама
+`compiler-codegen/src/parser/mod.rs:1636-1644` — `eprintln!` (НЕ
+`Diagnostic`, не идёт в LSP `publishDiagnostics`) на каждый `ro`/`let` с
+предшествующим `///`. Летит в STDERR процесса nova-lsp (не в JSON-RPC
+stdout-транспорт) → VSCode "Output > Nova LSP". Т.к. `check_open_documents`
+(Ф.1-стратегия `schedule_recheck_for`) перепарсивает ВСЕ открытые документы
+на КАЖДЫЙ debounced edit ЛЮБОГО документа — при наличии такого паттерна в
+любом открытом файле предупреждение печатается повторно на каждое
+нажатие клавиши в любом открытом документе. Навязчиво — да. Но структурно
+НЕ может быть причиной "Cannot call write after a stream was destroyed"
+(другой канал/другой механизм — readable-stream форвардинг stderr, не
+vscode-jsonrpc message writer). Сам warning не тронут (дизайн Plan 45,
+задание явно просило не трогать).
+
+### Тесты (добавлены, зелёные)
+`nova-lsp/src/server.rs::shutdown_gate_tests` — 3 теста на РЕАЛЬНОМ
+`tower_lsp::ClientSocket`-транспорте (не мок): `neg_refresh_client_hints_
+sends_nothing_after_shutdown`, `neg_recheck_open_documents_sends_nothing_
+after_shutdown` (оба проводят сервис через настоящий `initialize`-хендшейк,
+дренируют loopback-канал и считают реально отправленные сообщения — до/после
+`mark_shutting_down()`), `pos_mark_shutting_down_flips_flag`. `cargo test
+--lib shutdown_gate_tests` → 3/3 ok.
+
+Полный `cargo test --lib` (с `RUST_MIN_STACK=64MiB` — без этого несколько
+НЕСВЯЗАННЫХ тестов валятся stack-overflow ОДИНАКОВО что в этом worktree,
+что на немодифицированном main, т.е. предсуществующий инфраструктурный
+момент): 421 passed, 2 failed — оба сбоя («std.io does not exist» в
+`completion::imp_pos2_std_prefix_returns_submodules` и
+`stdlib_index::pos_top_level_modules_real_not_stale`) воспроизведены
+identично на немодифицированном main → предсуществующий дефект, НЕ
+регрессия от этой правки, вне scope.
+
+### Сборка
+`cargo build --release` в `nova-lsp/` (worktree) — чисто, 0 ошибок/новых
+warning. Бинарь: `nova-lsp/target/release/nova-lsp.exe`
+(sha256 `162b100a8d35ba30fb21f0f4f0280d1108185176674361dc32f002654ca6c1db`),
+против старого живого (`d:/Sources/nv-lang/nova/nova-lsp/target/release/
+nova-lsp.exe`, sha256 `1a79c4c81ce42194c67202d2e543919b80b7e21c1c3c7c5a91
+ccb5e74713a63f`, собран 2026-07-17).
+
+### Путь бинаря в расширении (nova-lang-local 0.2.0)
+`editors/vscode/client/extension.ts::findNovaLsp()` — приоритет:
+(1) настройка `nova.lsp.path` → (2) PATH (`where`/`which`) → (3)
+`<workspaceFolder>/target/release|debug/nova-lsp[.exe]`. `editors/vscode/
+package.json` НЕ бандлит сам бинарь nova-lsp в vsix (`.vscodeignore`
+исключает только `client/`/TS-исходники и dev-конфиги; `node_modules`
+СОХРАНЯЕТСЯ — рантайм-зависимость `vscode-languageclient`, как уже
+задокументировано в самом `.vscodeignore`).
+
+`d:/Sources/nv-lang/nova/.vscode/settings.json` держит явно:
+`"nova.lsp.path": "D:/Sources/nv-lang/nova/nova-lsp/target/release/
+nova-lsp.exe"` — т.е. текущий живой LSP грузится СТРОГО по этому пути
+(вариант (1), выше остальных в приоритете). Значит переустановка — это
+ЗАМЕНА ФАЙЛА по этому пути, БЕЗ переустановки vsix (расширение
+код/логика не менялись — только серверный бинарь).
+
+### Инструкция переустановки (интегратору/владельцу)
+1. Закрыть ВСЕ окна VSCode, где открыт nova-репозиторий (снимает файловую
+   блокировку Windows на запущенном `nova-lsp.exe` — иначе copy = os error 5).
+2. Скопировать `d:/Sources/nv-lang/nova-lspwrite/nova-lsp/target/release/
+   nova-lsp.exe` → `d:/Sources/nv-lang/nova/nova-lsp/target/release/
+   nova-lsp.exe` (перезапись).
+3. Открыть VSCode заново на nova-репо — `nova.lsp.path` в `.vscode/
+   settings.json` уже указывает туда же, расширение подхватит новый бинарь
+   автоматически. Переустановка `.vsix` НЕ требуется (extension.ts/
+   package.json не менялись).
