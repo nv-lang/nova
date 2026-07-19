@@ -27,8 +27,8 @@ fn main() {
                     Err(_) => {
                         println("Connect failed — is echo_server running on port " + PORT.to_str() + "?")
                     }
-                    Ok(conn) => {
-                        mut stream = conn
+                    Ok(consume conn) => {
+                        consume stream = conn
                         println("Connected to " + PORT.to_str())
 
                         match stream.write_str(MESSAGE) {

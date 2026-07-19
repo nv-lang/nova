@@ -28,14 +28,14 @@ fn main() {
                 // fiber'е (bind/accept/close) — mut-захват внешнего listener'а
                 // телом spawn был бы E_CONCURRENT_MUT_CAPTURE.
                 mut lst = match TcpListener.bind(addr) {
-                    Ok(l)  => l
+                    Ok(consume l)  => l
                     Err(_) => panic("Failed to bind: " + PORT.to_str())
                 }
                 println("Listening on 127.0.0.1:" + lst.local_port().to_str())
                 // Accept one connection and echo data back.
                 match lst.accept() {
-                    Ok(stream) => {
-                        mut s = stream
+                    Ok(consume stream) => {
+                        consume s = stream
                         println("Client connected from port " + s.peer_port().to_str())
                         match s.read_to_vec(4096) {
                             Ok(_data) => {
