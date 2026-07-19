@@ -210,6 +210,7 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
 | Статусы планов (сгенерировано, пофайловый источник) | [docs/plans/STATUS.md](plans/STATUS.md) |
 | Тесты (маркеры, folder-модули, флаги) | [docs/test-conventions.md](test-conventions.md) |
 | Правила разработки компилятора | [docs/compiler-conventions.md](compiler-conventions.md) |
+| Конвенция кодирования M:N-рантайма (проактив) / отладка гонок (реактив) | [docs/mn-coding-conventions.md](mn-coding-conventions.md) / [docs/debugging-races.md](debugging-races.md) |
 | Управление конвенциями (мета) | [docs/conventions-governance.md](conventions-governance.md) |
 | CLI-справка | [docs/nova-cli.md](nova-cli.md) |
 | Открытые долги `[M-*]` | [docs/plans/backlog-followups.md](plans/backlog-followups.md) |
