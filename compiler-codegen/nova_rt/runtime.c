@@ -2448,18 +2448,32 @@ void nova_runtime_worker_pump_scope(struct NovaFiberQueue* scope) {
         return;
     }
 
-    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
-    if (base && base->_nova_parent_scope == scope) {
-        /* (4a) Belongs to our scope — resume inline. */
-        _worker_run_one_fiber(w, co);
-    } else {
-        /* (4b) Different scope (or orphan) — push back and return promptly
-         * so the outer loop re-checks pending_remote. Non-blocking UV tick +
-         * 1ms sleep matches the (5) path to avoid storms. */
-        nova_runq_put(&w->runq, &_nova_global_runq, co);
-        uv_run(&w->loop, UV_RUN_NOWAIT);
-        uv_sleep(1);
-    }
+    /* (4) [M-187-high-concurrency-connection-wedge] fix (2026-07-19): run ANY
+     * popped fiber inline, WORK-CONSERVING — do NOT special-case "belongs to our
+     * scope" by pushing a foreign fiber back.
+     *
+     * The old (4b) push-back-and-spin was a cross-worker deadlock: under a
+     * connection storm (MAXPROCS≥2, MAX_INFLIGHT>2) every worker blocks inside a
+     * nested supervised_run_impl pump, each holding a SIBLING scope's ready child
+     * in its own deque. Because each pump only ran fibers of ITS OWN scope and
+     * pushed every foreign child straight back to the same ring, no worker ever
+     * ran another worker's child → no child completed → no parent's
+     * pending_remote ever decremented → permanent wedge (watchdog:
+     * `[supervised] count=0 pending_remote=1` + `STUCK_ALIVE_NOT_PARKED` fibers
+     * with a registered net handle sitting un-run in a size>0 deque). Proven by
+     * the MAXPROCS discriminator: 1 worker survives (no sibling to strand on),
+     * ≥2 wedges; and this is a lost-wake/stuck-completion, NOT the SpawnCtx/GC
+     * corruption closed separately by the child_error[] uncollectable fix.
+     *
+     * Running any ready fiber is always safe here (_worker_run_one_fiber saves +
+     * restores the outer active-scope/slot TLS, identical to the own-scope path)
+     * and always makes global progress: a foreign fiber's eventual park or
+     * completion decrements ITS OWN parent's pending_remote, freeing that parent
+     * to return from its pump — the cycle unwinds. The outer supervised_run_impl
+     * re-checks OUR pending_remote after we return, exactly as before. This is
+     * the same work-conserving discipline _worker_main already uses (it runs
+     * whatever it pops, never scope-filtered). */
+    _worker_run_one_fiber(w, co);
 }
 
 /* ── Plan 83.10.2 (2026-05-26): nova_loop_defer_close ───────────────
