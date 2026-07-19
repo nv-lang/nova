@@ -138,12 +138,36 @@
   «решение владельца 2026-07-18 (вариант А; philosophy visible ownership
   transfer)».
 
-## Дальше по плану (не начато на момент этого чекпоинта)
-- Фикстуры pos/neg (spec_tests/conformance).
-- Миграция examples/tls, examples/net, examples/flagship/aggregator,
-  spec_tests/conformance, std/**.
+## Статус (обновление): чекер+парсер+спека готовы, смок-тесты зелёные, фикстуры conformance готовы
+
+- Release nova.exe собран (`cargo build --release --manifest-path nova-cli/Cargo.toml`), чист.
+- Смок-тесты (scratchpad) подтвердили: plain `Ok(x)` на must-consume → E_CONSUME_PATTERN_REQUIRED;
+  `Ok(consume x)` компилируется, mut-capable; `mut y = x` после pattern-consume → E_VIEW_BINDING_FORBIDDEN
+  (сработал СУЩЕСТВУЮЩИЙ Rule 2 код без правок в нём); двойной close → use-after (D131); view-default
+  на НЕ-consume payload (`Option[int]`) не сломан.
+- Новые фикстуры (spec_tests/conformance, joins single CU):
+  - `d157_d180_consume_pattern_rvalue_ok.nv` (pos) — rvalue+place консьюм-паттерн, mut-capable,
+    if-let форма, view-default unaffected.
+  - `neg/d157_consume_pattern_required_neg.nv` — E_CONSUME_PATTERN_REQUIRED, текст подсказки пинован.
+  - `neg/d180_view_binding_after_pattern_consume_neg.nv` — E_VIEW_BINDING_FORBIDDEN после pattern-consume.
+  - `neg/d157_consume_pattern_double_close_neg.nv` — use-after-consume (D131) на pattern-bound payload.
+- **Миграция формы, потребовалась новым правилом** (существующие conformance-фикстуры,
+  обнаружено через `nova check` на одном файле — вся CU перепроверяется разом):
+  1. `d174_sync_consume_guards.nv:70,75` — `Some(d174_og2/d174_og3)` (OnceGuard) → `Some(consume …)`.
+  2. `d86_consume_typedef.nv:22` — `Ok(v)` (D86TypedefRes) → `Ok(consume v)`.
+  3. `net2_bind_used_port_test.nv:14,19,32,36` — `Ok(lst)/Ok(dup)/Ok(s1)/Ok(dup)`
+     (TcpListener/UdpSocket) → `Ok(consume …)`.
+  Обоснование каждого — payload-тип must-consume (D133), плейн-биндинг раньше НЕ давал ошибки
+  из-за самого бага (голый `ctx.declare(n, None)`); после фикса — обязательная форма.
+- `nova check` на любом файле spec_tests/conformance загружает и перепроверяет ВСЮ папку разом
+  (folder = 1 CU) — это ЖЕ подтверждает полноту миграционного списка (одна проверка = все 300+ файлов).
+  После миграции — PASS:1 FAIL:0 (только pre-existing unused-import warnings из чужих файлов).
+
+## Дальше по плану
+- Закоммитить фикстуры+миграцию, прогнать `nova test` (полный EXPECT-раннер) для верификации.
+- Миграция examples/tls, examples/net, examples/flagship/aggregator, std/**.
 - nova-tls / nova-http worktree + миграция + тесты.
-- Финальная приёмка (standalone-CU 69/0, флагман --strict-effects).
+- Финальная приёмка (standalone-CU N/0, флагман --strict-effects).
 
 ## Сетевые обрывы
 Несколько сетевых/авторизационных обрывов за сессию — по инструкции

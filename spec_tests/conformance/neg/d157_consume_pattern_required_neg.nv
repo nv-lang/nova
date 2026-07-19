@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR [E_CONSUME_PATTERN_REQUIRED] pattern-биндинг `x` держит consume-обязательный пейлоад типа `D157ReqStream` из `Ok(..)` — требуется явный `consume`-паттерн
+//
+// Consume-волна А (D157-амендмент, 2026-07-19, Plan 73.2): plain `Ok(x)`
+// pattern-биндинг над must-consume Ok-inner типом (D156-пропагация через
+// Result[T,E]) — ошибка, требуется явный consume-sub-pattern
+// `Ok(consume x)`. Пин суждения (message) целиком, включая имя пейлоад-
+// типа и variant — точная диагностика (не только код).
+
+module neg.d157_consume_pattern_required_neg
+
+type D157ReqStream consume {
+    id int,
+}
+
+fn D157ReqStream consume @close() -> () { () }
+
+fn dial() -> Result[D157ReqStream, str] => Ok(D157ReqStream { id: 1 })
+
+test "plain Ok(x) на must-consume payload — ошибка" {
+    match dial() {
+        Ok(x) => { x.close() },
+        Err(_e) => {},
+    }
+}

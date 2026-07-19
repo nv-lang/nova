@@ -1,0 +1,28 @@
+// EXPECT_COMPILE_ERROR [E_VIEW_BINDING_FORBIDDEN] view-binding на consume-обязательную переменную `stream` запрещён в теле функции (D180)
+//
+// Consume-волна А (D180-амендмент, 2026-07-19, Plan 73.2):
+// `mut stream = tcp` (alias БЕЗ `consume`) над pattern-bound `tcp` из
+// `Ok(consume tcp)` — запрещён существующим D180 Rule 2
+// (E_VIEW_BINDING_FORBIDDEN), теперь фактически enforced на этом пути
+// (было тихо проходило до этой волны — маркер
+// [M-d180-consume-propagation-match-payload-mut-rebind] пункт (в)).
+
+module neg.d180_view_binding_after_pattern_consume_neg
+
+type D180ReqSession consume {
+    id int,
+}
+
+fn D180ReqSession consume @close() -> () { () }
+
+fn dial() -> Result[D180ReqSession, str] => Ok(D180ReqSession { id: 1 })
+
+test "mut stream = tcp (pattern-bound consume) — alias запрещён" {
+    match dial() {
+        Ok(consume tcp) => {
+            mut stream = tcp
+            stream.close()
+        },
+        Err(_e) => {},
+    }
+}

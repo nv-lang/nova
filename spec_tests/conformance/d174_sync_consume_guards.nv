@@ -67,12 +67,12 @@ test "OnceGuard: start_won у победителя, commit → DONE (D174)" {
 test "Once.start() -> Option[OnceGuard]: Nova-body обёртка (D174, U.1.3b sync-inline)" {
     mut d174_once2 = Once.new()
     match d174_once2.start() {
-        Some(d174_og2) => d174_og2.commit()
+        Some(consume d174_og2) => d174_og2.commit()
         None => assert(false)
     }
     assert(d174_once2.is_completed())
     match d174_once2.start() {
-        Some(d174_og3) => {
+        Some(consume d174_og3) => {
             d174_og3.abort()
             assert(false)
         }

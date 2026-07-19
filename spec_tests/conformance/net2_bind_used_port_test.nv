@@ -11,12 +11,12 @@ import std.net.{TcpListener, UdpSocket, SocketAddr, real_net}
 test "net2: TcpListener bind to already-used port → Err (no P67-LEGACY ICE)" {
     with Net = real_net() {
         match TcpListener.bind(SocketAddr.loopback(0)) {
-            Ok(lst) => {
+            Ok(consume lst) => {
                 ro port = lst.local_port()
                 assert(port > 0)
                 // Второй bind на тот же порт → EADDRINUSE.
                 match TcpListener.bind(SocketAddr.loopback(port)) {
-                    Ok(dup) => { dup.close() assert(false) }
+                    Ok(consume dup) => { dup.close() assert(false) }
                     Err(_)  => assert(true)
                 }
                 lst.close()
@@ -29,11 +29,11 @@ test "net2: TcpListener bind to already-used port → Err (no P67-LEGACY ICE)" {
 test "net2: UdpSocket bind to already-used port → Err (no P67-LEGACY ICE)" {
     with Net = real_net() {
         match UdpSocket.bind(SocketAddr.loopback(0)) {
-            Ok(s1) => {
+            Ok(consume s1) => {
                 ro port = s1.local_port()
                 assert(port > 0)
                 match UdpSocket.bind(SocketAddr.loopback(port)) {
-                    Ok(dup) => { dup.close() assert(false) }
+                    Ok(consume dup) => { dup.close() assert(false) }
                     Err(_)  => assert(true)
                 }
                 s1.close()
