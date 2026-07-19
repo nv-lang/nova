@@ -90,9 +90,14 @@ import std.runtime.char
 // auto-available (без явного `import` пользователем — сохраняет прежнее
 // поведение) И инлайнит сигнатуры в `method_table`, так что чекер теперь
 // резолвит `.sqrt()`/`.abs()` через нормальный overload-канал. Codegen EMISSION
-// не меняется — `f64_method_to_c`/`int_method_to_c` (emit_c.rs) остаются
-// единственным источником C-функции (`sqrt`/`llabs`/...); этот import только
-// закрывает checker-side существование/arg-checking канал.
+// для f64/f32 math не меняется — `f64_method_to_c` (emit_c.rs) остаётся
+// единственным источником C-функции (`sqrt`/...). [Числовой паритет-2,
+// 2026-07-20] `int.abs()` — ИСКЛЮЧЕНИЕ из этого правила теперь: `int
+// @abs()` retracted из этого файла (был extern "nova" -> C `llabs`, UB на
+// `T.MIN`) и `int_method_to_c` (emit_c.rs) полностью удалён — `abs` для
+// `int` (и узких signed) теперь настоящий `.nv`-бланкет
+// (std/prelude/protocols.nv, `fn[T SignedInt] T @abs()`), без
+// C-function-name хардкода вообще.
 import std.runtime.math
 
 // Plan 62.C / 62.C.bis: re-export error types из std.prelude.errors.

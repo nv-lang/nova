@@ -377,3 +377,142 @@ test "Числовой паритет: f64.MIN/f32.MIN — most-negative-finite,
     assert(f64.MIN.is_finite())
     assert(f32.MIN.is_finite())
 }
+
+// ── [Числовой паритет-2, 2026-07-20] `abs`/`checked_abs`/`saturating_abs`/
+// `wrapping_abs` над `SignedInt` — `int @abs()` retracted от старого extern
+// "nova" -> C `llabs` (UB на `T.MIN`), заменён `.nv`-бланкетом, который
+// трапит на `T.MIN` через УЖЕ существующий unary-negate trap guard (D427
+// §R2, "negation overflow") — не новая overflow-политика. Узкие signed
+// (i8/i16/i32/i64) получают `abs` впервые.
+
+test "Числовой паритет-2: abs — обычные значения (int/sized signed), без overflow" {
+    ro a int = -5
+    assert(a.abs() == 5)
+    ro b int = 42
+    assert(b.abs() == 42)
+    ro c i32 = -2147483647
+    ro c_abs i32 = 2147483647
+    assert(c.abs() == c_abs)
+    ro d i8 = -100
+    ro d_abs i8 = 100
+    assert(d.abs() == d_abs)
+    ro e i64 = 0
+    assert(e.abs() == 0)
+}
+
+test "Числовой паритет-2: abs — int.MIN трапит (было UB через llabs, теперь честный trap)" panics "negation overflow" {
+    ro a = int.MIN
+    ro _r = a.abs()
+}
+
+test "Числовой паритет-2: abs — i32.MIN трапит (узкий signed, раньше abs вовсе не было)" panics "negation overflow" {
+    ro a i32 = i32.MIN
+    ro _r = a.abs()
+}
+
+test "Числовой паритет-2: checked_abs/saturating_abs/wrapping_abs — MIN-edge (None/MAX/MIN) + обычные" {
+    ro amin i8 = i8.MIN
+    assert(amin.checked_abs() == None)
+    ro amax i8 = i8.MAX
+    assert(amin.saturating_abs() == amax)
+    assert(amin.wrapping_abs() == amin)
+
+    ro bmin i32 = i32.MIN
+    assert(bmin.checked_abs() == None)
+    ro bmax i32 = i32.MAX
+    assert(bmin.saturating_abs() == bmax)
+    assert(bmin.wrapping_abs() == bmin)
+
+    ro c i32 = -7
+    ro c_abs i32 = 7
+    assert(c.checked_abs() == Some(c_abs))
+    assert(c.saturating_abs() == c_abs)
+    assert(c.wrapping_abs() == c_abs)
+    ro d int = 9
+    assert(d.checked_abs() == Some(d))
+    assert(d.saturating_abs() == d)
+    assert(d.wrapping_abs() == d)
+}
+
+// ── [Числовой паритет-2, 2026-07-20] `saturating_neg` над `SignedInt` —
+// Rust даёт её ТОЛЬКО signed-типам (в отличие от `checked_neg`/
+// `wrapping_neg`, которые остаются `Ints`-бланкетами выше).
+
+test "Числовой паритет-2: saturating_neg — MIN клампит к MAX, обычные не трогает" {
+    ro amin i8 = i8.MIN
+    ro amax i8 = i8.MAX
+    assert(amin.saturating_neg() == amax)
+    ro bmin i32 = i32.MIN
+    ro bmax i32 = i32.MAX
+    assert(bmin.saturating_neg() == bmax)
+    ro c i32 = 5
+    ro neg_five i32 = -5
+    assert(c.saturating_neg() == neg_five)
+    ro d i32 = -5
+    ro five i32 = 5
+    assert(d.saturating_neg() == five)
+    ro e int = 0
+    assert(e.saturating_neg() == 0)
+}
+
+// ── [Числовой паритет-2, 2026-07-20] Целочисленный `pow`/`checked_pow`/
+// `saturating_pow`/`wrapping_pow` над `Ints` — раньше не было вообще ни в
+// каком виде. `exp` — `u32` (Rust-паритет). `pow` трапит на overflow
+// (сырой `*`, D423 §R3), тот же trap-дефолт, что `+`/`-`/`*`.
+
+test "Числовой паритет-2: pow — 0/1/обычные степени, signed+unsigned, без overflow" {
+    ro a i32 = 5
+    assert(a.pow(0) == 1)
+    assert(a.pow(1) == 5)
+    ro b i32 = 2
+    assert(b.pow(10) == 1024)
+    ro z i32 = 0
+    assert(z.pow(0) == 1)          // 0^0 == 1 (математическая конвенция, Rust-паритет)
+    ro c u8 = 2
+    ro c_pow u8 = 128
+    assert(c.pow(7) == c_pow)      // 2^7 = 128, ровно на границе u8 (не overflow)
+    ro d int = -3
+    assert(d.pow(3) == -27)
+}
+
+test "Числовой паритет-2: pow — i32 2^31 трапит (integer overflow: *, D423 trap-дефолт)" panics "integer overflow: *" {
+    ro a i32 = 2
+    ro _r = a.pow(31)
+}
+
+test "Числовой паритет-2: checked_pow — None при overflow на любом шаге squaring, Some иначе" {
+    ro a i32 = 2
+    ro a_pow i32 = 1024
+    assert(a.checked_pow(10) == Some(a_pow))
+    assert(a.checked_pow(31) == None)          // 2^31 > i32.MAX
+    ro b u8 = 2
+    assert(b.checked_pow(8) == None)           // 2^8 = 256 > u8.MAX (переполнение в base-squaring шаге)
+    ro c u8 = 2
+    ro c_pow u8 = 128
+    assert(c.checked_pow(7) == Some(c_pow))
+}
+
+test "Числовой паритет-2: saturating_pow — знак ИСХОДНОГО @ + чётность exp определяют MIN/MAX" {
+    ro a i32 = 2
+    ro a_max i32 = i32.MAX
+    assert(a.saturating_pow(31) == a_max)       // positive base -> MAX
+    ro b i8 = 5
+    ro b_max i8 = i8.MAX
+    assert(b.saturating_pow(4) == b_max)        // 5^4=625 > i8.MAX(127) -> MAX
+    ro c i8 = -3
+    ro c_min i8 = i8.MIN
+    assert(c.saturating_pow(5) == c_min)        // (-3)^5=-243 < i8.MIN(-128), exp нечётный -> MIN
+    ro d u8 = 2
+    ro d_max u8 = u8.MAX
+    assert(d.saturating_pow(8) == d_max)        // unsigned: @<0 константно false -> всегда MAX
+}
+
+test "Числовой паритет-2: wrapping_pow — модульно на каждом шаге squaring, никогда не паникует" {
+    ro a u8 = 2
+    ro zero u8 = 0
+    assert(a.wrapping_pow(8) == zero)           // 2^8 = 256 mod 256 = 0
+    ro b i32 = 2
+    assert(b.wrapping_pow(31) == i32.MIN)       // 2^31 mod 2^32, представлено как i32 -> i32.MIN
+    ro c i32 = 3
+    assert(c.wrapping_pow(3) == 27)             // обычный случай — байт-паритет с pow
+}

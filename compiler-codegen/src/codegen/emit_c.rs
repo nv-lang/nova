@@ -36661,17 +36661,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             c_fn = c_fn, dst = dst_c, src = obj_c, n = n_c, pointee = pointee));
                     }
                 }
-                // 3c. D74 math methods on int (selected — abs, sign):
-                //     `n.abs()` → `llabs(n)`. Большинство int-методов — это
-                //     int-to-string, обработаны в str.from(...).
-                if obj_ty == "nova_int" {
-                    if let Some(c_fn) = Self::int_method_to_c(method) {
-                        let obj_c = self.emit_expr(obj)?;
-                        let mut arg_strs = vec![obj_c];
-                        for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
-                        return Ok(format!("{}({})", c_fn, arg_strs.join(", ")));
-                    }
-                }
+                // [Числовой паритет-2, 2026-07-20] 3c. D74 `int.abs()` →
+                // `llabs(n)` hardcode REMOVED (`int_method_to_c` retired —
+                // was UB on `LLONG_MIN`). `abs` on `int` is now a normal
+                // `.nv` `fn[T SignedInt] T @abs() -> T` blanket (std/
+                // prelude/protocols.nv) — it must reach the ORDINARY
+                // `.nv`-method dispatch below, not be intercepted here.
                 // Plan 206 Ф.1 (D423): `@overflowing_add/_sub/_mul` on any
                 // `Ints` primitive receiver — pure compiler intrinsic (needs a
                 // HW overflow flag, cannot be a `.nv` body). Direct inline
@@ -47037,16 +47032,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    /// D74: Map a Nova int method to a C function.
-    /// Большинство int-операций — встроенные операторы; здесь только
-    /// дополнительные (abs).
-    fn int_method_to_c(method: &str) -> Option<&'static str> {
-        match method {
-            "abs"  => Some("llabs"),     // long long abs
-            _ => None,
-        }
-    }
-
     /// Plan 177 Ф.3 [E_UNKNOWN_METHOD] — checker-side EXISTENCE oracle for INSTANCE
     /// methods on a PRIMITIVE receiver (`is_primitive_recv_name`) whose method set is
     /// (partly) HARDCODED in codegen — the D109 `prim_builtin_method` (hash/eq/ord/clone),
@@ -47069,9 +47054,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// `method_table["int"]["abs"]` are populated the NORMAL way and `method_overloads`
     /// (consulted by the caller BEFORE this fn) resolves them directly, with real
     /// arg-type checking. Those two arms are therefore unreachable now (removed, not
-    /// dead-but-kept) — codegen EMISSION is untouched, `f64_method_to_c`/
-    /// `int_method_to_c` remain the sole Nova-method → C-function mapping (called
-    /// directly from `emit_call`, not through this existence oracle).
+    /// dead-but-kept) — codegen EMISSION for f64/f32 math is untouched,
+    /// `f64_method_to_c` remains the sole Nova-method → C-function mapping for
+    /// those (called directly from `emit_call`, not through this existence
+    /// oracle). [Числовой паритет-2, 2026-07-20] `int_method_to_c` itself is
+    /// GONE now (not just this arm) — `int.abs()` was retracted from the
+    /// hardcode entirely and replaced by a real `.nv` `SignedInt` blanket
+    /// (std/prelude/protocols.nv), so it no longer needs any C-function-name
+    /// mapping table at all (its `.nv` body compiles like any other method).
     ///
     /// Deliberately GENEROUS (existence, not exact dispatch): the SAFE direction is
     /// "known" — a false "known" merely defers a genuinely-broken call to codegen
@@ -52472,9 +52462,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // [196.5 Stage-D] B11aa_int_math REMOVED. D74 `int_method_to_c`
                         // (`abs`) return-type consultation — same reasoning as B11y above
                         // (`int.abs()` is now a normal prelude method, checker-materialised
-                        // ahead of this legacy). `int_method_to_c` itself stays (emit_call
-                        // still uses it for the C-function mapping). NO-HIT across the same
-                        // 4-corpus measurement ⟹ structurally unreachable (§5).
+                        // ahead of this legacy). NO-HIT across the same 4-corpus measurement
+                        // ⟹ structurally unreachable (§5). [Числовой паритет-2, 2026-07-20]
+                        // `int_method_to_c` itself is now fully RETRACTED (not just this
+                        // consultation arm) — `int.abs()` is a real `.nv` `SignedInt`
+                        // blanket (std/prelude/protocols.nv), no C-function-name table
+                        // needed for it anymore; see runtime_registry.rs/emit_call.
                         // Plan 196.2 W1 [gate-1]: B11ab_str_method_big_match_second REMOVED.
                         // `str` is a .nv-backed type whose methods (to_upper/trim/len/byte_at/
                         // char_at/find/bytes/split/compare/pad/repeat/replace/…) are Nova-body /

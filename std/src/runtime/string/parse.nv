@@ -116,8 +116,14 @@ export fn str @to_f64() -> Result[f64, ParseFloatError] {
 }
 
 // ── Plan 174.1 (2026-07-08): `str @to_*` integer conversion surface ───────
-// Live set per actual consumers (owner decision) — NOT the full SignedInt/
-// UnsignedInt type-set: `to_int`, `to_i64`, `to_u64`, `to_u32`, `to_u8`.
+// Live set per actual consumers (owner decision) — originally NOT the full
+// SignedInt/UnsignedInt type-set: `to_int`, `to_i64`, `to_u64`, `to_u32`,
+// `to_u8`. [Числовой паритет-2, 2026-07-20] owner decision revisited
+// ("закрывать") — the remaining gaps (`to_i8`/`to_i16`/`to_i32`/`to_u16`/
+// `to_uint`) are filled below, completing the full SignedInt/UnsignedInt
+// set. Same per-method-overload-on-`str` form throughout (the type-set-
+// bounded generic path-call gap noted below still applies — unrelated to
+// which widths are live).
 // A type-set-bounded generic (`fn[T SignedInt] T.parse(...)`, tried first
 // per "используй механизм type-set-функций из 172.3, если есть") hit a live
 // codegen gap — a generic function whose RECEIVER is the type-set parameter
@@ -126,11 +132,13 @@ export fn str @to_f64() -> Result[f64, ParseFloatError] {
 // overloads on `str` are the interim form (as `f64.parse`/`to_f64` already
 // were before this file existed in its current shape).
 //
-// `to_u32`/`to_u8` range-check the wide unsigned engine result before
-// narrowing — closes the historical truncation bug (`i8.try_parse("999")`
-// used to silently wrap via a raw C-cast instead of erroring; см. Plan
-// 174.1 §4). `to_int`/`to_i64`/`to_u64` need no post-check — the engine's
-// own overflow guard already covers their whole range.
+// `to_u32`/`to_u8`/`to_u16`/`to_i32`/`to_i16`/`to_i8` range-check the wide
+// engine result (`int`/`uint` domain) before narrowing — closes the
+// historical truncation bug (`i8.try_parse("999")` used to silently wrap
+// via a raw C-cast instead of erroring; см. Plan 174.1 §4). `to_int`/
+// `to_i64`/`to_u64`/`to_uint` need no post-check — the engine's own
+// overflow guard already covers their whole range (`uint` is the same
+// width as the `@parse_uint_core` engine itself, no narrowing at all).
 
 /// Decimal (default) or radix-N (`radix: 2..=36`) parse into `int`.
 #stable(since = "0.1")
@@ -164,3 +172,47 @@ export fn str @to_u8(radix int = 10) -> Result[u8, ParseIntError] {
     if v > (u8.MAX as uint) { return Err(Overflow) }
     Ok(v as u8)
 }
+
+// [Числовой паритет-2, 2026-07-20] Остаток SignedInt/UnsignedInt-набора,
+// добор по решению владельца ("закрывать") к живому подмножеству Plan
+// 174.1 выше. Тот же движок (`@parse_int_core`/`@parse_uint_core`), тот
+// же range-check-после-разбора паттерн, что `to_u32`/`to_u8`.
+
+/// Decimal (default) or radix-N parse into `i8`, range-checked.
+#stable(since = "0.1")
+export fn str @to_i8(radix int = 10) -> Result[i8, ParseIntError] {
+    ro v = @parse_int_core(radix)?
+    if v > (i8.MAX as int) || v < (i8.MIN as int) { return Err(Overflow) }
+    Ok(v as i8)
+}
+
+/// Decimal (default) or radix-N parse into `i16`, range-checked.
+#stable(since = "0.1")
+export fn str @to_i16(radix int = 10) -> Result[i16, ParseIntError] {
+    ro v = @parse_int_core(radix)?
+    if v > (i16.MAX as int) || v < (i16.MIN as int) { return Err(Overflow) }
+    Ok(v as i16)
+}
+
+/// Decimal (default) or radix-N parse into `i32`, range-checked.
+#stable(since = "0.1")
+export fn str @to_i32(radix int = 10) -> Result[i32, ParseIntError] {
+    ro v = @parse_int_core(radix)?
+    if v > (i32.MAX as int) || v < (i32.MIN as int) { return Err(Overflow) }
+    Ok(v as i32)
+}
+
+/// Decimal (default) or radix-N parse into `u16`, range-checked (unsigned:
+/// a leading `-` is `Err(InvalidDigit)`, not negation).
+#stable(since = "0.1")
+export fn str @to_u16(radix int = 10) -> Result[u16, ParseIntError] {
+    ro v = @parse_uint_core(radix)?
+    if v > (u16.MAX as uint) { return Err(Overflow) }
+    Ok(v as u16)
+}
+
+/// Decimal (default) or radix-N parse into `uint`. Same range as the
+/// `@parse_uint_core` engine itself (`uint` IS that engine's domain) — no
+/// range-check needed, mirrors `@to_int` above.
+#stable(since = "0.1")
+export fn str @to_uint(radix int = 10) -> Result[uint, ParseIntError] => @parse_uint_core(radix)
