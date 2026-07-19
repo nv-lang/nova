@@ -48969,6 +48969,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ("char", "MAX", "((nova_int)0x10FFFFLL)", "nova_int"),
             ("char", "MIN", "((nova_int)0LL)",        "nova_int"),
             // Float
+            // [Plan 200 numeric-parity] `f64.MIN`/`f32.MIN` были ОТСУТСТВУЮЩИМИ —
+            // "MIN" уже в generic `is_numeric_const` списке чекера (types/mod.rs),
+            // так что `f64.MIN`/`f32.MIN` проходили type-check, но падали на
+            // C-компиляции (`use of undeclared identifier 'f64_MIN'`) — не было
+            // мэппинга в этой таблице. Rust-паритет: `f64::MIN`/`f32::MIN` =
+            // most-negative-FINITE значение (`-MAX`), НЕ путать с `MIN_POSITIVE`
+            // (наименьшее положительное нормализованное) — они разные константы,
+            // обе нужны одновременно (как в Rust).
+            ("f64",  "MIN",          "(-DBL_MAX)",                       "nova_f64"),
             ("f64",  "MAX",          "DBL_MAX",                          "nova_f64"),
             ("f64",  "MIN_POSITIVE", "DBL_MIN",                          "nova_f64"),
             ("f64",  "EPSILON",      "DBL_EPSILON",                      "nova_f64"),
@@ -48977,6 +48986,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ("f64",  "NEG_INFINITY", "((double)(-INFINITY))",            "nova_f64"),
             ("f64",  "PI",           "3.14159265358979323846",           "nova_f64"),
             ("f64",  "E",            "2.71828182845904523536",           "nova_f64"),
+            ("f32",  "MIN",          "(-FLT_MAX)",                       "nova_f32"),
             ("f32",  "MAX",          "FLT_MAX",                          "nova_f32"),
             ("f32",  "MIN_POSITIVE", "FLT_MIN",                          "nova_f32"),
             ("f32",  "EPSILON",      "FLT_EPSILON",                      "nova_f32"),

@@ -179,15 +179,24 @@ export fn f64 @max(other Self) -> Self => if @ > other { @ } else { other }
 // clamp — restrict value to [lo, hi] range.
 // int @clamp retracted Plan 200 Step 0 (D74 amend): now covered by the
 // `fn[T Ints] T @clamp(lo T, hi T) -> T` blanket (std/prelude/protocols.nv).
-// f64 @clamp stays concrete — f64 ∉ Ints (float clamp not part of the blanket).
+// f64/f32 @clamp stay concrete — float ∉ Ints (float clamp not part of the blanket).
 export fn f64 @clamp(lo f64, hi f64) -> f64 =>
     if @ < lo { lo } else if @ > hi { hi } else { @ }
 
-// D74 sign/predicate methods on `int` (where mathematically meaningful).
+// [Числовой паритет, 2026-07-19] `f32 @clamp` — was missing entirely (only
+// `f64 @clamp` existed); mechanical mirror, byte-identical contract (same
+// lo>hi behavior as f64/Ints @clamp — `@ < lo` checked first, never returns
+// `@` on an inverted range).
+export fn f32 @clamp(lo f32, hi f32) -> f32 =>
+    if @ < lo { lo } else if @ > hi { hi } else { @ }
+
+// D74 sign/predicate methods (where mathematically meaningful).
 // signum: -1 / 0 / +1 by sign. is_negative / is_positive: strict sign tests.
 // Pure if-expressions (same shape as @clamp) — resolved + lowered like any
-// `.nv`-declared int method, no Rust hardcode (§3).
-export fn int @signum() -> int =>
-    if @ < 0 { -1 } else if @ > 0 { 1 } else { 0 }
-export fn int @is_negative() -> bool => @ < 0
-export fn int @is_positive() -> bool => @ > 0
+// `.nv`-declared method, no Rust hardcode (§3).
+//
+// [Числовой паритет, 2026-07-19] retracted: `int @signum`/`@is_negative`/
+// `@is_positive` concrete-on-int-only bodies were replaced by the
+// `fn[T SignedInt] ...` blanket (std/prelude/protocols.nv, рядом с
+// `@clamp`-бланкетом) — тот же Plan 200 Step 0 паттерн (D74 amend), теперь
+// покрывающий i8/i16/i32/i64/int одним телом вместо ×N конкретных методов.

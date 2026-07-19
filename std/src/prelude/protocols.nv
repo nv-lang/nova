@@ -1071,3 +1071,30 @@ export fn[T Ints] T @wrapping_neg() -> T {
 #stable(since = "0.1")
 export fn[T Ints] T @clamp(lo T, hi T) -> T =>
     if @ < lo { lo } else if @ > hi { hi } else { @ }
+
+// [Числовой паритет, 2026-07-19] `signum`/`is_negative`/`is_positive` над
+// `SignedInt` — были концертными ТОЛЬКО на `int` (std/runtime/defaults.nv, D74),
+// i8/i16/i32/i64 не имели этих методов вовсе. Тела — чистые сравнения (`@ < 0`/
+// `@ > 0`), БЕЗ арифметики, значит без риска overflow (в отличие от `abs`, где
+// `-@` на `T.MIN` трапит — оставлено нетронутым до отдельного решения
+// владельца). Вытесняет старый конкретный `int @signum`/`@is_negative`/
+// `@is_positive` (std/runtime/defaults.nv) — теперь i8/i16/i32/i64/int все
+// получают эти методы через ЭТОТ бланкет. `UnsignedInt` НЕ входит — как и в
+// Rust, unsigned-типы не имеют `signum`/`is_negative`/`is_positive` (сравнение
+// с 0 для unsigned мат. вырождено: `is_negative` всегда `false`,
+// `is_positive` эквивалентен `!= 0`, `signum` не имеет отдельного -1-плеча) —
+// расширение на `UnsignedInt` было бы искусственным добавлением API, которого
+// нет у эталона (rustc-as-reference), поэтому не добирается.
+
+/// `signum` — знак значения: `-1`, если `@ < 0`; `1`, если `@ > 0`; иначе `0`.
+#stable(since = "0.1")
+export fn[T SignedInt] T @signum() -> T =>
+    if @ < 0 { -1 } else if @ > 0 { 1 } else { 0 }
+
+/// `is_negative` — строгая проверка знака: `true` iff `@ < 0`.
+#stable(since = "0.1")
+export fn[T SignedInt] T @is_negative() -> bool => @ < 0
+
+/// `is_positive` — строгая проверка знака: `true` iff `@ > 0`.
+#stable(since = "0.1")
+export fn[T SignedInt] T @is_positive() -> bool => @ > 0
