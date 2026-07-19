@@ -61,11 +61,22 @@ Windows (`fiber_arena_win.c`) поведенчески не тронут (там
 карантин+double-release-abort+live-проверки в goready/resume/sweep/driver)
 и дискриминатор `NOVA_UNCOLL_QUAR=1` (alloc_boehm.c).
 
-### Гейты волны — см. итоговый отчёт/коммиты
+### Гейты волны (все зелёные)
 - pos_max_fibers_concurrent: **30/30 PASS release + 30/30 dev** (было 0/30)
 - supervisor_stop_test: **10/10 PASS** (прямые прогоны)
 - supervisor_parfor_test (known-red CI): **10/10 PASS**
-- остальное — ниже по логу волны (standalone-CU WSL, conformance, Windows).
+- `spec_tests/conformance/standalone` WSL (весь CU): **PASS 68 / FAIL 0**
+- `spec_tests/conformance/standalone` Windows (фикс-бинарь, --jobs 4): **PASS 68 / FAIL 0** — регрессии нет (Windows-поведение не менялось: fiber_arena_win.c поведенчески не тронут, лишь no-op экспорты нового API).
+- TSan: НЕ применим — корень не data-race (GC-root-loss; `GC_MARKERS=1` в прежних волнах не лечил — согласуется).
+
+### Развод с [M-187-high-concurrency-connection-wedge] (параллельная ветка nova-wedge)
+M-187 — WINDOWS-симптом (permanent-000, loadtest.ps1). Мой фикс POSIX-only
+(fiber_arena.c); Windows-колбэк уже пушил все 3 слагаемых → GC-рутов на Windows
+не терялось → корня МОЕГО типа на Windows НЕТ. Значит M-187 wedge — ОТДЕЛЬНЫЙ
+баг (scheduler park/join под connection-concurrency, fibers.h — территория
+nova-wedge). Развод чистый: разные слои/платформы/файлы ядра (fiber_arena.c vs
+fibers.h). Единственное касание fibers.h здесь — 8 строк env-gated диагностики
+в nova_scope_sweep_dead_child (НИ строки логики планировщика).
 
 Прежние заходы ниже сохранены как история (двумя волнами sonnet до этого).
 
