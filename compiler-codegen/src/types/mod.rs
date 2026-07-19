@@ -33667,23 +33667,37 @@ impl MapLitAnnotator {
     }
 
     /// Plan 214 (D429): identical to `walk_block`, EXCEPT the block's own
-    /// trailing expression is propagated `current_fn_return_ty` — used ONLY
-    /// for a `FnBody::Block`'s OUTERMOST block (called once, from `walk_items`'
-    /// `Item::Fn` arm), where a fall-through trailing expr genuinely IS the
-    /// function's return value (implicit return, no `return` keyword). NOT
-    /// used for any nested block (if/match/loop bodies, etc. — those keep
-    /// calling plain `walk_block`, unchanged) — a nested block's OWN trailing
-    /// is only the function's return value when the whole enclosing construct
-    /// is itself in tail position, which this fix does not attempt to track
-    /// (see field doc; explicit `return X` — handled in `walk_stmt` instead —
-    /// has no such ambiguity, at ANY nesting depth).
+    /// trailing expression ALSO gets a direct `try_coerce_leaf` pass against
+    /// `current_fn_return_ty` — used ONLY for a `FnBody::Block`'s OUTERMOST
+    /// block (called once, from `walk_items`' `Item::Fn` arm), where a
+    /// fall-through trailing expr genuinely IS the function's return value
+    /// (implicit return, no `return` keyword). NOT used for any nested block
+    /// (if/match/loop bodies, etc. — those keep calling plain `walk_block`,
+    /// unchanged) — a nested block's OWN trailing is only the function's
+    /// return value when the whole enclosing construct is itself in tail
+    /// position, which this fix does not attempt to track (see field doc;
+    /// explicit `return X` — handled in `walk_stmt` — has no such ambiguity,
+    /// at ANY nesting depth).
+    ///
+    /// Deliberately does NOT call `walk_expr(t, ret_ty)` (which would ALSO
+    /// hand the return type to `try_wrap_leaf` — the PRE-EXISTING D55
+    /// single-wrapper rewrite, scoped to call-arg/let-const/element per its
+    /// own doc, never return): recurses via `walk_expr(t, None)` first
+    /// (byte-identical to prior behavior for every OTHER expected-type-driven
+    /// mechanism this walk does — map-literal inference, sum/newtype
+    /// try_wrap_leaf, record-field propagation, …), THEN applies ONLY
+    /// `try_coerce_leaf` directly against the return type. Silently widening
+    /// single-wrapper's OWN scope to cover return position would be an
+    /// undiscussed, un-spec'd behavior change beyond Plan 214's mandate.
     fn walk_fn_body_block(&mut self, b: &mut Block) {
         for s in &mut b.stmts {
             self.walk_stmt(s);
         }
         if let Some(t) = &mut b.trailing {
-            let ret_ty = self.current_fn_return_ty.clone();
-            self.walk_expr(t, ret_ty.as_ref());
+            self.walk_expr(t, None);
+            if let Some(ret_ty) = self.current_fn_return_ty.clone() {
+                self.try_coerce_leaf(t, &ret_ty);
+            }
         }
     }
 
@@ -33755,16 +33769,26 @@ impl MapLitAnnotator {
             }
             Stmt::Return { value, .. } => {
                 // Plan 214 (D429): propagate the enclosing FUNCTION's return
-                // type — `return X` always targets it regardless of nesting
-                // depth (unlike a block's OWN trailing expr, which is only
-                // the fn's return value in actual tail position — see
-                // `current_fn_return_ty` field doc). Found empirically: a
-                // bare `return sb` (finalize lane) compiled straight to a
-                // raw C `return sb;` without this — CC-FAIL (`Nova_
-                // StringBuilder*` where `nova_str` expected).
+                // type to `try_coerce_leaf` ONLY — `return X` always targets
+                // it regardless of nesting depth (unlike a block's OWN
+                // trailing expr, which is only the fn's return value in
+                // actual tail position — see `current_fn_return_ty` field
+                // doc). Found empirically: a bare `return sb` (finalize lane)
+                // compiled straight to a raw C `return sb;` without this —
+                // CC-FAIL (`Nova_StringBuilder*` where `nova_str` expected).
+                //
+                // Recurses via `walk_expr(v, None)` (byte-identical to prior
+                // behavior for every OTHER expected-type-driven mechanism —
+                // see `walk_fn_body_block`'s matching doc for why NOT to hand
+                // the return type to the full `walk_expr`: it would ALSO
+                // widen the PRE-EXISTING D55 single-wrapper `try_wrap_leaf`
+                // rewrite to a position it was never scoped to (return),
+                // outside Plan 214's mandate).
                 if let Some(v) = value {
-                    let ret_ty = self.current_fn_return_ty.clone();
-                    self.walk_expr(v, ret_ty.as_ref());
+                    self.walk_expr(v, None);
+                    if let Some(ret_ty) = self.current_fn_return_ty.clone() {
+                        self.try_coerce_leaf(v, &ret_ty);
+                    }
                 }
             }
             Stmt::Throw { value, .. } => self.walk_expr(value, None),
