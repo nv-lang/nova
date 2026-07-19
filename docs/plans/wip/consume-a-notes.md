@@ -189,9 +189,35 @@
   в pos_protocol_lit_closure_capture.nv). standalone-CU подмножество
   (авторитетный acceptance-бар задания) — чисто: PASS 69 FAIL 0.
 
-## Дальше по плану
-- nova-http worktree + грепнуть Ok(-паттерны на consume-типах + миграция + тесты.
-- Финальный отчёт (хэши веток, таблица миграции).
+## ФИНАЛ (готово к слиянию)
+
+- nova-http (worktree `d:/Sources/nv-lang/nova-http-consumeA`, ветка
+  `consume-a`) — 2 файла (`transport/real.nv` x2, `servernet/rt/
+  handle_connection_smoke.nv` x2 сайта) мигрированы. Все домен-модули
+  (root http, client, server, servernet+rt, serdejson, transport) —
+  `nova check` чист. `nova test src` падает на ПРЕ-СУЩЕСТВУЮЩЕМ codegen-
+  гэпе "for-in: cannot resolve iterator type… (Plan 35)" — НЕ consume,
+  подтверждено кросс-чеком на нетронутом master (identical failure на
+  serdejson.nv, файле который я не трогал).
+- Финальный повторный прогон standalone-CU (после того как ранний прогон
+  дал 3× CC-FAIL под --jobs 4 при параллельной фоновой нагрузке — изолиро-
+  ванная перепроверка --jobs 1 тех же 3 тестов дала чистый PASS,
+  подтверждая resource-contention флейку, НЕ регрессию) — финальный чистый
+  прогон: **PASS 69 FAIL 0**, exit=0.
+
+## Хэши веток (финал)
+- nova: `p-consume-enforce-a` @ `621cc7e5d5cc33ee34514882f7172b2a5d6b4819`
+  (база `main` @ `b2bfa05050d1e8e173d6e2b96dcb09d362d544cc`)
+- nova-tls: `consume-a` @ `38957a19973a10b5f8f439a89a296e5d73710aa3`
+  (база `master` @ `77c731e9dba95b84b2095631d08e548cf1511045`)
+- nova-http: `consume-a` @ `c76d5dc500880be3c9f8e361f535a58b6ad61456`
+  (база `master` @ `250f4abbb8b73c01932f5c013cc5dd831202e5fc`)
+
+Модель: sonnet (Claude Sonnet 5) на всех этапах.
+
+ГОТОВО К СЛИЯНИЮ — детальный отчёт передан оркестратору отдельным
+сообщением (та же структура, что в этом файле, + вердикты приёмки
+дословно).
 
 ## Сетевые обрывы
 Несколько сетевых/авторизационных обрывов за сессию — по инструкции
