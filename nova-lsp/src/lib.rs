@@ -17,6 +17,7 @@ pub mod format;
 pub mod goto_definition;
 pub mod hover;
 pub mod incremental;
+pub mod index_cache;
 pub mod inlay_hints;
 pub mod organize_imports;
 pub mod perf;

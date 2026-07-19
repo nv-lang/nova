@@ -27,6 +27,7 @@ use dashmap::DashMap;
 use nova_codegen::ast::{FnDecl, Item, Module, Pattern, TypeDeclKind};
 use nova_codegen::diag::Span;
 use ropey::Rope;
+use serde::{Deserialize, Serialize};
 use tower_lsp::lsp_types::{
     DocumentSymbol, Location, Position, Range, SymbolInformation, SymbolKind, Url,
 };
@@ -70,7 +71,13 @@ impl DocumentSymbolCache {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A single indexed symbol entry.
-#[derive(Debug, Clone)]
+///
+/// `Serialize`/`Deserialize` (Plan 215): every field type (`SymbolKind`,
+/// `Url`, `Range`) is already part of the LSP JSON-RPC wire format and
+/// derives these traits upstream in `lsp_types`/`url`, so this entry can be
+/// persisted to the on-disk index cache (`index_cache.rs`) verbatim — no
+/// separate cache-only schema needed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceSymbolEntry {
     pub name: String,
     pub kind: SymbolKind,
@@ -96,6 +103,20 @@ impl WorkspaceIndex {
     /// Remove index entries for a closed file.
     pub fn remove_file(&self, uri: &Url) {
         self.entries.remove(uri);
+    }
+
+    /// Plan 215: install pre-computed entries for `uri` without re-parsing —
+    /// used by the persistent index cache's warm-start path (`index_cache.rs`)
+    /// when the on-disk (mtime, size) fingerprint still matches the file.
+    pub fn install_file(&self, uri: Url, entries: Vec<WorkspaceSymbolEntry>) {
+        self.entries.insert(uri, entries);
+    }
+
+    /// Plan 215: read back this file's current entries (for persisting to the
+    /// on-disk cache after a (re)index). Empty `Vec` if the file has none /
+    /// isn't indexed.
+    pub fn export_file(&self, uri: &Url) -> Vec<WorkspaceSymbolEntry> {
+        self.entries.get(uri).map(|e| e.value().clone()).unwrap_or_default()
     }
 
     /// Search symbols matching `query` (case-insensitive substring).
@@ -282,6 +303,46 @@ impl ReferencesIndex {
     /// Mark the cold workspace scan as complete (idempotent).
     pub fn mark_primed(&self) {
         self.primed.store(true, Ordering::Release);
+    }
+
+    /// Plan 215: install pre-computed `(name, occurrence ranges)` pairs for
+    /// `uri` without re-parsing — the persistent index cache's warm-start
+    /// path when the file's on-disk fingerprint is unchanged. Mirrors
+    /// [`index_file`](Self::index_file)'s bookkeeping (clears any prior
+    /// contribution first, so a repeated install is idempotent) but skips the
+    /// tokenizer entirely.
+    pub fn install_file(&self, uri: Url, refs: Vec<(String, Vec<Range>)>) {
+        self.remove_file(&uri);
+        let mut names: Vec<String> = Vec::with_capacity(refs.len());
+        for (name, ranges) in refs {
+            let mut entry = self.by_name.entry(name.clone()).or_default();
+            for range in ranges {
+                entry.value_mut().push(RefOccurrence { uri: uri.clone(), range });
+            }
+            names.push(name);
+        }
+        self.by_file.insert(uri, names);
+    }
+
+    /// Plan 215: read back this file's current `(name, occurrence ranges)`
+    /// contribution (for persisting to the on-disk cache after a (re)index).
+    /// Empty `Vec` if the file isn't indexed.
+    pub fn export_file(&self, uri: &Url) -> Vec<(String, Vec<Range>)> {
+        let Some(names) = self.by_file.get(uri) else { return Vec::new() };
+        names
+            .value()
+            .iter()
+            .filter_map(|name| {
+                let entry = self.by_name.get(name)?;
+                let ranges: Vec<Range> = entry
+                    .value()
+                    .iter()
+                    .filter(|o| &o.uri == uri)
+                    .map(|o| o.range)
+                    .collect();
+                Some((name.clone(), ranges))
+            })
+            .collect()
     }
 }
 
