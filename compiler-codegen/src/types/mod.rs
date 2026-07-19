@@ -33320,6 +33320,27 @@ fn simple_expr_type(e: &Expr) -> Option<TypeRef> {
         }
         // Унарный минус не меняет числовой тип операнда.
         ExprKind::Unary { op: crate::ast::UnOp::Neg, operand } => simple_expr_type(operand),
+        // Plan 214 (D429): canonical `.new(...)` constructor call (D372 —
+        // "конструкторы = Type.new(...)") — `Type.new(...)` parses as
+        // `Call{func: Path([Type, "new"]), ..}` (dotted PascalCase-path,
+        // parser/mod.rs's postfix-path parsing). Recording the constructed
+        // type here lets an UNANNOTATED `let sb = StringBuilder.new()` still
+        // populate `var_types` — needed so `try_coerce_leaf`'s `Ident` lookup
+        // (Plan 214 finalize lane: `StringBuilder`/`WriteBuffer` values are
+        // essentially always bound this way, without an explicit type
+        // annotation) actually finds the binding's type. Any OTHER static
+        // call (`Type.method(...)` where method != "new") stays `None` — a
+        // non-constructor static method's return type is not reliably `Type`.
+        ExprKind::Call { func, .. } => match &func.kind {
+            ExprKind::Path(parts) if parts.len() == 2 && parts[1] == "new" => {
+                Some(TypeRef::Named {
+                    path: vec![parts[0].clone()],
+                    generics: Vec::new(),
+                    span: e.span,
+                })
+            }
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -33683,6 +33704,58 @@ impl MapLitAnnotator {
         );
     }
 
+    /// Plan 214 (D429) R7: rewrite `e` IN PLACE into `e.method()` — an
+    /// ordinary named-call, byte-identical to what a user would write by hand
+    /// — when `e` is a plain leaf (literal / var `Ident` with a KNOWN
+    /// `var_types` entry) whose type is a registered `#coerce` I, and
+    /// `expected`'s canonical key matches one of that I's declared O pairs.
+    /// No-op otherwise (the checker's verdict — exact match via
+    /// `assignable_direct`, or a genuine mismatch — stands unchanged).
+    ///
+    /// Leaf-only scope mirrors `try_wrap_leaf` exactly (same family, called
+    /// right after it below): `MapLitAnnotator` doesn't carry full scope-aware
+    /// type inference (that lives in `TypeCheckCtx`, already consulted by
+    /// `assignable`'s OWN `#coerce` accept-path fallback — so a non-leaf
+    /// coercible expr, e.g. a call-chain result, still type-CHECKS via that
+    /// fallback even when this rewrite pass leaves its AST shape untouched;
+    /// only the "canon = bare value" ergonomics (R9) would not apply to it
+    /// yet — a leaf covers the seed pairs' realistic shapes: a `str` literal
+    /// or variable, and a `StringBuilder`/`WriteBuffer` variable).
+    fn try_coerce_leaf(&mut self, e: &mut Expr, expected: &TypeRef) {
+        let input_name = match &e.kind {
+            ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => "str".to_string(),
+            ExprKind::Ident(name) => {
+                let Some(ty) = self.var_types.get(name) else { return };
+                let Some(n) = simple_named_type_name(ty) else { return };
+                n
+            }
+            _ => return,
+        };
+        let Some(pairs) = self.ctx.coerce_pairs.get(&input_name) else { return };
+        let exp_key = coerce_type_key(expected);
+        // R5: I never legally equals one of its own O's (R3/R11 keep the pair
+        // set disjoint from identity) — this is just a defensive no-op guard,
+        // not a case the seed pairs can hit.
+        if input_name == exp_key {
+            return;
+        }
+        let Some(pair) = pairs.iter().find(|p| p.output_key == exp_key) else { return };
+        let method_name = pair.method_name.clone();
+        let span = e.span;
+        let old = std::mem::replace(e, Expr::new(ExprKind::UnitLit, span));
+        *e = Expr::new(
+            ExprKind::Call {
+                func: Box::new(Expr::new(
+                    ExprKind::Member { obj: Box::new(old), name: method_name },
+                    span,
+                )),
+                args: vec![],
+                trailing: None,
+            },
+            span,
+        );
+    }
+
     fn walk_expr(&mut self, e: &mut Expr, expected: Option<&TypeRef>) {
         // Plan 200 (sql-autoconv) D55 amend: "obvious single-wrapper
         // coercion" REWRITE — a bare leaf value (literal / var `Ident`) at
@@ -33701,6 +33774,14 @@ impl MapLitAnnotator {
         // is sufficient, confirmed empirically).
         if let Some(exp) = expected {
             self.try_wrap_leaf(e, exp);
+            // Plan 214 (D429): `#coerce` REWRITE — same expected-type-propagated
+            // leaf walk, tried AFTER the single-wrapper rewrite above (R11
+            // primacy note — the two never compete on the same pair by
+            // construction, see `collect_coerce_pairs`'s R11 check). A no-op if
+            // `try_wrap_leaf` already replaced `e` with a `Type.Variant(..)`
+            // call above (that call's own shape doesn't match any `#coerce`
+            // leaf pattern, so this is naturally idempotent, not a special case).
+            self.try_coerce_leaf(e, exp);
         }
         // Plan 52.x: all-spread `[...a, ...b]` без expected-типа —
         // синтезируем map-тип из spread-источников, чтобы конверсия
