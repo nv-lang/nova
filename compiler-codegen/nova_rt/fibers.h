@@ -3148,15 +3148,51 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
         q->ctx_pins_count = 0;
         q->ctx_pins_cap   = 0;
     }
-    /* [M-187-high-concurrency-connection-wedge] fix (2026-07-19): free the
-     * UNCOLLECTABLE child_error[]/child_ctx[] retention arrays on scope exit —
-     * same lifetime/rationale as the ctx_pins free just above. Runs STRICTLY
-     * AFTER the Ф.3 decision loop (above, ~3074-3097) has read every child_error
-     * entry and released every retained child_ctx SpawnCtx back to its pool, so
-     * nothing dereferences these arrays past this point. Old (grown-out) arrays
-     * were already freed in nova_scope_grow_children; this frees the final live
-     * ones — no per-scope leak (matters for long-lived servers spinning many
-     * supervised scopes, e.g. the aggregator connection wedge). */
+    /* [M-187-high-concurrency-connection-wedge] fix (2026-07-19): build the
+     * suppressed-error chain from child_error[] HERE — strictly BEFORE freeing
+     * the (now uncollectable) retention arrays below. nv_compose_suppressed
+     * COPIES each non-primary child failure into a fresh chain node (msg via
+     * nova_str_from_cstr, kind/payload/tid by value), so `_nv_suppressed` does
+     * NOT alias child_error[] afterwards. Hoisted out of the `if (err)` re-throw
+     * block below (where it used to live) so the free that follows is the SINGLE
+     * lifetime end for these arrays on EVERY exit path (normal / CANCEL-return /
+     * interrupt / deadline / USER|PANIC re-throw). See the detailed suppressed-
+     * semantics comment at the re-throw site below. */
+    NovaErrorChain* _nv_suppressed = NULL;
+    if (err) {
+        NovaFailFrame _nv_aggf;
+        _nv_aggf.error_suppressed = NULL;
+        if (q->child_error) {
+            nova_bool _nv_prim_local = (q->first_error != NULL);
+            for (int _nv_ai = 0; _nv_ai < q->child_count; _nv_ai++) {
+                NovaChildError* _nv_ce = &q->child_error[_nv_ai];
+                if (_nv_ce->msg == NULL) continue;
+                if (_nv_ce->kind == NOVA_THROW_CANCEL) continue;
+                if (q->has_supervisor && !_nv_ce->escalated) continue;
+                if (_nv_ce->msg == err
+                    && (_nv_prim_local
+                        || (_nv_ce->payload == q->first_error_atomic_payload
+                            && _nv_ce->tid  == q->first_error_atomic_tid
+                            && _nv_ce->kind == q->first_error_atomic_kind))) {
+                    continue;  /* primary сам */
+                }
+                nv_compose_suppressed(&_nv_aggf,
+                                      nova_str_from_cstr(_nv_ce->msg),
+                                      _nv_ce->kind,
+                                      _nv_ce->payload,
+                                      _nv_ce->tid);
+            }
+        }
+        _nv_suppressed = _nv_aggf.error_suppressed;
+    }
+    /* Free the UNCOLLECTABLE child_error[]/child_ctx[] retention arrays on scope
+     * exit — same lifetime/rationale as the ctx_pins free just above. The Ф.3
+     * decision loop (~3074-3097) already read every entry + released every
+     * retained child_ctx SpawnCtx, and _nv_suppressed above copied out the last
+     * child_error reads, so nothing dereferences these arrays past this point.
+     * Old (grown-out) arrays were freed in nova_scope_grow_children; this frees
+     * the final live ones — no per-scope leak (matters for long-lived servers
+     * spinning many supervised scopes, e.g. the aggregator connection wedge). */
     if (q->child_error) { nova_free_uncollectable(q->child_error); q->child_error = NULL; }
     if (q->child_ctx)   { nova_free_uncollectable(q->child_ctx);   q->child_ctx   = NULL; }
     q->child_capacity = 0;
