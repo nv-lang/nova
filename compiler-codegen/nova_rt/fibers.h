@@ -2429,6 +2429,14 @@ void nova_spawn_pool_release(void* ctx, size_t size);
  *     visible to the owner's decision-loop (acquire wait) before it reads. */
 static inline void nova_scope_sweep_dead_child(NovaSpawnCtxBase* dead_ctx) {
     if (!dead_ctx) return;
+    /* [M-mn-spawnctx-corruption-cancel-wake] R1-трипваер: sweep по уже
+     * освобождённому ctx = double-sweep (двойной pool-release + чтение
+     * freelist-линка как _nova_parent_scope). Диаг-режим ловит до порчи. */
+    {
+        extern int  nova_spawn_pool_diag(void);
+        extern void nova_spawn_ctx_diag_check_live(const void* vbase, const char* where);
+        if (nova_spawn_pool_diag()) nova_spawn_ctx_diag_check_live(dead_ctx, "sweep-dead-child");
+    }
     NovaFiberQueue* parent_snapshot = dead_ctx->_nova_parent_scope;
     if (!nova_scope_retain_or_release_child(dead_ctx)) {
         nova_spawn_pool_release(dead_ctx, dead_ctx->_nova_pool_size);

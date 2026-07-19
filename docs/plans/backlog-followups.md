@@ -3320,23 +3320,37 @@ default` + метод собирается. Замечание (вне пери�
 | `[M-198-f5-conformance-subdir-verdict]` | **Найдено аудитом планов ≥150 (2026-07-16).** `docs/plans/wip/198-redo-notes.md` §«Ф.5 — ревизия подпапок `spec_tests/conformance/`» (задание владельца 2026-07-14): инвентарь каждой подпапки `conformance/*/` → вердикт одной из трёх категорий (законный отдельный CU / вернуть плоскими пирами в merged-CU / карантин-бага) с таблицей-вердиктом «в этот файл». Задание НЕ выполнено — файл обрывается на списке «кандидатов под подозрением» (`any_is/`, `cm_box/`, `d372_canonical/`, `lint/`, `plan70_1/`, `plan84/`, `consume_fixtures/`), таблицы-вердикта нет. | Plan 198 Ф.5 | P3 |
 | `[M-d412-blob-view-mut-write]` | Найдено ревью-2 Плана 210 (2026-07-16): blob-view над .rodata (одиночный `embed()` D412 и будущий `embed_dir`) при mut-биндинге ЗНАЧЕНИЯ (не литерала) не копируется — D412-копия (emit_c ~26599) ловит только биндинг блоб-ЛИТЕРАЛА. `mut d = f_returning_blob(); d[0]=5` → запись в read-only страницу = SEGV. Push безопасен (realloc уводит в кучу), опасна in-place запись. Фикс-кандидаты: чекер-запрет in-place записи в blob-view / рантайм-метка view+copy-on-write / документированный контракт. | D412 / Plan 210 ревью | **P2** |
 
-- **[M-mn-spawnctx-corruption-cancel-wake]** (2026-07-18, **P1**, opus-раскопка
-  gdb/ASLR-off, полный разбор `docs/plans/wip/boehm-eager-cost-notes.md`
-  §ОКОНЧАТЕЛЬНЫЙ КОРЕНЬ) — порча памяти SpawnCtx (128-байтный uncollectable
-  класс) в concurrent spawn+wake+cancel шторме (2000 файберов, NOVA_MAXPROCS=1):
-  32-битная запись усекает high-half free-list-линка (`rcx=0xf7d30880` =
-  trunc(0x7ffff7d30880)) → SIGSEGV в `GC_generic_malloc_uncollectable` «вне
-  арены»; мусорный `base->_nova_fiber_scope`/`_nova_saved_fail_top` → рваная
-  fail-frame-цепочка → abort «cancel-throw outside any supervised scope».
-  Поверхность гонки: `nova_goready`/`nova_sched_wake`/`_nova_driver_sleep_close_cb`
-  (nova_sched.h, driver.c:397) + жизненный цикл SpawnCtx (fibers.h). Латентна
-  всегда; была маскирована случайным GC-подавлением (плоский GC_add_roots
-  арены задирал порог сборки → 0 сборок за тест), вскрыта КОРРЕКТНЫМ
-  Boehm-mark-фиксом ea85229e0 (parent+форс-GC = 6/6 FAIL — доказательство
-  независимости от fiber_arena). Роняет `standalone/supervisor_stop_test` +
-  `standalone/pos_max_fibers_concurrent` (в known-red гейта с 2026-07-18);
-  вероятно тот же корень у [M-187-high-concurrency-wedge]. TSan-рецепт:
-  `~/tsan_build.sh` (WSL). Фикс-волна запущена 2026-07-18.
+- **[M-mn-spawnctx-corruption-cancel-wake]** — **✅ РЕШЕНО 2026-07-19
+  (opus-волна, worktree `nova-187w`, ветка `p-spawnctx-root`; полный разбор —
+  `docs/plans/wip/211-spawnctx-notes.md` §«КОРЕНЬ НАЙДЕН И ЗАКРЫТ»).**
+  «Порча SpawnCtx» оказалась СИМПТОМОМ. Корень: `GC_set_push_other_roots`
+  (fiber_arena.c, введён ea85229e0) ЗАМЕЩАЛ дефолтный колбэк bdwgc, который
+  на pthreads-сборке (`GC_default_push_other_roots` → `GC_push_all_stacks()`)
+  — единственный канал сканирования СТЕКОВ И РЕГИСТРОВ всех потоков.
+  Linux-порт Windows-модели перенёс лишь 1 из 3 слагаемых Windows-колбэка
+  (занятые fiber-слоты), потеряв native-стеки потоков и стек main → всё
+  рутованное только стеком (stack-локальный supervised `q`, его
+  child_error[]/child_ctx[], локали шедулера, токен) собиралось GC ЖИВЫМ,
+  страницы перекраивались — обе gdb-сигнатуры («32-битные усечения» =
+  легитимные int32-записи рантайма в свой же отобранный массив; ASCII в
+  SpawnCtx = страница ушла под строки) и рваный fail-top. Доказательства:
+  PIN2-бисекция (дубль-достижимость live-массивов через uncollectable-цепь)
+  10/10 PASS против 0/30 базлайна; mmap-вынос массивов 10/10; poison/карантин
+  ручных free — эффекта нет; наивный чейнинг дефолта — SIGSEGV в GC-маркере
+  (sp приостановленных воркеров внутри коро-стеков → диапазон через guard).
+  Фикс: полная компенсация в `_nova_gc_push_other_roots` — (1) main-стек
+  (probe + текущая VMA из /proc/self/maps на каждой сборке), (2) реестр
+  native-стеков воркеров/драйвера (`nova_fiber_arena_register_native_stack`),
+  (3) fiber-слоты как было; + bootstrap-страховка probe. Windows поведенчески
+  не тронут (там компенсация была полной с Plan 151/Ф.2). Верификация:
+  pos_max_fibers_concurrent 30/30 release + 30/30 dev (было 0/30);
+  supervisor_stop_test 10/10; supervisor_parfor_test (known-red CI) 10/10.
+  Оставлен opt-in диагностический инструментарий (ноль оверхеда без env):
+  `NOVA_SPAWN_POOL_DIAG=1` (R1-трипваер пула: poison+канарейка+карантин+
+  double-release-abort+live-проверки goready/resume/sweep/driver),
+  `NOVA_UNCOLL_QUAR=1` (карантин-дискриминатор uncollectable-free). Прежние
+  два сonnet-фикса (ACQUIRE-load count в driver.c; child_ctx[] collectable)
+  остаются в силе как независимые улучшения.
 - **[M-linux-mn-conformance-red]** (2026-07-16, P1, найден ПЕРВЫМ Linux-прогоном
   conformance — nova-gate CI, run 29513225018) — 2 фикстуры RUN-FAIL только на
   Linux (Windows зелёные): `app_effect_basic_t8_1` (63s, тесты внутри PASS,

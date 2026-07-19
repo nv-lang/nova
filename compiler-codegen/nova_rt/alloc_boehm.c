@@ -25,6 +25,8 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>  /* getenv — NOVA_UNCOLL_QUAR дискриминатор */
+#include <string.h>  /* memset — poison */
 
 /* Monotonic alloc counter — incremented on every nova_alloc call.
  * Used by nova_gc_alloc_count() and nova_gc_reset_stats().
@@ -157,6 +159,28 @@ void nova_gc_add_root(void* lo, void* hi) {
 
 void nova_free_uncollectable(void* ptr) {
     if (!ptr) return;
+    /* [M-mn-spawnctx-corruption-cancel-wake] дискриминатор (opt-in,
+     * NOVA_UNCOLL_QUAR=1): вместо GC_free — poison 0xDD + осознанная утечка.
+     * Если краш исчезает под этим флагом без иных изменений — порча течёт
+     * через реюз какого-то released-uncollectable блока (SpawnCtx-пул уже
+     * закрыт отдельным NOVA_SPAWN_POOL_DIAG-карантином; сюда попадают
+     * остальные: ctx_pins[], effect-snapshots, sync-примитивы и т.д.).
+     * Читатель stale-указателя получает детерминированный 0xDD-паттерн
+     * вместо случайного мусора. Ноль оверхеда без env (кеш-бранч). */
+    {
+        static int _quar = -1;
+        int q = __atomic_load_n(&_quar, __ATOMIC_RELAXED);
+        if (q < 0) {
+            const char* e = getenv("NOVA_UNCOLL_QUAR");
+            q = (e && e[0] == '1') ? 1 : 0;
+            __atomic_store_n(&_quar, q, __ATOMIC_RELAXED);
+        }
+        if (q) {
+            size_t sz = GC_size(ptr);
+            if (sz > 0) memset(ptr, 0xDD, sz);
+            return;
+        }
+    }
     GC_free(ptr);
 }
 

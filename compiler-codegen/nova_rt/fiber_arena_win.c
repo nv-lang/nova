@@ -615,6 +615,13 @@ void nova_fiber_arena_set_main_stack(void) {
 #endif
 }
 
+/* [M-mn-spawnctx-corruption-cancel-wake]: POSIX-реестр native-стеков.
+ * На Windows не нужен — колбэк _nova_fw_gc_push_other_roots уже пушит
+ * native_base per-arena + main-стек (Plan 151/Ф.2). No-op для паритета
+ * API с fiber_arena.c. */
+void nova_fiber_arena_register_native_stack(void) { }
+void nova_fiber_arena_unregister_native_stack(void) { }
+
 bool nova_fiber_arena_contains(const void* ptr) {
     return _nova_fw_find_arena(ptr) != NULL;
 }

@@ -195,6 +195,11 @@ void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope);
  * worker_main уже использует pool_release. */
 void* nova_spawn_pool_acquire(size_t size);
 void  nova_spawn_pool_release(void* ctx, size_t size);
+/* [M-mn-spawnctx-corruption-cancel-wake] R1-трипваер (opt-in,
+ * NOVA_SPAWN_POOL_DIAG=1): poison+канарейка+карантин SpawnCtx-пула.
+ * См. docs/debugging-races.md + 173.0 §2 R1. */
+int   nova_spawn_pool_diag(void);
+void  nova_spawn_ctx_diag_check_live(const void* vbase, const char* where);
 
 /* Plan 83.11 Phase A diagnostics (Variant B, 2026-05-27): in-process state
  * dump. Lock-free best-effort snapshot of all workers + sched_state + diag
