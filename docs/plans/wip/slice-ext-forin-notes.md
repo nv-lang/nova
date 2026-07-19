@@ -1,7 +1,45 @@
 # [M-slice-ext-receiver-for-in-elem-type] — рабочие заметки
 
-Worktree: `d:/Sources/nv-lang/nova-sliceext`, ветка `p-fix-slice-ext-forin`, от `main`@2afcb3f3d.
+Worktree: `d:/Sources/nv-lang/nova-sliceext`.
 Модель: sonnet.
+
+## ВОЛНА 2 (P2, ветка `p-fix-slice-ext-forin2` от свежей main, после мержа P1)
+
+P1 (чекер, коммит 71938307a, влит в main мерж-коммитом e0d03c6f9) закрыл ПОЛОВИНУ —
+`nova check` зелёный, но ЭМИССИЯ (codegen) на слитом main осталась CC-FAIL: та же
+фикстура `slice_ext_receiver_for_in_elem_ok.nv` — `Nova_NovaArray_nova_int_method_sef_tally(Nova_Vec____nova_int* nova_self)`
+— ВЕСЬ ресивер (`nova_self`) mono'т как `Vec[int]`, а не `Vec[SliceExtForinLane]`.
+Причина: `for r in @` ЛОУЭРИТСЯ через `var_types["nova_self"]` (не через чекер-канал
+P1 починил) — корень в codegen, `compiler-codegen/src/codegen/emit_c.rs`,
+`receiver_c_type()` (~16853), ветка `[]<elem>` (~16935): для КОНКРЕТНОГО НЕ-примитивного
+elem-типа (`elem_ty` не в списке str/bool/f64/f32/u8/char/i32/…/uint) код (Plan 101.1,
+~16953) БЕЗУСЛОВНО пробовал `self.subst_c(elem_ty)` (лукап в
+generic-substitution-карте `current_type_subst` — предназначен для РЕАЛЬНЫХ typevar'ов
+`fn[T] []T @m`), и при промахе ВСЕГДА дефолтил на `"nova_int" // erased T fallback` —
+не различая «действительно нерезолвнутый generic typevar» (T/U/K, короткое
+all-uppercase имя — см. параллельную проверку чуть выше по файлу, ~16902, для
+non-array receiver'а) от «конкретный именованный record/sum, которого просто НЕТ в
+current_type_subst, потому что он и не должен там быть» (`SliceExtForinLane`/
+`TaskResult`). Нигде в корпусе (std/examples/nova_tests) до этой правки НЕ было
+slice-расширения с конкретным ИМЕНОВАННЫМ (не примитив, не generic) элементом —
+ветка была «недостижима, но неправильна» до `[]TaskResult @to_report`.
+
+Фикс (та же функция, тот же match arm): добавлена ветка МЕЖДУ subst_c-успехом и
+nova_int-эрейзом — если `elem_ty` НЕ похож на typevar (не ≤2-символьное
+all-uppercase имя, тот же гейт что уже использует non-array-ветка чуть выше), резолвим
+его через ЕДИНЫЙ канонический лоуэринг `resolved_type_to_c(&ResolvedType::Named{...})`
+— ТОТ ЖЕ путь, которым `resolved_array_to_c` (~3744, РАБОЧИЙ путь для `[]TaskResult`
+как обычного поля/параметра) уже строит elem-арг для Vec-mono — так что смангленное
+имя инстанса (`Nova_Vec____Nova_SliceExtForinLane_p`) БАЙТ-В-БАЙТ совпадает с тем, что
+уже зарегистрировал call-site (`lanes []SliceExtForinLane`), а не расходится во
+ВТОРОЙ, отдельный mangle. Никакого name-guessing НЕ добавлено — переиспользован
+существующий канал (`resolved_type_to_c`), просто РАСШИРЕН гейт «когда его вызывать».
+
+Изолированный прогон (`spec_tests/_iso_slice_ext_forin/`, копия фикстуры в отдельном
+module) red→green ПОДТВЕРЖДЁН эмпирически на пересобранном бинаре (обе волны):
+- main ДО codegen-фикса (P1-фикс уже внутри): CC-FAIL, `member reference base type
+  'nova_int'`, сигнатура `Nova_NovaArray_nova_int_method_sef_tally(Nova_Vec____nova_int* nova_self)`.
+- main + codegen-фикс: `PASS: 1  FAIL: 0`.
 
 ## Баг
 
