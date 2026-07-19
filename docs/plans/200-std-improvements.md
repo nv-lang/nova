@@ -533,8 +533,11 @@ sonnet (координация со split).
 
 ## Пункт 18 — UTF-8 кодпоинт-логика: 4 копии → один приватный источник
 
-**Статус:** 📋 ЗАРЕГИСТРИРОВАН 2026-07-18 (владелец: 200 = зонтик доделок std). Найдено при
-вопросе владельца про `char_utf8_len`.
+**Статус:** ✅ СДЕЛАНО 2026-07-19 (worktree `nova-p20018`, ветка `p200-18-utf8`, слияние
+`p-tuple-fixarr` → П18; sonnet). Найдено при вопросе владельца про `char_utf8_len`.
+Блокер `[M-tuple-fixarr-typedef-order]` (typedef-порядок для `(T, [N]U)`) закрыт тем же
+заходом (`compiler-codegen/src/codegen/emit_c.rs`, унифицированный topo-sort tuple+fixarr
+typedef'ов) — см. `docs/history/simplifications-closed.md`. Приёмка ниже.
 
 **Что:** лестница `cp < 0x80 / 0x800 / 0x10000` (длина и/или кодирование кодпоинта в UTF-8)
 размножена по std в ЧЕТЫРЁХ местах:
@@ -566,6 +569,18 @@ API. Единственный носитель лестницы:
 string_builder/write_buffer тесты + checksums-CU; байт-паритет вывода pad/append на
 существующих фикстурах.
 **Модель:** haiku по этому списку (механика), координацию с 208 Ф.4 решает интегратор.
+
+**Приёмка (закрытие 2026-07-19, sonnet, бинарь на коммите `703b525b7`):** оба грепа по
+`std/`: `char_utf8_len|char_utf8_bytes` = 0 ✓; `< 0x800` = 1 совпадение, ровно в
+`defaults.nv:106` внутри `char @encode_utf8()` ✓. Таргетно: `std/src/runtime/string_builder_test.nv`
+PASS 1/0, `std/src/runtime/char_test.nv` PASS 1/0, `std/src/checksums` PASS 3/0 SKIP 3
+(non-test модули). `nova test std/src/runtime` целиком (директория) не гоняется — folder-module
+CU того же каталога тянет `sync_test.nv`, который падает ПРЕД-СУЩЕСТВУЮЩИМ (не связанным)
+ICE `[P67-LEGACY] Ident 'guard' not in var_types` — воспроизведён СТАНДАЛОНЕ и на чистом
+неизменённом main (та же строка, оба бинаря); отдельный дефект, вне объёма П18, заведён как
+`[M-runtime-sync-guard-consume-p67]` (backlog-followups.md, возможная регрессия
+2026-07-17..2026-07-19). write_buffer.nv не имеет отдельного `_test.nv` (нет прямых тестов
+по имени в std) — покрыт транзитивно (string_builder/интерполяция).
 
 ---
 
