@@ -3219,6 +3219,14 @@ struct TypeCheckCtx<'a> {
     /// Ф.1: объявления типов — для разворачивания alias/newtype при
     /// категоризации (assignability сравнивает категории, не имена).
     types: HashMap<String, &'a TypeDecl>,
+    /// Plan 214 (D429): `#coerce` pair registry (I type name → applicable
+    /// pairs), consumed by `assignable`'s accept-path fallback (tried AFTER
+    /// the single-wrapper fallback — R11 makes the two mutually exclusive by
+    /// construction, but the ordering mirrors the design note anyway). Owned
+    /// (not `&'a`) — built by `collect_coerce_pairs`, independent parallel
+    /// scan of `MapLitCtx`'s own copy (same data, R9 "one window"; see that
+    /// function's doc for why two independent builds stay in sync).
+    coerce_pairs: HashMap<String, Vec<CoercePairEntry>>,
     /// [M-compress-checksum-structvariant-ctor-xmodule] (Plan 173 P1): ВСЕ
     /// имена sum-вариантов (payload и unit), собранные по `module.items`
     /// НАПРЯМУЮ (Vec-обход — теряет ноль записей), в отличие от `types`
@@ -3960,7 +3968,15 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
 
-        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types, sum_variant_names, file_local_types, imported_modules,
+        // Plan 214 (D429): `#coerce` pair registry for the accept-path
+        // (`assignable`'s coerce fallback). Independent scan mirroring
+        // `MapLitCtx::build`'s own copy (see `collect_coerce_pairs` doc) —
+        // diagnostics discarded here (already surfaced via `MapLitCtx::
+        // check_module`, which runs earlier in `check_module_impl`).
+        let coerce_lookup = |n: &str| types.get(n).map(|td| td.kind.clone());
+        let (coerce_pairs, _coerce_errors_dup) = collect_coerce_pairs(module, &coerce_lookup);
+
+        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types, coerce_pairs, sum_variant_names, file_local_types, imported_modules,
             entry_imported_modules,
             entry_file_ids,
             const_fn_names,
@@ -17377,6 +17393,335 @@ fn wrap_kind_of(ty: &TypeRef, lookup: &impl Fn(&str) -> Option<TypeDeclKind>, de
         }
         _ => WrapKind::Other,
     }
+}
+
+// ─── Plan 214 (D429): `#coerce` — declarative implicit zero-cost conversions ───
+
+/// One validated `#coerce` pair, ready for accept/rewrite/lint consumption.
+/// Built ONLY by [`collect_coerce_pairs`] — never constructed ad hoc — so the
+/// three consumers (checker accept-path `assignable`, AST-rewrite
+/// `MapLitAnnotator::try_coerce_leaf`, lint `W_COERCE_EXPLICIT_REDUNDANT`)
+/// read structurally IDENTICAL data (R9 "one window"). Fully OWNED (no `'a`
+/// borrow off the source `Module`) — cheap to build twice (once in
+/// `MapLitCtx::build` for diagnostics + rewrite, once in `TypeCheckCtx::build`
+/// for the accept-path), mirroring this file's existing `wrap_types`/`types`
+/// parallel-scan convention (see `MapLitCtx::wrap_types` doc).
+#[derive(Debug, Clone)]
+pub(crate) struct CoercePairEntry {
+    /// O — canonical string key (see `coerce_type_key`): identifies the pair
+    /// together with the `by_input` map's key (I). Strips `ro`/`mut`/`uninit`
+    /// wrappers and canonicalizes `[]T`/`Vec[T]` (D239) so both spellings hit
+    /// the same key.
+    pub output_key: String,
+    /// Method name to call on a value of type I (`bytes`, `into_str`,
+    /// `into_bytes`, …) — what the rewrite splices in: `x` → `x.method_name()`.
+    pub method_name: String,
+    /// finalize (consume-receiver, owning return) vs view (non-consume, `ro`
+    /// return) lane (D429 R2). Feeds the R7-mandated use-after-consume
+    /// diagnostic text ("consumed by implicit #coerce finalization").
+    pub is_finalize: bool,
+    /// Declaring `#coerce fn`'s span — R3/R11 dup-pair diagnostics + (future)
+    /// R7 "inserted here" pointer.
+    pub decl_span: Span,
+}
+
+/// Plan 214 (D429) R6: canonical string key for a `#coerce` pair's I or O
+/// type — strips `ro`/`mut`/`uninit` wrappers (a pair's identity doesn't
+/// depend on the view-return's `ro`) and canonicalizes `[]T`/`Vec[T]` (D239)
+/// to the SAME key so both spellings dedupe/match identically. Deliberately a
+/// plain structural stringifier (not `resolved_cat_of`, which needs a
+/// generic-scope `exp_gs` this call site never has) — sufficient because R14
+/// already rejects every generic `#coerce` declaration, so every I/O this
+/// function ever sees is fully concrete.
+fn coerce_type_key(ty: &TypeRef) -> String {
+    match ty {
+        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
+            coerce_type_key(inner)
+        }
+        TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+            format!("[]{}", coerce_type_key(inner))
+        }
+        TypeRef::Named { path, generics, .. } => {
+            let base = path.last().cloned().unwrap_or_default();
+            if base == "Vec" && generics.len() == 1 {
+                format!("[]{}", coerce_type_key(&generics[0]))
+            } else if generics.is_empty() {
+                base
+            } else {
+                format!(
+                    "{}[{}]",
+                    base,
+                    generics.iter().map(coerce_type_key).collect::<Vec<_>>().join(",")
+                )
+            }
+        }
+        // Tuple/Func/Protocol/etc — out of V1 scope (R14 rejects generic decls, and a
+        // #coerce return type this shape would already need method-level generics to
+        // express meaningfully); a stable-enough fallback for a key that will simply
+        // never match anything real.
+        other => format!("{other:?}"),
+    }
+}
+
+/// Plan 214 (D429): bare concrete type NAME of `ty`, for I-side lookup —
+/// strips `ro`/`mut`/`uninit`, returns `Some(name)` only for a non-generic
+/// `TypeRef::Named` (covers `str`, `StringBuilder`, `WriteBuffer`, any
+/// non-generic user type — every legal V1 `#coerce` receiver type). `None`
+/// for anything else (array/tuple/generic-named/…) — a value of such a type
+/// can never be an I-side match in V1 (receiver types are never array/tuple-
+/// shaped in the seed pairs, and a generic-named value can't identify a
+/// concrete pair without unification, which V1 deliberately doesn't do —
+/// mirrors R14/R16's "concrete lookup, not unification" framing).
+fn simple_named_type_name(ty: &TypeRef) -> Option<String> {
+    match ty {
+        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
+            simple_named_type_name(inner)
+        }
+        TypeRef::Named { path, generics, .. } if generics.is_empty() => path.last().cloned(),
+        _ => None,
+    }
+}
+
+/// Plan 214 (D429) Ф.1: scan `module` (entry items + peer_files) for
+/// `#coerce`-attributed `fn`s, validate them (R1 unarity/receiver-form, R2
+/// zero-cost view/finalize shape, R3 one-decl-per-pair, R11 single-wrapper
+/// primacy, R12 effect-freedom, R14 generic-forms-forbidden), and return the
+/// accept/rewrite/lint-shared registry (`I type name → applicable pairs`)
+/// plus any validation diagnostics.
+///
+/// `lookup` — resolve a type NAME to its declared `TypeDeclKind`, EXACTLY the
+/// closure shape `single_wrap_candidates`/`wrap_kind_of` already take (R11
+/// reuses `single_wrap_candidates` verbatim to detect a pair already covered
+/// by the built-in newtype/sum wrapper).
+///
+/// Called from TWO independent build sites (`MapLitCtx::build` — surfaces the
+/// diagnostics via `MapLitCtx::check_module` — and `TypeCheckCtx::build` —
+/// consumes only `by_input`, diagnostics discarded to avoid double-reporting)
+/// — same parallel-scan shape as `wrap_types`/`types` elsewhere in this file;
+/// deterministic over the same `module`, so both copies agree byte-for-byte
+/// (R9 "one window" is about the DATA being identical, not about a single
+/// shared mutable instance — see `CoercePairEntry` doc).
+fn collect_coerce_pairs(
+    module: &Module,
+    lookup: &impl Fn(&str) -> Option<TypeDeclKind>,
+) -> (HashMap<String, Vec<CoercePairEntry>>, Vec<Diagnostic>) {
+    let mut by_input: HashMap<String, Vec<CoercePairEntry>> = HashMap::new();
+    let mut errors: Vec<Diagnostic> = Vec::new();
+    let mut seen_pairs: HashMap<(String, String), Span> = HashMap::new();
+
+    let mut fns: Vec<&FnDecl> = Vec::new();
+    for item in &module.items {
+        if let Item::Fn(f) = item {
+            fns.push(f);
+        }
+    }
+    for pf in &module.peer_files {
+        for item in &pf.items_here {
+            if let Item::Fn(f) = item {
+                fns.push(f);
+            }
+        }
+    }
+
+    for f in fns {
+        if !f.coerce_attr {
+            continue;
+        }
+        // R1: unarity + V1 form gate.
+        let Some(recv) = &f.receiver else {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_COERCE_NOT_UNARY] `#coerce fn {}` — a free function (no receiver) is \
+                     not a recognized `#coerce` shape (D429 R1). Declare it as a receiver \
+                     method: `#coerce fn Type @method() -> ro O` (view) or `#coerce fn Type \
+                     consume @method() -> O` (finalize).",
+                    f.name
+                ),
+                f.span,
+            ));
+            continue;
+        };
+        match recv.kind {
+            ReceiverKind::Static => {
+                if f.params.len() == 1 {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_COERCE_RECEIVER_FORM_DEFERRED] `#coerce fn {}.{}` — the \
+                             receiver-form (static one-param constructor) is DEFERRED from V1 \
+                             (D429 R1/§Форма): zero carriers, and the `ro Self` form check alone \
+                             doesn't guarantee zero-cost (a constructor may clone internally). \
+                             Declare the pair as a method on the SOURCE type instead: `#coerce \
+                             fn {} @method() -> ro Self` (or `consume @method()` for finalize).",
+                            recv.type_name, f.name, recv.type_name
+                        ),
+                        f.span,
+                    ));
+                } else {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_COERCE_NOT_UNARY] `#coerce fn {}.{}` — a static form must take \
+                             EXACTLY one parameter to be unary (D429 R1); got {}.",
+                            recv.type_name, f.name, f.params.len()
+                        ),
+                        f.span,
+                    ));
+                }
+                continue;
+            }
+            ReceiverKind::Instance => {
+                if !f.params.is_empty() {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_COERCE_NOT_UNARY] `#coerce fn {} @{}` — an instance-method \
+                             `#coerce` form must take ZERO parameters (I = receiver type, D429 \
+                             R1); got {}.",
+                            recv.type_name, f.name, f.params.len()
+                        ),
+                        f.span,
+                    ));
+                    continue;
+                }
+            }
+        }
+        let input_name = recv.type_name.clone();
+        // R14: generic #coerce declarations unsupported.
+        if !f.generics.is_empty() || !recv.generics.is_empty() {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_COERCE_GENERIC_UNSUPPORTED] `#coerce fn {} @{}` — generic `#coerce` \
+                     declarations are unsupported in V1 (D429 R14): the pair registry is a \
+                     concrete lookup, not unification. Remove the type parameter, or drop \
+                     `#coerce` and keep the method as an explicit call.",
+                    input_name, f.name
+                ),
+                f.span,
+            ));
+            continue;
+        }
+        // R12: effect-free.
+        if !f.effects.is_empty() {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_COERCE_EFFECTFUL] `#coerce fn {} @{}` declares a non-empty effect row — \
+                     an implicitly-inserted call must be effect-free (D429 R12): a hidden \
+                     effect at a bare-value call-site breaks the strict-effects contract \
+                     (\"effect visible in signature AND at the call-site\").",
+                    input_name, f.name
+                ),
+                f.span,
+            ));
+            continue;
+        }
+        let Some(ret_ty) = &f.return_type else {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_COERCE_NOT_ZERO_COST] `#coerce fn {} @{}` has no declared return type — \
+                     a `#coerce` pair must produce the O value (D429 R2).",
+                    input_name, f.name
+                ),
+                f.span,
+            ));
+            continue;
+        };
+        // R2: zero-cost view/finalize shape.
+        let is_finalize = recv.consume;
+        if recv.mutable {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_COERCE_NOT_ZERO_COST] `#coerce fn {} mut @{}` — a `mut`-receiver form is \
+                     neither the view lane (non-consume + `ro` return) nor the finalize lane \
+                     (`consume` + owning return); implicitly mutating the source at an unrelated \
+                     coercion call-site would be a hidden side-effect (D429 R2).",
+                    input_name, f.name
+                ),
+                f.span,
+            ));
+            continue;
+        }
+        if !is_finalize && !matches!(ret_ty, TypeRef::Readonly(..)) {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_COERCE_NOT_ZERO_COST] `#coerce fn {} @{}` — the non-`consume` (view) \
+                     form must return `ro O` (zero-cost view, D429 R2); the declared return type \
+                     is not `ro`-wrapped. Either wrap the return in `ro`, or mark the receiver \
+                     `consume` to declare a finalize (owning move) pair instead.",
+                    input_name, f.name
+                ),
+                f.span,
+            ));
+            continue;
+        }
+        if is_finalize && matches!(ret_ty, TypeRef::Readonly(..)) {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_COERCE_NOT_ZERO_COST] `#coerce fn {} consume @{}` returns `ro O` — a \
+                     finalize (`consume`) pair must return an OWNING value (D429 R2 finalize \
+                     lane), not a view into the receiver it just consumed.",
+                    input_name, f.name
+                ),
+                f.span,
+            ));
+            continue;
+        }
+
+        let output_ty = ret_ty.clone();
+        let output_key = coerce_type_key(&output_ty);
+
+        // R11: pair already covered by the built-in single-wrapper coercion
+        // (newtype-over-I / sum-with-one-unary-I-variant) — reuse the SAME
+        // decision function `assignable`'s single-wrap fallback calls.
+        let wrap_candidates = single_wrap_candidates(lookup, &output_ty);
+        if let Some((target, _inner)) = wrap_candidates
+            .iter()
+            .find(|(_, inner)| simple_named_type_name(inner).as_deref() == Some(input_name.as_str()))
+        {
+            let what = match target {
+                WrapTarget::Newtype(n) => format!("newtype `type {n} {input_name}`"),
+                WrapTarget::SumVariant(t, v) => format!("sum variant `{t}.{v}({input_name})`"),
+            };
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_COERCE_DUPLICATE_PAIR] `#coerce fn {input_name} @{}` duplicates a pair \
+                     already covered by the built-in single-wrapper coercion — {what} (D429 \
+                     R11). Two implicit mechanisms on the same (I,O) pair would make the \
+                     insertion non-deterministic for the reader; the wrapper already coerces \
+                     this pair, remove the `#coerce` declaration.",
+                    f.name
+                ),
+                f.span,
+            ));
+            continue;
+        }
+
+        // R3: at most one `#coerce` per (I,O) pair, program-wide.
+        let key = (input_name.clone(), output_key.clone());
+        if let Some(prev_span) = seen_pairs.get(&key) {
+            errors.push(
+                Diagnostic::new(
+                    format!(
+                        "[E_COERCE_DUPLICATE_PAIR] duplicate `#coerce` pair `{input_name} → \
+                         {output_key}` (D429 R3: at most one `#coerce` per (I,O) pair \
+                         program-wide, both declaration directions count).",
+                        input_name = input_name,
+                        output_key = output_key
+                    ),
+                    f.span,
+                )
+                .with_note_at("first declared here", *prev_span),
+            );
+            continue;
+        }
+        seen_pairs.insert(key, f.span);
+
+        by_input.entry(input_name).or_default().push(CoercePairEntry {
+            output_key,
+            method_name: f.name.clone(),
+            is_finalize,
+            decl_span: f.span,
+        });
+    }
+
+    (by_input, errors)
 }
 
 // Plan 172.1 U.5.4: the lossy `TyCat` category enum (and `cat_of`/`cat_of_depth`/
@@ -31943,6 +32288,16 @@ struct MapLitCtx {
     /// (let/const/call-arg/array-element/tuple/record-field/…) instead of a
     /// parallel pass — one walker, one place.
     wrap_types: HashMap<String, TypeDeclKind>,
+    /// Plan 214 (D429): `#coerce` pair registry — I type name → applicable
+    /// pairs. Built by `collect_coerce_pairs` (shared with `TypeCheckCtx`'s
+    /// accept-path copy) — feeds `MapLitAnnotator::try_coerce_leaf` (rewrite).
+    coerce_pairs: HashMap<String, Vec<CoercePairEntry>>,
+    /// Plan 214 (D429): validation diagnostics from the SAME `collect_coerce_pairs`
+    /// call that built `coerce_pairs` — surfaced by `check_module` below (mirrors
+    /// how this whole struct's other diagnostics-free build steps route errors:
+    /// `build()` cannot take a `&mut Vec<Diagnostic>` — see the `from_pairs`
+    /// comment above — so validation output is stashed here and drained later).
+    coerce_errors: Vec<Diagnostic>,
 }
 
 impl MapLitCtx {
@@ -32150,6 +32505,12 @@ impl MapLitCtx {
                 .iter()
                 .filter_map(|(k, v)| extract_params(v).map(|p| (k.clone(), p)))
                 .collect();
+        // Plan 214 (D429): `#coerce` pair registry, built off the SAME
+        // `wrap_types` lookup R11 needs (pair-already-covered-by-single-wrapper
+        // check) — one collector, shared shape with `TypeCheckCtx::build`'s
+        // independent copy (see `collect_coerce_pairs` doc).
+        let (coerce_pairs, coerce_errors) =
+            collect_coerce_pairs(module, &|n: &str| wrap_types.get(n).cloned());
         MapLitCtx {
             type_methods,
             known_types,
@@ -32161,10 +32522,16 @@ impl MapLitCtx {
             from_pairs_types,
             record_field_types,
             wrap_types,
+            coerce_pairs,
+            coerce_errors,
         }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
+        // Plan 214 (D429): surface `#coerce` validation diagnostics collected
+        // at `build()` time (R1/R2/R3/R11/R12/R14 — R15 is a parse-time reject,
+        // never reaches here).
+        errors.extend(self.coerce_errors.iter().cloned());
         for item in &module.items {
             match item {
                 Item::Fn(f) => {
@@ -32180,6 +32547,8 @@ impl MapLitCtx {
                         from_pairs_types: self.from_pairs_types.clone(),
                         record_field_types: self.record_field_types.clone(),
                         wrap_types: self.wrap_types.clone(),
+                        coerce_pairs: self.coerce_pairs.clone(),
+                        coerce_errors: Vec::new(),
                     };
                     // Generic-параметры receiver-типа тоже видимы.
                     if let Some(recv) = &f.receiver {
