@@ -158,4 +158,44 @@ ctx_pins (вторая коллизия, доминирующая в ЭТОМ т
 блок + соседей + writer. Если это ctx_pins — фикс тривиален (collectable, как
 child_ctx). ЕСЛИ НЕТ — искать UAF-write дальше.
 
-СЛЕДУЮЩИЙ ШАГ: core-dump разбор (bxe4fbvlf в работе).
+## GROUND TRUTH (core-dump, symbolized -O0/-O2)
+
+Репро-конфиг для tractable core: NOVA_MAXPROCS=1 NOVA_MAX_FIBERS=2112
+NOVA_FIBER_STACK=262144 (128K зажимается floor'ом до 256K). Крах-rate ~95%.
+Live-gdb МАСКИРУЕТ (0/20). Core-dump работает (pattern `core.<pid>`, ~650MB).
+Символы: собрал .c теста clang'ом против nova_rt (build_dbg.sh, -O0/-O2 -g).
+pmf_o0 / pmf_dbg в /home/craft/wedge187/.
+
+**Сигнатура 2 (драйвер-поток):**
+```
+mco_get_user_data(co=0x54004000)   minicoro.h:1849  <- deref мусора
+nova_goready(co=0x54004000)         nova_sched.h:188
+nova_sched_wake(scope,slot)         nova_sched.h:423  <- co=parked_co[slot]=0x54004000
+uv_run <- _nova_driver_main         driver.c:149
+```
+co=0x54004000 = УСЕЧЁННЫЙ указатель (реальный 0x00007720_54004000, обнулены
+биты 32-63). Драйвер close_cb будит спящий фибер; parked_co[slot] держит
+усечённый co.
+
+**Сигнатура 1 (main-поток):**
+```
+GC_generic_malloc_uncollectable         (libgc, порченый free-list)
+nova_alloc_uncollectable(size=128)      alloc_boehm.c:141
+nova_spawn_pool_acquire(size=104)       runtime.c:684
+nova_fn_main_impl                        pmf.c:3655 (тело for-spawn)
+```
+Свежий SpawnCtx-аллок на main крашится в Boehm free-list (128-uncollectable).
+
+**ВЫВОД:** parked_co-чанк (сиг2) = COLLECTABLE nova_alloc (512Б, НЕ 128-класс);
+free-list (сиг1) = uncollectable 128. РАЗНЫЕ пулы, ОДНА порча (обнуление
+high-half 8-байтного указателя). ⇒ порча НЕ специфична для пула/size-class ⇒
+**коллизия ctx_pins/child почти наверняка red herring** (как и вывод 211-волны);
+корень = ДИКАЯ/UAF запись, попадающая в разную память. Аксессоры чанков
+(nova_sched_*_at, fibers.h:679-711) корректны (чистая адресная арифметика).
+
+Chunk-геометрия NovaSchedState (fibers.h:646-664): 4 директории по
+1024 chunk-ptr, chunk=64 элем, never-realloc. parked/handle/stop_cb/parked_co
+в РАЗНЫХ директориях (нет cross-offset бага).
+
+СЛЕДУЮЩИЙ ШАГ: поймать WRITER. Пробую rr (record-replay reverse-watchpoint)
+или debug-guard в nova_goready (дамп scope/slot + parked_co-чанк).
