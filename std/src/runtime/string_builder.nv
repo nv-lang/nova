@@ -244,14 +244,14 @@ export fn StringBuilder mut @reserve(n int) -> *mut u8
 
 // Commit `n` bytes of previously-`@reserve`d spare capacity to the live
 // length — the second half of the zero-copy digit-loop protocol. Rebuilds
-// `@buf` via the public `Vec[T].new(ptr, len, cap)` cross-type bridge
-// (std/collections/vec/core.nv) since `data`/`len`/`cap` are `priv` to the
-// `collections.vec` module — this is the sanctioned way to bump the live
-// length after writing directly through the `@reserve`d pointer.
+// Тонкий делегат в `Vec[T] mut @advance` (in-place `len += n`; владелец
+// 2026-07-18) — прежний header-rebuild через 3-арг `[]u8.new(ptr,len,cap)`
+// плодил свежий GC-заголовок на каждый вызов. Обязательство инициализации
+// n байт — unsafe на сайте (см. контракт Vec @advance).
 export fn StringBuilder mut @advance(n int) -> ()
     requires n >= 0 && n <= @buf.cap() - @buf.len()
 {
-    @buf = []u8.new(@buf.ptr(), @buf.len() + n, @buf.cap())
+    unsafe { @buf.advance(n) }
 }
 
 // UTF-8 codepoint count of a byte run (D422 §"width = кодпоинты") — counts
