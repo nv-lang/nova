@@ -13926,7 +13926,43 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // Plan 214 (D429): `#coerce` fallback — tried AFTER the single-wrapper
+        // fallback above (design note: "single-wrapper проверяется ПЕРВЫМ").
+        // The two never actually compete at one call site: R11 rejects any
+        // `#coerce` declaration whose (I,O) pair is already covered by the
+        // single-wrapper mechanism, so by construction at most one of the two
+        // ever claims a given pair — this ordering is defensive symmetry with
+        // that invariant, not a live tie-break. R5 (exact > coercion) already
+        // holds structurally: we only reach here after `direct` failed, i.e.
+        // no exact match exists at this position.
+        if let Compat::Bad { .. } = &direct {
+            if let Some(input_name) = self.coerce_expr_input_name(expr, scope) {
+                if let Some(pairs) = self.coerce_pairs.get(&input_name) {
+                    let exp_key = coerce_type_key(expected);
+                    if pairs.iter().any(|p| p.output_key == exp_key) {
+                        return Compat::Ok;
+                    }
+                }
+            }
+        }
         direct
+    }
+
+    /// Plan 214 (D429): the concrete type NAME a `#coerce` lookup should use
+    /// for `expr` — the I-side key into `self.coerce_pairs`. Literal string
+    /// forms (`StrLit`/`InterpolatedStr`) are ALWAYS `str`-typed regardless of
+    /// content, so they resolve directly (no inference needed, mirrors
+    /// `wrap_kind_of_expr`'s literal fast-path); anything else goes through
+    /// the real scope-aware `infer_expr_type` (handles `Ident` var lookups,
+    /// method-chain results, etc. — more general than the AST-rewrite pass's
+    /// leaf-only `var_types`, since the accept-path here just needs a yes/no
+    /// verdict, not a rewritable node).
+    fn coerce_expr_input_name(&self, expr: &Expr, scope: &HashMap<String, TypeRef>) -> Option<String> {
+        if matches!(&expr.kind, ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. }) {
+            return Some("str".to_string());
+        }
+        let ty = self.infer_expr_type(expr, scope)?;
+        simple_named_type_name(&ty)
     }
 
     /// Plan 200 (sql-autoconv) D55 amend: best-effort `WrapKind` of `expr` —
