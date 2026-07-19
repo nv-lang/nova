@@ -39,7 +39,7 @@ export fn Vec[T] mut @push(v T) -> @ {
 /// Reading an uninit `u8` is garbage; for pointer-bearing `T` an uninit slot
 /// is GC-опасен (scanner walks junk) — hence the call-site obligation.
 /// Range (`0 <= n <= cap - len`) is enforced by `requires` (D257).
-export unsafe fn Vec[T] mut @advance(n int) -> ()
+export unsafe fn Vec[T] mut @advance(n int) -> @
     requires n >= 0 && n <= @cap - @len
 {
     @len += n

@@ -15525,7 +15525,7 @@ vs remaining-tail) — за владельцем/интегратором.
 - [D229](#d229--Debug-protocol--format-spec-expr) — амендится (диспетч `${expr:?}` через
   `@debug(f)`, радикс через `f.kind()`).
 - [D179](08-runtime.md#d179-stringbuilder--pure-nova-consume-type--plan-91-ф26) — амендится
-  (байтовый append + `@reserve`/`@spare`/`@advance`/`@len`/`@pad_in_place`/`@write_padded`; 2026-07-18: `@reserve -> ()` Rust-парити, сырой хвост — отдельная дверь `@spare() -> *mut u8`).
+  (байтовый append + `@reserve`/`@spare`/`@advance`/`@len`/`@pad_in_place`/`@write_padded`; 2026-07-18/20: `@reserve -> @` (fluent-канон D131; УКАЗАТЕЛЬ больше не возвращает), сырой хвост — отдельная дверь `@spare() -> *mut u8`; `@advance -> @`).
 - [D55](#d55-literal-coercion-в-позиции-с-явным-типом-sum-конструкторы-и-record-литералы) —
   амендится (str-литерал→`[]u8` коэрсия, общее правило для любой `[]u8`-позиции).
 - [D145](#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101) — источник protocol-embed

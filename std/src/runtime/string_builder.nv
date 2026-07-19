@@ -236,9 +236,10 @@ export fn StringBuilder consume @into_str_checked() -> Result[str, Utf8Error] =>
 // caller's contract is to write at most `n` bytes starting at the returned
 // pointer, then call `@advance` with the number actually written.
 // Разделение дверей (владелец 2026-07-18): reserve БОЛЬШЕ НЕ возвращает
-// указатель (Rust-парити `Vec::reserve -> ()`; ensure и expose — разные дела).
+// указатель (ensure и expose — разные дела); `-> @` — fluent-канон мутаторов
+// (D131-таблица: push/reserve/truncate/fill), даёт `sb.reserve(n).spare()`.
 // Сырой хвост — явная дверь `@spare()` ниже.
-export fn StringBuilder mut @reserve(n int) -> ()
+export fn StringBuilder mut @reserve(n int) -> @
     requires n >= 0
 {
     @buf.reserve(n)
@@ -256,7 +257,7 @@ export fn StringBuilder mut @spare() -> *mut u8 => @buf.ptr().offset(@buf.len())
 // 2026-07-18) — прежний header-rebuild через 3-арг `[]u8.new(ptr,len,cap)`
 // плодил свежий GC-заголовок на каждый вызов. Обязательство инициализации
 // n байт — unsafe на сайте (см. контракт Vec @advance).
-export fn StringBuilder mut @advance(n int) -> ()
+export fn StringBuilder mut @advance(n int) -> @
     requires n >= 0 && n <= @buf.cap() - @buf.len()
 {
     unsafe { @buf.advance(n) }
