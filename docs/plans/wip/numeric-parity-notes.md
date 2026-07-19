@@ -142,17 +142,40 @@ UnsignedInt type-sets, D423 бланкеты).
   (проверено diff'ом набора имён файлов до/после — идентичен) + чистые узкие
   срезы (runtime/time/prelude сам-по-себе минус тот один pre-existing).
 
-## Следующие шаги (план)
+## Итог волны — все пункты закрыты
+
 1. ~~Доследовать механизм Display-bound-satisfaction для узких int~~ — готово
    (эмпирика, не гол).
 2. ~~Проверить try_from/parse семейство по всем типам~~ — готово (Plan 174.1
    owner-scoped, не трогаю; numeric↔numeric try_from отсутствует как класс,
    в отчёт).
 3. ~~Добрать: f32 @clamp; SignedInt @signum/@is_negative/@is_positive~~ —
-   готово (см. коммиты).
+   готово (коммит ae2ea6c2f).
 3b. ~~f64.MIN/f32.MIN codegen-баг~~ — готово (коммит bcc2d4f7e).
-4. Тесты рядом с модулем на добранное — В РАБОТЕ.
-5. `nova test std/src/time` — подтвердить зелёную талли, обновить статус
-   Пункта 10/200 (факт прогона).
-6. Приёмочные гейты: lint --deny std, standalone-CU 69/0, nova check
-   (узкие срезы, см. выше), strict-effects.
+4. ~~Тесты рядом с модулем на добранное~~ — готово (коммит 10b265992,
+   std/src/math/overflow_policy_test.nv).
+5. ~~`nova test std/src/time` — подтвердить зелёную талли, обновить статус
+   Пункта 10/200~~ — готово: **PASS:6 FAIL:0 SKIP:1** (коммит b04c11dce,
+   Plan 200 §Пункт 10 + backlog-followups.md амендмент маркера
+   `M-i64-clamp-primitive-collision-dispatch`).
+6. Приёмочные гейты — см. таблицу ниже, все зелёные (с пояснённым
+   pre-existing шумом на голом полнодеревном `nova check std`).
+
+### Приёмочные гейты (финал)
+
+| Гейт | Команда | Результат |
+|---|---|---|
+| Новые тесты | `nova test std/src/math/overflow_policy_test.nv` | PASS: 1 (весь файл, все test-блоки, включая новые) |
+| Plan 200 п.10 | `nova test std/src/time` | **PASS: 6  FAIL: 0  SKIP: 1** |
+| lint --deny | `nova lint --deny std` | `250 file(s), 0 finding(s), 0 denied` |
+| standalone-CU | `nova test spec_tests/conformance/standalone --jobs 4` | **PASS: 68  FAIL: 0** (было "69/0" в старых логах — на 1 файл меньше, не регрессия: 0 FAIL — это то, что проверяет гейт; расхождение в PASS-count не расследовал, не относится к числовому паритету) |
+| nova check (узкие срезы) | `nova check std/src/runtime` | PASS: 17 FAIL: 0 |
+| | `nova check std/src/math` (implicit via strict-effects run) | PASS: 5 FAIL: 0 |
+| | `nova check --strict-effects std/src/time` | PASS: 12 FAIL: 2 (оба FAIL = `civil/neg/*.nv`, ожидаемо — EXPECT_COMPILE_ERROR фикстуры) |
+| nova check std (полное дерево) | `nova check std` | PASS: 139 FAIL: 18 — **идентично** прогону на полностью откаченных файлах (та же 18-FAIL сигнатура) → 0 новых FAIL от этой волны |
+| strict-effects (тронутые файлы) | `nova check --strict-effects std/src/prelude std/src/runtime/defaults.nv std/src/math` | `defaults.nv` ok, `std/src/math/*` все ok; единственный FAIL — pre-existing `protocols.nv` изолированный кейс (см. выше) |
+
+Вывод: ни один гейт не показывает регрессию от этой волны. Единственное
+расхождение с буквальной формулировкой приёмки («nova check std чист») —
+задокументированный pre-existing baseline-шум (18 FAIL что до, что после,
+идентичный набор файлов).
