@@ -9,3 +9,10 @@
 - `local_shadows_topfn/` — `[M-198-f4c-2-local-not-shadow-crossfile-topfn]`:
   локальная переменная не затеняет top-level `fn` того же имени из ДРУГОГО файла
   того же folder-module (re-verified 2026-07-17, Plan 212 pt.7).
+- `p196_b10m_phase1c_probe.nv` — `[M-196-probes-b10m-phase1c]`: phase-1c
+  pre-scan репро для `B10m_ident_empty_fallback` (emit_c.rs
+  `infer_call_ret_c`) — module-level `ro y = helper(21)` форвард-ссылается
+  на expr-body free fn без явного `-> T`, чей тело зовёт ДРУГУЮ такую же
+  fn — CC-FAIL (`assigning to 'nova_unit' from incompatible type
+  'nova_int'`). Детали: docs/plans/wip/196-probes-notes.md (Plan 196
+  волна-1 разведка-зонд).
