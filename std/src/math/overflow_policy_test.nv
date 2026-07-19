@@ -283,3 +283,97 @@ test "Step 0/D74: clamp — lo>hi edge (контракт 1:1 со старым i
     ro c i64 = -5
     assert(c.clamp(10, 0) == 10)          // -5 < 10 -> lo=10
 }
+
+// ── [Числовой паритет, 2026-07-19] f64/f32 @clamp — concrete (float ∉ Ints,
+// не бланкет), std/runtime/defaults.nv. f32 @clamp был добавлен этой волной
+// (зеркало f64, ранее отсутствовал). Тот же контракт-порядок (`@ < lo`
+// первой веткой), что у Ints-бланкета выше.
+
+test "Числовой паритет: f64 @clamp — в диапазоне/выше/ниже + lo>hi edge" {
+    ro a f64 = 1.5
+    assert(a.clamp(0.0, 10.0) == 1.5)      // в диапазоне -> сам
+    ro b f64 = 15.0
+    assert(b.clamp(0.0, 10.0) == 10.0)     // выше hi -> hi
+    ro c f64 = -5.0
+    assert(c.clamp(0.0, 10.0) == 0.0)      // ниже lo -> lo
+    ro d f64 = 5.0
+    assert(d.clamp(10.0, 0.0) == 10.0)     // lo>hi: @ < lo=10 -> lo (тот же порядок, что Ints/int)
+}
+
+test "Числовой паритет: f32 @clamp — зеркало f64, в диапазоне/выше/ниже + lo>hi edge" {
+    ro a f32 = 1.5
+    assert(a.clamp(0.0, 10.0) == 1.5)      // в диапазоне -> сам
+    ro b f32 = 15.0
+    assert(b.clamp(0.0, 10.0) == 10.0)     // выше hi -> hi
+    ro c f32 = -5.0
+    assert(c.clamp(0.0, 10.0) == 0.0)      // ниже lo -> lo
+    ro d f32 = 5.0
+    assert(d.clamp(10.0, 0.0) == 10.0)     // lo>hi: @ < lo=10 -> lo
+}
+
+// ── [Числовой паритет, 2026-07-19] SignedInt @signum/@is_negative/
+// @is_positive — были concrete-только-на-`int` (D74), теперь бланкет над
+// `SignedInt` (i8/i16/i32/i64/int). Тела — чистые сравнения, никакого
+// overflow-риска (в отличие от `abs`, который НЕ добирался — см. отчёт).
+
+test "Числовой паритет: signum — знак значения на всех SignedInt-ширинах" {
+    ro a int = 5
+    assert(a.signum() == 1)
+    ro b int = -5
+    assert(b.signum() == -1)
+    ro c int = 0
+    assert(c.signum() == 0)
+
+    ro d i64 = 5
+    ro one_i64 i64 = 1
+    assert(d.signum() == one_i64)
+    ro e i64 = -5
+    ro neg_one_i64 i64 = -1
+    assert(e.signum() == neg_one_i64)
+
+    ro f i8 = i8.MIN
+    ro neg_one_i8 i8 = -1
+    assert(f.signum() == neg_one_i8)       // signum само не переполняется (сравнение, не арифметика)
+    ro g i16 = 0
+    ro zero_i16 i16 = 0
+    assert(g.signum() == zero_i16)
+    ro h i32 = 7
+    ro one_i32 i32 = 1
+    assert(h.signum() == one_i32)
+}
+
+test "Числовой паритет: is_negative/is_positive — строгие проверки знака на всех SignedInt-ширинах" {
+    ro a int = -1
+    assert(a.is_negative())
+    assert(!a.is_positive())
+    ro b int = 0
+    assert(!b.is_negative())
+    assert(!b.is_positive())
+    ro c int = 1
+    assert(!c.is_negative())
+    assert(c.is_positive())
+
+    ro d i64 = i64.MIN
+    assert(d.is_negative())
+    ro e i32 = i32.MAX
+    assert(e.is_positive())
+    ro f i16 = 0
+    assert(!f.is_negative() && !f.is_positive())
+    ro g i8 = -1
+    assert(g.is_negative())
+}
+
+// ── [Числовой паритет, 2026-07-19] f64.MIN/f32.MIN — codegen-баг (найден
+// этой волной): "MIN" уже проходил чекер generic'ом для ЛЮБОГО numeric-типа,
+// но падал на C-компиляции (не было записи в emit_c.rs
+// numeric_type_constant_mapping). Rust-паритет: MIN = most-negative-FINITE
+// (`-MAX`), НЕ путать с уже существовавшим `MIN_POSITIVE`.
+
+test "Числовой паритет: f64.MIN/f32.MIN — most-negative-finite, отличается от MIN_POSITIVE" {
+    assert(f64.MIN == -f64.MAX)
+    assert(f32.MIN == -f32.MAX)
+    assert(f64.MIN < f64.MIN_POSITIVE)
+    assert(f32.MIN < f32.MIN_POSITIVE)
+    assert(f64.MIN.is_finite())
+    assert(f32.MIN.is_finite())
+}
