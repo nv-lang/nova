@@ -328,6 +328,28 @@ byte-parity НЕ требуется (аллокация убрана — `.c` м
 `nova check std/src/time` (targeted, без codegen) — зелёный на момент коммита. **Полный `nova test`/conformance —
 НЕ прогнан этой сессией** (CPU занят гейтом интегратора) — авторитетный гейт остаётся за оркестратором.
 
+**ДОПОЛНЕНИЕ (волна «числовой паритет», 2026-07-19, worktree `nova-numparity`, ветка
+`p-numeric-parity`, модель sonnet).** Прогнан отложенный полный `nova test std/src/time`:
+**PASS: 6  FAIL: 0  SKIP: 1** (`cron` — SKIP, нет test-блоков/`fn main()`, ожидаемо) —
+блокер снят подтверждённо, `sat_add_i64`/`sat_sub_i64`/`duration/core.nv` работают на
+`r.clamp(lo, hi)` без изменений (Ints-бланкет `@clamp`, std/src/prelude/protocols.nv,
+уже покрывал `i64` до этой волны — см. `docs/plans/wip/numeric-parity-notes.md`).
+Талли `std/src/time` — ЗЕЛЁНАЯ, пункт закрыт фактом прогона.
+
+Побочная находка (НЕ регрессия этой волны, НЕ трогал): `nova test
+std/src/time/overflow_safe_test.nv` (standalone-таргет ЭТОГО ОДНОГО файла) падает
+компиляторным ICE `[P67-LEGACY] Path call return type unknown for method=to_nanos`
+(emit_c.rs:52548) — воспроизведено И на полностью откаченном HEAD (до всех правок этой
+волны), т.е. pre-existing, из известного класса P67-LEGACY (generic-return-type-inference
+gap, уже описан в protocols.nv рядом с `@checked_div`/`@checked_neg`). При штатном прогоне
+`nova test std/src/time` (весь каталог, а не один файл) этот файл почему-то не входит в
+отчёт вовсе (не PASS/не FAIL/не SKIP — тихо отсутствует) — та же судьба у
+`std/src/time/rt/*.nv` и `std/src/time/civil/rt/*.nv`/`civil/neg/*.nv` (легаси
+`EXPECT_RUNTIME_PANIC`/`EXPECT_COMPILE_ERROR` фикстуры, отдельная конвенция запуска — см.
+`docs/test-conventions.md` §rt/neg). Не относится к Пункту 10 (`sat_add_i64` живёт в
+`duration/core.nv`, не в `overflow_safe_test.nv`) — отдельная P67-LEGACY заметка, не
+добираю в этой волне (не numeric-parity scope).
+
 ---
 
 ## Пункт 11 — duration.nv: `@as_*()` → голое имя (хвост D410-миграции `[M-d410-as-to-migration]`)

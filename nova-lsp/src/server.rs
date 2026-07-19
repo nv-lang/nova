@@ -21,7 +21,10 @@ use tower_lsp::lsp_types::{notification, request};
 use tower_lsp::{Client, LanguageServer};
 
 use crate::code_actions::compute_code_actions_with_stdlib;
-use crate::compiler::{check_file_with_root, check_open_documents, check_workspace, run_with_large_stack};
+use crate::compiler::{
+    check_file_with_root, check_open_documents, check_workspace, collect_nv_paths,
+    run_with_large_stack,
+};
 use crate::completion;
 use crate::diagnostic_mapping::to_lsp;
 use crate::document_highlight::compute_document_highlights;
@@ -29,6 +32,7 @@ use crate::format::{format_document, format_range, on_type_format};
 use crate::goto_definition::compute_goto_definition_in;
 use crate::hover::compute_hover_in;
 use crate::incremental::apply_changes;
+use crate::index_cache;
 use crate::rename::{prepare_rename, RenameDoc, compute_rename};
 use crate::semantic_tokens_delta::{build_delta_response, SemanticTokensSnapshot};
 use crate::signature_help::compute_signature_help_in;
@@ -417,31 +421,147 @@ impl Backend {
         )
         .await;
 
-        // Index all .nv files for workspace/symbol + references (Ф.12). This is
-        // the background cold-scan of the WHOLE workspace (not just open docs) so
-        // the first references/workspace-symbol on a cold project never blocks on
-        // a full-FS scan (sourcekit-lsp lesson).
-        let files = collect_nv_files(&root);
-        let total = files.len().max(1);
-        for (i, (uri, src)) in files.iter().enumerate() {
-            self.state.workspace_index.index_file(uri.clone(), src);
-            self.state.references_index.index_file(uri.clone(), src);
+        // Plan 215: warm-start the workspace/symbol + references index (Ф.12)
+        // from the persistent on-disk cache instead of unconditionally
+        // re-parsing every `.nv` file. `index_cache::load` degrades to `None`
+        // on first run / a corrupt or format-mismatched cache file — this
+        // path then behaves exactly like the old unconditional full scan
+        // below (every file lands in `to_reindex`), so there's no unsafe
+        // "trust the cache" branch here, only a fast path that skips
+        // re-parsing files whose (mtime, size) fingerprint is unchanged.
+        let scan_t0 = std::time::Instant::now();
+        let persisted = index_cache::load(&root).unwrap_or_default();
+        let had_cache = !persisted.files.is_empty();
+
+        // Path-only listing (no content read yet — Plan 213 Ф.1's filtered
+        // walk) so a warm start never pays the I/O cost of reading files it's
+        // about to skip.
+        let paths = collect_nv_paths(&root);
+        let total_files = paths.len();
+
+        let mut new_persisted = index_cache::PersistedIndex::new();
+        let mut to_reindex: Vec<std::path::PathBuf> = Vec::new();
+        let mut warm_hits = 0usize;
+
+        for path in &paths {
+            let Some(uri) = Url::from_file_path(path).ok() else { continue };
+            if let Some(fp) = index_cache::file_fingerprint(path) {
+                let key = uri.as_str().to_string();
+                if let Some(entry) = persisted.files.get(&key) {
+                    if (entry.mtime_nanos, entry.size) == fp {
+                        // Unchanged since the cache was written — install the
+                        // pre-computed entries directly, no parse.
+                        self.state.workspace_index.install_file(uri.clone(), entry.symbols.clone());
+                        self.state.references_index.install_file(uri.clone(), entry.refs.clone());
+                        new_persisted.files.insert(key, entry.clone());
+                        warm_hits += 1;
+                        continue;
+                    }
+                }
+            }
+            to_reindex.push(path.clone());
+        }
+
+        tracing::info!(
+            total_files,
+            warm_hits,
+            stale = to_reindex.len(),
+            had_cache,
+            fingerprint_pass_ms = scan_t0.elapsed().as_millis(),
+            "nova-lsp: index cache warm-start check"
+        );
+
+        // The index already reflects every warm-cache hit — answer
+        // workspace/symbol and references requests immediately instead of
+        // blocking on the stale-file reindex loop below (which may still
+        // have thousands of files left after a first-ever cold start).
+        self.state.references_index.mark_primed();
+
+        self.send_progress(
+            &token,
+            WorkDoneProgress::Report(WorkDoneProgressReport {
+                cancellable: Some(false),
+                message: Some(format!(
+                    "{warm_hits}/{total_files} warm from cache, reindexing {} stale",
+                    to_reindex.len()
+                )),
+                percentage: Some(20),
+            }),
+        )
+        .await;
+
+        // Reindex the stale set. Plan 215 "open documents first": a file
+        // already open in the editor (`state.docs`) is skipped here entirely
+        // — `did_open`/`did_change` already indexed it from the live buffer
+        // (the source of truth; reading the on-disk copy here could clobber
+        // unsaved edits — same principle as `workspace_lifecycle::
+        // apply_watched_event`) — so an open document never waits behind
+        // this loop's position at all, warm or cold.
+        //
+        // CPU-scromness (Plan 213 Ф.2 precedent: the owner has previously
+        // disabled the LSP entirely over background CPU usage): yield to the
+        // tokio scheduler after every file, and actively sleep every
+        // `REINDEX_SLEEP_EVERY` files, so a large stale set (e.g. after a
+        // `git pull` touching hundreds of files, or a first-ever cold start)
+        // never monopolizes a core against concurrent interactive requests.
+        const REINDEX_SLEEP_EVERY: usize = 64;
+        const REINDEX_SLEEP: Duration = Duration::from_millis(10);
+
+        let total_stale = to_reindex.len().max(1);
+        let mut processed = 0usize;
+        for (i, path) in to_reindex.iter().enumerate() {
+            let Some(uri) = Url::from_file_path(path).ok() else { continue };
+            if self.state.docs.contains_key(&uri) {
+                continue; // already fresh via the open-document path
+            }
+            let Ok(src) = std::fs::read_to_string(path) else { continue };
+            self.state.workspace_index.index_file(uri.clone(), &src);
+            self.state.references_index.index_file(uri.clone(), &src);
+
+            if let Some((mtime_nanos, size)) = index_cache::file_fingerprint(path) {
+                new_persisted.files.insert(
+                    uri.as_str().to_string(),
+                    index_cache::CachedFile {
+                        mtime_nanos,
+                        size,
+                        symbols: self.state.workspace_index.export_file(&uri),
+                        refs: self.state.references_index.export_file(&uri),
+                    },
+                );
+            }
+
             if i % 16 == 0 {
-                let pct = ((i * 100) / total) as u32;
+                let pct = 20 + ((i * 60) / total_stale) as u32;
                 self.send_progress(
                     &token,
                     WorkDoneProgress::Report(WorkDoneProgressReport {
                         cancellable: Some(false),
-                        message: Some(format!("indexed {}/{} files", i, total)),
-                        percentage: Some(pct.min(90)),
+                        message: Some(format!("reindexed {}/{} stale files", i, to_reindex.len())),
+                        percentage: Some(pct.min(80)),
                     }),
                 )
                 .await;
             }
+
+            processed += 1;
+            tokio::task::yield_now().await;
+            if processed % REINDEX_SLEEP_EVERY == 0 {
+                tokio::time::sleep(REINDEX_SLEEP).await;
+            }
         }
-        // The whole workspace is now in the references index — subsequent
-        // requests answer from memory, never re-scanning the filesystem.
-        self.state.references_index.mark_primed();
+
+        // Best-effort persist for the next server start. A write failure
+        // (read-only filesystem, disk full, …) only degrades the *next*
+        // start back to cold — never this session.
+        index_cache::save(&root, &new_persisted);
+
+        tracing::info!(
+            total_files,
+            warm_hits,
+            reindexed = to_reindex.len(),
+            total_elapsed_ms = scan_t0.elapsed().as_millis(),
+            "nova-lsp: workspace index ready"
+        );
 
         // Cold type-check pass → publish initial diagnostics.
         self.send_progress(

@@ -50,6 +50,12 @@ tokio-util = { version = "0.7", features = ["rt"] }
 # (Plan 104.10 Ф.18: didChangeWatchedFiles register_options).
 serde_json = "1"
 
+# Serialize/Deserialize derive for the persistent on-disk index cache
+# (Plan 215) — lsp_types (SymbolKind/Range/Position/Url) already implement
+# these traits (they are the JSON-RPC wire types), so deriving on our own
+# cache structs is all that's needed; no new wire format required.
+serde = { version = "1", features = ["derive"] }
+
 [dev-dependencies]
 # Needed in integration tests that spawn child processes with async helpers
 tokio = { version = "1", features = ["full"] }
