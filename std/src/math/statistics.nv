@@ -97,8 +97,8 @@ export fn Stats.min_max(xs []f64) -> Result[(f64, f64), StatsError] {
     mut lo = xs[0]
     mut hi = xs[0]
     for x in xs {
-        if x < lo { lo = x }
-        if x > hi { hi = x }
+        lo = lo.min(x)
+        hi = hi.max(x)
     }
     Ok((lo, hi))
 }
@@ -169,8 +169,8 @@ export fn StreamingStats mut @add(x f64) -> () {
         @min_val = x
         @max_val = x
     } else {
-        if x < @min_val { @min_val = x }
-        if x > @max_val { @max_val = x }
+        @min_val = @min_val.min(x)
+        @max_val = @max_val.max(x)
     }
     ro delta = x - @mean_val
     @mean_val += delta / (@count as f64)

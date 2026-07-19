@@ -24,10 +24,8 @@ fn Vec[T] mut @msort(cmp fn(T, T) -> int) -> @ {
         buf.clear()
         mut i = 0
         while i < n {
-            mut mid = i + width
-            if mid > n { mid = n }
-            mut hi = i + width + width
-            if hi > n { hi = n }
+            ro mid = (i + width).min(n)
+            ro hi = (i + width + width).min(n)
             mut a = i
             mut b = mid
             while a < mid && b < hi {

@@ -4643,13 +4643,18 @@ fn conv_walk_expr_for_while_counter(e: &Expr, out: &mut Vec<LintWarning>) {
 // std/prelude/protocols.nv Ints-бланкет, std/time/duration/core.nv) САМИ
 // реализованы РОВНО этим if/else-паттерном (`export fn int @min(other int)
 // -> int => if @ < other { @ } else { other }` и т.п.) — предложение
-// «замени на `.max(...)`» внутри тела `@max` было бы рекурсией на себя. Оба
-// правила молчат внутри любой fn с ИМЕНЕМ буквально `min`/`max`
-// (W_MANUAL_MIN_MAX) / `clamp` (W_MANUAL_CLAMP) — узко по имени, НЕ по
-// receiver'у (гасит и свободные функции-реализации:
-// `spec_tests/conformance/standalone/f11_corpus_06_pattern_regression.nv`
-// содержит `fn max(a int, b int) -> int => if a > b { a } else { b }` —
-// пиновая регрессия ИМЕННО этой формы, легитимно остаётся нетронутой).
+// «замени на `.max(...)`» внутри тела `@max` было бы рекурсией на себя.
+// ОБА правила молчат внутри любой fn с ИМЕНЕМ буквально `min`/`max`/
+// `clamp` — узко по имени, НЕ по receiver'у (гасит и свободные функции-
+// реализации: `spec_tests/conformance/standalone/
+// f11_corpus_06_pattern_regression.nv` содержит `fn max(a int, b int) ->
+// int => if a > b { a } else { b }` — пиновая регрессия ИМЕННО этой формы,
+// легитимно остаётся нетронутой). W_MANUAL_MIN_MAX ТОЖЕ гасится внутри
+// `clamp`-именованных fn — тело `@clamp` содержит внутренний `if`,
+// который САМ по себе валидный 2-операндный min/max-шейп (не рекурсия НА
+// `@clamp`, но: канон-референсная реализация вне периметра волны +
+// generic `fn[T Ints] T @clamp` резолвит `.min()`/`.max()` на T не
+// проверено — см. комментарий у `conv_manual_min_max` ниже).
 //
 // W_MANUAL_CLAMP НАМЕРЕННО не покрывает вложенные вызовы-цепочки
 // `x.min(hi).max(lo)` / `x.max(lo).min(hi)` (упомянутые как альтернативная
@@ -4846,8 +4851,25 @@ fn conv_manual_min_max(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarni
     // том же распарсенном узле, совпадает байт-в-байт.
     let consumed = conv_collect_clamp_consumed_spans(m);
     for f in conv_all_fns(m) {
-        if f.name == "min" || f.name == "max" {
-            continue; // само-ссылочный сайт — см. блок-комментарий выше
+        // `min`/`max` — прямая рекурсия (см. блок-комментарий выше).
+        // `clamp` — ТОЖЕ молчит: тело `@clamp` (Ints-бланкет
+        // protocols.nv, f32/f64 defaults.nv) содержит ВНУТРЕННИЙ `if @ >
+        // hi { hi } else { @ }`, который сам по себе валидный
+        // 2-операндный min/max-шейп (это НЕ рекурсия на `@clamp` — вызов
+        // `.min()`/`.max()` из тела `@clamp` не циклится), но: (а) это
+        // канон-РЕФЕРЕНСНАЯ реализация, от которой всё остальное
+        // отталкивается — трогать её этой стилевой волной не входит в
+        // периметр; (б) `fn[T Ints] T @clamp` — generic, а `.min()`/
+        // `.max()` определены КОНКРЕТНО per-type (defaults.nv), НЕ через
+        // Ints-бланкет — резолвится ли вызов на T внутри generic-тела БЕЗ
+        // отдельного bound-требования, не проверено (не наша забота
+        // проверять — избегаем риска). Тот же гейт закрывает
+        // `spec_tests/conformance/method_with_args_ok.nv::Bounded4_1
+        // @clamp` — файл пинует ИМЕННО этот if/else-шейп для теста
+        // ro-caching кодогена (докстринг «4 reads ro fields — cache
+        // emitted»), а не только W_MANUAL_CLAMP-совпадающие сайты.
+        if f.name == "min" || f.name == "max" || f.name == "clamp" {
+            continue;
         }
         conv_walk_fn(
             f,
@@ -7180,6 +7202,37 @@ mod tests {
         assert!(
             min_max_rule_hits(&ws, "W_MANUAL_CLAMP").is_empty(),
             "must NOT fire inside the very definition of @clamp, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // Regression (найдено на живом std/prelude/protocols.nv +
+    // spec_tests/conformance/method_with_args_ok.nv при разкраснении волны
+    // 2026-07-20): тело `@clamp` (`if @ < lo { lo } else if @ > hi { hi }
+    // else { @ }`) содержит ВНУТРЕННИЙ `if @ > hi { hi } else { @ }` —
+    // сам по себе валидный 2-операндный min/max-шейп. W_MANUAL_CLAMP это
+    // тело гасит (self-ref по имени `clamp`), но W_MANUAL_MIN_MAX должен
+    // ТОЖЕ молчать внутри `clamp`-именованных fn — иначе ложно предлагает
+    // `.min()`/`.max()` внутри канон-референсной реализации `@clamp`
+    // (generic `fn[T Ints] T @clamp` — резолвит ли `.min()`/`.max()` на T
+    // без отдельного bound-требования не проверено) и внутри
+    // `method_with_args_ok.nv::Bounded4_1 @clamp`, которая пинует ИМЕННО
+    // этот if/else-шейп для теста ro-caching кодогена.
+    #[test]
+    fn no_warning_manual_min_max_inside_clamp_definition() {
+        let src = "module foo\n\
+             export fn f64 @clamp(lo f64, hi f64) -> f64 =>\n    \
+             if @ < lo { lo } else if @ > hi { hi } else { @ }\n\
+             type Bounded4_1 { ro lo int, ro hi int }\n\
+             fn Bounded4_1 @clamp(x int) -> int {\n    \
+             if x < @lo { @lo } else { if x > @hi { @hi } else { x } }\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_MANUAL_MIN_MAX").is_empty(),
+            "must NOT fire inside the body of ANY `clamp`-named fn (canon @clamp \
+             reference impl AND user-defined @clamp pinning a codegen shape), got: {:?}",
             ws.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
     }

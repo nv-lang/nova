@@ -58,12 +58,12 @@ fn fold_max_depth(items []BTree) -> int {
     mut best = 0
     for it in items {
         ro d = depth(it)
-        if d > best { best = d }
+        best = best.max(d)
     }
     best
 }
 
-fn max_int(a int, b int) -> int => if a > b { a } else { b }
+fn max_int(a int, b int) -> int => a.max(b)
 
 test "self-recursive enum through Result builds and evaluates correctly" {
     ro r = build(5)

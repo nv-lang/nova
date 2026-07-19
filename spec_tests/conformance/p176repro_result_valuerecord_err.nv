@@ -25,7 +25,7 @@ fn MemSrc mut @pull(buf mut []u8) -> Result[int, VErr] {
     if cap == 0 { return Ok(0) }
     ro rem = @data.len() - @pos
     if rem <= 0 { return Ok(0) }
-    ro n = if cap < rem { cap } else { rem }
+    ro n = cap.min(rem)
     for i in 0..n {
         buf[i] = @data[@pos + i]
     }

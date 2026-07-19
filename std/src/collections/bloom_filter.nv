@@ -93,7 +93,7 @@ export fn BloomFilter.optimal(expected_n int, false_pos_rate f64) -> Self {
     ro m = (-n * false_pos_rate.ln() / (ln2 * ln2)).ceil() as int
     // k = (m/n) * ln(2)
     ro k = ((m as f64 / n) * ln2).ceil() as int
-    ro k_safe = if k < 1 { 1 } else { k }
+    ro k_safe = k.max(1)
     Self.new(m, k_safe)
 }
 

@@ -74,7 +74,7 @@ export type Range value {
 #stable(since = "0.1")
 export fn Range @len() -> int {
     ro n = @end - @start
-    if n < 0 { 0 } else { n }
+    n.max(0)
 }
 
 /// Возвращает `true` если диапазон не содержит элементов.
