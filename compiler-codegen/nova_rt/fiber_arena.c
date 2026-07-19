@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+/* [M-mn-spawnctx-corruption-cancel-wake]: pthread_getattr_np (реестр
+ * native-стеков для GC push_other_roots) требует _GNU_SOURCE ДО первого
+ * glibc-инклюда. */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 /* Plan 44.2 Etap 1 — per-thread fiber stack arena (Linux/macOS).
  * See fiber_arena.h for design notes.
  *
@@ -34,6 +40,8 @@
 #include <string.h>
 #include <stdint.h>
 #include <errno.h>      /* Plan 149: strtoll errno check */
+#include <fcntl.h>      /* [M-mn-spawnctx-…]: open(/proc/self/maps) в GC-колбэке */
+#include <sys/syscall.h> /* [M-mn-spawnctx-…]: SYS_gettid (bootstrap-probe main) */
 #include <unistd.h>
 #include <sys/mman.h>
 #include <pthread.h>
@@ -297,9 +305,146 @@ static void _arena_install_sigsegv_handler(void) {
  * Windows-сторона нашла это же на Ф.1). Guard-страницы и свободные/
  * никогда-не-тронутые слоты не читаются вовсе. */
 #ifdef NOVA_GC_BOEHM
+/* ── [M-mn-spawnctx-corruption-cancel-wake] КОРЕНЬ (2026-07-19) ──
+ *
+ * На pthreads-сборке bdwgc дефолтный `GC_push_other_roots` =
+ * `GC_default_push_other_roots` → `GC_push_all_stacks()` — канал, которым
+ * сканируются СТЕКИ И РЕГИСТРЫ всех зарегистрированных потоков. Установка
+ * нашего колбэка (ea85229e0) ЗАМЕНЯЛА его, а Linux-порт Windows-модели
+ * перенёс из трёх слагаемых Windows-колбэка ТОЛЬКО занятые fiber-слоты,
+ * потеряв два других (fiber_arena_win.c пушит их с Plan 151/Ф.2!):
+ * native-стеки потоков-владельцев и стек главного потока. Итог: всё,
+ * что рутовано только native-стеком (stack-локальный supervised-scope `q`
+ * и его child_error[]/child_ctx[] на стеке main, локали воркерского
+ * шедулера, cancel-токен и т.д.), собиралось ЖИВЫМ; страницы
+ * перекраивались под другие объекты — обе gdb-сигнатуры (усечённый
+ * free-list-линк 128Б uncollectable-класса — легитимные int32-записи
+ * рантайма в СВОЙ ЖЕ преждевременно отобранный массив; мусорный
+ * `_nova_fiber_scope`/ASCII в SpawnCtx к моменту wake) и рваный
+ * `_nova_saved_fail_top` («cancel-throw outside any supervised scope»).
+ *
+ * Доказательная матрица (изолированный pos_max_fibers_concurrent, WSL):
+ * базлайн 0/30 PASS; PIN2-бисекция (дубль-достижимость live-массивов
+ * через uncollectable-цепь) 10/10 PASS; mmap-вынос массивов из GC-кучи
+ * 10/10 PASS; poison/карантин ручных free — эффекта нет (порча не от
+ * manual-free). Наивный чейнинг дефолтного колбэка НЕ решение: суспенд
+ * ловит воркеров с sp ВНУТРИ коро-стека арены → GC_push_all_stacks
+ * строит диапазон [коро-sp, native-bottom] через PROT_NONE guard'ы →
+ * SIGSEGV в GC-маркере (наблюдён напрямую). Правильная модель — как на
+ * Windows: оверрайд + ПОЛНАЯ компенсация тремя слагаемыми ниже. */
+
+/* (а) main-стек: probe-адрес, зафиксированный nova_fiber_arena_set_main_
+ * stack (вызывается из _materialize_pool на main ДО установки колбэка).
+ * pthread_getattr_np для main даёт rlimit-диапазон, НЕ полностью
+ * замапленный — пушить его нельзя; вместо этого на каждой сборке
+ * читаем /proc/self/maps и пушим ТЕКУЩУЮ VMA main-стека (растёт вниз
+ * автоматически; мир остановлен — диапазон стабилен). */
+static char* volatile _nova_main_stack_probe = NULL;
+
+/* (б) native-стеки потоков рантайма (воркеры, драйвер, sysmon): NPTL
+ * маппит стек потока целиком → пуш полного диапазона безопасен (guard
+ * NPTL исключён самим pthread_getattr_np). Append-only список. */
+struct NovaNativeStackRange {
+    char* volatile lo;
+    char* volatile hi;
+    struct NovaNativeStackRange* next;
+};
+static struct NovaNativeStackRange* volatile _nova_native_stacks = NULL;
+
+void nova_fiber_arena_register_native_stack(void) {
+    pthread_attr_t attr;
+    if (pthread_getattr_np(pthread_self(), &attr) != 0) return;
+    void* addr = NULL; size_t size = 0;
+    int rc = pthread_attr_getstack(&attr, &addr, &size);
+    pthread_attr_destroy(&attr);
+    if (rc != 0 || !addr || !size) return;
+    struct NovaNativeStackRange* nd =
+        (struct NovaNativeStackRange*)malloc(sizeof *nd);
+    if (!nd) return;
+    nd->lo = (char*)addr;
+    nd->hi = (char*)addr + size;
+    struct NovaNativeStackRange* h;
+    do {
+        h = __atomic_load_n(&_nova_native_stacks, __ATOMIC_ACQUIRE);
+        nd->next = h;
+    } while (!__atomic_compare_exchange_n(&_nova_native_stacks, &h, nd,
+                                          false, __ATOMIC_RELEASE, __ATOMIC_ACQUIRE));
+}
+
+/* Поток выходит: снять диапазон (glibc может отдать кэшированный стек
+ * другому потоку — лишний conservative-пуш безвреден, но unmap кэша при
+ * переполнении сделал бы пуш опасным; гигиена — обнулить). Ищем узел,
+ * содержащий адрес локали текущего потока. */
+void nova_fiber_arena_unregister_native_stack(void) {
+    char probe_local;
+    char* p = &probe_local;
+    for (struct NovaNativeStackRange* nd =
+             __atomic_load_n(&_nova_native_stacks, __ATOMIC_ACQUIRE);
+         nd; nd = nd->next) {
+        char* lo = __atomic_load_n(&nd->lo, __ATOMIC_ACQUIRE);
+        char* hi = __atomic_load_n(&nd->hi, __ATOMIC_ACQUIRE);
+        if (lo && p >= lo && p < hi) {
+            __atomic_store_n(&nd->lo, (char*)NULL, __ATOMIC_RELEASE);
+            __atomic_store_n(&nd->hi, (char*)NULL, __ATOMIC_RELEASE);
+            return;
+        }
+    }
+}
+
+/* (а) main: найти в /proc/self/maps VMA, содержащую probe, и запушить её
+ * целиком. Стриминговый разбор без аллокаций (maps может быть огромным —
+ * guard-страницы арены плодят десятки тысяч VMA; [stack] — в конце). */
+static void _nova_push_main_stack_vma(void) {
+    char* probe = (char*)__atomic_load_n(&_nova_main_stack_probe, __ATOMIC_ACQUIRE);
+    if (!probe) return;
+    int fd = open("/proc/self/maps", O_RDONLY);
+    if (fd < 0) return;
+    static char buf[8192 + 256];
+    size_t carry = 0;
+    uintptr_t p = (uintptr_t)probe;
+    for (;;) {
+        ssize_t n = read(fd, buf + carry, sizeof(buf) - carry - 1);
+        if (n <= 0) break;
+        size_t len = carry + (size_t)n;
+        buf[len] = 0;
+        char* line = buf;
+        for (;;) {
+            char* nl = strchr(line, '\n');
+            if (!nl) {
+                carry = len - (size_t)(line - buf);
+                if (carry >= sizeof(buf) - 256) carry = 0;  /* линия-монстр */
+                else memmove(buf, line, carry);
+                break;
+            }
+            *nl = 0;
+            uintptr_t lo = (uintptr_t)strtoull(line, NULL, 16);
+            char* dash = strchr(line, '-');
+            uintptr_t hi = dash ? (uintptr_t)strtoull(dash + 1, NULL, 16) : 0;
+            if (lo <= p && p < hi) {
+                GC_push_all((char*)lo, (char*)hi);
+                close(fd);
+                return;
+            }
+            line = nl + 1;
+        }
+    }
+    close(fd);
+}
+
 /* Mark-фаза, мир остановлен → arena-list append-only + bitmap/high_water
  * стабильны; обход без лока безопасен (симметрия с Windows). */
 static void _nova_gc_push_other_roots(void) {
+    /* (а) main-стек (текущая VMA). */
+    _nova_push_main_stack_vma();
+    /* (б) native-стеки потоков рантайма. */
+    for (struct NovaNativeStackRange* nd =
+             __atomic_load_n(&_nova_native_stacks, __ATOMIC_ACQUIRE);
+         nd; nd = nd->next) {
+        char* lo = __atomic_load_n(&nd->lo, __ATOMIC_ACQUIRE);
+        char* hi = __atomic_load_n(&nd->hi, __ATOMIC_ACQUIRE);
+        if (lo && hi > lo) GC_push_all(lo, hi);
+    }
+    /* (в) занятые fiber-слоты арен. */
     for (struct NovaFiberArena* a =
              __atomic_load_n(&_nova_arena_list_head, __ATOMIC_ACQUIRE);
          a; a = a->next_arena) {
@@ -562,6 +707,15 @@ void nova_fiber_arena_init(void) {
      * per-process, до первого alloc'а слота (симметрия с Windows
      * _nova_fw_global_init/INIT_ONCE). */
     pthread_once(&_gc_roots_once, _arena_install_gc_roots);
+    /* [M-mn-spawnctx-corruption-cancel-wake]: bootstrap-страховка — в
+     * не-armed режиме _materialize_pool (и его set_main_stack) не
+     * вызывается вовсе, а оверрайд колбэка ставится ЗДЕСЬ, на первом
+     * mco_create главного потока. Без probe main-стек выпал бы из скана.
+     * Ставим probe сами, если мы — главный поток процесса. */
+    if (!__atomic_load_n(&_nova_main_stack_probe, __ATOMIC_ACQUIRE)
+        && getpid() == (pid_t)syscall(SYS_gettid)) {
+        nova_fiber_arena_set_main_stack();
+    }
 #endif
 
     /* Plan 149 Ф.1: resolve runtime config (env ∨ -D/toml ∨ builtin) with
@@ -940,7 +1094,23 @@ void nova_fiber_arena_release_retired(void) { }
 
 /* Plan 151: POSIX no-op — Boehm STW per-thread скан видит главный native-
  * стек штатно (TIB-свопа как на Windows нет; main не крутит fiber здесь). */
-void nova_fiber_arena_set_main_stack(void) { }
+/* [M-mn-spawnctx-corruption-cancel-wake] POSIX-порт Plan-151-механизма:
+ * probe-адрес на стеке main. Сама локаль умирает — нужен только адрес
+ * ВНУТРИ VMA main-стека для поиска диапазона в /proc/self/maps на каждой
+ * сборке (_nova_push_main_stack_vma). Зовётся из _materialize_pool на
+ * main ДО первого GC под оверрайднутым push_other_roots. */
+void nova_fiber_arena_set_main_stack(void) {
+#ifdef NOVA_GC_BOEHM
+    char probe_local;
+    __atomic_store_n(&_nova_main_stack_probe, (char*)&probe_local, __ATOMIC_RELEASE);
+#endif
+}
+
+#ifndef NOVA_GC_BOEHM
+/* Без Boehm push_other_roots-механизма реестр native-стеков не нужен. */
+void nova_fiber_arena_register_native_stack(void) { }
+void nova_fiber_arena_unregister_native_stack(void) { }
+#endif
 
 NovaFiberArenaStats nova_fiber_arena_stats(void) {
     NovaFiberArenaStats s = { 0 };

@@ -251,6 +251,17 @@ void nova_fiber_arena_release_retired(void);
  * видит главный стек штатно; арена demand-paged). */
 void nova_fiber_arena_set_main_stack(void);
 
+/* [M-mn-spawnctx-corruption-cancel-wake] (2026-07-19, POSIX): регистрация
+ * native-стека потока рантайма (воркер/драйвер/sysmon) для GC
+ * push_other_roots-колбэка. Оверрайд push_other_roots (ea85229e0) заменяет
+ * дефолтный GC_push_all_stacks bdwgc — колбэк обязан пушить native-стеки
+ * САМ (Windows-модель уже пушит native_base per-arena + main; POSIX-порт
+ * потерял оба слагаемых — этот реестр их возвращает). Зовётся на ВХОДЕ
+ * потока (после GC_register_my_thread); unregister — на выходе, до
+ * GC_unregister_my_thread. Windows/non-Boehm — no-op. */
+void nova_fiber_arena_register_native_stack(void);
+void nova_fiber_arena_unregister_native_stack(void);
+
 #endif /* NOVA_FIBER_ARENA_ENABLED */
 
 #endif /* NOVA_RT_FIBER_ARENA_H */

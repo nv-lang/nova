@@ -191,7 +191,7 @@ export fn str @replace(from str, to str) -> str {
     ro fn_len = from.byte_len()
     if fn_len == 0 { return @ }
     ro to_len = to.byte_len()
-    ro estimated = @byte_len() + if to_len > fn_len { to_len - fn_len } else { 0 }
+    ro estimated = @byte_len() + (to_len - fn_len).max(0)
     // [M-vec-spelling-consume-chain-cap-collision] (vec-sweep, 2026-07-06,
     // RESOLVED by workaround): `consume sb = StringBuilder.new().cap(n)`
     // (a 2-link chain bound in one `consume` let) broke D133 consume-tracking

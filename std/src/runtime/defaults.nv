@@ -93,17 +93,37 @@ export fn char @to_digit(radix int) -> Option[int] {
     Some(d)
 }
 
-// Байт-длина UTF-8-кодировки codepoint'а (1-4). Rust `char::len_utf8`.
-export fn char @len_utf8() -> int {
-    ro c = @ as int
-    if c < 0x80 { 1 }
-    else if c < 0x800 { 2 }
-    else if c < 0x10000 { 3 }
-    else { 4 }
+// UTF-8-кодировка codepoint'а в 4-байтный массив с длиной.
+// Каждая ветка лестницы возвращает кортеж (byte-length, [4]u8).
+// Rust `char::encode_utf8` (возвращает срез, здесь кортеж + хвостовые нули).
+export fn char @encode_utf8() -> (int, [4]u8) {
+    mut out [4]u8 = [0, 0, 0, 0]
+    ro cp = @ as int
+    mut len int = 0
+    if cp < 0x80 {
+        out[0] = cp as u8
+        len = 1
+    } else if cp < 0x800 {
+        out[0] = (0xC0 | (cp >> 6)) as u8
+        out[1] = (0x80 | (cp & 0x3F)) as u8
+        len = 2
+    } else if cp < 0x10000 {
+        out[0] = (0xE0 | (cp >> 12)) as u8
+        out[1] = (0x80 | ((cp >> 6) & 0x3F)) as u8
+        out[2] = (0x80 | (cp & 0x3F)) as u8
+        len = 3
+    } else {
+        out[0] = (0xF0 | (cp >> 18)) as u8
+        out[1] = (0x80 | ((cp >> 12) & 0x3F)) as u8
+        out[2] = (0x80 | ((cp >> 6) & 0x3F)) as u8
+        out[3] = (0x80 | (cp & 0x3F)) as u8
+        len = 4
+    }
+    (len, out)
 }
 
-// UTF-8-кодировка codepoint'а как `str` (= `@to_str()`).
-export fn char @encode_utf8() -> str => @to_str()
+// Байт-длина UTF-8-кодировки codepoint'а (1-4). Rust `char::len_utf8`.
+export fn char @len_utf8() -> int => @encode_utf8().0
 
 // ASCII case-insensitive equality (Plan 152.5a, D254). Rust `char::eq_ignore_ascii_case`.
 export fn char @eq_ignore_ascii_case(other char) -> bool =>

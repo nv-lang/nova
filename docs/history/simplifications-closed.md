@@ -16,6 +16,51 @@
 впоследствии сняты/зафикшены. Формально — то же самое, что раньше жило в
 simplifications.md под пометками ЗАКРЫТ/РЕШЕНО/✅.
 
+[2026-07-19 codegen emit_c — `[M-tuple-fixarr-typedef-order]`, ✅ ЗАКРЫТО] Кортеж с фикс-массивом
+`(T, [N]U)` генерировал C-typedef'ы в НЕПРАВИЛЬНОМ порядке: typedef кортежа
+(`struct { nova_int f0; _NovaFixArr_4_9_nova_byte f1; }`) эмитился РАНЬШЕ typedef'а самого
+`_NovaFixArr_4_9_nova_byte` → `unknown type name` CC-FAIL. **Root cause:** mono'd tuple
+(`_NovaTuple_...`) и mono'd fixed-array (`_NovaFixArr_...`) typedef'ы топо-сортировались
+ПО ОТДЕЛЬНОСТИ и splice'ились в два ФИКСИРОВАННЫХ маркера (tuple-маркер всегда раньше
+fixarr-маркера в преамбуле) — работает для `[N](T,U)` (fixarr-из-tuple, tuple нужен первым),
+но ломает `(T, [N]U)` (tuple-из-fixarr, fixarr нужен первым): tuple-сортировка проверяла
+зависимости только против ДРУГИХ tuple-имён, fixarr-поле внутри tuple было для неё невидимо
+→ tuple объявлялся «готовым» в первом же Kahn-раунде и эмитился ДО (всегда более позднего)
+fixarr-раздела. Два фиксированных маркера не могут выразить оба направления одновременно —
+обе вложенности легальны в языке (и могут смешиваться: `(T, [N](A,B))`). **Фикс**
+(`compiler-codegen/src/codegen/emit_c.rs`, ветка `p-tuple-fixarr`, коммит `2f5128367`): обе
+семьи typedef'ов слиты в ОДИН список узлов, топо-сортируются вместе как единый DAG, splice
+в ОДНУ точку (`/*__MONO_TUPLE_TYPEDEFS__*/`); `/*__MONO_FIXARR_TYPEDEFS__*/` — постоянный
+no-op. Заголовки-комментарии печатаются лениво (при первом входе семьи в топо-порядке), чтобы
+частый случай без кросс-зависимости воспроизводил старую байт-раскладку 1-в-1. **Verify:**
+`spec_tests/conformance/tuple_fixarr_typedef.nv` (обе вложенности + вложенный микс) — PASS;
+байт-паритет .c на 3 сэмплах (unrelated/tuple-only/fixarr-only): единственная разница —
+пред-существующий недетерминизм порядка forward-decl'ов `Nova_X` (HashSet-итерация,
+подтверждён идентичным на СТАРОМ неизменённом бинаре между двумя прогонами — родня
+`[M-codegen-emission-nondeterminism]`, не regression) + один детерминированный пустой
+перенос строки на месте retired-маркера; `std/src/checksums` δ0 (3 PASS). Разблокировал
+Plan 200 Пункт 18 (см. следующую запись).
+---
+
+[2026-07-19 Plan 200 Пункт 18 — UTF-8 кодпоинт-логика: 4 копии → 1 источник, ✅ СДЕЛАНО]
+`char @encode_utf8() -> (int, [4]u8)` (Rust-парити `char::encode_utf8`, кортеж (len, bytes) —
+ветка лестницы `cp < 0x80/0x800/0x10000`, записавшая байты, сама знает длину) заменил
+ЧЕТЫРЕ независимые копии кодпоинт-лестницы (`string_builder.nv` bit-shift в `@append`,
+`char_utf8_len`+`char_utf8_bytes` приватники, `defaults.nv` длина-лестница, `write_buffer.nv`
+своё кодирование). `char @len_utf8()` стал делегатом `@encode_utf8().0`;
+`string_builder.nv`/`write_buffer.nv` переписаны на единый `ro (n, b) = c.encode_utf8()`.
+Механика была готова с 2026-07-18 (ветка `p200-18-utf8`, коммит `bdae7f4e9`), но
+блокировалась `[M-tuple-fixarr-typedef-order]` (компилятор не мог собрать
+`(int, [4]u8)`-кортеж) — закрыт тем же заходом (см. запись выше), слияние в `p200-18-utf8`
+→ `703b525b7`. **Приёмка:** грепы `std/`: `char_utf8_len|char_utf8_bytes` = 0;
+`< 0x800` = 1 (только в `char @encode_utf8()`, `defaults.nv:106`). Таргетно:
+`string_builder_test.nv` PASS 1/0, `char_test.nv` PASS 1/0, `std/src/checksums` PASS 3/0.
+`nova test std/src/runtime` (директория целиком) заблокирован ОТДЕЛЬНЫМ пред-существующим
+дефектом в co-equal `sync_test.nv` (ICE `[P67-LEGACY] Ident 'guard'`, воспроизведён и на
+чистом main — НЕ связан с этой правкой) — заведён `[M-runtime-sync-guard-consume-p67]`,
+таргетные файлы прогнаны в изоляции вместо директории.
+---
+
 [2026-07-06 Plan 180 Ф.1 — sum-type rich auto-derive, ✅ УПРОЩЕНИЕ СНЯТО] Закрыт `[M-126-sum-*-rich]` (equal/hash/clone/compare/display/debug). **Было:** sum-арм каждого из шести built-in-синтезаторов = заглушка (equal=identity `@ == other`, hash=literal 0, clone=self, compare=0, display/debug=typename) → `#impl(P)` на sum-типе давал МОЛЧА неверную семантику (все значения «равны», hash-коллизия, clone-алиасинг). **Стало:** `match @ { … }` с одной arm на variant, payload биндится в паттерне и рекурсится как record-поля (`auto_derive.rs::synth_{equal,hash,clone,compare,fmt}_sum_body` + helpers `variant_bind_pattern`/`variant_construct`). Инжектятся ПОСЛЕ type-check (как record-path) → codegen-annotation-free-инференс лаверит match/variant-паттерны/variant-конструкцию (scrutinee `@` + `other: Self` — типы известны). **Verify:** `nova_tests/plan180_f1/sum_rich_autoderive_ok.nv` (6 test-блоков, все PASS — assertions падали бы на заглушках); conformance 53/0; zero-regression (единственный behavior-delta — `plan91_14/pos_debug_sum_derive.nv`, пинил V1-typename-placeholder → обновлён на variant-name); 43 Rust-unit-теста auto_derive PASS (+t27 stale sb→w fix). **Known-limit (не заглушка):** метод на bare-unit-варианте (`Nought.hash()`) мис-инферится — аннотировать `Self`-локалом; pre-existing bidirectional-инференс-граница.
 ---
 

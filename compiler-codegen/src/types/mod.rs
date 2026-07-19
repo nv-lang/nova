@@ -1890,7 +1890,7 @@ fn check_module_impl(
     // `*expr` pointer ops require unsafe context (block.is_unsafe = true
     // OR enclosing #unsafe fn). Walks fn bodies + test bodies, maintains
     // depth counter, emits diagnostic при depth == 0.
-    check_unsafe_context_in_module(module, &mut errors);
+    check_unsafe_context_in_module(module, &type_check_ctx.resolved_callees.borrow(), &mut errors);
 
     // Plan 174.6 M1 (D282 rule 2 / D353): validate that `extern "C" fn`
     // signatures (params + return) — and every `*extern "C" fn` fn-pointer
@@ -34555,6 +34555,7 @@ fn fn_sig_has_raw_ptr(fd: &FnDecl) -> bool {
 /// allowed iff depth > 0.
 pub(crate) fn check_unsafe_context_in_module(
     module: &crate::ast::Module,
+    resolved_calls: &HashMap<crate::ast::ExprId, Span>,
     errors: &mut Vec<Diagnostic>,
 ) {
     use crate::ast::{Item, FnBody};
@@ -34563,6 +34564,10 @@ pub(crate) fn check_unsafe_context_in_module(
     // Plan 118 A25: pre-collect fn names that have Fail effect — cast к
     // *fn → E_CALLBACK_THROWS_OVER_C_ABI (Nova exceptions cannot cross C ABI).
     let mut unsafe_fns: HashSet<String> = HashSet::new();
+    // [M-tuple-fixarr-волна, 2026-07-18] receiver-aware instance-enforcement:
+    // decl-спаны ВСЕХ unsafe fn/методов — точная per-overload истина для
+    // channel-first проверки в Call/Member-арме (имя — только fallback).
+    let mut unsafe_decl_spans: HashSet<Span> = HashSet::new();
     // Plan 138.2 [M-138-vec-bulk-parity] sharper A11 precision (the Ф.3.5
     // receiver-aware-lookup followup noted at the match site below): unsafe
     // STATIC methods (`fn Type.m()` — e.g. `RawMem.fill` / `RawMem.compare`)
@@ -34620,6 +34625,7 @@ pub(crate) fn check_unsafe_context_in_module(
         HashMap::new();
     let collect_from = |item: &Item,
                         unsafe_fns: &mut HashSet<String>,
+                        unsafe_decl_spans: &mut HashSet<Span>,
                         unsafe_static_methods: &mut HashSet<(String, String)>,
                         fail_fns: &mut HashSet<String>,
                         effect_fns: &mut HashMap<String, String>,
@@ -34645,6 +34651,7 @@ pub(crate) fn check_unsafe_context_in_module(
                 }
             }
             if fd.unsafe_attr {
+                unsafe_decl_spans.insert(fd.span);
                 match &fd.receiver {
                     Some(r) if r.kind == crate::ast::ReceiverKind::Static => {
                         unsafe_static_methods
@@ -34671,6 +34678,7 @@ pub(crate) fn check_unsafe_context_in_module(
                 && fn_sig_has_raw_ptr(fd)
             {
                 unsafe_fns.insert(fd.name.clone());
+                unsafe_decl_spans.insert(fd.span);
             }
             // Plan 118 A25: detect Fail effect через TypeRef::Named { path }
             // где last segment == "Fail". Fn с Fail effect = throwable —
@@ -34691,11 +34699,11 @@ pub(crate) fn check_unsafe_context_in_module(
         }
     };
     for item in &module.items {
-        collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns, &mut static_arities);
+        collect_from(item, &mut unsafe_fns, &mut unsafe_decl_spans, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns, &mut static_arities);
     }
     for pf in &module.peer_files {
         for item in &pf.items_here {
-            collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns, &mut static_arities);
+            collect_from(item, &mut unsafe_fns, &mut unsafe_decl_spans, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns, &mut static_arities);
         }
     }
     // [M-d216-unsafe-map-single-file-gaps]: SOFT used-tracking fallback name
@@ -34713,6 +34721,8 @@ pub(crate) fn check_unsafe_context_in_module(
     let mut state = UnsafeCtx {
         depth: 0,
         unsafe_fns,
+        unsafe_decl_spans,
+        resolved_calls: resolved_calls.clone(),
         unsafe_static_methods,
         fail_fns,
         effect_fns,
@@ -34795,6 +34805,11 @@ struct UnsafeCtx {
     /// is NOT falsely gated. Closes the "receiver-type-aware lookup" V1 gap
     /// noted at the A11 match site.
     unsafe_static_methods: HashSet<(String, String)>,
+    /// [2026-07-18] decl-спаны unsafe fn/методов + канал resolved_callees:
+    /// channel-first проверка инстанс-вызовов (разрешённая перегрузка safe →
+    /// НЕ гейтить, даже если имя совпадает с чужим unsafe-методом).
+    unsafe_decl_spans: HashSet<Span>,
+    resolved_calls: HashMap<crate::ast::ExprId, Span>,
     /// Plan 118 A25 enforcement: names of fns с Fail effect — cast к *fn
     /// → E_CALLBACK_THROWS_OVER_C_ABI (Nova exceptions cannot cross C ABI).
     fail_fns: HashSet<String>,
@@ -35327,8 +35342,16 @@ impl UnsafeCtx {
                     // method): bare-name lookup in unsafe_fns. Static
                     // methods are intentionally excluded here (handled
                     // above by exact receiver match).
+                    // [2026-07-18] CHANNEL-FIRST (закрытие name-keyed ложняка:
+                    // safe `sb.advance()` флагался из-за unsafe `Vec @advance`):
+                    // если f1 разрешил вызов (resolved_callees) — истина
+                    // per-overload по decl-спану; имя — fallback при пустом
+                    // канале (прежнее поведение, консервативно).
                     ExprKind::Member { name: mname, .. } if self.unsafe_fns.contains(mname) => {
-                        Some(mname.clone())
+                        match self.resolved_calls.get(&e.id) {
+                            Some(ds) if !self.unsafe_decl_spans.contains(ds) => None,
+                            _ => Some(mname.clone()),
+                        }
                     }
                     // Plan 118.1.6 (2026-06-08): indirect call через
                     // *unsafe fn(...) binding — same gating as direct call.

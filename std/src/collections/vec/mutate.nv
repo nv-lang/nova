@@ -27,6 +27,24 @@ export fn Vec[T] mut @push(v T) -> @ {
     @len += 1
 }
 
+/// Publish `n` elements ALREADY WRITTEN into reserved capacity: `len += n`,
+/// `cap` unchanged — in-place grow-only twin of Rust `Vec::set_len(len + n)`.
+/// The sanctioned way to bump live length after writing directly through the
+/// `@reserve`d pointer (`mut @ptr()` + extern/RawMem writes) — replaces the
+/// old header-rebuild idiom `v = Vec.new(v.ptr(), v.len()+n, v.cap())`
+/// (fresh GC-header per call; владелец 2026-07-18).
+///
+/// # Contract / unsafety
+/// `unsafe fn`: caller asserts the `n` slots past `@len` are INITIALIZED.
+/// Reading an uninit `u8` is garbage; for pointer-bearing `T` an uninit slot
+/// is GC-опасен (scanner walks junk) — hence the call-site obligation.
+/// Range (`0 <= n <= cap - len`) is enforced by `requires` (D257).
+export unsafe fn Vec[T] mut @advance(n int) -> @
+    requires n >= 0 && n <= @cap - @len
+{
+    @len += n
+}
+
 /// Remove and return the last element, or `None` if empty.
 export fn Vec[T] mut @pop() -> Option[T] {
     if @len == 0 {

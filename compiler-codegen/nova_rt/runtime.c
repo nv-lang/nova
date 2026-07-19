@@ -650,6 +650,167 @@ static __thread int _current_worker_id = -1;
 
 /* ── Plan 83.6: per-worker SpawnCtx pool implementation ─────────── */
 
+/* ── [M-mn-spawnctx-corruption-cancel-wake] R1-трипваер (2026-07-19) ──
+ *
+ * Плейбук docs/debugging-races.md + 173.0 §2 «Риск R1 (HIGHEST) — pool-recycle
+ * aliasing SpawnCtx»: poison + магик-канарейка + карантин GC-free-пути.
+ * Opt-in через env NOVA_SPAWN_POOL_DIAG=1 — по умолчанию ВЫКЛ, ноль оверхеда
+ * (один кешированный int-бранч). Диагностика, не Heisen-тест: все проверки —
+ * в холодных точках (release/acquire/goready-entry), никакого контрол-флоу
+ * не меняют, кроме abort() на пойманной порче.
+ *
+ * Схема свободного буфера (диаг-режим):
+ *   [0,8)   — intrusive next-линк (pool freelist ЛИБО карантин-стек)
+ *   [8,16)  — магик 0xC7A9DEADC7A9DEAD (перекрывает _nova_parent_slot/
+ *             _nova_worker_slot — живой ctx там держит маленькие числа,
+ *             коллизия исключена)
+ *   [16,24) — сохранённый размер буфера (для верификатора)
+ *   [24,N)  — 0xDD-poison
+ *
+ * Ловит (abort ДО фатала, с hex-дампом):
+ *   1. DOUBLE-RELEASE — release уже освобождённого ctx (магик на входе);
+ *   2. WRITE-AFTER-FREE — чужая запись в свободный буфер (poison-скан
+ *      выборки pool-freelist + карантина на каждом release/acquire);
+ *   3. USE-AFTER-RELEASE — goready/worker-resume/sweep читают ctx с
+ *      магиком/мусорным pool_size (nova_spawn_ctx_diag_check_live).
+ *
+ * Карантин: в диаг-режиме GC-free-путь (main-thread free / pool-cap /
+ * oversize / drain) НЕ зовёт nova_free_uncollectable — буфер уходит в
+ * глобальный lock-free стек навсегда (утечка осознанная, только под env).
+ * Это (а) делает write-after-GC_free детектируемым (память наша, poison
+ * верифицируем), (б) дискриминатор: если краш исчезает под карантином без
+ * единого срабатывания — источник порчи НЕ released-SpawnCtx память. */
+
+#define NOVA_POOL_DIAG_MAGIC  0xC7A9DEADC7A9DEADULL
+#define NOVA_POOL_DIAG_POISON 0xDD
+
+static int _nova_pool_diag_state = -1;   /* -1 = не читали env */
+int nova_spawn_pool_diag(void) {
+    int s = __atomic_load_n(&_nova_pool_diag_state, __ATOMIC_RELAXED);
+    if (s < 0) {
+        const char* e = getenv("NOVA_SPAWN_POOL_DIAG");
+        s = (e && e[0] == '1') ? 1 : 0;
+        __atomic_store_n(&_nova_pool_diag_state, s, __ATOMIC_RELAXED);
+    }
+    return s;
+}
+
+/* Карантин-стек: push-only Treiber; узлы никогда не уходят — обход без
+ * снятия безопасен при конкурентных push (link пишется до CAS-publish). */
+static void* _nova_pool_quar_head = NULL;
+static int   _nova_pool_quar_count = 0;
+
+static void _nova_pool_diag_dump(const char* why, const char* where,
+                                 const void* buf, size_t size) {
+    const unsigned char* p = (const unsigned char*)buf;
+    size_t n = size && size <= 512 ? size : 128;
+    fprintf(stderr,
+            "nova: [R1-TRIPWIRE] %s at %s: ctx=%p size=%zu worker=%d\n",
+            why, where, buf, size, _current_worker_id);
+    for (size_t i = 0; i < n; i += 16) {
+        fprintf(stderr, "  +%03zu:", i);
+        for (size_t j = i; j < i + 16 && j < n; j++) fprintf(stderr, " %02x", p[j]);
+        fprintf(stderr, "\n");
+    }
+    fflush(stderr);
+}
+
+/* Пометить свободный буфер (магик+размер+poison). Линк [0,8) НЕ трогаем —
+ * его пишет push-сайт ПОСЛЕ этой пометки. */
+static void _nova_pool_diag_mark_free(void* buf, size_t size) {
+    if (size < 32) return;
+    *(uint64_t*)((char*)buf + 8)  = NOVA_POOL_DIAG_MAGIC;
+    *(uint64_t*)((char*)buf + 16) = (uint64_t)size;
+    memset((char*)buf + 24, NOVA_POOL_DIAG_POISON, size - 24);
+}
+
+/* Проверить свободный буфер: магик цел, размер согласован, poison нетронут. */
+static void _nova_pool_diag_verify_free(const void* buf, const char* where) {
+    const char* p = (const char*)buf;
+    uint64_t magic = *(const uint64_t*)(p + 8);
+    if (magic != NOVA_POOL_DIAG_MAGIC) {
+        _nova_pool_diag_dump("WRITE-AFTER-FREE (magic clobbered)", where, buf, 128);
+        abort();
+    }
+    uint64_t size = *(const uint64_t*)(p + 16);
+    if (size < 32 || size > 4096) {
+        _nova_pool_diag_dump("WRITE-AFTER-FREE (size clobbered)", where, buf, 128);
+        abort();
+    }
+    for (uint64_t i = 24; i < size; i++) {
+        if ((unsigned char)p[i] != NOVA_POOL_DIAG_POISON) {
+            fprintf(stderr, "nova: [R1-TRIPWIRE] first poison diff at +%llu\n",
+                    (unsigned long long)i);
+            _nova_pool_diag_dump("WRITE-AFTER-FREE (poison diff)", where, buf, (size_t)size);
+            abort();
+        }
+    }
+}
+
+/* Выборочная верификация: первые 16 узлов карантина + первые 16 узлов
+ * pool-freelist'ов ТЕКУЩЕГО воркера. Только диаг-режим (холодный путь). */
+static void _nova_pool_diag_verify_sample(const char* where);
+
+static void _nova_pool_diag_quarantine(void* buf, size_t size) {
+    _nova_pool_diag_mark_free(buf, size < 32 ? 32 : size);
+    void* head;
+    do {
+        head = __atomic_load_n(&_nova_pool_quar_head, __ATOMIC_ACQUIRE);
+        *(void**)buf = head;
+    } while (!__atomic_compare_exchange_n(&_nova_pool_quar_head, &head, buf,
+                                          false, __ATOMIC_RELEASE, __ATOMIC_ACQUIRE));
+    __atomic_fetch_add(&_nova_pool_quar_count, 1, __ATOMIC_RELAXED);
+}
+
+/* Вход release в диаг-режиме: double-release-детект + выборочная проверка. */
+static void _nova_pool_diag_release_entry(void* ctx, size_t size) {
+    if (*(uint64_t*)((char*)ctx + 8) == NOVA_POOL_DIAG_MAGIC) {
+        _nova_pool_diag_dump("DOUBLE-RELEASE (freed magic already present)",
+                             "pool_release entry", ctx, size ? size : 128);
+        abort();
+    }
+    _nova_pool_diag_verify_sample("pool_release");
+}
+
+/* Живой ctx: магика быть НЕ должно, pool_size ∈ {0, 64..512}, слоты — малые
+ * числа. Ловит goready/resume/sweep по уже-освобождённому либо мусорному
+ * SpawnCtx (сигнатура-2 гонки: мусорный _nova_fiber_scope к моменту wake). */
+void nova_spawn_ctx_diag_check_live(const void* vbase, const char* where) {
+    const NovaSpawnCtxBase* b = (const NovaSpawnCtxBase*)vbase;
+    const char* why = NULL;
+    if (*(const uint64_t*)((const char*)vbase + 8) == NOVA_POOL_DIAG_MAGIC) {
+        why = "USE-AFTER-RELEASE (freed magic present on live path)";
+    } else if (b->_nova_pool_size != 0
+               && (b->_nova_pool_size < 64 || b->_nova_pool_size > 512)) {
+        why = "CTX GARBAGE (pool_size out of range)";
+    } else if (b->_nova_worker_slot < -2) {
+        why = "CTX GARBAGE (worker_slot below -2)";
+    }
+    if (why) {
+        _nova_pool_diag_dump(why, where, vbase, 128);
+        abort();
+    }
+}
+
+static void _nova_pool_diag_verify_sample(const char* where) {
+    void* q = __atomic_load_n(&_nova_pool_quar_head, __ATOMIC_ACQUIRE);
+    for (int i = 0; q && i < 16; i++) {
+        _nova_pool_diag_verify_free(q, where);
+        q = *(void**)q;
+    }
+    int wid = _current_worker_id;
+    if (wid >= 0 && _workers) {
+        NovaWorker* w = &_workers[wid];
+        for (int cls = 0; cls < NOVA_SPAWN_POOL_SIZE_CLASSES; cls++) {
+            void* p = w->spawn_pool_free[cls];
+            for (int i = 0; p && i < 16; i++) {
+                _nova_pool_diag_verify_free(p, where);
+                p = *(void**)p;
+            }
+        }
+    }
+}
+
 /* Acquire SpawnCtx из P-local pool либо Boehm fallback.
  *
  * Returns zero-initialized buffer of size `_nova_spawn_pool_class_size[cls]`
@@ -692,6 +853,12 @@ void* nova_spawn_pool_acquire(size_t size) {
     NovaWorker* w = &_workers[wid];
     void* head = w->spawn_pool_free[cls];
     if (head) {
+        /* [R1-трипваер]: перед реюзом проверяем, что свободный буфер никто
+         * не трогал (poison цел), + выборку остального freelist/карантина. */
+        if (nova_spawn_pool_diag()) {
+            _nova_pool_diag_verify_free(head, "pool_acquire pop");
+            _nova_pool_diag_verify_sample("pool_acquire");
+        }
         /* Fast path: pop intrusive head. Lock-free — single owner.
          * Free buffer holds next pointer в первых sizeof(void*) bytes. */
         void* next = *(void**)head;
@@ -722,13 +889,20 @@ void* nova_spawn_pool_acquire(size_t size) {
  * → direct Boehm free). */
 void nova_spawn_pool_release(void* ctx, size_t size) {
     if (!ctx) return;
+    int diag = nova_spawn_pool_diag();
+    if (diag) {
+        /* [R1-трипваер] double-release-детект + выборочная poison-проверка. */
+        _nova_pool_diag_release_entry(ctx, size);
+    }
     if (size == 0) {
         /* Allocation went через oversize/legacy path — direct Boehm free. */
+        if (diag) { _nova_pool_diag_quarantine(ctx, 128); return; }
         nova_free_uncollectable(ctx);
         return;
     }
     int cls = _nova_spawn_pool_class(size);
     if (cls < 0) {
+        if (diag) { _nova_pool_diag_quarantine(ctx, size); return; }
         nova_free_uncollectable(ctx);
         return;
     }
@@ -736,6 +910,7 @@ void nova_spawn_pool_release(void* ctx, size_t size) {
     int wid = _current_worker_id;
     if (wid < 0) {
         /* Main thread free path — pool not available. Direct Boehm. */
+        if (diag) { _nova_pool_diag_quarantine(ctx, _nova_spawn_pool_class_size[cls]); return; }
         nova_free_uncollectable(ctx);
         return;
     }
@@ -743,9 +918,13 @@ void nova_spawn_pool_release(void* ctx, size_t size) {
     NovaWorker* w = &_workers[wid];
     if (w->spawn_pool_count[cls] >= NOVA_SPAWN_POOL_MAX_PER_CLASS) {
         /* Pool capped — excess Boehm free. */
+        if (diag) { _nova_pool_diag_quarantine(ctx, _nova_spawn_pool_class_size[cls]); return; }
         nova_free_uncollectable(ctx);
         return;
     }
+
+    /* [R1-трипваер] пометить буфер (магик+poison) ДО записи линка. */
+    if (diag) _nova_pool_diag_mark_free(ctx, _nova_spawn_pool_class_size[cls]);
 
     /* Intrusive push: store next pointer в первых bytes ctx'а.
      * No Boehm alloc — single-instruction overhead. */
@@ -758,11 +937,18 @@ void nova_spawn_pool_release(void* ctx, size_t size) {
  * nova_runtime_shutdown после worker join. Frees all retained ctx
  * buffers через Boehm (no separate entry structs — intrusive list). */
 static void _nova_spawn_pool_drain(NovaWorker* w) {
+    int diag = nova_spawn_pool_diag();
     for (int cls = 0; cls < NOVA_SPAWN_POOL_SIZE_CLASSES; cls++) {
         void* head = w->spawn_pool_free[cls];
         while (head) {
             void* next = *(void**)head;
-            nova_free_uncollectable(head);
+            if (diag) {
+                /* [R1-трипваер] финальная проверка poison на shutdown;
+                 * буфер не освобождаем (карантин-дисциплина, утечка под env). */
+                _nova_pool_diag_verify_free(head, "pool_drain");
+            } else {
+                nova_free_uncollectable(head);
+            }
             head = next;
         }
         w->spawn_pool_free[cls] = NULL;
@@ -842,6 +1028,11 @@ static void _worker_main(void* arg) {
     if (GC_get_stack_base(&sb) == GC_SUCCESS) {
         GC_register_my_thread(&sb);
     }
+#endif
+#if NOVA_FIBER_ARENA_ENABLED
+    /* [M-mn-spawnctx-corruption-cancel-wake]: native-стек воркера в реестр
+     * GC push_other_roots-колбэка (POSIX; Windows/non-Boehm — no-op). */
+    nova_fiber_arena_register_native_stack();
 #endif
 
     /* Per-worker TLS: _nova_active_scope указывает на own scope.
@@ -1009,6 +1200,10 @@ static void _worker_main(void* arg) {
          * = previous fiber's slot (or -1) when fiber resumes, causing wrong slot
          * in channel ops on second+ park. */
         NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+        /* [R1-трипваер] ctx обязан выглядеть живым перед resume. */
+        if (base && nova_spawn_pool_diag()) {
+            nova_spawn_ctx_diag_check_live(base, "worker-main resume");
+        }
 
         /* Restore fiber's TLS snapshot (fail-top chain + active scope/slot).
          *
@@ -1302,6 +1497,9 @@ static void _worker_main(void* arg) {
      * GC-колбэком, обходящим список арен. Память арены освободит
      * nova_runtime_shutdown::nova_fiber_arena_release_retired после join. */
 #if NOVA_FIBER_ARENA_ENABLED
+    /* [M-mn-spawnctx-corruption-cancel-wake]: снять native-стек из реестра
+     * ДО GC_unregister (симметрия с регистрацией на входе). */
+    nova_fiber_arena_unregister_native_stack();
     nova_fiber_arena_thread_exit();
 #endif
 
@@ -1955,6 +2153,10 @@ void nova_runtime_signal_main(void) {
  * and we are on worker thread w (_current_worker_id == w->id). */
 static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
     NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+    /* [R1-трипваер] ctx обязан выглядеть живым перед resume. */
+    if (base && nova_spawn_pool_diag()) {
+        nova_spawn_ctx_diag_check_live(base, "run-one-fiber resume");
+    }
 
     /* Save outer TLS state (we may be inside a fiber — e.g. F_outer). */
     NovaFiberQueue*     outer_scope     = _nova_active_scope;
