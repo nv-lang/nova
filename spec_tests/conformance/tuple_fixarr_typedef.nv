@@ -1,0 +1,50 @@
+module spec_tests.conformance
+// [M-tuple-fixarr-typedef-order]: `(T, [N]U)` — tuple carrying a fixed-array
+// field BY VALUE. Before the fix, the mono'd tuple typedef and the mono'd
+// FixArr typedef were topo-sorted PER FAMILY and spliced at two fixed marker
+// positions (tuple marker always before the fixarr marker) — a tuple's own
+// topo sort was blind to fixarr element types, so it was declared "ready" and
+// emitted in the C preamble BEFORE the fixarr typedef it embeds by value:
+// `unknown type name '_NovaFixArr_...'` CC-FAIL. See emit_c.rs finalize splice
+// comment at `/*__MONO_TUPLE_TYPEDEFS__*/` for the fix (unified topo sort
+// across both families, spliced together at one location).
+
+fn f() -> (int, [4]u8) {
+    mut out [4]u8 = [7, 0, 0, 0]
+    (1, out)
+}
+
+test "(int, [4]u8) tuple-of-fixarr — typedef order" {
+    ro (n, b) = f()
+    assert(n == 1)
+    assert(b[0] == 7)
+    assert(b[1] == 0)
+}
+
+// Reverse nesting direction — `[N](T,U)` fixarr-of-tuple. The fixarr's OWN
+// topo sort already correctly required the tuple typedef first (only the
+// other direction was broken) — kept here as a same-class regression guard
+// so a future change to the unified sort can't silently re-break it.
+fn g() -> [2](int, int) {
+    [(1, 2), (3, 4)]
+}
+
+test "[2](int,int) fixarr-of-tuple — typedef order" {
+    ro pairs = g()
+    assert(pairs[0].0 == 1)
+    assert(pairs[0].1 == 2)
+    assert(pairs[1].0 == 3)
+    assert(pairs[1].1 == 4)
+}
+
+// Nested mix — tuple embeds a fixarr-of-tuples: `(T, [N](A,B))`.
+fn h() -> (int, [2](int, int)) {
+    (9, [(1, 2), (3, 4)])
+}
+
+test "(int, [2](int,int)) nested tuple-fixarr-tuple — typedef order" {
+    ro (tag, pairs) = h()
+    assert(tag == 9)
+    assert(pairs[0].0 == 1)
+    assert(pairs[1].1 == 4)
+}
