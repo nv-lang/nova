@@ -83,16 +83,76 @@ UnsignedInt type-sets, D423 бланкеты).
   `#impl(Display)` тела для узких int (симметрии ради) или оставить как есть
   (работает через какой-то другой механизм, трогать не нужно — не ломать
   molчаливо работающее).
-- **try_from / TryFrom конверсии** — ещё не проверено детально (следующий шаг).
+- **try_from / TryFrom конверсии** — `str @to_*` (parse) surface (std/runtime/
+  string/parse.nv) — ЖИВОЙ подмножество ТОЛЬКО `to_int`/`to_i64`/`to_u64`/
+  `to_u32`/`to_u8`, ЯВНО задокументированное как **owner decision** (Plan
+  174.1, "Live set per actual consumers... NOT the full SignedInt/
+  UnsignedInt type-set"). `to_i8`/`to_i16`/`to_i32`/`to_u16`/`to_uint`
+  ОТСУТСТВУЮТ намеренно (не забыты). Расширение этого сета было бы тихим
+  расширением уже принятого owner-решения → в отчёт как «требует решения
+  владельца» (пересмотреть Plan 174.1 scoping?), НЕ добираю. Отдельно:
+  numeric↔numeric `try_from` (типа `u8.try_from(300u32)`, Rust `TryFrom<T>`
+  между целыми) ОТСУТСТВУЕТ вообще как класс — только `as`-cast. Большой
+  комбинаторный вопрос дизайна, НЕ трогаю, в отчёт отдельным пунктом.
+- **f64.MIN / f32.MIN — НАЙДЕН И ПОЧИНЕН БАГ** (не просто дыра): "MIN" уже в
+  generic `is_numeric_const` списке чекера (types/mod.rs:7514), поэтому
+  `f64.MIN`/`f32.MIN` проходили type-check молча, но падали на C-компиляции
+  (`use of undeclared identifier 'f64_MIN'`) — не было записи в
+  `numeric_type_constant_mapping` (emit_c.rs:48769). Добавлено: `f64.MIN =
+  -DBL_MAX`, `f32.MIN = -FLT_MAX` (Rust-паритет: MIN = most-negative-finite,
+  НЕ путать с уже существующим `MIN_POSITIVE`). Коммит bcc2d4f7e.
+- **Display bound для узких int (i8/i16/i32/u8/u16/u32/u64/uint)** —
+  эмпирически подтверждено (build+run пробников): интерполяция `"${x}"`,
+  `x.to_str()` и generic `fn[T Display] show(x T)` РАБОТАЮТ корректно для
+  этих типов, несмотря на отсутствие явного текстового `#impl(Display)` тела
+  (в protocols.nv есть только для int/f64/f32/bool/char/str). НЕ гол по
+  факту поведения — механизм не текстовый (видимо компиляторный
+  interpolation-fallback), трогать не стал (работает — не трогаю).
+
+## Важное уточнение по гейту «nova check std чист» (по запросу координатора)
+
+`nova check std` (полный обход дерева, БЕЗ доп. флагов) даёт **18 FAIL** —
+ЭТО ЖЕ ЧИСЛО воспроизведено на ПОЛНОСТЬЮ откаченных (git checkout --)
+файлах, т.е. это **pre-existing базовый шум на HEAD b2bfa0505, НЕ внесён
+этой волной**:
+- 11 из 18 — `*_neg/*.nv` фикстуры (encoding/serde_neg ×7, fs/neg ×3,
+  io/neg ×2, net/neg ×3, time/civil/neg ×2 = 17 фикстур сгруппированы в счёте
+  как отдельные файлы) — они ПРЕДНАЗНАЧЕНЫ падать тайпчек (негативные тесты);
+  `nova check` не понимает `EXPECT_ERROR`-семантику (это знает только `nova
+  test`) — соответственно они ожидаемо красные под голым `check`, это НЕ шум
+  корректности.
+- 1 из 18 — `std/src/prelude/protocols.nv` — падает с `[E_UNKNOWN_METHOD]`
+  на `int.min`/`int.to_char`/`str.bytes` (методы, которые ФАКТИЧЕСКИ
+  существуют в std/runtime/*). Воспроизведено ТАКЖЕ на узком срезе `nova
+  check std/src/prelude` (изолированно) — то же самое. `--include-runtime`
+  флаг НЕ чинит (протестировано отдельно, тот же результат). Причина —
+  вероятно `std.prelude.*` файлы имеют auto-import глобального prelude
+  ОТКЛЮЧЁННЫМ (cycle protection, protocols.nv:13-18 коммент), и `nova check`
+  в per-file/per-module режиме не собирает тот же полный merge-граф импортов,
+  что `nova build`/`nova test`/`spec_tests/conformance` (single-CU). Тот же
+  класс проблемы уже задокументирован рядом (std/src/math/
+  overflow_policy_test.nv:11-17 — «файлы внутри std.prelude.* ломают
+  assert()-инфраструктуру для ЛЮБОГО теста в этом namespace»).
+- **Узкие срезы ЧИСТЫЕ**: `nova check std/src/runtime` -> `PASS: 17 FAIL: 0`
+  (подтверждает наблюдение координатора «на моём смоуке std/src/runtime было
+  чисто»). `nova check std/src/time` (см. ниже) — тоже чистый срез.
+- **Вывод**: буквальный «`nova check std` (голая команда) = 0 FAIL» уже был
+  НЕДОСТИЖИМ до этой волны (не моя регрессия) — использую как приёмочный
+  критерий «мои правки НЕ добавили новых FAIL к уже известному набору из 18»
+  (проверено diff'ом набора имён файлов до/после — идентичен) + чистые узкие
+  срезы (runtime/time/prelude сам-по-себе минус тот один pre-existing).
 
 ## Следующие шаги (план)
-1. Доследовать механизм Display-bound-satisfaction для узких int (не трогать
-   код, только понять — чтобы не плодить ложный гол/ложный фикс).
-2. Проверить try_from/parse семейство по всем типам.
-3. Добрать: f32 @clamp (зеркало f64); SignedInt @signum/@is_negative/
-   @is_positive (обобщение int-конкретных тел).
-4. Тесты рядом с модулем на добранное.
+1. ~~Доследовать механизм Display-bound-satisfaction для узких int~~ — готово
+   (эмпирика, не гол).
+2. ~~Проверить try_from/parse семейство по всем типам~~ — готово (Plan 174.1
+   owner-scoped, не трогаю; numeric↔numeric try_from отсутствует как класс,
+   в отчёт).
+3. ~~Добрать: f32 @clamp; SignedInt @signum/@is_negative/@is_positive~~ —
+   готово (см. коммиты).
+3b. ~~f64.MIN/f32.MIN codegen-баг~~ — готово (коммит bcc2d4f7e).
+4. Тесты рядом с модулем на добранное — В РАБОТЕ.
 5. `nova test std/src/time` — подтвердить зелёную талли, обновить статус
    Пункта 10/200 (факт прогона).
-6. Приёмочные гейты: lint --deny std, standalone-CU 69/0, nova check std,
-   strict-effects.
+6. Приёмочные гейты: lint --deny std, standalone-CU 69/0, nova check
+   (узкие срезы, см. выше), strict-effects.
