@@ -1,0 +1,13 @@
+// Plan 214 — use-after-consume neg guard (implicit finalize coercion).
+// EXPECT_COMPILE_ERROR
+module wip.d214negusecase
+
+fn d214_take_str(v str) -> int => v.byte_len()
+
+test "use-after-consume: sb consumed implicitly by #coerce finalize call-arg" {
+    consume sb = StringBuilder.new()
+    sb.append("hi")
+    ro n = d214_take_str(sb)   // implicit sb.into_str() here — sb disarmed
+    sb.append("more")          // use-after-consume — must be a compile error
+    assert(n == 2)
+}

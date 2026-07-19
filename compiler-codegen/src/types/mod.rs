@@ -25911,13 +25911,16 @@ struct ConsumeRegistry {
     /// imprecise (last-decl-wins per name) — mirrors this registry's existing
     /// `fn_return_types`/`fn_view_params` precision level, not a NEW gap.
     fn_param_output_keys: HashMap<String, Vec<String>>,
-    /// Plan 214 (D429): I type name → set of O canonical keys for
+    /// Plan 214 (D429): I type name → (O canonical key → method name) for
     /// FINALIZE-lane `#coerce` pairs only (view-lane pairs never consume
     /// anything — their I is never a `LinearityRegistry.consume_types`
     /// member in the first place, so they need no entry here). Built via
     /// `collect_coerce_pairs` (same collector the checker accept-path /
-    /// AST-rewrite use — R9 "one window"), filtered to `is_finalize`.
-    coerce_finalize_output_keys: HashMap<String, HashSet<String>>,
+    /// AST-rewrite use — R9 "one window"), filtered to `is_finalize`. The
+    /// method name (not just a `HashSet<String>` of keys) is kept so the R7
+    /// use-after-consume diagnostic can name the implicit call
+    /// (`ConsumeCtx.coerce_consumed_via`).
+    coerce_finalize_output_keys: HashMap<String, HashMap<String, String>>,
 }
 
 /// D86-followup (2026-07-14): if `rt` is `Result[T,E]` / `Option[T]` with a
@@ -26265,13 +26268,13 @@ impl ConsumeRegistry {
             module,
             &|n: &str| coerce_types_lookup.get(n).cloned(),
         );
-        let coerce_finalize_output_keys: HashMap<String, HashSet<String>> = coerce_by_input
+        let coerce_finalize_output_keys: HashMap<String, HashMap<String, String>> = coerce_by_input
             .into_iter()
             .filter_map(|(input_name, pairs)| {
-                let keys: HashSet<String> = pairs
+                let keys: HashMap<String, String> = pairs
                     .into_iter()
                     .filter(|p| p.is_finalize)
-                    .map(|p| p.output_key)
+                    .map(|p| (p.output_key, p.method_name))
                     .collect();
                 if keys.is_empty() { None } else { Some((input_name, keys)) }
             })
@@ -26552,6 +26555,15 @@ struct ConsumeCtx<'a> {
     /// Plan 201: (имя, span) consume-операций над guarded-биндингами,
     /// собранные во время walk'а тела re-consume блока.
     guard_violations: Vec<(String, Span)>,
+    /// Plan 214 (D429) R7: consuming-span → `#coerce`-финализирующий метод
+    /// name, for every credit issued by the free-fn call-arg check (see
+    /// `ConsumeRegistry.coerce_finalize_output_keys`). Consulted ONLY by
+    /// `use_var`'s error text — R7 mandates the use-after-consume diagnostic
+    /// name the IMPLICIT insertion point when that's what actually consumed
+    /// the variable (vs. an explicit `.into_str()` call, which needs no such
+    /// note — the source already says so). Empty for programs that never hit
+    /// the finalize lane's implicit-coerce call-arg shape.
+    coerce_consumed_via: HashMap<Span, String>,
 }
 
 impl<'a> ConsumeCtx<'a> {
@@ -26580,6 +26592,7 @@ impl<'a> ConsumeCtx<'a> {
             unsafe_t_locals: HashSet::new(),
             block_guards: HashSet::new(),
             guard_violations: Vec::new(),
+            coerce_consumed_via: HashMap::new(),
         }
     }
 
@@ -26674,13 +26687,27 @@ impl<'a> ConsumeCtx<'a> {
         let canon = self.canonical(name);
         match self.states.get(&canon) {
             Some(VarState::Consumed(at)) => {
+                // Plan 214 (D429) R7: an implicit `#coerce` finalize insertion
+                // must name itself in the diagnostic ("потреблён неявной
+                // #coerce-финализацией `<method>` в вызове … (строка N)"),
+                // not the generic "значение потреблено здесь" note an
+                // EXPLICIT consuming call gets (the source already names
+                // itself there). Falls back to the generic note otherwise.
+                let note = match self.coerce_consumed_via.get(at) {
+                    Some(method) => format!(
+                        "потреблён неявной #coerce-финализацией `{method}()` в вызове \
+                         (D429 R7); для чтения без потребления используйте явный \
+                         view-метод вместо implicit-коэрсии"
+                    ),
+                    None => "значение потреблено здесь".to_string(),
+                };
                 errors.push(Diagnostic::new(
                     format!(
                         "использование потреблённой переменной `{}` (D131): \
                          её значение отдано consume-вызовом и больше недоступно",
                         name),
                     span,
-                ).with_note_at("значение потреблено здесь".to_string(), *at));
+                ).with_note_at(note, *at));
             }
             Some(VarState::MaybeConsumed(at)) => {
                 errors.push(Diagnostic::new(
@@ -30552,16 +30579,22 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                     // credit it NOW, since diagnostics run on the PRE-rewrite tree
                     // and would otherwise spuriously flag `sb` as never consumed
                     // (the plan's own headline example: `log(sb)` → `log(sb.into_str())`).
-                    if let Some(param_keys) = ctx.reg.fn_param_output_keys.get(fname.as_str()) {
+                    if let Some(param_keys) = ctx.reg.fn_param_output_keys.get(fname.as_str()).cloned() {
                         for (i, a) in args.iter().enumerate() {
                             if consume_idxs.contains(&i) {
                                 continue; // already credited via consume_args above
                             }
                             let ExprKind::Ident(arg_name) = &a.expr().kind else { continue };
-                            let Some(arg_ty) = ctx.var_types.get(arg_name).cloned() else { continue };
-                            let Some(finalize_keys) = ctx.reg.coerce_finalize_output_keys.get(&arg_ty) else { continue };
-                            if matches!(param_keys.get(i), Some(pk) if finalize_keys.contains(pk)) {
-                                ctx.mark_consumed(arg_name, a.expr().span);
+                            let arg_name = arg_name.clone();
+                            let Some(arg_ty) = ctx.var_types.get(&arg_name).cloned() else { continue };
+                            let Some(finalize_keys) = ctx.reg.coerce_finalize_output_keys.get(&arg_ty).cloned() else { continue };
+                            if let Some(method_name) = param_keys.get(i).and_then(|pk| finalize_keys.get(pk)) {
+                                let span = a.expr().span;
+                                // R7: record WHICH implicit #coerce finalization consumed
+                                // `arg_name` here, so `use_var`'s use-after-consume
+                                // diagnostic can name it (mandated diagnostic quality).
+                                ctx.coerce_consumed_via.insert(span, method_name.clone());
+                                ctx.mark_consumed(&arg_name, span);
                             }
                         }
                     }
