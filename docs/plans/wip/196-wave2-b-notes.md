@@ -138,4 +138,41 @@ fluent-generic append, bound-method mono-dispatch, tuple-mono) реально х
 
 ---
 
-(продолжение — aggregator, финальная правка дублирующей ветки, wc -l gate-1 — следующие чекпоинты)
+## 6. Перепись — `examples/flagship/aggregator` (`nova build --strict-effects`)
+
+Команда: `nova build examples/flagship/aggregator/src/main.nv --strict-effects`, `NOVA_NODE_SUBSTS_TRACE=1`.
+**built OK, 43.93s** (только пре-существующие warnings — W_DEP_PATH_NO_RELEASE/W_REPLACE_IN_DEPENDENCY/
+W_PARAM_TYPE_POS_MUT/unused-import, не мои, не регрессия).
+
+| Consumer | hit-composed | hit прямой | fallback=miss |
+|---|---|---|---|
+| `mono_type_args` | 62 events / 5 distinct | **0** | 22 events / 3 distinct |
+| `resolve_method_level_subst` | 22 events / 22 distinct | **0** | 25 events / 25 distinct |
+
+Прямая non-composed «hit»-ветка `resolve_mono_type_args_ch` — **0 на всех ТРЁХ прогонах корпуса
+(std+standalone+aggregator), 0/1900+ событий суммарно** — находка §2 подтверждена на полном заданном
+корпусе (за вычетом d-фикстур, см. §4). Легаси fallback остаётся живым и здесь (3+25 distinct sites) —
+итоговый вердикт по легаси-движкам (§7) не меняется.
+
+## 7. Итоговый вердикт корпуса (std + standalone + aggregator, без d-фикстур — см. §4)
+
+| | mono_type_args fallback=miss (distinct) | resolve_method_level_subst fallback=miss (distinct) |
+|---|---|---|
+| std/{collections,time,encoding} | 23 | 74 |
+| standalone (88 файлов) | 8 | 16 |
+| aggregator (`--strict-effects`) | 3 | 25 |
+| **суммарно (с пересечениями по одинаковым D-формам)** | **живой, ненулевой** | **живой, ненулевой** |
+
+**Легаси-движки `resolve_mono_type_args` (19840) и `resolve_method_level_subst`'s Steps 1-3 fallback
+(21133) СНОСУ НЕ ПОДЛЕЖАТ в этой волне** — реальный производственный трафик на каждом кусочке корпуса,
+доминанта — `Vec[T]@append[S AsSlice[T]]` fluent-generic (структурный residual, задокументированный
+доккомент-Class R2) + Serialize-деривация методов (Option/str/int/f64/HashMap.serialize). Путь закрытия —
+Zone CH продюсер в `types/mod.rs`, СТОП-пункт по заданию (моя зона — только `emit_c.rs`).
+
+**Единственная валидная правка этой волны — снятие дублирующей non-composed "hit"-ветки внутри
+`resolve_mono_type_args_ch`** (0/1900+ на полном корпусе + доказательство by construction, §2) — детач+
+panic verification и снос — следующий шаг.
+
+---
+
+(продолжение — финальная правка дублирующей ветки, wc -l gate-1 — следующий чекпоинт)
