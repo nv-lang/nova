@@ -274,7 +274,7 @@ export fn StringBuilder mut @write_padded(bytes []u8, width int, fill char, alig
     requires width >= 0
 {
     ro content_chars = utf8_char_count(bytes)
-    ro pad_chars = if width > content_chars { width - content_chars } else { 0 }
+    ro pad_chars = (width - content_chars).max(0)
     match align {
         Align.Left => {
             @append(bytes)
