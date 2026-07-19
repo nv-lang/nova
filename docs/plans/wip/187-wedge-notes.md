@@ -348,3 +348,26 @@ Watchdog: `[supervised] count=0 pending_remote=1` + `STUCK_ALIVE_NOT_PARKED`
    corruption (pos_max_fibers/supervisor_stop/TSan). Коммит 80c0476fe.
 2. **runtime.c** — pump_scope work-conserving: устраняет cross-worker
    nested-supervised deadlock (wedge). Отдельный коммит.
+
+## ПОВОРОТ (2026-07-20): spawnctx GC-root фикс влит в main (ce79a26f5-семейство)
+
+Merge-коммит 0cdd6140d: КОРЕНЬ моего corruption-бага = **ea85229e0
+`GC_set_push_other_roots` замещал дефолтный pthreads-bdwgc
+`GC_default_push_other_roots→GC_push_all_stacks`** — единственный канал скана
+стеков/регистров ВСЕХ потоков на Linux. Порт перенёс 1 из 3 слагаемых
+Windows-модели → потеряны native-стеки воркеров/драйвера + main-стек → GC
+собирал ЖИВОЕ (stack-local supervised q, child_error/child_ctx, cancel-токен).
+Фикс главного агента = компенсация 3 слагаемых (main-VMA-проба + реестр
+native-стеков воркеров/драйвера). pos_max_fibers 30/30, supervisor_stop 10/10,
+supervisor_parfor 10/10 на main.
+
+**Следствие:** мой **child-arrays-uncollectable фикс (80c0476fe) + hoist
+(628e13bae) = ИЗБЫТОЧНЫ** — тот же premature-collect, закрыт на GC-root уровне
+правильно (массивы снова корректно сканируются). Дроплю их (workaround с
+leak-менеджментом больше не нужен). scope_multierror-регресс исчезает вместе с
+teardown-free.
+
+Мой **pump-фикс (b3d412ec0) — ОТДЕЛЬНЫЙ слой** (scheduler nested-supervised
+cross-worker deadlock, доказан MAXPROCS-дискриминатором + анализом кода 4b),
+НЕ GC. Проверяю: воспроизводится ли wedge на main ПОСЛЕ GC-root фикса → если да,
+pump-фикс нужен поверх.
