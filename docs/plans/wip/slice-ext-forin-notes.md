@@ -1,7 +1,45 @@
 # [M-slice-ext-receiver-for-in-elem-type] — рабочие заметки
 
-Worktree: `d:/Sources/nv-lang/nova-sliceext`, ветка `p-fix-slice-ext-forin`, от `main`@2afcb3f3d.
+Worktree: `d:/Sources/nv-lang/nova-sliceext`.
 Модель: sonnet.
+
+## ВОЛНА 2 (P2, ветка `p-fix-slice-ext-forin2` от свежей main, после мержа P1)
+
+P1 (чекер, коммит 71938307a, влит в main мерж-коммитом e0d03c6f9) закрыл ПОЛОВИНУ —
+`nova check` зелёный, но ЭМИССИЯ (codegen) на слитом main осталась CC-FAIL: та же
+фикстура `slice_ext_receiver_for_in_elem_ok.nv` — `Nova_NovaArray_nova_int_method_sef_tally(Nova_Vec____nova_int* nova_self)`
+— ВЕСЬ ресивер (`nova_self`) mono'т как `Vec[int]`, а не `Vec[SliceExtForinLane]`.
+Причина: `for r in @` ЛОУЭРИТСЯ через `var_types["nova_self"]` (не через чекер-канал
+P1 починил) — корень в codegen, `compiler-codegen/src/codegen/emit_c.rs`,
+`receiver_c_type()` (~16853), ветка `[]<elem>` (~16935): для КОНКРЕТНОГО НЕ-примитивного
+elem-типа (`elem_ty` не в списке str/bool/f64/f32/u8/char/i32/…/uint) код (Plan 101.1,
+~16953) БЕЗУСЛОВНО пробовал `self.subst_c(elem_ty)` (лукап в
+generic-substitution-карте `current_type_subst` — предназначен для РЕАЛЬНЫХ typevar'ов
+`fn[T] []T @m`), и при промахе ВСЕГДА дефолтил на `"nova_int" // erased T fallback` —
+не различая «действительно нерезолвнутый generic typevar» (T/U/K, короткое
+all-uppercase имя — см. параллельную проверку чуть выше по файлу, ~16902, для
+non-array receiver'а) от «конкретный именованный record/sum, которого просто НЕТ в
+current_type_subst, потому что он и не должен там быть» (`SliceExtForinLane`/
+`TaskResult`). Нигде в корпусе (std/examples/nova_tests) до этой правки НЕ было
+slice-расширения с конкретным ИМЕНОВАННЫМ (не примитив, не generic) элементом —
+ветка была «недостижима, но неправильна» до `[]TaskResult @to_report`.
+
+Фикс (та же функция, тот же match arm): добавлена ветка МЕЖДУ subst_c-успехом и
+nova_int-эрейзом — если `elem_ty` НЕ похож на typevar (не ≤2-символьное
+all-uppercase имя, тот же гейт что уже использует non-array-ветка чуть выше), резолвим
+его через ЕДИНЫЙ канонический лоуэринг `resolved_type_to_c(&ResolvedType::Named{...})`
+— ТОТ ЖЕ путь, которым `resolved_array_to_c` (~3744, РАБОЧИЙ путь для `[]TaskResult`
+как обычного поля/параметра) уже строит elem-арг для Vec-mono — так что смангленное
+имя инстанса (`Nova_Vec____Nova_SliceExtForinLane_p`) БАЙТ-В-БАЙТ совпадает с тем, что
+уже зарегистрировал call-site (`lanes []SliceExtForinLane`), а не расходится во
+ВТОРОЙ, отдельный mangle. Никакого name-guessing НЕ добавлено — переиспользован
+существующий канал (`resolved_type_to_c`), просто РАСШИРЕН гейт «когда его вызывать».
+
+Изолированный прогон (`spec_tests/_iso_slice_ext_forin/`, копия фикстуры в отдельном
+module) red→green ПОДТВЕРЖДЁН эмпирически на пересобранном бинаре (обе волны):
+- main ДО codegen-фикса (P1-фикс уже внутри): CC-FAIL, `member reference base type
+  'nova_int'`, сигнатура `Nova_NovaArray_nova_int_method_sef_tally(Nova_Vec____nova_int* nova_self)`.
+- main + codegen-фикс: `PASS: 1  FAIL: 0`.
 
 ## Баг
 
@@ -104,12 +142,43 @@ E_SELF_DOT_INVALID, `spec_tests/conformance/neg/neg_self_dot_invalid.nv`; зад
 
 ## Файлы
 
-- Фикс: `compiler-codegen/src/types/mod.rs` (`f1_check_fn`, инъекция scope["@"]).
-- Фикстура (red→green): `spec_tests/conformance/slice_ext_receiver_for_in_elem_ok.nv`.
+- Фикс P1 (чекер): `compiler-codegen/src/types/mod.rs` (`f1_check_fn`, инъекция
+  scope["@"]) — коммит `71938307a` (влит в main мержем `e0d03c6f9`).
+- Фикс P2 (codegen): `compiler-codegen/src/codegen/emit_c.rs` (`receiver_c_type`,
+  ветка `[]<elem>`, Plan 101.1 arm) — коммит `cd114d0d5` (ветка
+  `p-fix-slice-ext-forin2`).
+- Фикстура (red→green): `spec_tests/conformance/slice_ext_receiver_for_in_elem_ok.nv`
+  (влита в main вместе с P1; изолированная копия-прогон подтвердила P1-only —
+  всё ещё CC-FAIL, P1+P2 — PASS).
 - Гейт-носитель: `examples/flagship/aggregator/src/domain/domain.nv` +
   call sites (`aggregate.nv`, `live.nv`, `report_json_test.nv`) — миграция
-  `Report.from` → `[]TaskResult @to_report`, ПРЯМОЙ `for r in @` (без обхода).
+  `Report.from` → `[]TaskResult @to_report`, ПРЯМОЙ `for r in @` (без обхода) —
+  уже в main (влито вместе с P1).
+
+## Приёмка (P2, бинарь `p-fix-slice-ext-forin2`@cd114d0d5, оба фикса)
+
+- Изолированная копия фикстуры (`spec_tests/_iso_slice_ext_forin/`, отдельный
+  module, не коммичена): `PASS: 1 FAIL: 0` (было `CC-FAIL` на P1-only).
+- `nova build examples/flagship/aggregator/src/main.nv --strict-effects`:
+  `built: main.exe` (только pre-existing warnings — unused imports, W_PARAM_TYPE_POS_MUT).
+- `nova test examples/flagship/aggregator`: `PASS: 7 FAIL: 1 SKIP: 1`. Единственный
+  FAIL — `src/app/aggregate` (`report.done == 2`, `wall_ms < sequential_ms`) —
+  ИЗВЕСТНЫЙ таймингово-чувствительный concurrency-тест (реальный `supervised(deadline:)`
+  fan-out), предупреждён заданием как "не твой", не относится к slice-ext.
+- `nova test spec_tests/conformance/standalone --jobs 4`: `PASS: 68 FAIL: 0`
+  (эквивалент "standalone-CU 69/0" из задания — счёт по документированному
+  прецеденту плавает 68↔69 в зависимости от состава ветки, 0 failures — критерий
+  выполнен).
+- `nova test std/src/collections` (vec_seq `@map`/`@filter` slice-расширения):
+  `PASS: 13 FAIL: 0 SKIP: 6` — без регрессии.
+- Полный мега-CU (`spec_tests/conformance`, 988 файлов) НЕ гонялся повторно на
+  P2-бинаре по указанию координатора (авторитет — CI); один прогон на P1-only
+  бинаре (до кодогена-фикса) дал `PASS: 123 FAIL: 1` — единственный FAIL
+  (`app_effect_basic_t8_1`, файл БЕЗ единого `@`-ресивера/slice-extension) —
+  похоже на pre-existing/несвязанный шум, НЕ доисследован дальше (не гонять
+  мега-CU повторно — прямое указание координатора); флаг для CI.
 
 ## Статус
 
-В процессе — см. TodoWrite сессии.
+P1+P2 закрыты (коммиты влиты в ветку `p-fix-slice-ext-forin2`, main НЕ
+затронут — по дисциплине задания). Не язык-меняющее — D-амендмент не требуется.

@@ -16959,8 +16959,45 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let trimmed = c_ty.trim_end_matches('*').trim();
                                 c_elem_owned = trimmed.to_string();
                                 &c_elem_owned
-                            } else {
+                            } else if elem_ty.len() <= 2
+                                && elem_ty.chars().all(|c| c.is_ascii_uppercase())
+                            {
+                                // Genuine unresolved generic typevar shape (`T`/`U`/`K`/…,
+                                // no `current_type_subst` entry — erased-generic-method
+                                // body context, mirrors the bare-receiver typevar gate
+                                // above, ~16902) — erasure fallback, unchanged.
                                 "nova_int" // int/i64/erased T fallback
+                            } else {
+                                // [M-slice-ext-receiver-for-in-elem-type] (codegen half,
+                                // 2026-07-19): `elem_ty` is a CONCRETE named element (a
+                                // real record/sum, e.g. `[]TaskResult`) — NOT a typevar.
+                                // The generic-typevar arm above (§Plan 101.1) assumed any
+                                // non-primitive `elem_ty` absent from `current_type_subst`
+                                // was an unresolved generic, defaulting straight to the
+                                // `nova_int` erasure truth — wrong here: no slice-extension
+                                // anywhere in the corpus used a concrete NAMED record
+                                // element before, so this branch was unreachable-but-wrong
+                                // (silently mono'd `nova_self` as `Vec[int]` regardless of
+                                // the receiver's real element type — the actual root of
+                                // the reported `for r in @` CC-FAIL; the checker-side
+                                // `scope["@"]` fix alone was NOT sufficient, THIS is where
+                                // the C receiver type is actually decided). Resolve through
+                                // the SAME canonical single-source lowering every other
+                                // Named type uses (`resolved_type_to_c` → `resolved_named_to_c`),
+                                // identically to how `resolved_array_to_c` (the WORKING
+                                // path for `[]TaskResult` as an ordinary field/param, ~3744)
+                                // derives its Vec-mono element arg — so the mangled
+                                // `Vec[TaskResult]` instance name this receiver builds is
+                                // byte-identical to the one the call-site's own `[]TaskResult`
+                                // value already registered (no second, diverging mangle).
+                                let named = crate::types::ResolvedType::Named {
+                                    name: elem_ty.to_string(),
+                                    module: Vec::new(),
+                                    args: Vec::new(),
+                                };
+                                c_elem_owned = self.resolved_type_to_c(&named)
+                                    .unwrap_or_else(|_| "nova_int".to_string());
+                                &c_elem_owned
                             }
                         }
                     };
