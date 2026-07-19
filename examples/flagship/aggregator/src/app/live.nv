@@ -11,7 +11,7 @@
 // Demo/Chaos caller needs, or fork `fetch_one`'s signature. Instead, this
 // file re-runs the SAME race-a-lane-against-a-shared-`supervised(deadline:)`
 // SHAPE (peer of `aggregate.nv`, same module `backend.app` — reuses
-// `deadline_elapsed_ms`, `Report.from`, `TaskResult`/`TaskStatus`/`SourceData`/
+// `deadline_elapsed_ms`, `[]TaskResult @to_report`, `TaskResult`/`TaskStatus`/`SourceData`/
 // `AggError`/`Emit` directly, no import needed) against two small, honest
 // live fetchers below. Same cancellation guarantee, same `Report`/`Emit`
 // contract feeding `report_json.nv` unchanged — only the fetch body and the
@@ -270,7 +270,7 @@ export fn aggregate_live_health(budget Duration) Net Time Emit -> Report {
         live_lane_tcp(hosts[idx], shared_deadline, idx)
     }
     ro wall_ms = deadline_elapsed_ms(t0)
-    ro report = Report.from(results, wall_ms)
+    ro report = results.to_report(wall_ms)
     Emit.swarm_done(report.results.len(), report.done, report.failed, report.cancelled,
         report.wall_ms, report.sequential_ms)
     report
@@ -287,7 +287,7 @@ export fn aggregate_live_weather(budget Duration) Net Time Emit -> Report {
         live_lane_weather(city.0, city.1, city.2, shared_deadline, idx)
     }
     ro wall_ms = deadline_elapsed_ms(t0)
-    ro report = Report.from(results, wall_ms)
+    ro report = results.to_report(wall_ms)
     Emit.swarm_done(report.results.len(), report.done, report.failed, report.cancelled,
         report.wall_ms, report.sequential_ms)
     report

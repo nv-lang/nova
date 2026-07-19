@@ -1,0 +1,126 @@
+// [M-slice-ext-receiver-for-in-elem-type] pin (found 2026-07-18, live-code repro:
+// `examples/flagship/aggregator`'s `[]TaskResult @to_report` migration —
+// nv-coding-style §1а W_STATIC_CONVERSION turned `Report.from(results, wall_ms)` into
+// a slice-extension method; `for r in @` inside it CC-FAILed).
+//
+// Bug: iterating the BARE receiver `@` inside a slice-extension method
+// (`fn []T @m(...) { for r in @ { ... } }`) dropped the loop variable's element type
+// to codegen's nova_int-fallback — the generated C read `r` as `nova_int`, so
+// `r.field` broke ("member reference base type 'nova_int'") and a `match r.status`
+// resolved its tags against an UNRELATED sum type entirely (classic "channel empty →
+// codegen guesses" — родня [M-vec-ext-method-untyped-let-breaks-chain-dispatch],
+// docs/plans/backlog-followups.md, same "second window" class).
+//
+// Root (`compiler-codegen/src/types/mod.rs`, `f1_check_fn`): the receiver type
+// injected into `scope["@"]` for method-body checking was ALWAYS the flat
+// `TypeRef::Named{path:[recv.type_name]}` — for a slice-extension `fn []T @m`, the
+// parser bakes `recv.type_name` into the LITERAL flattened string `"[]T"`
+// (parser/mod.rs ~3006, one synthesized identifier), so `scope["@"]` held
+// `Named{path:["[]SliceExtForinLane"]}`, not the real `Array(Named(...))` shape the
+// parser ALSO builds (`recv.receiver_ty`, Plan 153.5/D263 — kept for the
+// monomorphizer). `infer_iter_elem_type`'s fallback match
+// (`TypeRef::Array(inner,_) => elem`, ~10068) only recognizes the genuine `Array`
+// shape — the flattened Named string isn't it — so `for r in @` fell through to
+// `None`: no elem type materialized, codegen guessed.
+//
+// Fix: prefer `recv.receiver_ty` (the FULL structured receiver type, already built by
+// the parser) over the flattened-Named fallback when injecting `scope["@"]` — the
+// SAME "prefer receiver_ty, else flat Named" idiom `resolve_return_channel`'s
+// `recv_pattern_tr` already uses (~10343). No non-slice receiver shape is affected
+// (`receiver_ty` is `None` for a bare `fn Type @m` receiver, so the fallback there is
+// byte-identical to before).
+//
+// Единица: standalone (module `spec_tests.conformance`, folder-module with its
+// neighbors — no name collisions; sef_-prefixed types/fns/locals per file-prefix
+// convention, test-conventions.md §"Только ПРОХОДЯЩИЕ тесты").
+module spec_tests.conformance
+
+type SliceExtForinStatus enum
+    | SefDone
+    | SefFailed(str)
+
+type SliceExtForinLane value {
+    ro id         str
+    ro status     SliceExtForinStatus
+    ro elapsed_ms int
+}
+
+fn SliceExtForinLane.sef_new(id str, status SliceExtForinStatus, elapsed_ms int) -> SliceExtForinLane =>
+    { id, status, elapsed_ms }
+
+// Bug carrier: bare `@` scrutinee, no intermediate binding — mirrors
+// `[]TaskResult @to_report`'s `for r in @ { sequential_ms += r.elapsed_ms; match
+// r.status { ... } }` shape exactly.
+export fn []SliceExtForinLane @sef_tally() -> (int, int, int) {
+    mut sef_done = 0
+    mut sef_failed = 0
+    mut sef_total_ms = 0
+    for r in @ {
+        sef_total_ms += r.elapsed_ms
+        match r.status {
+            SefDone      => { sef_done += 1 }
+            SefFailed(_) => { sef_failed += 1 }
+        }
+    }
+    (sef_done, sef_failed, sef_total_ms)
+}
+
+// Control: the SAME iteration through an explicitly-ANNOTATED intermediate binding —
+// the workaround domain.nv used before this fix. Was already green (different, gated
+// code path); must STAY green after the fix too — pins the workaround path doesn't
+// regress alongside the direct-`@` fix.
+export fn []SliceExtForinLane @sef_tally_annotated() -> (int, int, int) {
+    mut sef_done = 0
+    mut sef_failed = 0
+    mut sef_total_ms = 0
+    ro lanes []SliceExtForinLane = @
+    for r in lanes {
+        sef_total_ms += r.elapsed_ms
+        match r.status {
+            SefDone      => { sef_done += 1 }
+            SefFailed(_) => { sef_failed += 1 }
+        }
+    }
+    (sef_done, sef_failed, sef_total_ms)
+}
+
+// Sibling forms named in the task: `@len()` (no-dot method-call sugar — `@.len()`
+// dotted is E_SELF_DOT_INVALID, a hard parse rule, not this bug) / `@[i]` on a
+// NAMED-generic slice receiver (std/src/sort.nv already pins these on a CONCRETE
+// `[]int` receiver; this checks the same on a user named-record element type, the
+// shape this bug's root touches via the SelfAccess `resolved_types_buf` channel).
+export fn []SliceExtForinLane @sef_first_elapsed() -> int {
+    if @len() == 0 { return 0 }
+    @[0].elapsed_ms
+}
+
+test "slice-ext bare @ for-in: elem type resolves to the receiver's own record, not nova_int-fallback tags" {
+    ro lanes = [
+        SliceExtForinLane.sef_new("a", SliceExtForinStatus.SefDone, 10),
+        SliceExtForinLane.sef_new("b", SliceExtForinStatus.SefFailed("boom"), 20),
+        SliceExtForinLane.sef_new("c", SliceExtForinStatus.SefDone, 5),
+    ]
+    ro (done, failed, total_ms) = lanes.sef_tally()
+    assert(done == 2)
+    assert(failed == 1)
+    assert(total_ms == 35)
+}
+
+test "control: annotated-binding workaround stays green" {
+    ro lanes = [
+        SliceExtForinLane.sef_new("a", SliceExtForinStatus.SefDone, 10),
+        SliceExtForinLane.sef_new("b", SliceExtForinStatus.SefFailed("boom"), 20),
+        SliceExtForinLane.sef_new("c", SliceExtForinStatus.SefDone, 5),
+    ]
+    ro (done, failed, total_ms) = lanes.sef_tally_annotated()
+    assert(done == 2)
+    assert(failed == 1)
+    assert(total_ms == 35)
+}
+
+test "control: @len() / @[i] on a named-generic slice-ext receiver" {
+    ro lanes = [SliceExtForinLane.sef_new("a", SliceExtForinStatus.SefDone, 42)]
+    assert(lanes.sef_first_elapsed() == 42)
+    ro empty []SliceExtForinLane = []
+    assert(empty.sef_first_elapsed() == 0)
+}

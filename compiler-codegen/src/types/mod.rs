@@ -6772,13 +6772,38 @@ impl<'a> TypeCheckCtx<'a> {
         }
         // D175 (Plan 108): inject receiver type as "@" in scope so that
         // `check_target_readonly` can resolve @.field type for self-assignments.
+        //
+        // [M-slice-ext-receiver-for-in-elem-type] (2026-07-18): prefer the FULL
+        // structured receiver type (`receiver_ty` — `Array(Named(T))` for a
+        // slice-extension `fn []T @m`, mirrors the SAME "prefer receiver_ty,
+        // else flat Named{type_name,generics}" idiom already used by
+        // `resolve_return_channel`'s `recv_pattern_tr`, ~10343) over the flat
+        // `Named{path:[type_name]}` fallback. The flat form, for a slice
+        // receiver, spells `type_name` as the LITERAL flattened string
+        // `"[]T"` (parser `first_ident = "[]" + elem_name`, parser/mod.rs
+        // ~3006) — a `Named` whose path is a synthetic slice-sugar spelling,
+        // not a real registered type. Method-resolution consumers of
+        // scope["@"] already special-case-detect that `"[]"`-prefixed Named
+        // (`path[0].starts_with("[]")` → normalize to "Vec", ~15537/~16350)
+        // so they were unaffected either way — but `infer_iter_elem_type`'s
+        // structural match (`TypeRef::Array(inner,_) => elem`, ~10068) only
+        // recognizes the real `Array` shape, NOT the flattened Named spelling.
+        // `for r in @` inside a slice-extension therefore fell through to
+        // `None` (no elem type), and codegen's C emission guessed `nova_int`
+        // for the loop variable (`r.field` → "member reference base type
+        // 'nova_int'", match-tag resolution picked an unrelated sum type's
+        // tags). `receiver_ty` already carries the correct structured shape
+        // (`Array(Named(T))`, depth-aware for `[][]T`) — using it here closes
+        // the gap at the channel source instead of teaching codegen a second
+        // slice-sugar special case.
         if let Some(recv) = &fd.receiver {
             if matches!(recv.kind, ReceiverKind::Instance) {
-                scope.insert("@".to_string(), TypeRef::Named {
+                let self_ty = recv.receiver_ty.clone().unwrap_or_else(|| TypeRef::Named {
                     path: vec![recv.type_name.clone()],
                     generics: recv.generics.clone(),
                     span: recv.span,
                 });
+                scope.insert("@".to_string(), self_ty);
             }
         }
         // Plan 147 Ф.7 [M-147-param-index-freeze]: non-mut params are ro by
