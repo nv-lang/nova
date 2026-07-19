@@ -235,12 +235,20 @@ export fn StringBuilder consume @into_str_checked() -> Result[str, Utf8Error] =>
 // live (`@byte_len()` unchanged) until a matching `@advance(n)` call — the
 // caller's contract is to write at most `n` bytes starting at the returned
 // pointer, then call `@advance` with the number actually written.
-export fn StringBuilder mut @reserve(n int) -> *mut u8
+// Разделение дверей (владелец 2026-07-18): reserve БОЛЬШЕ НЕ возвращает
+// указатель (Rust-парити `Vec::reserve -> ()`; ensure и expose — разные дела).
+// Сырой хвост — явная дверь `@spare()` ниже.
+export fn StringBuilder mut @reserve(n int) -> ()
     requires n >= 0
 {
     @buf.reserve(n)
-    @buf.ptr().offset(@buf.len())
 }
+
+/// Указатель на ПЕРВЫЙ свободный байт хвоста (`[byte_len(), cap)`) — дверь
+/// протокола сырой записи: `reserve(n)` → `spare()` → запись ≤n байт →
+/// `advance(k)`. Rust-парити `spare_capacity_mut`. Разыменование — unsafe;
+/// сам указатель валиден до следующей реаллокации (`reserve`/`append`).
+export fn StringBuilder mut @spare() -> *mut u8 => @buf.ptr().offset(@buf.len())
 
 // Commit `n` bytes of previously-`@reserve`d spare capacity to the live
 // length — the second half of the zero-copy digit-loop protocol. Rebuilds
