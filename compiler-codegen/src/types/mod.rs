@@ -26340,6 +26340,28 @@ impl<'a> ConsumeCtx<'a> {
         }
     }
 
+    /// Consume-волна А (D157-амендмент, 2026-07-19): best-effort Ok/Some-
+    /// INNER тип match/if-let scrutinee — для D156-пропагации
+    /// consume-обязательства через Option/Result-пейлоад. Две формы:
+    /// - **rvalue** (`match TcpStream.connect(...) { … }`) — scrutinee сам
+    ///   `Call`, резолвится через `infer_unwrapped_call_type` напрямую.
+    /// - **place** (`match sess { … }`, `sess: Result[TcpStream, IoErr]`) —
+    ///   именованная переменная, резолвится через `var_unwrapped_types`
+    ///   (заполнена на declare-site из annotation/RHS).
+    /// Прочие формы scrutinee (member/@field, литералы, …) — honest defer,
+    /// None (sound: false-negative, не false-positive).
+    fn scrutinee_unwrapped_type(&self, scrutinee: &Expr) -> Option<String> {
+        match &scrutinee.kind {
+            ExprKind::Ident(name) => {
+                let canon = self.canonical(name);
+                self.var_unwrapped_types.get(&canon)
+                    .or_else(|| self.var_unwrapped_types.get(name.as_str()))
+                    .cloned()
+            }
+            _ => self.infer_unwrapped_call_type(scrutinee),
+        }
+    }
+
     /// Имя consume-метода для receiver-типа? (тип берётся по
     /// каноническому имени alias-класса).
     fn is_consume_method(&self, recv_var: &str, method: &str) -> bool {
@@ -28038,6 +28060,99 @@ fn consume_walk_block_inner(
             ctx.consume_obligations.remove(n);
         }
     }
+}
+
+/// Consume-волна А (D157-амендмент, D156-пропагация, 2026-07-19):
+/// declare pattern-bindings одного match/if-let arm'а.
+///
+/// Special-cased shape — single-arg tuple-variant `Ok(name)` / `Some(name)`
+/// (rvalue-скрутини — `TcpStream.connect(...)`; place-скрутини — именная
+/// переменная типа `Result[T,E]`/`Option[T]`, `scrut_unwrapped` резолвится
+/// вызывающим через `ConsumeCtx::scrutinee_unwrapped_type` ОДИН раз до
+/// вызова этой функции — Match переиспользует между armами):
+/// - unwrapped-тип НЕ known / НЕ must-consume (D133) — биндинг declare'ится
+///   как раньше, но теперь с ИЗВЕСТНЫМ типом (было `None`) — попутно чинит
+///   downstream method-dispatch/диагностики (не меняет consume-семантику).
+/// - unwrapped-тип must-consume:
+///   - `is_consume` НЕ указан на sub-pattern'е → `E_CONSUME_PATTERN_REQUIRED`
+///     (machine-applicable suggestion "вставьте `consume`"); биндинг
+///     declare'ится как ОБЫЧНАЯ (не-obligated) переменная — симметрия
+///     D180 Rule 1 (ошибка эмитируется один раз, без каскада).
+///   - `is_consume` указан (`Ok(consume tcp)`) → `declare_consume_binding`
+///     + implicit `mut` (D180: consume уже несёт права мутации).
+///
+/// Любая другая форма pattern'а (record/tuple/array-payload, `Err(..)`,
+/// произвольный sum-variant, wildcard, …) — unchanged fallback (honest
+/// defer; sound: false-negative, не false-positive).
+fn consume_declare_arm_pattern(
+    ctx: &mut ConsumeCtx,
+    pattern: &Pattern,
+    scrut_unwrapped: Option<&str>,
+    errors: &mut Vec<Diagnostic>,
+) {
+    if let Pattern::Variant {
+        path,
+        kind: VariantPatternKind::Tuple { patterns, rest: false },
+        ..
+    } = pattern
+    {
+        if patterns.len() == 1 {
+            let variant = path.last().map(|s| s.as_str()).unwrap_or("");
+            if matches!(variant, "Ok" | "Some") {
+                if let Pattern::Ident { name, is_consume, span, .. } = &patterns[0] {
+                    if name != "_" {
+                        let ty = scrut_unwrapped.map(|s| s.to_string());
+                        let must_consume = scrut_unwrapped
+                            .map(|t| ctx.lin_reg.consume_types.contains(t))
+                            .unwrap_or(false);
+                        if must_consume {
+                            if *is_consume {
+                                ctx.declare_consume_binding(name, ty);
+                                // D180: consume-биндинг уже mut-capable.
+                                ctx.local_mut.insert(name.clone(), true);
+                            } else {
+                                let insert_span = crate::diag::Span {
+                                    file_id: span.file_id,
+                                    start: span.start,
+                                    end: span.start,
+                                };
+                                errors.push(crate::diag::Diagnostic::new(
+                                    format!(
+                                        "[E_CONSUME_PATTERN_REQUIRED] pattern-биндинг `{}` держит \
+                                         consume-обязательный пейлоад типа `{}` из `{}(..)` — \
+                                         требуется явный `consume`-паттерн (D157-амендмент, \
+                                         D156-пропагация через Option/Result).",
+                                        name, ty.as_deref().unwrap_or("?"), variant,
+                                    ),
+                                    *span,
+                                ).with_note(
+                                    "владение must-consume пейлоадом должно быть явным на \
+                                     pattern-site (visible ownership transfer, D180-философия) \
+                                     — используй `consume`-sub-pattern.".to_string(),
+                                ).with_suggestion(crate::diag::Suggestion {
+                                    message: format!("`{}({})` → `{}(consume {})`", variant, name, variant, name),
+                                    span: insert_span,
+                                    replacement: "consume ".to_string(),
+                                    applicability: crate::diag::Applicability::MachineApplicable,
+                                }));
+                                // Degrade gracefully — regular (non-obligated)
+                                // binding, symmetric to D180 Rule 1's behaviour
+                                // on E_CONSUME_KEYWORD_MISSING (no cascade).
+                                ctx.declare(name, ty);
+                            }
+                        } else {
+                            ctx.declare(name, ty);
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+    }
+    // Fallback — unchanged pre-existing behaviour for every other shape.
+    let mut names = Vec::new();
+    consume_pattern_names(pattern, &mut names);
+    for n in &names { ctx.declare(n, None); }
 }
 
 fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic>) {
@@ -30148,10 +30263,11 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
         }
         ExprKind::IfLet { pattern, scrutinee, guard, then, else_ } => {
             consume_walk_expr(ctx, scrutinee, errors);
+            // Consume-волна А (D157-амендмент, D156-пропагация): resolve
+            // scrutinee's Ok/Some-inner тип ОДИН раз перед pattern-declare.
+            let scrut_unwrapped = ctx.scrutinee_unwrapped_type(scrutinee);
             let saved = ctx.states.clone();
-            let mut names = Vec::new();
-            consume_pattern_names(pattern, &mut names);
-            for n in &names { ctx.declare(n, None); }
+            consume_declare_arm_pattern(ctx, pattern, scrut_unwrapped.as_deref(), errors);
             // Plan 106: guard sees pattern bindings.
             if let Some(g) = guard { consume_walk_expr(ctx, g, errors); }
             consume_walk_block(ctx, then, errors);
@@ -30165,13 +30281,14 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
         // ─── match ───
         ExprKind::Match { scrutinee, arms } => {
             consume_walk_expr(ctx, scrutinee, errors);
+            // Consume-волна А: resolve ОДИН раз, переиспользуется всеми armами
+            // (rvalue-скрутини — Call resolved напрямую; place — по имени).
+            let scrut_unwrapped = ctx.scrutinee_unwrapped_type(scrutinee);
             let saved = ctx.states.clone();
             let mut joined: Option<HashMap<String, VarState>> = None;
             for arm in arms {
                 ctx.states = saved.clone();
-                let mut names = Vec::new();
-                consume_pattern_names(&arm.pattern, &mut names);
-                for n in &names { ctx.declare(n, None); }
+                consume_declare_arm_pattern(ctx, &arm.pattern, scrut_unwrapped.as_deref(), errors);
                 if let Some(g) = &arm.guard { consume_walk_expr(ctx, g, errors); }
                 match &arm.body {
                     MatchArmBody::Expr(ex) => consume_walk_expr(ctx, ex, errors),
