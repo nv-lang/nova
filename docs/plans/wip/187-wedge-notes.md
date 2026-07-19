@@ -128,4 +128,34 @@ Wedge (реальный P1) = aggregator server, socket I/O park (net.c
 _nn2_stream read/accept: тот же (scope,slot)→parked_co→goready паттерн).
 pos_max_fibers = быстрый прокси того же корня.
 
-СЛЕДУЮЩИЙ ШАГ: WSL-сборка p187 + gdb watchpoint.
+## Репро подтверждён (WSL, baseline)
+
+- baseline nova собран из nova-work@7513f2857 (== p187 nova_rt, байт-идентично):
+  `/home/craft/nova-target/release/nova`.
+- Standalone-обёртка `/home/craft/wedge187/pmf.nv` (= тело теста в `fn main`),
+  `nova build --mode release -o pmf`. Env NOVA_MAXPROCS=1 NOVA_MAX_FIBERS=20000.
+- **Direct-run ×20: PASS=4 FAIL=16 (80% SIGSEGV, rc=139, ТИХИЙ — без abort-текста).**
+  Сильный детерминированный-ish репро.
+- Live-gdb МАСКИРУЕТ (Heisenbug: ptrace-тайминг → 0/12 крашей под gdb). Перешёл
+  на **core-dump post-mortem** (ulimit -c unlimited, core_pattern=core в cwd,
+  sudo не нужен) — реальный тайминг сохранён. Скрипты в /home/craft/wedge187/.
+
+## СИЛЬНЫЙ КАНДИДАТ (найден чтением, ждёт core-пруфа)
+
+`nova_scope_pin_ctx` (fibers.h:1119-1158): `ctx_pins[]` ВСЁ ЕЩЁ
+`nova_alloc_uncollectable` + на grow `nova_free_uncollectable(старый)`.
+Первый alloc = `16*sizeof(void*) = 128` байт = ТОТ ЖЕ Boehm-uncollectable
+128-size-class, что SpawnCtx-пул (`_nova_spawn_pool_class_size[1]=128`).
+**Это ТА ЖЕ коллизия, что 211-волна починила для child_ctx — но ТОЛЬКО для
+child_ctx. ctx_pins остался uncollectable.** В pos_max_fibers ctx_pins растёт
+per-spawn в родителе (2000 спавнов → 16→32→...→2048 = ~8 grow, каждый
+free'ит предыдущий буфер в 128-класс, откуда main тут же тянет свежий SpawnCtx).
+211-волна тестировала child_ctx-фикс ИЗОЛИРОВАННО → 15/15 SIGSEGV, потому что
+ctx_pins (вторая коллизия, доминирующая в ЭТОМ тесте) осталась.
+
+ОСТОРОЖНО: коллизия могла быть red herring и для child_ctx (benign reuse, не
+порча). НЕ править вслепую — сначала core-dump ground-truth: посмотреть порченый
+блок + соседей + writer. Если это ctx_pins — фикс тривиален (collectable, как
+child_ctx). ЕСЛИ НЕТ — искать UAF-write дальше.
+
+СЛЕДУЮЩИЙ ШАГ: core-dump разбор (bxe4fbvlf в работе).
