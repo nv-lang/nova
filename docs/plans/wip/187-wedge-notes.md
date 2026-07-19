@@ -197,5 +197,36 @@ Chunk-геометрия NovaSchedState (fibers.h:646-664): 4 директори
 1024 chunk-ptr, chunk=64 элем, never-realloc. parked/handle/stop_cb/parked_co
 в РАЗНЫХ директориях (нет cross-offset бага).
 
-СЛЕДУЮЩИЙ ШАГ: поймать WRITER. Пробую rr (record-replay reverse-watchpoint)
-или debug-guard в nova_goready (дамп scope/slot + parked_co-чанк).
+## TSan-ПРОРЫВ (pmf_tsan, -fsanitize=thread -O1 -g)
+
+Гонки (6 прогонов, 21 warning). Все ОДНОГО класса — **алиасинг
+collectable рантайм-массивов** (разные scope, ОДИН адрес):
+- `nova_scope_grow` fibers.h:760/771/781 (worker: fiber_ctx/fibers массивы)
+- `nova_scope_grow_children`/`alloc_child_slot` fibers.h:1187/1221 (main: child_error)
+- `_nova_park_mark_slot` nova_sched.h:321 (worker: atomic write parked_co[slot])
+- `memset` в GC_generic_malloc / __tsan_memcpy (свежий блок)
+
+Примеры (TSan-адреса 0x7fff... = Boehm mmap-heap):
+1. worker `new_ctx[i]=NULL` (fiber_ctx) ↔ main `new_err[i].payload=NULL`
+   (child_error) — ОДИН адрес 0x7fff9ec12228.
+2. main memcpy читает OLD child_error ↔ worker atomic-write parked_co[slot]
+   — ОДИН адрес 0x7fffa62ca140.
+
+`nova_alloc`=`GC_malloc` (STW, thread-safe, `GC_set_all_interior_pointers(1)`)
+⇒ два concurrent alloc НЕ вернут один блок ⇒ **collect-and-reuse ЖИВЫХ
+collectable-объектов**. `GC_disable()` лечит (boehm-notes: 8/8 PASS) ⇒
+корень = ПРЕЖДЕВРЕМЕННАЯ GC-СБОРКА живого рантайм-массива.
+
+`_workers` (calloc, НЕ static) рутован через `GC_add_roots` (runtime.c:1581)
+— worker scope→fibers/sched_state/parked_co достижимы. Родительский
+supervised scope — stack-local в nova_fn_main_impl (main stack сканируется).
+Значит один из collectable-массивов теряет корень в окне (grow-swap: старый
+массив ещё копируется/используется, но уже reused; ЛИБО свежий массив до
+публикации в scope-поле).
+
+Коллизия ctx_pins/child-128 = ПОДТВЕРЖДЁННЫЙ red herring (порча в
+collectable 0x7fff-mmap, не в 128-uncollectable free-list как таковом).
+
+СЛЕДУЮЩИЙ ШАГ: дискриминатор — большой GC_INITIAL_HEAP_SIZE (без сборок за
+тест) → если 0 крахов, подтверждён GC-collect-класс; затем пиннинг
+теряющего корень массива (grow-order fix ИЛИ явный корень).
