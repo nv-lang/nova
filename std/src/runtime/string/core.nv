@@ -72,6 +72,12 @@ export extern "nova" fn str @hash() -> u64
 // field, O(1)): the bare field read `@len` trips D117 (E_SIZE_ACCESSOR_FIELD —
 // size-like accessors are method-only). `@ptr` is not a size accessor, so the
 // direct priv-field read is allowed.
+// Plan 214 (D429): #coerce — declares the implicit view-lane pair `str → ro
+// []u8`. Absorbs the retired name-gated D55 str-literal→[]u8 hack: any str
+// VALUE (not just a literal) now coerces at a call-arg/let-const/return/
+// element `[]u8` position via this exact method, byte-in-byte identical to
+// the explicit `.bytes()` call it replaces.
+#coerce
 export fn str @bytes() -> ro []u8 => unsafe { []u8.new(@ptr, @byte_len()) }
 
 // Raw pointer to the first byte of the UTF-8 data (like Rust `str::as_ptr`).

@@ -282,4 +282,7 @@ export fn WriteBuffer mut @write_f64_be(v f64) -> @ => @write_u64_be(v.to_bits()
 
 // Финализировать в []u8. После @into_bytes() WriteBuffer consumed.
 // Ownership transfer — возвращает внутренний buf напрямую (no copy).
+// Plan 214 (D429): #coerce — declares the implicit finalize-lane pair
+// `WriteBuffer → []u8` (owning zero-cost MOVE).
+#coerce
 export fn WriteBuffer consume @into_bytes() -> []u8 => @buf

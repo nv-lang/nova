@@ -226,6 +226,10 @@ export fn StringBuilder mut @write(bytes []u8) -> () { @buf.append(bytes) }
 // until that gap is closed under its own plan (see backlog-followups.md
 // marker); correctness is unaffected, only the zero-copy-reuse optimization
 // is foregone for this legacy-array call site.
+// Plan 214 (D429): #coerce — declares the implicit finalize-lane pair
+// `StringBuilder → str` (owning zero-cost MOVE, receiver disarmed at the
+// insertion point; use-after is a compile error, D133 linearity).
+#coerce
 export fn StringBuilder consume @into_str() -> str => unsafe { @buf.to_str_unchecked() }
 
 // Checked twin of `@into_str()` — validates UTF-8 instead of assuming it
