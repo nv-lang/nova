@@ -12,14 +12,14 @@ module regressions.monotonic_now_bare_binding
 
 import std.time.duration
 
-fn m187_monotonic_bare() -> int {
+fn m187_monotonic_bare() Time -> int {
     ro t0 = Monotonic.now()
     ro t1 = Monotonic.now()
     ro elapsed = t1.elapsed_since(t0)
     elapsed.millis() as int
 }
 
-fn m187_monotonic_bare_plus_duration(budget Duration) -> int {
+fn m187_monotonic_bare_plus_duration(budget Duration) Time -> int {
     ro t0 = Monotonic.now()
     ro deadline = t0 + budget
     ro elapsed = deadline.elapsed_since(t0)
