@@ -94,9 +94,10 @@ export fn char @to_digit(radix int) -> Option[int] {
 }
 
 // UTF-8-кодировка codepoint'а в 4-байтный массив с длиной.
-// Каждая ветка лестницы возвращает кортеж (byte-length, [4]u8).
+// Возвращает кортеж ([4]u8, byte-length) — «слайс по значению»: данные,
+// потом длина (конвенция {ptr,len}/{data,len,cap}; владелец 2026-07-20).
 // Rust `char::encode_utf8` (возвращает срез, здесь кортеж + хвостовые нули).
-export fn char @encode_utf8() -> (int, [4]u8) {
+export fn char @encode_utf8() -> ([4]u8, int) {
     mut out [4]u8 = [0, 0, 0, 0]
     ro cp = @ as int
     mut len int = 0
@@ -119,11 +120,11 @@ export fn char @encode_utf8() -> (int, [4]u8) {
         out[3] = (0x80 | (cp & 0x3F)) as u8
         len = 4
     }
-    (len, out)
+    (out, len)
 }
 
 // Байт-длина UTF-8-кодировки codepoint'а (1-4). Rust `char::len_utf8`.
-export fn char @len_utf8() -> int => @encode_utf8().0
+export fn char @len_utf8() -> int => @encode_utf8().1
 
 // ASCII case-insensitive equality (Plan 152.5a, D254). Rust `char::eq_ignore_ascii_case`.
 export fn char @eq_ignore_ascii_case(other char) -> bool =>

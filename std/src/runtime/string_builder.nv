@@ -140,7 +140,7 @@ export fn StringBuilder mut @append(s str) -> @ { @buf.append(s.bytes()) }
 // Append codepoint как UTF-8 (1-4 байта). Fluent push chain (D181)
 // + multi-line continuation (Plan 91 followup parser fix).
 export fn StringBuilder mut @append(c char) -> @ {
-    ro (n, b) = c.encode_utf8()
+    ro (b, n) = c.encode_utf8()
     for i in 0..n {
         @buf.push(b[i])
     }
@@ -331,7 +331,7 @@ export fn StringBuilder mut @pad_in_place(mark int, width int, fill char, align 
     }
 
     if left_chars > 0 {
-        ro (fill_len, fill_bytes) = fill.encode_utf8()
+        ro (fill_bytes, fill_len) = fill.encode_utf8()
         ro left_bytes = left_chars * fill_len
         @buf.reserve(left_bytes)
         unsafe {
