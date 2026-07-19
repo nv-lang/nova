@@ -20325,38 +20325,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             return Ok(legacy_pairs);
         }
-        let mut lowered: Vec<(String, String)> = Vec::with_capacity(channel.len());
-        for (name, rt) in channel.iter() {
-            let Some((_, legacy_c)) = legacy_pairs.iter().find(|(n, _)| n == name) else {
-                if trace {
-                    eprintln!(
-                        "[NODE_SUBSTS] consumer=mono_type_args call_id={:?} fallback=mismatch \
-                         {}=<no-legacy-name>",
-                        call_id, name
-                    );
-                }
-                return Ok(legacy_pairs);
-            };
-            let channel_c = self.resolved_type_to_c(rt).ok();
-            if channel_c.as_deref() != Some(legacy_c.as_str()) {
-                if trace {
-                    eprintln!(
-                        "[NODE_SUBSTS] consumer=mono_type_args call_id={:?} fallback=mismatch \
-                         {}={:?} legacy={:?}",
-                        call_id, name, channel_c, legacy_c
-                    );
-                }
-                return Ok(legacy_pairs);
-            }
-            lowered.push((name.clone(), legacy_c.clone()));
-        }
+        // [196-wave2-b, Plan 196 wave-2] REMOVED (was: a per-name loop rebuilding `lowered` from
+        // `channel` and returning `Ok(lowered)` on full agreement — the historical direct, non-
+        // composed "hit" path). `compose_mono_type_args_ch` above is tried FIRST and, for every
+        // `fn_decl.generics` name, ALSO looks up `channel`-by-name through the SAME
+        // `resolved_type_to_c` lowering before falling back to a positional turbofish ref — so
+        // whenever this loop's per-name checks would ALL have passed (every name present in
+        // `channel`, every lowering byte-identical to legacy), `compose_mono_type_args_ch` must
+        // already have produced the identical `composed == legacy_pairs` match and returned above
+        // as `hit-composed`. Detach+panic verified 0/1900+ `NOVA_NODE_SUBSTS_TRACE` events across
+        // std/{collections,time,encoding} + spec_tests/conformance/standalone (88 files) +
+        // examples/flagship/aggregator (`--strict-effects`) — see docs/plans/wip/196-wave2-b-notes.md
+        // §2/§7/§8 for the full census + byte-construction argument. Falling straight through to the
+        // legacy value here (rather than re-deriving a value already proven to equal it) is
+        // byte-identical by the SAME argument that gated every other branch in this function. Kept
+        // its own trace label (rather than silently merging into `fallback=miss`/`incomplete` above)
+        // so a future producer change that DOES make this reachable shows up distinctly in the
+        // `NOVA_NODE_SUBSTS_TRACE` census instead of vanishing.
         if trace {
             eprintln!(
-                "[NODE_SUBSTS] consumer=mono_type_args call_id={:?} hit n={}",
-                call_id, lowered.len()
+                "[NODE_SUBSTS] consumer=mono_type_args call_id={:?} fallback=post-compose-miss",
+                call_id
             );
         }
-        Ok(lowered)
+        Ok(legacy_pairs)
     }
 
     /// [M-196.5-stage-c2] Plan 196.5 Stage-C2 — POST-mono composition helper for
