@@ -403,6 +403,37 @@ Display/Debug — дженерик-импл в .nv; компилятор auto-de
 
 ## 10R. Ф.4R — редизайн сноса conv.h: «семантика живёт в fmt_buf, все пути — вызовы» (владелец 2026-07-20)
 
+### §10R-Д — три нормы-дополнения (владелец 2026-07-21; переданы исполнителю брифом, здесь — source of truth)
+
+**Д1. Порядок аргументов: value-first ВЕЗДЕ**, включая extern-границу (`(v, buf, cap, оси…)`);
+buf-first (`f64_fmt_into(buf, cap, v, …)`) — просочившаяся snprintf-идиома C, оба конца границы
+наши. Перестановка: nova_rt.h тела + extern-деклы + все call-сайты.
+
+**Д2. Имена: type-first** (канон семьи `int_fmt`/`bool_fmt`/`char_fmt`, решение владельца
+`29974ab36`): `fmt_f64` → `f64_fmt`. Греп на прочих глагол-first отставших.
+
+**Д3. Суффикс `_into` УПРАЗДНЯЕТСЯ** — он значил две разные вещи (C-extern'ы И экспорт-мосты),
+при том что ВСЯ семья пишет в `(buf, cap)`. Норма: «тип_fmt + оси с default-аргами»:
+```nova
+export unsafe fn int_fmt(v int, buf *mut u8, cap int, spec FmtSpec = FmtSpec.new()) -> int  requires cap >= 0
+export unsafe fn f64_fmt(v f64, buf *mut u8, cap int, kind FloatKind = FloatKind.Shortest, prec int = -1) -> int  requires cap >= 0
+export unsafe fn f32_fmt(v f32, buf *mut u8, cap int) -> int  requires cap >= 0
+```
+Мосты `int_fmt_into`/`*_fmt_shortest_into` упраздняются как сущности (простой рендер = та же
+функция с дефолтами; call-сайты SB/display_spec/тесты — прямые вызовы); C-extern'ы →
+`nova_f64_fmt`/`nova_f32_fmt` (стиль заголовка, D282 литеральные имена); шапка fmt_buf фиксирует
+норму семьи. **Проба до Д3-п.1:** default-арги у FREE fn через callnorm-backfill (Пункт-1/200
+доказал статики, free-форма — нет); дыра → НЕ перегрузки-по-арности и НЕ попутный callnorm-фикс:
+fallback = обёртки остаются с именами без `_into` (`f64_fmt_shortest`) + маркер
+`[M-freefn-default-arg-backfill-gap]` с probe-репро.
+
+**Гейты Д1-Д3:** эталоны Ш0 байт-в-байт; string_builder_test 1/0; checksums 3/0; греп `_into`
+по std/src + nova_rt.h = 0 (или честный fallback-остаток).
+
+> NB: примеры в §4-§6 (`f64_fmt_into(buf,cap,…)` и т.п.) — доредизайновые; канон сигнатур —
+> ЭТА секция. Примеры переписываются волной Ш4 вместе с D422-амендментом.
+
+
 **Мотив (диагноз владельца: «два источника семантики — неверный путь; нужен один, по максимуму в .nv»).**
 Аудит 2026-07-20 показал хуже, чем «два пути»: примитивные `@display`-тела — ЦИРКУЛЯРНЫЕ заглушки
 (`fn int @display(f) { f.write("${@}".bytes()) }` — зовут интерполяцию, т.е. компиляторный
