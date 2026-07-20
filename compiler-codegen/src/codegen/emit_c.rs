@@ -10514,6 +10514,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         if let Some(trailing) = &body.trailing {
             self.emit_source_annotation_for_expr(trailing);
+            // Plan 217: `with X = ... { consume g = e; g.close() }` — the
+            // handler-scope body's own trailing can be a bare consuming
+            // receiver-call, same as any other block-trailing choke point.
+            self.disarm_auto_cleanup_receiver_call(trailing);
             // [M-exp-promotion-blockers: url tuple-shape mono conflict,
             // sibling Option case] a bare `None` trailing's OWN emission
             // (`emit_expr`) doesn't know the sibling `interrupt Some(e)`
@@ -26943,6 +26947,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let post_label = self.contracts_post_label.clone();
         if let Some(trailing) = &block.trailing {
             self.emit_source_annotation_for_expr(trailing);
+            // Plan 217: a fn-body's trailing expr can itself be a bare
+            // consuming receiver-call (`fn f() { consume g = ...; g.close() }`
+            // — no explicit `return`/semicolon-statement, `g.close()` IS the
+            // trailing). Same disarm as `Stmt::Expr` — safe regardless of
+            // whether the trailing's VALUE is later used (disarming the flag
+            // doesn't affect the call's own return value).
+            self.disarm_auto_cleanup_receiver_call(trailing);
             // 172.4 Ф.3 блокер-1: trailing `@` fluent-метода — return-позиция ptr.
             let fluent_self_ret = self.var_types.get("nova_self")
                 .map(|sv| Self::is_value_struct_ptr(sv) && sv == ret_ty)
@@ -27296,6 +27307,43 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             return Some(format!("_defer_{}_{}_active", bid, idx));
         }
         None
+    }
+
+    /// Plan 217: if `e` is a bare receiver-call `X.method(...)` where `X` is
+    /// an active auto-cleanup/re-consume binding AND `method` is registered
+    /// as an ACTUAL consume-receiver method on `X`'s type
+    /// (`consume_receiver_methods` — mirrors checker's `is_consume_method`),
+    /// emit the disarm assignment right before `e` is evaluated. Called from
+    /// every "statement-like" expression-emission site where `e`'s value is
+    /// discarded (`Stmt::Expr`, block trailing used as a unit-typed
+    /// statement) — a bare statement/discarded-trailing has no downstream
+    /// value to preserve across reordering, so disarming first is safe.
+    /// Gating on `consume_receiver_methods` (not "any method call") matters:
+    /// a `ro`/`mut`-receiver helper method (e.g. a getter) on the SAME
+    /// binding must NOT disarm — the checker doesn't mark `X` consumed for
+    /// those either, so disarming here would be a silent resource leak.
+    fn disarm_auto_cleanup_receiver_call(&mut self, e: &Expr) {
+        if let ExprKind::Call { func, .. } = &e.kind {
+            if let ExprKind::Member { obj, name: method_name } = &func.kind {
+                if let ExprKind::Ident(recv_name) = &obj.kind {
+                    let recv_ty = self.var_types.get(recv_name).cloned().unwrap_or_default();
+                    let recv_ty_name = {
+                        let t = self.debt_strip_nova_trim_start(&recv_ty);
+                        t.strip_prefix("NovaValue_").map(|s| s.to_string()).unwrap_or(t)
+                    };
+                    let is_consuming_call = self.consume_receiver_methods
+                        .get(&recv_ty_name)
+                        .map_or(false, |ms| ms.contains(method_name));
+                    if is_consuming_call {
+                        if let Some(var) = self.disarm_var_for(recv_name) {
+                            self.line(&format!(
+                                "{} = 0;  /* Plan 217: consuming-вызов (receiver) — cleanup дизармлен */",
+                                var));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn emit_expr_with_reconsume_disarm(
@@ -28234,34 +28282,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 //   (b) any other consuming shape (`foo(X)`, nested calls,
                 //       `X` as a direct call-arg) — delegate to the
                 //       existing arg-scan/disarm machinery.
-                if let ExprKind::Call { func, .. } = &e.kind {
-                    if let ExprKind::Member { obj, name: method_name } = &func.kind {
-                        if let ExprKind::Ident(recv_name) = &obj.kind {
-                            // Plan 217: gate on `consume_receiver_methods` —
-                            // ONLY an actual consuming method call disarms.
-                            // A `ro`/`mut`-receiver helper method on the SAME
-                            // tracked binding (e.g. a getter) must NOT — that
-                            // would falsely skip the real cleanup at exit
-                            // (silent resource leak, зеркалит checker: такой
-                            // вызов не помечает X Consumed вообще).
-                            let recv_ty = self.var_types.get(recv_name).cloned().unwrap_or_default();
-                            let recv_ty_name = {
-                                let t = self.debt_strip_nova_trim_start(&recv_ty);
-                                t.strip_prefix("NovaValue_").map(|s| s.to_string()).unwrap_or(t)
-                            };
-                            let is_consuming_call = self.consume_receiver_methods
-                                .get(&recv_ty_name)
-                                .map_or(false, |ms| ms.contains(method_name));
-                            if is_consuming_call {
-                                if let Some(var) = self.disarm_var_for(recv_name) {
-                                    self.line(&format!(
-                                        "{} = 0;  /* Plan 217: consuming-вызов (receiver) — cleanup дизармлен */",
-                                        var));
-                                }
-                            }
-                        }
-                    }
-                }
+                self.disarm_auto_cleanup_receiver_call(e);
                 // Plan 217 (same KNOWN GAP as the non-bare return case above):
                 // the generic arg-scan disarm below is kept `reconsume_scopes`
                 // -only (unchanged pre-217 behaviour) — auto-cleanup bindings
@@ -29533,7 +29554,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         })
     }
 
+    /// Plan 217 (D-новый, гибрид C): thin wrapper around `emit_expr_inner`.
+    /// Central choke-point for the auto-cleanup receiver-call disarm
+    /// (`disarm_auto_cleanup_receiver_call`) — rather than hunting down
+    /// every one of the ~20 `block.trailing`/`b.trailing` emission call
+    /// sites scattered across if/match/loop/supervised/with/spawn bodies
+    /// (each a DIFFERENT choke point for "the last expr of a block used as
+    /// a statement"), the check lives HERE: every `X.method()` call is
+    /// necessarily emitted via `emit_expr` at some point, wherever it
+    /// syntactically sits (bare statement, block trailing, nested in a
+    /// bigger expression). Disarming is a pure flag-write with no bearing on
+    /// the computed value, so firing it unconditionally before delegating —
+    /// regardless of nesting position — is sound (idempotent even if some
+    /// OTHER choke-point's own explicit call to
+    /// `disarm_auto_cleanup_receiver_call` already fired it for the same
+    /// node).
     fn emit_expr(&mut self, expr: &Expr) -> Result<String, String> {
+        self.disarm_auto_cleanup_receiver_call(expr);
+        self.emit_expr_inner(expr)
+    }
+
+    fn emit_expr_inner(&mut self, expr: &Expr) -> Result<String, String> {
         match &expr.kind {
             // Plan 172.5 (D326 R4/R5): call-site `ref <place>` — pass the
             // address of the addressable place. A `mut ref`/`ro ref` parameter
@@ -33463,6 +33504,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.emit_stmt(stmt)?;
         }
         if let Some(trailing) = &block.trailing {
+            // Plan 217: same bare-consuming-receiver-call disarm as the
+            // other block-trailing choke points (`emit_block_stmts` /
+            // `emit_block_into`).
+            self.disarm_auto_cleanup_receiver_call(trailing);
             let v = self.emit_expr(trailing)?;
             // Plan 184 (Р5/Р7) [M-184-mut-chain-return-position]: a value-record
             // fluent `-> @` chain in return position yields `ref Self`
@@ -41610,6 +41655,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.emit_stmt(stmt)?;
         }
         if let Some(trailing) = &block.trailing {
+            // Plan 217: if/match/loop branch's trailing is often a bare
+            // consuming receiver-call used as a plain statement (`if c {
+            // g.close() } else { ... }`) — same disarm as `Stmt::Expr`/
+            // `emit_block_stmts` (safe regardless of whether `tmp` is later
+            // read: disarming doesn't change the call's own return value).
+            self.disarm_auto_cleanup_receiver_call(trailing);
             // Plan 125: trailing expression provably divergent (throw/panic/
             // exit/interrupt/user-fn-never/recursive). Emit ONLY side-effect
             // — control never reaches the assignment. Without this guard,
@@ -42649,6 +42700,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.emit_stmt(stmt)?;
         }
         if let Some(trailing) = &block.trailing {
+            // Plan 217: same bare-consuming-receiver-call disarm as the
+            // other block-trailing choke points.
+            self.disarm_auto_cleanup_receiver_call(trailing);
             let v = self.emit_expr(trailing)?;
             let bty = block_ty.clone();
             Self::emit_assign_typed(self, &tmp, &bty, &v);
