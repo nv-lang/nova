@@ -30918,3 +30918,38 @@ current, byte-behaviour). Спека: 02-types §D358 Ф.2-амендмент (`
   записях выше по этому файлу. Строка убрана из
   `docs/plans/backlog-followups.md` (lifecycle §13). Research-план 211
   (park-join) остаётся как архитектурное исследование, wedge его не ждёт.
+
+## [M-vr-binop-wrapper-decl-order-standalone-cu] ЗАКРЫТ (2026-07-20, worktree nova-vrbinop2)
+
+- **Корень ПЕРЕДИАГНОСТИРОВАН** (заявленный при заведении маркера
+  «decl-order» — неверен). Реальный корень: `collect_expr` (`lints.rs`
+  ~1095-1124) — DCE-seed для reachability-closure (Plan 159 Ф.1) — сидел
+  `equal`/`compare`/`concat` (селекторы операторного desugar'а `==`/`<`/str
+  `+`), но НЕ сидел `plus`/`minus`/`times`/`div`/`rem` — селекторы
+  value-record АРИФМЕТИКИ (`+`/`-`/`*`/`/`/`%` на `Monotonic`/`Duration`/…,
+  Plan 175 Ф.1b/Ф.3, emit_c.rs ~29716-29738). В STANDALONE executable CU
+  (`fn main` есть → reachability-DCE активен) без литерального `.plus(...)`
+  где-либо в CU type∧name пересечение никогда не помечало метод живым →
+  DCE дропал decl+body → безусловно эмитированная `nova_vr_binop_*`-обёртка
+  звала несуществующий C-символ → CC-FAIL (`t0 + 120.to_millis()` на
+  `examples/mini_aggregator.nv` — implicit-int fallback / «incompatible
+  result type»). Тот же класс, что уже покрытые equal/compare/concat в
+  ЭТОМ ЖЕ списке — не отдельный баг, пропущенный сосед.
+- **Фикс** (`compiler-codegen/src/lints.rs`, тот же `ExprKind::Binary`-рукав
+  ~1095-1128, где сидятся equal/compare/concat): добавлены
+  `out.insert("plus"/"minus"/"times"/"div"/"rem")` — консервативный
+  over-keep (harmless для unused-import lint, те же method-селекторы).
+- **Репро/гейты**: pre-fix binary на новой standalone-фикстуре
+  `spec_tests/conformance/standalone/vr_binop_arith_dce.nv`
+  (`Monotonic + Duration`/`Monotonic - Duration`/`Duration * i64`/
+  `Duration / i64`, все без литерального `.plus(...)`-вызова) —
+  CC-FAIL на ВСЕХ трёх незасеянных селекторах (`plus`/`times`/`div`)
+  синхронно, ровно предсказанная ошибка. Post-fix — компилится и бежит,
+  `VR_BINOP_ARITH_DCE_OK`. Полный прогон `standalone/`: PASS 69 FAIL 0
+  (включая новую фикстуру). `std/src/time` (`--strict-effects`): PASS 6
+  FAIL 0 SKIP 1 (module без test-блоков, не провал). Флагман
+  (`examples/flagship/aggregator/src/main.nv --strict-effects`) — built OK.
+- **Маркер**: строка `[M-vr-binop-wrapper-decl-order-standalone-cu]` убрана
+  из `docs/plans/backlog-followups.md` (переименована суть при закрытии:
+  корень = DCE-seed, НЕ decl-order — заголовок маркера исторический,
+  оставлен как ID).
