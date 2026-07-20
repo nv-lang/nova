@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR does not satisfy
+//
+// [M-checker-protocol-typed-arg-any-bypass] — the inline ANONYMOUS protocol form
+// (D142, `fn f(x protocol { ... })`) used as a PLAIN (non-generic-bound) parameter is a
+// SEPARATE `TypeRef::Protocol` shape from a Named protocol reference, and hit the same
+// `resolved_cat_of_depth` → `Any` collapse. `neg_anon_protocol_missing_method.nv` (same
+// directory) already covers the anon-protocol-as-GENERIC-BOUND surface
+// (`[T protocol {...}]`, checked by `BoundCtx`, never affected by this bug) — this
+// fixture covers the previously-uncovered PLAIN-parameter anon-protocol surface.
+module neg.neg_protocol_param_anon_missing
+
+type PABNoClose {
+    name str
+}
+
+fn pab_use_closer(c protocol { @close() -> () }) -> () => c.close()
+
+test "anon protocol PLAIN param rejects a concrete type missing the method" {
+    ro n = PABNoClose { name: "x" }
+    pab_use_closer(n)   // must NOT compile — PABNoClose has no @close
+}

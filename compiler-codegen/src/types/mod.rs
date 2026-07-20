@@ -14062,6 +14062,31 @@ impl<'a> TypeCheckCtx<'a> {
         let exp_rt = self.resolved_cat_of(expected, exp_gs);
         // Generic-параметр / any / func / tuple — проверить нельзя.
         if matches!(exp_rt, ResolvedType::Any) {
+            // [M-checker-protocol-typed-arg-any-bypass] fix (zero-tolerance, backlog-
+            // followups.md): `resolved_cat_of`/`resolved_cat_of_depth` map EVERY protocol
+            // EXPECTED type to `Any` — mirrors legacy `cat_of`'s "protocol/effect/opaque
+            // permissive" collapse, which pre-dates the structural-protocol machinery
+            // (D42/D53/D72/D142) and was never revisited once that machinery existed. That
+            // blanket `Any` used to ALSO skip structural verification entirely for a PLAIN
+            // (non-generic) protocol-typed parameter — `fn f(w Fmt)` — the documented
+            // "type value / existential" surface (`TypeDeclKind::Protocol` doc-comment).
+            // A `[T Bound]` GENERIC bound was NEVER affected by this hole — it is checked
+            // separately by `BoundCtx::check_satisfaction`/`check_satisfaction_against_methods`
+            // via `check_call_bounds`/`check_method_call_bounds` (D53/D72/D142), which never
+            // routes through `resolved_cat_of`. Symptom: `x.debug(sb)` with
+            // `sb: StringBuilder` (implements `Write` only, NOT the wider `Fmt`) type-checked
+            // clean, then silently type-confused the C pointer at runtime (`Nova_StringBuilder*`
+            // where `Nova_FmtCtx*` was expected — both structs happen to start with a pointer
+            // at offset 0, so nothing crashed, it just produced wrong output instead of a
+            // compile error). `protocol_mismatch_found` runs the SAME structural check (method-
+            // table presence + `use`-embed-flatten (D145) + default-body fallback (D183)) the
+            // generic-bound path already uses, narrowly gated to cases it can decide (a Named
+            // reference to a declared `Protocol`, or an inline anonymous `TypeRef::Protocol`,
+            // with an inferable concrete Named/Array/non-primitive/non-generic argument type)
+            // — anything undecidable stays exactly as permissive as before this fix.
+            if let Some(found) = self.protocol_mismatch_found(expr, expected, exp_gs, scope) {
+                return Compat::Bad { found };
+            }
             return Compat::Ok;
         }
         // Литералы: тип адаптируется к контексту (D44).
@@ -14331,6 +14356,190 @@ impl<'a> TypeCheckCtx<'a> {
         } else {
             Compat::Bad { found: typeref_display(&found_tr) }
         }
+    }
+
+    /// [M-checker-protocol-typed-arg-any-bypass] fix: `expected` (already found to
+    /// resolve to `ResolvedType::Any` by the caller — `assignable_direct`'s check right
+    /// above this call) may denote a PROTOCOL — either a `TypeRef::Named` naming a
+    /// declared `type X protocol { ... }`, or an inline anonymous `TypeRef::Protocol
+    /// { methods, .. }` (D142, e.g. `fn f(x protocol { @close() -> () })`). If so,
+    /// best-effort check whether `expr`'s INFERRED type structurally satisfies it — the
+    /// SAME rule the generic-bound path already enforces
+    /// (`BoundCtx::check_satisfaction_against_methods`, D53/D72/D142): every required
+    /// method (name + arity) must be present, directly or via a `default_body` fallback
+    /// (D183), transitively through `use`-embeds (D145).
+    ///
+    /// Returns `None` when undecidable (`expected` does not denote a protocol at all, the
+    /// arg's type is not inferable to a concrete nominal Named/Array type, the concrete
+    /// name is a passthrough generic-param of the ENCLOSING scope, or a primitive with no
+    /// `method_table` registry — mirrors `check_satisfaction`'s own skips) — the caller
+    /// keeps the OLD permissive `Compat::Ok` in every such case, so this fix touches
+    /// ONLY the case it can actually decide. `Some(msg)` is a DEFINITE structural
+    /// mismatch, formatted for the `Compat::Bad { found }` slot callers already build
+    /// `[E7301]`/`[E_NO_MATCHING_OVERLOAD]` diagnostics around (this fn intentionally does
+    /// NOT invent a new error code — every existing `Compat::Bad` call site already
+    /// produces a clean, well-tested compile error from `found`).
+    fn protocol_mismatch_found(
+        &self,
+        expr: &Expr,
+        expected: &TypeRef,
+        exp_gs: &HashSet<String>,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<String> {
+        // Peel the same transparent view-wrappers `resolved_cat_of_depth` recurses
+        // through en route to its Protocol/Any arms — `ro`/`mut`/`uninit`/`ref` views of a
+        // protocol-typed position collapse to Any exactly like the bare form there, so the
+        // structural check must see through them here too.
+        let mut peeled = expected;
+        loop {
+            peeled = match peeled {
+                TypeRef::Readonly(inner, _)
+                | TypeRef::Mut(inner, _)
+                | TypeRef::Uninit(inner, _)
+                | TypeRef::Ref(inner, _) => inner.as_ref(),
+                _ => break,
+            };
+        }
+        enum Req<'x> {
+            Named(String),
+            Anon(&'x [EffectMethod]),
+        }
+        let req = match peeled {
+            TypeRef::Named { path, .. } => {
+                let name = path.last()?;
+                // A generic type-param of the ENCLOSING position — `resolved_cat_of_depth`
+                // checks this FIRST too (before ever consulting `self.types`), so a name
+                // shadowing both a real protocol and a local type-param always resolves as
+                // the type-param there; mirror that precedence here.
+                if exp_gs.contains(name) {
+                    return None;
+                }
+                let td = self.types.get(name)?;
+                if !matches!(td.kind, TypeDeclKind::Protocol { .. }) {
+                    return None; // effect/type-set/opaque/etc. — different Any-source, untouched
+                }
+                Req::Named(name.clone())
+            }
+            TypeRef::Protocol { methods, .. } => Req::Anon(methods),
+            _ => return None, // Any/never/Self, func, tuple, unresolved name, generic-param, ...
+        };
+        let found_tr = self.infer_expr_type(expr, scope)?;
+        let concrete_name = match &found_tr {
+            TypeRef::Named { path, .. } => path.last()?.clone(),
+            // D239 `[]T ≡ Vec[T]` — align with `check_satisfaction_against_methods`'s own
+            // Array-as-Vec receiver treatment (checks Vec's method_table).
+            TypeRef::Array(_, _) => "Vec".to_string(),
+            _ => return None, // Tuple/Func/etc. — composite arg types, undecidable here
+        };
+        // Passthrough type-param (the arg's OWN type is a generic param of the enclosing
+        // fn, still erased at this call site) — undecidable, enforced at the eventual
+        // concrete call site instead (mirrors `check_satisfaction`'s
+        // `current_fn_generic_names` skip in `BoundCtx`).
+        if exp_gs.contains(&concrete_name) {
+            return None;
+        }
+        // Built-in primitives have no `method_table` registry here (their real methods
+        // live in codegen's `ExternalRegistry`) — best-effort permissive, mirrors
+        // `check_satisfaction`/`check_satisfaction_against_methods`'s identical skip.
+        if matches!(concrete_name.as_str(),
+            "int" | "i8" | "i16" | "i32" | "i64"
+            | "u8" | "u16" | "u32" | "u64" | "uint"
+            | "f32" | "f64" | "bool" | "char"
+            | "str" | "any" | "never")
+        {
+            return None;
+        }
+        // The "concrete" name is ITSELF a declared Protocol — the arg is an already-
+        // erased existential value (D142 `protocol Name { ... }` literal, or simply a
+        // protocol-typed variable/param forwarded to another protocol-typed position),
+        // NOT a nominal type with a `method_table` entry. A `protocol Writer4 { write(v)
+        // {...} }` literal's inline methods are captured into a per-literal vtable at
+        // construction (`emit_protocol_lit`) — validated THERE against every required
+        // method (see the D142 literal-completeness check) — they are never registered
+        // under the type name "Writer4" in `sig.method_table`, so `method_overloads`
+        // would (wrongly) report every method missing. Same-protocol forwarding
+        // (`w Writer4` flowing into another `Writer4`-expected position) trivially
+        // satisfies by identity; a DIFFERENT protocol name would need protocol-to-
+        // protocol subset checking, out of scope here — skip (permissive, unchanged
+        // from before this fix) rather than false-positive.
+        if self.types.get(&concrete_name)
+            .map(|td| matches!(td.kind, TypeDeclKind::Protocol { .. }))
+            .unwrap_or(false)
+        {
+            return None;
+        }
+        let missing = match &req {
+            Req::Named(proto_name) => {
+                let mut seen: HashSet<String> = HashSet::new();
+                self.protocol_missing_methods(&concrete_name, proto_name, &mut seen)
+            }
+            Req::Anon(methods) => self.protocol_required_missing(&concrete_name, methods),
+        };
+        if missing.is_empty() {
+            return None;
+        }
+        let proto_display = match &req {
+            Req::Named(n) => n.clone(),
+            Req::Anon(_) => "<anonymous protocol>".to_string(),
+        };
+        Some(format!(
+            "{} (does not satisfy `{}`; missing: {})",
+            concrete_name, proto_display, missing.join(", ")
+        ))
+    }
+
+    /// [M-checker-protocol-typed-arg-any-bypass] fix: does `type_name` provide every
+    /// method `required` lists (name + arity — `method_overloads` reads the base
+    /// `sig.method_table` ∪ this `TypeCheckCtx`'s own synth/auto-derive overlay, U.2.3.3)?
+    /// A method with a `default_body` (D183) counts as satisfied even when `type_name`
+    /// has no override — same rule as `BoundCtx::check_satisfaction_against_methods`.
+    /// Returns the list of missing method signatures (empty ⇒ satisfied).
+    fn protocol_required_missing(&self, type_name: &str, required: &[EffectMethod]) -> Vec<String> {
+        let mut missing = Vec::new();
+        for req in required {
+            let found = self
+                .method_overloads(type_name, &req.name)
+                .map(|fns| fns.iter().any(|f| f.params.len() == req.params.len()))
+                .unwrap_or(false);
+            if !found {
+                if req.default_body.is_some() {
+                    continue;
+                }
+                let sig = render_method_sig(&req.name, &req.params, &req.return_type);
+                let prefix = if req.is_static { "." } else { "" };
+                missing.push(format!("{}{}", prefix, sig));
+            }
+        }
+        missing
+    }
+
+    /// [M-checker-protocol-typed-arg-any-bypass] fix: `protocol_required_missing` for a
+    /// NAMED protocol, transitively flattened through `use`-embeds (D145) — mirrors the
+    /// `flatten_dfs` DFS `BoundCtx::build` runs to populate `protocol_specs`, re-walked
+    /// here because `TypeCheckCtx` has no precomputed flattened registry of its own (a
+    /// different struct, built in a different phase — see the type's own doc-comment).
+    /// `seen` DFS-guards embed cycles (diagnosed separately, `E_PROTOCOL_EMBED_CYCLE`) —
+    /// a cycle just stops contributing further methods, never infinite-loops.
+    fn protocol_missing_methods(
+        &self,
+        type_name: &str,
+        proto_name: &str,
+        seen: &mut HashSet<String>,
+    ) -> Vec<String> {
+        if !seen.insert(proto_name.to_string()) {
+            return Vec::new();
+        }
+        let Some(td) = self.types.get(proto_name) else { return Vec::new(); };
+        let TypeDeclKind::Protocol { methods, embeds } = &td.kind else { return Vec::new(); };
+        let mut missing = self.protocol_required_missing(type_name, methods);
+        for e in embeds {
+            if let TypeRef::Named { path, .. } = e {
+                if let Some(emb_name) = path.last() {
+                    missing.extend(self.protocol_missing_methods(type_name, emb_name, seen));
+                }
+            }
+        }
+        missing
     }
 
     /// 172.1.2 Шаг 1: пометить residual generic-параметры ЯВНЫМ носителем.

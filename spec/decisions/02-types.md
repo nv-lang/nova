@@ -1108,6 +1108,57 @@ Plan 15 D53 strict-mode (Plan 15 Ф.5) ввёл различие protocol/effect
   (codegen vtable struct + `emit_protocol_lit` + Plan 56 D122 box-pattern).
   См. также [D142](#d142).
 
+### D53 amend (2026-07-20, `[M-checker-protocol-typed-arg-any-bypass]`, worktree `nova-protoany`) — PLAIN protocol-typed параметр требует СТРУКТУРНОГО соответствия
+
+**Status:** ACTIVE. Язык-меняющее по строгости (то, что раньше молча проходило,
+теперь — compile error).
+
+#### Что было
+
+Строка 940 этой же секции (`log_one(my_user) // ok, User совместим со Display`)
+документирует PLAIN (не-generic-bound) protocol-typed параметр как «type value /
+existential» — заявленный, легальный способ использовать `protocol` (D53 сам называет
+его прямо, наравне с generic-bound-формой). Но checker-реализация (`resolved_cat_of_depth`,
+`compiler-codegen/src/types/mod.rs`) мапила **любой** `TypeDeclKind::Protocol`
+expected-тип в `ResolvedType::Any` — permissive-коллапс, унаследованный от старого
+`cat_of` («protocol/effect/opaque permissive»), появившийся ДО структурной
+protocol-машинерии (D53/D72/D142) и никогда не пересмотренный. Из-за этого
+`assignable_direct` пропускал **любой** аргумент в PLAIN protocol-typed позицию БЕЗ
+проверки, что аргумент реально реализует протокол — структурная типизация (§«Структурная
+совместимость») энфорсилась только для generic-bound-формы (`[T Protocol]`, отдельный
+механизм — `BoundCtx::check_satisfaction`, D72/D142), никогда для голого `x Protocol`.
+
+Симптом-прецедент: `Fmt = protocol { use Write, @width()..., ... }` (D422),
+`StringBuilder` реализует только `Write` (embedded под-протокол), НЕ полный `Fmt` — но
+`.debug(sb)`/`.display(sb)` с `sb: StringBuilder` компилировался БЕЗ ошибки (вместо
+корректного «нужен `FmtCtx.bare(sb, ...)`», см. `d374_write_sink_decouple.nv`). На C
+`Nova_StringBuilder*` шёл туда, где ожидался `Nova_FmtCtx*` (оба — указатель на offset 0)
+→ тихая type confusion (пустая строка) вместо чистой compile-error.
+
+#### Что теперь
+
+`assignable_direct` СТРУКТУРНО проверяет PLAIN protocol-typed позицию — той же
+проверкой «имя+арность метода присутствует (прямо, через `use`-embed (D145)
+рекурсивно, или через `default_body`-фолбэк, D183)», что generic-bound-форма уже
+применяет. Несоответствие → чистая compile error (переиспользует существующие коды
+`[E7301]`/`[E_NO_MATCHING_OVERLOAD]` — новый код ошибки не заводился). Соответствующий
+аргумент по-прежнему проходит — правило `log_one(my_user)` (строка 940) не изменилось,
+изменилось только то, что НЕсоответствующий аргумент больше не проходит молча.
+
+Не затронуто (намеренно, риск-контейнмент): `resolved_cat_of_depth` сам НЕ менялся
+(Any-коллапс для protocol остаётся — используется другими consumer'ами); generic-bound
+путь (`BoundCtx`) не менялся — уже был корректен; protocol-литералы
+(expression-position, `protocol Name { ops }`, D142) не проверяются этим правилом —
+их completeness уже проверяется на месте конструкции (missing-method там уже была
+compile error, `neg_protocol_lit_missing_method.nv`).
+
+**Гейт:** `spec_tests/conformance` standalone single-CU 508 PASS / 0 FAIL / 14 SKIP
+(baseline 504/0/14 + 4 новых `neg/neg_protocol_param_*` фикстуры). Реализация —
+`protocol_mismatch_found`/`protocol_required_missing`/`protocol_missing_methods`
+(`compiler-codegen/src/types/mod.rs`, рядом с `assignable_direct`). Подробности —
+[backlog-followups.md](../../docs/plans/backlog-followups.md) →
+`[M-checker-protocol-typed-arg-any-bypass]`.
+
 ---
 
 ## D55. Literal coercion в позиции с явным типом: sum-конструкторы и record-литералы

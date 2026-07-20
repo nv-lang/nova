@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR does not satisfy
+//
+// [M-checker-protocol-typed-arg-any-bypass] — a concrete type CAN own a same-named
+// method and still fail structural satisfaction when its ARITY does not match the
+// protocol's required signature (the same name+arity rule
+// `BoundCtx::check_satisfaction_against_methods` already applies to generic bounds,
+// D53/D72/D142) — a PLAIN protocol-typed parameter must apply the identical rule, not
+// the historical unconditional Any-bypass accept.
+module neg.neg_protocol_param_wrong_arity
+
+type PABAdder protocol {
+    @add(x int, y int) -> int
+}
+
+type PABSingleArg {
+    base int
+}
+fn PABSingleArg @add(x int) -> int => @base + x
+// Wrong arity: the protocol requires `@add(x, y)` (2 params); PABSingleArg only has a
+// 1-param `@add` — same NAME, different SIGNATURE, must not structurally satisfy.
+
+fn pab_use_adder(a PABAdder) -> int => a.add(1, 2)
+
+test "wrong-arity same-name method does not satisfy a plain protocol param" {
+    ro s = PABSingleArg { base: 0 }
+    pab_use_adder(s)   // must NOT compile — @add arity mismatch (1 vs required 2)
+}

@@ -1,0 +1,32 @@
+// EXPECT_COMPILE_ERROR does not satisfy
+//
+// [M-checker-protocol-typed-arg-any-bypass] — a PLAIN (non-generic-bound) protocol-
+// typed PARAMETER (`fn f(s Sink)`, the documented "type value / existential" surface
+// on `TypeDeclKind::Protocol`) must reject a concrete argument whose type is missing a
+// required protocol method — the checker used to degrade EVERY protocol expected type
+// straight to `ResolvedType::Any` (`resolved_cat_of_depth`) and `assignable_direct`
+// accepted anything at all against `Any`, with ZERO structural verification. Contrast
+// with `neg_anon_protocol_missing_method.nv` (same directory), which covers the
+// UNAFFECTED sibling surface — a GENERIC BOUND `[T protocol {...}]` — checked by a
+// completely separate mechanism (`BoundCtx::check_satisfaction`) that this bug never
+// touched. This fixture is the PLAIN-parameter counterpart that was previously
+// uncovered by ANY test in the corpus.
+module neg.neg_protocol_param_missing_method
+
+type PABSink protocol {
+    @write(v int) -> ()
+    @flush() -> ()
+}
+
+type PABPartial {
+    n int
+}
+fn PABPartial @write(v int) -> () { }
+// PABPartial deliberately has NO @flush — structurally incomplete for PABSink.
+
+fn pab_drain(s PABSink) -> () => s.write(1)
+
+test "missing-method concrete type rejected at a plain protocol-typed param" {
+    ro p = PABPartial { n: 0 }
+    pab_drain(p)   // must NOT compile — PABPartial lacks @flush
+}
