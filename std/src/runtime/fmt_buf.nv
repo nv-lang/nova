@@ -306,17 +306,20 @@ extern "C" fn f64_fmt_into(buf *mut u8, cap int, v f64, kind int, prec int) -> i
 /// указатель — call-сайт несёт обязательство «buf валиден на cap байт»
 /// (иначе safe-код мог бы соврать про cap и писать мимо буфера).
 export unsafe fn int_fmt_into(v int, buf *mut u8, cap int) -> int
+    requires cap >= 0
     => int_fmt(v, buf, cap, FmtSpec.new())
 
 /// Shortest round-trip рендер f64 (тот же движок, что f64 @to_str — байт-
 /// идентичный вывод) в buf[0..cap); возвращает записанные байты.
 export unsafe fn f64_fmt_shortest_into(v f64, buf *mut u8, cap int) -> int
+    requires cap >= 0
     => fmt_f64(buf, cap, v, FloatKind.Shortest, -1)
 
 /// f32-собрат (владелец 2026-07-20): shortest через nova_f32_shortest — тот же
 /// движок, что печать/`to_str` f32 (НЕ f64-расширение: без double-хвостов).
 extern "C" fn f32_fmt_into(buf *mut u8, cap int, v f32) -> int
 export unsafe fn f32_fmt_shortest_into(v f32, buf *mut u8, cap int) -> int
+    requires cap >= 0
     => unsafe { f32_fmt_into(buf, cap, v) }
 
 /// `.nv`-side wrapper: converts `FloatKind` → the `int` `f64_fmt_into`
