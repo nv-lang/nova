@@ -36,15 +36,22 @@
 
 ## Ф.2 — Версия и дистрибуция (почти всё ▶СЕЙЧАС)
 
-- [ ] **A-V1 ▶СЕЙЧАС** `nova --version` → 0.1.0 (+`nova-lsp --version`) `[nova-cli]` (sonnet, мелочь). — ЗАПУЩЕН
-- [ ] **A-V2 ▶СЕЙЧАС** Скрипт упаковки win-zip: nova.exe+nova-lsp.exe+vsix+README-инструкция
-      PATH `[scripts/]` (sonnet, вместе с A-V1). — ЗАПУЩЕН
+- [x] **A-V1 ✅ 2026-07-21** `nova --version`/`-V` = «nova 0.1.0», `nova-lsp --version` =
+      «nova-lsp 0.1.0» (версии в Cargo.toml всех трёх крейтов уже были 0.1.0; clap
+      `#[command(version)]` — без литералов). Теги v0.1.0 — отдельный A-V6.
+- [x] **A-V2 ✅ 2026-07-21** `scripts/package-release.ps1` (`-SkipBuild`/`-SmokeTest`/`-VcpkgBase`).
+      Состав `nova-v0.1.0-windows-x64.zip` (12.4MB, 506 файлов): nova.exe + nova-lsp.exe + std/ +
+      nova_rt/ (урезанный libuv-подсет) + gc/ (Boehm подсет) + setup-env.ps1 (5 env vars от
+      $PSScriptRoot) + README-INSTALL.md + LICENSE*+THIRD_PARTY. std-discovery = env-vars
+      (штатная поверхность). **SmokeTest PASSED: hello.exe собран+выполнен из изолированной
+      папки вне монорепы** (sha256 b76550ac…065f; 4 реальных бага упаковки найдены и починены —
+      wip/221-version-notes.md).
 - [ ] **A-V3 ▶СЕЙЧАС** docs/linux-build.md актуализация (gcc15/clang21 — фиксы влиты; nova-lsp
       сборка) `[docs]` (sonnet/haiku).
 - [ ] **A-V4 ▶СЕЙЧАС** THIRD_PARTY сверка (libuv/bdwgc/dtoa лицензии) `[docs]` (haiku).
 - [ ] **A-D1 ▶СЕЙЧАС** Dockerfile: образ с компилятором, hello-smoke, инструкция `[docker/]`
       (sonnet) — CPU-тяжёлый билд, очередь за слотом.
-- [ ] **A-V5** vsix-сборка VSCode-расширения в артефакт `[editors/vscode]` — ⛓A-V2.
+- [ ] **A-V5** vsix-сборка VSCode-расширения в артефакт `[editors/vscode]` — ⛓A-V2 ✅ (разблокирован).
 - [ ] **A-V6** Теги v0.1.0 на 4 репы + артефакты на GitHub Releases — ⛓Ф.0+Ф.1+Ф.3 (финал).
 
 ## Ф.3 — Документация внешнего пользователя (всё ▶СЕЙЧАС)
