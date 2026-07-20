@@ -1,8 +1,19 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # План 219 — build-демон (build-latency P2)
 
-**Статус:** 📋 УТВЕРЖДЁН владельцем 2026-07-20 («заводить — да»). **Приоритет:** P2
-(после [218](218-prebuilt-runtime-archive.md)). **Основа:** [startup-latency-research.md](wip/startup-latency-research.md).
+**Статус:** ✅ РЕАЛИЗОВАН 2026-07-20 (sonnet, worktree `nova-219`, ветка
+`p219-build-daemon`) — Ф.1+Ф.2 (IPC + dep-lock/toolchain/libuv cache + lifecycle) —
+детали/замеры: [219-impl-notes.md](wip/219-impl-notes.md). Гейты: conformance
+123 PASS/1 FAIL(чужой pre-existing race в Plan 218's rt-archive-cache под
+параллельными test-jobs, вне зоны/не регрессия — `[M-218-rt-archive-parallel-jobs-race]`,
+подтверждено PASS в изоляции)/14 SKIP; std checksums+collections 16/0; флагман
+aggregator `--strict-effects` built+works (HTTP 200, cold И через демон) на обоих
+путях. Замер: dep-lock 2.6–21.4с (сетезависимо, git tag listing) → ~70мс тёплый;
+wall флагман-билда 14.9–39.5с → 7.3–9.1с тёплый. Auto-spawn — opt-in `NOVA_DAEMON=1`
+(НЕ default-on, сознательное отличие от 218 — см. impl-notes). Не смёржено в main,
+не запушено (ждёт решения владельца). **Приоритет:** P2 (после
+[218](218-prebuilt-runtime-archive.md), реализован). **Основа:**
+[startup-latency-research.md](wip/startup-latency-research.md).
 
 ## 0. Что решаем (замер разведки)
 

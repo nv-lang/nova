@@ -103,12 +103,92 @@ default-on означало бы, что ЛЮБОЙ `nova build` (включая
 вообще (детект/sync как раньше). Никогда не паникует, никогда не блокирует билд.
 
 ## Фазы этой волны
-- Ф.1: `nova-cli/src/daemon.rs` (протокол+сервер+клиент+lifecycle) — DONE ниже.
-- Ф.2: wiring в `cmd_build` (dep-lock skip + toolchain/libuv cache) — DONE ниже.
+- Ф.1: `nova-cli/src/daemon.rs` (протокол+сервер+клиент+lifecycle) — DONE.
+- Ф.2: wiring в `cmd_build` (dep-lock skip + toolchain/libuv cache) — DONE.
 - Ф.3 (слияние с LSP, Plan 215): **НЕ делаем** — LSP держит ДРУГОЙ ресурс (индекс
   символов workspace, tower-lsp/stdio к редактору) и ДРУГОЙ lifecycle (стартует
   редактором, живёт весь editor-session). Общий процесс связал бы lifecycle
   build-cli (короткие, частые, из терминала/скриптов) с LSP (долгий, из IDE) без
   выигрыша — build-демон и так резидентен по своему собственному lifecycle.
-  Развилка решена: **отдельный демон** (см. отчёт).
-- Ф.4: замер + гейты — DONE ниже (см. отчёт).
+  Развилка решена: **отдельный демон**.
+- Ф.4: замер + гейты — DONE (см. ниже).
+
+## Итоги (реализация закончена)
+
+### Юнит-тесты
+9/9 `daemon::tests::*` зелёные (hash-стабильность dep_combined_hash, discovery
+roundtrip + corrupt-JSON graceful-None, wire Toolchain/LibuvConfig roundtrip
+(clang+gcc), toolchain cache-key чувствительность к env_fingerprint, полный
+клиент-сервер round-trip через реальный TCP: Status→Prime(без pkg_dir)→bad-token).
+По ходу пойман и исправлен реальный баг: `handle_prime` звал
+`test_runner::detect_or_build_libuv` напрямую — та функция делает FATAL
+`std::process::exit(1)` при неинициализированном libuv submodule (нормально для
+одноразового CLI, катастрофично для РЕЗИДЕНТНОГО демона — убило бы кэш для всех
+клиентов). Добавлена пре-проверка (та же, что первой делает сама функция) —
+демон теперь просто возвращает `libuv=None`, клиент падает назад на свой
+detect (тот же честный FATAL, если действительно всё сломано — не хуже pre-219).
+
+### Замер (release-бинарь, флагман `examples/flagship/aggregator`, git+path
+зависимости `tls`/`http`, worktree `nova-219`)
+
+| Сценарий | dep-lock фаза | wall (`nova build`) |
+|---|---|---|
+| cold #2 (без демона, rt-archive+libuv уже на диске) | 2.64с | 14.87с |
+| cold #3 (без демона, повтор — сеть отдала tag-listing дольше) | 21.40с | 39.54с |
+| daemon warm #1 (первый Prime для этого pkg_dir — ledger miss) | 4.56с | 23.02с |
+| daemon warm #2 (тот же демон-сеанс — ledger hit) | **0.070с** | **7.32с** |
+| daemon warm #3 (повтор) | **0.070с** | **9.11с** |
+
+**Наблюдение сверх плана:** dep-lock оказался НЕ стабильным ~987мс (как на
+пустышке в разведке), а сетезависимым (2.6–21.4с на реальном git+path графе,
+из-за `GitProvider::versions_with_tags`/`git_cache::list_versions` — резолвер
+тегов git-зависимости `tls` при КАЖДОМ `sync()`, даже когда граф не менялся).
+Демон не просто амортизирует фиксированные ~1с — устраняет ПОЛНОСТЬЮ
+сетезависимую переменную стоимость на тёплых билдах (70мс = только
+`load_pins`, чтение локального файла). Это делает выигрыш демона БОЛЬШЕ
+заявленной в плане цели «−1-3с» в реалистичном git-dependency сценарии,
+хотя и с большей дисперсией baseline, чем ожидала разведка на пустышке.
+
+### Byte-identical доказательство
+SHA256 экзешников РАЗНЫЕ между любыми двумя билдами (даже cold-vs-cold без
+демона вообще) — контрольный эксперимент подтвердил это ЛИНКЕР-артефакт
+(MSVC embed'ит PDB GUID/timestamp в PE), НЕ daemon-эффект; тот же паттерн,
+что Plan 218 уже документировал («behaviorally identical», не байт-в-байт).
+Функциональная проверка: `curl /api/run?legend=weather&mode=demo&seed=42` на
+cold-билде и daemon-билде — идентичные `legend/mode/seed/results[].status/
+error/probes/kind`, идентичный HTTP 200; различался ТОЛЬКО порядок JSON-полей
+(map-итерация, известное свойство, не гарантия) и `elapsed_ms`/`wall_ms`
+(реальные wall-clock тайминги — README флагмана САМ документирует `/api/run`
+как не byte-reproducible по времени). Заключение: byte-identical ПОВЕДЕНИЕ
+подтверждено; байт-идентичность exe — заведомо неприменимый критерий
+(преэкзистентно, не Plan 219).
+
+### Гейты
+- `spec_tests/conformance` (release-бинарь, дефолтные parallel jobs, БЕЗ
+  демона — `nova test` не проходит через daemon-код вообще): **123 PASS / 1
+  FAIL / 14 SKIP**. FAIL = `neg/f1_parse_message_positive`, CC-FAIL на
+  отсутствующем `libnova_rt.lib` в rt-archive-cache — **подтверждено
+  pre-existing race в Plan 218's `detect_or_build_rt_archive` под
+  параллельными jobs** (PASS в изоляции `--jobs 1`; Plan 219 не трогает
+  `test_runner.rs`/`cmd_test`). Маркер `[M-218-rt-archive-parallel-jobs-race]`
+  заведён в `docs/plans/backlog-followups.md`.
+- `std/src/checksums` + `std/src/collections`: **16 PASS / 0 FAIL / 9 SKIP**.
+- Флагман `examples/flagship/aggregator` под `--strict-effects`: built + works
+  (HTTP 200) И cold, И через демон.
+- Lifecycle: `daemon start/stop/status` — все три проверены вручную (status
+  до старта → "not running"; start → discovery-файл с pid/port/token; status
+  после → uptime/requests_served/cache-summary растут; stop → graceful
+  shutdown + discovery-файл убран).
+- Fallback: подтверждён КАЖДЫМ cold-прогоном выше (демон не запущен →
+  `try_prime` возвращает `None` за один `read_discovery` stat-вызов →
+  `cmd_build` идёт старым путём, ноль изменений поведения).
+
+### Известные ограничения (честный OPEN, не блокеры)
+- Dep-lock ledger не покрывает транзитивные манифесты (см. module doc
+  `daemon.rs` + `docs/simplifications.md` запись 2026-07-20).
+- Idle-timeout (1800с default) и конкурентный доступ (сериализация одним
+  `Mutex<DaemonState>`) не нагружены отдельным стресс-тестом в этой волне —
+  функционально корректны (Mutex гарантирует безопасность), но пропускная
+  способность под много параллельных `nova build` не измерена.
+- Unix auto-spawn без `setsid`-detach (см. simplifications.md) — платформа
+  этой сессии Windows, Unix-путь не прогонялся вживую.

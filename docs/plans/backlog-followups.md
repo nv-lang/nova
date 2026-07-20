@@ -20,6 +20,12 @@
 
 ---
 
+## P2 — вне объёма Plan 219, найдено попутно
+
+| Маркер | Суть | Home | Pri |
+|---|---|---|---|
+| `[M-218-rt-archive-parallel-jobs-race]` | **OPEN 2026-07-20 (найдено на гейте Plan 219, worktree `nova-219`, полный прогон `spec_tests/conformance` дефолтными parallel jobs).** `CC-FAIL spec_tests/conformance/neg/f1_parse_message_positive`: `clang: error: no such file or directory: '...\target\rt-archive-cache\<key>\libnova_rt.lib'` — путь к архиву, который `detect_or_build_rt_archive` (Plan 218, `compiler-codegen/src/test_runner.rs`) только что "построил" по её же логу, физически отсутствует на диске в момент линковки. **Подтверждено НЕ регрессией Plan 219**: (а) тот же тест PASS при запуске в изоляции (`--jobs 1`, один файл); (б) Plan 219 не трогает `test_runner.rs`/`cmd_test` вообще — `nova test`/conformance идут мимо build-демона целиком. Похоже на race между параллельными test-воркерами, строящими/удаляющими ОДИН И ТОТ ЖЕ archive-bucket (одинаковый ключ у нескольких файлов) — временный каталог/rename не атомарны относительно параллельного читателя, или дублирующая параллельная сборка одного bucket'а топчет файл другого воркера. Зона: `compiler-codegen/src/test_runner.rs::detect_or_build_rt_archive`/`build_rt_archive_lib` (Plan 218) — вне зоны Plan 219 (`nova-cli/src/**` only), не тронуто. Полный гейт-прогон conformance с этим флейком: 123 PASS / 1 FAIL(этот) / 14 SKIP. | Plan 218 (`compiler-codegen/src/test_runner.rs`) | P2 |
+
 ## P2 — вне объёма Plan 202, найдено попутно
 
 | Маркер | Суть | Home | Pri |
