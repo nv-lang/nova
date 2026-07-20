@@ -171,6 +171,86 @@ byte-parity-safe: новый код активируется ТОЛЬКО на `
   контекста у raw `nova-codegen compile`, не про Result/Option/generics). Grep по логу на
   `shadow`/`SHADOW` — 0 совпадений (0 расхождений shadow_check_node_substs). d119 конкретно
   падал на `.to_str()` (нужен prelude) — тоже pre-existing.
-- Авторитетный гейт `nova test spec_tests/conformance --jobs 4` (release, single CU) —
-  ЗАПУЩЕН, лог `conformance_run.log`, результат — следующим шагом чекпойнта.
-- Флагман `--strict-effects` — следующим шагом.
+- Авторитетный гейт `nova test spec_tests/conformance --jobs 4` (release, single CU,
+  `nova-cli` собран из ЭТОЙ ветки) — **PASS: 124  FAIL: 0  SKIP: 14**. Единым CU покрыты
+  d119/d122×2/d30/d408 (все 5 гейт-фикстур задания), `standalone/m176_method_return_
+  turbofish` (реальные turbofish-сайты), `m196_facetc_instance_collision_and_method_
+  generic_default` (документированный ICE в ДРУГОМ механизме, файл САМ турбофиш не
+  вызывает — см. §6 — прошёл чисто). Главный гейт (CLAUDE.md) — ЗЕЛЁНЫЙ.
+- Флагман: `nova check --strict-effects examples/flagship/aggregator/src/main.nv` →
+  **PASS: 1  FAIL: 0  WARN: 33** (все warning — unused-import/postfix-mut, косметика, не
+  про эту правку). `nova build --strict-effects --mode release ... -o aggregator.exe` →
+  **built (34.97s)**, 0 ошибок.
+- Мега-CU (весь корпус разом, `nova test` без folder-фильтра) — НЕ гонялся, по заданию
+  («Мега-CU НЕ гонять»).
+
+## 8. Trace — N реальных corpus-сайтов (repo-wide sweep)
+
+Repo-wide грep по AST-форме `value.method[Type](` (исключая declaration-строки `fn ...` и
+comment-only строки), весь репозиторий (`std/`, `examples/`, `spec_tests/`, `nova_tests/`,
+`detect172/`): **РОВНО 2 реальных call-сайта** — оба в
+`spec_tests/conformance/standalone/m176_method_return_turbofish.nv`:
+`r.empty[str]()` (ExprId 7) и `r.into[str]()` (ExprId 38, consume-метод). Единственный
+другой похожий шейп в корпусе — `x.try_as[T]()` (10 сайтов, 3 файла) — компиляторный
+ИНТРИНЗИК на `any`, НЕ проходит через `types/mod.rs`/`method_overloads` вообще (см. §6),
+Producer B на него не распространяется (структурно другой путь, не instance-method call в
+обычном смысле).
+
+`NOVA_NODE_SUBSTS_TRACE=1` ДО правки (baseline `2d9a15acc`): оба ExprId(7)/ExprId(38) —
+`channel=None`/`[B5] fallback reason=miss`, компенсация легаси `explicit_tf`. ПОСЛЕ правки:
+`producer=B-method-residual call_id=ExprId(7) method=empty n=1`,
+`producer=B-method-residual call_id=ExprId(38) method=into n=1` — оба HIT,
+`resolve_method_level_subst`/`rt_slots_from_call` теперь читают канал, легаси fallback не
+достигается на этих сайтах. **N=2** (было 0/2).
+
+Малое N — честный факт (не пропуск покрытия): explicit turbofish на instance-methods —
+редкий синтаксис в текущем корпусе (инференс из аргументов почти всегда достаточен,
+поэтому Producer B с прошлой волны уже покрывал подавляющее большинство instance-method
+generic-сайтов БЕЗ турбофиша). Продюсер доставлен ADDITIVELY/proactively — тот же паттерн,
+что у D310 (free-fn/static-ctor turbofish overlay), который тоже не имел широкого корпуса
+на момент своей правки.
+
+## 9. Что разблокировано для GEN-сноса (следующая волна)
+
+- **`rt_slots_from_call`'s per-arg structural fallback** (`emit_c.rs` ~2970-2978, внутри
+  `rt_slots_from_call`) — теперь МЁРТВ для explicit-turbofish-instance-method сайтов
+  (канал их покрывает). Полный снос fallback-тела ВСЁ ЕЩЁ гейтится покрытием ОСТАЛЬНЫХ
+  instance-method классов (inferred-only — но те УЖЕ покрыты продюсером с прошлой волны
+  196.5 Stage-A/B2/B4/B5, см. §1) — снос теперь технически безопасен для explicit-turbofish
+  класса, но `rt_slots_from_call`/`resolve_method_level_subst` обслуживают ОБА класса одной
+  функцией (channel-first с per-key completeness-гейтом), так что явный «detach» этого
+  подкласса потребовал бы различителя на call-site (не отделим без правки frozen-диапазона —
+  тот же паттерн, что GEN нашёл для `resolve_result_option_ret`/B06a/B10j). **Рекомендация
+  GEN-волне:** снос легаси explicit_tf-ветки (`emit_c.rs` `M-91.1-method-turbofish-dispatch`,
+  ~21347-21357, ПОСЛЕ канал-first блока в `resolve_method_level_subst`) — теперь безопасен
+  как panic-detach ЗА debug-only trace-накоплением (мой SHADOW/trace уже показал 0
+  расхождений на всём достижимом материале); `current_method_turbofish` state-поле,
+  вероятно, тоже можно снести следом, если explicit_tf была его единственной ролью
+  (не проверял — вне периметра этой волны, только чекер).
+- **B11r/B11q (method-generic Result/Option в frozen `infer_call_ret_c`)** — карта задания
+  относила их к «тому же классу» (instance-method без node_substs); ПО ФАКТУ они —
+  METHOD-класс с INFERRED (не turbofish) generics на Result/Option-объектах
+  (`.is_ok()`/`.map()`/`.unwrap_or()` и т.п.) — уже КАНАЛИЗИРОВАНЫ прошлой волной (Producer
+  B существовал ДО этой волны для inferred-путей, см. §1 диагностики). Byte-parity
+  фикстуры `d30_try_op_unwrap_pair`/`d408_option_chain_sized_width` (обе используют ИМЕННО
+  B11r/B11q классы) прошли PASS в mega-CU — подтверждает, что канал уже отвечает раньше
+  каскада для этих сайтов и B11r/B11q скорее всего уже МЁРТВЫ там же, где static-ctor
+  `rt_slots_from_args` был мёртв у CH. Рекомендация: GEN-волне стоит ICR-трейснуть B11r/B11q
+  ОТДЕЛЬНО (`NOVA_TRACE_ICR=1`) на этих двух фикстурах + std-корпусе, чтобы подтвердить
+  0 достижимости ДО panic-detach — не проверено этой волной (вне периметра: «чекер, не
+  emit_c»).
+
+## 10. Коммиты (ветка `p196-producer-b`, база main `2d9a15acc`)
+
+1. `b4961e650` docs(196): чекпойнт — диагностика гэпа (repro+трейс, explicit turbofish
+   на instance-method — реальный оставшийся гэп).
+2. `142f81b1b` feat(types,196-prodb): `[M-196-producer-b-turbofish]` node_substs для
+   explicit turbofish на instance-method — `resolve_return_channel`/
+   `resolve_instance_method_return_arity`/`infer_method_call_channel_type` расширены.
+3. `4343b48c3` fix(types,196-prodb): seed method-residual `full_subst` от explicit
+   turbofish (return-only-generic класс, найден РЕАЛЬНЫМ корпусом — m176).
+4. `127a5c1c0` docs(196): чекпойнт-обновление (реализация завершена).
+
+**В main НЕ мёржено. Push запрещён по заданию (worktree СВОЙ, не пушить).**
+
+Модель: sonnet.
