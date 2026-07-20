@@ -102,6 +102,30 @@ Debug build, `NOVA_TRACE_ICR=1`, `nova-codegen compile <fixture>` standalone:
 debug-only trace живым для накопления доказательства (тот же паттерн, что уже применён в этом
 файле к `B10l`/`B10m`: «Детач+panic ПРОБОВАЛСЯ — 0 fires... NOT removed»).
 
+### Финальные гейты (release nova-cli, после исправления libuv-copy bug)
+
+Первая попытка `nova test spec_tests/conformance` упала `FATAL libuv submodule not initialized` —
+причина: мой РАННИЙ `cp -r` в целевую папку, которая уже существовала (пустая), дал вложенный
+`libuv/libuv` (та самая ловушка из `project-worktree-nova-test-setup` — «если целевая папка уже
+есть — сначала `rm -rf`»). Исправлено (`rm -rf` + повторный `cp -r` + удаление вложенного `.git`).
+
+- **conformance ОДНИМ compile-unit'ом** (`nova test spec_tests/conformance --jobs 4`, release
+  nova-cli): **PASS: 124  FAIL: 0  SKIP: 14**. Главный гейт (CLAUDE.md) — ЗЕЛЁНЫЙ. `d325_
+  result_everywhere` компилируется и проходит ВНУТРИ этого прогона (полный manifest-aware CU
+  резолвит `sequence`/`partition`/`to_int`, которые raw `nova-codegen compile <file>` не резолвит
+  — см. §byte-parity выше; ограничение было именно инструмента `compile`, не языка/этой правки).
+- **Флагман** `nova check --strict-effects examples/flagship/aggregator/src/main.nv`: **PASS: 1
+  FAIL: 0 WARN: 28** (все warning — unused-import/postfix-mut-канон, косметика, не про эту правку).
+  Улучшение относительно CH-чекпойнта (§0 карты): та сессия видела pre-existing `nova-tls`
+  `E_CONSUME_PATTERN_REQUIRED` FAIL — не воспроизвелось здесь (git-dep кэш/апстрим успел
+  обновиться между сессиями; не мой предмет).
+- **Флагман full build** `nova build --strict-effects --mode release examples/flagship/aggregator/
+  src/main.nv -o aggregator.exe`: **built: aggregator.exe (49.65s)**, 0 ошибок. Полный C-codegen +
+  компиляция + линковка прошли чисто.
+
+Все три гейта зелёные на release-бинаре (нет debug_assertions → `icr_trace`/`GEN196_*` markers
+скомпилированы в no-op, нулевой overhead, поведение идентично pre-refactor коду по построению).
+
 ### Byte-parity (диф .c ДО/ПОСЛЕ, standalone, debug build)
 
 | Фикстура | diff |
