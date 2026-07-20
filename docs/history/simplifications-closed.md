@@ -30864,3 +30864,30 @@ current, byte-behaviour). Спека: 02-types §D358 Ф.2-амендмент (`
 - **Маркер**: строка `[M-runtime-sync-guard-consume-p67]` убрана из
   `docs/plans/backlog-followups.md` (P1 закрыт).
 
+
+## [M-187-high-concurrency-connection-wedge] ЗАКРЫТ (2026-07-20, opus-волна p187-wedge-scheduler + follow-up интегратора)
+
+- **Корень** (диагноз opus): НЕ-work-conserving pump — под connection-storm
+  (MAXPROCS≥2, MAX_INFLIGHT>2) каждый воркер блокировался в nested
+  `supervised_run_impl` pump, гоняя ТОЛЬКО файберы СВОЕГО scope и держа
+  ready-child СОСЕДНЕГО scope в своей deque → взаимный strand →
+  `count=0 pending_remote=1 STUCK_ALIVE_NOT_PARKED` → permanent-000.
+- **Фикс**: work-conserving pump (`compiler-codegen/nova_rt/runtime.c`, merge
+  `14decdfb1`) — popped-файбер гоняется inline независимо от scope
+  (с восстановлением outer active-scope/slot TLS); глобальный прогресс
+  гарантирован. Дискриминатор: без pump MAXPROCS2/4 клинят, с pump живут.
+  Развод подтверждён: corruption-обходка (child-arrays) дропнута как
+  избыточная после spawnctx GC-root фикса (`0cdd6140d`).
+- **Гейты волны** (opus, `4b8a9afe3`): pmf ×20 20/20; wedge `-P80`×2 +
+  `-P200`×2 @MAXPROCS4 MAX_INFLIGHT16 — served=16, post-single=200,
+  final=200, БЕЗ permanent-000.
+- **Follow-up интегратора (2026-07-20, `57ee49073`)**: снята app-митигация —
+  `MAX_INFLIGHT_CONNS` 2→16 в `examples/flagship/aggregator/src/main.nv`
+  (admission остаётся как честный backpressure на ширине worker-pool);
+  Windows-гейт на 16: burst P80×2 (23/28 served) + P200×2 (38/34 served),
+  post-single 200, idle 15s → 200, snapshot жив — БЕЗ вечного клина
+  (до фикса ширина 3+ давала permanent-000 и мёртвый сервер).
+- История находки (2026-07-15) и bounded-accept-митигации (2026-07-16) — в
+  записях выше по этому файлу. Строка убрана из
+  `docs/plans/backlog-followups.md` (lifecycle §13). Research-план 211
+  (park-join) остаётся как архитектурное исследование, wedge его не ждёт.
