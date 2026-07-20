@@ -14,15 +14,20 @@
 
 - [ ] **A-B1** Текущие волны влиты: 196-closeout · 217 · Linux-гонка (known-red) ·
       [M-freefn-named-default-arg-shift] (Д3-гейт). `[types/emit_c/callnorm/WSL]` — В ПОЛЁТЕ.
-- [ ] **A-B2** Ш4-снос conv.h+kill-switch+D422-амендмент+примеры §4-§6 `[emit_c+conv.h+spec]`
-      (sonnet) — ⛓named-фикс; «го» владельца ЕСТЬ.
+- [x] **A-B2 ✅ 2026-07-21** Ш4-снос conv.h+kill-switch+D422-амендмент+примеры §4-§6 — влит
+      (один путь = `*_display_spec`; остатки честные: pad user-типов + ptr-debug).
 - [ ] **A-B3** Ш2: перенос примитив-тел `[std/fmt+prelude]` (sonnet) —
       ⛓[M-fmt-write-protocol-collision-cycle-adjacent] (его фикс = отдельный атом A-B3a `[types]`).
 - [ ] **A-B4** box-vtable P2 `[emit_c/vtable]` (sonnet) — ⛓A-B2 (зона emit_c).
 - [ ] **A-B5** net-утечка-b free-on-close `[nova_rt/net.c]` (sonnet, mn-conventions §9) — независим.
-- [ ] **A-B6** Мелочь P3/P4: d55-const `[emit_c]` · oot-дефисы E_D78 `[resolve]` ·
+- [ ] **A-B6** Мелочь P3/P4: d55-const `[emit_c]` · oot-дефисы E_D78 `[resolve]` (В ПОЛЁТЕ) ·
       generic-match-scope-gap `[types]` · latent protocol-box `[emit_c]` — по освобождении зон;
       частично haiku (маркер-закрытия).
+- [ ] **A-B7** 216-defer-хвосты в v0.1 (решение владельца 2026-07-21 «конечно хочу»):
+      Err-пейлоады + nested/tuple-пейлоады consume-enforce (см. 216-план, хвосты Ф-финала)
+      `[types/consume]` (sonnet) — запуск при освобождении types-слота.
+- [ ] **A-B8** [M-d216-write-at-return-type-unknown-cc-panic] P1 (находка Ш4, блокирует мега-CU
+      гейт) `[emit_c]` (sonnet) — В ПОЛЁТЕ (прямой приказ владельца 2026-07-21).
 - [ ] **Критерий Ф.0:** backlog без OPEN P1/P2; CI без known_red вовсе.
 
 ## Ф.1 — Стабилизация (частично ▶СЕЙЧАС — прогоны находят баги раньше!)
