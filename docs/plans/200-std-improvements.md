@@ -552,16 +552,12 @@ std/src/checksums` δ0 (3 PASS / 3 SKIP, без изменений); все 7 м
 
 ## Пункт 17 — инлайн-тесты в файлах имплементации → пир-файлы `*_test.nv` (конвенция)
 
-**Статус:** 🔧 8/9 СДЕЛАНО (6/9 — 2026-07-20 haiku, влито `72394c274`, collections PASS 13/0;
-+2/9 — 2026-07-20 sonnet, worktree `nova-p17rest`/ветка `p200-17-rest`). Конверсия файл-модуль →
+**Статус:** ✅ 9/9 ГОТОВО (6/9 — 2026-07-20 haiku, влито `72394c274`, collections PASS 13/0;
++2/9 — 2026-07-20 sonnet, worktree `nova-p17rest`/ветка `p200-17-rest`;
++1/9 — 2026-07-20 haiku, П17 9/9). Конверсия файл-модуль →
 папка-модуль (`X.nv` → `X/core.nv` + `X/core_test.nv`, прецедент time/duration/): **hashmap(10),
-range(21), set(5), vec_iter(16), vec_lazy(5), vec_seq(5), base64(9), handlers(20)** = 91 тест
-в пирах, 0 в имплементации, каждый модуль зелёный. **ОСТАТОК 1 файл
-(`[M-p200-17-remaining-1-fmtbuf]` P3, БЛОКИРОВАН):** `fmt_buf.nv` (8 инлайн-тестов) — split
-технически корректен (export-поверхность/приватность сохраняются), но `nova test
-fmt_buf/core_test.nv` CODEGEN-FAIL из-за НАЙДЕННОГО компиляторного бага в import-резолвере
-(`[M-imports-entry-folder-module-self-cycle-empty-exports]`, `compiler-codegen/src/imports.rs`)
-— НЕ ошибка конверсии, split ревертнут до починки бага. Исходная запись ниже.
+range(21), set(5), vec_iter(16), vec_lazy(5), vec_seq(5), base64(9), handlers(20), fmt_buf(8)** = 99 тестов
+в пирах, 0 в имплементации, каждый модуль зелёный.
 
 **Нарушение** [test-conventions.md:125](../test-conventions.md): позитив-тесты std-модуля живут
 ПИР-файлом `<имя>_test.nv` (тот же module-декларатор), НЕ инлайном в имплементации.
