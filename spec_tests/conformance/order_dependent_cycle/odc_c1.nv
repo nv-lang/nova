@@ -1,0 +1,15 @@
+// [M-imports-order-dependent-cycle] — third-party importer, ORDER 1:
+// `odc_a` named before `odc_b`. Pairs with `odc_c2.nv` (same two imports,
+// reversed order) — both must compile AND produce the identical result;
+// before the fix, this was the CODEGEN-FAIL ordering (DFS entered `odc_a`
+// first, so `odc_b`'s back-edge to `odc_a` hit the cycle guard and
+// `odc_b_uses_a`'s `odc_a_val` reference went undefined).
+module order_dependent_cycle.odc_c1
+
+import ./odc_a.{odc_a_val}
+import ./odc_b.{odc_b_uses_a}
+
+test "order-dependent-cycle: odc_a-then-odc_b import order compiles and resolves" {
+    assert(odc_a_val() == 10)
+    assert(odc_b_uses_a() == 11)
+}

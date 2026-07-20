@@ -1,0 +1,17 @@
+// [M-imports-order-dependent-cycle] — third-party importer, ORDER 2:
+// `odc_b` named before `odc_a` (reversed from `odc_c1.nv`). Same two
+// modules, same asserted result — proves the outcome no longer depends on
+// which of the two cyclic modules a peer's import list names first; before
+// the fix this ordering happened to CODEGEN-PASS (DFS entered `odc_b`
+// first, so `odc_b`'s own import of `odc_a` resolved normally — the guard
+// only ever bit the SECOND-entered side), which is precisely what made the
+// bug order-DEPENDENT rather than a deterministic failure either way.
+module order_dependent_cycle.odc_c2
+
+import ./odc_b.{odc_b_uses_a}
+import ./odc_a.{odc_a_val}
+
+test "order-dependent-cycle: odc_b-then-odc_a import order compiles and resolves identically" {
+    assert(odc_a_val() == 10)
+    assert(odc_b_uses_a() == 11)
+}

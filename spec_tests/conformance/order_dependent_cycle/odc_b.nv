@@ -1,0 +1,17 @@
+// [M-imports-order-dependent-cycle] regression, leg B. Closes the cycle
+// `odc_a -> odc_b -> odc_a` — AND actually calls back across it
+// (`odc_b_uses_a` calls `odc_a_val`), unlike `odc_a` (see odc_a.nv). Before
+// the fix (`compiler-codegen/src/imports.rs`, `resolve_one`), whichever of
+// `odc_a`/`odc_b` a THIRD file's import list named FIRST decided which one
+// entered the DFS first — and the SECOND-entered one (whichever needed the
+// other's names in its own body) hit the `in_progress` cycle guard and got
+// an EMPTY export set for its back-edge: `odc_b_uses_a` failed with
+// `undefined identifier odc_a_val` in exactly one of the two import orders
+// a peer could write (see `odc_c1.nv`/`odc_c2.nv`), and passed in the
+// other — a build outcome that depended on line order, not on the program.
+module order_dependent_cycle.odc_b
+
+import ./odc_a.{odc_a_val}
+
+export fn odc_b_val() -> int => 20
+export fn odc_b_uses_a() -> int => odc_a_val() + 1
