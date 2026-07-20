@@ -33,6 +33,7 @@
 #define NOVA_P115_FFI_TEST_H
 
 #include <stdint.h>
+#include <string.h>   /* strlen — nova_fn_p139_cstr_strlen */
 
 /* ─── Plan 115 Ф.2 — Forward-declarations matching Nova mono'd tuple typedefs
  *

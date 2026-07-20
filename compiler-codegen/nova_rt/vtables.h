@@ -30,6 +30,8 @@
  */
 
 #include <stdint.h>
+#include <stdbool.h>  /* bool — used by the standalone nova_bool fallback typedef below */
+#include <string.h>   /* memcpy — _vt_nova_f64_hash bit-pattern hash */
 
 /* Forward declarations of primitive types (defined in nova_rt.h). */
 struct Nova_StringBuilder;  /* forward decl for NovaVtable_Display */

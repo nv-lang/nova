@@ -27,6 +27,9 @@
 #ifndef NOVA_RT_SYNC_BARRIER_H
 #define NOVA_RT_SYNC_BARRIER_H
 
+#include <stdio.h>    /* fprintf — malloc-failure diagnostics */
+#include <stdlib.h>   /* malloc/free — NovaBarrierTLFHandle (raw-malloc'd, not GC-managed) */
+
 /* ── Barrier TLF handle (timer-for-wait_for) ─────────────────────────
  *
  * Raw-malloc'd (NOT GC-managed). Lifecycle:

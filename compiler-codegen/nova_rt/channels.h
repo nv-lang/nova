@@ -30,6 +30,8 @@
 #include "alloc.h"
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>    /* fprintf — diagnostics (Nova_Time_after, timer metrics, select_park) */
+#include <stdlib.h>   /* abort/getenv/atexit/malloc/free — Nova_Time_after TLF, timer metrics */
 /* Plan 44.1 Ф.3-extended: alloca для shuffle order array без VLA
  * (MSVC не поддерживает VLA, но alloca есть на всех toolchain'ах). */
 #ifdef _MSC_VER

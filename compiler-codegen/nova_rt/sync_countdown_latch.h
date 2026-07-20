@@ -37,6 +37,9 @@
 #ifndef NOVA_RT_SYNC_COUNTDOWN_LATCH_H
 #define NOVA_RT_SYNC_COUNTDOWN_LATCH_H
 
+#include <stdio.h>    /* fprintf — malloc-failure diagnostics */
+#include <stdlib.h>   /* abort/malloc/free — NovaCDLTLFHandle (raw-malloc'd, not GC-managed) */
+
 /* ── TLF handle (await_for timer state) ─────────────────────── */
 
 /* NovaCDLTLFHandle is raw-malloc'd (NOT GC-managed). Lifecycle:
