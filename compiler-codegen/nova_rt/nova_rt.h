@@ -352,9 +352,10 @@ static inline nova_str nova_int_to_str(nova_int v) {
  *
  * SINGLE SOURCE OF TRUTH for every float→str path in the language: `str.from`,
  * `@display`/`@debug`, `${x}` interpolation, `StringBuilder.append`, AND direct
- * `println(float)` all funnel here (conv.h `nova_f64_to_str`/`nova_f32_to_str`
- * are thin GC-allocating wrappers over these; the print helpers below print the
- * bytes directly).
+ * `println(float)` all funnel here — directly (`f64_fmt`/`f32_fmt`,
+ * `std/src/runtime/fmt_buf.nv`, and the print helpers below) since Plan 208
+ * Ф.4R Ш4 retired the conv.h `nova_f64_to_str`/`nova_f32_to_str` wrappers
+ * that used to sit in front of this engine.
  *
  * Prior formatting was `snprintf("%g")` = 6 significant figures — LOSSY for
  * arbitrary f64 (`3.141592653589793` → "3.14159", `1234567.89` → "1.23457e+06"),
@@ -397,10 +398,12 @@ static inline int nova_f32_shortest(nova_f32 v, char* buf) {
     return n < 0 ? 0 : n;
 }
 
-/* Plan 208 Ф.1 (D422 §5) — buffer-form float formatter, ADDITIVE alongside the
- * existing str-returning `nova_f64_to_str`/`nova_fmt_f64_body` (conv.h) — those
- * keep backing the CURRENT `.nv` prelude / interpolation path unchanged. This
- * is the SOLE C-extern surface the Unified Formatter design keeps (D422 §5:
+/* Plan 208 Ф.1 (D422 §5) — buffer-form float formatter. Originally ADDITIVE
+ * alongside the then-existing str-returning `nova_f64_to_str`/
+ * `nova_fmt_f64_body` (conv.h); Ф.4R Ш4 retired both of those, so this IS
+ * the float-rendering engine now (via `f64_fmt`/`f32_fmt`,
+ * `std/src/runtime/fmt_buf.nv`). This is the SOLE C-extern surface the
+ * Unified Formatter design keeps (D422 §5:
  * "float — ЕДИНСТВЕННЫЙ C-extern, dtoa непортируем"); everything else
  * (int/bool/char/радикс/pad) moves to `.nv` (`std/src/runtime/fmt_buf.nv`).
  *

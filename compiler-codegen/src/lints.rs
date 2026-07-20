@@ -1294,25 +1294,35 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
             out.insert("alternate".to_string());
             out.insert("precision".to_string());
             out.insert("write".to_string());
-            // Plan 208 Ф.4R Ш3 (owner 2026-07-20): the interp fast-path
-            // (`emit_interpolated_str`/`emit_format_spec_value`,
+            // Plan 208 Ф.4R Ш3/Ш4 (owner 2026-07-20/2026-07-21): the interp
+            // fast-path (`emit_interpolated_str`/`emit_format_spec_value`,
             // compiler-codegen/src/codegen/emit_c.rs) now hand-emits DIRECT
-            // calls to these `std.runtime.string_builder` free functions
-            // for int/f64/f32 rich-spec AND bare interpolation (Ф.4R Ш1
-            // engine, `NOVA_FMT_LEGACY` kill-switch reverts to the old
-            // `conv.h` chain) — SAME invisible-to-AST-call class as the
-            // `StringBuilder`/`FmtCtx` seeds above: without seeding these
-            // FREE FUNCTION names, reachability-DCE (Plan 81 Ф.7.2/Plan 159)
-            // prunes them whenever nothing in the rest of the program spells
-            // them by name, and codegen emits a call to an undeclared C
-            // function (CC-FAIL) for the FIRST interpolated int/float/f32 in
-            // an otherwise `*_display_spec`-free program. str/char/bool
-            // primitives still route through the OLD `conv.h` chain this
-            // wave (no `*_display_spec` call emitted for them yet), so their
-            // names are NOT seeded here.
+            // calls to these `std.runtime.string_builder` free functions for
+            // ALL SIX primitive kinds (int/f64/f32/char/bool/str), bare AND
+            // rich-spec, Display AND Debug (Ф.4R Ш1 engine; the
+            // `NOVA_FMT_LEGACY` kill-switch + the old `conv.h` chain it used
+            // to fall back to are RETIRED as of Ш4) — SAME invisible-to-AST-
+            // call class as the `StringBuilder`/`FmtCtx` seeds above: without
+            // seeding these FREE FUNCTION names, reachability-DCE (Plan 81
+            // Ф.7.2/Plan 159) prunes them whenever nothing in the rest of the
+            // program spells them by name, and codegen emits a call to an
+            // undeclared C function (CC-FAIL/link error) for the FIRST
+            // interpolated value of that primitive kind in an otherwise
+            // `*_display_spec`-free program — exactly the class of bug this
+            // seed list exists to prevent (caught by the `bool_display_spec`/
+            // `char_display_spec` undefined-symbol link failures on
+            // `f14_legacy_workaround_still_works`/
+            // `f2_static_method_str_from_bool`/`f7_char_var` during Ш4's own
+            // folder-CU gate — str/char/bool were newly wired to
+            // `*_display_spec` this wave and had NOT been added here yet).
             out.insert("int_display_spec".to_string());
             out.insert("f64_display_spec".to_string());
             out.insert("f32_display_spec".to_string());
+            out.insert("bool_display_spec".to_string());
+            out.insert("char_display_spec".to_string());
+            out.insert("char_debug_display_spec".to_string());
+            out.insert("str_display_spec".to_string());
+            out.insert("str_debug_display_spec".to_string());
         }
         ExprKind::Lambda { body, .. } => collect_expr(body, out),
         ExprKind::ClosureLight { body, .. } => match body {

@@ -42105,85 +42105,105 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // - FormatSpec::Debug → Debug.@debug (D237 rename from DebugPrintable.@debug_fmt).
                     let is_debug = matches!(spec, crate::ast::FormatSpec::Debug);
                     let method_name = if is_debug { "debug" } else { "display" };
-                    let primitive_to_str_fn: fn(&str) -> Option<&'static str> = if is_debug {
-                        |ct| match ct {
-                            "nova_str" => Some("nova_str_to_debug_str"),
-                            "nova_char" => Some("nova_char_to_debug_str"),
-                            "nova_bool" => Some("nova_bool_to_debug_str"),
-                            "nova_f64" => Some("nova_f64_to_debug_str"),
-                            // Plan 154.1 [M-154.1-f32-display-debug].
-                            "nova_f32" => Some("nova_f32_to_debug_str"),
-                            "nova_int" => Some("nova_int_to_debug_str"),
-                            _ => None,
-                        }
-                    } else {
-                        |ct| match ct {
-                            // nova_str passes through identity для display.
-                            "nova_str" => Some(""),
-                            "nova_char" => Some("nova_char_to_str"),
-                            "nova_bool" => Some("nova_bool_to_str"),
-                            "nova_f64" => Some("nova_f64_to_str"),
-                            // Plan 154.1 [M-154.1-f32-display-debug].
-                            "nova_f32" => Some("nova_f32_to_str"),
-                            "nova_int" => Some("nova_int_to_str"),
-                            _ => None,
-                        }
-                    };
-
-                    // Plan 208 Ф.4R Ш3 (owner 2026-07-20): int/f64/f32 BARE
-                    // interpolation — devirtualized direct call into a
-                    // RESOLVED `*_display_spec` (Ф.4R Ш1,
-                    // `std.runtime.string_builder`), written STRAIGHT into
-                    // the real interp `sb` (no intermediate `nova_str` +
+                    // Plan 208 Ф.4R Ш3+Ш4 (owner 2026-07-20 / signal after
+                    // Д3): primitive BARE interpolation for ALL SIX
+                    // primitive kinds (int/f64/f32/char/bool/str) —
+                    // devirtualized direct call into a RESOLVED
+                    // `*_display_spec` (Ф.4R Ш1, `std.runtime.
+                    // string_builder`), written STRAIGHT into the real
+                    // interp `sb` (no intermediate `nova_str` +
                     // `Nova_StringBuilder_method_append` two-step —
                     // `*_display_spec` already writes into whatever
                     // StringBuilder it's given). Bare == "rich spec with
                     // every axis at default" — `width=0` makes
                     // `@pad_in_place` a no-op, so align/fill are inert
-                    // placeholders here. Debug == Display for these three
-                    // types (conv.h's own `nova_*_to_debug_str` bodies
-                    // literally delegate to `nova_*_to_str` — no escaping
-                    // for numbers), so ONE call site covers both
-                    // `is_debug` states, matching the OLD
-                    // `primitive_to_str_fn` table's own behavior exactly
-                    // (same C semantics, one fewer indirection). `f32`
-                    // keeps its OWN f32-precise engine here (matches the
-                    // OLD `nova_f32_to_str`/`_to_debug_str`, NOT the
+                    // placeholders here. Debug == Display for int/f64/f32/
+                    // bool (no escaping applies), so ONE call site covers
+                    // both `is_debug` states for those four — matching the
+                    // RETIRED `primitive_to_str_fn` table's own behavior
+                    // exactly. str/char DO differ under Debug (quote+escape)
+                    // — routed to the `*_debug_display_spec` sibling.
+                    // `f32` keeps its OWN f32-precise engine here (matches
+                    // the retired `nova_f32_to_str`/`_to_debug_str`, NOT the
                     // widen-to-double path the RICH-spec branch takes for
-                    // f32 in `emit_format_spec_value`). str/char/bool bare
-                    // interpolation stay on the OLD engine below THIS wave
-                    // (documented follow-up — see docs/plans/wip/
-                    // 208-f4r-notes.md "Ш3 scope"). Kill-switch:
-                    // `NOVA_FMT_LEGACY=1` keeps the OLD
-                    // `nova_int_to_str`/`nova_f64_to_str`/`nova_f32_to_str`
-                    // chain (the `primitive_to_str_fn` table above) for
-                    // byte-diff verification on the SAME binary.
-                    if !Self::fmt_legacy_enabled()
-                        && matches!(arg_ty.as_str(), "nova_int" | "nova_f64" | "nova_f32")
+                    // f32 in `emit_format_spec_value`). `CharLit` is a
+                    // special case (checked on the expr kind, not `arg_ty`):
+                    // `infer_expr_c_type` does not reliably resolve a bare
+                    // char LITERAL's C type to `nova_char` — same reason the
+                    // sum-type/user-type dispatch below explicitly excludes
+                    // `ExprKind::CharLit`.
+                    //
+                    // Ш4 teardown (this wave): the `NOVA_FMT_LEGACY=1`
+                    // kill-switch and the OLD `nova_int_to_str`/
+                    // `nova_f64_to_str`/`nova_f32_to_str`/`nova_char_to_str`/
+                    // `nova_bool_to_str`/`nova_str_to_debug_str`/…  chain
+                    // (the former `primitive_to_str_fn` table, removed
+                    // above) are RETIRED — `*_display_spec` is now the ONLY
+                    // interp-fast-path engine, no coexisting legacy branch
+                    // (feedback-codegen-dce-verification's kill-switch did
+                    // its job during Ш3's byte-diff verification; it does
+                    // not survive past Ш4).
+                    let is_char_lit = matches!(e.kind, ExprKind::CharLit(_));
+                    if is_char_lit
+                        || matches!(
+                            arg_ty.as_str(),
+                            "nova_int" | "nova_f64" | "nova_f32"
+                                | "nova_char" | "nova_bool" | "nova_str"
+                        )
                     {
-                        match arg_ty.as_str() {
-                            "nova_int" => {
-                                let c_fn = self.free_fn_c_name("int_display_spec");
-                                self.line(&format!(
-                                    "{}({}, (nova_int)({}), ((nova_int)0LL), ((nova_int)10LL), false, false, false, false, {}, (nova_char)(32U));",
-                                    c_fn, sb, v, Self::align_ctor_c(0)
-                                ));
+                        if is_char_lit || arg_ty == "nova_char" {
+                            let c_fn = self.free_fn_c_name(if is_debug {
+                                "char_debug_display_spec"
+                            } else {
+                                "char_display_spec"
+                            });
+                            self.line(&format!(
+                                "{}({}, ({}), ((nova_int)0LL), {}, (nova_char)(32U));",
+                                c_fn, sb, v, Self::align_ctor_c(0)
+                            ));
+                        } else {
+                            match arg_ty.as_str() {
+                                "nova_int" => {
+                                    let c_fn = self.free_fn_c_name("int_display_spec");
+                                    self.line(&format!(
+                                        "{}({}, (nova_int)({}), ((nova_int)0LL), ((nova_int)10LL), false, false, false, false, {}, (nova_char)(32U));",
+                                        c_fn, sb, v, Self::align_ctor_c(0)
+                                    ));
+                                }
+                                "nova_f64" => {
+                                    let c_fn = self.free_fn_c_name("f64_display_spec");
+                                    self.line(&format!(
+                                        "{}({}, (double)({}), ((nova_int)0LL), false, ((nova_int)0LL), false, false, {}, (nova_char)(32U));",
+                                        c_fn, sb, v, Self::align_ctor_c(0)
+                                    ));
+                                }
+                                "nova_f32" => {
+                                    let c_fn = self.free_fn_c_name("f32_display_spec");
+                                    self.line(&format!(
+                                        "{}({}, ({}), ((nova_int)0LL), {}, (nova_char)(32U));",
+                                        c_fn, sb, v, Self::align_ctor_c(0)
+                                    ));
+                                }
+                                "nova_bool" => {
+                                    let c_fn = self.free_fn_c_name("bool_display_spec");
+                                    self.line(&format!(
+                                        "{}({}, ({}), ((nova_int)0LL), {}, (nova_char)(32U));",
+                                        c_fn, sb, v, Self::align_ctor_c(0)
+                                    ));
+                                }
+                                "nova_str" => {
+                                    let c_fn = self.free_fn_c_name(if is_debug {
+                                        "str_debug_display_spec"
+                                    } else {
+                                        "str_display_spec"
+                                    });
+                                    self.line(&format!(
+                                        "{}({}, ({}), ((nova_int)0LL), false, ((nova_int)0LL), {}, (nova_char)(32U));",
+                                        c_fn, sb, v, Self::align_ctor_c(0)
+                                    ));
+                                }
+                                _ => unreachable!(),
                             }
-                            "nova_f64" => {
-                                let c_fn = self.free_fn_c_name("f64_display_spec");
-                                self.line(&format!(
-                                    "{}({}, (double)({}), ((nova_int)0LL), false, ((nova_int)0LL), false, false, {}, (nova_char)(32U));",
-                                    c_fn, sb, v, Self::align_ctor_c(0)
-                                ));
-                            }
-                            "nova_f32" => {
-                                let c_fn = self.free_fn_c_name("f32_display_spec");
-                                self.line(&format!(
-                                    "{}({}, ({}), ((nova_int)0LL), {}, (nova_char)(32U));",
-                                    c_fn, sb, v, Self::align_ctor_c(0)
-                                ));
-                            }
-                            _ => unreachable!(),
                         }
                         continue;
                     }
@@ -42376,64 +42396,61 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             continue;
                         }
                     }
-                    let s_expr = if matches!(e.kind, ExprKind::CharLit(_)) {
-                        if is_debug {
-                            format!("nova_char_to_debug_str({})", v)
+                    // Plan 208 Ф.4R Ш4: everything reaching THIS point is
+                    // neither a `CharLit` literal nor one of the six
+                    // primitive C types (`nova_int`/`nova_f64`/`nova_f32`/
+                    // `nova_char`/`nova_bool`/`nova_str`, all `continue`d
+                    // above into `*_display_spec`) — the former
+                    // `primitive_to_str_fn` table's `Some(_)` arms are
+                    // therefore dead by construction and have been removed;
+                    // only its `None` arm (the genuine user-type fallback,
+                    // unrelated to the primitive-family teardown) survives
+                    // here, unconditional.
+                    let s_expr = {
+                        // User-type fallback path — Display str.from chain (D237).
+                        // (debug fallback when debug synthesis failed
+                        // earlier — caller already tried via method dispatch).
+                        // Plan 175 Ф.3(d): value-record-aware strip (see note above).
+                        let arg_type = Self::debt_strip_value_prefix_or_nova_trim_start(&arg_ty);
+                        let from_method = if is_debug { "from_debug" } else { "from" };
+                        let key = ("str".to_string(), from_method.to_string());
+                        let str_from_c: Option<String> = self.method_overloads
+                            .get(&key)
+                            .and_then(|sigs| sigs.iter()
+                                .find(|s| !s.is_instance
+                                    && s.param_c_types.len() == 1
+                                    && s.param_c_types[0] == arg_ty)
+                                .map(|s| s.c_name.clone()));
+                        // [D410] fallback: user type has `@to_str() -> str`
+                        // but no `str.from`/`str.from_debug` overload —
+                        // interpolate via the instance method directly.
+                        // (Replaces the retracted D73 Into[str] auto-derive
+                        // fallback, spec/decisions/08-runtime.md#d73.)
+                        let to_str_c_name: Option<String> = if !is_debug {
+                            self.method_overloads
+                                .get(&(arg_type.clone(), "to_str".to_string()))
+                                .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
+                                .map(|s| s.c_name.clone())
                         } else {
-                            format!("nova_char_to_str({})", v)
-                        }
-                    } else {
-                        match (arg_ty.as_str(), primitive_to_str_fn(arg_ty.as_str())) {
-                            // Display-path: nova_str passes through identity.
-                            ("nova_str", Some("")) => v,
-                            (_, Some(fn_name)) => format!("{}({})", fn_name, v),
-                            (_, None) => {
-                                // User-type fallback path — Display str.from chain (D237).
-                                // (debug fallback when debug synthesis failed
-                                // earlier — caller already tried via method dispatch).
-                                // Plan 175 Ф.3(d): value-record-aware strip (see note above).
-                                let arg_type = Self::debt_strip_value_prefix_or_nova_trim_start(&arg_ty);
-                                let from_method = if is_debug { "from_debug" } else { "from" };
-                                let key = ("str".to_string(), from_method.to_string());
-                                let str_from_c: Option<String> = self.method_overloads
-                                    .get(&key)
-                                    .and_then(|sigs| sigs.iter()
-                                        .find(|s| !s.is_instance
-                                            && s.param_c_types.len() == 1
-                                            && s.param_c_types[0] == arg_ty)
-                                        .map(|s| s.c_name.clone()));
-                                // [D410] fallback: user type has `@to_str() -> str`
-                                // but no `str.from`/`str.from_debug` overload —
-                                // interpolate via the instance method directly.
-                                // (Replaces the retracted D73 Into[str] auto-derive
-                                // fallback, spec/decisions/08-runtime.md#d73.)
-                                let to_str_c_name: Option<String> = if !is_debug {
-                                    self.method_overloads
-                                        .get(&(arg_type.clone(), "to_str".to_string()))
-                                        .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
-                                        .map(|s| s.c_name.clone())
-                                } else {
-                                    None
-                                };
-                                if let Some(c_name) = str_from_c {
-                                    format!("{}({})", c_name, v)
-                                } else if let Some(c_name) = to_str_c_name {
-                                    // [M-187-interp-to_str-fallback-valuerecord-recv]
-                                    // Mirrors the display/debug branch fix above (Plan
-                                    // 175 Ф.3(d), line ~39977): the D410 to_str()-fallback
-                                    // synthesized this call as a bare `c_name(v)` without
-                                    // going through `prepare_method_recv`, so a value-record
-                                    // receiver (`NovaValue_<X>`, e.g. CompressError) hit the
-                                    // same pointer/by-value C type-mismatch — `Nova_X_method
-                                    // _to_str(NovaValue_X*)` expects `&obj`, not the bare
-                                    // by-value expr. `e` here is the interpolated expr itself
-                                    // (the receiver), same as the display/debug call site.
-                                    let recv_c = self.prepare_method_recv(&v, &arg_ty, false, Some(e));
-                                    format!("{}({})", c_name, recv_c)
-                                } else {
-                                    format!("nova_int_to_str((nova_int)({}))", v)
-                                }
-                            }
+                            None
+                        };
+                        if let Some(c_name) = str_from_c {
+                            format!("{}({})", c_name, v)
+                        } else if let Some(c_name) = to_str_c_name {
+                            // [M-187-interp-to_str-fallback-valuerecord-recv]
+                            // Mirrors the display/debug branch fix above (Plan
+                            // 175 Ф.3(d), line ~39977): the D410 to_str()-fallback
+                            // synthesized this call as a bare `c_name(v)` without
+                            // going through `prepare_method_recv`, so a value-record
+                            // receiver (`NovaValue_<X>`, e.g. CompressError) hit the
+                            // same pointer/by-value C type-mismatch — `Nova_X_method
+                            // _to_str(NovaValue_X*)` expects `&obj`, not the bare
+                            // by-value expr. `e` here is the interpolated expr itself
+                            // (the receiver), same as the display/debug call site.
+                            let recv_c = self.prepare_method_recv(&v, &arg_ty, false, Some(e));
+                            format!("{}({})", c_name, recv_c)
+                        } else {
+                            format!("nova_int_to_str((nova_int)({}))", v)
                         }
                     };
                     // Plan 109 (D179): Nova-generated method name.
@@ -42454,31 +42471,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.var_types
             .insert(result.clone(), "nova_str".to_string());
         Ok(result)
-    }
-
-    /// **Plan 152.7-B (D374):** lower a rich format spec `${expr:SPEC}` to a C
-    /// expression producing the formatted `nova_str`. Returns the C expression
-    /// (the caller appends it to the interp StringBuilder). `sb` is the interp
-    /// builder (used only for the user-type fallback path, which renders the
-    /// value into a fresh builder).
-    ///
-    /// Pipeline: render a "core" string (radix digits / fixed-precision float /
-    /// display-or-debug text), split sign+prefix from body for sign-aware
-    /// zero-pad, apply string-precision truncation, then pad/align via
-    /// `nova_fmt_pad`. All runtime helpers live in `nova_rt/conv.h` and are
-    /// locale-independent.
-    /// Plan 208 Ф.4R Ш3 (owner 2026-07-20): kill-switch for the interp
-    /// fast-path carrier swap — `NOVA_FMT_LEGACY=1` forces the OLD
-    /// `nova_rt/conv.h` `nova_fmt_*` chain (pre-Ф.4R codegen) so the SAME
-    /// binary can byte-diff the old vs new engine
-    /// (feedback-codegen-dce-verification: baseline = kill-switch on the
-    /// SAME binary, not a separate build). Read fresh each call (env var
-    /// lookup is cheap; no caching needed — this is a per-invocation CLI
-    /// process, not a hot loop).
-    fn fmt_legacy_enabled() -> bool {
-        std::env::var("NOVA_FMT_LEGACY")
-            .map(|v| v == "1")
-            .unwrap_or(false)
     }
 
     /// Ctor-call C expression for a resolved `align_code` (0=Left/1=Right/
@@ -42575,6 +42567,112 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         format!("Nova_StringBuilder_consume_into_str({})", tmp_sb)
     }
 
+    /// Plan 208 Ф.4R Ш4: same temp-builder shape as
+    /// `emit_int_display_spec_call`/`emit_f64_display_spec_call`, for
+    /// `char_display_spec`/`char_debug_display_spec` — closes the Ш3
+    /// follow-up (rich-spec char stayed on the old `conv.h` engine through
+    /// Ш3). One call site covers both `is_debug` states (only the resolved
+    /// C symbol differs — the two `.nv` functions share a signature).
+    fn emit_char_display_spec_call(
+        &mut self,
+        v: &str,
+        width: i64,
+        align_code: i32,
+        fill_cp: i64,
+        is_debug: bool,
+    ) -> String {
+        let tmp_sb = self.fresh_tmp_named("fmt_sb");
+        self.line(&format!(
+            "Nova_StringBuilder* {} = Nova_StringBuilder_static_new(16);",
+            tmp_sb
+        ));
+        let c_fn = self.free_fn_c_name(if is_debug {
+            "char_debug_display_spec"
+        } else {
+            "char_display_spec"
+        });
+        self.line(&format!(
+            "{}({}, ({}), ((nova_int){}LL), {}, (nova_char)({}U));",
+            c_fn, tmp_sb, v, width, Self::align_ctor_c(align_code), fill_cp,
+        ));
+        format!("Nova_StringBuilder_consume_into_str({})", tmp_sb)
+    }
+
+    /// Plan 208 Ф.4R Ш4: same shape, for `bool_display_spec` (Debug ==
+    /// Display for bool — ONE call site, no `is_debug` parameter needed).
+    fn emit_bool_display_spec_call(
+        &mut self,
+        v: &str,
+        width: i64,
+        align_code: i32,
+        fill_cp: i64,
+    ) -> String {
+        let tmp_sb = self.fresh_tmp_named("fmt_sb");
+        self.line(&format!(
+            "Nova_StringBuilder* {} = Nova_StringBuilder_static_new(16);",
+            tmp_sb
+        ));
+        let c_fn = self.free_fn_c_name("bool_display_spec");
+        self.line(&format!(
+            "{}({}, ({}), ((nova_int){}LL), {}, (nova_char)({}U));",
+            c_fn, tmp_sb, v, width, Self::align_ctor_c(align_code), fill_cp,
+        ));
+        format!("Nova_StringBuilder_consume_into_str({})", tmp_sb)
+    }
+
+    /// Plan 208 Ф.4R Ш4: same shape, for `str_display_spec`/
+    /// `str_debug_display_spec` (`.N` string precision is this family's own
+    /// `has_prec`/`prec` axis — no separate `nova_fmt_str_precision`
+    /// post-step needed, unlike the retired `conv.h` path).
+    fn emit_str_display_spec_call(
+        &mut self,
+        v: &str,
+        width: i64,
+        precision: Option<i64>,
+        align_code: i32,
+        fill_cp: i64,
+        is_debug: bool,
+    ) -> String {
+        let tmp_sb = self.fresh_tmp_named("fmt_sb");
+        self.line(&format!(
+            "Nova_StringBuilder* {} = Nova_StringBuilder_static_new(16);",
+            tmp_sb
+        ));
+        let c_fn = self.free_fn_c_name(if is_debug {
+            "str_debug_display_spec"
+        } else {
+            "str_display_spec"
+        });
+        let (has_prec, prec) = match precision {
+            Some(p) => ("true", p),
+            None => ("false", 0),
+        };
+        self.line(&format!(
+            "{}({}, ({}), ((nova_int){}LL), {}, ((nova_int){}LL), {}, (nova_char)({}U));",
+            c_fn, tmp_sb, v, width, has_prec, prec, Self::align_ctor_c(align_code), fill_cp,
+        ));
+        format!("Nova_StringBuilder_consume_into_str({})", tmp_sb)
+    }
+
+    /// **Plan 152.7-B (D374):** lower a rich format spec `${expr:SPEC}` to a C
+    /// expression producing the formatted `nova_str`. Returns the C expression
+    /// (the caller appends it to the interp StringBuilder). `sb` is the interp
+    /// builder (used only for the user-type fallback path, which renders the
+    /// value into a fresh builder).
+    ///
+    /// Plan 208 Ф.4R Ш4 (owner signal after Д3): every primitive axis
+    /// (int/float/str/char/bool, Display AND Debug) now renders through the
+    /// resolved `*_display_spec` family (`std.runtime.string_builder`, Ф.4R
+    /// Ш1) — the SAME primitives the bare `${x}` fast path
+    /// (`emit_interpolated_str`) and a type's own `@display`/`@debug` body
+    /// call (Ш2, still pending its own second-cycle blocker — see
+    /// `docs/plans/wip/208-f4r-notes.md` — but irrelevant to THIS call
+    /// site's own correctness). Only genuinely composite/user types fall to
+    /// the `FmtCtx`-carrying method-dispatch tail below. The
+    /// `NOVA_FMT_LEGACY=1` kill-switch and the OLD `nova_rt/conv.h`
+    /// `nova_fmt_*` chain this function used to co-emit (Ш3's byte-diff-
+    /// verification harness) are RETIRED as of this wave — this is now the
+    /// ONLY engine, no legacy branch survives.
     fn emit_format_spec_value(
         &mut self,
         e: &Expr,
@@ -42584,14 +42682,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         sb: &str,
     ) -> Result<String, String> {
         use crate::ast::format_spec::{Align, Kind, Sign};
-
-        // Plan 208 Ф.4R Ш3: NEW-engine gate for THIS wave's scope (int
-        // radix+decimal non-Debug, float non-Debug — the highest-traffic
-        // width/precision/align/fill/sign/alt/radix surface, D374/152.7-B).
-        // str/char/bool primitives and Debug-kind rich specs stay on the
-        // OLD `conv.h` engine below (documented follow-up, not this atom;
-        // see docs/plans/wip/208-f4r-notes.md "Ш3 scope").
-        let legacy = Self::fmt_legacy_enabled();
 
         // C literal for the fill char (Unicode scalar value).
         let fill_cp = spec.fill as u32 as i64;
@@ -42611,6 +42701,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .unwrap_or(0);
         let zero_pad = if spec.zero_pad { 1 } else { 0 };
         let sign_plus = matches!(spec.sign, Sign::Plus);
+        let is_debug = matches!(spec.kind, Kind::Debug);
 
         // Classify the value type.
         let is_int = matches!(
@@ -42644,146 +42735,83 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // `_ = sign_plus`: radix formatting is unsigned (two's complement),
             // so the `+` sign flag does not apply (matches Rust).
             let _ = sign_plus;
-            if !legacy {
-                return Ok(self.emit_int_display_spec_call(
-                    v, width_lit, base, upper != 0, spec.zero_pad, false,
-                    spec.alternate, align_code(spec.align, false), fill_cp,
-                ));
-            }
-            let alt = if spec.alternate { 1 } else { 0 };
-            let iv = format!("(nova_int)({})", v);
-            let body = format!("nova_fmt_int_radix_body({}, {}, {})", iv, base, upper);
-            let prefix = format!(
-                "nova_fmt_radix_prefix({}, {}, {})",
-                alt, base, upper
-            );
-            return Ok(format!(
-                "nova_fmt_pad({}, {}, {}, {}, {}, {})",
-                prefix,
-                body,
-                fill_cp,
-                align_code(spec.align, false),
-                width_lit,
-                zero_pad
+            return Ok(self.emit_int_display_spec_call(
+                v, width_lit, base, upper != 0, spec.zero_pad, false,
+                spec.alternate, align_code(spec.align, false), fill_cp,
             ));
         }
 
-        // ---- integer (decimal) ----
-        if is_int && !matches!(spec.kind, Kind::Debug) {
-            if !legacy {
-                return Ok(self.emit_int_display_spec_call(
-                    v, width_lit, 10, false, spec.zero_pad, sign_plus, false,
-                    align_code(spec.align, false), fill_cp,
-                ));
-            }
-            let iv = format!("(nova_int)({})", v);
-            let body = format!("nova_fmt_int_body({}, 10, 0)", iv);
-            let prefix = format!(
-                "nova_fmt_int_prefix({}, {})",
-                iv,
-                if sign_plus { 1 } else { 0 }
-            );
-            return Ok(format!(
-                "nova_fmt_pad({}, {}, {}, {}, {}, {})",
-                prefix,
-                body,
-                fill_cp,
-                align_code(spec.align, false),
-                width_lit,
-                zero_pad
+        // ---- integer (decimal) — Debug == Display for int (no escaping
+        // applies to a number), so ONE call site now covers both `spec.kind`
+        // states (Plan 208 Ф.4R Ш4 closes the "int Debug rich stayed on the
+        // old engine" follow-up: previously only non-Debug reached this
+        // branch, Debug fell through to the generic composite tail below
+        // with a DIFFERENT default alignment — an artifact of not being
+        // wired to `int_display_spec` yet, not a deliberate Rust-parity
+        // choice; Rust's `{:?}` on an int right-aligns exactly like `{}`).
+        if is_int {
+            return Ok(self.emit_int_display_spec_call(
+                v, width_lit, 10, false, spec.zero_pad, sign_plus, false,
+                align_code(spec.align, false), fill_cp,
             ));
         }
 
-        // ---- float ----
-        if is_float && !matches!(spec.kind, Kind::Debug) {
+        // ---- float — same Debug==Display unification as int above (Ш4
+        // closes the same follow-up for float rich specs). ----
+        if is_float {
             let dv = format!("(double)({})", v);
-            if !legacy {
-                return Ok(self.emit_f64_display_spec_call(
-                    &dv, width_lit, spec.precision.map(|p| p as i64), spec.zero_pad,
-                    sign_plus, align_code(spec.align, false), fill_cp,
-                ));
-            }
-            // Body: fixed precision if `.N` given, else the default `%g` repr
-            // (then strip its sign so the sign/prefix split stays uniform).
-            let (prefix, body) = if let Some(p) = spec.precision {
-                (
-                    format!(
-                        "nova_fmt_f64_prefix({}, {})",
-                        dv,
-                        if sign_plus { 1 } else { 0 }
-                    ),
-                    format!("nova_fmt_f64_body({}, {})", dv, p),
-                )
-            } else {
-                // No precision: default repr via nova_f64_to_str, but it carries
-                // its own sign. Use an empty prefix and let the body include the
-                // sign; force-`+` is honored by prepending via the prefix only
-                // when the value is non-negative.
-                let body = format!("nova_f64_to_str({})", dv);
-                let prefix = if sign_plus {
-                    // prefix '+' only for >= 0 (nova_f64_to_str already prints
-                    // '-' for negatives).
-                    format!(
-                        "(({} >= 0.0) ? (nova_str){{\"+\", 1}} : (nova_str){{\"\", 0}})",
-                        dv
-                    )
-                } else {
-                    "(nova_str){\"\", 0}".to_string()
-                };
-                (prefix, body)
-            };
-            return Ok(format!(
-                "nova_fmt_pad({}, {}, {}, {}, {}, {})",
-                prefix,
-                body,
-                fill_cp,
-                align_code(spec.align, false),
-                width_lit,
-                zero_pad
+            return Ok(self.emit_f64_display_spec_call(
+                &dv, width_lit, spec.precision.map(|p| p as i64), spec.zero_pad,
+                sign_plus, align_code(spec.align, false), fill_cp,
             ));
         }
 
-        // ---- string / char / bool / user-type: render a core str, then pad ----
-        // Determine the core (unpadded) string per the kind (Display vs Debug).
-        // `precision_consumed`: Plan 208 Ф.2 (D422) — for every primitive arm
-        // below (`false`), external `nova_fmt_str_precision` (codepoint
-        // truncation) still applies unchanged. Only the user/composite-type
-        // arm at the bottom sets `true` UNCONDITIONALLY now (see its comment —
-        // this is a deliberate D419→D422 semantic change, owner-approved).
-        // Width/fill/align padding is UNCHANGED either way — still an
-        // external post-step via `nova_fmt_pad` (D422 leaves that be; a
-        // type-driven `@pad` override is std-side plumbing only for now, not
-        // wired into this external step — see docs/plans/208-impl-progress.md).
-        let is_debug = matches!(spec.kind, Kind::Debug);
-        let (core, precision_consumed): (String, bool) = if is_char {
-            if is_debug {
-                (format!("nova_char_to_debug_str({})", v), false)
-            } else {
-                (format!("nova_char_to_str({})", v), false)
-            }
-        } else if is_str {
-            if is_debug {
-                (format!("nova_str_to_debug_str({})", v), false)
-            } else {
-                (v.to_string(), false)
-            }
-        } else if is_bool {
-            if is_debug {
-                (format!("nova_bool_to_debug_str({})", v), false)
-            } else {
-                (format!("nova_bool_to_str({})", v), false)
-            }
-        } else if is_int {
-            // int with `?` debug kind + non-radix.
-            if is_debug {
-                (format!("nova_int_to_debug_str((nova_int)({}))", v), false)
-            } else {
-                (format!("nova_int_to_str((nova_int)({}))", v), false)
-            }
-        } else if is_float {
-            // float with `?` debug kind.
-            (format!("nova_f64_to_debug_str((double)({}))", v), false)
-        } else {
+        // ---- char — Display (bare UTF-8) vs Debug (quoted+escaped) DO
+        // differ (unlike int/float/bool above), hence the `is_debug`-
+        // selected `.nv` sibling (`char_display_spec`/
+        // `char_debug_display_spec`); default LEFT align (Rust convention
+        // for chars, same as strings) — Ш4 closes the "char rich stayed on
+        // the old engine" follow-up. ----
+        if is_char {
+            return Ok(self.emit_char_display_spec_call(
+                v, width_lit, align_code(spec.align, true), fill_cp, is_debug,
+            ));
+        }
+
+        // ---- bool — Debug == Display (no escaping); default LEFT align
+        // (matches the pre-Ш4 generic-tail behavior for bool exactly). ----
+        if is_bool {
+            return Ok(self.emit_bool_display_spec_call(
+                v, width_lit, align_code(spec.align, true), fill_cp,
+            ));
+        }
+
+        // ---- str — Display (identity) vs Debug (quoted+escaped) differ;
+        // `.N` precision is THIS family's own axis now
+        // (`str_display_spec`/`str_debug_display_spec` truncate internally
+        // — no external `nova_fmt_str_precision` post-step for this arm
+        // anymore, Ш4 closes the "str rich stayed on the old engine"
+        // follow-up). Default LEFT align (Rust convention). ----
+        if is_str {
+            return Ok(self.emit_str_display_spec_call(
+                v, width_lit, spec.precision.map(|p| p as i64),
+                align_code(spec.align, true), fill_cp, is_debug,
+            ));
+        }
+
+        // ---- user/composite type: dispatch @display(f)/@debug(f), then pad
+        // externally (UNCHANGED from pre-Ф.4R — D422 §4 leaves composite
+        // width/pad as an external post-step; a type-driven `@pad` override
+        // is std-side plumbing only for now, not wired to skip this step).
+        // This is the LAST live call site for `nova_fmt_pad` — every
+        // primitive arm above now renders+pads through its own
+        // `*_display_spec` (Ф.4R Ш1/Ш4); composites have no such sibling of
+        // their own yet (see docs/plans/208-unified-formatter.md §10R
+        // remainder note). `nova_fmt_str_precision` has NO surviving caller
+        // (this arm never truncates by precision at all — see the comment
+        // above `core`'s construction below; same as before Ш4, unrelated
+        // to this wave's teardown).
+        let core: String = {
             // Plan 208 Ф.2 (D422): unified `@display(mut f Fmt)`/
             // `@debug(mut f Fmt)` dispatch — the D419 `@display_fmt`
             // special-case (optional second method, first refusal on a rich
@@ -42860,33 +42888,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ));
             self.line(&format!("{}({}, {});", fn_name, v, fmt_ctx));
             let _ = sb; // interp builder unused on this path.
-            // precision_consumed = true UNCONDITIONALLY (owner-approved
-            // 2026-07-16): D422's `Fmt` has no setter for `prec_consumed`
-            // (unlike `pad_consumed`/`@pad`) — there is no protocol-level way
-            // to ask "did the type look at precision", and Rust itself
-            // doesn't auto-truncate Debug/derive output by precision either.
-            // A type that wants precision semantics reads `@precision()`
-            // itself. This is a deliberate D419→D422 behavior change (D419's
-            // external-truncation-unless-@display_fmt-fired fallback is
-            // retracted along with `@display_fmt` itself) — see
-            // docs/plans/208-impl-progress.md.
-            (format!("Nova_StringBuilder_consume_into_str({})", fmt_sb), true)
+            // NO external precision truncation for this arm (owner-approved
+            // 2026-07-16, unchanged by Ш4): D422's `Fmt` has no setter for
+            // `prec_consumed` (unlike `pad_consumed`/`@pad`) — there is no
+            // protocol-level way to ask "did the type look at precision",
+            // and Rust itself doesn't auto-truncate Debug/derive output by
+            // precision either. A type that wants precision semantics reads
+            // `@precision()` itself. This is a deliberate D419→D422 behavior
+            // change (D419's external-truncation-unless-@display_fmt-fired
+            // fallback is retracted along with `@display_fmt` itself) — see
+            // docs/plans/208-impl-progress.md. `spec.precision` is therefore
+            // read only by the primitive arms above (each via its own
+            // `*_display_spec` `has_prec`/`prec` axis), never here.
+            format!("Nova_StringBuilder_consume_into_str({})", fmt_sb)
         };
 
-        // Apply string-precision truncation (codepoints), then pad/align.
-        // Strings default to LEFT alignment (Rust); precision truncates.
-        // D419: skip when `@display_fmt` already consumed `.precision()` —
-        // see `precision_consumed` doc comment above.
-        let core_after_prec = if precision_consumed {
-            core
-        } else if let Some(p) = spec.precision {
-            format!("nova_fmt_str_precision({}, {})", core, p as i64)
-        } else {
-            core
-        };
+        // Apply width/align pad externally — pad only, no precision (see
+        // the comment on `core`'s construction above for why). Strings
+        // (and composite types generally) default to LEFT alignment (Rust
+        // convention).
         Ok(format!(
             "nova_fmt_pad((nova_str){{\"\", 0}}, {}, {}, {}, {}, {})",
-            core_after_prec,
+            core,
             fill_cp,
             align_code(spec.align, true),
             width_lit,
