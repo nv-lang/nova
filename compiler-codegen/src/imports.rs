@@ -904,6 +904,48 @@ pub fn resolve_imports_inline_ex(
         });
     }
 
+    // [M-imports-entry-folder-module-self-cycle-empty-exports] fix: seed
+    // `visited` with the entry module's own export surface RIGHT NOW —
+    // `module.items` (+ each sibling's items) is fully parsed already, no
+    // recursion needed to know it. This makes `resolve_one`'s `visited`
+    // check (now ordered before the `in_progress` cycle guard, see there)
+    // answer correctly for any file transitively reached during THIS same
+    // resolve that plainly `import`s the entry module back — previously
+    // that hit the `in_progress` guard instead and got an empty
+    // `visible_acc` (entry_key stays in `in_progress` for the whole
+    // function, including the `pending_peer_preludes` drain below — see
+    // the entry_key comment above). Mirrors, per-file, the export-name
+    // filter `resolve_one`'s own peer loop applies to every other module
+    // (`module_has_exports` / `is_export` — Plan 81 Ф.1).
+    fn exported_names_from_items(items: &[Item]) -> Vec<String> {
+        let module_has_exports = items.iter().any(|item| match item {
+            Item::Fn(f) => f.is_export,
+            Item::Type(t) => t.is_export,
+            Item::Const(c) => c.is_export,
+            _ => false,
+        });
+        let mut names = Vec::new();
+        for item in items {
+            let (name, is_export) = match item {
+                Item::Type(t) => (Some(t.name.clone()), t.is_export),
+                Item::Fn(f) => (Some(f.name.clone()), f.is_export),
+                Item::Const(c) => (Some(c.name.clone()), c.is_export),
+                _ => (None, false),
+            };
+            if let Some(n) = name {
+                if !module_has_exports || is_export {
+                    names.push(n);
+                }
+            }
+        }
+        names
+    }
+    let mut entry_export_names: Vec<String> = exported_names_from_items(&module.items);
+    for sib in &siblings {
+        entry_export_names.extend(exported_names_from_items(&sib.module.items));
+    }
+    visited.insert(entry_key.clone(), entry_export_names);
+
     // Plan 81 Ф.10: per-peer visible-name accumulators.
     //   index 0      — entry's own imports.
     //   index 1      — prelude (auto-import; shared by ALL entry-group
@@ -1127,11 +1169,17 @@ pub fn resolve_imports_inline_ex(
         }
     }
 
-    // Entry done — promote из in_progress → visited.
-    // Plan 162 Ф.4: entry's exports not cached (entry is never dedup'd as
-    // an import by others in the same resolve call — it's the root module).
+    // Entry done — drop it from the open-set (DFS-stack bookkeeping only:
+    // nothing after this point calls `resolve_one` again in this function,
+    // so it's inert either way). `visited` already holds the entry's real
+    // export names, seeded up front (see `entry_export_names` above) —
+    // [M-imports-entry-folder-module-self-cycle-empty-exports]: do NOT
+    // overwrite that cache with `vec![]` here, that was the bug (the old
+    // "entry's exports not cached" comment/invariant this replaced was
+    // false — a file transitively reached via CU auto-injection, not a
+    // direct importer, CAN and does get dedup'd against the entry's own
+    // module_key within this same resolve call).
     in_progress.remove(&entry_key);
-    visited.insert(entry_key, vec![]);
     import_chain.pop();
 
     // Prepend merged items: imported сначала, потом user code (entry +
@@ -1631,6 +1679,48 @@ fn resolve_one(
     // не routing/registry key.
     let module_key: Vec<String> = canonical_module_key(&resolved_paths);
 
+    // [M-imports-entry-folder-module-self-cycle-empty-exports] fix: check
+    // the closed-set (`visited`) BEFORE the open-set (`in_progress`) guard.
+    // For every module OTHER than the entry, membership in these two sets
+    // is mutually exclusive by construction (`resolve_one` always does
+    // `in_progress.remove(&module_key); visited.insert(module_key, ...)`
+    // atomically at the end, never leaving both set simultaneously) — so
+    // this reorder is a strict no-op for them, whatever branch fires first
+    // fires identically to before.
+    //
+    // The ONE deliberate exception is the entry module: `entry_key` is
+    // pre-seeded into `visited` (with its real, already-known export names
+    // — the entry's own AST is fully parsed before any import resolution
+    // starts, so its export surface needs no recursion to compute) AND kept
+    // in `in_progress` for the whole resolve (root of the DFS). Before this
+    // fix, a file transitively reached via CU auto-injection (e.g. `.ptr()`
+    // → `needs_vec_injection` → `std.collections.vec` → its peer's own
+    // implicit prelude, deferred to `pending_peer_preludes` → …→ a module
+    // that plainly `import`s the entry module back) hit the `in_progress`
+    // guard below FIRST and returned with an EMPTY `visible_acc` for the
+    // entry's exports — even though the entry is not "still being
+    // resolved" in any meaningful sense (its items were sitting fully
+    // parsed in `module.items` the whole time). Checking `visited` first
+    // lets that lookup succeed instead, exactly like the diamond-dep dedup
+    // branch below already does for any other module.
+    if let Some(module_exports) = visited.get(&module_key) {
+        // Closed-set (or, for the entry, the pre-seeded export cache):
+        // items already merged (or, for the entry, always available) — skip
+        // the recursive resolve, just populate visible_acc with the
+        // module's exported names filtered by this import's selector. This
+        // is also needed when user code has an explicit `import X` and X
+        // was already loaded transitively (e.g. via prelude.core importing
+        // std.unicode — Plan 162 Ф.4: fixes regression where std.unicode
+        // free functions were invisible to explicit user imports because
+        // prelude.core had already added std.unicode to visited).
+        for exported_name in module_exports {
+            if import_selects(imp, exported_name) {
+                visible_acc.insert(exported_name.clone());
+            }
+        }
+        return Ok(());
+    }
+
     // Plan 162 Ф.2: cycle guard — когда модуль уже находится в стеке
     // DFS (in_progress), это цикл импортов. Вместо stack-overflow или
     // ошибки — ранний возврат Ok(()), позволяя циклу завершиться с теми
@@ -1639,6 +1729,13 @@ fn resolve_one(
     // разрешаются после полного сбора. Межмодульные циклы разрешены
     // (D29 rev-5, Plan 162), как peer-циклы в Rule D (Plan 42).
     //
+    // Note: this guard now only ever fires for a module that is genuinely
+    // mid-resolution (its own items are still being iterated in the peer
+    // loop below, `module_exports_cache` incomplete) — the entry module
+    // short-circuits via the `visited` check above instead, so a real
+    // two-way cycle (A imports B, B imports A, neither is the entry) still
+    // hits exactly this branch with an empty `visible_acc`, unchanged.
+    //
     // Предыдущее поведение (Plan 35 Ф.1 / D29 pre-rev5): Err("import cycle
     // detected") — оставлено ниже в виде legacy-комментария; удалить
     // можно после Ф.3 (method-resolution-by-type) когда cycle-semantics
@@ -1646,24 +1743,6 @@ fn resolve_one(
     if in_progress.contains(&module_key) {
         // Plan 162 Ф.2: cycle detected → early Ok(()) (cycle guard).
         // Позволяем циклу разрешиться: декларации уже собраны.
-        return Ok(());
-    }
-
-    // Closed-set: diamond-dep dedup. When a module is already in visited
-    // (items already merged into merged_items), skip the recursive resolve
-    // to avoid duplicating items. However, still populate visible_acc with
-    // the module's exported names filtered by this import's selector — this
-    // is needed when user code has an explicit `import X` and X was already
-    // loaded transitively (e.g. via prelude.core importing std.unicode).
-    // Plan 162 Ф.4: fixes regression where std.unicode free functions
-    // (is_alphabetic etc.) were invisible to explicit user imports because
-    // prelude.core had already added std.unicode to visited.
-    if let Some(module_exports) = visited.get(&module_key) {
-        for exported_name in module_exports {
-            if import_selects(imp, exported_name) {
-                visible_acc.insert(exported_name.clone());
-            }
-        }
         return Ok(());
     }
 
