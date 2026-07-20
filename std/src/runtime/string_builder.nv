@@ -25,7 +25,7 @@ module runtime.string_builder
 // @reserve/@advance/@pad_in_place/@write_padded/@into_str_checked methods
 // below. `Align` (runtime.fmt_buf, also `#no_prelude` — see its header note)
 // does not reopen the prelude cycle this file already breaks out of.
-import std.runtime.fmt_buf.{Align, int_fmt_into, f64_fmt_shortest_into}
+import std.runtime.fmt_buf.{Align, int_fmt_into, f64_fmt_shortest_into, f32_fmt_shortest_into}
 import std.runtime.raw_mem.{RawMem}
 import std.prelude.core.{Result}
 import std.runtime.string.{Utf8Error}
@@ -163,22 +163,29 @@ export fn StringBuilder mut @append(arr []u8) -> @ { @buf.append(arr) }
 // НЕВЕРНО (запрещало бы append отрицательных чисел). Rename на `x` —
 // консистентно с f64/f32-сиблингами ниже — снимает false-positive.
 // Zero-alloc (владелец 2026-07-20): reserve→spare→advance через fmt_buf-мосты
-// (int_fmt_into/f64_fmt_shortest_into) — БЕЗ промежуточной str-аллокации.
-// i64: знак+19 цифр < 24; f64 shortest ≤ 24 байта (dtoa-гарантия).
+// — БЕЗ промежуточной str-аллокации. Капы — ЧЕСТНЫЕ максимумы рендера
+// (поправка владельца 2026-07-20: без разнобоя на глаз):
+const INT_FMT_CAP int = 20   // "-9223372036854775808" — ровно 20
+const F64_FMT_CAP int = 24   // "-2.2250738585072014e-308" — ровно 24
+const F32_FMT_CAP int = 16   // "-1.1754944e-38" = 14; +2 запас формата %g
+
 export fn StringBuilder mut @append(x int) -> @ {
-    @reserve(24)
-    @advance(int_fmt_into(x, @spare(), 24))
+    @reserve(INT_FMT_CAP)
+    @advance(int_fmt_into(x, @spare(), INT_FMT_CAP))
 }
 export fn StringBuilder mut @append(x f64) -> @ {
-    @reserve(24)
-    @advance(f64_fmt_shortest_into(x, @spare(), 24))
+    @reserve(F64_FMT_CAP)
+    @advance(f64_fmt_shortest_into(x, @spare(), F64_FMT_CAP))
 }
 export fn StringBuilder mut @append(b bool) -> @ { if b { @append("true") } else { @append("false") } }
 // Plan 154.1 [M-154.1-f32-display-debug] + Plan 180: f32 via `@to_str()` →
 // the f32-precise shortest-round-trip formatter (nova_f32_to_str). Widening to
 // f64 first would surface the f32→f64 mantissa tail now that f64's formatter is
 // faithful (0.1f → "0.10000000149011612"); the direct f32 path keeps "0.1".
-export fn StringBuilder mut @append(x f32) -> @ { @append(x.to_str()) }
+export fn StringBuilder mut @append(x f32) -> @ {
+    @reserve(F32_FMT_CAP)
+    @advance(f32_fmt_shortest_into(x, @spare(), F32_FMT_CAP))
+}
 
 // Append строку s ровно n раз. n <= 0 → no-op.
 // Single reserve(total) → один realloc вместо n× амортизированного doubling.

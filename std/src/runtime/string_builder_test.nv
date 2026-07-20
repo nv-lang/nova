@@ -96,3 +96,14 @@ test "StringBuilder: @into_str_checked Ok/Err" {
         Err(_) => assert(true),
     }
 }
+
+// Zero-alloc appendы (2026-07-20): байт-паритет с прежним to_str-путём,
+// включая f32-канон (НЕ f64-расширение: 0.1 БЕЗ double-хвоста) и крайние капы.
+test "SB append int/f64/f32 zero-alloc byte-parity" {
+    consume sb = StringBuilder.new()
+    sb.append(0).append(" ").append(-9223372036854775807 - 1).append(" ").append(1.5)
+    assert(sb.into_str() == "0 -9223372036854775808 1.5")
+    consume sb2 = StringBuilder.new()
+    sb2.append(0.1 as f32).append(" ").append(-2.25 as f32)
+    assert(sb2.into_str() == "0.1 -2.25")
+}
