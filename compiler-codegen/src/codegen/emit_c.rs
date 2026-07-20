@@ -1555,6 +1555,14 @@ pub struct CEmitter {
     /// that `Stmt::Let`, to arm the shield + `_active` flag with the exact
     /// C names declared in the prologue. `(block_id, entry_idx, init_c_type)`.
     auto_cleanup_arm_sites: HashMap<Span, (usize, usize, String)>,
+    /// Plan 217: type_name (plain Nova) → set of method names declared with
+    /// a `consume` receiver on that type (mirrors checker's `LinearityRegistry
+    /// ::consume_methods`, types/mod.rs). Gates the Stmt::Expr bare-statement
+    /// receiver-disarm (`X.method()`): only an ACTUAL consuming method call
+    /// disarms auto-cleanup — a bare read-only/`ro`/`mut`-receiver method
+    /// call on the same tracked binding must NOT falsely disarm it (that
+    /// would leak the resource by skipping the real cleanup at scope-exit).
+    consume_receiver_methods: HashMap<String, HashSet<String>>,
     /// Plan 217: currently-armed auto-cleanup bindings — `(name, block_id,
     /// entry_idx)`, most-recently-armed last. Consulted by the disarm sites
     /// (`return X` bare/non-bare, direct call-arg, bare-statement consuming
@@ -2276,6 +2284,7 @@ impl CEmitter {
             reconsume_scopes: Vec::new(),
             auto_cleanup_types: HashSet::new(),
             auto_cleanup_arm_sites: HashMap::new(),
+            consume_receiver_methods: HashMap::new(),
             auto_cleanup_active: Vec::new(),
             var_boxed: HashMap::new(),
             warnings: std::cell::RefCell::new(Vec::new()),
@@ -4587,6 +4596,33 @@ impl CEmitter {
                                 && f.effects.is_empty()
                             {
                                 self.auto_cleanup_types.insert(recv.type_name.clone());
+                            }
+                        }
+                    }
+                }
+            };
+            collect(&module.items);
+            for pf in &module.peer_files {
+                collect(&pf.items_here);
+            }
+        }
+
+        // Plan 217: pre-pass — collect ALL consume-receiver method names per
+        // type (not just `cleanup`) — mirrors checker's `LinearityRegistry::
+        // consume_methods` exactly. Gates the auto-cleanup bare-statement
+        // receiver-disarm (`X.method()`): only a genuine consuming method
+        // call may disarm — a `ro`/`mut`-receiver helper method on the same
+        // type must NOT (that would falsely skip the real cleanup).
+        {
+            let mut collect = |items: &[Item]| {
+                for item in items {
+                    if let Item::Fn(f) = item {
+                        if let Some(recv) = &f.receiver {
+                            if recv.consume {
+                                self.consume_receiver_methods
+                                    .entry(recv.type_name.clone())
+                                    .or_default()
+                                    .insert(f.name.clone());
                             }
                         }
                     }
@@ -25801,15 +25837,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // inactive, `active_var == 0`, until armed).
                             c_binding: String::new(),
                             prev_deadline_var: prevdl_var.clone(),
-                            has_resource_trace: false,
+                            // Plan 217: ResourceTrace observability reused
+                            // as-is (same NULL-guarded `on_resource_enter`/
+                            // `_exit` pair as ConsumeScope — cheap, and gives
+                            // the feature the same structural observability
+                            // D185 already grants explicit `consume{}`).
+                            has_resource_trace: self.effect_schemas.contains_key("ResourceTrace"),
                             count_var: ccount_var.clone(),
                             // Plan 217 keystone (§6 оговорка): cancel-shield
                             // ЕСТЬ (cleanup should not be cancel-interrupted
                             // mid-flight — same reasoning as ConsumeScope),
-                            // но watchdog-порог/ResourceTrace НЕ подключены
-                            // (secondary D188 R1/R3 features, вне keystone-
-                            // скоупа 217; "0" = disarmed watchdog, harmless
-                            // literal per `nv_cleanup_watchdog_arm`).
+                            // watchdog-порог НЕ подключён (secondary D188 R3
+                            // feature, вне keystone-скоупа 217; "0" =
+                            // disarmed watchdog, harmless literal per
+                            // `nv_cleanup_watchdog_arm`).
                             threshold_var: "0".to_string(),
                         }),
                     });
@@ -27362,9 +27403,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         } else {
             binding.clone()
         };
+        let type_name = {
+            let t = self.debt_strip_nova_trim_start(&init_c_type);
+            t.strip_prefix("NovaValue_").map(|s| s.to_string()).unwrap_or(t)
+        };
         let active_var = format!("_defer_{}_{}_active", block_id, idx);
         let prevdl_var = format!("_defer_{}_{}_prevdl", block_id, idx);
         self.line(&format!("{} = nv_consume_enter_shield(0);", prevdl_var));
+        // Plan 217: mirror ConsumeScope's D185 R1 enter-event (NULL-guarded,
+        // observability only) — cheap, keeps auto-cleanup structurally
+        // observable the same way an explicit `consume{}` block already is.
+        if self.effect_schemas.contains_key("ResourceTrace") {
+            self.line(&format!(
+                "if (_nova_handler_ResourceTrace) {{ Nova_ResourceTrace_on_resource_enter(nova_str_from_cstr(\"{}\")); }}",
+                type_name));
+        }
         self.line(&format!("{} = 1;  /* Plan 217: auto-cleanup armed */", active_var));
         if let Some(scope) = self.defer_scopes.iter_mut().rev().find(|s| s.block_id == block_id) {
             if let Some(entry) = scope.entries.get_mut(idx) {
@@ -28169,7 +28222,60 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
             Stmt::Expr(e) => {
-                let val = self.emit_expr(e)?;
+                // Plan 217 (гибрид C, §8а п.6а drop-флаг): bare-statement
+                // consuming operation on an active auto-cleanup binding —
+                // disarm BEFORE evaluating. A bare statement has no
+                // downstream value to preserve across reordering (unlike
+                // return/tail position), so disarming first is safe and
+                // simpler than the arg-hoist dance those use.
+                //   (a) receiver form `X.method(...)` (e.g. `g.unlock()`) —
+                //       `X` sits inside `func` (Member.obj), NOT in `args`,
+                //       so the arg-scan below alone would miss it.
+                //   (b) any other consuming shape (`foo(X)`, nested calls,
+                //       `X` as a direct call-arg) — delegate to the
+                //       existing arg-scan/disarm machinery.
+                if let ExprKind::Call { func, .. } = &e.kind {
+                    if let ExprKind::Member { obj, name: method_name } = &func.kind {
+                        if let ExprKind::Ident(recv_name) = &obj.kind {
+                            // Plan 217: gate on `consume_receiver_methods` —
+                            // ONLY an actual consuming method call disarms.
+                            // A `ro`/`mut`-receiver helper method on the SAME
+                            // tracked binding (e.g. a getter) must NOT — that
+                            // would falsely skip the real cleanup at exit
+                            // (silent resource leak, зеркалит checker: такой
+                            // вызов не помечает X Consumed вообще).
+                            let recv_ty = self.var_types.get(recv_name).cloned().unwrap_or_default();
+                            let recv_ty_name = {
+                                let t = self.debt_strip_nova_trim_start(&recv_ty);
+                                t.strip_prefix("NovaValue_").map(|s| s.to_string()).unwrap_or(t)
+                            };
+                            let is_consuming_call = self.consume_receiver_methods
+                                .get(&recv_ty_name)
+                                .map_or(false, |ms| ms.contains(method_name));
+                            if is_consuming_call {
+                                if let Some(var) = self.disarm_var_for(recv_name) {
+                                    self.line(&format!(
+                                        "{} = 0;  /* Plan 217: consuming-вызов (receiver) — cleanup дизармлен */",
+                                        var));
+                                }
+                            }
+                        }
+                    }
+                }
+                // Plan 217 (same KNOWN GAP as the non-bare return case above):
+                // the generic arg-scan disarm below is kept `reconsume_scopes`
+                // -only (unchanged pre-217 behaviour) — auto-cleanup bindings
+                // passed as a plain call-arg (`foo(g)`, not `g.method()`) are
+                // NOT disarmed here without callee param-mode resolution. The
+                // receiver-call case just above (`g.method()`) is the one
+                // shape proven safe (gated on `consume_receiver_methods`).
+                let val = if self.reconsume_scopes.is_empty() {
+                    self.emit_expr(e)?
+                } else {
+                    let active: std::collections::HashSet<String> =
+                        self.reconsume_scopes.iter().map(|(b, _)| b.clone()).collect();
+                    self.emit_expr_with_reconsume_disarm(e, &active)?
+                };
                 // Plan 55 Ф.3: nova_unit — struct{}; `_tmp;` invalid C для struct.
                 // Cast в (void) даёт valid expression-statement и работает для всех типов.
                 let ty = self.infer_expr_c_type(e);
@@ -28516,20 +28622,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `val` through `emit_expr_with_reconsume_disarm` so the
                     // disarm-assignment lands exactly between "consuming call's
                     // args evaluated" and "call invoked" (see helper doc above).
-                    // Plan 217: non-bare `return EXPR` referencing an ACTIVE
-                    // auto-cleanup binding (e.g. `return f(g)`, `g` passed as
-                    // a direct call-arg) needs the same disarm — union both
-                    // registries before scanning.
+                    // Plan 217 (KNOWN GAP, честно задокументировано — см.
+                    // 217-impl-notes.md): non-bare `return f(g)` where `g` is
+                    // an auto-cleanup binding passed as a call-arg is NOT
+                    // disarmed here — unlike `reconsume_scopes` (safe by
+                    // construction: the checker's block_guards reject any
+                    // non-sanctioned occurrence before codegen ever sees it),
+                    // a bare auto-cleanup binding has NO such restriction —
+                    // the checker only counts an arg as a transfer when the
+                    // CALLEE's parameter is actually `consume`-mode
+                    // (`consume_idxs`, types/mod.rs `consume_args`), and
+                    // codegen does not (yet) re-derive that per-callee mode
+                    // set. Blindly disarming on "any direct Ident arg" (as
+                    // `reconsume_scopes` does) would risk a SILENT LEAK when
+                    // the callee's param is actually `ro`/`mut` (checker
+                    // leaves `g` Live, but codegen would wrongly zero its
+                    // flag). Left strict for now: `return X` bare (below) and
+                    // the `Stmt::Expr` receiver-call case (gated on
+                    // `consume_receiver_methods`) are the two disarm paths
+                    // proven safe without this extra machinery.
                     let reconsume_disarm_names: std::collections::HashSet<String> =
-                        if matches!(&v.kind, ExprKind::Ident(_))
-                            || (self.reconsume_scopes.is_empty() && self.auto_cleanup_active.is_empty())
-                        {
+                        if matches!(&v.kind, ExprKind::Ident(_)) || self.reconsume_scopes.is_empty() {
                             std::collections::HashSet::new()
                         } else {
                             let active: std::collections::HashSet<String> =
-                                self.reconsume_scopes.iter().map(|(b, _)| b.clone())
-                                    .chain(self.auto_cleanup_active.iter().map(|(n, _, _)| n.clone()))
-                                    .collect();
+                                self.reconsume_scopes.iter().map(|(b, _)| b.clone()).collect();
                             self.collect_reconsume_disarm_names(v, &active)
                         };
                     let val = if !reconsume_disarm_names.is_empty() {
