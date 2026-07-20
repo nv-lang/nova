@@ -16,6 +16,33 @@
 впоследствии сняты/зафикшены. Формально — то же самое, что раньше жило в
 simplifications.md под пометками ЗАКРЫТ/РЕШЕНО/✅.
 
+[2026-07-20 Plan 200 Пункт 17 — inline-tests → peer-файлы, 2/3 остатка ✅ (base64+handlers),
+fmt_buf НЕ закрыт] `[M-p200-17-remaining-3]` (sonnet, worktree `nova-p17rest`/ветка
+`p200-17-rest`) конвертировал `std/src/encoding/base64.nv` → `base64/{core.nv,core_test.nv}`
+(9 тестов, счётчик до/после совпал) и `std/src/testing/handlers.nv` →
+`handlers/{core.nv,core_test.nv}` (20 тестов). **Ловушка handlers:** файл начинался с
+`// ENV NOVA_MAXPROCS=1`/`// ENV NOVA_AUTOARM=0` — директивы `test_runner.rs::parse_env`
+парсятся из ПЕРВЫХ 30 строк ФАЙЛА, переданного `nova test` напрямую; раз тесты теперь
+запускаются как `.../core_test.nv`, а не `.../handlers.nv`, обе директивы физически обязаны
+переехать в `core_test.nv` (иначе single-thread-гарантия для `mut_clock`-тестов тихо
+отключилась бы). **fmt_buf НЕ конвертирован:** split был выполнен механически корректно
+(export-поверхность и приватность сохранены — `core_test.nv` резолвит module-private
+`int_fmt`/`FmtSpec`/`bool_fmt`/`char_fmt`/`fmt_f64` из `core.nv` без ошибок), но
+`nova test fmt_buf/core_test.nv` ловил CODEGEN-FAIL в СОВЕРШЕННО ДРУГОМ файле
+(`string_builder.nv:174/178/187`, `undefined identifier int_fmt_into` и т.п.) — root cause
+НАЙДЕН: баг import-резолвера (`compiler-codegen/src/imports.rs::resolve_imports_inline_ex`,
+entry-модуля `in_progress`-guard молча даёт ПУСТОЙ export-набор, когда entry-модуль
+транзитивно ре-импортируется ДРУГИМ файлом того же CU через auto-injection-цепочку
+`.ptr()`→vec-injection→prelude-peer-drain→`string_builder.nv`), см. новый маркер
+`[M-imports-entry-folder-module-self-cycle-empty-exports]` (`docs/plans/backlog-followups.md`,
+P2 Codegen) — НЕ ошибка конверсии, split fmt_buf РЕВЕРТНУТ (остался единым файлом, 8 инлайн-
+тестов, как было). Пункт 17 счёт: 6/9 → 8/9, `[M-p200-17-remaining-3]` сужен до
+`[M-p200-17-remaining-1-fmtbuf]` (P3, блокирован новым багом). **Verify:**
+`nova test base64/core_test.nv` PASS 1/0; `nova test handlers/core_test.nv` PASS 1/0;
+`nova test string_builder_test.nv` PASS 1/0 (fmt_buf-мосты живы, т.к. fmt_buf не тронут);
+`nova test std/src/checksums` PASS 3/0 SKIP 3 (δ0).
+---
+
 [2026-07-19 codegen emit_c — `[M-tuple-fixarr-typedef-order]`, ✅ ЗАКРЫТО] Кортеж с фикс-массивом
 `(T, [N]U)` генерировал C-typedef'ы в НЕПРАВИЛЬНОМ порядке: typedef кортежа
 (`struct { nova_int f0; _NovaFixArr_4_9_nova_byte f1; }`) эмитился РАНЬШЕ typedef'а самого
