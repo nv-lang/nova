@@ -208,6 +208,12 @@ export type Error {
 /// **Bootstrap (R1/R2):** доступен pre-method (str нужен в panic/interp до
 /// своих методов); literal-lowering зависит только от layout, не от методов.
 #stable(since = "0.1")
+// priv(type) — НАМЕРЕННО и НАВСЕГДА (решение владельца 2026-07-20, закрытие
+// П2-хвоста Plan 200): методы str живут в ДРУГОМ модуле (runtime.string, 38
+// прямых чтений @ptr/@len) — field-priv (D281, границы модуля) сломал бы их
+// все; перенос деклы в runtime.string невозможен (bootstrap: prelude первичен,
+// lang-item Plan 139.1). Итераторный прецедент П2 (priv(type)→priv) сюда НЕ
+// переносится: у итераторов тип и методы в одном модуле, у str — в разных.
 type str value priv(type) {
     ptr *u8
     len int
