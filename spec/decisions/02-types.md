@@ -12766,7 +12766,7 @@ T** (без `Clone`-bound). Для ref-типовых элементов коп�
 
 | Операция | Bound | Назначение |
 |---|---|---|
-| `Vec.from(items)` / `@extend` / `@push` | любой T | построение буфера, move-перенос |
+| `@extend` / `@push` (`Vec.from(items)` — **RETRACTED 2026-07-20**, Plan 200 П16, см. [D259 AMEND](#d259-конструктор-конвенция-vect--of-для-литерала-from-для-конверсии-plan-1531)) | любой T | построение буфера, move-перенос |
 | `@copy_from` / `@copy_within` / `@insert` / `@remove` / `@append` | любой T | сдвиг/перенос значений в буфере |
 | `@realloc_to` | любой T | рост capacity (перенос байт) |
 | `HashMap.from_iter` / `Set.from_iter` | любой T | построение из итератора (per-element insert) |
@@ -12932,7 +12932,7 @@ export type Vec[T] {
 |------|--------|
 | `Vec[T].new()` | empty, no allocation (cap = 0) |
 | `Vec[T].with_capacity(n)` | empty, pre-allocated n slots |
-| `Vec[T].from(items []T)` | copy from built-in slice |
+| ~~`Vec[T].from(items []T)`~~ | **RETRACTED 2026-07-20** (Plan 200 П16, [D259 AMEND](#d259-конструктор-конвенция-vect--of-для-литерала-from-для-конверсии-plan-1531)) — same-T conversion is `existing.clone()`; literal is `of(...)`; width conversion is an explicit per-element loop |
 | `Vec[T].from_raw_parts(ptr *T, len, cap)` | build from a raw `(ptr,len,cap)` triple (cross-type bridge, unsafe-obligated; D247) |
 
 ### Key methods
@@ -13144,9 +13144,13 @@ v[1] = 99  // → v.@index(1, 99)   write-overload через MutIndex (D240)
 4. **parfor (D71)** — internal result-collection буферы (`NovaArray_{nova_int,
    nova_bool,nova_f64,nova_str}`), layout-identical с Vec, никогда не escape'ят
    как user `[]T`; миграция = риск без семантического выигрыша → `[M-138.2-parfor-vec]`.
-5. **Literal-bridge `Vec[T].from(items []T)`** — static-method param `[]T` всё
+5. ~~**Literal-bridge `Vec[T].from(items []T)`**~~ — static-method param `[]T` всё
    ещё лоуэрится в `NovaArray_nova_int* items` (dead stub в каждом flipped-юните,
    класс `[M-138.2-self-in-param]` — generic-static-method param-type substitution).
+   **MOOT 2026-07-20 (Plan 200 П16):** `Vec[T].from` ретрактирован целиком (см.
+   [D259 AMEND](#d259-конструктор-конвенция-vect--of-для-литерала-from-для-конверсии-plan-1531)) — этот блокер физически исчез вместе с деклой; список сузился
+   до четырёх пунктов. Полный retire NovaArray этим не закрыт (остальные 4
+   блокера живы) — заметка только про исчезновение источника пункта 5.
 
 После того как Plan 139 Ф.2 мигрирует string/byte слой на `Nova_Vec____nova_byte*`
 (закрытие `[M-139-f2-ptr-field-producers]`), retirement можно завершить:
@@ -13376,6 +13380,26 @@ fn StringBuilder @write_str(s str) -> () {
 > легальность пустого `of()` (`spec_tests/conformance/d259_vec_of_vs_from.nv`,
 > `nova_tests/plan153_0/variadic_of.nv`), приведены в соответствие. Правило
 > «КАНОН» ниже устарело в части `Vec[int].of()` — актуальный текст только в этом
+> амендменте.
+
+> **AMEND (2026-07-20, Plan 200 П16) — `Vec[T].from(items []T)` ПОЛНОСТЬЮ
+> РЕТРАКТИРОВАН.** Владелец: «это же просто `items.clone()`» (согласовано
+> 2026-07-16, подтверждено 2026-07-20). Разделение ролей `of`/`from` ниже
+> частично устарело: роль «литерал» (`of`) остаётся канон без изменений;
+> роль «конверсия существующей коллекции» (`from`) закрывается напрямую через
+> `Clone` (D230, deep/recursive) — `existing.clone()` — а НЕ отдельным
+> статик-конструктором:
+> - **same-`T` конверсия** (`Vec[int].from(other_vec)`) → **`other_vec.clone()`**
+>   (Vec/HashMap/Set уже реализуют глубокий поэлементный `Clone`);
+> - **литерал** (`Vec[f32].from([1.5, 2.5])`) → канон уже был `of` — теперь
+>   единственный путь: **`Vec[f32].of(1.5, 2.5)`**;
+> - **width/типо-конверсия** (`Vec[u8].from(int_vec)`, тихо сужающая элементы)
+>   → явный поэлементный цикл (`for x in src { out.push(x as u8) }`) — сужение
+>   больше не прячется за одним вызовом.
+> Декларация удалена из `std/collections/vec/core.nv`; все живые вызовы
+> мигрированы (`[M-lint-findings-static-conversion]`-часть про `Vec.from`
+> закрыта). Текст «### Правило»/«### Почему» ниже — ИСТОРИЯ (объясняет, почему
+> `of` вообще появился рядом с `from`), актуальное поведение — только в этом
 > амендменте.
 
 ### Что
