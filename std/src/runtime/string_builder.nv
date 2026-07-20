@@ -341,16 +341,36 @@ export fn StringBuilder mut @pad_in_place(mark int, width int, fill char, align 
         unsafe {
             // memmove (overlap-safe) the existing tail right by `left_bytes`.
             RawMem.copy(@buf.ptr().offset(mark) as *u8, @buf.ptr().offset(mark + left_bytes) as *mut u8, content_len)
-            mut pos = mark
-            for c in 0..left_chars {
-                for b in 0..fill_len {
-                    @buf.ptr().write_at(pos, fill_bytes[b])
-                    pos += 1
+            // ASCII-fill (fill_len == 1 — пробел/'0'/… — типовой случай):
+            // весь двойной цикл = один memset (владелец 2026-07-20; RawMem.copy
+            // из [4]u8 в лоб нельзя — у фикс-массива нет @ptr(), да и незачем:
+            // внутренний цикл ≤4 байта, выигрыш — по ВНЕШНЕЙ оси width).
+            if fill_len == 1 {
+                RawMem.fill(@buf.ptr().offset(mark) as *mut u8, fill_bytes[0], left_chars)
+            } else {
+                mut pos = mark
+                for c in 0..left_chars {
+                    for b in 0..fill_len {
+                        @buf.ptr().write_at(pos, fill_bytes[b])
+                        pos += 1
+                    }
                 }
             }
+            @buf.advance(left_bytes)   // in-place len+=n вместо header-rebuild
         }
-        @buf = []u8.new(@buf.ptr(), end + left_bytes, @buf.cap())
     }
 
-    for k in 0..right_chars { @append(fill) }
+    if right_chars > 0 {
+        ro (fill_bytes, fill_len) = fill.encode_utf8()
+        if fill_len == 1 {
+            // ASCII-fill: reserve + один memset + advance вместо O(width) @append.
+            @buf.reserve(right_chars)
+            unsafe {
+                RawMem.fill(@buf.ptr().offset(@buf.len()) as *mut u8, fill_bytes[0], right_chars)
+                @buf.advance(right_chars)
+            }
+        } else {
+            for k in 0..right_chars { @append(fill) }
+        }
+    }
 }
