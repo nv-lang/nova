@@ -97,10 +97,24 @@ test "D55 non-regression: str-литерал в НЕ-[]u8 позиции ост�
     assert(s.byte_len() == 5)
 }
 
-test "D55 non-regression: str-ПЕРЕМЕННАЯ в []u8-позиции всё ещё требует явный .bytes() (D176)" {
+test "D429: str-ПЕРЕМЕННАЯ (не литерал) тоже коэрсится в []u8-позиции (D55 RETRACTED → D429, spec/decisions/02-types.md §D429 «Ретракт»: литерал — частный случай str-значения, отдельного литерал-правила не остаётся)" {
+    // 2026-07-19 (регресс-триаж): раньше (pre-D429) это была
+    // EXPECT_COMPILE_ERROR [E7301]-фикстура — spec_tests/conformance/neg/
+    // d55_bytes_lit_var_not_coerced_neg.nv (retired этим коммитом). D429
+    // деклативно ввёл `#coerce fn str @bytes() -> ro []u8` (std/src/runtime/
+    // string/core.nv) — ОБЩЕЕ правило по ЗНАЧЕНИЮ (не по форме литерал/не-
+    // литерал), явно ретрактирующее D55-подсекцию «Str-литерал → []u8»:
+    // литерал был лишь частным случаем str-значения. Голая переменная `s`
+    // в позиции 2 (`let`/`ro`/`mut` с явной `[]u8`-аннотацией, R6) теперь
+    // коэрсится ТАК ЖЕ, как литерал — компилятор AST-переписывает `s` →
+    // `s.bytes()` (R7), byte-в-byte как явный вызов.
     ro s = "var-not-lit"
-    // Explicit .bytes() still the required spelling for a non-literal value —
-    // see spec_tests/conformance/neg/d55_bytes_lit_var_not_coerced_neg.nv for
-    // the compile-error case (bare variable, no `.bytes()`).
+    ro b []u8 = s
+    assert(b.len() == 11)
+    // Явный `.bytes()` остаётся валидным (не запрещён, просто больше не
+    // ОБЯЗАТЕЛЕН) — канон call-сайта теперь голое значение (R9); явная форма
+    // здесь лишь ПРОВЕРЯЕТ тот же путь, не является демонстрацией required-
+    // формы (в отличие от старой семантики этого теста до D429).
     assert(d55_bytes_free_len(s.bytes()) == 11)
+    assert(d55_bytes_free_len(s) == 11)
 }
