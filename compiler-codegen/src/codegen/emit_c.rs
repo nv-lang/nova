@@ -52984,6 +52984,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     );
                                 }
                             }
+                            // [M-196-closeout] Plan 196 closeout П2 (2026-07-21): re-ran the
+                            // detach-panic trial (env-gated `NOVA_196_DETACH_B11=1`, temporary,
+                            // NOT left in the tree) AFTER П1's If-body closure peek fix
+                            // (`closure_if_ctor_peek`) — hypothesis was that closing that gap
+                            // might leave this bucket dead. Immediately DISPROVEN by the very
+                            // first real corpus hit: `spec_tests/conformance/
+                            // d30_try_op_unwrap_pair.nv` reaches this branch via
+                            // `Option[T Debug]@debug(mut f Fmt) -> ()`
+                            // (`std/src/prelude/protocols.nv:732`) — a plain concrete-Unit-
+                            // return Nova-body method with ZERO closures/generics involved
+                            // anywhere in the call. Confirms this bucket is the delivery vehicle
+                            // for `infer_method_level_return_for_sum`/hardcoded-match results
+                            // for ANY Option/Result instance-method the checker's Channel 2
+                            // doesn't independently materialize (broader than the closure-peek
+                            // residual П1 closed) — NOT detached, NOT dead.
                             return legacy;
                         }
                         // D26 prelude: Nova_Result* method type inference.
@@ -53035,6 +53050,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     );
                                 }
                             }
+                            // [M-196-closeout] Plan 196 closeout П2 (2026-07-21): mirrors the
+                            // B11q verdict just above — `Result[T Debug, E Debug]@debug`
+                            // (`std/src/prelude/protocols.nv:753`, same shape: concrete-Unit
+                            // return, zero closures/generics) reaches this bucket by the same
+                            // mechanism. NOT detached, NOT dead (see B11q comment above for the
+                            // full trial description).
                             return legacy;
                         }
                         // Plan 196.2 W1 [gate-1]: B11s_str_from_ident + B11s_user_type_from_ident
