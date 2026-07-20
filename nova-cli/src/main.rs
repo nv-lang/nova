@@ -4859,20 +4859,34 @@ fn cmd_build(
         let _t = nova_codegen::perf_timer::PerfTimer::new("embed-resolve");
         let (files, embed_warnings) = nova_codegen::embed_resolve::resolve_embeds(&mut module, &path, &repo).map_err(
             |diags| {
+                // [M-diag-dep-file-span-misattribution]: same file_id-aware
+                // fix as the type-check error path below — an `embed(...)`
+                // diagnostic's span may belong to a peer/dependency file, not
+                // the entry file.
+                let smap = build_source_map(&module, &src, &path);
                 let msgs: Vec<String> = diags
                     .iter()
-                    .map(|d| d.render(&src, &path_str))
+                    .map(|d| d.render_with_map(&smap))
                     .collect();
                 anyhow!("{}", msgs.join("
 "))
             },
         )?;
-        for w in &embed_warnings {
-            let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
-            eprintln!(
-                "  {} {}:{}:{}: {} [{}]",
-                bold(&yellow("warning:")), path_str, line, col, w.diag.message, w.rule
-            );
+        if !embed_warnings.is_empty() {
+            // [M-diag-dep-file-span-misattribution]: resolve each warning's
+            // own file_id instead of assuming it always belongs to the entry
+            // file (mirrors the diags fix above). Built once, outside the
+            // loop — `build_source_map` re-reads every peer file from disk.
+            let smap = build_source_map(&module, &src, &path);
+            for w in &embed_warnings {
+                let wpath = smap.path_for(w.diag.span.file_id).to_string();
+                let (line, col) = nova_codegen::diag::byte_to_line_col(
+                    smap.source_for(w.diag.span.file_id), w.diag.span.start);
+                eprintln!(
+                    "  {} {}:{}:{}: {} [{}]",
+                    bold(&yellow("warning:")), wpath, line, col, w.diag.message, w.rule
+                );
+            }
         }
         files
     };
@@ -4976,8 +4990,26 @@ fn cmd_build(
             let mut build_env = {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("type-check");
                 nova_codegen::types::check_module(&module).map_err(|errs| {
+                    // [M-diag-dep-file-span-misattribution] fix: a type-check
+                    // error's span may carry a `file_id` pointing at an
+                    // imported PEER file (incl. a path/git DEPENDENCY package
+                    // pulled in via `resolve_imports_inline` above) — not
+                    // `path`/`src` (the entry file). `cmd_check` already
+                    // builds a `SourceMap` + `render_with_map` for exactly
+                    // this reason (Plan 81 Ф.8.1, see `build_source_map` doc
+                    // above); `cmd_build` (`nova build`, what `nova.toml`
+                    // path/git deps actually get compiled through) had never
+                    // received the same fix — it rendered every diagnostic
+                    // through the single-file resolver (`d.render(&src,
+                    // &path_str)`), which ignores `span.file_id` entirely and
+                    // applies the dep-file's byte offset to the ENTRY file's
+                    // source + path. Symptom: a real `.into()` type error in
+                    // a path-dependency's `client/wire.nv` was reported as
+                    // `examples/flagship/aggregator/src/main.nv:46: ...` even
+                    // though that main.nv line is an unrelated comment.
+                    let smap = build_source_map(&module, &src, &path);
                     let msgs: Vec<String> = errs.iter()
-                        .map(|d| d.render(&src, &path_str))
+                        .map(|d| d.render_with_map(&smap))
                         .collect();
                     anyhow!("{}", msgs.join("\n"))
                 })?
@@ -4996,11 +5028,21 @@ fn cmd_build(
             }
             {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("lints");
-                for w in nova_codegen::lints::lint_module(&module) {
-                    let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
-                    // Plan 181 (D347): demangle synthesized `__sN` rebind names.
-                    let msg = nova_codegen::alpha_rename::demangle_rebind_names(&w.diag.message);
-                    eprintln!("{} {}:{}:{}: {} [{}]", bold(&yellow("warning:")), path.display(), line, col, msg, w.rule);
+                let lint_warnings = nova_codegen::lints::lint_module(&module);
+                if !lint_warnings.is_empty() {
+                    // [M-diag-dep-file-span-misattribution]: a lint on a peer/
+                    // dependency file must show ITS path/line, not the entry
+                    // file's (same file_id-aware fix as the type-check path
+                    // above).
+                    let smap = build_source_map(&module, &src, &path);
+                    for w in &lint_warnings {
+                        let wpath = smap.path_for(w.diag.span.file_id).to_string();
+                        let (line, col) = nova_codegen::diag::byte_to_line_col(
+                            smap.source_for(w.diag.span.file_id), w.diag.span.start);
+                        // Plan 181 (D347): demangle synthesized `__sN` rebind names.
+                        let msg = nova_codegen::alpha_rename::demangle_rebind_names(&w.diag.message);
+                        eprintln!("{} {}:{}:{}: {} [{}]", bold(&yellow("warning:")), wpath, line, col, msg, w.rule);
+                    }
                 }
             }
             // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expr.
