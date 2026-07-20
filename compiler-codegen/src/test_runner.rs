@@ -1317,6 +1317,19 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     let rt_fs = opts.rt_dir.join("fs.c");
     let march = march_flag();
 
+    // Plan 218: prebuilt runtime archive. If a bucket-matching `libnova_rt`
+    // is cached (or gets built here, one-time), link it instead of adding
+    // every rt_* source below as an individual per-build compile unit —
+    // see the "Plan 218" doc block above `detect_or_build_rt_archive` for
+    // the bucket-key rationale (effect-count/runtime-define ABI hazard).
+    // `None` (disabled via `NOVA_RT_ARCHIVE=0`, or any build failure) keeps
+    // the exact pre-218 behavior below — zero regression by construction.
+    let rt_archive: Option<RtArchiveConfig> = opts.rt_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|repo_root| detect_or_build_rt_archive(opts.rt_dir, repo_root, tc, opts));
+    let use_rt_archive = rt_archive.is_some();
+
     // Plan 27 Ф.1+Ф.D: Boehm paths resolved via detect_boehm (env overrides
     // + local vcpkg + global vcpkg). На Linux/macOS Some(BoehmConfig) с
     // include_dir=Some из system path, lib_dir=None — линкер через -lgc.
@@ -1469,14 +1482,20 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 c.arg("-DNOVA_USE_LIBUV=1");
                 c.arg("-I").arg(inc_path);
                 // Plan 83.12/183: net.c compiled only when libuv is present.
-                c.arg(&rt_net);
-                // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
-                c.arg(&rt_fs);
+                // Plan 218: already inside libnova_rt.a when the archive is active
+                // — skip re-adding as a loose source (would double-define symbols).
+                if !use_rt_archive {
+                    c.arg(&rt_net);
+                    // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
+                    c.arg(&rt_fs);
+                }
                 // Windows: libuv link via -L/-l flags (env has LIB set by vcvars).
                 #[cfg(target_os = "windows")]
                 {
                     c.arg(lib_path);
-                    c.arg(evloop);
+                    if !use_rt_archive {
+                        c.arg(evloop);
+                    }
                     for syslib in LIBUV_WIN_SYSLIBS {
                         c.arg(format!("-l{}", syslib.replace(".lib", "")));
                     }
@@ -1487,7 +1506,9 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                      * undefined в момент когда archive seen. Используем
                      * --start-group / --end-group чтобы symbols искались
                      * commutative с object files в command line. */
-                    c.arg(evloop);
+                    if !use_rt_archive {
+                        c.arg(evloop);
+                    }
                     #[cfg(target_os = "linux")]
                     c.arg("-Wl,--start-group");
                     c.arg(lib_path);
@@ -1554,16 +1575,22 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             }
             c.arg("-o").arg(opts.exe_file);
             c.arg(opts.c_file);
-            c.arg(&rt_alloc);
-            c.arg(&rt_effects);
-            c.arg(&rt_fibers);
-            c.arg(&rt_fiber_arena);  /* Plan 44.2 Etap 1 */
-            c.arg(&rt_fiber_arena_win);  /* Plan 82 Ф.1 */
-            c.arg(&rt_fiber_stats);  /* Plan 44.2 Etap 3 */
-            c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
-            c.arg(&rt_driver);       /* Plan 83.11 Ф.2 */
-            c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
-            c.arg(&rt_segv_diag);    /* Plan 83.11 §12.31 */
+            // Plan 218: prebuilt archive replaces the individual rt_* source
+            // args below when available (see `use_rt_archive` computed above).
+            if let Some(cfg) = &rt_archive {
+                c.arg(&cfg.lib_file);
+            } else {
+                c.arg(&rt_alloc);
+                c.arg(&rt_effects);
+                c.arg(&rt_fibers);
+                c.arg(&rt_fiber_arena);  /* Plan 44.2 Etap 1 */
+                c.arg(&rt_fiber_arena_win);  /* Plan 82 Ф.1 */
+                c.arg(&rt_fiber_stats);  /* Plan 44.2 Etap 3 */
+                c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
+                c.arg(&rt_driver);       /* Plan 83.11 Ф.2 */
+                c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
+                c.arg(&rt_segv_diag);    /* Plan 83.11 §12.31 */
+            }
             // Plan 115 D214 [M-115-ffi-build-pipeline]: system libs (-l) в link phase.
             // Plan 193 Ф.2 gap-1: lib_dirs (-L) BEFORE -l so the linker's
             // search path includes non-default-path native libs (mirrors
@@ -1673,10 +1700,14 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 c.arg("/DNOVA_USE_LIBUV=1");
                 c.arg(format!("/I{}", inc_path.display()));
                 // Plan 83.12/183: net.c compiled only when libuv is present.
-                c.arg(&rt_net);
-                // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
-                c.arg(&rt_fs);
-                c.arg(evloop);
+                // Plan 218: already inside libnova_rt.lib when the archive is
+                // active — skip re-adding as a loose source (double-define).
+                if !use_rt_archive {
+                    c.arg(&rt_net);
+                    // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
+                    c.arg(&rt_fs);
+                    c.arg(evloop);
+                }
                 c.arg(lib_path);
                 #[cfg(target_os = "windows")]
                 for syslib in LIBUV_WIN_SYSLIBS {
@@ -1684,16 +1715,22 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 }
             }
             c.arg(opts.c_file);
-            c.arg(&rt_alloc);
-            c.arg(&rt_effects);
-            c.arg(&rt_fibers);
-            c.arg(&rt_fiber_arena);  /* Plan 44.2 Etap 1 */
-            c.arg(&rt_fiber_arena_win);  /* Plan 82 Ф.1 */
-            c.arg(&rt_fiber_stats);  /* Plan 44.2 Etap 3 */
-            c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
-            c.arg(&rt_driver);       /* Plan 83.11 Ф.2 */
-            c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
-            c.arg(&rt_segv_diag);    /* Plan 83.11 §12.31 */
+            // Plan 218: prebuilt archive replaces the individual rt_* source
+            // args below when available (see `use_rt_archive` computed above).
+            if let Some(cfg) = &rt_archive {
+                c.arg(&cfg.lib_file);
+            } else {
+                c.arg(&rt_alloc);
+                c.arg(&rt_effects);
+                c.arg(&rt_fibers);
+                c.arg(&rt_fiber_arena);  /* Plan 44.2 Etap 1 */
+                c.arg(&rt_fiber_arena_win);  /* Plan 82 Ф.1 */
+                c.arg(&rt_fiber_stats);  /* Plan 44.2 Etap 3 */
+                c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
+                c.arg(&rt_driver);       /* Plan 83.11 Ф.2 */
+                c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
+                c.arg(&rt_segv_diag);    /* Plan 83.11 §12.31 */
+            }
             // Plan 27 Ф.1: Boehm link flags for MSVC (after sources, before /link).
             // Plan 115 D214 [M-115-ffi-build-pipeline]: also pass user FFI libs.
             // Plan 193 Ф.2 gap-1: also open the /link phase when lib_dirs is
@@ -1775,11 +1812,17 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 c.arg("-DNOVA_USE_LIBUV=1");
                 c.arg("-I").arg(inc_path);
                 // Plan 83.12/183: net.c compiled only when libuv is present.
-                c.arg(&rt_net);
-                // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
-                c.arg(&rt_fs);
+                // Plan 218: already inside libnova_rt.a when the archive is
+                // active — skip re-adding as a loose source (double-define).
+                if !use_rt_archive {
+                    c.arg(&rt_net);
+                    // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
+                    c.arg(&rt_fs);
+                }
                 c.arg(lib_path);
-                c.arg(evloop);
+                if !use_rt_archive {
+                    c.arg(evloop);
+                }
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
                 for syslib in LIBUV_UNIX_SYSLIBS {
                     c.arg(syslib);
@@ -1807,16 +1850,22 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             }
             c.arg("-o").arg(opts.exe_file);
             c.arg(opts.c_file);
-            c.arg(&rt_alloc);
-            c.arg(&rt_effects);
-            c.arg(&rt_fibers);
-            c.arg(&rt_fiber_arena);  /* Plan 44.2 Etap 1 */
-            c.arg(&rt_fiber_arena_win);  /* Plan 82 Ф.1 */
-            c.arg(&rt_fiber_stats);  /* Plan 44.2 Etap 3 */
-            c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
-            c.arg(&rt_driver);       /* Plan 83.11 Ф.2 */
-            c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
-            c.arg(&rt_segv_diag);    /* Plan 83.11 §12.31 */
+            // Plan 218: prebuilt archive replaces the individual rt_* source
+            // args below when available (see `use_rt_archive` computed above).
+            if let Some(cfg) = &rt_archive {
+                c.arg(&cfg.lib_file);
+            } else {
+                c.arg(&rt_alloc);
+                c.arg(&rt_effects);
+                c.arg(&rt_fibers);
+                c.arg(&rt_fiber_arena);  /* Plan 44.2 Etap 1 */
+                c.arg(&rt_fiber_arena_win);  /* Plan 82 Ф.1 */
+                c.arg(&rt_fiber_stats);  /* Plan 44.2 Etap 3 */
+                c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
+                c.arg(&rt_driver);       /* Plan 83.11 Ф.2 */
+                c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
+                c.arg(&rt_segv_diag);    /* Plan 83.11 §12.31 */
+            }
             // Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI libs (GCC).
             // Plan 193 Ф.2 gap-1: lib_dirs (-L) BEFORE -l, same as Clang.
             if let Some(ffi) = opts.ffi {
@@ -4636,6 +4685,516 @@ fn collect_c_files(dir: &Path, out: &mut Vec<PathBuf>, recursive: bool) -> Resul
         }
     }
     Ok(())
+}
+
+// ---------- Plan 218: prebuilt runtime archive (libnova_rt) ----------
+//
+// C-compiling a fresh nova program pays ~6.5s recompiling the ~10-12
+// nova_rt/*.c translation units on EVERY build (parsing windows.h/uv.h/gc.h
+// dominates — docs/plans/218-prebuilt-runtime-archive.md). Mirrors
+// `detect_or_build_libuv` above: compile the runtime .c files ONCE into a
+// static archive, cache it keyed by content+flags, link the archive on
+// subsequent builds instead of recompiling. Purely a build-latency
+// optimization — any failure here (disabled, build error, missing tool)
+// falls back to the pre-218 per-build inline-compile path (`build_command`'s
+// existing behavior), never turns a build that used to succeed into a
+// failure.
+//
+// **ABI hazard found while implementing this (not flagged by the original
+// latency research):** `effects.c` DEFINES the actual TLS storage for
+// `NovaEffectRegistry`, and `runtime.c` allocates/consumes
+// `NovaEffectSnapshot` by `sizeof`. Both types are sized by the
+// **per-program** `-DNOVA_MAX_EFFECT_STORAGES=N` marker (Plan 174.4 — see
+// effects.h's doc-comment above `NOVA_MAX_EFFECT_STORAGES`): `N` = distinct
+// effects USED BY THIS PROGRAM, read from a comment on line 1 of the
+// generated `.c` by `effect_count_define_arg`. That define is deliberately
+// applied to the WHOLE cc invocation (not `#define`d inside one `.c`)
+// specifically so `NovaEffectRegistry`/`NovaEffectSnapshot` have an
+// IDENTICAL layout in every TU compiled together. Precompiling
+// `effects.c`/`runtime.c` into one FIXED-N archive and linking it against a
+// DIFFERENT-N app.c would silently violate that invariant —
+// `NovaEffectRegistry.count`'s byte offset shifts with N, and
+// `NovaEffectSnapshot`-sized heap allocations could be undersized — a
+// classic silent memory-corruption bug, not a link error. Same reasoning
+// applies to `[runtime]` `fiber_stack`/`max_fibers` overrides
+// (`runtime_define_args`) baked into `fiber_arena.c`/`fiber_arena_win.c` —
+// not memory-unsafe, but a behavior difference (wrong default stack/fiber
+// count), which would violate the byte-identical-behavior gate.
+//
+// Fix: `rt_archive_key` below folds `N` and the runtime-defines into the
+// bucket key — a program only ever links against an archive built with ITS
+// OWN effect count / runtime overrides. This still captures the dominant
+// dev-loop win (editing and rebuilding the SAME program repeatedly never
+// changes its effect count) and, in practice, most programs share `N`
+// (built-ins Fail+Time only, no custom effects) so cross-program reuse
+// still happens routinely.
+
+/// Resolved lookup/build result for one archive bucket.
+#[derive(Clone)]
+pub struct RtArchiveConfig {
+    pub lib_file: PathBuf,
+}
+
+/// `NOVA_RT_ARCHIVE=0`/`off`/`false` disables — falls back to the pre-218
+/// per-build inline compile of every `nova_rt/*.c` (escape hatch, symmetric
+/// to `NOVA_CACHE=0` in `build_cache.rs`). Default: enabled.
+fn rt_archive_enabled() -> bool {
+    !matches!(std::env::var("NOVA_RT_ARCHIVE").as_deref(),
+              Ok("0") | Ok("off") | Ok("false"))
+}
+
+/// The `nova_rt/*.c` translation units folded into the archive — exactly
+/// the set `build_command` otherwise adds as individual source args (mirrors
+/// the `rt_alloc..rt_segv_diag` + conditional `rt_net`/`rt_fs`/eventloop.c
+/// list there 1:1 — keep in sync on future nova_rt additions). The
+/// GC-backend alloc file varies with `gc_kind` (part of the bucket key).
+fn rt_archive_sources(rt_dir: &Path, gc_kind: GcKind, libuv: Option<&LibuvConfig>) -> Vec<PathBuf> {
+    let mut v = vec![
+        rt_dir.join(gc_kind.alloc_c_name()),
+        rt_dir.join("effects.c"),
+        rt_dir.join("fibers.c"),
+        rt_dir.join("fiber_arena.c"),
+        rt_dir.join("fiber_arena_win.c"),
+        rt_dir.join("fiber_stats.c"),
+        rt_dir.join("runtime.c"),
+        rt_dir.join("driver.c"),
+        rt_dir.join("typeid.c"),
+        rt_dir.join("segv_diag.c"),
+    ];
+    if let Some(uv) = libuv {
+        v.push(rt_dir.join("net.c"));
+        v.push(rt_dir.join("fs.c"));
+        v.push(uv.eventloop_src.clone());
+    }
+    v
+}
+
+/// Every `nova_rt/*.{c,h}` file that participates in content-hashing for
+/// invalidation (Plan 218 requirement: hash CONTENT, never mtime — a
+/// `touch` without real changes must NOT bust the cache). Broader than
+/// `rt_archive_sources` on purpose: every archived `.c` `#include`s a chain
+/// of `nova_rt/*.h` — a header-only edit (e.g. `fibers.h`) must invalidate
+/// the archive even though no `.c` itself changed. Only files directly
+/// inside `rt_dir` — does NOT recurse into `rt_dir/libuv` (that submodule
+/// has its own independent cache/lifecycle, see `detect_or_build_libuv`).
+fn rt_hashable_files(rt_dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(rt_dir) else { return out; };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            continue;
+        }
+        match p.extension().and_then(|s| s.to_str()) {
+            Some("c") | Some("h") => out.push(p),
+            _ => {}
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Fingerprint (size + mtime-nanos) of the archive-builder compiler binary
+/// — mirrors `build_cache.rs`'s compiler-exe fingerprint pattern. A
+/// toolchain upgrade (new clang/cl.exe) must bust the archive.
+fn rt_archive_compiler_fingerprint(cc_path: &Path) -> Option<(u64, u128)> {
+    let meta = std::fs::metadata(cc_path).ok()?;
+    let nanos = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some((meta.len(), nanos))
+}
+
+/// Content-addressed key for one archive bucket. Every dimension that can
+/// change the actual bytes/behavior of the compiled objects is folded in —
+/// see the module doc above for the effect-count/runtime-define hazard
+/// that isn't obvious from `nova_rt/*.c` alone. Separate buckets (Plan 218
+/// requirement): dev vs release, GC boehm|malloc, platform (via
+/// `std::env::consts::OS`), libuv on/off, per-program effect count, per-
+/// package `[runtime]` overrides, release march. Returns `None` only if a
+/// hashable file vanished mid-read (races with a concurrent edit) — caller
+/// treats that exactly like "disabled" (falls back, non-fatal).
+fn rt_archive_key(
+    rt_dir: &Path,
+    mode: Mode,
+    gc_kind: GcKind,
+    libuv_present: bool,
+    effect_define: Option<&str>,
+    runtime_defines: &[String],
+    cc_fingerprint: Option<(u64, u128)>,
+) -> Option<String> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    "nova-rt-archive-v1".hash(&mut h);
+    format!("{:?}", mode).hash(&mut h);
+    format!("{:?}", gc_kind).hash(&mut h);
+    std::env::consts::OS.hash(&mut h);
+    libuv_present.hash(&mut h);
+    effect_define.hash(&mut h);
+    runtime_defines.hash(&mut h);
+    if matches!(mode, Mode::Release) {
+        march_flag().hash(&mut h);
+    }
+    cc_fingerprint.hash(&mut h);
+
+    let files = rt_hashable_files(rt_dir);
+    files.len().hash(&mut h);
+    for f in &files {
+        f.to_string_lossy().hash(&mut h);
+        let bytes = std::fs::read(f).ok()?;
+        bytes.hash(&mut h);
+    }
+    Some(format!("{:016x}", h.finish()))
+}
+
+/// Process-wide memoization: `nova test`/`nova bench` build MANY files in
+/// one process, each calling `detect_or_build_rt_archive` — without this,
+/// every single build would re-read+re-hash ~1-1.5MB of `nova_rt/*.{c,h}`
+/// content (cheap once, wasteful hundreds of times over one test run).
+/// Keyed by the CHEAP dimensions only (no content hash) — nova_rt content
+/// on disk cannot change mid-process for a single `nova test`/`nova build`
+/// invocation (same non-goal as `build_cache.rs`, which makes the same
+/// assumption for its own per-process source reads).
+static RT_ARCHIVE_MEMO: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, Option<RtArchiveConfig>>>,
+> = std::sync::OnceLock::new();
+
+fn rt_archive_memo_key(
+    rt_dir: &Path,
+    mode: Mode,
+    gc_kind: GcKind,
+    libuv_present: bool,
+    effect_define: Option<&str>,
+    runtime_defines: &[String],
+) -> String {
+    format!(
+        "{}|{:?}|{:?}|{}|{:?}|{:?}",
+        rt_dir.display(), mode, gc_kind, libuv_present, effect_define, runtime_defines
+    )
+}
+
+/// Resolve the fixed archive-builder compiler path for fingerprinting
+/// (`rt_archive_compiler_fingerprint`). On Windows: search the vcvars-
+/// captured `PATH` (from `tc`'s env snapshot — the current PROCESS's own
+/// `PATH` does NOT have `cl.exe` unless vcvars was called for it) for
+/// `cl.exe`; falls back to the literal `cl.exe` (unresolvable → fingerprint
+/// becomes `None`, a safe degrade — see doc above). On Unix: `$CC` or `cc`.
+fn resolve_archive_cc_path(tc: &Toolchain) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let env: &[(OsString, OsString)] = match tc {
+            Toolchain::Clang { env, .. } => env,
+            Toolchain::Msvc { env, .. } => env,
+            Toolchain::Gcc { .. } => &[],
+        };
+        if let Some((_, path_val)) = env.iter().find(|(k, _)| {
+            k.to_string_lossy().eq_ignore_ascii_case("PATH")
+        }) {
+            for dir in std::env::split_paths(path_val) {
+                let candidate = dir.join("cl.exe");
+                if candidate.is_file() {
+                    return candidate;
+                }
+            }
+        }
+        PathBuf::from("cl.exe")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = tc;
+        std::env::var("CC").ok().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("cc"))
+    }
+}
+
+/// Build (or reuse) the runtime archive for this exact bucket. `tc` is used
+/// only for `vcvars_path()` on Windows — the archive itself is compiled
+/// with a FIXED compiler (`cl.exe` via vcvars on Windows, `$CC`/`cc` on
+/// Unix), independent of the app's chosen `--toolchain`. This exactly
+/// mirrors the existing `detect_or_build_libuv`/`build_libuv_lib`
+/// precedent: `libuv.lib` is likewise built once with cl.exe/cc and linked
+/// into both clang- and msvc-toolchain app builds — COFF/ELF objects from
+/// either front-end interlink fine on their platform. Consequence (and
+/// deliberate, precedented trade-off): archived objects are NOT literally
+/// byte-identical machine code to what `--toolchain=clang` would emit
+/// inline (different compiler/no cross-TU `-flto` into the archive — see
+/// `build_rt_archive_lib` doc) — they ARE behaviorally identical, which is
+/// the actual gate (same C source, same effective defines, deterministic
+/// semantics; `libuv.lib` has coexisted with `-flto` app builds under this
+/// exact scheme since Plan 22).
+///
+/// Returns `None` on ANY failure — pure optimization, never a hard
+/// requirement; callers fall back to the pre-218 inline-compile path.
+pub fn detect_or_build_rt_archive(
+    rt_dir: &Path,
+    repo_root: &Path,
+    tc: &Toolchain,
+    opts: &BuildOpts,
+) -> Option<RtArchiveConfig> {
+    if !rt_archive_enabled() {
+        return None;
+    }
+    let d_prefix = if cfg!(target_os = "windows") { "/D" } else { "-D" };
+    let effect_define = effect_count_define_arg(opts.c_file, d_prefix);
+    let runtime_defines = runtime_define_args(opts.runtime, d_prefix);
+    let libuv_present = opts.libuv.is_some();
+
+    let memo_key = rt_archive_memo_key(
+        rt_dir, opts.mode, opts.gc_kind, libuv_present,
+        effect_define.as_deref(), &runtime_defines,
+    );
+    let memo = RT_ARCHIVE_MEMO.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    if let Ok(guard) = memo.lock() {
+        if let Some(cached) = guard.get(&memo_key) {
+            return cached.clone();
+        }
+    }
+
+    let result = (|| -> Option<RtArchiveConfig> {
+        let cc_path = resolve_archive_cc_path(tc);
+        let cc_fingerprint = rt_archive_compiler_fingerprint(&cc_path);
+
+        let key = rt_archive_key(
+            rt_dir, opts.mode, opts.gc_kind, libuv_present,
+            effect_define.as_deref(), &runtime_defines, cc_fingerprint,
+        )?;
+
+        let cache_dir = repo_root.join("target").join("rt-archive-cache").join(&key);
+        let lib_name = if cfg!(target_os = "windows") { "libnova_rt.lib" } else { "libnova_rt.a" };
+        let lib_file = cache_dir.join(lib_name);
+        if lib_file.is_file() {
+            return Some(RtArchiveConfig { lib_file });
+        }
+
+        let sources = rt_archive_sources(rt_dir, opts.gc_kind, opts.libuv);
+        let boehm_cfg = if opts.gc_kind == GcKind::Boehm { detect_boehm(opts.cg_include) } else { None };
+        eprintln!("nova: libnova_rt archive not built for this config, building (one-time, ~5-7 sec)...");
+        let build_result = build_rt_archive_lib(
+            &sources, &cache_dir, &lib_file, rt_dir, opts.cg_include, opts.mode,
+            opts.gc_kind, boehm_cfg.as_ref(), opts.libuv,
+            effect_define.as_deref(), &runtime_defines, tc.vcvars_path(),
+        );
+        match build_result {
+            Ok(()) if lib_file.is_file() => {
+                eprintln!("nova: libnova_rt archive built ({})", lib_file.display());
+                Some(RtArchiveConfig { lib_file })
+            }
+            Ok(()) => {
+                eprintln!(
+                    "nova: warning: libnova_rt archive build reported success but {} \
+                     missing — falling back to inline compile",
+                    lib_file.display()
+                );
+                None
+            }
+            Err(e) => {
+                eprintln!(
+                    "nova: warning: libnova_rt archive build failed ({}) — \
+                     falling back to per-build inline compile",
+                    e
+                );
+                None
+            }
+        }
+    })();
+
+    if let Ok(mut guard) = memo.lock() {
+        guard.insert(memo_key, result.clone());
+    }
+    result
+}
+
+/// Compile `sources` → objects and archive them into `lib_file`. Mirrors
+/// `build_libuv_lib`'s Windows(cl.exe+lib.exe)/Unix(cc+ar) structure exactly.
+/// `mode` controls optimization level only — deliberately NO `-flto`/`/GL`
+/// here even in Release (matches `build_libuv_lib`, which never LTOs
+/// `libuv.lib` either): mixing an LTO-bitcode static archive built by one
+/// compiler with a final link potentially done by a DIFFERENT compiler
+/// (clang vs gcc on Unix, since the archive's compiler is fixed but the
+/// app's `--toolchain` is not) risks incompatible bitcode formats. app.c
+/// itself still gets full `-flto` in `build_command` — only the archived
+/// runtime's cross-TU inlining into app.c is traded away, a bounded,
+/// precedented cost (`libuv.lib` already forgoes it entirely).
+#[allow(clippy::too_many_arguments)]
+fn build_rt_archive_lib(
+    sources: &[PathBuf],
+    cache_dir: &Path,
+    lib_file: &Path,
+    rt_dir: &Path,
+    cg_include: &Path,
+    mode: Mode,
+    gc_kind: GcKind,
+    boehm_cfg: Option<&BoehmConfig>,
+    libuv: Option<&LibuvConfig>,
+    effect_define: Option<&str>,
+    runtime_defines: &[String],
+    vcvars: Option<&Path>,
+) -> Result<()> {
+    std::fs::create_dir_all(cache_dir).map_err(|e| anyhow!("create cache_dir: {}", e))?;
+    let obj_dir = cache_dir.join("obj");
+    if obj_dir.is_dir() {
+        let _ = std::fs::remove_dir_all(&obj_dir);
+    }
+    std::fs::create_dir_all(&obj_dir).map_err(|e| anyhow!("create obj_dir: {}", e))?;
+    for src in sources {
+        if !src.is_file() {
+            return Err(anyhow!("rt archive source not found: {}", src.display()));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let vcv = vcvars.ok_or_else(|| anyhow!("vcvars required for libnova_rt archive build on Windows"))?;
+        let mode_flags = match mode {
+            Mode::Dev => "/Od /Z7",
+            Mode::Release => "/O2 /DNDEBUG",
+        };
+        let mut lines: Vec<String> = Vec::new();
+        lines.push(format!("/c /nologo /W0 {} /Gy", mode_flags));
+        lines.push(format!("/FI \"{}\"", rt_dir.join("nova_msvc_compat.h").display()));
+        if gc_kind == GcKind::Boehm {
+            lines.push("/DNOVA_GC_BOEHM /DGC_THREADS".to_string());
+            if let Some(cfg) = boehm_cfg {
+                if let Some(inc) = &cfg.include_dir {
+                    lines.push(format!("/I \"{}\"", inc.display()));
+                }
+            }
+        }
+        for da in runtime_defines {
+            lines.push(da.clone());
+        }
+        if let Some(ea) = effect_define {
+            lines.push(ea.to_string());
+        }
+        if let Some(uv) = libuv {
+            lines.push("/DNOVA_USE_LIBUV=1".to_string());
+            lines.push(format!("/I \"{}\"", uv.include_dir.display()));
+        }
+        lines.push(format!("/I \"{}\"", cg_include.display()));
+        lines.push(format!("/Fo\"{}\\\\\"", obj_dir.display()));
+        for s in sources {
+            lines.push(format!("\"{}\"", s.display()));
+        }
+        let rsp = cache_dir.join("compile.rsp");
+        std::fs::write(&rsp, lines.join("\n")).map_err(|e| anyhow!("write rsp: {}", e))?;
+        let inner = format!(
+            "\"call \"{}\" >nul 2>&1 && cl.exe @\"{}\"\"",
+            vcv.display(), rsp.display()
+        );
+        let mut cmd = Command::new("cmd");
+        cmd.raw_arg("/c").raw_arg(&inner);
+        let out = cmd.output().map_err(|e| anyhow!("spawn cl.exe: {}", e))?;
+        if !out.status.success() {
+            let combined = format!("{}{}", bytes_to_string(&out.stdout), bytes_to_string(&out.stderr));
+            return Err(anyhow!("libnova_rt compile failed: {}",
+                combined.lines().take(20).collect::<Vec<_>>().join("\n")));
+        }
+        let mut obj_files: Vec<PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(&obj_dir).map_err(|e| anyhow!("read obj_dir: {}", e))? {
+            let p = entry.map_err(|e| anyhow!("read_dir entry: {}", e))?.path();
+            if p.extension().and_then(|s| s.to_str()) == Some("obj") {
+                obj_files.push(p);
+            }
+        }
+        if obj_files.len() != sources.len() {
+            return Err(anyhow!(
+                "libnova_rt compile: expected {} .obj files, found {} in {}",
+                sources.len(), obj_files.len(), obj_dir.display()
+            ));
+        }
+        let lib_rsp = cache_dir.join("lib.rsp");
+        let mut lib_lines: Vec<String> =
+            vec!["/nologo".to_string(), format!("/OUT:\"{}\"", lib_file.display())];
+        for o in &obj_files {
+            lib_lines.push(format!("\"{}\"", o.display()));
+        }
+        std::fs::write(&lib_rsp, lib_lines.join("\n")).map_err(|e| anyhow!("write lib.rsp: {}", e))?;
+        let lib_inner = format!(
+            "\"call \"{}\" >nul 2>&1 && lib.exe @\"{}\"\"",
+            vcv.display(), lib_rsp.display()
+        );
+        let mut lib_cmd = Command::new("cmd");
+        lib_cmd.raw_arg("/c").raw_arg(&lib_inner);
+        let lib_out = lib_cmd.output().map_err(|e| anyhow!("spawn lib.exe: {}", e))?;
+        if !lib_out.status.success() {
+            return Err(anyhow!("lib.exe failed: {}", bytes_to_string(&lib_out.stderr)));
+        }
+        eprintln!("nova: libnova_rt.lib built ({} files)", sources.len());
+        return Ok(());
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
+        let mut obj_files: Vec<PathBuf> = Vec::new();
+        for src in sources {
+            let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("rt");
+            let obj = obj_dir.join(format!("{}.o", stem));
+            let mut c = Command::new(&cc);
+            match mode {
+                Mode::Dev => { c.args(["-O0", "-g", "-w"]); }
+                Mode::Release => {
+                    c.arg("-O3");
+                    c.arg(format!("-march={}", march_flag()));
+                    c.arg("-DNDEBUG");
+                    c.arg("-w");
+                }
+            }
+            c.arg("-c");
+            c.arg("-fPIC");
+            c.arg("-D_GNU_SOURCE");
+            if gc_kind == GcKind::Boehm {
+                c.arg("-DNOVA_GC_BOEHM");
+                c.arg("-DGC_THREADS");
+                if let Some(cfg) = boehm_cfg {
+                    if let Some(inc) = &cfg.include_dir {
+                        let s = inc.to_string_lossy();
+                        if !s.starts_with("/usr/include") {
+                            c.arg("-I").arg(inc);
+                        }
+                    }
+                }
+            }
+            for da in runtime_defines {
+                c.arg(da);
+            }
+            if let Some(ea) = effect_define {
+                c.arg(ea);
+            }
+            if let Some(uv) = libuv {
+                c.arg("-DNOVA_USE_LIBUV=1");
+                c.arg("-I").arg(&uv.include_dir);
+            }
+            c.arg("-I").arg(cg_include);
+            c.arg("-o").arg(&obj);
+            c.arg(src);
+            let out = c.output().map_err(|e| anyhow!("spawn {}: {}", cc, e))?;
+            if !out.status.success() {
+                return Err(anyhow!("libnova_rt compile failed on {}: {}",
+                    src.display(), bytes_to_string(&out.stderr)));
+            }
+            obj_files.push(obj);
+        }
+        let mut ar = Command::new("ar");
+        ar.arg("rcs").arg(lib_file);
+        for o in &obj_files {
+            ar.arg(o);
+        }
+        let ar_out = ar.output().map_err(|e| anyhow!("spawn ar: {}", e))?;
+        if !ar_out.status.success() {
+            return Err(anyhow!("ar failed: {}", bytes_to_string(&ar_out.stderr)));
+        }
+        eprintln!("nova: libnova_rt.a built ({} files)", sources.len());
+        return Ok(());
+    }
+    #[allow(unreachable_code)]
+    {
+        let _ = (sources, cache_dir, lib_file, rt_dir, cg_include, mode, gc_kind,
+                 boehm_cfg, libuv, effect_define, runtime_defines, vcvars);
+        Err(anyhow!("unsupported platform for libnova_rt archive build"))
+    }
 }
 
 /// Сводный результат для `test-all`.
