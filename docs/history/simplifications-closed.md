@@ -30953,3 +30953,54 @@ current, byte-behaviour). Спека: 02-types §D358 Ф.2-амендмент (`
   из `docs/plans/backlog-followups.md` (переименована суть при закрытии:
   корень = DCE-seed, НЕ decl-order — заголовок маркера исторический,
   оставлен как ID).
+
+## [M-parfor-capture-callee-name-collides-std-local] ЗАКРЫТ (2026-07-20, worktree nova-parfor, ветка p-fix-parfor-capture, sonnet)
+
+- **Корень**: `compiler-codegen/src/codegen/emit_c.rs::emit_spawn` (spawn-ctx
+  capture-скан, ~11504-11567). Свободные идентификаторы тела `spawn`/
+  `parallel for` собираются `collect_idents_expr`, которая для `Call{func,
+  ..}` кладёт callee-`Ident` в тот же список, что и обычные переменные —
+  без различия call-position/value-position. Захват затем резолвит тип
+  каждого имени через `self.var_types.get(&name)` — **плоскую**,
+  **НЕ per-функцию** `HashMap<String,String>`: `emit_fn_scoped_inner`
+  (~24241-24919) вставляет туда params/`nova_self`, но НИКОГДА не
+  восстанавливает их на выходе из функции (в отличие от `var_mutable`,
+  которое restore'ится). Если у ЛЮБОЙ другой функции CU (обработанной
+  раньше в этом же процессе кодогена) есть локал/параметр с тем же
+  именем, что и вызываемая module-fn (`probe`), capture-скан подхватывает
+  ЧУЖОЙ, случайный тип из `var_types["probe"]` и эмитит паразитное поле
+  ctx + присваивание `_nova_spawn_N_ctx->probe = probe;` — `probe` вне
+  области видимости drain-функции → CC-FAIL `use of undeclared identifier
+  'probe'`. Сам вызов эмитируется ПРАВИЛЬНО (mangled `nova_fn_...probe`)
+  — паразитно только ctx-поле. Та же болезнь, что закрытая 196.6
+  (`closure_param_type_overrides` per-name без per-fn) и
+  `[M-callnorm-free-fn-name-collision]`.
+- **Фикс** (тот же файл): добавлен резолв-осведомлённый walker
+  `collect_resolved_call_target_names_expr`/`_block`/`_stmt` (~14094-14317,
+  зеркало `collect_idents_expr` по структуре обхода) — собирает ТОЛЬКО
+  имена callee тех `Call`-узлов, чей `ExprId` есть в `self.resolved_callees`
+  (канал Plan 172.1 U.3.4, `types/mod.rs::f1_check_call`, заполняется
+  ТОЛЬКО для однозначно резолвнутого free-fn/method-вызова, НИКОГДА для
+  динамического вызова closure-переменной). В `emit_spawn` перед
+  `var_types.get` добавлен гейт: `if resolved_fn_call_names.contains(&name)
+  { continue; }` — исключение по РЕЗОЛВУ, не блэклист по имени: захваченная
+  closure-переменная, вызванная как `f(x)`, не попадает в
+  `resolved_fn_call_names` (checker не резолвит динамический вызов в
+  `resolved_callees`), поэтому обычный capture closures не задет.
+- **Репро/гейты**: новая standalone-фикстура
+  `spec_tests/conformance/standalone/parfor_capture_callee_name_collision.nv`
+  (module-fn `probe(i int) -> int`, коллизия с параметром `probe` в
+  НЕСВЯЗАННОЙ `drain_probe(probe u64)`, вызов `probe(i)` из `parallel for`)
+  — pre-fix binary (гейт временно отключён `if false && ...`) CC-FAIL
+  `use of undeclared identifier 'probe'` (детерминированно); post-fix —
+  PASS ×3. `examples/mini_aggregator.nv`: `ask_source` переименован в
+  `probe` (снят обходной комментарий-workaround), `nova build --mode
+  release --strict-effects` — built OK, бинарь `done=4 cancelled=2` ×3
+  прогона (детерминированно). Полный `nova test --mode release --positive
+  --compile-error spec_tests/conformance` (standalone-CU, ~530 тестов):
+  PASS 509 FAIL 1 (`app_effect_basic_t8_1` — pre-existing known-red,
+  whitelist `.github/workflows/nova-gate.yml:149`, не связан: тривиальный
+  `assert(true)` без spawn/parallel-for). `std/src/concurrency --mode
+  release`: PASS 4 FAIL 0 SKIP 5 (spawn-семья не сломана).
+- **Маркер**: строка `[M-parfor-capture-callee-name-collides-std-local]`
+  убрана из `docs/plans/backlog-followups.md`.

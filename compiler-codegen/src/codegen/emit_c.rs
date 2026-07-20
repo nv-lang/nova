@@ -11512,6 +11512,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let mut bound: std::collections::HashSet<String> = std::collections::HashSet::new();
         Self::collect_bound_names_expr(body, &mut bound);
 
+        // [M-parfor-capture-callee-name-collides-std-local]: names that resolve
+        // (checker's `resolved_callees` channel, by exact Call-site `ExprId`) to a
+        // genuine module-fn/method callee are NOT variables — never consult
+        // `var_types` for them below. See `collect_resolved_call_target_names_expr`
+        // doc for the full root-cause (flat, never-per-function-scoped `var_types`
+        // leaking a same-named LOCAL from an unrelated CU function).
+        let mut resolved_fn_call_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        self.collect_resolved_call_target_names_expr(body, &mut resolved_fn_call_names);
+
         // A name is a capture only if: it is in outer var_types AND not bound inside spawn.
         // Each capture is recorded with `by_value` flag:
         //   - immutable (let, not let mut) → captured BY VALUE (snapshot at spawn site).
@@ -11542,6 +11551,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let mut captures: Vec<(String, String, bool)> = Vec::new();
         for name in refs {
             if bound.contains(&name) {
+                continue;
+            }
+            // [M-parfor-capture-callee-name-collides-std-local]: a resolved
+            // call-target name (module-fn/method the checker statically picked
+            // for THIS call-site) is never a captured variable — skip it BEFORE
+            // the var_types lookup below, which has no per-function scoping and
+            // would otherwise wrongly match a same-named LOCAL from a completely
+            // unrelated function elsewhere in the CU. The call ITSELF is emitted
+            // correctly regardless (mangled free-fn dispatch, `emit_call`); only
+            // the spurious ctx-capture field is what this skip prevents.
+            if resolved_fn_call_names.contains(&name) {
                 continue;
             }
             // [M-spawn-module-const-capture] (Plan 173.1, 2026-07-09): a MODULE-
@@ -14068,6 +14088,231 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         if let Some(t) = &block.trailing {
             Self::collect_idents_expr(t, out);
+        }
+    }
+
+    /// [M-parfor-capture-callee-name-collides-std-local] fix: a spawn-ctx
+    /// capture pre-pass companion to `collect_idents_expr` — hunts for
+    /// `Call{func: Ident(name), ..}` nodes whose call-site the checker
+    /// resolved to a genuine `FnDecl` (`self.resolved_callees`, Plan 172.1
+    /// U.3.4 channel — populated in `types/mod.rs::f1_check_call` ONLY for
+    /// an unambiguously-resolved free-fn/method call, NEVER for a dynamic
+    /// closure-variable invocation `f(x)`).
+    ///
+    /// `emit_spawn`'s capture loop subtracts these names from the free-
+    /// identifier set BY RESOLVE, not by a per-name blacklist — same disease
+    /// class as [M-callnorm-free-fn-name-collision] / 196.6: `var_types` is a
+    /// flat `HashMap<String,String>` that is NEVER per-function-scoped
+    /// (`emit_fn_scoped_inner` inserts params into it but never restores the
+    /// prior state at function-exit, unlike `var_mutable`) — an unrelated
+    /// function elsewhere in the CU with a LOCAL of the same bare name
+    /// (e.g. `uint64_t probe` inside std's float-format engine) leaves a
+    /// stale entry that a module-fn CALLEE of the same spelling (`probe()`
+    /// called from inside a `parallel for`) wrongly matched, emitting
+    /// `ctx->probe = probe;` with no such C identifier in scope — CC-FAIL
+    /// "use of undeclared identifier 'probe'".
+    ///
+    /// Mirrors `collect_idents_expr`'s full traversal (every nested position
+    /// a `Call` can hide in — match arms, loop/if bodies, trailing closures,
+    /// record-lit fields, etc.) so a resolved callee buried anywhere in the
+    /// spawn body is found. Unlike it, a bare `Ident` leaf is a no-op here —
+    /// this pass exists ONLY to name resolved call-targets, never ordinary
+    /// variable reads. An UNRESOLVED call target (a captured closure
+    /// variable invoked as `f(x)`) is intentionally never recorded — the
+    /// checker never puts such a call in `resolved_callees`, so the name
+    /// falls straight through `collect_idents_expr`'s ordinary collection
+    /// and stays capture-eligible exactly as before this fix.
+    fn collect_resolved_call_target_names_expr(
+        &self,
+        expr: &Expr,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        let rce = |this: &Self, e: &Expr, out: &mut std::collections::HashSet<String>| {
+            this.collect_resolved_call_target_names_expr(e, out)
+        };
+        match &expr.kind {
+            ExprKind::Binary { left, right, .. } => {
+                rce(self, left, out);
+                rce(self, right, out);
+            }
+            ExprKind::Unary { operand, .. } => rce(self, operand, out),
+            ExprKind::Call { func, args, trailing } => {
+                if let ExprKind::Ident(name) = &func.kind {
+                    if self.resolved_callees.contains_key(&expr.id) {
+                        out.insert(name.clone());
+                    }
+                }
+                rce(self, func, out);
+                for a in args { rce(self, a.expr(), out); }
+                if let Some(t) = trailing {
+                    match t {
+                        crate::ast::Trailing::Block(b) => self.collect_resolved_call_target_names_block(b, out),
+                        crate::ast::Trailing::Fn(f) => match &f.body {
+                            crate::ast::FnBody::Block(b) => self.collect_resolved_call_target_names_block(b, out),
+                            crate::ast::FnBody::Expr(e) => rce(self, e, out),
+                            crate::ast::FnBody::External => {}
+                        },
+                        crate::ast::Trailing::LegacyBlockWithParams(tb) => self.collect_resolved_call_target_names_block(&tb.body, out),
+                    }
+                }
+            }
+            ExprKind::Member { obj, .. } => rce(self, obj, out),
+            ExprKind::Index { obj, index } => {
+                rce(self, obj, out);
+                rce(self, index, out);
+            }
+            ExprKind::If { cond, then, else_ } => {
+                rce(self, cond, out);
+                self.collect_resolved_call_target_names_block(then, out);
+                if let Some(ElseBranch::Block(b)) = else_.as_ref() {
+                    self.collect_resolved_call_target_names_block(b, out);
+                }
+                if let Some(ElseBranch::If(e)) = else_.as_ref() {
+                    rce(self, e, out);
+                }
+            }
+            ExprKind::IfLet { scrutinee, then, else_, .. } => {
+                rce(self, scrutinee, out);
+                self.collect_resolved_call_target_names_block(then, out);
+                if let Some(ElseBranch::Block(b)) = else_.as_ref() {
+                    self.collect_resolved_call_target_names_block(b, out);
+                }
+                if let Some(ElseBranch::If(e)) = else_.as_ref() {
+                    rce(self, e, out);
+                }
+            }
+            ExprKind::While { cond, body, .. } => {
+                rce(self, cond, out);
+                self.collect_resolved_call_target_names_block(body, out);
+            }
+            ExprKind::WhileLet { scrutinee, body, .. } => {
+                rce(self, scrutinee, out);
+                self.collect_resolved_call_target_names_block(body, out);
+            }
+            ExprKind::For { iter, body, .. }
+            | ExprKind::ParallelFor { iter, body, .. } => {
+                rce(self, iter, out);
+                self.collect_resolved_call_target_names_block(body, out);
+            }
+            ExprKind::Loop { body, .. } => self.collect_resolved_call_target_names_block(body, out),
+            ExprKind::Match { scrutinee, arms } => {
+                rce(self, scrutinee, out);
+                for arm in arms {
+                    if let Some(g) = &arm.guard { rce(self, g, out); }
+                    match &arm.body {
+                        MatchArmBody::Expr(e) => rce(self, e, out),
+                        MatchArmBody::Block(b) => self.collect_resolved_call_target_names_block(b, out),
+                    }
+                }
+            }
+            ExprKind::Range { start, end, .. } => {
+                if let Some(s) = start { rce(self, s, out); }
+                if let Some(e) = end { rce(self, e, out); }
+            }
+            ExprKind::Lambda { body, .. } => rce(self, body, out),
+            ExprKind::TupleLit(elems) => {
+                for e in elems { rce(self, e, out); }
+            }
+            ExprKind::ArrayLit(elems) => {
+                for elem in elems {
+                    match elem {
+                        ArrayElem::Item(x) | ArrayElem::Spread(x) => rce(self, x, out),
+                    }
+                }
+            }
+            ExprKind::MapLit { elems, .. } => {
+                for me in elems {
+                    match me {
+                        crate::ast::MapElem::Pair(k, v) => {
+                            rce(self, k, out);
+                            rce(self, v, out);
+                        }
+                        crate::ast::MapElem::Spread(e) => {
+                            rce(self, e, out);
+                        }
+                    }
+                }
+            }
+            ExprKind::RecordLit { fields, .. } => {
+                for f in fields {
+                    if let Some(v) = &f.value { rce(self, v, out); }
+                }
+            }
+            ExprKind::Spawn(body) => rce(self, body, out),
+            ExprKind::With { bindings, body } => {
+                for b in bindings { rce(self, &b.handler, out); }
+                self.collect_resolved_call_target_names_block(body, out);
+            }
+            ExprKind::Coalesce(l, r) => {
+                rce(self, l, out);
+                rce(self, r, out);
+            }
+            ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::As(e, _) | ExprKind::Is(e, _) => {
+                rce(self, e, out);
+            }
+            ExprKind::Interrupt(Some(v)) => rce(self, v, out),
+            ExprKind::Block(b) => self.collect_resolved_call_target_names_block(b, out),
+            ExprKind::Supervised { body, cancel, deadline } => {
+                self.collect_resolved_call_target_names_block(body, out);
+                if let Some(c) = cancel { rce(self, c, out); }
+                if let Some(dl) = deadline { rce(self, &dl.expr, out); }
+            }
+            ExprKind::Detach(b) | ExprKind::Blocking(b) => self.collect_resolved_call_target_names_block(b, out),
+            ExprKind::Select { arms } => {
+                for arm in arms {
+                    match &arm.op {
+                        SelectOp::Recv { chan, .. } => rce(self, chan, out),
+                        SelectOp::Send { chan, value } => {
+                            rce(self, chan, out);
+                            rce(self, value, out);
+                        }
+                        SelectOp::Default => {}
+                    }
+                    if let Some(g) = &arm.guard { rce(self, g, out); }
+                    self.collect_resolved_call_target_names_block(&arm.body, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_resolved_call_target_names_block(
+        &self,
+        block: &Block,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        for stmt in &block.stmts {
+            self.collect_resolved_call_target_names_stmt(stmt, out);
+        }
+        if let Some(t) = &block.trailing {
+            self.collect_resolved_call_target_names_expr(t, out);
+        }
+    }
+
+    fn collect_resolved_call_target_names_stmt(
+        &self,
+        stmt: &Stmt,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        match stmt {
+            Stmt::Let(d) => self.collect_resolved_call_target_names_expr(&d.value, out),
+            Stmt::Expr(e) => self.collect_resolved_call_target_names_expr(e, out),
+            Stmt::Assign { target, value, .. } => {
+                self.collect_resolved_call_target_names_expr(target, out);
+                self.collect_resolved_call_target_names_expr(value, out);
+            }
+            Stmt::Return { value: Some(v), .. } => self.collect_resolved_call_target_names_expr(v, out),
+            Stmt::Throw { value, .. } => self.collect_resolved_call_target_names_expr(value, out),
+            Stmt::ConsumeScope { init, body, .. } => {
+                self.collect_resolved_call_target_names_expr(init, out);
+                for s in &body.stmts {
+                    self.collect_resolved_call_target_names_stmt(s, out);
+                }
+                if let Some(t) = &body.trailing {
+                    self.collect_resolved_call_target_names_expr(t, out);
+                }
+            }
+            _ => {}
         }
     }
 

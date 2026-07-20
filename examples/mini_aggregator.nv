@@ -22,9 +22,10 @@ import std.time.duration
 // `timeout:` вместо `deadline: t0 + d` — обход
 // [M-vr-binop-wrapper-decl-order-standalone-cu]). Опоздавший спавн честно
 // ОБРЫВАЕТСЯ (его Time.sleep прерывается), канал остаётся пуст, исход —
-// "cancelled". Имя fn НЕ `probe` — обход
-// [M-parfor-capture-callee-name-collides-std-local] (оба — backlog-followups).
-fn ask_source(latency_ms int) Time -> str {
+// "cancelled". Имя fn — `probe` (было `ask_source`): пин закрытого
+// [M-parfor-capture-callee-name-collides-std-local] — коллизия имени с
+// std-локалом больше не роняет capture-анализ spawn-ctx.
+fn probe(latency_ms int) Time -> str {
     ro { tx, rx } = Channel.new(1)
     mut timed_out = false
     with Fail[TimeoutError] = |_e| { timed_out = true } {
@@ -48,7 +49,7 @@ fn ask_source(latency_ms int) Time -> str {
 // Fan-out: все источники стартуют ОДНОВРЕМЕННО, результат собирается в []str.
 fn fan_out(latencies []int) Time -> []str {
     ro outcomes = parallel for i int in 0..latencies.len() {
-        ask_source(latencies[i])
+        probe(latencies[i])
     }
     outcomes
 }
