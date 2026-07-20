@@ -31007,3 +31007,10 @@ current, byte-behaviour). Спека: 02-types §D358 Ф.2-амендмент (`
   release`: PASS 4 FAIL 0 SKIP 5 (spawn-семья не сломана).
 - **Маркер**: строка `[M-parfor-capture-callee-name-collides-std-local]`
   убрана из `docs/plans/backlog-followups.md`.
+
+## [M-p200-17-remaining-1-fmtbuf] ЗАКРЫТ (2026-07-20, worktree nova-p17split, ветка p200-17-split, haiku)
+
+- **Суть**: Пункт 17 плана 200 (инлайн-тесты → пир-файлы *_test.nv) требовал конверсии 9 файлов. Восьмой файл был успешно сплитнут ранее; последний `std/src/runtime/fmt_buf.nv` содержит 8 инлайн-тестов (337 строк кода + 215 строк тестов), был заблокирован компиляторным багом в import-резолвере (`[M-imports-entry-folder-module-self-cycle-empty-exports]`, зафиксировано в той же волне).
+- **Фикс**: Split на folder-модуль (std/src/runtime/fmt_buf/{core.nv,core_test.nv}, mirror time/duration/). core.nv: 337 строк (типы, функции), core_test.nv: module-строка + scratch-функция + 8 test-блоков (100 строк). Export-поверхность сохранена (Align/FloatKind/Sign/FmtKind экспортированы, остальное приватно).
+- **Гейты**: `nova test std/src/runtime/fmt_buf/core_test.nv` PASS (8 тестов); `nova test std/src/runtime/string_builder_test.nv` PASS; `nova check std/src/runtime` PASS 18/0; `nova test std/src/checksums` PASS 3/0.
+- **Маркеры**: `[M-p200-17-remaining-1-fmtbuf]` убран из backlog-followups.md; Пункт 17 отмечен 9/9 ✅ в 200-std-improvements.md (99 тестов в пирах, 0 в имплементации).
