@@ -607,8 +607,18 @@ fn handle_prime(state: &DaemonState, repo_root: &Path, req: PrimeRequest) -> Pri
         tc_guard.as_ref().and_then(|e| e.toolchain.vcvars_path().map(|p| p.to_path_buf()));
     drop(tc_guard);
 
-    let libuv_wire = {
-        let rt_dir = PathBuf::from(&req.rt_dir);
+    // Осторожно: `detect_or_build_libuv` делает `std::process::exit(1)` при
+    // отсутствующем libuv submodule (FATAL — обычное поведение для
+    // одноразового CLI-процесса). Демон — РЕЗИДЕНТНЫЙ процесс: такой exit
+    // убил бы кэш для ВСЕХ будущих клиентов, не только текущего запроса.
+    // Пре-проверка ниже дублирует ПЕРВУЮ проверку самой функции — если её
+    // не пройти, тихо возвращаем `None` (клиент падает назад на свой
+    // собственный `detect_or_build_libuv`, который честно даст тот же
+    // FATAL exit — не хуже pre-219 поведения, просто не рушит демон).
+    let rt_dir = PathBuf::from(&req.rt_dir);
+    let libuv_wire = if !rt_dir.join("libuv").join("include").join("uv.h").is_file() {
+        None
+    } else {
         let vcvars_str = vcvars_path.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
         let lkey = format!("{}|{}", req.rt_dir, vcvars_str);
         let cached = state.libuv.lock().unwrap().get(&lkey).cloned();
@@ -900,7 +910,10 @@ mod tests {
         let envelope = Envelope { token: info.token.clone(), body: RequestBody::Status };
         send_request(&mut stream, &envelope).expect("send");
         match read_response(stream).expect("response") {
-            Response::Status(s) => assert_eq!(s.requests_served, 0),
+            // counter includes THIS Status request itself (incremented
+            // before dispatch, same as every request kind) — first request
+            // served -> 1, not 0.
+            Response::Status(s) => assert_eq!(s.requests_served, 1),
             _ => panic!("expected Status"),
         }
 
