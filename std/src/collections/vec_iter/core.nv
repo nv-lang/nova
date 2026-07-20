@@ -644,6 +644,15 @@ export fn[I Next[T]] I mut @reduce(f fn(T, T) -> T) -> Option[T] {
 }
 
 /// Smallest element by `T`'s `Compare`, or `None` if empty.
+/// [M-202-ident-x-module-alias-collision] fix: match-arm bind was named
+/// bare `x` — a checker gap (`match_arm_bindings` can't resolve the
+/// generic `Option[T]` scrutinee of `@next()` inside THIS generic body, so
+/// `x` never lands in `scope`) let it fall through to the `imported_modules`
+/// module-call branch of `f1_check_call`'s `Member` dispatch whenever a
+/// USER program imported any module whose last path segment was literally
+/// `x` — false `[E7401] no function 'compare' in module 'x'`. Renamed to
+/// `cand` (checker gap itself is a separate, deeper latent issue — not
+/// fixed here, see backlog).
 export fn[I Next[T], T Compare] I mut @min() -> Option[T] {
     mut best = match @next() {
         Some(first) => first,
@@ -651,7 +660,7 @@ export fn[I Next[T], T Compare] I mut @min() -> Option[T] {
     }
     while true {
         match @next() {
-            Some(x) => { if x.compare(best) < 0 { best = x } },
+            Some(cand) => { if cand.compare(best) < 0 { best = cand } },
             None => return Some(best),
         }
     }
@@ -659,6 +668,8 @@ export fn[I Next[T], T Compare] I mut @min() -> Option[T] {
 }
 
 /// Largest element by `T`'s `Compare`, or `None` if empty.
+/// [M-202-ident-x-module-alias-collision] fix: see `@min` above (same
+/// bare-`x` match-arm-bind collision with imported module aliases).
 export fn[I Next[T], T Compare] I mut @max() -> Option[T] {
     mut best = match @next() {
         Some(first) => first,
@@ -666,7 +677,7 @@ export fn[I Next[T], T Compare] I mut @max() -> Option[T] {
     }
     while true {
         match @next() {
-            Some(x) => { if x.compare(best) > 0 { best = x } },
+            Some(cand) => { if cand.compare(best) > 0 { best = cand } },
             None => return Some(best),
         }
     }

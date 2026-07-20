@@ -611,6 +611,18 @@ export fn BoxIter[T] mut @for_each(f fn(T) -> ()) -> () {
 }
 
 /// Smallest remaining element by the element's own `Compare`, or `None`.
+/// [M-202-ident-x-module-alias-collision] fix: match-arm bind was named
+/// bare `x` — a checker gap (`match_arm_bindings` can't resolve the
+/// generic `Option[T]` scrutinee of `@next()` inside THIS generic body, so
+/// `x` never lands in `scope`) let it fall through to the `imported_modules`
+/// module-call branch of `f1_check_call`'s `Member` dispatch whenever a
+/// USER program imported any module whose last path segment was literally
+/// `x` — false `[E7401] no function 'compare' in module 'x'`. Renamed to
+/// `cand` (checker gap itself is a separate, deeper latent issue — not
+/// fixed here, see backlog). Mirror of `vec_iter/core.nv`'s identical fix
+/// (not empirically reached by the marker's own repro — `vec_lazy` wasn't
+/// pulled into that build's module graph — but same textual pattern, fixed
+/// proactively).
 export fn BoxIter[T Compare] mut @min() -> Option[T] {
     mut best = match @next() {
         Some(first) => first,
@@ -618,7 +630,7 @@ export fn BoxIter[T Compare] mut @min() -> Option[T] {
     }
     while true {
         match @next() {
-            Some(x) => { if x.compare(best) < 0 { best = x } },
+            Some(cand) => { if cand.compare(best) < 0 { best = cand } },
             None => return Some(best),
         }
     }
@@ -626,6 +638,8 @@ export fn BoxIter[T Compare] mut @min() -> Option[T] {
 }
 
 /// Largest remaining element by the element's own `Compare`, or `None`.
+/// [M-202-ident-x-module-alias-collision] fix: see `@min` above (same
+/// bare-`x` match-arm-bind collision with imported module aliases).
 export fn BoxIter[T Compare] mut @max() -> Option[T] {
     mut best = match @next() {
         Some(first) => first,
@@ -633,7 +647,7 @@ export fn BoxIter[T Compare] mut @max() -> Option[T] {
     }
     while true {
         match @next() {
-            Some(x) => { if x.compare(best) > 0 { best = x } },
+            Some(cand) => { if cand.compare(best) > 0 { best = cand } },
             None => return Some(best),
         }
     }
