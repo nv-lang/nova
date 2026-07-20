@@ -17,6 +17,7 @@ use nova_codegen::test_runner;
 
 mod bench;
 mod build_cache;
+mod daemon;
 
 // ---------- Plan 36 R7: structured CLI error types ----------
 
@@ -702,6 +703,36 @@ enum Cmd {
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
+    /// Plan 219: resident build-daemon — amortizes dep-lock resolution +
+    /// toolchain/libuv detection across `nova build` invocations for this
+    /// workspace. Purely a latency optimization: `nova build` behaves
+    /// byte-identically with or without a running daemon (falls back to a
+    /// normal cold build whenever the daemon is absent/unreachable).
+    ///
+    /// Subcommands: start, stop, status.
+    #[command(subcommand)]
+    Daemon(DaemonCmd),
+}
+
+/// Plan 219: `nova daemon <subcommand>`.
+#[derive(Subcommand)]
+enum DaemonCmd {
+    /// Start the build-daemon for this workspace (idempotent — reports
+    /// "already running" if one is already reachable). Runs detached in
+    /// the background; independent of `NOVA_DAEMON` env (explicit command).
+    Start,
+    /// Stop the running build-daemon for this workspace, if any.
+    Stop,
+    /// Report whether a build-daemon is running for this workspace, plus
+    /// its resident-cache summary (toolchain/libuv/dep-lock ledger).
+    Status,
+    /// INTERNAL: run the daemon server in THIS process (blocks forever).
+    /// Used by `daemon start`'s detached re-exec and by auto-spawn on the
+    /// first `nova build` (under `NOVA_DAEMON=1`) — not intended for
+    /// direct interactive use (foreground use is fine for debugging: it
+    /// just means Ctrl+C is how you stop it instead of `daemon stop`).
+    #[command(hide = true)]
+    Serve,
 }
 
 /// Plan 57: `nova bench <subcommand>`.
@@ -4750,6 +4781,17 @@ fn cmd_gc_layout_analyze(path: &Path, format: &str) -> Result<()> {
     Ok(())
 }
 
+/// Plan 219: `nova daemon <start|stop|status|serve>`.
+fn cmd_daemon(sub: DaemonCmd) -> Result<()> {
+    let repo = find_repo_root()?;
+    match sub {
+        DaemonCmd::Start => daemon::cmd_start(&repo),
+        DaemonCmd::Stop => daemon::cmd_stop(&repo),
+        DaemonCmd::Status => daemon::cmd_status(&repo),
+        DaemonCmd::Serve => daemon::run_server(repo),
+    }
+}
+
 fn cmd_build(
     path: &Path,
     output: Option<&Path>,
@@ -4804,13 +4846,27 @@ fn cmd_build(
     };
     check_module_path(&path, &module)?;
 
+    // Plan 219: build-демон — резидентный cache/config-сервис. Один IPC
+    // round-trip здесь спрашивает разом: (а) toolchain/libuv-конфиг (нужны
+    // позже, у detect-шага ниже) и (б) можно ли пропустить дорогой
+    // dep-lock resolve (нужно немедленно, следующий блок). Недоступность
+    // демона/ошибка IPC → `None` — весь путь ниже байт-идентичен
+    // pre-219 поведению (см. `daemon.rs` module doc).
+    let pkg_dir_opt = nova_codegen::manifest::find_package_dir(&path);
+    let daemon_prime = daemon::try_prime(
+        &repo, toolchain, clang, vcvars, &paths.rt_dir, pkg_dir_opt.as_deref(),
+    );
+    if daemon_prime.is_none() {
+        daemon::maybe_auto_spawn(&repo);
+    }
+
     // Plan 03.1 Ф.4: синхронизировать `nova.lock` пакета entry-файла —
     // зафиксировать граф зависимостей (path/git) для воспроизводимой
     // сборки. Запускается ДО резолва импортов: материализует git-deps в
     // кэше и загружает зафиксированные commit'ы, которыми затем
     // пользуется резолвер. Файл без пакета (нет `nova.toml`) —
     // зависимостей нет, шаг пропускается.
-    if let Some(pkg_dir) = nova_codegen::manifest::find_package_dir(&path) {
+    if let Some(pkg_dir) = pkg_dir_opt.clone() {
         // Plan 204 дофикс №2 (owner correction): [replace] declared directly
         // in the COMMITTED nova.toml — HARD error (E_REPLACE_IN_MANIFEST),
         // checked FIRST (fail fast, before any git materialization work).
@@ -4820,8 +4876,25 @@ fn cmd_build(
                 .map_err(|e| anyhow!("{}", e))?;
         }
         let _t = nova_codegen::perf_timer::PerfTimer::new("dep-lock");
-        nova_codegen::lockfile::sync(&pkg_dir)
-            .map_err(|e| anyhow!("резолюция зависимостей (nova.lock): {}", e))?;
+        // Plan 219: демон подтвердил, что entry `nova.toml`+`nova.lock` не
+        // изменились с прошлого резолва в этом сеансе демона (хеш
+        // содержимого, см. `daemon::dep_combined_hash`) → пропускаем
+        // дорогой resolve_version_deps/collect_dep_graph_ex/перезапись, но
+        // git-пины подгружаем ВСЕГДА (`load_pins` — дешёвый первый шаг,
+        // который делает и сам `sync()`) — resolve_imports_inline ниже
+        // зависит от материализованных git-deps на диске.
+        let skip_dep_lock = daemon_prime.as_ref().map(|p| p.skip_dep_lock).unwrap_or(false);
+        if skip_dep_lock {
+            nova_codegen::lockfile::load_pins(&pkg_dir)
+                .map_err(|e| anyhow!("резолюция зависимостей (nova.lock): {}", e))?;
+            eprintln!("{} build daemon — dep-graph unchanged, skipping lock resolution", green("note:"));
+        } else {
+            nova_codegen::lockfile::sync(&pkg_dir)
+                .map_err(|e| anyhow!("резолюция зависимостей (nova.lock): {}", e))?;
+            if let Some(hash) = daemon::dep_combined_hash(&pkg_dir) {
+                daemon::try_commit(&repo, &pkg_dir, &hash);
+            }
+        }
         // Plan 03.4 Ф.3: capability-confined deps — проверить, что
         // зависимости с `forbid` не используют запрещённые эффекты.
         nova_codegen::effect_surface::check_forbidden(&pkg_dir)?;
@@ -5207,16 +5280,28 @@ fn cmd_build(
 
     // detect toolchain
     let mode = test_runner::Mode::parse(mode)?;
-    let pref = test_runner::ToolchainPref::parse(toolchain)?;
-    let tc_opts = test_runner::ToolchainOpts {
-        pref,
-        explicit_clang: clang,
-        explicit_vcvars: vcvars,
+    // Plan 219: используем toolchain от демона, если у него был валидный
+    // ответ для ЭТИХ pref/explicit_clang/explicit_vcvars/env (демон сам
+    // проверяет это по своему кэш-ключу — см. `daemon::try_prime` doc);
+    // иначе — обычный детект, байт-идентично pre-219 поведению.
+    let tc = match daemon_prime.as_ref().and_then(|p| p.toolchain.clone()) {
+        Some(tc) => tc,
+        None => {
+            let pref = test_runner::ToolchainPref::parse(toolchain)?;
+            let tc_opts = test_runner::ToolchainOpts {
+                pref,
+                explicit_clang: clang,
+                explicit_vcvars: vcvars,
+            };
+            test_runner::detect_toolchain(&tc_opts)?
+        }
     };
-    let tc = test_runner::detect_toolchain(&tc_opts)?;
 
     // detect libuv
-    let libuv = test_runner::detect_or_build_libuv(&paths.rt_dir, &repo, tc.vcvars_path());
+    let libuv = match daemon_prime.as_ref().and_then(|p| p.libuv.clone()) {
+        Some(cfg) => Some(cfg),
+        None => test_runner::detect_or_build_libuv(&paths.rt_dir, &repo, tc.vcvars_path()),
+    };
 
     test_runner::install_cancel_handler();
 
@@ -6660,6 +6745,7 @@ fn run() -> ExitCode {
         Cmd::GcLayoutAnalyze { path, format } => {
             cmd_gc_layout_analyze(&path, &format)
         }
+        Cmd::Daemon(sub) => cmd_daemon(sub),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
