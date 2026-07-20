@@ -441,13 +441,29 @@ export fn StringBuilder mut @pad_in_place(mark int, width int, fill char, align 
 //      Forwarding `prec` unclamped would diverge from the Ш0 baseline for
 //      `.65`+.
 
-const DISPLAY_INT_CAP int = 20        // "-9223372036854775808"
+const DISPLAY_INT_CAP int = 20        // decimal: "-9223372036854775808"
 const DISPLAY_F64_FIXED_CAP int = 380 // DBL_MAX (~309 int digits) + '.' + 64 decimals + slack
 const DISPLAY_F64_SHORTEST_CAP int = 24
 const DISPLAY_F32_CAP int = 16
 const DISPLAY_CHAR_CAP int = 4
 const DISPLAY_CHAR_DEBUG_CAP int = 8
 const DISPLAY_BOOL_CAP int = 5
+
+/// Natural (non-zero-pad) render cap for `int_fmt`, per radix — a 64-bit
+/// value needs UP TO 64 BINARY digits (`radix: 2`), 22 OCTAL digits, or 16
+/// HEX digits, each plus a 2-byte alt-radix prefix (`0b`/`0o`/`0x`) when
+/// `alt` fires; DECIMAL needs at most 20 (`"-9223372036854775808"`, the
+/// ONLY radix with a sign). Found by direct testing (2026-07-20, Ш3 gate):
+/// a first cut reused `DISPLAY_INT_CAP` (sized for decimal, 20) for EVERY
+/// radix — `int_fmt` "truncates defensively (never overruns buf)" per its
+/// own contract, so `${int.MIN:o}` (needs 22 octal digits) silently lost
+/// its last 2 digits instead of erroring, diverging from the Ш0 baseline.
+fn int_display_natural_cap(radix int) -> int {
+    if radix == 2 { 66 }
+    else if radix == 8 { 24 }
+    else if radix == 16 { 18 }
+    else { DISPLAY_INT_CAP }
+}
 
 /// `int` display/debug/radix render (decimal is `radix: 10`; Debug for int
 /// is identical to Display per conv.h, so this ONE function backs both).
@@ -459,16 +475,17 @@ const DISPLAY_BOOL_CAP int = 5
 export fn int_display_spec(mut sb StringBuilder, v int, width int, radix int, upper bool, zero_pad bool, sign_plus bool, alt bool, align Align, fill char) -> ()
     requires radix == 10 || radix == 16 || radix == 8 || radix == 2
 {
+    ro natural_cap = int_display_natural_cap(radix)
     if zero_pad {
-        ro cap = width.max(DISPLAY_INT_CAP)
+        ro cap = width.max(natural_cap)
         ro spec = FmtSpec { width, radix, upper, zero_pad: true, sign_plus, alt }
         sb.reserve(cap)
         unsafe { sb.advance(int_fmt(v, sb.spare(), cap, spec)) }
     } else {
         ro mark = sb.byte_len()
         ro spec = FmtSpec { width: 0, radix, upper, zero_pad: false, sign_plus, alt }
-        sb.reserve(DISPLAY_INT_CAP)
-        unsafe { sb.advance(int_fmt(v, sb.spare(), DISPLAY_INT_CAP, spec)) }
+        sb.reserve(natural_cap)
+        unsafe { sb.advance(int_fmt(v, sb.spare(), natural_cap, spec)) }
         sb.pad_in_place(mark, width, fill, align)
     }
 }
