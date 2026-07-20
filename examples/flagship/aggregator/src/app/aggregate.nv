@@ -75,9 +75,10 @@ import std.time.duration
 // per-call identity comes from the address, not from hidden state.
 const BASE_PORT int = 20000
 
-// [M-flagship-spawn-throw-segfault]: **compiler/runtime bug, NOT worked
-// around in-place — the DESIGN below routes around it entirely (Result, no
-// `throw`).** `fetch_one` originally used `Fail[AggError]` + `throw` (the
+// [M-flagship-spawn-throw-segfault]: **ЗАКРЫТ (RE-VERIFY — свежий бинарь не
+// воспроизводит; заморожен фикстурой regressions/spawn_throw_multifield_payload/).
+// Текст ниже историчен — объясняет, ПОЧЕМУ здесь Result-форма; менять её
+// обратно на throw не требуется (Result читабельнее для mixed-исходов).** `fetch_one` originally used `Fail[AggError]` + `throw` (the
 // natural shape, matches every other `Fail`-effect fn in std/) and was
 // discharged via `with Fail[AggError] = |e| {...} { fetch_one(...) }` inside
 // `spawn { ... }` (a PLAIN function call from inside spawn — not nested
@@ -117,9 +118,11 @@ const BASE_PORT int = 20000
 /// (see the marker above for why this is `Result`, not `throw`/`Fail`) or
 /// the real `Net` round-trip against whatever handler is ambient
 /// (`mock_net()` today).
-// [M-flagship-spawn-capture-value-struct-ptr-mismatch]: **compiler/runtime
-// bug, NOT worked around in-place — the SIGNATURE below routes around it
-// entirely (scalar params, no captured `Source` struct).** Discovered
+// [M-flagship-spawn-capture-value-struct-ptr-mismatch]: **ЗАКРЫТ (RE-VERIFY
+// 2026-07-20 — свежий бинарь компилирует и бежит; заморожен фикстурой
+// regressions/spawn_capture_value_struct/). Скалярная сигнатура ниже —
+// исторический обход; вернуть `fetch_one(source Source, idx)` можно
+// отдельной byte-churn-волной, не обязательно.** Текст ниже историчен: Discovered
 // 2026-07-14 while wiring deliverable 1 (real `supervised(deadline:)`
 // cancel, see file-header note): capturing a multi-field `value` struct
 // param (`Source`, 2 `str` + 3 scalar fields) into a `spawn { ... }` ctx
@@ -188,9 +191,13 @@ fn deadline_elapsed_ms(t0 Monotonic) Time -> int {
 /// returned `TaskResult` — Report and Emit are the same truth, by
 /// construction (no separate race to keep in sync).
 fn fetch_guarded(source Source, shared_deadline Monotonic, idx int) Net Time Emit -> TaskResult {
-    // [M-flagship-monotonic-now-bare-binding-ice]: an un-annotated
-    // `ro t0 = Monotonic.now()` ICEs emit_c.rs ("[P67-LEGACY] Path call
-    // return type unknown for method=now — checker must annotate") — the
+    // [M-flagship-monotonic-now-bare-binding-ice]: ЗАКРЫТ (попутно M-176
+    // Path→Member фиксом 67717dcb1/747a79c65; заморожен фикстурой
+    // regressions/monotonic_now_bare_binding/; const-ресивер-shape той же
+    // семьи ЖИВ — [M-p67-path-call-const-receiver-method-ice], backlog).
+    // Аннотации `Monotonic` по файлу оставлены (безвредны). Историческое:
+    // un-annotated `ro t0 = Monotonic.now()` ICE'ило emit_c.rs ("[P67-LEGACY]
+    // Path call return type unknown for method=now — checker must annotate") — the
     // checker apparently needs an expected-type hint (a declared LHS type,
     // or the call used directly as an argument, as in
     // std/concurrency/supervised_deadline_test.nv's

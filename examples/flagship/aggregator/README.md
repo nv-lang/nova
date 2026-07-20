@@ -278,10 +278,12 @@ examples/flagship/aggregator/
   вечный клин» устранён pump-фиксом (см. блок ниже). При изменении
   константы — перегнать burst-гейт `xargs -P80`/`-P200` (см. main.nv,
   док-комментарий `MAX_INFLIGHT_CONNS`).
-  `[M-187-nested-spawn-scope-var-cc-fail]` (компилятор-баг: `spawn`,
-  вложенный в `spawn` под одним `supervised`, CC-FAIL'ит на сгенерированном
-  C) по-прежнему в силе для `spawn`, но `detach` — другой codegen-путь, не
-  задет.
+  `[M-187-nested-spawn-scope-var-cc-fail]` ЗАКРЫТ (фикс `emit_spawn`:
+  scope-queue всегда пробрасывается через ctx-поле `_nova_captured_scope_q`;
+  заморожен фикстурой `regressions/nested_spawn_scope_var/`) — историческое
+  упоминание «в силе» устарело 2026-07-20. Вся spawn-семья компилятор-багов
+  демо (throw-segfault, struct-capture, monotonic-ICE, nested-spawn) закрыта
+  и заморожена регресс-фикстурами в `regressions/`.
 - **Стабильность сервера (обновлено 2026-07-16 — прежние блокеры ЗАКРЫТЫ):**
   ранние заходы фиксировали, что сервер виснет на 2-3-м запросе и умирает в
   простое. ВСЁ ЭТО ПОЧИНЕНО и влито в main:
