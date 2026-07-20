@@ -92,8 +92,21 @@ void nova_gc_init(void) {
     GC_set_no_dls(1);
 
     GC_INIT();
-    /* Allow GC to run finalisers / collect aggressively */
-    GC_set_all_interior_pointers(1);
+    /* Allow GC to run finalisers / collect aggressively.
+     *
+     * [M-boehm-large-buffer-retention-fiber-reuse] DISCRIMINATOR (env-gated,
+     * default = historical behavior, zero overhead): interior pointers make
+     * ANY conservatively-scanned word that points ANYWHERE inside a heap
+     * object retain the whole object — so a stale stack word landing inside a
+     * KB-scale buffer retains it (retention ∝ buffer size). NOVA_GC_NO_INTERIOR=1
+     * turns them off to measure how much of the residual leak is interior-
+     * pointer amplification vs. base-pointer hits. DIAGNOSTIC ONLY — Nova `[]T`
+     * slice views point into the middle of a Vec backing, so turning interior
+     * pointers off is NOT correctness-preserving in general. */
+    {
+        const char* e = getenv("NOVA_GC_NO_INTERIOR");
+        GC_set_all_interior_pointers((e && e[0] == '1') ? 0 : 1);
+    }
 }
 
 void nova_gc_shutdown(void) {
