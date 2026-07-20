@@ -25821,6 +25821,38 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // "arm only after init captured" discipline).
             if let Stmt::Let(decl) = s {
                 if let Some(init_c_type) = self.auto_cleanup_qualifies(decl) {
+                    if let Pattern::Ident { name, .. } = &decl.pattern {
+                        // Plan 217 BUGFIX (2nd — found via probe run after the
+                        // c_binding-timing fix: "use of undeclared identifier
+                        // 'r'"): the FAIL/INTERRUPT run-site code emitted
+                        // right below (still inside THIS prologue) references
+                        // the binding's C name — but the REAL `Stmt::Let`
+                        // declaration only happens later, when `emit_stmt`
+                        // sequentially reaches this exact statement. Hoist a
+                        // pre-declaration here (same discipline as the
+                        // `errdefer_refs` mechanism just below, which covers
+                        // OTHER defer bodies referencing a not-yet-declared
+                        // var — but that pass doesn't know about THIS var
+                        // since my "body" is a placeholder UnitLit, not a
+                        // real AST reference). `hoisted_let_vars` makes the
+                        // real `Stmt::Let` emit assignment-only (no
+                        // redeclaration, `is_hoisted` branch).
+                        if !self.hoisted_let_vars.contains(name.as_str()) {
+                            let init_expr = if init_c_type.ends_with('*') {
+                                "NULL".to_string()
+                            } else if Self::is_struct_type(&init_c_type) {
+                                "{0}".to_string()
+                            } else {
+                                "0".to_string()
+                            };
+                            let name_c = Self::mangle_field_name(name);
+                            self.line(&format!(
+                                "{} {} = {};  /* Plan 217: hoisted for auto-cleanup FAIL/INTERRUPT run-site */",
+                                init_c_type, name_c, init_expr));
+                            self.hoisted_let_vars.insert(name.clone());
+                            self.var_types.insert(name.clone(), init_c_type.clone());
+                        }
+                    }
                     let active_var = format!("_defer_{}_{}_active", block_id, idx);
                     let prevdl_var = format!("_defer_{}_{}_prevdl", block_id, idx);
                     let ccount_var = format!("_defer_{}_{}_ccount", block_id, idx);
@@ -25828,18 +25860,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let t = self.debt_strip_nova_trim_start(&init_c_type);
                         t.strip_prefix("NovaValue_").map(|s| s.to_string()).unwrap_or(t)
                     };
+                    // Plan 217 BUGFIX (found via probe run — CC-FAIL "expected
+                    // expression", `Nova_P217Res_consume_cleanup(, x)`): the
+                    // FAIL/INTERRUPT run-site C code below is emitted RIGHT
+                    // HERE, in this prologue — i.e. BEFORE the `Stmt::Let` is
+                    // ever sequentially reached by `emit_stmt`. Deferring
+                    // `c_binding` to `emit_auto_cleanup_arm` (which patches
+                    // `self.defer_scopes`'s copy much later) is USELESS for
+                    // this immediately-emitted code — it read the empty
+                    // placeholder. The binding's C NAME (and whether it needs
+                    // the value-record `&`-wrap) is fully determined by the
+                    // AST + `init_c_type` ALREADY, so compute it now instead;
+                    // `emit_auto_cleanup_arm` no longer needs to patch it
+                    // (kept as a defensive no-op re-assignment there).
+                    let c_binding = self.pattern_binding(&decl.pattern).unwrap_or_default();
+                    let c_binding = if init_c_type.starts_with("NovaValue_") && !init_c_type.ends_with('*') {
+                        format!("(&{})", c_binding)
+                    } else {
+                        c_binding
+                    };
                     entries.push(DeferEntry {
                         active_var: active_var.clone(),
                         body: Expr::new(ExprKind::UnitLit, Span::default()),
                         outcome_binding: None,
                         consume_policy: Some(ConsumePolicy {
                             type_name,
-                            // Real c_binding (incl. value-record `&`-wrap)
-                            // is filled in by `emit_auto_cleanup_arm` once
-                            // the binding is actually declared — placeholder
-                            // here is never read before that (entry stays
-                            // inactive, `active_var == 0`, until armed).
-                            c_binding: String::new(),
+                            c_binding,
                             prev_deadline_var: prevdl_var.clone(),
                             // Plan 217: ResourceTrace observability reused
                             // as-is (same NULL-guarded `on_resource_enter`/
@@ -25979,6 +26025,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let comp_chain_t = format!("_defer_{}_throw_chain", block_id);
         self.line(&format!("NovaErrorChain* {} = {}.error_suppressed;", comp_chain_t, failframe_var));
         for (i, entry) in entries.iter().enumerate().rev() {
+            // Plan 217: consume-flavored entry (bare auto-cleanup consume-
+            // let) — dispatch the REAL `@cleanup(outcome)` via
+            // `emit_consume_entry_cleanup`, mirroring `enter_consume_defer_
+            // scope`'s own FAIL run-site exactly (that copy is what the
+            // explicit `consume X = e { body }` form uses; this generic
+            // per-block loop previously only special-cased `consume_policy`
+            // in `leave_defer_scope`/`emit_early_exit_cleanup` — a bare
+            // auto-cleanup binding whose OWN block throws mid-way re-enters
+            // HERE first, and fell through to the plain-defer path (a no-op
+            // placeholder body), silently skipping cleanup on this run-site.
+            // Found via probe3's throw-path fixture — genuine gap, not a
+            // hypothetical.
+            if let Some(policy) = &entry.consume_policy {
+                self.line(&format!("if ({}) {{", entry.active_var));
+                self.indent += 1;
+                self.line(&format!("{} = 0;", entry.active_var));
+                let df = format!("_defer_{}_{}_tcdf", block_id, i);
+                self.emit_consume_entry_cleanup(
+                    policy,
+                    DeferOutcome::FromFrame(&failframe_var),
+                    &df,
+                    ConsumeTail::FailChain { failframe: failframe_var.clone(), chain: comp_chain_t.clone() });
+                self.indent -= 1;
+                self.line("}");
+                continue;
+            }
             // Plan 173 Ф.1 (#4): все defer'ы плейн — бегут на error-path.
             let df = format!("_defer_{}_{}_tdf", block_id, i);
             self.line(&format!("if ({}) {{", entry.active_var));
@@ -26049,6 +26121,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // longjmp'ing past the remaining cleanups. A cleanup PANIC (D13
         // abort-class) is NOT swallowed — it re-raises via nv_panic.
         for (i, entry) in entries.iter().enumerate().rev() {
+            // Plan 217: same gap as the FAIL run-site above — consume-
+            // flavored entry dispatches the real `@cleanup(Interrupt)` here
+            // too (mirrors `enter_consume_defer_scope`'s own INTERRUPT
+            // run-site; `ConsumeTail::Swallow` — a cleanup-failure during
+            // an interrupt-unwind is dropped, control must still reach the
+            // interrupt target).
+            if let Some(policy) = &entry.consume_policy {
+                self.line(&format!("if ({}) {{", entry.active_var));
+                self.indent += 1;
+                self.line(&format!("{} = 0;", entry.active_var));
+                let df = format!("_defer_{}_{}_icdf", block_id, i);
+                self.emit_consume_entry_cleanup(policy, DeferOutcome::Interrupt, &df, ConsumeTail::Swallow);
+                self.indent -= 1;
+                self.line("}");
+                continue;
+            }
             self.line(&format!("if ({}) {{", entry.active_var));
             self.indent += 1;
             let idf = format!("_defer_{}_{}_idf", block_id, i);
