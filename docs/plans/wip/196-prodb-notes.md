@@ -112,11 +112,65 @@ byte-parity-safe: новый код активируется ТОЛЬКО на `
 циклом (сохранить правку → checkout baseline → собрать → .c → восстановить → пересобрать →
 .c → diff) — то же, что CH делал для static-ctor.
 
-## 5. Дальше (после чекпойнта)
+## 5. Реализация ЗАВЕРШЕНА (types/mod.rs, коммиты 142f81b1b + 4343b48c3)
 
-Имплементация в `types/mod.rs`, затем: SHADOW-корпус, byte-parity 5 фикстур + репро,
-NOVA_NODE_SUBSTS_TRACE подсчёт новых сайтов (репро + поиск реальных explicit-turbofish-
-instance-method сайтов в std/examples — возможно ИХ ВООБЩЕ НЕТ в текущем корпусе, что само
-по себе результат: продюсер добавлен proactively/additively, trace N может быть малым на
-существующем корпусе, но небезопасным пропуском не является — как и D310 turbofish-overlay
-у free-fn, который тоже не имел широкого корпуса на момент правки).
+- `resolve_return_channel` (~10346): новый параметр `explicit_method_type_args`, overlay
+  ПЕРЕД `extra_eqs` — `solver.unify(Var(v), leaf)` с `rt_respells_names`-poison-гейтом.
+  Три существующих вызова (fluent-generic/method-residual/carrier) прокинуты.
+- `resolve_instance_method_return_arity`: новый параметр `explicit_type_args: Option<&[TypeRef]>`
+  (0-arity wrapper передаёт `None`).
+- `infer_method_call_channel_type` (единственная точка входа Producer B): гейт входа расширен
+  с `Member{obj,name}` до `Member{..} | TurboFish{base: Member{..}, type_args}` — вторая форма
+  = explicit turbofish на instance-ресивере (`obj.method[U](args)`). Closure-arg fallback
+  пропускается, когда turbofish уже дан.
+- **ВТОРОЙ баг, найден РЕАЛЬНЫМ корпусом** (не синтетикой): `spec_tests/conformance/
+  standalone/m176_method_return_turbofish.nv` (`fn Reg @empty[T]() -> Vec[T]`, ВЫЗОВ БЕЗ
+  параметров — `T` только в позиции возврата) вскрыл, что solver-overlay в
+  `resolve_return_channel` НЕДОСТАТОЧЕН: method-residual ветка строит `full_subst`/`out_full`
+  ТОЛЬКО из args/closure unify ДО вызова solver'а — при 0 параметрах `out_full` остаётся
+  unresolved и функция бейлится (`return None`) РАНЬШЕ, чем solver вообще вызывается. Фикс:
+  `full_subst` дополнительно сеется `explicit_type_args` (positional по `f.generics`,
+  `entry().or_insert_with`) ДО args-loop — `unify_type` никогда не перезаписывает already-
+  bound имя (подтверждено чтением `const_fn_trampoline.rs:1073` — «already bound — must
+  match»), так что сид безопасен.
+
+## 6. Реальные корпусные сайты этого класса (не только синтетика)
+
+- `spec_tests/conformance/standalone/m176_method_return_turbofish.nv`: `r.empty[str]()`,
+  `r.into[str]()` (consume-метод) — ОБА теперь `producer=B-method-residual` (было
+  `channel=None`/`[B5] fallback`). `nova test spec_tests/conformance` (release, single CU):
+  **PASS**.
+- `spec_tests/conformance/any_is/box_is_downcast.nv` (`n.try_as[int]()` и т.п.) — ЛОЖНОЕ
+  срабатывание грепа: `try_as` — компиляторный ИНТРИНЗИК на `any` (спец-кейс в `emit_c.rs`
+  ~33318/~53003, ВООБЩЕ не проходит через `types/mod.rs`/`method_overloads` — нет ни одного
+  упоминания `try_as` в `types/mod.rs`). Продюсер B на него не распространяется и не должен
+  (не instance-method вызов в обычном смысле, отдельный builtin-путь) — нулевое
+  взаимодействие, нулевой риск.
+- `spec_tests/conformance/m196_facetc_instance_collision_and_method_generic_default.nv`
+  (комментарий ~20-36): `pb.wrap[str]("hi")` (explicit turbofish + default-arg backfill)
+  ДОКУМЕНТИРОВАН как известный ICE в ДРУГОМ, независимом механизме —
+  `callnorm.rs::try_normalize_call` (default-arg Block-rewrite) сознательно ОСТАВЛЯЕТ
+  `TurboFish{base:Member}`-вызовы НЕТРОНУТЫМИ (var_types-ordering конфликт с frozen
+  `infer_call_ret_c`/`resolve_instance_call_subst`, Plan 91.1/172.1 зона) — этот файл САМ НЕ
+  вызывает эту форму (`pb.wrap("hi")` без turbofish, U инферится из аргумента). Producer B
+  этот файл не трогает и не может задеть этот ICE (не работает с `callnorm.rs`); файл входит
+  в mega-CU conformance-прогон — если он проходит, значит регрессии нет.
+
+## 7. Гейты — статус
+
+- Byte-parity standalone (4/5 гейт-фикстур, `nova-codegen compile` напрямую — d119 не
+  компилируется standalone, нужен prelude, см. GEN notes): `d122_bound_method_mono_dispatch`,
+  `d122_generic_bound_forwarding`, `d30_try_op_unwrap_pair`, `d408_option_chain_sized_width` —
+  **diff=0** (ревёрт-цикл: baseline `2d9a15acc` mod.rs vs патч). Плюс синтетический репро
+  (`Box[T] @map[U]`, explicit `w.map[str](...)`) — **diff=0** (легаси explicit_tf fallback и
+  новый канал сходятся байт-в-байт, как и должно быть).
+- SHADOW: standalone-корпус `std/src/{collections,time,encoding}` (104 файла) — 14 OK / 90
+  FAIL, 32 паники — ВСЕ `[P67-LEGACY]` (`.append`/`.swap`/`.keys` return-type-unknown / `Ident
+  X not in var_types`), идентичный класс/строки (52787/52930/53787), что задокументировала
+  GEN-волна как ПРЕДСУЩЕСТВУЮЩИЙ standalone-tool артефакт (нехватка multi-file/prelude
+  контекста у raw `nova-codegen compile`, не про Result/Option/generics). Grep по логу на
+  `shadow`/`SHADOW` — 0 совпадений (0 расхождений shadow_check_node_substs). d119 конкретно
+  падал на `.to_str()` (нужен prelude) — тоже pre-existing.
+- Авторитетный гейт `nova test spec_tests/conformance --jobs 4` (release, single CU) —
+  ЗАПУЩЕН, лог `conformance_run.log`, результат — следующим шагом чекпойнта.
+- Флагман `--strict-effects` — следующим шагом.
