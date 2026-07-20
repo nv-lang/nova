@@ -178,13 +178,67 @@ conformance-мега-CU НЕ перегонялся для ЭТОГО шага �
 `Option/Result@debug`-и-подобные КОНКРЕТНО-типизированные builtin-sum-методы в
 Channel 2 в чекере, вне периметра этой волны).
 
+## 5. П3 — re-trace `resolve_result_option_ret` (B06a/B10j): ❌ НЕ СНОШЕНО (1 живой класс найден)
+
+**Методология:** ПРАВИЛЬНАЯ (изолированные single-file repro через реальный
+пайплайн, `nova test <file>.nv`/`nova test <folder>`, `NOVA_TRACE_ICR=1`,
+optimized nova-cli binary собран с `RUSTFLAGS="-C debug-assertions=on"` —
+быстрый рантайм + `cfg(debug_assertions)` трейсы активны). Маркеры внутри самой
+`resolve_result_option_ret` (`emit_c.rs:19487`) — `GEN196_legacy_resolve_result_
+option_ret_RESULT`/`_OPTION` (не путать с B06a/B10j — те трассируют ВЫЗЫВАЮЩИЕ
+ветки, которые могут дойти до этой fn и получить `None` без трассировки самой
+fn — только внутренние маркеры доказывают, что функция РЕАЛЬНО произвела
+ответ).
+
+**Прогон (8 карта-фикстур, ПОШТУЧНО, изолированно):**
+`d85_question_return`, `d85_result_payload_width`, `d30_try_op_unwrap_pair`,
+`d408_option_chain_sized_width`, `d30_result_option_ret_generic`,
+`d88_default_generic_params`, `m196_facetc_generic_static_typaram`,
+`d119_option_result_method_level_generic` — **0 хитов** `GEN196_legacy_
+resolve_result_option_ret_*` на ВСЕХ восьми (B06a/B10j caller-ветки САМИ
+срабатывают на некоторых из них, но не доходят до трассируемого пути внутри
+`resolve_result_option_ret` — берут другой возврат раньше `?`).
+
+**Прогон std/{collections,time,encoding}** (папками, folder-CU):
+`std/src/collections` — 0 хитов; `std/src/time` — 0 хитов; **`std/src/encoding`
+— 1 хит** `GEN196_legacy_resolve_result_option_ret_RESULT`. Бисекция сузила до
+`std/src/encoding/serde` (изолированный прогон папки — тот же 1 хит,
+`PASS: 1 FAIL: 0`).
+
+**Точный класс (найден чтением, не измерен построчно — `icr_trace` дедуплицирует
+булево per-marker-per-process, не считает call-сайты):** generic array/slice
+serde-методы `[]T@serialize[S Serializer](mut s S) -> Result[(), SerError]` /
+`[]T.deserialize[D Deserializer](mut d D) -> Result[[]T, DeError]`
+(`std/src/encoding/serde/serde.nv:299,307`), вызываемые на конкретном
+element-типе — напр. `@tags.serialize(s)` где `tags: []str`
+(`std/src/encoding/serde/manual_roundtrip_test.nv:43`). Method-level generic
+(`S`/`D` Serializer/Deserializer) + `Result[(), SerError]`/`Result[[]T, DeError]`
+возврат → `B06a_method_overload_sentinel_mono` → `resolve_result_option_ret`
+резолвит РЕАЛЬНО (не откатывается раньше).
+
+**Вывод:** `resolve_result_option_ret` ОСТАЁТСЯ ЖИВОЙ — снос НЕ выполнен
+(инструкция задания: «если жив — точный класс+число, доложи (НЕ снос)»).
+Число: **1 подтверждённый живой класс** (generic slice-serde
+serialize/deserialize) в изолированном std-корпусе; 0 хитов на всех 8
+карта-фикстурах. Producer B (turbofish instance-method node_substs) закрыл
+СВОЙ класс (explicit-turbofish instance-methods), но НЕ покрывает
+generic-slice-extension-method + Result-return без турбофиша — за пределами
+периметра Producer B (см. `docs/plans/wip/196-prodb-notes.md` §1: «Producer B
+целится в generic INSTANCE-методы user-типов… B11q/B11r обслуживают BUILTIN
+Option/Result» — этот serde-класс третий: generic SLICE-extension-метод,
+ни то ни другое). Маркер для будущей волны: доресолвить `[]T@serialize`/
+`[]T.deserialize`-класс в Channel 2 (чекер), тогда `resolve_result_option_ret`
+можно будет пере-детачить.
+
 ## Статус пунктов (сводка, обновляется)
 
 - П1 (If-body peek): ✅ ЗАКРЫТО (коммит `0d4ee870d`, гейты зелёные).
 - П2 (снос B11q/B11r): ❌ НЕ СНОШЕНО — честный отрицательный вердикт (живой
   corpus-хит `Option@debug`, вне closure/generic периметра П1), doc-маркер
   `[M-196-closeout]` оставлен, детач-код удалён.
-- П3 (re-trace resolve_result_option_ret / B06a-B10j): В РАБОТЕ.
-- П4 (re-trace rt_slots_from_args): НЕ НАЧАТО.
+- П3 (re-trace resolve_result_option_ret / B06a-B10j): ❌ НЕ СНОШЕНО — 1 живой
+  класс (generic slice-serde serialize/deserialize, std/src/encoding/serde),
+  0 хитов на 8 карта-фикстурах. Снос НЕ выполнен (жив).
+- П4 (re-trace rt_slots_from_args): В РАБОТЕ.
 - П5 (терминал-фиксы по зондам wip/): НЕ НАЧАТО.
 - П6 (реестр 196-one-truth-closeout.md): НЕ НАЧАТО.
