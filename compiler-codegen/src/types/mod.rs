@@ -16918,6 +16918,130 @@ impl<'a> TypeCheckCtx<'a> {
             Stmt::Expr(_) | Stmt::Assign { .. } | Stmt::TupleAssign { .. }))
     }
 
+    /// [M-196-closeout-if-body-peek] Narrow per-branch peek used ONLY by
+    /// `closure_if_ctor_peek` below — recognizes the builtin Option/Result ctor
+    /// shapes that `infer_expr_type` structurally cannot resolve without an
+    /// `expected` type (bare `None`, single-arg `Some`/`Ok`/`Err` calls — see
+    /// `materialize_literal_coercion`'s ctor arm, ~13724, which is expected-type-
+    /// driven, the REVERSE direction from this peek). Falls back to
+    /// `infer_expr_type` (unchanged) for anything else, so already-working shapes
+    /// (e.g. a nested call that itself returns a concrete `Option[T]`/`Result[T,E]`)
+    /// keep working exactly as before.
+    fn closure_if_ctor_branch_peek(
+        &self,
+        e: &Expr,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<ClosureIfCtorBranch> {
+        if let ExprKind::Ident(n) = &e.kind {
+            if n == "None" {
+                return Some(ClosureIfCtorBranch::Option(None));
+            }
+        }
+        if let ExprKind::Call { func, args, .. } = &e.kind {
+            if args.len() == 1 {
+                if let ExprKind::Ident(ctor) = &func.kind {
+                    let inner = self.infer_expr_type(args[0].expr(), scope);
+                    match ctor.as_str() {
+                        "Some" => return Some(ClosureIfCtorBranch::Option(inner)),
+                        "Ok" => return Some(ClosureIfCtorBranch::Result(inner, None)),
+                        "Err" => return Some(ClosureIfCtorBranch::Result(None, inner)),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        Self::typeref_as_ctor_branch(self.infer_expr_type(e, scope)?)
+    }
+
+    /// A concrete `Option[T]`/`Result[T,E]` (already fully resolved, e.g. by a
+    /// nested call) also counts as a known branch — both slots known.
+    fn typeref_as_ctor_branch(t: TypeRef) -> Option<ClosureIfCtorBranch> {
+        if let TypeRef::Named { path, generics, .. } = &t {
+            match (path.last().map(String::as_str), generics.as_slice()) {
+                (Some("Option"), [ty]) => {
+                    return Some(ClosureIfCtorBranch::Option(Some(ty.clone())));
+                }
+                (Some("Result"), [ty, ety]) => {
+                    return Some(ClosureIfCtorBranch::Result(Some(ty.clone()), Some(ety.clone())));
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// [M-196-closeout-if-body-peek] Closes the last producer gap documented by
+    /// the builtin-producer wave (`docs/plans/wip/196-builtin-notes.md` §2):
+    /// `ClosureBody::Expr(If{..})` combinator bodies like
+    /// `|x| if x == 0 { None } else { Some(x) }` — REAL corpus site,
+    /// `spec_tests/conformance/plan200_14_option_result_flat_map_filter.nv:44`
+    /// (`a.flat_map(|x| if x == 0 { None } else { Some(x) })`, test "f itself can
+    /// return None (real bind, not just map)"). `infer_expr_type`'s existing
+    /// `ExprKind::If` arm (Plan 125/172.1, D275 unit-domination, unchanged here)
+    /// bails on this shape because NEITHER branch alone resolves without ctor-aware
+    /// peeking (`None` bare-Ident is generic-Option-excluded, `Some(x)` has no
+    /// expected-type context) — deliberately scoped to closure-peek callers only
+    /// (NOT folded into shared `infer_expr_type`, which has 249 unrelated
+    /// consumers; a narrow local helper keeps blast radius to zero elsewhere).
+    ///
+    /// Gate: `If{then, else_: Some(ElseBranch::Block)}` only (no elif chains — the
+    /// real corpus shape is a plain two-way branch; conservative, matches the
+    /// "peek is read-only best-effort, not an interpreter" contract of the sibling
+    /// gates in this file). Both branch blocks must be stmt-empty-or-peek-safe
+    /// (`closure_block_stmts_are_peek_safe`) with SOME trailing expr. Each
+    /// branch's trailing expr is peeked via `closure_if_ctor_branch_peek`; the two
+    /// results must agree on the SAME sum (Option xor Result) and every generic
+    /// slot known by either side must not conflict — else bail (`None`, safe
+    /// legacy fallback, exactly the pre-existing behavior).
+    fn closure_if_ctor_peek(
+        &self,
+        e: &Expr,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<TypeRef> {
+        let ExprKind::If { then, else_: Some(crate::ast::ElseBranch::Block(eb)), .. } = &e.kind
+        else {
+            return None;
+        };
+        if !Self::closure_block_stmts_are_peek_safe(&then.stmts)
+            || !Self::closure_block_stmts_are_peek_safe(&eb.stmts)
+        {
+            return None;
+        }
+        let then_e = then.trailing.as_deref()?;
+        let else_e = eb.trailing.as_deref()?;
+        let a = self.closure_if_ctor_branch_peek(then_e, scope)?;
+        let b = self.closure_if_ctor_branch_peek(else_e, scope)?;
+        let merge_slot = |x: Option<TypeRef>, y: Option<TypeRef>| -> Option<Option<TypeRef>> {
+            match (x, y) {
+                (Some(tx), Some(ty)) => {
+                    if ResolvedType::from_type_ref(&tx) == ResolvedType::from_type_ref(&ty) {
+                        Some(Some(tx))
+                    } else {
+                        None // conflicting concrete types on the same slot — bail
+                    }
+                }
+                (Some(t), None) | (None, Some(t)) => Some(Some(t)),
+                (None, None) => Some(None),
+            }
+        };
+        match (a, b) {
+            (ClosureIfCtorBranch::Option(ta), ClosureIfCtorBranch::Option(tb)) => {
+                let t = merge_slot(ta, tb)??;
+                Some(TypeRef::Named { path: vec!["Option".to_string()], generics: vec![t], span: e.span })
+            }
+            (ClosureIfCtorBranch::Result(ta, ea), ClosureIfCtorBranch::Result(tb, eb2)) => {
+                let t = merge_slot(ta, tb)??;
+                let et = merge_slot(ea, eb2)??;
+                Some(TypeRef::Named {
+                    path: vec!["Result".to_string()],
+                    generics: vec![t, et],
+                    span: e.span,
+                })
+            }
+            _ => None, // mismatched sum kinds (Option vs Result) — bail, legacy fallback
+        }
+    }
+
     fn closure_arg_return_peek(
         &self,
         fp: &[TypeRef],
@@ -16940,9 +17064,13 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
                 match body {
-                    ClosureBody::Expr(be) => self.infer_expr_type(be, &cscope),
+                    ClosureBody::Expr(be) => self.infer_expr_type(be, &cscope)
+                        .or_else(|| self.closure_if_ctor_peek(be, &cscope)),
                     ClosureBody::Block(b) if Self::closure_block_stmts_are_peek_safe(&b.stmts) => {
-                        b.trailing.as_deref().and_then(|t| self.infer_expr_type(t, &cscope))
+                        b.trailing.as_deref().and_then(|t| {
+                            self.infer_expr_type(t, &cscope)
+                                .or_else(|| self.closure_if_ctor_peek(t, &cscope))
+                        })
                     }
                     _ => None,
                 }
@@ -17117,10 +17245,14 @@ impl<'a> TypeCheckCtx<'a> {
             // statements class, kept consistent so both closure-arg producers
             // agree on what a "peekable" block looks like.
             let body_tr: Option<TypeRef> = match body {
-                ClosureBody::Expr(be) => self.infer_expr_type(be, &cscope),
+                ClosureBody::Expr(be) => self.infer_expr_type(be, &cscope)
+                    .or_else(|| self.closure_if_ctor_peek(be, &cscope)),
                 ClosureBody::Block(b) => {
                     if Self::closure_block_stmts_are_peek_safe(&b.stmts) {
-                        b.trailing.as_deref().and_then(|t| self.infer_expr_type(t, &cscope))
+                        b.trailing.as_deref().and_then(|t| {
+                            self.infer_expr_type(t, &cscope)
+                                .or_else(|| self.closure_if_ctor_peek(t, &cscope))
+                        })
                     } else {
                         None
                     }
@@ -17829,6 +17961,16 @@ fn lit_range_check(val: i128, name: &str) -> Option<String> {
 /// other constructor / non-matching expected (the literal then keeps its seed). Matched
 /// by the LAST path segment so `std.Option`-qualified forms resolve identically (§3 —
 /// no name-key special-casing of one builtin; this is the standard sum-ctor shape).
+/// [M-196-closeout-if-body-peek] Partial knowledge about which builtin sum an
+/// If-branch's trailing expr constructs, per-generic-slot (`Option` has one slot,
+/// `Result` has two — T and E, either possibly still unknown from THIS branch
+/// alone, e.g. bare `None`/`Err(e)` doesn't reveal T). See
+/// `closure_if_ctor_peek`/`closure_if_ctor_branch_peek` (`~16916`).
+enum ClosureIfCtorBranch {
+    Option(Option<TypeRef>),
+    Result(Option<TypeRef>, Option<TypeRef>),
+}
+
 fn ctor_payload_expected<'a>(ctor: &str, expected: &'a TypeRef) -> Option<&'a TypeRef> {
     let TypeRef::Named { path, generics, .. } = expected else {
         return None;
