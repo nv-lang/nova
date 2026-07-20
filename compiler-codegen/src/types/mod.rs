@@ -3219,6 +3219,23 @@ struct TypeCheckCtx<'a> {
     /// Ф.1: объявления типов — для разворачивания alias/newtype при
     /// категоризации (assignability сравнивает категории, не имена).
     types: HashMap<String, &'a TypeDecl>,
+    /// [M-p67-path-call-const-receiver-method-ice]: top-level `const NAME TYPE
+    /// = value` name → its declared `TYPE`, for every const in the merged CU
+    /// (`module.items`, built once in `build`). Consts WITHOUT an explicit type
+    /// annotation (`const X = 120`, inferred from `value`) are absent here —
+    /// out of scope for this fix. Consumed by `infer_method_call_channel_type`'s
+    /// Path-shape arm: a SCREAMING_SNAKE_CASE const receiver (`BUDGET_MS.
+    /// to_millis()`) is folded by parser/mod.rs's PascalCase path-collector
+    /// into `ExprKind::Path(["BUDGET_MS", "to_millis"])` (a spelling-only
+    /// heuristic, blind to "is this actually a bound identifier") instead of
+    /// the `Member{obj: Ident, name}` shape a lowercase-first variable
+    /// receiver of the SAME method gets — this table lets the checker
+    /// recognize the receiver anyway and route it through the identical
+    /// instance-method resolution a Member-form call already uses. Types and
+    /// consts are disjoint Nova DECL namespaces, so a name present here is
+    /// NEVER also a genuine type/module Path receiver (`Monotonic.now()`) —
+    /// unambiguous.
+    const_types: HashMap<String, TypeRef>,
     /// Plan 214 (D429): `#coerce` pair registry (I type name → applicable
     /// pairs), consumed by `assignable`'s accept-path fallback (tried AFTER
     /// the single-wrapper fallback — R11 makes the two mutually exclusive by
@@ -3976,7 +3993,19 @@ impl<'a> TypeCheckCtx<'a> {
         let coerce_lookup = |n: &str| types.get(n).map(|td| td.kind.clone());
         let (coerce_pairs, _coerce_errors_dup) = collect_coerce_pairs(module, &coerce_lookup);
 
-        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types, coerce_pairs, sum_variant_names, file_local_types, imported_modules,
+        // [M-p67-path-call-const-receiver-method-ice]: const-name → declared
+        // type, explicit-annotation consts only (see field doc on
+        // `const_types` above).
+        let mut const_types: HashMap<String, TypeRef> = HashMap::new();
+        for item in &module.items {
+            if let Item::Const(cd) = item {
+                if let Some(ty) = &cd.ty {
+                    const_types.entry(cd.name.clone()).or_insert_with(|| ty.clone());
+                }
+            }
+        }
+
+        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types, const_types, coerce_pairs, sum_variant_names, file_local_types, imported_modules,
             entry_imported_modules,
             entry_file_ids,
             const_fn_names,
@@ -16546,57 +16575,79 @@ impl<'a> TypeCheckCtx<'a> {
         e: &Expr,
         scope: &HashMap<String, TypeRef>,
     ) -> Option<TypeRef> {
-        let ExprKind::Call { func, .. } = &e.kind else { return None; };
+        let ExprKind::Call { func, args: call_args, .. } = &e.kind else { return None; };
+        // МЕРЖ ДВУХ ВОЛН 2026-07-20 (интегратор): entry принимает ТРИ AST-shape'а.
         // [M-196-producer-b-turbofish] (Plan 196 Producer B): `obj.method[U](args)` —
         // explicit METHOD-level turbofish on an INSTANCE receiver parses to
-        // `TurboFish{base: Member{obj,name}, type_args}` (parser/mod.rs ~8230: a `[T](args)`
-        // postfix-continuation is available to ANY base, not just a type-like one —
-        // `req.body.parse[T]()`). Structurally distinct from a static-ctor turbofish
-        // (`Type[T].new()` — TurboFish wraps the RECEIVER: `Member{obj: TurboFish{..}, name}`)
-        // — that shape is excluded further below unchanged (`obj.kind == TurboFish` guard).
-        // Widen the entry match to accept EITHER AST shape, carrying the explicit type-args
-        // alongside when present so they can overlay `resolve_return_channel`'s solver as
-        // ground truth (mirrors the free-fn/static-ctor D310 turbofish overlay).
-        let (member_expr, explicit_type_args): (&Expr, Option<&[TypeRef]>) = match &func.kind {
-            ExprKind::Member { .. } => (func.as_ref(), None),
-            ExprKind::TurboFish { base, type_args } if matches!(&base.kind, ExprKind::Member { .. }) => {
-                (base.as_ref(), Some(type_args.as_slice()))
+        // `TurboFish{base: Member{obj,name}, type_args}` (parser/mod.rs ~8230). Structurally
+        // distinct from a static-ctor turbofish (`Type[T].new()` — TurboFish wraps the
+        // RECEIVER) — excluded below unchanged (`obj.kind == TurboFish` guard). Explicit
+        // type-args overlay `resolve_return_channel`'s solver as ground truth (D310 mirror).
+        // [M-p67-path-call-const-receiver-method-ice]: `Path([CONST_NAME, method])` —
+        // a `const NAME TYPE = value` receiver in conventional SCREAMING_SNAKE_CASE: the
+        // parser's PascalCase path-collector (`starts_uppercase` gate) folds `NAME.method`
+        // into a 2-segment Path — spelling-only — instead of the `Member` shape a
+        // lowercase-first variable receiver gets. `const_types` (built once in
+        // `TypeCheckCtx::build`) recognizes the receiver and routes it through the
+        // IDENTICAL resolution — one channel, one behavior, any surface spelling.
+        let (recv_ty, name, explicit_type_args): (TypeRef, &String, Option<&[TypeRef]>) =
+            match &func.kind {
+            ExprKind::Member { .. } | ExprKind::TurboFish { .. } => {
+                let (member_expr, explicit_ta): (&Expr, Option<&[TypeRef]>) = match &func.kind {
+                    ExprKind::Member { .. } => (func.as_ref(), None),
+                    ExprKind::TurboFish { base, type_args }
+                        if matches!(&base.kind, ExprKind::Member { .. }) =>
+                    {
+                        (base.as_ref(), Some(type_args.as_slice()))
+                    }
+                    _ => return None,
+                };
+                let ExprKind::Member { obj, name } = &member_expr.kind else { return None; };
+                if name.starts_with('@') {
+                    return None;
+                }
+                // Exclude static-ctor forms (`Type[T].new()`, `[]T.new()`): their return is
+                // inferred by `infer_expr_type`'s ctor arms / `resolve_generic_static_return`,
+                // not the instance path.
+                if matches!(&obj.kind, ExprKind::TurboFish { .. }) {
+                    return None;
+                }
+                if let ExprKind::Path(parts) = &obj.kind {
+                    if parts.len() == 2 && parts[0] == "__array" {
+                        return None;
+                    }
+                }
+                // Receiver type: chain-aware (recurse for a Call receiver), else leaf via
+                // infer_expr_type.
+                let rt = self
+                    .infer_method_call_channel_type(obj, scope)
+                    .or_else(|| self.infer_expr_type(obj, scope))
+                    // 172.1.2 (Call:.len closure): третий источник — КАНАЛ: Member-ресиверы
+                    // generic-тел (`@_buckets`, `@data`) аннотированы Шагом 2b как
+                    // Named/TypeParam, но TypeRef-инференс их не видит. Восстановление
+                    // TypeRef — ЛОКАЛЬНОЕ (TypeParam(n) → Named{n} только для
+                    // method-резолюции; residual в out заново пометит Call-арм).
+                    .or_else(|| {
+                        if !obj.id.is_set() {
+                            return None;
+                        }
+                        let buf = self.resolved_types_buf.borrow();
+                        let rt = buf.get(&obj.id)?.clone();
+                        drop(buf);
+                        Self::resolved_to_typeref_tp(&rt, e.span)
+                    })?;
+                (rt, name, explicit_ta)
+            }
+            // [M-p67-path-call-const-receiver-method-ice]: `parts[0]` unambiguously a
+            // const (types/consts are disjoint Nova DECL namespaces) — a real
+            // static/type-namespace Path (`Monotonic.now()`, `Channel.new()`) never
+            // collides with a name present in `const_types`.
+            ExprKind::Path(parts) if parts.len() == 2 => {
+                let rt = self.const_types.get(parts[0].as_str())?.clone();
+                (rt, &parts[1], None)
             }
             _ => return None,
         };
-        let ExprKind::Member { obj, name } = &member_expr.kind else { return None; };
-        if name.starts_with('@') {
-            return None;
-        }
-        // Exclude static-ctor forms (`Type[T].new()`, `[]T.new()`): their return is inferred by
-        // `infer_expr_type`'s ctor arms / `resolve_generic_static_return`, not the instance path.
-        if matches!(&obj.kind, ExprKind::TurboFish { .. }) {
-            return None;
-        }
-        if let ExprKind::Path(parts) = &obj.kind {
-            if parts.len() == 2 && parts[0] == "__array" {
-                return None;
-            }
-        }
-        // Receiver type: chain-aware (recurse for a Call receiver), else leaf via infer_expr_type.
-        let ExprKind::Call { args: call_args, .. } = &e.kind else { return None; };
-        let recv_ty = self
-            .infer_method_call_channel_type(obj, scope)
-            .or_else(|| self.infer_expr_type(obj, scope))
-            // 172.1.2 (Call:.len closure): третий источник — КАНАЛ: Member-ресиверы
-            // generic-тел (`@_buckets`, `@data`) аннотированы Шагом 2b как
-            // Named/TypeParam, но TypeRef-инференс их не видит. Восстановление
-            // TypeRef — ЛОКАЛЬНОЕ (TypeParam(n) → Named{n} только для
-            // method-резолюции; residual в out заново пометит Call-арм).
-            .or_else(|| {
-                if !obj.id.is_set() {
-                    return None;
-                }
-                let buf = self.resolved_types_buf.borrow();
-                let rt = buf.get(&obj.id)?.clone();
-                drop(buf);
-                Self::resolved_to_typeref_tp(&rt, e.span)
-            })?;
         let call_arity = call_args.len();
         // Plan 196.5 Stage-A: this call-site's `ExprId` is the `node_substs` key producer B
         // writes under (propagated through `resolve_instance_method_return_arity` →
