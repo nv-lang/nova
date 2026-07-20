@@ -73,3 +73,21 @@ fast-forward на актуальный `main` (`git merge --ff-only main`,
   запросы не читаются). Нужен отдельный заход «Linux M:N server profile».
 - Волна закрыта частично: Dockerfile/README/bind-правка влиты; docker run-гейт
   переедет в закрытие маркера.
+
+## 2026-07-20 — docker run гейт (§7.5) ЗЕЛЁНЫЙ: волна 2 закрыта целиком
+
+Образ пересобран на свежем main (все рантайм-фиксы: guard-page слой 1
+`f6bb896da`, GC-marker слой 2 + spawnctx GC-roots `0cdd6140d`, work-conserving
+pump `14decdfb1`, admission 16 `57ee49073`; nova-tls с leak-фиксом по git):
+126МБ, `docker build ... && docker run --rm -p 8187:8187 aggregator-demo:local` —
+буквально «одной командой».
+
+Smoke в контейнере (Windows-хост, Docker Desktop/WSL2): boot `/` 200 →
+5× `/api/run?legend=demo` все 200 → 15с простоя → chaos-run 200 (раньше
+контейнер умирал именно тут) → snapshot жив (`fibers 12/12`, wall 1201ms).
+Burst `xargs -P40`: **ровно 16/40 отвечено 200** (= MAX_INFLIGHT_CONNS,
+admission работает как спроектирован), 24 честно отбиты, post-burst 200,
+контейнер Up. [M-187-docker-linux-runtime-hang] подтверждён закрытым и в
+докере, не только под WSL-гейтом волны слоя 2.
+
+Остаток волны 2: ghcr-публикация — за владельцем (решение о неймспейсе/тегах).
