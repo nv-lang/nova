@@ -1,16 +1,21 @@
-// [M-imports-entry-folder-module-self-cycle-empty-exports] NEGATIVE —
-// genuine two-way import cycle (`cyc_a` <-> `cyc_b`, see those files) must
-// still fail compilation after the entry-exports fix (2026-07-20): only the
-// CU *entry* module (this file) gets its export surface pre-seeded across
-// the cycle guard now; an ordinary cross-file cycle between two NON-entry
-// modules is unaffected — `cyc_b.b_calls_a` references `cyc_a.a_val` on the
-// leg of the cycle the guard can't yet see, so the whole TU is a hard
-// compile error, not a silent pass.
-// EXPECT_COMPILE_ERROR undefined identifier `a_val`
+// [M-imports-entry-folder-module-self-cycle-empty-exports] /
+// [M-imports-order-dependent-cycle] — POSITIVE (flipped 2026-07-20, see
+// `cyc_a.nv`/`cyc_b.nv` for the full history). D291 (07-modules.md)
+// explicitly allows cross-module import cycles; this fixture used to encode
+// a NEGATIVE expectation (compile MUST fail) that was actually just an
+// unfixed instance of the SAME order-dependent cycle-guard bug the
+// [M-imports-order-dependent-cycle] wave fixed (fmt_buf<->string_builder,
+// Plan 208 Ф.4R Ш1 finding) — `cyc_a`/`cyc_b` is structurally identical (a
+// module reached via a direct import, whose own nested import cycles back
+// to it) to the fmt_buf-first ordering that used to CODEGEN-FAIL. Now both
+// `cyc_a.a_val` (calls `b_val`) and `cyc_b.b_calls_a` (calls `a_val` back
+// across the cycle) resolve correctly.
 module entry_self_cycle.cycle_test
 
 import ./cyc_a.{a_val}
+import ./cyc_b.{b_calls_a}
 
-test "unreachable — TU must fail to compile before this runs" {
+test "genuine two-way import cycle resolves (D291)" {
     assert(a_val() == 3)
+    assert(b_calls_a() == 3)
 }

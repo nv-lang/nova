@@ -1,9 +1,15 @@
-// [M-imports-entry-folder-module-self-cycle-empty-exports] regression pair,
-// leg A. Genuine two-way import cycle: cyc_a imports cyc_b, cyc_b imports
-// cyc_a back — NEITHER file is the CU entry (entry_test.nv is), so this is
-// NOT the entry-exports-empty bug (fixed 2026-07-20); it is the pre-existing
-// D29 rev-5 / Plan 162 "collect-first" cycle guard, which must still catch
-// a real cross-file cycle: see `cyc_b.nv`'s `b_calls_a` for the failing leg.
+// [M-imports-entry-folder-module-self-cycle-empty-exports] /
+// [M-imports-order-dependent-cycle] regression pair, leg A. Genuine
+// two-way import cycle: cyc_a imports cyc_b, cyc_b imports cyc_a back —
+// NEITHER file is the CU entry (cycle_test.nv is). D291 (07-modules.md)
+// explicitly allows cross-module import cycles ("collect-signatures-first,
+// lazy bodies"); [M-imports-order-dependent-cycle] (2026-07-20) generalized
+// the entry-exports fix (2026-07-20) to ANY in-progress module, not just
+// the CU entry — a module's own exported names are cached as soon as its
+// items are parsed, before its own imports are followed, so a cyclic
+// back-edge now sees them instead of an empty set. This pair used to be a
+// NEGATIVE fixture (compile MUST fail) — now POSITIVE: `cyc_b.b_calls_a`
+// (leg B) legitimately resolves `a_val` across the cycle.
 module entry_self_cycle.cyc_a
 
 import ./cyc_b.{b_val}

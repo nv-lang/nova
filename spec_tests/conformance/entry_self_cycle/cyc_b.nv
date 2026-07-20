@@ -1,13 +1,13 @@
-// [M-imports-entry-folder-module-self-cycle-empty-exports] regression pair,
-// leg B. `cyc_b` imports `cyc_a` back (closing the cycle `cyc_a` -> `cyc_b`
-// -> `cyc_a`). By the time this import resolves, `cyc_a` is still
-// mid-resolution (in `in_progress`, not yet `visited`) — the cycle guard in
-// `resolve_one` early-returns with an EMPTY `visible_acc` for this leg, same
-// as before the entry-exports fix (that fix only special-cases the CU
-// *entry* module, not an ordinary two-way cycle between two imported
-// modules). `b_calls_a` below therefore references an identifier this file
-// never actually imported — the whole TU (`cycle_test.nv`) must fail with
-// `undefined identifier` on `a_val`, proving the guard is intact.
+// [M-imports-entry-folder-module-self-cycle-empty-exports] /
+// [M-imports-order-dependent-cycle] regression pair, leg B. `cyc_b` imports
+// `cyc_a` back (closing the cycle `cyc_a` -> `cyc_b` -> `cyc_a`). By the
+// time this import resolves, `cyc_a` is still mid-resolution (`in_progress`,
+// not yet fully `visited`) — but `[M-imports-order-dependent-cycle]`
+// (2026-07-20, `resolve_one` in `compiler-codegen/src/imports.rs`) now seeds
+// `visited[cyc_a]` with `cyc_a`'s own export names (computed from its
+// already-parsed items — no resolved imports needed, D291) as soon as
+// `cyc_a.nv` is parsed, BEFORE `cyc_a`'s own import of `cyc_b` is followed.
+// `b_calls_a` below therefore correctly sees `a_val` across the cycle.
 module entry_self_cycle.cyc_b
 
 import ./cyc_a.{a_val}

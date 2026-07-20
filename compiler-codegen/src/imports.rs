@@ -917,29 +917,11 @@ pub fn resolve_imports_inline_ex(
     // the entry_key comment above). Mirrors, per-file, the export-name
     // filter `resolve_one`'s own peer loop applies to every other module
     // (`module_has_exports` / `is_export` — Plan 81 Ф.1).
-    fn exported_names_from_items(items: &[Item]) -> Vec<String> {
-        let module_has_exports = items.iter().any(|item| match item {
-            Item::Fn(f) => f.is_export,
-            Item::Type(t) => t.is_export,
-            Item::Const(c) => c.is_export,
-            _ => false,
-        });
-        let mut names = Vec::new();
-        for item in items {
-            let (name, is_export) = match item {
-                Item::Type(t) => (Some(t.name.clone()), t.is_export),
-                Item::Fn(f) => (Some(f.name.clone()), f.is_export),
-                Item::Const(c) => (Some(c.name.clone()), c.is_export),
-                _ => (None, false),
-            };
-            if let Some(n) = name {
-                if !module_has_exports || is_export {
-                    names.push(n);
-                }
-            }
-        }
-        names
-    }
+    //
+    // [M-imports-order-dependent-cycle]: `exported_names_from_items` is now
+    // a top-level fn (defined above `resolve_one`) — the SAME entry-only
+    // trick below is generalized there to ANY in-progress (non-entry)
+    // module, not just the entry.
     let mut entry_export_names: Vec<String> = exported_names_from_items(&module.items);
     for sib in &siblings {
         entry_export_names.extend(exported_names_from_items(&sib.module.items));
@@ -1206,6 +1188,45 @@ pub fn resolve_imports_inline_ex(
     }
 
     Ok(())
+}
+
+/// [M-imports-order-dependent-cycle] (generalizes the entry-only
+/// `[M-imports-entry-folder-module-self-cycle-empty-exports]` fix,
+/// 2026-07-20): a module's exported-name SURFACE is computable from its own
+/// parsed `items` alone — it needs no resolved imports (D291: cross-module
+/// cycles are allowed; "collect-signatures-first, lazy bodies" is the
+/// stated architecture, but the actual `visited`/`module_exports_cache`
+/// population previously happened only AFTER a module's own imports had
+/// been (possibly cycle-guard-truncated) recursed into — not actually
+/// "signatures first"). Used both to seed the CU entry's export cache
+/// (`resolve_imports_inline_ex`) and, per this fix, to seed/extend ANY
+/// in-progress module's provisional export cache in `resolve_one` below,
+/// as soon as each of its (peer) files is parsed — BEFORE recursing into
+/// that file's own imports. Mirrors, per-file, the export-name filter
+/// `resolve_one`'s own peer loop applies to every other module
+/// (`module_has_exports` / `is_export` — Plan 81 Ф.1).
+pub(crate) fn exported_names_from_items(items: &[Item]) -> Vec<String> {
+    let module_has_exports = items.iter().any(|item| match item {
+        Item::Fn(f) => f.is_export,
+        Item::Type(t) => t.is_export,
+        Item::Const(c) => c.is_export,
+        _ => false,
+    });
+    let mut names = Vec::new();
+    for item in items {
+        let (name, is_export) = match item {
+            Item::Type(t) => (Some(t.name.clone()), t.is_export),
+            Item::Fn(f) => (Some(f.name.clone()), f.is_export),
+            Item::Const(c) => (Some(c.name.clone()), c.is_export),
+            _ => (None, false),
+        };
+        if let Some(n) = name {
+            if !module_has_exports || is_export {
+                names.push(n);
+            }
+        }
+    }
+    names
 }
 
 /// Plan 35 Ф.1 cycle detection (D29): DFS-recursive resolve.
@@ -1798,6 +1819,38 @@ fn resolve_one(
             for attr in &peer_module.attrs {
                 inherited_attrs.push(attr.clone());
             }
+        }
+
+        // [M-imports-order-dependent-cycle] (2026-07-20, generalizes
+        // [M-imports-entry-folder-module-self-cycle-empty-exports]): seed/
+        // extend `visited[module_key]` with THIS peer's own export surface
+        // RIGHT NOW — `peer_module.items` is fully parsed already, no
+        // recursion needed to know it (`exported_names_from_items` reads
+        // only items, per D291's stated "collect-signatures-first" design).
+        // Done BEFORE this peer's own imports are recursed into (below),
+        // so a cyclic back-edge reached from elsewhere in the DFS (e.g. a
+        // sibling top-level import of a module that mutually imports THIS
+        // one — the fmt_buf↔string_builder / Ф.4R Ш1 finding) sees these
+        // names via the `visited` check (ordered before the `in_progress`
+        // guard) instead of hitting the guard and getting an empty
+        // `visible_acc`. `module_key` is already in `in_progress` (inserted
+        // above, before this peer loop) — same "in both sets at once"
+        // precedent the entry-exports fix established; harmless no-op for
+        // any module never re-entered mid-resolve. Extends rather than
+        // overwrites: a multi-peer folder-module accumulates across peers
+        // as each is parsed (order within `resolved_paths` is Plan 42 rule
+        // B — alphabetical — same on every run, so accumulation order is
+        // deterministic even though it may still be PARTIAL if the cyclic
+        // back-edge fires before a later peer of this same module is
+        // reached — a monotonic, never-worse-than-before improvement, not
+        // a full fix for that narrower nested case). The final, complete
+        // `module_exports_cache` computed below (peer loop's end) replaces
+        // this provisional entry once the whole module finishes.
+        {
+            let peer_export_names = exported_names_from_items(&peer_module.items);
+            visited.entry(module_key.clone())
+                .or_insert_with(Vec::new)
+                .extend(peer_export_names);
         }
 
         // Регистрируем PeerFile (snapshot до recursive resolve + merge).
