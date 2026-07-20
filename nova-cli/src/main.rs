@@ -5586,6 +5586,13 @@ fn cmd_test(
         max_test_ms,
         // Plan 172.1 U.7.1: --report-cc-leaks.
         report_cc_leaks,
+        // [M-standalone-out-of-tree-interp-sb-typedef]: same CWD-resolved
+        // `repo`/`stdlib_dir` as `cmd_build` already threads through —
+        // `codegen_to_c` uses these instead of re-deriving a repo root from
+        // each `.nv` file's own filesystem location (which fails for files
+        // outside the project tree, e.g. a `%TEMP%` probe file).
+        repo: &repo,
+        stdlib_dir: &paths.stdlib_dir,
     };
 
     // Plan 57.D.1: optionally aggregate PerfTimer markers across all
@@ -5675,6 +5682,9 @@ fn cmd_test_build(
         // enforce'ит контракты по умолчанию (тесты проверяют поведение
         // enforce-with-elision) — `checked` = поведенчески старый `enforce`.
         contracts_mode: nova_codegen::ast::ContractsMode::Checked,
+        // [M-standalone-out-of-tree-interp-sb-typedef]: see `cmd_test`.
+        repo: &repo,
+        stdlib_dir: &paths.stdlib_dir,
     };
 
     test_runner::install_cancel_handler();
