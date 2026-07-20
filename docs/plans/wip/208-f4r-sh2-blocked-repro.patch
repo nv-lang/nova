@@ -1,0 +1,251 @@
+diff --git a/std/src/prelude/protocols.nv b/std/src/prelude/protocols.nv
+index 77fc13661..548e150fc 100644
+--- a/std/src/prelude/protocols.nv
++++ b/std/src/prelude/protocols.nv
+@@ -610,88 +610,34 @@ export type AsSlice[T] protocol {
+ //   (`Nova_int_method_debug`), and the guard in emit_c.rs (Plan 154.1 Ф.1)
+ //   turns any remaining primitive-via-generic mis-dispatch into a loud error.
+ //
+-// Display bodies are uniform `sb.append(@)` — they dispatch on the value's
+-// type through the typed `@append` overloads on StringBuilder (str/char/int/
+-// f64/bool; see std/runtime/string_builder.nv). No intermediate `nova_str`
+-// from an interp-string temp StringBuilder.
+-//
+-// Debug bodies: for `int`/`f64`/`bool` the debug form is identical to display
+-// (`nova_*_to_debug_str` == `nova_*_to_str`), so they reuse `sb.append(@)`.
+-// For `char`/`str` debug adds quotes + escapes (`'c'`, `"a\nb"`); that logic
+-// lives in the conv.h `nova_char_to_debug_str` / `nova_str_to_debug_str`
+-// formatters, reached from Nova via the interp `:?` spec. The interp path uses
+-// the conv.h formatter DIRECTLY for primitives (never re-dispatches to this
+-// method), so the char/str debug bodies do NOT recurse.
+-//
+ // `#impl(Display)` / `#impl(Debug)` opt-in (Plan 154.1 Ф.2 / D268) binds the
+ // protocol to the primitive type and checks the signature.
+ //
+-// `f32` (Plan 154.1 followup [M-154.1-f32-display-debug], 2026-06-14): now
+-// covered — conv.h `nova_f32_to_str`/`_to_debug_str` widen to double + reuse
+-// the f64 formatter; `@append(f32)` casts to f64; interp-map routes `${f32}`
+-// directly to conv.h. Numeric debug == display (no escaping).
+-
+-// Plan 174.2 (str.from-ретракция) + Plan 208 Ф.2 (D422 signature migration):
+-// тела ниже пишут через интерполяцию ("${@}" / "${@:?}") НАПРЯМУЮ — НЕ через
+-// `.to_str()` (инвариант рекурсии: `.to_str()`'s blanket-тело САМО есть
+-// `"${@}"`; примитив-путь `${@}` лоуэрится в emit_c.rs::emit_interpolated_str
+-// прямо в nova_int_to_str/nova_f64_to_str/… — цикла нет ни в одну, ни в
+-// другую сторону). Debug-тело численных примитивов идентично display (D229 —
+-// numbers don't need escaping), спеллинг через `:?` — та же C-функция
+-// (nova_*_to_debug_str == nova_*_to_str, conv.h).
+-//
+-// `.bytes()` on the interpolated-string RESULT (a runtime `str` VALUE, not a
+-// literal) is required now that `Write.@write` takes `[]u8` (D374 aменд ×2)
+-// — D55's literal→[]u8 coercion only covers literal `"..."` positions, not
+-// an interpolated expression's result (D176 explicit-.bytes() rule).
+-//
+ // These bodies are the STRUCTURAL-satisfaction primitive for `Display`/
+ // `Debug` (required, no default per D422 §3) — the compiler's OWN
+ // interpolation codegen (`emit_interpolated_str`/`emit_format_spec_value`)
+-// never actually CALLS them for a bare or rich-spec primitive (it keeps its
+-// pre-existing direct `conv.h` fast path, unchanged byte-for-byte). They are
+-// exercised only when a primitive is dispatched to POLYMORPHICALLY through a
+-// generic `Fmt`-typed sink — e.g. `Option[T Debug]`/`Result[T Debug, E Debug]`
+-// below calling `v.debug(f)` where `T`/`E` monomorphizes to a primitive, or a
+-// future `Vec[T]`/`[]T` generic Display (Ф.3). Radix/width/alternate axes on
+-// `f` are therefore NOT read here (`f.kind()` stays unconsulted) — a nested
+-// `${container:x}` hex-formatting its primitive elements is out of THIS
+-// phase's scope (no existing call site exercises it; documented follow-up,
+-// see `docs/plans/208-impl-progress.md`).
+-#impl(Display)
+-fn int @display(mut f Fmt) -> () { f.write("${@}".bytes()) }
+-#impl(Debug)
+-fn int @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
+-
+-#impl(Display)
+-fn f64 @display(mut f Fmt) -> () { f.write("${@}".bytes()) }
+-#impl(Debug)
+-fn f64 @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
+-
+-// Plan 180: f32 display/debug — f32-precise shortest-round-trip formatter
+-// (nova_f32_to_str, strtof-based), routed directly by the interp `${f32}`
+-// dispatch (emit_c.rs primitive_to_str_fn). Widening to f64 first
+-// (`@ as f64` before interpolating) would surface the f32→f64 mantissa tail
+-// (0.1f → "0.10000000149011612"); the direct f32 interp path keeps "0.1".
+-#impl(Display)
+-fn f32 @display(mut f Fmt) -> () { f.write("${@}".bytes()) }
+-#impl(Debug)
+-fn f32 @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
+-
+-#impl(Display)
+-fn bool @display(mut f Fmt) -> () { f.write("${@}".bytes()) }
+-#impl(Debug)
+-fn bool @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
+-
+-#impl(Display)
+-fn char @display(mut f Fmt) -> () { f.write("${@}".bytes()) }
+-#impl(Debug)
+-fn char @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
+-
++// does NOT call them for a bare or rich-spec primitive literal (that stays a
++// devirtualized direct call, Plan 208 Ф.4R Ш3). They ARE exercised when a
++// primitive is dispatched POLYMORPHICALLY through a generic `Fmt`-typed
++// sink — e.g. `Option[T Debug]`/`Result[T Debug, E Debug]` below calling
++// `v.debug(f)` where `T`/`E` monomorphizes to a primitive, or a generic
++// `Vec[T]`/`[]T` Display/Debug. Radix/width/alternate axes on `f` are NOT
++// read here (`f.kind()` stays unconsulted) — a nested `${container:x}`
++// hex-formatting its primitive elements is out of scope (no existing call
++// site exercises it; documented follow-up, docs/plans/208-impl-progress.md).
++//
++// Plan 208 Ф.4R Ш2 (owner 2026-07-20, docs/plans/208-unified-formatter.md
++// §10R): int/f64/f32/bool/char `@display`+`@debug` and str's `@debug` MOVED
++// to `std/runtime/fmt_buf.nv` — the previous CIRCULAR stubs
++// (`f.write("${@}".bytes())`, calling BACK into interpolation — allocating a
++// temp StringBuilder + re-parsing a literal format string to render a value
++// already in hand) are retired in favor of direct non-recursive renders over
++// the same buffer primitives (`int_fmt`/`fmt_f64`/`str_debug_fmt`/etc.) that
++// back the compiler's own fast path — one source of render semantics
++// (§0/§10), not two. `str`'s `@display` (`f.write(@bytes())`) was ALREADY
++// non-circular and stays here unchanged.
+ #impl(Display)
+ fn str @display(mut f Fmt) -> () { f.write(@bytes()) }
+-#impl(Debug)
+-fn str @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
+ 
+ 
+ // ──────────────────────────────────────────────────────────────────────────
+diff --git a/std/src/runtime/fmt_buf.nv b/std/src/runtime/fmt_buf.nv
+index 97660a503..6c105ebb7 100644
+--- a/std/src/runtime/fmt_buf.nv
++++ b/std/src/runtime/fmt_buf.nv
+@@ -222,7 +222,7 @@ fn int_fmt(v int, buf *mut u8, cap int, spec FmtSpec) -> int
+ 
+ /// `bool` → `"true"`/`"false"`, written directly into `buf[0..cap)`.
+ /// Returns bytes written (`<= cap`; truncates defensively).
+-fn bool_fmt(v bool, buf *mut u8, cap int) -> int {
++export fn bool_fmt(v bool, buf *mut u8, cap int) -> int {
+     unsafe {
+         if v {
+             ro want = 4
+@@ -249,7 +249,7 @@ fn bool_fmt(v bool, buf *mut u8, cap int) -> int {
+ /// Invalid codepoints (out of range / surrogate half) are replaced with
+ /// U+FFFD, mirroring `nova_char_to_str` (conv.h). Returns bytes written
+ /// (1..4; `<= cap`, truncates defensively).
+-fn char_fmt(v char, buf *mut u8, cap int) -> int {
++export fn char_fmt(v char, buf *mut u8, cap int) -> int {
+     mut cp = v as int
+     if cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
+         cp = 0xFFFD
+@@ -409,7 +409,7 @@ fn utf8_encode_at(cp int, buf *mut u8, cap int, pos int) -> int {
+ /// `nova_str_to_debug_str` (conv.h:248) byte-for-byte: iterates the ALREADY
+ /// UTF-8-encoded source bytes (multi-byte sequences pass through opaque —
+ /// every continuation/lead byte is >= 0x80, so never matches a special case).
+-fn str_debug_fmt(s str, buf *mut u8, cap int) -> int {
++export fn str_debug_fmt(s str, buf *mut u8, cap int) -> int {
+     ro bytes = s.bytes()
+     ro blen = bytes.len()
+     mut pos = 0
+@@ -440,7 +440,7 @@ fn str_debug_fmt(s str, buf *mut u8, cap int) -> int {
+ /// `buf[0..cap)`. Mirrors `nova_char_to_debug_str` (conv.h:317) byte-for-
+ /// byte: escapes `\n`/`\t`/`\r`/NUL/`'`/`\`/other-control(<0x20)/DEL(0x7F);
+ /// everything else passes through UTF-8-encoded (`utf8_encode_at` above).
+-fn char_debug_fmt(v char, buf *mut u8, cap int) -> int {
++export fn char_debug_fmt(v char, buf *mut u8, cap int) -> int {
+     mut cp = v as int
+     if cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) { cp = 0xFFFD }
+     mut pos = 0
+@@ -663,6 +663,97 @@ export fn str_debug_display_spec(mut sb StringBuilder, v str, width int, has_pre
+     sb.pad_in_place(mark, width, fill, align)
+ }
+ 
++// ─── Ш2 (Plan 208 Ф.4R, owner 2026-07-20): primitive Display/Debug bodies ──
++//
++// MOVED from `prelude/protocols.nv` — were CIRCULAR stubs
++// (`fn int @display(mut f Fmt) { f.write("${@}".bytes()) }`) that called
++// BACK into interpolation (allocating a temp StringBuilder + re-parsing a
++// literal format string) to render a value the compiler already had in
++// hand. These bodies render DIRECTLY via the buffer primitives above (no
++// StringBuilder concretely required — `f` is only a `Fmt`, so `@append`/
++// `*_display_spec`'s StringBuilder-specific reserve/spare/advance protocol
++// doesn't apply here; a small scratch `[]u8` + ONE `f.write(...)` call is
++// the zero-recursion replacement).
++//
++// Axes are NOT consulted (`f.width()`/`f.align()`/etc. stay unread) —
++// UNCHANGED from the bodies these replace (see the removed comment in
++// protocols.nv: "Radix/width/alternate axes on `f` are therefore NOT read
++// here... out of THIS phase's scope" — Ф.4R is a carrier swap, not a new
++// feature). `str`'s `@display` was ALREADY non-circular
++// (`f.write(@bytes())`) and stays in protocols.nv untouched; `str`'s
++// `@debug` WAS circular and moves here alongside the others.
++import std.prelude.protocols.{Fmt, Display, Debug}
++
++#impl(Display)
++fn int @display(mut f Fmt) -> () {
++    mut buf []u8 = []u8.new(cap: DISPLAY_INT_CAP)
++    ro n = unsafe { int_fmt_into(@, buf.ptr(), DISPLAY_INT_CAP) }
++    unsafe { buf.advance(n) }
++    f.write(buf)
++}
++#impl(Debug)
++fn int @debug(mut f Fmt) -> () { @display(f) }
++
++#impl(Display)
++fn f64 @display(mut f Fmt) -> () {
++    mut buf []u8 = []u8.new(cap: DISPLAY_F64_SHORTEST_CAP)
++    ro n = unsafe { f64_fmt_shortest_into(@, buf.ptr(), DISPLAY_F64_SHORTEST_CAP) }
++    unsafe { buf.advance(n) }
++    f.write(buf)
++}
++#impl(Debug)
++fn f64 @debug(mut f Fmt) -> () { @display(f) }
++
++// Plan 180: f32 display/debug — f32-PRECISE shortest-round-trip formatter
++// (`f32_fmt_shortest_into`/`nova_f32_shortest`), NOT widened to f64 first
++// (`0.1f` stays `"0.1"`, not the f64-widened mantissa tail
++// `"0.10000000149011612"`) — matches the bare `${f32val}` interp dispatch.
++#impl(Display)
++fn f32 @display(mut f Fmt) -> () {
++    mut buf []u8 = []u8.new(cap: DISPLAY_F32_CAP)
++    ro n = unsafe { f32_fmt_shortest_into(@, buf.ptr(), DISPLAY_F32_CAP) }
++    unsafe { buf.advance(n) }
++    f.write(buf)
++}
++#impl(Debug)
++fn f32 @debug(mut f Fmt) -> () { @display(f) }
++
++#impl(Display)
++fn bool @display(mut f Fmt) -> () {
++    mut buf []u8 = []u8.new(cap: DISPLAY_BOOL_CAP)
++    ro n = bool_fmt(@, buf.ptr(), DISPLAY_BOOL_CAP)
++    unsafe { buf.advance(n) }
++    f.write(buf)
++}
++#impl(Debug)
++fn bool @debug(mut f Fmt) -> () { @display(f) }
++
++#impl(Display)
++fn char @display(mut f Fmt) -> () {
++    mut buf []u8 = []u8.new(cap: DISPLAY_CHAR_CAP)
++    ro n = char_fmt(@, buf.ptr(), DISPLAY_CHAR_CAP)
++    unsafe { buf.advance(n) }
++    f.write(buf)
++}
++#impl(Debug)
++fn char @debug(mut f Fmt) -> () {
++    mut buf []u8 = []u8.new(cap: DISPLAY_CHAR_DEBUG_CAP)
++    ro n = char_debug_fmt(@, buf.ptr(), DISPLAY_CHAR_DEBUG_CAP)
++    unsafe { buf.advance(n) }
++    f.write(buf)
++}
++
++// `str @display` is ALREADY non-circular (`f.write(@bytes())`, prelude/
++// protocols.nv) and stays there untouched — only `@debug` moves here.
++#impl(Debug)
++fn str @debug(mut f Fmt) -> () {
++    ro cap = @byte_len() * 4 + 2
++    mut buf []u8 = []u8.new(cap: cap)
++    ro n = str_debug_fmt(@, buf.ptr(), cap)
++    unsafe { buf.advance(n) }
++    f.write(buf)
++}
++
+ // ─── Tests (Plan 208 Ф.1 gate) ───
+ //
+ // INLINE (not a peer `fmt_buf_test.nv`): every primitive above is
