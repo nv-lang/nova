@@ -635,8 +635,52 @@ ICE `[P67-LEGACY] Ident 'guard' not in var_types` — воспроизведён
 
 ## Пункт 19 — `[N]T @ptr()` / `@len()` — аксессоры фикс-массива (зеркало Vec/str)
 
-**Статус:** 📋 СОГЛАСОВАНО 2026-07-21 (владелец). НЕ чистая haiku-механика — см. архитектурную
-записку ниже; модель: sonnet (компилятор) + фикстуры haiku.
+**Статус:** ✅ СДЕЛАНО 2026-07-21 (worktree `nova-p19`, ветка `p200-19-fixarr`, sonnet, коммиты
+`4c022a1ec` (чекпоинт: checker+codegen синтез) + `01a0ea94c` (фикстуры + E_UNKNOWN_METHOD гейт +
+D431)). В main не влито, push не делан — по заданию волны (интегратор мёржит отдельно).
+
+**Ш0-вердикт (первым делом, подтвердил дизайн):** проба `fn [4]u8 @probe() -> int => 4` — **НЕ
+парсится** (`error: expected identifier, got int literal` на `4` внутри `[4]`). Путь —
+КОМПИЛЯТОР-СИНТЕЗ, как и предполагала архитектурная записка (const-generic `N` на уровне
+метода в языке нет).
+
+**Механизм («одно окно» с `@index`, D238-семья):** тот же структурный приём, каким `arr[i]`
+уже резолвится (checker `ExprKind::Index`-арм, `types/mod.rs` ~8991; codegen
+`parse_mono_fixed_array_name` + `.data`/`->data`, `emit_c.rs` ~32415). Checker:
+`peel_fixed_array`+`fixed_array_accessor_return` (types/mod.rs) — вызываются из ДВУХ уже
+существующих продюсеров (`infer_expr_type`'s Call-арм и `infer_method_call_channel_type`), НЕ
+новый резолв-путь; `is_mut` через существующий `is_through_ro_binding` (D175/D326). Codegen:
+`emit_call`'s `Member`-арм, синтез напрямую через ТУ ЖЕ `parse_mono_fixed_array_name`, что и
+`arr[i]`-чтение (`len()` → компайл-тайм литерал `N`; `ptr()` → адрес `data[0]`, `const`-квалификация
+по `is_place_mutable` — тот же predicate, что Vec-overload'ы Plan 135/138.4). Побочная находка (в
+scope этой же волны, не отдельный маркер — единственный, кто вводит РЕАЛЬНУЮ FixedArray-метод-
+поверхность): `check_instance_overload`'s `E_UNKNOWN_METHOD`-гейт исторически скипал Array/
+FixedArray-ресиверы целиком ("Vec" не в `is_primitive_recv_name`) → typo на `[N]T` падал
+внутренним ICE `[P67-LEGACY]`, не чистой диагностикой; добавлен FixedArray-специфичный гейт
+(любой метод кроме `len`/`ptr` на `TypeRef::FixedArray` → чистый `[E_UNKNOWN_METHOD]`; `Array`/
+`[]T`, реально `Vec[T]`, не затронут).
+
+**D431** (`spec/decisions/03-syntax.md`) — полный decision-блок после D27 + amendment-заметка в
+самом D27.
+
+**Фикстуры:** pos `spec_tests/conformance/d431_fixarr_len_ptr.nv` (3 test-блока: `.len()` на
+трёх разных N; `unsafe { RawMem.copy(arr.ptr(), dst.ptr(), arr.len()) }` round-trip; mut-
+перегрузка — запись через `.ptr().write(...)` видна в `arr`); neg
+`spec_tests/conformance/neg/d431_fixarr_unknown_method_neg.nv` (typo `.lenx()` →
+`EXPECT_COMPILE_ERROR E_UNKNOWN_METHOD`, было ICE до гейта).
+
+**Верификация (5/5 зелёных):** `nova test std/src/collections/vec` PASS 1/0; `nova test
+std/src/runtime/string_builder_test.nv` PASS 1/0; `nova test std/src/checksums` PASS 3/0 SKIP 3;
+pos-фикстура (standalone-изолированная копия) PASS; neg-фикстура PASS (negative). Байт-паритет:
+2 нетронутых фикстуры (`d216_ptr_methods_174_5.nv` — Vec `.ptr()`, НЕ FixedArray;
+`d27_fixed_array.nv` — FixedArray-индексация без `.len()`/`.ptr()`-вызовов), SHA-256 сгенерированного
+`.c` идентичен между этой веткой и базовым коммитом `f0eba7b5f` (throwaway reference worktree,
+удалён после сверки): `parity_a.c` `7b8fde0493b7c0c2145c4e9e482223ba785a1088415208bb3d028ccaf36ff115`,
+`parity_b.c` `b8e3e0a6c73276f4a4cd23f43b6836345193a9d2c8a89e69529a99fb8f858979`.
+
+**Остаток по тексту пункта (сознательно НЕ в этой волне):** миграция трёх мотив-сайтов
+(pad `fill_bytes` → `RawMem.copy`; `encode_utf8`-потребители → копия среза; `@display`-fallback
+примитива → стек-буфер) — отдельный шаг после приземления.
 
 **Мотив (три реальных упора одной недели):** (1) pad-оптимизация: `RawMem.copy` из
 `fill_bytes [4]u8` несобираем — нет указателя-источника; (2) потребители `encode_utf8`
