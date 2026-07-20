@@ -1229,6 +1229,30 @@ if/else там встречается редко и решение — за от
 идентично). `nova lint --rule W_MANUAL_MIN_MAX,W_MANUAL_CLAMP std
 spec_tests examples` = 0.
 
+## 31. Время: `Duration`/`Monotonic` в домене; голые `_ms int` — только провод и сериализация (· согласовано 2026-07-20)
+
+- **Доменные сигнатуры и публичные API: длительность = `Duration`, момент = `Monotonic`.**
+  Канон — флагманская дверь: `fn aggregate(sources []Source, budget Duration)`,
+  `supervised(deadline: t0 + budget)` (D408: абсолютная точка). Не `budget_ms int`.
+- **Голые `_ms int` разрешены ровно в трёх местах:**
+  1. **эффект-провод** — `Time.sleep(ms int)` / `now_unix_ms() -> int` (int-провод Ф.1,
+     `std/src/prelude/effects.nv` §Time): опы пересекают FFI (`nova_rt/effects.h`),
+     скаляр ABI-прост; типизированный слой ПОВЕРХ — `time.duration` (`sleep(Duration)`,
+     `sleep_until(Monotonic)`);
+  2. **границы сериализации** — JSON/API-поля с единицей в имени (`elapsed_ms`,
+     `wall_ms`, `budget_ms` в снапшотах) — числа там канон;
+  3. **тест-хендлеры** — `with Time = effect Time { sleep(ms) {} ... }` пишутся по
+     сигнатурам опов.
+- **Анти-паттерн:** конверсия на двери (`budget.as_millis() as int`) и дальше int-плавание
+  по всем внутренним сигнатурам (`fetch_one(latency_ms int)`, `deadline_elapsed_ms -> int`).
+  Единица уезжает в имена, компилятор её не видит, `ms`/`ns`-путаница ловится только глазами.
+- **Известное расхождение:** внутренности `examples/flagship/aggregator` (историческое,
+  §выше и есть его портрет) — миграция на `Duration` после закрытия трёх codegen-маркеров
+  хрупкости Duration-путей: `[M-vr-binop-wrapper-decl-order-standalone-cu]`,
+  `[M-p67-path-call-const-receiver-method-ice]`, `[M-flagship-monotonic-now-bare-binding-ice]`
+  (все — backlog-followups). До их закрытия точечный обход допустим ТОЛЬКО с
+  маркер-ссылкой в комментарии (образец — `examples/mini_aggregator.nv`).
+
 ## Известные расхождения для будущего sweep'а
 
 1. **`docs/idioms/size-accessors.md:41-42`** документирует `s.len()` как O(n) codepoint-count,
