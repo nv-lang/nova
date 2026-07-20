@@ -135,14 +135,18 @@ jobs:
           # [M-linux-mn-conformance-red] в backlog-followups.md). Тесты НЕ
           # ослаблены: любой FAIL вне этого списка = красный гейт.
           # 2026-07-18: +supervisor_stop_test и pos_max_fibers_concurrent —
-          # ТА ЖЕ 211-семья (порча SpawnCtx в cancel-wake, корень доказан
-          # gdb-раскопкой: docs/plans/wip/boehm-eager-cost-notes.md
-          # §ОКОНЧАТЕЛЬНЫЙ КОРЕНЬ + [M-mn-spawnctx-corruption-cancel-wake]);
-          # были маскированы случайным GC-подавлением (гигантский плоский
-          # GC_add_roots задирал порог сборки), вскрыты КОРРЕКТНЫМ Boehm-mark
-          # фиксом ea85229e0. Фикс-волна планировщика запущена 2026-07-18.
+          # ТА ЖЕ 211-семья (порча SpawnCtx в cancel-wake).
+          # 2026-07-20: supervisor_parfor_test/supervisor_stop_test/
+          # pos_max_fibers_concurrent СНЯТЫ из known_red — КОРЕНЬ ЗАКРЫТ
+          # spawnctx GC-root фиксом (ce79a26f5: мой ea85229e0 был НЕПОЛНЫМ —
+          # переносил 1 из 3 слагаемых дефолтного pthreads-bdwgc-колбэка,
+          # терял native-стеки потоков + main-стек → premature-collect живых
+          # child_error/ctx/scope). Реальный Linux-CI статус подтверждён PASS
+          # на всех трёх (run 29717823412). app_effect_basic_t8_1 ОСТАЁТСЯ —
+          # отдельная Linux M:N RUN-FAIL флака ([M-linux-mn-conformance-red]),
+          # НЕ путать с мега-CU CC-FAIL (тот закрыт [M-208] → conformance 504/0).
           if [ "${code}" -ne 0 ]; then
-            known_red='^(spec_tests/conformance/app_effect_basic_t8_1|spec_tests/conformance/standalone/supervisor_parfor_test|spec_tests/conformance/standalone/supervisor_stop_test|spec_tests/conformance/standalone/pos_max_fibers_concurrent)$'
+            known_red='^(spec_tests/conformance/app_effect_basic_t8_1)$'
             unexpected="$(awk '/^===== SUMMARY/,/^$/' "${log}" \
               | grep -E '^(RUN-FAIL|FAIL|CC-FAIL|CODEGEN-FAIL|NEG-[A-Z-]+|TIMEOUT)' \
               | awk '{print $2}' | grep -vE "${known_red}" || true)"
