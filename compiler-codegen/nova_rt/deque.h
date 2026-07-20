@@ -35,6 +35,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdlib.h>   /* malloc/calloc/free — see below */
 #include "sync.h"     /* nova_atomic_intptr, atomic helpers */
 
 /* ── NovaDequeArray — array snapshot for resize ─────────────────── */
