@@ -1,0 +1,17 @@
+// [M-imports-order-dependent-cycle] regression, leg A. Genuine two-way
+// import cycle with odc_b (odc_b imports odc_a back, see odc_b.nv) — but
+// THIS leg does NOT itself call back into odc_b (its own import of odc_b
+// is present only to close the cycle / exercise the TYPE side, mirroring
+// the original Plan 208 Ф.4R Ш1 finding: `fmt_buf`'s v1 architecture only
+// needed a TYPE from `string_builder`, never called one of its free
+// functions — the asymmetric shape is what made the bug ORDER-DEPENDENT
+// rather than a deterministic double-fail: whichever side is entered
+// second in the DFS is the one whose OWN body needs the other's names,
+// and only `odc_b` needs `odc_a`'s here). `odc_a_val` deliberately does NOT
+// reference anything from `odc_b` — the import below exists purely to
+// create the cycle edge `odc_a -> odc_b`.
+module order_dependent_cycle.odc_a
+
+import ./odc_b.{odc_b_val}
+
+export fn odc_a_val() -> int => 10
