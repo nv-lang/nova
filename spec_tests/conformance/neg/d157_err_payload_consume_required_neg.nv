@@ -1,0 +1,26 @@
+// EXPECT_COMPILE_ERROR [E_CONSUME_PATTERN_REQUIRED] pattern-биндинг `e` держит consume-обязательный пейлоад типа `D157ErrReqPayload` из `Err(..)` — требуется явный `consume`-паттерн
+
+// Plan 216 tails (Err-payload follow-up, 2026-07-21): plain `Err(e)`
+// pattern-биндинг над must-consume Err/E-inner типом (D156-пропагация через
+// ВТОРОЙ generic `Result[T,E]`) — ошибка, требуется явный consume-sub-pattern
+// `Err(consume e)`. Симметрично существующему d157_consume_pattern_required_neg.nv
+// (Ok-сторона); закрывает bootstrap-defer из 05-memory.md
+// (`[M-73.2-err-payload-consume]`). Пин суждения целиком, включая имя
+// пейлоад-типа и variant `Err(..)`.
+
+module neg.d157_err_payload_consume_required_neg
+
+type D157ErrReqPayload consume {
+    code int,
+}
+
+fn D157ErrReqPayload consume @drop() -> () { () }
+
+fn dial() -> Result[int, D157ErrReqPayload] => Err(D157ErrReqPayload { code: 1 })
+
+test "plain Err(e) на must-consume payload — ошибка" {
+    match dial() {
+        Ok(_v) => {},
+        Err(e) => { e.drop() },
+    }
+}

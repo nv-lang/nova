@@ -26571,6 +26571,36 @@ struct ConsumeRegistry {
     /// `is_any_consume_method` name-only fallback (28381) instead of the
     /// precise per-type lookup.
     unwrapped_method_return_types: HashMap<(String, String), String>,
+    /// Plan 216 tails (Err-payload follow-up, 2026-07-21): companion of
+    /// `unwrapped_fn_return_types`/`unwrapped_method_return_types` — the
+    /// Err/E-INNER type name (`Result[T,E]`'s second generic; `Option[T]`
+    /// has no Err arm, always absent here) instead of the Ok/Some-inner T.
+    /// Same rationale/consulted-only-from-`infer_unwrapped_call_err_type`
+    /// discipline as the Ok/Some companion — see that field's doc.
+    unwrapped_fn_return_err_types: HashMap<String, String>,
+    /// Plan 216 tails (Err-payload follow-up): method-keyed companion of
+    /// `unwrapped_fn_return_err_types` — see `unwrapped_method_return_types`
+    /// doc for the free-fn/method split rationale.
+    unwrapped_method_return_err_types: HashMap<(String, String), String>,
+    /// Plan 216 tails (nested-tuple-payload follow-up, 2026-07-21): free-fn
+    /// name → per-element type names of the Ok/Some-inner type, WHEN that
+    /// inner type is itself a tuple `(A,B,...)` (companion of
+    /// `unwrapped_fn_return_types`, which only covers a single-segment
+    /// Named inner type — mutually exclusive population, never both for the
+    /// same fn). `None` element = non-Named / nested-further component
+    /// (sound false-negative). Enables `Ok((consume a, b))`-shape
+    /// consume-pattern-required enforcement per tuple slot.
+    unwrapped_fn_return_tuple_types: HashMap<String, Vec<Option<String>>>,
+    /// Plan 216 tails (nested-tuple-payload follow-up): method-keyed
+    /// companion of `unwrapped_fn_return_tuple_types`.
+    unwrapped_method_return_tuple_types: HashMap<(String, String), Vec<Option<String>>>,
+    /// Plan 216 tails (nested-tuple-payload follow-up): Err-arm counterpart
+    /// of `unwrapped_fn_return_tuple_types` — per-element type names of the
+    /// Err-inner type when it is itself a tuple.
+    unwrapped_fn_return_err_tuple_types: HashMap<String, Vec<Option<String>>>,
+    /// Plan 216 tails (nested-tuple-payload follow-up): method-keyed
+    /// companion of `unwrapped_fn_return_err_tuple_types`.
+    unwrapped_method_return_err_tuple_types: HashMap<(String, String), Vec<Option<String>>>,
     /// Plan 108.1 (D176 amend): `(receiver_type, method_name)` для всех
     /// методов с `mut`-receiver (`fn T mut @method(...)`).  Вызов такого
     /// метода на параметре без `mut` → E_PARAM_NOT_MUT.
@@ -26702,6 +26732,70 @@ fn unwrap_result_option_name(rt: &TypeRef, self_ty: &str) -> Option<String> {
     None
 }
 
+/// Plan 216 tails (Err-payload follow-up, 2026-07-21): companion of
+/// `unwrap_result_option_name` — resolves `Result[T,E]`'s Err/E-INNER type
+/// name instead of the Ok/Some-inner T (`Option[T]` has no Err arm — always
+/// `None` for it). Kept a SEPARATE function (not a parameterized
+/// generics-index arg to the existing one) — narrow blast-radius precedent
+/// already established in this registry (`mut_methods_arity` doc).
+fn unwrap_result_err_name(rt: &TypeRef, self_ty: &str) -> Option<String> {
+    if let TypeRef::Named { path, generics, .. } = rt {
+        if path.len() == 1 && path[0] == "Result" && generics.len() >= 2 {
+            if let TypeRef::Named { path: ip, .. } = &generics[1] {
+                if ip.len() == 1 {
+                    return Some(if ip[0] == "Self" {
+                        self_ty.to_string()
+                    } else {
+                        ip[0].clone()
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Plan 216 tails (nested-tuple-payload follow-up, 2026-07-21): shared innards
+/// of `unwrap_result_option_tuple_names`/`unwrap_result_err_tuple_names` —
+/// resolves the requested generic slot of `Result[T,E]`/`Option[T]` (index 0
+/// = Ok/Some-inner T, `allow_option` true; index 1 = Err-inner E, `Option`
+/// never eligible) to per-element Named type names IFF that slot is itself a
+/// tuple type `(A,B,...)`. `None` overall = not a tuple (falls back to the
+/// existing scalar `unwrap_result_option_name`/`unwrap_result_err_name`
+/// path); `None` element = non-Named/nested-further component (sound
+/// false-negative, never false-positive).
+fn unwrap_generic_tuple_names(
+    rt: &TypeRef,
+    self_ty: &str,
+    idx: usize,
+    allow_option: bool,
+) -> Option<Vec<Option<String>>> {
+    let TypeRef::Named { path, generics, .. } = rt else { return None };
+    if path.len() != 1 { return None; }
+    let is_result = path[0] == "Result";
+    let is_option = allow_option && path[0] == "Option";
+    if !(is_result || is_option) || generics.len() <= idx { return None; }
+    let TypeRef::Tuple(elems, _) = &generics[idx] else { return None };
+    Some(elems.iter().map(|e| match e {
+        TypeRef::Named { path: ip, .. } if ip.len() == 1 => {
+            Some(if ip[0] == "Self" { self_ty.to_string() } else { ip[0].clone() })
+        }
+        _ => None,
+    }).collect())
+}
+
+/// Plan 216 tails (nested-tuple-payload follow-up): Ok/Some-inner tuple
+/// element types — see `unwrap_generic_tuple_names` doc.
+fn unwrap_result_option_tuple_names(rt: &TypeRef, self_ty: &str) -> Option<Vec<Option<String>>> {
+    unwrap_generic_tuple_names(rt, self_ty, 0, true)
+}
+
+/// Plan 216 tails (nested-tuple-payload follow-up): Err-inner tuple element
+/// types — see `unwrap_generic_tuple_names` doc.
+fn unwrap_result_err_tuple_names(rt: &TypeRef, self_ty: &str) -> Option<Vec<Option<String>>> {
+    unwrap_generic_tuple_names(rt, self_ty, 1, false)
+}
+
 impl ConsumeRegistry {
     fn build(module: &Module) -> Self {
         let mut methods: HashSet<(String, String)> = HashSet::new();
@@ -26713,6 +26807,13 @@ impl ConsumeRegistry {
         // D86-followup: unwrapped (Ok/Some-inner) companion maps — see field docs.
         let mut unwrapped_fn_return_types: HashMap<String, String> = HashMap::new();
         let mut unwrapped_method_return_types: HashMap<(String, String), String> = HashMap::new();
+        // Plan 216 tails (Err-payload + nested-tuple follow-up, 2026-07-21).
+        let mut unwrapped_fn_return_err_types: HashMap<String, String> = HashMap::new();
+        let mut unwrapped_method_return_err_types: HashMap<(String, String), String> = HashMap::new();
+        let mut unwrapped_fn_return_tuple_types: HashMap<String, Vec<Option<String>>> = HashMap::new();
+        let mut unwrapped_method_return_tuple_types: HashMap<(String, String), Vec<Option<String>>> = HashMap::new();
+        let mut unwrapped_fn_return_err_tuple_types: HashMap<String, Vec<Option<String>>> = HashMap::new();
+        let mut unwrapped_method_return_err_tuple_types: HashMap<(String, String), Vec<Option<String>>> = HashMap::new();
         let mut recv_returning: HashSet<(String, String)> = HashSet::new();
         let mut fn_view_params: HashMap<String, Vec<usize>> = HashMap::new();
         // Plan 103.9 (D174): method return-type map for var-type inference.
@@ -26935,6 +27036,19 @@ impl ConsumeRegistry {
                                 unwrapped_method_return_types.insert(
                                     (r.type_name.clone(), fd.name.clone()), inner);
                             }
+                            // Plan 216 tails (Err-payload + nested-tuple follow-up).
+                            if let Some(inner) = unwrap_result_err_name(rt, &r.type_name) {
+                                unwrapped_method_return_err_types.insert(
+                                    (r.type_name.clone(), fd.name.clone()), inner);
+                            }
+                            if let Some(elems) = unwrap_result_option_tuple_names(rt, &r.type_name) {
+                                unwrapped_method_return_tuple_types.insert(
+                                    (r.type_name.clone(), fd.name.clone()), elems);
+                            }
+                            if let Some(elems) = unwrap_result_err_tuple_names(rt, &r.type_name) {
+                                unwrapped_method_return_err_tuple_types.insert(
+                                    (r.type_name.clone(), fd.name.clone()), elems);
+                            }
                         }
                         // Plan 77 (D132): `-> @` fluent-метод.
                         if fd.returns_receiver {
@@ -26971,6 +27085,16 @@ impl ConsumeRegistry {
                         if let Some(rt) = &fd.return_type {
                             if let Some(inner) = unwrap_result_option_name(rt, "") {
                                 unwrapped_fn_return_types.insert(fd.name.clone(), inner);
+                            }
+                            // Plan 216 tails (Err-payload + nested-tuple follow-up).
+                            if let Some(inner) = unwrap_result_err_name(rt, "") {
+                                unwrapped_fn_return_err_types.insert(fd.name.clone(), inner);
+                            }
+                            if let Some(elems) = unwrap_result_option_tuple_names(rt, "") {
+                                unwrapped_fn_return_tuple_types.insert(fd.name.clone(), elems);
+                            }
+                            if let Some(elems) = unwrap_result_err_tuple_names(rt, "") {
+                                unwrapped_fn_return_err_tuple_types.insert(fd.name.clone(), elems);
                             }
                         }
                         // Plan 100.3 (D157): collect view-params — non-consume params
@@ -27037,6 +27161,9 @@ impl ConsumeRegistry {
             fn_non_unsafe_params, method_non_unsafe_params,
             record_consume_fields, record_field_names,
             unwrapped_method_return_types, unwrapped_fn_return_types,
+            unwrapped_fn_return_err_types, unwrapped_method_return_err_types,
+            unwrapped_fn_return_tuple_types, unwrapped_method_return_tuple_types,
+            unwrapped_fn_return_err_tuple_types, unwrapped_method_return_err_tuple_types,
             fn_param_output_keys, coerce_finalize_output_keys,
         }
     }
@@ -27115,6 +27242,22 @@ impl ConsumeRegistry {
                             self.unwrapped_method_return_types
                                 .entry((r.type_name.clone(), fd.name.clone()))
                                 .or_insert(inner);
+                        }
+                        // Plan 216 tails (Err-payload + nested-tuple follow-up).
+                        if let Some(inner) = unwrap_result_err_name(rt, &r.type_name) {
+                            self.unwrapped_method_return_err_types
+                                .entry((r.type_name.clone(), fd.name.clone()))
+                                .or_insert(inner);
+                        }
+                        if let Some(elems) = unwrap_result_option_tuple_names(rt, &r.type_name) {
+                            self.unwrapped_method_return_tuple_types
+                                .entry((r.type_name.clone(), fd.name.clone()))
+                                .or_insert(elems);
+                        }
+                        if let Some(elems) = unwrap_result_err_tuple_names(rt, &r.type_name) {
+                            self.unwrapped_method_return_err_tuple_types
+                                .entry((r.type_name.clone(), fd.name.clone()))
+                                .or_insert(elems);
                         }
                     }
                     if !consume_idx.is_empty() {
@@ -27244,6 +27387,23 @@ struct ConsumeCtx<'a> {
     /// напрямую; place Ident — через эту карту). Неизвестно → None (sound:
     /// false-negative, не false-positive).
     var_unwrapped_types: HashMap<String, String>,
+    /// Plan 216 tails (Err-payload follow-up, 2026-07-21): companion of
+    /// `var_unwrapped_types` — best-effort Err/E-INNER type name (`Option`
+    /// has no Err arm, always absent). Same fill discipline (explicit
+    /// annotation via `unwrap_result_err_name` / RHS via
+    /// `infer_unwrapped_call_err_type`), consulted by
+    /// `scrutinee_unwrapped_err_type` for the Err-arm mirror of the D157/D180
+    /// Ok/Some-payload consume-pattern-required enforcement.
+    var_unwrapped_err_types: HashMap<String, String>,
+    /// Plan 216 tails (nested-tuple-payload follow-up, 2026-07-21): companion
+    /// of `var_unwrapped_types` — per-element type names of the Ok/Some-inner
+    /// type WHEN it is itself a tuple `(A,B,...)` (mutually exclusive
+    /// population with `var_unwrapped_types` for the same var — a var's
+    /// unwrapped type is either a flat Named or a Tuple, never both).
+    var_unwrapped_tuple_types: HashMap<String, Vec<Option<String>>>,
+    /// Plan 216 tails (nested-tuple-payload follow-up): Err-arm counterpart
+    /// of `var_unwrapped_tuple_types`.
+    var_unwrapped_err_tuple_types: HashMap<String, Vec<Option<String>>>,
     /// Plan 73 followup: alias-карта. `let a = b` -> `aliases[a] = b`
     /// (b — каноническое имя). Обе переменные ссылаются на ОДИН
     /// heap-объект; consume любой -> consume всего alias-класса.
@@ -27339,6 +27499,9 @@ impl<'a> ConsumeCtx<'a> {
             states: HashMap::new(),
             var_types: HashMap::new(),
             var_unwrapped_types: HashMap::new(),
+            var_unwrapped_err_types: HashMap::new(),
+            var_unwrapped_tuple_types: HashMap::new(),
+            var_unwrapped_err_tuple_types: HashMap::new(),
             aliases: HashMap::new(),
             consume_obligations: HashSet::new(),
             all_declared_consume: HashSet::new(),
@@ -27636,6 +27799,122 @@ impl<'a> ConsumeCtx<'a> {
                     .cloned()
             }
             _ => self.infer_unwrapped_call_type(scrutinee),
+        }
+    }
+
+    /// Plan 216 tails (Err-payload + nested-tuple follow-up, 2026-07-21):
+    /// shared innards of `infer_unwrapped_call_err_type`/
+    /// `infer_unwrapped_call_tuple_type`/`infer_unwrapped_call_err_tuple_type`
+    /// — identical Call-shape matching as `infer_unwrapped_call_type`
+    /// (static-method/free-fn/method-call forms), generic over the value
+    /// type `T` so it works for both the scalar (`String`) Err-payload map
+    /// pair and the tuple (`Vec<Option<String>>`) companion pairs.
+    fn infer_unwrapped_call_generic<T: Clone>(
+        &self,
+        e: &Expr,
+        fn_map: &HashMap<String, T>,
+        method_map: &HashMap<(String, String), T>,
+    ) -> Option<T> {
+        let ExprKind::Call { func, .. } = &e.kind else { return None; };
+        match &func.kind {
+            ExprKind::Path(parts) if parts.len() >= 2 => {
+                let type_name = parts[parts.len() - 2].clone();
+                let method_name = parts[parts.len() - 1].clone();
+                method_map.get(&(type_name, method_name)).cloned()
+            }
+            ExprKind::Ident(fname) => fn_map.get(fname).cloned(),
+            ExprKind::Member { obj, name: method } => {
+                let recv_ty: Option<String> = match &obj.kind {
+                    ExprKind::Ident(recv) if recv == "self" => self.self_type.clone(),
+                    ExprKind::Ident(recv) => {
+                        let canon = self.canonical(recv);
+                        self.var_types.get(&canon)
+                            .or_else(|| self.var_types.get(recv.as_str()))
+                            .cloned()
+                    }
+                    ExprKind::SelfAccess => self.self_type.clone(),
+                    _ => None,
+                };
+                recv_ty.and_then(|rty| method_map.get(&(rty, method.clone())).cloned())
+            }
+            _ => None,
+        }
+    }
+
+    /// Plan 216 tails (Err-payload follow-up): Err-arm counterpart of
+    /// `infer_unwrapped_call_type` — see that method's doc.
+    fn infer_unwrapped_call_err_type(&self, e: &Expr) -> Option<String> {
+        self.infer_unwrapped_call_generic(
+            e, &self.reg.unwrapped_fn_return_err_types, &self.reg.unwrapped_method_return_err_types)
+    }
+
+    /// Plan 216 tails (nested-tuple-payload follow-up): Ok/Some-arm tuple
+    /// counterpart of `infer_unwrapped_call_type`.
+    fn infer_unwrapped_call_tuple_type(&self, e: &Expr) -> Option<Vec<Option<String>>> {
+        self.infer_unwrapped_call_generic(
+            e, &self.reg.unwrapped_fn_return_tuple_types, &self.reg.unwrapped_method_return_tuple_types)
+    }
+
+    /// Plan 216 tails (nested-tuple-payload follow-up): Err-arm tuple
+    /// counterpart of `infer_unwrapped_call_type`.
+    fn infer_unwrapped_call_err_tuple_type(&self, e: &Expr) -> Option<Vec<Option<String>>> {
+        self.infer_unwrapped_call_generic(
+            e, &self.reg.unwrapped_fn_return_err_tuple_types, &self.reg.unwrapped_method_return_err_tuple_types)
+    }
+
+    /// Plan 216 tails (Err-payload follow-up): Err-arm counterpart of
+    /// `scrutinee_unwrapped_type` — see that method's doc.
+    fn scrutinee_unwrapped_err_type(&self, scrutinee: &Expr) -> Option<String> {
+        match &scrutinee.kind {
+            ExprKind::Ident(name) => {
+                let canon = self.canonical(name);
+                self.var_unwrapped_err_types.get(&canon)
+                    .or_else(|| self.var_unwrapped_err_types.get(name.as_str()))
+                    .cloned()
+            }
+            _ => self.infer_unwrapped_call_err_type(scrutinee),
+        }
+    }
+
+    /// Plan 216 tails (nested-tuple-payload follow-up): Ok/Some-arm tuple
+    /// counterpart of `scrutinee_unwrapped_type`.
+    fn scrutinee_unwrapped_tuple_type(&self, scrutinee: &Expr) -> Option<Vec<Option<String>>> {
+        match &scrutinee.kind {
+            ExprKind::Ident(name) => {
+                let canon = self.canonical(name);
+                self.var_unwrapped_tuple_types.get(&canon)
+                    .or_else(|| self.var_unwrapped_tuple_types.get(name.as_str()))
+                    .cloned()
+            }
+            _ => self.infer_unwrapped_call_tuple_type(scrutinee),
+        }
+    }
+
+    /// Plan 216 tails (nested-tuple-payload follow-up): Err-arm tuple
+    /// counterpart of `scrutinee_unwrapped_type`.
+    fn scrutinee_unwrapped_err_tuple_type(&self, scrutinee: &Expr) -> Option<Vec<Option<String>>> {
+        match &scrutinee.kind {
+            ExprKind::Ident(name) => {
+                let canon = self.canonical(name);
+                self.var_unwrapped_err_tuple_types.get(&canon)
+                    .or_else(|| self.var_unwrapped_err_tuple_types.get(name.as_str()))
+                    .cloned()
+            }
+            _ => self.infer_unwrapped_call_err_tuple_type(scrutinee),
+        }
+    }
+
+    /// Plan 216 tails (Err-payload + nested-tuple follow-up, 2026-07-21):
+    /// bundles all four best-effort unwrapped-shape lookups for a match/
+    /// if-let scrutinee, resolved ONCE by the caller and reused across every
+    /// arm (mirrors the pre-existing single `scrutinee_unwrapped_type()`
+    /// call-per-Match/IfLet discipline). Consumed by `consume_declare_arm_pattern`.
+    fn scrutinee_unwrapped(&self, scrutinee: &Expr) -> ScrutUnwrapped {
+        ScrutUnwrapped {
+            ok: self.scrutinee_unwrapped_type(scrutinee),
+            err: self.scrutinee_unwrapped_err_type(scrutinee),
+            ok_tuple: self.scrutinee_unwrapped_tuple_type(scrutinee),
+            err_tuple: self.scrutinee_unwrapped_err_tuple_type(scrutinee),
         }
     }
 
@@ -28854,6 +29133,16 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                     if let Some(inner) = unwrap_result_option_name(&p.ty, "") {
                         ctx.var_unwrapped_types.insert(p.name.clone(), inner);
                     }
+                    // Plan 216 tails (Err-payload + nested-tuple follow-up).
+                    if let Some(inner) = unwrap_result_err_name(&p.ty, "") {
+                        ctx.var_unwrapped_err_types.insert(p.name.clone(), inner);
+                    }
+                    if let Some(elems) = unwrap_result_option_tuple_names(&p.ty, "") {
+                        ctx.var_unwrapped_tuple_types.insert(p.name.clone(), elems);
+                    }
+                    if let Some(elems) = unwrap_result_err_tuple_names(&p.ty, "") {
+                        ctx.var_unwrapped_err_tuple_types.insert(p.name.clone(), elems);
+                    }
                     let pty = match &p.ty {
                         TypeRef::Named { path, .. } if path.len() == 1 =>
                             Some(path[0].clone()),
@@ -29353,32 +29642,116 @@ fn consume_walk_block_inner(
     }
 }
 
-/// Consume-волна А (D157-амендмент, D156-пропагация, 2026-07-19):
-/// declare pattern-bindings одного match/if-let arm'а.
+/// Plan 216 tails (Err-payload + nested-tuple follow-up, 2026-07-21): bundled
+/// best-effort unwrapped-shape info for a match/if-let scrutinee — built ONCE
+/// per Match/IfLet by `ConsumeCtx::scrutinee_unwrapped` and reused across
+/// every arm (mirrors the pre-existing single-lookup discipline). `ok`/`err`
+/// are the flat Named-type-name form (original D157/D180 scope); `ok_tuple`/
+/// `err_tuple` are the nested-tuple-payload follow-up (per-element names,
+/// populated only when the corresponding inner type is itself a tuple —
+/// mutually exclusive with the scalar field for the same arm).
+struct ScrutUnwrapped {
+    ok: Option<String>,
+    err: Option<String>,
+    ok_tuple: Option<Vec<Option<String>>>,
+    err_tuple: Option<Vec<Option<String>>>,
+}
+
+/// Plan 216 tails (2026-07-21): shared core of the scalar Ok/Some/Err payload
+/// case AND the per-element nested-tuple-payload case in
+/// `consume_declare_arm_pattern` below — declare `name`: if `payload_ty`
+/// names a must-consume type (D133), either register the consume-obligation
+/// (`is_consume` sub-pattern present) or emit `E_CONSUME_PATTERN_REQUIRED`;
+/// otherwise declare as a plain (possibly unknown-type) binding. `ctx_desc`
+/// is the diagnostic's variant-shape text (`"Ok(..)"` / `"Err((..))"` / …).
+fn consume_require_pattern_binding(
+    ctx: &mut ConsumeCtx,
+    name: &str,
+    is_consume: bool,
+    span: crate::diag::Span,
+    payload_ty: Option<&str>,
+    ctx_desc: &str,
+    errors: &mut Vec<Diagnostic>,
+) {
+    if name == "_" { return; }
+    let ty = payload_ty.map(|s| s.to_string());
+    let must_consume = payload_ty
+        .map(|t| ctx.lin_reg.consume_types.contains(t))
+        .unwrap_or(false);
+    if !must_consume {
+        ctx.declare(name, ty);
+        return;
+    }
+    if is_consume {
+        ctx.declare_consume_binding(name, ty);
+        // D180: consume-биндинг уже mut-capable.
+        ctx.local_mut.insert(name.to_string(), true);
+        return;
+    }
+    let insert_span = crate::diag::Span {
+        file_id: span.file_id,
+        start: span.start,
+        end: span.start,
+    };
+    errors.push(crate::diag::Diagnostic::new(
+        format!(
+            "[E_CONSUME_PATTERN_REQUIRED] pattern-биндинг `{}` держит \
+             consume-обязательный пейлоад типа `{}` из `{}` — \
+             требуется явный `consume`-паттерн (D157-амендмент, \
+             D156-пропагация через Option/Result).",
+            name, ty.as_deref().unwrap_or("?"), ctx_desc,
+        ),
+        span,
+    ).with_note(
+        "владение must-consume пейлоадом должно быть явным на \
+         pattern-site (visible ownership transfer, D180-философия) \
+         — используй `consume`-sub-pattern.".to_string(),
+    ).with_suggestion(crate::diag::Suggestion {
+        message: format!("`{}` → `consume {}`", name, name),
+        span: insert_span,
+        replacement: "consume ".to_string(),
+        applicability: crate::diag::Applicability::MachineApplicable,
+    }));
+    // Degrade gracefully — regular (non-obligated) binding, symmetric to
+    // D180 Rule 1's behaviour on E_CONSUME_KEYWORD_MISSING (no cascade).
+    ctx.declare(name, ty);
+}
+
+/// Consume-волна А (D157-амендмент, D156-пропагация, 2026-07-19) + Plan 216
+/// tails (Err-payload + nested-tuple follow-up, 2026-07-21): declare
+/// pattern-bindings одного match/if-let arm'а.
 ///
-/// Special-cased shape — single-arg tuple-variant `Ok(name)` / `Some(name)`
-/// (rvalue-скрутини — `TcpStream.connect(...)`; place-скрутини — именная
-/// переменная типа `Result[T,E]`/`Option[T]`, `scrut_unwrapped` резолвится
-/// вызывающим через `ConsumeCtx::scrutinee_unwrapped_type` ОДИН раз до
-/// вызова этой функции — Match переиспользует между armами):
-/// - unwrapped-тип НЕ known / НЕ must-consume (D133) — биндинг declare'ится
-///   как раньше, но теперь с ИЗВЕСТНЫМ типом (было `None`) — попутно чинит
-///   downstream method-dispatch/диагностики (не меняет consume-семантику).
-/// - unwrapped-тип must-consume:
-///   - `is_consume` НЕ указан на sub-pattern'е → `E_CONSUME_PATTERN_REQUIRED`
-///     (machine-applicable suggestion "вставьте `consume`"); биндинг
-///     declare'ится как ОБЫЧНАЯ (не-obligated) переменная — симметрия
-///     D180 Rule 1 (ошибка эмитируется один раз, без каскада).
-///   - `is_consume` указан (`Ok(consume tcp)`) → `declare_consume_binding`
-///     + implicit `mut` (D180: consume уже несёт права мутации).
+/// Special-cased shapes — single-arg tuple-variant `Ok(..)`/`Some(..)`/
+/// `Err(..)` (rvalue-скрутини — `TcpStream.connect(...)`; place-скрутини —
+/// именная переменная типа `Result[T,E]`/`Option[T]`; `scrut` резолвится
+/// вызывающим через `ConsumeCtx::scrutinee_unwrapped` ОДИН раз до вызова
+/// этой функции — Match переиспользует между armами):
 ///
-/// Любая другая форма pattern'а (record/tuple/array-payload, `Err(..)`,
-/// произвольный sum-variant, wildcard, …) — unchanged fallback (honest
-/// defer; sound: false-negative, не false-positive).
+/// 1. **Scalar payload** — `Ok(x)`/`Some(x)`/`Err(x)` (single `Ident`
+///    sub-pattern): unwrapped-тип НЕ must-consume (D133) → биндинг
+///    declare'ится как раньше, но теперь с ИЗВЕСТНЫМ типом (было `None`);
+///    must-consume → `is_consume` НЕ указан → `E_CONSUME_PATTERN_REQUIRED`;
+///    указан (`Ok(consume tcp)`/`Err(consume e)`) → `declare_consume_binding`
+///    + implicit `mut` (D180). Err-arm — Plan 216 tail closure: раньше ТОЛЬКО
+///    Ok/Some (D157 bootstrap honest-defer); теперь симметрично Err (E тоже
+///    must-consume — `Result[T,E]`'s second generic).
+/// 2. **Nested-tuple payload** — `Ok((a, b))`/`Some((a, b))`/`Err((a, b))`
+///    (single `Tuple` sub-pattern) — Plan 216 tail closure (было unchanged
+///    fallback, spec 05-memory.md «Nested/record/tuple payload… не покрыт»):
+///    когда per-element типы известны (`scrut.ok_tuple`/`scrut.err_tuple`) И
+///    arity совпадает — каждый элемент проходит ТОТ ЖЕ scalar-must-consume
+///    гейт (`consume_require_pattern_binding`) независимо; unresolved/
+///    mismatched arity — honest-defer fallback (declare без obligation).
+///    Глубже вложенный не-`Ident` элемент (ещё один tuple/record/wildcard) —
+///    honest-defer для ЭТОГО элемента (declare его имён без obligation).
+///
+/// Любая другая форма pattern'а (record-payload `Ok({..})`, произвольный
+/// sum-variant, wildcard, …) — unchanged fallback (honest defer; sound:
+/// false-negative, не false-positive).
 fn consume_declare_arm_pattern(
     ctx: &mut ConsumeCtx,
     pattern: &Pattern,
-    scrut_unwrapped: Option<&str>,
+    scrut: &ScrutUnwrapped,
     errors: &mut Vec<Diagnostic>,
 ) {
     if let Pattern::Variant {
@@ -29389,53 +29762,47 @@ fn consume_declare_arm_pattern(
     {
         if patterns.len() == 1 {
             let variant = path.last().map(|s| s.as_str()).unwrap_or("");
-            if matches!(variant, "Ok" | "Some") {
-                if let Pattern::Ident { name, is_consume, span, .. } = &patterns[0] {
-                    if name != "_" {
-                        let ty = scrut_unwrapped.map(|s| s.to_string());
-                        let must_consume = scrut_unwrapped
-                            .map(|t| ctx.lin_reg.consume_types.contains(t))
-                            .unwrap_or(false);
-                        if must_consume {
-                            if *is_consume {
-                                ctx.declare_consume_binding(name, ty);
-                                // D180: consume-биндинг уже mut-capable.
-                                ctx.local_mut.insert(name.clone(), true);
-                            } else {
-                                let insert_span = crate::diag::Span {
-                                    file_id: span.file_id,
-                                    start: span.start,
-                                    end: span.start,
-                                };
-                                errors.push(crate::diag::Diagnostic::new(
-                                    format!(
-                                        "[E_CONSUME_PATTERN_REQUIRED] pattern-биндинг `{}` держит \
-                                         consume-обязательный пейлоад типа `{}` из `{}(..)` — \
-                                         требуется явный `consume`-паттерн (D157-амендмент, \
-                                         D156-пропагация через Option/Result).",
-                                        name, ty.as_deref().unwrap_or("?"), variant,
-                                    ),
-                                    *span,
-                                ).with_note(
-                                    "владение must-consume пейлоадом должно быть явным на \
-                                     pattern-site (visible ownership transfer, D180-философия) \
-                                     — используй `consume`-sub-pattern.".to_string(),
-                                ).with_suggestion(crate::diag::Suggestion {
-                                    message: format!("`{}({})` → `{}(consume {})`", variant, name, variant, name),
-                                    span: insert_span,
-                                    replacement: "consume ".to_string(),
-                                    applicability: crate::diag::Applicability::MachineApplicable,
-                                }));
-                                // Degrade gracefully — regular (non-obligated)
-                                // binding, symmetric to D180 Rule 1's behaviour
-                                // on E_CONSUME_KEYWORD_MISSING (no cascade).
-                                ctx.declare(name, ty);
-                            }
-                        } else {
-                            ctx.declare(name, ty);
-                        }
+            let is_err = variant == "Err";
+            if matches!(variant, "Ok" | "Some") || is_err {
+                let scalar_ty: Option<&str> =
+                    if is_err { scrut.err.as_deref() } else { scrut.ok.as_deref() };
+                let tuple_ty: Option<&[Option<String>]> =
+                    if is_err { scrut.err_tuple.as_deref() } else { scrut.ok_tuple.as_deref() };
+                match &patterns[0] {
+                    Pattern::Ident { name, is_consume, span, .. } if name != "_" => {
+                        consume_require_pattern_binding(
+                            ctx, name, *is_consume, *span, scalar_ty,
+                            &format!("{}(..)", variant), errors);
                         return;
                     }
+                    Pattern::Tuple(elem_patterns, _) => {
+                        if let Some(elem_types) = tuple_ty {
+                            if elem_types.len() == elem_patterns.len() {
+                                let ctx_desc = format!("{}((..))", variant);
+                                for (elem_pat, elem_ty) in elem_patterns.iter().zip(elem_types.iter()) {
+                                    match elem_pat {
+                                        Pattern::Ident { name, is_consume, span, .. } => {
+                                            consume_require_pattern_binding(
+                                                ctx, name, *is_consume, *span,
+                                                elem_ty.as_deref(), &ctx_desc, errors);
+                                        }
+                                        _ => {
+                                            // Deeper nesting inside a tuple
+                                            // element (wildcard/array/record/
+                                            // nested tuple) — honest defer.
+                                            let mut names = Vec::new();
+                                            consume_pattern_names(elem_pat, &mut names);
+                                            for n in &names { ctx.declare(n, None); }
+                                        }
+                                    }
+                                }
+                                return;
+                            }
+                        }
+                        // Unknown/mismatched tuple shape — fall through to
+                        // the honest-defer fallback below.
+                    }
+                    _ => {}
                 }
             }
         }
@@ -29658,6 +30025,17 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                 if let Some(u) = ctx.var_unwrapped_types.get(&canon).cloned() {
                     ctx.var_unwrapped_types.insert(names[0].clone(), u);
                 }
+                // Plan 216 tails (Err-payload + nested-tuple follow-up):
+                // alias inherits the Err/tuple companions too.
+                if let Some(u) = ctx.var_unwrapped_err_types.get(&canon).cloned() {
+                    ctx.var_unwrapped_err_types.insert(names[0].clone(), u);
+                }
+                if let Some(u) = ctx.var_unwrapped_tuple_types.get(&canon).cloned() {
+                    ctx.var_unwrapped_tuple_types.insert(names[0].clone(), u);
+                }
+                if let Some(u) = ctx.var_unwrapped_err_tuple_types.get(&canon).cloned() {
+                    ctx.var_unwrapped_err_tuple_types.insert(names[0].clone(), u);
+                }
             } else {
                 let ty = ctx.infer_let_type(decl);
                 // Consume-волна А (D157-амендмент, 2026-07-19): best-effort
@@ -29671,6 +30049,28 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                         .or_else(|| ctx.infer_unwrapped_call_type(&decl.value));
                     if let Some(u) = unwrapped {
                         ctx.var_unwrapped_types.insert(names[0].clone(), u);
+                    }
+                    // Plan 216 tails (Err-payload + nested-tuple follow-up,
+                    // 2026-07-21): same explicit-annotation-first / RHS-fallback
+                    // discipline for the Err-scalar and Ok/Some+Err tuple companions.
+                    let self_ty = ctx.self_type.as_deref().unwrap_or("");
+                    let unwrapped_err = decl.ty.as_ref()
+                        .and_then(|t| unwrap_result_err_name(t, self_ty))
+                        .or_else(|| ctx.infer_unwrapped_call_err_type(&decl.value));
+                    if let Some(u) = unwrapped_err {
+                        ctx.var_unwrapped_err_types.insert(names[0].clone(), u);
+                    }
+                    let unwrapped_tuple = decl.ty.as_ref()
+                        .and_then(|t| unwrap_result_option_tuple_names(t, self_ty))
+                        .or_else(|| ctx.infer_unwrapped_call_tuple_type(&decl.value));
+                    if let Some(u) = unwrapped_tuple {
+                        ctx.var_unwrapped_tuple_types.insert(names[0].clone(), u);
+                    }
+                    let unwrapped_err_tuple = decl.ty.as_ref()
+                        .and_then(|t| unwrap_result_err_tuple_names(t, self_ty))
+                        .or_else(|| ctx.infer_unwrapped_call_err_tuple_type(&decl.value));
+                    if let Some(u) = unwrapped_err_tuple {
+                        ctx.var_unwrapped_err_tuple_types.insert(names[0].clone(), u);
                     }
                 }
                 // Plan 100.3 (D157): detect consume-closures.
@@ -31585,11 +31985,12 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
         }
         ExprKind::IfLet { pattern, scrutinee, guard, then, else_ } => {
             consume_walk_expr(ctx, scrutinee, errors);
-            // Consume-волна А (D157-амендмент, D156-пропагация): resolve
-            // scrutinee's Ok/Some-inner тип ОДИН раз перед pattern-declare.
-            let scrut_unwrapped = ctx.scrutinee_unwrapped_type(scrutinee);
+            // Consume-волна А (D157-амендмент, D156-пропагация) + Plan 216
+            // tails (Err-payload + nested-tuple): resolve scrutinee's bundled
+            // unwrapped shape ОДИН раз перед pattern-declare.
+            let scrut = ctx.scrutinee_unwrapped(scrutinee);
             let saved = ctx.states.clone();
-            consume_declare_arm_pattern(ctx, pattern, scrut_unwrapped.as_deref(), errors);
+            consume_declare_arm_pattern(ctx, pattern, &scrut, errors);
             // Plan 106: guard sees pattern bindings.
             if let Some(g) = guard { consume_walk_expr(ctx, g, errors); }
             consume_walk_block(ctx, then, errors);
@@ -31603,14 +32004,14 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
         // ─── match ───
         ExprKind::Match { scrutinee, arms } => {
             consume_walk_expr(ctx, scrutinee, errors);
-            // Consume-волна А: resolve ОДИН раз, переиспользуется всеми armами
-            // (rvalue-скрутини — Call resolved напрямую; place — по имени).
-            let scrut_unwrapped = ctx.scrutinee_unwrapped_type(scrutinee);
+            // Consume-волна А + Plan 216 tails: resolve ОДИН раз, переиспользуется
+            // всеми armами (rvalue-скрутини — Call resolved напрямую; place — по имени).
+            let scrut = ctx.scrutinee_unwrapped(scrutinee);
             let saved = ctx.states.clone();
             let mut joined: Option<HashMap<String, VarState>> = None;
             for arm in arms {
                 ctx.states = saved.clone();
-                consume_declare_arm_pattern(ctx, &arm.pattern, scrut_unwrapped.as_deref(), errors);
+                consume_declare_arm_pattern(ctx, &arm.pattern, &scrut, errors);
                 if let Some(g) = &arm.guard { consume_walk_expr(ctx, g, errors); }
                 match &arm.body {
                     MatchArmBody::Expr(ex) => consume_walk_expr(ctx, ex, errors),

@@ -1,10 +1,43 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # План 216 — Consume-дисциплина: enforce по букве (вариант А)
 
-**Статус:** 🔨 В РАБОТЕ 2026-07-19 (волна запущена 2026-07-18 решением владельца; план-файл
-оформлен вдогонку по вопросу владельца — работа шла под маркером). **Приоритет P1.**
+**Статус:** ✅ Основная волна ЗАКРЫТА (слияние `bcb3c6bd6`, 2026-07-20, в `main`);
+**хвосты Err-payload + nested-tuple ЗАКРЫТЫ 2026-07-21** (ветка `p216-defer-tails`,
+план 221 атом A-B7). **Приоритет P1 (основная волна) / P2 (хвосты).**
 **Маркер-источник:** `[M-d180-consume-propagation-match-payload-mut-rebind]`
 (backlog-followups.md §P1; найден владельцем 2026-07-17 чтением TLS-регресс-теста; home = этот план).
+
+## Хвосты (закрыты 2026-07-21, ветка `p216-defer-tails`)
+
+Bootstrap-волна (05-memory.md, D157-амендмент «Область») честно defer'ила
+3 пункта. Разобраны по итогам:
+1. **Err-пейлоад** (`Err(x)` над must-consume `E` в `Result[T,E]`) — **ЗАКРЫТО**.
+   Симметрично Ok/Some: `Err(consume e)` обязателен, та же
+   `E_CONSUME_PATTERN_REQUIRED`. Новая инфраструктура (`unwrap_result_err_name`,
+   `unwrapped_*_return_err_types`, `var_unwrapped_err_types`,
+   `infer_unwrapped_call_err_type`, `scrutinee_unwrapped_err_type`) — зеркало
+   Ok/Some-путей, `compiler-codegen/src/types/mod.rs`.
+2. **Nested/tuple-пейлоад** — **ЧАСТИЧНО ЗАКРЫТО: tuple-форма.**
+   `Ok((a, b))`/`Some((a, b))`/`Err((a, b))` — per-element must-consume гейт
+   (arity-совпадение + известный per-element unwrapped-тип; иначе
+   honest-defer fallback, unchanged). Новая инфраструктура
+   (`unwrap_result_option_tuple_names`/`unwrap_result_err_tuple_names`,
+   `unwrapped_*_return_(err_)tuple_types`, `var_unwrapped_(err_)tuple_types`,
+   `ScrutUnwrapped`-бандл, `consume_require_pattern_binding` — общий gate для
+   scalar-арма И per-tuple-элемента).
+   **Record-форма (`Ok({ a, b })`) НЕ покрыта** — нет per-field-type registry
+   в `ConsumeCtx` для этого пути; новый followup `[M-216-record-payload-consume]`
+   (P3, узкий — 0 существующих сайтов паттерн-матчат record-payload).
+3. **Field/`@field`-скрутини** (`match @session { … }`) — **НЕ ТРОНУТО**
+   (отдельный, более узкий пробел — followup `[M-73.2-field-scrutinee-unwrap]`,
+   вне мандата этой волны хвостов).
+
+Фикстуры: `d157_d180_consume_pattern_err_payload_ok.nv`,
+`d157_d180_consume_pattern_nested_tuple_ok.nv` (pos) +
+`neg/d157_err_payload_consume_required_neg.nv`,
+`neg/d157_nested_tuple_consume_required_neg.nv` (neg). Спека — D157-амендмент
+расширен (05-memory.md, «Amendment Plan 216 tails» + обновлённая «Область»).
+Модель: sonnet.
 
 ## Мотив (одной фразой)
 

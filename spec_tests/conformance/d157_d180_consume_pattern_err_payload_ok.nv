@@ -1,0 +1,58 @@
+// Plan 216 tails (Err-payload follow-up, 2026-07-21): consume-волна А
+// (D157/D180) bootstrap явно defer'ил Err-пейлоад ("нет карты
+// unwrapped-Err-типа сегодня" — 05-memory.md, followup
+// `[M-73.2-err-payload-consume]`). Эта фикстура закрывает хвост: `Err(e)`
+// pattern-биндинг над must-consume Err/E-inner типом (D156-пропагация через
+// ВТОРОЙ generic `Result[T,E]`) теперь симметричен Ok/Some — обязан нести
+// `consume`-sub-pattern (`Err(consume e)`), mut-capable, must-be-consumed
+// (D133). rvalue+place скрутини, if-let форма, view-default на НЕ-must-consume
+// Err (str) не сломан (существующий d157_d180_consume_pattern_rvalue_ok.nv
+// уже это покрывал для Ok-стороны — здесь симметрично для Err-стороны).
+
+module spec_tests.conformance
+
+type P216ErrPayload consume {
+    code int,
+}
+
+fn P216ErrPayload consume @log_and_drop() -> () { () }
+fn P216ErrPayload mut @touch() -> () { () }
+
+fn dial_p216_err(v int) -> Result[int, P216ErrPayload] =>
+    if v > 0 { Ok(v) } else { Err(P216ErrPayload { code: v }) }
+
+test "rvalue match Err(consume e) — ownership явный, mut-capable, consume-до-exit" {
+    match dial_p216_err(-1) {
+        Ok(_v) => {},
+        Err(consume e) => {
+            e.touch()           // mut-метод без доп. `mut`-keyword (D180)
+            e.log_and_drop()    // consume-обязательство выполнено (D133)
+        },
+    }
+}
+
+test "place-скрутини — именная Result-переменная, Err(consume e) тот же путь" {
+    ro attempt = dial_p216_err(-2)
+    match attempt {
+        Ok(_v) => {},
+        Err(consume e) => { e.log_and_drop() },
+    }
+}
+
+test "if-let rvalue Err(consume e) — ownership явный" {
+    if Err(consume e) = dial_p216_err(-3) {
+        e.log_and_drop()
+    }
+}
+
+fn dial_str_err(v int) -> Result[int, str] =>
+    if v > 0 { Ok(v) } else { Err("boom") }
+
+test "view-default Err payload НЕ сломан — не-must-consume E (str) остаётся plain" {
+    match dial_str_err(-1) {
+        Ok(_v) => {},
+        Err(msg) => {
+            assert(msg == "boom")
+        },
+    }
+}
