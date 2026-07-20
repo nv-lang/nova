@@ -3735,9 +3735,24 @@ fn codegen_to_c(
     // объявляют тот же `module X`. Если да — manifest check использует
     // is_folder_module=true (parent.X rule).
     let is_folder_module = is_folder_module_peer(path);
+    // `[M-oot-dash-module-name-e78]` (2026-07-21): a file outside `repo`
+    // (the SAME CWD-resolved project root already threaded below into
+    // `resolve_imports_inline*`, per `[M-standalone-out-of-tree-interp-sb-typedef]`)
+    // is exempt from D78 — `find_manifest` inside `check_module_path_with_kind`
+    // walks to the nearest ancestor `nova.toml` regardless of which project
+    // invoked `nova`, so a file living e.g. under a shared `%TEMP%` scratch
+    // tree can land under a wholly UNRELATED leftover manifest several
+    // directories up and get its `parent.target` rule wrongly enforced.
+    // In-tree files (the overwhelming case) are untouched (δ0).
+    let skip_d78_oot = manifest::is_outside_repo(path, repo);
     // Bug fix 2026-06-01: emit W_D78_REV1_DEPRECATED warning instead of
     // silent acceptance для rev-1 legacy declarations.
-    match manifest::check_module_path_with_kind(path, &module.name, is_folder_module) {
+    let d78_result = if skip_d78_oot {
+        Ok(manifest::ModulePathCheck::Rev3)
+    } else {
+        manifest::check_module_path_with_kind(path, &module.name, is_folder_module)
+    };
+    match d78_result {
         Ok(manifest::ModulePathCheck::Rev3) => {}
         Ok(manifest::ModulePathCheck::Rev1Deprecated(msg)) => {
             eprintln!("warning: {}", msg);
