@@ -576,12 +576,16 @@ static inline void nova_bench_set_throughput_elements(nova_int n) {
  * NULL ptr защищается ".ptr ? ... : "?"" fallback.
  */
 static inline void nova_bench_emit_metric(nova_str name, nova_int value, nova_str unit) {
+    /* gcc 14+ makes -Wincompatible-pointer-types error-by-default: bare `"?"`/
+     * `""` string literals are `char*` in C, but name.ptr/unit.ptr are
+     * `const uint8_t*` (nova_str ABI, vtables.h) — cast-only, no behavior
+     * change (clang accepted the mismatch silently). */
     fprintf(stdout, "__BENCH_METRIC__\t%.*s\t%lld\t%.*s\n",
         (int)(name.ptr ? name.len : 1),
-        name.ptr ? name.ptr : "?",
+        name.ptr ? name.ptr : (const uint8_t*)"?",
         (long long)value,
         (int)(unit.ptr ? unit.len : 0),
-        unit.ptr ? unit.ptr : "");
+        unit.ptr ? unit.ptr : (const uint8_t*)"");
     fflush(stdout);
 }
 
