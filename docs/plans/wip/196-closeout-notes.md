@@ -67,10 +67,65 @@ CPU) укладывается: **8m56s**, полный вывод.
 
 (продолжение по мере выполнения — п.2/3/4/5/6 ниже)
 
+## 3. П1 — If-body closure peek: ✅ ЗАКРЫТО
+
+**Реализация** (`compiler-codegen/src/types/mod.rs`, коммит `0d4ee870d`):
+- Новый enum `ClosureIfCtorBranch` (module-level, рядом с `ctor_payload_expected`) —
+  `Option(Option<TypeRef>)` / `Result(Option<TypeRef>, Option<TypeRef>)` — частичное
+  знание про то, какой builtin sum и какой generic-слот знает ОДНА ветка If.
+- `closure_if_ctor_branch_peek` — пикает ОДНУ ветку: bare `Ident("None")` →
+  `Option(None)`; single-arg `Call(Some/Ok/Err, [x])` → инферит `x` через
+  существующий `infer_expr_type` и заворачивает в нужный слот; иначе — делегат в
+  `infer_expr_type` + `typeref_as_ctor_branch` (конкретный `Option[T]`/`Result[T,E]`
+  тоже засчитывается).
+- `closure_if_ctor_peek` — главная точка входа: гейт `If{then, else_:
+  Some(Block)}` (без elif-цепочек — реальный corpus-шейп простой двусторонний),
+  обе стороны обязаны быть `closure_block_stmts_are_peek_safe` (тот же гейт, что
+  builtin-волна), комбинирует результаты обеих веток (конфликт слотов/разные суммы
+  → `None`, безопасный legacy-фоллбек).
+- Оба call-сайта (`closure_arg_return_peek` ~16921 и inline-дубль в
+  `resolve_method_return_with_closure_args` ~17140) подключены через
+  `.or_else(|| self.closure_if_ctor_peek(...))` — АДДИТИВНО (существующий
+  `infer_expr_type`-путь пробуется ПЕРВЫМ, новый peek только страхует то, что
+  раньше давало `None`).
+
+**Гейты (release nova-cli, собран из ЭТОГО worktree):**
+- `nova-codegen`/`nova-cli` — `cargo build --release` — 0 errors (оба).
+- **Авторитетный гейт** `nova test spec_tests/conformance --jobs 12` (СИНХРОННО,
+  foreground) — **PASS: 126  FAIL: 0  SKIP: 16**. ЗЕЛЁНЫЙ (baseline был PASS 125 —
+  дельта не регрессия: сравнивал по `grep -c "^PASS"`, который ПОВТОРНО считал
+  строку `===== SUMMARY ===== PASS: N ...` как ещё один "PASS"-хит — истинное
+  сравнение по SUMMARY-строке; FAIL=0 в обоих прогонах, что и есть красная линия).
+  Живой corpus-сайт `plan200_14_option_result_flat_map_filter.nv:44` (`if x==0
+  {None} else {Some(x)}`) участвует в мега-CU (top-level loose-файлы без своего
+  `fn main` агрегируются В ОДИН runnable-юнит `app_effect_basic_t8_1`, самый
+  медленный тест — 269s, что и есть весь мега-CU целиком; отдельной
+  PASS/FAIL-строки на `plan200_14` нет, но 0 FAIL для всего агрегата = его тесты
+  тоже все PASS).
+- **⚠ ЛОВУШКА ОКРУЖЕНИЯ (эта машина/сессия, НЕ связано с правкой):** `nova check
+  --strict-effects examples/flagship/aggregator/src/main.nv` БЕЗ
+  `NOVA_OFFLINE=1` падает `FAIL: 1` — «git-зависимость `tls`: fetch... nova-tls» —
+  агент-сендбокс не имеет исходящего сетевого доступа, а resolve_git_dep пытается
+  живой fetch несмотря на то, что нужный commit УЖЕ есть в глобальном
+  `~/.nova/git` кэше (`nova-tls-768a12b7c05ddb78/910e14be86c3690f4b5ddd1d30d365437336f910`
+  присутствует). **Фикс окружения:** `NOVA_OFFLINE=1` — тогда кэш используется
+  без сети. С этим флагом: `nova check --strict-effects
+  examples/flagship/aggregator/src/main.nv` → **PASS: 1  FAIL: 0  WARN: 33** (все
+  warning — unused-import, косметика). `nova build --strict-effects --mode
+  release ... -o aggregator.exe` → **built (34.10s)**, 0 ошибок. Записать в
+  чекпойнт для следующих пунктов этой же волны — всегда экспортировать
+  `NOVA_OFFLINE=1` для флагман-гейта в ЭТОЙ среде.
+
+**Вывод:** producer gap №1 закрыт. Легаси (`infer_method_level_return_for_sum`
+B11q/B11r) для этого шейпа теперь НЕ единственный путь — канал (`resolve_return_channel`
+через `resolve_instance_method_return_arity`/`node_substs`) отвечает раньше для
+`If`-body Option/Result combinator-closures. Легаси-ветка САМА НЕ снесена этим
+пунктом (это — П2, следующий).
+
 ## Статус пунктов (сводка, обновляется)
 
-- П1 (If-body peek): В РАБОТЕ.
-- П2 (снос B11q/B11r): ОЖИДАЕТ П1.
+- П1 (If-body peek): ✅ ЗАКРЫТО (коммит `0d4ee870d`, гейты зелёные).
+- П2 (снос B11q/B11r): В РАБОТЕ.
 - П3 (re-trace resolve_result_option_ret / B06a-B10j): НЕ НАЧАТО.
 - П4 (re-trace rt_slots_from_args): НЕ НАЧАТО.
 - П5 (терминал-фиксы по зондам wip/): НЕ НАЧАТО.
