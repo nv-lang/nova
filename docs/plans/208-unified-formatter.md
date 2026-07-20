@@ -1,7 +1,16 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 208 — Unified Formatter (`@display(mut f Fmt)`, байтовый `Write`, zero-alloc)
 
-**Статус:** 🔨 Ф.0-Ф.3 РЕАЛИЗОВАНЫ (2026-07-16, ветка `p208-impl`, owner-go получен). Ф.0 (спека D422
+**Статус:** 🔨 Ф.0-Ф.3 РЕАЛИЗОВАНЫ (2026-07-16, ветка `p208-impl`, owner-go получен).
+**Ф.4R-прогресс (2026-07-21, влито `bb5cae073`):** Ш0 (эталоны-контракт, 4 квирка запинованы) +
+Ш1 (Debug-движок + `*_display_spec`, семейство в string_builder.nv — обход order-dependent-import
+цикла) + Ш3 (fast-path по резолву, kill-switch `NOVA_FMT_LEGACY=1`, скоуп int/f64/f32; str/char/bool
+rich — follow-up) — ВЛИТЫ; §10R-Д: Д1 value-first ✅ + Д2 type-first (`fmt_f64`→`f64_fmt`) ✅
+применены той же интеграцией; Д3 (упразднение `_into`) — В РАБОТЕ (волна p208-f4r-no-into).
+**Ш2 — СТОП** (перенос примитив-тел требует второго цикла fmt_buf↔prelude — компиляторная находка,
+патч-репро в wip/208-f4r-sh2-blocked-repro.patch; рекомендация в notes: цель достижима без цикла).
+Ш4 (снос conv.h nova_fmt_* + kill-switch + D422-амендмент + переписка примеров §4-§6) — по сигналу
+владельца после Д3. Ф.0 (спека D422
 keystone + амендменты) и Ф.1 (буфер-примитивы `.nv`, аддитивно) слиты в main ранее (`edcc4ab73`,
 `b6ee6f40a`). Ф.2 (когерентная волна: `Write`/`Fmt`/`FmtCtx`/энумы в std, `emit_c.rs`-диспатч на
 `@display(f)`/`@debug(f)`, снос `@display_fmt`-пути, миграция всех известных потребителей —
