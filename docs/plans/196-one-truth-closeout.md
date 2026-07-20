@@ -1,7 +1,10 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 196 — «Одна правда»: удалить второе окно `infer_expr_c_type`
 
-**Статус:** 🔥 IN PROGRESS, **КУРС-КОРРЕКТИРОВАН 2026-07-12**. **Приоритет:** P0 (ключевая
+**Статус:** 🔥 IN PROGRESS (НЕ ЗАКРЫТ — см. «Итог финальной closeout-волны
+2026-07-21» в конце файла: 1 продюсер-gap закрыт, 3 честных отрицательных
+вердикта «жив», 5 терминал-остатков задокументированы, снос НЕ выполнен).
+**КУРС-КОРРЕКТИРОВАН 2026-07-12**. **Приоритет:** P0 (ключевая
 идея 172-186). **Умбрелла над:** 172.1 (U-хвосты), 172.12, 172.13. Координирует, НЕ дублирует.
 
 ---
@@ -431,3 +434,55 @@ merged-CU зелёный). Полный рецепт + локализация �
 (изолированно нет) → каждая итерация = 7-мин мега-CU гейт. Две под-правки (чекер-фильтр + codegen-имя)
 готовы в рецепте, третий сайт — по нему же. Закроется при системном фасете B ИЛИ отдельной волной по слову.
 **Возврат в merged-CU:** `standalone/{method_call_never_static,scalar_only_empty}.nv` — после фикса.
+
+---
+
+## 🏁 Итог финальной closeout-волны (2026-07-21, worktree `nova-196close`, ветка `p196-closeout`, sonnet)
+
+Полный отчёт по шагам: [wip/196-closeout-notes.md](wip/196-closeout-notes.md). Методология —
+ИЗОЛИРОВАННЫЕ repro через реальный пайплайн (`nova test <file/folder>`, resolve_imports_inline,
+НЕ standalone `nova-codegen compile`), `NOVA_TRACE_ICR=1`/новые точные зонды — избегая
+ложных «мертво»-вердиктов прошлых волн (глобальная дедупликация трейсов по процессу).
+
+### Снесено ЭТОЙ волной
+**0 движков физически снесено.** Обе попытки снести/детачить (B11q/B11r паника-триал; чекер-фикс
+на B11al-терминал) наткнулись на живые corpus-хиты уже на ПЕРВОМ репро и были откачены (zero-
+tolerance §4а — половинный/нерабочий патч не остаётся в дереве).
+
+### Доставлено (продюсер-улучшение, НЕ снос)
+- **П1 — If-body closure peek ЗАКРЫТ** (`closure_if_ctor_peek`/`closure_if_ctor_branch_peek`,
+  `types/mod.rs`, коммит `0d4ee870d`): последний ПРОДЮСЕР-gap builtin-волны — `|x| if c {
+  Some(..) } else { None }`-комбинаторы (реальный сайт `plan200_14_option_result_flat_map_
+  filter.nv:44`) теперь канализируются, а не только легаси. Гейты зелёные: conformance
+  126/0/16, флагман PASS 1/0/33 + built.
+- **Новый точный зонд** `NOVA_B5_MEANINGFUL_TRACE` (`rt_slots_from_call`, коммит `9d4209be1`) —
+  отличает РЕАЛЬНОЕ восстановление слота от шумного тривиального 0-generic «fallback»
+  (существующий `NOVA_B5_TRACE` был зашумлён). Оставлен в дереве (env-gated, 0 цена).
+
+### Канал покрывает (после этой волны)
+Explicit-turbofish instance-methods (Producer B, прошлые волны) + static-ctor (CH, прошлые
+волны) + **If-body Option/Result combinator closures (Producer B, ЭТА волна, П1)**.
+
+### Честные остатки (ЖИВЫЕ, снос НЕ выполнен — по маркеру)
+
+| # | Маркер/функция | Класс (конкретный, найден изолированным repro) | Число |
+|---|---|---|---|
+| 1 | `B11q_novaopt_methods`/`B11r_result_like_methods` (`infer_call_ret_c`, frozen) | ЛЮБОЙ Option/Result instance-метод вне Channel 2 — напр. `Option[T Debug]@debug`/`Result[T,E Debug]@debug` (`std/src/prelude/protocols.nv:732,753`), концептуально ШИРЕ closure-peek (П1 не покрывает) | 1+ (первый же repro, d30) |
+| 2 | `resolve_result_option_ret` (B06a/B10j callers, `emit_c.rs:19487`) | generic slice-serde `[]T@serialize[S]`/`[]T.deserialize[D] -> Result[...]` (`std/src/encoding/serde/serde.nv:299,307`; вызов `@tags.serialize(s)`, `manual_roundtrip_test.nv:43`) | 1 класс (0 хитов на 8 карта-фикстурах, 1 хит в std/encoding/serde) |
+| 3 | `rt_slots_from_call` MISS-fallback (6 call-сайтов, `emit_c.rs:36478,37676,38306,39190,39957,40281`) | generic `HashMap[K,V]`-подобные static/instance вызовы, `channel=None` целиком (node_substs канал их вообще не видит) | 8246+ RECOVERED-хитов (неполный мега-CU прогон, реальное число БОЛЬШЕ) |
+| 4 | `B10m_ident_empty_fallback` (`196-probes-notes.md` §1) | phase-1c pre-scan write-once баг (bare-call к expr-body unannotated free-fn, forward-reference в файле) | подтверждён CC-FAIL-репро |
+| 5 | `B11al_panic_method_p67` (`196-probes-notes.md` §2.1) | неизвестный метод на `*T`-ресивере — рецепт зонда неполон, реальный фикс требует расширения ОБЩЕГО `infer_arg_ty` (см. `wip/196-closeout-notes.md` П5) | подтверждён red-фикстурой |
+| 6 | `B12q_panic_path_p67` (`196-probes-notes.md` §2.2) | неизвестный static-метод через 2-сегментный `Type.method()` Path | подтверждён red-фикстурой |
+| 7 | `B12r_panic_path_no_method_seg` (`196-probes-notes.md` §2.3) | Path длиннее 2 сегментов — сцеплен с открытым `[M-d289-module-qualified-path-method-collision-cu]` | подтверждён red-фикстурой |
+| 8 | `B12s_panic_path_no_parts` (`196-probes-notes.md` §2.4) | callee через произвольное выражение (Index/Ternary/…) | подтверждён red-фикстурой |
+
+**Статус реестра: план 196 ОСТАЁТСЯ 🔥 IN PROGRESS, НЕ ЗАКРЫТ.** Второе окно (`infer_expr_c_type`/
+`infer_call_ret_c`) по-прежнему живёт как необходимый fallback для минимум 3 задокументированных
+классов (builtin Option/Result debug-и-подобные методы; generic slice-serde; generic HashMap[K,V]-
+подобные static/instance вызовы) плюс 5 терминал-остатков вне frozen-зоны (checker-side, `types/mod.rs`
++ `parser/mod.rs`). Каждый остаток — с конкретным классом+числом (не голословно «наверное живо»),
+маркер и файл-источник указаны для следующей волны. Гейты этой волны — зелёные на КАЖДОМ шаге
+(conformance 126/0/16, флагман built, byte-diff=0 на откаченных попытках).
+
+Хэши коммитов (ветка `p196-closeout`, база main `58804953d`): `d46610dae`, `0d4ee870d`, `418afb69f`,
+`428529179`, `6805f2643`, `9d4209be1`, `34e9a9e41`. В main НЕ мёржено, push НЕ делался. Модель: sonnet.
