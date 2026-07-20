@@ -10353,6 +10353,17 @@ impl<'a> TypeCheckCtx<'a> {
         method_names_ordered: &[String],
         method_params: &[Param],
         call_args_scope: Option<(&[CallArg], &HashMap<String, TypeRef>)>,
+        // [M-196-producer-b-turbofish] (Plan 196 Producer B): an explicit METHOD-level
+        // turbofish on an INSTANCE call (`obj.method[U](args)`) — positional, aligned to
+        // `method_names_ordered` (mirrors `f1_check_call`'s free-fn/static-ctor turbofish
+        // overlay, D310, ~11691: "explicit annotation is ground truth"). `None` for every
+        // pre-existing caller (inferred-only call-sites — unchanged behavior, additive
+        // parameter). Carrier names (`names` below) are NEVER turbofish-supplied on an
+        // instance call — the receiver VALUE already fixes them; turbofish on `obj.method[..]`
+        // binds ONLY the method's OWN generics (Nova has no receiver-generic turbofish syntax
+        // on an instance call — `Type[T].method(...)` is the DISTINCT static-ctor AST shape,
+        // excluded by the caller before this fn is ever invoked).
+        explicit_method_type_args: Option<&[TypeRef]>,
     ) -> Option<(ResolvedType, Vec<(String, ResolvedType)>)> {
         use constraint_solver::{Solver, Ty, TypeVar, VarGen};
         // Carrier generic names — bare single-segment, no args (same extraction
@@ -10416,6 +10427,30 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(prt) = solver.as_concrete_leaf(&solver.resolve(&Ty::Var(*v))) {
                     if let Some(tr) = Self::resolved_to_typeref_tp(&prt, recv.span) {
                         carrier_tr_subst.insert(n.clone(), tr);
+                    }
+                }
+            }
+        }
+        // [M-196-producer-b-turbofish] Explicit method-level turbofish overlay: unify each
+        // `method_names_ordered[i]`'s FRESH var directly against the WRITTEN type-arg,
+        // positionally — same ground-truth-overlay contract as the free-fn/static-ctor D310
+        // turbofish overlay (`f1_check_call` ~11691) and the legacy codegen seed
+        // (`resolve_method_level_subst`'s `explicit_tf`, `emit_c.rs` ~21347). Runs BEFORE
+        // `extra_eqs` (args/closure-derived) below — union-find `unify` is order-independent
+        // (a later `solver.unify(a,b)` on the same var still merges cleanly), so this only
+        // ADDS ground truth, never races the args-derived pass. Guarded by the SAME
+        // `rt_respells_names` poison check the arg-derived path uses (~10475): a written
+        // type-arg that bare-spells one of THIS call's own fresh-var names (nested generic
+        // body re-using a carrier/method spelling) is unification poison, not information —
+        // skip it, leave the var free, honest fall-through (unresolved → whole map stays
+        // unwritten via the completeness gate at fn exit, same as an inference miss).
+        if let Some(explicit) = explicit_method_type_args {
+            for (n, ta) in method_names_ordered.iter().zip(explicit.iter()) {
+                if let Some(v) = vars.get(n.as_str()) {
+                    let ta_rt = ResolvedType::from_type_ref(ta);
+                    if !Self::rt_respells_names(&ta_rt, &vars) {
+                        let leaf = Self::ty_from_resolved_vars(&ta_rt, &vars);
+                        let _ = solver.unify(&Ty::Var(*v), &leaf);
                     }
                 }
             }
@@ -15853,7 +15888,7 @@ impl<'a> TypeCheckCtx<'a> {
         recv_ty: &TypeRef,
         method: &str,
     ) -> Option<TypeRef> {
-        self.resolve_instance_method_return_arity(recv_ty, method, None, None, None)
+        self.resolve_instance_method_return_arity(recv_ty, method, None, None, None, None)
     }
 
     /// 172.1.2 (2026-07-03): arity-aware вариант — при >1 перегрузке выбирает
@@ -15872,6 +15907,12 @@ impl<'a> TypeCheckCtx<'a> {
         // by — that wrapper has no callers today, kept for API symmetry with
         // `resolve_generic_static_return`).
         call_id: Option<crate::ast::ExprId>,
+        // [M-196-producer-b-turbofish] (Plan 196 Producer B): explicit METHOD-level
+        // turbofish from an `obj.method[U](args)` call-site (positional, aligned to
+        // `f.generics` declaration order) — threaded through to every
+        // `resolve_return_channel` call below as ground-truth overlay (see that fn's doc).
+        // `None` from every pre-existing caller (inferred-only instance calls).
+        explicit_type_args: Option<&[TypeRef]>,
     ) -> Option<TypeRef> {
         // Normalize receiver: peel ro/mut views; `[]T`/`[N]T` → "Vec" (D239 slice alias),
         // so a slice receiver resolves Vec's methods (std's pervasive spelling). Mirror of
@@ -16085,7 +16126,7 @@ impl<'a> TypeCheckCtx<'a> {
                         f.generics.iter().map(|g| g.name.clone()).collect();
                     if let Some((_, ordered)) = self.resolve_return_channel(
                         recv, recv_ty, peeled, peeled, &method_names,
-                        &method_names_ordered, &f.params, args_scope,
+                        &method_names_ordered, &f.params, args_scope, explicit_type_args,
                     ) {
                         if !ordered.is_empty() {
                             if std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some() {
@@ -16213,7 +16254,7 @@ impl<'a> TypeCheckCtx<'a> {
             // nothing else to trust a release build's materialization against.
             let channel = self.resolve_return_channel(
                 recv, recv_ty, peeled, ret, &method_names, &method_names_ordered, &f.params,
-                args_scope);
+                args_scope, explicit_type_args);
             return match channel {
                 Some((rt, ordered)) if rt == ResolvedType::from_type_ref(&out_full) => {
                     // [M-196.5-node-substs] SHADOW-adjacent write: the solver
@@ -16299,7 +16340,7 @@ impl<'a> TypeCheckCtx<'a> {
         // assert), which is Stage-1a's actual Tier-2 deliverable.
         let channel = self.resolve_return_channel(
             recv, recv_ty, peeled, ret, &method_names, &method_names_ordered, &f.params,
-            args_scope);
+            args_scope, explicit_type_args);
         debug_assert!(
             channel
                 .as_ref()
@@ -16489,7 +16530,24 @@ impl<'a> TypeCheckCtx<'a> {
         scope: &HashMap<String, TypeRef>,
     ) -> Option<TypeRef> {
         let ExprKind::Call { func, .. } = &e.kind else { return None; };
-        let ExprKind::Member { obj, name } = &func.kind else { return None; };
+        // [M-196-producer-b-turbofish] (Plan 196 Producer B): `obj.method[U](args)` —
+        // explicit METHOD-level turbofish on an INSTANCE receiver parses to
+        // `TurboFish{base: Member{obj,name}, type_args}` (parser/mod.rs ~8230: a `[T](args)`
+        // postfix-continuation is available to ANY base, not just a type-like one —
+        // `req.body.parse[T]()`). Structurally distinct from a static-ctor turbofish
+        // (`Type[T].new()` — TurboFish wraps the RECEIVER: `Member{obj: TurboFish{..}, name}`)
+        // — that shape is excluded further below unchanged (`obj.kind == TurboFish` guard).
+        // Widen the entry match to accept EITHER AST shape, carrying the explicit type-args
+        // alongside when present so they can overlay `resolve_return_channel`'s solver as
+        // ground truth (mirrors the free-fn/static-ctor D310 turbofish overlay).
+        let (member_expr, explicit_type_args): (&Expr, Option<&[TypeRef]>) = match &func.kind {
+            ExprKind::Member { .. } => (func.as_ref(), None),
+            ExprKind::TurboFish { base, type_args } if matches!(&base.kind, ExprKind::Member { .. }) => {
+                (base.as_ref(), Some(type_args.as_slice()))
+            }
+            _ => return None,
+        };
+        let ExprKind::Member { obj, name } = &member_expr.kind else { return None; };
         if name.starts_with('@') {
             return None;
         }
@@ -16528,8 +16586,20 @@ impl<'a> TypeCheckCtx<'a> {
         // `resolve_return_channel`'s caller-side insert).
         let call_id = if e.id.is_set() { Some(e.id) } else { None };
         self.resolve_instance_method_return_arity(
-            &recv_ty, name, Some(call_arity), Some((call_args.as_slice(), scope)), call_id)
+            &recv_ty, name, Some(call_arity), Some((call_args.as_slice(), scope)), call_id,
+            explicit_type_args)
             .or_else(|| {
+                // [M-196-producer-b-turbofish] An explicit turbofish call-site skips the
+                // closure-arg-inference fallback: `explicit_type_args` already fixes every
+                // method-level generic by declaration, so a miss above means a DIFFERENT
+                // reason (arity/overload/carrier residual) — closure-return-peek exists to
+                // discover a generic that has NO other source, which doesn't apply once one
+                // was written explicitly (mirrors the free-fn D310 overlay's ground-truth
+                // contract: an explicit annotation is never a trigger for a fallback INFERENCE
+                // source).
+                if explicit_type_args.is_some() {
+                    return None;
+                }
                 // 172.1.2 arg-binding (2026-07-03): method-level generic (`map[U]`)
                 // выводится из closure-аргумента при известном carrier-subst.
                 self.resolve_method_return_with_closure_args(&recv_ty, name, call_args, scope, call_id)
