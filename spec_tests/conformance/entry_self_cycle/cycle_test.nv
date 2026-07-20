@@ -1,0 +1,16 @@
+// [M-imports-entry-folder-module-self-cycle-empty-exports] NEGATIVE —
+// genuine two-way import cycle (`cyc_a` <-> `cyc_b`, see those files) must
+// still fail compilation after the entry-exports fix (2026-07-20): only the
+// CU *entry* module (this file) gets its export surface pre-seeded across
+// the cycle guard now; an ordinary cross-file cycle between two NON-entry
+// modules is unaffected — `cyc_b.b_calls_a` references `cyc_a.a_val` on the
+// leg of the cycle the guard can't yet see, so the whole TU is a hard
+// compile error, not a silent pass.
+// EXPECT_COMPILE_ERROR undefined identifier `a_val`
+module entry_self_cycle.cycle_test
+
+import ./cyc_a.{a_val}
+
+test "unreachable — TU must fail to compile before this runs" {
+    assert(a_val() == 3)
+}

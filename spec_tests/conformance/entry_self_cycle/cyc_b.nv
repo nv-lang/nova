@@ -1,0 +1,17 @@
+// [M-imports-entry-folder-module-self-cycle-empty-exports] regression pair,
+// leg B. `cyc_b` imports `cyc_a` back (closing the cycle `cyc_a` -> `cyc_b`
+// -> `cyc_a`). By the time this import resolves, `cyc_a` is still
+// mid-resolution (in `in_progress`, not yet `visited`) — the cycle guard in
+// `resolve_one` early-returns with an EMPTY `visible_acc` for this leg, same
+// as before the entry-exports fix (that fix only special-cases the CU
+// *entry* module, not an ordinary two-way cycle between two imported
+// modules). `b_calls_a` below therefore references an identifier this file
+// never actually imported — the whole TU (`cycle_test.nv`) must fail with
+// `undefined identifier` on `a_val`, proving the guard is intact.
+module entry_self_cycle.cyc_b
+
+import ./cyc_a.{a_val}
+
+export fn b_val() -> int => 2
+
+export fn b_calls_a() -> int => a_val()
