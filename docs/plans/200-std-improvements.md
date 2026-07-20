@@ -552,9 +552,16 @@ std/src/checksums` δ0 (3 PASS / 3 SKIP, без изменений); все 7 м
 
 ## Пункт 17 — инлайн-тесты в файлах имплементации → пир-файлы `*_test.nv` (конвенция)
 
-**Статус:** 📋 СОГЛАСОВАНО 2026-07-17 (владелец: «найти все и исправить»). Нарушение
-[test-conventions.md:125](../test-conventions.md): позитив-тесты std-модуля живут ПИР-файлом
-`<имя>_test.nv` (тот же module-декларатор), НЕ инлайном в имплементации.
+**Статус:** 🔧 6/9 СДЕЛАНО 2026-07-20 (haiku, интегратор-приёмка; влито `72394c274`, collections
+PASS 13/0). Конверсия файл-модуль → папка-модуль (`X.nv` → `X/core.nv` + `X/core_test.nv`,
+прецедент time/duration/): **hashmap(10), range(21), set(5), vec_iter(16), vec_lazy(5),
+vec_seq(5)** = 62 теста в пирах, 0 в имплементации, каждый модуль зелёный. **ОСТАТОК 3 файла
+(`[M-p200-17-remaining-3]` P3):** base64/fmt_buf/handlers — haiku-конверсия падала (fmt_buf:
+cross-module export-видимость `int_fmt_into`; handlers: parse-ошибка в пире; base64: пусто),
+НЕ влиты — нужен sonnet (интеграция зависимостей). Исходная запись ниже.
+
+**Нарушение** [test-conventions.md:125](../test-conventions.md): позитив-тесты std-модуля живут
+ПИР-файлом `<имя>_test.nv` (тот же module-декларатор), НЕ инлайном в имплементации.
 
 **Инвентарь (греп `^test "` вне `*_test.nv`, std/src): 16 файлов имплементации.**
 `collections/`: hashmap, range, set, vec_iter, vec_lazy, vec_seq · `encoding/`: base64,
