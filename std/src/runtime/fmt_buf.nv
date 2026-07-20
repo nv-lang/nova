@@ -291,6 +291,22 @@ fn char_fmt(v char, buf *mut u8, cap int) -> int {
 /// for the enum-typed `.nv`-side wrapper.
 extern "C" fn f64_fmt_into(buf *mut u8, cap int, v f64, kind int, prec int) -> int
 
+// ── std-internal мосты для zero-alloc @append (владелец 2026-07-20) ──────
+// D422 §5-privacy СОХРАНЯЕТСЯ: наружу — только простые decimal/shortest-
+// рендеры для протокола reserve→spare→запись→advance (StringBuilder
+// @append(int/f64) без str-аллокации); полный FmtSpec-движок (радиксы/
+// width/pad) остаётся модуль-приватным до 208 Ф.4.
+
+/// Decimal-рендер int в buf[0..cap); возвращает записанные байты (≤ cap,
+/// с defensive-truncate как у int_fmt). Для i64 достаточно cap ≥ 20.
+export fn int_fmt_into(v int, buf *mut u8, cap int) -> int
+    => int_fmt(v, buf, cap, FmtSpec.new())
+
+/// Shortest round-trip рендер f64 (тот же движок, что f64 @to_str — байт-
+/// идентичный вывод) в buf[0..cap); возвращает записанные байты.
+export fn f64_fmt_shortest_into(v f64, buf *mut u8, cap int) -> int
+    => fmt_f64(buf, cap, v, FloatKind.Shortest, -1)
+
 /// `.nv`-side wrapper: converts `FloatKind` → the `int` `f64_fmt_into`
 /// carries across the `extern "C"` ABI boundary (D422 §5 — enums don't cross
 /// `extern "C"` directly).

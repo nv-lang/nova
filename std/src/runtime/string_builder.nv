@@ -25,7 +25,7 @@ module runtime.string_builder
 // @reserve/@advance/@pad_in_place/@write_padded/@into_str_checked methods
 // below. `Align` (runtime.fmt_buf, also `#no_prelude` — see its header note)
 // does not reopen the prelude cycle this file already breaks out of.
-import std.runtime.fmt_buf.{Align}
+import std.runtime.fmt_buf.{Align, int_fmt_into, f64_fmt_shortest_into}
 import std.runtime.raw_mem.{RawMem}
 import std.prelude.core.{Result}
 import std.runtime.string.{Utf8Error}
@@ -162,8 +162,17 @@ export fn StringBuilder mut @append(arr []u8) -> @ { @buf.append(arr) }
 // (линт по имени параметра, не по семантике); `requires n >= 0` было бы
 // НЕВЕРНО (запрещало бы append отрицательных чисел). Rename на `x` —
 // консистентно с f64/f32-сиблингами ниже — снимает false-positive.
-export fn StringBuilder mut @append(x int) -> @ { @append(x.to_str()) }
-export fn StringBuilder mut @append(x f64) -> @ { @append(x.to_str()) }
+// Zero-alloc (владелец 2026-07-20): reserve→spare→advance через fmt_buf-мосты
+// (int_fmt_into/f64_fmt_shortest_into) — БЕЗ промежуточной str-аллокации.
+// i64: знак+19 цифр < 24; f64 shortest ≤ 24 байта (dtoa-гарантия).
+export fn StringBuilder mut @append(x int) -> @ {
+    @reserve(24)
+    @advance(int_fmt_into(x, @spare(), 24))
+}
+export fn StringBuilder mut @append(x f64) -> @ {
+    @reserve(24)
+    @advance(f64_fmt_shortest_into(x, @spare(), 24))
+}
 export fn StringBuilder mut @append(b bool) -> @ { if b { @append("true") } else { @append("false") } }
 // Plan 154.1 [M-154.1-f32-display-debug] + Plan 180: f32 via `@to_str()` →
 // the f32-precise shortest-round-trip formatter (nova_f32_to_str). Widening to
