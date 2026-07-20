@@ -1,8 +1,13 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # План 218 — предсобранный архив рантайма `libnova_rt.a` (build-latency P1)
 
-**Статус:** 📋 УТВЕРЖДЁН владельцем 2026-07-20 («заводить — да»). **Приоритет:** P1
-(крупнейший рычаг build-latency). **Основа:** [startup-latency-research.md](wip/startup-latency-research.md)
+**Статус:** ✅ РЕАЛИЗОВАН 2026-07-20 (sonnet, worktree `nova-218`, ветка
+`p218-libnova-rt-archive`) — детали/замеры: [218-impl-notes.md](wip/218-impl-notes.md).
+Гейты зелёные: conformance 503 PASS/1 FAIL(чужой известный пин)/14 SKIP, std
+checksums+collections 16/0, флагман aggregator `--strict-effects` built+works (HTTP 200).
+Замер: c-compile ~5.0с → ~0.7с тёплый (−~4.3с), wall ~8.2с → ~4.0с (−~4.2с). Не смёржено в
+main, не запушено (ждёт решения владельца). **Приоритет:** P1 (крупнейший рычаг
+build-latency). **Основа:** [startup-latency-research.md](wip/startup-latency-research.md)
 (opus-разведка, замеры).
 
 ## 0. Что решаем (замер разведки)
