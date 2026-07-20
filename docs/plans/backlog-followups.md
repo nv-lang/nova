@@ -3537,6 +3537,36 @@ default` + метод собирается. Замечание (вне пери�
   ternary cast-fix) запрещена мандатом этой волны (§4а, «СТОП+доклад» вместо
   спекулятивного фикса вне зоны). Требует отдельной волны с явным решением
   владельца (или пиновка toolchain постарше для CI-паритета, см. п.3 выше).
+  **2026-07-20 (закрытие, sonnet, worktree `nova-gcc15`, ветка
+  `p-fix-gcc15-rt`) — все 3 категории gcc15-ошибок исправлены, gcc15-подпункт
+  ЗАКРЫТ (полная деталь в `docs/plans/wip/gcc15-rt-notes.md`):**
+  (1) struct-tag unification — `typedef struct {...} NovaFiberQueue;` /
+  `NovaBlockingState` в `fibers.h` получили тег (`typedef struct
+  NovaFiberQueue {...} NovaFiberQueue;` и аналогично для `NovaBlockingState`),
+  унифицирован с тегированной форвард-декларацией в `driver.h` — ABI/layout
+  не меняется, чисто source-level. (2) `_Bool`-atomic RMW — `nova_atomic_bool`
+  underlying-тип НЕ менялся (остался `bool`; 15+ scheduler-сайтов —
+  cancel_requested/stop/started/published/done/cancelled/closed — не
+  тронуты); переписаны ТОЛЬКО 6 stdlib-методов
+  `Nova_AtomicBool_method_fetch_{or,and,xor}_{bool,MemOrdering}`
+  (`sync_primitives.h`, единственное место в nova_rt с битовым RMW на
+  `nova_atomic_bool`, никогда не вызывается из scheduler-кода) на
+  load+CAS-retry-loop — тот же идиом, что уже используется в этом файле для
+  `fetch_max`/`fetch_min`. (3) pointer-mismatch ternary — точечные касты
+  `(const uint8_t*)""`/`(const uint8_t*)"?"` в `effects.h::nv_exit` и
+  `bench.h::nova_bench_emit_metric` (голый `""`-литерал — `char*` в C, а
+  `nova_str.ptr` — `const uint8_t*`). **Гейты:** WSL2 gcc 15.2.0 — ARCHIVE_OK
+  (все 13 `.c` чисто); WSL2 clang 21.1.8 — ARCHIVE_OK (не сломан). Windows
+  (`nova-cli`) — `cargo build --release` чисто; `NOVA_RT_ARCHIVE=1` архив с
+  нуля собрался (13 files); `spec_tests/conformance/standalone` **PASS
+  70/FAIL 0** (вкл. `pos_max_fibers_concurrent`/`supervisor_parfor_test`/
+  `supervisor_stop_test`); `pos_max_fibers_concurrent`+`supervisor_stop_test`
+  — **5× подряд PASS** (планировщик/атомики не сломаны); флагман-агрегатор
+  под `--strict-effects` собрался и ответил `HTTP 200` на `curl` живого
+  сервера. Мега-CU не гонял. **Итог: rt-архив (Plan 218) теперь собирается
+  чисто на обоих WSL2-toolchain'ах** — fallback на per-build inline compile
+  для этой машины больше не нужен. В main не смёржено, не запушено —
+  решение владельца.
 
 - **[M-replace-transitive-deps]** (2026-07-16, P3, найден compress-lock волной 205 Ф.2) —
   `[replace]` в nova.local.toml действует ТОЛЬКО на `[dependencies]` корневого пакета

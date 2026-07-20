@@ -759,28 +759,64 @@ static inline NovaTuple_CasRawBool Nova_AtomicBool_method_cmpxchg(
     NovaTuple_CasRawBool r; r.ok = ok; r.witness = (nova_bool)exp; return r;
 }
 
-/* fetch_or_bool / fetch_or_MemOrdering. */
+/* fetch_or_bool / fetch_or_MemOrdering / fetch_and_* / fetch_xor_*.
+ *
+ * gcc 14+ (incl. 15.2) rejects __atomic_fetch_{or,and,xor} directly on a
+ * `_Bool*` operand (nova_atomic_bool == bool) — RMW bitwise builtins on
+ * _Bool are refused by design; clang still accepts it, which is why this
+ * class only showed up once the WSL toolchain moved to gcc 15. `value`
+ * itself stays `bool` (nova_atomic_bool's underlying type is NOT changed —
+ * every other nova_atomic_bool site in the runtime, incl. scheduler flags
+ * like cancel_requested/stop/started, only ever load/store/exchange it,
+ * which gcc allows unmodified). Reimplemented as an explicit load+CAS retry
+ * loop — the same idiom this file already uses a few lines up for
+ * AtomicI64/I32/... fetch_max/fetch_min — using only __atomic_load_n /
+ * __atomic_compare_exchange_n on the bool, both of which gcc permits (see
+ * Nova_AtomicBool_method_cmpxchg above, unaffected by this restriction).
+ * Ordering/semantics unchanged: for a boolean value in {0,1}, bitwise
+ * OR/AND/XOR is identical to logical OR/AND/XOR, and the loop returns the
+ * value observed immediately before the winning CAS — exactly what the
+ * direct __atomic_fetch_* intrinsic would have returned. */
 static inline nova_bool Nova_AtomicBool_method_fetch_or_bool(Nova_AtomicBool* a, nova_bool v) {
-    return (nova_bool)__atomic_fetch_or(&a->value, (bool)v, __ATOMIC_SEQ_CST);
+    bool want = (bool)v;
+    bool cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
+    while (!__atomic_compare_exchange_n(&a->value, &cur, (bool)(cur | want), true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) { /* cur refreshed by CAS on failure */ }
+    return (nova_bool)cur;
 }
 static inline nova_bool Nova_AtomicBool_method_fetch_or_MemOrdering(Nova_AtomicBool* a, nova_bool v, const Nova_MemOrdering* ord) {
-    return (nova_bool)__atomic_fetch_or(&a->value, (bool)v, nova_mo_c(ord));
+    int mo = nova_mo_c(ord);
+    bool want = (bool)v;
+    bool cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
+    while (!__atomic_compare_exchange_n(&a->value, &cur, (bool)(cur | want), true, mo, __ATOMIC_RELAXED)) { /* cur refreshed by CAS on failure */ }
+    return (nova_bool)cur;
 }
 
-/* fetch_and_bool / fetch_and_MemOrdering. */
 static inline nova_bool Nova_AtomicBool_method_fetch_and_bool(Nova_AtomicBool* a, nova_bool v) {
-    return (nova_bool)__atomic_fetch_and(&a->value, (bool)v, __ATOMIC_SEQ_CST);
+    bool want = (bool)v;
+    bool cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
+    while (!__atomic_compare_exchange_n(&a->value, &cur, (bool)(cur & want), true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) { /* cur refreshed by CAS on failure */ }
+    return (nova_bool)cur;
 }
 static inline nova_bool Nova_AtomicBool_method_fetch_and_MemOrdering(Nova_AtomicBool* a, nova_bool v, const Nova_MemOrdering* ord) {
-    return (nova_bool)__atomic_fetch_and(&a->value, (bool)v, nova_mo_c(ord));
+    int mo = nova_mo_c(ord);
+    bool want = (bool)v;
+    bool cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
+    while (!__atomic_compare_exchange_n(&a->value, &cur, (bool)(cur & want), true, mo, __ATOMIC_RELAXED)) { /* cur refreshed by CAS on failure */ }
+    return (nova_bool)cur;
 }
 
-/* fetch_xor_bool / fetch_xor_MemOrdering. */
 static inline nova_bool Nova_AtomicBool_method_fetch_xor_bool(Nova_AtomicBool* a, nova_bool v) {
-    return (nova_bool)__atomic_fetch_xor(&a->value, (bool)v, __ATOMIC_SEQ_CST);
+    bool want = (bool)v;
+    bool cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
+    while (!__atomic_compare_exchange_n(&a->value, &cur, (bool)(cur ^ want), true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) { /* cur refreshed by CAS on failure */ }
+    return (nova_bool)cur;
 }
 static inline nova_bool Nova_AtomicBool_method_fetch_xor_MemOrdering(Nova_AtomicBool* a, nova_bool v, const Nova_MemOrdering* ord) {
-    return (nova_bool)__atomic_fetch_xor(&a->value, (bool)v, nova_mo_c(ord));
+    int mo = nova_mo_c(ord);
+    bool want = (bool)v;
+    bool cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
+    while (!__atomic_compare_exchange_n(&a->value, &cur, (bool)(cur ^ want), true, mo, __ATOMIC_RELAXED)) { /* cur refreshed by CAS on failure */ }
+    return (nova_bool)cur;
 }
 
 /* ── Plan 103.3: TLF timer state (lock_for / read_for / write_for)

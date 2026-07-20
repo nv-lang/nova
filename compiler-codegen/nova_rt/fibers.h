@@ -300,7 +300,13 @@ typedef struct {
     nova_bool used;         /* false = free/consumed slot. */
 } NovaVClockEntry;
 
-typedef struct {
+/* gcc 14+ (incl. 15.2, -Wincompatible-pointer-types promoted to error-by-default
+ * for C) treats a tagged forward declaration (`struct NovaFiberQueue;`, as used
+ * by driver.h) and an anonymous-struct typedef (`typedef struct {...} X;`) as
+ * two DIFFERENT C types, even though the typedef name matches — clang accepts
+ * this pattern silently. Tagging the struct here unifies both spellings into
+ * one type; purely a source-level fix, no ABI/layout change. */
+typedef struct NovaFiberQueue {
     /* Plan 22 Ф.7: dynamic arrays через managed heap.
      * NULL до первого spawn_into. capacity показывает alloc'нутую
      * длину массивов (все 7 синхронизированы — растут вместе). */
@@ -3766,7 +3772,10 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
  * GC-аллокации и без вызовов обратно в Nova-рантайм (work_cb идёт на
  * потоке, не зарегистрированном в Boehm и не являющемся fiber'ом). */
 
-typedef struct {
+/* Tagged for the same reason as `struct NovaFiberQueue` above (driver.h
+ * forward-declares `struct NovaBlockingState;`; gcc 14+ treats that and an
+ * anonymous-struct typedef as distinct types). */
+typedef struct NovaBlockingState {
     NovaFiberQueue*  scope;
     int              slot;
     uv_work_t        work;

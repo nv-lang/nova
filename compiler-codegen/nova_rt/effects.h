@@ -1198,9 +1198,13 @@ static inline void nv_exit(nova_int code, nova_str msg) {
          * 32 байт хватит на "exit(<int64>): " + null. */
         size_t cap = msg.len + 32;
         char* buf = (char*)nova_alloc(cap);
+        /* gcc 14+ makes -Wincompatible-pointer-types error-by-default: a bare
+         * `""` string literal is `char*` in C, but msg.ptr is `const uint8_t*`
+         * (nova_str ABI, vtables.h) — the ternary needs both arms to agree.
+         * Cast-only, no behavior change (clang accepted the mismatch silently). */
         int written = snprintf(buf, cap, "exit(%lld): %.*s",
                                (long long)code, (int)msg.len,
-                               msg.len > 0 ? msg.ptr : "");
+                               msg.len > 0 ? msg.ptr : (const uint8_t*)"");
         if (written < 0) buf[0] = 0;
         _nova_test_frame->fail_msg = buf;
         longjmp(_nova_test_frame->jmp, 1);
