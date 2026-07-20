@@ -106,7 +106,7 @@ import std.runtime.math
 // name + variant constructors — все перечислены selectively (см. 62.A
 // note про wildcard и multi-line). RuntimeNoneError добавлен 62.C.bis
 // (2026-05-20) после P1-B bodyless-type support в parser.
-export import std.prelude.errors.{RuntimeError, DivByZero, Overflow, IndexOutOfBounds, TypeMismatch, AssertFailed, NoHandler, ReadBufferError, UnexpectedEnd, RuntimeNoneError}
+export import std.prelude.errors.{RuntimeError, DivByZero, Overflow, IndexOutOfBounds, TypeMismatch, AssertFailed, NoHandler, ReadBufferError, UnexpectedEnd, RuntimeNoneError, RangeError}
 
 // Plan 62.D non-opaque: re-export Iter[T] protocol formal declaration из
 // std.prelude.collections. До 62.D `Iter[T]` существовал ТОЛЬКО как
@@ -327,5 +327,10 @@ export import std.runtime.string.{pad_left, pad_right, repeat, replace, compare,
 ///     `EmbeddedDir.new([EmbeddedEntry{...}, …])`, отсортировано по path).
 ///     Payload'ы — zero-copy static rodata (существующая HexBlobLit-арм,
 ///     emit_c.rs НЕ менялся).
+///   - 19 = [M-numeric-try-narrowing] done (2026-07-20, D430): `RangeError`
+///     (unit-type, checked numeric-narrowing error) declared in
+///     std/prelude/errors.nv + re-exported through this facade —
+///     `try_to_<T>` family (std/prelude/protocols.nv, `fn[S Ints] S
+///     @try_to_i8()`/.../`@try_to_uint()`) returns `Result[T, RangeError]`.
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 18
+export const PRELUDE_VERSION int = 19

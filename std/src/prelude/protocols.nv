@@ -62,6 +62,13 @@ module prelude.protocols
 // otherwise stays clear of.
 import std.runtime.fmt_buf.{Align, Sign, FmtKind}
 
+// [M-numeric-try-narrowing] (2026-07-20, D430): `RangeError` — return type
+// of the `try_to_<T>` checked-narrowing family further down in this file.
+// Same import shape as `collections.nv`'s `{CharFromError, TryFromCharError,
+// ReadBufferError, UnexpectedEnd}` line — `std.prelude.errors` has ZERO
+// imports itself (no cycle risk pulling it into `prelude.protocols`).
+import std.prelude.errors.{RangeError}
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // Equality / Hashing / Ordering protocols (D109)
@@ -1286,4 +1293,198 @@ export fn[T Ints] T @wrapping_pow(exp u32) -> T {
         base = wrapped2
     }
     acc
+}
+
+// ── [M-numeric-try-narrowing] (2026-07-20, D430, owner-approved backlog
+// item): checked narrowing число→число, CHAINED form —
+// `(300u32).try_to_u8() -> Result[u8, RangeError]` — a method on the SOURCE
+// value (owner decision: NOT a Rust-style static `u8::try_from`), same
+// receiver-form convention as `str.to_i8`/`checked_*`/`saturating_*` above.
+// `as` stays the fast truncating cast, unchanged; `try_to_<T>` is the
+// checked sibling — `Err(RangeError)` when the value does not fit `<T>`'s
+// range, `Ok(narrowed)` otherwise.
+//
+// Blanket strategy: ONE `fn[S Ints] S @try_to_<T>()` blanket PER TARGET
+// type `<T>` (10 total — i8/i16/i32/i64/int/u8/u16/u32/u64/uint), bounded
+// over the FULL `Ints` set (mixing signed+unsigned sources in one body,
+// SAME idiom as `@checked_add`/`@saturating_mul` above), NOT two separate
+// SignedInts/UnsignedInts overloads sharing the method name — no precedent
+// in this file for two same-named blankets over disjoint type-sets, and a
+// single `Ints`-wide body with a sign-agnostic `if @ < 0 { .. } else { .. }`
+// split (the exact branch shape `saturating_pow` already uses successfully)
+// avoids that open question entirely.
+//
+// Soundness: each body widens `@` to the FULL-WIDTH domain of matching
+// sign — `i64` on the `@ < 0` branch (only ever reachable for signed
+// members; constant-false and dead at runtime for unsigned members, but
+// still compiled — see below), `u64` on the `@ >= 0` branch (reachable for
+// every member, since `@ < 0` is constant-false for unsigned `Ints`
+// members). `i64`/`u64` are wide enough to hold ANY `SignedInts`/
+// `UnsignedInts` member exactly AND wide enough to hold any target's
+// `MIN`/`MAX` exactly (the target itself is always some `Ints` member too)
+// — so no cast in this section ever truncates/wraps a value the
+// comparison depends on. (A naive alternative — casting the target's
+// `MAX`/`MIN` DOWN into the source type `S` instead — breaks the moment
+// the target is WIDER than `S`: e.g. `u32.MAX as i32` wraps to `-1` and
+// corrupts an `i32 @try_to_u32()` check. Widening `@` UP instead of
+// narrowing the bound DOWN sidesteps that whole bug class.)
+//
+// D227 Rule 4 (negative literal into unsigned-mono = hard error) is never
+// triggered: `i8.MIN`/`i16.MIN`/... are compile-time constants of a FIXED
+// concrete (signed) type, cast only into `i64` (also signed) on the `@ <
+// 0` branch — never into an unsigned type anywhere in this section. The
+// only comparison against an unsigned target's implicit lower bound is
+// `@ < 0` itself (a literal `0` — non-negative, always legal regardless of
+// `S`'s signedness, same shape `checked_div`/`saturating_pow` above already
+// rely on). `@ as i64` inside an `Ints`-wide blanket has a working,
+// shipped precedent — `std/time/duration/core.nv`'s
+// `fn[T Ints] T @to_nanos() -> Duration => { nanos: @ as i64 }`.
+//
+// Full matrix (100 pairs via 10 blankets × 10 monomorphized `Ints`
+// members each, INCLUDING same-signedness WIDENING pairs like
+// `i8.try_to_i64()` and the 10 identity pairs like `i8.try_to_i8()` —
+// always `Ok`) is a deliberate simplification, not scope creep: Nova
+// type-sets have no width-based exclusion mechanism, so hand-splitting
+// the "genuinely risky" ~55 pairs out of `Ints` would mean reverting to
+// N² per-type methods — exactly what the blanket form exists to avoid.
+// This mirrors Rust's OWN `TryFrom` numeric impls, which likewise cover
+// the complete pairwise matrix (its widening impls are documented as
+// "never fails" rather than omitted). `as` remains the zero-check fast
+// path for callers who already know a conversion is widening.
+
+/// `try_to_i8` — checked narrowing conversion into `i8` (range
+/// `[-128, 127]`). `Err(RangeError)` if `@` does not fit; `Ok(@ as i8)`
+/// otherwise.
+#stable(since = "0.1")
+export fn[S Ints] S @try_to_i8() -> Result[i8, RangeError] {
+    if @ < 0 {
+        ro w = @ as i64
+        if w < (i8.MIN as i64) { Err(RangeError) } else { Ok(@ as i8) }
+    } else {
+        ro w = @ as u64
+        if w > (i8.MAX as u64) { Err(RangeError) } else { Ok(@ as i8) }
+    }
+}
+
+/// `try_to_i16` — checked narrowing conversion into `i16` (range
+/// `[-32768, 32767]`). `Err(RangeError)` if `@` does not fit; `Ok(@ as
+/// i16)` otherwise.
+#stable(since = "0.1")
+export fn[S Ints] S @try_to_i16() -> Result[i16, RangeError] {
+    if @ < 0 {
+        ro w = @ as i64
+        if w < (i16.MIN as i64) { Err(RangeError) } else { Ok(@ as i16) }
+    } else {
+        ro w = @ as u64
+        if w > (i16.MAX as u64) { Err(RangeError) } else { Ok(@ as i16) }
+    }
+}
+
+/// `try_to_i32` — checked narrowing conversion into `i32`. `Err
+/// (RangeError)` if `@` does not fit; `Ok(@ as i32)` otherwise.
+#stable(since = "0.1")
+export fn[S Ints] S @try_to_i32() -> Result[i32, RangeError] {
+    if @ < 0 {
+        ro w = @ as i64
+        if w < (i32.MIN as i64) { Err(RangeError) } else { Ok(@ as i32) }
+    } else {
+        ro w = @ as u64
+        if w > (i32.MAX as u64) { Err(RangeError) } else { Ok(@ as i32) }
+    }
+}
+
+/// `try_to_i64` — checked narrowing conversion into `i64`. Only ever fails
+/// for a source WIDER than `i64` (`u64`/`uint` values above `i64.MAX`) —
+/// no signed source can overflow `i64`, it is the platform's widest
+/// signed type. `Err(RangeError)` if `@` does not fit; `Ok(@ as i64)`
+/// otherwise.
+#stable(since = "0.1")
+export fn[S Ints] S @try_to_i64() -> Result[i64, RangeError] {
+    if @ < 0 {
+        ro w = @ as i64
+        if w < (i64.MIN as i64) { Err(RangeError) } else { Ok(@ as i64) }
+    } else {
+        ro w = @ as u64
+        if w > (i64.MAX as u64) { Err(RangeError) } else { Ok(@ as i64) }
+    }
+}
+
+/// `try_to_int` — checked narrowing conversion into `int` (same width as
+/// `i64` on this platform, D129). Same contract as `@try_to_i64`, distinct
+/// C type. `Err(RangeError)` if `@` does not fit; `Ok(@ as int)` otherwise.
+#stable(since = "0.1")
+export fn[S Ints] S @try_to_int() -> Result[int, RangeError] {
+    if @ < 0 {
+        ro w = @ as i64
+        if w < (int.MIN as i64) { Err(RangeError) } else { Ok(@ as int) }
+    } else {
+        ro w = @ as u64
+        if w > (int.MAX as u64) { Err(RangeError) } else { Ok(@ as int) }
+    }
+}
+
+/// `try_to_u8` — checked narrowing conversion into `u8` (range
+/// `[0, 255]`). Negative sources always `Err(RangeError)`; otherwise `Err`
+/// if `@ > 255`, else `Ok(@ as u8)`.
+#stable(since = "0.1")
+export fn[S Ints] S @try_to_u8() -> Result[u8, RangeError] {
+    if @ < 0 {
+        Err(RangeError)
+    } else {
+        ro w = @ as u64
+        if w > (u8.MAX as u64) { Err(RangeError) } else { Ok(@ as u8) }
+    }
+}
+
+/// `try_to_u16` — checked narrowing conversion into `u16` (range
+/// `[0, 65535]`). Negative sources always `Err(RangeError)`; otherwise
+/// `Err` if `@ > 65535`, else `Ok(@ as u16)`.
+#stable(since = "0.1")
+export fn[S Ints] S @try_to_u16() -> Result[u16, RangeError] {
+    if @ < 0 {
+        Err(RangeError)
+    } else {
+        ro w = @ as u64
+        if w > (u16.MAX as u64) { Err(RangeError) } else { Ok(@ as u16) }
+    }
+}
+
+/// `try_to_u32` — checked narrowing conversion into `u32`. Negative
+/// sources always `Err(RangeError)`; otherwise `Err` if `@ > u32.MAX`,
+/// else `Ok(@ as u32)`.
+#stable(since = "0.1")
+export fn[S Ints] S @try_to_u32() -> Result[u32, RangeError] {
+    if @ < 0 {
+        Err(RangeError)
+    } else {
+        ro w = @ as u64
+        if w > (u32.MAX as u64) { Err(RangeError) } else { Ok(@ as u32) }
+    }
+}
+
+/// `try_to_u64` — checked narrowing conversion into `u64`. Only ever fails
+/// for a negative signed source — `u64` is the platform's widest unsigned
+/// type, so no non-negative source can overflow it. `Err(RangeError)` if
+/// `@ < 0`; `Ok(@ as u64)` otherwise.
+#stable(since = "0.1")
+export fn[S Ints] S @try_to_u64() -> Result[u64, RangeError] {
+    if @ < 0 {
+        Err(RangeError)
+    } else {
+        ro w = @ as u64
+        if w > (u64.MAX as u64) { Err(RangeError) } else { Ok(@ as u64) }
+    }
+}
+
+/// `try_to_uint` — checked narrowing conversion into `uint` (same width as
+/// `u64` on this platform). Same contract as `@try_to_u64`, distinct C
+/// type. `Err(RangeError)` if `@ < 0`; `Ok(@ as uint)` otherwise.
+#stable(since = "0.1")
+export fn[S Ints] S @try_to_uint() -> Result[uint, RangeError] {
+    if @ < 0 {
+        Err(RangeError)
+    } else {
+        ro w = @ as u64
+        if w > (uint.MAX as u64) { Err(RangeError) } else { Ok(@ as uint) }
+    }
 }
