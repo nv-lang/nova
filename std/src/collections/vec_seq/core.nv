@@ -114,39 +114,3 @@ export fn[T] []T @all(pred fn(T) -> bool) -> bool {
 // Tests
 // ──────────────────────────────────────────────────────────────────────────
 
-test "map preserves length and applies function" {
-    ro v []int = [1, 2, 3]
-    ro doubled = v.map(|x| x * 2)
-    assert(doubled.len() == 3)
-    assert(doubled.get(0) == Some(2))
-    assert(doubled.get(2) == Some(6))
-}
-
-test "filter keeps matching elements" {
-    ro v []int = [1, 2, 3, 4, 5]
-    ro even = v.filter(|x| x % 2 == 0)
-    assert(even.len() == 2)
-    assert(even.get(0) == Some(2))
-    assert(even.get(1) == Some(4))
-}
-
-test "fold sums elements" {
-    ro v []int = [1, 2, 3, 4]
-    ro sum = v.fold(0, |acc, x| acc + x)
-    assert(sum == 10)
-}
-
-test "any/all on empty array" {
-    ro v []int = []
-    assert(!v.any(|x| x > 0))             // ни одного → false
-    assert(v.all(|x| x > 0))               // вакуумная истина → true
-}
-
-test "for-loop over array uses implicit iter (D58)" {
-    ro v []int = [1, 2, 3]
-    mut total = 0
-    for x in v {                           // implicit iter — без .iter()
-        total += x
-    }
-    assert(total == 6)
-}

@@ -1,0 +1,170 @@
+// Реализация HashMap[K, V] в стиле Nova stdlib.
+//
+// Контекст. По [D26](../spec/decisions/08-runtime.md#d26), `HashMap[K, V]` живёт
+// в stdlib (`std.collections.HashMap`), не встроен в язык. Встроены
+// только массивы `[]T` и `[N]T` ([D27](../spec/decisions/03-syntax.md#d27)).
+//
+// Это *черновик реализации* — показывает как stdlib-тип выглядит на
+// Nova. Open addressing + linear probing + resize. Без advanced
+// оптимизаций (Robin Hood, SIMD lookup, perfect hashing).
+//
+// Допущения:
+//   - `K` имеет операции `hash() -> u64` и `eq(other K) -> bool`
+//     (структурно, [D15](../spec/decisions/02-types.md#d15)). В реальной stdlib —
+//     prelude-protocol `Hash` + `Eq` с auto-derive для примитивов
+//     (зависит от Q15).
+//   - Использует `[]T` и `[T; N]` из [D27](../spec/decisions/03-syntax.md#d27).
+//   - Методы инстанса через `@` ([D35](../spec/decisions/03-syntax.md#d35)).
+//   - Поля по правилам [D36](../spec/decisions/02-types.md#d36): `readonly` для
+//     invariants, без префикса для мутируемых.
+
+module collections.hashmap
+
+import std.collections.vec.{Vec}
+
+test "insert and get" {
+    mut m = HashMap[str, int].new()
+    m.insert("alice", 1)
+    m.insert("bob", 2)
+
+    assert(m.len() == 2)
+    assert(m.get("alice") == Some(1))
+    assert(m.get("bob") == Some(2))
+    assert(m.get("charlie") == None)
+}
+
+test "insert returns old value on overwrite" {
+    mut m = HashMap[str, int].new()
+    assert(m.insert("a", 1) == None)
+    assert(m.insert("a", 2) == Some(1))
+    assert(m.get("a") == Some(2))
+    assert(m.len() == 1)
+}
+
+test "remove" {
+    mut m = HashMap[str, int].new()
+    m.insert("a", 1)
+    m.insert("b", 2)
+
+    assert(m.remove("a") == Some(1))
+    assert(m.remove("a") == None)
+    assert(m.len() == 1)
+    assert(m.get("a") == None)
+    assert(m.get("b") == Some(2))
+}
+
+test "contains keys" {
+    // NOTE: iterating m.keys() not yet supported — KeysIter mono body
+    // emits incomplete. Tracking: bootstrap iterator-on-generic limitation.
+    mut m = HashMap[str, int].new()
+    m.insert("a", 1)
+    m.insert("b", 2)
+    m.insert("c", 3)
+    assert(m.contains("a"))
+    assert(m.contains("b"))
+    assert(m.contains("c"))
+    assert(!m.contains("d"))
+    assert(m.len() == 3)
+}
+
+test "get_or_insert with counter pattern" {
+    mut counts = HashMap[str, int].new()
+    ro words = ["foo", "bar", "foo", "baz", "foo", "bar"]
+
+    for w in words {
+        ro prev = counts.get_or_insert(w, || 0)
+        counts.insert(w, prev + 1)
+    }
+
+    assert(counts.get("foo") == Some(3))
+    assert(counts.get("bar") == Some(2))
+    assert(counts.get("baz") == Some(1))
+}
+
+test "from pairs constructor" {
+    mut m = HashMap[str, int].from([("x", 10), ("y", 20), ("z", 30)])
+    assert(m.len() == 3)
+    assert(m.get("y") == Some(20))
+}
+
+test "rehash on growth" {
+    mut m = HashMap[int, int].new(cap: 4)
+    // cap(4) → ceil(4*4/3)=6 → next_pow2(6)=8 бакетов.
+    // 100 вставок сильно превышают threshold → серия rehash'ей.
+    for i in 0..100 {
+        m.insert(i, i * 2)
+    }
+    assert(m.len() == 100)
+    assert(m.cap() >= 128)      // достаточно для 100 при 0.75 load
+    for i in 0..100 {
+        assert(m.get(i) == Some(i * 2))
+    }
+}
+
+// Plan 52 Ф.6 / vec-sweep (2026-07-06): контракт `new().cap(n)` (ex-`with_capacity`)
+// — `n` вставок без rehash. `@cap()` после ровно `n` вставок не должна
+// измениться. Проверяем граничные n: 4, 7, 8, 13, 16 — все бывшие баги, где
+// прежняя bucket-count реализация давала threshold < n.
+test "new().cap(n) contract — n inserts without rehash" {
+    // n = 4
+    mut m4 = HashMap[int, int].new(cap: 4)
+    ro cap4 = m4.cap()
+    for i in 0..4 { m4.insert(i, i) }
+    assert(m4.cap() == cap4)
+    assert(m4.len() == 4)
+
+    // n = 7
+    mut m7 = HashMap[int, int].new(cap: 7)
+    ro cap7 = m7.cap()
+    for i in 0..7 { m7.insert(i, i) }
+    assert(m7.cap() == cap7)
+    assert(m7.len() == 7)
+
+    // n = 8
+    mut m8 = HashMap[int, int].new(cap: 8)
+    ro cap8 = m8.cap()
+    for i in 0..8 { m8.insert(i, i) }
+    assert(m8.cap() == cap8)
+    assert(m8.len() == 8)
+
+    // n = 13
+    mut m13 = HashMap[int, int].new(cap: 13)
+    ro cap13 = m13.cap()
+    for i in 0..13 { m13.insert(i, i) }
+    assert(m13.cap() == cap13)
+    assert(m13.len() == 13)
+
+    // n = 16
+    mut m16 = HashMap[int, int].new(cap: 16)
+    ro cap16 = m16.cap()
+    for i in 0..16 { m16.insert(i, i) }
+    assert(m16.cap() == cap16)
+    assert(m16.len() == 16)
+}
+
+test "tombstones cleanup on rehash" {
+    mut m = HashMap[int, int].new(cap: 16)
+    for i in 0..10 { m.insert(i, i) }
+    for i in 0..8  { m.remove(i) }
+    // Сейчас: 2 occupied + 8 tombstones. Следующий insert → rehash.
+    m.insert(100, 100)
+    assert(m.len() == 3)
+    assert(m.get(8) == Some(8))
+    assert(m.get(9) == Some(9))
+    assert(m.get(100) == Some(100))
+}
+
+// [M-138.2-next-pow2-branchless] — равенство O(1) bit-smear реализации
+// прежней O(log n) цикловой. Граничные n: 0/1 → 1 (guard), точные степени
+// двойки остаются неизменны, промежуточные округляются вверх.
+test "next_pow2 branchless equivalence" {
+    assert(next_pow2(0) == 1)
+    assert(next_pow2(1) == 1)
+    assert(next_pow2(2) == 2)
+    assert(next_pow2(3) == 4)
+    assert(next_pow2(4) == 4)
+    assert(next_pow2(5) == 8)
+    assert(next_pow2(8) == 8)
+    assert(next_pow2(1000) == 1024)
+    assert(next_pow2(1024) == 1024)
+}
