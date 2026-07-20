@@ -1034,6 +1034,48 @@ pub fn expected_module_path_rev3(
 /// `W_D78_REV1_DEPRECATED` вместо silent acceptance, чтобы migrate
 /// pressure был visible. После полной миграции rev-1 branch будет removed
 /// (followup `[M-D78-strict-removal]`).
+/// `[M-oot-dash-module-name-e78]` (2026-07-21): true iff `file` resolves to
+/// a filesystem path OUTSIDE `repo` (both canonicalized). `repo` is the
+/// CWD-resolved project root the CALLING `nova` invocation already computed
+/// for import/prelude resolution (`nova-cli::find_repo_root()` /
+/// `test_runner::codegen_to_c`'s `repo` param) — the SAME root threaded
+/// through `resolve_imports_inline*` per `[M-standalone-out-of-tree-interp-sb-typedef]`.
+///
+/// Used to gate D78 enforcement at the call sites (`test_runner.rs`,
+/// `nova-cli/src/main.rs`): `find_manifest` above walks parent directories
+/// looking for **any** `nova.toml`, with no awareness of which project
+/// actually invoked `nova`. For a file living outside the invoking
+/// project's own tree (a `%TEMP%` probe, a scratch script), that walk can
+/// land on a wholly UNRELATED ancestor manifest — e.g. a leftover
+/// `nova.toml` several directories up a shared scratch tree from a
+/// different earlier task — and enforce ITS `parent.target` rule against a
+/// file that was never meant to be part of that package. That manifest is
+/// real (not a bug in `find_manifest` itself, whose contract is exactly
+/// "nearest ancestor `nova.toml`"), but honoring it for a file the CALLING
+/// project doesn't consider its own is wrong: imports/prelude for that file
+/// already resolve against `repo`/`stdlib_dir` (the invoking project), not
+/// against whatever foreign manifest happens to sit above it — D78
+/// enforcement should use the same "which project is this" answer, not a
+/// second, inconsistent one.
+///
+/// A file INSIDE `repo` is unaffected (`false`) — the overwhelming in-tree
+/// case (including nested real sub-packages like
+/// `spec_tests/conformance/d78_root_peers/`) keeps exact pre-fix behavior.
+/// Canonicalization failure (either path doesn't exist / inaccessible) is
+/// treated conservatively as "not outside" (`false`) — enforcement still
+/// runs, matching behavior before this fix existed.
+pub fn is_outside_repo(file: &Path, repo: &Path) -> bool {
+    let abs_file = match std::fs::canonicalize(file) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    let abs_repo = match std::fs::canonicalize(repo) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    !abs_file.starts_with(&abs_repo)
+}
+
 pub fn check_module_path(
     file: &Path,
     declared: &[String],

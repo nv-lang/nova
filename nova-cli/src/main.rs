@@ -1478,8 +1478,24 @@ impl Drop for TmpDirGuard<'_> {
 
 // ---------- subcommand implementations ----------
 
-fn check_module_path(path: &Path, module: &nova_codegen::ast::Module) -> Result<()> {
+/// `repo` — the CWD-resolved project root the caller already has at hand
+/// (`find_repo_root()`), if any. `[M-oot-dash-module-name-e78]` (2026-07-21):
+/// when `repo` is `Some` and `path` resolves OUTSIDE it, D78 enforcement is
+/// skipped — `nova_codegen::manifest::find_manifest` walks to the nearest
+/// ancestor `nova.toml` regardless of which project invoked `nova`, so an
+/// out-of-tree file (e.g. under a shared `%TEMP%` scratch tree) can land
+/// under a wholly UNRELATED leftover manifest several directories up and
+/// get its `parent.target` rule wrongly enforced. See
+/// `nova_codegen::manifest::is_outside_repo` doc for the full rationale.
+/// `repo = None` (caller couldn't resolve one) preserves exact pre-fix
+/// behavior (always enforce via `find_manifest`).
+fn check_module_path(path: &Path, module: &nova_codegen::ast::Module, repo: Option<&Path>) -> Result<()> {
     use nova_codegen::manifest::ModulePathCheck;
+    if let Some(repo) = repo {
+        if nova_codegen::manifest::is_outside_repo(path, repo) {
+            return Ok(());
+        }
+    }
     // Bug fix 2026-06-01: emit W_D78_REV1_DEPRECATED warning для rev-1
     // legacy declarations вместо silent acceptance.
     match nova_codegen::manifest::check_module_path(path, &module.name) {
@@ -2289,8 +2305,13 @@ fn check_one_file(path: &Path, verbose: bool, conv_lint: bool) -> CheckResult {
             },
         };
 
+    // `[M-oot-dash-module-name-e78]` (2026-07-21): resolve repo root once,
+    // reused both for the D78 gate right below and for the import-resolve
+    // block further down (was previously resolved only there).
+    let repo_opt = find_repo_root().ok();
+
     // 2. check_module_path
-    if let Err(e) = check_module_path(path, &module) {
+    if let Err(e) = check_module_path(path, &module, repo_opt.as_deref()) {
         return CheckResult {
             file: path.to_path_buf(),
             error: Some(format!("{}", e)),
@@ -2933,7 +2954,7 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
     let path_str = path.to_string_lossy();
     let mut module = nova_codegen::parser::parse(&src)
         .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?;
-    check_module_path(path, &module)?;
+    check_module_path(path, &module, find_repo_root().ok().as_deref())?;
     // Plan 45 MVP: для single-file mode `nova doc <file>` НЕ резолвим
     // импорты — иначе items из auto-imported std/prelude и других
     // модулей попадают в output. Это даёт "documentation of THIS
@@ -4844,7 +4865,7 @@ fn cmd_build(
         nova_codegen::parser::parse(&src)
             .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?
     };
-    check_module_path(&path, &module)?;
+    check_module_path(&path, &module, Some(&repo))?;
 
     // Plan 219: build-демон — резидентный cache/config-сервис. Один IPC
     // round-trip здесь спрашивает разом: (а) toolchain/libuv-конфиг (нужны
