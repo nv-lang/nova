@@ -2967,6 +2967,13 @@ impl CEmitter {
             })
             .collect();
         let all_hit = !slots.is_empty() && slots.iter().all(|(_, o)| o.is_some());
+        // [M-196-closeout, П4] temporary reachability probe (NOVA_B5_MEANINGFUL_TRACE,
+        // NOT NOVA_B5_TRACE — that one fires on every trivial 0-generic call too, drowning
+        // out the signal): only meaningful when slot_names is non-empty AND the channel
+        // left at least one slot `None` (a REAL partial/total miss, not a vacuous
+        // 0-generic "fallback").
+        let had_real_miss = !slot_names.is_empty() && !all_hit;
+        let pre_fallback_nones: usize = slots.iter().filter(|(_, o)| o.is_none()).count();
         if !all_hit {
             // Transitional fallback (Q9 path): per-arg structural re-derive fills ONLY
             // still-`None` slots (`infer_type_param_binding_rt` never overwrites a bound
@@ -2975,6 +2982,16 @@ impl CEmitter {
                 if let Some(rt) = self.channel_arg_rt(arg.expr()) {
                     self.infer_type_param_binding_rt(param_ty, &rt, &mut slots);
                 }
+            }
+        }
+        if had_real_miss && std::env::var_os("NOVA_B5_MEANINGFUL_TRACE").is_some() {
+            let post_fallback_nones = slots.iter().filter(|(_, o)| o.is_none()).count();
+            let recovered = pre_fallback_nones.saturating_sub(post_fallback_nones);
+            if recovered > 0 {
+                eprintln!(
+                    "[B5-MEANINGFUL] RECOVERED call={:?} names={:?} channel={:?} recovered={}",
+                    call_id, slot_names, channel, recovered,
+                );
             }
         }
         if std::env::var_os("NOVA_B5_TRACE").is_some() {

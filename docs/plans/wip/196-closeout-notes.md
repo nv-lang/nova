@@ -230,6 +230,49 @@ Option/Result» — этот serde-класс третий: generic SLICE-extens
 `[]T.deserialize`-класс в Channel 2 (чекер), тогда `resolve_result_option_ret`
 можно будет пере-детачить.
 
+## 6. П4 — re-trace `rt_slots_from_args`/`rt_slots_from_call` MISS-fallback: ❌ НЕ СНОШЕНО (массово живой)
+
+**Методология:** `NOVA_B5_TRACE` (существующий) оказался НЕДОСТАТОЧНО точным
+сигналом — печатает `[B5] fallback` даже для тривиальных 0-generic вызовов
+(`slot_names` пуст → `all_hit` авто-`false`, но fallback-цикл — no-op:
+`infer_type_param_binding_rt` ТОЛЬКО мутирует УЖЕ СУЩЕСТВУЮЩИЙ по имени slot,
+никогда не создаёт новый — на пустом `slots` буквально нечего делать).
+Полный mega-CU прогон с `NOVA_B5_TRACE=1` дал 11825 hit / 18301 fallback —
+число завышено шумом.
+
+**Добавлен точный zonд** (`emit_c.rs`, `rt_slots_from_call`, temporary-turned-
+permanent диагностика, `NOVA_B5_MEANINGFUL_TRACE`, env-gated, нулевая цена без
+флага — тот же паттерн, что `NOVA_B5_TRACE`/`NOVA_TRACE_ICR`): считает
+`pre_fallback_nones`/`post_fallback_nones` (сколько `None`-слотов ДО и ПОСЛЕ
+per-arg-derive цикла) и печатает `[B5-MEANINGFUL] RECOVERED` ТОЛЬКО когда (а)
+`slot_names` НЕ пуст (реальные generic-параметры есть) И (б) fallback реально
+закрыл ≥1 слот, который channel (`node_substs`) НЕ дал.
+
+**Результат** (mega-CU `spec_tests/conformance --jobs 12`, `NOVA_OFFLINE=1`,
+прогон не досчитан целиком — оборван таймаутом тула на ~9m50s, но результат
+УЖЕ решающий): **8246 `RECOVERED`-хитов** за неполный прогон (реальное число на
+полном мега-CU — БОЛЬШЕ). Примеры: `names=["K","V"] channel=None
+recovered=1` — generic `HashMap[K,V]`-подобные static/instance вызовы, канал
+(`node_substs`) их **вообще НЕ видит** (`channel=None`, полный, не частичный
+промах), per-arg structural re-derive закрывает ХОТЯ БЫ один слот (K или V) из
+двух.
+
+**Вывод:** MISS-fallback в `rt_slots_from_call` (все 6 call-сайтов —
+`emit_c.rs:36478,37676,38306,39190,39957,40281`) остаётся МАССОВО живым —
+Producer B (turbofish instance-method) и CH (static-ctor) закрыли СВОИ узкие
+классы, но `node_substs`-канал в целом ещё далёк от полноты по generic
+static/instance-методам общего вида (`HashMap`-подобный `K,V`-класс — самый
+частый по числу хитов). Снос НЕ выполнен (жив, массово). Зонд
+(`NOVA_B5_MEANINGFUL_TRACE`) ОСТАВЛЕН в дереве (env-gated, 0 цена без флага) —
+инструмент для будущей волны точно измерять прогресс канала по мере расширения
+`node_substs`-продюсеров.
+
+**Гейт:** `cargo build --release` (nova-cli, обычный проф.) — 0 errors. Полный
+conformance-гейт НЕ перегонялся заново для ЭТОГО пункта отдельно (зонд —
+чистая аддитивная диагностика под неиспользуемым по умолчанию env var, нулевой
+поведенческий diff в обычном режиме без флага; П1-гейт уже покрывает
+неизменное поведение остального кода).
+
 ## Статус пунктов (сводка, обновляется)
 
 - П1 (If-body peek): ✅ ЗАКРЫТО (коммит `0d4ee870d`, гейты зелёные).
@@ -239,6 +282,9 @@ Option/Result» — этот serde-класс третий: generic SLICE-extens
 - П3 (re-trace resolve_result_option_ret / B06a-B10j): ❌ НЕ СНОШЕНО — 1 живой
   класс (generic slice-serde serialize/deserialize, std/src/encoding/serde),
   0 хитов на 8 карта-фикстурах. Снос НЕ выполнен (жив).
-- П4 (re-trace rt_slots_from_args): В РАБОТЕ.
-- П5 (терминал-фиксы по зондам wip/): НЕ НАЧАТО.
+- П4 (re-trace rt_slots_from_args): ❌ НЕ СНОШЕНО — массово живой (8246+
+  RECOVERED-хитов на неполном мега-CU прогоне, класс: generic HashMap[K,V]-
+  подобные вызовы с `channel=None`). Точный зонд `NOVA_B5_MEANINGFUL_TRACE`
+  оставлен для будущих волн.
+- П5 (терминал-фиксы по зондам wip/): В РАБОТЕ.
 - П6 (реестр 196-one-truth-closeout.md): НЕ НАЧАТО.
