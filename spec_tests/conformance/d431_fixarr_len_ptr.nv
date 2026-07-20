@@ -1,0 +1,40 @@
+// D431 — `[N]T @len()` / `@ptr()` компилятор-синтезированные аксессоры (зеркало
+// Vec/str, Plan 200 Пункт 19). Механизм — та же структурная FixedArray-магия,
+// что `arr[i]` (D238-семья): нет `.nv`-декларации (method-level const-generic N
+// в языке отсутствует, см. Ш0-проба в спеке), checker+codegen синтезируют обе
+// операции напрямую из `TypeRef::FixedArray(N, elem)`.
+module spec_tests.conformance
+
+import std.runtime.raw_mem
+
+test "[N]T @len() — компайл-тайм N, разные размеры (D431)" {
+    ro a1 [1]u8 = [7]
+    ro a4 [4]u8 = [1, 2, 3, 4]
+    ro a16 [16]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    assert(a1.len() == 1)
+    assert(a4.len() == 4)
+    assert(a16.len() == 16)
+}
+
+test "[N]T @ptr() — round-trip через RawMem.copy (D431, unsafe)" {
+    ro src [4]u8 = [10, 20, 30, 40]
+    mut dst [4]u8 = [0, 0, 0, 0]
+    unsafe {
+        raw_mem.RawMem.copy(src.ptr(), dst.ptr(), src.len())
+    }
+    assert(dst[0] == 10)
+    assert(dst[1] == 20)
+    assert(dst[2] == 30)
+    assert(dst[3] == 40)
+}
+
+test "[N]T @ptr() mut-перегрузка — запись через ptr видна в arr (D431)" {
+    mut a [4]u8 = [0, 0, 0, 0]
+    unsafe {
+        a.ptr().write(99 as u8)
+    }
+    assert(a[0] == 99)
+    assert(a[1] == 0)
+    assert(a[2] == 0)
+    assert(a[3] == 0)
+}

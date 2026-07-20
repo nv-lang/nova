@@ -56,24 +56,41 @@ fn [4]u8 @probe() -> int => 4
 
 `cargo build --release --manifest-path nova-cli/Cargo.toml` — **OK** (exit 0).
 
-## Статус на чекпоинте
+## Дополнительная находка — E_UNKNOWN_METHOD гейт для FixedArray (не было в
+исходной карте, добавлено по факту разведки)
+
+Проба показала: bare `arr.len` (без скобок) НЕ даёт чистую диагностику —
+`nova check` пропускает молча (permissive gap до codegen), `nova test`
+падает CC-FAIL («no member named 'len' in struct») — это D117-путь
+НЕ применим (не чистая диагностика). Проба с опечаткой `arr.lenx()`
+оказалась ХУЖЕ — `nova test` падал внутренним ICE `[P67-LEGACY] method
+call return type unknown` (panic, "This is a bug in nova"), ОБА пути
+pre-existing (не regression — `check_instance_overload`'s E_UNKNOWN_METHOD
+гейт исторически скипался для Array/FixedArray-ресиверов целиком, т.к.
+"Vec" не входит в `is_primitive_recv_name`). Решение (в scope этой волны,
+т.к. Пункт 19 — единственный, кто вводит РЕАЛЬНУЮ FixedArray-метод-
+поверхность): добавлен FixedArray-специфичный гейт в `check_instance_overload`
+(types/mod.rs, перед primitive-гейтом) — любой метод НЕ `len`/`ptr` на
+`TypeRef::FixedArray`-ресивере → чистый `[E_UNKNOWN_METHOD]`. `Array`/`[]T`
+(реально `Vec[T]`) НЕ затронут — гейт матчит буквально `FixedArray`, не
+peeled-"Vec"-имя. Неg-фикстура использует typo-ветку (`arr.lenx()`),
+подтверждено: было ICE → стало чистый compile error.
+
+## Статус на чекпоинте — ГОТОВО
 
 - [x] Ш0-проба
-- [x] Checker synthesis (2 producer hooks)
+- [x] Checker synthesis (2 producer hooks + E_UNKNOWN_METHOD гейт)
 - [x] Codegen synthesis (emit_call Member arm)
-- [x] Rebuild green
-- [ ] D431 spec-блок (в процессе — amendment-заметка в D27 уже вставлена,
-      полный блок "## D431." ещё не вставлен)
-- [ ] Фикстуры pos/neg
-- [ ] Верификация (targeted nova test + conformance-фикстуры + байт-паритет)
+- [x] Rebuild green (checker+codegen, затем повторно после E_UNKNOWN_METHOD гейта)
+- [x] D431 spec-блок — полный decision-блок в `spec/decisions/03-syntax.md`
+      (amendment-заметка в D27 + отдельный `## D431.` перед `## D30`)
+- [x] Фикстуры: pos `spec_tests/conformance/d431_fixarr_len_ptr.nv` (3 test-блока:
+      len на 3 разных N, RawMem.copy round-trip, mut-перегрузка запись);
+      neg `spec_tests/conformance/neg/d431_fixarr_unknown_method_neg.nv`
+      (typo → E_UNKNOWN_METHOD, EXPECT_COMPILE_ERROR)
+- [x] Верификация — 5 прогонов, все зелёные (см. финальный отчёт)
+- [x] Байт-паритет — 2 нетронутых фикстуры, SHA-256 идентичны против
+      базовой ветки `f0eba7b5f` (throwaway reference worktree, удалён)
 
-## Следующие шаги
-
-1. Вставить `## D431.` decision-блок в `spec/decisions/03-syntax.md` перед
-   `## D30` границей (номер D431 подтверждён свободным — highest existing
-   `D430`, README индекс отдельной нумерованной таблицы не держит).
-2. Фикстуры: pos (`arr.len()`, `RawMem.copy(arr.ptr(),...)` round-trip,
-   mut-перегрузка запись), neg (bare `arr.len` без скобок — D117-класс,
-   ожидание: обычная диагностика, НЕ наша новая форма).
-3. Верификация по брифу: nova test std/collections/vec 1/0, string_builder_test
-   1/0, checksums 3/0, спот-байт-паритет на 2 нетронутых фикстурах.
+Миграция трёх мотив-сайтов (pad fill_bytes/display-fallback) — НЕ в этой
+волне (текст Пункта 19, отдельный шаг).

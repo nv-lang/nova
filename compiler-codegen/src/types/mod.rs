@@ -10954,6 +10954,35 @@ impl<'a> TypeCheckCtx<'a> {
             _ => return,
         };
         let type_name = type_name.as_str();
+        // Plan 200 П19 [E_UNKNOWN_METHOD]: a `[N]T` FixedArray receiver normalizes to
+        // "Vec" just above (D239 spelling reuse for the SLICE `[]T` case), but `[N]T` is
+        // NOT `Vec[T]` at the C level ([M-fixed-array-value-semantics] — inline `{ T
+        // data[N]; }`, no heap pointer/len/cap header) and has ZERO real `.nv` methods
+        // (Plan 200-19 architecture note — method-level const-generic `N` isn't in the
+        // language). Before this gate, ANY method call on a FixedArray receiver — a genuine
+        // typo (`arr.lenx()`) as much as the two now-synthesized accessors this Plan adds
+        // (`@len`/`@ptr`, handled entirely upstream of `check_instance_overload` — see
+        // `fixed_array_accessor_return`/Ш0 doc there) — fell through this permissive `Named`/
+        // `Array`/`FixedArray`-blind normalization straight to codegen, which has no correct
+        // fallback for a non-Vec-shaped struct and panics `[P67-LEGACY]` (verified: `nova
+        // test` on `a.lenx()` for `a [4]u8` ICEs at emit_c.rs, "method call return type
+        // unknown"). Scoped to `FixedArray` ONLY (not `Array`/`[]T`, which genuinely IS
+        // `Vec[T]` and keeps its existing, correct resolution below unchanged).
+        if matches!(rt, TypeRef::FixedArray(..)) && !matches!(method_name, "len" | "ptr") {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_UNKNOWN_METHOD] no method `{}` on fixed-array type `[N]T` — a \
+                     `[N]T` receiver only has the compiler-synthesized `@len()`/`@ptr()` \
+                     accessors (D431) plus indexing (`arr[i]`, D238); it is a distinct \
+                     inline value type, not `Vec[T]` — Vec's own methods do not apply.\n  \
+                     fix: check the method name for a typo, or copy into a `[]T`/`Vec[T]` \
+                     first if you need the fuller Vec surface.",
+                    method_name,
+                ),
+                span,
+            ));
+            return;
+        }
         // Plan 177 Ф.3 [E_UNKNOWN_METHOD] (§0/§1/§6): a PRIMITIVE receiver whose method
         // resolves in NO channel — not a user/prelude method (`method_overloads`), not a
         // codegen builtin-intrinsic (`primitive_instance_method_known`: D109/D74/str/
