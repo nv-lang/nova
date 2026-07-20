@@ -4947,10 +4947,38 @@ pub fn detect_or_build_rt_archive(
         effect_define.as_deref(), &runtime_defines,
     );
     let memo = RT_ARCHIVE_MEMO.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    if let Ok(guard) = memo.lock() {
-        if let Some(cached) = guard.get(&memo_key) {
-            return cached.clone();
-        }
+    // [M-218-rt-archive-parallel-jobs-race] fix: hold ONE guard across the
+    // whole check -> build -> memoize sequence below (previously the lock
+    // was released right after the lookup and re-acquired only to insert
+    // the result — leaving a window between them). `nova test --jobs N`
+    // runs its worker pool as N THREADS inside ONE process
+    // (`std::thread::scope` in this file's parallel test runner, not
+    // separate OS processes), all calling this fn concurrently for
+    // (usually) the SAME bucket. With the lock released in that window,
+    // every thread could observe a memo-miss AND an absent on-disk
+    // `lib_file` at once, then race to build/overwrite the SAME
+    // `target/rt-archive-cache/<key>/` bucket concurrently — shared obj
+    // dir, shared `.rsp` files, shared output archive clobbered by
+    // multiple `cl.exe`/`lib.exe` (or `cc`/`ar`) invocations at once, not
+    // merely wasted work but actual corruption (observed as a flaky FAIL
+    // under `--jobs`, PASS in isolation — the archive some later reader
+    // linked against was mid-write). Holding the lock for the full
+    // sequence makes the first thread to reach a bucket do the real
+    // build while every other thread blocks; they then either hit the
+    // now-populated memo (same bucket — the common case per the module
+    // doc: most programs share one bucket) or build their own DIFFERENT
+    // bucket serially right after (rare). `build_rt_archive_lib` below is
+    // ALSO hardened with its own unique-scratch-dir + atomic-rename
+    // publish (mirrors `build_cache.rs::store_c`'s temp+rename idiom) as
+    // defense-in-depth for builders in SEPARATE OS processes, which this
+    // in-process mutex can't serialize (e.g. a concurrent `nova build` in
+    // another terminal against the same repo `target/`).
+    let mut guard = match memo.lock() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if let Some(cached) = guard.get(&memo_key) {
+        return cached.clone();
     }
 
     let result = (|| -> Option<RtArchiveConfig> {
@@ -5001,10 +5029,25 @@ pub fn detect_or_build_rt_archive(
         }
     })();
 
-    if let Ok(mut guard) = memo.lock() {
-        guard.insert(memo_key, result.clone());
-    }
+    guard.insert(memo_key, result.clone());
     result
+}
+
+/// Unique-enough per-attempt tag for `build_rt_archive_lib`'s scratch
+/// dir/files (see that fn's doc for why). PID gives cross-process
+/// uniqueness (two separate `nova` OS processes racing on the same repo
+/// `target/`); the atomic counter gives intra-process uniqueness across
+/// threads in case this is ever called without the caller's memo-mutex
+/// serialization; the nanosecond timestamp is a cheap extra safety
+/// margin. [M-218-rt-archive-parallel-jobs-race].
+fn unique_build_tag() -> String {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{}-{}-{}", std::process::id(), n, nanos)
 }
 
 /// Compile `sources` → objects and archive them into `lib_file`. Mirrors
@@ -5018,6 +5061,19 @@ pub fn detect_or_build_rt_archive(
 /// itself still gets full `-flto` in `build_command` — only the archived
 /// runtime's cross-TU inlining into app.c is traded away, a bounded,
 /// precedented cost (`libuv.lib` already forgoes it entirely).
+///
+/// **[M-218-rt-archive-parallel-jobs-race]:** everything this fn writes
+/// (obj files, `.rsp` files, the linked archive itself) goes into a
+/// scratch dir UNIQUE to this one build ATTEMPT
+/// (`cache_dir/.build-<pid>-<counter>-<nanos>`, never a fixed shared
+/// `cache_dir/obj` — that was the actual corruption vector: two builders
+/// writing the same obj/.rsp/archive paths at once). The real `lib_file`
+/// path is only ever touched once, at the very end, via an atomic
+/// rename — a reader either sees no file or a fully-written one, never a
+/// partial one. The caller (`detect_or_build_rt_archive`) already
+/// serializes same-process callers with a widened mutex; this is
+/// defense-in-depth for builders in separate OS processes, which that
+/// mutex cannot see.
 #[allow(clippy::too_many_arguments)]
 fn build_rt_archive_lib(
     sources: &[PathBuf],
@@ -5034,17 +5090,21 @@ fn build_rt_archive_lib(
     vcvars: Option<&Path>,
 ) -> Result<()> {
     std::fs::create_dir_all(cache_dir).map_err(|e| anyhow!("create cache_dir: {}", e))?;
-    let obj_dir = cache_dir.join("obj");
-    if obj_dir.is_dir() {
-        let _ = std::fs::remove_dir_all(&obj_dir);
-    }
+    let obj_dir = cache_dir.join(format!(".build-{}", unique_build_tag()));
     std::fs::create_dir_all(&obj_dir).map_err(|e| anyhow!("create obj_dir: {}", e))?;
     for src in sources {
         if !src.is_file() {
+            let _ = std::fs::remove_dir_all(&obj_dir);
             return Err(anyhow!("rt archive source not found: {}", src.display()));
         }
     }
+    // Linked INSIDE the isolated scratch dir first — published to the
+    // real `lib_file` path only via the atomic rename at the bottom.
+    let tmp_lib_file = obj_dir.join(
+        lib_file.file_name().unwrap_or_else(|| std::ffi::OsStr::new("libnova_rt.tmp"))
+    );
 
+    let build: Result<()> = (|| -> Result<()> {
     #[cfg(target_os = "windows")]
     {
         let vcv = vcvars.ok_or_else(|| anyhow!("vcvars required for libnova_rt archive build on Windows"))?;
@@ -5078,7 +5138,7 @@ fn build_rt_archive_lib(
         for s in sources {
             lines.push(format!("\"{}\"", s.display()));
         }
-        let rsp = cache_dir.join("compile.rsp");
+        let rsp = obj_dir.join("compile.rsp");
         std::fs::write(&rsp, lines.join("\n")).map_err(|e| anyhow!("write rsp: {}", e))?;
         let inner = format!(
             "\"call \"{}\" >nul 2>&1 && cl.exe @\"{}\"\"",
@@ -5105,9 +5165,9 @@ fn build_rt_archive_lib(
                 sources.len(), obj_files.len(), obj_dir.display()
             ));
         }
-        let lib_rsp = cache_dir.join("lib.rsp");
+        let lib_rsp = obj_dir.join("lib.rsp");
         let mut lib_lines: Vec<String> =
-            vec!["/nologo".to_string(), format!("/OUT:\"{}\"", lib_file.display())];
+            vec!["/nologo".to_string(), format!("/OUT:\"{}\"", tmp_lib_file.display())];
         for o in &obj_files {
             lib_lines.push(format!("\"{}\"", o.display()));
         }
@@ -5178,7 +5238,7 @@ fn build_rt_archive_lib(
             obj_files.push(obj);
         }
         let mut ar = Command::new("ar");
-        ar.arg("rcs").arg(lib_file);
+        ar.arg("rcs").arg(&tmp_lib_file);
         for o in &obj_files {
             ar.arg(o);
         }
@@ -5192,9 +5252,58 @@ fn build_rt_archive_lib(
     #[allow(unreachable_code)]
     {
         let _ = (sources, cache_dir, lib_file, rt_dir, cg_include, mode, gc_kind,
-                 boehm_cfg, libuv, effect_define, runtime_defines, vcvars);
+                 boehm_cfg, libuv, effect_define, runtime_defines, vcvars, &tmp_lib_file);
         Err(anyhow!("unsupported platform for libnova_rt archive build"))
     }
+    })();
+
+    // [M-218-rt-archive-parallel-jobs-race]: publish atomically. By this
+    // point the archive is either fully written at `tmp_lib_file` (inside
+    // the isolated scratch dir) or `build` is `Err` and nothing has
+    // touched the real `lib_file` path at all — a half-finished build
+    // NEVER becomes visible at `lib_file`. Mirrors
+    // `build_cache.rs::store_c`'s temp-file + `fs::rename` idiom (same
+    // repo, same class of problem: don't let readers observe a partial
+    // write).
+    let published = build.and_then(|()| {
+        if !tmp_lib_file.is_file() {
+            return Err(anyhow!(
+                "libnova_rt archive build reported success but {} missing",
+                tmp_lib_file.display()
+            ));
+        }
+        match std::fs::rename(&tmp_lib_file, lib_file) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // This process's callers are already serialized by
+                // `detect_or_build_rt_archive`'s widened mutex, but a
+                // genuinely separate `nova` OS process racing on the same
+                // repo `target/` is NOT covered by that mutex. If it won
+                // and already published a file at `lib_file`, that
+                // archive is content-addressed by the very same bucket
+                // key we just built from — byte-identical inputs, so
+                // treat its presence as success instead of surfacing a
+                // spurious failure (e.g. a Windows sharing violation from
+                // renaming over a file the other process still has open).
+                if lib_file.is_file() {
+                    Ok(())
+                } else {
+                    Err(anyhow!(
+                        "publish {} -> {}: {}",
+                        tmp_lib_file.display(), lib_file.display(), e
+                    ))
+                }
+            }
+        }
+    });
+
+    // Scratch dir is disposable regardless of outcome — best-effort
+    // cleanup, never fails the build over it (matches this module's other
+    // `let _ = std::fs::remove_dir_all(...)` best-effort precedent, e.g.
+    // `build_libuv_lib` above).
+    let _ = std::fs::remove_dir_all(&obj_dir);
+
+    published
 }
 
 /// Сводный результат для `test-all`.
