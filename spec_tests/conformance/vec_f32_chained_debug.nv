@@ -4,36 +4,53 @@
 // obj is a TurboFish{Vec,[f32]} static-returning `.new()/.from()` did not resolve
 // the return type to `Nova_Vec____nova_f32*` (it worked for int), so `.debug`
 // fell through to the str overload and a Vec[f32]* was passed into a str method.
+//
+// [M-208-vec-chained-debug-display-red] AMEND (2026-07-20): Plan 208 Ф.2 (D422,
+// `std/src/prelude/protocols.nv`) changed `Display.@display`/`Debug.@debug` to
+// take `Fmt` (a strictly richer protocol — `use Write` + width/precision/align/
+// fill/sign/alternate/kind/`@pad`), not bare `Write`. `StringBuilder` satisfies
+// only `Write`, not the full `Fmt` shape, so a bare sink can no longer be passed
+// directly as the argument (pre-D422 it could, since `@display`/`@debug` took
+// bare `Write` then) — same documented breaking change already reflected at
+// every other direct-call site in this wave: `d374_write_sink_decouple.nv`
+// ("...so it can no longer be passed AS `Fmt` directly..."),
+// `std/src/collections/vec/protocols_test.nv`, `std/src/time/duration/core.nv`.
+// This file predates D422 (written for the old `Write`-typed signature) and was
+// missed by the 208 Ф.3 migration sweep (scoped to `std/**` impls, not
+// `spec_tests/` call sites) — root cause was NOT a format change (`Vec[...]`
+// unchanged) and NOT a dispatch misroute; it was a stale pre-D422 call
+// convention. Fix: wrap the sink in `FmtCtx.bare(sink, mark, is_debug)`, the
+// same canonical wrapper every other post-D422 direct-call fixture uses.
 module spec_tests.conformance
 import std.collections.vec.{Vec}
 
 test "Vec[f32].new() chained .debug (empty)" {
     consume a = StringBuilder.new()
-    Vec[f32].new().debug(a)
+    Vec[f32].new().debug(FmtCtx.bare(a, 0, true))
     assert(a.into_str() == "Vec[]")
 }
 
 test "Vec[f32].from([...]) chained .debug" {
     consume a = StringBuilder.new()
-    Vec[f32].from([1.5, 2.5]).debug(a)
+    Vec[f32].from([1.5, 2.5]).debug(FmtCtx.bare(a, 0, true))
     assert(a.into_str() == "Vec[1.5, 2.5]")
 }
 
 test "Vec[f32].from([...]) chained .display" {
     consume a = StringBuilder.new()
-    Vec[f32].from([1.5, 2.5]).display(a)
+    Vec[f32].from([1.5, 2.5]).display(FmtCtx.bare(a, 0, false))
     assert(a.into_str() == "Vec[1.5, 2.5]")
 }
 
 // Control: Vec[int] chained already works.
 test "Vec[int].from([...]) chained .debug (control)" {
     consume a = StringBuilder.new()
-    Vec[int].from([1, 2]).debug(a)
+    Vec[int].from([1, 2]).debug(FmtCtx.bare(a, 0, true))
     assert(a.into_str() == "Vec[1, 2]")
 }
 
 test "Vec[int].new() chained .debug (control)" {
     consume a = StringBuilder.new()
-    Vec[int].new().debug(a)
+    Vec[int].new().debug(FmtCtx.bare(a, 0, true))
     assert(a.into_str() == "Vec[]")
 }
