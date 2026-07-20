@@ -3568,6 +3568,67 @@ default` + метод собирается. Замечание (вне пери�
   чисто на обоих WSL2-toolchain'ах** — fallback на per-build inline compile
   для этой машины больше не нужен. В main не смёржено, не запушено —
   решение владельца.
+  **2026-07-20 (ЗАКРЫТИЕ, sonnet, worktree `nova-linuxrace`, ветка
+  `p-fix-linux-mn-red`) — маркер ЗАКРЫТ, known_red снят из
+  `nova-gate.yml`.** Вердикт: `app_effect_basic_t8_1` НЕ был жертвой
+  M:N-гонки — ТРИ независимых, полностью ДЕТЕРМИНИРОВАННЫХ дефекта,
+  впервые вскрытых end-to-end прогоном на WSL2 (свежий main, rt_archive
+  default ON — ПЕРВЫЙ реальный CI-эквивалентный прогон этой комбинации на
+  Linux; предыдущие волны либо гоняли per-build inline compile fallback,
+  либо только компилировали архив вручную без реального `nova test`):
+  (1) **link-order баг** (`test_runner.rs::build_command`, Clang+Gcc Unix
+  branches) — `libuv.a` добавлялась в командную строку линковки ДО
+  `opts.c_file`/`libnova_rt.a`, которым нужны её символы (`uv_strerror` и
+  пр., из `fibers.h`) — GNU `ld` резолвит архив только против СИМВОЛОВ,
+  undefined НА МОМЕНТ его появления в команде; ссылки, возникшие ПОЗЖЕ, не
+  ищутся повторно. CC-FAIL `undefined reference to uv_strerror`. Фикс:
+  переставлены object/library-аргументы (libuv теперь строго ПОСЛЕ
+  ссылающихся объектов), Windows-ветка не тронута (MSVC linker не
+  order-зависим). (2) **`build_rt_archive_lib` (Plan 218) Unix-ветка не
+  передавала `-ffunction-sections`/`-fdata-sections`** — без per-function
+  секций финальный `--gc-sections` не мог вычистить МЁРТВУЮ
+  `nova_bench_heap_sampler_thread` (её globals определяются ТОЛЬКО в
+  bench_mode, emit_c.rs:7174) из архивных `.o`, тянула неразрешённые ссылки
+  в обычную (non-bench) сборку — CC-FAIL
+  `_nova_bench_heap_sample_interval_ns`/`_nova_bench_heap_sampler_stop`.
+  Windows-половина той же функции уже имела эквивалент (`/Gy`) — асимметрия
+  Unix/Windows. Фикс: добавлены оба флага. (3) **cbrt non-portability**
+  (`spec_tests/conformance/d109_primitive_methods_f64_f32_math.nv:24,56`) —
+  `assert((27.0).cbrt() == 3.0)` полагался на exact equality; IEEE-754 НЕ
+  гарантирует correctly-rounded `cbrt` (в отличие от `sqrt`) — glibc's
+  runtime `cbrt(27.0)` на этой машине даёт `3.0000000000000004441` (1 ULP);
+  на Windows/MSVC и через GCC's compile-time constant-folder (ТОЛЬКО для
+  литералов, `pow(x,1/3)`-путь variable-формы всё равно бы упал) исторически
+  давало ровно `3.0` — платформенно-хрупкий assert, деterministически падал
+  на Linux+clang (Auto-toolchain-preference = Clang>Gcc на Linux). Фикс:
+  оба assert'а (f64-литерал + f32-переменная) переведены на epsilon-сравнение
+  (`1e-9`/`1e-5`). Побочная находка (НЕ починена, вне зоны — заведён
+  отдельный маркер `[M-emit-c-loc-for-span-wrong-file-merged-cu]` ниже):
+  компиляторный баг мисатрибуции file:line для folder-module merged CU
+  (`emit_c.rs::loc_for_span` — `self.source_file_name`/`annotation_source`
+  process-global вместо per-span originating file; `byte_to_line_col` без
+  bounds-check даёт детерминированный garbage-line при overshoot) — это и
+  объясняло исторический сбивающий с толку label «app_effect_basic_t8_1.nv:22»
+  для assert'ов, реально находящихся в d109 на строках 24/56. Побочно
+  улучшена диагностика `test_runner.rs`: `NOVA_DEBUG_CC_DUMP=1` (полный
+  stdout/stderr дамп при CC-FAIL, ноль оверхеда без env, мирроринг
+  `NOVA_DEBUG_TIMEOUT_DUMP`) + расширен `errs`-фильтр (раньше матчил только
+  substring "error" — GNU ld'шные `undefined reference to`/`cannot find -l`
+  строки не содержат слово "error", терялись за уводящей в сторону
+  clang-обёрткой "linker command failed"). **Гейты:** WSL2 представитель
+  (rt_archive default ON, реальный CI-путь) — **20/20 PASS подряд**, ноль
+  крэшей/SIGSEGV/зависаний. Windows: `cargo build --release` чисто;
+  `spec_tests/conformance/standalone` **PASS 70/FAIL 0**;
+  `pos_max_fibers_concurrent`+`supervisor_stop_test`+`supervisor_parfor_test`
+  **×5 подряд PASS**; флагман-агрегатор собрался под `--strict-effects` и
+  ответил `HTTP 200` живому `curl`. **known_red-строка снята из
+  `.github/workflows/nova-gate.yml`** (заменена closure-комментарием с
+  диагнозом). Полная деталь — `docs/plans/wip/linux-mn-red-notes.md`.
+  Файлы: `compiler-codegen/src/test_runner.rs`,
+  `spec_tests/conformance/d109_primitive_methods_f64_f32_math.nv`,
+  `.github/workflows/nova-gate.yml`. Worktree `nova-linuxrace`, ветка
+  `p-fix-linux-mn-red` — в main НЕ смёржено, не запушено, решение
+  интегратора.
 
 - **[M-replace-transitive-deps]** (2026-07-16, P3, найден compress-lock волной 205 Ф.2) —
   `[replace]` в nova.local.toml действует ТОЛЬКО на `[dependencies]` корневого пакета
