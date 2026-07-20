@@ -42286,6 +42286,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         self.line(&format!("{} {};", block_ty, tmp));
         self.var_types.insert(tmp.clone(), block_ty.clone());
+        // [M-freefn-named-default-arg-shift] fix: snapshot `var_types` HERE
+        // (after `tmp`'s own entry above, so `tmp` survives the restore) and
+        // restore it once the block's `{ }` closes below. The real-body loop
+        // just below (`emit_stmt` over `block.stmts`) inserts each of the
+        // block's OWN `let`-locals into the SAME flat, never-per-scope
+        // `var_types` map (see doc comment above — that's the map this fn's
+        // own type-probe phase already had to work around) — but unlike the
+        // type-probe's transient overlay, nothing previously undid these
+        // insertions once the block's closing brace was emitted, so a
+        // block-local whose NAME collides with an outer-scope variable of a
+        // DIFFERENT type silently overwrote that outer binding for the rest
+        // of the enclosing function. This is the general form of the disease
+        // class already on record as [M-callnorm-free-fn-name-collision] /
+        // 196.6 / [M-parfor-capture-callee-name-collides-std-local]: here it
+        // fires for EVERY `{ }` block-expression, most visibly for
+        // `callnorm`'s Plan 46 D102 default/named-arg desugar Block, whose
+        // synthesized `let <param_name> = …` bindings are named after the
+        // CALLEE's own params — e.g. `int_fmt(v int, buf *mut u8, cap int,
+        // spec FmtSpec = …)` called as `int_fmt(42, buf.ptr(), 24, spec:
+        // spec)` desugars to a Block containing `let buf = …` (type `*mut
+        // u8`), which used to leak past the Block and hijack every
+        // subsequent `buf.ptr()` dispatch (`buf` the OUTER `[]u8`/`Vec[u8]`)
+        // onto `str`'s `.ptr()` instead of `Vec`'s — CC-FAIL "passing
+        // 'Nova_Vec____nova_byte *' to parameter of incompatible type
+        // 'nova_str'" (std/src/runtime/fmt_buf/core_test.nv, D102 Ф.4R §10R-Д3
+        // gate). Standalone repro:
+        // spec_tests/conformance/standalone/freefn_named_default_arg_shift.nv.
+        let saved_var_types = self.var_types.clone();
         self.line("{");
         self.indent += 1;
         if block.is_unsafe { self.unsafe_depth += 1; }
@@ -42305,6 +42333,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if block.is_unsafe { self.unsafe_depth -= 1; }
         self.indent -= 1;
         self.line("}");
+        self.var_types = saved_var_types;
         Ok(tmp)
     }
 
