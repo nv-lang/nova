@@ -12,30 +12,45 @@ test "int_fmt: decimal positive/negative/zero" {
     mut buf = scratch(24)
     ro spec = FmtSpec.new()
 
-    ro n1 = int_fmt(42, buf.ptr(), 24, spec)
+    // Plan 208 Ф.4R §10R-Д3: `int_fmt` is now `unsafe fn` (merged former
+    // `int_fmt_into` bridge's unsafe-status) — every call wraps.
+    ro n1 = unsafe { int_fmt(42, buf.ptr(), 24, spec: spec) }
     assert(n1 == 2)
     unsafe {
         assert(buf.ptr().read_at(0) == ('4' as u8))
         assert(buf.ptr().read_at(1) == ('2' as u8))
     }
 
-    ro n2 = int_fmt(-5, buf.ptr(), 24, spec)
+    ro n2 = unsafe { int_fmt(-5, buf.ptr(), 24, spec: spec) }
     assert(n2 == 2)
     unsafe {
         assert(buf.ptr().read_at(0) == ('-' as u8))
         assert(buf.ptr().read_at(1) == ('5' as u8))
     }
 
-    ro n3 = int_fmt(0, buf.ptr(), 24, spec)
+    ro n3 = unsafe { int_fmt(0, buf.ptr(), 24, spec: spec) }
     assert(n3 == 1)
     unsafe { assert(buf.ptr().read_at(0) == ('0' as u8)) }
+}
+
+test "int_fmt: default spec (§10R-Д3 — simple render = defaulted call)" {
+    // Omitting `spec` entirely renders plain decimal — the SAME behavior the
+    // retired `int_fmt_into` bridge used to provide, now via callnorm's
+    // free-fn default-arg backfill (`spec FmtSpec = FmtSpec.new()`).
+    mut buf = scratch(24)
+    ro n = unsafe { int_fmt(42, buf.ptr(), 24) }
+    assert(n == 2)
+    unsafe {
+        assert(buf.ptr().read_at(0) == ('4' as u8))
+        assert(buf.ptr().read_at(1) == ('2' as u8))
+    }
 }
 
 test "int_fmt: zero_pad width" {
     mut buf = scratch(24)
     ro spec = FmtSpec { ...FmtSpec.new(), width: 4, zero_pad: true }
 
-    ro n = int_fmt(42, buf.ptr(), 24, spec)
+    ro n = unsafe { int_fmt(42, buf.ptr(), 24, spec: spec) }
     assert(n == 4)
     unsafe {
         assert(buf.ptr().read_at(0) == ('0' as u8))
@@ -45,7 +60,7 @@ test "int_fmt: zero_pad width" {
     }
 
     // Negative zero_pad: '0' padding goes BETWEEN the sign and the digits.
-    ro n2 = int_fmt(-7, buf.ptr(), 24, spec)
+    ro n2 = unsafe { int_fmt(-7, buf.ptr(), 24, spec: spec) }
     assert(n2 == 4)
     unsafe {
         assert(buf.ptr().read_at(0) == ('-' as u8))
@@ -59,7 +74,7 @@ test "int_fmt: hex radix (lower/upper/alt), oct, bin" {
     mut buf = scratch(24)
 
     ro hex_lower = FmtSpec { ...FmtSpec.new(), radix: 16 }
-    ro nh = int_fmt(255, buf.ptr(), 24, hex_lower)
+    ro nh = unsafe { int_fmt(255, buf.ptr(), 24, spec: hex_lower) }
     assert(nh == 2)
     unsafe {
         assert(buf.ptr().read_at(0) == ('f' as u8))
@@ -67,7 +82,7 @@ test "int_fmt: hex radix (lower/upper/alt), oct, bin" {
     }
 
     ro hex_upper = FmtSpec { ...FmtSpec.new(), radix: 16, upper: true }
-    ro nhu = int_fmt(255, buf.ptr(), 24, hex_upper)
+    ro nhu = unsafe { int_fmt(255, buf.ptr(), 24, spec: hex_upper) }
     assert(nhu == 2)
     unsafe {
         assert(buf.ptr().read_at(0) == ('F' as u8))
@@ -75,7 +90,7 @@ test "int_fmt: hex radix (lower/upper/alt), oct, bin" {
     }
 
     ro hex_alt = FmtSpec { ...FmtSpec.new(), radix: 16, alt: true }
-    ro nha = int_fmt(255, buf.ptr(), 24, hex_alt)
+    ro nha = unsafe { int_fmt(255, buf.ptr(), 24, spec: hex_alt) }
     assert(nha == 4)
     unsafe {
         assert(buf.ptr().read_at(0) == ('0' as u8))
@@ -85,7 +100,7 @@ test "int_fmt: hex radix (lower/upper/alt), oct, bin" {
     }
 
     ro oct = FmtSpec { ...FmtSpec.new(), radix: 8 }
-    ro no = int_fmt(8, buf.ptr(), 24, oct)
+    ro no = unsafe { int_fmt(8, buf.ptr(), 24, spec: oct) }
     assert(no == 2)
     unsafe {
         assert(buf.ptr().read_at(0) == ('1' as u8))
@@ -93,7 +108,7 @@ test "int_fmt: hex radix (lower/upper/alt), oct, bin" {
     }
 
     ro bin = FmtSpec { ...FmtSpec.new(), radix: 2 }
-    ro nb = int_fmt(5, buf.ptr(), 24, bin)
+    ro nb = unsafe { int_fmt(5, buf.ptr(), 24, spec: bin) }
     assert(nb == 3)
     unsafe {
         assert(buf.ptr().read_at(0) == ('1' as u8))
@@ -104,7 +119,7 @@ test "int_fmt: hex radix (lower/upper/alt), oct, bin" {
     // radix reinterprets negative values as the raw two's-complement bit
     // pattern (Rust `{:x}` of -1i64 == "ff..ff") — 64-bit `int` on this
     // platform → 16 hex digits, all 'f'.
-    ro nneg = int_fmt(-1, buf.ptr(), 24, hex_lower)
+    ro nneg = unsafe { int_fmt(-1, buf.ptr(), 24, spec: hex_lower) }
     assert(nneg == 16)
     unsafe {
         mut i = 0
@@ -120,7 +135,7 @@ test "int_fmt: cap truncation never overruns" {
     // must report the truncated length actually written.
     mut buf = scratch(4)
     ro spec = FmtSpec { ...FmtSpec.new(), width: 8, zero_pad: true }
-    ro n = int_fmt(42, buf.ptr(), 2, spec)
+    ro n = unsafe { int_fmt(42, buf.ptr(), 2, spec: spec) }
     assert(n == 2)
 }
 
@@ -178,12 +193,14 @@ test "char_fmt: 1/2/3/4-byte UTF-8 encodings" {
     }
 }
 
-test "f64_fmt_into: Shortest/Fixed/Sci kinds" {
+test "nova_f64_fmt (C-extern): Shortest/Fixed/Sci kinds" {
     mut buf = scratch(64)
 
     // kind 1 = Fixed
+    // Plan 208 Ф.4R §10R-Д3: renamed from `f64_fmt_into` (extern, D282
+    // literal name — now `nova_`-prefixed header-style, see nova_rt.h).
     // [M-174.6-rawptr-extern-unsafe-infer] (D424 rule 1): inferred `unsafe fn`.
-    ro nf = unsafe { f64_fmt_into(3.14159, buf.ptr(), 64, 1, 2) }
+    ro nf = unsafe { nova_f64_fmt(3.14159, buf.ptr(), 64, 1, 2) }
     assert(nf == 4)
     unsafe {
         assert(buf.ptr().read_at(0) == ('3' as u8))
@@ -193,7 +210,7 @@ test "f64_fmt_into: Shortest/Fixed/Sci kinds" {
     }
 
     // kind 0 = Shortest (round-trip minimal) — same engine as println(float).
-    ro ns = unsafe { f64_fmt_into(2.5, buf.ptr(), 64, 0, 0) }
+    ro ns = unsafe { nova_f64_fmt(2.5, buf.ptr(), 64, 0, 0) }
     assert(ns == 3)
     unsafe {
         assert(buf.ptr().read_at(0) == ('2' as u8))
@@ -202,14 +219,16 @@ test "f64_fmt_into: Shortest/Fixed/Sci kinds" {
     }
 
     // kind 2 = Sci
-    ro ne = unsafe { f64_fmt_into(1234.5, buf.ptr(), 64, 2, 1) }
+    ro ne = unsafe { nova_f64_fmt(1234.5, buf.ptr(), 64, 2, 1) }
     assert(ne > 0)
     unsafe { assert(buf.ptr().read_at(1) == ('.' as u8)) }
 }
 
-test "fmt_f64: FloatKind enum wrapper matches f64_fmt_into" {
+test "f64_fmt: FloatKind enum wrapper matches nova_f64_fmt" {
     mut buf = scratch(64)
-    ro n = f64_fmt(3.14159, buf.ptr(), 64, FloatKind.Fixed, 2)
+    // Plan 208 Ф.4R §10R-Д3: `f64_fmt` is now `unsafe fn` (merged former
+    // `f64_fmt_shortest_into` bridge's unsafe-status) — every call wraps.
+    ro n = unsafe { f64_fmt(3.14159, buf.ptr(), 64, kind: FloatKind.Fixed, prec: 2) }
     assert(n == 4)
     unsafe {
         assert(buf.ptr().read_at(0) == ('3' as u8))
@@ -217,6 +236,12 @@ test "fmt_f64: FloatKind enum wrapper matches f64_fmt_into" {
         assert(buf.ptr().read_at(3) == ('4' as u8))
     }
 
-    ro n2 = f64_fmt(2.5, buf.ptr(), 64, FloatKind.Shortest, 0)
+    ro n2 = unsafe { f64_fmt(2.5, buf.ptr(), 64, kind: FloatKind.Shortest, prec: 0) }
     assert(n2 == 3)
+
+    // Default-arg call shape (§10R-Д3 norm): omitting kind/prec renders
+    // shortest round-trip — the SAME behavior the retired
+    // `f64_fmt_shortest_into` bridge used to provide.
+    ro n3 = unsafe { f64_fmt(2.5, buf.ptr(), 64) }
+    assert(n3 == 3)
 }

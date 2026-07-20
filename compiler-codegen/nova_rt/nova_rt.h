@@ -404,21 +404,30 @@ static inline int nova_f32_shortest(nova_f32 v, char* buf) {
  * "float — ЕДИНСТВЕННЫЙ C-extern, dtoa непортируем"); everything else
  * (int/bool/char/радикс/pad) moves to `.nv` (`std/src/runtime/fmt_buf.nv`).
  *
- * Literal C symbol name (NO `nova_` prefix) — [D282](../../spec/decisions/
+ * Literal C symbol name — [D282](../../spec/decisions/
  * 08-runtime.md#d282) `extern "C" fn` contract: the `.nv`-side declaration
- * (`extern "C" fn f64_fmt_into(...)`) calls this exact name, resolved purely
+ * (`extern "C" fn nova_f64_fmt(...)`) calls this exact name, resolved purely
  * via header visibility (nova_rt.h is `#include`d into every generated C
  * translation unit — no separate forward-declaration emitted by codegen for
  * `extern "C" fn`, Plan 91.12 Ф.-1). Kept `static inline` (like every other
  * nova_rt.h primitive) so multiple .c translation units that include this
  * header do NOT collide with duplicate external-linkage definitions.
  *
+ * Plan 208 Ф.4R §10R-Д3 (owner 2026-07-21, `docs/plans/208-unified-formatter.md`
+ * §10R-Д, source of truth): renamed from `f64_fmt_into` — the `_into` suffix
+ * is retired repo-wide (it meant two different things: this C-extern AND the
+ * now-retired `.nv` bridge functions, while every member of the family writes
+ * into `(buf, cap)` regardless of suffix). `nova_`-prefixed header-style name
+ * (matches `nova_f64_shortest`/`nova_print_f64` siblings in this same file) —
+ * still a D282 literal name (whatever the `.nv` extern declares IS the C
+ * symbol, no compiler mangling), just a different literal than before.
+ *
  * kind: 0=Shortest (delegates to `nova_f64_shortest`, the existing
  *       round-trip-minimal engine — reused verbatim, not reimplemented),
  *       1=Fixed    (`%.*f` fixed-point, `prec` decimal places),
  *       2=Sci      (`%.*e` scientific, `prec` decimal places).
- * `FloatKind` is a `.nv`-side enum (`std/src/runtime/fmt_buf.nv`); the
- * `.nv`-wrapper `fmt_f64` converts it to this `int` at the ABI boundary
+ * `FloatKind` is a `.nv`-side enum (`std/src/runtime/fmt_buf/core.nv`); the
+ * `.nv`-wrapper `f64_fmt` converts it to this `int` at the ABI boundary
  * (enums do not cross `extern "C"` directly, D422 §5).
  *
  * Writes at most `cap` bytes into `buf` (TRUNCATING defensively if `cap` is
@@ -427,7 +436,7 @@ static inline int nova_f32_shortest(nova_f32 v, char* buf) {
  * number of bytes actually written. `tmp[400]` covers the worst case: a
  * `%.*f` render of `DBL_MAX` (~309 integer digits) at the widest clamped
  * precision (40) plus sign/decimal-point — comfortably under 400. */
-static inline nova_int f64_fmt_into(double v, uint8_t* buf, nova_int cap, nova_int kind, nova_int prec) {
+static inline nova_int nova_f64_fmt(double v, uint8_t* buf, nova_int cap, nova_int kind, nova_int prec) {
     char tmp[400];
     int n;
     if (kind == 1) {
@@ -447,11 +456,13 @@ static inline nova_int f64_fmt_into(double v, uint8_t* buf, nova_int cap, nova_i
     return result;
 }
 
-/* f32-собрат f64_fmt_into (2026-07-20, владелец: SB @append(f32) без
+/* f32-собрат nova_f64_fmt (2026-07-20, владелец: SB @append(f32) без
  * str-аллокации): shortest-only — оси Fixed/Sci для f32 не нужны (D422:
  * пользовательский spec-путь идёт через f64-ось). Тот же
- * defensive-truncate контракт. Разрешается D282 literal-name extern'ом. */
-static inline nova_int f32_fmt_into(nova_f32 v, uint8_t* buf, nova_int cap) {
+ * defensive-truncate контракт. Разрешается D282 literal-name extern'ом.
+ * Переименован из `f32_fmt_into` (Ф.4R §10R-Д3, тот же мотив, что у
+ * `nova_f64_fmt` выше — суффикс `_into` упразднён репо-wide). */
+static inline nova_int nova_f32_fmt(nova_f32 v, uint8_t* buf, nova_int cap) {
     char tmp[64];
     int n = nova_f32_shortest(v, tmp);
     if (n < 0) n = 0;

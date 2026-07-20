@@ -27,8 +27,8 @@ module runtime.string_builder
 // does not reopen the prelude cycle this file already breaks out of.
 //
 // Plan 208 Ф.4R Ш1 (owner 2026-07-20, architecture fix — see
-// `docs/plans/wip/208-f4r-notes.md`): `int_fmt`/`fmt_f64`/`FmtSpec`/
-// `FloatKind`/`bool_fmt`/`char_fmt`/`f32_fmt_into`/`str_debug_fmt`/
+// `docs/plans/wip/208-f4r-notes.md`): `int_fmt`/`f64_fmt`/`FmtSpec`/
+// `FloatKind`/`bool_fmt`/`char_fmt`/`f32_fmt`/`str_debug_fmt`/
 // `char_debug_fmt` added to this SAME one-directional import (this file
 // already imports `fmt_buf` — `fmt_buf` does NOT import this file back,
 // no cycle) — backs the `*_display_spec` family further down. An earlier
@@ -39,7 +39,12 @@ module runtime.string_builder
 // having nothing to do with either import) — a genuine compiler defect in
 // cyclic-import resolution, not something to route around. This file's
 // pre-existing one-way dependency avoids the whole class of bug.
-import std.runtime.fmt_buf.{Align, FloatKind, FmtSpec, int_fmt_into, f64_fmt_shortest_into, f32_fmt_shortest_into, int_fmt, f64_fmt, bool_fmt, char_fmt, f32_fmt_into, str_debug_fmt, char_debug_fmt}
+//
+// Plan 208 Ф.4R §10R-Д3 (owner 2026-07-21): `int_fmt_into`/
+// `f64_fmt_shortest_into`/`f32_fmt_shortest_into` bridges are RETIRED — the
+// `_into` suffix is gone repo-wide; `int_fmt`/`f64_fmt`/`f32_fmt` are now the
+// SOLE entry points (axis params default, `unsafe fn`), imported directly.
+import std.runtime.fmt_buf.{Align, FloatKind, FmtSpec, int_fmt, f64_fmt, bool_fmt, char_fmt, f32_fmt, str_debug_fmt, char_debug_fmt}
 import std.runtime.raw_mem.{RawMem}
 import std.prelude.core.{Result}
 import std.runtime.string.{Utf8Error}
@@ -183,22 +188,30 @@ const INT_FMT_CAP int = 20   // "-9223372036854775808" — ровно 20
 const F64_FMT_CAP int = 24   // "-2.2250738585072014e-308" — ровно 24
 const F32_FMT_CAP int = 16   // "-1.1754944e-38" = 14; +2 запас формата %g
 
+// Plan 208 Ф.4R §10R-Д3: `int_fmt(x, buf, cap)` — `spec` axis omitted,
+// defaults to plain decimal (`FmtSpec.new()`), same shape the retired
+// `int_fmt_into` bridge used to provide.
 export fn StringBuilder mut @append(x int) -> @ {
     @reserve(INT_FMT_CAP)
-    unsafe { @advance(int_fmt_into(x, @spare(), INT_FMT_CAP)) }
+    unsafe { @advance(int_fmt(x, @spare(), INT_FMT_CAP)) }
 }
+// `f64_fmt(x, buf, cap)` — `kind`/`prec` axes omitted, default to
+// Shortest/-1, same shape the retired `f64_fmt_shortest_into` bridge used
+// to provide.
 export fn StringBuilder mut @append(x f64) -> @ {
     @reserve(F64_FMT_CAP)
-    unsafe { @advance(f64_fmt_shortest_into(x, @spare(), F64_FMT_CAP)) }
+    unsafe { @advance(f64_fmt(x, @spare(), F64_FMT_CAP)) }
 }
 export fn StringBuilder mut @append(b bool) -> @ { if b { @append("true") } else { @append("false") } }
 // Plan 154.1 [M-154.1-f32-display-debug] + Plan 180: f32 via `@to_str()` →
 // the f32-precise shortest-round-trip formatter (nova_f32_to_str). Widening to
 // f64 first would surface the f32→f64 mantissa tail now that f64's formatter is
 // faithful (0.1f → "0.10000000149011612"); the direct f32 path keeps "0.1".
+// Plan 208 Ф.4R §10R-Д3: `f32_fmt_shortest_into` bridge retired — `f32_fmt`
+// is the sole entry point now (same shape, no axis params to default).
 export fn StringBuilder mut @append(x f32) -> @ {
     @reserve(F32_FMT_CAP)
-    unsafe { @advance(f32_fmt_shortest_into(x, @spare(), F32_FMT_CAP)) }
+    unsafe { @advance(f32_fmt(x, @spare(), F32_FMT_CAP)) }
 }
 
 // Append строку s ровно n раз. n <= 0 → no-op.
@@ -437,7 +450,7 @@ export fn StringBuilder mut @pad_in_place(mark int, width int, fill char, align 
 //      signbit-aware.
 //   2. `f64_display_spec`'s precision is clamped to 64 (matching
 //      `nova_fmt_f64_body`'s own `if (prec > 64) prec = 64`) — DIFFERENT
-//      from `fmt_f64`/`f64_fmt_into`'s own internal Fixed-kind clamp (340).
+//      from `f64_fmt`'s own internal Fixed-kind clamp (340).
 //      Forwarding `prec` unclamped would diverge from the Ш0 baseline for
 //      `.65`+.
 
@@ -480,12 +493,14 @@ export fn int_display_spec(mut sb StringBuilder, v int, width int, radix int, up
         ro cap = width.max(natural_cap)
         ro spec = FmtSpec { width, radix, upper, zero_pad: true, sign_plus, alt }
         sb.reserve(cap)
-        unsafe { sb.advance(int_fmt(v, sb.spare(), cap, spec)) }
+        // D102: `spec` has a default now (§10R-Д3) — a supplied value must be
+        // passed BY NAME (keyword-only), not positionally.
+        unsafe { sb.advance(int_fmt(v, sb.spare(), cap, spec: spec)) }
     } else {
         ro mark = sb.byte_len()
         ro spec = FmtSpec { width: 0, radix, upper, zero_pad: false, sign_plus, alt }
         sb.reserve(natural_cap)
-        unsafe { sb.advance(int_fmt(v, sb.spare(), natural_cap, spec)) }
+        unsafe { sb.advance(int_fmt(v, sb.spare(), natural_cap, spec: spec)) }
         sb.pad_in_place(mark, width, fill, align)
     }
 }
@@ -540,7 +555,9 @@ export fn f64_display_spec(mut sb StringBuilder, v f64, width int, has_prec bool
         // own internal 340 clamp).
         ro clamped_prec = prec.max(0).min(64)
         sb.reserve(DISPLAY_F64_FIXED_CAP)
-        unsafe { sb.advance(f64_fmt(mag, sb.spare(), DISPLAY_F64_FIXED_CAP, FloatKind.Fixed, clamped_prec)) }
+        // D102: `kind`/`prec` have defaults now (§10R-Д3) — supplied values
+        // must be passed BY NAME (keyword-only), not positionally.
+        unsafe { sb.advance(f64_fmt(mag, sb.spare(), DISPLAY_F64_FIXED_CAP, kind: FloatKind.Fixed, prec: clamped_prec)) }
     } else {
         // No-precision (shortest round-trip) path — the body ALREADY
         // carries its own sign (`fmt_f64` Shortest on the RAW value);
@@ -551,7 +568,9 @@ export fn f64_display_spec(mut sb StringBuilder, v f64, width int, has_prec bool
         // on `-0.0` in THIS branch).
         if sign_plus && v >= 0.0 { sb.append("+"); prefix_len = 1 }
         sb.reserve(DISPLAY_F64_SHORTEST_CAP)
-        unsafe { sb.advance(f64_fmt(v, sb.spare(), DISPLAY_F64_SHORTEST_CAP, FloatKind.Shortest, -1)) }
+        // Shortest/-1 ARE `f64_fmt`'s defaults (§10R-Д3) — omit both axes
+        // entirely rather than spell out the default by name.
+        unsafe { sb.advance(f64_fmt(v, sb.spare(), DISPLAY_F64_SHORTEST_CAP)) }
     }
     if zero_pad {
         ro zp_width = (width - prefix_len).max(0)
@@ -562,7 +581,7 @@ export fn f64_display_spec(mut sb StringBuilder, v f64, width int, has_prec bool
 }
 
 /// `f32` BARE display render — the f32-PRECISE shortest engine
-/// (`f32_fmt_into`/`nova_f32_shortest`), matching the bare `${f32val}`
+/// (`f32_fmt`/`nova_f32_shortest`), matching the bare `${f32val}`
 /// interp path (emit_c.rs `primitive_to_str_fn`'s `nova_f32_to_str`), NOT
 /// the widen-to-f64 path a RICH f32 spec currently takes (Ш3 decides which
 /// call site uses this vs `f64_display_spec(sb, v as f64, ...)` — both
@@ -570,7 +589,7 @@ export fn f64_display_spec(mut sb StringBuilder, v f64, width int, has_prec bool
 export fn f32_display_spec(mut sb StringBuilder, v f32, width int, align Align, fill char) -> () {
     ro mark = sb.byte_len()
     sb.reserve(DISPLAY_F32_CAP)
-    unsafe { sb.advance(f32_fmt_into(v, sb.spare(), DISPLAY_F32_CAP)) }
+    unsafe { sb.advance(f32_fmt(v, sb.spare(), DISPLAY_F32_CAP)) }
     sb.pad_in_place(mark, width, fill, align)
 }
 
