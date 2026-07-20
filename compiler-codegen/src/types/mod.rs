@@ -16210,6 +16210,23 @@ impl<'a> TypeCheckCtx<'a> {
             // bail, unchanged legacy behavior.
             let Some((call_args, call_scope)) = args_scope else { return None };
             let mut full_subst = subst.clone();
+            // [M-196-producer-b-turbofish] Seed from an explicit method-level turbofish
+            // (`obj.method[U](args)`) BEFORE the args/closure-derived pass below — ground
+            // truth, positional against `f.generics` (mirrors the free-fn D310 overlay and
+            // the legacy codegen `explicit_tf` seed, `emit_c.rs` ~21347). Handles the class
+            // `unify_type` structurally CANNOT: a method generic that appears ONLY in
+            // RETURN position (no param mentions it, e.g. `fn Reg @empty[T]() -> Vec[T]`) —
+            // the args loop below has nothing to unify against, so without this seed
+            // `out_full` stays unresolved and the whole branch honestly bails, exactly the
+            // `m176_method_return_turbofish` regression class this mirrors the FIX for.
+            // `unify_type` never overwrites an already-bound name (see its "already bound —
+            // must match" arm) — a param that ALSO mentions this generic can only confirm or
+            // silently no-op on conflict, never diverge from the explicit annotation.
+            if let Some(explicit) = explicit_type_args {
+                for (g, ta) in f.generics.iter().zip(explicit.iter()) {
+                    full_subst.entry(g.name.clone()).or_insert_with(|| ta.clone());
+                }
+            }
             for (p, a) in f.params.iter().zip(call_args.iter()) {
                 if p.is_variadic {
                     break;
