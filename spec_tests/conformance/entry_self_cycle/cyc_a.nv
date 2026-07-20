@@ -1,0 +1,11 @@
+// [M-imports-entry-folder-module-self-cycle-empty-exports] regression pair,
+// leg A. Genuine two-way import cycle: cyc_a imports cyc_b, cyc_b imports
+// cyc_a back — NEITHER file is the CU entry (entry_test.nv is), so this is
+// NOT the entry-exports-empty bug (fixed 2026-07-20); it is the pre-existing
+// D29 rev-5 / Plan 162 "collect-first" cycle guard, which must still catch
+// a real cross-file cycle: see `cyc_b.nv`'s `b_calls_a` for the failing leg.
+module entry_self_cycle.cyc_a
+
+import ./cyc_b.{b_val}
+
+export fn a_val() -> int => b_val() + 1
