@@ -11397,6 +11397,7 @@ runtime-точку (`nova_scope_exit`).
 | `cancel` (structural) | `Failure("cancel: " + reason)` (D90 §7 marker) |
 | `panic(msg)` | `Panic(msg)` |
 | `interrupt v` | `Failure(reason)` (спека core.nv:130; выравнивает impl — consume-монолит СЕЙЧАС обходил on_exit на interrupt, defer-frame его оборачивает) |
+| `break` / `continue` (loop-body exit, [D432](02-types.md#d432) §6 Plan 217) | `Success` — не несут throw/panic-исход; тело итерации завершается штатно, cleanup бежит с тем же исходом, что normal end-of-scope |
 
 Субсумирует три ретрактнутые формы (D189): `errdefer{…}` ≡ `defer(o){ match o { Failure(_)|Panic(_) => …, Success => () } }`;
 `okdefer{…}` ≡ `defer(o){ match o { Success => …, _ => () } }`; `defer |r| {…}` ≡ эта форма.

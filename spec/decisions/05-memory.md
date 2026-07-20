@@ -556,6 +556,12 @@ Safe by construction.
 `consume X = …` обязывает X быть consumed до конца scope'а. D131
 flow-sensitive analysis применяется без изменений.
 
+**Амендмент [D432](02-types.md#d432) (Plan 217, 2026-07-20):** Rule 6 НЕ
+применяется, если тип `X` объявил эффект-чистый `@cleanup` — для таких
+типов непотребление к концу скоупа не ошибка (компилятор авто-вставляет
+`@cleanup(outcome)`, гибрид C). Rule 6 продолжает действовать БЕЗ
+ИЗМЕНЕНИЙ для типов без `@cleanup` (строгая линейность).
+
 ### Error codes
 
 | Код | Когда | Suggestion (machine-applicable) |
