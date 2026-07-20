@@ -103,21 +103,19 @@ const DEFAULT_PORT u16 = 8187
 // dumps on the wedged runs showing multiple workers'
 // `STUCK_ALIVE_NOT_PARKED` fibers under `[supervised] ... pending_remote=1`
 // — the same stale-slot symptom as the pre-existing marker below `main`):
-// `MAX_INFLIGHT_CONNS = 1` survives (partial admission, ~2-5/80 accepted,
-// rest honestly rejected, server alive after); `= 2` also survives
-// (reproduced clean across repeated back-to-back 80-way bursts on one
-// live server, and separately against a 200-way burst — see this
-// package's README for the recorded transcripts); `= 3` and `= 4`
-// reproduced the SAME permanent wedge (0/80 admitted, dead afterward) on
-// this machine. `16` (this constant's first guess, matching the runtime's
-// own worker-pool size) was **wrong** — genuinely concurrent bounded
-// handling at that width is not a fix, it recreates the exact failure
-// mode via `aggregate()`'s own fan-out multiplying the effective
-// concurrently-alive-fiber count far past the connection bound itself.
-// `2` is kept (not `1`) for a little extra throughput at the same observed
-// safety margin — this is an empirical cliff, not a formula; do not raise
-// this constant without re-running the `xargs -P80`/`-P200` gate above.
-const MAX_INFLIGHT_CONNS i64 = 2
+// HISTORY: while the scheduler wedge was open, this constant was the
+// mitigation — `= 2` was the empirical cliff (3+ reproduced a permanent
+// wedge; see `docs/history/simplifications-closed.md`,
+// `[M-187-high-concurrency-connection-wedge]`). The wedge's root cause
+// (non-work-conserving nested `supervised` pump parking ready fibers of a
+// SIBLING scope) is FIXED in the runtime (work-conserving pump,
+// `nova_rt/runtime.c`, merge `14decdfb1`), gate-proven at width 16 with
+// `xargs -P80`/`-P200` bursts (no permanent-000, full recovery). `16`
+// (matching the runtime's worker-pool size) is now the real backpressure
+// bound, not a wedge workaround: admission control stays because honestly
+// rejecting excess load is the right behavior for a bounded demo server —
+// re-run the burst gate if you change this.
+const MAX_INFLIGHT_CONNS i64 = 16
 
 // Live legends use a wall-clock (not simulated) budget — generous enough for
 // a handful of real round-trips, still bounded (the real-cancel race,
