@@ -1,39 +1,58 @@
 // Plan 153.x [M-154.1-chained-vec-f32-method-misdispatch]: chained
-// `Vec[f32].new().debug(a)` / `.from([...]).debug(a)` must dispatch `.debug` on
+// `Vec[f32].new().debug(a)` / `.of(...).debug(a)` must dispatch `.debug` on
 // the Vec[f32] receiver (not on str). Root: infer_expr_c_type for a Call whose
-// obj is a TurboFish{Vec,[f32]} static-returning `.new()/.from()` did not resolve
+// obj is a TurboFish{Vec,[f32]} static-returning `.new()/.of()` did not resolve
 // the return type to `Nova_Vec____nova_f32*` (it worked for int), so `.debug`
 // fell through to the str overload and a Vec[f32]* was passed into a str method.
+// (`.of` supersedes the retracted `Vec[T].from` — Plan 200 П16, 2026-07-20 — as
+// the non-`.new()` static-returning constructor exercised here.)
+//
+// FOUND + FIXED (Plan 200 П16, 2026-07-20, discovered while re-verifying this
+// file's migration): the calls below passed a bare `StringBuilder` as `.debug`/
+// `.display`'s `mut f Fmt` argument — a call form that PREDATES the Plan 208
+// Ф.2/Ф.3 (D422) migration from the old `(mut w Write)` signature to the
+// current `Fmt` protocol (`Fmt: use Write` + width/precision/align/fill/sign/
+// alternate/kind/pad, prelude/protocols.nv). `StringBuilder` alone does NOT
+// implement `Fmt` (only `Write`), so this silently RUN-FAILed (wrong
+// `into_str()` content, not a compile error — Vec[int]/[f32] built ANY way,
+// `.of`/`.new`/push/literal, all affected identically; confirmed unrelated to
+// this file's own `.of` migration via isolated probes). This exact staleness
+// class is independently documented in `std/collections/vec/protocols.nv`
+// (§Display/Debug header comment, Ф.3): a hand-written `@display`/`@debug`
+// call site naming its arg by the OLD `Write` shape goes uncaught by a
+// mono-grep sweep. Canon call form (matches `protocols_test.nv` /
+// `std/time/duration/core.nv`): wrap the sink in `FmtCtx.bare(sink, mark,
+// is_debug)`.
 module spec_tests.conformance
 import std.collections.vec.{Vec}
 
 test "Vec[f32].new() chained .debug (empty)" {
     consume a = StringBuilder.new()
-    Vec[f32].new().debug(a)
+    Vec[f32].new().debug(FmtCtx.bare(a, 0, true))
     assert(a.into_str() == "Vec[]")
 }
 
-test "Vec[f32].from([...]) chained .debug" {
+test "Vec[f32].of(...) chained .debug" {
     consume a = StringBuilder.new()
-    Vec[f32].from([1.5, 2.5]).debug(a)
+    Vec[f32].of(1.5, 2.5).debug(FmtCtx.bare(a, 0, true))
     assert(a.into_str() == "Vec[1.5, 2.5]")
 }
 
-test "Vec[f32].from([...]) chained .display" {
+test "Vec[f32].of(...) chained .display" {
     consume a = StringBuilder.new()
-    Vec[f32].from([1.5, 2.5]).display(a)
+    Vec[f32].of(1.5, 2.5).display(FmtCtx.bare(a, 0, false))
     assert(a.into_str() == "Vec[1.5, 2.5]")
 }
 
 // Control: Vec[int] chained already works.
-test "Vec[int].from([...]) chained .debug (control)" {
+test "Vec[int].of(...) chained .debug (control)" {
     consume a = StringBuilder.new()
-    Vec[int].from([1, 2]).debug(a)
+    Vec[int].of(1, 2).debug(FmtCtx.bare(a, 0, true))
     assert(a.into_str() == "Vec[1, 2]")
 }
 
 test "Vec[int].new() chained .debug (control)" {
     consume a = StringBuilder.new()
-    Vec[int].new().debug(a)
+    Vec[int].new().debug(FmtCtx.bare(a, 0, true))
     assert(a.into_str() == "Vec[]")
 }

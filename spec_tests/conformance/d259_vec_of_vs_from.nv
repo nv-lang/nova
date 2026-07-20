@@ -1,13 +1,18 @@
 // D259 — `[]T` constructor convention: `of` for a LITERAL element list,
-// `from` for CONVERTING an existing collection (Plan 153.1).
+// `.clone()` for CONVERTING an existing collection (Plan 153.1; `from`
+// RETRACTED 2026-07-20, Plan 200 П16 — see D259 AMEND, spec/decisions/02-types.md).
 //   • `[]T.of(a, b, c)` (variadic) — build a Vec from a literal list of elements.
-//   • `[]T.from(coll)`  — clone-like conversion of an existing `[]T`/collection.
+//   • `existing.clone()` — deep, independent copy of an existing `[]T`/collection
+//     (`Vec[T].from(coll)` used to spell exactly this — it was literally
+//     `coll.clone()` under the hood — so the conversion role now goes straight
+//     through `Clone`, no dedicated static constructor).
 //   • `[]T.new()` — empty vector. `[]T.of()` with ZERO args is a contract
 //     violation (D259 amend, 2026-07-06, `requires args.len() > 0` on `of`) —
 //     see std/collections/vec/neg/vec_of_empty_panic.nv for the panic fixture.
-// Both `of` and `from` materialise the SAME element sequence; `from(coll)` is an
-// INDEPENDENT copy (mutating the source afterwards must not touch the result).
-// Spec: spec/decisions/02-types.md:12292 (D259). Depends on D232 (`[]T`), D239 (`[]T ≡ Vec[T]`).
+// Both `of` and `.clone()` materialise the SAME element sequence; `.clone()` is
+// an INDEPENDENT copy (mutating the source afterwards must not touch the result).
+// Spec: spec/decisions/02-types.md:12292 (D259), D259 AMEND (retract, 2026-07-20).
+// Depends on D232 (`[]T`), D239 (`[]T ≡ Vec[T]`), D230 (`Clone` deep/recursive).
 // Part of the SINGLE `spec_tests.conformance` folder-module (minimal CU).
 module spec_tests.conformance
 
@@ -28,9 +33,9 @@ test "new() yields an empty Vec (D259 amend: of() with no args is now rejected)"
     assert(b.len() == 0)
 }
 
-test "from(existing) converts a collection, matching of(...) element-for-element (D259)" {
+test "clone(existing) converts a collection, matching of(...) element-for-element (D259 retract)" {
     ro src []int = [10, 20, 30]
-    ro converted = []int.from(src)     // conversion path
+    ro converted = src.clone()         // conversion path (was `[]int.from(src)`)
     ro literal = []int.of(10, 20, 30)  // literal path
     assert(converted.len() == literal.len())
     assert(converted[0] == literal[0])
@@ -38,11 +43,11 @@ test "from(existing) converts a collection, matching of(...) element-for-element
     assert(converted[2] == literal[2])
 }
 
-test "from(coll) is an independent copy — mutating the source leaves it unchanged (D259)" {
+test "clone() is an independent copy — mutating the source leaves it unchanged (D259 retract)" {
     mut src []int = [7, 8, 9]
-    ro copied = []int.from(src)   // clone-like conversion
-    src[0] = 99                      // mutate the ORIGINAL after the copy
-    assert(src[0] == 99)             // source observes its own mutation
-    assert(copied[0] == 7)           // the converted Vec is a separate buffer
+    ro copied = src.clone()   // clone-like conversion (was `[]int.from(src)`)
+    src[0] = 99                  // mutate the ORIGINAL after the copy
+    assert(src[0] == 99)         // source observes its own mutation
+    assert(copied[0] == 7)       // the cloned Vec is a separate buffer
     assert(copied.len() == 3)
 }

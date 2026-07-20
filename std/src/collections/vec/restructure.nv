@@ -41,10 +41,10 @@ import std.collections.range.{Range}
 /// # Examples
 ///
 /// ```nova
-/// ro a = Vec[int].from([1, 2, 3])
-/// ro b = Vec[int].from([4, 5])
+/// ro a = Vec[int].of(1, 2, 3)
+/// ro b = Vec[int].of(4, 5)
 /// ro c = a.concat(b)
-/// assert(c.equal(Vec[int].from([1, 2, 3, 4, 5])))
+/// assert(c.equal(Vec[int].of(1, 2, 3, 4, 5)))
 /// assert(a.len() == 3)   // operands untouched
 /// assert(b.len() == 2)
 /// ```
@@ -77,10 +77,10 @@ export fn Vec[T] @concat(other Vec[T]) -> Vec[T] {
 /// # Examples
 ///
 /// ```nova
-/// ro a = Vec[int].from([1, 2])
-/// ro b = Vec[int].from([3, 4])
+/// ro a = Vec[int].of(1, 2)
+/// ro b = Vec[int].of(3, 4)
 /// ro c = a + b
-/// assert(c.equal(Vec[int].from([1, 2, 3, 4])))
+/// assert(c.equal(Vec[int].of(1, 2, 3, 4)))
 /// ```
 export fn Vec[T] @plus(other Vec[T]) -> Vec[T] => @concat(other)
 
@@ -105,11 +105,11 @@ export fn Vec[T] @plus(other Vec[T]) -> Vec[T] => @concat(other)
 ///
 /// ```nova
 /// mut nested = Vec[Vec[int]].new()
-/// nested.push(Vec[int].from([1, 2]))
-/// nested.push(Vec[int].from([3]))
-/// nested.push(Vec[int].from([4, 5]))
+/// nested.push(Vec[int].of(1, 2))
+/// nested.push(Vec[int].of(3))
+/// nested.push(Vec[int].of(4, 5))
 /// ro flat = nested.flatten()
-/// assert(flat.equal(Vec[int].from([1, 2, 3, 4, 5])))
+/// assert(flat.equal(Vec[int].of(1, 2, 3, 4, 5)))
 /// ```
 export fn Vec[Vec[T]] @flatten() -> Vec[T] {
     // Pre-size the output to the exact total element count so the per-row bulk
@@ -142,9 +142,9 @@ export fn Vec[Vec[T]] @flatten() -> Vec[T] {
 /// # Examples
 ///
 /// ```nova
-/// mut v = Vec[int].from([1, 2, 3, 4, 5])
+/// mut v = Vec[int].of(1, 2, 3, 4, 5)
 /// v.rotate_left(2)
-/// assert(v.equal(Vec[int].from([3, 4, 5, 1, 2])))
+/// assert(v.equal(Vec[int].of(3, 4, 5, 1, 2)))
 /// ```
 export fn Vec[T] mut @rotate_left(n int) -> @
     requires n >= 0
@@ -177,9 +177,9 @@ export fn Vec[T] mut @rotate_left(n int) -> @
 /// # Examples
 ///
 /// ```nova
-/// mut v = Vec[int].from([1, 2, 3, 4, 5])
+/// mut v = Vec[int].of(1, 2, 3, 4, 5)
 /// v.rotate_right(2)
-/// assert(v.equal(Vec[int].from([4, 5, 1, 2, 3])))
+/// assert(v.equal(Vec[int].of(4, 5, 1, 2, 3)))
 /// ```
 export fn Vec[T] mut @rotate_right(n int) -> @
     requires n >= 0
@@ -210,10 +210,10 @@ export fn Vec[T] mut @rotate_right(n int) -> @
 /// # Examples
 ///
 /// ```nova
-/// mut v = Vec[int].from([1, 2, 3, 4, 5])
+/// mut v = Vec[int].of(1, 2, 3, 4, 5)
 /// ro cut = v.drain(1..4)
-/// assert(cut.equal(Vec[int].from([2, 3, 4])))
-/// assert(v.equal(Vec[int].from([1, 5])))
+/// assert(cut.equal(Vec[int].of(2, 3, 4)))
+/// assert(v.equal(Vec[int].of(1, 5)))
 /// ```
 export fn Vec[T] mut @drain(range Range) -> Vec[T]
     requires range.start >= 0 && range.end >= range.start && range.end <= @len
@@ -257,9 +257,9 @@ export fn Vec[T] mut @drain(range Range) -> Vec[T]
 /// # Examples
 ///
 /// ```nova
-/// mut v = Vec[int].from([1, 2, 5, 6])
-/// v.insert_slice(2, Vec[int].from([3, 4]))
-/// assert(v.equal(Vec[int].from([1, 2, 3, 4, 5, 6])))
+/// mut v = Vec[int].of(1, 2, 5, 6)
+/// v.insert_slice(2, Vec[int].of(3, 4))
+/// assert(v.equal(Vec[int].of(1, 2, 3, 4, 5, 6)))
 /// ```
 export fn Vec[T] mut @insert_slice(i int, sl []T) -> @
     requires 0 <= i && i <= @len
