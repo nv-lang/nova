@@ -110,6 +110,16 @@
   - **(R2)** Имя обычное, без префикса: `parse_int -> Result`, `read_u32 -> Result`, `open -> Result` (как Rust `str::parse`).
   - **(R3)** Префикс `try_` — **только** чтобы отличить fallible-вариант одноимённого **infallible**: `from`/`try_from`, `into`/`try_into` (D77). В одиночных fallible-операциях (нет infallible-сиблинга) префикса НЕТ.
   - **(R4)** `Option` — только genuine absence (`find`/`get`/`env`/`parent`), НЕ fallibility; `Result → Option` через `.ok()`.
+  - **(R3а) Трёхсловарная таблица «checked/try» (владелец 2026-07-21 — роли ЧЁТКИЕ, не смешивать):**
+    · **`checked_*` (префикс)** — ТОЛЬКО арифметическая политика переполнения, четвёрка
+      `checked_/wrapping_/saturating_/overflowing_` (D423/D427; Rust-словарь) — не применять вне арифметики;
+    · **`try_*`** — неблокирующая попытка «удалось ли сейчас» → `bool` (sync: `try_lock`/`try_acquire`,
+      Rust-парити) ПЛЮС конверсии-сиблинги D77 из (R3) (`from`/`try_from`);
+    · **`*_checked` (суффикс)** — Option/Result-близнец ПАНИКУЮЩЕГО/unchecked одноимённого метода,
+      проверка предусловия (`split_at` ↔ `split_at_checked`, `into_str` ↔ `into_str_checked`;
+      Rust-парити `split_at_checked`) — суффикс намеренно держит пару рядом в доке/автокомплите.
+    Выглядит разнобоем, но это три РАЗНЫЕ семантики (политика ≠ попытка ≠ предусловие) — все три
+    Rust-парити; выравнивание «под одну» ломало бы словарь без выгоды.
   - **(R5)** Эффект `Fail[E]` в публичной std-сигнатуре запрещён для **собственных** ошибок (→ `Result`), но разрешён для прозрачного **проброса** `Fail[E]` из closure-параметра (effect-polymorphic forwarding: `retry`/`parallel`/`in_transaction` над телом пользователя).
   - Throw сохранён операторами (D85): `expr!!` (throw), `expr?` (проброс), `expr.ok()` (→Option), `match`. Эффект `Fail[E]` остаётся в языке (D25) — для пользовательского кода и внутренних хелперов; std им свои ошибки наружу не отдаёт. **Эталон:** `std/net` (Result-everywhere, 0 `Fail[`) — норма, не исключение.
   - **Миграция SHIPPED-форм** (`@try_parse_int`→`@parse_int`, удаление bare `@parse_int`/`@parse_int_opt`, 22 `read_X`/`try_read_X` пары) — Plan 177 Ф.2 (compiler-gated части — Ф.2b).
