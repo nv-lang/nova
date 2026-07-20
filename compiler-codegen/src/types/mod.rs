@@ -16766,6 +16766,34 @@ impl<'a> TypeCheckCtx<'a> {
     /// `infer_expr_type` (stmts-block, unsupported expr shape, etc.) — the same
     /// "no invention" contract `infer_expr_type` already holds everywhere else
     /// in this file.
+    /// [M-196-builtin-producer] Closure-body-block peek gate: a block is safe to
+    /// peek (return its `trailing` expr's type under the UNCHANGED closure-param
+    /// `cscope`) when every leading statement is a NON-BINDING side-effect
+    /// (`Stmt::Expr`/`Stmt::Assign`/`Stmt::TupleAssign` — none of these introduce a
+    /// new name into scope, so `trailing`'s free variables are exactly the
+    /// closure's own params, unaffected by what preceded it). `Stmt::Let`/
+    /// `Stmt::Const` (new bindings `trailing` could reference) and control-flow
+    /// (`Return`/`Break`/`Continue`/`Throw`/…) are conservatively EXCLUDED — this
+    /// is a peek (read-only best-effort type materialization feeding a
+    /// propose-then-verify solver, `resolve_return_channel`), not a real
+    /// interpreter; the narrower the accepted shape, the safer the guarantee
+    /// that "trailing's type doesn't depend on anything peek can't see".
+    ///
+    /// Closes a real corpus gap: `Option[T]@flat_map[U](f fn(T)->Option[U])`-style
+    /// combinators are naturally written `|x| { some_side_effect; Some(f(x)) }`
+    /// (a mutation flag in a test, a log call, etc.) — before this, ANY non-empty
+    /// leading statement bailed the whole peek (`_ => None`), permanently denying
+    /// `U` a binding source and leaving the call un-channeled (legacy
+    /// `infer_method_level_return_for_sum`/B11q/B11r pick it up instead).
+    /// `spec_tests/conformance/plan200_14_option_result_flat_map_filter.nv`
+    /// (`n.flat_map(|x| { called = true; Some(x + 1) })`,
+    /// `r.flat_map(|x| { called = true; p200_14_check_positive(x) })`) is the
+    /// exact shape this closes.
+    fn closure_block_stmts_are_peek_safe(stmts: &[Stmt]) -> bool {
+        stmts.iter().all(|s| matches!(s,
+            Stmt::Expr(_) | Stmt::Assign { .. } | Stmt::TupleAssign { .. }))
+    }
+
     fn closure_arg_return_peek(
         &self,
         fp: &[TypeRef],
@@ -16789,7 +16817,7 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 match body {
                     ClosureBody::Expr(be) => self.infer_expr_type(be, &cscope),
-                    ClosureBody::Block(b) if b.stmts.is_empty() => {
+                    ClosureBody::Block(b) if Self::closure_block_stmts_are_peek_safe(&b.stmts) => {
                         b.trailing.as_deref().and_then(|t| self.infer_expr_type(t, &cscope))
                     }
                     _ => None,
@@ -16960,10 +16988,14 @@ impl<'a> TypeCheckCtx<'a> {
             if !seed_ok {
                 continue;
             }
+            // [M-196-builtin-producer] mirrors `closure_arg_return_peek`'s
+            // peek-safe gate (same doc there) — same non-binding-leading-
+            // statements class, kept consistent so both closure-arg producers
+            // agree on what a "peekable" block looks like.
             let body_tr: Option<TypeRef> = match body {
                 ClosureBody::Expr(be) => self.infer_expr_type(be, &cscope),
                 ClosureBody::Block(b) => {
-                    if b.stmts.is_empty() {
+                    if Self::closure_block_stmts_are_peek_safe(&b.stmts) {
                         b.trailing.as_deref().and_then(|t| self.infer_expr_type(t, &cscope))
                     } else {
                         None
