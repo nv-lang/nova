@@ -1,0 +1,34 @@
+// [M-parfor-capture-callee-name-collides-std-local] regress.
+//
+// `drain_probe` is an UNRELATED function processed earlier in the same CU
+// with a PARAM named `probe` — this pollutes the codegen's flat, never-
+// per-function-scoped `var_types` map (`emit_fn_scoped_inner` never
+// restores param entries at function-exit — same disease class as
+// [M-callnorm-free-fn-name-collision] / 196.6). The free module-fn `probe`
+// below shares that bare name; calling it from inside `parallel for` used
+// to make the spawn-ctx capture scan wrongly match the stale
+// `var_types["probe"]` entry left by `drain_probe`'s param and emit a
+// bogus ctx capture field (`ctx->probe = probe;` with no such C identifier
+// in scope) — CC-FAIL "use of undeclared identifier 'probe'". The call
+// ITSELF was always emitted correctly (mangled free-fn dispatch); only
+// the spurious ctx-capture field broke compilation.
+module standalone.parfor_capture_callee_name_collision
+
+fn drain_probe(probe u64) -> u64 {
+    return probe + 1
+}
+
+fn probe(i int) -> int {
+    return i * 2
+}
+
+test "parallel for calling module-fn probe — no stale var_types capture" {
+    ro sink = drain_probe(7)
+    ro xs = parallel for i in 0..6 {
+        probe(i)
+    }
+    mut total = 0
+    for v in xs { total = total + v }
+    assert(total == 30)
+    assert(sink == 8)
+}
