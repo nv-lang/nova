@@ -355,3 +355,85 @@ Write-Host "=== ГОТОВО ==="
 Write-Host "Zip:    $ZipPath ($ZipSizeMb MB)"
 Write-Host "SHA256: $($Hash.Hash.ToLower())"
 Write-Host "(записан рядом: $ZipPath.sha256)"
+
+# ---------- 9. -SmokeTest: реальная проверка std-discovery вне монорепы ----------
+#
+# Распаковывает zip в ЧИСТУЮ temp-папку (никакого доступа к монорепе),
+# dot-source setup-env.ps1, создаёт отдельный "пользовательский проект" в
+# ДРУГОЙ temp-папке (свой nova.toml, hello.nv) и гоняет nova.exe build оттуда.
+# Это единственный способ реально подтвердить вердикт (а) — что std/nova_rt,
+# положенные рядом с exe, действительно работают вне монорепы.
+
+if ($SmokeTest) {
+    Write-Host ""
+    Write-Host "=== SmokeTest: распаковка в чистую папку + hello-smoke ==="
+
+    $TmpBase = Join-Path ([System.IO.Path]::GetTempPath()) ("nova-release-smoke-" + [System.Guid]::NewGuid().ToString("N"))
+    $ExtractDir = Join-Path $TmpBase "extracted"
+    $ProjectDir = Join-Path $TmpBase "hello-project"
+    New-Item -ItemType Directory -Force -Path $ExtractDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $ProjectDir | Out-Null
+
+    try {
+        Write-Host "Extract -> $ExtractDir"
+        Expand-Archive -Path $ZipPath -DestinationPath $ExtractDir -Force
+        $InstallDir = Join-Path $ExtractDir $ZipName
+
+        if (-not (Test-Path (Join-Path $InstallDir "nova.exe"))) {
+            throw "SmokeTest FAIL: nova.exe не найден в распакованном архиве ($InstallDir)"
+        }
+
+        # dot-source setup-env.ps1 из распакованной папки — задаёт env vars в
+        # ЭТОМ процессе powershell.exe (сохраняются до конца скрипта).
+        . (Join-Path $InstallDir "setup-env.ps1")
+
+        # "Пользовательский проект" — своя nova.toml (совсем не монорепа).
+        Set-Content -Path (Join-Path $ProjectDir "nova.toml") -Value @'
+[package]
+name = "hello-smoke"
+version = "0.1.0"
+'@ -Encoding utf8
+
+        Set-Content -Path (Join-Path $ProjectDir "hello.nv") -Value @'
+module hello
+
+fn main() {
+    println("Hello, Nova!")
+}
+'@ -Encoding utf8
+
+        Push-Location $ProjectDir
+        try {
+            Write-Host "--- nova --version (распакованный бинарь) ---"
+            & (Join-Path $InstallDir "nova.exe") --version
+            if ($LASTEXITCODE -ne 0) {
+                throw "SmokeTest FAIL: nova --version, exit=$LASTEXITCODE"
+            }
+
+            Write-Host "--- nova build hello.nv (из чистого проекта, env указывает на распакованный std/nova_rt/gc) ---"
+            & (Join-Path $InstallDir "nova.exe") build hello.nv
+            if ($LASTEXITCODE -ne 0) {
+                throw "SmokeTest FAIL: nova build hello.nv, exit=$LASTEXITCODE"
+            }
+
+            $HelloExe = Join-Path $ProjectDir "hello.exe"
+            if (-not (Test-Path $HelloExe)) {
+                throw "SmokeTest FAIL: hello.exe не создан после build"
+            }
+
+            Write-Host "--- ./hello.exe ---"
+            $out = & $HelloExe
+            Write-Host $out
+            if ($out -notmatch "Hello, Nova!") {
+                throw "SmokeTest FAIL: неожиданный вывод hello.exe: $out"
+            }
+
+            Write-Host ""
+            Write-Host "=== SMOKE TEST PASSED === (std-discovery вердикт (а) подтверждён: работает из чистой папки вне монорепы)"
+        } finally {
+            Pop-Location
+        }
+    } finally {
+        Remove-Item -Recurse -Force $TmpBase -ErrorAction SilentlyContinue
+    }
+}
