@@ -52712,20 +52712,38 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // — резолвит return-тип через FnDecl + closure-
                             // arg return type. Hardcoded match ниже —
                             // fallback для legacy inline-emit методов.
-                            if let Some(resolved) = self.infer_method_level_return_for_sum(
+                            let legacy = self.infer_method_level_return_for_sum(
                                 "Option", method.as_str(), args, &[("T".to_string(), elem_ty.clone())])
-                            {
-                                return resolved;
+                                .unwrap_or_else(|| match method.as_str() {
+                                    "is_some" | "is_none" => "nova_bool".into(),
+                                    "unwrap_or" | "unwrap" | "unwrap_or_else" => elem_ty,
+                                    "map" | "or" => format!("NovaOpt_{}", elem_ty),
+                                    // Plan 59 Ф.7.5 D3: Option.ok_or producer
+                                    // эмитит erased (int,str) Result.
+                                    "ok_or" => "NovaRes_nova_int_nova_str*".into(),
+                                    _ => "nova_int".into(),
+                                });
+                            // [M-196-builtin-producer] SHADOW: whenever the checker's Channel 2
+                            // (`resolved_types`) DOES carry an annotation for this exact call
+                            // (meaning `resolve_instance_method_return_arity`/Producer B resolved
+                            // it), it must byte-agree with this legacy branch's answer — this
+                            // legacy branch is reached ONLY when the earlier Channel-2 check in
+                            // `infer_expr_c_type` already missed (no entry, or `resolved_type_to_c`
+                            // errored on it), so a `Some`+`Ok` hit HERE means the channel silently
+                            // disagreed with itself between annotation-time and lowering-time —
+                            // worth catching loudly (debug-only, zero release cost) rather than
+                            // silently falling back to a possibly-stale legacy answer.
+                            #[cfg(debug_assertions)]
+                            if let Some(rt) = self.resolved_types.get(&expr.id) {
+                                if let Ok(ch_c) = self.resolved_type_to_c(rt) {
+                                    debug_assert_eq!(
+                                        ch_c, legacy,
+                                        "[SHADOW-B11q] channel/legacy mismatch: method={} channel={:?} legacy={:?}",
+                                        method, ch_c, legacy,
+                                    );
+                                }
                             }
-                            return match method.as_str() {
-                                "is_some" | "is_none" => "nova_bool".into(),
-                                "unwrap_or" | "unwrap" | "unwrap_or_else" => elem_ty,
-                                "map" | "or" => format!("NovaOpt_{}", elem_ty),
-                                // Plan 59 Ф.7.5 D3: Option.ok_or producer
-                                // эмитит erased (int,str) Result.
-                                "ok_or" => "NovaRes_nova_int_nova_str*".into(),
-                                _ => "nova_int".into(),
-                            };
+                            return legacy;
                         }
                         // D26 prelude: Nova_Result* method type inference.
                         // Plan 72 P1-C: use tracked Result[T,E] type params when available.
@@ -52748,25 +52766,35 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             let err_ident = Self::sanitize_c_for_ident(&err_c);
                             // Plan 99.1 Ф.3: для Nova-body методов с
                             // method-level generic (`map[U]`/`map_err[F]`/etc).
-                            if let Some(resolved) = self.infer_method_level_return_for_sum(
+                            let legacy = self.infer_method_level_return_for_sum(
                                 "Result", method.as_str(), args,
                                 &[("T".to_string(), ok_c.clone()),
                                   ("E".to_string(), err_c.clone())])
-                            {
-                                return resolved;
+                                .unwrap_or_else(|| match method.as_str() {
+                                    "is_ok" | "is_err" => "nova_bool".into(),
+                                    "unwrap" | "unwrap_or" | "unwrap_or_else" => ok_c,
+                                    "ok"  => format!("NovaOpt_{}", ok_ident),
+                                    "err" => format!("NovaOpt_{}", err_ident),
+                                    // Plan 59 Ф.7.5 D3: map/map_err сохраняют тип
+                                    // Result-выражения (D1a emit'ит `out` как
+                                    // `{obj_ty}`). Точная смена Ok/Err-типа при
+                                    // map — задача дальнейшего инкремента.
+                                    "map" | "map_err" => obj_ty.clone(),
+                                    _ => "nova_int".into(),
+                                });
+                            // [M-196-builtin-producer] SHADOW: mirrors the B11q check just above —
+                            // a Channel-2 hit reaching this legacy branch anyway must byte-agree.
+                            #[cfg(debug_assertions)]
+                            if let Some(rt) = self.resolved_types.get(&expr.id) {
+                                if let Ok(ch_c) = self.resolved_type_to_c(rt) {
+                                    debug_assert_eq!(
+                                        ch_c, legacy,
+                                        "[SHADOW-B11r] channel/legacy mismatch: method={} channel={:?} legacy={:?}",
+                                        method, ch_c, legacy,
+                                    );
+                                }
                             }
-                            return match method.as_str() {
-                                "is_ok" | "is_err" => "nova_bool".into(),
-                                "unwrap" | "unwrap_or" | "unwrap_or_else" => ok_c,
-                                "ok"  => format!("NovaOpt_{}", ok_ident),
-                                "err" => format!("NovaOpt_{}", err_ident),
-                                // Plan 59 Ф.7.5 D3: map/map_err сохраняют тип
-                                // Result-выражения (D1a emit'ит `out` как
-                                // `{obj_ty}`). Точная смена Ok/Err-типа при
-                                // map — задача дальнейшего инкремента.
-                                "map" | "map_err" => obj_ty.clone(),
-                                _ => "nova_int".into(),
-                            };
+                            return legacy;
                         }
                         // Plan 196.2 W1 [gate-1]: B11s_str_from_ident + B11s_user_type_from_ident
                         // REMOVED. Built-in `str.from(x)`/from_bytes_lossy/from_bytes_unchecked/
