@@ -78,7 +78,7 @@ export fn Queue[T] @is_empty() -> bool =>
 export fn Queue[T] @cap() -> int => @inbox.cap()
 
 /// Reserve capacity `n` on BOTH backing arrays (replacement for the removed
-/// `Queue[T].with_capacity` static constructor: `Queue[T].new().cap(n)`).
+/// `Queue[T].with_capacity` static constructor: `Queue[T].new(cap: n)`).
 #stable(since = "0.1")
 export fn Queue[T] mut @cap(n int) -> @
     requires n >= 0

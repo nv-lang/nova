@@ -6,7 +6,7 @@
 // ITS OWN declaring file's body, never a peer's. This trio (this file +
 // `d307_5_3_pf_dispatch_int.nv` + `d307_5_3_pf_dispatch_generic.nv`) sharpens
 // the existing criterion to the case that used to bleed: one of the three
-// same-named `priv(file)` overloads is GENERIC (`fn[T SignedInt]`) — the
+// same-named `priv(file)` overloads is GENERIC (`fn[T SignedInts]`) — the
 // generic-mono dispatch path used to hijack every same-named call in the
 // whole folder-CU (this file's own concrete `bool` overload included) once
 // ANY peer declared a same-named `priv(file)` generic (facet-B, D84

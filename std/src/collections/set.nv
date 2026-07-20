@@ -28,8 +28,8 @@ import std.collections.hashmap.{HashMap}
 /// assert(s.insert(1) == false)  // дубликат
 /// assert(s.contains(1))
 ///
-/// let a = Set[int].new().cap(4)
-/// let b = Set[int].new().cap(4)
+/// let a = Set[int].new(cap: 4)
+/// let b = Set[int].new(cap: 4)
 /// // a | b — объединение
 /// // a & b — пересечение
 /// // a - b — разность
@@ -103,7 +103,7 @@ export fn Set[T] @cap() -> int => @map.cap()
 /// Гарантировать ёмкость минимум под `n` элементов без rehash (delegates to
 /// `HashMap`'s own `mut @cap(n)` — same "grows only, entry-count → bucket-count"
 /// semantics). Replacement for the removed `Set[T].with_capacity` static
-/// constructor: `Set[T].new().cap(n)`.
+/// constructor: `Set[T].new(cap: n)`.
 #stable(since = "0.1")
 export fn Set[T] mut @cap(n int) -> @
     requires n >= 0

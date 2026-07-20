@@ -17,7 +17,7 @@ import std.runtime.raw_mem.{RawMem}
 ///
 /// Returns `@` (self) so calls chain fluently
 /// ([M-138.2-vec-fluent-push], precedent: `StringBuilder.append`):
-/// `Vec[u8].new().cap(3).push(1 as u8).push(2 as u8)`. A bare statement
+/// `Vec[u8].new(cap: 3).push(1 as u8).push(2 as u8)`. A bare statement
 /// call `v.push(x)` still works — the returned `@` is simply ignored.
 export fn Vec[T] mut @push(v T) -> @ {
     @reserve(1)

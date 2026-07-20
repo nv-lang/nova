@@ -79,7 +79,7 @@ export fn WriteBuffer @cap() -> int => @buf.cap()
 
 // Set capacity to exactly `n` bytes (delegates to the underlying `[]u8`'s
 // own exact `mut @cap(n)` — no rounding). Replacement for the removed
-// `WriteBuffer.with_capacity` static constructor: `WriteBuffer.new().cap(n)`.
+// `WriteBuffer.with_capacity` static constructor: `WriteBuffer.new(cap: n)`.
 export fn WriteBuffer mut @cap(n int) -> @
     requires n >= @len()
 { @buf.cap(n) }

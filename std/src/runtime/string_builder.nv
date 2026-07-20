@@ -106,7 +106,7 @@ export fn StringBuilder @cap() -> int => @buf.cap()
 
 // Set capacity to exactly `n` bytes (delegates to the underlying `[]u8`'s
 // own exact `mut @cap(n)` — no rounding). Replacement for the removed
-// `StringBuilder.with_capacity` static constructor: `StringBuilder.new().cap(n)`.
+// `StringBuilder.with_capacity` static constructor: `StringBuilder.new(cap: n)`.
 export fn StringBuilder mut @cap(n int) -> @
     requires n >= @byte_len()
 { @buf.cap(n) }

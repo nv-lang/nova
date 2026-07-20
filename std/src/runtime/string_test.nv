@@ -10,7 +10,7 @@
 //
 // [Числовой паритет-2, 2026-07-20]: covers the `str @to_*` widths added
 // this wave (`to_i8`/`to_i16`/`to_i32`/`to_u16`/`to_uint`,
-// std/runtime/string/parse.nv) — completing the SignedInt/UnsignedInt set
+// std/runtime/string/parse.nv) — completing the SignedInts/UnsignedInts set
 // that Plan 174.1 originally left partial by owner decision. Pre-existing
 // `to_int`/`to_i64`/`to_u64`/`to_u32`/`to_u8` already have conformance
 // coverage (spec_tests/conformance/parse_int_*.nv) — not duplicated here.

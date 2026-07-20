@@ -820,18 +820,18 @@ fn Result[T Display, E Display] @display(mut f Fmt) -> () {
 
 // Plan 172.3 (D310): stdlib type-set bounds over the primitive integer families.
 // A type-set is a named set of concrete types usable as a generic bound
-// (`fn[T SignedInt] …`), монорфизируется per member. Signed and unsigned are
+// (`fn[T SignedInts] …`), монорфизируется per member. Signed and unsigned are
 // SEPARATE sets — u64.MAX = 2^64-1 ∉ i64, so a single body cannot be sound for
 // both (E_TYPE_SET_MIXED_SIGNEDNESS guards user-declared mixed sets).
 //
 // Главный потребитель — Plan 174.1 (primitive parse API): один
-// `fn[T SignedInt] T.try_parse(...)` вместо ×N per-type обёрток.
-type SignedInt   set i8 | i16 | i32 | i64 | int
-type UnsignedInt set u8 | u16 | u32 | u64 | uint
+// `fn[T SignedInts] T.try_parse(...)` вместо ×N per-type обёрток.
+type SignedInts   set i8 | i16 | i32 | i64 | int   // мн.число = семейство сетов (П15/200, владелец 2026-07-16)
+type UnsignedInts set u8 | u16 | u32 | u64 | uint
 
-// Plan 206 Ф.0 (D423): полное объединение SignedInt ∪ UnsignedInt — единый
+// Plan 206 Ф.0 (D423): полное объединение SignedInts ∪ UnsignedInts — единый
 // bound для `@overflowing_*`/`@checked_*`/`@saturating_*`/`@wrapping_*`
-// (один бланкет на op вместо ×2 через SignedInt/UnsignedInt раздельно).
+// (один бланкет на op вместо ×2 через SignedInts/UnsignedInts раздельно).
 // D310 §«Знаковость» запрещает ЧАСТИЧНЫЙ signed/unsigned микс (несоундно —
 // разные value-domains); ПОЛНОЕ объединение (все 5 signed + все 5 unsigned,
 // без пропусков) — отдельно разрешённый случай (D423 amends D310): тело
@@ -839,6 +839,9 @@ type UnsignedInt set u8 | u16 | u32 | u64 | uint
 // сравнения (`rhs < 0` у unsigned константно false), несоундности из
 // частичного микса тут нет. Тот же случай, что иллюстративный `AnyNumber`
 // в самом тексте D310 (02-types.md).
+// ВНИМАНИЕ читателю: `Ints` ВКЛЮЧАЕТ И БЕЗЗНАКОВЫЕ (все 10 целых типов) —
+// не «только знаковые по аналогии с int» (ловушка имени; Go-прецедент
+// constraints.Integer — тоже все целые). Знаковые-только = `SignedInts`.
 type Ints set i8 | i16 | i32 | i64 | int | u8 | u16 | u32 | u64 | uint
 
 // Plan 206 Ф.2 (D423): три .nv-бланкета над компиляторным интринсиком
@@ -1073,33 +1076,33 @@ export fn[T Ints] T @clamp(lo T, hi T) -> T =>
     if @ < lo { lo } else if @ > hi { hi } else { @ }
 
 // [Числовой паритет, 2026-07-19] `signum`/`is_negative`/`is_positive` над
-// `SignedInt` — были концертными ТОЛЬКО на `int` (std/runtime/defaults.nv, D74),
+// `SignedInts` — были концертными ТОЛЬКО на `int` (std/runtime/defaults.nv, D74),
 // i8/i16/i32/i64 не имели этих методов вовсе. Тела — чистые сравнения (`@ < 0`/
 // `@ > 0`), БЕЗ арифметики, значит без риска overflow (в отличие от `abs`, где
 // `-@` на `T.MIN` трапит — оставлено нетронутым до отдельного решения
 // владельца). Вытесняет старый конкретный `int @signum`/`@is_negative`/
 // `@is_positive` (std/runtime/defaults.nv) — теперь i8/i16/i32/i64/int все
-// получают эти методы через ЭТОТ бланкет. `UnsignedInt` НЕ входит — как и в
+// получают эти методы через ЭТОТ бланкет. `UnsignedInts` НЕ входит — как и в
 // Rust, unsigned-типы не имеют `signum`/`is_negative`/`is_positive` (сравнение
 // с 0 для unsigned мат. вырождено: `is_negative` всегда `false`,
 // `is_positive` эквивалентен `!= 0`, `signum` не имеет отдельного -1-плеча) —
-// расширение на `UnsignedInt` было бы искусственным добавлением API, которого
+// расширение на `UnsignedInts` было бы искусственным добавлением API, которого
 // нет у эталона (rustc-as-reference), поэтому не добирается.
 
 /// `signum` — знак значения: `-1`, если `@ < 0`; `1`, если `@ > 0`; иначе `0`.
 #stable(since = "0.1")
-export fn[T SignedInt] T @signum() -> T =>
+export fn[T SignedInts] T @signum() -> T =>
     if @ < 0 { -1 } else if @ > 0 { 1 } else { 0 }
 
 /// `is_negative` — строгая проверка знака: `true` iff `@ < 0`.
 #stable(since = "0.1")
-export fn[T SignedInt] T @is_negative() -> bool => @ < 0
+export fn[T SignedInts] T @is_negative() -> bool => @ < 0
 
 /// `is_positive` — строгая проверка знака: `true` iff `@ > 0`.
 #stable(since = "0.1")
-export fn[T SignedInt] T @is_positive() -> bool => @ > 0
+export fn[T SignedInts] T @is_positive() -> bool => @ > 0
 
-// [Числовой паритет-2, 2026-07-20] `saturating_neg` над `SignedInt` — Rust
+// [Числовой паритет-2, 2026-07-20] `saturating_neg` над `SignedInts` — Rust
 // даёт `saturating_neg` ТОЛЬКО signed-типам (`int_macros.rs`; unsigned
 // `uNN::saturating_neg` не существует в Rust std — в отличие от
 // `checked_neg`/`wrapping_neg` выше, которые Rust даёт ОБОИМ знакам и
@@ -1109,16 +1112,16 @@ export fn[T SignedInt] T @is_positive() -> bool => @ > 0
 // симметричен всюду кроме `MIN`).
 /// `saturating_neg` — при `@ == T.MIN` клампит к `T.MAX`, иначе `-@`.
 #stable(since = "0.1")
-export fn[T SignedInt] T @saturating_neg() -> T =>
+export fn[T SignedInts] T @saturating_neg() -> T =>
     if @ == T.MIN { T.MAX } else { -@ }
 
 // [Числовой паритет-2, 2026-07-20] `abs`/`checked_abs`/`wrapping_abs`/
-// `saturating_abs` над `SignedInt` — раньше единственный конкретный `int
+// `saturating_abs` над `SignedInts` — раньше единственный конкретный `int
 // @abs()` (std/runtime/math.nv, `extern "nova"` -> C `llabs`, D109-хардкод
 // в `runtime_registry.rs`/`emit_c.rs::int_method_to_c`) был UB на `T.MIN`
 // (`llabs(LLONG_MIN)` не определён C-стандартом — `-LLONG_MIN` не
 // представим в `long long`). Узкие signed (i8/i16/i32/i64) не имели `abs`
-// вовсе. И то, и другое заменено ОДНИМ `.nv`-бланкетом на `SignedInt`
+// вовсе. И то, и другое заменено ОДНИМ `.nv`-бланкетом на `SignedInts`
 // (охватывает `int` тоже — старый extern-хардкод RETRACTED, см.
 // runtime_registry.rs/emit_c.rs): `abs` = `if @ < 0 { -@ } else { @ }` —
 // унарный `-@` УЖЕ трапит на `T.MIN` компиляторным guard'ом (D427 §R2,
@@ -1131,35 +1134,35 @@ export fn[T SignedInt] T @saturating_neg() -> T =>
 // `iNN::checked_abs`/`saturating_abs`/`wrapping_abs` — все существуют
 // только для signed). Прямая `@ == T.MIN` ветка (не `(0).checked_sub`-
 // reformulation, как у `checked_neg`) корректна здесь, т.к. бланкет
-// ТОЛЬКО над `SignedInt`, не над полным `Ints` — знаковой инверсии
+// ТОЛЬКО над `SignedInts`, не над полным `Ints` — знаковой инверсии
 // условия overflow между signed/unsigned (D427 §R4.2) тут нет, потому что
-// unsigned не в охвате вовсе. `UnsignedInt` НЕ входит — как и в Rust,
+// unsigned не в охвате вовсе. `UnsignedInts` НЕ входит — как и в Rust,
 // unsigned `.abs()` не существует (identity, искусственное расширение
 // охвата эталона).
 
 /// `abs` — модуль значения; трапит на `T.MIN` ("negation overflow" — тот
 /// же trap, что голый унарный `-@`, НЕ новая политика).
 #stable(since = "0.1")
-export fn[T SignedInt] T @abs() -> T =>
+export fn[T SignedInts] T @abs() -> T =>
     if @ < 0 { -@ } else { @ }
 
 /// `checked_abs` — `None` iff `@ == T.MIN` (единственный непредставимый
 /// случай — `|T.MIN|` не влезает в `T`), иначе `Some(|@|)`.
 #stable(since = "0.1")
-export fn[T SignedInt] T @checked_abs() -> Option[T] {
+export fn[T SignedInts] T @checked_abs() -> Option[T] {
     if @ == T.MIN { return None }
     Some(if @ < 0 { -@ } else { @ })
 }
 
 /// `saturating_abs` — при `@ == T.MIN` клампит к `T.MAX`, иначе `|@|`.
 #stable(since = "0.1")
-export fn[T SignedInt] T @saturating_abs() -> T =>
+export fn[T SignedInts] T @saturating_abs() -> T =>
     if @ == T.MIN { T.MAX } else if @ < 0 { -@ } else { @ }
 
 /// `wrapping_abs` — модульно: `T.MIN` отображается сам в себя (тот же
 /// two's-complement-эффект, что `wrapping_neg(T.MIN) == T.MIN`), иначе `|@|`.
 #stable(since = "0.1")
-export fn[T SignedInt] T @wrapping_abs() -> T =>
+export fn[T SignedInts] T @wrapping_abs() -> T =>
     if @ == T.MIN { T.MIN } else if @ < 0 { -@ } else { @ }
 
 // [Числовой паритет-2, 2026-07-20] Целочисленный `pow`/`checked_pow`/

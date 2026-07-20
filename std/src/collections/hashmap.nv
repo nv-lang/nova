@@ -82,7 +82,7 @@ type Slot[K, V] enum
 ///
 /// # See Also
 ///
-/// - `HashMap.new().cap(n)` — создать с предварительной ёмкостью
+/// - `HashMap.new(cap: n)` — создать с предварительной ёмкостью
 /// - `[HashMap.from]` — из массива пар
 /// - `[Set]` — множество поверх HashMap
 #stable(since = "0.1")
@@ -180,7 +180,7 @@ export fn HashMap[K, V] @cap() -> int => @buckets.len()
 /// Set the capacity to guarantee at least `n` entries fit without a further
 /// rehash (D117 AMEND setter: same-name 1-arg overload of `@cap()`) — the
 /// instance-method replacement for the removed `HashMap[K, V].with_capacity`
-/// static constructor: `HashMap[K, V].new().cap(n)` reproduces the OLD
+/// static constructor: `HashMap[K, V].new(cap: n)` reproduces the OLD
 /// `with_capacity(n)`'s exact bucket count (entry-count → bucket-count sizing
 /// unchanged: `ceil(4n/3)`, next pow2), because `@count == 0` right after
 /// `new()` — see the shrink branch below.

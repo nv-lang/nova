@@ -117,14 +117,14 @@ export fn str @to_f64() -> Result[f64, ParseFloatError] {
 
 // ── Plan 174.1 (2026-07-08): `str @to_*` integer conversion surface ───────
 // Live set per actual consumers (owner decision) — originally NOT the full
-// SignedInt/UnsignedInt type-set: `to_int`, `to_i64`, `to_u64`, `to_u32`,
+// SignedInts/UnsignedInts type-set: `to_int`, `to_i64`, `to_u64`, `to_u32`,
 // `to_u8`. [Числовой паритет-2, 2026-07-20] owner decision revisited
 // ("закрывать") — the remaining gaps (`to_i8`/`to_i16`/`to_i32`/`to_u16`/
-// `to_uint`) are filled below, completing the full SignedInt/UnsignedInt
+// `to_uint`) are filled below, completing the full SignedInts/UnsignedInts
 // set. Same per-method-overload-on-`str` form throughout (the type-set-
 // bounded generic path-call gap noted below still applies — unrelated to
 // which widths are live).
-// A type-set-bounded generic (`fn[T SignedInt] T.parse(...)`, tried first
+// A type-set-bounded generic (`fn[T SignedInts] T.parse(...)`, tried first
 // per "используй механизм type-set-функций из 172.3, если есть") hit a live
 // codegen gap — a generic function whose RECEIVER is the type-set parameter
 // in a *path call* aborts with `[P67-LEGACY] Path call return type unknown`
@@ -173,7 +173,7 @@ export fn str @to_u8(radix int = 10) -> Result[u8, ParseIntError] {
     Ok(v as u8)
 }
 
-// [Числовой паритет-2, 2026-07-20] Остаток SignedInt/UnsignedInt-набора,
+// [Числовой паритет-2, 2026-07-20] Остаток SignedInts/UnsignedInts-набора,
 // добор по решению владельца ("закрывать") к живому подмножеству Plan
 // 174.1 выше. Тот же движок (`@parse_int_core`/`@parse_uint_core`), тот
 // же range-check-после-разбора паттерн, что `to_u32`/`to_u8`.

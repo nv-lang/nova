@@ -4,7 +4,7 @@
 // resolve PER-instance via the Nova-name of the substituted member. POS conformance for the
 // happy path: one set, several distinct members, explicit type-args. (Mixed-signedness /
 // non-member / multiple-sets are NEG cases in separate diag-files.)
-// D-prefixed set name avoids clashing with prelude `SignedInt`/`UnsignedInt` in the shared module.
+// D-prefixed set name avoids clashing with prelude `SignedInts`/`UnsignedInts` in the shared module.
 module spec_tests.conformance
 
 // Type-set bound: named set of concrete signed-int members (no mixed signedness).
