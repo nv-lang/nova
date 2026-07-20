@@ -84,7 +84,10 @@ export type FmtKind enum Display | Debug | Hex | Oct | Bin | Exp
 // NOT the compiler-facing `FormatSpec`/`Fmt` (Ф.2) — no `width` meaning
 // beyond zero-pad target, no fill/precision (those live one layer up, at
 // the `write_padded`/`pad_in_place` StringBuilder level, D422 §4).
-type FmtSpec {
+// `value` (владелец 2026-07-20): маленький POD (2×int + 4×bool) — на стеке,
+// БЕЗ GC-заголовка на каждый вызов рендера (последняя лишняя аллокация
+// zero-alloc-пути; D215/D328 value-семантика, structural ==).
+type FmtSpec value {
     width int       // zero-pad target total width (prefix+digits); only
                     // consulted when `zero_pad` is true
     radix int       // 10 (decimal) | 16 | 8 | 2 — the only supported radixes
