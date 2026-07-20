@@ -11720,29 +11720,64 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                         // [M-196.5-node-substs] Producer A: `subst` above is the SAME map
                         // just applied to the return — capture the VALUES themselves,
-                        // ordered by `callee.generics` declaration order (mono-manging
-                        // needs positional order). Same materialize-only-when-fully-
-                        // resolved gate as the return-channel write above (per-param, via
+                        // ordered by DECLARATION order (mono-mangling needs positional
+                        // order): receiver-carrier generics FIRST, then the fn's OWN
+                        // generics.
+                        //
+                        // [M-196-ch-static-ctor-node-substs] (Plan 196 Zone CH, producer):
+                        // a STATIC generic ctor (`fn Box[T].make(x T) -> Result[Box[T],E]`,
+                        // called bare `Box.make(v)`) carries its type-params on the
+                        // RECEIVER, so `callee.generics` is EMPTY — the old
+                        // `callee.generics`-only ordering skipped `node_substs` for the
+                        // WHOLE static-ctor class, even though `subst` (arg-unified above)
+                        // fully bound `T` and the `resolved_types` return-channel write two
+                        // blocks up ALREADY materialized the concrete `Result[Box[int],E]`.
+                        // Widen the positional-subst channel to match the return channel by
+                        // ordering over `receiver.generics ++ callee.generics`
+                        // (`callee_gs_inner` already contains BOTH — this only fixes the
+                        // ORDER + the completeness denominator). Additive + byte-parity-safe:
+                        // a free fn (no receiver) has `gen_names == callee.generics` →
+                        // byte-identical; the codegen consumer (`rt_slots_from_args`, keyed
+                        // BY NAME) treats a fresh entry as a channel HIT guarded by the
+                        // per-key byte-identity check (`subst_map_adopt_rt`) with a legacy
+                        // MISS-fallback, and `shadow_check_node_substs` (debug) asserts the
+                        // channel lowers to the exact legacy C-string.
+                        let mut gen_names: Vec<String> = Vec::new();
+                        if let Some(recv) = &callee.receiver {
+                            for tr in &recv.generics {
+                                if let TypeRef::Named { path, .. } = tr {
+                                    if path.len() == 1 && !gen_names.contains(&path[0]) {
+                                        gen_names.push(path[0].clone());
+                                    }
+                                }
+                            }
+                        }
+                        for g in &callee.generics {
+                            if !gen_names.contains(&g.name) {
+                                gen_names.push(g.name.clone());
+                            }
+                        }
+                        // Same materialize-only-when-fully-resolved gate as the
+                        // return-channel write above (per-param, via
                         // `typeref_mentions_any`), plus a whole-map completeness gate
-                        // (`ordered.len() == callee.generics.len()`): a residual (erased-
-                        // body caller leaving some param unbound) means the channel stays
+                        // (`ordered.len() == gen_names.len()`): a residual (erased-body
+                        // caller leaving some param unbound) means the channel stays
                         // UNWRITTEN for this call-site — same contract as `resolved_types_buf`.
-                        let ordered: Vec<(String, ResolvedType)> = callee
-                            .generics
+                        let ordered: Vec<(String, ResolvedType)> = gen_names
                             .iter()
-                            .filter_map(|g| {
-                                subst.get(&g.name).and_then(|tr| {
+                            .filter_map(|name| {
+                                subst.get(name).and_then(|tr| {
                                     if !typeref_mentions_any(tr, &callee_gs_inner)
                                         && !typeref_mentions_any(tr, gs)
                                     {
-                                        Some((g.name.clone(), ResolvedType::from_type_ref(tr)))
+                                        Some((name.clone(), ResolvedType::from_type_ref(tr)))
                                     } else {
                                         None
                                     }
                                 })
                             })
                             .collect();
-                        if !callee.generics.is_empty() && ordered.len() == callee.generics.len() {
+                        if !gen_names.is_empty() && ordered.len() == gen_names.len() {
                             // [M-196.5-node-substs] Stage-A coverage trace (§9 acceptance:
                             // "канал непуст на generic-формах"). Opt-in, mirrors NOVA_A1PP_TRACE.
                             if std::env::var_os("NOVA_NODE_SUBSTS_TRACE").is_some() {
