@@ -21252,9 +21252,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // `emit_call`). The channel-first path below doesn't need the
         // VALUE — the checker already folded any explicit turbofish into
         // the subst it wrote to `node_substs` at this SAME `call_id` (same
-        // AST node, same source text) — only the CLEARING side-effect; the
-        // legacy fallback still consumes `explicit_tf` exactly as before.
-        let explicit_tf = std::mem::take(&mut self.current_method_turbofish);
+        // AST node, same source text) — only the CLEARING side-effect;
+        // the taken value itself is now dead (196 GEN-final snos below,
+        // 2026-07-20) — the clear MUST still run unconditionally so an
+        // outer turbofish never leaks into a nested call.
+        let _explicit_tf = std::mem::take(&mut self.current_method_turbofish);
         // Channel-first: the checker (`f1_check_call` / `resolve_return_
         // channel`, 196.5 §6.2) already solved this call-site's FULL subst
         // (receiver-carrier ++ method-level, in declaration order) into
@@ -21337,24 +21339,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
         }
-        // [M-91.1-method-turbofish-dispatch] Seed slots from explicit
-        // method-level type-args (`obj.method[U,...]`). Positional map onto
-        // fn_decl.generics. `explicit_tf` was already taken above (channel-
-        // first preamble) — consumed here exactly as legacy did. Resolved
-        // in the receiver_subst context (current_type_subst set above).
-        // Inference (Steps 1/2) still runs and, for same-type call sites,
-        // re-derives the identical binding — explicit + inferred converge.
-        if !explicit_tf.is_empty() {
-            for (slot, tr) in subst_slots.iter_mut().zip(explicit_tf.iter()) {
-                if slot.1.is_none() {
-                    if let Ok(c) = self.type_ref_to_c(tr) {
-                        if !c.is_empty() && c != "void*" {
-                            slot.1 = Some(c);
-                        }
-                    }
-                }
-            }
-        }
+        // [M-91.1-method-turbofish-dispatch] REMOVED (Plan 196 GEN-final,
+        // 2026-07-20, docs/plans/wip/196-prodb-notes.md §9 +
+        // docs/plans/wip/196-gen-final-notes.md). Former: seed slots from
+        // explicit method-level type-args (`obj.method[U,...]`),
+        // positionally onto `fn_decl.generics`, for names the channel-first
+        // block above (~21276-21309) missed/left partial. Producer B
+        // (196-prodb-notes.md §3-6) now writes `node_substs[call_id]` for
+        // explicit turbofish on INSTANCE-method calls via
+        // `resolve_return_channel`'s `explicit_method_type_args` overlay,
+        // so the channel-first block is complete for this call class.
+        // debug-only panic-detach (`[M-196-gen-final-detach]`) ran clean
+        // (0 fires) across: the two REAL corpus call-sites of this AST
+        // shape repo-wide (`standalone/m176_method_return_turbofish.nv`'s
+        // `r.empty[str]()`/`r.into[str]()`, confirmed by a fresh repo-wide
+        // grep — same N=2 Producer B found), the 5 byte-parity gate
+        // fixtures (d119_option_result_method_level_generic,
+        // d122_bound_method_mono_dispatch, d122_generic_bound_forwarding,
+        // d30_try_op_unwrap_pair, d408_option_chain_sized_width),
+        // m196_facetc_instance_collision_and_method_generic_default, the
+        // std/src/{collections,time,encoding} standalone corpus (104
+        // files), and a 262-file partial sweep of spec_tests/conformance.
+        // NO-HIT ⟹ structurally unreachable (§5) ⟹ removed outright (not
+        // left as a live panic — the repo-wide grep bounds the AST shape
+        // that could ever reach here to the 2 already-verified sites).
         // Step 1: non-closure args через standard inference (Plan 98 +
         // user-generic existing behavior).
         for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
@@ -52431,6 +52439,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // concurrency yet NO-HIT across conformance+std ⟹ structurally
                         // unreachable (§5).
                         // D26 prelude: NovaOpt_T method type inference.
+                        // [M-196-gen-final] Plan 196 GEN-final (2026-07-20,
+                        // docs/plans/wip/196-prodb-notes.md §9) ICR-traced this
+                        // bucket ON THE GATE FIXTURES it was hypothesised as
+                        // dead for (`d408_option_chain_sized_width`,
+                        // `d119_option_result_method_level_generic`):
+                        // `[ICR-HIT] B11q_novaopt_methods` fires on BOTH,
+                        // `[MLRFS-HIT] sum=Option method={map,unwrap,or}
+                        // resolved=false` — reconfirms (independently of the
+                        // Plan 196.3 wave-2 finding just below on
+                        // `infer_method_level_return_for_sum`) that this
+                        // bucket is genuinely LIVE, not dead-superseded by
+                        // Producer B's `node_substs` channel (which targets
+                        // user-generic instance methods, not builtin
+                        // Option/Result sum-method dispatch). NOT detached.
                         if obj_ty.starts_with("NovaOpt_") {
                             self.icr_trace("B11q_novaopt_methods");
                             let elem_ty = Self::debt_unmangle_ptr_suffix(
@@ -52462,6 +52484,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         // D26 prelude: Nova_Result* method type inference.
                         // Plan 72 P1-C: use tracked Result[T,E] type params when available.
+                        // [M-196-gen-final] Plan 196 GEN-final (2026-07-20,
+                        // docs/plans/wip/196-prodb-notes.md §9) ICR-traced this
+                        // bucket ON THE GATE FIXTURE it was hypothesised as
+                        // dead for (`d30_try_op_unwrap_pair`): `[ICR-HIT]
+                        // B11r_result_like_methods` fires, `[MLRFS-HIT]
+                        // sum=Result method=is_ok resolved=false` — genuinely
+                        // LIVE, not dead-superseded. NOT detached (mirrors the
+                        // B11q verdict just above + the Plan 196.3 wave-2
+                        // finding on `infer_method_level_return_for_sum`
+                        // below).
                         if Self::is_result_like(&obj_ty) {
                             self.icr_trace("B11r_result_like_methods");
                             // Plan 59 Ф.7.5-lite: inline-aware (T,E) inference.
