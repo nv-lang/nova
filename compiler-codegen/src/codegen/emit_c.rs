@@ -25937,9 +25937,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // real `Stmt::Let` emit assignment-only (no
                         // redeclaration, `is_hoisted` branch).
                         if !self.hoisted_let_vars.contains(name.as_str()) {
+                            // NovaValue_/mono-`____` value-records — структуры,
+                            // которых is_struct_type не знает (флагман-регрессия
+                            // `NovaValue_TcpStream st = 0`): им тоже `{0}`.
                             let init_expr = if init_c_type.ends_with('*') {
                                 "NULL".to_string()
-                            } else if Self::is_struct_type(&init_c_type) {
+                            } else if Self::is_struct_type(&init_c_type)
+                                || init_c_type.starts_with("NovaValue_")
+                                || init_c_type.contains("____")
+                            {
                                 "{0}".to_string()
                             } else {
                                 "0".to_string()
