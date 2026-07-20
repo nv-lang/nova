@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// mini_aggregator.nv — суть флагманского демо (examples/flagship/aggregator)
+// в ~30 строках кода: одновременный опрос N «источников» с ОБЩИМ бюджетом
+// времени и честной отменой опоздавших. Без сети, без HTTP, без UI —
+// только ядро паттерна: `parallel for` + `supervised(deadline:)`.
+//
+// Build & run:
+//   nova-cli/target/release/nova build examples/mini_aggregator.nv -o mini_agg && ./mini_agg
+//
+// Печатает (структурно детерминированно; wall ≈ бюджет, не сумма задержек):
+//   done=4 cancelled=2 wall=~150-170ms — два «медленных» источника отменены
+//   на 120-мс бюджете, а не дожиты до конца (сумма задержек была бы 1300 мс).
+
+module nova_examples.mini_aggregator
+
+import std.time.duration
+
+// Один «источник»: ждёт свою задержку (симуляция сети) и рапортует в канал.
+// Бюджет 120 мс; все источники стартуют одновременно (parallel for ниже),
+// так что per-lane `timeout:` здесь ≈ общий бюджет забега (во флагмане —
+// строже: ОДНА абсолютная точка `deadline: t0 + budget`, D408; здесь
+// `timeout:` вместо `deadline: t0 + d` — обход
+// [M-vr-binop-wrapper-decl-order-standalone-cu]). Опоздавший спавн честно
+// ОБРЫВАЕТСЯ (его Time.sleep прерывается), канал остаётся пуст, исход —
+// "cancelled". Имя fn НЕ `probe` — обход
+// [M-parfor-capture-callee-name-collides-std-local] (оба — backlog-followups).
+fn ask_source(latency_ms int) Time -> str {
+    ro { tx, rx } = Channel.new(1)
+    mut timed_out = false
+    with Fail[TimeoutError] = |_e| { timed_out = true } {
+        supervised(timeout: 120.to_millis()) {   // 120 мс = бюджет
+            spawn {
+                Time.sleep(latency_ms)
+                ro _ = tx.try_send(true)
+            }
+        }
+    }
+    if timed_out {
+        "cancelled"
+    } else {
+        match rx.try_recv() {
+            Some(_) => "done"
+            None    => "cancelled"
+        }
+    }
+}
+
+// Fan-out: все источники стартуют ОДНОВРЕМЕННО, результат собирается в []str.
+fn fan_out(latencies []int) Time -> []str {
+    ro outcomes = parallel for i int in 0..latencies.len() {
+        ask_source(latencies[i])
+    }
+    outcomes
+}
+
+fn main() Time {
+    ro latencies []int = [20, 40, 60, 80, 300, 800]   // мс; последние два не успеют
+    ro t0 Monotonic = Monotonic.now()
+    ro outcomes = fan_out(latencies)
+    mut done = 0
+    mut cancelled = 0
+    for i int in 0..outcomes.len() {
+        if outcomes[i] == "done" { done = done + 1 } else { cancelled = cancelled + 1 }
+    }
+    ro now Monotonic = Monotonic.now()
+    ro wall = now.elapsed_since(t0)
+    println("done=${done} cancelled=${cancelled} wall=${wall.millis()}ms")
+}

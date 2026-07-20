@@ -57,6 +57,13 @@
   .sig .ty { color: var(--ink-soft); } .sig .pun { color: var(--ink-faint); }
   .thesis .note { font-size: 12px; color: var(--ink-soft); border-left: 2px solid var(--line); padding-left: 12px; flex: 1 1 240px; min-width: 0; }
   .thesis .note b { color: var(--ink); } .thesis .note code { font-family: var(--mono); font-size: 11px; }
+  /* v10: тексты для стороннего читателя — герой, история режима, «что здесь языкового» */
+  .hero { margin: 10px 16px 0; font-size: 13px; line-height: 1.5; color: var(--ink-soft); }
+  .hero b { color: var(--ink); }
+  .modestory { padding: 4px 16px 0; font-size: 12px; color: var(--ink-faint); }
+  .langfacts { margin: 14px 16px 0; font-size: 12px; line-height: 1.55; color: var(--ink-faint); }
+  .langfacts b { color: var(--ink); font-weight: 600; }
+  .langfacts code { font-family: var(--mono); font-size: 11px; }
 
   /* v9 (Ред.7 №11): эффект-бейдж — живая подмена мира хендлером */
   .fxbadge { font-family: var(--mono); font-size: 11.5px; white-space: nowrap; border: 1px solid var(--line);
@@ -212,18 +219,21 @@
       <button class="seg" data-scen="llm" aria-pressed="false">🤖 LLM</button>
     </div>
     <div class="segmented" role="group" aria-label="Data mode">
-      <button class="seg" data-mode="demo" aria-pressed="true" title="Тот же aggregate — меняется только with Net = mock_net(seed = 42)"><span class="dot"></span>Demo</button>
-      <button class="seg" data-mode="chaos" aria-pressed="false" title="Тот же aggregate — меняется только seed у mock_net(...)"><span class="dot"></span>Chaos</button>
+      <button class="seg" data-mode="demo" aria-pressed="true" title="Офлайн и детерминированно: seed 42, запуск повторим байт-в-байт — тот же aggregate под with Net = mock_net(seed = 42)"><span class="dot"></span>Demo</button>
+      <button class="seg" data-mode="chaos" aria-pressed="false" title="Источники случайно падают и тормозят — дедлайн отдаёт частичный результат вместо зависшей страницы; меняется только seed у mock_net(...)"><span class="dot"></span>Chaos</button>
       <button class="seg" id="liveBtn" data-mode="live" disabled title="Тот же aggregate под with Net = real_net() — включится с живым Nova-беком (Ф.MVP-2)">Live 🔒</button>
     </div>
     <button class="iconbtn" id="theme" title="Тема" aria-label="Переключить тему">◐</button>
   </div>
+
+  <div class="hero">Это <b>один процесс Nova</b>: кнопка ▶ опрашивает 6 источников одновременно и укладывает ответ в общий бюджет; кто не успел — <b>честно отменён</b>, а не брошен доживать в фоне. Ниже — судьба каждого источника (успел · упал · отменён) и настоящий код, которым это сделано.</div>
 
   <div class="thesis">
     <div class="sig" id="sigLine"></div>
     <span class="fxbadge" id="fxNet" title="Эффект-хендлер прогона: код один — мир подменяется">with Net = <b>mock_net(seed = 42)</b></span>
     <div class="note" id="noteLine"></div>
   </div>
+  <div class="modestory" id="modeStory"></div>
 
   <div class="scope">
     <div class="scope-head">
@@ -280,6 +290,15 @@
     </div>
     <pre class="code" id="codeTab1"><span class="line"><span class="cm">// aggregate.nv — настоящий код примера (фрагмент; real-cancel supervised(deadline:) = деливерабл №1)</span></span><span class="line"></span><span class="line"><span class="kw">fn</span> fetch_guarded(source <span class="ty">Source</span>, budget_ms <span class="ty">int</span>, idx <span class="ty">int</span>) <span class="eff">Net Time Emit</span> <span class="pun">-&gt;</span> <span class="ty">TaskResult</span> {</span><span class="line">    <span class="kw">ro</span> t0 <span class="ty">Monotonic</span> = <span class="ty">Monotonic</span>.now()</span><span class="line">    <span class="eff">Emit</span>.lane_started(source.id, idx)</span><span class="line">    <span class="kw">ro</span> outcome    = fetch_one(source, idx)          <span class="cm">// реальный Net round-trip</span></span><span class="line">    <span class="kw">ro</span> elapsed_ms = deadline_elapsed_ms(t0)</span><span class="line">    <span class="kw">ro</span> status = <span class="kw">if</span> elapsed_ms &gt; budget_ms {</span><span class="line">        <span class="ty">TaskStatus</span>.Cancelled                        <span class="cm">// опоздал — за бюджетом</span></span><span class="line">    } <span class="kw">else</span> {</span><span class="line">        <span class="kw">match</span> outcome {</span><span class="line">            Ok(data) =&gt; <span class="ty">TaskStatus</span>.Done(data)</span><span class="line">            Err(e)   =&gt; <span class="ty">TaskStatus</span>.Failed(e.to_str())</span><span class="line">        }</span><span class="line">    }</span><span class="line">    <span class="cm">// + Emit.lane_done / lane_failed / lane_cancelled — см. полный файл</span></span><span class="line">    <span class="ty">TaskResult</span> { id: source.id, status, elapsed_ms }</span><span class="line">}</span><span class="line"></span><span class="line"><span class="kw">export fn</span> aggregate(sources <span class="pun">[]</span><span class="ty">Source</span>, budget <span class="ty">Duration</span>) <span class="eff">Net Time Emit</span> <span class="pun">-&gt;</span> <span class="ty">Report</span> {</span><span class="line">    <span class="kw">ro</span> t0 <span class="ty">Monotonic</span> = <span class="ty">Monotonic</span>.now()</span><span class="line">    <span class="kw">ro</span> budget_ms = budget.as_millis() <span class="kw">as</span> <span class="ty">int</span></span><span class="line">    <span class="kw">ro</span> results = <span class="kw">parallel for</span> idx <span class="ty">int</span> <span class="kw">in</span> 0..sources.len() {   <span class="cm">// fan-out</span></span><span class="line">        fetch_guarded(sources[idx], budget_ms, idx)</span><span class="line">    }</span><span class="line">    <span class="eff">Emit</span>.swarm_done(<span class="pun">…</span>)</span><span class="line">    <span class="ty">Report</span>.from(results, deadline_elapsed_ms(t0))</span><span class="line">}</span></pre>
     <pre class="code" id="codeTab2" style="display:none"><span class="line"><span class="cm">// aggregate_test.nv — фрагмент: подменяем МИР, не код (ни одного мок-фреймворка)</span></span><span class="line"></span><span class="line"><span class="kw">test</span> <span class="st">"aggregate: done/failed/cancelled settle correctly on a mixed fan-out"</span> {</span><span class="line hl" id="hlNetLine">    <span class="kw">with</span> <span class="eff">Net</span> = mock_net(), <span class="eff">Emit</span> = null_emit() {   <span class="cm">// ← весь сетевой мир = хендлер</span></span><span class="line">        <span class="kw">ro</span> report = aggregate(tiny_sources(), <span class="ty">Duration</span>.from_millis(120))</span><span class="line">        assert(report.done == 2)</span><span class="line">        assert(report.failed == 1)</span><span class="line">        assert(report.cancelled == 1)</span><span class="line">        assert(report.wall_ms &lt; report.sequential_ms)    <span class="cm">// speedup</span></span><span class="line">    }</span><span class="line">}</span><span class="line"></span><span class="line"><span class="cm">// тот же aggregate под with Net = real_net() — Live; код не меняется</span></span></pre>
+  </div>
+
+  <div class="langfacts" id="langfacts">
+    <b>Что здесь делает язык, а не фреймворк:</b>
+    эффекты видны в сигнатуре — <code>fn aggregate(…) Net Time Emit -&gt; Report</code> ·
+    тест подменяет мир одной строкой — <code>with Net = mock_net()</code>, ни одного мок-фреймворка ·
+    отмена настоящая — опоздавший файбер обрывается по дедлайну, а не доживает в фоне ·
+    «0 leaks» — не лозунг: <code>/api/snapshot</code> отвечает <code>fibers_spawned/closed = 12/12</code> ·
+    один нативный бинарь — <code>nova build</code> → C, без VM.
   </div>
 
   <div class="foot">
@@ -719,10 +738,18 @@
       b.setAttribute("aria-pressed","true"); scen=b.dataset.scen; applyScenario(); refreshLiveBtn(); run(); }); });
 
   // data-mode switch (demo / chaos / live) — own group
+  /* v10: история режима — что читатель сейчас смотрит, человеческим языком */
+  var MODE_STORY = {
+    demo:  "Демо: офлайн и детерминированно — seed 42, каждый запуск повторим байт-в-байт (сид можно поменять в URL).",
+    chaos: "Хаос: источники случайно падают и тормозят — дедлайн спасает ответ: частичный результат вместо зависшей страницы.",
+    live:  "Live: настоящие HTTPS-запросы тем же кодом — подменён только обработчик эффекта: with Net = real_net()."
+  };
+  function refreshModeStory(){ var el=document.getElementById("modeStory"); if(el) el.textContent = MODE_STORY[mode] || ""; }
   Array.prototype.slice.call(document.querySelectorAll('.segmented[aria-label="Data mode"] .seg')).forEach(function(b){
     b.addEventListener("click", function(){ if(b.disabled) return;
       document.querySelectorAll('.segmented[aria-label="Data mode"] .seg').forEach(function(x){ x.setAttribute("aria-pressed","false"); });
-      b.setAttribute("aria-pressed","true"); mode=b.dataset.mode; run(); }); });
+      b.setAttribute("aria-pressed","true"); mode=b.dataset.mode; refreshModeStory(); run(); }); });
+  refreshModeStory();
 
   document.getElementById("run").addEventListener("click", run);
 
