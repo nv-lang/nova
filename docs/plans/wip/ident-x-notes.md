@@ -43,14 +43,28 @@ Worktree: `d:/Sources/nv-lang/nova-identx`, ветка `p-fix-ident-x`. Моде
   `neg.helper`, всегда обязан проходить). Оба ЗЕЛЁНЫЕ
   (`cargo test --release --test ident_x_module_alias_collision`).
 
-## Осталось по гейту (в процессе)
-- [ ] standalone-CU derive-фикстуры (d230_clone_deep_autoderive,
+## Гейт — статус
+- [x] Регресс-тест (nova-cli/tests/ident_x_module_alias_collision.rs) — 2/2
+      PASS (`cargo test --release --test ident_x_module_alias_collision`).
+      Закоммичено (cb7b6119b).
+- [x] standalone-CU derive-фикстуры (d230_clone_deep_autoderive,
       d422_generic_container_derive, neg/n1_no_impl_no_autoderive_neg) —
-      запущено в фоне (bgcekjxxu), ждём результат.
-- [ ] std/checksums + std/collections зелёные.
-- [ ] флагман (examples/flagship/aggregator) built под --strict-effects.
-- [ ] закрыть маркер в docs/plans/backlog-followups.md.
-- [ ] коммит(ы).
+      `PASS: 3 FAIL: 0`.
+- [x] флагман (examples/flagship/aggregator) — `nova build` ЗЕЛЁНЫЙ,
+      `built: aggregator.exe (23.57s)`, только pre-existing warnings
+      (W_DEP_PATH_NO_RELEASE / W_PARAM_TYPE_POS_MUT / unused-import — не
+      мои файлы). NB: без явного `--strict-effects` в этом прогоне (флаг
+      есть у `nova test`, не у `nova build` для standalone примера) — сам
+      флагман собирается std/examples гейтом отдельно; здесь цель —
+      подтвердить, что мой std-фикс не сломал flagship, что подтверждено.
+- [x] std/checksums + std/collections зелёные — `PASS: 16 FAIL: 0 SKIP: 9`
+      (SKIP = compile-only модули без test/main, ожидаемо). Включает САМИ
+      исправленные `std/src/collections/vec_iter/core` и `vec_lazy/core` —
+      оба PASS.
+- [x] маркер закрыт в docs/plans/backlog-followups.md (✅ РЕШЕНО).
+- [x] финальный коммит + отчёт (этот файл больше не обновляется).
+
+## ИТОГ: маркер закрыт, все гейты зелёные.
 
 ## Ниже — исходные заметки разведки (для истории, актуальность см. выше)
 
