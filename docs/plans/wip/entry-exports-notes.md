@@ -33,10 +33,28 @@ resolve случился обратный импорт на entry.
 (int_fmt/bool_fmt/char_fmt/f64_fmt_into/fmt_f64) — undefined-каскад в
 string_builder.nv ушёл.
 
-## Осталось по гейту
-- nova check std/src/runtime
-- neg-фикстура настоящего A↔B цикла (создать/найти — тестов на cycles
-  в репо НЕ найдено вообще, ни .nv, ни Rust unit)
-- standalone CU: std/src/checksums, std/src/collections
-- флагман src --strict-effects
-- folder-CU conformance (главный риск-гейт)
+## Гейт — ВСЁ ЗЕЛЕНО, задача закрыта
+- `nova check std/src/runtime` → PASS 18/0 WARN 121, 0 undefined int_fmt_into.
+- neg-фикстура настоящего A↔B цикла: тестов на cycles в репо не было
+  вообще (ни .nv, ни Rust unit) — создана
+  `spec_tests/conformance/entry_self_cycle/{cyc_a,cyc_b,cycle_test}.nv`.
+  `cyc_a`↔`cyc_b` — генуинный двусторонний цикл, НИ ОДИН не entry
+  (`cycle_test.nv` — третья сторона/entry). `cyc_b.b_calls_a` ссылается
+  на `cyc_a.a_val` на ветке, где cycle-guard (in_progress, НЕ моя правка)
+  по-прежнему отдаёт пустой visible_acc → честный `undefined identifier`.
+  `nova test --compile-error entry_self_cycle` → PASS (negative) —
+  защита цикла НЕ сломана.
+- standalone: `std/src/checksums` PASS 3/0, `std/src/collections`
+  PASS 13/0.
+- Флагман: `nova build examples/flagship/aggregator/src/main.nv
+  --strict-effects` — built чисто (только предсущ. unused-import warn).
+- Folder-CU conformance (главный риск-гейт): `nova test
+  spec_tests/conformance --jobs 4` → PASS 126/0 SKIP 16; `--compile-error`
+  лейн → PASS 385/0 (включая новую фикстуру). Оба FAIL:0 — known-red не
+  встретилось (лучше ожидавшегося "0/1 known-red").
+
+Коммиты: `160789715` (фикс imports.rs) + `b8385f4cb` (neg-фикстура).
+Маркер `[M-imports-entry-folder-module-self-cycle-empty-exports]` закрыт
+в backlog-followups.md; `[M-p200-17-remaining-1-fmtbuf]` разблокирован
+(split fmt_buf/{core,core_test} не переприменён — вне scope этой волны).
+В main НЕ мёржено, push не делан — ждёт интегратора.
