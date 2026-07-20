@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT OR Apache-2.0
+﻿# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # package-release.ps1 — Plan 221 Ф.2 (A-V2): собирает Windows-x64 zip-релиз
 # Nova (nova.exe + nova-lsp.exe + std/ + минимальный C-рантайм для дистрибуции
@@ -34,7 +34,14 @@ param(
     [switch]$SkipBuild,
     [string]$Version = "0.1.0",
     [string]$OutDir = "dist",
-    [switch]$SmokeTest
+    [switch]$SmokeTest,
+    # Где искать vcpkg_installed/x64-windows-static (gc.lib/atomic_ops.lib +
+    # headers). По умолчанию — репо-относительно (compiler-codegen/vcpkg_installed).
+    # Нужен override, когда пакуешь из worktree БЕЗ своей копии vcpkg_installed
+    # (worktree на exFAT не может junction/symlink на main-репо — см.
+    # docs/plans/wip/221-version-notes.md, project-worktree-nova-test-setup):
+    # укажи -VcpkgBase на vcpkg_installed основного репозитория.
+    [string]$VcpkgBase = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -128,24 +135,28 @@ Get-ChildItem -Path $SrcNovaRt -File | ForEach-Object {
 # 3b. libuv/include — целиком, рекурсивно (заголовки нужны компилятору всегда).
 $SrcLibuvInclude = Join-Path $SrcNovaRt "libuv\include"
 if (-not (Test-Path $SrcLibuvInclude)) {
-    throw "libuv/include не найден: $SrcLibuvInclude — libuv submodule не инициализирован в этом checkout? Запусти `git submodule update --init compiler-codegen/nova_rt/libuv` в РЕПО, из которого пакуешь (не в этом worktree — см. docs/plans/wip/221-version-notes.md)."
+    throw "libuv/include не найден: $SrcLibuvInclude — libuv submodule не инициализирован в этом checkout? Запусти: git submodule update --init compiler-codegen/nova_rt/libuv (в РЕПО, из которого пакуешь; см. docs/plans/wip/221-version-notes.md)."
 }
 New-Item -ItemType Directory -Force -Path (Join-Path $DstNovaRt "libuv") | Out-Null
 Copy-Item $SrcLibuvInclude (Join-Path $DstNovaRt "libuv\include") -Recurse
 
-# 3c. libuv/src/*.c (top-level, не рекурсивно) — общие source-файлы.
+# 3c. libuv/src/*.c + *.h (top-level, не рекурсивно) — общие source-файлы
+# И приватные заголовки (uv-common.h/strscpy.h/idna.h/queue.h/... лежат РЯДОМ
+# с .c в src/, НЕ в include/ — реальная находка первого SmokeTest-прогона:
+# "fatal error C1083: uv-common.h: No such file" при копировании только *.c).
 $SrcLibuvSrc = Join-Path $SrcNovaRt "libuv\src"
 $DstLibuvSrc = Join-Path $DstNovaRt "libuv\src"
 New-Item -ItemType Directory -Force -Path $DstLibuvSrc | Out-Null
-Get-ChildItem -Path $SrcLibuvSrc -Filter "*.c" -File | ForEach-Object {
+Get-ChildItem -Path (Join-Path $SrcLibuvSrc "*") -Include "*.c", "*.h" -File | ForEach-Object {
     Copy-Item $_.FullName (Join-Path $DstLibuvSrc $_.Name)
 }
 
-# 3d. libuv/src/win/*.c — Windows platform-specific.
+# 3d. libuv/src/win/*.c + *.h — Windows platform-specific (тот же приватный-
+# заголовок паттерн: win/internal.h, win/winapi.h и т.п. рядом с win/*.c).
 $SrcLibuvWin = Join-Path $SrcLibuvSrc "win"
 $DstLibuvWin = Join-Path $DstLibuvSrc "win"
 New-Item -ItemType Directory -Force -Path $DstLibuvWin | Out-Null
-Get-ChildItem -Path $SrcLibuvWin -Filter "*.c" -File | ForEach-Object {
+Get-ChildItem -Path (Join-Path $SrcLibuvWin "*") -Include "*.c", "*.h" -File | ForEach-Object {
     Copy-Item $_.FullName (Join-Path $DstLibuvWin $_.Name)
 }
 
@@ -163,7 +174,11 @@ Write-Host "nova_rt/ staged: $DstNovaRt"
 # Дистрибуции нужны только gc.lib+atomic_ops.lib + их заголовки.
 
 Write-Host "=== Копирую gc/ (Boehm GC lib+headers, подмножество vcpkg_installed) ==="
-$VcpkgBase = Join-Path $RepoRoot "compiler-codegen\vcpkg_installed\x64-windows-static"
+$VcpkgSrcBase = $VcpkgBase
+if ([string]::IsNullOrWhiteSpace($VcpkgSrcBase)) {
+    $VcpkgSrcBase = Join-Path $RepoRoot "compiler-codegen\vcpkg_installed\x64-windows-static"
+}
+Write-Host "vcpkg source: $VcpkgSrcBase"
 $DstGc = Join-Path $StageDir "gc"
 $DstGcLib = Join-Path $DstGc "lib"
 $DstGcInclude = Join-Path $DstGc "include"
@@ -173,7 +188,7 @@ New-Item -ItemType Directory -Force -Path $DstGcInclude | Out-Null
 $GcOk = $true
 $GcLibFiles = @("gc.lib", "atomic_ops.lib")
 foreach ($f in $GcLibFiles) {
-    $srcF = Join-Path $VcpkgBase "lib\$f"
+    $srcF = Join-Path $VcpkgSrcBase "lib\$f"
     if (Test-Path $srcF) {
         Copy-Item $srcF (Join-Path $DstGcLib $f)
     } else {
@@ -184,7 +199,7 @@ foreach ($f in $GcLibFiles) {
 
 $GcIncludeTop = @("gc.h", "gc_cpp.h", "atomic_ops.h", "atomic_ops_malloc.h", "atomic_ops_stack.h")
 foreach ($f in $GcIncludeTop) {
-    $srcF = Join-Path $VcpkgBase "include\$f"
+    $srcF = Join-Path $VcpkgSrcBase "include\$f"
     if (Test-Path $srcF) {
         Copy-Item $srcF (Join-Path $DstGcInclude $f)
     } else {
@@ -195,7 +210,7 @@ foreach ($f in $GcIncludeTop) {
 
 $GcIncludeDirs = @("gc", "atomic_ops")
 foreach ($d in $GcIncludeDirs) {
-    $srcD = Join-Path $VcpkgBase "include\$d"
+    $srcD = Join-Path $VcpkgSrcBase "include\$d"
     if (Test-Path $srcD) {
         Copy-Item $srcD (Join-Path $DstGcInclude $d) -Recurse
     } else {
@@ -256,68 +271,68 @@ Set-Content -Path (Join-Path $StageDir "setup-env.ps1") -Value $SetupEnvContent 
 
 # ---------- 6. README-INSTALL.md ----------
 
+# ВАЖНО: без обратных кавычек (backtick) внутри — в PowerShell-строке это
+# escape-символ; markdown code fences тут заменены отступом в 3 пробела,
+# инлайн-код — просто без выделения. $Version/$ZipName — намеренная
+# интерполяция (двойные кавычки here-string).
 $ReadmeContent = @"
 # Nova v$Version — установка (Windows x64)
 
 ## Установка
 
-1. Распакуй `$ZipName.zip` в любую папку (например `C:\nova`).
-2. В **той же** PowerShell-сессии, из папки установки, выполни (обязательно
+1. Распакуй $ZipName.zip в любую папку (например C:\nova).
+2. В той же PowerShell-сессии, из папки установки, выполни (обязательно
    через точку — dot-source, иначе env-переменные не сохранятся):
 
-   ``````powershell
    . .\setup-env.ps1
-   ``````
 
-   Это выставляет ``NOVA_STD_PATH`` / ``NOVA_CG_INCLUDE`` / ``NOVA_RT_DIR`` /
-   ``NOVA_GC_LIB_DIR`` / ``NOVA_GC_INCLUDE_DIR`` (нужны, чтобы ``nova.exe``
-   находил стандартную библиотеку и C-рантайм вне монорепы разработки) и
-   добавляет папку в ``PATH`` текущей сессии.
+   Это выставляет NOVA_STD_PATH / NOVA_CG_INCLUDE / NOVA_RT_DIR /
+   NOVA_GC_LIB_DIR / NOVA_GC_INCLUDE_DIR (нужны, чтобы nova.exe находил
+   стандартную библиотеку и C-рантайм вне монорепы разработки) и добавляет
+   папку в PATH текущей сессии.
 
    Чтобы не повторять это в каждой новой сессии — добавь папку установки в
-   ``PATH`` через «Параметры → Переменные среды» и пропиши те же 5 env vars
-   постоянно (Панель управления или ``setx``).
+   PATH через «Параметры → Переменные среды» и пропиши те же 5 env vars
+   постоянно (Панель управления или setx).
 
-3. Проверь: ``nova --version`` должен вывести ``nova $Version``.
+3. Проверь: nova --version должен вывести nova $Version.
 
 ## Требования
 
 Nova компилирует программы в C, поэтому на машине нужен C-компилятор:
-MSVC (Visual Studio Build Tools, ``vcvars64.bat``) — определяется
-автоматически, либо clang/gcc через ``--toolchain``.
+MSVC (Visual Studio Build Tools, vcvars64.bat) — определяется
+автоматически, либо clang/gcc через --toolchain.
 
 ## Быстрый старт
 
-У твоего проекта должен быть свой ``nova.toml`` (минимум ``[package]
-name = "..."``) — ``nova build``/``nova test`` ищут его вверх от текущей
-директории. Дальше — hello world:
+У твоего проекта должен быть свой nova.toml (минимум [package]
+name = "...") — nova build/nova test ищут его вверх от текущей директории.
+Дальше — hello world (hello.nv):
 
-``````
-module hello
+   module hello
 
-fn main() {
-    println("Hello, Nova!")
-}
-``````
+   fn main() {
+       println("Hello, Nova!")
+   }
 
-``````powershell
-nova build hello.nv
-.\hello.exe
-``````
+Собрать и запустить:
+
+   nova build hello.nv
+   .\hello.exe
 
 Более полный тур — mini_aggregator во флагман-примерах монорепозитория
-(``examples/flagship/aggregator``) и quickstart в docs репозитория.
+(examples/flagship/aggregator) и quickstart в docs репозитория.
 
 ## VSCode-расширение
 
-Пока отдельно от этого архива — см. ``editors/vscode`` в исходном
-репозитории (сборка vsix — отдельный атом релиза).
+Пока отдельно от этого архива — см. editors/vscode в исходном репозитории
+(сборка vsix — отдельный атом релиза).
 
 ## Лицензия
 
-MIT OR Apache-2.0 — см. ``LICENSE`` / ``LICENSE-MIT`` / ``LICENSE-APACHE``.
-Сторонние компоненты (libuv, Boehm GC) — см. ``THIRD_PARTY/`` и
-``nova_rt/libuv/LICENSE``.
+MIT OR Apache-2.0 — см. LICENSE / LICENSE-MIT / LICENSE-APACHE.
+Сторонние компоненты (libuv, Boehm GC) — см. THIRD_PARTY/ и
+nova_rt/libuv/LICENSE.
 "@
 
 Set-Content -Path (Join-Path $StageDir "README-INSTALL.md") -Value $ReadmeContent -Encoding utf8
@@ -368,7 +383,14 @@ if ($SmokeTest) {
     Write-Host ""
     Write-Host "=== SmokeTest: распаковка в чистую папку + hello-smoke ==="
 
-    $TmpBase = Join-Path ([System.IO.Path]::GetTempPath()) ("nova-release-smoke-" + [System.Guid]::NewGuid().ToString("N"))
+    # НЕ System.IO.Path]::GetTempPath() (обычно %LOCALAPPDATA%\Temp) — на этой
+    # машине там ненадёжная распаковка (первый прогон: Expand-Archive туда
+    # молча "теряла" 5 из 12 top-level libuv .c-файлов — не MAX_PATH, длины
+    # путей ~150 символов; воспроизводимо только под системным %TEMP%,
+    # повторная распаковка ТОГО ЖЕ zip в dist\test-extract дала все 12/12).
+    # dist/ — не менее "чистая" площадка (никаких repo-relative путей, только
+    # содержимое zip), просто на более предсказуемой ФС.
+    $TmpBase = Join-Path $OutDirFull ("smoke-" + [System.Guid]::NewGuid().ToString("N"))
     $ExtractDir = Join-Path $TmpBase "extracted"
     $ProjectDir = Join-Path $TmpBase "hello-project"
     New-Item -ItemType Directory -Force -Path $ExtractDir | Out-Null
@@ -388,11 +410,18 @@ if ($SmokeTest) {
         . (Join-Path $InstallDir "setup-env.ps1")
 
         # "Пользовательский проект" — своя nova.toml (совсем не монорепа).
+        # -Encoding ascii (НЕ utf8!): PowerShell 5.1's "utf8" Set-Content ВСЕГДА
+        # пишет BOM (EF BB BF), а nova-лексер падает на BOM в .nv-файлах
+        # ("unexpected byte: 'ï'") — реальная находка первого прогона smoke-теста.
+        # Контент чисто ASCII, так что ascii-кодировка безопасна и без BOM.
+        # package name = "hello" (не "hello-smoke") — D78 rev-4 "root peer":
+        # для .nv-файла ПРЯМО в корне source root module-имя обязано совпасть
+        # с именем пакета (нашлось этим же прогоном — E_D78_MODULE_PATH_MISMATCH).
         Set-Content -Path (Join-Path $ProjectDir "nova.toml") -Value @'
 [package]
-name = "hello-smoke"
+name = "hello"
 version = "0.1.0"
-'@ -Encoding utf8
+'@ -Encoding ascii
 
         Set-Content -Path (Join-Path $ProjectDir "hello.nv") -Value @'
 module hello
@@ -400,7 +429,7 @@ module hello
 fn main() {
     println("Hello, Nova!")
 }
-'@ -Encoding utf8
+'@ -Encoding ascii
 
         Push-Location $ProjectDir
         try {
