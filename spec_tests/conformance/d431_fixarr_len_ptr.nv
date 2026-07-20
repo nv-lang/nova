@@ -5,7 +5,7 @@
 // операции напрямую из `TypeRef::FixedArray(N, elem)`.
 module spec_tests.conformance
 
-import std.runtime.raw_mem
+import std.runtime.raw_mem.{RawMem}
 
 test "[N]T @len() — компайл-тайм N, разные размеры (D431)" {
     ro a1 [1]u8 = [7]
@@ -20,7 +20,7 @@ test "[N]T @ptr() — round-trip через RawMem.copy (D431, unsafe)" {
     ro src [4]u8 = [10, 20, 30, 40]
     mut dst [4]u8 = [0, 0, 0, 0]
     unsafe {
-        raw_mem.RawMem.copy(src.ptr(), dst.ptr(), src.len())
+        RawMem.copy(src.ptr(), dst.ptr(), src.len())
     }
     assert(dst[0] == 10)
     assert(dst[1] == 20)
