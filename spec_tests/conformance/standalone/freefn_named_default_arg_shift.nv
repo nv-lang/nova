@@ -1,0 +1,43 @@
+// [M-freefn-named-default-arg-shift] regression.
+//
+// NOT an argument-shift in the call's own emitted C (`callnorm`'s
+// synthesized param-order call — Plan 46 D102 — is byte-correct). The real
+// defect: `emit_c.rs::emit_block_expr` (invoked for EVERY `ExprKind::Block`,
+// including callnorm's default/named-arg desugar Block) never restores
+// `var_types` after its `{ }` closes — a block-local `let <param_name> = …`
+// whose name COLLIDES with an outer-scope variable of a DIFFERENT type
+// leaks that type past the block's closing brace (`var_types` is a flat,
+// never-per-scope `HashMap<String,String>` — same disease class as
+// `[M-callnorm-free-fn-name-collision]` / 196.6, `[M-parfor-capture-callee-
+// name-collides-std-local]`). Every SUBSEQUENT name-based dispatch on the
+// shadowed outer variable then resolves against the WRONG type.
+//
+// `describe`'s 2nd param is named `buf` (type `str`); its LAST param
+// `spec` is a DEFAULT passed BY NAME (D102) — forcing `callnorm` to
+// rewrite the call into a two-phase Block containing `let buf = "hi"`
+// (str). The test's OWN local `buf` (type `[]u8` = `Vec[u8]`) shares that
+// bare name; BOTH `str` and `Vec[u8]` define a builtin method literally
+// named `.ptr()` (emit_c.rs D216/D410 intrinsic dispatch, branches on the
+// receiver's inferred C type). Before the fix, calling `buf.ptr()` AFTER
+// the `describe(...)` call wrongly dispatched against `str`'s `.ptr()`
+// (leaked `var_types["buf"] == "nova_str"`) instead of `Vec[u8]`'s — CC-FAIL
+// "passing 'Nova_Vec____nova_byte *' to parameter of incompatible type
+// 'nova_str'". Repro: `nova test
+// spec_tests/conformance/standalone/freefn_named_default_arg_shift.nv`.
+module standalone.freefn_named_default_arg_shift
+
+fn describe(v int, buf str, cap int, spec int = 0) -> int {
+    return v + cap + spec + buf.byte_len()
+}
+
+test "free fn named-arg on default param does not leak param-name shadow past its call" {
+    mut buf = []u8.new(cap: 4)
+    buf.push(9 as u8)
+    ro spec = 5
+    ro n = describe(1, "hi", 8, spec: spec)
+    assert(n == 16)
+    assert(buf.len() == 1)
+    unsafe {
+        assert(buf.ptr().read_at(0) == (9 as u8))
+    }
+}
