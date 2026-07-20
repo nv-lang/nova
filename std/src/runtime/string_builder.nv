@@ -171,11 +171,11 @@ const F32_FMT_CAP int = 16   // "-1.1754944e-38" = 14; +2 запас форма�
 
 export fn StringBuilder mut @append(x int) -> @ {
     @reserve(INT_FMT_CAP)
-    @advance(int_fmt_into(x, @spare(), INT_FMT_CAP))
+    unsafe { @advance(int_fmt_into(x, @spare(), INT_FMT_CAP)) }
 }
 export fn StringBuilder mut @append(x f64) -> @ {
     @reserve(F64_FMT_CAP)
-    @advance(f64_fmt_shortest_into(x, @spare(), F64_FMT_CAP))
+    unsafe { @advance(f64_fmt_shortest_into(x, @spare(), F64_FMT_CAP)) }
 }
 export fn StringBuilder mut @append(b bool) -> @ { if b { @append("true") } else { @append("false") } }
 // Plan 154.1 [M-154.1-f32-display-debug] + Plan 180: f32 via `@to_str()` →
@@ -184,7 +184,7 @@ export fn StringBuilder mut @append(b bool) -> @ { if b { @append("true") } else
 // faithful (0.1f → "0.10000000149011612"); the direct f32 path keeps "0.1".
 export fn StringBuilder mut @append(x f32) -> @ {
     @reserve(F32_FMT_CAP)
-    @advance(f32_fmt_shortest_into(x, @spare(), F32_FMT_CAP))
+    unsafe { @advance(f32_fmt_shortest_into(x, @spare(), F32_FMT_CAP)) }
 }
 
 // Append строку s ровно n раз. n <= 0 → no-op.
