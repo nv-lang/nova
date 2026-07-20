@@ -1,0 +1,169 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Repro tool for [M-boehm-large-buffer-retention-fiber-reuse]
+// (nova repo docs/plans/backlog-followups.md P2).
+//
+// Faithful, TLS-FREE reproduction of the residual GC-heap growth that an
+// explicit gc.collect() does NOT return to a plateau under "many short
+// fibers per iteration, each churning a KB-scale GC buffer".
+//
+// Structure mirrors nova-tls/src/stream_leak_test_slow.nv EXACTLY (supervised
+// + 2×spawn + Channel + least-squares gc.heap_size() slope), but the TLS
+// round-trip is stripped to a RAW TCP loopback that transfers a LARGE ([]u8)
+// application buffer per connection. Per the marker's own control ("TCP-only
+// WITHOUT large buffers = plateau; ANY large-buffer path = linear growth"),
+// the discriminating variable is the BUFFER SIZE, not TLS — so this needs only
+// std.net (TcpListener/TcpStream + libuv), no mbedTLS shim.
+//
+// Two tests print a least-squares slope (bytes/iter) of gc.heap_size() sampled
+// after gc.collect():
+//   - LARGE(16384): expected LINEAR growth (conservative stale-stack retention)
+//   - SMALL(64)   : control, expected PLATEAU
+//
+// USAGE (WSL Linux, where fiber_arena.c is the active arena):
+//   NOVA_RT_DIR=<worktree>/compiler-codegen/nova_rt \
+//     nova test docs/plans/wip/boehmret-repro/boehmret_slope.nv --keep-artifacts
+// Then re-run the produced .exe directly N times for stable slope numbers.
+//
+// DISCRIMINATOR: run baseline vs. NOVA_GC_STACK_SCAN_KB=<N> (env knob added to
+// fiber_arena.c::_nova_gc_push_other_roots). If the LARGE slope drops toward
+// the SMALL plateau when the whole-stack push is tightened to a live window,
+// the whole-stack conservative-overscan hypothesis is confirmed.
+
+module boehmret
+
+import std.net.{Net, TcpListener, TcpStream, SocketAddr, real_net}
+import std.runtime.gc
+
+const LEAK_ITERATIONS int = 1500
+const LEAK_WARMUP int = 200
+const LEAK_SAMPLE_EVERY int = 100
+const BIG int = 16384      // 16 KiB — TLS_CHUNK scale (the leaking buffer size)
+const SMALL int = 64       // control — no large buffer
+
+// Build a fresh []u8 of `n` bytes. This is the "big buffer churned per pump":
+// a fresh KB-scale GC allocation whose backing address lands on the fiber /
+// worker / driver stacks during the transfer, then becomes garbage.
+fn make_buf(n int) -> []u8 {
+    mut v = []u8.new()
+    for i in 0..n { v.push((i & 0xff) as u8) }
+    v
+}
+
+fn run_slope(buf_bytes int) -> f64 {
+    with Net = real_net() {
+        mut sx f64 = 0.0
+        mut sy f64 = 0.0
+        mut sxy f64 = 0.0
+        mut sxx f64 = 0.0
+        mut n f64 = 0.0
+        for i in 0..LEAK_ITERATIONS {
+            ro ch_port = Channel.new(1)
+            supervised {
+                spawn {
+                    mut lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                        Ok(consume l)  => l
+                        Err(_) => panic("bind failed")
+                    }
+                    ch_port.tx.send(lst.local_port())
+                    match lst.accept() {
+                        Err(_) => {}
+                        Ok(consume tcp) => {
+                            consume stream = tcp
+                            match stream.read_to_vec(buf_bytes) {
+                                Ok(_)  => { ro _wrote = stream.write_all(make_buf(buf_bytes)) }
+                                Err(_) => {}
+                            }
+                            stream.close()
+                        }
+                    }
+                    lst.close()
+                }
+                spawn {
+                    ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 as u16 }
+                    match TcpStream.connect(SocketAddr.loopback(port)) {
+                        Err(_) => {}
+                        Ok(consume tcp) => {
+                            consume stream = tcp
+                            ro _wrote = stream.write_all(make_buf(buf_bytes))
+                            ro _echo = stream.read_to_vec(buf_bytes)
+                            stream.close()
+                        }
+                    }
+                }
+            }
+            if i >= LEAK_WARMUP && (i - LEAK_WARMUP) % LEAK_SAMPLE_EVERY == 0 {
+                gc.collect()
+                ro x = i as f64
+                ro y = gc.heap_size() as f64
+                sx += x
+                sy += y
+                sxy += x * y
+                sxx += x * x
+                n += 1.0
+            }
+        }
+        ro slope = (n * sxy - sx * sy) / (n * sxx - sx * sx)
+        slope
+    }
+}
+
+// Compute-only variant: same supervised + 2×spawn shape and same large-buffer
+// churn, but NO net I/O. If this ALSO grows linearly, the leak is inherent to
+// GC + fiber + large-buffer (not the net/libuv layer). If it plateaus, the
+// net/stream/eventloop layer is implicated (real reference leak).
+fn run_slope_compute(buf_bytes int) -> f64 {
+    mut sx f64 = 0.0
+    mut sy f64 = 0.0
+    mut sxy f64 = 0.0
+    mut sxx f64 = 0.0
+    mut n f64 = 0.0
+    mut acc = AtomicInt.new(0)
+    for i in 0..LEAK_ITERATIONS {
+        supervised {
+            spawn {
+                mut a = make_buf(buf_bytes)
+                mut b = make_buf(buf_bytes)
+                acc.fetch_add(a.len() + b.len())
+            }
+            spawn {
+                mut a = make_buf(buf_bytes)
+                mut b = make_buf(buf_bytes)
+                acc.fetch_add(a.len() + b.len())
+            }
+        }
+        if i >= LEAK_WARMUP && (i - LEAK_WARMUP) % LEAK_SAMPLE_EVERY == 0 {
+            gc.collect()
+            ro x = i as f64
+            ro y = gc.heap_size() as f64
+            sx += x
+            sy += y
+            sxy += x * y
+            sxx += x * x
+            n += 1.0
+        }
+    }
+    ro slope = (n * sxy - sx * sy) / (n * sxx - sx * sx)
+    if acc.load() == -1 { println("unreachable") }
+    slope
+}
+
+test "boehmret: LARGE compute-only churn (no net) — GC-heap slope" {
+    ro slope = run_slope_compute(BIG)
+    println("[boehmret] COMPUTE-LARGE(" + BIG.to_str() + ") slope = " + slope.to_str() + " bytes/iter")
+    assert(slope < 100000000.0)
+}
+
+test "boehmret: LARGE buffer TCP-loopback churn — GC-heap slope" {
+    ro slope = run_slope(BIG)
+    println("[boehmret] LARGE(" + BIG.to_str() + ") slope = " + slope.to_str() + " bytes/iter")
+    // Print-only gate: do NOT fail the run — we want the NUMBER, compared
+    // across NOVA_GC_STACK_SCAN_KB settings. Loose ceiling only guards against
+    // a runaway (e.g. OOM-approaching) regression.
+    assert(slope < 100000000.0)
+}
+
+test "boehmret: SMALL buffer TCP-loopback churn — GC-heap slope (control)" {
+    ro slope = run_slope(SMALL)
+    println("[boehmret] SMALL(" + SMALL.to_str() + ") slope = " + slope.to_str() + " bytes/iter")
+    assert(slope < 100000000.0)
+}

@@ -840,6 +840,14 @@ nova_int net_tcp_read(void* sv, uint8_t* buf, nova_int cap) {
     nova_sched_park_until(scope, slot, _nn2_stream_read_ready, s);
     nova_sched_unregister_pending(scope, slot);
 
+    /* [M-boehm-large-buffer-retention-fiber-reuse]: the read is complete and
+     * the bytes are already in the caller's buffer. `s` is an uncollectable
+     * (permanently GC-scanned) stream that is never freed, so leaving
+     * `s->read_ptr` pointing at the caller's []u8 backing ROOTS that buffer
+     * forever — a real leak that grows ∝ buffer size per connection. Drop the
+     * reference now that libuv is done with it (the next read re-sets it). */
+    s->read_ptr = NULL;
+
     if (nova_abool_load(&cancel_sc->cancel_requested)) return UV_ECANCELED;
     if (nova_aint_load(&s->stage) >= NN2_CLOSING)       return UV_ECANCELED;
 
@@ -940,6 +948,14 @@ nova_int net_tcp_write(void* sv, const uint8_t* buf, nova_int len) {
 
     nova_sched_park_until(scope, slot, _nn2_stream_write_ready, s);
     nova_sched_unregister_pending(scope, slot);
+
+    /* [M-boehm-large-buffer-retention-fiber-reuse]: uv_write copied the
+     * caller's buffer pointer into s->write_req.bufsml[]. The write is now
+     * complete (write_cb has fired) so libuv no longer needs the req, but the
+     * stale pointer would keep the caller's []u8 alive forever via the
+     * uncollectable, never-freed `s`. Clear the whole req (re-inited on the
+     * next write) to release it. */
+    memset(&s->write_req, 0, sizeof(s->write_req));
 
     if (nova_abool_load(&cancel_sc->cancel_requested)) return UV_ECANCELED;
     if (nova_aint_load(&s->stage) >= NN2_CLOSING)       return UV_ECANCELED;

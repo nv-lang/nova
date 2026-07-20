@@ -391,6 +391,38 @@ void nova_fiber_arena_unregister_native_stack(void) {
     }
 }
 
+/* [M-boehm-large-buffer-retention-fiber-reuse] DISCRIMINATOR / candidate fix:
+ * env NOVA_GC_STACK_SCAN_KB=N (>0) tightens every WHOLE-stack conservative
+ * push below (main VMA, native thread stacks, occupied fiber slots) to only
+ * the top N KiB near each stack's hot end (base) — an over-approximation of
+ * the LIVE window [sp, base) — instead of the full mapped region [lo, base).
+ * The dead region [lo, sp) holds stale KB-buffer addresses left by returned
+ * deep frames; with GC_set_all_interior_pointers(1) any such stale word
+ * retains the whole buffer (retention ∝ buffer size) — the residual that a
+ * full gc.collect() does not reclaim. Default 0 = whole-region (current
+ * behavior, zero overhead — env read once, cached). This is a DIAGNOSTIC knob
+ * for the discriminating experiment: it is only sound while every live stack
+ * is shallower than N (else genuine roots would be missed). A principled fix
+ * must source each thread's TRUE live sp (see boehmret-design.md). */
+static size_t _nova_gc_stack_scan_bytes(void) {
+    static long _cached = -2;  /* -2 = unread; 0 = disabled; >0 = bytes */
+    long v = __atomic_load_n(&_cached, __ATOMIC_RELAXED);
+    if (v == -2) {
+        const char* e = getenv("NOVA_GC_STACK_SCAN_KB");
+        long kb = (e && e[0]) ? strtol(e, NULL, 10) : 0;
+        v = (kb > 0) ? kb * 1024 : 0;
+        __atomic_store_n(&_cached, v, __ATOMIC_RELAXED);
+    }
+    return (size_t)v;
+}
+
+/* Clamp [*lo, hi) to the top `scan` bytes near hi (hot end / stack base).
+ * Stack grows DOWN → the live window is the top. No-op when the knob is 0. */
+static inline void _nova_gc_clamp_top(char** lo, char* hi) {
+    size_t scan = _nova_gc_stack_scan_bytes();
+    if (scan && *lo && hi > *lo && (size_t)(hi - *lo) > scan) *lo = hi - scan;
+}
+
 /* (а) main: найти в /proc/self/maps VMA, содержащую probe, и запушить её
  * целиком. Стриминговый разбор без аллокаций (maps может быть огромным —
  * guard-страницы арены плодят десятки тысяч VMA; [stack] — в конце). */
@@ -421,7 +453,9 @@ static void _nova_push_main_stack_vma(void) {
             char* dash = strchr(line, '-');
             uintptr_t hi = dash ? (uintptr_t)strtoull(dash + 1, NULL, 16) : 0;
             if (lo <= p && p < hi) {
-                GC_push_all((char*)lo, (char*)hi);
+                char* clo = (char*)lo;
+                _nova_gc_clamp_top(&clo, (char*)hi);   /* NOVA_GC_STACK_SCAN_KB */
+                GC_push_all(clo, (char*)hi);
                 close(fd);
                 return;
             }
@@ -442,7 +476,10 @@ static void _nova_gc_push_other_roots(void) {
          nd; nd = nd->next) {
         char* lo = __atomic_load_n(&nd->lo, __ATOMIC_ACQUIRE);
         char* hi = __atomic_load_n(&nd->hi, __ATOMIC_ACQUIRE);
-        if (lo && hi > lo) GC_push_all(lo, hi);
+        if (lo && hi > lo) {
+            _nova_gc_clamp_top(&lo, hi);   /* NOVA_GC_STACK_SCAN_KB */
+            GC_push_all(lo, hi);
+        }
     }
     /* (в) занятые fiber-слоты арен. */
     for (struct NovaFiberArena* a =
@@ -456,7 +493,8 @@ static void _nova_gc_push_other_roots(void) {
             if (!((w >> (slot & 63)) & 1)) continue;   /* слот свободен */
             char* usable_lo = base + slot * a->slot_size + NOVA_FIBER_GUARD_SIZE;
             char* usable_hi = base + (slot + 1) * a->slot_size;
-            GC_push_all_eager(usable_lo, usable_hi);   /* guard исключён */
+            _nova_gc_clamp_top(&usable_lo, usable_hi);   /* NOVA_GC_STACK_SCAN_KB */
+            GC_push_all_eager(usable_lo, usable_hi);      /* guard исключён */
         }
     }
 }
