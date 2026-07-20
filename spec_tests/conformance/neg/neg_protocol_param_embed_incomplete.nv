@@ -1,0 +1,31 @@
+// EXPECT_COMPILE_ERROR does not satisfy
+//
+// [M-checker-protocol-typed-arg-any-bypass] — mirrors the reported real-world
+// precedent structurally: `StringBuilder` implements `Write` but not the wider `Fmt`
+// (`Fmt = protocol { use Write, @width()..., ... }`, D422), yet used to compile clean
+// as a `Fmt`-typed argument via the Any-bypass. Same shape here with self-contained
+// types: `PABOnlyBase` implements the EMBEDDED sub-protocol `PABBase` but not the outer
+// `PABFull` protocol's own additional method — `use`-embed (D145) flattening must be
+// walked when checking structural satisfaction of a PLAIN protocol-typed param.
+module neg.neg_protocol_param_embed_incomplete
+
+type PABBase protocol {
+    @base_op() -> int
+}
+type PABFull protocol {
+    use PABBase
+    @extra_op() -> int
+}
+
+type PABOnlyBase {
+    v int
+}
+fn PABOnlyBase @base_op() -> int => @v
+// No @extra_op — satisfies PABBase (the embedded protocol) but not PABFull itself.
+
+fn pab_use_full(x PABFull) -> int => x.extra_op()
+
+test "embed-incomplete concrete type rejected at a plain protocol-typed param" {
+    ro o = PABOnlyBase { v: 1 }
+    pab_use_full(o)   // must NOT compile — satisfies PABBase, not PABFull
+}
