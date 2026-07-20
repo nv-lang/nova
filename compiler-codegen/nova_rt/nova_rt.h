@@ -447,6 +447,19 @@ static inline nova_int f64_fmt_into(uint8_t* buf, nova_int cap, double v, nova_i
     return result;
 }
 
+/* f32-собрат f64_fmt_into (2026-07-20, владелец: SB @append(f32) без
+ * str-аллокации): shortest-only — оси Fixed/Sci для f32 не нужны (D422:
+ * пользовательский spec-путь идёт через f64-ось). Тот же
+ * defensive-truncate контракт. Разрешается D282 literal-name extern'ом. */
+static inline nova_int f32_fmt_into(uint8_t* buf, nova_int cap, nova_f32 v) {
+    char tmp[64];
+    int n = nova_f32_shortest(v, tmp);
+    if (n < 0) n = 0;
+    nova_int m = (nova_int)n < cap ? (nova_int)n : cap;
+    memcpy(buf, tmp, (size_t)m);
+    return m;
+}
+
 /* ---- println ---- */
 /* Variadic nova_println is generated per call-site. Each arg is printed
  * with its own helper depending on type. */

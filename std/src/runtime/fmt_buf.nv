@@ -307,6 +307,12 @@ export fn int_fmt_into(v int, buf *mut u8, cap int) -> int
 export fn f64_fmt_shortest_into(v f64, buf *mut u8, cap int) -> int
     => fmt_f64(buf, cap, v, FloatKind.Shortest, -1)
 
+/// f32-собрат (владелец 2026-07-20): shortest через nova_f32_shortest — тот же
+/// движок, что печать/`to_str` f32 (НЕ f64-расширение: без double-хвостов).
+extern "C" fn f32_fmt_into(buf *mut u8, cap int, v f32) -> int
+export fn f32_fmt_shortest_into(v f32, buf *mut u8, cap int) -> int
+    => unsafe { f32_fmt_into(buf, cap, v) }
+
 /// `.nv`-side wrapper: converts `FloatKind` → the `int` `f64_fmt_into`
 /// carries across the `extern "C"` ABI boundary (D422 §5 — enums don't cross
 /// `extern "C"` directly).
