@@ -448,16 +448,36 @@
   f64-ПЕРЕМЕННАЯ в `[]f32`-контексте (`Vec[f32].from([f64var])`) — НЕ сужается молча (был тихий
   мусор), а даёт громкую `E_ARRAY_ELEM_NARROW` (D44/D54 — narrowing не-литералов только через
   явный `as f32`). pos+neg тесты `plan154_1` (9/9).
-- **`[M-numeric-try-narrowing]`** — **ОДОБРЕНО владельцем 2026-07-20, реализация в очереди.**
-  Проверяемое сужение число→число: `as`-сужение молча обрезает (`300u32 as u8` = 44 — тихая
-  порча), нужен проверяемый вариант, возвращающий `Result`/`Option` (Rust `u8::try_from(300u32)
-  → Err`). **Форма — ЦЕПОЧНАЯ по конвенции Nova (НЕ Rust-static `u8::try_from`):**
-  `(300u32).try_to_u8() -> Result[u8, RangeError]` — метод на исходном значении, приставка
-  `try_` = проверяемая, `to_<T>` = целевой тип (ряд с `str.to_i8/i16`, семьёй `checked_*`).
-  Матрица комбинаторная: каждый исходный числовой тип × `try_to_<меньший>` (i64→i32/i16/i8/u*,
-  u64→u32/…, int↔узкие). Отдельная волна (numeric-parity followup); `as` остаётся быстрым-
-  обрезающим. Пара к str.to_iN (numeric-parity2). Спек-амендмент при реализации (новый std-API,
-  не язык-меняющее, но задокументировать форму в nv-coding-style).
+- **`[M-numeric-try-narrowing]`** ✅ **RESOLVED 2026-07-20** (worktree `nova-tryfrom`,
+  ветка `p-try-narrowing`, не влито в main — интегратору на слияние). Проверяемое сужение
+  число→число: `(300u32).try_to_u8() -> Result[u8, RangeError]` — метод на исходном значении
+  (чейн-форма, НЕ Rust-static `u8::try_from`), `try_`+`to_<T>` naming ряд с `str.to_i8/i16`/
+  `checked_*`. **Реализация — 10 `.nv`-бланкетов** (`fn[S Ints] S @try_to_i8()`/…/`@try_to_uint()`,
+  один на целевой тип, `std/prelude/protocols.nv`) вместо N²=100 ручных методов: единый
+  `Ints`-бланкет с sign-agnostic `if @ < 0 {} else {}`-веткой (форма `@saturating_pow`) покрывает
+  ОБА знака источника одним телом (не split SignedInts/UnsignedInts на одно имя — нет прецедента
+  двух одноимённых бланкетов над непересекающимися type-set в файле); каждое тело расширяет `@`
+  до full-width `i64`/`u64` ПЕРЕД сравнением с границами цели (soundness — избегает wraparound
+  при касте границы цели ВНИЗ в узкий источник, напр. `u32.MAX as i32 == -1`). Полная матрица
+  10×10 (100 пар, вкл. identity + same-signedness widening — тривиально `Ok`): Nova type-sets не
+  умеют width-based исключение, ручное выкусывание «безопасных» пар означало бы возврат к N²;
+  тот же выбор, что у Rust `TryFrom` numeric impls. `RangeError` — новый unit-тип
+  (`std/prelude/errors.nv`, re-exported facade, `PRELUDE_VERSION` 18→19) — НЕ переиспользован
+  `ParseIntError` (str-parse-специфичные `Empty`/`InvalidDigit`/`InvalidRadix` нерелевантны число→
+  число). Компилятор НЕ тронут (`types/mod.rs`/`emit_c.rs`/`lints.rs` — заняты параллельной
+  Duration-волной). Тесты `std/src/math/try_narrowing_test.nv` (не рядом с `protocols.nv` —
+  auto-import-prelude-disabled gap, тот же что у `overflow_policy_test.nv`); краевые: границы
+  MIN/MAX точно → `Ok`, MAX+1/MIN-1 → `Err`, 0, отрицательное→unsigned → `Err`, Vec[T].of-сэмплы.
+  Известный НЕ-новый разрыв (не заводился отдельным followup — покрыт существующим классом):
+  `for`-bound receiver для generic type-set-bound бланкета падает в pre-existing `[P67-LEGACY]`
+  "method call return type unknown" — обходится типизированной `ro`-локалью (тот же обход, что
+  весь `overflow_policy_test.nv`). Спека — **D430** (`spec/decisions/04-effects.md` + README).
+  Гейты (worktree-бинарь): `nova test std/src/math` 4/4 PASS; `nova lint --deny std` 5 находок —
+  ВСЕ pre-existing в нетронутых файлах (`fmt_buf.nv`/`string_builder.nv`/`write_buffer.nv`,
+  известный `[M-p200-17-remaining-3]`), 0 новых; флагман `examples/flagship/aggregator`
+  `--strict-effects` built OK; 2 nova_tests-провала (`folder_per_file_imports_use`,
+  `plan62/neg/prelude_shadow_warning`) подтверждены pre-existing идентичным прогоном на HEAD
+  без моих правок (baseline diff).
 - **`[M-154.1-chained-vec-f32-method-misdispatch]`** ✅ **RESOLVED 2026-06-14** (Plan 153.x):
   chained `Vec[f32].new().debug(a)` / `.from([...]).debug(a)` мис-диспатчил `.debug` на
   `str.debug` → `Vec[f32]*` в str-метод → CC-FAIL. **Корень — gap C (registration timing)**, НЕ

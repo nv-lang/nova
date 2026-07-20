@@ -7302,3 +7302,35 @@ brotli-decode — **C-FFI к `libbrotlidec`** (НЕ pure-Nova V1: 120 KB вст�
 ### Связь
 
 Amends [D423](#d423) (§R6 явно выносил div/neg за рамки — теперь закрыто) · Amends [D13](#) (int overflow trap, расширен на div/mod/neg) · [D317](#d317) (Duration overflow — параллельная, НЕ мигрирована, см. §R5) · [D227](03-syntax.md#d227) Rule 4 (негативный литерал в unsigned — hard error, мотивирует reformulation §R4.1) · [D140.4/194](09-tooling.md#d421) (Z3-элизия — механически подключена, СТОРОНА доказательства не реализована, §R5) · Plan [206](../../docs/plans/206-arithmetic-overflow-policy.md) · Plan [206.1](../../docs/plans/206.1-div-neg-trap.md).
+
+## D430. Проверяемое числовое сужение — `try_to_<T>` чейн-семья + `RangeError` ([M-numeric-try-narrowing], 2026-07-20)
+
+**Статус:** закреплён 2026-07-20 (owner-approved backlog item, форма зафиксирована владельцем ДО реализации). Новый std-API surface — не язык-меняющее слияние (ни синтаксиса, ни type-checker/codegen-логики компилятор не менял, только `.nv`-бланкеты над УЖЕ существующим `Ints`-инфраструктурой D310/D423).
+
+### Что
+
+**Мотив:** `as`-сужение молча обрезает (`300u32 as u8` = 44 — тихая порча данных, Rust-прецедент `u8::try_from(300u32) → Err`). Нужен проверяемый вариант, симметричный уже принятой чейн-конвенции Nova (`str.to_i8`/`checked_*`/`saturating_*`), а НЕ Rust-static `u8::try_from(...)`.
+
+**Форма:** `(300u32).try_to_u8() -> Result[u8, RangeError]` — метод на ИСХОДНОМ значении (владелец, 2026-07-20: чейн, не static-конструктор на целевом типе). Имя: приставка `try_` = проверяемая версия, `to_<T>` = целевой тип — тот же принцип именования, что `str.to_i8`/`to_u16` (Plan 174.1/numeric-parity-2) и `checked_*`-семья (D423). `as` остаётся быстрым обрезающим кастом, без изменений.
+
+### Правило
+
+**(R1) `RangeError` — новый unit-тип** (`std/prelude/errors.nv`), НЕ переиспользование `ParseIntError` (str-parse-специфичный: варианты `Empty`/`InvalidDigit`/`InvalidRadix` не имеют смысла для число→число, только `Overflow` был бы релевантен — навязывать вызывающему матчить нерелевантные варианты хуже, чем завести узкий тип) и НЕ `CharFromError`/`TryFromCharError` (char-конверсия, другой домен). Прецедент формы — ТЕ ЖЕ unit-типы («факт без данных»), `#stable(since = "0.1")`, re-exported через `std/prelude.nv` facade (`PRELUDE_VERSION` 18→19).
+
+**(R2) Бланкет-стратегия — ОДИН `fn[S Ints] S @try_to_<T>()` на целевой тип `<T>` (10 бланкетов: i8/i16/i32/i64/int/u8/u16/u32/u64/uint), НЕ N²=100 ручных методов и НЕ два SignedInts/UnsignedInts-бланкета на одно имя** (в файле нет прецедента двух одноимённых бланкетов над непересекающимися type-set — решено НЕ открывать этот вопрос, единый `Ints`-бланкет с sign-agnostic `if @ < 0 {...} else {...}` веткой, та же форма что `@saturating_pow` уже использует, закрывает и signed, и unsigned источники одним телом). Каждый бланкет покрывает ВСЮ матрицу 10 источников × 1 цель (мономорфизация per член `Ints`) — 10 бланкетов = полные 100 пар источник×цель, включая 10 identity-пар (`i8.try_to_i8()`) и same-signedness WIDENING-пары (`i8.try_to_i64()`) — те тривиально всегда `Ok`, включены НЕ как scope creep, а потому что Nova type-sets не имеют width-based исключающего механизма: ручное выкусывание ~45 «безопасных» пар из `Ints` означало бы возврат к N² ручным методам — именно то, что бланкет-форма призвана избежать. Тот же выбор, что у Rust `TryFrom` numeric impls (тоже полная матрица, widening-плечи документированы как «never fails», не опущены).
+
+**(R3) Soundness-инвариант.** Каждое тело `@try_to_<T>` расширяет `@` до full-width домена СВОЕЙ знаковости ПЕРЕД сравнением с границами цели — `i64` на ветке `@ < 0` (достижима только для signed членов; для unsigned членов константно `false`, ветка мертва в рантайме, но всё равно компилируется), `u64` на ветке `@ >= 0` (достижима для ЛЮБОГО члена — `@ < 0` константно `false` для unsigned). `i64`/`u64` вмещают ЛЮБОЙ член `SignedInts`/`UnsignedInts` точно И вмещают `MIN`/`MAX` ЛЮБОЙ цели точно (цель сама — тоже какой-то член `Ints`) — ни один cast в бланкетах не обрезает/не переполняется значением, от которого зависит сравнение. Наивная альтернатива — кастовать `MAX`/`MIN` цели ВНИЗ в исходный тип `S` — ломается, когда цель ШИРЕ `S` (`u32.MAX as i32` даёт `-1`, портит проверку `i32 @try_to_u32()`); расширение `@` ВВЕРХ вместо сужения границы ВНИЗ обходит этот класс багов целиком.
+
+**(R4) D227 Rule 4 (негативный литерал в unsigned-моно) НЕ триггерится нигде в этих бланкетах.** `i8.MIN`/…/`int.MIN` — компайл-тайм константы ФИКСИРОВАННОГО signed-типа, кастуются ТОЛЬКО в `i64` (тоже signed) на ветке `@ < 0` — никогда в unsigned. Единственное сравнение с неявной нижней границей unsigned-цели — `@ < 0` (литерал `0`, неотрицательный, легален независимо от знаковости `S` — та же форма, что `checked_div`/`saturating_pow` уже используют). `@ as i64` внутри `Ints`-бланкета имеет рабочий прецедент — `std/time/duration/core.nv`, `fn[T Ints] T @to_nanos() -> Duration => { nanos: @ as i64 }`.
+
+**(R5) Компилятор НЕ менялся.** Реализация целиком в `.nv` (`std/prelude/protocols.nv` + `std/prelude/errors.nv` + facade `std/prelude.nv`) поверх уже принятых `SignedInts`/`UnsignedInts`/`Ints` type-set'ов (D310) и уже рабочего `@ as i64`/`@ as u64`-паттерна (D423/D427-семья, `duration/core.nv`). `compiler-codegen/src/{types/mod.rs, codegen/emit_c.rs, lints.rs}` не тронуты (заняты параллельной Duration-волной на момент реализации).
+
+### Границы
+
+**Известный, НЕ новый разрыв, задетый при написании тестов:** generic type-set-bound бланкет-метод (`fn[S Ints] S @try_to_<T>()`), вызванный на receiver'е, который сам — bound переменная `for`-цикла (`for v in vec { v.try_to_u8() }`), падает в pre-existing `[P67-LEGACY]` "method call return type unknown" (тот же класс, что уже задокументирован в заголовке `std/src/math/overflow_policy_test.nv` для inline-conversion-call receiver — здесь тот же checker-gap для другого receiver-shape, `for`-bound Ident, а не Call). НЕ specific для `try_to_*` (общий generic-blanket-dispatch разрыв, вне зоны этой волны) — обходится в тестах чтением элемента в типизированную `ro`-локаль перед вызовом (тот же обход, что весь остальной файл уже применяет). Followup НЕ заводился отдельно — покрыт существующим общим "generic-blanket receiver must be typed local" классом (`[P67-LEGACY]`, см. D423/D427 §«Известные разрывы»/§R4.3).
+
+**Тесты** — `std/src/math/try_narrowing_test.nv` (НЕ рядом с `protocols.nv`: тот же pre-existing gap с отключённым auto-import prelude внутри `std.prelude.*`, что у `overflow_policy_test.nv`).
+
+### Связь
+
+Использует [D310](02-types.md#d310) (`SignedInts`/`UnsignedInts`/`Ints` type-set'ы) · Использует [D423](#d423)/[D427](#d427) (`@ as i64`/`@ as u64`-паттерн внутри `Ints`-бланкета, sign-agnostic `if @ < 0 {} else {}` форма) · [D227](03-syntax.md#d227) Rule 4 (негативный литерал в unsigned — НЕ триггерится, см. §R4) · Соседствует с `str.to_i8`/`to_u16` (Plan 174.1/numeric-parity-2, тот же range-check-после-разбора паттерн, другой error-тип `ParseIntError` — НЕ переиспользован, см. §R1) · Backlog `[M-numeric-try-narrowing]` (docs/plans/backlog-followups.md).
