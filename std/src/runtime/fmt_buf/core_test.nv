@@ -183,7 +183,7 @@ test "f64_fmt_into: Shortest/Fixed/Sci kinds" {
 
     // kind 1 = Fixed
     // [M-174.6-rawptr-extern-unsafe-infer] (D424 rule 1): inferred `unsafe fn`.
-    ro nf = unsafe { f64_fmt_into(buf.ptr(), 64, 3.14159, 1, 2) }
+    ro nf = unsafe { f64_fmt_into(3.14159, buf.ptr(), 64, 1, 2) }
     assert(nf == 4)
     unsafe {
         assert(buf.ptr().read_at(0) == ('3' as u8))
@@ -193,7 +193,7 @@ test "f64_fmt_into: Shortest/Fixed/Sci kinds" {
     }
 
     // kind 0 = Shortest (round-trip minimal) — same engine as println(float).
-    ro ns = unsafe { f64_fmt_into(buf.ptr(), 64, 2.5, 0, 0) }
+    ro ns = unsafe { f64_fmt_into(2.5, buf.ptr(), 64, 0, 0) }
     assert(ns == 3)
     unsafe {
         assert(buf.ptr().read_at(0) == ('2' as u8))
@@ -202,14 +202,14 @@ test "f64_fmt_into: Shortest/Fixed/Sci kinds" {
     }
 
     // kind 2 = Sci
-    ro ne = unsafe { f64_fmt_into(buf.ptr(), 64, 1234.5, 2, 1) }
+    ro ne = unsafe { f64_fmt_into(1234.5, buf.ptr(), 64, 2, 1) }
     assert(ne > 0)
     unsafe { assert(buf.ptr().read_at(1) == ('.' as u8)) }
 }
 
 test "fmt_f64: FloatKind enum wrapper matches f64_fmt_into" {
     mut buf = scratch(64)
-    ro n = fmt_f64(buf.ptr(), 64, 3.14159, FloatKind.Fixed, 2)
+    ro n = f64_fmt(3.14159, buf.ptr(), 64, FloatKind.Fixed, 2)
     assert(n == 4)
     unsafe {
         assert(buf.ptr().read_at(0) == ('3' as u8))
@@ -217,6 +217,6 @@ test "fmt_f64: FloatKind enum wrapper matches f64_fmt_into" {
         assert(buf.ptr().read_at(3) == ('4' as u8))
     }
 
-    ro n2 = fmt_f64(buf.ptr(), 64, 2.5, FloatKind.Shortest, 0)
+    ro n2 = f64_fmt(2.5, buf.ptr(), 64, FloatKind.Shortest, 0)
     assert(n2 == 3)
 }

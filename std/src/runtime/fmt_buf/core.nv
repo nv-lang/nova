@@ -292,7 +292,7 @@ export fn char_fmt(v char, buf *mut u8, cap int) -> int {
 /// most `cap` bytes into `buf`, returns bytes written (truncates defensively).
 /// `kind`: 0=Shortest, 1=Fixed (`%.*f`), 2=Sci (`%.*e`) — see `fmt_f64` below
 /// for the enum-typed `.nv`-side wrapper.
-extern "C" fn f64_fmt_into(buf *mut u8, cap int, v f64, kind int, prec int) -> int
+extern "C" fn f64_fmt_into(v f64, buf *mut u8, cap int, kind int, prec int) -> int
 
 // ── std-internal мосты для zero-alloc @append (владелец 2026-07-20) ──────
 // D422 §5-privacy СОХРАНЯЕТСЯ: наружу — только простые decimal/shortest-
@@ -313,19 +313,19 @@ export unsafe fn int_fmt_into(v int, buf *mut u8, cap int) -> int
 /// идентичный вывод) в buf[0..cap); возвращает записанные байты.
 export unsafe fn f64_fmt_shortest_into(v f64, buf *mut u8, cap int) -> int
     requires cap >= 0
-    => fmt_f64(buf, cap, v, FloatKind.Shortest, -1)
+    => f64_fmt(v, buf, cap, FloatKind.Shortest, -1)
 
 /// f32-собрат (владелец 2026-07-20): shortest через nova_f32_shortest — тот же
 /// движок, что печать/`to_str` f32 (НЕ f64-расширение: без double-хвостов).
-export extern "C" fn f32_fmt_into(buf *mut u8, cap int, v f32) -> int
+export extern "C" fn f32_fmt_into(v f32, buf *mut u8, cap int) -> int
 export unsafe fn f32_fmt_shortest_into(v f32, buf *mut u8, cap int) -> int
     requires cap >= 0
-    => unsafe { f32_fmt_into(buf, cap, v) }
+    => unsafe { f32_fmt_into(v, buf, cap) }
 
 /// `.nv`-side wrapper: converts `FloatKind` → the `int` `f64_fmt_into`
 /// carries across the `extern "C"` ABI boundary (D422 §5 — enums don't cross
 /// `extern "C"` directly).
-export fn fmt_f64(buf *mut u8, cap int, v f64, kind FloatKind, prec int) -> int {
+export fn f64_fmt(v f64, buf *mut u8, cap int, kind FloatKind, prec int) -> int {
     ro k = match kind {
         FloatKind.Shortest => 0,
         FloatKind.Fixed => 1,
@@ -333,7 +333,7 @@ export fn fmt_f64(buf *mut u8, cap int, v f64, kind FloatKind, prec int) -> int 
     }
     // [M-174.6-rawptr-extern-unsafe-infer] (D424 rule 1): `buf *mut u8` param
     // — inferred `unsafe fn`, call requires the wrap.
-    unsafe { f64_fmt_into(buf, cap, v, k, prec) }
+    unsafe { f64_fmt_into(v, buf, cap, k, prec) }
 }
 
 // ─── Debug-escape engine (Находка А, Plan 208 Ф.4R Ш1, owner 2026-07-20) ───
@@ -497,228 +497,6 @@ export fn char_debug_fmt(v char, buf *mut u8, cap int) -> int {
 // mix impl + tests in one file) keep the primitives private while still
 // exercising them directly.
 
-// Scratch buffer: a `Vec[u8]` sized generously for these tests, exposing a
-// raw `*mut u8` via `.ptr()` for the primitives under test. Reads back via
-// `unsafe { buf.ptr().read_at(i) }` — NOT `buf[i]` — since these primitives
-// write through the raw pointer directly, bypassing `Vec`'s own `len`
-// tracking (`buf.len()` stays `0` the whole time).
-fn scratch(cap int) -> []u8 => []u8.new(cap: cap)
-
-test "int_fmt: decimal positive/negative/zero" {
-    mut buf = scratch(24)
-    ro spec = FmtSpec.new()
-
-    ro n1 = int_fmt(42, buf.ptr(), 24, spec)
-    assert(n1 == 2)
-    unsafe {
-        assert(buf.ptr().read_at(0) == ('4' as u8))
-        assert(buf.ptr().read_at(1) == ('2' as u8))
-    }
-
-    ro n2 = int_fmt(-5, buf.ptr(), 24, spec)
-    assert(n2 == 2)
-    unsafe {
-        assert(buf.ptr().read_at(0) == ('-' as u8))
-        assert(buf.ptr().read_at(1) == ('5' as u8))
-    }
-
-    ro n3 = int_fmt(0, buf.ptr(), 24, spec)
-    assert(n3 == 1)
-    unsafe { assert(buf.ptr().read_at(0) == ('0' as u8)) }
-}
-
-test "int_fmt: zero_pad width" {
-    mut buf = scratch(24)
-    ro spec = FmtSpec { ...FmtSpec.new(), width: 4, zero_pad: true }
-
-    ro n = int_fmt(42, buf.ptr(), 24, spec)
-    assert(n == 4)
-    unsafe {
-        assert(buf.ptr().read_at(0) == ('0' as u8))
-        assert(buf.ptr().read_at(1) == ('0' as u8))
-        assert(buf.ptr().read_at(2) == ('4' as u8))
-        assert(buf.ptr().read_at(3) == ('2' as u8))
-    }
-
-    // Negative zero_pad: '0' padding goes BETWEEN the sign and the digits.
-    ro n2 = int_fmt(-7, buf.ptr(), 24, spec)
-    assert(n2 == 4)
-    unsafe {
-        assert(buf.ptr().read_at(0) == ('-' as u8))
-        assert(buf.ptr().read_at(1) == ('0' as u8))
-        assert(buf.ptr().read_at(2) == ('0' as u8))
-        assert(buf.ptr().read_at(3) == ('7' as u8))
-    }
-}
-
-test "int_fmt: hex radix (lower/upper/alt), oct, bin" {
-    mut buf = scratch(24)
-
-    ro hex_lower = FmtSpec { ...FmtSpec.new(), radix: 16 }
-    ro nh = int_fmt(255, buf.ptr(), 24, hex_lower)
-    assert(nh == 2)
-    unsafe {
-        assert(buf.ptr().read_at(0) == ('f' as u8))
-        assert(buf.ptr().read_at(1) == ('f' as u8))
-    }
-
-    ro hex_upper = FmtSpec { ...FmtSpec.new(), radix: 16, upper: true }
-    ro nhu = int_fmt(255, buf.ptr(), 24, hex_upper)
-    assert(nhu == 2)
-    unsafe {
-        assert(buf.ptr().read_at(0) == ('F' as u8))
-        assert(buf.ptr().read_at(1) == ('F' as u8))
-    }
-
-    ro hex_alt = FmtSpec { ...FmtSpec.new(), radix: 16, alt: true }
-    ro nha = int_fmt(255, buf.ptr(), 24, hex_alt)
-    assert(nha == 4)
-    unsafe {
-        assert(buf.ptr().read_at(0) == ('0' as u8))
-        assert(buf.ptr().read_at(1) == ('x' as u8))
-        assert(buf.ptr().read_at(2) == ('f' as u8))
-        assert(buf.ptr().read_at(3) == ('f' as u8))
-    }
-
-    ro oct = FmtSpec { ...FmtSpec.new(), radix: 8 }
-    ro no = int_fmt(8, buf.ptr(), 24, oct)
-    assert(no == 2)
-    unsafe {
-        assert(buf.ptr().read_at(0) == ('1' as u8))
-        assert(buf.ptr().read_at(1) == ('0' as u8))
-    }
-
-    ro bin = FmtSpec { ...FmtSpec.new(), radix: 2 }
-    ro nb = int_fmt(5, buf.ptr(), 24, bin)
-    assert(nb == 3)
-    unsafe {
-        assert(buf.ptr().read_at(0) == ('1' as u8))
-        assert(buf.ptr().read_at(1) == ('0' as u8))
-        assert(buf.ptr().read_at(2) == ('1' as u8))
-    }
-
-    // radix reinterprets negative values as the raw two's-complement bit
-    // pattern (Rust `{:x}` of -1i64 == "ff..ff") — 64-bit `int` on this
-    // platform → 16 hex digits, all 'f'.
-    ro nneg = int_fmt(-1, buf.ptr(), 24, hex_lower)
-    assert(nneg == 16)
-    unsafe {
-        mut i = 0
-        while i < 16 {
-            assert(buf.ptr().read_at(i) == ('f' as u8))
-            i = i + 1
-        }
-    }
-}
-
-test "int_fmt: cap truncation never overruns" {
-    // cap smaller than the rendered length — must not panic/overrun, and
-    // must report the truncated length actually written.
-    mut buf = scratch(4)
-    ro spec = FmtSpec { ...FmtSpec.new(), width: 8, zero_pad: true }
-    ro n = int_fmt(42, buf.ptr(), 2, spec)
-    assert(n == 2)
-}
-
-test "bool_fmt: true/false" {
-    mut buf = scratch(8)
-    ro nt = bool_fmt(true, buf.ptr(), 8)
-    assert(nt == 4)
-    unsafe {
-        assert(buf.ptr().read_at(0) == ('t' as u8))
-        assert(buf.ptr().read_at(1) == ('r' as u8))
-        assert(buf.ptr().read_at(2) == ('u' as u8))
-        assert(buf.ptr().read_at(3) == ('e' as u8))
-    }
-
-    ro nf = bool_fmt(false, buf.ptr(), 8)
-    assert(nf == 5)
-    unsafe {
-        assert(buf.ptr().read_at(0) == ('f' as u8))
-        assert(buf.ptr().read_at(1) == ('a' as u8))
-        assert(buf.ptr().read_at(2) == ('l' as u8))
-        assert(buf.ptr().read_at(3) == ('s' as u8))
-        assert(buf.ptr().read_at(4) == ('e' as u8))
-    }
-}
-
-test "char_fmt: 1/2/3/4-byte UTF-8 encodings" {
-    mut buf = scratch(8)
-
-    ro n1 = char_fmt('A', buf.ptr(), 8)
-    assert(n1 == 1)
-    unsafe { assert(buf.ptr().read_at(0) == ('A' as u8)) }
-
-    ro n2 = char_fmt('\u{E9}', buf.ptr(), 8)   // 'é'
-    assert(n2 == 2)
-    unsafe {
-        assert(buf.ptr().read_at(0) == 0xC3 as u8)
-        assert(buf.ptr().read_at(1) == 0xA9 as u8)
-    }
-
-    ro n3 = char_fmt('\u{4E2D}', buf.ptr(), 8)  // '中'
-    assert(n3 == 3)
-    unsafe {
-        assert(buf.ptr().read_at(0) == 0xE4 as u8)
-        assert(buf.ptr().read_at(1) == 0xB8 as u8)
-        assert(buf.ptr().read_at(2) == 0xAD as u8)
-    }
-
-    ro n4 = char_fmt('\u{1F600}', buf.ptr(), 8)  // grinning face emoji
-    assert(n4 == 4)
-    unsafe {
-        assert(buf.ptr().read_at(0) == 0xF0 as u8)
-        assert(buf.ptr().read_at(1) == 0x9F as u8)
-        assert(buf.ptr().read_at(2) == 0x98 as u8)
-        assert(buf.ptr().read_at(3) == 0x80 as u8)
-    }
-}
-
-test "f64_fmt_into: Shortest/Fixed/Sci kinds" {
-    mut buf = scratch(64)
-
-    // kind 1 = Fixed
-    // [M-174.6-rawptr-extern-unsafe-infer] (D424 rule 1): inferred `unsafe fn`.
-    ro nf = unsafe { f64_fmt_into(buf.ptr(), 64, 3.14159, 1, 2) }
-    assert(nf == 4)
-    unsafe {
-        assert(buf.ptr().read_at(0) == ('3' as u8))
-        assert(buf.ptr().read_at(1) == ('.' as u8))
-        assert(buf.ptr().read_at(2) == ('1' as u8))
-        assert(buf.ptr().read_at(3) == ('4' as u8))
-    }
-
-    // kind 0 = Shortest (round-trip minimal) — same engine as println(float).
-    ro ns = unsafe { f64_fmt_into(buf.ptr(), 64, 2.5, 0, 0) }
-    assert(ns == 3)
-    unsafe {
-        assert(buf.ptr().read_at(0) == ('2' as u8))
-        assert(buf.ptr().read_at(1) == ('.' as u8))
-        assert(buf.ptr().read_at(2) == ('5' as u8))
-    }
-
-    // kind 2 = Sci
-    ro ne = unsafe { f64_fmt_into(buf.ptr(), 64, 1234.5, 2, 1) }
-    assert(ne > 0)
-    unsafe { assert(buf.ptr().read_at(1) == ('.' as u8)) }
-}
-
-test "fmt_f64: FloatKind enum wrapper matches f64_fmt_into" {
-    mut buf = scratch(64)
-    ro n = fmt_f64(buf.ptr(), 64, 3.14159, FloatKind.Fixed, 2)
-    assert(n == 4)
-    unsafe {
-        assert(buf.ptr().read_at(0) == ('3' as u8))
-        assert(buf.ptr().read_at(2) == ('1' as u8))
-        assert(buf.ptr().read_at(3) == ('4' as u8))
-    }
-
-    ro n2 = fmt_f64(buf.ptr(), 64, 2.5, FloatKind.Shortest, 0)
-    assert(n2 == 3)
-}
-
-// ─── Debug-escape engine tests (Plan 208 Ф.4R Ш1 gate) ───
-
 test "str_debug_fmt: quotes, escapes (\\n \\t \\r \\0 \" \\\\), control \\xHH, passthrough" {
     mut buf = scratch(64)
     ro n = str_debug_fmt("a\nb\tc\rd\\e\"f", buf.ptr(), 64)
@@ -780,64 +558,3 @@ test "char_debug_fmt: quote/backslash/control/passthrough" {
 // Cross-checked directly against the Ш0 baseline fixtures
 // (spec_tests/conformance/d422_f4r_baseline_*.nv) — same expected literals.
 
-test "int_display_spec: decimal + radix, zero_pad, width/align/fill" {
-    mut sb1 = StringBuilder.new()
-    int_display_spec(sb1, -1, 0, 16, false, false, false, false, Align.Right, ' ')
-    assert(sb1.into_str() == "ffffffffffffffff")
-
-    mut sb2 = StringBuilder.new()
-    int_display_spec(sb2, 255, 8, 16, false, true, false, false, Align.Right, ' ')
-    assert(sb2.into_str() == "000000ff")
-
-    mut sb3 = StringBuilder.new()
-    int_display_spec(sb3, 42, 6, 10, false, false, false, false, Align.Center, '*')
-    assert(sb3.into_str() == "**42**")
-
-    mut sb4 = StringBuilder.new()
-    int_display_spec(sb4, 255, 10, 16, false, true, false, true, Align.Right, ' ')
-    assert(sb4.into_str() == "0x000000ff")
-}
-
-test "f64_display_spec: precision+width, -0.0 double-sign quirk, no-precision shortest" {
-    mut sb1 = StringBuilder.new()
-    f64_display_spec(sb1, -12.345, 10, true, 2, false, Align.Right, '0')
-    assert(sb1.into_str() == "-000012.35")
-
-    mut sb2 = StringBuilder.new()
-    f64_display_spec(sb2, -0.0, 0, true, 2, false, Align.Right, ' ')
-    assert(sb2.into_str() == "--0.00")   // pinned quirk — see Ш0 baseline
-
-    mut sb3 = StringBuilder.new()
-    f64_display_spec(sb3, 1.0e20, 0, false, 0, false, Align.Right, ' ')
-    assert(sb3.into_str() == "1e+20")
-
-    mut sb4 = StringBuilder.new()
-    f64_display_spec(sb4, -0.0, 0, false, 0, false, Align.Right, ' ')
-    assert(sb4.into_str() == "-0")   // no double-sign in the no-precision branch
-
-    mut sb5 = StringBuilder.new()
-    f64_display_spec(sb5, 1.5, 0, true, 65, false, Align.Right, ' ')
-    assert(sb5.into_str() == "1.5000000000000000000000000000000000000000000000000000000000000000")
-}
-
-test "str/char/bool display_spec: identity, Debug-escape, precision truncation" {
-    mut sb1 = StringBuilder.new()
-    str_display_spec(sb1, "hello world", 0, true, 5, Align.Left, ' ')
-    assert(sb1.into_str() == "hello")
-
-    mut sb2 = StringBuilder.new()
-    str_debug_display_spec(sb2, "hello", 0, false, 0, Align.Left, ' ')
-    assert(sb2.into_str() == "\"hello\"")
-
-    mut sb3 = StringBuilder.new()
-    char_display_spec(sb3, 'x', 0, Align.Left, ' ')
-    assert(sb3.into_str() == "x")
-
-    mut sb4 = StringBuilder.new()
-    char_debug_display_spec(sb4, '\n', 0, Align.Left, ' ')
-    assert(sb4.into_str() == "'\\n'")
-
-    mut sb5 = StringBuilder.new()
-    bool_display_spec(sb5, true, 0, Align.Left, ' ')
-    assert(sb5.into_str() == "true")
-}

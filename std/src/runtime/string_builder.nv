@@ -39,7 +39,7 @@ module runtime.string_builder
 // having nothing to do with either import) — a genuine compiler defect in
 // cyclic-import resolution, not something to route around. This file's
 // pre-existing one-way dependency avoids the whole class of bug.
-import std.runtime.fmt_buf.{Align, FloatKind, FmtSpec, int_fmt_into, f64_fmt_shortest_into, f32_fmt_shortest_into, int_fmt, fmt_f64, bool_fmt, char_fmt, f32_fmt_into, str_debug_fmt, char_debug_fmt}
+import std.runtime.fmt_buf.{Align, FloatKind, FmtSpec, int_fmt_into, f64_fmt_shortest_into, f32_fmt_shortest_into, int_fmt, f64_fmt, bool_fmt, char_fmt, f32_fmt_into, str_debug_fmt, char_debug_fmt}
 import std.runtime.raw_mem.{RawMem}
 import std.prelude.core.{Result}
 import std.runtime.string.{Utf8Error}
@@ -540,7 +540,7 @@ export fn f64_display_spec(mut sb StringBuilder, v f64, width int, has_prec bool
         // own internal 340 clamp).
         ro clamped_prec = prec.max(0).min(64)
         sb.reserve(DISPLAY_F64_FIXED_CAP)
-        unsafe { sb.advance(fmt_f64(sb.spare(), DISPLAY_F64_FIXED_CAP, mag, FloatKind.Fixed, clamped_prec)) }
+        unsafe { sb.advance(f64_fmt(mag, sb.spare(), DISPLAY_F64_FIXED_CAP, FloatKind.Fixed, clamped_prec)) }
     } else {
         // No-precision (shortest round-trip) path — the body ALREADY
         // carries its own sign (`fmt_f64` Shortest on the RAW value);
@@ -551,7 +551,7 @@ export fn f64_display_spec(mut sb StringBuilder, v f64, width int, has_prec bool
         // on `-0.0` in THIS branch).
         if sign_plus && v >= 0.0 { sb.append("+"); prefix_len = 1 }
         sb.reserve(DISPLAY_F64_SHORTEST_CAP)
-        unsafe { sb.advance(fmt_f64(sb.spare(), DISPLAY_F64_SHORTEST_CAP, v, FloatKind.Shortest, -1)) }
+        unsafe { sb.advance(f64_fmt(v, sb.spare(), DISPLAY_F64_SHORTEST_CAP, FloatKind.Shortest, -1)) }
     }
     if zero_pad {
         ro zp_width = (width - prefix_len).max(0)
@@ -570,7 +570,7 @@ export fn f64_display_spec(mut sb StringBuilder, v f64, width int, has_prec bool
 export fn f32_display_spec(mut sb StringBuilder, v f32, width int, align Align, fill char) -> () {
     ro mark = sb.byte_len()
     sb.reserve(DISPLAY_F32_CAP)
-    unsafe { sb.advance(f32_fmt_into(sb.spare(), DISPLAY_F32_CAP, v)) }
+    unsafe { sb.advance(f32_fmt_into(v, sb.spare(), DISPLAY_F32_CAP)) }
     sb.pad_in_place(mark, width, fill, align)
 }
 

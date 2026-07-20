@@ -427,7 +427,7 @@ static inline int nova_f32_shortest(nova_f32 v, char* buf) {
  * number of bytes actually written. `tmp[400]` covers the worst case: a
  * `%.*f` render of `DBL_MAX` (~309 integer digits) at the widest clamped
  * precision (40) plus sign/decimal-point — comfortably under 400. */
-static inline nova_int f64_fmt_into(uint8_t* buf, nova_int cap, double v, nova_int kind, nova_int prec) {
+static inline nova_int f64_fmt_into(double v, uint8_t* buf, nova_int cap, nova_int kind, nova_int prec) {
     char tmp[400];
     int n;
     if (kind == 1) {
@@ -451,7 +451,7 @@ static inline nova_int f64_fmt_into(uint8_t* buf, nova_int cap, double v, nova_i
  * str-аллокации): shortest-only — оси Fixed/Sci для f32 не нужны (D422:
  * пользовательский spec-путь идёт через f64-ось). Тот же
  * defensive-truncate контракт. Разрешается D282 literal-name extern'ом. */
-static inline nova_int f32_fmt_into(uint8_t* buf, nova_int cap, nova_f32 v) {
+static inline nova_int f32_fmt_into(nova_f32 v, uint8_t* buf, nova_int cap) {
     char tmp[64];
     int n = nova_f32_shortest(v, tmp);
     if (n < 0) n = 0;
