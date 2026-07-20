@@ -26,6 +26,29 @@ Nova генерит C и зовёт полноценный Clang/GCC/MSVC даж
    должен компилироваться TCC байт-корректно (те же семантики). Риск: TCC-специфичные баги
    на сложном generated C (atomics, coro, GC-hooks nova_rt). Обязателен полный conformance
    под TCC-бэкендом.
+
+### 2.1. ★ TCC = ПОРТ РАНТАЙМ-БИЛТИНОВ, не toolchain-флаг (уточнение 2026-07-20)
+
+TCC НЕ поддерживает целый ряд `__builtin_*`/`__atomic_*`, на которых стоит generated C и
+рантайм. Это делает 220 **осознанным портом** (`__TINYC__`-гейт + compat-реализации), а не
+добавлением `--toolchain tcc`. Конкретные блокеры (ревизия ОБЯЗАТЕЛЬНА перед оценкой):
+
+- **Overflow-семейство** — `__builtin_add/sub/mul_overflow` (checked/overflowing/saturating/
+  wrapping арифметика, D423-trap-политика; свежий numeric-parity добор — `@pow` через
+  `@overflowing_mul`). TCC их НЕ имеет → `__TINYC__`-гейт + ручная compat-реализация overflow-
+  детекции (тот же compat-подход, что уже применяется где-то в codegen).
+- **`__atomic_*`** — **Chase-Lev work-stealing deque** M:N-планировщика (`nova_sched.h`/
+  `runtime.c`), ACQUIRE/RELEASE/CAS по всей конвенции [[mn-coding-conventions]]. TCC-поддержка
+  атомиков ЧАСТИЧНАЯ → это самый рискованный блокер (некорректный атомик = гонка в scheduler).
+- **`__builtin_expect`** — branch-hint (hot/cold пути). TCC игнорирует/частично — не критично
+  для корректности (только пессимизация), но ревизия нужна.
+- **TLS (thread-local)** — active-scope/slot TLS воркеров (work-conserving pump §12 конвенции),
+  fail-frame. TCC-поддержка TLS частичная/платформо-зависимая.
+
+**Вывод:** прежде чем оценивать выигрыш TCC — провести аудит ВСЕХ `__builtin_*`/`__atomic_*`/
+TLS в generated C + `nova_rt/**`, составить список требующих `__TINYC__`-compat. Возможно
+блокеров столько (особенно atomics в scheduler), что порт дороже выигрыша — тогда 220
+закрывается как «не окупается» ИЛИ ограничивается однопоточным dev-режимом (без M:N-atomics).
 2. **Только dev.** TCC — dev-режим (быстрый, худший кодоген); release остаётся Clang/GCC/MSVC.
    Никогда не для release/бенчей.
 3. **Интеграция toolchain.** Добавить `--toolchain tcc` (сейчас clang/gcc/msvc). Линковка с
@@ -36,6 +59,9 @@ Nova генерит C и зовёт полноценный Clang/GCC/MSVC даж
 
 ## 3. Фазы (эскиз — детализируется ПОСЛЕ 218)
 
+- **Ф.0 (ГЕЙТ окупаемости)** Аудит ВСЕХ `__builtin_*`/`__atomic_*`/TLS в generated C +
+  `nova_rt/**` (§2.1) → список требующих `__TINYC__`-compat. РЕШЕНИЕ: порт окупается ИЛИ
+  закрыть 220 / ограничить однопоточным dev. Без этого гейта дальше НЕ идти.
 - **Ф.1** (разведка) TCC-сборка минимального generated app.c + `libnova_rt.a` (218) — корректность
   на простом коде; замер vs Clang.
 - **Ф.2** `--toolchain tcc` в build-пайплайн; линковка с предсобранным рантаймом.
