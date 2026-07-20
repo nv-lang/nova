@@ -3254,16 +3254,24 @@ struct TypeCheckCtx<'a> {
     /// E_UNKNOWN_TYPE-гейт (RecordLit variant-ctor) обязан видеть variant-имя
     /// вне зависимости от того, чья одноимённая сумма победила слот в `types`.
     sum_variant_names: HashSet<String>,
-    /// [M-198-f4c-1-privfile-type-not-discriminated]: lossless per-file overlay
-    /// for `priv(file) type` declarations — same collision class as
-    /// `sum_variant_names` above (`types` last-write-wins on name), но для
-    /// TYPE SHAPE resolution. D307 already file-discriminates fn/method
-    /// symbols (`sig.fn_decls: Vec<&FnDecl>` + caller-file filter в
-    /// `f1_check_call`, fix 2d5f64e91) — types had no analogous multi-candidate
-    /// registry, so two peer files declaring their OWN `priv(file) type Rect`
-    /// (different shapes) collapsed onto ONE slot in `types`; whichever file's
-    /// decl was inserted LAST won for BOTH files' field-access checks. Keyed
-    /// by declaring file_id → name → decl; empty for every non-colliding name
+    /// [M-198-f4c-1-privfile-type-not-discriminated] (originally `priv(file)
+    /// type`-only) + [M-fmt-write-protocol-collision-cycle-adjacent] (2026-07-21,
+    /// broadened to EVERY type decl): lossless per-file overlay — same
+    /// collision class as `sum_variant_names` above (`types` last-write-wins
+    /// on bare name), но для TYPE SHAPE / protocol-identity resolution. D307
+    /// already file-discriminates fn/method symbols (`sig.fn_decls:
+    /// Vec<&FnDecl>` + caller-file filter в `f1_check_call`, fix 2d5f64e91) —
+    /// types had no analogous multi-candidate registry, so two DIFFERENT
+    /// modules declaring their OWN same-named `export type` (e.g. `std.io.
+    /// Write` — `flush()`-bearing — vs `std.prelude.protocols.Write` — bare
+    /// `@write` — a REAL production collision, not merely `priv(file)`)
+    /// collapsed onto ONE slot in `types`; whichever decl the transitive-
+    /// import merge order happened to insert LAST won CU-wide, for every
+    /// reference regardless of which module's `Write` it actually meant — an
+    /// import cycle in an unrelated part of the graph can flip that order
+    /// with zero change at either `Write` declaration (see `docs/plans/wip/
+    /// write-collision-notes.md`, `protocol_mismatch_found`'s fix). Keyed by
+    /// declaring file_id → name → decl; empty for every non-colliding name
     /// (the common case) — byte-parity preserved for callers that don't
     /// consult it. Read via `types_get_for_file`.
     file_local_types: HashMap<crate::diag::FileId, HashMap<String, &'a TypeDecl>>,
@@ -3635,17 +3643,34 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 Item::Type(td) => {
                     types.insert(td.name.clone(), td);
-                    // [M-198-f4c-1-privfile-type-not-discriminated]: record EVERY
-                    // `priv(file) type` decl под своим file_id — `types.insert`
-                    // above just overwrote a same-name peer-file collision (if
-                    // any), losing it for any file-oblivious reader; this
-                    // side-table keeps it recoverable by declaring file.
-                    if td.file_private {
-                        file_local_types
-                            .entry(td.span.file_id)
-                            .or_default()
-                            .insert(td.name.clone(), td);
-                    }
+                    // [M-198-f4c-1-privfile-type-not-discriminated] (was priv(file)-
+                    // only) + [M-fmt-write-protocol-collision-cycle-adjacent]
+                    // (2026-07-21, generalized): record EVERY type decl под своим
+                    // file_id — `types.insert` above just overwrote a same-name
+                    // cross-module collision (if any: e.g. TWO DIFFERENT protocols
+                    // both named `Write` — `std.io.Write` (`flush()`-bearing) vs
+                    // `std.prelude.protocols.Write` (bare `@write`) — whichever
+                    // lands LAST in the merged transitive-import order wins the
+                    // ONE slot in `types`, an order that a merely-ADJACENT
+                    // inter-module import cycle elsewhere in the graph can flip
+                    // with zero change at either Write declaration; empirically
+                    // confirmed via instrumented trace, `docs/plans/wip/
+                    // write-collision-notes.md`). This per-file overlay keeps
+                    // EVERY same-named decl recoverable by its OWN declaring file
+                    // — was gated to `td.file_private` only (the narrower
+                    // priv(file) case D307 already needed); broadened to ALL types
+                    // so `types_get_for_file` (below) can also disambiguate a
+                    // PLAIN `export type` collision using the REFERENCING type
+                    // annotation's own file_id (the file declaring `sink Write` —
+                    // e.g. `protocols.nv` itself — always has ITS OWN `Write` in
+                    // this per-file map, independent of merge order). Cheap: one
+                    // extra HashMap entry per type per declaring file, no new
+                    // collision class (a file cannot declare the same type name
+                    // twice).
+                    file_local_types
+                        .entry(td.span.file_id)
+                        .or_default()
+                        .insert(td.name.clone(), td);
                     if let TypeDeclKind::Sum(vs) = &td.kind {
                         for v in vs {
                             sum_variant_names.insert(v.name.clone());
@@ -14494,11 +14519,16 @@ impl<'a> TypeCheckCtx<'a> {
             };
         }
         enum Req<'x> {
-            Named(String),
+            // [M-fmt-write-protocol-collision-cycle-adjacent]: carries the
+            // REFERRING TypeRef's own `span.file_id` alongside the bare name —
+            // `protocol_missing_methods` below needs it to re-resolve the SAME
+            // (not a same-named collision from a different module) protocol
+            // decl when walking `use`-embeds / missing-method lists.
+            Named(String, crate::diag::FileId),
             Anon(&'x [EffectMethod]),
         }
         let req = match peeled {
-            TypeRef::Named { path, .. } => {
+            TypeRef::Named { path, span, .. } => {
                 let name = path.last()?;
                 // A generic type-param of the ENCLOSING position — `resolved_cat_of_depth`
                 // checks this FIRST too (before ever consulting `self.types`), so a name
@@ -14507,11 +14537,24 @@ impl<'a> TypeCheckCtx<'a> {
                 if exp_gs.contains(name) {
                     return None;
                 }
-                let td = self.types.get(name)?;
+                // [M-fmt-write-protocol-collision-cycle-adjacent] (2026-07-21):
+                // `self.types.get(name)` alone is the CU-wide last-write-wins slot
+                // (see `file_local_types`'s doc) — TWO different modules declaring
+                // their own same-named `export type X protocol` (e.g. `std.io.Write`
+                // vs `std.prelude.protocols.Write`) collapse onto ONE winner there,
+                // decided by transitive-import merge order (an import cycle
+                // elsewhere in the graph can flip it with zero change at either
+                // declaration). `types_get_for_file` disambiguates using THIS
+                // TypeRef's OWN declaring file (`span.file_id` — the file that
+                // actually WROTE `sink Write`, e.g. `protocols.nv` itself, which
+                // always has its OWN `Write` in the per-file overlay) before
+                // falling back to the CU-wide slot for the (common) non-colliding
+                // case — order-independent, no fmt_buf-specific branch.
+                let td = self.types_get_for_file(name, span.file_id)?;
                 if !matches!(td.kind, TypeDeclKind::Protocol { .. }) {
                     return None; // effect/type-set/opaque/etc. — different Any-source, untouched
                 }
-                Req::Named(name.clone())
+                Req::Named(name.clone(), span.file_id)
             }
             TypeRef::Protocol { methods, .. } => Req::Anon(methods),
             _ => return None, // Any/never/Self, func, tuple, unresolved name, generic-param, ...
@@ -14562,9 +14605,9 @@ impl<'a> TypeCheckCtx<'a> {
             return None;
         }
         let missing = match &req {
-            Req::Named(proto_name) => {
+            Req::Named(proto_name, use_file_id) => {
                 let mut seen: HashSet<String> = HashSet::new();
-                self.protocol_missing_methods(&concrete_name, proto_name, &mut seen)
+                self.protocol_missing_methods(&concrete_name, proto_name, *use_file_id, &mut seen)
             }
             Req::Anon(methods) => self.protocol_required_missing(&concrete_name, methods),
         };
@@ -14572,7 +14615,7 @@ impl<'a> TypeCheckCtx<'a> {
             return None;
         }
         let proto_display = match &req {
-            Req::Named(n) => n.clone(),
+            Req::Named(n, _) => n.clone(),
             Req::Anon(_) => "<anonymous protocol>".to_string(),
         };
         Some(format!(
@@ -14617,18 +14660,40 @@ impl<'a> TypeCheckCtx<'a> {
         &self,
         type_name: &str,
         proto_name: &str,
+        // [M-fmt-write-protocol-collision-cycle-adjacent] (2026-07-21): the
+        // declaring file_id of the REFERENCING TypeRef (threaded from
+        // `protocol_mismatch_found`'s `Req::Named` for the TOP-level call;
+        // from THIS fn's own resolved `td.span.file_id` for the recursive
+        // embed calls below) — resolves `proto_name` via `types_get_for_file`
+        // instead of the CU-wide last-write-wins `self.types`, so a
+        // same-named protocol collision from an unrelated module (e.g.
+        // `std.io.Write` vs `std.prelude.protocols.Write`) cannot substitute
+        // the WRONG decl's method list here.
+        use_file_id: crate::diag::FileId,
         seen: &mut HashSet<String>,
     ) -> Vec<String> {
         if !seen.insert(proto_name.to_string()) {
             return Vec::new();
         }
-        let Some(td) = self.types.get(proto_name) else { return Vec::new(); };
+        let Some(td) = self.types_get_for_file(proto_name, use_file_id) else { return Vec::new(); };
         let TypeDeclKind::Protocol { methods, embeds } = &td.kind else { return Vec::new(); };
         let mut missing = self.protocol_required_missing(type_name, methods);
+        // An embed clause (`use Write` inside `Fmt`) is textually written
+        // INSIDE `Fmt`'s own declaring file — NOT necessarily the file of
+        // whatever call site originally referenced `Fmt` by name (e.g. a
+        // `fn D374Pair @display(mut f Fmt)` signature written in a THIRD
+        // file that neither declares `Fmt` nor `Write` itself). Re-anchor to
+        // `td.span.file_id` (this protocol's OWN file) before recursing, so
+        // the embed name resolves relative to where it's actually written,
+        // not relative to the top-level caller's file (which may have no
+        // local override for the embed name at all, silently falling back to
+        // the very CU-wide collision slot this fix exists to avoid).
         for e in embeds {
             if let TypeRef::Named { path, .. } = e {
                 if let Some(emb_name) = path.last() {
-                    missing.extend(self.protocol_missing_methods(type_name, emb_name, seen));
+                    missing.extend(
+                        self.protocol_missing_methods(type_name, emb_name, td.span.file_id, seen),
+                    );
                 }
             }
         }
