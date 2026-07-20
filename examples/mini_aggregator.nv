@@ -15,21 +15,20 @@ module nova_examples.mini_aggregator
 
 import std.time.duration
 
+const BUDGET_MS int = 120   // общий бюджет на ВЕСЬ забег, мс
+
 // Один «источник»: ждёт свою задержку (симуляция сети) и рапортует в канал.
-// Бюджет 120 мс; все источники стартуют одновременно (parallel for ниже),
-// так что per-lane `timeout:` здесь ≈ общий бюджет забега (во флагмане —
-// строже: ОДНА абсолютная точка `deadline: t0 + budget`, D408; здесь
-// `timeout:` вместо `deadline: t0 + d` — обход
-// [M-vr-binop-wrapper-decl-order-standalone-cu]). Опоздавший спавн честно
+// Дедлайн — ОДНА абсолютная точка (t0 + бюджет) на всех, канон D408: джиттер
+// старта ланов не размывает общий бюджет. Опоздавший спавн честно
 // ОБРЫВАЕТСЯ (его Time.sleep прерывается), канал остаётся пуст, исход —
-// "cancelled". Имя fn — `probe` (было `ask_source`): пин закрытого
-// [M-parfor-capture-callee-name-collides-std-local] — коллизия имени с
-// std-локалом больше не роняет capture-анализ spawn-ctx.
-fn probe(latency_ms int) Time -> str {
+// "cancelled". Файл заодно пинует три закрытых codegen-фикса standalone-CU:
+// имя fn `probe` (коллизия с std-локалом, capture-по-резолву), `t0 + Duration`
+// (DCE-seed vr-binop) и `BUDGET_MS.to_millis()` (const-ресивер, P67-семья).
+fn probe(latency_ms int, deadline Monotonic) Time -> str {
     ro { tx, rx } = Channel.new(1)
     mut timed_out = false
     with Fail[TimeoutError] = |_e| { timed_out = true } {
-        supervised(timeout: 120.to_millis()) {   // 120 мс = бюджет
+        supervised(deadline: deadline) {
             spawn {
                 Time.sleep(latency_ms)
                 ro _ = tx.try_send(true)
@@ -47,9 +46,9 @@ fn probe(latency_ms int) Time -> str {
 }
 
 // Fan-out: все источники стартуют ОДНОВРЕМЕННО, результат собирается в []str.
-fn fan_out(latencies []int) Time -> []str {
+fn fan_out(latencies []int, deadline Monotonic) Time -> []str {
     ro outcomes = parallel for i int in 0..latencies.len() {
-        probe(latencies[i])
+        probe(latencies[i], deadline)
     }
     outcomes
 }
@@ -57,7 +56,8 @@ fn fan_out(latencies []int) Time -> []str {
 fn main() Time {
     ro latencies []int = [20, 40, 60, 80, 300, 800]   // мс; последние два не успеют
     ro t0 Monotonic = Monotonic.now()
-    ro outcomes = fan_out(latencies)
+    ro deadline Monotonic = t0 + BUDGET_MS.to_millis()   // одна точка на всех (D408)
+    ro outcomes = fan_out(latencies, deadline)
     mut done = 0
     mut cancelled = 0
     for i int in 0..outcomes.len() {
