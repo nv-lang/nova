@@ -1104,12 +1104,28 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
             // Without seeding them the reachability closure prunes
             // `str.concat`/`str.eq`/`T.compare`… and codegen calls an undeclared
             // C function (implicit-int return → type-mismatch / link error).
-            // Seed all conservatively. (Harmless over-approx for the
-            // unused-import lint — these are method selectors.)
+            //
+            // [M-vr-binop-wrapper-decl-order-standalone-cu] (root-cause
+            // correction, was misdiagnosed as decl-order): the SAME desugar
+            // hazard applies to value-record ARITHMETIC (`+`/`-`/`*`/`/`/`%`
+            // on `Monotonic`/`Duration`/… — Plan 175 Ф.1b/Ф.3, emit_c.rs
+            // ~29716-29738) → `Nova_T_method_plus`/`_minus`/`_times`/`_div`/
+            // `_rem`, called through an unconditionally-emitted
+            // `nova_vr_binop_*` wrapper. Without a literal `.plus(...)` call
+            // in the CU, the reachability closure (type∧name intersection)
+            // never marks the method live, DCE drops its decl+body, and the
+            // wrapper calls an undeclared C function → CC-FAIL. Seed all
+            // conservatively. (Harmless over-approx for the unused-import
+            // lint — these are method selectors.)
             out.insert("equal".to_string());
             out.insert("eq".to_string());
             out.insert("compare".to_string());
             out.insert("concat".to_string());
+            out.insert("plus".to_string());
+            out.insert("minus".to_string());
+            out.insert("times".to_string());
+            out.insert("div".to_string());
+            out.insert("rem".to_string());
         }
         ExprKind::Unary { operand, .. } => collect_expr(operand, out),
         ExprKind::Try(i) | ExprKind::Bang(i) | ExprKind::RefArg(i) => collect_expr(i, out),

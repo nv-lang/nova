@@ -1,0 +1,33 @@
+// [M-vr-binop-wrapper-decl-order-standalone-cu] regression pin (root-cause
+// corrected: DCE-seed, not decl-order — see docs/plans/backlog-followups.md).
+//
+// Value-record ARITHMETIC operators (@plus/@minus/@times/@div/@rem, Plan 175
+// Ф.1b/Ф.3) desugar to a `nova_vr_binop_*` wrapper (emit_c.rs ~29716-29738)
+// that unconditionally calls `Nova_<T>_method_plus`/`_minus`/`_times`/`_div`.
+// Before this fix, `collect_expr`'s DCE-seed list (lints.rs, reachability-DCE
+// soundness, Plan 159 Ф.1) seeded `equal`/`compare`/`concat` for the
+// IDENTICAL wrapper hazard but NOT the arithmetic selectors. In a
+// STANDALONE executable CU (`fn main` present → reachability-DCE active)
+// with no literal `.plus(...)`/`.times(...)` call anywhere, the type∧name
+// reachability closure never marked the arithmetic methods live → DCE
+// dropped decl+body → the wrapper called an undeclared C function →
+// CC-FAIL (implicit-int return / "incompatible result type"). Root-caused
+// on examples/mini_aggregator.nv (`t0 + 120.to_millis()`).
+// EXPECT_STDOUT VR_BINOP_ARITH_DCE_OK
+
+module standalone.vr_binop_arith_dce
+
+import std.time.duration
+
+fn main() Io -> () {
+    ro t0 Monotonic = Monotonic.now()
+    ro t1 Monotonic = t0 + 120.to_millis()    // Monotonic @plus(Duration)
+    ro back Monotonic = t1 - 120.to_millis()  // Monotonic @minus(Duration)
+    ro scaled = 120.to_millis() * 3           // Duration @times(i64)
+    ro shrunk = scaled / 3                    // Duration @div(i64)
+    if back.elapsed_since(t0).is_zero() && shrunk == 120.to_millis() {
+        println("VR_BINOP_ARITH_DCE_OK")
+    } else {
+        println("UNEXPECTED")
+    }
+}
