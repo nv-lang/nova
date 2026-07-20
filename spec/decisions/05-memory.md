@@ -934,6 +934,22 @@ Rule 2 `E_VIEW_BINDING_FORBIDDEN` (см. её амендмент ниже), doub
 остаётся legal view-default биндингом (пример: `Option[int]`), без
 `consume`-keyword'а и без предупреждения.
 
+**Amendment (Plan 216 tails, 2026-07-21) — Err-пейлоад + nested-tuple
+payload.** Правило выше распространяется на Err-ветку и tuple-payload
+симметрично (закрывает 2 из 3 bootstrap-honest-defer пунктов — см.
+«Область» ниже):
+- **Err-пейлоад.** `Err(x)` над `Result[T,E]`, где `E` (Err-инвариант) —
+  must-consume тип, требует `consume`-sub-pattern (`Err(consume e)`) ТЕМ
+  ЖЕ правилом, что Ok/Some для `T` — независимая ось (`T` и `E` могут быть
+  обе, одна, или ни одна must-consume; правило проверяется на КАЖДОЙ
+  match-arm независимо). `Option[T]` не участвует (нет Err-варианта).
+- **Nested-tuple payload.** `Ok((a, b))` / `Some((a, b))` / `Err((a, b))` —
+  single-arg tuple-variant, sub-pattern сам `(a, b)` (tuple-pattern) —
+  КОГДА Ok/Some/Err-инвариант САМ tuple-тип `(A, B, …)`: каждый элемент
+  проверяется НЕЗАВИСИМО тем же правилом (`A` must-consume без `consume`
+  на `a` → ошибка; `B` не-must-consume → `b` legal plain). Record-payload
+  (`Ok({ a, b })`) этим amendment'ом НЕ покрыт (см. «Область»).
+
 **Синтаксис.** `consume` — новый sub-pattern qualifier на `Pattern::Ident`,
 симметричный существующему `mut` (D36/Plan 108.3): взаимоисключающи на
 одном биндинге (`consume mut x` / `mut consume x` — parse error
@@ -948,28 +964,54 @@ tuple-variant (`Ok(consume x)`); это ОРТОГОНАЛЬНО top-level `cons
 
 | Код | Когда | Suggestion (machine-applicable) |
 |---|---|---|
-| `E_CONSUME_PATTERN_REQUIRED` | `Ok(x)`/`Some(x)` payload — must-consume тип, sub-pattern без `consume` | Insert `consume ` перед именем биндинга |
+| `E_CONSUME_PATTERN_REQUIRED` | `Ok(x)`/`Some(x)`/`Err(x)` payload (или per-element внутри `Ok((a,b))`/`Some((a,b))`/`Err((a,b))` tuple-payload, Plan 216 tails) — must-consume тип, sub-pattern без `consume` | Insert `consume ` перед именем биндинга |
 
 Format Plan 50 D102 (header + code + span + note + suggestion), см.
 [D102](03-syntax.md#d102-именованные-аргументы-и-значения-параметров-по-умолчанию).
 
 **Область (bootstrap, honest defer).**
-- Только `Ok(..)`/`Some(..)` (успех-ветка) — Err-пейлоад (`Result[T,E]`,
-  `E` тоже must-consume) НЕ покрыт: сегодня нет unwrapped-E-type карты
-  (компаньон `unwrapped_method_return_types` хранит только Ok/Some-inner,
-  D86-followup). → followup `[M-73.2-err-payload-consume]`.
+- ~~Только `Ok(..)`/`Some(..)` (успех-ветка) — Err-пейлоад НЕ покрыт~~ —
+  **ЗАКРЫТО Plan 216 tails (2026-07-21).** `Err(x)` (`Result[T,E]`, `E`
+  тоже must-consume — второй generic-аргумент) теперь симметричен Ok/Some:
+  обязан нести `consume`-sub-pattern (`Err(consume e)`), та же
+  `E_CONSUME_PATTERN_REQUIRED`-диагностика (текст `из \`Err(..)\`` вместо
+  `Ok(..)`/`Some(..)`). Новые companion-карты `unwrapped_*_return_err_types`
+  (`ConsumeRegistry`) / `var_unwrapped_err_types` (`ConsumeCtx`) +
+  `infer_unwrapped_call_err_type` / `scrutinee_unwrapped_err_type` —
+  зеркало Ok/Some-инфраструктуры, `Option` не участвует (нет Err-ветки).
+  Closes `[M-73.2-err-payload-consume]`.
 - Place-скрутини резолвится ТОЛЬКО для голого `Ident` (переменная с
   known `Result[T,E]`/`Option[T]`-аннотацией ИЛИ RHS с известным
   unwrapped-return-type). `@field`/`recv.field`-скрутини (Member) — не
   резолвится (нет field-type registry в `ConsumeCtx` для generic-типов
-  сегодня) — sound false-negative. → followup `[M-73.2-field-scrutinee-unwrap]`.
-- Nested/record/tuple payload внутри `Ok(..)` (`Ok({ a, b })`,
-  `Ok((a, b))`) — не покрыт, unchanged fallback.
+  сегодня) — sound false-negative. → followup `[M-73.2-field-scrutinee-unwrap]`
+  (НЕ тронуто Plan 216 tails — отдельный, более узкий пробел).
+- ~~Nested/record/tuple payload внутри `Ok(..)` — не покрыт~~ — **ЧАСТИЧНО
+  ЗАКРЫТО Plan 216 tails (2026-07-21): tuple-форма.** `Ok((a, b))` /
+  `Some((a, b))` / `Err((a, b))` (single-arg tuple-variant, sub-pattern —
+  `Tuple` с известным per-element unwrapped-типом) — каждый элемент
+  проходит ТОТ ЖЕ scalar-гейт независимо: must-consume элемент без
+  `consume` → `E_CONSUME_PATTERN_REQUIRED` (текст `из \`Ok((..))\``/
+  `Err((..))\``, отличает от scalar `Ok(..)`); не-must-consume элемент —
+  unaffected view-биндинг. Arity-mismatch/unresolved shape — honest-defer
+  fallback (unchanged). Новые companion-карты
+  `unwrapped_*_return_tuple_types` / `unwrapped_*_return_err_tuple_types`
+  (`ConsumeRegistry`) + `var_unwrapped_tuple_types` /
+  `var_unwrapped_err_tuple_types` (`ConsumeCtx`) — per-element type names,
+  `None` для non-Named/nested-further компонента (sound false-negative).
+  **Record-форма (`Ok({ a, b })`) остаётся НЕ покрыта** (нет per-field-type
+  registry в `ConsumeCtx` для этого пути) — honest defer, unchanged
+  fallback; followup `[M-216-record-payload-consume]`.
 
 Реализация: `Pattern::Ident.is_consume` (`compiler-codegen/src/ast/mod.rs`),
 `parse_pattern()` (`compiler-codegen/src/parser/mod.rs`),
 `ConsumeCtx::var_unwrapped_types` / `scrutinee_unwrapped_type` /
 `consume_declare_arm_pattern` (`compiler-codegen/src/types/mod.rs`).
+Plan 216 tails (Err-payload + nested-tuple, 2026-07-21): `unwrap_result_err_name`
+/ `unwrap_result_option_tuple_names` / `unwrap_result_err_tuple_names`,
+`ConsumeCtx::scrutinee_unwrapped` (bundles ok/err/ok_tuple/err_tuple),
+`consume_require_pattern_binding` (shared scalar-gate helper, both the
+direct scalar arm AND per-tuple-element) — все в `compiler-codegen/src/types/mod.rs`.
 
 ### Связь
 

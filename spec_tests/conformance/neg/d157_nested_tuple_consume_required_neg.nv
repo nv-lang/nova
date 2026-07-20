@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR [E_CONSUME_PATTERN_REQUIRED] pattern-биндинг `a` держит consume-обязательный пейлоад типа `D157TupleReqElem` из `Ok((..))` — требуется явный `consume`-паттерн
+
+// Plan 216 tails (nested-tuple-payload follow-up, 2026-07-21): plain
+// `Ok((a, b))` tuple-sub-pattern где ПЕРВЫЙ элемент — must-consume тип —
+// ошибка, требуется явный consume-sub-pattern `Ok((consume a, b))` на ЭТОМ
+// элементе (второй элемент, не-must-consume, plain-биндинг легален и не
+// затронут). Закрывает bootstrap-defer из 05-memory.md ("Nested/record/tuple
+// payload внутри Ok(..) — не покрыт"). Пин суждения целиком, включая имя
+// пейлоад-типа и variant-shape `Ok((..))` (отличает от scalar `Ok(..)`).
+
+module neg.d157_nested_tuple_consume_required_neg
+
+type D157TupleReqElem consume {
+    id int,
+}
+
+fn D157TupleReqElem consume @close() -> () { () }
+
+fn dial() -> Result[(D157TupleReqElem, int), str] =>
+    Ok((D157TupleReqElem { id: 1 }, 2))
+
+test "plain Ok((a, b)) с must-consume первым элементом — ошибка" {
+    match dial() {
+        Ok((a, b)) => { a.close(); assert(b == 2) },
+        Err(_e) => {},
+    }
+}

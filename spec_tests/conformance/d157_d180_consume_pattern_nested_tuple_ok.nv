@@ -1,0 +1,63 @@
+// Plan 216 tails (nested-tuple-payload follow-up, 2026-07-21): consume-волна
+// А (D157/D180) bootstrap явно defer'ил nested/tuple пейлоад ("Nested/record/
+// tuple payload внутри Ok(..) — не покрыт, unchanged fallback" — 05-memory.md).
+// Эта фикстура закрывает tuple-часть хвоста: `Ok((a, b))`/`Err((a, b))`
+// tuple-sub-pattern над Ok/Some/Err-inner типом, который сам — tuple
+// `(A, B)` — теперь enforced per-element, тем же правилом что и scalar
+// `Ok(x)`: must-consume элемент обязан нести `consume`-sub-pattern
+// (`Ok((consume a, b))`), mut-capable, must-be-consumed (D133); не-must-consume
+// элемент (b) остаётся plain view-биндингом (view-default unaffected).
+
+module spec_tests.conformance
+
+type P216TupleElem consume {
+    id int,
+}
+
+fn P216TupleElem consume @close() -> () { () }
+fn P216TupleElem mut @touch() -> () { () }
+
+fn dial_p216_tuple(v int) -> Result[(P216TupleElem, int), str] =>
+    Ok((P216TupleElem { id: v }, v * 10))
+
+fn maybe_p216_tuple(v int) -> Option[(P216TupleElem, int)] =>
+    Some((P216TupleElem { id: v }, v * 10))
+
+test "rvalue match Ok((consume a, b)) — первый элемент consume, второй — plain view" {
+    match dial_p216_tuple(1) {
+        Ok((consume a, b)) => {
+            a.touch()           // mut-метод без доп. `mut`-keyword (D180)
+            assert(b == 10)
+            a.close()           // consume-обязательство выполнено (D133)
+        },
+        Err(_e) => {},
+    }
+}
+
+test "place-скрутини — именная Option-переменная, тот же tuple consume-паттерн" {
+    ro attempt = maybe_p216_tuple(2)
+    match attempt {
+        Some((consume a, b)) => {
+            assert(b == 20)
+            a.close()
+        },
+        None => {},
+    }
+}
+
+test "if-let rvalue Some((consume a, b)) — ownership явный" {
+    if Some((consume a, _b)) = maybe_p216_tuple(3) {
+        a.close()
+    }
+}
+
+fn dial_p216_plain_tuple() -> Option[(int, int)] => Some((7, 8))
+
+test "view-default tuple payload НЕ сломан — оба элемента не-must-consume" {
+    match dial_p216_plain_tuple() {
+        Some((x, y)) => {
+            assert(x == 7 && y == 8)
+        },
+        None => {},
+    }
+}
