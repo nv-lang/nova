@@ -15101,6 +15101,28 @@ impl<'a> TypeCheckCtx<'a> {
             // Plan 125.1 (Ф.2): never-returning builtins + user fns whose
             // return_type resolves to `Ty::Never` → propagate `never`.
             ExprKind::Call { func, args: outer_call_args, .. } => {
+                // Plan 200 П19: `[N]T @len()`/`@ptr()` — compiler-synthesized FixedArray
+                // accessors, checked FIRST (§3 one-window structural test — same peel as
+                // `check_instance_overload`, D238-family). Must run before every other Call
+                // arm below: a FixedArray receiver has ZERO real `.nv` methods (architecture
+                // note, Plan 200-19), so nothing here can shadow a genuine declaration —
+                // and this is what lets `unsafe { p.write(...) }` on a `mut`-receiver
+                // `arr.ptr()` type-check as `*mut T` (E_POINTER_RO_ASSIGN reads THIS
+                // function's return via `infer_expr_type(obj)`, not the codegen channel).
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    if matches!(name.as_str(), "len" | "ptr") && outer_call_args.is_empty() {
+                        if let Some(obj_ty) = self.infer_expr_type(obj, scope) {
+                            if let Some((n, inner)) = Self::peel_fixed_array(&obj_ty) {
+                                let is_mut = !self.is_through_ro_binding(obj);
+                                if let Some(rt) = Self::fixed_array_accessor_return(
+                                    n, inner, name, is_mut, expr.span,
+                                ) {
+                                    return Some(rt);
+                                }
+                            }
+                        }
+                    }
+                }
                 // [M-183-int-to-str-module-method-collision] (§0 checker-primary):
                 // EFFECT-OPERATION call — `Time.now_monotonic_ns()` / `Clock.tick()` — has a
                 // STATICALLY-KNOWN declared return type (the op's `return_type` in the
@@ -15897,6 +15919,59 @@ impl<'a> TypeCheckCtx<'a> {
         Some((out, ordered))
     }
 
+    /// Plan 200 П19: peel `ro`/`mut` TYPE wrappers off a receiver `TypeRef` and, if the
+    /// core shape is `[N]T` (`TypeRef::FixedArray`), return `(N, &elem)`. Mirror of the
+    /// peel-loop `resolve_instance_method_return_arity`/`check_instance_overload` already
+    /// run before their "Vec" name-normalization (§3 one-window: same structural test, not
+    /// a second copy) — kept as its own tiny fn because the `@len`/`@ptr` synthesis below is
+    /// called from two sites (inline `infer_expr_type` + the channel producer) that each do
+    /// their OWN peel for unrelated reasons first.
+    fn peel_fixed_array(ty: &TypeRef) -> Option<(usize, &TypeRef)> {
+        match ty {
+            TypeRef::FixedArray(n, inner, _) => Some((*n, inner.as_ref())),
+            TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => Self::peel_fixed_array(i),
+            _ => None,
+        }
+    }
+
+    /// Plan 200 П19 (`[N]T @len()` / `@ptr()`): compiler-SYNTHESIZED FixedArray accessors —
+    /// same class of magic as the D238 `arr[i]` FixedArray read (checker `ExprKind::Index`
+    /// arm ~8991, codegen `parse_mono_fixed_array_name` ~32415): no `.nv` `FnDecl` exists for
+    /// either method (method-level const-generic `N` is not in the language — Ш0 probe
+    /// `fn [4]u8 @probe() -> int => 4` fails to parse, "expected identifier, got int
+    /// literal" — confirmed 2026-07-21), so the return type is synthesized STRUCTURALLY from
+    /// `(n, inner)` here rather than looked up in `method_table`. `is_mut` is the call-site
+    /// receiver's mutability (`!is_through_ro_binding(obj)`, same predicate D175/D326 already
+    /// use) — selects `*T` (ro, D246 default) vs `*mut T` for `@ptr()`, mirroring Vec's real
+    /// `@ptr()`/`mut @ptr()` overload pair (`access.nv:262/270`). Returns `None` for any
+    /// other method name (falls through unchanged to the normal Vec-normalized dispatch —
+    /// zero interference with real Vec/Array methods, which stay on their existing path).
+    fn fixed_array_accessor_return(
+        n: usize,
+        inner: &TypeRef,
+        method: &str,
+        is_mut: bool,
+        span: crate::diag::Span,
+    ) -> Option<TypeRef> {
+        match method {
+            "len" => Some(TypeRef::Named {
+                path: vec!["int".to_string()],
+                generics: Vec::new(),
+                span,
+            }),
+            "ptr" => {
+                let _ = n; // N doesn't affect the accessor's TYPE, only codegen's C body.
+                let pointee = if is_mut {
+                    TypeRef::Mut(Box::new(inner.clone()), span)
+                } else {
+                    inner.clone()
+                };
+                Some(TypeRef::Pointer(Box::new(pointee), span))
+            }
+            _ => None,
+        }
+    }
+
     /// Plan 172.1.2 [M-172.1-U4-recv-infer]: resolve the DECLARED return type of an
     /// INSTANCE method call `obj.method(...)` from the signature registry, given the
     /// receiver's already-resolved type `recv_ty`. Substitutes the receiver's carrier
@@ -16576,6 +16651,26 @@ impl<'a> TypeCheckCtx<'a> {
         scope: &HashMap<String, TypeRef>,
     ) -> Option<TypeRef> {
         let ExprKind::Call { func, args: call_args, .. } = &e.kind else { return None; };
+        // Plan 200 П19: `[N]T @len()`/`@ptr()` — same compiler-synthesized FixedArray
+        // accessors as the early check in `infer_expr_type`'s Call arm (§3 one-window: one
+        // shared `fixed_array_accessor_return`, two producer call-sites — this fn feeds the
+        // codegen `resolved_types` CHANNEL, the other feeds inline soundness checks; see that
+        // fn's own doc for why they're decoupled instead of merged). Checked first so it
+        // short-circuits before the const-receiver/turbofish AST-shape dispatch below.
+        if let ExprKind::Member { obj, name } = &func.kind {
+            if matches!(name.as_str(), "len" | "ptr") && call_args.is_empty() {
+                if let Some(obj_ty) = self.infer_expr_type(obj, scope) {
+                    if let Some((n, inner)) = Self::peel_fixed_array(&obj_ty) {
+                        let is_mut = !self.is_through_ro_binding(obj);
+                        if let Some(rt) = Self::fixed_array_accessor_return(
+                            n, inner, name, is_mut, e.span,
+                        ) {
+                            return Some(rt);
+                        }
+                    }
+                }
+            }
+        }
         // МЕРЖ ДВУХ ВОЛН 2026-07-20 (интегратор): entry принимает ТРИ AST-shape'а.
         // [M-196-producer-b-turbofish] (Plan 196 Producer B): `obj.method[U](args)` —
         // explicit METHOD-level turbofish on an INSTANCE receiver parses to

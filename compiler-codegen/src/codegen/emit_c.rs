@@ -34391,6 +34391,55 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
             ExprKind::Member { obj, name: method } => {
+                // Plan 200 П19: `[N]T @len()`/`@ptr()` — compiler-synthesized FixedArray
+                // accessors, SAME structural recognition (`parse_mono_fixed_array_name` +
+                // `.data`/`->data`) as the existing D238 `arr[i]` FixedArray READ arm just
+                // below the range-slice branch (~32415) — "one window", not a name-keyed
+                // branch bolted on elsewhere. No `.nv` `FnDecl` exists for either method
+                // (Ш0 probe: `fn [4]u8 @probe()` doesn't parse — method-level const-generic
+                // `N` isn't in the language), so the C body is synthesized directly HERE,
+                // bypassing the name-keyed `method_receivers` dispatch below entirely (which
+                // would otherwise try to call Vec's real `@len`/`@ptr` C body against a
+                // non-Vec-shaped `_NovaFixArr_...` struct — wrong layout, CC-FAIL). Checked
+                // first — a FixedArray receiver has ZERO real methods (architecture note),
+                // so this can never shadow a genuine declaration; any OTHER method name on a
+                // FixedArray receiver falls through unchanged to the pre-existing dispatch.
+                if matches!(method.as_str(), "len" | "ptr") && args.is_empty() {
+                    let obj_ty = self.infer_expr_c_type(obj);
+                    let (bare, is_ptr) = match obj_ty.strip_suffix('*') {
+                        Some(s) => (s, true),
+                        None => (obj_ty.as_str(), false),
+                    };
+                    if let Some((n, elem_ty)) = Self::parse_mono_fixed_array_name(bare) {
+                        let o = self.emit_expr(obj)?;
+                        let data_expr = if is_ptr {
+                            format!("(({})->data)", o)
+                        } else {
+                            format!("(({}).data)", o)
+                        };
+                        if method == "len" {
+                            return Ok(format!("((nova_int){}LL)", n));
+                        } else {
+                            // @ptr(): address of the first element. A C array field
+                            // (`T data[N]`) decays to `&data[0]` on use — `data_expr` cast
+                            // to an elem-pointer IS that address, no explicit `&(...)[0]`
+                            // needed. `const`-qualify for the ro overload only (D246 `*T`
+                            // ≡ `*ro T` default) — mirrors Vec's real `@ptr()`/`mut @ptr()`
+                            // pair (both emit the identical bare `@data` C expr in
+                            // access.nv:262/270; the `const` here is FixedArray's own
+                            // equivalent of that ro/mut split, decided by the SAME
+                            // call-site receiver-mutability predicate Plan 135/138.4
+                            // already use for Vec's overload pick).
+                            let is_mut_recv = self.is_place_mutable(obj);
+                            let cast = if is_mut_recv {
+                                format!("{}*", elem_ty)
+                            } else {
+                                format!("const {}*", elem_ty)
+                            };
+                            return Ok(format!("(({})({}))", cast, data_expr));
+                        }
+                    }
+                }
                 // Plan 132.1 Ф.1: SelfAccess self-method call — `@name(args)`.
                 // obj = SelfAccess means the call is `@name(...)` inside an
                 // instance method body. field_cache.rs may have already rewritten
