@@ -26,40 +26,99 @@ Probe-скрипты (временные, не в репо):
 4. f64 precision КЛЭМПИТСЯ на 64 (nova_fmt_f64_body), НЕ на 340 (fmt_f64/
    f64_fmt_into's собственный клэмп) — `.65`+ разошлись бы без реклэмпа.
 
-## Ш1 — DONE (коммит d2ff4d0be)
+## Ш1 — DONE (коммит d2ff4d0be, ИСПРАВЛЕН доп. коммитом — архитектура v2)
 
-`std/src/runtime/fmt_buf.nv` — аддитивно, ничего существующего не тронуто:
-1. Debug-escape движок: `str_debug_fmt`/`char_debug_fmt` + хелперы
-   (write_esc2_at/write_hex_esc_at/utf8_encode_at) — побайтовый порт
-   nova_str_to_debug_str/nova_char_to_debug_str.
-2. `*_display_spec` семейство (int/f64/f32/bool/char/char_debug/str/
-   str_debug) — плоские аргументы, рендер в `mut sb StringBuilder` через
-   reserve/spare/advance + `@pad_in_place`. Обязан воспроизводить:
-   - float precision-path: prefix(sign)+body(magnitude via fmt_f64 Fixed)
-     РАЗДЕЛЬНО (квирк #1), И реклэмп prec.min(64) (квирк #4, ИНАЧЕ
-     разойдётся с fmt_f64's собственным клэмпом-340).
-   - float no-precision: body=fmt_f64(Shortest) несёт свой знак, prefix
-     условный '+' только если v>=0.0 (asymmetric vs precision-path).
-   - int: int_fmt (уже был спек-полный) — совпадает 1:1.
+`std/src/runtime/fmt_buf.nv` — Debug-escape движок: `str_debug_fmt`/
+`char_debug_fmt` + хелперы (write_esc2_at/write_hex_esc_at/utf8_encode_at) —
+побайтовый порт nova_str_to_debug_str/nova_char_to_debug_str. Остаётся в
+fmt_buf.nv (не завязан на StringBuilder, безопасен как есть).
 
-**ВАЖНАЯ НАХОДКА (архитектурная, снимает риск из брифа):** `fmt_buf.nv`
-(`#no_prelude`) МОЖЕТ импортировать `std.runtime.string_builder.{StringBuilder}`
-даже несмотря на то, что `string_builder.nv` УЖЕ импортирует fmt_buf —
-inter-module ЦИКЛ, но D29 rev-5/Plan 162 его ЯВНО поддерживает
-(imports.rs:1634-1650, "collect-first DFS guard", `in_progress.contains
-→ early Ok(())`). Эмпирически подтверждено: компилируется и работает БЕЗ
-обходов. Комментарий `#no_prelude` в шапке fmt_buf.nv описывает риск через
-АВТО-prelude (бланket-импорт), не через ЦЕЛЕВОЙ явный импорт — это РАЗНЫЕ
-вещи.
+**АРХИТЕКТУРА v1 (в первом коммите d2ff4d0be) ОКАЗАЛАСЬ БАГОВАННОЙ —
+ИСПРАВЛЕНА тем же Ш1 (без нового шага):** первая версия положила
+`*_display_spec` семейство В `fmt_buf.nv`, что потребовало
+`import std.runtime.string_builder.{StringBuilder}` — ВТОРОЙ конец цикла
+(`string_builder.nv` уже импортирует `fmt_buf`). Изначально записал в этот
+файл вывод «D29 rev-5/Plan 162 явно поддерживает inter-module циклы,
+эмпирически подтверждено» — этот вывод был **ПРЕЖДЕВРЕМЕННЫМ**: мои
+верификационные прогоны (baseline + string_builder_test + checksums)
+СЛУЧАЙНО не попадали в баг-триггерящую комбинацию. Реальная находка (при
+подготовке Ш3, см. ниже) — цикл `runtime.fmt_buf ↔ runtime.string_builder`
+ЛОМАЕТСЯ ПОРЯДКОЗАВИСИМО: третий файл, импортирующий ИМЕНА из ОБОИХ
+модулей, компилируется/падает в зависимости от ТЕКСТОВОГО ПОРЯДКА своих
+`import`-строк:
+```
+import std.runtime.fmt_buf.{Align}            \  ← в ЭТОМ порядке:
+import std.runtime.string_builder.{StringBuilder}  CODEGEN-FAIL
+                                                     "undefined identifier
+                                                      int_fmt_into" ВНУТРИ
+                                                      string_builder.nv
+import std.runtime.string_builder.{StringBuilder}  \ ← swap →
+import std.runtime.fmt_buf.{Align}                  PASS
+```
+Voспроизведено (1) через `nova build` И `nova test`, (2) в изоляции (один
+файл, без других conformance-пиров), (3) НЕ воспроизводится на нетронутом
+main-репо (там `fmt_buf` НЕ импортирует `string_builder` — только диамант,
+не цикл — работает в любом порядке). Правдоподобный механизм (НЕ
+подтверждён чтением всего imports.rs — вне бюджета волны): collect-first
+DFS cycle-guard (imports.rs:1634-1650) возвращает `Ok(())` РАНО при
+повторном входе в модуль, уже `in_progress` — если внешний файл первым
+трогает `fmt_buf`, DFS входит в `fmt_buf`, тот (по v1-архитектуре) тянет
+`string_builder`, который тянет `fmt_buf` НАЗАД — `fmt_buf` уже
+`in_progress` → ранний возврат ДО того, как `fmt_buf` полностью собрал
+СВОИ декларации в этот проход — `string_builder`, «увидев» неполный
+`fmt_buf`, теряет `int_fmt_into` и friends.
 
-Верификация: baseline 3/3 PASS + string_builder_test 1/0 + checksums 3/0 +
-inline unit-тесты в fmt_buf.nv (добавлены, PASS).
+**ИСПРАВЛЕНИЕ (архитектура v2, тот же Ш1, коммит `<см. git log>`):**
+`*_display_spec` семейство + константы ПЕРЕЕХАЛИ из `fmt_buf.nv` В
+`string_builder.nv` (у него УЖЕ был безопасный ОДНОСТОРОННИЙ импорт
+`fmt_buf` — цикла больше НЕТ вообще). `fmt_buf.nv` лишился импорта
+`string_builder`; взамен `export`-нул то, что `string_builder.nv` теперь
+использует напрямую: `int_fmt`, `fmt_f64`, `FmtSpec`, `bool_fmt`,
+`char_fmt`, `f32_fmt_into`, `str_debug_fmt`, `char_debug_fmt` (были
+module-private, кроме int_fmt_into/f64_fmt_shortest_into/
+f32_fmt_shortest_into/Align/FloatKind — те УЖЕ были exported с Ф.1).
+Тесты семейства переехали из inline `fmt_buf.nv` в
+`string_builder_test.nv` (уже существующий peer-файл с ИДЕНТИЧНЫМ
+паттерном импорта `{StringBuilder}`+`{Align}`, НО в БЕЗОПАСНОМ порядке
+`string_builder` ПЕРЕД `fmt_buf` — что и объясняет, почему ОН годами не
+ловил этот баг).
+
+**Побочная находка при фиксе (реальный баг в МОЁМ Ш1-коде, не
+компиляторный):** `f64_display_spec` изначально использовал ОДИН и тот же
+`neg = v < 0.0` тест И для магнитуды (`nova_fmt_f64_body`-стиль, НЕ
+signbit-aware), И для префикса (должен быть `nova_fmt_f64_prefix`-стиль,
+signbit-aware: `v<0.0 || (v==0.0 && 1.0/v<0.0)`) — из-за этого `-0.0` с
+precision давал ОДИН минус вместо пинованных ДВУХ (`--0.00`). Исправлено:
+раздельные `mag_neg`/`prefix_neg`. Также добавлен `zero_pad bool` параметр
+(изначально отсутствовал — width+fill='0' НЕ эквивалентно zero-pad-между-
+знаком-и-цифрами; f64_display_spec теперь пере-якорит `@pad_in_place` на
+`mark+prefix_len` при zero_pad, зеркаля int_display_spec's `int_fmt`-
+нативную семантику). Оба бага пойманы inline-тестами до Ш3, не просочились.
+
+Верификация (после ВСЕХ фиксов): baseline 3/3 PASS + string_builder_test
+1/0 (8 test-блоков, вкл. zero_pad-квирк для float) + checksums 3/0 +
+ПОВТОРНО подтверждён fmt_buf-до-string_builder import-order сценарий —
+теперь PASS (ранее ловушка).
 
 ## Ш2 — СТОП: компиляторная находка, ловушка-стоп ПОДТВЕРЖДЕНА (2026-07-20)
 
 **Статус: ЗАБЛОКИРОВАНО. Код НЕ закоммичен, дерево возвращено к чистому
-Ш1 (коммит d2ff4d0be). Патч попытки — `docs/plans/wip/208-f4r-sh2-blocked-repro.patch`
-(не применён, для справки/воспроизведения).**
+Ш1 (коммит d2ff4d0be — АРХИТЕКТУРА v1, до фикса ниже). Патч попытки —
+`docs/plans/wip/208-f4r-sh2-blocked-repro.patch` (не применён, для
+справки/воспроизведения).**
+
+**ПОСТФАКТУМ (после находки Ш1-архитектурного фикса ниже):** Ш2's находка
+здесь — ТА ЖЕ КЛАССА компиляторный баг, что Ш1's (order-dependent
+inter-module cycle resolution), просто через ДРУГУЮ пару модулей
+(`runtime.fmt_buf ↔ prelude.protocols`, а не `runtime.fmt_buf ↔
+runtime.string_builder`). Ш1's архитектурный обход (относить
+StringBuilder-зависимый код В string_builder.nv, а не тянуть
+StringBuilder-тип В fmt_buf.nv) — та же СТРАТЕГИЯ применима здесь: если
+Ш2 когда-то возобновится, вариант «оставить тела в protocols.nv» (см.
+рекомендацию ниже) — это ТОЧНО такой же «не тянуть цикл» ход, не хак.
+Компиляторный баг САМ по себе (imports.rs collect-order) остаётся
+незачиненным — вне рамок этой волны, находка зафиксирована для отдельного
+компиляторного трека.
 
 ### Что делалось
 
