@@ -27,8 +27,21 @@ hello→флагман. LSP/docker — опциональные пункты (р
 
 ## Ф.2 — Версия и дистрибуция
 
-- [ ] Версионирование: `nova --version` → 0.1.0; тег v0.1.0 на все 4 репы согласованно.
-- [ ] Windows: собранный `nova.exe` (+nova-lsp.exe опц.) — zip-архив; инструкция PATH.
+- [~] Версионирование: `nova --version` → 0.1.0 ✅ (A-V1, подтверждено сборкой: `nova
+      --version`/`-V` = «nova 0.1.0», `nova-lsp --version` = «nova-lsp 0.1.0» — версии в
+      Cargo.toml уже были 0.1.0 до этой волны). Тег v0.1.0 на все 4 репы — ОТДЕЛЬНО, не
+      сделано (вне скоупа A-V1/A-V2).
+- [x] Windows: собранный `nova.exe` (+nova-lsp.exe) — zip-архив; инструкция PATH (A-V2,
+      2026-07-21). `scripts/package-release.ps1` (`-SkipBuild` берёт готовые бинари,
+      `-SmokeTest` — реальная проверка вне монорепы). Состав `nova-v0.1.0-windows-x64.zip`:
+      nova.exe + nova-lsp.exe + std/ (исходники) + nova_rt/ (C-рантайм, урезанный libuv-подсет:
+      include + src/*.{c,h} top + src/win/*.{c,h}) + gc/ (Boehm GC lib+headers, урезанный
+      vcpkg-подсет) + setup-env.ps1 (dot-source — выставляет 5 env vars от своего расположения)
+      + README-INSTALL.md + LICENSE*+THIRD_PARTY. std-discovery вердикт (а): env-vars
+      (`NOVA_STD_PATH`/`NOVA_CG_INCLUDE`/`NOVA_RT_DIR`/`NOVA_GC_LIB_DIR`/`NOVA_GC_INCLUDE_DIR`)
+      — штатная config-поверхность, не hack. SmokeTest PASSED: hello.exe собран+выполнен из
+      полностью изолированной папки (см. docs/plans/wip/221-version-notes.md для полной
+      разведки+прогона).
 - [ ] Linux: сборка из исходников — проверенный рецепт (docs/linux-build.md актуализировать
       на gcc15/clang21 — фиксы уже влиты); опц. готовый бинарь.
 - [ ] Docker-образ (из очереди) — ОПЦИОНАЛЬНО, по решению владельца.

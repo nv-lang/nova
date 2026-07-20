@@ -47,8 +47,38 @@ Worktree: d:/Sources/nv-lang/nova-v01 (branch p221-version-zip, base main @ 6d07
      NOVA_STD_PATH/NOVA_CG_INCLUDE/NOVA_RT_DIR/NOVA_GC_LIB_DIR/NOVA_GC_INCLUDE_DIR).
      MSVC toolchain на машине пользователя всё равно нужен (архитектурное свойство
      C-codegen, не блокер этой волны — как и Linux-рецепт "сборка из исходников").
-3. Написать scripts/package-release.ps1 (PS 5.1-совместимый, без && / ternary) — В РАБОТЕ.
-4. Прогнать реально: zip → распаковать в чистую temp-папку → nova.exe --version →
-   hello-smoke (build+test) с env vars, указывающими в распакованную папку.
-5. Отметить чекбоксы Ф.2 (строки версия/win-zip) в docs/plans/221-release-v0-1.md.
-6. Коммит(ы) — по имени файлов, без co-author.
+3. ✅ scripts/package-release.ps1 написан (4 коммита частями) — параметры
+   (-SkipBuild/-Version/-OutDir/-SmokeTest/-VcpkgBase), сборка/копирование
+   бинарей, stage-папка (std/nova_rt-подсет/gc-подсет), setup-env.ps1 +
+   README-INSTALL.md + лицензии, zip+sha256, -SmokeTest блок.
+4. ✅ РЕАЛЬНЫЙ прогон (-SkipBuild -SmokeTest -VcpkgBase <main-репо>) — SMOKE TEST
+   PASSED после 4 найденных и исправленных багов:
+   - backtick-и в PS-строках ломали парсинг (throw-msg + README here-string) +
+     файл был БЕЗ UTF-8 BOM (PS5.1 без BOM → кириллица в системной codepage →
+     мусорные токены). Исправлено: убраны backtick-и, файл пересохранён с BOM.
+   - libuv/src/*.c копировались БЕЗ приватных заголовков (uv-common.h,
+     strscpy.h, idna.h, queue.h, win/internal.h и т.п. — лежат РЯДОМ с .c в
+     src/, НЕ в include/) → cl.exe "uv-common.h: No such file". Исправлено:
+     Get-ChildItem -Include "*.c","*.h" (с path\* — Include игнорируется без
+     wildcard/-Recurse, PS-готча).
+   - SmokeTest hello.nv/nova.toml писались Set-Content -Encoding utf8 (PS5.1
+     utf8 ВСЕГДА добавляет BOM) → nova-лексер "unexpected byte 'ï'".
+     Исправлено: -Encoding ascii (контент чисто ASCII).
+   - package name "hello-smoke" + `module hello` нарушало D78 rev-4 root-peer
+     (module==package для файла в корне source root). Исправлено: name="hello".
+   - Доп.: -VcpkgBase параметр (worktree без своей vcpkg_installed — нужен
+     явный путь на main-репо); SmokeTest temp-папка перенесена из %TEMP% в
+     dist/ (на этой машине Expand-Archive под системным Temp воспроизводимо
+     "теряла" 5/12 файлов без видимой причины — не MAX_PATH; под dist/
+     стабильно 12/12).
+   Финал: nova --version/-V = "nova 0.1.0"; nova-lsp --version = "nova-lsp
+   0.1.0"; zip = 12.4 MB (506 файлов: std 287 + nova_rt 121 + gc 90 + верхний
+   уровень); SmokeTest — hello.exe собран+выполнен из ПОЛНОСТЬЮ изолированной
+   папки (свой nova.toml, dot-sourced setup-env.ps1), включая one-time
+   libuv+nova_rt archive автосборку (~24 сек, MSVC vcvars на этой машине).
+   SHA256 zip: b76550ac6290a255c51b221e8becd2714fd9937f940e7037b66ac26ddc75065f
+   (последний успешный прогон; записан также в .sha256 рядом с zip).
+5. ✅ Чекбоксы Ф.2 (версия/win-zip) отмечены в docs/plans/221-release-v0-1.md
+   (версия — [~] частично: nova --version подтверждён, тег на 4 репы — вне
+   скоупа; win-zip — [x] полностью).
+6. Коммиты — по имени файлов, без co-author (7 коммитов в этой волне).
