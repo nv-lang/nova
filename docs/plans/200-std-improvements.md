@@ -491,19 +491,50 @@ Some/None, filter pass/fail, Result short-circuit); conformance-фикстура
 
 ## Пункт 16 — ретракт `Vec[T].from(items []T)` (пятая дверь §1а) с развязкой типо-направленной роли
 
-**Статус:** 📋 СОГЛАСОВАНО 2026-07-16 (владелец) — **ПОЛНЫЙ ретракт**. Каждая роль `from` уже покрыта каноном
-(core.nv:210, маркер `[M-lint-findings-static-conversion]` уже висит):
-1. **same-T копия** — дубль `items.clone()` (D9);
-2. **типизированный литерал** — `Vec[f32].from([1, 2])` = НЕЦЕЛЕВОЕ использование (владелец): канон —
-   вариадик **`Vec[f32].of(1, 2)`** (правило «of = вариадик-коллекции»);
-3. **element-width конверсия** `Vec[u8].from(int-vec)` (NOTE в коде) — явной поэлементной формой (map/`as`),
-   тихое сужение в конструкторе — не канон.
+**Статус:** ✅ СДЕЛАНО 2026-07-20 (sonnet, по карте владельца) — **ПОЛНЫЙ ретракт**.
 
-**Карта миграции 95 сайтов** (nova_tests заморожен — не мигрировать): литеральные → `.of(...)`; same-T →
-`.clone()`; width — явно; затем снести декл. Закрывает `[M-lint-findings-static-conversion]`-часть про Vec.from.
+Три роли `from` мигрированы по канону (карта подтверждена на факте — ВСЕ живые сайты вне nova_tests
+оказались литеральными; role-2/role-3 подтверждены на отдельных фикстурах):
+1. **литерал** (`Vec[int].from([1,2,3])`, `Vec[f32].from([1.5,2.5])`) → **`Vec[T].of(...)`** — 59 сайтов в
+   `std/src/collections/vec/{access,iter,mutate,protocols,restructure,views}.nv` + `vec_lazy.nv` (doc-примеры
+   и inline-тесты) + 6 conformance-файлов (`repro_control`, `repro_explicit`, `repro_param`,
+   `self_nested_repro`, `t8_arg_vec_accepts_literal`, `vec_f32_chained_debug`);
+2. **same-T конверсия** (`[]int.from(src)`) → **`src.clone()`** — 2 сайта, `spec_tests/conformance/
+   d259_vec_of_vs_from.nv` (единственный файл, реально бивший эту роль; переписан ЦЕЛИКОМ с сохранением
+   покрытия — `of`/`new`/`clone`-independence, D259 header переписан на текущий канон);
+3. **width-конверсия** (`Vec[u8].from(int_vec)`) — сайтов с фактическим вызовом НЕ найдено (только
+   объясняющий NOTE-комментарий в core.nv про НЕ-bulk-copy); карта пункта 3 остаётся справочной на случай
+   будущего сайта (явный поэлементный цикл, не одна фраза).
 
-**Приёмка:** греп `Vec[…].from(` = 0 вне nova_tests; conformance δ0; `nova test std/collections` зелёный.
-Модель: sonnet по карте (роль-2 требует суждения по месту), гейт — оркестратор.
+Декла `Vec[T].from` снесена ПОСЛЕДНИМ коммитом из `std/src/collections/vec/core.nv` (вместе с обновлением
+doc-комментария `of`, который ссылался на `from` для сравнения). `[M-lint-findings-static-conversion]`
+Vec.from-часть закрыта (маркер остаётся открыт для остальных 20 сайтов — `docs/plans/backlog-followups.md`).
+
+**Спека тем же слиянием:** `spec/decisions/02-types.md` (D259 AMEND-блок + `README.md` индекс-строка + D232
+construction-таблица + D230 shallow-copy таблица + NovaArray-блокер item 5 помечен MOOT), `docs/nv-coding-style.md`
+§1а item 4, `docs/collections/vec-owned.md` (Construction-таблица + секция `of` vs `.clone()` переписана),
+`docs/vec-lazy.md` (пример кода).
+
+**Побочная находка (зафиксирована и исправлена в этой же волне):** при standalone-верификации
+`vec_f32_chained_debug.nv` обнаружен НЕ связанный с Vec.from, самостоятельный pre-existing баг — вызовы
+`.debug(a)`/`.display(a)` передавали голый `StringBuilder` вместо `FmtCtx.bare(a, mark, is_debug)` (устаревшая
+call-форма, оставшаяся от ДО Plan 208 Ф.2/Ф.3 (D422) миграции `Write`→`Fmt`; воспроизведён на ГОЛОМ
+`Vec[int]` без единого `.of()/.from()` — не регрессия миграции). Исправлено на канон-форму (по образцу
+`std/src/collections/vec/protocols_test.nv` / `std/src/time/duration/core.nv`); подтверждено 5/5 в изоляции.
+
+**Прогоны:** `nova test std/src/collections/vec` PASS (весь folder-module, access/core/iter/mutate/protocols/
+restructure/views + пир-тесты, 26 test-блоков); `nova test std/src/collections/vec_lazy.nv` PASS; `nova test
+std/src/checksums` δ0 (3 PASS / 3 SKIP, без изменений); все 7 мигрированных conformance-файлов — standalone
+(изолированный module-namespace, обходя shared-module merge всей папки conformance) 7/7 PASS. Финальные грепы
+`Vec[…].from(` живых сайтов и декла = 0 вне nova_tests и вне исторических комментариев.
+
+**Находка про карту:** `spec_tests/conformance` НЕ допускает истинно изолированный per-file прогон обычным
+путём — все ~150 файлов папки (кроме `standalone/`) делят `module spec_tests.conformance` и мега-CU
+собирается целиком при передаче ЛЮБОГО одного из них (авторитетный гейт интегратора, не std-агента);
+для «standalone-прогона» карты фактическая техника — временная module-переименованная копия в
+`standalone/`, прогнанная и удалённая (не коммитится).
+
+Модель: sonnet по карте (роль-2 требует суждения по месту), гейт финального мега-CU — оркестратор/интегратор.
 
 ---
 

@@ -176,53 +176,22 @@ export fn Vec[T].new(ptr *mut T, len int, cap int) -> Self
 // был лишней сущностью. Обратная операция осталась: `Vec[T].new(ptr, len,
 // cap)` — конструктор-поглотитель.)
 
-/// Build a `Vec[T]` by copying every element of an iterable source — a
-/// `clone`-like **conversion** of an existing collection.
-///
-/// **Convention (Plan 153.1 / [D259](../../../spec/decisions/02-types.md#d259-конструктор-конвенция-vect--of-для-литерала-from-для-конверсии-plan-1531)):**
-/// `from` is for converting an **existing** `[]T` / collection
-/// (`Vec[int].from(some_slice)`). For a **literal element list** use the variadic
-/// `Vec[T].of(a, b, c)` instead — `Vec[int].of(1, 2, 3)`, NOT `from([1, 2, 3])`.
-///
-/// `from([literal])` is a **redundant-clone anti-pattern**: under D239 the array
-/// literal `[1, 2, 3]` is *already* a `Vec[int]` (one allocation at the literal),
-/// so `from` copies it into a **second** buffer — two allocations for what
-/// `of(1, 2, 3)` does in one (it takes the elements directly). `from([])` is
-/// likewise just a slower `Vec[T].new()`. `of` narrows exactly like `from`
-/// (`Vec[u8].of(1, 2, 3)`), so prefer it for every literal.
-///
-/// Plan 138.1 Ф.0.1: the source is annotated `[]T` (NOT a distinct built-in
-/// array param). After the D239 type-flip `[]T` ≡ `Vec[T]`, so this signature
-/// becomes `from(items Vec[T])` — a `clone`-like copy — and continues to
-/// compile and behave identically. The actual copy loop is delegated to the
-/// generic-`Iter` `@extend` (mutate.nv), so the only `[]T` reference in this
-/// folder-module is here in the signature.
-///
-/// NOTE (deferred): converting `from` itself to a fully generic
-/// `from[S Iter[T]](items S)` is blocked by a codegen gap — static methods
-/// with method-level generics do not propagate the type-arg substitution into
-/// for-in / inner generic calls (emits an unresolved `____Nova_S_p` symbol).
-/// `@extend` (an instance method) does not hit this gap and IS converted.
-export fn Vec[T].from(items []T) -> Self => Vec[T].new(cap: items.len()).extend(items) // [M-lint-findings-static-conversion]
-// NOTE ([M-138-rawmem-bulk-ops], Plan 138.2): `from` is intentionally NOT
-// bulk-copied via `RawMem.copy_nonoverlapping`. The source `items` is supplied
-// by the caller and may carry a *different element C-width* than `T` — e.g.
-// `Vec[u8].from(src)` where `src` is a `Vec[int]` (8-byte slots) narrowed to
-// `u8` element-by-element (and likewise `of(...)`, which routes through the same
-// `@extend` loop after collecting its variadic args). A byte-wise memcpy would
-// read the wrong bytes (`size_of[T]()` is the *target* stride, not the
-// source's). The `@extend` loop performs a per-element typed assignment, which
-// applies the implicit numeric conversion correctly. The
-// in-module same-`T` bulk ops (`@cap`/`@append`/`@clone`/`@insert`/
-// `@remove`/`@copy_from`/`@copy_within`) have matching strides and stay bulk.
+// `Vec[T].from(items []T)` — RETRACTED 2026-07-20 (Plan 200 П16, [D259 AMEND],
+// ../../../spec/decisions/02-types.md#d259-конструктор-конвенция-vect--of-для-литерала-from-для-конверсии-plan-1531).
+// It was exactly `items.clone()` (owner: «это же просто items.clone()») — a
+// same-T conversion is now spelled `existing.clone()` directly (Clone, D230,
+// is deep/recursive and element-wise, protocols.nv); a literal element list is
+// `of(...)` (below); a width/type-changing conversion (e.g. `Vec[u8]` from a
+// `Vec[int]`) is an explicit per-element loop, not a one-call narrow. All std/
+// spec_tests call sites migrated; see docs/plans/200-std-improvements.md П16.
 
 /// Ergonomic variadic constructor: `Vec[int].of(1, 2, 3)` — the **canonical**
 /// way to build a `Vec` from a literal element list (Plan 153.1 /
 /// [D259](../../../spec/decisions/02-types.md#d259-конструктор-конвенция-vect--of-для-литерала-from-для-конверсии-plan-1531)). The call-site variadic args
 /// are collected into a single `[]T` (= `Vec[T]`) value and returned **zero-copy**
-/// (one allocation). This is why it beats `from([1, 2, 3])`: under D239 the
-/// literal `[1, 2, 3]` is already a `Vec[int]`, so `from` would copy it into a
-/// second buffer (two allocations) for the same result. `of` narrows like `from`
+/// (one allocation): under D239 the literal `[1, 2, 3]` argument to `of` is
+/// already a `Vec[int]`, and `of` takes its elements directly rather than
+/// copying them into a second buffer. `of` narrows exactly like a typed literal
 /// (`Vec[u8].of(1, 2, 3)`). `of()` with **no args is a contract violation**
 /// (D259 amend, 2026-07-06) — build the empty case with `Vec[T].new()`.
 ///
@@ -230,12 +199,20 @@ export fn Vec[T].from(items []T) -> Self => Vec[T].new(cap: items.len()).extend(
 /// variadic collection. The call-site packs `of(1,2,3)`'s args into a single
 /// collected `[]T` matching this body's `args` parameter — previously the raw
 /// args were passed straight through (`_static_of(1,2,3)` → "too many
-/// arguments"). `from` remains the **conversion** path (copy an existing
-/// collection / narrow a width-differing source).
+/// arguments").
 ///
 /// D259 amend (2026-07-06): `of()` with **zero** arguments is rejected by
 /// contract — an empty `.of()` call reads as an accident (did the caller mean
 /// `.new()`?). Build an empty vector with `Vec[T].new()` instead.
+///
+/// **D259 AMEND (2026-07-20, Plan 200 П16, retract):** `Vec[T].from` — the
+/// conversion-of-an-existing-collection constructor `of` used to be contrasted
+/// with in this doc-comment — is **RETRACTED**: it was exactly `items.clone()`
+/// (owner: «это же просто items.clone()»). Converting an existing same-`T`
+/// collection is now spelled `existing.clone()` directly; a width/type-changing
+/// conversion (e.g. building a `Vec[u8]` from a `Vec[int]`) is an explicit
+/// per-element loop, not a one-call narrow. `of` remains the sole literal-list
+/// constructor.
 export fn Vec[T].of(...args []T) -> Self
     requires args.len() > 0
 => args
