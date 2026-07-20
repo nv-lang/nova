@@ -1081,6 +1081,12 @@ fn cmd_test_build(
     };
     let libuv = test_runner::detect_or_build_libuv(&rt_dir_buf, &repo_root, vcvars);
     let gc_kind = test_runner::GcKind::parse(gc)?;
+    // [M-standalone-out-of-tree-interp-sb-typedef]: `codegen_to_c` now takes
+    // an explicit repo/stdlib_dir instead of re-deriving from `file`'s own
+    // location (see `TestBuildOpts::repo` doc-comment) — this binary's own
+    // `repo_root` (CWD, see `default_repo_root`) is the right anchor, same
+    // one already used above for `cg_include_buf`/`rt_dir_buf` defaults.
+    let stdlib_dir_buf = nova_codegen::manifest::resolve_std_path(&repo_root);
     let opts = test_runner::TestBuildOpts {
         nv_file: file,
         toolchain: &tc,
@@ -1101,6 +1107,8 @@ fn cmd_test_build(
         // Plan 194 A2.1 (замена Plan 140 Ф.2): build-policy режим. Legacy
         // `off` retired — default `checked` (недоказанные проверяются).
         contracts_mode: nova_codegen::ast::ContractsMode::parse(contracts),
+        repo: &repo_root,
+        stdlib_dir: &stdlib_dir_buf,
     };
     let mut _split: (u128, u128) = (0, 0);
     let status = test_runner::run_one(&opts, &mut _split);

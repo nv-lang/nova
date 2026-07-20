@@ -2801,6 +2801,22 @@ pub struct TestBuildOpts<'a> {
     /// убран — недоказанные контракты проверяются в debug И release под
     /// всеми тремя значениями. Default `Checked`.
     pub contracts_mode: ast::ContractsMode,
+    /// [M-standalone-out-of-tree-interp-sb-typedef]: the project root and
+    /// resolved std-source-root for THIS `nova test`/`nova test-build`
+    /// invocation — already resolved once by the caller (CWD-based
+    /// `find_repo_root()` + `resolve_std_path`, see `nova-cli::resolve_paths`),
+    /// mirroring what `nova build` (`cmd_build`) already threads through to
+    /// `resolve_imports_inline`/`resolve_embeds`. `codegen_to_c` uses these
+    /// directly instead of re-deriving a repo root from `nv_file`'s own
+    /// filesystem location (`find_repo_root_from`) — that per-file walk
+    /// returns `None` for any `.nv` file living outside the project tree
+    /// (e.g. a `%TEMP%` probe file), which silently skipped ALL cross-file
+    /// import resolution including the implicit `std.prelude` auto-import —
+    /// so prelude-only types like `StringBuilder` (interpolation lowering's
+    /// hand-synthesized `Nova_StringBuilder_*` calls, Plan 109/D179) never
+    /// entered the module and their C typedef/bodies were never emitted.
+    pub repo: &'a Path,
+    pub stdlib_dir: &'a Path,
 }
 
 /// Plan 26 Ф.2: unique tmp subdir per test. Хеш от display даёт
@@ -2957,7 +2973,9 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     // (build-policy режим). Per-fixture `// CONTRACTS checked|optimized|verified`
     // директива переопределяет build-policy для этого фикстура.
     let contracts_mode = parse_contracts_policy(&src).unwrap_or(opts.contracts_mode);
-    let codegen_result = codegen_to_c(opts.nv_file, &src, opts.mono_depth, contracts_mode);
+    let codegen_result = codegen_to_c(
+        opts.nv_file, &src, opts.mono_depth, contracts_mode, opts.repo, opts.stdlib_dir,
+    );
     let codegen_warnings: Vec<String> = match &codegen_result {
         Ok((ws, _, _, _)) => ws.clone(),
         Err(_) => vec![],
@@ -3610,7 +3628,24 @@ enum CodegenArtifact {
 
 /// Plan 48 Ф.7.6: `mono_depth` — optional CLI override для
 /// CEmitter.mono_depth_limit (None = default из env var или 500).
-fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_mode: ast::ContractsMode) -> Result<(Vec<String>, Vec<String>, bool, CodegenArtifact), String> {
+///
+/// [M-standalone-out-of-tree-interp-sb-typedef]: `repo`/`stdlib_dir` are the
+/// CALLER's already-resolved project root + std-source-root (CWD-based
+/// `find_repo_root()`, see `TestBuildOpts::repo` doc-comment) — NOT
+/// re-derived here from `path`'s own filesystem location. A `.nv` file
+/// living outside the project tree (e.g. a `%TEMP%` probe file) has no
+/// `nova.toml` ancestor of its OWN, but it still belongs to the project that
+/// invoked `nova test` — exactly like `nova build` (`cmd_build`) already
+/// treats it, threading its own CWD-resolved `repo`/`stdlib_dir` through to
+/// `resolve_imports_inline`/`resolve_embeds` unconditionally.
+fn codegen_to_c(
+    path: &Path,
+    src: &str,
+    mono_depth: Option<usize>,
+    contracts_mode: ast::ContractsMode,
+    repo: &Path,
+    stdlib_dir: &Path,
+) -> Result<(Vec<String>, Vec<String>, bool, CodegenArtifact), String> {
     // Plan 57.D.1: PerfTimer wraps вокруг каждого pass. Markers эмитятся
     // если NOVA_PERF_TIMER=1, accumulated если NOVA_PERF_TIMER_AGGREGATE=1.
     let mut module = {
@@ -3643,22 +3678,25 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_mod
     // that is_known_type / is_known_fn can answer cross-module questions during
     // check_module_with_sig_table (suppresses false E_UNKNOWN_PROTOCOL /
     // E_BOUND_UNKNOWN / E7401 for symbols from transitively imported modules).
-    let sig_table_opt: Option<crate::imports::ModuleSigTable> =
-        if let Some(repo) = find_repo_root_from(path) {
-            let stdlib_dir = crate::manifest::resolve_std_path(repo.as_ref());
-            let _t = crate::perf_timer::PerfTimer::new("imports-resolve");
-            // Plan 42 правило F: test mode = include `*_test.nv` peers.
-            crate::imports::resolve_imports_inline_ex(path, &mut module, &repo, &stdlib_dir, true)
-                .map_err(|e| format!("import resolution: {}", e))?;
-            // Collect signatures AFTER imports are resolved so all imported
-            // items are present in module.imports for the sig-walk.
-            Some(
-                crate::imports::collect_all_signatures(path, &module, &repo, &stdlib_dir)
-                    .unwrap_or_else(|_| crate::imports::ModuleSigTable::new()),
-            )
-        } else {
-            None
-        };
+    // [M-standalone-out-of-tree-interp-sb-typedef]: `repo`/`stdlib_dir` are
+    // the caller's CWD-resolved project root (see fn doc-comment above) —
+    // used unconditionally, same as `nova build`. Previously this branched
+    // on `find_repo_root_from(path)` (a walk from `path`'s OWN directory),
+    // which returned `None` — silently skipping this entire block, INCLUDING
+    // the implicit `std.prelude` auto-import — for any `.nv` file living
+    // outside a `nova.toml` tree.
+    let sig_table_opt: Option<crate::imports::ModuleSigTable> = {
+        let _t = crate::perf_timer::PerfTimer::new("imports-resolve");
+        // Plan 42 правило F: test mode = include `*_test.nv` peers.
+        crate::imports::resolve_imports_inline_ex(path, &mut module, repo, stdlib_dir, true)
+            .map_err(|e| format!("import resolution: {}", e))?;
+        // Collect signatures AFTER imports are resolved so all imported
+        // items are present in module.imports for the sig-walk.
+        Some(
+            crate::imports::collect_all_signatures(path, &module, repo, stdlib_dir)
+                .unwrap_or_else(|_| crate::imports::ModuleSigTable::new()),
+        )
+    };
 
     // [M-vec-access-e7320-as-bytes-str] variant D (span-misrender fix,
     // 2026-07-07): every diagnostic rendered below this point runs on the
@@ -3703,9 +3741,12 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_mod
     // matcher reads — see doc-comment above `codegen_to_c`).
     let embed_dir_warnings: Vec<crate::lints::LintWarning> = {
         let _t = crate::perf_timer::PerfTimer::new("embed-resolve");
-        let project_root = find_repo_root_from(path)
-            .unwrap_or_else(|| path.parent().map(|p| p.to_path_buf()).unwrap_or_default());
-        match crate::embed_resolve::resolve_embeds(&mut module, path, &project_root) {
+        // [M-standalone-out-of-tree-interp-sb-typedef]: same `repo` as the
+        // import-resolve block above (was `find_repo_root_from(path)`,
+        // falling back to `path`'s own directory for out-of-tree files —
+        // `nova build`'s `cmd_build` already uses its CWD-resolved `repo`
+        // here unconditionally, see `nova-cli::main.rs` `resolve_embeds` call).
+        match crate::embed_resolve::resolve_embeds(&mut module, path, repo) {
             Ok((_files, warns)) => warns,
             Err(diags) => {
                 return Err(diags
@@ -4044,6 +4085,10 @@ pub struct TestAllOpts<'a> {
     /// of every existing EXPECT_CC_ERROR fixture). Tooling-only, no codegen
     /// change. Default `false`. See [`print_cc_leak_report`].
     pub report_cc_leaks: bool,
+    /// [M-standalone-out-of-tree-interp-sb-typedef]: propagated to every
+    /// per-job `TestBuildOpts` — see its doc-comment.
+    pub repo: &'a Path,
+    pub stdlib_dir: &'a Path,
 }
 
 // ---------- Plan 26 Ф.13: graceful Ctrl+C ----------
@@ -6108,6 +6153,8 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
             let gc_kind = opts.gc_kind;
             let mono_depth = opts.mono_depth;
             let contracts_mode = opts.contracts_mode;
+            let repo = opts.repo;
+            let stdlib_dir = opts.stdlib_dir;
 
             // [M-codegen-conformance-stack-overflow]: large generated test files
             // (Unicode conformance fixtures — thousands of asserts in one block)
@@ -6139,6 +6186,8 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                     mono_depth,
                     maxprocs_budget,
                     contracts_mode,
+                    repo,
+                    stdlib_dir,
                 };
                 // Plan 26 Ф.12: retry для transient AV/linker race fails.
                 // Exponential backoff: 100ms, 200ms, 400ms.
@@ -7098,7 +7147,11 @@ mod tests {
             return;
         }
         let src = std::fs::read_to_string(&nv_path).expect("read p0 fixture");
-        let result = codegen_to_c(&nv_path, &src, None, ast::ContractsMode::Checked);
+        let repo = find_repo_root_from(&nv_path).expect("p0 fixture is in-tree");
+        let stdlib_dir = crate::manifest::resolve_std_path(&repo);
+        let result = codegen_to_c(
+            &nv_path, &src, None, ast::ContractsMode::Checked, &repo, &stdlib_dir,
+        );
         assert!(result.is_ok(), "P3-B vtable dispatch: codegen должен успешно скомпилировать, но: {:?}", result.err());
     }
 
