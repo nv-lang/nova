@@ -1,144 +1,174 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# Plan 196 — Зона GEN: чекпоинт-заметки (sonnet, worktree `nova-196gen`, ветка `p196-zone-gen`)
+# Plan 196 — Зона GEN: чекпоинт-заметки (sonnet, worktree `nova-196gen`)
 
-**Родитель:** [196-campaign-map.md](196-campaign-map.md) §2 «Зона GEN — emit_c 19485-21432».
 **Назначение файла:** непрерывность при обрыве сессии + сырые находки для интегратора (приёмка
-по-прежнему ПО КОДУ, интегратором; статусы D-трекера в `196.3-wave2-d-driven.md` НЕ трогал —
-это привилегия интегратора при приёмке).
+ПО КОДУ, интегратором). Файл переиспользуется разными GEN-подзадачами во времени — предыдущее
+содержимое (сессия `p196-zone-gen`, широкая кампания Q9/Q10/D239/D372, emit_c 19485-21432) уже
+проинтегрировано/устарело относительно текущей ветки; см. `git log -p` этого файла для истории,
+если нужно восстановить контекст той сессии.
 
 ---
 
-## Сделано в этой сессии (коммиты на `p196-zone-gen`)
+## ТЕКУЩАЯ СЕССИЯ: снос легаси-движков резолва Result/Option (по карте CH)
 
-1. **`c7c7f127e`** — fix `[M-novavtable-read-write-pointer-collision]` (добавка к зоне, backlog
-   P2, ЗАКРЫТ). Guard `B11d_typed_pointer_methods` (emit_c.rs, эмиссия ~36083 + инференс-двойник
-   ~51490) исключал `NovaArray_`, но не `NovaVtable_` (`"NovaVtable_X*".starts_with("Nova_")` ==
-   false — символ на позиции 4 это `V`, не `_`). Нуль-арный `.read()`/одноарный `.write(v)` на
-   ЛЮБОМ handler-значении (`NovaVtable_<Eff>*`) мисдиспатчился в typed-pointer-deref вместо
-   `B11ac_novavtable_effect`/direct-handler-call. Фикс — явное исключение в ОБОИХ guard'ах.
-   Пин расширен в `d61_effect_handler_direct_call.nv` (`D61Guard` effect с буквальными
-   `read`/`write` op-именами + тест). Изолированная верификация: PASS 472 FAIL 12 (все 12 —
-   pre-existing, см. §2 ниже; ни один не касается d61/NovaVtable).
-2. **`3a5f252a3`** — docs: маркер снят из `backlog-followups.md`, закрытие залогировано в
-   `simplifications.md`.
-3. Стрей `.git`-файл внутри `compiler-codegen/nova_rt/libuv/` (пропущен `robocopy /XD .git` —
-   XD исключает только ДИРЕКТОРИИ, а это был gitlink-ФАЙЛ) ломал ВСЕ git-команды в этом worktree
-   (`fatal: not a git repository: .../.git/modules/...`) — удалён (`rm -f`, не коммитился, не
-   часть репозитория). **Для будущих worktree-агентов: после robocopy libuv всегда проверять
-   `ls compiler-codegen/nova_rt/libuv/.git` — если это ФАЙЛ (не каталог), удалить его явно.**
+**Ветка:** `p196-gen-result-teardown` (от `main` `bbfd63e3b`). **Карта:** CH-агент,
+`docs/plans/wip/196-ch-result-notes.md` §6 «Разблокировка для GEN-сноса».
 
-## Пре-существующая, НЕ моя регрессия — НЕ трогал (стоп-волна владельца)
+### Итог одной строкой
 
-При изолированной верификации (conformance-папка минус `d229_debug_format_spec.nv`, временно
-вынесенный и ВОЗВРАЩЁННЫЙ на место после прогона) — `PASS 472 FAIL 12`. Среди 12: и `d229`
-(до выноса), и (в самом прогоне) `app_effect_basic_t8_1` — ОБА об одном и том же:
-`[E_IMPL_WRONG_SIGNATURE]` на auto-derived `Debug`/`Display` (`D229Point`/`D422gPoint`) —
-сгенерированный derive-метод несёт `w Fmt` (bare), а новый канон (мердж
-`4d6b15363 fix-param-mut-enforcement`, самый свежий на момент старта этой сессии) требует
-`mut f Fmt` буквально. Похоже, auto-derive codegen для Debug/Display не обновлён под новый
-канон одновременно с мерджем — систематическая регрессия (минимум 2 файла), НЕ specific to
-d229. Координатор уже проверяет это отдельно на main — **не чинить в Зоне GEN** (чужая
-стоп-волна). Остальные 10 из 12 — TIMEOUT (`standalone/f*` — известный host-contention флак,
-см. `feedback-large-tests-stored-not-in-regress`) + 1 `NEG-NO-ERROR` (`i64_clamp_no_overload_neg`,
-не связан).
+Keystone-задача карты — перенос `register_novares_decl`/`register_novaopt_decl` side-effect'а из
+легаси `resolve_result_option_ret` (~emit_c.rs:19211) в «законный emit-pass sink». По коду
+выяснилось: такой sink уже существовал для Result (`result_repr_c_type`, ~48486, свой же
+196.3-вердикт «LEGIT-LOWERING, canonical sink»), но НЕ для Option (инлайн-дубль внутри
+`resolved_named_to_c`'s `"Option"`-ветки, ~4127). Сделано: добавлен Option-твин
+`opt_repr_c_type` (~48492) + ОБЕ стороны (channel-producer `resolved_named_to_c` И legacy
+`resolve_result_option_ret`) теперь зовут ОДИН канонический sink на каждый тип (Result→
+`result_repr_c_type`, Option→`opt_repr_c_type`) вместо независимого byte-identical дублирования
+логики. Это и есть факт «переноса side-effect в emit-pass»: typedef-регистрация больше НЕ
+дублируется в type-inference хелпере.
 
-## Q10 (D119/D122, `resolve_mono_type_args`/`resolve_method_level_subst`) — код-migration УЖЕ
-## завершена; закрытие блокировано fallback≠0, вне scope Zone GEN
+**Полный снос (удаление тела/безусловный panic) `resolve_result_option_ret` НЕ произведён** — по
+структурной причине кода (не по недосмотру), см. «Почему снос не завершён» ниже.
 
-Проверил по коду (grep всех call-сайтов):
-- `resolve_mono_type_args` (~19668, legacy-движок, ~400 строк, doc-комментарий уже фиксирует
-  Tier-2/Q10-вердикт) вызывается ТОЛЬКО из `resolve_mono_type_args_ch` (~20097, propose-then-
-  verify wrapper) — единственная точка входа. Оба out-of-zone `emit_call`-сайта (~39149, ~39440)
-  УЖЕ идут через `_ch`. Внутри frozen-зоны сайт (если есть) звал бы legacy напрямую — не нашёл
-  такого (frozen-зона candidate coordinates съехали, см. §0 карты).
-- `resolve_method_level_subst` (~20961) имеет channel-first ВСТРОЕННЫЙ (не отдельный `_ch`-враппер
-  — сразу читает `node_substs[call_id]` на входе, ~21002-21035) с legacy Steps 1/2/2f/3 как
-  fallback. 5 прямых вызывающих (33916/34458/34726/37442/37738) — все уже зовут ЭТУ функцию
-  (единственную), не легаси напрямую.
-- **Вывод: «флип на `_ch`» (консьюмер-сторона в emit_c.rs) уже СДЕЛАН на 100% — нечего мигрировать
-  дальше на этом уровне.** Кампанийная карта («ДОЖАТЬ: завершить флип →_ch») была написана до
-  этого состояния или имела в виду именно снос legacy-тела, не флип вызовов.
-- **Снос legacy-тела заблокирован количественно, не качественно.** `196.5-stage-c2-notes.md`
-  (уже на main, коммит `714a0a781`) даёт точные числа ПОСЛЕ композиции: B1
-  (`resolve_mono_type_args_ch`) fallback 784→193 (−75%, но НЕ 0); B2 (`resolve_method_level_subst`)
-  true-remaining-fallback 842→~22 (−97%, но НЕ 0). Ноль — обязательное условие приёмки (5)
-  («тихий legacy-fallback ЗАПРЕЩЁН» ловушка §4.3) — до 0 остаток закрывают ТОЛЬКО новые
-  producers node_substs для форм Source 2+/2f/3 (arg-type inference без turbofish/closure-return-
-  bound/structural-bound) — это канал-РАСШИРЕНИЕ (types/mod.rs), **Зона CH**, не Zone GEN.
-- **Действие:** НЕ трогал (нечего мигрировать в emit_c.rs; снос legacy — за Zone CH + полным
-  corpus-гейтом, вне scope одного sonnet-захода). Статус в трекере оставляю как есть (🔄/Q10) —
-  интегратору решать, обновлять ли формулировку кампанийной карты («флип завершён,
-  осталось расширение канала», не «завершить флип»).
+### Что сделано (файл:функция, маркер `[M-196-gen]`)
 
-## Q9 (`infer_type_param_binding`×3 + `infer_protocol_structural_binding`) — ВОЗМОЖНАЯ
-## переклассификация, требует решения интегратора/владельца
+`compiler-codegen/src/codegen/emit_c.rs`:
 
-Кампанийная карта относит эти 4 функции к «→ чекер» (D16/D53/D72/D42/D355). Проверил по коду:
-эти функции — НЕ ТОЛЬКО потребляются legacy-движками (`resolve_mono_type_args` Source 2/2b,
-`infer_generic_static_ctor_ret` ~19507) — они ТАКЖЕ являются прямой зависимостью
-**`resolve_instance_call_subst`** (~20795), которая, по ЕЁ ЖЕ doc-комментарию, — «ЕДИНЫЙ
-POST-mono резолвер» W1-i.B, уже ФЛИПНУТЫЙ на authoritative (SHADOW-verified 0 mismatch,
-196.5) и являющийся ЦЕЛЕВОЙ (не legacy) архитектурой для frozen-зоны carrier/method-level subst.
+1. Новый sink `opt_repr_c_type(&self, inner_c: &str) -> String` (~48492, рядом с
+   `result_repr_c_type`) — Option-твин: `sanitize_for_novaopt` + `register_novaopt_decl` +
+   `format!("NovaOpt_{}", ..)`.
+2. `resolved_named_to_c`'s `"Option"`-ветка (~4127) — инлайн заменён на `self.opt_repr_c_type(&inner_c)`.
+3. `resolve_result_option_ret` (~19211):
+   - Result-ветка → `self.result_repr_c_type(&ok, &err)` (было: ручные `register_novares_decl` + `format!`).
+   - Option-ветка → `self.opt_repr_c_type(&inner)` (было: ручные `register_novaopt_decl` + `format!`).
+   - Добавлены debug-only (`cfg(debug_assertions)`, `NOVA_TRACE_ICR=1`) `icr_trace` маркеры
+     `GEN196_legacy_resolve_result_option_ret_RESULT`/`_OPTION` — та же нулевая-overhead
+     конвенция, что и остальные ~114 ICR-бакетов в `infer_call_ret_c`; даёт будущей волне точку
+     измерения достижимости ИМЕННО этой функции (не косвенно через B06a/B10j, которые триггерятся
+     любым из 3 fallback'ов каскада).
 
-Другими словами: `infer_type_param_binding`/`infer_protocol_structural_binding` — это чисто
-СТРУКТУРНЫЕ C-строка↔TypeRef подстановочные примитивы (даётся УЖЕ конкретный C-тип, извлекаются
-под-биндинги матчингом формы) — ближе к rustc'овскому «mono = подстановка» (не переинференс
-семантики из AST), и НОВАЯ архитектура их СОХРАНЯЕТ, а не заменяет. Это отличается от Q10-класса
-(`resolve_mono_type_args`/`resolve_method_level_subst`), которые ОРКЕСТРИРУЮТ (решают, ОТКУДА
-брать биндинг — turbofish/arg/closure-return/structural), а не просто применяют уже-решённое.
+Pure refactor — идентичные аргументы/порядок вызовов/строки форматирования. Ни одно вычисляемое
+значение не изменилось ни в одной ветке.
 
-**Не трогал** (не моё решение — переклассификация меняет кампанийную карту; интегратору/владельцу
-на рассмотрение). Если переклассификация верна, Q9 может НЕ требовать отдельной чекер-миграции —
-функции остаются как разделяемый lowering-примитив для ОБЕИХ (старой и новой) архитектур.
+### Почему снос не завершён (структурная причина, не недосмотр)
 
-## D239 (`compute_array_elem_type_for_obj` / `channel_array_elem_c`) — не трогал,
-## подтвердил прежний вердикт (ЕДИНСТВЕННЫЙ вызов, риск реален)
+Оба вызывающих сайта `resolve_result_option_ret` — ВНУТРИ frozen wave-1 `infer_call_ret_c`
+(фактический диапазон сейчас `50757`-`52899`; задание давало устаревшие координаты `46293`-`48883`
+из 196.5-заморозки — файл вырос на ~4400 строк, функция та же, просто съехала):
 
-Grep подтвердил: ОДИН оставшийся вызов `compute_array_elem_type_for_obj` — Channel-6k fallback
-внутри `infer_expr_c_type`'s `ExprKind::Index`-арма (~52776), СРАЗУ после `channel_array_elem_c`
-(~52769). Прочитал контекст полностью (52700-52820):
-- `ExprKind::Ident`-ветка внутри `compute_array_elem_type_for_obj` дублирует уже-выполненную
-  ПРЯМО ВЫШЕ (~52754) проверку `array_element_types.get(name)` для НЕ-self-describing типов
-  (`obj_ty_self_describing == false`) — там она мертва (тот же lookup уже провалился). НО для
-  self-describing типов (`Nova_Vec____`/`NovaArray_`, когда декодирование по mangled-имени НЕ
-  удалось на 52739-52753) ветка ~52754 СОЗНАТЕЛЬНО пропущена (комментарий: side-table «poisoned,
-  last-wins across peers») — значит `compute_array_elem_type_for_obj`'s Ident-арм в ЭТОМ случае
-  НЕ дубликат, а единственный remaining путь (пусть и «отравленный» по документированной
-  причине). НЕ доказано мёртвым — не трогал.
-- `Member`-ветка (`debt_compute_field_array_elem_type`, глубокий field-chain `obj.f1.f2.field[i]`)
-  — живая: единственный явно нарезанный (`Member{obj:SelfAccess,...}`) кейс перехвачен РАНЬШЕ
-  (~52760), но ОБЩИЙ `Member` (не через self) — нет.
-- `SelfAccess`-ветка (`@[j]` в generic `[]T`-методе) — живая, не перехвачена нигде выше при
-  non-self-describing `obj_ty_pre`.
-**Вывод: fallback НЕ провабельно 0-hit без полного мега-CU замера по этим трём формам** — ровно
-ловушка §4.1 кампанийной карты (снятие БЕЗ доказательства на ПОЛНОМ корпусе → прошлый откат 93/2).
-Полный conformance-гейт вне scope этой сессии (правило «полный conformance НЕ гонять») —
-оставил как есть, D239 остаётся 🔄.
+- `~51162` (`B06a_method_overload_sentinel_mono`) — METHOD-level-generic класс
+  (`mono_method_decls` sentinel). Карта CH отмечает этот класс ВНЕ ПЕРИМЕТРА (Producer B,
+  `resolve_return_channel` method-level widen — «вне этой волны»).
+- `~51879` (`B10j_generic_fn_value_aware_return`) — free-fn/static-ctor generic возврат. ICR-трейс
+  НЕ бьёт ни на одной проверенной фикстуре (согласуется с находкой CH — канал уже отвечает раньше
+  в каскаде).
 
-## D372 (`infer_generic_static_ctor_ret`) — подтвердил: корректно SEP, ПРЕД-канальный по делу,
-## не «недосмотренная миграция»
+`resolve_result_option_ret` не имеет expr-id/call-site identity в сигнатуре — не может различить,
+чей вызов до неё дошёл. Единственный способ детачнуть ТОЛЬКО free-fn/ctor-класс без риска для
+method-класса — редактировать сами вызывающие сайты внутри `infer_call_ret_c` (различитель), что
+прямо запрещено заданием («НЕ ломать frozen-контракт... перенос side-effect, НЕ переписывание
+frozen-логики»). Безусловный panic внутри функции стрелял бы по ОБОИМ сайтам одинаково — для
+B06a (method-класс, доказанно не покрытого продюсером в эту волну) это была бы недоказанная
+регрессия, не снос.
 
-Единственный вызывающий (~52358) стоит НАМЕРЕННО ДО Channel-1/2 в `infer_expr_c_type` (комментарий
-~52326-52334: «Channel 2 would… lower it to the ERASED `Nova_Wrap*` and the LHS local's instance
-methods would dispatch to the NULL stubs» — то есть каналы СТРУКТУРНО дают НЕПРАВИЛЬНЫЙ ответ для
-stub-only generic-ctor без turbofish; функция существует ИМЕННО чтобы перехватить этот кейс до
-канала). Функция сама гейтится `generic_type_has_voidptr_fields` — не общий legacy-fallback,
-а узкий pre-channel special-case. «→ чекер»-миграция потребовала бы чекеру знать про mono-
-инстанциацию НА call-site (per-call `ResolvedType`, Call-return класс) — то есть глубже канала,
-чем Зона CH сейчас строит (§0 карты: канал для Call-return классов "ПОСТРОЕН" для Result/Option/
-sum/static, но ctor-stub-erasure — другой класс, не упомянут явно). Не трогал — вне emit_c-only
-scope Zone GEN, коллизия с Zone CH (types/mod.rs).
+Это ровно условие из `docs/plans/196.4-call-resolvedtype-channel.md` §9: «удаляются... ИЛИ раньше
+через `panic!`-detach, ЕСЛИ ветвь отделима без правки замороженного диапазона» — не отделима в эту
+волну → остаётся 🔄 (§9/§10 того же документа явно это разрешают). Функция сохранена ЖИВОЙ во всех
+профилях (включая release) — корректный fallback для METHOD-класса.
 
-## Рекомендация интегратору
+### Empirical trace (доказательство «дальше сносить рано»)
 
-- Q10: обновить формулировку карты (флип-на-канал ЗАВЕРШЁН; снос легаси = функция Zone CH's
-  producer-расширения + batch-B2 full-corpus гейт, не отдельная задача Zone GEN).
-- Q9: рассмотреть переклассификацию `infer_type_param_binding`×3/`infer_protocol_structural_binding`
-  как «остаются» (lowering-примитив новой архитектуры), не «→ чекер» — избежать потраченного
-  впустую захода на несуществующую миграцию.
-- D239/D372: остаются 🔄/SEP как задокументировано; оба требуют либо полного corpus-гейта
-  (D239) либо Zone CH channel-расширения (D372) — не «дожимаемы» одним emit_c-only sonnet-заходом.
-- Зона GEN emit_c-only остаток после этой сессии: НЕТ дополнительных безопасных, самодостаточных
-  (без Zone CH/полного гейта) изменений, которые я мог бы найти по коду. Если у интегратора есть
-  другая гипотеза по конкретному call-сайту — welcome, но я не хочу гадать против ловушек §4
-  карты (D239-93/2 precedent) без полного гейта.
+Debug build, `NOVA_TRACE_ICR=1`, `nova-codegen compile <fixture>` standalone:
+- Гейт-фикстуры: `d85_question_return`/`d85_result_payload_width` — 0 хитов; `d30_try_op_unwrap_pair`
+  — `B10f`/`B11d`/`B11r` (METHOD non-generic, ожидаемо); `d408_option_chain_sized_width` — `B11q`
+  (METHOD, ожидаемо). Ни разу `B06a`/`B10j`/`GEN196_legacy_resolve_result_option_ret_*`.
+- CH-пробники: `d30_result_option_ret_generic` — `B10e`; `d88_default_generic_params` — 0;
+  `m196_facetc_generic_static_typaram` — `B12o`. Тот же результат — 0 `B06a`/`B10j`/`GEN196_*`.
+- Корпус `std/src/{collections,time,encoding}` (97 файлов, standalone): 12/97 скомпилировались
+  (остальные 85 требуют full-CU/folder-module контекст — `nova-codegen compile` берёт ОДИН файл,
+  не резолвит co-equal siblings; подтверждено на `d325_result_everywhere.nv`, module
+  `spec_tests.conformance`, не резолвит `sequence`/`partition` из `std/src/prelude/core.nv` в
+  standalone-режиме — implicit prelude подключается только в manifest-aware `nova build`/`nova
+  test`, НЕ в raw `nova-codegen compile <file>`). Из 85 несобравшихся — 12 упали
+  ПРЕДСУЩЕСТВУЮЩЕЙ Rust-панико́й `[P67-LEGACY] ... return type unknown` (52787/52930/53787) — НЕ
+  про Result/Option (`.append`/`.swap`/`.keys`/`.reserve`/`.iter`/`.len`/Path-`new`/`max_value`),
+  триггерится нехваткой multi-file контекста, не этой правкой. 12 успешных компиляций — 0
+  `B06a`/`B10j`/`GEN196_*`.
+
+Вывод: на всём достижимом standalone-материале (7 узких фикстур + 12 корпусных файлов)
+`resolve_result_option_ret` ни разу не сработала ни для method-, ни для free-fn-класса —
+согласуется с картой CH. НЕ исчерпывающее покрытие (flagship/nova_tests/85 недостижимых std-файлов
+вне охвата этого инструмента) — недостаточно для безусловного panic, достаточно чтобы держать
+debug-only trace живым для накопления доказательства (тот же паттерн, что уже применён в этом
+файле к `B10l`/`B10m`: «Детач+panic ПРОБОВАЛСЯ — 0 fires... NOT removed»).
+
+### Финальные гейты (release nova-cli, после исправления libuv-copy bug)
+
+Первая попытка `nova test spec_tests/conformance` упала `FATAL libuv submodule not initialized` —
+причина: мой РАННИЙ `cp -r` в целевую папку, которая уже существовала (пустая), дал вложенный
+`libuv/libuv` (та самая ловушка из `project-worktree-nova-test-setup` — «если целевая папка уже
+есть — сначала `rm -rf`»). Исправлено (`rm -rf` + повторный `cp -r` + удаление вложенного `.git`).
+
+- **conformance ОДНИМ compile-unit'ом** (`nova test spec_tests/conformance --jobs 4`, release
+  nova-cli): **PASS: 124  FAIL: 0  SKIP: 14**. Главный гейт (CLAUDE.md) — ЗЕЛЁНЫЙ. `d325_
+  result_everywhere` компилируется и проходит ВНУТРИ этого прогона (полный manifest-aware CU
+  резолвит `sequence`/`partition`/`to_int`, которые raw `nova-codegen compile <file>` не резолвит
+  — см. §byte-parity выше; ограничение было именно инструмента `compile`, не языка/этой правки).
+- **Флагман** `nova check --strict-effects examples/flagship/aggregator/src/main.nv`: **PASS: 1
+  FAIL: 0 WARN: 28** (все warning — unused-import/postfix-mut-канон, косметика, не про эту правку).
+  Улучшение относительно CH-чекпойнта (§0 карты): та сессия видела pre-existing `nova-tls`
+  `E_CONSUME_PATTERN_REQUIRED` FAIL — не воспроизвелось здесь (git-dep кэш/апстрим успел
+  обновиться между сессиями; не мой предмет).
+- **Флагман full build** `nova build --strict-effects --mode release examples/flagship/aggregator/
+  src/main.nv -o aggregator.exe`: **built: aggregator.exe (49.65s)**, 0 ошибок. Полный C-codegen +
+  компиляция + линковка прошли чисто.
+
+Все три гейта зелёные на release-бинаре (нет debug_assertions → `icr_trace`/`GEN196_*` markers
+скомпилированы в no-op, нулевой overhead, поведение идентично pre-refactor коду по построению).
+
+### Byte-parity (диф .c ДО/ПОСЛЕ, standalone, debug build)
+
+| Фикстура | diff |
+|---|---|
+| `d85_question_return` | 0 |
+| `d85_result_payload_width` | 0 |
+| `d30_try_op_unwrap_pair` | 0 |
+| `d408_option_chain_sized_width` | 0 |
+| `d30_result_option_ret_generic` | 0 |
+| `d88_default_generic_params` | 0 |
+| `m196_facetc_generic_static_typaram` | 0 |
+
+`d325_result_everywhere.nv` — standalone-compile недостижим ИНСТРУМЕНТОМ (см. корпус-абзац выше;
+`NOVA_STD_PATH` не помогает — ошибка не про поиск пути, а про implicit-prelude, который raw
+single-file `compile` не подключает). НЕ регрессия правки — доказуемо ПО ФАЗАМ: d325's ошибки
+(`undefined identifier`/`E_UNKNOWN_METHOD`) — диагностика TYPE-CHECK фазы (`types/mod.rs`), которая
+падает ДО того, как codegen (`emit_c.rs`, где вся правка) вообще запускается; d325 физически не
+может увидеть эту правку ни в каком виде (идентичный отказ до/после на identical stage). Result/
+Option-канал на этом классе косвенно покрыт `d30_try_op_unwrap_pair`/`d30_result_option_ret_generic`
+(Result) + `d408_option_chain_sized_width` (Option) — все diff=0. Снятие ограничения для d325 самого
+требует `nova build`/`nova test` (manifest-aware pipeline) вместо raw `nova-codegen compile` —
+вне этого чекпойнта; полный mega-CU НЕ гонялся (задание: «Мега-CU НЕ гонять»).
+
+### Реестр 196 — что закрыто/осталось
+
+- ЗАКРЫТО: дубль-движок typedef-регистрации Result/Option (раньше независимо инлайнился в ДВУХ
+  местах — channel-producer `resolved_named_to_c` и legacy `resolve_result_option_ret`) — теперь
+  ОДИН канонический sink на тип. «ONE TRUTH» для этой конкретной под-задачи достигнута.
+- 🔄 НЕ ЗАКРЫТО (задокументировано, НЕ регрессия): физический снос `resolve_result_option_ret`/её
+  вызовов в `infer_call_ret_c` — гейтится (а) METHOD-generic классом (Producer B, вне периметра
+  этой волны) и (б) неотделимостью двух call sites без правки frozen-диапазона (запрещено
+  заданием). Debug-only trace-хуки оставлены живыми для будущего накопления доказательства.
+- `infer_result_type_params`/`resolve_result_te`/`resolve_result_te_strict` — не трогались: уже
+  соответствуют byte-parity-safe migration паттерну (legacy-wins-over-channel guard, ~18081); их
+  call sites вне frozen-зоны потенциально доступны будущей волне, но это отдельная, более крупная
+  задача (десятки call sites), не keystone этого задания.
+- `infer_method_level_return_for_sum`/B11r/B11q — не тронуты (вне периметра, по карте CH).
+- `rt_slots_from_args` — не тронут (Producer B / instance-method класс, вне этой волны).
+
+### Гейты (см. финальный отчёт агента для release/conformance/флагман)
+
+Byte-parity 7/7 diff=0; d325 недостижим инструментом (фазовое доказательство неприкосновенности);
+детач: debug-only trace добавлен (0 хитов на всём проверенном материале), безусловный panic НЕ
+добавлен (недостаточно доказательства по всему корпусу).
+
+Модель: sonnet.

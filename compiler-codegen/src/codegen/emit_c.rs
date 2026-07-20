@@ -4137,9 +4137,10 @@ impl CEmitter {
                     if self.rt_is_erased_stub(inner, false) {
                         return Ok("NovaOpt_nova_int".to_string());
                     }
-                    let sanitized = Self::sanitize_for_novaopt(&inner_c);
-                    self.register_novaopt_decl(&sanitized, &inner_c);
-                    format!("NovaOpt_{}", sanitized)
+                    // [M-196-gen] canonical sink (was inlined sanitize+register+format
+                    // here, byte-identical dup of resolve_result_option_ret's Option
+                    // arm) — see opt_repr_c_type doc.
+                    self.opt_repr_c_type(&inner_c)
                 } else {
                     "NovaOpt_nova_int".to_string()
                 }
@@ -19207,6 +19208,37 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// DeError]` inferred `None` and the `?`/`!!` degenerated. Construct the
     /// `NovaRes`/`NovaOpt` C type directly and register its decl. Returns None
     /// for non-Result/Option or when an arg is unresolvable.
+    ///
+    /// [M-196-gen] (Plan 196 "ONE TRUTH", GEN-agent wave): the two callers of
+    /// this fn (`infer_call_ret_c`'s `B06a_method_overload_sentinel_mono` —
+    /// METHOD-level-generic sentinel, and `B10j_generic_fn_value_aware_return`
+    /// — free-fn/static-ctor generic return) both sit INSIDE the frozen
+    /// wave-1 zone (`infer_call_ret_c`, 196.2) — per docs/plans/196.4-call-
+    /// resolvedtype-channel.md §9, Tier-2 helpers living inside that zone are
+    /// torn down "вместе с кластером или раньше через `panic!`-detach, если
+    /// ветвь отделима без правки замороженного диапазона". The two callers
+    /// are NOT separable from in here (this fn has no expr-id / call-site
+    /// identity to distinguish them), and the CH map (docs/plans/wip/196-ch-
+    /// result-notes.md §6) marks the METHOD-generic class (B06a's kind) as
+    /// producer-incomplete (Producer B / `resolve_return_channel` method-
+    /// level widen, out of THIS wave's scope) — so this fn's Result/Option
+    /// derivation logic stays LIVE (unconditionally, in every build
+    /// profile — release included) as the correctness fallback for both
+    /// call sites. What DID move out (this wave): the `register_novares_
+    /// decl`/`register_novaopt_decl` + name-format side-effect, previously
+    /// duplicated inline here, now funnels through the SAME canonical sink
+    /// the channel-producer path uses (`result_repr_c_type` /
+    /// `opt_repr_c_type`, both `~48486` — "LEGIT-LOWERING, canonical sink"
+    /// verdict) — one engine for "Result/Option ResolvedType-pair → C +
+    /// typedef", not two byte-identical copies. `icr_trace` markers below
+    /// are the DEBUG-only (`cfg(debug_assertions)`, zero release overhead,
+    /// same convention as every other `infer_call_ret_c` bucket) hooks for
+    /// the NEXT wave's reachability proof — `NOVA_TRACE_ICR=1` over the full
+    /// corpus (this wave measured 0 hits over d85/d30/d408/d30_result_
+    /// option_ret_generic/d88_default_generic_params/m196_facetc_generic_
+    /// static_typaram + targeted std/collections+time+encoding sweep — see
+    /// docs/plans/wip/196-gen-notes.md; not exhaustive enough over the WHOLE
+    /// corpus/flagship/nova_tests to justify an unconditional panic yet).
     fn resolve_result_option_ret(
         &self,
         ty: &crate::ast::TypeRef,
@@ -19230,14 +19262,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 (Some("Result"), 2) => {
                     let ok = resolve_arg(&generics[0])?;
                     let err = resolve_arg(&generics[1])?;
-                    self.register_novares_decl(&ok, &err);
-                    return Some(format!("NovaRes_{}*", Self::novares_name(&ok, &err)));
+                    self.icr_trace("GEN196_legacy_resolve_result_option_ret_RESULT");
+                    return Some(self.result_repr_c_type(&ok, &err));
                 }
                 (Some("Option"), 1) => {
                     let inner = resolve_arg(&generics[0])?;
-                    let sani = Self::sanitize_for_novaopt(&inner);
-                    self.register_novaopt_decl(&sani, &inner);
-                    return Some(format!("NovaOpt_{}", sani));
+                    self.icr_trace("GEN196_legacy_resolve_result_option_ret_OPTION");
+                    return Some(self.opt_repr_c_type(&inner));
                 }
                 _ => {}
             }
@@ -48488,6 +48519,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 59 Ф.7.5 D3: флип на mono — `Result[T,E]` → `NovaRes_<n>*`
         // (per-(T,E) тип). До D3 здесь был хардкод `Nova_Result*`.
         format!("NovaRes_{}*", Self::novares_name(ok_c, err_c))
+    }
+
+    /// [M-196-gen] `opt_repr_c_type` — Option-twin of `result_repr_c_type`
+    /// above: канонический sink для `Option[T]` → C, тот же verdict
+    /// (LEGIT-LOWERING, единственная точка решения). До этой правки
+    /// `resolved_named_to_c`'s `"Option"`-ветка (channel-producer сторона)
+    /// и `resolve_result_option_ret` (legacy TypeRef+subst сторона, ниже)
+    /// каждая инлайнила БАЙТ-ИДЕНТИЧНУЮ пару `sanitize_for_novaopt` +
+    /// `register_novaopt_decl` + `format!("NovaOpt_{}", ..)` — дубль-движок
+    /// (Plan 196 "ONE TRUTH"). Обе стороны теперь зовут ЭТУ функцию —
+    /// typedef-регистрация живёт в одном каноническом codegen-sink'е, а не
+    /// дублируется в каждом producer'е (docs/plans/196.4-call-resolvedtype-
+    /// channel.md §10 "mono side-effects": «Регистрация должна жить в
+    /// emit-pass, не в type-инференсе»). Pure refactor — идентичные
+    /// аргументы, идентичный порядок вызовов, идентичная строка → byte-parity.
+    fn opt_repr_c_type(&self, inner_c: &str) -> String {
+        let sanitized = Self::sanitize_for_novaopt(inner_c);
+        self.register_novaopt_decl(&sanitized, inner_c);
+        format!("NovaOpt_{}", sanitized)
     }
 
     /// Plan 59 Ф.7.5 D1a: dual-mode имя trampoline-метода Result. Legacy
