@@ -26107,6 +26107,14 @@ struct LinearityRegistry {
     /// для локальных типов — для внешних типов мы не знаем их consume-статус
     /// из module.items.
     local_type_names: HashSet<String>,
+    /// Plan 217 (D-новый, «авто-`@cleanup` (гибрид C)», §8а п.1): имена
+    /// типов, чей `@cleanup(outcome ScopeOutcome)` метод объявлен и несёт
+    /// ПУСТОЙ effect-row (эффект-чистый — `extern "nova"` guard'ы ТОЖЕ
+    /// считаются, в отличие от codegen'ового `consume_cleanup_types`,
+    /// который исключает extern ради ccount-поля). Ограждение 1 плана:
+    /// авто-cleanup стартует ТОЛЬКО для этих типов; fallible-`@cleanup`
+    /// (непустой effect-row) остаётся строго-линейным (D133 без изменений).
+    cleanup_pure_types: HashSet<String>,
 }
 
 impl LinearityRegistry {
@@ -26114,6 +26122,7 @@ impl LinearityRegistry {
         let mut consume_types = HashSet::new();
         let mut consume_methods: HashMap<String, Vec<String>> = HashMap::new();
         let mut local_type_names = HashSet::new();
+        let mut cleanup_pure_types = HashSet::new();
 
         // 1. Local module: consume-types + consume-methods + all local type names.
         for item in &module.items {
@@ -26130,12 +26139,34 @@ impl LinearityRegistry {
                             .entry(recv.type_name.clone())
                             .or_default()
                             .push(fd.name.clone());
+                        // Plan 217 §8а п.1: `@cleanup` (метод `cleanup` на
+                        // consume-receiver'е, instance-kind) с ПУСТЫМ
+                        // effects-row → эффект-чистый уборщик. `extern
+                        // "nova"` включаются (`MutexGuard`/`TcpStream`/…
+                        // сегодня все extern + `[never]`) — в отличие от
+                        // codegen-ового ccount-реестра, здесь extern-статус
+                        // не имеет значения (нас интересует ТОЛЬКО effect-
+                        // чистота сигнатуры).
+                        if fd.name == "cleanup"
+                            && matches!(recv.kind, ReceiverKind::Instance)
+                            && fd.effects.is_empty()
+                        {
+                            cleanup_pure_types.insert(recv.type_name.clone());
+                        }
                     }
                 }
             }
         }
 
-        LinearityRegistry { consume_types, consume_methods, local_type_names }
+        LinearityRegistry { consume_types, consume_methods, local_type_names, cleanup_pure_types }
+    }
+
+    /// Plan 217 §8а п.1/п.2: тип объявил `@cleanup` эффект-чисто → гибрид C
+    /// авто-cleanup применим (аффинный: непотребление к концу скоупа — НЕ
+    /// ошибка). Пустая строка / неизвестный тип → false (fail-safe: остаётся
+    /// строгая линейность D133, как до 217).
+    fn has_pure_cleanup(&self, ty: &str) -> bool {
+        !ty.is_empty() && self.cleanup_pure_types.contains(ty)
     }
 
     /// Plan 100.1 (D133 / D6): `type_is_consume(TypeRef)` — рекурсивно
@@ -27621,7 +27652,21 @@ impl<'a> ConsumeCtx<'a> {
             // используем D156-strict-forget вместо D133-not-consumed.
             let is_strict_generic = !ty.is_empty()
                 && self.consume_bound_generics.contains(&ty);
+            // Plan 217 (D-новый, §8а п.1/п.2, гибрид C): тип объявил
+            // ЭФФЕКТ-ЧИСТЫЙ `@cleanup` → аффинный (≤1), непотребление к
+            // scope-exit НЕ ошибка — компилятор авто-вставляет
+            // `@cleanup(outcome)` (codegen: emit_c.rs `auto_cleanup_*`,
+            // per-block DeferEntry.consume_policy, drop-флаг §8а п.6).
+            // Generic `[T consume]`-bound (`is_strict_generic`) исключён —
+            // конкретный тип неизвестен статически, D156-strict-forget как
+            // раньше. Типы БЕЗ `@cleanup` (StringBuilder и т.п., §1) —
+            // строгая линейность без изменений (`has_pure_cleanup` даёт
+            // false для них).
+            let is_auto_cleanup_eligible = !is_strict_generic
+                && self.lin_reg.has_pure_cleanup(&ty);
             match state {
+                Some(VarState::Live) if is_auto_cleanup_eligible => {}
+                Some(VarState::MaybeConsumed(_)) if is_auto_cleanup_eligible => {}
                 Some(VarState::Live) => {
                     let methods = self.lin_reg.consume_methods_for(&ty);
                     // Plan 100.6 (D164 §5): cross-module hint — если тип не

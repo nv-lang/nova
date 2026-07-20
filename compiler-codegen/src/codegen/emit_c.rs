@@ -1540,6 +1540,32 @@ pub struct CEmitter {
     /// санкционированный вынос владения: Return-эмит гасит cleanup
     /// (`_defer_<id>_0_active = 0;`) ПЕРЕД прогоном early-exit cleanup'ов.
     reconsume_scopes: Vec<(String, usize)>,
+    /// Plan 217 (D-новый, гибрид C): имена типов (plain Nova, НЕ C-ident) с
+    /// эффект-чистым `@cleanup` (`f.effects.is_empty()`) — extern И user-
+    /// defined ОБА считаются (в отличие от `consume_cleanup_types`, который
+    /// исключает extern ради ccount-поля). Populated by an `emit_module`
+    /// pre-pass mirroring `LinearityRegistry::build`'s checker-side twin
+    /// (types/mod.rs) — must stay in sync (both scan the same `f.name ==
+    /// "cleanup" && recv.consume && Instance && effects.is_empty()` shape).
+    auto_cleanup_types: HashSet<String>,
+    /// Plan 217: arm-sites for bare `consume X = e;` (non-block) bindings of
+    /// an auto-cleanup-eligible type, collected by `enter_defer_scope`'s
+    /// prologue scan (keyed by the `LetDecl`'s span — stable within one
+    /// function body). Consumed (removed) when `emit_stmt` actually reaches
+    /// that `Stmt::Let`, to arm the shield + `_active` flag with the exact
+    /// C names declared in the prologue. `(block_id, entry_idx, init_c_type)`.
+    auto_cleanup_arm_sites: HashMap<Span, (usize, usize, String)>,
+    /// Plan 217: currently-armed auto-cleanup bindings — `(name, block_id,
+    /// entry_idx)`, most-recently-armed last. Consulted by the disarm sites
+    /// (`return X` bare/non-bare, direct call-arg, bare-statement consuming
+    /// method call on the receiver) to zero the matching `_active` flag —
+    /// this IS the runtime drop-flag (§8а п.6(а)): the flag is read only at
+    /// scope-exit, so a branch that disarmed it skips cleanup while a
+    /// sibling branch that didn't still runs it (MaybeConsumed-safe).
+    /// Entries for a block are dropped in `leave_defer_scope` (retain by
+    /// block_id) — the single choke-point every block already passes
+    /// through, so no per-call-site bookkeeping is needed.
+    auto_cleanup_active: Vec<(String, usize, usize)>,
     /// Closure mut-capture heap-box registry. Maps variable name → C box-pointer
     /// variable name (`_box_<name>`). When a mut local is captured by a closure,
     /// it is heap-promoted: a `T* _box_x = nova_alloc(sizeof(T)); *_box_x = x;`
@@ -2248,6 +2274,9 @@ impl CEmitter {
             defer_scopes: Vec::new(),
             defer_block_counter: 0,
             reconsume_scopes: Vec::new(),
+            auto_cleanup_types: HashSet::new(),
+            auto_cleanup_arm_sites: HashMap::new(),
+            auto_cleanup_active: Vec::new(),
             var_boxed: HashMap::new(),
             warnings: std::cell::RefCell::new(Vec::new()),
             strict_errors: std::cell::RefCell::new(Vec::new()),
@@ -4525,6 +4554,39 @@ impl CEmitter {
                             if recv.consume && matches!(recv.kind, ReceiverKind::Instance) {
                                 self.consume_cleanup_types
                                     .insert(Self::receiver_type_c_ident(&recv.type_name));
+                            }
+                        }
+                    }
+                }
+            };
+            collect(&module.items);
+            for pf in &module.peer_files {
+                collect(&pf.items_here);
+            }
+        }
+
+        // Plan 217 (D-новый, гибрид C, §8а п.1): pre-pass — collect PLAIN
+        // Nova type names (not C-ident) whose `@cleanup` is effect-pure
+        // (`f.effects.is_empty()`). Unlike the ccount pre-pass above, extern
+        // "nova" cleanups COUNT here (MutexGuard/ReadGuard/WriteGuard/Permit/
+        // TcpStream today — all `extern "nova"` + empty effect-row) — auto-
+        // cleanup eligibility depends only on effect-purity, not on who
+        // wrote the cleanup body. Mirrors `LinearityRegistry::build`'s
+        // `cleanup_pure_types` (types/mod.rs checker side) — MUST stay in
+        // sync so checker-suppressed-diagnostic and codegen-inserted-cleanup
+        // never diverge (a mismatch would silently leak a resource instead
+        // of erroring, per feedback-zero-tolerance-bugs).
+        {
+            let mut collect = |items: &[Item]| {
+                for item in items {
+                    if let Item::Fn(f) = item {
+                        if f.name != "cleanup" { continue; }
+                        if let Some(recv) = &f.receiver {
+                            if recv.consume
+                                && matches!(recv.kind, ReceiverKind::Instance)
+                                && f.effects.is_empty()
+                            {
+                                self.auto_cleanup_types.insert(recv.type_name.clone());
                             }
                         }
                     }
@@ -25663,11 +25725,43 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         block.stmts.iter().any(|s| matches!(s, Stmt::Defer { .. }))
     }
 
+    /// Plan 217 (D-новый, гибрид C): if `decl` is a bare `consume X = e;`
+    /// (single `Ident` pattern — guard 3: no drop-glue, only named scalar
+    /// bindings qualify, never tuple/record destructure) whose init
+    /// expression's type has a registered effect-pure `@cleanup`
+    /// (`auto_cleanup_types`, guard 1), return `Some(init_c_type)` (the raw
+    /// C type as `infer_expr_c_type` reports it — same shape `Stmt::
+    /// ConsumeScope` codegen already strips via `debt_strip_nova_trim_start`
+    /// + `NovaValue_` peel). `None` for anything that must keep strict
+    /// linearity (non-consume, non-Ident pattern, or no pure `@cleanup`).
+    fn auto_cleanup_qualifies(&self, decl: &LetDecl) -> Option<String> {
+        if !decl.consume { return None; }
+        if !matches!(&decl.pattern, Pattern::Ident { .. }) { return None; }
+        let init_c_type = self.infer_expr_c_type(&decl.value);
+        let type_name = self.debt_strip_nova_trim_start(&init_c_type);
+        let type_name = type_name
+            .strip_prefix("NovaValue_")
+            .map(|s| s.to_string())
+            .unwrap_or(type_name);
+        if self.auto_cleanup_types.contains(&type_name) {
+            Some(init_c_type)
+        } else {
+            None
+        }
+    }
+
+    /// Plan 217: does this block contain at least one bare consume-let that
+    /// qualifies for auto-cleanup (`auto_cleanup_qualifies`)? Non-recursive,
+    /// mirrors `block_has_defers` (nested blocks get their own scope).
+    fn block_has_auto_cleanup_lets(&self, block: &Block) -> bool {
+        block.stmts.iter().any(|s| matches!(s, Stmt::Let(decl) if self.auto_cleanup_qualifies(decl).is_some()))
+    }
+
     /// Push a new defer scope onto the stack and emit its prologue:
     /// declaration of activation flags (zero-init), and the NovaFailFrame
     /// setjmp wrapper for errdefer-bearing blocks. Returns block_id.
     fn enter_defer_scope(&mut self, block: &Block, is_loop_body: bool) -> usize {
-        if !Self::block_has_defers(block) {
+        if !Self::block_has_defers(block) && !self.block_has_auto_cleanup_lets(block) {
             return 0;
         }
         self.defer_block_counter += 1;
@@ -25676,6 +25770,57 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let mut idx = 0usize;
         for s in &block.stmts {
             // Plan 173 Ф.1 (#4): only plain `defer` remains (D189).
+            // Plan 217 (гибрид C): bare auto-cleanup-eligible `consume X = e;`
+            // gets its OWN entry too (`consume_policy: Some`) — same per-
+            // block LIFO stack, same four run-sites (leave_defer_scope /
+            // emit_early_exit_cleanup already branch on `consume_policy`
+            // generically, see их doc-comments). `active_var`/`prevdl`/
+            // `ccount` are declared here (prologue, unconditionally 0/NULL)
+            // but only ARMED when `emit_stmt` actually reaches this exact
+            // `Stmt::Let` (partial-init safety — matches ConsumeScope's own
+            // "arm only after init captured" discipline).
+            if let Stmt::Let(decl) = s {
+                if let Some(init_c_type) = self.auto_cleanup_qualifies(decl) {
+                    let active_var = format!("_defer_{}_{}_active", block_id, idx);
+                    let prevdl_var = format!("_defer_{}_{}_prevdl", block_id, idx);
+                    let ccount_var = format!("_defer_{}_{}_ccount", block_id, idx);
+                    let type_name = {
+                        let t = self.debt_strip_nova_trim_start(&init_c_type);
+                        t.strip_prefix("NovaValue_").map(|s| s.to_string()).unwrap_or(t)
+                    };
+                    entries.push(DeferEntry {
+                        active_var: active_var.clone(),
+                        body: Expr::new(ExprKind::UnitLit, Span::default()),
+                        outcome_binding: None,
+                        consume_policy: Some(ConsumePolicy {
+                            type_name,
+                            // Real c_binding (incl. value-record `&`-wrap)
+                            // is filled in by `emit_auto_cleanup_arm` once
+                            // the binding is actually declared — placeholder
+                            // here is never read before that (entry stays
+                            // inactive, `active_var == 0`, until armed).
+                            c_binding: String::new(),
+                            prev_deadline_var: prevdl_var.clone(),
+                            has_resource_trace: false,
+                            count_var: ccount_var.clone(),
+                            // Plan 217 keystone (§6 оговорка): cancel-shield
+                            // ЕСТЬ (cleanup should not be cancel-interrupted
+                            // mid-flight — same reasoning as ConsumeScope),
+                            // но watchdog-порог/ResourceTrace НЕ подключены
+                            // (secondary D188 R1/R3 features, вне keystone-
+                            // скоупа 217; "0" = disarmed watchdog, harmless
+                            // literal per `nv_cleanup_watchdog_arm`).
+                            threshold_var: "0".to_string(),
+                        }),
+                    });
+                    self.line(&format!("int {} = 0;", active_var));
+                    self.line(&format!("int64_t {} = 0;", prevdl_var));
+                    self.line(&format!("int {} = 0;", ccount_var));
+                    self.auto_cleanup_arm_sites.insert(decl.span, (block_id, idx, init_c_type));
+                    idx += 1;
+                    continue;
+                }
+            }
             let (body, outcome_binding) = match s {
                 Stmt::Defer { body, outcome_binding, .. } => (body, outcome_binding.clone()),
                 _ => continue,
@@ -25951,6 +26096,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         let scope = self.defer_scopes.pop().expect("defer_scopes balanced");
         debug_assert_eq!(scope.block_id, block_id);
+        // Plan 217: drop this block's auto-cleanup bindings from the
+        // disarm-lookup registry — the C variables they'd disarm no longer
+        // exist past this point (either already fired below, or the block
+        // never reached them). Single choke-point (every block already
+        // calls `leave_defer_scope` exactly once) — no per-call-site
+        // bookkeeping needed for the (name, block_id, idx) triples pushed
+        // by `emit_auto_cleanup_arm`.
+        self.auto_cleanup_active.retain(|(_, bid, _)| *bid != block_id);
         // Plan 100.4.4 (D161): Per-defer NovaFailFrame wrap — каждый defer body
         // в своём setjmp envelope. LIFO continues despite individual failures;
         // failures accumulate в local compose-state, re-throw at end если any.
@@ -27087,6 +27240,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// (Match/If как ПРЯМОЕ значение return) — консервативный fallback:
     /// disarm перед вычислением всего EXPR (за пределами узкого амендмента
     /// v3 — вложенность Call-в-Call, засвидетельствованная в nova-tls).
+    /// Plan 217: resolve `name` to the C `_active` flag it should disarm, if
+    /// any — checks `reconsume_scopes` first (re-consume `consume X { … }`
+    /// blocks always use entry index 0, D188-амендмент Plan 201), then
+    /// `auto_cleanup_active` (bare auto-cleanup consume-lets, arbitrary
+    /// index within their block). Most-recently-armed wins (`.rev()`),
+    /// mirroring shadowing semantics already used by `reconsume_scopes`
+    /// alone before 217.
+    fn disarm_var_for(&self, name: &str) -> Option<String> {
+        if let Some((_, bid)) = self.reconsume_scopes.iter().rev().find(|(n, _)| n == name) {
+            return Some(format!("_defer_{}_0_active", bid));
+        }
+        if let Some((_, bid, idx)) = self.auto_cleanup_active.iter().rev().find(|(n, _, _)| n == name) {
+            return Some(format!("_defer_{}_{}_active", bid, idx));
+        }
+        None
+    }
+
     fn emit_expr_with_reconsume_disarm(
         &mut self,
         e: &Expr,
@@ -27125,12 +27295,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // момент передачи владения: дизармим guard'ы, бывшие ПРЯМЫМИ
                 // аргументами именно этого вызова.
                 for name in &disarmed_here {
-                    if let Some((_, bid)) = self.reconsume_scopes.iter().rev()
-                        .find(|(b, _)| b == name)
-                    {
+                    if let Some(var) = self.disarm_var_for(name) {
                         self.line(&format!(
-                            "_defer_{}_0_active = 0;  /* Plan 201 v3: consuming-вызов — cleanup дизармлен */",
-                            bid));
+                            "{} = 0;  /* Plan 201 v3 / 217: consuming-вызов — cleanup дизармлен */",
+                            var));
                     }
                 }
                 let rebuilt = Expr {
@@ -27159,12 +27327,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // передачи владения» схлопывается в сами field-exprs.
                 let names_here = self.collect_reconsume_disarm_names(e, names);
                 for name in &names_here {
-                    if let Some((_, bid)) = self.reconsume_scopes.iter().rev()
-                        .find(|(b, _)| b == name)
-                    {
+                    if let Some(var) = self.disarm_var_for(name) {
                         self.line(&format!(
-                            "_defer_{}_0_active = 0;  /* Plan 201 v3: consuming-вызов (fallback) — cleanup дизармлен */",
-                            bid));
+                            "{} = 0;  /* Plan 201 v3 / 217: consuming-вызов (fallback) — cleanup дизармлен */",
+                            var));
                     }
                 }
                 self.emit_expr(e)
@@ -27172,7 +27338,69 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
+    /// Plan 217 (D-новый, гибрид C): arm the auto-cleanup entry for `decl`
+    /// (a bare consume-let just declared by `emit_stmt_inner`) — resolves
+    /// the `(block_id, idx, init_c_type)` stashed by `enter_defer_scope`'s
+    /// prologue scan, patches in the REAL `c_binding` (incl. value-record
+    /// `&`-wrap, mirrors `Stmt::ConsumeScope` codegen at its own binding
+    /// point), enters the cancel-shield (`nv_consume_enter_shield(0)` —
+    /// threshold 0 is a harmless literal, no watchdog-warn armed, см.
+    /// `ConsumePolicy.threshold_var` doc), and flips `_active = 1`. Pushes
+    /// `(name, block_id, idx)` onto `auto_cleanup_active` so the disarm
+    /// sites (return / call-arg / bare-statement consuming call) can find
+    /// it. Partial-init safety: armed only HERE (after `emit_stmt_inner`
+    /// already emitted the declaration), never in the prologue — if `init`
+    /// itself threw, we'd never reach this line, so no phantom cleanup.
+    fn emit_auto_cleanup_arm(&mut self, decl: &LetDecl, span: Span) -> Result<(), String> {
+        let (block_id, idx, init_c_type) = match self.auto_cleanup_arm_sites.remove(&span) {
+            Some(v) => v,
+            None => return Ok(()),
+        };
+        let binding = self.pattern_binding(&decl.pattern)?;
+        let c_binding_arg = if init_c_type.starts_with("NovaValue_") && !init_c_type.ends_with('*') {
+            format!("(&{})", binding)
+        } else {
+            binding.clone()
+        };
+        let active_var = format!("_defer_{}_{}_active", block_id, idx);
+        let prevdl_var = format!("_defer_{}_{}_prevdl", block_id, idx);
+        self.line(&format!("{} = nv_consume_enter_shield(0);", prevdl_var));
+        self.line(&format!("{} = 1;  /* Plan 217: auto-cleanup armed */", active_var));
+        if let Some(scope) = self.defer_scopes.iter_mut().rev().find(|s| s.block_id == block_id) {
+            if let Some(entry) = scope.entries.get_mut(idx) {
+                if let Some(policy) = &mut entry.consume_policy {
+                    policy.c_binding = c_binding_arg;
+                }
+            }
+        }
+        self.auto_cleanup_active.push((binding, block_id, idx));
+        Ok(())
+    }
+
+    /// Plan 217 (D-новый, гибрид C): thin wrapper around `emit_stmt_inner`.
+    /// After a bare `Stmt::Let` finishes emitting its normal C declaration,
+    /// checks whether this exact statement (keyed by its span) was flagged
+    /// by `enter_defer_scope`'s prologue scan as an auto-cleanup arm-site —
+    /// if so, arms the shield + `_active` flag right here (partial-init
+    /// safety: the resource is now genuinely captured). Kept as a separate
+    /// wrapper (rather than inlining into the giant `Stmt::Let` match arm
+    /// below, which has many early `return Ok(())`s) to avoid touching that
+    /// arm's internals at all.
     fn emit_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+        let decl_span = match stmt {
+            Stmt::Let(decl) if self.auto_cleanup_arm_sites.contains_key(&decl.span) => Some(decl.span),
+            _ => None,
+        };
+        self.emit_stmt_inner(stmt)?;
+        if let Some(span) = decl_span {
+            if let Stmt::Let(decl) = stmt {
+                self.emit_auto_cleanup_arm(decl, span)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn emit_stmt_inner(&mut self, stmt: &Stmt) -> Result<(), String> {
         // Source annotation hook: if --annotate-source enabled, emit the
         // originating Nova source as a /* SRC: ... */ comment.
         self.emit_source_annotation_for_stmt(stmt);
@@ -28288,12 +28516,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `val` through `emit_expr_with_reconsume_disarm` so the
                     // disarm-assignment lands exactly between "consuming call's
                     // args evaluated" and "call invoked" (see helper doc above).
+                    // Plan 217: non-bare `return EXPR` referencing an ACTIVE
+                    // auto-cleanup binding (e.g. `return f(g)`, `g` passed as
+                    // a direct call-arg) needs the same disarm — union both
+                    // registries before scanning.
                     let reconsume_disarm_names: std::collections::HashSet<String> =
-                        if matches!(&v.kind, ExprKind::Ident(_)) || self.reconsume_scopes.is_empty() {
+                        if matches!(&v.kind, ExprKind::Ident(_))
+                            || (self.reconsume_scopes.is_empty() && self.auto_cleanup_active.is_empty())
+                        {
                             std::collections::HashSet::new()
                         } else {
                             let active: std::collections::HashSet<String> =
-                                self.reconsume_scopes.iter().map(|(b, _)| b.clone()).collect();
+                                self.reconsume_scopes.iter().map(|(b, _)| b.clone())
+                                    .chain(self.auto_cleanup_active.iter().map(|(n, _, _)| n.clone()))
+                                    .collect();
                             self.collect_reconsume_disarm_names(v, &active)
                         };
                     let val = if !reconsume_disarm_names.is_empty() {
@@ -28324,13 +28560,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // вынос владения: дизармим cleanup ИМЕННО этого блока (innermost
                     // с совпадающим binding'ом) ПЕРЕД прогоном early-exit cleanup'ов.
                     // Объемлющие consume-блоки НЕ трогаем — их ресурсы не выносятся.
+                    // Plan 217: same sanctioned-transfer disarm for a bare
+                    // `return X` where `X` is a bare auto-cleanup binding
+                    // (not a re-consume-block guard) — `disarm_var_for`
+                    // checks both registries.
                     if let ExprKind::Ident(ret_name) = &v.kind {
-                        if let Some((_, bid)) = self.reconsume_scopes.iter().rev()
-                            .find(|(b, _)| b == ret_name)
-                        {
+                        if let Some(var) = self.disarm_var_for(ret_name) {
                             self.line(&format!(
-                                "_defer_{}_0_active = 0;  /* Plan 201: return-вынос — cleanup дизармлен */",
-                                bid));
+                                "{} = 0;  /* Plan 201 / 217: return-вынос — cleanup дизармлен */",
+                                var));
                         }
                     }
                     if let Some(label) = post_label {
