@@ -1,6 +1,9 @@
 #ifndef NOVA_RT_SCHED_H
 #define NOVA_RT_SCHED_H
 
+#include <stdio.h>    /* fprintf — abort-path diagnostics (grow_state/get_state/park/gopark) */
+#include <stdlib.h>   /* abort — invariant-violation fail-fast */
+
 /* Plan 22 Ф.3 (D93): нормативный park/wake API для блокирующих операций.
  *
  * Любая блокирующая операция в runtime'е (Time.sleep, Channel.recv,

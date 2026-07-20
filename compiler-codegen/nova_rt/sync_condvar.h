@@ -50,6 +50,9 @@
 #ifndef NOVA_RT_SYNC_CONDVAR_H
 #define NOVA_RT_SYNC_CONDVAR_H
 
+#include <stdio.h>    /* fprintf — malloc-failure diagnostics */
+#include <stdlib.h>   /* abort/malloc/free — NovaCondvarTLFHandle (raw-malloc'd, not GC-managed) */
+
 /* ── WaitResult (Plan 103.4, D170) ──────────────────────────────────────
  *
  * Return type for Condvar.wait_for().

@@ -3487,6 +3487,58 @@ default` + метод собирается. Замечание (вне пери�
   предпринят (root cause не локализован в рамках зоны/бюджета — предпринимать
   спекулятивный фикс без верифицированного корня запрещено §4а). Единственная
   правка — `deque.h` include-гигиена (нулевой риск, не concurrency-логика).
+  **2026-07-20 (продолжение, sonnet, worktree `nova-rtheaders`, ветка
+  `p-fix-rt-headers`) — include-гигиена по ВСЕМ `nova_rt/*.h` завершена,
+  вскрыт отдельный НЕ-include класс gcc-ошибок:**
+  Аудит всех 31 заголовка `compiler-codegen/nova_rt/*.h` (кроме vendored
+  `libuv/`) на self-containedness (grep реального использования libc-символов
+  vs собственных `#include`, каждое совпадение верифицировано вручную против
+  ложных срабатываний в комментариях). Исправлено 9 файлов (только
+  `#include`-строки, нулевой риск): `channels.h`/`nova_sched.h` (+`stdio.h`
+  +`stdlib.h`: `fprintf`/`abort`/`malloc`/`free`/`getenv`/`atexit`),
+  `sync_barrier.h`/`sync_condvar.h`/`sync_countdown_latch.h`/`sync_semaphore.h`
+  (те же 2 инклуда — раньше ВООБЩЕ без своих `#include`, полагались
+  транзитивно на `sync_primitives.h`, который их `#include`-ит по факту
+  реальными директивами, не text-splice), `typeid.h` (+`string.h` для
+  `memcpy`, +`"alloc.h"` для `nova_alloc` — последнее найдено ПРЯМОЙ
+  компиляцией `typeid.c`, единственного `.c` из `rt_archive_sources`, кто
+  инклудит `typeid.h` без `nova_rt.h`-bootstrap: gcc 15 давал `implicit
+  declaration of function 'nova_alloc'` → `int→void*` `-Wint-conversion`),
+  `vtables.h` (+`string.h` для `memcpy`, +`stdbool.h` для `bool` в его
+  standalone-fallback `#ifndef NOVA_RT_H` typedef-блоке),
+  `plan115_ffi_test.h` (+`string.h` для `strlen`). Остальные 22 заголовка
+  (включая `sync_primitives.h`, `bench.h` — оба ранее подозревались) уже
+  self-contained: либо через собственный `#include "nova_rt.h"`-bootstrap
+  (`fibers.h`/`effects.h`/`bench.h`/`net.h`/`fs.h`), либо полный свой список.
+  **Гейты:** Windows (`cl.exe`, реальный prod-toolchain) — `cargo build
+  --release` чисто; `NOVA_RT_ARCHIVE=1` архив с нуля собрался
+  (`libnova_rt.lib built (13 files)`); `spec_tests/conformance/standalone`
+  **PASS 68/FAIL 0** (вкл. `pos_max_fibers_concurrent`,
+  `supervisor_parfor_test`). WSL2 та же машина (gcc 15.2.0/clang 21.1.8),
+  ручная репликация `build_rt_archive_lib`'s Unix-ветки (идентичные флаги):
+  **clang — ARCHIVE_OK** (все 13 `.c` чисто, `ar rcs` собрал `libnova_rt.a`;
+  include-фиксы полностью закрывают clang-класс из этой заметки). **gcc —
+  ВСЁ ЕЩЁ FAILED**, но `typeid.c` теперь чист; остаются 3 категории ошибок,
+  ни одна НЕ include-related (полная категоризация в
+  `docs/plans/wip/rt-headers-notes.md`): (1) `struct NovaFiberQueue*` vs
+  `NovaFiberQueue*` type mismatch (44 error) — `driver.h` форвард-декларирует
+  ТЕГИРОВАННЫЙ `struct NovaFiberQueue;`, `fibers.h` определяет АНОНИМНЫЙ
+  `typedef struct {...} NovaFiberQueue;` — два разных C-типа, пронизывает
+  `driver.h`/`driver.c`/`fibers.h`/`runtime.h`; аналогично
+  `struct NovaBlockingState*`; (2) `__atomic_fetch_and/or/xor` на
+  `nova_atomic_bool*`(`_Bool*`) в `sync_primitives.h` (36 error) — ЭТО И ЕСТЬ
+  ранее задокументированный gcc-флаг выше, НЕ include (файл уже полный);
+  (3) pointer-type mismatch в тернарнике (`const uint8_t*` vs `char*`
+  string-literal) в `effects.h::nv_exit` + `bench.h::nova_bench_emit_metric` —
+  ЭТО И ЕСТЬ «pointer-type ternary» флаг выше. Root cause расхождения:
+  GCC 14+ (в т.ч. 15.2 здесь) продвинул `-Wincompatible-pointer-types` из
+  warning в error-by-default для C; prod-флаг `-w` это НЕ подавляет
+  (verified). Clang 21 на идентичном источнике+флагах эти диагностики не
+  эскалирует. **Ни одна из 3 категорий НЕ тронута** — правка сверх
+  `#include`-строк (struct-tag unification / `_Bool`-atomic redesign /
+  ternary cast-fix) запрещена мандатом этой волны (§4а, «СТОП+доклад» вместо
+  спекулятивного фикса вне зоны). Требует отдельной волны с явным решением
+  владельца (или пиновка toolchain постарше для CI-паритета, см. п.3 выше).
 
 - **[M-replace-transitive-deps]** (2026-07-16, P3, найден compress-lock волной 205 Ф.2) —
   `[replace]` в nova.local.toml действует ТОЛЬКО на `[dependencies]` корневого пакета

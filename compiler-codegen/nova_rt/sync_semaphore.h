@@ -16,6 +16,9 @@
 #ifndef NOVA_RT_SYNC_SEMAPHORE_H
 #define NOVA_RT_SYNC_SEMAPHORE_H
 
+#include <stdio.h>    /* fprintf — malloc-failure diagnostics */
+#include <stdlib.h>   /* abort/malloc/free — NovaSemaphoreTLFHandle (raw-malloc'd, not GC-managed) */
+
 /* ── Semaphore TLF (timer) handle ─────────────────────────────────────────
  *
  * Used by acquire_for(Duration): raw-malloc'd (NOT GC-managed).
