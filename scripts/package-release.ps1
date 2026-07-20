@@ -209,3 +209,149 @@ if (-not $GcOk) {
 }
 
 Write-Host "gc/ staged: $DstGc (ok=$GcOk)"
+
+# ---------- 5. setup-env.ps1 (dot-source после распаковки) ----------
+#
+# nova.exe НЕ ищет std/nova_rt относительно себя — только через env vars
+# (NOVA_STD_PATH/NOVA_CG_INCLUDE/NOVA_RT_DIR/NOVA_GC_LIB_DIR/NOVA_GC_INCLUDE_DIR)
+# или репо-относительно от CWD-проекта (find_repo_root). Для дистрибутива вне
+# монорепы — только env vars. Скрипт вычисляет путь от СВОЕГО расположения
+# ($PSScriptRoot), поэтому работает из любой распакованной папки.
+
+$SetupEnvContent = @'
+# setup-env.ps1 — выставляет env vars, чтобы nova.exe/nova-lsp.exe находили
+# std/ и C-рантайм из ЭТОЙ распакованной папки (а не из монорепы разработки).
+#
+# Использование (ОБЯЗАТЕЛЬНО dot-source — иначе env vars не попадут в текущую
+# сессию, а исчезнут вместе с дочерним процессом):
+#
+#   . .\setup-env.ps1
+#
+# После этого `nova.exe build/test <file>.nv` работает из ЛЮБОЙ рабочей
+# директории (при условии, что у твоего проекта есть свой nova.toml —
+# `nova init` создаёт его).
+
+$root = $PSScriptRoot
+
+$env:NOVA_STD_PATH = Join-Path $root "std"
+$env:NOVA_CG_INCLUDE = $root
+$env:NOVA_RT_DIR = Join-Path $root "nova_rt"
+$env:NOVA_GC_LIB_DIR = Join-Path $root "gc\lib"
+$env:NOVA_GC_INCLUDE_DIR = Join-Path $root "gc\include"
+
+if ($env:PATH -notlike "*$root*") {
+    $env:PATH = "$root;$env:PATH"
+}
+
+Write-Host "Nova env настроен:"
+Write-Host "  NOVA_STD_PATH        = $env:NOVA_STD_PATH"
+Write-Host "  NOVA_CG_INCLUDE      = $env:NOVA_CG_INCLUDE"
+Write-Host "  NOVA_RT_DIR          = $env:NOVA_RT_DIR"
+Write-Host "  NOVA_GC_LIB_DIR      = $env:NOVA_GC_LIB_DIR"
+Write-Host "  NOVA_GC_INCLUDE_DIR  = $env:NOVA_GC_INCLUDE_DIR"
+Write-Host "  PATH += $root"
+'@
+
+Set-Content -Path (Join-Path $StageDir "setup-env.ps1") -Value $SetupEnvContent -Encoding utf8
+
+# ---------- 6. README-INSTALL.md ----------
+
+$ReadmeContent = @"
+# Nova v$Version — установка (Windows x64)
+
+## Установка
+
+1. Распакуй `$ZipName.zip` в любую папку (например `C:\nova`).
+2. В **той же** PowerShell-сессии, из папки установки, выполни (обязательно
+   через точку — dot-source, иначе env-переменные не сохранятся):
+
+   ``````powershell
+   . .\setup-env.ps1
+   ``````
+
+   Это выставляет ``NOVA_STD_PATH`` / ``NOVA_CG_INCLUDE`` / ``NOVA_RT_DIR`` /
+   ``NOVA_GC_LIB_DIR`` / ``NOVA_GC_INCLUDE_DIR`` (нужны, чтобы ``nova.exe``
+   находил стандартную библиотеку и C-рантайм вне монорепы разработки) и
+   добавляет папку в ``PATH`` текущей сессии.
+
+   Чтобы не повторять это в каждой новой сессии — добавь папку установки в
+   ``PATH`` через «Параметры → Переменные среды» и пропиши те же 5 env vars
+   постоянно (Панель управления или ``setx``).
+
+3. Проверь: ``nova --version`` должен вывести ``nova $Version``.
+
+## Требования
+
+Nova компилирует программы в C, поэтому на машине нужен C-компилятор:
+MSVC (Visual Studio Build Tools, ``vcvars64.bat``) — определяется
+автоматически, либо clang/gcc через ``--toolchain``.
+
+## Быстрый старт
+
+У твоего проекта должен быть свой ``nova.toml`` (минимум ``[package]
+name = "..."``) — ``nova build``/``nova test`` ищут его вверх от текущей
+директории. Дальше — hello world:
+
+``````
+module hello
+
+fn main() {
+    println("Hello, Nova!")
+}
+``````
+
+``````powershell
+nova build hello.nv
+.\hello.exe
+``````
+
+Более полный тур — mini_aggregator во флагман-примерах монорепозитория
+(``examples/flagship/aggregator``) и quickstart в docs репозитория.
+
+## VSCode-расширение
+
+Пока отдельно от этого архива — см. ``editors/vscode`` в исходном
+репозитории (сборка vsix — отдельный атом релиза).
+
+## Лицензия
+
+MIT OR Apache-2.0 — см. ``LICENSE`` / ``LICENSE-MIT`` / ``LICENSE-APACHE``.
+Сторонние компоненты (libuv, Boehm GC) — см. ``THIRD_PARTY/`` и
+``nova_rt/libuv/LICENSE``.
+"@
+
+Set-Content -Path (Join-Path $StageDir "README-INSTALL.md") -Value $ReadmeContent -Encoding utf8
+
+# ---------- 7. Лицензии ----------
+
+Write-Host "=== Копирую лицензии ==="
+foreach ($lic in @("LICENSE", "LICENSE-APACHE", "LICENSE-MIT")) {
+    $srcLic = Join-Path $RepoRoot $lic
+    if (Test-Path $srcLic) {
+        Copy-Item $srcLic (Join-Path $StageDir $lic)
+    }
+}
+$ThirdPartyDir = Join-Path $RepoRoot "THIRD_PARTY"
+if (Test-Path $ThirdPartyDir) {
+    Copy-Item $ThirdPartyDir (Join-Path $StageDir "THIRD_PARTY") -Recurse
+}
+
+# ---------- 8. Zip + sha256 ----------
+
+Write-Host "=== Собираю zip ==="
+$ZipPath = Join-Path $OutDirFull "$ZipName.zip"
+if (Test-Path $ZipPath) {
+    Remove-Item -Force $ZipPath
+}
+Compress-Archive -Path $StageDir -DestinationPath $ZipPath -CompressionLevel Optimal
+
+$Hash = Get-FileHash -Path $ZipPath -Algorithm SHA256
+$ShaLine = "$($Hash.Hash.ToLower())  $ZipName.zip"
+Set-Content -Path "$ZipPath.sha256" -Value $ShaLine -Encoding ascii
+
+$ZipSizeMb = [math]::Round((Get-Item $ZipPath).Length / 1MB, 1)
+Write-Host ""
+Write-Host "=== ГОТОВО ==="
+Write-Host "Zip:    $ZipPath ($ZipSizeMb MB)"
+Write-Host "SHA256: $($Hash.Hash.ToLower())"
+Write-Host "(записан рядом: $ZipPath.sha256)"
