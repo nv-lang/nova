@@ -56,36 +56,38 @@ fn main() -> () {
 | `Vec[T].new()` | Empty vector, cap = 0, no allocation |
 | `Vec[T].with_capacity(n)` | Empty vector, pre-allocated `n` element slots |
 | `Vec[T].of(a, b, c)` | Vector from a **literal element list** (variadic) — **one** allocation |
-| `Vec[T].from(coll)` | **Convert** an existing collection / `[]T` — a `clone`-like copy |
+| `existing.clone()` | **Convert** (deep-copy) an existing collection / `[]T` |
 
-### `of` vs `from` — when to use which (Plan 153.1 / [D259](../../spec/decisions/02-types.md#d259-конструктор-конвенция-vect--of-для-литерала-from-для-конверсии-plan-1531))
+### `of` vs `.clone()` — when to use which (Plan 153.1 / [D259](../../spec/decisions/02-types.md#d259-конструктор-конвенция-vect--of-для-литерала-from-для-конверсии-plan-1531))
 
-Two constructors, two distinct roles — don't mix them up:
+> **`Vec[T].from(coll)` is RETRACTED (2026-07-20, Plan 200 П16)** — it was
+> exactly `coll.clone()` (a deep, per-element copy via `Clone`, D230), so the
+> dedicated static constructor was redundant. Use `.clone()` directly.
+
+Two distinct roles — don't mix them up:
 
 - **Building from a literal element list → `Vec[T].of(a, b, c)`** (variadic). Like
   Rust `vec![a, b, c]`. Takes the elements directly: **one allocation**.
-- **Converting an existing collection → `Vec[T].from(coll)`**. Like Rust
-  `Vec::from(iter)` — a `clone`-like copy of something you already hold.
+- **Converting an existing collection → `existing.clone()`**. Like Rust
+  `iter.clone()` — a deep, independent copy of something you already hold.
 
 ```nova
 ro a = Vec[int].of(1, 2, 3)        // ✅ literal list → of (1 allocation)
 ro b = Vec[int].new()              // ✅ empty
-ro c = Vec[int].from(other_vec)    // ✅ convert an existing collection
-
-ro d = Vec[int].from([1, 2, 3])    // ❌ redundant-clone anti-pattern
-ro e = Vec[int].from([])           // ❌ → Vec[int].new()
+ro c = other_vec.clone()           // ✅ convert (deep-copy) an existing collection
 ```
 
-**Why `from([literal])` is an anti-pattern.** Under [D239](../../spec/decisions/02-types.md#d239-t--синтаксический-псевдоним-vect)
+**Why a literal never goes through a conversion path.** Under [D239](../../spec/decisions/02-types.md#d239-t--синтаксический-псевдоним-vect)
 an array literal `[1, 2, 3]` is *already* a `Vec[int]` — one allocation at the
-literal itself. `from` then copies it into a **second** buffer, so
-`Vec[int].from([1, 2, 3])` costs **two** allocations to produce exactly what
-`Vec[int].of(1, 2, 3)` produces in **one**. Reserve `from` for converting a
-collection you already have (`from(some_vec)` / `from(some_slice)`).
+literal itself. Wrapping it in a second constructor call (the old
+`from([1, 2, 3])` anti-pattern) would copy it into a **second** buffer for two
+allocations total, versus `Vec[int].of(1, 2, 3)`'s **one**. Reserve `.clone()`
+for converting a collection you already have.
 
 > When the element type is already fixed by context, you don't even need a
-> constructor — the bare literal `[a, b, c]` *is* the `Vec[T]` (D239). `of`/`from`
-> are only for inline type annotation (return position, generic context).
+> constructor — the bare literal `[a, b, c]` *is* the `Vec[T]` (D239). `of` is
+> only for inline type annotation (return position, generic context); `.clone()`
+> is only for converting a collection you already hold.
 
 ## Method reference
 

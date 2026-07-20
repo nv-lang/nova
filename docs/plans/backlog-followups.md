@@ -3075,7 +3075,7 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
 - **[M-lint-findings-static-conversion]** (2026-07-09, P3, Wave: миграционная волна §1а;
   источник: план 185, `nova lint std/`) — 21 сайт статик-конверсий `T.from(x)` /
   `T.parse(s)` в std (Csv/Ini/Json/**Toml**.parse, Url/Body/BodyReader/HeaderValue/Ulid/Uuid.from,
-  HashMap.from, Vec[T].from, JsonValue.try_from и др.) — «пятая дверь» по §1а
+  HashMap.from, ~~Vec[T].from~~, JsonValue.try_from и др.) — «пятая дверь» по §1а
   nv-coding-style (ретракция 2026-07-09). Миграция = переименование публичного API
   (`s.to_json()`-семья) + правка вызовов; не входит в план 185. On-line маркеры
   на декларациях; полный список — `nova lint --rule W_STATIC_CONVERSION std/`
@@ -3084,7 +3084,11 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   волны (2026-07-09), маркер не был проставлен; проставлен сейчас. `VersionReq.parse`
   (data/semver_range.nv) НЕ в этом списке — для него сделан полноценный фикс
   (`str @to_versionreq() -> Result[...]`, по образцу `semver.nv`), т.к. файл малой
-  сложности без зависимых Fail-эффект regression-тестов.
+  сложности без зависимых Fail-эффект regression-тестов. **`Vec.from`-часть ЗАКРЫТА
+  Plan 200 П16 (2026-07-20)** — не переименование, а полный ретракт (владелец:
+  «это же просто items.clone()»); декла снесена, все вызовы мигрированы на
+  `.of(...)` (литерал) / `.clone()` (same-T) / явный цикл (width-конверсия).
+  Маркер остаётся ОТКРЫТ для остальных 20 сайтов (HashMap.from и др.).
 
 - **[M-lint-findings-fail-public-signature]** (2026-07-09, P3, Wave: D325-R5 миграция;
   источник: план 185) — 8 сайтов `Fail[XError]` в публичных std-сигнатурах

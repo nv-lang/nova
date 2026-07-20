@@ -47,7 +47,7 @@ module collections.vec
 /// overload dispatch — same shape as `@as_ptr` / `mut @as_ptr` in access.nv).
 ///
 /// ```nova
-/// let v = Vec[int].from([1, 2, 3])
+/// let v = Vec[int].of(1, 2, 3)
 /// let s = v.slice()
 /// assert(s.len() == 3 && s[0] == 1)
 /// ```
@@ -62,7 +62,7 @@ export fn Vec[T] @slice() -> Self =>
 /// accessor convention, mirroring `mut @as_ptr`).
 ///
 /// ```nova
-/// mut v = Vec[int].from([1, 2, 3])
+/// mut v = Vec[int].of(1, 2, 3)
 /// mut s = v.slice()
 /// s[0] = 99
 /// assert(v[0] == 99)            // write-through to the parent
@@ -83,7 +83,7 @@ export fn Vec[T] mut @slice() -> Self =>
 /// `len(left) + len(right) == len` invariant.
 ///
 /// ```nova
-/// let v = Vec[int].from([1, 2, 3, 4, 5])
+/// let v = Vec[int].of(1, 2, 3, 4, 5)
 /// let (l, r) = v.split_at(2)
 /// assert(l.len() == 2 && r.len() == 3)
 /// assert(l[0] == 1 && r[0] == 3)
@@ -101,7 +101,7 @@ export fn Vec[T] @split_at(i int) -> (Self, Self)
 /// the parent buffer (`cap == len`).
 ///
 /// ```nova
-/// let v = Vec[int].from([1, 2, 3])
+/// let v = Vec[int].of(1, 2, 3)
 /// match v.split_first() {
 ///     Some((h, t)) => { assert(h == 1 && t.len() == 2 && t[0] == 2) }
 ///     None => { assert(false) }
@@ -122,7 +122,7 @@ export fn Vec[T] @split_first() -> Option[(T, Self)] {
 /// the parent buffer (`cap == len`).
 ///
 /// ```nova
-/// let v = Vec[int].from([1, 2, 3])
+/// let v = Vec[int].of(1, 2, 3)
 /// match v.split_last() {
 ///     Some((l, init)) => { assert(l == 3 && init.len() == 2 && init[1] == 2) }
 ///     None => { assert(false) }
@@ -150,7 +150,7 @@ export fn Vec[T] @split_last() -> Option[(T, Self)] {
 /// for "at most n". The aliased view has `cap == len`.
 ///
 /// ```nova
-/// let v = Vec[int].from([1, 2, 3, 4, 5])
+/// let v = Vec[int].of(1, 2, 3, 4, 5)
 /// assert(v.first_n(3).len() == 3)
 /// assert(v.first_n(99).len() == 5)   // clamped to len
 /// assert(v.first_n(0).len() == 0)
@@ -165,8 +165,8 @@ export fn Vec[T] @first_n(n int) -> Self { // [M-lint-findings-param-no-contract
 /// empty view (same rationale as `first_n`). The aliased view has `cap == len`.
 ///
 /// ```nova
-/// let v = Vec[int].from([1, 2, 3, 4, 5])
-/// assert(v.last_n(2).equal(Vec[int].from([4, 5])))
+/// let v = Vec[int].of(1, 2, 3, 4, 5)
+/// assert(v.last_n(2).equal(Vec[int].of(4, 5)))
 /// assert(v.last_n(99).len() == 5)    // clamped to len
 /// assert(v.last_n(0).len() == 0)
 /// ```

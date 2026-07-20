@@ -1,5 +1,5 @@
 // Plan 138.1 Ф.4 — t8: []T == Vec[T] (B1/A8)
-// fn f_veclit(a []int) accepts [1,2,3] literal and Vec[int].from([4,5]).
+// fn f_veclit(a []int) accepts [1,2,3] literal and Vec[int].of(4,5).
 
 module spec_tests.conformance
 import std.collections.vec.{Vec}
@@ -14,8 +14,8 @@ test "[]T param accepts array literal [1,2,3]" {
     assert(f_veclit([1, 2, 3]) == 6)
 }
 
-test "[]T param accepts Vec[int].from([4,5])" {
-    ro v = Vec[int].from([4, 5])
+test "[]T param accepts Vec[int].of(4,5)" {
+    ro v = Vec[int].of(4, 5)
     assert(f_veclit(v) == 9)
 }
 

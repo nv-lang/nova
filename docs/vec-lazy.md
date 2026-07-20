@@ -238,7 +238,7 @@ For hot paths there is an **allocation-free, indirection-free** sibling module:
 ```nova
 import std.collections.vec_iter_zc
 
-let v = Vec[int].from([1, 2, 3, 4, 5, 6])
+let v = Vec[int].of(1, 2, 3, 4, 5, 6)
 let got = v.ziter().zmap(|x| x * 10).zfilter(|x| x > 25).zcollect()
 assert(got == [30, 40, 50, 60])
 ```

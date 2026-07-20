@@ -1,7 +1,7 @@
 // Plan 153.x [M-154.1-chained-vec-f32-method-misdispatch]: chained
-// `Vec[f32].new().debug(a)` / `.from([...]).debug(a)` must dispatch `.debug` on
+// `Vec[f32].new().debug(a)` / `.of(...).debug(a)` must dispatch `.debug` on
 // the Vec[f32] receiver (not on str). Root: infer_expr_c_type for a Call whose
-// obj is a TurboFish{Vec,[f32]} static-returning `.new()/.from()` did not resolve
+// obj is a TurboFish{Vec,[f32]} static-returning `.new()/.of()` did not resolve
 // the return type to `Nova_Vec____nova_f32*` (it worked for int), so `.debug`
 // fell through to the str overload and a Vec[f32]* was passed into a str method.
 //
@@ -30,22 +30,22 @@ test "Vec[f32].new() chained .debug (empty)" {
     assert(a.into_str() == "Vec[]")
 }
 
-test "Vec[f32].from([...]) chained .debug" {
+test "Vec[f32].of(...) chained .debug" {
     consume a = StringBuilder.new()
-    Vec[f32].from([1.5, 2.5]).debug(FmtCtx.bare(a, 0, true))
+    Vec[f32].of(1.5, 2.5).debug(FmtCtx.bare(a, 0, true))
     assert(a.into_str() == "Vec[1.5, 2.5]")
 }
 
-test "Vec[f32].from([...]) chained .display" {
+test "Vec[f32].of(...) chained .display" {
     consume a = StringBuilder.new()
-    Vec[f32].from([1.5, 2.5]).display(FmtCtx.bare(a, 0, false))
+    Vec[f32].of(1.5, 2.5).display(FmtCtx.bare(a, 0, false))
     assert(a.into_str() == "Vec[1.5, 2.5]")
 }
 
 // Control: Vec[int] chained already works.
-test "Vec[int].from([...]) chained .debug (control)" {
+test "Vec[int].of(...) chained .debug (control)" {
     consume a = StringBuilder.new()
-    Vec[int].from([1, 2]).debug(FmtCtx.bare(a, 0, true))
+    Vec[int].of(1, 2).debug(FmtCtx.bare(a, 0, true))
     assert(a.into_str() == "Vec[1, 2]")
 }
 

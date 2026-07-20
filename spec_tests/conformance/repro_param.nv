@@ -53,7 +53,7 @@ fn FiltItP[I Next[T], T] mut @drain() -> Vec[T] {
 }
 
 test "Self-in-type-arg PARAM position nested generic" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     // Build a MapItP and the FiltItP[Self, U] that @pair_with expects, then pass
     // the FiltItP to @pair_with on a fresh MapItP of the SAME mono type.
     mut mapped = v.iter().mp(|x| x * 10)
