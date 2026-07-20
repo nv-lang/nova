@@ -5652,7 +5652,18 @@ impl CEmitter {
                 /* AGENT-A */ "Semaphore",
                 // === END PLAN-103.4 PREDECLARED TYPES ===
             ];
-            for name in external_names {
+            // [M-codegen-emission-nondeterminism] fix (2026-07-20): `external_names`/
+            // `vtable_names` are `std::collections::HashSet<String>` — Rust's default
+            // `RandomState` hasher seeds per-PROCESS, so iterating them directly gives
+            // a DIFFERENT fwd-typedef order on every `nova build` invocation (same set
+            // of names, shuffled). Sort into a Vec by name (stable, meaningful key —
+            // matches the C symbol identity) before emitting; this only reorders sibling
+            // fwd-decls that have no dependency on each other (plain `typedef struct X X;`
+            // opaque forward decls — order among them is semantically inert), so this is
+            // purely a tie-break, not a topo-order change.
+            let mut external_names_sorted: Vec<String> = external_names.into_iter().collect();
+            external_names_sorted.sort();
+            for name in external_names_sorted {
                 if local_types.contains(&name) { continue; }
                 if BUILTIN_TYPE_NAMES.contains(&name.as_str()) { continue; }
                 if BUILTIN_RUNTIME_TYPES.contains(&name.as_str()) { continue; }
@@ -5670,7 +5681,11 @@ impl CEmitter {
             // runtime/effects.h dedicated struct, but emit-skip required
             // чтобы избежать conflict с declaration).
             const BUILTIN_VTABLE_NAMES: &[&str] = &["Fail", "Time", "Mem", "TimerMetrics"];
-            for name in vtable_names {
+            // [M-codegen-emission-nondeterminism] fix: same HashSet-order issue as
+            // `external_names` above — sort before emitting.
+            let mut vtable_names_sorted: Vec<String> = vtable_names.into_iter().collect();
+            vtable_names_sorted.sort();
+            for name in vtable_names_sorted {
                 if BUILTIN_VTABLE_NAMES.contains(&name.as_str()) { continue; }
                 // Local effects — emit_effect_type generates an anonymous typedef
                 // which would conflict with a named forward decl. Skip.
@@ -18623,7 +18638,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 return format!("((void)({}), (void)({}), 1)", l, r);
             }
             let mut field_conds: Vec<String> = Vec::new();
-            for (var_name, field_types) in &variants {
+            // [M-codegen-emission-nondeterminism] fix (2026-07-20): `variants` is a
+            // `HashMap<String, Vec<String>>` (legacy `sum_schemas` value) — Rust's
+            // default per-process-random hasher gives a DIFFERENT iteration order on
+            // every `nova build` invocation, reordering the `&&`-chained tag conjuncts
+            // below run-to-run (semantically inert — every conjunct is a pure,
+            // side-effect-free comparison and `&&` is commutative here — but the
+            // emitted C text is not reproducible). Sort by variant name (stable,
+            // meaningful key: the C `NOVA_TAG_<ty>_<v>` identity) before iterating.
+            let mut variant_names: Vec<&String> = variants.keys().collect();
+            variant_names.sort();
+            for var_name in variant_names {
+                let field_types = &variants[var_name];
                 if field_types.is_empty() {
                     continue;
                 }
