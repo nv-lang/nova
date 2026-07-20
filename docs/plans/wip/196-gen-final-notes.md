@@ -123,12 +123,26 @@ sum-типы — отдельный диспетчер (`generic_type_methods`/`
   vs builtin Option/Result sum-method диспетчер). Остаются как есть; doc-комментарии
   добавлены для будущих волн.
 
-## Гейты (см. финальный отчёт)
+## Гейты — ФИНАЛ (release nova-cli, собран из этой ветки)
 
-- Byte-parity 5/5 identical (revert-cycle).
-- Детач-трейс: 0 паник (гейт-фикстуры + std-корпус + частичный conformance-sweep +
-  repo-wide-grep-подтверждённый N=2 исчерпывающий class).
-- Авторитетный гейт (release, `nova test spec_tests/conformance`) + флагман — см. отчёт
-  агента (заполняется после сборки release).
+- Byte-parity 5/5 identical (revert-cycle: `git checkout HEAD` baseline → собрать → `.c` →
+  восстановить правку → пересобрать → `.c` → diff).
+- Детач-трейс: 0 паник (7 гейт-фикстур + std/collections+time+encoding 104 файла +
+  частичный conformance-sweep 262 файла + repo-wide-grep-подтверждённый N=2 исчерпывающий
+  class).
+- **Авторитетный гейт** `nova test spec_tests/conformance --jobs 4` (release, single CU) —
+  **PASS: 125  FAIL: 0  SKIP: 14**. ЗЕЛЁНЫЙ.
+- **Флагман** `nova check --strict-effects examples/flagship/aggregator/src/main.nv` —
+  **PASS: 1  FAIL: 0  WARN: 33** (все warning — unused-import/postfix-mut, косметика).
+  `nova build --strict-effects --mode release ... -o aggregator.exe` — **built (51.16s)**,
+  0 ошибок.
+- Мега-CU (весь корпус разом) — НЕ гонялся, по заданию.
+
+## Коммиты (ветка `p196-gen-final`, база main `64b1f1396`)
+
+1. `545961e59` feat(196-gen-final): снос легаси explicit_tf seed в
+   resolve_method_level_subst + B11q/B11r doc-вердикт + этот чекпойнт.
+
+**В main НЕ мёржено. Push не делался (по заданию).**
 
 Модель: sonnet.
