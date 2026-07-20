@@ -2,15 +2,28 @@
 # Plan 208 — Unified Formatter (`@display(mut f Fmt)`, байтовый `Write`, zero-alloc)
 
 **Статус:** 🔨 Ф.0-Ф.3 РЕАЛИЗОВАНЫ (2026-07-16, ветка `p208-impl`, owner-go получен).
-**Ф.4R-прогресс (2026-07-21, влито `bb5cae073`):** Ш0 (эталоны-контракт, 4 квирка запинованы) +
-Ш1 (Debug-движок + `*_display_spec`, семейство в string_builder.nv — обход order-dependent-import
-цикла) + Ш3 (fast-path по резолву, kill-switch `NOVA_FMT_LEGACY=1`, скоуп int/f64/f32; str/char/bool
-rich — follow-up) — ВЛИТЫ; §10R-Д: Д1 value-first ✅ + Д2 type-first (`fmt_f64`→`f64_fmt`) ✅
-применены той же интеграцией; Д3 (упразднение `_into`) — В РАБОТЕ (волна p208-f4r-no-into).
-**Ш2 — СТОП** (перенос примитив-тел требует второго цикла fmt_buf↔prelude — компиляторная находка,
-патч-репро в wip/208-f4r-sh2-blocked-repro.patch; рекомендация в notes: цель достижима без цикла).
-Ш4 (снос conv.h nova_fmt_* + kill-switch + D422-амендмент + переписка примеров §4-§6) — по сигналу
-владельца после Д3. Ф.0 (спека D422
+**Ф.4R-прогресс (2026-07-21, влито `bb5cae073` + Д3 `b3ae85b05`):** Ш0 (эталоны-контракт, 4 квирка
+запинованы) + Ш1 (Debug-движок + `*_display_spec`, семейство в string_builder.nv — обход
+order-dependent-import цикла) + Ш3 (fast-path по резолву, kill-switch `NOVA_FMT_LEGACY=1`, скоуп
+int/f64/f32) + §10R-Д (Д1 value-first ✅, Д2 type-first `fmt_f64`→`f64_fmt` ✅, Д3 упразднение
+`_into` ✅) — ВЛИТЫ. **Ш4 — ЗАКРЫТА (2026-07-21, worktree `nova-sh4`, ветка `p208-sh4-teardown`,
+sonnet):** kill-switch `NOVA_FMT_LEGACY` + старая emit_c.rs-эмиссия nova_fmt_*-цепочки снесены (ТОЛЬКО
+`*_display_spec`-путь остался); Ш3-хвост (str/char/bool rich-spec + int/float Debug rich, оставшиеся
+на старом движке) ЗАКРЫТ — все шесть примитивных видов (int/f64/f32/char/bool/str), bare И rich-spec,
+Display И Debug, теперь девиртуализованно зовут `*_display_spec`; `conv.h` nova_fmt_*-семья снесена,
+остаток = `nova_fmt_pad`+2 хелпера (композитный/user-type rich-spec pad — нет `*_display_spec`-аналога
+для произвольных типов) и `nova_ptr_to_debug_str` (pointer Debug, нет `.nv`-порта) — оба живые;
+D422-амендмент («Статус реализации» + V1-упрощение #3 частично закрыто) — в `spec/decisions/02-types.md`;
+примеры §3/§4/§6/§9 (доредизайновые `f64_fmt_into`/buf-first) переписаны на канон §10R-Д. Гейты:
+эталоны Ш0 (см. ниже — блокированы ПОСТОРОННИМ багом, см. маркер), fmt_buf/core 1/0, string_builder_test
+1/0, checksums 3/0. **Ш2 — СТОП** (перенос примитив-тел требует второго цикла fmt_buf↔prelude —
+компиляторная находка, патч-репро в wip/208-f4r-sh2-blocked-repro.patch; заблокирован ОТДЕЛЬНЫМ
+маркером `[M-fmt-write-protocol-collision-cycle-adjacent]`, `docs/plans/backlog-followups.md`).
+**Находка Ш4 (вне scope, P1):** `nova test spec_tests/conformance` (мега-CU) падает
+internal-error на НЕСВЯЗАННОМ `d216_ptr_methods_174_5.nv` (`.write_at` P67-LEGACY panic,
+`emit_c.rs`) — подтверждено НЕ регрессией Ф.4R (репро на нетронутом main-бинаре тоже);
+маркер `[M-d216-write-at-return-type-unknown-cc-panic]` в backlog-followups.md; блокирует
+полный мега-CU гейт независимо от этой волны — не чинилось (вне ЗОНЫ). Ф.0 (спека D422
 keystone + амендменты) и Ф.1 (буфер-примитивы `.nv`, аддитивно) слиты в main ранее (`edcc4ab73`,
 `b6ee6f40a`). Ф.2 (когерентная волна: `Write`/`Fmt`/`FmtCtx`/энумы в std, `emit_c.rs`-диспатч на
 `@display(f)`/`@debug(f)`, снос `@display_fmt`-пути, миграция всех известных потребителей —
@@ -119,7 +132,7 @@ sb.write("hello, ")
 int_display(42, sb)          // ${n}   компилятор ЗНАЕТ sink=конкретный StringBuilder →
                              //        digit-loop прямо в sb.reserve/advance (КОНКРЕТНЫЕ методы SB, zero-COPY)
 sb.write(", ")
-f64_display(3.14, sb)        // ${f}   f64_fmt_into(buf,cap,v,Shortest) [C] → sb.write(buf)
+f64_display(3.14, sb)        // ${f}   f64_fmt(v,buf,cap,Shortest) [C] → sb.write(buf)
 sb.write(", ")
 Point_display(rec, sb)       // ${rec} компилятор-синтез: "Point(", int_display(@x,sb), ", ", …, ")"
 sb.write(", ")
@@ -169,7 +182,7 @@ sb.write(buf[0..k])
 sb.write(" | ")
 
 // ${f:8.2} — float: тело из C по prec, ширина — через стек, потом write_padded
-buf2[32]; k = f64_fmt_into(buf2, 32, f, Fixed, /*prec*/2)   // C: "3.14"  (единственный extern)
+buf2[32]; k = f64_fmt(f, buf2, 32, Fixed, /*prec*/2)   // C: "3.14"  (единственный extern)
 write_padded(sb, buf2[0..k], /*w*/8, ' ', Right)             // "    3.14"
 sb.write(" | ")
 
@@ -221,7 +234,8 @@ result = sb.into_str()
 **НОВЫЙ:**
 - **D422 (keystone)** — Unified Formatter: единый `@display(mut f Fmt)`; `Fmt` embeds `Write` через `use` (D145 protocol-embed) + оси/`@pad`/`@kind`;
   `pad_consumed` auto-pad; буфер-примитив `(buf,cap)->len`; перенос `conv.h`→`.nv`; float-extern-контракт
-  (`extern "C" fn f64_fmt_into(buf,cap,v,kind,prec)` — литеральное имя, D282); энумы `Align`/`Sign`/`FmtKind`.
+  (`extern "C" fn nova_f64_fmt(v,buf,cap,kind,prec)` — литеральное имя, D282; §10R-Д канон:
+  value-first + `.nv`-wrapper `f64_fmt` без `_into`); энумы `Align`/`Sign`/`FmtKind`.
 
 **АМЕНДИТЬ:**
 - **D55** (literal-coercion) — аменд: str-**литерал** `"..."` коэрсится в `[]u8` в ЛЮБОЙ `[]u8`-позиции (не только
@@ -244,7 +258,7 @@ result = sb.into_str()
 
 Миграция: ~10 примитивных `@display`/`@debug` тел; немногие `@display_fmt`-юзеры; переписать `emit_interpolated_str`
 + `emit_format_spec_value` (pad_in_place); `conv.h` int/bool/char/радикс/pad → `.nv`; `Write.@write` str→[]u8 (+ str-
-overload); `f64_fmt_into` C-контракт. Гейты: полный conformance один-CU зелёный; форматные фикстуры (width/align/fill/
+overload); `f64_fmt`/`nova_f64_fmt` C-контракт (§10R-Д канон, без `_into`). Гейты: полный conformance один-CU зелёный; форматные фикстуры (width/align/fill/
 sign/radix/precision/alternate/pretty) pos; byte-parity НЕ требуется (вывод тот же, .c меняется законно).
 
 ## 8. Статус развилок
@@ -287,7 +301,7 @@ sign/radix/precision/alternate/pretty) pos; byte-parity НЕ требуется 
 type Align   enum Left | Right | Center
 type Sign    enum Minus | Plus
 type FmtKind enum Display | Debug | Hex | Oct | Bin | Exp
-type FloatKind enum Shortest | Fixed | Sci        // для f64_fmt_into
+type FloatKind enum Shortest | Fixed | Sci        // для f64_fmt
 ```
 
 **`Write` — байтовый sink форматирования (ИНФАЛЛИБЕЛЬНЫЙ). МИНИМАЛЬНЫЙ (ревью 2026-07-15):**
@@ -356,13 +370,16 @@ export type FmtCtx {
 // @write → sink.@write; @width → spec.width; …; @pad(bytes) → write_padded в sink + pad_consumed=true
 ```
 
-**Буфер-примитивы — ВНУТРЕННИЕ (.nv, не публичные), zero-alloc:**
+**Буфер-примитивы — ВНУТРЕННИЕ (.nv, не публичные), zero-alloc — §9 набросок ИСТОРИЧЕСКИЙ
+(до §10R-Д); канон-сигнатуры value-first/type-first/без `_into` — §10R-Д3 ниже,
+`std/src/runtime/fmt_buf.nv` (реализовано):**
 ```nova
-fn int_fmt(v int, buf *mut u8, cap int, spec FmtSpec) -> int      // digit-loop + радикс + zero_pad; вернуть len
+fn int_fmt(v int, buf *mut u8, cap int, spec FmtSpec = FmtSpec.new()) -> int      // digit-loop + радикс + zero_pad; вернуть len
 fn bool_fmt(v bool, buf *mut u8, cap int) -> int
 fn char_fmt(v char, buf *mut u8, cap int) -> int                  // UTF-8 encode
-// float — ЕДИНСТВЕННЫЙ C-extern (dtoa непортируем). D282: extern "C" fn + ЛИТЕРАЛЬНОЕ имя, БЕЗ nova_-префикса:
-extern "C" fn f64_fmt_into(buf *mut u8, cap int, v f64, kind int, prec int) -> int
+// float — ЕДИНСТВЕННЫЙ C-extern (dtoa непортируем). D282: extern "C" fn + ЛИТЕРАЛЬНОЕ имя (nova_-префиксное, header-стиль):
+extern "C" fn nova_f64_fmt(v f64, buf *mut u8, cap int, kind int, prec int) -> int
+// .nv-wrapper: f64_fmt(v, buf, cap, kind = FloatKind.Shortest, prec = -1) -> int
 // FloatKind пересекает C-ABI как int (0=Shortest/1=Fixed/2=Sci); .nv-wrapper конвертит enum→int. C-имя = литеральное.
 ```
 
@@ -389,7 +406,7 @@ fn StringBuilder consume @into_str_checked() -> Result[str, Utf8Error]
 в `spec/decisions/`. **Гейт:** owner sign-off (язык-меняющее).
 
 **Фаза 1 — Фундамент, АДДИТИВНО без смены поведения (sonnet .nv + 1 C-файл).** Буфер-примитивы в .nv
-(`int_fmt`/`bool_fmt`/`char_fmt` + радикс + `pad_in_place`/`write_padded`) РЯДОМ с conv.h; `f64_fmt_into` (C-extern
+(`int_fmt`/`bool_fmt`/`char_fmt` + радикс + `pad_in_place`/`write_padded`) РЯДОМ с conv.h; `f64_fmt`/`nova_f64_fmt` (C-extern
 буфер-форма) рядом с текущим float; `StringBuilder` аменд (`@reserve`/`@advance`/`@len`/`into_str`). Старый путь ещё
 работает. **Гейт:** unit-тесты примитивов + полный conformance БЕЗ регресса.
 
@@ -515,6 +532,7 @@ width/align/fill/sign/`#`alt/`0`zero-pad/radix(hex/oct/bin)/precision(float+str)
   оркестратор гейтит полным conformance САМ (агенты — только таргетно). Это много ~7-мин серийных гейтов оркестратора —
   Фаза 2 по календарю дольше прочих; это норма, не задержка.
 
-**Следующий шаг:** финализировать сигнатуры (`Fmt`/`Write`/`Display`/`Debug`/буфер-примитив/`f64_fmt_into`) +
-карта исполнения (что opus-синтез в компиляторе, что дешёвыми агентами по `.nv`/`conv.h`→`.nv`; порядок; гейты).
+**Следующий шаг (историческая запись — выполнено):** финализировать сигнатуры (`Fmt`/`Write`/`Display`/`Debug`/
+буфер-примитив/`f64_fmt`) + карта исполнения (что opus-синтез в компиляторе, что дешёвыми агентами по
+`.nv`/`conv.h`→`.nv`; порядок; гейты).
 **Реализация не начинается без owner-go** (язык-меняющее).

@@ -15450,12 +15450,19 @@ Auto-derive синтезирует ОБА метода, но с разной ф�
 
 #### 5. Буфер-примитивы — внутренние (`.nv`, не публичные), zero-alloc
 
+Канон-сигнатуры ниже — value-first + type-first имена + БЕЗ суффикса `_into`
+([§10R-Д1-Д3](../../docs/plans/208-unified-formatter.md#10r-д---три-нормы-дополнения-владелец-2026-07-21-переданы-исполнителю-брифом-здесь--source-of-truth),
+владелец 2026-07-21, реализовано Ф.4R Ш4 — заменяет доредизайновый набросок этой подсекции):
+
 ```nova
-fn int_fmt(v int, buf *mut u8, cap int, spec FmtSpec) -> int   // digit-loop + радикс + zero_pad
-fn bool_fmt(v bool, buf *mut u8, cap int) -> int
-fn char_fmt(v char, buf *mut u8, cap int) -> int               // UTF-8 encode
-// float — ЕДИНСТВЕННЫЙ C-extern (dtoa непортируем):
-extern "C" fn fmt_f64_into(buf *mut u8, cap int, v f64, kind int, prec int) -> int
+export unsafe fn int_fmt(v int, buf *mut u8, cap int, spec FmtSpec = FmtSpec.new()) -> int  requires cap >= 0
+export unsafe fn bool_fmt(v bool, buf *mut u8, cap int) -> int
+export unsafe fn char_fmt(v char, buf *mut u8, cap int) -> int               // UTF-8 encode
+// float — ЕДИНСТВЕННЫЙ C-extern (dtoa непортируем); "простой рендер" = дефолт-арги, НЕ отдельный
+// `_into`-мост (Ф.4R Д3):
+extern "C" fn nova_f64_fmt(v f64, buf *mut u8, cap int, kind int, prec int) -> int
+export unsafe fn f64_fmt(v f64, buf *mut u8, cap int, kind FloatKind = FloatKind.Shortest, prec int = -1) -> int  requires cap >= 0
+export unsafe fn f32_fmt(v f32, buf *mut u8, cap int) -> int  requires cap >= 0
 ```
 
 `extern "C" fn` + **литеральное имя** (без `nova_`-префикса) — по
@@ -15470,7 +15477,7 @@ enum→int на границе.
 type Align     enum Left | Right | Center
 type Sign      enum Minus | Plus
 type FmtKind   enum Display | Debug | Hex | Oct | Bin | Exp
-type FloatKind enum Shortest | Fixed | Sci        // для fmt_f64_into (C-ABI int, не пересекает границу как enum)
+type FloatKind enum Shortest | Fixed | Sci        // для f64_fmt (C-ABI int, не пересекает границу как enum)
 ```
 
 Все — `enum`-маркер синтаксис ([D406](#d406-sum-type-синтаксис-enum-маркер-2026-07-01)), не
@@ -15508,7 +15515,7 @@ fn StringBuilder consume @into_str_checked() -> Result[str, Utf8Error]
 | Ф.2 | Когерентная волна: `Write`/`Fmt`/`FmtCtx`/энумы в std; компилятор — переписка `emit_interpolated_str`/`emit_format_spec_value` на `@display(f)`/`@debug(f)`; удаление `@display_fmt`-пути; ретракт `str.from_debug` | ✅ 2026-07-16 (ветка `p208-impl`) — **с тремя V1-упрощениями, см. подсекцию ниже** |
 | Ф.3 | Дженерики `.nv` (`[]T`/`Vec[T]`/`Option`/`Result` Display/Debug) + auto-derive record/sum/tuple (компактная `TypeName(a, b)` форма Display, отличная от именованной Debug-формы) | ✅ 2026-07-16 (ветка `p208-impl`, волна 2) — см. `docs/plans/wip/208-impl-progress.md` §"Ф.3 — генерики .nv + auto-derive" |
 | Ф.4 | Зачистка: оставшийся `conv.h` → `.nv`; удаление мёртвого `nova_fmt_*` | ⏳ pending — **заблокирована** (разведка волны 2 подтвердила и УГЛУБИЛА блокер Ф.2's V1-упрощения #1, см. ниже): примитивный форматный путь (bare + rich-spec, `emit_interpolated_str`/`emit_format_spec_value`) сознательно НЕ перевязан на буфер-примитивы Ф.1 — `conv.h`'s `nova_fmt_*`/`nova_*_to_str`/`nova_*_to_debug_str` остаются ЖИВЫМИ (не мёртвыми), так что «удалить мёртвый nova_fmt_*» пока буквально нечего удалять. Волна 2 нашла ДОПОЛНИТЕЛЬНЫЙ блокер: буфер-примитивы Ф.1 не имеют quote/escape-логики для Debug str/char (нужна с нуля) — см. `wip/208-impl-progress.md` §"Ф.4 — статус: РАЗВЕДКА" |
-| Ф.4R | Редизайн зачистки (owner 2026-07-20) + §10R-Д1-Д3 нормы-дополнения (owner 2026-07-21): value-first порядок аргументов везде (вкл. extern-границу), type-first имена (`fmt_f64`→`f64_fmt`), суффикс `_into` упразднён (`int_fmt_into`/`f64_fmt_shortest_into`/`f32_fmt_shortest_into` мосты retired — "простой рендер" = та же функция с default-аргами: `int_fmt(v,buf,cap,spec=FmtSpec.new())`, `f64_fmt(v,buf,cap,kind=FloatKind.Shortest,prec=-1)`, `f32_fmt(v,buf,cap)`; C-extern'ы → `nova_f64_fmt`/`nova_f32_fmt`, D282 литеральные-но-`nova_`-префиксные имена) | ✅ §10R-Д1-Д3 done (§5/§7 code-примеры выше в ЭТОМ разделе — доредизайновые, актуальные сигнатуры и норма семьи только в [docs/plans/208-unified-formatter.md](../../docs/plans/208-unified-formatter.md) §10R-Д, source of truth); Ш1-Ш3 (движок/архитектура/interp-fast-path) — см. `docs/plans/wip/208-f4r-notes.md`; Ш2 (перенос примитив-тел `@display`/`@debug`) остаётся заблокирован циклическим импорт-багом (см. те же notes); Ш4 (снос `conv.h`) не начат |
+| Ф.4R | Редизайн зачистки (owner 2026-07-20) + §10R-Д1-Д3 нормы-дополнения (owner 2026-07-21): value-first порядок аргументов везде (вкл. extern-границу), type-first имена (`fmt_f64`→`f64_fmt`), суффикс `_into` упразднён (`int_fmt_into`/`f64_fmt_shortest_into`/`f32_fmt_shortest_into` мосты retired — "простой рендер" = та же функция с default-аргами: `int_fmt(v,buf,cap,spec=FmtSpec.new())`, `f64_fmt(v,buf,cap,kind=FloatKind.Shortest,prec=-1)`, `f32_fmt(v,buf,cap)`; C-extern'ы → `nova_f64_fmt`/`nova_f32_fmt`, D282 литеральные-но-`nova_`-префиксные имена) | ✅ Ш0-Ш1/Ш3-Ш4 DONE, §10R-Д1-Д3 done (§5 code-примеры выше в ЭТОМ разделе переписаны на канон Ш4; норма семьи — [docs/plans/208-unified-formatter.md](../../docs/plans/208-unified-formatter.md) §10R-Д, source of truth); **Ш4 (снос `conv.h` `nova_fmt_*`/`nova_*_to_str`/`nova_*_to_debug_str` + kill-switch `NOVA_FMT_LEGACY` + str/char/bool rich-spec и int/float Debug rich переведены на `*_display_spec`) — ЗАКРЫТА**: для ВСЕХ шести примитивных видов (int/f64/f32/char/bool/str), И bare, И rich-spec, И Display, И Debug — единственный источник рендер-семантики теперь `std/src/runtime/{fmt_buf,string_builder}.nv` (`*_display_spec`-семейство); `conv.h` остаток = `nova_fmt_pad`+`nova_fmt_encode_fill`+`nova_fmt_char_count` (ТОЛЬКО композитный/user-type rich-spec pad — нет `*_display_spec`-аналога для произвольных типов) и `nova_ptr_to_debug_str` (pointer `${p:?}`, нет `.nv`-порта) — оба живые, не мёртвые. V1-упрощение #3 (см. подсекцию ниже) закрыто В ЧАСТИ «рендер хардкожен параллельно в Rust-эмиттере, `int_fmt` мёртв» (обе посылки теперь ложны) — часть «примитивные `@display`/`@debug`-ТЕЛА сами не читают `f.kind()`/`f.width()`, остаются циркулярной заглушкой» ОСТАЁТСЯ до Ш2 (перенос этих тел на `fmt_buf`-extension-методы), который заблокирован ОТДЕЛЬНЫМ компиляторным блокером `[M-fmt-write-protocol-collision-cycle-adjacent]` (`docs/plans/backlog-followups.md` — Write-протокол name-коллизия/резолв, НЕ циклический импорт — тот класс закрыт Ш1's архитектурным обходом). V1-упрощения #1 (композитный/user-type rich-spec не стримит в главный `sb`, рендерится во FRESH builder + внешний `nova_fmt_pad`) и #2 (precision для composite дропается) — ВНЕ scope Ш4 (описывают ТОЛЬКО composite/user-type путь, который Ш4 намеренно не трогал — §10R предписывает закрыть ТОЛЬКО примитивную семью) — остаются как есть, НЕ регрессия. |
 
 Ф.2 реализована на ветке `p208-impl` (3 шага: std-сигнатуры, `emit_c.rs`-диспатч,
 миграция потребителей — json.nv + `spec_tests/conformance/d374_*`/`d229_*`/бывшие
@@ -15529,7 +15536,9 @@ D422 — заполняют места, где D422 либо молчит, ли�
    применяется БЕЗУСЛОВНО). Наблюдаемо идентично для любого типа, который сам
    не зовёт `@pad` (ни один существующий тип этого не делает) — но алгоритм
    §4 в буквальном смысле не реализован. Полная mark+`pad_in_place`-перевязка —
-   явный follow-up.
+   явный follow-up. **Статус (Ф.4R Ш4, 2026-07-21): ВНЕ scope этой волны** —
+   §10R предписывает закрыть ТОЛЬКО примитивную семью (int/f64/f32/char/bool/str);
+   composite/user-type rich-spec путь Ш4 намеренно не трогала, стоит как было.
 2. **Precision auto-truncate для composite/user-типов — ДРОПНУТ, не
    "пропущен через `prec_consumed`".** D422 §2 даёт `Fmt` только
    `@precision() -> Option[int]` (иммутабельный getter) — нет протокольного
@@ -15541,7 +15550,9 @@ D422 — заполняют места, где D422 либо молчит, ли�
    запрашивал. Это меняет один D419-эры assert (был:
    `${p:.3}` обрезает извне; стало: не обрезает) — задокументировано как
    легитимная миграция ретрактированной семантики, не ослабление теста
-   (`spec_tests/conformance/d422_unified_display_dispatch.nv`).
+   (`spec_tests/conformance/d422_unified_display_dispatch.nv`). **Статус
+   (Ф.4R Ш4, 2026-07-21): ВНЕ scope этой волны** — тот же composite-путь, что
+   #1, не тронут.
 3. **Примитивные `@display`/`@debug` (int/f64/f32/bool/char/str) не читают
    `f.kind()`/`f.width()`.** Тела — `f.write("${@}".bytes())` (интерп-стринг
    шорткат, byte-identical существующему `conv.h`-пути). Верно ТОЛЬКО потому,
@@ -15564,6 +15575,21 @@ D422 — заполняют места, где D422 либо молчит, ли�
    hand-synth C — через method-dispatch на переписанных примитивных
    `@display(f)`/`@debug(f)` телах, не прямой C-вызов; это делает "перевязку"
    ОДНОЙ когерентной big-bang волной, не серией мелких безопасных шагов).
+   **Статус (Ф.4R Ш4, 2026-07-21): ЧАСТИЧНО ЗАКРЫТО.** Обе посылки этого
+   пункта, КАК ДИАГНОСТИРОВАНО (компилятор хардкодит рендер параллельно
+   `.nv`-движку; `int_fmt` мёртв), теперь ЛОЖНЫ: interp fast-path (bare И
+   rich-spec, ОБА kind) девиртуализованно зовёт `*_display_spec`
+   (`std/src/runtime/string_builder.nv`), который зовёт `int_fmt`/`f64_fmt`/
+   `f32_fmt`/`bool_fmt`/`char_fmt`/`str_debug_fmt`/`char_debug_fmt`
+   (`fmt_buf.nv`) — тот же движок, что использовал бы настоящий `@display`-
+   body. `conv.h`'s `nova_fmt_*`/`nova_*_to_str`/`nova_*_to_debug_str` цепочка
+   СНЕСЕНА (Ф.4R Ш4). Но САМИ примитивные `@display`/`@debug`-ТЕЛА (в
+   `prelude/protocols.nv`) остаются циркулярной заглушкой
+   (`f.write("${@}".bytes())`) — компилятор их по-прежнему НЕ зовёт напрямую
+   (обходит девиртуализацией), значит "примитивы не читают `f.kind()`/
+   `f.width()` В СВОИХ ТЕЛАХ" остаётся буквально верным до Ш2 (перенос тел на
+   `fmt_buf`-extension-методы), заблокированного `[M-fmt-write-protocol-
+   collision-cycle-adjacent]`.
 
 **Координация с Plan 152.7.2** (`docs/plans/152.7.2-format-context.md`, отдельный
 план, СВОЁ решение по статусу — не закрыт этим коммитом): его "interp-direct-
@@ -15609,7 +15635,8 @@ vs remaining-tail) — за владельцем/интегратором.
 - [D406](#d406-sum-type-синтаксис-enum-маркер-2026-07-01) — `enum`-маркер для
   `Align`/`Sign`/`FmtKind`/`FloatKind`.
 - [D282](08-runtime.md#d282-new--extern-nova-fn--extern-c-fn--двух-abi-синтаксис-для-ffi-plan-9112-ф-1) —
-  `extern "C" fn fmt_f64_into` литеральное имя.
+  `extern "C" fn nova_f64_fmt`/`nova_f32_fmt` литеральные имена (§10R-Д3 канон; `fmt_f64_into` —
+  доредизайновое имя, переименовано владельцем).
 - [D176](#d176-ro-t--тип-модификатор) — `.bytes()` на str-переменной = `ro []u8` zero-copy view.
 - str.from_debug/str.from ретракция (Plan 174.2, [D73](08-runtime.md#d73-from--into-protocol-пара-с-авто-выводом))
   — `str.from_debug(@)` в Debug-протокола default-body (`std/prelude/protocols.nv`) остаётся

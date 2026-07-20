@@ -9,6 +9,29 @@
  *
  * Не охвачено: int↔char range-check, byte↔char, sub-int range-check.
  * Эти случаи делаются inline в codegen (Plan 08 Ф.2).
+ *
+ * Plan 208 Ф.4R Ш4 (owner signal after Д3, docs/plans/208-unified-
+ * formatter.md §10R): the Display/Debug primitive-formatting family that
+ * used to live in this file (`nova_bool_to_str`/`nova_f64_to_str`/
+ * `nova_f32_to_str`/`nova_char_to_str`, their `_to_debug_str` twins,
+ * `nova_str_to_debug_str`/`nova_char_to_debug_str`, and the whole
+ * `nova_fmt_int_body`/`nova_fmt_int_radix_body`/`nova_fmt_int_prefix`/
+ * `nova_fmt_radix_prefix`/`nova_fmt_f64_body`/`nova_fmt_f64_prefix`/
+ * `nova_fmt_str_precision` format-spec chain) has been RETIRED — every
+ * caller (the interp fast path AND the rich format-spec lowering,
+ * `compiler-codegen/src/codegen/emit_c.rs` `emit_interpolated_str`/
+ * `emit_format_spec_value`) now renders through the `.nv` `*_display_spec`
+ * family (`std/src/runtime/string_builder.nv`, Ф.4R Ш1) instead — the
+ * single surviving carrier for primitive int/f64/f32/char/bool/str
+ * Display+Debug rendering. Two fmt-family members remain here, each with a
+ * REAL non-fmt caller (see their own comments below for the exact call
+ * site): `nova_fmt_pad` (the composite/user-type rich-spec tail's external
+ * width/align post-step — composites have no `*_display_spec` sibling of
+ * their own yet) and its two helpers `nova_fmt_encode_fill`/
+ * `nova_fmt_char_count`; `nova_ptr_to_debug_str` (pointer `${p:?}` hex-
+ * address rendering — no `.nv` port exists, out of Ф.4R's primitive-family
+ * scope). `nova_fmt_bytes_for_chars` was ONLY used by the now-removed
+ * `nova_fmt_str_precision` and has no other caller — removed alongside it.
  */
 
 #ifndef NOVA_CONV_H
@@ -140,160 +163,19 @@ static inline nova_parse_bool_result nova_str_to_bool(nova_str s) {
     return r;
 }
 
-/* === bool → str === */
-static inline nova_str nova_bool_to_str(nova_bool b) {
-    if (b) return (nova_str){ "true", 4 };
-    else   return (nova_str){ "false", 5 };
-}
-
-/* === f64/f32 → str === */
-/* nova_int_to_str уже определён в nova_rt.h; здесь — f64/f32.
+/* === Plan 91.14 (D229) pointer Debug — the ONE Display/Debug-family
+ * survivor besides `nova_fmt_pad` below (see file-header note) ===
  *
- * Plan 180 [M-180-f64-shortest-roundtrip]: SHORTEST ROUND-TRIP. These are thin
- * GC-allocating wrappers over the single-source-of-truth core in nova_rt.h
- * (`nova_f64_shortest`/`nova_f32_shortest`) — the SAME formatter that backs
- * direct `println(float)`, `@display`/`@debug`, `${x}` interpolation, and
- * `StringBuilder.append`. Contract: the MINIMAL decimal string `s` such that
- * `strtod(s) == v` (f64) / `strtof(s) == v` (f32) bit-for-bit. Prior
- * `snprintf("%g")` (6 sig-figs) was lossy for arbitrary values and broke
- * `decode(encode(v)) == v` on float-bearing JSON.
- *
- * Buffer: worst case `%.17g` == "-1.2345678901234567e-308" (24 chars) + NUL;
- * 32 bytes is sufficient. */
-static inline nova_str nova_f64_to_str(double v) {
-    char* buf = (char*)nova_alloc(32);
-    int n = nova_f64_shortest(v, buf);
-    return (nova_str){ buf, (size_t)n };
-}
-
-/* Plan 154.1 [M-154.1-f32-display-debug] + Plan 180: f32 round-trip at FLOAT
- * precision via `strtof` (NOT the widened f64 round-trip) — `0.1f` stays "0.1"
- * rather than exposing the widened-double tail "0.10000000149011612". */
-static inline nova_str nova_f32_to_str(nova_f32 v) {
-    char* buf = (char*)nova_alloc(32);
-    int n = nova_f32_shortest(v, buf);
-    return (nova_str){ buf, (size_t)n };
-}
-
-/* === char (codepoint) → str (UTF-8 encode) === */
-/* Infallible: codepoint предполагается валидным (0..0x10FFFF, не surrogate).
- * Если не валидный — эмитим replacement char U+FFFD. */
-static inline nova_str nova_char_to_str(nova_int cp) {
-    if (cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
-        cp = 0xFFFD;  /* replacement */
-    }
-    char* buf = (char*)nova_alloc(5);
-    size_t len;
-    if (cp < 0x80) {
-        buf[0] = (char)cp;
-        len = 1;
-    } else if (cp < 0x800) {
-        buf[0] = (char)(0xC0 | (cp >> 6));
-        buf[1] = (char)(0x80 | (cp & 0x3F));
-        len = 2;
-    } else if (cp < 0x10000) {
-        buf[0] = (char)(0xE0 | (cp >> 12));
-        buf[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
-        buf[2] = (char)(0x80 | (cp & 0x3F));
-        len = 3;
-    } else {
-        buf[0] = (char)(0xF0 | (cp >> 18));
-        buf[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
-        buf[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
-        buf[3] = (char)(0x80 | (cp & 0x3F));
-        len = 4;
-    }
-    buf[len] = '\0';
-    return (nova_str){ buf, len };
-}
-
-/* === Plan 91.14 (D229) DebugPrintable primitives ===
- *
- * Per D229 §«Default body synthesis»: debug-form per primitive type.
- * Numeric primitives — same output как display. str — quoted + escaped.
- * char — single-quoted + escaped. bool — same as display.
- *
- * Note: nova_int_to_str defined в nova_rt.h (forward visible через include
- * order — nova_rt.h included BEFORE conv.h в generated C). nova_f64_to_str,
- * nova_bool_to_str, nova_char_to_str defined выше в этом файле.
- */
-
-/* bool → debug str: same as display ("true"/"false"). */
-static inline nova_str nova_bool_to_debug_str(nova_bool b) {
-    return nova_bool_to_str(b);
-}
-
-/* int → debug str: same as display (numbers don't need escaping). */
-static inline nova_str nova_int_to_debug_str(nova_int v) {
-    return nova_int_to_str(v);
-}
-
-/* f64 → debug str: same as display. */
-static inline nova_str nova_f64_to_debug_str(double v) {
-    return nova_f64_to_str(v);
-}
-
-/* f32 → debug str: same as display (Plan 154.1). */
-static inline nova_str nova_f32_to_debug_str(nova_f32 v) {
-    return nova_f32_to_str(v);
-}
-
-/* str → debug str: quoted + escaped form (Rust-style).
- *
- * Escape rules:
- *   "  → \"        \  → \\
- *   \n → \n        \t → \t        \r → \r        \0 → \0
- *   ASCII control bytes (< 0x20, non-printable) → \x{HH}
- *   Multi-byte UTF-8 — passthrough (valid из source). */
-static inline nova_str nova_str_to_debug_str(nova_str s) {
-    /* Pass 1: count output bytes (incl. 2 surrounding quotes). */
-    size_t out_len = 2;
-    for (size_t i = 0; i < s.len; i++) {
-        unsigned char c = (unsigned char)s.ptr[i];
-        if (c == '"' || c == '\\') out_len += 2;
-        else if (c == '\n' || c == '\t' || c == '\r' || c == '\0') out_len += 2;
-        else if (c < 0x20) out_len += 4;
-        else out_len += 1;
-    }
-    /* Plan 199 Ф.3 (D418): buffer is EXACTLY out_len bytes — no trailing NUL.
-     * out_len >= 2 always (the two surrounding quotes), so never nova_alloc(0). */
-    char* buf = (char*)nova_alloc(out_len);
-    size_t j = 0;
-    buf[j++] = '"';
-    for (size_t i = 0; i < s.len; i++) {
-        unsigned char c = (unsigned char)s.ptr[i];
-        switch (c) {
-            case '"':  buf[j++] = '\\'; buf[j++] = '"';  break;
-            case '\\': buf[j++] = '\\'; buf[j++] = '\\'; break;
-            case '\n': buf[j++] = '\\'; buf[j++] = 'n';  break;
-            case '\t': buf[j++] = '\\'; buf[j++] = 't';  break;
-            case '\r': buf[j++] = '\\'; buf[j++] = 'r';  break;
-            case '\0': buf[j++] = '\\'; buf[j++] = '0';  break;
-            default:
-                if (c < 0x20) {
-                    static const char hex[] = "0123456789abcdef";
-                    buf[j++] = '\\';
-                    buf[j++] = 'x';
-                    buf[j++] = hex[(c >> 4) & 0xF];
-                    buf[j++] = hex[c & 0xF];
-                } else {
-                    buf[j++] = (char)c;
-                }
-                break;
-        }
-    }
-    buf[j++] = '"';
-    return (nova_str){ (const uint8_t*)buf, j };
-}
-
-/* ptr → debug str: hex address (Plan 91.14 D229 §«Pointer integration»,
+ * ptr → debug str: hex address (Plan 91.14 D229 §«Pointer integration»,
  * Ф.5). Output examples: "0x7f8a4b3c..." (16 hex chars on 64-bit) или
  * "0x0" for null pointer. Caller wraps в "<Type @ 0x...>" form via
  * caller-side concat для full pointer-debug shape.
  *
  * Note: addr disclosure is the security concern motivating
  * E_PTR_NO_DISPLAY_USE_DEBUG_STR for bare ${ptr}. Explicit ${ptr:?}
- * acknowledges the opt-in. */
+ * acknowledges the opt-in. Live call site: `emit_c.rs`
+ * `emit_interpolated_str`'s pointer-AddrOf-Debug branch — no `.nv` port
+ * exists (out of Ф.4R's primitive-family scope, Plan 208 Ф.4R Ш4). */
 static inline nova_str nova_ptr_to_debug_str(const void* p) {
     if (p == 0) {
         return (nova_str){ "0x0 (null)", 10 };
@@ -310,47 +192,6 @@ static inline nova_str nova_ptr_to_debug_str(const void* p) {
         buf[n] = '\0';
     }
     return (nova_str){ buf, (size_t)n };
-}
-
-/* char (codepoint) → debug str: single-quoted + escaped if needed.
- * Output examples: 'A' '\n' '\\' '\'' (escaped apostrophe). */
-static inline nova_str nova_char_to_debug_str(nova_int cp) {
-    if (cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
-        cp = 0xFFFD;
-    }
-    char* buf = (char*)nova_alloc(8);
-    size_t j = 0;
-    buf[j++] = '\'';
-    if (cp == '\n')      { buf[j++] = '\\'; buf[j++] = 'n'; }
-    else if (cp == '\t') { buf[j++] = '\\'; buf[j++] = 't'; }
-    else if (cp == '\r') { buf[j++] = '\\'; buf[j++] = 'r'; }
-    else if (cp == '\0') { buf[j++] = '\\'; buf[j++] = '0'; }
-    else if (cp == '\'') { buf[j++] = '\\'; buf[j++] = '\''; }
-    else if (cp == '\\') { buf[j++] = '\\'; buf[j++] = '\\'; }
-    else if (cp < 0x20 || cp == 0x7F) {
-        static const char hex[] = "0123456789abcdef";
-        buf[j++] = '\\';
-        buf[j++] = 'x';
-        buf[j++] = hex[(cp >> 4) & 0xF];
-        buf[j++] = hex[cp & 0xF];
-    } else if (cp < 0x80) {
-        buf[j++] = (char)cp;
-    } else if (cp < 0x800) {
-        buf[j++] = (char)(0xC0 | (cp >> 6));
-        buf[j++] = (char)(0x80 | (cp & 0x3F));
-    } else if (cp < 0x10000) {
-        buf[j++] = (char)(0xE0 | (cp >> 12));
-        buf[j++] = (char)(0x80 | ((cp >> 6) & 0x3F));
-        buf[j++] = (char)(0x80 | (cp & 0x3F));
-    } else {
-        buf[j++] = (char)(0xF0 | (cp >> 18));
-        buf[j++] = (char)(0x80 | ((cp >> 12) & 0x3F));
-        buf[j++] = (char)(0x80 | ((cp >> 6) & 0x3F));
-        buf[j++] = (char)(0x80 | (cp & 0x3F));
-    }
-    buf[j++] = '\'';
-    buf[j] = '\0';
-    return (nova_str){ buf, j };
 }
 
 /* === str → char (single codepoint) === */
@@ -402,14 +243,15 @@ static inline nova_char_decode_result nova_int_to_char(nova_int n) {
 /* ============================================================================
  * Plan 152.7-B (D258) — format-spec mini-language runtime helpers.
  *
- * Rust-style `${expr:[[fill]align][sign][#][0][width][.precision][type]]}`.
- * All formatting is locale-INDEPENDENT (no setlocale; fixed ASCII digit/letter
- * tables, '.' decimal point regardless of host locale). Codegen parses the
- * spec at compile time (ast/format_spec.rs) and emits calls into these helpers.
- *
- * The split between "prefix" (sign + alt radix marker) and "body" (the
- * magnitude digits) lets `0`-padding insert zeros BETWEEN the sign/prefix and
- * the digits (e.g. `-007`, `0x00ff`) — matching Rust/printf semantics.
+ * Plan 208 Ф.4R Ш4: only `nova_fmt_pad` (+ its two helpers below) survives
+ * from this section — the ONLY remaining external width/align post-step,
+ * used by `emit_c.rs` `emit_format_spec_value`'s composite/user-type rich-
+ * spec tail (composites dispatch `@display(f)`/`@debug(f)` into a fresh
+ * builder, then this function pads the result — no `*_display_spec`
+ * sibling exists for arbitrary user types, unlike every primitive, which
+ * now renders+pads through its own `.nv` `*_display_spec` entry point).
+ * All formatting here is locale-INDEPENDENT (no setlocale; fixed ASCII
+ * digit/letter tables, '.' decimal point regardless of host locale).
  * ============================================================================ */
 
 /* Encode one Unicode scalar (the fill char) into UTF-8 at `dst`, returning the
@@ -431,23 +273,6 @@ static inline size_t nova_fmt_char_count(const char* p, size_t len) {
         if (((unsigned char)p[i] & 0xC0) != 0x80) n++;
     }
     return n;
-}
-
-/* Byte length of the first `nchars` codepoints of a UTF-8 run (for truncation
- * to a precision in codepoints without splitting a multibyte char). */
-static inline size_t nova_fmt_bytes_for_chars(const char* p, size_t len, size_t nchars) {
-    size_t i = 0, seen = 0;
-    while (i < len && seen < nchars) {
-        size_t step = 1;
-        unsigned char b = (unsigned char)p[i];
-        if      (b >= 0xF0) step = 4;
-        else if (b >= 0xE0) step = 3;
-        else if (b >= 0xC0) step = 2;
-        if (i + step > len) step = len - i;
-        i += step;
-        seen++;
-    }
-    return i;
 }
 
 /* align: 0 = left (pad right), 1 = right (pad left), 2 = center.
@@ -500,108 +325,6 @@ static inline nova_str nova_fmt_pad(
     memcpy(buf + j, body.ptr, body.len); j += body.len;
     for (int64_t k = 0; k < right_pad; k++) { memcpy(buf + j, fbuf, fbytes); j += fbytes; }
     return (nova_str){ (const uint8_t*)buf, j };
-}
-
-/* int → decimal magnitude digit string. Produces UNSIGNED magnitude only;
- * sign/prefix handled by the caller via nova_fmt_int_prefix + nova_fmt_pad.
- * Handles INT64_MIN correctly via the unsigned domain. */
-static inline nova_str nova_fmt_int_body(nova_int v, int base, int upper) {
-    uint64_t mag = (v < 0) ? (uint64_t)(-(v + 1)) + 1u : (uint64_t)v;
-    const char* digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
-    char tmp[66];
-    size_t n = 0;
-    if (mag == 0) { tmp[n++] = '0'; }
-    while (mag > 0) { tmp[n++] = digits[mag % (uint64_t)base]; mag /= (uint64_t)base; }
-    /* Plan 199 Ф.3 (D418): EXACTLY n bytes — no trailing NUL. n >= 1 always. */
-    char* buf = (char*)nova_alloc(n);
-    for (size_t k = 0; k < n; k++) buf[k] = tmp[n - 1 - k];
-    return (nova_str){ (const uint8_t*)buf, n };
-}
-
-/* Radix body (`x`/`X`/`b`/`o`): reinterpret the value as an UNSIGNED two's-
- * complement bit pattern (Rust semantics — `{:x}` of -1i64 == "ff..ff").
- * No sign char; the `#` prefix is added separately. */
-static inline nova_str nova_fmt_int_radix_body(nova_int v, int base, int upper) {
-    uint64_t bits = (uint64_t)v;
-    const char* digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
-    char tmp[66];
-    size_t n = 0;
-    if (bits == 0) { tmp[n++] = '0'; }
-    while (bits > 0) { tmp[n++] = digits[bits % (uint64_t)base]; bits /= (uint64_t)base; }
-    /* Plan 199 Ф.3 (D418): EXACTLY n bytes — no trailing NUL. n >= 1 always. */
-    char* buf = (char*)nova_alloc(n);
-    for (size_t k = 0; k < n; k++) buf[k] = tmp[n - 1 - k];
-    return (nova_str){ (const uint8_t*)buf, n };
-}
-
-/* Build the sign + alt-radix prefix string for a DECIMAL integer.
- *   sign_plus : force a leading '+' for non-negatives. */
-static inline nova_str nova_fmt_int_prefix(nova_int v, int sign_plus) {
-    char buf[2];
-    size_t n = 0;
-    if (v < 0) buf[n++] = '-';
-    else if (sign_plus) buf[n++] = '+';
-    if (n == 0) return (nova_str){ (const uint8_t*)"", 0 };
-    /* Plan 199 Ф.3 (D418): EXACTLY n bytes — no trailing NUL. n >= 1 here. */
-    char* out = (char*)nova_alloc(n);
-    memcpy(out, buf, n);
-    return (nova_str){ (const uint8_t*)out, n };
-}
-
-/* Build the alt-radix prefix (`0x`/`0X`/`0o`/`0b`) for a radix integer.
- * Radix formatting is unsigned (two's complement), so there is never a sign. */
-static inline nova_str nova_fmt_radix_prefix(int alt, int base, int upper) {
-    if (!alt) return (nova_str){ "", 0 };
-    char buf[2];
-    size_t n = 0;
-    /* Rust semantics: the radix prefix is ALWAYS lowercase (0x/0o/0b) even for
-       uppercase hex `{:#X}` → "0xFF". `upper` affects only the digit body. */
-    if (base == 16)      { buf[n++] = '0'; buf[n++] = 'x'; }
-    else if (base == 8)  { buf[n++] = '0'; buf[n++] = 'o'; }
-    else if (base == 2)  { buf[n++] = '0'; buf[n++] = 'b'; }
-    if (n == 0) return (nova_str){ (const uint8_t*)"", 0 };
-    /* Plan 199 Ф.3 (D418): EXACTLY n bytes — no trailing NUL. n >= 1 here. */
-    char* out = (char*)nova_alloc(n);
-    memcpy(out, buf, n);
-    return (nova_str){ (const uint8_t*)out, n };
-}
-
-/* f64 → fixed-precision magnitude string (no sign), `prec` decimal places. */
-static inline nova_str nova_fmt_f64_body(double v, int prec) {
-    double mag = (v < 0.0) ? -v : v;
-    /* worst case: 309 integer digits + '.' + prec + NUL. Cap precision. */
-    if (prec < 0) prec = 0;
-    if (prec > 64) prec = 64;
-    int cap = 340 + prec + 2;
-    char* buf = (char*)nova_alloc((size_t)cap);
-    int n = snprintf(buf, (size_t)cap, "%.*f", prec, mag);
-    if (n < 0) n = 0;
-    return (nova_str){ buf, (size_t)n };
-}
-
-/* Sign prefix for a float value (NaN/Inf carry their own sign from snprintf for
- * the body path, but the fixed-precision body above takes magnitude, so the
- * sign is computed here from the raw value). */
-static inline nova_str nova_fmt_f64_prefix(double v, int sign_plus) {
-    /* signbit handles -0.0 too (Rust prints "-0.00" for f64 -0.0). */
-    int neg = (v < 0.0) || (v == 0.0 && (1.0 / v) < 0.0);
-    char buf[2]; size_t n = 0;
-    if (neg) buf[n++] = '-';
-    else if (sign_plus) buf[n++] = '+';
-    if (n == 0) return (nova_str){ (const uint8_t*)"", 0 };
-    /* Plan 199 Ф.3 (D418): EXACTLY n bytes — no trailing NUL. n >= 1 here. */
-    char* out = (char*)nova_alloc(n);
-    memcpy(out, buf, n);
-    return (nova_str){ (const uint8_t*)out, n };
-}
-
-/* Truncate a string to `prec` codepoints (string precision). Returns a view
- * into the same backing bytes (zero-copy) — safe because nova_str is immutable
- * and the source outlives the interpolation expression. */
-static inline nova_str nova_fmt_str_precision(nova_str s, int64_t prec) {
-    if (prec < 0) return s;
-    size_t nbytes = nova_fmt_bytes_for_chars(s.ptr, s.len, (size_t)prec);
-    return (nova_str){ s.ptr, nbytes };
 }
 
 #endif /* NOVA_CONV_H */

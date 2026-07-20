@@ -20,6 +20,12 @@
 
 ---
 
+## P1 — вне объёма Plan 208 Ф.4R, найдено попутно (блокирует мега-CU гейт)
+
+| Маркер | Суть | Home | Pri |
+|---|---|---|---|
+| `[M-d216-write-at-return-type-unknown-cc-panic]` | **OPEN 2026-07-21 (найдено при гейт-верификации Plan 208 Ф.4R Ш4, worktree `nova-sh4`, sonnet).** `nova test spec_tests/conformance` (мега-CU, ЛЮБОЙ подмножество путей внутри этого folder — module=folder, весь `spec_tests.conformance` мёржится в ОДИН CU независимо от того, какие конкретные файлы переданы) падает internal-error (не диагностика, panic компилятора): `[P67-LEGACY] method call \`.write_at\` return type unknown — checker must annotate (compiler-conventions.md §0); obj_ty="" obj=Ident(q)` в `emit_c.rs` (`~53385` на момент находки). Источник — `spec_tests/conformance/d216_ptr_methods_174_5.nv:18` (`q.write_at(1, 99)`). **ПОДТВЕРЖДЕНО НЕ РЕГРЕССИЕЙ Ф.4R**: воспроизводится байт-в-байт на НЕТРОНУТОМ main-бинаре (`d:/Sources/nv-lang/nova`, HEAD на момент проверки `c190de41e`, до и после Ф.4R Ш4-правок) — тот же файл/тот же craш вне зависимости от Ф.4R-изменений (`emit_c.rs` fmt-район/`conv.h`/`string_builder.nv` этой волны никак не пересекаются с pointer-method-dispatch кодом). Значит на текущем main мега-CU гейт `spec_tests/conformance` **красный** независимо от Ф.4R — вероятно, дремлющий баг, который никто не ловил, т.к. авторитетный полный прогон в последнее время не гонялся (см. project-conformance-single-cu-run.md — гонка редкая). Ф.4R Ш4 верифицировала свои гейты через folder-CU с ВРЕМЕННО вынесенным (не закоммичено) `d216_ptr_methods_174_5.nv` — файл возвращён на место перед коммитом Ф.4R Ш4; этот маркер — единственный след находки. **Не чинилось в рамках Ф.4R Ш4** (вне ЗОНЫ волны: pointer-method type-inference, не forматирование). | floating (не привязан к плану) | **P1 (блокирует мега-CU гейт)** |
+
 ## P2 — вне объёма Plan 219, найдено попутно
 
 | Маркер | Суть | Home | Pri |
