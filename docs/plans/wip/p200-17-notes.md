@@ -3,10 +3,10 @@
 ## Статус
 
 ### Завершено
-- hashmap: 9 → 10 тестов (перенесено), PASS 10/10, коммит PENDING
+- hashmap: 10 тестов, PASS 10/10, коммит 124caf04b
+- range: 21 тест, PASS 21/21, коммит PENDING
 
 ### В работе
-- range
 - set
 - vec_iter
 - vec_lazy

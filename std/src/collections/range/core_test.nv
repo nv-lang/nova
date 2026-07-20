@@ -1,0 +1,212 @@
+// stdlib_range.nv — тип Range и его итератор.
+//
+// `a..b` (exclusive) и `a..=b` (inclusive) — литералы Range
+// ([D58](../spec/decisions/03-syntax.md#d58)).
+//
+// **Canonical form:** Range всегда хранится в **half-open** форме
+// `[start, end)`. `..=` нормализуется на конструкторе в `..` через
+// `end + 1`. Это даёт:
+//   - 16 байт памяти вместо 17+ (нет поля inclusive)
+//   - единая семантика во всех методах (нет ветвления if inclusive)
+//   - один canonical form — соответствует Rust's `Range`, Python `range()`
+//
+// Edge case: `0..=int.MAX` → overflow на end+1 при компиляторной
+// нормализации `..=` → half-open → **runtime panic** (не Fail; см. ниже).
+//
+// `Iterable[T]` — структурный effect в prelude. RangeIter автоматически
+// удовлетворяет `Iter[int]` через `mut next() -> Option[int]`.
+
+// Plan 91 Ф.7.1: partial_prelude — range.nv is re-exported в std.prelude
+// (Plan 62.D bis-1), и full auto-import prelude → cycle при standalone nova check
+// (collections.range → std.prelude → std.collections.range). Используем
+// #prelude(core, runtime, errors): только core (Option/Some/None/Ordering) + runtime (assert) +
+// errors (RuntimeError) — всё что нужно range API + тестам, БЕЗ
+// std.collections.range re-export через std.prelude.collections.
+#prelude(core, runtime, errors)
+module collections.range
+
+// Range as function argument — функция верхнего уровня
+fn sum_range(r Range) -> int {
+    mut s = 0
+    for x in r { s += x }
+    s
+}
+
+test "exclusive range basic" {
+    ro r = 0..5
+    assert(r.start == 0)
+    assert(r.end == 5)
+    assert(r.len() == 5)
+    assert(!r.is_empty())
+}
+
+test "inclusive range desugars to half-open" {
+    ro r = 0..=5                         // нормализуется в { start: 0, end: 6 }
+    assert(r.start == 0)
+    assert(r.end == 6)                    // half-open form
+    assert(r.len() == 6)                  // 0, 1, 2, 3, 4, 5
+}
+
+test "empty range when start >= end" {
+    ro r = 5..5                          // exclusive — пустой
+    assert(r.is_empty())
+    assert(r.len() == 0)
+
+    ro r2 = 5..=5                        // inclusive c одним элементом
+    assert(!r2.is_empty())
+    assert(r2.len() == 1)                 // {5..6} → 1
+}
+
+test "negative range yields empty" {
+    ro r = 5..0                          // start > end, exclusive
+    assert(r.is_empty())
+    assert(r.len() == 0)
+}
+
+test "contains" {
+    ro r = 0..5                          // [0, 1, 2, 3, 4]
+    assert(r.contains(0))
+    assert(r.contains(4))
+    assert(!r.contains(5))                // half-open — 5 не включён
+    assert(!r.contains(-1))
+
+    ro r2 = 0..=5                        // [0..6) — содержит 5
+    assert(r2.contains(5))
+    assert(!r2.contains(6))
+}
+
+test "iter yields all elements in order" {
+    ro r = 1..4
+    mut it = r.iter()
+    assert(it.next() == Some(1))
+    assert(it.next() == Some(2))
+    assert(it.next() == Some(3))
+    assert(it.next() == None)
+    assert(it.next() == None)             // None стабилен после исчерпания
+}
+
+test "iter inclusive — same as exclusive end+1" {
+    ro r = 1..=3                         // нормализуется в 1..4
+    mut it = r.iter()
+    assert(it.next() == Some(1))
+    assert(it.next() == Some(2))
+    assert(it.next() == Some(3))
+    assert(it.next() == None)
+}
+
+test "for-loop sums range" {
+    mut total = 0
+    for x in 0..5 {                       // implicit iter (D58)
+        total += x
+    }
+    assert(total == 0 + 1 + 2 + 3 + 4)
+}
+
+test "for-loop on Range value" {
+    ro r = 1..=4
+    mut total = 0
+    for x in r {                          // implicit iter на Range-значении
+        total += x
+    }
+    assert(total == 1 + 2 + 3 + 4)
+}
+
+test "Range as function argument" {
+    assert(sum_range(0..5) == 10)
+    assert(sum_range(1..=4) == 10)
+}
+
+test "step_by basic — every other" {
+    ro collected = (0..10).step_by(2)
+    mut it = collected
+    assert(it.next() == Some(0))
+    assert(it.next() == Some(2))
+    assert(it.next() == Some(4))
+    assert(it.next() == Some(6))
+    assert(it.next() == Some(8))
+    assert(it.next() == None)
+}
+
+test "step_by 64 — crypto block iteration" {
+    // Use-case: SHA-256 обрабатывает блоки по 64 байта
+    mut blocks = 0
+    for i in (0..256).step_by(64) {
+        blocks += 1
+    }
+    assert(blocks == 4)                     // 0, 64, 128, 192
+}
+
+test "step_by stops before end" {
+    // step не делает «overshoot» — последний yield < end
+    mut last = -1
+    for i in (0..10).step_by(3) {
+        last = i
+    }
+    assert(last == 9)                       // 0, 3, 6, 9 — следующее 12 > 10
+}
+
+test "step_by step >= end-start gives single element" {
+    mut count = 0
+    for i in (0..5).step_by(100) {
+        count += 1
+    }
+    assert(count == 1)                      // только начальный 0
+}
+
+test "step_by step=1 yields every element" {
+    mut it = (0..4).step_by(1)
+    assert(it.next() == Some(0))
+    assert(it.next() == Some(1))
+    assert(it.next() == Some(2))
+    assert(it.next() == Some(3))
+    assert(it.next() == None)
+}
+
+test "reverse basic" {
+    mut it = (0..5).reverse()
+    assert(it.next() == Some(4))
+    assert(it.next() == Some(3))
+    assert(it.next() == Some(2))
+    assert(it.next() == Some(1))
+    assert(it.next() == Some(0))
+    assert(it.next() == None)
+}
+
+test "reverse empty" {
+    mut it = (5..5).reverse()
+    assert(it.next() == None)
+}
+
+test "reverse single element" {
+    mut it = (3..4).reverse()
+    assert(it.next() == Some(3))
+    assert(it.next() == None)
+}
+
+test "reverse via for-loop" {
+    mut collected []int = []
+    for i in (1..=3).reverse() {
+        collected.push(i)
+    }
+    assert(collected == [3, 2, 1])
+}
+
+test "StepRangeIter copy by value — independent cursors" {
+    mut it = (0..10).step_by(2)
+    ro _a = it.next()
+    mut it2 = it
+    assert(_a == Some(0))
+    assert(it2.next() == Some(2))
+    assert(it2.next() == Some(4))
+    assert(it.next() == Some(2))
+}
+
+test "ReverseRangeIter copy by value — independent cursors" {
+    mut it = (1..=4).reverse()
+    ro _a = it.next()
+    mut it2 = it
+    assert(_a == Some(4))
+    assert(it2.next() == Some(3))
+    assert(it2.next() == Some(2))
+    assert(it.next() == Some(3))
+}
