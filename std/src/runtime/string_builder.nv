@@ -25,7 +25,21 @@ module runtime.string_builder
 // @reserve/@advance/@pad_in_place/@write_padded/@into_str_checked methods
 // below. `Align` (runtime.fmt_buf, also `#no_prelude` — see its header note)
 // does not reopen the prelude cycle this file already breaks out of.
-import std.runtime.fmt_buf.{Align, int_fmt_into, f64_fmt_shortest_into, f32_fmt_shortest_into}
+//
+// Plan 208 Ф.4R Ш1 (owner 2026-07-20, architecture fix — see
+// `docs/plans/wip/208-f4r-notes.md`): `int_fmt`/`fmt_f64`/`FmtSpec`/
+// `FloatKind`/`bool_fmt`/`char_fmt`/`f32_fmt_into`/`str_debug_fmt`/
+// `char_debug_fmt` added to this SAME one-directional import (this file
+// already imports `fmt_buf` — `fmt_buf` does NOT import this file back,
+// no cycle) — backs the `*_display_spec` family further down. An earlier
+// attempt put `*_display_spec` IN `fmt_buf.nv` instead, requiring `fmt_buf`
+// to import `StringBuilder` FROM here — that closed an inter-module cycle
+// found to be order-dependently broken (a third file's own import order
+// of `fmt_buf` vs `string_builder` flips CODEGEN-FAIL/PASS for symbols
+// having nothing to do with either import) — a genuine compiler defect in
+// cyclic-import resolution, not something to route around. This file's
+// pre-existing one-way dependency avoids the whole class of bug.
+import std.runtime.fmt_buf.{Align, FloatKind, FmtSpec, int_fmt_into, f64_fmt_shortest_into, f32_fmt_shortest_into, int_fmt, fmt_f64, bool_fmt, char_fmt, f32_fmt_into, str_debug_fmt, char_debug_fmt}
 import std.runtime.raw_mem.{RawMem}
 import std.prelude.core.{Result}
 import std.runtime.string.{Utf8Error}
@@ -389,4 +403,263 @@ export fn StringBuilder mut @pad_in_place(mark int, width int, fill char, align 
             for k in 0..right_chars { @append(fill) }
         }
     }
+}
+
+// ─── `*_display_spec` family (Plan 208 Ф.4R Ш1, owner 2026-07-20) ─────────
+//
+// Flat-argument render-INTO-`StringBuilder` entry points — the SINGLE
+// rendering path both the compiler's interp fast-path (Ш3: devirtualized
+// direct call, resolved by declaration — compiler-conventions §3) and a
+// primitive's own `@display`/`@debug` body (Ш2, still open — see
+// `docs/plans/wip/208-f4r-notes.md`) are meant to converge on. "Плоские
+// аргументы" precedent: `FmtCtx.rich` (prelude/protocols.nv) — same shape,
+// primitive scalars only, no `Option[T]`/enum literals crossing a
+// hand-synthesized call boundary.
+//
+// LIVES HERE (not `fmt_buf.nv`) specifically to avoid an inter-module cycle
+// — see the import-block comment above this file's `import
+// std.runtime.fmt_buf.{...}` line for the full story (a first attempt put
+// this family in `fmt_buf.nv`, requiring it to import `StringBuilder` back
+// from here; empirically that cycle broke third-file import resolution in
+// an order-dependent way). This file already has a clean one-way
+// dependency on `fmt_buf` for everything these functions need.
+//
+// Each function REPRODUCES `nova_rt/conv.h`'s existing `nova_fmt_*` chain
+// byte-for-byte (see `spec_tests/conformance/d422_f4r_baseline_*.nv`, the
+// Ш0 contract) — this is a CARRIER SWAP (Rust-emitted C chain → `.nv`
+// engine), not a behavior redesign. Two deliberate quirks are REPRODUCED,
+// not fixed (see the baseline fixtures' comments for why):
+//   1. `f64_display_spec`'s precision branch computes the sign prefix and
+//      the magnitude body SEPARATELY (mirrors `nova_fmt_f64_prefix`/
+//      `nova_fmt_f64_body` exactly) — `-0.0` with an explicit precision
+//      therefore double-signs (`--0.00`), because the magnitude negation
+//      test is `v < 0.0` (false for `-0.0`) while the prefix test is
+//      signbit-aware.
+//   2. `f64_display_spec`'s precision is clamped to 64 (matching
+//      `nova_fmt_f64_body`'s own `if (prec > 64) prec = 64`) — DIFFERENT
+//      from `fmt_f64`/`f64_fmt_into`'s own internal Fixed-kind clamp (340).
+//      Forwarding `prec` unclamped would diverge from the Ш0 baseline for
+//      `.65`+.
+
+const DISPLAY_INT_CAP int = 20        // decimal: "-9223372036854775808"
+const DISPLAY_F64_FIXED_CAP int = 380 // DBL_MAX (~309 int digits) + '.' + 64 decimals + slack
+const DISPLAY_F64_SHORTEST_CAP int = 24
+const DISPLAY_F32_CAP int = 16
+const DISPLAY_CHAR_CAP int = 4
+const DISPLAY_CHAR_DEBUG_CAP int = 8
+const DISPLAY_BOOL_CAP int = 5
+
+/// Natural (non-zero-pad) render cap for `int_fmt`, per radix — a 64-bit
+/// value needs UP TO 64 BINARY digits (`radix: 2`), 22 OCTAL digits, or 16
+/// HEX digits, each plus a 2-byte alt-radix prefix (`0b`/`0o`/`0x`) when
+/// `alt` fires; DECIMAL needs at most 20 (`"-9223372036854775808"`, the
+/// ONLY radix with a sign). Found by direct testing (2026-07-20, Ш3 gate):
+/// a first cut reused `DISPLAY_INT_CAP` (sized for decimal, 20) for EVERY
+/// radix — `int_fmt` "truncates defensively (never overruns buf)" per its
+/// own contract, so `${int.MIN:o}` (needs 22 octal digits) silently lost
+/// its last 2 digits instead of erroring, diverging from the Ш0 baseline.
+fn int_display_natural_cap(radix int) -> int {
+    if radix == 2 { 66 }
+    else if radix == 8 { 24 }
+    else if radix == 16 { 18 }
+    else { DISPLAY_INT_CAP }
+}
+
+/// `int` display/debug/radix render (decimal is `radix: 10`; Debug for int
+/// is identical to Display per conv.h, so this ONE function backs both).
+/// `width`/`zero_pad` behave exactly like `int_fmt`'s own `FmtSpec.width`/
+/// `.zero_pad` (a zero-pad TARGET, consulted only when `zero_pad` is true);
+/// when `zero_pad` is false, `width` instead drives EXTERNAL align/fill
+/// padding via `@pad_in_place` — mirrors `nova_fmt_pad`'s `zero_pad` branch
+/// always overriding `align` (conv.h:469, checked BEFORE the align switch).
+export fn int_display_spec(mut sb StringBuilder, v int, width int, radix int, upper bool, zero_pad bool, sign_plus bool, alt bool, align Align, fill char) -> ()
+    requires radix == 10 || radix == 16 || radix == 8 || radix == 2
+{
+    ro natural_cap = int_display_natural_cap(radix)
+    if zero_pad {
+        ro cap = width.max(natural_cap)
+        ro spec = FmtSpec { width, radix, upper, zero_pad: true, sign_plus, alt }
+        sb.reserve(cap)
+        unsafe { sb.advance(int_fmt(v, sb.spare(), cap, spec)) }
+    } else {
+        ro mark = sb.byte_len()
+        ro spec = FmtSpec { width: 0, radix, upper, zero_pad: false, sign_plus, alt }
+        sb.reserve(natural_cap)
+        unsafe { sb.advance(int_fmt(v, sb.spare(), natural_cap, spec)) }
+        sb.pad_in_place(mark, width, fill, align)
+    }
+}
+
+/// `f64` display/debug render (Debug for f64 is identical to Display per
+/// conv.h — `has_prec: false` covers both). `prec` only consulted when
+/// `has_prec` — precision=0 (`.0`) and no-precision are semantically
+/// DIFFERENT (fixed-0-decimals vs shortest-round-trip), hence the explicit
+/// bool rather than a `-1`-sentinel (mirrors `FmtCtx.rich`'s own
+/// `has_width`/`has_precision` bools).
+///
+/// `zero_pad` mirrors `nova_fmt_pad`'s own zero-pad branch (conv.h:469,
+/// checked BEFORE the align switch) — zeros insert BETWEEN the prefix
+/// (explicit `-`/`+`, if any) and the body, never before the sign. Found by
+/// direct testing (2026-07-20, Ш1 gate): a first cut used the generic
+/// `@pad_in_place(mark, width, fill, align)` unconditionally, which — for
+/// `align: Right, fill: '0'` — inserts zeros BEFORE the whole prefix+body
+/// run (`${-12.345:010.2}` → wrong `"0000-12.35"` instead of the Ш0-pinned
+/// `"-000012.35"`). `prefix_len` tracks how many bytes the (possibly empty)
+/// explicit prefix occupied; the zero-pad case re-anchors `@pad_in_place`
+/// at `mark + prefix_len` (right after the prefix) instead of `mark`,
+/// forcing `Align.Right`/`'0'` — the SAME technique `int_display_spec`
+/// gets for free from `int_fmt`'s own `FmtSpec.zero_pad`. This ALSO covers
+/// the no-precision branch correctly: when `sign_plus` is false there is NO
+/// explicit prefix at all (`prefix_len == 0`) and the shortest-engine body
+/// carries its OWN embedded sign (e.g. `"-100000"`) — zero-padding then
+/// inserts BEFORE that embedded sign too (`${-1.0e5:012}` → confirmed
+/// against the pre-Ф.4R binary: `"00000-100000"`, NOT `"-00000100000"` —
+/// pinned as-is, matches `nova_fmt_pad`'s prefix="" case exactly).
+export fn f64_display_spec(mut sb StringBuilder, v f64, width int, has_prec bool, prec int, zero_pad bool, sign_plus bool, align Align, fill char) -> () {
+    ro mark = sb.byte_len()
+    mut prefix_len = 0
+    if has_prec {
+        // Quirk #1 (see file-header note): TWO DIFFERENT negative tests,
+        // mirroring `nova_fmt_f64_body`/`nova_fmt_f64_prefix` exactly —
+        // NOT the same test reused for both purposes (an earlier cut of
+        // this function made exactly that mistake and silently produced
+        // only ONE `-` for `-0.0`, not the pinned `--0.00`).
+        //   - `mag_neg` (magnitude negation, `nova_fmt_f64_body`): plain
+        //     `v < 0.0` — FALSE for `-0.0`, so `mag` stays `-0.0`
+        //     (unchanged) and `fmt_f64`'s `%.*f` engine prints ITS OWN
+        //     sign from the bit pattern regardless.
+        //   - `prefix_neg` (sign prefix, `nova_fmt_f64_prefix`): signbit-
+        //     AWARE — `v < 0.0 || (v == 0.0 && 1.0/v < 0.0)` — TRUE for
+        //     `-0.0`. Both fire independently for `-0.0`, concatenating
+        //     into the pinned double-minus `--0.00`.
+        ro mag_neg = v < 0.0
+        ro prefix_neg = v < 0.0 || (v == 0.0 && (1.0 / v) < 0.0)
+        if prefix_neg { sb.append("-"); prefix_len = 1 } else if sign_plus { sb.append("+"); prefix_len = 1 }
+        ro mag = if mag_neg { -v } else { v }
+        // Quirk #2: clamp at 64 (matches nova_fmt_f64_body, NOT fmt_f64's
+        // own internal 340 clamp).
+        ro clamped_prec = prec.max(0).min(64)
+        sb.reserve(DISPLAY_F64_FIXED_CAP)
+        unsafe { sb.advance(fmt_f64(sb.spare(), DISPLAY_F64_FIXED_CAP, mag, FloatKind.Fixed, clamped_prec)) }
+    } else {
+        // No-precision (shortest round-trip) path — the body ALREADY
+        // carries its own sign (`fmt_f64` Shortest on the RAW value);
+        // prefix is empty unless `sign_plus` AND the value is
+        // non-negative — mirrors the `dv >= 0.0` ternary in
+        // `emit_format_spec_value` exactly (asymmetric vs the precision
+        // branch above by design — see Ш0 baseline notes: no double-sign
+        // on `-0.0` in THIS branch).
+        if sign_plus && v >= 0.0 { sb.append("+"); prefix_len = 1 }
+        sb.reserve(DISPLAY_F64_SHORTEST_CAP)
+        unsafe { sb.advance(fmt_f64(sb.spare(), DISPLAY_F64_SHORTEST_CAP, v, FloatKind.Shortest, -1)) }
+    }
+    if zero_pad {
+        ro zp_width = (width - prefix_len).max(0)
+        sb.pad_in_place(mark + prefix_len, zp_width, '0', Align.Right)
+    } else {
+        sb.pad_in_place(mark, width, fill, align)
+    }
+}
+
+/// `f32` BARE display render — the f32-PRECISE shortest engine
+/// (`f32_fmt_into`/`nova_f32_shortest`), matching the bare `${f32val}`
+/// interp path (emit_c.rs `primitive_to_str_fn`'s `nova_f32_to_str`), NOT
+/// the widen-to-f64 path a RICH f32 spec currently takes (Ш3 decides which
+/// call site uses this vs `f64_display_spec(sb, v as f64, ...)` — both
+/// building blocks are provided here; this one is the f32-precise half).
+export fn f32_display_spec(mut sb StringBuilder, v f32, width int, align Align, fill char) -> () {
+    ro mark = sb.byte_len()
+    sb.reserve(DISPLAY_F32_CAP)
+    unsafe { sb.advance(f32_fmt_into(sb.spare(), DISPLAY_F32_CAP, v)) }
+    sb.pad_in_place(mark, width, fill, align)
+}
+
+/// `bool` display/debug render (Debug == Display for bool per conv.h).
+export fn bool_display_spec(mut sb StringBuilder, v bool, width int, align Align, fill char) -> () {
+    ro mark = sb.byte_len()
+    sb.reserve(DISPLAY_BOOL_CAP)
+    unsafe { sb.advance(bool_fmt(v, sb.spare(), DISPLAY_BOOL_CAP)) }
+    sb.pad_in_place(mark, width, fill, align)
+}
+
+/// `char` Display render (bare UTF-8, no escaping).
+export fn char_display_spec(mut sb StringBuilder, v char, width int, align Align, fill char) -> () {
+    ro mark = sb.byte_len()
+    sb.reserve(DISPLAY_CHAR_CAP)
+    unsafe { sb.advance(char_fmt(v, sb.spare(), DISPLAY_CHAR_CAP)) }
+    sb.pad_in_place(mark, width, fill, align)
+}
+
+/// `char` Debug render (single-quoted + escaped — `char_debug_fmt`,
+/// `fmt_buf.nv`).
+export fn char_debug_display_spec(mut sb StringBuilder, v char, width int, align Align, fill char) -> () {
+    ro mark = sb.byte_len()
+    sb.reserve(DISPLAY_CHAR_DEBUG_CAP)
+    unsafe { sb.advance(char_debug_fmt(v, sb.spare(), DISPLAY_CHAR_DEBUG_CAP)) }
+    sb.pad_in_place(mark, width, fill, align)
+}
+
+/// Byte offset of the first `nchars` codepoints in a UTF-8 byte run —
+/// mirrors `conv.h`'s `nova_fmt_bytes_for_chars` (used for `.N` string
+/// precision truncation). `nchars < 0` is unreachable in practice (the
+/// spec parser only ever produces `prec >= 0`) but returns the full length
+/// defensively rather than looping forever.
+fn display_spec_bytes_for_chars(bytes []u8, nchars int) -> int {
+    if nchars < 0 { return bytes.len() }
+    ro len = bytes.len()
+    mut i = 0
+    mut seen = 0
+    while i < len && seen < nchars {
+        ro b = bytes[i]
+        mut step = 1
+        if b >= (0xF0 as u8) { step = 4 }
+        else if b >= (0xE0 as u8) { step = 3 }
+        else if b >= (0xC0 as u8) { step = 2 }
+        if i + step > len { step = len - i }
+        i += step
+        seen += 1
+    }
+    i
+}
+
+/// `str` Display render — identity content (zero-copy view of `v`'s own
+/// bytes), optional `.N` precision truncation (codepoints, mirrors
+/// `nova_fmt_str_precision`), then width/align/fill pad. Default align is
+/// caller-resolved (Rust convention: strings left-align by default) —
+/// same "resolve default before calling" contract every other codegen call
+/// site in this family follows (mirrors the pre-existing
+/// `align_code(spec.align, default_left)` Rust-side helper).
+export fn str_display_spec(mut sb StringBuilder, v str, width int, has_prec bool, prec int, align Align, fill char) -> () {
+    ro mark = sb.byte_len()
+    ro vb = v.bytes()
+    if has_prec {
+        ro cut = display_spec_bytes_for_chars(vb, prec)
+        sb.write(vb[0..cut])
+    } else {
+        sb.write(vb)
+    }
+    sb.pad_in_place(mark, width, fill, align)
+}
+
+/// `str` Debug render — quoted+escaped content (`str_debug_fmt`,
+/// `fmt_buf.nv`, rendered into a scratch `[]u8` sized for the worst case:
+/// every source byte expands to a 4-byte `\xHH` escape, +2 for the
+/// surrounding quotes), then the SAME optional `.N` precision truncation +
+/// pad as Display above (mirrors the existing behavior:
+/// `emit_format_spec_value`'s `precision_consumed` is `false` for the
+/// primitive str/Debug arm too, so `.N` truncates the ESCAPED+QUOTED text,
+/// not the source — preserved as-is, not a Ф.4R design choice).
+export fn str_debug_display_spec(mut sb StringBuilder, v str, width int, has_prec bool, prec int, align Align, fill char) -> () {
+    ro cap = v.byte_len() * 4 + 2
+    mut scratch []u8 = []u8.new(cap: cap)
+    ro n = str_debug_fmt(v, scratch.ptr(), cap)
+    unsafe { scratch.advance(n) }
+    ro mark = sb.byte_len()
+    if has_prec {
+        ro cut = display_spec_bytes_for_chars(scratch, prec)
+        sb.write(scratch[0..cut])
+    } else {
+        sb.write(scratch)
+    }
+    sb.pad_in_place(mark, width, fill, align)
 }

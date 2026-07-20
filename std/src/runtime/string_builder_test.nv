@@ -8,7 +8,7 @@
 // test here is `export`ed (public D179-amend API), so this is unproblematic.
 module runtime.string_builder_test
 
-import std.runtime.string_builder.{StringBuilder}
+import std.runtime.string_builder.{StringBuilder, int_display_spec, f64_display_spec, f32_display_spec, bool_display_spec, char_display_spec, char_debug_display_spec, str_display_spec, str_debug_display_spec}
 import std.runtime.fmt_buf.{Align}
 
 test "StringBuilder: @reserve/@advance zero-copy digit-loop protocol" {
@@ -106,4 +106,91 @@ test "SB append int/f64/f32 zero-alloc byte-parity" {
     consume sb2 = StringBuilder.new()
     sb2.append(0.1 as f32).append(" ").append(-2.25 as f32)
     assert(sb2.into_str() == "0.1 -2.25")
+}
+
+// Plan 208 Ф.4R Ш1 (owner 2026-07-20): `*_display_spec` family gate —
+// cross-checked directly against `spec_tests/conformance/d422_f4r_baseline_
+// *.nv` (Ш0 byte-parity contract), same expected literals.
+test "int_display_spec: decimal + radix, zero_pad, width/align/fill" {
+    consume sb1 = StringBuilder.new()
+    int_display_spec(sb1, -1, 0, 16, false, false, false, false, Align.Right, ' ')
+    assert(sb1.into_str() == "ffffffffffffffff")
+
+    consume sb2 = StringBuilder.new()
+    int_display_spec(sb2, 255, 8, 16, false, true, false, false, Align.Right, ' ')
+    assert(sb2.into_str() == "000000ff")
+
+    consume sb3 = StringBuilder.new()
+    int_display_spec(sb3, 42, 6, 10, false, false, false, false, Align.Center, '*')
+    assert(sb3.into_str() == "**42**")
+
+    consume sb4 = StringBuilder.new()
+    int_display_spec(sb4, 255, 10, 16, false, true, false, true, Align.Right, ' ')
+    assert(sb4.into_str() == "0x000000ff")
+}
+
+test "f64_display_spec: precision+width, -0.0 double-sign quirk, no-precision shortest" {
+    consume sb1 = StringBuilder.new()
+    f64_display_spec(sb1, -12.345, 10, true, 2, true, false, Align.Right, ' ')
+    assert(sb1.into_str() == "-000012.35")
+
+    consume sb2 = StringBuilder.new()
+    f64_display_spec(sb2, -0.0, 0, true, 2, false, false, Align.Right, ' ')
+    assert(sb2.into_str() == "--0.00")   // pinned quirk — see Ш0 baseline
+
+    consume sb3 = StringBuilder.new()
+    f64_display_spec(sb3, 1.0e20, 0, false, 0, false, false, Align.Right, ' ')
+    assert(sb3.into_str() == "1e+20")
+
+    consume sb4 = StringBuilder.new()
+    f64_display_spec(sb4, -0.0, 0, false, 0, false, false, Align.Right, ' ')
+    assert(sb4.into_str() == "-0")   // no double-sign in the no-precision branch
+
+    consume sb5 = StringBuilder.new()
+    f64_display_spec(sb5, 1.5, 0, true, 65, false, false, Align.Right, ' ')
+    assert(sb5.into_str() == "1.5000000000000000000000000000000000000000000000000000000000000000")
+
+    // zero_pad, NO precision — body carries its own embedded sign (shortest
+    // engine), prefix is empty (sign_plus false) — zeros insert BEFORE the
+    // embedded sign (matches pre-Ф.4R binary ground truth exactly, NOT the
+    // "nicer-looking" `-00000100000`).
+    consume sb6 = StringBuilder.new()
+    f64_display_spec(sb6, -1.0e5, 12, false, 0, true, false, Align.Right, ' ')
+    assert(sb6.into_str() == "00000-100000")
+
+    consume sb7 = StringBuilder.new()
+    f64_display_spec(sb7, 1.0e5, 12, false, 0, true, false, Align.Right, ' ')
+    assert(sb7.into_str() == "000000100000")
+}
+
+test "str/char/bool display_spec: identity, Debug-escape, precision truncation" {
+    consume sb1 = StringBuilder.new()
+    str_display_spec(sb1, "hello world", 0, true, 5, Align.Left, ' ')
+    assert(sb1.into_str() == "hello")
+
+    consume sb2 = StringBuilder.new()
+    str_debug_display_spec(sb2, "hello", 0, false, 0, Align.Left, ' ')
+    assert(sb2.into_str() == "\"hello\"")
+
+    consume sb3 = StringBuilder.new()
+    char_display_spec(sb3, 'x', 0, Align.Left, ' ')
+    assert(sb3.into_str() == "x")
+
+    consume sb4 = StringBuilder.new()
+    char_debug_display_spec(sb4, '\n', 0, Align.Left, ' ')
+    assert(sb4.into_str() == "'\\n'")
+
+    consume sb5 = StringBuilder.new()
+    bool_display_spec(sb5, true, 0, Align.Left, ' ')
+    assert(sb5.into_str() == "true")
+}
+
+test "f32_display_spec: f32-precise shortest engine" {
+    consume sb1 = StringBuilder.new()
+    f32_display_spec(sb1, 0.1 as f32, 0, Align.Left, ' ')
+    assert(sb1.into_str() == "0.1")
+
+    consume sb2 = StringBuilder.new()
+    f32_display_spec(sb2, -2.25 as f32, 8, Align.Right, ' ')
+    assert(sb2.into_str() == "   -2.25")
 }

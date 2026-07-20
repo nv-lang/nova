@@ -1,0 +1,56 @@
+// Plan 208 Ф.4R (owner 2026-07-20, docs/plans/208-unified-formatter.md §10R)
+// — Ш0 BASELINE: byte-exact snapshot of F64 display/format-spec output from
+// the CURRENT (pre-Ф.4R) `nova_rt/conv.h` `nova_fmt_f64_*` chain, captured
+// by building+running the unmodified main-repo binary on 2026-07-20. See
+// d422_f4r_baseline_int.nv header — same byte-parity contract, DO NOT edit.
+module spec_tests.conformance
+
+test "Ф.4R baseline: f64 precision + width" {
+    assert("${-12.345:010.2}" == "-000012.35")
+    assert("${12.345:010.2}" == "0000012.35")
+    assert("${3.7:.0}" == "4")
+    assert("${-3.7:.0}" == "-4")
+    assert("${3.14159265:.5}" == "3.14159")
+    assert("${3.14:10}" == "      3.14")
+    assert("${3.14:+.2}" == "+3.14")
+    assert("${-3.14:+.2}" == "-3.14")
+    assert("${0.0:.2}" == "0.00")
+    // Ш0 KNOWN QUIRK (nova_rt/conv.h `nova_fmt_f64_body`/`_prefix`,
+    // pre-Ф.4R): `-0.0` WITH an explicit precision double-signs.
+    // `nova_fmt_f64_body` negates the magnitude via `v < 0.0` (FALSE for
+    // `-0.0`), so `%.*f` receives `-0.0` directly and prints its OWN `-`;
+    // `nova_fmt_f64_prefix` separately detects `-0.0` via the signbit-aware
+    // check (`v == 0.0 && 1.0/v < 0.0`) and ALSO emits `-` — the two
+    // concatenate into `--0.00`. Pinned AS-IS (byte-parity contract, not a
+    // fix target — Ф.4R replicates existing behavior, it does not correct
+    // it).
+    assert("${-0.0:.2}" == "--0.00")
+}
+
+test "Ф.4R baseline: f64 precision CLAMPED at 64 (nova_fmt_f64_body's `if (prec > 64) prec = 64`)" {
+    // Ш0 KNOWN QUIRK: the OLD engine's `nova_fmt_f64_body` (conv.h) clamps
+    // precision to 64 decimal places BEFORE calling `%.*f` — a DIFFERENT
+    // clamp than `fmt_buf.nv`'s own `f64_fmt_into`/`fmt_f64` (nova_rt.h),
+    // which internally clamps Fixed-kind precision at 340. A naive Ш1
+    // `f64_display_spec` that forwards `prec` straight to `fmt_f64` WITHOUT
+    // re-clamping at 64 would diverge from this baseline for `.65`+.
+    // `.64` and `.65` render IDENTICALLY (both clamp to 64 digits) — that
+    // equality IS the pin.
+    assert("${1.5:.64}" == "1.5000000000000000000000000000000000000000000000000000000000000000")
+    assert("${1.5:.65}" == "1.5000000000000000000000000000000000000000000000000000000000000000")
+    assert("${1.23456789:.70}" == "1.2345678899999998900938180668163113296031951904296875000000000000")
+}
+
+test "Ф.4R baseline: f64 no-precision (shortest round-trip engine) edge magnitudes" {
+    assert("${1.0e20}" == "1e+20")
+    assert("${1.0e-20}" == "1e-20")
+    assert("${123456789.123}" == "123456789.123")
+    assert("${0.0001}" == "0.0001")
+    assert("${1.0}" == "1")
+    assert("${-1.0}" == "-1")
+    assert("${3.141592653589793}" == "3.141592653589793")
+    // No-precision path does NOT double-sign (unlike the precision case
+    // above) — `nova_f64_to_str(-0.0)` alone carries the sign via `%g`.
+    assert("${-0.0}" == "-0")
+    assert("${1.0e20:+}" == "+1e+20")
+}

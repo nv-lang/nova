@@ -1,0 +1,48 @@
+// Plan 208 Ф.4R (owner 2026-07-20, docs/plans/208-unified-formatter.md §10R)
+// — Ш0 BASELINE: byte-exact snapshot of INT display/format-spec output from
+// the CURRENT (pre-Ф.4R) `nova_rt/conv.h` `nova_fmt_*` chain, captured by
+// building+running the unmodified main-repo binary on 2026-07-20. These
+// literals are the byte-parity CONTRACT for the whole Ф.4R rewrite (Ш1
+// builds `*_display_spec` in `.nv`, Ш3 flips the compiler fast-path onto
+// it) — every one of them must keep passing UNCHANGED through Ш1-Ш3.
+// DO NOT edit the expected strings below; a mismatch after the flip means
+// the NEW engine is wrong, not this file.
+module spec_tests.conformance
+
+test "Ф.4R baseline: int decimal (bare, MIN/MAX/-1/0)" {
+    assert("${int.MIN}" == "-9223372036854775808")
+    assert("${int.MAX}" == "9223372036854775807")
+    assert("${-1}" == "-1")
+    assert("${0}" == "0")
+    assert("${42}" == "42")
+}
+
+test "Ф.4R baseline: int hex/oct/bin radix — MIN/MAX/-1 two's-complement bit pattern" {
+    assert("${int.MIN:x}" == "8000000000000000")
+    assert("${int.MAX:x}" == "7fffffffffffffff")
+    assert("${-1:x}" == "ffffffffffffffff")
+    assert("${-1:X}" == "FFFFFFFFFFFFFFFF")
+    assert("${int.MIN:o}" == "1000000000000000000000")
+    assert("${int.MAX:o}" == "777777777777777777777")
+    assert("${-1:o}" == "1777777777777777777777")
+    assert("${int.MIN:b}" == "1000000000000000000000000000000000000000000000000000000000000000")
+    assert("${int.MAX:b}" == "111111111111111111111111111111111111111111111111111111111111111")
+    assert("${-1:b}" == "1111111111111111111111111111111111111111111111111111111111111111")
+}
+
+test "Ф.4R baseline: zero-pad / width / sign / alt boundaries" {
+    assert("${255:08x}" == "000000ff")
+    assert("${255:#010x}" == "0x000000ff")
+    assert("${-7:04}" == "-007")
+    assert("${42:04}" == "0042")
+    assert("${42:+}" == "+42")
+    assert("${-42:+}" == "-42")
+    assert("${255:#x}" == "0xff")
+    assert("${255:#X}" == "0xFF")
+    assert("${8:#o}" == "0o10")
+    assert("${5:#b}" == "0b101")
+    assert("${42:<6}" == "42    ")
+    assert("${42:>6}" == "    42")
+    assert("${42:^6}" == "  42  ")
+    assert("${42:*^6}" == "**42**")
+}

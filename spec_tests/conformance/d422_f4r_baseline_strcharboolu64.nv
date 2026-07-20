@@ -1,0 +1,57 @@
+// Plan 208 Ф.4R (owner 2026-07-20, docs/plans/208-unified-formatter.md §10R)
+// — Ш0 BASELINE: byte-exact snapshot of str/char/bool/u64 display output
+// from the CURRENT (pre-Ф.4R) `nova_rt/conv.h` chain, captured by
+// building+running the unmodified main-repo binary on 2026-07-20. See
+// d422_f4r_baseline_int.nv header — same byte-parity contract, DO NOT edit.
+module spec_tests.conformance
+
+test "Ф.4R baseline: str/char Display + Debug-quoted (as-is, escape rules unchanged)" {
+    ro hello = "hello"
+    assert("${hello}" == "hello")
+    assert("${hello:?}" == "\"hello\"")
+    ro esc_s = "a\nb\tc\rd\\e\"f"
+    assert("${esc_s:?}" == "\"a\\nb\\tc\\rd\\\\e\\\"f\"")
+    ro nul_s = "a\0b"
+    assert("${nul_s:?}" == "\"a\\0b\"")
+    // Non-printable control bytes (< 0x20) NOT in {\n \t \r \0} escape as
+    // `\xHH` (lowercase hex, NO braces — conv.h `nova_str_to_debug_str`'s
+    // own header comment says `\x{HH}` but the actual code emits `\xHH`;
+    // this fixture pins the real runtime behavior, not the stale comment).
+    ro ctrl_s = "\u{01}\u{1f}"
+    assert("${ctrl_s:?}" == "\"\\x01\\x1f\"")
+
+    ro cx = 'x'
+    assert("${cx}" == "x")
+    assert("${cx:?}" == "'x'")
+    ro cnl = '\n'
+    assert("${cnl:?}" == "'\\n'")
+    ro cq = '\''
+    assert("${cq:?}" == "'\\''")
+    ro cb = '\\'
+    assert("${cb:?}" == "'\\\\'")
+    // Printable multi-byte codepoint — passthrough, no escaping.
+    ro cu = '\u{4E2D}'
+    assert("${cu:?}" == "'中'")
+}
+
+test "Ф.4R baseline: bool" {
+    assert("${true}" == "true")
+    assert("${false}" == "false")
+    assert("${true:?}" == "true")
+}
+
+test "Ф.4R baseline: u64 MAX / i64 MIN bare interpolation" {
+    // Ш0 KNOWN QUIRK: bare `${u64_value}` interpolation has NO dedicated
+    // u64 entry in emit_c.rs's `primitive_to_str_fn` (only the "nova_int"
+    // C-type is covered there) — it falls through to the generic
+    // numeric-cast fallback `nova_int_to_str((nova_int)(v))`, which
+    // reinterprets the u64 bit pattern as SIGNED `nova_int`. `u64.MAX`
+    // (all-ones bit pattern) therefore prints "-1", NOT
+    // "18446744073709551615". Pinned AS-IS (byte-parity contract — Ф.4R
+    // does not fix this; a correctness fix, if ever undertaken, is a
+    // separate follow-up outside this plan's scope).
+    ro u64max = u64.MAX
+    assert("${u64max}" == "-1")
+    ro i64min = i64.MIN
+    assert("${i64min}" == "-9223372036854775808")
+}
