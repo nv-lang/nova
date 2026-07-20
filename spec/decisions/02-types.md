@@ -5725,18 +5725,26 @@ consume-параметр, вызов consume-метода на биндинге)
    consume-метод типа `X` (совпадает с checker's `is_consume_method`) —
    ЛЮБОЙ такой метод (не только `@cleanup`), напр. `g.unlock()` наряду с
    гипотетическим `g.cleanup()`.
+3. Прямая передача биндинга аргументом вызова (`foo(g)`, free-fn ИЛИ
+   `recv.method(g)`) на позиции, которая `consume`-режима хотя бы на ОДНОМ
+   overload'е этого имени (`free_fn_consume_param_positions`/
+   `method_consume_param_positions` — консервативный union по имени,
+   зеркало checker's `consume_args`/`consume_idxs`). Найдено ОБЯЗАТЕЛЬНЫМ
+   (не опциональным) folder-CU-регрессом: `guard_cross_scope_transfer.nv`
+   (`consume g = mu.lock(); do_work_under_lock(g, counter)` — обычный
+   std-паттерн «передать guard в хелпер») ломался двойным `unlock` без
+   этого дизарма — то, что изначально казалось «редким гипотетическим
+   пробелом», оказалось активным сценарием в существующем корпусе.
+4. Вход в ЛЮБОЙ RE-CONSUME БЛОК (`consume X { body }`, D188/201-амендмент)
+   на бывшем bare-биндинге `X` — блок берёт cleanup «на себя» целиком
+   (exactly-once, свой tail/return-дизарм), поэтому OUTER auto-cleanup флаг
+   дизармится БЕЗУСЛОВНО при входе в блок (до эмиссии тела), иначе cleanup
+   срабатывает дважды. Тоже найдено folder-CU-регрессом
+   (`d188_reconsume_block.nv`, D201Boom-сторож).
 
-**Известный пробел keystone (задокументирован, не блокирует принятие):**
-передача биндинга как ПРЯМОГО аргумента вызова (`foo(g)`, вне receiver-
-позиции) НЕ дизармится в текущей реализации — codegen не переопределяет
-per-callee consume-режим параметра (`consume_idxs`, зеркало checker's
-`consume_args`) для ЭТОГО конкретного случая; слепой дизарм «любой прямой
-Ident-арг» (как это исторически делает механизм re-consume-блока D188,
-БЕЗОПАСНЫЙ там ТОЛЬКО из-за checker's `block_guards`, отвергающих любое
-несанкционированное появление ДО кодгена) дал бы ТИХУЮ УТЕЧКУ для bare
-auto-cleanup биндинга, если целевой параметр НЕ consume-режима. Follow-up
-`[M-217-consume-param-transfer-disarm]` — вычислить `consume_idxs` в
-codegen (зеркало checker) и включить этот путь.
+Все четыре точки реализованы; известных пробелов в disarm-механике на
+момент принятия D432 нет (folder-CU регресс — `spec_tests/conformance`
+одним CU — прогнан до зелёного после КАЖДОГО из вскрытых случаев).
 
 ### §5. Drop-флаг (§8а п.6, MaybeConsumed на общем exit-пути)
 

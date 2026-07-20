@@ -1555,6 +1555,24 @@ pub struct CEmitter {
     /// that `Stmt::Let`, to arm the shield + `_active` flag with the exact
     /// C names declared in the prologue. `(block_id, entry_idx, init_c_type)`.
     auto_cleanup_arm_sites: HashMap<Span, (usize, usize, String)>,
+    /// Plan 217 BUGFIX (folder-CU regression `guard_cross_scope_transfer.nv`
+    /// "Guard passed to helper function and consumed there" — MutexGuard
+    /// double-`unlock`): free-fn NAME → set of ARG POSITIONS that are
+    /// `consume`-mode on AT LEAST ONE overload of that name (union across
+    /// overloads — conservative, favors disarming over leaking since the
+    /// alternative, discovered empirically, is an ACTIVE double-cleanup
+    /// crash). `do_work_under_lock(g, counter)` — `g` at position 0 must
+    /// disarm `g`'s auto-cleanup in the CALLER before the call, mirroring
+    /// what the checker's `consume_args`/`consume_idxs` already does for
+    /// the STATIC obligation (this closes the codegen-side gap that left
+    /// `_active` armed after a legitimate transfer).
+    free_fn_consume_param_positions: HashMap<String, HashSet<usize>>,
+    /// Plan 217 BUGFIX (same as above): `(receiver_type_name, method_name)`
+    /// → set of consume-mode ARG positions (0-based, receiver excluded) —
+    /// covers `recv.method(g)` where `g` is an auto-cleanup binding passed
+    /// as a consume-mode argument to a METHOD call (not the receiver
+    /// itself, which `consume_receiver_methods` already handles).
+    method_consume_param_positions: HashMap<(String, String), HashSet<usize>>,
     /// Plan 217: type_name (plain Nova) → set of method names declared with
     /// a `consume` receiver on that type (mirrors checker's `LinearityRegistry
     /// ::consume_methods`, types/mod.rs). Gates the Stmt::Expr bare-statement
@@ -2284,6 +2302,8 @@ impl CEmitter {
             reconsume_scopes: Vec::new(),
             auto_cleanup_types: HashSet::new(),
             auto_cleanup_arm_sites: HashMap::new(),
+            free_fn_consume_param_positions: HashMap::new(),
+            method_consume_param_positions: HashMap::new(),
             consume_receiver_methods: HashMap::new(),
             auto_cleanup_active: Vec::new(),
             var_boxed: HashMap::new(),
@@ -4591,9 +4611,26 @@ impl CEmitter {
                     if let Item::Fn(f) = item {
                         if f.name != "cleanup" { continue; }
                         if let Some(recv) = &f.receiver {
+                            // BUGFIX (folder-CU regression, 2026-07-20):
+                            // name-only match false-positived on
+                            // `DbConnection consume @cleanup() -> ()`
+                            // (`cross_pkg_consume_via_protocol_ok.nv`) — a
+                            // ZERO-ARG method for an unrelated ad-hoc
+                            // `Resource` protocol, not `Cleanup[E]`'s
+                            // `@cleanup(outcome ScopeOutcome) -> ()` shape.
+                            // Must mirror the checker-side gate
+                            // (types/mod.rs `LinearityRegistry::build`)
+                            // EXACTLY, or the two diverge (checker
+                            // suppresses D133 for a type codegen doesn't
+                            // treat as auto-cleanup, or vice versa — either
+                            // way a silent leak / CC-FAIL).
+                            let is_cleanup_protocol_shape = f.params.len() == 1
+                                && matches!(&f.params[0].ty,
+                                    TypeRef::Named { path, .. } if path.last().map_or(false, |s| s == "ScopeOutcome"));
                             if recv.consume
                                 && matches!(recv.kind, ReceiverKind::Instance)
                                 && f.effects.is_empty()
+                                && is_cleanup_protocol_shape
                             {
                                 self.auto_cleanup_types.insert(recv.type_name.clone());
                             }
@@ -4623,6 +4660,51 @@ impl CEmitter {
                                     .entry(recv.type_name.clone())
                                     .or_default()
                                     .insert(f.name.clone());
+                            }
+                        }
+                    }
+                }
+            };
+            collect(&module.items);
+            for pf in &module.peer_files {
+                collect(&pf.items_here);
+            }
+        }
+
+        // Plan 217 BUGFIX (folder-CU regression, `guard_cross_scope_
+        // transfer.nv` "Guard passed to helper function and consumed
+        // there" — MutexGuard double-`unlock`): pre-pass — collect, per
+        // free-fn NAME and per `(type, method)`, the ARG POSITIONS that are
+        // `consume`-mode on at least one overload (union — conservative).
+        // Drives the call-arg disarm in `disarm_auto_cleanup_receiver_call`
+        // (despite the name, that fn now ALSO handles this case) — without
+        // it, `consume g = mu.lock(); helper(g)` where `helper`'s param IS
+        // `consume`-mode leaves `g`'s `_active` flag armed after a
+        // legitimate ownership transfer, double-firing `@cleanup` at the
+        // caller's scope-exit on top of whatever `helper` itself did.
+        {
+            let mut collect = |items: &[Item]| {
+                for item in items {
+                    if let Item::Fn(f) = item {
+                        let modes = Self::fn_param_modes(f);
+                        let consume_positions: HashSet<usize> = modes.iter()
+                            .enumerate()
+                            .filter(|(_, &m)| m == 2)
+                            .map(|(i, _)| i)
+                            .collect();
+                        if consume_positions.is_empty() { continue; }
+                        match &f.receiver {
+                            None => {
+                                self.free_fn_consume_param_positions
+                                    .entry(f.name.clone())
+                                    .or_default()
+                                    .extend(consume_positions);
+                            }
+                            Some(recv) => {
+                                self.method_consume_param_positions
+                                    .entry((recv.type_name.clone(), f.name.clone()))
+                                    .or_default()
+                                    .extend(consume_positions);
                             }
                         }
                     }
@@ -27397,37 +27479,79 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         None
     }
 
-    /// Plan 217: if `e` is a bare receiver-call `X.method(...)` where `X` is
-    /// an active auto-cleanup/re-consume binding AND `method` is registered
-    /// as an ACTUAL consume-receiver method on `X`'s type
-    /// (`consume_receiver_methods` — mirrors checker's `is_consume_method`),
-    /// emit the disarm assignment right before `e` is evaluated. Called from
-    /// every "statement-like" expression-emission site where `e`'s value is
-    /// discarded (`Stmt::Expr`, block trailing used as a unit-typed
-    /// statement) — a bare statement/discarded-trailing has no downstream
-    /// value to preserve across reordering, so disarming first is safe.
-    /// Gating on `consume_receiver_methods` (not "any method call") matters:
-    /// a `ro`/`mut`-receiver helper method (e.g. a getter) on the SAME
-    /// binding must NOT disarm — the checker doesn't mark `X` consumed for
-    /// those either, so disarming here would be a silent resource leak.
+    /// Plan 217: if `e` is a Call, disarm auto-cleanup/re-consume bindings
+    /// that are genuinely consumed by IT — either as the receiver of a
+    /// registered consume-method (`X.method(...)`, gated on
+    /// `consume_receiver_methods` — mirrors checker's `is_consume_method`),
+    /// or as a direct argument at a `consume`-mode parameter position
+    /// (`helper(X, other)`, gated on `free_fn_consume_param_positions` /
+    /// `method_consume_param_positions` — mirrors checker's `consume_args`/
+    /// `consume_idxs`; found necessary via the `guard_cross_scope_transfer.
+    /// nv` regression — MutexGuard `g` passed to a `consume`-param helper
+    /// left `_active` armed after a legitimate transfer, double-`unlock`ing
+    /// at the caller's scope-exit). Emits the disarm assignment right
+    /// before `e` is evaluated. Called from every "statement-like"
+    /// expression-emission site where `e`'s value is discarded (`Stmt::
+    /// Expr`, block trailing) AND from the central `emit_expr` choke-point
+    /// (covers nested/return/tail positions too) — a pure flag-write has no
+    /// bearing on the computed value, so firing it unconditionally,
+    /// wherever this exact Call node is emitted, is sound (idempotent on
+    /// repeat). Gating on the registered-method/position sets (not "any
+    /// method call"/"any direct arg") matters both ways: a `ro`/`mut`
+    /// helper method or a `ro`/`mut`-param argument position must NOT
+    /// disarm — the checker doesn't mark `X` consumed for those either, so
+    /// disarming here would be a silent resource leak (the OPPOSITE
+    /// failure mode from the double-cleanup this fixes).
     fn disarm_auto_cleanup_receiver_call(&mut self, e: &Expr) {
-        if let ExprKind::Call { func, .. } = &e.kind {
-            if let ExprKind::Member { obj, name: method_name } = &func.kind {
-                if let ExprKind::Ident(recv_name) = &obj.kind {
-                    let recv_ty = self.var_types.get(recv_name).cloned().unwrap_or_default();
-                    let recv_ty_name = {
-                        let t = self.debt_strip_nova_trim_start(&recv_ty);
-                        t.strip_prefix("NovaValue_").map(|s| s.to_string()).unwrap_or(t)
-                    };
-                    let is_consuming_call = self.consume_receiver_methods
-                        .get(&recv_ty_name)
-                        .map_or(false, |ms| ms.contains(method_name));
-                    if is_consuming_call {
-                        if let Some(var) = self.disarm_var_for(recv_name) {
-                            self.line(&format!(
-                                "{} = 0;  /* Plan 217: consuming-вызов (receiver) — cleanup дизармлен */",
-                                var));
-                        }
+        let ExprKind::Call { func, args, .. } = &e.kind else { return };
+        // (a) receiver form `X.method(...)`.
+        if let ExprKind::Member { obj, name: method_name } = &func.kind {
+            if let ExprKind::Ident(recv_name) = &obj.kind {
+                let recv_ty = self.var_types.get(recv_name).cloned().unwrap_or_default();
+                let recv_ty_name = {
+                    let t = self.debt_strip_nova_trim_start(&recv_ty);
+                    t.strip_prefix("NovaValue_").map(|s| s.to_string()).unwrap_or(t)
+                };
+                let is_consuming_call = self.consume_receiver_methods
+                    .get(&recv_ty_name)
+                    .map_or(false, |ms| ms.contains(method_name));
+                if is_consuming_call {
+                    if let Some(var) = self.disarm_var_for(recv_name) {
+                        self.line(&format!(
+                            "{} = 0;  /* Plan 217: consuming-вызов (receiver) — cleanup дизармлен */",
+                            var));
+                    }
+                }
+            }
+        }
+        // (b) direct call-argument at a `consume`-mode parameter position —
+        // free-fn or method (args here EXCLUDE the receiver, matching
+        // `method_consume_param_positions`'s indexing).
+        let consume_positions: Option<HashSet<usize>> = match &func.kind {
+            ExprKind::Ident(name) => self.free_fn_consume_param_positions.get(name).cloned(),
+            ExprKind::Path(path) => path.last()
+                .and_then(|name| self.free_fn_consume_param_positions.get(name))
+                .cloned(),
+            ExprKind::Member { obj, name: method_name } => {
+                let recv_ty = self.infer_expr_c_type(obj);
+                let recv_ty_name = {
+                    let t = self.debt_strip_nova_trim_start(&recv_ty);
+                    t.strip_prefix("NovaValue_").map(|s| s.to_string()).unwrap_or(t)
+                };
+                self.method_consume_param_positions
+                    .get(&(recv_ty_name, method_name.clone()))
+                    .cloned()
+            }
+            _ => None,
+        };
+        if let Some(positions) = consume_positions {
+            for (i, a) in args.iter().enumerate() {
+                if !positions.contains(&i) { continue; }
+                if let ExprKind::Ident(arg_name) = &a.expr().kind {
+                    if let Some(var) = self.disarm_var_for(arg_name) {
+                        self.line(&format!(
+                            "{} = 0;  /* Plan 217: consume-param call-arg — cleanup дизармлен */",
+                            var));
                     }
                 }
             }
@@ -28935,6 +29059,35 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             Stmt::ConsumeScope { binding, type_annot: _, init, body, re_consume, result, .. } => {
                 let init_c_type = self.infer_expr_c_type(init);
                 let init_c_code = self.emit_expr(init)?;
+                // Plan 217 BUGFIX (folder-CU regression, `d188_reconsume_
+                // block.nv` — D201Boom sentinel panics + D188-on-exit-
+                // double-invocation): a re-consume block `consume X {
+                // body }` takes over `X`'s cleanup ENTIRELY for its
+                // duration (exactly-once, tail/return escape дизармит ITS
+                // OWN scope) — but if `X` was ALSO a bare auto-cleanup-
+                // eligible `consume X = e;` binding (registered in
+                // `auto_cleanup_active` by `enter_defer_scope`), that OUTER
+                // entry had NO idea this block exists and stayed armed.
+                // At the outer scope's exit it fired `@cleanup` A SECOND
+                // TIME (once via the block's own exactly-once dispatch,
+                // once via the outer auto-cleanup) — exactly the D188-r2
+                // ccount guard's "on-exit-double-invocation" panic, or (for
+                // a sentinel type whose cleanup itself panics) the wrong
+                // panic firing on a path that's supposed to be disarmed.
+                // Fix: entering ANY re-consume block on `X` is ITSELF a
+                // disarm point for the OUTER auto-cleanup flag — ownership
+                // management is handed to the block for its duration,
+                // unconditionally (mirrors the checker's own `owned`
+                // check + eventual `mark_consumed_bypass_guard`).
+                if *re_consume {
+                    if let ExprKind::Ident(outer_name) = &init.kind {
+                        if let Some(var) = self.disarm_var_for(outer_name) {
+                            self.line(&format!(
+                                "{} = 0;  /* Plan 217: re-consume блок берёт cleanup на себя — outer auto-cleanup дизармлен */",
+                                var));
+                        }
+                    }
+                }
                 let scope_id = self.defer_block_counter;
                 self.defer_block_counter += 1;
                 let c_binding = format!("_consume_{}_{}", binding, scope_id);

@@ -1,0 +1,188 @@
+// D432 — авто-`@cleanup` для непотреблённых consume-переменных (гибрид C).
+// type X consume с ЭФФЕКТ-ЧИСТЫМ @cleanup → аффинный (≤1): непотребление к
+// концу скоупа НЕ ошибка, компилятор авто-вставляет @cleanup(outcome) на
+// висячих exit-путях. Flow-sensitive: дизармится на return-голом
+// идентификаторе и на явном receiver-вызове зарегистрированного
+// consume-метода. Spec: spec/decisions/02-types.md D432. Part of the
+// SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+type D432Res consume { id int }
+
+fn D432Res consume @cleanup(_outcome ScopeOutcome) -> () {
+    ()
+}
+
+fn D432Res consume @close() -> () {
+    ()
+}
+
+fn d432_make(id int) -> D432Res => { id }
+
+// (1) bare consume-let, NEVER explicitly consumed — NOT a D133-not-consumed
+// error (auto-cleanup covers it); cleanup runs exactly once.
+test "D432: bare consume-let never touched — auto-cleanup at normal exit" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        consume r = d432_make(1)
+        ro _x = r.id
+    }
+    assert(exit_calls == 1)
+}
+
+fn d432_return_it(id int) -> D432Res {
+    consume r = d432_make(id)
+    return r
+}
+
+// (2) return-disarm: `r` inside d432_return_it is returned bare — its
+// auto-cleanup must NOT fire. The caller's `r2` (never touched) DOES get
+// auto-cleaned. If return-disarm were broken we'd see exit_calls == 2.
+test "D432: return disarms auto-cleanup on the returning path" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        consume r2 = d432_return_it(2)
+        ro _y = r2.id
+    }
+    assert(exit_calls == 1)
+}
+
+// (3) explicit receiver-call `.close()` (a consume-method, NOT `@cleanup`
+// itself) as a bare statement disarms auto-cleanup — no double-fire.
+test "D432: explicit consume-method call disarms auto-cleanup (no double-fire)" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        consume r = d432_make(3)
+        r.close()
+    }
+    assert(exit_calls == 0)
+}
+
+// (4) MaybeConsumed / drop-flag: consumed on ONE branch only.
+fn d432_maybe(should_close bool, id int) -> () {
+    consume r = d432_make(id)
+    if should_close {
+        r.close()
+    } else {
+        ro _x = r.id
+    }
+}
+
+test "D432: MaybeConsumed drop-flag — closed branch does NOT double-cleanup" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        d432_maybe(true, 4)
+    }
+    assert(exit_calls == 0)
+}
+
+test "D432: MaybeConsumed drop-flag — non-closed branch still auto-cleans" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        d432_maybe(false, 5)
+    }
+    assert(exit_calls == 1)
+}
+
+// (5) LIFO: two auto-cleanup bindings (DISTINCT types so ResourceTrace's
+// per-type label lets us observe order) — `b` (declared second) fires first.
+type D432LogA consume { tag str }
+type D432LogB consume { tag str }
+
+fn D432LogA consume @cleanup(_outcome ScopeOutcome) -> () { () }
+fn D432LogB consume @cleanup(_outcome ScopeOutcome) -> () { () }
+
+fn d432_log_a(tag str) -> D432LogA => { tag }
+fn d432_log_b(tag str) -> D432LogB => { tag }
+
+test "D432: LIFO order for two auto-cleanup bindings" {
+    mut order = ""
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(label, _outcome, _duration_ms, _overrun) {
+            order = order + label
+            return ()
+        }
+    } {
+        consume a = d432_log_a("A")
+        consume b = d432_log_b("B")
+        ro _p = a.tag
+        ro _q = b.tag
+    }
+    assert(order == "D432LogBD432LogA")
+}
+
+// (6) loop: a consume-let declared INSIDE a loop body must be auto-cleaned
+// EVERY iteration (not leaked across iterations, not just once).
+test "D432: consume-let inside loop body auto-cleans every iteration" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        mut i = 0
+        while i < 5 {
+            consume r = d432_make(i)
+            ro _x = r.id
+            i = i + 1
+        }
+    }
+    assert(exit_calls == 5)
+}
+
+// (7) throw-path: auto-cleanup still fires when the enclosing scope throws.
+type D432Boom { msg str }
+
+fn d432_boom() Fail[D432Boom] -> () {
+    throw D432Boom { msg: "boom" }
+}
+
+test "D432: auto-cleanup fires on throw-path too" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        with Fail = effect Fail { fail(_m) { interrupt () } } {
+            consume r = d432_make(9)
+            d432_boom()
+        }
+    }
+    assert(exit_calls == 1)
+}

@@ -26147,9 +26147,22 @@ impl LinearityRegistry {
                         // codegen-ового ccount-реестра, здесь extern-статус
                         // не имеет значения (нас интересует ТОЛЬКО effect-
                         // чистота сигнатуры).
+                        // BUGFIX (found via folder-CU regression run,
+                        // 2026-07-20): matching by NAME alone false-
+                        // positived on `cross_pkg_consume_via_protocol_ok.nv`'s
+                        // `DbConnection consume @cleanup() -> ()` — a
+                        // ZERO-ARG method satisfying a DIFFERENT ad-hoc
+                        // `Resource` protocol, not `Cleanup[E]`'s
+                        // `@cleanup(outcome ScopeOutcome) -> ()` shape.
+                        // Require the REAL protocol signature: exactly one
+                        // param, typed `ScopeOutcome`.
+                        let is_cleanup_protocol_shape = fd.params.len() == 1
+                            && matches!(&fd.params[0].ty,
+                                TypeRef::Named { path, .. } if path.last().map_or(false, |s| s == "ScopeOutcome"));
                         if fd.name == "cleanup"
                             && matches!(recv.kind, ReceiverKind::Instance)
                             && fd.effects.is_empty()
+                            && is_cleanup_protocol_shape
                         {
                             cleanup_pure_types.insert(recv.type_name.clone());
                         }
