@@ -129,32 +129,36 @@ jobs:
               > "${log}" 2>&1
           code=$?
           cat "${log}"
-          # Известная Linux-краснота: M:N-runtime гонки (runq init<->steal,
-          # sysmon<->worker; TSan-подтверждены 2026-07-16) роняют фикстуры
-          # ТОЛЬКО на Linux — фикс в работе (План 211, маркер
-          # [M-linux-mn-conformance-red] в backlog-followups.md). Тесты НЕ
-          # ослаблены: любой FAIL вне этого списка = красный гейт.
-          # 2026-07-18: +supervisor_stop_test и pos_max_fibers_concurrent —
-          # ТА ЖЕ 211-семья (порча SpawnCtx в cancel-wake).
-          # 2026-07-20: supervisor_parfor_test/supervisor_stop_test/
-          # pos_max_fibers_concurrent СНЯТЫ из known_red — КОРЕНЬ ЗАКРЫТ
-          # spawnctx GC-root фиксом (ce79a26f5: мой ea85229e0 был НЕПОЛНЫМ —
-          # переносил 1 из 3 слагаемых дефолтного pthreads-bdwgc-колбэка,
-          # терял native-стеки потоков + main-стек → premature-collect живых
-          # child_error/ctx/scope). Реальный Linux-CI статус подтверждён PASS
-          # на всех трёх (run 29717823412). app_effect_basic_t8_1 ОСТАЁТСЯ —
-          # отдельная Linux M:N RUN-FAIL флака ([M-linux-mn-conformance-red]),
-          # НЕ путать с мега-CU CC-FAIL (тот закрыт [M-208] → conformance 504/0).
-          if [ "${code}" -ne 0 ]; then
-            known_red='^(spec_tests/conformance/app_effect_basic_t8_1)$'
-            unexpected="$(awk '/^===== SUMMARY/,/^$/' "${log}" \
-              | grep -E '^(RUN-FAIL|FAIL|CC-FAIL|CODEGEN-FAIL|NEG-[A-Z-]+|TIMEOUT)' \
-              | awk '{print $2}' | grep -vE "${known_red}" || true)"
-            if [ -z "${unexpected}" ]; then
-              echo "::warning::conformance: падения только из known-Linux-red списка (План 211) — гейт засчитан зелёным"
-              code=0
-            fi
-          fi
+          # known_red-список СНЯТ (2026-07-20, [M-linux-mn-conformance-red]
+          # ЗАКРЫТ): app_effect_basic_t8_1 (представитель всего
+          # spec_tests/conformance folder-CU) НЕ был жертвой M:N-гонки —
+          # три независимых, полностью детерминированных дефекта:
+          # (1) link-order баг (test_runner.rs build_command, Linux/Unix):
+          #     `libuv.a` добавлялась в команду ДО объектов/rt-архива,
+          #     которым нужны её символы (uv_strerror и т.п.) — GNU ld не
+          #     резолвит архив против ссылок, возникших ПОЗЖЕ в командной
+          #     строке; (2) `build_rt_archive_lib` (Plan 218, Unix-ветка) не
+          #     передавала -ffunction-sections/-fdata-sections — без
+          #     per-function секций `--gc-sections` не мог вычистить мёртвую
+          #     `nova_bench_heap_sampler_thread` (bench-only globals) из
+          #     архивных .o, утаскивая неразрешённые ссылки в обычную (не
+          #     bench) сборку; (3) `d109_primitive_methods_f64_f32_math.nv`
+          #     полагался на exact-equality `cbrt(27.0)==3.0` — на этой
+          #     Linux/clang связке glibc's runtime cbrt() даёт 1 ULP
+          #     погрешность (IEEE-754 не гарантирует correctly-rounded cbrt,
+          #     в отличие от sqrt) — платформенно-хрупкий assert, переведён
+          #     на epsilon-сравнение. Побочно найден и задокументирован (НЕ
+          #     починен в этой волне, вне зоны) компилятороный баг label
+          #     misattribution для folder-module merged CU
+          #     (`emit_c.rs::loc_for_span` использует process-global
+          #     `source_file_name`, не per-span originating file) —
+          #     см. `[M-emit-c-loc-for-span-wrong-file-merged-cu]` в
+          #     backlog-followups.md. Верификация: WSL2 ×20 подряд PASS
+          #     (rt-архив default ON, реальный CI-путь), Windows-регрессия
+          #     standalone 70/0 + pos_max_fibers_concurrent/
+          #     supervisor_stop_test/supervisor_parfor_test ×5 + флагман
+          #     `--strict-effects` живой. known_red теперь = ПУСТОЙ список —
+          #     любой FAIL = красный гейт без исключений.
           if [ "${code}" -ne 0 ]; then
             {
               echo "### ❌ FAILED: spec_tests/conformance"

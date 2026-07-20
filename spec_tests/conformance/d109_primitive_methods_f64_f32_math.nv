@@ -21,7 +21,19 @@ module spec_tests.conformance
 
 test "f64 full math-intrinsic set resolves + computes (D109/D74 wave-2)" {
     assert((9.0).sqrt() == 3.0)
-    assert((27.0).cbrt() == 3.0)
+    // [M-linux-mn-conformance-red] (2026-07-20): unlike sqrt (IEEE-754
+    // requires correctly-rounded results), cbrt has NO such guarantee —
+    // glibc's runtime cbrt(27.0) on some libm versions/platforms returns
+    // 3.0000000000000004441 (1 ULP off), even though 27^(1/3) is
+    // mathematically exact. Exact equality here previously passed only
+    // because MSVC's cbrt (Windows) and GCC's compile-time constant-folder
+    // (for the LITERAL 27.0 only, not the runtime call) both happen to
+    // round to exactly 3.0 — clang on Linux never constant-folds cbrt and
+    // calls the real (imprecise) runtime libm function, making this assert
+    // fail deterministically (100% of runs) on Linux+clang. Epsilon
+    // comparison keeps the intent (cbrt resolves + computes correctly)
+    // without depending on a specific libm's rounding behavior.
+    assert(((27.0).cbrt() - 3.0).abs() < 1e-9)
     assert((-4.5).abs() == 4.5)
     assert((3.1).ceil() == 4.0)
     assert((3.9).floor() == 3.0)
@@ -53,7 +65,9 @@ test "f32 full math-intrinsic set resolves + computes (D109 wave-2, previously u
     ro nine f32 = 9.0
     ro twentyseven f32 = 27.0
     assert(nine.sqrt() == 3.0)
-    assert(twentyseven.cbrt() == 3.0)
+    // [M-linux-mn-conformance-red]: same libm cbrt non-portability as the
+    // f64 case above — epsilon comparison (f32 precision: ~7 sig. digits).
+    assert((twentyseven.cbrt() - 3.0).abs() < 1e-5)
     ro negfour f32 = -4.5
     assert(negfour.abs() == 4.5)
     ro c f32 = 3.1

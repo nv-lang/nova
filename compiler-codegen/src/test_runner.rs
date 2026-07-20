@@ -1475,48 +1475,48 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 }
             }
             c.arg("-I").arg(opts.cg_include);
-            // Plan 22 libuv (cross-platform).
-            if let (Some(inc_path), Some(lib_path), Some(evloop)) =
+            // Plan 22 libuv (cross-platform): defines + include path only
+            // here. [M-linux-mn-conformance-red] fix (2026-07-20): the
+            // LIBRARY (`libuv.a`) and any libuv-dependent LOOSE SOURCES
+            // (`rt_net.c`/`rt_fs.c`, non-archive path) are placed LATER —
+            // right after `opts.c_file` + the rt-archive/individual rt_*
+            // sources are added (see the matching block below, right before
+            // FFI libs). Root cause: GNU `ld` resolves archive members only
+            // against symbols undefined AT THE MOMENT the archive is seen on
+            // the command line; a reference appearing LATER (from an object
+            // added AFTER the archive) is never satisfied — confirmed
+            // empirically on WSL2/Linux (`nova test`, Plan 218 rt-archive
+            // path, default-on): `undefined reference to uv_strerror`
+            // (`fibers.h`'s `_nova_sleep_via_libuv`/`nova_blocking_offload`,
+            // folded into `libnova_rt.a`) because `libuv.a` used to be added
+            // HERE — before `libnova_rt.a`/`opts.c_file` further down.
+            // Windows/MSVC's linker does a full symbol-table pass (not
+            // strictly left-to-right for `.lib`), so the Windows sub-block
+            // below stays at this ORIGINAL (early) position — zero behavior
+            // change there, this split only takes effect on non-Windows.
+            if let (Some(inc_path), Some(_lib_path), Some(_evloop)) =
                 (&libuv_include, &libuv_lib, &libuv_eventloop)
             {
                 c.arg("-DNOVA_USE_LIBUV=1");
                 c.arg("-I").arg(inc_path);
-                // Plan 83.12/183: net.c compiled only when libuv is present.
-                // Plan 218: already inside libnova_rt.a when the archive is active
-                // — skip re-adding as a loose source (would double-define symbols).
-                if !use_rt_archive {
-                    c.arg(&rt_net);
-                    // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
-                    c.arg(&rt_fs);
-                }
                 // Windows: libuv link via -L/-l flags (env has LIB set by vcvars).
                 #[cfg(target_os = "windows")]
                 {
-                    c.arg(lib_path);
+                    // Plan 83.12/183: net.c compiled only when libuv is present.
+                    // Plan 218: already inside libnova_rt.lib when the archive is
+                    // active — skip re-adding as a loose source (double-define).
                     if !use_rt_archive {
-                        c.arg(evloop);
+                        c.arg(&rt_net);
+                        // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
+                        c.arg(&rt_fs);
+                    }
+                    c.arg(_lib_path);
+                    if !use_rt_archive {
+                        c.arg(_evloop);
                     }
                     for syslib in LIBUV_WIN_SYSLIBS {
                         c.arg(format!("-l{}", syslib.replace(".lib", "")));
                     }
-                }
-                #[cfg(not(target_os = "windows"))]
-                {
-                    /* Linux ld обрабатывает .a archives только для symbols
-                     * undefined в момент когда archive seen. Используем
-                     * --start-group / --end-group чтобы symbols искались
-                     * commutative с object files в command line. */
-                    if !use_rt_archive {
-                        c.arg(evloop);
-                    }
-                    #[cfg(target_os = "linux")]
-                    c.arg("-Wl,--start-group");
-                    c.arg(lib_path);
-                    for syslib in LIBUV_UNIX_SYSLIBS {
-                        c.arg(syslib);
-                    }
-                    #[cfg(target_os = "linux")]
-                    c.arg("-Wl,--end-group");
                 }
             }
             // Plan 27 Ф.1+Ф.D: Boehm link flags for Clang.
@@ -1590,6 +1590,38 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 c.arg(&rt_driver);       /* Plan 83.11 Ф.2 */
                 c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
                 c.arg(&rt_segv_diag);    /* Plan 83.11 §12.31 */
+            }
+            // [M-linux-mn-conformance-red] fix: libuv object/library
+            // placement, non-Windows only — see the comment at the early
+            // libuv defines block above (`-DNOVA_USE_LIBUV=1` site). Must
+            // come AFTER `opts.c_file` + `libnova_rt.a`/individual rt_*
+            // sources (just above) so `ld` sees the libuv-dependent
+            // references BEFORE `libuv.a` on the command line.
+            #[cfg(not(target_os = "windows"))]
+            if let (Some(_inc_path), Some(lib_path), Some(evloop)) =
+                (&libuv_include, &libuv_lib, &libuv_eventloop)
+            {
+                // Plan 83.12/183: net.c compiled only when libuv is present.
+                // Plan 218: already inside libnova_rt.a when the archive is active
+                // — skip re-adding as a loose source (would double-define symbols).
+                if !use_rt_archive {
+                    c.arg(&rt_net);
+                    // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
+                    c.arg(&rt_fs);
+                    c.arg(evloop);
+                }
+                /* Linux ld обрабатывает .a archives только для symbols
+                 * undefined в момент когда archive seen. Используем
+                 * --start-group / --end-group чтобы symbols искались
+                 * commutative с object files в command line. */
+                #[cfg(target_os = "linux")]
+                c.arg("-Wl,--start-group");
+                c.arg(lib_path);
+                for syslib in LIBUV_UNIX_SYSLIBS {
+                    c.arg(syslib);
+                }
+                #[cfg(target_os = "linux")]
+                c.arg("-Wl,--end-group");
             }
             // Plan 115 D214 [M-115-ffi-build-pipeline]: system libs (-l) в link phase.
             // Plan 193 Ф.2 gap-1: lib_dirs (-L) BEFORE -l so the linker's
@@ -1805,28 +1837,22 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 c.arg(da);
             }
             c.arg("-I").arg(opts.cg_include);
-            // Plan 22 libuv (Linux).
-            if let (Some(inc_path), Some(lib_path), Some(evloop)) =
+            // Plan 22 libuv (Linux): defines + include path only here.
+            // [M-linux-mn-conformance-red] fix (2026-07-20): object/library
+            // placement (rt_net.c/rt_fs.c loose sources + libuv.a itself)
+            // MOVED below, after `opts.c_file` + rt-archive/individual rt_*
+            // sources — same root cause + fix rationale as the Clang branch
+            // above (GNU `ld` only resolves archive members against symbols
+            // undefined AT THE POINT the archive is seen; `libuv.a` was
+            // being placed BEFORE `libnova_rt.a`, so `uv_strerror` etc.
+            // (referenced from fibers.h, folded into the rt-archive) never
+            // resolved — confirmed empirically, `undefined reference to
+            // uv_strerror`).
+            if let (Some(inc_path), Some(_lib_path), Some(_evloop)) =
                 (&libuv_include, &libuv_lib, &libuv_eventloop)
             {
                 c.arg("-DNOVA_USE_LIBUV=1");
                 c.arg("-I").arg(inc_path);
-                // Plan 83.12/183: net.c compiled only when libuv is present.
-                // Plan 218: already inside libnova_rt.a when the archive is
-                // active — skip re-adding as a loose source (double-define).
-                if !use_rt_archive {
-                    c.arg(&rt_net);
-                    // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
-                    c.arg(&rt_fs);
-                }
-                c.arg(lib_path);
-                if !use_rt_archive {
-                    c.arg(evloop);
-                }
-                #[cfg(any(target_os = "linux", target_os = "macos"))]
-                for syslib in LIBUV_UNIX_SYSLIBS {
-                    c.arg(syslib);
-                }
             }
             // Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI shim flags (GCC).
             // .h shims via -include (force-include); .c via compilation unit.
@@ -1865,6 +1891,33 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 c.arg(&rt_driver);       /* Plan 83.11 Ф.2 */
                 c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
                 c.arg(&rt_segv_diag);    /* Plan 83.11 §12.31 */
+            }
+            // [M-linux-mn-conformance-red] fix: libuv object/library
+            // placement — see the comment at the early libuv defines block
+            // above. Must come AFTER `opts.c_file` + `libnova_rt.a`/
+            // individual rt_* sources (just above) so `ld` sees the
+            // libuv-dependent references BEFORE `libuv.a` on the command line.
+            if let (Some(_inc_path), Some(lib_path), Some(evloop)) =
+                (&libuv_include, &libuv_lib, &libuv_eventloop)
+            {
+                // Plan 83.12/183: net.c compiled only when libuv is present.
+                // Plan 218: already inside libnova_rt.a when the archive is
+                // active — skip re-adding as a loose source (double-define).
+                if !use_rt_archive {
+                    c.arg(&rt_net);
+                    // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
+                    c.arg(&rt_fs);
+                    c.arg(evloop);
+                }
+                #[cfg(target_os = "linux")]
+                c.arg("-Wl,--start-group");
+                c.arg(lib_path);
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                for syslib in LIBUV_UNIX_SYSLIBS {
+                    c.arg(syslib);
+                }
+                #[cfg(target_os = "linux")]
+                c.arg("-Wl,--end-group");
             }
             // Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI libs (GCC).
             // Plan 193 Ф.2 gap-1: lib_dirs (-L) BEFORE -l, same as Clang.
@@ -3272,9 +3325,34 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
             bytes_to_string(&cc_captured.stdout),
             bytes_to_string(&cc_captured.stderr)
         );
+        // [M-linux-mn-conformance-red] (2026-07-20): opt-in full dump — the
+        // 3-line "error"-substring filter below misses linker diagnostics
+        // that don't literally contain the word "error" (GNU ld's
+        // `undefined reference to` lines don't), truncating the visible
+        // detail down to just clang's generic "linker command failed"
+        // wrapper line. Zero overhead when unset (mirrors
+        // NOVA_DEBUG_TIMEOUT_DUMP above).
+        if std::env::var("NOVA_DEBUG_CC_DUMP").as_deref() == Ok("1") {
+            eprintln!(
+                "=== CC-FAIL STDOUT ===\n{}\n=== CC-FAIL STDERR ===\n{}\n=== END ===",
+                bytes_to_string(&cc_captured.stdout),
+                bytes_to_string(&cc_captured.stderr)
+            );
+        }
+        // [M-linux-mn-conformance-red]: GNU `ld`'s own diagnostic lines
+        // (`undefined reference to ...`, `cannot find -l...`) don't contain
+        // the literal substring "error" — only the front-end's wrapper line
+        // does (e.g. clang's "linker command failed with exit code 1"). Widen
+        // the filter so a link failure's detail shows the ACTUAL undefined
+        // symbol instead of just the uninformative wrapper line.
         let errs: Vec<&str> = combined
             .lines()
-            .filter(|l| l.to_lowercase().contains("error"))
+            .filter(|l| {
+                let lc = l.to_lowercase();
+                lc.contains("error")
+                    || lc.contains("undefined reference")
+                    || lc.contains("cannot find -l")
+            })
             .take(3)
             .collect();
         let detail = if errs.is_empty() {
@@ -5249,6 +5327,26 @@ fn build_rt_archive_lib(
             }
             c.arg("-c");
             c.arg("-fPIC");
+            // [M-linux-mn-conformance-red] fix (2026-07-20): without per-
+            // function/data sections, `-Wl,--gc-sections` at the final link
+            // (main `build_command`'s Linux/macOS branch) can only discard
+            // an ENTIRE archive-member .o as a unit, never an individual
+            // dead function within one — so once effects.o/runtime.o/etc.
+            // get pulled in for symbols they DO provide, dead code inside
+            // them (e.g. `nova_bench_heap_sampler_thread` in bench.h,
+            // included unconditionally, whose `NOVA_BENCH_STATE_DEFINE`
+            // globals are only DEFINED in bench_mode builds) drags in
+            // unresolved externs even for a plain `nova test`/`nova build`.
+            // Confirmed empirically on WSL2/Linux: `undefined reference to
+            // _nova_bench_heap_sample_interval_ns`/`_nova_bench_heap_sampler_stop`
+            // when linking against the rt-archive, absent in the pre-218
+            // per-build inline-compile path (which already passes these
+            // flags — see `build_command`'s Clang/Gcc Unix branches). The
+            // Windows half of this function already has the equivalent
+            // (`/Gy`, function-level linking) — this brings the Unix half
+            // to parity.
+            c.arg("-ffunction-sections");
+            c.arg("-fdata-sections");
             c.arg("-D_GNU_SOURCE");
             if gc_kind == GcKind::Boehm {
                 c.arg("-DNOVA_GC_BOEHM");
