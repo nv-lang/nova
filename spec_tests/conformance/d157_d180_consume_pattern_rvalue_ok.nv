@@ -55,7 +55,7 @@ test "if-let rvalue Ok(consume x) — ownership явный" {
 test "view-default place-match НЕ сломан — Option[int] payload остаётся plain" {
     match maybe_consume_a(4) {
         Some(x) => {
-            assert x == 4
+            assert(x == 4)
         },
         None => {},
     }
