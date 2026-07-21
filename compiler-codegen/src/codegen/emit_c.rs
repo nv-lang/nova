@@ -46876,6 +46876,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         self.var_types.insert(raw.clone(), t.clone());
                                         tmp_registrations.push(raw.clone());
                                     }
+                                    // `[M-216-record-payload-consume]` (2026-07-21):
+                                    // Option-payload — plain struct pointer
+                                    // (`Nova_<Record>*`, e.g. `Some({ a, b })`
+                                    // over `Option[SomeRecord]`) — same
+                                    // registration gap/fix as the mono-Result
+                                    // branch above (see its comment): without
+                                    // this, recursive `Pattern::Record` sees an
+                                    // unregistered `scr` and falls through to a
+                                    // bogus field-access expression.
+                                    if t.starts_with("Nova_") && t.ends_with('*')
+                                        && matches!(p, Pattern::Record { .. })
+                                    {
+                                        self.var_types.insert(raw.clone(), t.clone());
+                                        tmp_registrations.push(raw.clone());
+                                    }
                                     (raw, t, false)
                                 } else {
                                     (raw, "nova_int".into(), false)
@@ -46941,6 +46956,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         }
                                     }
                                     if inner_c.starts_with("NovaOpt_") {
+                                        self.var_types.insert(
+                                            raw.clone(), inner_c.clone());
+                                        tmp_registrations.push(raw.clone());
+                                    }
+                                    // `[M-216-record-payload-consume]` (2026-07-21):
+                                    // record-payload — inner_c is a plain struct
+                                    // pointer (`Nova_<Record>*`), neither the
+                                    // tuple nor Option prefix above. Register it
+                                    // too, mirroring the same rationale — without
+                                    // this, the recursive `Pattern::Record` arm
+                                    // below reads `var_types.get(&raw)` (empty,
+                                    // never populated) and falls through its own
+                                    // `is_plain_record` check as false, emitting a
+                                    // bogus field-access expression (`->payload..a`)
+                                    // instead of `->payload.Ok._0->a`. Only
+                                    // applies to the single-`Ident`-payload record
+                                    // shape (record-in-tuple/nested-further is a
+                                    // pre-existing, separate honest-defer gap —
+                                    // out of scope here).
+                                    if inner_c.starts_with("Nova_") && inner_c.ends_with('*')
+                                        && matches!(p, Pattern::Record { .. })
+                                    {
                                         self.var_types.insert(
                                             raw.clone(), inner_c.clone());
                                         tmp_registrations.push(raw.clone());
