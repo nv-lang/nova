@@ -61,9 +61,17 @@
 
 ## Ф.3 — Документация внешнего пользователя (всё ▶СЕЙЧАС)
 
-- [ ] **A-Q1 ▶СЕЙЧАС** Quickstart: установка→hello→mini_aggregator→ссылки `[docs]` (sonnet).
-- [ ] **A-Q2 ▶СЕЙЧАС** README на внешнего читателя (что за язык: эффекты/consume/M:N) `[README]`
-      (sonnet, вместе с A-Q1).
+- [x] **A-Q1 ✅ 2026-07-21** `docs/quickstart.md`: установка (Windows zip + setup-env.ps1;
+      Linux — ссылка на docs/linux-build.md) → hello world (реально собран+прогнан standalone-
+      проектом) → mini_aggregator.nv (эффекты Time + spawn/parallel for/supervised(deadline:),
+      реально собран+прогнан) → ссылки (spec/overview.md, flagship/aggregator, spec/decisions/).
+      Все команды прогнаны живым nova.exe из main-репы (read-only).
+- [x] **A-Q2 ✅ 2026-07-21** README.md — добавлен абзац-суть (compiles-to-C/эффекты-в-типах/
+      consume+Boehm GC/M:N fiber-scheduler/батарейки std+net+tls+http+compress) сразу после
+      тэглайна; секция Status переписана под v0.1.0 (компилятор+CLI+LSP+VSCode, что готово/что
+      на roadmap); новая секция Installation (ссылка на docs/quickstart.md) перед Building from
+      source; quickstart-ссылка в шапке. Существующий контент (Show me the code/Memory/What's
+      removed/License) сохранён без изменений.
 - [ ] **A-Q3 ▶СЕЙЧАС** Язык-тур (выжимка из spec/decisions, не вся спека) `[docs]` (sonnet, крупнее).
 - [ ] **A-W1 ▶СЕЙЧАС** Страница релиза на сайте: версия/скачать/quickstart-ссылка `[репа www/site]`
       (sonnet — ПОЛНОСТЬЮ независимая репа). — ЗАПУЩЕН

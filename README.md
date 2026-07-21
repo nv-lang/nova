@@ -7,7 +7,7 @@
 
   <p>
     <a href="https://nv-lang.org">Website</a> |
-    <a href="#getting-started">Getting started</a> |
+    <a href="docs/quickstart.md">Quickstart</a> |
     <a href="spec/overview.md">Documentation</a> |
     <a href="CONTRIBUTING.md">Contributing</a>
   </p>
@@ -19,6 +19,18 @@
 
 ---
 
+Nova compiles to C, then to a native binary — no VM, no interpreter.
+Every function's side effects (`Db`, `Net`, `Io`, `Time`, ...) are part of
+its type, checked by the compiler, so a reviewer can tell what a function
+touches without reading its body. Memory is managed by a Boehm GC by
+default; for resources that need deterministic, pause-free cleanup
+(files, sockets, locks) `consume`/ownership gives you a guaranteed
+`on_exit` at scope end, with no GC in the loop. Concurrency is
+structured (`spawn`, `parallel for`, `supervised`) on an M:N
+work-stealing fiber scheduler — no `async`/`await`, no function-colour
+split. The standard library ships with batteries included: `std`
+(collections, IO, time, JSON, ...) plus separately versioned `net`,
+`tls`, `http`, and `compress` packages.
 
 ```nova
 fn process_order(o Order) Db Net Time Fail -> Receipt
@@ -213,8 +225,15 @@ programmer writes nothing special.
 
 ## Status
 
-Active development. The specification is stable across core features
-(effects, handlers, syntax, memory, concurrency). Single compiler:
+**v0.1.0 — the first public release.** Early, but working: the compiler
+(parser, type-checker, C-backend codegen), the CLI (`nova build`/`check`/
+`test`/`doc`), a language server (`nova-lsp`) with a VSCode extension, and
+a standard library covering collections, IO, time, JSON, and — as
+separate packages — networking, TLS, HTTP, and compression. The
+specification is stable across core features (effects, handlers, syntax,
+memory, concurrency); some corners (SMT-backed contract verification
+beyond trivial cases, a concurrent GC) are still on the roadmap. Single
+compiler:
 
 - **compiler-codegen** — Rust implementation with parser,
   type-checker, and C-backend codegen.
@@ -261,6 +280,15 @@ What works today (bootstrap):
   were retracted — D189.)
 - Boehm GC default with introspection API (`heap_size`, `live_count`,
   `collect`).
+
+## Installation
+
+The easiest way to get started on Windows x64 is the prebuilt release
+archive (`nova.exe` + `nova-lsp.exe` + standard library + C runtime, no
+Rust toolchain needed — just a C compiler): download it from
+[GitHub Releases](https://github.com/nv-lang/nova/releases), unzip, and
+`. .\setup-env.ps1`. Full walkthrough, including the from-source path on
+Linux, and a first "Hello, Nova!" program: **[docs/quickstart.md](docs/quickstart.md)**.
 
 ## Building from source
 
