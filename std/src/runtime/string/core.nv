@@ -249,7 +249,10 @@ export fn []u8 @to_str_lossy() -> str {
             i += 1
         }
     }
-    str.alloc_copy(out.ptr(), out.len())
+    // Zero-copy кража буфера (владелец 2026-07-21): `out` валиден по построению —
+    // `alloc_copy` платил ВТОРУЮ полную копию; `into_str_unchecked` забирает буфер
+    // как есть (cap-хвост висит на той же GC-аллокации — как у SB @into_str).
+    unsafe { out.into_str_unchecked() }
 }
 
 // Steal variant: consume []u8, zero-copy reuse of the data ptr. `consume`

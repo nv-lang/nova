@@ -100,7 +100,10 @@ export fn str @to_ascii_lower() -> str {
         ro b = out[i] as int
         if b >= 65 && b <= 90 { out[i] = (b + 32) as u8 }
     }
-    str.alloc_copy(out.ptr(), out.len())
+    // Zero-copy кража буфера (владелец 2026-07-21): `out` валиден по построению —
+    // `alloc_copy` платил ВТОРУЮ полную копию; `into_str_unchecked` забирает буфер
+    // как есть (cap-хвост висит на той же GC-аллокации — как у SB @into_str).
+    unsafe { out.into_str_unchecked() }
 }
 
 // ASCII uppercase копия. Bulk-copy then in-place patch: one alloc + memcpy,
@@ -115,7 +118,10 @@ export fn str @to_ascii_upper() -> str {
         ro b = out[i] as int
         if b >= 97 && b <= 122 { out[i] = (b - 32) as u8 }
     }
-    str.alloc_copy(out.ptr(), out.len())
+    // Zero-copy кража буфера (владелец 2026-07-21): `out` валиден по построению —
+    // `alloc_copy` платил ВТОРУЮ полную копию; `into_str_unchecked` забирает буфер
+    // как есть (cap-хвост висит на той же GC-аллокации — как у SB @into_str).
+    unsafe { out.into_str_unchecked() }
 }
 
 // Конкатенация двух строк (создаёт новую). O(a+b).
@@ -135,11 +141,12 @@ export fn str @concat(other str) -> str {
     // Plan 152.0 Ф.3: one alloc (cap a+b) + two bulk Vec.@append (RawMem.copy
     // memmove) + steal-into-str (reuse buffer, no second memcpy). Identical bytes
     // to the retired C nova_str_concat (1 alloc + 2 memcpy + NUL); zero push-loop.
-    mut out []u8 = []u8.new()
-    out.cap(a.len() + b.len())
-    out.append(a)
-    out.append(b)
-    str.alloc_copy(out.ptr(), out.len())
+    // Chain-форма (владелец 2026-07-21): точный pre-alloc + fluent-append (@append -> @).
+    mut out []u8 = []u8.new(cap: a.len() + b.len()).append(a).append(b)
+    // Zero-copy кража буфера (владелец 2026-07-21): `out` валиден по построению —
+    // `alloc_copy` платил ВТОРУЮ полную копию; `into_str_unchecked` забирает буфер
+    // как есть (cap-хвост висит на той же GC-аллокации — как у SB @into_str).
+    unsafe { out.into_str_unchecked() }
 }
 
 // Оператор `+`: `s1 + s2 == s1.@plus(s2)` → @concat (D46).
