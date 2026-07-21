@@ -233,3 +233,48 @@ test "D432: bare consume-let inside spawn closure auto-cleans exactly once" {
     }
     assert(exit_calls == 1)
 }
+
+// (9) [M-217-break-continue-loop-boundary-bleed] regression guard: a `break`
+// inside a NESTED, trivial `loop { … }` (no `defer`/consume-let of its OWN)
+// must NOT prematurely fire an OUTER, still-open auto-cleanup consume-let's
+// `@cleanup` — the outer scope has not exited. Found as a follow-up
+// regression while verifying the (8) fix above: `enter_defer_scope` early-
+// returns (no C boilerplate, no `self.defer_scopes` entry) for a loop body
+// with no defer/auto-cleanup-let of its own — a deliberate perf shortcut.
+// But `Stmt::Break`'s `emit_early_exit_cleanup(stop_at_loop=true)` walks
+// `self.defer_scopes` from the top looking for the NEAREST `is_loop_body`
+// marker to stop at; when the loop being broken registered none, the walk
+// "overshoots" past the (absent) loop boundary straight into whatever
+// ENCLOSING scope is actually on top instead — firing ITS `@cleanup` early.
+// Reproducible with NO spawn/parallel-for at all (plain sequential code) —
+// a pre-existing gap in the shared break/continue machinery, merely never
+// exercised for a spawn/parallel-for body before this wave's (a)+(b) fixes
+// (spawn bodies never registered a real auto-cleanup scope prior to fix (b),
+// so this path was unreachable via spawn). Real-world trigger:
+// `readguard_writeguard_separated.nv`'s "multiple ReadGuards can coexist" —
+// `consume rg = rw.read(); loop { … if … { break } … }; rg.unlock()` (a
+// CAS-retry loop) double-released the guard (`@cleanup` via the break, THEN
+// the manual `.unlock()`) → runtime panic "read_unlock() called without a
+// matching read()". Mirrors that shape with a local resource + `exit_calls`
+// instead of an RwLock, isolating the codegen defect from the native guard.
+test "D432: break inside a nested empty loop must not bleed into an outer auto-cleanup scope" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        consume r = d432_make(11)
+        mut now = 5
+        mut old_max = 0
+        loop {
+            if now <= old_max { break }
+            old_max = now
+            break
+        }
+        ro _x = r.id
+    }
+    assert(exit_calls == 1)
+}
