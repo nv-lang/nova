@@ -5720,27 +5720,34 @@ fn conv_coerce_explicit_redundant(m: &Module, _o: &ConvLintOptions, out: &mut Ve
 // accepts the bare literal at that position too (verified: `nova check
 // --strict-effects` stayed green on every canonized site).
 //
-// CAVEAT — discovered empirically during this wave's canonization sweep,
-// NOT reasoned from the spec: the type-checker's ACCEPT decision does not
-// guarantee the CODEGEN REWRITE (materializing the coercion in emitted C)
-// actually runs for every call-arg shape yet. `nova test` (real C build+run,
-// no `--strict-effects`) caught TWO real CC-FAILs this wave — `nova check`
-// passed, `nova build`/`test` did not: `BufWriter[W].write(data []u8)`
-// (`std/src/io`, generic receiver) and `TcpStream.write/write_all(data
-// []u8)` (`std/src/net`, `Net`-effect receiver) inside `test { }` blocks —
-// while the STRUCTURALLY IDENTICAL `TlsStream.write_all(data []u8) Net`
-// (`examples/tls/echo_server.nv`, plain `fn main()`, `--strict-effects`)
-// built fine, as did `File.write` (`std/src/fs`, `Fs`-effect, inside `test
-// { }`) and free-fn/static calls (`crypto`/`checksums`/`base64`/`os`, inside
-// `test { }`). Root cause NOT fully isolated (plausibly the codegen rewrite
-// pass's own `test { }`-body coverage, mirroring `conv_all_test_bodies`'
-// doc above — but `File.write` contradicts a clean "test-block gap" theory,
-// so this is left an OPEN finding, not a diagnosed one) — a legitimate
-// compiler follow-up, out of scope for a lint-only wave. Practical effect:
-// this lint's advice is TYPE-CHECK-sound but not yet universally BUILD-safe
-// for every call-arg shape; `std/src/io` and `std/src/net`'s own `.bytes()`
-// call-arg sites were deliberately left UNCANONIZED this wave (reverted
-// after the CC-FAIL) — see the wave's report for the exact repro sites.
+// CAVEAT (RESOLVED 2026-07-21, [M-bytes-literal-callarg-coerce-codegen-gap],
+// branch p-fix-bytes-coerce-gap) — was: the type-checker's ACCEPT decision
+// did not guarantee the CODEGEN REWRITE (materializing the coercion in
+// emitted C) actually ran for every call-arg shape. Root cause, fully
+// isolated: `synthesize_bytes_lit_call_args` (codegen/emit_c.rs) resolves
+// the call-arg receiver's C type via `infer_expr_c_type(obj)` — for a
+// CONCRETE (monomorphized) local this is the mono-mangled name
+// (`BufWriter____Nova_BytesWriter_p`), but a GENERIC-receiver method
+// (`BufWriter[W] mut @write`) is registered in `method_overloads` under its
+// ERASED base name (`"BufWriter"`, Plan 48 Ф.3) — monomorphization
+// (`emit_monomorphized_method`) never adds a mono-suffixed entry. The exact
+// `key` lookup missed → the pre-pass silently no-op'd → the bare literal
+// reached C emission unwrapped → CC-FAIL (`nova_str` vs
+// `Nova_Vec____nova_byte*`). This was a GENERIC-RECEIVER gap specifically,
+// NOT a `test { }`-block gap as first suspected: `TcpStream.write`/
+// `write_all` (non-generic) were re-verified PASSING even BEFORE the fix
+// (`std/src/net/tcp_test.nv`, `write_all_test.nv`) — every non-generic
+// `write`-declaring type (`File`/`FmtCtx`/`Stdout`/`TcpStream`/…) resolves
+// to its own concrete registered name and never hit this mismatch; only
+// `BufWriter[W]` (the one generic receiver in the `write` family) did. Fix:
+// on a `key` miss where the receiver name contains the mono separator
+// (`____`), retry with the base name (`split("____").next()`) — the same
+// idiom already used elsewhere in emit_c.rs to bridge a mono instance back
+// to its erased-generic registration. All 34 sites this wave left
+// UNCANONIZED (`.bytes()` kept on `BufWriter`/`TcpStream` call-args in
+// `std/src/io` + `std/src/net`) are now safe to canonize — done in the
+// `p-fix-bytes-coerce-gap` follow-up wave (see `docs/plans/221.1-bug-sweep.md`
+// for the closure record).
 //
 // Literal-only per owner's explicit brief (2026-07-21) — a `str` VARIABLE
 // receiver would ALSO coerce today under the general D429 #coerce mechanism

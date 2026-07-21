@@ -31,7 +31,7 @@ export fn mock_net() -> Effect[Net] => effect Net {
     tcp_bind(_addr SocketAddr)            => listener_ok(1 as *())
     accept(_listener TcpListener)         => stream_ok(2 as *())
     connect(_addr SocketAddr)             => stream_ok(3 as *())
-    read(_stream TcpStream, buf mut []u8) => int_ok(mock_fill(buf, "mock-reply".bytes()))
+    read(_stream TcpStream, buf mut []u8) => int_ok(mock_fill(buf, "mock-reply"))
     write(_stream TcpStream, data []u8)   => int_ok(data.len())
     shutdown(_stream TcpStream)           => unit_ok()
     close_stream(_stream TcpStream)       {}

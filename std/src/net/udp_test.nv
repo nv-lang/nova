@@ -58,7 +58,7 @@ test "net2/udp: loopback datagram + value-SocketAddr sender via out-param" {
                 ro b_port = b.local_port()
                 assert(b_port > 0)
                 ch_b.tx.send(b_port)                       // buffered, no park
-                assert(must(b.send_to("ping net2".bytes(), SocketAddr.loopback(a_port))) == 9)
+                assert(must(b.send_to("ping net2", SocketAddr.loopback(a_port))) == 9)
                 b.close()
             }
         }

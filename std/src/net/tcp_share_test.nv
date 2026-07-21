@@ -34,9 +34,9 @@ test "tcp/share: real loopback — копия живёт после close ори
                 ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
                 mut c = must(TcpStream.connect(SocketAddr.loopback(port)))
                 mut c2 = c.share()
-                assert(must_io(c.write("one.".bytes())) == 4)
+                assert(must_io(c.write("one.")) == 4)
                 c.close()                               // NOT last — сокет жив
-                assert(must_io(c2.write("two.".bytes())) == 4)
+                assert(must_io(c2.write("two.")) == 4)
                 c2.close()                              // последний — real close
             }
             spawn {
@@ -82,7 +82,7 @@ test "tcp/share: конкурентные share-копии per-fiber, авто-c
                     // один C-side park-slot на направление (D407; конкурентный
                     // I/O = @split, share = конкурентное ВЛАДЕНИЕ).
                     spawn consume w1 = c.share() {
-                        assert(must_io(w1.write("xy".bytes())) == 2)
+                        assert(must_io(w1.write("xy")) == 2)
                     }
                     spawn consume w2 = c.share() {
                         ro _held = w2.rc.load()          // владеет долей до выхода
