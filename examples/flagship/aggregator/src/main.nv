@@ -83,7 +83,7 @@ import std.os.{env, real_os}
 import http.server.{ServeMux, ServerRequest, ServerResponse, StreamBody, handler_fn, sse_event}
 import http.servernet.{handle_connection}
 import std.time.duration
-import std.runtime.sync.{AtomicI64}
+import std.runtime.sync.{AtomicInt}
 
 // Loopback port: env override (`AGGREGATOR_PORT`) or this default.
 const DEFAULT_PORT u16 = 8187
@@ -115,7 +115,7 @@ const DEFAULT_PORT u16 = 8187
 // bound, not a wedge workaround: admission control stays because honestly
 // rejecting excess load is the right behavior for a bounded demo server —
 // re-run the burst gate if you change this.
-const MAX_INFLIGHT_CONNS i64 = 16
+const MAX_INFLIGHT_CONNS int = 16
 
 // Live legends use a wall-clock (not simulated) budget — generous enough for
 // a handful of real round-trips, still bounded (the real-cancel race,
@@ -191,7 +191,7 @@ fn resolve_addr(port u16) Os -> SocketAddr =>
 // commit) is memory-safe, just has this concurrency ceiling. Mitigation
 // (this file only, no runtime/compiler change): admission control BEFORE
 // a connection is ever handed to a handler fiber at all — an
-// `AtomicI64` permit counter (`MAX_INFLIGHT_CONNS`, see its own doc-comment
+// `AtomicInt` permit counter (`MAX_INFLIGHT_CONNS`, see its own doc-comment
 // above) is checked right after `accept()` returns; within budget, the
 // connection is handled CONCURRENTLY via `detach { }` (D50 fire-and-forget
 // — under this binary's armed M:N runtime that is a REAL worker-pool
@@ -225,13 +225,13 @@ fn main() Time Detach {
                     }
                     println("Nova flagship aggregator listening on http://${addr.ip()}:${lst.local_port()}")
                     // Bounded-accept permit counter (see the marker note
-                    // above `fn main`) — `AtomicI64` is `#share` (D415), so
+                    // above `fn main`) — `AtomicInt` is `#share` (D415), so
                     // capturing it (by reference) into the per-connection
                     // `detach { }` below to `fetch_sub` on completion is a
                     // legal cross-fiber capture without a `consume`/channel
                     // dance, same exemption `sync_test.nv`'s own fixtures
                     // rely on.
-                    mut inflight = AtomicI64.new(0)
+                    mut inflight = AtomicInt.new(0)
                     mut running = true
                     while running {
                         match lst.accept() {
