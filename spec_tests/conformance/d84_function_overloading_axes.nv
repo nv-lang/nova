@@ -25,8 +25,8 @@ test "overload by argument types: str/int/bool variants (D84)" {
 }
 
 // Ось 3 — по арности
-fn d84_greet(name str) -> str => "Hello " + name
-fn d84_greet(name str, title str) -> str => "Hello " + title + " " + name
+fn d84_greet(name str) -> str => "Hello ${name}"
+fn d84_greet(name str, title str) -> str => "Hello ${title} ${name}"
 
 test "overload by arity: 1 vs 2 arguments (D84)" {
     assert(d84_greet("Alice") == "Hello Alice")
@@ -34,7 +34,7 @@ test "overload by arity: 1 vs 2 arguments (D84)" {
 }
 
 // Combined: receiver-type + arity
-fn str @d84_repeat() -> str => @ + @
+fn str @d84_repeat() -> str => @concat(@)
 fn str @d84_repeat(n int) -> str {
     mut r = ""
     for _ in 0..n {

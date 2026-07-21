@@ -22,7 +22,7 @@ export fn Widget mut @label(v str) -> @ {
 // здесь легитимен, W_WITH_MUTATOR молчит (сигнатура — fn-типовый параметр).
 export fn Widget mut @with_label_scope[R](body fn() -> R) -> R {
     ro saved = @label
-    @label = "locked:" + saved
+    @label = "locked:${saved}"
     ro r = body()
     @label = saved
     r
@@ -31,7 +31,7 @@ export fn Widget mut @with_label_scope[R](body fn() -> R) -> R {
 // Канон §26 (D411): деструктуризация одним биндингом вместо полевых снапшотов.
 fn describe(w Widget) -> str {
     ro { kind, label } = w
-    "${kind}" + label
+    "${kind}${label}"
 }
 
 // Канон perf-conventions: StringBuilder в цикле.

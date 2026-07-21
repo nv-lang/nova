@@ -36,7 +36,7 @@ fn rm_gauge_join(l RmGaugeList[str], sep str) -> str => match l {
     RmGaugeNil => ""
     RmGaugeCons(v, rest) => {
         ro tail = rm_gauge_join(rest, sep)
-        if tail == "" { v } else { v + sep + tail }
+        if tail == "" { v } else { "${v}${sep}${tail}" }
     }
 }
 
@@ -47,7 +47,7 @@ fn rm_gauge_sum_int(l RmGaugeList[int]) -> int => match l {
 
 test "self-recursive generic @map[U]: type-changing int -> str across a 3-element list, no erasure, order preserved" {
     ro l = RmGaugeCons(1, RmGaugeCons(2, RmGaugeCons(3, RmGaugeNil)))
-    ro mapped = l.map(|x| "n" + x.to_str())   // RmGaugeList[str] — the mono BEING built calls itself
+    ro mapped = l.map(|x| "n${x}")   // RmGaugeList[str] — the mono BEING built calls itself
     assert(rm_gauge_join(mapped, ",") == "n1,n2,n3")
 }
 

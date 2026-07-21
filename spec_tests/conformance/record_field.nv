@@ -24,7 +24,7 @@ test "[N]str field survives forced GC (heap-record scan)" {
     mut t = Tags { names: ["", "", ""] }
     mut i = 0
     while i < 3 {
-        t.names[i] = "tag_" + "${i}" + "_data"
+        t.names[i] = "tag_${i}_data"
         i = i + 1
     }
     mut k = 0

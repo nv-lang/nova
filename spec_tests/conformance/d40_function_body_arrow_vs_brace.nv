@@ -10,7 +10,7 @@ module spec_tests.conformance
 fn d40_expr_body(x int) -> int => x * 2
 fn d40_negate(x int) -> int => -x
 fn d40_is_even(x int) -> bool => x % 2 == 0
-fn d40_greet(name str) -> str => "hello " + name
+fn d40_greet(name str) -> str => "hello ${name}"
 
 // Многострочный `match` — это ОДНО выражение, поэтому `=> match { ... }` корректно
 fn d40_match_expr(n int) -> str => match n {

@@ -8,7 +8,7 @@ fn d48_fmt(parts []str, args []int) -> str {
     mut d48_out = parts[0]
     mut d48_i = 0
     for d48_a in args {
-        d48_out = d48_out + d48_a.to_str() + parts[d48_i + 1]
+        d48_out = d48_out.concat(d48_a.to_str()).concat(parts[d48_i + 1])
         d48_i += 1
     }
     d48_out

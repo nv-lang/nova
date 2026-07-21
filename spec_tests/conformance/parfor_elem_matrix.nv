@@ -28,7 +28,7 @@ test "matrix: примитив f64 (boxed-транспорт)" {
 
 test "matrix: примитив str" {
     ro xs = parallel for i in 0..3 {
-        "v" + i.to_str()
+        "v${i}"
     }
     assert(xs.len() == 3)
     assert(xs.contains("v0"))
@@ -38,7 +38,7 @@ test "matrix: примитив str" {
 
 test "matrix: heap-record" {
     ro xs = parallel for i in 0..3 {
-        Health { name: "n" + i.to_str(), code: i * 10 }
+        Health { name: "n${i}", code: i * 10 }
     }
     assert(xs.len() == 3)
     mut sum = 0

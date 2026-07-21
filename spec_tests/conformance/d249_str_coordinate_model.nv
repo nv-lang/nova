@@ -35,7 +35,7 @@ test "str equality (D249)" {
 
 test "str concatenation produces correct byte_len (D249)" {
     mut s = "foo"
-    s = s + "bar"
+    s = s.concat("bar")
     assert(s == "foobar")
     assert(s.byte_len() == 6)
 }

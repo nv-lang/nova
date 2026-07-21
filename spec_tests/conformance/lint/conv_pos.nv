@@ -31,14 +31,14 @@ export fn Widget mut @with_label(v str) -> () {
 fn describe(w Widget) -> str {
     ro kind = w.kind
     ro label = w.label
-    "${kind}" + label
+    "${kind}${label}"
 }
 
 // W_STR_CONCAT_LOOP: строковая конкатенация в цикле.
 fn join(parts []str) -> str {
     mut s = ""
     for p in parts {
-        s = s + "," + p
+        s = s.concat(",").concat(p)
     }
     s
 }

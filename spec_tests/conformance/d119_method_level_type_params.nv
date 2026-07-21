@@ -39,7 +39,7 @@ test "same receiver T, distinct method U → distinct mono instances (D119)" {
 test "map chain int → str → str without erasure (D119)" {
     ro w = D119Box[int].new(7)
     ro s = w.map(|x| x.to_str())        // (T=int,  U=str) → D119Box[str]
-    ro s2 = s.map(|x| x + "!")           // (T=str,  U=str) → receiver T re-resolved from chained value
+    ro s2 = s.map(|x| "${x}!")           // (T=str,  U=str) → receiver T re-resolved from chained value
     assert(s2.inner == "7!")
 }
 

@@ -37,10 +37,10 @@
 module spec_tests.conformance
 
 type M196PA { x int }
-fn M196PA @tag(suffix str = "!") -> str => "PA" + suffix
+fn M196PA @tag(suffix str = "!") -> str => "PA${suffix}"
 
 type M196PB { y int }
-fn M196PB @tag(suffix str = "?") -> str => "PB" + suffix
+fn M196PB @tag(suffix str = "?") -> str => "PB${suffix}"
 
 test "cross-type instance-method name collision + default-arg resolves per-receiver-type (Plan 196 Facet C)" {
     ro a = M196PA { x: 1 }

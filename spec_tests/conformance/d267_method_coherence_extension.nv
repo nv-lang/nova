@@ -5,11 +5,11 @@
 module spec_tests.conformance
 
 // 1. Extension method на built-in type с новым именем — нет orphan rule
-fn str @d267_exclaim() -> str => @ + "!"
+fn str @d267_exclaim() -> str => "${@}!"
 
 // 2. Extension overload по типу аргумента (D84 axis) — различимые сигнатуры разрешены
-fn str @d267_prefixed(tag str) -> str => "[" + tag + "] " + @
-fn str @d267_prefixed(n int) -> str => if n > 0 { "[+] " + @ } else { "[-] " + @ }
+fn str @d267_prefixed(tag str) -> str => "[${tag}] ${@}"
+fn str @d267_prefixed(n int) -> str => if n > 0 { "[+] ${@}" } else { "[-] ${@}" }
 
 // 3. Extension методы на user type
 type D267Counter { value int }

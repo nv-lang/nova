@@ -11,7 +11,7 @@ fn build_names() -> [4]str {
     // нечего было бы освобождать и тест был бы вакуумным).
     mut out [4]str = ["", "", "", ""]
     for i in 0..4 {
-        out[i] = "name_" + "${i}" + "_payload"
+        out[i] = "name_${i}_payload"
     }
     out
 }
@@ -44,9 +44,9 @@ type Holder2 { tag str }
 
 fn build_holders() -> [3]Holder2 {
     mut out [3]Holder2 = [
-        Holder2 { tag: "h" + "0" },
-        Holder2 { tag: "h" + "1" },
-        Holder2 { tag: "h" + "2" },
+        Holder2 { tag: "h".concat("0") },
+        Holder2 { tag: "h".concat("1") },
+        Holder2 { tag: "h".concat("2") },
     ]
     out
 }

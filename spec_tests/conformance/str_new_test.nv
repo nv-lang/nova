@@ -9,6 +9,6 @@ test "str.new() == \"\"" {
 }
 
 test "str.new() usable как builder seed" {
-    ro s = str.new() + "hello"
+    ro s = str.new().concat("hello")
     assert(s == "hello")
 }

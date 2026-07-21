@@ -8,7 +8,7 @@ export fn add_one(x int) -> int => x + 1
 
 export fn double(x int) -> int => x * 2
 
-export fn greet(name str) -> str => "hello, " + name
+export fn greet(name str) -> str => "hello, ${name}"
 
 // Self-check (требуется test runner'ом — иначе file treated как broken
 // test без entry point → CC-FAIL с undefined symbol nova_fn_main_impl).

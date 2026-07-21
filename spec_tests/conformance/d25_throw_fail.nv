@@ -37,7 +37,7 @@ fn d25_rethrow(amount int) Fail[str] -> int {
         d25_use(amount)
     }
     if had_throw {
-        throw "wrapped: " + caught
+        throw "wrapped: ${caught}"
     }
     r
 }
