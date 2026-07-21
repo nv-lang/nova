@@ -66,10 +66,10 @@
       флака — на перепроверку A-R1. nova_tests-baseline: 313 каталогов 4 батчами — 169 PASS,
       12 компайл-фейлов = документированное легаси (STATUS.md: retired-API str.from и пр.,
       non-blocking с 2026-07-11, миграция Plan 198) — НЕ релиз-блокеры.
-- [ ] **A-S2** Полный `nova test` WSL Linux `[WSL]` — ⛓A-S1-рецепт (те же батчи), после Linux-гонки.
-- [ ] **A-S3** loadtest.ps1 полный (10× комбо + concurrency 80) `[флагман]` — ⛓A-B1.
-- [ ] **A-S4 ▶СЕЙЧАС** Соседние репы: nova-tls/http/compress suites зелёные `[соседние репы]` (sonnet).
-- [ ] **A-S5** Slope-регрессы GC в допуске `[WSL]` — ⛓A-B5.
+- [x] **A-S2 ✅ 2026-07-21** WSL conformance 517/0/19 (полный tally, актуальное дерево).
+- [x] **A-S3 ✅ 2026-07-21** loadtest полный: PASS 68/0, все 7 блоков (включая concurrency-80 c честным shedding и детерминизм seed=42).
+- [x] **A-S4 ✅ 2026-07-21** tls зелёный (slow-лейн требует --timeout 300 — конфиг, не дефект) · compress зелёный · http 5/0 после for-in+ErrorKind фиксов.
+- [x] **A-S5 ✅ 2026-07-21** WSL net-slope --full 4/0 (stream_leak с refcount-фиксом в допуске).
 
 ## Ф.2 — Версия и дистрибуция (почти всё ▶СЕЙЧАС)
 
