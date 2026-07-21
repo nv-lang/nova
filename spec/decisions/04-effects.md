@@ -6502,6 +6502,11 @@ effect-операции, same-module `to_str()`-коллизия на `int`-rece
 
 ## D316 — `Time`: плумбинг-эффект, единый источник схемы + `TimerMetrics`-split (Plan 175 Ф.1, 2026-07-04)
 
+> **Амендмент (Plan 200 П12-хвост, 2026-07-21):** свободные обёртки `sleep(d Duration)` и
+> `sleep_until(deadline Monotonic)` РЕТРАКТИРОВАНЫ (surface = методы, D9): канон —
+> `d.sleep()` / `deadline.sleep_until()` (`Monotonic @sleep_until()`, monotonic.nv).
+> Effect-op `Time.sleep(ms int)` — слой примитива, без изменений.
+
 **Source:** Plan 175 (time-system-rework), Ф.1. **Amends:** [D11](#d11)/[D14](#d14)/[D62](#d62) (prelude `Time`-decl), [D124](#d124) (wall/monotonic-разделение).
 **Status:** ✅ ACTIVE (Ф.1 — единый источник + split; **Ф.1b/Ф.3 SHIPPED 2026-07-04 — amend ниже**; **unit-rename side-task SHIPPED 2026-07-06 — единицы в именах опов, amend ниже, не путать с формальной Ф.4 (sleep-семантика/tolerance, остаётся TODO)**). Overflow-политика — **D317 ✅ SHIPPED (Ф.1c, 2026-07-06)**; monotonic non-regression — **D318 ✅ SHIPPED (Ф.1c, 2026-07-06)**. Typed **effect-ops** (`timestamp()->Timestamp` в схеме, mock на typed-record'ах) — **🚩 OWNER-GATED** (retire int-wire, Ф.2; см. amend).
 
