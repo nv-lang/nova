@@ -1,0 +1,50 @@
+// concurrency.nv — spawn, parallel for, supervised(deadline:), channels.
+// No `async fn`/`.await`/`Future<T>` — `Time` in a signature is the only
+// marker that a function touches the clock; structured concurrency instead
+// of a separate async dialect (see examples/mini_aggregator.nv).
+module tour.concurrency
+
+import std.time.duration
+
+fn probe(latency_ms int, deadline Monotonic) Time -> str {
+    ro { tx, rx } = Channel.new(1)
+    mut timed_out = false
+    with Fail[TimeoutError] = |_e| { timed_out = true } {
+        supervised(deadline: deadline) {
+            spawn {
+                Time.sleep(latency_ms)
+                ro _ = tx.try_send(true)
+            }
+        }
+    }
+    if timed_out {
+        "cancelled"
+    } else {
+        match rx.try_recv() {
+            Some(_) => "done"
+            None    => "cancelled"
+        }
+    }
+}
+
+// `parallel for` — homogeneous fan-out: all iterations start at once,
+// results collected into a []T in order.
+fn fan_out(latencies []int, deadline Monotonic) Time -> []str {
+    ro outcomes = parallel for i int in 0..latencies.len() {
+        probe(latencies[i], deadline)
+    }
+    outcomes
+}
+
+fn main() Time {
+    ro latencies []int = [10, 20, 300]   // ms; last one misses the budget
+    ro t0 = Monotonic.now()
+    ro deadline = t0 + 60.to_millis()
+    ro outcomes = fan_out(latencies, deadline)
+    mut done = 0
+    mut cancelled = 0
+    for i int in 0..outcomes.len() {
+        if outcomes[i] == "done" { done += 1 } else { cancelled += 1 }
+    }
+    println("done=${done} cancelled=${cancelled}")
+}

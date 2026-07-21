@@ -1,0 +1,19 @@
+// strings_tour.nv — `${}` interpolation, Display vs Debug format-spec `:?`.
+module tour.strings_tour
+
+fn main() {
+    ro name = "Nova"
+    ro n = 42
+    // Plain interpolation routes through Display (@display) — bare values.
+    println("hello ${name}, n=${n}")
+
+    // `${expr:?}` routes to Debug (@debug) instead of Display — e.g. a str
+    // gets quoted with escapes under Debug, bare under Display; primitives
+    // like int/bool are the same either way.
+    ro s = "hi"
+    println("display=${s} debug=${s:?}")
+
+    ro some = Some(7)
+    ro none = None as Option[int]
+    println("debug(some)=${some:?} debug(none)=${none:?}")
+}
