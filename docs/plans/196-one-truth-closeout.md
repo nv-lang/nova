@@ -486,3 +486,42 @@ Explicit-turbofish instance-methods (Producer B, прошлые волны) + st
 
 Хэши коммитов (ветка `p196-closeout`, база main `58804953d`): `d46610dae`, `0d4ee870d`, `418afb69f`,
 `428529179`, `6805f2643`, `9d4209be1`, `34e9a9e41`. В main НЕ мёржено, push НЕ делался. Модель: sonnet.
+
+---
+
+## 🏁 B11q/B11r root-cause волна (2026-07-21, worktree `nova-196b11`, ветка `p196-b11q`, sonnet)
+
+Полный отчёт: [wip/196-b11q-rootcause-notes.md](wip/196-b11q-rootcause-notes.md). Задача — карта
+«B11q/B11r», продолжение прошлой закрытой closeout-волны (остаток №1 в таблице выше).
+
+**Корень найден (не был известен прошлой волне):** ЛЮБОЙ вызов `.debug()`/`.display()` на внутреннем
+значении ИЗНУТРИ `Option[T Debug]@debug`/`Result[T,E Debug]@debug` (и `@display`-близнецов) бьёт в
+структурный пробел Channel 2 — рецептор в этом вызове (`v: T`) ГОЛЫЙ generic type-param, связанный
+протоколом `Debug`, а `resolve_instance_method_return_arity`/`infer_method_call_channel_type`
+(`types/mod.rs`) не умеют «receiver = generic-имя-в-скоупе, диспетчеризуй по его БАУНДУ»: `gs`
+(генерики в скоупе, нить через 31 сайт `types/mod.rs`) несёт ТОЛЬКО имена (`&HashSet<String>`), баунды
+теряются до резолва вызова. Подтверждено изолированным repro (`Some(Some(42))`/`${x:?}`) + чтением
+сгенерированного `.c` (`Nova_Option_method_debug_NovaOpt_nova_int`'s тело вызывает
+`Nova_Option_method_debug_nova_int(v, f)` мимо Channel 2). **Снос B11q/B11r НЕ выполнен** — фикс
+потребовал бы расширения `gs` (широкий blast radius, 31 сайт) или нового cross-cutting checker-состояния
+— смежно с protocol-resolution зоной (другой агент этой волны), не точечный патч. Задокументировано
+(`[M-196-b11q-root-cause]`, `emit_c.rs` ~53661/~53779) для следующей волны.
+
+**⚠ Инцидентально найден БЛОКЕР авторитетного гейта (не моя зона, СРОЧНО):** `spec_tests/conformance/
+d216_ptr_methods_174_5.nv:17-18` (`mut q = buf.ptr(); q.write_at(1, 99)`) паникует
+`[P67-LEGACY] method call .write_at return type unknown` (`obj_ty=""`) — и поскольку
+`spec_tests/conformance` — ОДИН модуль (папка = co-equal файлы), **ЛЮБОЙ** `nova test
+spec_tests/conformance/<файл>.nv` (single-file ИЛИ folder) падает идентично, включая файлы никак не
+связанные с pointers. Верифицировано A/B (git stash моей правки, чистый `cargo build --release`) —
+падает ОДИНАКОВО на pristine и patched (регрессия НЕ из этой волны). Флагман (`nova check
+--strict-effects examples/flagship/aggregator`) — PASS на обоих (компилятор в целом здоров, поломан
+именно `spec_tests/conformance` folder-CU). Фикстура не менялась (`c6c4a7af0`, Plan 174.5 original) —
+регрессия пришла ИЗВНЕ между 196-closeout baseline (`58804953d`, зелёный 126/0/16) и текущим main
+(`5c775de3b`); подозреваемый — `p208-sh4-teardown` merge (`4ad3c8d10`, Debug/Display rich-spec refactor),
+НЕ подтверждено git-bisect (вне бюджета/зоны — Plan 174.5/D216 pointer-typing, не resolve-channel зона
+этого задания). **Из-за этого блокера полный мега-CU гейт этой волной НЕ получен** — честно не заявляю
+зелёный гейт, которого не было; готовые альтернативы: изолированный repro (PASS) + флагман (PASS) на
+patched-бинаре, идентично pristine.
+
+Коммит (ветка `p196-b11q`, база main `5c775de3b`): comment-only B11q/B11r root-cause diagnosis + notes
+(0 поведенческих изменений, verified). В main НЕ мёржено, push НЕ делался. Модель: sonnet.
