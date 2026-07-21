@@ -15702,7 +15702,7 @@ fn StringBuilder consume @into_str_checked() -> Result[str, Utf8Error]
 | Ф.2 | Когерентная волна: `Write`/`Fmt`/`FmtCtx`/энумы в std; компилятор — переписка `emit_interpolated_str`/`emit_format_spec_value` на `@display(f)`/`@debug(f)`; удаление `@display_fmt`-пути; ретракт `str.from_debug` | ✅ 2026-07-16 (ветка `p208-impl`) — **с тремя V1-упрощениями, см. подсекцию ниже** |
 | Ф.3 | Дженерики `.nv` (`[]T`/`Vec[T]`/`Option`/`Result` Display/Debug) + auto-derive record/sum/tuple (компактная `TypeName(a, b)` форма Display, отличная от именованной Debug-формы) | ✅ 2026-07-16 (ветка `p208-impl`, волна 2) — см. `docs/plans/wip/208-impl-progress.md` §"Ф.3 — генерики .nv + auto-derive" |
 | Ф.4 | Зачистка: оставшийся `conv.h` → `.nv`; удаление мёртвого `nova_fmt_*` | ⏳ pending — **заблокирована** (разведка волны 2 подтвердила и УГЛУБИЛА блокер Ф.2's V1-упрощения #1, см. ниже): примитивный форматный путь (bare + rich-spec, `emit_interpolated_str`/`emit_format_spec_value`) сознательно НЕ перевязан на буфер-примитивы Ф.1 — `conv.h`'s `nova_fmt_*`/`nova_*_to_str`/`nova_*_to_debug_str` остаются ЖИВЫМИ (не мёртвыми), так что «удалить мёртвый nova_fmt_*» пока буквально нечего удалять. Волна 2 нашла ДОПОЛНИТЕЛЬНЫЙ блокер: буфер-примитивы Ф.1 не имеют quote/escape-логики для Debug str/char (нужна с нуля) — см. `wip/208-impl-progress.md` §"Ф.4 — статус: РАЗВЕДКА" |
-| Ф.4R | Редизайн зачистки (owner 2026-07-20) + §10R-Д1-Д3 нормы-дополнения (owner 2026-07-21): value-first порядок аргументов везде (вкл. extern-границу), type-first имена (`fmt_f64`→`f64_fmt`), суффикс `_into` упразднён (`int_fmt_into`/`f64_fmt_shortest_into`/`f32_fmt_shortest_into` мосты retired — "простой рендер" = та же функция с default-аргами: `int_fmt(v,buf,cap,spec=FmtSpec.new())`, `f64_fmt(v,buf,cap,kind=FloatKind.Shortest,prec=-1)`, `f32_fmt(v,buf,cap)`; C-extern'ы → `nova_f64_fmt`/`nova_f32_fmt`, D282 литеральные-но-`nova_`-префиксные имена) | ✅ Ш0-Ш1/Ш3-Ш4 DONE, §10R-Д1-Д3 done (§5 code-примеры выше в ЭТОМ разделе переписаны на канон Ш4; норма семьи — [docs/plans/208-unified-formatter.md](../../docs/plans/208-unified-formatter.md) §10R-Д, source of truth); **Ш4 (снос `conv.h` `nova_fmt_*`/`nova_*_to_str`/`nova_*_to_debug_str` + kill-switch `NOVA_FMT_LEGACY` + str/char/bool rich-spec и int/float Debug rich переведены на `*_display_spec`) — ЗАКРЫТА**: для ВСЕХ шести примитивных видов (int/f64/f32/char/bool/str), И bare, И rich-spec, И Display, И Debug — единственный источник рендер-семантики теперь `std/src/runtime/{fmt_buf,string_builder}.nv` (`*_display_spec`-семейство); `conv.h` остаток = `nova_fmt_pad`+`nova_fmt_encode_fill`+`nova_fmt_char_count` (ТОЛЬКО композитный/user-type rich-spec pad — нет `*_display_spec`-аналога для произвольных типов) и `nova_ptr_to_debug_str` (pointer `${p:?}`, нет `.nv`-порта) — оба живые, не мёртвые. V1-упрощение #3 (см. подсекцию ниже) закрыто В ЧАСТИ «рендер хардкожен параллельно в Rust-эмиттере, `int_fmt` мёртв» (обе посылки теперь ложны) — часть «примитивные `@display`/`@debug`-ТЕЛА сами не читают `f.kind()`/`f.width()`, остаются циркулярной заглушкой» ОСТАЁТСЯ до Ш2 (перенос этих тел на `fmt_buf`-extension-методы), который заблокирован ОТДЕЛЬНЫМ компиляторным блокером `[M-fmt-write-protocol-collision-cycle-adjacent]` (`docs/plans/backlog-followups.md` — Write-протокол name-коллизия/резолв, НЕ циклический импорт — тот класс закрыт Ш1's архитектурным обходом). V1-упрощения #1 (композитный/user-type rich-spec не стримит в главный `sb`, рендерится во FRESH builder + внешний `nova_fmt_pad`) и #2 (precision для composite дропается) — ВНЕ scope Ш4 (описывают ТОЛЬКО composite/user-type путь, который Ш4 намеренно не трогал — §10R предписывает закрыть ТОЛЬКО примитивную семью) — остаются как есть, НЕ регрессия. |
+| Ф.4R | Редизайн зачистки (owner 2026-07-20) + §10R-Д1-Д3 нормы-дополнения (owner 2026-07-21): value-first порядок аргументов везде (вкл. extern-границу), type-first имена (`fmt_f64`→`f64_fmt`), суффикс `_into` упразднён (`int_fmt_into`/`f64_fmt_shortest_into`/`f32_fmt_shortest_into` мосты retired — "простой рендер" = та же функция с default-аргами: `int_fmt(v,buf,cap,spec=FmtSpec.new())`, `f64_fmt(v,buf,cap,kind=FloatKind.Shortest,prec=-1)`, `f32_fmt(v,buf,cap)`; C-extern'ы → `nova_f64_fmt`/`nova_f32_fmt`, D282 литеральные-но-`nova_`-префиксные имена) | ✅ Ш0-Ш1/Ш3-Ш4 DONE, §10R-Д1-Д3 done (§5 code-примеры выше в ЭТОМ разделе переписаны на канон Ш4; норма семьи — [docs/plans/208-unified-formatter.md](../../docs/plans/208-unified-formatter.md) §10R-Д, source of truth); **Ш4 (снос `conv.h` `nova_fmt_*`/`nova_*_to_str`/`nova_*_to_debug_str` + kill-switch `NOVA_FMT_LEGACY` + str/char/bool rich-spec и int/float Debug rich переведены на `*_display_spec`) — ЗАКРЫТА**: для ВСЕХ шести примитивных видов (int/f64/f32/char/bool/str), И bare, И rich-spec, И Display, И Debug — единственный источник рендер-семантики теперь `std/src/runtime/{fmt_buf,string_builder}.nv` (`*_display_spec`-семейство); `conv.h` остаток = `nova_fmt_pad`+`nova_fmt_encode_fill`+`nova_fmt_char_count` (ТОЛЬКО композитный/user-type rich-spec pad — нет `*_display_spec`-аналога для произвольных типов) и `nova_ptr_to_debug_str` (pointer `${p:?}`, нет `.nv`-порта) — оба живые, не мёртвые. V1-упрощение #3 (см. подсекцию ниже) закрыто В ЧАСТИ «рендер хардкожен параллельно в Rust-эмиттере, `int_fmt` мёртв» (обе посылки теперь ложны). **Ш2 (2026-07-21, worktree `nova-sh2`, ветка `p208-sh2-bodies`, sonnet) — ЗАКРЫТА, закрывает V1-упрощение #3 ПОЛНОСТЬЮ:** блокер `[M-fmt-write-protocol-collision-cycle-adjacent]` снят (фикс влит в main, `compiler-codegen/src/types/mod.rs`); примитивные `@display`/`@debug`-тела (int/f64/f32/bool/char/str-`@debug`) в `prelude/protocols.nv` переписаны с циркулярной заглушки (`f.write("${@}".bytes())`) на прямые вызовы `*_display_spec`-семейства (`runtime.string_builder`) — физически тела ОСТАЛИСЬ в `protocols.nv` (не переехали в `fmt_buf.nv`, как исходно намечено картой — тот перенос потребовал бы `protocols.nv ↔ fmt_buf.nv` цикл; вместо этого — однонаправленный импорт `protocols.nv → string_builder.nv`, `string_builder.nv` не импортирует `prelude.protocols` обратно, поэтому нового цикла НЕТ), но теперь `f.kind()`/`f.width()` больше не остаются непрочитанными в теле «просто потому что» — тело зовёт РЕАЛЬНЫЙ рендер-движок (`*_display_spec`, тот же, что fast-path Ш3 девиртуализует), не самоссылающуюся интерполяцию. V1-упрощения #1 (композитный/user-type rich-spec не стримит в главный `sb`, рендерится во FRESH builder + внешний `nova_fmt_pad`) и #2 (precision для composite дропается) — ВНЕ scope Ш2/Ш4 (описывают ТОЛЬКО composite/user-type путь, который ни одна из этих волн не трогала — §10R предписывает закрыть ТОЛЬКО примитивную семью) — остаются как есть, НЕ регрессия. |
 
 Ф.2 реализована на ветке `p208-impl` (3 шага: std-сигнатуры, `emit_c.rs`-диспатч,
 миграция потребителей — json.nv + `spec_tests/conformance/d374_*`/`d229_*`/бывшие
@@ -15762,21 +15762,88 @@ D422 — заполняют места, где D422 либо молчит, ли�
    hand-synth C — через method-dispatch на переписанных примитивных
    `@display(f)`/`@debug(f)` телах, не прямой C-вызов; это делает "перевязку"
    ОДНОЙ когерентной big-bang волной, не серией мелких безопасных шагов).
-   **Статус (Ф.4R Ш4, 2026-07-21): ЧАСТИЧНО ЗАКРЫТО.** Обе посылки этого
-   пункта, КАК ДИАГНОСТИРОВАНО (компилятор хардкодит рендер параллельно
-   `.nv`-движку; `int_fmt` мёртв), теперь ЛОЖНЫ: interp fast-path (bare И
-   rich-spec, ОБА kind) девиртуализованно зовёт `*_display_spec`
-   (`std/src/runtime/string_builder.nv`), который зовёт `int_fmt`/`f64_fmt`/
-   `f32_fmt`/`bool_fmt`/`char_fmt`/`str_debug_fmt`/`char_debug_fmt`
-   (`fmt_buf.nv`) — тот же движок, что использовал бы настоящий `@display`-
-   body. `conv.h`'s `nova_fmt_*`/`nova_*_to_str`/`nova_*_to_debug_str` цепочка
-   СНЕСЕНА (Ф.4R Ш4). Но САМИ примитивные `@display`/`@debug`-ТЕЛА (в
-   `prelude/protocols.nv`) остаются циркулярной заглушкой
-   (`f.write("${@}".bytes())`) — компилятор их по-прежнему НЕ зовёт напрямую
-   (обходит девиртуализацией), значит "примитивы не читают `f.kind()`/
-   `f.width()` В СВОИХ ТЕЛАХ" остаётся буквально верным до Ш2 (перенос тел на
-   `fmt_buf`-extension-методы), заблокированного `[M-fmt-write-protocol-
-   collision-cycle-adjacent]`.
+   **Статус (Ф.4R Ш4, 2026-07-21): ЧАСТИЧНО ЗАКРЫТО** (промежуточная запись,
+   ниже — финал Ш2). Обе посылки этого пункта, КАК ДИАГНОСТИРОВАНО (компилятор
+   хардкодит рендер параллельно `.nv`-движку; `int_fmt` мёртв), теперь ЛОЖНЫ:
+   interp fast-path (bare И rich-spec, ОБА kind) девиртуализованно зовёт
+   `*_display_spec` (`std/src/runtime/string_builder.nv`), который зовёт
+   `int_fmt`/`f64_fmt`/`f32_fmt`/`bool_fmt`/`char_fmt`/`str_debug_fmt`/
+   `char_debug_fmt` (`fmt_buf.nv`) — тот же движок, что использовал бы
+   настоящий `@display`-body. `conv.h`'s `nova_fmt_*`/`nova_*_to_str`/
+   `nova_*_to_debug_str` цепочка СНЕСЕНА (Ф.4R Ш4). Но САМИ примитивные
+   `@display`/`@debug`-ТЕЛА (в `prelude/protocols.nv`) на тот момент оставались
+   циркулярной заглушкой (`f.write("${@}".bytes())`) — компилятор их
+   по-прежнему НЕ зовёт напрямую (обходит девиртуализацией), значит
+   "примитивы не читают `f.kind()`/`f.width()` В СВОИХ ТЕЛАХ" оставалось
+   буквально верным до Ш2, заблокированного `[M-fmt-write-protocol-collision-
+   cycle-adjacent]`.
+
+   **Статус (Ф.4R Ш2, 2026-07-21, worktree `nova-sh2`, ветка `p208-sh2-bodies`,
+   sonnet): ПОЛНОСТЬЮ ЗАКРЫТО.** Блокер снят — `[M-fmt-write-protocol-
+   collision-cycle-adjacent]` (Write-протокол name-коллизия по голому имени в
+   `TypeCheckCtx::build`, `compiler-codegen/src/types/mod.rs`) исправлен и
+   влит в main отдельной волной (per-file type overlay +
+   `types_get_for_file`), равно как соседний `[M-imports-order-dependent-
+   cycle]`. Примитивные `@display`/`@debug`-тела (int/f64/f32/bool/char/
+   str's `@debug`; str's `@display` уже была некруговой identity-копией,
+   не тронута) в `prelude/protocols.nv` переписаны на прямые вызовы
+   `*_display_spec`-семейства:
+   ```nova
+   #impl(Display)
+   fn int @display(mut f Fmt) -> () {
+       consume sb = StringBuilder.new()
+       int_display_spec(sb, @, 0, 10, false, false, false, false, Align.Left, ' ')
+       f.write(sb.into_str().bytes())
+   }
+   ```
+   (аналогично для f64/f32/bool/char displaying/debug-вариантов, зовущих
+   `f64_display_spec`/`f32_display_spec`/`bool_display_spec`/
+   `char_display_spec`/`char_debug_display_spec`/`str_debug_display_spec`
+   соответственно — bare-параметры `width:0, align:Left, fill:' '` — no-op
+   паддинг-оси, byte-identical старому bare-поведению).
+
+   Тела физически ОСТАЛИСЬ в `protocols.nv` (НЕ переехали в `fmt_buf.nv`, как
+   исходно намечено §10R-картой — тот перенос потребовал бы завести цикл
+   `protocols.nv ↔ fmt_buf.nv` заново поверх уже разрешённого; вместо этого —
+   ОДНОНАПРАВЛЕННЫЙ импорт `std.runtime.string_builder.{...}` в
+   `protocols.nv`, где `*_display_spec`-семейство физически живёт с Ш1
+   architecture-v2 — `string_builder.nv` `#no_prelude`, НЕ импортирует
+   `prelude.protocols` обратно, значит нового цикла нет; тот же
+   однонаправленный shape, что уже существующий `fmt_buf`-импорт строкой
+   выше в том же файле). Каждое тело рендерит в свежий
+   `consume sb = StringBuilder.new()` (т.к. `*_display_spec` требует
+   КОНКРЕТНЫЙ `StringBuilder`, а `@display(mut f Fmt)` получает АБСТРАКТНЫЙ
+   `Fmt`), затем ОДИН `f.write(sb.into_str().bytes())` копирует итог в
+   реальный sink — не zero-alloc (в отличие от компиляторного fast-path,
+   который пишет прямо в целевой `StringBuilder` без промежуточного), но
+   единственный источник рендер-семантики: полиморфный путь
+   (`v.display(f)`/`v.debug(f)` через абстрактный `Fmt` — `Option[T Debug]`/
+   `Result[T Debug, E Debug]` и future generic `Vec[T]`/`[]T` Display) теперь
+   зовёт ТОТ ЖЕ `*_display_spec`-движок, что компиляторный fast-path
+   девиртуализует, а не отдельную циркулярную дорожку. V1-упрощение #3
+   (эта секция целиком) ЗАКРЫТО ПОЛНОСТЬЮ — обе половины («рендер хардкожен
+   параллельно» И «примитивные тела — циркулярная заглушка») теперь ложны.
+   zero-alloc для ЭТОГО (generic-диспетч) пути — задокументированный
+   follow-up вне scope Ш2 (примитив тут рендерится редко, только через
+   абстрактный `Fmt`; горячий top-level путь остаётся zero-copy через Ш3
+   fast-path, не задет).
+
+   Верификация: `nova check` (checker-only — обходит НЕСВЯЗАННЫЙ
+   pre-existing `[M-d216-write-at-return-type-unknown-cc-panic]`, который
+   ловит ЛЮБОЙ full-pipeline прогон папки `spec_tests/conformance`) на трёх
+   эталонах Ш0 (`d422_f4r_baseline_{int,float,strcharboolu64}.nv`) — PASS
+   3/0 (216 WARN, все предсуществующие unused-import/W_FFI_CANCEL_UNSAFE);
+   изолированный standalone-репро (`nova build`+run вне conformance-папки,
+   обходит write_at ICE полностью) — bare Display/Debug на ВСЕХ шести
+   примитивах PASS, ПЛЮС полиморфный путь через `Option[T Debug]`/
+   `Option[T Display]`/`Result[T Debug, E Debug]` (единственный реальный
+   вызыватель перенесённых тел до будущего generic-Display на `Vec`/`[]T`) —
+   PASS; `fmt_buf/core_test` 1/0, `string_builder_test` 1/0, `checksums`
+   3/0 (fnv/adler32/crc32); `d374_write_sink_decouple` (checker) PASS 1/0;
+   флагман `examples/flagship/aggregator/src/main.nv --strict-effects`
+   built чисто (70.34s, только предсущ. warnings). Полный мега-CU НЕ
+   гонялся — заблокирован тем же НЕСВЯЗАННЫМ write_at ICE, за интегратором
+   (`docs/plans/backlog-followups.md`).
 
 **Координация с Plan 152.7.2** (`docs/plans/152.7.2-format-context.md`, отдельный
 план, СВОЁ решение по статусу — не закрыт этим коммитом): его "interp-direct-
