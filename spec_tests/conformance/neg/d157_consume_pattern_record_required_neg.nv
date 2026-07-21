@@ -1,0 +1,34 @@
+// EXPECT_COMPILE_ERROR [E_CONSUME_PATTERN_REQUIRED] pattern-биндинг `a` держит consume-обязательный пейлоад типа `D157RecReqPayload` из `Ok({..})` — требуется явный `consume`-паттерн
+//
+// [M-216-record-payload-consume] (2026-07-21): record-payload follow-up
+// зеркало d157_consume_pattern_required_neg.nv для scalar-формы. Plain
+// shorthand `{ a }` (или explicit `{ a: a }` без `consume`) над
+// must-consume record-field — ошибка, требуется явный consume-sub-pattern
+// (`{ a: consume a }`). Пин суждения (message) целиком, включая имя
+// пейлоад-типа и variant-shape (`Ok({..})`, отличает от scalar `Ok(..)`/
+// tuple `Ok((..))` вариантов).
+
+module neg.d157_consume_pattern_record_required_neg
+
+type D157RecReqPayload consume {
+    id int,
+}
+
+fn D157RecReqPayload consume @close() -> () { () }
+
+type D157RecReqPair consume {
+    consume a D157RecReqPayload,
+    b int,
+}
+
+fn D157RecReqPair consume @close() -> () { () }
+
+fn dial() -> Result[D157RecReqPair, str] =>
+    Ok(D157RecReqPair { a: D157RecReqPayload { id: 1 }, b: 2 })
+
+test "plain shorthand { a } на must-consume record-field — ошибка" {
+    match dial() {
+        Ok({ a, b }) => { a.close() },
+        Err(_e) => {},
+    }
+}

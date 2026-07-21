@@ -947,8 +947,25 @@ payload.** Правило выше распространяется на Err-в�
   single-arg tuple-variant, sub-pattern сам `(a, b)` (tuple-pattern) —
   КОГДА Ok/Some/Err-инвариант САМ tuple-тип `(A, B, …)`: каждый элемент
   проверяется НЕЗАВИСИМО тем же правилом (`A` must-consume без `consume`
-  на `a` → ошибка; `B` не-must-consume → `b` legal plain). Record-payload
-  (`Ok({ a, b })`) этим amendment'ом НЕ покрыт (см. «Область»).
+  на `a` → ошибка; `B` не-must-consume → `b` legal plain).
+
+**Amendment ([M-216-record-payload-consume], 2026-07-21) — record payload.**
+Закрывает последний из трёх bootstrap-honest-defer пунктов (см. «Область»
+ниже). `Ok({ a, b })` / `Some({ a, b })` / `Err({ a, b })` — single-arg
+tuple-variant, sub-pattern сам record-паттерн (`{ .. }`) — КОГДА Ok/Some/Err-
+инвариант САМ record-тип: каждое поле проверяется НЕЗАВИСИМО тем же
+scalar-гейтом, что и tuple-payload элемент (`consume_require_pattern_binding`,
+разделяемый helper): must-consume поле без `consume`-sub-pattern на его
+binding'е (`{ a: consume x, b }` — explicit rename-форма; must-consume поле
+в **shorthand**-форме `{ a }` — тоже ошибка, shorthand не может нести
+`consume`) → `E_CONSUME_PATTERN_REQUIRED`; не-must-consume поле — legal
+plain view-биндинг (shorthand и rename-форма обе). Per-field типы резолвятся
+через новый `ConsumeRegistry::record_field_types` (record-тип → поле →
+Named-тип-имя, `None`/absent — non-Named/nested-further поле, sound
+false-negative) — companion `record_field_names`/`record_consume_fields`
+(та же collect-логика, та же ТОЛЬКО-`module.items` область, без peer-file
+merge). Глубже вложенное поле (не-`Ident` sub-pattern внутри record-поля) —
+honest-defer для ЭТОГО поля (unchanged fallback).
 
 **Синтаксис.** `consume` — новый sub-pattern qualifier на `Pattern::Ident`,
 симметричный существующему `mut` (D36/Plan 108.3): взаимоисключающи на
@@ -964,7 +981,7 @@ tuple-variant (`Ok(consume x)`); это ОРТОГОНАЛЬНО top-level `cons
 
 | Код | Когда | Suggestion (machine-applicable) |
 |---|---|---|
-| `E_CONSUME_PATTERN_REQUIRED` | `Ok(x)`/`Some(x)`/`Err(x)` payload (или per-element внутри `Ok((a,b))`/`Some((a,b))`/`Err((a,b))` tuple-payload, Plan 216 tails) — must-consume тип, sub-pattern без `consume` | Insert `consume ` перед именем биндинга |
+| `E_CONSUME_PATTERN_REQUIRED` | `Ok(x)`/`Some(x)`/`Err(x)` payload (или per-element внутри `Ok((a,b))`/`Some((a,b))`/`Err((a,b))` tuple-payload, Plan 216 tails; или per-field внутри `Ok({a,b})`/`Some({a,b})`/`Err({a,b})` record-payload, [M-216-record-payload-consume]) — must-consume тип, sub-pattern без `consume` | Insert `consume ` перед именем биндинга |
 
 Format Plan 50 D102 (header + code + span + note + suggestion), см.
 [D102](03-syntax.md#d102-именованные-аргументы-и-значения-параметров-по-умолчанию).
@@ -999,9 +1016,24 @@ Format Plan 50 D102 (header + code + span + note + suggestion), см.
   (`ConsumeRegistry`) + `var_unwrapped_tuple_types` /
   `var_unwrapped_err_tuple_types` (`ConsumeCtx`) — per-element type names,
   `None` для non-Named/nested-further компонента (sound false-negative).
-  **Record-форма (`Ok({ a, b })`) остаётся НЕ покрыта** (нет per-field-type
-  registry в `ConsumeCtx` для этого пути) — honest defer, unchanged
-  fallback; followup `[M-216-record-payload-consume]`.
+  **Record-форма — ЗАКРЫТО [M-216-record-payload-consume] (2026-07-21).**
+  `Ok({ a, b })` / `Some({ a, b })` / `Err({ a, b })` (single-arg
+  tuple-variant, sub-pattern — `Record` с известным per-field типом,
+  резолвится через новый `ConsumeRegistry::record_field_types`) — каждое
+  поле проходит ТОТ ЖЕ scalar-гейт независимо (shorthand `{ a }` И rename
+  `{ a: x }` формы обе enforced; текст диагностики `из \`Ok({..})\``/
+  `Err({..})\`` отличает от scalar/tuple вариантов). Глубже вложенное поле
+  (не-`Ident` sub-pattern) — honest-defer для ЭТОГО поля (unchanged).
+  Codegen-хвост, вскрывшийся при закрытии: `pattern_bind_typed`
+  (`compiler-codegen/src/codegen/emit_c.rs`) не регистрировал plain
+  struct-pointer inner-тип (`Nova_<Record>*`) в `var_types` на access-path
+  ДО рекурсии в `Pattern::Record`-арм (только `_NovaTuple_`/`NovaOpt_`
+  префиксы были покрыты, в mono-Result-ветке И в Option-`is_opt`-ветке) —
+  рекурсивный `pattern_bind_typed` читал пустой `scr_ty`, `is_plain_record`
+  ложно `false`, эмитил битый C (`->payload..a` двойная точка). Фикс —
+  добавить ту же регистрацию для record-inner в обеих ветках (0
+  существующих сайтов этого пути в кодовой базе на момент фикса — работа
+  впрок, per followup-формулировку).
 
 Реализация: `Pattern::Ident.is_consume` (`compiler-codegen/src/ast/mod.rs`),
 `parse_pattern()` (`compiler-codegen/src/parser/mod.rs`),
@@ -1012,6 +1044,17 @@ Plan 216 tails (Err-payload + nested-tuple, 2026-07-21): `unwrap_result_err_name
 `ConsumeCtx::scrutinee_unwrapped` (bundles ok/err/ok_tuple/err_tuple),
 `consume_require_pattern_binding` (shared scalar-gate helper, both the
 direct scalar arm AND per-tuple-element) — все в `compiler-codegen/src/types/mod.rs`.
+[M-216-record-payload-consume] (2026-07-21): `ConsumeRegistry::record_field_types`
+(companion of `record_field_names`/`record_consume_fields`, same
+`module.items`-only collect scope) — record-type name → (field name → field's
+Named-type single-segment name); `consume_declare_arm_pattern`'s
+`Pattern::Record` arm reuses `scrut.ok`/`scrut.err` (already-resolved scalar
+type name IS the record-type name when the Ok/Some/Err-inner T is itself a
+record) as the lookup key into that map, then per-field
+`consume_require_pattern_binding` (same shared helper, no new function) — all
+in `compiler-codegen/src/types/mod.rs`. Codegen companion fix (record-inner
+`var_types` registration gap) in `compiler-codegen/src/codegen/emit_c.rs`'s
+`pattern_bind_typed` (mono-Result branch + Option `is_opt` branch).
 
 ### Связь
 

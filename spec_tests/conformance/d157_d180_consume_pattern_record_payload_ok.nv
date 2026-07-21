@@ -1,0 +1,79 @@
+// [M-216-record-payload-consume] (2026-07-21): consume-волна А (D157/D180)
+// bootstrap явно defer'ил record-пейлоад ("Ok({ a, b })-форма этим
+// amendment'ом НЕ покрыт" — 05-memory.md, Plan 216 tails "Область").
+// Эта фикстура закрывает record-часть хвоста: `Ok({ a, b })`/`Some({ a, b })`/
+// `Err({ a, b })` record-sub-pattern над Ok/Some/Err-inner типом, который сам
+// — record-тип — теперь enforced per-field, тем же правилом что и scalar
+// `Ok(x)`/tuple `Ok((a, b))`: must-consume поле обязано нести
+// `consume`-sub-pattern (`Ok({ a: consume x, b })`), mut-capable,
+// must-be-consumed (D133); не-must-consume поле (b) остаётся plain
+// view-биндингом (view-default unaffected). Shorthand-поле (`{ a }`, оба —
+// must-consume и не-must-consume) — тоже enforced (shorthand не может нести
+// `consume`, поэтому must-consume-поле в shorthand-форме — ошибка, см. neg
+// фикстуру).
+
+module spec_tests.conformance
+
+type P216RecPayload consume {
+    id int,
+}
+
+fn P216RecPayload consume @close() -> () { () }
+fn P216RecPayload mut @touch() -> () { () }
+
+type P216RecPair consume {
+    consume a P216RecPayload,
+    b int,
+}
+
+fn P216RecPair consume @close() -> () { () }
+
+fn dial_p216_record(v int) -> Result[P216RecPair, str] =>
+    Ok(P216RecPair { a: P216RecPayload { id: v }, b: v * 10 })
+
+fn maybe_p216_record(v int) -> Option[P216RecPair] =>
+    Some(P216RecPair { a: P216RecPayload { id: v }, b: v * 10 })
+
+test "rvalue match Ok({ a: consume x, b }) — a consume, b — plain view" {
+    match dial_p216_record(1) {
+        Ok({ a: consume x, b }) => {
+            x.touch()           // mut-метод без доп. `mut`-keyword (D180)
+            assert(b == 10)
+            x.close()           // consume-обязательство выполнено (D133)
+        },
+        Err(_e) => {},
+    }
+}
+
+test "place-скрутини — именная Option-переменная, тот же record consume-паттерн" {
+    ro attempt = maybe_p216_record(2)
+    match attempt {
+        Some({ a: consume x, b }) => {
+            assert(b == 20)
+            x.close()
+        },
+        None => {},
+    }
+}
+
+test "if-let rvalue Some({ a: consume x, .. }) — ownership явный" {
+    if Some({ a: consume x, .. }) = maybe_p216_record(3) {
+        x.close()
+    }
+}
+
+type P216PlainPair {
+    x int,
+    y int,
+}
+
+fn dial_p216_plain_record() -> Option[P216PlainPair] => Some(P216PlainPair { x: 7, y: 8 })
+
+test "view-default record payload НЕ сломан — оба поля не-must-consume" {
+    match dial_p216_plain_record() {
+        Some({ x, y }) => {
+            assert(x == 7 && y == 8)
+        },
+        None => {},
+    }
+}

@@ -26880,6 +26880,23 @@ struct ConsumeRegistry {
     /// ЕДИНСТВЕННЫЙ среди всех записей, чей field-set покрывает имена
     /// литерала. Неоднозначность → None (без действия — консервативно).
     record_field_names: HashMap<String, HashSet<String>>,
+    /// `[M-216-record-payload-consume]` (2026-07-21): companion of
+    /// `record_field_names`/`record_consume_fields` — record type name
+    /// (record types + sum-variant record payloads, same population as
+    /// those two) → (field name → field's Named-type single-segment name,
+    /// `Self` resolved at declare-time isn't available here so kept literal
+    /// — record types don't appear as sum-variant Self-payload in practice
+    /// for this narrow lookup). `None`/absent field = non-Named or
+    /// nested-further field type (sound false-negative, never
+    /// false-positive) — mirrors `unwrap_generic_tuple_names`'s per-element
+    /// resolution used for the Plan 216 tails tuple-payload companion.
+    /// Enables `Ok({ consume a, b })`-shape (`Pattern::Record` sub-pattern
+    /// of a single-arg Ok/Some/Err tuple-variant) consume-pattern-required
+    /// enforcement per field — mirrors the tuple-payload per-element gate
+    /// (`consume_require_pattern_binding`), closing the record-payload
+    /// bootstrap-honest-defer noted in 05-memory.md's D157 amendment
+    /// "Область".
+    record_field_types: HashMap<String, HashMap<String, String>>,
     /// Plan 214 (D429): free-fn name → per-position canonical `coerce_type_key`
     /// of each declared param's type (see `coerce_type_key` doc). Lets the
     /// call-arg walk (`ExprKind::Ident(fname)` case) tell "same type, plain
@@ -27043,6 +27060,8 @@ impl ConsumeRegistry {
         // record_field_names (ALL fields) для резолва анонимных литералов.
         let mut record_consume_fields: HashMap<String, HashSet<String>> = HashMap::new();
         let mut record_field_names: HashMap<String, HashSet<String>> = HashMap::new();
+        // `[M-216-record-payload-consume]`: companion per-field-TYPE map — see field doc.
+        let mut record_field_types: HashMap<String, HashMap<String, String>> = HashMap::new();
         {
             let mut collect_fields = |type_name: &str, fields: &[RecordField]| {
                 let all: HashSet<String> = fields.iter()
@@ -27052,11 +27071,21 @@ impl ConsumeRegistry {
                     .filter(|f| f.consume)
                     .map(|f| f.name.clone())
                     .collect();
+                let types: HashMap<String, String> = fields.iter()
+                    .filter_map(|f| match &f.ty {
+                        TypeRef::Named { path, .. } if path.len() == 1 =>
+                            Some((f.name.clone(), path[0].clone())),
+                        _ => None,
+                    })
+                    .collect();
                 if !all.is_empty() {
                     record_field_names.insert(type_name.to_string(), all);
                 }
                 if !consume.is_empty() {
                     record_consume_fields.insert(type_name.to_string(), consume);
+                }
+                if !types.is_empty() {
+                    record_field_types.insert(type_name.to_string(), types);
                 }
             };
             for item in &module.items {
@@ -27363,7 +27392,7 @@ impl ConsumeRegistry {
             mut_methods_arity, ro_methods_arity, recv_returning_arity,
             fn_mut_params, method_mut_params,
             fn_non_unsafe_params, method_non_unsafe_params,
-            record_consume_fields, record_field_names,
+            record_consume_fields, record_field_names, record_field_types,
             unwrapped_method_return_types, unwrapped_fn_return_types,
             unwrapped_fn_return_err_types, unwrapped_method_return_err_types,
             unwrapped_fn_return_tuple_types, unwrapped_method_return_tuple_types,
@@ -30005,6 +30034,45 @@ fn consume_declare_arm_pattern(
                         }
                         // Unknown/mismatched tuple shape — fall through to
                         // the honest-defer fallback below.
+                    }
+                    // `[M-216-record-payload-consume]` (2026-07-21): record
+                    // sub-pattern — `Ok({ a, b })`/`Some({ a, b })`/
+                    // `Err({ a, b })`. `scalar_ty` (already resolved above,
+                    // same Ok/Some/Err-inner type name used by the plain-
+                    // Ident case) names the record type IFF the Ok/Some/Err
+                    // inner T is itself a Named record type — look up its
+                    // per-field types in `ConsumeRegistry::record_field_types`
+                    // (`.` and rest-shorthand fields are shorthand
+                    // `RecordPatternField.pattern = None`, name IS the
+                    // binding — mirrors D17/D52 shorthand semantics).
+                    Pattern::Record { fields, .. } => {
+                        if let Some(field_types) = scalar_ty.and_then(|tn| ctx.reg.record_field_types.get(tn)) {
+                            let ctx_desc = format!("{}({{..}})", variant);
+                            for f in fields {
+                                match &f.pattern {
+                                    // Shorthand `{ a }` — binding name IS the field name.
+                                    None => {
+                                        let elem_ty = field_types.get(&f.name).map(|s| s.as_str());
+                                        consume_require_pattern_binding(
+                                            ctx, &f.name, false, f.span, elem_ty, &ctx_desc, errors);
+                                    }
+                                    Some(Pattern::Ident { name, is_consume, span, .. }) => {
+                                        let elem_ty = field_types.get(&f.name).map(|s| s.as_str());
+                                        consume_require_pattern_binding(
+                                            ctx, name, *is_consume, *span, elem_ty, &ctx_desc, errors);
+                                    }
+                                    Some(inner) => {
+                                        // Deeper nesting (`{ a: (x, y) }` etc.) — honest defer.
+                                        let mut names = Vec::new();
+                                        consume_pattern_names(inner, &mut names);
+                                        for n in &names { ctx.declare(n, None); }
+                                    }
+                                }
+                            }
+                            return;
+                        }
+                        // Unknown record type / no field-type registry entry
+                        // — fall through to the honest-defer fallback below.
                     }
                     _ => {}
                 }
