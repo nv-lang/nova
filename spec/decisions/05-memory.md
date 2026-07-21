@@ -673,6 +673,142 @@ keyword'а (D180 Rule 4: `consume mut` избыточен — consume уже н�
 явного `consume` (Rule 2, теперь фактически enforced и на этом пути),
 double-consume → use-after (D131).
 
+### Амендмент (2026-07-21) — match-tail passthrough как Rule 1 RHS; divergence-aware match join
+
+> Находка владельца 2026-07-21 (чтение `examples/tls/echo_server.nv:42-45`),
+> маркер `[M-mut-binding-accepts-must-consume]`,
+> `docs/plans/backlog-followups.md`. Кросс-ref: [D131](#d131-consume--квалификатор-логической-линейности),
+> [D133](02-types.md#d133), [D157-амендмент](#d157-implicit-view-default--closure-capture-analysis--match-consume)
+> выше, [D184](03-syntax.md#d184).
+
+**Дырка.** Канонический паттерн `Ok(consume l) => l` на match-arm'е (сам
+payload-биндинг `l` — корректно consume-обязателен, D157-амендмент выше)
+— НЕ гарантирует, что РЕЗУЛЬТАТ всего match-выражения тоже воспринимается
+как consume-обязательный, когда этот результат тут же связывается новым
+binding'ом:
+
+```nova
+// ❌ компилировался БЕЗ ошибки (пред-амендмент) — молчаливая дыра
+mut lst = match TcpListener.bind(addr) {
+    Ok(consume l)  => l
+    Err(_) => panic("bind failed")
+}
+```
+
+Корень — `infer_value_type` (D180 Rule 1's RHS-type inference,
+`compiler-codegen/src/types/mod.rs`) распознавал только узкий набор форм
+RHS (`Call` на конструктор/free-fn/метод с известным return-типом, `Ident`
+alias, `RecordLit`, `Try`/`Bang`/`RefArg`/`Coalesce`-развёртку) — **но не
+`ExprKind::Match`/`ExprKind::IfLet`**. Match-выражение как RHS целого
+`let`/`mut`/`ro`-биндинга просто возвращало `None`, поэтому Rule 1
+(`E_CONSUME_KEYWORD_MISSING`) не имел данных для срабатывания — молчал
+даже когда каждая arm'а честно консьюмит свой payload через
+`Ok(consume x) => x`. Это ОРТОГОНАЛЬНО [D157-амендменту](#d157-implicit-view-default--closure-capture-analysis--match-consume)
+выше (тот закрыл alias arm-bound имени: `mut stream = tcp`, где `tcp` —
+САМ payload pattern-биндинг); здесь же дыра на уровень дальше — результат
+matcha, после того как arm уже корректно его вернул.
+
+**Правило (нормативное, не new rule — расширение Rule 1's RHS-инференции).**
+`infer_value_type` теперь рекурсирует в `Match`-arm'ы (`MatchArmBody::Expr`
+tail либо `MatchArmBody::Block.trailing`) и в `IfLet`'s `then`/`else`
+ветки, разрешая тип RHS через ПЕРВУЮ arm/ветку, чей tail сам resolve'ится
+(best-effort — обычно единственная non-diverging arm, поскольку
+well-typed match/if-let arm'ы согласуются в одном типе). Поскольку
+`consume_walk_expr` над самим match'ем (который заполняет `var_types` для
+arm-bound имён через `consume_declare_arm_pattern`) уже выполнен К МОМЕНТУ
+вызова `infer_let_type` (см. `consume_walk_stmt`'s `Stmt::Let`: RHS
+walk'ается ДО инференции типа), рекурсия в `Ident`-tail arm'ы (`Ok(consume
+l) => l`) резолвится "бесплатно" через уже-существующий `Ident`-case.
+Итог: `mut lst = match { Ok(consume l) => l, ... }` теперь корректно
+триггерит `E_CONSUME_KEYWORD_MISSING` (Rule 1), требуя `consume lst = …`.
+
+**Побочная находка (та же волна, тот же корень-класс дефектов) —
+divergence-unaware match join.** Как только match-tail-passthrough
+биндинги стали реально consume-obligated (выше), классический idiom
+`Err(e) => { x.close(); return Err(e) }` начал ложно читаться как
+`MaybeConsumed` на arm'ах, которые НЕ проходили через error-ветку.
+Причина — `ExprKind::Match`'s state-join (`consume_walk_expr`,
+`compiler-codegen/src/types/mod.rs`) сливал состояния ВСЕХ arm'ов через
+`consume_join` безусловно, не проверяя, диverges ли arm (`return`/`throw`/
+`panic(..)`/`exit(..)`/вложенный diverging if-или-match — существующие
+`expr_diverges`/`block_diverges` helpers). Sibling-код `consume_walk_if`
+УЖЕ имел divergence-aware merge (`then_diverges`/`else_diverges`,
+исключающий diverging-ветку из join'а) — `Match` эту обработку никогда
+не получал, чистое упущение симметрии, не самостоятельное решение.
+Исправлено тем же слиянием: diverging arm пропускается из join'а
+(`continue`), а ПЕРВАЯ non-diverging arm проходит через `consume_join`
+(само-джойн с собой) вместо raw-присвоения — иначе arm-локальные
+pattern-биндинги (`x` из `Ok(consume x) => x`) утекали бы в states-карту
+ПОСЛЕ match'а (у `consume_join`'а есть задокументированное поведение
+«ветка-локальные переменные отбрасываются» через домен ключей `saved`,
+которое raw-присвоение обходило).
+
+**Аудит + канонизация (та же волна).** Прогон нового Rule 1 по `std/**` +
+`examples/**` (вне `_wip`) нашёл и канонизировал ~17 сайтов (`mut`/`ro X =
+match { Ok(consume …) => … }` → `consume X = …`): `std/src/fs/fs.nv`
+(`File.open`/`File.create`), `std/src/net/{byte_surface,
+d302_neterror_iokind,split,write_all}_test.nv`,
+`examples/{tls,net}/echo_server.nv`,
+`examples/flagship/aggregator/{src/app/aggregate.nv,src/main.nv}`.
+Каскад: где канонизация обнажала alias consume-обязательной переменной
+(`mut st = stream` над уже-`consume stream`) — Rule 2 (`E_VIEW_BINDING_FORBIDDEN`)
+срабатывал корректно; фикс — тот же `consume` на алиасе (Rule 3, move).
+Отдельно — 3 сайта (`byte_surface_test.nv`'s `UdpSocket`,
+`split_test.nv`'s `TcpListener`) обнажили ДОСРОЧНО-СУЩЕСТВУЮЩИЙ пробел
+дисциплины в самих тестах: `panic(..)` — exit-point (D133 «Plan 100.1»),
+все Live consume-obligations на panic-call должны быть закрыты; для типов
+БЕЗ `@cleanup` (`UdpSocket`/`TcpListener`, в отличие от `TcpStream`/
+`TlsStream`, D432) это не смягчается — тесты дозакрывали ресурс перед
+panic-веткой явным `.close()`.
+
+**Отдельно рассмотрено и НЕ сделано (см. цитату эмпирической проверки
+ниже) — «убрать rebind + ручной `.close()`» для
+`Ok(consume session) => { consume stream = session; …; stream.close() }`
+идиомы в `examples/tls/net`.** Гипотеза (не подтвердилась): раз
+`TcpStream`/`TlsStream` объявили `@cleanup` (D432), ручной `.close()` в
+конце да и сам rebind — избыточны. Эмпирически (генерируемый C,
+`compiler-codegen/src/codegen/emit_c.rs` `auto_cleanup_qualifies`)
+подтверждено ДВОЯКО:
+1. D432 §2 нормативно и буквально в реализации ограничивает авто-cleanup
+   ТОЛЬКО именованным bare `consume X = e;` (`Stmt::Let`, `Pattern::Ident`)
+   — arm-bound `Ok(consume stream) => { … }` БЕЗ явного rebind'а НЕ
+   попадает в `auto_cleanup_qualifies`/`block_has_auto_cleanup_lets`
+   вообще; убрать rebind → cleanup не вызывается НИГДЕ (проверено:
+   сгенерированный C не содержит вызова `@cleanup` для такого биндинга).
+   Rebind — LOAD-BEARING, не декоративный.
+2. Даже сохранив rebind и убрав только ручной `.close()`, ветвление через
+   `return`-до-конца-функции (не просто fallthrough нескольких match-arm'ов
+   без `return`, как в реальных `echo_server`/`echo_client` файлах) в
+   отдельном пробном репро вызвало runtime-fatal
+   (`defer cleanup-fail with no outer handler:
+   D188-on-exit-double-invocation`) — сигнал, что auto-cleanup под
+   early-`return`-из-вложенного-match ещё не полностью надёжен на всех
+   формах ветвления. Echo-файлы такого `return`-паттерна НЕ используют
+   (только вложенные match/println без `return`), так что их текущий
+   ручной `.close()` остаётся safe-by-construction и НЕ тронут этим
+   слиянием — canonизация idiom'ы (drop rebind/close) отложена, честно,
+   до отдельного разбора D432's early-return disarm-покрытия
+   (`[M-d432-early-return-nested-match-disarm]`, вне периметра этой волны).
+
+### Error codes (без изменений)
+
+Коды та же таблица (`E_CONSUME_KEYWORD_MISSING`/`E_VIEW_BINDING_FORBIDDEN`/
+`W_CONSUME_KEYWORD_UNNECESSARY`) — этот амендмент расширяет ТОЛЬКО
+RHS-инференцию (какие expr-формы распознаются как consume-обязательные) и
+join-механику match'а; новых кодов не вводит.
+
+### Реализация
+
+`infer_value_type` (`ExprKind::Match`/`ExprKind::IfLet` arms, best-effort
+recursion в arm/branch tail), divergence-aware merge в `ExprKind::Match`'s
+handler внутри `consume_walk_expr` (оба —
+`compiler-codegen/src/types/mod.rs`). Фикстуры:
+`spec_tests/conformance/neg/d180_match_tail_mut_binding_neg.nv` (RED,
+`E_CONSUME_KEYWORD_MISSING`),
+`spec_tests/conformance/d180_match_tail_consume_binding_ok.nv` (GREEN,
+канонический фикс + divergence-join regression pin, оба test-блока
+реально исполнены — не только type-check).
+
 ---
 
 ## D157. Implicit view default + closure capture analysis + `match consume`

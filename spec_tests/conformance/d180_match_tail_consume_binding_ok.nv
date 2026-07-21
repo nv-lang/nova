@@ -1,0 +1,65 @@
+// [M-mut-binding-accepts-must-consume] (2026-07-21) — positive companion of
+// neg/d180_match_tail_mut_binding_neg.nv: the canonical fix
+// (`consume lst = match { ... }`) compiles and the must-consume discipline
+// is fully enforced end-to-end (echo_server.nv's actual shape).
+//
+// Second test below pins the fallout this fix surfaced and had to close in
+// the SAME wave: `ExprKind::Match`'s consume-state join was NOT
+// divergence-aware (unlike `consume_walk_if`, which already special-cased
+// `then_diverges`/`else_diverges`) — a match arm that unconditionally exits
+// (`return`/`panic(..)`) was still folded into the post-match join, so the
+// universal `Err(e) => { x.close(); return Err(e) }` idiom spuriously read
+// back as `MaybeConsumed` on the arms that actually fall through, the
+// moment its binding became properly must-consume-tracked (which it never
+// was before this fix, so the defect was dormant).
+
+module spec_tests.conformance
+
+type D180MatchTailStream consume {
+    id int,
+}
+
+fn D180MatchTailStream consume @close() -> () { () }
+fn D180MatchTailStream mut @touch() -> () { () }
+
+fn bind_tail_ok(v int) -> Result[D180MatchTailStream, str] =>
+    Ok(D180MatchTailStream { id: v })
+
+fn connect_tail_ok(v int) -> Result[D180MatchTailStream, str] =>
+    Ok(D180MatchTailStream { id: v })
+
+test "consume lst = match { Ok(consume l) => l, ... } — canonical fix, mut-capable" {
+    consume lst = match bind_tail_ok(1) {
+        Ok(consume l) => l
+        Err(_e) => panic("bind failed")
+    }
+    lst.touch()          // mut-capable без доп. keyword'а (D180 Rule 4)
+    lst.close()
+}
+
+fn use_tail_diverge(fail bool) -> Result[int, str] {
+    // Divergence-aware join regression pin: the Err arm below closes `st`
+    // and diverges via `return` BEFORE the join point; the Ok arm falls
+    // through normally without touching `st` at all up to this point.
+    // Pre-fix, folding the (already-Consumed) Err-arm state into the join
+    // produced `MaybeConsumed` for `st` on the surviving Ok arm — a false
+    // positive, since that arm never executed the Err branch at all.
+    consume st = match connect_tail_ok(2) {
+        Ok(consume s) => s
+        Err(e) => return Err(e)
+    }
+    if fail {
+        st.close()
+        return Err("boom")
+    }
+    ro id = st.id
+    st.close()
+    Ok(id)
+}
+
+test "divergence-aware match join — Err-arm early-return does not poison Ok-arm state" {
+    ro a = use_tail_diverge(true)
+    ro b = use_tail_diverge(false)
+    assert(match a { Err(_) => true, Ok(_) => false })
+    assert(match b { Ok(2) => true, _ => false })
+}

@@ -1,0 +1,35 @@
+// EXPECT_COMPILE_ERROR [E_CONSUME_KEYWORD_MISSING] binding `lst` держит consume-обязательную инстанс типа `D180MatchTailListener` — требуется keyword `consume` (D180)
+//
+// [M-mut-binding-accepts-must-consume] (2026-07-21, владелец, чтение
+// examples/tls/echo_server.nv): match-expression USED AS a let-RHS whose
+// arms pass a must-consume payload through unchanged
+// (`Ok(consume l) => l`) escaped D180 Rule 1 entirely — `infer_value_type`
+// never recursed into `ExprKind::Match` arm bodies, so the checker had no
+// idea the match's own result type was must-consume, and a `mut`/`ro`
+// binding of that result compiled silently (no E_CONSUME_KEYWORD_MISSING).
+// This is DIFFERENT from the [M-d180-consume-propagation-match-payload-
+// mut-rebind] wave (d180_view_binding_after_pattern_consume_neg.nv) — that
+// one was about ALIASING the arm-bound name itself (`mut stream = tcp`
+// where `tcp` is `Ok(consume tcp)`'s own payload); THIS gap is one level
+// further out — the match's RESULT (after the arm already correctly
+// consumed its payload and returned it) binds into a fresh `mut`/`ro`
+// variable, which the checker's RHS-type-inference never even looked at.
+
+module neg.d180_match_tail_mut_binding_neg
+
+type D180MatchTailListener consume {
+    id int,
+}
+
+fn D180MatchTailListener consume @close() -> () { () }
+
+fn bind_tail(v int) -> Result[D180MatchTailListener, str] =>
+    Ok(D180MatchTailListener { id: v })
+
+test "mut lst = match { Ok(consume l) => l, ... } — match-tail passthrough escapes Rule 1" {
+    mut lst = match bind_tail(1) {
+        Ok(consume l) => l
+        Err(_e) => panic("bind failed")
+    }
+    lst.close()
+}

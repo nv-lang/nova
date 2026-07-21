@@ -39,7 +39,7 @@ fn main() {
                 // D415 §2 reasoning as examples/net/echo_server.nv: a
                 // mut-capture of either across the spawn boundary would be
                 // E_CONCURRENT_MUT_CAPTURE).
-                mut lst = match TcpListener.bind(addr) {
+                consume lst = match TcpListener.bind(addr) {
                     Ok(consume l)  => l
                     Err(_) => panic("Failed to bind: ${PORT}")
                 }

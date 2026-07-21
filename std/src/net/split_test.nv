@@ -20,7 +20,7 @@ test "TCP split: server + client exchange via read/write halves _slow" {
             // Client fiber: connect, split, write request, read reply.
             spawn {
                 ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
-                mut conn = match TcpStream.connect(SocketAddr.loopback(port)) {
+                consume conn = match TcpStream.connect(SocketAddr.loopback(port)) {
                     Ok(consume s) => s
                     Err(_) => panic("connect failed")
                 }
@@ -44,14 +44,18 @@ test "TCP split: server + client exchange via read/write halves _slow" {
 
             // Server fiber: bind + accept в одном файбере, listener не покидает его.
             spawn {
-                mut lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                consume lst = match TcpListener.bind(SocketAddr.loopback(0)) {
                     Ok(consume l) => l
                     Err(_) => panic("bind failed")
                 }
                 ch.tx.send(lst.local_port())
-                mut srv = match lst.accept() {
+                // D133 strict (`TcpListener` has no `@cleanup`, unlike
+                // `TcpStream`): close `lst` before `panic` on this
+                // (never-taken outside a real failure) error arm — see
+                // byte_surface_test.nv's UdpSocket sites for the same shape.
+                consume srv = match lst.accept() {
                     Ok(consume s) => s
-                    Err(_) => panic("accept failed")
+                    Err(_) => { lst.close(); panic("accept failed") }
                 }
                 mut (srv_rd, srv_wr) = srv.split()
 
@@ -59,7 +63,7 @@ test "TCP split: server + client exchange via read/write halves _slow" {
                 req_buf.resize(64, 0 as u8)
                 ro incoming = srv_rd.read(req_buf)
                 assert(incoming.is_ok())
-                ro req_n = match incoming { Ok(n) => n, Err(_) => panic("srv read") }
+                ro req_n = match incoming { Ok(n) => n, Err(_) => { lst.close(); panic("srv read") } }
                 assert(unsafe { req_buf[0..req_n].to_str_unchecked() } == "client-hello")
 
                 ro reply_wr = srv_wr.write("server-greeting".bytes())
@@ -77,7 +81,7 @@ test "split mock stream — read half + write half" {
     with Net = mock_net() {
         supervised {
             spawn {
-                mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                consume s = match TcpStream.connect(SocketAddr.loopback(0)) {
                     Ok(consume c) => c
                     Err(_) => panic("connect")
                 }
