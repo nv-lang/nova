@@ -2541,7 +2541,15 @@ fn conv_lint_options_for(path: &Path) -> nova_codegen::lints::ConvLintOptions {
     // → 13 ложных находок держали gate красным (fix 2026-07-11).
     let in_test = s.ends_with("_test.nv") || s.contains("nova_tests/")
         || s.contains("spec_tests/");
-    nova_codegen::lints::ConvLintOptions { in_std, in_vec_module, in_test }
+    // Владелец 2026-07-21: `std/src/runtime/string/**` — реализация самого
+    // str-примитива (`@concat`/etc., transform.nv и соседи) — не сайт для
+    // W_STR_CONCAT_METHOD-канонизации, это и есть канон-определение.
+    let in_str_runtime_impl = s.contains("/runtime/string/")
+        || s.starts_with("std/runtime/string/")
+        || s.starts_with("runtime/string/");
+    nova_codegen::lints::ConvLintOptions {
+        in_std, in_vec_module, in_test, in_str_runtime_impl,
+    }
 }
 
 /// Plan 185: `nova lint [paths]` — прогон реестра конвенционных правил
