@@ -1,0 +1,75 @@
+// [M-protocol-box-callarg-vtable-incomplete] (Plan 221 A-B4/A-B6, box-vtable P2 /
+// latent protocol-box — one root, fixed together). Codegen's box/vtable coercion
+// of a concrete implementer into a PROTOCOL-TYPED position broke specifically in
+// CALL-ARGUMENT (and, same root, RETURN-VALUE) position when the protocol is a
+// PLAIN NAMED protocol (no `[T]` generics) — CC-FAIL "passing/returning
+// 'Nova_X *' … incompatible … 'NovaBox_<Proto>'". Root: `protocol_type_args`
+// (compiler-codegen/src/codegen/emit_c.rs) gated its entire body on
+// `!generics.is_empty()`, so a non-generic protocol param/return type never
+// reached the pre-box hooks (`fn_protocol_params` for call args,
+// `current_fn_returns_protocol` for returns) even though `type_ref_to_c` had
+// ALREADY lowered the fn's declared signature to `NovaBox_<Proto>` unconditionally
+// — signature demanded a box, call/return sites kept passing the bare pointer.
+// A SECOND, independent bug in the same area: `fn_protocol_params` itself (used
+// by generic-protocol call args) was populated ONLY inside `emit_fn` (per-callee,
+// on-the-fly) with no pre-pass — a caller emitted BEFORE its callee's own
+// `emit_fn` ran (source/emission order) saw an empty entry and skipped boxing
+// even for a GENERIC protocol param. Fixed by (a) a pre-pass populating
+// `fn_protocol_params` for every fn before any body is emitted (mirrors the
+// existing non-generic-protocol-typedef pre-pass), and (b) `protocol_type_args`
+// now returns `Some((proto, vec![]))` for a non-generic protocol type instead of
+// `None`, with the two box-type-name formatters that read it patched to omit the
+// (bogus, trailing-`_`) args suffix when `type_args` is empty.
+//
+// This fixture covers BOTH: a non-generic protocol used as a call-ARGUMENT type,
+// a non-generic protocol used as a fn RETURN type, and — to also pin the
+// pre-pass/ordering half of the fix — a GENERIC protocol call-argument where the
+// callee is declared (and its `emit_fn` therefore runs) AFTER the caller in
+// source order.
+module spec_tests.conformance
+
+type M221Greeter protocol {
+    @greet() -> int
+}
+
+type M221GreeterG[T] protocol {
+    @greet() -> T
+}
+
+type M221Speaker {
+    base int
+}
+
+fn M221Speaker @greet() -> int => @base + 1
+
+// Call-argument position, non-generic protocol param — declared BEFORE its
+// only caller (`m221_call_greet_arg`) so a source/registration-order gap would
+// NOT be masked by "callee runs its own emit_fn first" happenstance ordering.
+fn m221_call_greet_arg(g M221Greeter) -> int => g.greet()
+
+// Return-value position, non-generic protocol return.
+fn m221_make_greeter() -> M221Greeter {
+    ro sp = M221Speaker { base: 41 }
+    return sp
+}
+
+// Call-argument position, GENERIC protocol param, callee declared AFTER the
+// function that calls it (`m221_uses_generic_arg_first` below) — pins the
+// pre-pass ordering fix independent of the non-generic-gate fix.
+fn m221_uses_generic_arg_first() -> int => m221_call_greet_arg_generic(M221Speaker { base: 21 })
+
+fn m221_call_greet_arg_generic(g M221GreeterG[int]) -> int => g.greet()
+
+test "protocol-box: non-generic protocol as call-argument type" {
+    ro sp = M221Speaker { base: 41 }
+    assert(m221_call_greet_arg(sp) == 42)
+}
+
+test "protocol-box: non-generic protocol as fn return type" {
+    mut g = m221_make_greeter()
+    assert(g.greet() == 42)
+}
+
+test "protocol-box: generic protocol call-argument, callee declared after caller" {
+    assert(m221_uses_generic_arg_first() == 22)
+}

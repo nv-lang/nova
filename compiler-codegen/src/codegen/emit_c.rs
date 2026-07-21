@@ -5982,6 +5982,62 @@ impl CEmitter {
             let _ = self.emit_protocol_box_typedef(&proto_name, &[]);
         }
 
+        // [M-protocol-box-callarg-vtable-incomplete] (Plan 221 A-B4): pre-pass —
+        // register `fn_protocol_params` (D142 protocol-typed parameter →
+        // NovaBox_* pre-box info) for EVERY fn BEFORE any fn body is emitted.
+        // Previously this table was populated only inside `emit_fn` itself
+        // (see below, "Plan 72 P3-B: protocol-typed parameters lower to
+        // NovaBox_*"), so a call site reached the pre-box hook
+        // (`emit_call`'s `debt_call_protocol_params_key` lookup) with an
+        // EMPTY entry whenever the callee's own `emit_fn` had not run yet
+        // (source order: callee defined/emitted AFTER the caller, or the
+        // caller is itself never directly emitted-through such as `main`
+        // being emitted in item order ahead of a later-declared callee) —
+        // the concrete argument then passed through un-boxed as a bare
+        // `Nova_<T>*`, mismatching the callee's `NovaBox_<Proto>` parameter
+        // type (CC-FAIL `passing 'Nova_X *' to parameter of incompatible
+        // type 'NovaBox_<Proto>'`). Mirrors the existing non-generic-protocol
+        // pre-emit above (same rationale: call sites need this BEFORE the
+        // declaring fn's body pass). Byte-identical for every fn without a
+        // protocol-typed param (both loops are no-ops); for fns WITH one,
+        // `emit_fn`'s own registration below is now a harmless idempotent
+        // re-insert (HashMap::insert, same key/value) — order between the
+        // two no longer matters.
+        {
+            let mut register_fn_protocol_params = |f: &FnDecl, out: &mut Self| {
+                let mut param_protos: Vec<Option<(String, Vec<String>)>> = Vec::new();
+                let mut any_proto = false;
+                for p in &f.params {
+                    if let Some((proto, type_args)) = out.protocol_type_args(&p.ty) {
+                        out.emit_protocol_box_typedef(&proto, &type_args);
+                        param_protos.push(Some((proto, type_args)));
+                        any_proto = true;
+                    } else {
+                        param_protos.push(None);
+                    }
+                }
+                if any_proto {
+                    let key = match &f.receiver {
+                        Some(recv) => format!("{}.{}", recv.type_name, f.name),
+                        None => f.name.clone(),
+                    };
+                    out.fn_protocol_params.insert(key, param_protos);
+                }
+            };
+            for item in &module.items {
+                if let Item::Fn(f) = item {
+                    register_fn_protocol_params(f, &mut self);
+                }
+            }
+            for pf in &module.peer_files {
+                for item in &pf.items_here {
+                    if let Item::Fn(f) = item {
+                        register_fn_protocol_params(f, &mut self);
+                    }
+                }
+            }
+        }
+
         // Plan 138.2 Ф.0c (D29 method-level shadow): names of generic types
         // that the user has REDECLARED in entry-peer-files with a DIFFERENT
         // arity (e.g. user non-generic `type Vec { x, y }` shadowing an
@@ -9120,14 +9176,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         None
     }
 
-    /// Plan 72 P3-B: if `ty` is a generic protocol instantiation (e.g.
-    /// `Iter[int]`), return `(proto_name, [concrete C type args])`. Used for
-    /// both protocol return types and protocol parameter types — they lower to
-    /// the `NovaBox_*` fat pointer. Returns `None` for non-protocol types.
+    /// Plan 72 P3-B: if `ty` is a protocol type — generic instantiation (e.g.
+    /// `Iter[int]`) OR a plain non-generic protocol (e.g. `Greeter`) — return
+    /// `(proto_name, [concrete C type args])` (empty Vec for non-generic).
+    /// Used for both protocol return types and protocol parameter types —
+    /// they lower to the `NovaBox_*` fat pointer. Returns `None` for
+    /// non-protocol types.
+    ///
+    /// [M-protocol-box-callarg-vtable-incomplete] (Plan 221 A-B4): before this
+    /// fix, a non-empty `generics` check gated this whole fn — a NAMED
+    /// non-generic protocol type (`fn f(g Greeter)`, no `[T]`) returned `None`
+    /// here, so it was invisible to BOTH the call-argument pre-box hook
+    /// (`emit_call`'s `fn_protocol_params` lookup) and the return-value
+    /// pre-box hook (`wrap_protocol_return`'s `protocol_box_return_type_info`)
+    /// — `type_ref_to_c` (the DECLARED-type lowering, used for the fn
+    /// signature itself) already lowers a non-generic protocol to
+    /// `NovaBox_<Name>` unconditionally (no gate), so the signature demanded
+    /// a box while call/return sites kept passing/returning the bare
+    /// concrete pointer — CC-FAIL (`passing/returning 'Nova_X *' … incompatible
+    /// … 'NovaBox_<Proto>'`). Non-generic protocols were already known-boxable
+    /// elsewhere (`emit_protocol_vtable_companion`'s own comment: "non-generic
+    /// protocols → empty type_args OK"; `emit_protocol_box_typedef` already
+    /// handles empty `type_args` for the pre-non-generic-protocol-typedef
+    /// pass) — this fn simply never surfaced that case to its callers.
     fn protocol_type_args(&self, ty: &TypeRef) -> Option<(String, Vec<String>)> {
         let proto_name = self.extract_protocol_type_name(ty)?;
         let TypeRef::Named { generics, .. } = ty else { return None; };
-        if generics.is_empty() { return None; }
+        if generics.is_empty() { return Some((proto_name, Vec::new())); }
         let type_args: Vec<String> = generics.iter()
             .filter_map(|g| self.type_ref_to_c(g).ok())
             .collect();
@@ -9147,11 +9222,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// (`&self`) — the typedef itself is emitted by `emit_protocol_box_typedef`.
     fn protocol_box_c_type_for(&self, ty: &TypeRef) -> Option<(String, String, Vec<String>)> {
         let (proto, type_args) = self.protocol_type_args(ty)?;
-        let args_mangled: String = type_args.iter()
-            .map(|t| Self::sanitize_c_for_ident(t))
-            .collect::<Vec<_>>()
-            .join("_");
-        Some((format!("NovaBox_{}_{}", proto, args_mangled), proto, type_args))
+        // Mirror `emit_protocol_box_typedef`'s / `type_ref_to_c`'s non-generic
+        // mangling: no args-suffix (and no trailing `_`) when `type_args` is
+        // empty — a NAMED non-generic protocol's C type is bare `NovaBox_<Proto>`.
+        let box_ty = if type_args.is_empty() {
+            format!("NovaBox_{}", proto)
+        } else {
+            let args_mangled: String = type_args.iter()
+                .map(|t| Self::sanitize_c_for_ident(t))
+                .collect::<Vec<_>>()
+                .join("_");
+            format!("NovaBox_{}_{}", proto, args_mangled)
+        };
+        Some((box_ty, proto, type_args))
     }
 
     /// Plan 72 P1-C: emit a C cast expression that reinterprets a `nova_int`
@@ -34454,11 +34537,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let v = self.emit_expr(arg_expr)?;
                                 let boxed = self.box_value_for_protocol(
                                     v, &concrete_c, proto, type_args);
-                                let args_mangled: String = type_args.iter()
-                                    .map(|t| Self::sanitize_c_for_ident(t))
-                                    .collect::<Vec<_>>().join("_");
-                                let box_ty = format!(
-                                    "NovaBox_{}_{}", proto, args_mangled);
+                                // [M-protocol-box-callarg-vtable-incomplete]:
+                                // mirror `type_ref_to_c`'s non-generic mangling
+                                // (bare `NovaBox_<Proto>`, no trailing `_`) —
+                                // `type_args` is now empty for a NAMED
+                                // non-generic protocol param (see
+                                // `protocol_type_args`), and the old
+                                // unconditional `NovaBox_{}_{}` produced a
+                                // bogus `NovaBox_Greeter_` (trailing
+                                // underscore, undeclared C type) that didn't
+                                // match the callee's real parameter type.
+                                let box_ty = if type_args.is_empty() {
+                                    format!("NovaBox_{}", proto)
+                                } else {
+                                    let args_mangled: String = type_args.iter()
+                                        .map(|t| Self::sanitize_c_for_ident(t))
+                                        .collect::<Vec<_>>().join("_");
+                                    format!("NovaBox_{}_{}", proto, args_mangled)
+                                };
                                 let tmp = self.fresh_tmp();
                                 self.line(&format!(
                                     "{} {} = {};", box_ty, tmp, boxed));
