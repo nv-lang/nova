@@ -7,12 +7,12 @@ import std.crypto.sha256.{Sha256}
 import std.encoding.hex.{Hex}
 
 test "SHA-256: пустая строка" {
-    assert(Sha256.hash_str("".bytes()) ==
+    assert(Sha256.hash_str("") ==
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
 }
 
 test "SHA-256: 'abc' (NIST sample)" {
-    assert(Sha256.hash_str("abc".bytes()) ==
+    assert(Sha256.hash_str("abc") ==
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
 }
 
@@ -46,9 +46,9 @@ test "SHA-256: incremental == one-shot" {
     ro one_shot = Sha256.hash_str(full)
 
     mut state = Sha256.new()
-    state.update("The quick brown ".bytes())
-    state.update("fox jumps over ".bytes())
-    state.update("the lazy dog".bytes())
+    state.update("The quick brown ")
+    state.update("fox jumps over ")
+    state.update("the lazy dog")
     ro digest = state.finalize()
     mut bytes []u8 = []
     for i in 0..32 { bytes.push(digest[i]) }

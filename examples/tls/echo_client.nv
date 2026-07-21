@@ -25,7 +25,7 @@ import std.net.{SocketAddr, TcpStream, real_net}
 import tls.{TlsStream, ClientConfig, VerificationMode, TlsVersion}
 
 const PORT u16 = 7778
-const MESSAGE str = "hello from nova, over tls"
+const MESSAGE = "hello from nova, over tls"
 
 fn server_ca() -> []u8 => embed("certs/localhost_cert.pem")
 

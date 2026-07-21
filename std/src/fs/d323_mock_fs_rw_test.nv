@@ -11,7 +11,7 @@ test "mock_fs: write -> read -> metadata -> remove round-trip" {
     mut fs = MemFs.new()
     ro p = Path.posix("/data/hi.txt")
     with Fs = mock_fs(fs) {
-        match write(p, "hi bytes".bytes()) { Ok(()) => assert(true), Err(_) => assert(false) }
+        match write(p, "hi bytes") { Ok(()) => assert(true), Err(_) => assert(false) }
         match read(p) { Ok(b) => assert(b.len() == 8), Err(_) => assert(false) }
         match read_text(p) { Ok(s) => assert(s == "hi bytes"), Err(_) => assert(false) }
         match metadata(p) { Ok(m) => assert(m.len() == 8 && m.is_file()), Err(_) => assert(false) }
@@ -44,7 +44,7 @@ test "mock_fs: File seek + read_at + write_at (positioned I/O)" {
             Err(_) => assert(false)
             Ok(consume f0) => {
                 consume f = f0
-                ro _ = f.write("0123456789".bytes())
+                ro _ = f.write("0123456789")
                 match f.seek(SeekFrom.start(0)) { Ok(pos) => assert(pos == 0), Err(_) => assert(false) }
                 mut buf []u8 = []u8.new()
                 buf.resize(4, 0 as u8)
@@ -54,7 +54,7 @@ test "mock_fs: File seek + read_at + write_at (positioned I/O)" {
                 buf2.resize(2, 0 as u8)
                 match f.read_at(buf2, 5) { Ok(n) => assert(n == 2), Err(_) => assert(false) }
                 assert(buf2[0] == (53 as u8))  // '5'
-                match f.write_at("AB".bytes(), 0) { Ok(n) => assert(n == 2), Err(_) => assert(false) }
+                match f.write_at("AB", 0) { Ok(n) => assert(n == 2), Err(_) => assert(false) }
                 ro _ = f.close()
             }
         }

@@ -16,7 +16,7 @@ test "real_fs: write / read / stat / read_dir / remove round-trip" {
                 ro _ = remove_dir_all(dir)   // best-effort clean from a prior run
                 match create_dir(dir) { Ok(()) => assert(true), Err(_) => assert(false) }
                 ro f = dir.join("hello.txt")
-                match write(f, "real bytes".bytes()) { Ok(()) => assert(true), Err(_) => assert(false) }
+                match write(f, "real bytes") { Ok(()) => assert(true), Err(_) => assert(false) }
                 match read_text(f) { Ok(s) => assert(s == "real bytes"), Err(_) => assert(false) }
                 match metadata(f) { Ok(m) => assert(m.len() == 10 && m.is_file()), Err(_) => assert(false) }
                 match read_dir(dir) { Ok(es) => assert(es.len() == 1), Err(_) => assert(false) }

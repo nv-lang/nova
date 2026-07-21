@@ -32,7 +32,7 @@ module std.io
 
 // 8 KiB read chunk — matches Rust's `DEFAULT_BUF_SIZE`. Large enough to amortise
 // per-call overhead, small enough to bound transient memory.
-const DEFAULT_CHUNK int = 8192
+const DEFAULT_CHUNK = 8192
 
 // ─── Protocols ───
 

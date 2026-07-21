@@ -73,7 +73,7 @@ import std.time.duration
 // Loopback port range used for the synthetic fan-out (Demo/Chaos): each
 // source connects to `BASE_PORT + index`, so the (mocked) `Net` handler's
 // per-call identity comes from the address, not from hidden state.
-const BASE_PORT int = 20000
+const BASE_PORT = 20000
 
 // [M-flagship-spawn-throw-segfault]: **ЗАКРЫТ (RE-VERIFY — свежий бинарь не
 // воспроизводит; заморожен фикстурой regressions/spawn_throw_multifield_payload/).

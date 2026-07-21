@@ -22,13 +22,13 @@
 module std.fs
 
 // POSIX errno codes returned (negated) by the mock; kind_from_errno maps them.
-const EN_NOTFOUND      int = 2
-const EN_ISDIR         int = 21
-const EN_NOTDIR        int = 20
-const EN_ALREADYEXISTS int = 17
-const EN_NOTEMPTY      int = 39
-const EN_INVAL         int = 22
-const EN_NOSPC         int = 28
+const EN_NOTFOUND = 2
+const EN_ISDIR = 21
+const EN_NOTDIR = 20
+const EN_ALREADYEXISTS = 17
+const EN_NOTEMPTY = 39
+const EN_INVAL = 22
+const EN_NOSPC = 28
 
 // ─── MemFs — the in-memory tree + fd table + scan iterator + error injection ──
 

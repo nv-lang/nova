@@ -25,7 +25,7 @@ import std.io.{IoError, ErrorKind, SeekFrom}
 
 // EINVAL — returned by the real_fs handler when a path is rejected before the FFI
 // (interior NUL), mapping to ErrorKind.InvalidInput in the wrapper.
-const E_INVAL int = 22
+const E_INVAL = 22
 
 // ─── int-code → Result helpers (the effect boundary is int-only) ──
 

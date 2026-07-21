@@ -61,7 +61,7 @@ fn main() {
                                 match stream.read_to_vec(4096) {
                                     Err(_) => println("Read failed")
                                     Ok(_data) => {
-                                        match stream.write_all("echo_ok\n".bytes()) {
+                                        match stream.write_all("echo_ok\n") {
                                             Ok(_)  => println("Echo sent")
                                             Err(_) => println("Write failed")
                                         }

@@ -22,28 +22,28 @@ module std.fs
 //     the platform UV_FS_O_* set, so Nova never sees OS-specific flag values) ──
 
 /// Open for reading.
-const OPEN_READ   int = 1
+const OPEN_READ = 1
 /// Open for writing.
-const OPEN_WRITE  int = 2
+const OPEN_WRITE = 2
 /// All writes append at end-of-file (O_APPEND).
-const OPEN_APPEND int = 4
+const OPEN_APPEND = 4
 /// Truncate to zero length on open (O_TRUNC).
-const OPEN_TRUNC  int = 8
+const OPEN_TRUNC = 8
 /// Create the file if missing (O_CREAT).
-const OPEN_CREATE int = 16
+const OPEN_CREATE = 16
 /// With CREATE, fail if the file already exists (O_EXCL — anti-TOCTOU, §3c).
-const OPEN_EXCL   int = 32
+const OPEN_EXCL = 32
 
 // ─── Seek whence (nova_fs_seek maps to native SEEK_SET/CUR/END) ──
-const SEEK_SET int = 0
-const SEEK_CUR int = 1
-const SEEK_END int = 2
+const SEEK_SET = 0
+const SEEK_CUR = 1
+const SEEK_END = 2
 
 // ─── stat st_mode kind bits (POSIX S_IFMT >> 12; fs.c normalises Windows) ──
-const KIND_FILE    int = 1
-const KIND_DIR     int = 2
-const KIND_SYMLINK int = 3
-const KIND_OTHER   int = 0
+const KIND_FILE = 1
+const KIND_DIR = 2
+const KIND_SYMLINK = 3
+const KIND_OTHER = 0
 
 // ─── Blocking uv_fs_* hooks (nova_rt/fs.c) ──
 // Convention (net-precedent): return >= 0 on success (fd / byte-count / 0), or a

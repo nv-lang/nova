@@ -34,14 +34,14 @@ test "decode: неправильный secret → InvalidSignature" {
     claims_m.insert("sub", JsonValue.Str("u1"))
     ro token = Jwt.encode_hs256(secret, JsonValue.Object(claims_m))
 
-    assert(match Jwt.decode_hs256("wrong".bytes(), token) {
+    assert(match Jwt.decode_hs256("wrong", token) {
         Err(InvalidSignature) => true
         _                     => false
     })
 }
 
 test "decode: неправильный формат → InvalidFormat" {
-    assert(match Jwt.decode_hs256("secret".bytes(), "not-a-jwt") {
+    assert(match Jwt.decode_hs256("secret", "not-a-jwt") {
         Err(InvalidFormat) => true
         _                  => false
     })

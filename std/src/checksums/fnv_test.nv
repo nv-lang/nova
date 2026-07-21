@@ -16,12 +16,12 @@ test "FNV-1a 64: пустой ввод" {
 
 test "FNV-1a 32: 'a'" {
     // Test vector: hash32("a") = 0xE40C292C
-    assert(Fnv.hash32("a".bytes()) == 0xE40C292C)
+    assert(Fnv.hash32("a") == 0xE40C292C)
 }
 
 test "FNV-1a 64: 'foobar'" {
     // Test vector: hash64("foobar") = 0x85944171F73967E8
-    assert(Fnv.hash64("foobar".bytes()) == 0x85944171F73967E8)
+    assert(Fnv.hash64("foobar") == 0x85944171F73967E8)
 }
 
 test "детерминизм: повторный hash → тот же результат" {
@@ -42,8 +42,8 @@ test "streaming: один chunk == split chunks" {
     ro one_shot = Fnv.hash64(full)
 
     mut state = Fnv64.new()
-    state.update("Hello, ".bytes())
-    state.update("world!".bytes())
+    state.update("Hello, ")
+    state.update("world!")
     ro streaming = state.finalize()
 
     assert(one_shot == streaming)

@@ -10,9 +10,9 @@
 //!    warning. Public API должен иметь typed Fail (D65 convention).
 
 use crate::ast::{
-    ArrayElem, Block, CallArg, ClosureBody, ElseBranch, Expr, ExprKind, FnBody, FnDecl,
+    ArrayElem, Block, CallArg, ClosureBody, ConstDecl, ElseBranch, Expr, ExprKind, FnBody, FnDecl,
     HandlerMethodBody, Import, Item, MatchArmBody, Module, Pattern, ReceiverKind,
-    Stmt, TypeDeclKind, TypeRef,
+    Stmt, TypeDeclKind, TypeRef, VariantPatternKind,
 };
 use crate::diag::{byte_to_line_col, Diagnostic, Span};
 use std::collections::HashSet;
@@ -3206,6 +3206,37 @@ pub const CONV_RULES: &[ConvRule] = &[
         ast: Some(conv_manual_min_max),
         text: None,
     },
+    ConvRule {
+        id: "W_REDUNDANT_BYTES_ON_LITERAL",
+        summary: "`\"...\".bytes()` голым call-аргументом — позиция уже коэрсировала бы \
+                  str-литерал в `[]u8` через `#coerce` (D429/D55, владелец 2026-07-21)",
+        ast: Some(conv_redundant_bytes_on_literal),
+        text: None,
+    },
+    ConvRule {
+        id: "W_REDUNDANT_CONSUME_REBIND",
+        summary: "`consume y = x` в теле match-арма, где `x` — уже `consume`-биндинг \
+                  ИЗ ПАТТЕРНА того же арма и больше нигде не используется — бинди сразу \
+                  в паттерне (владелец 2026-07-21)",
+        ast: Some(conv_redundant_consume_rebind),
+        text: None,
+    },
+    ConvRule {
+        id: "W_MANUAL_CLOSE_AUTO_CLEANUP",
+        summary: "хвостовой ручной finalize-вызов на `consume`-биндинге типа с \
+                  `consume @cleanup` (D432) — авто-cleanup на выходе из скоупа делает \
+                  вызов избыточным (владелец 2026-07-21)",
+        ast: Some(conv_manual_close_auto_cleanup),
+        text: None,
+    },
+    ConvRule {
+        id: "W_REDUNDANT_CONST_TYPE_ANNOTATION",
+        summary: "аннотация типа у `const`, СОВПАДАЮЩАЯ с дефолтным типом литерала-\
+                  инициализатора (str/int/bool/char) — тип и так выводится (владелец \
+                  2026-07-21)",
+        ast: Some(conv_redundant_const_type_annotation),
+        text: None,
+    },
 ];
 
 /// id всех правил реестра (для валидации `--rule` и `--list-rules`).
@@ -3379,6 +3410,38 @@ fn conv_all_fns(m: &Module) -> Vec<&FnDecl> {
         for item in &pf.items_here {
             if let Item::Fn(f) = item {
                 out.push(f);
+            }
+        }
+    }
+    out
+}
+
+/// `test "name" { … }` block bodies (`Item::Test`) — SIBLING of
+/// `conv_all_fns`, deliberately SEPARATE from it (owner 2026-07-21 lint
+/// sweep finding): `conv_all_fns` only sees `Item::Fn`, so EVERY existing
+/// `CONV_RULES` entry that walks via `conv_all_fns(m)` is BLIND to code
+/// living inside `test { }` blocks — a real, pre-existing gap across the
+/// WHOLE registry (most `*_test.nv` module content is exactly `test { }`
+/// blocks, not `fn`s; confirmed empirically: `nova lint` over `std`/
+/// `examples` found zero `W_REDUNDANT_BYTES_ON_LITERAL` hits in
+/// `std/src/net/tcp_test.nv`'s `conn.write("hello net2".bytes())` call-arg
+/// sites despite the shape matching). Widening the SHARED `conv_all_fns`
+/// itself is out of scope here (touches all 25 pre-existing rules at once,
+/// its own separate validation pass) — this wave's 4 NEW rules use this
+/// sibling helper explicitly so at least the new rules' own advertised
+/// scope ("std/examples") is not silently narrowed by the gap; flagged in
+/// the wave's report as a legitimate follow-up for the other 25.
+fn conv_all_test_bodies(m: &Module) -> Vec<&Block> {
+    let mut out = Vec::new();
+    for item in &m.items {
+        if let Item::Test(t) = item {
+            out.push(&t.body);
+        }
+    }
+    for pf in &m.peer_files {
+        for item in &pf.items_here {
+            if let Item::Test(t) = item {
+                out.push(&t.body);
             }
         }
     }
@@ -5639,6 +5702,447 @@ fn conv_coerce_explicit_redundant(m: &Module, _o: &ConvLintOptions, out: &mut Ve
 }
 
 // ---------------------------------------------------------------------------
+// W_REDUNDANT_BYTES_ON_LITERAL — bare `"...".bytes()` sitting as a
+// call-ARGUMENT (owner 2026-07-21). Scope note: `W_COERCE_EXPLICIT_REDUNDANT`
+// above already flags `.bytes()`/`.into_bytes()`/`.into_str()` at let/const/
+// return positions (incl. a str-literal receiver) — this rule deliberately
+// covers ONLY the call-arg position, which that rule's own doc explicitly
+// excludes ("call-arg positions … NOT flagged — need callee signature
+// resolution"). No overlap, no double-warning on the same site.
+//
+// Soundness WITHOUT callee resolution (TYPE-CHECK level): `"...".bytes()`
+// calls str's OWN (non-overloadable, prelude-fixed) `#coerce`-registered
+// view method (`std/src/runtime/string/core.nv`: `#coerce fn str @bytes()
+// -> ro []u8`), unconditionally typed `ro []u8`. If the enclosing call
+// ALREADY type-checks with `.bytes()` present, the argument SLOT's declared
+// type already accepts `ro []u8` — and D429 R6 lists "call-arg на
+// резолвленный параметр" among the ✅ #coerce positions, so `nova check`
+// accepts the bare literal at that position too (verified: `nova check
+// --strict-effects` stayed green on every canonized site).
+//
+// CAVEAT — discovered empirically during this wave's canonization sweep,
+// NOT reasoned from the spec: the type-checker's ACCEPT decision does not
+// guarantee the CODEGEN REWRITE (materializing the coercion in emitted C)
+// actually runs for every call-arg shape yet. `nova test` (real C build+run,
+// no `--strict-effects`) caught TWO real CC-FAILs this wave — `nova check`
+// passed, `nova build`/`test` did not: `BufWriter[W].write(data []u8)`
+// (`std/src/io`, generic receiver) and `TcpStream.write/write_all(data
+// []u8)` (`std/src/net`, `Net`-effect receiver) inside `test { }` blocks —
+// while the STRUCTURALLY IDENTICAL `TlsStream.write_all(data []u8) Net`
+// (`examples/tls/echo_server.nv`, plain `fn main()`, `--strict-effects`)
+// built fine, as did `File.write` (`std/src/fs`, `Fs`-effect, inside `test
+// { }`) and free-fn/static calls (`crypto`/`checksums`/`base64`/`os`, inside
+// `test { }`). Root cause NOT fully isolated (plausibly the codegen rewrite
+// pass's own `test { }`-body coverage, mirroring `conv_all_test_bodies`'
+// doc above — but `File.write` contradicts a clean "test-block gap" theory,
+// so this is left an OPEN finding, not a diagnosed one) — a legitimate
+// compiler follow-up, out of scope for a lint-only wave. Practical effect:
+// this lint's advice is TYPE-CHECK-sound but not yet universally BUILD-safe
+// for every call-arg shape; `std/src/io` and `std/src/net`'s own `.bytes()`
+// call-arg sites were deliberately left UNCANONIZED this wave (reverted
+// after the CC-FAIL) — see the wave's report for the exact repro sites.
+//
+// Literal-only per owner's explicit brief (2026-07-21) — a `str` VARIABLE
+// receiver would ALSO coerce today under the general D429 #coerce mechanism
+// (unlike the RETRACTED D55 literal-only subsection the brief cites), but is
+// intentionally left OUT of this rule's scope; flagged as a discrepancy in
+// the wave's report rather than silently widened past the given brief.
+// ---------------------------------------------------------------------------
+
+fn conv_redundant_bytes_on_literal(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    fn is_bare_bytes_on_literal(e: &Expr) -> bool {
+        let ExprKind::Call { func, args, trailing } = &e.kind else { return false };
+        if !args.is_empty() || trailing.is_some() {
+            return false;
+        }
+        let ExprKind::Member { obj, name } = &func.kind else { return false };
+        name == "bytes"
+            && matches!(obj.kind, ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. })
+    }
+
+    fn check_expr(e: &Expr, out: &mut Vec<LintWarning>) {
+        let ExprKind::Call { args, .. } = &e.kind else { return };
+        for a in args {
+            // Spread (`...expr`) changes arity/semantics — out of scope
+            // (mirrors `conv_redundant_of`'s positional-only caution).
+            if a.is_spread() {
+                continue;
+            }
+            let arg_expr = a.expr();
+            if !is_bare_bytes_on_literal(arg_expr) {
+                continue;
+            }
+            out.push(LintWarning {
+                rule: "W_REDUNDANT_BYTES_ON_LITERAL",
+                diag: Diagnostic::new(
+                    "str литерал коэрсируется в `[]u8` (D55/D429 `#coerce`, \
+                     zero-copy) — уберите `.bytes()`."
+                        .to_string(),
+                    arg_expr.span,
+                ),
+            });
+        }
+    }
+
+    for f in conv_all_fns(m) {
+        conv_walk_fn(f, &mut |_s, _| {}, &mut |e, _in_loop| check_expr(e, out));
+    }
+    // `test { }` block bodies — see `conv_all_test_bodies` doc (sibling of
+    // `conv_all_fns`, covers a real gap the shared helper leaves open).
+    for tb in conv_all_test_bodies(m) {
+        conv_walk_block(tb, false, &mut |_s, _| {}, &mut |e, _in_loop| check_expr(e, out));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_REDUNDANT_CONSUME_REBIND — `consume y = x` as (one of) the arm block's
+// own statements, where `x` is a name bound `consume` DIRECTLY by the
+// immediately enclosing match arm's own pattern (`Ok(consume x)`) and never
+// used again anywhere else in that arm's body (owner 2026-07-21). Advice:
+// bind straight to the final name in the pattern (`Ok(consume y)`), dropping
+// the rebind statement — a real corpus instance of exactly this double-
+// rebind exists today (`std/src/fs/d323_open_options_test.nv`:
+// `Ok(consume f0) => { consume f = f0; … }`).
+// ---------------------------------------------------------------------------
+
+fn conv_redundant_consume_rebind(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    fn variant_name(p: &Pattern) -> &str {
+        match p {
+            Pattern::Variant { path, .. } => path.last().map(String::as_str).unwrap_or("pattern"),
+            _ => "pattern",
+        }
+    }
+    fn consume_idents(p: &Pattern, acc: &mut Vec<String>) {
+        match p {
+            Pattern::Ident { name, is_consume: true, .. } => acc.push(name.clone()),
+            Pattern::Variant { kind: VariantPatternKind::Tuple { patterns, .. }, .. } => {
+                for sp in patterns {
+                    consume_idents(sp, acc);
+                }
+            }
+            Pattern::Tuple(pats, _) => {
+                for sp in pats {
+                    consume_idents(sp, acc);
+                }
+            }
+            Pattern::Record { fields, .. } => {
+                for rf in fields {
+                    if let Some(sp) = &rf.pattern {
+                        consume_idents(sp, acc);
+                    }
+                }
+            }
+            Pattern::Binding { inner, .. } => consume_idents(inner, acc),
+            Pattern::Or { alternatives, .. } => {
+                for a in alternatives {
+                    consume_idents(a, acc);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn ident_count(b: &Block, name: &str) -> usize {
+        let mut n = 0usize;
+        conv_walk_block(b, false, &mut |_, _| {}, &mut |e, _| {
+            if let ExprKind::Ident(id) = &e.kind {
+                if id == name {
+                    n += 1;
+                }
+            }
+        });
+        n
+    }
+
+    fn check_expr(e: &Expr, out: &mut Vec<LintWarning>) {
+        let ExprKind::Match { arms, .. } = &e.kind else { return };
+        for arm in arms {
+            let MatchArmBody::Block(body) = &arm.body else { continue };
+            let mut names = Vec::new();
+            consume_idents(&arm.pattern, &mut names);
+            if names.is_empty() {
+                continue;
+            }
+            let vname = variant_name(&arm.pattern);
+            for old_name in &names {
+                for s in &body.stmts {
+                    let Stmt::Let(d) = s else { continue };
+                    if !d.consume {
+                        continue;
+                    }
+                    let Pattern::Ident { name: new_name, .. } = &d.pattern else {
+                        continue;
+                    };
+                    let ExprKind::Ident(rhs) = &d.value.kind else { continue };
+                    if rhs != old_name {
+                        continue;
+                    }
+                    if ident_count(body, old_name) > 1 {
+                        continue;
+                    }
+                    out.push(LintWarning {
+                        rule: "W_REDUNDANT_CONSUME_REBIND",
+                        diag: Diagnostic::new(
+                            format!(
+                                "`consume {new_name} = {old_name}` избыточен — \
+                                 `{old_name}` уже `consume`-биндинг из паттерна \
+                                 арма (`{vname}(consume {old_name})`), нигде \
+                                 больше не используется. Бинди сразу: \
+                                 `{vname}(consume {new_name})`."
+                            ),
+                            d.span,
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
+    for f in conv_all_fns(m) {
+        conv_walk_fn(f, &mut |_s, _| {}, &mut |e, _in_loop| check_expr(e, out));
+    }
+    for tb in conv_all_test_bodies(m) {
+        conv_walk_block(tb, false, &mut |_s, _| {}, &mut |e, _in_loop| check_expr(e, out));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_MANUAL_CLOSE_AUTO_CLEANUP — a tail-position, zero-arg finalizer call
+// (`x.close()` and siblings) on a `consume`-bound local whose EXPLICIT type
+// annotation is a std type carrying `consume @cleanup` (D432 auto-cleanup:
+// TcpStream/MutexGuard/ReadGuard/WriteGuard/Permit) — the scope-exit
+// prologue already invokes `@cleanup` on every exit path (success/throw/
+// panic/cancel), so a manual tail call duplicates it (owner 2026-07-21).
+//
+// SEMANTIC-UPGRADE: mirrors codegen's REAL `auto_cleanup_types`/
+// `consume_cleanup_types` (emit_c.rs, scanned from `f.name == "cleanup" &&
+// recv.consume` program-wide) with a hardcoded conservative seed of the five
+// CURRENT std types declaring `consume @cleanup` (verified 2026-07-21:
+// `net/tcp.nv` TcpStream, `runtime/sync.nv` MutexGuard/ReadGuard/
+// WriteGuard/Permit) — a per-file syntactic pass can't see cross-file
+// declarations, same conservative-seed precedent as
+// `conv_coerce_explicit_redundant` above. Deliberately does NOT include
+// `File` (fs.nv): documented BY DESIGN as a must-`@close` type WITHOUT
+// auto-cleanup (`@close` returns `Result`, auto-cleanup can't surface the
+// error) — excluded correctly, not an oversight.
+//
+// Scope restricted to the LAST statement of (a) a fn's own top-level body
+// block and (b) a match-arm block — NOT if/while/for/loop-nested blocks
+// (owner's brief: "только ХВОСТОВОЙ вызов"; a documented scope limit, not a
+// silent gap — a full recursive block-walker is a legitimate follow-up).
+// ---------------------------------------------------------------------------
+
+const CONV_AUTO_CLEANUP_SEED_TYPES: &[&str] =
+    &["TcpStream", "MutexGuard", "ReadGuard", "WriteGuard", "Permit"];
+
+fn conv_manual_close_auto_cleanup(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    fn tail_call(block: &Block) -> Option<&Expr> {
+        if let Some(t) = &block.trailing {
+            return Some(t.as_ref());
+        }
+        match block.stmts.last() {
+            Some(Stmt::Expr(e)) => Some(e),
+            Some(Stmt::Let(d))
+                if matches!(&d.pattern, Pattern::Ident { name, .. } if name == "_") =>
+            {
+                Some(&d.value)
+            }
+            _ => None,
+        }
+    }
+
+    fn check_block(block: &Block, out: &mut Vec<LintWarning>) {
+        // Consume-bindings, explicitly typed as a seed auto-cleanup type,
+        // introduced directly in THIS block's own statement list.
+        let mut seed_bindings: Vec<&str> = Vec::new();
+        for s in &block.stmts {
+            let Stmt::Let(d) = s else { continue };
+            if !d.consume {
+                continue;
+            }
+            let Pattern::Ident { name, .. } = &d.pattern else { continue };
+            let Some(ty) = &d.ty else { continue };
+            let Some(tn) = conv_ty_last_name(ty) else { continue };
+            if CONV_AUTO_CLEANUP_SEED_TYPES.contains(&tn) {
+                seed_bindings.push(name.as_str());
+            }
+        }
+        if seed_bindings.is_empty() {
+            return;
+        }
+        let Some(tail) = tail_call(block) else { return };
+        let ExprKind::Call { func, args, trailing } = &tail.kind else { return };
+        if !args.is_empty() || trailing.is_some() {
+            return;
+        }
+        let ExprKind::Member { obj, name: method } = &func.kind else { return };
+        let ExprKind::Ident(recv) = &obj.kind else { return };
+        if !seed_bindings.contains(&recv.as_str()) {
+            return;
+        }
+        out.push(LintWarning {
+            rule: "W_MANUAL_CLOSE_AUTO_CLEANUP",
+            diag: Diagnostic::new(
+                format!(
+                    "`{recv}.{method}()` хвостовым вызовом скоупа избыточен: авто-\
+                     `@cleanup` (D432) уже закрывает `{recv}` на выходе из скоупа \
+                     (успех/throw/panic/cancel). Уберите вызов."
+                ),
+                tail.span,
+            ),
+        });
+    }
+
+    fn check_expr(e: &Expr, out: &mut Vec<LintWarning>) {
+        let ExprKind::Match { arms, .. } = &e.kind else { return };
+        for arm in arms {
+            if let MatchArmBody::Block(b) = &arm.body {
+                check_block(b, out);
+            }
+        }
+    }
+
+    for f in conv_all_fns(m) {
+        if let FnBody::Block(b) = &f.body {
+            check_block(b, out);
+        }
+        conv_walk_fn(f, &mut |_s, _| {}, &mut |e, _in_loop| check_expr(e, out));
+    }
+    for tb in conv_all_test_bodies(m) {
+        check_block(tb, out);
+        conv_walk_block(tb, false, &mut |_s, _| {}, &mut |e, _in_loop| check_expr(e, out));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_REDUNDANT_CONST_TYPE_ANNOTATION — `const`, module- or scope-level, whose
+// explicit type annotation MATCHES the bare-literal-default type of its own
+// initializer (`str`→str, `int`→int, `bool`→bool, `char`→char) — the type is
+// inferred either way, so the annotation adds nothing (owner 2026-07-21,
+// verified live: `const MESSAGE = "hello"` already infers `str`). Reuses the
+// SAME default-type helpers `W_REDUNDANT_OF` already relies on
+// (`conv_ty_literal_default_name` / `conv_expr_is_bare_literal_of`) — single
+// source of truth for "what type does a bare literal default to", no new
+// literal-default logic duplicated here.
+//
+// Deliberately NARROW: only `const` — module-level `Item::Const` AND
+// scope-level `Stmt::Const` (Plan 114.4 Ф.2, SAME `ConstDecl` shape) — `let`/
+// `ro`/`mut` locals are OUT of scope (owner: their annotation is often
+// documentary, not a canon violation). Any annotation that does NOT match
+// the bare-literal default (`[]u8`, `u32`, a narrower/wider numeric width,
+// …) is left alone — those are load-bearing (coercion/narrowing), never
+// flagged.
+// ---------------------------------------------------------------------------
+
+// [M-p67-path-call-const-receiver-method-ice] guard (found the HARD way
+// this wave, 2026-07-21): a SCREAMING_SNAKE_CASE const name used later as
+// `NAME.method(...)` parses as a 2-segment `ExprKind::Path(["NAME",
+// "method"])`, not `Member{obj: Ident("NAME"), ..}` (parser's Path-vs-Member
+// split is CASE-based, not type-based — see
+// `examples/flagship/aggregator/regressions/const_receiver_generic_ext_ice/
+// const_receiver_generic_ext_ice.nv`'s own doc comment for the full
+// pre-existing root-cause writeup). Removing an EXPLICIT type from the
+// `const` declaration can make the checker lose the annotation this Path
+// shape needs and re-trigger the "[P67-LEGACY] Path call return type
+// unknown" codegen ICE — `nova check` stays green (accept-path is fine),
+// only `nova build`/`nova test` (real codegen) explodes. Caught empirically
+// via `examples/mini_aggregator.nv`'s `BUDGET_MS.to_millis()` (CC-FAIL
+// reproduced, reverted) DURING this wave's canonization sweep — this rule
+// must not recommend the same footgun again. Conservative: skips flagging
+// ANY const whose name is later used as a call-receiver (`NAME.method(...)`,
+// `Member` OR `Path` shape) ANYWHERE in the module, even though only the
+// Path-shape (SCREAMING_SNAKE_CASE + generic-extension method) is the
+// actual trigger — false-negative-safe over false-positive-unsafe.
+fn conv_collect_call_receiver_names(m: &Module) -> HashSet<String> {
+    fn add_from_expr(e: &Expr, out: &mut HashSet<String>) {
+        match &e.kind {
+            ExprKind::Path(segs) if segs.len() >= 2 => {
+                out.insert(segs[0].clone());
+            }
+            ExprKind::Call { func, .. } => {
+                if let ExprKind::Member { obj, .. } = &func.kind {
+                    if let ExprKind::Ident(n) = &obj.kind {
+                        out.insert(n.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut names = HashSet::new();
+    for f in conv_all_fns(m) {
+        conv_walk_fn(f, &mut |_, _| {}, &mut |e, _| add_from_expr(e, &mut names));
+    }
+    for tb in conv_all_test_bodies(m) {
+        conv_walk_block(tb, false, &mut |_, _| {}, &mut |e, _| add_from_expr(e, &mut names));
+    }
+    names
+}
+
+fn conv_check_const_redundant_annotation(
+    d: &ConstDecl,
+    call_receiver_names: &HashSet<String>,
+    out: &mut Vec<LintWarning>,
+) {
+    let Some(ty) = &d.ty else { return };
+    let Some(default_name) = conv_ty_literal_default_name(ty) else { return };
+    if !conv_expr_is_bare_literal_of(&d.value, default_name) {
+        return;
+    }
+    if call_receiver_names.contains(&d.name) {
+        return;
+    }
+    out.push(LintWarning {
+        rule: "W_REDUNDANT_CONST_TYPE_ANNOTATION",
+        diag: Diagnostic::new(
+            format!(
+                "аннотация `{name} {t}` избыточна — тип `{t}` и так выводится из \
+                 литерала-инициализатора. Уберите аннотацию (оставляйте только когда \
+                 она направляет коэрсию/сужение — например `[]u8`/`u32`).",
+                name = d.name,
+                t = default_name
+            ),
+            d.span,
+        ),
+    });
+}
+
+fn conv_redundant_const_type_annotation(
+    m: &Module,
+    _o: &ConvLintOptions,
+    out: &mut Vec<LintWarning>,
+) {
+    let call_receiver_names = conv_collect_call_receiver_names(m);
+    for item in &m.items {
+        if let Item::Const(d) = item {
+            conv_check_const_redundant_annotation(d, &call_receiver_names, out);
+        }
+    }
+    for pf in &m.peer_files {
+        for item in &pf.items_here {
+            if let Item::Const(d) = item {
+                conv_check_const_redundant_annotation(d, &call_receiver_names, out);
+            }
+        }
+    }
+    fn check_stmt(s: &Stmt, names: &HashSet<String>, out: &mut Vec<LintWarning>) {
+        if let Stmt::Const(d) = s {
+            conv_check_const_redundant_annotation(d, names, out);
+        }
+    }
+    for f in conv_all_fns(m) {
+        conv_walk_fn(f, &mut |s, _| check_stmt(s, &call_receiver_names, out), &mut |_, _| {});
+    }
+    for tb in conv_all_test_bodies(m) {
+        conv_walk_block(
+            tb,
+            false,
+            &mut |s, _| check_stmt(s, &call_receiver_names, out),
+            &mut |_, _| {},
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // W_PARAM_NO_CONTRACT — index/offset/len-параметр публичной std-fn без
 // `requires` (nv-coding-style §5): каждый такой параметр ОБЯЗАН нести
 // контракт — норма приёмки (согласовано 2026-07-07). Только в std (in_std).
@@ -7838,6 +8342,278 @@ mod tests {
         assert!(
             !ws.iter().any(|w| w.rule == "new-then-cap"),
             "не должен fire когда между new и cap есть другой stmt, получено: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // ─── W_REDUNDANT_BYTES_ON_LITERAL ──────────────────────────────────
+
+    #[test]
+    fn redundant_bytes_on_literal_call_arg() {
+        // Real corpus shape: examples/tls/echo_server.nv
+        // `stream.write_all("echo_ok\n".bytes())`.
+        let src = "module foo\n\
+             fn run(stream mut TcpStream) -> () {\n    \
+             stream.write_all(\"echo_ok\\n\".bytes())\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_REDUNDANT_BYTES_ON_LITERAL");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn no_warning_bytes_on_variable_call_arg() {
+        // `.bytes()` on an IDENT (not a literal) — literal-only rule, must
+        // stay silent (owner's explicit scope, even though the general
+        // D429 `#coerce` mechanism would ALSO cover a variable receiver).
+        let src = "module foo\n\
+             fn run(stream mut TcpStream, s str) -> () {\n    \
+             stream.write_all(s.bytes())\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_REDUNDANT_BYTES_ON_LITERAL").is_empty(),
+            "got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_bytes_on_literal_let_position_not_call_arg() {
+        // let/return positions are `W_COERCE_EXPLICIT_REDUNDANT`'s turf —
+        // this rule must stay silent there (no double-warning on one site).
+        let src = "module foo\n\
+             fn run() -> () {\n    \
+             ro b []u8 = \"hi\".bytes()\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_REDUNDANT_BYTES_ON_LITERAL").is_empty(),
+            "got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // ─── W_REDUNDANT_CONSUME_REBIND ────────────────────────────────────
+
+    #[test]
+    fn redundant_consume_rebind_real_corpus_shape() {
+        // Real corpus shape: std/src/fs/d323_open_options_test.nv:26
+        // `Ok(consume f0) => { consume f = f0; ro _ = f.write("bb".bytes()); ro _ = f.close() }`.
+        let src = "module foo\n\
+             fn run(r Result[File, IoError]) -> () {\n    \
+             match r {\n        \
+             Ok(consume f0) => {\n            \
+             consume f = f0\n            \
+             ro _ = f.write(\"bb\".bytes())\n        \
+             }\n        \
+             Err(_) => ()\n    \
+             }\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_REDUNDANT_CONSUME_REBIND");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        assert!(hit[0].diag.message.contains("Ok(consume f)"), "got: {}", hit[0].diag.message);
+    }
+
+    #[test]
+    fn no_warning_consume_rebind_when_old_name_still_used() {
+        let src = "module foo\n\
+             fn run(r Result[File, IoError]) -> () {\n    \
+             match r {\n        \
+             Ok(consume f0) => {\n            \
+             consume f = f0\n            \
+             ro _ = f0.metadata()\n        \
+             }\n        \
+             Err(_) => ()\n    \
+             }\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_REDUNDANT_CONSUME_REBIND").is_empty(),
+            "got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_consume_rebind_when_pattern_not_consume() {
+        // Plain `Ok(f0)` — pattern binding is NOT `consume`, so `consume f
+        // = f0` is not the double-rebind anti-pattern this rule targets.
+        let src = "module foo\n\
+             fn run(r Result[File, IoError]) -> () {\n    \
+             match r {\n        \
+             Ok(f0) => {\n            \
+             consume f = f0\n        \
+             }\n        \
+             Err(_) => ()\n    \
+             }\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_REDUNDANT_CONSUME_REBIND").is_empty(),
+            "got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // ─── W_MANUAL_CLOSE_AUTO_CLEANUP ────────────────────────────────────
+
+    #[test]
+    fn manual_close_auto_cleanup_tail_call_fires() {
+        let src = "module foo\n\
+             fn run(t TcpStream) -> () {\n    \
+             consume conn TcpStream = t\n    \
+             conn.close()\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_MANUAL_CLOSE_AUTO_CLEANUP");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn no_warning_manual_close_non_seed_type() {
+        // `File` deliberately excluded — `@close` is fallible, no
+        // auto-`@cleanup` exists for it (fs.nv doc, D133).
+        let src = "module foo\n\
+             fn run(t File) -> () {\n    \
+             consume f File = t\n    \
+             ro _ = f.close()\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_MANUAL_CLOSE_AUTO_CLEANUP").is_empty(),
+            "got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_manual_close_not_tail_position() {
+        // Early close with logic AFTER — legal, per owner's brief.
+        let src = "module foo\n\
+             fn run(t TcpStream) -> () {\n    \
+             consume conn TcpStream = t\n    \
+             conn.close()\n    \
+             ro _ = 1\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_MANUAL_CLOSE_AUTO_CLEANUP").is_empty(),
+            "got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_manual_close_untyped_consume() {
+        // No explicit type annotation — conservative gap by design (can't
+        // syntactically know the binding's type without cross-file lookup).
+        let src = "module foo\n\
+             fn run(t TcpStream) -> () {\n    \
+             consume conn = t\n    \
+             conn.close()\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_MANUAL_CLOSE_AUTO_CLEANUP").is_empty(),
+            "got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // ─── W_REDUNDANT_CONST_TYPE_ANNOTATION ─────────────────────────────
+
+    #[test]
+    fn redundant_const_type_annotation_module_level() {
+        // Real corpus shape: examples/tls/echo_client.nv:28
+        // `const MESSAGE str = "hello from nova, over tls"`.
+        let src = "module foo\nconst MESSAGE str = \"hello\"\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_REDUNDANT_CONST_TYPE_ANNOTATION");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        assert!(hit[0].diag.message.contains("MESSAGE"), "got: {}", hit[0].diag.message);
+    }
+
+    #[test]
+    fn redundant_const_type_annotation_scope_level() {
+        let src = "module foo\n\
+             fn run() -> int {\n    \
+             const N int = 5\n    \
+             N\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_REDUNDANT_CONST_TYPE_ANNOTATION");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn no_warning_const_annotation_drives_coercion() {
+        // `[]u8` — NOT the literal's own default type (`str`) — the
+        // annotation is load-bearing (D55/D429 coercion), never flagged.
+        let src = "module foo\nconst BUF []u8 = \"hello\"\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_REDUNDANT_CONST_TYPE_ANNOTATION").is_empty(),
+            "got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_const_annotation_narrows_int_width() {
+        let src = "module foo\nconst N u32 = 5\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_REDUNDANT_CONST_TYPE_ANNOTATION").is_empty(),
+            "got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_const_no_annotation() {
+        let src = "module foo\nconst MESSAGE = \"hello\"\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_REDUNDANT_CONST_TYPE_ANNOTATION").is_empty(),
+            "got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_const_p67_path_call_receiver_guard() {
+        // [M-p67-path-call-const-receiver-method-ice] guard: `BUDGET_MS` is
+        // later used as `BUDGET_MS.to_millis()` (2-segment Path-call
+        // receiver, real CC-FAIL reproduced this wave via
+        // examples/mini_aggregator.nv) — must NOT recommend dropping the
+        // annotation even though it matches the literal's own default type.
+        let src = "module foo\n\
+             const BUDGET_MS int = 120\n\
+             fn f() -> int {\n    \
+             BUDGET_MS.to_millis()\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_REDUNDANT_CONST_TYPE_ANNOTATION").is_empty(),
+            "must stay silent on a const later used as a call-receiver (P67-family risk), got: {:?}",
             ws.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
     }
