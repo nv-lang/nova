@@ -48,14 +48,12 @@ test "aggregate: done/failed/cancelled settle correctly on a mixed fan-out" {
     with Net = mock_net() {
         with Emit = null_emit() {
             ro report = aggregate(tiny_sources(), 120.to_millis())
-            println("DEBUG len=" + report.results.len().to_str() + " done=" + report.done.to_str() +
-                " failed=" + report.failed.to_str() + " cancelled=" + report.cancelled.to_str() +
-                " wall_ms=" + report.wall_ms.to_str() + " seq_ms=" + report.sequential_ms.to_str())
+            println("DEBUG len=${report.results.len()} done=${report.done} failed=${report.failed} cancelled=${report.cancelled} wall_ms=${report.wall_ms} seq_ms=${report.sequential_ms}")
             for r in report.results {
                 match r.status {
-                    Done(_)   => println("  " + r.id + " Done elapsed=" + r.elapsed_ms.to_str())
-                    Failed(m) => println("  " + r.id + " Failed(" + m + ") elapsed=" + r.elapsed_ms.to_str())
-                    Cancelled => println("  " + r.id + " Cancelled elapsed=" + r.elapsed_ms.to_str())
+                    Done(_)   => println("  ${r.id} Done elapsed=${r.elapsed_ms}")
+                    Failed(m) => println("  ${r.id} Failed(${m}) elapsed=${r.elapsed_ms}")
+                    Cancelled => println("  ${r.id} Cancelled elapsed=${r.elapsed_ms}")
                 }
             }
             assert(report.results.len() == 4)

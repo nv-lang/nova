@@ -71,13 +71,12 @@ export type DateError enum
 export fn DateError @to_str() -> str =>
     match @ {
         InvalidField(f, given, mn, mx) => {
-            "invalid " + f.name() + ": " + given.to_str() +
-                " (expected " + mn.to_str() + ".." + mx.to_str() + ")"
+            "invalid ${f.name()}: ${given} (expected ${mn}..${mx})"
         }
-        RangeOverflow(kind) => "range overflow: " + kind,
-        Ambiguous(kind)     => "ambiguous local time: " + kind,
-        UnknownZone(name)   => "unknown time zone: " + name,
-        BadTzData(what)     => "bad tz data: " + what,
+        RangeOverflow(kind) => "range overflow: ${kind}",
+        Ambiguous(kind)     => "ambiguous local time: ${kind}",
+        UnknownZone(name)   => "unknown time zone: ${name}",
+        BadTzData(what)     => "bad tz data: ${what}",
     }
 
 
@@ -100,10 +99,10 @@ export type ParseDateTimeError enum
 export fn ParseDateTimeError @to_str() -> str =>
     match @ {
         FormatMismatch(pos, expected) => {
-            "format mismatch at " + pos.to_str() + ": expected " + expected
+            "format mismatch at ${pos}: expected ${expected}"
         }
         InvalidValue(pos, field, given) => {
-            "invalid " + field.name() + " at " + pos.to_str() + ": " + given.to_str()
+            "invalid ${field.name()} at ${pos}: ${given}"
         }
     }
 

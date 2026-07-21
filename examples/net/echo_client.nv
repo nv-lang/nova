@@ -25,11 +25,11 @@ fn main() {
             spawn {
                 match TcpStream.connect(addr) {
                     Err(_) => {
-                        println("Connect failed — is echo_server running on port " + PORT.to_str() + "?")
+                        println("Connect failed — is echo_server running on port ${PORT}?")
                     }
                     Ok(consume conn) => {
                         consume stream = conn
-                        println("Connected to " + PORT.to_str())
+                        println("Connected to ${PORT}")
 
                         match stream.write_str(MESSAGE) {
                             Err(_) => { println("Write failed"); stream.close() }
@@ -40,7 +40,7 @@ fn main() {
                                         // [M-174.1-vec-method-chain-elem-erasure]: explicit []u8 local.
                                         ro eb []u8 = echo_bytes
                                         ro echo = unsafe { eb.to_str_unchecked() }
-                                        println("Echo: " + echo)
+                                        println("Echo: ${echo}")
                                         stream.close()
                                     }
                                 }

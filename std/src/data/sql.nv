@@ -64,7 +64,7 @@ export type Sql {
 #stable(since = "0.1")
 export fn Sql @concat(other Sql) -> Sql =>
     {
-        template: @template + " " + other.template,
+        template: "${@template} ${other.template}",
         args:     [...@args, ...other.args],
     }
 
@@ -73,15 +73,15 @@ export fn Sql @concat(other Sql) -> Sql =>
 export fn Sql.concat_many(parts []Sql, sep str) -> Sql {
     if parts.len() == 0 { return { template: "", args: [] } }
 
-    mut tpl = parts[0].template
+    consume sb = StringBuilder.new().append(parts[0].template)
     mut args []SqlValue = [...parts[0].args]
     mut i = 1
     while i < parts.len() {
-        tpl = tpl + sep + parts[i].template
+        sb.append(sep).append(parts[i].template)
         args.extend(parts[i].args)
         i += 1
     }
-    { template: tpl, args }
+    { template: sb.into_str(), args }
 }
 
 // with_filter — добавить дополнительное `AND <expr>` к WHERE-секции.
@@ -308,7 +308,8 @@ export fn SqlBuilder mut @where_in(col str, values []SqlValue) -> SqlBuilder {
         @predicates.push({ template: "FALSE", args: [] })
         return @
     }
-    ro placeholders = "?" + ", ?".repeat(values.len() - 1)
+    ro rest = ", ?".repeat(values.len() - 1)
+    ro placeholders = "?${rest}"
     @predicates.push({ template: "${col} IN (${placeholders})", args: values })
     @
 }

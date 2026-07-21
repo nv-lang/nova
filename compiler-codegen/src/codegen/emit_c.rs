@@ -14738,6 +14738,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     Self::collect_idents_block(&arm.body, out);
                 }
             }
+            // Владелец 2026-07-21 (найдено при str-concat-lint канонизации,
+            // [M-str-interp-closure-capture-miss]): `InterpolatedStr` не
+            // обходился здесь — идентификатор, упомянутый ТОЛЬКО внутри
+            // `${expr}` (напр. `|host| "${host}:${port}"` где `port` — outer
+            // captured var, ЕСЛИ он больше нигде в теле closure'а не
+            // используется), не попадал в capture-list. Симптом: C
+            // codegen `use of undeclared identifier 'port'` — closure struct
+            // не резервировал под него поле. Репро: `resolve_addr` (examples/
+            // flagship/aggregator/src/main.nv) после канонизации `host + ":"
+            // + port.to_str()` → `"${host}:${port}"`.
+            ExprKind::InterpolatedStr { parts } => {
+                for p in parts {
+                    if let crate::ast::InterpStrPart::Expr { expr, .. } = p {
+                        Self::collect_idents_expr(expr, out);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -47816,6 +47833,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     Self::collect_free_idents_block(&arm.body, out);
                 }
             }
+            // Владелец 2026-07-21 (см. `collect_idents_expr`/
+            // `collect_truly_free_idents` — та же дыра, [M-str-interp-
+            // closure-capture-miss]): `${expr}` внутри interpolated-string
+            // не обходился.
+            ExprKind::InterpolatedStr { parts } => {
+                for p in parts {
+                    if let crate::ast::InterpStrPart::Expr { expr, .. } = p {
+                        Self::collect_free_idents(expr, out);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -48102,6 +48130,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             ExprKind::Interrupt(Some(v)) => {
                 Self::collect_truly_free_idents(v, bound, out);
+            }
+            // Владелец 2026-07-21 (найдено при str-concat-lint канонизации,
+            // [M-str-interp-closure-capture-miss]): та же дыра, что и в
+            // `collect_idents_expr` выше (см. её комментарий) — `${expr}`
+            // внутри interpolated-string не обходился, идентификатор,
+            // упомянутый ТОЛЬКО там, не попадал в closure free-var/capture
+            // set → C codegen "use of undeclared identifier". Это ГЛАВНЫЙ
+            // путь для `flat_map(|x| "...${captured}...")`-формы (emit_lambda,
+            // не emit_spawn) — репро: `resolve_addr` (examples/flagship/
+            // aggregator/src/main.nv).
+            ExprKind::InterpolatedStr { parts } => {
+                for p in parts {
+                    if let crate::ast::InterpStrPart::Expr { expr, .. } = p {
+                        Self::collect_truly_free_idents(expr, bound, out);
+                    }
+                }
             }
             _ => {}
         }

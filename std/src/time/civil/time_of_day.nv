@@ -144,7 +144,7 @@ export fn TimeOfDay @compare(other TimeOfDay) -> int =>
     else { 0 }
 
 fn pad2_i64(n i64) -> str =>
-    if n < 10 { "0" + n.to_str() } else { n.to_str() }
+    if n < 10 { "0${n}" } else { n.to_str() }
 
 // Дробная часть секунды: ".SSS"/".SSSSSS"/".SSSSSSSSS" (короткая форма,
 // trailing-zero группами по 3, как java.time) или "" при ns==0.
@@ -153,22 +153,21 @@ fn format_frac(ns i64) -> str {
     if ns % 1_000_000 == 0 {
         ro ms = ns / 1_000_000
         ro s = ms.to_str()
-        return "." + s.pad_start(3, '0')
+        return ".${s.pad_start(3, '0')}"
     }
     if ns % 1_000 == 0 {
         ro us = ns / 1_000
         ro s = us.to_str()
-        return "." + s.pad_start(6, '0')
+        return ".${s.pad_start(6, '0')}"
     }
     ro s = ns.to_str()
-    "." + s.pad_start(9, '0')
+    ".${s.pad_start(9, '0')}"
 }
 
 /// ISO-8601 форма `HH:MM:SS[.fff]` (наносекунды — 3/6/9 знаков по кратности).
 #stable(since = "0.1")
 export fn TimeOfDay @to_iso() -> str =>
-    pad2_i64(@hour() as i64) + ":" + pad2_i64(@minute() as i64) + ":" +
-        pad2_i64(@second() as i64) + format_frac(@nano() as i64)
+    "${pad2_i64(@hour() as i64)}:${pad2_i64(@minute() as i64)}:${pad2_i64(@second() as i64)}${format_frac(@nano() as i64)}"
 
 /// Display = ISO-форма.
 #stable(since = "0.1")

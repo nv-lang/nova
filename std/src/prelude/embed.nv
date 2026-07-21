@@ -134,7 +134,7 @@ export fn EmbeddedDir @merge(other EmbeddedDir) -> EmbeddedDir {
             out.push(bv)
             j += 1
         } else {
-            panic("EmbeddedDir.merge: duplicate path `" + a[i].path + "` present in both directories")
+            panic("EmbeddedDir.merge: duplicate path `${a[i].path}` present in both directories")
         }
     }
     // Contiguous drain остатка (один из входов исчерпан) — канон

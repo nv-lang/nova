@@ -207,8 +207,7 @@ export fn Repo[T] @update_versioned(value T, expected_version i64) Db Fail[RepoE
     args.push(I(expected_version))
 
     ro q Sql = {
-        template: "UPDATE ${@table} SET ${assigns}, version = version + 1 " +
-                "WHERE id = ? AND version = ?",
+        template: "UPDATE ${@table} SET ${assigns}, version = version + 1 WHERE id = ? AND version = ?",
         args,
     }
     ro affected = Db.exec(q)
@@ -326,8 +325,7 @@ export fn Repo[T] @fetch_page(after Option[u64], size int) Db Fail[RepoError] ->
         None     => { template: "", args: [] }
     }
     ro q Sql = {
-        template: "SELECT * FROM ${@table} WHERE 1 = 1 ${cursor_predicate.template} " +
-                "ORDER BY id ASC LIMIT ?",
+        template: "SELECT * FROM ${@table} WHERE 1 = 1 ${cursor_predicate.template} ORDER BY id ASC LIMIT ?",
         args: [...cursor_predicate.args, (size + 1) as i64],
     }
     ro items = @list_with(q)

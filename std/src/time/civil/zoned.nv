@@ -392,9 +392,9 @@ export fn ZonedDateTime @compare(other ZonedDateTime) -> int {
 /// RFC-9557 суффикс `[Europe/Moscow]` (лосслесс идентичность зоны).
 #stable(since = "0.1")
 export fn ZonedDateTime @to_iso() -> str {
-    ro base = @dt.to_iso() + @offset.to_iso()
+    ro base = "${@dt.to_iso()}${@offset.to_iso()}"
     match @zone {
-        Iana(z) => base + "[" + z.id + "]",
+        Iana(z) => "${base}[${z.id}]",
         _ => base,
     }
 }

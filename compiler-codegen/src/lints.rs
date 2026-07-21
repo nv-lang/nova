@@ -2998,6 +2998,11 @@ pub struct ConvLintOptions {
     /// Файл — тест (`*_test.nv` / nova_tests): в тестах канон владельца —
     /// `Vec[T].of(a, b, c)` (вариадик), W_VEC_SPELLING не действует.
     pub in_test: bool,
+    /// Владелец 2026-07-21: файл внутри `std/src/runtime/string/**` —
+    /// реализация самого str-примитива (`@concat`/`@bytes`/etc.,
+    /// std/src/runtime/string/transform.nv и соседи) — `W_STR_CONCAT_METHOD`
+    /// там не действует (это canon-определение, не сайт для канонизации).
+    pub in_str_runtime_impl: bool,
 }
 
 /// Одно конвенционное правило реестра.
@@ -3089,6 +3094,14 @@ pub const CONV_RULES: &[ConvRule] = &[
         summary: "`buf = buf + x` / `buf += \"...\"` в цикле — O(N²); канон \
                   StringBuilder (perf-conventions)",
         ast: Some(conv_str_concat_loop),
+        text: None,
+    },
+    ConvRule {
+        id: "W_STR_CONCAT_METHOD",
+        summary: "`.concat(...)` вызов на str-выражении — канон строковая \
+                  интерполяция \"${a}${b}\" (владелец 2026-07-21, тот же \
+                  D-амендмент что и E_STR_CONCAT_PLUS, spec/decisions/02-types.md)",
+        ast: Some(conv_str_concat_method),
         text: None,
     },
     ConvRule {
@@ -4274,7 +4287,13 @@ fn conv_immutable_rebuild_setter(m: &Module, _o: &ConvLintOptions, out: &mut Vec
 // ---------------------------------------------------------------------------
 
 /// `true`, если `e` синтаксически «строкоподобно» — литерал/интерполяция,
-/// или `+`-конкатенация, у которой хотя бы один операнд строкоподобен.
+/// `+`-конкатенация с хотя бы одним строкоподобным операндом, `.to_str()`-
+/// конверсия (владелец 2026-07-21: результат всегда str, независимо от
+/// ресивера — расширение W_STR_CONCAT_LOOP на очень частый реальный сайт
+/// `buf += x.to_str()`/`s = s + x.to_str()`, D-амендмент про string `+`
+/// spec/decisions/02-types.md), либо `.concat(...)`-вызов на уже
+/// распознанном строкоподобном ресивере (chain-propagation, та же
+/// эвристика используется T3 `W_STR_CONCAT_METHOD` ниже).
 /// File-scope (не только `conv_str_concat_loop`): используется ТАКЖЕ
 /// `conv_non_compound_assign` для дедупа с этим правилом (один и тот же
 /// сайт `buf = buf + "..."` в цикле не должен получить оба warning'а —
@@ -4284,6 +4303,17 @@ fn conv_is_stringish(e: &Expr) -> bool {
         ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => true,
         ExprKind::Binary { op: crate::ast::BinOp::Add, left, right } => {
             conv_is_stringish(left) || conv_is_stringish(right)
+        }
+        ExprKind::Call { func, .. } => {
+            if let ExprKind::Member { obj, name } = &func.kind {
+                match name.as_str() {
+                    "to_str" => true,
+                    "concat" => conv_is_stringish(obj),
+                    _ => false,
+                }
+            } else {
+                false
+            }
         }
         _ => false,
     }
@@ -4330,6 +4360,63 @@ fn conv_str_concat_loop(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarn
                 }
             },
             &mut |_e, _| {},
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_STR_CONCAT_METHOD (владелец 2026-07-21) — `.concat(...)` вызов на
+// str-выражении: канон — string-интерполяция (`"${a}${b}"`). Изначально
+// планировалось как T1/T3 половина единого lint'а `string-concat-prefer-
+// interp`; T1 (бинарный `+` со str-операндами) ретрактирован в HARD ERROR
+// `E_STR_CONCAT_PLUS` (types/mod.rs, is_arith-блок walk_expr) — `+` для str
+// больше не существует как оператор, это не warning-уровня находка. Здесь
+// остаётся T3 — метод `@concat` (std/src/runtime/string/transform.nv) НЕ
+// ретрактирован, остаётся явным API, но предпочтительнее интерполяции для
+// читаемости при построении строк вне цикла (в цикле — см. W_STR_CONCAT_LOOP
+// выше, тот же канон StringBuilder).
+//
+// SEMANTIC-UPGRADE: без типов (AST-only реестр) не знаем, str ли ресивер —
+// синтаксический гейт через `conv_is_stringish` (str-литерал/интерполяция/
+// `.to_str()`-конверсия/уже-распознанный `.concat(...)`-chain). НЕ
+// отслеживает `let`-биндинги через statement-границы (как и W_STR_CONCAT_LOOP
+// не отслеживает — та же консервативная конвенция этого реестра): `ro s =
+// "x"; s.concat("y")` не распознаётся (документированная граница —
+// false-negative, не false-positive). Тем же путём `Vec[T].concat(...)` /
+// `[]u8.concat(...)` ЕСТЕСТВЕННО не триггерят: их ресивер не матчит
+// str-эвристику — отдельного явного type-based исключения не требуется.
+//
+// Исключение: `std/src/runtime/string/**` (реализация примитива) —
+// `o.in_str_runtime_impl` (вычисляется вызывающей стороной по пути файла,
+// nova-cli::conv_lint_options_for, тот же паттерн что и `in_vec_module` для
+// W_VEC_SPELLING).
+// ---------------------------------------------------------------------------
+
+fn conv_str_concat_method(m: &Module, o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    if o.in_str_runtime_impl {
+        return;
+    }
+    for f in conv_all_fns(m) {
+        conv_walk_fn(
+            f,
+            &mut |_s, _| {},
+            &mut |e, _in_loop| {
+                let ExprKind::Call { func, .. } = &e.kind else { return };
+                let ExprKind::Member { obj, name } = &func.kind else { return };
+                if name == "concat" && conv_is_stringish(obj) {
+                    out.push(LintWarning {
+                        rule: "W_STR_CONCAT_METHOD",
+                        diag: Diagnostic::new(
+                            "`.concat(...)` на str — используйте строковую \
+                             интерполяцию `\"${a}${b}\"` вместо метода \
+                             (perf-conventions); в цикле — см. W_STR_CONCAT_LOOP \
+                             (StringBuilder)."
+                                .to_string(),
+                            e.span,
+                        ),
+                    });
+                }
+            },
         );
     }
 }
@@ -6960,6 +7047,132 @@ mod tests {
         assert!(
             ws.iter().any(|w| w.rule == "W_NON_COMPOUND_ASSIGN"),
             "expected W_NON_COMPOUND_ASSIGN outside a loop, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // Владелец 2026-07-21: `conv_is_stringish` расширен на `.to_str()`/
+    // `.concat(...)`-chain (T1 [бинарный `+`] ретрактирован в HARD ERROR
+    // E_STR_CONCAT_PLUS, types/mod.rs — тесты там же, spec_tests/conformance/
+    // neg fixture); W_STR_CONCAT_LOOP (T2) и новый W_STR_CONCAT_METHOD (T3)
+    // остаются lint-warning.
+
+    #[test]
+    fn warns_on_str_concat_loop_with_to_str_operand() {
+        // Расширение: `s += i.to_str()` в цикле — раньше НЕ ловилось
+        // (`conv_is_stringish` не распознавал `.to_str()`-вызов), теперь ловится.
+        let src = "module foo\nfn run() -> str {\n    mut s = \"\"\n    \
+             for i in 0..10 {\n        s += i.to_str()\n    }\n    s\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_STR_CONCAT_LOOP"),
+            "ожидался W_STR_CONCAT_LOOP на `s += i.to_str()` в цикле, получено: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_str_concat_loop_int_accumulator() {
+        // Обратная совместимость: числовой аккумулятор в цикле — не str,
+        // не должен fire (не должно быть ложных срабатываний от `.to_str()`
+        // расширения на несвязанные `+=`).
+        let src = "module foo\nfn run() -> int {\n    mut acc = 0\n    \
+             for i in 0..10 {\n        acc += i\n    }\n    acc\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_STR_CONCAT_LOOP"),
+            "не должен fire на int += int, получено: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // Владелец 2026-07-21: W_STR_CONCAT_METHOD (T3) — `.concat(...)` на str.
+
+    #[test]
+    fn warns_on_str_dot_concat_method_call() {
+        let src = "module foo\nfn run() -> str {\n    \"hello\".concat(\" world\")\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_STR_CONCAT_METHOD"),
+            "ожидался W_STR_CONCAT_METHOD на str.concat(...), получено: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn warns_on_str_concat_via_to_str_receiver() {
+        // Ресивер — `.to_str()`-конверсия (тоже точно str).
+        let src = "module foo\nfn run(n int) -> str {\n    n.to_str().concat(\"!\")\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_STR_CONCAT_METHOD"),
+            "ожидался W_STR_CONCAT_METHOD, ресивер .to_str(), получено: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn warns_twice_on_str_concat_chain() {
+        // Chain-propagation: оба `.concat(...)` в цепочке распознаются
+        // (внешний ресивер = внутренний concat-call на str-литерале).
+        let src = "module foo\nfn run() -> str {\n    \"a\".concat(\"b\").concat(\"c\")\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hits = ws.iter().filter(|w| w.rule == "W_STR_CONCAT_METHOD").count();
+        assert!(
+            hits >= 2,
+            "ожидались 2 срабатывания (chain), получено {}: {:?}",
+            hits,
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_vec_concat_negative() {
+        // Негатив: `.concat(...)` на Vec — ресивер не str-литерал/`.to_str()`/
+        // `.concat()`-chain — эвристика естественно молчит.
+        let src = "module foo\nfn run() -> Vec[int] {\n    \
+             ro v = Vec[int].new()\n    ro w = Vec[int].new()\n    v.concat(w)\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_STR_CONCAT_METHOD"),
+            "не должен fire на Vec.concat, получено: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_bytes_concat_negative() {
+        // Негатив: `.concat(...)` на `[]u8` — та же логика.
+        let src = "module foo\nfn run() -> []u8 {\n    \
+             mut a []u8 = []u8.new()\n    mut b []u8 = []u8.new()\n    a.concat(b)\n}\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_STR_CONCAT_METHOD"),
+            "не должен fire на []u8.concat, получено: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_str_concat_method_in_runtime_string_impl() {
+        // `in_str_runtime_impl` — исключение для реализации примитива
+        // (std/src/runtime/string/**, вычисляется по пути вызывающей
+        // стороной, nova-cli::conv_lint_options_for).
+        let src = "module std.runtime.string.transform\n\
+             fn str @concat_twice(a str, b str) -> str {\n    a.concat(b)\n}\n";
+        let m = parse(src);
+        let opts = ConvLintOptions { in_str_runtime_impl: true, ..ConvLintOptions::default() };
+        let ws = run_conv_rules(Some(&m), src, &opts, None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_STR_CONCAT_METHOD"),
+            "должен молчать при in_str_runtime_impl, получено: {:?}",
             ws.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
     }

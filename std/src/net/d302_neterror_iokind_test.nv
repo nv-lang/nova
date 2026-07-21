@@ -102,4 +102,4 @@ test "TcpStream io-conformance surfaces IoError (not NetError) on the wire" {
 
 // `panic` is declared `extern "nova"` module-private in tcp_test.nv (same
 // folder-module CU) — reused here, not redeclared.
-fn panic_d302(op str) -> never => panic("d302_neterror_iokind: unexpected Err at " + op)
+fn panic_d302(op str) -> never => panic("d302_neterror_iokind: unexpected Err at ${op}")

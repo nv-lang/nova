@@ -116,8 +116,8 @@ export fn Offset @to_iso() -> str {
     ro m = (a % 3600) / 60
     ro s = a % 60
     ro sign = if neg { "-" } else { "+" }
-    ro base = sign + pad2(h) + ":" + pad2(m)
-    if s == 0 { base } else { base + ":" + pad2(s) }
+    ro base = "${sign}${pad2(h)}:${pad2(m)}"
+    if s == 0 { base } else { "${base}:${pad2(s)}" }
 }
 
 /// Display = ISO-форма.

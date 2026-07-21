@@ -41,16 +41,16 @@ fn main() {
                 // E_CONCURRENT_MUT_CAPTURE).
                 mut lst = match TcpListener.bind(addr) {
                     Ok(consume l)  => l
-                    Err(_) => panic("Failed to bind: " + PORT.to_str())
+                    Err(_) => panic("Failed to bind: ${PORT}")
                 }
-                println("Listening on 127.0.0.1:" + lst.local_port().to_str())
+                println("Listening on 127.0.0.1:${lst.local_port()}")
 
                 match lst.accept() {
                     Err(_) => println("Accept failed")
                     Ok(consume tcp) => {
-                        println("Client connected from port " + tcp.peer_port().to_str())
+                        println("Client connected from port ${tcp.peer_port()}")
                         match TlsStream.accept(tcp, cfg) {
-                            Err(e) => println("TLS handshake failed: " + e.to_str())
+                            Err(e) => println("TLS handshake failed: ${e.to_str()}")
                             Ok(consume session) => {
                                 // NB: don't name this binding `tls` — it would
                                 // shadow the imported package alias (`tls.*`)

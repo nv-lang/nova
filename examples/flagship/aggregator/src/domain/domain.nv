@@ -56,8 +56,8 @@ export type AggError enum
 #stable(since = "0.1")
 export fn AggError @to_str() -> str {
     match @ {
-        Upstream(id)  => "upstream failure: " + id
-        Transport(msg) => "transport error: " + msg
+        Upstream(id)  => "upstream failure: ${id}"
+        Transport(msg) => "transport error: ${msg}"
     }
 }
 

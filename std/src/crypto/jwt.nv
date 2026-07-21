@@ -41,11 +41,11 @@ export fn Jwt.encode_hs256(secret []u8, claims JsonValue) -> str {
     ro header_b64 = Base64.encode_url(header.to_str().bytes())
     ro payload_b64 = Base64.encode_url(claims.to_str().bytes())
 
-    ro signing_input = header_b64 + "." + payload_b64
+    ro signing_input = "${header_b64}.${payload_b64}"
     ro mac = HmacSha256.compute(secret, signing_input.bytes())
     ro sig_b64 = Base64.encode_url(mac[0..32])
 
-    signing_input + "." + sig_b64
+    "${signing_input}.${sig_b64}"
 }
 
 fn make_header_hs256() -> HashMap[str, JsonValue] {
@@ -96,7 +96,7 @@ export fn Jwt.decode_hs256(secret []u8, token str) -> Result[JsonValue, JwtError
     }
 
     // Verify signature
-    ro signing_input = header_b64 + "." + payload_b64
+    ro signing_input = "${header_b64}.${payload_b64}"
     ro expected_mac = HmacSha256.compute(secret, signing_input.bytes())
     ro actual_sig = match Base64.decode_url(sig_b64) {
         Ok(b)  => b

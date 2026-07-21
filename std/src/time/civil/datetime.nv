@@ -138,7 +138,7 @@ export fn DateTime @compare(other DateTime) -> int {
 
 /// ISO-8601 форма `YYYY-MM-DDTHH:MM:SS[.fff]`.
 #stable(since = "0.1")
-export fn DateTime @to_iso() -> str => @date.to_iso() + "T" + @time.to_iso()
+export fn DateTime @to_iso() -> str => "${@date.to_iso()}T${@time.to_iso()}"
 
 /// Display = ISO-форма.
 #stable(since = "0.1")

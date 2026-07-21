@@ -360,17 +360,17 @@ fn format_year(y i64) -> str {
     ro a = if neg { -y } else { y }
     ro digits = a.to_str()
     ro padded = if digits.byte_len() >= 4 { digits } else { digits.pad_start(4, '0') }
-    if neg { "-" + padded } else { padded }
+    if neg { "-${padded}" } else { padded }
 }
 
 fn pad2(n i64) -> str =>
-    if n < 10 { "0" + n.to_str() } else { n.to_str() }
+    if n < 10 { "0${n}" } else { n.to_str() }
 
 /// ISO-8601 календарная форма `YYYY-MM-DD` (round-trip c `s.to_date()`, Ф.5).
 #stable(since = "0.1")
 export fn Date @to_iso() -> str {
     ro (y, m, d) = civil_from_days(@epoch_day)
-    format_year(y) + "-" + pad2(m) + "-" + pad2(d)
+    "${format_year(y)}-${pad2(m)}-${pad2(d)}"
 }
 
 /// Display = ISO-форма.

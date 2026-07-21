@@ -461,7 +461,7 @@ fn Lexer mut @read_escape() -> Result[str, ParseJsonError] {
         Some(b) if b == B_LOWER_U   => @read_unicode_escape()
         // Неизвестный escape — настоящий codepoint (не Latin-1-фантом);
         // @advance() уже сдвинул @pos на 1 байт, символ начинался на @pos-1.
-        Some(_) => Err(InvalidEscape { @line, @col, seq: "\\" + @char_at(@pos - 1).to_str() })
+        Some(_) => Err(InvalidEscape { @line, @col, seq: "\\${@char_at(@pos - 1).to_str()}" })
     }
 }
 
@@ -821,7 +821,7 @@ fn escape_char(c char) -> str => match c {
 
 fn unicode_escape(code int) -> str {
     ro hex = to_hex_4(code)
-    "\\u" + hex
+    "\\u${hex}"
 }
 
 fn to_hex_4(n int) -> str {
@@ -830,7 +830,7 @@ fn to_hex_4(n int) -> str {
     ro h1 = chars[(n / 0x100) % 16]
     ro h2 = chars[(n / 0x10) % 16]
     ro h3 = chars[n % 16]
-    h0.to_str() + h1.to_str() + h2.to_str() + h3.to_str()
+    "${h0.to_str()}${h1.to_str()}${h2.to_str()}${h3.to_str()}"
 }
 
 fn format_array(xs []JsonValue) -> str {

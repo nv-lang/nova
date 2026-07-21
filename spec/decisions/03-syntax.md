@@ -2748,6 +2748,18 @@ fn Vector @times(other Vector) -> f64 => // dot product
 > **Примечание (Plan 91.8b, 2026-06-17):** `@eq`/`@lt`/`@le`/`@gt`/`@ge` — УДАЛЕНЫ как operator-dispatch имена.
 > Используй `Equal.@equal` / `Compare.@compare`. Подробнее: [D363](#d363-operator-dispatch-via-protocols--замена-magic-methods-plan-918b).
 
+> **Амендмент (владелец, 2026-07-21): исключение для `str` — `a + b`
+> запрещён.** Строка `| a + b | @plus(b) | свободный |` таблицы выше
+> перестаёт применяться к `str`+`+` конкретно: `nova_str + nova_str` —
+> **hard error `E_STR_CONCAT_PLUS`**, а не dispatch на `@plus`. `str`
+> определяет `@plus` (std/src/runtime/string/transform.nv, делегирует
+> `@concat`), но операторный `+` больше не диспатчится на него ни для
+> какого типа операнда — единственное такое исключение в языке. Канон —
+> string-интерполяция (`"${a}${b}"`) или явный `.concat(...)`/
+> `StringBuilder` в цикле. Подробности и мотивация — амендмент
+> [D216 §1](02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo)
+> (str-блок, рядом с `@concat`/operator-lowering option (b)).
+
 ### Почему
 
 1. **Просто и предсказуемо** — структурное matching по имени, без

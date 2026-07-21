@@ -137,11 +137,11 @@ export fn Period @compare(other Period) -> int {
 #stable(since = "0.1")
 export fn Period @to_iso() -> str {
     if @is_zero() { return "P0D" }
-    mut s = "P"
-    if @years != 0 { s = s + @years.to_str() + "Y" }
-    if @months != 0 { s = s + @months.to_str() + "M" }
-    if @days != 0 { s = s + @days.to_str() + "D" }
-    s
+    consume sb = StringBuilder.new().append("P")
+    if @years != 0 { sb.append(@years.to_str()).append("Y") }
+    if @months != 0 { sb.append(@months.to_str()).append("M") }
+    if @days != 0 { sb.append(@days.to_str()).append("D") }
+    sb.into_str()
 }
 
 /// Display = ISO-форма.
