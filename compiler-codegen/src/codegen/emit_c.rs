@@ -1184,6 +1184,25 @@ pub struct CEmitter {
     /// `xs.map(inc)` — нужно знать sig чтобы построить thunk и closure.
     /// Обновляется при register_fn в первом проходе.
     user_fn_sigs: HashMap<String, (Vec<String>, String)>,
+    /// [M-196-freefn-arity-overload-default-ret-mismatch] fix: `user_fn_sigs`
+    /// above is keyed by BARE name only and last-declaration-wins — correct
+    /// for the common single-overload free fn, but arity-BLIND and WRONG
+    /// whenever ≥2 free-fn overloads share a name with DIFFERENT return
+    /// types (the return-type inference for a call picks whichever overload
+    /// happened to be registered LAST, regardless of the call's actual
+    /// arg count). By the time B10f reads a return type, any call that
+    /// needed default-arg backfill has ALREADY been normalized to the
+    /// EXACT positional arg count of its resolved candidate
+    /// (`callnorm.rs`'s two-phase Block rewrite runs before codegen) — so
+    /// disambiguating by `params.len() == args.len()` at THIS layer (same
+    /// criterion as the checker-side Q1 rtbuf-producer, `types/mod.rs`'s
+    /// Ident/Call arm) is sound and requires no default-fill logic of its
+    /// own. Parallel to `user_fn_sigs` (never removes/replaces it — same
+    /// registration sites, additively pushing every overload's own
+    /// `(params.len(), ret_c)` instead of overwriting) so every OTHER
+    /// `user_fn_sigs` consumer (thunk emission, HOF param inference, arity
+    /// checks) stays byte-identical.
+    free_fn_ret_by_arity: HashMap<String, Vec<(usize, String)>>,
     /// Bidirectional inference: maps (callee_name, param_index) → inner closure
     /// signature (param_types, ret_type) when the HOF parameter at that position
     /// has type `fn(T...) -> R`. Populated during register_fn pass; consulted in
@@ -2263,6 +2282,7 @@ impl CEmitter {
             unanno_light_clos: HashMap::new(),
             array_param_fn_sigs: HashMap::new(),
             user_fn_sigs: HashMap::new(),
+            free_fn_ret_by_arity: HashMap::new(),
             hof_param_fn_sigs: HashMap::new(),
             user_fn_variadic: HashSet::new(),
             suppress_variadic_routing: false,
@@ -15399,6 +15419,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 )))
                 .collect::<Result<Vec<_>, _>>()?;
             self.user_fn_sigs.insert(f.name.clone(), (param_c_tys, ret.clone()));
+            // [M-196-freefn-arity-overload-default-ret-mismatch] fix: additively
+            // record THIS overload's own arity alongside the last-wins entry
+            // above (see `free_fn_ret_by_arity`'s doc) — every overload sharing
+            // `f.name` pushes its own `(params.len(), ret)` instead of the
+            // single slot overwriting.
+            self.free_fn_ret_by_arity.entry(f.name.clone())
+                .or_default()
+                .push((f.params.len(), ret.clone()));
             // Bidirectional inference: for each fn-typed parameter, record the
             // inner closure signature so ClosureLight call-site args can infer
             // their parameter types without explicit annotations.
@@ -53595,6 +53623,38 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if !ret_ty.is_empty() && ret_ty != "void*" {
                                 self.icr_trace("B10e_fn_param_sigs_first");
                                 return ret_ty.clone();
+                            }
+                        }
+                        // [M-196-freefn-arity-overload-default-ret-mismatch] fix:
+                        // `user_fn_sigs` right below is keyed by bare NAME ONLY and
+                        // last-declaration-wins — WRONG whenever ≥2 free-fn overloads
+                        // share a name with DIFFERENT return types (repro: `fn f(x
+                        // int)->int` + `fn f(x int, tag str="d")->str`, `f(5)` picks
+                        // whichever was registered last, regardless of the call's
+                        // actual arg count). By this point any call that needed
+                        // default-arg backfill has ALREADY been normalized
+                        // (`callnorm.rs`) to the EXACT positional arg count of its
+                        // resolved candidate, so `args.len()` here already equals
+                        // that candidate's true declared arity — disambiguating by
+                        // `params.len() == args.len()` (same criterion the checker's
+                        // sibling Q1 rtbuf-producer, `types/mod.rs`'s Ident/Call arm,
+                        // already uses) needs no default-fill logic of its own. Falls
+                        // through to the unchanged `user_fn_sigs` lookup (byte-
+                        // identical for every single-overload name, and for the
+                        // genuine tie — ≥2 overloads sharing that exact arity, D84
+                        // axis 2 — where this stays honestly silent).
+                        if let Some(variants) = self.free_fn_ret_by_arity.get(name) {
+                            let exact: Vec<&(usize, String)> = variants.iter()
+                                .filter(|(n, _)| *n == args.len())
+                                .collect();
+                            if let [only] = exact.as_slice() {
+                                let ret_ty = &only.1;
+                                if !ret_ty.is_empty() && ret_ty != "void*"
+                                    && !self.debt_is_generic_stub_c(ret_ty)
+                                {
+                                    self.icr_trace("B10f_arity_variant");
+                                    return ret_ty.clone();
+                                }
                             }
                         }
                         // A bare `name(...)` call (func is Ident, not Member) targets

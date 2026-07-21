@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR no matching overload
+//
+// [M-196-freefn-arity-overload-default-ret-mismatch] NEGATIVE guard: the
+// `pick_no_default_overload` fix (types/mod.rs) must NOT swallow a genuine
+// wrong-arity call — calling with FEWER args than either overload's
+// REQUIRED (non-default) param count binds against NEITHER candidate
+// (`bind_call_args` fails for both — `MissingRequired` on the shared
+// required `x`), so `overload_applicability` returns `None` for both and
+// the fix's tie-break is never reached. This still leaks to a codegen
+// "no matching overload" error (the checker's own `any_arity` stays
+// `false` — a pre-existing, out-of-scope gap: this class of wrong-arity
+// call is `[M-172.1-free-fn-multi-overload-ambiguous]`'s documented
+// "defer: that arity error is reported by BoundCtx, not here", but
+// BoundCtx does not fire here either) — pinned as a compile-error
+// regardless of exact diagnostic owner, so the fix above staying
+// correctly narrow (arity+type-compatible candidates only) is provable.
+module neg.m196af_freefn_arity_default_ret_neg
+
+fn m196af_np(x int) -> int => x
+fn m196af_np(x int, tag str = "d") -> str => tag
+
+test "unreachable — codegen must fail before running" {
+    assert(m196af_np() == 0)
+}

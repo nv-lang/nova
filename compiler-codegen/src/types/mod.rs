@@ -11237,6 +11237,60 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
+    /// [M-196-freefn-arity-overload-default-ret-mismatch] fix: when ≥2
+    /// free-fn overloads are BOTH arity+type-compatible for a call (only
+    /// reachable when at least one of them needed a DEFAULT-arg fill to
+    /// bind — a genuine same-arity/same-category collision, D84 axis 2,
+    /// binds ALL its tied candidates with the SAME (zero) default-count,
+    /// so it always still falls into the `None` tie branch below,
+    /// unaffected), prefer the candidate needing the FEWEST defaults
+    /// filled — equivalently, the fewest TOTAL declared params (`args.len()`
+    /// is fixed across candidates, so minimizing `params.len()` minimizes
+    /// defaults-needed). This generalizes the ordinary "exact arity wins
+    /// over a default-filled longer overload" rule (every other language
+    /// with default args applies it) to N-way default chains, and agrees
+    /// with codegen's sibling Q1 rtbuf-producer (`types/mod.rs`'s Ident/Call
+    /// arm feeding `resolved_types_buf`, mirrored by `emit_c.rs`'s
+    /// `infer_call_ret_c`) whenever Q1's stricter literal
+    /// `f.params.len() == args.len()` filter finds a unique zero-default
+    /// match (the `defaults_used == 0` case is exactly Q1's own criterion)
+    /// — but ALSO covers calls where the intended candidate itself needs
+    /// SOME defaults and every sibling needs strictly more (Q1 has no
+    /// tie-break for that shape at all, so it silently defers to codegen's
+    /// arity-blind name-keyed `user_fn_sigs` — the same latent bug, wider
+    /// shape). A genuine tie (≥2 candidates needing the SAME minimal
+    /// default-count — D84 axis 2, or two default-chains of equal length)
+    /// still defers, unchanged. Returns an INDEX into `compat` (not a
+    /// reference) to sidestep the extra lifetime parameter a borrowed
+    /// return would otherwise need — callers already hold `compat`.
+    fn pick_no_default_overload(
+        &self,
+        compat: &[&&FnDecl],
+        args: &[CallArg],
+    ) -> Option<usize> {
+        // Two-pass: collect (index, defaults_used) for every candidate that
+        // still binds, THEN pick the minimum — a single pass that bails on
+        // the first tie would wrongly stop at an early tie between two
+        // high-default candidates instead of finding a later, strictly
+        // better (fewer-defaults) one.
+        let scored: Vec<(usize, usize)> = compat.iter().enumerate()
+            .filter_map(|(i, c)| {
+                let bindings = crate::argbind::bind_call_args(&c.params, args).ok()?;
+                let defaults_used = bindings.iter()
+                    .filter(|b| matches!(b, crate::argbind::ArgBinding::Default))
+                    .count();
+                Some((i, defaults_used))
+            })
+            .collect();
+        let min_defaults = scored.iter().map(|(_, d)| *d).min()?;
+        let mut at_min = scored.iter().filter(|(_, d)| *d == min_defaults);
+        let (idx, _) = at_min.next()?;
+        if at_min.next().is_some() {
+            return None; // ≥2 candidates tied at the minimum — genuine ambiguity.
+        }
+        Some(*idx)
+    }
+
     /// Ф.1: проверить типы аргументов call-site против параметров callee.
     /// Plan 172.1 U.3.1: ARITY-AWARE compatibility probe for ONE overload.
     ///
@@ -11788,9 +11842,17 @@ impl<'a> TypeCheckCtx<'a> {
                         // U.3.2 multi-overload Path site and U.4.3 instance-method site.
                         // Enables Call-channel for multi-overload free fns like
                         // assert(bool)/assert(bool,str).
-                        // [M-172.1-free-fn-multi-overload-ambiguous]: 0 or ≥2 compat → codegen.
-                        if compat.len() == 1 {
-                            let chosen = compat[0];
+                        // [M-172.1-free-fn-multi-overload-ambiguous]: 0 or ≥2 compat → codegen,
+                        // UNLESS `pick_no_default_overload` finds a unique zero-default
+                        // candidate among the ≥2 (see [M-196-freefn-arity-overload-default-
+                        // ret-mismatch] fix above) — a genuine same-arity/-category tie
+                        // (D84 axis 2) still defers, unchanged.
+                        let chosen_opt: Option<&&FnDecl> = match compat.len() {
+                            0 => None,
+                            1 => Some(compat[0]),
+                            _ => self.pick_no_default_overload(&compat, args).map(|i| compat[i]),
+                        };
+                        if let Some(chosen) = chosen_opt {
                             self.resolved_callees.borrow_mut().insert(call_id, chosen.span);
                             if call_id.is_set() {
                                 if let Some(ret_ty) = &chosen.return_type {

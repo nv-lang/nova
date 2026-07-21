@@ -1,0 +1,43 @@
+// [M-196-freefn-arity-overload-default-ret-mismatch] — free-fn overload
+// resolution when a DEFAULT-arg fill makes the call's arg count coincide
+// with more than one overload's declared arity. Root cause (see
+// docs/plans/backlog-followups.md): the checker's own ambiguity gate
+// (`types/mod.rs::f1_check_call`, Ident arm) recognized ≥2 arity+type-
+// compatible overloads (`bind_call_args` succeeds for both — one needs a
+// default fill, D84 axis-2 same-arity collisions cannot reach this branch)
+// and deferred ENTIRELY to codegen instead of recording `resolved_callees`
+// — codegen's legacy fallback (`user_fn_sigs`, keyed by bare NAME,
+// last-DECLARATION-wins) then silently answered with WHICHEVER overload
+// was declared last, regardless of the call's actual arg count: a str/int
+// clash for the surrounding expression (pinned here as a value assertion).
+// Fix: `TypeCheckCtx::pick_no_default_overload` — when ≥2 candidates bind,
+// prefer the one needing the FEWEST defaults (unique minimum only; a
+// genuine tie — same minimal default-count — still defers, unchanged).
+// Threading the resolved candidate through `resolved_callees` ALSO fixes
+// `callnorm.rs`'s default-arg backfill for these calls (its `channel_params`
+// fast path consumes the same entry) and adds a parallel arity-keyed
+// codegen fallback (`free_fn_ret_by_arity`) for calls normalized to a
+// Block (whose synthesized tail `Call` node has no checker id to channel).
+module spec_tests.conformance
+
+// Shape 1 (the marker's literal repro): the SHORTER overload's total
+// arg-count coincides with the LONGER one's REQUIRED (non-default) count.
+fn m196af_f(x int) -> int => x
+fn m196af_f(x int, tag str = "d") -> str => tag
+
+test "free-fn overload: exact-arity sibling wins over a default-reachable one (M-196af)" {
+    assert(m196af_f(5) == 5)
+    assert(m196af_f(5, "custom") == "custom")
+}
+
+// Shape 2 (broader collision): BOTH overloads need a default-arg fill for
+// the SAME call arity — neither declared arity equals the call's arg
+// count exactly. The checker prefers the candidate needing FEWEST
+// defaults (1, vs the sibling's 2).
+fn m196af_h(x int, y int = 10) -> int => x + y
+fn m196af_h(x int, y int = 10, z int = 20) -> str => "s"
+
+test "free-fn overload: fewest-defaults sibling wins when neither matches exactly (M-196af)" {
+    assert(m196af_h(5) == 15)
+    assert(m196af_h(5, 1, 2) == "s")
+}
