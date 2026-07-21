@@ -1,0 +1,42 @@
+// 03_methods.nv — @-methods, protocols (#impl), property methods by arity.
+module tour.methods
+
+type Counter value { mut n int }
+
+// A method is declared outside the type body: `fn Type [mut] @name(...) -> R`.
+// `@n` inside the body refers to the receiver's field `n`.
+fn Counter mut @inc() -> () {
+    @n += 1
+}
+
+// Property-by-arity (D84/D409): reading is `@x() -> T`, writing is
+// `mut @x(v T) -> @` — a fluent setter that returns the receiver.
+fn Counter @value() -> int => @n
+fn Counter mut @value(v int) -> @ {
+    @n = v   // D409: fluent setter, receiver returned automatically
+}
+
+// `protocol` = structural interface (behavior contract on a type).
+// `#impl(...)` opts a type into a protocol explicitly (D186).
+type Sized protocol {
+    @size() -> int
+}
+
+type Box { items []int }
+fn Box @size() -> int => @items.len()
+
+fn sum_sizes[T Sized](a T, b T) -> int => a.size() + b.size()
+
+fn main() {
+    mut c = Counter { n: 0 }
+    c.inc()
+    c.inc()
+    println("counter after two inc = ${c.value()}")
+
+    ro c2 = c.value(100)   // fluent setter, returns @ (Counter)
+    println("after fluent set = ${c2.value()}")
+
+    ro b1 = Box { items: []int.of(1, 2, 3) }
+    ro b2 = Box { items: []int.of(4, 5) }
+    println("sum_sizes = ${sum_sizes(b1, b2)}")
+}

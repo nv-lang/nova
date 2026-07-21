@@ -1,0 +1,33 @@
+// ffi_tour.nv — FFI basics: opaque pointer `*()`, typed handles, `external fn`.
+// Full cookbook: docs/ffi-cookbook.md. `ptr` as a built-in type was removed
+// (Plan 134) — `*()` (pointer to unit = `void*` in C) is used everywhere.
+module tour.ffi_tour
+
+// A typed handle wraps a raw `*()` in a record so distinct resources
+// (FileHandle vs SocketHandle) are NOT interchangeable at compile time,
+// even though both are `void*` on the C side.
+type FileHandle { ro value *() }
+
+fn main() {
+    // NULL literal — bitwise-zero opaque pointer.
+    ro nothing *() = (0 as *())
+
+    // *() constructed from an integer (normally this would come back from
+    // an `external fn` call into a C library).
+    ro raw *() = 0x1000 as *()
+
+    // Round-trip cast: *() -> int -> *() (same bit pattern).
+    ro raw_as_int = raw as int
+    ro raw_back *() = raw_as_int as *()
+    println("raw == raw_back: ${raw == raw_back}")
+
+    ro handle = FileHandle { value: raw }
+    println("handle.value as int = ${handle.value as int}")
+    println("nothing as int = ${nothing as int}")
+
+    // An `external fn` declaration (D82) binds to a C symbol; the cookbook
+    // shows the full pattern:
+    //   external fn nova_fn_sqlite3_open(path str) -> (*(), int)
+    // — tuple-by-value return, no linking demonstrated here since it needs
+    // a real C library on the link line.
+}

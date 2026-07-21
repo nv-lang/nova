@@ -1,0 +1,28 @@
+// collections_tour.nv — Vec ([]T is a syntactic alias), HashMap, iterators.
+module tour.collections_tour
+
+import std.collections.hashmap.{HashMap}
+import std.collections.vec_iter
+
+fn main() {
+    // `[]T` is a syntactic alias for `Vec[T]` — methods work directly, no
+    // `.iter()` needed to call adapters like `.filter()`/`.count()`.
+    ro xs []int = []int.of(1, 2, 3, 4, 5, 6, 7, 8)
+    println("count=${xs.iter().count()} evens=${xs.iter().filter(|x| x % 2 == 0).count()}")
+
+    // Map-literal `[k: v, ...]` constructs a HashMap[K, V] directly (D108).
+    ro m HashMap[str, int] = ["a": 1, "b": 2, "c": 3]
+    ro key = "b"
+    ro val = m.get(key)
+    println("m.len()=${m.len()} m[b]=${val}")
+
+    // Option/Result combinators: flat_map for real monadic bind (no nested
+    // Option[Option[U]]), filter to drop a Some by predicate.
+    ro port = Some(10).flat_map(|x| Some(x * 100)) ?? 8080
+    ro none_port = (None as Option[int]).flat_map(|x| Some(x * 100)) ?? 8080
+    println("port=${port} none_port=${none_port}")
+
+    ro evens_only = Some(10).filter(|x| x % 2 == 0)
+    ro odds_dropped = Some(3).filter(|x| x % 2 == 0)
+    println("evens_only=${evens_only} odds_dropped=${odds_dropped}")
+}

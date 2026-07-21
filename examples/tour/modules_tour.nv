@@ -1,0 +1,14 @@
+// modules_tour.nv — importing a folder-module (tour.greeter, see
+// tour/greeter/{core,loud}.nv). Every import path is fully qualified from
+// the PACKAGE root — this file's package is `nova_examples` (declared in
+// ../nova.toml), so a sibling folder-module is `nova_examples.tour.greeter`,
+// same shape `std.collections.vec` uses to reach into the `std` package.
+module tour.modules_tour
+
+import nova_examples.tour.greeter.{greet, shout}
+
+fn main() {
+    ro g = greet("Nova")
+    println(g.text)
+    println(shout(g))
+}

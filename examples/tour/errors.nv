@@ -1,0 +1,38 @@
+// errors.nv — Result + `?`, panic for programmer-bug invariants.
+module tour.errors
+
+type ParseErr enum Empty | BadDigit
+
+fn parse_digit(s str) -> Result[int, ParseErr] {
+    if s.byte_len() == 0 { return Err(Empty) }
+    ro c = s.bytes()[0]
+    if c < 48 || c > 57 { return Err(BadDigit) }
+    Ok((c as int) - 48)
+}
+
+// `?` propagates Err out of a Result-returning function (D85).
+fn parse_two(a str, b str) -> Result[int, ParseErr] {
+    ro x = parse_digit(a)?
+    ro y = parse_digit(b)?
+    Ok(x + y)
+}
+
+fn main() {
+    match parse_two("3", "4") {
+        Ok(sum)  => println("sum = ${sum}")
+        Err(_e)  => println("parse failed")
+    }
+    match parse_two("3", "x") {
+        Ok(sum) => println("sum = ${sum}")
+        Err(_e) => println("parse failed as expected")
+    }
+
+    // panic: an invariant the CALLER was required to satisfy — a genuine
+    // programmer bug, not a recoverable external-input error. Never used for
+    // bad user input/network/files (those are Result).
+    ro xs = []int.of(1, 2, 3)
+    if xs.len() > 5 {
+        ro _oob = xs[10]  // would panic: out-of-bounds is not reached here
+    }
+    println("done")
+}

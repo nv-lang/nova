@@ -1,0 +1,8 @@
+// greeter/loud.nv — peer file, SAME module `tour.greeter` as core.nv.
+// Items declared in either file are visible to both without an import —
+// a folder-module shares one namespace across its peer files.
+module tour.greeter
+
+import std.unicode
+
+export fn shout(g Greeting) -> str => g.text.to_upper()

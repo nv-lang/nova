@@ -1,0 +1,8 @@
+// greeter/core.nv — a FOLDER is one module made of co-equal peer files
+// (tour.greeter), not one file per type. Both files here declare the same
+// `module tour.greeter` (see greet.nv).
+module tour.greeter
+
+export type Greeting { text str }
+
+export fn greet(name str) -> Greeting => { text: "Hello, ${name}!" }

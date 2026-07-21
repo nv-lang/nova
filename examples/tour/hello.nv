@@ -1,0 +1,13 @@
+// 01_hello.nv — functions, let/mut, type inference.
+module tour.hello
+
+// `ro` = read-only binding (never reassigned); `mut` = reassignable.
+// Types are usually inferred; write them explicitly when it helps a reader.
+fn add(a int, b int) -> int => a + b
+
+fn main() {
+    ro name = "Nova"                 // inferred: str
+    mut count int = 0                // explicit type, still inferred-friendly
+    count = count + 1
+    println("Hello, ${name}! count=${count}, add(2,3)=${add(2, 3)}")
+}
