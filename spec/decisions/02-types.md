@@ -16150,20 +16150,50 @@ codegen-баг. Теперь — hard compile error ДО кодогена, с т
 по-прежнему бейлит в `None` МОЛЧА для этих категорий (unchanged pre-existing behavior, вне
 периметра этого маркера; отдельный follow-up при реальном триггере).
 
+**(R4) Literal-fit amend (2026-07-21, найдено мега-CU гейтом на `d407_enum_payload_width.nv`
+— ложное срабатывание R2 на УЖЕ ЖИВОЙ фикстуре).** БЕЗ типового суффикса/каста литеральный арм
+(`d407W(_) => 1`) не несёт СОБСТВЕННОГО фиксированного типа — в отличие от pattern-bound
+переменной (чей тип ФИКСИРОВАН типом payload'а, из которого её извлекли), голый int-литерал
+гибок до помещения в контекст (D54 literal-fit; rustc-эталон: unsuffixed integer literal
+унифицируется с контекстом, а не навязывает свой дефолт). ПЕРЕД R1/R2-сравнением ResolvedType'ов
+чекер теперь проверяет: если один из двух конфликтующих арм — голый литерал (`IntLit` или
+`Unary{Neg, IntLit}`, `-1`), тот же самый critical shape, что уже матчит D227 Rule 6 в
+`assignable`), впишется ли его СЫРОЕ значение в тип ДРУГОГО арма (те же правила, что литерал в
+аннотированной позиции: D227 Rule 3 sized range-check, Rule 1 no-upper-check для wide-default
+`int`/`uint`, Rule 6 negative-floor для unsigned) — если да, литеральный арм ПРОСТО ПРИНИМАЕТ
+тип другого арма (никакого widen, никакой ошибки); НЕ имеет значения, какой арм физически
+первый (порядко-независимо: `common`/`common_lit` отслеживают, был ли текущий «общий» тип сам
+литералом, чтобы ПОЗЖЕ пришедший конкретный арм тоже мог быть усыновлён). **Floor НЕ ослаблен:**
+отрицательный литерал (`-1`), который НЕ вписывается в unsigned-таргет (напр. `uint`, 64-бит
+безнаковый — САМ `int` тоже не расширяется безопасно в `uint` той же ширины), падает через это
+исключение и остаётся genuine-mismatch → `E_MATCH_ARM_WIDTH_MISMATCH`, как и раньше (R2
+неизменён для этого случая — Rule 6 категоричен, ширина не спасает). Область — та же, что R1/R2
+(int-family/`Scalar` only); нечисловые литералы (`str`/`char`/…) не тронуты.
+
 ### Реализация
 
 `compiler-codegen/src/types/mod.rs`: `infer_match_common_primitive` (unify через
 `would_narrow_into`, R1) + новая `check_match_arm_width_mismatch` (диагностика, R2), обе
-построены над общим `match_arm_value_types` (per-arm `(Span, ResolvedType)` экстракция,
-единый источник для канала И диагностики — §0/§3). Вызывается из `f1_expr`'s
-`ExprKind::Match`-ветки ДО материализации канала.
+построены над общим `match_arm_value_types` (per-arm `(Span, ResolvedType, Option<i128>)`
+экстракция — третий элемент несёт RAW-значение, если арм — голый литерал; единый источник для
+канала И диагностики — §0/§3). Литерал-fit (R4) — `bare_int_literal_value` (распознаёт
+`IntLit`/`Unary{Neg,IntLit}`) + `literal_fits_scalar` (те же D227-правила, что `assignable`'s
+`IntLit`-ветка уже применяет к аннотированной позиции), проверяется ПЕРВЫМ в обеих функциях,
+до R1-widen/R2-mismatch-ветки. Вызывается из `f1_expr`'s `ExprKind::Match`-ветки ДО
+материализации канала.
 
 ### Тесты
 
 `detect172/u172_2_match_arm_width_pos.nv` (R1: широкий/узкий unify, three-arm progressive,
-explicit-`as`-unify) + `detect172/neg/n_match_arm_width_mismatch.nv` (R2, `EXPECT_COMPILE_ERROR
-E_MATCH_ARM_WIDTH_MISMATCH`) · `spec_tests/conformance/d129_match_arm_width_widen.nv` (R1,
-конформанс-CU) + `spec_tests/conformance/neg/n_match_arm_width_mismatch.nv` (R2).
+explicit-`as`-unify; R4: bare-литерал усыновляет `uint`-сиблинга, порядко-независимо) +
+`detect172/neg/n_match_arm_width_mismatch.nv` (R2, `EXPECT_COMPILE_ERROR
+E_MATCH_ARM_WIDTH_MISMATCH`) + `detect172/neg/n_match_arm_width_negative_literal_uint.nv` (R4
+floor: отрицательный литерал НЕ усыновляет `uint`, mismatch остаётся) ·
+`spec_tests/conformance/d129_match_arm_width_widen.nv` (R1+R4, конформанс-CU) +
+`spec_tests/conformance/neg/n_match_arm_width_mismatch.nv` (R2) +
+`spec_tests/conformance/neg/n_match_arm_width_negative_literal_uint.nv` (R4 floor). Полный
+мега-CU `spec_tests/conformance` (1004+ файлов, `NOVA_CACHE=0`) — **PASS 519 / FAIL 0 / SKIP
+19** (включает `d407_enum_payload_width.nv`, чей ложный R2-mismatch и был найден гейтом).
 
 ### Связь
 
