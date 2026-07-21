@@ -262,7 +262,7 @@ export fn Duration @sleep() Time -> () => Time.sleep(@to_millis_ceil() as int)
 /// (Go/tokio parity; the underlying runtime already treats `ms <= 0` as an
 /// immediate yield, so this holds for any non-positive `Duration`).
 /// Granularity is the libuv timer wheel (~1ms) — `sleep` guarantees
-// П12-хвост (владелец, снос 2026-07-21): свободные обёртки `(d).sleep()` /
+// П12-хвост (владелец, снос 2026-07-21): свободные обёртки `sleep(d)` /
 // `sleep_until(deadline)` РЕТРАКТИРОВАНЫ (§3 surface=методы + D9 «одна
 // дверь»): канон — `d.sleep()` и `deadline.sleep_until()` (метод в
 // monotonic.nv). Effect-op `Time.sleep(ms)` — слой примитива, не тронут.
