@@ -2,10 +2,15 @@
     "name": "nova-lang",
     "displayName": "Nova Language",
     "description": "Nova programming language support: syntax highlighting and LSP diagnostics",
-    "version": "0.2.0",
-    "publisher": "nova-lang-local",
+    "version": "0.1.0",
+    "publisher": "nv-lang",
     "engines": {
         "vscode": "^1.75.0"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/nv-lang/nova.git",
+        "directory": "editors/vscode"
     },
     "categories": [
         "Programming Languages"
