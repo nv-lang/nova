@@ -15,7 +15,7 @@ use crate::ast::{
     Stmt, TypeDeclKind, TypeRef, VariantPatternKind,
 };
 use crate::diag::{byte_to_line_col, Diagnostic, Span};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Один lint-warning.
 #[derive(Debug, Clone)]
@@ -3180,9 +3180,14 @@ pub const CONV_RULES: &[ConvRule] = &[
     },
     ConvRule {
         id: "W_COERCE_EXPLICIT_REDUNDANT",
-        summary: "явный `.bytes()`/`.into_str()`/`.into_bytes()` в позиции с \
-                  явным ожидаемым типом — голое значение скоэрсировалось бы в \
-                  ТО ЖЕ САМОЕ через `#coerce` (D429 R9, Plan 214)",
+        summary: "явный `.bytes()`/`.into_str()`/`.into_bytes()`/… (реестро-\
+                  ориентированно, из видимых `#coerce fn`-деклараций) в позиции \
+                  с явным ожидаемым типом ИЛИ call-аргументом на синтаксически-\
+                  гарантированном значении (литерал/интерполяция/`.to_str()`-\
+                  чейн) — голое значение скоэрсировалось бы в ТО ЖЕ САМОЕ через \
+                  `#coerce` (D429 R6/R9, Plan 214; call-arg лейн + реестро-\
+                  ориентация — владелец 2026-07-21, поглотил бывший \
+                  W_REDUNDANT_BYTES_ON_LITERAL)",
         ast: Some(conv_coerce_explicit_redundant),
         text: None,
     },
@@ -3204,13 +3209,6 @@ pub const CONV_RULES: &[ConvRule] = &[
                   `if x > hi {x = hi}`) — канон `a.max(b)`/`a.min(b)` (nv-coding-style \
                   §30, прецедент clippy manual_min/manual_max)",
         ast: Some(conv_manual_min_max),
-        text: None,
-    },
-    ConvRule {
-        id: "W_REDUNDANT_BYTES_ON_LITERAL",
-        summary: "`\"...\".bytes()` голым call-аргументом — позиция уже коэрсировала бы \
-                  str-литерал в `[]u8` через `#coerce` (D429/D55, владелец 2026-07-21)",
-        ast: Some(conv_redundant_bytes_on_literal),
         text: None,
     },
     ConvRule {
@@ -5556,7 +5554,19 @@ fn conv_result_discarded(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWar
 // ---------------------------------------------------------------------------
 // W_COERCE_EXPLICIT_REDUNDANT — explicit call to a `#coerce`-registered
 // method (Plan 214, D429 R9) where a bare value would coerce to the exact
-// same result at this position.
+// same result at this position. Generalized 2026-07-21 (owner correction on
+// [M-bytes-literal-callarg-coerce-codegen-gap]'s lint follow-up — "не
+// закладываться на str: линт должен ловить ЛЮБЫЕ избыточные явные конверсии,
+// покрытые авто-коэрсией", pairs read from the registry, not hardcoded)
+// to (a) cover the call-arg position — absorbing the former standalone
+// `W_REDUNDANT_BYTES_ON_LITERAL` rule as this rule's call-arg lane instead
+// of a second rule — and (b) build its method/shape table from the
+// `#coerce fn` declarations ACTUALLY VISIBLE in the linted module (own
+// `Item::Fn`s + same-folder peers, `conv_all_fns`'s scope) instead of a
+// fixed 3-entry list, falling back to that list only when the scan finds
+// nothing (a consumer file outside the declaring type's folder-module —
+// `nova lint` has no cross-module import resolution, see the SEMANTIC-
+// UPGRADE note below).
 // ---------------------------------------------------------------------------
 
 /// Plan 214 (D429 R9): the O-shape a seed `#coerce` method's zero-arg call
@@ -5567,55 +5577,115 @@ enum CoerceSeedShape {
     BytesSlice,
 }
 
+/// The 3 std seed `#coerce` pairs (Plan 214 Ф.3), used as a FALLBACK when
+/// the AST scan (`scan_coerce_methods`) finds no `#coerce fn` decl in the
+/// linted module's own scope (e.g. a consumer file in a different folder-
+/// module that only imports `str`/`StringBuilder`/`WriteBuffer` — `nova
+/// lint` cannot see the declaring file's AST, see the SEMANTIC-UPGRADE note
+/// on `conv_coerce_explicit_redundant`). Kept as literal data (not a
+/// hardcoded RULE) — same role a registry miss/cold-cache fallback would
+/// play, not a second source of truth: whenever the scan finds a REAL decl
+/// for one of these names it fully supersedes the matching fallback entry.
+const COERCE_SEED_METHODS: &[(&str, CoerceSeedShape)] = &[
+    ("bytes", CoerceSeedShape::BytesSlice),
+    ("into_bytes", CoerceSeedShape::BytesSlice),
+    ("into_str", CoerceSeedShape::Str),
+];
+
+fn coerce_seed_shape_of(method: &str) -> Option<CoerceSeedShape> {
+    COERCE_SEED_METHODS.iter().find(|(n, _)| *n == method).map(|(_, s)| *s)
+}
+
+fn coerce_ty_matches_shape(ty: &TypeRef, shape: CoerceSeedShape) -> bool {
+    match shape {
+        CoerceSeedShape::Str => matches!(ty,
+            TypeRef::Named { path, generics, .. }
+                if generics.is_empty() && path.len() == 1 && path[0] == "str"),
+        CoerceSeedShape::BytesSlice => match ty {
+            TypeRef::Array(inner, _) => matches!(&**inner,
+                TypeRef::Named { path, generics, .. }
+                    if generics.is_empty() && path.len() == 1 && path[0] == "u8"),
+            TypeRef::Named { path, generics, .. }
+                if path.len() == 1 && path[0] == "Vec" && generics.len() == 1 =>
+            {
+                matches!(&generics[0], TypeRef::Named { path, generics, .. }
+                    if generics.is_empty() && path.len() == 1 && path[0] == "u8")
+            }
+            _ => false,
+        },
+    }
+}
+
+/// Registry-driven method-name set for THIS module: every zero-arg,
+/// receiver-form `#coerce fn` visible via `conv_all_fns(m)` (own items +
+/// same-folder peers — the same scope `MapLitCtx`/`collect_coerce_pairs`
+/// scans for the checker's real registry, minus cross-module import
+/// resolution `nova lint` structurally cannot do, see module doc above).
+/// Best-effort: does NOT replicate D429's R1-R14 validation (a malformed
+/// `#coerce fn` — wrong arity, generic, etc. — is a checker error elsewhere;
+/// this scan only needs the method NAME to widen the lint's coverage, never
+/// to accept/reject the program). Returns method name → O-shape when the O
+/// type matches one of the two known shapes (Str / BytesSlice) this lint
+/// currently knows how to compare against an expected-type position; a
+/// `#coerce` pair returning some OTHER shape is invisible to this lint (safe
+/// false-negative — no advice is worse than wrong advice).
+fn scan_coerce_methods(m: &Module) -> HashMap<String, CoerceSeedShape> {
+    let mut found = HashMap::new();
+    for f in conv_all_fns(m) {
+        if !f.coerce_attr || f.receiver.is_none() || !f.params.is_empty() {
+            continue;
+        }
+        let Some(ret) = &f.return_type else { continue };
+        // Strip a `ro`-wrapper (view lane) — shape comparison is on the
+        // bare underlying type either way (finalize lane never wraps `ro`).
+        let bare_ret = match ret {
+            TypeRef::Readonly(inner, _) => inner.as_ref(),
+            other => other,
+        };
+        let shape = if coerce_ty_matches_shape(bare_ret, CoerceSeedShape::Str) {
+            Some(CoerceSeedShape::Str)
+        } else if coerce_ty_matches_shape(bare_ret, CoerceSeedShape::BytesSlice) {
+            Some(CoerceSeedShape::BytesSlice)
+        } else {
+            None
+        };
+        if let Some(shape) = shape {
+            found.insert(f.name.clone(), shape);
+        }
+    }
+    found
+}
+
 fn conv_coerce_explicit_redundant(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
     // SEMANTIC-UPGRADE: `nova lint` is a syntactic, per-file, no-import-
     // resolution pass (see module doc at the top of this file) — it cannot
     // resolve a receiver's real type, so it cannot consult the ACTUAL
     // `#coerce` registry (`types/mod.rs::collect_coerce_pairs`, built from
     // the checker's module-merged AST) for arbitrary USER-declared pairs
-    // (D429 R8: `#coerce` covers all types, not just std). This is a
-    // CONSERVATIVE approximation scoped to the THREE std seed pairs Plan 214
-    // Ф.3 introduces (`str.bytes()` view; `StringBuilder.into_str()` /
-    // `WriteBuffer.into_bytes()` finalize) — flags a bare zero-arg call to
-    // one of these well-known method names sitting at a SYNTACTICALLY
-    // explicit-type position (`let`/`const` annotation, or a fn's arrow-body
-    // / `return` matching its OWN declared return type). Deliberately
-    // conservative: call-arg positions (need callee signature resolution —
-    // out of reach without imports/types) are NOT flagged — false-negative-
-    // safe, never risking a false positive beyond the (unlikely) case of an
-    // UNRELATED type also spelling one of these three names with the exact
-    // same shape. A full semantic version (reading the real registry) belongs
-    // in a type-aware pass run inside the build pipeline with import
-    // resolution (`lint_module`) — a legitimate follow-up, not a silent gap.
-    const COERCE_SEED_METHODS: &[(&str, CoerceSeedShape)] = &[
-        ("bytes", CoerceSeedShape::BytesSlice),
-        ("into_bytes", CoerceSeedShape::BytesSlice),
-        ("into_str", CoerceSeedShape::Str),
-    ];
-
-    fn shape_of(method: &str) -> Option<CoerceSeedShape> {
-        COERCE_SEED_METHODS.iter().find(|(n, _)| *n == method).map(|(_, s)| *s)
-    }
-
-    fn ty_matches(ty: &TypeRef, shape: CoerceSeedShape) -> bool {
-        match shape {
-            CoerceSeedShape::Str => matches!(ty,
-                TypeRef::Named { path, generics, .. }
-                    if generics.is_empty() && path.len() == 1 && path[0] == "str"),
-            CoerceSeedShape::BytesSlice => match ty {
-                TypeRef::Array(inner, _) => matches!(&**inner,
-                    TypeRef::Named { path, generics, .. }
-                        if generics.is_empty() && path.len() == 1 && path[0] == "u8"),
-                TypeRef::Named { path, generics, .. }
-                    if path.len() == 1 && path[0] == "Vec" && generics.len() == 1 =>
-                {
-                    matches!(&generics[0], TypeRef::Named { path, generics, .. }
-                        if generics.is_empty() && path.len() == 1 && path[0] == "u8")
-                }
-                _ => false,
-            },
-        }
-    }
+    // (D429 R8: `#coerce` covers all types, not just std) living OUTSIDE the
+    // linted module's own folder. `scan_coerce_methods` above narrows this
+    // gap (reads REAL `#coerce fn` decls in scope instead of a fixed list),
+    // but the fallback list still stands in for the same-shape decl living
+    // in an out-of-folder module. This is a CONSERVATIVE approximation:
+    // flags a bare zero-arg call to a known-shape `#coerce` method name
+    // sitting at a SYNTACTICALLY explicit-type position (`let`/`const`
+    // annotation, a fn's arrow-body / `return` matching its OWN declared
+    // return type, OR — since 2026-07-21 — a call-arg, per D429 R9's own
+    // note that call-arg needs no target-type check: if the call already
+    // type-checks WITH the explicit `.method()` present, D429 R6 guarantees
+    // the bare value would coerce identically at that same slot). Risk this
+    // shares with the pre-existing non-call-arg lanes (documented there
+    // already, not new): an UNRELATED type spelling the same method name
+    // with the exact same shape, or (R16) a call-arg landing on a generic
+    // catch-all overload where the coercion is genuinely NOT inserted — both
+    // presumed rare enough in practice for the 3 seed pairs' well-known
+    // names; a full semantic version (reading the real registry with import
+    // resolution) belongs in a type-aware pass run inside the build
+    // pipeline, a legitimate follow-up, not a silent gap.
+    let dynamic = scan_coerce_methods(m);
+    let shape_of = |method: &str| -> Option<CoerceSeedShape> {
+        dynamic.get(method).copied().or_else(|| coerce_seed_shape_of(method))
+    };
 
     // Bare `x.method()` — zero-arg method call on a LEAF receiver (plain
     // `Ident` or a str literal) ONLY. Found empirically (running this rule
@@ -5641,10 +5711,15 @@ fn conv_coerce_explicit_redundant(m: &Module, _o: &ConvLintOptions, out: &mut Ve
         Some((name.as_str(), e.span))
     }
 
-    fn check_value(value: &Expr, expected: &TypeRef, out: &mut Vec<LintWarning>) {
+    fn check_value(
+        value: &Expr,
+        expected: &TypeRef,
+        shape_of: &dyn Fn(&str) -> Option<CoerceSeedShape>,
+        out: &mut Vec<LintWarning>,
+    ) {
         let Some((method, span)) = bare_seed_call(value) else { return };
         let Some(shape) = shape_of(method) else { return };
-        if !ty_matches(expected, shape) {
+        if !coerce_ty_matches_shape(expected, shape) {
             return;
         }
         out.push(LintWarning {
@@ -5660,114 +5735,38 @@ fn conv_coerce_explicit_redundant(m: &Module, _o: &ConvLintOptions, out: &mut Ve
         });
     }
 
-    for f in conv_all_fns(m) {
-        match (&f.body, &f.return_type) {
-            (FnBody::Expr(e), Some(ret)) => check_value(e, ret, out),
-            // Block body's OWN trailing expr (no `return` keyword — implicit
-            // return, the pervasive std idiom: `fn f() -> str { ...;
-            // buf.into_str() }`). Mirrors `MapLitAnnotator::walk_fn_body_block`
-            // (types/mod.rs) — same "outermost block only" scope (a nested
-            // if/match arm's own trailing is only a return in tail position,
-            // not tracked here either, consistent with that rewrite-side fix).
-            (FnBody::Block(b), Some(ret)) => {
-                if let Some(t) = &b.trailing {
-                    check_value(t, ret, out);
-                }
-            }
-            _ => {}
-        }
-        conv_walk_fn(
-            f,
-            &mut |s, _| match s {
-                Stmt::Let(d) => {
-                    if let Some(ty) = &d.ty {
-                        check_value(&d.value, ty, out);
-                    }
-                }
-                Stmt::Const(d) => {
-                    if let Some(ty) = &d.ty {
-                        check_value(&d.value, ty, out);
-                    }
-                }
-                Stmt::Return { value: Some(v), .. } => {
-                    if let Some(ret) = &f.return_type {
-                        check_value(v, ret, out);
-                    }
-                }
-                _ => {}
-            },
-            &mut |_, _| {},
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------
-// W_REDUNDANT_BYTES_ON_LITERAL — bare `"...".bytes()` sitting as a
-// call-ARGUMENT (owner 2026-07-21). Scope note: `W_COERCE_EXPLICIT_REDUNDANT`
-// above already flags `.bytes()`/`.into_bytes()`/`.into_str()` at let/const/
-// return positions (incl. a str-literal receiver) — this rule deliberately
-// covers ONLY the call-arg position, which that rule's own doc explicitly
-// excludes ("call-arg positions … NOT flagged — need callee signature
-// resolution"). No overlap, no double-warning on the same site.
-//
-// Soundness WITHOUT callee resolution (TYPE-CHECK level): `"...".bytes()`
-// calls str's OWN (non-overloadable, prelude-fixed) `#coerce`-registered
-// view method (`std/src/runtime/string/core.nv`: `#coerce fn str @bytes()
-// -> ro []u8`), unconditionally typed `ro []u8`. If the enclosing call
-// ALREADY type-checks with `.bytes()` present, the argument SLOT's declared
-// type already accepts `ro []u8` — and D429 R6 lists "call-arg на
-// резолвленный параметр" among the ✅ #coerce positions, so `nova check`
-// accepts the bare literal at that position too (verified: `nova check
-// --strict-effects` stayed green on every canonized site).
-//
-// CAVEAT (RESOLVED 2026-07-21, [M-bytes-literal-callarg-coerce-codegen-gap],
-// branch p-fix-bytes-coerce-gap) — was: the type-checker's ACCEPT decision
-// did not guarantee the CODEGEN REWRITE (materializing the coercion in
-// emitted C) actually ran for every call-arg shape. Root cause, fully
-// isolated: `synthesize_bytes_lit_call_args` (codegen/emit_c.rs) resolves
-// the call-arg receiver's C type via `infer_expr_c_type(obj)` — for a
-// CONCRETE (monomorphized) local this is the mono-mangled name
-// (`BufWriter____Nova_BytesWriter_p`), but a GENERIC-receiver method
-// (`BufWriter[W] mut @write`) is registered in `method_overloads` under its
-// ERASED base name (`"BufWriter"`, Plan 48 Ф.3) — monomorphization
-// (`emit_monomorphized_method`) never adds a mono-suffixed entry. The exact
-// `key` lookup missed → the pre-pass silently no-op'd → the bare literal
-// reached C emission unwrapped → CC-FAIL (`nova_str` vs
-// `Nova_Vec____nova_byte*`). This was a GENERIC-RECEIVER gap specifically,
-// NOT a `test { }`-block gap as first suspected: `TcpStream.write`/
-// `write_all` (non-generic) were re-verified PASSING even BEFORE the fix
-// (`std/src/net/tcp_test.nv`, `write_all_test.nv`) — every non-generic
-// `write`-declaring type (`File`/`FmtCtx`/`Stdout`/`TcpStream`/…) resolves
-// to its own concrete registered name and never hit this mismatch; only
-// `BufWriter[W]` (the one generic receiver in the `write` family) did. Fix:
-// on a `key` miss where the receiver name contains the mono separator
-// (`____`), retry with the base name (`split("____").next()`) — the same
-// idiom already used elsewhere in emit_c.rs to bridge a mono instance back
-// to its erased-generic registration. All 34 sites this wave left
-// UNCANONIZED (`.bytes()` kept on `BufWriter`/`TcpStream` call-args in
-// `std/src/io` + `std/src/net`) are now safe to canonize — done in the
-// `p-fix-bytes-coerce-gap` follow-up wave (see `docs/plans/221.1-bug-sweep.md`
-// for the closure record).
-//
-// Literal-only per owner's explicit brief (2026-07-21) — a `str` VARIABLE
-// receiver would ALSO coerce today under the general D429 #coerce mechanism
-// (unlike the RETRACTED D55 literal-only subsection the brief cites), but is
-// intentionally left OUT of this rule's scope; flagged as a discrepancy in
-// the wave's report rather than silently widened past the given brief.
-// ---------------------------------------------------------------------------
-
-fn conv_redundant_bytes_on_literal(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
-    fn is_bare_bytes_on_literal(e: &Expr) -> bool {
+    // Call-arg position (D429 R9 + R6, absorbed 2026-07-21 from the former
+    // standalone `W_REDUNDANT_BYTES_ON_LITERAL`): a `.method()` call sitting
+    // as a call-ARGUMENT, on a receiver whose type is SYNTACTICALLY
+    // guaranteed regardless of scope (`nova lint` cannot resolve a plain
+    // `Ident`'s type here, unlike the let/return lanes above where the
+    // POSITION'S own annotation supplies the expected type) — a literal, an
+    // interpolation, OR a chain whose OUTERMOST call is `.to_str()` (owner
+    // brief 2026-07-21: "литерал/интерполяция/чейн, оканчивающийся
+    // `.to_str()`" — `.to_str()` is a near-universal Display-family method
+    // returning `str` unconditionally across std, so a chain ending in it is
+    // exactly as syntactically-str-guaranteed as a literal, no receiver-type
+    // resolution needed). No target-type check needed here (unlike
+    // `check_value` above): D429 R9's own note establishes call-arg
+    // soundness without it — if `x.method()` type-checks as this call's
+    // argument, R6 guarantees a bare `x` would coerce identically at that
+    // same slot. A bare `Ident` receiver is intentionally EXCLUDED (owner's
+    // literal-only brief for this lane, mirrors the retired rule's own
+    // `no_warning_bytes_on_variable_call_arg` test) — only the THREE
+    // syntactically-str-guaranteed shapes above ever fire here.
+    fn is_to_str_chain(e: &Expr) -> bool {
         let ExprKind::Call { func, args, trailing } = &e.kind else { return false };
         if !args.is_empty() || trailing.is_some() {
             return false;
         }
-        let ExprKind::Member { obj, name } = &func.kind else { return false };
-        name == "bytes"
-            && matches!(obj.kind, ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. })
+        matches!(&func.kind, ExprKind::Member { name, .. } if name == "to_str")
     }
 
-    fn check_expr(e: &Expr, out: &mut Vec<LintWarning>) {
+    fn check_call_arg(
+        e: &Expr,
+        shape_of: &dyn Fn(&str) -> Option<CoerceSeedShape>,
+        out: &mut Vec<LintWarning>,
+    ) {
         let ExprKind::Call { args, .. } = &e.kind else { return };
         for a in args {
             // Spread (`...expr`) changes arity/semantics — out of scope
@@ -5776,15 +5775,27 @@ fn conv_redundant_bytes_on_literal(m: &Module, _o: &ConvLintOptions, out: &mut V
                 continue;
             }
             let arg_expr = a.expr();
-            if !is_bare_bytes_on_literal(arg_expr) {
+            let ExprKind::Call { func, args: inner_args, trailing } = &arg_expr.kind else { continue };
+            if !inner_args.is_empty() || trailing.is_some() {
                 continue;
             }
+            let ExprKind::Member { obj, name } = &func.kind else { continue };
+            let is_str_guaranteed_receiver = matches!(
+                obj.kind,
+                ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. }
+            ) || is_to_str_chain(obj);
+            if !is_str_guaranteed_receiver {
+                continue;
+            }
+            let Some(_shape) = shape_of(name) else { continue };
             out.push(LintWarning {
-                rule: "W_REDUNDANT_BYTES_ON_LITERAL",
+                rule: "W_COERCE_EXPLICIT_REDUNDANT",
                 diag: Diagnostic::new(
-                    "str литерал коэрсируется в `[]u8` (D55/D429 `#coerce`, \
-                     zero-copy) — уберите `.bytes()`."
-                        .to_string(),
+                    format!(
+                        "явный вызов `.{name}()` call-аргументом на синтаксически-\
+                         гарантированном значении — голое значение скоэрсировалось бы \
+                         в ТО ЖЕ САМОЕ через `#coerce` (D429 R6/R9). Уберите явный вызов."
+                    ),
                     arg_expr.span,
                 ),
             });
@@ -5792,12 +5803,83 @@ fn conv_redundant_bytes_on_literal(m: &Module, _o: &ConvLintOptions, out: &mut V
     }
 
     for f in conv_all_fns(m) {
-        conv_walk_fn(f, &mut |_s, _| {}, &mut |e, _in_loop| check_expr(e, out));
+        match (&f.body, &f.return_type) {
+            (FnBody::Expr(e), Some(ret)) => check_value(e, ret, &shape_of, out),
+            // Block body's OWN trailing expr (no `return` keyword — implicit
+            // return, the pervasive std idiom: `fn f() -> str { ...;
+            // buf.into_str() }`). Mirrors `MapLitAnnotator::walk_fn_body_block`
+            // (types/mod.rs) — same "outermost block only" scope (a nested
+            // if/match arm's own trailing is only a return in tail position,
+            // not tracked here either, consistent with that rewrite-side fix).
+            (FnBody::Block(b), Some(ret)) => {
+                if let Some(t) = &b.trailing {
+                    check_value(t, ret, &shape_of, out);
+                }
+            }
+            _ => {}
+        }
+        // `conv_walk_fn` takes TWO independent `&mut dyn FnMut` closures
+        // (stmt + expr) — both need mutable access to the same accumulator,
+        // which two DISTINCT closure captures can't share directly (each
+        // would need its own unique `&mut out`, rejected by the borrow
+        // checker even though the two closures are only ever called
+        // sequentially, never concurrently). A `RefCell` sidesteps this:
+        // both closures borrow it mutably only for the duration of their own
+        // call, never overlapping in practice, so runtime borrow-checking
+        // never panics; drained into the real `out` once the walk finishes.
+        let local = std::cell::RefCell::new(Vec::new());
+        conv_walk_fn(
+            f,
+            &mut |s, _| match s {
+                Stmt::Let(d) => {
+                    if let Some(ty) = &d.ty {
+                        check_value(&d.value, ty, &shape_of, &mut local.borrow_mut());
+                    }
+                }
+                Stmt::Const(d) => {
+                    if let Some(ty) = &d.ty {
+                        check_value(&d.value, ty, &shape_of, &mut local.borrow_mut());
+                    }
+                }
+                Stmt::Return { value: Some(v), .. } => {
+                    if let Some(ret) = &f.return_type {
+                        check_value(v, ret, &shape_of, &mut local.borrow_mut());
+                    }
+                }
+                _ => {}
+            },
+            &mut |e, _in_loop| check_call_arg(e, &shape_of, &mut local.borrow_mut()),
+        );
+        out.extend(local.into_inner());
     }
     // `test { }` block bodies — see `conv_all_test_bodies` doc (sibling of
-    // `conv_all_fns`, covers a real gap the shared helper leaves open).
+    // `conv_all_fns`, covers a real gap the shared helper leaves open). Only
+    // the call-arg lane applies here (no fn return-type/let-annot context
+    // needed beyond what `check_call_arg` already handles standalone) — a
+    // `test { }` block has no declared return type of its own, and its own
+    // `let`/`const` positions ARE walked by `check_call_arg`'s sibling
+    // statement-walk callback below via the SAME `conv_walk_block`, so this
+    // mirrors the fn-body treatment exactly minus the two contexts a test
+    // block structurally lacks.
     for tb in conv_all_test_bodies(m) {
-        conv_walk_block(tb, false, &mut |_s, _| {}, &mut |e, _in_loop| check_expr(e, out));
+        let local = std::cell::RefCell::new(Vec::new());
+        conv_walk_block(
+            tb,
+            false,
+            &mut |s, _| {
+                if let Stmt::Let(d) = s {
+                    if let Some(ty) = &d.ty {
+                        check_value(&d.value, ty, &shape_of, &mut local.borrow_mut());
+                    }
+                } else if let Stmt::Const(d) = s {
+                    if let Some(ty) = &d.ty {
+                        check_value(&d.value, ty, &shape_of, &mut local.borrow_mut());
+                    }
+                }
+            },
+            &mut |e, _in_loop| check_call_arg(e, &shape_of, &mut local.borrow_mut()),
+        );
+        out.extend(local.into_inner());
     }
 }
 
@@ -8353,7 +8435,8 @@ mod tests {
         );
     }
 
-    // ─── W_REDUNDANT_BYTES_ON_LITERAL ──────────────────────────────────
+    // ─── W_COERCE_EXPLICIT_REDUNDANT — call-arg lane (absorbed 2026-07-21
+    // from the former standalone `W_REDUNDANT_BYTES_ON_LITERAL`) ──────────
 
     #[test]
     fn redundant_bytes_on_literal_call_arg() {
@@ -8365,15 +8448,45 @@ mod tests {
              }\n";
         let m = parse(src);
         let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
-        let hit = min_max_rule_hits(&ws, "W_REDUNDANT_BYTES_ON_LITERAL");
+        let hit = min_max_rule_hits(&ws, "W_COERCE_EXPLICIT_REDUNDANT");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn redundant_bytes_on_interpolation_call_arg() {
+        // Interpolated string receiver — always `str`-typed regardless of
+        // content (mirrors StrLit treatment), owner brief 2026-07-21.
+        let src = "module foo\n\
+             fn run(stream mut TcpStream, msg str) -> () {\n    \
+             stream.write_all(\"echo: ${msg}\".bytes())\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_COERCE_EXPLICIT_REDUNDANT");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn redundant_bytes_on_to_str_chain_call_arg() {
+        // Owner brief 2026-07-21: a chain ending in `.to_str()` is also
+        // syntactically str-guaranteed — real corpus shape (fmt/duration):
+        // `f.write(@nanos.to_str().bytes())`.
+        let src = "module foo\n\
+             fn run(f mut FmtCtx, nanos i64) -> () {\n    \
+             f.write(nanos.to_str().bytes())\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_COERCE_EXPLICIT_REDUNDANT");
         assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
     }
 
     #[test]
     fn no_warning_bytes_on_variable_call_arg() {
-        // `.bytes()` on an IDENT (not a literal) — literal-only rule, must
-        // stay silent (owner's explicit scope, even though the general
-        // D429 `#coerce` mechanism would ALSO cover a variable receiver).
+        // `.bytes()` on an IDENT (not a literal/interp/`.to_str()`-chain) —
+        // call-arg lane's explicit literal-only scope (owner brief), must
+        // stay silent (even though the general D429 `#coerce` mechanism
+        // would ALSO cover a variable receiver at a KNOWN-type position).
         let src = "module foo\n\
              fn run(stream mut TcpStream, s str) -> () {\n    \
              stream.write_all(s.bytes())\n\
@@ -8381,24 +8494,68 @@ mod tests {
         let m = parse(src);
         let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
         assert!(
-            min_max_rule_hits(&ws, "W_REDUNDANT_BYTES_ON_LITERAL").is_empty(),
+            min_max_rule_hits(&ws, "W_COERCE_EXPLICIT_REDUNDANT").is_empty(),
             "got: {:?}",
             ws.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
     }
 
     #[test]
-    fn no_warning_bytes_on_literal_let_position_not_call_arg() {
-        // let/return positions are `W_COERCE_EXPLICIT_REDUNDANT`'s turf —
-        // this rule must stay silent there (no double-warning on one site).
+    fn no_double_warning_bytes_on_literal_let_position_not_call_arg() {
+        // let/return positions are the SAME rule's own non-call-arg lane —
+        // must fire exactly ONCE (no double-warning on one site).
         let src = "module foo\n\
              fn run() -> () {\n    \
              ro b []u8 = \"hi\".bytes()\n\
              }\n";
         let m = parse(src);
         let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_COERCE_EXPLICIT_REDUNDANT");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn coerce_registry_scan_picks_up_local_coerce_fn_not_in_seed_list() {
+        // Registry-driven extension (owner correction 2026-07-21): a
+        // #coerce fn NOT in the hardcoded 3-seed fallback list (here: a
+        // made-up `@view_bytes()` name) is still caught via the AST scan
+        // (`scan_coerce_methods`) when its declaration is visible in the
+        // SAME module — proves the lint reads pairs from what's actually
+        // declared, not solely the static list. Exercised via the `let`-
+        // annotation lane (accepts an Ident receiver, unlike the call-arg
+        // lane's literal-only scope — see the sibling call-arg-specific
+        // test below for that narrower lane).
+        let src = "module foo\n\
+             type Blob { ro data []u8 }\n\
+             #coerce\n\
+             fn Blob @view_bytes() -> ro []u8 => @data\n\
+             fn run(b Blob) -> () {\n    \
+             ro v []u8 = b.view_bytes()\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_COERCE_EXPLICIT_REDUNDANT");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn no_warning_call_arg_on_bare_ident_even_with_local_registry_hit() {
+        // `b.view_bytes()` receiver `b` is an Ident (variable) at a CALL-ARG
+        // position — that lane's literal-only scope excludes an Ident
+        // regardless of registry membership (mirrors
+        // `no_warning_bytes_on_variable_call_arg`, exercised through the
+        // dynamic-registry path instead of the static-fallback path).
+        let src = "module foo\n\
+             type Blob { ro data []u8 }\n\
+             #coerce\n\
+             fn Blob @view_bytes() -> ro []u8 => @data\n\
+             fn run(sink mut TcpStream, b Blob) -> () {\n    \
+             sink.write_all(b.view_bytes())\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
         assert!(
-            min_max_rule_hits(&ws, "W_REDUNDANT_BYTES_ON_LITERAL").is_empty(),
+            min_max_rule_hits(&ws, "W_COERCE_EXPLICIT_REDUNDANT").is_empty(),
             "got: {:?}",
             ws.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
