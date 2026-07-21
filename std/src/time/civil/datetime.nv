@@ -41,6 +41,34 @@ export fn Date @at(time TimeOfDay) -> DateTime => { date: @, time }
 export fn Date @at_midnight() -> DateTime =>
     { date: @, time: TimeOfDay.midnight() }
 
+/// Композит-конструктор: дата + время-поля с default-полночью, одним
+/// вызовом (Python-эргономика: `datetime(y, m, d, h, min, s)` без
+/// вложенного `TimeOfDay.new` + `!!`). Арность-сиблинг `DateTime.new(date,
+/// time)` — Plan 200 П21.
+///
+/// `h`/`min`/`s`/`ns` — те же границы, что у `TimeOfDay.new` (0..23 /
+/// 0..59 / 0..59 / 0..999_999_999); `y`/`m`/`d` — границы `Date.new`.
+///
+/// # Examples
+/// ```nova
+/// ro midnight = DateTime.new(2026, Jun, 8)!!
+/// ro dt = DateTime.new(2026, Jun, 8, 10, 0)!!
+/// ```
+#stable(since = "0.1")
+export fn DateTime.new(y i32, m Month, d i32,
+                       h int = 0, min int = 0, s int = 0, ns int = 0) -> Result[DateTime, DateError] {
+    ro date = Date.new(y, m, d)?
+    ro time = TimeOfDay.new(h, min, s: s, ns: ns)?
+    Ok({ date, time })
+}
+
+// П21 «Date @at(h, m=0, ...)» ОТЛОЖЕН: инстанс-перегрузка по арности на
+// КОНКРЕТНОМ типе коллидирует в C-мангле (один символ Nova_Date_method_at
+// на обе формы) — [M-concrete-instance-arity-overload-mangle], компилятор-
+// очередь; generic-типы манглятся полной сигнатурой (П5), конкретные — нет.
+// Вернуть перегрузку после фикса. Композит DateTime.new(y,m,d,h=0,...) —
+// статик-путь, манглится корректно, живёт ниже.
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // Компоненты (property-методы по арности)

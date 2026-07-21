@@ -6691,6 +6691,15 @@ Temporal (единая `Duration`) узнаёт «календарная она 
 
 ## D321 — DST `Disambiguation` (4-way) + `OffsetConflict` + parse-strictness + структурные `DateError`/`ParseDateTimeError` + IANA tz-db (Plan 175.1 Ф.3/Ф.4/Ф.5, 2026-07-10)
 
+> **Амендмент (Plan 200 П21, 2026-07-21, владелец):** композит-конструктор
+> `DateTime.new(y i32, m Month, d i32, h int = 0, min int = 0, s int = 0, ns int = 0)
+> -> Result[DateTime, DateError]` — арность-сиблинг `DateTime.new(date, time)`; default-полночь
+> (`DateTime.new(2026, Jun, 8)` == 00:00:00.0), Python-паритет одним вызовом
+> (`datetime(y, m, d, h, min)`), тело = композиция `Date.new` + `TimeOfDay.new` (валидация не
+> дублируется). `Month`-enum и `Result` сохранены намеренно. Парная форма `Date @at(h, m = 0,
+> s = 0, ns = 0)` ОТЛОЖЕНА: инстанс-перегрузка по арности на конкретном типе коллидирует в
+> C-мангле (`[M-concrete-instance-arity-overload-mangle]`) — вернётся после фикса.
+
 **Source:** Plan 175.1, Ф.3 (Offset/Fixed/Zoned) + Ф.4 (IANA) + Ф.5 (parse-strictness). **Amends:** ничего. **Реализация:** `std/time/civil/{offset,zoned,tz,tzif,parse,format}.nv`.
 
 **Статус:** ✅ ACTIVE (Ф.3/Ф.5 — полностью; Ф.4 IANA — **реализовано с задокументированным сужением данных**, см. §tzdb ниже).

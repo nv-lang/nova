@@ -244,6 +244,34 @@ test "DateTime compare: дата приоритетнее времени" {
     assert(a < b)
 }
 
+test "DateTime.new композит: default-полночь" {
+    ro dt = DateTime.new(2026, Jun, 8)!!
+    assert(dt.year() == 2026 && dt.month() == Jun && dt.day() == 8)
+    assert(dt.hour() == 0 && dt.minute() == 0 && dt.second() == 0)
+}
+
+test "DateTime.new композит == ступенчатая форма" {
+    ro a = DateTime.new(2026, Jun, 8, 10, 0)!!
+    ro b = Date.new(2026, Jun, 8)!!.at(TimeOfDay.new(10, 0)!!)
+    assert(a.compare(b) == 0)
+    assert(a.hour() == 10 && a.minute() == 0)
+}
+
+
+test "DateTime.new композит: невалидные поля → Err" {
+    // биндинг, НЕ chained .is_ok() на вызове: chain-канал на 5-арг статик-
+    // перегрузке выводит тип 2-арг формы (DateTime) — известная chain-семья.
+    ro bad_hour = DateTime.new(2026, Jun, 8, 25, 0)
+    assert(bad_hour.is_err())
+    ro bad_min = DateTime.new(2026, Jun, 8, 10, 61)
+    assert(bad_min.is_err())
+}
+
+test "DateTime.new композит: цепочка до зоны (smoke)" {
+    ro z = DateTime.new(2026, Jun, 8, 10, 0)!!.to_zoned("+03:00".to_timezone()!!)!!
+    assert(z.time().hour() == 10)
+}
+
 
 // ── YearMonth / MonthDay ──
 
