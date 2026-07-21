@@ -3310,7 +3310,7 @@ examples --format short` → `PASS: 30 FAIL: 0 WARN: 51` (`examples/_wip/` вн�
 нарушений** в обоих деревьях — `std/` и `examples/` уже конформны
 `--strict-effects` без единой правки.
 
-Машинно-парсимый список (`docs/plans/strict-effects-debt.txt`,
+Машинно-парсимый список (`docs/plans/wip/strict-effects-debt.txt`,
 `путь:строка:вид:недостающий-эффект`) создан пустым (0 data-строк, только
 header-комментарий с датой/командой) — **следующему haiku-агенту делать
 нечего**: миграция аннотаций std/examples не требуется, флаг можно включать

@@ -1311,5 +1311,5 @@ spec_tests examples` = 0.
 - функция, вызывающая эффектную функцию вне `with E = ...`-скоупа, обязана нести эффект в СВОЕЙ
   сигнатуре (транзитивность, `E_UNDECLARED_TRANSITIVE_EFFECT`);
 - fn-значение не коэрсится в fn-тип с меньшим набором эффектов (`E_EFFECT_ERASED_IN_FN_TYPE`).
-Долг миграции трекается `[M-strict-effects-conformance-sweep]` (docs/plans/strict-effects-debt.txt).
+Долг миграции трекается `[M-strict-effects-conformance-sweep]` (docs/plans/wip/strict-effects-debt.txt).
 Для пользовательского кода флаг опционален (флип в дефолт — только через D-амендмент).
