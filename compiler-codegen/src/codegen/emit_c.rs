@@ -5132,6 +5132,54 @@ impl CEmitter {
                                 }
                             }
                         }
+                        // (3) [M-http-compress-errorkind-crosspkg-collision]: this
+                        // peer's OWN imports didn't resolve it — check its SIBLING
+                        // peers (same physical folder-module group, `pf_modpath`).
+                        // A bare colliding reference can appear in a peer file that
+                        // never itself imports the type by name — e.g. a folder-
+                        // module test file (`client_test.nv`) that only imports
+                        // `http.{Http}` while matching `e.kind` on a `HttpError`
+                        // value (imported transitively via a SIBLING peer's `import
+                        // http.{…, ErrorKind, …}`, `client.nv`). The checker
+                        // resolves this fine (field access needs no import of the
+                        // field's own type), but codegen's per-file bare-name
+                        // resolution only consulted THIS file's imports. Every
+                        // peer file of one folder-module shares one namespace
+                        // (Rule C, D281) — so a resolving import anywhere in the
+                        // SAME physical group is authoritative for every sibling,
+                        // exactly like a same-group type DECLARATION already is
+                        // (condition 1 above). Same ambiguity guard (>1 distinct
+                        // resolving module across the whole group → leave
+                        // unqualified) as condition 2's own-file scan.
+                        if hit.is_none() {
+                            for sib in &module.peer_files {
+                                if effective_modpath(sib) != pf_modpath {
+                                    continue;
+                                }
+                                for imp in &sib.imports {
+                                    let selects = match &imp.items {
+                                        None => true,
+                                        Some(items) => items.iter().any(|it| {
+                                            it.name == *name
+                                                || it.alias.as_deref() == Some(name.as_str())
+                                        }),
+                                    };
+                                    if !selects {
+                                        continue;
+                                    }
+                                    if let Some(cand) =
+                                        cands.iter().find(|c| path_matches(c, &imp.path))
+                                    {
+                                        if hit.is_none() {
+                                            hit = Some(cand.clone());
+                                        } else if hit.as_deref() != Some(cand.as_slice()) {
+                                            hit = None;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         if let Some(m) = hit {
                             self.file_type_module.insert((pf.file_id, name.clone()), m);
                         }
@@ -6761,8 +6809,29 @@ impl CEmitter {
         // 1c. Pre-populate method_receivers so emit_call can route obj.method() correctly
         // Plus D84: register free-functions в method_overloads с sentinel-key
         // ("", name) — единый mechanism для overload resolution.
+        //
+        // [M-http-compress-errorkind-crosspkg-collision] fix: this pass calls
+        // `type_ref_to_c` on every fn's params/return type (below, D84
+        // overload-reg) BEFORE `emit_fn`'s per-fn `current_emit_file_id` gate
+        // ever runs for this item (that happens later, in step 4) — so a bare
+        // param/return type with a COLLIDING simple name (`ErrorKind` shared
+        // between http/compress in this CU, e.g. `HttpError.new(kind
+        // ErrorKind)`) resolved via `ref_type_base` saw a stale/`None`
+        // `current_emit_file_id` and fell through to the unqualified `Nova_
+        // ErrorKind*` (D381 only gated the type-DECL emission loop and the
+        // fn-BODY emission loop, not this earlier signature pre-scan). Fix:
+        // set the emission-file context per-item here too, mirroring the
+        // save/gate/restore pattern used at emit_type_decl (~15621) and
+        // emit_fn_forward_decl (~15638/~15713) — byte-identical when this CU
+        // has no cross-module/per-file type collision (`any_type_file_
+        // collision()` false).
+        let saved_emit_file_id_1c = self.current_emit_file_id;
+        let any_type_collision_1c = self.any_type_file_collision();
         for item in &module.items {
             if let Item::Fn(f) = item {
+                if any_type_collision_1c {
+                    self.current_emit_file_id = Some(f.span.file_id);
+                }
                 // Plan 138.2 Ф.0c (D29 method-level shadow): skip registering
                 // an imported generic type's method when the user redeclared
                 // that type name with a different arity (`type Vec { x, y }`
@@ -7207,6 +7276,10 @@ impl CEmitter {
                 }
             }
         }
+        // [M-http-compress-errorkind-crosspkg-collision] fix: restore the
+        // pre-loop emission-file context (each iteration above set its own
+        // per-fn value directly — see the loop-entry comment).
+        self.current_emit_file_id = saved_emit_file_id_1c;
 
         // 1c2. D39 / Plan 11 Ф.9: register auto-proxy delegated methods.
         // Для каждого record-type с embed-полями: для каждого метода
@@ -7386,11 +7459,23 @@ impl CEmitter {
         // fallback logic). The REAL pass at §2 re-inserts the identical
         // value later — idempotent, zero functional change for every
         // already-working case.
+        // [M-http-compress-errorkind-crosspkg-collision] fix: same class of gap
+        // as the step-1c pre-pass above — `type_ref_to_c` on every free fn's
+        // params here runs with whatever `current_emit_file_id` the LAST
+        // drain-A generic-instance emission left it as (often `None`/stale),
+        // so a bare colliding type name (`ErrorKind`) falls through
+        // `ref_type_base` to its unqualified form. Set the emission-file
+        // context per-item here too (restored once after the loop).
+        let saved_emit_file_id_sigpreseed = self.current_emit_file_id;
+        let any_type_collision_sigpreseed = self.any_type_file_collision();
         for item in &module.items {
             if let Item::Fn(f) = item {
                 if f.receiver.is_none() && f.generics.is_empty()
                     && !self.user_fn_sigs.contains_key(&f.name)
                 {
+                    if any_type_collision_sigpreseed {
+                        self.current_emit_file_id = Some(f.span.file_id);
+                    }
                     if let Some(param_c_tys) = f.params.iter()
                         .map(|p| self.type_ref_to_c(&p.ty))
                         .collect::<Result<Vec<_>, _>>()
@@ -7403,6 +7488,7 @@ impl CEmitter {
                 }
             }
         }
+        self.current_emit_file_id = saved_emit_file_id_sigpreseed;
         for item in &module.items {
             if let Item::Let(l) = item {
                 if l.is_ghost { continue; }
@@ -23690,6 +23776,40 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     fn emit_generic_type_instance_scoped_inner(
+        &mut self,
+        template: &crate::ast::TypeDecl,
+        type_subst: &[(String, String)],
+        mangled: &str,
+    ) -> Result<(), String> {
+        // [M-http-compress-errorkind-crosspkg-collision] fix (mirrors the
+        // non-generic type-decl emission gate at emit_type_decl, ~15621): a
+        // generic template's own fields/variant payloads are lowered here via
+        // `type_ref_to_c` OUTSIDE any fn/test emission scope (this runs from
+        // `drain_generic_type_worklist`, called both between module phases and
+        // from mono-body drains — `current_emit_file_id` is whatever the LAST
+        // fn/test/type left it as, often `None` at CU start). A field typed
+        // with a COLLIDING simple name (e.g. a generic wrapper instantiated
+        // over `HttpError`, whose OWN field `kind ErrorKind` gets re-lowered
+        // when the wrapper's struct body references the inner type) then hits
+        // `ref_type_base`'s bare-name fallthrough (`current_emit_file_id` is
+        // None/stale, not the template's declaring file) — emitting an
+        // unqualified `Nova_ErrorKind*` even though `ErrorKind` collides
+        // between http/compress in this CU (D381 catches the TYPE's own
+        // struct/tag emission, but not a re-lowering of the SAME field type
+        // string from inside a generic instance body). GATED like the
+        // existing type-decl block: byte-identical when this CU has no
+        // cross-module/per-file type collision at all.
+        let saved_emit_file_id_gti = self.current_emit_file_id;
+        if self.any_type_file_collision() {
+            self.current_emit_file_id = Some(template.span.file_id);
+        }
+
+        let r = self.emit_generic_type_instance_body(template, type_subst, mangled);
+        self.current_emit_file_id = saved_emit_file_id_gti;
+        r
+    }
+
+    fn emit_generic_type_instance_body(
         &mut self,
         template: &crate::ast::TypeDecl,
         type_subst: &[(String, String)],
@@ -54921,6 +55041,61 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         && ir_c == "nova_int"
                     {
                         eprintln!("[MEMBER-INT ch2-consume] id={:?} span={:?} rt={:?}", expr.id, expr.span, rt);
+                    }
+                    // [M-http-compress-errorkind-crosspkg-collision] fix: the
+                    // checker's `ResolvedType::Named` for a field-access Member
+                    // (`e.kind`) carries only the BARE field-type name/module as
+                    // WRITTEN in the field's own `TypeRef` (`ErrorKind`, module
+                    // `[]`) — it does not know which of several cross-module
+                    // colliding definitions (http/compress/std.io `ErrorKind`)
+                    // the field's OWN declaring type resolved to. D381's
+                    // per-file `ref_type_base` resolves a bare colliding name
+                    // via THIS file's (or its folder-module siblings') own
+                    // imports — but a file that only imports the ENCLOSING
+                    // record (`HttpError`) and never imports the field's type
+                    // by name (never needs to — field access requires no
+                    // import of the field's own type) has no import chain to
+                    // resolve `ErrorKind` from, so `ir_c` here is the bare
+                    // unqualified `Nova_ErrorKind*` even though this CU has a
+                    // genuine collision. The record/sum's OWN schema entry
+                    // (`record_schemas[<StructName>][<field>]`) was ALREADY
+                    // correctly qualified when the enclosing type was emitted
+                    // (`emit_record_type`/`emit_sum_type` run under the D381
+                    // file-context gate at the type's OWN declaring file) — so
+                    // when the channel's answer is an unqualified colliding
+                    // name, prefer that authoritative schema entry instead.
+                    // Narrow + gated: only fires when (a) this is a Member
+                    // field access, (b) the channel's bare name is a KNOWN
+                    // collision, and (c) the object's own (reliably inferred)
+                    // struct type has a schema entry for this exact field that
+                    // disagrees — every non-colliding CU is untouched (empty
+                    // `colliding_type_names` short-circuits immediately).
+                    if !self.colliding_type_names.is_empty() {
+                        if let ExprKind::Member { obj, name: field_name } = &expr.kind {
+                            if let Some(bare) = ir_c.strip_suffix('*')
+                                .and_then(|s| s.strip_prefix("Nova_"))
+                            {
+                                if self.colliding_type_names.contains(bare) {
+                                    let obj_ty = self.infer_expr_c_type(obj);
+                                    // Mirrors the legacy Member field-lookup's own
+                                    // struct-name derivation (Plan 127.1 Ф.1): strip
+                                    // `const `, then the Nova/NovaValue_/NovaTuple_
+                                    // C-prefix — `record_schemas` is keyed by the
+                                    // BARE Nova type name, not the C pointer string.
+                                    let stripped_const = obj_ty.trim_start_matches("const ").trim();
+                                    let struct_name = Self::debt_strip_nova_value_tuple_prefix_or_empty(stripped_const)
+                                        .trim_end_matches('*')
+                                        .trim();
+                                    if let Some(schema) = self.record_schemas.get(struct_name) {
+                                        if let Some(qualified) = schema.get(field_name.as_str()) {
+                                            if qualified != &ir_c {
+                                                return qualified.clone();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     // [M-into-raw-generic-stub-ret] A generic method CALL whose
                     // checker-annotated return type still embeds an unsubstituted

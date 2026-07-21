@@ -8759,3 +8759,86 @@ type-name-collision (репро одинаково на baseline). Квалиф�
 
 Закрывает `[M-sync-crossmodule-samename-type-collision]` + `[M-codegen-nominal-type-name-collision]`;
 разблокирует `[M-178-autodecompress-needs-179]` (codegen-часть).
+
+### D381-амендмент (2026-07-21, `[M-http-compress-errorkind-crosspkg-collision]`) — три оставшихся пробела механизма (НЕ новая ось, тот же collision-aware мангл)
+
+**Находка.** D381's collision-scan и `current_emit_file_id`-гейт УЖЕ строятся из
+`module.peer_files` — единого списка ВСЕГО compile-unit'а, включающего peer-файлы
+НЕСКОЛЬКИХ Nova-**пакетов** (корневой пакет + git/path-зависимости типа `nova-compress`
+внутри `nova-http`), не только одного `Module`-дерева — вопреки первоначальному
+предположению («сканим только один пакет»). `http.ErrorKind`/`compress.ErrorKind`/
+`std.io.ErrorKind` co-present в одном CU (nova-http сьют, git-зависимость `compress`)
+корректно детектировались как коллидирующие и КАЧЕСТВЕННО квалифицировались
+(`Nova_http_ErrorKind`/`Nova_compress_ErrorKind`/`Nova_std_io_ErrorKind`) на большинстве
+сайтов. Но 3/6 CU сьюта всё равно падали `CC-FAIL "use/unknown type name 'Nova_ErrorKind'"`
+— три РАЗНЫХ, узких пробела в самом механизме (не архитектурный gap):
+
+1. **Пропущенные pre-pass'ы без file-context-гейта.** Два module-level pre-scan'а —
+   step «1c» (D84 free-fn overload-регистрация, `type_ref_to_c` на каждый параметр/
+   возврат) и «B10f» sig-preseed (`user_fn_sigs`) — вызывали `type_ref_to_c` для КАЖДОЙ
+   free-fn СИГНАТУРЫ (напр. `HttpError.new(kind ErrorKind)`) ДО того, как per-fn
+   `current_emit_file_id`-гейт (`emit_fn_forward_decl`/`emit_fn`, шаг 2/4) хоть раз
+   срабатывал для этого элемента — оставляя контекст `None`/stale от предыдущего типа.
+   Фикс: те же save/gate(`any_type_file_collision()`)/restore обёртки, что уже
+   применялись в `emit_type_decl`/`emit_fn_forward_decl`, распространены на оба
+   pre-pass'а (per-item `current_emit_file_id = Some(f.span.file_id)`, restore один раз
+   после всего цикла — `continue`-безопасно, т.к. значение не восстанавливается
+   поитерационно). Аналогично — `emit_generic_type_instance_scoped_inner` (мономорфный
+   инстанс генерик-шаблона, дренится `drain_generic_type_worklist`) получил тот же гейт
+   от `template.span.file_id` — генерик-шаблон, чьё ПОЛЕ типизировано коллидирующим
+   именем, лоуэрился в контексте, оставшемся от последнего пройденного pre-pass'а.
+
+2. **Peer-файл без своего import, резолвящийся через СОСЕДА по группе.** D381's REF-
+   резолюция (`ref_type_base`) проверяет (1) объявляет ли ЭТОТ файл коллидирующий тип
+   сам (Rule C/D281), иначе (2) импортирует ли ЭТОТ файл его по имени. Но folder-модуль
+   — ОДНО пространство имён на несколько co-equal файлов (D29/D78/D281) — и test-файл
+   внутри группы может ссылаться на коллидирующий тип ТОЛЬКО структурно (через поле
+   уже-импортированного типа: `import http.{HttpError}` + `match e.kind {...}`, БЕЗ
+   собственного `import http.{..., ErrorKind, ...}`), пока СОСЕДНИЙ файл той же
+   физической группы (`client.nv`) импортирует `ErrorKind` явно. Условие (2) проверяло
+   только `pf.imports` — свои собственные, не всей группы. Фикс: добавлено условие (3) —
+   если файл сам не резолвит, просканировать ВСЕХ peer'ов той же `effective_modpath`-
+   группы на резолвящий import; тот же guard неоднозначности (>1 различный кандидат по
+   всей группе → оставить неквалифицированным), что и у условия (2).
+
+3. **Checker-канал теряет DEF-модуль для типа ПОЛЯ.** Когда НИ ОДИН файл группы не
+   импортирует коллидирующее имя вовсе (структурная ссылка через поле — `e.kind`, где
+   `e: HttpError`, и НИКТО не импортирует `ErrorKind` напрямую — легально: доступ к полю
+   не требует импорта типа поля), условия (1)/(2)/(3) все промахиваются, и `infer_expr_c_type`'s
+   Channel 2 (`resolved_types[expr.id]` → `resolved_type_to_c`) резолвит ГОЛОЕ имя типа
+   поля КАК НАПИСАНО в его собственном `TypeRef` (`ErrorKind`, `module: []`) — чекер не
+   несёт DEF-модуль поля через этот канал. Но СХЕМА записи/суммы (`record_schemas[<Struct
+   >][<field>]`), зарегистрированная при эмите САМОГО типа (`emit_record_type`/`emit_sum_type`,
+   которые ВСЕГДА запускаются под D381 file-context-гейтом на СВОЁМ объявляющем файле), уже
+   несёт корректно квалифицированную строку (`Nova_http_ErrorKind*`). Фикс — узкая REF-
+   поправка в Channel 2 Member-ветке `infer_expr_c_type`: когда канал возвращает
+   НЕКВАЛИФИЦИРОВАННОЕ коллидирующее имя (`Nova_<Name>*`, `<Name> ∈ colliding_type_names`)
+   для `expr = Member{obj, field}`, и `record_schemas[<obj-struct-name>][<field>]` несёт
+   ДРУГУЮ (уже квалифицированную) строку — предпочесть схему. Единая точка НЕ расширена
+   (не новый мангл-механизм); это приоритет между уже существующими двумя источниками
+   истины (checker-channel vs def-time schema) при их расхождении — расхождение возможно
+   ТОЛЬКО когда оба уже согласны на факт коллизии (`colliding_type_names` непусто), так что
+   не-коллидирующий CU не задет (guard на пустое множество в начале).
+
+**Корень (общий для всех трёх).** D381 закрыл DEF-сторону (эмит типа) и REF-сторону
+(явная ссылка на имя типа в СВОЁМ файле) полностью; но НЕ каждый codegen-сайт, читающий
+тип ЧЕРЕЗ третий канал (сигнатура pre-scan вне per-item file-context; структурная ссылка
+без прямого импорта; checker-канал без DEF-модуля) успевал получить ту же file-context/
+schema-консультацию, что уже была построена для DEF/REF основного пути.
+
+**Гейт.** `nova-http` `nova test src --jobs 1` ×2 — **PASS 5/FAIL 0/SKIP 1** (детерминированно,
+`servernet` SKIP честный — no test blocks/no main, compiles OK); `nova-tls`/`nova-compress`
+сьюты (без `--full`) не сломаны; флагман `examples/flagship/aggregator --strict-effects`
+(тянет http+tls+compress через `examples/nova.toml` зависимости) собран чисто; standalone-
+выборка 15 conformance-фикстур (enum/sum-типы) без CC/CODEGEN-регрессии (SKIP по
+`NOVA_SMT_BACKEND` не установлен — ожидаемо, не связано с этим фиксом).
+
+Зона правки: только `compiler-codegen/src/codegen/emit_c.rs` (`ref_type_base`'s per-file
+resolution scan — sibling-group fallback; step-1c/B10f free-fn signature pre-scan'ы —
+file-context гейт; `emit_generic_type_instance_scoped_inner` — то же; `infer_expr_c_type`'s
+Channel-2 Member-ветка — schema-preference поправка). Явно НЕ тронуто: ABI/`#repr`/extern-
+типы (наблюдаемое имя `Nova_http_ErrorKind`/`Nova_compress_ErrorKind` и т.п. — то же самое
+D381-порождённое имя, что и раньше на всех уже работавших сайтах; эта волна лишь
+распространяет ЕГО на ранее пропущенные codegen-сайты, не меняет саму схему мангла).
+
+См. `[M-http-compress-errorkind-crosspkg-collision]` (backlog-followups.md) — статус ЗАКРЫТ.
