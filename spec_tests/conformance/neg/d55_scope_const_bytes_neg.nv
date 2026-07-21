@@ -1,0 +1,25 @@
+// [M-d55-const-bytes-lit-not-constexpr] fix (2026-07-21, P3, backlog-followups.md).
+// Scope-local `const c []u8 = "..."` (`Stmt::Const`, NOT module-level
+// `Item::Const`) is NOT walked by the D429 `#coerce` str→[]u8 AST-rewrite pass
+// (`MapLitAnnotator::walk_stmt`, types/mod.rs — `Stmt::Const(_) => {}`, a
+// deliberate no-op since Plan 114.4 Ф.2) — so the literal stays a bare
+// `StrLit`, never gets rewritten into `"...".bytes()`. `[]u8` is a heap Vec
+// POINTER (len/cap/data), not a C-constexpr — `emit_const_expr`'s `StrLit` arm
+// always builds a `nova_str`-shaped `{.ptr=...,.len=...}` struct literal
+// regardless of the DECLARED target type. Block-scope has no equivalent of
+// module-level's `nova_consts_init()` lazy-init machinery to fall back to.
+// Before this fix: silent mis-compile (checker accepted with zero diagnostic,
+// codegen emitted an ill-typed C initializer — CC-FAIL, or worse if the
+// shapes ever happened to typecheck). Fix: `emit_stmt_inner`'s `Stmt::Const`
+// arm (emit_c.rs) now detects this exact shape (bytes-slice target + bare
+// StrLit value) and emits a clear, actionable diagnostic instead — steering
+// the author to `let`/`ro`/`mut` (which DOES coerce correctly, D429 R6; see
+// the positive companion fixture `d55_const_bytes_lit.nv`).
+// EXPECT_COMPILE_ERROR E_CONST_BYTES_NOT_CONSTEXPR
+
+module neg.d55_scope_const_bytes_neg
+
+fn d55_scope_const_bytes_bad() -> int {
+    const c []u8 = "hi"
+    return c.len()
+}

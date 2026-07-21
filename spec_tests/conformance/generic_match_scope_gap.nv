@@ -1,0 +1,73 @@
+// generic-match-scope-gap fix (`[M-202-ident-x-module-alias-collision]`
+// follow-up, 2026-07-21, docs/plans/backlog-followups.md).
+//
+// Root cause: `match_arm_bindings` (types/mod.rs) widens the match-arm
+// `scope` with pattern-bound names using `scrut_ty` — but `scrut_ty` comes
+// from `infer_expr_type(scrutinee, scope)`, whose `Call` arm DELIBERATELY
+// does NOT resolve a general instance-method-call's return type ("GENERAL
+// instance method-call return inference is DECOUPLED from `infer_expr_type`",
+// its own doc). So `match @next() { Some(x) => ... }` inside a GENERIC fn
+// (`I Next[T]` receiver bound) always got `scrut_ty = None` → the pattern
+// bind (`x`) never entered `scope` for the arm body. `x.compare(...)` on the
+// unresolved `x` then fell through `f1_check_call`'s `ExprKind::Member`
+// dispatch to the `imported_modules` free-function-in-module guess — ANY
+// user import whose LAST path segment happened to equal the bare bind name
+// (`x`, here deliberately imported below) made `x.compare(...)` misread as
+// a call to a nonexistent free function `compare` in module `x` — false
+// `[E7401] no function 'compare' in module 'x'`. `[M-202-...]` (2026-07-20)
+// found and worked around this by renaming `std`'s own colliding bind
+// (`x`→`cand` in `vec_iter/core.nv`/`vec_lazy/core.nv`) but explicitly left
+// the underlying scope-gap open as a separate, deeper marker (see that
+// marker's text: "общий scope-gap для generic match-арм-биндингов —
+// латентная, более глубокая проблема"). Fix: `TypeCheckCtx` now publishes
+// the enclosing fn's own generics+bounds (`current_fn_generics`, RAII,
+// mirrors `current_fn_return_ty`) and `ExprKind::Match` tries a narrow,
+// LOCAL fallback (`resolve_generic_bound_method_return`) — ONLY to feed
+// `match_arm_bindings` — when the scrutinee is a 0-arg method call on a
+// generic-param receiver bound to a protocol declaring that 0-arg method
+// (e.g. `Next[T]`'s `@next() -> Option[T]`). Does NOT touch
+// `infer_expr_type`'s general Call-arm decoupling (would ripple to other
+// consumers, per that fn's own doc) — scoped to this ONE call-site.
+module spec_tests.conformance
+
+type GmsgBox { v int }
+
+#impl(Compare)
+fn GmsgBox @compare(other GmsgBox) -> int => @v - other.v
+
+type GmsgIter { mut items []GmsgBox, mut i int }
+
+#impl(Next[GmsgBox])
+fn GmsgIter mut @next() -> Option[GmsgBox] {
+    if @i >= @items.len() { return None }
+    ro r = @items[@i]
+    @i = @i + 1
+    Some(r)
+}
+
+/// Mirrors `std/src/collections/vec_iter/core.nv`'s `@min` shape exactly
+/// (generic `I Next[T], T Compare`, `match @next() { Some(x) => ... }` with a
+/// BARE (deliberately non-renamed) bind name) — the shape that originally
+/// surfaced the scope-gap.
+export fn[I Next[T], T Compare] I mut @gmsg_min() -> Option[T] {
+    mut best = match @next() {
+        Some(first) => first,
+        None => return None,
+    }
+    while true {
+        match @next() {
+            Some(x) => { if x.compare(best) < 0 { best = x } },
+            None => return Some(best),
+        }
+    }
+    Some(best)
+}
+
+test "generic-match-scope-gap: bare match-arm bind (x) inside generic Next[T]-bound fn resolves correctly" {
+    mut it = GmsgIter { items: [GmsgBox{v:3}, GmsgBox{v:1}, GmsgBox{v:2}], i: 0 }
+    ro m = it.gmsg_min()
+    match m {
+        Some(b) => assert(b.v == 1),
+        None => assert(false),
+    }
+}

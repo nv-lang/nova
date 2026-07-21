@@ -8810,7 +8810,62 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // тип из аннотации/typed-target).
         let saved_expected = self.expected_record_type.clone();
         self.expected_record_type = Self::debt_struct_name_from_c_type(ty_c);
-        let val = self.emit_expr(value)?;
+        // [M-d55-const-bytes-lit-not-constexpr] fix (2026-07-21): a module-level
+        // `const c []u8 = "hi"` reaches HERE (lazy-init) because `[]u8` is a heap
+        // Vec pointer, not C-constexpr (emit_const_expr's StrLit arm only builds a
+        // `nova_str`-shaped struct literal, wrong C type for a bytes-slice target
+        // — routed to Err → this lazy path by `emit_const_decl`'s caller). By this
+        // point the CHECKER has already AST-rewritten the bare `"hi"` into
+        // `"hi".bytes()` (D429 `#coerce` str→[]u8 view pair, `try_coerce_leaf`,
+        // types/mod.rs) — value is `Call{Member{obj: StrLit(s), name: "bytes"}}`.
+        // That rewrite mints a FRESH synthetic `ExprId` for the new nodes (not a
+        // real UNSET, but never entered into `resolved_callees` — that map is
+        // captured from the checker BEFORE this AST-mutating pass runs). The
+        // general `emit_call` Member-dispatch's `resolved_callees` channel misses
+        // it and falls to a slower `method_overloads[("str","bytes")]` lookup —
+        // which ALSO misses here specifically because module-level consts are
+        // emitted at pipeline stage "1b" (emit_module, right after types/forward-
+        // decls), BEFORE the pass that registers std's `str @bytes()` (std/
+        // runtime/string/core.nv) into `method_overloads` runs. Reaching NO
+        // matching entry, dispatch falls through to a much later, permissive
+        // fallback and mis-resolves the bare method name "bytes" against an
+        // UNRELATED registered symbol (`bench.bytes` → `nova_bench_set_throughput
+        // _bytes`, Plan 57 bench DSL, external_registry.rs NAMESPACE_OVERRIDES) —
+        // `Nova_bench_static_bytes` undefined-symbol link failure. Reordering
+        // const-emission after method registration is out of scope here (global
+        // pipeline reordering, wide blast radius on every other const in every
+        // CU). Instead: recognize this ONE well-known, permanent shape directly
+        // and emit the correct, already-proven-correct call ourselves — the SAME
+        // `str @bytes() -> ro []u8` Nova-body method every OTHER call site of
+        // `.bytes()` on a `str` receiver resolves to (`Nova_str_method_bytes`,
+        // mangled `Nova_<Type>_method_<name>` — zero-copy view, `unsafe { []u8.new
+        // (@ptr, @byte_len()) }`, std/runtime/string/core.nv) — bypassing the
+        // method-registry timing gap entirely for this narrow, structurally-
+        // recognizable case. Any OTHER coerce-rewritten shape (finalize lane,
+        // consume-receiver, etc.) is NOT covered — falls through to the pre-
+        // existing `emit_expr` dispatch unchanged (byte-identical outside this
+        // one shape).
+        let val = if let ExprKind::Call { func, args, .. } = &value.kind {
+            if let ExprKind::Member { obj, name: m } = &func.kind {
+                if m == "bytes" && args.is_empty()
+                    && matches!(obj.kind, ExprKind::StrLit(_))
+                    && Self::is_bytes_slice_c_ty(ty_c)
+                {
+                    let obj_c = self.emit_expr(obj)?;
+                    Some(format!("Nova_str_method_bytes({})", obj_c))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let val = match val {
+            Some(v) => v,
+            None => self.emit_expr(value)?,
+        };
         self.expected_record_type = saved_expected;
         self.line(&format!("_nova_const_{}_value = {};", name, val));
         let body = std::mem::replace(&mut self.out, saved_out);
@@ -27833,6 +27888,40 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 } else {
                     self.infer_expr_c_type(&decl.value)
                 };
+                // [M-d55-const-bytes-lit-not-constexpr] fix (2026-07-21): a
+                // scope-local `const c []u8 = "hi"` is NOT walked by the D429
+                // `#coerce` str→[]u8 AST-rewrite pass (`MapLitAnnotator::
+                // walk_stmt`, types/mod.rs — `Stmt::Const(_) => {}`, a
+                // deliberate no-op since Plan 114.4 Ф.2) — so `decl.value` stays
+                // a bare `StrLit`. `[]u8` is a heap Vec POINTER (len/cap/data),
+                // not a C-constexpr — `emit_const_expr`'s `StrLit` arm always
+                // builds a `nova_str`-shaped `{.ptr=...,.len=...}` struct
+                // literal (correct for a `str`-typed const) regardless of the
+                // DECLARED target type, so this would silently emit an
+                // ILL-TYPED C initializer (`const Nova_Vec____nova_byte* c =
+                // {.ptr="hi", .len=2};` — CC-FAIL, or worse if the shapes ever
+                // happened to typecheck) instead of a clear Nova-level
+                // diagnostic. Module-level `const` (`Item::Const`) has a
+                // genuine fix (IS walked by the D429 rewrite + falls to the
+                // pre-existing `emit_lazy_const` runtime-init path, see its
+                // doc) — scope-local const has no block-scope equivalent of
+                // `nova_consts_init()` to lazy-init into (would need new
+                // per-block init-ordering machinery, out of scope for this
+                // fix). Turn the silent mis-compile into an explicit,
+                // actionable error instead: `let`/`ro`/`mut` already coerce
+                // str→[]u8 correctly at this exact scope (D429 R6) — steer
+                // the author there.
+                if Self::is_bytes_slice_c_ty(&ty_c) && matches!(decl.value.kind, ExprKind::StrLit(_)) {
+                    return Err(format!(
+                        "[E_CONST_BYTES_NOT_CONSTEXPR] scope-local `const {name} []u8 = \"...\"` \
+                         is not supported — a `[]u8` value is a heap-allocated Vec, not a \
+                         compile-time C constant, and this position has no runtime-init \
+                         machinery (unlike a module-level `const`, which lazy-inits). Use \
+                         `let`/`ro`/`mut {name} []u8 = \"...\"` instead (same zero-copy str→[]u8 \
+                         view coercion, D429).",
+                        name = decl.name
+                    ));
+                }
                 let val = self.emit_const_expr_typed(&decl.value, Some(&ty_c))
                     .map_err(|e| format!("scope-local const `{}` codegen failed: {}", decl.name, e))?;
                 self.line(&format!("const {} {} = {};", ty_c, decl.name, val));
