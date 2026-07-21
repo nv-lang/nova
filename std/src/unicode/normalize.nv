@@ -21,15 +21,15 @@ import std.collections.hashmap.{HashMap}
 import std.collections.vec.{Vec}
 
 // ---- Hangul constants (UAX #15) ----
-const SBASE = 0xAC00
-const LBASE = 0x1100
-const VBASE = 0x1161
-const TBASE = 0x11A7
-const LCOUNT = 19
-const VCOUNT = 21
-const TCOUNT = 28
-const NCOUNT = 588    // VCOUNT * TCOUNT
-const SCOUNT = 11172  // LCOUNT * NCOUNT
+const SBASE int = 0xAC00
+const LBASE int = 0x1100
+const VBASE int = 0x1161
+const TBASE int = 0x11A7
+const LCOUNT int = 19
+const VCOUNT int = 21
+const TCOUNT int = 28
+const NCOUNT int = 588    // VCOUNT * TCOUNT
+const SCOUNT int = 11172  // LCOUNT * NCOUNT
 
 // ---- lazy-static tables (built once on first normalization call) ----
 // hex / parse_cp_list / parse_cp_keyed_table / parse_cp_int_table /

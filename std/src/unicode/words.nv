@@ -18,24 +18,24 @@ module std.unicode
 import std.collections.vec.{Vec}
 
 // ─── Word_Break category codes (MUST match nova-codegen unicode `wb_cat_code`) ───
-const WB_CR = 1
-const WB_LF = 2
-const WB_NEWLINE = 3
-const WB_EXTEND = 4
-const WB_ZWJ = 5
-const WB_RI = 6
-const WB_FORMAT = 7
-const WB_KATAKANA = 8
-const WB_HEBREW = 9
-const WB_ALETTER = 10
-const WB_SQ = 11        // Single_Quote
-const WB_DQ = 12        // Double_Quote
-const WB_MIDNUMLET = 13
-const WB_MIDLETTER = 14
-const WB_MIDNUM = 15
-const WB_NUMERIC = 16
-const WB_EXTENDNUMLET = 17
-const WB_WSEGSPACE = 18
+const WB_CR int = 1
+const WB_LF int = 2
+const WB_NEWLINE int = 3
+const WB_EXTEND int = 4
+const WB_ZWJ int = 5
+const WB_RI int = 6
+const WB_FORMAT int = 7
+const WB_KATAKANA int = 8
+const WB_HEBREW int = 9
+const WB_ALETTER int = 10
+const WB_SQ int = 11        // Single_Quote
+const WB_DQ int = 12        // Double_Quote
+const WB_MIDNUMLET int = 13
+const WB_MIDLETTER int = 14
+const WB_MIDNUM int = 15
+const WB_NUMERIC int = 16
+const WB_EXTENDNUMLET int = 17
+const WB_WSEGSPACE int = 18
 
 ro wb_flat []u32 = parse_flat(WB_DATA)
 fn wbcat(cp u32) -> int => range_lookup3(wb_flat, cp)

@@ -16,20 +16,20 @@ module std.unicode
 import std.collections.vec.{Vec}
 
 // ─── Sentence_Break category codes (MUST match nova-codegen unicode `sb_cat_code`) ──
-const SB_CR = 1
-const SB_LF = 2
-const SB_EXTEND = 3
-const SB_SEP = 4
-const SB_FORMAT = 5
-const SB_SP = 6
-const SB_LOWER = 7
-const SB_UPPER = 8
-const SB_OLETTER = 9
-const SB_NUMERIC = 10
-const SB_ATERM = 11
-const SB_SCONTINUE = 12
-const SB_STERM = 13
-const SB_CLOSE = 14
+const SB_CR int = 1
+const SB_LF int = 2
+const SB_EXTEND int = 3
+const SB_SEP int = 4
+const SB_FORMAT int = 5
+const SB_SP int = 6
+const SB_LOWER int = 7
+const SB_UPPER int = 8
+const SB_OLETTER int = 9
+const SB_NUMERIC int = 10
+const SB_ATERM int = 11
+const SB_SCONTINUE int = 12
+const SB_STERM int = 13
+const SB_CLOSE int = 14
 
 ro sb_flat []u32 = parse_flat(SB_DATA)
 fn sbcat(cp u32) -> int => range_lookup3(sb_flat, cp)
