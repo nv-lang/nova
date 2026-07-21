@@ -186,3 +186,50 @@ test "D432: auto-cleanup fires on throw-path too" {
     }
     assert(exit_calls == 1)
 }
+
+// (8) spawn-closure: a BARE consume-let (no `{ … }` scope-block) whose
+// auto-cleanup synthesizes INSIDE a `spawn { … }` closure —
+// [M-217-spawn-closure-consume-cleanup-undefined] regression guard. Found
+// via `nova build examples/net/echo_server.nv --strict-effects`
+// (`consume stream = conn` inside spawn), which surfaced TWO independent
+// defects in the same area:
+//   (a) method-DCE was pruning the synthesized `Nova_<T>_consume_cleanup`
+//       definition (the bare-consume-let form had no `collect_used_names`
+//       seed, unlike the block-form `Stmt::ConsumeScope`) while the call
+//       site — driven directly by AST, independent of DCE — still linked
+//       against it → `undefined symbol Nova_TcpStream_consume_cleanup` at
+//       link time in every spawn-closure caller (echo_server/echo_client
+//       net+tls). Guarded by the `bare_consume_let_seeds_cleanup_method`
+//       Rust unit test in emit_c.rs plus the flagship `nova build
+//       --strict-effects` gates (echo_server/echo_client net+tls,
+//       aggregator).
+//   (b) `emit_spawn`'s own top-level body-statement loop skipped
+//       `enter_defer_scope`/`leave_defer_scope` entirely (unlike every
+//       OTHER block-emission site — match arms, `if`/`while` bodies,
+//       `emit_supervised`'s own body) — a BARE auto-cleanup consume-let
+//       placed DIRECTLY at spawn-body top level (no enclosing match/if)
+//       never got its `active_var`/`consume_policy` armed at all, so
+//       `@cleanup` silently never ran (found via THIS test, which failed
+//       at runtime with `exit_calls == 0` even after fix (a) alone).
+// `nova test`'s harness has no `fn main`, so reachability-DCE never
+// engages for THIS file (see `compute_dead_decls_with`'s `has_main`
+// gate) — this test therefore only exercises defect (b) functionally;
+// defect (a) is guarded separately as noted above.
+test "D432: bare consume-let inside spawn closure auto-cleans exactly once" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        supervised {
+            spawn {
+                consume r = d432_make(10)
+                ro _x = r.id
+            }
+        }
+    }
+    assert(exit_calls == 1)
+}

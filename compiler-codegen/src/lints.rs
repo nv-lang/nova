@@ -977,6 +977,25 @@ fn collect_stmt(s: &Stmt, out: &mut HashSet<String>) {
                 collect_tr(t, out);
             }
             collect_expr(&d.value, out);
+            // Plan 217 (D-новый, гибрид C) BUGFIX [M-217-spawn-closure-consume-
+            // cleanup-undefined]: a BARE `consume x = e` (no trailing `{ … }`
+            // block — unlike `Stmt::ConsumeScope` above) auto-inserts a
+            // scope-exit dispatch to the resource type's `@cleanup` method via
+            // the SAME synthetic `Nova_<T>_consume_cleanup` C symbol
+            // (`enter_defer_scope`'s auto-cleanup prologue scan), never spelled
+            // as an AST `Member`/`Call` node. Without this seed the method-DCE
+            // type∧name intersection ((T, cleanup)) never fires whenever `T`'s
+            // only reachable consume-binding is a bare `consume x = e` (e.g.
+            // `consume stream = conn` inside a `spawn { … }` closure —
+            // `examples/net/echo_server.nv`/`echo_client.nv`, TLS pair) — the
+            // definition is pruned as dead while the call site (driven
+            // directly by AST, independent of DCE) still links against it →
+            // `undefined symbol Nova_TcpStream_consume_cleanup`. Mirrors the
+            // `Stmt::ConsumeScope` seed immediately below (over-keep, never
+            // over-prune: firing still requires the receiver TYPE reachable).
+            if d.consume {
+                out.insert("cleanup".to_string());
+            }
         }
         Stmt::Const(d) => {
             if let Some(t) = &d.ty {

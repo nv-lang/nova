@@ -3775,3 +3775,71 @@ default` + метод собирается. Замечание (вне пери�
   ОСТАЮТСЯ откачены, стоят под `nova:allow W_STATIC_CONVERSION`
   (read_buffer.nv:54, write_buffer.nv:60). После фикса — вернуть
   переименования (dual-form to_*/into_*, см. notes) и снять оба подавления.
+
+## [M-217-spawn-closure-consume-cleanup-undefined] — CI-гейт КРАСНЫЙ: `Nova_TcpStream_consume_cleanup` undefined внутри `_nova_spawn_0` (P0, 2026-07-21) — ✅ РЕШЕНО
+
+**РЕШЕНО 2026-07-21 (sonnet, worktree `nova-spawncl`, ветка `p-fix-spawn-cleanup`):**
+регрессия Plan 217 (авто-`@cleanup`, влит 22f3a519f + 45f047098), ловившая CI
+на `echo_server_net`/`echo_client_net` (+ tls-пара транзитивно). Симптом:
+`nova build examples/net/echo_server.nv --strict-effects` → `lld-link:
+undefined symbol Nova_TcpStream_consume_cleanup`, 3 ссылки все внутри
+`_nova_spawn_0` (паттерн `consume stream = conn` ВНУТРИ `spawn { }`).
+
+Разведка вскрыла ДВА независимых дефекта в одной области:
+
+**(a) DCE-семя пропущено для bare-consume-let.** `compiler-codegen/src/
+lints.rs::collect_stmt`'s `Stmt::Let`-ветка (~975) не сеяла имя `"cleanup"`
+для method-DCE reachability-замыкания — в отличие от соседней
+`Stmt::ConsumeScope`-ветки (~1002, `out.insert("cleanup")`, добавлено ещё в
+Plan 159.1/187 под ТОЧНО такой же паттерн для block-формы `consume x = e {
+… }`). Bare-форма `consume x = e` (без `{ … }`, Plan 217 «гибрид C») тоже
+диспетчит `@cleanup` через синтетический `Nova_<T>_consume_cleanup`-символ
+(`enter_defer_scope`'s auto-cleanup prologue), никогда не пишется как AST
+`Member`/`Call`-нода — но семени для неё не было. `(TcpStream, cleanup)`
+пары никогда не «зажигались» → метод-DCE выпиливал ОПРЕДЕЛЕНИЕ (`nova
+build`-исполняемые имеют `fn main` → DCE активен), а call-сайт (эмитится
+AST-путём, независимо от DCE) продолжал на него ссылаться → undefined
+symbol при линковке. **Фикс:** `if d.consume { out.insert("cleanup"...) }`
+в `Stmt::Let`-ветке (lints.rs ~980-998). Regression-guard: Rust unit-тест
+`bare_consume_let_seeds_cleanup_method` (emit_c.rs, `dce_tests`-модуль,
+рядом с существующим `consume_scope_exit_seeds_cleanup_method`).
+
+**(b) `emit_spawn` игнорировал auto-cleanup ПОЛНОСТЬЮ для bare consume-let
+ПРЯМО в теле spawn (не вложенных в match/if).** Найдено ПРИ верификации
+фикса (a) новой conformance-фикстурой — assert упал в рантайме
+(`exit_calls == 0`, не 1) даже после фикса (a). Корень: `emit_spawn`'s
+собственный statement-loop для тела (`emit_c.rs` ~12320,
+`ExprKind::Block(b) => { for stmt in &b.stmts { self.emit_stmt(stmt)?; } }`)
+НИКОГДА не вызывал `enter_defer_scope`/`leave_defer_scope` — единственное
+место block-эмиссии во всём `emit_c.rs`, которое их пропускало (у
+`emit_supervised`'s собственного тела, у match-арм, у `if`/`while`-тел —
+везде есть). Без `enter_defer_scope`'s prologue-скана auto-cleanup-let
+никогда не «взводился» (`active_var`/`consume_policy` не регистрировались)
+— `@cleanup` молча НИКОГДА не запускался для этого конкретного размещения
+(тихий resource leak, не просто отсутствующий символ). Echo-примеры не
+задеты этим вторым дефектом — их `consume s = stream` вложен в `match … {
+Ok(consume stream) => { … } }`-арм, а арм-тело эмитится ОТДЕЛЬНОЙ функцией,
+которая enter_defer_scope зовёт как обычно. **Фикс:** обернуть
+`ExprKind::Block(b)`-ветку `emit_spawn`'s body-эмиссии в `enter_defer_scope
+(b, false)` / `leave_defer_scope(block_id)` — зеркало `emit_supervised`'s
+уже существующего паттерна (~12630). Безопасно byte-identical для КАЖДОГО
+существующего spawn-тела без defer/bare-consume-let (`enter_defer_scope`
+рано возвращает `block_id=0` когда `!block_has_defers &&
+!block_has_auto_cleanup_lets`, `leave_defer_scope(0)` — no-op); грепом по
+всему `spec_tests/conformance` подтверждено — ни одна существующая
+фикстура не держит top-level `defer` прямо в `spawn { }` (значит ни одна не
+полагалась на старое молчаливое no-op поведение).
+
+**Гейты (все 5 CI-целей, `--strict-effects`, worktree `nova-spawncl`):**
+`echo_server_net`/`echo_client_net`/`echo_server_tls`/`echo_client_tls`/
+`aggregator` — ВСЕ **built** (до фикса (a) — undefined symbol на net+tls
+парах; после — зелёные). Точечный consume-regress (d432 + 3× d157/d180-ok +
+7× d157/d180-neg, изолированный subset вне мега-CU) — **8/8 PASS**.
+Rust `dce_tests` (24, включая новый) + `lints::tests` (86) — все ok.
+
+Regression-guard: 8-й `test` в `spec_tests/conformance/
+d432_auto_cleanup_hybrid_c.nv` (`"D432: bare consume-let inside spawn
+closure auto-cleans exactly once"`) — гоняет ОБА дефекта функционально
+(DCE не активен для `nova test`, у фикстуры нет `fn main` —
+`compute_dead_decls_with`'s `has_main`-гейт; дефект (a) отдельно накрыт
+Rust unit-тестом выше + флагман-гейтами).
