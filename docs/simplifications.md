@@ -9035,3 +9035,42 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
   консервативный (нет ref_typed-оракула): корректность > байты в нестандартном режиме.
 - **`[0; N]`-repeat литерал** (Rust-style) по-прежнему не поддержан парсером
   ([M-sha256-array-repeat-literal-parser]) — не взято в эту волну.
+
+## [M-effect-handler-body-record-literal] CLOSED + [M-spawn-var-boxed-leak] CLOSED (2026-07-22, ветка p175-typed-effects, Plan 175 Ф.2-v2, sonnet)
+
+- **`[M-effect-handler-body-record-literal]` закрыт архитектурно, не догоняющим патчем.**
+  Handler-literal (`with X = effect X {…}`) capture-механизм заменён на common
+  closure-capture path (`emit_lambda`'s `var_boxed`/mangled-field схема) — `#define`-макросы
+  для захватов удалены целиком. Escaping-хендлеры (factory `-> Effect[X]`) heap-promote
+  мутабельные захваты (как раньше); inline-хендлеры (`with X = … { body }`) берут `&cap_name`
+  напрямую БЕЗ box — новая boxed-переменная там была бы C-scope-leak (`emit_with` заворачивает
+  handler-конструирование в свой interrupt-frame C-блок; boxed-переменная, объявленная там, не
+  пережила бы закрытие блока — найдено на `spec_tests/conformance/repro_matrix.nv`'s two-level
+  nested-handler-capture фикстуре, `[M-175-handler-lit-boxed-var-c-scope-leak]`).
+- **`[M-spawn-var-boxed-leak]` (побочная находка, тот же коммит).** `spawn`/`detach`/
+  `blocking`-тела резолвят захваты через СВОЙ `current_spawn_captures`-механизм, не через
+  `var_boxed` — но `var_boxed`-проверка в `ExprKind::Ident`-резолюции стоит РАНЬШЕ, так что
+  stale `var_boxed`-запись (от closure/handler-literal РАНЕЕ в той же enclosing fn) затеняла
+  корректный spawn-путь (`spec_tests/conformance/standalone/scope_multierror_test.nv`,
+  `application_cross_fiber_t8_7.nv`). Пофикшено var_boxed save/take/restore-изоляцией вокруг
+  ВСЕХ четырёх body-swap-сайтов (`emit_spawn`, `emit_detach`, оба `blocking`-work-fn) —
+  mirror паттерна, который `emit_lambda`/`emit_monomorphized_method` уже применяют.
+- **`#default_handler(X)`-механизм (D431, новый)** — generic compiler front-end (parser
+  `#default_handler(EffectName)`-атрибут в `DocAttr::DefaultHandler`; checker
+  `check_default_handlers` — duplicate/arity/return-type/unknown-effect/cycle) + per-эффект
+  runtime-хук (лениво once-per-thread конструирует+ставит дефолт-handler без `with`); `Time`
+  первый мигрированный эффект (`std/src/time/duration/core.nv` `time_default`). DCE-root-seed
+  добавлен (иначе reachability-DCE, Plan 81/159, дропает fn, единственная ссылка на которую —
+  сырая C-строка в `main()`-прологе, невидимая AST-walker'у) — нашлось на
+  `spec_tests/conformance/standalone/vr_binop_arith_dce.nv`.
+- **НЕ сделано этой волной (два followup, `docs/plans/backlog-followups.md`):**
+  typed-schema retype Time (`sleep(Duration)`/`now()->Timestamp`/`now_monotonic()->Monotonic`)
+  — требует wire↔surface scalar-bridge на handler-impl+call-site (hand-written `NovaVtable_Time`
+  компилируется раньше per-CU value-record-typedef'ов, та же находка что D316-amend §Ф.2);
+  ambient-retraction Time (D62 amend, strict-effects-сигнатуры по всему std/examples) —
+  масштаб отдельного окна. `#default_handler` runtime-хук написан generic (работает для ЛЮБОГО
+  эффекта через `emit_effect_type`'s auto-generated dispatch), Time — единственный эффект с
+  hand-written vtable, поэтому единственный со своим fn-pointer-хуком (`_nova_time_default_ctor`).
+- **Гейт:** `nova test spec_tests/conformance` 130 PASS / 1 pre-existing FAIL (несвязанный,
+  `d316_time_effect_typed_surface.nv` ссылается на ретрактированный free-fn `sleep_until`,
+  ветка не трогала файл); `nova test std/src` 67 PASS / 0 FAIL.
