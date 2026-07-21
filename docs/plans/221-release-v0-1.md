@@ -80,8 +80,9 @@
 - [x] **A-V3 ✅ 2026-07-21** docs/linux-build.md актуализирован (haiku + поправка интегратора:
       рецепт=CI, закрытые known-issues в историю, секция nova-lsp).
 - [x] **A-V4 ✅ 2026-07-21** THIRD_PARTY сверка (haiku): README.md + minicoro-LICENSE добавлены.
-- [ ] **A-D1 ▶СЕЙЧАС** Dockerfile: образ с компилятором, hello-smoke, инструкция `[docker/]`
-      (sonnet) — В ПОЛЁТЕ.
+- [x] **A-D1 ✅ 2026-07-21** docker/release/Dockerfile (two-stage, рецепт=CI) + README —
+      образ ~1.01GB собран локально, smoke В КОНТЕЙНЕРЕ: hello собран+выполнен
+      («hello from nova docker»). 5 env-vars = unix-варианты setup-env.ps1.
 - [ ] **A-V5** vsix-сборка VSCode-расширения в артефакт `[editors/vscode]` — ⛓A-V2 ✅ (разблокирован).
 - [ ] **A-V6** Теги v0.1.0 на 4 репы + артефакты на GitHub Releases — ⛓Ф.0+Ф.1+Ф.3 (финал).
 
@@ -98,7 +99,9 @@
       на roadmap); новая секция Installation (ссылка на docs/quickstart.md) перед Building from
       source; quickstart-ссылка в шапке. Существующий контент (Show me the code/Memory/What's
       removed/License) сохранён без изменений.
-- [ ] **A-Q3 ▶СЕЙЧАС** Язык-тур (выжимка из spec/decisions, не вся спека) `[docs]` (sonnet, крупнее).
+- [x] **A-Q3 ✅ 2026-07-21** docs/language-tour.md — 12 секций, 12/12 примеров прогнаны
+      (examples/tour/, strict-effects чист). Находки тура: println-Debug-record мусор
+      (фикс-волна в полёте) + str.parse_int в идиомах-доке аспирационный (поправить в A-Q4).
 - [ ] **A-W1 ▶СЕЙЧАС** Страница релиза на сайте: версия/скачать/quickstart-ссылка `[репа www/site]`
       (sonnet — ПОЛНОСТЬЮ независимая репа). — ЗАПУЩЕН
 - [ ] **A-Q4** Release notes v0.1.0 (draft ▶СЕЙЧАС из истории сессий; финал ⛓Ф.0).
