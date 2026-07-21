@@ -90,7 +90,7 @@ export fn YearMonth @compare(other YearMonth) -> int {
 /// ISO-форма `YYYY-MM` (format_year/pad2 — module-private хелперы date.nv).
 #stable(since = "0.1")
 export fn YearMonth @to_iso() -> str =>
-    format_year(@year as i64) + "-" + pad2(@month as i64)
+    "${format_year(@year as i64)}-${pad2(@month as i64)}"
 
 /// Display = ISO-форма.
 #stable(since = "0.1")
@@ -157,7 +157,7 @@ export fn MonthDay @compare(other MonthDay) -> int {
 /// ISO-форма `--MM-DD` (ISO-8601 monthday).
 #stable(since = "0.1")
 export fn MonthDay @to_iso() -> str =>
-    "--" + pad2(@month as i64) + "-" + pad2(@day as i64)
+    "--${pad2(@month as i64)}-${pad2(@day as i64)}"
 
 /// Display = ISO-форма.
 #stable(since = "0.1")

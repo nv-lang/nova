@@ -43,15 +43,24 @@ test "tcp/share: real loopback — копия живёт после close ори
                 mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
                 ch.tx.send(lst.local_port())
                 mut srv = must(lst.accept())
-                mut got = ""
-                while got.byte_len() < 8 {
+                // [M-str-interp-closure-capture-miss] follow-up (владелец
+                // 2026-07-21): явный `cap:` — bare `StringBuilder.new()`
+                // (default-arg `INITIAL_CAPACITY`) внутри `spawn {}` триггерит
+                // отдельный, ещё не до конца root-caused codegen-баг
+                // (default-arg backfill для static-ctora, похоже, не
+                // квалифицирует module-private const правильным file_id при
+                // попадании в spawn-capture-scan — тот же класс, что и
+                // interpolation-capture-miss, но другой путь substitution'а).
+                // Явный cap обходит default-arg path целиком.
+                consume sb = StringBuilder.new(cap: 16)
+                while sb.byte_len() < 8 {
                     ro part = must(srv.read_text(16))
                     if part.byte_len() == 0 { break }   // EOF
-                    got = got + part
+                    sb.append(part)
                 }
                 // Если close оригинала рвал бы сокет — второй write упал бы /
                 // сервер увидел бы EOF после "one.".
-                assert(got == "one.two.")
+                assert(sb.into_str() == "one.two.")
                 srv.close()
                 lst.close()
             }
@@ -86,13 +95,22 @@ test "tcp/share: конкурентные share-копии per-fiber, авто-c
                 mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
                 ch.tx.send(lst.local_port())
                 mut srv = must(lst.accept())
-                mut got = ""
-                while got.byte_len() < 2 {
+                // [M-str-interp-closure-capture-miss] follow-up (владелец
+                // 2026-07-21): явный `cap:` — bare `StringBuilder.new()`
+                // (default-arg `INITIAL_CAPACITY`) внутри `spawn {}` триггерит
+                // отдельный, ещё не до конца root-caused codegen-баг
+                // (default-arg backfill для static-ctora, похоже, не
+                // квалифицирует module-private const правильным file_id при
+                // попадании в spawn-capture-scan — тот же класс, что и
+                // interpolation-capture-miss, но другой путь substitution'а).
+                // Явный cap обходит default-arg path целиком.
+                consume sb = StringBuilder.new(cap: 16)
+                while sb.byte_len() < 2 {
                     ro part = must(srv.read_text(8))
                     if part.byte_len() == 0 { break }
-                    got = got + part
+                    sb.append(part)
                 }
-                assert(got == "xy")
+                assert(sb.into_str() == "xy")
                 mut buf []u8 = []u8.new()
                 buf.resize(4, 0 as u8)
                 assert(must_io(srv.read(buf)) == 0)     // EOF после close последнего

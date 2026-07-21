@@ -50,8 +50,7 @@ test "ошибка: cost вне диапазона" {
 }
 
 test "ошибка: пароль > 72 байта" {
-    mut long = ""
-    for i in 0..100 { long = long + "a" }
+    ro long = "a".repeat(100)
     ro r = with Random = th.seeded(0) { InsecureDemoKdf.hash(long, 4) }
     match r {
         Ok(_)  => assert(false)

@@ -208,7 +208,7 @@ test "split: .collect() Vec is a real, reusable, indexable Vec[str]" {
     assert(parts[1] == "k2=v2")
     // Re-iterate the materialized Vec via the ordinary (generic) VecIter —
     // confirms .collect() handed back a genuinely independent Vec[str].
-    mut joined = ""
-    for p in parts { joined = joined + p }
-    assert(joined == "k1=v1k2=v2")
+    consume sb = StringBuilder.new()
+    for p in parts { sb.append(p) }
+    assert(sb.into_str() == "k1=v1k2=v2")
 }

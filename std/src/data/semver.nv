@@ -308,14 +308,15 @@ fn is_ascii_ident_char(c char) -> bool {
 /// Round-trip: `v.to_str().to_version()== v` для валидной Version.
 #stable(since = "0.1")
 export fn Version @to_str() -> str {
-    mut s = @major.to_str() + "." + @minor.to_str() + "." + @patch.to_str()
+    consume sb = StringBuilder.new()
+    sb.append(@major.to_str()).append(".").append(@minor.to_str()).append(".").append(@patch.to_str())
     if @pre.len() > 0 {
-        s = s + "-" + join_dots(@pre)
+        sb.append("-").append(join_dots(@pre))
     }
     if @build.len() > 0 {
-        s = s + "+" + join_dots(@build)
+        sb.append("+").append(join_dots(@build))
     }
-    s
+    sb.into_str()
 }
 
 fn join_dots(parts []str) -> str {

@@ -98,7 +98,7 @@ export fn DateTimeFormat mut @opt_end() -> @ { @items.push(FOptEnd) }
 // ──────────────────────────────────────────────────────────────────────────
 
 fn fmt_pad2(n int) -> str =>
-    if n < 10 { "0" + n.to_str() } else { n.to_str() }
+    if n < 10 { "0${n}" } else { n.to_str() }
 
 /// Отформатировать plain DateTime по паттерну.
 #stable(since = "0.1")

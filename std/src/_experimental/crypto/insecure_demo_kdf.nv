@@ -100,8 +100,8 @@ export fn InsecureDemoKdf.hash(password str, cost int) Random -> Result[str, Ins
     ro hashed = demo_kdf(password.bytes(), salt, cost)
 
     // Format: $ndk1$<cost>$<salt><hash>
-    ro cost_str = if cost < 10 { "0" + cost.to_str() } else { cost.to_str() }
-    Ok("$" + FORMAT_TAG + "$" + cost_str + "$" + demo_base64_encode(salt) + demo_base64_encode(hashed))
+    ro cost_str = if cost < 10 { "0${cost}" } else { cost.to_str() }
+    Ok("$${FORMAT_TAG}$${cost_str}$${demo_base64_encode(salt)}${demo_base64_encode(hashed)}")
 }
 
 

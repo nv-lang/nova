@@ -25,7 +25,7 @@ import std.io.{IoError}
 fn must[T](r Result[T, NetError]) -> T {
     match r {
         Ok(v)  => v
-        Err(e) => panic("net2 test: unexpected Err: " + e.to_str())
+        Err(e) => panic("net2 test: unexpected Err: ${e.to_str()}")
     }
 }
 
@@ -33,7 +33,7 @@ fn must[T](r Result[T, NetError]) -> T {
 fn must_io[T](r Result[T, IoError]) -> T {
     match r {
         Ok(v)  => v
-        Err(e) => panic("net2 test: unexpected Err: " + e.to_str())
+        Err(e) => panic("net2 test: unexpected Err: ${e.to_str()}")
     }
 }
 
@@ -66,7 +66,7 @@ test "net2/tcp: two-fiber loopback echo through the Net effect" {
                 assert(n == 10)
                 ro msg = unsafe { buf[0..n].to_str_unchecked() }
                 assert(msg == "hello net2")
-                assert(must_io(srv.write(("echo: " + msg).bytes())) == 16)
+                assert(must_io(srv.write("echo: ${msg}".bytes())) == 16)
                 srv.close()
                 lst.close()
             }

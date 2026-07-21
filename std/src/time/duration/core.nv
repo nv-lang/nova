@@ -654,19 +654,19 @@ export fn Duration @to_str() -> str {
     ro sign = if n < 0 { "-" } else { "" }
 
     if abs < 1_000 {
-        sign + abs.to_str() + "ns"
+        "${sign}${abs}ns"
     } else if abs < 1_000_000 {
-        sign + (abs / 1_000).to_str() + "us"
+        "${sign}${abs / 1_000}us"
     } else if abs < 1_000_000_000 {
-        sign + (abs / 1_000_000).to_str() + "ms"
+        "${sign}${abs / 1_000_000}ms"
     } else if abs < 60 * 1_000_000_000 {
-        sign + @seconds_f64().abs().to_str() + "s"
+        "${sign}${@seconds_f64().abs()}s"
     } else if abs < 3_600 * 1_000_000_000 {
-        sign + (abs / 60_000_000_000).to_str() + "min"
+        "${sign}${abs / 60_000_000_000}min"
     } else if abs < 86_400 * 1_000_000_000 {
-        sign + (abs / 3_600_000_000_000).to_str() + "h"
+        "${sign}${abs / 3_600_000_000_000}h"
     } else {
-        sign + (abs / 86_400_000_000_000).to_str() + "d"
+        "${sign}${abs / 86_400_000_000_000}d"
     }
 }
 

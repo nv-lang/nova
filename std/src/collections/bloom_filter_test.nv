@@ -32,12 +32,12 @@ test "optimal sizing" {
 test "false positive rate приемлемый для small set" {
     mut bf = BloomFilter.new(1024, 4)
     for i in 0..50 {
-        bf.insert("item-" + i.to_str())
+        bf.insert("item-${i}")
     }
     // Сколько false positives на 100 неинсёртенных?
     mut false_pos = 0
     for j in 50..150 {
-        if bf.contains("item-" + j.to_str()) {
+        if bf.contains("item-${j}") {
             false_pos += 1
         }
     }

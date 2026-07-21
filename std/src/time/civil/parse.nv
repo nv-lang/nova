@@ -18,7 +18,7 @@ module time.civil
 // Ровно n ASCII-цифр с позиции pos → (значение, новая позиция).
 fn digits_at(s str, pos int, n int) -> Result[(i64, int), ParseDateTimeError] {
     if pos + n > s.byte_len() {
-        return Err(FormatMismatch(pos, n.to_str() + " digits"))
+        return Err(FormatMismatch(pos, "${n} digits"))
     }
     mut v i64 = 0
     mut i = pos
@@ -317,5 +317,5 @@ export fn str @to_period() -> Result[Period, ParseDateTimeError] {
 #stable(since = "0.1")
 export fn Timestamp @to_rfc3339() -> str {
     ro z = @to_zoned(Utc)
-    z.datetime().to_iso() + "Z"
+    "${z.datetime().to_iso()}Z"
 }
