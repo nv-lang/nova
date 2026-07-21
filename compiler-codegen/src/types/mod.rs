@@ -28523,7 +28523,20 @@ impl<'a> ConsumeCtx<'a> {
                                 .cloned()
                         }
                         ExprKind::SelfAccess => self.self_type.clone(),
-                        _ => None,
+                        // [M-vec-spelling-consume-chain-cap-collision] (vec-sweep
+                        // 2026-07-06, fixed here): `obj` не всегда простой Ident —
+                        // 2-звенный (и глубже) method-chain на consume-binding'е
+                        // (`consume sb = StringBuilder.new().cap(n)`) кладёт сюда
+                        // САМ `Call`-узел (`StringBuilder.new()`) как receiver.
+                        // Прежде это било в `_ => None` → тип ВСЕЙ цепочки не
+                        // резолвился → `var_types["sb"]` не заполнялся →
+                        // `is_consume_method` никогда не находил `sb`'s тип →
+                        // `.into_str()` не распознавался как consuming-вызов →
+                        // ложный `[D133-not-consumed] (тип \`\`)`. Рекурсивный
+                        // fallback на этот же `infer_value_type` резолвит
+                        // receiver любой глубины цепочки (сам обрабатывает
+                        // базовый `Type.new(...)`-Call как первая ветка выше).
+                        _ => self.infer_value_type(obj),
                     };
                     if let Some(rty) = recv_ty {
                         if let Some(ret) = self.reg.method_return_types
