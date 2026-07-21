@@ -197,15 +197,7 @@ export fn str @replace(from str, to str) -> str {
     if fn_len == 0 { return @ }
     ro to_len = to.byte_len()
     ro estimated = @byte_len() + (to_len - fn_len).max(0)
-    // [M-vec-spelling-consume-chain-cap-collision] (vec-sweep, 2026-07-06,
-    // RESOLVED by workaround): `consume sb = StringBuilder.new().cap(n)`
-    // (a 2-link chain bound in one `consume` let) broke D133 consume-tracking
-    // for the WHOLE compile unit — reproduced down to an arbitrary 2nd link
-    // (even a trivial unrelated `-> @` method chained onto `.new()`), not
-    // specific to `.cap`. `consume sb = StringBuilder.new()` (single call)
-    // + `.cap(n)` as its own SEPARATE statement avoids it.
-    consume sb = StringBuilder.new()
-    sb.cap(estimated)
+    consume sb = StringBuilder.new(cap: estimated)
     mut rest = @
     while true {
         match rest.find(from) {
@@ -227,8 +219,7 @@ export fn str @replacen(from str, to str, n int) -> str
 {
     ro fn_len = from.byte_len()
     if n <= 0 || fn_len == 0 { return @ }
-    consume sb = StringBuilder.new()
-    sb.cap(@byte_len())
+    consume sb = StringBuilder.new(cap: @byte_len())
     mut rest = @
     mut count = 0
     while count < n {
