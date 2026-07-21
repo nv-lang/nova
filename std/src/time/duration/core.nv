@@ -262,10 +262,34 @@ export fn Duration @sleep() Time -> () => Time.sleep(@to_millis_ceil() as int)
 /// (Go/tokio parity; the underlying runtime already treats `ms <= 0` as an
 /// immediate yield, so this holds for any non-positive `Duration`).
 /// Granularity is the libuv timer wheel (~1ms) — `sleep` guarantees
-// П12-хвост (владелец, снос 2026-07-21): свободные обёртки `(d).sleep()` /
-// `sleep_until(deadline)` РЕТРАКТИРОВАНЫ (§3 surface=методы + D9 «одна
-// дверь»): канон — `d.sleep()` и `deadline.sleep_until()` (метод в
-// monotonic.nv). Effect-op `Time.sleep(ms)` — слой примитива, не тронут.
+/// «sleep for *at least* `d`», never less. No `tolerance` parameter yet
+/// ([M-sleep-tolerance] — Swift-style coalescing, future-additive).
+///
+/// # Examples
+/// ```nova
+/// sleep(500.to_millis())
+/// sleep(0.to_nanos())  // resolves immediately, no wait
+/// ```
+#stable(since = "0.1")
+export fn sleep(d Duration) Time -> () => d.sleep()
+
+/// Suspend until the given **monotonic** deadline (Plan 175 Ф.3(b), D316
+/// Q3 — MVP `sleep(deadline - Monotonic.now())` wrapper; drift-free true
+/// re-arm timer is future work, Plan 66). Only `Monotonic` deadlines are
+/// accepted — **not** `Timestamp`: an absolute wall-clock deadline is immune
+/// to NTP/DST jumps only via the monotonic clock (D124 §3); the wall-based
+/// equivalent is the explicit, footgun-visible `sleep(ts.time_until())`.
+/// A deadline already in the past resolves **immediately** (saturate-to-
+/// zero via `elapsed_since`, D318 — never a negative sleep, never a trap).
+///
+/// # Examples
+/// ```nova
+/// ro deadline = Monotonic.now() + 5.to_seconds()
+/// sleep_until(deadline)
+/// ```
+#stable(since = "0.1")
+export fn sleep_until(deadline Monotonic) Time -> () =>
+    sleep(deadline.elapsed_since(Monotonic.now()))
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -709,7 +733,7 @@ export fn Duration @to_human() -> str {
 // живёт ТОЛЬКО в std/prelude/effects.nv (codegen читает её оттуда). Ранее
 // здесь дублировался закомментированный 5-й источник схемы — УДАЛЁН, чтобы
 // не плодить расходящиеся зеркала. int-провод (`now()->int`) сохраняется в
-// Ф.1; типизация (`timestamp()->Timestamp`, `(Duration).sleep()`) — Ф.2/Ф.3.
+// Ф.1; типизация (`timestamp()->Timestamp`, `sleep(Duration)`) — Ф.2/Ф.3.
 
 
 // Plan 200 Step 2 (D410/D317 amend): int/f64 per-width fluent constructors
@@ -1080,27 +1104,27 @@ test "Ф.3(c): m2 - m1 диспатчится в @minus(Monotonic) → Duration,
     }
 }
 
-test "Ф.3(b): free (Duration).sleep() под mock-clock продвигает виртуальные часы" {
+test "Ф.3(b): free sleep(Duration) под mock-clock продвигает виртуальные часы" {
     with Time = th.mut_clock(1000 as u64) {
-        (500.to_millis()).sleep()
+        sleep(500.to_millis())
         assert(Time.now_unix_ms() == 1500)
         // Duration.ZERO как const-reference — pre-existing [M-175-value-record-const-ref]
         // gap (не time-специфичный); workaround — to_nanos(0), см. "predicates" выше.
-        (0.to_nanos()).sleep()  // немедленно, часы не двигаются
+        sleep(0.to_nanos())  // немедленно, часы не двигаются
         assert(Time.now_unix_ms() == 1500)
     }
 }
 
-test "Ф.3(b)/Q3: Monotonic @sleep_until — будущий дедлайн ждёт ровно дельту, прошлый — немедленно" {
+test "Ф.3(b)/Q3: sleep_until(Monotonic) — будущий дедлайн ждёт ровно дельту, прошлый — немедленно" {
     with Time = th.mut_clock(0 as u64) {
         ro m0 = Monotonic.now()
         ro deadline = m0 + 3.to_seconds()
-        deadline.sleep_until()
+        sleep_until(deadline)
         assert(Time.now_unix_ms() == 3000)
 
         // дедлайн уже в прошлом → saturate-to-zero, немедленно (без доп. ожидания)
         ro past = Monotonic.now() - 10.to_seconds()
-        past.sleep_until()
+        sleep_until(past)
         assert(Time.now_unix_ms() == 3000)
     }
 }

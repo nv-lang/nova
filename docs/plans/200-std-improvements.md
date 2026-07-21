@@ -405,7 +405,7 @@ hours/days).
 - **Float — отдельно** (f64 ∉ Ints, в бланкет не входит): `f64 @to_seconds()` (заменяет `from_secs_f`;
   `1.5.to_seconds()`). Только секунды.
 - **Singular** `int @second()`/`@minute()` — убрать (DRY; `1.to_seconds()`).
-- **Свободные обёртки-дубли убрать — ✅ ХВОСТ ИСПОЛНЕН 2026-07-21 интегратором** (chain-волна стартовала до дописки): `sleep`/`sleep_until` снесены, `Monotonic @sleep_until()` добавлен (monotonic.nv), 7 call-сайтов мигрированы, D316-амендмент; duration 1/0, checksums δ0. (владелец 2026-07-16): `fn sleep(d Duration)` (duration.nv:263 — однострочный
+- **Свободные обёртки-дубли убрать** (владелец 2026-07-16): `fn sleep(d Duration)` (duration.nv:263 — однострочный
   делегат в `d.sleep()`) и `fn sleep_until(deadline Monotonic)` (:280 → метод `Monotonic @sleep_until()`) — §3
   nv-coding-style (surface = методы) + D9; канон `5.to_seconds().sleep()` / `deadline.sleep_until()`. Effect-op
   `Time.sleep(ms int)` (prelude/effects) НЕ трогать — слой примитива, не пользовательский surface. Мигрировать

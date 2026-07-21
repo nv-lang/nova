@@ -107,22 +107,6 @@ export fn Monotonic @elapsed_since(other Monotonic) -> Duration =>
         0.to_nanos()
     }
 
-/// Suspend until THIS **monotonic** deadline (П12-хвост 2026-07-21: метод
-/// вместо ретрактированной свободной `sleep_until(deadline)`; Plan 175
-/// Ф.3(b), D316 Q3 — MVP-обёртка `sleep(deadline - now)`; drift-free
-/// re-arm — future, Plan 66). Только `Monotonic` — не `Timestamp` (D124 §3:
-/// wall-дедлайн уязвим к NTP/DST; явная wall-форма — `ts.time_until().sleep()`).
-/// Прошедший дедлайн разрешается НЕМЕДЛЕННО (saturate-to-zero, D318).
-///
-/// # Examples
-/// ```nova
-/// ro deadline = Monotonic.now() + 5.to_seconds()
-/// deadline.sleep_until()
-/// ```
-#stable(since = "0.1")
-export fn Monotonic @sleep_until() Time -> () =>
-    @elapsed_since(Monotonic.now()).sleep()
-
 /// `Monotonic - Monotonic → Duration` (Plan 175 Ф.3(c) / D318 Q4) —
 /// operator-overload alias for [`elapsed_since`], symmetric with
 /// `Timestamp @minus(Timestamp) -> Duration` above. `m2 - m1` dispatches
