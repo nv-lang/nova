@@ -9352,6 +9352,26 @@ impl<'a> TypeCheckCtx<'a> {
                         // object's address as garbage int. See
                         // `check_interp_no_display` doc for full scope.
                         self.check_interp_no_display(e, gs, scope, spec, errors);
+                        // Plan 221.1 followup (coordinator repro, 2026-07-21):
+                        // the SAME numeric-address garbage-fallback also fires
+                        // for bare `${x:?}` (Debug) on a type without
+                        // `#impl(Debug)` — `inject_synthesized_methods`
+                        // (auto_derive.rs) only synthesizes `@debug` for types
+                        // that literally list "Debug" in `impl_protocols`
+                        // (D229 §4: "Когда user type X помечен #impl(Debug)"),
+                        // contradicting the `gate_on_impl=false` "zero-friction,
+                        // no annotation needed" comment at emit_c.rs's Debug
+                        // branch (~42816) — that comment describes an intent
+                        // Plan 91.14's OWN default-body candidate search can
+                        // never fulfil (`Debug` protocol ships with NO default
+                        // body at all, D229 §2 "NO default body в protocol
+                        // decl" — the candidate list is always empty regardless
+                        // of the gate flag). D229 §7 already RESERVES
+                        // `E_DEBUG_PRINTABLE_NOT_IMPLEMENTED` for exactly this
+                        // "type doesn't impl Debug, no auto-synthesis possible"
+                        // case — it was never wired up. See
+                        // `check_interp_no_debug` doc for full scope.
+                        self.check_interp_no_debug(e, gs, scope, spec, errors);
                         self.f1_expr(e, gs, scope, errors);
                     }
                 }
@@ -13969,53 +13989,43 @@ impl<'a> TypeCheckCtx<'a> {
     ///     the Option-Result `DeclaredBody` special-case, neither of which
     ///     is visible to this pre-mono pass; flagging here risks a false
     ///     positive against a type that DOES resolve fine post-mono.
-    fn check_interp_no_display(
+    /// Shared scoping logic between `check_interp_no_display` and
+    /// `check_interp_no_debug` — resolves `ex`'s static type and returns its
+    /// name IFF it's a candidate this pass should judge at all: a
+    /// non-generic `Record`/`Sum`/`NamedTuple`/`Newtype` declared type.
+    /// Returns `None` for everything the gap-closure deliberately leaves
+    /// alone (see the two callers' doc comments for the itemized list —
+    /// primitives, generic type-params, generic declared types, unknown
+    /// names, `CharLit` literals).
+    fn resolve_interp_user_value_type(
         &self,
         ex: &Expr,
         gs: &HashSet<String>,
         scope: &HashMap<String, TypeRef>,
-        spec: &crate::ast::FormatSpec,
-        errors: &mut Vec<Diagnostic>,
-    ) {
-        let spec_is_display = match spec {
-            crate::ast::FormatSpec::None => true,
-            crate::ast::FormatSpec::Debug => false,
-            crate::ast::FormatSpec::Spec(s) => {
-                !matches!(s.kind, crate::ast::format_spec::Kind::Debug)
-            }
-        };
-        if !spec_is_display {
-            return;
-        }
+    ) -> Option<String> {
         // CharLit is never a user type — mirrors emit_c's
         // `!matches!(e.kind, ExprKind::CharLit(_))` gate at ~42775/~42690.
         if matches!(ex.kind, ExprKind::CharLit(_)) {
-            return;
+            return None;
         }
         let tname = match self.infer_expr_type(ex, scope) {
             Some(TypeRef::Named { path, generics, .. }) if generics.is_empty() => {
-                match path.last() {
-                    Some(n) => n.clone(),
-                    None => return,
-                }
+                path.last()?.clone()
             }
-            _ => return,
+            _ => return None,
         };
         if gs.contains(&tname) {
-            return; // generic type-param in scope — mono-time concern.
+            return None; // generic type-param in scope — mono-time concern.
         }
         if matches!(
             tname.as_str(),
             "int" | "float" | "f32" | "f64" | "bool" | "char" | "str"
         ) {
-            return;
+            return None;
         }
-        let td = match self.types.get(&tname) {
-            Some(td) => td,
-            None => return, // unknown/builtin name — leave to other passes.
-        };
+        let td = self.types.get(&tname)?; // unknown/builtin name — leave to other passes.
         if !td.generics.is_empty() {
-            return; // generic declared type (incl. Option/Result) — mono-time concern.
+            return None; // generic declared type (incl. Option/Result) — mono-time concern.
         }
         let is_user_value_type = matches!(
             td.kind,
@@ -14025,8 +14035,30 @@ impl<'a> TypeCheckCtx<'a> {
                 | TypeDeclKind::Newtype(_)
         );
         if !is_user_value_type {
+            return None;
+        }
+        Some(tname)
+    }
+
+    fn check_interp_no_display(
+        &self,
+        ex: &Expr,
+        gs: &HashSet<String>,
+        scope: &HashMap<String, TypeRef>,
+        spec: &crate::ast::FormatSpec,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        // Only the bare `FormatSpec::None` shape reaches emit_c's numeric
+        // fallback (~42903) — a rich `Spec` (even Display-kind) is emitted
+        // via the SEPARATE `emit_format_spec_value` lowering, which already
+        // errors honestly (`E_BAD_FORMAT_SPEC`) when no Display/Debug method
+        // resolves (emit_c.rs ~43295-43302) — no garbage-fallback gap there.
+        if !matches!(spec, crate::ast::FormatSpec::None) {
             return;
         }
+        let Some(tname) = self.resolve_interp_user_value_type(ex, gs, scope) else {
+            return;
+        };
         if self.find_method_decl(&tname, "display").is_some() {
             return; // explicit `@display` OR gate-satisfied auto-derive synth.
         }
@@ -14042,9 +14074,98 @@ impl<'a> TypeCheckCtx<'a> {
                  opt-in, never auto-derived; rustc precedent: missing impl is a \
                  compile error, not a best-effort fallback). Fix: add \
                  `#impl(Display)` above `type {}` plus a `fn {} @display(mut f \
-                 Fmt)` method, or use `${{x:?}}` for the always-available Debug \
-                 auto-derive.",
+                 Fmt)` method, or use `${{x:?}}` (requires its OWN `#impl(Debug)`, \
+                 D229 §4 — not automatic either).",
                 tname, tname, tname,
+            ),
+            ex.span,
+        ));
+    }
+
+    /// Plan 221.1 followup [M-interp-numeric-fallback-silent-garbage]:
+    /// D410-style fallback for Debug — `str.from_debug(T)` overload routes
+    /// bare `${x:?}` to a real conversion instead of the numeric-cast last
+    /// resort (emit_c.rs ~42865/42887, `from_method = "from_debug"` when
+    /// `is_debug`). Unlike Display, there is NO `to_str()`-instance
+    /// equivalent fallback for Debug in emit_c — only `str.from_debug`.
+    fn interp_debug_via_str_from_debug(&self, tname: &str) -> bool {
+        self.method_overloads("str", "from_debug")
+            .map_or(false, |fns| fns.iter().any(|f| {
+                f.params.len() == 1
+                    && matches!(&f.params[0].ty, TypeRef::Named { path, .. }
+                        if path.last().map_or(false, |s| s == tname))
+            }))
+    }
+
+    /// Plan 221.1 followup (coordinator repro, 2026-07-21)
+    /// [M-interp-numeric-fallback-silent-garbage]: bare `${x:?}` (Debug —
+    /// spec is exactly `FormatSpec::Debug`, the bare form; a rich `Spec`
+    /// with `Kind::Debug` goes through the separate `emit_format_spec_value`
+    /// lowering, which already errors honestly via `E_BAD_FORMAT_SPEC` when
+    /// no `@debug` resolves) on a user value-type WITHOUT `#impl(Debug)`
+    /// used to silently reach the SAME numeric-cast last-resort fallback as
+    /// the Display case (`nova_int_to_str((nova_int)(v))`, emit_c.rs
+    /// ~42903) — printing the object's heap address as a decimal integer.
+    ///
+    /// This closes a gap DISTINCT from (but sibling to) `E_INTERP_NO_
+    /// DISPLAY`: `emit_c.rs`'s Debug branch (~42816) calls
+    /// `try_synthesize_default_method_with_gate(..., gate_on_impl=false)`
+    /// with a comment claiming "zero-friction... no annotation needed" —
+    /// but `Debug`'s protocol declaration ships with **no default body at
+    /// all** (D229 §2), so that candidate-search-based synthesis path can
+    /// NEVER find a match regardless of the gate flag; it is dead code for
+    /// Debug specifically. The REAL Debug synthesis mechanism actually used
+    /// everywhere in this codebase is `inject_synthesized_methods`
+    /// (auto_derive.rs, hand-written memberwise-body generator), and IT
+    /// gates on `td.impl_protocols` containing `"Debug"` literally (mirrored
+    /// in the type-checker's own `register_synthesized_methods`, which is
+    /// what `find_method_decl` below actually observes) — i.e. Debug DOES
+    /// require `#impl(Debug)` in the ACTUAL, currently-shipping
+    /// implementation, matching D229 §4 ("Когда user type X помечен
+    /// `#impl(Debug)`") and its own §7 error-code table, which already
+    /// RESERVES `E_DEBUG_PRINTABLE_NOT_IMPLEMENTED` for exactly "type
+    /// doesn't impl Debug, no auto-synthesis possible" — that code was
+    /// never actually wired to a check anywhere in the compiler before this.
+    ///
+    /// Scope mirrors `check_interp_no_display` exactly (see
+    /// `resolve_interp_user_value_type`): non-generic `Record`/`Sum`/
+    /// `NamedTuple`/`Newtype` only; primitives (which DO have unconditional
+    /// `@debug` bodies in `std/prelude/protocols.nv` per D229 §5), typed
+    /// pointers (separately covered by `E_PTR_NO_DISPLAY_USE_DEBUG_STR`),
+    /// generic type-params, and generic declared types are left alone.
+    fn check_interp_no_debug(
+        &self,
+        ex: &Expr,
+        gs: &HashSet<String>,
+        scope: &HashMap<String, TypeRef>,
+        spec: &crate::ast::FormatSpec,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        if !matches!(spec, crate::ast::FormatSpec::Debug) {
+            return;
+        }
+        let Some(tname) = self.resolve_interp_user_value_type(ex, gs, scope) else {
+            return;
+        };
+        if self.find_method_decl(&tname, "debug").is_some() {
+            return; // explicit `@debug` OR gate-satisfied (`#impl(Debug)`) auto-derive synth.
+        }
+        if self.interp_debug_via_str_from_debug(&tname) {
+            return; // D410-style `str.from_debug(T)` fallback still applies.
+        }
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_DEBUG_PRINTABLE_NOT_IMPLEMENTED] type `{}` has no \
+                 `#impl(Debug)` — bare `\"${{...:?}}\"` would otherwise \
+                 silently print a numeric cast of the value instead of a \
+                 real representation (Plan 91.14 D229 §4/§7: Debug \
+                 auto-derive requires `#impl(Debug)` same as Display requires \
+                 `#impl(Display)` — it is NOT automatic for every record/sum \
+                 type). Fix: add `#impl(Debug)` above `type {}` (compiler \
+                 synthesizes a memberwise `{} {{ field1: ..., field2: ... }}` \
+                 body via `inject_synthesized_methods`), or write an explicit \
+                 `fn {} @debug(mut f Fmt)` method.",
+                tname, tname, tname, tname,
             ),
             ex.span,
         ));

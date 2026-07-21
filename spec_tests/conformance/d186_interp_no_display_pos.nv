@@ -1,19 +1,33 @@
 // Plan 221.1 (D186-амендмент) [M-interp-numeric-fallback-silent-garbage] POS —
-// companion to neg/d186_interp_no_display_neg.nv. Two legitimate escapes from
-// the new `E_INTERP_NO_DISPLAY` gate on bare `"${x}"` (Display) interpolation
-// of a user record type:
+// companion to neg/d186_interp_no_display_neg.nv + neg/d229_interp_no_debug_neg.nv.
+// Two legitimate escapes, one per gate:
 //
-//   1. Type opts in explicitly — `#impl(Display)` + `fn T @display(mut f Fmt)`
-//      — bare `${x}` dispatches straight to it (unchanged pre-existing
-//      behavior, this diagnostic never touches an already-served type).
-//   2. `${x:?}` (Debug format-spec) — the always-available Debug auto-derive
-//      (gate_on_impl=false for Debug, Plan 91.14 D229) works with NO `#impl`
-//      at all; the new gate is Display-only per its scope.
+//   1. `#impl(Display)` + `fn T @display(mut f Fmt)` — bare `${x}` dispatches
+//      straight to it (unchanged pre-existing behavior, `E_INTERP_NO_DISPLAY`
+//      never touches an already-served type).
+//   2. `#impl(Debug)` — bare `${x:?}` dispatches to the compiler-synthesized
+//      memberwise body (`inject_synthesized_methods`, D229 §4).
+//
+// ⚠️ CORRECTION (coordinator repro, same-day follow-up): this file
+// PREVIOUSLY asserted `${x:?}` works with **NO** `#impl` at all ("Debug is
+// always-available, gate is Display-only") via a WEAK `contains("1")` /
+// `contains("2")` assertion — that assertion was WRONG (Debug auto-derive is
+// #impl(Debug)-gated exactly like Display, D229 §4/§7) and passed FALSELY:
+// the type had zero `#impl`, so `${d:?}` actually printed the raw heap
+// address (e.g. `2640040103904` locally) — which happened to CONTAIN both
+// "1" and "2" as substrings on this machine, but not on Linux CI (no "2" in
+// its particular address), where the weak test correctly went red. See the
+// D229 amendment (spec/decisions/02-types.md) for the root cause
+// (`E_DEBUG_PRINTABLE_NOT_IMPLEMENTED`, now wired via `check_interp_no_debug`
+// — the type below WITHOUT `#impl(Debug)` is now `neg/
+// d229_interp_no_debug_neg.nv`'s pin, not a positive case here). This file
+// now asserts the EXACT expected string for both escapes — an address can
+// never coincidentally equal an exact literal, closing the false-pass hole.
 //
 // One folder-module `spec_tests.conformance`.
 module spec_tests.conformance
 
-// (1) explicit opt-in — bare `${x}` dispatches to the user's own @display.
+// (1) explicit Display opt-in — bare `${x}` dispatches to the user's own @display.
 type D186InterpDisplay { label str }
 
 #impl(Display)
@@ -23,7 +37,9 @@ fn D186InterpDisplay @display(mut f Fmt) -> () {
     f.write(")".bytes())
 }
 
-// (2) NO `#impl(Display)` at all — only `${x:?}` (Debug) is available.
+// (2) explicit Debug opt-in — bare `${x:?}` dispatches to the compiler's
+// synthesized memberwise body (no explicit `@debug` written here at all).
+#impl(Debug)
 type D186InterpDebugOnly { a int, b int }
 
 test "explicit #impl(Display): bare ${x} dispatches to user @display, no gate error" {
@@ -31,9 +47,9 @@ test "explicit #impl(Display): bare ${x} dispatches to user @display, no gate er
     assert("${d186_d}" == "D186InterpDisplay(hi)")
 }
 
-test "no #impl(Display) at all: ${x:?} still works via Debug auto-derive (gate is Display-only)" {
+test "explicit #impl(Debug): bare ${x:?} dispatches to synthesized memberwise body, exact match" {
     ro d186_dbg = D186InterpDebugOnly { a: 1, b: 2 }
-    ro out = "${d186_dbg:?}"
-    assert(out.contains("1"))
-    assert(out.contains("2"))
+    // EXACT equality (not `contains`) — pins the precise D229 §4 memberwise
+    // form and can never coincidentally match a garbage heap-address int.
+    assert("${d186_dbg:?}" == "D186InterpDebugOnly { a: 1, b: 2 }")
 }
