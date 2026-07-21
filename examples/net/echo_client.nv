@@ -16,7 +16,7 @@ module net.echo_client
 import std.net.{SocketAddr, TcpStream, real_net}
 
 const PORT u16 = 7777
-const MESSAGE str = "hello from nova"
+const MESSAGE = "hello from nova"
 
 fn main() {
     with Net = real_net() {

@@ -56,7 +56,7 @@ test "R1: [F ReadFs] generic dispatches to DirFs (Fs effect surfaces transitivel
     ro root = Path.posix("/r1_assets")
     with Fs = mock_fs(fs) {
         ro _ = create_dir(root)
-        ro _ = write(root.join("a.txt"), "hello".bytes())
+        ro _ = write(root.join("a.txt"), "hello")
         ro dfs = DirFs.new(root)
         match read_file_via(dfs, "a.txt") {
             Ok(b)  => assert(unsafe { b.to_str_unchecked() } == "hello")
@@ -74,7 +74,7 @@ test "DirFs: read_file hit + miss (within root) — NotFound for an absent file"
     ro root = Path.posix("/df_hitmiss")
     with Fs = mock_fs(fs) {
         ro _ = create_dir(root)
-        ro _ = write(root.join("a.txt"), "payload".bytes())
+        ro _ = write(root.join("a.txt"), "payload")
         ro dfs = DirFs.new(root)
         match dfs.read_file("a.txt") {
             Ok(b)  => assert(unsafe { b.to_str_unchecked() } == "payload")
@@ -122,7 +122,7 @@ test "DirFs: path_exists true/false; NotFound-escape from @resolve maps to Ok(fa
     ro root = Path.posix("/df_exists")
     with Fs = mock_fs(fs) {
         ro _ = create_dir(root)
-        ro _ = write(root.join("here.txt"), "y".bytes())
+        ro _ = write(root.join("here.txt"), "y")
         ro dfs = DirFs.new(root)
         match dfs.path_exists("here.txt")  { Ok(b) => assert(b),  Err(_) => assert(false) }
         match dfs.path_exists("absent.txt") { Ok(b) => assert(!b), Err(_) => assert(false) }
@@ -145,7 +145,7 @@ test "dev/prod (§6б.4): same generic ReadFs-bounded fn serves EmbeddedDir (pro
     ro root = Path.posix("/devfrontend")
     with Fs = mock_fs(fs) {
         ro _ = create_dir(root)
-        ro _ = write(root.join("index.html"), "dev-bytes".bytes())
+        ro _ = write(root.join("index.html"), "dev-bytes")
         ro dev = DirFs.new(root)
         match pick_bytes(dev, "index.html") {
             Ok(b)  => assert(unsafe { b.to_str_unchecked() } == "dev-bytes")

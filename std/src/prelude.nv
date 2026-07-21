@@ -333,4 +333,4 @@ export import std.runtime.string.{pad_left, pad_right, repeat, replace, compare,
 ///     `try_to_<T>` family (std/prelude/protocols.nv, `fn[S Ints] S
 ///     @try_to_i8()`/.../`@try_to_uint()`) returns `Result[T, RangeError]`.
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 19
+export const PRELUDE_VERSION = 19

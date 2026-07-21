@@ -14,7 +14,7 @@
 module std.io
 
 // 8 KiB — the classic stdio buffer size (Rust `BufReader`/`BufWriter`).
-const DEFAULT_BUF_CAP int = 8192
+const DEFAULT_BUF_CAP = 8192
 
 // ─── BufWriter[W] — must-consume buffering sink (D133) ───
 

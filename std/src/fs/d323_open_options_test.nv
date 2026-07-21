@@ -8,7 +8,7 @@ test "mock_fs: OpenOptions create_new on existing -> AlreadyExists" {
     mut fs = MemFs.new()
     ro p = Path.posix("/exists.txt")
     with Fs = mock_fs(fs) {
-        ro _ = write(p, "x".bytes())
+        ro _ = write(p, "x")
         match OpenOptions.new().write(true).create_new(true).open(p) {
             Ok(consume f)  => { consume fh = f; ro _ = fh.close(); assert(false) }
             Err(e) => match e.kind { ErrorKind.AlreadyExists => assert(true), _ => assert(false) }
@@ -20,10 +20,10 @@ test "mock_fs: OpenOptions append writes at EOF" {
     mut fs = MemFs.new()
     ro p = Path.posix("/log.txt")
     with Fs = mock_fs(fs) {
-        ro _ = write(p, "aa".bytes())
+        ro _ = write(p, "aa")
         match File.append(p) {
             Err(_) => assert(false)
-            Ok(consume f0) => { consume f = f0; ro _ = f.write("bb".bytes()); ro _ = f.close() }
+            Ok(consume f0) => { consume f = f0; ro _ = f.write("bb"); ro _ = f.close() }
         }
         match read_text(p) { Ok(s) => assert(s == "aabb"), Err(_) => assert(false) }
     }

@@ -61,7 +61,7 @@ fn main() Time {
     mut done = 0
     mut cancelled = 0
     for i int in 0..outcomes.len() {
-        if outcomes[i] == "done" { done = done + 1 } else { cancelled = cancelled + 1 }
+        if outcomes[i] == "done" { done += 1 } else { cancelled += 1 }
     }
     ro now Monotonic = Monotonic.now()
     ro wall = now.elapsed_since(t0)

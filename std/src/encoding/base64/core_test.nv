@@ -28,12 +28,12 @@ test "encode: RFC 4648 test vectors" {
     //   "foob"  => "Zm9vYg=="
     //   "fooba" => "Zm9vYmE="
     //   "foobar"=> "Zm9vYmFy"
-    assert(Base64.encode("f".bytes()) == "Zg==")
-    assert(Base64.encode("fo".bytes()) == "Zm8=")
-    assert(Base64.encode("foo".bytes()) == "Zm9v")
-    assert(Base64.encode("foob".bytes()) == "Zm9vYg==")
-    assert(Base64.encode("fooba".bytes()) == "Zm9vYmE=")
-    assert(Base64.encode("foobar".bytes()) == "Zm9vYmFy")
+    assert(Base64.encode("f") == "Zg==")
+    assert(Base64.encode("fo") == "Zm8=")
+    assert(Base64.encode("foo") == "Zm9v")
+    assert(Base64.encode("foob") == "Zm9vYg==")
+    assert(Base64.encode("fooba") == "Zm9vYmE=")
+    assert(Base64.encode("foobar") == "Zm9vYmFy")
 }
 
 test "decode: RFC 4648 test vectors" {

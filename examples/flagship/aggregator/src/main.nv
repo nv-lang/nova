@@ -121,7 +121,7 @@ const MAX_INFLIGHT_CONNS i64 = 16
 // a handful of real round-trips, still bounded (the real-cancel race,
 // deliverable 1, applies here too — a hung real connection is genuinely cut
 // off, not left to block the response forever).
-const LIVE_BUDGET_MS int = 4000
+const LIVE_BUDGET_MS = 4000
 
 fn frontend_html() -> []u8 => embed("../frontend/index.html")
 

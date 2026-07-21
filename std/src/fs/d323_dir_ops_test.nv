@@ -9,8 +9,8 @@ test "mock_fs: mkdir + read_dir + rename + copy_file" {
     with Fs = mock_fs(fs) {
         ro d = Path.posix("/proj")
         match create_dir(d) { Ok(()) => assert(true), Err(_) => assert(false) }
-        ro _ = write(d.join("a.txt"), "a".bytes())
-        ro _ = write(d.join("b.txt"), "b".bytes())
+        ro _ = write(d.join("a.txt"), "a")
+        ro _ = write(d.join("b.txt"), "b")
         match read_dir(d) { Ok(es) => assert(es.len() == 2), Err(_) => assert(false) }
         match rename(d.join("a.txt"), d.join("c.txt")) { Ok(()) => assert(true), Err(_) => assert(false) }
         match try_exists(d.join("a.txt")) { Ok(b) => assert(b == false), Err(_) => assert(false) }
@@ -24,7 +24,7 @@ test "mock_fs: remove non-empty dir -> DirectoryNotEmpty" {
     with Fs = mock_fs(fs) {
         ro d = Path.posix("/full")
         ro _ = create_dir(d)
-        ro _ = write(d.join("x"), "x".bytes())
+        ro _ = write(d.join("x"), "x")
         match remove_dir(d) {
             Ok(())  => assert(false)
             Err(e) => match e.kind { ErrorKind.DirectoryNotEmpty => assert(true), _ => assert(false) }

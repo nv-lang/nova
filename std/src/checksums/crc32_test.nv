@@ -12,11 +12,11 @@ test "crc32: пустой ввод → 0" {
 
 test "crc32: ASCII '123456789' → 0xCBF43926 (классический test vector)" {
     // Стандартный CRC-32/ISO-HDLC test vector.
-    assert(crc32("123456789".bytes()) == 0xCBF43926)
+    assert(crc32("123456789") == 0xCBF43926)
 }
 
 test "crc32: 'hello world' → 0x0D4A1185" {
-    assert(crc32("hello world".bytes()) == 0x0D4A1185)
+    assert(crc32("hello world") == 0x0D4A1185)
 }
 
 test "crc32: один байт 0x00 → 0xD202EF8D" {

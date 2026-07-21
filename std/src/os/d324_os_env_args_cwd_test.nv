@@ -26,12 +26,12 @@ test "d324: mock_os env value byte-correctness via env_bytes" {
     mut d324_os = MockOs.new()
     with Os = mock_os(d324_os) {
         match env("RAW", "seed") { Ok(()) => assert(true), Err(_) => assert(false) }
-        match env_bytes("RAW".bytes()) {
+        match env_bytes("RAW") {
             Some(b) => { assert(b.len() == 4); assert(b[0] == (115 as u8)) }   // 's'
             None    => assert(false)
         }
         // absent key → None (distinct from present-empty)
-        match env_bytes("MISSING".bytes()) { Some(_) => assert(false), None => assert(true) }
+        match env_bytes("MISSING") { Some(_) => assert(false), None => assert(true) }
     }
 }
 

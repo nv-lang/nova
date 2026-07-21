@@ -38,7 +38,7 @@ export fn weather_demo_sources() -> []Source {
 }
 
 #stable(since = "0.1")
-export const WEATHER_BUDGET_MS int = 1200
+export const WEATHER_BUDGET_MS = 1200
 
 // ── Health-check legend (research 15 §5b) ───────────────────────────────────
 
@@ -57,7 +57,7 @@ export fn health_demo_sources() -> []Source {
 }
 
 #stable(since = "0.1")
-export const HEALTH_BUDGET_MS int = 1200
+export const HEALTH_BUDGET_MS = 1200
 
 // ── Chaos: perturb a demo table by a seeded PRNG ────────────────────────────
 

@@ -10,9 +10,9 @@ test "d323: write_atomic durable replace round-trip" {
     ro d323_p = Path.posix("/cfg/app")
     with Fs = mock_fs(d323_wa) {
         ro _ = create_dir(Path.posix("/cfg"))
-        match write_atomic(d323_p, "v1".bytes()) { Ok(()) => assert(true), Err(_) => assert(false) }
+        match write_atomic(d323_p, "v1") { Ok(()) => assert(true), Err(_) => assert(false) }
         match read_text(d323_p) { Ok(s) => assert(s == "v1"), Err(_) => assert(false) }
-        match write_atomic(d323_p, "v2-longer".bytes()) { Ok(()) => assert(true), Err(_) => assert(false) }
+        match write_atomic(d323_p, "v2-longer") { Ok(()) => assert(true), Err(_) => assert(false) }
         match read_text(d323_p) { Ok(s) => assert(s == "v2-longer"), Err(_) => assert(false) }
         // No stray temp sibling remains.
         match try_exists(Path.posix("/cfg/.app.novatmp")) { Ok(b) => assert(b == false), Err(_) => assert(false) }
@@ -24,9 +24,9 @@ test "d323: write_atomic torn-write rolls back; original preserved, temp removed
     ro d323_p = Path.posix("/cfg2/data")
     with Fs = mock_fs(d323_tw) {
         ro _ = create_dir(Path.posix("/cfg2"))
-        ro _ = write(d323_p, "original".bytes())
+        ro _ = write(d323_p, "original")
         d323_tw.fail_writes()   // the write into the temp fails with ENOSPC
-        match write_atomic(d323_p, "new".bytes()) {
+        match write_atomic(d323_p, "new") {
             Ok(())  => assert(false)
             Err(e) => match e.kind { ErrorKind.StorageFull => assert(true), _ => assert(false) }
         }

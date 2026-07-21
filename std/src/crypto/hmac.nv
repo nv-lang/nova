@@ -31,8 +31,8 @@ import std.encoding.hex.{Hex}
 // SHA-256 specific (block_size = 64, output_size = 32)
 // ──────────────────────────────────────────────────────────────────────────
 
-const SHA256_BLOCK_SIZE int = 64
-const SHA256_OUTPUT_SIZE int = 32
+const SHA256_BLOCK_SIZE = 64
+const SHA256_OUTPUT_SIZE = 32
 
 
 /// HMAC-SHA-256 (RFC 2104) — keyed message authentication. 32-byte tag.

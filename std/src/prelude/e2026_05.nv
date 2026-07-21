@@ -49,4 +49,4 @@ export import std.prelude.effects.{Fail, Time, Mem}
 /// rolling facade. Snapshot version = 5 (matches rolling on
 /// 2026-05-18, post Plan 62.F.bis Ф.3 — Time/Mem added).
 #stable(since = "0.1")
-export const PRELUDE_EDITION_2026_05 int = 5
+export const PRELUDE_EDITION_2026_05 = 5

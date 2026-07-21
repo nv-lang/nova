@@ -30,20 +30,20 @@ test "StringBuilder: @reserve/@advance zero-copy digit-loop protocol" {
 
 test "StringBuilder: @write_padded left/right/center" {
     consume sb1 = StringBuilder.new()
-    sb1.write_padded("hi".bytes(), 8, ' ', Align.Right)
+    sb1.write_padded("hi", 8, ' ', Align.Right)
     assert(sb1.into_str() == "      hi")
 
     consume sb2 = StringBuilder.new()
-    sb2.write_padded("hi".bytes(), 8, ' ', Align.Left)
+    sb2.write_padded("hi", 8, ' ', Align.Left)
     assert(sb2.into_str() == "hi      ")
 
     consume sb3 = StringBuilder.new()
-    sb3.write_padded("hi".bytes(), 8, '*', Align.Center)
+    sb3.write_padded("hi", 8, '*', Align.Center)
     assert(sb3.into_str() == "***hi***")
 
     // width already satisfied — no padding inserted.
     consume sb4 = StringBuilder.new()
-    sb4.write_padded("hello".bytes(), 3, ' ', Align.Right)
+    sb4.write_padded("hello", 3, ' ', Align.Right)
     assert(sb4.into_str() == "hello")
 }
 

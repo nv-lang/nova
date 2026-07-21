@@ -15,8 +15,8 @@ test "mock_os: env_bytes 2-arg set (raw bytes) + vars snapshot + args" {
     with Os = mock_os(os) {
         mut raw []u8 = []u8.new()
         raw.push(0xFF as u8); raw.push(0xFE as u8)
-        ro _ = env_bytes("B".bytes(), raw)
-        match env_bytes("B".bytes()) {
+        ro _ = env_bytes("B", raw)
+        match env_bytes("B") {
             Some(b) => { assert(b.len() == 2); assert(b[0] == (0xFF as u8)); assert(b[1] == (0xFE as u8)) }
             None    => assert(false)
         }

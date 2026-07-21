@@ -3416,6 +3416,38 @@ fn conv_all_fns(m: &Module) -> Vec<&FnDecl> {
     out
 }
 
+/// `test "name" { … }` block bodies (`Item::Test`) — SIBLING of
+/// `conv_all_fns`, deliberately SEPARATE from it (owner 2026-07-21 lint
+/// sweep finding): `conv_all_fns` only sees `Item::Fn`, so EVERY existing
+/// `CONV_RULES` entry that walks via `conv_all_fns(m)` is BLIND to code
+/// living inside `test { }` blocks — a real, pre-existing gap across the
+/// WHOLE registry (most `*_test.nv` module content is exactly `test { }`
+/// blocks, not `fn`s; confirmed empirically: `nova lint` over `std`/
+/// `examples` found zero `W_REDUNDANT_BYTES_ON_LITERAL` hits in
+/// `std/src/net/tcp_test.nv`'s `conn.write("hello net2".bytes())` call-arg
+/// sites despite the shape matching). Widening the SHARED `conv_all_fns`
+/// itself is out of scope here (touches all 25 pre-existing rules at once,
+/// its own separate validation pass) — this wave's 4 NEW rules use this
+/// sibling helper explicitly so at least the new rules' own advertised
+/// scope ("std/examples") is not silently narrowed by the gap; flagged in
+/// the wave's report as a legitimate follow-up for the other 25.
+fn conv_all_test_bodies(m: &Module) -> Vec<&Block> {
+    let mut out = Vec::new();
+    for item in &m.items {
+        if let Item::Test(t) = item {
+            out.push(&t.body);
+        }
+    }
+    for pf in &m.peer_files {
+        for item in &pf.items_here {
+            if let Item::Test(t) = item {
+                out.push(&t.body);
+            }
+        }
+    }
+    out
+}
+
 /// Имена record-полей типов, ОБЪЯВЛЕННЫХ в этом модуле: тип → поля.
 fn conv_module_record_fields(m: &Module) -> std::collections::HashMap<String, Vec<String>> {
     let mut out: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
@@ -5678,18 +5710,37 @@ fn conv_coerce_explicit_redundant(m: &Module, _o: &ConvLintOptions, out: &mut Ve
 // excludes ("call-arg positions … NOT flagged — need callee signature
 // resolution"). No overlap, no double-warning on the same site.
 //
-// Soundness WITHOUT callee resolution: `"...".bytes()` calls str's OWN
-// (non-overloadable, prelude-fixed) `#coerce`-registered view method
-// (`std/src/runtime/string/core.nv`: `#coerce fn str @bytes() -> ro []u8`),
-// unconditionally typed `ro []u8`. If the enclosing call ALREADY type-checks
-// with `.bytes()` present, the argument SLOT's declared type already accepts
-// `ro []u8` — and D429 R6 lists "call-arg на резолвленный параметр" among
-// the ✅ #coerce positions. A `.bytes()` call can never satisfy a `mut`/
-// `consume` slot (a `ro` view can't bind there — E_READONLY_COERCE), so if
-// the code compiles today with `.bytes()`, the slot is a plain/`ro` accept-
-// position and dropping `.bytes()` keeps typing identical. No semantic
-// lookup needed, no false-positive risk — same "already compiles → coerces
-// too" guarantee `W_COERCE_EXPLICIT_REDUNDANT` already relies on.
+// Soundness WITHOUT callee resolution (TYPE-CHECK level): `"...".bytes()`
+// calls str's OWN (non-overloadable, prelude-fixed) `#coerce`-registered
+// view method (`std/src/runtime/string/core.nv`: `#coerce fn str @bytes()
+// -> ro []u8`), unconditionally typed `ro []u8`. If the enclosing call
+// ALREADY type-checks with `.bytes()` present, the argument SLOT's declared
+// type already accepts `ro []u8` — and D429 R6 lists "call-arg на
+// резолвленный параметр" among the ✅ #coerce positions, so `nova check`
+// accepts the bare literal at that position too (verified: `nova check
+// --strict-effects` stayed green on every canonized site).
+//
+// CAVEAT — discovered empirically during this wave's canonization sweep,
+// NOT reasoned from the spec: the type-checker's ACCEPT decision does not
+// guarantee the CODEGEN REWRITE (materializing the coercion in emitted C)
+// actually runs for every call-arg shape yet. `nova test` (real C build+run,
+// no `--strict-effects`) caught TWO real CC-FAILs this wave — `nova check`
+// passed, `nova build`/`test` did not: `BufWriter[W].write(data []u8)`
+// (`std/src/io`, generic receiver) and `TcpStream.write/write_all(data
+// []u8)` (`std/src/net`, `Net`-effect receiver) inside `test { }` blocks —
+// while the STRUCTURALLY IDENTICAL `TlsStream.write_all(data []u8) Net`
+// (`examples/tls/echo_server.nv`, plain `fn main()`, `--strict-effects`)
+// built fine, as did `File.write` (`std/src/fs`, `Fs`-effect, inside `test
+// { }`) and free-fn/static calls (`crypto`/`checksums`/`base64`/`os`, inside
+// `test { }`). Root cause NOT fully isolated (plausibly the codegen rewrite
+// pass's own `test { }`-body coverage, mirroring `conv_all_test_bodies`'
+// doc above — but `File.write` contradicts a clean "test-block gap" theory,
+// so this is left an OPEN finding, not a diagnosed one) — a legitimate
+// compiler follow-up, out of scope for a lint-only wave. Practical effect:
+// this lint's advice is TYPE-CHECK-sound but not yet universally BUILD-safe
+// for every call-arg shape; `std/src/io` and `std/src/net`'s own `.bytes()`
+// call-arg sites were deliberately left UNCANONIZED this wave (reverted
+// after the CC-FAIL) — see the wave's report for the exact repro sites.
 //
 // Literal-only per owner's explicit brief (2026-07-21) — a `str` VARIABLE
 // receiver would ALSO coerce today under the general D429 #coerce mechanism
@@ -5709,35 +5760,37 @@ fn conv_redundant_bytes_on_literal(m: &Module, _o: &ConvLintOptions, out: &mut V
             && matches!(obj.kind, ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. })
     }
 
+    fn check_expr(e: &Expr, out: &mut Vec<LintWarning>) {
+        let ExprKind::Call { args, .. } = &e.kind else { return };
+        for a in args {
+            // Spread (`...expr`) changes arity/semantics — out of scope
+            // (mirrors `conv_redundant_of`'s positional-only caution).
+            if a.is_spread() {
+                continue;
+            }
+            let arg_expr = a.expr();
+            if !is_bare_bytes_on_literal(arg_expr) {
+                continue;
+            }
+            out.push(LintWarning {
+                rule: "W_REDUNDANT_BYTES_ON_LITERAL",
+                diag: Diagnostic::new(
+                    "str литерал коэрсируется в `[]u8` (D55/D429 `#coerce`, \
+                     zero-copy) — уберите `.bytes()`."
+                        .to_string(),
+                    arg_expr.span,
+                ),
+            });
+        }
+    }
+
     for f in conv_all_fns(m) {
-        conv_walk_fn(
-            f,
-            &mut |_s, _| {},
-            &mut |e, _in_loop| {
-                let ExprKind::Call { args, .. } = &e.kind else { return };
-                for a in args {
-                    // Spread (`...expr`) changes arity/semantics — out of
-                    // scope (mirrors `conv_redundant_of`'s positional-only
-                    // caution).
-                    if a.is_spread() {
-                        continue;
-                    }
-                    let arg_expr = a.expr();
-                    if !is_bare_bytes_on_literal(arg_expr) {
-                        continue;
-                    }
-                    out.push(LintWarning {
-                        rule: "W_REDUNDANT_BYTES_ON_LITERAL",
-                        diag: Diagnostic::new(
-                            "str литерал коэрсируется в `[]u8` (D55/D429 `#coerce`, \
-                             zero-copy) — уберите `.bytes()`."
-                                .to_string(),
-                            arg_expr.span,
-                        ),
-                    });
-                }
-            },
-        );
+        conv_walk_fn(f, &mut |_s, _| {}, &mut |e, _in_loop| check_expr(e, out));
+    }
+    // `test { }` block bodies — see `conv_all_test_bodies` doc (sibling of
+    // `conv_all_fns`, covers a real gap the shared helper leaves open).
+    for tb in conv_all_test_bodies(m) {
+        conv_walk_block(tb, false, &mut |_s, _| {}, &mut |e, _in_loop| check_expr(e, out));
     }
 }
 
@@ -5800,54 +5853,55 @@ fn conv_redundant_consume_rebind(m: &Module, _o: &ConvLintOptions, out: &mut Vec
         n
     }
 
-    for f in conv_all_fns(m) {
-        conv_walk_fn(
-            f,
-            &mut |_s, _| {},
-            &mut |e, _in_loop| {
-                let ExprKind::Match { arms, .. } = &e.kind else { return };
-                for arm in arms {
-                    let MatchArmBody::Block(body) = &arm.body else { continue };
-                    let mut names = Vec::new();
-                    consume_idents(&arm.pattern, &mut names);
-                    if names.is_empty() {
+    fn check_expr(e: &Expr, out: &mut Vec<LintWarning>) {
+        let ExprKind::Match { arms, .. } = &e.kind else { return };
+        for arm in arms {
+            let MatchArmBody::Block(body) = &arm.body else { continue };
+            let mut names = Vec::new();
+            consume_idents(&arm.pattern, &mut names);
+            if names.is_empty() {
+                continue;
+            }
+            let vname = variant_name(&arm.pattern);
+            for old_name in &names {
+                for s in &body.stmts {
+                    let Stmt::Let(d) = s else { continue };
+                    if !d.consume {
                         continue;
                     }
-                    let vname = variant_name(&arm.pattern);
-                    for old_name in &names {
-                        for s in &body.stmts {
-                            let Stmt::Let(d) = s else { continue };
-                            if !d.consume {
-                                continue;
-                            }
-                            let Pattern::Ident { name: new_name, .. } = &d.pattern else {
-                                continue;
-                            };
-                            let ExprKind::Ident(rhs) = &d.value.kind else { continue };
-                            if rhs != old_name {
-                                continue;
-                            }
-                            if ident_count(body, old_name) > 1 {
-                                continue;
-                            }
-                            out.push(LintWarning {
-                                rule: "W_REDUNDANT_CONSUME_REBIND",
-                                diag: Diagnostic::new(
-                                    format!(
-                                        "`consume {new_name} = {old_name}` избыточен — \
-                                         `{old_name}` уже `consume`-биндинг из паттерна \
-                                         арма (`{vname}(consume {old_name})`), нигде \
-                                         больше не используется. Бинди сразу: \
-                                         `{vname}(consume {new_name})`."
-                                    ),
-                                    d.span,
-                                ),
-                            });
-                        }
+                    let Pattern::Ident { name: new_name, .. } = &d.pattern else {
+                        continue;
+                    };
+                    let ExprKind::Ident(rhs) = &d.value.kind else { continue };
+                    if rhs != old_name {
+                        continue;
                     }
+                    if ident_count(body, old_name) > 1 {
+                        continue;
+                    }
+                    out.push(LintWarning {
+                        rule: "W_REDUNDANT_CONSUME_REBIND",
+                        diag: Diagnostic::new(
+                            format!(
+                                "`consume {new_name} = {old_name}` избыточен — \
+                                 `{old_name}` уже `consume`-биндинг из паттерна \
+                                 арма (`{vname}(consume {old_name})`), нигде \
+                                 больше не используется. Бинди сразу: \
+                                 `{vname}(consume {new_name})`."
+                            ),
+                            d.span,
+                        ),
+                    });
                 }
-            },
-        );
+            }
+        }
+    }
+
+    for f in conv_all_fns(m) {
+        conv_walk_fn(f, &mut |_s, _| {}, &mut |e, _in_loop| check_expr(e, out));
+    }
+    for tb in conv_all_test_bodies(m) {
+        conv_walk_block(tb, false, &mut |_s, _| {}, &mut |e, _in_loop| check_expr(e, out));
     }
 }
 
@@ -5938,22 +5992,24 @@ fn conv_manual_close_auto_cleanup(m: &Module, _o: &ConvLintOptions, out: &mut Ve
         });
     }
 
+    fn check_expr(e: &Expr, out: &mut Vec<LintWarning>) {
+        let ExprKind::Match { arms, .. } = &e.kind else { return };
+        for arm in arms {
+            if let MatchArmBody::Block(b) = &arm.body {
+                check_block(b, out);
+            }
+        }
+    }
+
     for f in conv_all_fns(m) {
         if let FnBody::Block(b) = &f.body {
             check_block(b, out);
         }
-        conv_walk_fn(
-            f,
-            &mut |_s, _| {},
-            &mut |e, _in_loop| {
-                let ExprKind::Match { arms, .. } = &e.kind else { return };
-                for arm in arms {
-                    if let MatchArmBody::Block(b) = &arm.body {
-                        check_block(b, out);
-                    }
-                }
-            },
-        );
+        conv_walk_fn(f, &mut |_s, _| {}, &mut |e, _in_loop| check_expr(e, out));
+    }
+    for tb in conv_all_test_bodies(m) {
+        check_block(tb, out);
+        conv_walk_block(tb, false, &mut |_s, _| {}, &mut |e, _in_loop| check_expr(e, out));
     }
 }
 
@@ -5977,10 +6033,62 @@ fn conv_manual_close_auto_cleanup(m: &Module, _o: &ConvLintOptions, out: &mut Ve
 // flagged.
 // ---------------------------------------------------------------------------
 
-fn conv_check_const_redundant_annotation(d: &ConstDecl, out: &mut Vec<LintWarning>) {
+// [M-p67-path-call-const-receiver-method-ice] guard (found the HARD way
+// this wave, 2026-07-21): a SCREAMING_SNAKE_CASE const name used later as
+// `NAME.method(...)` parses as a 2-segment `ExprKind::Path(["NAME",
+// "method"])`, not `Member{obj: Ident("NAME"), ..}` (parser's Path-vs-Member
+// split is CASE-based, not type-based — see
+// `examples/flagship/aggregator/regressions/const_receiver_generic_ext_ice/
+// const_receiver_generic_ext_ice.nv`'s own doc comment for the full
+// pre-existing root-cause writeup). Removing an EXPLICIT type from the
+// `const` declaration can make the checker lose the annotation this Path
+// shape needs and re-trigger the "[P67-LEGACY] Path call return type
+// unknown" codegen ICE — `nova check` stays green (accept-path is fine),
+// only `nova build`/`nova test` (real codegen) explodes. Caught empirically
+// via `examples/mini_aggregator.nv`'s `BUDGET_MS.to_millis()` (CC-FAIL
+// reproduced, reverted) DURING this wave's canonization sweep — this rule
+// must not recommend the same footgun again. Conservative: skips flagging
+// ANY const whose name is later used as a call-receiver (`NAME.method(...)`,
+// `Member` OR `Path` shape) ANYWHERE in the module, even though only the
+// Path-shape (SCREAMING_SNAKE_CASE + generic-extension method) is the
+// actual trigger — false-negative-safe over false-positive-unsafe.
+fn conv_collect_call_receiver_names(m: &Module) -> HashSet<String> {
+    fn add_from_expr(e: &Expr, out: &mut HashSet<String>) {
+        match &e.kind {
+            ExprKind::Path(segs) if segs.len() >= 2 => {
+                out.insert(segs[0].clone());
+            }
+            ExprKind::Call { func, .. } => {
+                if let ExprKind::Member { obj, .. } = &func.kind {
+                    if let ExprKind::Ident(n) = &obj.kind {
+                        out.insert(n.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut names = HashSet::new();
+    for f in conv_all_fns(m) {
+        conv_walk_fn(f, &mut |_, _| {}, &mut |e, _| add_from_expr(e, &mut names));
+    }
+    for tb in conv_all_test_bodies(m) {
+        conv_walk_block(tb, false, &mut |_, _| {}, &mut |e, _| add_from_expr(e, &mut names));
+    }
+    names
+}
+
+fn conv_check_const_redundant_annotation(
+    d: &ConstDecl,
+    call_receiver_names: &HashSet<String>,
+    out: &mut Vec<LintWarning>,
+) {
     let Some(ty) = &d.ty else { return };
     let Some(default_name) = conv_ty_literal_default_name(ty) else { return };
     if !conv_expr_is_bare_literal_of(&d.value, default_name) {
+        return;
+    }
+    if call_receiver_names.contains(&d.name) {
         return;
     }
     out.push(LintWarning {
@@ -6003,26 +6111,32 @@ fn conv_redundant_const_type_annotation(
     _o: &ConvLintOptions,
     out: &mut Vec<LintWarning>,
 ) {
+    let call_receiver_names = conv_collect_call_receiver_names(m);
     for item in &m.items {
         if let Item::Const(d) = item {
-            conv_check_const_redundant_annotation(d, out);
+            conv_check_const_redundant_annotation(d, &call_receiver_names, out);
         }
     }
     for pf in &m.peer_files {
         for item in &pf.items_here {
             if let Item::Const(d) = item {
-                conv_check_const_redundant_annotation(d, out);
+                conv_check_const_redundant_annotation(d, &call_receiver_names, out);
             }
         }
     }
+    fn check_stmt(s: &Stmt, names: &HashSet<String>, out: &mut Vec<LintWarning>) {
+        if let Stmt::Const(d) = s {
+            conv_check_const_redundant_annotation(d, names, out);
+        }
+    }
     for f in conv_all_fns(m) {
-        conv_walk_fn(
-            f,
-            &mut |s, _| {
-                if let Stmt::Const(d) = s {
-                    conv_check_const_redundant_annotation(d, out);
-                }
-            },
+        conv_walk_fn(f, &mut |s, _| check_stmt(s, &call_receiver_names, out), &mut |_, _| {});
+    }
+    for tb in conv_all_test_bodies(m) {
+        conv_walk_block(
+            tb,
+            false,
+            &mut |s, _| check_stmt(s, &call_receiver_names, out),
             &mut |_, _| {},
         );
     }
@@ -8479,6 +8593,27 @@ mod tests {
         assert!(
             min_max_rule_hits(&ws, "W_REDUNDANT_CONST_TYPE_ANNOTATION").is_empty(),
             "got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_const_p67_path_call_receiver_guard() {
+        // [M-p67-path-call-const-receiver-method-ice] guard: `BUDGET_MS` is
+        // later used as `BUDGET_MS.to_millis()` (2-segment Path-call
+        // receiver, real CC-FAIL reproduced this wave via
+        // examples/mini_aggregator.nv) — must NOT recommend dropping the
+        // annotation even though it matches the literal's own default type.
+        let src = "module foo\n\
+             const BUDGET_MS int = 120\n\
+             fn f() -> int {\n    \
+             BUDGET_MS.to_millis()\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_REDUNDANT_CONST_TYPE_ANNOTATION").is_empty(),
+            "must stay silent on a const later used as a call-receiver (P67-family risk), got: {:?}",
             ws.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
     }

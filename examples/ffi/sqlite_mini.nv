@@ -20,9 +20,9 @@ type Db { ro value *() }
 type Stmt { ro value *() }
 
 // SQLite constants (subset).
-const SQLITE_OK   int = 0
-const SQLITE_ROW  int = 100
-const SQLITE_DONE int = 101
+const SQLITE_OK = 0
+const SQLITE_ROW = 100
+const SQLITE_DONE = 101
 
 // Error sum type (Nova-native, distinct от raw C codes).
 type DbError

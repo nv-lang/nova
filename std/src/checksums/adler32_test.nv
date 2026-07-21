@@ -11,11 +11,11 @@ test "adler32: пустой ввод → 1" {
 }
 
 test "adler32: 'Wikipedia' → 0x11E60398 (RFC 1950 пример)" {
-    assert(adler32("Wikipedia".bytes()) == 0x11E60398)
+    assert(adler32("Wikipedia") == 0x11E60398)
 }
 
 test "adler32: ASCII '123456789' → 0x091E01DE (классический test vector)" {
-    assert(adler32("123456789".bytes()) == 0x091E01DE)
+    assert(adler32("123456789") == 0x091E01DE)
 }
 
 test "adler32: incremental == монолитный" {
