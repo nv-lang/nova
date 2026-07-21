@@ -34767,28 +34767,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // `Nova_Vec____nova_byte*`). `wrap_str_lit_as_bytes_call` itself
                 // is already shape-agnostic (wraps ANY expr in `.bytes()`), so
                 // widening this guard is the whole fix.
-                CallArg::Item(inner)
-                    if matches!(inner.kind, ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. })
-                        // [M-bytes-literal-callarg-coerce-codegen-gap] fix
-                        // (2026-07-21, third shape): a general `str`-TYPED
-                        // call-chain (`@to_str()`, `@nanos.to_str()`,
-                        // `sb.into_str()`, …) is EXACTLY as D429-#coerce-
-                        // eligible at a `[]u8` call-arg position as a literal
-                        // — the checker's `assignable` coerce fallback never
-                        // required a literal SHAPE, only a `str` TYPE (D429
-                        // R6/R9 covers "call-arg на резолвленный параметр"
-                        // unconditionally). `StrLit`/`InterpolatedStr` are
-                        // recognized WITHOUT resolving `inner`'s type (they're
-                        // always str, syntactically) — a general chain needs
-                        // an actual C-type check, which `infer_expr_c_type`
-                        // already provides (same channel the receiver-key
-                        // lookup above uses). Caught empirically canonizing
-                        // `f.write(@nanos.to_str())` (`std/src/time/duration/
-                        // core.nv`) — `nova check` accepted it (D429), CC-FAIL
-                        // on build (`nova_str` vs `Nova_Vec____nova_byte*`)
-                        // because only the literal/interp shapes were wrapped.
-                        || self.infer_expr_c_type(inner) == "nova_str" =>
-                {
+                CallArg::Item(inner) => {
                     // Skip the trailing variadic slot — `param_c_types[last]`
                     // there names the COLLECTOR array type, not a per-argument
                     // `[]u8` element (variadic-arg collection into a synthesized
@@ -34800,7 +34779,48 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         && chosen.param_c_types.get(i)
                             .map(|c| Self::is_bytes_slice_c_ty(c))
                             .unwrap_or(false);
-                    if is_bytes {
+                    // GATE ordering fix ([M-bytes-literal-callarg-coerce-
+                    // codegen-gap] regression, 2026-07-22, owner report on
+                    // combined main): `is_bytes` (cheap, side-effect-free —
+                    // reads the ALREADY-resolved `chosen.param_c_types`) MUST
+                    // be checked FIRST, before ever calling
+                    // `infer_expr_c_type(inner)`. The previous ordering ran
+                    // `infer_expr_c_type` UNCONDITIONALLY on every single
+                    // `CallArg::Item` in the ENTIRE compile unit (the match
+                    // guard evaluated it regardless of whether this position
+                    // even accepts `[]u8`) — on the mega-CU
+                    // `spec_tests/conformance` run this reached a desugar-
+                    // synthesized map-literal temp (`_m3`, `desugar.rs::
+                    // fresh_map_tmp`) in some UNRELATED call, at a position
+                    // `infer_expr_c_type` had never been asked to resolve
+                    // before (nothing else in `emit_call` calls it on every
+                    // arg blindly) — hit the legacy `[P67-LEGACY] Ident
+                    // \`_m3\` not in var_types` panic (emit_c.rs, the LAST-
+                    // resort fallback arm, compiler-conventions.md §0).
+                    // Gating on `is_bytes` FIRST narrows `infer_expr_c_type`
+                    // to exactly the candidate positions the original
+                    // literal/interp check already targeted (a real `[]u8`
+                    // call-arg slot) — the general str-chain shape (third
+                    // sub-gap) only ever needs resolving THERE, never on an
+                    // arbitrary unrelated argument.
+                    if !is_bytes {
+                        None
+                    } else if matches!(inner.kind, ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. }) {
+                        Some(CallArg::Item(Self::wrap_str_lit_as_bytes_call(inner)))
+                    } else if self.infer_expr_c_type(inner) == "nova_str" {
+                        // [M-bytes-literal-callarg-coerce-codegen-gap] fix
+                        // (2026-07-21, third shape): a general `str`-TYPED
+                        // call-chain (`@to_str()`, `@nanos.to_str()`,
+                        // `sb.into_str()`, …) is EXACTLY as D429-#coerce-
+                        // eligible at a `[]u8` call-arg position as a literal
+                        // — the checker's `assignable` coerce fallback never
+                        // required a literal SHAPE, only a `str` TYPE (D429
+                        // R6/R9 covers "call-arg на резолвленный параметр"
+                        // unconditionally). Caught empirically canonizing
+                        // `f.write(@nanos.to_str())` (`std/src/time/duration/
+                        // core.nv`) — `nova check` accepted it (D429), CC-FAIL
+                        // on build (`nova_str` vs `Nova_Vec____nova_byte*`)
+                        // because only the literal/interp shapes were wrapped.
                         Some(CallArg::Item(Self::wrap_str_lit_as_bytes_call(inner)))
                     } else {
                         None
