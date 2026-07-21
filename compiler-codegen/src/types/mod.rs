@@ -3304,6 +3304,30 @@ struct TypeCheckCtx<'a> {
     /// error type so a carrier-mismatched `?` gets a specific fix-it hint
     /// (`.ok_or(..)` / `.ok()` / `.map_err(..)`) instead of a generic error.
     current_fn_return_ty: std::cell::RefCell<Option<TypeRef>>,
+    /// `[M-202-ident-x-module-alias-collision]` follow-up fix (generic-match-
+    /// scope-gap, 2026-07-21): the enclosing fn's OWN generic params (name +
+    /// bounds), set in `f1_check_fn`, cleared on exit — mirrors
+    /// `current_fn_return_ty`'s RAII pattern exactly. `TypeCheckCtx` has no
+    /// general generic-bound machinery (that lives in the separate, heavier
+    /// `BoundCtx` checker pass) — this is a narrow, ADDITIVE carrier for
+    /// EXACTLY one consumer: `ExprKind::Match`'s scrutinee-type resolution
+    /// (`f1_expr_inner`), used ONLY to widen `match_arm_bindings`'s pattern-
+    /// bound `scope` extension when the scrutinee is a call to a method on a
+    /// GENERIC-PARAM receiver bound to a known protocol (e.g. `@next()` on
+    /// receiver `I` bound `I Next[T]` inside `fn[I Next[T], T] I mut @min()`).
+    /// Without this, `infer_expr_type`'s deliberately-DECOUPLED general
+    /// instance-method-call return inference (see its own doc, ~15605 —
+    /// "GENERAL instance method-call return inference is DECOUPLED from
+    /// `infer_expr_type`") returns `None` for ANY `match obj.method() {...}`
+    /// scrutinee, generic or not — but a NON-generic concrete receiver still
+    /// gets its arm-bindings scope-extension via codegen's OWN later channel
+    /// (`resolved_callees`/`infer_method_call_channel_type`), so only the
+    /// generic-bound-receiver case is a genuine gap (no other channel ever
+    /// resolves `Option[T]` from an ABSTRACT `T` at check-time). Fixing the
+    /// general decoupling is out of scope (perturbs other `infer_expr_type`
+    /// consumers per that fn's own doc) — this is the minimal, local carrier
+    /// needed for the ONE narrow fallback in the `Match` arm, nowhere else.
+    current_fn_generics: std::cell::RefCell<Vec<GenericParam>>,
     /// Plan 124.6 (D225): current fn's `#test_access(TypeA, TypeB, ...)` list.
     /// Если non-empty, current fn body получает priv-field access ко всем
     /// перечисленным types (escape hatch для unit tests + sibling helper
@@ -3475,6 +3499,18 @@ struct FnReturnTyGuard<'a, 'b> {
 impl<'a, 'b> Drop for FnReturnTyGuard<'a, 'b> {
     fn drop(&mut self) {
         *self.ctx.current_fn_return_ty.borrow_mut() = self.prev.take();
+    }
+}
+
+/// generic-match-scope-gap fix: RAII guard для current_fn_generics в
+/// TypeCheckCtx (mirrors `FnReturnTyGuard` exactly).
+struct FnGenericsGuard<'a, 'b> {
+    ctx: &'b TypeCheckCtx<'a>,
+    prev: Vec<GenericParam>,
+}
+impl<'a, 'b> Drop for FnGenericsGuard<'a, 'b> {
+    fn drop(&mut self) {
+        *self.ctx.current_fn_generics.borrow_mut() = std::mem::take(&mut self.prev);
     }
 }
 
@@ -4037,6 +4073,7 @@ impl<'a> TypeCheckCtx<'a> {
             in_const_fn: std::cell::Cell::new(false),
             current_recv_type: std::cell::RefCell::new(None),
             current_fn_return_ty: std::cell::RefCell::new(None),
+            current_fn_generics: std::cell::RefCell::new(Vec::new()),
             current_fn_test_access: std::cell::RefCell::new(Vec::new()),
             ro_binding_names: std::cell::RefCell::new(std::collections::HashSet::new()),
             mut_ref_param_names: std::cell::RefCell::new(std::collections::HashSet::new()),
@@ -6805,6 +6842,12 @@ impl<'a> TypeCheckCtx<'a> {
         let prev_ret_ty = self.current_fn_return_ty.borrow_mut().take();
         *self.current_fn_return_ty.borrow_mut() = fd.return_type.clone();
         let _ret_ty_guard = FnReturnTyGuard { ctx: self, prev: prev_ret_ty };
+        // generic-match-scope-gap fix: publish the enclosing fn's OWN generic
+        // params (name + bounds) — see `current_fn_generics` field doc.
+        // Restored on exit via `FnGenericsGuard` (RAII — covers early returns).
+        let prev_fn_generics = std::mem::take(&mut *self.current_fn_generics.borrow_mut());
+        *self.current_fn_generics.borrow_mut() = fd.generics.clone();
+        let _fn_generics_guard = FnGenericsGuard { ctx: self, prev: prev_fn_generics };
         // Plan 124.6 (D225): set current_fn_test_access — fn body gets priv
         // access к listed types.
         let prev_ta = std::mem::take(&mut *self.current_fn_test_access.borrow_mut());
@@ -9098,6 +9141,26 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_expr(scrutinee, gs, scope, errors);
                 // Plan 124.2 (D221): each arm's pattern checked vs scrutinee type.
                 let scrut_ty = self.infer_expr_type(scrutinee, scope);
+                // generic-match-scope-gap fix (2026-07-21, see
+                // `resolve_generic_bound_method_return` doc): when the general
+                // inference above misses (a scrutinee that's a call to a method
+                // on a GENERIC-PARAM receiver bound to a known protocol, e.g.
+                // `@next()` on `I` bound `I Next[T]`), try the narrow bound-
+                // aware fallback — used ONLY to widen the arm-bindings scope
+                // extension below (`binds_scrut_ty`), NEVER for
+                // `check_priv_pattern_recursive` or the channel materialization
+                // further down (both keep using the original, general
+                // `scrut_ty` — unchanged behavior there).
+                let binds_scrut_ty: Option<TypeRef> = scrut_ty.clone().or_else(|| {
+                    if let ExprKind::Call { func, args, .. } = &scrutinee.kind {
+                        if args.is_empty() {
+                            if let ExprKind::Member { obj, name } = &func.kind {
+                                return self.resolve_generic_bound_method_return(scope, obj, name);
+                            }
+                        }
+                    }
+                    None
+                });
                 for arm in arms {
                     self.check_priv_pattern_recursive(&arm.pattern, scrut_ty.as_ref(), errors);
                     if let Some(g) = &arm.guard {
@@ -9116,7 +9179,7 @@ impl<'a> TypeCheckCtx<'a> {
                     // the receiver's real type) — e.g. an `i64` receiver silently mis-dispatching
                     // into `f64 @clamp` (implicit int64_t<->double cast, precision loss at i64
                     // extremes, no CC-FAIL since both sides are scalar).
-                    let binds = self.match_arm_bindings(&arm.pattern, scrut_ty.as_ref());
+                    let binds = self.match_arm_bindings(&arm.pattern, binds_scrut_ty.as_ref());
                     let mut saved: Vec<(String, Option<TypeRef>)> = Vec::new();
                     for (n, t) in &binds {
                         saved.push((n.clone(), scope.insert(n.clone(), t.clone())));
@@ -10652,6 +10715,82 @@ impl<'a> TypeCheckCtx<'a> {
     /// generic-args скрутини; одно-payload вариант non-generic user-sum
     /// (declared TypeRef); catch-all `v =>` (тип = scrut_ty). Всё прочее —
     /// пустой результат (арм-инференция в наружном scope, как раньше).
+    /// generic-match-scope-gap fix (`[M-202-ident-x-module-alias-collision]`
+    /// follow-up, 2026-07-21): narrow fallback used ONLY to feed
+    /// `match_arm_bindings` when the general `infer_expr_type(scrutinee, ..)`
+    /// returns `None` for a `match @method() { ... }` scrutinee whose
+    /// receiver is an ABSTRACT generic type-param bound to a known protocol
+    /// (e.g. `@next()` on receiver `I` inside `fn[I Next[T], T] I mut @min()`,
+    /// `std/src/collections/vec_iter/core.nv`/`vec_lazy/core.nv`). Repro: a
+    /// generic fn's body does `match @next() { Some(x) => x.compare(...) }` —
+    /// `infer_expr_type`'s `Call` arm deliberately does NOT resolve a general
+    /// instance-method-call return (see its own doc, ~15605), so `scrut_ty`
+    /// was `None` and `x` never entered `scope` — any USER import whose last
+    /// path segment happened to equal the bare bind-name (`x`) then made
+    /// `f1_check_call`'s `ExprKind::Member` dispatch misread `x.compare(..)`
+    /// as a call to a nonexistent free function `compare` in module `x`
+    /// (false `[E7401]`). Renaming the bind (`x`→`cand`, done at the time)
+    /// only hid the SYMPTOM; this closes the underlying scope-gap so ANY
+    /// bind-name is safe, not just non-colliding ones.
+    ///
+    /// Resolution: `obj`'s scope-type (`self.infer_expr_type`) must be a bare
+    /// `Named{path:[P], generics:[]}` where `P` is one of the CURRENT fn's own
+    /// generic params (`current_fn_generics`, RAII-published by
+    /// `f1_check_fn` — see field doc). Walk `P`'s declared bounds; the first
+    /// bound that names a `TypeDeclKind::Protocol` declaring a 0-arg method
+    /// matching `method` wins — its return type, with the PROTOCOL's own
+    /// generics (`Next[T]`'s `T`) substituted by the bound's concrete type
+    /// ARGS at this call-site (`subst_type_ref_pub`, `const_fn_trampoline.rs`
+    /// — the same generic-param substitution every OTHER mono/subst consumer
+    /// in this codebase uses). Multi-arg protocol methods, non-protocol
+    /// bounds, and non-generic-param receivers all fall through to `None`
+    /// (unsupported — no regression, just no additional coverage): this is
+    /// intentionally narrow, scoped to the ONE consumer site
+    /// (`ExprKind::Match`'s scrutinee) — does NOT touch `infer_expr_type`'s
+    /// general Call-arm decoupling (per that fn's own doc, changing it there
+    /// would ripple to every other consumer).
+    fn resolve_generic_bound_method_return(
+        &self,
+        scope: &HashMap<String, TypeRef>,
+        obj: &Expr,
+        method: &str,
+    ) -> Option<TypeRef> {
+        let obj_ty = self.infer_expr_type(obj, scope)?;
+        let TypeRef::Named { path, generics, .. } = &obj_ty else { return None };
+        if path.len() != 1 || !generics.is_empty() {
+            return None;
+        }
+        let param_name = path[0].as_str();
+        let fn_generics = self.current_fn_generics.borrow();
+        let gp = fn_generics.iter().find(|g| g.name == param_name)?;
+        for bound in &gp.bounds {
+            let TypeRef::Named { path: bpath, generics: bargs, .. } = bound else { continue };
+            if bpath.len() != 1 {
+                continue;
+            }
+            let Some(td) = self.types.get(bpath[0].as_str()) else { continue };
+            let TypeDeclKind::Protocol { methods, .. } = &td.kind else { continue };
+            let Some(m) = methods.iter().find(|m| {
+                m.name == method || m.name.trim_start_matches('@') == method
+            }) else { continue };
+            if !m.params.is_empty() || !m.generics.is_empty() {
+                // Narrow case only — a parameterized/generic protocol method
+                // would need arg-type-driven substitution too; unsupported here.
+                continue;
+            }
+            let ret = m.return_type.clone()?;
+            if td.generics.len() == bargs.len() && !td.generics.is_empty() {
+                let subst: HashMap<String, TypeRef> = td.generics.iter()
+                    .map(|g| g.name.clone())
+                    .zip(bargs.iter().cloned())
+                    .collect();
+                return Some(crate::const_fn_trampoline::subst_type_ref_pub(&ret, &subst));
+            }
+            return Some(ret);
+        }
+        None
+    }
+
     fn match_arm_bindings(
         &self,
         pattern: &Pattern,

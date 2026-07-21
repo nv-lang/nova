@@ -1,0 +1,43 @@
+// [M-d55-const-bytes-lit-not-constexpr] fix (2026-07-21, P3, backlog-followups.md).
+// `const c []u8 = "hi"` (module-level `Item::Const` with explicit `[]u8`
+// annotation) went through `emit_const_expr_typed`/`emit_const_expr`
+// (`compiler-codegen/src/codegen/emit_c.rs`) — a constexpr-only C-emission
+// branch, bypassing `emit_expr_with_target_type` (the choke-point that carries
+// D55/D429 str→[]u8 literal coercion everywhere else). `[]u8` is a heap Vec
+// pointer (len/cap/data), not a C-constexpr value — the checker's D429
+// `#coerce` AST-rewrite (`str "hi"` → `"hi".bytes()`, types/mod.rs
+// `try_coerce_leaf`) DOES fire here (`Item::Const` IS walked, unlike
+// scope-local `Stmt::Const` — see the neg companion fixture), correctly
+// routing this const to the pre-existing `emit_lazy_const` runtime-init path
+// (module-level `ro NAME = EXPR` lazy-static machinery, `nova_consts_init()`).
+// But the rewritten node's synthetic checker `ExprId` is never entered into
+// `resolved_callees` (that map is captured from the checker BEFORE this
+// AST-mutating pass runs) — codegen's `resolved_callees` channel misses it,
+// falls to `method_overloads[("str","bytes")]`, which ALSO misses because
+// module-level consts are emitted at pipeline stage "1b" (right after types/
+// forward-decls), BEFORE the pass that registers std's `str @bytes()`
+// (std/runtime/string/core.nv) into `method_overloads` runs. Falls through to
+// a much later, permissive fallback that mis-resolves the bare method name
+// "bytes" against an UNRELATED registered symbol (`bench.bytes` → Plan 57
+// bench DSL, external_registry.rs NAMESPACE_OVERRIDES `nova_bench_set_
+// throughput_bytes`) — `Nova_bench_static_bytes` undefined-symbol LINK
+// FAILURE (was a silent-miscompile-shaped bug: checker accepted the const
+// with NO diagnostic, codegen only failed at the link stage). Fix:
+// `emit_lazy_const` (emit_c.rs) recognizes this ONE well-known, permanent
+// shape (`Call{Member{obj: StrLit(s), name:"bytes"}, args:[]}` targeting a
+// bytes-slice C type) directly and emits the correct, already-proven-correct
+// `Nova_str_method_bytes(<literal>)` call itself — bypassing the method-
+// registry timing gap for this narrow, structurally-recognizable case.
+module spec_tests.conformance
+
+const D55_CONST_BYTES []u8 = "hi"
+
+fn d55_const_bytes_decode(bytes []u8) -> str => match bytes.to_str() {
+    Ok(s) => s
+    Err(_) => "ERR"
+}
+
+test "D55 (M-d55-const-bytes-lit-not-constexpr): module-level const []u8 from str-литерал (lazy-init, zero-copy view)" {
+    assert(D55_CONST_BYTES.len() == 2)
+    assert(d55_const_bytes_decode(D55_CONST_BYTES) == "hi")
+}
