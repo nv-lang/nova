@@ -219,3 +219,43 @@ jobs:
             echo "::error::flagship examples build failed for:${failed}"
             exit 1
           fi
+
+      # ── Examples anti-rot (Plan 197 Ф.5 / Plan 221 A-E2, 2026-07-21) ────
+      # ВЕСЬ examples/** вне _wip обязан собираться (--strict-effects) —
+      # «примеры не должны портить впечатление о языке» (владелец).
+      # Список целей — docs/plans/wip/197-f5-gate-list.txt (BUILD/CHECK,
+      # сгенерирован полным прогоном 197-финала); файл читается напрямую,
+      # чтобы гейт не расходился со списком.
+      - name: Examples anti-rot gate — all examples build/check (Plan 197 Ф.5)
+        run: |
+          set -uo pipefail
+          set +e
+          failed=""
+          while read -r kind path; do
+            case "${kind}" in BUILD|CHECK) ;; *) continue ;; esac
+            [ "${kind}" = "BUILD" ] && cmd=build || cmd=check
+            echo "::group::${cmd} ${path}"
+            log="$(mktemp)"
+            if [ "${cmd}" = "build" ]; then
+              ./nova-cli/target/release/nova build "${path}" --strict-effects \
+                  -o "/tmp/nova-gate-bin/ex_$(basename "${path}" .nv)" > "${log}" 2>&1
+            else
+              ./nova-cli/target/release/nova check "${path}" --strict-effects > "${log}" 2>&1
+            fi
+            code=$?
+            cat "${log}"
+            echo "::endgroup::"
+            if [ "${code}" -ne 0 ]; then
+              failed="${failed} ${path}"
+              {
+                echo "### ❌ FAILED: examples anti-rot — ${path}"
+                echo '```'
+                tail -n 60 "${log}"
+                echo '```'
+              } >> "${GITHUB_STEP_SUMMARY}"
+            fi
+          done < docs/plans/wip/197-f5-gate-list.txt
+          if [ -n "${failed}" ]; then
+            echo "::error::examples anti-rot failed for:${failed}"
+            exit 1
+          fi
