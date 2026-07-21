@@ -225,8 +225,7 @@ fn MultiError @fmt_chain() -> str => @primary
 /// Возвращает []str — массив всех messages.
 #stable(since = "0.1")
 fn MultiError @walk() -> []str {
-    mut result []str = []str.new()
-    result.cap(@suppressed.len() + 1)
+    mut result []str = []str.new(cap: @suppressed.len() + 1)
     result.push(@primary)
     for s in @suppressed {
         result.push(s)

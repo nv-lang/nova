@@ -70,8 +70,7 @@ export fn Set[T].new(cap int = 16) -> Self
 /// ```
 #stable(since = "0.1")
 export fn Set[T].from_iter(items []T) -> Self {
-    mut s = Self.new()
-    s.cap(items.len() * 2)
+    mut s = Self.new(cap: items.len() * 2)
     for x in items {
         s.insert(x)
     }

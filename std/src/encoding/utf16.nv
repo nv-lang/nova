@@ -50,8 +50,7 @@ export fn str @encode_utf16() -> []u16 {
     // capacity hint: code units ≤ byte_len (ASCII=1 байт=1 unit; не-ASCII —
     // меньше units чем байт, кроме supplementary 4 байта→2 units; byte_len —
     // безопасная верхняя граница без второго прохода).
-    mut out []u16 = []u16.new()
-    out.cap(@byte_len())
+    mut out []u16 = []u16.new(cap: @byte_len())
     for c in @chars() {
         ro cp = c as int
         if cp < 0x10000 {
@@ -76,8 +75,7 @@ export fn str @encode_utf16() -> []u16 {
 /// через `StringBuilder` (потребляется один раз на единственном успешном пути).
 export fn str.from_utf16(units []u16) -> Result[str, Utf16Error] {
     ro n = units.len()
-    mut cps []int = []int.new()
-    cps.cap(n)
+    mut cps []int = []int.new(cap: n)
     mut i = 0
     while i < n {
         ro u = units[i] as int

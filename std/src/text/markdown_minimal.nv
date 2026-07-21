@@ -250,8 +250,7 @@ fn render_inline(s str) -> str {
 
 // Push-loop materialisation of `s.chars()` — see `render_inline` doc.
 fn to_chars(s str) -> []char {
-    mut out []char = []char.new()
-    out.cap(s.byte_len())
+    mut out []char = []char.new(cap: s.byte_len())
     for c in s.chars() { out.push(c) }
     out
 }

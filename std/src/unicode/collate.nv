@@ -196,8 +196,7 @@ fn contraction_has_longer(first u32, tail []u32) -> bool {
 }
 
 fn cp_seq_push(src []u32, x u32) -> []u32 {
-    mut out []u32 = []u32.new()
-    out.cap(src.len() + 1)
+    mut out []u32 = []u32.new(cap: src.len() + 1)
     for v in src { out.push(v) }
     out.push(x)
     out
@@ -208,8 +207,7 @@ fn cp_seq_push(src []u32, x u32) -> []u32 {
 // reinterprets 64-bit ints as 32-bit words → garbage indices (the `(hi<<32)|lo`
 // out-of-bounds that bit the s21 discontiguous path). Keep the element types exact.
 fn idx_seq_push(src []int, x int) -> []int {
-    mut out []int = []int.new()
-    out.cap(src.len() + 1)
+    mut out []int = []int.new(cap: src.len() + 1)
     for v in src { out.push(v) }
     out.push(x)
     out
@@ -225,15 +223,12 @@ fn s21_match(cps []u32, used []int, i int) -> (Option[str], []int) {
     ro n = cps.len()
     ro first = cps[i]
     mut best_ces = collate_single_map.get(first)   // longest exact so far = `first` alone
-    mut best_consumed []int = []int.new()
-    best_consumed.cap(4)
+    mut best_consumed []int = []int.new(cap: 4)
     best_consumed.push(i)
     match collate_contraction_map.get(first) {
         Some(_) => {
-            mut cur_tail []u32 = []u32.new()
-            cur_tail.cap(4)                     // matched tail cps (after first)
-            mut cur_consumed []int = []int.new()
-            cur_consumed.cap(4)                 // their indices (in order)
+            mut cur_tail []u32 = []u32.new(cap: 4)                     // matched tail cps (after first)
+            mut cur_consumed []int = []int.new(cap: 4)                 // their indices (in order)
             mut prev_ccc = 0
             mut j = i + 1
             mut going = true
@@ -285,8 +280,7 @@ fn s21_match(cps []u32, used []int, i int) -> (Option[str], []int) {
 
 // [i] ++ consumed (the discontiguously-matched tail indices).
 fn with_base(i int, consumed []int) -> []int {
-    mut out []int = []int.new()
-    out.cap(consumed.len() + 1)
+    mut out []int = []int.new(cap: consumed.len() + 1)
     out.push(i)
     for x in consumed { out.push(x) }
     out
@@ -297,13 +291,11 @@ fn with_base(i int, consumed []int) -> []int {
 fn collation_elements(s str) -> []u32 {
     ro cps = str_to_cps(normalize_nfd(s))
     ro n = cps.len()
-    mut used []int = []int.new()
-    used.cap(n)
+    mut used []int = []int.new(cap: n)
     for z in 0..n {
         used.push(0)
     }
-    mut acc []u32 = []u32.new()
-    acc.cap(n * 8)
+    mut acc []u32 = []u32.new(cap: n * 8)
     mut i = 0
     while i < n {
         if used[i] == 1 {
@@ -343,14 +335,10 @@ const L4_MAX u32 = 0xFFFF
 export fn collate_sort_key(s str) -> []u32 {
     ro ce = collation_elements(s)
     ro m = ce.len() / 4
-    mut prim []u32 = []u32.new()
-    prim.cap(m + 1)
-    mut sec []u32 = []u32.new()
-    sec.cap(m + 1)
-    mut tert []u32 = []u32.new()
-    tert.cap(m + 1)
-    mut quat []u32 = []u32.new()
-    quat.cap(m + 1)
+    mut prim []u32 = []u32.new(cap: m + 1)
+    mut sec []u32 = []u32.new(cap: m + 1)
+    mut tert []u32 = []u32.new(cap: m + 1)
+    mut quat []u32 = []u32.new(cap: m + 1)
     mut after_variable = false
     for j in 0..m {
         ro variable = ce[j * 4]
@@ -381,8 +369,7 @@ export fn collate_sort_key(s str) -> []u32 {
             after_variable = false
         }
     }
-    mut key []u32 = []u32.new()
-    key.cap(prim.len() + sec.len() + tert.len() + quat.len() + 4)
+    mut key []u32 = []u32.new(cap: prim.len() + sec.len() + tert.len() + quat.len() + 4)
     for w in prim { key.push(w) }
     key.push(0)
     for w in sec { key.push(w) }
