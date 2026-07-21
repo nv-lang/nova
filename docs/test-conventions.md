@@ -570,6 +570,39 @@ nova_tests/plan_foo/
   PANIC-класс (D348-инверсия его сознательно не принимает);
 - смешанные маркеры (`EXPECT_STDOUT`+`EXPECT_RUNTIME_PANIC`) — процессные потоки.
 
+**Легаси-standalone в `std/**` — суффикс `_trap_test.nv` (не просто `_traps.nv`)
+· [M-trap-tests-silent-skip-default-lane] 2026-07-21:** для модулей stdlib
+легаси runtime-panic файлы кладутся, как и в `nova_tests/`, в под-каталог
+`rt/` рядом с модулем (`std/src/<модуль>/rt/`, при уровне вложенности —
+`std/src/<модуль>/<под-модуль>/rt/`), каждый файл — **свой standalone CU**
+(`module rt.<имя_файла_без_.nv>`, D78: сегмент = имя файла). Имя файла —
+**`<scenario>_trap_test.nv`** (не `<scenario>_traps.nv` без `_test` —
+голое множественное число ничем не сигналит «это тест-файл» ни человеку,
+ни tooling'у на глаз). `_test`-суффикс здесь не «съедается» — для
+standalone-файла (не peer'а folder-module) module-декларатор равен
+**полному** имени файла (`module rt.dur_add_overflow_trap_test`, не
+`module rt.dur_add_overflow`): D78 rev-3 не отрезает `_test` от target для
+standalone-случая (отрезание `_test` — только discovery-механика folder-
+module peer'ов, `resolve_imports`/`walk_nv`, см. §«Где писать тесты для
+stdlib» выше).
+
+Прецедент: `std/src/time/rt/dur_f64_nan_trap_test.nv`,
+`std/src/time/rt/dur_div_zero_trap_test.nv`,
+`std/src/time/rt/dur_add_overflow_trap_test.nv`,
+`std/src/time/civil/rt/date_period_overflow_trap_test.nv`.
+
+**Лейн `EXPECT_RUNTIME_PANIC`/`EXPECT_COMPILE_ERROR`/`EXPECT_TIMEOUT`/
+`EXPECT_EXIT` — всегда `--full`:** дефолтный `nova test` (`TestSelection`
+default = `{Positive}` без `--include-slow`) эти файлы **не запускает** —
+это by-design (регресс должен быть быстрым), НО раннер обязан показать их
+как явный `SKIP <path> # <lane> lane — requires --full` (или
+`--include-slow`/`--slow-only` для `_slow.nv`) в общем `SKIP:`-счётчике, а
+не молчать. Директория, где ЕДИНСТВЕННЫЙ контент — trap-тесты (напр.
+`std/src/time/rt/`), под дефолтным `nova test <dir>` отчитывается видимыми
+SKIP-строками, а НЕ голым «PASS: 0 FAIL: 0» (неотличимым от пустой/опечатанной
+директории — реальный баг, найденный и закрытый этой правкой). Полный прогон
+трапов — `nova test --full <dir>`.
+
 ---
 
 ### Полный checklist для агента при написании тестов

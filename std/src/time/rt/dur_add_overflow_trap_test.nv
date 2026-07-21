@@ -2,7 +2,7 @@
 // Silent two's-complement wrap (Go-ловушка) недопустим: оператор паникует.
 // EXPECT_RUNTIME_PANIC Duration arithmetic overflow
 
-module rt.dur_add_overflow_traps
+module rt.dur_add_overflow_trap_test
 
 import std.time.duration
 

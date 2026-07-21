@@ -3,7 +3,7 @@
 // Non-trapping эскейпы: @try_plus → Result, @saturating_plus → clamp.
 // EXPECT_RUNTIME_PANIC Date arithmetic overflow
 
-module rt.date_period_overflow_traps
+module rt.date_period_overflow_trap_test
 
 import std.time.civil
 

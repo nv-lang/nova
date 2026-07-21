@@ -2,7 +2,7 @@
 // Rust `Duration::mul_f64(NaN)` паникует — Nova-паритет.
 // EXPECT_RUNTIME_PANIC non-finite or out-of-range f64
 
-module rt.dur_f64_nan_traps
+module rt.dur_f64_nan_trap_test
 
 import std.time.duration
 
