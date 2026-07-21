@@ -378,7 +378,7 @@ export fn real_fs() -> Effect[Fs] {
 /// (Read loop inlined over `File` — avoids the effectful-generic forward path.)
 #stable(since = "0.1")
 export fn read(path Path) Fs -> Result[[]u8, IoError] {
-    mut f = match File.open(path) { Ok(consume x) => x, Err(e) => return Err(e) }
+    consume f = match File.open(path) { Ok(consume x) => x, Err(e) => return Err(e) }
     mut out []u8 = []u8.new()
     mut chunk []u8 = []u8.new()
     chunk.resize(8192, 0 as u8)
@@ -418,7 +418,7 @@ export fn read_text(path Path) Fs -> Result[str, IoError] {
 /// closes; a close error surfaces if the write was OK.
 #stable(since = "0.1")
 export fn write(path Path, data []u8) Fs -> Result[(), IoError] {
-    mut f = match File.create(path) { Ok(consume x) => x, Err(e) => return Err(e) }
+    consume f = match File.create(path) { Ok(consume x) => x, Err(e) => return Err(e) }
     mut werr Option[IoError] = None
     ro total = data.len()
     mut done = 0

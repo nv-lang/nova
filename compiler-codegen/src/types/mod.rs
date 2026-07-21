@@ -28562,6 +28562,40 @@ impl<'a> ConsumeCtx<'a> {
                 self.infer_unwrapped_call_type(a)
                     .or_else(|| self.infer_value_type(a))
             }
+            // [M-mut-binding-accepts-must-consume] (2026-07-21): `match`/
+            // `if let` USED AS a let-RHS — `mut lst = match TcpListener.bind(..)
+            // { Ok(consume l) => l, Err(_) => panic(..) }`. Prior to this fix
+            // `infer_value_type` didn't recurse into arm bodies at all, so a
+            // pass-through arm returning its own (correctly must-consume-typed,
+            // per the D157-амендмент pattern-payload gate above) binding was
+            // invisible to D180 Rule 1 — the `mut`/`ro` binding silently
+            // escaped `E_CONSUME_KEYWORD_MISSING`. This call always runs AFTER
+            // `consume_walk_expr(ctx, &decl.value, ..)` (see `consume_walk_stmt`
+            // `Stmt::Let`), which already ran `consume_declare_arm_pattern` for
+            // every arm and populated `var_types` for arm-bound names (e.g.
+            // `l` → `"TcpListener"`) — so recursing here through the existing
+            // `Ident` arm below resolves the pass-through for free. Best-effort:
+            // first arm whose tail resolves to a known type wins (a
+            // well-typed match's arms all agree on one type anyway); a
+            // diverging arm (`panic(..)`, unresolvable call) yields `None` and
+            // is skipped in favor of the next arm.
+            ExprKind::Match { arms, .. } => arms.iter().find_map(|arm| {
+                let tail: Option<&Expr> = match &arm.body {
+                    MatchArmBody::Expr(e) => Some(e),
+                    MatchArmBody::Block(b) => b.trailing.as_deref(),
+                };
+                tail.and_then(|t| self.infer_value_type(t))
+            }),
+            ExprKind::IfLet { then, else_, .. } => {
+                let then_ty = then.trailing.as_deref()
+                    .and_then(|t| self.infer_value_type(t));
+                then_ty.or_else(|| match else_ {
+                    Some(ElseBranch::Block(b)) => b.trailing.as_deref()
+                        .and_then(|t| self.infer_value_type(t)),
+                    Some(ElseBranch::If(e)) => self.infer_value_type(e),
+                    None => None,
+                })
+            }
             _ => None,
         }
     }
@@ -32879,13 +32913,52 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                 ctx.states = saved.clone();
                 consume_declare_arm_pattern(ctx, &arm.pattern, &scrut, errors);
                 if let Some(g) = &arm.guard { consume_walk_expr(ctx, g, errors); }
+                // [M-mut-binding-accepts-must-consume] (2026-07-21):
+                // divergence-aware merge, mirroring `consume_walk_if`'s
+                // `then_diverges`/`else_diverges` handling (which already had
+                // this) — `consume_walk_if` existed with the fix, but this
+                // N-ary `Match` sibling never got the analogous treatment.
+                // An arm whose body unconditionally exits (`return`/`throw`/
+                // `panic(..)`/nested diverging if-or-match — see
+                // `expr_diverges`/`block_diverges` above) never reaches the
+                // point after the match, so its post-arm states must NOT be
+                // folded into the join — else a consume-obligated var
+                // consumed ONLY on that arm's exit path (the canonical
+                // `Err(e) => { x.close(); return Err(e) }` idiom, universal
+                // across std/examples) spuriously reads back as
+                // `MaybeConsumed` on the arms that actually fall through
+                // (surfaced by this same fix: these bindings were not
+                // consume_obligated at all before, per the RHS-inference gap
+                // fixed in `infer_value_type` above, so this join defect was
+                // dormant on match-tail-passthrough sites until now).
+                let arm_diverges = match &arm.body {
+                    MatchArmBody::Expr(ex) => expr_diverges(ex),
+                    MatchArmBody::Block(b) => block_diverges(b),
+                };
                 match &arm.body {
                     MatchArmBody::Expr(ex) => consume_walk_expr(ctx, ex, errors),
                     MatchArmBody::Block(b) => consume_walk_block(ctx, b, errors),
                 }
+                if arm_diverges { continue; }
                 let arm_states = ctx.states.clone();
                 joined = Some(match joined {
-                    None => arm_states,
+                    // First surviving (non-diverging) arm: still route through
+                    // `consume_join` (self-join, `consume_join2` is idempotent
+                    // for `(s, s)`) rather than adopting `arm_states` raw —
+                    // `consume_join` restricts its output to `saved`'s key
+                    // domain (see its doc-comment "ветка-локальные переменные
+                    // отбрасываются"), which is exactly what discards this
+                    // arm's OWN pattern-bound names (e.g. `Ok(consume x) => x`'s
+                    // `x`) from leaking into the states map past the match —
+                    // they never existed before it and aren't in scope after.
+                    // A raw `arm_states` assignment here would keep `x` as
+                    // `Live`/`Consumed` post-match, and `x` is never
+                    // consumed-checked again (out of scope) NOR is it in
+                    // `saved` to be dropped — an `x`-shaped ghost obligation
+                    // that then fails `check_obligations_at_exit` at the
+                    // enclosing function's end (caught by fs.nv's
+                    // `Ok(consume x) => x` sites during this fix's own audit).
+                    None => consume_join(&saved, &arm_states, &arm_states),
                     Some(j) => consume_join(&saved, &j, &arm_states),
                 });
             }

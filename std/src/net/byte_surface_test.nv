@@ -12,7 +12,7 @@ test "TcpStream.write / write_all return byte count" {
     with Net = mock_net() {
         supervised {
             spawn {
-                mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                consume s = match TcpStream.connect(SocketAddr.loopback(0)) {
                     Ok(consume c) => c, Err(_) => panic("connect")
                 }
                 // Payload incl. embedded NUL + non-UTF-8 lead byte.
@@ -31,7 +31,7 @@ test "TcpStream.read_to_vec materialises []u8" {
     with Net = mock_net() {
         supervised {
             spawn {
-                mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                consume s = match TcpStream.connect(SocketAddr.loopback(0)) {
                     Ok(consume c) => c, Err(_) => panic("connect")
                 }
                 ro bytes = match s.read_to_vec(64) { Ok(b) => b, Err(_) => panic("read_to_vec") }
@@ -48,7 +48,7 @@ test "TcpReadHalf.read / TcpWriteHalf.write over split" {
     with Net = mock_net() {
         supervised {
             spawn {
-                mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                consume s = match TcpStream.connect(SocketAddr.loopback(0)) {
                     Ok(consume c) => c, Err(_) => panic("connect")
                 }
                 mut (rdh, wrh) = s.split()
@@ -71,15 +71,20 @@ test "UdpSocket.send_to / recv_from_vec (mock)" {
     with Net = mock_net() {
         supervised {
             spawn {
-                mut sock = match UdpSocket.bind(SocketAddr.loopback(0)) {
+                consume sock = match UdpSocket.bind(SocketAddr.loopback(0)) {
                     Ok(consume s) => s, Err(_) => panic("bind")
                 }
+                // Plan 216 (D133 strict — `UdpSocket` has no `@cleanup`,
+                // unlike `TcpStream`): close before `panic` on the mock's
+                // (never-taken) error arm — a Live consume-obligation on a
+                // panic-exit is a real diagnostic, not exempted like
+                // `@cleanup`-bearing types (D432 §4 covers `panic` for those).
                 ro n = match sock.send_to(Vec[u8].of(0xDE, 0xAD, 0xBE, 0xEF), SocketAddr.loopback(9999)) {
-                    Ok(n) => n, Err(_) => panic("send_to")
+                    Ok(n) => n, Err(_) => { sock.close(); panic("send_to") }
                 }
                 assert(n == 4)
                 ro (data, _sender) = match sock.recv_from_vec(64) {
-                    Ok(t) => t, Err(_) => panic("recv_from_vec")
+                    Ok(t) => t, Err(_) => { sock.close(); panic("recv_from_vec") }
                 }
                 // mock recv returns "" → 0 bytes.
                 assert(data.len() == 0)

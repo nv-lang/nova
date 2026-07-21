@@ -219,7 +219,7 @@ fn main() Time Detach {
                     // this fiber (same discipline as echo_server.nv) — a
                     // mut-capture of an outer listener from spawn's body
                     // would be E_CONCURRENT_MUT_CAPTURE.
-                    mut lst = match TcpListener.bind(addr) {
+                    consume lst = match TcpListener.bind(addr) {
                         Ok(consume l)  => l
                         Err(_) => panic("Failed to bind: ${port}")
                     }

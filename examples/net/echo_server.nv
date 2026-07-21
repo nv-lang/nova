@@ -27,7 +27,7 @@ fn main() {
                 // Plan 173.3 (D415 §2): listener живёт ЦЕЛИКОМ в серверном
                 // fiber'е (bind/accept/close) — mut-захват внешнего listener'а
                 // телом spawn был бы E_CONCURRENT_MUT_CAPTURE.
-                mut lst = match TcpListener.bind(addr) {
+                consume lst = match TcpListener.bind(addr) {
                     Ok(consume l)  => l
                     Err(_) => panic("Failed to bind: ${PORT}")
                 }
