@@ -1,0 +1,54 @@
+// [M-protocol-embed-vtable-missing-method] (found closing
+// [M-protocol-box-callarg-vtable-incomplete], Plan 221 A-B4/A-B6). A protocol WITH a
+// `use`-embed (`type MEVGreeter protocol { use MEVBase  @greet()->int }`, D145) lost the
+// EMBEDDED method in its codegen vtable-struct: `protocol_method_registry` (compiler-
+// codegen/src/codegen/emit_c.rs) registered the protocol's raw AST `methods` only,
+// ignoring `embeds` — the vtable struct built from this registry (`emit_protocol_box_
+// typedef`) therefore had no field/thunk for the embedded method, and calling it through
+// a protocol-box coercion (call-argument OR let-binding) CC-FAILed: `no member named
+// 'base_greet' in struct NovaVtable_MEVGreeter`. The checker already flattens `use`-
+// embeds transitively when validating structural satisfaction (D145,
+// `types/mod.rs::flatten_dfs`/`protocol_missing_methods`) — codegen's registry now
+// mirrors that flatten (bag-union over `embeds`, cycle-guarded) BEFORE building the
+// vtable, so the embedded method reaches the vtable struct/instance same as a directly
+// declared one. Covers BOTH repro shapes from the original finding: call-argument
+// position AND let-binding coercion — the bug was NOT specific to call-arg position
+// (unlike the sibling, already-fixed [M-protocol-box-callarg-vtable-incomplete]).
+// Part of the single `spec_tests.conformance` folder-module; M-prefixed unique type
+// names avoid duplicate-top-level-name clashes.
+module spec_tests.conformance
+
+type MEVBase protocol {
+    @base_greet() -> int
+}
+
+type MEVGreeter protocol {
+    use MEVBase
+    @greet() -> int
+}
+
+type MEVSpeaker {
+    base int
+}
+
+fn MEVSpeaker @base_greet() -> int => @base + 1
+fn MEVSpeaker @greet() -> int => @base + 2
+
+// Call-argument position: `g` is protocol-typed (`MEVGreeter`, WITH an embed) —
+// `g.base_greet()` calls the EMBEDDED method through the protocol-box vtable.
+fn mev_call_embedded_via_arg(g MEVGreeter) -> int => g.base_greet()
+
+test "embed-vtable: embedded method reachable through a call-argument protocol-box" {
+    ro sp = MEVSpeaker { base: 40 }
+    assert(mev_call_embedded_via_arg(sp) == 41)
+    // the protocol's own (non-embedded) method still works too — both live in the
+    // same flattened vtable.
+    assert(sp.greet() == 42)
+}
+
+test "embed-vtable: embedded method reachable through a let-binding protocol-box" {
+    ro sp = MEVSpeaker { base: 40 }
+    mut g MEVGreeter = sp
+    assert(g.base_greet() == 41)
+    assert(g.greet() == 42)
+}

@@ -5954,6 +5954,89 @@ impl CEmitter {
             }
         }
 
+        // [M-protocol-embed-vtable-missing-method] (Plan 221 followup, found
+        // while closing [M-protocol-box-callarg-vtable-incomplete]): the
+        // checker flattens `use`-embeds transitively when validating a
+        // protocol's method-set (`types/mod.rs::flatten_dfs` /
+        // `protocol_missing_methods` — a protocol WITH `use Base` is treated
+        // as if it directly declared `Base`'s methods too, D145). Codegen's
+        // `protocol_method_registry` used to insert the RAW `t.kind`'s
+        // `methods` only, ignoring `embeds` entirely — the vtable STRUCT
+        // (built from this registry in `emit_protocol_box_typedef`) and the
+        // vtable INSTANCE (filled in `emit_protocol_vtable_companion`) then
+        // had no field/thunk for an embedded method,
+        // so calling it through a protocol-box (`g.base_greet()` where
+        // `EmbGreeter` embeds `EmbBase`) failed to compile: `no member named
+        // 'base_greet' in struct NovaVtable_EmbGreeter`. Fix: flatten here,
+        // BEFORE registration, so the registry (and everything built from
+        // it) sees the same method-set the checker already validated
+        // against. `direct` is scanned from BOTH `module.items` and
+        // `peer_files` (cross-file embeds — e.g. a protocol declared in one
+        // file embedding one from another peer file in the same
+        // compile-unit — must resolve too, mirroring the checker's
+        // CU-wide `types_get_for_file`/`self.types` lookup). Bag-union,
+        // cycle-guarded via `seen` (a genuine `use`-cycle is diagnosed
+        // separately by the checker's `E_PROTOCOL_EMBED_CYCLE` — here a
+        // revisited name during the DFS just stops contributing further
+        // methods, never infinite-loops), mirrors `types/mod.rs::flatten_dfs`
+        // exactly (same duplicate/cycle policy — dup-detection is the
+        // checker's job, not codegen's).
+        let mut protocol_direct: HashMap<String, (Vec<String>, Vec<EffectMethod>, Vec<TypeRef>)> =
+            HashMap::new();
+        {
+            let mut collect = |t: &crate::ast::TypeDecl| {
+                if let crate::ast::TypeDeclKind::Protocol { methods, embeds } = &t.kind {
+                    let type_params: Vec<String> =
+                        t.generics.iter().map(|g| g.name.clone()).collect();
+                    protocol_direct.insert(
+                        t.name.clone(),
+                        (type_params, methods.clone(), embeds.clone()),
+                    );
+                }
+            };
+            for item in &module.items {
+                if let Item::Type(t) = item {
+                    collect(t);
+                }
+            }
+            for pf in &module.peer_files {
+                for item in &pf.items_here {
+                    if let Item::Type(t) = item {
+                        collect(t);
+                    }
+                }
+            }
+        }
+        fn flatten_protocol_methods_codegen(
+            name: &str,
+            direct: &HashMap<String, (Vec<String>, Vec<EffectMethod>, Vec<TypeRef>)>,
+            seen: &mut HashSet<String>,
+            out: &mut Vec<EffectMethod>,
+        ) {
+            if !seen.insert(name.to_string()) {
+                return;
+            }
+            let Some((_, methods, embeds)) = direct.get(name) else { return; };
+            for m in methods {
+                out.push(m.clone());
+            }
+            for e in embeds {
+                if let TypeRef::Named { path, .. } = e {
+                    if let Some(emb_name) = path.last() {
+                        flatten_protocol_methods_codegen(emb_name, direct, seen, out);
+                    }
+                }
+            }
+        }
+        let flattened_protocol_methods = |name: &str,
+                                           direct: &HashMap<String, (Vec<String>, Vec<EffectMethod>, Vec<TypeRef>)>|
+         -> Vec<EffectMethod> {
+            let mut out = Vec::new();
+            let mut seen = HashSet::new();
+            flatten_protocol_methods_codegen(name, direct, &mut seen, &mut out);
+            out
+        };
+
         // Plan 97.1 Ф.2 (D142): pre-register non-generic protocol-методы
         // в `protocol_method_registry`. Generic-protocol'ы регистрируются
         // в loop ниже (с t.generics.is_empty() == false), но non-generic
@@ -5963,11 +6046,13 @@ impl CEmitter {
         for item in &module.items {
             if let Item::Type(t) = item {
                 if t.generics.is_empty() {
-                    if let crate::ast::TypeDeclKind::Protocol { methods, .. } = &t.kind {
+                    if let crate::ast::TypeDeclKind::Protocol { .. } = &t.kind {
                         self.protocol_types.insert(t.name.clone());
+                        let flat_methods =
+                            flattened_protocol_methods(&t.name, &protocol_direct);
                         self.protocol_method_registry.insert(
                             t.name.clone(),
-                            (Vec::new(), methods.clone()),
+                            (Vec::new(), flat_methods),
                         );
                         non_generic_protocols.push(t.name.clone());
                     }
@@ -6109,15 +6194,23 @@ impl CEmitter {
                     // `Nova_Iter*` для protocol-typed parameters → CC-FAIL
                     // `unknown type name 'Nova_Iter'` (regression от merge'а
                     // main↔plan-62-main).
-                    if let crate::ast::TypeDeclKind::Protocol { methods, .. } = &t.kind {
+                    if let crate::ast::TypeDeclKind::Protocol { .. } = &t.kind {
                         self.protocol_types.insert(t.name.clone());
                         // Plan 72 P3-B: register method signatures for vtable generation.
                         let type_params: Vec<String> = t.generics.iter()
                             .map(|g| g.name.clone())
                             .collect();
+                        // [M-protocol-embed-vtable-missing-method]: flatten
+                        // `use`-embeds here too (see pre-pass above,
+                        // `protocol_direct`/`flattened_protocol_methods`) —
+                        // a GENERIC protocol embedding another protocol
+                        // (generic or not) must also see the embedded
+                        // methods in its vtable.
+                        let flat_methods =
+                            flattened_protocol_methods(&t.name, &protocol_direct);
                         self.protocol_method_registry.insert(
                             t.name.clone(),
-                            (type_params, methods.clone()),
+                            (type_params, flat_methods),
                         );
                         continue;
                     }
