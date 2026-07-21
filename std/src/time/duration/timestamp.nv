@@ -145,7 +145,7 @@ export fn Timestamp @compare(other Timestamp) -> int =>
 #stable(since = "0.1")
 export fn Timestamp @debug(mut f Fmt) -> () {
     f.write("Timestamp(unix_ns=")
-    f.write(@nanos.to_str().bytes())
+    f.write(@nanos.to_str())
     f.write(")")
 }
 

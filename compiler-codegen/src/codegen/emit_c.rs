@@ -34768,7 +34768,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // is already shape-agnostic (wraps ANY expr in `.bytes()`), so
                 // widening this guard is the whole fix.
                 CallArg::Item(inner)
-                    if matches!(inner.kind, ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. }) =>
+                    if matches!(inner.kind, ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. })
+                        // [M-bytes-literal-callarg-coerce-codegen-gap] fix
+                        // (2026-07-21, third shape): a general `str`-TYPED
+                        // call-chain (`@to_str()`, `@nanos.to_str()`,
+                        // `sb.into_str()`, …) is EXACTLY as D429-#coerce-
+                        // eligible at a `[]u8` call-arg position as a literal
+                        // — the checker's `assignable` coerce fallback never
+                        // required a literal SHAPE, only a `str` TYPE (D429
+                        // R6/R9 covers "call-arg на резолвленный параметр"
+                        // unconditionally). `StrLit`/`InterpolatedStr` are
+                        // recognized WITHOUT resolving `inner`'s type (they're
+                        // always str, syntactically) — a general chain needs
+                        // an actual C-type check, which `infer_expr_c_type`
+                        // already provides (same channel the receiver-key
+                        // lookup above uses). Caught empirically canonizing
+                        // `f.write(@nanos.to_str())` (`std/src/time/duration/
+                        // core.nv`) — `nova check` accepted it (D429), CC-FAIL
+                        // on build (`nova_str` vs `Nova_Vec____nova_byte*`)
+                        // because only the literal/interp shapes were wrapped.
+                        || self.infer_expr_c_type(inner) == "nova_str" =>
                 {
                     // Skip the trailing variadic slot — `param_c_types[last]`
                     // there names the COLLECTOR array type, not a per-argument

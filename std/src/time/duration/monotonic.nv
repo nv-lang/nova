@@ -161,7 +161,7 @@ export fn Monotonic @compare(other Monotonic) -> int =>
 #stable(since = "0.1")
 export fn Monotonic @display(mut f Fmt) -> () {
     f.write("+")
-    f.write(@nanos.to_nanos().to_str().bytes())
+    f.write(@nanos.to_nanos().to_str())
 }
 
 /// Diagnostic form: `Monotonic(+1.234s)` — explicitly NOT a date (D124/D318).
@@ -169,7 +169,7 @@ export fn Monotonic @display(mut f Fmt) -> () {
 #stable(since = "0.1")
 export fn Monotonic @debug(mut f Fmt) -> () {
     f.write("Monotonic(+")
-    f.write(@nanos.to_nanos().to_str().bytes())
+    f.write(@nanos.to_nanos().to_str())
     f.write(")")
 }
 
