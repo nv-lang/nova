@@ -1,0 +1,16 @@
+// [M-d78-dup-decl-type-cross-import-ambiguous] repro: a THIRD file
+// (neither `a/neg/kind.nv` nor `b/neg/kind.nv`) selectively imports the
+// colliding `Kind` type BARE (`import a.neg.kind.{Kind, classify_a}`)
+// and references it directly in a `match` — exercises D381's branch (2)
+// selective-import suffix match (`emit_c.rs`'s `file_type_module`) from
+// OUTSIDE the declaring module, on the `dupN`-tagged physical-identity
+// axis Plan 202 Ф.1b opened.
+module d78_dup_decl_type_cross_import.client_a
+
+import a.neg.kind.{Kind, classify_a}
+
+export fn label_a(n int) -> str =>
+    match classify_a(n) {
+        Kind.Alpha => "a-alpha"
+        Kind.Beta => "a-beta"
+    }

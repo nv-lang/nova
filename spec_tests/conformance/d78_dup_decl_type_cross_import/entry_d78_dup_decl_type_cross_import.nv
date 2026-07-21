@@ -1,0 +1,27 @@
+// [M-d78-dup-decl-type-cross-import-ambiguous] pos-fixture (Plan 202
+// residual, followup of `d78_dup_decl_type_axis/`). `client_a.nv` /
+// `client_b.nv` each selectively import the colliding `Kind` sum type
+// BARE from one of the two physically distinct `neg.kind` modules
+// (`a/neg/kind.nv`, `b/neg/kind.nv`) and reference it directly
+// (qualified-variant `match`) OUTSIDE its declaring module — the one
+// path Ф.1b's own fixtures didn't exercise (there `Kind` never left its
+// declaring module). Before the fix, D381 branch (2)'s selective-import
+// suffix match can never line up with a `dupN`-tagged candidate (a real
+// import path never contains the synthetic `dupN` physical
+// discriminator), so BOTH client files' `Kind` reference degrade to
+// unqualified `Nova_Kind` — same C tag-enum/ctor for two DIFFERENT
+// variant sets, a `CC-FAIL` redefinition (or worse, a silently wrong
+// variant table) the moment both are compiled into one CU.
+// D29 `parent.target` naming: `d78_dup_decl_type_cross_import.
+// entry_d78_dup_decl_type_cross_import`.
+module d78_dup_decl_type_cross_import.entry_d78_dup_decl_type_cross_import
+
+import client_a.{label_a}
+import client_b.{label_b}
+
+test "D78 rev-4 residual: type imported bare cross-module from a dup-decl physical sibling keeps its own Kind sum type, values not mixed" {
+    assert(label_a(1) == "a-alpha")
+    assert(label_a(-1) == "a-beta")
+    assert(label_b(1) == "b-gamma")
+    assert(label_b(-1) == "b-alpha")
+}

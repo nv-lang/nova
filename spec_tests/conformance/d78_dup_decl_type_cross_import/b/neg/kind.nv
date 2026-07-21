@@ -1,0 +1,11 @@
+// [M-d78-dup-decl-type-cross-import-ambiguous] repro, half B. See
+// `a/neg/kind.nv` doc comment for the full rationale. Same declaration
+// (`module neg.kind`), DIFFERENT physical directory, DIFFERENT variant
+// set for the same simple type name `Kind` — exported and referenced
+// bare from `../client_b.nv`.
+module neg.kind
+
+export type Kind enum Alpha | Gamma
+
+export fn classify_b(n int) -> Kind =>
+    if n > 0 { Gamma } else { Alpha }

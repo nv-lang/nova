@@ -1,0 +1,14 @@
+// [M-d78-dup-decl-type-cross-import-ambiguous] repro: mirror of
+// `client_a.nv` for `b/neg/kind.nv`'s `Kind`. Both client files live in
+// the SAME compile unit, each selectively importing a DIFFERENT
+// physical module's same-named `Kind` — the per-file `file_type_module`
+// resolution must keep them apart.
+module d78_dup_decl_type_cross_import.client_b
+
+import b.neg.kind.{Kind, classify_b}
+
+export fn label_b(n int) -> str =>
+    match classify_b(n) {
+        Kind.Alpha => "b-alpha"
+        Kind.Gamma => "b-gamma"
+    }
