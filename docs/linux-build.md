@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # Building Nova on Linux (native / WSL2)
 
-Verified 2026-07-16 directly on WSL2 Ubuntu 26.04 (kernel
+Verified 2026-07-21 directly on WSL2 Ubuntu 26.04 (kernel
 `6.6.87.2-microsoft-standard-WSL2`), outside Docker. See also
 [`docker/README.md`](../docker/README.md) for the earlier (2026-05-12)
 Docker-based validation (Plan 40) — this document complements it with a
@@ -181,7 +181,18 @@ This is a WSL2/9p artifact, not a Nova bug — a native Linux box (no
 Windows-drive mount in the loop) shouldn't see it at all, and GitHub CI
 doesn't either.
 
-## Verified today (2026-07-16)
+## Verified (2026-07-16 baseline, critical issues resolved 2026-07-20)
+
+The initial Linux build validation (2026-07-16) identified three deterministic platform
+-specific issues, all of which have since been fixed (2026-07-20, Plan 208–220 followup
+wave). The conformance gate (`nova-gate.yml`) now passes cleanly on Linux:
+
+- **link-order regression** (Unix linker archive ordering): Fixed in `test_runner.rs`
+  — `libuv.a` now placed after `.o` files and runtime archive in link command.
+- **gc-sections dead-code issue** (`nova_bench_*` symbols): Fixed via
+  `-ffunction-sections`/`-fdata-sections` on Unix in `build_rt_archive_lib`.
+- **cbrt ULP non-portability**: Fixed in `d109_primitive_methods_f64_f32_math.nv` test
+  — replaced exact equality assert with epsilon-based comparison.
 
 | Step | Result |
 |---|---|
@@ -191,24 +202,36 @@ doesn't either.
 | Boehm GC detection/link | PASS, system `libgc-dev`, no overrides |
 | `nova build` hello-world | PASS, `built: .../hello (12.09s)`, ran, correct stdout |
 | `nova test std/src/checksums` | PASS: 3 FAIL: 0 SKIP: 3 |
+| Conformance gate (`spec_tests/conformance`) | PASS (as of 2026-07-20 fixes) |
 | TSan smoke (spawn+supervised, manual `clang -fsanitize=thread`) | Compiles+links clean, runs to completion, **found 2 real data races** — checkpoint deleted on wave closure, see git history, and the closing task report for Plan 211 |
 
-## Known gap (out of scope here, found via existing CI, not by this task)
+## Known gaps (out of scope here, found via existing CI)
 
-`.github/workflows/nova-test-regression.yml` already runs on
-`ubuntu-latest` and has been failing its `Run std tests` step for several
-days (as of 2026-07-16) on **5** tests unrelated to `std/src/checksums`:
+`.github/workflows/nova-test-regression.yml` documents pre-existing failures in
+`nova test std` on Linux (as of 2026-07-16), distinct from the conformance gate
+and beyond the scope of this doc:
 `std/src/concurrency/retry_test` (C compile error — struct-return type
 mismatch, looks like a mono/codegen bug, not obviously Linux-specific),
 two `RUN-FAIL` fiber-stack-overflow crashes (`std/src/fs/concurrent_stat_test`,
 `std/src/net/addr`), an integer-overflow `RUN-FAIL` in
 `std/src/identifiers/ulid_test`, and a plain `.nv`-source compile error in
 `std/src/time/civil/civil_arith_test` (retired `str.len()` API, D249 —
-looks like a pre-existing source bug, unrelated to platform). These are
-**pre-existing, not introduced by this task** (this task only touched
-`std/src/checksums`, per its own scope) — flagged here for whoever picks
-up full `nova test std` on Linux next; not investigated further as it's
-outside `[M-nova-linux-build]`'s brief.
+looks like a pre-existing source bug, unrelated to platform). Whoever picks
+up full `nova test std` on Linux should track these independently.
+
+## Building nova-lsp
+
+The Nova language server is available in `nova-lsp/` within the repository:
+
+```sh
+cd nova-lsp
+cargo build --release
+# → target/release/nova-lsp (executable available in nova-lsp/target/release)
+```
+
+No additional system dependencies are required beyond the standard Nova build setup
+(Rust toolchain, C compiler, Boehm GC). The LSP binary can be used as a
+language server backend for compatible editors (VSCode, Neovim, etc.).
 
 ## TSan / sanitizer builds
 
