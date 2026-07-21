@@ -256,16 +256,19 @@ fn Duration @to_millis_ceil() -> i64 => (@nanos + 999_999) / 1_000_000
 export fn Duration @sleep() Time -> () => Time.sleep(@to_millis_ceil() as int)
 
 /// Suspend the current fiber for at least `d` (Plan 175 Ф.3(b)/Ф.4, D316) —
-/// the canonical **free-function** form (Q6/Q8: user code sees only types +
-/// free `sleep`/`sleep_until`, never calls the `Time` effect directly).
-/// `d <= 0` resolves **immediately** — no error, no negative-sleep trap
-/// (Go/tokio parity; the underlying runtime already treats `ms <= 0` as an
-/// immediate yield, so this holds for any non-positive `Duration`).
-/// Granularity is the libuv timer wheel (~1ms) — `sleep` guarantees
-// П12-хвост (владелец, снос 2026-07-21): свободные обёртки `sleep(d)` /
-// `sleep_until(deadline)` РЕТРАКТИРОВАНЫ (§3 surface=методы + D9 «одна
-// дверь»): канон — `d.sleep()` и `deadline.sleep_until()` (метод в
-// monotonic.nv). Effect-op `Time.sleep(ms)` — слой примитива, не тронут.
+/// canonical free-function form: `sleep(Duration)` requires a typed Duration,
+/// NOT a bare int (unit-ambiguous). `d <= 0` resolves immediately.
+/// NB: временно восстановлено 2026-07-22 (латка d316-строгости после
+/// [M-175-time-*] П12-снос) — метод-канон `d.sleep()` + typed Time вернутся
+/// вместе в эффект-рефакторе 175 Ф.2-v3.
+#stable(since = "0.1")
+export fn sleep(d Duration) Time -> () => d.sleep()
+/// Suspend until a monotonic deadline (D316 Q3). Only `Monotonic`, not
+/// `Timestamp` (wall-clock immune to NTP/DST only via monotonic, D124 §3).
+/// Past deadline resolves immediately (saturate-to-zero, D318).
+#stable(since = "0.1")
+export fn sleep_until(deadline Monotonic) Time -> () =>
+    sleep(deadline.elapsed_since(Monotonic.now()))
 
 
 // ──────────────────────────────────────────────────────────────────────────
