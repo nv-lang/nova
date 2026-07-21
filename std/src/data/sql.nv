@@ -186,7 +186,13 @@ export fn DbRow @at(i int) -> Option[SqlValue] => @values.get(i)
 export fn SqlValue @expect_int() -> Result[i64, DbError] =>
     match @ {
         I(n) => Ok(n)
-        _    => Err(DbError.Constraint("expected I, got ${@}"))
+        // Plan 221.1 (E_INTERP_NO_DISPLAY audit): `SqlValue` has no
+        // `#impl(Display)` — bare `${@}` used to silently reach emit_c's
+        // numeric-cast fallback (print the enum's heap address as an int).
+        // `${@:?}` uses the always-available Debug auto-derive instead —
+        // shows the actual variant/value, which is strictly more useful in
+        // an error message anyway.
+        _    => Err(DbError.Constraint("expected I, got ${@:?}"))
     }
 
 /// Extract str или `Err(Constraint)`.
@@ -194,7 +200,7 @@ export fn SqlValue @expect_int() -> Result[i64, DbError] =>
 export fn SqlValue @expect_str() -> Result[str, DbError] =>
     match @ {
         S(s) => Ok(s)
-        _    => Err(DbError.Constraint("expected S, got ${@}"))
+        _    => Err(DbError.Constraint("expected S, got ${@:?}"))
     }
 
 /// Extract bool или `Err(Constraint)`.
@@ -202,7 +208,7 @@ export fn SqlValue @expect_str() -> Result[str, DbError] =>
 export fn SqlValue @expect_bool() -> Result[bool, DbError] =>
     match @ {
         B(b) => Ok(b)
-        _    => Err(DbError.Constraint("expected B, got ${@}"))
+        _    => Err(DbError.Constraint("expected B, got ${@:?}"))
     }
 
 /// Extract f64 или `Err(Constraint)`. INT→FLOAT promotion разрешена.
@@ -211,7 +217,7 @@ export fn SqlValue @expect_f64() -> Result[f64, DbError] =>
     match @ {
         F(x) => Ok(x)
         I(n) => Ok(n as f64)
-        _    => Err(DbError.Constraint("expected F/I, got ${@}"))
+        _    => Err(DbError.Constraint("expected F/I, got ${@:?}"))
     }
 
 /// Extract i64 в `Option` (NULL → None) — для NULL-able колонок.

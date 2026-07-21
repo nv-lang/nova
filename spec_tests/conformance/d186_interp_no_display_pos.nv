@@ -1,0 +1,39 @@
+// Plan 221.1 (D186-амендмент) [M-interp-numeric-fallback-silent-garbage] POS —
+// companion to neg/d186_interp_no_display_neg.nv. Two legitimate escapes from
+// the new `E_INTERP_NO_DISPLAY` gate on bare `"${x}"` (Display) interpolation
+// of a user record type:
+//
+//   1. Type opts in explicitly — `#impl(Display)` + `fn T @display(mut f Fmt)`
+//      — bare `${x}` dispatches straight to it (unchanged pre-existing
+//      behavior, this diagnostic never touches an already-served type).
+//   2. `${x:?}` (Debug format-spec) — the always-available Debug auto-derive
+//      (gate_on_impl=false for Debug, Plan 91.14 D229) works with NO `#impl`
+//      at all; the new gate is Display-only per its scope.
+//
+// One folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+// (1) explicit opt-in — bare `${x}` dispatches to the user's own @display.
+type D186InterpDisplay { label str }
+
+#impl(Display)
+fn D186InterpDisplay @display(mut f Fmt) -> () {
+    f.write("D186InterpDisplay(".bytes())
+    f.write(@label.bytes())
+    f.write(")".bytes())
+}
+
+// (2) NO `#impl(Display)` at all — only `${x:?}` (Debug) is available.
+type D186InterpDebugOnly { a int, b int }
+
+test "explicit #impl(Display): bare ${x} dispatches to user @display, no gate error" {
+    ro d186_d = D186InterpDisplay { label: "hi" }
+    assert("${d186_d}" == "D186InterpDisplay(hi)")
+}
+
+test "no #impl(Display) at all: ${x:?} still works via Debug auto-derive (gate is Display-only)" {
+    ro d186_dbg = D186InterpDebugOnly { a: 1, b: 2 }
+    ro out = "${d186_dbg:?}"
+    assert(out.contains("1"))
+    assert(out.contains("2"))
+}

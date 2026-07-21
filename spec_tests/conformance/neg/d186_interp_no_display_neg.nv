@@ -1,0 +1,31 @@
+// Plan 221.1 (D186-амендмент) [M-interp-numeric-fallback-silent-garbage] NEG —
+// bare `"${p}"` (Display: no spec, or a rich `Spec` whose kind != Debug)
+// interpolation of a user record type WITHOUT `#impl(Display)` must be a
+// COMPILE ERROR, not silent numeric-cast garbage.
+//
+// Root cause fixed here: emit_c.rs's interpolation lowering has a
+// LAST-RESORT fallback (~42903, `nova_int_to_str((nova_int)(v))`) for any
+// non-primitive expr that reaches bare Display with no `str.from`/`to_str`/
+// `@display` route — it silently printed the record's heap address as a
+// decimal integer. D186 gate_on_impl=true already means "no `#impl(Display)`
+// ⇒ no display method" for the auto-derive synthesis path; this test pins
+// that already-established absence surfacing as an HONEST compile error
+// (`E_INTERP_NO_DISPLAY`) instead of degrading to garbage output at runtime.
+// rustc precedent: `Display` is never auto-derived — a missing impl is a
+// compile error, not a best-effort fallback.
+//
+// See spec/decisions/02-types.md#d186 (amendment) for the rule.
+// Siblings: d186_interp_no_display_pos.nv (has `#impl(Display)` — works),
+// d186_interp_debug_always_works_pos.nv (`${p:?}` — Debug auto-derive,
+// gate_on_impl=false, always available regardless of `#impl`).
+//
+// EXPECT_COMPILE_ERROR E_INTERP_NO_DISPLAY
+
+module neg.d186_interp_no_display_neg
+
+type NoDisplayPoint { x int, y int }
+
+fn bad() -> str {
+    ro p = NoDisplayPoint { x: 1, y: 2 }
+    "${p}"
+}
