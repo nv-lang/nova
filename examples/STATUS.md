@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# examples/ — Ф.1/Ф.2 ревизии выполнены (Plan 197), Ф.3-Ф.5 ещё впереди
+# examples/ — Ф.1/Ф.2/Ф.3 готовы (Plan 197), Ф.5-расширение подготовлено
 
 Аудит + чистка мёртвой поверхности (2026-07-12): удалены явно
 нерабочие/не-user-facing файлы (compiler-тесты, намеренно-нерабочее
@@ -9,18 +9,32 @@ std.data.X.{...}`; wildcard-импорт и т.п.) заменён на кано
 было дёшево. Пример без сохранённого канонического концепта, для которого
 переписка не окупалась, — удалён; пример с ценным концептом, но требующий
 переписи начисто, — перемещён в **[`_wip/`](_wip/)** (не участвует в
-будущем CI-гейте компиляции).
+CI-гейте компиляции).
 
-Большинство `examples/**/*.nv` теперь реально компилируются текущим
-тулчейном (`nova build`). Несколько файлов остаются заблокированы
-**известными багами компилятора** (не авторским содержимым examples) —
-подробности и repro в
-[`docs/plans/197-audit-progress.md`](../docs/plans/197-audit-progress.md):
-generic `.map()`/`Result.map` type-argument inference (ICE), `with EFFECT =
-value { ... }` не парсится внутри тела handler-method, extern-FFI tuple
-return type codegen. Эти баги — вне границ Plan 197, ждут отдельной волны
-compiler-codegen.
+**Ф.3 (2026-07-21):** витринная карта — **[`examples/README.md`](README.md)**
+(8 категорий, нарастающая сложность). Полный переаудит всех `.nv` вне
+`_wip/` (включая новые `tour/**`/`mini_aggregator.nv`, появившиеся между
+07-17 и сегодня) — ноль регрессий на всех ранее зелёных файлах.
 
-См. **[Plan 197](../docs/plans/197-examples-revision.md)** — Ф.3
-(канонический showcase-набор) и Ф.5 (CI-гейт компиляции) ещё не сделаны.
-Флагман — [Plan 187](../docs/plans/187-flagship-concurrency-demo.md).
+Почти все `examples/**/*.nv` вне `_wip/` реально компилируются текущим
+тулчейном (`nova build`/`nova check --strict-effects`). Четыре файла
+остаются заблокированы **подтверждёнными багами компилятора** (не
+авторским содержимым examples) — подробности и repro в
+[`docs/plans/wip/197-audit-progress.md`](../docs/plans/wip/197-audit-progress.md):
+`real_world/orm_decorators.nv` (`SyncDetach` не реализован в std bootstrap),
+`real_world/orm_demo.nv` (`E7001` — `Repo[T].bulk_load[K]`+`Vec[K].map()`
+type-inference), и **новая находка 2026-07-21** —
+`net/echo_client.nv`/`echo_server.nv` (`undefined symbol:
+Nova_TcpStream_consume_cleanup` — `consume TcpStream` внутри `spawn {}`,
+codegen-пробел; эти два файла — часть текущего 5-целевого флагман-гейта
+`nova-gate.yml`, гейт вероятно красный на них прямо сейчас). Эти баги —
+вне границ Plan 197, ждут отдельной волны compiler-codegen.
+
+**Ф.5-подготовка (2026-07-21):** точный список путей для расширения
+CI-гейта на весь `examples/**` (не только 5 флагман-целей) —
+[`docs/plans/wip/197-f5-gate-list.txt`](../docs/plans/wip/197-f5-gate-list.txt).
+`.github/workflows/nova-gate.yml` этим заходом НЕ менялся (только текст
+предложения в плане/gate-list) — включение решает интегратор.
+
+См. **[Plan 197](../docs/plans/197-examples-revision.md)**. Флагман —
+[Plan 187](../docs/plans/187-flagship-concurrency-demo.md).

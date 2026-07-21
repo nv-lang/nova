@@ -1,7 +1,25 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 197 — examples/ ревизия: снести устаревшее, пересобрать канон, дом для 187
 
-**Статус:** 🚧 Ф.1/Ф.2 ГОТОВЫ (2026-07-12), дожаты 2026-07-17 (рестарт
+**Статус:** 🚧 Ф.1/Ф.2/Ф.3 ГОТОВЫ (Ф.3 — 2026-07-21, worktree `nova-ex197`/
+branch `p197-final`): витринная карта [`examples/README.md`](
+../../examples/README.md) (8 категорий, нарастающая сложность,
+build-only/run пометки, Known gaps), полный переаудит без регрессий
+(включая новые `tour/**`×13+`mini_aggregator.nv`, появившиеся между 07-17
+и сегодня — все зелёные). Найдена НОВАЯ регрессия: `net/echo_client.nv`/
+`echo_server.nv` (undefined symbol `Nova_TcpStream_consume_cleanup` —
+`consume TcpStream` внутри `spawn{}`, codegen-пробел, воспроизведено в
+главной репе тем же релизным `nova.exe`) — эти два файла ВХОДЯТ в текущий
+5-целевой флагман-гейт `nova-gate.yml`, из чего следует, что гейт
+**вероятно красный прямо сейчас** (см. [197-audit-progress.md](
+wip/197-audit-progress.md) §«Заход 2026-07-21» — владельцу стоит
+проверить последний CI-прогон/`workflow_dispatch`). Классифицирован как
+KEEP-blocked-by-toolchain (не перенесён в `_wip/` — тот же прецедент, что
+`orm_decorators.nv`/`orm_demo.nv`: готовый контент, не concept-to-rewrite).
+Ф.5-подготовка: точный список путей для расширения CI-гейта на ВЕСЬ
+`examples/**` — [197-f5-gate-list.txt](wip/197-f5-gate-list.txt)
+(BUILD/CHECK по каждому файлу + предложенный текст шага, `nova-gate.yml`
+НЕ менялся). Ранее (2026-07-12), дожаты 2026-07-17 (рестарт
 погибшей волны, worktree `nova-197r`/branch `p197-examples-rest`) — аудит
 всех 29 файлов + чистка мёртвой поверхности + переверификация 19
 не-`_wip`-файлов сегодняшним `nova.exe` (ноль регрессий от промежуточных
@@ -140,6 +158,17 @@ compiler-багами вне скоупа этого плана (`.map()` generi
   покрывает намеченные категории (`basics/effects/ffi/real_world` есть,
   `effects/spawn_demo.nv` — готовый кандидат в отдельную `concurrency/`,
   перенос не делался). Явный reshape — отдельная директива при желании.
+  **✅ ГОТОВО 2026-07-21** (worktree `nova-ex197`/branch `p197-final`):
+  явный reshape папок НЕ сделан (директива этого захода — карта, не
+  редизайн дерева), но эталонный showcase-набор явно зафиксирован как
+  курируемая карта — [`examples/README.md`](../../examples/README.md),
+  8 пунктов нарастающей сложности (hello → getting_started →
+  mini_aggregator → tour/ → effects/ → net+tls → ffi/typed_pointers →
+  flagship/aggregator), с build-only/run-пометками и разделом Known gaps
+  (ссылки на битые/заблокированные исключены из витрины). Полный
+  переаудит всех файлов вне `_wip/` подтверждён `nova build/check
+  --strict-effects` сегодняшним релизным `nova.exe` — см.
+  [197-audit-progress.md](wip/197-audit-progress.md) §«Заход 2026-07-21».
 - **Ф.4 — дом для 187 (флагман):** ✅ РЕШЕНО (владелец 2026-07-11) И ИСПОЛНЕНО фактически:
   `examples/flagship/aggregator/` существует как реализованный проект (src/frontend/loadtest/regressions) —
   моно-репа. **`flagship/` = КАТЕГОРИЯ-тир, каждый демо — именованная подпапка** (масштаб на N
@@ -164,6 +193,45 @@ compiler-багами вне скоупа этого плана (`.map()` generi
   флагман-таргеты), это отдельное расширение `nova-gate.yml` (новый шаг,
   `nova build`/`nova check` по всем `.nv` в `examples/` кроме `_wip/`), не
   сделанное этой волной. Не гейт корректности рантайма — только компиляция.
+  **Ф.5-подготовка 2026-07-21** (worктree `nova-ex197`/branch `p197-final`):
+  точный BUILD/CHECK-список по каждому файлу —
+  [`197-f5-gate-list.txt`](wip/197-f5-gate-list.txt) (30 целей: 28 BUILD +
+  2 CHECK, исключая 4 KEEP-blocked-by-toolchain и 6 `_wip/`-файлов).
+  Предложенный текст нового шага `nova-gate.yml` (НЕ применён — `yml` не
+  трогался этим заходом, решение об включении за интегратором):
+  ```yaml
+        - name: Examples anti-rot — build/check ALL non-flagship examples
+            (--strict-effects)
+          run: |
+            set -e
+            targets_build=(
+              examples/basics/arithmetic.nv examples/basics/demo.nv
+              examples/basics/hello.nv examples/basics/match_demo.nv
+              examples/basics/records.nv examples/basics/strings.nv
+              examples/effects/effects.nv examples/effects/effects_d61.nv
+              examples/effects/spawn_demo.nv examples/ffi/ptr_basics.nv
+              examples/getting_started.nv examples/mini_aggregator.nv
+              examples/plan110/ffi_sqlite_consumable.nv
+              examples/tour/*.nv
+              examples/typed_pointers/basic_pointer.nv
+              examples/typed_pointers/unsafe_fn_keyword.nv
+            )
+            targets_check=(
+              examples/ffi/sqlite_mini.nv
+              examples/tour/greeter/core.nv examples/tour/greeter/loud.nv
+            )
+            # tls/echo_* уже в существующих 5 флагман-целях — не дублировать.
+            # net/echo_*, real_world/orm_* — KEEP-blocked-by-toolchain,
+            # намеренно исключены (см. 197-f5-gate-list.txt) до фикса апстрима.
+            for t in "${targets_build[@]}"; do
+              ./nova-cli/target/release/nova build "$t" --strict-effects
+            done
+            for t in "${targets_check[@]}"; do
+              ./nova-cli/target/release/nova check "$t" --strict-effects
+            done
+  ```
+  Точный список целей (с обоснованием каждого исключения) —
+  [`197-f5-gate-list.txt`](wip/197-f5-gate-list.txt).
 
 ## Гейты
 
