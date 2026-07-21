@@ -1,0 +1,38 @@
+// Bugfix A-Q3 (tour-волна 2026-07-21, найдено на актуальном main): `nova
+// build` (standalone, `cmd_build` in nova-cli/src/main.rs) silently OMITTED
+// the `inject_synthesized_methods` pass (Plan 126.2 Ф.2 — the non-serde
+// auto-derive injector for Equal/Hash/Clone/Compare/Display/Debug). Only the
+// serde-filtered variant ran (pre-check). Root cause: `test_runner.rs` (the
+// `nova test` pipeline this very file runs under) already had this call —
+// so a `#impl(Debug)` auto-derive record's `println("${p:?}")` printed the
+// correct `TypeName { field: value }` form under `nova test`, while the
+// BYTE-IDENTICAL code compiled+run via standalone `nova build` printed the
+// receiver's raw pointer cast to an int (fell all the way through
+// `emit_c.rs`'s `emit_interpolated_str` dispatch chain to the
+// `nova_int_to_str((nova_int)(v))` last-resort fallback — no derived
+// `@debug`/`@display` FnDecl existed in `module.items` for codegen's
+// type-keyed dispatch to find).
+//
+// This fixture pins the CORRECT interpolation behavior (the derive/dispatch
+// logic itself) under the `nova test` pipeline — it cannot exercise
+// `cmd_build`'s own wiring (spec_tests/conformance always runs via `nova
+// test`, never `nova build` — see docs/promts/read-project.md's gate
+// command). The `cmd_build`-specific wiring gap is covered separately by
+// building `examples/basics/debug_derive_println.nv` with plain `nova build`
+// + running the binary (see that file + backlog-followups.md entry for this
+// A-Q3 marker).
+//
+// See spec/decisions/02-types.md#d422 (auto-derive Display/Debug split) and
+// #d229 (Debug named form) for the underlying protocol semantics this
+// fixture is NOT re-litigating — only the println/interpolation dispatch
+// wiring is in scope here.
+module spec_tests.conformance
+
+#impl(Debug)
+type AQ3DebugRecord { x int, y int }
+
+test "A-Q3: println(\"${p:?}\") on auto-derive Debug record — named form, not raw pointer" {
+    ro p = AQ3DebugRecord { x: 1, y: 2 }
+    assert("${p:?}" == "AQ3DebugRecord { x: 1, y: 2 }")
+    println("${p:?}")
+}
