@@ -16103,3 +16103,73 @@ ro Self`) — ОТЛОЖЕНА из V1** (решение владельца 2026
 **Статус: спека нормативна с 2026-07-18 (прод-решение, без V1-упрощений — решение владельца).
 Реализация — [Plan 214](../../docs/plans/214-coerce-attribute.md) (не начата); до Ф.2 действует
 переходно старый write-костыль (документирован в подсекции D55).**
+
+## D433. Match-арм int-width unify + `E_MATCH_ARM_WIDTH_MISMATCH` ([M-match-arm-mixed-int-width-sentinel-coerce], Plan 172.2 followup, 2026-07-21)
+
+**Статус:** закреплён 2026-07-21 (bugfix + enforcement-gap closure, P1 — старейший живой пункт
+backlog-followups.md, семья Plan 172.2). Behavior-changing (меняет наблюдаемое принятие/отклонение
+части `match`-выражений) → D-амендмент в том же слиянии, что и код.
+
+### Что
+
+**Мотив.** `match o { Some(v) => v, None => -1 }` в контексте `Option[u32]` (значит `v` типа
+`u32`) и `None`-арм с сентинелом-литералом `-1` (типа `int`) молча компилировался в C-код,
+типизированный `uint32_t`, — `-1` тихо реинтерпретировался как `4294967295` (bit pattern),
+КОГДА не было внешнего ожидаемого типа, форсирующего верную ширину (например,
+неаннотированный `ro r = match {...}`; аннотированный `ro r int = match {...}` или прямой
+`-> int`-возврат matcha уже работали верно — там ширина брался из аннотации/return-типа, а не
+из самого match). Причина: `infer_match_common_primitive` (единственный производитель
+согласованного типа арм matcha) бейлил в `None` при ЛЮБОМ расхождении типов арм, и codegen'ный
+legacy-фоллбек (`infer_expr_c_type`'s Match-арм / `emit_match`'s собственный arm-type-цикл)
+подбирал тип ПЕРВОГО non-`nova_int` арма — произвольно, безотносительно к типу ДРУГОГО арма.
+Триггер исчез из std.unicode после миграции `compose_pair → Option[u32]` (D327), но остался
+в компиляторе — тихая дыра (§1 + §4 compiler-conventions.md), P1 с 2026-06-26.
+
+### Правило
+
+**(R1) Safe-widening unify.** Если арм'ы matcha — int-family (`Scalar`) с РАЗНЫМИ типами, но
+ОДНА сторона безопасно расширяется в другую (D54 `would_narrow_into` — тот же критерий, что
+уже разрешает неявное присваивание `u32`-значения в `int`-локаль без `as`; ключевое правило:
+`unsigned → строго более широкий signed` безопасно, `signed → unsigned` — НИКОГДА неявно),
+общий тип matcha = БОЛЕЕ ШИРОКАЯ сторона — а не тип первого/произвольного арма. Закрывает
+описанный выше баг: `u32`-payload-арм + `int`-сентинел-арм теперь детерминированно унифицируются
+в `int`, `-1` остаётся `-1`. Итеративно (N>2 арм): при переходе к каждому следующему арму
+common сравнивается с ТЕКУЩИМ (уже расширенным) common, не с первым исходным армом.
+
+**(R2) Genuine mismatch → `E_MATCH_ARM_WIDTH_MISMATCH`.** Если НИ ОДНА сторона не расширяется
+безопасно в другую (оба направления — narrowing; типовой случай: одинаковая ширина, разная
+знаковость, `i32` vs `u32` — `signed → unsigned` запрещено правилом D54 категорически, ширина
+тут не помогает) — раньше это ТОЖЕ тихо бейлилось в `None` и ловило тот же произвольный-arm-
+codegen-баг. Теперь — hard compile error ДО кодогена, с точкой на несовместимом арме и
+заметкой на первом установленном типе; требует явного `... as <T>` на одном из арм, ровно как
+уже требуется для несовместимого присваивания (D54). Это НОВОЕ отклонение ранее молча
+принимавшихся программ — источник D-амендмента.
+
+**(R3) Область: int-family (`Scalar`) ТОЛЬКО.** Расхождение НЕ-числовых типов арм
+(`Float` vs `Float`, `record` vs `record`, …) не тронуто — `infer_match_common_primitive`
+по-прежнему бейлит в `None` МОЛЧА для этих категорий (unchanged pre-existing behavior, вне
+периметра этого маркера; отдельный follow-up при реальном триггере).
+
+### Реализация
+
+`compiler-codegen/src/types/mod.rs`: `infer_match_common_primitive` (unify через
+`would_narrow_into`, R1) + новая `check_match_arm_width_mismatch` (диагностика, R2), обе
+построены над общим `match_arm_value_types` (per-arm `(Span, ResolvedType)` экстракция,
+единый источник для канала И диагностики — §0/§3). Вызывается из `f1_expr`'s
+`ExprKind::Match`-ветки ДО материализации канала.
+
+### Тесты
+
+`detect172/u172_2_match_arm_width_pos.nv` (R1: широкий/узкий unify, three-arm progressive,
+explicit-`as`-unify) + `detect172/neg/n_match_arm_width_mismatch.nv` (R2, `EXPECT_COMPILE_ERROR
+E_MATCH_ARM_WIDTH_MISMATCH`) · `spec_tests/conformance/d129_match_arm_width_widen.nv` (R1,
+конформанс-CU) + `spec_tests/conformance/neg/n_match_arm_width_mismatch.nv` (R2).
+
+### Связь
+
+Использует [D54](03-syntax.md#d54-операторы-as-и-is) (`would_narrow_into`/narrowing-критерий —
+единственный источник, тот же, что метод-arg enforcement Plan 172.2) · [D129](#d129)
+(`int`≡`i64`-alias — сентинел-литерал `-1` типизируется `int`, широкая сторона unify) ·
+[D327](#d327) (Codepoint=`u32` — миграция, убравшая исходный триггер из std.unicode, не из
+компилятора) · Backlog `[M-match-arm-mixed-int-width-sentinel-coerce]`
+(`docs/plans/backlog-followups.md`, Plan 172.2 followup, P1).
