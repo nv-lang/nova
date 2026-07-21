@@ -51,7 +51,7 @@
 
 ## Ф.1 — Стабилизация (частично ▶СЕЙЧАС — прогоны находят баги раньше!)
 
-- [ ] **A-S1 ▶СЕЙЧАС** Полный `nova test` Windows — батчи 1-5 ПРОГНАНЫ 2026-07-21
+- [x] **A-S1 ✅ 2026-07-21** Полный `nova test` Windows — батчи 1-5 ПРОГНАНЫ 2026-07-21
       (std целиком: collections/checksums/encoding/math/text/unicode 32/0 ·
       io/fs/path/time/os/crypto/data/identifiers 24/0 · runtime/concurrency/testing/prelude
       11/1 · net/ffi/sort/text 2/0 · examples+flagship-regressions). Находки: (1)
@@ -59,7 +59,11 @@
       RUN-FAIL 3/3 → фикс-волна В ПОЛЁТЕ (бисекция: пачка-2026-07-21 или давний);
       (2) `spawn_capture_value_struct` — RUN-FAIL под конкурентной нагрузкой батча,
       изолированно 3/3 PASS → флака-подозрение (гонка под нагрузкой?), перепроверка
-      ×10 на тихой машине в A-R1. Остаток: nova_tests-baseline батч (после CPU).
+      ×10 на тихой машине в A-R1. Обе находки ЗАКРЫТЫ: mut_clock — корень в тест-раннере
+      (folder-модуль читал ENV-директивы только из алфавитно-первого peer; влит+запушен);
+      флака — на перепроверку A-R1. nova_tests-baseline: 313 каталогов 4 батчами — 169 PASS,
+      12 компайл-фейлов = документированное легаси (STATUS.md: retired-API str.from и пр.,
+      non-blocking с 2026-07-11, миграция Plan 198) — НЕ релиз-блокеры.
 - [ ] **A-S2** Полный `nova test` WSL Linux `[WSL]` — ⛓A-S1-рецепт (те же батчи), после Linux-гонки.
 - [ ] **A-S3** loadtest.ps1 полный (10× комбо + concurrency 80) `[флагман]` — ⛓A-B1.
 - [ ] **A-S4 ▶СЕЙЧАС** Соседние репы: nova-tls/http/compress suites зелёные `[соседние репы]` (sonnet).
