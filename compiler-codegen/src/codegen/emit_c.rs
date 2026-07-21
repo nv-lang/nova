@@ -12498,6 +12498,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         };
         match &body.kind {
             ExprKind::Block(b) => {
+                // [M-217-spawn-body-toplevel-bare-consume-let-noop] BUGFIX:
+                // this raw per-statement loop used to skip `enter_defer_scope`/
+                // `leave_defer_scope` entirely — unlike EVERY other block-
+                // emission site (`emit_supervised`'s own body, match arms, `if`/
+                // `while` bodies, …), which all wrap their stmts with the
+                // defer-scope prologue/epilogue (mirrors `emit_supervised`
+                // just above, ~line 12630). A plain `defer` statement directly
+                // at spawn-body top level silently never ran; worse, a BARE
+                // auto-cleanup `consume x = e` (Plan 217 hybrid, no `{ … }`
+                // scope-block) directly at spawn-body top level got its
+                // `active_var`/`consume_policy` entry registered nowhere —
+                // `enter_defer_scope`'s prologue is the ONLY place that scans
+                // for `auto_cleanup_qualifies` lets and arms them — so the
+                // resource's `@cleanup` never fired at all (found via a probe
+                // that placed `consume r = mk(1)` directly in `spawn { }` with
+                // no enclosing match/if: `on_resource_exit` never invoked,
+                // `exit_calls` stayed 0 — a silent resource leak, not merely a
+                // missing-symbol/link defect). Nested blocks (a `match`/`if`
+                // arm INSIDE the spawn body) were unaffected — those go
+                // through their own `enter_defer_scope` call in their own
+                // emission function regardless of the outer spawn context,
+                // which is why `examples/net/echo_server.nv`'s `consume s =
+                // stream` (nested inside a `match … { Ok(consume stream) =>
+                // { … } }` arm) still got a dispatch call emitted (the
+                // separate DCE-seeding defect this wave's `lints.rs` fix
+                // addresses) — only a BARE top-level spawn-body consume-let
+                // hit this second, independent gap.
+                let block_id = self.enter_defer_scope(b, false);
                 for stmt in &b.stmts {
                     self.emit_stmt(stmt)?;
                 }
@@ -12505,6 +12533,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let v = self.emit_expr(trailing)?;
                     emit_parfor_send(self, &v);
                 }
+                self.leave_defer_scope(block_id);
             }
             _ => {
                 let v = self.emit_expr(body)?;
@@ -58267,6 +58296,45 @@ mod dce_tests {
             !dm.contains(&("Inner".to_string(), "cleanup".to_string())),
             "inner (nested-field) cleanup reached only via the outer \
              cleanup's own nested consume-scope must survive"
+        );
+    }
+
+    #[test]
+    fn bare_consume_let_seeds_cleanup_method() {
+        // [M-217-spawn-closure-consume-cleanup-undefined] regression guard
+        // (Plan 217 D-новый, гибрид C): a BARE `consume x = e` (auto-cleanup
+        // hybrid — NO trailing `{ … }` block, unlike `Stmt::ConsumeScope`
+        // above) synthesizes the SAME scope-exit dispatch to
+        // `Nova_<T>_consume_cleanup` (`enter_defer_scope`'s auto-cleanup
+        // prologue scan) — the `.cleanup(…)` selector is never spelled as an
+        // AST node here either. Found via `nova build examples/net/
+        // echo_server.nv --strict-effects` (`consume stream = conn` inside a
+        // `spawn { … }` closure): method-DCE pruned `(TcpStream, cleanup)`
+        // because only the `Stmt::ConsumeScope` bare-name seed existed, not
+        // one for plain `Stmt::Let{consume: true}` — the definition was
+        // dropped while the call site (AST-driven, independent of DCE) still
+        // linked against it → `undefined symbol Nova_TcpStream_consume_cleanup`.
+        // (A second, independent defect in the same area — `emit_spawn`'s
+        // top-level body loop skipping `enter_defer_scope` entirely, so a
+        // BARE consume-let directly at spawn-body top level never armed at
+        // all — is fixed separately in `emit_spawn` and guarded by the
+        // spec_tests/conformance d432 fixture's spawn-closure test, since
+        // that defect is about runtime dispatch, not DCE/reachability.)
+        let dm = dead_methods(
+            "module t\n\
+             type Boom consume { id int }\n\
+             fn Boom consume @cleanup(_o ScopeOutcome) -> () => ()\n\
+             fn mk(v int) -> Boom => { id: v }\n\
+             fn main() -> () => {\n\
+               consume b = mk(1)\n\
+               ro _n = b.id\n\
+             }\n",
+            true,
+        );
+        assert!(
+            !dm.contains(&("Boom".to_string(), "cleanup".to_string())),
+            "cleanup method reached only via a BARE consume-let's auto-cleanup \
+             (no `{{ … }}` scope-block) must survive method-DCE"
         );
     }
 
