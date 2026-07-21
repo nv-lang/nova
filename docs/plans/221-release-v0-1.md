@@ -19,12 +19,29 @@
       (один путь = `*_display_spec`; остатки честные: pad user-типов + ptr-debug).
 - [x] **A-B3 ✅ 2026-07-21** Ш2: перенос примитив-тел — ВЛИТ (план 208 «один путь» закрыт
       целиком; V1-упрощение #3 снято). A-B3a (write-collision, file-anchored types) — тоже ✅ влит.
-- [ ] **A-B4** box-vtable P2 `[emit_c/vtable]` (sonnet) — ⛓A-B2 (зона emit_c).
+- [x] **A-B4 ✅ 2026-07-21** box-vtable P2 `[emit_c/vtable]` (sonnet, worktree `nova-boxvt`,
+      ветка `p-fix-box-vtable`, коммит `847cdbc84`) — `[M-protocol-box-callarg-vtable-incomplete]`
+      РЕШЁН (тот же корень закрыл и «latent protocol-box» из A-B6 ниже — одна запись backlog,
+      два пункта плана). Root: (1) `fn_protocol_params` регистрировался только внутри `emit_fn`
+      без пре-пасса — caller, эмитящийся раньше callee, пропускал бокс даже для generic-протокола;
+      (2) `protocol_type_args` безусловно возвращал `None` для NAMED non-generic протокола, хотя
+      `type_ref_to_c` уже лоуэрил такой параметр/возврат в `NovaBox_<Proto>` — CC-FAIL на call-arg
+      И return. Фикс: пре-пасс + `protocol_type_args` теперь `Some((proto, vec![]))` для
+      non-generic + 2 box-имя-форматера поправлены (без хвостового `_`). Фикстура
+      `spec_tests/conformance/m221_protocolbox_callarg_ok.nv` (3 позитивных теста). Гейты:
+      conformance мега-CU PASS 130/FAIL 0/SKIP 18; флагман `--strict-effects` build чист, test
+      9 PASS/1 SKIP (1 RUN-FAIL `aggregate.nv:45` — подтверждён pre-existing timing-флаки,
+      standalone PASS ×2, не связан с protocol-кодом). Отдельно найден (НЕ чинился, вне зоны
+      атома) `[M-protocol-embed-vtable-missing-method]` — use-embed протокол теряет
+      embedded-метод в vtable-struct (другой корень: codegen не зеркалит checker-side
+      `flatten_protocol_methods`).
 - [x] **A-B5 ✅ 2026-07-21** net-утечка-b free-on-close — ВЛИТ (refcount §9, утечка −87%,
       риск-гейты UAF зелёные).
 - [ ] **A-B6** Мелочь P3/P4: d55-const `[emit_c]` · ~~oot-дефисы~~ ✅ (корень = чужой
       ancestor-манифест, out-of-repo экземпт D78, влит) · generic-match-scope-gap `[types]` ·
-      latent protocol-box `[emit_c]` — остаток по освобождении зон.
+      ~~latent protocol-box~~ ✅ 2026-07-21 (закрыт вместе с A-B4, см. выше; followup
+      `[M-protocol-embed-vtable-missing-method]` заведён отдельно, P2) — остаток по
+      освобождении зон.
 - [x] **A-B7 ✅ 2026-07-21** 216-defer-хвосты — ВЛИТЫ (Err-пейлоады + tuple-пейлоады
       consume-enforce, спек-амендмент 05-memory; record-пейлоад = узкий followup
       `[M-216-record-payload-consume]`).
