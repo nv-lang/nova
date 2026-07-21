@@ -16,9 +16,29 @@ Display И Debug, теперь девиртуализованно зовут `*_
 D422-амендмент («Статус реализации» + V1-упрощение #3 частично закрыто) — в `spec/decisions/02-types.md`;
 примеры §3/§4/§6/§9 (доредизайновые `f64_fmt_into`/buf-first) переписаны на канон §10R-Д. Гейты:
 эталоны Ш0 (см. ниже — блокированы ПОСТОРОННИМ багом, см. маркер), fmt_buf/core 1/0, string_builder_test
-1/0, checksums 3/0. **Ш2 — СТОП** (перенос примитив-тел требует второго цикла fmt_buf↔prelude —
-компиляторная находка, патч-репро в wip/208-f4r-sh2-blocked-repro.patch; заблокирован ОТДЕЛЬНЫМ
-маркером `[M-fmt-write-protocol-collision-cycle-adjacent]`, `docs/plans/backlog-followups.md`).
+1/0, checksums 3/0. **Ш2 — ЗАКРЫТА (2026-07-21, worktree `nova-sh2`, ветка `p208-sh2-bodies`,
+sonnet):** блокер снят — оба компиляторных фикса (`[M-imports-order-dependent-cycle]`,
+`[M-fmt-write-protocol-collision-cycle-adjacent]`) уже в main. Примитивные `@display`/`@debug`
+(int/f64/f32/bool/char/str-`@debug`; str's `@display` уже была некруговой, не тронута) в
+`std/src/prelude/protocols.nv` переписаны с циркулярной заглушки (`f.write("${@}".bytes())`) на
+прямые вызовы `*_display_spec`-семейства (`runtime.string_builder`) — тот же движок, что Ш3
+девиртуализует для fast-path; протокольный путь (`v.display(f)`/`v.debug(f)` на абстрактном `Fmt`,
+например `Option[T Debug]`/`Result[…]`) теперь зовёт ОДИН источник рендер-семантики. Архитектура:
+тело рендерит в свежий `consume sb = StringBuilder.new()` (т.к. `*_display_spec` требует конкретный
+`StringBuilder`, а `@display(mut f Fmt)` получает абстрактный `Fmt`), затем один
+`f.write(sb.into_str().bytes())`. Импорт `std.runtime.string_builder.{...}` в `protocols.nv` НЕ
+новый цикл (`string_builder.nv` `#no_prelude`, не импортирует `prelude.protocols` обратно —
+однонаправленно, как уже существующий `fmt_buf`-импорт). D422-амендмент («Статус реализации» +
+V1-упрощение #3 ПОЛНОСТЬЮ закрыто) — в `spec/decisions/02-types.md`. Гейты: `nova check`
+(checker-only, обходит НЕСВЯЗАННЫЙ write_at ICE) на трёх эталонах Ш0 — PASS 3/0 (216 WARN, все
+предсуществующие); изолированный standalone codegen-репро (`nova build`+run, вне conformance-папки —
+обходит write_at ICE) — bare Display/Debug на всех шести примитивах PASS, ПЛЮС полиморфный путь
+через `Option[T Debug]`/`Option[T Display]`/`Result[…]` (единственный реальный вызыватель
+перенесённых тел) — PASS; `fmt_buf/core_test` 1/0, `string_builder_test` 1/0, `checksums` 3/0
+(fnv/adler32/crc32); `d374_write_sink_decouple` (checker) PASS 1/0; флагман
+`examples/flagship/aggregator/src/main.nv --strict-effects` built чисто (70.34s, только предсущ.
+warnings). Полный мега-CU НЕ гонялся (блокирован тем же НЕСВЯЗАННЫМ
+`[M-d216-write-at-return-type-unknown-cc-panic]`, за интегратором).
 **Находка Ш4 (вне scope, P1):** `nova test spec_tests/conformance` (мега-CU) падает
 internal-error на НЕСВЯЗАННОМ `d216_ptr_methods_174_5.nv` (`.write_at` P67-LEGACY panic,
 `emit_c.rs`) — подтверждено НЕ регрессией Ф.4R (репро на нетронутом main-бинаре тоже);
@@ -495,6 +515,13 @@ Debug-escape str/char (портируемый цикл, .nv) · поверх —
   Debug-escape, bool/char.
 - **Ш2 (std; sonnet):** переезд примитивных `@display`/`@debug`-тел из prelude/protocols.nv
   в fmt_buf-extension → протокольный путь становится .nv-истинным и zero-alloc.
+  **✅ ЗАКРЫТА (2026-07-21).** Физически тела ОСТАЛИСЬ в `protocols.nv` (не переехали в
+  `fmt_buf.nv` — тот перенос требовал бы `protocols.nv ↔ fmt_buf.nv` цикл поверх уже
+  разрешённого; вместо этого тела зовут `*_display_spec` из `string_builder.nv`
+  ОДНОНАПРАВЛЕННЫМ импортом, без нового цикла) — не zero-alloc (свежий `StringBuilder` на
+  каждый вызов, не стек-буфер), но .nv-истинный: единственный источник рендер-семантики,
+  циркулярная заглушка убита. zero-alloc для этого пути — задокументированный follow-up,
+  не регрессия (примитивы сюда попадают редко — только полиморфный generic-путь).
 - **Ш3 (компилятор, АТОМ; sonnet по карте):** fast-path эмитит вызовы `*_display_spec`
   вместо conv.h-цепочки; kill-switch `NOVA_FMT_LEGACY=1` (старая эмиссия) для
   байт-дифф-верификации на корпусе НА ОДНОМ бинаре. Гейт: эталоны Ш1 + байт-паритет

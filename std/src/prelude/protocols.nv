@@ -62,6 +62,20 @@ module prelude.protocols
 // otherwise stays clear of.
 import std.runtime.fmt_buf.{Align, Sign, FmtKind}
 
+// Plan 208 Ф.4R Ш2 (D422 §5 V1-упрощение #3 closeout): primitive `@display`/
+// `@debug` bodies below call the SAME `*_display_spec` family the compiler's
+// own fast-path devirtualizes to (Ш3) — the single-source-of-truth render
+// engine now lives in `runtime.string_builder` (Ш1 architecture-v2 moved it
+// there FROM `fmt_buf.nv` specifically to avoid a fmt_buf↔string_builder
+// import cycle; see `docs/plans/wip/208-f4r-notes.md` Ш1). Importing
+// `runtime.string_builder` HERE is NOT a new cycle: `string_builder.nv` is
+// `#no_prelude` and does not import `prelude.protocols` (or anything that
+// does) back — one-directional, same shape as the `fmt_buf` import above.
+// (The BLOCKING cycle that stopped Ш2 originally was importing
+// `prelude.protocols` FROM `fmt_buf.nv` — the reverse direction, which
+// really did loop; going protocols → string_builder here never did.)
+import std.runtime.string_builder.{StringBuilder, int_display_spec, f64_display_spec, f32_display_spec, bool_display_spec, char_display_spec, char_debug_display_spec, str_debug_display_spec}
+
 // [M-numeric-try-narrowing] (2026-07-20, D430): `RangeError` — return type
 // of the `try_to_<T>` checked-narrowing family further down in this file.
 // Same import shape as `collections.nv`'s `{CharFromError, TryFromCharError,
@@ -631,67 +645,123 @@ export type AsSlice[T] protocol {
 // the f64 formatter; `@append(f32)` casts to f64; interp-map routes `${f32}`
 // directly to conv.h. Numeric debug == display (no escaping).
 
-// Plan 174.2 (str.from-ретракция) + Plan 208 Ф.2 (D422 signature migration):
-// тела ниже пишут через интерполяцию ("${@}" / "${@:?}") НАПРЯМУЮ — НЕ через
-// `.to_str()` (инвариант рекурсии: `.to_str()`'s blanket-тело САМО есть
-// `"${@}"`; примитив-путь `${@}` лоуэрится в emit_c.rs::emit_interpolated_str
-// прямо в nova_int_to_str/nova_f64_to_str/… — цикла нет ни в одну, ни в
-// другую сторону). Debug-тело численных примитивов идентично display (D229 —
-// numbers don't need escaping), спеллинг через `:?` — та же C-функция
-// (nova_*_to_debug_str == nova_*_to_str, conv.h).
+// Plan 208 Ф.4R Ш2 (D422 §5, V1-упрощение #3 CLOSEOUT, 2026-07-21): тела ниже
+// БОЛЬШЕ НЕ круговая заглушка через интерполяцию ("${@}"/"${@:?}" — тот старый
+// вид звал компиляторный fast-path САМ НА СЕБЯ через codegen-lowering, живя
+// как трюк, не реальная семантика). Теперь — ПРЯМЫЕ вызовы того же
+// `*_display_spec`-семейства (`runtime.string_builder`), которое Ш3 девиртуализует
+// компиляторный fast-path на (`${x}`/`${x:spec}` литеральных мест). Протокольный
+// путь (полиморфный `v.display(f)`/`v.debug(f)` через абстрактный `Fmt`, e.g.
+// `Option[T Display]`/`Result[…]` ниже, будущий generic `Vec[T]`/`[]T`) теперь
+// зовёт ТОТ ЖЕ .nv-рендер-движок, а не отдельную циркулярную дорожку — closing
+// the "one source of truth" invariant (§10R inвариант-приёмка).
 //
-// `.bytes()` on the interpolated-string RESULT (a runtime `str` VALUE, not a
-// literal) is required now that `Write.@write` takes `[]u8` (D374 aменд ×2)
-// — D55's literal→[]u8 coercion only covers literal `"..."` positions, not
-// an interpolated expression's result (D176 explicit-.bytes() rule).
+// Механизм: `@display(mut f Fmt)` получает АБСТРАКТНЫЙ `Fmt` (не конкретный
+// `StringBuilder`, который `*_display_spec` требует по сигнатуре) — так что
+// каждое тело рендерит в СВЕЖИЙ scratch `StringBuilder` (маленький,
+// стек-подобный по духу — как §3's "generic-путь: рендер в буфер + один
+// write" — `*_display_spec` пишет digit-loop через `@reserve`/`@advance`
+// НАПРЯМУЮ на этот конкретный SB, а не байт-за-байтом через абстрактный
+// `Write`), затем ОДИН `f.write(scratch.into_str().bytes())` копирует итог в
+// реальный sink. `width=0`/`Align.Left`/`fill=' '` — no-op паддинг-оси (bare
+// вызов без спека; `@pad_in_place` рано возвращает при `content_chars >=
+// width`, т.е. `width<=0` всегда безопасный no-op); `radix=10`/
+// `upper=false`/`zero_pad=false`/`sign_plus=false`/`alt=false` — decimal
+// bare-рендер, зеркалит старое bare-поведение байт-в-байт (не квирк, не
+// новое поведение — то же, что компиляторный fast-path эмитит для bare int).
 //
-// These bodies are the STRUCTURAL-satisfaction primitive for `Display`/
-// `Debug` (required, no default per D422 §3) — the compiler's OWN
-// interpolation codegen (`emit_interpolated_str`/`emit_format_spec_value`)
-// never actually CALLS them for a bare or rich-spec primitive (it keeps its
-// pre-existing direct `conv.h` fast path, unchanged byte-for-byte). They are
-// exercised only when a primitive is dispatched to POLYMORPHICALLY through a
-// generic `Fmt`-typed sink — e.g. `Option[T Debug]`/`Result[T Debug, E Debug]`
-// below calling `v.debug(f)` where `T`/`E` monomorphizes to a primitive, or a
-// future `Vec[T]`/`[]T` generic Display (Ф.3). Radix/width/alternate axes on
-// `f` are therefore NOT read here (`f.kind()` stays unconsulted) — a nested
-// `${container:x}` hex-formatting its primitive elements is out of THIS
-// phase's scope (no existing call site exercises it; documented follow-up,
-// see `docs/plans/208-impl-progress.md`).
+// Debug-тело численных примитивов идентично Display (D229 — числа не
+// экранируются) — `*_display_spec` тот же вызов, что и Display-тело (см.
+// docstring `int_display_spec`/`f64_display_spec` в string_builder.nv:
+// "Debug for int/f64 is identical to Display per conv.h"). `char`/`str`
+// Debug зовут `*_debug_display_spec`-близнецов (кавычки+эскейпы,
+// `str_debug_fmt`/`char_debug_fmt`, fmt_buf.nv Ш1 движок).
+//
+// Compiler's OWN interpolation codegen (`emit_interpolated_str`/
+// `emit_format_spec_value`, Ш3) devirtualizes bare/rich-spec int/f64/f32 (и,
+// после этого Ш2, композиция для остальных примитивов остаётся возможной
+// follow-up'ом Ш3 — см. 208-f4r-notes.md "Follow-up") ПРЯМО на резолв
+// `*_display_spec`, минуя ЭТИ protocol-тела — они exercised когда примитив
+// дошёл сюда ПОЛИМОРФНО (через `Fmt`-typed generic sink), т.е. эти два пути
+// теперь СХОДЯТСЯ на одном движке, не дублируют семантику.
 #impl(Display)
-fn int @display(mut f Fmt) -> () { f.write("${@}".bytes()) }
+fn int @display(mut f Fmt) -> () {
+    consume sb = StringBuilder.new()
+    int_display_spec(sb, @, 0, 10, false, false, false, false, Align.Left, ' ')
+    f.write(sb.into_str().bytes())
+}
 #impl(Debug)
-fn int @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
+fn int @debug(mut f Fmt) -> () {
+    consume sb = StringBuilder.new()
+    int_display_spec(sb, @, 0, 10, false, false, false, false, Align.Left, ' ')
+    f.write(sb.into_str().bytes())
+}
 
 #impl(Display)
-fn f64 @display(mut f Fmt) -> () { f.write("${@}".bytes()) }
+fn f64 @display(mut f Fmt) -> () {
+    consume sb = StringBuilder.new()
+    f64_display_spec(sb, @, 0, false, -1, false, false, Align.Left, ' ')
+    f.write(sb.into_str().bytes())
+}
 #impl(Debug)
-fn f64 @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
+fn f64 @debug(mut f Fmt) -> () {
+    consume sb = StringBuilder.new()
+    f64_display_spec(sb, @, 0, false, -1, false, false, Align.Left, ' ')
+    f.write(sb.into_str().bytes())
+}
 
-// Plan 180: f32 display/debug — f32-precise shortest-round-trip formatter
-// (nova_f32_to_str, strtof-based), routed directly by the interp `${f32}`
-// dispatch (emit_c.rs primitive_to_str_fn). Widening to f64 first
-// (`@ as f64` before interpolating) would surface the f32→f64 mantissa tail
-// (0.1f → "0.10000000149011612"); the direct f32 interp path keeps "0.1".
+// Plan 180: f32 display/debug — f32-PRECISE shortest-round-trip formatter
+// (`f32_fmt`/`nova_f32_shortest`, NOT widen-to-f64 first — widening surfaces
+// the f32→f64 mantissa tail, `0.1f` → `"0.10000000149011612"`); mirrors the
+// bare `${f32val}` interp path (emit_c.rs `primitive_to_str_fn`'s
+// `nova_f32_to_str`). Numeric debug == display (no escaping).
 #impl(Display)
-fn f32 @display(mut f Fmt) -> () { f.write("${@}".bytes()) }
+fn f32 @display(mut f Fmt) -> () {
+    consume sb = StringBuilder.new()
+    f32_display_spec(sb, @, 0, Align.Left, ' ')
+    f.write(sb.into_str().bytes())
+}
 #impl(Debug)
-fn f32 @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
+fn f32 @debug(mut f Fmt) -> () {
+    consume sb = StringBuilder.new()
+    f32_display_spec(sb, @, 0, Align.Left, ' ')
+    f.write(sb.into_str().bytes())
+}
 
 #impl(Display)
-fn bool @display(mut f Fmt) -> () { f.write("${@}".bytes()) }
+fn bool @display(mut f Fmt) -> () {
+    consume sb = StringBuilder.new()
+    bool_display_spec(sb, @, 0, Align.Left, ' ')
+    f.write(sb.into_str().bytes())
+}
 #impl(Debug)
-fn bool @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
+fn bool @debug(mut f Fmt) -> () {
+    consume sb = StringBuilder.new()
+    bool_display_spec(sb, @, 0, Align.Left, ' ')
+    f.write(sb.into_str().bytes())
+}
 
 #impl(Display)
-fn char @display(mut f Fmt) -> () { f.write("${@}".bytes()) }
+fn char @display(mut f Fmt) -> () {
+    consume sb = StringBuilder.new()
+    char_display_spec(sb, @, 0, Align.Left, ' ')
+    f.write(sb.into_str().bytes())
+}
 #impl(Debug)
-fn char @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
+fn char @debug(mut f Fmt) -> () {
+    consume sb = StringBuilder.new()
+    char_debug_display_spec(sb, @, 0, Align.Left, ' ')
+    f.write(sb.into_str().bytes())
+}
 
 #impl(Display)
 fn str @display(mut f Fmt) -> () { f.write(@bytes()) }
 #impl(Debug)
-fn str @debug(mut f Fmt) -> () { f.write("${@:?}".bytes()) }
+fn str @debug(mut f Fmt) -> () {
+    consume sb = StringBuilder.new()
+    str_debug_display_spec(sb, @, 0, false, -1, Align.Left, ' ')
+    f.write(sb.into_str().bytes())
+}
 
 
 // ──────────────────────────────────────────────────────────────────────────
