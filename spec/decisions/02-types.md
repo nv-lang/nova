@@ -7848,6 +7848,56 @@ auto-derive `str.from(@)` pattern).
 > `E_PROTO_IMPL_MUT_FOR_CONSUME`, `E_PROTO_IMPL_CONSUME_FOR_MUT`.
 > See [D209](04-effects.md#d209--protocol-method--syntax--receiver-mutability-plan-1084-2026-06-09).
 
+> ⚠️ **D186 AMENDED by Plan 221.1 (2026-07-21)
+> [M-interp-numeric-fallback-silent-garbage]** — closes an ENFORCEMENT GAP in
+> the "Gate semantics" table above: `Interpolation "${u}" | ✅ да` was already
+> normative (interpolation requires `#impl(P)` same as bare call), but the
+> codegen path for the built-in canonical `Display` protocol specifically
+> (`emit_c.rs`'s bare-`${x}` lowering) had NO corresponding compile-time
+> check — a user record/sum/namedtuple/newtype interpolated bare (`"${p}"`,
+> not `"${p:?}"`) WITHOUT `#impl(Display)` compiled silently and reached a
+> LAST-RESORT numeric-cast fallback (`nova_int_to_str((nova_int)(v))`,
+> emit_c.rs ~42903) — printing the value's heap address as a decimal
+> integer instead of erroring per the gate this section already mandates.
+>
+> **Fix:** new type-checker diagnostic `E_INTERP_NO_DISPLAY`
+> (`types/mod.rs::check_interp_no_display`, called from the `f1_expr_inner`
+> `ExprKind::InterpolatedStr` arm) fires when a bare-Display interpolated
+> expression's static type is a **non-generic** `Record`/`Sum`/`NamedTuple`/
+> `Newtype` declared type that has neither (a) an explicit `@display`
+> method, (b) a gate-satisfied `#impl(Display)` auto-derive synthesis
+> (already registered in the checker's `synth_methods` overlay before this
+> pass runs — same predicate `find_method_decl(T, "display")` covers both),
+> nor (c) the pre-existing D410 `str.from(T)` / `T.to_str()` fallback route.
+> rustc precedent: `Display` is never auto-derived; a missing impl is a
+> compile error, not a best-effort runtime fallback.
+>
+> **Scope — deliberately narrow** (avoids overreach into adjacent, already-
+> handled or mono-time-only concerns):
+> - generic type-parameters in scope (`fn f[T](x T)`) — bound-satisfiability
+>   is a mono-time concern, not decidable structurally pre-monomorphization;
+> - generic (parametrized) declared types — `Vec[T]`, builtin
+>   `Option`/`Result`, a user `Box[T]` — routed via
+>   `try_generic_mono_interp_dispatch` / the Option-Result `DeclaredBody`
+>   special-case in `emit_c.rs`, neither visible to this pre-mono checker
+>   pass;
+> - typed pointers (`&v`, `*p`, `e as *T`) — separately covered by
+>   `E_PTR_NO_DISPLAY_USE_DEBUG_STR` (Plan 91.14/118, D216 §15); `*T` Debug
+>   auto-derive remains a distinct open item
+>   (`[M-91.14-ptr-auto-derive]`), untouched by this amendment;
+> - `${x:?}` (Debug format-spec) is **unaffected** — Debug synthesis already
+>   uses `gate_on_impl=false` (D229/D237, unconditional auto-derive), so it
+>   remains available with no `#impl` regardless of this gap-closure.
+>
+> Fixture: `spec_tests/conformance/neg/d186_interp_no_display_neg.nv` (pin),
+> `spec_tests/conformance/d186_interp_no_display_pos.nv` (both legitimate
+> escapes: explicit `#impl(Display)`, and `${x:?}` with no `#impl` at all).
+> One real pre-existing occurrence found + fixed in std during the
+> pre-enforcement audit: `std/src/data/sql.nv`'s `SqlValue @expect_*`
+> error-message interpolations (`"expected I, got ${@}"`) — `SqlValue` (a
+> closed sum, no `#impl(Display)`) was silently printing its own heap
+> address in `DbError.Constraint` messages; changed to `${@:?}` (Debug).
+
 ---
 
 ## D200. Associated constants — `const` field в `type X`

@@ -9343,7 +9343,15 @@ impl<'a> TypeCheckCtx<'a> {
             }
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts {
-                    if let InterpStrPart::Expr { expr: e, spec: _ } = p {
+                    if let InterpStrPart::Expr { expr: e, spec } = p {
+                        // Plan 221.1 (D186-амендмент): bare `"${x}"` (Display)
+                        // interpolation of a user record/sum/newtype/named-tuple
+                        // WITHOUT `#impl(Display)` used to silently reach
+                        // emit_c's numeric-cast last-resort fallback
+                        // (`nova_int_to_str((nova_int)(v))`) — prints the
+                        // object's address as garbage int. See
+                        // `check_interp_no_display` doc for full scope.
+                        self.check_interp_no_display(e, gs, scope, spec, errors);
                         self.f1_expr(e, gs, scope, errors);
                     }
                 }
@@ -13903,6 +13911,143 @@ impl<'a> TypeCheckCtx<'a> {
                 matches!(&f.return_type, Some(TypeRef::Named { path, .. })
                     if path.len() == 1 && path[0] == "str")
             }))
+    }
+
+    /// Plan 221.1 [M-interp-numeric-fallback-silent-garbage]: mirrors the
+    /// D410 fallback emit_c.rs checks (~42887-42904) right before its
+    /// numeric-cast last resort — `str.from(T)` overload OR `T.to_str()`
+    /// INSTANCE method. Either routes bare `${x}` to a real string
+    /// conversion instead of the garbage numeric cast, so a type
+    /// satisfying this predicate must NOT get `E_INTERP_NO_DISPLAY`.
+    /// Deliberately narrower than `t_satisfies_str_from` above (which also
+    /// accepts `@into() -> str` — the retracted D73 Into[str] auto-derive
+    /// path, no longer consulted by emit_c's interpolation fallback).
+    fn interp_display_via_str_from_or_to_str(&self, tname: &str) -> bool {
+        let str_from = self.method_overloads("str", "from")
+            .map_or(false, |fns| fns.iter().any(|f| {
+                f.params.len() == 1
+                    && matches!(&f.params[0].ty, TypeRef::Named { path, .. }
+                        if path.last().map_or(false, |s| s == tname))
+            }));
+        if str_from { return true; }
+        self.method_overloads(tname, "to_str")
+            .map_or(false, |fns| fns.iter().any(|f| f.receiver.is_some()))
+    }
+
+    /// Plan 221.1 (D186-амендмент) [M-interp-numeric-fallback-silent-garbage]:
+    /// bare `"${x}"` (Display: `spec` is `None` or a non-Debug rich `Spec`)
+    /// interpolation of a user value-type WITHOUT `#impl(Display)` used to
+    /// silently reach emit_c's LAST-RESORT numeric-cast fallback
+    /// (`nova_int_to_str((nova_int)(v))`, emit_c.rs ~42903) — prints the
+    /// object's heap address as a decimal integer with zero diagnostic.
+    /// D186 gate_on_impl=true already means "no `#impl(Display)` ⇒ no
+    /// display method" for the synthesis path (`try_synthesize_default_
+    /// method`, gate_on_impl=true for Display) — this pass turns that
+    /// already-established absence into an honest compile error instead of
+    /// letting codegen degrade to silent garbage. rustc precedent: `Display`
+    /// is never auto-derived; a missing impl is a compile error, not a
+    /// best-effort fallback.
+    ///
+    /// Scope — deliberately narrow, non-generic value types only
+    /// (`td.generics.is_empty()`):
+    ///   - `Record` / `Sum` / `NamedTuple` / `Newtype` declared types.
+    ///
+    /// Explicitly OUT of scope (left silent here — handled elsewhere or a
+    /// distinct, already-covered concern):
+    ///   - primitives / `str` / `char` — never reach emit_c's fallback at
+    ///     all (early-out at emit_c.rs ~42775-42778);
+    ///   - typed pointers (`&v`, `*p`, `e as *T`) — already banned via
+    ///     `E_PTR_NO_DISPLAY_USE_DEBUG_STR` (`UnsafeCtx::walk_expr` above,
+    ///     Plan 91.14/118 D216 §15); `*T` Debug auto-derive is a SEPARATE
+    ///     open item ([M-91.14-ptr-auto-derive]), not touched here;
+    ///   - generic type-parameters in scope (`gs.contains(name)`) — bound-
+    ///     satisfiability is a mono-time concern the checker cannot decide
+    ///     structurally pre-monomorphization;
+    ///   - generic (parametrized) declared types — `Vec[T]`, builtin
+    ///     `Option`/`Result`, or a user `Box[T]` (`!td.generics.is_empty()`)
+    ///     — routed in emit_c via `try_generic_mono_interp_dispatch` /
+    ///     the Option-Result `DeclaredBody` special-case, neither of which
+    ///     is visible to this pre-mono pass; flagging here risks a false
+    ///     positive against a type that DOES resolve fine post-mono.
+    fn check_interp_no_display(
+        &self,
+        ex: &Expr,
+        gs: &HashSet<String>,
+        scope: &HashMap<String, TypeRef>,
+        spec: &crate::ast::FormatSpec,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let spec_is_display = match spec {
+            crate::ast::FormatSpec::None => true,
+            crate::ast::FormatSpec::Debug => false,
+            crate::ast::FormatSpec::Spec(s) => {
+                !matches!(s.kind, crate::ast::format_spec::Kind::Debug)
+            }
+        };
+        if !spec_is_display {
+            return;
+        }
+        // CharLit is never a user type — mirrors emit_c's
+        // `!matches!(e.kind, ExprKind::CharLit(_))` gate at ~42775/~42690.
+        if matches!(ex.kind, ExprKind::CharLit(_)) {
+            return;
+        }
+        let tname = match self.infer_expr_type(ex, scope) {
+            Some(TypeRef::Named { path, generics, .. }) if generics.is_empty() => {
+                match path.last() {
+                    Some(n) => n.clone(),
+                    None => return,
+                }
+            }
+            _ => return,
+        };
+        if gs.contains(&tname) {
+            return; // generic type-param in scope — mono-time concern.
+        }
+        if matches!(
+            tname.as_str(),
+            "int" | "float" | "f32" | "f64" | "bool" | "char" | "str"
+        ) {
+            return;
+        }
+        let td = match self.types.get(&tname) {
+            Some(td) => td,
+            None => return, // unknown/builtin name — leave to other passes.
+        };
+        if !td.generics.is_empty() {
+            return; // generic declared type (incl. Option/Result) — mono-time concern.
+        }
+        let is_user_value_type = matches!(
+            td.kind,
+            TypeDeclKind::Record(_)
+                | TypeDeclKind::Sum(_)
+                | TypeDeclKind::NamedTuple(_)
+                | TypeDeclKind::Newtype(_)
+        );
+        if !is_user_value_type {
+            return;
+        }
+        if self.find_method_decl(&tname, "display").is_some() {
+            return; // explicit `@display` OR gate-satisfied auto-derive synth.
+        }
+        if self.interp_display_via_str_from_or_to_str(&tname) {
+            return; // D410 `str.from(T)` / `T.to_str()` fallback still applies.
+        }
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_INTERP_NO_DISPLAY] type `{}` has no `#impl(Display)` — bare \
+                 string interpolation `\"${{...}}\"` would otherwise silently \
+                 print a numeric cast of the value instead of a real \
+                 representation (Plan 91.9 D186: gate_on_impl=true — Display is \
+                 opt-in, never auto-derived; rustc precedent: missing impl is a \
+                 compile error, not a best-effort fallback). Fix: add \
+                 `#impl(Display)` above `type {}` plus a `fn {} @display(mut f \
+                 Fmt)` method, or use `${{x:?}}` for the always-available Debug \
+                 auto-derive.",
+                tname, tname, tname,
+            ),
+            ex.span,
+        ));
     }
 
     /// record/sum-тип. Пустые типы (unit), эффекты (handler — значение),
