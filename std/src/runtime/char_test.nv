@@ -49,3 +49,33 @@ test "char: to_str() and to_stringbuilder() together on the same value" {
     consume sb = c.to_stringbuilder()
     assert(viastr == sb.into_str())
 }
+
+// Регрессия [M-forin-crosspkg-char-to_str-blanket-collision] (2026-07-21,
+// нашедшая A-S4 / for-in cross-package): codegen-side twin бага выше.
+// `char @to_str()` резолвится ТОЛЬКО через bare-T blanket (`fn[T] T @to_str()
+// -> str`) — но `[]u8 @to_str() -> Result[str, Utf8Error]` (Plan 174.1/196.7,
+// std/runtime/string/core.nv) — КОНКРЕТНЫЙ метод на ДРУГОМ типе с ТЕМ ЖЕ
+// именем. `infer_call_ret_c`'s name-only legacy fallback (`fn_ret_{method}`,
+// emit_c.rs) — единый ключ БЕЗ receiver-типа, куда пишет forward-decl ЛЮБОГО
+// `to_str`-метода; т.к. generic-blanket методы возвращаются РАНЬШЕ (свой
+// early-return в forward-decl pass, никогда не пишут в этот ключ), ключ
+// всегда содержит return-тип ПОСЛЕДНЕГО зарегистрированного КОНКРЕТНОГО
+// `to_str` — здесь `[]u8`'s `Result[str, Utf8Error]`, а НЕ `char`'s `str`.
+// Найдено через `std/src/encoding/url.nv`'s `for b in c.to_str().bytes()`
+// (внутри `for c in s.chars()`) — `.bytes()` на ошибочно-инференном
+// `Result`-типе эродировало до `nova_int`, и for-in терял резолв
+// iterator-типа (`cannot resolve iterator type for expression of C-type
+// 'nova_int'`) — воспроизведено в `nova-http` (5×CODEGEN-FAIL), но корень
+// НЕ cross-package: same-CU/same-package коллизия имени метода. Фикс:
+// codegen предпочитает bare-T blanket (`mono_method_decls[("T"/1-2 uppercase
+// letters, method)]`) ПЕРЕД name-only fallback для ПРИМИТИВНОГО receiver'а.
+test "char.to_str().bytes() nested for-in — no []u8.to_str() name collision" {
+    mut total = 0
+    for c in "aB".chars() {
+        for b in c.to_str().bytes() {
+            total = total + (b as int)
+        }
+    }
+    // 'a' (0x61=97) + 'B' (0x42=66) = 163.
+    assert(total == 163)
+}

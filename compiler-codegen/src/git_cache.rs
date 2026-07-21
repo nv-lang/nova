@@ -27,7 +27,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Результат материализации git-зависимости.
 #[derive(Debug, Clone)]
@@ -211,6 +211,34 @@ fn memo_key(url: &str, pin: &GitPin, locked: Option<&str>) -> String {
     format!("{}\u{0}{:?}\u{0}{}", url, pin, locked.unwrap_or(""))
 }
 
+/// Task 2 (nova-http `--jobs>1` race): per-key mutex serializing the WHOLE
+/// check-memo → do-git-work → insert-memo critical section for a given
+/// `(url, pin, locked_commit)` combination. `nova test --jobs N` runs N
+/// CUs on separate THREADS in one process (`nova-cli/src/main.rs`
+/// `n_workers`/thread::spawn, not separate processes) — `memo()`'s own
+/// Mutex only protected the two individual map accesses, not the git
+/// `clone`/`fetch`/`worktree add` work IN BETWEEN: two threads could both
+/// see a memo-miss, then BOTH run `git fetch`/`git worktree add` against
+/// the SAME bare-repo directory concurrently — `git worktree add` on a
+/// commit that a sibling thread is mid-checkout'ing (or two concurrent
+/// `git fetch`s against one `.git` dir) intermittently corrupts/locks the
+/// repo, surfacing as the observed "fetch git-зависимости ... importing
+/// file: error.nv" failures on random CUs under `--jobs 16`+. Each
+/// DISTINCT key gets its own lock (`Arc<Mutex<()>>`, entry created under
+/// the outer table's lock then immediately released) so unrelated
+/// dependencies still resolve fully in parallel — only same-key racers
+/// serialize, and the second-in-line then hits a warm memo/cache hit
+/// (cheap) instead of redoing the git work.
+fn key_locks() -> &'static Mutex<HashMap<String, Arc<Mutex<()>>>> {
+    static L: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+    L.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn lock_for_key(key: &str) -> Arc<Mutex<()>> {
+    let mut table = key_locks().lock().unwrap();
+    table.entry(key.to_string()).or_insert_with(|| Arc::new(Mutex::new(()))).clone()
+}
+
 /// Материализовать git-зависимость в кэше по умолчанию
 /// (`git_cache_root()`); вернуть checkout рабочего дерева на нужном
 /// commit'е.
@@ -228,6 +256,13 @@ pub fn resolve_git_dep(
         .map(|s| s.to_string())
         .or_else(|| locked_commit_for(url));
     let key = memo_key(url, pin, effective.as_deref());
+    // Serialize the ENTIRE check-memo → git-work → insert-memo section per
+    // key (see `lock_for_key` doc) — closes the `--jobs>1` git-fetch race
+    // (Task 2). Fast path (already memoized) still only pays for the lock
+    // acquire + a HashMap lookup; only a genuine same-key cache-miss race
+    // pays for waiting out the winner's git work instead of duplicating it.
+    let per_key = lock_for_key(&key);
+    let _guard = per_key.lock().unwrap();
     if let Some(hit) = memo().lock().unwrap().get(&key).cloned() {
         return Ok(hit);
     }
@@ -653,5 +688,65 @@ mod tests {
 
         fs::remove_dir_all(&src).ok();
         fs::remove_dir_all(&cache).ok();
+    }
+
+    /// Task 2 regression (`--jobs>1` git-fetch race, forin-crosspkg wave):
+    /// N threads concurrently resolving the SAME `(url, pin)` through the
+    /// PUBLIC `resolve_git_dep` (the memo'd entrypoint every real call site
+    /// uses — `imports.rs`/`lockfile.rs`/`nova-cli/src/main.rs`) must not
+    /// race each other's `git clone`/`fetch`/`worktree add` on the shared
+    /// bare-repo dir. Before the per-key lock (`lock_for_key`) this
+    /// reproduced intermittently: `memo()`'s Mutex only guarded the two
+    /// individual map accesses, leaving the slow git work in between
+    /// unsynchronized — concurrent `git worktree add` on the same commit
+    /// (or overlapping `git fetch`s on the same `.git` dir) sporadically
+    /// errored. `NOVA_HOME` is overridden per-test-process (this test
+    /// mutates process env — `#[test]` runs in threads of ONE process, so
+    /// this must be the only test in the binary touching `NOVA_HOME`;
+    /// isolated via a unique temp dir + serial-safe because no other test
+    /// here reads/writes `NOVA_HOME`) so this exercises the REAL
+    /// `git_cache_root()`-based cache path, not the direct
+    /// `resolve_git_dep_in` bypass the other tests use.
+    #[test]
+    fn concurrent_resolve_same_key_no_race() {
+        let (src, commit) = make_source_repo("race");
+        let home = std::env::temp_dir().join(format!(
+            "nova_git_race_home_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&home).unwrap();
+        // SAFETY: single-threaded env mutation point — no other test in
+        // this binary reads/writes NOVA_HOME, and all N worker threads
+        // spawned below only READ it (via git_cache_root()) after this set.
+        unsafe { std::env::set_var("NOVA_HOME", &home); }
+        let url = src.to_string_lossy().to_string();
+
+        let handles: Vec<_> = (0..16)
+            .map(|_| {
+                let url = url.clone();
+                std::thread::spawn(move || {
+                    resolve_git_dep(&url, &GitPin::Tag("v1.0.0".into()), None)
+                })
+            })
+            .collect();
+        let results: Vec<Result<GitResolution>> =
+            handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+        for (i, r) in results.iter().enumerate() {
+            assert!(r.is_ok(), "worker {} failed: {:?}", i, r.as_ref().err());
+        }
+        for r in &results {
+            let r = r.as_ref().unwrap();
+            assert_eq!(r.commit, commit);
+            assert!(r.checkout.join("nova.toml").is_file());
+        }
+
+        unsafe { std::env::remove_var("NOVA_HOME"); }
+        fs::remove_dir_all(&src).ok();
+        fs::remove_dir_all(&home).ok();
     }
 }
