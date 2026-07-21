@@ -53762,6 +53762,50 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Option/Result sum-method dispatch). NOT detached.
                         if obj_ty.starts_with("NovaOpt_") {
                             self.icr_trace("B11q_novaopt_methods");
+                            // [M-196-b11q-root-cause] Plan 196 B11q/B11r deep-dive
+                            // (2026-07-21): env-gated site probe (`NOVA_196_B11Q_SITE_TRACE`,
+                            // debug-only, zero release cost), kept in the tree as a
+                            // diagnostic aid (mirrors `NOVA_B5_MEANINGFUL_TRACE`'s
+                            // precedent) — prints the call-site span + enclosing fn so a
+                            // future wave can re-isolate any NEW class landing in this
+                            // bucket without re-deriving the harness. ROOT CAUSE isolated
+                            // this wave (`d30_try_op_unwrap_pair.nv`'s hit traced to
+                            // `current_fn=debug`, i.e. it fires FROM INSIDE
+                            // `Option[T Debug]@debug`'s OWN body, not from user code):
+                            // the recursive `v.debug(f)` call in that body (and the
+                            // `Result[T,E Debug]@debug` twin's `v.debug(f)`/`e.debug(f)`)
+                            // has receiver type `T`/`E` — a BARE generic type-param bound
+                            // by the `Debug` protocol, not a concrete type. Channel 2's
+                            // producer (`resolve_instance_method_return_arity`) has NO
+                            // route for "receiver is a generic param name currently in
+                            // scope, dispatch via ITS PROTOCOL BOUND": the existing
+                            // protocol-receiver branch (~16138) only fires when
+                            // `type_name` IS ITSELF a declared protocol's name (e.g. a
+                            // param literally typed `w Writer`), and
+                            // `resolve_prefix_generic_method_return`'s bare-typevar scan
+                            // matches by COINCIDENTAL same-spelling generic names across
+                            // UNRELATED declarations in `method_table` (order-dependent
+                            // over a `HashMap`), not by the receiver's ACTUAL bound —
+                            // confirmed by a minimal isolated repro
+                            // (`Some(Some(42))` / `${x:?}`, generates
+                            // `Nova_Option_method_debug_NovaOpt_nova_int`, whose body's
+                            // `v.debug(f)` — `v: T` where the OUTER T is itself bound to
+                            // `Option[int]` — is exactly this call). A real fix needs the
+                            // CURRENT function's own `f.generics` (WITH bounds — `gs`,
+                            // threaded through 31 call-sites as `&HashSet<String>`, drops
+                            // bounds entirely) available at the call-resolution site —
+                            // new cross-cutting checker state, not a local patch, and
+                            // squarely a protocol-DISPATCH question (this wave's other
+                            // agents' `types/mod.rs` zone) rather than a resolve-channel
+                            // fallback-engine one. NOT attempted this wave; documented
+                            // for the next. See `docs/plans/196-one-truth-closeout.md`.
+                            #[cfg(debug_assertions)]
+                            if std::env::var_os("NOVA_196_B11Q_SITE_TRACE").is_some() {
+                                eprintln!(
+                                    "[B11Q-SITE] method={} obj_ty={} span={:?} current_fn={:?} expr_id={:?} expr_id_set={}",
+                                    method, obj_ty, expr.span, self.current_fn_name, expr.id, expr.id.is_set()
+                                );
+                            }
                             let elem_ty = Self::debt_unmangle_ptr_suffix(
                                 obj_ty.strip_prefix("NovaOpt_")
                                     .unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"))
@@ -53836,6 +53880,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // below).
                         if Self::is_result_like(&obj_ty) {
                             self.icr_trace("B11r_result_like_methods");
+                            // [M-196-b11q-root-cause] env-gated site probe, kept
+                            // (debug-only, zero release cost) — same diagnostic +
+                            // same root cause as the B11q comment just above:
+                            // `Result[T,E Debug]@debug`'s own `v.debug(f)`/
+                            // `e.debug(f)` recursive calls have a bare
+                            // generic-type-param receiver bound by `Debug`, a
+                            // class Channel 2 has no producer for. NOT attempted
+                            // this wave; see the full writeup at B11q.
+                            #[cfg(debug_assertions)]
+                            if std::env::var_os("NOVA_196_B11Q_SITE_TRACE").is_some() {
+                                eprintln!(
+                                    "[B11R-SITE] method={} obj_ty={} span={:?} current_fn={:?} expr_id={:?} expr_id_set={}",
+                                    method, obj_ty, expr.span, self.current_fn_name, expr.id, expr.id.is_set()
+                                );
+                            }
                             // Plan 59 Ф.7.5-lite: inline-aware (T,E) inference.
                             let (ok_c, err_c) = self.resolve_result_te(obj, &obj_ty)
                                 .unwrap_or_else(|| panic!("[P67-LEGACY] Result T/E unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0)", obj_ty));
