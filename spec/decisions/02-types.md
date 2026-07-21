@@ -8599,6 +8599,46 @@ Plan 118 family scope:
 > `[M-139.1-hash-irreducible-crypto-seed]`). **9/10 str-методов — Nova-body**
 > (`@concat`/`@compare` закрывают Ф.3); operator-lowering `+`/`<`/… —
 > сознательно C (perf, option (b)).
+>
+> **Амендмент (владелец, 2026-07-21): оператор `+` для `str` РЕТРАКТИРОВАН —
+> string-конкатенация через `+` больше не существует в языке.** До этого
+> амендмента `nova_str + nova_str` был не документированной в D46 (общая
+> operator-overloading таблица) фичей: codegen (`emit_c.rs`, BinOp-арм `lty ==
+> "nova_str"`) молча лоуэрил его в `Nova_str_method_concat`, минуя `@plus`
+> (см. блок option (b) выше) — де-факто рабочий, но НИГДЕ в спеке не
+> санкционированный операторный `+` на строках. Закрытие дыры, не
+> ретракция задокументированного поведения:
+>
+> - **Hard error `E_STR_CONCAT_PLUS`** — бинарный `+`, где хотя бы один
+>   операнд определённо `str` (typed-checker, `types/mod.rs::walk_expr`,
+>   `is_arith`-блок; permissive на unknown/generic-T, симметрично
+>   `E_MIXED_WIDTH_ARITH` рядом). Сообщение — «string `+` is not part of
+>   the language; use string interpolation (`"${a}${b}"`) instead — or,
+>   inside a loop, a `StringBuilder` + `.append` (repeated `+` is O(n²))».
+> - **Канон.** Вне цикла — string-интерполяция `"${a}${b}"`. Внутри
+>   цикла — `StringBuilder.new()` + `.append(...)` + `.into_str()`
+>   (не repeated `+`/`.concat()`: O(n²)).
+> - **`@concat` НЕ ретрактирован** — `s.concat(t)` (std/src/runtime/
+>   string/transform.nv) остаётся явным, вызываемым методом (perf-
+>   идентичен старому lowering'у: alloc + 2×memcpy). Lint
+>   `W_STR_CONCAT_METHOD` (perf-conventions реестр, Plan 185) рекомендует
+>   интерполяцию вместо явного `.concat(...)` вне цикла;
+>   `W_STR_CONCAT_LOOP` — то же самое внутри цикла (в т.ч. `.to_str()`-
+>   RHS), рекомендуя `StringBuilder`.
+> - **`@plus` (str, transform.nv: `str @plus(other str) -> str =>
+>   @concat(other)`) НЕ удалён**, но операторный синтаксис `a + b` на
+>   него больше не диспатчится — `E_STR_CONCAT_PLUS` срабатывает на
+>   уровне AST (`ExprKind::Binary{Add}`) ДО любого метод-резолва,
+>   независимо от того, определён ли `@plus`. D46 (`03-syntax.md`) —
+>   таблица «оператор → метод» перестаёт применяться к `str`+`+`
+>   конкретно (единственное исключение в языке; `@plus` для остальных
+>   типов — без изменений).
+> - **Операторы сравнения/равенства `str` — БЕЗ ИЗМЕНЕНИЙ.** `<` / `<=` /
+>   `>` / `>=` / `==` / `!=` над `nova_str` продолжают лоуэриться как и
+>   раньше (option (b) выше, `Nova_str_method_compare`/`_equal`) — этот
+>   амендмент касается ИСКЛЮЧИТЕЛЬНО `+` (`BinOp::Add`).
+> - **Негатив-фикстура:** `spec_tests/conformance/neg/str_concat_plus_neg.nv`
+>   (`EXPECT_COMPILE_ERROR E_STR_CONCAT_PLUS`) пинует текст ошибки.
 - `*uninit T` — pointer к possibly-uninit T (pointee init/layout contracts off);
   также degraded-форма после арифметики (alignment/bounds gone). **§10a rename
   (Plan 174.5, 2026-07-11):** was `*unsafe T` — see the amendment at the end

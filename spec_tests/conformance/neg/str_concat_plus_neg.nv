@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_STR_CONCAT_PLUS
+//
+// Владелец 2026-07-21: строковая конкатенация через `+` ретрактирована —
+// закрытие несанкционированной фичи (была НИГДЕ не специфицирована в спеке,
+// codegen молча лоуэрил `nova_str + nova_str` в `Nova_str_method_concat`).
+// D-амендмент: spec/decisions/02-types.md D216 §1 (str-блок, рядом с
+// `@concat`/operator-lowering option (b)) + spec/decisions/03-syntax.md D46.
+// Канон — string-интерполяция `"${a}${b}"` (или `StringBuilder`+`.append`
+// в цикле). `@concat` остаётся явным методом — НЕ ретрактирован.
+
+module neg.str_concat_plus_neg
+
+fn d_str_concat_plus_bad() -> str {
+    ro a = "hello, "
+    ro b = "world"
+    a + b   // ✗ E_STR_CONCAT_PLUS — оператор `+` для str не существует
+}

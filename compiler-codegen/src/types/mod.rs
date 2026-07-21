@@ -19066,6 +19066,20 @@ fn typeref_is_bool_or_unit(ty: &TypeRef) -> bool {
     }
 }
 
+/// Владелец 2026-07-21 (D-амендмент, spec/decisions/02-types.md, рядом с
+/// D55/str-блоками): is this type definitively `str`? Transparent over
+/// L1/L2 modifier wrappers, как `typeref_is_bool_or_unit`. Conservative:
+/// permissive (returns `false`) on unknown/generic types — same convention
+/// as the sibling helpers above (не ловит T-параметры generic-функций,
+/// резолвящиеся в `str` только на mono).
+fn typeref_is_str(ty: &TypeRef) -> bool {
+    match ty {
+        TypeRef::Named { path, .. } => path.last().map_or(false, |s| s == "str"),
+        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) => typeref_is_str(inner),
+        _ => false,
+    }
+}
+
 fn prim_ref(name: &str, span: Span) -> TypeRef {
     TypeRef::Named {
         path: vec![name.to_string()],
@@ -20140,6 +20154,39 @@ impl<'a> BoundCtx<'a> {
                              str, char, or a type carrying `@compare`). Boolean ordering \
                              is method-only via `@compare` (D183 / Plan 150 D248), not \
                              the `<` operator. Use `==` / `!=` for boolean equality."
+                                .to_string(),
+                            e.span,
+                        ));
+                    }
+                }
+                // Владелец 2026-07-21 (D-амендмент, spec/decisions/02-types.md,
+                // рядом с D55/str-блоками): string `+` is NOT part of the
+                // language — `str` не специфицирован в спеке как имеющий
+                // арифметические операторы; ранее это была несанкционированная
+                // фича (codegen Plan 13 Ф.9.2 молча лоуэрил `BinOp::Add` на
+                // `nova_str` в `Nova_str_method_concat`). Закрытие дыры:
+                // hard error, ЕДИНСТВЕННЫЙ канон — интерполяция
+                // (`"${a}${b}"`) или явный `@concat`/`StringBuilder.append`
+                // (в цикле). Gate — конкретно `BinOp::Add` (Sub/Mul/Div/Mod
+                // на str и так не имеют смысла/недостижимы — нет
+                // `@minus`/`@times` и т.п.); permissive на unknown/generic-T
+                // (та же конвенция, что и E_MIXED_WIDTH_ARITH ниже — не
+                // ловит generic-параметр, резолвящийся в `str` только на
+                // mono). `@concat` (str/transform.nv) остаётся явным методом
+                // — НЕ ретрактирован, просто operator-sugar `+` над ним
+                // больше не существует.
+                if matches!(op, BinOp::Add) {
+                    let is_str = |x: &Expr| {
+                        Self::infer_arg_ty(x, scope).map_or(false, |t| typeref_is_str(&t))
+                    };
+                    if is_str(left) || is_str(right) {
+                        errors.push(Diagnostic::new(
+                            "[E_STR_CONCAT_PLUS] string `+` is not part of the \
+                             language; use string interpolation \
+                             (`\"${a}${b}\"`) instead — or, inside a loop, a \
+                             `StringBuilder` + `.append` (repeated `+` is \
+                             O(n²)). `@concat` remains available as an \
+                             explicit method (`a.concat(b)`)."
                                 .to_string(),
                             e.span,
                         ));
