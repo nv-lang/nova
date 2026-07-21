@@ -1,0 +1,34 @@
+// Plan 221.1 (D229-амендмент) [M-interp-numeric-fallback-silent-garbage]
+// follow-up NEG — bare `"${p:?}"` (Debug) interpolation of a user record
+// type with ZERO `#impl(...)` annotations must be a COMPILE ERROR, not
+// silent numeric-cast garbage.
+//
+// Root cause (coordinator repro, confirmed Windows AND Linux):
+// `println("${d:?}")` for a plain record with no `#impl` at all printed a
+// raw heap address instead of erroring or deriving. `emit_c.rs`'s Debug
+// branch calls `try_synthesize_default_method_with_gate(..., gate_on_impl=
+// false)` claiming "zero-friction, no annotation needed" — but that call
+// can never actually synthesize Debug (its candidate search requires a
+// protocol default body, and `Debug`'s protocol decl explicitly has none,
+// D229 §2). The REAL Debug synthesis mechanism used everywhere
+// (`inject_synthesized_methods`, auto_derive.rs) gates on `#impl(Debug)`
+// being literally present — matching D229 §4 ("Когда user type X помечен
+// `#impl(Debug)`") and its own §7 error-code table, which already reserves
+// `E_DEBUG_PRINTABLE_NOT_IMPLEMENTED` for exactly this case. That code was
+// never wired to fire anywhere in the compiler before this fix.
+//
+// See spec/decisions/02-types.md D229 amendment (Plan 221.1 follow-up) for
+// the rule. Siblings: d186_interp_no_display_pos.nv (both legitimate
+// escapes — explicit `#impl(Display)`, explicit `#impl(Debug)`),
+// neg/d186_interp_no_display_neg.nv (the sibling Display-side gap).
+//
+// EXPECT_COMPILE_ERROR E_DEBUG_PRINTABLE_NOT_IMPLEMENTED
+
+module neg.d229_interp_no_debug_neg
+
+type NoDebugPoint { x int, y int }
+
+fn bad() -> str {
+    ro p = NoDebugPoint { x: 1, y: 2 }
+    "${p:?}"
+}

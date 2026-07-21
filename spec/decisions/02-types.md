@@ -7885,9 +7885,17 @@ auto-derive `str.from(@)` pattern).
 >   `E_PTR_NO_DISPLAY_USE_DEBUG_STR` (Plan 91.14/118, D216 §15); `*T` Debug
 >   auto-derive remains a distinct open item
 >   (`[M-91.14-ptr-auto-derive]`), untouched by this amendment;
-> - `${x:?}` (Debug format-spec) is **unaffected** — Debug synthesis already
->   uses `gate_on_impl=false` (D229/D237, unconditional auto-derive), so it
->   remains available with no `#impl` regardless of this gap-closure.
+> - `${x:?}` (Debug format-spec) is handled by a **SIBLING** diagnostic,
+>   `E_DEBUG_PRINTABLE_NOT_IMPLEMENTED` (`check_interp_no_debug`) — see the
+>   D229 amendment below. ⚠️ **CORRECTION (same-day follow-up, coordinator
+>   repro):** an earlier revision of this bullet claimed Debug synthesis is
+>   unconditional (`gate_on_impl=false`) and therefore always available with
+>   no `#impl` at all — that claim was **WRONG**, verified false by a
+>   standalone runtime repro (`println("${d:?}")` on a plain record with
+>   ZERO `#impl` annotations printed a raw heap address on both Windows and
+>   Linux). See D229 amendment for the actual mechanism and why the
+>   `gate_on_impl=false` flag never accomplishes what its comment claims for
+>   Debug specifically.
 >
 > Fixture: `spec_tests/conformance/neg/d186_interp_no_display_neg.nv` (pin),
 > `spec_tests/conformance/d186_interp_no_display_pos.nv` (both legitimate
@@ -12790,6 +12798,74 @@ Primitives (int/f64/f32/bool/char/str) — explicit @debug в `std/prelude/proto
 - Plan 91.14 (this D-block's home plan)
 - Plan 91.13 — JSON conformance (sibling, just landed)
 - Plan 91.8a.2 — Display infrastructure (foundation, ~80% mechanism reused)
+
+> ⚠️ **D229 AMENDED by Plan 221.1 (2026-07-21)
+> [M-interp-numeric-fallback-silent-garbage] follow-up** — wires up the
+> `E_DEBUG_PRINTABLE_NOT_IMPLEMENTED` code this section's §7 table already
+> reserved, but which no code in the compiler ever actually raised.
+>
+> **Root cause (coordinator repro, confirmed both Windows and Linux):**
+> `println("${d:?}")` for `type D { a int, b int }` with **NO** `#impl(...)`
+> annotation at all printed a raw heap address (e.g. `2640040103904`), not
+> `"D { a: 1, b: 2 }"`. `emit_c.rs`'s Debug branch (~42816) calls
+> `try_synthesize_default_method_with_gate(t, c, "debug", gate_on_impl=false)`
+> with a comment describing this as "zero-friction... no annotation needed"
+> — but that call is DEAD for `Debug` specifically: its candidate search
+> requires a protocol method with `default_body.is_some()`, and this
+> section's own §2 protocol declaration explicitly ships `Debug` with **NO**
+> default body ("Compiler synthesizes per-type via `inject_synthesized_
+> methods`"). The candidate list is therefore always empty regardless of the
+> gate flag — `gate_on_impl=false` never fires the intended bypass for
+> Debug. The REAL synthesis mechanism actually used everywhere in the
+> current implementation is `inject_synthesized_methods` (auto_derive.rs,
+> hand-written memberwise-body generator per §4 above), and it gates on
+> `td.impl_protocols` containing `"Debug"` literally — i.e. **`#impl(Debug)`
+> IS required** in the shipping implementation, exactly as this section's
+> §4 already states ("Когда user type X помечен `#impl(Debug)`") and
+> exactly matching its own §7 error-code reservation — that diagnostic was
+> simply never wired to fire; the type silently fell through to `emit_c.rs`'s
+> generic non-primitive interpolation fallback (`nova_int_to_str`) instead,
+> the SAME numeric-cast garbage class the sibling `E_INTERP_NO_DISPLAY`
+> (D186 amendment above) closes for bare Display.
+>
+> ⚠️ **Retraction:** an earlier pass at this same fix (D186 amendment above,
+> same-day) asserted "Debug synthesis already uses `gate_on_impl=false`
+> (D229/D237, unconditional auto-derive)... available with no `#impl`
+> regardless" — that assertion was **WRONG**, based on the emit_c comment's
+> claimed intent rather than a verified runtime repro. §4/§7 of THIS section
+> (D229, pre-existing, unchanged by this amendment) already correctly
+> documented the `#impl(Debug)`-gated reality; the wrong assertion was an
+> error in the sibling fix's own reasoning, now corrected.
+>
+> **Fix:** new type-checker diagnostic `E_DEBUG_PRINTABLE_NOT_IMPLEMENTED`
+> (`types/mod.rs::check_interp_no_debug`, sibling of `check_interp_no_
+> display`, called from the same `f1_expr_inner` `ExprKind::InterpolatedStr`
+> arm) fires when a bare `${x:?}` (spec is exactly `FormatSpec::Debug`; a
+> rich `Spec` with `Kind::Debug` goes through the separate
+> `emit_format_spec_value` lowering, which already errors honestly via
+> `E_BAD_FORMAT_SPEC` when no `@debug` resolves — no gap there) interpolated
+> expression's static type is a **non-generic** `Record`/`Sum`/`NamedTuple`/
+> `Newtype` declared type with neither (a) an explicit `@debug` method, (b)
+> a gate-satisfied `#impl(Debug)` auto-derive synthesis (checker's own
+> `synth_methods` overlay already mirrors `inject_synthesized_methods`'s
+> gate — `find_method_decl(T, "debug")` covers both), nor (c) a `str.from_
+> debug(T)` overload (the Debug-side D410 fallback; unlike Display there is
+> no `to_str()`-instance equivalent for Debug).
+>
+> **Scope** — identical to `E_INTERP_NO_DISPLAY`'s (shared helper
+> `resolve_interp_user_value_type`): primitives (which DO have unconditional
+> `@debug` per §5 above — never gated), typed pointers (`E_PTR_NO_DISPLAY_
+> USE_DEBUG_STR`, separate), generic type-params, and generic declared types
+> are left alone.
+>
+> Fixture: `spec_tests/conformance/neg/d229_interp_no_debug_neg.nv` (pin —
+> bare `${x:?}` on a type with zero `#impl` at all).
+> `spec_tests/conformance/d186_interp_no_display_pos.nv` hardened to assert
+> the EXACT expected string (`"D186InterpDebugOnly { a: 1, b: 2 }"`) via
+> `#impl(Debug)`, replacing a prior `contains("1")`/`contains("2")` assertion
+> that passed FALSELY (the printed heap address happened to contain both
+> digit substrings locally, masking the bug — and on Linux CI the address
+> didn't contain `"2"`, so the weak assertion caught the regression there).
 
 ### D230 NEW — `Clone` protocol (Plan 126 Ф.1)
 

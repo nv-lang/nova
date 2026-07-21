@@ -27,6 +27,12 @@ import std.text          // []str @join(sep) — используется в sql
 /// SQL value variants: int, float, string, bool, bytes, null. D55 coercion:
 /// `[42, "alice"]` → `[I(42), S("alice")]` автоматически в позиции `[]SqlValue`.
 #stable(since = "0.1")
+// Plan 221.1 (E_DEBUG_PRINTABLE_NOT_IMPLEMENTED audit): `@expect_*` methods
+// below interpolate the receiver bare via `${@:?}` (Debug) in their error
+// messages — that requires `#impl(Debug)` same as `#impl(Display)` would
+// (D229 §4), else it's a compile error now instead of a silent heap-address
+// garbage print.
+#impl(Debug)
 export type SqlValue enum
     | I(i64)
     | F(f64)
