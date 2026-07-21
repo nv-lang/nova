@@ -2936,8 +2936,46 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
         }
     };
 
+    // [A-S1 mutclock-regress]: folder-module CUs (Plan 169.1 Ф.8) pick the
+    // ALPHABETICALLY-FIRST peer as `opts.nv_file` (walk_nv_filtered_ex above:
+    // "Первый файл (по алфавиту) — entry") — for `core.nv` + `core_test.nv`
+    // that's `core.nv` (`.` < `_` in ASCII), which typically carries NO
+    // header directives (the directives live on the peer that actually
+    // declares the `test "..."` blocks, e.g. `core_test.nv`'s
+    // `// ENV NOVA_MAXPROCS=1` / `// ENV NOVA_AUTOARM=0`). Every marker
+    // parse below (`parse_env`/`parse_alloc_constraint`/
+    // `parse_smt_backend_requirement`/`parse_timeout_ms`/`parse_expect`)
+    // scans only `src` (the entry file) — a directive living on a
+    // non-entry peer was silently dropped, never applied to the run step.
+    // Concretely: `std/src/testing/handlers` (core.nv/core_test.nv)'s
+    // `NOVA_AUTOARM=0` escape hatch never reached the test exe's env, so
+    // the mut_clock auto-idle-advance concurrent-sleep test ran under the
+    // default-armed M:N runtime instead of the cooperative bootstrap path
+    // its ordering guarantee depends on (nova_vclock_alive_count/
+    // nova_vclock_park_until, fibers.h) — non-deterministic spawn-order
+    // firing instead of deadline-order (core_test.nv "конкурентные sleep
+    // будятся в порядке дедлайна" / "часы после конкурентных sleep").
+    // Fix: gather header directives from same-module peer files (sharing
+    // `opts.nv_file`'s directory + `module X` declaration, same predicate
+    // `is_folder_module_dir` already uses) as SEPARATE marker-scan sources
+    // — codegen/compile still use `src`/`path` unchanged (peer merge for
+    // compilation already happens correctly via
+    // `resolve_imports_inline_ex(..., include_test_peers=true)` further
+    // below); this only widens what the CHEAP pre-compile marker scan sees.
+    // Kept as a `Vec` of whole per-file sources (NOT concatenated into one
+    // string) — every `parse_*` below does its own `.lines().take(30)` on
+    // its input, so concatenating first would let the entry file's own 30
+    // lines crowd out a peer's directives past that combined offset;
+    // calling each `parse_*` once per source and merging RESULTS avoids
+    // that entirely.
+    let marker_srcs = collect_marker_sources(&src, opts.nv_file);
+
     // Plan 27 Ф.6: AllocConstraint — check before any build work.
-    let alloc_constraint = parse_alloc_constraint(&src);
+    let alloc_constraint = marker_srcs
+        .iter()
+        .map(|s| parse_alloc_constraint(s))
+        .find(|c| !matches!(c, AllocConstraint::None))
+        .unwrap_or(AllocConstraint::None);
     if !alloc_constraint.allows(opts.gc_kind.tag()) {
         return Outcome::Skipped {
             reason: SkipReason::AllocBackend {
@@ -2950,7 +2988,7 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
 
     // Plan 33 V1: REQUIRES_SMT_BACKEND — skip если активный backend
     // не совпадает с тем, который тест ожидает (Z3-only / trivial-only).
-    if let Some(required) = parse_smt_backend_requirement(&src) {
+    if let Some(required) = marker_srcs.iter().find_map(|s| parse_smt_backend_requirement(s)) {
         let actual = active_smt_backend();
         if actual != required {
             return Outcome::Skipped {
@@ -2961,16 +2999,34 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     }
 
     // Plan 27 Б.2: per-test timeout override via EXPECT_TIMEOUT_MS.
-    let effective_timeout = parse_timeout_ms(&src).unwrap_or(opts.timeout);
+    let effective_timeout = marker_srcs
+        .iter()
+        .find_map(|s| parse_timeout_ms(s))
+        .unwrap_or(opts.timeout);
 
     // Plan 83.1 Ф.2: per-test env vars (// ENV NAME=VALUE) — applied to
-    // the run step only.
-    let env_vars = parse_env(&src);
+    // the run step only. Merged across every marker source (entry + same-
+    // module peers); later sources win on key collision (peer directives
+    // are expected to be the specific/authoritative ones — see fn doc on
+    // `collect_marker_sources`).
+    let env_vars: Vec<(String, String)> = {
+        let mut merged: Vec<(String, String)> = Vec::new();
+        for s in &marker_srcs {
+            for (k, v) in parse_env(s) {
+                if let Some(existing) = merged.iter_mut().find(|(ek, _)| *ek == k) {
+                    existing.1 = v;
+                } else {
+                    merged.push((k, v));
+                }
+            }
+        }
+        merged
+    };
 
     // Plan 27 Б.3: capture stdout/stderr на PASS при --verbose.
     let verbose = matches!(opts.verbosity, Verbosity::Verbose);
 
-    let expect = parse_expect(&src);
+    let expect: Vec<ExpectMarker> = marker_srcs.iter().flat_map(|s| parse_expect(s)).collect();
     let find_compile_error = || expect.iter().find_map(|m| if let ExpectMarker::CompileError(p) = m { Some(p) } else { None });
     let find_cc_error      = || expect.iter().find_map(|m| if let ExpectMarker::CcError(p)      = m { Some(p) } else { None });
     let find_runtime_panic = || expect.iter().find_map(|m| if let ExpectMarker::RuntimePanic(p) = m { Some(p) } else { None });
@@ -3025,7 +3081,10 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     // Plan 194 A2.1 (замена Plan 140 Ф.2): contracts_mode прокинут через opts
     // (build-policy режим). Per-fixture `// CONTRACTS checked|optimized|verified`
     // директива переопределяет build-policy для этого фикстура.
-    let contracts_mode = parse_contracts_policy(&src).unwrap_or(opts.contracts_mode);
+    let contracts_mode = marker_srcs
+        .iter()
+        .find_map(|s| parse_contracts_policy(s))
+        .unwrap_or(opts.contracts_mode);
     let codegen_result = codegen_to_c(
         opts.nv_file, &src, opts.mono_depth, contracts_mode, opts.repo, opts.stdlib_dir,
     );
@@ -3679,6 +3738,67 @@ pub fn find_repo_root_from(start: &Path) -> Option<PathBuf> {
 /// `manifest::check_module_path` for folder-module entry validation.
 fn is_folder_module_peer(path: &Path) -> bool {
     crate::imports::is_folder_module_peer(path)
+}
+
+/// [A-S1 mutclock-regress] fix: `run_one`'s cheap pre-compile header-marker
+/// scan (`parse_env`/`parse_alloc_constraint`/`parse_smt_backend_requirement`/
+/// `parse_timeout_ms`/`parse_expect`/`parse_contracts_policy`) only ever saw
+/// `entry_src` (`opts.nv_file`'s own content) — for a folder-module CU
+/// (Plan 169.1 Ф.8), `opts.nv_file` is the ALPHABETICALLY-FIRST peer
+/// (`walk_nv_filtered_ex`: "Первый файл (по алфавиту) — entry"), which is
+/// frequently a non-test library file (`core.nv` before `core_test.nv`) that
+/// carries none of the directives — those live on the peer that actually
+/// declares the `test "..."` blocks. Directives placed there (e.g.
+/// `std/src/testing/handlers/core_test.nv`'s `// ENV NOVA_AUTOARM=0`) were
+/// silently dropped, never applied to the run step (root cause of the
+/// mut_clock auto-idle-advance ordering flake — the escape hatch never
+/// reached the test exe's env, so `spawn` took the default-armed M:N path
+/// instead of the cooperative bootstrap path the deadline-order guarantee
+/// depends on).
+///
+/// Returns one entry per file: `entry_src` itself, followed by each
+/// same-module sibling peer's own full source (peers found via the same
+/// `module X` declaration match `is_folder_module_dir` uses — NOT full
+/// import resolution, this runs before that and must stay cheap). Kept as
+/// SEPARATE strings (not concatenated) — every `parse_*` marker function
+/// does its own `.lines().take(30)` on whatever it's given, so a single
+/// combined string would let the entry file's own first 30 lines crowd a
+/// peer's directives out of every scanner's window (a peer positioned past
+/// line 30 of a naive concatenation would never be seen). Callers must
+/// invoke each `parse_*` once per returned source and merge the results
+/// (`find_map`/`flat_map`/explicit merge — see call sites in `run_one`).
+/// Single-file CUs (the common case) get back a one-element vec — no
+/// peers found, callers observe byte-identical behavior to before this fix.
+/// Codegen/compilation still use the original `entry_src`/`path` directly —
+/// this helper's output is ONLY fed to the marker scan.
+fn collect_marker_sources(entry_src: &str, entry_path: &Path) -> Vec<String> {
+    let mut sources = vec![entry_src.to_string()];
+    let Some(dir) = entry_path.parent() else {
+        return sources;
+    };
+    let Some(my_decl) = crate::imports::scan_module_decl(entry_src) else {
+        return sources;
+    };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return sources;
+    };
+    let mut peers: Vec<PathBuf> = rd
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("nv"))
+        .filter(|p| p.as_path() != entry_path)
+        .collect();
+    peers.sort();
+    for peer in peers {
+        let Ok(peer_src) = std::fs::read_to_string(&peer) else {
+            continue;
+        };
+        if crate::imports::scan_module_decl(&peer_src).as_ref() != Some(&my_decl) {
+            continue;
+        }
+        sources.push(peer_src);
+    }
+    sources
 }
 
 /// Plan 52 Ф.9: возвращает `(codegen_warnings, lint_warnings)` — последние
@@ -7153,6 +7273,78 @@ mod tests {
         }
         src.push_str("// ENV NOVA_MAXPROCS=4\n");
         assert!(parse_env(&src).is_empty());
+    }
+
+    // ---------- [A-S1 mutclock-regress]: collect_marker_sources ----------
+    // Root cause of the mut_clock auto-idle-advance ordering flake: a
+    // folder-module CU's `opts.nv_file` is the alphabetically-first peer
+    // (e.g. `core.nv`), which typically has no header directives — those
+    // live on the peer that declares the `test "..."` blocks (`core_test.nv`).
+    // `collect_marker_sources` must surface that peer's own source as a
+    // SEPARATE entry (not lose it past a naive 30-line-of-the-concatenation
+    // cutoff) so callers' per-source `parse_env`/etc still see it.
+
+    #[test]
+    fn collect_marker_sources_single_file_no_peers() {
+        let dir = std::env::temp_dir().join(format!("nova_cms_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let entry = dir.join("solo.nv");
+        std::fs::write(&entry, "module solo\ntest \"x\" { assert(true) }\n").unwrap();
+        let src = std::fs::read_to_string(&entry).unwrap();
+        let sources = collect_marker_sources(&src, &entry);
+        assert_eq!(sources.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn collect_marker_sources_finds_same_module_peer_directive() {
+        let dir = std::env::temp_dir().join(format!("nova_cms_test2_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        // Entry file: alphabetically first, same shape as core.nv — no
+        // ENV directive of its own, `module` line pushed past line 30 by
+        // a long header comment (mirrors the real fixture).
+        let entry = dir.join("core.nv");
+        let mut entry_src = String::new();
+        for i in 0..40 {
+            entry_src.push_str(&format!("// header line {}\n", i));
+        }
+        entry_src.push_str("module testing.handlers\n");
+        std::fs::write(&entry, &entry_src).unwrap();
+        // Peer file: alphabetically after, carries the directive AND the
+        // `test` blocks — same module declaration.
+        let peer = dir.join("core_test.nv");
+        std::fs::write(
+            &peer,
+            "// ENV NOVA_AUTOARM=0\nmodule testing.handlers\ntest \"y\" { assert(true) }\n",
+        )
+        .unwrap();
+        let sources = collect_marker_sources(&entry_src, &entry);
+        assert_eq!(sources.len(), 2, "expected entry + 1 same-module peer");
+        // Simulates the `run_one` merge: at least one source must parse
+        // the directive — this is exactly what silently returned empty
+        // before the fix (parse_env(&src) only ever saw `entry_src`).
+        let found_autoarm = sources
+            .iter()
+            .flat_map(|s| parse_env(s))
+            .any(|(k, v)| k == "NOVA_AUTOARM" && v == "0");
+        assert!(found_autoarm, "NOVA_AUTOARM=0 directive from peer file must be visible");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn collect_marker_sources_ignores_different_module_peer() {
+        let dir = std::env::temp_dir().join(format!("nova_cms_test3_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let entry = dir.join("a.nv");
+        let entry_src = "module a\ntest \"x\" { assert(true) }\n".to_string();
+        std::fs::write(&entry, &entry_src).unwrap();
+        // Unrelated .nv file in the same directory, different module —
+        // must NOT be pulled in.
+        let unrelated = dir.join("b.nv");
+        std::fs::write(&unrelated, "// ENV SHOULD_NOT_APPEAR=1\nmodule b\n").unwrap();
+        let sources = collect_marker_sources(&entry_src, &entry);
+        assert_eq!(sources.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ---------- Plan 26 Ф.17 #11: civil_from_days regression tests ----------
