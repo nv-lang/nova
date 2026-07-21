@@ -53,6 +53,14 @@
       std.time + типизация опов (sleep(Duration)/now()->Timestamp/now_monotonic()->Monotonic).
       Корень: `[M-effect-handler-body-record-literal]`; детали — 221.1 Ф.2б. + Расширения владельца 2026-07-21: механизм #default_handler (дефолты эффектов из C-хардкода в .nv, лениво до main) И ретракция ambient-статуса Time (D62): Time в сигнатурах как все эффекты — «без магии». Волна в полёте
       (sonnet, worktree nova-typedfx). БЛОКЕР ТЕГОВ.
+      - **A-B9 частично ✅ 2026-07-22 влито:** handler-тела→общий-путь + #default_handler (D431).
+- [ ] **A-B10 🔨 ОБЯЗАТЕЛЬНЫЙ ДО ТЕГОВ (решение владельца 2026-07-22: «v0.1 ждёт typed-эффекты»)**
+      Эффект-рефактор 175 Ф.2-v3 (продолжение A-B9): (1) снос рукописных C-vtable Time/Mem/
+      TimerMetrics из nova_rt (Fail остаётся хардкодом — сильно встроен); (2) typedef value-record
+      перед effect-vtable (снимает scalar-bridge — идея владельца); (3) типизация опов, sleep-канон
+      = ТОЛЬКО метод `d.sleep()` (D9 одна дверь, свободная sleep() убрана); (4) РЕТРАКЦИЯ ambient
+      Time (D62) — Time обязателен в сигнатурах как Fs/Net, миграция std+examples+conformance до
+      нуля. Волна `p175-effect-refactor` (sonnet). БЛОКЕР ТЕГОВ.
 - [x] **Критерий Ф.0: ✅ 2026-07-21 ДОСТИГНУТ** — исходная очередь пуста; CI без known_red.
       Пост-Ф.0 добавка из A-S4 (не в исходном критерии, но релиз-скоуп): for-in cross-package
       (nova-http, 5 CU) + git-кэш гонка раннера — волна в полёте, финал-гейт A-R1 после неё.
