@@ -37,17 +37,19 @@
       `flatten_protocol_methods`).
 - [x] **A-B5 ✅ 2026-07-21** net-утечка-b free-on-close — ВЛИТ (refcount §9, утечка −87%,
       риск-гейты UAF зелёные).
-- [ ] **A-B6** Мелочь P3/P4: d55-const `[emit_c]` · ~~oot-дефисы~~ ✅ (корень = чужой
-      ancestor-манифест, out-of-repo экземпт D78, влит) · generic-match-scope-gap `[types]` ·
-      ~~latent protocol-box~~ ✅ 2026-07-21 (закрыт вместе с A-B4, см. выше; followup
-      `[M-protocol-embed-vtable-missing-method]` заведён отдельно, P2) — остаток по
-      освобождении зон.
+- [x] **A-B6 ✅ 2026-07-21 ЦЕЛИКОМ** Мелочь P3/P4: d55-const ✅ (гибрид: module-level const
+      []u8 — прямая эмиссия bytes-вызова в lazy-init; scope-local — честная диагностика
+      E_CONST_BYTES_NOT_CONSTEXPR) · oot-дефисы ✅ · generic-match-scope-gap ✅ (carrier
+      current_fn_generics + резолв 0-arg метода по протокол-баунду только для match-bindings) ·
+      latent protocol-box ✅ (вместе с A-B4). Гейт после вливания: 517/19/0 + флагман.
 - [x] **A-B7 ✅ 2026-07-21** 216-defer-хвосты — ВЛИТЫ (Err-пейлоады + tuple-пейлоады
       consume-enforce, спек-амендмент 05-memory; record-пейлоад = узкий followup
       `[M-216-record-payload-consume]`).
 - [x] **A-B8 ✅ 2026-07-21** d216/write_at паника — ВЛИТ (корень: Block-арм infer_expr_c_type
       без пре-регистрации let-локалов + stale плоский var_types; folder-CU 517/0 после фикса).
-- [ ] **Критерий Ф.0:** backlog без OPEN P1/P2; CI без known_red вовсе.
+- [x] **Критерий Ф.0: ✅ 2026-07-21 ДОСТИГНУТ** — исходная очередь пуста; CI без known_red.
+      Пост-Ф.0 добавка из A-S4 (не в исходном критерии, но релиз-скоуп): for-in cross-package
+      (nova-http, 5 CU) + git-кэш гонка раннера — волна в полёте, финал-гейт A-R1 после неё.
 
 ## Ф.1 — Стабилизация (частично ▶СЕЙЧАС — прогоны находят баги раньше!)
 
