@@ -34,8 +34,15 @@
 
 ## Ф.1 — Стабилизация (частично ▶СЕЙЧАС — прогоны находят баги раньше!)
 
-- [ ] **A-S1 ▶СЕЙЧАС** Полный `nova test` Windows (весь std+примеры+nova_tests-baseline),
-      батчами <10мин `[прогоны]` — фоновыми Bash-задачами интегратора; красное → в Ф.0-очередь.
+- [ ] **A-S1 ▶СЕЙЧАС** Полный `nova test` Windows — батчи 1-5 ПРОГНАНЫ 2026-07-21
+      (std целиком: collections/checksums/encoding/math/text/unicode 32/0 ·
+      io/fs/path/time/os/crypto/data/identifiers 24/0 · runtime/concurrency/testing/prelude
+      11/1 · net/ffi/sort/text 2/0 · examples+flagship-regressions). Находки: (1)
+      `std/src/testing/handlers/core` mut_clock auto-idle-advance — ДЕТЕРМИНИРОВАННЫЙ
+      RUN-FAIL 3/3 → фикс-волна В ПОЛЁТЕ (бисекция: пачка-2026-07-21 или давний);
+      (2) `spawn_capture_value_struct` — RUN-FAIL под конкурентной нагрузкой батча,
+      изолированно 3/3 PASS → флака-подозрение (гонка под нагрузкой?), перепроверка
+      ×10 на тихой машине в A-R1. Остаток: nova_tests-baseline батч (после CPU).
 - [ ] **A-S2** Полный `nova test` WSL Linux `[WSL]` — ⛓A-S1-рецепт (те же батчи), после Linux-гонки.
 - [ ] **A-S3** loadtest.ps1 полный (10× комбо + concurrency 80) `[флагман]` — ⛓A-B1.
 - [ ] **A-S4 ▶СЕЙЧАС** Соседние репы: nova-tls/http/compress suites зелёные `[соседние репы]` (sonnet).
