@@ -5139,6 +5139,26 @@ fn cmd_build(
                     }
                 }
             }
+            // Plan 126.2 Ф.2 (bugfix A-Q3, 2026-07-21): inject the NON-serde
+            // synthesized built-in protocol methods (Equal/Hash/Clone/Compare/
+            // Display/Debug) into module.items so codegen emits real C bodies
+            // and dispatch (incl. interpolated-string `${p}`/`${p:?}`) resolves
+            // them. `cmd_build` (`nova build`) was silently MISSING this call —
+            // only the serde-filtered variant ran (line ~5017, pre-check).
+            // `test_runner.rs` (`nova test`) already has this exact call in
+            // this exact position (after effects/lints, before annotate-maps/
+            // desugar) — its absence here is why a `#impl(Debug)` auto-derive
+            // record's `println("${p:?}")` fell through every dispatch window
+            // to the raw-pointer-as-int fallback (`emit_c.rs`
+            // `emit_interpolated_str`, the `nova_int_to_str((nova_int)(v))`
+            // last-resort branch) while the byte-identical code inside a
+            // `test { }` block (via `nova test`) printed correctly. User-
+            // explicit methods still win (`inject_synthesized_methods` skips
+            // types that already provide the method).
+            {
+                let _t = nova_codegen::perf_timer::PerfTimer::new("auto-derive-inject");
+                nova_codegen::protocols::auto_derive::inject_synthesized_methods(&mut module);
+            }
             // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expr.
             {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("annotate-maps");
