@@ -11487,12 +11487,35 @@ impl Parser {
                     ));
                 }
                 // Sub-lex и sub-parse выражение из ${...}.
-                let tokens = crate::lexer::lex(expr_src).map_err(|e| {
+                let mut tokens = crate::lexer::lex(expr_src).map_err(|e| {
                     Diagnostic::new(
                         format!("invalid expression in `${{...}}`: {}", e.message),
                         span,
                     )
                 })?;
+                // Владелец 2026-07-21 (найдено при str-concat-lint
+                // канонизации, [M-str-interp-wrong-file-id]): `lex(expr_src)`
+                // — независимый sub-lex сырой substring'а `${...}`, каждый
+                // токен получает span с `file_id = MAIN_FILE_ID` (0) по
+                // умолчанию (`Span::new`, backward-compat конструктор) — БЕЗ
+                // контекста, в каком реальном файле лежит объемлющий
+                // string-литерал. Для интерполяции внутри entry-файла (его
+                // file_id обычно 0) это случайно совпадало; но для ЛЮБОГО
+                // не-entry файла (типичный случай — module-private `const`,
+                // резолвящийся в codegen по `(file_id, name)` через
+                // `private_const_c_names`, emit_c.rs) lookup мисс'ил на
+                // неверном file_id=0 и молча падал на bare unmangled name →
+                // C `error: use of undeclared identifier` (репро: `"${FORMAT_TAG}"`,
+                // std/src/_experimental/crypto/insecure_demo_kdf.nv, module-private
+                // const в НЕ-entry файле). Фикс: перед sub-parse
+                // проставляем токенам РЕАЛЬНЫЙ `file_id` объемлющего string-
+                // литерала (`span.file_id`) — byte-offset'ы (`start`/`end`)
+                // остаются relative к `expr_src` substring'у, как и раньше
+                // (только `file_id`, единственное поле, использующееся как
+                // HashMap-ключ в const-резолве, был неверен).
+                for t in &mut tokens {
+                    t.span.file_id = span.file_id;
+                }
                 let mut sub = Parser::with_src(tokens, expr_src.to_string());
                 let inner = sub.parse_expr().map_err(|e| {
                     Diagnostic::new(
