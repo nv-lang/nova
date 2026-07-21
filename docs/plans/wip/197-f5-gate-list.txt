@@ -1,0 +1,73 @@
+# Plan 197 Ф.5-подготовка — точный список путей для расширения nova-gate.yml
+# на ВЕСЬ examples/** anti-rot (не только текущие 5 флагман-целей).
+# Сгенерировано 2026-07-21, worktree nova-ex197/branch p197-final,
+# полным прогоном `nova build/check <path> --strict-effects` сегодняшним
+# релизным nova.exe главной репы. yml НЕ трогался этим заходом — только
+# список + текст шага ниже, интегратор решает когда включать.
+#
+# Формат: <команда> <путь>
+# BUILD  — nova build <path> --strict-effects (файл с fn main ИЛИ с test-блоком,
+#          nova build синтезирует test-runner entry point для файлов без main)
+# CHECK  — nova check <path> --strict-effects (чистый library-модуль, ни main
+#          ни test — nova build неприменим по конструкции)
+
+BUILD examples/basics/arithmetic.nv
+BUILD examples/basics/demo.nv
+BUILD examples/basics/hello.nv
+BUILD examples/basics/match_demo.nv
+BUILD examples/basics/records.nv
+BUILD examples/basics/strings.nv
+BUILD examples/effects/effects.nv
+BUILD examples/effects/effects_d61.nv
+BUILD examples/effects/spawn_demo.nv
+BUILD examples/ffi/ptr_basics.nv
+CHECK examples/ffi/sqlite_mini.nv
+BUILD examples/getting_started.nv
+BUILD examples/mini_aggregator.nv
+BUILD examples/plan110/ffi_sqlite_consumable.nv
+BUILD examples/tls/echo_client.nv
+BUILD examples/tls/echo_server.nv
+BUILD examples/tour/collections_tour.nv
+BUILD examples/tour/concurrency.nv
+BUILD examples/tour/consume_tour.nv
+BUILD examples/tour/effects_tour.nv
+BUILD examples/tour/errors.nv
+BUILD examples/tour/ffi_tour.nv
+CHECK examples/tour/greeter/core.nv
+CHECK examples/tour/greeter/loud.nv
+BUILD examples/tour/hello.nv
+BUILD examples/tour/methods.nv
+BUILD examples/tour/modules_tour.nv
+BUILD examples/tour/patterns.nv
+BUILD examples/tour/strings_tour.nv
+BUILD examples/tour/types.nv
+BUILD examples/typed_pointers/basic_pointer.nv
+BUILD examples/typed_pointers/unsafe_fn_keyword.nv
+
+# --- examples/flagship/aggregator/ — уже гейтится ОТДЕЛЬНО, не дублировать
+# по отдельным файлам:
+#   - `nova build examples/flagship/aggregator/src/main.nv --strict-effects`
+#     уже один из 5 существующих флагман-таргетов nova-gate.yml (компилирует
+#     весь src/-граф транзитивно — domain/app/api модули отдельно НЕ билдить).
+#   - Юнит-тесты (`src/app/aggregate_test.nv`, `src/app/live_test.nv`,
+#     `src/api/report_json_test.nv`) и regressions/-корпус гоняются через
+#     `nova test examples/flagship/aggregator --strict-effects` (Plan 187
+#     собственный гейт, вне объёма этого списка).
+#   - `src/app/aggregate_test.nv` ЗАМЕЧЕНА FLAKY на локальном прогоне
+#     (3 запуска подряд: 12/14, 13/14, 14/14 passed — timing-чувствительные
+#     ms-бюджеты в fan-out тесте, не новая регрессия этого захода, не
+#     трогал/не чинил — вне объёма Ф.3, компилятор не менялся).
+
+# --- ИСКЛЮЧЕНО из гейта (KEEP-blocked-by-toolchain — компилятор-баг,
+# НЕ авторский контент, см. docs/plans/wip/197-audit-progress.md):
+#   examples/net/echo_client.nv   — undefined symbol Nova_TcpStream_consume_cleanup
+#   examples/net/echo_server.nv  — то же (уже в nova-gate.yml как флагман-цель —
+#                                    см. предупреждение в audit-progress.md,
+#                                    заход 07-21: гейт вероятно красный СЕЙЧАС)
+#   examples/real_world/orm_decorators.nv — SyncDetach не реализован в std
+#   examples/real_world/orm_demo.nv       — E7001 bulk_load[K]+.map() inference
+
+# --- ИСКЛЮЧЕНО из гейта (_wip/ — концепт требует переписи с нуля, не
+# гарантированно компилируется, README внутри):
+#   examples/_wip/effect_density/{domain,http,main,repository,service}.nv
+#   examples/_wip/typed_pointers/unsafe_block.nv
