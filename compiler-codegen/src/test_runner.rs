@@ -2451,6 +2451,13 @@ pub enum SkipReason {
     /// MbedtlsConfig/BrotliConfig graceful-degrade contract (missing native
     /// lib → never a hard link error), generalized to generic `[ffi] libs`.
     FfiLibNotFound { lib: String, searched: Vec<PathBuf> },
+    /// [M-trap-tests-silent-skip-default-lane]: file was discovered but its
+    /// lane (`EXPECT_*` type, or `_slow` suffix) isn't in the active
+    /// `TestSelection` — see [`LaneExclusion`]. Synthesized directly by
+    /// `run_all` for `walk_nv_selected_ex`'s `excluded` list (no codegen/cc/
+    /// run attempted — cheaper than a real SKIP and, unlike the silent drop
+    /// this replaces, always shows up as one `SKIP <path> # …` row).
+    LaneExcluded { lane: &'static str, hint: &'static str },
 }
 
 impl SkipReason {
@@ -2476,6 +2483,9 @@ impl SkipReason {
                 lib,
                 searched.iter().map(|p| p.display().to_string())
                     .collect::<Vec<_>>().join(", "),
+            ),
+            SkipReason::LaneExcluded { lane, hint } => format!(
+                "{} lane — requires {}", lane, hint,
             ),
         }
     }
@@ -5713,6 +5723,50 @@ impl TestSelection {
     }
 }
 
+/// [M-trap-tests-silent-skip-default-lane]: reason a file/folder-module entry
+/// was excluded from `walk_nv_selected_ex`'s `out` (the file exists, was
+/// discovered, but the active `TestSelection` doesn't run its lane). Before
+/// this, `walk_nv_selected` just dropped these silently — `nova test
+/// std/src/time/rt` (a dir holding only 3 legit `EXPECT_RUNTIME_PANIC` trap
+/// tests) reported a bare "PASS: 0  FAIL: 0", indistinguishable from an
+/// empty/typo'd directory. Every variant here becomes one visible SKIP row
+/// (`SKIP <path> # <lane> lane — requires <hint>`) in the SAME `SKIP:` tally
+/// as other `Outcome::Skipped` reasons (AllocBackend/SmtBackend/…) — a lane
+/// exclusion is not a bug, but it must never look like zero tests exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaneExclusion {
+    /// File's `EXPECT_*` marker maps to a `TestType` not in `sel.types`
+    /// (default run = `{Positive}` only — `EXPECT_RUNTIME_PANIC`/
+    /// `EXPECT_COMPILE_ERROR`/`EXPECT_TIMEOUT`/`EXPECT_EXIT` all excluded).
+    Type(TestType),
+    /// `*_slow.nv` stem and `sel.include_slow == false` (D376). Distinct from
+    /// `Type` because slow-ness is an orthogonal per-file suffix, not an
+    /// `EXPECT_*` marker — a slow file can be any `TestType`.
+    Slow,
+}
+
+impl LaneExclusion {
+    /// Human-facing lane name for the SKIP detail string.
+    pub fn lane_name(self) -> &'static str {
+        match self {
+            LaneExclusion::Type(TestType::Positive) => "positive",
+            LaneExclusion::Type(TestType::CompileError) => "compile-error",
+            LaneExclusion::Type(TestType::Panic) => "runtime-panic",
+            LaneExclusion::Type(TestType::Timeout) => "timeout",
+            LaneExclusion::Type(TestType::Exit) => "exit",
+            LaneExclusion::Slow => "slow",
+        }
+    }
+
+    /// Flag that unlocks the lane — the fix for "this SKIP" the row names.
+    pub fn hint(self) -> &'static str {
+        match self {
+            LaneExclusion::Slow => "--include-slow/--slow-only",
+            LaneExclusion::Type(_) => "--full",
+        }
+    }
+}
+
 /// [M-d376-slow-suffix-folder-module-peer-merge]: process-wide "this `nova
 /// test` invocation was asked to include `_slow` tests" flag, set ONCE by
 /// `run_all` from `opts.selection.include_slow` before any entry is
@@ -5909,16 +5963,45 @@ fn walk_nv_filtered_ex(
 
 /// Plan 169.1.1: Like `walk_nv_filtered` but uses `TestSelection` to filter by type
 /// (EXPECT_* marker) AND slow-file suffix. Reads file header only for type detection.
+///
+/// Silent-drop wrapper kept for existing callers/tests that don't care WHY a
+/// file was excluded — see [`walk_nv_selected_ex`]
+/// ([M-trap-tests-silent-skip-default-lane]) for the variant `run_all` uses,
+/// which also reports the reason so it can surface a visible SKIP row.
 pub fn walk_nv_selected(root: &Path, out: &mut Vec<PathBuf>, sel: &TestSelection) -> Result<()> {
+    let mut excluded = Vec::new();
+    walk_nv_selected_ex(root, out, &mut excluded, sel)
+}
+
+/// [M-trap-tests-silent-skip-default-lane]: like [`walk_nv_selected`], but
+/// additionally collects every file/folder-module entry that WAS discovered
+/// yet excluded purely because its lane (`EXPECT_*` type, or `_slow` suffix)
+/// isn't in `sel` — tagged with [`LaneExclusion`] so the caller can turn each
+/// into a visible `SKIP <path> # <lane> lane — requires <hint>` row instead
+/// of the file just vanishing (the bug this fixes: `nova test
+/// std/src/time/rt` — a dir holding only `EXPECT_RUNTIME_PANIC` trap tests —
+/// used to report a bare "PASS: 0  FAIL: 0", indistinguishable from an empty
+/// directory). `excluded` order follows discovery order (not sorted); callers
+/// that need determinism sort it themselves (`run_all` does, alongside its
+/// `inputs`).
+pub fn walk_nv_selected_ex(
+    root: &Path,
+    out: &mut Vec<PathBuf>,
+    excluded: &mut Vec<(PathBuf, LaneExclusion)>,
+    sel: &TestSelection,
+) -> Result<()> {
     if root.is_file() {
         let stem = root.file_stem().and_then(|s| s.to_str()).unwrap_or("");
         let is_slow = is_slow_file_stem(stem);
         if is_slow && !sel.include_slow {
+            excluded.push((root.to_path_buf(), LaneExclusion::Slow));
             return Ok(());
         }
         let test_type = detect_test_type(root);
         if sel.types.contains(&test_type) {
             out.push(root.to_path_buf());
+        } else {
+            excluded.push((root.to_path_buf(), LaneExclusion::Type(test_type)));
         }
         return Ok(());
     }
@@ -5942,9 +6025,20 @@ pub fn walk_nv_selected(root: &Path, out: &mut Vec<PathBuf>, sel: &TestSelection
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                 if stem == "_module" { continue; }
                 let is_slow = is_slow_file_stem(stem);
-                if is_slow && !sel.include_slow { continue; }
+                if is_slow && !sel.include_slow {
+                    // D376 "zero per-file I/O" preserved: no read, just the
+                    // dirent name we already have — same cost as the silent
+                    // `continue` this replaces.
+                    excluded.push((path.clone(), LaneExclusion::Slow));
+                    continue;
+                }
                 let stem_no_slow = strip_slow_suffix(stem);
                 let core_stem = stem_no_slow.strip_suffix("_test").unwrap_or(stem_no_slow);
+                // OS-suffix mismatch (`_windows.nv` on non-Windows, etc.) is a
+                // DIFFERENT, already-expected category (platform gating, not a
+                // lane selection) — deliberately NOT reported as LaneExclusion
+                // here: it would spam a SKIP row per foreign-OS peer file
+                // across the whole std/spec_tests tree on every run.
                 if !crate::imports::peer_active_for_target_pub(core_stem, target) { continue; }
             }
             direct_nv.push(path);
@@ -5960,6 +6054,8 @@ pub fn walk_nv_selected(root: &Path, out: &mut Vec<PathBuf>, sel: &TestSelection
                 let test_type = detect_test_type(&entry);
                 if sel.types.contains(&test_type) {
                     out.push(entry);
+                } else {
+                    excluded.push((entry, LaneExclusion::Type(test_type)));
                 }
             }
         }
@@ -5968,11 +6064,13 @@ pub fn walk_nv_selected(root: &Path, out: &mut Vec<PathBuf>, sel: &TestSelection
             let test_type = detect_test_type(&p);
             if sel.types.contains(&test_type) {
                 out.push(p);
+            } else {
+                excluded.push((p, LaneExclusion::Type(test_type)));
             }
         }
     }
     for sub in sub_dirs {
-        walk_nv_selected(&sub, out, sel)?;
+        walk_nv_selected_ex(&sub, out, excluded, sel)?;
     }
     Ok(())
 }
@@ -6259,17 +6357,23 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
         opts.input_dirs
     };
     let mut inputs: Vec<PathBuf> = Vec::new();
+    // [M-trap-tests-silent-skip-default-lane]: files discovered but excluded
+    // purely by lane (EXPECT_* type not in selection, or *_slow without
+    // --include-slow) — see `walk_nv_selected_ex` doc. Turned into visible
+    // pre-computed SKIP jobs below instead of vanishing from `inputs`.
+    let mut excluded_inputs: Vec<(PathBuf, LaneExclusion)> = Vec::new();
     for dir_or_file in effective_dirs {
         if dir_or_file.is_file() {
             inputs.push(dir_or_file.clone());
         } else {
             let mut found = Vec::new();
-            walk_nv_selected(dir_or_file, &mut found, &opts.selection)?;
+            walk_nv_selected_ex(dir_or_file, &mut found, &mut excluded_inputs, &opts.selection)?;
             inputs.extend(found);
         }
     }
     // Стабильный порядок по пути — shuffle потом переопределит если нужно.
     inputs.sort();
+    excluded_inputs.sort_by(|a, b| a.0.cmp(&b.0));
 
     std::fs::create_dir_all(opts.tmp_dir)
         .map_err(|e| anyhow!("create tmp_dir: {}", e))?;
@@ -6299,12 +6403,14 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
         None
     };
 
-    // Build job list applying all filters.
-    let mut jobs: Vec<(String, PathBuf)> = Vec::new();
-    for nv_path in &inputs {
-        let display = display_name(nv_path, &cwd);
+    // Build job list applying all filters. Shared by both real jobs and the
+    // synthesized lane-exclusion SKIP jobs below, so --filter/--skip/
+    // --filter-from/--rerun-failed narrow the SKIP rows exactly like real
+    // tests (a lane-excluded file outside the requested --filter shouldn't
+    // show up either).
+    let passes_filters = |nv_path: &Path, display: &str| -> bool {
         if let Some(filter) = opts.filter {
-            if !display.contains(filter) { continue; }
+            if !display.contains(filter) { return false; }
         }
         // Plan 36.D: --skip применяется к display name И к raw path string
         // (для skip типа `std/runtime/` который может не попадать в display).
@@ -6313,15 +6419,32 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
             let skip_match = opts.skip.iter().any(|pat| {
                 !pat.is_empty() && (display.contains(pat.as_str()) || path_str.contains(pat.as_str()))
             });
-            if skip_match { continue; }
+            if skip_match { return false; }
         }
         if let Some(set) = &filter_from_set {
-            if !set.contains(&display) { continue; }
+            if !set.contains(display) { return false; }
         }
         if let Some(set) = &rerun_set {
-            if !set.contains(&display) { continue; }
+            if !set.contains(display) { return false; }
         }
-        jobs.push((display, nv_path.clone()));
+        true
+    };
+    // `Option<SkipReason>` = precomputed outcome for lane-excluded entries —
+    // `None` (real job, goes through `run_one`) vs `Some(reason)` (skip
+    // immediately, no codegen/cc/run attempted).
+    let mut jobs: Vec<(String, PathBuf, Option<SkipReason>)> = Vec::new();
+    for nv_path in &inputs {
+        let display = display_name(nv_path, &cwd);
+        if !passes_filters(nv_path, &display) { continue; }
+        jobs.push((display, nv_path.clone(), None));
+    }
+    for (nv_path, reason) in &excluded_inputs {
+        let display = display_name(nv_path, &cwd);
+        if !passes_filters(nv_path, &display) { continue; }
+        jobs.push((display, nv_path.clone(), Some(SkipReason::LaneExcluded {
+            lane: reason.lane_name(),
+            hint: reason.hint(),
+        })));
     }
 
     // Plan 27 Б.7: shuffle если задан seed.
@@ -6336,7 +6459,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
 
     // Plan 27 Б.5: --list — print names без запуска.
     if opts.list_only {
-        for (display, _) in &jobs {
+        for (display, _, _) in &jobs {
             println!("{}", display);
         }
         return Ok(Summary { pass: 0, fail: 0, skip: 0, results: Vec::new() });
@@ -6402,7 +6525,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                 if is_cancelled() { return; }
                 let idx = next_idx.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 if idx >= jobs.len() { return; }
-                let (display, nv_path) = &jobs[idx];
+                let (display, nv_path, preskip) = &jobs[idx];
                 let test_opts = TestBuildOpts {
                     nv_file: nv_path,
                     toolchain,
@@ -6428,7 +6551,14 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                 let retry_start = Instant::now();
                 // Plan 169.1 Ф.1: split timing output from run_one.
                 let mut split: (u128, u128) = (0, 0);
-                let mut outcome = run_one(&test_opts, &mut split);
+                // [M-trap-tests-silent-skip-default-lane]: lane-excluded jobs
+                // carry a precomputed SkipReason — never touch codegen/cc/run,
+                // just surface the reason as an immediate Skipped outcome.
+                let mut outcome = if let Some(reason) = preskip {
+                    Outcome::Skipped { reason: reason.clone(), elapsed: Duration::from_millis(0) }
+                } else {
+                    run_one(&test_opts, &mut split)
+                };
                 let mut retry_count = 0u32;
                 for attempt in 1..=retries {
                     if !is_transient_fail(&outcome) { break; }
@@ -7608,6 +7738,81 @@ mod plan156_slow_lane_tests {
         walk_nv_selected(&root, &mut out4, &sel_full).unwrap();
         assert_eq!(out4.len(), 6); // all 6 files
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// [M-trap-tests-silent-skip-default-lane]: `walk_nv_selected` silently
+    /// dropped every non-Positive/non-included-slow file — `nova test
+    /// std/src/time/rt` (3 legit EXPECT_RUNTIME_PANIC trap tests, no
+    /// positives) reported a bare "PASS: 0  FAIL: 0" with zero trace of why.
+    /// `walk_nv_selected_ex` must report EVERY excluded file tagged with the
+    /// right `LaneExclusion`, so `run_all` can turn each into a visible SKIP
+    /// row (`SKIP <path> # <lane> lane — requires <hint>`).
+    #[test]
+    fn walk_nv_selected_ex_reports_excluded_lanes() {
+        use super::{walk_nv_selected_ex, LaneExclusion, TestSelection, TestType};
+        use std::fs;
+        let root = std::env::temp_dir().join(format!("nova_p_trap_excl_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create temp root");
+        fs::write(root.join("pos.nv"), "fn main() {}").unwrap();
+        fs::write(root.join("ce.nv"), "// EXPECT_COMPILE_ERROR\nfn main() {}").unwrap();
+        fs::write(root.join("pan.nv"), "// EXPECT_RUNTIME_PANIC\nfn main() {}").unwrap();
+        fs::write(root.join("to.nv"), "// EXPECT_TIMEOUT\nfn main() {}").unwrap();
+        fs::write(root.join("ex.nv"), "// EXPECT_EXIT\nfn main() {}").unwrap();
+        fs::write(root.join("big_slow.nv"), "fn main() {}").unwrap();
+
+        // Default selection (Positive-only, no slow) — a dir like
+        // std/src/time/rt (only EXPECT_RUNTIME_PANIC files) must NOT look
+        // like an empty/typo'd directory: every non-positive file shows up
+        // in `excluded`, none silently vanish.
+        let sel = TestSelection::default();
+        let mut out = vec![];
+        let mut excluded = vec![];
+        walk_nv_selected_ex(&root, &mut out, &mut excluded, &sel).unwrap();
+        assert_eq!(out.len(), 1, "only pos.nv selected: {:?}", out);
+        assert!(out[0].ends_with("pos.nv"));
+        assert_eq!(excluded.len(), 5, "5 files excluded, none silently dropped: {:?}", excluded);
+
+        let find = |suffix: &str| -> LaneExclusion {
+            excluded.iter().find(|(p, _)| p.ends_with(suffix))
+                .unwrap_or_else(|| panic!("{} missing from excluded: {:?}", suffix, excluded))
+                .1
+        };
+        assert_eq!(find("ce.nv"), LaneExclusion::Type(TestType::CompileError));
+        assert_eq!(find("pan.nv"), LaneExclusion::Type(TestType::Panic));
+        assert_eq!(find("to.nv"), LaneExclusion::Type(TestType::Timeout));
+        assert_eq!(find("ex.nv"), LaneExclusion::Type(TestType::Exit));
+        assert_eq!(find("big_slow.nv"), LaneExclusion::Slow);
+
+        // Lane-name/hint text is exactly what the SKIP row prints
+        // (SkipReason::LaneExcluded's description: "<lane> lane — requires <hint>").
+        assert_eq!(LaneExclusion::Type(TestType::Panic).lane_name(), "runtime-panic");
+        assert_eq!(LaneExclusion::Type(TestType::Panic).hint(), "--full");
+        assert_eq!(LaneExclusion::Slow.lane_name(), "slow");
+        assert_eq!(LaneExclusion::Slow.hint(), "--include-slow/--slow-only");
+
+        // --full selects everything — nothing left excluded.
+        let sel_full = TestSelection::full();
+        let mut out_full = vec![];
+        let mut excluded_full = vec![];
+        walk_nv_selected_ex(&root, &mut out_full, &mut excluded_full, &sel_full).unwrap();
+        assert_eq!(out_full.len(), 6);
+        assert!(excluded_full.is_empty(), "full selection must exclude nothing: {:?}", excluded_full);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The exact SKIP detail string a user sees for a runtime-panic trap
+    /// test excluded from the default lane (the owner-reported symptom:
+    /// `std/src/time/rt/*_trap_test.nv` PASS 0 FAIL 0, no SKIP visible).
+    #[test]
+    fn lane_excluded_skip_reason_description() {
+        use super::{LaneExclusion, SkipReason, TestType};
+        let reason = SkipReason::LaneExcluded {
+            lane: LaneExclusion::Type(TestType::Panic).lane_name(),
+            hint: LaneExclusion::Type(TestType::Panic).hint(),
+        };
+        assert_eq!(reason.description(), "runtime-panic lane — requires --full");
     }
 
     #[test]

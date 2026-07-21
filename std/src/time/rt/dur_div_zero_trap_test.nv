@@ -1,7 +1,7 @@
 // Plan 175 Ф.1c / D317 — Duration `/ 0` traps (не UB, не silent).
 // EXPECT_RUNTIME_PANIC division by zero
 
-module rt.dur_div_zero_traps
+module rt.dur_div_zero_trap_test
 
 import std.time.duration
 
