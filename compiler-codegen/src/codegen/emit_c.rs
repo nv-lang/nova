@@ -54558,7 +54558,68 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                 }
-                return self.infer_expr_c_type(e);
+                // [M-d216-write-at-return-type-unknown-cc-panic] (2026-07-21): the
+                // trailing expr may reference the block's OWN top-level `let`/`mut`
+                // locals NESTED inside a larger expression, not just as a bare Ident
+                // (the narrow case above) — e.g. a method-call RECEIVER
+                // (`unsafe { mut q = buf.ptr(); q.write_at(1, 99) }` desugars to a
+                // `with unsafe_handler { … }` whose body is exactly this Block, `q`
+                // bound by a preceding top-level `let`, referenced as the receiver of
+                // the trailing `Member` call). Without pre-registering those locals,
+                // the nested Ident lookup inside `infer_call_ret_c`
+                // (`recv_c_type_materialized`) finds nothing at this probe-only call
+                // (`var_types` lacks the key — mirrors the RHS body-bearing overlay
+                // ~27805 / `emit_block_expr`'s identical overlay ~35148) → obj_ty=""
+                // → hits the final `[P67-LEGACY]` hard panic (found: `nova test`
+                // panicking on `spec_tests/conformance/d216_ptr_methods_174_5.nv`,
+                // `.write_at` call, backlog marker). Same overlay technique used at
+                // the other two sites, but through `pattern_binding_overrides`
+                // (RefCell) rather than `self.var_types` directly — this function is
+                // `&self` (mirrors the `Match`-arm `block_saved` seed ~55281 for the
+                // identical reason): pre-register every top-level `let`'s inferred
+                // type, probe the trailing expr, then restore — the real emission
+                // (`emit_stmt`) re-registers these locals authoritatively when it
+                // actually runs.
+                //
+                // UNCONDITIONAL override (no `!contains_key` guard, matching the
+                // ~27805 reference exactly): `var_types` is a flat, NOT block-scoped
+                // registry (§0 known debt — std/prelude functions leave their own
+                // params/locals in it permanently, e.g. some hash helper's own `d`/
+                // `s` params). A stale foreign entry for the SAME short name (`d`,
+                // `s`, …) can already be sitting in `var_types` from an unrelated
+                // std function compiled earlier in this same CU — a `!contains_key`
+                // guard would (wrongly) treat that stale entry as authoritative and
+                // skip installing the override, so the probe still resolves the
+                // WRONG (foreign) type for a name this block's OWN top-level `let`
+                // just rebound. `recv_c_type_materialized` checks
+                // `pattern_binding_overrides` BEFORE `var_types`, so an unconditional
+                // override here always wins for this probe regardless of what (if
+                // anything) `var_types` already holds; real emission is unaffected
+                // (it uses `var_types` directly, restored by its own proper block
+                // scope enter/exit, not this RefCell overlay).
+                let mut _overlay_saved: Vec<(String, Option<String>)> = Vec::new();
+                for s in &b.stmts {
+                    if let crate::ast::Stmt::Let(d) = s {
+                        if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
+                            {
+                                let ty2 = d.ty.as_ref().and_then(|t| self.type_ref_to_c(t).ok())
+                                    .unwrap_or_else(|| self.infer_expr_c_type(&d.value));
+                                let prev = self.pattern_binding_overrides.borrow_mut().insert(name.clone(), ty2);
+                                _overlay_saved.push((name.clone(), prev));
+                            }
+                        }
+                    }
+                }
+                let result = self.infer_expr_c_type(e);
+                let mut overrides = self.pattern_binding_overrides.borrow_mut();
+                for (name, old) in _overlay_saved.drain(..).rev() {
+                    match old {
+                        Some(t) => { overrides.insert(name, t); }
+                        None => { overrides.remove(&name); }
+                    }
+                }
+                drop(overrides);
+                return result;
             }
             return "nova_unit".into();
         }
