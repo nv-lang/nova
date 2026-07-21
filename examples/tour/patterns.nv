@@ -1,0 +1,36 @@
+// patterns.nv — match, guards, `if <Pattern> = expr` (if-let form), record match.
+module tour.patterns
+
+type Shape enum
+    | Circle(f64)
+    | Square(f64)
+
+fn describe(n int) -> str => match n {
+    0          => "zero"
+    n if n > 0 => "positive"
+    _          => "negative"
+}
+
+fn area(s Shape) -> f64 => match s {
+    Circle(r) => 3.14 * r * r
+    Square(a) => a * a
+}
+
+fn main() {
+    println("describe(0)=${describe(0)} describe(5)=${describe(5)} describe(-3)=${describe(-3)}")
+    println("area(Circle(2.0))=${area(Circle(2.0))}")
+
+    // `if <Pattern> = expr { } else { }` — Nova's if-let form: matches a
+    // single-arm pattern and binds inside the `if`, falls to `else` on no match.
+    ro opts []Option[int] = [Some(1), None, Some(3)]
+    mut total = 0
+    mut missing = 0
+    for o in opts {
+        if Some(v) = o {
+            total += v
+        } else {
+            missing += 1
+        }
+    }
+    println("total=${total} missing=${missing}")
+}

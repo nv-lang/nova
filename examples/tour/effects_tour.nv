@@ -1,0 +1,34 @@
+// effects_tour.nv — effects in function signatures, handler substitution (D61).
+module tour.effects_tour
+
+// An `effect` declares operations whose implementation is decided at the
+// call site, not baked into the function — think "testable side-channel",
+// checked by the compiler (unlike `protocol`, which is fixed per-type).
+type Counter effect {
+    next() -> int
+}
+
+// `Counter` in the signature says: this function performs Counter's
+// operations, but does NOT say who handles them.
+fn count_three() Counter -> int {
+    ro a = Counter.next()
+    ro b = Counter.next()
+    ro c = Counter.next()
+    a + b + c
+}
+
+fn main() {
+    // `with Handler = effect X { ... } { body }` substitutes a concrete
+    // handler for the duration of `body`. Swap the handler in tests
+    // (e.g. a deterministic fake) without touching `count_three`.
+    mut state = 0
+    with Counter = effect Counter {
+        next() {
+            state += 1
+            return state
+        }
+    } {
+        ro total = count_three()
+        println("total = ${total}")   // 1 + 2 + 3 = 6
+    }
+}

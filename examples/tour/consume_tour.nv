@@ -1,0 +1,45 @@
+// consume_tour.nv — consume-params/bindings, defer, auto-`@cleanup` (D432).
+module tour.consume_tour
+
+// `consume` = an ownership-tracked type; a `consume` binding must be
+// consumed exactly once UNLESS it declares `@cleanup` (see below).
+type Resource consume { id int }
+
+// A type with an effect-pure `@cleanup` shifts from linear (must-consume)
+// to affine (may-forget) — the compiler auto-inserts `@cleanup(outcome)` on
+// any dangling exit path (D432, new in this release). Without `@cleanup`,
+// forgetting to consume is a compile error (D133) — that's the strict form.
+// `@cleanup` must have an effect-pure (empty) effect row (no I/O allowed
+// inside it), so it can only touch pure/in-memory state.
+fn Resource consume @cleanup(_outcome ScopeOutcome) -> () {
+    ()
+}
+
+fn Resource consume @close() -> () { () }
+
+fn make(id int) -> Resource => { id }
+
+fn main() {
+    // `defer { ... }` runs at scope exit, LIFO for multiple defers (D189).
+    {
+        defer { println("first defer registered, runs LAST") }
+        defer { println("second defer registered, runs FIRST") }
+        println("inside scope")
+    }
+    println("explicit-consume demo below")
+}
+
+// A bare consume-let, never explicitly consumed: this COMPILES (D432
+// auto-cleanup covers it) — before D432 this was a D133 compile error.
+test "D432: bare consume-let never touched still compiles + runs" {
+    consume r = make(1)
+    ro _id = r.id
+    assert(_id == 1)
+}
+
+// Explicit consume still works exactly as before D432 (strict linear form).
+test "explicit consume + close still works (pre-D432 form)" {
+    consume r2 = make(2)
+    r2.close()
+    assert(true)
+}
