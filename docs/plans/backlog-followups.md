@@ -3843,3 +3843,66 @@ closure auto-cleans exactly once"`) — гоняет ОБА дефекта фу�
 (DCE не активен для `nova test`, у фикстуры нет `fn main` —
 `compute_dead_decls_with`'s `has_main`-гейт; дефект (a) отдельно накрыт
 Rust unit-тестом выше + флагман-гейтами).
+
+## [M-217-break-continue-loop-boundary-bleed] — `break` внутри тривиального вложенного `loop{}` протекает cleanup во внешний scope (P0, 2026-07-21, follow-up к M-217-spawn-closure-consume-cleanup-undefined) — ✅ РЕШЕНО
+
+**РЕШЕНО 2026-07-21 (sonnet, тот же worktree `nova-spawncl`, ветка
+`p-fix-spawn-cleanup`, коммит поверх b017de1bb):** большой гейт на
+объединённом main поймал регресс ПОСЛЕ фикса (b) выше:
+`spec_tests/conformance/readguard_writeguard_separated.nv` тест «multiple
+ReadGuards can coexist» — детерминированный RUN-FAIL «RwLock.read_unlock()
+called without a matching read()» на всех 4 итерациях `parallel for`.
+
+**Корень** (найден дампом реального `.c` из спойлер-верифицированного
+прогона фикстуры, НЕ из синтетики): паттерн `consume rg = rw.read(); loop {
+… if … { break } … }; rg.unlock()` (CAS-retry цикл МЕЖДУ consume-let'ом и
+ручным disarm-вызовом). `enter_defer_scope` (emit_c.rs ~26040) ранним
+`return 0` НЕ регистрирует scope для тела цикла, если у ЭТОГО тела нет
+СВОИХ `defer`/auto-cleanup-let (чистая perf-оптимизация — CAS-retry `loop`
+не имеет своих). Но `Stmt::Break`'s `emit_early_exit_cleanup(stop_at_loop=
+true)` (~26652) идёт по `self.defer_scopes` СВЕРХУ в поисках БЛИЖАЙШЕГО
+`is_loop_body`-маркера, чтобы там остановиться — раз у ломаемого цикла
+маркера нет вовсе, проход «проскакивает» мимо (несуществующей) границы
+цикла прямо во ВНЕШНИЙ, ещё открытый scope (`rg`'s auto-cleanup scope,
+зарегистрированный фиксом (b) выше!) и ПРЕЖДЕВРЕМЕННО стреляет его
+`@cleanup` — хотя внешний scope НЕ завершается этим `break` (он выходит
+только из ВНУТРЕННЕГО `loop{}`). После break'а выполнение продолжается,
+доходит до ручного `rg.unlock()` — ВТОРОЙ релиз того же guard'а →
+double-release. Voспроизведено БЕЗ единого spawn'а (голый `fn main`,
+`consume r = mk(); loop { … break … }; r.close()` → `CLEANUP CALLED` ДО
+`CLOSE CALLED`) — доказывает: баг ОБЩИЙ, pre-existing в разделяемой
+break/continue-машинерии, просто НИКОГДА раньше не упражнялся для
+spawn/parallel-for тела (до фикса (b) spawn-тела вообще не регистрировали
+реальный auto-cleanup scope — веткам просто нечего было «протекать»).
+
+**Фикс:** новое поле `loop_body_has_scope: Vec<bool>` (emit_c.rs, рядом с
+`auto_cleanup_active`) — `emit_loop_body_inline_ex` (ЕДИНСТВЕННая точка
+входа для ВСЕХ форм цикла: for/while/loop — проверено грепом, единственный
+вызов `enter_defer_scope(_, true)` во всём файле) пушит
+`block_id != 0` ПЕРЕД телом, попает ПОСЛЕ. `Stmt::Break`/`Stmt::Continue`
+теперь проверяют `loop_body_has_scope.last()`: `Some(false)` (ближайший
+цикл НЕ зарегистрировал scope) → `emit_early_exit_cleanup` вообще НЕ
+вызывается (безопасно: раз у цикла нет своего scope, внутри него по
+построению не может остаться ничего открытого на `self.defer_scopes` —
+всё, что было открыто ВНУТРИ, уже закрылось своим `leave_defer_scope` до
+этой точки); `Some(true)`/пусто (defensive fallback) → старое поведение
+(уже корректно останавливается на РЕАЛЬНО зарегистрированном scope цикла).
+
+**Гейты (СИНХРОННО, worktree `nova-spawncl`):**
+`readguard_writeguard_separated.nv` (запущен в реальной folder-CU локации,
+`d256_contract_self_field.nv` временно вынесен из директории на время
+верификации — у него ложно-срабатывающий `// REQUIRES_SMT_BACKEND` внутри
+ПРОЗЫ комментария, наивный парсер маркера матчит его как директиву и молча
+скипает ВЕСЬ top-level combined-module — pre-existing, НЕ этой волны
+дефект, за periметром; d256 возвращён на место после верификации,
+НЕ трогался) — **3/3 PASS** (детерминированно, до фикса — 4/4 RUN-FAIL,
+воспроизведено дословно с тем же сообщением). d432-фикстура (9 тестов,
+добавлен новый regression-test) + 3× d157/d180-ok + 7× d157/d180-neg —
+**8/8 PASS** (repored-entries). Все 5 CI-целей (echo_server/echo_client
+net+tls, aggregator) `--strict-effects` — **built**. Rust `dce_tests` (24)
+— ok.
+
+Regression-guard: 9-й `test` в `d432_auto_cleanup_hybrid_c.nv` (`"D432:
+break inside a nested empty loop must not bleed into an outer auto-cleanup
+scope"`) — изолирует дефект от нативного RwLock (локальный ресурс +
+`exit_calls`, тот же CAS-retry-loop shape).

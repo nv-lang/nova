@@ -1592,6 +1592,44 @@ pub struct CEmitter {
     /// block_id) — the single choke-point every block already passes
     /// through, so no per-call-site bookkeeping is needed.
     auto_cleanup_active: Vec<(String, usize, usize)>,
+    /// [M-217-break-continue-loop-boundary-bleed] BUGFIX: one entry per
+    /// currently-open loop body (`for`/`while`/bare `loop`), pushed/popped by
+    /// `emit_loop_body_inline_ex` alongside its own `enter_defer_scope`/
+    /// `leave_defer_scope` call — `true` iff THAT call actually pushed a real
+    /// `DeferScope` (i.e. the loop's OWN top-level statements contain a
+    /// `defer` or an auto-cleanup-qualifying bare `consume` let). `enter_
+    /// defer_scope` early-returns `block_id=0` (no scope, no C boilerplate)
+    /// for a loop body with neither — a deliberate perf optimization for the
+    /// (common) trivial-loop case. But `Stmt::Break`/`Stmt::Continue`'s
+    /// `emit_early_exit_cleanup(stop_at_loop=true)` walks `self.defer_scopes`
+    /// from the top looking for the NEAREST `is_loop_body` scope to stop at —
+    /// when the loop being broken registered NO scope of its own, that
+    /// marker is simply ABSENT from the stack, so the walk "overshoots" past
+    /// the (nonexistent) loop boundary straight into whatever ENCLOSING,
+    /// still-open scope happens to be on top instead (e.g. the spawn/fn
+    /// body's own auto-cleanup consume-let scope) — firing that OUTER
+    /// scope's `@cleanup` prematurely (the outer scope has not actually
+    /// exited; a `break` out of a nested trivial loop should touch NOTHING
+    /// beyond the loop's own — absent — boundary). Found via `[M-217-spawn-
+    /// closure-consume-cleanup-undefined]` follow-up regression
+    /// (`readguard_writeguard_separated.nv`'s "multiple ReadGuards can
+    /// coexist": `consume rg = rw.read(); loop { … if … { break } … };
+    /// rg.unlock()` — the CAS-retry loop's `break` wrongly fired `rg`'s
+    /// `@cleanup` early, then the manual `.unlock()` after the loop fired
+    /// AGAIN → double-release, "read_unlock() called without a matching
+    /// read()"). Reproducible with NO spawn involved at all (plain `fn
+    /// main`) — a pre-existing gap in the shared break/continue early-exit
+    /// machinery, merely never exercised via a spawn/parallel-for body
+    /// before (spawn bodies never registered a real auto-cleanup scope
+    /// prior to this same wave's `emit_spawn` fix). `Stmt::Break`/`Continue`
+    /// consult `.last()`: `Some(false)` (nearest loop registered no scope)
+    /// → skip `emit_early_exit_cleanup` entirely (sound: a loop with no
+    /// scope of its own can, by construction, have nothing nested inside it
+    /// still open on `self.defer_scopes` at this point); `Some(true)` or
+    /// empty (defensive fallback, preserves old behavior) → proceed as
+    /// before, which already correctly stops AT a genuinely-registered loop
+    /// scope.
+    loop_body_has_scope: Vec<bool>,
     /// Closure mut-capture heap-box registry. Maps variable name → C box-pointer
     /// variable name (`_box_<name>`). When a mut local is captured by a closure,
     /// it is heap-promoted: a `T* _box_x = nova_alloc(sizeof(T)); *_box_x = x;`
@@ -2306,6 +2344,7 @@ impl CEmitter {
             method_consume_param_positions: HashMap::new(),
             consume_receiver_methods: HashMap::new(),
             auto_cleanup_active: Vec::new(),
+            loop_body_has_scope: Vec::new(),
             var_boxed: HashMap::new(),
             warnings: std::cell::RefCell::new(Vec::new()),
             strict_errors: std::cell::RefCell::new(Vec::new()),
@@ -26721,6 +26760,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// exactly what the per-iteration safepoint prevents).
     fn emit_loop_body_inline_ex(&mut self, body: &Block, skip_preempt: bool) -> Result<(), String> {
         let block_id = self.enter_defer_scope(body, true);
+        // [M-217-break-continue-loop-boundary-bleed]: record whether THIS
+        // loop actually registered a real defer-scope (`block_id != 0`) so
+        // `Stmt::Break`/`Stmt::Continue` can tell a genuine loop-boundary
+        // marker from an absent one — see `loop_body_has_scope` field doc.
+        self.loop_body_has_scope.push(block_id != 0);
         // Plan 44.7: preemption safepoint at the loop backedge. Emitted as
         // the first statement of the body so it runs at the start of every
         // iteration — this also covers the `continue` edge (continue jumps
@@ -26739,6 +26783,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.line(&format!("(void)({});", v));
         }
         self.leave_defer_scope(block_id);
+        self.loop_body_has_scope.pop();
         Ok(())
     }
 
@@ -29181,13 +29226,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
             Stmt::Break(_) => {
-                if !self.defer_scopes.is_empty() {
+                // [M-217-break-continue-loop-boundary-bleed]: only walk when
+                // the NEAREST enclosing loop actually registered a defer-
+                // scope of its own (`loop_body_has_scope`'s top). A trivial
+                // loop (no `defer`/auto-cleanup consume-let at ITS OWN top
+                // level) registers none — `self.defer_scopes` at this point
+                // holds only OUTER, still-open scopes that this `break`
+                // must NOT touch (they haven't exited; see field doc).
+                // `unwrap_or(true)` is a defensive fallback for the (should
+                // never happen outside a loop) empty-stack case — preserves
+                // the pre-fix behavior rather than silently under-cleaning.
+                if !self.defer_scopes.is_empty()
+                    && self.loop_body_has_scope.last().copied().unwrap_or(true)
+                {
                     self.emit_early_exit_cleanup(/*stop_at_loop=*/true);
                 }
                 self.line("break;");
             }
             Stmt::Continue(_) => {
-                if !self.defer_scopes.is_empty() {
+                // [M-217-break-continue-loop-boundary-bleed]: see Stmt::Break above.
+                if !self.defer_scopes.is_empty()
+                    && self.loop_body_has_scope.last().copied().unwrap_or(true)
+                {
                     self.emit_early_exit_cleanup(/*stop_at_loop=*/true);
                 }
                 self.line("continue;");
