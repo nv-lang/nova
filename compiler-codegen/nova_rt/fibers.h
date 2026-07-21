@@ -4206,8 +4206,25 @@ static inline nova_int _nova_time_default_now(void) {
     return (nova_int)_nova_wall_unix_ms();
 }
 
-/* Inline dispatch: with user handler → handler method; else → default. */
+/* Plan 175 Ф.2-v2 (`#default_handler(Time)`): lazily construct + install
+ * the `.nv` default handler (if this CU registered one — see effects.h/
+ * effects.c `_nova_time_default_ctor`) the FIRST time any op dispatches
+ * with no `with Time = …` bound on this thread; a real `with` always
+ * overrides normally (save/install/restore around the block, unaffected).
+ * A CU that never pulls in std.time's default (`_nova_time_default_ctor ==
+ * NULL`) falls through to the OLD hardcoded real-clock impls below —
+ * backward-compat, no forced migration. */
+static inline void _nova_time_ensure_default(void) {
+    if (!_nova_handler_Time && _nova_time_default_ctor) {
+        _nova_handler_Time = _nova_time_default_ctor();
+    }
+}
+
+/* Inline dispatch: with user handler (explicit `with` OR lazily-installed
+ * `#default_handler`) → handler method; else → hardcoded real-clock impl
+ * (bootstrap fallback for a CU with no `#default_handler(Time)` fn). */
 static inline nova_unit Nova_Time_sleep(nova_int ms) {
+    _nova_time_ensure_default();
     if (_nova_handler_Time) {
         return _nova_handler_Time->sleep(_nova_handler_Time->ctx, ms);
     }
@@ -4219,6 +4236,7 @@ static inline nova_unit Nova_Time_sleep(nova_int ms) {
  * `Nova_{Effect}_{op}`, generic pattern, без хардкода в src (grep
  * подтвердил: emit_c.rs строит имя из схемы). */
 static inline nova_int Nova_Time_now_unix_ms(void) {
+    _nova_time_ensure_default();
     if (_nova_handler_Time) {
         return _nova_handler_Time->now_unix_ms(_nova_handler_Time->ctx);
     }
@@ -4230,6 +4248,7 @@ static inline nova_int Nova_Time_now_unix_ms(void) {
  * умножает на 1e6 (overflow безопасен в i64 для разумных значений).
  * User-handler-path использует vtable-slot напрямую. */
 static inline nova_int Nova_Time_now_ms(void) {
+    _nova_time_ensure_default();
     if (_nova_handler_Time) {
         return _nova_handler_Time->now_ms(_nova_handler_Time->ctx);
     }
@@ -4237,6 +4256,7 @@ static inline nova_int Nova_Time_now_ms(void) {
 }
 
 static inline nova_int Nova_Time_now_ns(void) {
+    _nova_time_ensure_default();
     if (_nova_handler_Time) {
         return _nova_handler_Time->now_ns(_nova_handler_Time->ctx);
     }
@@ -4257,6 +4277,7 @@ static inline nova_int Nova_Time_now_ns(void) {
  * которым нужен mock monotonic-clock (std/testing/handlers.nv fixed_ms /
  * mut_clock), реализуют слот явно. */
 static inline nova_int Nova_Time_now_monotonic_ns(void) {
+    _nova_time_ensure_default();
     if (_nova_handler_Time && _nova_handler_Time->now_monotonic_ns) {
         return _nova_handler_Time->now_monotonic_ns(_nova_handler_Time->ctx);
     }
@@ -4271,6 +4292,7 @@ static inline nova_int Nova_Time_now_monotonic_ns(void) {
  * real OS-hook (`_nova_local_offset_sec()` above) — backward-compat, no
  * forced migration of existing handler literals. */
 static inline nova_int Nova_Time_local_offset_sec(void) {
+    _nova_time_ensure_default();
     if (_nova_handler_Time && _nova_handler_Time->local_offset_sec) {
         return _nova_handler_Time->local_offset_sec(_nova_handler_Time->ctx);
     }

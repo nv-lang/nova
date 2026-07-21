@@ -77,6 +77,8 @@ fn extract_doc_attrs(attrs: &[DocAttr]) -> ExtractedDocAttrs {
             DocAttr::DocSummary(s) => summary_override = Some(s.clone()),
             DocAttr::DocSection(_) => {}
             DocAttr::DocTestHandlers(p) => doc_test_handlers = Some(p.clone()),
+            // Plan 175 Ф.2-v2: internal codegen/checker marker, not doc-rendered.
+            DocAttr::DefaultHandler(_) => {}
         }
     }
     let stability = match tier {

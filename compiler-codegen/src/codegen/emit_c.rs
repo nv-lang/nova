@@ -438,6 +438,31 @@ fn compute_dead_decls_with(module: &Module, enabled: bool) -> DeadDecls {
     let mut methods: Vec<(String, String, HashSet<String>)> = Vec::new();
     // Worklist seed: `main` is always a root.
     let mut worklist: Vec<String> = vec!["main".to_string()];
+    // Plan 175 Ф.2-v2: `#default_handler(X)` fns are referenced ONLY via a
+    // raw C-text fn-pointer assignment codegen emits into `main()`'s
+    // prologue (`_nova_time_default_ctor = &nova_fn_...;`) — invisible to
+    // `collect_used_names`'s AST walk, so without this seed a program that
+    // imports std.time but never calls a Time op by name (e.g. only via the
+    // `#default_handler` ctor's OWN body) would get its default-handler fn
+    // pruned as dead, leaving the fn-pointer assignment referencing an
+    // undefined symbol (mirrors the `main` seed above — this fn is always
+    // "called", just not through an AST `Call` node).
+    for it in &module.items {
+        if let Item::Fn(f) = it {
+            if f.doc_attrs.iter().any(|a| matches!(a, crate::ast::DocAttr::DefaultHandler(_))) {
+                worklist.push(f.name.clone());
+            }
+        }
+    }
+    for pf in &module.peer_files {
+        for it in &pf.items_here {
+            if let Item::Fn(f) = it {
+                if f.doc_attrs.iter().any(|a| matches!(a, crate::ast::DocAttr::DefaultHandler(_))) {
+                    worklist.push(f.name.clone());
+                }
+            }
+        }
+    }
     // Plan 209 Ф.2 (HashMap-mono-gap fix): D39 embed-delegation proxies
     // (`emit_embed_proxies`) are SYNTHESIZED directly in codegen — never AST
     // `Item::Fn` nodes — so `collect_used_names` above can never see the call
@@ -1942,6 +1967,18 @@ pub struct CEmitter {
     /// Drives (a) the hidden `int _consume_ccount;` field appended by
     /// `emit_record_type` and (b) the exactly-once prologue in `emit_fn`.
     consume_cleanup_types: HashSet<String>,
+    /// Plan 175 Ф.2-v2: `#default_handler(EffectName)` registry — effect
+    /// name → plain Nova name of the zero-arg free fn tagged as its default
+    /// handler-factory (checker already validated arity/return-type/
+    /// uniqueness/cycles — see `check_default_handlers`). Populated by an
+    /// `emit_module` pre-pass (mirrors `consume_cleanup_types` above).
+    /// GENERIC mechanism — consulted by `emit_effect_type`'s per-op dispatch
+    /// wrapper: an effect with a registered default gets an inline
+    /// once-per-thread lazy-construct-then-install check
+    /// (`if (!_nova_handler_X) { _nova_handler_X = <ctor>(); }`) before the
+    /// vtable call; an effect with none keeps today's behaviour (crash on
+    /// NULL `_nova_handler_X` if used without an enclosing `with`) unchanged.
+    default_handler_fns: HashMap<String, String>,
     /// Plan 173 Ф.5 (#8): struct names that ACTUALLY received the hidden
     /// `_consume_ccount` field (heap records only). The `emit_fn` prologue
     /// gates on THIS set (not `consume_cleanup_types`) so the two can never
@@ -2445,6 +2482,7 @@ impl CEmitter {
             // emit_module runs the pre-pass.
             preempt_keep: crate::codegen::preempt_keep::PreemptKeepSet::default(),
             consume_cleanup_types: HashSet::new(),
+            default_handler_fns: HashMap::new(),
             consume_ccount_structs: HashSet::new(),
             record_consume_fields: HashMap::new(),
             record_field_names: HashMap::new(),
@@ -4639,6 +4677,28 @@ impl CEmitter {
             }
             self.preempt_keep =
                 crate::codegen::preempt_keep::compute_preempt_keep_set(all_fns);
+        }
+
+        // Plan 175 Ф.2-v2: pre-pass — collect `#default_handler(X)` free fns
+        // (checker already validated arity/return-type/uniqueness/cycles;
+        // codegen just needs the plain Nova name to resolve its mangled C
+        // symbol — consulted by `emit_effect_type`'s dispatch-wrapper below).
+        {
+            let mut collect = |items: &[Item]| {
+                for item in items {
+                    if let Item::Fn(f) = item {
+                        for attr in &f.doc_attrs {
+                            if let crate::ast::DocAttr::DefaultHandler(eff) = attr {
+                                self.default_handler_fns.insert(eff.clone(), f.name.clone());
+                            }
+                        }
+                    }
+                }
+            };
+            collect(&module.items);
+            for pf in &module.peer_files {
+                collect(&pf.items_here);
+            }
         }
 
         // Plan 173 Ф.5 (#8, D188 R2): pre-pass — collect receiver types of
@@ -11374,9 +11434,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // match-arm, if-let, while-let) are locals of the op, NOT free variables of
             // the enclosing factory fn — they must not be captured. Without this, a stale
             // entry in the flat `var_types` map (e.g. `i` left behind by a previously-emitted
-            // std.sort fn) makes an op-body local wrongly captured, producing both a dangling
-            // `ctx->i = &i` (no such local in the factory) and a `#define i (*_c->i)` that
-            // collides with the genuine op-body `nova_int i`. Mirror emit_spawn/detach/blocking,
+            // std.sort fn) makes an op-body local wrongly captured, producing both a bogus
+            // ctx-field capture (no such local in the factory) and a var_boxed/local-copy
+            // unpack that collides with the genuine op-body `nova_int i`. Mirror emit_spawn/detach/blocking,
             // which already subtract bound names via collect_bound_names_*. PER-method: a name
             // bound-local in one op may legitimately be an enclosing capture used by another op.
             let mut bound: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -11405,28 +11465,50 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // This goes directly into out (inside the function body) before the vtable.
         // MSVC supports local typedefs in function scope.
         let ctx_struct = format!("NovaCtx_{}", handler_id);
-        // Plan 175 Ф.1b (dangling-capture fix): pointer captures store the
-        // pointer directly; MUTABLE scalar captures store `&local` (mutation
-        // must be visible to the caller for INLINE handlers); IMMUTABLE scalar
-        // captures store a BY-VALUE snapshot (copy). The old code stored EVERY
-        // scalar by `&local` — for a FACTORY handler (`fn fixed_ms(ms) ->
-        // Effect[Time] { handler … }`) the literal escapes and `&ms` dangled
-        // (mock clock read freed stack → garbage). Immutable-by-value is sound
-        // both inline (value unchanged) and escaping (copy survives return).
-        // `needs_deref[i]` == field is `T*` (by-pointer) ⇒ body access derefs.
-        let capture_by_ptr: Vec<bool> = all_captures.iter().map(|(name, cap_ty)| {
-            cap_ty.ends_with('*') || self.var_mutable.contains(name)
-        }).collect();
+        // Plan 175 Ф.2-v2 (common closure-capture path — replaces the old
+        // `#define {cap} (*_c->{cap})` textual-macro aliasing, [M-effect-
+        // handler-body-record-literal] fix-direction): handler-literal
+        // captures now use EXACTLY the mechanism `emit_lambda` uses for
+        // closures (mirrors it 1:1, see emit_lambda's env-struct/var_boxed
+        // comments a few thousand lines below in this file):
+        //   * MUTABLE captures: escaping handlers (returned as `Effect[X]`
+        //     from a factory fn) heap-promote to a `T*` box (reusing an
+        //     already-boxed var if a prior closure/handler in this fn
+        //     already promoted it — `self.var_boxed`) and register it in the
+        //     OUTER `var_boxed` so `ExprKind::Ident` transparently derefs
+        //     `(*box)` afterward — exactly like a closure capture. INLINE
+        //     handlers (`with X = effect {…} { body }`) instead take
+        //     `&cap_name` directly (no box, no outer `var_boxed` write) —
+        //     `emit_with` wraps handler-construction in its own nested C
+        //     block, so a box's C VARIABLE DECLARATION would itself go out
+        //     of scope at the end of that `with`, corrupting any later read
+        //     of `cap_name` ([M-175-handler-lit-boxed-var-c-scope-leak]);
+        //     `&cap_name` is a bare expression, not a new scoped variable,
+        //     and is always sound since `cap_name` was already in scope
+        //     before the handler literal. See the per-capture code below for
+        //     the exact split.
+        //   * IMMUTABLE captures (incl. already-pointer heap refs, e.g. a
+        //     captured `Nova_Foo*` local) are a plain BY-VALUE snapshot —
+        //     copying a pointer by value already preserves shared-object
+        //     mutation visibility; only REASSIGNMENT of the local binding
+        //     needs the box, which is exactly what `var_mutable` gates.
+        // Field names are MANGLED (`_nv_fv_<handler_id>_<name>`, matching
+        // emit_lambda's `mangled_field`) so a nested closure/handler literal
+        // built INSIDE an op body never collides with a struct-member token
+        // sharing a captured var's bare name (the exact class of bug the
+        // macro approach required a separate mangling workaround for).
+        let free_var_is_mut: Vec<bool> = all_captures.iter()
+            .map(|(name, _)| self.var_mutable.contains(name))
+            .collect();
+        let mangled_field = |name: &str| format!("_nv_fv_{}_{}", handler_id, name);
         let capture_ptr_tys: Vec<String> = all_captures.iter()
-            .zip(capture_by_ptr.iter())
-            .map(|((_, cap_ty), &by_ptr)| {
-                if !by_ptr { cap_ty.clone() }
-                else if cap_ty.ends_with('*') { cap_ty.clone() }
-                else { format!("{}*", cap_ty) }
+            .zip(free_var_is_mut.iter())
+            .map(|((_, cap_ty), &is_mut)| {
+                if is_mut { format!("{}*", cap_ty) } else { cap_ty.clone() }
             }).collect();
         self.line(&format!("typedef struct {{"));
         for ((cap_name, _), ptr_ty) in all_captures.iter().zip(capture_ptr_tys.iter()) {
-            self.line(&format!("    {} {};", ptr_ty, cap_name));
+            self.line(&format!("    {} {};", ptr_ty, mangled_field(cap_name)));
         }
         if all_captures.is_empty() {
             self.line("    char _dummy;");
@@ -11437,7 +11519,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // The impl functions (file-scope) also need to know the ctx struct type.
         let _ = writeln!(self.deferred_impls, "typedef struct {{");
         for ((cap_name, _), ptr_ty) in all_captures.iter().zip(capture_ptr_tys.iter()) {
-            let _ = writeln!(self.deferred_impls, "    {} {};", ptr_ty, cap_name);
+            let _ = writeln!(self.deferred_impls, "    {} {};", ptr_ty, mangled_field(cap_name));
         }
         if all_captures.is_empty() {
             let _ = writeln!(self.deferred_impls, "    char _dummy;");
@@ -11456,45 +11538,71 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "{ctx_ty}* {ctx} = ({ctx_ty}*)nova_alloc(sizeof({ctx_ty}));",
             ctx_ty = ctx_struct, ctx = ctx_var
         ));
-        for ((cap_name, cap_ty), &by_ptr) in all_captures.iter().zip(capture_by_ptr.iter()) {
-            if !by_ptr {
-                // Immutable scalar/struct: by-value snapshot (copy survives escape).
-                self.line(&format!("{ctx}->{cap} = {cap};", ctx = ctx_var, cap = cap_name));
-            } else if cap_ty.ends_with('*') {
-                // Pointer type: store the pointer value directly (heap object, no indirection)
-                self.line(&format!("{ctx}->{cap} = {cap};", ctx = ctx_var, cap = cap_name));
-            } else {
-                // Mutable scalar/struct capture. Two cases (Plan 175 Ф.1b):
+        for ((cap_name, cap_ty), &is_mut) in all_captures.iter().zip(free_var_is_mut.iter()) {
+            let field = mangled_field(cap_name);
+            if is_mut {
+                // Mutable capture. Two cases ([M-175-handler-lit-boxed-var-
+                // c-scope-leak] — found via spec_tests/conformance/repro_
+                // matrix.nv's two-level nested-handler-capture fixture):
                 //
-                // (a) ESCAPING handler — the literal is the value of a factory fn
-                //     returning `Effect[X]` (C ret `NovaVtable_X*`), e.g.
-                //     `fn mut_clock() -> Effect[Time] { mut current_ms … }`. A
-                //     `&stack_local` would dangle after the fn returns, and the
-                //     handler's own writes (`sleep` mutates `current_ms`) would
-                //     scribble freed stack → HEAP-PROMOTE: alloc a cell, copy the
-                //     current value, store the cell pointer.
+                // (a) ESCAPING handler — the literal is the return value of a
+                //     factory fn (`fn f() -> Effect[X] { … effect X {…} }`).
+                //     `&stack_local` would dangle once the factory returns, so
+                //     UNCONDITIONALLY heap-promote (mirrors emit_lambda's
+                //     closure-capture box logic) — reuse an existing box if
+                //     `cap_name` was already promoted by an earlier closure/
+                //     handler in this same enclosing fn (`self.var_boxed`),
+                //     else allocate one now, and register it in the OUTER
+                //     `var_boxed` so later reads/writes of `cap_name` in the
+                //     enclosing fn stay synced with the handler's mutations
+                //     (exactly like a closure capture).
                 //
-                // (b) INLINE handler (`with X = effect X {…} { body }` in a
-                //     non-Effect fn) — captures point at still-live enclosing
-                //     locals, and callers may read those locals back after the
-                //     block (`mut n=0; …handler mutates n…; assert(n==…)`). Keep
-                //     `&local` so mutations remain visible to the caller.
-                //
-                // Body access stays `(*_c->cap)` in both cases.
+                // (b) INLINE handler (`with X = effect X {…} { body }`, NOT
+                //     returned) — `&cap_name` directly, NO box. This matters
+                //     even though the box's ALLOCATION would be heap-durable:
+                //     `emit_with` wraps handler-construction in its OWN
+                //     nested C block (the interrupt-frame machinery for
+                //     `with`), so a NEW `_box_<cap>` C VARIABLE declared
+                //     there is itself block-scoped and goes out of C scope
+                //     once that `with` closes — but `cap_name`'s Nova-level
+                //     `mut` binding (and any use of it AFTER the `with`
+                //     block, or by a SIBLING `with` at the same level) must
+                //     keep working. `&cap_name` sidesteps this entirely: it's
+                //     just an address-of expression, no new scoped variable,
+                //     and it is always sound because `cap_name`'s OWN `mut`
+                //     declaration necessarily lives in a C scope that
+                //     outlives this `with` (Nova's binding rules — a name
+                //     can only be captured if it was already in scope before
+                //     the handler literal). Do NOT touch the OUTER
+                //     `var_boxed` here: `cap_name` remains a plain local for
+                //     the rest of the enclosing fn — nothing about its
+                //     storage changed.
                 let handler_escapes = self.current_fn_return_ty.as_deref()
                     .map_or(false, |t| t.starts_with("NovaVtable_"));
-                if handler_escapes {
-                    let cap_ty = cap_ty.clone();
-                    let cell = self.fresh_tmp();
-                    self.line(&format!(
-                        "{ty}* {cell} = ({ty}*)nova_alloc(sizeof({ty}));",
-                        ty = cap_ty, cell = cell));
-                    self.line(&format!("*{cell} = {cap};", cell = cell, cap = cap_name));
-                    self.line(&format!(
-                        "{ctx}->{cap} = {cell};", ctx = ctx_var, cap = cap_name, cell = cell));
+                let field_val = if handler_escapes {
+                    if let Some(existing) = self.var_boxed.get(cap_name) {
+                        existing.clone()
+                    } else {
+                        let bv = format!("_box_{}", cap_name);
+                        self.line(&format!(
+                            "{ty}* {bv} = ({ty}*)nova_alloc(sizeof({ty}));",
+                            ty = cap_ty, bv = bv));
+                        self.line(&format!("*{bv} = {cap};", bv = bv, cap = cap_name));
+                        self.var_boxed.insert(cap_name.clone(), bv.clone());
+                        bv
+                    }
                 } else {
-                    self.line(&format!("{ctx}->{cap} = &{cap};", ctx = ctx_var, cap = cap_name));
-                }
+                    format!("&{}", cap_name)
+                };
+                self.line(&format!("{ctx}->{field} = {field_val};",
+                    ctx = ctx_var, field = field, field_val = field_val));
+            } else {
+                // Immutable capture (incl. already-pointer heap refs): plain
+                // by-value snapshot. `cap_name` here can never itself be
+                // var_boxed (only mutable vars are ever registered there),
+                // so the bare read is always the correct current value.
+                self.line(&format!("{ctx}->{field} = {cap};",
+                    ctx = ctx_var, field = field, cap = cap_name));
             }
         }
         // Patch vtable at runtime — use mangled field name for overloaded ops
@@ -11701,15 +11809,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
 
-            // Unpack context: expose captured variables so body code can use them directly
+            // Plan 175 Ф.2-v2: this op body is its own C function — isolate
+            // `var_boxed` (mirrors emit_lambda / emit_monomorphized_method's
+            // `[M-mono-method-var-boxed-leak]` fix) so an unrelated boxed
+            // name from the enclosing fn or a PREVIOUS op's body iteration
+            // never leaks in, and so THIS op's captures don't leak to the
+            // next op's body. Restored below alongside var_types/fail_e_map.
+            let saved_var_boxed = std::mem::take(&mut self.var_boxed);
+
+            // Unpack context: expose captured variables so body code can use
+            // them directly — common closure-capture path (no `#define`):
+            // mutable captures register `_c->field` in `var_boxed` so
+            // `ExprKind::Ident` auto-derefs; immutable captures get a plain
+            // local copy under the bare name (fresh local, own C-function
+            // scope — no outer macro can be active to corrupt it).
             self.line(&format!("{ctx}* _c = ({ctx}*)_ctx;", ctx = ctx_struct));
-            for ((cap_name, cap_ty), &by_ptr) in all_captures.iter().zip(capture_by_ptr.iter()) {
-                if by_ptr && !cap_ty.ends_with('*') {
-                    // Mutable scalar capture stored as `T*`: deref `(*_c->cap)`.
-                    self.line(&format!("#define {cap} (*_c->{cap})", cap = cap_name));
+            for ((cap_name, cap_ty), &is_mut) in all_captures.iter().zip(free_var_is_mut.iter()) {
+                let field = mangled_field(cap_name);
+                if is_mut {
+                    self.var_boxed.insert(cap_name.clone(), format!("_c->{}", field));
                 } else {
-                    // By-value snapshot OR pointer-typed capture: `(_c->cap)` (no deref).
-                    self.line(&format!("#define {cap} (_c->{cap})", cap = cap_name));
+                    self.line(&format!("{} {} = _c->{};", cap_ty, cap_name, field));
                 }
             }
             // Plan 65 Ф.1: rebind annotation-bridged handler params from the
@@ -11801,10 +11921,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.expected_record_type = saved_op_expected;
             self.contracts_post_label = saved_op_post_label;
 
-            // Undef the macros so they don't leak
-            for (cap_name, _) in &all_captures {
-                self.line(&format!("#undef {}", cap_name));
-            }
+            // Restore var_boxed (per-op isolation — see take() above; no
+            // `#undef` needed, common closure-capture path uses `var_boxed`
+            // rewriting rather than macros).
+            self.var_boxed = saved_var_boxed;
 
             // Restore var_types state for method params
             for (name, prev) in saved_params {
@@ -12502,6 +12622,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_out    = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
         self.indent = 0;
+        // Plan 175 Ф.2-v2 ([M-spawn-var-boxed-leak] class): a spawn-body is
+        // its own C function reached ONLY via `_c->name` capture rewriting
+        // (`current_spawn_captures`, checked further below in Ident
+        // resolution) — NOT via `var_boxed` macro-free box-deref. But
+        // `var_boxed` is a flat, un-scoped map: if an EARLIER closure or
+        // handler-literal in the SAME enclosing fn boxed a mut var this
+        // spawn ALSO captures (same name), the stale `var_boxed` entry is
+        // checked FIRST in Ident resolution (before `current_spawn_
+        // captures`) and wrongly emits `(*_box_name)` — a C local that
+        // lives in the CALLER's stack frame, invisible inside this spawn's
+        // own function. Isolate (mirrors emit_lambda's identical fix for
+        // its own body) so this spawn's captures are resolved ONLY via its
+        // own ctx struct; restored below.
+        let saved_var_boxed_spawn = std::mem::take(&mut self.var_boxed);
 
         // Plan 48 Ф.4 ([M-mono-spawn-fwd-decls]): pre-scan `scan_expr_fwd`
         // emits forward declarations for every spawn-body it sees in the
@@ -12774,6 +12908,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let entry_code = std::mem::replace(&mut self.out, saved_out);
         self.deferred_impls.push_str(&entry_code);
         self.indent = saved_indent;
+        self.var_boxed = saved_var_boxed_spawn;
 
         // spawn evaluates to unit.
         Ok("NOVA_UNIT".to_string())
@@ -13713,6 +13848,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
         self.indent = 0;
+        // Plan 175 Ф.2-v2 ([M-spawn-var-boxed-leak] class, mirrors emit_spawn's
+        // identical fix): isolate `var_boxed` for this detach-body's own
+        // scope — captures here are resolved via `current_spawn_captures`
+        // (`_c->name`), not `var_boxed`; a stale outer entry would shadow it.
+        let saved_var_boxed_detach = std::mem::take(&mut self.var_boxed);
 
         self.line(&format!("{}void {}(mco_coro* _co) {{", self.top_level_storage(), detach_id));
         self.indent += 1;
@@ -13821,6 +13961,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let entry_fn_text = std::mem::take(&mut self.out);
         self.indent = saved_indent;
         self.out = saved_out;
+        self.var_boxed = saved_var_boxed_detach;
         self.deferred_impls.push_str(&entry_fn_text);
 
         // ── Call site: heap-alloc ctx, fill captures, spawn_orphan ──
@@ -14040,6 +14181,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_out    = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
         self.indent = 0;
+        // Plan 175 Ф.2-v2 ([M-spawn-var-boxed-leak] class, mirrors emit_spawn):
+        // isolate `var_boxed` — this work-fn body resolves captures via
+        // `current_spawn_captures`, not `var_boxed`.
+        let saved_var_boxed_blk = std::mem::take(&mut self.var_boxed);
 
         self.line(&format!("{}void {}(void* _blk_arg) {{", self.top_level_storage(), blk_id));
         self.indent += 1;
@@ -14089,6 +14234,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let blk_code = std::mem::replace(&mut self.out, saved_out);
         self.deferred_impls.push_str(&blk_code);
         self.indent = saved_indent;
+        self.var_boxed = saved_var_boxed_blk;
 
         if has_result {
             Ok(format!("{}._nova_result", ctx_var))
@@ -14184,6 +14330,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_out    = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
         self.indent = 0;
+        // Plan 175 Ф.2-v2 ([M-spawn-var-boxed-leak] class, mirrors emit_spawn):
+        // isolate `var_boxed` — this work-fn body's captures (if any go
+        // through Ident resolution rather than the plain `_c->param` args
+        // built below) must not see a stale outer box entry.
+        let saved_var_boxed_blk = std::mem::take(&mut self.var_boxed);
 
         self.line(&format!("{}void {}(void* _blk_arg) {{", self.top_level_storage(), blk_id));
         self.indent += 1;
@@ -14208,6 +14359,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let blk_code = std::mem::replace(&mut self.out, saved_out);
         self.deferred_impls.push_str(&blk_code);
         self.indent = saved_indent;
+        self.var_boxed = saved_var_boxed_blk;
 
         if has_result {
             Ok(format!("{}._nova_result", ctx_var))
@@ -16199,6 +16351,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 storage = self.top_level_storage_inline(), ret = ret, name = name, method = mangled, params = fn_params_str
             ));
             self.indent += 1;
+            // Plan 175 Ф.2-v2 (`#default_handler`, GENERIC — any effect may opt
+            // in): if this effect has a registered default-handler factory,
+            // lazily construct + install it the first time ANY op dispatches
+            // with no `with X = …` in scope for this thread — mirrors a
+            // closure's lazy-box-promotion pattern (compute once, memoized in
+            // the TLS slot itself; a real `with` still overrides normally,
+            // since `emit_with` always overwrites `_nova_handler_X` on entry
+            // and restores the PRIOR value — NULL or the default — on exit).
+            // An effect with no registered default keeps today's behaviour
+            // (NULL-deref if used without an enclosing `with`) unchanged.
+            if let Some(fn_name) = self.default_handler_fns.get(name).cloned() {
+                let ctor_c_name = self.free_fn_c_name(&fn_name);
+                self.line(&format!(
+                    "if (!_nova_handler_{name}) {{ _nova_handler_{name} = {ctor}(); }}",
+                    name = name, ctor = ctor_c_name,
+                ));
+            }
             // Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]:
             // intercept Application.register_finalizer dispatcher — push к
             // active LIFO stack БЕЗ handler-vtable call. User handler impl
@@ -26323,6 +26492,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         //  emit_main_function via emit_effects_registrar_fn.)
         self.line("_nova_register_effects_fn = _nova_register_all_effects_;");
         self.line("_nova_register_all_effects_();");
+        // Plan 175 Ф.2-v2 (`#default_handler`): wire the ONE effect-specific
+        // runtime hook that exists today — `_nova_time_default_ctor`
+        // (nova_rt/effects.c declares it `= NULL`; fibers.h's `Nova_Time_*`
+        // dispatch wrappers lazily call it on first use with no `with Time =
+        // …` bound). Generic front-end (any effect may carry
+        // `#default_handler` — validated by `check_default_handlers`),
+        // narrow per-effect back-end — the next migrated effect adds an
+        // analogous one-line hook here, not a new mechanism. A CU with no
+        // `#default_handler(Time)` fn leaves the hook NULL — unchanged
+        // real-clock fallback behaviour (backward-compat).
+        if let Some(fn_name) = self.default_handler_fns.get("Time").cloned() {
+            let c_name = self.free_fn_c_name(&fn_name);
+            self.line(&format!("_nova_time_default_ctor = &{};", c_name));
+        }
         // Plan 173 Ф.5 п.2 (D192-ретракт): __CLEANUP_TIMEOUT_INIT__ удалён.
         // Plan 174 (D349): assign typed TimeoutError throw fn pointer (if
         // TimeoutError referenced). Spliced via __SCOPE_TIMEOUT_INIT__.
