@@ -130,9 +130,8 @@ This is an early release; treat it accordingly.
   (`spec/decisions/`); this release's English-facing documentation
   (README, quickstart, language tour) is a curated subset, not a full
   translation.
-- The VSCode extension currently ships syntax highlighting plus LSP
-  wiring; a packaged `.vsix` artifact for this release is tracked
-  separately from the core language/compiler release.
+- The VSCode extension (syntax highlighting + LSP client) ships as a
+  packaged `nova-lang-0.1.0.vsix` attached to this release.
 - Some standard-library corners and example programs carry documented,
   narrow-scope simplifications (see `docs/simplifications.md` in the
   repository) — these are tracked, not silent.
