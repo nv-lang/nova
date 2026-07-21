@@ -5027,7 +5027,19 @@ impl CEmitter {
             // name → set of DEFINING modules (distinct module paths declaring a
             // non-generic type of that simple name).
             let mut type_def_modules: HashMap<String, BTreeSet<Vec<String>>> = HashMap::new();
-            let record_def = |td: &TypeDecl, mods: &mut HashMap<String, BTreeSet<Vec<String>>>, m: &[String]| {
+            // [M-d78-dup-decl-type-cross-import-ambiguous] fix: name → cand
+            // (effective_modpath, possibly `dupN`-tagged) → the DEFINING peer
+            // file's physical anchor (`phys_key_of`, same canonical
+            // dir-for-folder-module/file-for-single-file key the fn/type dup
+            // axis above already computes). Used ONLY as a fallback in branch
+            // (2) below, when the declared-name suffix match can't disambiguate
+            // a `dupN`-tagged cand (its synthetic tag never appears in a real
+            // import path) — see doc there. Empty whenever no cand in this CU
+            // carries a `dupN` tag (the entire pre-Ф.1b corpus), so the
+            // fallback is never even consulted for byte-identical output.
+            let mut type_def_files: HashMap<String, HashMap<Vec<String>, Vec<String>>> =
+                HashMap::new();
+            let record_def = |td: &TypeDecl, mods: &mut HashMap<String, BTreeSet<Vec<String>>>, m: &[String]| -> bool {
                 // Collision-qualify only the concrete (non-generic) nominal types
                 // with a POINTER `Nova_<name>*` struct/tag identity used uniformly
                 // at def+ref without alias indirection: Sum and HEAP Record. Value-
@@ -5045,6 +5057,9 @@ impl CEmitter {
                     && !RUNTIME_DEFINED_TYPES.contains(&td.name.as_str())
                 {
                     mods.entry(td.name.clone()).or_default().insert(m.to_vec());
+                    true
+                } else {
+                    false
                 }
             };
             if module.peer_files.is_empty() {
@@ -5059,7 +5074,16 @@ impl CEmitter {
                         if let Item::Type(td) = item {
                             // Plan 202 Ф.1b: physical identity, not raw decl —
                             // mirrors the fn axis (see shared doc comment above).
-                            record_def(td, &mut type_def_modules, &effective_modpath(pf));
+                            let m = effective_modpath(pf);
+                            if record_def(td, &mut type_def_modules, &m) {
+                                if let Some(phys) = phys_key_of.get(&pf.file_id) {
+                                    type_def_files
+                                        .entry(td.name.clone())
+                                        .or_default()
+                                        .entry(m)
+                                        .or_insert_with(|| phys.clone());
+                                }
+                            }
                         }
                     }
                 }
@@ -5109,6 +5133,54 @@ impl CEmitter {
                                 || (ipath.len() <= cand.len()
                                     && cand.ends_with(ipath))
                         };
+                        // [M-d78-dup-decl-type-cross-import-ambiguous] fix:
+                        // `cand` may carry a synthetic `dupN` physical
+                        // discriminator (`effective_modpath` above, Plan 202
+                        // Ф.1b — two PHYSICALLY DISTINCT modules forced to
+                        // share one `module` declaration). A real import path
+                        // is a plain filesystem path from a package root
+                        // (`imports::resolve_module_paths` treats `parts` as
+                        // a relative `PathBuf`) and NEVER contains a `dupN`
+                        // segment, so `path_matches` above can't ever line up
+                        // with such a `cand` — every `dupN`-tagged candidate
+                        // silently fails to match, regardless of how many
+                        // modules actually select `name` (previously this
+                        // degraded straight to "no hit", same as a genuine
+                        // ambiguity: colliding type left unqualified → C
+                        // redefinition risk the moment BOTH physical modules'
+                        // colliding type is selectively imported and
+                        // referenced by name from outside). Fall back to
+                        // matching the DEFINING file's actual on-disk path
+                        // (`type_def_files`, built alongside `type_def_modules`
+                        // above) against the import path as filesystem
+                        // components — this is exactly how the loader itself
+                        // resolves `imp.path` to a file, so it disambiguates
+                        // `dupN` siblings the declared-name check cannot.
+                        let phys_matches = |cand: &[String], ipath: &[String]| -> bool {
+                            let Some(phys) =
+                                type_def_files.get(name).and_then(|m| m.get(cand))
+                            else {
+                                return false;
+                            };
+                            let Some(raw) = phys.first() else {
+                                return false;
+                            };
+                            let mut comps: Vec<String> = std::path::Path::new(raw)
+                                .components()
+                                .filter_map(|c| match c {
+                                    std::path::Component::Normal(s) => {
+                                        Some(s.to_string_lossy().into_owned())
+                                    }
+                                    _ => None,
+                                })
+                                .collect();
+                            if let Some(last) = comps.last_mut() {
+                                if let Some(stripped) = last.strip_suffix(".nv") {
+                                    *last = stripped.to_string();
+                                }
+                            }
+                            ipath.len() <= comps.len() && comps.ends_with(ipath)
+                        };
                         let mut hit: Option<Vec<String>> = None;
                         for imp in &pf.imports {
                             let selects = match &imp.items {
@@ -5121,9 +5193,11 @@ impl CEmitter {
                             if !selects {
                                 continue;
                             }
-                            if let Some(cand) =
-                                cands.iter().find(|c| path_matches(c, &imp.path))
-                            {
+                            let found = cands
+                                .iter()
+                                .find(|c| path_matches(c, &imp.path))
+                                .or_else(|| cands.iter().find(|c| phys_matches(c, &imp.path)));
+                            if let Some(cand) = found {
                                 if hit.is_none() {
                                     hit = Some(cand.clone());
                                 } else if hit.as_deref() != Some(cand.as_slice()) {

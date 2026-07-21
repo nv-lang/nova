@@ -1,0 +1,16 @@
+// [M-d78-dup-decl-type-cross-import-ambiguous] repro, half A. Same D29
+// rev-3 forced 2-segment declaration (`module neg.kind`) as its
+// `../../d78_dup_decl_type_axis/a/neg/kind.nv` sibling, but here the
+// colliding `Kind` sum type is EXPORTED and referenced BARE from a peer
+// OUTSIDE its own declaring module (`../client_a.nv`, selective
+// `import a.neg.kind.{Kind, classify_a}`) — the residual gap Plan 202
+// Ф.1b's own fixtures don't exercise (there, `Kind` is only used INSIDE
+// the declaring module). D381 collision-qualification branch (2)
+// (`emit_c.rs`'s `file_type_module` selective-import suffix match) must
+// disambiguate `client_a.nv`'s `Kind` from `b/neg/kind.nv`'s.
+module neg.kind
+
+export type Kind enum Alpha | Beta
+
+export fn classify_a(n int) -> Kind =>
+    if n > 0 { Alpha } else { Beta }
