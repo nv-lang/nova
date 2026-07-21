@@ -1,0 +1,74 @@
+// [M-match-arm-mixed-int-width-sentinel-coerce] (Plan 172.2 followup, P1, fixed
+// 2026-07-21) POS — the complement of `neg/n_match_arm_width_mismatch` (i32 vs u32,
+// same width/different sign, neither safely widens → E_MATCH_ARM_WIDTH_MISMATCH).
+// A `match` whose arms hold int-family types that DISAGREE but are safe-widening-
+// compatible (D54, `would_narrow_into`) — e.g. a `u32` payload arm alongside an `int`
+// sentinel-literal arm — now unifies to the WIDER side instead of silently picking an
+// arbitrary arm's width (the old bug: `None => -1` read back as `4294967295` because
+// codegen's legacy re-derive chose the `u32` arm's C type for the whole match). None of
+// these cases require an explicit `as` — the widening is Nova-sanctioned elsewhere
+// (assignment-target compat) and is now consistently applied to match-arm unification
+// too. Folder-module peer of `module detect172`. D-amendment: spec/decisions/02-types.md.
+module detect172
+
+test "172.2: u32 arm + int sentinel arm widen to int, no wraparound (root repro)" {
+    ro o Option[u32] = None
+    ro r = match o {
+        Some(v) => v,
+        None => -1,
+    }
+    assert(r == -1)
+}
+
+test "172.2: same mix, explicit fn return position (was already OK pre-fix)" {
+    ro r = pick172(None)
+    assert(r == -1)
+    ro r2 = pick172(Some(7))
+    assert(r2 == 7)
+}
+
+test "172.2: u32 arm + int sentinel via an un-annotated local INSIDE a -> int fn (exact original repro)" {
+    ro r = pick172_via_local(None)
+    assert(r == -1)
+    ro r2 = pick172_via_local(Some(42))
+    assert(r2 == 42)
+}
+
+test "172.2: three-arm progressive widen (u8, u16, int-literal) settles on the widest" {
+    ro p = M172WidthPickB
+    ro a u8 = 9
+    ro b u16 = 900
+    ro r = match p {
+        M172WidthPickA => a,
+        M172WidthPickB => b,
+        M172WidthPickC => -1,
+    }
+    assert(r == 900)
+}
+
+test "172.2: explicit `as` still unifies an otherwise-incompatible same-width mix" {
+    ro o Option[i32] = None
+    ro u u32 = 5
+    ro r = match o {
+        Some(v) => v as u32,
+        None => u,
+    }
+    assert(r == 5)
+}
+
+fn pick172(o Option[u32]) -> int {
+    match o {
+        Some(v) => v,
+        None => -1,
+    }
+}
+
+fn pick172_via_local(o Option[u32]) -> int {
+    ro r = match o {
+        Some(v) => v,
+        None => -1,
+    }
+    r
+}
+
+type M172WidthPick enum M172WidthPickA | M172WidthPickB | M172WidthPickC

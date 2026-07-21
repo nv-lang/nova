@@ -9199,6 +9199,13 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     }
                 }
+                // [M-match-arm-mixed-int-width-sentinel-coerce] fix (P1, 2026-07-21):
+                // arms with GENUINELY incompatible int widths (neither safely widens
+                // into the other) → hard error BEFORE the channel materialization
+                // below, which otherwise bails silently and lets the legacy codegen
+                // arm-type re-derivation pick an arbitrary (wrong) width. Safe-widening
+                // mixes are NOT reported (see `check_match_arm_width_mismatch` doc).
+                self.check_match_arm_width_mismatch(arms, scope, scrut_ty.as_ref(), errors);
                 // Plan 172.1 U.4.4 (Match-arm half): materialize the common primitive
                 // arm type into the checker channel so codegen READS the resolved match
                 // type instead of re-deriving it (§0/§1). See
@@ -10845,13 +10852,20 @@ impl<'a> TypeCheckCtx<'a> {
         out
     }
 
-    fn infer_match_common_primitive(
+    /// [M-match-arm-mixed-int-width-sentinel-coerce] (Plan 172.2 followup, fixed
+    /// 2026-07-21): per-arm (span, ResolvedType) extraction shared by
+    /// `infer_match_common_primitive` (channel materialization) and
+    /// `check_match_arm_width_mismatch` (diagnostic). Factored out so both
+    /// consumers walk arms/bindings IDENTICALLY (§0/§3 — one arm-type derivation,
+    /// not two copies that could drift). Diverging (`Never`) arms are OMITTED —
+    /// they contribute no type constraint, same as the old inline `continue`.
+    fn match_arm_value_types(
         &self,
         arms: &[MatchArm],
         scope: &HashMap<String, TypeRef>,
         scrut_ty: Option<&TypeRef>,
-    ) -> Option<ResolvedType> {
-        let mut common: Option<ResolvedType> = None;
+    ) -> Option<Vec<(Span, ResolvedType)>> {
+        let mut out = Vec::new();
         for arm in arms {
             // АТОМ 2a: расширить scope биндингами паттерна (типы из scrut_ty).
             // Пустой набор биндингов → армы работают в наружном scope как раньше.
@@ -10874,14 +10888,14 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 None
             };
-            let rt: ResolvedType = match &arm.body {
-                MatchArmBody::Expr(e) => match self.infer_expr_type(e, scope) {
+            let (span, rt): (Span, ResolvedType) = match &arm.body {
+                MatchArmBody::Expr(e) => (e.span, match self.infer_expr_type(e, scope) {
                     Some(tr) => ResolvedType::from_type_ref(&tr),
                     None => arm_rt(e)?,
-                },
+                }),
                 MatchArmBody::Block(b) => {
                     let t = b.trailing.as_deref()?;
-                    if b.stmts.is_empty() {
+                    (t.span, if b.stmts.is_empty() {
                         if let Some(tr) = self.infer_expr_type(t, scope) {
                             ResolvedType::from_type_ref(&tr)
                         } else {
@@ -10890,16 +10904,61 @@ impl<'a> TypeCheckCtx<'a> {
                     } else {
                         // stmts-блок: scope-инференс нельзя (блок-локалы), канал — можно.
                         arm_rt(t)?
-                    }
+                    })
                 }
             };
             if rt == ResolvedType::Never {
                 continue; // diverging arm contributes no constraint
             }
+            out.push((span, rt));
+        }
+        Some(out)
+    }
+
+    /// [M-match-arm-mixed-int-width-sentinel-coerce] fix: does `b` need an EXPLICIT
+    /// `as` to reach `a` (neither direction is a Nova-sanctioned safe int-widening,
+    /// D54/`would_narrow_into`)? int-family (`Scalar`) ONLY — non-int disagreement
+    /// (records/Float/etc.) is unchanged pre-existing behavior (bail silently, out
+    /// of this marker's scope). `false` when EITHER side is non-int (permissive,
+    /// mirrors `would_narrow_into`'s own "Non-int on either side ⇒ false" contract —
+    /// the caller's `int_width_sign` gate already excludes those before calling).
+    fn int_arms_incompatible(a: &ResolvedType, b: &ResolvedType) -> bool {
+        b.would_narrow_into(a) && a.would_narrow_into(b)
+    }
+
+    fn infer_match_common_primitive(
+        &self,
+        arms: &[MatchArm],
+        scope: &HashMap<String, TypeRef>,
+        scrut_ty: Option<&TypeRef>,
+    ) -> Option<ResolvedType> {
+        let arm_types = self.match_arm_value_types(arms, scope, scrut_ty)?;
+        let mut common: Option<ResolvedType> = None;
+        for (_, rt) in arm_types {
             match &common {
                 None => common = Some(rt),
                 Some(c) if *c == rt => {}
-                Some(_) => return None, // arms disagree on type → bail
+                Some(c) => {
+                    // [M-match-arm-mixed-int-width-sentinel-coerce] fix: int-family
+                    // arms that DISAGREE but are safe-widening-compatible (D54,
+                    // e.g. `u32` sentinel arm + `int` literal arm) unify to the
+                    // WIDER side instead of bailing — the wider type is what BOTH
+                    // arms can losslessly hold (mirrors the assignment-target
+                    // widening Nova already allows elsewhere; `would_narrow_into`
+                    // is the single source, `int_width_sign` gates int-family-only).
+                    let both_int = c.int_width_sign().is_some() && rt.int_width_sign().is_some();
+                    if !both_int || Self::int_arms_incompatible(c, &rt) {
+                        return None; // genuine mismatch (or non-int) → bail, as before
+                    }
+                    // `rt` does NOT narrow into `c` ⇒ `c` is wide enough for `rt`,
+                    // keep it. Otherwise (not incompatible ⇒ the OTHER direction
+                    // must be safe) `c` narrows into `rt` ⇒ `rt` is the wider side.
+                    if !rt.would_narrow_into(c) {
+                        // c already wide enough — no change.
+                    } else {
+                        common = Some(rt); // upgrade to rt, the wider (or equal-C-type) side
+                    }
+                }
             }
         }
         let rt = common?;
@@ -10923,6 +10982,75 @@ impl<'a> TypeCheckCtx<'a> {
             Some(rt)
         } else {
             None
+        }
+    }
+
+    /// [M-match-arm-mixed-int-width-sentinel-coerce] fix (Plan 172.2 followup,
+    /// P1, 2026-07-21): a `match` whose arms hold GENUINELY incompatible int-family
+    /// widths (neither side safe-widens into the other, D54/`would_narrow_into` —
+    /// e.g. `u32` vs `i32` same-width-different-sign, or `u16` vs `i8`) used to bail
+    /// SILENTLY out of `infer_match_common_primitive` into the legacy codegen
+    /// arm-type re-derivation, which picks the first non-`nova_int` arm regardless
+    /// of the OTHER arm's width/sign — silently reinterpreting a sentinel literal's
+    /// bits under the wrong type (`None => -1` read back as `4294967295` when a
+    /// sibling arm bound `u32`). Safe-widening-compatible mixes (`u32` sentinel arm
+    /// + `int`/`i64` literal arm) are NOT reported here — `infer_match_common_primitive`
+    /// now unifies those to the wider side (this function's own bail path is only
+    /// entered when NEITHER direction is safe). D-amendment: spec/decisions/02-types.md.
+    fn check_match_arm_width_mismatch(
+        &self,
+        arms: &[MatchArm],
+        scope: &HashMap<String, TypeRef>,
+        scrut_ty: Option<&TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let Some(arm_types) = self.match_arm_value_types(arms, scope, scrut_ty) else { return };
+        let mut common: Option<(Span, ResolvedType)> = None;
+        for (span, rt) in arm_types {
+            let Some((c_span, c)) = &common else {
+                common = Some((span, rt));
+                continue;
+            };
+            if *c == rt {
+                continue;
+            }
+            let both_int = c.int_width_sign().is_some() && rt.int_width_sign().is_some();
+            if !both_int {
+                continue; // non-int disagreement — unchanged pre-existing behavior, out of scope
+            }
+            if !Self::int_arms_incompatible(c, &rt) {
+                // safe-widening-compatible — track the wider side for any FURTHER arm,
+                // mirroring `infer_match_common_primitive`'s own unify (so a 3rd arm is
+                // compared against the correct running-wider type, not the first arm).
+                // `rt` does NOT narrow into `c` ⇒ `c` stays the wider running type;
+                // otherwise (not incompatible ⇒ the other direction is safe) `c`
+                // narrows into `rt` ⇒ `rt` becomes the new wider running type.
+                if !rt.would_narrow_into(c) {
+                    // c stays the wider running type — no change.
+                } else {
+                    common = Some((span, rt));
+                }
+                continue;
+            }
+            // Genuine mismatch: neither `int_name()` can be `None` here (both int-family).
+            let c_name = c.int_name().unwrap_or("<int>");
+            let rt_name = rt.int_name().unwrap_or("<int>");
+            errors.push(
+                Diagnostic::new(
+                    format!(
+                        "[E_MATCH_ARM_WIDTH_MISMATCH] match arms have incompatible integer \
+                         widths: `{}` here vs `{}` — neither safely widens into the other; \
+                         cast one arm explicitly (`... as {}` or `... as {}`)",
+                        rt_name, c_name, c_name, rt_name,
+                    ),
+                    span,
+                )
+                .with_note_at(
+                    format!("this arm is typed `{}`", c_name),
+                    *c_span,
+                ),
+            );
+            return; // one diagnostic per match — avoid a cascade of repeats
         }
     }
 
