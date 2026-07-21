@@ -10852,19 +10852,64 @@ impl<'a> TypeCheckCtx<'a> {
         out
     }
 
+    /// [M-match-arm-mixed-int-width-sentinel-coerce] amend (found by the mega-CU
+    /// gate on `d407_enum_payload_width.nv`, 2026-07-21): is `e` a BARE integer
+    /// literal — `IntLit` or `Unary{Neg, IntLit}` (`-1`, per the SAME shape
+    /// `assignable`'s D227 Rule 6 branch matches, ~14544) — with no cast / no
+    /// fixed type of its own? Returns the raw value (i128, overflow-safe for
+    /// negation of `i64::MIN`) if so. A bare literal is flexible: unlike a
+    /// pattern-bound variable (whose type is FIXED by the payload it was
+    /// extracted from), a literal arm has no type until placed in context —
+    /// `d407W(_) => 1` alongside a `uint`-typed sibling arm must let `1` ADOPT
+    /// `uint`, not be compared as a rigid `int` vs `uint` mismatch (D54 literal-fit,
+    /// rustc precedent: an unsuffixed integer literal unifies with its context).
+    fn bare_int_literal_value(e: &Expr) -> Option<i128> {
+        match &e.kind {
+            ExprKind::IntLit(v) => Some(*v as i128),
+            ExprKind::Unary { op: UnOp::Neg, operand } => {
+                if let ExprKind::IntLit(v) = &operand.kind {
+                    Some(-(*v as i128))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// [M-match-arm-mixed-int-width-sentinel-coerce] amend: does the raw literal
+    /// value `v` fit `target` (int-family) WITHOUT loss — the SAME rules
+    /// `assignable`'s `IntLit`/`Unary{Neg,IntLit}` branches already enforce for a
+    /// literal reaching an ANNOTATED position (D227 Rule 3 sized range-check,
+    /// Rule 6 negative-into-unsigned floor)? Wide-default (`int`/`uint`) targets
+    /// have no upper range-check (`sized_int_name` → `None`, D227 Rule 1) — only
+    /// the negative-floor applies (and only for `uint`, `int` is signed).
+    fn literal_fits_scalar(v: i128, target: &ResolvedType) -> bool {
+        let Some((_, signed)) = target.int_width_sign() else { return false };
+        if !signed && v < 0 {
+            return false; // D227 Rule 6: a negative literal never fits an unsigned target
+        }
+        match target.sized_int_name() {
+            Some(name) => lit_range_check(v, &name).is_none(),
+            None => true, // wide-default int/uint: no upper range-check (D227 Rule 1)
+        }
+    }
+
     /// [M-match-arm-mixed-int-width-sentinel-coerce] (Plan 172.2 followup, fixed
-    /// 2026-07-21): per-arm (span, ResolvedType) extraction shared by
+    /// 2026-07-21): per-arm (span, ResolvedType, literal-value) extraction shared by
     /// `infer_match_common_primitive` (channel materialization) and
     /// `check_match_arm_width_mismatch` (diagnostic). Factored out so both
     /// consumers walk arms/bindings IDENTICALLY (§0/§3 — one arm-type derivation,
     /// not two copies that could drift). Diverging (`Never`) arms are OMITTED —
-    /// they contribute no type constraint, same as the old inline `continue`.
+    /// they contribute no type constraint, same as the old inline `continue`. The
+    /// third tuple element is `Some(v)` when the arm's value expression is a BARE
+    /// integer literal (`bare_int_literal_value`) — the literal-fit amend above.
     fn match_arm_value_types(
         &self,
         arms: &[MatchArm],
         scope: &HashMap<String, TypeRef>,
         scrut_ty: Option<&TypeRef>,
-    ) -> Option<Vec<(Span, ResolvedType)>> {
+    ) -> Option<Vec<(Span, ResolvedType, Option<i128>)>> {
         let mut out = Vec::new();
         for arm in arms {
             // АТОМ 2a: расширить scope биндингами паттерна (типы из scrut_ty).
@@ -10888,14 +10933,14 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 None
             };
-            let (span, rt): (Span, ResolvedType) = match &arm.body {
-                MatchArmBody::Expr(e) => (e.span, match self.infer_expr_type(e, scope) {
+            let (span, t_expr, rt): (Span, &Expr, ResolvedType) = match &arm.body {
+                MatchArmBody::Expr(e) => (e.span, e, match self.infer_expr_type(e, scope) {
                     Some(tr) => ResolvedType::from_type_ref(&tr),
                     None => arm_rt(e)?,
                 }),
                 MatchArmBody::Block(b) => {
                     let t = b.trailing.as_deref()?;
-                    (t.span, if b.stmts.is_empty() {
+                    (t.span, t, if b.stmts.is_empty() {
                         if let Some(tr) = self.infer_expr_type(t, scope) {
                             ResolvedType::from_type_ref(&tr)
                         } else {
@@ -10910,7 +10955,7 @@ impl<'a> TypeCheckCtx<'a> {
             if rt == ResolvedType::Never {
                 continue; // diverging arm contributes no constraint
             }
-            out.push((span, rt));
+            out.push((span, rt, Self::bare_int_literal_value(t_expr)));
         }
         Some(out)
     }
@@ -10934,11 +10979,35 @@ impl<'a> TypeCheckCtx<'a> {
     ) -> Option<ResolvedType> {
         let arm_types = self.match_arm_value_types(arms, scope, scrut_ty)?;
         let mut common: Option<ResolvedType> = None;
-        for (_, rt) in arm_types {
+        let mut common_lit: Option<i128> = None; // Some iff `common` came from a bare literal arm
+        for (_, rt, lit) in arm_types {
             match &common {
-                None => common = Some(rt),
+                None => { common = Some(rt); common_lit = lit; }
                 Some(c) if *c == rt => {}
                 Some(c) => {
+                    // [M-match-arm-mixed-int-width-sentinel-coerce] amend (mega-CU
+                    // gate found on d407_enum_payload_width.nv, 2026-07-21): a BARE
+                    // literal arm has no fixed type of its own — check literal-fit
+                    // (D227 Rules 1/3/6) BEFORE treating a disagreement as a real
+                    // width conflict. `d407W(_) => 1` alongside a `uint` sibling arm
+                    // must adopt `uint`, not collide with the literal's flexible
+                    // default (`int`). Whichever side is the literal, if it FITS the
+                    // other (concrete or previously-established) side, adopt that
+                    // side — no widen, no error. A negative literal that doesn't fit
+                    // an unsigned target correctly falls through to the mismatch
+                    // check below (D227 Rule 6 floor still applies).
+                    if let Some(v) = lit {
+                        if Self::literal_fits_scalar(v, c) {
+                            continue; // this arm's literal adopts `c` — common unchanged
+                        }
+                    }
+                    if let Some(cv) = common_lit {
+                        if Self::literal_fits_scalar(cv, &rt) {
+                            common = Some(rt); // established literal adopts the new, more concrete `rt`
+                            common_lit = None;
+                            continue;
+                        }
+                    }
                     // [M-match-arm-mixed-int-width-sentinel-coerce] fix: int-family
                     // arms that DISAGREE but are safe-widening-compatible (D54,
                     // e.g. `u32` sentinel arm + `int` literal arm) unify to the
@@ -10958,6 +11027,7 @@ impl<'a> TypeCheckCtx<'a> {
                     } else {
                         common = Some(rt); // upgrade to rt, the wider (or equal-C-type) side
                     }
+                    common_lit = None; // common is now a concrete (non-literal-flexible) type
                 }
             }
         }
@@ -11006,9 +11076,11 @@ impl<'a> TypeCheckCtx<'a> {
     ) {
         let Some(arm_types) = self.match_arm_value_types(arms, scope, scrut_ty) else { return };
         let mut common: Option<(Span, ResolvedType)> = None;
-        for (span, rt) in arm_types {
+        let mut common_lit: Option<i128> = None; // Some iff `common` came from a bare literal arm
+        for (span, rt, lit) in arm_types {
             let Some((c_span, c)) = &common else {
                 common = Some((span, rt));
+                common_lit = lit;
                 continue;
             };
             if *c == rt {
@@ -11017,6 +11089,24 @@ impl<'a> TypeCheckCtx<'a> {
             let both_int = c.int_width_sign().is_some() && rt.int_width_sign().is_some();
             if !both_int {
                 continue; // non-int disagreement — unchanged pre-existing behavior, out of scope
+            }
+            // [M-match-arm-mixed-int-width-sentinel-coerce] amend (mega-CU gate
+            // found on d407_enum_payload_width.nv, 2026-07-21): literal-fit BEFORE
+            // treating a disagreement as a real conflict — mirrors
+            // `infer_match_common_primitive`'s own amend (see its doc for the full
+            // rationale). A negative literal that doesn't fit an unsigned target
+            // still falls through to the mismatch check (D227 Rule 6 floor).
+            if let Some(v) = lit {
+                if Self::literal_fits_scalar(v, c) {
+                    continue; // this arm's literal adopts `c` — common unchanged
+                }
+            }
+            if let Some(cv) = common_lit {
+                if Self::literal_fits_scalar(cv, &rt) {
+                    common = Some((span, rt)); // established literal adopts the new, concrete `rt`
+                    common_lit = None;
+                    continue;
+                }
             }
             if !Self::int_arms_incompatible(c, &rt) {
                 // safe-widening-compatible — track the wider side for any FURTHER arm,
@@ -11030,6 +11120,7 @@ impl<'a> TypeCheckCtx<'a> {
                 } else {
                     common = Some((span, rt));
                 }
+                common_lit = None; // common is now a concrete (non-literal-flexible) type
                 continue;
             }
             // Genuine mismatch: neither `int_name()` can be `None` here (both int-family).

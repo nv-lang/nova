@@ -41,6 +41,21 @@ test "match-arm width unify: same mix through an un-annotated local inside the f
     assert(d129_pick_width_via_local(Some(9)) == 9)
 }
 
+// [M-match-arm-mixed-int-width-sentinel-coerce] amend (mega-CU gate false-positive
+// found on `d407_enum_payload_width.nv`, 2026-07-21): a BARE integer literal arm has
+// no fixed type of its own (D54 literal-fit, rustc precedent — an unsuffixed literal
+// unifies with its context) — it must ADOPT the sibling arm's concrete type when the
+// value fits, not collide with its own flexible default (`int`) as a genuine width
+// mismatch. `d407W(_) => 1` alongside a `uint` payload arm is legal.
+test "match-arm width unify: bare literal arm adopts a concrete uint sibling (D407-shape)" {
+    ro d = D129PayloadV(0x8000000000000000)
+    ro got = d129_extract_payload(d)
+    assert(got > 100)  // uint: 2^63 > 100; a signed collapse would read negative
+
+    ro small = D129PayloadV(42)
+    assert(d129_extract_payload(small) == 42)
+}
+
 fn d129_pick_width(o Option[u32]) -> int {
     match o {
         Some(v) => v,
@@ -54,4 +69,13 @@ fn d129_pick_width_via_local(o Option[u32]) -> int {
         None => -1,
     }
     r
+}
+
+type D129Payload enum
+    | D129PayloadV(uint)
+    | D129PayloadW(u8)
+
+fn d129_extract_payload(d D129Payload) -> uint => match d {
+    D129PayloadV(v) => v
+    D129PayloadW(_) => 1
 }

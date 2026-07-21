@@ -56,6 +56,34 @@ test "172.2: explicit `as` still unifies an otherwise-incompatible same-width mi
     assert(r == 5)
 }
 
+// [M-match-arm-mixed-int-width-sentinel-coerce] amend (mega-CU gate false-positive
+// found on `d407_enum_payload_width.nv`, 2026-07-21): a BARE integer literal arm has
+// no fixed type of its own (D54 literal-fit, rustc precedent) — it must ADOPT the
+// sibling arm's concrete type when it fits, not collide with its own flexible
+// default (`int`). `d407W(_) => 1` alongside a `uint` payload arm is legal (1 fits
+// uint) and must NOT raise `E_MATCH_ARM_WIDTH_MISMATCH`.
+test "172.2 amend: bare literal arm adopts the sibling's concrete uint type (D407-shape)" {
+    ro d = M172PayloadV(0x8000000000000000)
+    ro got = m172_extract_payload(d)
+    assert(got > 100)  // uint: 2^63 > 100; a signed collapse would read negative
+
+    ro small = M172PayloadV(42)
+    assert(m172_extract_payload(small) == 42)
+}
+
+// Same literal-fit, but the LITERAL arm comes FIRST (order-independence check —
+// the running `common`/`common_lit` must adopt the LATER concrete arm too).
+test "172.2 amend: bare literal arm FIRST still adopts a later concrete u16 arm" {
+    ro p = M172WidthPickB
+    ro b u16 = 900
+    ro r = match p {
+        M172WidthPickC => 1,
+        M172WidthPickB => b,
+        M172WidthPickA => 2,
+    }
+    assert(r == 900)
+}
+
 fn pick172(o Option[u32]) -> int {
     match o {
         Some(v) => v,
@@ -72,3 +100,12 @@ fn pick172_via_local(o Option[u32]) -> int {
 }
 
 type M172WidthPick enum M172WidthPickA | M172WidthPickB | M172WidthPickC
+
+type M172Payload enum
+    | M172PayloadV(uint)
+    | M172PayloadW(u8)
+
+fn m172_extract_payload(d M172Payload) -> uint => match d {
+    M172PayloadV(v) => v
+    M172PayloadW(_) => 1
+}
