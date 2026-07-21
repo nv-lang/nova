@@ -12,22 +12,24 @@
 
 ## Ф.0 — Ноль багов очереди (гейт входа в релизную фазу)
 
-- [ ] **A-B1** Текущие волны влиты: 196-closeout · 217 · Linux-гонка (known-red) ·
-      [M-freefn-named-default-arg-shift] (Д3-гейт). `[types/emit_c/callnorm/WSL]` — В ПОЛЁТЕ.
+- [x] **A-B1 ✅ 2026-07-21** Текущие волны влиты: 196-closeout (честный реестр, 196 дальше в
+      фоне) · 217 (D432 + фикс TcpStream-регрессии хойста) · Linux-гонка (known_red снят) ·
+      named-default-arg-shift. Всё в пушах 8e843e2ac/181b32e41.
 - [x] **A-B2 ✅ 2026-07-21** Ш4-снос conv.h+kill-switch+D422-амендмент+примеры §4-§6 — влит
       (один путь = `*_display_spec`; остатки честные: pad user-типов + ptr-debug).
-- [ ] **A-B3** Ш2: перенос примитив-тел `[std/fmt+prelude]` (sonnet) —
-      ⛓[M-fmt-write-protocol-collision-cycle-adjacent] (его фикс = отдельный атом A-B3a `[types]`).
+- [x] **A-B3 ✅ 2026-07-21** Ш2: перенос примитив-тел — ВЛИТ (план 208 «один путь» закрыт
+      целиком; V1-упрощение #3 снято). A-B3a (write-collision, file-anchored types) — тоже ✅ влит.
 - [ ] **A-B4** box-vtable P2 `[emit_c/vtable]` (sonnet) — ⛓A-B2 (зона emit_c).
-- [ ] **A-B5** net-утечка-b free-on-close `[nova_rt/net.c]` (sonnet, mn-conventions §9) — независим.
-- [ ] **A-B6** Мелочь P3/P4: d55-const `[emit_c]` · oot-дефисы E_D78 `[resolve]` (В ПОЛЁТЕ) ·
-      generic-match-scope-gap `[types]` · latent protocol-box `[emit_c]` — по освобождении зон;
-      частично haiku (маркер-закрытия).
-- [ ] **A-B7** 216-defer-хвосты в v0.1 (решение владельца 2026-07-21 «конечно хочу»):
-      Err-пейлоады + nested/tuple-пейлоады consume-enforce (см. 216-план, хвосты Ф-финала)
-      `[types/consume]` (sonnet) — запуск при освобождении types-слота.
-- [ ] **A-B8** [M-d216-write-at-return-type-unknown-cc-panic] P1 (находка Ш4, блокирует мега-CU
-      гейт) `[emit_c]` (sonnet) — В ПОЛЁТЕ (прямой приказ владельца 2026-07-21).
+- [x] **A-B5 ✅ 2026-07-21** net-утечка-b free-on-close — ВЛИТ (refcount §9, утечка −87%,
+      риск-гейты UAF зелёные).
+- [ ] **A-B6** Мелочь P3/P4: d55-const `[emit_c]` · ~~oot-дефисы~~ ✅ (корень = чужой
+      ancestor-манифест, out-of-repo экземпт D78, влит) · generic-match-scope-gap `[types]` ·
+      latent protocol-box `[emit_c]` — остаток по освобождении зон.
+- [x] **A-B7 ✅ 2026-07-21** 216-defer-хвосты — ВЛИТЫ (Err-пейлоады + tuple-пейлоады
+      consume-enforce, спек-амендмент 05-memory; record-пейлоад = узкий followup
+      `[M-216-record-payload-consume]`).
+- [x] **A-B8 ✅ 2026-07-21** d216/write_at паника — ВЛИТ (корень: Block-арм infer_expr_c_type
+      без пре-регистрации let-локалов + stale плоский var_types; folder-CU 517/0 после фикса).
 - [ ] **Критерий Ф.0:** backlog без OPEN P1/P2; CI без known_red вовсе.
 
 ## Ф.1 — Стабилизация (частично ▶СЕЙЧАС — прогоны находят баги раньше!)
@@ -51,11 +53,11 @@
       (штатная поверхность). **SmokeTest PASSED: hello.exe собран+выполнен из изолированной
       папки вне монорепы** (sha256 b76550ac…065f; 4 реальных бага упаковки найдены и починены —
       wip/221-version-notes.md).
-- [ ] **A-V3 ▶СЕЙЧАС** docs/linux-build.md актуализация (gcc15/clang21 — фиксы влиты; nova-lsp
-      сборка) `[docs]` (sonnet/haiku).
-- [ ] **A-V4 ▶СЕЙЧАС** THIRD_PARTY сверка (libuv/bdwgc/dtoa лицензии) `[docs]` (haiku).
+- [x] **A-V3 ✅ 2026-07-21** docs/linux-build.md актуализирован (haiku + поправка интегратора:
+      рецепт=CI, закрытые known-issues в историю, секция nova-lsp).
+- [x] **A-V4 ✅ 2026-07-21** THIRD_PARTY сверка (haiku): README.md + minicoro-LICENSE добавлены.
 - [ ] **A-D1 ▶СЕЙЧАС** Dockerfile: образ с компилятором, hello-smoke, инструкция `[docker/]`
-      (sonnet) — CPU-тяжёлый билд, очередь за слотом.
+      (sonnet) — В ПОЛЁТЕ.
 - [ ] **A-V5** vsix-сборка VSCode-расширения в артефакт `[editors/vscode]` — ⛓A-V2 ✅ (разблокирован).
 - [ ] **A-V6** Теги v0.1.0 на 4 репы + артефакты на GitHub Releases — ⛓Ф.0+Ф.1+Ф.3 (финал).
 
