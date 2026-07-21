@@ -34,7 +34,7 @@ fn m187_guarded(src M187Src, deadline Monotonic) Time -> bool {
     } {
         supervised(deadline: deadline) {
             spawn {
-                ro _r = m187_thrower(src.id, "detail-" + src.id)
+                ro _r = m187_thrower(src.id, "detail-${src.id}")
             }
         }
         99

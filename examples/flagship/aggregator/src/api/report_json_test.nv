@@ -76,7 +76,7 @@ fn handlers_demo() -> HandlersDto => { net: "mock(seed=42)", time: "real" }
 fn srcs_for(ids []str) -> []Source {
     mut out []Source = []
     for id in ids {
-        out.push(Source.new(id, "unit-" + id, 3, 0, false))
+        out.push(Source.new(id, "unit-${id}", 3, 0, false))
     }
     out
 }

@@ -134,7 +134,7 @@ fn resolve_port() Os -> u16 =>
 // for the container-side override, `ENV AGGREGATOR_BIND=0.0.0.0`). A
 // malformed value falls back to loopback too (honest default over a crash).
 fn resolve_addr(port u16) Os -> SocketAddr =>
-    env("AGGREGATOR_BIND").flat_map(|host| SocketAddr.from_str(host + ":" + port.to_str()).ok()) ?? SocketAddr.loopback(port)
+    env("AGGREGATOR_BIND").flat_map(|host| SocketAddr.from_str("${host}:${port}").ok()) ?? SocketAddr.loopback(port)
 
 // ── fn main: accept-loop (the only legitimately hand-rolled part — see the
 //    file-header note: http.servernet has no reusable accept-loop function
@@ -221,9 +221,9 @@ fn main() Time Detach {
                     // would be E_CONCURRENT_MUT_CAPTURE.
                     mut lst = match TcpListener.bind(addr) {
                         Ok(consume l)  => l
-                        Err(_) => panic("Failed to bind: " + port.to_str())
+                        Err(_) => panic("Failed to bind: ${port}")
                     }
-                    println("Nova flagship aggregator listening on http://" + addr.ip() + ":" + lst.local_port().to_str())
+                    println("Nova flagship aggregator listening on http://${addr.ip()}:${lst.local_port()}")
                     // Bounded-accept permit counter (see the marker note
                     // above `fn main`) — `AtomicI64` is `#share` (D415), so
                     // capturing it (by reference) into the per-connection
@@ -393,7 +393,7 @@ fn run_net(legend str, mode str, seed int) Emit Time -> RunResult {
             ro sources = chaos_variant(weather_demo_sources(), seed as u64)
             ro report = with Net = mock_net() { aggregate(sources, WEATHER_BUDGET_MS.to_millis()) }
             RunResult { report, sources, budget_ms: WEATHER_BUDGET_MS,
-                handlers: { net: "mock(seed=" + seed.to_str() + ")", time: "real" } }
+                handlers: { net: "mock(seed=${seed})", time: "real" } }
         } else {
             ro sources = weather_demo_sources()
             ro report = with Net = mock_net() { aggregate(sources, WEATHER_BUDGET_MS.to_millis()) }
@@ -412,7 +412,7 @@ fn run_net(legend str, mode str, seed int) Emit Time -> RunResult {
             ro sources = chaos_variant(health_demo_sources(), seed as u64)
             ro report = with Net = mock_net() { aggregate(sources, HEALTH_BUDGET_MS.to_millis()) }
             RunResult { report, sources, budget_ms: HEALTH_BUDGET_MS,
-                handlers: { net: "mock(seed=" + seed.to_str() + ")", time: "real" } }
+                handlers: { net: "mock(seed=${seed})", time: "real" } }
         } else {
             ro sources = health_demo_sources()
             ro report = with Net = mock_net() { aggregate(sources, HEALTH_BUDGET_MS.to_millis()) }
@@ -504,12 +504,11 @@ type EmitRecord {
 // those shapes is confirmed frontend-compatible.
 fn emit_record_json(r EmitRecord) -> str {
     ro err_field = if r.kind == "lane_failed" {
-        ",\"error\":\"" + json_escape(r.err) + "\""
+        ",\"error\":\"${json_escape(r.err)}\""
     } else {
         ""
     }
-    "{\"id\":\"" + json_escape(r.id) + "\",\"elapsed_ms\":" + r.elapsed_ms.to_str() +
-        err_field + ",\"t_ms\":" + r.t_ms.to_str() + "}"
+    "{\"id\":\"${json_escape(r.id)}\",\"elapsed_ms\":${r.elapsed_ms}${err_field},\"t_ms\":${r.t_ms}}"
 }
 
 /// `Emit` is discharged here (`with Emit = <recorder>`); `Time` stays
@@ -552,7 +551,7 @@ fn events_body(legend str, mode str, seed int) Time -> ServerResponse {
     ro dto = build_snapshot(rr.report, rr.sources, legend, mode, seed_out, rr.budget_ms, rr.handlers)
 
     mut chunks [][]u8 = []
-    chunks.push(sse_event("replay_info", "{\"total_ms\":" + total_ms.to_str() + ",\"time_scale\":1}"))
+    chunks.push(sse_event("replay_info", "{\"total_ms\":${total_ms},\"time_scale\":1}"))
     for r in records {
         chunks.push(sse_event(r.kind, emit_record_json(r)))
     }

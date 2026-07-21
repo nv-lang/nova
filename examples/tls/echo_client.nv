@@ -39,12 +39,12 @@ fn main() {
             spawn {
                 match TcpStream.connect(addr) {
                     Err(_) => {
-                        println("Connect failed — is echo_server running on port " + PORT.to_str() + "?")
+                        println("Connect failed — is echo_server running on port ${PORT}?")
                     }
                     Ok(consume tcp) => {
-                        println("TCP connected to " + PORT.to_str() + ", starting TLS handshake")
+                        println("TCP connected to ${PORT}, starting TLS handshake")
                         match TlsStream.connect(tcp, cfg) {
-                            Err(e) => println("TLS handshake failed: " + e.to_str())
+                            Err(e) => println("TLS handshake failed: ${e.to_str()}")
                             Ok(consume session) => {
                                 // NB: don't name this binding `tls` — it would
                                 // shadow the imported package alias (`tls.*`)
@@ -53,17 +53,17 @@ fn main() {
                                 // a method call (E7401).
                                 consume stream = session
                                 ro version = stream.protocol_version() ?? TlsVersion.Tls13
-                                println("TLS established (" + version.to_str() + ")")
+                                println("TLS established (${version.to_str()})")
                                 match stream.write_all(MESSAGE.bytes()) {
-                                    Err(e) => { println("Write failed: " + e.to_str()); stream.close() }
+                                    Err(e) => { println("Write failed: ${e.to_str()}"); stream.close() }
                                     Ok(_) => {
                                         match stream.read_to_vec(256) {
-                                            Err(e) => { println("Read failed: " + e.to_str()); stream.close() }
+                                            Err(e) => { println("Read failed: ${e.to_str()}"); stream.close() }
                                             Ok(echo_bytes) => {
                                                 // [M-174.1-vec-method-chain-elem-erasure]: explicit []u8 local.
                                                 ro eb []u8 = echo_bytes
                                                 ro echo = unsafe { eb.to_str_unchecked() }
-                                                println("Echo: " + echo)
+                                                println("Echo: ${echo}")
                                                 stream.close()
                                             }
                                         }
