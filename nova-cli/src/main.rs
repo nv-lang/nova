@@ -2339,7 +2339,39 @@ fn check_one_file(path: &Path, verbose: bool, conv_lint: bool) -> CheckResult {
     // already pass `true` with the same "mirror test_runner pipeline" rationale.
     let mut sig_table_opt: Option<nova_codegen::imports::ModuleSigTable> = None;
     {
-        if let Ok(repo) = find_repo_root() {
+        // [M-104.10-diag-pipeline-correctness] (CLI degraded-CU parity with
+        // nova-lsp's already-fixed `[M-104.10-degraded-cu-red]`): the old
+        // gate here was a BARE `find_repo_root()` (CWD-anchored nova.toml
+        // walk) — when it failed (no ancestor `nova.toml` from the CURRENT
+        // DIRECTORY, e.g. checking a single out-of-project file, or a file
+        // that lives under a DIFFERENT repo than the invoking CWD), import
+        // resolution was skipped ENTIRELY: no prelude merge, no peers, no
+        // sig-table. The module was then still type-checked as if complete,
+        // so `println`/`Vec`/every prelude symbol false-reddened as
+        // "undefined identifier" for perfectly valid Nova code — the exact
+        // false-red class this marker's LSP fix already eliminated on the
+        // IDE side. Worse: `resolve_std_path` (Plan 91.9) explicitly
+        // supports a `NOVA_STD_PATH` env override for exactly this
+        // standalone/no-manifest scenario, but the bare gate never even
+        // reached that call — the override was silently ignored.
+        //
+        // Fix: best-effort repo anchor, mirroring the LSP's fallback chain
+        // (nearest ancestor `nova.toml` -> ... -> entry-dir): try the
+        // CWD-anchored root first (unchanged common case), then the entry
+        // file's OWN ancestor `nova.toml` (`find_repo_root_from`, already
+        // used a few lines below for embed-resolve — same helper, now
+        // reused here too), then finally the entry file's own directory so
+        // `NOVA_STD_PATH` (absolute) or a sibling `std/` still resolve for
+        // a genuinely standalone probe. `resolve_imports_inline_ex` is safe
+        // to call even when the resulting `stdlib_dir` does not exist — the
+        // prelude auto-import is a no-op then (see `imports.rs` prelude
+        // guard), identical to today's skip-everything behavior — so this
+        // can only IMPROVE resolution, never regress it.
+        let repo_for_imports = find_repo_root()
+            .ok()
+            .or_else(|| nova_codegen::test_runner::find_repo_root_from(path))
+            .or_else(|| path.parent().map(|p| p.to_path_buf()));
+        if let Some(repo) = repo_for_imports {
             let paths = resolve_paths(&repo);
             if let Err(e) = nova_codegen::imports::resolve_imports_inline_ex(
                 path, &mut module, &repo, &paths.stdlib_dir, true,
@@ -2356,7 +2388,6 @@ fn check_one_file(path: &Path, verbose: bool, conv_lint: bool) -> CheckResult {
             // feeds into `check_module_with_sig_table` below. Enabling
             // `include_test_peers=true` above (this marker) merges MORE
             // sibling `*_test.nv` peers into the checked CU than before, which
-            // surfaced this pre-existing per-file-check gap on files that
             // previously never reached it (e.g. `std/net/addr.nv` merging
             // `error_test.nv`'s `ro io = NetError.IoError(..)` local shadowing
             // the `io` module name — misresolved as a module-call E7401
@@ -2368,8 +2399,11 @@ fn check_one_file(path: &Path, verbose: bool, conv_lint: bool) -> CheckResult {
                     .unwrap_or_else(|_| nova_codegen::imports::ModuleSigTable::new()),
             );
         }
-        // Если find_repo_root() не нашёл nova.toml — silently skip imports
-        // (single-file mode без cross-file context).
+        // A `.nv` file with NO discoverable repo root at all (no ancestor
+        // `nova.toml` from CWD or from the file itself, and no parent
+        // directory — i.e. a filesystem root entry) has no anchor to
+        // resolve even a `NOVA_STD_PATH`-relative override against; imports
+        // stay skipped in that unreachable-in-practice corner case.
     }
 
     // Plan 186 (D412): `embed("path")` -> HexBlobLit до type-check (parity
