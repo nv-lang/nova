@@ -54184,6 +54184,60 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                             }
                         }
+                        // [M-forin-crosspkg-char-to_str-blanket-collision] (2026-07-21):
+                        // a PRIMITIVE receiver (char/int/bool/…) whose method resolves
+                        // ONLY via the bare-T blanket (`fn[T] T @to_str() -> str`, no
+                        // concrete override registered for THIS primitive) must NOT fall
+                        // through to the name-only `fn_ret_{method}` key below — that key
+                        // is "last-registered-wins" (§ comment above) and a DIFFERENT
+                        // concrete same-named method on an unrelated type (e.g.
+                        // `[]u8 @to_str() -> Result[str, Utf8Error]`, Plan 174.1/196.7)
+                        // is very likely the one that wrote it (non-generic forward-decl
+                        // runs strictly AFTER the generic-blanket branch returns early —
+                        // see the `!f.generics.is_empty()` early-return a few thousand
+                        // lines up in the forward-decl pass — so the name-only key is
+                        // NEVER written by the blanket itself). Root cause of the
+                        // `nova-http` for-in CODEGEN-FAIL quintet (`char.to_str().bytes()`
+                        // inferred as the ARRAY facade's `Result` instead of `str`,
+                        // eroding the outer `.bytes()` call to `nova_int` and failing
+                        // for-in's iterator-type resolution) — reproduced with NO
+                        // external/git package involved (same-CU, same-package
+                        // `http.client`+root-peer `url.nv`), so this is a general
+                        // same-CU method-name collision, not a cross-package gap.
+                        // Consult the blanket FIRST (mirrors the existing Plan-161
+                        // primitive-free gate at ~52726, extended to primitives): the
+                        // bare-T sentinel is keyed `("T"/1-2 uppercase letters, method)`
+                        // in `mono_method_decls` and its return type does not depend on
+                        // the receiver (only unbounded blankets reach the name-only
+                        // fallback at all — bounded/protocol blankets are handled by the
+                        // dedicated B08 path above). GATED to receivers with NO
+                        // type-qualified `fn_ret_{recv}_{method}` entry (checked just
+                        // above) so a genuine concrete-method receiver is unaffected —
+                        // byte-identical there.
+                        if matches!(obj_ty.as_str(),
+                            "nova_int" | "nova_char" | "nova_bool" | "nova_f64" | "nova_f32"
+                                | "nova_byte" | "nova_str" | "u8" | "u16" | "u32" | "u64"
+                                | "i8" | "i16" | "i32" | "i64" | "usize" | "nova_isize")
+                        {
+                            if let Some((_, fd)) = self.mono_method_decls.iter().find(
+                                |((tvname, mname), fd)| mname == method
+                                    && tvname.len() <= 2
+                                    && tvname.chars().all(|c| c.is_ascii_uppercase())
+                                    && fd.generics.iter()
+                                        .find(|g| &g.name == tvname)
+                                        .map(|g| g.bounds.is_empty())
+                                        .unwrap_or(false))
+                            {
+                                if let Some(ret_ty) = &fd.return_type {
+                                    if let Ok(c_ty) = self.type_ref_to_c(ret_ty) {
+                                        if !c_ty.is_empty() && c_ty != "void*" {
+                                            self.icr_trace("B11ae2_primitive_blanket_return");
+                                            return c_ty;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         let ret_key = format!("fn_ret_{}", method);
                         if let Some(ret_ty) = self.var_types.get(&ret_key) {
                             self.icr_trace("B11af_fn_ret_method_nameonly");
