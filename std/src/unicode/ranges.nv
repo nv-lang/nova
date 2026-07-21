@@ -10,8 +10,7 @@ import std.collections.vec.{Vec}
 // "lo,hi,cat;lo,hi,cat;.." (or any nested ';'-of-',') -> flat []u32.
 // Used by graphemes.nv (GCB/ExtPict/InCB) and collate.nv (implicit weights).
 fn parse_flat(data str) -> []u32 {
-    mut out []u32 = []u32.new()
-    out.cap(1024)
+    mut out []u32 = []u32.new(cap: 1024)
     for entry in data.split(";") {
         for f in entry.split(",") {
             match hex(f) { Some(v) => out.push(v), None => {} }

@@ -221,8 +221,7 @@ fn decode_with(s str, require_padding bool) -> Result[[]u8, Base64Error] {
     ro tail = trimmed_len - full_blocks * 4
     ro out_capacity = full_blocks * 3 + (if tail == 0 { 0 } else { tail - 1 })
 
-    mut out []u8 = []u8.new()
-    out.cap(out_capacity)
+    mut out []u8 = []u8.new(cap: out_capacity)
     mut pos = 0
     for _ in 0..full_blocks {
         ro c0 = decode_at(s, pos)?

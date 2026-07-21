@@ -57,6 +57,10 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
                 // grow-метода (append/insert/reserve) на parent-массиве
                 // после создания slice-view из него.
                 lint_view_extend_detach(f, view_extend_suppressed, &mut warnings);
+                // Владелец 2026-07-21: `new-then-cap` — `X.new()` сразу
+                // следом `.cap(n)` на том же binding (или chain-форма
+                // `X.new().cap(n)`) → warning, canon = `X.new(cap: n)`.
+                lint_new_then_cap(f, &mut warnings);
                 // Plan 52 Ф.2: map-литерал lints (dup-key, NaN-key) —
                 // требуют обхода выражений внутри тела функции.
                 match &f.body {
@@ -2075,6 +2079,217 @@ fn walk_view_extend_expr(
         }
         ExprKind::For { body, .. } | ExprKind::While { body, .. } => {
             walk_view_extend_block(body, view_parents, out);
+        }
+        _ => {}
+    }
+}
+
+// ============================================================================
+// `new-then-cap` lint (владелец 2026-07-21): `X.new()` (без cap-арга) сразу
+// следом `.cap(n)` на том же binding — две аллокации там, где canonical
+// spelling (std/src/collections/vec/core.nv:104) даёт одну:
+// `X.new(cap: n)`. Две поверхностные формы:
+//   - split statements: `mut v = X.new()` затем `v.cap(n)` следующим stmt;
+//   - chain: `X.new().cap(n)`.
+// Warning-класс (как unused-import) — не error; canon — рекомендация.
+// ============================================================================
+
+/// `true` если `Call { func: Member{name:"new", ..}, args, .. }` не содержит
+/// cap-аргумента (ни позиционного, ни named `cap:`) — т.е. `.new()` /
+/// `.new(0)`-подобный вызов БЕЗ явного pre-sizing.
+fn is_new_call_without_cap(func: &Expr, args: &[CallArg]) -> bool {
+    if let ExprKind::Member { name, .. } = &func.kind {
+        if name == "new" {
+            return !args.iter().any(|a| matches!(a, CallArg::Named { name, .. } if name == "cap"))
+                && args.is_empty();
+        }
+    }
+    false
+}
+
+/// Best-effort human-readable receiver description for the chain-form
+/// message (`Vec[T].new().cap(n)` → "Vec[T]"). Falls back to "expression"
+/// when the receiver isn't a simple path/ident (rare in practice — chain
+/// form's receiver is always the type/constructor expression).
+fn describe_new_receiver(func: &Expr) -> String {
+    if let ExprKind::Member { obj, .. } = &func.kind {
+        match &obj.kind {
+            ExprKind::Ident(n) => return n.clone(),
+            ExprKind::Path(segs) => return segs.join("."),
+            ExprKind::TurboFish { base, .. } => return describe_new_receiver_base(base),
+            _ => {}
+        }
+    }
+    "expression".to_string()
+}
+
+fn describe_new_receiver_base(base: &Expr) -> String {
+    match &base.kind {
+        ExprKind::Ident(n) => n.clone(),
+        ExprKind::Path(segs) => segs.join("."),
+        _ => "expression".to_string(),
+    }
+}
+
+fn lint_new_then_cap(f: &FnDecl, out: &mut Vec<LintWarning>) {
+    match &f.body {
+        FnBody::Expr(e) => walk_new_then_cap_expr(e, out),
+        FnBody::Block(b) => walk_new_then_cap_block(b, out),
+        FnBody::External => {}
+    }
+}
+
+fn walk_new_then_cap_block(b: &Block, out: &mut Vec<LintWarning>) {
+    // Track `binding -> span_of_new_call` for bindings whose RHS was a bare
+    // `X.new()` (no cap). Consumed (removed) on the very next stmt if that
+    // stmt is `binding.cap(n)` — только соседний stmt считается «сразу
+    // следом» (D-simple: no cross-stmt reordering heuristics).
+    let mut pending: Option<(String, crate::diag::Span)> = None;
+    for s in &b.stmts {
+        // Recurse first (nested blocks/exprs), independent of the pending
+        // adjacency-tracking below.
+        walk_new_then_cap_stmt(s, out);
+        match s {
+            Stmt::Let(d) if !d.consume => {
+                let is_bare_new = matches!(
+                    &d.value.kind,
+                    ExprKind::Call { func, args, .. } if is_new_call_without_cap(func, args)
+                );
+                pending = if is_bare_new {
+                    if let Pattern::Ident { name, .. } = &d.pattern {
+                        Some((name.clone(), d.value.span))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+            }
+            Stmt::Expr(e) => {
+                if let Some((bind_name, new_span)) = &pending {
+                    if let ExprKind::Call { func, args, .. } = &e.kind {
+                        if let ExprKind::Member { obj, name } = &func.kind {
+                            if name == "cap"
+                                && args.len() == 1
+                                && matches!(&obj.kind, ExprKind::Ident(v) if v == bind_name)
+                            {
+                                out.push(new_then_cap_warning(bind_name, *new_span, e.span));
+                            }
+                        }
+                    }
+                }
+                pending = None;
+            }
+            _ => {
+                pending = None;
+            }
+        }
+    }
+    if let Some(t) = &b.trailing {
+        // Trailing expr (no-semicolon last stmt) can ALSO be the `.cap(n)`
+        // half of the split-stmt pattern — parser folds a semicolon-less
+        // last statement into `trailing`, not `Stmt::Expr` (D-Block).
+        if let Some((bind_name, new_span)) = &pending {
+            if let ExprKind::Call { func, args, .. } = &t.kind {
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    if name == "cap"
+                        && args.len() == 1
+                        && matches!(&obj.kind, ExprKind::Ident(v) if v == bind_name)
+                    {
+                        out.push(new_then_cap_warning(bind_name, *new_span, t.span));
+                    }
+                }
+            }
+        }
+        walk_new_then_cap_expr(t, out);
+    }
+}
+
+fn new_then_cap_warning(
+    bind_name: &str,
+    new_span: crate::diag::Span,
+    cap_span: crate::diag::Span,
+) -> LintWarning {
+    LintWarning {
+        rule: "new-then-cap",
+        diag: crate::diag::Diagnostic::new(
+            format!(
+                "`{name}.new()` immediately followed by `{name}.cap(n)` — \
+                 use `.new(cap: n)` instead: one call, one allocation \
+                 (canonical spelling, see Vec docs).",
+                name = bind_name,
+            ),
+            cap_span,
+        )
+        .with_note_at(format!("`{}` created here", bind_name), new_span),
+    }
+}
+
+fn walk_new_then_cap_stmt(s: &Stmt, out: &mut Vec<LintWarning>) {
+    match s {
+        Stmt::Let(d) => walk_new_then_cap_expr(&d.value, out),
+        Stmt::Expr(e) => walk_new_then_cap_expr(e, out),
+        Stmt::Assign { target, value, .. } => {
+            walk_new_then_cap_expr(target, out);
+            walk_new_then_cap_expr(value, out);
+        }
+        Stmt::Return { value: Some(v), .. } => walk_new_then_cap_expr(v, out),
+        Stmt::Throw { value, .. } => walk_new_then_cap_expr(value, out),
+        Stmt::Defer { body, .. } => walk_new_then_cap_expr(body, out),
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            walk_new_then_cap_expr(expr, out)
+        }
+        _ => {}
+    }
+}
+
+fn walk_new_then_cap_expr(e: &Expr, out: &mut Vec<LintWarning>) {
+    match &e.kind {
+        // Chain form: `X.new().cap(n)` — outer Call is `.cap(...)` whose
+        // Member.obj is itself a bare `X.new()` Call.
+        ExprKind::Call { func, args, .. } => {
+            if let ExprKind::Member { obj, name } = &func.kind {
+                if name == "cap" && args.len() == 1 {
+                    if let ExprKind::Call { func: inner_func, args: inner_args, .. } = &obj.kind {
+                        if is_new_call_without_cap(inner_func, inner_args) {
+                            // Chain has no separate binding name — describe
+                            // the receiver type/callee for the message.
+                            let callee_desc = describe_new_receiver(inner_func);
+                            out.push(LintWarning {
+                                rule: "new-then-cap",
+                                diag: crate::diag::Diagnostic::new(
+                                    format!(
+                                        "`{recv}.new().cap(n)` chain — use \
+                                         `{recv}.new(cap: n)` instead: one call, \
+                                         one allocation (canonical spelling, \
+                                         see Vec docs).",
+                                        recv = callee_desc,
+                                    ),
+                                    e.span,
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+            walk_new_then_cap_expr(func, out);
+            for a in args {
+                walk_new_then_cap_expr(a.expr(), out);
+            }
+        }
+        ExprKind::Block(b) => walk_new_then_cap_block(b, out),
+        ExprKind::If { cond, then, else_ } => {
+            walk_new_then_cap_expr(cond, out);
+            walk_new_then_cap_block(then, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => walk_new_then_cap_block(b, out),
+                    ElseBranch::If(if_expr) => walk_new_then_cap_expr(if_expr, out),
+                }
+            }
+        }
+        ExprKind::For { body, .. } | ExprKind::While { body, .. } => {
+            walk_new_then_cap_block(body, out);
         }
         _ => {}
     }
@@ -7278,6 +7493,119 @@ mod tests {
             min_max_rule_hits(&ws, "W_MANUAL_MIN_MAX").is_empty(),
             "must NOT fire inside the body of ANY `clamp`-named fn (canon @clamp \
              reference impl AND user-defined @clamp pinning a codegen shape), got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // Владелец 2026-07-21: `new-then-cap` lint.
+
+    #[test]
+    fn warns_on_split_stmt_new_then_cap() {
+        let m = parse(
+            "module foo\n\
+             fn run() {\n    \
+             mut v = Vec[int].new()\n    \
+             v.cap(16)\n\
+             }\n",
+        );
+        let ws = lint_module(&m);
+        assert!(
+            ws.iter().any(|w| w.rule == "new-then-cap"),
+            "ожидался new-then-cap, получено: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn warns_on_chain_new_then_cap() {
+        let m = parse(
+            "module foo\n\
+             fn run() {\n    \
+             mut v = Vec[int].new().cap(16)\n\
+             }\n",
+        );
+        let ws = lint_module(&m);
+        assert!(
+            ws.iter().any(|w| w.rule == "new-then-cap"),
+            "ожидался new-then-cap (chain), получено: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_when_cap_passed_at_new() {
+        let m = parse(
+            "module foo\n\
+             fn run() {\n    \
+             mut v = Vec[int].new(cap: 16)\n    \
+             v.push(1)\n\
+             }\n",
+        );
+        let ws = lint_module(&m);
+        assert!(
+            !ws.iter().any(|w| w.rule == "new-then-cap"),
+            "не должен fire когда cap уже передан в new(), получено: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_on_standalone_cap_setter() {
+        // `v.cap(n)` без предшествующего bare `.new()` на том же binding
+        // (legit setter — shrink-to-fit / room-for-N, vec/core.nv:242-243)
+        // — must NOT warn.
+        let m = parse(
+            "module foo\n\
+             fn run(v mut Vec[int]) {\n    \
+             ro extra = 4\n    \
+             v.cap(v.len() + extra)\n\
+             }\n",
+        );
+        let ws = lint_module(&m);
+        assert!(
+            !ws.iter().any(|w| w.rule == "new-then-cap"),
+            "не должен fire на самостоятельном .cap()-сеттере, получено: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_when_cap_call_on_different_binding() {
+        // `v` был создан bare-`new()`, но следующий stmt зовёт `.cap()` на
+        // ДРУГОМ binding'е (`w`, обычный параметр) — не тот же паттерн,
+        // adjacency-tracking по имени НЕ должен ложно смэтчить `v`.
+        let m = parse(
+            "module foo\n\
+             fn run(w mut Vec[int]) {\n    \
+             mut v = Vec[int].new()\n    \
+             w.cap(16)\n    \
+             v.push(1)\n\
+             }\n",
+        );
+        let ws = lint_module(&m);
+        assert!(
+            !ws.iter().any(|w| w.rule == "new-then-cap"),
+            "не должен fire когда .cap() зовётся на ДРУГОМ binding'е, получено: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_when_stmt_between_new_and_cap() {
+        // Стейтмент МЕЖДУ new и cap разрывает «сразу следом» — не warn
+        // (D-simple: только строго соседний stmt).
+        let m = parse(
+            "module foo\n\
+             fn run() {\n    \
+             mut v = Vec[int].new()\n    \
+             ro n = 16\n    \
+             v.cap(n)\n\
+             }\n",
+        );
+        let ws = lint_module(&m);
+        assert!(
+            !ws.iter().any(|w| w.rule == "new-then-cap"),
+            "не должен fire когда между new и cap есть другой stmt, получено: {:?}",
             ws.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
     }

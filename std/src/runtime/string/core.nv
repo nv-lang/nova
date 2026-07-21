@@ -211,8 +211,7 @@ export fn []u8 @to_str_lossy() -> str {
         return str.alloc_copy(@ptr(), n)
     }
     // Worst case every byte → 3-byte FFFD.
-    mut out []u8 = []u8.new()
-    out.cap(n * 3)
+    mut out []u8 = []u8.new(cap: n * 3)
     mut i = 0
     while i < n {
         ro c = @[i] as int

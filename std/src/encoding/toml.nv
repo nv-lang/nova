@@ -72,8 +72,7 @@ type TomlParser {
 }
 
 fn TomlParser.new(s str) -> Self {
-    mut chs []char = []char.new()
-    chs.cap(s.byte_len())
+    mut chs []char = []char.new(cap: s.byte_len())
     for c in s.chars() { chs.push(c) }
     {
         input: s,

@@ -41,8 +41,7 @@ const SMALL_FINAL_SIGMA u32 = 0x3C2
 
 // Single-codepoint sequence (identity mapping).
 fn single(cp u32) -> []u32 {
-    mut out []u32 = []u32.new()
-    out.cap(1)
+    mut out []u32 = []u32.new(cap: 1)
     out.push(cp)
 }
 
@@ -67,8 +66,7 @@ fn upper_one(cp u32) -> []u32 {
 /// Full case folding (UCD CaseFolding status C+F) — for caseless matching.
 /// Idempotent on its own output. Multi-codepoint folds apply (ß → "ss").
 export fn fold_case(s str) -> str {
-    mut out []u32 = []u32.new()
-    out.cap(s.byte_len())
+    mut out []u32 = []u32.new(cap: s.byte_len())
     for c in s.chars() {
         // `None` arm is a fluent `out.push(..)` tail (typed `Vec*`); the `Some`
         // arm yields unit — the `match` coerces to unit in statement position
@@ -84,8 +82,7 @@ export fn fold_case(s str) -> str {
 /// Full Unicode uppercase (locale-independent). Multi-codepoint expansions apply
 /// (ß → "SS", ﬁ → "FI", ﬀ → "FF", ŉ → "ʼN", …). No Turkic/Lithuanian tailoring.
 export fn to_uppercase(s str) -> str {
-    mut out []u32 = []u32.new()
-    out.cap(s.byte_len())
+    mut out []u32 = []u32.new(cap: s.byte_len())
     for c in s.chars() {
         match upper_map.get(c as u32) {
             Some(seq) => { for d in parse_cp_list(seq) { out.push(d) } }
@@ -101,8 +98,7 @@ export fn to_uppercase(s str) -> str {
 export fn to_lowercase(s str) -> str {
     ro cps = str_to_cps(s)
     ro n = cps.len()
-    mut out []u32 = []u32.new()
-    out.cap(n)
+    mut out []u32 = []u32.new(cap: n)
     for i in 0..n {
         ro cp = cps[i]
         if cp == CAP_SIGMA {

@@ -35,8 +35,7 @@ export fn Glob.matches(pattern str, path str) -> bool =>
 // (D260-амендмент) with O(1) `Vec[char] @get(i)`, restoring the intended
 // linear-ish complexity instead of the O(n²) footgun.
 fn collect_chars(s str) -> []char {
-    mut out []char = []char.new()
-    out.cap(s.byte_len())
+    mut out []char = []char.new(cap: s.byte_len())
     for c in s.chars() { out.push(c) }
     out
 }

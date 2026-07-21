@@ -93,8 +93,7 @@ export fn str @strip_suffix(suffix str) -> Option[str] {
 // Renamed to_lower → to_ascii_lower (Plan 91.18 Ф.2).
 export fn str @to_ascii_lower() -> str {
     ro (bytes, n) = (@bytes(), @byte_len())
-    mut out []u8 = []u8.new()
-    out.cap(n)
+    mut out []u8 = []u8.new(cap: n)
     out.append(bytes)
     for i in 0..n {
         ro b = out[i] as int
@@ -111,8 +110,7 @@ export fn str @to_ascii_lower() -> str {
 // Renamed to_upper → to_ascii_upper (Plan 91.18 Ф.2).
 export fn str @to_ascii_upper() -> str {
     ro (bytes, n) = (@bytes(), @byte_len())
-    mut out []u8 = []u8.new()
-    out.cap(n)
+    mut out []u8 = []u8.new(cap: n)
     out.append(bytes)
     for i in 0..n {
         ro b = out[i] as int

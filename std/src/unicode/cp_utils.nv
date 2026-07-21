@@ -20,8 +20,7 @@ fn hex(s str) -> Option[u32] {
 
 // "d1,d2,d3" (comma-separated hex) -> [d1, d2, d3].
 fn parse_cp_list(s str) -> []u32 {
-    mut out []u32 = []u32.new()
-    out.cap(4)
+    mut out []u32 = []u32.new(cap: 4)
     for part in s.split(",") {
         match hex(part) { Some(cp) => out.push(cp), None => {} }
     }
@@ -101,8 +100,7 @@ fn parse_comp_table(data str) -> HashMap[int, u32] {
 }
 
 fn str_to_cps(s str) -> []u32 {
-    mut out []u32 = []u32.new()
-    out.cap(s.byte_len())
+    mut out []u32 = []u32.new(cap: s.byte_len())
     for c in s.chars() { out.push(c as u32) }
     out
 }

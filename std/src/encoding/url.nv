@@ -423,8 +423,7 @@ fn hex_value_at(sc []char, pos int) -> Result[u8, ParseUrlError] {
 
 // Push-loop materialisation of `s.chars()` — see `Url.decode_query` doc.
 fn to_chars(s str) -> []char {
-    mut out []char = []char.new()
-    out.cap(s.byte_len())
+    mut out []char = []char.new(cap: s.byte_len())
     for c in s.chars() { out.push(c) }
     out
 }

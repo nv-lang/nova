@@ -36,8 +36,7 @@ import std.collections.vec.{Vec}
 /// ```
 #stable(since = "0.1")
 export fn[T] []T @map[U](f fn(T) -> U) -> []U {
-    mut out []U = []U.new()
-    out.cap(@len())
+    mut out []U = []U.new(cap: @len())
     for x in @ {                          // implicit iter (D58)
         out.push(f(x))
     }

@@ -26,8 +26,7 @@ export fn Csv.parse(input str) Fail[ParseCsvError] -> [][]str { // [M-lint-findi
     // не `.collect()` — крашит кодоген на CharsIter, Block 2 precedent)
     // вместо ретрактированного `input.chars().nth(i)` O(n) скана на каждой
     // итерации (D260-амендмент).
-    mut ic []char = []char.new()
-    ic.cap(input.byte_len())
+    mut ic []char = []char.new(cap: input.byte_len())
     for c in input.chars() { ic.push(c) }
 
     mut i = 0
