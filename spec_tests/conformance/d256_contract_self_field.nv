@@ -2,8 +2,20 @@
 // Норма (spec §D256): requires/ensures метода могут ссылаться на состояние
 // receiver'а (`@field`; `@len()` ≡ `@len` — D117 zero-arg аксессоры); прочие
 // `@method()` в контракте — внятная ошибка (SMT-путь — corpus contracts/ с
-// REQUIRES_SMT_BACKEND; здесь — runtime-enforcement недоказанного requires,
+// SMT-бэкендом; здесь — runtime-enforcement недоказанного requires,
 // happy-path). Один folder-module `spec_tests.conformance`.
+//
+// NB: comment text deliberately avoids spelling the literal directive token
+// `REQUIRES_SMT_BACKEND` at trimmed-line-start — `test_runner.rs`'s
+// `parse_smt_backend_requirement` matches ANY first-30-lines comment line
+// starting with `// REQUIRES_SMT_BACKEND` (prefix-strip, no exact-directive
+// syntax check), and this file's peer-file marker scan (folder-module-wide,
+// `collect_marker_sources`) fed that false match into the WHOLE
+// `spec_tests/conformance` mega-CU's single aggregated test entry — silently
+// SKIPPING every test in the 1000+-file folder-module (found while gating
+// [M-protocol-embed-vtable-missing-method], 2026-07-21: the entire CU never
+// actually ran, masking the real PASS/FAIL signal for anyone testing this
+// folder).
 module spec_tests.conformance
 
 type D256Counter {
