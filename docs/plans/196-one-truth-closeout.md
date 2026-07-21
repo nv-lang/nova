@@ -525,3 +525,27 @@ patched-бинаре, идентично pristine.
 
 Коммит (ветка `p196-b11q`, база main `5c775de3b`): comment-only B11q/B11r root-cause diagnosis + notes
 (0 поведенческих изменений, verified). В main НЕ мёржено, push НЕ делался. Модель: sonnet.
+
+## Под-программа: name-hardcode audit (2026-07-22, находка владельца — BUILTIN_VTABLE_NAMES)
+
+**Связь с 196:** хардкод-списки имён типов/протоколов/эффектов/методов в Rust = ВТОРОЙ
+источник правды по именам (ровно то, что 196 «one truth» вычищает; §3: max из .nv).
+
+**Инвентарь (compiler-codegen/src, греп 2026-07-22):** 31 список `const X: &[&str]` + 92
+сравнения `== "TypeName"` + 21 `.contains(&"...")` = ~144 сайта.
+
+**§3-ДОЛГ (имеют .nv-декларацию — кандидаты на вывод из атрибута/реестра, НЕ имён-списка):**
+- `BUILTIN_VTABLE_NAMES` (emit_c.rs:6062) — эффект-vtable; Time уходит в [175.2](175.2-typed-effects.md) ч.6, остаток → атрибут.
+- `RT_VTABLE_PROTOCOLS = ["Hash","Compare","Display"]` (:9891) — ПРОТОКОЛЫ в .nv.
+- `BUILTIN_TYPE_NAMES`/`BUILTIN_RUNTIME_TYPES`/`RUNTIME_NATIVE_CONCRETE_TYPES` — типы.
+- `SUSPEND_EFFECT_NAMES` (types/mod.rs) — эффекты.
+- `FLUENT_BUILTIN_METHODS`/`VEC_INHERENT_METHOD_SELECTORS`/`CHAR_UNICODE_METHOD_SELECTORS` — методы в .nv.
+- 92× `== "Тип"` + 21× contains — построчная классификация в пост-релизной волне.
+
+**ЛЕГИТИМНЫЕ (C-фундамент, НЕ из .nv — не долг):** `LIBUV_*SYSLIBS` (линкер-флаги),
+`NOVA_PRIMITIVES`/`PRIMITIVE_TYPES` (примитивы = фундамент языка), `ABBREVIATIONS`/doc-`TYPES`
+(доки), `KNOWN_PART_ONLY_MACRO_STATEMENTS` (split_tu-механика).
+
+**План:** до тегов — только то, что 175.2 задевает (Time-vtable). Остальное — пост-релизная
+196-волна «per-list классификация → вывод из .nv-атрибута/реестра». Маркер
+`[M-196-name-hardcode-lists]`.
