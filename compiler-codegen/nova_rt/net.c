@@ -329,12 +329,14 @@ typedef struct NovaNet2Listener {
     NovaFiberQueue* accept_scope;  /* NULL when no waiter */
     int             accept_slot;
     nova_atomic_int pending_conns; /* incremented by connection_cb (loop thread) */
+    nova_atomic_int refcount;      /* [M-boehm-...] variant (b), see below */
 } NovaNet2Listener;
 
 typedef struct NovaNet2Stream {
     uv_tcp_t        handle;        /* must be first */
     uv_loop_t*      loop;
     nova_atomic_int stage;
+    nova_atomic_int refcount;      /* [M-boehm-...] variant (b), see below */
 
     /* connect path */
     uv_connect_t    connect_req;
@@ -366,6 +368,77 @@ typedef struct NovaNet2Stream {
 
     volatile int32_t split_refcount; /* 0 = unsplit / 2 / 1 */
 } NovaNet2Stream;
+
+/* ─── [M-boehm-large-buffer-retention-fiber-reuse] variant (b): free-on-close
+ * refcount protocol ───────────────────────────────────────────────────────
+ *
+ * Variant (a) (merged) stopped the buffer-scaling leak (read_ptr/write_req
+ * cleared after each op). The RESIDUAL leak variant (b) fixes: the
+ * NovaNet2Listener/Stream/Udp structs themselves are nova_alloc_uncollectable
+ * (a permanent GC root — see the file-header rationale) and were NEVER
+ * nova_free_uncollectable'd — a fixed-size leak per accepted/connected
+ * socket. `_nn2_*_close_cb` only flipped stage=CLOSED and woke waiters.
+ *
+ * Naive `nova_free_uncollectable(s)` inside close_cb is a use-after-free
+ * (mn-coding-conventions.md §9 class): a fiber parked in net_tcp_read/write/
+ * connect/accept/udp_send_to/udp_recv_from is woken BY close_cb (the CLOSING
+ * predicate) but resumes on its OWN schedule — it dereferences `s`/`lst`/
+ * `sock` (stage, op_err, read_err, …) strictly AFTER close_cb has already
+ * run. A concurrent net_tcp_close()/net_listener_close()/net_udp_close()
+ * from a DIFFERENT fiber than the one parked reading/writing (the supported
+ * "close from elsewhere to unblock a park" pattern — split TcpReadHalf/
+ * TcpWriteHalf, or a supervisor closing a listener during shutdown) makes
+ * this a genuine cross-fiber race, not just a same-fiber ordering question.
+ *
+ * Fix — classic intrusive atomic refcount (same idiom as
+ * `nova_chan_writer_close` in channels.h / R1 A1 in sync.h:
+ * nova_aint_fetch_sub_release + acquire-fence-before-destroy on the
+ * thread that drives the count to zero):
+ *   - `refcount` starts at 1 ("existence" unit — the handle/struct is alive,
+ *     libuv references it, the Nova-side handle value may still be used).
+ *   - Every function that may touch struct fields AFTER a park (read/write/
+ *     connect/accept/udp send/recv — exactly the ops with a CLOSING-aware
+ *     predicate) acquires ONE unit for its entire body (from entry to every
+ *     return, via a single acquire()/goto-release()/return exit) — this
+ *     covers the whole "issue → maybe-park → read result fields" window,
+ *     including any cross-thread `nova_loop_defer_call` completion running
+ *     concurrently while this fiber is parked.
+ *   - `_nn2_*_close_cb` (runs once uv_close completes — libuv guarantees no
+ *     other callback fires on the handle afterward) releases the "existence"
+ *     unit AFTER doing its wake-work.
+ *   - The struct is freed by whichever release drives refcount to 0 — could
+ *     be an in-flight op finishing after close_cb already ran, or close_cb
+ *     itself if no op is in flight when it runs. Both orders are safe: the
+ *     side that observes the OTHER side's contribution already retired sees
+ *     count 0 and frees exactly once (single atomic fetch_sub per release,
+ *     no double-free).
+ *   - `net_tcp_shutdown`'s cross-thread path is fire-and-forget (no park) —
+ *     the ISSUING call cannot release after itself. It acquires before
+ *     queuing the deferred job; the deferred job itself releases after
+ *     calling uv_shutdown (mirrors mn-conventions §9: a pointer crossing a
+ *     thread/queue boundary needs the crossing to be covered by an explicit
+ *     lifetime unit, not by the issuing frame's already-returned stack).
+ *   - Scope: only nova_alloc_uncollectable'd net.c objects. Never-freed DNS
+ *     `NovaNet2DnsReq` is nova_alloc (regular GC memory) — untouched. */
+
+static inline void _nn2_stream_acquire(NovaNet2Stream* s) {
+    (void)nova_aint_inc(&s->refcount);
+}
+static inline void _nn2_stream_release(NovaNet2Stream* s) {
+    if (nova_aint_fetch_sub_release(&s->refcount) == 1) {
+        nova_thread_fence_acquire();
+        nova_free_uncollectable(s);
+    }
+}
+static inline void _nn2_listener_acquire(NovaNet2Listener* lst) {
+    (void)nova_aint_inc(&lst->refcount);
+}
+static inline void _nn2_listener_release(NovaNet2Listener* lst) {
+    if (nova_aint_fetch_sub_release(&lst->refcount) == 1) {
+        nova_thread_fence_acquire();
+        nova_free_uncollectable(lst);
+    }
+}
 
 /* ─── Park predicates (lost-wake-free, see file header) ──────────────────────
  * Each returns true when the op's completion latch is set OR the handle is
@@ -421,6 +494,7 @@ void* net_tcp_listen(const NovaNetAddr* addr, nova_int backlog, nova_int* out_er
         (NovaNet2Listener*)nova_alloc_uncollectable(sizeof(NovaNet2Listener));
     memset(lst, 0, sizeof(*lst));
     nova_aint_init(&lst->stage, NN2_IDLE);
+    nova_aint_init(&lst->refcount, 1);   /* [M-boehm-...] variant (b): existence unit */
     lst->loop = loop;
     lst->handle.data = lst;
 
@@ -466,6 +540,11 @@ static void _nn2_listener_close_cb(uv_handle_t* h) {
         lst->accept_scope = NULL;
         nova_sched_wake(sc, sl);
     }
+    /* [M-boehm-...] variant (b): libuv is done with `lst` (uv_close
+     * completed — no further callback will touch it). Release the
+     * "existence" unit; frees now iff no net_tcp_accept() call is
+     * currently in flight (holding its own acquire). */
+    _nn2_listener_release(lst);
 }
 
 /* [M-183-net2-loop-affinity-cross-thread-op] fix: the accept-issue step
@@ -524,8 +603,16 @@ static nova_bool _nn2_accept_issue_ready(void* ctx) {
 
 void* net_tcp_accept(void* lstv, nova_int* out_err) {
     NovaNet2Listener* lst = (NovaNet2Listener*)lstv;
+    void* result;
+    /* [M-boehm-large-buffer-retention-fiber-reuse] variant (b): op-in-flight
+     * unit held for the WHOLE call (covers the park + every post-park read
+     * of `lst` below) so a concurrent net_listener_close()/scope-cancel
+     * cannot free `lst` out from under us. Released exactly once at every
+     * exit via the `out:` label. */
+    _nn2_listener_acquire(lst);
+
     int32_t s = nova_aint_load(&lst->stage);
-    if (s >= NN2_CLOSING) { if (out_err) *out_err = UV_ECANCELED; return NULL; }
+    if (s >= NN2_CLOSING) { if (out_err) *out_err = UV_ECANCELED; result = NULL; goto out; }
 
     NovaFiberQueue* scope = _nova_active_scope;
     int slot = _nova_active_slot;
@@ -533,7 +620,7 @@ void* net_tcp_accept(void* lstv, nova_int* out_err) {
 
     NovaFiberQueue* cancel_sc = _nn2_cancel_scope(scope);
     if (nova_abool_load(&cancel_sc->cancel_requested)) {
-        if (out_err) *out_err = UV_ECANCELED; return NULL;
+        if (out_err) *out_err = UV_ECANCELED; result = NULL; goto out;
     }
 
     for (;;) {
@@ -549,7 +636,7 @@ void* net_tcp_accept(void* lstv, nova_int* out_err) {
             continue;  /* lost the CAS — retry */
         }
         if (nova_aint_load(&lst->stage) >= NN2_CLOSING) {
-            if (out_err) *out_err = UV_ECANCELED; return NULL;
+            if (out_err) *out_err = UV_ECANCELED; result = NULL; goto out;
         }
         /* Publish the waiter BEFORE parking; the predicate absorbs a
          * connection_cb that fires in the gap (lost-wake-free). */
@@ -561,10 +648,10 @@ void* net_tcp_accept(void* lstv, nova_int* out_err) {
         lst->accept_scope = NULL;
 
         if (nova_abool_load(&cancel_sc->cancel_requested)) {
-            if (out_err) *out_err = UV_ECANCELED; return NULL;
+            if (out_err) *out_err = UV_ECANCELED; result = NULL; goto out;
         }
         if (nova_aint_load(&lst->stage) >= NN2_CLOSING) {
-            if (out_err) *out_err = UV_ECANCELED; return NULL;
+            if (out_err) *out_err = UV_ECANCELED; result = NULL; goto out;
         }
     }
 
@@ -572,6 +659,7 @@ void* net_tcp_accept(void* lstv, nova_int* out_err) {
         (NovaNet2Stream*)nova_alloc_uncollectable(sizeof(NovaNet2Stream));
     memset(st, 0, sizeof(*st));
     nova_aint_init(&st->stage, NN2_IDLE);
+    nova_aint_init(&st->refcount, 1);   /* [M-boehm-...] variant (b): existence unit */
     /* Accepted stream inherits the LISTENER's loop (see Nn2AcceptIssueCtx
      * comment) — not nova_current_loop(), which may now be a different
      * worker than the one lst was created/bound on. */
@@ -605,9 +693,13 @@ void* net_tcp_accept(void* lstv, nova_int* out_err) {
         rc = actx.rc;
     }
 
-    if (rc != 0) { if (out_err) *out_err = rc; return NULL; }
+    if (rc != 0) { if (out_err) *out_err = rc; result = NULL; goto out; }
     if (out_err) *out_err = 0;
-    return st;
+    result = st;
+
+out:
+    _nn2_listener_release(lst);
+    return result;
 }
 
 uint16_t net_listener_local_port(void* lstv) {
@@ -675,6 +767,11 @@ static void _nn2_stream_close_cb(uv_handle_t* h) {
     if (s->op_scope)    { NovaFiberQueue* sc = s->op_scope;    int sl = s->op_slot;    s->op_scope = NULL;    nova_sched_wake(sc, sl); }
     if (s->read_scope)  { NovaFiberQueue* sc = s->read_scope;  int sl = s->read_slot;  s->read_scope = NULL;  nova_sched_wake(sc, sl); }
     if (s->write_scope) { NovaFiberQueue* sc = s->write_scope; int sl = s->write_slot; s->write_scope = NULL; nova_sched_wake(sc, sl); }
+    /* [M-boehm-...] variant (b): libuv is done with `s` (uv_close completed —
+     * no further read_cb/write_cb/connect_cb will fire). Release the
+     * "existence" unit; frees now iff no read/write/connect call is
+     * currently in flight (each holds its own acquire across park+wake). */
+    _nn2_stream_release(s);
 }
 
 void* net_tcp_connect(const NovaNetAddr* addr, nova_int* out_err) {
@@ -683,12 +780,22 @@ void* net_tcp_connect(const NovaNetAddr* addr, nova_int* out_err) {
         (NovaNet2Stream*)nova_alloc_uncollectable(sizeof(NovaNet2Stream));
     memset(s, 0, sizeof(*s));
     nova_aint_init(&s->stage, NN2_IDLE);
+    nova_aint_init(&s->refcount, 1);   /* [M-boehm-...] variant (b): existence unit */
     s->loop = loop;
     s->handle.data = s;
     s->connect_req.data = s;
 
+    void* result;
+    /* [M-boehm-large-buffer-retention-fiber-reuse] variant (b): op-in-flight
+     * unit for the WHOLE call — a scope-cancel can invoke _nn2_stream_stop_cb
+     * (registered below) concurrently on another thread once `s` is
+     * registered pending; without this acquire that could drive the
+     * existence unit to 0 and free `s` while we are still parked / reading
+     * its fields. Released exactly once at every exit via `out:`. */
+    _nn2_stream_acquire(s);
+
     int rc = uv_tcp_init(loop, &s->handle);
-    if (rc != 0) { if (out_err) *out_err = rc; return NULL; }
+    if (rc != 0) { if (out_err) *out_err = rc; result = NULL; goto out; }
 
     NovaFiberQueue* scope = _nova_active_scope;
     int slot = _nova_active_slot;
@@ -698,7 +805,7 @@ void* net_tcp_connect(const NovaNetAddr* addr, nova_int* out_err) {
     if (nova_abool_load(&cancel_sc->cancel_requested)) {
         if (out_err) *out_err = UV_ECANCELED;
         uv_close((uv_handle_t*)&s->handle, _nn2_stream_close_cb);
-        return NULL;
+        result = NULL; goto out;
     }
 
     /* Publish waiter + latch BEFORE issuing the op (lost-wake-free): the
@@ -718,23 +825,27 @@ void* net_tcp_connect(const NovaNetAddr* addr, nova_int* out_err) {
         s->op_scope = NULL;
         if (out_err) *out_err = rc;
         uv_close((uv_handle_t*)&s->handle, _nn2_stream_close_cb);
-        return NULL;
+        result = NULL; goto out;
     }
 
     nova_sched_park_until(scope, slot, _nn2_stream_op_ready, s);
     nova_sched_unregister_pending(scope, slot);
 
     if (nova_abool_load(&cancel_sc->cancel_requested)) {
-        if (out_err) *out_err = UV_ECANCELED; return NULL;
+        if (out_err) *out_err = UV_ECANCELED; result = NULL; goto out;
     }
     if (nova_aint_load(&s->stage) == NN2_CLOSED) {
-        if (out_err) *out_err = UV_ECANCELED; return NULL;
+        if (out_err) *out_err = UV_ECANCELED; result = NULL; goto out;
     }
-    if (s->op_err != 0) { if (out_err) *out_err = s->op_err; return NULL; }
+    if (s->op_err != 0) { if (out_err) *out_err = s->op_err; result = NULL; goto out; }
 
     nova_aint_store(&s->stage, NN2_IDLE);
     if (out_err) *out_err = 0;
-    return s;
+    result = s;
+
+out:
+    _nn2_stream_release(s);
+    return result;
 }
 
 /* alloc_cb: hand libuv the CALLER's buffer slice (zero-copy read). */
@@ -798,16 +909,25 @@ static void _nn2_do_read_start_deferred(void* argp) {
 
 nova_int net_tcp_read(void* sv, uint8_t* buf, nova_int cap) {
     NovaNet2Stream* s = (NovaNet2Stream*)sv;
+    nova_int result;
+    /* [M-boehm-large-buffer-retention-fiber-reuse] variant (b): op-in-flight
+     * unit for the WHOLE call (covers the park + every post-park read of `s`
+     * below) — a concurrent net_tcp_close()/scope-cancel from a DIFFERENT
+     * fiber (the supported "close from elsewhere to unblock a parked read"
+     * pattern) must not free `s` while we are still using it. Released
+     * exactly once at every exit via `out:`. */
+    _nn2_stream_acquire(s);
+
     int32_t st = nova_aint_load(&s->stage);
-    if (st >= NN2_CLOSING) return UV_ECANCELED;
-    if (cap <= 0) return 0;
+    if (st >= NN2_CLOSING) { result = UV_ECANCELED; goto out; }
+    if (cap <= 0) { result = 0; goto out; }
 
     NovaFiberQueue* scope = _nova_active_scope;
     int slot = _nova_active_slot;
     if (!scope) { fprintf(stderr, "nova/net: read outside scope\n"); abort(); }
 
     NovaFiberQueue* cancel_sc = _nn2_cancel_scope(scope);
-    if (nova_abool_load(&cancel_sc->cancel_requested)) return UV_ECANCELED;
+    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = UV_ECANCELED; goto out; }
 
     /* Publish waiter + buffer + latch BEFORE uv_read_start (lost-wake-free).
      * NOTE: no stage transition here — read and write halves run full-duplex
@@ -830,7 +950,7 @@ nova_int net_tcp_read(void* sv, uint8_t* buf, nova_int cap) {
         if (rc != 0) {
             nova_sched_unregister_pending(scope, slot);
             s->read_scope = NULL;
-            return rc;
+            result = rc; goto out;
         }
     } else {
         /* Genuine cross-thread case: marshal to s->loop's thread. */
@@ -848,12 +968,16 @@ nova_int net_tcp_read(void* sv, uint8_t* buf, nova_int cap) {
      * reference now that libuv is done with it (the next read re-sets it). */
     s->read_ptr = NULL;
 
-    if (nova_abool_load(&cancel_sc->cancel_requested)) return UV_ECANCELED;
-    if (nova_aint_load(&s->stage) >= NN2_CLOSING)       return UV_ECANCELED;
+    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = UV_ECANCELED; goto out; }
+    if (nova_aint_load(&s->stage) >= NN2_CLOSING)       { result = UV_ECANCELED; goto out; }
 
-    if (s->read_err != 0) return s->read_err;
-    if (s->read_eof)      return 0;   /* clean EOF: 0 bytes */
-    return s->read_n;
+    if (s->read_err != 0) { result = s->read_err; goto out; }
+    if (s->read_eof)      { result = 0; goto out; }   /* clean EOF: 0 bytes */
+    result = s->read_n;
+
+out:
+    _nn2_stream_release(s);
+    return result;
 }
 
 static void _nn2_write_cb(uv_write_t* req, int status) {
@@ -901,16 +1025,22 @@ static void _nn2_do_write_issue_deferred(void* argp) {
 
 nova_int net_tcp_write(void* sv, const uint8_t* buf, nova_int len) {
     NovaNet2Stream* s = (NovaNet2Stream*)sv;
+    nova_int result;
+    /* [M-boehm-large-buffer-retention-fiber-reuse] variant (b): op-in-flight
+     * unit for the WHOLE call — same rationale as net_tcp_read above.
+     * Released exactly once at every exit via `out:`. */
+    _nn2_stream_acquire(s);
+
     int32_t st = nova_aint_load(&s->stage);
-    if (st >= NN2_CLOSING) return UV_ECANCELED;
-    if (len == 0) return 0;
+    if (st >= NN2_CLOSING) { result = UV_ECANCELED; goto out; }
+    if (len == 0) { result = 0; goto out; }
 
     NovaFiberQueue* scope = _nova_active_scope;
     int slot = _nova_active_slot;
     if (!scope) { fprintf(stderr, "nova/net: write outside scope\n"); abort(); }
 
     NovaFiberQueue* cancel_sc = _nn2_cancel_scope(scope);
-    if (nova_abool_load(&cancel_sc->cancel_requested)) return UV_ECANCELED;
+    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = UV_ECANCELED; goto out; }
 
     /* Zero-copy: uv_write points straight at the caller's []u8 memory, which the
      * Nova caller keeps alive on its fiber stack across this parked call.
@@ -934,7 +1064,7 @@ nova_int net_tcp_write(void* sv, const uint8_t* buf, nova_int len) {
         if (rc != 0) {
             nova_sched_unregister_pending(scope, slot);
             s->write_scope = NULL;
-            return rc;
+            result = rc; goto out;
         }
     } else {
         /* Genuine cross-thread case: `wctx` is a local of THIS function call
@@ -957,11 +1087,15 @@ nova_int net_tcp_write(void* sv, const uint8_t* buf, nova_int len) {
      * next write) to release it. */
     memset(&s->write_req, 0, sizeof(s->write_req));
 
-    if (nova_abool_load(&cancel_sc->cancel_requested)) return UV_ECANCELED;
-    if (nova_aint_load(&s->stage) >= NN2_CLOSING)       return UV_ECANCELED;
+    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = UV_ECANCELED; goto out; }
+    if (nova_aint_load(&s->stage) >= NN2_CLOSING)       { result = UV_ECANCELED; goto out; }
 
-    if (s->write_err != 0) return s->write_err;
-    return s->write_n;
+    if (s->write_err != 0) { result = s->write_err; goto out; }
+    result = s->write_n;
+
+out:
+    _nn2_stream_release(s);
+    return result;
 }
 
 /* [M-183-net2-loop-affinity-cross-thread-op] fix: uv_shutdown is fire-and-
@@ -969,13 +1103,24 @@ nova_int net_tcp_write(void* sv, const uint8_t* buf, nova_int len) {
  * owning loop's own uv_run same as read/write/accept. Unlike those, this
  * function does not park, so it cannot safely wait for the (possibly
  * deferred) issue to publish a real return code without introducing a new
- * blocking point; `s` itself is GC-heap-owned (safe to touch from the
- * deferred job whenever it runs), so we accept a best-effort `0` on the
- * cross-thread path — callers of shutdown() do not depend on this rc for
- * correctness (half-close is already advisory). */
+ * blocking point; we accept a best-effort `0` on the cross-thread path —
+ * callers of shutdown() do not depend on this rc for correctness (half-close
+ * is already advisory).
+ *
+ * [M-boehm-large-buffer-retention-fiber-reuse] variant (b): `s` is no longer
+ * "safe to touch whenever this job runs" for free — it is only alive while
+ * refcount > 0. Since net_tcp_shutdown() does NOT park (its own frame
+ * returns to the caller before this job necessarily runs — mn-conventions
+ * §9 class: a pointer crossing a thread/queue boundary needs the crossing
+ * itself covered by a lifetime unit, not by the issuing frame's stack,
+ * which may already be gone), net_tcp_shutdown() acquires ONE unit before
+ * queuing and THIS job releases it after touching `s` — mirroring the
+ * park-based ops' acquire/release but shifted to bracket the deferred call
+ * itself rather than net_tcp_shutdown()'s (already-returned) frame. */
 static void _nn2_do_shutdown_issue(void* argp) {
     NovaNet2Stream* s = (NovaNet2Stream*)argp;
     uv_shutdown(&s->shutdown_req, (uv_stream_t*)&s->handle, NULL);
+    _nn2_stream_release(s);
 }
 
 nova_int net_tcp_shutdown(void* sv) {
@@ -984,6 +1129,7 @@ nova_int net_tcp_shutdown(void* sv) {
     if (nova_current_loop() == s->loop) {
         return uv_shutdown(&s->shutdown_req, (uv_stream_t*)&s->handle, NULL);
     }
+    _nn2_stream_acquire(s);   /* released by _nn2_do_shutdown_issue itself */
     nova_loop_defer_call(s->loop, _nn2_do_shutdown_issue, s);
     return 0;
 }
@@ -1060,6 +1206,7 @@ typedef struct NovaNet2Udp {
     uv_udp_t        handle;        /* must be first */
     uv_loop_t*      loop;
     nova_atomic_int stage;
+    nova_atomic_int refcount;      /* [M-boehm-...] variant (b), see below */
 
     /* recv path */
     NovaFiberQueue* recv_scope;
@@ -1080,6 +1227,17 @@ typedef struct NovaNet2Udp {
     nova_atomic_int send_done;     /* completion latch */
 } NovaNet2Udp;
 
+/* [M-boehm-...] variant (b): same refcount protocol as stream/listener above. */
+static inline void _nn2_udp_acquire(NovaNet2Udp* sock) {
+    (void)nova_aint_inc(&sock->refcount);
+}
+static inline void _nn2_udp_release(NovaNet2Udp* sock) {
+    if (nova_aint_fetch_sub_release(&sock->refcount) == 1) {
+        nova_thread_fence_acquire();
+        nova_free_uncollectable(sock);
+    }
+}
+
 static void         _nn2_udp_close_cb(uv_handle_t* h);
 static NovaStopMode _nn2_udp_stop_cb(void* handle);
 
@@ -1099,6 +1257,7 @@ void* net_udp_bind(const NovaNetAddr* addr, nova_int* out_err) {
     NovaNet2Udp* sock = (NovaNet2Udp*)nova_alloc_uncollectable(sizeof(NovaNet2Udp));
     memset(sock, 0, sizeof(*sock));
     nova_aint_init(&sock->stage, NN2_IDLE);
+    nova_aint_init(&sock->refcount, 1);   /* [M-boehm-...] variant (b): existence unit */
     sock->loop = loop;
     sock->handle.data = sock;
 
@@ -1160,14 +1319,22 @@ static void _nn2_do_udp_send_issue_deferred(void* argp) {
 nova_int net_udp_send_to(void* sockv, const uint8_t* buf, nova_int len,
                              const NovaNetAddr* addr) {
     NovaNet2Udp* sock = (NovaNet2Udp*)sockv;
-    if (len == 0) return 0;
+    nova_int result;
+    /* [M-boehm-large-buffer-retention-fiber-reuse] variant (b): op-in-flight
+     * unit for the WHOLE call — same rationale as the TCP ops above (a
+     * concurrent net_udp_close() from another fiber must not free `sock`
+     * while this call is parked / reading its fields). Released exactly
+     * once at every exit via `out:`. */
+    _nn2_udp_acquire(sock);
+
+    if (len == 0) { result = 0; goto out; }
 
     NovaFiberQueue* scope = _nova_active_scope;
     int slot = _nova_active_slot;
     if (!scope) { fprintf(stderr, "nova/net: send_to outside scope\n"); abort(); }
 
     NovaFiberQueue* cancel_sc = _nn2_cancel_scope(scope);
-    if (nova_abool_load(&cancel_sc->cancel_requested)) return UV_ECANCELED;
+    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = UV_ECANCELED; goto out; }
 
     /* Zero-copy: send straight from the caller's []u8. Publish waiter + latch
      * BEFORE uv_udp_send (lost-wake-free: this exact gap timed out ~3/10). */
@@ -1188,7 +1355,7 @@ nova_int net_udp_send_to(void* sockv, const uint8_t* buf, nova_int len,
     if (nova_current_loop() == sock->loop) {
         int rc;
         _nn2_udp_send_issue_raw(&sctx, &rc);
-        if (rc != 0) { sock->send_scope = NULL; return rc; }
+        if (rc != 0) { sock->send_scope = NULL; result = rc; goto out; }
     } else {
         nova_loop_defer_call(sock->loop, _nn2_do_udp_send_issue_deferred, &sctx);
     }
@@ -1196,8 +1363,12 @@ nova_int net_udp_send_to(void* sockv, const uint8_t* buf, nova_int len,
     nova_sched_park_until(scope, slot, _nn2_udp_send_ready, sock);
     sock->send_scope = NULL;
 
-    if (sock->send_err != 0) return sock->send_err;
-    return len;
+    if (sock->send_err != 0) { result = sock->send_err; goto out; }
+    result = len;
+
+out:
+    _nn2_udp_release(sock);
+    return result;
 }
 
 static void _nn2_udp_alloc_cb(uv_handle_t* h, size_t suggested, uv_buf_t* buf) {
@@ -1250,6 +1421,10 @@ static void _nn2_udp_close_cb(uv_handle_t* h) {
         sock->recv_scope = NULL;
         nova_sched_wake(sc, sl);
     }
+    /* [M-boehm-...] variant (b): libuv is done with `sock`. Release the
+     * "existence" unit; frees now iff no send/recv call is currently in
+     * flight (each holds its own acquire across park+wake). */
+    _nn2_udp_release(sock);
 }
 
 /* [M-183-net2-loop-affinity-cross-thread-op] fix: issue uv_udp_recv_start on
@@ -1275,16 +1450,22 @@ static void _nn2_do_udp_recv_start_deferred(void* argp) {
 nova_int net_udp_recv_from(void* sockv, uint8_t* buf, nova_int cap,
                                NovaNetAddr* sender) {
     NovaNet2Udp* sock = (NovaNet2Udp*)sockv;
+    nova_int result;
+    /* [M-boehm-large-buffer-retention-fiber-reuse] variant (b): op-in-flight
+     * unit for the WHOLE call — same rationale as net_tcp_read above.
+     * Released exactly once at every exit via `out:`. */
+    _nn2_udp_acquire(sock);
+
     int32_t s = nova_aint_load(&sock->stage);
-    if (s >= NN2_CLOSING) return UV_ECANCELED;
-    if (cap <= 0) return 0;
+    if (s >= NN2_CLOSING) { result = UV_ECANCELED; goto out; }
+    if (cap <= 0) { result = 0; goto out; }
 
     NovaFiberQueue* scope = _nova_active_scope;
     int slot = _nova_active_slot;
     if (!scope) { fprintf(stderr, "nova/net: recv_from outside scope\n"); abort(); }
 
     NovaFiberQueue* cancel_sc = _nn2_cancel_scope(scope);
-    if (nova_abool_load(&cancel_sc->cancel_requested)) return UV_ECANCELED;
+    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = UV_ECANCELED; goto out; }
 
     /* Publish waiter + buffer + latch BEFORE uv_udp_recv_start (lost-wake-free). */
     sock->recv_ptr = buf;
@@ -1305,7 +1486,7 @@ nova_int net_udp_recv_from(void* sockv, uint8_t* buf, nova_int cap,
             nova_sched_unregister_pending(scope, slot);
             sock->recv_scope = NULL;
             nova_aint_store(&sock->stage, NN2_IDLE);
-            return rc;
+            result = rc; goto out;
         }
     } else {
         nova_loop_defer_call(sock->loop, _nn2_do_udp_recv_start_deferred, sock);
@@ -1314,16 +1495,20 @@ nova_int net_udp_recv_from(void* sockv, uint8_t* buf, nova_int cap,
     nova_sched_park_until(scope, slot, _nn2_udp_recv_ready, sock);
     nova_sched_unregister_pending(scope, slot);
 
-    if (nova_abool_load(&cancel_sc->cancel_requested)) return UV_ECANCELED;
-    if (nova_aint_load(&sock->stage) >= NN2_CLOSING)    return UV_ECANCELED;
+    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = UV_ECANCELED; goto out; }
+    if (nova_aint_load(&sock->stage) >= NN2_CLOSING)    { result = UV_ECANCELED; goto out; }
     nova_aint_store(&sock->stage, NN2_IDLE);
 
-    if (sock->recv_err != 0) return sock->recv_err;
+    if (sock->recv_err != 0) { result = sock->recv_err; goto out; }
     if (sender) {
         if (sock->recv_sender_valid) _nn2_addr_from_ss(&sock->recv_sender, sender);
         else memset(sender, 0, sizeof(*sender));
     }
-    return sock->recv_n;
+    result = sock->recv_n;
+
+out:
+    _nn2_udp_release(sock);
+    return result;
 }
 
 uint16_t net_udp_local_port(void* sockv) {
