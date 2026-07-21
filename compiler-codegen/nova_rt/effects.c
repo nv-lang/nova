@@ -257,6 +257,11 @@ __thread volatile int*       _nova_preempt_ptr   = NULL;  /* Plan 44.7 */
 __thread NovaFinalizerStack* _nova_active_finalizer_stack = NULL;
 #endif
 
+/* Plan 175 Ф.2-v2 (`#default_handler(Time)`): NOT thread-local — set ONCE
+ * (if at all) by codegen's generated `main()` prologue, read-only after.
+ * See effects.h doc comment + fibers.h `Nova_Time_*` dispatch wrappers. */
+NovaVtable_Time* (*_nova_time_default_ctor)(void) = NULL;
+
 /* Per-fiber handler scoping: registry of effect-storage addresses.
  * Built-in effects (Fail, Time) auto-registered in nova_runtime_init.
  * User-defined эффекты регистрируются codegen'ом при первом использовании

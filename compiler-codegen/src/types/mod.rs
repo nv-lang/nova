@@ -1900,6 +1900,11 @@ fn check_module_impl(
     // C-ABI grammar is read off the TYPE structure, never off type names.
     check_ffi_c_abi_signatures(module, &mut errors);
 
+    // Plan 175 Ф.2-v2: `#default_handler(X)` validation (duplicate/arity/
+    // return-type/unknown-effect/cross-default cycle). See
+    // `check_default_handlers` below.
+    check_default_handlers(module, &mut errors);
+
     // Plan 172.1 U.3.4: lift the per-call resolved-callee channel (call-site `ExprId` →
     // chosen callee `FnDecl` span) out of the checker into the `ModuleEnv` so the pipeline
     // hands it to codegen. ADDITIVE substrate — codegen does not read it yet (U.4.3), so
@@ -37280,6 +37285,284 @@ fn ffi_validate_c_fnptr_occurrences(
             }
         }
         TR::Unit(_) | TR::Protocol { .. } => {}
+    }
+}
+
+/// Plan 175 Ф.2-v2 (`#default_handler` D-block, 04-effects.md): validate
+/// every free fn tagged `#default_handler(EffectName)`:
+///   - `EffectName` must name a declared `type X effect { ... }` in this CU
+///     (`E_DEFAULT_HANDLER_UNKNOWN_EFFECT`).
+///   - at most one `#default_handler` per effect (`E_DEFAULT_HANDLER_DUPLICATE`).
+///   - the fn must be a zero-param free fn (no receiver) returning exactly
+///     `Effect[EffectName]` (`E_DEFAULT_HANDLER_ARITY` /
+///     `E_DEFAULT_HANDLER_RETURN_TYPE`).
+///   - **no cycles** among registered defaults: if `X`'s ctor body directly
+///     references another effect `Y` that ALSO carries `#default_handler`,
+///     record edge `X -> Y`; a cycle in this graph is a compile error
+///     (`E_DEFAULT_HANDLER_CYCLE`) — a real cycle would recurse forever the
+///     first time either default is lazily constructed at runtime.
+///
+/// The reference-collection walk below is intentionally a conservative
+/// over-approximation (collects every bare `Ident` reachable from the fn
+/// body, not just ones in call position) — for cycle-SAFETY a false
+/// positive (rejecting a legal program) is far preferable to a false
+/// negative (missing a real cycle), and ctor bodies are simple setup code
+/// in practice.
+pub(crate) fn check_default_handlers(module: &crate::ast::Module, errors: &mut Vec<Diagnostic>) {
+    use crate::ast::{DocAttr, FnDecl, Item, TypeDeclKind};
+
+    // Collect entry-declared fns + type decls over the whole CU (mirrors
+    // `check_ffi_c_abi_signatures` above: entry items + peer files).
+    // `module.items` (fully-merged flat view) and each entry peer file's
+    // own `items_here` overlap for entry-module declarations — dedupe by
+    // `Span` (unique per real source declaration) so a fn/type declared
+    // in the entry module isn't counted twice.
+    let mut seen_fn_spans: HashSet<crate::diag::Span> = HashSet::new();
+    let mut all_fns: Vec<&FnDecl> = Vec::new();
+    let mut seen_type_spans: HashSet<crate::diag::Span> = HashSet::new();
+    let mut effect_names: HashSet<String> = HashSet::new();
+    let mut all_item_lists: Vec<&[Item]> = vec![&module.items];
+    for pf in &module.peer_files {
+        all_item_lists.push(&pf.items_here);
+    }
+    for items in all_item_lists {
+        for it in items {
+            match it {
+                Item::Fn(f) => {
+                    if seen_fn_spans.insert(f.span) { all_fns.push(f); }
+                }
+                Item::Type(td) if matches!(&td.kind, TypeDeclKind::Effect(_)) => {
+                    if seen_type_spans.insert(td.span) {
+                        effect_names.insert(td.name.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // effect_name -> Vec<&FnDecl> (duplicates tracked for the diagnostic).
+    let mut registry: HashMap<String, Vec<&FnDecl>> = HashMap::new();
+    for f in &all_fns {
+        for attr in &f.doc_attrs {
+            if let DocAttr::DefaultHandler(eff) = attr {
+                registry.entry(eff.clone()).or_default().push(f);
+            }
+        }
+    }
+    if registry.is_empty() { return; }
+
+    for (eff, fns) in &registry {
+        if !effect_names.contains(eff) {
+            for f in fns {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_DEFAULT_HANDLER_UNKNOWN_EFFECT] `#default_handler({eff})` \
+                         on `{name}` — `{eff}` is not a declared `effect` type in this \
+                         compile unit.",
+                        eff = eff, name = f.name,
+                    ),
+                    f.span,
+                ));
+            }
+            continue;
+        }
+        if fns.len() > 1 {
+            for f in fns {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_DEFAULT_HANDLER_DUPLICATE] effect `{eff}` has {n} \
+                         `#default_handler` fns (`{name}` among them) — at most one \
+                         default-handler factory is allowed per effect.",
+                        eff = eff, n = fns.len(), name = f.name,
+                    ),
+                    f.span,
+                ));
+            }
+        }
+        for f in fns {
+            if f.receiver.is_some() || !f.params.is_empty() {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_DEFAULT_HANDLER_ARITY] `#default_handler({eff})` fn `{name}` \
+                         must be a zero-parameter free fn.",
+                        eff = eff, name = f.name,
+                    ),
+                    f.span,
+                ));
+            }
+            let ret_ok = matches!(
+                &f.return_type,
+                Some(crate::ast::TypeRef::Named { path, generics, .. })
+                    if path.len() == 1 && path[0] == "Effect"
+                        && generics.len() == 1
+                        && matches!(&generics[0],
+                            crate::ast::TypeRef::Named { path: ip, .. }
+                                if ip.last().map_or(false, |n| n == eff))
+            );
+            if !ret_ok {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_DEFAULT_HANDLER_RETURN_TYPE] `#default_handler({eff})` fn \
+                         `{name}` must return exactly `Effect[{eff}]`.",
+                        eff = eff, name = f.name,
+                    ),
+                    f.span,
+                ));
+            }
+        }
+    }
+
+    // ---- Cycle check over the registered-default graph ----
+    let registered: HashSet<&String> = registry.keys().collect();
+    let mut refs_in_expr = |e: &crate::ast::Expr, out: &mut HashSet<String>| {
+        default_handler_collect_idents_expr(e, out);
+    };
+    let mut edges: HashMap<String, HashSet<String>> = HashMap::new();
+    for (eff, fns) in &registry {
+        let mut refs: HashSet<String> = HashSet::new();
+        for f in fns {
+            match &f.body {
+                crate::ast::FnBody::Expr(e) => refs_in_expr(e, &mut refs),
+                crate::ast::FnBody::Block(b) => default_handler_collect_idents_block(b, &mut refs),
+                crate::ast::FnBody::External => {}
+            }
+        }
+        let deps: HashSet<String> = refs.into_iter()
+            .filter(|n| n != eff && registered.contains(n))
+            .collect();
+        edges.insert(eff.clone(), deps);
+    }
+    // Simple DFS cycle detection over `edges`.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Mark { Visiting, Done }
+    let mut marks: HashMap<String, Mark> = HashMap::new();
+    fn dfs(
+        node: &str,
+        edges: &HashMap<String, HashSet<String>>,
+        marks: &mut HashMap<String, Mark>,
+        stack: &mut Vec<String>,
+    ) -> Option<Vec<String>> {
+        if let Some(Mark::Done) = marks.get(node) { return None; }
+        if stack.iter().any(|n| n == node) {
+            let start = stack.iter().position(|n| n == node).unwrap();
+            let mut cyc = stack[start..].to_vec();
+            cyc.push(node.to_string());
+            return Some(cyc);
+        }
+        stack.push(node.to_string());
+        if let Some(deps) = edges.get(node) {
+            let mut sorted: Vec<&String> = deps.iter().collect();
+            sorted.sort();
+            for dep in sorted {
+                if let Some(cyc) = dfs(dep, edges, marks, stack) {
+                    return Some(cyc);
+                }
+            }
+        }
+        stack.pop();
+        marks.insert(node.to_string(), Mark::Done);
+        None
+    }
+    let mut sorted_roots: Vec<&String> = edges.keys().collect();
+    sorted_roots.sort();
+    let mut reported_cycle = false;
+    for root in sorted_roots {
+        if reported_cycle { break; }
+        let mut stack = Vec::new();
+        if let Some(cyc) = dfs(root, &edges, &mut marks, &mut stack) {
+            reported_cycle = true;
+            if let Some(fns) = registry.get(root) {
+                if let Some(f) = fns.first() {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_DEFAULT_HANDLER_CYCLE] `#default_handler` construction \
+                             cycle: {} — a default-handler ctor cannot (transitively) \
+                             depend on another effect's default-handler ctor that leads \
+                             back to itself (would recurse forever on first lazy use).",
+                            cyc.join(" -> "),
+                        ),
+                        f.span,
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// Minimal, deliberately-conservative "collect every bare `Ident` reachable
+/// from this expression" walker for `check_default_handlers`'s cycle check
+/// (NOT a general-purpose free-variable/capture analysis — see
+/// `emit_c.rs`'s `collect_idents_expr` for that). Missing an exotic
+/// `ExprKind` arm here only makes the cycle check UNDER-conservative for
+/// that arm's sub-expressions — acceptable for a safety-net that currently
+/// guards a single registered default (`Time`); widen alongside the next
+/// effect that adopts `#default_handler` if it needs an arm not covered yet.
+fn default_handler_collect_idents_expr(expr: &crate::ast::Expr, out: &mut HashSet<String>) {
+    use crate::ast::{ElseBranch, ExprKind, MatchArmBody};
+    match &expr.kind {
+        ExprKind::Ident(name) => { out.insert(name.clone()); }
+        ExprKind::Binary { left, right, .. } => {
+            default_handler_collect_idents_expr(left, out);
+            default_handler_collect_idents_expr(right, out);
+        }
+        ExprKind::Unary { operand, .. } => default_handler_collect_idents_expr(operand, out),
+        ExprKind::Call { func, args, .. } => {
+            default_handler_collect_idents_expr(func, out);
+            for a in args { default_handler_collect_idents_expr(a.expr(), out); }
+        }
+        ExprKind::Member { obj, .. } => default_handler_collect_idents_expr(obj, out),
+        ExprKind::Index { obj, index } => {
+            default_handler_collect_idents_expr(obj, out);
+            default_handler_collect_idents_expr(index, out);
+        }
+        ExprKind::If { cond, then, else_ } => {
+            default_handler_collect_idents_expr(cond, out);
+            default_handler_collect_idents_block(then, out);
+            match else_.as_ref() {
+                Some(ElseBranch::Block(b)) => default_handler_collect_idents_block(b, out),
+                Some(ElseBranch::If(e)) => default_handler_collect_idents_expr(e, out),
+                None => {}
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            default_handler_collect_idents_expr(scrutinee, out);
+            for arm in arms {
+                match &arm.body {
+                    MatchArmBody::Expr(e) => default_handler_collect_idents_expr(e, out),
+                    MatchArmBody::Block(b) => default_handler_collect_idents_block(b, out),
+                }
+            }
+        }
+        ExprKind::Block(b) => default_handler_collect_idents_block(b, out),
+        ExprKind::HandlerLit { methods, .. } => {
+            for m in methods {
+                match &m.body {
+                    crate::ast::HandlerMethodBody::Expr(e) => default_handler_collect_idents_expr(e, out),
+                    crate::ast::HandlerMethodBody::Block(b) => default_handler_collect_idents_block(b, out),
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn default_handler_collect_idents_block(block: &crate::ast::Block, out: &mut HashSet<String>) {
+    use crate::ast::Stmt;
+    for stmt in &block.stmts {
+        match stmt {
+            Stmt::Let(d) => default_handler_collect_idents_expr(&d.value, out),
+            Stmt::Expr(e) => default_handler_collect_idents_expr(e, out),
+            Stmt::Assign { target, value, .. } => {
+                default_handler_collect_idents_expr(target, out);
+                default_handler_collect_idents_expr(value, out);
+            }
+            Stmt::Return { value: Some(e), .. } => default_handler_collect_idents_expr(e, out),
+            _ => {}
+        }
+    }
+    if let Some(t) = &block.trailing {
+        default_handler_collect_idents_expr(t, out);
     }
 }
 

@@ -345,6 +345,16 @@ pub enum DocAttr {
     DocSection(String),
     /// `#doc(test_handlers = "path.to.handlers")`.
     DocTestHandlers(String),
+    /// Plan 175 Ф.2-v2: `#default_handler(EffectName)` — declares this
+    /// zero-arg free fn (`-> Effect[EffectName]`) as the AMBIENT default
+    /// handler-factory for `EffectName`. Compiler synthesizes a lazy,
+    /// once-per-thread construction of the returned handler literal on
+    /// first transitive use of an op of `EffectName` with no enclosing
+    /// `with EffectName = …` in scope (an explicit `with` still overrides,
+    /// same as today); an effect with no `#default_handler` keeps its
+    /// prior default behaviour unchanged (opt-in per effect — see
+    /// spec/decisions/04-effects.md D-block `#default_handler`).
+    DefaultHandler(String),
 }
 
 /// Функция: и свободная, и метод (через `receiver`).

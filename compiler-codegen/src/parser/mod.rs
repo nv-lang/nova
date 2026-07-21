@@ -1950,6 +1950,27 @@ impl Parser {
                     self.bump();
                     self.parse_doc_attr_doc_variant()?
                 }
+                "default_handler" => {
+                    self.bump(); // #
+                    self.bump(); // default_handler
+                    let eff_span = self.peek().span;
+                    if !matches!(self.peek().kind, TokenKind::LParen) {
+                        return Err(Diagnostic::new(
+                            "expected `(EffectName)` after `#default_handler`", eff_span,
+                        ));
+                    }
+                    self.bump(); // (
+                    let eff_name = match &self.peek().kind {
+                        TokenKind::Ident(n) => n.clone(),
+                        _ => return Err(Diagnostic::new(
+                            "expected an effect type name inside `#default_handler(...)`",
+                            self.peek().span,
+                        )),
+                    };
+                    self.bump(); // Ident
+                    self.expect(&TokenKind::RParen)?;
+                    DocAttr::DefaultHandler(eff_name)
+                }
                 _ => break, // не наш — другому parser'у
             };
             out.push(attr);

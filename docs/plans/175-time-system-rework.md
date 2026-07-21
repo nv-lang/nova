@@ -8,6 +8,13 @@
 > активного 172.1.2 — пере-grep symbol-якорями перед каждой фазой**), stale-номера старой нумерации вычищены,
 > spec_tests-покрытие добавлено (методология 2026-06-28), тест-раскладка приведена к конвенциям, кросс-рефы
 > 173-семьи, новые контракты (suspend-семантика Monotonic, infallibility, 2262-горизонт Timestamp).
+> **Ф.2-v2 (2026-07-22, ветка `p175-typed-effects`, sonnet, НЕ смёржено в main):** `[M-effect-handler-body-
+> record-literal]` ЗАКРЫТ архитектурно (handler-literal capture-механизм → common closure-capture path,
+> см. [D431](../../spec/decisions/04-effects.md#d431-default_handlerx--ambient-lazy-default-handler-factory-для-эффектов-plan-175-ф2-v2-2026-07-2122));
+> НОВЫЙ generic `#default_handler(X)`-механизм (Time — первый мигрированный эффект). Time typed-schema
+> (Duration/Timestamp/Monotonic в опах, relocation в std.time) и ambient-retraction (D62 amend) — **НЕ
+> сделаны этой волной** (scalar-bridge + strict-effects-миграция std/examples — оба отдельные окна,
+> `[M-175-time-typed-schema-scalar-bridge]`/`[M-175-time-ambient-retraction]` в backlog-followups.md).
 > **Статус:** 🚧 IN PROGRESS (ядро закрыто, доводочные пункты остаются TODO) — **Ф.0/Ф.1 ✅; Ф.1b ✅ + Ф.3 ✅
 > SHIPPED (option C, 2026-07-04): value-records Duration/Timestamp/Monotonic + полный typed user-surface
 > (арифметика/==/compare/neg, `Timestamp.now()`-сахар, `@is_past`/`@time_until`/`@elapsed` int-based,

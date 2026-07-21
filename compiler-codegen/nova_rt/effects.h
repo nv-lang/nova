@@ -1486,6 +1486,15 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
  * now_monotonic_ns, local_offset_sec, now_ms, now_ns (см. emit_handler_decl
  * / fixed_ms vtable init). Ретайр now_ms/now_ns — Plan 175 Ф.2 (не в
  * Ф.1/Ф.4). */
+// [Plan 175 Ф.2-v2 note] Full typed-schema retype (`sleep(Duration)`/
+// `now()->Timestamp`/`now_monotonic()->Monotonic`, dropping the `_ms`/`_ns`
+// name-suffixes) needs a wire<->surface scalar-bridge at the handler-impl
+// AND generic call-site dispatch (this struct is compiled before the
+// per-CU `NovaValue_*` typedefs exist, so it can never name them) — same
+// conclusion as the historical D316-amend §Ф.2 finding. NOT implemented
+// this wave (scoped out — too large to land safely alongside the rest of
+// this change); op names/types below are UNCHANGED. The `#default_handler`
+// mechanism just below IS new and wired for Time.
 typedef struct {
     void*     ctx;
     nova_unit (*sleep)(void* _ctx, nova_int ms);
@@ -1501,6 +1510,15 @@ __declspec(thread) extern NovaVtable_Time* _nova_handler_Time;
 #else
 extern __thread NovaVtable_Time* _nova_handler_Time;
 #endif
+
+/* Plan 175 Ф.2-v2 (`#default_handler(Time)`, generic mechanism — see
+ * check_default_handlers/emit_c.rs `default_handler_fns`): set by
+ * codegen's generated `main()` prologue to the mangled C symbol of the
+ * `.nv` free fn tagged `#default_handler(Time)` (std/time/duration/core.nv
+ * `time_default`) IF this CU references it; NULL otherwise (a CU that
+ * never pulls in std.time's default keeps the OLD real-clock fallback in
+ * fibers.h `Nova_Time_*` — backward-compat, no forced migration). */
+extern NovaVtable_Time* (*_nova_time_default_ctor)(void);
 
 /* Nova_Time_sleep / Nova_Time_now_unix_ms defined in fibers.h (after NovaFiberQueue
  * complete + nova_fiber_yield + nova_supervised_step). They are not
