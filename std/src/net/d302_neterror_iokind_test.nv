@@ -62,7 +62,7 @@ test "TcpStream structurally conforms to io.Read/io.Write (mono-dispatch over mo
                 // Generic io-bound helpers (std.io.write_all/read_exact take a
                 // `[W Write]`/`[R Read]` bound) accept a bare `TcpStream` —
                 // the io.Read/io.Write conformance this test exists to prove.
-                match write_all(s, "hi".bytes()) {
+                match write_all(s, "hi") {
                     Ok(_)  => {}
                     Err(_) => panic_d302("write_all")
                 }

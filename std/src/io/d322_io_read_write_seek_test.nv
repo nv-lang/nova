@@ -6,7 +6,7 @@ module std.io
 
 
 test "d322: copy is generic over Read+Write (effect-free conformers, Q15)" {
-    mut d322_r = BytesReader.new("payload".bytes())
+    mut d322_r = BytesReader.new("payload")
     mut d322_w = BytesWriter.new()
     match copy(d322_r, d322_w) {
         Ok(n)  => assert(n == 7)
@@ -16,7 +16,7 @@ test "d322: copy is generic over Read+Write (effect-free conformers, Q15)" {
 }
 
 test "d322: read Ok(0) is EOF only with a non-empty buffer (Q9)" {
-    mut d322_r = BytesReader.new("ab".bytes())
+    mut d322_r = BytesReader.new("ab")
     mut d322_buf []u8 = []u8.new()
     d322_buf.resize(8, 0 as u8)
     match d322_r.read(d322_buf) { Ok(n) => assert(n == 2), Err(_) => assert(false) }
@@ -24,7 +24,7 @@ test "d322: read Ok(0) is EOF only with a non-empty buffer (Q9)" {
 }
 
 test "d322: read_exact past EOF -> UnexpectedEof" {
-    mut d322_r = BytesReader.new("z".bytes())
+    mut d322_r = BytesReader.new("z")
     mut d322_two []u8 = []u8.new()
     d322_two.resize(2, 0 as u8)
     match read_exact(d322_r, d322_two) {
@@ -34,7 +34,7 @@ test "d322: read_exact past EOF -> UnexpectedEof" {
 }
 
 test "d322: SeekFrom origins; negative Start -> InvalidInput" {
-    mut d322_r = BytesReader.new("0123456789".bytes())
+    mut d322_r = BytesReader.new("0123456789")
     match d322_r.seek(SeekFrom.end(-1)) { Ok(p) => assert(p == 9), Err(_) => assert(false) }
     match d322_r.seek(SeekFrom.start(-1)) {
         Ok(_)  => assert(false)

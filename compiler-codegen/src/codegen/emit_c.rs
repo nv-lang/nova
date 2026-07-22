@@ -13937,8 +13937,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// fire-and-forget на orphan fiber (D50 AsyncDetach default).
     ///
     /// Архитектура (паритет Go `go fn()` / tokio::spawn без JoinHandle):
-    /// 1. Capture-анализ (как у emit_spawn): immutable scalars by-value,
-    ///    остальное by-pointer.
+    /// 1. Capture-анализ (как у emit_spawn): immutable captures by-value;
+    ///    mutable captures — HEAP-BOX (НЕ `&stack_local` как в emit_spawn:
+    ///    орфан переживает кадр вызывающего —
+    ///    [M-conformance-megacu-intermittent-run-crash], см. capture-setup
+    ///    ниже).
     /// 2. Ctx-struct с NovaSpawnCtxBase prefix + capture fields →
     ///    `lambda_forward_decls` (file scope).
     /// 3. Entry function `_nova_detach_N(mco_coro*)` — body wrapped в
@@ -14241,7 +14244,41 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("}");
 
         // Capture setup (как у emit_spawn — handles nested-capture rewriting).
-        for (cap, _, by_value) in &captures {
+        //
+        // [M-conformance-megacu-intermittent-run-crash] (2026-07-22): mutable
+        // captures are HEAP-BOXED here, NOT taken by `&stack_local` as
+        // emit_spawn does. emit_spawn's by-ref capture is sound because a
+        // supervised parent JOINS its children before the enclosing frame
+        // pops; a detach orphan is fire-and-forget and ROUTINELY outlives the
+        // caller frame — `ctx->cap = &local` was a use-after-return that hit
+        // as a stochastic AV (frame[1] = `_nova_detach_1` →
+        // `Nova_AtomicInt_method_fetch_sub_int` on a garbage handle read from
+        // the dead frame) whenever the orphan's worker pickup was delayed past
+        // the caller's return under CPU contention (~15%/run at 4-way load on
+        // the conformance mega-CU; the «~1 of 8 gate runs» silent mid-run
+        // death of `a_q3_println_debug_record`). Fix mirrors the established
+        // escaping-handler idiom (emit_effect_handler_literal case (a)):
+        // lazily heap-promote the var into a GC box, register it in
+        // `var_boxed` so textually-later reads/writes in the enclosing fn
+        // transparently deref the box (keeps the D50 §3.1 canonical pattern
+        // `mut x = 0; detach { x = 42 }; runtime.drain_orphans();
+        // assert(x == 42)` working), and store the BOX pointer in the ctx —
+        // the ctx field type (`T*`) and the orphan body's `(*_c->cap)` access
+        // are unchanged; only the pointee moves stack → GC heap. The box is
+        // collectable (`nova_alloc`) and stays reachable through the scanned
+        // ctx for the orphan's whole life. D415 §2 already restricts mut
+        // captures across a detach boundary to `#share` types
+        // (AtomicInt/Mutex/#share records), for which a boxed handle copy
+        // preserves shared-object mutation exactly.
+        //
+        // Known accepted limits (same class as the escaping-handler box,
+        // [M-175-handler-lit-boxed-var-c-scope-leak]): (a) box reuse across
+        // TWO detach sites capturing the same var relies on the first box's
+        // C declaration still being in scope; (b) rebinding-visibility of a
+        // scalar capture read BEFORE the detach line inside a loop follows
+        // emission order, not iteration order. Neither shape exists in the
+        // corpus; both degrade to stale reads, never to UB.
+        for (cap, ty, by_value) in &captures {
             let is_outer_cap = self.current_spawn_captures.as_ref()
                 .map(|s| s.contains(cap)).unwrap_or(false);
             let outer_by_value = self.current_spawn_capture_by_value.as_ref()
@@ -14250,14 +14287,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if outer_by_value { format!("_c->{}", cap) }
                 else { format!("(*_c->{})", cap) }
             } else { cap.clone() };
-            let address_outer = if is_outer_cap {
-                if outer_by_value { format!("&_c->{}", cap) }
-                else { format!("_c->{}", cap) }
-            } else { format!("&{}", cap) };
             if *by_value {
                 self.line(&format!("{ctx_var}->{cap} = {access_outer};"));
             } else {
-                self.line(&format!("{ctx_var}->{cap} = {address_outer};"));
+                let box_ptr = if let Some(existing) = self.var_boxed.get(cap) {
+                    // Var already heap-promoted by an earlier closure/handler/
+                    // detach in this enclosing fn — share the same box so all
+                    // parties observe the same cell.
+                    existing.clone()
+                } else {
+                    let bv = format!("{}_box_{}", detach_id, cap);
+                    self.line(&format!(
+                        "{ty}* {bv} = ({ty}*)nova_alloc(sizeof({ty}));",
+                        ty = ty, bv = bv));
+                    self.line(&format!("*{bv} = {access_outer};",
+                        bv = bv, access_outer = access_outer));
+                    self.var_boxed.insert(cap.clone(), bv.clone());
+                    bv
+                };
+                self.line(&format!("{ctx_var}->{cap} = {box_ptr};"));
             }
         }
 
@@ -35238,7 +35286,35 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             },
             _ => return None,
         };
-        let sigs = self.method_overloads.get(&key)?;
+        // [M-bytes-literal-callarg-coerce-codegen-gap] fix (2026-07-21): a
+        // GENERIC receiver (`BufWriter[W] mut @write(data []u8)`) is registered
+        // above under its ERASED base name (`"BufWriter"`, Plan 48 Ф.3 —
+        // "for generic receiver types, use erased types") — monomorphization
+        // itself (`emit_monomorphized_method`) never adds a mono-suffixed
+        // (`"BufWriter____Nova_BytesWriter_p"`) entry to `method_overloads`.
+        // But `recv_name` above came from `infer_expr_c_type(obj)`, which for
+        // a CONCRETE local (`consume bw = BufWriter[BytesWriter].new(sink)`)
+        // resolves to the MONO instance name, not the erased one — an exact
+        // `key` miss even though the method genuinely exists and is unambiguous.
+        // Root cause of the reported gap: `nova check` accepts the bare
+        // literal (D429 call-arg #coerce is type-check-sound, no receiver
+        // mono-awareness needed there), but this codegen materialization
+        // pass silently no-op'd on the mono/erased name mismatch — CC-FAIL
+        // downstream, only for GENERIC receivers (`BufWriter[W]`); every
+        // non-generic `write`-declaring type (`File`/`FmtCtx`/`TcpStream`/…)
+        // was already registered under its own concrete name and never hit
+        // this gap. Fall back to the base name (before the first `____` mono
+        // separator) on a lookup miss — same idiom used elsewhere in this
+        // file (`base_name = struct_name.split("____").next()...`) to bridge
+        // a mono instance back to its erased-generic registration.
+        let sigs = match self.method_overloads.get(&key) {
+            Some(s) => s,
+            None if key.0.contains("____") => {
+                let base = key.0.split("____").next().unwrap_or(key.0.as_str()).to_string();
+                self.method_overloads.get(&(base, key.1.clone()))?
+            }
+            None => return None,
+        };
         let chosen: &MethodSig = match self.resolved_callees.get(&call_id)
             .and_then(|sp| sigs.iter().find(|s| s.fn_span == Some(*sp)))
         {
@@ -35250,7 +35326,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let mut out: Vec<CallArg> = Vec::with_capacity(args.len());
         for (i, a) in args.iter().enumerate() {
             let rewritten = match a {
-                CallArg::Item(inner) if matches!(inner.kind, ExprKind::StrLit(_)) => {
+                // [M-bytes-literal-callarg-coerce-codegen-gap] fix (2026-07-21):
+                // an INTERPOLATED string (`"echo: ${msg}"`) is ALWAYS `str`-typed
+                // regardless of content (mirrors `types/mod.rs`'s own
+                // `try_coerce_leaf`/`concrete_type_name_of` treatment of
+                // `StrLit`/`InterpolatedStr` as interchangeable "always str"
+                // leaf forms) — `nova check` already accepts it bare at a
+                // `[]u8` call-arg (D429), but this pre-pass only recognized a
+                // plain `StrLit`, silently missing the interpolated form
+                // (caught empirically canonizing `srv.write("echo: ${msg}")`,
+                // `std/src/net/tcp_test.nv` — CC-FAIL, `nova_str` vs
+                // `Nova_Vec____nova_byte*`). `wrap_str_lit_as_bytes_call` itself
+                // is already shape-agnostic (wraps ANY expr in `.bytes()`), so
+                // widening this guard is the whole fix.
+                CallArg::Item(inner) => {
                     // Skip the trailing variadic slot — `param_c_types[last]`
                     // there names the COLLECTOR array type, not a per-argument
                     // `[]u8` element (variadic-arg collection into a synthesized
@@ -35262,7 +35351,48 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         && chosen.param_c_types.get(i)
                             .map(|c| Self::is_bytes_slice_c_ty(c))
                             .unwrap_or(false);
-                    if is_bytes {
+                    // GATE ordering fix ([M-bytes-literal-callarg-coerce-
+                    // codegen-gap] regression, 2026-07-22, owner report on
+                    // combined main): `is_bytes` (cheap, side-effect-free —
+                    // reads the ALREADY-resolved `chosen.param_c_types`) MUST
+                    // be checked FIRST, before ever calling
+                    // `infer_expr_c_type(inner)`. The previous ordering ran
+                    // `infer_expr_c_type` UNCONDITIONALLY on every single
+                    // `CallArg::Item` in the ENTIRE compile unit (the match
+                    // guard evaluated it regardless of whether this position
+                    // even accepts `[]u8`) — on the mega-CU
+                    // `spec_tests/conformance` run this reached a desugar-
+                    // synthesized map-literal temp (`_m3`, `desugar.rs::
+                    // fresh_map_tmp`) in some UNRELATED call, at a position
+                    // `infer_expr_c_type` had never been asked to resolve
+                    // before (nothing else in `emit_call` calls it on every
+                    // arg blindly) — hit the legacy `[P67-LEGACY] Ident
+                    // \`_m3\` not in var_types` panic (emit_c.rs, the LAST-
+                    // resort fallback arm, compiler-conventions.md §0).
+                    // Gating on `is_bytes` FIRST narrows `infer_expr_c_type`
+                    // to exactly the candidate positions the original
+                    // literal/interp check already targeted (a real `[]u8`
+                    // call-arg slot) — the general str-chain shape (third
+                    // sub-gap) only ever needs resolving THERE, never on an
+                    // arbitrary unrelated argument.
+                    if !is_bytes {
+                        None
+                    } else if matches!(inner.kind, ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. }) {
+                        Some(CallArg::Item(Self::wrap_str_lit_as_bytes_call(inner)))
+                    } else if self.infer_expr_c_type(inner) == "nova_str" {
+                        // [M-bytes-literal-callarg-coerce-codegen-gap] fix
+                        // (2026-07-21, third shape): a general `str`-TYPED
+                        // call-chain (`@to_str()`, `@nanos.to_str()`,
+                        // `sb.into_str()`, …) is EXACTLY as D429-#coerce-
+                        // eligible at a `[]u8` call-arg position as a literal
+                        // — the checker's `assignable` coerce fallback never
+                        // required a literal SHAPE, only a `str` TYPE (D429
+                        // R6/R9 covers "call-arg на резолвленный параметр"
+                        // unconditionally). Caught empirically canonizing
+                        // `f.write(@nanos.to_str())` (`std/src/time/duration/
+                        // core.nv`) — `nova check` accepted it (D429), CC-FAIL
+                        // on build (`nova_str` vs `Nova_Vec____nova_byte*`)
+                        // because only the literal/interp shapes were wrapped.
                         Some(CallArg::Item(Self::wrap_str_lit_as_bytes_call(inner)))
                     } else {
                         None

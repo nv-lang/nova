@@ -74,11 +74,10 @@ test "UdpSocket.send_to / recv_from_vec (mock)" {
                 consume sock = match UdpSocket.bind(SocketAddr.loopback(0)) {
                     Ok(consume s) => s, Err(_) => panic("bind")
                 }
-                // Plan 216 (D133 strict — `UdpSocket` has no `@cleanup`,
-                // unlike `TcpStream`): close before `panic` on the mock's
-                // (never-taken) error arm — a Live consume-obligation on a
-                // panic-exit is a real diagnostic, not exempted like
-                // `@cleanup`-bearing types (D432 §4 covers `panic` for those).
+                // Explicit close before `panic` on the mock's (never-taken)
+                // error arm — kept for clarity even though Plan 217.1 (D432)
+                // gave `UdpSocket` its own `@cleanup`, so a panic here would
+                // now auto-close `sock` regardless (D432 §4 covers `panic`).
                 ro n = match sock.send_to(Vec[u8].of(0xDE, 0xAD, 0xBE, 0xEF), SocketAddr.loopback(9999)) {
                     Ok(n) => n, Err(_) => { sock.close(); panic("send_to") }
                 }

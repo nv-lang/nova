@@ -38,8 +38,8 @@ export type JwtError enum
 #stable(since = "0.1")
 export fn Jwt.encode_hs256(secret []u8, claims JsonValue) -> str {
     ro header = JsonValue.Object(make_header_hs256())
-    ro header_b64 = Base64.encode_url(header.to_str().bytes())
-    ro payload_b64 = Base64.encode_url(claims.to_str().bytes())
+    ro header_b64 = Base64.encode_url(header.to_str())
+    ro payload_b64 = Base64.encode_url(claims.to_str())
 
     ro signing_input = "${header_b64}.${payload_b64}"
     ro mac = HmacSha256.compute(secret, signing_input.bytes())

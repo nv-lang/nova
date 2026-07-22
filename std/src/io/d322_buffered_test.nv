@@ -9,13 +9,13 @@ module std.io
 
 
 test "BufReader serves reads through its buffer" {
-    mut src = BytesReader.new("hello world".bytes())
+    mut src = BytesReader.new("hello world")
     mut br = BufReader[BytesReader].new(src)
     match read_to_end(br) { Ok(o) => assert(o.len() == 11), Err(_) => assert(false) }
 }
 
 test "BufReader direct read from buffer" {
-    mut src = BytesReader.new("abcdef".bytes())
+    mut src = BytesReader.new("abcdef")
     mut br = BufReader[BytesReader].new(src)
     mut buf []u8 = []u8.new(); buf.resize(3, 0 as u8)
     match br.read(buf) { Ok(n) => { assert(n == 3); assert(buf[0] == 0x61 as u8) }, Err(_) => assert(false) }
@@ -26,7 +26,7 @@ test "BufWriter close flushes buffered bytes to the (shared) sink" {
     consume bw = BufWriter[BytesWriter].new(sink)
     mut d []u8 = []u8.new(); d.push(0x41 as u8); d.push(0x42 as u8)
     assert(bw.write(d).is_ok())
-    assert(bw.write("CD".bytes()).is_ok())
+    assert(bw.write("CD").is_ok())
     // buffered — not yet on the sink until close/flush
     match bw.close() { Ok(()) => {}, Err(_) => assert(false) }
     assert(sink.len() == 4)

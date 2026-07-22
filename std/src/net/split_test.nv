@@ -26,7 +26,7 @@ test "TCP split: server + client exchange via read/write halves _slow" {
                 }
                 mut (cli_rd, cli_wr) = conn.split()
 
-                ro wr = cli_wr.write("client-hello".bytes())
+                ro wr = cli_wr.write("client-hello")
                 assert(wr.is_ok())
                 ro nbytes = match wr { Ok(n) => n, Err(_) => panic("client write") }
                 assert(nbytes == 12)
@@ -49,10 +49,11 @@ test "TCP split: server + client exchange via read/write halves _slow" {
                     Err(_) => panic("bind failed")
                 }
                 ch.tx.send(lst.local_port())
-                // D133 strict (`TcpListener` has no `@cleanup`, unlike
-                // `TcpStream`): close `lst` before `panic` on this
-                // (never-taken outside a real failure) error arm — see
-                // byte_surface_test.nv's UdpSocket sites for the same shape.
+                // Explicit close before `panic` on this (never-taken outside
+                // a real failure) error arm — kept for clarity/symmetry with
+                // byte_surface_test.nv's UdpSocket sites even though Plan
+                // 217.1 (D432) gave `TcpListener` its own `@cleanup`, so a
+                // panic here would now auto-close `lst` regardless.
                 consume srv = match lst.accept() {
                     Ok(consume s) => s
                     Err(_) => { lst.close(); panic("accept failed") }
@@ -66,7 +67,7 @@ test "TCP split: server + client exchange via read/write halves _slow" {
                 ro req_n = match incoming { Ok(n) => n, Err(_) => { lst.close(); panic("srv read") } }
                 assert(unsafe { req_buf[0..req_n].to_str_unchecked() } == "client-hello")
 
-                ro reply_wr = srv_wr.write("server-greeting".bytes())
+                ro reply_wr = srv_wr.write("server-greeting")
                 assert(reply_wr.is_ok())
 
                 srv_rd.close()
@@ -87,7 +88,7 @@ test "split mock stream — read half + write half" {
                 }
                 mut (rdh, wrh) = s.split()
 
-                ro w1 = wrh.write("hello".bytes())
+                ro w1 = wrh.write("hello")
                 assert(w1.is_ok())
                 ro nbytes = match w1 { Ok(n) => n, Err(_) => -1 }
                 assert(nbytes == 5)

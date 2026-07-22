@@ -141,7 +141,7 @@ export fn Period @to_iso() -> str {
     if @years != 0 { sb.append(@years.to_str()).append("Y") }
     if @months != 0 { sb.append(@months.to_str()).append("M") }
     if @days != 0 { sb.append(@days.to_str()).append("D") }
-    sb.into_str()
+    sb
 }
 
 /// Display = ISO-форма.

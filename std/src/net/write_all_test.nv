@@ -14,7 +14,7 @@ test "write_all — full buffer through mock stream" {
                     Ok(consume c) => c
                     Err(_) => panic("connect")
                 }
-                assert(s.write_all("the entire message".bytes()).is_ok())
+                assert(s.write_all("the entire message").is_ok())
                 s.close()
             }
         }
