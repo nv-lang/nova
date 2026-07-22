@@ -24,7 +24,7 @@ fn must_str(c bool) Fail -> str {
 
 test "trailing-throw at fn return position" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro a = must_pos(5)
         assert(a == 5)

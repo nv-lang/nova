@@ -14,7 +14,7 @@ fn pick5(c bool, log mut []str) Fail -> str {
 
 test "stmts-then-throw still flagged divergent" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         mut log = []str.new()
         ro s = pick5(false, log)
@@ -26,7 +26,7 @@ test "stmts-then-throw still flagged divergent" {
 test "stmts-then-throw fires on true" {
     mut caught = false
     with Fail = effect Fail {
-        fail(_) { caught = true; interrupt () }
+        fail(_) -> never { caught = true; interrupt () }
     } {
         mut log = []str.new()
         ro _ = pick5(true, log)

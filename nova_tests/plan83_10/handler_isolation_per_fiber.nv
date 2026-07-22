@@ -13,8 +13,8 @@ module nova_tests.plan83_10
 
 fn helper_h_100() Time -> int {
     with Time = effect Time {
-        sleep(_d) { return () }
-        now() { return 100.to_unix_millis() }
+        sleep(_d) -> () { return () }
+        now() -> Timestamp { return 100.to_unix_millis() }
     } {
         Timestamp.now().unix_millis()
     }
@@ -22,8 +22,8 @@ fn helper_h_100() Time -> int {
 
 fn helper_h_999() Time -> int {
     with Time = effect Time {
-        sleep(_d) { return () }
-        now() { return 999.to_unix_millis() }
+        sleep(_d) -> () { return () }
+        now() -> Timestamp { return 999.to_unix_millis() }
     } {
         Timestamp.now().unix_millis()
     }

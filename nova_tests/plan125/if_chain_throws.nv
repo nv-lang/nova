@@ -16,7 +16,7 @@ fn pick2(n int) Fail -> str {
 
 test "if-chain: valid n returns ok" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro s = pick2(42)
         assert(s == "ok")
@@ -26,7 +26,7 @@ test "if-chain: valid n returns ok" {
 test "if-chain: n=0 throws" {
     mut caught = 0
     with Fail = effect Fail {
-        fail(_) { caught = 1; interrupt () }
+        fail(_) -> never { caught = 1; interrupt () }
     } {
         ro _ = pick2(0)
     }

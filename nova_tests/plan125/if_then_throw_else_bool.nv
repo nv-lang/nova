@@ -12,7 +12,7 @@ fn pick9(c bool) Fail -> bool {
 
 test "bool else, throw then" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro b = pick9(false)
         assert(b)

@@ -12,7 +12,7 @@ fn pick4(opt Option[int]) Fail -> str {
 
 test "if-let then-throw, else-str" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro s = pick4(None)
         assert(s == "none-ok")

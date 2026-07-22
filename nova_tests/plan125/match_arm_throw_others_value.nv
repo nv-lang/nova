@@ -15,7 +15,7 @@ fn name(t Tag2) Fail -> str {
 
 test "match-arm throw: A picks alpha" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro s = name(Tag2.A)
         assert(s == "alpha")
@@ -24,7 +24,7 @@ test "match-arm throw: A picks alpha" {
 
 test "match-arm throw: B picks bravo" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro s = name(Tag2.B)
         assert(s == "bravo")
@@ -34,7 +34,7 @@ test "match-arm throw: B picks bravo" {
 test "match-arm throw: C fires handler" {
     mut caught = false
     with Fail = effect Fail {
-        fail(_) { caught = true; interrupt () }
+        fail(_) -> never { caught = true; interrupt () }
     } {
         ro _s = name(Tag2.C)
     }

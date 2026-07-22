@@ -14,7 +14,7 @@ fn classify(t Tier, fault bool) Fail -> str {
 
 test "nested-if-throw inside match arm" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro a = classify(Tier.Low, false)
         ro b = classify(Tier.Mid, false)
@@ -28,7 +28,7 @@ test "nested-if-throw inside match arm" {
 test "nested-if-throw fires inside Mid" {
     mut caught = false
     with Fail = effect Fail {
-        fail(_) { caught = true; interrupt () }
+        fail(_) -> never { caught = true; interrupt () }
     } {
         ro _ = classify(Tier.Mid, true)
     }

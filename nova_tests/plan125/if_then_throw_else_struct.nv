@@ -15,7 +15,7 @@ fn pick12(c bool) Fail -> Pair {
 
 test "struct in else, throw in then" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro p = pick12(false)
         assert(p.a == 1)

@@ -13,7 +13,7 @@ fn pick11(c bool) Fail -> str {
 
 test "if-then-throw / else-str returns str" {
     with Fail = effect Fail {
-        fail(_msg) {
+        fail(_msg) -> never {
             interrupt ()
         }
     } {
@@ -25,7 +25,7 @@ test "if-then-throw / else-str returns str" {
 test "if-then-throw fires handler on true" {
     mut caught = false
     with Fail = effect Fail {
-        fail(_msg) {
+        fail(_msg) -> never {
             caught = true
             interrupt ()
         }

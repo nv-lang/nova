@@ -31,7 +31,7 @@ fn do_throw(msg str) -> int {
 test "armed M:N — Fail handler catches throw from spawned fiber" {
     mut caught = ""
     with Fail = effect Fail {
-        fail(msg) {
+        fail(msg) -> never {
             caught = msg
             interrupt ()
         }
@@ -47,7 +47,7 @@ test "armed M:N — Fail handler invoked exactly once" {
     mut count = 0
     mut msg = ""
     with Fail = effect Fail {
-        fail(m) {
+        fail(m) -> never {
             count += 1
             msg = m
             interrupt ()
@@ -64,7 +64,7 @@ test "armed M:N — Fail handler invoked exactly once" {
 test "armed M:N — Fail handler catches indirect throw via function" {
     mut caught = ""
     with Fail = effect Fail {
-        fail(msg) {
+        fail(msg) -> never {
             caught = msg
             interrupt ()
         }
@@ -85,7 +85,7 @@ test "armed M:N — Fail handler not triggered on success path" {
     // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
     mut result = AtomicInt.new(0)
     with Fail = effect Fail {
-        fail(_msg) {
+        fail(_msg) -> never {
             handler_ran = true
             interrupt ()
         }
@@ -106,7 +106,7 @@ test "armed M:N — Fail handler captures outer mut variable" {
     mut errors = 0
     mut last_err = ""
     with Fail = effect Fail {
-        fail(msg) {
+        fail(msg) -> never {
             errors += 1
             last_err = msg
             interrupt ()
@@ -128,7 +128,7 @@ test "armed M:N — Fail handler works across multiple supervised blocks" {
     mut caught1 = ""
     mut caught2 = ""
     with Fail = effect Fail {
-        fail(msg) {
+        fail(msg) -> never {
             if caught1 == "" {
                 caught1 = msg
             } else {
