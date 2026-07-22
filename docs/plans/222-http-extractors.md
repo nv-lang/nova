@@ -32,17 +32,58 @@ Nova не нужен**, D-амендмент не требуется).
 
 ## 1. Архитектурная опора: extractors переиспользуют serde, не изобретают парсер
 
-`nova-http` уже несёт `Deserialize`-протокол (std/src/encoding/serde/serde.nv:187) и рабочий
-`json_decode_body[T Deserialize]` (serdejson.nv:37) поверх `Deserializer`. Вместо отдельного
-парсера для path-params и query-string — **два новых `Deserializer`-имплементора**, оба кормят
-тот же `T.deserialize(d)`-механизм, что и JSON:
+**Разграничение (уточнено ревью владельца 2026-07-22 — «serde зашит в компилятор?»):**
+`Serialize`/`Deserialize` — ЕДИНСТВЕННЫЕ два протокола этого плана, которые компилятор ЗНАЕТ
+по имени: `#impl(Deserialize)` над record'ом заставляет `auto_derive.rs`
+(compiler-codegen/src/protocols/auto_derive.rs — тот же synth-механизм, что `Equal`/`Hash`/
+`Clone`/`Display`/`Debug`, все 8 в списке `is_builtin_protocol`) СГЕНЕРИРОВАТЬ тело
+`.deserialize` по полям типа by TYPE-DIRECTED PULL (скаляр → `deser_int`/…, вложенный record →
+рекурсивный `T.deserialize`, `Option` → инлайн null-check) — это единственный способ обойти
+поля пользовательского типа без рантайм-reflection (которого в Nova нет).
+**`FromRequest`/`IntoResponse` (этот план, §2) — ОБЫЧНЫЕ пользовательские protocols, компилятор
+их не знает и не синтезирует; вся логика — рукописный `.nv`-код в `nova-http`.**
+
+Extractors НЕ трогают serde-derive-синтез — только ЗОВУТ уже готовый `T.deserialize`, подсунув
+СВОЙ источник данных: `nova-http` уже несёт `Deserialize`-протокол
+(std/src/encoding/serde/serde.nv:187) и рабочий `json_decode_body[T Deserialize]`
+(serdejson.nv:37) поверх абстрактного `Deserializer`-протокола (источник данных отделён от
+`T.deserialize` по конструкции serde — Plan 180). Вместо отдельного парсера для path-params и
+query-string — **два новых `Deserializer`-имплементора**, оба кормят ТОТ ЖЕ `T.deserialize(d)`:
 
 - `ParamsDeserializer` — оборачивает `[](str, str)` (уже поле `ServerRequest.params`) как
   плоский объект-источник;
 - `QueryDeserializer` — парсит `a=1&b=2` (raw `ServerRequest.query`) в тот же плоский вид.
 
 **Следствие:** `Path[T]`/`Query[T]` — это не два новых движка, а два новых **источника** для
-одного существующего движка. Compiler-conventions §0/§10 («один путь») соблюдён по построению.
+ОДНОГО compiler-synthesized движка; `T` (твой `CreateUserRequest`/`UserIdParams`) синтезируется
+`#impl(Deserialize)` РОВНО ОДИН РАЗ и работает со всеми тремя источниками одинаково.
+Compiler-conventions §0/§10 («один путь») соблюдён по построению.
+
+`Json[T]`/`Path[T]`/`Query[T]` сами `#impl(Deserialize)` НЕ несут (их поле `data T` — это `T`,
+уже готовый serde-тип; сама обёртка в JSON/params не сериализуется напрямую) — они лишь
+МАРШРУТИЗИРУЮТ, откуда `T.deserialize` возьмёт данные:
+```nova
+export type Json[T] value { data T }
+
+#impl(FromRequest)
+fn Json[T Deserialize] @from_request(req ServerRequest) -> Result[Json[T], HttpError] {
+    match json_decode_body[T](req.body) {   // существующий serde-вызов (178/180), без изменений
+        Ok(v)  => Ok(Json { data: v })
+        Err(e) => Err(e)
+    }
+}
+
+export type Path[T] value { data T }
+
+#impl(FromRequest)
+fn Path[T Deserialize] @from_request(req ServerRequest) -> Result[Path[T], HttpError] {
+    mut d = ParamsDeserializer.at(req.params)
+    match T.deserialize(d) {                // ТОТ ЖЕ T.deserialize, что у Json[T] — другой источник
+        Ok(v)  => Ok(Path { data: v })
+        Err(e) => Err(HttpError.decode_error(e.to_str()))
+    }
+}
+```
 
 ## 2. Протоколы (все — вписываются в существующие generic/protocol-механизмы)
 
