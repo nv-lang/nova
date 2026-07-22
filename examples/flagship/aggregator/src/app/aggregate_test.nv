@@ -106,7 +106,7 @@ test "aggregate: same code, two source lists (handler/source swap only)" {
 
 // ── NEG: a source past the deadline is GENUINELY cancelled early ───────────
 //    (real `supervised(deadline:)` cancel, plan 187 Ф.MVP-2 деливерабл 1 —
-//    see aggregate.nv's file-header note). The lane's `Time.sleep(300)` is
+//    see aggregate.nv's file-header note). The lane's `(300).to_millis().sleep()` is
 //    interrupted AT the shared deadline (~40ms), not run to completion —
 //    `wall_ms` must stay close to the budget, well under the source's own
 //    (uncancelled) 300ms latency. This replaces the earlier self-checked-

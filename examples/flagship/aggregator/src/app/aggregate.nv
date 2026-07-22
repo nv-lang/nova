@@ -113,7 +113,7 @@ const BASE_PORT = 20000
 // returns `Result[SourceData, AggError]` directly; `fetch_guarded` branches
 // on it with a plain `match`. Zero effect-handler unwinding on the
 // simulated-failure path.
-/// Fetch a single source. Demo/Chaos: `Time.sleep(source.latency_ms)` first
+/// Fetch a single source. Demo/Chaos: `(source.latency_ms).to_millis().sleep()` first
 /// (the simulated network wait), then either a simulated-upstream `Err`
 /// (see the marker above for why this is `Result`, not `throw`/`Fail`) or
 /// the real `Net` round-trip against whatever handler is ambient
@@ -150,7 +150,7 @@ const BASE_PORT = 20000
 // for `Emit.lane_started` anyway) and captures only those into the spawn ctx.
 fn fetch_one(id str, latency_ms int, should_fail bool, idx int) Net Time -> Result[SourceData, AggError] {
     if latency_ms > 0 {
-        Time.sleep(latency_ms)
+        (latency_ms).to_millis().sleep()
     }
     if should_fail {
         return Err(AggError.Upstream(id))

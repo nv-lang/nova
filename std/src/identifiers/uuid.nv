@@ -128,7 +128,7 @@ export fn Uuid.v4() Random -> Self {
 /// отлично для primary keys в БД (B-tree friendly).
 #stable(since = "0.1")
 export fn Uuid.v7() Time Random -> Self {
-    ro ms = Time.now_unix_ms() as u64
+    ro ms = Timestamp.now().unix_millis() as u64
 
     // Заполняем верхние 48 бит timestamp'ом.
     // hi = [48 бит ts][4 бит version=7][12 бит rand]

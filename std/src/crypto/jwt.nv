@@ -131,7 +131,7 @@ export fn Jwt.decode_hs256(secret []u8, token str) -> Result[JsonValue, JwtError
 #stable(since = "0.1")
 export fn Jwt.validate_hs256(secret []u8, token str) Time -> Result[JsonValue, JwtError] {
     ro claims = Jwt.decode_hs256(secret, token)?
-    ro now_ms = Time.now_unix_ms() as u64
+    ro now_ms = Timestamp.now().unix_millis() as u64
     ro now_s = now_ms / 1000
 
     match claims.object() {

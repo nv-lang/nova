@@ -4,7 +4,7 @@
 // entry.
 //
 // Positive fixture verifying the deadline-check code path is wired:
-//   • ConsumeScope body calls Time.sleep(N), N < default exit_timeout
+//   • ConsumeScope body calls (N).to_millis().sleep(), N < default exit_timeout
 //     (5000ms). Suspend entry now calls nv_shield_check_deadline()
 //     which checks mask>0 + deadline > now — passes here.
 //   • Body completes; cleanup runs; outer code observes finalised
@@ -36,7 +36,7 @@ fn use_with_short_sleep() -> int {
     consume r = ShortLivedRes3.new(42) {
         // Tiny sleep — far below the 5000ms default deadline.
         // Suspend entry MUST consult shield deadline_ns and NOT throw.
-        Time.sleep(1)
+        (1).to_millis().sleep()
         completed = r.id
     }
     completed

@@ -11706,8 +11706,45 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     .unwrap_or_else(|| m.name.clone());
                 mangled_key
             };
-            self.line(&format!("{vt}->{field} = {fn};",
-                vt = vtable_var, field = field, fn = fn_name));
+            // Plan 175 Ф.3 (D316 typed retype): `NovaVtable_Time`'s
+            // sleep/now/now_monotonic slots are raw-int64-nanos WIRE
+            // (effects.h — hand-written struct can't name a per-CU typed
+            // value-record), while THIS handler-literal's op body
+            // (`fn_name`) is schema-driven typed (`NovaValue_Duration`/
+            // `Timestamp`/`Monotonic`, same as any user handler-literal
+            // body). Installing `fn_name` DIRECTLY into the vtable slot
+            // would be a function-pointer-signature mismatch (by-value
+            // struct param/return vs raw int64 — different, no
+            // ABI-compatible reinterpretation). Generate a thin static
+            // marshalling THUNK with the WIRE signature that wraps/unwraps
+            // at the one call boundary, and install THAT instead — mirror
+            // image of the dispatch-fn-side marshalling in
+            // `emit_effect_type`.
+            let install_fn = if eff == "Time" && matches!(field.as_str(), "sleep" | "now" | "now_monotonic") {
+                let thunk_name = format!("{}_time_wire_{}", handler_id, m.name);
+                if field == "sleep" {
+                    let _ = writeln!(self.lambda_forward_decls,
+                        "{storage}nova_unit {thunk}(void* _ctx, int64_t nanos);",
+                        storage = self.top_level_storage(), thunk = thunk_name);
+                    let _ = writeln!(self.deferred_impls,
+                        "{storage}nova_unit {thunk}(void* _ctx, int64_t nanos) {{ \
+                         NovaValue_Duration _nv_d = {{ .nanos = nanos }}; return {fn}(_ctx, _nv_d); }}",
+                        storage = self.top_level_storage(), thunk = thunk_name, fn = fn_name);
+                } else {
+                    let ret_ty = if field == "now" { "NovaValue_Timestamp" } else { "NovaValue_Monotonic" };
+                    let _ = writeln!(self.lambda_forward_decls,
+                        "{storage}int64_t {thunk}(void* _ctx);",
+                        storage = self.top_level_storage(), thunk = thunk_name);
+                    let _ = writeln!(self.deferred_impls,
+                        "{storage}int64_t {thunk}(void* _ctx) {{ {ret} _nv_r = {fn}(_ctx); return _nv_r.nanos; }}",
+                        storage = self.top_level_storage(), thunk = thunk_name, ret = ret_ty, fn = fn_name);
+                }
+                thunk_name
+            } else {
+                fn_name.clone()
+            };
+            self.line(&format!("{vt}->{field} = {install_fn};",
+                vt = vtable_var, field = field, install_fn = install_fn));
         }
         // Plan 20 Ф.8 (4): vtable->prev initialized to NULL here.
         // Будет перезаписан в `with X = h { ... }` codegen перед install'ом
@@ -16477,6 +16514,66 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 );
                 self.line("nova_unit _u = { 0 };");
                 self.line("return _u;");
+            } else if name == "Time" && matches!(mangled.as_str(), "sleep" | "now" | "now_monotonic" | "local_offset_sec") {
+                // Plan 175 Ф.3 (D316 typed retype): the hand-written
+                // `NovaVtable_Time` slots (effects.h) stay raw-int64-nanos
+                // WIRE (they can't name a per-CU `NovaValue_Duration`/
+                // `Timestamp`/`Monotonic` type — see effects.h doc comment),
+                // but THIS dispatch fn's own signature is schema-driven
+                // (typed `NovaValue_Duration`/`Timestamp`/`Monotonic`, same
+                // as any other effect op) — it DOES know the complete type
+                // (emitted after Фаза 2's reordering), so the marshalling
+                // between typed surface and raw wire happens right here,
+                // once, at the one chokepoint every call funnels through.
+                //
+                // Per-FIELD null-check + real-clock fallback (mirrors the
+                // pre-Ф.2-v3 `now_monotonic_ns`/`local_offset_sec`
+                // backward-compat pattern, extended here to ALL FOUR ops
+                // defensively): a handler LITERAL is allowed to be partial
+                // (implement only SOME of Time's ops — e.g.
+                // nova_tests/plan83_10/handler_isolation_per_fiber.nv's
+                // handler defines only `now()`) — C99 designated-init
+                // zero-fills the rest of the heap-allocated vtable, so an
+                // unimplemented slot is a NULL fn pointer. Calling through
+                // a NULL fn pointer unconditionally (as the naive
+                // `_nova_handler_Time->field(...)` one-liner would) is a
+                // regression vs the hand-written dispatcher this replaces;
+                // falling back to the real-clock primitive instead keeps
+                // the exact same behavior partial-handler fixtures relied on.
+                match mangled.as_str() {
+                    "sleep" => {
+                        // param `d` is `NovaValue_Duration` (by value) —
+                        // extract `.nanos` for the int64-wire slot.
+                        let arg_name = m.params.first().map(|p| p.name.clone())
+                            .unwrap_or_else(|| "d".to_string());
+                        self.line(&format!(
+                            "if (_nova_handler_Time->sleep) {{ return _nova_handler_Time->sleep(_nova_handler_Time->ctx, {arg}.nanos); }}",
+                            arg = arg_name
+                        ));
+                        self.line(&format!(
+                            "return _nova_time_default_sleep((nova_int)(({arg}.nanos + 999999) / 1000000));",
+                            arg = arg_name
+                        ));
+                    }
+                    "now" => {
+                        self.line("if (_nova_handler_Time->now) { int64_t _nv_w = _nova_handler_Time->now(_nova_handler_Time->ctx); return (NovaValue_Timestamp){ .nanos = _nv_w }; }");
+                        self.line(&format!(
+                            "return ({ret}){{ .nanos = _nova_wall_unix_ms() * (int64_t)1000000 }};",
+                            ret = ret
+                        ));
+                    }
+                    "now_monotonic" => {
+                        self.line("if (_nova_handler_Time->now_monotonic) { int64_t _nv_w = _nova_handler_Time->now_monotonic(_nova_handler_Time->ctx); return (NovaValue_Monotonic){ .nanos = _nv_w }; }");
+                        self.line(&format!(
+                            "return ({ret}){{ .nanos = _nova_monotonic_ns() }};",
+                            ret = ret
+                        ));
+                    }
+                    _ /* local_offset_sec */ => {
+                        self.line("if (_nova_handler_Time->local_offset_sec) { return _nova_handler_Time->local_offset_sec(_nova_handler_Time->ctx); }");
+                        self.line("return _nova_local_offset_sec();");
+                    }
+                }
             } else {
                 self.line(&format!(
                     "return _nova_handler_{name}->{field}({args});",

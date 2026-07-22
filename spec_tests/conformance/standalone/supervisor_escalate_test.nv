@@ -26,7 +26,7 @@ test "Supervisor=escalate: падение эскалируется — пари�
                     ro tag = i
                     spawn {
                         if tag == 2 { throw 4242 }
-                        Time.sleep(5)
+                        (5).to_millis().sleep()
                     }
                 }
             }
@@ -53,7 +53,7 @@ test "дефолт (нет супервизора): тот же исход чт�
                 ro tag = i
                 spawn {
                     if tag == 2 { throw 4242 }
-                    Time.sleep(5)
+                    (5).to_millis().sleep()
                 }
             }
         }
@@ -86,7 +86,7 @@ test "пользовательская политика: (idx, err)-narrowing + 
                 ro tag = i
                 spawn {
                     if tag < 2 { throw 700 + tag }
-                    Time.sleep(10)
+                    (10).to_millis().sleep()
                     done.fetch_add(1)
                 }
             }
@@ -118,7 +118,7 @@ test "Escalate-with-error: throw в хендлере становится primar
                     ro tag = i
                     spawn {
                         if tag == 1 { throw 4242 }
-                        Time.sleep(5)
+                        (5).to_millis().sleep()
                     }
                 }
             }

@@ -1464,15 +1464,36 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
  * extern-примитив, вызываемый из .nv).
  *
  * `now_ms`/`now_ns` handler-extension слоты (Plan 48 Ф.5 legacy) — RETIRED,
- * никогда не были в `.nv`-схеме (только `sleep`/`now_unix_ms`/
- * `now_monotonic_ns`/`local_offset_sec`), поэтому в generic vtable для них
- * места нет; ни один handler-литерал их больше не объявляет (подтверждено —
- * std/testing/handlers/core_test.nv). */
+ * никогда не были в `.nv`-схеме, поэтому в generic vtable для них места
+ * нет; ни один handler-литерал их больше не объявляет (подтверждено —
+ * std/testing/handlers/core_test.nv).
+ *
+ * Plan 175 Ф.3 (D316, typed retype): `.nv`-СХЕМА теперь typed
+ * (`sleep(Duration)->()` / `now()->Timestamp` / `now_monotonic()->
+ * Monotonic` / `local_offset_sec()->int`) — единица времени в ТИПЕ, не в
+ * имени опа. Слоты НИЖЕ остаются raw-int64-WIRE (переименованы под новые
+ * op-имена: `now_unix_ms`→`now`, `now_monotonic_ns`→`now_monotonic`) —
+ * этот hand-written struct не может называть per-CU `NovaValue_Duration`/
+ * `Timestamp`/`Monotonic` (та же compiled-once-vs-per-CU причина, что
+ * блокирует полный "снос" struct'а самого, см. выше). Codegen marshals на
+ * границе: `Nova_Time_sleep(NovaValue_Duration d)` (generated dispatch fn,
+ * ЗНАЕТ полный тип Duration) extracts `d.nanos` перед вызовом
+ * `_nova_handler_Time->sleep(ctx, nanos)`; `Nova_Time_now()` wraps the raw
+ * `int64_t` return back into `NovaValue_Timestamp{.nanos=...}`. Handler-
+ * literal install (`emit_handler_lit`) does the mirror-image marshalling:
+ * user's typed op-body fn (`(void*, NovaValue_Duration)`) gets wrapped in
+ * a thin raw-wire thunk (`(void*, int64_t)`) before being stored into
+ * `vt->sleep`. See emit_c.rs `emit_effect_type`/`emit_handler_lit`
+ * Time-specific branches — this IS the exact class of hand-written-C
+ * escape-hatch `Nova_Mutex_method_lock_for` already uses for a `Duration`
+ * TIMEOUT param (nova_rt/sync_primitives.h: `void* timeout` + "first field
+ * int64_t nanos" contract) — same ABI-identity trick, applied
+ * systematically for Time's 3 clock-typed ops. */
 typedef struct {
     void*     ctx;
-    nova_unit (*sleep)(void* _ctx, nova_int ms);
-    nova_int  (*now_unix_ms)(void* _ctx);
-    nova_int  (*now_monotonic_ns)(void* _ctx);
+    nova_unit (*sleep)(void* _ctx, int64_t nanos);
+    int64_t   (*now)(void* _ctx);            /* Unix epoch nanoseconds */
+    int64_t   (*now_monotonic)(void* _ctx);  /* monotonic nanoseconds */
     nova_int  (*local_offset_sec)(void* _ctx);
 } NovaVtable_Time;
 

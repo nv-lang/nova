@@ -8,7 +8,7 @@ module neg.handler_sleep_neg
 test "Time.sleep в Supervisor-хендлере отвергается" {
     with Supervisor = effect Supervisor {
         on_child_fail(idx, err) {
-            Time.sleep(100)
+            (100).to_millis().sleep()
             Decision.Escalate
         }
     } {

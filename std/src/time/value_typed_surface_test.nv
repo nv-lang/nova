@@ -7,7 +7,7 @@
 //   - Duration/Timestamp/Monotonic — `value`-records (round-trip через
 //     to_*/голые геттеры, stack, zero-GC);
 //   - арифметика value-records: @plus/@minus/@neg/@times/@div/@compare/==;
-//   - typed-сахар `Timestamp.now()` над int-wire `Time.now_unix_ms()`;
+//   - typed-сахар `Timestamp.now()` над typed `Time.now()` (D316 Ф.3 retype);
 //   - `@is_past`/`@time_until`/`@elapsed` РАБОТАЮТ (int-based) под mock-часами;
 //   - `Monotonic.now()` (Plan 175 Ф.3a: `.nv`-сахар, мокабелен, больше не
 //     compiler-builtin) non-regression.
@@ -42,7 +42,7 @@ test "Ф.1b: value Timestamp round-trip + @plus/@minus" {
 
 test "Ф.3: Timestamp.now() sugar + @is_past/@time_until/@elapsed (int-based mock)" {
     with Time = th.fixed_ms(10_000) {
-        // sugar wraps int-wire Time.now_unix_ms() (ms) → value Timestamp
+        // sugar wraps typed Time.now() → value Timestamp
         assert(Timestamp.now().unix_millis() == 10_000)
         // 10s now; deadline at 6s is past; at 20s is future
         ro past = 6.to_unix_seconds()
@@ -58,7 +58,7 @@ test "Ф.3: mut_clock advances timed surface coherently" {
     with Time = th.mut_clock(1_000) {
         ro t0 = Timestamp.now()
         assert(t0.unix_millis() == 1_000)
-        Time.sleep(2_000)  // int ms wire
+        2_000.to_millis().sleep()
         ro t1 = Timestamp.now()
         assert(t1.unix_millis() == 3_000)
         assert((t1 - t0) == 2.to_seconds())

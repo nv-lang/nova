@@ -3,7 +3,7 @@
 module standalone.n5_sleep_in_measure_warning
 bench "with-sleep" {
     measure {
-        Time.sleep(1)
+        (1).to_millis().sleep()
     }
 }
 

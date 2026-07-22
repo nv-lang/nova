@@ -40,26 +40,23 @@ export type Monotonic value {
     ro nanos i64
 }
 
-/// Текущий монотонный момент. **Plan 175 Ф.3(a) (D316):** ergonomic-сахар
-/// над int-wire `Time.now_monotonic_ns()` (эффект `Time`) — тот же паттерн,
-/// что `Timestamp.now()` выше. **Мокабелен:** `with Time = th.mut_clock(...)`
-/// подменяет монотонные часы детерминированно (закрывает
-/// `[M-monotonic-mock-support]`). Заменяет прежний compiler-builtin
-/// (4 сайта dispatch/inference в emit_c.rs удалены той же волной — grep
-/// `nova_monotonic_now_record`/`"Nova_Monotonic*"` = 0, по норме плана 175 §Ф.3).
+/// Текущий монотонный момент. **Plan 175 Ф.3 (D316 typed retype):** тонкая
+/// ergonomic-обёртка над typed `Time.now_monotonic()` (эффект `Time`,
+/// возвращает `Monotonic` напрямую — больше не int-wire + wrap).
+/// **Мокабелен:** `with Time = th.mut_clock(...)` подменяет монотонные
+/// часы детерминированно (закрывает `[M-monotonic-mock-support]`).
 ///
 /// # Examples
 /// ```nova
 /// with Time = th.mut_clock(0 as u64) {
 ///     ro m0 = Monotonic.now()
-///     Time.sleep(5000)  // virtual clock advance (ms)
+///     5.to_seconds().sleep()  // virtual clock advance
 ///     ro m1 = Monotonic.now()
 ///     assert(m1.elapsed_since(m0) == 5.to_seconds())
 /// }
 /// ```
 #stable(since = "0.6")
-export fn Monotonic.now() Time -> Monotonic =>
-    { nanos: Time.now_monotonic_ns() as i64 }
+export fn Monotonic.now() Time -> Monotonic => Time.now_monotonic()
 
 /// Raw nanoseconds — escape hatch для FFI / bench. Cросс-процессное
 /// сравнение бессмысленно. Cравнение внутри одного процесса допустимо.

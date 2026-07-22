@@ -57,7 +57,7 @@ import std.time.duration
 /// Mockable through the `Time` effect handler is **planned for Plan 65
 /// Ф.10** (currently the runtime path is real-clock only). Until then,
 /// integration tests should use small real durations (`10.to_millis()`)
-/// and tolerate scheduler jitter via `>=` comparisons against `Time.now_unix_ms()`.
+/// and tolerate scheduler jitter via `>=` comparisons against `Time.now()`.
 ///
 /// # Migration from `Time.after(int)`
 ///

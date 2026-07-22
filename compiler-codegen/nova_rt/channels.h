@@ -1443,13 +1443,19 @@ static inline Nova_ChanReader* nova_chan_reader_close_after_ns(int64_t nanos) {
      *
      * Real-clock path runs only when handler is unbound. */
     if (_nova_handler_Time) {
-        /* Compute ms via the same rounding rule as the real-clock path,
-         * then delegate to the handler's sleep. Most mock handlers ignore
-         * the actual ms value (fixed_ms) or advance virtual clock by it
-         * (mut_clock). */
-        int64_t ms_mock = (nanos + 999999) / 1000000;
-        if (ms_mock < 1) ms_mock = 1;
-        _nova_handler_Time->sleep(_nova_handler_Time->ctx, (nova_int)ms_mock);
+        /* Plan 175 Ф.3 (D316 typed retype): vtable's `sleep` slot wire is
+         * raw int64 NANOSECONDS now (was milliseconds pre-Ф.3) — pass
+         * `nanos` straight through, no lossy ms-rounding at this layer.
+         * (A handler literal's `sleep(d Duration)` body sees a proper
+         * Duration — codegen's install-time marshalling thunk, see
+         * emit_c.rs emit_handler_lit's Time-specific branch, wraps this
+         * raw value back into `{nanos: ...}` before calling the user body;
+         * any internal ms-rounding — e.g. mut_clock's virtual clock — now
+         * happens THERE, not in this hand-written caller.) Most mock
+         * handlers ignore the actual value (fixed_ms) or advance virtual
+         * clock by it (mut_clock). */
+        int64_t nanos_mock = nanos > 0 ? nanos : 1;
+        _nova_handler_Time->sleep(_nova_handler_Time->ctx, nanos_mock);
         Nova_ChannelPair pair = nova_channel_new(1);
         nova_chan_writer_close(pair.tx);
         return pair.rx;

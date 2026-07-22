@@ -62,7 +62,7 @@
 //       with Time = th.mut_clock(0), Random = th.seeded(7) {
 //           let bucket = TokenBucket.new(10, 1.0)
 //           bucket.try_acquire()         // 9 tokens left
-//           Time.sleep(1.second())       // virtual clock advance
+//           1.to_seconds().sleep()       // virtual clock advance
 //           bucket.try_acquire()         // refilled to 10, теперь 9
 //       }
 //   }
@@ -184,41 +184,40 @@ test "PRNG: non-correlation между последовательными выз
     }
 }
 
-// ── Time handlers (Plan 175 D316 amend, 2026-07-06: int-провод — `now_unix_ms()->int` ms,
-//    `sleep(ms int)`. Retired `now_ms()`/`now_ns()` НЕ в схеме → не зовём;
-//    аргумент sleep — миллисекунды как int, не `Duration`). ────────────────
+// ── Time handlers (Plan 175 Ф.3, D316 typed retype: `now()->Timestamp`,
+//    `sleep(Duration)`. Retired `now_ms()`/`now_ns()` НЕ в схеме → не зовём). ─
 
-test "fixed_ms.now_unix_ms() возвращает заданное значение (ms)" {
-    ro ms = with Time = fixed_ms(12345 as u64) { Time.now_unix_ms() }
+test "fixed_ms.now() возвращает заданное значение (ms)" {
+    ro ms = with Time = fixed_ms(12345 as u64) { Timestamp.now().unix_millis() }
     assert(ms == 12345)
 }
 
 test "fixed_ms.sleep — no-op (время не двигается)" {
     with Time = fixed_ms(1000 as u64) {
-        Time.sleep(100)
-        Time.sleep(1000)
-        assert(Time.now_unix_ms() == 1000)
+        (100).to_millis().sleep()
+        (1000).to_millis().sleep()
+        assert(Timestamp.now().unix_millis() == 1000)
     }
 }
 
 test "mut_clock — sleep продвигает виртуальное время (ms)" {
     with Time = mut_clock(0 as u64) {
-        assert(Time.now_unix_ms() == 0)
-        Time.sleep(500)
-        assert(Time.now_unix_ms() == 500)
-        Time.sleep(2000)
-        assert(Time.now_unix_ms() == 2500)
+        assert(Timestamp.now().unix_millis() == 0)
+        (500).to_millis().sleep()
+        assert(Timestamp.now().unix_millis() == 500)
+        (2000).to_millis().sleep()
+        assert(Timestamp.now().unix_millis() == 2500)
     }
 }
 
 test "mut_clock — independent instances между with-блоками" {
     ro m1 = with Time = mut_clock(1000 as u64) {
-        Time.sleep(1000)
-        Time.now_unix_ms()
+        (1000).to_millis().sleep()
+        Timestamp.now().unix_millis()
     }
     ro m2 = with Time = mut_clock(1000 as u64) {
-        Time.sleep(5000)
-        Time.now_unix_ms()
+        (5000).to_millis().sleep()
+        Timestamp.now().unix_millis()
     }
     assert(m1 == 2000)
     assert(m2 == 6000)
@@ -226,7 +225,7 @@ test "mut_clock — independent instances между with-блоками" {
 
 test "seeded + fixed_ms композируются" {
     ro r = with Random = seeded(42 as u64), Time = fixed_ms(5000 as u64) {
-        Random.u64() + (Time.now_unix_ms() as u64)
+        Random.u64() + (Timestamp.now().unix_millis() as u64)
     }
     assert(r != 0 as u64)
 }
@@ -234,10 +233,10 @@ test "seeded + fixed_ms композируются" {
 test "seeded + mut_clock композируются" {
     with Random = seeded(99 as u64), Time = mut_clock(0 as u64) {
         ro v1 = Random.u64()
-        Time.sleep(1000)
+        (1000).to_millis().sleep()
         ro v2 = Random.u64()
         assert(v1 != v2)
-        assert(Time.now_unix_ms() == 1000)
+        assert(Timestamp.now().unix_millis() == 1000)
     }
 }
 
@@ -260,7 +259,7 @@ test "mut_clock auto-idle-advance: sleep(10_000) в одиночном spawn з�
     mut woke = AtomicInt.new(0)
     with Time = mut_clock(0 as u64) {
         supervised {
-            spawn { Time.sleep(10_000); woke.fetch_add(1) }
+            spawn { (10_000).to_millis().sleep(); woke.fetch_add(1) }
         }
     }
     assert(woke.load() == 1)
@@ -278,9 +277,9 @@ test "mut_clock auto-idle-advance: конкурентные sleep будятся
     mut order_100 = AtomicInt.new(-1)
     with Time = mut_clock(0 as u64) {
         supervised {
-            spawn { Time.sleep(100); order_100.store(seq.fetch_add(1)) }
-            spawn { Time.sleep(10);  order_10.store(seq.fetch_add(1)) }
-            spawn { Time.sleep(50);  order_50.store(seq.fetch_add(1)) }
+            spawn { (100).to_millis().sleep(); order_100.store(seq.fetch_add(1)) }
+            spawn { (10).to_millis().sleep();  order_10.store(seq.fetch_add(1)) }
+            spawn { (50).to_millis().sleep();  order_50.store(seq.fetch_add(1)) }
         }
     }
     assert(order_10.load() == 0)
@@ -291,15 +290,15 @@ test "mut_clock auto-idle-advance: конкурентные sleep будятся
 test "mut_clock auto-idle-advance: часы после конкурентных sleep равны максимальному дедлайну" {
     with Time = mut_clock(0 as u64) {
         supervised {
-            spawn { Time.sleep(100) }
-            spawn { Time.sleep(10) }
-            spawn { Time.sleep(50) }
+            spawn { (100).to_millis().sleep() }
+            spawn { (10).to_millis().sleep() }
+            spawn { (50).to_millis().sleep() }
         }
         // Все три виртуальных сна разрешились — часы продвинуты РОВНО до
         // максимального дедлайна (100), не до суммы (160) — доказывает, что
         // bump — `current_ms = max(current_ms, deadline)`, не `+=` (что
         // задвоило бы вклад уже сработавших siblings).
-        assert(Time.now_unix_ms() == 100)
+        assert(Timestamp.now().unix_millis() == 100)
     }
 }
 
@@ -321,9 +320,9 @@ test "local_offset_sec() мокабелен произвольным handler-л�
     // fixed_ms/mut_clock helper'ы) — произвольный `effect Time { ... }`
     // литерал волен вернуть любое значение (здесь: MSK, UTC+3 = 10800s).
     ro off = with Time = effect Time {
-        sleep(ms) => ()
-        now_unix_ms() => 0
-        now_monotonic_ns() => 0
+        sleep(d) => ()
+        now() => 0.to_unix_millis()
+        now_monotonic() => { nanos: 0 }
         local_offset_sec() => 10_800
     } {
         Time.local_offset_sec()

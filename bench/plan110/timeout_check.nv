@@ -9,11 +9,11 @@
 
 module plan110.timeout_check
 
-bench "Time.sleep(0) x100k без shield (deadline check no-op fast path)" {
+bench "(0).to_millis().sleep() x100k без shield (deadline check no-op fast path)" {
     measure {
         mut i = 0
         while i < 100000 {
-            Time.sleep(0)
+            (0).to_millis().sleep()
             i = i + 1
         }
         bench.elements(100000)
@@ -27,12 +27,12 @@ type R {
 fn R.new(id int) -> R => { id }
 fn R consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
-bench "Time.sleep(0) x100k под shield (deadline check + mask-defer cancel)" {
+bench "(0).to_millis().sleep() x100k под shield (deadline check + mask-defer cancel)" {
     measure {
         consume r = R.new(0) {
             mut i = 0
             while i < 100000 {
-                Time.sleep(0)
+                (0).to_millis().sleep()
                 i = i + 1
             }
             ro _ = r.id
