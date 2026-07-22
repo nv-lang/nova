@@ -99,3 +99,31 @@ scalar-капчера до detach-строки внутри цикла (эмис
 p=0.15 → n ≥ ⌈-ln(0.01)/0.15⌉ = 31; беру 40+ прямых прогонов (4-way ×10+)
 чистыми + полный гейт --jobs 16 ×10 + detach_effect_ok_test/
 share_capture_ok_test/std concurrency + флагман-сборка.
+
+## ЗАКРЫТИЕ — верификация выполнена, всё зелёное (2026-07-22)
+
+- Фикс: `emit_c.rs::emit_detach` — heap-box mut-капчеров (коммит 47ad72aa5).
+- Регресс-фикстура `spec_tests/conformance/detach_mut_capture_outlives_frame.nv`
+  (db6dd4f71): два теста — семантика (kick→burn→drain→assert) и точная
+  crash-форма маркера (mut-локаль test-тела + sleep(60ms) в орфане, без
+  drain). **Pre-fix бинарём main: RUN-FAIL детерминированно** — в
+  наблюдённом прогоне тихая порча ЧУЖОЙ кучи (`arr.push` chain: a[2]≠3 —
+  вторая мода того же корня); **post-fix: PASS**.
+- Прямые прогоны mega-exe 4-way parallel: **48/48 чисто**
+  (до фикса 6/40 крахов; вероятность случайной чистоты (0.85)^48 ≈ 0.04%).
+- Мега-CU гейт `nova test --positive --compile-error --timeout 600
+  --jobs 16 spec_tests/conformance`: **×10 подряд — 528/0/55, EXIT=0,
+  0 RUN-FAIL, 0 SEGV-DIAG** (логи gate_v1..v10 в корне worktree, не
+  коммитятся).
+- `std/src/concurrency`: 4 PASS / 5 SKIP / 0 FAIL (паритет 211-верификации).
+- `supervisor_parfor_test`/`supervisor_stop_test`/`detach_effect_ok_test`/
+  `share_capture_ok_test`: PASS.
+- Флагман `examples/flagship/aggregator` собран `--strict-effects` (22.2s)
+  (path-deps nova-http/nova-tls скопированы в `C:/Users/Public/` рядом с
+  worktree — flagship ищет их sibling'ами корня).
+- TSan не применим (не data-race, а use-after-return указателя, известного
+  единственному потоку в момент разыменования); корень доказан VEH-стеком
+  (6/6 идентичных frame[1]) + детерминированным pre/post-fix регрессом.
+
+Маркер в backlog-followups.md переведён в ✅ ЗАКРЫТО с полным диагнозом.
+Слияние в main — за интегратором (ветка p-fix-mn-crash, 4 коммита).
