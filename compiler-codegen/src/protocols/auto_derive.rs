@@ -624,9 +624,10 @@ fn zero_value_expr(ty: &TypeRef) -> Option<Expr> {
 /// `default`) — that case keeps the natural `MissingField` error.
 fn resolve_missing_value(
     type_name: &str, field_name: &str, ty: &TypeRef, default: &Option<Option<String>>,
+    file_id: crate::diag::FileId,
 ) -> Result<Expr, DeriveError> {
     if let Some(Some(fn_name)) = default {
-        return Ok(call(ident(fn_name), vec![]));
+        return Ok(call(ident_at(fn_name, file_id), vec![]));
     }
     match zero_value_expr(ty) {
         Some(e) => Ok(e),
@@ -1051,6 +1052,28 @@ fn ex(kind: ExprKind) -> Expr {
 
 fn ident(name: &str) -> Expr {
     ex(ExprKind::Ident(name.to_string()))
+}
+
+/// Plan 180.1 Ф.1.5: a bare `Ident` reference tagged with a REAL `file_id`
+/// (not `span_dummy()`'s `MAIN_FILE_ID`). Needed for `#serde(default =
+/// "fn_name")`: the synthesized call to a user free function is the FIRST
+/// auto-derive body to reference an arbitrary lowercase user symbol by bare
+/// identifier (every other synthesized reference is either a builtin/
+/// Capitalized name — bootstrap-exempt in `is_known` — or a `.method()` call,
+/// which resolves via the method table, not identifier-scope). The identifier-
+/// resolution checker looks up visibility via `group_decls[file_id]` (Plan
+/// 42.15 Rule C: peers of ONE folder-module share a declaration namespace
+/// keyed by any member file_id of that group); `span_dummy()`'s `MAIN_FILE_ID`
+/// resolves to the COMPILATION UNIT's entry file, which is WRONG whenever the
+/// type carrying `#impl(Deserialize)` is declared in a module imported from
+/// elsewhere (the normal case — DTOs are typically decoded from a different
+/// file than where they're declared) — `default_role` would then be looked up
+/// in the IMPORTER's own module-group, not the type's, and spuriously fail as
+/// `undefined identifier`. Tagging with the type-decl's OWN `file_id` (any
+/// member of its peer-group) fixes the lookup regardless of which file ends
+/// up as the compilation entry.
+fn ident_at(name: &str, file_id: crate::diag::FileId) -> Expr {
+    Expr::new(ExprKind::Ident(name.to_string()), Span::with_file(0, 0, file_id))
 }
 
 fn self_field(field_name: &str) -> Expr {
@@ -2451,7 +2474,26 @@ fn make_serde_method(
     param_name: &str,
     return_type: TypeRef,
     body: FnBody,
+    file_id: crate::diag::FileId,
 ) -> FnDecl {
+    // Plan 180.1 Ф.1.5: the FnDecl's OWN span (not each inner expression's) is
+    // what the identifier-resolution checker uses to pick `file_id` for
+    // walking the WHOLE body (`fd.span.file_id`, one value per function — a
+    // sound assumption for ordinary code, where a function's body always
+    // lives in the same file as its declaration). A synthesized method's
+    // `span_dummy()` (`MAIN_FILE_ID`) breaks that assumption whenever the type
+    // being synthesized for was pulled into the CU from a DIFFERENT module
+    // than the entry (the common case: DTOs are declared once, decoded
+    // elsewhere) — free-function references inside the body (`#serde(default
+    // = "fn")`) would resolve against the ENTRY's own scope instead of the
+    // type's declaring module's. Tagging the FnDecl's span with the type's
+    // OWN `file_id` fixes the lookup unconditionally (harmless — a dummy
+    // start/end never renders in a diagnostic; only `file_id` is load-bearing
+    // here, ever consulted by name-resolution, not by the module's own path
+    // lookup for the diagnostic's OWN pretty-printer — that resolves the
+    // path from `file_id` via a separate table populated at parse time, which
+    // already has an entry for `file_id`).
+    let fn_span = Span::with_file(0, 0, file_id);
     FnDecl {
         name: method_name.to_string(),
         receiver: Some(Receiver {
@@ -2462,19 +2504,19 @@ fn make_serde_method(
             kind: if is_static { ReceiverKind::Static } else { ReceiverKind::Instance },
             mutable: false,
             consume: false,
-            span: span_dummy(),
+            span: fn_span,
         }),
         generics: vec![GenericParam {
             name: generic_name.to_string(),
             bounds: vec![type_ref_named(bound_name)],
             default: None,
-            span: span_dummy(),
+            span: fn_span,
             consume_bound: false,
         }],
         params: vec![Param {
             name: param_name.to_string(),
             ty: type_ref_named(generic_name),
-            span: span_dummy(),
+            span: fn_span,
             is_variadic: false,
             default: None,
             consume: false,
@@ -2487,7 +2529,7 @@ fn make_serde_method(
         return_is_const: false,
         returns_receiver: false,
         body,
-        span: span_dummy(),
+        span: fn_span,
         is_export: false,
         is_external: false,
         compiler_generated: true,
@@ -2769,7 +2811,7 @@ pub fn synthesize_serialize<Q: DeriveQuery>(
     };
     Ok(make_serde_method(
         &type_decl.name, "serialize", false, "S", "Serializer", "s",
-        result_ty(TypeRef::Unit(span_dummy()), "SerError"), body))
+        result_ty(TypeRef::Unit(span_dummy()), "SerError"), body, type_decl.span.file_id))
 }
 
 /// `Variant` / `Variant(p0, p1)` / `Variant { f, g }` reconstruction expression
@@ -3144,6 +3186,7 @@ pub fn synthesize_deserialize<Q: DeriveQuery>(
             // "required").
             let value = resolve_missing_value(
                 &type_decl.name, &f.name, &f.ty, &rf.opts.default.clone().or(Some(None)),
+                type_decl.span.file_id,
             )?;
             stmts.push(let_stmt(&f.name, false, None, value));
         } else if rf.opts.default.is_some() || !rf.opts.aliases.is_empty() {
@@ -3153,7 +3196,7 @@ pub fn synthesize_deserialize<Q: DeriveQuery>(
             names.extend(rf.opts.aliases.iter().cloned());
             let is_opt = is_option_ty(&f.ty);
             let missing_block: Block = if rf.opts.default.is_some() {
-                let v = resolve_missing_value(&type_decl.name, &f.name, &f.ty, &rf.opts.default)?;
+                let v = resolve_missing_value(&type_decl.name, &f.name, &f.ty, &rf.opts.default, type_decl.span.file_id)?;
                 block_trailing(v)
             } else if is_opt {
                 // No explicit default on an Option field — absence (of ALL
@@ -3227,7 +3270,7 @@ pub fn synthesize_deserialize<Q: DeriveQuery>(
     // `type_refs_equiv_modulo_self` Self↔receiver check.
     Ok(make_serde_method(
         &type_decl.name, "deserialize", true, "D", "Deserializer", "d",
-        result_ty(type_ref_named(&type_decl.name), "DeError"), body))
+        result_ty(type_ref_named(&type_decl.name), "DeError"), body, type_decl.span.file_id))
 }
 
 // ────────────────────────────────────────────────────────────────────────
