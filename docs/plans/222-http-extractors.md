@@ -167,11 +167,27 @@ export type IntoResponse protocol { fn into_response() -> ServerResponse }
 `IntoResponse` для `str`/`ServerResponse`/`Json[T Serialize]`/`Result[R,E]`-бланкет; прямой
 `ServerResponse.json[T Serialize](status, T)` конструктор (сейчас json только через serdejson вручную).
 
-## 7. Под-план 222.6 — аудит run-loop/servernet (разведка)
+## 7. Под-план 222.6 — аудит run-loop/servernet ✅ ГОТОВ (2026-07-22, принят владельцем)
 
-Отдельный отчёт: connection-handling / graceful shutdown / keep-alive / timeout-drain vs Axum-run
-(hyper). Пока НЕ утверждаем «годен» — [M-187]-семья намекает на M:N-сложности под нагрузкой. По отчёту —
-решение «оставить/усилить/переделать», отдельным под-планом.
+Аудит проведён (opus). Итог: **ничего не блокирует 222.3/222.4** — extractors/middleware работают
+над уже забуференным ServerRequest, граница `ServerRequest → Handler → ServerResponse` стабильна;
+M:N-субстрат ([M-187]-семья) закрыт и загейчен целиком. Пробелы — аддитивное упрочнение:
+keep-alive НЕТ (single-shot, Connection: close), таймаутов НЕТ (slowloris + безлимитный body по
+Content-Length = единственный DoS-вектор), graceful shutdown не реализован (субстрат
+supervised(deadline:) готов), библиотечной accept-loop нет (ошибка accept убивает цикл потребителя),
+chunked-request/100-continue нет. Оговорка: Json[T]-экстрактор (222.3) приземлять ВМЕСТЕ с
+body-size limit. Полный отчёт — scratchpad-сессия 2026-07-22.
+
+## 7а. Под-план 222.7 — run-loop hardening = закрытие [M-178-server-policy-surface] 🔨 В РАБОТЕ
+
+Решение владельца 2026-07-22: «не откладывать, закрыть сейчас». Агент (sonnet), ветка
+p222-7-policy-surface. **Фаза 1** (всё в nova-http, std/net не трогаем — зона занята 217.1):
+библиотечный serve() accept-loop (admission bounded + backoff на ошибке accept), keep-alive
+persistent-loop, header/read/idle-deadline поверх supervised(deadline:), body-size limit (413),
+chunked-request decode + 100-continue, ServerConfig (with_*). **Фаза 2** (после освобождения
+std/net): timeout-примитивы, конфигурируемый backlog, переименование set_nodelay/set_keepalive →
+property-стиль `mut @nodelay(on)`/`mut @keepalive(on)` (конвенция nv-coding-style; вопрос владельца
+2026-07-22 — set_-префикс противоречит конвенции).
 
 ## 8. Маркеры (регистрируются этим планом)
 
