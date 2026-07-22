@@ -1,0 +1,95 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for [M-nv-spawn-ctx-capture-mut-param-ptr-mismatch] (222.7
+// bug-sweep, found in nova-http's servernet `policy.nv` — `spawn consume ws
+// = s.share() { ... }` inline from a `mut TcpStream` PARAMETER CC-FAILed;
+// via an intermediate `consume w = s.share()` bound to a plain local first,
+// it worked).
+//
+// Root cause (compiler-codegen/src/codegen/emit_c.rs), TWO bugs in the same
+// class (both needed for this exact shape):
+//   1. `emit_spawn`'s ctx-populate loop (which writes `ctx->field = <outer
+//      expr>;` at the spawn call site) only special-cased a captured name
+//      that was ITSELF an enclosing spawn's own capture (`is_outer_cap`) —
+//      a captured name that was instead a `mut T` free-fn/method PARAMETER
+//      (Plan 184 R10 in-out by-pointer ABI, tracked in `ref_params`) fell
+//      through to the "plain local" arm, which assumes the outer C storage
+//      IS the value — so `ctx->field = s;` assigned a POINTER into a VALUE
+//      field (by-value capture) or `ctx->field = &s;` took the address of a
+//      POINTER instead of passing it through (by-pointer capture).
+//   2. Even with (1) fixed, the SPAWNED FIBER BODY's own `Ident("s")`
+//      emission hit a SEPARATE bug: the general `ref_params` auto-deref
+//      check ran BEFORE the `current_spawn_captures` ctx-rewrite check in
+//      the same match arm, and returned early — so a name that was a
+//      by-pointer param in the OUTER (enclosing) function but is now a
+//      spawn-CAPTURED ctx field inside the fiber still got rewritten as a
+//      bare `(*s)` (an outer-function-only C variable, undeclared inside
+//      the fiber) instead of `_c->s`/`(*_c->s)`. An active spawn-capture
+//      for a name now always takes priority over the stale `ref_params`
+//      membership.
+//
+// This fixture pins the exact minimal repro shape: `s.share()` evaluated
+// INLINE as a `spawn consume` initializer, referencing a `mut TcpStream`
+// function PARAMETER, over a real loopback connection.
+//
+// EXPECT_TIMEOUT_MS 30000
+
+module standalone.m222_7_spawn_ctx_capture_mut_param
+
+import std.net.{TcpStream, TcpListener, SocketAddr, real_net}
+import std.time.duration
+
+fn read_via_share(s mut TcpStream) Net -> int {
+    ro (tx, rx) = Channel.new(1)
+    supervised {
+        spawn consume ws = s.share() {
+            match ws.read_to_vec(64) {
+                Ok(chunk) => { ro _ = tx.try_send(chunk.len()) }
+                Err(_)    => { ro _ = tx.try_send(-1) }
+            }
+        }
+    }
+    tx.close()
+    rx.try_recv() ?? -2
+}
+
+test "spawn consume ws = s.share() {} inline from a mut-param builds and runs" {
+    with Net = real_net() {
+        ro (port_tx, port_rx) = Channel.new(1)
+        ro (got_tx, got_rx) = Channel.new(1)
+        with Fail[TimeoutError] = |_e| {} {
+            supervised(timeout: 3.to_seconds()) {
+                spawn {
+                    consume lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                        Ok(consume l) => l
+                        Err(_) => { return }
+                    }
+                    ro _ = port_tx.try_send(lst.local_port())
+                    match lst.accept() {
+                        Ok(consume stream) => {
+                            consume s = stream
+                            ro n = read_via_share(s)
+                            s.close()
+                            ro _ = got_tx.try_send(n)
+                        }
+                        Err(_) => ()
+                    }
+                    lst.close()
+                }
+                spawn {
+                    ro port = match port_rx.recv() { Some(p) => p, None => 0 as u16 }
+                    match TcpStream.connect(SocketAddr.loopback(port)) {
+                        Ok(consume conn) => {
+                            consume cli = conn
+                            ro _ = cli.write_str("hi")
+                            cli.close()
+                        }
+                        Err(_) => ()
+                    }
+                }
+            }
+        }
+        got_tx.close()
+        ro got = got_rx.try_recv() ?? -3
+        assert(got == 2)
+    }
+}

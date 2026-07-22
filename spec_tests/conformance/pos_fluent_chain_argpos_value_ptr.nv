@@ -1,0 +1,51 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for [M-http-props-mut-chain-argpos-value-ptr-mismatch] (222.7
+// bug-sweep, found in nova-http's `server.nv`/`servernet/config.nv` —
+// `ServerPolicy.new().max_body_bytes(8)` used directly as a call argument).
+// Root cause (compiler-codegen/src/codegen/emit_c.rs):
+//   1. `is_struct_type` (consulted by `emit_assign_typed`, which materializes
+//      a value-record fluent `-> @` chain used as a call argument into an
+//      addressable temp — `synthesize_method_byref_args`/`synthesize_free_
+//      fn_byref_args`'s "needs_copy" wrap emits a `{ trailing }` Block for
+//      exactly this) was missing the `NovaValue_`/`NovaTuple_`/
+//      `_NovaFixArr_` C-type prefixes, so a value-record fell through to
+//      the "scalar" branch and got wrapped in a bogus `(NovaValue_X)(v)`
+//      C-style cast — not legal C for a struct (or struct-pointer) RHS.
+//   2. Even with (1) fixed, a `-> @` fluent-chain tail RETURNS a pointer
+//      (`NovaValue_X*` = ref Self) while the materialized temp is the VALUE
+//      type — every consumer of `emit_assign_typed` in this file needed the
+//      existing `is_fluent_value_ptr_for_target` deref check (the SAME one
+//      `deref_fluent_value_args`/the let-binding consumer already used) —
+//      it was missing from the block-trailing/if-tail-unify/blocking-result
+//      call sites specifically.
+// This fixture pins the exact minimal repro shape: a `value` record with
+// several fields and `mut @x(v) -> @` builder methods, chained (once and
+// twice) directly as a free-fn AND a method-call argument.
+module spec_tests.conformance
+
+type FluentPolicy value {
+    max_inflight int
+    max_body_bytes int
+}
+
+fn FluentPolicy.new() -> FluentPolicy => { max_inflight: 16, max_body_bytes: 1048576 }
+fn FluentPolicy @max_body_bytes() -> int => @max_body_bytes
+fn FluentPolicy mut @max_body_bytes(v int) -> @ { @max_body_bytes = v }
+fn FluentPolicy @max_inflight() -> int => @max_inflight
+fn FluentPolicy mut @max_inflight(v int) -> @ { @max_inflight = v }
+
+fn fluent_policy_take(p FluentPolicy) -> int => p.max_body_bytes()
+
+type FluentServer value { tag int }
+fn FluentServer.new() -> FluentServer => { tag: 7 }
+fn FluentServer @serve(p FluentPolicy) -> int => p.max_body_bytes() + @tag
+
+test "FluentPolicy.new().max_body_bytes(8) directly as a free-fn call argument" {
+    assert(fluent_policy_take(FluentPolicy.new().max_body_bytes(8)) == 8)
+}
+
+test "FluentPolicy.new().max_inflight(1).max_body_bytes(8) (chained twice) as a method-call argument" {
+    ro s = FluentServer.new()
+    ro n = s.serve(FluentPolicy.new().max_inflight(1).max_body_bytes(8))
+    assert(n == 15)
+}

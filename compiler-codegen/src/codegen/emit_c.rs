@@ -12610,15 +12610,38 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 .map(|s| s.contains(cap)).unwrap_or(false);
             let outer_by_value = self.current_spawn_capture_by_value.as_ref()
                 .map(|s| s.contains(cap)).unwrap_or(false);
+            // [M-nv-spawn-ctx-capture-mut-param-ptr-mismatch] fix (222.7):
+            // a "local var" outer capture is NOT always a plain by-value C
+            // local — a `mut T` free-fn/method PARAMETER (Plan 184 R10
+            // in-out ABI) is ALREADY represented as `T*` in C, exactly like
+            // an `is_outer_cap && !outer_by_value` capture field one level
+            // up. The two branches below only special-cased the latter
+            // (nested-spawn re-capture); a bare `mut`-param name fell
+            // through to the `cap.clone()`/`&{cap}` "ordinary local"
+            // arms, which assume `cap`'s C storage IS the value — so
+            // `ctx->field = cap;` (by_value) assigned a `T*` into a `T`
+            // field (clang: "assigning to 'T' from incompatible type
+            // 'T *'"), and `ctx->field = &cap;` (by-pointer) took the
+            // address of a POINTER (`T**`) instead of passing it through.
+            // `ref_params` (Plan 184) is the existing registry of exactly
+            // these by-pointer-ABI names — same predicate every other
+            // read/write site in this file already consults (see e.g. the
+            // Ident-emission `ref_params` deref below). Treating a
+            // `ref_params` name as "already a pointer" here mirrors that.
+            let outer_is_ref_param = self.ref_params.contains(cap);
             let access_outer = if is_outer_cap {
                 if outer_by_value { format!("_c->{}", cap) }            // T value
                 else { format!("(*_c->{})", cap) }                       // *T
+            } else if outer_is_ref_param {
+                format!("(*{})", cap)                                    // by-pointer param → deref for the value
             } else {
                 cap.clone()                                              // local var
             };
             let address_outer = if is_outer_cap {
                 if outer_by_value { format!("&_c->{}", cap) }           // address of T field
                 else { format!("_c->{}", cap) }                          // already a pointer
+            } else if outer_is_ref_param {
+                cap.clone()                                              // by-pointer param — already the address
             } else {
                 format!("&{}", cap)                                      // local var address
             };
@@ -14477,9 +14500,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.emit_stmt(stmt)?;
         }
         if let Some(trailing) = &body.trailing {
-            let v = self.emit_expr(trailing)?;
+            let mut v = self.emit_expr(trailing)?;
             if has_result {
                 let rty = result_ty.clone();
+                // [M-http-props-mut-chain-argpos-value-ptr-mismatch] fix
+                // (222.7): see `emit_assign_typed`'s own doc comment — deref
+                // a value-record fluent `-> @` chain tail before assigning
+                // into the (value-typed) `_c->_nova_result` field.
+                if self.is_fluent_value_ptr_for_target(trailing, &rty) {
+                    v = format!("(*({}))", v);
+                }
                 Self::emit_assign_typed(self, "_c->_nova_result", &rty, &v);
             } else {
                 self.line(&format!("(void)({});", v));
@@ -31118,7 +31148,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // the body sees a `T`, and assignment lands in the caller's
                 // storage. Checked early: ref-params are user locals, never
                 // variant/ctor names.
-                if self.ref_params.contains(name) {
+                //
+                // [M-nv-spawn-ctx-capture-mut-param-ptr-mismatch] fix (222.7):
+                // `ref_params` is populated once per ENCLOSING function and
+                // never cleared/rescoped when emission descends into a
+                // spawned fiber's own body — so a name that was a by-pointer
+                // param/ref-local IN THE OUTER FUNCTION stayed in this set
+                // even after `current_spawn_captures` activated the SAME name
+                // as a captured ctx field for the fiber (spawn's `refs` scan
+                // — `collect_idents_expr`/`collect_idents_stmt` — walks INTO
+                // a nested `consume X = e { .. }`'s own init expression, e.g.
+                // `spawn consume ws = s.share() { .. }` capturing the outer
+                // `mut TcpStream` param `s`). Since this arm returns early,
+                // it pre-empted the `current_spawn_captures` arm below —
+                // which is the one that knows `s` is no longer a real C
+                // variable inside the fiber body at all, only reachable via
+                // `_c->s`/`(*_c->s)` — emitting a bare `(*s)` against an
+                // undeclared C identifier (CC-FAIL: "use of undeclared
+                // identifier 's'"). An active spawn-capture for this exact
+                // name always wins: skip the ref-param branch and fall
+                // through to the capture-access arm below.
+                let shadowed_by_spawn_capture = self.current_spawn_captures.as_ref()
+                    .map(|c| c.contains(name)).unwrap_or(false);
+                if self.ref_params.contains(name) && !shadowed_by_spawn_capture {
                     return Ok(format!("(*{})", name));
                 }
                 // Plan 61 Ф.3: typed Fail[E] handler-arm parameter — name
@@ -43158,8 +43210,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.line(&format!("(void)({});", v));
                 } else {
                     // target-type-aware: literal-cleanup для typed-int if-result.
-                    let v = self.emit_expr_with_target_type(e, &if_ty)?;
+                    let mut v = self.emit_expr_with_target_type(e, &if_ty)?;
                     let ity = if_ty.clone();
+                    // [M-http-props-mut-chain-argpos-value-ptr-mismatch] fix
+                    // (222.7): see `emit_assign_typed`'s own doc comment —
+                    // deref a value-record fluent `-> @` chain tail before
+                    // assigning into the (value-typed) unify tmp.
+                    if self.is_fluent_value_ptr_for_target(e, &ity) {
+                        v = format!("(*({}))", v);
+                    }
                     Self::emit_assign_typed(self, &tmp, &ity, &v);
                 }
                 self.indent -= 1;
@@ -43197,7 +43256,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             } else {
                 // target-type-aware emit: для typed-integer ty литералы в Binary
                 // получают «нативный» suffix вместо ((nova_int)NLL).
-                let v = self.emit_expr_with_target_type(trailing, ty)?;
+                let mut v = self.emit_expr_with_target_type(trailing, ty)?;
+                // [M-http-props-mut-chain-argpos-value-ptr-mismatch] fix
+                // (222.7): see `emit_assign_typed`'s own doc comment — deref
+                // a value-record fluent `-> @` chain tail before assigning
+                // into the (value-typed) `tmp`.
+                if self.is_fluent_value_ptr_for_target(trailing, ty) {
+                    v = format!("(*({}))", v);
+                }
                 Self::emit_assign_typed(self, tmp, ty, &v);
             }
         } else if !diverges {
@@ -43214,10 +43280,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     /// Emit `tmp = v` with appropriate handling for different C types.
+    ///
+    /// [M-http-props-mut-chain-argpos-value-ptr-mismatch] fix (222.7): this
+    /// prefix list is missing `NovaValue_` (value-records, Plan 124.8/D226),
+    /// `NovaTuple_` (named tuples, D215) and `_NovaFixArr_` ([N]T inline
+    /// arrays, D27-амендмент) — all THREE are struct C-types (matching the
+    /// authoritative, more complete `is_value_type` oracle below), but fell
+    /// through to the "scalar" `else` branch of `emit_assign_typed`, which
+    /// blindly wraps the RHS in a `(ty)(v)` C-style cast. For most scalars
+    /// that is harmless/no-op-ish; for a value-record it produced
+    /// `(NovaValue_X)(v)` — casting a STRUCT (or, when `v` is itself a
+    /// value-record fluent `-> @` chain result, a struct POINTER) to a
+    /// struct VALUE type, which is not legal C (CC-FAIL: "used type
+    /// 'NovaValue_X' where arithmetic or pointer type is required" /
+    /// "assigning to 'NovaValue_X' from incompatible type 'NovaValue_X *'").
+    /// Empirically caught canonizing a block-trailing value-record fluent
+    /// chain used directly as a call argument (`free_take(Policy.new()
+    /// .max_body_bytes(8))` — the argument materializes into an
+    /// `emit_block_expr` temp, whose trailing-assign hit exactly this gap).
     fn is_struct_type(ty: &str) -> bool {
         ty == "nova_unit" || ty.contains("nova_str") || ty.starts_with("Nova_")
             || ty.starts_with("struct ") || ty.starts_with("NovaVtable_")
             || ty.starts_with("NovaOpt_") || ty.starts_with("_NovaTuple")
+            || ty.starts_with("NovaValue_") || ty.starts_with("NovaTuple_")
+            || ty.starts_with("_NovaFixArr_")
     }
 
     fn emit_assign_typed(&mut self, tmp: &str, ty: &str, v: &str) {
@@ -44278,8 +44364,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 217: same bare-consuming-receiver-call disarm as the
             // other block-trailing choke points.
             self.disarm_auto_cleanup_receiver_call(trailing);
-            let v = self.emit_expr(trailing)?;
+            let mut v = self.emit_expr(trailing)?;
             let bty = block_ty.clone();
+            // [M-http-props-mut-chain-argpos-value-ptr-mismatch] fix (222.7):
+            // the block's trailing value is a value-record fluent `-> @`
+            // chain (`NovaValue_X*` = ref Self) — deref it, same `ref T -> T`
+            // auto-conversion `deref_fluent_value_args`/the let-binding
+            // consumer already apply. Without this, `emit_assign_typed`
+            // received a POINTER string for a VALUE-typed `tmp` — see its own
+            // doc comment for the full root-cause note (this block-expr path
+            // is exactly how a value-record chain used directly as a call
+            // argument reaches it: `synthesize_method_byref_args`/
+            // `synthesize_free_fn_byref_args`'s "needs_copy" wrap materializes
+            // the argument as a `{ trailing }` Block).
+            if self.is_fluent_value_ptr_for_target(trailing, &bty) {
+                v = format!("(*({}))", v);
+            }
             Self::emit_assign_typed(self, &tmp, &bty, &v);
         } else {
             let bty = block_ty.clone();
