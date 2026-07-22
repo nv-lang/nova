@@ -6777,10 +6777,56 @@ registry-miss) / fn-тип / anonymous-protocol / opaque-без-vouch / Effect �
 `#share` — механизм один (§3).
 
 **V1-границы скана (задокументированные, направление — недолов, не
-false-positive):** биндинги замыканий/match-arm'ов не трекаются как внешние
-(имя не найдено → не флагаем); типы биндингов — из аннотаций + синтаксического
+false-positive):** биндинги замыканий не трекаются как внешние (имя не
+найдено → не флагаем); типы биндингов — из аннотаций + синтаксического
 эскиза init-выражения (`Type.new(..)`/`Type[T].new(..)`/`Type{..}`/литералы);
 не-выводимый тип mut-биндинга → консервативно флагаем.
+
+> **Амендмент ([M-detach-consume-escape-unchecked], владелец P1, 2026-07-22):
+> `match`/`if let`/`while let` pattern-биндинги БОЛЬШЕ НЕ «не найдено».**
+> Владелец нашёл во флагмане (`examples/flagship/aggregator/src/main.nv`)
+> ровно ту дыру, что была здесь честно задокументирована: `match lst.accept()
+> { Ok(consume stream) => { detach { …stream… } } }` — `stream` связан явным
+> `consume`-sub-bind'ом (D157/D180, `Pattern::Ident{is_consume}`) в
+> match-arm'е, ОБЪЕМЛЮЩЕМ относительно `detach`; `detach` захватывал его БЕЗ
+> явного move — use-after-consume/use-after-free по выходе из match-arm'а,
+> который к моменту исполнения orphan-файбера уже мог завершиться. `spawn
+> consume` ловит СИММЕТРИЧНЫЙ случай (§4) — `detach` этого не делал, потому
+> что `check_capture_boundary` в принципе не мог УВИДЕТЬ `stream`: ни один
+> `match`/`if let`/`while let` arm не заводил scope-фрейм для своих
+> pattern-биндингов (`state.scopes` в `types/mod.rs` — единственный
+> механизм, которым capture-check резолвит имя до биндинга). Фикс —
+> симметричный для `spawn`/`parallel for`/`detach` разом (общая точка входа,
+> `check_capture_boundary`), в два слоя:
+>
+> 1. **`Match`/`IfLet`/`WhileLet` теперь заводят scope-фрейм** для bound-имён
+>    своего pattern'а (мутабельность — из `Pattern::Ident.is_mut`, как и
+>    везде) ПЕРЕД сканом guard/тела — то же, что уже делали `for`/
+>    `parallel for` для loop-переменной. Побочный эффект (сознательно
+>    принят, не половинчато): `mut`-бинд из match/if-let/while-let pattern'а,
+>    захваченный в spawn/parallel-for/detach БЕЗ типовой аннотации, теперь
+>    ТОЖЕ консервативно флагуется `E_CONCURRENT_MUT_CAPTURE` (тип неизвестен
+>    на pattern-destructure сайте — тот же «не выводим ⇒ флагуем» путь, что
+>    уже стоит для обычного `let`) — раньше это тоже было «имя не найдено →
+>    не флагаем», симметричная дыра той же природы, закрыта тем же ходом.
+> 2. **`ScopeBinding.linear_pattern`** — явный `consume`-sub-bind
+>    (`Ok(consume x)`/`Some(consume x)`) не несёт статической type-аннотации
+>    (`ty: None` — V1 не выводит тип pattern-destructure), поэтому обычный
+>    `type_decls`-lookup по `ty` не может опознать линейность; сам факт, что
+>    ИСХОДНЫЙ синтаксис пометил биндинг `consume`, уже достаточен и
+>    авторитетен → флаг читается напрямую, независимо от `ty`.
+>
+> Диагностика — тот же код, **`E_LINEAR_CAPTURE_IN_FIBER`** (Plan 201/173.1,
+> §4 ниже), текст различает «известный consume-тип» и «явный consume-pattern
+> без известного типа». Требуемый фикс на месте ошибки — явный move:
+> **`detach consume c [= expr] { … }`** — новая, симметричная `spawn consume`
+> форма (парсер: `parse_detach`, тот же `Stmt::ConsumeScope`-десугар
+> verbatim, минус лишняя `Expr::Block`-обёртка, которая `Spawn` требует, а
+> `Detach` — нет, у него `body: Block` напрямую). Neg-фикстура: точный
+> флагман-паттерн, `spec_tests/conformance/neg/detach_consume_escape_neg.nv`;
+> pos-твин (обе формы `detach consume`):
+> `spec_tests/conformance/detach_consume_move_ok.nv`. Флагман переписан на
+> `detach consume stream { … }`.
 
 > **Амендмент (owner P1, 2026-07-11): `detach` закрывает идентичный gap.**
 > Первоначальная Ф.2-волна вкрутила capture-check только в `spawn`/
@@ -6851,6 +6897,33 @@ runtime-примитива). Keyword'а `move` нет — используетс
 `ro`) — неявные, но проверяемые (§2); полный capture-list
 `spawn(consume c, ro cfg)` отвергнут (§7 Q9): обязательны явные только move'ы.
 
+> **Амендмент ([M-detach-consume-escape-unchecked], владелец P1, 2026-07-22):
+> `detach consume` — та же форма, симметрично `spawn consume`.**
+>
+> ```nova
+> detach consume c = expr { body }   // связать и отдать orphan-файберу
+> detach consume c { body }          // уже связанный c — переотдать orphan-файберу
+> ```
+>
+> Мотивация — см. амендмент к §2 выше: `detach` — РОВНО такая же
+> concurrency-граница, как `spawn` (fire-and-forget orphan-файбер, D50,
+> может пережить лексический scope родителя), и до этого амендмента не имела
+> явного move-эскейпа для consume-типов (`spawn consume` уже была). Десугар
+> идентичен: `Detach(Block[ConsumeScope])` — тот же D188-механизм verbatim,
+> с той разницей, что `ExprKind::Detach` уже хранит `body: Block` напрямую
+> (не `Box<Expr>`, как `Spawn`), поэтому обёртка `Expr::Block` вокруг
+> `ConsumeScope`, которую требует `Spawn`-десугар, здесь не нужна — парсер
+> (`parse_detach`) строит `Block` со единственным `Stmt::ConsumeScope`
+> напрямую. Cleanup срабатывает на выходе тела orphan-файбера, не
+> лексического блока родителя — тем самым orphan переживает родителя БЕЗ
+> use-after-consume (ownership уже внутри него). Capture-check
+> (`check_capture_boundary`), codegen ctx-захват (`emit_detach` — «по
+> образцу `emit_spawn`», уже было симметрично ДО этого амендмента) и
+> consume-tracker (`consume_walk_isolated_block`, уже вызывался для `detach`
+> с тем же телом) не потребовали отдельных изменений под эту форму — все три
+> уже были написаны generic по `Block`/`Stmt::ConsumeScope`, не по
+> containing-конструкту.
+
 ### §5. Поглощение `#fiber_send` / `E_POINTER_CROSS_FIBER` (Plan 118.3) — Ф.4
 
 Ad-hoc запрет Plan 118.3 «сырой `*T` через границу файбера»
@@ -6920,9 +6993,10 @@ E_CONST_EFFECT_IN_INIT).
 
 | код | что |
 |---|---|
-| `E_CONCURRENT_MUT_CAPTURE` | mut-захват не-mut-alias-safe типа телом spawn/parallel-for |
+| `E_CONCURRENT_MUT_CAPTURE` | mut-захват не-mut-alias-safe типа телом spawn/parallel-for/detach |
 | `E_SHARE_INVALID_KIND` | `#share` на kind без instance-идентичности |
 | `E_CONST_INIT_CONCURRENCY` | конкуренция в module-level ro/const-инициализаторе |
+| `E_LINEAR_CAPTURE_IN_FIBER` | consume-тип (или явный `consume`-pattern-биндинг) захвачен в spawn/parallel-for/detach без move (Plan 201/173.1; [M-detach-consume-escape-unchecked]) |
 
 Тесты: `nova_tests/err173_3/` — pos `share_capture_ok_test` (ro / `#share`-
 примитивы / `spawn consume` / авто-share user-тип / user `#share`-vouch),
@@ -6934,6 +7008,13 @@ E_CONST_EFFECT_IN_INIT).
 std (`concurrency/cancellation.nv` `within`/`race2` — реальные TOCTOU-гонки,
 переведены на каналы; `http/servernet` smoke — на каналы) + nova_tests
 (~19 файлов — на `Atomic*`).
+
+[M-detach-consume-escape-unchecked] (2026-07-22, §2/§4 амендменты выше) —
+`detach consume`-форма + match/if-let/while-let scope-фрейм: neg
+`spec_tests/conformance/neg/detach_consume_escape_neg.nv` (точный
+флагман-паттерн), pos `spec_tests/conformance/detach_consume_move_ok.nv`
+(обе `detach consume` формы). Флагман (`examples/flagship/aggregator/src/
+main.nv`) переписан на явный move.
 
 ## D416. Supervision-as-effect — `Supervisor`/`on_child_fail(idx, err) → Decision` (Plan 173.2)
 

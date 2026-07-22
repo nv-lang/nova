@@ -10615,8 +10615,67 @@ impl Parser {
     }
 
     /// `detach { body }` — fire-and-forget, global supervisor (D50).
+    ///
+    /// [M-detach-consume-escape-unchecked] (D415 §4 extension, Plan 173.3):
+    /// `detach consume c [= expr] { body }` — mirror of `spawn consume`
+    /// (see `parse_spawn` above for the full desugar rationale). `detach` is
+    /// JUST as concurrent a boundary as `spawn` (orphan fiber, may run on
+    /// another OS thread after the enclosing scope has already exited) — a
+    /// bare `detach { … stream … }` capturing a `consume`-typed outer
+    /// binding (e.g. `TcpStream`) by reference is a use-after-consume /
+    /// use-after-free once the owning scope exits before the orphan fiber
+    /// runs. This explicit-move form is the escape valve the type-checker's
+    /// `E_LINEAR_CAPTURE_IN_FIBER` (types/mod.rs `check_capture_boundary`)
+    /// now requires. Desugars to `Detach(Block[ConsumeScope])` — reuses the
+    /// SAME `Stmt::ConsumeScope` machinery `spawn consume` uses (D188), just
+    /// without the extra `Expr::Block` wrapper `Spawn` needs (`Detach`
+    /// already takes a bare `Block`, not a boxed `Expr`).
     fn parse_detach(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwDetach)?.span;
+        if matches!(self.peek().kind, TokenKind::KwConsume) {
+            self.bump(); // consume
+            let (name, name_span) = self.parse_ident()?;
+            let init = if matches!(self.peek().kind, TokenKind::Eq) {
+                self.bump(); // =
+                self.skip_newlines();
+                let saved_trailing = self.no_trailing_block;
+                self.no_trailing_block = true;
+                let e = self.parse_expr();
+                self.no_trailing_block = saved_trailing;
+                e?
+            } else {
+                Expr::new(ExprKind::Ident(name.clone()), name_span)
+            };
+            self.skip_newlines();
+            if !matches!(self.peek().kind, TokenKind::LBrace) {
+                return Err(Diagnostic::new(
+                    "`detach consume c [= expr]` requires a block body `{ ... }` \
+                     (D415 §4) — the orphan fiber owns `c`; its cleanup fires \
+                     when the fiber's own body exits, not the lexical block."
+                        .to_string(),
+                    self.peek().span,
+                ));
+            }
+            let user_body = self.parse_block()?;
+            let cs_span = start.merge(user_body.span);
+            let wrapped = Block {
+                stmts: vec![Stmt::ConsumeScope {
+                    binding: name,
+                    type_annot: None,
+                    init,
+                    body: user_body,
+                    // D415 §4 already-bound form — mirrors `spawn consume`:
+                    // не Plan-201 re-consume, у detach-формы свои правила.
+                    re_consume: false,
+                    result: None,
+                    span: cs_span,
+                }],
+                trailing: None,
+                span: cs_span,
+                is_unsafe: false,
+            };
+            return Ok(Expr::new(ExprKind::Detach(wrapped), cs_span));
+        }
         let block = self.parse_block()?;
         let end = block.span;
         Ok(Expr::new(ExprKind::Detach(block), start.merge(end)))

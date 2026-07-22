@@ -22380,6 +22380,16 @@ impl<'a> crate::protocols::share_check::ShareQuery for CapShareQuery<'a> {
 struct ScopeBinding {
     mutable: bool,
     ty: Option<TypeRef>,
+    /// [M-detach-consume-escape-unchecked] (D415 §4 extension, Plan 173.3):
+    /// `true` only for a name bound via an explicit `consume`-marked pattern
+    /// sub-bind (`Ok(consume x)` / `Some(consume x)` — `Pattern::Ident{
+    /// is_consume: true }`, D157/D180) in a `match`/`if let`/`while let` arm.
+    /// These arrive with `ty: None` (no static annotation — V1 has no
+    /// pattern-destructure type inference), so the ordinary `ty`-based
+    /// `type_decls`-lookup linear check in `check_capture_boundary` can never
+    /// see them; this flag is the ONLY signal that the binding is a linear/
+    /// consume resource, and is authoritative regardless of `ty`.
+    linear_pattern: bool,
 }
 
 /// Plan 16: capability state передаётся через walk как mutable.
@@ -22593,7 +22603,7 @@ impl<'a> CapabilityCtx<'a> {
         // spawn/parallel-for capture-check can see a captured name bound in.
         let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
         for p in &f.params {
-            frame.insert(p.name.clone(), ScopeBinding { mutable: p.is_mut, ty: Some(p.ty.clone()) });
+            frame.insert(p.name.clone(), ScopeBinding { mutable: p.is_mut, ty: Some(p.ty.clone()), linear_pattern: false });
         }
         state.scopes.push(frame);
         match &f.body {
@@ -22636,10 +22646,11 @@ impl<'a> CapabilityCtx<'a> {
                     let ty = d.ty.clone().or_else(|| {
                         capture_syntactic_init_type(&d.value, &self.type_decls)
                     });
-                    for (name, pat_mut) in pattern_capture_names(&d.pattern) {
+                    for (name, pat_mut, pat_consume) in pattern_capture_names(&d.pattern) {
                         frame.insert(name, ScopeBinding {
                             mutable: d.mutable || pat_mut,
                             ty: ty.clone(),
+                            linear_pattern: pat_consume,
                         });
                     }
                 }
@@ -22838,9 +22849,23 @@ impl<'a> CapabilityCtx<'a> {
                     }
                 }
             }
-            ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            ExprKind::IfLet { scrutinee, pattern, guard, then, else_ } => {
                 self.walk_expr(scrutinee, state, errors);
+                // [M-detach-consume-escape-unchecked] (D415 §4 extension):
+                // register the pattern's bound names — including explicit
+                // `consume` sub-binds (`if let Ok(consume x) = … { … }`) —
+                // into a scope frame BEFORE walking guard/then, so a nested
+                // spawn/parallel-for/detach inside `then` that captures `x`
+                // can resolve it via `state.scopes` (was previously
+                // invisible — no frame was ever pushed here).
+                let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
+                for (name, is_mut, is_consume) in pattern_capture_names(pattern) {
+                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: None, linear_pattern: is_consume });
+                }
+                state.scopes.push(frame);
+                if let Some(g) = guard { self.walk_expr(g, state, errors); }
                 self.walk_block(then, state, errors);
+                state.scopes.pop();
                 if let Some(eb) = else_ {
                     match eb {
                         ElseBranch::Block(b) => self.walk_block(b, state, errors),
@@ -22851,11 +22876,25 @@ impl<'a> CapabilityCtx<'a> {
             ExprKind::Match { scrutinee, arms } => {
                 self.walk_expr(scrutinee, state, errors);
                 for arm in arms {
+                    // [M-detach-consume-escape-unchecked] (D415 §4 extension):
+                    // same as `IfLet` above — a match-arm's own pattern binds
+                    // (e.g. `Ok(consume stream) => { detach { …stream… } }`,
+                    // the exact flagship-found gap) were entirely invisible to
+                    // `state.scopes` before this fix; register them here so
+                    // the capture-check boundary (`check_capture_boundary`,
+                    // called from `spawn`/`parallel for`/`detach` arms) can
+                    // see them.
+                    let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
+                    for (name, is_mut, is_consume) in pattern_capture_names(&arm.pattern) {
+                        frame.insert(name, ScopeBinding { mutable: is_mut, ty: None, linear_pattern: is_consume });
+                    }
+                    state.scopes.push(frame);
                     if let Some(g) = &arm.guard { self.walk_expr(g, state, errors); }
                     match &arm.body {
                         MatchArmBody::Expr(e) => self.walk_expr(e, state, errors),
                         MatchArmBody::Block(b) => self.walk_block(b, state, errors),
                     }
+                    state.scopes.pop();
                 }
             }
             ExprKind::Block(b) => self.walk_block(b, state, errors),
@@ -23002,8 +23041,8 @@ impl<'a> CapabilityCtx<'a> {
                 // never flagged as a "captured outer mut" (it's per-iteration
                 // local, not shared across siblings).
                 let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
-                for (name, is_mut) in pattern_capture_names(pattern) {
-                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: elem_type.clone() });
+                for (name, is_mut, is_consume) in pattern_capture_names(pattern) {
+                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: elem_type.clone(), linear_pattern: is_consume });
                 }
                 state.scopes.push(frame);
                 self.check_capture_boundary(body, state, errors);
@@ -23014,8 +23053,8 @@ impl<'a> CapabilityCtx<'a> {
             ExprKind::For { iter, body, pattern, elem_type, .. } => {
                 self.walk_expr(iter, state, errors);
                 let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
-                for (name, is_mut) in pattern_capture_names(pattern) {
-                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: elem_type.clone() });
+                for (name, is_mut, is_consume) in pattern_capture_names(pattern) {
+                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: elem_type.clone(), linear_pattern: is_consume });
                 }
                 state.scopes.push(frame);
                 for s in &body.stmts { self.walk_stmt(s, state, errors); }
@@ -23026,9 +23065,21 @@ impl<'a> CapabilityCtx<'a> {
                 self.walk_expr(cond, state, errors);
                 self.walk_block(body, state, errors);
             }
-            ExprKind::WhileLet { scrutinee, body, .. } => {
+            ExprKind::WhileLet { scrutinee, pattern, guard, body, .. } => {
                 self.walk_expr(scrutinee, state, errors);
+                // [M-detach-consume-escape-unchecked] (D415 §4 extension):
+                // same fix as `IfLet`/`Match` above — `while let Ok(consume
+                // x) = … { … }` binds `x` for the loop body; make it visible
+                // to `state.scopes` so a nested spawn/parallel-for/detach
+                // capturing it is checked.
+                let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
+                for (name, is_mut, is_consume) in pattern_capture_names(pattern) {
+                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: None, linear_pattern: is_consume });
+                }
+                state.scopes.push(frame);
+                if let Some(g) = guard { self.walk_expr(g, state, errors); }
                 self.walk_block(body, state, errors);
+                state.scopes.pop();
             }
             ExprKind::Loop { body, .. } => self.walk_block(body, state, errors),
             ExprKind::Select { arms } => {
@@ -23392,6 +23443,18 @@ impl<'a> CapabilityCtx<'a> {
         // явный move `spawn consume c { … }` (D415 §4 — init exempt в
         // capture_scan). Отдельный Vec — своя диагностика.
         let mut linear_flagged: Vec<(String, String)> = Vec::new();
+        // [M-detach-consume-escape-unchecked] (D415 §4 extension, Plan 173.3):
+        // names bound via an explicit `consume` pattern sub-bind
+        // (`Ok(consume stream) => { … }` in a `match`/`if let`/`while let`
+        // arm — `ScopeBinding.linear_pattern`) never carry a `ty` (no static
+        // annotation at a pattern-destructure site — V1 has no destructure
+        // type inference), so the `ty`-based `type_decls` lookup above can
+        // never classify them as linear. `linear_pattern` is set precisely
+        // when the SOURCE syntax already marked the bind `consume` — that is
+        // itself sufficient (and authoritative) evidence this is a linear/
+        // consume resource, independent of knowing its concrete type name.
+        // Separate Vec (no type name available for the diagnostic).
+        let mut pattern_linear_flagged: Vec<String> = Vec::new();
         for name in free {
             let binding = state.scopes.iter().rev().find_map(|f| f.get(&name));
             if let Some(b) = binding {
@@ -23405,6 +23468,10 @@ impl<'a> CapabilityCtx<'a> {
                             continue;
                         }
                     }
+                }
+                if b.linear_pattern {
+                    pattern_linear_flagged.push(name.clone());
+                    continue;
                 }
                 if !b.mutable {
                     // `ro` capture — deep-immutable view (D246): always safe,
@@ -23461,8 +23528,29 @@ impl<'a> CapabilityCtx<'a> {
                      (Plan 201 / 173.1 by-value капчур). Возьмите \
                      `@share()`-копию per-fiber (`ro w = {n}.share()` перед \
                      `spawn {{ …w… }}` — refcount закрывает последним) либо \
-                     явный move: `spawn consume {n} {{ … }}` (D415 §4).",
+                     явный move: `spawn consume {n} {{ … }}` / \
+                     `detach consume {n} {{ … }}` (D415 §4).",
                     n = name, ty = ty
+                ),
+                body.span,
+            ));
+        }
+        pattern_linear_flagged.sort(); // deterministic diagnostic order
+        for name in pattern_linear_flagged {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_LINEAR_CAPTURE_IN_FIBER] `{n}` (явный `consume`-биндинг \
+                     из pattern, напр. `Ok(consume {n})`) захвачен в тело \
+                     `spawn`/`parallel for`/`detach` из объемлющего scope: \
+                     by-value копия обёртки в N файберов = N алиасов одного \
+                     ресурса БЕЗ учёта владения → use-after-consume/double-\
+                     close (Plan 173.3 / [M-detach-consume-escape-unchecked], \
+                     D415 §4 расширение). Передайте владение явным move: \
+                     `spawn consume {n} {{ … }}` / `detach consume {n} {{ … }}` \
+                     — тело получает `{n}` во владение, cleanup срабатывает \
+                     при выходе из ЕГО собственного тела, а не объемлющего \
+                     scope.",
+                    n = name
                 ),
                 body.span,
             ));
@@ -23479,11 +23567,12 @@ impl<'a> CapabilityCtx<'a> {
                      threads from, the parent/siblings). Allowed captures \
                      (Plan 173.3, D415 §2): move it in explicitly \
                      (`spawn consume {} = expr {{ .. }}` / \
-                     `spawn consume {} {{ .. }}`), capture it `ro` (immutable \
+                     `spawn consume {} {{ .. }}` / `detach consume {} {{ .. }}`), \
+                     capture it `ro` (immutable \
                      view), or use an internally-synchronized `#share` type \
                      (`Mutex`/`Atomic*` — or a user lock-free type vouched \
                      with `#share`).",
-                    name, why, name, name
+                    name, why, name, name, name
                 ),
                 body.span,
             ));
@@ -23552,20 +23641,33 @@ fn capture_syntactic_init_type(
     }
 }
 
-/// Plan 173.3 (D415 §2): bound names (+ per-name mutability) introduced by a
-/// `let`/for-loop-var/etc pattern. Non-`Ident` sub-patterns default
-/// `mutable = false` (conservative — V1 does not track per-element `mut` in
-/// destructure patterns beyond the direct `Ident{is_mut}` case; see D184 §1
-/// "no per-element granularity V1", the same limitation this mirrors).
-fn pattern_capture_names(pat: &Pattern) -> Vec<(String, bool)> {
+/// Plan 173.3 (D415 §2): bound names (+ per-name mutability + per-name
+/// explicit-`consume` marker) introduced by a `let`/for-loop-var/match-arm/
+/// if-let/etc pattern. Non-`Ident` sub-patterns default `mutable = false,
+/// is_consume = false` (conservative — V1 does not track per-element `mut`/
+/// `consume` in destructure patterns beyond the direct `Ident{is_mut,
+/// is_consume}` case; see D184 §1 "no per-element granularity V1", the same
+/// limitation this mirrors). Plan 173.3 [M-detach-consume-escape-unchecked]
+/// amendment (D415 §4 extension): the third tuple element (`is_consume`) —
+/// `Ok(consume tcp)`-style explicit ownership-transfer sub-binds (D157/D180)
+/// — feeds the `spawn`/`parallel for`/`detach` capture-check's
+/// `linear_pattern` classification (see `check_capture_boundary`) so a
+/// match-arm-bound consume value (no static type annotation — `ty` stays
+/// `None` in `ScopeBinding`, so the ordinary `type_decls`-lookup linear check
+/// can't see it) is still caught, closing the exact gap the flagship's
+/// `match lst.accept() { Ok(consume stream) => { detach { ...stream... } } }`
+/// slipped through (bare `Ok(consume stream)` bind was entirely invisible to
+/// `state.scopes` before this amendment — match/if-let arms pushed no scope
+/// frame at all).
+fn pattern_capture_names(pat: &Pattern) -> Vec<(String, bool, bool)> {
     let mut out = Vec::new();
     pattern_capture_names_into(pat, &mut out);
     out
 }
 
-fn pattern_capture_names_into(pat: &Pattern, out: &mut Vec<(String, bool)>) {
+fn pattern_capture_names_into(pat: &Pattern, out: &mut Vec<(String, bool, bool)>) {
     match pat {
-        Pattern::Ident { name, is_mut, .. } => out.push((name.clone(), *is_mut)),
+        Pattern::Ident { name, is_mut, is_consume, .. } => out.push((name.clone(), *is_mut, *is_consume)),
         Pattern::Variant { kind: VariantPatternKind::Tuple { patterns, .. }, .. } => {
             for p in patterns { pattern_capture_names_into(p, out); }
         }
@@ -23574,7 +23676,7 @@ fn pattern_capture_names_into(pat: &Pattern, out: &mut Vec<(String, bool)>) {
             for f in fields {
                 match &f.pattern {
                     Some(p) => pattern_capture_names_into(p, out),
-                    None => out.push((f.name.clone(), false)), // `{ name }` shorthand
+                    None => out.push((f.name.clone(), false, false)), // `{ name }` shorthand
                 }
             }
         }
@@ -23582,14 +23684,14 @@ fn pattern_capture_names_into(pat: &Pattern, out: &mut Vec<(String, bool)>) {
             for e in elems {
                 match e {
                     ArrayPatternElem::Item(p) => pattern_capture_names_into(p, out),
-                    ArrayPatternElem::RestBind(name) => out.push((name.clone(), false)),
+                    ArrayPatternElem::RestBind(name) => out.push((name.clone(), false, false)),
                     ArrayPatternElem::Rest => {}
                 }
             }
         }
         Pattern::Tuple(pats, _) => { for p in pats { pattern_capture_names_into(p, out); } }
         Pattern::Binding { name, inner, .. } => {
-            out.push((name.clone(), false));
+            out.push((name.clone(), false, false));
             pattern_capture_names_into(inner, out);
         }
         Pattern::Or { alternatives, .. } => {
@@ -23619,7 +23721,7 @@ fn capture_scan_stmt(s: &Stmt, shadow: &mut HashSet<String>, free: &mut HashSet<
         Stmt::Expr(e) => capture_scan_expr(e, shadow, free),
         Stmt::Let(d) => {
             capture_scan_expr(&d.value, shadow, free);
-            for (name, _) in pattern_capture_names(&d.pattern) {
+            for (name, _, _) in pattern_capture_names(&d.pattern) {
                 shadow.insert(name);
             }
         }
@@ -23711,7 +23813,7 @@ fn capture_scan_expr(e: &Expr, shadow: &mut HashSet<String>, free: &mut HashSet<
         ExprKind::IfLet { scrutinee, then, else_, guard, pattern } => {
             capture_scan_expr(scrutinee, shadow, free);
             let mut inner_shadow = shadow.clone();
-            for (n, _) in pattern_capture_names(pattern) { inner_shadow.insert(n); }
+            for (n, _, _) in pattern_capture_names(pattern) { inner_shadow.insert(n); }
             if let Some(g) = guard { capture_scan_expr(g, &mut inner_shadow, free); }
             capture_scan_block(then, &mut inner_shadow, free);
             capture_scan_else(else_, shadow, free);
@@ -23720,7 +23822,7 @@ fn capture_scan_expr(e: &Expr, shadow: &mut HashSet<String>, free: &mut HashSet<
             capture_scan_expr(scrutinee, shadow, free);
             for arm in arms {
                 let mut inner_shadow = shadow.clone();
-                for (n, _) in pattern_capture_names(&arm.pattern) { inner_shadow.insert(n); }
+                for (n, _, _) in pattern_capture_names(&arm.pattern) { inner_shadow.insert(n); }
                 if let Some(g) = &arm.guard { capture_scan_expr(g, &mut inner_shadow, free); }
                 match &arm.body {
                     MatchArmBody::Expr(be) => capture_scan_expr(be, &mut inner_shadow, free),
@@ -23768,7 +23870,7 @@ fn capture_scan_expr(e: &Expr, shadow: &mut HashSet<String>, free: &mut HashSet<
         ExprKind::For { pattern, iter, body, .. } | ExprKind::ParallelFor { pattern, iter, body, .. } => {
             capture_scan_expr(iter, shadow, free);
             let mut inner_shadow = shadow.clone();
-            for (n, _) in pattern_capture_names(pattern) { inner_shadow.insert(n); }
+            for (n, _, _) in pattern_capture_names(pattern) { inner_shadow.insert(n); }
             capture_scan_block(body, &mut inner_shadow, free);
         }
         ExprKind::While { cond, body, .. } => {
@@ -23778,7 +23880,7 @@ fn capture_scan_expr(e: &Expr, shadow: &mut HashSet<String>, free: &mut HashSet<
         ExprKind::WhileLet { scrutinee, body, guard, pattern, .. } => {
             capture_scan_expr(scrutinee, shadow, free);
             let mut inner_shadow = shadow.clone();
-            for (n, _) in pattern_capture_names(pattern) { inner_shadow.insert(n); }
+            for (n, _, _) in pattern_capture_names(pattern) { inner_shadow.insert(n); }
             if let Some(g) = guard { capture_scan_expr(g, &mut inner_shadow, free); }
             capture_scan_block(body, &mut inner_shadow, free);
         }
