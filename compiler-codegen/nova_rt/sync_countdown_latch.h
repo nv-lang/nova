@@ -281,7 +281,7 @@ static inline nova_bool Nova_CountDownLatch_method_await_for(Nova_CountDownLatch
     if (_nova_active_slot < 0) {
         /* Non-fiber: spin-poll with deadline. */
         nova_mutex_unlock(&cdl->mu);
-        int64_t deadline = _nova_monotonic_ns() + nanos;
+        int64_t deadline = time_monotonic_ns() + nanos;
         for (;;) {
             _nova_cpu_yield();
             nova_mutex_lock(&cdl->mu);
@@ -290,7 +290,7 @@ static inline nova_bool Nova_CountDownLatch_method_await_for(Nova_CountDownLatch
                 return true;
             }
             nova_mutex_unlock(&cdl->mu);
-            if (_nova_monotonic_ns() >= deadline) return false;
+            if (time_monotonic_ns() >= deadline) return false;
         }
     }
 

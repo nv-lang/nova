@@ -13260,7 +13260,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // `timeout: <Duration>` — relative offset from now.
                 self.line(&format!(
                     "{}.deadline_ns = nova_deadline_combine({}.deadline_ns, \
-                     _nova_monotonic_ns() + (int64_t)(({}).nanos));",
+                     time_monotonic_ns() + (int64_t)(({}).nanos));",
                     queue_var, queue_var, v
                 ));
             } else {
@@ -16650,27 +16650,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             arg = arg_name
                         ));
                         self.line(&format!(
-                            "return _nova_time_default_sleep((nova_int)(({arg}.nanos + 999999) / 1000000));",
+                            "return time_default_sleep((nova_int)(({arg}.nanos + 999999) / 1000000));",
                             arg = arg_name
                         ));
                     }
                     "now" => {
                         self.line("if (_nova_handler_Time->now) { int64_t _nv_w = _nova_handler_Time->now(_nova_handler_Time->ctx); return (NovaValue_Timestamp){ .nanos = _nv_w }; }");
                         self.line(&format!(
-                            "return ({ret}){{ .nanos = _nova_wall_unix_ms() * (int64_t)1000000 }};",
+                            "return ({ret}){{ .nanos = time_wall_unix_ms() * (int64_t)1000000 }};",
                             ret = ret
                         ));
                     }
                     "now_monotonic" => {
                         self.line("if (_nova_handler_Time->now_monotonic) { int64_t _nv_w = _nova_handler_Time->now_monotonic(_nova_handler_Time->ctx); return (NovaValue_Monotonic){ .nanos = _nv_w }; }");
                         self.line(&format!(
-                            "return ({ret}){{ .nanos = _nova_monotonic_ns() }};",
+                            "return ({ret}){{ .nanos = time_monotonic_ns() }};",
                             ret = ret
                         ));
                     }
                     _ /* local_offset_sec */ => {
                         self.line("if (_nova_handler_Time->local_offset_sec) { return _nova_handler_Time->local_offset_sec(_nova_handler_Time->ctx); }");
-                        self.line("return _nova_local_offset_sec();");
+                        self.line("return time_local_offset_sec();");
                     }
                 }
             } else {

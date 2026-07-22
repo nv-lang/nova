@@ -1458,8 +1458,8 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
  * работает без `with`/explicit import, как раньше) — теперь ОБЫЧНЫЙ
  * ВСЕГДА-присутствующий `.nv` default handler, не второй хардкод-C-путь.
  * Его тело зовёт те же тонкие `extern "C"` примитивы, что раньше
- * (`_nova_wall_unix_ms`/`_nova_monotonic_ns`/`_nova_local_offset_sec`/
- * `_nova_time_default_sleep`, определены в fibers.h) — единственный
+ * (`time_wall_unix_ms`/`time_monotonic_ns`/`time_local_offset_sec`/
+ * `time_default_sleep`, определены в fibers.h) — единственный
  * оставшийся Time-related C (§3: не хардкод-зеркало .nv-схемы, а тонкий
  * extern-примитив, вызываемый из .nv).
  *

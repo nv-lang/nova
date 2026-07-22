@@ -227,18 +227,18 @@ export type Time effect {
 // подтверждено, что cross-module record-literal construction РАЗРЕШЕНА
 // (нет module-privacy на value-record полях), так что этот handler НЕ
 // нуждается в спец-правах time.duration-модуля.
-extern "C" fn _nova_wall_unix_ms() -> int
-extern "C" fn _nova_monotonic_ns() -> int
-extern "C" fn _nova_local_offset_sec() -> int
-extern "C" fn _nova_time_default_sleep(ms int) -> ()
+extern "C" fn time_wall_unix_ms() -> int
+extern "C" fn time_monotonic_ns() -> int
+extern "C" fn time_local_offset_sec() -> int
+extern "C" fn time_default_sleep(ms int) -> ()
 
 #default_handler(Time)
 fn time_default() -> Effect[Time] {
     effect Time {
-        sleep(d) => _nova_time_default_sleep(((d.nanos() + 999_999) / 1_000_000) as int)
-        now() => { nanos: _nova_wall_unix_ms() * 1_000_000 }
-        now_monotonic() => { nanos: _nova_monotonic_ns() }
-        local_offset_sec() => _nova_local_offset_sec()
+        sleep(d Duration) => time_default_sleep(((d.nanos() + 999_999) / 1_000_000) as int)
+        now() => { nanos: time_wall_unix_ms() * 1_000_000 }
+        now_monotonic() => { nanos: time_monotonic_ns() }
+        local_offset_sec() => time_local_offset_sec()
     }
 }
 

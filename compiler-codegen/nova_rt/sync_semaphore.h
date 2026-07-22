@@ -7,7 +7,7 @@
 // Included from sync_primitives.h after all other sync headers.
 // Depends on: nova_sched_{park_with_unlock,wake}, nova_alloc_uncollectable,
 //             Nova_Fail_fail, nova_throw, uv_timer_*, _nova_active_scope/slot,
-//             _nova_cpu_yield, _nova_monotonic_ns, NovaMutexTLFHandle pattern.
+//             _nova_cpu_yield, time_monotonic_ns, NovaMutexTLFHandle pattern.
 //
 // Naming convention: Nova_Semaphore_{static|method}_<name>[_<suffix>].
 // All runtime invariants are unconditional (fire in Dev AND Release — per
@@ -253,7 +253,7 @@ static inline nova_bool Nova_Semaphore_method_acquire_for(Nova_Semaphore* s,
     if (_nova_active_slot < 0) {
         /* Non-fiber: spin-poll with deadline. */
         nova_mutex_unlock(&s->mu);
-        int64_t deadline = _nova_monotonic_ns() + nanos;
+        int64_t deadline = time_monotonic_ns() + nanos;
         for (;;) {
             _nova_cpu_yield();
             nova_mutex_lock(&s->mu);
@@ -263,7 +263,7 @@ static inline nova_bool Nova_Semaphore_method_acquire_for(Nova_Semaphore* s,
                 return true;
             }
             nova_mutex_unlock(&s->mu);
-            if (_nova_monotonic_ns() >= deadline) return false;
+            if (time_monotonic_ns() >= deadline) return false;
         }
     }
 
