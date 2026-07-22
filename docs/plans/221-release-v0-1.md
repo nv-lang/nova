@@ -60,7 +60,18 @@
       перед effect-vtable (снимает scalar-bridge — идея владельца); (3) типизация опов, sleep-канон
       = ТОЛЬКО метод `d.sleep()` (D9 одна дверь, свободная sleep() убрана); (4) РЕТРАКЦИЯ ambient
       Time (D62) — Time обязателен в сигнатурах как Fs/Net, миграция std+examples+conformance до
-      нуля. Волна `p175-effect-refactor` (sonnet). БЛОКЕР ТЕГОВ.
+      нуля. Волна `p175-effect-refactor` (sonnet). **v3 ✅ ВЛИТ (65ba4fb90): typed Time,
+      2-pass emission снял 4× барьер, ambient честный, sleep=метод.** Mem/TimerMetrics-vtable
+      остаток → после тегов (196).
+- [ ] **A-B11 🔨 эффект-API-полировка (Ф.2-v4, находки владельца вычиткой 2026-07-22) ДО ТЕГОВ**
+      [175.2 Ф.2-v4](175.2-typed-effects.md): (1-3 ✅ ветка p-fx-polish: extern `time_*`-нейминг,
+      sleep(d Duration)-тип, вынос тестов в пир-файлы). Остаток (новая волна): (4) handler-опы
+      полная декларация обязательна (`now() -> Timestamp =>`, E-ошибка, ~78 сайтов); (5) priv nanos
+      Monotonic/Timestamp/Duration; (6) перенос Time-эффекта+default-handler в folder-модуль
+      time.duration (priv-доступ handler'у, БЕЗ публичного from_ns; возможно т.к. ambient снят);
+      (7) #default_handler без аргумента (вывод из -> Effect[X]); (8) нейминг time_default→real_time
+      (симметрия real_fs). Список ОТКРЫТ (владелец продолжает вычитку) — финал ОДНОЙ волной.
+      БЛОКЕР ТЕГОВ.
 - [x] **Критерий Ф.0: ✅ 2026-07-21 ДОСТИГНУТ** — исходная очередь пуста; CI без known_red.
       Пост-Ф.0 добавка из A-S4 (не в исходном критерии, но релиз-скоуп): for-in cross-package
       (nova-http, 5 CU) + git-кэш гонка раннера — волна в полёте, финал-гейт A-R1 после неё.
