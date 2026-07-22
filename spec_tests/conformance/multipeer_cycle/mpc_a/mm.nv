@@ -1,0 +1,9 @@
+// [M-imports-multipeer-cycle-partial-exports] regression — peer MM
+// (alphabetically MIDDLE of `mpc_a`'s three peers, see aa.nv/zz_late.nv).
+// No imports of its own — purely here to make `mpc_a` a genuine ≥3-peer
+// folder-module (not just a 2-peer edge case) between the peer that closes
+// the cycle (aa.nv) and the peer whose export is the one that goes missing
+// pre-fix (zz_late.nv).
+module multipeer_cycle.mpc_a
+
+export fn mpc_a_mm_val() -> int => 2

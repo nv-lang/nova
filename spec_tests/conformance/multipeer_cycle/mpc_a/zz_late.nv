@@ -1,0 +1,11 @@
+// [M-imports-multipeer-cycle-partial-exports] regression — peer ZZ_LATE
+// (alphabetically LAST of `mpc_a`'s three peers, see aa.nv/mm.nv). Declares
+// the ONE name (`mpc_a_late_val`) that `mpc_b` needs across the cycle edge
+// `mpc_b -> mpc_a`. Pre-fix, `resolve_one`'s single combined pass had
+// already recursed from `aa.nv` (the FIRST peer, parsed before this one)
+// into `mpc_b`'s own imports by the time this file would have been parsed —
+// so `mpc_b`'s back-edge to `mpc_a` saw a `visited[mpc_a_key]` cache missing
+// THIS peer's export entirely: `mpc_a_late_val` resolved to nothing.
+module multipeer_cycle.mpc_a
+
+export fn mpc_a_late_val() -> int => 3

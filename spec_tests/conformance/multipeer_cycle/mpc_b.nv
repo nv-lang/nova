@@ -1,0 +1,11 @@
+// [M-imports-multipeer-cycle-partial-exports] regression (221.1 Ф.2 #14) —
+// closes the cycle `mpc_a/aa.nv -> mpc_b -> mpc_a` (D291: cross-module
+// cycles are legal). Crucially imports the name declared ONLY in `mpc_a`'s
+// alphabetically-LAST peer (`zz_late.nv`) — the exact shape that went
+// missing pre-fix (see aa.nv/zz_late.nv for the full root-cause note).
+module multipeer_cycle.mpc_b
+
+import ./mpc_a.{mpc_a_late_val}
+
+export fn mpc_b_val() -> int => 20
+export fn mpc_b_uses_late() -> int => mpc_a_late_val() + 1

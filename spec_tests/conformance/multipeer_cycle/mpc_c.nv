@@ -1,0 +1,18 @@
+// [M-imports-multipeer-cycle-partial-exports] regression (221.1 Ф.2 #14) —
+// third-party importer, independent of the `mpc_a`<->`mpc_b` cycle edge
+// itself. Directly imports `mpc_a`'s alphabetically-LAST-peer name
+// (`mpc_a_late_val`, declared in mpc_a/zz_late.nv) AND `mpc_b`'s
+// cycle-crossing function (`mpc_b_uses_late`, which itself calls
+// `mpc_a_late_val` across the back-edge) — both must resolve and both must
+// agree on the same value, proving the multi-peer cycle's export cache is
+// COMPLETE (not just "happens to be visible from one particular angle").
+module multipeer_cycle.mpc_c
+
+import ./mpc_a.{mpc_a_late_val, mpc_a_aa_uses_b}
+import ./mpc_b.{mpc_b_uses_late}
+
+test "multipeer-cycle: alphabetically-last peer's export survives a cross-module cycle" {
+    assert(mpc_a_late_val() == 3)
+    assert(mpc_b_uses_late() == 4)
+    assert(mpc_a_aa_uses_b() == 120)
+}
