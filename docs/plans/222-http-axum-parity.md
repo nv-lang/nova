@@ -208,8 +208,15 @@ serde-атрибуты известны. (а) эмитить OpenAPI-спеку 
 всегда синхронную, без единой аннотации, с нулевой рантайм-ценой; (б) той же инфраструктурой
 СВЕРЯТЬ на компиляции: `{id}` в пути объявлен? поле `id` в `Path[T]` есть? тип парсится из строки?
 **Почему круче всех:** FastAPI делает (а) рефлексией в рантайме; Rust (`utoipa`/`aide`) — руками
-дублирующими аннотациями; (б) **не делает НИКТО**. **Зависит:** 222.1 (Router) + 222.3 (extractors).
-**Зона:** компилятор (сбор метаданных) + nova-http. Крупный.
+дублирующими аннотациями. **Поправка 2026-07-23:** (б) частично ЕСТЬ у **.NET minimal APIs** —
+Roslyn-анализаторы ловят часть рассинхронов параметров маршрута; **изучить их, не изобретать**.
+Незанятая ниша: **связка «спека + сверка из ОДНОГО источника»** — у .NET спека строится рефлексией
+на старте (source generators применены к сериализации, не к спеке).
+**Кандидат-форма (из FastAPI):** ко-локация `#route(get, "/users/{id}")` НАД хендлером даёт
+компилятору путь и сигнатуру в одном месте → сверка тривиальна (у Axum они разнесены). Оценить как
+дополнение к императивной регистрации, не замену.
+**Зависит:** 222.1 (Router) + 222.3 (extractors). **Зона:** компилятор (сбор метаданных) +
+nova-http. Крупный.
 
 ### 222.9 — validation-derive (`#validate`) 🔴
 **Дыра:** serde проверяет только ТИПЫ; «int» ≠ «int в 1..100». Pydantic даёт `min_length`/`regex`/
@@ -233,13 +240,41 @@ serde-атрибуты известны. (а) эмитить OpenAPI-спеку 
 парсер (boundary-стриминг), интеграция с body-size-limit из 222.7. **Зона:** nova-http.
 
 ### 222.12 — батарейки-middleware: CORS · static · compression · logging · rate-limit 🔴
-**Дыра:** экосистемы нет (Express — тысячи middleware, FastAPI/Starlette — в коробке). Каждый пункт
-— небольшой `fn(next Handler) -> Handler` поверх 222.4. `static` смыкается с `serve_static(ReadFs)`
-из roadmap nova-http (210 Ф.6б ReadFs уже есть). **Зависит:** 222.4. **Зона:** nova-http.
+**Дыра:** экосистемы нет (Express — тысячи middleware, FastAPI/Starlette — в коробке).
+**Зависит:** 222.4. **Зона:** nova-http.
+
+**РЕШЕНИЕ ПО СТРУКТУРЕ (владелец 2026-07-23: «батарейки часть http или отдельные модули?»):
+ВНУТРИ пакета `nova-http`, отдельными МОДУЛЯМИ** (`http.middleware.cors`, `http.middleware.compress`,
+`http.static`, `http.auth`, …). Обоснование — три факта, проверенных по коду 2026-07-23:
+1. **Ни одна батарейка НЕ требует новой внешней зависимости** (см. таблицу ниже) → главный аргумент
+   за отдельные пакеты («не тащить лишнее») отпадает.
+2. **Манифест НЕ поддерживает optional-deps/features** (`Dependency` = name/source/forbid,
+   `manifest.rs:52`) → отдельные пакеты всё равно были бы «всё или ничего», выигрыша нет.
+3. **Экосистемы/реестра нет** (требование владельца «батарейки из коробки») → отдельные пакеты
+   некому обнаруживать. Один `import http.middleware.cors.{cors}` — платишь только за то, что
+   импортировал (CU включает только импортированные модули).
+
+**Декомпозиция по батарейкам (источник → что нужно → готовность):**
+| Батарейка | Семантику брать из | Нужно | Статус зависимостей |
+|---|---|---|---|
+| CORS | `tower-http::CorsLayer` (RFC-правила preflight/credentials/max-age) | чистая логика заголовков | ✅ ноль |
+| static | **Go stdlib `http.FileServer`** (ETag/Range/If-Modified-Since — вылизано) + `tower-http::ServeDir` | `ReadFs` | ✅ `std/fs/readfs.nv` (210 Ф.6б) |
+| compression | `tower-http::CompressionLayer` (content-negotiation `Accept-Encoding`, q-values) | gzip/brotli | ✅ пакет `compress` УЖЕ зависимость (205 Ф.2) |
+| logging/tracing | `chi/middleware.Logger` + `RequestID`/`RealIP` (форма) | время, вывод | ✅ std |
+| rate-limit | `chi/middleware.Throttle`, `tower::limit` | токен-бакет | ✅ **`std/concurrency/rate_limiter.nv` УЖЕ ЕСТЬ** — обёртка, не реализация |
+| recover/panic-guard | `chi/middleware.Recoverer`, `tower-http::CatchPanicLayer` | перехват паники хендлера | ⚠️ уточнить семантику паники в фибре |
+
+**ФОРМА композиции — из Go/chi, НЕ из tower:** Go-middleware = `func(http.Handler) http.Handler` —
+**один-в-один наш `fn(next Handler) -> Handler`**; tower-`Service` (generic + `poll_ready` +
+backpressure) в нашу модель не переносится. Семантику берём у tower-http (строже и полнее), форму —
+у chi.
 
 ### 222.13 — auth-блоки: JWT/OAuth2-скелеты, sessions 🟠
 Сейчас только `cookie.nv` (10 экспортов). FastAPI даёт `Security`/scopes, Express — passport.
-Осторожно: криптография — не изобретать (опереться на nova-tls/crypto). **Зона:** nova-http.
+**Готовность (проверено 2026-07-23): `std/crypto/{jwt,hmac}.nv` УЖЕ СУЩЕСТВУЮТ** → JWT-извлекатель
+это обёртка (extractor, читающий `Authorization`, зовущий `Jwt.decode_hs256`, отдающий `Claims`),
+НЕ реализация криптографии. Формы брать из `axum-extra` (typed-header extractors, cookie-jar).
+Новых внешних зависимостей НЕ нужно. **Зона:** nova-http.
 
 ### 222.14 — WebSocket 🟠
 Явно вне ядра 222 (другой протокол общения: upgrade-handshake, фрейминг, ping/pong, backpressure).
