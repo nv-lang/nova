@@ -1,0 +1,62 @@
+// [M-conformance-megacu-intermittent-run-crash] regression (2026-07-22).
+//
+// A `mut` (#share) capture crossing a `detach` boundary must survive the
+// DEATH OF THE CALLER FRAME: the orphan fiber is fire-and-forget and
+// routinely starts after the spawning function has already returned.
+// Pre-fix, emit_detach captured `&stack_local` into the orphan ctx
+// (copied from emit_spawn, where the supervised parent joins children
+// before its frame pops — sound there, use-after-return here): the orphan
+// woke after `dmc_kick`'s frame was popped AND overwritten (`dmc_burn`
+// recursion below makes the clobber deterministic), read a garbage
+// AtomicInt handle from the dead slot and AV'd inside fetch_add — the
+// silent mid-run mega-CU crash of this marker. Post-fix the capture is a
+// GC-heap box shared by caller and orphan, so this test is deterministic:
+// the increment lands on the real AtomicInt no matter how late the orphan
+// runs, and the caller observes it after drain_orphans().
+
+module spec_tests.conformance
+
+fn dmc_kick(mut n AtomicInt) Detach Time -> () {
+    detach {
+        // Sleep past the caller's return + stack clobber — guarantees the
+        // orphan touches the capture only after dmc_kick's frame is gone.
+        (60).to_millis().sleep()
+        ro _ = n.fetch_add(1)
+    }
+}
+
+// Deep recursion — deterministically overwrites the stack region where
+// dmc_kick's (dead) frame lived before the orphan wakes.
+priv(file) fn dmc_burn(d int) -> int {
+    if d <= 0 {
+        return 1
+    }
+    return d + dmc_burn(d - 1)
+}
+
+test "detach mut-capture survives caller frame death (heap-box, not &stack)" {
+    mut n = AtomicInt.new(0)
+    dmc_kick(n)
+    ro _ = dmc_burn(64)
+    runtime.drain_orphans()
+    assert(n.load() == 1)
+}
+
+// The EXACT crash shape of the marker: a `mut` #share local declared in the
+// TEST BODY itself, captured by a `detach` whose orphan wakes long after
+// this test block has returned (no drain here — deliberate). The suite
+// keeps running other tests on this same fiber stack, recycling this
+// frame's slots; the orphan then performs its increment. Pre-fix
+// (`ctx->slot = &stack_local`) that read a garbage handle from the dead
+// frame → AV → the whole mega-CU binary died mid-run with no FAIL line
+// (the marker's symptom, ~1/8 of gate runs — here made deterministic by
+// the 60ms delay). Post-fix the capture lives in a GC box, so the late
+// increment is safe; the atexit orphan-drain then lets the binary exit
+// cleanly.
+test "detach mut-capture: orphan outliving the test frame must not corrupt (crash-repro)" {
+    mut lost = AtomicInt.new(0)
+    detach {
+        (60).to_millis().sleep()
+        ro _ = lost.fetch_add(1)
+    }
+}

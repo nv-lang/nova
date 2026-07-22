@@ -13937,8 +13937,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// fire-and-forget на orphan fiber (D50 AsyncDetach default).
     ///
     /// Архитектура (паритет Go `go fn()` / tokio::spawn без JoinHandle):
-    /// 1. Capture-анализ (как у emit_spawn): immutable scalars by-value,
-    ///    остальное by-pointer.
+    /// 1. Capture-анализ (как у emit_spawn): immutable captures by-value;
+    ///    mutable captures — HEAP-BOX (НЕ `&stack_local` как в emit_spawn:
+    ///    орфан переживает кадр вызывающего —
+    ///    [M-conformance-megacu-intermittent-run-crash], см. capture-setup
+    ///    ниже).
     /// 2. Ctx-struct с NovaSpawnCtxBase prefix + capture fields →
     ///    `lambda_forward_decls` (file scope).
     /// 3. Entry function `_nova_detach_N(mco_coro*)` — body wrapped в
@@ -14241,7 +14244,41 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("}");
 
         // Capture setup (как у emit_spawn — handles nested-capture rewriting).
-        for (cap, _, by_value) in &captures {
+        //
+        // [M-conformance-megacu-intermittent-run-crash] (2026-07-22): mutable
+        // captures are HEAP-BOXED here, NOT taken by `&stack_local` as
+        // emit_spawn does. emit_spawn's by-ref capture is sound because a
+        // supervised parent JOINS its children before the enclosing frame
+        // pops; a detach orphan is fire-and-forget and ROUTINELY outlives the
+        // caller frame — `ctx->cap = &local` was a use-after-return that hit
+        // as a stochastic AV (frame[1] = `_nova_detach_1` →
+        // `Nova_AtomicInt_method_fetch_sub_int` on a garbage handle read from
+        // the dead frame) whenever the orphan's worker pickup was delayed past
+        // the caller's return under CPU contention (~15%/run at 4-way load on
+        // the conformance mega-CU; the «~1 of 8 gate runs» silent mid-run
+        // death of `a_q3_println_debug_record`). Fix mirrors the established
+        // escaping-handler idiom (emit_effect_handler_literal case (a)):
+        // lazily heap-promote the var into a GC box, register it in
+        // `var_boxed` so textually-later reads/writes in the enclosing fn
+        // transparently deref the box (keeps the D50 §3.1 canonical pattern
+        // `mut x = 0; detach { x = 42 }; runtime.drain_orphans();
+        // assert(x == 42)` working), and store the BOX pointer in the ctx —
+        // the ctx field type (`T*`) and the orphan body's `(*_c->cap)` access
+        // are unchanged; only the pointee moves stack → GC heap. The box is
+        // collectable (`nova_alloc`) and stays reachable through the scanned
+        // ctx for the orphan's whole life. D415 §2 already restricts mut
+        // captures across a detach boundary to `#share` types
+        // (AtomicInt/Mutex/#share records), for which a boxed handle copy
+        // preserves shared-object mutation exactly.
+        //
+        // Known accepted limits (same class as the escaping-handler box,
+        // [M-175-handler-lit-boxed-var-c-scope-leak]): (a) box reuse across
+        // TWO detach sites capturing the same var relies on the first box's
+        // C declaration still being in scope; (b) rebinding-visibility of a
+        // scalar capture read BEFORE the detach line inside a loop follows
+        // emission order, not iteration order. Neither shape exists in the
+        // corpus; both degrade to stale reads, never to UB.
+        for (cap, ty, by_value) in &captures {
             let is_outer_cap = self.current_spawn_captures.as_ref()
                 .map(|s| s.contains(cap)).unwrap_or(false);
             let outer_by_value = self.current_spawn_capture_by_value.as_ref()
@@ -14250,14 +14287,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if outer_by_value { format!("_c->{}", cap) }
                 else { format!("(*_c->{})", cap) }
             } else { cap.clone() };
-            let address_outer = if is_outer_cap {
-                if outer_by_value { format!("&_c->{}", cap) }
-                else { format!("_c->{}", cap) }
-            } else { format!("&{}", cap) };
             if *by_value {
                 self.line(&format!("{ctx_var}->{cap} = {access_outer};"));
             } else {
-                self.line(&format!("{ctx_var}->{cap} = {address_outer};"));
+                let box_ptr = if let Some(existing) = self.var_boxed.get(cap) {
+                    // Var already heap-promoted by an earlier closure/handler/
+                    // detach in this enclosing fn — share the same box so all
+                    // parties observe the same cell.
+                    existing.clone()
+                } else {
+                    let bv = format!("{}_box_{}", detach_id, cap);
+                    self.line(&format!(
+                        "{ty}* {bv} = ({ty}*)nova_alloc(sizeof({ty}));",
+                        ty = ty, bv = bv));
+                    self.line(&format!("*{bv} = {access_outer};",
+                        bv = bv, access_outer = access_outer));
+                    self.var_boxed.insert(cap.clone(), bv.clone());
+                    bv
+                };
+                self.line(&format!("{ctx_var}->{cap} = {box_ptr};"));
             }
         }
 

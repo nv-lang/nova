@@ -92,3 +92,12 @@ export fn UdpSocket @local_addr() Net -> SocketAddr {
 /// Close the socket (consume).
 #stable(since = "0.1")
 export fn UdpSocket consume @close() Net { Net.close_socket(@) }
+
+/// D432/Plan 217.1 `Cleanup[never]`-имплементация: cleanup = `@close()`.
+/// Делает `UdpSocket` пригодным для авто-`@cleanup` (гибрид C, D432) —
+/// непотреблённый к концу скоупа сокет закрывается автоматически (см.
+/// `TcpStream`/`TcpListener`, std/net/tcp.nv).
+#stable(since = "0.1")
+export fn UdpSocket consume @cleanup(_outcome ScopeOutcome) -> () {
+    @close()
+}

@@ -27,10 +27,12 @@ extract-слой. Аудит показал — местами фундамен�
 Зоны нарочно НЕ пересекаются → максимум параллельных волн:
 
 ```
-ВОЛНА A (параллельно, РАЗНЫЕ репо/зоны, ноль конфликтов):
-  222.1  Router с нуля (Axum-style)        — nova-http/src/*.nv       ─┐
-  222.2  serde field-атрибуты до Rust-      — КОМПИЛЯТОР auto_derive.rs │ независимы
-         паритета (продолжение 180)                                   ─┘
+ВОЛНА A:
+  222.1  Router с нуля (Axum-style)        — nova-http/src/*.nv
+  222.2  serde field-атрибуты = **[180.1 Ф.1/Ф.7/Ф.10](180.1-serde-parity-and-beyond.md),
+         УЖЕ В РАБОТЕ** (волна p180-serde-field-attrs, 2026-07-22: rename/rename_all/skip/
+         default/alias/flatten + strict-by-default unknown-fields + wire-валидация) —
+         здесь НЕ дублировать, только ссылка
 
 ВОЛНА B (после A):
   222.3  extractors + IntoResponse          — nova-http .nv (нужен новый Router + serde-attrs)
@@ -40,8 +42,10 @@ extract-слой. Аудит показал — местами фундамен�
 ВОЛНА C (после B):
   222.4  middleware / layers / группы        — на новом Router
 
-ПАРАЛЛЕЛЬНО ВСЕМУ (разведка, не блокирует):
-  222.6  аудит run-loop/servernet vs Axum run — отдельный отчёт, потом решение
+РАЗВЕДКА — ДО ВОЛНЫ B (ревью 2026-07-22: «параллельно, не блокирует» опасно — если
+аудит найдёт, что run-loop надо переделывать (как нашёл про ServeMux), это перечеркнёт
+222.3/222.4 поверх; дешёвая разведка идёт ПЕРВОЙ вместе с волной A):
+  222.6  аудит run-loop/servernet vs Axum run — отчёт → решение до старта B
 ```
 
 **Критический путь:** 222.1 ∥ 222.2 → 222.3. Всё остальное навешивается. 222.2 — прекондишн реальной
@@ -63,6 +67,11 @@ extract-слой. Аудит показал — местами фундамен�
 - **Nested:** `Router.nest("/api", sub_router)` — под-роутер с префиксом (замена слабых «групп»).
 - **Fallback:** `Router.fallback(h)` — цепочка, не одинокий `not_found`.
 - **Типизированные params** отдаёт слой 222.3 (Router даёт сырые `[](str,str)`, extractors типизируют).
+- **Route-конфликт = ошибка регистрации** (ревью 2026-07-22): дубль-маршрут/пересечение
+  precedence → typed `Result`-ошибка при `route()` (Axum ПАНИКУЕТ — мы лучше: typed, а где
+  статически выводимо — компайл-диагностика).
+- **`MethodRouter.fallback`** per-route (405-семантика на уровне метода-набора, не только
+  глобальный `Router.fallback`) — Axum-паритет.
 
 Всё — обычный `.nv` в nova-http; синтаксис Nova не меняется. D-амендмент не нужен (пакет-уровень).
 
@@ -158,11 +167,27 @@ export type IntoResponse protocol { fn into_response() -> ServerResponse }
 `IntoResponse` для `str`/`ServerResponse`/`Json[T Serialize]`/`Result[R,E]`-бланкет; прямой
 `ServerResponse.json[T Serialize](status, T)` конструктор (сейчас json только через serdejson вручную).
 
-## 7. Под-план 222.6 — аудит run-loop/servernet (разведка)
+## 7. Под-план 222.6 — аудит run-loop/servernet ✅ ГОТОВ (2026-07-22, принят владельцем)
 
-Отдельный отчёт: connection-handling / graceful shutdown / keep-alive / timeout-drain vs Axum-run
-(hyper). Пока НЕ утверждаем «годен» — [M-187]-семья намекает на M:N-сложности под нагрузкой. По отчёту —
-решение «оставить/усилить/переделать», отдельным под-планом.
+Аудит проведён (opus). Итог: **ничего не блокирует 222.3/222.4** — extractors/middleware работают
+над уже забуференным ServerRequest, граница `ServerRequest → Handler → ServerResponse` стабильна;
+M:N-субстрат ([M-187]-семья) закрыт и загейчен целиком. Пробелы — аддитивное упрочнение:
+keep-alive НЕТ (single-shot, Connection: close), таймаутов НЕТ (slowloris + безлимитный body по
+Content-Length = единственный DoS-вектор), graceful shutdown не реализован (субстрат
+supervised(deadline:) готов), библиотечной accept-loop нет (ошибка accept убивает цикл потребителя),
+chunked-request/100-continue нет. Оговорка: Json[T]-экстрактор (222.3) приземлять ВМЕСТЕ с
+body-size limit. Полный отчёт — scratchpad-сессия 2026-07-22.
+
+## 7а. Под-план 222.7 — run-loop hardening = закрытие [M-178-server-policy-surface] 🔨 В РАБОТЕ
+
+Решение владельца 2026-07-22: «не откладывать, закрыть сейчас». Агент (sonnet), ветка
+p222-7-policy-surface. **Фаза 1** (всё в nova-http, std/net не трогаем — зона занята 217.1):
+библиотечный serve() accept-loop (admission bounded + backoff на ошибке accept), keep-alive
+persistent-loop, header/read/idle-deadline поверх supervised(deadline:), body-size limit (413),
+chunked-request decode + 100-continue, ServerConfig (with_*). **Фаза 2** (после освобождения
+std/net): timeout-примитивы, конфигурируемый backlog, переименование set_nodelay/set_keepalive →
+property-стиль `mut @nodelay(on)`/`mut @keepalive(on)` (конвенция nv-coding-style; вопрос владельца
+2026-07-22 — set_-префикс противоречит конвенции).
 
 ## 8. Маркеры (регистрируются этим планом)
 
@@ -176,7 +201,18 @@ export type IntoResponse protocol { fn into_response() -> ServerResponse }
 
 ## 9. Гейты / модель
 
-Каждый под-план — свои таргетные тесты + `nova test` затронутого модуля δ0; 222.2 (компилятор) — serde
-conformance + auto-derive-фикстуры на новые атрибуты; полный пакетный прогон nova-http — интегратор.
-Модель: 222.1/222.3/222.4/222.5 — sonnet (nova-http .nv по карте); 222.2 — sonnet (компилятор, auto_derive
-по карте 180); 222.6 — opus-разведка. Приёмка/слияние/флип-гейты — интегратор.
+Каждый под-план — свои таргетные тесты + `nova test` затронутого модуля δ0; 222.2 — гейты в
+180.1; полный пакетный прогон nova-http — интегратор. **Интеграционный гейт всего 222
+(ревью 2026-07-22): флагман aggregator (живой потребитель nova-http) собирается
+--strict-effects + держит loadtest.ps1 (68 блоков) + полный мега-CU conformance — на КАЖДОМ
+вливании под-плана.** Модель: 222.1/222.3/222.4/222.5 — sonnet (nova-http .nv по карте);
+222.6 — opus-разведка. Приёмка/слияние/флип-гейты — интегратор.
+
+## 10. Очерёдность go (обновлено 2026-07-22, решение владельца)
+
+**Старт ДО тегов v0.1** (владелец 2026-07-22: «222 старт до тегов»): волна A =
+**222.1 (Router) ∥ 222.6 (run-loop аудит)** запущена немедленно; 222.2 уже идёт как 180.1.
+**Перевод флагмана aggregator на новый стек (Router + serde-атрибуты) — сразу по готовности
+serde (180.1 Ф.1)**, не дожидаясь остальных под-планов. Волна B (222.3+222.5) — после обоих
+A-результатов И вердикта 222.6. Вливания 222 идут через полный интеграционный гейт (§9) и
+НЕ двигают порядок тегов — теги по явному «go» владельца.

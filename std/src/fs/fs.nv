@@ -166,6 +166,16 @@ export fn OpenOptions @open(path Path) Fs -> Result[File, IoError] {
 /// An open file handle. **Must be `@close`d** (D133): a `File` that leaves scope
 /// un-closed is a compile error. Conforms to io.Read / io.Write / io.Seek (its
 /// methods carry the `Fs` effect, surfaced transitively at monomorphisation, Q15).
+///
+/// **Plan 217.1 (D432 rollout) — deliberately excluded from auto-`@cleanup`.**
+/// `@close()` is fallible (`Fs -> Result[(), IoError]`, see the 🏆 rationale
+/// above this file's header): D432 §1 restricts auto-cleanup to an EMPTY
+/// effect-row `@cleanup` anyway, so `File` doesn't qualify as-is. Even setting
+/// that guard aside, silently swallowing the close error on an auto-inserted
+/// path would undo the exact differentiator this type exists for (Go/Rust/
+/// Java/Zig all swallow it on drop) — `File` stays must-consume regardless of
+/// any future fallible-`@cleanup` effect-propagation policy (Plan 217 §8 п.1).
+/// Regression guard: std/src/fs/neg/d323_file_not_consumed_neg.nv.
 #stable(since = "0.1")
 export type File consume {
     priv fd int
