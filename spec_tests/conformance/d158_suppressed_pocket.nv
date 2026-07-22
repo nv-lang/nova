@@ -28,7 +28,7 @@ fn d158b_body_clean() Fail -> () {
 
 // (1) primary caught as-is; suppressed() surfaces the cleanup error, narrowable.
 fn d158b_run_single() -> bool {
-    with Fail = effect Fail { fail(_m) { interrupt () } } {
+    with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
         d158b_body_with_failing_cleanup()
     }
     ro sup = suppressed()
@@ -37,7 +37,7 @@ fn d158b_run_single() -> bool {
 
 // (2) empty pocket when no cleanup fails.
 fn d158b_run_empty() -> int {
-    with Fail = effect Fail { fail(_m) { interrupt () } } {
+    with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
         d158b_body_clean()
     }
     suppressed().len()
@@ -45,11 +45,11 @@ fn d158b_run_empty() -> int {
 
 // (3) no leak between unrelated catches.
 fn d158b_run_no_leak() -> bool {
-    with Fail = effect Fail { fail(_m) { interrupt () } } {
+    with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
         d158b_body_with_failing_cleanup()
     }
     ro c1 = suppressed().len()
-    with Fail = effect Fail { fail(_m) { interrupt () } } {
+    with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
         d158b_body_clean()
     }
     ro c2 = suppressed().len()

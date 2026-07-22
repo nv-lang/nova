@@ -14,6 +14,12 @@
 
 module standalone.supervisor_stop_test
 import std.concurrency.supervisor as sup
+// Plan 175.2 Ф.2-v4 (П6): (5).to_millis() used to resolve without an
+// explicit import — an accidental side effect of Time (and its
+// Duration/Timestamp/Monotonic import) living in std.prelude.effects
+// (auto-imported into every CU). Now that Time moved to std.time.duration,
+// this file needs its own explicit import for the to_millis() blanket.
+import std.time.duration
 
 test "Supervisor=stop: один падает — siblings доживают, scope продолжает" {
     ro n = 8

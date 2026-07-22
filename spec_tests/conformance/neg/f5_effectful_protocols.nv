@@ -52,7 +52,7 @@ test "effectful protocol method — Fail caught by handler" {
     ro v = Validator { min: 10 }
     mut caught = ""
     with Fail = effect Fail {
-        fail(msg) {
+        fail(msg) -> never {
             caught = msg
             interrupt ()
         }

@@ -13,6 +13,6 @@ fn run_effects() -> () {
 }
 
 test "f7: statement-mode parallel for (record body) — not flagged, compiles+runs" {
-    with Fail = effect Fail { fail(_m) { interrupt () } } { run_effects() }
+    with Fail = effect Fail { fail(_m) -> never { interrupt () } } { run_effects() }
     assert(true)
 }

@@ -25,10 +25,10 @@ type MakesShape effect {
 
 test "handler-лит: heap record-литерал в теле опа" {
     with MakesPoint = effect MakesPoint {
-        heap_record() { return Point12 { x: 1, y: 2 } }
-        value_record() => PointV { x: 3, y: 4 }
-        anon_tuple() => (5, 6)
-        ctor_call() => Point12.new(7, 8)
+        heap_record() -> Point12 { return Point12 { x: 1, y: 2 } }
+        value_record() -> PointV => PointV { x: 3, y: 4 }
+        anon_tuple() -> (int, int) => (5, 6)
+        ctor_call() -> Point12 => Point12.new(7, 8)
     } {
         ro p = MakesPoint.heap_record()
         assert(p.x == 1)
@@ -47,7 +47,7 @@ test "handler-лит: heap record-литерал в теле опа" {
 
 test "handler-лит: sum-variant record в теле опа" {
     with MakesShape = effect MakesShape {
-        sum_variant() => Shape2_2.Circle2 { r: 9 }
+        sum_variant() -> Shape2_2 => Shape2_2.Circle2 { r: 9 }
     } {
         ro s = MakesShape.sum_variant()
         match s {
@@ -74,7 +74,7 @@ type AnonValue effect {
 
 test "handler-лит: анонимный heap record-литерал (=> форма)" {
     with AnonHeap = effect AnonHeap {
-        make() => { x: 10, y: 20 }
+        make() -> Point12 => { x: 10, y: 20 }
     } {
         ro p = AnonHeap.make()
         assert(p.x == 10)
@@ -84,7 +84,7 @@ test "handler-лит: анонимный heap record-литерал (=> форм
 
 test "handler-лит: анонимный heap record-литерал (block/return форма)" {
     with AnonHeap = effect AnonHeap {
-        make() { return { x: 30, y: 40 } }
+        make() -> Point12 { return { x: 30, y: 40 } }
     } {
         ro p = AnonHeap.make()
         assert(p.x == 30)
@@ -94,7 +94,7 @@ test "handler-лит: анонимный heap record-литерал (block/retur
 
 test "handler-лит: анонимный value record-литерал" {
     with AnonValue = effect AnonValue {
-        make() => { x: 50, y: 60 }
+        make() -> PointV => { x: 50, y: 60 }
     } {
         ro pv = AnonValue.make()
         assert(pv.x == 50)
@@ -120,7 +120,7 @@ type AnonWithCapture effect {
 test "handler-лит: захват локали + анонимный record" {
     mut base = 100
     with AnonWithCapture = effect AnonWithCapture {
-        make() {
+        make() -> Point12 {
             base += 1
             return { x: base, y: base + 1 }
         }
@@ -148,13 +148,13 @@ test "вложенные handler-литы: анонимные record'ы + зах
     mut o_count = 0
     mut i_count = 0
     with OuterEff = effect OuterEff {
-        outer_make() {
+        outer_make() -> Point12 {
             o_count += 1
             return { x: o_count, y: o_count * 10 }
         }
     } {
         with InnerEff = effect InnerEff {
-            inner_make() {
+            inner_make() -> PointV {
                 i_count += 5
                 // вызов ВНЕШНЕГО эффекта из тела внутреннего опа
                 ro op = OuterEff.outer_make()

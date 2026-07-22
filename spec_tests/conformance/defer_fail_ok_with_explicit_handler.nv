@@ -17,7 +17,7 @@ fn risky_cleanup() Fail[CleanupErr2] -> () {
 // silent_cleanup wraps risky in handler — Fail НЕ leaks.
 fn silent_cleanup() -> () {
     with Fail = effect Fail {
-        fail(_msg) { interrupt () }
+        fail(_msg) -> never { interrupt () }
     } {
         risky_cleanup()
     }

@@ -39,8 +39,8 @@ test "Plan 173 Ф.5.2 (ex-110.2.2.a): Level-1 порог превышен → ov
     mut observed_duration = -1
     mut result = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, duration_ms, overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, duration_ms, overrun) -> () {
             observed_duration = duration_ms
             observed_overrun = overrun
             return ()

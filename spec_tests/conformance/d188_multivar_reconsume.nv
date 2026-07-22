@@ -37,8 +37,8 @@ fn d188mv_boom(v int) -> D188MvBoom => { id: v }
 test "Plan 174 D188-multivar: consume A, B, C { } — LIFO cleanup order via ResourceTrace" {
     mut order []str = []str.new()
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(label, _outcome, _duration_ms, _overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(label, _outcome, _duration_ms, _overrun) -> () {
             order.push(label)
             return ()
         }
@@ -69,8 +69,8 @@ fn d188mv_pick_first(consume keep D188MvBoom, consume drop D188MvResA) -> D188Mv
 test "Plan 174 D188-multivar: return-вынос ОДНОГО из двух дизармит СВОЙ cleanup, второй cleanup'ится" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
             exit_calls += 1
             return ()
         }

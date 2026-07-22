@@ -16,7 +16,7 @@ fn tick() Counter -> int =>
 fn caller() -> int {
     ro f fn() Counter -> int = tick
     with Counter = effect Counter {
-        next() => 1
+        next() -> int => 1
     } {
         f()
     }
