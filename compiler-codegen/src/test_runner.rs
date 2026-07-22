@@ -107,6 +107,22 @@ pub struct CapturedOutput {
     pub elapsed: Duration,
 }
 
+/// [M-test-runner-tempdir-race-jobs]: classify a `Command::spawn()` failure
+/// as a TRANSIENT Windows exec-lock (worth retrying) vs a genuine error
+/// (missing binary, permissions the user actually needs to fix, etc — must
+/// fail immediately, never silently retried into a false PASS). Raw OS error
+/// codes, not string-matching: `spawn()` failures are OS-level (`CreateFileW`
+/// under the hood), carrying no descriptive child-process text to match on
+/// (unlike the CC/link retry above, which greps the CHILD's own stdout/
+/// stderr). `5` = `ERROR_ACCESS_DENIED`, `32` = `ERROR_SHARING_VIOLATION` —
+/// the two codes Windows returns when another process (classically Defender/
+/// AV scanning a freshly-written .exe on first execution) holds a
+/// conflicting handle for a moment. Pure/pub(crate) so a unit test can feed
+/// synthetic `io::Error`s without needing an actual locked file on disk.
+pub(crate) fn is_transient_exec_lock_error(e: &std::io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(5) | Some(32))
+}
+
 /// Стандартный `Command::output()` блокирует вечно если child зависает.
 /// Эта функция запускает child + читает stdout/stderr через pipes +
 /// убивает по таймауту. Threads нужны потому что piped stdout/stderr
@@ -3463,29 +3479,57 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
 
     // Step 3 — run с timeout.
     let run_start = Instant::now();
-    let mut run_cmd = Command::new(&exe_file);
-    #[cfg(not(target_os = "windows"))]
-    {
-        run_cmd.env("LC_ALL", "C.UTF-8");
-        run_cmd.env("LANG", "C.UTF-8");
-    }
-    // Plan 83.1 Ф.5: thread-budget — NOVA_MAXPROCS для тестового exe.
-    // Ставится ДО `// ENV`-директив, чтобы тест, проверяющий сам
-    // NOVA_MAXPROCS, мог переопределить бюджет своей директивой.
-    if let Some(budget) = opts.maxprocs_budget {
-        run_cmd.env("NOVA_MAXPROCS", budget.to_string());
-    }
-    // Plan 83.1 Ф.2: apply `// ENV NAME=VALUE` directives to the test exe.
-    for (key, val) in &env_vars {
-        run_cmd.env(key, val);
-    }
-    let run_captured = match run_with_timeout(run_cmd, effective_timeout) {
-        Ok(o) => o,
-        Err(e) => {
-            return Outcome::Fail {
-                stage: Stage::Run { error: format!("spawn exe: {}", e) },
-                elapsed: start.elapsed(),
-            };
+    // [M-test-runner-tempdir-race-jobs] fix: retry a TRANSIENT exec-lock on
+    // spawning the just-linked `exe_file` — under `--jobs N` a freshly
+    // written .exe can momentarily fail to open for execution (Windows
+    // Defender/AV scanning it on first launch: `ERROR_ACCESS_DENIED`/raw OS
+    // error 5, or `ERROR_SHARING_VIOLATION`/raw OS error 32 — a DIFFERENT
+    // process briefly holds the handle). This is the SAME class of transient
+    // Windows file-lock the CC/link step already retries above
+    // (`CC_LOCK_RETRIES`, "cannot open output file") — but that retry only
+    // covers the compiler/linker's OWN diagnostic text; `Command::spawn()`
+    // failing outright on the RUN step (this fn's `exe_file`, already
+    // successfully linked moments earlier) had ZERO retry, so a transient
+    // exec-lock surfaced as a hard `RUN-FAIL` (`spawn exe: ...`) instead of
+    // the harness quietly waiting it out — observed spuriously on the
+    // longest-running job in the suite (the `spec_tests/conformance`
+    // folder-module mega-CU), which is simply "in flight" the longest and
+    // therefore statistically most likely to overlap a burst of OTHER
+    // workers' concurrent exec/link activity under `--jobs 16`. `Command`
+    // is single-shot (consumed by `spawn`), so each attempt rebuilds it.
+    const RUN_LOCK_RETRIES: u32 = 5;
+    const RUN_LOCK_DELAY_MS: u64 = 200;
+    let mut run_attempt = 0u32;
+    let run_captured = loop {
+        let mut run_cmd = Command::new(&exe_file);
+        #[cfg(not(target_os = "windows"))]
+        {
+            run_cmd.env("LC_ALL", "C.UTF-8");
+            run_cmd.env("LANG", "C.UTF-8");
+        }
+        // Plan 83.1 Ф.5: thread-budget — NOVA_MAXPROCS для тестового exe.
+        // Ставится ДО `// ENV`-директив, чтобы тест, проверяющий сам
+        // NOVA_MAXPROCS, мог переопределить бюджет своей директивой.
+        if let Some(budget) = opts.maxprocs_budget {
+            run_cmd.env("NOVA_MAXPROCS", budget.to_string());
+        }
+        // Plan 83.1 Ф.2: apply `// ENV NAME=VALUE` directives to the test exe.
+        for (key, val) in &env_vars {
+            run_cmd.env(key, val);
+        }
+        match run_with_timeout(run_cmd, effective_timeout) {
+            Ok(o) => break o,
+            Err(e) => {
+                if is_transient_exec_lock_error(&e) && run_attempt < RUN_LOCK_RETRIES {
+                    run_attempt += 1;
+                    std::thread::sleep(Duration::from_millis(RUN_LOCK_DELAY_MS * run_attempt as u64));
+                    continue;
+                }
+                return Outcome::Fail {
+                    stage: Stage::Run { error: format!("spawn exe: {}", e) },
+                    elapsed: start.elapsed(),
+                };
+            }
         }
     };
     // Plan 169.1 Ф.1: capture run_ms immediately after execution completes.
@@ -3637,6 +3681,24 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
                     let last_lines: Vec<&str> = stdout.lines().chain(stderr.lines()).rev().take(3).collect();
                     last_lines.into_iter().rev().collect::<Vec<_>>().join(" | ")
                 };
+                // [M-test-runner-tempdir-race-jobs] investigation aid: opt-in
+                // full dump (exit code + last 50 lines) for a genuine
+                // RUN-FAIL — mirrors NOVA_DEBUG_CC_DUMP/NOVA_DEBUG_TIMEOUT_DUMP
+                // above. Needed because a mid-stream crash with no "FAIL:"/
+                // "panic: " line ever printed (fail_lines empty — the exact
+                // case this investigation hit on the `spec_tests/conformance`
+                // mega-CU) only shows 3 trailing PASS lines by default, which
+                // don't say WHY the process died (exit code invisible).
+                if std::env::var("NOVA_DEBUG_RUN_DUMP").as_deref() == Ok("1") {
+                    let tail = |s: &str| -> String {
+                        s.lines().rev().take(50).collect::<Vec<_>>().into_iter().rev()
+                            .collect::<Vec<_>>().join("\n")
+                    };
+                    eprintln!(
+                        "=== RUN-FAIL exit={} ===\n--- stdout (tail) ---\n{}\n--- stderr (tail) ---\n{}\n=== END ===",
+                        exit, tail(&stdout), tail(&stderr)
+                    );
+                }
                 Outcome::Fail {
                     stage: Stage::Run { error: detail },
                     elapsed: start.elapsed(),
@@ -7154,6 +7216,31 @@ mod tests {
 
     fn first_marker(src: &str) -> Option<ExpectMarker> {
         parse_expect(src).into_iter().next()
+    }
+
+    // ---- [M-test-runner-tempdir-race-jobs]: transient exec-lock classifier ----
+
+    #[test]
+    fn exec_lock_classifies_transient_windows_codes() {
+        // ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION — the two codes a
+        // freshly-linked .exe momentarily locked by AV/Defender scan-on-
+        // execute (or another process still holding a handle) surfaces as.
+        // These SHOULD be retried instead of failing the test outright.
+        let denied = std::io::Error::from_raw_os_error(5);
+        let sharing = std::io::Error::from_raw_os_error(32);
+        assert!(is_transient_exec_lock_error(&denied));
+        assert!(is_transient_exec_lock_error(&sharing));
+    }
+
+    #[test]
+    fn exec_lock_does_not_classify_real_errors() {
+        // A genuinely missing binary / real permissions problem must NOT be
+        // retried — that would turn an honest failure into a false PASS (or
+        // just needlessly slow down a real, reproducible failure).
+        let not_found = std::io::Error::from_raw_os_error(2); // ERROR_FILE_NOT_FOUND
+        let generic = std::io::Error::new(std::io::ErrorKind::Other, "boom");
+        assert!(!is_transient_exec_lock_error(&not_found));
+        assert!(!is_transient_exec_lock_error(&generic));
     }
 
     // ---- Plan 172.1 U.7.1: CC-FAIL classifier tests ----
