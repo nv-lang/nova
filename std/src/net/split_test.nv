@@ -49,10 +49,11 @@ test "TCP split: server + client exchange via read/write halves _slow" {
                     Err(_) => panic("bind failed")
                 }
                 ch.tx.send(lst.local_port())
-                // D133 strict (`TcpListener` has no `@cleanup`, unlike
-                // `TcpStream`): close `lst` before `panic` on this
-                // (never-taken outside a real failure) error arm — see
-                // byte_surface_test.nv's UdpSocket sites for the same shape.
+                // Explicit close before `panic` on this (never-taken outside
+                // a real failure) error arm — kept for clarity/symmetry with
+                // byte_surface_test.nv's UdpSocket sites even though Plan
+                // 217.1 (D432) gave `TcpListener` its own `@cleanup`, so a
+                // panic here would now auto-close `lst` regardless.
                 consume srv = match lst.accept() {
                     Ok(consume s) => s
                     Err(_) => { lst.close(); panic("accept failed") }

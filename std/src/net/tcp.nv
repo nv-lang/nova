@@ -116,6 +116,15 @@ export fn TcpListener mut @set_reuse_address(on bool) Net {
 #stable(since = "0.1")
 export fn TcpListener consume @close() Net { Net.close_listener(@) }
 
+/// D432/Plan 217.1 `Cleanup[never]`-имплементация: cleanup = `@close()`.
+/// Делает `TcpListener` пригодным для авто-`@cleanup` (гибрид C, D432) —
+/// непотреблённый к концу скоупа listener закрывается автоматически, как
+/// `TcpStream` (см. ниже).
+#stable(since = "0.1")
+export fn TcpListener consume @cleanup(_outcome ScopeOutcome) -> () {
+    @close()
+}
+
 // ─── TcpStream public API ─────────────────────────────────────────────────────
 
 /// Connect to a remote TCP address (parks until connected or error).
@@ -319,6 +328,12 @@ export fn TcpReadHalf consume @close() Net {
     Net.close_stream(TcpStream.from_raw(@handle))
 }
 
+/// D432/Plan 217.1 `Cleanup[never]`-имплементация: cleanup = `@close()`.
+#stable(since = "0.1")
+export fn TcpReadHalf consume @cleanup(_outcome ScopeOutcome) -> () {
+    @close()
+}
+
 /// Write `data` to the write half; returns `Ok(n)` bytes accepted.
 #stable(since = "0.1")
 export fn TcpWriteHalf mut @write(data []u8) Net -> Result[int, NetError] {
@@ -335,6 +350,12 @@ export fn TcpWriteHalf @local_port() Net -> u16 {
 #stable(since = "0.1")
 export fn TcpWriteHalf consume @close() Net {
     Net.close_stream(TcpStream.from_raw(@handle))
+}
+
+/// D432/Plan 217.1 `Cleanup[never]`-имплементация: cleanup = `@close()`.
+#stable(since = "0.1")
+export fn TcpWriteHalf consume @cleanup(_outcome ScopeOutcome) -> () {
+    @close()
 }
 
 // ─── real_net: the unified Net handler (TCP + UDP + DNS) ──────────────────────
