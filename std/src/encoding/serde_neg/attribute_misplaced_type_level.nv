@@ -1,0 +1,9 @@
+// EXPECT_COMPILE_ERROR E_SERDE_ATTRIBUTE_MISPLACED
+// Plan 180.1 Ф.1: a field-level serde key (`rename`) on a TYPE-level
+// `#serde(...)` is rejected — it belongs on the individual field's own
+// `#serde(...)`, not the type's.
+module serde_neg.attribute_misplaced_type_level
+import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
+#serde(rename = "x")
+#impl(Serialize + Deserialize)
+type Bad value { ro a int }

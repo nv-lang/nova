@@ -1,9 +1,12 @@
 // EXPECT_COMPILE_ERROR E_SERDE_BAD_ATTRIBUTE
-// Plan 180 Ф.6 (D382): unknown / not-yet-supported `#serde(...)` key rejected
-// (field-customization attrs are [M-180-serde-field-attributes]).
+// Plan 180 Ф.6 (D382) + 180.1 Ф.1: unknown `#serde(...)` key rejected. NOTE:
+// `rename_all` used to be the not-yet-supported key exercised here — 180.1
+// Ф.1 landed its consumption, so this fixture now uses a genuinely-unknown
+// key instead (see serde_neg/on_sum_rename_all.nv for the NEW rename_all-on-
+// sum-type diagnostic that took over this file's old role).
 module serde_neg.bad_attr
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
-#serde(rename_all = "camelCase")
+#serde(this_key_does_not_exist = "x")
 #impl(Serialize + Deserialize)
 type Bad enum
     | A

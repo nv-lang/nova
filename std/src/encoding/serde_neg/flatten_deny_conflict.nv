@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_SERDE_FLATTEN_DENY_CONFLICT
+// Plan 180.1 Ф.10: `#serde(flatten)` is incompatible with the (now-default,
+// Ф.7) strict unknown-field policy — a flattened field's inner keys arrive
+// mixed into the parent wire object and cannot be attributed by the
+// parent's unknown-field check without `#serde(allow_unknown)`.
+module serde_neg.flatten_deny_conflict
+import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
+
+#impl(Serialize + Deserialize)
+type Inner value { ro x int }
+
+#impl(Serialize + Deserialize)
+type Outer value {
+    ro y int
+    #serde(flatten)
+    ro inner Inner
+}
