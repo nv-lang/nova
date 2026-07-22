@@ -6929,8 +6929,37 @@ impl CEmitter {
         };
 
         // 1. Type declarations first (structs/unions needed by fn signatures)
+        //
+        // Plan 175 Ф.2-v3 Фаза 2 (D316 §Ф.2 historical finding — root cause
+        // of the Time-typed-ops rollback, 4× before this fix): emit ALL
+        // non-effect type decls (records/sums/value-records/named-tuples/
+        // aliases/newtypes — anything whose BODY a function-pointer field
+        // might need to be COMPLETE for, e.g. a by-value `Duration` op
+        // parameter) in a FIRST pass, and defer `TypeDeclKind::Effect` to a
+        // SECOND pass afterward. Effect vtables are function-pointer
+        // structs — `emit_effect_type` may declare a field like
+        // `nova_unit (*sleep)(void*, NovaValue_Duration)`, which needs
+        // `NovaValue_Duration`'s COMPLETE struct body already emitted
+        // (a by-value struct parameter of an INCOMPLETE type is a hard C
+        // error, unlike a plain forward-declared pointer) — module.items
+        // order is whatever import/merge order produced (an effect
+        // declared in a module that happens to be processed before the
+        // value-record module it references would previously hit "unknown
+        // type" / incomplete-type errors). Two passes over the same
+        // (unordered-safe) `module.items` sidesteps the ordering question
+        // entirely: no matter where `type Time effect {...}` (or any user
+        // effect referencing a value-record type) sits in the merged item
+        // list, its vtable now emits strictly after every other type body.
         for item in &module.items {
             if let Item::Type(t) = item {
+                if matches!(t.kind, TypeDeclKind::Effect(_)) { continue; }
+                if should_skip_type(t) { continue; }
+                self.emit_type_decl(t)?;
+            }
+        }
+        for item in &module.items {
+            if let Item::Type(t) = item {
+                if !matches!(t.kind, TypeDeclKind::Effect(_)) { continue; }
                 if should_skip_type(t) { continue; }
                 self.emit_type_decl(t)?;
             }
