@@ -46,14 +46,14 @@ import std.collections.vec_seq.{filter}
 // - `in_transaction` — пробрасываем неизменно (вложенная композиция
 //   handler'ов работает прозрачно).
 export fn with_soft_delete(real Effect[Db]) -> Effect[Db] => effect Db {
-    query(q) {
+    query(q) -> []DbRow {
         // SELECT: добавляем фильтр. Простая реализация — `with_filter`
         // конкатенирует AND. Реальная stdlib-версия делала бы parsing,
         // чтобы корректно работать с UNION/подзапросами.
         ro filtered = q.with_filter(sql`deleted_at IS NULL`)
         real.query(filtered)
     }
-    exec(q) {
+    exec(q) -> int {
         // DELETE → UPDATE deleted_at. Распознаём по template-префиксу.
         if q.template.starts_with("DELETE FROM") {
             // Простой rewrite: "DELETE FROM <t> WHERE ..."
@@ -75,7 +75,7 @@ export fn with_soft_delete(real Effect[Db]) -> Effect[Db] => effect Db {
             real.exec(q)
         }
     }
-    in_transaction(b) => real.in_transaction(b)
+    in_transaction(b) -> T => real.in_transaction(b)
 }
 
 
@@ -93,8 +93,8 @@ export fn with_soft_delete(real Effect[Db]) -> Effect[Db] => effect Db {
 // а сконцентрирована в одной функции. И отключается в тестах
 // тривиально — оборачиваем `with Db = postgres_handler` (без декоратора).
 export fn with_audit(real Effect[Db], current_user_id u64) -> Effect[Db] => effect Db {
-    query(q) => real.query(q)                     // SELECT не аудируем
-    exec(q) {
+    query(q) -> []DbRow => real.query(q)                     // SELECT не аудируем
+    exec(q) -> int {
         ro result = real.exec(q)
 
         // detach — fire-and-forget audit-запись (D50). В тестах
@@ -105,7 +105,7 @@ export fn with_audit(real Effect[Db], current_user_id u64) -> Effect[Db] => effe
         }
         result
     }
-    in_transaction(b) {
+    in_transaction(b) -> T {
         // Транзакция — оборачиваем неизменно. Audit за каждый exec
         // внутри — попадёт в detach-очередь.
         real.in_transaction(b)
@@ -138,9 +138,9 @@ fn write_audit_entry(user_id u64, q Sql, affected int) Detach -> () {
 // (replica lag). Поэтому транзакционный body запускается с **под-handler'ом**,
 // у которого query тоже идёт на primary.
 export fn with_read_replica(primary Effect[Db], replica Effect[Db]) -> Effect[Db] => effect Db {
-    query(q) => replica.query(q)
-    exec(q)  => primary.exec(q)
-    in_transaction(b) {
+    query(q) -> []DbRow => replica.query(q)
+    exec(q) -> int => primary.exec(q)
+    in_transaction(b) -> T {
         // Внутри транзакции — всё через primary. Подменяем Db
         // вложенным handler'ом, который делегирует только primary.
         primary.in_transaction(|| with Db = primary { b() })
@@ -207,15 +207,15 @@ export fn build_db(primary Effect[Db], replica Effect[Db], current_user_id u64) 
 type CapturedQuery { template str, args []SqlValue }
 
 fn capturing_handler(log mut []CapturedQuery) -> Effect[Db] => effect Db {
-    query(q) {
+    query(q) -> []DbRow {
         log.push({ template: q.template, args: q.args })
         []
     }
-    exec(q) {
+    exec(q) -> int {
         log.push({ template: q.template, args: q.args })
         0
     }
-    in_transaction(b) => b()
+    in_transaction(b) -> T => b()
 }
 
 test "soft-delete: SELECT augmented with deleted_at IS NULL" {

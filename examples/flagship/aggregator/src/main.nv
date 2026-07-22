@@ -545,23 +545,23 @@ fn events_body(legend str, mode str, seed int) Time -> ServerResponse {
     ro t0 Monotonic = Monotonic.now()
     ro { tx, rx } = Channel.new(256)
     ro rr = with Emit = effect Emit {
-        lane_started(id str, idx int) {
+        lane_started(id str, idx int) -> () {
             ro t_ms = Monotonic.now().elapsed_since(t0).millis() as int
             ro _ = tx.try_send(EmitRecord { kind: "lane_started", id, elapsed_ms: 0, err: "", t_ms })
         }
-        lane_done(id str, elapsed_ms int) {
+        lane_done(id str, elapsed_ms int) -> () {
             ro t_ms = Monotonic.now().elapsed_since(t0).millis() as int
             ro _ = tx.try_send(EmitRecord { kind: "lane_done", id, elapsed_ms, err: "", t_ms })
         }
-        lane_failed(id str, err str, elapsed_ms int) {
+        lane_failed(id str, err str, elapsed_ms int) -> () {
             ro t_ms = Monotonic.now().elapsed_since(t0).millis() as int
             ro _ = tx.try_send(EmitRecord { kind: "lane_failed", id, elapsed_ms, err, t_ms })
         }
-        lane_cancelled(id str, elapsed_ms int) {
+        lane_cancelled(id str, elapsed_ms int) -> () {
             ro t_ms = Monotonic.now().elapsed_since(t0).millis() as int
             ro _ = tx.try_send(EmitRecord { kind: "lane_cancelled", id, elapsed_ms, err: "", t_ms })
         }
-        swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) {}
+        swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) -> () {}
     } {
         run_net(legend, mode, seed)
     }

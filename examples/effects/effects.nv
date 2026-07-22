@@ -17,7 +17,7 @@ fn main() {
     // Простой handler — closure захватывает mutable переменную.
     mut state = 0
     with Counter = effect Counter {
-        next() {
+        next() -> int {
             state += 1
             return state
         }
