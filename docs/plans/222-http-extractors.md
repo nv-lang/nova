@@ -60,15 +60,24 @@ export type IntoResponse protocol {
 ```
 
 `Result[R IntoResponse, E IntoResponse] : IntoResponse` — бланкет-impl (Ok → R.into_response(),
-Err → E.into_response()) — это и даёт `?`-эргономику в хендлерах бесплатно:
+Err → E.into_response()) — это и даёт `?`-эргономику в хендлерах бесплатно.
 
+**Важно про синтаксис (поправка после ревью владельца 2026-07-22):** в Axum-примерах параметр
+деструктурируется прямо в сигнатуре — `fn h(Json(input): Json<T>)`. **В Nova такого паттерна
+НЕТ и не будет** (не нужен) — обёртки-extractors это ОБЫЧНЫЕ value-record'ы с именованным полем,
+без tuple-struct-магии:
 ```nova
-fn get_user(Path(p) Path[UserIdParams], State(db) MyDb) -> Result[Json[User], HttpError] {
-    ro user = db.find(p.id)?     // HttpError уже IntoResponse — просто пробрасывается
-    Ok(Json(user))
+export type Json[T] value { data T }
+export type Path[T] value { data T }
+```
+Параметр хендлера — обычный типизированный параметр; распаковка — обычное чтение поля в теле:
+```nova
+fn get_user(req Path[UserIdParams]) -> Result[Json[User], HttpError] {
+    ro db = get_db()                     // §5: захват через замыкание при регистрации, не параметр
+    ro user = db.find(req.data.id)?      // HttpError уже IntoResponse — просто пробрасывается
+    Ok(Json { data: user })
 }
 ```
-(`State(db)` — см. §5, это НЕ extractor-протокол, а замыкание-паттерн; здесь для контраста с Axum.)
 
 ## 3. Встроенные extractor-типы
 
