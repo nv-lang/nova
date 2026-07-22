@@ -651,7 +651,7 @@ export fn Duration @to_str() -> str {
 /// **Byte-exact ASCII** — no bytes > 0x7F (fixes the U+03BC "μs" regression,
 /// Q12; the underlying `to_str` already emits ASCII `"us"`, Ф.1c).
 #stable(since = "0.1")
-export fn Duration @display(mut f Fmt) -> () { f.write(@to_str().bytes()) }
+export fn Duration @display(mut f Fmt) -> () { f.write(@to_str()) }
 
 /// Debug (D237; signature migrated to `Fmt` — Plan 208 Ф.2/D422) —
 /// diagnostic form showing the exact raw nanoseconds alongside the human
@@ -660,9 +660,9 @@ export fn Duration @display(mut f Fmt) -> () { f.write(@to_str().bytes()) }
 #stable(since = "0.1")
 export fn Duration @debug(mut f Fmt) -> () {
     f.write("Duration(")
-    f.write(@to_str().bytes())
+    f.write(@to_str())
     f.write(", ")
-    f.write(@nanos.to_str().bytes())
+    f.write(@nanos.to_str())
     f.write("ns)")
 }
 

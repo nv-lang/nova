@@ -316,7 +316,7 @@ export fn Version @to_str() -> str {
     if @build.len() > 0 {
         sb.append("+").append(join_dots(@build))
     }
-    sb.into_str()
+    sb
 }
 
 fn join_dots(parts []str) -> str {

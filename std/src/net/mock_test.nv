@@ -8,7 +8,7 @@ module std.net
 test "net2/mock: TCP round-trip is fully in-memory" {
     with Net = mock_net() {
         mut s = must(TcpStream.connect(SocketAddr.loopback(0)))
-        assert(must_io(s.write("hi".bytes())) == 2)
+        assert(must_io(s.write("hi")) == 2)
         mut buf []u8 = []u8.new()
         buf.resize(32, 0 as u8)
         ro n = must_io(s.read(buf))
@@ -29,7 +29,7 @@ test "net2/mock: listener + UDP + DNS stubs are deterministic" {
         lst.close()
 
         mut sock = must(UdpSocket.bind(SocketAddr.loopback(0)))
-        assert(must(sock.send_to("x".bytes(), SocketAddr.loopback(1))) == 1)
+        assert(must(sock.send_to("x", SocketAddr.loopback(1))) == 1)
         assert(sock.local_port() == 7070)
         sock.close()
 

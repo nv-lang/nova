@@ -29,7 +29,7 @@ test "mock_io keeps stdout and stderr separate" {
 }
 
 test "mock_io scripts stdin (read to end)" {
-    mut cap = IoCapture.new("piped stdin".bytes())
+    mut cap = IoCapture.new("piped stdin")
     ro got = with Io = mock_io(cap) {
         mut inp = stdin()
         match read_to_end(inp) { Ok(b) => b.len(), Err(_) => -1 }
@@ -38,7 +38,7 @@ test "mock_io scripts stdin (read to end)" {
 }
 
 test "mock_io scripted stdin decodes to string" {
-    mut cap = IoCapture.new("café".bytes())
+    mut cap = IoCapture.new("café")
     ro s = with Io = mock_io(cap) {
         mut inp = stdin()
         match read_to_string(inp) { Ok(t) => t, Err(_) => "" }
@@ -51,7 +51,7 @@ test "BufWriter over stdout batches, close flushes to the mock" {
     with Io = mock_io(cap) {
         mut o = stdout()
         consume bw = BufWriter[Stdout].new(o)
-        ro _ = bw.write("batched".bytes())
+        ro _ = bw.write("batched")
         // still buffered → nothing captured yet
         ro _ = bw.close()
     }

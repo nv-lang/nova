@@ -8,7 +8,7 @@ module std.io
 
 
 test "read_to_end returns all bytes; empty reader is immediate EOF" {
-    mut r = BytesReader.new("abc".bytes())
+    mut r = BytesReader.new("abc")
     match read_to_end(r) { Ok(o) => assert(o.len() == 3), Err(_) => assert(false) }
     mut e = BytesReader.new([]u8.new())
     match read_to_end(e) { Ok(o) => assert(o.len() == 0), Err(_) => assert(false) }
@@ -25,21 +25,21 @@ test "byte-roundtrip through BytesWriter incl invalid-UTF8 bytes" {
 }
 
 test "read_to_string is fallible on invalid UTF-8 -> InvalidData" {
-    mut r = BytesReader.new("héllo".bytes())
+    mut r = BytesReader.new("héllo")
     match read_to_string(r) { Ok(s) => assert(s == "héllo"), Err(_) => assert(false) }
     mut bad []u8 = []u8.new(); bad.push(0xFF as u8)
     assert(read_to_string(BytesReader.new(bad)).is_err())
 }
 
 test "read_exact fills fully; short stream -> UnexpectedEof; empty buf is not EOF" {
-    mut r = BytesReader.new("abcd".bytes())
+    mut r = BytesReader.new("abcd")
     mut buf []u8 = []u8.new(); buf.resize(4, 0 as u8)
     assert(read_exact(r, buf).is_ok())
     assert(buf[0] == 0x61 as u8); assert(buf[3] == 0x64 as u8)
     mut tail []u8 = []u8.new(); tail.resize(1, 0 as u8)
     assert(read_exact(r, tail).is_err())   // already at EOF
     // empty read buffer returns Ok(0) (NOT EOF): read_exact of len 0 is Ok.
-    mut r2 = BytesReader.new("x".bytes())
+    mut r2 = BytesReader.new("x")
     mut empty []u8 = []u8.new()
     assert(read_exact(r2, empty).is_ok())
 }
@@ -48,7 +48,7 @@ test "write_str bridge + copy moves all bytes" {
     mut w = BytesWriter.new()
     assert(write_str(w, "hi").is_ok())
     assert(w.len() == 2)
-    mut r = BytesReader.new("stream this".bytes())
+    mut r = BytesReader.new("stream this")
     mut sink = BytesWriter.new()
     match copy(r, sink) { Ok(n) => assert(n == 11), Err(_) => assert(false) }
     assert(sink.len() == 11)
@@ -56,7 +56,7 @@ test "write_str bridge + copy moves all bytes" {
 }
 
 test "seek Start/End/Current + negative Start is InvalidInput" {
-    mut r = BytesReader.new("0123456789".bytes())
+    mut r = BytesReader.new("0123456789")
     match r.seek(SeekFrom.start(4)) { Ok(p) => assert(p == 4), Err(_) => assert(false) }
     mut buf []u8 = []u8.new(); buf.resize(1, 0 as u8)
     match r.read(buf) { Ok(n) => { assert(n == 1); assert(buf[0] == 0x34 as u8) }, Err(_) => assert(false) }

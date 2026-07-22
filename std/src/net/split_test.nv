@@ -26,7 +26,7 @@ test "TCP split: server + client exchange via read/write halves _slow" {
                 }
                 mut (cli_rd, cli_wr) = conn.split()
 
-                ro wr = cli_wr.write("client-hello".bytes())
+                ro wr = cli_wr.write("client-hello")
                 assert(wr.is_ok())
                 ro nbytes = match wr { Ok(n) => n, Err(_) => panic("client write") }
                 assert(nbytes == 12)
@@ -67,7 +67,7 @@ test "TCP split: server + client exchange via read/write halves _slow" {
                 ro req_n = match incoming { Ok(n) => n, Err(_) => { lst.close(); panic("srv read") } }
                 assert(unsafe { req_buf[0..req_n].to_str_unchecked() } == "client-hello")
 
-                ro reply_wr = srv_wr.write("server-greeting".bytes())
+                ro reply_wr = srv_wr.write("server-greeting")
                 assert(reply_wr.is_ok())
 
                 srv_rd.close()
@@ -88,7 +88,7 @@ test "split mock stream — read half + write half" {
                 }
                 mut (rdh, wrh) = s.split()
 
-                ro w1 = wrh.write("hello".bytes())
+                ro w1 = wrh.write("hello")
                 assert(w1.is_ok())
                 ro nbytes = match w1 { Ok(n) => n, Err(_) => -1 }
                 assert(nbytes == 5)
