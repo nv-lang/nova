@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# План 222 (зонтик) — nova-http до Axum-паритета: audit-driven переработка, не тонкий слой
+# План 222 (зонтик) — nova-http как веб-фреймворк: скелет по Axum, продуктовая планка по FastAPI, механизм свой
 
 **Статус:** 🔨 В РАБОТЕ (owner-go 2026-07-22: «старт до тегов»). Волна A ВЫПОЛНЕНА в ветках:
 222.1 Router ГОТОВ (p222-1-router, 34/34 server-тестов, −2 pre-existing FAIL), 222.2/serde на
