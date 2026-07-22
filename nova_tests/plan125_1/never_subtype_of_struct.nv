@@ -21,7 +21,7 @@ fn pick_point(c bool) Fail -> Point2 {
 
 test "never subtype of user struct" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro p = pick_point(false)
         assert(p.x == 3)

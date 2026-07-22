@@ -41,7 +41,7 @@ test "Transaction6_3 rollback on error path" {
 test "Transaction6_3 rollback explicit on error path" {
     ro db2 = Db4 { id: 2 }
     // Error path — rollback fires, no leak
-    with Fail[OrderErr2] = effect Fail { fail(_e) { interrupt () } } {
+    with Fail[OrderErr2] = effect Fail { fail(_e) -> never { interrupt () } } {
         process(db2, true)
     }
 }

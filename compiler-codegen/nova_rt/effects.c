@@ -222,7 +222,11 @@ __declspec(thread) NovaInterruptFrame* _nova_current_handler_iframe = NULL;
 __declspec(thread) NovaTestFrame*      _nova_test_frame    = NULL;
 __declspec(thread) NovaVtable_Fail*     _nova_handler_Fail     = NULL;  /* default NULL → Nova_Fail_fail falls back to nova_throw */
 __declspec(thread) NovaVtable_Fail_any* _nova_handler_Fail_any = NULL;  /* Plan 61 Ф.2 typed erased slot */
-__declspec(thread) NovaVtable_Time*     _nova_handler_Time     = NULL;  /* default NULL → context-sensitive yield (see fibers.h) */
+/* Plan 175 Ф.2-v3: struct type stays hand-written (effects.h doc comment —
+ * channels.h / runtime.c need a stable named type), so the TLS slot
+ * definition stays HERE too (dispatch FUNCTIONS moved to generic codegen,
+ * not this slot). */
+__declspec(thread) NovaVtable_Time*     _nova_handler_Time     = NULL;  /* default NULL → ambient #default_handler(Time) installs lazily (prelude) */
 __declspec(thread) NovaFiberQueue*     _nova_active_scope  = NULL;  /* active supervised scope for current thread */
 __declspec(thread) int                 _nova_active_slot   = -1;
 /* Plan 44.5 Layer 5 deferred-unlock: set by fiber in park_with_unlock before
@@ -256,6 +260,11 @@ __thread volatile int*       _nova_preempt_ptr   = NULL;  /* Plan 44.7 */
 /* Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]: см. MSVC branch. */
 __thread NovaFinalizerStack* _nova_active_finalizer_stack = NULL;
 #endif
+
+/* Plan 175 Ф.2-v3: `_nova_time_default_ctor` (Ф.2-v2 special-case hook) is
+ * GONE — the generic `#default_handler` mechanism now lives inline inside
+ * each `Nova_Time_<op>()` dispatcher body (`emit_effect_type`, same as any
+ * other `#default_handler` effect). See effects.h doc comment. */
 
 /* Per-fiber handler scoping: registry of effect-storage addresses.
  * Built-in effects (Fail, Time) auto-registered in nova_runtime_init.

@@ -36,7 +36,7 @@ test "D196 form 1: прямой Cleanup-init, body исполняется (D196)
 test "D196 form 2: Result-unwrap init через ? (D196)" {
     mut d196_got = 0
     with Fail = effect Fail {
-        fail(_m) { interrupt () }
+        fail(_m) -> never { interrupt () }
     } {
         d196_got = d196_use_unwrap()
     }

@@ -11,7 +11,7 @@ fn use_div(c bool) Fail -> int {
 
 test "divergent if-expr passed as nova_str arg" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro n = use_div(true)
         assert(n == 5)

@@ -1,0 +1,41 @@
+// EXPECT_COMPILE_ERROR E_LINEAR_CAPTURE_IN_FIBER
+// [M-detach-consume-escape-unchecked] (владелец, чтением
+// examples/flagship/aggregator/src/main.nv): ТОЧНЫЙ флагман-паттерн —
+// `match lst.accept() { Ok(consume stream) => { detach { ro _ =
+// handle_connection(stream, routes()); ro _ = inflight.fetch_sub(1) } } }`.
+// `stream` — consume-типа (`TcpStream`-подобный), явно связан через
+// `Ok(consume stream)` в ОБЪЕМЛЮЩЕМ относительно `detach` scope
+// (match-arm), а НЕ передан во владение самому `detach`. `detach` —
+// fire-and-forget orphan-fiber (D50): может выполниться ПОСЛЕ выхода из
+// scope-владельца `stream` (match-arm давно завершился) → use-after-
+// consume/use-after-free. `spawn consume` уже ловит симметричный случай
+// (D415 §4); до этой правки `detach` — нет (match/if-let/while-let
+// pattern-биндинги были полностью невидимы для capture-check'а — см.
+// `ScopeBinding.linear_pattern`, `types/mod.rs`). Ожидаемый фикс:
+// `detach consume stream { … }` (явный move владения).
+module neg.detach_consume_escape_neg
+
+type DcaeStream consume {
+    id int,
+}
+
+fn DcaeStream consume @close() -> () { () }
+
+fn dcae_accept(v int) -> Result[DcaeStream, str] => Ok(DcaeStream { id: v })
+
+fn dcae_handle_connection(consume stream DcaeStream) -> () {
+    stream.close()
+}
+
+test "detach captures consume pattern-bound match-arm value from enclosing scope — E_LINEAR_CAPTURE_IN_FIBER" {
+    mut inflight = AtomicInt.new(0)
+    match dcae_accept(1) {
+        Ok(consume stream) => {
+            detach {
+                ro _ = dcae_handle_connection(stream)
+                ro _ = inflight.fetch_sub(1)
+            }
+        },
+        Err(_e) => {},
+    }
+}

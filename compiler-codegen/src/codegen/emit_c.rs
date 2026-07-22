@@ -31,7 +31,23 @@ pub(crate) const RUNTIME_DEFINED_TYPES: &[&str] = &[
     // Plan 175 Ф.1: TimerMetrics — read-only introspection effect split out
     // of Time (Q1). Direct-C dispatch (Nova_TimerMetrics_timer_*, no vtable),
     // like Mem. Schema built from its .nv decl (single source).
-    "Fail", "Time", "Mem", "TimerMetrics",
+    //
+    // Plan 175 Ф.2-v3 (снос рукописного `NovaVtable_Time`): "Time" REMOVED
+    // from this list — Time теперь генерируется ЧЕРЕЗ ОБЩИЙ effect-codegen
+    // путь (`emit_effect_type`, тот же что user-эффекты), НЕ через
+    // hand-written struct в nova_rt/effects.h (которая снесена). Time
+    // declaration живёт в `std/time/duration/time_effect.nv` (Plan 175.2
+    // Ф.2-v4 П6 moved it OUT of prelude — module name is irrelevant to this
+    // list/codegen path, keyed purely by the effect NAME "Time" regardless
+    // of which module declares it) — струкура/dispatch/handler-slot
+    // генерируются codegen'ом как для любого `type X effect {...}`.
+    // `#default_handler` (bare form, П7/D431; fn `real_time`, П8-rename) —
+    // ambient-fallback (Time работает без явного `with`/`import`) больше
+    // не хардкод-C-путь, а ОБЫЧНЫЙ generic `#default_handler` механизм;
+    // registration — compile-unit-wide (см. `check_default_handlers`), не
+    // требует prelude-резидентства. "Fail" остаётся (владелец: Fail —
+    // сильно встроенный, хардкод намеренно НЕ трогается).
+    "Fail", "Mem", "TimerMetrics",
     // sync (sync_primitives.h): MemOrdering + sized atomics.
     // Plan 207 (2026-07-16 consolidation): AtomicPtr removed (int-proxy
     // duplicate, no generic [T] yet — Plan 103.7); Isize/Usize spellings
@@ -438,6 +454,33 @@ fn compute_dead_decls_with(module: &Module, enabled: bool) -> DeadDecls {
     let mut methods: Vec<(String, String, HashSet<String>)> = Vec::new();
     // Worklist seed: `main` is always a root.
     let mut worklist: Vec<String> = vec!["main".to_string()];
+    // Plan 175 Ф.2-v2 (Ф.2-v3: `_nova_time_default_ctor` special-case gone,
+    // seeding rationale unchanged): `#default_handler(X)` fns are referenced
+    // ONLY via a raw C-text fn-pointer assignment codegen emits INSIDE the
+    // generic `Nova_X_<op>()` dispatcher body (`emit_effect_type`,
+    // `if (!_nova_handler_X) { _nova_handler_X = ctor(); }`) — invisible to
+    // `collect_used_names`'s AST walk, so without this seed a program that
+    // never calls an effect op by name in a way DCE can see (e.g. only via
+    // the `#default_handler` ctor's OWN body) would get its default-handler
+    // fn pruned as dead, leaving the generated fn-pointer assignment
+    // referencing an undefined symbol (mirrors the `main` seed above — this
+    // fn is always "called", just not through an AST `Call` node).
+    for it in &module.items {
+        if let Item::Fn(f) = it {
+            if f.doc_attrs.iter().any(|a| matches!(a, crate::ast::DocAttr::DefaultHandler(_))) {
+                worklist.push(f.name.clone());
+            }
+        }
+    }
+    for pf in &module.peer_files {
+        for it in &pf.items_here {
+            if let Item::Fn(f) = it {
+                if f.doc_attrs.iter().any(|a| matches!(a, crate::ast::DocAttr::DefaultHandler(_))) {
+                    worklist.push(f.name.clone());
+                }
+            }
+        }
+    }
     // Plan 209 Ф.2 (HashMap-mono-gap fix): D39 embed-delegation proxies
     // (`emit_embed_proxies`) are SYNTHESIZED directly in codegen — never AST
     // `Item::Fn` nodes — so `collect_used_names` above can never see the call
@@ -1942,6 +1985,18 @@ pub struct CEmitter {
     /// Drives (a) the hidden `int _consume_ccount;` field appended by
     /// `emit_record_type` and (b) the exactly-once prologue in `emit_fn`.
     consume_cleanup_types: HashSet<String>,
+    /// Plan 175 Ф.2-v2: `#default_handler(EffectName)` registry — effect
+    /// name → plain Nova name of the zero-arg free fn tagged as its default
+    /// handler-factory (checker already validated arity/return-type/
+    /// uniqueness/cycles — see `check_default_handlers`). Populated by an
+    /// `emit_module` pre-pass (mirrors `consume_cleanup_types` above).
+    /// GENERIC mechanism — consulted by `emit_effect_type`'s per-op dispatch
+    /// wrapper: an effect with a registered default gets an inline
+    /// once-per-thread lazy-construct-then-install check
+    /// (`if (!_nova_handler_X) { _nova_handler_X = <ctor>(); }`) before the
+    /// vtable call; an effect with none keeps today's behaviour (crash on
+    /// NULL `_nova_handler_X` if used without an enclosing `with`) unchanged.
+    default_handler_fns: HashMap<String, String>,
     /// Plan 173 Ф.5 (#8): struct names that ACTUALLY received the hidden
     /// `_consume_ccount` field (heap records only). The `emit_fn` prologue
     /// gates on THIS set (not `consume_cleanup_types`) so the two can never
@@ -2445,6 +2500,7 @@ impl CEmitter {
             // emit_module runs the pre-pass.
             preempt_keep: crate::codegen::preempt_keep::PreemptKeepSet::default(),
             consume_cleanup_types: HashSet::new(),
+            default_handler_fns: HashMap::new(),
             consume_ccount_structs: HashSet::new(),
             record_consume_fields: HashMap::new(),
             record_field_names: HashMap::new(),
@@ -4641,6 +4697,49 @@ impl CEmitter {
                 crate::codegen::preempt_keep::compute_preempt_keep_set(all_fns);
         }
 
+        // Plan 175 Ф.2-v2: pre-pass — collect `#default_handler(X)` free fns
+        // (checker already validated arity/return-type/uniqueness/cycles;
+        // codegen just needs the plain Nova name to resolve its mangled C
+        // symbol — consulted by `emit_effect_type`'s dispatch-wrapper below).
+        {
+            // Plan 175.2 Ф.2-v4 (П7, D431): `#default_handler` argument is
+            // now optional — bare form infers `X` from `f`'s own
+            // `-> Effect[X]` return type (checker already validated this
+            // shape in `check_default_handlers`; codegen just re-derives
+            // the same string here, mirroring
+            // `default_handler_infer_effect_name` in types/mod.rs).
+            let infer_eff = |rt: &Option<crate::ast::TypeRef>| -> Option<String> {
+                match rt {
+                    Some(crate::ast::TypeRef::Named { path, generics, .. })
+                        if path.len() == 1 && path[0] == "Effect" && generics.len() == 1 =>
+                    {
+                        match &generics[0] {
+                            crate::ast::TypeRef::Named { path: ip, .. } => ip.last().cloned(),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                }
+            };
+            let mut collect = |items: &[Item]| {
+                for item in items {
+                    if let Item::Fn(f) = item {
+                        for attr in &f.doc_attrs {
+                            if let crate::ast::DocAttr::DefaultHandler(eff_opt) = attr {
+                                if let Some(eff) = eff_opt.clone().or_else(|| infer_eff(&f.return_type)) {
+                                    self.default_handler_fns.insert(eff, f.name.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+            collect(&module.items);
+            for pf in &module.peer_files {
+                collect(&pf.items_here);
+            }
+        }
+
         // Plan 173 Ф.5 (#8, D188 R2): pre-pass — collect receiver types of
         // USER (non-extern) `consume @cleanup` methods. These heap-record
         // structs get a hidden `int _consume_ccount;` field and the generated
@@ -5426,6 +5525,59 @@ impl CEmitter {
                             group_entry.push((c.name.clone(), mangled));
                         }
                     }
+                    // [M-175-lazy-const-crossmodule-collision] (2026-07-22,
+                    // found via spec_tests/conformance/standalone/
+                    // repro_const_dup.nv): module-level `ro NAME = expr`
+                    // (`Item::Let`, Pattern::Ident — LetDecl has NO `is_export`
+                    // field at all, D24 grammar never allows `export ro` at
+                    // module scope) was COMPLETELY absent from this
+                    // module-qualification pass — it always fell to the bare
+                    // `_nova_const_<name>_value` C symbol (see
+                    // `emit_lazy_const`), with NO collision protection
+                    // whatsoever. Harmless while every such binding's bare
+                    // name happened to be globally unique; broke the moment
+                    // Plan 175 Ф.2-v3 made `std.time.duration` (which has
+                    // `export const ZERO/SECOND/MINUTE/HOUR Duration = …`)
+                    // transitively reachable from EVERY compile-unit (via
+                    // `std/prelude/effects.nv`'s new `Time`-schema import) —
+                    // a user file's own private `ro ZERO = …` collided with
+                    // `Duration.ZERO` at the C symbol level (two DIFFERENT
+                    // Nova consts, correctly resolved by the checker in their
+                    // own files, but emitting the IDENTICAL unqualified C
+                    // name). Treat exactly like a non-exported, non-file-
+                    // private `Item::Const` — module-qualified `Nova_const_
+                    // <module>_<name>`, distributed Rule-C style to every peer
+                    // in Step 2 below (a module-level `ro` has no file-private
+                    // variant to special-case).
+                    if let Item::Let(l) = item {
+                        // [M-175-lazy-const-crossmodule-collision] fix: a
+                        // module-level `ro NAME = expr` binding's pattern is
+                        // NOT always `Pattern::Ident` — an ALL-CAPS/PascalCase
+                        // bare name (`ZERO`, `SECOND`, …) parses as
+                        // `Pattern::Variant { path: [name], kind: Unit }` (the
+                        // parser's unit-variant-pattern shape, since a bare
+                        // capitalized identifier is AMBIGUOUS with an enum
+                        // unit-variant pattern) — mirrors EXACTLY the shape
+                        // the pre-existing `Item::Let` emission loop below
+                        // (in `emit_module`, right before `emit_lazy_const`)
+                        // already matches. Missing this arm is why this whole
+                        // branch never fired for `repro_const_dup.nv`'s
+                        // `ZERO`/`SECOND`/`THIRD`/`FOURTH` on the first attempt.
+                        let name = match &l.pattern {
+                            Pattern::Ident { name, .. } => Some(name.clone()),
+                            Pattern::Variant { path, kind: VariantPatternKind::Unit, .. }
+                                if path.len() == 1 => Some(path[0].clone()),
+                            _ => None,
+                        };
+                        if let Some(name) = name {
+                            let mangled = format!(
+                                "Nova_const_{}_{}",
+                                pf.module_name.join("_"),
+                                name
+                            );
+                            group_entry.push((name, mangled));
+                        }
+                    }
                 }
             }
 
@@ -5754,11 +5906,14 @@ impl CEmitter {
 
         // Plan 175 Ф.1 (D316 — единый источник схемы): хардкод
         // `effect_schemas["Time"]` УДАЛЁН. `Time` (D11/D14/D62) объявлен в
-        // `std/prelude/effects.nv` — `emit_type_decl` (RUNTIME_DEFINED_TYPES
-        // ветка, TypeDeclKind::Effect) строит `effect_schemas["Time"]` из
-        // этой декларации (симметрично RuntimeError/MemOrdering sum-schema,
-        // 172.1 U.1). Единственный источник правды — `.nv`, без хардкод-
-        // зеркала. Int-провод сохранён (Ф.1 не меняет поведение):
+        // `std/time/duration/time_effect.nv` (Plan 175.2 Ф.2-v4 П6 —
+        // moved OUT of prelude; was `std/prelude/effects.nv` Ф.2-v2..Ф.3) —
+        // `emit_type_decl` (RUNTIME_DEFINED_TYPES ветка, TypeDeclKind::Effect)
+        // строит `effect_schemas["Time"]` из этой декларации (симметрично
+        // RuntimeError/MemOrdering sum-schema, 172.1 U.1) — module path is
+        // irrelevant to this lookup (keyed by effect NAME). Единственный
+        // источник правды — `.nv`, без хардкод-зеркала. Int-провод сохранён
+        // (Ф.1 не меняет поведение):
         // `sleep(ms int)->()`, `now_unix_ms()->int`, `now_monotonic_ns()->int`
         // (D316 amend, 2026-07-06: операции переименованы с единицей в
         // имени, owner-side-task вне формальной Ф-нумерации плана 175;
@@ -6059,7 +6214,10 @@ impl CEmitter {
             // pre-registered effect_schemas + codegen helpers (no
             // runtime/effects.h dedicated struct, but emit-skip required
             // чтобы избежать conflict с declaration).
-            const BUILTIN_VTABLE_NAMES: &[&str] = &["Fail", "Time", "Mem", "TimerMetrics"];
+            // Plan 175 Ф.2-v3: "Time" removed — no longer a hand-written
+            // vtable (см. RUNTIME_DEFINED_TYPES comment above); flows through
+            // `local_effects` (declared in module.items via prelude) instead.
+            const BUILTIN_VTABLE_NAMES: &[&str] = &["Fail", "Mem", "TimerMetrics"];
             // [M-codegen-emission-nondeterminism] fix: same HashSet-order issue as
             // `external_names` above — sort before emitting.
             let mut vtable_names_sorted: Vec<String> = vtable_names.into_iter().collect();
@@ -6851,8 +7009,37 @@ impl CEmitter {
         };
 
         // 1. Type declarations first (structs/unions needed by fn signatures)
+        //
+        // Plan 175 Ф.2-v3 Фаза 2 (D316 §Ф.2 historical finding — root cause
+        // of the Time-typed-ops rollback, 4× before this fix): emit ALL
+        // non-effect type decls (records/sums/value-records/named-tuples/
+        // aliases/newtypes — anything whose BODY a function-pointer field
+        // might need to be COMPLETE for, e.g. a by-value `Duration` op
+        // parameter) in a FIRST pass, and defer `TypeDeclKind::Effect` to a
+        // SECOND pass afterward. Effect vtables are function-pointer
+        // structs — `emit_effect_type` may declare a field like
+        // `nova_unit (*sleep)(void*, NovaValue_Duration)`, which needs
+        // `NovaValue_Duration`'s COMPLETE struct body already emitted
+        // (a by-value struct parameter of an INCOMPLETE type is a hard C
+        // error, unlike a plain forward-declared pointer) — module.items
+        // order is whatever import/merge order produced (an effect
+        // declared in a module that happens to be processed before the
+        // value-record module it references would previously hit "unknown
+        // type" / incomplete-type errors). Two passes over the same
+        // (unordered-safe) `module.items` sidesteps the ordering question
+        // entirely: no matter where `type Time effect {...}` (or any user
+        // effect referencing a value-record type) sits in the merged item
+        // list, its vtable now emits strictly after every other type body.
         for item in &module.items {
             if let Item::Type(t) = item {
+                if matches!(t.kind, TypeDeclKind::Effect(_)) { continue; }
+                if should_skip_type(t) { continue; }
+                self.emit_type_decl(t)?;
+            }
+        }
+        for item in &module.items {
+            if let Item::Type(t) = item {
+                if !matches!(t.kind, TypeDeclKind::Effect(_)) { continue; }
                 if should_skip_type(t) { continue; }
                 self.emit_type_decl(t)?;
             }
@@ -7643,7 +7830,20 @@ impl CEmitter {
                     } else {
                         self.infer_expr_c_type(&l.value)
                     };
-                    self.emit_lazy_const(&name, &ty_c, &l.value)?;
+                    // [M-175-lazy-const-crossmodule-collision]: module-level
+                    // `ro NAME = expr` is ALWAYS module-private (LetDecl has
+                    // no `is_export`) — look up the module-qualified name the
+                    // pre-pass above (Step 1, `Item::Let` branch) registered,
+                    // mirroring `emit_const_decl`'s own lookup. Falls back to
+                    // the bare name only if the pre-pass found no entry
+                    // (defensive; should always be present once peer_files is
+                    // non-empty — byte-identical fallback for any edge case
+                    // it doesn't cover).
+                    let c_name = self.private_const_c_names
+                        .get(&(l.span.file_id, name.clone()))
+                        .cloned()
+                        .unwrap_or_else(|| name.clone());
+                    self.emit_lazy_const(&name, &c_name, &ty_c, &l.value)?;
                 }
             }
         }
@@ -9050,7 +9250,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             Err(_) => {
                 // Plan 14 Ф.2: non-constant initialiser (record-literal,
                 // function call, и т.п.) — desugaring в lazy-init геттер.
-                self.emit_lazy_const(&c.name, &ty_c, &c.value)
+                // [M-175-lazy-const-crossmodule-collision]: use the ALREADY-
+                // computed `c_name` (module-qualified when non-exported —
+                // see lookup above) as the wrapper qualifier, not the bare
+                // `c.name` — this was the bug: `c_name` was computed and
+                // then silently discarded on this path, so every lazy
+                // (non-constexpr-initializer) const emitted the UNQUALIFIED
+                // `_nova_const_<bare-name>_value` regardless of collision.
+                self.emit_lazy_const(&c.name, &c_name, &ty_c, &c.value)
             }
         }
     }
@@ -9086,16 +9293,42 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// На use-site `Ident(name)` для lazy const'ов эмитим ГОЛОЕ
     /// `_nova_const_<name>_value` (не call — eager-init гарантирует, что оно
     /// уже populated до старта любого worker'а).
-    fn emit_lazy_const(&mut self, name: &str, ty_c: &str, value: &Expr) -> Result<(), String> {
+    ///
+    /// [M-175-lazy-const-crossmodule-collision] (2026-07-22): `name` (bare
+    /// SOURCE identifier) and `c_name` (the QUALIFIER substituted into the
+    /// `_nova_const_<c_name>_value` wrapper below — NOT the final symbol by
+    /// itself) are now DISTINCT parameters. `name` still drives every
+    /// Nova-level registry keyed by source identifier (`lazy_consts`/
+    /// `var_types`/topo-sort dependency-matching via `pending_const_inits`
+    /// — those operate on Nova-level identifiers, resolved unambiguously by
+    /// the checker per-file, independent of any C-symbol collision).
+    /// `c_name` is the module-qualified (or bare, if no collision risk /
+    /// exported) name callers precompute (see `emit_const_decl`'s `c_name`
+    /// lookup and the `Item::Let` call site's mirrored lookup; reference
+    /// sites mirror the SAME lookup — see the `ExprKind::Ident` lazy-const
+    /// branch), so two DIFFERENT lazy consts sharing a bare source name
+    /// (e.g. a user's own private `ro ZERO` vs `Duration.ZERO`, both
+    /// reachable in one CU since Plan 175 Ф.2-v3 made `std.time.duration`
+    /// transitively pulled into every CU) no longer collide into one
+    /// `_nova_const_ZERO_value` C global.
+    fn emit_lazy_const(&mut self, name: &str, c_name: &str, ty_c: &str, value: &Expr) -> Result<(), String> {
         // Регистрируем имя как lazy — use-site Ident(name) станет голым
-        // чтением `_nova_const_<name>_value`.
+        // чтением `c_name`.
         self.lazy_consts.insert(name.to_string());
         // Регистрируем тип, чтобы infer_expr_c_type(Ident(name)) возвращал
         // правильный c-тип (для записи в var_types — как обычный binding).
         self.var_types.insert(name.to_string(), ty_c.to_string());
         // Эмитим storage (file-scope static; no `_init` flag anymore — the
         // combined `nova_consts_init()` runs it exactly once, eagerly).
-        self.line(&format!("{}{} _nova_const_{}_value;", self.top_level_storage(), ty_c, name));
+        // [M-175-lazy-const-crossmodule-collision]: KEEP the `_nova_const_
+        // <X>_value` wrapper (not just a bare `c_name`) — the wrapper isn't
+        // decorative, it's what keeps a const named after a C keyword
+        // (`for`/`while`/…) or colliding with an unrelated bare C symbol
+        // safe; `c_name` only substitutes the qualifier-or-bare-name PIECE
+        // inside it (bare `name` in the overwhelmingly common non-colliding
+        // case → byte-identical to pre-fix output; `Nova_const_<module>_
+        // <name>` when the pre-pass detected a cross-module bare-name clash).
+        self.line(&format!("{}{} _nova_const_{}_value;", self.top_level_storage(), ty_c, c_name));
         // Capture this const's init-BODY into its own buffer (same
         // side-statement-safety rationale as the old getter-body capture —
         // nested emits, e.g. a record-literal's helper statements, must not
@@ -9115,7 +9348,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // No-op under malloc/RC backends.
         self.line(&format!(
             "nova_gc_add_root(&_nova_const_{n}_value, (char*)(&_nova_const_{n}_value) + sizeof(_nova_const_{n}_value));",
-            n = name
+            n = c_name
         ));
         // Передать ty_c как ожидаемый record-target для D55 coercion
         // (`const FOO = { ... }` без явного имени типа должен подхватить
@@ -9179,7 +9412,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             None => self.emit_expr(value)?,
         };
         self.expected_record_type = saved_expected;
-        self.line(&format!("_nova_const_{}_value = {};", name, val));
+        self.line(&format!("_nova_const_{}_value = {};", c_name, val));
         let body = std::mem::replace(&mut self.out, saved_out);
         self.indent = saved_indent;
         // Dependency scan (best-effort — see `collect_free_idents`'s
@@ -11331,6 +11564,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let synth_method = HandlerMethod {
             name: op_name,
             params: handler_params,
+            // Plan 175.2 Ф.2-v4 (П4): synthesized post-checker (D31 lambda-
+            // sugar desugar) — never walked by `check_handler_op_declarations`,
+            // so the mandatory-`ret_ty` rule doesn't apply here. Codegen
+            // resolves the real return type from `effect_schemas` regardless.
+            ret_ty: None,
             body: handler_body,
             span: handler.span,
         };
@@ -11374,9 +11612,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // match-arm, if-let, while-let) are locals of the op, NOT free variables of
             // the enclosing factory fn — they must not be captured. Without this, a stale
             // entry in the flat `var_types` map (e.g. `i` left behind by a previously-emitted
-            // std.sort fn) makes an op-body local wrongly captured, producing both a dangling
-            // `ctx->i = &i` (no such local in the factory) and a `#define i (*_c->i)` that
-            // collides with the genuine op-body `nova_int i`. Mirror emit_spawn/detach/blocking,
+            // std.sort fn) makes an op-body local wrongly captured, producing both a bogus
+            // ctx-field capture (no such local in the factory) and a var_boxed/local-copy
+            // unpack that collides with the genuine op-body `nova_int i`. Mirror emit_spawn/detach/blocking,
             // which already subtract bound names via collect_bound_names_*. PER-method: a name
             // bound-local in one op may legitimately be an enclosing capture used by another op.
             let mut bound: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -11405,28 +11643,50 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // This goes directly into out (inside the function body) before the vtable.
         // MSVC supports local typedefs in function scope.
         let ctx_struct = format!("NovaCtx_{}", handler_id);
-        // Plan 175 Ф.1b (dangling-capture fix): pointer captures store the
-        // pointer directly; MUTABLE scalar captures store `&local` (mutation
-        // must be visible to the caller for INLINE handlers); IMMUTABLE scalar
-        // captures store a BY-VALUE snapshot (copy). The old code stored EVERY
-        // scalar by `&local` — for a FACTORY handler (`fn fixed_ms(ms) ->
-        // Effect[Time] { handler … }`) the literal escapes and `&ms` dangled
-        // (mock clock read freed stack → garbage). Immutable-by-value is sound
-        // both inline (value unchanged) and escaping (copy survives return).
-        // `needs_deref[i]` == field is `T*` (by-pointer) ⇒ body access derefs.
-        let capture_by_ptr: Vec<bool> = all_captures.iter().map(|(name, cap_ty)| {
-            cap_ty.ends_with('*') || self.var_mutable.contains(name)
-        }).collect();
+        // Plan 175 Ф.2-v2 (common closure-capture path — replaces the old
+        // `#define {cap} (*_c->{cap})` textual-macro aliasing, [M-effect-
+        // handler-body-record-literal] fix-direction): handler-literal
+        // captures now use EXACTLY the mechanism `emit_lambda` uses for
+        // closures (mirrors it 1:1, see emit_lambda's env-struct/var_boxed
+        // comments a few thousand lines below in this file):
+        //   * MUTABLE captures: escaping handlers (returned as `Effect[X]`
+        //     from a factory fn) heap-promote to a `T*` box (reusing an
+        //     already-boxed var if a prior closure/handler in this fn
+        //     already promoted it — `self.var_boxed`) and register it in the
+        //     OUTER `var_boxed` so `ExprKind::Ident` transparently derefs
+        //     `(*box)` afterward — exactly like a closure capture. INLINE
+        //     handlers (`with X = effect {…} { body }`) instead take
+        //     `&cap_name` directly (no box, no outer `var_boxed` write) —
+        //     `emit_with` wraps handler-construction in its own nested C
+        //     block, so a box's C VARIABLE DECLARATION would itself go out
+        //     of scope at the end of that `with`, corrupting any later read
+        //     of `cap_name` ([M-175-handler-lit-boxed-var-c-scope-leak]);
+        //     `&cap_name` is a bare expression, not a new scoped variable,
+        //     and is always sound since `cap_name` was already in scope
+        //     before the handler literal. See the per-capture code below for
+        //     the exact split.
+        //   * IMMUTABLE captures (incl. already-pointer heap refs, e.g. a
+        //     captured `Nova_Foo*` local) are a plain BY-VALUE snapshot —
+        //     copying a pointer by value already preserves shared-object
+        //     mutation visibility; only REASSIGNMENT of the local binding
+        //     needs the box, which is exactly what `var_mutable` gates.
+        // Field names are MANGLED (`_nv_fv_<handler_id>_<name>`, matching
+        // emit_lambda's `mangled_field`) so a nested closure/handler literal
+        // built INSIDE an op body never collides with a struct-member token
+        // sharing a captured var's bare name (the exact class of bug the
+        // macro approach required a separate mangling workaround for).
+        let free_var_is_mut: Vec<bool> = all_captures.iter()
+            .map(|(name, _)| self.var_mutable.contains(name))
+            .collect();
+        let mangled_field = |name: &str| format!("_nv_fv_{}_{}", handler_id, name);
         let capture_ptr_tys: Vec<String> = all_captures.iter()
-            .zip(capture_by_ptr.iter())
-            .map(|((_, cap_ty), &by_ptr)| {
-                if !by_ptr { cap_ty.clone() }
-                else if cap_ty.ends_with('*') { cap_ty.clone() }
-                else { format!("{}*", cap_ty) }
+            .zip(free_var_is_mut.iter())
+            .map(|((_, cap_ty), &is_mut)| {
+                if is_mut { format!("{}*", cap_ty) } else { cap_ty.clone() }
             }).collect();
         self.line(&format!("typedef struct {{"));
         for ((cap_name, _), ptr_ty) in all_captures.iter().zip(capture_ptr_tys.iter()) {
-            self.line(&format!("    {} {};", ptr_ty, cap_name));
+            self.line(&format!("    {} {};", ptr_ty, mangled_field(cap_name)));
         }
         if all_captures.is_empty() {
             self.line("    char _dummy;");
@@ -11437,7 +11697,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // The impl functions (file-scope) also need to know the ctx struct type.
         let _ = writeln!(self.deferred_impls, "typedef struct {{");
         for ((cap_name, _), ptr_ty) in all_captures.iter().zip(capture_ptr_tys.iter()) {
-            let _ = writeln!(self.deferred_impls, "    {} {};", ptr_ty, cap_name);
+            let _ = writeln!(self.deferred_impls, "    {} {};", ptr_ty, mangled_field(cap_name));
         }
         if all_captures.is_empty() {
             let _ = writeln!(self.deferred_impls, "    char _dummy;");
@@ -11456,45 +11716,71 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "{ctx_ty}* {ctx} = ({ctx_ty}*)nova_alloc(sizeof({ctx_ty}));",
             ctx_ty = ctx_struct, ctx = ctx_var
         ));
-        for ((cap_name, cap_ty), &by_ptr) in all_captures.iter().zip(capture_by_ptr.iter()) {
-            if !by_ptr {
-                // Immutable scalar/struct: by-value snapshot (copy survives escape).
-                self.line(&format!("{ctx}->{cap} = {cap};", ctx = ctx_var, cap = cap_name));
-            } else if cap_ty.ends_with('*') {
-                // Pointer type: store the pointer value directly (heap object, no indirection)
-                self.line(&format!("{ctx}->{cap} = {cap};", ctx = ctx_var, cap = cap_name));
-            } else {
-                // Mutable scalar/struct capture. Two cases (Plan 175 Ф.1b):
+        for ((cap_name, cap_ty), &is_mut) in all_captures.iter().zip(free_var_is_mut.iter()) {
+            let field = mangled_field(cap_name);
+            if is_mut {
+                // Mutable capture. Two cases ([M-175-handler-lit-boxed-var-
+                // c-scope-leak] — found via spec_tests/conformance/repro_
+                // matrix.nv's two-level nested-handler-capture fixture):
                 //
-                // (a) ESCAPING handler — the literal is the value of a factory fn
-                //     returning `Effect[X]` (C ret `NovaVtable_X*`), e.g.
-                //     `fn mut_clock() -> Effect[Time] { mut current_ms … }`. A
-                //     `&stack_local` would dangle after the fn returns, and the
-                //     handler's own writes (`sleep` mutates `current_ms`) would
-                //     scribble freed stack → HEAP-PROMOTE: alloc a cell, copy the
-                //     current value, store the cell pointer.
+                // (a) ESCAPING handler — the literal is the return value of a
+                //     factory fn (`fn f() -> Effect[X] { … effect X {…} }`).
+                //     `&stack_local` would dangle once the factory returns, so
+                //     UNCONDITIONALLY heap-promote (mirrors emit_lambda's
+                //     closure-capture box logic) — reuse an existing box if
+                //     `cap_name` was already promoted by an earlier closure/
+                //     handler in this same enclosing fn (`self.var_boxed`),
+                //     else allocate one now, and register it in the OUTER
+                //     `var_boxed` so later reads/writes of `cap_name` in the
+                //     enclosing fn stay synced with the handler's mutations
+                //     (exactly like a closure capture).
                 //
-                // (b) INLINE handler (`with X = effect X {…} { body }` in a
-                //     non-Effect fn) — captures point at still-live enclosing
-                //     locals, and callers may read those locals back after the
-                //     block (`mut n=0; …handler mutates n…; assert(n==…)`). Keep
-                //     `&local` so mutations remain visible to the caller.
-                //
-                // Body access stays `(*_c->cap)` in both cases.
+                // (b) INLINE handler (`with X = effect X {…} { body }`, NOT
+                //     returned) — `&cap_name` directly, NO box. This matters
+                //     even though the box's ALLOCATION would be heap-durable:
+                //     `emit_with` wraps handler-construction in its OWN
+                //     nested C block (the interrupt-frame machinery for
+                //     `with`), so a NEW `_box_<cap>` C VARIABLE declared
+                //     there is itself block-scoped and goes out of C scope
+                //     once that `with` closes — but `cap_name`'s Nova-level
+                //     `mut` binding (and any use of it AFTER the `with`
+                //     block, or by a SIBLING `with` at the same level) must
+                //     keep working. `&cap_name` sidesteps this entirely: it's
+                //     just an address-of expression, no new scoped variable,
+                //     and it is always sound because `cap_name`'s OWN `mut`
+                //     declaration necessarily lives in a C scope that
+                //     outlives this `with` (Nova's binding rules — a name
+                //     can only be captured if it was already in scope before
+                //     the handler literal). Do NOT touch the OUTER
+                //     `var_boxed` here: `cap_name` remains a plain local for
+                //     the rest of the enclosing fn — nothing about its
+                //     storage changed.
                 let handler_escapes = self.current_fn_return_ty.as_deref()
                     .map_or(false, |t| t.starts_with("NovaVtable_"));
-                if handler_escapes {
-                    let cap_ty = cap_ty.clone();
-                    let cell = self.fresh_tmp();
-                    self.line(&format!(
-                        "{ty}* {cell} = ({ty}*)nova_alloc(sizeof({ty}));",
-                        ty = cap_ty, cell = cell));
-                    self.line(&format!("*{cell} = {cap};", cell = cell, cap = cap_name));
-                    self.line(&format!(
-                        "{ctx}->{cap} = {cell};", ctx = ctx_var, cap = cap_name, cell = cell));
+                let field_val = if handler_escapes {
+                    if let Some(existing) = self.var_boxed.get(cap_name) {
+                        existing.clone()
+                    } else {
+                        let bv = format!("_box_{}", cap_name);
+                        self.line(&format!(
+                            "{ty}* {bv} = ({ty}*)nova_alloc(sizeof({ty}));",
+                            ty = cap_ty, bv = bv));
+                        self.line(&format!("*{bv} = {cap};", bv = bv, cap = cap_name));
+                        self.var_boxed.insert(cap_name.clone(), bv.clone());
+                        bv
+                    }
                 } else {
-                    self.line(&format!("{ctx}->{cap} = &{cap};", ctx = ctx_var, cap = cap_name));
-                }
+                    format!("&{}", cap_name)
+                };
+                self.line(&format!("{ctx}->{field} = {field_val};",
+                    ctx = ctx_var, field = field, field_val = field_val));
+            } else {
+                // Immutable capture (incl. already-pointer heap refs): plain
+                // by-value snapshot. `cap_name` here can never itself be
+                // var_boxed (only mutable vars are ever registered there),
+                // so the bare read is always the correct current value.
+                self.line(&format!("{ctx}->{field} = {cap};",
+                    ctx = ctx_var, field = field, cap = cap_name));
             }
         }
         // Patch vtable at runtime — use mangled field name for overloaded ops
@@ -11551,8 +11837,45 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     .unwrap_or_else(|| m.name.clone());
                 mangled_key
             };
-            self.line(&format!("{vt}->{field} = {fn};",
-                vt = vtable_var, field = field, fn = fn_name));
+            // Plan 175 Ф.3 (D316 typed retype): `NovaVtable_Time`'s
+            // sleep/now/now_monotonic slots are raw-int64-nanos WIRE
+            // (effects.h — hand-written struct can't name a per-CU typed
+            // value-record), while THIS handler-literal's op body
+            // (`fn_name`) is schema-driven typed (`NovaValue_Duration`/
+            // `Timestamp`/`Monotonic`, same as any user handler-literal
+            // body). Installing `fn_name` DIRECTLY into the vtable slot
+            // would be a function-pointer-signature mismatch (by-value
+            // struct param/return vs raw int64 — different, no
+            // ABI-compatible reinterpretation). Generate a thin static
+            // marshalling THUNK with the WIRE signature that wraps/unwraps
+            // at the one call boundary, and install THAT instead — mirror
+            // image of the dispatch-fn-side marshalling in
+            // `emit_effect_type`.
+            let install_fn = if eff == "Time" && matches!(field.as_str(), "sleep" | "now" | "now_monotonic") {
+                let thunk_name = format!("{}_time_wire_{}", handler_id, m.name);
+                if field == "sleep" {
+                    let _ = writeln!(self.lambda_forward_decls,
+                        "{storage}nova_unit {thunk}(void* _ctx, int64_t nanos);",
+                        storage = self.top_level_storage(), thunk = thunk_name);
+                    let _ = writeln!(self.deferred_impls,
+                        "{storage}nova_unit {thunk}(void* _ctx, int64_t nanos) {{ \
+                         NovaValue_Duration _nv_d = {{ .nanos = nanos }}; return {fn}(_ctx, _nv_d); }}",
+                        storage = self.top_level_storage(), thunk = thunk_name, fn = fn_name);
+                } else {
+                    let ret_ty = if field == "now" { "NovaValue_Timestamp" } else { "NovaValue_Monotonic" };
+                    let _ = writeln!(self.lambda_forward_decls,
+                        "{storage}int64_t {thunk}(void* _ctx);",
+                        storage = self.top_level_storage(), thunk = thunk_name);
+                    let _ = writeln!(self.deferred_impls,
+                        "{storage}int64_t {thunk}(void* _ctx) {{ {ret} _nv_r = {fn}(_ctx); return _nv_r.nanos; }}",
+                        storage = self.top_level_storage(), thunk = thunk_name, ret = ret_ty, fn = fn_name);
+                }
+                thunk_name
+            } else {
+                fn_name.clone()
+            };
+            self.line(&format!("{vt}->{field} = {install_fn};",
+                vt = vtable_var, field = field, install_fn = install_fn));
         }
         // Plan 20 Ф.8 (4): vtable->prev initialized to NULL here.
         // Будет перезаписан в `with X = h { ... }` codegen перед install'ом
@@ -11701,15 +12024,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
 
-            // Unpack context: expose captured variables so body code can use them directly
+            // Plan 175 Ф.2-v2: this op body is its own C function — isolate
+            // `var_boxed` (mirrors emit_lambda / emit_monomorphized_method's
+            // `[M-mono-method-var-boxed-leak]` fix) so an unrelated boxed
+            // name from the enclosing fn or a PREVIOUS op's body iteration
+            // never leaks in, and so THIS op's captures don't leak to the
+            // next op's body. Restored below alongside var_types/fail_e_map.
+            let saved_var_boxed = std::mem::take(&mut self.var_boxed);
+
+            // Unpack context: expose captured variables so body code can use
+            // them directly — common closure-capture path (no `#define`):
+            // mutable captures register `_c->field` in `var_boxed` so
+            // `ExprKind::Ident` auto-derefs; immutable captures get a plain
+            // local copy under the bare name (fresh local, own C-function
+            // scope — no outer macro can be active to corrupt it).
             self.line(&format!("{ctx}* _c = ({ctx}*)_ctx;", ctx = ctx_struct));
-            for ((cap_name, cap_ty), &by_ptr) in all_captures.iter().zip(capture_by_ptr.iter()) {
-                if by_ptr && !cap_ty.ends_with('*') {
-                    // Mutable scalar capture stored as `T*`: deref `(*_c->cap)`.
-                    self.line(&format!("#define {cap} (*_c->{cap})", cap = cap_name));
+            for ((cap_name, cap_ty), &is_mut) in all_captures.iter().zip(free_var_is_mut.iter()) {
+                let field = mangled_field(cap_name);
+                if is_mut {
+                    self.var_boxed.insert(cap_name.clone(), format!("_c->{}", field));
                 } else {
-                    // By-value snapshot OR pointer-typed capture: `(_c->cap)` (no deref).
-                    self.line(&format!("#define {cap} (_c->{cap})", cap = cap_name));
+                    self.line(&format!("{} {} = _c->{};", cap_ty, cap_name, field));
                 }
             }
             // Plan 65 Ф.1: rebind annotation-bridged handler params from the
@@ -11801,10 +12136,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.expected_record_type = saved_op_expected;
             self.contracts_post_label = saved_op_post_label;
 
-            // Undef the macros so they don't leak
-            for (cap_name, _) in &all_captures {
-                self.line(&format!("#undef {}", cap_name));
-            }
+            // Restore var_boxed (per-op isolation — see take() above; no
+            // `#undef` needed, common closure-capture path uses `var_boxed`
+            // rewriting rather than macros).
+            self.var_boxed = saved_var_boxed;
 
             // Restore var_types state for method params
             for (name, prev) in saved_params {
@@ -12502,6 +12837,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_out    = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
         self.indent = 0;
+        // Plan 175 Ф.2-v2 ([M-spawn-var-boxed-leak] class): a spawn-body is
+        // its own C function reached ONLY via `_c->name` capture rewriting
+        // (`current_spawn_captures`, checked further below in Ident
+        // resolution) — NOT via `var_boxed` macro-free box-deref. But
+        // `var_boxed` is a flat, un-scoped map: if an EARLIER closure or
+        // handler-literal in the SAME enclosing fn boxed a mut var this
+        // spawn ALSO captures (same name), the stale `var_boxed` entry is
+        // checked FIRST in Ident resolution (before `current_spawn_
+        // captures`) and wrongly emits `(*_box_name)` — a C local that
+        // lives in the CALLER's stack frame, invisible inside this spawn's
+        // own function. Isolate (mirrors emit_lambda's identical fix for
+        // its own body) so this spawn's captures are resolved ONLY via its
+        // own ctx struct; restored below.
+        let saved_var_boxed_spawn = std::mem::take(&mut self.var_boxed);
 
         // Plan 48 Ф.4 ([M-mono-spawn-fwd-decls]): pre-scan `scan_expr_fwd`
         // emits forward declarations for every spawn-body it sees in the
@@ -12774,6 +13123,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let entry_code = std::mem::replace(&mut self.out, saved_out);
         self.deferred_impls.push_str(&entry_code);
         self.indent = saved_indent;
+        self.var_boxed = saved_var_boxed_spawn;
 
         // spawn evaluates to unit.
         Ok("NOVA_UNIT".to_string())
@@ -12942,7 +13292,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // `timeout: <Duration>` — relative offset from now.
                 self.line(&format!(
                     "{}.deadline_ns = nova_deadline_combine({}.deadline_ns, \
-                     _nova_monotonic_ns() + (int64_t)(({}).nanos));",
+                     time_monotonic_ns() + (int64_t)(({}).nanos));",
                     queue_var, queue_var, v
                 ));
             } else {
@@ -13713,6 +14063,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
         self.indent = 0;
+        // Plan 175 Ф.2-v2 ([M-spawn-var-boxed-leak] class, mirrors emit_spawn's
+        // identical fix): isolate `var_boxed` for this detach-body's own
+        // scope — captures here are resolved via `current_spawn_captures`
+        // (`_c->name`), not `var_boxed`; a stale outer entry would shadow it.
+        let saved_var_boxed_detach = std::mem::take(&mut self.var_boxed);
 
         self.line(&format!("{}void {}(mco_coro* _co) {{", self.top_level_storage(), detach_id));
         self.indent += 1;
@@ -13821,6 +14176,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let entry_fn_text = std::mem::take(&mut self.out);
         self.indent = saved_indent;
         self.out = saved_out;
+        self.var_boxed = saved_var_boxed_detach;
         self.deferred_impls.push_str(&entry_fn_text);
 
         // ── Call site: heap-alloc ctx, fill captures, spawn_orphan ──
@@ -14040,6 +14396,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_out    = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
         self.indent = 0;
+        // Plan 175 Ф.2-v2 ([M-spawn-var-boxed-leak] class, mirrors emit_spawn):
+        // isolate `var_boxed` — this work-fn body resolves captures via
+        // `current_spawn_captures`, not `var_boxed`.
+        let saved_var_boxed_blk = std::mem::take(&mut self.var_boxed);
 
         self.line(&format!("{}void {}(void* _blk_arg) {{", self.top_level_storage(), blk_id));
         self.indent += 1;
@@ -14089,6 +14449,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let blk_code = std::mem::replace(&mut self.out, saved_out);
         self.deferred_impls.push_str(&blk_code);
         self.indent = saved_indent;
+        self.var_boxed = saved_var_boxed_blk;
 
         if has_result {
             Ok(format!("{}._nova_result", ctx_var))
@@ -14184,6 +14545,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_out    = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
         self.indent = 0;
+        // Plan 175 Ф.2-v2 ([M-spawn-var-boxed-leak] class, mirrors emit_spawn):
+        // isolate `var_boxed` — this work-fn body's captures (if any go
+        // through Ident resolution rather than the plain `_c->param` args
+        // built below) must not see a stale outer box entry.
+        let saved_var_boxed_blk = std::mem::take(&mut self.var_boxed);
 
         self.line(&format!("{}void {}(void* _blk_arg) {{", self.top_level_storage(), blk_id));
         self.indent += 1;
@@ -14208,6 +14574,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let blk_code = std::mem::replace(&mut self.out, saved_out);
         self.deferred_impls.push_str(&blk_code);
         self.indent = saved_indent;
+        self.var_boxed = saved_var_boxed_blk;
 
         if has_result {
             Ok(format!("{}._nova_result", ctx_var))
@@ -16140,10 +16507,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .map(|(n, p)| (n.as_str(), p.as_slice()))
             .collect();
 
+        // Plan 175 Ф.2-v3: "Time" is the ONE narrow exception — its
+        // `NovaVtable_Time` struct + `_nova_handler_Time` TLS slot stay
+        // hand-declared in nova_rt/effects.h/.c (see the doc comment there):
+        // hand-written C consumers OUTSIDE codegen (nova_rt/channels.h
+        // `ChanReader.close_after` mock-time path, nova_rt/runtime.c
+        // worker-thread TLS registration) dereference `_nova_handler_Time`'s
+        // fields directly and are compiled ONCE (not per-CU), so they need a
+        // single stable named type — an anonymous struct emitted fresh into
+        // each generated CU can't serve that (and would typedef-redefinition
+        // conflict with effects.h's). Steps 1+2 below are skipped for Time;
+        // step 3 (dispatch functions) stays fully generic either way.
+        let emit_struct_and_slot = name != "Time";
+
         // 1. Vtable struct: one fn ptr per method, plus void* ctx
-        self.line(&format!("typedef struct {{"));
-        self.indent += 1;
-        self.line("void* ctx;");
+        if emit_struct_and_slot {
+            self.line(&format!("typedef struct {{"));
+            self.indent += 1;
+            self.line("void* ctx;");
+        }
         let mut schema: HashMap<String, (Vec<String>, String)> = HashMap::new();
         for (m, (_, param_c_types)) in methods.iter().zip(method_param_c.iter()) {
             let ret = match &m.return_type {
@@ -16151,29 +16533,52 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 Some(t) => self.type_ref_to_c(t)?,
             };
             let mangled = Self::mangle_op(&m.name, param_c_types, &all_method_pairs);
-            let mut param_types_with_ctx = vec!["void*".to_string()]; // ctx first
-            param_types_with_ctx.extend(param_c_types.iter().cloned());
-            let params_sig = param_types_with_ctx.join(", ");
-            self.line(&format!("{} (*{})({}); ", ret, mangled, params_sig));
+            if emit_struct_and_slot {
+                let mut param_types_with_ctx = vec!["void*".to_string()]; // ctx first
+                param_types_with_ctx.extend(param_c_types.iter().cloned());
+                let params_sig = param_types_with_ctx.join(", ");
+                self.line(&format!("{} (*{})({}); ", ret, mangled, params_sig));
+            }
             schema.insert(mangled.clone(), (param_c_types.clone(), ret));
         }
-        self.indent -= 1;
-        self.line(&format!("}} NovaVtable_{};", name));
-        self.line("");
+        if emit_struct_and_slot {
+            self.indent -= 1;
+            self.line(&format!("}} NovaVtable_{};", name));
+            self.line("");
 
-        // 2. Thread-local handler slot.
-        self.line("#ifdef _MSC_VER");
-        self.line(&format!(
-            "__declspec(thread) NovaVtable_{name}* _nova_handler_{name} = NULL;",
-            name = name
-        ));
-        self.line("#else");
-        self.line(&format!(
-            "__thread NovaVtable_{name}* _nova_handler_{name} = NULL;",
-            name = name
-        ));
-        self.line("#endif");
-        self.line("");
+            // 2. Thread-local handler slot.
+            self.line("#ifdef _MSC_VER");
+            self.line(&format!(
+                "__declspec(thread) NovaVtable_{name}* _nova_handler_{name} = NULL;",
+                name = name
+            ));
+            self.line("#else");
+            self.line(&format!(
+                "__thread NovaVtable_{name}* _nova_handler_{name} = NULL;",
+                name = name
+            ));
+            self.line("#endif");
+            self.line("");
+        }
+
+        // Plan 175 Ф.2-v3 [ordering-fix]: `emit_effect_type` runs during the
+        // TYPE-decl emission pass, which happens EARLY in the generated
+        // file — well before the `#default_handler` ctor free-fn's own
+        // forward declaration (emitted later, in the fn-decl pass). The
+        // ensure-default check below calls the ctor by mangled name; without
+        // an explicit prototype HERE first, C falls back to an implicit
+        // `int fn()` declaration at the call site, which then conflicts with
+        // the REAL `NovaVtable_X*`-returning prototype emitted downstream
+        // ("conflicting types for ..."). Emit a matching forward decl now —
+        // harmless if a compatible one appears again later (repeat
+        // prototypes are fine in C; only *conflicting* ones error).
+        if let Some(fn_name) = self.default_handler_fns.get(name).cloned() {
+            let ctor_c_name = self.free_fn_c_name(&fn_name);
+            self.line(&format!(
+                "{storage}NovaVtable_{name}* {ctor}(void);",
+                storage = self.top_level_storage(), name = name, ctor = ctor_c_name,
+            ));
+        }
 
         // 3. Dispatch helpers: Nova_Effect_method() calls through vtable
         for (m, (_, param_c_types)) in methods.iter().zip(method_param_c.iter()) {
@@ -16199,6 +16604,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 storage = self.top_level_storage_inline(), ret = ret, name = name, method = mangled, params = fn_params_str
             ));
             self.indent += 1;
+            // Plan 175 Ф.2-v2 (`#default_handler`, GENERIC — any effect may opt
+            // in): if this effect has a registered default-handler factory,
+            // lazily construct + install it the first time ANY op dispatches
+            // with no `with X = …` in scope for this thread — mirrors a
+            // closure's lazy-box-promotion pattern (compute once, memoized in
+            // the TLS slot itself; a real `with` still overrides normally,
+            // since `emit_with` always overwrites `_nova_handler_X` on entry
+            // and restores the PRIOR value — NULL or the default — on exit).
+            // An effect with no registered default keeps today's behaviour
+            // (NULL-deref if used without an enclosing `with`) unchanged.
+            if let Some(fn_name) = self.default_handler_fns.get(name).cloned() {
+                let ctor_c_name = self.free_fn_c_name(&fn_name);
+                self.line(&format!(
+                    "if (!_nova_handler_{name}) {{ _nova_handler_{name} = {ctor}(); }}",
+                    name = name, ctor = ctor_c_name,
+                ));
+            }
             // Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]:
             // intercept Application.register_finalizer dispatcher — push к
             // active LIFO stack БЕЗ handler-vtable call. User handler impl
@@ -16223,6 +16645,66 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 );
                 self.line("nova_unit _u = { 0 };");
                 self.line("return _u;");
+            } else if name == "Time" && matches!(mangled.as_str(), "sleep" | "now" | "now_monotonic" | "local_offset_sec") {
+                // Plan 175 Ф.3 (D316 typed retype): the hand-written
+                // `NovaVtable_Time` slots (effects.h) stay raw-int64-nanos
+                // WIRE (they can't name a per-CU `NovaValue_Duration`/
+                // `Timestamp`/`Monotonic` type — see effects.h doc comment),
+                // but THIS dispatch fn's own signature is schema-driven
+                // (typed `NovaValue_Duration`/`Timestamp`/`Monotonic`, same
+                // as any other effect op) — it DOES know the complete type
+                // (emitted after Фаза 2's reordering), so the marshalling
+                // between typed surface and raw wire happens right here,
+                // once, at the one chokepoint every call funnels through.
+                //
+                // Per-FIELD null-check + real-clock fallback (mirrors the
+                // pre-Ф.2-v3 `now_monotonic_ns`/`local_offset_sec`
+                // backward-compat pattern, extended here to ALL FOUR ops
+                // defensively): a handler LITERAL is allowed to be partial
+                // (implement only SOME of Time's ops — e.g.
+                // nova_tests/plan83_10/handler_isolation_per_fiber.nv's
+                // handler defines only `now()`) — C99 designated-init
+                // zero-fills the rest of the heap-allocated vtable, so an
+                // unimplemented slot is a NULL fn pointer. Calling through
+                // a NULL fn pointer unconditionally (as the naive
+                // `_nova_handler_Time->field(...)` one-liner would) is a
+                // regression vs the hand-written dispatcher this replaces;
+                // falling back to the real-clock primitive instead keeps
+                // the exact same behavior partial-handler fixtures relied on.
+                match mangled.as_str() {
+                    "sleep" => {
+                        // param `d` is `NovaValue_Duration` (by value) —
+                        // extract `.nanos` for the int64-wire slot.
+                        let arg_name = m.params.first().map(|p| p.name.clone())
+                            .unwrap_or_else(|| "d".to_string());
+                        self.line(&format!(
+                            "if (_nova_handler_Time->sleep) {{ return _nova_handler_Time->sleep(_nova_handler_Time->ctx, {arg}.nanos); }}",
+                            arg = arg_name
+                        ));
+                        self.line(&format!(
+                            "return time_sleep_ms((nova_int)(({arg}.nanos + 999999) / 1000000));",
+                            arg = arg_name
+                        ));
+                    }
+                    "now" => {
+                        self.line("if (_nova_handler_Time->now) { int64_t _nv_w = _nova_handler_Time->now(_nova_handler_Time->ctx); return (NovaValue_Timestamp){ .nanos = _nv_w }; }");
+                        self.line(&format!(
+                            "return ({ret}){{ .nanos = time_wall_unix_ms() * (int64_t)1000000 }};",
+                            ret = ret
+                        ));
+                    }
+                    "now_monotonic" => {
+                        self.line("if (_nova_handler_Time->now_monotonic) { int64_t _nv_w = _nova_handler_Time->now_monotonic(_nova_handler_Time->ctx); return (NovaValue_Monotonic){ .nanos = _nv_w }; }");
+                        self.line(&format!(
+                            "return ({ret}){{ .nanos = time_monotonic_ns() }};",
+                            ret = ret
+                        ));
+                    }
+                    _ /* local_offset_sec */ => {
+                        self.line("if (_nova_handler_Time->local_offset_sec) { return _nova_handler_Time->local_offset_sec(_nova_handler_Time->ctx); }");
+                        self.line("return time_local_offset_sec();");
+                    }
+                }
             } else {
                 self.line(&format!(
                     "return _nova_handler_{name}->{field}({args});",
@@ -26258,7 +26740,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line(&format!("{}void _nova_register_all_effects_(void) {{", self.top_level_storage()));
         self.indent += 1;
         self.line("nova_register_effect_storage((void**)&_nova_handler_Fail);");
-        self.line("nova_register_effect_storage((void**)&_nova_handler_Time);");
+        // Plan 175 Ф.2-v3: "Time" registration MOVED into the generic
+        // `emit_user_effect_registrations` loop below — Time is no longer a
+        // hardcoded builtin vtable (см. RUNTIME_DEFINED_TYPES/BUILTIN_VTABLE_
+        // NAMES comments), so its `_nova_handler_Time` is registered exactly
+        // like any user effect's handler slot.
         // User-defined effects — additional calls emitted here:
         self.emit_user_effect_registrations();
         self.indent -= 1;
@@ -26323,6 +26809,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         //  emit_main_function via emit_effects_registrar_fn.)
         self.line("_nova_register_effects_fn = _nova_register_all_effects_;");
         self.line("_nova_register_all_effects_();");
+        // Plan 175 Ф.2-v3: the standalone `_nova_time_default_ctor` runtime
+        // hook (Ф.2-v2 special-case) is GONE — Time now goes through the
+        // fully generic `#default_handler` mechanism baked directly into
+        // each `Nova_Time_<op>()` dispatcher body by `emit_effect_type`
+        // (same lazy-install-once pattern any other `#default_handler`
+        // effect gets — see the `default_handler_fns.get(name)` check
+        // inside `emit_effect_type`). No per-effect wiring needed here
+        // anymore; `#default_handler(Time)` now lives in
+        // std/prelude/effects.nv (always in scope — ambient fallback
+        // without import), so every CU registers it uniformly.
         // Plan 173 Ф.5 п.2 (D192-ретракт): __CLEANUP_TIMEOUT_INIT__ удалён.
         // Plan 174 (D349): assign typed TimeoutError throw fn pointer (if
         // TimeoutError referenced). Spliced via __SCOPE_TIMEOUT_INIT__.
@@ -26383,7 +26879,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Skip built-ins (зарегистрированы явно ИЛИ direct-C без handler-slot'а).
             // Plan 175 Ф.1: TimerMetrics — direct-C introspection (как Mem), нет
             // `_nova_handler_TimerMetrics`-слота → регистрировать нечего.
-            if name == "Fail" || name == "Time" || name == "Mem" || name == "TimerMetrics" { continue; }
+            // Plan 175 Ф.2-v3: "Time" REMOVED from skip-list — теперь generic
+            // effect (emit_effect_type generates `_nova_handler_Time` same as
+            // any user effect), значит ОБЯЗАН per-fiber TLS registration как
+            // все прочие (иначе `with Time = ...` не изолируется между
+            // fiber'ами на одном OS-thread — [M-83.10.1-per-fiber-handler-
+            // tls-race] класс бага). "Fail" зарегистрирован явно отдельно
+            // (см. `_nova_handler_Fail` в effects.h/emit_main_wrapper).
+            if name == "Fail" || name == "Mem" || name == "TimerMetrics" { continue; }
             self.line(&format!(
                 "nova_register_effect_storage((void**)&_nova_handler_{});", name));
         }
@@ -30695,8 +31198,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // `emit_lazy_const`). Проверяем ПЕРВЫМ, до is_local_var,
                 // потому что emit_lazy_const регистрирует name в var_types
                 // для type-inference, а is_local_var тогда был бы true.
+                //
+                // [M-175-lazy-const-crossmodule-collision] (2026-07-22): a
+                // lazy const's C symbol is `_nova_const_<qualifier>_value`,
+                // where `<qualifier>` is EITHER the bare source `name`
+                // (common case, byte-identical to pre-fix output) OR the
+                // module-qualified name from `private_const_c_names`
+                // (populated by the pre-pass in `emit_module` for a
+                // non-exported const/`ro`-binding — see there) when a
+                // cross-module bare-name clash was detected (repro: a user
+                // file's own private `ro ZERO = …` vs `Duration.ZERO`, both
+                // lazy consts sharing the bare name `ZERO` once `std.time.
+                // duration` became transitively reachable from every CU).
+                // MUST look up the qualifier and were-wrap it here — must
+                // NOT return `private_const_c_names`'s value directly (that
+                // map is ALSO consulted, unwrapped, for EAGER private
+                // consts further below — a different C-naming convention;
+                // see `emit_const_decl`/`emit_lazy_const`).
                 if self.lazy_consts.contains(name) {
-                    return Ok(format!("_nova_const_{}_value", name));
+                    let qualifier = self.private_const_c_names
+                        .get(&(expr.span.file_id, name.clone()))
+                        .cloned()
+                        .unwrap_or_else(|| name.clone());
+                    return Ok(format!("_nova_const_{}_value", qualifier));
                 }
                 let is_local_var = self.var_types.contains_key(name);
                 let is_user_fn = self.var_types.contains_key(&format!("fn_ret_{}", name));

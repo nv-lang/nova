@@ -14,7 +14,7 @@
 // Pipeline verified:
 //   1. consume scope entry → nv_consume_enter_shield (mask only)
 //   2. cleanup dispatch → nv_cleanup_watchdog_arm(1ms из Level 1)
-//   3. cleanup body Time.sleep(30) → suspend → nv_shield_check_deadline →
+//   3. cleanup body (30).to_millis().sleep() → suspend → nv_shield_check_deadline →
 //      (в fiber-контексте) one-shot stderr-варн, БЕЗ прерывания
 //   4. cleanup завершается → nv_cleanup_watchdog_disarm →
 //      exit-событие (duration≈30ms, overrun=true, порог 1ms < 30ms)
@@ -30,7 +30,7 @@ fn SlowCleanup4 @exit_timeout_ms() -> int => 1
 // Медленный cleanup: 30ms >> 1ms порога. Time — ambient (D62).
 // D192-ретракт: НЕ прерывается — добегает до конца.
 fn SlowCleanup4 consume @cleanup(_outcome ScopeOutcome) -> () {
-    Time.sleep(30)
+    (30).to_millis().sleep()
     return ()
 }
 
@@ -39,8 +39,8 @@ test "Plan 173 Ф.5.2 (ex-110.2.2.a): Level-1 порог превышен → ov
     mut observed_duration = -1
     mut result = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, duration_ms, overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, duration_ms, overrun) -> () {
             observed_duration = duration_ms
             observed_overrun = overrun
             return ()

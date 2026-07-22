@@ -15,7 +15,7 @@ fn pick1(c bool) Fail -> int {
 
 test "block-wrapped throw in then" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro n = pick1(false)
         assert(n == 9)

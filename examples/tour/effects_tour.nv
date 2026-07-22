@@ -23,7 +23,7 @@ fn main() {
     // (e.g. a deterministic fake) without touching `count_three`.
     mut state = 0
     with Counter = effect Counter {
-        next() {
+        next() -> int {
             state += 1
             return state
         }

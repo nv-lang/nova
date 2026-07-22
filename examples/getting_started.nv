@@ -94,7 +94,7 @@ fn main() {
     mut events = 0
     mut logged = 0
     with Audit = effect Audit {
-        record(amount) {
+        record(amount) -> () {
             events += 1
             logged += amount
             return ()
@@ -122,7 +122,7 @@ test "checkout records one audit event per item and sums line totals" {
     mut count = 0
     mut last  = -1
     with Audit = effect Audit {
-        record(amount) {
+        record(amount) -> () {
             count += 1
             last = amount
             return ()

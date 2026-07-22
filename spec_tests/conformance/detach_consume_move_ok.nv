@@ -1,0 +1,43 @@
+// [M-detach-consume-escape-unchecked] positive companion of
+// neg/detach_consume_escape_neg.nv — the canonical fix for the flagship's
+// gap (examples/flagship/aggregator/src/main.nv): explicit
+// `detach consume stream { … }` transfers ownership of a match-arm-bound
+// consume value INTO the orphan fiber (D415 §4 extension, mirrors
+// `spawn consume c { … }`) — the fiber owns `stream` for the rest of its
+// own body, cleanup/consume-obligation is discharged there instead of the
+// (already-exited-by-the-time-the-orphan-runs) match-arm scope. Must
+// compile clean (no E_LINEAR_CAPTURE_IN_FIBER) — same shape as the neg
+// companion, differing ONLY in the explicit `consume` move on `detach`.
+
+module spec_tests.conformance
+
+type DcamStream consume {
+    id int,
+}
+
+fn DcamStream consume @cleanup(_outcome ScopeOutcome) -> () { () }
+
+fn dcam_accept(v int) -> Result[DcamStream, str] => Ok(DcamStream { id: v })
+
+fn dcam_handle_connection(consume stream DcamStream) -> () {
+    ro _n = stream.id
+}
+
+test "detach consume stream { ... } — explicit move, no E_LINEAR_CAPTURE_IN_FIBER" {
+    mut inflight = AtomicInt.new(0)
+    match dcam_accept(1) {
+        Ok(consume stream) => {
+            detach consume stream {
+                ro _ = dcam_handle_connection(stream)
+                ro _ = inflight.fetch_sub(1)
+            }
+        },
+        Err(_e) => {},
+    }
+}
+
+test "detach consume c = expr { ... } — explicit-init form also legal" {
+    detach consume s = DcamStream { id: 2 } {
+        ro _n = s.id
+    }
+}

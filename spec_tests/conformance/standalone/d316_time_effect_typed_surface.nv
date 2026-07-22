@@ -1,6 +1,8 @@
 // d316_time_effect_typed_surface.nv — D316: `Time` плумбинг-эффект, единый
 // источник схемы, TimerMetrics-split, ns-канон, typed user-facing surface
-// (Timestamp.now()/Monotonic.now()/free sleep/sleep_until), мокабельность.
+// (Timestamp.now()/Monotonic.now()/(Duration).sleep()/(Monotonic).sleep_until()
+// МЕТОД-канон — Plan 175 Ф.2-v3, 2026-07-22: free `sleep`/`sleep_until`
+// RETRACTED, method-only), мокабельность.
 module standalone.d316_time_effect_typed_surface
 
 import std.time.duration
@@ -10,7 +12,7 @@ test "d316: Timestamp.now()/Monotonic.now() мокабельны через од
     with Time = d316_th.mut_clock(1_000 as u64) {
         ro d316_ts0 = Timestamp.now()
         ro d316_m0 = Monotonic.now()
-        sleep(2.to_seconds())
+        2.to_seconds().sleep()
         ro d316_ts1 = Timestamp.now()
         ro d316_m1 = Monotonic.now()
         // Один handler двигает ОБА чтения на одну и ту же дельту (Ред.2 Q14).
@@ -31,12 +33,12 @@ test "d316: TimerMetrics вынесен из Time — read-only опы дисп�
     assert(d316_after - d316_before >= 1)
 }
 
-test "d316: free sleep/sleep_until — канонический вызов, не Time.sleep напрямую" {
+test "d316: (Duration).sleep()/(Monotonic).sleep_until() — канонический метод-вызов, не Time.sleep напрямую" {
     with Time = d316_th.mut_clock(0 as u64) {
-        sleep(500.to_millis())
+        500.to_millis().sleep()
         assert(Timestamp.now().unix_millis() == 500)
         ro d316_deadline = Monotonic.now() + 1.to_seconds()
-        sleep_until(d316_deadline)
+        d316_deadline.sleep_until()
         assert(Timestamp.now().unix_millis() == 1500)
     }
 }

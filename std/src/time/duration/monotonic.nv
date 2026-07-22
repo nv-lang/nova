@@ -35,36 +35,60 @@ module time.duration
 /// ```
 ///
 /// **Plan 175 Ф.1b (D316):** `value`-record — stack-allocated, zero-GC.
+///
+/// **Plan 175.2 Ф.2-v4 (П5, D220 per-field):** `nanos` is `priv` (module-
+/// private per D281) since this wave — was `ro` (publicly constructible
+/// `{ nanos: ... }` from any module, letting external code assemble an
+/// arbitrary `Monotonic` — nonsensical outside this process, D124). The
+/// real-clock path stays `Monotonic.now()` (via the ambient `Time`
+/// effect); a raw-nanoseconds escape hatch for mocks/FFI/benches is
+/// `T.to_monotonic_nanos()` below (paired with the pre-existing raw-read
+/// `@nanos()` accessor).
 #stable(since = "0.6")
 export type Monotonic value {
-    ro nanos i64
+    priv nanos i64
 }
 
-/// Текущий монотонный момент. **Plan 175 Ф.3(a) (D316):** ergonomic-сахар
-/// над int-wire `Time.now_monotonic_ns()` (эффект `Time`) — тот же паттерн,
-/// что `Timestamp.now()` выше. **Мокабелен:** `with Time = th.mut_clock(...)`
-/// подменяет монотонные часы детерминированно (закрывает
-/// `[M-monotonic-mock-support]`). Заменяет прежний compiler-builtin
-/// (4 сайта dispatch/inference в emit_c.rs удалены той же волной — grep
-/// `nova_monotonic_now_record`/`"Nova_Monotonic*"` = 0, по норме плана 175 §Ф.3).
+/// Текущий монотонный момент. **Plan 175 Ф.3 (D316 typed retype):** тонкая
+/// ergonomic-обёртка над typed `Time.now_monotonic()` (эффект `Time`,
+/// возвращает `Monotonic` напрямую — больше не int-wire + wrap).
+/// **Мокабелен:** `with Time = th.mut_clock(...)` подменяет монотонные
+/// часы детерминированно (закрывает `[M-monotonic-mock-support]`).
 ///
 /// # Examples
 /// ```nova
 /// with Time = th.mut_clock(0 as u64) {
 ///     ro m0 = Monotonic.now()
-///     Time.sleep(5000)  // virtual clock advance (ms)
+///     5.to_seconds().sleep()  // virtual clock advance
 ///     ro m1 = Monotonic.now()
 ///     assert(m1.elapsed_since(m0) == 5.to_seconds())
 /// }
 /// ```
 #stable(since = "0.6")
-export fn Monotonic.now() Time -> Monotonic =>
-    { nanos: Time.now_monotonic_ns() as i64 }
+export fn Monotonic.now() Time -> Monotonic => Time.now_monotonic()
 
 /// Raw nanoseconds — escape hatch для FFI / bench. Cросс-процессное
 /// сравнение бессмысленно. Cравнение внутри одного процесса допустимо.
 #stable(since = "0.6")
 export fn Monotonic @nanos() -> i64 => @nanos
+
+/// `T.to_monotonic_nanos()` — construct a `Monotonic` from a raw
+/// nanosecond count (any `Ints` width). Plan 175.2 Ф.2-v4 (П5): the
+/// write-direction escape hatch pairing `@nanos()` above — needed now that
+/// `nanos` is `priv` (D220), for mock `Time` handlers (`std.testing.
+/// handlers`) and any other code OUTSIDE `time.duration` that must build a
+/// `Monotonic` from a bare integer without going through `Time.
+/// now_monotonic()` (which would be circular inside a mock handler body).
+/// Cross-process comparison is still meaningless (D124) — this constructs
+/// a value for the SAME semantics `@nanos()` already reads back out.
+///
+/// # Examples
+/// ```nova
+/// let m = 0.to_monotonic_nanos()
+/// assert(m.nanos() == 0)
+/// ```
+#stable(since = "0.6")
+export fn[T Ints] T @to_monotonic_nanos() -> Monotonic => { nanos: @ as i64 }
 
 // ── Monotonic arithmetic (D124 rule 3: NO cross-type ops with Timestamp) ──
 
@@ -106,6 +130,22 @@ export fn Monotonic @elapsed_since(other Monotonic) -> Duration =>
     } else {
         0.to_nanos()
     }
+
+/// Suspend until THIS **monotonic** deadline (П12-хвост 2026-07-21: метод
+/// вместо ретрактированной свободной `sleep_until(deadline)`; Plan 175
+/// Ф.3(b), D316 Q3 — MVP-обёртка `sleep(deadline - now)`; drift-free
+/// re-arm — future, Plan 66). Только `Monotonic` — не `Timestamp` (D124 §3:
+/// wall-дедлайн уязвим к NTP/DST; явная wall-форма — `ts.time_until().sleep()`).
+/// Прошедший дедлайн разрешается НЕМЕДЛЕННО (saturate-to-zero, D318).
+///
+/// # Examples
+/// ```nova
+/// ro deadline = Monotonic.now() + 5.to_seconds()
+/// deadline.sleep_until()
+/// ```
+#stable(since = "0.1")
+export fn Monotonic @sleep_until() Time -> () =>
+    @elapsed_since(Monotonic.now()).sleep()
 
 /// `Monotonic - Monotonic → Duration` (Plan 175 Ф.3(c) / D318 Q4) —
 /// operator-overload alias for [`elapsed_since`], symmetric with

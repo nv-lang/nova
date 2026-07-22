@@ -19,7 +19,7 @@ fn process() Fail -> () {
 
 test "failable без defer-cover — D162 error" {
     with Fail = effect Fail {
-        fail(_m) { interrupt () }
+        fail(_m) -> never { interrupt () }
     } {
         process()
     }

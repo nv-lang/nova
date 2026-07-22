@@ -57,7 +57,7 @@ fn d158_risky_cleanup() Fail[D158CommitErr] -> () {
 
 fn d158_silent_cleanup() -> () {
     with Fail = effect Fail {
-        fail(_msg) { interrupt () }
+        fail(_msg) -> never { interrupt () }
     } {
         d158_risky_cleanup()
     }
@@ -69,7 +69,7 @@ fn d158_process_silent() -> () {
 
 test "failable call в defer при Fail[E] в sig — normal exit (D158)" {
     with Fail = effect Fail {
-        fail(_m) { interrupt () }
+        fail(_m) -> never { interrupt () }
     } {
         d158_process_normal()
     }
@@ -78,7 +78,7 @@ test "failable call в defer при Fail[E] в sig — normal exit (D158)" {
 test "explicit throw в defer-body — компилируется, happy-path чист (D158)" {
     mut handler_ran = false
     with Fail = effect Fail {
-        fail(_m) {
+        fail(_m) -> never {
             handler_ran = true
             interrupt ()
         }
@@ -90,7 +90,7 @@ test "explicit throw в defer-body — компилируется, happy-path ч
 
 test "?-оператор в defer-body (D158)" {
     with Fail = effect Fail {
-        fail(_m) { interrupt () }
+        fail(_m) -> never { interrupt () }
     } {
         d158_process_try()
     }
@@ -99,7 +99,7 @@ test "?-оператор в defer-body (D158)" {
 test "defer-fail во время error-propagation — primary ловится (D158)" {
     mut caught = false
     with Fail = effect Fail {
-        fail(_m) {
+        fail(_m) -> never {
             caught = true
             interrupt ()
         }

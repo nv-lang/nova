@@ -339,8 +339,8 @@ static inline Nova_WaitResult* Nova_Condvar_method_wait_for(
     if (_nova_active_slot < 0) {
         /* Non-fiber path: spin-poll until deadline. */
         Nova_Mutex_method_unlock(m);
-        int64_t deadline = _nova_monotonic_ns() + nanos;
-        while (_nova_monotonic_ns() < deadline) _nova_cpu_yield();
+        int64_t deadline = time_monotonic_ns() + nanos;
+        while (time_monotonic_ns() < deadline) _nova_cpu_yield();
         Nova_Mutex_method_lock(m);
         return nova_make_WaitResult_TimedOut();
     }

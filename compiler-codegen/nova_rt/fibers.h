@@ -2676,7 +2676,7 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
 /* ─── Plan 174 (D349): scope-deadline helpers ─── */
 
 /* Forward-decl: monotonic-ns clock (defined below, after the scheduler). */
-static inline int64_t _nova_monotonic_ns(void);
+static inline int64_t time_monotonic_ns(void);
 
 /* Combine two absolute-ns deadlines treating 0 as "no deadline". Result =
  * the earliest (tightest) non-zero point. An inner scope can only TIGHTEN an
@@ -2738,7 +2738,7 @@ static void _nova_scope_deadline_wait_cb(uv_timer_t* h) { (void)h; }
 static inline void _nova_scope_deadline_run_once(int64_t deadline_ns) {
     uv_loop_t* loop = nova_current_loop();
     if (deadline_ns == 0) { uv_run(loop, UV_RUN_ONCE); return; }
-    int64_t remaining_ns = deadline_ns - _nova_monotonic_ns();
+    int64_t remaining_ns = deadline_ns - time_monotonic_ns();
     if (remaining_ns <= 0) {
         /* Deadline already passed — don't block; pump ready events so
          * cancellation close_cbs can complete and fibers drain. */
@@ -2969,7 +2969,7 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
          * — token cancel takes precedence, no bogus TimeoutError). */
         if (_dl_ns != 0 && !_dl_fired
             && !nova_abool_load(&q->cancel_requested)
-            && _nova_monotonic_ns() >= _dl_ns) {
+            && time_monotonic_ns() >= _dl_ns) {
             _dl_fired = true;
             nova_scope_deliver_cancel(q, NULL);
         }
@@ -3440,7 +3440,7 @@ static inline int64_t _nova_monotonic_ms(void) {
  *
  * Returns int64_t (Nova-side Monotonic.nanos field is i64). Overflow при
  * процесс-uptime > ~292 years — пренебрежимо. */
-static inline int64_t _nova_monotonic_ns(void) {
+static inline int64_t time_monotonic_ns(void) {
     return (int64_t)uv_hrtime();
 }
 
@@ -3460,7 +3460,7 @@ static inline int64_t _nova_monotonic_ns(void) {
  * поддерживаемых платформах — при (теоретическом) сбое возвращаем 0
  * вместо undefined tv, а не abort (Time.now_unix_ms() ambient — не должен
  * валить процесс). */
-static inline int64_t _nova_wall_unix_ms(void) {
+static inline int64_t time_wall_unix_ms(void) {
     uv_timeval64_t tv;
     if (uv_gettimeofday(&tv) != 0) {
         return 0;
@@ -3486,7 +3486,7 @@ static inline int64_t _nova_wall_unix_ms(void) {
 #    define WIN32_LEAN_AND_MEAN
 #  endif
 #  include <windows.h>
-static inline int64_t _nova_local_offset_sec(void) {
+static inline int64_t time_local_offset_sec(void) {
     TIME_ZONE_INFORMATION tzi;
     DWORD rc = GetTimeZoneInformation(&tzi);
     /* `Bias`/`*Bias` are MINUTES to ADD to local time to get UTC
@@ -3502,7 +3502,7 @@ static inline int64_t _nova_local_offset_sec(void) {
 }
 #else
 #  include <time.h>
-static inline int64_t _nova_local_offset_sec(void) {
+static inline int64_t time_local_offset_sec(void) {
     time_t now = time(NULL);
     struct tm local_tm;
     localtime_r(&now, &local_tm);
@@ -4111,7 +4111,7 @@ static inline void _nova_cancel_via_driver(NovaFiberQueue* scope) {
  *    invariant violated).
  *
  * `ms <= 0` → single yield (compatibility with `Time.sleep(0)` idiom). */
-static inline nova_unit _nova_time_default_sleep(nova_int ms) {
+static inline nova_unit time_sleep_ms(nova_int ms) {
     /* Plan 110.2.2.a (D188 R3 + D192): cleanup-deadline gate before
      * suspending. Если scope-cleanup shield active и deadline уже
      * exceeded — throw сразу без park'а (иначе fiber бы спал N ms
@@ -4199,83 +4199,23 @@ static inline nova_unit _nova_time_default_sleep(nova_int ms) {
     return NOVA_UNIT;
 }
 
-/* Default impl: real wall-clock unix epoch milliseconds ([M-time-default-
- * handler-not-wallclock] / D316 amend, 2026-07-06 — было ошибочно
- * _nova_monotonic_ms(), см. _nova_wall_unix_ms() выше). */
-static inline nova_int _nova_time_default_now(void) {
-    return (nova_int)_nova_wall_unix_ms();
-}
-
-/* Inline dispatch: with user handler → handler method; else → default. */
-static inline nova_unit Nova_Time_sleep(nova_int ms) {
-    if (_nova_handler_Time) {
-        return _nova_handler_Time->sleep(_nova_handler_Time->ctx, ms);
-    }
-    return _nova_time_default_sleep(ms);
-}
-
-/* Plan 175 (D316 amend, 2026-07-06 owner unit-rename): переименована из `Nova_Time_now` вслед за
- * .nv-оп `now()` → `now_unix_ms()` — codegen зовёт C-wrapper по имени
- * `Nova_{Effect}_{op}`, generic pattern, без хардкода в src (grep
- * подтвердил: emit_c.rs строит имя из схемы). */
-static inline nova_int Nova_Time_now_unix_ms(void) {
-    if (_nova_handler_Time) {
-        return _nova_handler_Time->now_unix_ms(_nova_handler_Time->ctx);
-    }
-    return _nova_time_default_now();
-}
-
-/* Plan 48 Ф.5: aliases for handlers.nv `now_ms` / `now_ns` shape.
- * Default-impl делегирует к now_unix_ms() (which is monotonic ms); now_ns
- * умножает на 1e6 (overflow безопасен в i64 для разумных значений).
- * User-handler-path использует vtable-slot напрямую. */
-static inline nova_int Nova_Time_now_ms(void) {
-    if (_nova_handler_Time) {
-        return _nova_handler_Time->now_ms(_nova_handler_Time->ctx);
-    }
-    return _nova_time_default_now();
-}
-
-static inline nova_int Nova_Time_now_ns(void) {
-    if (_nova_handler_Time) {
-        return _nova_handler_Time->now_ns(_nova_handler_Time->ctx);
-    }
-    return _nova_time_default_now() * (nova_int)1000000;
-}
-
-/* Plan 65 Ф.12.2 / D124: dispatch для Monotonic.now() / Time.now_monotonic_ns()
- * (переименована из `now_monotonic` — Plan 175 D316 amend (2026-07-06), единицы
- * в именах опов; чисто механическое переименование, поведение не менялось).
+/* Plan 175 Ф.2-v3 (снос рукописного Time-dispatch): хенд-written
+ * диспатчи `Nova_Time_sleep`/`_now_unix_ms`/`_now_ms`/`_now_ns`/`_now_monotonic_ns`/
+ * `_local_offset_sec` (+ `_nova_time_default_now` / `_nova_time_ensure_default`),
+ * ранее жившие ЗДЕСЬ, СНЕСЕНЫ — `emit_effect_type` (emit_c.rs, ТОТ ЖЕ
+ * общий путь, что у любого пользовательского `type X effect {...}`)
+ * теперь генерирует `Nova_Time_<op>()` постранично из схемы
+ * std/prelude/effects.nv `Time`, включая lazy `#default_handler` install-once проверку
+ * инлайн в теле каждого диспатчера.
  *
- * Plan 175 Ф.3(a) (D316, 2026-07-06): slot добавлен в NovaVtable_Time
- * (effects.h) — вызов теперь ИДЁТ через handler vtable, mock'абелен
- * (closes [M-monotonic-mock-support]). Function-pointer NULL-check (не
- * только `_nova_handler_Time`) — backward-compat: handler-литералы,
- * написанные до Ф.3(a) и не объявляющие `now_monotonic_ns() => ...`,
- * оставляют слот NULL (C99 designated-init zero-fill) и прозрачно падают
- * на real-clock (тот же поведенческий контракт, что был раньше). Handlers,
- * которым нужен mock monotonic-clock (std/testing/handlers.nv fixed_ms /
- * mut_clock), реализуют слот явно. */
-static inline nova_int Nova_Time_now_monotonic_ns(void) {
-    if (_nova_handler_Time && _nova_handler_Time->now_monotonic_ns) {
-        return _nova_handler_Time->now_monotonic_ns(_nova_handler_Time->ctx);
-    }
-    return (nova_int)_nova_monotonic_ns();
-}
-
-/* Plan 175.1 (D316 amend + D321, 2026-07-10): dispatch for
- * `Time.local_offset_sec()` — closes [M-175.1-local-offset-effect-op].
- * Same NULL-safe handler-extension-slot pattern as now_monotonic_ns
- * above: handler-literals written before this amend leave the slot NULL
- * (C99 designated-init zero-fill) and transparently fall back to the
- * real OS-hook (`_nova_local_offset_sec()` above) — backward-compat, no
- * forced migration of existing handler literals. */
-static inline nova_int Nova_Time_local_offset_sec(void) {
-    if (_nova_handler_Time && _nova_handler_Time->local_offset_sec) {
-        return _nova_handler_Time->local_offset_sec(_nova_handler_Time->ctx);
-    }
-    return (nova_int)_nova_local_offset_sec();
-}
+ * `time_sleep_ms` выше ОСТАЁТСЯ — это тонкий `extern "C"`
+ * sleep-ПРИМИТИВ (scheduler-aware: fiber-park / drain / bootstrap-block),
+ * вызываемый из ВСЕГДА-присутствующего `.nv` default handler'a
+ * (std/prelude/effects.nv `time_default`) точно так же, как `time_wall_unix_ms`/
+ * `time_monotonic_ns`/`time_local_offset_sec` (декларированы как `extern "C" fn`
+ * дальше по файлу). С-fallback больше НЕТ — ambient-поведение
+ * (Time без `with`/импорта) даёт `time_default` из prelude (auto-import в
+ * КАЖДЫЙ CU), не второй хардкод-слой диспатча. */
 
 /* ──────────────────────────────────────────────────────────────────
  * Plan 173 Ф.5 п.6: nova_runtime_reset() — сброс thread-local

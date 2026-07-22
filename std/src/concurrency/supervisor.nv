@@ -15,8 +15,8 @@
 // Пользовательская политика — просто handler-литерал:
 //
 //   with Supervisor = effect Supervisor {
-//       on_child_fail(idx, err) => if err is TransientError { Decision.Stop }
-//                                  else { Decision.Escalate }
+//       on_child_fail(idx int, err any) -> Decision =>
+//           if err is TransientError { Decision.Stop } else { Decision.Escalate }
 //   } { ... }
 //
 // Словарь решений `Escalate` / `Stop` — ПОЛНЫЙ (Restart-семейство
@@ -32,7 +32,7 @@ module concurrency.supervisor
 #stable(since = "0.1")
 export fn escalate() -> Effect[Supervisor] {
     effect Supervisor {
-        on_child_fail(idx, err) => Decision.Escalate
+        on_child_fail(idx int, err any) -> Decision => Decision.Escalate
     }
 }
 
@@ -43,6 +43,6 @@ export fn escalate() -> Effect[Supervisor] {
 #stable(since = "0.1")
 export fn stop() -> Effect[Supervisor] {
     effect Supervisor {
-        on_child_fail(idx, err) => Decision.Stop
+        on_child_fail(idx int, err any) -> Decision => Decision.Stop
     }
 }

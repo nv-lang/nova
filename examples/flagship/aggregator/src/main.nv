@@ -262,7 +262,35 @@ fn main() Time Detach {
                                     // the detached body itself (fiber that
                                     // finishes the connection is the one
                                     // that frees its own slot).
-                                    detach {
+                                    //
+                                    // [M-detach-consume-escape-unchecked]
+                                    // (closed): `stream` is a `consume`-typed
+                                    // `TcpStream` bound by the `Ok(consume
+                                    // stream)` match-arm ABOVE — an
+                                    // enclosing scope relative to this
+                                    // `detach`. A bare `detach { …stream… }`
+                                    // captured it BY REFERENCE from that
+                                    // enclosing scope: `detach` is a
+                                    // fire-and-forget orphan fiber (D50) that
+                                    // may run AFTER the match-arm's own scope
+                                    // has already exited → use-after-consume/
+                                    // use-after-free — a real gap the
+                                    // compiler did not catch (`spawn consume`
+                                    // already caught the symmetric case,
+                                    // D415 §4; `detach` did not, until the
+                                    // D415 §4 extension that added this
+                                    // diagnostic —
+                                    // `E_LINEAR_CAPTURE_IN_FIBER`,
+                                    // `types/mod.rs`
+                                    // `check_capture_boundary`/
+                                    // `ScopeBinding.linear_pattern`). Fix:
+                                    // explicit `detach consume stream { … }`
+                                    // — ownership of `stream` moves INTO the
+                                    // orphan fiber; the fiber is now the sole
+                                    // owner for the rest of its own body, so
+                                    // it outliving the match-arm's scope is
+                                    // no longer a use-after-free.
+                                    detach consume stream {
                                         // `routes()` is cheap (a handful of
                                         // ServeMux entries) — rebuilt per
                                         // connection, same shape as
@@ -517,23 +545,23 @@ fn events_body(legend str, mode str, seed int) Time -> ServerResponse {
     ro t0 Monotonic = Monotonic.now()
     ro { tx, rx } = Channel.new(256)
     ro rr = with Emit = effect Emit {
-        lane_started(id str, idx int) {
+        lane_started(id str, idx int) -> () {
             ro t_ms = Monotonic.now().elapsed_since(t0).millis() as int
             ro _ = tx.try_send(EmitRecord { kind: "lane_started", id, elapsed_ms: 0, err: "", t_ms })
         }
-        lane_done(id str, elapsed_ms int) {
+        lane_done(id str, elapsed_ms int) -> () {
             ro t_ms = Monotonic.now().elapsed_since(t0).millis() as int
             ro _ = tx.try_send(EmitRecord { kind: "lane_done", id, elapsed_ms, err: "", t_ms })
         }
-        lane_failed(id str, err str, elapsed_ms int) {
+        lane_failed(id str, err str, elapsed_ms int) -> () {
             ro t_ms = Monotonic.now().elapsed_since(t0).millis() as int
             ro _ = tx.try_send(EmitRecord { kind: "lane_failed", id, elapsed_ms, err, t_ms })
         }
-        lane_cancelled(id str, elapsed_ms int) {
+        lane_cancelled(id str, elapsed_ms int) -> () {
             ro t_ms = Monotonic.now().elapsed_since(t0).millis() as int
             ro _ = tx.try_send(EmitRecord { kind: "lane_cancelled", id, elapsed_ms, err: "", t_ms })
         }
-        swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) {}
+        swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) -> () {}
     } {
         run_net(legend, mode, seed)
     }

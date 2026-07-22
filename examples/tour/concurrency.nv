@@ -12,7 +12,7 @@ fn probe(latency_ms int, deadline Monotonic) Time -> str {
     with Fail[TimeoutError] = |_e| { timed_out = true } {
         supervised(deadline: deadline) {
             spawn {
-                Time.sleep(latency_ms)
+                (latency_ms).to_millis().sleep()
                 ro _ = tx.try_send(true)
             }
         }

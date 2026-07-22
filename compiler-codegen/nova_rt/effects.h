@@ -1431,69 +1431,70 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
 
 /* ---- Built-in `Time` effect (D11 / D14 / D62) ----
  *
- * Operations: now_unix_ms() -> int, sleep(ms int) -> unit. By D11 — это
- * обычный stdlib-эффект. По D62 — Async ambient: Time-операции callable
- * откуда угодно, в сигнатуре не требуется, default handler доступен.
+ * Plan 175 Ф.2-v3 (снос рукописного Time-DISPATCH; struct-layout остаётся
+ * единым источником, но по НЕОБХОДИМОСТИ — не по лени): диспатч-функции
+ * (`Nova_Time_sleep`/`_now_unix_ms`/`_now_monotonic_ns`/`_local_offset_sec`)
+ * и lazy `#default_handler`-install-once логика СНЕСЕНЫ отсюда/fibers.h —
+ * `emit_effect_type` (emit_c.rs, ТОТ ЖЕ путь, что у user-эффектов) теперь
+ * генерирует их постранично из схемы std/prelude/effects.nv `Time`.
  *
- * Default handler (см. fibers.h):
- *   sleep(ms)      — context-sensitive: в fiber'е yield-loop до deadline;
- *                    на main внутри supervised — drain queue per pass;
- *                    на top-level (нет scope) — native OS sleep.
- *                    ms <= 0 → один yield (compatibility с `Time.sleep(0)`).
- *   now_unix_ms()  — unix epoch ms, real wall clock (uv_gettimeofday; см.
- *                    _nova_wall_unix_ms() в fibers.h — [M-time-default-
- *                    handler-not-wallclock] / D316 amend, 2026-07-06).
+ * Сам typedef `NovaVtable_Time` НИЖЕ **остаётся hand-written** (единственное
+ * узкое исключение, не архитектурная лазейка): nova_rt/channels.h
+ * (`nova_chan_reader_close_after_ns` — `ChanReader.close_after` mock-time
+ * path) и nova_rt/runtime.c (worker-thread TLS-registration при старте)
+ * — HAND-WRITTEN C, не codegen — обращаются к `_nova_handler_Time->sleep(...)`
+ * / `_nova_handler_Time->ctx` НАПРЯМУЮ по конкретным полям. Компилятору C
+ * нужен ОДИН стабильный named-struct-тип, видимый ИМ (они компилируются РАЗ,
+ * как часть nova_rt-архива, НЕ per-CU) — anonymous struct, который
+ * генерирует `emit_effect_type` внутри КАЖДОГО user-CU, для этой цели не
+ * подходит (typedef-redefinition конфликт + channels.h всё равно не видит
+ * per-CU generated тип). Поэтому `emit_effect_type` для `name == "Time"`
+ * ПРОПУСКАЕТ шаги 1 (struct) и 2 (TLS slot decl) — они здесь — и эмитит
+ * ТОЛЬКО шаг 3 (dispatch-функции, generic, как всегда).
  *
- * User override: `with Time = handler Time { sleep(ms) { ... } now_unix_ms() { ... } } { body }`
- * — для тестов (fixed clock, mock sleep). */
-
-/* Layout matches codegen-generated layout for user effects.
+ * `#default_handler(Time)` переехал В std/prelude/effects.nv (`time_default`,
+ * сразу после декларации `Time`) — prelude auto-import'ится в КАЖДЫЙ CU
+ * (`is_prelude_self_module`), значит ambient real-clock fallback (Time
+ * работает без `with`/explicit import, как раньше) — теперь ОБЫЧНЫЙ
+ * ВСЕГДА-присутствующий `.nv` default handler, не второй хардкод-C-путь.
+ * Его тело зовёт те же тонкие `extern "C"` примитивы, что раньше
+ * (`time_wall_unix_ms`/`time_monotonic_ns`/`time_local_offset_sec`/
+ * `time_sleep_ms`, определены в fibers.h) — единственный
+ * оставшийся Time-related C (§3: не хардкод-зеркало .nv-схемы, а тонкий
+ * extern-примитив, вызываемый из .nv).
  *
- * Plan 175 Ф.1/Ф.4 (D316 — единый источник схемы + единицы в именах опов):
- * op-schema эффекта `Time` теперь читается codegen'ом ИЗ
- * std/prelude/effects.nv (int-провод `sleep(ms int)`,
- * `now_unix_ms()->int`, `now_monotonic_ns()->int`), а не из хардкода.
- * Этот hand-written vtable = HANDLER-интерфейс (не codegen-schema): его
- * слоты — только те опы, что реализуются `with Time = handler {...}`.
- * 5 timer-счётчиков (→ TimerMetrics, Ф.1/Q1) dispatch'атся direct-C
- * (channels.h), НЕ через этот vtable.
+ * `now_ms`/`now_ns` handler-extension слоты (Plan 48 Ф.5 legacy) — RETIRED,
+ * никогда не были в `.nv`-схеме, поэтому в generic vtable для них места
+ * нет; ни один handler-литерал их больше не объявляет (подтверждено —
+ * std/testing/handlers/core_test.nv).
  *
- * Plan 175 Ф.3(a) (D316, 2026-07-06): `now_monotonic_ns`-слот ДОБАВЛЕН —
- * `Monotonic.now()` больше не compiler-builtin (см. std/time/duration.nv),
- * а обычный `.nv`-сахар над `Time.now_monotonic_ns()`, значит вызов ИДЁТ
- * через vtable и обязан быть mock'абелен (closes [M-monotonic-mock-support]).
- * Handler-литералы БЕЗ явного `now_monotonic_ns() => ...` оставляют слот
- * NULL (C99 designated-init zero-fills недостающие поля) — Nova_Time_
- * now_monotonic_ns() (fibers.h) НУЛЬ-проверяет сам указатель на функцию
- * (не только `_nova_handler_Time`) и падает обратно на real-clock —
- * backward-compat для handler-литералов, написанных до Ф.3(a)
- * (nova_tests/concurrency/* и др., не мигрированы этой волной).
- *
- * Plan 175.1 (D316 amend + D321, 2026-07-10): `local_offset_sec`-слот
- * ДОБАВЛЕН — closes [M-175.1-local-offset-effect-op] (owner decision:
- * системный часовой пояс машины ДОЛЖЕН быть доступен). Тот же NULL-safe
- * handler-extension pattern, что `now_monotonic_ns` выше: handler-литералы
- * без явного `local_offset_sec() => ...` оставляют слот NULL и падают на
- * реальный OS-хук (`_nova_local_offset_sec()`, nova_rt/fibers.h — Windows
- * `GetTimeZoneInformation`/POSIX `localtime_r().tm_gmtoff`).
- *
- * Plan 48 Ф.5: now_ms / now_ns — handler-extension слоты, чтобы handlers.nv
- * (fixed_ms, mut_clock — std/testing/handlers.nv) могли регистрировать
- * полный набор. Default-импл (Nova_Time_now_ms / _now_ns) — wrapper'ы
- * вокруг now_unix_ms(). Field-названия designated-init'ятся по имени
- * (порядок в структуре не важен для C designated initializers) — MUST
- * совпадать с codegen-emitted op-именами: ctx, sleep, now_unix_ms,
- * now_monotonic_ns, local_offset_sec, now_ms, now_ns (см. emit_handler_decl
- * / fixed_ms vtable init). Ретайр now_ms/now_ns — Plan 175 Ф.2 (не в
- * Ф.1/Ф.4). */
+ * Plan 175 Ф.3 (D316, typed retype): `.nv`-СХЕМА теперь typed
+ * (`sleep(Duration)->()` / `now()->Timestamp` / `now_monotonic()->
+ * Monotonic` / `local_offset_sec()->int`) — единица времени в ТИПЕ, не в
+ * имени опа. Слоты НИЖЕ остаются raw-int64-WIRE (переименованы под новые
+ * op-имена: `now_unix_ms`→`now`, `now_monotonic_ns`→`now_monotonic`) —
+ * этот hand-written struct не может называть per-CU `NovaValue_Duration`/
+ * `Timestamp`/`Monotonic` (та же compiled-once-vs-per-CU причина, что
+ * блокирует полный "снос" struct'а самого, см. выше). Codegen marshals на
+ * границе: `Nova_Time_sleep(NovaValue_Duration d)` (generated dispatch fn,
+ * ЗНАЕТ полный тип Duration) extracts `d.nanos` перед вызовом
+ * `_nova_handler_Time->sleep(ctx, nanos)`; `Nova_Time_now()` wraps the raw
+ * `int64_t` return back into `NovaValue_Timestamp{.nanos=...}`. Handler-
+ * literal install (`emit_handler_lit`) does the mirror-image marshalling:
+ * user's typed op-body fn (`(void*, NovaValue_Duration)`) gets wrapped in
+ * a thin raw-wire thunk (`(void*, int64_t)`) before being stored into
+ * `vt->sleep`. See emit_c.rs `emit_effect_type`/`emit_handler_lit`
+ * Time-specific branches — this IS the exact class of hand-written-C
+ * escape-hatch `Nova_Mutex_method_lock_for` already uses for a `Duration`
+ * TIMEOUT param (nova_rt/sync_primitives.h: `void* timeout` + "first field
+ * int64_t nanos" contract) — same ABI-identity trick, applied
+ * systematically for Time's 3 clock-typed ops. */
 typedef struct {
     void*     ctx;
-    nova_unit (*sleep)(void* _ctx, nova_int ms);
-    nova_int  (*now_unix_ms)(void* _ctx);
-    nova_int  (*now_monotonic_ns)(void* _ctx);
+    nova_unit (*sleep)(void* _ctx, int64_t nanos);
+    int64_t   (*now)(void* _ctx);            /* Unix epoch nanoseconds */
+    int64_t   (*now_monotonic)(void* _ctx);  /* monotonic nanoseconds */
     nova_int  (*local_offset_sec)(void* _ctx);
-    nova_int  (*now_ms)(void* _ctx);
-    nova_int  (*now_ns)(void* _ctx);
 } NovaVtable_Time;
 
 #ifdef _MSC_VER
@@ -1501,11 +1502,6 @@ __declspec(thread) extern NovaVtable_Time* _nova_handler_Time;
 #else
 extern __thread NovaVtable_Time* _nova_handler_Time;
 #endif
-
-/* Nova_Time_sleep / Nova_Time_now_unix_ms defined in fibers.h (after NovaFiberQueue
- * complete + nova_fiber_yield + nova_supervised_step). They are not
- * forward-declared here because callers always include nova_rt.h which pulls
- * in fibers.h after effects.h. */
 
 /* ──────────────────────────────────────────────────────────────────
  * Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]:

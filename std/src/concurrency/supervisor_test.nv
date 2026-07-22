@@ -4,6 +4,13 @@
 module concurrency.supervisor_test
 
 import std.concurrency.supervisor as sup
+// Plan 175.2 Ф.2-v4 (П6): `(5).to_millis()` used to resolve without an
+// explicit import — an accidental side effect of `Time` (and its
+// `Duration`/`Timestamp`/`Monotonic` import) living in `std.prelude.effects`
+// (auto-imported into every CU). Now that `Time` moved to
+// `std.time.duration` (this file doesn't otherwise transitively pull that
+// module in), the `to_millis()` blanket needs its own explicit import.
+import std.time.duration
 
 test "stop(): падение ребёнка не эскалируется, siblings доживают" {
     ro n = 5
@@ -15,7 +22,7 @@ test "stop(): падение ребёнка не эскалируется, sibli
                 ro tag = i
                 spawn {
                     if tag == 1 { throw 13 }
-                    Time.sleep(5)
+                    (5).to_millis().sleep()
                     done.fetch_add(1)
                 }
             }

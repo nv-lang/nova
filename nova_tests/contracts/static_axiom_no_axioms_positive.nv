@@ -14,7 +14,7 @@ fn use_greeter() -> str
 
 test "handler без axioms → no W2402" {
     with #verify Greeter = effect Greeter {
-        greet() => "hi"
+        greet() -> str => "hi"
     } {
         assert(use_greeter() == "hello")
     }

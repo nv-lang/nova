@@ -1,18 +1,17 @@
-// EXPECT_COMPILE_ERROR cannot pass `Timestamp` as argument `deadline`
+// EXPECT_COMPILE_ERROR no field or method `sleep_until` on type `Timestamp`
 
-// D316/Q3 — `sleep_until` принимает ТОЛЬКО `Monotonic` (дедлайн иммунен
-// к NTP/DST) — `sleep_until(Timestamp)` НЕ вводится намеренно. Wall-clock
-// абсолютный сон — явный `sleep(ts.time_until())` (footgun виден на
-// call-site). Диагностика — обычный E7301 type-mismatch (генерик
-// параметр-тайпчек уже даёт корректный, информативный message;
-// специализированный `E_SLEEP_UNTIL_WALL`-код с fix-it — nice-to-have,
-// НЕ реализован этой волной, см. project-creation.txt).
+// D316/Q3 — `sleep_until` — МЕТОД, существующий ТОЛЬКО на `Monotonic`
+// (дедлайн иммунен к NTP/DST) — Plan 175 Ф.2-v3: free `sleep_until`
+// retracted, method-only canon (`Monotonic @sleep_until()`,
+// std/time/duration/monotonic.nv). `Timestamp` has no `.sleep_until()`
+// method at all — wall-clock абсолютный сон — явный
+// `ts.time_until().sleep()` (footgun виден на call-site).
 module neg.d316_sleep_until_timestamp_neg
 
 import std.time.duration
 
 fn d316_neg_sleep_until(ts Timestamp) Time -> () {
-    sleep_until(ts)
+    ts.sleep_until()
 }
 
 test "probe" {

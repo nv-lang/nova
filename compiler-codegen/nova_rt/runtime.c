@@ -1055,13 +1055,33 @@ static void _worker_main(void* arg) {
      * worker's TLS handlers at NULL. Fiber would then see no handler.
      *
      * Registration order must match nova_fn_main to keep snapshot indices
-     * consistent (index 0 = Fail, index 1 = Time, ...user effects...).
-     * save/restore iterate by index, so ORDER must be the same everywhere. */
+     * consistent (index 0 = Fail, ...everything else exactly as
+     * `_nova_register_effects_fn` — generated `_nova_register_all_effects_`
+     * — orders it). save/restore iterate by index, so ORDER must be the
+     * same everywhere.
+     *
+     * Plan 175 Ф.2-v3 [regression fix]: `_nova_handler_Time` explicit
+     * hardcoded registration REMOVED from this worker-thread path — Time is
+     * no longer a builtin special-cased ahead of user effects (it flows
+     * through the same generic `effect_schemas`-driven loop as everything
+     * else now, see emit_c.rs `emit_user_effect_registrations`). Leaving it
+     * hardcoded HERE while the main-thread path (`emit_main_wrapper`)
+     * dropped its own matching explicit line put Time at index 1 on worker
+     * threads but at its alphabetical generic-loop position on the main
+     * thread — a snapshot-index MISMATCH between threads (silently swaps
+     * which slot Application/Time/other-effects' inherited handler value
+     * lands in for a fiber stolen onto a worker) — caught by
+     * spec_tests/conformance/app_effect_basic_t8_1 (child fiber inherited
+     * the WRONG Application handler). Registering Time ONLY via the one
+     * generic function below, on BOTH main and worker threads, keeps the
+     * index assignment single-sourced and consistent everywhere. */
     nova_register_effect_storage((void**)&_nova_handler_Fail);
-    nova_register_effect_storage((void**)&_nova_handler_Time);
-    /* User-defined effects registered via function pointer set by generated
-     * code in nova_fn_main. If NULL (bootstrap / missing generated fn) —
-     * only built-ins are registered (sufficient for current test suite). */
+    /* User-defined effects (and now Time) registered via function pointer
+     * set by generated code in nova_fn_main. If NULL (bootstrap / missing
+     * generated fn) — only Fail is registered (sufficient for current test
+     * suite — no CU exists without SOME effect_schemas entry beyond Fail,
+     * since Time/prelude is always present, so this should always be set
+     * in practice; NULL-guard kept for defensive bootstrap safety). */
     if (_nova_register_effects_fn) {
         _nova_register_effects_fn();
     }

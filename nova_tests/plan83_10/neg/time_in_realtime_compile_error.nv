@@ -8,6 +8,6 @@ module neg.time_in_realtime_compile_error
 
 fn rt_time_violates() Time -> () {
     ro _ = realtime {
-        Time.sleep(0)
+        (0).to_millis().sleep()
     }
 }

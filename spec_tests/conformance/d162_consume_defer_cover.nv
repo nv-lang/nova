@@ -39,7 +39,7 @@ test "infallible + явный commit — D162 не fires (D162)" {
 
 test "failable + defer-cover — обязательство покрыто на всех путях (D162)" {
     with Fail = effect Fail {
-        fail(_m) { interrupt () }
+        fail(_m) -> never { interrupt () }
     } {
         d162_failable_defer()
     }
@@ -62,7 +62,7 @@ fn d162_failable_match_throw(n int) Fail -> int {
 
 test "failable + throw в match-ветке = явная обработка error-path (D162)" {
     with Fail = effect Fail {
-        fail(_m) { interrupt () }
+        fail(_m) -> never { interrupt () }
     } {
         ro v = d162_failable_match_throw(3)
         assert(v == 42)

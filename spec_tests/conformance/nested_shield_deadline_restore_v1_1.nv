@@ -46,14 +46,14 @@ fn run_nested() -> int {
         // Inner deadline pre-fix would still be active here.
         // Outer body now sleeps 50ms — pre-fix this would fire
         // bogus watchdog-варн (ист. CleanupTimeoutError; 50ms > 5ms inner's stale budget).
-        Time.sleep(50)
+        (50).to_millis().sleep()
         result += outer.id
     }
     return result
 }
 
 test "Plan 110.x: nested consume{} shields restore outer deadline" {
-    // Pre-fix: this would misfire (ист. CleanupTimeoutError throw) при Time.sleep(50)
+    // Pre-fix: this would misfire (ист. CleanupTimeoutError throw) при (50).to_millis().sleep()
     // because deadline = t_inner + 5ms (stale from inner shield).
     // Post-fix: outer's 1000ms deadline restored на inner leave → sleep OK.
     ro r = run_nested()

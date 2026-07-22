@@ -44,7 +44,7 @@ type D61Guard effect {
 
 test "D61 §8: прямой вызов на handler-значении, минуя with (bool op)" {
     ro switcher = effect D61Switch {
-        flip() => true
+        flip() -> bool => true
     }
     ro b = switcher.flip()          // прямой вызов, минуя with
     assert(b == true)
@@ -52,8 +52,8 @@ test "D61 §8: прямой вызов на handler-значении, минуя
 
 test "D61 §8: прямой вызов резолвит ВЕРНЫЙ возврат операции — int и str на ОДНОМ handler-значении" {
     ro d61_gauge_h = effect D61Gauge {
-        peek() => 42
-        tag() => "temp"
+        peek() -> int => 42
+        tag() -> str => "temp"
     }
     ro r = d61_gauge_h.peek()       // прямой вызов — int, не str
     ro l = d61_gauge_h.tag()         // прямой вызов — str, не int
@@ -62,16 +62,16 @@ test "D61 §8: прямой вызов резолвит ВЕРНЫЙ возвр�
 }
 
 test "D61 §8: два независимо связанных handler-ЗНАЧЕНИЯ одного эффекта остаются различны при прямом вызове" {
-    ro a = effect D61Switch { flip() => true }
-    ro b = effect D61Switch { flip() => false }
+    ro a = effect D61Switch { flip() -> bool => true }
+    ro b = effect D61Switch { flip() -> bool => false }
     assert(a.flip() == true)
     assert(b.flip() == false)
 }
 
 test "[M-novavtable-read-write-pointer-collision]: read()/write(v) op-имена на handler-значении дispatch'атся через vtable, не через B11d typed-pointer-deref" {
     ro guard_h = effect D61Guard {
-        read() => 7
-        write(v) => v == 7
+        read() -> int => 7
+        write(v) -> bool => v == 7
     }
     ro r = guard_h.read()           // прямой вызов read() — до фикса ловился B11d
     ro w = guard_h.write(7)         // прямой вызов write(v) — до фикса ловился B11d

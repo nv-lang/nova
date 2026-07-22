@@ -30,7 +30,7 @@ test "Plan 110.6.5 A110.6.5.a: many fibers entering consume scope under cancel p
     // cancel_mask_count atomically (D188 R3), runs cleanup, decrements.
     // No cross-fiber data race (each worker owns its local Worker3).
     //
-    // NOTE: explicit `Time.sleep(0)` inside body removed после
+    // NOTE: explicit `(0).to_millis().sleep()` inside body removed после
     // observed test-runner timeout под heavy concurrent shield+
     // deadline-check pressure. Tracked as
     // [M-110-deadline-check-yield-zero-race] followup. The mask/leave

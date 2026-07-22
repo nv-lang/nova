@@ -22,10 +22,10 @@ fn finalizer_noop() -> () => ()
 
 test "Plan 110.9.3 V1.1: register_finalizer compile + LIFO codegen" {
     with Application = effect Application {
-        register_finalizer(f fn() -> ()) {
+        register_finalizer(f fn() -> ()) -> () {
             return ()
         }
-        default_exit_timeout_ms() {
+        default_exit_timeout_ms() -> int {
             return 5000
         }
     } {

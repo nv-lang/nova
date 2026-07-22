@@ -22,7 +22,7 @@ type M187ThrowErr enum
     | Multi { id str, detail str, code int, blob []u8 }
 
 fn m187_thrower(id str, detail str) Fail[M187ThrowErr] Time -> M187Data {
-    Time.sleep(0)
+    (0).to_millis().sleep()
     throw M187ThrowErr.Multi { id, detail, code: 7, blob: [1, 2, 3] as []u8 }
 }
 

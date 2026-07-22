@@ -14,7 +14,7 @@ fn step(s Sig) Fail -> int {
 
 test "Go branch picks int" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro n = step(Sig.Go)
         assert(n == 11)

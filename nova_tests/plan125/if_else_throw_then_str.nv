@@ -12,7 +12,7 @@ fn pick3(c bool) Fail -> str {
 
 test "if-else-throw / then-str returns str" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro s = pick3(true)
         assert(s == "hi")
@@ -22,7 +22,7 @@ test "if-else-throw / then-str returns str" {
 test "if-else-throw fires on false" {
     mut caught = false
     with Fail = effect Fail {
-        fail(_) { caught = true; interrupt () }
+        fail(_) -> never { caught = true; interrupt () }
     } {
         ro _s = pick3(false)
     }

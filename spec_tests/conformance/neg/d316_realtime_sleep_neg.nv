@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR cannot be called inside `realtime` block
+// EXPECT_COMPILE_ERROR cannot use suspend-effect `Time` inside `realtime` block
 
 // D316/D64 — `Time` suspend-эффект (sleep park'ает fiber) запрещён внутри
 // `#realtime fn` (realtime гарантирует отсутствие fiber-suspension).
@@ -6,12 +6,32 @@
 // suspend-effect ban на Net/Fs/Db/Time), НЕ через E_REALTIME_SYNC_PARK
 // (тот код — для #parks-аннотированных sync-примитивов Mutex/Condvar/etc,
 // отдельный механизм; для suspend-эффектов — plain D64-диагностика).
+//
+// Plan 175 Ф.2-v3 [gap found, 2026-07-22]: calls this via the qualified
+// effect-op form `Time.sleep(d)` DELIBERATELY, not the `d.sleep()` method
+// sugar (also valid, and now the promoted idiom elsewhere) — the D64
+// checker's realtime-suspend-effect scan (types/mod.rs
+// `realtime_suspend_effect` call site, `check_expr_forbid`) is SYNTACTIC
+// on `Effect.op(...)`-shaped paths (`path.len()==2 &&
+// effect_decls.contains(path[0])`); an instance-method call
+// (`expr.method()`, receiver not a bare type/effect name) needs the
+// receiver's inferred type to resolve which method_table entry applies —
+// that path is explicitly marked deferred ("dynamic member-call; не
+// resolve'им" / "instance-method через obj.method требует
+// type-инференции, отложен") elsewhere in the same file, PRE-EXISTING and
+// orthogonal to this refactor. `Time.sleep(d)` remains fully valid (only
+// the free-function `sleep`/`sleep_until` SUGAR was retracted, not the
+// effect op itself) and is the one call-shape this diagnostic can see —
+// using it here keeps this regression-guard's coverage intact.
+// Follow-up: `[M-175-realtime-ban-method-call-blind]` — extending D64's
+// (and D63 `forbid`'s) suspend-effect scan to instance-method calls needs
+// receiver-type inference at the callee-effects checkpoint.
 module neg.d316_realtime_sleep_neg
 
 import std.time.duration
 
 #realtime fn d316_neg_rt_sleep() Time {
-    sleep(1.to_millis())
+    Time.sleep(1.to_millis())
 }
 
 test "probe" {

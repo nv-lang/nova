@@ -1900,6 +1900,15 @@ fn check_module_impl(
     // C-ABI grammar is read off the TYPE structure, never off type names.
     check_ffi_c_abi_signatures(module, &mut errors);
 
+    // Plan 175 Ф.2-v2: `#default_handler(X)` validation (duplicate/arity/
+    // return-type/unknown-effect/cross-default cycle). See
+    // `check_default_handlers` below.
+    check_default_handlers(module, &mut errors);
+
+    // Plan 175.2 Ф.2-v4 (П4, D-амендмент): handler-literal op declarations
+    // must be fully typed (`-> Type` mandatory, must match effect schema).
+    check_handler_op_declarations(module, &mut errors);
+
     // Plan 172.1 U.3.4: lift the per-call resolved-callee channel (call-site `ExprId` →
     // chosen callee `FnDecl` span) out of the checker into the `ModuleEnv` so the pipeline
     // hands it to codegen. ADDITIVE substrate — codegen does not read it yet (U.4.3), so
@@ -22375,6 +22384,16 @@ impl<'a> crate::protocols::share_check::ShareQuery for CapShareQuery<'a> {
 struct ScopeBinding {
     mutable: bool,
     ty: Option<TypeRef>,
+    /// [M-detach-consume-escape-unchecked] (D415 §4 extension, Plan 173.3):
+    /// `true` only for a name bound via an explicit `consume`-marked pattern
+    /// sub-bind (`Ok(consume x)` / `Some(consume x)` — `Pattern::Ident{
+    /// is_consume: true }`, D157/D180) in a `match`/`if let`/`while let` arm.
+    /// These arrive with `ty: None` (no static annotation — V1 has no
+    /// pattern-destructure type inference), so the ordinary `ty`-based
+    /// `type_decls`-lookup linear check in `check_capture_boundary` can never
+    /// see them; this flag is the ONLY signal that the binding is a linear/
+    /// consume resource, and is authoritative regardless of `ty`.
+    linear_pattern: bool,
 }
 
 /// Plan 16: capability state передаётся через walk как mutable.
@@ -22588,7 +22607,7 @@ impl<'a> CapabilityCtx<'a> {
         // spawn/parallel-for capture-check can see a captured name bound in.
         let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
         for p in &f.params {
-            frame.insert(p.name.clone(), ScopeBinding { mutable: p.is_mut, ty: Some(p.ty.clone()) });
+            frame.insert(p.name.clone(), ScopeBinding { mutable: p.is_mut, ty: Some(p.ty.clone()), linear_pattern: false });
         }
         state.scopes.push(frame);
         match &f.body {
@@ -22631,10 +22650,11 @@ impl<'a> CapabilityCtx<'a> {
                     let ty = d.ty.clone().or_else(|| {
                         capture_syntactic_init_type(&d.value, &self.type_decls)
                     });
-                    for (name, pat_mut) in pattern_capture_names(&d.pattern) {
+                    for (name, pat_mut, pat_consume) in pattern_capture_names(&d.pattern) {
                         frame.insert(name, ScopeBinding {
                             mutable: d.mutable || pat_mut,
                             ty: ty.clone(),
+                            linear_pattern: pat_consume,
                         });
                     }
                 }
@@ -22833,9 +22853,23 @@ impl<'a> CapabilityCtx<'a> {
                     }
                 }
             }
-            ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            ExprKind::IfLet { scrutinee, pattern, guard, then, else_ } => {
                 self.walk_expr(scrutinee, state, errors);
+                // [M-detach-consume-escape-unchecked] (D415 §4 extension):
+                // register the pattern's bound names — including explicit
+                // `consume` sub-binds (`if let Ok(consume x) = … { … }`) —
+                // into a scope frame BEFORE walking guard/then, so a nested
+                // spawn/parallel-for/detach inside `then` that captures `x`
+                // can resolve it via `state.scopes` (was previously
+                // invisible — no frame was ever pushed here).
+                let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
+                for (name, is_mut, is_consume) in pattern_capture_names(pattern) {
+                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: None, linear_pattern: is_consume });
+                }
+                state.scopes.push(frame);
+                if let Some(g) = guard { self.walk_expr(g, state, errors); }
                 self.walk_block(then, state, errors);
+                state.scopes.pop();
                 if let Some(eb) = else_ {
                     match eb {
                         ElseBranch::Block(b) => self.walk_block(b, state, errors),
@@ -22846,11 +22880,25 @@ impl<'a> CapabilityCtx<'a> {
             ExprKind::Match { scrutinee, arms } => {
                 self.walk_expr(scrutinee, state, errors);
                 for arm in arms {
+                    // [M-detach-consume-escape-unchecked] (D415 §4 extension):
+                    // same as `IfLet` above — a match-arm's own pattern binds
+                    // (e.g. `Ok(consume stream) => { detach { …stream… } }`,
+                    // the exact flagship-found gap) were entirely invisible to
+                    // `state.scopes` before this fix; register them here so
+                    // the capture-check boundary (`check_capture_boundary`,
+                    // called from `spawn`/`parallel for`/`detach` arms) can
+                    // see them.
+                    let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
+                    for (name, is_mut, is_consume) in pattern_capture_names(&arm.pattern) {
+                        frame.insert(name, ScopeBinding { mutable: is_mut, ty: None, linear_pattern: is_consume });
+                    }
+                    state.scopes.push(frame);
                     if let Some(g) = &arm.guard { self.walk_expr(g, state, errors); }
                     match &arm.body {
                         MatchArmBody::Expr(e) => self.walk_expr(e, state, errors),
                         MatchArmBody::Block(b) => self.walk_block(b, state, errors),
                     }
+                    state.scopes.pop();
                 }
             }
             ExprKind::Block(b) => self.walk_block(b, state, errors),
@@ -22997,8 +23045,8 @@ impl<'a> CapabilityCtx<'a> {
                 // never flagged as a "captured outer mut" (it's per-iteration
                 // local, not shared across siblings).
                 let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
-                for (name, is_mut) in pattern_capture_names(pattern) {
-                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: elem_type.clone() });
+                for (name, is_mut, is_consume) in pattern_capture_names(pattern) {
+                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: elem_type.clone(), linear_pattern: is_consume });
                 }
                 state.scopes.push(frame);
                 self.check_capture_boundary(body, state, errors);
@@ -23009,8 +23057,8 @@ impl<'a> CapabilityCtx<'a> {
             ExprKind::For { iter, body, pattern, elem_type, .. } => {
                 self.walk_expr(iter, state, errors);
                 let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
-                for (name, is_mut) in pattern_capture_names(pattern) {
-                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: elem_type.clone() });
+                for (name, is_mut, is_consume) in pattern_capture_names(pattern) {
+                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: elem_type.clone(), linear_pattern: is_consume });
                 }
                 state.scopes.push(frame);
                 for s in &body.stmts { self.walk_stmt(s, state, errors); }
@@ -23021,9 +23069,21 @@ impl<'a> CapabilityCtx<'a> {
                 self.walk_expr(cond, state, errors);
                 self.walk_block(body, state, errors);
             }
-            ExprKind::WhileLet { scrutinee, body, .. } => {
+            ExprKind::WhileLet { scrutinee, pattern, guard, body, .. } => {
                 self.walk_expr(scrutinee, state, errors);
+                // [M-detach-consume-escape-unchecked] (D415 §4 extension):
+                // same fix as `IfLet`/`Match` above — `while let Ok(consume
+                // x) = … { … }` binds `x` for the loop body; make it visible
+                // to `state.scopes` so a nested spawn/parallel-for/detach
+                // capturing it is checked.
+                let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
+                for (name, is_mut, is_consume) in pattern_capture_names(pattern) {
+                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: None, linear_pattern: is_consume });
+                }
+                state.scopes.push(frame);
+                if let Some(g) = guard { self.walk_expr(g, state, errors); }
                 self.walk_block(body, state, errors);
+                state.scopes.pop();
             }
             ExprKind::Loop { body, .. } => self.walk_block(body, state, errors),
             ExprKind::Select { arms } => {
@@ -23387,6 +23447,18 @@ impl<'a> CapabilityCtx<'a> {
         // явный move `spawn consume c { … }` (D415 §4 — init exempt в
         // capture_scan). Отдельный Vec — своя диагностика.
         let mut linear_flagged: Vec<(String, String)> = Vec::new();
+        // [M-detach-consume-escape-unchecked] (D415 §4 extension, Plan 173.3):
+        // names bound via an explicit `consume` pattern sub-bind
+        // (`Ok(consume stream) => { … }` in a `match`/`if let`/`while let`
+        // arm — `ScopeBinding.linear_pattern`) never carry a `ty` (no static
+        // annotation at a pattern-destructure site — V1 has no destructure
+        // type inference), so the `ty`-based `type_decls` lookup above can
+        // never classify them as linear. `linear_pattern` is set precisely
+        // when the SOURCE syntax already marked the bind `consume` — that is
+        // itself sufficient (and authoritative) evidence this is a linear/
+        // consume resource, independent of knowing its concrete type name.
+        // Separate Vec (no type name available for the diagnostic).
+        let mut pattern_linear_flagged: Vec<String> = Vec::new();
         for name in free {
             let binding = state.scopes.iter().rev().find_map(|f| f.get(&name));
             if let Some(b) = binding {
@@ -23400,6 +23472,10 @@ impl<'a> CapabilityCtx<'a> {
                             continue;
                         }
                     }
+                }
+                if b.linear_pattern {
+                    pattern_linear_flagged.push(name.clone());
+                    continue;
                 }
                 if !b.mutable {
                     // `ro` capture — deep-immutable view (D246): always safe,
@@ -23456,8 +23532,29 @@ impl<'a> CapabilityCtx<'a> {
                      (Plan 201 / 173.1 by-value капчур). Возьмите \
                      `@share()`-копию per-fiber (`ro w = {n}.share()` перед \
                      `spawn {{ …w… }}` — refcount закрывает последним) либо \
-                     явный move: `spawn consume {n} {{ … }}` (D415 §4).",
+                     явный move: `spawn consume {n} {{ … }}` / \
+                     `detach consume {n} {{ … }}` (D415 §4).",
                     n = name, ty = ty
+                ),
+                body.span,
+            ));
+        }
+        pattern_linear_flagged.sort(); // deterministic diagnostic order
+        for name in pattern_linear_flagged {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_LINEAR_CAPTURE_IN_FIBER] `{n}` (явный `consume`-биндинг \
+                     из pattern, напр. `Ok(consume {n})`) захвачен в тело \
+                     `spawn`/`parallel for`/`detach` из объемлющего scope: \
+                     by-value копия обёртки в N файберов = N алиасов одного \
+                     ресурса БЕЗ учёта владения → use-after-consume/double-\
+                     close (Plan 173.3 / [M-detach-consume-escape-unchecked], \
+                     D415 §4 расширение). Передайте владение явным move: \
+                     `spawn consume {n} {{ … }}` / `detach consume {n} {{ … }}` \
+                     — тело получает `{n}` во владение, cleanup срабатывает \
+                     при выходе из ЕГО собственного тела, а не объемлющего \
+                     scope.",
+                    n = name
                 ),
                 body.span,
             ));
@@ -23474,11 +23571,12 @@ impl<'a> CapabilityCtx<'a> {
                      threads from, the parent/siblings). Allowed captures \
                      (Plan 173.3, D415 §2): move it in explicitly \
                      (`spawn consume {} = expr {{ .. }}` / \
-                     `spawn consume {} {{ .. }}`), capture it `ro` (immutable \
+                     `spawn consume {} {{ .. }}` / `detach consume {} {{ .. }}`), \
+                     capture it `ro` (immutable \
                      view), or use an internally-synchronized `#share` type \
                      (`Mutex`/`Atomic*` — or a user lock-free type vouched \
                      with `#share`).",
-                    name, why, name, name
+                    name, why, name, name, name
                 ),
                 body.span,
             ));
@@ -23547,20 +23645,33 @@ fn capture_syntactic_init_type(
     }
 }
 
-/// Plan 173.3 (D415 §2): bound names (+ per-name mutability) introduced by a
-/// `let`/for-loop-var/etc pattern. Non-`Ident` sub-patterns default
-/// `mutable = false` (conservative — V1 does not track per-element `mut` in
-/// destructure patterns beyond the direct `Ident{is_mut}` case; see D184 §1
-/// "no per-element granularity V1", the same limitation this mirrors).
-fn pattern_capture_names(pat: &Pattern) -> Vec<(String, bool)> {
+/// Plan 173.3 (D415 §2): bound names (+ per-name mutability + per-name
+/// explicit-`consume` marker) introduced by a `let`/for-loop-var/match-arm/
+/// if-let/etc pattern. Non-`Ident` sub-patterns default `mutable = false,
+/// is_consume = false` (conservative — V1 does not track per-element `mut`/
+/// `consume` in destructure patterns beyond the direct `Ident{is_mut,
+/// is_consume}` case; see D184 §1 "no per-element granularity V1", the same
+/// limitation this mirrors). Plan 173.3 [M-detach-consume-escape-unchecked]
+/// amendment (D415 §4 extension): the third tuple element (`is_consume`) —
+/// `Ok(consume tcp)`-style explicit ownership-transfer sub-binds (D157/D180)
+/// — feeds the `spawn`/`parallel for`/`detach` capture-check's
+/// `linear_pattern` classification (see `check_capture_boundary`) so a
+/// match-arm-bound consume value (no static type annotation — `ty` stays
+/// `None` in `ScopeBinding`, so the ordinary `type_decls`-lookup linear check
+/// can't see it) is still caught, closing the exact gap the flagship's
+/// `match lst.accept() { Ok(consume stream) => { detach { ...stream... } } }`
+/// slipped through (bare `Ok(consume stream)` bind was entirely invisible to
+/// `state.scopes` before this amendment — match/if-let arms pushed no scope
+/// frame at all).
+fn pattern_capture_names(pat: &Pattern) -> Vec<(String, bool, bool)> {
     let mut out = Vec::new();
     pattern_capture_names_into(pat, &mut out);
     out
 }
 
-fn pattern_capture_names_into(pat: &Pattern, out: &mut Vec<(String, bool)>) {
+fn pattern_capture_names_into(pat: &Pattern, out: &mut Vec<(String, bool, bool)>) {
     match pat {
-        Pattern::Ident { name, is_mut, .. } => out.push((name.clone(), *is_mut)),
+        Pattern::Ident { name, is_mut, is_consume, .. } => out.push((name.clone(), *is_mut, *is_consume)),
         Pattern::Variant { kind: VariantPatternKind::Tuple { patterns, .. }, .. } => {
             for p in patterns { pattern_capture_names_into(p, out); }
         }
@@ -23569,7 +23680,7 @@ fn pattern_capture_names_into(pat: &Pattern, out: &mut Vec<(String, bool)>) {
             for f in fields {
                 match &f.pattern {
                     Some(p) => pattern_capture_names_into(p, out),
-                    None => out.push((f.name.clone(), false)), // `{ name }` shorthand
+                    None => out.push((f.name.clone(), false, false)), // `{ name }` shorthand
                 }
             }
         }
@@ -23577,14 +23688,14 @@ fn pattern_capture_names_into(pat: &Pattern, out: &mut Vec<(String, bool)>) {
             for e in elems {
                 match e {
                     ArrayPatternElem::Item(p) => pattern_capture_names_into(p, out),
-                    ArrayPatternElem::RestBind(name) => out.push((name.clone(), false)),
+                    ArrayPatternElem::RestBind(name) => out.push((name.clone(), false, false)),
                     ArrayPatternElem::Rest => {}
                 }
             }
         }
         Pattern::Tuple(pats, _) => { for p in pats { pattern_capture_names_into(p, out); } }
         Pattern::Binding { name, inner, .. } => {
-            out.push((name.clone(), false));
+            out.push((name.clone(), false, false));
             pattern_capture_names_into(inner, out);
         }
         Pattern::Or { alternatives, .. } => {
@@ -23614,7 +23725,7 @@ fn capture_scan_stmt(s: &Stmt, shadow: &mut HashSet<String>, free: &mut HashSet<
         Stmt::Expr(e) => capture_scan_expr(e, shadow, free),
         Stmt::Let(d) => {
             capture_scan_expr(&d.value, shadow, free);
-            for (name, _) in pattern_capture_names(&d.pattern) {
+            for (name, _, _) in pattern_capture_names(&d.pattern) {
                 shadow.insert(name);
             }
         }
@@ -23706,7 +23817,7 @@ fn capture_scan_expr(e: &Expr, shadow: &mut HashSet<String>, free: &mut HashSet<
         ExprKind::IfLet { scrutinee, then, else_, guard, pattern } => {
             capture_scan_expr(scrutinee, shadow, free);
             let mut inner_shadow = shadow.clone();
-            for (n, _) in pattern_capture_names(pattern) { inner_shadow.insert(n); }
+            for (n, _, _) in pattern_capture_names(pattern) { inner_shadow.insert(n); }
             if let Some(g) = guard { capture_scan_expr(g, &mut inner_shadow, free); }
             capture_scan_block(then, &mut inner_shadow, free);
             capture_scan_else(else_, shadow, free);
@@ -23715,7 +23826,7 @@ fn capture_scan_expr(e: &Expr, shadow: &mut HashSet<String>, free: &mut HashSet<
             capture_scan_expr(scrutinee, shadow, free);
             for arm in arms {
                 let mut inner_shadow = shadow.clone();
-                for (n, _) in pattern_capture_names(&arm.pattern) { inner_shadow.insert(n); }
+                for (n, _, _) in pattern_capture_names(&arm.pattern) { inner_shadow.insert(n); }
                 if let Some(g) = &arm.guard { capture_scan_expr(g, &mut inner_shadow, free); }
                 match &arm.body {
                     MatchArmBody::Expr(be) => capture_scan_expr(be, &mut inner_shadow, free),
@@ -23763,7 +23874,7 @@ fn capture_scan_expr(e: &Expr, shadow: &mut HashSet<String>, free: &mut HashSet<
         ExprKind::For { pattern, iter, body, .. } | ExprKind::ParallelFor { pattern, iter, body, .. } => {
             capture_scan_expr(iter, shadow, free);
             let mut inner_shadow = shadow.clone();
-            for (n, _) in pattern_capture_names(pattern) { inner_shadow.insert(n); }
+            for (n, _, _) in pattern_capture_names(pattern) { inner_shadow.insert(n); }
             capture_scan_block(body, &mut inner_shadow, free);
         }
         ExprKind::While { cond, body, .. } => {
@@ -23773,7 +23884,7 @@ fn capture_scan_expr(e: &Expr, shadow: &mut HashSet<String>, free: &mut HashSet<
         ExprKind::WhileLet { scrutinee, body, guard, pattern, .. } => {
             capture_scan_expr(scrutinee, shadow, free);
             let mut inner_shadow = shadow.clone();
-            for (n, _) in pattern_capture_names(pattern) { inner_shadow.insert(n); }
+            for (n, _, _) in pattern_capture_names(pattern) { inner_shadow.insert(n); }
             if let Some(g) = guard { capture_scan_expr(g, &mut inner_shadow, free); }
             capture_scan_block(body, &mut inner_shadow, free);
         }
@@ -26613,19 +26724,45 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, i
             }
             // Q-блок 173.2: suspend-операции не должны блокировать drive-цикл.
             // Компилируемое приближение MVP: прямой вызов `Time.sleep(...)`.
+            //
+            // [M-175-realtime-ban-method-call-blind] fix (2026-07-22,
+            // regression found via spec_tests/conformance/neg/
+            // handler_sleep_neg.nv): Plan 175 Ф.2-v3 retracted the free
+            // `sleep`/`sleep_until` sugar functions — `d.sleep()`/
+            // `deadline.sleep_until()` (instance METHOD calls on `Duration`/
+            // `Monotonic`) are now the PROMOTED idiom, not `Time.sleep(d)`
+            // directly. This checker is purely SYNTACTIC (no type inference
+            // available at this AST-only stage — same limitation as D64's
+            // `realtime_suspend_effect` scan just above in this file), so it
+            // previously went blind the moment a supervisor-handler body
+            // called `sleep` through the method form instead of the two
+            // `Time`-qualified shapes it matched. Widen the heuristic: ANY
+            // `.sleep()`/`.sleep_until()` method call (whatever the
+            // receiver) is treated as a suspend-op candidate — these method
+            // names are owned exclusively by `Duration`/`Monotonic` in std
+            // (and this is a narrow, careful-use context — supervisor
+            // handlers — where a false positive on an unrelated same-named
+            // user method is an acceptable, rare trade-off against silently
+            // missing a real suspend-under-handler bug). The original
+            // `Time.sleep(...)`/`Time.sleep` qualified-path forms remain
+            // covered too (the effect op itself is still perfectly valid to
+            // call directly — only the free-fn sugar was retracted).
             ExprKind::Call { func, .. } => {
-                let is_time_sleep = match &func.kind {
+                let is_suspend_call = match &func.kind {
                     ExprKind::Path(segs) =>
                         segs.len() == 2 && segs[0] == "Time" && segs[1] == "sleep",
-                    ExprKind::Member { obj, name, .. } =>
-                        name == "sleep" && matches!(&obj.kind, ExprKind::Ident(n) if n == "Time"),
+                    // `obj` unused now that ANY receiver counts — see comment
+                    // above (was: only `Ident("Time")`).
+                    ExprKind::Member { name, .. } =>
+                        name == "sleep" || name == "sleep_until",
                     _ => false,
                 };
-                if is_time_sleep {
+                if is_suspend_call {
                     errors.push(Diagnostic::new(
-                        "[E_SUPERVISOR_HANDLER_SUSPEND] `Time.sleep` внутри `Supervisor`-хендлера \
-                         запрещён (Q-блок 173.2): suspend-операция заблокировала бы serialized \
-                         drive-цикл scope'а (решения по падениям перестали бы приниматься)."
+                        "[E_SUPERVISOR_HANDLER_SUSPEND] suspend-операция (`Time.sleep`/`.sleep()`/\
+                         `.sleep_until()`) внутри `Supervisor`-хендлера запрещена (Q-блок 173.2): \
+                         suspend-операция заблокировала бы serialized drive-цикл scope'а (решения \
+                         по падениям перестали бы приниматься)."
                             .to_string(),
                         e.span,
                     ));
@@ -37280,6 +37417,658 @@ fn ffi_validate_c_fnptr_occurrences(
             }
         }
         TR::Unit(_) | TR::Protocol { .. } => {}
+    }
+}
+
+/// Plan 175 Ф.2-v2 (`#default_handler` D-block, 04-effects.md): validate
+/// every free fn tagged `#default_handler(EffectName)`:
+///   - `EffectName` must name a declared `type X effect { ... }` in this CU
+///     (`E_DEFAULT_HANDLER_UNKNOWN_EFFECT`).
+///   - at most one `#default_handler` per effect (`E_DEFAULT_HANDLER_DUPLICATE`).
+///   - the fn must be a zero-param free fn (no receiver) returning exactly
+///     `Effect[EffectName]` (`E_DEFAULT_HANDLER_ARITY` /
+///     `E_DEFAULT_HANDLER_RETURN_TYPE`).
+///   - **no cycles** among registered defaults: if `X`'s ctor body directly
+///     references another effect `Y` that ALSO carries `#default_handler`,
+///     record edge `X -> Y`; a cycle in this graph is a compile error
+///     (`E_DEFAULT_HANDLER_CYCLE`) — a real cycle would recurse forever the
+///     first time either default is lazily constructed at runtime.
+///
+/// The reference-collection walk below is intentionally a conservative
+/// over-approximation (collects every bare `Ident` reachable from the fn
+/// body, not just ones in call position) — for cycle-SAFETY a false
+/// positive (rejecting a legal program) is far preferable to a false
+/// negative (missing a real cycle), and ctor bodies are simple setup code
+/// in practice.
+/// Plan 175.2 Ф.2-v4 (П7, D431): extract `X` out of a `-> Effect[X]` return
+/// type (same shape `check_default_handlers`'s `ret_ok` match already
+/// requires) — used to infer the effect name for a BARE `#default_handler`
+/// (no explicit `(EffectName)` argument). `None` if `rt` isn't shaped like
+/// `Effect[<Named>]` at all (caller reports a dedicated diagnostic then).
+fn default_handler_infer_effect_name(rt: &Option<crate::ast::TypeRef>) -> Option<String> {
+    match rt {
+        Some(crate::ast::TypeRef::Named { path, generics, .. })
+            if path.len() == 1 && path[0] == "Effect" && generics.len() == 1 =>
+        {
+            match &generics[0] {
+                crate::ast::TypeRef::Named { path: ip, .. } => ip.last().cloned(),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn check_default_handlers(module: &crate::ast::Module, errors: &mut Vec<Diagnostic>) {
+    use crate::ast::{DocAttr, FnDecl, Item, TypeDeclKind};
+
+    // Collect entry-declared fns + type decls over the whole CU (mirrors
+    // `check_ffi_c_abi_signatures` above: entry items + peer files).
+    // `module.items` (fully-merged flat view) and each entry peer file's
+    // own `items_here` overlap for entry-module declarations — dedupe by
+    // `Span` (unique per real source declaration) so a fn/type declared
+    // in the entry module isn't counted twice.
+    let mut seen_fn_spans: HashSet<crate::diag::Span> = HashSet::new();
+    let mut all_fns: Vec<&FnDecl> = Vec::new();
+    let mut seen_type_spans: HashSet<crate::diag::Span> = HashSet::new();
+    let mut effect_names: HashSet<String> = HashSet::new();
+    let mut all_item_lists: Vec<&[Item]> = vec![&module.items];
+    for pf in &module.peer_files {
+        all_item_lists.push(&pf.items_here);
+    }
+    for items in all_item_lists {
+        for it in items {
+            match it {
+                Item::Fn(f) => {
+                    if seen_fn_spans.insert(f.span) { all_fns.push(f); }
+                }
+                Item::Type(td) if matches!(&td.kind, TypeDeclKind::Effect(_)) => {
+                    if seen_type_spans.insert(td.span) {
+                        effect_names.insert(td.name.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // effect_name -> Vec<&FnDecl> (duplicates tracked for the diagnostic).
+    let mut registry: HashMap<String, Vec<&FnDecl>> = HashMap::new();
+    for f in &all_fns {
+        for attr in &f.doc_attrs {
+            if let DocAttr::DefaultHandler(eff_opt) = attr {
+                // Plan 175.2 Ф.2-v4 (П7, D431): bare `#default_handler`
+                // (no `(EffectName)`) infers the effect from `f`'s own
+                // `-> Effect[X]` return type — DRY (the explicit name was
+                // always redundant with the return type). If inference
+                // fails (no return type / wrong shape), emit a dedicated
+                // diagnostic right here (can't build a registry key without
+                // a name) instead of silently dropping the fn.
+                match eff_opt.clone().or_else(|| default_handler_infer_effect_name(&f.return_type)) {
+                    Some(eff) => { registry.entry(eff).or_default().push(f); }
+                    None => {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_DEFAULT_HANDLER_RETURN_TYPE] bare `#default_handler` on \
+                                 `{name}` — cannot infer the effect: fn must return exactly \
+                                 `Effect[X]` for SOME declared effect type `X` (or write the \
+                                 explicit form `#default_handler(X)`).",
+                                name = f.name,
+                            ),
+                            f.span,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    if registry.is_empty() { return; }
+
+    for (eff, fns) in &registry {
+        if !effect_names.contains(eff) {
+            for f in fns {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_DEFAULT_HANDLER_UNKNOWN_EFFECT] `#default_handler({eff})` \
+                         on `{name}` — `{eff}` is not a declared `effect` type in this \
+                         compile unit.",
+                        eff = eff, name = f.name,
+                    ),
+                    f.span,
+                ));
+            }
+            continue;
+        }
+        if fns.len() > 1 {
+            for f in fns {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_DEFAULT_HANDLER_DUPLICATE] effect `{eff}` has {n} \
+                         `#default_handler` fns (`{name}` among them) — at most one \
+                         default-handler factory is allowed per effect.",
+                        eff = eff, n = fns.len(), name = f.name,
+                    ),
+                    f.span,
+                ));
+            }
+        }
+        for f in fns {
+            if f.receiver.is_some() || !f.params.is_empty() {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_DEFAULT_HANDLER_ARITY] `#default_handler({eff})` fn `{name}` \
+                         must be a zero-parameter free fn.",
+                        eff = eff, name = f.name,
+                    ),
+                    f.span,
+                ));
+            }
+            let ret_ok = matches!(
+                &f.return_type,
+                Some(crate::ast::TypeRef::Named { path, generics, .. })
+                    if path.len() == 1 && path[0] == "Effect"
+                        && generics.len() == 1
+                        && matches!(&generics[0],
+                            crate::ast::TypeRef::Named { path: ip, .. }
+                                if ip.last().map_or(false, |n| n == eff))
+            );
+            if !ret_ok {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_DEFAULT_HANDLER_RETURN_TYPE] `#default_handler({eff})` fn \
+                         `{name}` must return exactly `Effect[{eff}]`.",
+                        eff = eff, name = f.name,
+                    ),
+                    f.span,
+                ));
+            }
+        }
+    }
+
+    // ---- Cycle check over the registered-default graph ----
+    let registered: HashSet<&String> = registry.keys().collect();
+    let mut refs_in_expr = |e: &crate::ast::Expr, out: &mut HashSet<String>| {
+        default_handler_collect_idents_expr(e, out);
+    };
+    let mut edges: HashMap<String, HashSet<String>> = HashMap::new();
+    for (eff, fns) in &registry {
+        let mut refs: HashSet<String> = HashSet::new();
+        for f in fns {
+            match &f.body {
+                crate::ast::FnBody::Expr(e) => refs_in_expr(e, &mut refs),
+                crate::ast::FnBody::Block(b) => default_handler_collect_idents_block(b, &mut refs),
+                crate::ast::FnBody::External => {}
+            }
+        }
+        let deps: HashSet<String> = refs.into_iter()
+            .filter(|n| n != eff && registered.contains(n))
+            .collect();
+        edges.insert(eff.clone(), deps);
+    }
+    // Simple DFS cycle detection over `edges`.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Mark { Visiting, Done }
+    let mut marks: HashMap<String, Mark> = HashMap::new();
+    fn dfs(
+        node: &str,
+        edges: &HashMap<String, HashSet<String>>,
+        marks: &mut HashMap<String, Mark>,
+        stack: &mut Vec<String>,
+    ) -> Option<Vec<String>> {
+        if let Some(Mark::Done) = marks.get(node) { return None; }
+        if stack.iter().any(|n| n == node) {
+            let start = stack.iter().position(|n| n == node).unwrap();
+            let mut cyc = stack[start..].to_vec();
+            cyc.push(node.to_string());
+            return Some(cyc);
+        }
+        stack.push(node.to_string());
+        if let Some(deps) = edges.get(node) {
+            let mut sorted: Vec<&String> = deps.iter().collect();
+            sorted.sort();
+            for dep in sorted {
+                if let Some(cyc) = dfs(dep, edges, marks, stack) {
+                    return Some(cyc);
+                }
+            }
+        }
+        stack.pop();
+        marks.insert(node.to_string(), Mark::Done);
+        None
+    }
+    let mut sorted_roots: Vec<&String> = edges.keys().collect();
+    sorted_roots.sort();
+    let mut reported_cycle = false;
+    for root in sorted_roots {
+        if reported_cycle { break; }
+        let mut stack = Vec::new();
+        if let Some(cyc) = dfs(root, &edges, &mut marks, &mut stack) {
+            reported_cycle = true;
+            if let Some(fns) = registry.get(root) {
+                if let Some(f) = fns.first() {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_DEFAULT_HANDLER_CYCLE] `#default_handler` construction \
+                             cycle: {} — a default-handler ctor cannot (transitively) \
+                             depend on another effect's default-handler ctor that leads \
+                             back to itself (would recurse forever on first lazy use).",
+                            cyc.join(" -> "),
+                        ),
+                        f.span,
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// Plan 175.2 Ф.2-v4 (П4, D-амендмент): handler-literal (`effect X {...}`)
+/// ops MUST fully declare their return type (`op(params) -> Type => body`) —
+/// the only incomplete-declaration form left in the language (`fn`/effect-
+/// decl ops/`#impl` are always fully typed). Mandatory ONLY for
+/// `HandlerLit` (effect handlers) — `ProtocolLit` method-impls are
+/// unaffected (out of scope, unchanged parser leniency).
+///
+/// Two diagnostics:
+///   - `E_INCOMPLETE_HANDLER_OP_DECL` — op has no `-> Type` at all.
+///   - `E_HANDLER_OP_RETURN_TYPE_MISMATCH` — declared `-> Type` doesn't
+///     structurally match the effect's own op signature (`typeref_equal`;
+///     an effect op with NO declared return type means implicit `()`).
+///
+/// Conservative by design: only fires when the effect name AND the op name
+/// both resolve to a known `type X effect { ... }` declaration in this CU —
+/// an unresolved effect/op is left to other diagnostics (unknown-effect/
+/// unknown-op are a different concern, not this pass's job).
+pub(crate) fn check_handler_op_declarations(module: &crate::ast::Module, errors: &mut Vec<Diagnostic>) {
+    use crate::ast::{EffectMethod, FnBody, Item, TypeDeclKind};
+
+    let mut seen_type_spans: HashSet<crate::diag::Span> = HashSet::new();
+    let mut effect_decls: HashMap<String, Vec<EffectMethod>> = HashMap::new();
+    let mut all_item_lists: Vec<&[Item]> = vec![&module.items];
+    for pf in &module.peer_files {
+        all_item_lists.push(&pf.items_here);
+    }
+    for items in &all_item_lists {
+        for it in *items {
+            if let Item::Type(td) = it {
+                if let TypeDeclKind::Effect(methods) = &td.kind {
+                    if seen_type_spans.insert(td.span) {
+                        effect_decls.insert(td.name.clone(), methods.clone());
+                    }
+                }
+            }
+        }
+    }
+    if effect_decls.is_empty() { return; }
+
+    let mut seen_fn_spans: HashSet<crate::diag::Span> = HashSet::new();
+    let mut seen_test_spans: HashSet<crate::diag::Span> = HashSet::new();
+    for items in &all_item_lists {
+        for it in *items {
+            match it {
+                Item::Fn(f) => {
+                    if !seen_fn_spans.insert(f.span) { continue; }
+                    match &f.body {
+                        FnBody::Block(b) => walk_block_for_handler_op_decls(b, &effect_decls, errors),
+                        FnBody::Expr(e) => walk_expr_for_handler_op_decls(e, &effect_decls, errors),
+                        FnBody::External => {}
+                    }
+                }
+                Item::Test(t) => {
+                    if seen_test_spans.insert(t.span) {
+                        walk_block_for_handler_op_decls(&t.body, &effect_decls, errors);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// `effect_ret` — `None` means the effect op has no explicit `-> Type`
+/// (implicit `()`). `handler_ret` is always `Some` by the time this is
+/// called (mandatory-ness already gated by the caller).
+fn handler_op_ret_matches(handler_ret: &crate::ast::TypeRef, effect_ret: Option<&crate::ast::TypeRef>) -> bool {
+    match effect_ret {
+        Some(t) => typeref_equal(handler_ret, t),
+        None => matches!(handler_ret, crate::ast::TypeRef::Unit(_)),
+    }
+}
+
+fn walk_block_for_handler_op_decls(
+    b: &Block,
+    effect_decls: &HashMap<String, Vec<crate::ast::EffectMethod>>,
+    errors: &mut Vec<Diagnostic>,
+) {
+    for s in &b.stmts {
+        match s {
+            Stmt::Let(decl) => walk_expr_for_handler_op_decls(&decl.value, effect_decls, errors),
+            Stmt::Const(_) => {}
+            Stmt::Expr(e) => walk_expr_for_handler_op_decls(e, effect_decls, errors),
+            Stmt::Assign { target, value, .. } => {
+                walk_expr_for_handler_op_decls(target, effect_decls, errors);
+                walk_expr_for_handler_op_decls(value, effect_decls, errors);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value { walk_expr_for_handler_op_decls(v, effect_decls, errors); }
+            }
+            Stmt::Throw { value, .. } => walk_expr_for_handler_op_decls(value, effect_decls, errors),
+            Stmt::Defer { body, .. } => walk_expr_for_handler_op_decls(body, effect_decls, errors),
+            Stmt::ConsumeScope { init, body, .. } => {
+                walk_expr_for_handler_op_decls(init, effect_decls, errors);
+                walk_block_for_handler_op_decls(body, effect_decls, errors);
+            }
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_for_handler_op_decls(expr, effect_decls, errors),
+            Stmt::Break(_) | Stmt::Continue(_) => {}
+            Stmt::Apply { args, .. } => {
+                for a in args { walk_expr_for_handler_op_decls(a, effect_decls, errors); }
+            }
+            Stmt::Calc { steps, .. } => {
+                for step in steps { walk_expr_for_handler_op_decls(&step.expr, effect_decls, errors); }
+            }
+            Stmt::Reveal { .. } => {}
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { walk_expr_for_handler_op_decls(e, effect_decls, errors); }
+                for e in rhs { walk_expr_for_handler_op_decls(e, effect_decls, errors); }
+            }
+        }
+    }
+    if let Some(t) = &b.trailing { walk_expr_for_handler_op_decls(t, effect_decls, errors); }
+}
+
+fn walk_expr_for_handler_op_decls(
+    e: &Expr,
+    effect_decls: &HashMap<String, Vec<crate::ast::EffectMethod>>,
+    errors: &mut Vec<Diagnostic>,
+) {
+    match &e.kind {
+        ExprKind::ProtocolLit { methods, .. } => {
+            // Out of scope (D-амендмент covers effect handler-literals
+            // only) — still recurse into bodies for nested HandlerLits.
+            for m in methods {
+                match &m.body {
+                    HandlerMethodBody::Expr(ex) => walk_expr_for_handler_op_decls(ex, effect_decls, errors),
+                    HandlerMethodBody::Block(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+                }
+            }
+        }
+        ExprKind::HandlerLit { effect_name, methods } => {
+            let eff_last = effect_name.last().cloned().unwrap_or_default();
+            if let Some(schema_methods) = effect_decls.get(&eff_last) {
+                for m in methods {
+                    if let Some(op_decl) = schema_methods.iter().find(|em| em.name == m.name) {
+                        match &m.ret_ty {
+                            None => {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_INCOMPLETE_HANDLER_OP_DECL] handler-literal op \
+                                         `{eff}.{op}` is missing its return type — handler-op \
+                                         declarations must be FULLY typed (Plan 175.2 Ф.2-v4 \
+                                         П4): write `{op}(...) -> {rt} => ...`, matching the \
+                                         effect's own `{eff}` declaration.",
+                                        eff = eff_last, op = m.name,
+                                        rt = op_decl.return_type.as_ref()
+                                            .map(|t| render_type_ref(t))
+                                            .unwrap_or_else(|| "()".to_string()),
+                                    ),
+                                    m.span,
+                                ));
+                            }
+                            Some(rt) => {
+                                if !handler_op_ret_matches(rt, op_decl.return_type.as_ref()) {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_HANDLER_OP_RETURN_TYPE_MISMATCH] handler-literal \
+                                             op `{eff}.{op}` declares return type `{got}`, but the \
+                                             effect's own declaration says `{want}` — handler-op \
+                                             signatures must match the effect schema exactly.",
+                                            eff = eff_last, op = m.name,
+                                            got = render_type_ref(rt),
+                                            want = op_decl.return_type.as_ref()
+                                                .map(|t| render_type_ref(t))
+                                                .unwrap_or_else(|| "()".to_string()),
+                                        ),
+                                        rt.span(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            for m in methods {
+                match &m.body {
+                    HandlerMethodBody::Expr(ex) => walk_expr_for_handler_op_decls(ex, effect_decls, errors),
+                    HandlerMethodBody::Block(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+                }
+            }
+        }
+        ExprKind::Block(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+        ExprKind::With { bindings, body } => {
+            for bd in bindings { walk_expr_for_handler_op_decls(&bd.handler, effect_decls, errors); }
+            walk_block_for_handler_op_decls(body, effect_decls, errors);
+        }
+        ExprKind::If { cond, then, else_ } => {
+            walk_expr_for_handler_op_decls(cond, effect_decls, errors);
+            walk_block_for_handler_op_decls(then, effect_decls, errors);
+            match else_ {
+                Some(ElseBranch::Block(b)) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+                Some(ElseBranch::If(e2)) => walk_expr_for_handler_op_decls(e2, effect_decls, errors),
+                None => {}
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            walk_expr_for_handler_op_decls(scrutinee, effect_decls, errors);
+            walk_block_for_handler_op_decls(then, effect_decls, errors);
+            match else_ {
+                Some(ElseBranch::Block(b)) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+                Some(ElseBranch::If(e2)) => walk_expr_for_handler_op_decls(e2, effect_decls, errors),
+                None => {}
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            walk_expr_for_handler_op_decls(scrutinee, effect_decls, errors);
+            for a in arms {
+                match &a.body {
+                    MatchArmBody::Expr(ex) => walk_expr_for_handler_op_decls(ex, effect_decls, errors),
+                    MatchArmBody::Block(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+                }
+                if let Some(g) = &a.guard { walk_expr_for_handler_op_decls(g, effect_decls, errors); }
+            }
+        }
+        ExprKind::For { iter, body, .. } => {
+            walk_expr_for_handler_op_decls(iter, effect_decls, errors);
+            walk_block_for_handler_op_decls(body, effect_decls, errors);
+        }
+        ExprKind::While { cond, body, .. } | ExprKind::WhileLet { scrutinee: cond, body, .. } => {
+            walk_expr_for_handler_op_decls(cond, effect_decls, errors);
+            walk_block_for_handler_op_decls(body, effect_decls, errors);
+        }
+        ExprKind::Loop { body, .. } => walk_block_for_handler_op_decls(body, effect_decls, errors),
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                match &arm.op {
+                    SelectOp::Recv { chan, .. } => walk_expr_for_handler_op_decls(chan, effect_decls, errors),
+                    SelectOp::Send { chan, value } => {
+                        walk_expr_for_handler_op_decls(chan, effect_decls, errors);
+                        walk_expr_for_handler_op_decls(value, effect_decls, errors);
+                    }
+                    SelectOp::Default => {}
+                }
+                if let Some(g) = &arm.guard { walk_expr_for_handler_op_decls(g, effect_decls, errors); }
+                walk_block_for_handler_op_decls(&arm.body, effect_decls, errors);
+            }
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            walk_block_for_handler_op_decls(body, effect_decls, errors);
+        }
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+        ExprKind::Supervised { body, cancel, deadline } => {
+            if let Some(c) = cancel { walk_expr_for_handler_op_decls(c, effect_decls, errors); }
+            if let Some(dl) = deadline { walk_expr_for_handler_op_decls(&dl.expr, effect_decls, errors); }
+            walk_block_for_handler_op_decls(body, effect_decls, errors);
+        }
+        ExprKind::Spawn(ex) => walk_expr_for_handler_op_decls(ex, effect_decls, errors),
+        ExprKind::ParallelFor { iter, body, .. } => {
+            walk_expr_for_handler_op_decls(iter, effect_decls, errors);
+            walk_block_for_handler_op_decls(body, effect_decls, errors);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            walk_expr_for_handler_op_decls(func, effect_decls, errors);
+            for a in args { walk_expr_for_handler_op_decls(a.expr(), effect_decls, errors); }
+            if let Some(tr) = trailing {
+                match tr {
+                    Trailing::Block(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+                    Trailing::Fn(fsb) => match &fsb.body {
+                        FnBody::Block(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+                        FnBody::Expr(e2) => walk_expr_for_handler_op_decls(e2, effect_decls, errors),
+                        FnBody::External => {}
+                    },
+                    Trailing::LegacyBlockWithParams(tb) => walk_block_for_handler_op_decls(&tb.body, effect_decls, errors),
+                }
+            }
+        }
+        ExprKind::Binary { left, right, .. } => {
+            walk_expr_for_handler_op_decls(left, effect_decls, errors);
+            walk_expr_for_handler_op_decls(right, effect_decls, errors);
+        }
+        ExprKind::Unary { operand, .. } => walk_expr_for_handler_op_decls(operand, effect_decls, errors),
+        ExprKind::Coalesce(a, b) => {
+            walk_expr_for_handler_op_decls(a, effect_decls, errors);
+            walk_expr_for_handler_op_decls(b, effect_decls, errors);
+        }
+        ExprKind::As(e2, _) | ExprKind::Is(e2, _) => walk_expr_for_handler_op_decls(e2, effect_decls, errors),
+        ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } | ExprKind::TurboFish { base: obj, .. } => {
+            walk_expr_for_handler_op_decls(obj, effect_decls, errors);
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { walk_expr_for_handler_op_decls(s, effect_decls, errors); }
+            if let Some(e2) = end { walk_expr_for_handler_op_decls(e2, effect_decls, errors); }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => walk_expr_for_handler_op_decls(e2, effect_decls, errors),
+                }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            let pairs = crate::ast::MapElem::cloned_pairs(elems);
+            for (k, v) in pairs.iter() {
+                walk_expr_for_handler_op_decls(k, effect_decls, errors);
+                walk_expr_for_handler_op_decls(v, effect_decls, errors);
+            }
+        }
+        ExprKind::TupleLit(elems) => { for el in elems { walk_expr_for_handler_op_decls(el, effect_decls, errors); } }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields { if let Some(v) = &f.value { walk_expr_for_handler_op_decls(v, effect_decls, errors); } }
+        }
+        ExprKind::Throw(v) | ExprKind::Try(v) | ExprKind::Bang(v) | ExprKind::RefArg(v) | ExprKind::Interrupt(Some(v)) => {
+            walk_expr_for_handler_op_decls(v, effect_decls, errors);
+        }
+        ExprKind::Interrupt(None) => {}
+        ExprKind::Lambda { body, .. } => walk_expr_for_handler_op_decls(body, effect_decls, errors),
+        ExprKind::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(e2) => walk_expr_for_handler_op_decls(e2, effect_decls, errors),
+            ClosureBody::Block(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+        },
+        ExprKind::ClosureFull(fsb) => match &fsb.body {
+            FnBody::Block(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+            FnBody::Expr(e2) => walk_expr_for_handler_op_decls(e2, effect_decls, errors),
+            FnBody::External => {}
+        },
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr { expr: e2, spec: _ } = p {
+                    walk_expr_for_handler_op_decls(e2, effect_decls, errors);
+                }
+            }
+        }
+        ExprKind::TaggedTemplate { .. } => {}
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            walk_expr_for_handler_op_decls(range, effect_decls, errors);
+            walk_expr_for_handler_op_decls(body, effect_decls, errors);
+        }
+        ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::CharLit(_) | ExprKind::StrLit(_)
+        | ExprKind::BoolLit(_) | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::UnitLit
+        | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit
+        | ExprKind::SelfAccess => {}
+    }
+}
+
+/// Minimal, deliberately-conservative "collect every bare `Ident` reachable
+/// from this expression" walker for `check_default_handlers`'s cycle check
+/// (NOT a general-purpose free-variable/capture analysis — see
+/// `emit_c.rs`'s `collect_idents_expr` for that). Missing an exotic
+/// `ExprKind` arm here only makes the cycle check UNDER-conservative for
+/// that arm's sub-expressions — acceptable for a safety-net that currently
+/// guards a single registered default (`Time`); widen alongside the next
+/// effect that adopts `#default_handler` if it needs an arm not covered yet.
+fn default_handler_collect_idents_expr(expr: &crate::ast::Expr, out: &mut HashSet<String>) {
+    use crate::ast::{ElseBranch, ExprKind, MatchArmBody};
+    match &expr.kind {
+        ExprKind::Ident(name) => { out.insert(name.clone()); }
+        ExprKind::Binary { left, right, .. } => {
+            default_handler_collect_idents_expr(left, out);
+            default_handler_collect_idents_expr(right, out);
+        }
+        ExprKind::Unary { operand, .. } => default_handler_collect_idents_expr(operand, out),
+        ExprKind::Call { func, args, .. } => {
+            default_handler_collect_idents_expr(func, out);
+            for a in args { default_handler_collect_idents_expr(a.expr(), out); }
+        }
+        ExprKind::Member { obj, .. } => default_handler_collect_idents_expr(obj, out),
+        ExprKind::Index { obj, index } => {
+            default_handler_collect_idents_expr(obj, out);
+            default_handler_collect_idents_expr(index, out);
+        }
+        ExprKind::If { cond, then, else_ } => {
+            default_handler_collect_idents_expr(cond, out);
+            default_handler_collect_idents_block(then, out);
+            match else_.as_ref() {
+                Some(ElseBranch::Block(b)) => default_handler_collect_idents_block(b, out),
+                Some(ElseBranch::If(e)) => default_handler_collect_idents_expr(e, out),
+                None => {}
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            default_handler_collect_idents_expr(scrutinee, out);
+            for arm in arms {
+                match &arm.body {
+                    MatchArmBody::Expr(e) => default_handler_collect_idents_expr(e, out),
+                    MatchArmBody::Block(b) => default_handler_collect_idents_block(b, out),
+                }
+            }
+        }
+        ExprKind::Block(b) => default_handler_collect_idents_block(b, out),
+        ExprKind::HandlerLit { methods, .. } => {
+            for m in methods {
+                match &m.body {
+                    crate::ast::HandlerMethodBody::Expr(e) => default_handler_collect_idents_expr(e, out),
+                    crate::ast::HandlerMethodBody::Block(b) => default_handler_collect_idents_block(b, out),
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn default_handler_collect_idents_block(block: &crate::ast::Block, out: &mut HashSet<String>) {
+    use crate::ast::Stmt;
+    for stmt in &block.stmts {
+        match stmt {
+            Stmt::Let(d) => default_handler_collect_idents_expr(&d.value, out),
+            Stmt::Expr(e) => default_handler_collect_idents_expr(e, out),
+            Stmt::Assign { target, value, .. } => {
+                default_handler_collect_idents_expr(target, out);
+                default_handler_collect_idents_expr(value, out);
+            }
+            Stmt::Return { value: Some(e), .. } => default_handler_collect_idents_expr(e, out),
+            _ => {}
+        }
+    }
+    if let Some(t) = &block.trailing {
+        default_handler_collect_idents_expr(t, out);
     }
 }
 

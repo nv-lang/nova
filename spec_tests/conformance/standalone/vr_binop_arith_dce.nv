@@ -19,7 +19,7 @@ module standalone.vr_binop_arith_dce
 
 import std.time.duration
 
-fn main() Io -> () {
+fn main() Io Time -> () {
     ro t0 Monotonic = Monotonic.now()
     ro t1 Monotonic = t0 + 120.to_millis()    // Monotonic @plus(Duration)
     ro back Monotonic = t1 - 120.to_millis()  // Monotonic @minus(Duration)

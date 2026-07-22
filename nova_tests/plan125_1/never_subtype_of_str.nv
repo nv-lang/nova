@@ -19,7 +19,7 @@ fn pick2(c bool) Fail -> str {
 
 test "never subtype of str via throw branch" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro s = pick2(false)
         assert(s == "ok")

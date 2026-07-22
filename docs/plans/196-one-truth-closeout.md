@@ -525,3 +525,46 @@ patched-бинаре, идентично pristine.
 
 Коммит (ветка `p196-b11q`, база main `5c775de3b`): comment-only B11q/B11r root-cause diagnosis + notes
 (0 поведенческих изменений, verified). В main НЕ мёржено, push НЕ делался. Модель: sonnet.
+
+## Под-программа: name-hardcode audit (2026-07-22, находка владельца — BUILTIN_VTABLE_NAMES)
+
+**Связь с 196:** хардкод-списки имён типов/протоколов/эффектов/методов в Rust = ВТОРОЙ
+источник правды по именам (ровно то, что 196 «one truth» вычищает; §3: max из .nv).
+
+**Инвентарь (compiler-codegen/src, греп 2026-07-22):** 31 список `const X: &[&str]` + 92
+сравнения `== "TypeName"` + 21 `.contains(&"...")` = ~144 сайта.
+
+**§3-ДОЛГ (имеют .nv-декларацию — кандидаты на вывод из атрибута/реестра, НЕ имён-списка):**
+- `BUILTIN_VTABLE_NAMES` (emit_c.rs:6062) — эффект-vtable; Time уходит в [175.2](175.2-typed-effects.md) ч.6, остаток → атрибут.
+- `RT_VTABLE_PROTOCOLS = ["Hash","Compare","Display"]` (:9891) — ПРОТОКОЛЫ в .nv.
+- `BUILTIN_TYPE_NAMES`/`BUILTIN_RUNTIME_TYPES`/`RUNTIME_NATIVE_CONCRETE_TYPES` — типы.
+- `SUSPEND_EFFECT_NAMES` (types/mod.rs) — эффекты.
+- `FLUENT_BUILTIN_METHODS`/`VEC_INHERENT_METHOD_SELECTORS`/`CHAR_UNICODE_METHOD_SELECTORS` — методы в .nv.
+- 92× `== "Тип"` + 21× contains — построчная классификация в пост-релизной волне.
+
+**ЛЕГИТИМНЫЕ (C-фундамент, НЕ из .nv — не долг):** `LIBUV_*SYSLIBS` (линкер-флаги),
+`NOVA_PRIMITIVES`/`PRIMITIVE_TYPES` (примитивы = фундамент языка), `ABBREVIATIONS`/doc-`TYPES`
+(доки), `KNOWN_PART_ONLY_MACRO_STATEMENTS` (split_tu-механика).
+
+**План:** до тегов — только то, что 175.2 задевает (Time-vtable). Остальное — пост-релизная
+196-волна «per-list классификация → вывод из .nv-атрибута/реестра». Маркер
+`[M-196-name-hardcode-lists]`.
+
+
+### Расширение аудита: ПОЛНАЯ карта хардкода (2026-07-22, вопрос владельца «где ещё хардкод?»)
+
+7 греп-категорий по всему компилятору (метод-детектор, повторяемый):
+| Кат | Сайтов | Природа |
+|---|---|---|
+| A `const X: &[&str]` списки имён | 31 | долг(vtable/протоколы)+фундамент(примитивы/syslibs) |
+| B `== "ИмяТипа"` | 92 | диспетч по строке вместо .nv-резолва |
+| C `.contains(&"Имя")` | 21 | то же |
+| D рукописный C-vtable/схемы nova_rt | 8 | ЯДРО (NovaVtable_Time) |
+| E `match name { "Foo"=>}` | 28 | имя как ключ |
+| F RUNTIME_DEFINED_TYPES-схемы в Rust | 41 | схемы типов дублированы |
+| G «must match»/layout | 315 | ABI C↔Rust — в осн. ЛЕГИТИМ (FFI), но риск рассинхрона |
+
+**Метод (не реактивный):** (1) греп-детектор 7 категорий → скрипт `scripts/hardcode-audit.sh`;
+(2) критерий долга §3: есть .nv-декларация + Rust/C-копия = долг; легитим = чего в .nv нет
+(примитивы/ABI-layout/syslibs); (3) тест «удали в .nv → среагирует?»; (4) tripwire-гейт против роста.
+**Программа:** пост-релизная (~500 сайтов, G≈315 легитим-ABI); зачистка по категориям B→E→F→A→D.

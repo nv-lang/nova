@@ -35,12 +35,12 @@ test "Plan 110.4.4.a A110.4.4.a.a + A110.4.4.b.a: ResourceTrace handler observes
     mut last_duration = -1
     mut last_overrun = true
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(label) {
+        on_resource_enter(label) -> () {
             enter_calls += 1
             last_enter_label = label
             return ()
         }
-        on_resource_exit(_label, _outcome, duration_ms, overrun) {
+        on_resource_exit(_label, _outcome, duration_ms, overrun) -> () {
             exit_calls += 1
             last_duration = duration_ms
             last_overrun = overrun

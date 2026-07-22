@@ -245,3 +245,62 @@ test "f64_fmt: FloatKind enum wrapper matches nova_f64_fmt" {
     ro n3 = unsafe { f64_fmt(2.5, buf.ptr(), 64) }
     assert(n3 == 3)
 }
+
+// Вынесено из core.nv (test-conventions §тесты-рядом-в-пир-файле, тот же
+// folder-module `runtime.fmt_buf` — str_debug_fmt/char_debug_fmt).
+
+test "str_debug_fmt: quotes, escapes (\\n \\t \\r \\0 \" \\\\), control \\xHH, passthrough" {
+    mut buf = scratch(64)
+    ro n = str_debug_fmt("a\nb\tc\rd\\e\"f", buf.ptr(), 64)
+    // `"a\nb\tc\rd\\e\"f"` — 18 bytes.
+    assert(n == 18)
+
+    mut buf2 = scratch(16)
+    ro n2 = str_debug_fmt("a\u{01}b", buf2.ptr(), 16)
+    // `"a\x01b"` — 8 bytes.
+    assert(n2 == 8)
+    unsafe {
+        assert(buf2.ptr().read_at(0) == ('"' as u8))
+        assert(buf2.ptr().read_at(1) == ('a' as u8))
+        assert(buf2.ptr().read_at(2) == ('\\' as u8))
+        assert(buf2.ptr().read_at(3) == ('x' as u8))
+        assert(buf2.ptr().read_at(4) == ('0' as u8))
+        assert(buf2.ptr().read_at(5) == ('1' as u8))
+        assert(buf2.ptr().read_at(6) == ('b' as u8))
+        assert(buf2.ptr().read_at(7) == ('"' as u8))
+    }
+}
+
+test "str_debug_fmt: cap truncation never overruns" {
+    mut buf = scratch(4)
+    ro n = str_debug_fmt("hello world", buf.ptr(), 4)
+    assert(n == 4)
+}
+
+test "char_debug_fmt: quote/backslash/control/passthrough" {
+    mut buf = scratch(8)
+    ro n1 = char_debug_fmt('x', buf.ptr(), 8)
+    assert(n1 == 3)
+    unsafe {
+        assert(buf.ptr().read_at(0) == ('\'' as u8))
+        assert(buf.ptr().read_at(1) == ('x' as u8))
+        assert(buf.ptr().read_at(2) == ('\'' as u8))
+    }
+
+    ro n2 = char_debug_fmt('\n', buf.ptr(), 8)
+    assert(n2 == 4)
+    unsafe {
+        assert(buf.ptr().read_at(1) == ('\\' as u8))
+        assert(buf.ptr().read_at(2) == ('n' as u8))
+    }
+
+    ro n3 = char_debug_fmt('\'', buf.ptr(), 8)
+    assert(n3 == 4)
+    unsafe {
+        assert(buf.ptr().read_at(1) == ('\\' as u8))
+        assert(buf.ptr().read_at(2) == ('\'' as u8))
+    }
+
+    ro n4 = char_debug_fmt('中', buf.ptr(), 8)
+    assert(n4 == 5)  // ' + 3-byte UTF-8 + '
+}

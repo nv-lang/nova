@@ -17,7 +17,7 @@ fn check(c bool) Fail -> int {
 
 test "throw stmt followed by trailing int" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro n = check(false)
         assert(n == 42)

@@ -15,6 +15,12 @@
 module standalone.scope_multierror_test
 
 import std.concurrency.supervisor as sup
+// Plan 175.2 Ф.2-v4 (П6): (5).to_millis() used to resolve without an
+// explicit import — an accidental side effect of Time (and its
+// Duration/Timestamp/Monotonic import) living in std.prelude.effects
+// (auto-imported into every CU). Now that Time moved to std.time.duration,
+// this file needs its own explicit import for the to_millis() blanket.
+import std.time.duration
 
 test "MultiError: не-primary детская ошибка читается suppressed() после ловли primary" {
     mut failed = AtomicInt.new(0)
@@ -24,7 +30,7 @@ test "MultiError: не-primary детская ошибка читается supp
         0
     } {
         with Supervisor = effect Supervisor {
-            on_child_fail(_idx, _err) {
+            on_child_fail(_idx, _err) -> Decision {
                 // Дождаться фиксации ОБОИХ падений — потом эскалировать.
                 mut spins = 0
                 while failed.load() < 2 { spins += 1 }
@@ -76,7 +82,7 @@ test "MultiError: Stop-решённые ошибки retained, но в suppresse
         supervised {
             spawn { throw 333 }
             spawn {
-                Time.sleep(5)
+                (5).to_millis().sleep()
                 done.fetch_add(1)
             }
         }

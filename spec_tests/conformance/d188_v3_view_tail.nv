@@ -41,8 +41,8 @@ fn d188v3_peek_wrap(consume r D188V3Share) -> int {
 test "D188-v3 fix: consume s { s.share() } — receiver-позиция tail-EXPR — обычное использование, cleanup срабатывает" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
             exit_calls += 1
             return ()
         }
@@ -60,8 +60,8 @@ test "D188-v3 fix: consume s { s.share() } — receiver-позиция tail-EXPR
 test "D188-v3 fix: return s.method_view() — receiver-позиция return-EXPR — обычное использование, cleanup срабатывает" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
             exit_calls += 1
             return ()
         }
@@ -76,8 +76,8 @@ test "D188-v3 fix: return s.method_view() — receiver-позиция return-EXP
 test "D188-v3 fix: return f(r) — свободная fn, view-аргумент в return-EXPR — обычное использование, cleanup срабатывает" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
             exit_calls += 1
             return ()
         }

@@ -72,13 +72,13 @@ fn d188v3_pair_ctor2(other int, consume x D188V3Res) -> D188V3Pair {
 test "D188-v3 (б): падение ДО передачи владения — cleanup ещё сработал" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
             exit_calls += 1
             return ()
         }
     } {
-        with Fail = effect Fail { fail(_m) { interrupt () } } {
+        with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
             consume r = d188v3_make(7)
             ro _p = consume r {
                 d188v3_pair_ctor2(d188v3_risky_fails(), r)

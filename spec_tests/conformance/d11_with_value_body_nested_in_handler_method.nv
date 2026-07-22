@@ -53,7 +53,7 @@ type D11WithDb effect {
 }
 
 fn d11_leaf(tag int) -> Effect[D11WithDb] => effect D11WithDb {
-    exec() => tag
+    exec() -> int => tag
 }
 
 fn d11_helper() -> int => 99
@@ -63,7 +63,7 @@ fn d11_helper() -> int => 99
 // диагностированную Plan 197 audit: `with EFFECT = value { ... }`,
 // `value` — bare identifier, with-тело начинается с bare-call.
 fn d11_wrapper() -> Effect[D11WithDb] => effect D11WithDb {
-    exec() {
+    exec() -> int {
         ro alt = d11_leaf(42)
         with D11WithDb = alt { d11_helper() }
     }
@@ -105,7 +105,7 @@ test "D11: `with EFFECT = value { ... }` — baseline (не вложенный) 
 // (`primary.in_transaction(|| with Db = primary { b() })`: `primary`
 // одновременно receiver вызова снаружи И capture внутри closure'а).
 fn d11_ctx_closure_leaf(primary int) -> Effect[D11WithDb] => effect D11WithDb {
-    exec() {
+    exec() -> int {
         ro base = primary
         ro doubled = || primary * 2
         base + doubled()

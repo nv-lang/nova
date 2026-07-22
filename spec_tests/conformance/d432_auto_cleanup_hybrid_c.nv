@@ -24,8 +24,8 @@ fn d432_make(id int) -> D432Res => { id }
 test "D432: bare consume-let never touched — auto-cleanup at normal exit" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
             exit_calls += 1
             return ()
         }
@@ -47,8 +47,8 @@ fn d432_return_it(id int) -> D432Res {
 test "D432: return disarms auto-cleanup on the returning path" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
             exit_calls += 1
             return ()
         }
@@ -64,8 +64,8 @@ test "D432: return disarms auto-cleanup on the returning path" {
 test "D432: explicit consume-method call disarms auto-cleanup (no double-fire)" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
             exit_calls += 1
             return ()
         }
@@ -89,8 +89,8 @@ fn d432_maybe(should_close bool, id int) -> () {
 test "D432: MaybeConsumed drop-flag — closed branch does NOT double-cleanup" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
             exit_calls += 1
             return ()
         }
@@ -103,8 +103,8 @@ test "D432: MaybeConsumed drop-flag — closed branch does NOT double-cleanup" {
 test "D432: MaybeConsumed drop-flag — non-closed branch still auto-cleans" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
             exit_calls += 1
             return ()
         }
@@ -128,8 +128,8 @@ fn d432_log_b(tag str) -> D432LogB => { tag }
 test "D432: LIFO order for two auto-cleanup bindings" {
     mut order = ""
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(label, _outcome, _duration_ms, _overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(label, _outcome, _duration_ms, _overrun) -> () {
             order = order + label
             return ()
         }
@@ -147,8 +147,8 @@ test "D432: LIFO order for two auto-cleanup bindings" {
 test "D432: consume-let inside loop body auto-cleans every iteration" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
             exit_calls += 1
             return ()
         }
@@ -173,13 +173,13 @@ fn d432_boom() Fail[D432Boom] -> () {
 test "D432: auto-cleanup fires on throw-path too" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
             exit_calls += 1
             return ()
         }
     } {
-        with Fail = effect Fail { fail(_m) { interrupt () } } {
+        with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
             consume r = d432_make(9)
             d432_boom()
         }
@@ -218,8 +218,8 @@ test "D432: auto-cleanup fires on throw-path too" {
 test "D432: bare consume-let inside spawn closure auto-cleans exactly once" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
             exit_calls += 1
             return ()
         }
@@ -260,8 +260,8 @@ test "D432: bare consume-let inside spawn closure auto-cleans exactly once" {
 test "D432: break inside a nested empty loop must not bleed into an outer auto-cleanup scope" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
             exit_calls += 1
             return ()
         }

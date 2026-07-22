@@ -15,36 +15,36 @@
 
 module spec_tests.conformance
 test "supervised drain: 6 armed M:N блоков с растущими sched-state завершаются" {
-    ro t0 = Time.now_unix_ms()
+    ro t0 = Timestamp.now().unix_millis()
 
     // Профиль роста sched-state (3/1/6/4/8/5) под armed M:N: повторные grow
     // конкурентно с wake'ами (каждый ребёнок паркуется в Time.sleep, driver
     // будит через close_cb) — воспроизводит grow-vs-wake окно на supervised-drain.
-    supervised { for _ in 0..3 { spawn { Time.sleep(5) } } }
-    supervised { for _ in 0..1 { spawn { Time.sleep(5) } } }
-    supervised { for _ in 0..6 { spawn { Time.sleep(5) } } }
-    supervised { for _ in 0..4 { spawn { Time.sleep(5) } } }
-    supervised { for _ in 0..8 { spawn { Time.sleep(5) } } }
-    supervised { for _ in 0..5 { spawn { Time.sleep(5) } } }
+    supervised { for _ in 0..3 { spawn { (5).to_millis().sleep() } } }
+    supervised { for _ in 0..1 { spawn { (5).to_millis().sleep() } } }
+    supervised { for _ in 0..6 { spawn { (5).to_millis().sleep() } } }
+    supervised { for _ in 0..4 { spawn { (5).to_millis().sleep() } } }
+    supervised { for _ in 0..8 { spawn { (5).to_millis().sleep() } } }
+    supervised { for _ in 0..5 { spawn { (5).to_millis().sleep() } } }
 
-    ro elapsed = Time.now_unix_ms() - t0
+    ro elapsed = Timestamp.now().unix_millis() - t0
     // Все 27 детей спят по 5мс параллельно; при отсутствии зависания общий
     // elapsed должен остаться малым (< 2000мс с огромным запасом на CI-jitter).
     assert(elapsed < 2000)
 }
 
 test "supervised drain: вложенные supervised под armed M:N дренируются" {
-    ro t0 = Time.now_unix_ms()
+    ro t0 = Timestamp.now().unix_millis()
     // Nested supervised — cancel-propagation drain (fibers.h:893) под M:N.
     supervised {
         for _ in 0..4 {
             spawn {
                 supervised {
-                    for _ in 0..3 { spawn { Time.sleep(5) } }
+                    for _ in 0..3 { spawn { (5).to_millis().sleep() } }
                 }
             }
         }
     }
-    ro elapsed = Time.now_unix_ms() - t0
+    ro elapsed = Timestamp.now().unix_millis() - t0
     assert(elapsed < 2000)
 }

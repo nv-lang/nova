@@ -19,7 +19,7 @@ priv(file) fn process1() Fail -> () {
 }
 
 test "do_work fails + failable-defer compile pass" {
-    with Fail = effect Fail { fail(_msg) { interrupt () } } {
+    with Fail = effect Fail { fail(_msg) -> never { interrupt () } } {
         process1()
     }
 }

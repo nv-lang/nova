@@ -144,11 +144,11 @@ fn make_transactions() Account -> int {
 test "account effect через handler" {
     mut bal = 0
     with Account = effect Account {
-        deposit(n) {
+        deposit(n) -> () {
             bal += n
             return ()
         }
-        withdraw(n) {
+        withdraw(n) -> bool {
             ro enough = bal >= n
             if enough {
                 bal -= n
@@ -156,7 +156,7 @@ test "account effect через handler" {
             }
             false
         }
-        balance() => bal
+        balance() -> int => bal
     } {
         ro final_balance = make_transactions()
         // 100 + 50 - 30 = 120 (вторая withdraw отклонена)

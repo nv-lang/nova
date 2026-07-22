@@ -28,47 +28,47 @@ module std.net
 #stable(since = "0.1")
 export fn mock_net() -> Effect[Net] => effect Net {
     // ── TCP ──────────────────────────────────────────────────────────────────
-    tcp_bind(_addr SocketAddr)            => listener_ok(1 as *())
-    accept(_listener TcpListener)         => stream_ok(2 as *())
-    connect(_addr SocketAddr)             => stream_ok(3 as *())
-    read(_stream TcpStream, buf mut []u8) => int_ok(mock_fill(buf, "mock-reply"))
-    write(_stream TcpStream, data []u8)   => int_ok(data.len())
-    shutdown(_stream TcpStream)           => unit_ok()
-    close_stream(_stream TcpStream)       {}
-    close_listener(_listener TcpListener) {}
-    mark_split(_stream TcpStream)         {}
-    listener_local_port(_listener TcpListener) => 4242
-    listener_local_addr(_listener TcpListener, out mut []u8) {
+    tcp_bind(_addr SocketAddr) -> Result[TcpListener, NetError] => listener_ok(1 as *())
+    accept(_listener TcpListener) -> Result[TcpStream, NetError] => stream_ok(2 as *())
+    connect(_addr SocketAddr) -> Result[TcpStream, NetError] => stream_ok(3 as *())
+    read(_stream TcpStream, buf mut []u8) -> Result[int, NetError] => int_ok(mock_fill(buf, "mock-reply"))
+    write(_stream TcpStream, data []u8) -> Result[int, NetError] => int_ok(data.len())
+    shutdown(_stream TcpStream) -> Result[(), NetError] => unit_ok()
+    close_stream(_stream TcpStream) -> () {}
+    close_listener(_listener TcpListener) -> () {}
+    mark_split(_stream TcpStream) -> () {}
+    listener_local_port(_listener TcpListener) -> u16 => 4242
+    listener_local_addr(_listener TcpListener, out mut []u8) -> () {
         unsafe { net_addr_loopback_into(4242, out.ptr()) }
     }
-    stream_local_port(_stream TcpStream) => 5050
-    stream_peer_port(_stream TcpStream)  => 6060
-    stream_local_addr(_stream TcpStream, out mut []u8) {
+    stream_local_port(_stream TcpStream) -> u16 => 5050
+    stream_peer_port(_stream TcpStream) -> u16 => 6060
+    stream_local_addr(_stream TcpStream, out mut []u8) -> () {
         unsafe { net_addr_loopback_into(5050, out.ptr()) }
     }
-    stream_peer_addr(_stream TcpStream, out mut []u8) {
+    stream_peer_addr(_stream TcpStream, out mut []u8) -> () {
         unsafe { net_addr_loopback_into(6060, out.ptr()) }
     }
-    set_nodelay(_stream TcpStream, _on bool)          {}
-    set_keepalive(_stream TcpStream, _on bool)        {}
-    set_reuse_address(_listener TcpListener, _on bool) {}
+    set_nodelay(_stream TcpStream, _on bool) -> () {}
+    set_keepalive(_stream TcpStream, _on bool) -> () {}
+    set_reuse_address(_listener TcpListener, _on bool) -> () {}
 
     // ── UDP ──────────────────────────────────────────────────────────────────
-    udp_bind(_addr SocketAddr)          => socket_ok(10 as *())
-    send_to(_sock UdpSocket, data []u8, _addr SocketAddr) => int_ok(data.len())
-    recv_from(_sock UdpSocket, buf mut []u8, sender mut []u8) {
+    udp_bind(_addr SocketAddr) -> Result[UdpSocket, NetError] => socket_ok(10 as *())
+    send_to(_sock UdpSocket, data []u8, _addr SocketAddr) -> Result[int, NetError] => int_ok(data.len())
+    recv_from(_sock UdpSocket, buf mut []u8, sender mut []u8) -> Result[int, NetError] {
         unsafe { net_addr_loopback_into(0, sender.ptr()) }
         ro _ = buf
         int_ok(0)
     }
-    close_socket(_sock UdpSocket)       {}
-    socket_local_port(_sock UdpSocket)  => 7070
-    socket_local_addr(_sock UdpSocket, out mut []u8) {
+    close_socket(_sock UdpSocket) -> () {}
+    socket_local_port(_sock UdpSocket) -> u16 => 7070
+    socket_local_addr(_sock UdpSocket, out mut []u8) -> () {
         unsafe { net_addr_loopback_into(7070, out.ptr()) }
     }
 
     // ── DNS ──────────────────────────────────────────────────────────────────
-    lookup(_host []u8, _port u16) => mock_lookup()
+    lookup(_host []u8, _port u16) -> Result[(int, int), NetError] => mock_lookup()
 }
 
 // A single-element loopback "array" (a nova_alloc'd POD) for the mock DNS stub,
