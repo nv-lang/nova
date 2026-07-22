@@ -906,9 +906,9 @@ export fn JsonValue @to_str_pretty() -> str => pretty_at(@, 0)
 #impl(Display)
 fn JsonValue @display(mut f Fmt) -> () {
     if f.alternate() {
-        f.write(@to_str_pretty())
+        f.write(@to_str_pretty().bytes())
     } else {
-        f.write(@to_str())
+        f.write(@to_str().bytes())
     }
 }
 
