@@ -42,9 +42,9 @@ verification) — в [wip/](wip/); при закрытии волны — уда
 | time | [175](175-time-system-rework.md) + [175.1](175.1-civil-time.md) (civil) |
 | io / fs / os | [176](176-io-fs-os.md) (umbrella) |
 | nova lint | [185](185-nova-lint.md) |
-| http | [178](178-std-http.md) (umbrella) + [222](222-http-extractors.md) (extractors, дизайн) |
+| http | [178](178-std-http.md) (umbrella) + [222](222-http-extractors.md) (зонтик: Router-rebuild/extractors/middleware, дизайн) |
 | encoding/compress | [179](179-std-encoding-compress.md) |
-| serde / typed-json | [180](180-serde-derive.md) |
+| serde / typed-json | [180](180-serde-derive.md) + [222.2](222-http-extractors.md) (field-атрибуты до Rust-паритета) |
 | формат/Display | [208](208-unified-formatter.md) |
 
 ## Связанные директории
