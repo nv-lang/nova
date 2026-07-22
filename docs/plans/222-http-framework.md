@@ -241,33 +241,13 @@ nova-http. Крупный.
 
 ### 222.12 — батарейки-middleware: CORS · static · compression · logging · rate-limit 🔴
 **Дыра:** экосистемы нет (Express — тысячи middleware, FastAPI/Starlette — в коробке).
-**Зависит:** 222.4. **Зона:** nova-http.
-
-**РЕШЕНИЕ ПО СТРУКТУРЕ (владелец 2026-07-23: «батарейки часть http или отдельные модули?»):
-ВНУТРИ пакета `nova-http`, отдельными МОДУЛЯМИ** (`http.middleware.cors`, `http.middleware.compress`,
-`http.static`, `http.auth`, …). Обоснование — три факта, проверенных по коду 2026-07-23:
-1. **Ни одна батарейка НЕ требует новой внешней зависимости** (см. таблицу ниже) → главный аргумент
-   за отдельные пакеты («не тащить лишнее») отпадает.
-2. **Манифест НЕ поддерживает optional-deps/features** (`Dependency` = name/source/forbid,
-   `manifest.rs:52`) → отдельные пакеты всё равно были бы «всё или ничего», выигрыша нет.
-3. **Экосистемы/реестра нет** (требование владельца «батарейки из коробки») → отдельные пакеты
-   некому обнаруживать. Один `import http.middleware.cors.{cors}` — платишь только за то, что
-   импортировал (CU включает только импортированные модули).
-
-**Декомпозиция по батарейкам (источник → что нужно → готовность):**
-| Батарейка | Семантику брать из | Нужно | Статус зависимостей |
-|---|---|---|---|
-| CORS | `tower-http::CorsLayer` (RFC-правила preflight/credentials/max-age) | чистая логика заголовков | ✅ ноль |
-| static | **Go stdlib `http.FileServer`** (ETag/Range/If-Modified-Since — вылизано) + `tower-http::ServeDir` | `ReadFs` | ✅ `std/fs/readfs.nv` (210 Ф.6б) |
-| compression | `tower-http::CompressionLayer` (content-negotiation `Accept-Encoding`, q-values) | gzip/brotli | ✅ пакет `compress` УЖЕ зависимость (205 Ф.2) |
-| logging/tracing | `chi/middleware.Logger` + `RequestID`/`RealIP` (форма) | время, вывод | ✅ std |
-| rate-limit | `chi/middleware.Throttle`, `tower::limit` | токен-бакет | ✅ **`std/concurrency/rate_limiter.nv` УЖЕ ЕСТЬ** — обёртка, не реализация |
-| recover/panic-guard | `chi/middleware.Recoverer`, `tower-http::CatchPanicLayer` | перехват паники хендлера | ⚠️ уточнить семантику паники в фибре |
-
-**ФОРМА композиции — из Go/chi, НЕ из tower:** Go-middleware = `func(http.Handler) http.Handler` —
-**один-в-один наш `fn(next Handler) -> Handler`**; tower-`Service` (generic + `poll_ready` +
-backpressure) в нашу модель не переносится. Семантику берём у tower-http (строже и полнее), форму —
-у chi.
+**РЕШЕНИЕ (владелец 2026-07-23): внутри пакета `nova-http` отдельными МОДУЛЯМИ** — ни одна
+батарейка не требует новой внешней зависимости, манифест не умеет optional-deps, реестра нет.
+**Семантика — из `tower-http`, ФОРМА композиции — из Go/`chi`** (их `func(http.Handler)
+http.Handler` = наш `fn(next Handler) -> Handler`; tower-`Service` не переносится).
+**Полная декомпозиция (модули, фазы, источники, готовность зависимостей, открытый вопрос про
+панику в фибре) — отдельный файл: [222.12](222.12-http-batteries.md).**
+**Зависит:** 222.4.
 
 ### 222.13 — auth-блоки: JWT/OAuth2-скелеты, sessions 🟠
 Сейчас только `cookie.nv` (10 экспортов). FastAPI даёт `Security`/scopes, Express — passport.
