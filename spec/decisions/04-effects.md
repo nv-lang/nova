@@ -7450,3 +7450,24 @@ Hand-written dispatch-функции (`Nova_Time_sleep`/`_now_unix_ms`/`_now_mon
 ### Связь
 
 Amends [D316](#d316) (typed-schema retype — теперь LANDED) · [D431](#d431-default_handlerx--ambient-lazy-default-handler-factory-для-эффектов-plan-175-ф2-v2-2026-07-2122) (`#default_handler` mechanism, `[M-175-time-typed-schema-scalar-bridge]` → CLOSED) · `nova_rt/sync_primitives.h` `Nova_Mutex_method_lock_for` (тот же void*+first-field ABI-identity приём, прецедент) · Plan [175](../../docs/plans/175-time-system-rework.md) Ф.2-v3 · `[M-175-realtime-ban-method-call-blind]` (Supervisor-хендлер-ветка CLOSED эта волна; D64-ветка остаётся open followup, docs/plans/backlog-followups.md) · `[M-175-lazy-const-crossmodule-collision]` (новый, CLOSED эта же волна, docs/plans/backlog-followups.md) · `project-conformance-single-cu-run` (мега-CU gate convention).
+
+## Amend D316/D431 Ф.2-v3 — extern-нейминг: `_nova_*` → доменный `time_*` (владелец code-review, 2026-07-22)
+
+**Статус:** закрывает несоответствие §5а (`docs/compiler-conventions.md` — «Имена C-символов на FFI-границе», согласовано 2026-07-08). Ф.2-v3 (амендмент выше, та же дата) ввела в `std/prelude/effects.nv` четыре `extern "C" fn` с vendor-префиксом `_nova_` (`_nova_wall_unix_ms`/`_nova_monotonic_ns`/`_nova_local_offset_sec`/`_nova_time_default_sleep`) — нарушение уже зафиксированного правила «модульные C-шимы — `<модуль>_<имя>` БЕЗ vendor-префикса», прецедент `fs_open`/`fs_close`/`fs_chmod` (`std/fs/ffi.nv` ↔ `nova_rt/fs.c`), `net_addr_loopback_into`, `os_env_get`.
+
+**Фикс:** переименованы в `time_wall_unix_ms`/`time_monotonic_ns`/`time_local_offset_sec`/`time_default_sleep` — синхронно на обеих сторонах FFI-границы:
+- `.nv`: `extern "C" fn`-декларации, `std/prelude/effects.nv` (`time_default` default-handler body).
+- C: определения в `nova_rt/fibers.h`; внутренние вызовы `time_monotonic_ns()` в `nova_rt/sync_barrier.h`/`sync_condvar.h`/`sync_countdown_latch.h`/`sync_primitives.h`/`sync_semaphore.h` — этот хелпер общий низкоуровневый rt-примитив (timeout-ветки mutex/rwlock/condvar/semaphore/barrier/countdown-latch), НЕ приватный для `Time`-эффекта; переименован везде одним движением, семантика не менялась.
+- Rust codegen (`emit_c.rs`) — hardcoded C-строки install-once vtable-пути `Time` (`sleep`/`now`/`now_monotonic`/`local_offset_sec` fallback-ветки) обновлены синхронно, иначе unresolved-symbol CC-FAIL.
+
+Заодно (тот же владелец-ревью, П2): default-handler-тело `sleep(d)` в `time_default` получило явный тип параметра — `sleep(d Duration) => ...` (handler-method-параметры в handler-литерале синтаксически опциональны по типу, D40 — компилятор выводит их из декларации эффекта; явная аннотация здесь чисто для читаемости, единственный параметризованный оп default-реализации). `now()`/`now_monotonic()`/`local_offset_sec()` — без параметров, менять нечего.
+
+**Границы:** переименование C-symbol'ов и добавление одной явной type-аннотации — НЕ поведение/ABI типов Nova-уровня. `Time`-эффект-схема, `sleep(Duration)`-контракт, wire-формат (raw int64 nanos) не менялись. Публичный Nova-код эти C-имена не видит (internal rt↔codegen контракт).
+
+### Гейт
+
+Полный мега-CU `spec_tests/conformance` (см. коммит-гейт волны) · `std/src/time/duration` suite (33 теста, вынесенные в `core_test.nv` тем же слиянием — см. соседний followup вынос-тестов) · 5 CI-целей `--strict-effects` built+boot · `nova check std --strict-effects` 0 новых находок.
+
+### Связь
+
+§5а (`docs/compiler-conventions.md`, 2026-07-08, C-symbol naming) · Amends [D316](#d316)/[D431](#d431-default_handlerx--ambient-lazy-default-handler-factory-для-эффектов-plan-175-ф2-v2-2026-07-2122) Ф.2-v3 (описание ДО этого переименования, историческая точность сохранена, не переписана) · [D40](03-syntax.md#d40) (handler-method `=> expr`/`{ block }`, параметры опциональны по типу).

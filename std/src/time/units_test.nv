@@ -76,7 +76,7 @@ test "Timestamp.now() без with-обработчика — настоящее 
     assert(ms > 1_700_000_000_000)
 }
 
-// Monotonic не задета фиксом (тот же _nova_monotonic_ns источник, что и
+// Monotonic не задета фиксом (тот же time_monotonic_ns источник, что и
 // до фикса — фикс трогал только now()/wall-clock путь).
 test "Monotonic.now() всё ещё монотонно растёт после фикса wall-clock" {
     ro t0 = Monotonic.now()

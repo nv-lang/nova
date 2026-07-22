@@ -2676,7 +2676,7 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
 /* ─── Plan 174 (D349): scope-deadline helpers ─── */
 
 /* Forward-decl: monotonic-ns clock (defined below, after the scheduler). */
-static inline int64_t _nova_monotonic_ns(void);
+static inline int64_t time_monotonic_ns(void);
 
 /* Combine two absolute-ns deadlines treating 0 as "no deadline". Result =
  * the earliest (tightest) non-zero point. An inner scope can only TIGHTEN an
@@ -2738,7 +2738,7 @@ static void _nova_scope_deadline_wait_cb(uv_timer_t* h) { (void)h; }
 static inline void _nova_scope_deadline_run_once(int64_t deadline_ns) {
     uv_loop_t* loop = nova_current_loop();
     if (deadline_ns == 0) { uv_run(loop, UV_RUN_ONCE); return; }
-    int64_t remaining_ns = deadline_ns - _nova_monotonic_ns();
+    int64_t remaining_ns = deadline_ns - time_monotonic_ns();
     if (remaining_ns <= 0) {
         /* Deadline already passed — don't block; pump ready events so
          * cancellation close_cbs can complete and fibers drain. */
@@ -2969,7 +2969,7 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
          * — token cancel takes precedence, no bogus TimeoutError). */
         if (_dl_ns != 0 && !_dl_fired
             && !nova_abool_load(&q->cancel_requested)
-            && _nova_monotonic_ns() >= _dl_ns) {
+            && time_monotonic_ns() >= _dl_ns) {
             _dl_fired = true;
             nova_scope_deliver_cancel(q, NULL);
         }
@@ -3440,7 +3440,7 @@ static inline int64_t _nova_monotonic_ms(void) {
  *
  * Returns int64_t (Nova-side Monotonic.nanos field is i64). Overflow при
  * процесс-uptime > ~292 years — пренебрежимо. */
-static inline int64_t _nova_monotonic_ns(void) {
+static inline int64_t time_monotonic_ns(void) {
     return (int64_t)uv_hrtime();
 }
 
@@ -3460,7 +3460,7 @@ static inline int64_t _nova_monotonic_ns(void) {
  * поддерживаемых платформах — при (теоретическом) сбое возвращаем 0
  * вместо undefined tv, а не abort (Time.now_unix_ms() ambient — не должен
  * валить процесс). */
-static inline int64_t _nova_wall_unix_ms(void) {
+static inline int64_t time_wall_unix_ms(void) {
     uv_timeval64_t tv;
     if (uv_gettimeofday(&tv) != 0) {
         return 0;
@@ -3486,7 +3486,7 @@ static inline int64_t _nova_wall_unix_ms(void) {
 #    define WIN32_LEAN_AND_MEAN
 #  endif
 #  include <windows.h>
-static inline int64_t _nova_local_offset_sec(void) {
+static inline int64_t time_local_offset_sec(void) {
     TIME_ZONE_INFORMATION tzi;
     DWORD rc = GetTimeZoneInformation(&tzi);
     /* `Bias`/`*Bias` are MINUTES to ADD to local time to get UTC
@@ -3502,7 +3502,7 @@ static inline int64_t _nova_local_offset_sec(void) {
 }
 #else
 #  include <time.h>
-static inline int64_t _nova_local_offset_sec(void) {
+static inline int64_t time_local_offset_sec(void) {
     time_t now = time(NULL);
     struct tm local_tm;
     localtime_r(&now, &local_tm);
@@ -4111,7 +4111,7 @@ static inline void _nova_cancel_via_driver(NovaFiberQueue* scope) {
  *    invariant violated).
  *
  * `ms <= 0` → single yield (compatibility with `Time.sleep(0)` idiom). */
-static inline nova_unit _nova_time_default_sleep(nova_int ms) {
+static inline nova_unit time_default_sleep(nova_int ms) {
     /* Plan 110.2.2.a (D188 R3 + D192): cleanup-deadline gate before
      * suspending. Если scope-cleanup shield active и deadline уже
      * exceeded — throw сразу без park'а (иначе fiber бы спал N ms
@@ -4208,11 +4208,11 @@ static inline nova_unit _nova_time_default_sleep(nova_int ms) {
  * std/prelude/effects.nv `Time`, включая lazy `#default_handler` install-once проверку
  * инлайн в теле каждого диспатчера.
  *
- * `_nova_time_default_sleep` выше ОСТАЁТСЯ — это тонкий `extern "C"`
+ * `time_default_sleep` выше ОСТАЁТСЯ — это тонкий `extern "C"`
  * sleep-ПРИМИТИВ (scheduler-aware: fiber-park / drain / bootstrap-block),
  * вызываемый из ВСЕГДА-присутствующего `.nv` default handler'a
- * (std/prelude/effects.nv `time_default`) точно так же, как `_nova_wall_unix_ms`/
- * `_nova_monotonic_ns`/`_nova_local_offset_sec` (декларированы как `extern "C" fn`
+ * (std/prelude/effects.nv `time_default`) точно так же, как `time_wall_unix_ms`/
+ * `time_monotonic_ns`/`time_local_offset_sec` (декларированы как `extern "C" fn`
  * дальше по файлу). С-fallback больше НЕТ — ambient-поведение
  * (Time без `with`/импорта) даёт `time_default` из prelude (auto-import в
  * КАЖДЫЙ CU), не второй хардкод-слой диспатча. */

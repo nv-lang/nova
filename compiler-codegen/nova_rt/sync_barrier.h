@@ -394,10 +394,10 @@ static inline NovaOpt_nova_int Nova_Barrier_method_wait_for(Nova_Barrier* b, voi
         /* Non-fiber: spin-poll with deadline. */
         nova_int my_gen = b->generation;
         nova_mutex_unlock(&b->mu);
-        int64_t deadline = _nova_monotonic_ns() + nanos;
+        int64_t deadline = time_monotonic_ns() + nanos;
         for (;;) {
             _nova_cpu_yield();
-            if (_nova_monotonic_ns() >= deadline) {
+            if (time_monotonic_ns() >= deadline) {
                 /* Timed out: undo arrived_count if still in same generation. */
                 nova_mutex_lock(&b->mu);
                 if (b->generation == my_gen) {

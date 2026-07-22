@@ -1003,7 +1003,7 @@ static inline nova_bool Nova_Mutex_method_lock_for(Nova_Mutex* m,
     if (_nova_active_slot < 0) {
         /* Non-fiber: spin-poll with deadline. */
         nova_mutex_unlock(&m->mu);
-        int64_t deadline = _nova_monotonic_ns() + nanos;
+        int64_t deadline = time_monotonic_ns() + nanos;
         for (;;) {
             _nova_cpu_yield();
             nova_mutex_lock(&m->mu);
@@ -1013,7 +1013,7 @@ static inline nova_bool Nova_Mutex_method_lock_for(Nova_Mutex* m,
                 return true;
             }
             nova_mutex_unlock(&m->mu);
-            if (_nova_monotonic_ns() >= deadline) return false;
+            if (time_monotonic_ns() >= deadline) return false;
         }
     }
 
@@ -1319,7 +1319,7 @@ static inline nova_bool Nova_RwLock_method_read_for(Nova_RwLock* rw, void* timeo
     }
     if (_nova_active_slot < 0) {
         nova_mutex_unlock(&rw->mu);
-        int64_t deadline = _nova_monotonic_ns() + tnanos;
+        int64_t deadline = time_monotonic_ns() + tnanos;
         for (;;) {
             _nova_cpu_yield();
             nova_mutex_lock(&rw->mu);
@@ -1329,7 +1329,7 @@ static inline nova_bool Nova_RwLock_method_read_for(Nova_RwLock* rw, void* timeo
                 return true;
             }
             nova_mutex_unlock(&rw->mu);
-            if (_nova_monotonic_ns() >= deadline) return false;
+            if (time_monotonic_ns() >= deadline) return false;
         }
     }
     uint64_t delay_ms = (uint64_t)((tnanos + 999999LL) / 1000000LL);
@@ -1425,7 +1425,7 @@ static inline nova_bool Nova_RwLock_method_write_for(Nova_RwLock* rw, void* time
     }
     if (_nova_active_slot < 0) {
         nova_mutex_unlock(&rw->mu);
-        int64_t deadline = _nova_monotonic_ns() + tnanos;
+        int64_t deadline = time_monotonic_ns() + tnanos;
         for (;;) {
             _nova_cpu_yield();
             nova_mutex_lock(&rw->mu);
@@ -1436,7 +1436,7 @@ static inline nova_bool Nova_RwLock_method_write_for(Nova_RwLock* rw, void* time
                 return true;
             }
             nova_mutex_unlock(&rw->mu);
-            if (_nova_monotonic_ns() >= deadline) return false;
+            if (time_monotonic_ns() >= deadline) return false;
         }
     }
     uint64_t delay_ms = (uint64_t)((tnanos + 999999LL) / 1000000LL);
@@ -1658,7 +1658,7 @@ static inline nova_bool Nova_ReentrantMutex_method_lock_for(
     if (_nova_active_slot < 0) {
         /* Non-fiber (main thread) spin path with deadline. */
         nova_mutex_unlock(&rm->mu);
-        int64_t deadline = _nova_monotonic_ns() + tnanos;
+        int64_t deadline = time_monotonic_ns() + tnanos;
         for (;;) {
             _nova_cpu_yield();
             nova_mutex_lock(&rm->mu);
@@ -1670,7 +1670,7 @@ static inline nova_bool Nova_ReentrantMutex_method_lock_for(
                 return true;
             }
             nova_mutex_unlock(&rm->mu);
-            if (_nova_monotonic_ns() >= deadline) return false;
+            if (time_monotonic_ns() >= deadline) return false;
         }
     }
     uint64_t delay_ms = (uint64_t)((tnanos + 999999LL) / 1000000LL);
