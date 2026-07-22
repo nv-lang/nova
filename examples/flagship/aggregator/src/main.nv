@@ -32,8 +32,9 @@
 //   - a manual accept LOOP (legitimately hand-rolled — `http.servernet` has no
 //     reusable accept-loop function yet, only single-shot `handle_connection`,
 //     see that module's own header) that spawns
-//     `http.servernet.handle_connection(stream, mux)` per connection;
-//   - EVERY endpoint is a `ServeMux` route (`http.server`) — routing, request
+//     `http.servernet.handle_connection(stream, routes())` per connection;
+//   - EVERY endpoint is a `Router` route (`http.server`, Plan 222 — replaces
+//     the retired `ServeMux`) — routing, request
 //     parsing, response serialization, and (for `/api/events`) the SSE wire
 //     format all come from the `http` package.
 //
@@ -51,8 +52,8 @@
 // `events_body` below, wired through `handler_fn(|req| ...)`) ARE the proof.
 // This is what lets `/api/run`/`/api/events` do PER-REQUEST fresh
 // `aggregate()` calls (fresh `mode`/`seed`/live-vs-mock) from inside an
-// otherwise-pure `ServeMux` route, with no second dispatch mechanism needed
-// alongside `ServeMux`.
+// otherwise-pure `Router` route, with no second dispatch mechanism needed
+// alongside `Router`.
 //
 // `/api/events` is a SSE REPLAY, not a live per-request push: the whole run
 // settles first (so the JSON `run_summary` + every lane's real `t_ms` are
@@ -80,7 +81,7 @@ import ./app.{aggregate_live_health, aggregate_live_weather, health_live_sources
 import ./api.{build_snapshot, HandlersDto, snapshot_to_json}
 import std.net.{SocketAddr, TcpListener, real_net, mock_net}
 import std.os.{env, real_os}
-import http.server.{ServeMux, ServerRequest, ServerResponse, StreamBody, handler_fn, sse_event}
+import http.server.{Router, ServerRequest, ServerResponse, StreamBody, handler_fn, sse_event}
 import http.servernet.{handle_connection}
 import std.time.duration
 import std.runtime.sync.{AtomicInt}
@@ -292,7 +293,7 @@ fn main() Time Detach {
                                     // no longer a use-after-free.
                                     detach consume stream {
                                         // `routes()` is cheap (a handful of
-                                        // ServeMux entries) — rebuilt per
+                                        // `Router` entries) — rebuilt per
                                         // connection, same shape as
                                         // nova-http's own
                                         // servernet/rt/handle_connection_smoke.nv.
@@ -364,15 +365,20 @@ fn main() Time Detach {
 // concurrent `aggregate()` output, nothing faked to route around this), a
 // genuine reliability caveat.
 
-// ── ServeMux: every endpoint is a route, no manual parsing/routing/wire ────
+// ── Router: every endpoint is a route, no manual parsing/routing/wire ──────
+// (Plan 222: migrated off the retired `ServeMux` — segment-trie `Router`,
+// nova-http `server_router.nv`. Routes here are static and known conflict-
+// free by construction (four distinct literal paths, no shared `{param}`/
+// `{*catch-all}` slots) — `!!` unwraps `Router.@get`'s `Result` the same way
+// `router_test.nv`'s own fixtures do for statically-known-good registrations.)
 
-fn routes() Time -> ServeMux {
-    mut mux = ServeMux.new()
-    mux.get("/", handler_fn(|_req| ServerResponse.bytes(200, "text/html; charset=utf-8", frontend_html())))
-    mux.get("/api/snapshot", handler_fn(|_req| snapshot_body("weather", "demo", 42)))
-    mux.get("/api/run", handler_fn(|req| snapshot_body(legend_of(req), mode_of(req), seed_of(req))))
-    mux.get("/api/events", handler_fn(|req| events_body(legend_of(req), mode_of(req), seed_of(req))))
-    mux
+fn routes() Time -> Router {
+    mut r = Router.new()
+    r.get("/", handler_fn(|_req| ServerResponse.bytes(200, "text/html; charset=utf-8", frontend_html())))!!
+    r.get("/api/snapshot", handler_fn(|_req| snapshot_body("weather", "demo", 42)))!!
+    r.get("/api/run", handler_fn(|req| snapshot_body(legend_of(req), mode_of(req), seed_of(req))))!!
+    r.get("/api/events", handler_fn(|req| events_body(legend_of(req), mode_of(req), seed_of(req))))!!
+    r
 }
 
 fn legend_of(req ServerRequest) -> str => req.query_param("legend") ?? "weather"
