@@ -897,15 +897,19 @@ pub enum TypeAttr {
     Share,
 }
 
-/// Plan 180 Ф.6 (D382): один аргумент `#serde(...)`-аннотации. Общая
-/// key/value-грамматика (`key`, `key="s"`, `key=ident`) разбирается парсером
-/// в этот структурированный список (`serde_attrs` на TypeDecl / SumVariant /
-/// RecordField). V1 семантически потребляет ТОЛЬКО режимы тегирования
-/// (`tag`/`content`/`untagged`, D345/D382); прочие serde-ключи
-/// (`rename`/`skip`/`flatten`/`default`/`alias`/`rename_all`/
-/// `deny_unknown_fields`) отклоняются парсером как not-yet-supported
-/// (E_SERDE_BAD_ATTRIBUTE) до followup `[M-180-serde-field-attributes]`.
-/// AST-поле и грамматика — общие, так что расширение тривиально.
+/// Plan 180 Ф.6 (D382) + 180.1 Ф.1/Ф.7 (D-амендмент field-attrs): один
+/// аргумент `#serde(...)`-аннотации. Общая key/value-грамматика (`key`,
+/// `key="s"`) разбирается парсером в этот структурированный список
+/// (`serde_attrs` на TypeDecl / SumVariant / RecordField). Позиционная
+/// валидность (какой ключ на типе vs на поле) проверяется НЕ парсером, а
+/// consume-стороной (`compiler-codegen/src/protocols/auto_derive.rs`) —
+/// тот же принцип, что `E_SERDE_TAGGING_ON_NON_SUM` для `tag`/`content`.
+///
+/// **Потреблено (180.1 Ф.1):** `rename`/`rename_all`/`skip`/
+/// `skip_serializing_if`/`default`/`alias`/`deny_unknown_fields`(no-op-
+/// синоним дефолта, см. ниже)/`allow_unknown`. **Гейт:** `flatten`
+/// парсится, но synth honest-gate'ит (`E_SERDE_FLATTEN_UNSUPPORTED`,
+/// `[M-180-serde-flatten]`) — самый сложный item, см. 180.1-план.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SerdeArg {
     /// `tag = "type"` — имя дискриминатор-поля (internally-tagged; с `content`
@@ -916,6 +920,94 @@ pub enum SerdeArg {
     Content(String),
     /// `untagged` — untagged (try-each-variant). Только на sum-типе.
     Untagged,
+    /// `rename = "wireName"` — field-level: явное wire-имя, ПЕРЕОПРЕДЕЛЯЕТ
+    /// type-level `rename_all` (180.1 Ф.1.1/Ф.1.2).
+    Rename(String),
+    /// `rename_all = "convention"` — type-level: массовое переименование
+    /// полей по конвенции (180.1 Ф.1.2). Конвенция валидируется парсером
+    /// (E_SERDE_BAD_ATTRIBUTE при неизвестном имени).
+    RenameAll(RenameConvention),
+    /// `skip` — field-level: поле не сериализуется и не читается; при
+    /// десериализации берётся default (zero-value типа или
+    /// `#serde(default = "fn")`, если указан) — 180.1 Ф.1.3.
+    Skip,
+    /// `skip_serializing_if = "predicate"` — field-level: условный пропуск на
+    /// записи, если `@field.<predicate>()` вернул true (180.1 Ф.1.4).
+    SkipSerializingIf(String),
+    /// `default` (bare) / `default = "fn_name"` — field-level: при отсутствии
+    /// поля в wire — zero-value типа (bare) или `fn_name()` (180.1 Ф.1.5).
+    /// `None` = bare `default`; `Some(fn)` = `default = "fn"`.
+    Default(Option<String>),
+    /// `alias = "old_name"` — field-level: доп. wire-имя ТОЛЬКО на чтение;
+    /// повторяем (несколько `alias` на одном поле) — 180.1 Ф.1.6.
+    Alias(String),
+    /// `flatten` — field-level: вложенный record «размазывается» в плоский
+    /// wire. Гейт `[M-180-serde-flatten]` (180.1 Ф.1.8) — синтаксис принят,
+    /// synth honest-errors.
+    Flatten,
+    /// `deny_unknown_fields` — type-level. **180.1 Ф.7-разворот:** unknown-
+    /// field policy стала STRICT BY DEFAULT (было ignore) → этот ключ теперь
+    /// no-op-синоним уже действующего дефолта (принято, не отклоняется, ничего
+    /// не меняет). Оставлен для serde-мышечной памяти.
+    DenyUnknownFields,
+    /// `allow_unknown` — type-level: opt-out строгого-по-умолчанию unknown-
+    /// field policy (180.1 Ф.7) — неизвестные wire-поля молча игнорируются
+    /// (forward-compat API).
+    AllowUnknown,
+}
+
+/// 180.1 Ф.1.2 (Q8 180-plan): `rename_all`-конвенции. Конвертирует
+/// canonical (Nova snake_case) имя поля в wire-имя.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenameConvention {
+    CamelCase,
+    SnakeCase,
+    KebabCase,
+    ScreamingSnakeCase,
+    PascalCase,
+}
+
+impl RenameConvention {
+    /// Парсит `#serde(rename_all = "...")`-строку в конвенцию. `None` —
+    /// неизвестное имя (парсер эмитит E_SERDE_BAD_ATTRIBUTE со списком).
+    pub fn parse(s: &str) -> Option<RenameConvention> {
+        match s {
+            "camelCase" => Some(RenameConvention::CamelCase),
+            "snake_case" => Some(RenameConvention::SnakeCase),
+            "kebab-case" => Some(RenameConvention::KebabCase),
+            "SCREAMING_SNAKE_CASE" => Some(RenameConvention::ScreamingSnakeCase),
+            "PascalCase" => Some(RenameConvention::PascalCase),
+            _ => None,
+        }
+    }
+
+    /// Применить конвенцию к canonical snake_case-имени поля Nova.
+    pub fn apply(self, field_name: &str) -> String {
+        let words: Vec<&str> = field_name.split('_').filter(|s| !s.is_empty()).collect();
+        if words.is_empty() {
+            return field_name.to_string();
+        }
+        let cap = |w: &str| -> String {
+            let mut c = w.chars();
+            match c.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                None => String::new(),
+            }
+        };
+        match self {
+            RenameConvention::SnakeCase => field_name.to_string(),
+            RenameConvention::CamelCase => {
+                let mut out = String::new();
+                for (i, w) in words.iter().enumerate() {
+                    if i == 0 { out.push_str(w); } else { out.push_str(&cap(w)); }
+                }
+                out
+            }
+            RenameConvention::PascalCase => words.iter().map(|w| cap(w)).collect::<Vec<_>>().join(""),
+            RenameConvention::KebabCase => words.join("-"),
+            RenameConvention::ScreamingSnakeCase => words.iter().map(|w| w.to_uppercase()).collect::<Vec<_>>().join("_"),
+        }
+    }
 }
 
 /// Plan 180 Ф.6 (D382 / D345): режим тегирования sum-типа для serde. Выводится
@@ -1295,10 +1387,12 @@ pub struct RecordField {
     /// type-only access (default).
     /// Backward-compat: default empty Vec.
     pub visible_to: Vec<String>,
-    /// Plan 180 Ф.6 (D382): `#serde(...)` field-level attributes. Empty Vec =
-    /// default (no serde customization). See [`SerdeArg`]. Field-level serde
-    /// keys are parsed/stored here but their synth-consumption is a followup
-    /// (`[M-180-serde-field-attributes]`).
+    /// Plan 180 Ф.6 (D382) + 180.1 Ф.1: `#serde(...)` field-level attributes.
+    /// Empty Vec = default (no serde customization). See [`SerdeArg`].
+    /// Consumed by the record-field auto-derive synth (`auto_derive.rs`) —
+    /// `rename`/`skip`/`skip_serializing_if`/`default`/`alias` landed; NOT
+    /// consumed for `SumVariantKind::Record` payload fields yet (sum-serde
+    /// rich synth is a separate gate, `[M-126-sum-*-rich]`).
     pub serde_attrs: Vec<SerdeArg>,
 }
 
@@ -1309,8 +1403,9 @@ pub struct SumVariant {
     pub discriminant: Option<i64>,
     pub span: Span,
     /// Plan 180 Ф.6 (D382): `#serde(...)` variant-level attributes. Empty Vec =
-    /// default. See [`SerdeArg`]. Variant-level serde keys are parsed/stored
-    /// here; synth-consumption is a followup (`[M-180-serde-field-attributes]`).
+    /// default. See [`SerdeArg`]. Variant-level serde keys (distinct from a
+    /// Record-variant's PAYLOAD field attrs above) remain unconsumed —
+    /// out of 180.1 Ф.1 scope (record types only).
     pub serde_attrs: Vec<SerdeArg>,
 }
 
