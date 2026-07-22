@@ -7371,12 +7371,12 @@ Amends [D423](#d423) (§R6 явно выносил div/neg за рамки — �
 ### Границы / отложено
 
 - ~~**Typed-schema retype Time**~~ — **ЗАКРЫТО** Plan 175 Ф.2-v3 (см. amend «D316/D431 Ф.2-v3: typed Time-схема + снос рукописного диспатча» ниже). Решение НЕ было «отложенный per-Time-struct-редизайн»: hand-written `NovaVtable_Time` struct/slot ОСТАЛСЯ (channels.h/runtime.c нужен стабильный C-тип, компилируемый once, не per-CU) — но его WIRE переехал на raw int64 nanoseconds под НОВЫМИ typed op-именами, а marshalling typed⇄wire живёт в generated dispatch-fn (`emit_effect_type`) и handler-install-thunk (`emit_handler_lit`), СИММЕТРИЧНО тому же ABI-identity приёму, что `Nova_Mutex_method_lock_for` уже применяет для Duration-таймаута (`sync_primitives.h`).
-- **Ambient-retraction Time (D62 amend)** — владелец запросил ретракцию: каждая fn, транзитивно зовущая Time-опы (в т.ч. через `Timestamp.now()`/`Duration.@sleep()`/`sleep`), обязана нести `Time` в сигнатуре под `--strict-effects`, симметрично Fs/Net/Db. НЕ начато (механическая миграция по diagnostic-loop через ВЕСЬ std+examples — масштаб сопоставим с 755+-сайт retyping'ом из Plan 175 §6, отдельное окно). `[M-175-time-ambient-retraction]`.
+- ~~**Ambient-retraction Time (D62 amend)**~~ — **ЗАКРЫТО** Plan 175 Ф.2-v3 Фаза 4 (2026-07-22): владелец запросил ретракцию — каждая fn, транзитивно зовущая Time-опы, обязана нести `Time` в сигнатуре под `--strict-effects`, симметрично Fs/Net/Db. Аудит по всем трём уровням: `std/` — 0 находок (предыдущая волна уже держала дисциплину); 5 CI-целей (aggregator + echo net/tls) — built `--strict-effects` чисто; `spec_tests/conformance` (577 файлов, полный check) — РОВНО одна находка (`standalone/vr_binop_arith_dce.nv`, `fn main() Io -> ()` звало `Monotonic.now()` — добавлен `Time`). Масштаб оказался НЕ сопоставим с 755+-сайт retyping'ом (предположение при постановке было завышенным) — единственный реальный фикс. `[M-175-time-ambient-retraction]`.
 - Fs/Net/Os — НЕ мигрированы на `#default_handler` (механизм — generic, но их C-хардкод-дефолт не тронут этой волной; следующий шаг «по образцу»).
 
 ### Связь
 
-Родня [D316](#d316)/[D317](#d317)/[D318](#d318) (Plan 175 Time-семья) · amends [D62](#d62-прагматичная-семантика-эффектов-прямые-в-сигнатуре-fail-strict-async-ambient-правило-effectprotocol) (ambient-retraction Time — OPEN, см. «Границы» выше) · [[feedback-maximize-nv-sourcing]] (реализация в `.nv`, не в C) · Plan [175](../../docs/plans/175-time-system-rework.md) Ф.2-v2 · `[M-effect-handler-body-record-literal]` (см. amend в §«Handler-literal capture mechanism» ниже — CLOSED, common closure-capture path заменил `#define`-макросы).
+Родня [D316](#d316)/[D317](#d317)/[D318](#d318) (Plan 175 Time-семья) · amends [D62](#d62-прагматичная-семантика-эффектов-прямые-в-сигнатуре-fail-strict-async-ambient-правило-effectprotocol) (ambient-retraction Time — CLOSED Ф.2-v3 Фаза 4, см. amend ниже) · [[feedback-maximize-nv-sourcing]] (реализация в `.nv`, не в C) · Plan [175](../../docs/plans/175-time-system-rework.md) Ф.2-v2 · `[M-effect-handler-body-record-literal]` (см. amend в §«Handler-literal capture mechanism» ниже — CLOSED, common closure-capture path заменил `#define`-макросы).
 
 ## Amend D316/handler-literal capture mechanism: `[M-effect-handler-body-record-literal]` CLOSED (Plan 175 Ф.2-v2, 2026-07-21/22)
 
@@ -7422,9 +7422,19 @@ Hand-written dispatch-функции (`Nova_Time_sleep`/`_now_unix_ms`/`_now_mon
 
 **Побочная находка (не регрессия этой волны, но впервые релевантна):** `[M-175-realtime-ban-method-call-blind]` — D64 realtime-suspend-effect-check (`types/mod.rs`, `check_expr_forbid`/`check_callee_effects`) СИНТАКСИЧЕСКИЙ на форму вызова: ловит `Effect.op(...)`-shaped path (`path.len()==2 && effect_decls.contains(path[0])`) и qualified free-fn/static-method calls через `method_table`, но НЕ instance-method call на произвольном expression-receiver (`expr.method()`, напр. `d.sleep()`) — тот путь явно помечен "dynamic member-call; не resolve'им" / "instance-method через obj.method требует type-инференции, отложен" уже ДО этой волны. Раньше это было некритично, т.к. канонический sleep-вызов (`sleep(d)`/`Time.sleep(d)`) попадал в ПОКРЫТУЮ форму; теперь, когда `d.sleep()` — promoted idiom, D64-гард на `realtime`-функциях, зовущих sleep ТОЛЬКО через метод, слеп. Негатив-фикстура `spec_tests/conformance/neg/d316_realtime_sleep_neg.nv` сознательно продолжает звать `Time.sleep(d)` (не `.sleep()`) — обе формы валидны, эффект-оп не ретрактирован, только `.nv`-сахарные free-функции. Расширение D64/D63-скана на instance-method-call — отдельный followup (нужна receiver-type-инференция в этом checkpoint'е), не блокирует эту волну.
 
+### Фаза 4 — ambient Time retraction (D62 amend) верифицирована до нуля
+
+Владелец: каждая fn, транзитивно зовущая Time-опы, обязана нести `Time` в effect-row под `--strict-effects` (симметрично Fs/Net/Db) — D431 «Границы» предполагал это НЕ начатым, масштаб сопоставимым с 755+-сайт retyping'ом из §6. Аудит (`nova check --strict-effects`) по трём уровням дал СИЛЬНО меньший реальный остаток:
+
+- **`std/`** (142 файла) — 0 находок: предыдущая волна уже держала дисциплину (функции вроде `Uuid.v7()` уже несут `Time Random` в сигнатуре).
+- **5 CI-целей** (aggregator + echo net/tls client/server) — built `--strict-effects` чисто.
+- **`spec_tests/conformance`** (577 файлов, полный check) — РОВНО одна находка: `standalone/vr_binop_arith_dce.nv`, `fn main() Io -> ()` звало `Monotonic.now()` без `Time`. Единственный fix: `fn main() Io Time -> ()`.
+
+Ретракция закрыта верифицируемо (не «сделано и не проверено») — исходное предположение о масштабе (>200 сайтов) не подтвердилось, реальный остаток — один файл.
+
 ### Гейт
 
-5/5 d316-фикстур (`spec_tests/conformance/neg/d316_*`, `standalone/d316_time_effect_typed_surface`) PASS · `std/src/time`+`std/src/testing` suite 8/8 PASS · `nova check std` 142/142 реальных файлов (17 "FAIL" — все intentional `*_neg`) · `tls_handler_per_fiber_armed`/`tls_handler_race_repro` (armed M:N per-fiber handler isolation под typed-схемой) PASS · `examples/flagship/aggregator` `--strict-effects` built+boot.
+5/5 d316-фикстур (`spec_tests/conformance/neg/d316_*`, `standalone/d316_time_effect_typed_surface`) PASS · `std/src/time`+`std/src/testing` suite 8/8 PASS · `nova check std` 142/142 реальных файлов (17 "FAIL" — все intentional `*_neg`) · `tls_handler_per_fiber_armed`/`tls_handler_race_repro` (armed M:N per-fiber handler isolation под typed-схемой) PASS · `examples/flagship/aggregator` + 4 echo-примера (net/tls × client/server) `--strict-effects` built+boot · `nova check --strict-effects spec_tests/conformance` (577 файлов) — 0 Time-related findings после Фазы 4 fix.
 
 ### Связь
 
