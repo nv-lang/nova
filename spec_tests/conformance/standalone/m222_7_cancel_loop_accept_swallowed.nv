@@ -1,0 +1,65 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for [M-nv-cancel-loop-accept-swallowed] (222.7 bug-sweep,
+// found in nova-http's servernet `serve()` accept-loop work). Root cause
+// (compiler-codegen/nova_rt/net.c): `NovaNet2Listener` had a SINGLE
+// existence-unit refcount, released unconditionally by
+// `_nn2_listener_close_cb` — regardless of whether the close was the user's
+// own explicit `.close()` or an internal `supervised(timeout:/deadline:)`
+// cancellation auto-close (`_nn2_listener_stop_cb`). A cancelled, in-flight
+// `accept()` call's own transient acquire/release (held only for that one
+// call) was the only thing keeping the struct alive past that close, so the
+// struct was freed the moment the FIRST cancelled `accept()` call returned.
+// Any retry loop that (reasonably) calls `.accept()` again afterward — this
+// fixture's shape, and `nova-http`'s own `serve()` accept-loop — then
+// dereferenced an ALREADY-FREED listener: undefined behavior, observed as
+// anything from a bogus-but-prompt `Err()` to a full process-shutdown hang
+// (corrupted uncollectable-heap bookkeeping wedging a later, unrelated
+// `GC_gcollect()` at process exit — this is why the WHOLE TEST BINARY, not
+// just one assertion, could hang). Fixed by giving the listener TWO
+// independent release triggers (the OS-handle close AND the user's own
+// eventual `.close()`/D432 auto-`@cleanup`) so the struct survives until
+// BOTH have fired — `net_tcp_listen`/`net_listener_close` in net.c.
+//
+// This fixture's own `while` loop deliberately calls `.accept()` a further
+// TWO times after the first (cancelled) call returns — exactly the shape
+// that dereferenced freed memory pre-fix — and asserts the whole process
+// still completes well within the outer per-test timeout budget below.
+//
+// EXPECT_TIMEOUT_MS 30000
+
+module standalone.m222_7_cancel_loop_accept_swallowed
+
+import std.net.{TcpListener, SocketAddr, real_net}
+import std.time.duration
+
+test "supervised(timeout:) cancels a while-loop-retried accept() (no leak/hang)" {
+    with Net = real_net() {
+        with Fail[TimeoutError] = |_e| {} {
+            supervised(timeout: 500.to_millis()) {
+                spawn {
+                    consume lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                        Ok(consume l) => l
+                        Err(_) => { return }
+                    }
+                    mut running = true
+                    mut n = 0
+                    while running {
+                        match lst.accept() {
+                            Ok(_) => {}
+                            Err(_) => {
+                                n = n + 1
+                                // A well-behaved retry loop backs off and
+                                // keeps going — exactly `serve()`'s own
+                                // "Err doesn't kill the loop" policy. Bound
+                                // it here so the fixture itself terminates.
+                                if n >= 3 { running = false }
+                            }
+                        }
+                    }
+                    lst.close()
+                }
+            }
+        }
+    }
+    assert(true)
+}

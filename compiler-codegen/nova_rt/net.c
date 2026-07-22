@@ -518,6 +518,37 @@ void* net_tcp_listen(const NovaNetAddr* addr, nova_int backlog, nova_int* out_er
         return NULL;
     }
     if (out_err) *out_err = 0;
+    /* [M-nv-cancel-loop-accept-swallowed] fix (222.7): from here on `lst`
+     * is handed to the caller as a live `TcpListener` — bump the refcount
+     * to add a SECOND, independent release trigger for the Nova-level
+     * `consume` handle's own eventual close (`net_listener_close`, called
+     * by `TcpListener consume @close()`/its D432 auto-`@cleanup`, exactly
+     * once). Until THIS unit is also released, `_nn2_listener_release`
+     * (below/`_nn2_listener_close_cb`) cannot free the struct.
+     *
+     * Root cause this closes: previously there was only ONE unit, released
+     * unconditionally by `_nn2_listener_close_cb` — whether that callback
+     * fired because of the user's own `.close()` OR because `supervised
+     * (timeout:)`/`(deadline:)` cancellation auto-closed the listener via
+     * `_nn2_listener_stop_cb`. A cancelled, in-flight `accept()` call's own
+     * transient acquire (`_nn2_listener_acquire`/`_nn2_listener_release`,
+     * held only for that ONE call) was the only thing keeping the struct
+     * alive past that close — so the struct was freed the moment the
+     * FIRST cancelled `accept()` call returned. Any well-behaved retry
+     * loop that (reasonably) calls `.accept()` again afterward — e.g.
+     * `serve()`'s own accept-loop shape — then dereferenced an ALREADY-
+     * FREED `NovaNet2Listener*` (`_nn2_listener_acquire` incrementing a
+     * freed refcount field; `lst->stage`/`->pending_conns` read and
+     * `lst->accept_scope` written through freed memory): undefined
+     * behavior, not a well-defined "re-parks and never wakes" — observed
+     * manifestations ranged from a plausible-looking-but-bogus immediate
+     * Err() to a full process-shutdown hang (corrupted uncollectable-heap
+     * bookkeeping wedging a later, unrelated `GC_gcollect()` at process
+     * exit). Deferring the free until BOTH the OS-close AND the user's own
+     * close/cleanup have happened keeps the struct allocated — `stage`
+     * safely observable as `>= NN2_CLOSING` — for as long as the Nova
+     * `consume` value can still legally have methods called on it. */
+    (void)nova_aint_inc(&lst->refcount);
     return lst;
 }
 
@@ -731,6 +762,17 @@ void net_listener_close(void* lstv) {
         nova_loop_defer_close(lst->loop, (uv_handle_t*)&lst->handle,
                               _nn2_listener_close_cb);
     }
+    /* [M-nv-cancel-loop-accept-swallowed] fix (222.7): release the Nova-
+     * level "user owns me" unit acquired at the end of `net_tcp_listen`
+     * — UNCONDITIONALLY, regardless of whether THIS call won the CAS
+     * above (ordinary user-driven close) or the listener was already
+     * cancelled/closed internally by `_nn2_listener_stop_cb` (the CAS
+     * lost the race). `TcpListener consume @close()`/its D432 auto-
+     * `@cleanup` calls this exactly once per listener (linear-consume
+     * discipline) — independent of which side actually won the OS-level
+     * close race. See `net_tcp_listen`'s matching `nova_aint_inc` for the
+     * full root-cause note. */
+    _nn2_listener_release(lst);
 }
 
 /* ─── TcpStream ────────────────────────────────────────────────────────────── */

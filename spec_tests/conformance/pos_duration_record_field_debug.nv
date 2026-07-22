@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for [M-nv-duration-record-field-debug-bytes-missing] (222.7
+// bug-sweep, found in nova-http's servernet policy work — `ServerPolicy`
+// needs a `Duration` field for its deadline knobs). ANY full build (not
+// `check`) touching a value/heap record with a `Duration` field was
+// suspected to CC-FAIL in the auto-derived `@debug` body (`nova_str` passed
+// where `[]u8` is expected) — root cause traced to `Duration`'s OWN
+// hand-written `@display`/`@debug` (std/src/time/duration/core.nv) calling
+// `f.write(...)` with bare `str`/`str`-returning expressions instead of
+// `.bytes()`, unlike every other hand-written `@display`/`@debug` in the
+// codebase (see `std/src/time/civil/format.nv`'s `w.write(@to_iso().bytes())`
+// convention). Fixed by adding the missing `.bytes()` calls in `Duration`'s
+// own `@display`/`@debug`. This fixture pins the minimal repro shape
+// (value-record with one `Duration` field, `#impl(Debug)`, full build via
+// `nova test`) so a regression CC-FAILs this conformance run instead of only
+// showing up transitively in a downstream package.
+module spec_tests.conformance
+
+import std.time.duration
+
+#impl(Debug)
+type TinyDurationHolder value { d Duration }
+
+test "TinyDurationHolder (value-record, Duration field): auto-derived @debug builds and runs" {
+    ro h = TinyDurationHolder { d: 5.to_seconds() }
+    ro s = "${h:?}"
+    assert(s.contains("TinyDurationHolder"))
+    assert(s.contains("Duration("))
+    assert(s.contains("ns)"))
+}
