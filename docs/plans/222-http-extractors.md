@@ -1,5 +1,15 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# План 222 — Extractors для `nova-http`: типобезопасный routing-слой в духе Axum, без Rust-сложности
+# План 222 — nova-http до Axum-эргономики: extractors + IntoResponse + middleware (не порт Axum, а дельта)
+
+> **Объём (уточнено ревью владельца 2026-07-22 — «мы весь Axum хотим или только extract?»):**
+> «весь Axum» ≈ Router + extract + response + middleware + Handler + run-loop. У нас Router
+> (`ServeMux`, план 178), `Handler` и сервер (178 + servernet) УЖЕ ЕСТЬ. Этот план = **дельта
+> между нашим текущим http и Axum-УРОВНЕМ УДОБСТВА**: (1) extractors — §1-4, (2) `IntoResponse` —
+> §2, (3) middleware+группы — §6. Цель — ФУНКЦИОНАЛЬНЫЙ паритет по эргономике, НЕ структурный
+> клон: там, где Nova сильнее, делаем ИНАЧЕ (синхронно вместо async, closures вместо `State<T>`,
+> M:N-фибры вместо tower-futures). WebSocket/SSE — своей природы (SSE уже есть, `ServerResponse.sse`),
+> вне этого плана.
+
 
 **Статус:** 📋 ДИЗАЙН, НЕ СОГЛАСОВАН (черновик по запросу владельца 2026-07-22: «план по реализации
 такого модуля для Nova» — после сравнения ServeMux/chi/Express/Axum). Ждёт owner-go.
@@ -77,13 +87,31 @@ export type Path[T] value { data T }
 
 #impl(FromRequest)
 fn Path[T Deserialize] @from_request(req ServerRequest) -> Result[Path[T], HttpError] {
-    mut d = ParamsDeserializer.at(req.params)
+    mut d = ParamsDeserializer.at(req.params)   // реализатор Deserializer-протокола, см. ниже
     match T.deserialize(d) {                // ТОТ ЖЕ T.deserialize, что у Json[T] — другой источник
         Ok(v)  => Ok(Path { data: v })
         Err(e) => Err(HttpError.decode_error(e.to_str()))
     }
 }
 ```
+
+**Реальный serde-API источника** (сверено с serde.nv:124-165, НЕ вымышленный): `Deserializer`
+даёт ДВА ортогональных набора — навигация по имени (`@enter_field(key) -> Result[Self, DeError]`)
+и чтение скаляра ПО ТИПУ (`@deser_int()`/`@deser_str()`/`@deser_bool()`/… — без имени). Синтез
+компилятора для `UserIdParams { id int }` генерит `d.enter_field("id")?.deser_int()?` (имя
+выбирает ОТКУДА, тип — КАК прочитать; статическая типобезопасность, никакого `Any`). Значит
+`ParamsDeserializer` реализует РОВНО эти методы над списком пар `[](str, str)`: `enter_field(k)`
+находит пару с ключом `k` и ставит на неё под-курсор; `deser_int()` берёт строковое значение
+текущей пары и `str.to_int()`-парсит (ошибка парса → `DeError`). Тот же контракт `Deserializer`,
+что у `JsonDeserializer` (json.nv:161) — просто источник — плоский список, не JSON-дерево.
+
+**Граница компилятор/nv для serde (сверено с кодом, ревью владельца 2026-07-22):** в Rust-
+компиляторе (`auto_derive.rs`) зашито ТОЛЬКО ОДНО — синтез ТЕЛ `@serialize`/`.deserialize` (обход
+полей record'а/вариантов sum'а + разбор `#serde(tag=…)`-режимов). ВСЁ остальное — обычный `.nv`
+(std/src/encoding/serde/, 1188 строк): протоколы `Serializer`/`Deserializer`, скаляр-conformance
+(`int @serialize`/…), и целиком реализатор формата `JsonSerializer`/`JsonDeserializer` (json.nv).
+Значит `ParamsDeserializer`/`QueryDeserializer` — **обычный `.nv`-код нового формата-источника,
+ноль строк Rust, ноль изменений компилятора** (тот же класс, что «добавить YAML-бэкенд к serde»).
 
 ## 2. Протоколы (все — вписываются в существующие generic/protocol-механизмы)
 
@@ -201,7 +229,9 @@ factory-функции — рассмотреть только если реал
 ## 8. Фазы
 
 - **Ф.0 Протоколы + `ParamsDeserializer`/`QueryDeserializer`** (sonnet): `FromRequest`/
-  `IntoResponse` в новом `src/extract.nv` (nova-http); два Deserializer-имплементора над
+  `IntoResponse` в новом `src/extract.nv` (nova-http; имя = Axum-паритет `axum::extract`, но файл
+  несёт и IntoResponse+middleware — заголовок файла честно перечисляет; НЕ плодить 3 микрофайла);
+  два Deserializer-имплементора над
   существующим `Deserializer`-протоколом (serde.nv); юнит-тесты деконструкции params/query в
   простые record'ы (без HTTP-контекста вообще — чистые парсер-тесты).
 - **Ф.1 Встроенные extractors** (sonnet): `Path[T]`/`Query[T]`/`Json[T]`(обёртка)/`Bytes`/`Text`/
