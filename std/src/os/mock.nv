@@ -154,21 +154,21 @@ fn MockOs mut @mem_exit(code int) -> int { @exited = true; @exit_code_v = code; 
 #stable(since = "0.1")
 export fn mock_os(mut state MockOs) -> Effect[Os] {
     effect Os {
-        arg_count()               => state.mem_arg_count()
-        arg_at(i int)             => state.mem_arg_at(i)
-        env_get(key []u8)         => state.mem_env_get(key)
-        env_has(key []u8)         => state.mem_env_has(key)
-        env_set(key []u8, val []u8) => state.env_put(key, val)
-        env_remove(key []u8)      => state.mem_env_remove(key)
-        env_len()                 => state.mem_env_len()
-        env_key_at(i int)         => state.mem_env_key_at(i)
-        env_val_at(i int)         => state.mem_env_val_at(i)
-        cwd()                     => state.mem_cwd()
-        set_cwd(path []u8)        => state.mem_set_cwd(path)
-        temp_dir()                => state.temp
-        home_dir()                => state.home
-        exit(code int)            => state.mem_exit(code)
-        pid()                     => state.pid_val
-        hostname()                => state.host
+        arg_count() -> int => state.mem_arg_count()
+        arg_at(i int) -> str => state.mem_arg_at(i)
+        env_get(key []u8) -> Option[str] => state.mem_env_get(key)
+        env_has(key []u8) -> bool => state.mem_env_has(key)
+        env_set(key []u8, val []u8) -> int => state.env_put(key, val)
+        env_remove(key []u8) -> int => state.mem_env_remove(key)
+        env_len() -> int => state.mem_env_len()
+        env_key_at(i int) -> str => state.mem_env_key_at(i)
+        env_val_at(i int) -> str => state.mem_env_val_at(i)
+        cwd() -> str => state.mem_cwd()
+        set_cwd(path []u8) -> int => state.mem_set_cwd(path)
+        temp_dir() -> str => state.temp
+        home_dir() -> str => state.home
+        exit(code int) -> int => state.mem_exit(code)
+        pid() -> int => state.pid_val
+        hostname() -> str => state.host
     }
 }

@@ -281,84 +281,89 @@ export fn File consume @close() Fs -> Result[(), IoError] => wrap_unit(Fs.close(
 
 /// Concrete `Fs` handler dispatching to libuv `uv_fs_*` (park/wake). Install at
 /// the root of an async program: `with Fs = real_fs() { … }`.
+///
+/// Plan 175.2 Ф.2-v4 (П9, D431 amend): `#default_handler` (bare form, П7) —
+/// `Fs` now auto-constructs (lazily, once per thread) on first transitive
+/// use with no enclosing `with Fs = …`, consistent with `Time`/`real_time()`.
 #stable(since = "0.1")
+#default_handler
 export fn real_fs() -> Effect[Fs] {
     effect Fs {
-        open(path []u8, flags int, mode int) {
+        open(path []u8, flags int, mode int) -> int {
             match c_path(path) { Ok(cp) => unsafe { fs_open(cp.ptr(), flags, mode) }, Err(_) => 0 - 22 }
         }
-        close(fd int) => fs_close(fd)
-        read(fd int, buf mut []u8) {
+        close(fd int) -> int => fs_close(fd)
+        read(fd int, buf mut []u8) -> int {
             if buf.len() == 0 { return 0 }
             unsafe { fs_read(fd, buf.ptr(), buf.len()) }
         }
-        write(fd int, data []u8) {
+        write(fd int, data []u8) -> int {
             if data.len() == 0 { return 0 }
             unsafe { fs_write(fd, data.ptr(), data.len()) }
         }
-        read_at(fd int, buf mut []u8, offset int) {
+        read_at(fd int, buf mut []u8, offset int) -> int {
             if buf.len() == 0 { return 0 }
             unsafe { fs_read_at(fd, buf.ptr(), buf.len(), offset) }
         }
-        write_at(fd int, data []u8, offset int) {
+        write_at(fd int, data []u8, offset int) -> int {
             if data.len() == 0 { return 0 }
             unsafe { fs_write_at(fd, data.ptr(), data.len(), offset) }
         }
-        seek(fd int, offset i64, whence int) => fs_seek(fd, offset, whence)
-        sync_all(fd int) => fs_fsync(fd)
-        sync_data(fd int) => fs_fdatasync(fd)
-        stat(path []u8, img mut []u8) {
+        seek(fd int, offset i64, whence int) -> i64 => fs_seek(fd, offset, whence)
+        sync_all(fd int) -> int => fs_fsync(fd)
+        sync_data(fd int) -> int => fs_fdatasync(fd)
+        stat(path []u8, img mut []u8) -> int {
             match c_path(path) { Ok(cp) => unsafe { fs_stat_into(cp.ptr(), img.ptr()) }, Err(_) => 0 - 22 }
         }
-        lstat(path []u8, img mut []u8) {
+        lstat(path []u8, img mut []u8) -> int {
             match c_path(path) { Ok(cp) => unsafe { fs_lstat_into(cp.ptr(), img.ptr()) }, Err(_) => 0 - 22 }
         }
-        fstat(fd int, img mut []u8) => unsafe { fs_fstat_into(fd, img.ptr()) }
-        mkdir(path []u8, mode int) {
+        fstat(fd int, img mut []u8) -> int => unsafe { fs_fstat_into(fd, img.ptr()) }
+        mkdir(path []u8, mode int) -> int {
             match c_path(path) { Ok(cp) => unsafe { fs_mkdir(cp.ptr(), mode) }, Err(_) => 0 - 22 }
         }
-        remove_file(path []u8) {
+        remove_file(path []u8) -> int {
             match c_path(path) { Ok(cp) => unsafe { fs_unlink(cp.ptr()) }, Err(_) => 0 - 22 }
         }
-        remove_dir(path []u8) {
+        remove_dir(path []u8) -> int {
             match c_path(path) { Ok(cp) => unsafe { fs_rmdir(cp.ptr()) }, Err(_) => 0 - 22 }
         }
-        rename(src []u8, dst []u8) {
+        rename(src []u8, dst []u8) -> int {
             match c_path(src) {
                 Ok(cs) => match c_path(dst) { Ok(cd) => unsafe { fs_rename(cs.ptr(), cd.ptr()) }, Err(_) => 0 - 22 }
                 Err(_) => 0 - 22
             }
         }
-        symlink(target []u8, link []u8) {
+        symlink(target []u8, link []u8) -> int {
             match c_path(target) {
                 Ok(ct) => match c_path(link) { Ok(cl) => unsafe { fs_symlink(ct.ptr(), cl.ptr()) }, Err(_) => 0 - 22 }
                 Err(_) => 0 - 22
             }
         }
-        chmod(path []u8, mode int) {
+        chmod(path []u8, mode int) -> int {
             match c_path(path) { Ok(cp) => unsafe { fs_chmod(cp.ptr(), mode) }, Err(_) => 0 - 22 }
         }
-        copy_file(src []u8, dst []u8) {
+        copy_file(src []u8, dst []u8) -> int {
             match c_path(src) {
                 Ok(cs) => match c_path(dst) { Ok(cd) => unsafe { fs_copyfile(cs.ptr(), cd.ptr()) }, Err(_) => 0 - 22 }
                 Err(_) => 0 - 22
             }
         }
-        fsync_dir(path []u8) {
+        fsync_dir(path []u8) -> int {
             match c_path(path) { Ok(cp) => unsafe { fs_fsync_dir(cp.ptr()) }, Err(_) => 0 - 22 }
         }
         // Хендл scandir пересекает Fs-эффект как голый int НАМЕРЕННО: vtable
         // эффектов носит примитивы (прецедент realpath-кортежа), хендл приватен
         // и живёт только внутри read_dir. Типизированная обёртка — при
         // выравнивании на net-канон ([M-ffi-handle-newtype], после лимитов).
-        scandir_open(path []u8) {
+        scandir_open(path []u8) -> int {
             match c_path(path) { Ok(cp) => unsafe { fs_scandir_open(cp.ptr()) }, Err(_) => 0 - 22 }
         }
-        scandir_next(h int) => fs_scandir_next(h)
-        scandir_name(h int) => fs_scandir_name(h)
-        scandir_kind(h int) => fs_scandir_kind(h)
-        scandir_close(h int) => fs_scandir_close(h)
-        realpath(path []u8) {
+        scandir_next(h int) -> int => fs_scandir_next(h)
+        scandir_name(h int) -> str => fs_scandir_name(h)
+        scandir_kind(h int) -> int => fs_scandir_kind(h)
+        scandir_close(h int) -> () => fs_scandir_close(h)
+        realpath(path []u8) -> (int, str) {
             match c_path(path) {
                 Ok(cp) => {
                     mut err = 0

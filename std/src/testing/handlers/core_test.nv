@@ -302,7 +302,10 @@ test "mut_clock auto-idle-advance: часы после конкурентных 
     }
 }
 
-// ── local_offset_sec (Plan 175.1, D316 amend + D321, 2026-07-10) ──────────
+// ── local_offset_sec (Plan 175.1, D316 amend + D321, 2026-07-10; retype
+// int->Offset ATTEMPTED + REVERTED same wave, Plan 175.2 Ф.2-v4 П11 — see
+// std/time/duration/time_effect.nv file-header comment /
+// [M-offset-result-mono-bleed-if-let]) ─────────────────────────────────────
 // closes [M-175.1-local-offset-effect-op].
 
 test "fixed_ms.local_offset_sec() — mock-coherence, фиксированный UTC (0)" {
@@ -320,10 +323,10 @@ test "local_offset_sec() мокабелен произвольным handler-л�
     // fixed_ms/mut_clock helper'ы) — произвольный `effect Time { ... }`
     // литерал волен вернуть любое значение (здесь: MSK, UTC+3 = 10800s).
     ro off = with Time = effect Time {
-        sleep(d) => ()
-        now() => 0.to_unix_millis()
-        now_monotonic() => { nanos: 0 }
-        local_offset_sec() => 10_800
+        sleep(d Duration) -> () => ()
+        now() -> Timestamp => 0.to_unix_millis()
+        now_monotonic() -> Monotonic => 0.to_monotonic_nanos()
+        local_offset_sec() -> int => 10_800
     } {
         Time.local_offset_sec()
     }
