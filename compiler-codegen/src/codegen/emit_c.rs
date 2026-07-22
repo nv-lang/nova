@@ -31,7 +31,20 @@ pub(crate) const RUNTIME_DEFINED_TYPES: &[&str] = &[
     // Plan 175 Ф.1: TimerMetrics — read-only introspection effect split out
     // of Time (Q1). Direct-C dispatch (Nova_TimerMetrics_timer_*, no vtable),
     // like Mem. Schema built from its .nv decl (single source).
-    "Fail", "Time", "Mem", "TimerMetrics",
+    //
+    // Plan 175 Ф.2-v3 (снос рукописного `NovaVtable_Time`): "Time" REMOVED
+    // from this list — Time теперь генерируется ЧЕРЕЗ ОБЩИЙ effect-codegen
+    // путь (`emit_effect_type`, тот же что user-эффекты), НЕ через
+    // hand-written struct в nova_rt/effects.h (которая снесена). Time
+    // declaration живёт в std/prelude/effects.nv (auto-imported в КАЖДЫЙ
+    // CU) — струкура/dispatch/handler-slot генерируются codegen'ом как для
+    // любого `type X effect {...}`. `#default_handler(Time)` теперь тоже в
+    // prelude (см. std/prelude/effects.nv `time_default`) — ambient-fallback
+    // (Time работает без явного `with`/`import`) больше не хардкод-C-путь,
+    // а ОБЫЧНЫЙ generic `#default_handler` механизм, просто зарегистрированный
+    // в ВСЕГДА-присутствующем prelude-модуле. "Fail" остаётся (владелец:
+    // Fail — сильно встроенный, хардкод намеренно НЕ трогается).
+    "Fail", "Mem", "TimerMetrics",
     // sync (sync_primitives.h): MemOrdering + sized atomics.
     // Plan 207 (2026-07-16 consolidation): AtomicPtr removed (int-proxy
     // duplicate, no generic [T] yet — Plan 103.7); Isize/Usize spellings
@@ -438,15 +451,17 @@ fn compute_dead_decls_with(module: &Module, enabled: bool) -> DeadDecls {
     let mut methods: Vec<(String, String, HashSet<String>)> = Vec::new();
     // Worklist seed: `main` is always a root.
     let mut worklist: Vec<String> = vec!["main".to_string()];
-    // Plan 175 Ф.2-v2: `#default_handler(X)` fns are referenced ONLY via a
-    // raw C-text fn-pointer assignment codegen emits into `main()`'s
-    // prologue (`_nova_time_default_ctor = &nova_fn_...;`) — invisible to
+    // Plan 175 Ф.2-v2 (Ф.2-v3: `_nova_time_default_ctor` special-case gone,
+    // seeding rationale unchanged): `#default_handler(X)` fns are referenced
+    // ONLY via a raw C-text fn-pointer assignment codegen emits INSIDE the
+    // generic `Nova_X_<op>()` dispatcher body (`emit_effect_type`,
+    // `if (!_nova_handler_X) { _nova_handler_X = ctor(); }`) — invisible to
     // `collect_used_names`'s AST walk, so without this seed a program that
-    // imports std.time but never calls a Time op by name (e.g. only via the
-    // `#default_handler` ctor's OWN body) would get its default-handler fn
-    // pruned as dead, leaving the fn-pointer assignment referencing an
-    // undefined symbol (mirrors the `main` seed above — this fn is always
-    // "called", just not through an AST `Call` node).
+    // never calls an effect op by name in a way DCE can see (e.g. only via
+    // the `#default_handler` ctor's OWN body) would get its default-handler
+    // fn pruned as dead, leaving the generated fn-pointer assignment
+    // referencing an undefined symbol (mirrors the `main` seed above — this
+    // fn is always "called", just not through an AST `Call` node).
     for it in &module.items {
         if let Item::Fn(f) = it {
             if f.doc_attrs.iter().any(|a| matches!(a, crate::ast::DocAttr::DefaultHandler(_))) {
@@ -6119,7 +6134,10 @@ impl CEmitter {
             // pre-registered effect_schemas + codegen helpers (no
             // runtime/effects.h dedicated struct, but emit-skip required
             // чтобы избежать conflict с declaration).
-            const BUILTIN_VTABLE_NAMES: &[&str] = &["Fail", "Time", "Mem", "TimerMetrics"];
+            // Plan 175 Ф.2-v3: "Time" removed — no longer a hand-written
+            // vtable (см. RUNTIME_DEFINED_TYPES comment above); flows through
+            // `local_effects` (declared in module.items via prelude) instead.
+            const BUILTIN_VTABLE_NAMES: &[&str] = &["Fail", "Mem", "TimerMetrics"];
             // [M-codegen-emission-nondeterminism] fix: same HashSet-order issue as
             // `external_names` above — sort before emitting.
             let mut vtable_names_sorted: Vec<String> = vtable_names.into_iter().collect();
@@ -16292,10 +16310,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .map(|(n, p)| (n.as_str(), p.as_slice()))
             .collect();
 
+        // Plan 175 Ф.2-v3: "Time" is the ONE narrow exception — its
+        // `NovaVtable_Time` struct + `_nova_handler_Time` TLS slot stay
+        // hand-declared in nova_rt/effects.h/.c (see the doc comment there):
+        // hand-written C consumers OUTSIDE codegen (nova_rt/channels.h
+        // `ChanReader.close_after` mock-time path, nova_rt/runtime.c
+        // worker-thread TLS registration) dereference `_nova_handler_Time`'s
+        // fields directly and are compiled ONCE (not per-CU), so they need a
+        // single stable named type — an anonymous struct emitted fresh into
+        // each generated CU can't serve that (and would typedef-redefinition
+        // conflict with effects.h's). Steps 1+2 below are skipped for Time;
+        // step 3 (dispatch functions) stays fully generic either way.
+        let emit_struct_and_slot = name != "Time";
+
         // 1. Vtable struct: one fn ptr per method, plus void* ctx
-        self.line(&format!("typedef struct {{"));
-        self.indent += 1;
-        self.line("void* ctx;");
+        if emit_struct_and_slot {
+            self.line(&format!("typedef struct {{"));
+            self.indent += 1;
+            self.line("void* ctx;");
+        }
         let mut schema: HashMap<String, (Vec<String>, String)> = HashMap::new();
         for (m, (_, param_c_types)) in methods.iter().zip(method_param_c.iter()) {
             let ret = match &m.return_type {
@@ -16303,29 +16336,52 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 Some(t) => self.type_ref_to_c(t)?,
             };
             let mangled = Self::mangle_op(&m.name, param_c_types, &all_method_pairs);
-            let mut param_types_with_ctx = vec!["void*".to_string()]; // ctx first
-            param_types_with_ctx.extend(param_c_types.iter().cloned());
-            let params_sig = param_types_with_ctx.join(", ");
-            self.line(&format!("{} (*{})({}); ", ret, mangled, params_sig));
+            if emit_struct_and_slot {
+                let mut param_types_with_ctx = vec!["void*".to_string()]; // ctx first
+                param_types_with_ctx.extend(param_c_types.iter().cloned());
+                let params_sig = param_types_with_ctx.join(", ");
+                self.line(&format!("{} (*{})({}); ", ret, mangled, params_sig));
+            }
             schema.insert(mangled.clone(), (param_c_types.clone(), ret));
         }
-        self.indent -= 1;
-        self.line(&format!("}} NovaVtable_{};", name));
-        self.line("");
+        if emit_struct_and_slot {
+            self.indent -= 1;
+            self.line(&format!("}} NovaVtable_{};", name));
+            self.line("");
 
-        // 2. Thread-local handler slot.
-        self.line("#ifdef _MSC_VER");
-        self.line(&format!(
-            "__declspec(thread) NovaVtable_{name}* _nova_handler_{name} = NULL;",
-            name = name
-        ));
-        self.line("#else");
-        self.line(&format!(
-            "__thread NovaVtable_{name}* _nova_handler_{name} = NULL;",
-            name = name
-        ));
-        self.line("#endif");
-        self.line("");
+            // 2. Thread-local handler slot.
+            self.line("#ifdef _MSC_VER");
+            self.line(&format!(
+                "__declspec(thread) NovaVtable_{name}* _nova_handler_{name} = NULL;",
+                name = name
+            ));
+            self.line("#else");
+            self.line(&format!(
+                "__thread NovaVtable_{name}* _nova_handler_{name} = NULL;",
+                name = name
+            ));
+            self.line("#endif");
+            self.line("");
+        }
+
+        // Plan 175 Ф.2-v3 [ordering-fix]: `emit_effect_type` runs during the
+        // TYPE-decl emission pass, which happens EARLY in the generated
+        // file — well before the `#default_handler` ctor free-fn's own
+        // forward declaration (emitted later, in the fn-decl pass). The
+        // ensure-default check below calls the ctor by mangled name; without
+        // an explicit prototype HERE first, C falls back to an implicit
+        // `int fn()` declaration at the call site, which then conflicts with
+        // the REAL `NovaVtable_X*`-returning prototype emitted downstream
+        // ("conflicting types for ..."). Emit a matching forward decl now —
+        // harmless if a compatible one appears again later (repeat
+        // prototypes are fine in C; only *conflicting* ones error).
+        if let Some(fn_name) = self.default_handler_fns.get(name).cloned() {
+            let ctor_c_name = self.free_fn_c_name(&fn_name);
+            self.line(&format!(
+                "{storage}NovaVtable_{name}* {ctor}(void);",
+                storage = self.top_level_storage(), name = name, ctor = ctor_c_name,
+            ));
+        }
 
         // 3. Dispatch helpers: Nova_Effect_method() calls through vtable
         for (m, (_, param_c_types)) in methods.iter().zip(method_param_c.iter()) {
@@ -26427,7 +26483,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line(&format!("{}void _nova_register_all_effects_(void) {{", self.top_level_storage()));
         self.indent += 1;
         self.line("nova_register_effect_storage((void**)&_nova_handler_Fail);");
-        self.line("nova_register_effect_storage((void**)&_nova_handler_Time);");
+        // Plan 175 Ф.2-v3: "Time" registration MOVED into the generic
+        // `emit_user_effect_registrations` loop below — Time is no longer a
+        // hardcoded builtin vtable (см. RUNTIME_DEFINED_TYPES/BUILTIN_VTABLE_
+        // NAMES comments), so its `_nova_handler_Time` is registered exactly
+        // like any user effect's handler slot.
         // User-defined effects — additional calls emitted here:
         self.emit_user_effect_registrations();
         self.indent -= 1;
@@ -26492,20 +26552,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         //  emit_main_function via emit_effects_registrar_fn.)
         self.line("_nova_register_effects_fn = _nova_register_all_effects_;");
         self.line("_nova_register_all_effects_();");
-        // Plan 175 Ф.2-v2 (`#default_handler`): wire the ONE effect-specific
-        // runtime hook that exists today — `_nova_time_default_ctor`
-        // (nova_rt/effects.c declares it `= NULL`; fibers.h's `Nova_Time_*`
-        // dispatch wrappers lazily call it on first use with no `with Time =
-        // …` bound). Generic front-end (any effect may carry
-        // `#default_handler` — validated by `check_default_handlers`),
-        // narrow per-effect back-end — the next migrated effect adds an
-        // analogous one-line hook here, not a new mechanism. A CU with no
-        // `#default_handler(Time)` fn leaves the hook NULL — unchanged
-        // real-clock fallback behaviour (backward-compat).
-        if let Some(fn_name) = self.default_handler_fns.get("Time").cloned() {
-            let c_name = self.free_fn_c_name(&fn_name);
-            self.line(&format!("_nova_time_default_ctor = &{};", c_name));
-        }
+        // Plan 175 Ф.2-v3: the standalone `_nova_time_default_ctor` runtime
+        // hook (Ф.2-v2 special-case) is GONE — Time now goes through the
+        // fully generic `#default_handler` mechanism baked directly into
+        // each `Nova_Time_<op>()` dispatcher body by `emit_effect_type`
+        // (same lazy-install-once pattern any other `#default_handler`
+        // effect gets — see the `default_handler_fns.get(name)` check
+        // inside `emit_effect_type`). No per-effect wiring needed here
+        // anymore; `#default_handler(Time)` now lives in
+        // std/prelude/effects.nv (always in scope — ambient fallback
+        // without import), so every CU registers it uniformly.
         // Plan 173 Ф.5 п.2 (D192-ретракт): __CLEANUP_TIMEOUT_INIT__ удалён.
         // Plan 174 (D349): assign typed TimeoutError throw fn pointer (if
         // TimeoutError referenced). Spliced via __SCOPE_TIMEOUT_INIT__.
@@ -26566,7 +26622,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Skip built-ins (зарегистрированы явно ИЛИ direct-C без handler-slot'а).
             // Plan 175 Ф.1: TimerMetrics — direct-C introspection (как Mem), нет
             // `_nova_handler_TimerMetrics`-слота → регистрировать нечего.
-            if name == "Fail" || name == "Time" || name == "Mem" || name == "TimerMetrics" { continue; }
+            // Plan 175 Ф.2-v3: "Time" REMOVED from skip-list — теперь generic
+            // effect (emit_effect_type generates `_nova_handler_Time` same as
+            // any user effect), значит ОБЯЗАН per-fiber TLS registration как
+            // все прочие (иначе `with Time = ...` не изолируется между
+            // fiber'ами на одном OS-thread — [M-83.10.1-per-fiber-handler-
+            // tls-race] класс бага). "Fail" зарегистрирован явно отдельно
+            // (см. `_nova_handler_Fail` в effects.h/emit_main_wrapper).
+            if name == "Fail" || name == "Mem" || name == "TimerMetrics" { continue; }
             self.line(&format!(
                 "nova_register_effect_storage((void**)&_nova_handler_{});", name));
         }

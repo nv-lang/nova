@@ -24,15 +24,25 @@
 //   RUNTIME_DEFINED_EFFECTS (emit_c.rs RUNTIME_DEFINED_TYPES extension),
 //   потому что `NovaVtable_Fail` уже определён в nova_rt/effects.h.
 //
-// **Plan 62.F.bis Ф.3 (2026-05-18, this commit):**
+// **Plan 62.F.bis Ф.3 (2026-05-18, this commit); ПЕРЕСМОТРЕНО Plan 175
+// Ф.2-v3 (2026-07-22, снос рукописного Time-диспатча):**
 //
-// - **`Time`** — formal declaration ниже. Hardcoded codegen
-//   pre-registration `effect_schemas["Time"]` (emit_c.rs:1077-1081)
-//   остаётся неизменной — declaration здесь даёт canonical API surface
-//   для `nova doc` + AI tooling. Codegen skip'ает emit_effect_type
-//   через RUNTIME_DEFINED_TYPES (emit_c.rs:5021+) и
-//   BUILTIN_VTABLE_NAMES (emit_c.rs:1231) — `NovaVtable_Time`
-//   pre-existing в nova_rt.
+// - **`Time`** — formal declaration ниже, ЕДИНСТВЕННЫЙ источник схемы
+//   (`effect_schemas["Time"]` строится codegen'ом ИЗ этой декларации —
+//   никакого хардкод-зеркала). Dispatch-функции (`Nova_Time_sleep` и
+//   т.д.) генерируются ЧЕРЕЗ ОБЩИЙ `emit_effect_type` путь — ТОТ ЖЕ, что
+//   у user-эффектов (не hand-written в nova_rt/fibers.h больше). Узкое
+//   исключение: сам typedef `NovaVtable_Time` + TLS-слот
+//   `_nova_handler_Time` остаются hand-written в nova_rt/effects.h/.c —
+//   nova_rt/channels.h (`ChanReader.close_after` mock-time path) и
+//   nova_rt/runtime.c (worker-thread TLS registration) — hand-written C
+//   ВНЕ codegen, компилируемый ОДИН раз (не per-CU) — трогают поля
+//   `_nova_handler_Time->sleep`/`->ctx` напрямую, значит нужен единый
+//   стабильный named-struct-тип (anonymous per-CU struct не подошёл бы).
+//   `#default_handler(Time)` (`time_default`, см. ниже, сразу после
+//   декларации) даёт ambient-fallback (Time работает без `with`/import) —
+//   ОБЫЧНЫЙ generic-механизм, просто зарегистрированный в ВСЕГДА-
+//   присутствующем prelude-модуле (не хардкод-C-путь, как было).
 //
 //   **Что включено в декларацию:**
 //     - `sleep(ms int) -> ()` — yield/sleep current fiber.
@@ -129,12 +139,17 @@ export type Fail[E] effect {
 ///     (emit_c.rs:1080) и работает; formal declaration появится когда
 ///     `Chan[T]` будет доступен в prelude.
 ///
-/// **Единый источник схемы (Plan 175 Ф.1, D316):** эта декларация —
-/// ЕДИНСТВЕННЫЙ источник `effect_schemas["Time"]`; codegen читает её из
-/// `.nv` (emit_type_decl / RUNTIME_DEFINED_TYPES-ветка строит схему из
-/// методов), а не из хардкода. Skip struct/vtable emission через
-/// RUNTIME_DEFINED_TYPES + BUILTIN_VTABLE_NAMES — `NovaVtable_Time` живёт
-/// в nova_rt/effects.h. Int-провод (`now_unix_ms()->int` /
+/// **Единый источник схемы (Plan 175 Ф.1, D316; dispatch-generic с Ф.2-v3):**
+/// эта декларация — ЕДИНСТВЕННЫЙ источник `effect_schemas["Time"]`; codegen
+/// читает её из `.nv` (`emit_type_decl` → `emit_effect_type`, ТОТ ЖЕ generic
+/// путь что user-эффекты), а не из хардкода. Dispatch-функции
+/// (`Nova_Time_sleep` и т.д.) генерируются ИЗ ЭТОЙ схемы напрямую — больше
+/// не hand-written в nova_rt/fibers.h. Узкое исключение (не архитектурная
+/// дыра): сам struct-тип `NovaVtable_Time` + TLS-слот `_nova_handler_Time`
+/// остаются hand-written в nova_rt/effects.h/.c — nova_rt/channels.h
+/// (`ChanReader.close_after`) и nova_rt/runtime.c трогают их поля напрямую
+/// из hand-written C, компилируемого ОДИН раз (не per-CU), и нуждаются в
+/// одном стабильном named-типе. Int-провод (`now_unix_ms()->int` /
 /// `now_monotonic_ns()->int` / `sleep(ms int)`) сохраняется в Ф.1 без
 /// смены поведения; типизация (`timestamp()->Timestamp` /
 /// `monotonic()->Monotonic` / `sleep(Duration)`) — Ф.2/Ф.3.
@@ -169,6 +184,38 @@ export type Time effect {
     now_unix_ms() -> int
     now_monotonic_ns() -> int
     local_offset_sec() -> int
+}
+
+// Plan 175 Ф.2-v3 (снос ambient-C-fallback, D316/D-default_handler):
+// раньше "нет with Time = ..." → dispatch падал на С-хардкод внутри
+// hand-written Nova_Time_* wrapper'ов (nova_rt/fibers.h). Теперь дефолт —
+// ОБЫЧНАЯ .nv handler-фабрика прямо ЗДЕСЬ, в prelude (a НЕ в
+// std/time/duration/core.nv, куда её изначально поместили Ф.2-v2) —
+// prelude auto-import'ится в КАЖДЫЙ CU (`is_prelude_self_module`), значит
+// ambient-Time (работает БЕЗ `with`, БЕЗ явного import std.time — как
+// Random, не Fail) больше не зависит от того, попал ли `time.duration`
+// модуль в этот конкретный compile-unit. Компилятор лениво (по первому
+// использованию, без with) конструирует и устанавливает её РОВНО ОДИН РАЗ
+// на поток (см. generic install-once check внутри `Nova_Time_<op>()`,
+// emit_c.rs `emit_effect_type`) — явный `with Time = ...` по-прежнему
+// переопределяет как раньше. Тело — тонкие `extern "C"` примитивы поверх
+// РЕАЛЬНЫХ часов/таймера (nova_rt/fibers.h): scheduler-aware sleep
+// (fiber-park / drain / bootstrap-block) + uv-часы. ZERO-imports (prelude
+// constraint) — `extern "C" fn` декларации имён уже существующих в
+// nova_rt C-символов, импорт не нужен.
+extern "C" fn _nova_wall_unix_ms() -> int
+extern "C" fn _nova_monotonic_ns() -> int
+extern "C" fn _nova_local_offset_sec() -> int
+extern "C" fn _nova_time_default_sleep(ms int) -> ()
+
+#default_handler(Time)
+fn time_default() -> Effect[Time] {
+    effect Time {
+        sleep(ms) => _nova_time_default_sleep(ms)
+        now_unix_ms() => _nova_wall_unix_ms()
+        now_monotonic_ns() => _nova_monotonic_ns()
+        local_offset_sec() => _nova_local_offset_sec()
+    }
 }
 
 /// **TimerMetrics-effect** — read-only introspection timer-runtime

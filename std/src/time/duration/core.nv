@@ -714,31 +714,16 @@ export fn Duration @to_human() -> str {
 // не плодить расходящиеся зеркала. int-провод (`now()->int`) сохраняется в
 // Ф.1; типизация (`timestamp()->Timestamp`, `(Duration).sleep()`) — Ф.2/Ф.3.
 
-// Plan 175 Ф.2-v2 (`#default_handler`, D-блок 04-effects.md): раньше
-// "нет with Time = ..." → dispatch падал на С-хардкод ВНУТРИ каждого
-// Nova_Time_* wrapper'а (nova_rt/fibers.h). Теперь дефолт — ОБЫЧНАЯ .nv
-// handler-фабрика, помеченная `#default_handler(Time)`; компилятор лениво
-// (по первому использованию, без with) конструирует и устанавливает её
-// РОВНО ОДИН РАЗ на поток (см. `_nova_time_ensure_default` в fibers.h) —
-// явный `with Time = ...` по-прежнему переопределяет как раньше. Тело —
-// тонкие extern "C" примитивы поверх РЕАЛЬНЫХ часов/таймера (прежде
-// зашитых прямо в С-диспетчер): механизм GENERIC (любой `type X effect`
-// может получить `#default_handler(X)`), но лишь `Time` реально проводит
-// его через runtime-хук этой волной (Fs/Net/Os — следующий шаг).
-extern "C" fn _nova_wall_unix_ms() -> int
-extern "C" fn _nova_monotonic_ns() -> int
-extern "C" fn _nova_local_offset_sec() -> int
-extern "C" fn _nova_time_default_sleep(ms int) -> ()
-
-#default_handler(Time)
-fn time_default() -> Effect[Time] {
-    effect Time {
-        sleep(ms) => _nova_time_default_sleep(ms)
-        now_unix_ms() => _nova_wall_unix_ms()
-        now_monotonic_ns() => _nova_monotonic_ns()
-        local_offset_sec() => _nova_local_offset_sec()
-    }
-}
+// Plan 175 Ф.2-v3 (2026-07-22): `#default_handler(Time)` (`time_default`)
+// MOVED to std/prelude/effects.nv, сразу после декларации `type Time
+// effect {...}` — prelude auto-import'ится в КАЖДЫЙ CU, значит ambient
+// Time (работает без `with`/явного `import std.time`, как Random, не
+// Fail) больше не зависит от того, попал ли ЭТОТ модуль (time.duration)
+// транзитивно в конкретный compile-unit. Раньше (Ф.2-v2) фабрика жила
+// здесь и полагалась на hardcoded C-fallback (nova_rt/fibers.h
+// `Nova_Time_*`) для CU, что её не тянули — тот fallback снесён (Ф.2-v3
+// снос рукописного Time-диспатча), так что единственный источник
+// ambient-поведения теперь — always-present prelude default handler.
 
 
 // Plan 200 Step 2 (D410/D317 amend): int/f64 per-width fluent constructors
