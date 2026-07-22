@@ -24,10 +24,76 @@ import {
     RevealOutputChannelOn,
     ErrorAction,
     CloseAction,
+    State,
 } from 'vscode-languageclient/node';
 
 let client: LanguageClient | undefined;
 let outputChannel: vscode.OutputChannel;
+
+// ─────────────────────────────────────────────────────────────
+// [M-lsp-didclose-after-stream-destroyed] guard
+// ─────────────────────────────────────────────────────────────
+//
+// Symptom: Output > Nova LSP logs
+//   [Error] Sending document notification textDocument/didClose failed.
+//   Error: Cannot call write after a stream was destroyed
+// on document close / window reload / config-change restart.
+//
+// Root cause (vscode-languageclient 9.0.1, node_modules/vscode-languageclient/
+// lib/common/textSynchronization.js + client.js — third-party, not ours to
+// patch): DidOpenTextDocumentFeature/DidChangeTextDocumentFeature/
+// DidSaveTextDocumentFeature/DidCloseTextDocumentFeature forward
+// vscode.workspace.onDid{Open,Change,Save,Close}TextDocument straight into
+// `client.sendNotification(...)` with no check that the client is still
+// State.Running, and client.shutdown()/handleConnectionClosed() don't await
+// in-flight sends before calling connection.end()/dispose(). Any document
+// event that fires in that window (our own stop()/restart(), extension
+// deactivate(), a window reload closing many documents at once, or the
+// server process exiting on its own) reaches a transport whose stream is
+// already destroyed. The library's own unguarded
+// `.catch(error => this._client.error(...))` then surfaces it as a
+// top-level Output-panel Error, even though — from the client's point of
+// view — it's an expected race during shutdown/restart, not a functional
+// failure (the document being reported closed is, in fact, closed).
+//
+// Fix (client-side only — this file is the only lever we have over a
+// third-party dependency): guard every outgoing document-sync notification
+// through `guardedDocumentSend`, wired in via `clientOptions.middleware`
+// below.
+//   1. Skip the send outright when `client.state !== State.Running` —
+//      covers the common, easily-reproduced cases (our stop()/restart(),
+//      deactivate(), window-teardown cascades).
+//   2. If a send is still attempted (state was Running a moment ago, but
+//      the connection died between the check and the actual write — e.g.
+//      the server process exited independently), swallow the rejection
+//      ourselves and log it at info level. Because `guardedDocumentSend`'s
+//      own promise never rejects, vscode-languageclient's outer
+//      `.catch(() => this._client.error(...))` has nothing left to catch,
+//      so the scary Error line never appears for this known race.
+function isClientRunning(): boolean {
+    return client !== undefined && client.state === State.Running;
+}
+
+function guardedDocumentSend<T>(
+    method: string,
+    data: T,
+    next: (data: T) => Promise<void>
+): Promise<void> {
+    if (!isClientRunning()) {
+        outputChannel?.appendLine(
+            `[Nova] Skipping ${method} notification — LSP client is not running ` +
+            '(shutting down or restarting).'
+        );
+        return Promise.resolve();
+    }
+    return next(data).catch((error: unknown) => {
+        outputChannel?.appendLine(
+            `[Nova] ${method} notification could not be delivered — server connection ` +
+            'closed mid-send. Expected during shutdown/restart, not a functional error: ' +
+            `${error instanceof Error ? error.message : String(error)}`
+        );
+    });
+}
 
 // ─────────────────────────────────────────────────────────────
 // Extension lifecycle
@@ -142,6 +208,15 @@ async function startClient(context: vscode.ExtensionContext): Promise<void> {
             workspaceFolders:
                 vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [],
         },
+        // [M-lsp-didclose-after-stream-destroyed]: guard document-sync notifications
+        // against sending on a client that is no longer Running (see the block comment
+        // above `isClientRunning`/`guardedDocumentSend`).
+        middleware: {
+            didOpen: (document, next) => guardedDocumentSend('didOpen', document, next),
+            didChange: (event, next) => guardedDocumentSend('didChange', event, next),
+            didSave: (document, next) => guardedDocumentSend('didSave', document, next),
+            didClose: (document, next) => guardedDocumentSend('didClose', document, next),
+        },
         // Auto-restart on crash: up to 3 errors, then shutdown with user message
         errorHandler: {
             error(
@@ -194,7 +269,22 @@ async function startClient(context: vscode.ExtensionContext): Promise<void> {
 async function stopClient(): Promise<void> {
     if (client) {
         try {
-            await client.stop();
+            // [M-lsp-didclose-after-stream-destroyed] defense in depth: the
+            // vscode-languageclient default stop() grace period is a hardcoded
+            // 2000ms (lib/common/client.js `stop(timeout = 2000)`) before it
+            // force-kills the server process — too tight on a large/warm
+            // workspace (nova-lsp's own 2026-07-20 investigation, see
+            // docs/plans/wip/lsp-write-fix-notes.md, found this exact grace
+            // period being blown by a still-running cold scan and traced the
+            // resulting force-kill to this same "Cannot call write after a
+            // stream was destroyed" symptom). nova-lsp already gates its own
+            // background sends on `shutting_down` so it now exits promptly,
+            // but a wider timeout costs nothing and further reduces the odds
+            // of ever reaching a force-kill in the first place. The
+            // `guardedDocumentSend` middleware above is the primary guard —
+            // this is a belt-and-suspenders reduction of how often it has
+            // anything to guard against.
+            await client.stop(5000);
         } catch {
             // ignore stop-time errors
         }
