@@ -1429,6 +1429,27 @@ export type Permit consume { ptr int }
 
 /// Guard returned by `Once.start()`. Consume-typed: must call `.commit()` or `.abort()`.
 ///
+/// **Plan 217.1 (D432 rollout) — considered and rejected for auto-`@cleanup`.**
+/// Unlike `MutexGuard`/`ReadGuard`/`WriteGuard`/`Permit`/`TcpStream` (a single
+/// idempotent release action, safe to silently auto-run), `OnceGuard`'s two
+/// discharge methods are NOT interchangeable: `.commit()` permanently
+/// transitions `Once` to `DONE` (skips setup forever after), `.abort()` to
+/// `POISONED` (all future callers re-panic). D432's auto-cleanup can only
+/// react to `ScopeOutcome` (`Success`/`Failure`/`Panic`), not to *why* a
+/// `Success`-looking path never reached `.commit()` — e.g. an early `return`
+/// after a non-throwing failure check would auto-resolve to `Success` and
+/// silently `.commit()` a `Once` whose setup never actually completed, a
+/// permanent, unrecoverable false-positive (no code path ever retries a
+/// `DONE` `Once`). Contrast `Transaction`/`Db` (D432's own canonical
+/// `@cleanup` example): a spurious auto-`commit()` there just costs a later,
+/// recoverable rollback — `OnceGuard` has no such safety net. Kept strictly
+/// linear (D133): the explicit `.commit()`/`.abort()` choice stays mandatory.
+/// Separately, a real fiber panic before either call today leaks the `Once`
+/// in `IN_PROGRESS` forever (deadlocks all waiters) — a pre-existing gap,
+/// NOT closed by this rollout (would need an asymmetric "auto-abort-only-on-
+/// Failure/Panic, still-mandatory-explicit-on-Success" mechanism that
+/// `Cleanup[never]`'s single uniform method can't express).
+///
 /// # Examples
 ///
 /// ```nova
