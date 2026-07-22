@@ -1,10 +1,15 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # План 222 (зонтик) — nova-http до Axum-паритета: audit-driven переработка, не тонкий слой
 
-**Статус:** 📋 ЗОНТИК, ДИЗАЙН, НЕ СОГЛАСОВАН (реструктурирован после ревью владельца 2026-07-22:
-«ServeMux нулевой — брать из Axum, возможно удалить; пройтись по ВСЕМ блокам; если хуже — делаем
-по образу Axum; serde использовать по максимуму и докрутить до оригинала»). Ждёт owner-go на
-под-планы.
+**Статус:** 🔨 В РАБОТЕ (owner-go 2026-07-22: «старт до тегов»). Волна A ВЫПОЛНЕНА в ветках:
+222.1 Router ГОТОВ (p222-1-router, 34/34 server-тестов, −2 pre-existing FAIL), 222.2/serde на
+финальных гейтах (p180-serde-field-attrs; всё кроме flatten — тот гейтнут [M-180-serde-flatten]),
+222.6 ✅ принят, 222.7 фаза 1 ГОТОВА в ветке (p222-7-policy-surface; live-тесты заблокированы
+4 компиляторными багами → 221.1 Ф.2 №7-10, окно «222.7-блокеры» после serde-влития).
+**Влитие Router = одна волна с влитием serde + миграцией флагмана на новый стек** (флагман сидит
+на ServeMux — раздельное влитие сломало бы интеграционный гейт §9). Прекондишн зелёного
+пакетного гейта nova-http — волна «пакет под свежий компилятор» (221.1 Ф.2 №11: 5 красных
+дрейф-тестов ДО всех правок 222).
 **Приоритет:** ниже релиза 221. **Пакет:** `nova-http` (внешний git-репо) + компилятор (для serde).
 **Родитель:** [178](178-std-http.md) (http umbrella) + [180](180-serde-derive.md) (serde — 222.2 = его
 продолжение).
@@ -16,7 +21,7 @@ extract-слой. Аудит показал — местами фундамен�
 
 | Блок | Что РЕАЛЬНО (код) | vs Axum | Решение |
 |---|---|---|---|
-| **Routing (ServeMux)** | линейный `for r in routes` O(n)/запрос; `{param}` ТОЛЬКО 1 сегмент; НЕТ `{*wildcard}`; **first-match по порядку регистрации** (не Go-1.22-precedence — док врёт); нет групп/nesting; нет middleware | trie-router, wildcards, precedence, nested, MethodRouter, layers | **ПЕРЕДЕЛАТЬ С НУЛЯ по Axum (222.1); ServeMux ретайр/фасад** |
+| **Routing (ServeMux)** | линейный `for r in routes` O(n)/запрос; `{param}` ТОЛЬКО 1 сегмент; НЕТ `{*wildcard}`; **first-match по порядку регистрации** (не Go-1.22-precedence — док врёт); нет групп/nesting; нет middleware | trie-router, wildcards, precedence, nested, MethodRouter, layers | **ПЕРЕДЕЛАТЬ С НУЛЯ по Axum (222.1); ServeMux РЕТАЙР без фасада (решение владельца 2026-07-22)** — ✅ сделано в p222-1-router |
 | **Handler** | `fn(ServerRequest)->ServerResponse` newtype (server.nv:329) | ровно то, во что Axum-Handler стирается | **фундамент ОК, оставить**; эргономика — поверх |
 | **ServerResponse** | text/html/bytes/empty/redirect/stream/sse/header | приличный набор, но нет `IntoResponse`, нет `.json(T)` | **расширить (222.5), не сносить** |
 | **serde** | derive record/sum + tag-режимы; формат — JSON | **НЕТ rename/rename_all/skip/default/flatten** (180 их спроектировал, не дошил) | **докрутить до Rust-паритета (222.2)** |
@@ -55,7 +60,7 @@ extract-слой. Аудит показал — местами фундамен�
 
 ## 2. Под-план 222.1 — Router с нуля (Axum-модель)
 
-**ServeMux ретайрится** (или остаётся как `Router.flat()`-совместимость-фасад — решить на Ф.0).
+**ServeMux ретайрится БЕЗ фасада** (решение владельца 2026-07-22; выполнено).
 Новый `Router`:
 - **Segment-trie** (не линейный скан): узлы — литерал / `{param}` / `{*rest}`-catch-all; O(глубина пути),
   не O(число маршрутов).
@@ -91,7 +96,7 @@ default/flatten — эталон»), но `SerdeArg` (ast/mod.rs) довёз Т�
 | **`default`** | field | опциональные поля запроса | 🔴 |
 | **`skip` / `skip_serializing_if`** | field | не слать null/пустое | 🟠 |
 | **`alias`** | field | принять несколько входных имён | 🟠 |
-| **`flatten`** | field | слить вложенный record (pagination-обёртки) | 🟠 |
+| **`flatten`** | field | слить вложенный record (pagination-обёртки) | 🟠 — гейтнут `[M-180-serde-flatten]` (companion-синтез, отдельная волна; грамматика+валидация уже есть) |
 | `deny_unknown_fields` | container | строгий вход | 🟢 (частично есть по 180 §87) |
 
 **Где Nova может СДЕЛАТЬ ЛУЧШЕ Rust-serde (не только паритет — требование владельца «что можно лучше»):**
