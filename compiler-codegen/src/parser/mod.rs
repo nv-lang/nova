@@ -1953,22 +1953,26 @@ impl Parser {
                 "default_handler" => {
                     self.bump(); // #
                     self.bump(); // default_handler
-                    let eff_span = self.peek().span;
-                    if !matches!(self.peek().kind, TokenKind::LParen) {
-                        return Err(Diagnostic::new(
-                            "expected `(EffectName)` after `#default_handler`", eff_span,
-                        ));
-                    }
-                    self.bump(); // (
-                    let eff_name = match &self.peek().kind {
-                        TokenKind::Ident(n) => n.clone(),
-                        _ => return Err(Diagnostic::new(
-                            "expected an effect type name inside `#default_handler(...)`",
-                            self.peek().span,
-                        )),
+                    // Plan 175.2 Ф.2-v4 (П7, D431): `(EffectName)` is now
+                    // OPTIONAL — bare `#default_handler` infers the effect
+                    // from the decorated fn's `-> Effect[X]` return type
+                    // (checker-side, `check_default_handlers`). Explicit
+                    // `(EffectName)` form still parses unchanged.
+                    let eff_name = if matches!(self.peek().kind, TokenKind::LParen) {
+                        self.bump(); // (
+                        let name = match &self.peek().kind {
+                            TokenKind::Ident(n) => n.clone(),
+                            _ => return Err(Diagnostic::new(
+                                "expected an effect type name inside `#default_handler(...)`",
+                                self.peek().span,
+                            )),
+                        };
+                        self.bump(); // Ident
+                        self.expect(&TokenKind::RParen)?;
+                        Some(name)
+                    } else {
+                        None
                     };
-                    self.bump(); // Ident
-                    self.expect(&TokenKind::RParen)?;
                     DocAttr::DefaultHandler(eff_name)
                 }
                 _ => break, // не наш — другому parser'у
@@ -10426,6 +10430,18 @@ impl Parser {
                 }
             }
             self.expect(&TokenKind::RParen)?;
+            // Plan 175.2 Ф.2-v4 (П4): optional `-> Type` after the param
+            // list — parsed for BOTH callers (`effect X {...}` handler-
+            // literals AND `protocol P {...}` method-impls), stored as
+            // `Option<TypeRef>`. Mandatory-ness (E_INCOMPLETE_HANDLER_OP_DECL)
+            // is a CHECKER rule (`check_handler_op_declarations`) scoped ONLY
+            // to `HandlerLit` — `ProtocolLit` method-impls stay optional
+            // here (unchanged, out of scope for this D-амендмент).
+            let ret_ty = if self.eat(&TokenKind::Arrow).is_some() {
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
             let body = match self.peek().kind {
                 TokenKind::FatArrow => {
                     self.bump();
@@ -10447,6 +10463,7 @@ impl Parser {
             methods.push(HandlerMethod {
                 name: mname,
                 params,
+                ret_ty,
                 body,
                 span: mspan.merge(end),
             });

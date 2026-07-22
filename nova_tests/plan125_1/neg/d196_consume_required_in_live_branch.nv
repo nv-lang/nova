@@ -32,7 +32,7 @@ fn drive(c bool, k int) Fail -> int {
 
 test "D196 divergent-then + Cleanup-else compiles + runs on happy path" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro n = drive(false, 11)
         assert(n == 11)

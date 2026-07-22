@@ -4111,7 +4111,7 @@ static inline void _nova_cancel_via_driver(NovaFiberQueue* scope) {
  *    invariant violated).
  *
  * `ms <= 0` → single yield (compatibility with `Time.sleep(0)` idiom). */
-static inline nova_unit time_default_sleep(nova_int ms) {
+static inline nova_unit time_sleep_ms(nova_int ms) {
     /* Plan 110.2.2.a (D188 R3 + D192): cleanup-deadline gate before
      * suspending. Если scope-cleanup shield active и deadline уже
      * exceeded — throw сразу без park'а (иначе fiber бы спал N ms
@@ -4208,7 +4208,7 @@ static inline nova_unit time_default_sleep(nova_int ms) {
  * std/prelude/effects.nv `Time`, включая lazy `#default_handler` install-once проверку
  * инлайн в теле каждого диспатчера.
  *
- * `time_default_sleep` выше ОСТАЁТСЯ — это тонкий `extern "C"`
+ * `time_sleep_ms` выше ОСТАЁТСЯ — это тонкий `extern "C"`
  * sleep-ПРИМИТИВ (scheduler-aware: fiber-park / drain / bootstrap-block),
  * вызываемый из ВСЕГДА-присутствующего `.nv` default handler'a
  * (std/prelude/effects.nv `time_default`) точно так же, как `time_wall_unix_ms`/

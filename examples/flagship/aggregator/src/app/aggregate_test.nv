@@ -234,11 +234,11 @@ test "aggregate: Emit fires lane_started exactly once per source" {
     ro { tx, rx } = Channel.new(16)
     with Net = mock_net() {
         with Emit = effect Emit {
-            lane_started(_id str, _idx int) { ro _ = tx.try_send(1) }
-            lane_done(_id str, _elapsed_ms int) {}
-            lane_failed(_id str, _err str, _elapsed_ms int) {}
-            lane_cancelled(_id str, _elapsed_ms int) {}
-            swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) {}
+            lane_started(_id str, _idx int) -> () { ro _ = tx.try_send(1) }
+            lane_done(_id str, _elapsed_ms int) -> () {}
+            lane_failed(_id str, _err str, _elapsed_ms int) -> () {}
+            lane_cancelled(_id str, _elapsed_ms int) -> () {}
+            swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) -> () {}
         } {
             ro _ = aggregate(tiny_sources(), 120.to_millis())
         }
@@ -263,11 +263,11 @@ test "aggregate: Emit lane outcomes tally exactly like the settled Report" {
     ro { tx, rx } = Channel.new(16)
     with Net = mock_net() {
         with Emit = effect Emit {
-            lane_started(_id str, _idx int) {}
-            lane_done(_id str, _elapsed_ms int)             { ro _ = tx.try_send(1) }   // done
-            lane_failed(_id str, _err str, _elapsed_ms int) { ro _ = tx.try_send(2) }   // failed
-            lane_cancelled(_id str, _elapsed_ms int)        { ro _ = tx.try_send(3) }   // cancelled
-            swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) {}
+            lane_started(_id str, _idx int) -> () {}
+            lane_done(_id str, _elapsed_ms int) -> () { ro _ = tx.try_send(1) }   // done
+            lane_failed(_id str, _err str, _elapsed_ms int) -> () { ro _ = tx.try_send(2) }   // failed
+            lane_cancelled(_id str, _elapsed_ms int) -> () { ro _ = tx.try_send(3) }   // cancelled
+            swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) -> () {}
         } {
             ro report = aggregate(tiny_sources(), 120.to_millis())
             tx.close()
@@ -310,11 +310,11 @@ test "aggregate: Emit swarm_done matches the returned Report, fires once" {
     mut sequential_ms = 0
     with Net = mock_net() {
         with Emit = effect Emit {
-            lane_started(_id str, _idx int) {}
-            lane_done(_id str, _elapsed_ms int) {}
-            lane_failed(_id str, _err str, _elapsed_ms int) {}
-            lane_cancelled(_id str, _elapsed_ms int) {}
-            swarm_done(f int, d int, fl int, c int, w int, s int) {
+            lane_started(_id str, _idx int) -> () {}
+            lane_done(_id str, _elapsed_ms int) -> () {}
+            lane_failed(_id str, _err str, _elapsed_ms int) -> () {}
+            lane_cancelled(_id str, _elapsed_ms int) -> () {}
+            swarm_done(f int, d int, fl int, c int, w int, s int) -> () {
                 fired += 1
                 fanout = f
                 done = d
@@ -342,11 +342,11 @@ test "aggregate: source past deadline fires lane_cancelled, nothing else" {
     ro { tx, rx } = Channel.new(4)
     with Net = mock_net() {
         with Emit = effect Emit {
-            lane_started(_id str, _idx int) {}
-            lane_done(_id str, _elapsed_ms int)             { ro _ = tx.try_send(1) }   // done
-            lane_failed(_id str, _err str, _elapsed_ms int) { ro _ = tx.try_send(2) }   // failed
-            lane_cancelled(_id str, _elapsed_ms int)        { ro _ = tx.try_send(3) }   // cancelled
-            swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) {}
+            lane_started(_id str, _idx int) -> () {}
+            lane_done(_id str, _elapsed_ms int) -> () { ro _ = tx.try_send(1) }   // done
+            lane_failed(_id str, _err str, _elapsed_ms int) -> () { ro _ = tx.try_send(2) }   // failed
+            lane_cancelled(_id str, _elapsed_ms int) -> () { ro _ = tx.try_send(3) }   // cancelled
+            swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) -> () {}
         } {
             ro srcs []Source = [Source.new("slow", "", 1, 300, false)]
             ro _ = aggregate(srcs, 40.to_millis())

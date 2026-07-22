@@ -110,7 +110,7 @@ export fn mock_io(mut cap IoCapture) -> Effect[Io] {
     // `nova_int`, so `data.len()` would be typed on `int` without the annotation
     // (Plan 65 Ф.1 handler-body codegen note, see std/testing/handlers.nv).
     effect Io {
-        read_in(buf mut []u8) {
+        read_in(buf mut []u8) -> Result[int, IoError] {
             ro want = buf.len()
             ro rem = cap.input.len() - cap.in_pos
             if want == 0 || rem <= 0 { return Ok(0) }
@@ -123,11 +123,11 @@ export fn mock_io(mut cap IoCapture) -> Effect[Io] {
             cap.in_pos = cap.in_pos + n
             Ok(n)
         }
-        write_out(data []u8) {
+        write_out(data []u8) -> Result[int, IoError] {
             cap.out.append(data)
             Ok(data.len())
         }
-        write_err(data []u8) {
+        write_err(data []u8) -> Result[int, IoError] {
             cap.err.append(data)
             Ok(data.len())
         }
@@ -144,23 +144,28 @@ extern "C" fn io_read_fd(fd int, buf *mut u8, len int) -> int
 /// Real console `Io` handler: `write_out`/`write_err` go to stdout/stderr,
 /// `read_in` reads from stdin, via the fd hooks. A negative hook result maps to
 /// `IoError.from_os(-rc)`. Install with `with Io = real_io() { … }`.
+///
+/// Plan 175.2 Ф.2-v4 (П9, D431 amend): `#default_handler` (bare form, П7) —
+/// `Io` now auto-constructs (lazily, once per thread) on first transitive
+/// use with no enclosing `with Io = …`, consistent with `Time`/`real_time()`.
 #stable(since = "0.1")
+#default_handler
 export fn real_io() -> Effect[Io] {
     effect Io {
-        read_in(buf mut []u8) {
+        read_in(buf mut []u8) -> Result[int, IoError] {
             ro want = buf.len()
             if want == 0 { return Ok(0) }
             ro rc = unsafe { io_read_fd(0, buf.ptr(), want) }
             if rc < 0 { return Err(IoError.from_os(0 - rc, "read")) }
             Ok(rc)
         }
-        write_out(data []u8) {
+        write_out(data []u8) -> Result[int, IoError] {
             if data.len() == 0 { return Ok(0) }
             ro rc = unsafe { io_write_fd(1, data.ptr(), data.len()) }
             if rc < 0 { return Err(IoError.from_os(0 - rc, "write")) }
             Ok(rc)
         }
-        write_err(data []u8) {
+        write_err(data []u8) -> Result[int, IoError] {
             if data.len() == 0 { return Ok(0) }
             ro rc = unsafe { io_write_fd(2, data.ptr(), data.len()) }
             if rc < 0 { return Err(IoError.from_os(0 - rc, "write")) }

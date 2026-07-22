@@ -14,7 +14,7 @@ fn rank(c bool) Fail -> int {
 
 test "never subtype of int via throw branch" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro n = rank(false)
         assert(n == 42)

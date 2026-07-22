@@ -12,7 +12,7 @@
 module neg.handler_sleep_neg
 test "suspend-операция (метод .sleep()) в Supervisor-хендлере отвергается" {
     with Supervisor = effect Supervisor {
-        on_child_fail(idx, err) {
+        on_child_fail(idx, err) -> Decision {
             (100).to_millis().sleep()
             Decision.Escalate
         }

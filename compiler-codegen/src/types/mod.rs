@@ -1905,6 +1905,10 @@ fn check_module_impl(
     // `check_default_handlers` below.
     check_default_handlers(module, &mut errors);
 
+    // Plan 175.2 Ф.2-v4 (П4, D-амендмент): handler-literal op declarations
+    // must be fully typed (`-> Type` mandatory, must match effect schema).
+    check_handler_op_declarations(module, &mut errors);
+
     // Plan 172.1 U.3.4: lift the per-call resolved-callee channel (call-site `ExprId` →
     // chosen callee `FnDecl` span) out of the checker into the `ModuleEnv` so the pipeline
     // hands it to codegen. ADDITIVE substrate — codegen does not read it yet (U.4.3), so
@@ -37436,6 +37440,25 @@ fn ffi_validate_c_fnptr_occurrences(
 /// positive (rejecting a legal program) is far preferable to a false
 /// negative (missing a real cycle), and ctor bodies are simple setup code
 /// in practice.
+/// Plan 175.2 Ф.2-v4 (П7, D431): extract `X` out of a `-> Effect[X]` return
+/// type (same shape `check_default_handlers`'s `ret_ok` match already
+/// requires) — used to infer the effect name for a BARE `#default_handler`
+/// (no explicit `(EffectName)` argument). `None` if `rt` isn't shaped like
+/// `Effect[<Named>]` at all (caller reports a dedicated diagnostic then).
+fn default_handler_infer_effect_name(rt: &Option<crate::ast::TypeRef>) -> Option<String> {
+    match rt {
+        Some(crate::ast::TypeRef::Named { path, generics, .. })
+            if path.len() == 1 && path[0] == "Effect" && generics.len() == 1 =>
+        {
+            match &generics[0] {
+                crate::ast::TypeRef::Named { path: ip, .. } => ip.last().cloned(),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn check_default_handlers(module: &crate::ast::Module, errors: &mut Vec<Diagnostic>) {
     use crate::ast::{DocAttr, FnDecl, Item, TypeDeclKind};
 
@@ -37473,8 +37496,29 @@ pub(crate) fn check_default_handlers(module: &crate::ast::Module, errors: &mut V
     let mut registry: HashMap<String, Vec<&FnDecl>> = HashMap::new();
     for f in &all_fns {
         for attr in &f.doc_attrs {
-            if let DocAttr::DefaultHandler(eff) = attr {
-                registry.entry(eff.clone()).or_default().push(f);
+            if let DocAttr::DefaultHandler(eff_opt) = attr {
+                // Plan 175.2 Ф.2-v4 (П7, D431): bare `#default_handler`
+                // (no `(EffectName)`) infers the effect from `f`'s own
+                // `-> Effect[X]` return type — DRY (the explicit name was
+                // always redundant with the return type). If inference
+                // fails (no return type / wrong shape), emit a dedicated
+                // diagnostic right here (can't build a registry key without
+                // a name) instead of silently dropping the fn.
+                match eff_opt.clone().or_else(|| default_handler_infer_effect_name(&f.return_type)) {
+                    Some(eff) => { registry.entry(eff).or_default().push(f); }
+                    None => {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_DEFAULT_HANDLER_RETURN_TYPE] bare `#default_handler` on \
+                                 `{name}` — cannot infer the effect: fn must return exactly \
+                                 `Effect[X]` for SOME declared effect type `X` (or write the \
+                                 explicit form `#default_handler(X)`).",
+                                name = f.name,
+                            ),
+                            f.span,
+                        ));
+                    }
+                }
             }
         }
     }
@@ -37615,6 +37659,340 @@ pub(crate) fn check_default_handlers(module: &crate::ast::Module, errors: &mut V
                 }
             }
         }
+    }
+}
+
+/// Plan 175.2 Ф.2-v4 (П4, D-амендмент): handler-literal (`effect X {...}`)
+/// ops MUST fully declare their return type (`op(params) -> Type => body`) —
+/// the only incomplete-declaration form left in the language (`fn`/effect-
+/// decl ops/`#impl` are always fully typed). Mandatory ONLY for
+/// `HandlerLit` (effect handlers) — `ProtocolLit` method-impls are
+/// unaffected (out of scope, unchanged parser leniency).
+///
+/// Two diagnostics:
+///   - `E_INCOMPLETE_HANDLER_OP_DECL` — op has no `-> Type` at all.
+///   - `E_HANDLER_OP_RETURN_TYPE_MISMATCH` — declared `-> Type` doesn't
+///     structurally match the effect's own op signature (`typeref_equal`;
+///     an effect op with NO declared return type means implicit `()`).
+///
+/// Conservative by design: only fires when the effect name AND the op name
+/// both resolve to a known `type X effect { ... }` declaration in this CU —
+/// an unresolved effect/op is left to other diagnostics (unknown-effect/
+/// unknown-op are a different concern, not this pass's job).
+pub(crate) fn check_handler_op_declarations(module: &crate::ast::Module, errors: &mut Vec<Diagnostic>) {
+    use crate::ast::{EffectMethod, FnBody, Item, TypeDeclKind};
+
+    let mut seen_type_spans: HashSet<crate::diag::Span> = HashSet::new();
+    let mut effect_decls: HashMap<String, Vec<EffectMethod>> = HashMap::new();
+    let mut all_item_lists: Vec<&[Item]> = vec![&module.items];
+    for pf in &module.peer_files {
+        all_item_lists.push(&pf.items_here);
+    }
+    for items in &all_item_lists {
+        for it in *items {
+            if let Item::Type(td) = it {
+                if let TypeDeclKind::Effect(methods) = &td.kind {
+                    if seen_type_spans.insert(td.span) {
+                        effect_decls.insert(td.name.clone(), methods.clone());
+                    }
+                }
+            }
+        }
+    }
+    if effect_decls.is_empty() { return; }
+
+    let mut seen_fn_spans: HashSet<crate::diag::Span> = HashSet::new();
+    let mut seen_test_spans: HashSet<crate::diag::Span> = HashSet::new();
+    for items in &all_item_lists {
+        for it in *items {
+            match it {
+                Item::Fn(f) => {
+                    if !seen_fn_spans.insert(f.span) { continue; }
+                    match &f.body {
+                        FnBody::Block(b) => walk_block_for_handler_op_decls(b, &effect_decls, errors),
+                        FnBody::Expr(e) => walk_expr_for_handler_op_decls(e, &effect_decls, errors),
+                        FnBody::External => {}
+                    }
+                }
+                Item::Test(t) => {
+                    if seen_test_spans.insert(t.span) {
+                        walk_block_for_handler_op_decls(&t.body, &effect_decls, errors);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// `effect_ret` — `None` means the effect op has no explicit `-> Type`
+/// (implicit `()`). `handler_ret` is always `Some` by the time this is
+/// called (mandatory-ness already gated by the caller).
+fn handler_op_ret_matches(handler_ret: &crate::ast::TypeRef, effect_ret: Option<&crate::ast::TypeRef>) -> bool {
+    match effect_ret {
+        Some(t) => typeref_equal(handler_ret, t),
+        None => matches!(handler_ret, crate::ast::TypeRef::Unit(_)),
+    }
+}
+
+fn walk_block_for_handler_op_decls(
+    b: &Block,
+    effect_decls: &HashMap<String, Vec<crate::ast::EffectMethod>>,
+    errors: &mut Vec<Diagnostic>,
+) {
+    for s in &b.stmts {
+        match s {
+            Stmt::Let(decl) => walk_expr_for_handler_op_decls(&decl.value, effect_decls, errors),
+            Stmt::Const(_) => {}
+            Stmt::Expr(e) => walk_expr_for_handler_op_decls(e, effect_decls, errors),
+            Stmt::Assign { target, value, .. } => {
+                walk_expr_for_handler_op_decls(target, effect_decls, errors);
+                walk_expr_for_handler_op_decls(value, effect_decls, errors);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value { walk_expr_for_handler_op_decls(v, effect_decls, errors); }
+            }
+            Stmt::Throw { value, .. } => walk_expr_for_handler_op_decls(value, effect_decls, errors),
+            Stmt::Defer { body, .. } => walk_expr_for_handler_op_decls(body, effect_decls, errors),
+            Stmt::ConsumeScope { init, body, .. } => {
+                walk_expr_for_handler_op_decls(init, effect_decls, errors);
+                walk_block_for_handler_op_decls(body, effect_decls, errors);
+            }
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_for_handler_op_decls(expr, effect_decls, errors),
+            Stmt::Break(_) | Stmt::Continue(_) => {}
+            Stmt::Apply { args, .. } => {
+                for a in args { walk_expr_for_handler_op_decls(a, effect_decls, errors); }
+            }
+            Stmt::Calc { steps, .. } => {
+                for step in steps { walk_expr_for_handler_op_decls(&step.expr, effect_decls, errors); }
+            }
+            Stmt::Reveal { .. } => {}
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { walk_expr_for_handler_op_decls(e, effect_decls, errors); }
+                for e in rhs { walk_expr_for_handler_op_decls(e, effect_decls, errors); }
+            }
+        }
+    }
+    if let Some(t) = &b.trailing { walk_expr_for_handler_op_decls(t, effect_decls, errors); }
+}
+
+fn walk_expr_for_handler_op_decls(
+    e: &Expr,
+    effect_decls: &HashMap<String, Vec<crate::ast::EffectMethod>>,
+    errors: &mut Vec<Diagnostic>,
+) {
+    match &e.kind {
+        ExprKind::ProtocolLit { methods, .. } => {
+            // Out of scope (D-амендмент covers effect handler-literals
+            // only) — still recurse into bodies for nested HandlerLits.
+            for m in methods {
+                match &m.body {
+                    HandlerMethodBody::Expr(ex) => walk_expr_for_handler_op_decls(ex, effect_decls, errors),
+                    HandlerMethodBody::Block(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+                }
+            }
+        }
+        ExprKind::HandlerLit { effect_name, methods } => {
+            let eff_last = effect_name.last().cloned().unwrap_or_default();
+            if let Some(schema_methods) = effect_decls.get(&eff_last) {
+                for m in methods {
+                    if let Some(op_decl) = schema_methods.iter().find(|em| em.name == m.name) {
+                        match &m.ret_ty {
+                            None => {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_INCOMPLETE_HANDLER_OP_DECL] handler-literal op \
+                                         `{eff}.{op}` is missing its return type — handler-op \
+                                         declarations must be FULLY typed (Plan 175.2 Ф.2-v4 \
+                                         П4): write `{op}(...) -> {rt} => ...`, matching the \
+                                         effect's own `{eff}` declaration.",
+                                        eff = eff_last, op = m.name,
+                                        rt = op_decl.return_type.as_ref()
+                                            .map(|t| render_type_ref(t))
+                                            .unwrap_or_else(|| "()".to_string()),
+                                    ),
+                                    m.span,
+                                ));
+                            }
+                            Some(rt) => {
+                                if !handler_op_ret_matches(rt, op_decl.return_type.as_ref()) {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_HANDLER_OP_RETURN_TYPE_MISMATCH] handler-literal \
+                                             op `{eff}.{op}` declares return type `{got}`, but the \
+                                             effect's own declaration says `{want}` — handler-op \
+                                             signatures must match the effect schema exactly.",
+                                            eff = eff_last, op = m.name,
+                                            got = render_type_ref(rt),
+                                            want = op_decl.return_type.as_ref()
+                                                .map(|t| render_type_ref(t))
+                                                .unwrap_or_else(|| "()".to_string()),
+                                        ),
+                                        rt.span(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            for m in methods {
+                match &m.body {
+                    HandlerMethodBody::Expr(ex) => walk_expr_for_handler_op_decls(ex, effect_decls, errors),
+                    HandlerMethodBody::Block(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+                }
+            }
+        }
+        ExprKind::Block(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+        ExprKind::With { bindings, body } => {
+            for bd in bindings { walk_expr_for_handler_op_decls(&bd.handler, effect_decls, errors); }
+            walk_block_for_handler_op_decls(body, effect_decls, errors);
+        }
+        ExprKind::If { cond, then, else_ } => {
+            walk_expr_for_handler_op_decls(cond, effect_decls, errors);
+            walk_block_for_handler_op_decls(then, effect_decls, errors);
+            match else_ {
+                Some(ElseBranch::Block(b)) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+                Some(ElseBranch::If(e2)) => walk_expr_for_handler_op_decls(e2, effect_decls, errors),
+                None => {}
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            walk_expr_for_handler_op_decls(scrutinee, effect_decls, errors);
+            walk_block_for_handler_op_decls(then, effect_decls, errors);
+            match else_ {
+                Some(ElseBranch::Block(b)) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+                Some(ElseBranch::If(e2)) => walk_expr_for_handler_op_decls(e2, effect_decls, errors),
+                None => {}
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            walk_expr_for_handler_op_decls(scrutinee, effect_decls, errors);
+            for a in arms {
+                match &a.body {
+                    MatchArmBody::Expr(ex) => walk_expr_for_handler_op_decls(ex, effect_decls, errors),
+                    MatchArmBody::Block(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+                }
+                if let Some(g) = &a.guard { walk_expr_for_handler_op_decls(g, effect_decls, errors); }
+            }
+        }
+        ExprKind::For { iter, body, .. } => {
+            walk_expr_for_handler_op_decls(iter, effect_decls, errors);
+            walk_block_for_handler_op_decls(body, effect_decls, errors);
+        }
+        ExprKind::While { cond, body, .. } | ExprKind::WhileLet { scrutinee: cond, body, .. } => {
+            walk_expr_for_handler_op_decls(cond, effect_decls, errors);
+            walk_block_for_handler_op_decls(body, effect_decls, errors);
+        }
+        ExprKind::Loop { body, .. } => walk_block_for_handler_op_decls(body, effect_decls, errors),
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                match &arm.op {
+                    SelectOp::Recv { chan, .. } => walk_expr_for_handler_op_decls(chan, effect_decls, errors),
+                    SelectOp::Send { chan, value } => {
+                        walk_expr_for_handler_op_decls(chan, effect_decls, errors);
+                        walk_expr_for_handler_op_decls(value, effect_decls, errors);
+                    }
+                    SelectOp::Default => {}
+                }
+                if let Some(g) = &arm.guard { walk_expr_for_handler_op_decls(g, effect_decls, errors); }
+                walk_block_for_handler_op_decls(&arm.body, effect_decls, errors);
+            }
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            walk_block_for_handler_op_decls(body, effect_decls, errors);
+        }
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+        ExprKind::Supervised { body, cancel, deadline } => {
+            if let Some(c) = cancel { walk_expr_for_handler_op_decls(c, effect_decls, errors); }
+            if let Some(dl) = deadline { walk_expr_for_handler_op_decls(&dl.expr, effect_decls, errors); }
+            walk_block_for_handler_op_decls(body, effect_decls, errors);
+        }
+        ExprKind::Spawn(ex) => walk_expr_for_handler_op_decls(ex, effect_decls, errors),
+        ExprKind::ParallelFor { iter, body, .. } => {
+            walk_expr_for_handler_op_decls(iter, effect_decls, errors);
+            walk_block_for_handler_op_decls(body, effect_decls, errors);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            walk_expr_for_handler_op_decls(func, effect_decls, errors);
+            for a in args { walk_expr_for_handler_op_decls(a.expr(), effect_decls, errors); }
+            if let Some(tr) = trailing {
+                match tr {
+                    Trailing::Block(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+                    Trailing::Fn(fsb) => match &fsb.body {
+                        FnBody::Block(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+                        FnBody::Expr(e2) => walk_expr_for_handler_op_decls(e2, effect_decls, errors),
+                        FnBody::External => {}
+                    },
+                    Trailing::LegacyBlockWithParams(tb) => walk_block_for_handler_op_decls(&tb.body, effect_decls, errors),
+                }
+            }
+        }
+        ExprKind::Binary { left, right, .. } => {
+            walk_expr_for_handler_op_decls(left, effect_decls, errors);
+            walk_expr_for_handler_op_decls(right, effect_decls, errors);
+        }
+        ExprKind::Unary { operand, .. } => walk_expr_for_handler_op_decls(operand, effect_decls, errors),
+        ExprKind::Coalesce(a, b) => {
+            walk_expr_for_handler_op_decls(a, effect_decls, errors);
+            walk_expr_for_handler_op_decls(b, effect_decls, errors);
+        }
+        ExprKind::As(e2, _) | ExprKind::Is(e2, _) => walk_expr_for_handler_op_decls(e2, effect_decls, errors),
+        ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } | ExprKind::TurboFish { base: obj, .. } => {
+            walk_expr_for_handler_op_decls(obj, effect_decls, errors);
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { walk_expr_for_handler_op_decls(s, effect_decls, errors); }
+            if let Some(e2) = end { walk_expr_for_handler_op_decls(e2, effect_decls, errors); }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => walk_expr_for_handler_op_decls(e2, effect_decls, errors),
+                }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            let pairs = crate::ast::MapElem::cloned_pairs(elems);
+            for (k, v) in pairs.iter() {
+                walk_expr_for_handler_op_decls(k, effect_decls, errors);
+                walk_expr_for_handler_op_decls(v, effect_decls, errors);
+            }
+        }
+        ExprKind::TupleLit(elems) => { for el in elems { walk_expr_for_handler_op_decls(el, effect_decls, errors); } }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields { if let Some(v) = &f.value { walk_expr_for_handler_op_decls(v, effect_decls, errors); } }
+        }
+        ExprKind::Throw(v) | ExprKind::Try(v) | ExprKind::Bang(v) | ExprKind::RefArg(v) | ExprKind::Interrupt(Some(v)) => {
+            walk_expr_for_handler_op_decls(v, effect_decls, errors);
+        }
+        ExprKind::Interrupt(None) => {}
+        ExprKind::Lambda { body, .. } => walk_expr_for_handler_op_decls(body, effect_decls, errors),
+        ExprKind::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(e2) => walk_expr_for_handler_op_decls(e2, effect_decls, errors),
+            ClosureBody::Block(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+        },
+        ExprKind::ClosureFull(fsb) => match &fsb.body {
+            FnBody::Block(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
+            FnBody::Expr(e2) => walk_expr_for_handler_op_decls(e2, effect_decls, errors),
+            FnBody::External => {}
+        },
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr { expr: e2, spec: _ } = p {
+                    walk_expr_for_handler_op_decls(e2, effect_decls, errors);
+                }
+            }
+        }
+        ExprKind::TaggedTemplate { .. } => {}
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            walk_expr_for_handler_op_decls(range, effect_decls, errors);
+            walk_expr_for_handler_op_decls(body, effect_decls, errors);
+        }
+        ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::CharLit(_) | ExprKind::StrLit(_)
+        | ExprKind::BoolLit(_) | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::UnitLit
+        | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit
+        | ExprKind::SelfAccess => {}
     }
 }
 

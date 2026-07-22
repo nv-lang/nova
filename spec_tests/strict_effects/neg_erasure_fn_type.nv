@@ -22,7 +22,7 @@ fn caller() -> int {
 
 fn main() {
     with Counter = effect Counter {
-        next() => 1
+        next() -> int => 1
     } {
         ro a = caller()
         println(a)

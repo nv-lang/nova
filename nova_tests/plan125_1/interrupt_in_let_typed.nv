@@ -7,7 +7,7 @@ module nova_tests.plan125_1
 
 fn classify1(c bool) -> int {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         // `let n int = if-expr с interrupt-в-branch` — never <: int.
         ro n int = if c {

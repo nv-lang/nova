@@ -12,7 +12,7 @@ type Logger1 effect {
 
 test "effect-литерал в ro-биндинге + with" {
     ro h = effect Logger1 {
-        log(msg) => ()
+        log(msg) -> () => ()
     }
     with Logger1 = h {
         Logger1.log("hello")
@@ -22,7 +22,7 @@ test "effect-литерал в ro-биндинге + with" {
 
 test "несколько с-with блоков с одним литералом" {
     ro h = effect Logger1 {
-        log(msg) => ()
+        log(msg) -> () => ()
     }
     ro r1 = with Logger1 = h { 1 }
     ro r2 = with Logger1 = h { 2 }

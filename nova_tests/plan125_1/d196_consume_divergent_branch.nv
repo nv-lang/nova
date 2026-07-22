@@ -29,7 +29,7 @@ fn use_guard(c bool) Fail -> int {
 
 test "D196 consume with divergent else compiles + works on happy path" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro n = use_guard(true)
         assert(n == 7)

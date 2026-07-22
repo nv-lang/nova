@@ -36,14 +36,17 @@ pub(crate) const RUNTIME_DEFINED_TYPES: &[&str] = &[
     // from this list — Time теперь генерируется ЧЕРЕЗ ОБЩИЙ effect-codegen
     // путь (`emit_effect_type`, тот же что user-эффекты), НЕ через
     // hand-written struct в nova_rt/effects.h (которая снесена). Time
-    // declaration живёт в std/prelude/effects.nv (auto-imported в КАЖДЫЙ
-    // CU) — струкура/dispatch/handler-slot генерируются codegen'ом как для
-    // любого `type X effect {...}`. `#default_handler(Time)` теперь тоже в
-    // prelude (см. std/prelude/effects.nv `time_default`) — ambient-fallback
-    // (Time работает без явного `with`/`import`) больше не хардкод-C-путь,
-    // а ОБЫЧНЫЙ generic `#default_handler` механизм, просто зарегистрированный
-    // в ВСЕГДА-присутствующем prelude-модуле. "Fail" остаётся (владелец:
-    // Fail — сильно встроенный, хардкод намеренно НЕ трогается).
+    // declaration живёт в `std/time/duration/time_effect.nv` (Plan 175.2
+    // Ф.2-v4 П6 moved it OUT of prelude — module name is irrelevant to this
+    // list/codegen path, keyed purely by the effect NAME "Time" regardless
+    // of which module declares it) — струкура/dispatch/handler-slot
+    // генерируются codegen'ом как для любого `type X effect {...}`.
+    // `#default_handler` (bare form, П7/D431; fn `real_time`, П8-rename) —
+    // ambient-fallback (Time работает без явного `with`/`import`) больше
+    // не хардкод-C-путь, а ОБЫЧНЫЙ generic `#default_handler` механизм;
+    // registration — compile-unit-wide (см. `check_default_handlers`), не
+    // требует prelude-резидентства. "Fail" остаётся (владелец: Fail —
+    // сильно встроенный, хардкод намеренно НЕ трогается).
     "Fail", "Mem", "TimerMetrics",
     // sync (sync_primitives.h): MemOrdering + sized atomics.
     // Plan 207 (2026-07-16 consolidation): AtomicPtr removed (int-proxy
@@ -4699,12 +4702,33 @@ impl CEmitter {
         // codegen just needs the plain Nova name to resolve its mangled C
         // symbol — consulted by `emit_effect_type`'s dispatch-wrapper below).
         {
+            // Plan 175.2 Ф.2-v4 (П7, D431): `#default_handler` argument is
+            // now optional — bare form infers `X` from `f`'s own
+            // `-> Effect[X]` return type (checker already validated this
+            // shape in `check_default_handlers`; codegen just re-derives
+            // the same string here, mirroring
+            // `default_handler_infer_effect_name` in types/mod.rs).
+            let infer_eff = |rt: &Option<crate::ast::TypeRef>| -> Option<String> {
+                match rt {
+                    Some(crate::ast::TypeRef::Named { path, generics, .. })
+                        if path.len() == 1 && path[0] == "Effect" && generics.len() == 1 =>
+                    {
+                        match &generics[0] {
+                            crate::ast::TypeRef::Named { path: ip, .. } => ip.last().cloned(),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                }
+            };
             let mut collect = |items: &[Item]| {
                 for item in items {
                     if let Item::Fn(f) = item {
                         for attr in &f.doc_attrs {
-                            if let crate::ast::DocAttr::DefaultHandler(eff) = attr {
-                                self.default_handler_fns.insert(eff.clone(), f.name.clone());
+                            if let crate::ast::DocAttr::DefaultHandler(eff_opt) = attr {
+                                if let Some(eff) = eff_opt.clone().or_else(|| infer_eff(&f.return_type)) {
+                                    self.default_handler_fns.insert(eff, f.name.clone());
+                                }
                             }
                         }
                     }
@@ -5882,11 +5906,14 @@ impl CEmitter {
 
         // Plan 175 Ф.1 (D316 — единый источник схемы): хардкод
         // `effect_schemas["Time"]` УДАЛЁН. `Time` (D11/D14/D62) объявлен в
-        // `std/prelude/effects.nv` — `emit_type_decl` (RUNTIME_DEFINED_TYPES
-        // ветка, TypeDeclKind::Effect) строит `effect_schemas["Time"]` из
-        // этой декларации (симметрично RuntimeError/MemOrdering sum-schema,
-        // 172.1 U.1). Единственный источник правды — `.nv`, без хардкод-
-        // зеркала. Int-провод сохранён (Ф.1 не меняет поведение):
+        // `std/time/duration/time_effect.nv` (Plan 175.2 Ф.2-v4 П6 —
+        // moved OUT of prelude; was `std/prelude/effects.nv` Ф.2-v2..Ф.3) —
+        // `emit_type_decl` (RUNTIME_DEFINED_TYPES ветка, TypeDeclKind::Effect)
+        // строит `effect_schemas["Time"]` из этой декларации (симметрично
+        // RuntimeError/MemOrdering sum-schema, 172.1 U.1) — module path is
+        // irrelevant to this lookup (keyed by effect NAME). Единственный
+        // источник правды — `.nv`, без хардкод-зеркала. Int-провод сохранён
+        // (Ф.1 не меняет поведение):
         // `sleep(ms int)->()`, `now_unix_ms()->int`, `now_monotonic_ns()->int`
         // (D316 amend, 2026-07-06: операции переименованы с единицей в
         // имени, owner-side-task вне формальной Ф-нумерации плана 175;
@@ -11537,6 +11564,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let synth_method = HandlerMethod {
             name: op_name,
             params: handler_params,
+            // Plan 175.2 Ф.2-v4 (П4): synthesized post-checker (D31 lambda-
+            // sugar desugar) — never walked by `check_handler_op_declarations`,
+            // so the mandatory-`ret_ty` rule doesn't apply here. Codegen
+            // resolves the real return type from `effect_schemas` regardless.
+            ret_ty: None,
             body: handler_body,
             span: handler.span,
         };
@@ -16650,7 +16682,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             arg = arg_name
                         ));
                         self.line(&format!(
-                            "return time_default_sleep((nova_int)(({arg}.nanos + 999999) / 1000000));",
+                            "return time_sleep_ms((nova_int)(({arg}.nanos + 999999) / 1000000));",
                             arg = arg_name
                         ));
                     }

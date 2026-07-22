@@ -14,7 +14,7 @@ fn pick_list(c bool) Fail -> []int {
 
 test "never subtype of list[int]" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro xs = pick_list(false)
         assert(xs.len() == 3)

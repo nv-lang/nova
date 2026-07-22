@@ -7,8 +7,8 @@
 module neg.defer_fail_err_interrupt_in_body
 fn process() -> int {
     ro x = with Time = effect Time {
-        sleep(_ms) { () }
-        now() { 0 }
+        sleep(_ms) -> () { () }
+        now() -> Timestamp { 0 }
         now_ms() { 0 }
         now_ns() { 0 }
     } {

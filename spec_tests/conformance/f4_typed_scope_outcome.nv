@@ -16,7 +16,7 @@ fn f4_throw_typed() Fail[F4Err] -> () {
 // Typed payload: body throws F4Err, defer narrows `err is F4Err` and reads .code.
 fn f4_run_typed() -> int {
     mut seen = 0
-    with Fail = effect Fail { fail(_m) { interrupt () } } {
+    with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
         defer(o ScopeOutcome) {
             match o {
                 Success      => ()
@@ -40,7 +40,7 @@ fn f4_throw_str() Fail -> () {
 // Bare-str payload: body throws a plain str, defer narrows `err is str`.
 fn f4_run_str() -> str {
     mut got = "none"
-    with Fail = effect Fail { fail(_m) { interrupt () } } {
+    with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
         defer(o ScopeOutcome) {
             match o {
                 Success      => ()
@@ -60,7 +60,7 @@ fn f4_run_str() -> str {
 // Negative narrowing: a typed F4Err is NOT a str.
 fn f4_run_typed_not_str() -> bool {
     mut is_str = true
-    with Fail = effect Fail { fail(_m) { interrupt () } } {
+    with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
         defer(o ScopeOutcome) {
             match o {
                 Success      => ()

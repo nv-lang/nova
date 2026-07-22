@@ -49,9 +49,9 @@ export type Emit effect {
 /// vtable, they just do nothing).
 #stable(since = "0.1")
 export fn null_emit() -> Effect[Emit] => effect Emit {
-    lane_started(_id str, _idx int) {}
-    lane_done(_id str, _elapsed_ms int) {}
-    lane_failed(_id str, _err str, _elapsed_ms int) {}
-    lane_cancelled(_id str, _elapsed_ms int) {}
-    swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) {}
+    lane_started(_id str, _idx int) -> () {}
+    lane_done(_id str, _elapsed_ms int) -> () {}
+    lane_failed(_id str, _err str, _elapsed_ms int) -> () {}
+    lane_cancelled(_id str, _elapsed_ms int) -> () {}
+    swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) -> () {}
 }

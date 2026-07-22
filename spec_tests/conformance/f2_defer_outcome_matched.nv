@@ -28,7 +28,7 @@ fn b2_run_success() -> str {
 // Failure-path: throw пойман with Fail → o = Failure (Zig-парность: payload доступен).
 fn b2_run_failure() -> str {
     mut trail = ""
-    with Fail = effect Fail { fail(_m) { interrupt () } } {
+    with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
         defer(o ScopeOutcome) {
             match o {
                 Success    => { trail += "S" }

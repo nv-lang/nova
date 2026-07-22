@@ -27,7 +27,7 @@ fn main() {
     // Базовый случай: handler с состоянием через return
     mut state = 0
     with Counter = effect Counter {
-        next() {
+        next() -> int {
             state += 1
             return state
         }
@@ -38,7 +38,7 @@ fn main() {
 
     // D61: interrupt прерывает with-блок
     ro r = with Switch = effect Switch {
-        flip() {
+        flip() -> bool {
             interrupt 999       // вместо bool отдаём int как результат всего with
         }
     } {
@@ -49,7 +49,7 @@ fn main() {
 
     // D61: handler-значение через переменную, прямой вызов h.op
     ro switcher = effect Switch {
-        flip() => true
+        flip() -> bool => true
     }
     ro b = switcher.flip()              // прямой вызов, минуя with
     println("direct flip = ", b)         // true

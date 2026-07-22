@@ -13,7 +13,7 @@ fn is_ready(c bool) Fail -> bool {
 
 test "never subtype of bool" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro b = is_ready(false)
         assert(b == true)

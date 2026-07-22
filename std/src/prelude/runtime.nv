@@ -210,7 +210,7 @@ extern "nova" fn println(...items []any) -> ()
 /// # Examples
 /// ```nova
 /// mut primary_code = 0
-/// with Fail[DbErr] = effect Fail[DbErr] { fail(e) { primary_code = e.code } } {
+/// with Fail[DbErr] = effect Fail[DbErr] { fail(e) -> never { primary_code = e.code } } {
 ///     do_tx()            // тело кинуло DbErr; @cleanup кинул Cleanup2
 /// }
 /// for s in suppressed() {          // == [Cleanup2]

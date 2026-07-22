@@ -12,7 +12,7 @@ fn pick10(c bool) Fail -> []int {
 
 test "list[int] in else" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro xs = pick10(false)
         assert(xs.len() == 3)

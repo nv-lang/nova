@@ -16,7 +16,7 @@ fn maybe_str(c bool) Fail -> str {
 
 test "typed let with divergent else compiles + works" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro s = maybe_str(true)
         assert(s == "ok")

@@ -37,7 +37,7 @@ fn use_effect_int() Clock1 -> str {
 }
 
 test "effect-op int result: correct typing, no foreign to_str interception" {
-    ro out = with Clock1 = effect Clock1 { tick() => 5 } {
+    ro out = with Clock1 = effect Clock1 { tick() -> int => 5 } {
         use_effect_int()
     }
     assert(out == "9")           // 5*2-1 = 9

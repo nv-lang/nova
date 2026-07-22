@@ -32,16 +32,16 @@ test "Plan 110.4.6.a + 173 Ф.5.2: Application Level-2 порог доходит
     mut observed_overrun = false
     mut observed_duration = -1
     with Application = effect Application {
-        register_finalizer(_f) {
+        register_finalizer(_f) -> () {
             return ()
         }
-        default_exit_timeout_ms() {
+        default_exit_timeout_ms() -> int {
             return 1
         }
     } {
         with ResourceTrace = effect ResourceTrace {
-            on_resource_enter(_label) { return () }
-            on_resource_exit(_label, _outcome, duration_ms, overrun) {
+            on_resource_enter(_label) -> () { return () }
+            on_resource_exit(_label, _outcome, duration_ms, overrun) -> () {
                 observed_duration = duration_ms
                 observed_overrun = overrun
                 return ()
@@ -62,8 +62,8 @@ test "Plan 110.4.6.a: no Application handler → Level 3 fallback 5000ms (overru
     mut observed_overrun = true
     mut observed_duration = -1
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, duration_ms, overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, duration_ms, overrun) -> () {
             observed_duration = duration_ms
             observed_overrun = overrun
             return ()

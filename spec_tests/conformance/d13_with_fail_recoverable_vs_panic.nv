@@ -17,7 +17,7 @@ fn d13_may_fail(trip bool) Fail[D13FailErr] -> int {
 
 test "with Fail: recoverable USER throw пойман → handler result (D13/173)" {
     ro caught = with Fail = effect Fail {
-        fail(_e) { interrupt (-1) }
+        fail(_e) -> never { interrupt (-1) }
     } {
         d13_may_fail(true)
     }
@@ -26,7 +26,7 @@ test "with Fail: recoverable USER throw пойман → handler result (D13/173
 
 test "with Fail: no-throw путь → нормальный результат (регресс-гард)" {
     ro ok = with Fail = effect Fail {
-        fail(_e) { interrupt (-1) }
+        fail(_e) -> never { interrupt (-1) }
     } {
         d13_may_fail(false)
     }

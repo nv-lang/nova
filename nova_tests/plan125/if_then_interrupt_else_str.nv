@@ -5,7 +5,7 @@ module nova_tests.plan125
 
 fn pick7(c bool) -> str {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         if c {
             throw "x"

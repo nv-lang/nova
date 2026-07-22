@@ -31,16 +31,16 @@ fn Res3 consume @cleanup(_outcome ScopeOutcome) -> () {
 test "Plan 110.4.7 A110.4.7.a: child fiber inherits Application via D80 snapshot" {
     mut child_overrun = false
     with Application = effect Application {
-        register_finalizer(_f) {
+        register_finalizer(_f) -> () {
             return ()
         }
-        default_exit_timeout_ms() {
+        default_exit_timeout_ms() -> int {
             return 1
         }
     } {
         with ResourceTrace = effect ResourceTrace {
-            on_resource_enter(_label) { return () }
-            on_resource_exit(_label, _outcome, _duration_ms, overrun) {
+            on_resource_enter(_label) -> () { return () }
+            on_resource_exit(_label, _outcome, _duration_ms, overrun) -> () {
                 child_overrun = overrun
                 return ()
             }

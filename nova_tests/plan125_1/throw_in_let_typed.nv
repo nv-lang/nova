@@ -15,7 +15,7 @@ fn pick3(c bool) Fail -> str {
 
 test "typed let with throw branch" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro s = pick3(true)
         assert(s == "fine")

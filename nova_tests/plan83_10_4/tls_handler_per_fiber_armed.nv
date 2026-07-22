@@ -26,8 +26,8 @@ module nova_tests.plan83_10_4
 
 fn get_time_a() -> int {
     with Time = effect Time {
-        sleep(_d) { return () }
-        now() { return 1001.to_unix_millis() }
+        sleep(_d) -> () { return () }
+        now() -> Timestamp { return 1001.to_unix_millis() }
     } {
         Timestamp.now().unix_millis()
     }
@@ -35,8 +35,8 @@ fn get_time_a() -> int {
 
 fn get_time_b() -> int {
     with Time = effect Time {
-        sleep(_d) { return () }
-        now() { return 2002.to_unix_millis() }
+        sleep(_d) -> () { return () }
+        now() -> Timestamp { return 2002.to_unix_millis() }
     } {
         Timestamp.now().unix_millis()
     }
@@ -44,8 +44,8 @@ fn get_time_b() -> int {
 
 fn get_time_c() -> int {
     with Time = effect Time {
-        sleep(_d) { return () }
-        now() { return 3003.to_unix_millis() }
+        sleep(_d) -> () { return () }
+        now() -> Timestamp { return 3003.to_unix_millis() }
     } {
         Timestamp.now().unix_millis()
     }
@@ -74,8 +74,8 @@ test "armed M:N — spawn inherits outer with-handler from parent" {
     // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
     mut got = AtomicInt.new(0)
     with Time = effect Time {
-        sleep(_d) { return () }
-        now() { return 7777.to_unix_millis() }
+        sleep(_d) -> () { return () }
+        now() -> Timestamp { return 7777.to_unix_millis() }
     } {
         supervised {
             spawn {
@@ -95,8 +95,8 @@ test "armed M:N — inner with overrides outer within same fiber" {
     mut outer_val = AtomicInt.new(0)
     mut inner_val = AtomicInt.new(0)
     with Time = effect Time {
-        sleep(_d) { return () }
-        now() { return 444.to_unix_millis() }
+        sleep(_d) -> () { return () }
+        now() -> Timestamp { return 444.to_unix_millis() }
     } {
         supervised {
             spawn { outer_val.store(Timestamp.now().unix_millis()) }             // inherits 444
@@ -118,8 +118,8 @@ test "armed M:N — fiber A handler does not affect fiber B" {
     supervised {
         spawn {
             with Time = effect Time {
-                sleep(_d) { return () }
-                now() { return 111.to_unix_millis() }
+                sleep(_d) -> () { return () }
+                now() -> Timestamp { return 111.to_unix_millis() }
             } {
                 got_a.store(Timestamp.now().unix_millis())
             }

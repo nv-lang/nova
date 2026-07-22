@@ -62,9 +62,19 @@ module time.duration
 /// **Plan 175 Ф.1b (D316):** `value`-record — stack-allocated, zero-GC.
 /// Single `i64 nanos` field → ABI-identical to a bare `int64_t` at the C
 /// boundary (sync-timeouts / channel-deadlines extract `.nanos`).
+///
+/// **Plan 175.2 Ф.2-v4 (П5, D220 per-field):** `nanos` is `priv` (module-
+/// private, not just type-private — bare `priv` on a field flips to
+/// module-scope per D281) since this wave — was `ro` (publicly
+/// constructible `{ nanos: ... }` from ANY module, letting external code
+/// assemble an arbitrary/invalid `Duration` by hand). Construct via the
+/// `to_*` fluent constructors below (`T.to_nanos()`/`to_millis()`/etc.) —
+/// all of which live in THIS module and keep working unchanged (module-
+/// private access, 07-modules §393). Reading the raw value is still public
+/// via the `@nanos()` accessor (unaffected — a method, not field access).
 #stable(since = "0.1")
 export type Duration value {
-    ro nanos i64
+    priv nanos i64
 }
 
 /// Zero duration — 0 nanoseconds. Useful как default / sentinel value.

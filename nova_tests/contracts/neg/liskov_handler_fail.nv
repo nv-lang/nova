@@ -12,7 +12,7 @@ type ConstEffect effect {
 
 test "liskov handler fail" {
     with #verify ConstEffect = effect ConstEffect {
-        get_ten() => 5
+        get_ten() -> int => 5
     } {
         ro r = ConstEffect.get_ten()
         assert(r == 5)

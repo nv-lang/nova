@@ -10,7 +10,7 @@ type Logger2_2 effect {
 
 
 fn console_logger() -> Effect[Logger2_2] => effect Logger2_2 {
-    log(msg) => ()
+    log(msg) -> () => ()
 }
 
 

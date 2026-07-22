@@ -354,7 +354,15 @@ pub enum DocAttr {
     /// same as today); an effect with no `#default_handler` keeps its
     /// prior default behaviour unchanged (opt-in per effect — see
     /// spec/decisions/04-effects.md D-block `#default_handler`).
-    DefaultHandler(String),
+    ///
+    /// Plan 175.2 Ф.2-v4 (П7, D431): the `(EffectName)` argument is now
+    /// OPTIONAL — `None` when written bare (`#default_handler`, no parens);
+    /// the checker (`check_default_handlers`) infers the effect name from
+    /// the fn's own `-> Effect[X]` return type instead (DRY — the name
+    /// was always redundant with the return type). `Some(name)` (explicit
+    /// form, unchanged) still overrides/cross-checks against the return
+    /// type as before.
+    DefaultHandler(Option<String>),
 }
 
 /// Функция: и свободная, и метод (через `receiver`).
@@ -2835,6 +2843,12 @@ pub enum HandlerVerification {
 pub struct HandlerMethod {
     pub name: String,
     pub params: Vec<HandlerMethodParam>,
+    /// Plan 175.2 Ф.2-v4 (П4, D-амендмент): explicit `-> Type` after the
+    /// param list. `None` for a `protocol P {...}` method-impl (unchanged,
+    /// return type inferred from the protocol contract) — mandatory ONLY
+    /// for `effect X {...}` handler-literal ops (checker enforces via
+    /// `check_handler_op_declarations`, E_INCOMPLETE_HANDLER_OP_DECL).
+    pub ret_ty: Option<TypeRef>,
     pub body: HandlerMethodBody,
     pub span: Span,
 }

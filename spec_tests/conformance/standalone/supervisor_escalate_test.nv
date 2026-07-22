@@ -10,6 +10,12 @@
 
 module standalone.supervisor_escalate_test
 import std.concurrency.supervisor as sup
+// Plan 175.2 Ф.2-v4 (П6): (5).to_millis() used to resolve without an
+// explicit import — an accidental side effect of Time (and its
+// Duration/Timestamp/Monotonic import) living in std.prelude.effects
+// (auto-imported into every CU). Now that Time moved to std.time.duration,
+// this file needs its own explicit import for the to_millis() blanket.
+import std.time.duration
 
 test "Supervisor=escalate: падение эскалируется — паритет с дефолтом" {
     mut caught = false
@@ -72,7 +78,7 @@ test "пользовательская политика: (idx, err)-narrowing + 
     mut seen_int = 0
     mut after_scope = 0
     with Supervisor = effect Supervisor {
-        on_child_fail(idx, err) {
+        on_child_fail(idx, err) -> Decision {
             // idx — валидный retention-слот; err — typed payload (int).
             assert(idx >= 0)
             assert(idx < n)
@@ -109,7 +115,7 @@ test "Escalate-with-error: throw в хендлере становится primar
         0
     } {
         with Supervisor = effect Supervisor {
-            on_child_fail(idx, err) {
+            on_child_fail(idx, err) -> Decision {
                 throw 7777    // Q-блок: Fail в хендлере = Escalate-with-error
             }
         } {

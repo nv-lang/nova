@@ -16,6 +16,12 @@
 // ENV NOVA_MAXPROCS=1
 
 module standalone.pos_max_fibers_concurrent
+// Plan 175.2 Ф.2-v4 (П6): (5).to_millis() used to resolve without an
+// explicit import — an accidental side effect of Time (and its
+// Duration/Timestamp/Monotonic import) living in std.prelude.effects
+// (auto-imported into every CU). Now that Time moved to std.time.duration,
+// this file needs its own explicit import for the to_millis() blanket.
+import std.time.duration
 test "NOVA_MAX_FIBERS=20000: 2000 concurrent fibers all woken by cancel" {
     ro tok = CancelToken.new()
     supervised(cancel: tok) {

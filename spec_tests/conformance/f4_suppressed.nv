@@ -52,7 +52,7 @@ fn mid_composes_c() Fail -> () {
 
 // ── #6: single suppressed materializes and narrows ──────────────────────────
 fn run_single() -> int {
-    with Fail = effect Fail { fail(_m) { interrupt () } } {
+    with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
         body_a_defer_b()
     }
     ro sup = suppressed()
@@ -65,14 +65,14 @@ fn run_single() -> int {
 
 // ── #7: order = chronological firing order [C, B] ───────────────────────────
 fn run_order_count() -> int {
-    with Fail = effect Fail { fail(_m) { interrupt () } } {
+    with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
         body_a_defers_bc()
     }
     suppressed().len()
 }
 
 fn run_order_first_is_c() -> bool {
-    with Fail = effect Fail { fail(_m) { interrupt () } } {
+    with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
         body_a_defers_bc()
     }
     ro sup = suppressed()
@@ -84,7 +84,7 @@ fn run_order_first_is_c() -> bool {
 }
 
 fn run_order_second_is_b() -> bool {
-    with Fail = effect Fail { fail(_m) { interrupt () } } {
+    with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
         body_a_defers_bc()
     }
     ro sup = suppressed()
@@ -93,7 +93,7 @@ fn run_order_second_is_b() -> bool {
 
 // ── #7: empty pocket when no cleanup fails ──────────────────────────────────
 fn run_empty() -> int {
-    with Fail = effect Fail { fail(_m) { interrupt () } } {
+    with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
         body_a_only()
     }
     suppressed().len()
@@ -101,7 +101,7 @@ fn run_empty() -> int {
 
 // ── #7: chain survives propagation through an intermediate frame ────────────
 fn run_rethrow() -> int {
-    with Fail = effect Fail { fail(_m) { interrupt () } } {
+    with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
         mid_composes_c()
     }
     suppressed().len()
@@ -111,11 +111,11 @@ fn run_rethrow() -> int {
 // First catch has suppressed [B]; a later, independent catch with no failing
 // cleanup must see an EMPTY pocket (reset-on-throw), not the leftover [B].
 fn run_no_leak() -> bool {
-    with Fail = effect Fail { fail(_m) { interrupt () } } {
+    with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
         body_a_defer_b()
     }
     ro c1 = suppressed().len()   // == 1
-    with Fail = effect Fail { fail(_m) { interrupt () } } {
+    with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
         body_a_only()
     }
     ro c2 = suppressed().len()   // == 0 (did not inherit [B])
@@ -144,7 +144,7 @@ fn run_typed_catch() -> int {
 // receives the same primary, and the cleanup failure composed during the
 // final unwind is still visible in the pocket.
 fn run_catch_rethrow() -> int {
-    with Fail = effect Fail { fail(_m) { interrupt () } } {
+    with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
         with Fail[SupA] = |e| throw e {
             body_a_defer_b()
             0

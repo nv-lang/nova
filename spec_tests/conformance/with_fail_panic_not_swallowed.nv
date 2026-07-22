@@ -21,7 +21,7 @@ fn wf_panics() Fail[WFErr] -> int {
 
 test "with fail panic not swallowed" panics "boom" {
     ro _r = with Fail = effect Fail {
-        fail(_m) { interrupt 0 }
+        fail(_m) -> never { interrupt 0 }
     } {
         wf_panics()
     }

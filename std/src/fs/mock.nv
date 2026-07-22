@@ -468,31 +468,31 @@ fn child_name(childkey str, dirkey str) -> str {
 #stable(since = "0.1")
 export fn mock_fs(mut fs MemFs) -> Effect[Fs] {
     effect Fs {
-        open(path []u8, flags int, mode int)      => fs.mem_open(path, flags, mode)
-        close(fd int)                             => fs.mem_close(fd)
-        read(fd int, buf mut []u8)                => fs.mem_read(fd, buf)
-        write(fd int, data []u8)                  => fs.mem_write(fd, data)
-        read_at(fd int, buf mut []u8, offset int) => fs.mem_read_at(fd, buf, offset)
-        write_at(fd int, data []u8, offset int)   => fs.mem_write_at(fd, data, offset)
-        seek(fd int, offset i64, whence int)      => fs.mem_seek(fd, offset, whence)
-        sync_all(fd int)                          => 0
-        sync_data(fd int)                         => 0
-        stat(path []u8, img mut []u8)             => fs.mem_stat(path, img)
-        lstat(path []u8, img mut []u8)            => fs.mem_stat(path, img)
-        fstat(fd int, img mut []u8)               => fs.mem_fstat(fd, img)
-        mkdir(path []u8, mode int)                => fs.mem_mkdir(path, mode)
-        remove_file(path []u8)                    => fs.mem_remove_file(path)
-        remove_dir(path []u8)                     => fs.mem_remove_dir(path)
-        rename(src []u8, dst []u8)                => fs.mem_rename(src, dst)
-        symlink(target []u8, link []u8)           => fs.mem_symlink(target, link)
-        chmod(path []u8, mode int)                => fs.mem_chmod(path, mode)
-        copy_file(src []u8, dst []u8)             => fs.mem_copy(src, dst)
-        fsync_dir(path []u8)                      => 0
-        scandir_open(path []u8)                   => fs.mem_scandir_open(path)
-        scandir_next(h int)                       => fs.mem_scandir_next(h)
-        scandir_name(h int)                       => fs.mem_scandir_name(h)
-        scandir_kind(h int)                       => fs.mem_scandir_kind(h)
-        scandir_close(h int)                      => fs.mem_scandir_close(h)
-        realpath(path []u8)                       => fs.mem_realpath(path)
+        open(path []u8, flags int, mode int) -> int => fs.mem_open(path, flags, mode)
+        close(fd int) -> int => fs.mem_close(fd)
+        read(fd int, buf mut []u8) -> int => fs.mem_read(fd, buf)
+        write(fd int, data []u8) -> int => fs.mem_write(fd, data)
+        read_at(fd int, buf mut []u8, offset int) -> int => fs.mem_read_at(fd, buf, offset)
+        write_at(fd int, data []u8, offset int) -> int => fs.mem_write_at(fd, data, offset)
+        seek(fd int, offset i64, whence int) -> i64 => fs.mem_seek(fd, offset, whence)
+        sync_all(fd int) -> int => 0
+        sync_data(fd int) -> int => 0
+        stat(path []u8, img mut []u8) -> int => fs.mem_stat(path, img)
+        lstat(path []u8, img mut []u8) -> int => fs.mem_stat(path, img)
+        fstat(fd int, img mut []u8) -> int => fs.mem_fstat(fd, img)
+        mkdir(path []u8, mode int) -> int => fs.mem_mkdir(path, mode)
+        remove_file(path []u8) -> int => fs.mem_remove_file(path)
+        remove_dir(path []u8) -> int => fs.mem_remove_dir(path)
+        rename(src []u8, dst []u8) -> int => fs.mem_rename(src, dst)
+        symlink(target []u8, link []u8) -> int => fs.mem_symlink(target, link)
+        chmod(path []u8, mode int) -> int => fs.mem_chmod(path, mode)
+        copy_file(src []u8, dst []u8) -> int => fs.mem_copy(src, dst)
+        fsync_dir(path []u8) -> int => 0
+        scandir_open(path []u8) -> int => fs.mem_scandir_open(path)
+        scandir_next(h int) -> int => fs.mem_scandir_next(h)
+        scandir_name(h int) -> str => fs.mem_scandir_name(h)
+        scandir_kind(h int) -> int => fs.mem_scandir_kind(h)
+        scandir_close(h int) -> () => fs.mem_scandir_close(h)
+        realpath(path []u8) -> (int, str) => fs.mem_realpath(path)
     }
 }

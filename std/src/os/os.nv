@@ -186,37 +186,42 @@ export fn hostname() Os -> Result[str, IoError] {
 /// Concrete `Os` handler dispatching to the native process environment
 /// (getenv/getcwd/setenv/getpid/…). Install at the root of a program:
 /// `with Os = real_os() { … }`.
+///
+/// Plan 175.2 Ф.2-v4 (П9, D431 amend): `#default_handler` (bare form, П7) —
+/// `Os` now auto-constructs (lazily, once per thread) on first transitive
+/// use with no enclosing `with Os = …`, consistent with `Time`/`real_time()`.
 #stable(since = "0.1")
+#default_handler
 export fn real_os() -> Effect[Os] {
     effect Os {
-        arg_count() => os_arg_count()
-        arg_at(i int) => os_arg_at(i)
-        env_get(key []u8) {
+        arg_count() -> int => os_arg_count()
+        arg_at(i int) -> str => os_arg_at(i)
+        env_get(key []u8) -> Option[str] {
             match os_cstr(key) { Ok(ck) => if unsafe { os_env_has(ck.ptr()) } == 1 { Some(unsafe { os_env_get(ck.ptr()) }) } else { None }, Err(_) => None }
         }
-        env_has(key []u8) {
+        env_has(key []u8) -> bool {
             match os_cstr(key) { Ok(ck) => unsafe { os_env_has(ck.ptr()) } == 1, Err(_) => false }
         }
-        env_set(key []u8, val []u8) {
+        env_set(key []u8, val []u8) -> int {
             match os_cstr(key) {
                 Ok(ck) => match os_cstr(val) { Ok(cv) => unsafe { os_env_set(ck.ptr(), cv.ptr()) }, Err(_) => 0 - 22 }
                 Err(_) => 0 - 22
             }
         }
-        env_remove(key []u8) {
+        env_remove(key []u8) -> int {
             match os_cstr(key) { Ok(ck) => unsafe { os_env_remove(ck.ptr()) }, Err(_) => 0 - 22 }
         }
-        env_len() => os_env_len()
-        env_key_at(i int) => os_env_key_at(i)
-        env_val_at(i int) => os_env_val_at(i)
-        cwd() => os_cwd()
-        set_cwd(path []u8) {
+        env_len() -> int => os_env_len()
+        env_key_at(i int) -> str => os_env_key_at(i)
+        env_val_at(i int) -> str => os_env_val_at(i)
+        cwd() -> str => os_cwd()
+        set_cwd(path []u8) -> int {
             match os_cstr(path) { Ok(cp) => unsafe { os_set_cwd(cp.ptr()) }, Err(_) => 0 - 22 }
         }
-        temp_dir() => os_temp_dir()
-        home_dir() => os_home_dir()
-        exit(code int) => os_exit(code)
-        pid() => os_pid()
-        hostname() => os_hostname()
+        temp_dir() -> str => os_temp_dir()
+        home_dir() -> str => os_home_dir()
+        exit(code int) -> int => os_exit(code)
+        pid() -> int => os_pid()
+        hostname() -> str => os_hostname()
     }
 }

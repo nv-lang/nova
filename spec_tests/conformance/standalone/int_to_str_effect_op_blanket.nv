@@ -37,6 +37,6 @@ fn describe() Clock -> str {
 }
 
 fn main() Io -> () {
-    ro s = with Clock = effect Clock { tick() => 9 } { describe() }
+    ro s = with Clock = effect Clock { tick() -> int => 9 } { describe() }
     println(s)
 }

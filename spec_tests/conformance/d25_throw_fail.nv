@@ -1,6 +1,6 @@
 // D25 — `throw` и параметризация `Fail[E]`. Норма (spec/decisions/04-effects.md §D25):
 // `throw expr` — операция эффекта `Fail`, не магия: «та же проверка, что для Db.query».
-// Перехват — ТОЛЬКО через handler `with Fail = effect Fail { fail(msg) { ... interrupt v } }`
+// Перехват — ТОЛЬКО через handler `with Fail = effect Fail { fail(msg) -> never { ... interrupt v } }`
 // (try/catch отвергнут). Покрытие: (1) throw на error-path ловится handler'ом (msg доступен),
 // ok-path handler НЕ триггерит; (2) типизированный `Fail[str]` + `interrupt v` как результат
 // with-блока-выражения; (3) re-throw из-под внутреннего handler'а наружу (форма 2 D25 —
@@ -28,7 +28,7 @@ fn d25_rethrow(amount int) Fail[str] -> int {
     mut caught = ""
     mut had_throw = false
     ro r = with Fail[str] = effect Fail[str] {
-        fail(msg) {
+        fail(msg) -> never {
             caught = msg
             had_throw = true
             interrupt 0
@@ -60,7 +60,7 @@ test "throw ловится with-Fail handler, msg доступен (D25)" {
     mut caught = ""
     mut handler_ran = false
     with Fail = effect Fail {
-        fail(msg) {
+        fail(msg) -> never {
             caught = msg
             handler_ran = true
             interrupt ()
@@ -76,7 +76,7 @@ test "ok-path НЕ триггерит Fail handler, значение прохо�
     mut handler_ran = false
     mut got = 0
     with Fail = effect Fail {
-        fail(_msg) {
+        fail(_msg) -> never {
             handler_ran = true
             interrupt ()
         }
@@ -89,13 +89,13 @@ test "ok-path НЕ триггерит Fail handler, значение прохо�
 
 test "типизированный Fail[str]; interrupt v — результат with-блока (D25)" {
     ro ok = with Fail[str] = effect Fail[str] {
-        fail(_m) { interrupt -1 }
+        fail(_m) -> never { interrupt -1 }
     } {
         d25_use(21)
     }
     assert(ok == 42)
     ro bad = with Fail[str] = effect Fail[str] {
-        fail(_m) { interrupt -1 }
+        fail(_m) -> never { interrupt -1 }
     } {
         d25_use(-3)
     }
@@ -105,7 +105,7 @@ test "типизированный Fail[str]; interrupt v — результат
 test "re-throw из handler'а наружу с обогащением контекста (D25 форма 2)" {
     mut outer_caught = ""
     with Fail = effect Fail {
-        fail(msg) {
+        fail(msg) -> never {
             outer_caught = msg
             interrupt ()
         }
@@ -119,7 +119,7 @@ test "re-throw обёртка: happy-path проходит без throw (D25)" {
     mut handler_ran = false
     mut got = 0
     with Fail = effect Fail {
-        fail(_m) {
+        fail(_m) -> never {
             handler_ran = true
             interrupt ()
         }
@@ -134,7 +134,7 @@ test "throw как expression в match-arm — never (D25)" {
     mut caught = ""
     mut got = -1
     with Fail = effect Fail {
-        fail(msg) {
+        fail(msg) -> never {
             caught = msg
             interrupt ()
         }
@@ -143,7 +143,7 @@ test "throw как expression в match-arm — never (D25)" {
     }
     assert(caught == "negative not allowed")
     with Fail = effect Fail {
-        fail(_m) { interrupt () }
+        fail(_m) -> never { interrupt () }
     } {
         got = d25_check(6)
     }
@@ -154,7 +154,7 @@ test "throw как expression в if/else-ветке — never совместим
     mut caught = ""
     mut got = -1
     with Fail = effect Fail {
-        fail(msg) {
+        fail(msg) -> never {
             caught = msg
             interrupt ()
         }
@@ -163,7 +163,7 @@ test "throw как expression в if/else-ветке — never совместим
     }
     assert(caught == "zero forbidden")
     with Fail = effect Fail {
-        fail(_m) { interrupt () }
+        fail(_m) -> never { interrupt () }
     } {
         got = d25_nonzero(7)
     }
@@ -173,7 +173,7 @@ test "throw как expression в if/else-ветке — never совместим
 test "?? throw — Some-ветка НЕ бросает (short-circuit, D25)" {
     mut caught = ""
     with Fail = effect Fail {
-        fail(msg) {
+        fail(msg) -> never {
             caught = msg
             interrupt ()
         }
@@ -188,7 +188,7 @@ test "?? throw — Some-ветка НЕ бросает (short-circuit, D25)" {
 test "?? throw — None-ветка реально бросает (D25)" {
     mut caught = ""
     with Fail = effect Fail {
-        fail(msg) {
+        fail(msg) -> never {
             caught = msg
             interrupt ()
         }

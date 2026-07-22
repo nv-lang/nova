@@ -23,7 +23,7 @@ priv(file) fn process2() Fail -> () {
 }
 
 test "body fail + multi-defer Fail bodies — D161 composition" {
-    with Fail = effect Fail { fail(_msg) { interrupt () } } {
+    with Fail = effect Fail { fail(_msg) -> never { interrupt () } } {
         process2()
     }
 }

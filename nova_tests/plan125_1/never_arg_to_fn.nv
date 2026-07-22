@@ -20,7 +20,7 @@ fn pick1(c bool) Fail -> str {
 
 test "divergent if-expr in arg position" {
     with Fail = effect Fail {
-        fail(_) { interrupt () }
+        fail(_) -> never { interrupt () }
     } {
         ro out = pick1(false)
         assert(out == "hello")

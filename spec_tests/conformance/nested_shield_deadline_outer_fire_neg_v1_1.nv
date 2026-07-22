@@ -47,8 +47,8 @@ test "Plan 173 Ф.5.2: watchdog армится только на cleanup — д�
     mut overruns = 0
     mut exits = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, _duration_ms, overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, overrun) -> () {
             exits += 1
             if overrun {
                 overruns += 1

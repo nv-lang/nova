@@ -7,7 +7,7 @@
 module neg.handler_interrupt_neg
 test "interrupt в Supervisor-хендлере отвергается" {
     ro _ = with Supervisor = effect Supervisor {
-        on_child_fail(idx, err) {
+        on_child_fail(idx, err) -> Decision {
             interrupt 5
         }
     } {

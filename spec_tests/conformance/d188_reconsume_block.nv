@@ -28,8 +28,8 @@ fn d201_boom(v int) -> D201Boom => { id: v }
 test "D188/201 re-consume statement: body runs, cleanup exactly-once" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
             exit_calls += 1
             return ()
         }
@@ -47,13 +47,13 @@ test "D188/201 re-consume statement: body runs, cleanup exactly-once" {
 test "D188/201 re-consume: cleanup runs on throw path (Failure)" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label) { return () }
-        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
             exit_calls += 1
             return ()
         }
     } {
-        with Fail = effect Fail { fail(_m) { interrupt () } } {
+        with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
             consume r = d201_make(6)
             consume r {
                 d188_r2_throws()
