@@ -234,41 +234,29 @@ export fn Duration @seconds_f64() -> f64 => (@nanos as f64) / 1_000_000_000.0
 /// Total duration as fractional milliseconds (`f64`).
 #stable(since = "0.1")
 export fn Duration @millis_f64() => (@nanos as f64) / 1_000_000.0
-// Round up to whole milliseconds — module-private helper for `@sleep`.
-// `@millis` truncates toward zero, which would sleep LESS than
-// requested when `@nanos` isn't an exact ms multiple (e.g. 1.5ms → 1ms).
-// `Time.sleep(ms int)` only accepts whole milliseconds (int-wire, D316),
-// so we ceil instead of truncate: `(nanos + 999_999) / 1_000_000`.
-// Assumes non-negative `@nanos` (sleeping a negative duration is meaningless).
-fn Duration @to_millis_ceil() -> i64 => (@nanos + 999_999) / 1_000_000
-
 /// Sleep for this duration via the ambient `Time` effect.
 ///
-/// **Rounds up** to whole milliseconds — never sleeps for *less* than
-/// requested (the `Time` effect's `sleep` op is int-ms wire-typed, D316;
-/// sub-millisecond remainders are rounded up, not truncated away).
+/// Plan 175 Ф.3 (D316 typed retype): `Time.sleep` now takes a typed
+/// `Duration` directly (no more int-ms wire at the `.nv` surface — the
+/// wire's ms-rounding, if any, is an internal handler-impl detail, e.g.
+/// the real-clock `#default_handler(Time)` in std/prelude/effects.nv
+/// ceils to whole milliseconds because the underlying scheduler primitive
+/// is ms-granular; a MOCK handler like `th.mut_clock` can honor full
+/// nanosecond precision if it wants to). Full ns precision now flows
+/// end-to-end through the effect call itself.
 ///
 /// # Examples
 /// ```nova
 /// 5.to_seconds().sleep()
 /// ```
 #stable(since = "0.1")
-export fn Duration @sleep() Time -> () => Time.sleep(@to_millis_ceil() as int)
+export fn Duration @sleep() Time -> () => Time.sleep(@)
 
-/// Suspend the current fiber for at least `d` (Plan 175 Ф.3(b)/Ф.4, D316) —
-/// canonical free-function form: `sleep(Duration)` requires a typed Duration,
-/// NOT a bare int (unit-ambiguous). `d <= 0` resolves immediately.
-/// NB: временно восстановлено 2026-07-22 (латка d316-строгости после
-/// [M-175-time-*] П12-снос) — метод-канон `d.sleep()` + typed Time вернутся
-/// вместе в эффект-рефакторе 175 Ф.2-v3.
-#stable(since = "0.1")
-export fn sleep(d Duration) Time -> () => d.sleep()
-/// Suspend until a monotonic deadline (D316 Q3). Only `Monotonic`, not
-/// `Timestamp` (wall-clock immune to NTP/DST only via monotonic, D124 §3).
-/// Past deadline resolves immediately (saturate-to-zero, D318).
-#stable(since = "0.1")
-export fn sleep_until(deadline Monotonic) Time -> () =>
-    sleep(deadline.elapsed_since(Monotonic.now()))
+// Free `sleep(Duration)`/`sleep_until(Monotonic)` RETRACTED (Plan 175
+// Ф.2-v3, 2026-07-22, owner decision — П12-снос latch made permanent):
+// canonical form is METHOD-ONLY — `d.sleep()` (above) and
+// `deadline.sleep_until()` (std/time/duration/monotonic.nv
+// `Monotonic @sleep_until()`, pre-existing). No free-function alias.
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -714,31 +702,16 @@ export fn Duration @to_human() -> str {
 // не плодить расходящиеся зеркала. int-провод (`now()->int`) сохраняется в
 // Ф.1; типизация (`timestamp()->Timestamp`, `(Duration).sleep()`) — Ф.2/Ф.3.
 
-// Plan 175 Ф.2-v2 (`#default_handler`, D-блок 04-effects.md): раньше
-// "нет with Time = ..." → dispatch падал на С-хардкод ВНУТРИ каждого
-// Nova_Time_* wrapper'а (nova_rt/fibers.h). Теперь дефолт — ОБЫЧНАЯ .nv
-// handler-фабрика, помеченная `#default_handler(Time)`; компилятор лениво
-// (по первому использованию, без with) конструирует и устанавливает её
-// РОВНО ОДИН РАЗ на поток (см. `_nova_time_ensure_default` в fibers.h) —
-// явный `with Time = ...` по-прежнему переопределяет как раньше. Тело —
-// тонкие extern "C" примитивы поверх РЕАЛЬНЫХ часов/таймера (прежде
-// зашитых прямо в С-диспетчер): механизм GENERIC (любой `type X effect`
-// может получить `#default_handler(X)`), но лишь `Time` реально проводит
-// его через runtime-хук этой волной (Fs/Net/Os — следующий шаг).
-extern "C" fn _nova_wall_unix_ms() -> int
-extern "C" fn _nova_monotonic_ns() -> int
-extern "C" fn _nova_local_offset_sec() -> int
-extern "C" fn _nova_time_default_sleep(ms int) -> ()
-
-#default_handler(Time)
-fn time_default() -> Effect[Time] {
-    effect Time {
-        sleep(ms) => _nova_time_default_sleep(ms)
-        now_unix_ms() => _nova_wall_unix_ms()
-        now_monotonic_ns() => _nova_monotonic_ns()
-        local_offset_sec() => _nova_local_offset_sec()
-    }
-}
+// Plan 175 Ф.2-v3 (2026-07-22): `#default_handler(Time)` (`time_default`)
+// MOVED to std/prelude/effects.nv, сразу после декларации `type Time
+// effect {...}` — prelude auto-import'ится в КАЖДЫЙ CU, значит ambient
+// Time (работает без `with`/явного `import std.time`, как Random, не
+// Fail) больше не зависит от того, попал ли ЭТОТ модуль (time.duration)
+// транзитивно в конкретный compile-unit. Раньше (Ф.2-v2) фабрика жила
+// здесь и полагалась на hardcoded C-fallback (nova_rt/fibers.h
+// `Nova_Time_*`) для CU, что её не тянули — тот fallback снесён (Ф.2-v3
+// снос рукописного Time-диспатча), так что единственный источник
+// ambient-поведения теперь — always-present prelude default handler.
 
 
 // Plan 200 Step 2 (D410/D317 amend): int/f64 per-width fluent constructors
@@ -786,7 +759,7 @@ export fn measure[T](action fn() -> T) Time -> (T, Duration) {
 
 /// Compute дедлайн `now() + d` с использованием ambient `Time`.
 ///
-/// Convenience-обёртка чтобы не писать `Time.now_unix_ms() + 5.to_seconds()` каждый раз.
+/// Convenience-обёртка чтобы не писать `Timestamp.now() + 5.to_seconds()` каждый раз.
 ///
 /// **Plan 175 Ф.5(d) — намеренно ОСТАЁТСЯ `Timestamp`-based** (НЕ мигрирован
 /// на `Monotonic`, в отличие от [`measure`]): возвращаемый тип — `Timestamp`
@@ -957,7 +930,7 @@ test "Ф.5(d): measure[T] мигрирован на Monotonic (elapsed имму�
     // не на call-site — gap специфичен call-site turbofish-инференсу).
     with Time = th.mut_clock(0 as u64) {
         ro (result, elapsed) = measure(fn() -> int {
-            Time.sleep(3000)  // virtual clock advance под mock — elapsed = 3s
+            3000.to_millis().sleep()  // virtual clock advance под mock — elapsed = 3s
             42
         })
         assert(result == 42)
@@ -1089,9 +1062,9 @@ test "Ф.1c/D318: Monotonic elapsed_since saturate-to-zero; checked_duration_sin
 test "Ф.3(a)/D316: Monotonic.now() мокабелен через Time-handler (mock-coherence)" {
     with Time = th.mut_clock(0 as u64) {
         ro m0 = Monotonic.now()
-        Time.sleep(5000)  // virtual clock advance, ms
+        5000.to_millis().sleep()  // virtual clock advance, ms
         ro m1 = Monotonic.now()
-        // ОДИН handler двигает и wall (now_unix_ms), и monotonic (now_monotonic_ns)
+        // ОДИН handler двигает и wall (now), и monotonic (now_monotonic)
         // когерентно — оба читают из одного `current_ms` (Ред.2 Q14 mock-coherence).
         assert(m1.elapsed_since(m0) == 5.to_seconds())
         assert(Timestamp.now().unix_millis() == 5000)
@@ -1101,7 +1074,7 @@ test "Ф.3(a)/D316: Monotonic.now() мокабелен через Time-handler (
 test "Ф.3(c): m2 - m1 диспатчится в @minus(Monotonic) → Duration, не @minus(Duration)" {
     with Time = th.mut_clock(0 as u64) {
         ro m1 = Monotonic.now()
-        Time.sleep(2000)
+        2000.to_millis().sleep()
         ro m2 = Monotonic.now()
         ro d = m2 - m1
         assert(d == 2.to_seconds())
@@ -1109,14 +1082,14 @@ test "Ф.3(c): m2 - m1 диспатчится в @minus(Monotonic) → Duration,
     }
 }
 
-test "Ф.3(b): free (Duration).sleep() под mock-clock продвигает виртуальные часы" {
+test "Ф.3(b): (Duration).sleep() метод-канон под mock-clock продвигает виртуальные часы" {
     with Time = th.mut_clock(1000 as u64) {
         (500.to_millis()).sleep()
-        assert(Time.now_unix_ms() == 1500)
+        assert(Timestamp.now().unix_millis() == 1500)
         // Duration.ZERO как const-reference — pre-existing [M-175-value-record-const-ref]
         // gap (не time-специфичный); workaround — to_nanos(0), см. "predicates" выше.
         (0.to_nanos()).sleep()  // немедленно, часы не двигаются
-        assert(Time.now_unix_ms() == 1500)
+        assert(Timestamp.now().unix_millis() == 1500)
     }
 }
 
@@ -1125,12 +1098,12 @@ test "Ф.3(b)/Q3: Monotonic @sleep_until — будущий дедлайн жд�
         ro m0 = Monotonic.now()
         ro deadline = m0 + 3.to_seconds()
         deadline.sleep_until()
-        assert(Time.now_unix_ms() == 3000)
+        assert(Timestamp.now().unix_millis() == 3000)
 
         // дедлайн уже в прошлом → saturate-to-zero, немедленно (без доп. ожидания)
         ro past = Monotonic.now() - 10.to_seconds()
         past.sleep_until()
-        assert(Time.now_unix_ms() == 3000)
+        assert(Timestamp.now().unix_millis() == 3000)
     }
 }
 

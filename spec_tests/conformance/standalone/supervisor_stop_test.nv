@@ -29,7 +29,7 @@ test "Supervisor=stop: один падает — siblings доживают, scop
                     }
                     // Пережить момент падения ребёнка 3: yield-точка — при
                     // escalate-политике здесь бы прилетела отмена.
-                    Time.sleep(20)
+                    (20).to_millis().sleep()
                     done.fetch_add(1)
                 }
             }
@@ -53,7 +53,7 @@ test "Supervisor=stop: несколько падений — все выкину
                     if tag % 3 == 0 {
                         throw 1000 + tag
                     }
-                    Time.sleep(10)
+                    (10).to_millis().sleep()
                     done.fetch_add(1)
                 }
             }
@@ -76,7 +76,7 @@ test "Supervisor=stop: panic ребёнка тоже доходит до реш�
                     if tag == 0 {
                         panic("child catastrophe")
                     }
-                    Time.sleep(10)
+                    (10).to_millis().sleep()
                     done.fetch_add(1)
                 }
             }

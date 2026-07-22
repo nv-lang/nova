@@ -13,10 +13,10 @@ module nova_tests.plan83_10_4
 
 fn handler_value(v int) -> int {
     with Time = effect Time {
-        sleep(_ms) { return () }
-        now_unix_ms() { return v }
+        sleep(_d) { return () }
+        now() { return v.to_unix_millis() }
     } {
-        Time.now_unix_ms()
+        Timestamp.now().unix_millis()
     }
 }
 
@@ -63,13 +63,13 @@ test "race repro: inherited outer + per-fiber override — no contamination" {
     mut inner0 = AtomicInt.new(-1)
     mut inner1 = AtomicInt.new(-1)
     with Time = effect Time {
-        sleep(_ms) { return () }
-        now_unix_ms() { return 999 }
+        sleep(_d) { return () }
+        now() { return 999.to_unix_millis() }
     } {
         supervised {
-            spawn { outer0.store(Time.now_unix_ms()) }           // inherits 999
+            spawn { outer0.store(Timestamp.now().unix_millis()) }           // inherits 999
             spawn { inner0.store(handler_value(111)) }   // overrides to 111
-            spawn { outer1.store(Time.now_unix_ms()) }           // inherits 999
+            spawn { outer1.store(Timestamp.now().unix_millis()) }           // inherits 999
             spawn { inner1.store(handler_value(222)) }   // overrides to 222
         }
     }
@@ -87,16 +87,16 @@ test "race repro: outer handler intact after supervised completes" {
     mut before = -1
     mut after = -1
     with Time = effect Time {
-        sleep(_ms) { return () }
-        now_unix_ms() { return 12345 }
+        sleep(_d) { return () }
+        now() { return 12345.to_unix_millis() }
     } {
-        before = Time.now_unix_ms()
+        before = Timestamp.now().unix_millis()
         supervised {
             spawn { ro _ = handler_value(1) }
             spawn { ro _ = handler_value(2) }
             spawn { ro _ = handler_value(3) }
         }
-        after = Time.now_unix_ms()
+        after = Timestamp.now().unix_millis()
     }
     assert(before == 12345)
     assert(after == 12345)

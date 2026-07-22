@@ -26,7 +26,7 @@ fn guarded(source PSource) Time -> int {
     with Fail[TimeoutError] = |_e| { timed_out = true } {
         supervised(timeout: 200.to_millis()) {
             spawn {
-                Time.sleep(source.latency_ms)
+                (source.latency_ms).to_millis().sleep()
                 ro _ = tx.try_send(source.id.byte_len() + source.port)
             }
         }

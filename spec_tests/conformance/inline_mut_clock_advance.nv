@@ -6,7 +6,7 @@
 //
 // Семантика:
 //   - mut_clock(start_ms): handler с mut current_ms = start_ms.
-//   - Time.sleep(d): current_ms += d.nanos / 1_000_000.
+//   - d.sleep(): current_ms += d.nanos / 1_000_000.
 //   - Time.now_ms(): возвращает current_ms.
 //
 // Inline: не используем `Time` effect, моделируем как обычные функции

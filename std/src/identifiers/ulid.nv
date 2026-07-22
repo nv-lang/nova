@@ -154,7 +154,7 @@ fn decode_char(c char) -> Option[u8] {
 /// Throws `TimestampOverflow` если ms ≥ 2^48 (~10889 AD).
 #stable(since = "0.1")
 export fn Ulid.new() Time Random Fail[ParseUlidError] -> Self { // [M-lint-findings-fail-public-signature]
-    ro ms = Time.now_unix_ms() as u64
+    ro ms = Timestamp.now().unix_millis() as u64
     if ms >= 0x1000000000000 {                       // 2^48
         throw TimestampOverflow
     }

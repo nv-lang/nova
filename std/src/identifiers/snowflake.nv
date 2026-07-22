@@ -86,7 +86,7 @@ export fn SnowflakeGen.new(machine_id int) -> Result[Self, SnowflakeError] {
 /// Использует `Time` effect для получения текущего времени.
 #stable(since = "0.1")
 export fn SnowflakeGen mut @next() Time -> Result[i64, SnowflakeError] {
-    ro now = Time.now_unix_ms() as i64
+    ro now = Timestamp.now().unix_millis() as i64
 
     if now < @last_ms {
         return Err(ClockBackwards { now, last: @last_ms })

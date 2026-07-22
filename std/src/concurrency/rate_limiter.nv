@@ -24,8 +24,8 @@ import std.time.duration
 #stable(since = "0.1")
 // [M-rate-limiter-monotonic] ЗАКРЫТ (Plan 175 Ф.3, 2026-07-11): refill-тайминг
 // переведён на `Monotonic` (D124, std/time/duration.nv) — immune к
-// NTP wall-clock скачкам, в отличие от прежнего `Time.now_unix_ms()`.
-// Переход был gated на `now_monotonic_ns`-слот в рантайм-vtable
+// NTP wall-clock скачкам, в отличие от прежнего `Time.now()`.
+// Переход был gated на `now_monotonic`-слот в рантайм-vtable
 // `NovaVtable_Time` (nova_rt/effects.h) — слот появился в Plan 175 Ф.3(a)
 // (закрыл `[M-monotonic-mock-support]`), `Monotonic.now()` теперь мокабелен
 // через `th.fixed_ms`/`th.mut_clock` когерентно с wall-clock. Ручной

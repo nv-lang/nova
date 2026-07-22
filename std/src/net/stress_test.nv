@@ -119,7 +119,7 @@ test "net2/stress: throughput baseline — 8 MiB echo in 64 KiB chunks" {
                 mut back []u8 = []u8.new()
                 back.resize(65536, 0 as u8)
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
-                ro start = Time.now_monotonic_ns()
+                ro start = Monotonic.now().nanos()
                 for _ in 0..128 {
                     match conn.write_all(chunk) {
                         Ok(_)  => {}
@@ -137,7 +137,7 @@ test "net2/stress: throughput baseline — 8 MiB echo in 64 KiB chunks" {
                     }
                     assert(off == 65536)
                 }
-                ro elapsed_ns = Time.now_monotonic_ns() - start
+                ro elapsed_ns = Monotonic.now().nanos() - start
                 assert(elapsed_ns > 0)
                 // One-way payload: 8 MiB. MiB/s = 8 * 1e9 / elapsed_ns.
                 ro mibps = 8 * 1000000000 / elapsed_ns

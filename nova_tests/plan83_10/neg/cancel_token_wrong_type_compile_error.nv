@@ -13,7 +13,7 @@ module neg.cancel_token_wrong_type_compile_error
 fn blocking_with_time_violates() Time -> int {
     mut r = 0
     blocking {
-        Time.sleep(0)
+        (0).to_millis().sleep()
         r = 42
     }
     r

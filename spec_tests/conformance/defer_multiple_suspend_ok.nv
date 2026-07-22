@@ -2,9 +2,9 @@
 // D161 (Plan 100.4.4) wrap гарантирует LIFO continues.
 
 module spec_tests.conformance
-fn cleanup_a() Time -> () { Time.sleep(3) }
-fn cleanup_b() Time -> () { Time.sleep(3) }
-fn cleanup_c() Time -> () { Time.sleep(3) }
+fn cleanup_a() Time -> () { (3).to_millis().sleep() }
+fn cleanup_b() Time -> () { (3).to_millis().sleep() }
+fn cleanup_c() Time -> () { (3).to_millis().sleep() }
 
 priv(file) fn process3() Time -> () {
     defer { cleanup_a() }   // LIFO last

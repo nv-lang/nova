@@ -3919,3 +3919,31 @@ Regression-guard: 9-й `test` в `d432_auto_cleanup_hybrid_c.nv` (`"D432:
 break inside a nested empty loop must not bleed into an outer auto-cleanup
 scope"`) — изолирует дефект от нативного RwLock (локальный ресурс +
 `exit_calls`, тот же CAS-retry-loop shape).
+
+## [M-175-realtime-ban-method-call-blind] — D64/D63 suspend-effect scan слеп на instance-method call (Plan 175 Ф.2-v3, 2026-07-22)
+
+**ЧАСТИЧНО ЗАКРЫТО (2026-07-22, Фаза 5 регресс-фикс):** отдельный, СТРУКТУРНО ИДЕНТИЧНЫЙ чекер — Supervisor-хендлер suspend-scan (Q-блок 173.2, `types/mod.rs` `walk_expr_for_handler_lits`, err-код `E_SUPERVISOR_HANDLER_SUSPEND`) — оказался БЛОКИРУЮЩИМ (не «followup, не блокирует», как изначально помечено ниже): `spec_tests/conformance/neg/handler_sleep_neg.nv` дал NEG-NO-ERROR на полном мега-CU. Тот чекер расширен — ЛЮБОЙ `.sleep()`/`.sleep_until()` method-call (не только `Time.sleep(...)`) теперь триггерит `E_SUPERVISOR_HANDLER_SUSPEND`, независимо от receiver'а (эвристика без type-инференции — имена `sleep`/`sleep_until` в std принадлежат только `Duration`/`Monotonic`, узкий контекст оправдывает риск false-positive). **D64/D63-ветка (realtime/forbid, types/mod.rs `check_callee_effects`) остаётся ОТКРЫТОЙ** — см. ниже, не путать с закрытой Supervisor-веткой.
+
+**Найдено при:** ретипизации Time (Ф.2-v3) — метод-канон `d.sleep()` стал promoted idiom вместо `Time.sleep(d)`/free `sleep(d)`.
+
+**Дефект:** `check_expr_forbid`/`check_callee_effects` (`compiler-codegen/src/types/mod.rs`) детектирует suspend-эффект внутри `realtime {}`/`forbid`-блока СИНТАКСИЧЕСКИ — только `Effect.op(...)`-shaped path (`path.len()==2 && effect_decls.contains(path[0])`, ИЛИ qualified free-fn/static-method call через `method_table`). Instance-method call на произвольном expression-receiver (`expr.method()`, напр. `d.sleep()` где `d` — переменная/выражение типа `Duration`) НЕ резолвится — веткa явно помечена "dynamic member-call; не resolve'им" (уже существовавшее ограничение, НЕ введено этой волной). Значит `#realtime fn` вызывающая suspend-effect ТОЛЬКО через метод (`d.sleep()`, не `Time.sleep(d)`) может пройти D64-гард необнаруженной.
+
+**Почему не пофикшено этой же волной:** нужна receiver-type-инференция В ЭТОМ checkpoint'е (какой тип у `d`, чтобы найти `method_table[Тип]["sleep"]`) — checker уже конструирует такую инфраструктуру для IDE (`expr_types`/`resolved_types` side-channel, `record_expr_types`-флаг), но НЕ включена по умолчанию в основной check-pass. Масштаб фикса — architectural (не point-patch), риск регрессии в основном чекере высок при спешке.
+
+**Текущий обход:** негатив-фикстура (`spec_tests/conformance/neg/d316_realtime_sleep_neg.nv`) продолжает звать `Time.sleep(d)` (qualified form, ловится) — обе формы валидны семантически (только `.nv`-сахарные free-функции `sleep`/`sleep_until` ретрактированы, не сам effect-op), так что гейт не ослаблен, просто использует ДРУГОЙ (покрытый) call-shape.
+
+**Follow-up:** расширить D64 (`realtime_suspend_effect`) и D63 (`forbid`) сканы на instance-method-call форму — включить `record_expr_types`-инфраструктуру (или эквивалент) на этом checkpoint'е основного (не только IDE) прохода, резолвить receiver-тип перед `method_table`-lookup.
+
+## [M-175-lazy-const-crossmodule-collision] — module-level `ro NAME` lazy const без module-qualification (Plan 175 Ф.2-v3, 2026-07-22) — CLOSED
+
+**Найдено при:** полном мега-CU регресс-бисекции после Ф.2-v3 (см. amend в spec/decisions/04-effects.md «Фаза 5»), баг НЕ виден на per-file/per-directory точечных гейтах.
+
+**Дефект:** `emit_c.rs`'s Plan 91.12 (D307) module-qualification pre-pass (`private_const_c_names`) обрабатывал только `Item::Const` (`const NAME = …`/`export const …`). Module-level `ro NAME = expr` (`Item::Let`, non-constexpr initializer → lazy-init путь) НИКОГДА не получал qualified C-имя — `emit_lazy_const` всегда эмитил bare `_nova_const_<name>_value`, вне зависимости от коллизий. Безобидно, пока bare-имя `ro`-биндинга нигде больше не встречалось; Ф.1's `std/prelude/effects.nv` import `Duration/Timestamp/Monotonic` сделал `duration/core.nv`'s `export const ZERO/SECOND/MINUTE/HOUR Duration` transitively reachable из КАЖДОГО CU — файл с собственным приватным `ro ZERO`/`ro SECOND` столкнулся с ними на уровне C-символа (repro: `spec_tests/conformance/standalone/repro_const_dup.nv`).
+
+**Fix (`compiler-codegen/src/codegen/emit_c.rs`):**
+- `emit_module`'s Step-1 const-grouping pre-pass расширен на `Item::Let` (Pattern-matching ОБЕ формы бинда — `Pattern::Ident` И `Pattern::Variant{kind:Unit}`, т.к. bare ALL-CAPS-имя парсится во вторую форму).
+- `emit_lazy_const(name, c_name, ty_c, value)` — новый параметр `c_name` (qualifier для `_nova_const_<c_name>_value`), отдельно от `name` (bare source identifier, всё ещё управляет `lazy_consts`/`var_types`/topo-sort).
+- `emit_const_decl`'s lazy (Err) branch и `Item::Let`-call-site теперь передают ПРАВИЛЬНО вычисленный `c_name` (раньше `emit_const_decl` вычислял `c_name`, но тут же ронял его, передавая bare `c.name`).
+- REFERENCE-site (`ExprKind::Ident`, lazy branch) теперь ТОЖЕ смотрит `private_const_c_names` для qualifier перед построением `_nova_const_<qualifier>_value`.
+
+**Гейт:** `repro_const_dup.nv` PASS; полный мега-CU (`nova test --positive --compile-error spec_tests/conformance`) — PASS 527 / FAIL 0 / SKIP 55 (совпадает с историческим чистым baseline).

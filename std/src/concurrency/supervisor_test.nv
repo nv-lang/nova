@@ -15,7 +15,7 @@ test "stop(): падение ребёнка не эскалируется, sibli
                 ro tag = i
                 spawn {
                     if tag == 1 { throw 13 }
-                    Time.sleep(5)
+                    (5).to_millis().sleep()
                     done.fetch_add(1)
                 }
             }

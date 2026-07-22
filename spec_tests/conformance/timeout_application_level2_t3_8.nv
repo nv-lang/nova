@@ -24,7 +24,7 @@ fn Res6.new(id int) -> Res6 => { id }
 // Cleanup спит 30ms — при пороге 1ms (Level 2) это превышение,
 // при пороге 5000ms (Level 3) — нет. Time — ambient (D62).
 fn Res6 consume @cleanup(_outcome ScopeOutcome) -> () {
-    Time.sleep(30)
+    (30).to_millis().sleep()
     return ()
 }
 

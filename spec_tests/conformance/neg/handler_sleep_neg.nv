@@ -1,14 +1,19 @@
 // EXPECT_COMPILE_ERROR E_SUPERVISOR_HANDLER_SUSPEND
 //
-// Plan 173.2 Q-блок neg: suspend-операции (`Time.sleep`) внутри
-// Supervisor-хендлера запрещены — заблокировали бы serialized drive-цикл
-// scope'а (решения по падениям перестали бы приниматься).
+// Plan 173.2 Q-блок neg: suspend-операции (`Time.sleep` / method-канон
+// `(Duration).sleep()`/`(Monotonic).sleep_until()`) внутри Supervisor-
+// хендлера запрещены — заблокировали бы serialized drive-цикл scope'а
+// (решения по падениям перестали бы приниматься). Plan 175 Ф.2-v3
+// [M-175-realtime-ban-method-call-blind] fix (2026-07-22): вызов ниже —
+// через МЕТОД `(100).to_millis().sleep()` (promoted idiom с Ф.3, free
+// `sleep`/`sleep_until` retracted) — регресс-гард на то, что Supervisor-
+// хендлер suspend-scan видит method-call форму, не только `Time.sleep(...)`.
 
 module neg.handler_sleep_neg
-test "Time.sleep в Supervisor-хендлере отвергается" {
+test "suspend-операция (метод .sleep()) в Supervisor-хендлере отвергается" {
     with Supervisor = effect Supervisor {
         on_child_fail(idx, err) {
-            Time.sleep(100)
+            (100).to_millis().sleep()
             Decision.Escalate
         }
     } {

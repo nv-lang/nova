@@ -1,13 +1,15 @@
 // stdlib/time/units_test.nv — Plan 175 D316 amend (2026-07-06, owner unit-rename): единицы времени
-// в именах операций эффекта `Time` (`now()` → `now_unix_ms()`,
-// `now_monotonic()` → `now_monotonic_ns()`) + `Duration.@sleep()`-сахар.
+// в именах операций эффекта `Time`; Plan 175 Ф.3 (2026-07-22, D316 typed
+// retype): опы ретипизированы дальше — `now_unix_ms()->int` →
+// `now()->Timestamp`, `now_monotonic_ns()->int` → `now_monotonic()->
+// Monotonic`, `sleep(ms int)` → `sleep(d Duration)` — + `Duration.@sleep()`-сахар.
 //
 // Проверяется:
-//   1. `Timestamp.now()` работает как раньше (rename — внутренняя деталь
-//      `.nv`-сахара, user-facing surface не меняется).
+//   1. `Timestamp.now()` работает как раньше (rename/retype — внутренняя
+//      деталь `.nv`-сахара, user-facing surface не меняется).
 //   2. `Duration.@sleep()` спит НЕ МЕНЬШЕ запрошенного (замер по `Monotonic`).
-//   3. `mut_clock`-handler совместим с переименованной операцией
-//      (`now_unix_ms()` + `sleep` продвигают виртуальные часы как раньше).
+//   3. `mut_clock`-handler совместим с typed-операцией
+//      (`now()`/`sleep(Duration)` продвигают виртуальные часы как раньше).
 
 module time.units_test
 
@@ -24,7 +26,7 @@ test "Timestamp.now() работает как раньше после переи
 test "Timestamp.now() — mut_clock тоже совместим" {
     with Time = th.mut_clock(1000 as u64) {
         assert(Timestamp.now().unix_millis() == 1000)
-        Time.sleep(500)
+        500.to_millis().sleep()
         assert(Timestamp.now().unix_millis() == 1500)
     }
 }
@@ -62,7 +64,7 @@ test "Duration.@sleep() округляет sub-ms длительность вв�
 }
 
 // [M-time-default-handler-not-wallclock] / D316 amend (2026-07-06): боевой
-// (default, БЕЗ `with Time = handler {...}`) обработчик Time.now_unix_ms()
+// (default, БЕЗ `with Time = handler {...}`) обработчик Time.now()
 // должен отдавать настоящее wall-clock unix-время, а не monotonic uptime
 // процесса. Порог 1_700_000_000_000мс = 2023-11-14 — любое монотонное
 // значение (uptime процесса от старта, единицы-десятки секунд у короткого
@@ -75,7 +77,7 @@ test "Timestamp.now() без with-обработчика — настоящее 
 }
 
 // Monotonic не задета фиксом (тот же _nova_monotonic_ns источник, что и
-// до фикса — фикс трогал только _nova_time_default_now()/now_unix_ms()).
+// до фикса — фикс трогал только now()/wall-clock путь).
 test "Monotonic.now() всё ещё монотонно растёт после фикса wall-clock" {
     ro t0 = Monotonic.now()
     ro t1 = Monotonic.now()
