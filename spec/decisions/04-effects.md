@@ -7351,7 +7351,7 @@ Amends [D423](#d423) (§R6 явно выносил div/neg за рамки — �
 
 ## D431. `#default_handler(X)` — ambient lazy default-handler factory для эффектов (Plan 175 Ф.2-v2, 2026-07-21/22)
 
-**Статус:** Ф.1 (компилятор-механизм + Time-хук) LANDED эту волну; typed-schema retype Time (D316-полный `sleep(Duration)`/`now()->Timestamp`/`now_monotonic()->Monotonic`) и ambient-retraction (см. amend D62 ниже) — OPEN, followup.
+**Статус:** Ф.1 (компилятор-механизм + Time-хук) LANDED этой волной (Plan 175 Ф.2-v2); typed-schema retype Time (D316-полный `sleep(Duration)`/`now()->Timestamp`/`now_monotonic()->Monotonic`) LANDED следующей волной (Plan 175 Ф.2-v3, см. amend ниже) — scalar-bridge реализован через per-op marshalling, НЕ через отложенный per-Time-struct-редизайн. Ambient-retraction (D62 amend) остаётся OPEN.
 
 ### Контекст
 
@@ -7370,7 +7370,7 @@ Amends [D423](#d423) (§R6 явно выносил div/neg за рамки — �
 
 ### Границы / отложено
 
-- **Typed-schema retype Time** (`sleep(Duration)`/`now()->Timestamp`/`now_monotonic()->Monotonic`, дроп `_ms`/`_ns`-суффиксов из ИМЁН) — исследовано, НЕ реализовано этой волной: требует wire↔surface scalar-bridge на ДВУХ кодоген-точках (handler-impl сигнатура И generic call-site dispatch), т.к. hand-written `NovaVtable_Time` (`effects.h`) компилируется РАНЬШЕ per-CU `NovaValue_Duration`/`Timestamp`/`Monotonic`-typedef'ов (та же находка, что D316-amend §Ф.2 — см. Plan 175 §Ф.2 history) — слишком большой/рискованный кусок для этого окна вместе с остальным. `[M-175-time-typed-schema-scalar-bridge]`.
+- ~~**Typed-schema retype Time**~~ — **ЗАКРЫТО** Plan 175 Ф.2-v3 (см. amend «D316/D431 Ф.2-v3: typed Time-схема + снос рукописного диспатча» ниже). Решение НЕ было «отложенный per-Time-struct-редизайн»: hand-written `NovaVtable_Time` struct/slot ОСТАЛСЯ (channels.h/runtime.c нужен стабильный C-тип, компилируемый once, не per-CU) — но его WIRE переехал на raw int64 nanoseconds под НОВЫМИ typed op-именами, а marshalling typed⇄wire живёт в generated dispatch-fn (`emit_effect_type`) и handler-install-thunk (`emit_handler_lit`), СИММЕТРИЧНО тому же ABI-identity приёму, что `Nova_Mutex_method_lock_for` уже применяет для Duration-таймаута (`sync_primitives.h`).
 - **Ambient-retraction Time (D62 amend)** — владелец запросил ретракцию: каждая fn, транзитивно зовущая Time-опы (в т.ч. через `Timestamp.now()`/`Duration.@sleep()`/`sleep`), обязана нести `Time` в сигнатуре под `--strict-effects`, симметрично Fs/Net/Db. НЕ начато (механическая миграция по diagnostic-loop через ВЕСЬ std+examples — масштаб сопоставим с 755+-сайт retyping'ом из Plan 175 §6, отдельное окно). `[M-175-time-ambient-retraction]`.
 - Fs/Net/Os — НЕ мигрированы на `#default_handler` (механизм — generic, но их C-хардкод-дефолт не тронут этой волной; следующий шаг «по образцу»).
 
@@ -7389,3 +7389,43 @@ Amends [D423](#d423) (§R6 явно выносил div/neg за рамки — �
 ### Связь
 
 [D431](#d431-default_handlerx--ambient-lazy-default-handler-factory-для-эффектов-plan-175-ф2-v2-2026-07-2122) · Plan [175](../../docs/plans/175-time-system-rework.md) Ф.2-v2 · `docs/plans/backlog-followups.md` (`[M-effect-handler-body-record-literal]` → CLOSED).
+
+## Amend D316/D431 Ф.2-v3: typed Time-схема + снос рукописного диспатча (Plan 175 Ф.2-v3, 2026-07-22)
+
+**Статус:** ЗАКРЫВАЕТ `[M-175-time-typed-schema-scalar-bridge]` (D431 «Границы/отложено») и историческую находку Ф.2 (4× откат — vtable эмитился раньше value-record typedef'ов).
+
+### Фаза 1 — снос рукописного `Nova_Time_*`-диспатча
+
+Hand-written dispatch-функции (`Nova_Time_sleep`/`_now_unix_ms`/`_now_monotonic_ns`/`_local_offset_sec`, `nova_rt/fibers.h`) и парный `_nova_time_default_ctor`-хук (`effects.h`/`effects.c`) СНЕСЕНЫ. `Time` теперь генерирует dispatch-функции ЧЕРЕЗ ОБЩИЙ `emit_effect_type`-путь (тот же, что user-эффекты) — единый источник и для схемы (уже был, Ф.1), и для диспетчер-тел (новое). `#default_handler(Time)` (`time_default`) ПЕРЕЕХАЛ из `std/time/duration/core.nv` в `std/prelude/effects.nv` (сразу после декларации `Time`) — prelude auto-import'ится в КАЖДЫЙ CU, поэтому ambient-fallback (Time работает без `with`/явного `import std.time`) больше НЕ зависит от того, попал ли `time.duration`-модуль транзитивно в конкретный CU (раньше — зависел, backward-compat держался на hand-written C-fallback, который теперь снесён).
+
+**Узкое ОСТАЮЩЕЕСЯ исключение** (не архитектурная дыра, реальная необходимость): typedef `NovaVtable_Time` + TLS-слот `_nova_handler_Time` остаются hand-written в `effects.h`/`.c` — `nova_rt/channels.h` (`ChanReader.close_after` mock-time path) и `nova_rt/runtime.c` (worker-thread TLS registration) — HAND-WRITTEN C вне codegen, компилируемый ОДИН раз (не per-CU), — обращаются к `_nova_handler_Time->sleep(...)`/`->ctx` напрямую по конкретным полям; нужен один стабильный named-struct-тип, который anonymous per-CU-generated struct дать не может (плюс typedef-redefinition конфликт). `emit_effect_type` для `name == "Time"` пропускает шаги 1+2 (struct+TLS-slot-decl) — они здесь — и эмитит ТОЛЬКО шаг 3 (dispatch-функции, generic как всегда).
+
+**Регрессия, найденная и закрытая В ТОЙ ЖЕ волне:** снятие explicit `_nova_handler_Time`-pre-registration с main-thread пути (`emit_main_wrapper`) при сохранении hardcoded pre-registration на worker-thread (`runtime.c`) давало РАЗНЫЙ snapshot-index для остальных эффектов (напр. `Application`) между main и worker — child fiber наследовал ЧУЖОЙ handler (`spec_tests/conformance/app_effect_basic_t8_1` ловил дефект). Fix: `Time` регистрируется ТОЛЬКО через generic `_nova_register_effects_fn` на ОБОИХ путях — единый источник порядка индексов.
+
+### Фаза 2 — value-record typedef'ы ДО effect-vtable struct (2-pass emission)
+
+Корень исторического 4× отката: главный "type declarations first" проход в `emit_module` эмитил effect-vtable struct (function-pointer поля) в ТОМ ЖЕ проходе по `module.items`, что record/value-record тела — если `type X effect {...}` встречался РАНЬШЕ value-record'а, чьим типом типизирован один из его опов (Duration), C получал by-value поле несовершенного типа. Fix: проход разбит на ДВА — сперва ВСЁ кроме `TypeDeclKind::Effect`, затем ВСЕ эффекты. Порядок в merged item-list больше не важен. Изолированный репро (RED→GREEN): user-эффект с Duration-типизированным опом, handler-тело строит Duration через `.plus()`.
+
+### Фаза 3 — typed Time-опы
+
+Схема (`std/prelude/effects.nv`): `sleep(ms int)->()`/`now_unix_ms()->int`/`now_monotonic_ns()->int` → `sleep(d Duration)->()`/`now()->Timestamp`/`now_monotonic()->Monotonic` (голые имена, единица в ТИПЕ). `local_offset_sec()->int` не менялся (плоский оффсет — не time-величина).
+
+**Wire остался raw int64 nanoseconds** (НЕ typed) в hand-written `NovaVtable_Time` (Фаза-1-исключение выше не позволяет struct'у именовать per-CU `NovaValue_Duration`/`Timestamp`/`Monotonic`). Codegen маршалит на границе — ТОТ ЖЕ ABI-identity приём, что `Nova_Mutex_method_lock_for` уже применяет для Duration-таймаута (`sync_primitives.h`: `void* timeout` + "first field int64_t nanos" контракт), применён систематически к трём clock-типизированным опам Time:
+
+- `emit_effect_type` (dispatch-функция, ЗНАЕТ complete typed-подпись, т.к. эмитится после Фазы-2-переупорядочивания): извлекает `.nanos` из by-value typed-параметра перед вызовом wire-слота; оборачивает raw int64 wire-результат в typed value-record (`(NovaValue_Timestamp){.nanos = ...}`) компаунд-литералом перед возвратом typed-вызывающему.
+- **Per-field NULL-check + real-clock fallback** (восстанавливает backward-compat для ЧАСТИЧНЫХ handler-литералов — `nova_tests/plan83_10/handler_isolation_per_fiber.nv` определяет ТОЛЬКО `now()`; `sleep`/`now_monotonic`/`local_offset_sec` обязаны не падать на NULL fn-pointer, а прозрачно упасть на `_nova_wall_unix_ms`/`_nova_monotonic_ns`/`_nova_local_offset_sec`/`_nova_time_default_sleep` — тот же контракт, что был у ex-`now_monotonic_ns`/`local_offset_sec`-слотов до Ф.2-v3, расширен defensively на ВСЕ четыре опа).
+- `emit_handler_lit` (handler-literal install): typed op-тело оборачивается тонким marshalling-THUNK с wire-сигнатурой (`(void*, int64_t)`/`(void*) -> int64_t`) перед записью в vtable-slot — иначе function-pointer-signature mismatch (by-value struct vs raw int64 — НЕ ABI-совместимые типы функции, несмотря на layout-идентичность самого значения).
+
+### Латка снята НАВСЕГДА — sleep = ТОЛЬКО метод (владелец, П12-снос → постоянное решение)
+
+Свободные `sleep(Duration)`/`sleep_until(Monotonic)` (временная латка после Ф.2-v2, восстановленная для d316-строгости) RETRACTED из `std/time/duration/core.nv` БЕЗ замены. Канон — ТОЛЬКО методы: `d.sleep()` (`Duration @sleep()`, зовёт `Time.sleep(@)` напрямую — полная ns-точность, ceil-to-ms больше НЕ на `.nv`-сахарном слое, а внутри real-clock `#default_handler`) и `deadline.sleep_until()` (`Monotonic @sleep_until()`, pre-existing с "П12-хвоста"). `Timestamp.now()`/`Monotonic.now()` упрощены до прямого `Time.now()`/`Time.now_monotonic()` (typed op возвращает готовый value — обёртке больше нечего строить вручную).
+
+**Побочная находка (не регрессия этой волны, но впервые релевантна):** `[M-175-realtime-ban-method-call-blind]` — D64 realtime-suspend-effect-check (`types/mod.rs`, `check_expr_forbid`/`check_callee_effects`) СИНТАКСИЧЕСКИЙ на форму вызова: ловит `Effect.op(...)`-shaped path (`path.len()==2 && effect_decls.contains(path[0])`) и qualified free-fn/static-method calls через `method_table`, но НЕ instance-method call на произвольном expression-receiver (`expr.method()`, напр. `d.sleep()`) — тот путь явно помечен "dynamic member-call; не resolve'им" / "instance-method через obj.method требует type-инференции, отложен" уже ДО этой волны. Раньше это было некритично, т.к. канонический sleep-вызов (`sleep(d)`/`Time.sleep(d)`) попадал в ПОКРЫТУЮ форму; теперь, когда `d.sleep()` — promoted idiom, D64-гард на `realtime`-функциях, зовущих sleep ТОЛЬКО через метод, слеп. Негатив-фикстура `spec_tests/conformance/neg/d316_realtime_sleep_neg.nv` сознательно продолжает звать `Time.sleep(d)` (не `.sleep()`) — обе формы валидны, эффект-оп не ретрактирован, только `.nv`-сахарные free-функции. Расширение D64/D63-скана на instance-method-call — отдельный followup (нужна receiver-type-инференция в этом checkpoint'е), не блокирует эту волну.
+
+### Гейт
+
+5/5 d316-фикстур (`spec_tests/conformance/neg/d316_*`, `standalone/d316_time_effect_typed_surface`) PASS · `std/src/time`+`std/src/testing` suite 8/8 PASS · `nova check std` 142/142 реальных файлов (17 "FAIL" — все intentional `*_neg`) · `tls_handler_per_fiber_armed`/`tls_handler_race_repro` (armed M:N per-fiber handler isolation под typed-схемой) PASS · `examples/flagship/aggregator` `--strict-effects` built+boot.
+
+### Связь
+
+Amends [D316](#d316) (typed-schema retype — теперь LANDED) · [D431](#d431-default_handlerx--ambient-lazy-default-handler-factory-для-эффектов-plan-175-ф2-v2-2026-07-2122) (`#default_handler` mechanism, `[M-175-time-typed-schema-scalar-bridge]` → CLOSED) · `nova_rt/sync_primitives.h` `Nova_Mutex_method_lock_for` (тот же void*+first-field ABI-identity приём, прецедент) · Plan [175](../../docs/plans/175-time-system-rework.md) Ф.2-v3 · `[M-175-realtime-ban-method-call-blind]` (новый followup, docs/plans/backlog-followups.md).

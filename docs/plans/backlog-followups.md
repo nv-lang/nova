@@ -3919,3 +3919,15 @@ Regression-guard: 9-й `test` в `d432_auto_cleanup_hybrid_c.nv` (`"D432:
 break inside a nested empty loop must not bleed into an outer auto-cleanup
 scope"`) — изолирует дефект от нативного RwLock (локальный ресурс +
 `exit_calls`, тот же CAS-retry-loop shape).
+
+## [M-175-realtime-ban-method-call-blind] — D64/D63 suspend-effect scan слеп на instance-method call (Plan 175 Ф.2-v3, 2026-07-22)
+
+**Найдено при:** ретипизации Time (Ф.2-v3) — метод-канон `d.sleep()` стал promoted idiom вместо `Time.sleep(d)`/free `sleep(d)`.
+
+**Дефект:** `check_expr_forbid`/`check_callee_effects` (`compiler-codegen/src/types/mod.rs`) детектирует suspend-эффект внутри `realtime {}`/`forbid`-блока СИНТАКСИЧЕСКИ — только `Effect.op(...)`-shaped path (`path.len()==2 && effect_decls.contains(path[0])`, ИЛИ qualified free-fn/static-method call через `method_table`). Instance-method call на произвольном expression-receiver (`expr.method()`, напр. `d.sleep()` где `d` — переменная/выражение типа `Duration`) НЕ резолвится — веткa явно помечена "dynamic member-call; не resolve'им" (уже существовавшее ограничение, НЕ введено этой волной). Значит `#realtime fn` вызывающая suspend-effect ТОЛЬКО через метод (`d.sleep()`, не `Time.sleep(d)`) может пройти D64-гард необнаруженной.
+
+**Почему не пофикшено этой же волной:** нужна receiver-type-инференция В ЭТОМ checkpoint'е (какой тип у `d`, чтобы найти `method_table[Тип]["sleep"]`) — checker уже конструирует такую инфраструктуру для IDE (`expr_types`/`resolved_types` side-channel, `record_expr_types`-флаг), но НЕ включена по умолчанию в основной check-pass. Масштаб фикса — architectural (не point-patch), риск регрессии в основном чекере высок при спешке.
+
+**Текущий обход:** негатив-фикстура (`spec_tests/conformance/neg/d316_realtime_sleep_neg.nv`) продолжает звать `Time.sleep(d)` (qualified form, ловится) — обе формы валидны семантически (только `.nv`-сахарные free-функции `sleep`/`sleep_until` ретрактированы, не сам effect-op), так что гейт не ослаблен, просто использует ДРУГОЙ (покрытый) call-shape.
+
+**Follow-up:** расширить D64 (`realtime_suspend_effect`) и D63 (`forbid`) сканы на instance-method-call форму — включить `record_expr_types`-инфраструктуру (или эквивалент) на этом checkpoint'е основного (не только IDE) прохода, резолвить receiver-тип перед `method_table`-lookup.
