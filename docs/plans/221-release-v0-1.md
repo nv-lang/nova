@@ -47,14 +47,14 @@
       `[M-216-record-payload-consume]`).
 - [x] **A-B8 ✅ 2026-07-21** d216/write_at паника — ВЛИТ (корень: Block-арм infer_expr_c_type
       без пре-регистрации let-локалов + stale плоский var_types; folder-CU 517/0 после фикса).
-- [ ] **A-B9 🔨 2026-07-21 (поздний А-класс, решение владельца: «API эффектов не менять
+- [x] **A-B9 ✅ 2026-07-22 (влит целиком: handler-тела→общий путь, #default_handler D431, Time→std.time, typed-опы)** — исходная формулировка: 🔨 2026-07-21 (поздний А-класс, решение владельца: «API эффектов не менять
       после v0.1»)** [175.2](175.2-typed-effects.md) typed effects ОДНИМ окном (полный план — в файле подплана): handler-тела → обычные fn
       через протокол-машинерию (снос особого эмиттера emit_handler_lit) + Time-эффект →
       std.time + типизация опов (sleep(Duration)/now()->Timestamp/now_monotonic()->Monotonic).
       Корень: `[M-effect-handler-body-record-literal]`; детали — 221.1 Ф.2б. + Расширения владельца 2026-07-21: механизм #default_handler (дефолты эффектов из C-хардкода в .nv, лениво до main) И ретракция ambient-статуса Time (D62): Time в сигнатурах как все эффекты — «без магии». Волна в полёте
       (sonnet, worktree nova-typedfx). БЛОКЕР ТЕГОВ.
       - **A-B9 частично ✅ 2026-07-22 влито:** handler-тела→общий-путь + #default_handler (D431).
-- [ ] **A-B10 🔨 ОБЯЗАТЕЛЬНЫЙ ДО ТЕГОВ (решение владельца 2026-07-22: «v0.1 ждёт typed-эффекты»)**
+- [x] **A-B10 ✅ 2026-07-22 (v3 влит 65ba4fb90; остаток Mem/TimerMetrics-vtable → после тегов, 196)** — исходно: ОБЯЗАТЕЛЬНЫЙ ДО ТЕГОВ (решение владельца 2026-07-22: «v0.1 ждёт typed-эффекты»)**
       Эффект-рефактор 175 Ф.2-v3 (продолжение A-B9): (1) снос рукописных C-vtable Time/Mem/
       TimerMetrics из nova_rt (Fail остаётся хардкодом — сильно встроен); (2) typedef value-record
       перед effect-vtable (снимает scalar-bridge — идея владельца); (3) типизация опов, sleep-канон
@@ -63,7 +63,7 @@
       нуля. Волна `p175-effect-refactor` (sonnet). **v3 ✅ ВЛИТ (65ba4fb90): typed Time,
       2-pass emission снял 4× барьер, ambient честный, sleep=метод.** Mem/TimerMetrics-vtable
       остаток → после тегов (196).
-- [ ] **A-B11 🔨 эффект-API-полировка (Ф.2-v4, находки владельца вычиткой 2026-07-22) ДО ТЕГОВ**
+- [x] **A-B11 ✅ 2026-07-22 (Ф.2-v4 влита: П1-П10 — D434 полная декларация handler-опов, priv nanos, Time в folder-модуль time.duration, #default_handler без аргумента, real_time, time_*-extern, sleep(Duration), тесты в пир-файлах; П11 typed local_offset ОТКАЧЕН — CU-wide inference баг [M-offset-result-mono-bleed-if-let], после тегов)** — исходно: 🔨 эффект-API-полировка (Ф.2-v4, находки владельца вычиткой 2026-07-22) ДО ТЕГОВ**
       [175.2 Ф.2-v4](175.2-typed-effects.md): (1-3 ✅ ветка p-fx-polish: extern `time_*`-нейминг,
       sleep(d Duration)-тип, вынос тестов в пир-файлы). Остаток (новая волна): (4) handler-опы
       полная декларация обязательна (`now() -> Timestamp =>`, E-ошибка, ~78 сайтов); (5) priv nanos
