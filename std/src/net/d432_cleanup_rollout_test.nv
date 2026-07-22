@@ -1,0 +1,169 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 217.1 (D432 rollout) — auto-`@cleanup` added to `TcpListener`,
+// `TcpReadHalf`, `TcpWriteHalf`, `UdpSocket` (all empty effect-row, mirror
+// `TcpStream`'s own `@cleanup`, std/src/net/tcp.nv:280). Proves — same
+// `ResourceTrace` harness as spec_tests/conformance/d432_auto_cleanup_hybrid_c.nv
+// — that a never-closed bare consume-let of each type is auto-cleaned
+// exactly once at scope exit, and that an explicit `.close()` still disarms
+// it (D432 §4 flow-sensitive dearm, no double-fire).
+//
+// Caveat found while writing this fixture (empirical, not spec-mandated):
+// `TcpStream.split()` returns its halves via a TUPLE-destructuring pattern
+// (`mut (rdh, wrh) = s.split()`), and D432 §2 explicitly does NOT extend
+// auto-cleanup to destructured bindings (only bare `consume X = e;` single-
+// `Ident` patterns qualify) — confirmed empirically: a tuple-destructured,
+// never-closed half compiles clean with NO cleanup firing at all (a
+// PRE-EXISTING D133 tracking gap through tuple/match extraction,
+// `[M-176-consume-through-result-match]`, not a regression from this
+// rollout — the same file was silently unenforced before `@cleanup` existed
+// on these types too). The halves' new `@cleanup` is therefore reachable in
+// practice only via an explicit re-bind into a bare consume-let
+// (`consume rdh = rdh0`) — shown below — not through `.split()`'s direct
+// tuple return. Kept anyway per Plan 217 §8а п.4 ("resources default to
+// auto-cleanup absent an explicit reason not to") and for forward
+// compatibility if the destructure-tracking gap is closed later.
+//
+// `File`/`BufWriter` stay OUT of this rollout — both are explicitly
+// documented (std/src/fs/fs.nv, std/src/io/buffered.nv) as celebrating
+// "no silent swallow of the close error" as their #1 differentiator vs.
+// Go/Rust/Java/Zig; D432 §1 restricts auto-cleanup to an EMPTY effect-row
+// `@cleanup` anyway (`@close()` on both is `Fail`-carrying), so this is
+// simultaneously a design-intent exclusion and an effect-guard exclusion.
+// `File`'s existing must-consume regression guard:
+// std/src/fs/neg/d323_file_not_consumed_neg.nv (unaffected by this rollout).
+
+module std.net
+
+test "Plan 217.1: TcpListener auto-cleans when never explicitly closed" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(label, _outcome, _duration_ms, _overrun) -> () {
+            assert(label == "TcpListener")
+            exit_calls += 1
+            return ()
+        }
+    } {
+        with Net = mock_net() {
+            consume lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                Ok(consume l) => l
+                Err(_) => panic("bind")
+            }
+            ro _p = lst.local_port()
+        }
+    }
+    assert(exit_calls == 1)
+}
+
+test "Plan 217.1: TcpListener explicit close disarms auto-cleanup (no double-fire)" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        with Net = mock_net() {
+            consume lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                Ok(consume l) => l
+                Err(_) => panic("bind")
+            }
+            lst.close()
+        }
+    }
+    assert(exit_calls == 0)
+}
+
+test "Plan 217.1: UdpSocket auto-cleans when never explicitly closed" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(label, _outcome, _duration_ms, _overrun) -> () {
+            assert(label == "UdpSocket")
+            exit_calls += 1
+            return ()
+        }
+    } {
+        with Net = mock_net() {
+            consume sock = match UdpSocket.bind(SocketAddr.loopback(0)) {
+                Ok(consume s) => s
+                Err(_) => panic("bind")
+            }
+            ro _p = sock.local_port()
+        }
+    }
+    assert(exit_calls == 1)
+}
+
+test "Plan 217.1: UdpSocket explicit close disarms auto-cleanup (no double-fire)" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        with Net = mock_net() {
+            consume sock = match UdpSocket.bind(SocketAddr.loopback(0)) {
+                Ok(consume s) => s
+                Err(_) => panic("bind")
+            }
+            sock.close()
+        }
+    }
+    assert(exit_calls == 0)
+}
+
+// Split halves reach `@cleanup` only via an explicit re-bind into a bare
+// consume-let (see module doc comment above — `.split()`'s own tuple
+// return is NOT tracked by D432's flow analysis).
+test "Plan 217.1: split halves re-bound into bare idents auto-clean independently" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        with Net = mock_net() {
+            consume s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                Ok(consume c) => c
+                Err(_) => panic("connect")
+            }
+            mut (rdh0, wrh0) = s.split()
+            consume rdh = rdh0
+            consume wrh = wrh0
+            ro _x = rdh.local_port()
+            ro _y = wrh.local_port()
+        }
+    }
+    assert(exit_calls == 2)
+}
+
+test "Plan 217.1: split half explicit close disarms auto-cleanup (no double-fire)" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(label, _outcome, _duration_ms, _overrun) -> () {
+            assert(label == "TcpWriteHalf")
+            exit_calls += 1
+            return ()
+        }
+    } {
+        with Net = mock_net() {
+            consume s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                Ok(consume c) => c
+                Err(_) => panic("connect")
+            }
+            mut (rdh0, wrh0) = s.split()
+            consume rdh = rdh0
+            consume wrh = wrh0
+            rdh.close()
+            ro _y = wrh.local_port()
+        }
+    }
+    assert(exit_calls == 1)
+}
