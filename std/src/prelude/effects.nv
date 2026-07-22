@@ -11,14 +11,23 @@
 //      types/mod.rs:3148, codegen/emit_c.rs:3186).
 //
 // Архитектурные правила (Plan 62 §«Стратификация»):
-//   - **ZERO imports** — было верно до Plan 175 Ф.2-v3. Единственное
-//     ИСКЛЮЧЕНИЕ теперь: `import std.time.duration.{Duration, Timestamp,
-//     Monotonic}` ниже — `Time`-схема типизирована (D316 §Ф.2/Ф.3:
-//     `sleep(Duration)`/`now()->Timestamp`/`now_monotonic()->Monotonic`),
-//     и `#default_handler(Time)` (`time_default`) переехал сюда (Ф.2-v3,
-//     ambient-safety без явного import — см. ниже), значит эта декларация
-//     обязана называть эти типы. Всё остальное в файле (Fail/Mem/
-//     TimerMetrics/Random) — по-прежнему self-contained на primitives.
+//   - **ZERO imports.** Plan 175 Ф.2-v3 добавляла временное исключение
+//     (`import std.time.duration.{Duration, Timestamp, Monotonic}`) для
+//     типизированной `Time`-схемы, жившей здесь. Plan 175.2 Ф.2-v4 (П6,
+//     owner code-review, 2026-07-22) переносит `Time` + его
+//     `#default_handler` (`real_time`, П8-rename) ОБРАТНО в co-equal файл
+//     `std/time/duration/time_effect.nv` (та же логика, что вынесла
+//     `Time` из prelude в Plan 175 родителе Ф.2-исходно, ДО того как
+//     v3 временно вернула её сюда за ambient-safety) — ambient (Time без
+//     `with`, без import) был РЕТРАКТИРОВАН уже в Ф.2-v3/Ф.3, так что
+//     prelude-резидентство ради ambient-доступности избыточно: effect-row
+//     имена резолвятся compile-unit-wide вне зависимости от модуля
+//     объявления (07-modules §393, precedent — `std/time/civil/tzif.nv`
+//     `Fs Os -> ...` без импорта имён). Реальная причина переноса —
+//     `nanos`-поля `Monotonic`/`Timestamp`/`Duration` становятся
+//     module-private (D220, П5 той же волны): handler, живущий В
+//     `time.duration`, конструирует их record-литералом без публичного
+//     `from_ns`. ZERO-imports правило снова строго верно для ЭТОГО файла.
 //   - Auto-import `std.prelude` отключён внутри `std.prelude.*` через
 //     `is_prelude_self_module` (compiler-codegen/src/manifest.rs:314+).
 //
@@ -30,41 +39,10 @@
 //   RUNTIME_DEFINED_EFFECTS (emit_c.rs RUNTIME_DEFINED_TYPES extension),
 //   потому что `NovaVtable_Fail` уже определён в nova_rt/effects.h.
 //
-// **Plan 62.F.bis Ф.3 (2026-05-18, this commit); ПЕРЕСМОТРЕНО Plan 175
-// Ф.2-v3 (2026-07-22, снос рукописного Time-диспатча):**
-//
-// - **`Time`** — formal declaration ниже, ЕДИНСТВЕННЫЙ источник схемы
-//   (`effect_schemas["Time"]` строится codegen'ом ИЗ этой декларации —
-//   никакого хардкод-зеркала). Dispatch-функции (`Nova_Time_sleep` и
-//   т.д.) генерируются ЧЕРЕЗ ОБЩИЙ `emit_effect_type` путь — ТОТ ЖЕ, что
-//   у user-эффектов (не hand-written в nova_rt/fibers.h больше). Узкое
-//   исключение: сам typedef `NovaVtable_Time` + TLS-слот
-//   `_nova_handler_Time` остаются hand-written в nova_rt/effects.h/.c —
-//   nova_rt/channels.h (`ChanReader.close_after` mock-time path) и
-//   nova_rt/runtime.c (worker-thread TLS registration) — hand-written C
-//   ВНЕ codegen, компилируемый ОДИН раз (не per-CU) — трогают поля
-//   `_nova_handler_Time->sleep`/`->ctx` напрямую, значит нужен единый
-//   стабильный named-struct-тип (anonymous per-CU struct не подошёл бы).
-//   `#default_handler(Time)` (`time_default`, см. ниже, сразу после
-//   декларации) даёт ambient-fallback (Time работает без `with`/import) —
-//   ОБЫЧНЫЙ generic-механизм, просто зарегистрированный в ВСЕГДА-
-//   присутствующем prelude-модуле (не хардкод-C-путь, как было).
-//
-//   **Что включено в декларацию:**
-//     - `sleep(ms int) -> ()` — yield/sleep current fiber.
-//     - `now() -> int` — monotonic ms with handler override hook.
-//
-//   **Что DEFERRED (intentionally):**
-//     - `after(ms int) -> Chan[int]` — internal concurrency-runtime
-//       operation, requires `Chan[T]` в scope. `Chan[T]` живёт в
-//       runtime, не в prelude. Pre-registered в codegen
-//       `effect_schemas` (с `Nova_ChanReader*` raw type) — продолжает
-//       работать через codegen dispatch. Decl-only signature будущее
-//       расширение когда `Chan[T]` будет доступен в prelude.
-//
-//   **AI-first rationale:** users часто пишут `with Time = handler
-//   Time { sleep(ms) {...} } { body }` (mocking clocks). `nova doc`
-//   теперь показывает sleep/now signatures без обращения к runtime.
+// - **`Time`** — MOVED OUT (Plan 175.2 Ф.2-v4, П6) → `std/time/duration/
+//   time_effect.nv` (`module time.duration`, co-equal с `core.nv`/
+//   `monotonic.nv`/`timestamp.nv`). См. header-комментарий этого файла +
+//   header-комментарий `time_effect.nv` для полной истории/rationale.
 //
 // - **`Mem`** — formal declaration ниже. Runtime introspection effect
 //   (alloc_count/free_count/live/reset). Hardcoded codegen
@@ -76,12 +54,6 @@
 //   + builtin type "Detach" (types/mod.rs:2080).
 
 module prelude.effects
-
-// Plan 175 Ф.2-v3: единственный import в этом файле (см. header-комментарий
-// выше) — нужен для типизированной `Time`-схемы (`Duration`/`Timestamp`/
-// `Monotonic` — имена типов в сигнатурах опов ниже + record-literal
-// construction в `time_default`).
-import std.time.duration.{Duration, Timestamp, Monotonic}
 
 /// **Failable-эффект** — единственный способ объявить ошибку в сигнатуре
 /// функции (D25, D62, D65; spec/decisions/04-effects.md).
@@ -106,7 +78,7 @@ import std.time.duration.{Duration, Timestamp, Monotonic}
 /// with Fail[E] = |e| { panic("got {}", e) } { body }
 ///
 /// // Explicit handler-форма (D55): full Effect[Fail[E]] declaration.
-/// with Fail[E] = effect Fail[E] { fail(e) => panic("...") } { body }
+/// with Fail[E] = effect Fail[E] { fail(e) -> never => panic("...") } { body }
 /// ```
 ///
 /// **Default handler:** runtime устанавливает `Nova_Fail_fail` который
@@ -123,124 +95,10 @@ export type Fail[E] effect {
     fail(e E) -> never
 }
 
-/// **Time-effect** — ambient runtime эффект для доступа к часам и
-/// scheduler'у (D11 / D14 / D62, spec/decisions/04-effects.md).
-///
-/// **Назначение:** AI-first hooks для unit-тестов. В production
-/// `Time.now()` / `Time.sleep(d)` дают monotonic clock и fiber-suspension
-/// через runtime. В тестах handler-override:
-/// ```nova
-/// with Time = effect Time {
-///     sleep(d) {}
-///     now() { 12345.to_unix_millis() }
-///     now_monotonic() { { nanos: 0 } }
-///     local_offset_sec() { 0 }
-/// } {
-///     // время "замерло" — sleep noop, now() возвращает fixed value
-///     run_test_with_fixed_clock()
-/// }
-/// ```
-///
-/// **Default handler** (без `with` block, `time_default` ниже):
-///   - `sleep(d)` — yields fiber через nova_fiber_sleep_ms (libuv timer
-///     или blocking sleep если в bootstrap mode).
-///   - `now()` — unix epoch wall-clock момент (`Timestamp`).
-///
-/// **Realtime-context:** `Time` суspend-effect (D64), запрещён внутри
-/// `realtime { ... }` блоков. См. `realtime_suspend_effect` в
-/// types/mod.rs.
-///
-/// **Что НЕ включено в декларацию** (intentional deferral):
-///   - `after(ms int) -> Chan[int]` — internal concurrency-runtime op,
-///     требует `Chan[T]` в scope. Pre-registered в codegen
-///     (emit_c.rs:1080) и работает; formal declaration появится когда
-///     `Chan[T]` будет доступен в prelude.
-///
-/// **Единый источник схемы (Plan 175 Ф.1, D316; dispatch-generic + typed
-/// с Ф.2-v3):** эта декларация — ЕДИНСТВЕННЫЙ источник
-/// `effect_schemas["Time"]`; codegen читает её из `.nv` (`emit_type_decl`
-/// → `emit_effect_type`, ТОТ ЖЕ generic путь что у user-эффектов).
-/// Dispatch-функции (`Nova_Time_sleep` и т.д.) генерируются ИЗ ЭТОЙ схемы —
-/// не hand-written в nova_rt/fibers.h. Узкое исключение (не архитектурная
-/// дыра): сам struct-тип `NovaVtable_Time` + TLS-слот `_nova_handler_Time`
-/// остаются hand-written в nova_rt/effects.h/.c (channels.h/runtime.c нужен
-/// единый стабильный C-тип, см. header-комментарий там) — но их WIRE
-/// остался int64 nanoseconds (переименован под новые имена опов); codegen
-/// маршалит typed-параметры/-результаты (`Duration`/`Timestamp`/
-/// `Monotonic`) в/из raw i64 на границе dispatch-функции и
-/// handler-literal install (см. emit_c.rs `emit_effect_type`/
-/// `emit_handler_lit`, Time-специфичная marshalling-ветка) — ЕДИНСТВЕННОЕ
-/// место, где int-провод ещё виден, и оно generated/hand-written C, не
-/// `.nv`-схема (Ф.2/Ф.3 цель: "голые имена, единица в типе").
-///
-/// **Plan 175 Ф.3 (D316, 2026-07-22 — Ф.2-v3 typed retype):** операции
-/// РЕТИПИЗИРОВАНЫ с единицей в ТИПЕ вместо имени — `now_unix_ms()->int`
-/// → `now()->Timestamp`; `now_monotonic_ns()->int` → `now_monotonic()->
-/// Monotonic`; `sleep(ms int)->()` → `sleep(d Duration)->()`. int-провод
-/// (`_ms`/`_ns`-suffixed extern-примитивы) остаётся ВНУТРИ реализации
-/// хендлеров/extern (ниже), НЕ в схеме — закрывает исторический D316 §Ф.2
-/// finding (4× откат: vtable эмитился раньше value-record typedef'ов —
-/// Фаза 2 этой же волны чинит порядок эмиссии в общем случае; `Time`
-/// конкретно решает через marshalling-thunk, не через прямое именование
-/// `NovaValue_Duration` в hand-written struct — см. выше).
-///
-/// **`now_monotonic()->Monotonic`** (Plan 65 Ф.12.3 / D124) — монотонные
-/// часы; `Monotonic` record.
-/// **5 timer-observability-счётчиков ВЫНЕСЕНЫ** в отдельный `TimerMetrics`
-/// (Plan 175 Ф.1 / Q1) — read-only introspection, не «время».
-///
-/// **`local_offset_sec()->int`** (Plan 175.1, D316 amend + D321,
-/// 2026-07-10) — системный UTC-сдвиг ТЕКУЩЕЙ локальной зоны машины, в
-/// секундах (owner decision: системный часовой пояс машины ДОЛЖЕН быть
-/// доступен из Nova). Закрывает `[M-175.1-local-offset-effect-op]`. Даёт
-/// ТОЛЬКО числовой сдвиг — не implicit-зону: `ZonedDateTime`/civil-API
-/// по-прежнему требуют явный `TimeZone`/`Offset` (D319 R1 не меняется);
-/// Nova-сахар `Offset.local()` (`std/time/civil/offset.nv`) — явный запрос
-/// (тот же класс операции, что java.time `ZoneId.systemDefault()` /
-/// Temporal `Now.timeZoneId()` — explicit query, не implicit substitution).
-/// Остаётся plain `int` (не `Duration`) — оффсет, не длительность/момент.
-#stable(since = "0.1")
-export type Time effect {
-    sleep(d Duration) -> ()
-    now() -> Timestamp
-    now_monotonic() -> Monotonic
-    local_offset_sec() -> int
-}
-
-// Plan 175 Ф.2-v3 (снос ambient-C-fallback, D316/D-default_handler):
-// раньше "нет with Time = ..." → dispatch падал на С-хардкод внутри
-// hand-written Nova_Time_* wrapper'ов (nova_rt/fibers.h). Теперь дефолт —
-// ОБЫЧНАЯ .nv handler-фабрика прямо ЗДЕСЬ, в prelude (a НЕ в
-// std/time/duration/core.nv, куда её изначально поместили Ф.2-v2) —
-// prelude auto-import'ится в КАЖДЫЙ CU (`is_prelude_self_module`), значит
-// ambient-Time (работает БЕЗ `with`, БЕЗ явного import std.time — как
-// Random, не Fail) больше не зависит от того, попал ли `time.duration`
-// модуль в этот конкретный compile-unit. Компилятор лениво (по первому
-// использованию, без with) конструирует и устанавливает её РОВНО ОДИН РАЗ
-// на поток (см. generic install-once check внутри `Nova_Time_<op>()`,
-// emit_c.rs `emit_effect_type`) — явный `with Time = ...` по-прежнему
-// переопределяет как раньше. Тело — тонкие `extern "C"` примитивы поверх
-// РЕАЛЬНЫХ часов/таймера (nova_rt/fibers.h): scheduler-aware sleep
-// (fiber-park / drain / bootstrap-block) + uv-часы. Типизированные
-// параметры/результаты (Duration/Timestamp/Monotonic) конструируются
-// напрямую через record-literal (`{ nanos: ... }`) / `.nanos()` accessor —
-// подтверждено, что cross-module record-literal construction РАЗРЕШЕНА
-// (нет module-privacy на value-record полях), так что этот handler НЕ
-// нуждается в спец-правах time.duration-модуля.
-extern "C" fn time_wall_unix_ms() -> int
-extern "C" fn time_monotonic_ns() -> int
-extern "C" fn time_local_offset_sec() -> int
-extern "C" fn time_default_sleep(ms int) -> ()
-
-#default_handler(Time)
-fn time_default() -> Effect[Time] {
-    effect Time {
-        sleep(d Duration) => time_default_sleep(((d.nanos() + 999_999) / 1_000_000) as int)
-        now() => { nanos: time_wall_unix_ms() * 1_000_000 }
-        now_monotonic() => { nanos: time_monotonic_ns() }
-        local_offset_sec() => time_local_offset_sec()
-    }
-}
+// `Time` effect + its `real_time()` default-handler — MOVED to
+// `std/time/duration/time_effect.nv` (Plan 175.2 Ф.2-v4, П6). See that
+// file's header comment for the full rationale (module-private `nanos`
+// access on `Monotonic`/`Timestamp`/`Duration`, D220 per-field).
 
 /// **TimerMetrics-effect** — read-only introspection timer-runtime
 /// (Plan 65 Ф.11 counters; вынесены из `Time` в Plan 175 Ф.1 / Q1).

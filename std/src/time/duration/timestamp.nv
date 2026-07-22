@@ -21,9 +21,16 @@ module time.duration
 ///
 /// **Plan 175 Ф.1b (D316):** `value`-record — stack-allocated, zero-GC.
 /// Окно i64-ns ≈ 1677-09-21 .. 2262-04-11 (±292 года от эпохи, Q16).
+///
+/// **Plan 175.2 Ф.2-v4 (П5, D220 per-field):** `nanos` is `priv` (module-
+/// private per D281) since this wave — was `ro` (publicly constructible
+/// `{ nanos: ... }` from any module). Construct via `T.to_unix_seconds()`/
+/// `to_unix_millis()`/`to_unix_nanos()` below (module-private access,
+/// unaffected). `@unix_nanos()` accessor remains the public raw-value
+/// escape hatch.
 #stable(since = "0.1")
 export type Timestamp value {
-    ro nanos i64
+    priv nanos i64
 }
 
 /// Unix epoch — 1970-01-01 00:00:00 UTC.

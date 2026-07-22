@@ -42,10 +42,10 @@ test "Offset @to_iso: Z / ±HH:MM / под-минутные с секундам�
 // тесты не должны зависеть от реального TZ окружения CI-машины).
 test "Offset.local() мокабелен произвольным handler-литералом" {
     ro off = with Time = effect Time {
-        sleep(d) => ()
-        now() => 0.to_unix_millis()
-        now_monotonic() => { nanos: 0 }
-        local_offset_sec() => 19_800   // +05:30, произвольное non-zero
+        sleep(d Duration) -> () => ()
+        now() -> Timestamp => 0.to_unix_millis()
+        now_monotonic() -> Monotonic => 0.to_monotonic_nanos()
+        local_offset_sec() -> int => 19_800   // +05:30, произвольное non-zero
     } {
         Offset.local()
     }
