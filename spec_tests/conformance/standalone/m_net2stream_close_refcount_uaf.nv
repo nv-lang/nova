@@ -1,0 +1,89 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for [M-net2stream-close-refcount-uaf] (221.1 bug-sweep #12,
+// found in the "net2stream+imports" compiler window, 2026-07-23). Same UAF
+// class as the already-fixed [M-nv-cancel-loop-accept-swallowed] on
+// TcpListener (compiler-codegen/nova_rt/net.c, commit 2c7459c79) — but for
+// TcpStream read()/write(). `NovaNet2Stream` had a SINGLE existence-unit
+// refcount, released unconditionally by `_nn2_stream_close_cb` regardless of
+// whether the close was the user's own explicit `.close()` or an internal
+// `supervised(timeout:/deadline:)` cancellation auto-close
+// (`_nn2_stream_stop_cb`). A cancelled, in-flight `read()`/`write()` call's
+// own transient acquire/release (held only for that one call) was the only
+// thing keeping the struct alive past that close, so the struct was freed the
+// moment the FIRST cancelled `read()` call returned. Any retry loop that
+// (reasonably) calls `.read()` again afterward then dereferenced an
+// ALREADY-FREED `NovaNet2Stream*` (`_nn2_stream_acquire` incrementing a freed
+// refcount field): undefined behavior. Fixed by giving the stream TWO
+// independent release triggers (the OS-handle close AND the user's own
+// eventual `.close()`/D432 auto-`@cleanup`) so the struct survives until BOTH
+// have fired — `net_tcp_connect`/`net_tcp_accept`/`net_tcp_close` in net.c.
+//
+// This fixture's client fiber deliberately calls `.read()` a further TWO
+// times after the first (cancelled) call returns — exactly the shape that
+// dereferenced freed memory pre-fix — and asserts the whole process still
+// completes well within the outer per-test timeout budget below.
+//
+// EXPECT_TIMEOUT_MS 30000
+
+module standalone.m_net2stream_close_refcount_uaf
+
+import std.net.{TcpStream, TcpListener, SocketAddr, real_net}
+import std.time.duration
+
+test "supervised(timeout:) cancels a while-loop-retried stream read() (no UAF/hang)" {
+    with Net = real_net() {
+        with Fail[TimeoutError] = |_e| {} {
+            ro ch = Channel.new(1)   // server port → client
+            supervised(timeout: 300.to_millis()) {
+                spawn {
+                    // Server: bind + accept, then just hold the connection
+                    // open (a long sleep — gets cancelled by the same
+                    // timeout as the client, which is fine: only the
+                    // CLIENT's retry-after-cancel shape is under test).
+                    consume lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                        Ok(consume l) => l
+                        Err(_) => panic("bind failed")
+                    }
+                    ch.tx.send(lst.local_port())
+                    consume srv = match lst.accept() {
+                        Ok(consume s) => s
+                        Err(_) => { lst.close(); panic("accept failed") }
+                    }
+                    (5000).to_millis().sleep()
+                    srv.close()
+                    lst.close()
+                }
+                spawn {
+                    ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
+                    consume conn = match TcpStream.connect(SocketAddr.loopback(port)) {
+                        Ok(consume s) => s
+                        Err(_) => panic("connect failed")
+                    }
+                    mut buf []u8 = []u8.new()
+                    buf.resize(16, 0 as u8)
+                    mut running = true
+                    mut n = 0
+                    while running {
+                        match conn.read(buf) {
+                            Ok(_) => {}
+                            Err(_) => {
+                                n = n + 1
+                                // A well-behaved retry loop keeps going —
+                                // same "Err doesn't kill the loop" shape
+                                // as m222_7's accept-retry fixture. Once the
+                                // scope's timeout fires (first Err), `conn`'s
+                                // underlying stream is auto-closing
+                                // internally; these FURTHER read() calls are
+                                // exactly the shape that dereferenced
+                                // already-freed memory pre-fix.
+                                if n >= 3 { running = false }
+                            }
+                        }
+                    }
+                    conn.close()
+                }
+            }
+        }
+    }
+    assert(true)
+}
