@@ -5501,6 +5501,59 @@ impl CEmitter {
                             group_entry.push((c.name.clone(), mangled));
                         }
                     }
+                    // [M-175-lazy-const-crossmodule-collision] (2026-07-22,
+                    // found via spec_tests/conformance/standalone/
+                    // repro_const_dup.nv): module-level `ro NAME = expr`
+                    // (`Item::Let`, Pattern::Ident — LetDecl has NO `is_export`
+                    // field at all, D24 grammar never allows `export ro` at
+                    // module scope) was COMPLETELY absent from this
+                    // module-qualification pass — it always fell to the bare
+                    // `_nova_const_<name>_value` C symbol (see
+                    // `emit_lazy_const`), with NO collision protection
+                    // whatsoever. Harmless while every such binding's bare
+                    // name happened to be globally unique; broke the moment
+                    // Plan 175 Ф.2-v3 made `std.time.duration` (which has
+                    // `export const ZERO/SECOND/MINUTE/HOUR Duration = …`)
+                    // transitively reachable from EVERY compile-unit (via
+                    // `std/prelude/effects.nv`'s new `Time`-schema import) —
+                    // a user file's own private `ro ZERO = …` collided with
+                    // `Duration.ZERO` at the C symbol level (two DIFFERENT
+                    // Nova consts, correctly resolved by the checker in their
+                    // own files, but emitting the IDENTICAL unqualified C
+                    // name). Treat exactly like a non-exported, non-file-
+                    // private `Item::Const` — module-qualified `Nova_const_
+                    // <module>_<name>`, distributed Rule-C style to every peer
+                    // in Step 2 below (a module-level `ro` has no file-private
+                    // variant to special-case).
+                    if let Item::Let(l) = item {
+                        // [M-175-lazy-const-crossmodule-collision] fix: a
+                        // module-level `ro NAME = expr` binding's pattern is
+                        // NOT always `Pattern::Ident` — an ALL-CAPS/PascalCase
+                        // bare name (`ZERO`, `SECOND`, …) parses as
+                        // `Pattern::Variant { path: [name], kind: Unit }` (the
+                        // parser's unit-variant-pattern shape, since a bare
+                        // capitalized identifier is AMBIGUOUS with an enum
+                        // unit-variant pattern) — mirrors EXACTLY the shape
+                        // the pre-existing `Item::Let` emission loop below
+                        // (in `emit_module`, right before `emit_lazy_const`)
+                        // already matches. Missing this arm is why this whole
+                        // branch never fired for `repro_const_dup.nv`'s
+                        // `ZERO`/`SECOND`/`THIRD`/`FOURTH` on the first attempt.
+                        let name = match &l.pattern {
+                            Pattern::Ident { name, .. } => Some(name.clone()),
+                            Pattern::Variant { path, kind: VariantPatternKind::Unit, .. }
+                                if path.len() == 1 => Some(path[0].clone()),
+                            _ => None,
+                        };
+                        if let Some(name) = name {
+                            let mangled = format!(
+                                "Nova_const_{}_{}",
+                                pf.module_name.join("_"),
+                                name
+                            );
+                            group_entry.push((name, mangled));
+                        }
+                    }
                 }
             }
 
@@ -7750,7 +7803,20 @@ impl CEmitter {
                     } else {
                         self.infer_expr_c_type(&l.value)
                     };
-                    self.emit_lazy_const(&name, &ty_c, &l.value)?;
+                    // [M-175-lazy-const-crossmodule-collision]: module-level
+                    // `ro NAME = expr` is ALWAYS module-private (LetDecl has
+                    // no `is_export`) — look up the module-qualified name the
+                    // pre-pass above (Step 1, `Item::Let` branch) registered,
+                    // mirroring `emit_const_decl`'s own lookup. Falls back to
+                    // the bare name only if the pre-pass found no entry
+                    // (defensive; should always be present once peer_files is
+                    // non-empty — byte-identical fallback for any edge case
+                    // it doesn't cover).
+                    let c_name = self.private_const_c_names
+                        .get(&(l.span.file_id, name.clone()))
+                        .cloned()
+                        .unwrap_or_else(|| name.clone());
+                    self.emit_lazy_const(&name, &c_name, &ty_c, &l.value)?;
                 }
             }
         }
@@ -9157,7 +9223,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             Err(_) => {
                 // Plan 14 Ф.2: non-constant initialiser (record-literal,
                 // function call, и т.п.) — desugaring в lazy-init геттер.
-                self.emit_lazy_const(&c.name, &ty_c, &c.value)
+                // [M-175-lazy-const-crossmodule-collision]: use the ALREADY-
+                // computed `c_name` (module-qualified when non-exported —
+                // see lookup above) as the wrapper qualifier, not the bare
+                // `c.name` — this was the bug: `c_name` was computed and
+                // then silently discarded on this path, so every lazy
+                // (non-constexpr-initializer) const emitted the UNQUALIFIED
+                // `_nova_const_<bare-name>_value` regardless of collision.
+                self.emit_lazy_const(&c.name, &c_name, &ty_c, &c.value)
             }
         }
     }
@@ -9193,16 +9266,42 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// На use-site `Ident(name)` для lazy const'ов эмитим ГОЛОЕ
     /// `_nova_const_<name>_value` (не call — eager-init гарантирует, что оно
     /// уже populated до старта любого worker'а).
-    fn emit_lazy_const(&mut self, name: &str, ty_c: &str, value: &Expr) -> Result<(), String> {
+    ///
+    /// [M-175-lazy-const-crossmodule-collision] (2026-07-22): `name` (bare
+    /// SOURCE identifier) and `c_name` (the QUALIFIER substituted into the
+    /// `_nova_const_<c_name>_value` wrapper below — NOT the final symbol by
+    /// itself) are now DISTINCT parameters. `name` still drives every
+    /// Nova-level registry keyed by source identifier (`lazy_consts`/
+    /// `var_types`/topo-sort dependency-matching via `pending_const_inits`
+    /// — those operate on Nova-level identifiers, resolved unambiguously by
+    /// the checker per-file, independent of any C-symbol collision).
+    /// `c_name` is the module-qualified (or bare, if no collision risk /
+    /// exported) name callers precompute (see `emit_const_decl`'s `c_name`
+    /// lookup and the `Item::Let` call site's mirrored lookup; reference
+    /// sites mirror the SAME lookup — see the `ExprKind::Ident` lazy-const
+    /// branch), so two DIFFERENT lazy consts sharing a bare source name
+    /// (e.g. a user's own private `ro ZERO` vs `Duration.ZERO`, both
+    /// reachable in one CU since Plan 175 Ф.2-v3 made `std.time.duration`
+    /// transitively pulled into every CU) no longer collide into one
+    /// `_nova_const_ZERO_value` C global.
+    fn emit_lazy_const(&mut self, name: &str, c_name: &str, ty_c: &str, value: &Expr) -> Result<(), String> {
         // Регистрируем имя как lazy — use-site Ident(name) станет голым
-        // чтением `_nova_const_<name>_value`.
+        // чтением `c_name`.
         self.lazy_consts.insert(name.to_string());
         // Регистрируем тип, чтобы infer_expr_c_type(Ident(name)) возвращал
         // правильный c-тип (для записи в var_types — как обычный binding).
         self.var_types.insert(name.to_string(), ty_c.to_string());
         // Эмитим storage (file-scope static; no `_init` flag anymore — the
         // combined `nova_consts_init()` runs it exactly once, eagerly).
-        self.line(&format!("{}{} _nova_const_{}_value;", self.top_level_storage(), ty_c, name));
+        // [M-175-lazy-const-crossmodule-collision]: KEEP the `_nova_const_
+        // <X>_value` wrapper (not just a bare `c_name`) — the wrapper isn't
+        // decorative, it's what keeps a const named after a C keyword
+        // (`for`/`while`/…) or colliding with an unrelated bare C symbol
+        // safe; `c_name` only substitutes the qualifier-or-bare-name PIECE
+        // inside it (bare `name` in the overwhelmingly common non-colliding
+        // case → byte-identical to pre-fix output; `Nova_const_<module>_
+        // <name>` when the pre-pass detected a cross-module bare-name clash).
+        self.line(&format!("{}{} _nova_const_{}_value;", self.top_level_storage(), ty_c, c_name));
         // Capture this const's init-BODY into its own buffer (same
         // side-statement-safety rationale as the old getter-body capture —
         // nested emits, e.g. a record-literal's helper statements, must not
@@ -9222,7 +9321,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // No-op under malloc/RC backends.
         self.line(&format!(
             "nova_gc_add_root(&_nova_const_{n}_value, (char*)(&_nova_const_{n}_value) + sizeof(_nova_const_{n}_value));",
-            n = name
+            n = c_name
         ));
         // Передать ty_c как ожидаемый record-target для D55 coercion
         // (`const FOO = { ... }` без явного имени типа должен подхватить
@@ -9286,7 +9385,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             None => self.emit_expr(value)?,
         };
         self.expected_record_type = saved_expected;
-        self.line(&format!("_nova_const_{}_value = {};", name, val));
+        self.line(&format!("_nova_const_{}_value = {};", c_name, val));
         let body = std::mem::replace(&mut self.out, saved_out);
         self.indent = saved_indent;
         // Dependency scan (best-effort — see `collect_free_idents`'s
@@ -31067,8 +31166,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // `emit_lazy_const`). Проверяем ПЕРВЫМ, до is_local_var,
                 // потому что emit_lazy_const регистрирует name в var_types
                 // для type-inference, а is_local_var тогда был бы true.
+                //
+                // [M-175-lazy-const-crossmodule-collision] (2026-07-22): a
+                // lazy const's C symbol is `_nova_const_<qualifier>_value`,
+                // where `<qualifier>` is EITHER the bare source `name`
+                // (common case, byte-identical to pre-fix output) OR the
+                // module-qualified name from `private_const_c_names`
+                // (populated by the pre-pass in `emit_module` for a
+                // non-exported const/`ro`-binding — see there) when a
+                // cross-module bare-name clash was detected (repro: a user
+                // file's own private `ro ZERO = …` vs `Duration.ZERO`, both
+                // lazy consts sharing the bare name `ZERO` once `std.time.
+                // duration` became transitively reachable from every CU).
+                // MUST look up the qualifier and were-wrap it here — must
+                // NOT return `private_const_c_names`'s value directly (that
+                // map is ALSO consulted, unwrapped, for EAGER private
+                // consts further below — a different C-naming convention;
+                // see `emit_const_decl`/`emit_lazy_const`).
                 if self.lazy_consts.contains(name) {
-                    return Ok(format!("_nova_const_{}_value", name));
+                    let qualifier = self.private_const_c_names
+                        .get(&(expr.span.file_id, name.clone()))
+                        .cloned()
+                        .unwrap_or_else(|| name.clone());
+                    return Ok(format!("_nova_const_{}_value", qualifier));
                 }
                 let is_local_var = self.var_types.contains_key(name);
                 let is_user_fn = self.var_types.contains_key(&format!("fn_ret_{}", name));

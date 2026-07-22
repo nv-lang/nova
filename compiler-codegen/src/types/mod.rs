@@ -26618,19 +26618,45 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, i
             }
             // Q-блок 173.2: suspend-операции не должны блокировать drive-цикл.
             // Компилируемое приближение MVP: прямой вызов `Time.sleep(...)`.
+            //
+            // [M-175-realtime-ban-method-call-blind] fix (2026-07-22,
+            // regression found via spec_tests/conformance/neg/
+            // handler_sleep_neg.nv): Plan 175 Ф.2-v3 retracted the free
+            // `sleep`/`sleep_until` sugar functions — `d.sleep()`/
+            // `deadline.sleep_until()` (instance METHOD calls on `Duration`/
+            // `Monotonic`) are now the PROMOTED idiom, not `Time.sleep(d)`
+            // directly. This checker is purely SYNTACTIC (no type inference
+            // available at this AST-only stage — same limitation as D64's
+            // `realtime_suspend_effect` scan just above in this file), so it
+            // previously went blind the moment a supervisor-handler body
+            // called `sleep` through the method form instead of the two
+            // `Time`-qualified shapes it matched. Widen the heuristic: ANY
+            // `.sleep()`/`.sleep_until()` method call (whatever the
+            // receiver) is treated as a suspend-op candidate — these method
+            // names are owned exclusively by `Duration`/`Monotonic` in std
+            // (and this is a narrow, careful-use context — supervisor
+            // handlers — where a false positive on an unrelated same-named
+            // user method is an acceptable, rare trade-off against silently
+            // missing a real suspend-under-handler bug). The original
+            // `Time.sleep(...)`/`Time.sleep` qualified-path forms remain
+            // covered too (the effect op itself is still perfectly valid to
+            // call directly — only the free-fn sugar was retracted).
             ExprKind::Call { func, .. } => {
-                let is_time_sleep = match &func.kind {
+                let is_suspend_call = match &func.kind {
                     ExprKind::Path(segs) =>
                         segs.len() == 2 && segs[0] == "Time" && segs[1] == "sleep",
-                    ExprKind::Member { obj, name, .. } =>
-                        name == "sleep" && matches!(&obj.kind, ExprKind::Ident(n) if n == "Time"),
+                    // `obj` unused now that ANY receiver counts — see comment
+                    // above (was: only `Ident("Time")`).
+                    ExprKind::Member { name, .. } =>
+                        name == "sleep" || name == "sleep_until",
                     _ => false,
                 };
-                if is_time_sleep {
+                if is_suspend_call {
                     errors.push(Diagnostic::new(
-                        "[E_SUPERVISOR_HANDLER_SUSPEND] `Time.sleep` внутри `Supervisor`-хендлера \
-                         запрещён (Q-блок 173.2): suspend-операция заблокировала бы serialized \
-                         drive-цикл scope'а (решения по падениям перестали бы приниматься)."
+                        "[E_SUPERVISOR_HANDLER_SUSPEND] suspend-операция (`Time.sleep`/`.sleep()`/\
+                         `.sleep_until()`) внутри `Supervisor`-хендлера запрещена (Q-блок 173.2): \
+                         suspend-операция заблокировала бы serialized drive-цикл scope'а (решения \
+                         по падениям перестали бы приниматься)."
                             .to_string(),
                         e.span,
                     ));
