@@ -5,7 +5,7 @@
 источникам с общим дедлайном, настоящей отменой опоздавших ланов
 (`supervised(deadline:)`), веб-UI (waterfall-визуализация) и HTTP-сервером
 на чистом `nova build` → нативный бинарь (без VM) — **весь HTTP-слой идёт
-через пакет `http`** (`ServeMux`/`http.servernet.handle_connection`), в
+через пакет `http`** (`Router`/`http.servernet.handle_connection`), в
 `src/main.nv` нет ни одной ручной парсинг/роутинг/response-serialization
 строки.
 
@@ -139,7 +139,8 @@ version = "0.1" }`, `examples/nova.lock`) — резолвятся АВТОМА�
 `mode` = `demo` \| `chaos` \| `live` (по умолчанию `demo`);
 `seed` — игнорируется при `mode=live` (сеть — сама себе случайность).
 
-Каждый роут — обычная `ServeMux`-запись (`http.server`); `/api/run`/
+Каждый роут — обычная `Router`-запись (`http.server`, Plan 222 — на смену
+ретайренному `ServeMux`); `/api/run`/
 `/api/events` — handler-closure, которая ВНУТРИ своего тела открывает
 `with Net = mock_net()`/`with Net = real_net()` по `mode` и вызывает
 `aggregate()`/`aggregate_live_*` — эффекты дисчаржатся ДО возврата
@@ -241,7 +242,7 @@ API пакета — это точка входа, `nova info` про неё н�
 ```
 examples/flagship/aggregator/
   src/
-    main.nv         — точка входа: accept-loop + ServeMux-роутинг (module src.main)
+    main.nv         — точка входа: accept-loop + Router-роутинг (module src.main)
     domain/
       domain.nv      — Source/SourceData/AggError/TaskStatus/TaskResult/Report,
                         чистые данные, БЕЗ эффектов (module src.domain,
@@ -339,5 +340,5 @@ examples/flagship/aggregator/
 - `std/src/concurrency/supervised_deadline_test.nv` — образец
   `supervised(deadline:)`, на котором построена настоящая отмена.
 - `nova-http/src/servernet/rt/handle_connection_smoke.nv` — образец
-  `handle_connection` + `ServeMux` за живым сокетом, на котором построен
+  `handle_connection` + `Router` за живым сокетом, на котором построен
   роутинг этого пакета.
