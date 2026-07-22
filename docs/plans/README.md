@@ -46,6 +46,7 @@ verification) — в [wip/](wip/); при закрытии волны — уда
 | encoding/compress | [179](179-std-encoding-compress.md) |
 | serde / typed-json | [180](180-serde-derive.md) + [222.2](222-http-framework.md) (field-атрибуты до Rust-паритета) |
 | формат/Display | [208](208-unified-formatter.md) |
+| коэрсии `#coerce` | [214](214-coerce-attribute.md) + [214.1](214.1-generic-coerce.md) (generic-образцы, снятие R14) |
 
 ## Связанные директории
 
