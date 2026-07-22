@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_SERDE_SKIP_FIELD_NO_DEFAULT
+// Plan 180.1 Ф.1.3: `#serde(skip)` on a field whose type has no computable
+// zero value (a user-defined record, here) and no `default = "fn"` override
+// is a compile error with an actionable message, not a silent bad-codegen.
+module serde_neg.skip_no_default
+import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
+
+#impl(Serialize + Deserialize)
+type Foo value { ro n int }
+
+#impl(Serialize + Deserialize)
+type Bad value {
+    ro a int
+    #serde(skip)
+    ro thing Foo
+}

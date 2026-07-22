@@ -1,0 +1,110 @@
+// Plan 180.1 Ф.1 — field-attributes consumption: `rename`/`rename_all`/
+// `skip`/`skip_serializing_if`/`default`/`alias` on a record DTO, plus Ф.7
+// (owner-decided 2026-07-22 reversal) strict-by-default unknown-field policy
+// + its `#serde(allow_unknown)` opt-out. Lives beside the module per
+// test-conventions (std-module tests are peer files, not spec_tests).
+module encoding.serde
+
+fn default_role() -> str => "guest"
+
+/// DTO exercising every landed Ф.1 attribute at once — camelCase wire
+/// (`rename_all`) with one field-level override (`rename`), an alias for
+/// schema migration, a `skip` field (never touches the wire, zero-value on
+/// read), a conditionally-omitted `Option` field (`skip_serializing_if`),
+/// and two `default` flavours (bare zero-value, `= "fn"`).
+#serde(rename_all = "camelCase")
+#impl(Serialize + Deserialize)
+type Account value {
+    ro user_id int
+    #serde(rename = "displayName")
+    ro full_name str
+    #serde(alias = "legacy_email")
+    ro email str
+    #serde(default)
+    ro retry_count int
+    #serde(default = "default_role")
+    ro role str
+    #serde(skip)
+    ro cache_token str
+    #serde(skip_serializing_if = "is_none")
+    ro nickname Option[str]
+}
+
+test "rename + rename_all: wire uses camelCase / explicit rename, never snake_case" {
+    ro a = Account{
+        user_id: 1, full_name: "Alice", email: "a@b.c",
+        retry_count: 2, role: "admin", cache_token: "secret",
+        nickname: Some("Al"),
+    }
+    ro enc = json_encode(a)!!
+    assert(enc.contains("\"userId\""))
+    assert(!enc.contains("\"user_id\""))
+    assert(enc.contains("\"displayName\""))
+    assert(!enc.contains("\"full_name\""))
+    assert(enc.contains("\"retryCount\""))
+    assert(enc.contains("\"role\""))
+    assert(enc.contains("\"nickname\""))
+    // `skip` — the field never reaches the wire under EITHER name, and its
+    // value ("secret") never leaks either.
+    assert(!enc.contains("cacheToken"))
+    assert(!enc.contains("cache_token"))
+    assert(!enc.contains("secret"))
+
+    ro dec = json_decode[Account](enc)!!
+    assert(dec.user_id == 1)
+    assert(dec.full_name == "Alice")
+    assert(dec.email == "a@b.c")
+    assert(dec.retry_count == 2)
+    assert(dec.role == "admin")
+    assert(dec.nickname == Some("Al"))
+    // `skip` round-trips to the type's zero value, NOT the original "secret".
+    assert(dec.cache_token == "")
+}
+
+test "skip_serializing_if(is_none): None Option field omitted from the wire" {
+    ro a = Account{
+        user_id: 2, full_name: "Bob", email: "b@c.d",
+        retry_count: 0, role: "guest", cache_token: "",
+        nickname: None,
+    }
+    ro enc = json_encode(a)!!
+    assert(!enc.contains("nickname"))
+    ro dec = json_decode[Account](enc)!!
+    assert(dec.nickname == None)
+}
+
+test "default: absent wire field falls back to zero-value / fn-default" {
+    ro raw = "{\"userId\": 3, \"displayName\": \"Cy\", \"email\": \"c@d.e\"}"
+    ro dec = json_decode[Account](raw)!!
+    assert(dec.retry_count == 0)     // bare `default` -> zero value
+    assert(dec.role == "guest")      // `default = "default_role"` -> fn() result
+    assert(dec.cache_token == "")    // `skip` -> zero value regardless of wire
+    assert(dec.nickname == None)     // plain absent Option -> None (unaffected)
+}
+
+test "alias: legacy wire name still accepted on read" {
+    ro raw = "{\"userId\": 4, \"displayName\": \"Dee\", \"legacy_email\": \"old@x.y\"}"
+    ro dec = json_decode[Account](raw)!!
+    assert(dec.email == "old@x.y")
+}
+
+test "strict-by-default (Ф.7): unknown wire field -> Err(UnknownField), not silent-ignore" {
+    ro raw = "{\"userId\": 5, \"displayName\": \"Ee\", \"email\": \"e@f.g\", \"typo_field\": 1}"
+    match json_decode[Account](raw) {
+        Ok(_)  => assert(false)
+        Err(e) => match e.kind {
+            UnknownField(f) => assert(f == "typo_field")
+            _               => assert(false)
+        }
+    }
+}
+
+/// Opt-out companion type for the `allow_unknown` pos-case below.
+#serde(allow_unknown)
+#impl(Serialize + Deserialize)
+type Lenient value { ro a int }
+
+test "allow_unknown: opt-out accepts unexpected wire fields (forward-compat)" {
+    ro dec = json_decode[Lenient]("{\"a\": 1, \"b\": 2}")!!
+    assert(dec.a == 1)
+}

@@ -61,7 +61,7 @@ export fn SerError @to_str() -> str {
 export type DeErrorKind enum
     | UnexpectedType { expected str, found str }   // ждали int, нашли string
     | MissingField(str)                            // required-поле отсутствует (Q7)
-    | UnknownField(str)                            // при deny_unknown_fields (Q5)
+    | UnknownField(str)                            // strict-by-default (180.1 Ф.7); opt-out #serde(allow_unknown)
     | UnknownVariant { name str, expected []str }  // enum tag не совпал (Q4, sum-deser)
     | NoVariantMatched                             // untagged — ни один вариант (Q17)
     | OutOfRange(str)                              // int не влез в i64/u64 (Q15)
@@ -163,6 +163,11 @@ export type Deserializer protocol {
     // ── struct-доступ (под-cursor по ключу) ──
     mut @enter_field(key str)         -> Result[Self, DeError]   // MissingField если нет
     mut @enter_field_or_null(key str) -> Result[Self, DeError]   // null-cursor если нет (Option-поля)
+    // Plan 180.1 Ф.1.5/Ф.1.6: точная presence-проверка (БЕЗ конфликта с
+    // JSON `null`, в отличие от `enter_field_or_null`) — используется
+    // синтезатором для `default`/`alias`-fallback-цепочки (has_field(name)?
+    // до enter_field(name), а не догадка по null-курсору).
+    mut @has_field(key str) -> Result[bool, DeError]
     // ── seq-доступ ──
     mut @seq_len()          -> Result[int, DeError]
     mut @enter_index(i int) -> Result[Self, DeError]

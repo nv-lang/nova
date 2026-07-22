@@ -2752,6 +2752,10 @@ impl Parser {
             }
             let (key, key_span) = match &self.peek().kind {
                 TokenKind::Ident(n) => (n.clone(), self.peek().span),
+                // Plan 180.1 Ф.1.6: `alias` is ALSO a reserved keyword
+                // (`type X alias OtherType`, D52) — the lexer emits `KwAlias`,
+                // not a plain `Ident`, so it needs an explicit alternative here.
+                TokenKind::KwAlias => ("alias".to_string(), self.peek().span),
                 _ => return Err(Diagnostic::new(
                     "[E_SERDE_BAD_ATTRIBUTE] expected a serde attribute name inside `#serde(...)`",
                     self.peek().span,
@@ -2760,7 +2764,28 @@ impl Parser {
             self.bump(); // key
             match key.as_str() {
                 "untagged" => out.push(SerdeArg::Untagged),
-                "tag" | "content" => {
+                "skip" => out.push(SerdeArg::Skip),
+                "flatten" => out.push(SerdeArg::Flatten),
+                "deny_unknown_fields" => out.push(SerdeArg::DenyUnknownFields),
+                "allow_unknown" => out.push(SerdeArg::AllowUnknown),
+                "default" => {
+                    // Plan 180.1 Ф.1.5: bare `default` OR `default = "fn_name"`.
+                    if matches!(self.peek().kind, TokenKind::Eq) {
+                        self.bump(); // =
+                        let val = match &self.peek().kind {
+                            TokenKind::Str(s) => { let s = s.clone(); self.bump(); s }
+                            _ => return Err(Diagnostic::new(
+                                "[E_SERDE_BAD_ATTRIBUTE] `default = ...` requires a string \
+                                 value naming a zero-arg function: `#serde(default = \"fn_name\")`",
+                                self.peek().span,
+                            )),
+                        };
+                        out.push(SerdeArg::Default(Some(val)));
+                    } else {
+                        out.push(SerdeArg::Default(None));
+                    }
+                }
+                "tag" | "content" | "rename" | "skip_serializing_if" | "alias" => {
                     self.expect(&TokenKind::Eq)?;
                     let val = match &self.peek().kind {
                         TokenKind::Str(s) => { let s = s.clone(); self.bump(); s }
@@ -2770,16 +2795,41 @@ impl Parser {
                             self.peek().span,
                         )),
                     };
-                    if key == "tag" { out.push(SerdeArg::Tag(val)); }
-                    else { out.push(SerdeArg::Content(val)); }
+                    match key.as_str() {
+                        "tag" => out.push(SerdeArg::Tag(val)),
+                        "content" => out.push(SerdeArg::Content(val)),
+                        "rename" => out.push(SerdeArg::Rename(val)),
+                        "skip_serializing_if" => out.push(SerdeArg::SkipSerializingIf(val)),
+                        "alias" => out.push(SerdeArg::Alias(val)),
+                        _ => unreachable!(),
+                    }
+                }
+                "rename_all" => {
+                    self.expect(&TokenKind::Eq)?;
+                    let (val, val_span) = match &self.peek().kind {
+                        TokenKind::Str(s) => { let s = s.clone(); let sp = self.peek().span; self.bump(); (s, sp) }
+                        _ => return Err(Diagnostic::new(
+                            "[E_SERDE_BAD_ATTRIBUTE] `rename_all` requires a string value: \
+                             `#serde(rename_all=\"camelCase\")`",
+                            self.peek().span,
+                        )),
+                    };
+                    match crate::ast::RenameConvention::parse(&val) {
+                        Some(conv) => out.push(SerdeArg::RenameAll(conv)),
+                        None => return Err(Diagnostic::new(
+                            format!("[E_SERDE_BAD_ATTRIBUTE] unknown `rename_all` convention \
+                                     `{}`. Supported: `camelCase`, `snake_case`, `kebab-case`, \
+                                     `SCREAMING_SNAKE_CASE`, `PascalCase`.", val),
+                            val_span,
+                        )),
+                    }
                 }
                 other => return Err(Diagnostic::new(
-                    format!("[E_SERDE_BAD_ATTRIBUTE] unknown or not-yet-supported serde \
-                             attribute `{}`. Supported: `tag`, `content`, `untagged` (enum \
-                             tagging, D382). Field-customization attributes (rename / \
-                             rename_all / skip / default / flatten / alias / \
-                             deny_unknown_fields) are a followup \
-                             [M-180-serde-field-attributes].", other),
+                    format!("[E_SERDE_BAD_ATTRIBUTE] unknown serde attribute `{}`. Supported: \
+                             `tag`, `content`, `untagged` (enum tagging, D382); `rename`, \
+                             `rename_all`, `skip`, `skip_serializing_if`, `default`, `alias`, \
+                             `flatten`, `deny_unknown_fields`, `allow_unknown` (field/wire \
+                             customization, 180.1 Ф.1/Ф.7).", other),
                     key_span,
                 )),
             }

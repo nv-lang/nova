@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E_SERDE_WIRE_NAME_COLLISION
+// Plan 180.1 Ф.10: an `alias` that collides with ANOTHER field's wire name
+// is rejected at compile time (an ambiguous read-time route is never a
+// runtime surprise here).
+module serde_neg.wire_name_collision_alias
+import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
+#impl(Serialize + Deserialize)
+type Bad value {
+    ro a int
+    #serde(alias = "a")
+    ro b int
+}

@@ -256,6 +256,15 @@ fn JsonDeserializer mut @enter_field_or_null(key str) -> Result[JsonDeserializer
         }
     }
 }
+// Plan 180.1 Ф.1.5/Ф.1.6: exact presence check — distinct from
+// `enter_field_or_null` (which conflates "absent key" with "present JSON
+// null"). Used by the record synthesizer's `default`/`alias`-fallback chain.
+fn JsonDeserializer mut @has_field(key str) -> Result[bool, DeError] {
+    match @cur.object() {
+        None => Err(DeError.unexpected("object", json_kind(@cur)))
+        Some(m) => Ok(m.get(key).is_some())
+    }
+}
 fn JsonDeserializer mut @seq_len() -> Result[int, DeError] {
     match @cur.array() {
         None    => Err(DeError.unexpected("array", json_kind(@cur)))

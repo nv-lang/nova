@@ -15495,17 +15495,18 @@ without a grammar change. Type-level `#serde` is threaded through
 the record-field loop; variant-level as a leading marker in
 `parse_one_sum_variant`.
 
-**Recognized keys (V1).** `tag`, `content`, `untagged` — sum-type enum tagging
-(consumed by D345 Ф.5 via `serde_tagging_mode`; `tag`/`content` land, `untagged`
-is parsed+validated but its derive is gated `E_SERDE_UNTAGGED_GATED`, see D345).
-**Unknown-attribute policy
-(convention, mirrors `#impl`/`#from_fields`: unknown marker → hard error, never
-silent):** any other key inside `#serde(...)` → **`E_SERDE_BAD_ATTRIBUTE`** at
-parse time (beats Go/Jackson silent tag-typo). Field-customization attributes
-(`rename`/`rename_all`/`skip`/`default`/`flatten`/`alias`/
-`deny_unknown_fields`) are parsed by the SAME grammar but their synthesis-
-consumption is a scoped follow-up ([M-180-serde-field-attributes]) — they
-currently reject as not-yet-supported rather than silently ignore.
+**Recognized keys (V1, AMENDED by D435 2026-07-22 — 180.1 Ф.1).** `tag`,
+`content`, `untagged` — sum-type enum tagging (consumed by D345 Ф.5 via
+`serde_tagging_mode`; `tag`/`content` land, `untagged` is parsed+validated but
+its derive is gated `E_SERDE_UNTAGGED_GATED`, see D345). `rename`,
+`rename_all`, `skip`, `skip_serializing_if`, `default`, `alias`,
+`deny_unknown_fields`, `allow_unknown` — field/wire customization on RECORD
+types, consumed by the record synthesizer (D435). `flatten` is parsed and
+statically validated but its synthesis remains gated (D435,
+[M-180-serde-flatten]). **Unknown-attribute policy** (convention, mirrors
+`#impl`/`#from_fields`: unknown marker → hard error, never silent): any other
+key inside `#serde(...)` → **`E_SERDE_BAD_ATTRIBUTE`** at parse time (beats
+Go/Jackson silent tag-typo).
 
 **Static validation** (`serde_tagging_mode`, surfaced as compile errors):
 `E_SERDE_TAGGING_CONFLICT` (`untagged` with `tag`/`content`; or `tag`==`content`);
@@ -15514,6 +15515,191 @@ currently reject as not-yet-supported rather than silently ignore.
 `E_SERDE_INTERNAL_TAG_NON_STRUCT` (internal `tag` on a type with a tuple
 variant); `E_SERDE_UNTAGGED_GATED` (untagged derive gated on a codegen-mono fix,
 [M-180-untagged-codegen-mono]). See D345 Ф.5 for the emitted wire per mode.
+See D435 for the field-attribute-specific validations added on top
+(`E_SERDE_ATTRIBUTE_MISPLACED`, `E_SERDE_WIRE_NAME_COLLISION`, etc.).
+
+---
+
+## D435 — field-attribute consumption + wire-contract validation (Plan 180.1 Ф.1/Ф.10) {#d435}
+
+**What changed.** D382 defined the `#serde(...)` grammar/AST generally but
+consumed only the sum-tagging keys; every other key parsed-but-rejected
+(`[M-180-serde-field-attributes]`). This amendment lands **consumption** of
+the field/wire-customization keys on **record types** (sum-type rich-attr
+support remains a separate follow-up, gated the same way sum auto-derive
+richness is — `[M-126-sum-*-rich]`) plus the compile-time wire-contract
+validation that rename/alias introduce.
+
+**`SerdeArg` grows** (`compiler-codegen/src/ast/mod.rs`): `Rename(String)`,
+`RenameAll(RenameConvention)`, `Skip`, `SkipSerializingIf(String)`,
+`Default(Option<String>)` (`None` = bare `default`, `Some(fn)` =
+`default = "fn"`), `Alias(String)` (repeatable), `Flatten`,
+`DenyUnknownFields`, `AllowUnknown`. `RenameConvention` (new enum): CamelCase /
+SnakeCase / KebabCase / ScreamingSnakeCase / PascalCase, parsed from the
+`rename_all` string value at PARSE time (unknown convention name →
+`E_SERDE_BAD_ATTRIBUTE` naming the supported set, same policy as an unknown
+key) and applied via `RenameConvention::apply` (splits the canonical
+snake_case field name on `_`, recombines per convention).
+
+**Semantics (per key):**
+- **`rename = "wire_name"`** (field-level) — the field's effective wire name.
+  **Overrides** a type-level `rename_all` (field-level wins — explicit beats
+  derived).
+- **`rename_all = "convention"`** (type-level, record only) — every field's
+  wire name is `convention.apply(field_name)` unless that field has its own
+  `rename`.
+- **`skip`** (field-level) — the field is **never** serialized and **never**
+  read from the wire on deserialize; its value on decode comes from the SAME
+  fallback resolution as bare `default` (a computable zero value: numeric →
+  `0`, `bool` → `false`, `str` → `""`, `Option[T]` → `None`, `Vec[T]`/`[]T` →
+  `[]`, `HashMap`/`Map` → `.new()`) or, if given, `default = "fn"`'s result. A
+  field type with **no** computable zero value and no `default` override →
+  **`E_SERDE_SKIP_FIELD_NO_DEFAULT`** (actionable: names the field/type, tells
+  the user to add `default = "fn_name"`) — never a silent bad value or an ICE.
+- **`skip_serializing_if = "predicate"`** (field-level) — on serialize,
+  `@field.<predicate>()` is called; if it returns `true` the
+  `struct_field`+value pair is omitted from the wire for that value. General
+  form (not `Option`-special-cased): any zero-arg bool-returning method on the
+  field's type works (`is_none` on `Option`, but also e.g. `is_empty` on a
+  collection). On deserialize the field is unaffected (absence is handled by
+  the normal missing-field/`default`/alias machinery below) — this key is
+  serialize-direction only, matching serde's own asymmetry.
+- **`default` (bare)** — if the field (or all its `alias` candidates, see
+  below) is absent from the wire, use the type's zero value instead of
+  raising `MissingField`.
+- **`default = "fn_name"`** — same trigger, but the fallback value is
+  `fn_name()` (a zero-arg function returning the field's type) instead of a
+  zero value.
+- **`alias = "old_name"`** (field-level, repeatable) — an ADDITIONAL wire name
+  accepted on READ ONLY (schema migration: old clients still send
+  `old_name`). Resolution order: the field's own (rename/rename_all-resolved)
+  wire name first, then each `alias` in declaration order — the first
+  candidate PRESENT in the wire object wins (checked via the new
+  `Deserializer.has_field`, not by catching a `MissingField`). If NONE of the
+  candidates are present: an `Option` field (no explicit `default`) falls
+  back to `None` (Q7 semantics, now alias-aware); a field WITH `default`
+  (bare or `= fn`) uses that; otherwise (`Required`, no `default`) the
+  primary wire name is re-entered so the natural `MissingField(primary)`
+  diagnostic still fires, naming the CANONICAL name (not an alias) so the
+  error message stays anchored to the type's own schema.
+- **`deny_unknown_fields`** (type-level) — **AMENDED MEANING** by D436 below:
+  now a no-op synonym of the (new) default; kept accepted for serde-muscle-
+  memory rather than becoming a stale `E_SERDE_BAD_ATTRIBUTE` trap.
+- **`allow_unknown`** (type-level) — see D436 (Ф.7 default reversal).
+- **`flatten`** (field-level) — **parsed, statically validated, synthesis
+  GATED.** `E_SERDE_FLATTEN_DENY_CONFLICT` when the type is (now-default)
+  strict: a flattened field's inner keys arrive mixed into the parent wire
+  object, which the parent's unknown-field scan cannot attribute without
+  knowing the child type's field set. `E_SERDE_FLATTEN_UNSUPPORTED` once
+  `allow_unknown` removes that specific conflict — actual flatten synthesis
+  needs a companion "fields-only" synth variant (reads/writes the child's
+  fields directly into the parent's `d`/`s` cursor, with NO
+  `begin_struct`/`end_struct`/`enter_field` wrapper of its own) that the
+  auto-derive machine does not yet emit. Honest scope-out, tracked
+  `[M-180-serde-flatten]` — the hardest item in Ф.1, deliberately not forced.
+
+**New protocol member** (`std/src/encoding/serde/serde.nv` `Deserializer`):
+`mut @has_field(key str) -> Result[bool, DeError]` — an exact presence check,
+distinct from the existing `enter_field_or_null` (which conflates "key
+absent" with "value present and JSON `null`" — correct for `Option`'s
+absence-is-`None` semantics, WRONG for `default`/`alias` resolution, which
+must distinguish the two). JSON backend (`json.nv`): `@cur.object()?.get(key)
+!= None`.
+
+**Compile-time wire-contract validation (Ф.10)**, run once per record type
+(`validate_wire_contract`, after rename/rename_all/alias resolution):
+- **`E_SERDE_WIRE_NAME_COLLISION`** — two fields' effective wire names
+  collide (after `rename`/`rename_all`); an `alias` collides with another
+  field's wire name; an `alias` is declared on two different fields.
+- **`E_SERDE_SKIP_RENAME_CONFLICT`** — `skip` + `rename` together (rename is
+  meaningless on a field that is never on the wire).
+- **`E_SERDE_ATTRIBUTE_MISPLACED`** — a field-only key on a type-level
+  `#serde(...)` or vice-versa (e.g. `rename` on the type, `rename_all` on a
+  field).
+- **`E_SERDE_ATTRIBUTE_ON_SUM_UNSUPPORTED`** — `rename_all`/`allow_unknown`/
+  `deny_unknown_fields` on a SUM type (Ф.1 v1 scope is record-only; silently
+  ignoring would be a worse footgun than a clear gate).
+- **`E_SERDE_DUPLICATE_ATTRIBUTE`** — the same key given more than once where
+  that is ambiguous (`rename`, `rename_all`, `skip_serializing_if`, `default`
+  — NOT `alias`, which is deliberately repeatable).
+
+**Scope note (record vs sum).** All of the above targets `TypeDeclKind::
+Record`/`NamedTuple` fields. `SumVariantKind::Record` payload fields (a
+struct-shaped enum variant) do NOT yet consume field-attrs — sum rich synth
+is a separate gate (`[M-126-sum-*-rich]`); using a field-customization key
+inside a sum variant's payload is currently a silent no-op there (unlike the
+type-level misplaced-key checks above, which DO cover sum declarations).
+Tracked as a known v1 scope boundary, not a defect.
+
+## D436 — unknown-field policy: strict by default (Plan 180.1 Ф.7, REVERSES Plan 180 Q5) {#d436}
+
+**Reversal.** Plan 180's Q5 (`180-serde-derive.md` decision table) chose
+serde parity: **ignore unknown wire fields by default**, `deny_unknown_fields`
+opt-in strict. **Owner decision 2026-07-22 ("согласен"): REVERSED.** An
+unknown field in the wire object is now **rejected by default** —
+`Err(DeError{UnknownField(name)})` — with a NEW opt-out key,
+`#serde(allow_unknown)`, restoring the old ignore-silently behaviour for
+types that deliberately want forward-compatible wire evolution.
+
+**Rationale (owner, verbatim intent).** serde/Jackson's ignore-by-default is
+a well-known class of silent bug: a typo'd config key, or a field renamed on
+one side of an API and not the other, is accepted and silently dropped —
+the value the caller thought they set never takes effect, with no signal at
+all. Nova already treats `#serde(...)` attribute typos as a hard compile
+error (`E_SERDE_BAD_ATTRIBUTE`, D382) in the same no-magic spirit; treating a
+wire-level "typo" (an unexpected key) as silently-fine while a
+compile-level typo is a hard error was an inconsistency. AI-generated
+client/server code in particular is prone to drifting field names — failing
+loudly at the first decode is strictly better than a silently-incomplete
+value discovered much later.
+
+**Mechanism.** The record `.deserialize` synthesis (`auto_derive.rs`
+`build_unknown_field_check`, called from `synthesize_deserialize`) emits, as
+the FIRST statements of the body (unless the type carries
+`#serde(allow_unknown)`):
+```
+ro __nv_wire_keys = d.map_keys()?
+for __nv_uk in __nv_wire_keys {
+    if <__nv_uk not in known-wire-names> {
+        return Err(DeError.new(UnknownField(__nv_uk)))
+    }
+}
+```
+`known-wire-names` = every non-`skip` field's resolved wire name plus its
+`alias`es (Ф.1). A `skip` field's name is deliberately NOT in that set — a
+skipped field is functionally invisible, so a wire key matching its name is,
+correctly, still "unknown" under strict policy.
+
+**`deny_unknown_fields` (the OLD opt-in key, D382/Q5) is retained as an
+ACCEPTED, explicit no-op** — it now merely re-states the already-active
+default; kept rather than turned into a stale `E_SERDE_BAD_ATTRIBUTE` trap
+for anyone carrying serde muscle memory. Combining it with the new
+`allow_unknown` on the SAME type is a direct self-contradiction →
+`E_SERDE_UNKNOWN_FIELD_POLICY_CONFLICT` (D435's validation list).
+
+**`DeErrorKind::UnknownField(str)`** (`serde.nv`, D340) already existed in
+the data model (originally documented "at `deny_unknown_fields`" — comment
+updated) — this amendment is what makes the record synthesizer actually
+raise it, closing that latent gap.
+
+**Migration.** Audited every `#impl(... Deserialize ...)` type in the tree
+at landing time (`std/`, `spec_tests/`, `nova_tests/`, `examples/` including
+the flagship `aggregator`): **zero** existing record type decodes a
+hand-written wire literal carrying a field outside its own schema — the only
+DTOs consuming `Deserialize` at all live beside `std/encoding/serde` itself
+(the flagship's JSON DTOs, `examples/flagship/aggregator/src/api/
+report_json.nv` / `main.nv`, are `#impl(Serialize)`-only — snapshot/wire
+output, never decoded back), so no pre-existing fixture needed a behavioural
+migration to `allow_unknown` or a tightened DTO. New pos coverage:
+`std/src/encoding/serde/field_attrs_test.nv` (strict-by-default → `Err
+{UnknownField}`; `#serde(allow_unknown)` opt-out pos-case).
+
+**Peer-table update.** `180-serde-derive.md` §2's `unknown-field-policy` row
+("`= IGNORE by-default ... (serde-паритет)`") is superseded by this decision
+— Nova is now **`🏆` strict-by-default** (stricter than serde/Swift/Kotlin's
+ignore-default; matches kotlinx's protectiveness by DEFAULT rather than by
+opt-in `@JsonClassDiscriminator`-adjacent configuration, while still offering
+an explicit, opt-in escape hatch serde-style forward-compat APIs still need).
 
 ---
 

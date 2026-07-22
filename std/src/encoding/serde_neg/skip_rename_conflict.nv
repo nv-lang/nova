@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E_SERDE_SKIP_RENAME_CONFLICT
+// Plan 180.1 Ф.10: `skip` + `rename` together on the same field is
+// meaningless — a skipped field is never on the wire, so renaming it has
+// no effect. Rejected at compile time rather than silently ignored.
+module serde_neg.skip_rename_conflict
+import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
+#impl(Serialize + Deserialize)
+type Bad value {
+    ro a int
+    #serde(skip, rename = "b")
+    ro b int
+}

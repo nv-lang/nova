@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_SERDE_WIRE_NAME_COLLISION
+// Plan 180.1 Ф.10: two fields whose effective wire names collide after
+// `rename`/`rename_all` are rejected at compile time — a silent
+// last-field-wins overwrite would be a classic serde-adjacent footgun.
+module serde_neg.wire_name_collision_rename
+import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
+#impl(Serialize + Deserialize)
+type Bad value {
+    #serde(rename = "x")
+    ro a int
+    #serde(rename = "x")
+    ro b int
+}

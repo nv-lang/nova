@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_SERDE_ATTRIBUTE_ON_SUM_UNSUPPORTED
+// Plan 180.1 Ф.1 scope: `rename_all`/`allow_unknown`/`deny_unknown_fields`
+// consumption targets RECORD types only (v1) — a sum type gets a clear gate
+// instead of a silent no-op. (This fixture takes over `bad_attr.nv`'s old
+// role: `rename_all` used to be simply unrecognized grammar; now it IS
+// recognized grammar, but scoped away from sum types.)
+module serde_neg.rename_all_on_sum
+import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
+#serde(rename_all = "camelCase")
+#impl(Serialize + Deserialize)
+type Bad enum
+    | A
+    | B

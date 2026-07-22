@@ -34,8 +34,8 @@ use std::collections::HashSet;
 use crate::ast::{
     BinOp, Block, CallArg, Expr, ExprKind, FnBody, FnDecl, GenericParam, MatchArm, MatchArmBody,
     NamedTupleField, Param, Pattern, RecordField, RecordLitField, RecordPatternField, Receiver,
-    ReceiverKind, SerdeArg, SerdeTagging, Stmt, SumVariant, SumVariantKind, TypeDecl, TypeDeclKind,
-    TypeRef, VariantPatternKind,
+    ReceiverKind, RenameConvention, SerdeArg, SerdeTagging, Stmt, SumVariant, SumVariantKind,
+    TypeDecl, TypeDeclKind, TypeRef, VariantPatternKind,
 };
 use crate::diag::Span;
 
@@ -128,7 +128,13 @@ pub enum DeriveError {
     /// Plan 180 Ф.6 (D382): `#serde(...)` tagging-mode misconfiguration on a
     /// sum/record type. `message` already carries the specific `[E_SERDE_*]`
     /// code (E_SERDE_TAGGING_CONFLICT / E_SERDE_CONTENT_WITHOUT_TAG /
-    /// E_SERDE_TAGGING_ON_NON_SUM / E_SERDE_INTERNAL_TAG_NON_STRUCT).
+    /// E_SERDE_TAGGING_ON_NON_SUM / E_SERDE_INTERNAL_TAG_NON_STRUCT). Plan
+    /// 180.1 Ф.1/Ф.7/Ф.10 reuses this same carrier for the newer field-attr /
+    /// wire-contract diagnostics (E_SERDE_ATTRIBUTE_MISPLACED /
+    /// E_SERDE_WIRE_NAME_COLLISION / E_SERDE_FLATTEN_* /
+    /// E_SERDE_SKIP_RENAME_CONFLICT / E_SERDE_UNKNOWN_FIELD_POLICY_CONFLICT /
+    /// E_SERDE_SKIP_FIELD_NO_DEFAULT) — one message-carrying variant, many
+    /// codes (mirrors the existing precedent, no new enum sprawl).
     SerdeTagging {
         type_name: String,
         message: String,
@@ -195,17 +201,52 @@ pub fn serde_tagging_mode(td: &TypeDecl) -> Result<SerdeTagging, DeriveError> {
         type_name: td.name.clone(),
         message: msg,
     };
-    let is_sum = iter_sum_variants(td).is_some();
-    if !is_sum {
-        if td.serde_attrs.is_empty() {
-            return Ok(SerdeTagging::External);
+    // Plan 180.1 Ф.1/Ф.7: field-only keys never belong on a TYPE decl,
+    // regardless of sum/record — reject up front (E_SERDE_ATTRIBUTE_MISPLACED).
+    for a in &td.serde_attrs {
+        if matches!(
+            a,
+            SerdeArg::Rename(_) | SerdeArg::Skip | SerdeArg::SkipSerializingIf(_)
+                | SerdeArg::Default(_) | SerdeArg::Alias(_) | SerdeArg::Flatten
+        ) {
+            return Err(err(format!(
+                "[E_SERDE_ATTRIBUTE_MISPLACED] type `{}`: `{}` is a field-level \
+                 serde attribute and cannot appear on a `#serde(...)` at type level. \
+                 Move it to the individual field's own `#serde(...)`.",
+                td.name, serde_arg_key_name(a),
+            )));
         }
-        return Err(err(format!(
-            "[E_SERDE_TAGGING_ON_NON_SUM] type `{}` is not a sum type — \
-             `#serde(tag/content/untagged)` tagging attributes apply only to \
-             sum (`type X enum A | B`, D406) declarations.",
-            td.name,
-        )));
+    }
+    let is_sum = iter_sum_variants(td).is_some();
+    let has_tagging_attr = td.serde_attrs.iter().any(|a| {
+        matches!(a, SerdeArg::Tag(_) | SerdeArg::Content(_) | SerdeArg::Untagged)
+    });
+    if !is_sum {
+        if has_tagging_attr {
+            return Err(err(format!(
+                "[E_SERDE_TAGGING_ON_NON_SUM] type `{}` is not a sum type — \
+                 `#serde(tag/content/untagged)` tagging attributes apply only to \
+                 sum (`type X enum A | B`, D406) declarations.",
+                td.name,
+            )));
+        }
+        return Ok(SerdeTagging::External);
+    }
+    // Plan 180.1 Ф.1 scope: rename_all / allow_unknown / deny_unknown_fields
+    // consumption targets RECORD types only (v1) — reject explicitly on sum
+    // (no-magic: silently ignoring would be a worse footgun than a clear gate).
+    for a in &td.serde_attrs {
+        if matches!(
+            a,
+            SerdeArg::RenameAll(_) | SerdeArg::AllowUnknown | SerdeArg::DenyUnknownFields
+        ) {
+            return Err(err(format!(
+                "[E_SERDE_ATTRIBUTE_ON_SUM_UNSUPPORTED] sum type `{}`: `{}` is only \
+                 consumed on record types (180.1 Ф.1 scope) — sum-type rich \
+                 attribute support is a separate followup ([M-126-sum-*-rich]).",
+                td.name, serde_arg_key_name(a),
+            )));
+        }
     }
     let mut tag: Option<String> = None;
     let mut content: Option<String> = None;
@@ -215,6 +256,7 @@ pub fn serde_tagging_mode(td: &TypeDecl) -> Result<SerdeTagging, DeriveError> {
             SerdeArg::Tag(s) => tag = Some(s.clone()),
             SerdeArg::Content(s) => content = Some(s.clone()),
             SerdeArg::Untagged => untagged = true,
+            _ => {}
         }
     }
     if untagged && (tag.is_some() || content.is_some()) {
@@ -282,6 +324,430 @@ pub fn serde_tagging_mode(td: &TypeDecl) -> Result<SerdeTagging, DeriveError> {
     }
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// Plan 180.1 Ф.1 (field-attributes) / Ф.7 (strict-by-default unknown-field
+// policy) / Ф.10 (compile-time wire-contract validation).
+//
+// `rename`/`rename_all`/`skip`/`skip_serializing_if`/`default`/`alias` are
+// resolved ONCE per record type (`resolve_fields`) into `ResolvedField`s
+// shared by `synthesize_serialize`/`synthesize_deserialize`; `validate_wire_
+// contract` runs the Ф.10 collision checks over the resolved set.
+// `flatten` is parsed but synthesis is honestly GATED — see
+// `validate_wire_contract`'s dedicated diagnostics ([M-180-serde-flatten]).
+// ────────────────────────────────────────────────────────────────────────
+
+/// Human-readable key name for a `SerdeArg` — used in misplaced-attribute /
+/// duplicate-attribute diagnostics.
+fn serde_arg_key_name(a: &SerdeArg) -> &'static str {
+    match a {
+        SerdeArg::Tag(_) => "tag",
+        SerdeArg::Content(_) => "content",
+        SerdeArg::Untagged => "untagged",
+        SerdeArg::Rename(_) => "rename",
+        SerdeArg::RenameAll(_) => "rename_all",
+        SerdeArg::Skip => "skip",
+        SerdeArg::SkipSerializingIf(_) => "skip_serializing_if",
+        SerdeArg::Default(_) => "default",
+        SerdeArg::Alias(_) => "alias",
+        SerdeArg::Flatten => "flatten",
+        SerdeArg::DenyUnknownFields => "deny_unknown_fields",
+        SerdeArg::AllowUnknown => "allow_unknown",
+    }
+}
+
+/// Plan 180.1 Ф.7: type-level serde options — `rename_all` convention
+/// (Ф.1.2) + unknown-field policy. **Reversal (owner-decided 2026-07-22):**
+/// absent `allow_unknown` ⇒ STRICT (unknown wire field ⇒ typed
+/// `DeError{UnknownField}`) — this is now the DEFAULT (was: ignore-by-
+/// default, serde parity). `allow_unknown` opts back OUT to the old
+/// ignore-unknown behaviour (forward-compatible API).
+#[derive(Debug, Clone, Default)]
+pub struct TypeSerdeOptions {
+    pub rename_all: Option<RenameConvention>,
+    pub allow_unknown: bool,
+}
+
+/// Resolve + validate type-level serde options (record types only — callers
+/// must have already rejected sum-type placement via `serde_tagging_mode`).
+pub fn type_serde_options(td: &TypeDecl) -> Result<TypeSerdeOptions, DeriveError> {
+    let err = |msg: String| DeriveError::SerdeTagging { type_name: td.name.clone(), message: msg };
+    let mut rename_all: Option<RenameConvention> = None;
+    let mut allow_unknown = false;
+    let mut deny_unknown = false;
+    for a in &td.serde_attrs {
+        match a {
+            SerdeArg::RenameAll(conv) => {
+                if rename_all.is_some() {
+                    return Err(err(format!(
+                        "[E_SERDE_DUPLICATE_ATTRIBUTE] type `{}`: `rename_all` given more \
+                         than once.", td.name)));
+                }
+                rename_all = Some(*conv);
+            }
+            SerdeArg::AllowUnknown => allow_unknown = true,
+            SerdeArg::DenyUnknownFields => deny_unknown = true,
+            _ => {}
+        }
+    }
+    if allow_unknown && deny_unknown {
+        return Err(err(format!(
+            "[E_SERDE_UNKNOWN_FIELD_POLICY_CONFLICT] type `{}`: `#serde(allow_unknown)` \
+             (opt-out) and `#serde(deny_unknown_fields)` (strict — now the DEFAULT, \
+             180.1 Ф.7) cannot both be given on the same type.", td.name)));
+    }
+    Ok(TypeSerdeOptions { rename_all, allow_unknown })
+}
+
+/// Plan 180.1 Ф.1: resolved per-field serde customization.
+#[derive(Debug, Clone, Default)]
+pub struct FieldSerdeOptions {
+    pub rename: Option<String>,
+    pub skip: bool,
+    pub skip_serializing_if: Option<String>,
+    /// `None` = no `default` attribute (field is `Required` unless `skip`).
+    /// `Some(None)` = bare `default` (zero-value). `Some(Some(fn))` =
+    /// `default = "fn"` (zero-arg function call).
+    pub default: Option<Option<String>>,
+    pub aliases: Vec<String>,
+    pub flatten: bool,
+}
+
+/// Resolve + validate field-level serde options.
+pub fn field_serde_options(
+    type_name: &str, field_name: &str, attrs: &[SerdeArg],
+) -> Result<FieldSerdeOptions, DeriveError> {
+    let err = |msg: String| DeriveError::SerdeTagging { type_name: type_name.to_string(), message: msg };
+    let mut opts = FieldSerdeOptions::default();
+    for a in attrs {
+        match a {
+            SerdeArg::Tag(_) | SerdeArg::Content(_) | SerdeArg::Untagged
+            | SerdeArg::RenameAll(_) | SerdeArg::AllowUnknown | SerdeArg::DenyUnknownFields => {
+                return Err(err(format!(
+                    "[E_SERDE_ATTRIBUTE_MISPLACED] type `{}`, field `{}`: `{}` is a \
+                     type-level serde attribute and cannot appear on a field. Move it \
+                     to the type's own `#serde(...)`.",
+                    type_name, field_name, serde_arg_key_name(a))));
+            }
+            SerdeArg::Rename(s) => {
+                if opts.rename.is_some() {
+                    return Err(err(format!(
+                        "[E_SERDE_DUPLICATE_ATTRIBUTE] type `{}`, field `{}`: `rename` \
+                         given more than once.", type_name, field_name)));
+                }
+                opts.rename = Some(s.clone());
+            }
+            SerdeArg::Skip => opts.skip = true,
+            SerdeArg::SkipSerializingIf(pred) => {
+                if opts.skip_serializing_if.is_some() {
+                    return Err(err(format!(
+                        "[E_SERDE_DUPLICATE_ATTRIBUTE] type `{}`, field `{}`: \
+                         `skip_serializing_if` given more than once.", type_name, field_name)));
+                }
+                opts.skip_serializing_if = Some(pred.clone());
+            }
+            SerdeArg::Default(fn_name) => {
+                if opts.default.is_some() {
+                    return Err(err(format!(
+                        "[E_SERDE_DUPLICATE_ATTRIBUTE] type `{}`, field `{}`: `default` \
+                         given more than once.", type_name, field_name)));
+                }
+                opts.default = Some(fn_name.clone());
+            }
+            SerdeArg::Alias(s) => opts.aliases.push(s.clone()),
+            SerdeArg::Flatten => opts.flatten = true,
+        }
+    }
+    if opts.skip && opts.rename.is_some() {
+        return Err(err(format!(
+            "[E_SERDE_SKIP_RENAME_CONFLICT] type `{}`, field `{}`: `skip` + `rename` \
+             together is meaningless — a skipped field is never on the wire, so \
+             renaming it has no effect. Remove one.", type_name, field_name)));
+    }
+    Ok(opts)
+}
+
+/// Plan 180.1 Ф.1.1/Ф.1.2: effective wire name for a field — field-level
+/// `rename` OVERRIDES type-level `rename_all`; absent both, the canonical
+/// Nova field name is used as-is.
+fn wire_name_for(field_name: &str, opts: &FieldSerdeOptions, rename_all: Option<RenameConvention>) -> String {
+    if let Some(r) = &opts.rename {
+        r.clone()
+    } else if let Some(conv) = rename_all {
+        conv.apply(field_name)
+    } else {
+        field_name.to_string()
+    }
+}
+
+/// A record field with resolved serde customization + effective wire name —
+/// computed once (`resolve_fields`), shared by the serialize/deserialize
+/// synthesizers and the Ф.10 wire-contract validation.
+struct ResolvedField {
+    field: DerivedField,
+    opts: FieldSerdeOptions,
+    wire: String,
+}
+
+/// Plan 180.1 Ф.1/Ф.10: resolve type + per-field serde options for a record
+/// type and validate the wire contract. Single entry point shared by
+/// `synthesize_serialize`/`synthesize_deserialize`.
+fn resolve_fields(td: &TypeDecl, fields: &[DerivedField]) -> Result<(TypeSerdeOptions, Vec<ResolvedField>), DeriveError> {
+    let type_opts = type_serde_options(td)?;
+    let mut resolved = Vec::with_capacity(fields.len());
+    for f in fields {
+        let opts = field_serde_options(&td.name, &f.name, &f.serde_attrs)?;
+        let wire = wire_name_for(&f.name, &opts, type_opts.rename_all);
+        resolved.push(ResolvedField { field: f.clone(), opts, wire });
+    }
+    validate_wire_contract(td, &resolved, &type_opts)?;
+    Ok((type_opts, resolved))
+}
+
+/// Plan 180.1 Ф.10: compile-time wire-contract validation, run once per
+/// record type after `rename`/`rename_all`/`alias` resolution:
+/// - two fields' effective wire names collide → `E_SERDE_WIRE_NAME_COLLISION`
+///   (`skip` fields excluded — never on the wire);
+/// - an `alias` collides with another field's wire name or another field's
+///   alias → the same code;
+/// - `flatten` (any field) — currently ALWAYS an error: with the strict-by-
+///   default unknown-field policy (Ф.7) this is a real incompatibility
+///   (`E_SERDE_FLATTEN_DENY_CONFLICT`) unless the type opts out via
+///   `allow_unknown`, in which case actual flatten SYNTHESIS is still
+///   unimplemented (`E_SERDE_FLATTEN_UNSUPPORTED`, honest scope-out,
+///   `[M-180-serde-flatten]` — 180.1 Ф.1.8, the hardest item).
+fn validate_wire_contract(td: &TypeDecl, fields: &[ResolvedField], type_opts: &TypeSerdeOptions) -> Result<(), DeriveError> {
+    let err = |msg: String| DeriveError::SerdeTagging { type_name: td.name.clone(), message: msg };
+    let mut owners: Vec<(String, String)> = Vec::new(); // (wire_name, field_name), non-skip only
+    for rf in fields {
+        if rf.opts.skip { continue; }
+        if let Some((existing_wire, existing_field)) = owners.iter().find(|(w, _)| *w == rf.wire) {
+            return Err(err(format!(
+                "[E_SERDE_WIRE_NAME_COLLISION] type `{}`: fields `{}` and `{}` both \
+                 resolve to wire name `\"{}\"` (after rename/rename_all).",
+                td.name, existing_field, rf.field.name, existing_wire,
+            )));
+        }
+        owners.push((rf.wire.clone(), rf.field.name.clone()));
+    }
+    for rf in fields {
+        for alias in &rf.opts.aliases {
+            if let Some((_, owner_field)) = owners.iter().find(|(w, _)| w == alias) {
+                if owner_field == &rf.field.name && rf.wire == *alias {
+                    continue; // alias identical to own primary wire name — redundant, harmless
+                }
+                return Err(err(format!(
+                    "[E_SERDE_WIRE_NAME_COLLISION] type `{}`: field `{}`'s alias \
+                     `\"{}\"` collides with field `{}`'s wire name.",
+                    td.name, rf.field.name, alias, owner_field,
+                )));
+            }
+        }
+    }
+    let mut alias_owners: Vec<(String, String)> = Vec::new();
+    for rf in fields {
+        for alias in &rf.opts.aliases {
+            if let Some((_, owner_field)) = alias_owners.iter().find(|(a, _)| a == alias) {
+                if owner_field != &rf.field.name {
+                    return Err(err(format!(
+                        "[E_SERDE_WIRE_NAME_COLLISION] type `{}`: alias `\"{}\"` is \
+                         declared on both field `{}` and field `{}`.",
+                        td.name, alias, owner_field, rf.field.name,
+                    )));
+                }
+            }
+            alias_owners.push((alias.clone(), rf.field.name.clone()));
+        }
+    }
+    if fields.iter().any(|rf| rf.opts.flatten) {
+        if !type_opts.allow_unknown {
+            return Err(err(format!(
+                "[E_SERDE_FLATTEN_DENY_CONFLICT] type `{}`: `#serde(flatten)` is \
+                 incompatible with the (now-default, 180.1 Ф.7) strict unknown-field \
+                 policy — a flattened field's inner keys arrive mixed into the parent \
+                 wire object and cannot be attributed by the parent's unknown-field \
+                 check. Add `#serde(allow_unknown)` to the type — flatten SYNTHESIS \
+                 itself remains gated regardless, see [M-180-serde-flatten].",
+                td.name,
+            )));
+        }
+        return Err(err(format!(
+            "[E_SERDE_FLATTEN_UNSUPPORTED] type `{}`: `#serde(flatten)` synthesis is \
+             not yet implemented ([M-180-serde-flatten], 180.1 Ф.1.8 — the hardest \
+             attribute, honestly scoped out) — it needs a companion \"fields-only\" \
+             synth variant (no begin_struct/end_struct wrapper) the auto-derive \
+             machine does not yet emit. Use a nested (non-flattened) sub-object \
+             field instead.",
+            td.name,
+        )));
+    }
+    Ok(())
+}
+
+/// Plan 180.1 Ф.1.3/Ф.1.5: a zero-value AST expression for `ty` (`Option` →
+/// typed `None`; numeric → `0 as T`; `bool` → `false`; `str` → `""`; `[]T`/
+/// `Vec[T]` → `[]`; `HashMap`/`Map` → `.new()`). `None` ⇒ no computable zero
+/// value — caller must require an explicit `#serde(default = "fn")` instead.
+fn zero_value_expr(ty: &TypeRef) -> Option<Expr> {
+    if option_inner(ty).is_some() {
+        return Some(ex(ExprKind::As(Box::new(ident("None")), ty.clone())));
+    }
+    match ty.strip_modifiers() {
+        TypeRef::Named { path, generics, .. } => {
+            let name = path.last()?.as_str();
+            if generics.is_empty() {
+                match name {
+                    "int" | "i8" | "i16" | "i32" | "i64"
+                    | "uint" | "u8" | "u16" | "u32" | "u64" =>
+                        Some(ex(ExprKind::As(Box::new(int_lit(0)), type_ref_named(name)))),
+                    "f32" | "f64" =>
+                        Some(ex(ExprKind::As(Box::new(ex(ExprKind::FloatLit(0.0))), type_ref_named(name)))),
+                    "bool" => Some(ex(ExprKind::BoolLit(false))),
+                    "str" => Some(str_lit("")),
+                    _ => None,
+                }
+            } else if name == "Vec" {
+                Some(ex(ExprKind::ArrayLit(vec![])))
+            } else if name == "HashMap" || name == "Map" {
+                Some(member_call(type_static_expr(ty), "new", vec![]))
+            } else {
+                None
+            }
+        }
+        TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _) => Some(ex(ExprKind::ArrayLit(vec![]))),
+        _ => None,
+    }
+}
+
+/// Plan 180.1 Ф.1.3/Ф.1.5: resolve the fallback value for a field that is
+/// either `skip` (always) or `default`-attributed (wire-absent fallback).
+/// Callers must NOT invoke this for a plain `Required` field (no `skip`, no
+/// `default`) — that case keeps the natural `MissingField` error.
+fn resolve_missing_value(
+    type_name: &str, field_name: &str, ty: &TypeRef, default: &Option<Option<String>>,
+    file_id: crate::diag::FileId,
+) -> Result<Expr, DeriveError> {
+    if let Some(Some(fn_name)) = default {
+        return Ok(call(ident_at(fn_name, file_id), vec![]));
+    }
+    match zero_value_expr(ty) {
+        Some(e) => Ok(e),
+        None => Err(DeriveError::SerdeTagging {
+            type_name: type_name.to_string(),
+            message: format!(
+                "[E_SERDE_SKIP_FIELD_NO_DEFAULT] type `{}`, field `{}` (type `{}`): \
+                 `#serde(skip)`/bare `#serde(default)` needs a computable zero value, \
+                 but `{}` has none synthesized. Provide `#serde(default = \"fn_name\")` \
+                 naming a zero-arg function returning `{}`.",
+                type_name, field_name, type_ref_render(ty), type_ref_render(ty), type_ref_render(ty),
+            ),
+        }),
+    }
+}
+
+/// Build the Block that reads a field's value assuming cursor `cursor` is
+/// ALREADY entered (present) — trailing expression = decoded value. Mirrors
+/// the plain per-field decode logic (narrow-scalar inline vs
+/// `deser_field_expr`) so it is reusable by both the plain path and the
+/// has_field-guarded default/alias fallback chain.
+fn build_field_value_block(f_name: &str, ty: &TypeRef, cursor: &str) -> Block {
+    if let Some(plan) = narrow_scalar_deser_plan(ty) {
+        let mut stmts = Vec::new();
+        emit_narrow_scalar_deser(&mut stmts, f_name, cursor, &plan);
+        Block { stmts, trailing: Some(Box::new(ident(f_name))), span: span_dummy(), is_unsafe: false }
+    } else {
+        block_trailing(deser_field_expr(ty, cursor))
+    }
+}
+
+/// Plan 180.1 Ф.1.5/Ф.1.6: build the deserialize value-expression for a field
+/// with `default` and/or `alias` customization — try each candidate wire name
+/// (primary first, then aliases, in declaration order) via `has_field`; the
+/// FIRST present wins (`enter_field` + decode); if NONE are present, fall back
+/// to `missing_block` (pre-resolved by the caller: a default/zero value, a
+/// typed `None`, or — for a plain `Required` field with only `alias`
+/// customization — a final `enter_field(primary)?` re-attempt so the natural
+/// `MissingField(primary)` error still fires, naming the primary wire name).
+fn build_field_with_fallback(f_name: &str, ty: &TypeRef, names: &[String], missing_block: Block) -> Expr {
+    let mut acc = missing_block;
+    for (i, name) in names.iter().enumerate().rev() {
+        let cursor = format!("__nv_hf_{}_{}", f_name, i);
+        let mut then_stmts = vec![let_stmt(&cursor, true, None,
+            try_(member_call(ident("d"), "enter_field", vec![str_lit(name)])))];
+        let value_block = build_field_value_block(f_name, ty, &cursor);
+        then_stmts.extend(value_block.stmts);
+        let then_block = Block {
+            stmts: then_stmts, trailing: value_block.trailing, span: span_dummy(), is_unsafe: false,
+        };
+        let if_expr = ex(ExprKind::If {
+            cond: Box::new(try_(member_call(ident("d"), "has_field", vec![str_lit(name)]))),
+            then: then_block,
+            else_: Some(crate::ast::ElseBranch::Block(acc)),
+        });
+        acc = block_trailing(if_expr);
+    }
+    *acc.trailing.expect("build_field_with_fallback: non-empty fold always sets trailing")
+}
+
+/// Plan 180.1 Ф.7: the set of wire names a strict-by-default record accepts
+/// (primary wire name + all aliases of every NON-skip field) — used to build
+/// the unknown-field scan. `skip` fields are excluded (never on the wire).
+fn known_wire_names(fields: &[ResolvedField]) -> Vec<String> {
+    let mut names = Vec::new();
+    for rf in fields {
+        if rf.opts.skip { continue; }
+        names.push(rf.wire.clone());
+        for a in &rf.opts.aliases {
+            names.push(a.clone());
+        }
+    }
+    names
+}
+
+/// Plan 180.1 Ф.7: build the strict-by-default unknown-field check —
+/// `ro __nv_wire_keys = d.map_keys()?; for __nv_uk in __nv_wire_keys { if
+/// <not in known> { return Err(DeError.new(UnknownField(__nv_uk))) } }`.
+/// Emitted at the START of a record's `.deserialize` body unless the type
+/// carries `#serde(allow_unknown)`.
+fn build_unknown_field_check(known: &[String]) -> Vec<Stmt> {
+    let cond = if known.is_empty() {
+        ex(ExprKind::BoolLit(true))
+    } else {
+        let mut it = known.iter();
+        let first = it.next().expect("non-empty checked above");
+        let mut acc = binop(BinOp::Neq, ident("__nv_uk"), str_lit(first));
+        for n in it {
+            acc = binop(BinOp::And, acc, binop(BinOp::Neq, ident("__nv_uk"), str_lit(n)));
+        }
+        acc
+    };
+    let raise = Stmt::Return {
+        value: Some(call(ident("Err"), vec![
+            call(ex(ExprKind::Path(vec!["DeError".to_string(), "new".to_string()])),
+                vec![call(ident("UnknownField"), vec![ident("__nv_uk")])]),
+        ])),
+        span: span_dummy(),
+    };
+    let inner_if = ex(ExprKind::If {
+        cond: Box::new(cond),
+        then: Block { stmts: vec![raise], trailing: None, span: span_dummy(), is_unsafe: false },
+        else_: None,
+    });
+    let for_body = Block { stmts: vec![Stmt::Expr(inner_if)], trailing: None, span: span_dummy(), is_unsafe: false };
+    let for_loop = ex(ExprKind::For {
+        pattern: Pattern::Ident { name: "__nv_uk".to_string(), span: span_dummy(), is_mut: false, is_consume: false },
+        iter: Box::new(ident("__nv_wire_keys")),
+        body: for_body,
+        elem_type: None,
+        invariants: vec![],
+        decreases: None,
+        iter_consume: false,
+    });
+    vec![
+        let_stmt("__nv_wire_keys", false, None, try_(member_call(ident("d"), "map_keys", vec![]))),
+        Stmt::Expr(for_loop),
+    ]
+}
+
 /// Trait providing query methods нужные synthesizer'у — позволяет
 /// auto_derive быть unit-testable без полного TypeCheckCtx.
 ///
@@ -340,6 +806,10 @@ pub struct DerivedField {
     pub name: String,
     pub ty: TypeRef,
     pub span: Span,
+    /// Plan 180.1 Ф.1: field-level `#serde(...)` attributes (empty for
+    /// `NamedTupleField` — positional tuple fields don't carry serde attrs,
+    /// out of Ф.1 scope; record fields carry theirs verbatim).
+    pub serde_attrs: Vec<SerdeArg>,
 }
 
 /// Извлечь нормализованный список fields из type-decl. Returns None если
@@ -351,6 +821,7 @@ pub fn iter_fields(td: &TypeDecl) -> Option<Vec<DerivedField>> {
                 name: f.name.clone(),
                 ty: f.ty.clone(),
                 span: f.span,
+                serde_attrs: f.serde_attrs.clone(),
             }).collect()
         ),
         TypeDeclKind::NamedTuple(fields) => Some(
@@ -358,6 +829,7 @@ pub fn iter_fields(td: &TypeDecl) -> Option<Vec<DerivedField>> {
                 name: f.name.clone(),
                 ty: f.ty.clone(),
                 span: f.span,
+                serde_attrs: Vec::new(),
             }).collect()
         ),
         _ => None,
@@ -582,6 +1054,28 @@ fn ident(name: &str) -> Expr {
     ex(ExprKind::Ident(name.to_string()))
 }
 
+/// Plan 180.1 Ф.1.5: a bare `Ident` reference tagged with a REAL `file_id`
+/// (not `span_dummy()`'s `MAIN_FILE_ID`). Needed for `#serde(default =
+/// "fn_name")`: the synthesized call to a user free function is the FIRST
+/// auto-derive body to reference an arbitrary lowercase user symbol by bare
+/// identifier (every other synthesized reference is either a builtin/
+/// Capitalized name — bootstrap-exempt in `is_known` — or a `.method()` call,
+/// which resolves via the method table, not identifier-scope). The identifier-
+/// resolution checker looks up visibility via `group_decls[file_id]` (Plan
+/// 42.15 Rule C: peers of ONE folder-module share a declaration namespace
+/// keyed by any member file_id of that group); `span_dummy()`'s `MAIN_FILE_ID`
+/// resolves to the COMPILATION UNIT's entry file, which is WRONG whenever the
+/// type carrying `#impl(Deserialize)` is declared in a module imported from
+/// elsewhere (the normal case — DTOs are typically decoded from a different
+/// file than where they're declared) — `default_role` would then be looked up
+/// in the IMPORTER's own module-group, not the type's, and spuriously fail as
+/// `undefined identifier`. Tagging with the type-decl's OWN `file_id` (any
+/// member of its peer-group) fixes the lookup regardless of which file ends
+/// up as the compilation entry.
+fn ident_at(name: &str, file_id: crate::diag::FileId) -> Expr {
+    Expr::new(ExprKind::Ident(name.to_string()), Span::with_file(0, 0, file_id))
+}
+
 fn self_field(field_name: &str) -> Expr {
     ex(ExprKind::Member {
         obj: Box::new(ex(ExprKind::SelfAccess)),
@@ -630,6 +1124,11 @@ fn binop(op: BinOp, l: Expr, r: Expr) -> Expr {
         left: Box::new(l),
         right: Box::new(r),
     })
+}
+
+/// Plan 180.1 Ф.1.4: `!<e>` — used by `skip_serializing_if`'s inverted guard.
+fn not_expr(e: Expr) -> Expr {
+    ex(ExprKind::Unary { op: crate::ast::UnOp::Not, operand: Box::new(e) })
 }
 
 fn type_ref_named(name: &str) -> TypeRef {
@@ -1975,7 +2474,26 @@ fn make_serde_method(
     param_name: &str,
     return_type: TypeRef,
     body: FnBody,
+    file_id: crate::diag::FileId,
 ) -> FnDecl {
+    // Plan 180.1 Ф.1.5: the FnDecl's OWN span (not each inner expression's) is
+    // what the identifier-resolution checker uses to pick `file_id` for
+    // walking the WHOLE body (`fd.span.file_id`, one value per function — a
+    // sound assumption for ordinary code, where a function's body always
+    // lives in the same file as its declaration). A synthesized method's
+    // `span_dummy()` (`MAIN_FILE_ID`) breaks that assumption whenever the type
+    // being synthesized for was pulled into the CU from a DIFFERENT module
+    // than the entry (the common case: DTOs are declared once, decoded
+    // elsewhere) — free-function references inside the body (`#serde(default
+    // = "fn")`) would resolve against the ENTRY's own scope instead of the
+    // type's declaring module's. Tagging the FnDecl's span with the type's
+    // OWN `file_id` fixes the lookup unconditionally (harmless — a dummy
+    // start/end never renders in a diagnostic; only `file_id` is load-bearing
+    // here, ever consulted by name-resolution, not by the module's own path
+    // lookup for the diagnostic's OWN pretty-printer — that resolves the
+    // path from `file_id` via a separate table populated at parse time, which
+    // already has an entry for `file_id`).
+    let fn_span = Span::with_file(0, 0, file_id);
     FnDecl {
         name: method_name.to_string(),
         receiver: Some(Receiver {
@@ -1986,19 +2504,19 @@ fn make_serde_method(
             kind: if is_static { ReceiverKind::Static } else { ReceiverKind::Instance },
             mutable: false,
             consume: false,
-            span: span_dummy(),
+            span: fn_span,
         }),
         generics: vec![GenericParam {
             name: generic_name.to_string(),
             bounds: vec![type_ref_named(bound_name)],
             default: None,
-            span: span_dummy(),
+            span: fn_span,
             consume_bound: false,
         }],
         params: vec![Param {
             name: param_name.to_string(),
             ty: type_ref_named(generic_name),
-            span: span_dummy(),
+            span: fn_span,
             is_variadic: false,
             default: None,
             consume: false,
@@ -2011,7 +2529,7 @@ fn make_serde_method(
         return_is_const: false,
         returns_receiver: false,
         body,
-        span: span_dummy(),
+        span: fn_span,
         is_export: false,
         is_external: false,
         compiler_generated: true,
@@ -2248,17 +2766,37 @@ pub fn synthesize_serialize<Q: DeriveQuery>(
     // attrs on a non-sum type: E_SERDE_TAGGING_ON_NON_SUM).
     let mode = serde_tagging_mode(type_decl)?;
     let body = if let Some(fields) = iter_fields(type_decl) {
+        // Plan 180.1 Ф.1/Ф.10: resolve rename/rename_all/skip/skip_serializing_if
+        // + validate the wire contract (collisions, flatten-gate) once.
+        let (_type_opts, resolved) = resolve_fields(type_decl, &fields)?;
+        let active_len = resolved.iter().filter(|rf| !rf.opts.skip).count();
         let mut stmts: Vec<Stmt> = Vec::new();
-        // s.begin_struct("Type", N)?
+        // s.begin_struct("Type", N)? — N excludes `skip` fields (decorative
+        // count only; `skip_serializing_if`'s runtime-conditional omission is
+        // NOT reflected — no backend currently uses `len` for correctness).
         stmts.push(Stmt::Expr(try_(member_call(
             ident("s"), "begin_struct",
-            vec![str_lit(&type_decl.name), int_lit(fields.len() as i64)],
+            vec![str_lit(&type_decl.name), int_lit(active_len as i64)],
         ))));
-        for f in &fields {
-            // s.struct_field("f")?
-            stmts.push(Stmt::Expr(try_(member_call(
-                ident("s"), "struct_field", vec![str_lit(&f.name)]))));
-            stmts.push(Stmt::Expr(try_(ser_value_expr(self_field(&f.name), &f.ty))));
+        for rf in &resolved {
+            if rf.opts.skip { continue; }
+            let field_stmts = vec![
+                Stmt::Expr(try_(member_call(ident("s"), "struct_field", vec![str_lit(&rf.wire)]))),
+                Stmt::Expr(try_(ser_value_expr(self_field(&rf.field.name), &rf.field.ty))),
+            ];
+            match &rf.opts.skip_serializing_if {
+                Some(pred) => {
+                    // Plan 180.1 Ф.1.4: general predicate form — `if
+                    // !(@field.<predicate>()) { struct_field(...)?; <ser>?; }`.
+                    let cond = not_expr(member_call(self_field(&rf.field.name), pred, vec![]));
+                    stmts.push(Stmt::Expr(ex(ExprKind::If {
+                        cond: Box::new(cond),
+                        then: Block { stmts: field_stmts, trailing: None, span: span_dummy(), is_unsafe: false },
+                        else_: None,
+                    })));
+                }
+                None => stmts.extend(field_stmts),
+            }
         }
         FnBody::Block(block_with_trailing(
             stmts, member_call(ident("s"), "end_struct", vec![])))
@@ -2273,7 +2811,7 @@ pub fn synthesize_serialize<Q: DeriveQuery>(
     };
     Ok(make_serde_method(
         &type_decl.name, "serialize", false, "S", "Serializer", "s",
-        result_ty(TypeRef::Unit(span_dummy()), "SerError"), body))
+        result_ty(TypeRef::Unit(span_dummy()), "SerError"), body, type_decl.span.file_id))
 }
 
 /// `Variant` / `Variant(p0, p1)` / `Variant { f, g }` reconstruction expression
@@ -2626,29 +3164,76 @@ pub fn synthesize_deserialize<Q: DeriveQuery>(
     // on a non-sum type: E_SERDE_TAGGING_ON_NON_SUM).
     let mode = serde_tagging_mode(type_decl)?;
     let body = if let Some(fields) = iter_fields(type_decl) {
+    // Plan 180.1 Ф.1/Ф.7/Ф.10: resolve rename/rename_all/skip/default/alias +
+    // validate the wire contract once (collisions, flatten-gate).
+    let (type_opts, resolved) = resolve_fields(type_decl, &fields)?;
     let mut stmts: Vec<Stmt> = Vec::new();
+    // Ф.7 (owner-decided reversal): strict-by-default unknown-field policy —
+    // scan the wire object's keys against the known set BEFORE reading any
+    // field, unless the type opts out via `#serde(allow_unknown)`.
+    if !type_opts.allow_unknown {
+        stmts.extend(build_unknown_field_check(&known_wire_names(&resolved)));
+    }
     let mut lit_fields: Vec<RecordLitField> = Vec::new();
-    for f in &fields {
-        let sub = format!("__nv_de_{}", f.name);
-        if let Some(plan) = narrow_scalar_deser_plan(&f.ty) {
-            // Narrow scalar → enter_field + inline read/range-guard/cast.
-            stmts.push(let_stmt(&sub, true, None, try_(member_call(
-                ident("d"), "enter_field", vec![str_lit(&f.name)]))));
-            emit_narrow_scalar_deser(&mut stmts, &f.name, &sub, &plan);
-        } else {
-            // `Option` fields enter via `enter_field_or_null` (absent key → null
-            // cursor → None, Q7); everything else via `enter_field` (absent →
-            // MissingField). The VALUE expression is uniform: `deser_field_expr`
-            // handles the Option null-check (recursively, for nested Option),
-            // same-width scalars, `[]u8`→bytes, and static `.deserialize`.
+    for rf in &resolved {
+        let f = &rf.field;
+        if rf.opts.skip {
+            // Plan 180.1 Ф.1.3: `skip` — never read from the wire; the field's
+            // value is always the resolved default/zero value (the `.or` picks
+            // the explicit `default = "fn"` if given, else the bare zero-value
+            // path — `resolve_missing_value`'s `None` case IS "no default at
+            // all", which for a `skip` field must still mean "zero-value", not
+            // "required").
+            let value = resolve_missing_value(
+                &type_decl.name, &f.name, &f.ty, &rf.opts.default.clone().or(Some(None)),
+                type_decl.span.file_id,
+            )?;
+            stmts.push(let_stmt(&f.name, false, None, value));
+        } else if rf.opts.default.is_some() || !rf.opts.aliases.is_empty() {
+            // Plan 180.1 Ф.1.5/Ф.1.6: default and/or alias customization — try
+            // primary + aliases via `has_field`, else fall back.
+            let mut names = vec![rf.wire.clone()];
+            names.extend(rf.opts.aliases.iter().cloned());
             let is_opt = is_option_ty(&f.ty);
-            let enter = if is_opt { "enter_field_or_null" } else { "enter_field" };
-            stmts.push(let_stmt(&sub, true, None, try_(member_call(
-                ident("d"), enter, vec![str_lit(&f.name)]))));
-            // Annotate the Option local so the None/Some(..) if-branches unify to
-            // `Option[inner]` for the checker.
+            let missing_block: Block = if rf.opts.default.is_some() {
+                let v = resolve_missing_value(&type_decl.name, &f.name, &f.ty, &rf.opts.default, type_decl.span.file_id)?;
+                block_trailing(v)
+            } else if is_opt {
+                // No explicit default on an Option field — absence (of ALL
+                // candidate names) still means `None` (Q7 semantics extended
+                // to cover aliases).
+                block_trailing(ex(ExprKind::As(Box::new(ident("None")), f.ty.clone())))
+            } else {
+                // Required field, alias-only (no default): re-attempt the
+                // PRIMARY wire name so the natural `MissingField(primary)`
+                // error still fires (all candidates already confirmed absent).
+                let final_cursor = format!("__nv_hf_final_{}", f.name);
+                let mut fstmts = vec![let_stmt(&final_cursor, true, None,
+                    try_(member_call(ident("d"), "enter_field", vec![str_lit(&rf.wire)])))];
+                let vb = build_field_value_block(&f.name, &f.ty, &final_cursor);
+                fstmts.extend(vb.stmts);
+                Block { stmts: fstmts, trailing: vb.trailing, span: span_dummy(), is_unsafe: false }
+            };
             let ty_ann = if is_opt { Some(f.ty.clone()) } else { None };
-            stmts.push(let_stmt(&f.name, false, ty_ann, deser_field_expr(&f.ty, &sub)));
+            let value_expr = build_field_with_fallback(&f.name, &f.ty, &names, missing_block);
+            stmts.push(let_stmt(&f.name, false, ty_ann, value_expr));
+        } else {
+            // Plain path (unchanged shape from Ф.2-record) — only the WIRE
+            // name (`rf.wire`, may differ under `rename`/`rename_all`) changes;
+            // the local/Nova-side field name (`f.name`) never does.
+            let sub = format!("__nv_de_{}", f.name);
+            if let Some(plan) = narrow_scalar_deser_plan(&f.ty) {
+                stmts.push(let_stmt(&sub, true, None, try_(member_call(
+                    ident("d"), "enter_field", vec![str_lit(&rf.wire)]))));
+                emit_narrow_scalar_deser(&mut stmts, &f.name, &sub, &plan);
+            } else {
+                let is_opt = is_option_ty(&f.ty);
+                let enter = if is_opt { "enter_field_or_null" } else { "enter_field" };
+                stmts.push(let_stmt(&sub, true, None, try_(member_call(
+                    ident("d"), enter, vec![str_lit(&rf.wire)]))));
+                let ty_ann = if is_opt { Some(f.ty.clone()) } else { None };
+                stmts.push(let_stmt(&f.name, false, ty_ann, deser_field_expr(&f.ty, &sub)));
+            }
         }
         lit_fields.push(RecordLitField {
             name: f.name.clone(),
@@ -2685,7 +3270,7 @@ pub fn synthesize_deserialize<Q: DeriveQuery>(
     // `type_refs_equiv_modulo_self` Self↔receiver check.
     Ok(make_serde_method(
         &type_decl.name, "deserialize", true, "D", "Deserializer", "d",
-        result_ty(type_ref_named(&type_decl.name), "DeError"), body))
+        result_ty(type_ref_named(&type_decl.name), "DeError"), body, type_decl.span.file_id))
 }
 
 // ────────────────────────────────────────────────────────────────────────
