@@ -641,6 +641,85 @@ match @buckets[idx] {
 D52 решает все три, ценой breaking change по syntax-site всех
 type-объявлений. Подробно — [history/evolution.md](history/evolution.md).
 
+### Амендмент (ОКНО-5, 2026-07-23): newtype над fn-типом + call-through + alias-прозрачность
+
+**Проблема.** `type Handler fn(ServerRequest) -> ServerResponse` (newtype,
+underlying — fn-тип) **не парсился**: `expected identifier, got '('`.
+Причина — parser-эвристика «пустой sum» (empty-sum body-end detection,
+см. Plan 72 P1-B выше) трактовала ЛЮБОЙ голый `KwFn` сразу после `type X`
+как начало СЛЕДУЮЩЕЙ top-level декларации (`type X` без тела + отдельная
+`fn name(...)`), а не как начало fn-типа. Настоящий top-level `fn` ВСЕГДА
+несёт identifier сразу после keyword (`fn name(`); fn-TYPE body, наоборот,
+начинается `fn(` — сразу `(`, без имени. Однозначный lookahead одним
+токеном: `fn` считается концом декларации (следующая `fn`-декларация)
+ТОЛЬКО когда токен ПОСЛЕ него — НЕ `(`.
+
+**Форма (закрывает синтаксический пробел, D52 §Полный синтаксис остаётся
+без изменений — это РАСШИРЕНИЕ newtype-формы `type X Y`, где `Y` теперь
+может быть fn-типом, не только именованным типом):**
+
+```nova
+type Handler fn(ServerRequest) -> ServerResponse   // newtype над fn-типом
+type HandlerAlias alias fn(int) -> str             // alias fn-типа (тоже валиден)
+```
+
+**Call-through (единственный newtype-род, форвардящий операцию над
+underlying).** Значение newtype-над-fn-типом вызывается НАПРЯМУЮ:
+
+```nova
+fn call_it(h Handler, req ServerRequest) -> ServerResponse => h(req)
+```
+
+Обоснование — асимметрия с `int`-newtype (`UserId`), который НЕ форвардит
+`+`: вызов — ЕДИНСТВЕННАЯ осмысленная операция над значением функционального
+типа (в отличие от арифметики, у которой для домена `UserId` попросту нет
+единственно верной трактовки). Прецедент — Go `type HandlerFunc func(...)`,
+который одновременно и вызывается (`h(w, r)`), и несёт методы. Newtype
+как имя ОСТАЁТСЯ (методы, внятная диагностика «ожидался `Handler`», типы не
+путаются) — call-through не отменяет nominal-типизацию, просто добавляет
+ОДНУ разрешённую сквозную операцию.
+
+**Alias fn-типа — прозрачность включает вызов.** До этого амендмента
+`type X alias fn(A) -> B` объявлялся без ошибок, но значение типа `X` не
+вызывалось (`[E_CALL_NOT_CALLABLE]`) — резолв вызова смотрел на ИМЯ типа
+локала, не разворачивая alias. D52 alias уже требует полной прозрачности
+(`X` и `Y` совместимы) — вызываемость теперь часть этой прозрачности,
+разворачивается ТРАНЗИТИВНО через любую цепочку alias'ов.
+
+**Авто-коэрсия `fn → Handler`.** См. [D55 §Obvious single-wrapper
+coercion](#d55-literal-coercion-в-позиции-с-явным-типом-sum-конструкторы-и-record-литералы)
+— fn-типы добавлены в структурную «таблицу родов», используемую тем же
+механизмом, что и `int`/`str`/`[]u8` (никакого нового кода
+coercion-стороны не потребовалось — механизм уже был обобщён на
+произвольный `Newtype(inner)`, не только скалярный `inner`).
+**Однонаправленно**: `Handler → fn` НЕ коэрсится (nominal-типизация не
+растворяется — два РАЗНЫХ newtype над ОДНИМ fn-типом взаимно
+неподставимы, см. регресс `d52_newtype_fn_reverse_coerce_neg.nv`).
+
+**Известный, задокументированный остаток (НЕ в объёме амендмента):** два
+overload'а, различающихся ТОЛЬКО newtype-fn-параметром с ОДИНАКОВОЙ
+underlying-сигнатурой, и вызов с голой fn-функцией — checker НЕ детектирует
+двусмысленность на Nova-уровне (тот же класс, что и pre-existing
+`[M-172.1-free-fn-multi-overload-ambiguous]`); компиляция падает ЧЕСТНО, но
+на C-уровне (мангл-коллизия, оба erased-параметра — `void*`) — см. регресс
+`d55_fn_newtype_ambiguous_lift_neg.nv` (`EXPECT_CC_ERROR`, НЕ
+`EXPECT_COMPILE_ERROR`). Отдельно найден, ОРТОГОНАЛЬНЫЙ newtype-у,
+pre-existing пробел: `assignable_direct` для fn-типизированного `expected`
+коллапсирует категорию в `Any` (структурная проверка fn-сигнатур на
+call-arg позиции отсутствует ВООБЩЕ, для любого fn-значения, newtype или
+голого) — заведено как `[M-fn-type-expected-any-bypass]` в
+`docs/plans/backlog-followups.md`, вне объёма этого окна.
+
+**Реализация:** `compiler-codegen/src/parser/mod.rs` (`parse_type_decl`
+empty-sum lookahead), `compiler-codegen/src/types/mod.rs`
+(`BoundCtx::fn_type_names` pre-scan + `check_call_callee_not_local_shadow`),
+`compiler-codegen/src/codegen/emit_c.rs` (`fn_newtype_sigs` pre-scan +
+`resolve_fn_typeref` — call-dispatch через существующий `NovaClosBase`/
+`NOVA_CLOS_CALL_*` механизм, ноль нового codegen). Регресс:
+`spec_tests/conformance/d52_newtype_fn_type.nv` (4 куска) +
+`spec_tests/conformance/neg/d52_newtype_fn_reverse_coerce_neg.nv` +
+`spec_tests/conformance/neg/d55_fn_newtype_ambiguous_lift_neg.nv`.
+
 ---
 
 ## D406. Sum-type синтаксис: `enum` маркер (2026-07-01)
@@ -1340,6 +1419,36 @@ widening невидимо для автора), `f32`/`f64`, `bool`, `str`,
 `cat_compatible_rt`'s permissive int↔float assignability — здесь int и
 float — РАЗНЫЕ «роды», иначе `${1}` был бы неоднозначен между
 `I(i64)`/`F(f64)` и ничего бы не обернулось.
+
+**Амендмент (ОКНО-5, 2026-07-23): fn-типы в таблице родов.** Род `Fn`
+добавлен для структурного совпадения `fn(A, …) -> R` с `fn(A, …) -> R`
+(параметры и возврат совпадают структурно) — тот же механизм, что и для
+`int`/`str`, БЕЗ отдельного нового кода: `single_wrap_candidates` уже был
+обобщён на произвольный `Newtype(inner)` (не только скалярный `inner`), а
+`WrapKind::Other`-fallback для `TypeRef::Func` УЖЕ различал fn-значения от
+не-fn (единственный практический сценарий этого амендмента —
+`type Handler fn(A) -> B` с ОДНИМ таким newtype в скоупе — уже корректно
+разрешался существующим кодом; расширение зафиксировано here как явное
+намерение, а не побочный эффект). Пример:
+
+```nova
+type Handler fn(ServerRequest) -> ServerResponse
+
+fn make_response(req ServerRequest) -> ServerResponse => { body: "hi" }
+fn accept(h Handler) -> str => "ok"
+
+ro r = accept(make_response)   // fn -> Handler, авто-подъём
+```
+
+Как и для `int`/`str` — **однонаправленно**: `Handler → fn` (или
+`Handler → Middleware`, другой newtype над ТЕМ ЖЕ fn-типом) НЕ коэрсится —
+единственный существующий механизм (`single_wrap_candidates`) ключуется
+ТОЛЬКО по `expected`-стороне и всегда ОБОРАЧИВАЕТ голое значение в
+именованную обёртку, никогда не разворачивает названную обёртку обратно
+(нет и не было обратной ветки). Регресс:
+`spec_tests/conformance/neg/d52_newtype_fn_reverse_coerce_neg.nv`. См.
+[D52 §Амендмент (ОКНО-5)](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-)
+для call-through/alias-прозрачности этого же newtype-рода.
 
 **Однозначность обязательна**: если ⩾2 кандидата совпадают по «роду»
 (гипотетический sum с двумя int-payload'ами) или 0 совпадают —
