@@ -1,0 +1,61 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for [M-cancel-loop-accept-swallowed-residual] (221.1 №15,
+// ОКНО-3 2026-07-23) — the D188 R3 shield-narrowing amendment. Closes the
+// residual gap left open by `m2217_15_cancel_busyloop_scope_mismatch.nv`'s
+// own "NARROWER-THAN-THE-FULL-SYMPTOM NOTE": before this fix,
+// `nv_consume_enter_shield`/`leave_shield` armed the cancel-mask for the
+// WHOLE consume-scope body (capture → busy-loop → cleanup dispatch), not
+// just the actual `@cleanup` dispatch — so `nova_fiber_yield`'s cancel-throw
+// check stayed permanently deferred (`cancel_mask_count > 0`) for as long as
+// ANY `consume`-bound resource with auto-cleanup was alive in the fiber,
+// even a PURE CPU-bound retry loop that never touches the resource itself.
+// D188 R3 amendment (owner decision (б)): narrow the shield to the cleanup
+// PHASE only — the letter of D159 ("cleanup completes-then-cancel-
+// propagates") never required shielding the body, only the cleanup call
+// itself.
+//
+// This fixture: a `consume`-bound resource (auto-`@cleanup`, D432) held
+// across a CPU-bound busy/retry loop under `supervised(timeout:)` — same
+// loop shape as m2217_15's own busy loop, but now WITH a live consume-scope
+// wrapping it (the exact residual gap). Pre-fix: the shield holds the whole
+// time → loop spins until the OUTER EXPECT_TIMEOUT_MS budget (never
+// cancelled by `supervised`). Post-fix: cancellation reaches the loop's own
+// cooperative preempt-check normally (shield narrowed to the cleanup
+// dispatch only) → the supervised deadline actually cancels the loop,
+// `@cleanup` still runs exactly once on the way out.
+//
+// EXPECT_TIMEOUT_MS 20000
+
+module standalone.m2217_15b_cancel_consume_shield_narrowed
+
+import std.time.duration
+
+type M2217B15Res consume { tag int }
+
+fn M2217B15Res consume @cleanup(_outcome ScopeOutcome) -> () { () }
+
+fn m2217b15_make(tag int) -> M2217B15Res => { tag }
+
+test "supervised(timeout:) cancels a consume-bound busy loop (D188 R3 shield narrowed to cleanup only, 221.1 №15)" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        with Fail[TimeoutError] = |_e| {} {
+            supervised(timeout: 300.to_millis()) {
+                spawn {
+                    consume res = m2217b15_make(1)
+                    mut n = 0
+                    while true {
+                        n = n + 1
+                    }
+                }
+            }
+        }
+    }
+    assert(exit_calls == 1)
+}

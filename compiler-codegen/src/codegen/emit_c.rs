@@ -18876,6 +18876,50 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                 }
+                // [M-generic-value-self-protocol-wrapper-mono] (221.1 Ф.2
+                // #25, ОКНО-3 2026-07-23): the two bare-typevar guards above
+                // (`type_params.contains(&name)` direct-Self, and the
+                // "Option[<bare T>]" hardcoded check just above) both miss a
+                // NESTED still-generic inner — `Result[Wrap[T], E]` /
+                // `Option[Wrap[T]]` (`Self` = the receiver's OWN generic
+                // type, e.g. a protocol method `.m(...) -> Result[Self, E]`
+                // on `Wrap[T] value {...}` — `Self` substitutes to
+                // `Wrap[T]`, a `Named` whose OWN generics still mention `T`,
+                // not itself a bare type-param). Falling through to
+                // `type_ref_to_c` below recursively mono's `Wrap[T]` using
+                // the UNSUBSTITUTED literal `T` — `NovaValue_Wrap____
+                // Nova_T_p` — and registers a NovaOpt/NovaRes wrapper struct
+                // for that bogus name (`unknown type name`, CC-FAIL) — same
+                // class of hazard the `generic_type_templates`-gated
+                // `Pair[B,A]` guard below already handles for a BARE generic
+                // return, generalized here to `Option`/`Result`'s FIRST
+                // (Ok/Some) type-arg specifically, RECURSIVELY
+                // (`type_ref_uses_any_type_param`, same helper the `Pair`
+                // guard uses) so a nested `Wrap[T]` is caught too, not just a
+                // direct bare `T`. Scoped to `Option`/`Result` (the two
+                // protocol-conformance-bearing containers actually reported
+                // live) — the erased body is provably unreachable for this
+                // shape (mirrors every other stub-routed case in this
+                // function/`emit_generic_static_method_stub`): the caller-
+                // side mono pass emits the correct concrete instance per
+                // call site.
+                if (name == "Option" || name == "Result") && !generics.is_empty() {
+                    let inner_still_generic = generics.first()
+                        .map_or(false, |g| Self::type_ref_uses_any_type_param(g, type_params));
+                    if inner_still_generic {
+                        if name == "Option" {
+                            let c_name = self.sum_schema_registry
+                                .lookup_sum_schema("Option")
+                                .map(|e| e.c_name.clone())
+                                .unwrap_or_else(|| "NovaOpt_nova_int".into());
+                            return c_name;
+                        }
+                        // Result[X, E] erased placeholder — a real (never-
+                        // dereferenced, per the stub-routing rationale above)
+                        // pointer type is always valid C regardless of `X`.
+                        return "void*".into();
+                    }
+                }
                 // Plan 48 Ф.3: generic type with type-param args (e.g. Pair[B, A] in erased context)
                 // must NOT be monomorphized — return erased base pointer to avoid spurious instances.
                 // Plan 153.2 Ф.2 (STAGE 2): the param check is RECURSIVE
@@ -19044,6 +19088,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             } else { false }
         } else { false };
         if has_void_ptr_fields {
+            return self.emit_generic_static_method_stub(f);
+        }
+        // [M-generic-value-self-protocol-wrapper-mono] (221.1 Ф.2 #25, ОКНО-3
+        // 2026-07-23): a protocol-conformance method whose return type is
+        // `Result[X, E]` / `Option[X]` with `X` STILL mentioning the
+        // receiver's own generic type-param recursively (e.g. `Self` on
+        // `Wrap[T] value {...}` substituting to `Wrap[T]`) — same family as
+        // `has_void_ptr_fields` above (erased body provably unreachable for
+        // a still-generic value-kind receiver; the caller-side mono pass
+        // emits the correct concrete instance per call site). Route to the
+        // stub — `erased_type_ref_c` (just fixed alongside this) now returns
+        // a syntactically-safe placeholder for this exact shape instead of
+        // falling through to a bogus bare-typevar mono registration, but the
+        // FULL erased body (this function, not the stub) would still try to
+        // construct/return a REAL Result/Option value into that placeholder
+        // type — invalid. The stub skips body construction entirely (zeroed
+        // dummy return), matching this file's established pattern.
+        let ret_wraps_still_generic_inner = f.return_type.as_ref().map_or(false, |rt| {
+            if let TypeRef::Named { path, generics: rt_generics, .. } = rt {
+                matches!(path.last().map(String::as_str), Some("Result") | Some("Option"))
+                    && rt_generics.first().map_or(false, |inner|
+                        Self::type_ref_uses_any_type_param(inner, &type_params))
+            } else {
+                false
+            }
+        });
+        if ret_wraps_still_generic_inner {
             return self.emit_generic_static_method_stub(f);
         }
         // D109: Methods whose params use bare type params (e.g. find_slot(key K)) generate
@@ -28210,6 +28281,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let unwind_cleanup = matches!(outcome, DeferOutcome::FromFrame(_) | DeferOutcome::Interrupt);
         let o_local = self.fresh_tmp();
         self.materialize_scope_outcome(&o_local, outcome);
+        // [M-cancel-loop-accept-swallowed-residual] (221.1 №15, D188 R3
+        // amendment, ОКНО-3 2026-07-23, владелец-решение (б)): the cancel-
+        // shield is armed HERE — immediately before the cleanup dispatch —
+        // narrowed from the previous "over body+cleanup" scope (D159's
+        // letter: only cleanup itself is shielded; the body's own suspend
+        // points stay cancellable). `policy.prev_deadline_var` was already
+        // declared (bare, `=0`) by the prologue; this assigns it. The
+        // matching `nv_consume_leave_shield` runs right after the cleanup
+        // call below (both success and throwing paths, unchanged).
+        self.line(&format!(
+            "{} = nv_consume_enter_shield({});",
+            policy.prev_deadline_var, policy.threshold_var));
         // Plan 173 Ф.5 п.2 (D192-ретракт): watchdog armed around the CLEANUP
         // call only («fiber застрял в cleanup» — body не под порогом). t0 for
         // the duration measured into the ResourceTrace exit-event. Both set
@@ -28957,8 +29040,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             t.strip_prefix("NovaValue_").map(|s| s.to_string()).unwrap_or(t)
         };
         let active_var = format!("_defer_{}_{}_active", block_id, idx);
-        let prevdl_var = format!("_defer_{}_{}_prevdl", block_id, idx);
-        self.line(&format!("{} = nv_consume_enter_shield(0);", prevdl_var));
+        // [M-cancel-loop-accept-swallowed-residual] (221.1 №15, D188 R3
+        // amendment, ОКНО-3 2026-07-23, владелец-решение (б)): the shield is
+        // NO LONGER armed here at resource-capture time — that held the
+        // cancel-mask up over the ENTIRE scope BODY (every suspend/yield
+        // point between capture and cleanup), contradicting D159's "cleanup
+        // completes-then-cancel-propagates" (only CLEANUP itself should be
+        // shielded). `nv_consume_enter_shield` is now called immediately
+        // before the actual cleanup dispatch in `emit_consume_entry_cleanup`
+        // (the ONE place per policy where `Nova_<T>_consume_cleanup` runs),
+        // which also does the matching `nv_consume_leave_shield`. This body
+        // no longer touches the shield at all — cancellation reaches the
+        // body's own suspend points normally now.
         // Plan 217: mirror ConsumeScope's D185 R1 enter-event (NULL-guarded,
         // observability only) — cheap, keeps auto-cleanup structurally
         // observable the same way an explicit `consume{}` block already is.
@@ -30502,16 +30595,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.line(&format!("int {} = nv_resolve_exit_timeout_ms();", timeout_var));
                 }
 
-                // Plan 110.2.1 (D188 R3): cancel-shield over body + cleanup. enter
-                // returns the previous deadline (nested-shield safety); leave restores
-                // it. Both re-home into the consume-policy so all four run-sites leave.
-                // Plan 173 Ф.5 п.2 (D192-ретракт): enter больше НЕ армит deadline
-                // (mask only); timeout_var = порог watchdog-варна, армится вокруг
-                // самого cleanup-вызова (emit_consume_entry_cleanup).
+                // [M-cancel-loop-accept-swallowed-residual] (221.1 №15, D188
+                // R3 amendment, ОКНО-3 2026-07-23, владелец-решение (б)):
+                // cancel-shield NARROWED to the cleanup phase only (D159's
+                // letter — "cleanup completes-then-cancel-propagates" — the
+                // BODY between capture and cleanup is NOT part of cleanup and
+                // must stay cancellable at its own suspend/yield points).
+                // `nv_consume_enter_shield` is no longer called here (that
+                // held the mask up for the WHOLE body); it now fires
+                // immediately before the cleanup dispatch itself, inside
+                // `emit_consume_entry_cleanup` (the ONE place per policy
+                // where `Nova_<T>_consume_cleanup` actually runs, for
+                // whichever of the four run-sites triggers it) — which
+                // already does the matching `nv_consume_leave_shield` right
+                // after. Just pre-declare the C local here (bare, `=0`) so
+                // all four run-sites can still reference the SAME name for
+                // `nv_consume_leave_shield` after cleanup returns.
                 let prev_deadline_var = self.fresh_tmp();
-                self.line(&format!(
-                    "int64_t {} = nv_consume_enter_shield({});",
-                    prev_deadline_var, timeout_var));
+                self.line(&format!("int64_t {} = 0;", prev_deadline_var));
 
                 // Plan 110.4.4.a (D185, R1) + Plan 173 Ф.5 п.2 (D185 amend):
                 // ResourceTrace.on_resource_enter — observability only
@@ -47072,6 +47173,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "uint32_t"  => "uint32_t",
             "uint16_t"  => "uint16_t",
             "uint64_t"  => "uint64_t",
+            // [P67-nova-int-collapse-fix] (221.1 №18, ОКНО-3 2026-07-23):
+            // plain `int` elements (`[1, 2, 3]`) infer `first_item_ty ==
+            // "nova_int"` — the OVERWHELMINGLY common case — but "nova_int"
+            // was missing from this explicit primitive list entirely,
+            // falling through to the hint-REQUIRING branch below (which
+            // panics `[P67] nova_int collapse` when no hint is set at all,
+            // rather than gracefully defaulting). In real `.nv`-driven
+            // compiles a channel hint is apparently always populated by the
+            // time this runs (527/0 conformance never hit this), masking
+            // the gap — but two Rust unit tests constructing a bare
+            // `IntLit` array literal directly (no compile pipeline, no
+            // hint) crashed on it
+            // (`array_lit_named_tuple_box_tests::emit_array_lit_int_
+            // primitive_unchanged`/`_named_tuple_heap_box`). `nova_int`
+            // needs no hint to resolve — it IS the element type already.
+            "nova_int"  => "nova_int",
             _ => match self.current_array_elem_hint.as_deref().unwrap_or_else(|| panic!("[P67] nova_int collapse")) {
                 "nova_str"  => "nova_str",
                 "nova_bool" => "nova_bool",

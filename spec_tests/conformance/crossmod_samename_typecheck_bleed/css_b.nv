@@ -1,0 +1,8 @@
+// [M-crossmodule-samename-typecheck-bleed] (221.1 Ф.2 №28) regression probe.
+// Peer `css_b`: declares its OWN, DIFFERENTLY-SHAPED `Widget` (field `label`)
+// — same name as `css_a.Widget`, different fields entirely.
+module crossmod_samename_typecheck_bleed.css_b
+
+type Widget { ro label str }
+
+export fn css_b_make() -> Widget => { label: "hi" }

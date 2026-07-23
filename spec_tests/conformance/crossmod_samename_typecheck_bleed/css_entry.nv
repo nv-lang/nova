@@ -1,0 +1,17 @@
+// [M-crossmodule-samename-typecheck-bleed] (221.1 Ф.2 №28) regression probe.
+// Entry peer: imports constructor FUNCTIONS from both `css_a` and `css_b`
+// (NOT the `Widget` type name itself from either) — the combining CU
+// transitively holds BOTH same-named `Widget` decls reachable. Each call's
+// return value must resolve to ITS OWN module's `Widget` shape, not
+// whichever one wins a name-only global slot.
+module crossmod_samename_typecheck_bleed.css_entry
+
+import ./css_a.{css_a_make}
+import ./css_b.{css_b_make}
+
+test "cross-module same-name type resolves to its own declaring module, not a same-named peer (221.1 №28)" {
+    ro wa = css_a_make()
+    assert(wa.qty == 5)
+    ro wb = css_b_make()
+    assert(wb.label == "hi")
+}

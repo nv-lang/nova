@@ -9036,6 +9036,33 @@ chain — `nova_sched_cancel_all_pending` + `nova_scope_cancel_wake_all` +
 sequence as `nova_cancel_token_cancel_reason`).
 composition.
 
+**R3d amend (2026-07-23) [M-cancel-loop-accept-swallowed-residual] — shield
+NARROWED to the cleanup phase only (221.1 №15, ОКНО-3, владелец-решение (б)):**
+the codegen IMPLEMENTATION (`emit_c.rs`/`fibers.h`'s `nv_consume_enter_shield`/
+`nv_consume_leave_shield`) had drifted from R3's own letter above (which
+already scoped the mask to «cleanup-path», not the whole scope) — it armed
+the cancel-mask at RESOURCE-CAPTURE time (consume-scope/auto-cleanup entry)
+and held it until scope exit, i.e. over the ENTIRE body between capture and
+cleanup dispatch, not just the cleanup call itself. Any suspend/yield point
+inside the body of a live `consume`-bound resource (including a pure
+CPU-bound busy/retry loop that never touches the resource — e.g. an
+`accept()` retry loop under `supervised(timeout:)` holding an unrelated
+`consume`d listener) therefore never observed cancellation until the
+resource's cleanup eventually ran — an indefinite hang for any loop whose
+own exit condition depends on that same cancellation. Fix: `nv_consume_
+enter_shield` is called ONLY immediately before the `Nova_<T>_consume_
+cleanup` dispatch itself (inside the single dispatcher shared by all four
+run-sites — FAIL/LEAVE/EARLY/INTERRUPT); `nv_consume_leave_shield` keeps
+running right after, unchanged. The body's own suspend/yield points are now
+cancellable normally; only the cleanup call proper is shielded — this IS
+what R3's own prose already says («внутри cleanup-path... маскируется»), the
+codegen simply hadn't matched it. Regression:
+`spec_tests/conformance/standalone/m2217_15b_cancel_consume_shield_narrowed.nv`
+(RED on the pre-fix binary — timed out; GREEN after) + the full
+`d432_auto_cleanup_hybrid_c.nv` suite (9 cases: exactly-once, return-disarm,
+explicit-close disarm, MaybeConsumed branches, LIFO order, loop-body,
+throw-path, spawn-closure, break/continue boundary) re-verified unaffected.
+
 **R3a amend (2026-06-05) [M-110.x-cleanup-shield-deadline-underflow]
 codegen-layout invariant fix (supervised(cancel:) path):**
 
@@ -11423,8 +11450,8 @@ ScopeOutcome)` с fallback на `parse_expr` для `defer (expr)`; double-bindi
 protocol-сахар (тип инкапсулирует cleanup через `@cleanup(o ScopeOutcome)`, ex-`@on_exit`). Разница
 `consume` vs bare `defer(o)` — **must-consume (D133) + exactly-once (D188 R2) + partial-init (D188 R1)
 + ResourceTrace-события**, НЕ «добежит/не добежит» (§3a). Consume-специфичная policy (cancel-shield
-поверх body+cleanup, 3-level timeout, ResourceTrace enter/exit) re-home'ится на **consume-flavored
-defer-entry**, не теряется при десугаре.
+поверх cleanup-фазы ТОЛЬКО — **R3d амендмент**, ранее ошибочно «body+cleanup»; 3-level timeout,
+ResourceTrace enter/exit) re-home'ится на **consume-flavored defer-entry**, не теряется при десугаре.
 
 **4. Централизованный ре-диспатч (`nova_scope_exit`)** — ОДИН runtime-helper
 `nova_scope_exit(NovaFailFrame* primary, NovaScopeExitPolicy policy)`, `policy ∈ {CATCH, TRANSPARENT}`;
