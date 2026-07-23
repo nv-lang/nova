@@ -15,7 +15,7 @@
 // (draining a `Channel[str]` event log — the sanctioned cross-fiber handoff,
 // D415 — since `lane_*` ops fire from worker fibers, not the test's own).
 
-module src.app
+module app
 
 import ../domain.{Source, TaskResult, TaskStatus, Report}
 import std.net.{mock_net}

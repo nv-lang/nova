@@ -1,0 +1,17 @@
+# Plan 223 (D78 rev-5, "src/ невидим ВЕЗДЕ") — own nested package, own
+# nova.toml (own [package] name, distinct from the ambient `spec_tests`
+# package identity), mirroring `d78_root_peers/nova.toml`'s precedent for
+# the same reason: this fixture needs a REAL manifest with a FLAT
+# (entry-mode-shaped) `source_root` to exercise Ф.1's resolver — `[lib]
+# src = "."` (explicit, matching `examples/nova.toml`'s own reasoning
+# comment) makes THIS package's own root flat, so `src/` inside it is an
+# ORDINARY subfolder from the manifest's point of view — exactly the
+# asymmetry Plan 223 fixes (mirrors examples/flagship/aggregator's real
+# shape one level up, without needing the whole flagship tree in a spec
+# fixture).
+[package]
+name = "d78_src_transparency"
+version = "0.1.0"
+
+[lib]
+src = "."

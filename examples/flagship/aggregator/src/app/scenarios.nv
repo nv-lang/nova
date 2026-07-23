@@ -16,7 +16,7 @@
 // EFFECT for tests; here we want a plain pure-value generator with no effect
 // dependency, since scenario-building is not itself an I/O concern).
 
-module src.app
+module app
 
 import ../domain.{Source}
 

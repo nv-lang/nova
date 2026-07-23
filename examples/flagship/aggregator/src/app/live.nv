@@ -61,7 +61,7 @@
 // `seed` is caller-ignored for live (plan 187 §9.4 деливерабл 3) — there is
 // nothing to seed, the network IS the randomness.
 
-module src.app
+module app
 
 import ../domain.{Source, SourceData, AggError, TaskStatus, TaskResult, Report}
 import std.net.{SocketAddr, TcpStream, resolve}

@@ -23,7 +23,7 @@
 // (`"Cancelled"` / `{"Failed":"..."}` / `{"Done":{...}}, — D345 Ф.2) that
 // `#impl(Serialize)` on `TaskStatus` directly would produce.
 
-module src.api
+module api
 
 import ../domain.{Report, TaskResult, TaskStatus, Source}
 import std.encoding.serde.{Serialize, json_encode, json_encode_pretty}

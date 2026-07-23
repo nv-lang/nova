@@ -72,7 +72,7 @@
 // `GET /api/events?legend=&mode=&seed=` (SSE replay of the same run's `Emit`
 // timeline, real `t_ms` offsets).
 
-module src.main
+module main
 
 import ./domain.{Source, Report}
 import ./app.{Emit, null_emit}

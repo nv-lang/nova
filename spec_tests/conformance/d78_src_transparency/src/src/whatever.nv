@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E_MODULE_DIR_SRC_RESERVED
+//
+// Plan 223 Ф.3 neg-fixture — `src` is a reserved module-folder name INSIDE
+// an already-established source root (D78 rev-5 rule 3): this package's
+// `src/` (rule 1's shift target, established by `src/main.nv`/`src/util/`)
+// contains ANOTHER directory literally named `src` — `src/src/` would
+// make rule 1 ambiguous (which `src/` is THE root?), so it hard-errors
+// instead of silently re-shifting a second time.
+module whatever
+
+export fn unreachable_double_src() -> int => 0

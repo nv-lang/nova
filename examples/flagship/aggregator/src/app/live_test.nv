@@ -17,7 +17,7 @@
 // blocker hint — the test below pins exactly that: settled lanes, no
 // resurrected blocker marker.
 
-module src.app
+module app
 
 import ../domain.{Source}
 import std.net.{mock_net}

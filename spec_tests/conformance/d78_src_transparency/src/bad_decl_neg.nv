@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR expected (rev-3 parent.X): `bad_decl_neg`
+//
+// Plan 223 Ф.3 neg-fixture — the discouraged/legacy form `module
+// src.bad_decl_neg`, written by hand as if `src` were an ordinary path
+// segment (the pre-223 behavior for this exact file), is now REJECTED:
+// D78 rev-5 rule 1 requires the bare filestem-only declaration `module
+// bad_decl_neg` (no `src` segment) for a file directly in an established
+// `src/` root — pinned by the pos-fixture `src/main.nv` (`module main`).
+// The marker above pins the mismatch message's own suggested/expected
+// form (`expected (rev-3 parent.X): `bad_decl_neg`) — proving the
+// suggestion never mentions `src` (D78 rev-5 §5).
+module src.bad_decl_neg
+
+export fn unreachable_bad_decl() -> int => 0

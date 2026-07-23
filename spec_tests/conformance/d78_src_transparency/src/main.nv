@@ -1,0 +1,14 @@
+// Plan 223 Ф.3 pos-fixture — entry file directly under `src/` (this
+// package's `[lib] src = "."` root is FLAT, so `src/` here is an ORDINARY
+// subfolder from the manifest's point of view — exactly the entry-mode
+// shape Plan 223's D78 rev-5 targets). Rule 1: the module root shifts to
+// THIS `src/` directory; `src` never appears in the module path — bare
+// `module main` (single file directly in the shifted root), mirroring
+// `examples/flagship/aggregator/src/main.nv` -> `module main` post-223.
+module main
+
+import util.{util_value}
+
+test "Plan 223 D78 rev-5: file directly in src/ declares bare filestem, src/ shift resolves sibling import" {
+    assert(util_value() == 42)
+}

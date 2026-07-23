@@ -45,7 +45,7 @@
 // `src/app/*.nv` imports `../domain` right back for its own use of these
 // types (no behavior change anywhere, pure module-boundary move).
 
-module src.api
+module api
 
 import ../domain.{Report, TaskResult, TaskStatus, SourceData, Source}
 
