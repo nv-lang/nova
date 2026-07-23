@@ -14306,9 +14306,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 .map(|s| s.contains(cap)).unwrap_or(false);
             let outer_by_value = self.current_spawn_capture_by_value.as_ref()
                 .map(|s| s.contains(cap)).unwrap_or(false);
+            // [M-detach-ctx-capture-after-ro-call-value-ptr-mismatch] fix
+            // (221.1 Ф.2 #16, mirrors emit_spawn's identical
+            // [M-nv-spawn-ctx-capture-mut-param-ptr-mismatch] fix, same
+            // file's `emit_spawn` capture loop above): a captured name that
+            // is NOT itself an outer-fiber
+            // capture (`is_outer_cap` false) is not necessarily a plain C
+            // value either — a `mut T` in-out param (Plan 184 R10) OR a
+            // large `ro` value-struct param passed by-ref for efficiency
+            // (Plan 172.14 Ф.1, free fn or method) is ALREADY `T*` in C
+            // (`self.ref_params`, populated once per enclosing fn — see
+            // emit_fn's param-classification pass). This detach capture-
+            // populate loop only ever checked `is_outer_cap`, never
+            // `ref_params` — so capturing such a parameter into `detach {}`
+            // (with NO intervening spawn) fell through to the bare
+            // `cap.clone()` "ordinary local" arm, which assumes `cap`'s C
+            // storage IS the value: `ctx->field = cap;` (by_value) then
+            // assigned a `T*` into a `T` field (clang: "assigning to 'T'
+            // from incompatible type 'T *'"). Live repro: a bare (no `mut`/
+            // `consume`) multi-field value-record parameter (nova-http's
+            // `ServerPolicy`, 8 fields) captured into `detach { ... }` —
+            // reproduced independent of any earlier method call on it (the
+            // "after an earlier ro-call" framing was circumstantial: any
+            // multi-field value-struct param triggers `free_fn_byref_flag`/
+            // `method_byref_flag` and lands in `ref_params` regardless).
+            let outer_is_ref_param = self.ref_params.contains(cap);
             let access_outer = if is_outer_cap {
                 if outer_by_value { format!("_c->{}", cap) }
                 else { format!("(*_c->{})", cap) }
+            } else if outer_is_ref_param {
+                format!("(*{})", cap)
             } else { cap.clone() };
             if *by_value {
                 self.line(&format!("{ctx_var}->{cap} = {access_outer};"));
