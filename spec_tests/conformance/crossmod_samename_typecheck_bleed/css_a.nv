@@ -1,0 +1,7 @@
+// [M-crossmodule-samename-typecheck-bleed] (221.1 Ф.2 №28) regression probe.
+// Peer `css_a`: declares its OWN `Widget` (field `qty`).
+module crossmod_samename_typecheck_bleed.css_a
+
+type Widget { ro qty int }
+
+export fn css_a_make() -> Widget => { qty: 5 }

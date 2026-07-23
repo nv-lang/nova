@@ -3451,6 +3451,28 @@ struct TypeCheckCtx<'a> {
     /// `infer_expr_c_type` `_=>nova_int` fallback bugs (§0/§1; e.g. a `bool` var legacy typed
     /// as `nova_int`). Verified by full regress (the divergence set is bounded — U.4.4-prep.b audit).
     resolved_types_buf: std::cell::RefCell<HashMap<crate::ast::ExprId, ResolvedType>>,
+    /// [M-crossmodule-samename-typecheck-bleed] (221.1 Ф.2 №28, 2026-07-23):
+    /// `ResolvedType::Named` carries no span/file identity (`{name, module,
+    /// args}` only) — reconstructing a `TypeRef` from it for the checker's
+    /// scope-binding channel (`resolved_to_typeref`) had NO choice but to
+    /// re-stamp the CALL SITE's own `expr.span`, discarding the CALLEE's
+    /// OWN return-type annotation span (where the type name was actually
+    /// WRITTEN, in the callee's declaring file). Once two DIFFERENT modules
+    /// of the same combined CU declare a same-named type (`Widget`), a
+    /// bare `ro w = other_module_fn()` binding in a THIRD file that never
+    /// itself mentions `Widget` resolved the field-access `w.field` against
+    /// whichever same-named `Widget` won the GLOBAL name-only `self.types`
+    /// slot (last declaration wins) instead of the callee's OWN module's
+    /// `Widget` — false `[E7320] no field ... on type Widget`. This side-
+    /// table records, for the free-fn/static-method single-overload call-
+    /// return materialization site (`f1_check_call`, the ONLY current
+    /// producer), the callee's OWN return-type annotation span — keyed by
+    /// the CALL expr's `ExprId` — so the Call-arm reader in
+    /// `infer_expr_type` can hand `resolved_to_typeref` the CALLEE's file
+    /// identity instead of the caller's. Empty for any call this producer
+    /// doesn't cover (generic/instance/multi-overload calls) — reader falls
+    /// back to `expr.span`, today's existing (unchanged) behavior.
+    call_return_decl_span: std::cell::RefCell<HashMap<crate::ast::ExprId, Span>>,
     /// 172.1.2 Binary-bounds (2026-07-03): generic-параметры ТЕКУЩЕЙ проверяемой fn
     /// с numeric type-set bound'ом (все члены сета — числовые примитивы). Ставится
     /// f1_check_fn на вход, очищается на выход. Для правила Binary
@@ -4103,6 +4125,9 @@ impl<'a> TypeCheckCtx<'a> {
             node_substs: std::cell::RefCell::new(HashMap::new()),
             // Plan 172.1 U.4.4(b): empty checker-side resolved-type channel.
             resolved_types_buf: std::cell::RefCell::new(HashMap::new()),
+            // [M-crossmodule-samename-typecheck-bleed] (221.1 №28): empty
+            // call-return decl-span side channel; filled during the check walk.
+            call_return_decl_span: std::cell::RefCell::new(HashMap::new()),
             in_call_func: std::cell::Cell::new(false),
             numeric_bounded_params: std::cell::RefCell::new(HashSet::new()),
             // Plan 104.10 Ф.2: OFF by default (zero-overhead). check_module_with_expr_types
@@ -11871,6 +11896,11 @@ impl<'a> TypeCheckCtx<'a> {
                                     {
                                         let rt = ResolvedType::from_type_ref(ret_ty);
                                         self.resolved_types_buf.borrow_mut().insert(call_id, rt);
+                                        // [M-crossmodule-samename-typecheck-bleed] (221.1 №28):
+                                        // stash the CALLEE's own return-type annotation span
+                                        // (its declaring file) — see field doc.
+                                        self.call_return_decl_span.borrow_mut()
+                                            .insert(call_id, ret_ty.span());
                                     }
                                 }
                             }
@@ -12146,6 +12176,10 @@ impl<'a> TypeCheckCtx<'a> {
                     };
                     let rt = ResolvedType::from_type_ref(ret_ty);
                     self.resolved_types_buf.borrow_mut().insert(call_id, rt);
+                    // [M-crossmodule-samename-typecheck-bleed] (221.1 №28): stash
+                    // the CALLEE's own return-type annotation span (its declaring
+                    // file) — see field doc on `call_return_decl_span`.
+                    self.call_return_decl_span.borrow_mut().insert(call_id, ret_ty.span());
                 }
                 // Plan 196.5 producers-widen (Class-2, d122-class gap): this used to be
                 // `else if` — meaning a free-fn/static-method call whose DECLARED return
@@ -12616,7 +12650,7 @@ impl<'a> TypeCheckCtx<'a> {
         // Plan 172.1 U.4.4 generic-Member: capture the receiver's type-args (`recv_type_args`)
         // so a generic field's type can be substituted before the channel gate (see the hook
         // at the field-found site below). `[]` for a non-generic receiver → no substitution.
-        let TypeRef::Named { path, generics: recv_type_args, .. } = &obj_tr else { return; };
+        let TypeRef::Named { path, generics: recv_type_args, span: obj_tr_span } = &obj_tr else { return; };
         let Some(tname) = path.last() else { return; };
         // Plan 152.1 Ф.4 (D249): str's bare length / codepoint-access / byte-access
         // accessors are retired for the lens model. Targeted error (fires BEFORE the
@@ -12666,7 +12700,19 @@ impl<'a> TypeCheckCtx<'a> {
         // the USE-SITE's file; a colliding `priv(file) type` resolves to ITS
         // OWN file's shape instead of whichever peer-file decl won the global
         // `types` slot (mirrors 2d5f64e91's caller-file fn-candidate filter).
-        let Some(td) = self.types_get_for_file(tname, span.file_id) else { return; };
+        //
+        // [M-crossmodule-samename-typecheck-bleed] (221.1 №28, 2026-07-23):
+        // prefer `obj_tr`'s OWN span (`obj_tr_span`) over the member-access
+        // expr's span — a value whose type flows in from ANOTHER file (a
+        // function call's return, an imported const, etc.) must resolve
+        // `tname` against the type's OWN declaring-file scope, not the
+        // ACCESSING file's — otherwise a same-named type declared in an
+        // unrelated peer module of the same CU can win the name-only global
+        // `self.types` fallback (false E7320). Safe: `types_get_for_file`
+        // itself still falls back to the SAME global map when the given
+        // file has no local/group/import match, so this can only ever
+        // sharpen resolution (never regress a case that worked before).
+        let Some(td) = self.types_get_for_file(tname, obj_tr_span.file_id) else { return; };
         match &td.kind {
             TypeDeclKind::Record(fields) => {
                 // embed (`use`) проксирует поля/методы вложенного типа — резолв
@@ -16405,7 +16451,17 @@ impl<'a> TypeCheckCtx<'a> {
                 // insert is for a DIFFERENT ExprId (the outer expr, not this Call expr).
                 if expr.id.is_set() {
                     if let Some(rt) = self.resolved_types_buf.borrow().get(&expr.id) {
-                        return Self::resolved_to_typeref(rt, expr.span);
+                        // [M-crossmodule-samename-typecheck-bleed] (221.1 №28):
+                        // prefer the CALLEE's own return-type annotation span
+                        // (its declaring file) over this call EXPRESSION's span
+                        // (the caller's file) — a same-named type declared in
+                        // BOTH the callee's module and some unrelated peer
+                        // module of the same CU must resolve against the
+                        // callee's own module, not whichever one happens to
+                        // win the name-only global `self.types` slot.
+                        let decl_span = self.call_return_decl_span.borrow()
+                            .get(&expr.id).copied();
+                        return Self::resolved_to_typeref(rt, decl_span.unwrap_or(expr.span));
                     }
                 }
                 None
