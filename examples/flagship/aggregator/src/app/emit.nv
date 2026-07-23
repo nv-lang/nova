@@ -18,7 +18,7 @@
 // required to consume — default installed handler is `null_emit()`, a no-op
 // sink, so `aggregate` stays callable without every caller wiring up a UI.
 
-module src.app
+module app
 
 /// Progress events for the flagship aggregator's live visualization
 /// (waterfall UI / SSE bridge — plan 187 §3 Ф.1, `[M-178-server-streaming]`

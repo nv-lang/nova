@@ -1,0 +1,12 @@
+// Plan 223 Ф.3 pos-fixture — entry file living OUTSIDE `src/` (directly
+// in this package's own flat source_root, a sibling of `src/` itself).
+// Rule 2: "entry вне src/ не задет" — behavior is UNCHANGED from before
+// Plan 223: the ordinary independent single-file form `<package>.<stem>`
+// (back-compat rev-3), same as `examples/mini_aggregator.nv` (which lives
+// directly in `examples/`, no `src/` ancestor anywhere on its path,
+// package-name-prefixed exactly as always).
+module d78_src_transparency.outside
+
+test "Plan 223 D78 rev-5 rule 2: entry outside src/ is byte-identical to pre-223 behavior" {
+    assert(1 + 1 == 2)
+}

@@ -60,7 +60,7 @@
 // prefer a dedicated `seeded_net(seed, profile)` handler instead (heavier:
 // a full ~20-op `Net` handler literal) — flagged, not decided.
 
-module src.app
+module app
 
 import ../domain.{Source, SourceData, AggError, TaskStatus, TaskResult, Report}
 import std.net.{SocketAddr, TcpStream}

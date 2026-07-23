@@ -906,6 +906,14 @@ pub fn expected_module_path(file: &Path, m: &Manifest) -> Option<Vec<String>> {
     if parts.is_empty() {
         return None;
     }
+    // Plan 223 Ф.1: `bare` shadow manifest (empty `package_name`, see
+    // `apply_src_transparency`) — this dead (rev-1, never accepted) legacy
+    // hint stays cosmetically consistent (no leading-dot artifact in the
+    // error message's "expected (rev-1 legacy)" line) rather than gaining
+    // special-case logic of its own.
+    if m.package_name.is_empty() {
+        return Some(parts);
+    }
     let mut full = vec![m.package_name.clone()];
     full.extend(parts);
     Some(full)
@@ -953,13 +961,27 @@ pub fn expected_module_path_rev3(
     // Edge case: если `internal/` САМА folder-module (peers прямо в
     // internal/, target == "internal") — declaration = `owner.internal`
     // (2 segments, без дублирования).
+    // Plan 223 Ф.1 (D78 rev-5, "src/ невидим всегда"): `m.package_name ==
+    // ""` is the BARE/no-prefix sentinel used by the `src/`-shift shadow
+    // manifest built in `apply_src_transparency` below — every "prepend
+    // package name at root level" branch below OMITS the segment entirely
+    // instead of emitting an empty-string segment, collapsing what would
+    // otherwise be a 2 (or 3, for `internal/`) segment declaration down to
+    // 1 (or 2) when there is no real package name to anchor it to (an
+    // entry-mode app rooted at its own `src/`, not a named library
+    // package). Ordinary manifests always have a non-empty
+    // `package_name` (`nova.toml` requires it), so every EXISTING call
+    // site is byte-identical to pre-223 behavior.
+    let bare = m.package_name.is_empty();
+
     if let Some(internal_idx) = parts.iter().position(|s| s == "internal") {
         // owner = parts[internal_idx - 1]; если internal на root level
-        // (parts[0] == "internal") — owner = package name.
-        let owner = if internal_idx == 0 {
-            m.package_name.clone()
+        // (parts[0] == "internal") — owner = package name (или ничего,
+        // если `bare` — см. коммент выше).
+        let owner: Option<String> = if internal_idx == 0 {
+            if bare { None } else { Some(m.package_name.clone()) }
         } else {
-            parts[internal_idx - 1].clone()
+            Some(parts[internal_idx - 1].clone())
         };
         // target = последний сегмент для single-file; для folder-module
         // peer — folder name (предпоследний сегмент).
@@ -973,12 +995,14 @@ pub fn expected_module_path_rev3(
         } else {
             parts.last()?.clone()
         };
+        let mut decl: Vec<String> = owner.into_iter().collect();
+        decl.push("internal".to_string());
         // Если target == "internal" → `internal/` сама folder-module,
-        // declaration = owner.internal (2 segments, без дублирования).
-        if target == "internal" {
-            return Some(vec![owner, "internal".to_string()]);
+        // declaration = owner.internal (без дублирования target).
+        if target != "internal" {
+            decl.push(target);
         }
-        return Some(vec![owner, "internal".to_string(), target]);
+        return Some(decl);
     }
 
     if is_folder_module {
@@ -989,20 +1013,25 @@ pub fn expected_module_path_rev3(
         if parts.len() < 2 {
             // peer на root level (например `src/main/foo.nv` — folder
             // module `main` под `src`): parent = root folder name.
-            // Fall back to using package name as parent.
+            // Fall back to using package name as parent (или ничего в
+            // `bare`-режиме — folder name один сегмент).
             if parts.len() == 1 {
                 // folder = parts[0]
-                return Some(vec![m.package_name.clone(), parts[0].clone()]);
+                return Some(if bare {
+                    vec![parts[0].clone()]
+                } else {
+                    vec![m.package_name.clone(), parts[0].clone()]
+                });
             }
             return None;
         }
         let folder = parts[parts.len() - 2].clone();
-        let parent = if parts.len() == 2 {
+        if parts.len() == 2 {
             // folder прямо под source_root → parent = package name
-            m.package_name.clone()
-        } else {
-            parts[parts.len() - 3].clone()
-        };
+            // (или ничего в `bare`-режиме).
+            return Some(if bare { vec![folder] } else { vec![m.package_name.clone(), folder] });
+        }
+        let parent = parts[parts.len() - 3].clone();
         return Some(vec![parent, folder]);
     }
 
@@ -1011,12 +1040,12 @@ pub fn expected_module_path_rev3(
         return None;
     }
     let target = parts[parts.len() - 1].clone();
-    let parent = if parts.len() == 1 {
-        // file прямо под source_root → parent = package name
-        m.package_name.clone()
-    } else {
-        parts[parts.len() - 2].clone()
-    };
+    if parts.len() == 1 {
+        // file прямо под source_root → parent = package name (или ничего
+        // в `bare`-режиме — просто имя файла, один сегмент).
+        return Some(if bare { vec![target] } else { vec![m.package_name.clone(), target] });
+    }
+    let parent = parts[parts.len() - 2].clone();
     Some(vec![parent, target])
 }
 
@@ -1112,6 +1141,84 @@ pub enum ModulePathCheck {
     Rev1Deprecated(String),
 }
 
+/// Plan 223 Ф.1 (D78 rev-5 — "src/ невидим ВЕЗДЕ", §«Source root» amendment):
+/// if `file` lives under a directory literally named `src` somewhere below
+/// `m`'s OWN `source_root` (manifest-mode already resolves a nontrivial
+/// `[lib] src` INTO `source_root` at parse time — see `Manifest::source_root`
+/// doc — so this only fires for the file's remaining, package-internal path),
+/// that `src/` becomes the file's EFFECTIVE module root and is never part of
+/// the declared module path — symmetric with manifest-mode's own `[lib] src`.
+///
+/// Returns:
+/// - `Ok(m)` unchanged (cloned) — no `src` directory found on the path;
+///   every existing call site is byte-identical to pre-223 behavior (rule 2:
+///   "entry вне `src/` не задет").
+/// - `Ok(shadow)` — a shadow `Manifest` with `source_root` relocated to
+///   (and including) the FIRST `src/` directory encountered walking from
+///   `m.source_root` toward `file` ("ближайший предок... на пути ОТ
+///   выведенного корня", D78 rev-5 §1), and `package_name` cleared to `""`
+///   — the bare/no-prefix sentinel `expected_module_path_rev3` consumes to
+///   omit the package-name segment entirely (an entry-mode app has no
+///   library package name to prefix its own `src/`-rooted modules with).
+/// - `Err(msg)` — `E_MODULE_DIR_SRC_RESERVED` (D78 rev-5 §3): a
+///   module-folder literally named `src` sits somewhere INSIDE an already-
+///   established source root — either (a) `m.source_root` was ALREADY
+///   relocated by an explicit non-trivial `[lib] src` (`m.source_root !=
+///   m.manifest_dir`) and `src` appears anywhere in what remains (manifest
+///   mode's own `src/src/` case, e.g. a hypothetical `std/src/src/foo.nv`),
+///   or (b) the flat/entry-mode root found MORE THAN ONE `src` directory on
+///   the path (the first is legally rule-1's shift target; any FURTHER
+///   `src/` nested inside it — `.../src/src/...` — would make rule 1
+///   ambiguous, per D78 rev-5's own rationale for reserving the name).
+fn apply_src_transparency(file: &Path, m: Manifest) -> Result<Manifest, String> {
+    let Some(abs_file) = std::fs::canonicalize(file).ok() else { return Ok(m) };
+    let Some(abs_root) = std::fs::canonicalize(&m.source_root).ok() else { return Ok(m) };
+    let Ok(rel) = abs_file.strip_prefix(&abs_root) else { return Ok(m) };
+    let rel_no_ext = rel.with_extension("");
+    let parts: Vec<String> = rel_no_ext
+        .components()
+        .filter_map(|c| c.as_os_str().to_str().map(|s| s.to_string()))
+        .collect();
+    // A file directly in source_root has no directory chain to scan.
+    if parts.len() < 2 {
+        return Ok(m);
+    }
+    let dirs = &parts[..parts.len() - 1];
+    let src_positions: Vec<usize> = dirs
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| d.as_str() == "src")
+        .map(|(i, _)| i)
+        .collect();
+    if src_positions.is_empty() {
+        return Ok(m);
+    }
+    let already_src_rooted = m.source_root != m.manifest_dir;
+    if already_src_rooted || src_positions.len() > 1 {
+        return Err(format!(
+            "[E_MODULE_DIR_SRC_RESERVED] `src` is a reserved module-folder \
+             name inside a source root (D78 rev-5 §3, Plan 223) — in {}\n  \
+             a directory literally named `src` was found nested inside a \
+             source root that already has its own effective `src/` (either \
+             this package's manifest `[lib] src`, or an outer `src/` that \
+             rule 1 already picked as the module root). `src/src/` would \
+             make rule 1 ambiguous (which `src/` is THE root?) — rename the \
+             inner directory.",
+            file.display(),
+        ));
+    }
+    // Exactly one `src` occurrence on a flat root — legal shift (rule 1).
+    let idx = src_positions[0];
+    let mut new_root = abs_root;
+    for seg in &dirs[..=idx] {
+        new_root.push(seg);
+    }
+    let mut shadow = m;
+    shadow.source_root = new_root;
+    shadow.package_name = String::new();
+    Ok(shadow)
+}
+
 pub fn check_module_path_with_kind(
     file: &Path,
     declared: &[String],
@@ -1120,13 +1227,20 @@ pub fn check_module_path_with_kind(
     let Some(manifest) = find_manifest(file) else {
         return Ok(ModulePathCheck::Rev3);
     };
+    // Plan 223 Ф.1: `src/` transparency shift (see `apply_src_transparency`
+    // doc) — `manifest_for_path` is the (possibly `src/`-shadowed) manifest
+    // used for the rev-3/legacy expected-path computation; `manifest`
+    // (unshadowed) stays the source of the D78 rev-4 root-peer alternate
+    // form and the final error message's package-name mention, both of
+    // which are ABOUT the real package, not the entry-mode `src/` shift.
+    let manifest_for_path = apply_src_transparency(file, manifest.clone())?;
     // Plan 81 Ф.10: a folder-module peer's legacy (rev-1) declaration is the
     // path to the FOLDER — every peer of the folder shares one declaration,
     // so the file-stem segment is dropped. This matches the universal
     // folder-module convention (peer_recur, std/prelude/, …) and the
     // `import` path that addresses the folder.
     let expected_legacy = {
-        let base = expected_module_path(file, &manifest);
+        let base = expected_module_path(file, &manifest_for_path);
         if is_folder_module {
             base.map(|mut v| {
                 v.pop();
@@ -1136,7 +1250,7 @@ pub fn check_module_path_with_kind(
             base
         }
     };
-    let expected_rev3 = expected_module_path_rev3(file, &manifest, is_folder_module);
+    let expected_rev3 = expected_module_path_rev3(file, &manifest_for_path, is_folder_module);
 
     // rev-3 strict match — only acceptable form (Plan 42 rev-3 canonical).
     if let Some(exp) = &expected_rev3 {

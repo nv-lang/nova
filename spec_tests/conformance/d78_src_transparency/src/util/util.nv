@@ -1,0 +1,10 @@
+// Plan 223 Ф.3 pos-fixture — folder-module directly under the shifted
+// `src/` root (this is the ONLY file in `util/`, matching the real
+// `examples/flagship/aggregator/src/domain/domain.nv` shape: a
+// single-member folder-module is still detected/declared by folder name,
+// not filestem). Rule 1: declaration is bare `module util` (folder name
+// only) — no `src` segment, no package-name segment (an entry-mode app
+// rooted at its own `src/` has no library name to prefix with).
+module util
+
+export fn util_value() -> int => 42

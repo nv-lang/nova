@@ -1,0 +1,12 @@
+// [M-autoderive-extension-import-seed-combined-cu] regression (221.1 №33)
+// — peer `dsc_b`: imports `dsc_a` (mirrors http.servernet's dependency on
+// http.server's respond types) and drives the actual `@serialize` codegen
+// via `json_encode`, importing `std.encoding.serde` itself directly — so
+// the type-declaring/serde-importing files are NOT the CU's entry (see
+// `dsc_entry.nv`, which imports both but not serde).
+module derive_seed_combined_cu.dsc_b
+
+import ./dsc_a.{DscRec, dsc_make}
+import std.encoding.serde.{json_encode}
+
+export fn dsc_to_json() -> str => json_encode(dsc_make()).unwrap()
