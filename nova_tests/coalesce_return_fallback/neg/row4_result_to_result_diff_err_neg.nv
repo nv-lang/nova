@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR замени на `X.map_err(fn(_) -> OtherErr => <ошибка>)?`
+// EXPECT_COMPILE_ERROR замени на `X.map_err(fn(_ RowErr) -> OtherErr => <ошибка>)?`
 //
 // D86 AMEND 2026-07-23 / E_COALESCE_RETURN_FALLBACK, таблица строка 4:
 // Result[T,E] -> fn возвращает Result[T,F] (F != E), fallback

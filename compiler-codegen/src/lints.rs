@@ -5739,6 +5739,32 @@ fn conv_manual_coalesce(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarn
                 }
                 _ => return,
             };
+            // `??`'s desugar discards the caught `Err`-payload entirely
+            // (`Err(_) => fallback` — no binding reaches the fallback side).
+            // If the fallback body FREELY references the bound error name
+            // (e.g. `Err(e) => { log(e); D }`), rewriting to `X ?? D` would
+            // silently drop that reference — NOT an equivalent rewrite, so
+            // suppress (stay silent) rather than suggest a wrong canon. This
+            // only applies to the Value bucket: the Return-class bucket's
+            // `.map_err(fn(e E) -> F => ...)` bridge CAN reference `e` (it's
+            // the closure's own parameter), so no analogous restriction there.
+            if let Some(name) = fb_bound_err_name {
+                let references_bound_name = match &fb_arm.body {
+                    MatchArmBody::Expr(be) => {
+                        let mut free = HashSet::new();
+                        crate::types::capture_scan_expr(be, &mut HashSet::new(), &mut free);
+                        free.contains(name)
+                    }
+                    MatchArmBody::Block(b) => {
+                        let mut free = HashSet::new();
+                        crate::types::capture_scan_block(b, &mut HashSet::new(), &mut free);
+                        free.contains(name)
+                    }
+                };
+                if references_bound_name && matches!(conv_coalesce_fb_shape(fb_arm), CoalesceFbShape::Value) {
+                    return;
+                }
+            }
             let (note, suggestion) = match conv_coalesce_fb_shape(fb_arm) {
                 CoalesceFbShape::Value => (
                     "значение-fallback (в т.ч. `panic`/`throw` — обычные выражения, \
@@ -5762,7 +5788,24 @@ fn conv_manual_coalesce(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarn
                     ) {
                         return;
                     }
-                    crate::types::coalesce_advice_render(&advice, e.span)
+                    let (note, suggestion) = crate::types::coalesce_advice_render(&advice, e.span);
+                    // `MapErr`'s Suggestion embeds `source_err_display` — for
+                    // the checker (Ф.2) that's a REAL inferred type; here
+                    // (Ф.3, syntax-only heuristic) it's the internal sentinel
+                    // placeholder (`conv_coalesce_advice_for_return` doc) when
+                    // not a verbatim passthrough — showing that name to the
+                    // programmer would be confusing/wrong. Drop the
+                    // Suggestion in that one case; the note (target error
+                    // type, real) stays informative.
+                    let suggestion = if matches!(
+                        advice,
+                        crate::types::CoalesceReturnAdvice::MapErr { .. }
+                    ) {
+                        None
+                    } else {
+                        suggestion
+                    };
+                    (note, suggestion)
                 }
             };
             hits.push((
@@ -9164,6 +9207,63 @@ mod tests {
             coalesce_rule_hits(&ws, "W_MANUAL_COALESCE").is_empty(),
             "must be SILENT on glob.nv-class (no Option/Result bridge), got: {:?}",
             ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn manual_coalesce_neg_fallback_references_bound_err_silent() {
+        // Real-world regression (found migrating examples/flagship/aggregator
+        // during Ф.4): `Err(e) => { st.close(); return Err(Wrap(e.to_str())) }`
+        // — a Value-shape fallback (multi-stmt block, not bare `return`) that
+        // FREELY references the bound error `e`. `??`'s desugar discards
+        // `Err`'s payload entirely (`Err(_) => fallback`) — rewriting to
+        // `X ?? D` would silently drop the reference to `e`, NOT an
+        // equivalent rewrite. Must stay SILENT, not suggest a wrong canon.
+        let src = "module foo\n\
+             type E enum Bad\n\
+             fn find(n int) -> Result[int, E] => if n > 0 { Ok(n) } else { Err(E.Bad) }\n\
+             fn close() -> () => ()\n\
+             fn run(n int) -> int {\n\
+                 match find(n) {\n\
+                     Ok(v) => v,\n\
+                     Err(e) => {\n\
+                         close()\n\
+                         panic(\"boom\")\n\
+                     },\n\
+                 }\n\
+             }\n";
+        // Sibling fixture: same shape, but the fallback DOES reference the
+        // bound error `e` (via `describe(e)`) — must suppress.
+        let src2 = "module foo\n\
+             type E enum Bad\n\
+             fn find(n int) -> Result[int, E] => if n > 0 { Ok(n) } else { Err(E.Bad) }\n\
+             fn describe(e E) -> str => \"err\"\n\
+             fn run(n int) -> str {\n\
+                 match find(n) {\n\
+                     Ok(v) => v.to_str(),\n\
+                     Err(e) => describe(e),\n\
+                 }\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        // Sanity: the minimal repro above (no reference to `e`) SHOULD still
+        // fire (it's an ordinary value-fallback) — confirms the suppression
+        // below is specifically about the `e`-reference, not a general
+        // regression in Value-shape detection.
+        assert_eq!(
+            coalesce_rule_hits(&ws, "W_MANUAL_COALESCE").len(),
+            1,
+            "sanity: non-referencing Value-shape fallback must still fire, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+
+        let m2 = parse(src2);
+        let ws2 = run_conv_rules(Some(&m2), src2, &ConvLintOptions::default(), None);
+        assert!(
+            coalesce_rule_hits(&ws2, "W_MANUAL_COALESCE").is_empty(),
+            "must be SILENT when the Value-shape fallback references the bound \
+             error name (`??` cannot express that), got: {:?}",
+            ws2.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
     }
 }

@@ -19878,9 +19878,12 @@ pub(crate) enum CoalesceReturnAdvice {
     SameCarrier,
     /// `X.ok()?` — операнд `Result`, функция возвращает `Option`.
     ResultToOptionFn,
-    /// `X.map_err(fn(_) -> F => <ошибка>)?` — Result→Result, но `E` меняется
-    /// на `F` (`target_err_display` — читаемое имя `F`).
-    MapErr { target_err_display: String },
+    /// `X.map_err(fn(_ E) -> F => <ошибка>)?` — Result→Result, но `E`
+    /// меняется на `F`. Closure-full параметр ОБЯЗАН быть типизирован (`_ E`,
+    /// не голый `_` — D22/closure-full grammar), поэтому носим оба имени:
+    /// `source_err_display` — читаемое имя `E` (операнда), `target_err_display`
+    /// — читаемое имя `F` (return-типа).
+    MapErr { source_err_display: String, target_err_display: String },
     /// `X.ok_or(<ошибка>)?` — операнд `Option`, функция возвращает `Result`.
     OkOr,
     /// Оба типа известны и НИ один не `Option`/`Result` — обёртки для
@@ -19918,7 +19921,8 @@ pub(crate) fn coalesce_return_fallback_advice(
         ("Result", "Result") => {
             match (op.1.get(1), ret.1.get(1)) {
                 (Some(oe), Some(re)) if typeref_equal(oe, re) => CoalesceReturnAdvice::SameCarrier,
-                (Some(_), Some(re)) => CoalesceReturnAdvice::MapErr {
+                (Some(oe), Some(re)) => CoalesceReturnAdvice::MapErr {
+                    source_err_display: typeref_display(oe),
                     target_err_display: typeref_display(re),
                 },
                 // E-тип одной из сторон не виден (malformed Result-generics) —
@@ -19969,7 +19973,7 @@ pub(crate) fn coalesce_advice_render(
                 applicability: Applicability::MachineApplicable,
             }),
         ),
-        CoalesceReturnAdvice::MapErr { target_err_display } => (
+        CoalesceReturnAdvice::MapErr { source_err_display, target_err_display } => (
             format!(
                 "меняется тип ошибки (наружу `{}`) — канон `.map_err` (D85 отклонил \
                  авто-`From` ради явности).",
@@ -19977,14 +19981,15 @@ pub(crate) fn coalesce_advice_render(
             ),
             Some(Suggestion {
                 message: format!(
-                    "замени на `X.map_err(fn(_) -> {} => <ошибка>)?` — впиши исходное \
-                     error-выражение вместо плейсхолдера",
-                    target_err_display
+                    "замени на `X.map_err(fn(_ {}) -> {} => <ошибка>)?` — впиши исходное \
+                     error-выражение вместо плейсхолдера (closure-full параметр типизирован \
+                     обязательно — голый `fn(_)` не парсится)",
+                    source_err_display, target_err_display
                 ),
                 span: suggestion_span,
                 replacement: format!(
-                    ".map_err(fn(_) -> {} => /* исходное выражение ошибки */)?",
-                    target_err_display
+                    ".map_err(fn(_ {}) -> {} => /* исходное выражение ошибки */)?",
+                    source_err_display, target_err_display
                 ),
                 applicability: Applicability::HasPlaceholders,
             }),
@@ -24379,7 +24384,7 @@ fn pattern_capture_names_into(pat: &Pattern, out: &mut Vec<(String, bool, bool)>
 /// common expression/statement shapes; an unhandled shape is a (documented,
 /// conservative-direction) under-approximation — it can only cause a missed
 /// capture, never a false E_CONCURRENT_MUT_CAPTURE.
-fn capture_scan_block(b: &Block, shadow: &mut HashSet<String>, free: &mut HashSet<String>) {
+pub(crate) fn capture_scan_block(b: &Block, shadow: &mut HashSet<String>, free: &mut HashSet<String>) {
     for s in &b.stmts {
         capture_scan_stmt(s, shadow, free);
     }
@@ -24427,7 +24432,7 @@ fn capture_scan_stmt(s: &Stmt, shadow: &mut HashSet<String>, free: &mut HashSet<
     }
 }
 
-fn capture_scan_expr(e: &Expr, shadow: &mut HashSet<String>, free: &mut HashSet<String>) {
+pub(crate) fn capture_scan_expr(e: &Expr, shadow: &mut HashSet<String>, free: &mut HashSet<String>) {
     match &e.kind {
         ExprKind::Ident(name) => {
             if !shadow.contains(name) {
