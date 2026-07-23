@@ -152,7 +152,7 @@ fn parse_month_name(s str, pos int) -> Result[(i64, int), ParseDateTimeError] {
     if pos + 3 > s.byte_len() { return Err(FormatMismatch(pos, "month name")) }
     ro name = s[pos..pos + 3]
     for n in 1..=12 {
-        ro m = match Month.from_number(n) { Ok(x) => x, Err(_) => return Err(FormatMismatch(pos, "month name")) }
+        ro m = Month.from_number(n).map_err(fn(_ DateError) -> ParseDateTimeError => FormatMismatch(pos, "month name"))?
         if m.to_str() == name { return Ok((n as i64, pos + 3)) }
     }
     Err(FormatMismatch(pos, "month name"))
@@ -162,7 +162,7 @@ fn parse_weekday_name(s str, pos int) -> Result[int, ParseDateTimeError] {
     if pos + 3 > s.byte_len() { return Err(FormatMismatch(pos, "weekday name")) }
     ro name = s[pos..pos + 3]
     for n in 1..=7 {
-        ro w = match Weekday.from_number(n) { Ok(x) => x, Err(_) => return Err(FormatMismatch(pos, "weekday name")) }
+        ro w = Weekday.from_number(n).map_err(fn(_ DateError) -> ParseDateTimeError => FormatMismatch(pos, "weekday name"))?
         if w.to_str() == name { return Ok(pos + 3) }
     }
     Err(FormatMismatch(pos, "weekday name"))
@@ -240,19 +240,13 @@ export fn str @to_datetime_with(f DateTimeFormat) -> Result[DateTime, ParseDateT
     }
     expect_end(@, pos)?
 
-    ro month = match Month.from_number(fields.month as int) {
-        Ok(m) => m,
-        Err(_) => return Err(InvalidValue(0, FieldKind.Month, fields.month)),
-    }
-    ro date = match Date.new(fields.year as i32, month, fields.day as i32) {
-        Ok(d) => d,
-        Err(_) => return Err(InvalidValue(0, FieldKind.Day, fields.day)),
-    }
+    ro month = Month.from_number(fields.month as int)
+        .map_err(fn(_ DateError) -> ParseDateTimeError => InvalidValue(0, FieldKind.Month, fields.month))?
+    ro date = Date.new(fields.year as i32, month, fields.day as i32)
+        .map_err(fn(_ DateError) -> ParseDateTimeError => InvalidValue(0, FieldKind.Day, fields.day))?
     ro sec = if fields.second == 60 { 59 } else { fields.second }   // Q5
-    ro time = match TimeOfDay.new(fields.hour as int, fields.minute as int, s: sec as int, ns: (fields.milli * 1_000_000) as int) {
-        Ok(t) => t,
-        Err(_) => return Err(InvalidValue(0, FieldKind.Hour, fields.hour)),
-    }
+    ro time = TimeOfDay.new(fields.hour as int, fields.minute as int, s: sec as int, ns: (fields.milli * 1_000_000) as int)
+        .map_err(fn(_ DateError) -> ParseDateTimeError => InvalidValue(0, FieldKind.Hour, fields.hour))?
     Ok(date.at(time))
 }
 

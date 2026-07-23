@@ -34,10 +34,7 @@ fn guarded(source PSource) Time -> int {
     if timed_out {
         -1
     } else {
-        match rx.try_recv() {
-            Some(n) => n
-            None    => -2
-        }
+        rx.try_recv() ?? -2
     }
 }
 

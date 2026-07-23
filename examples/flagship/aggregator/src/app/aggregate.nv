@@ -232,10 +232,7 @@ fn fetch_guarded(source Source, shared_deadline Monotonic, idx int) Net Time Emi
     ro status = if timed_out {
         TaskStatus.Cancelled
     } else {
-        match rx.try_recv() {
-            Some(st) => st
-            None     => TaskStatus.Cancelled   // belt-and-suspenders: no send, no TimeoutError either
-        }
+        rx.try_recv() ?? TaskStatus.Cancelled   // belt-and-suspenders: no send, no TimeoutError either
     }
     match status {
         Done(_)   => Emit.lane_done(sid, elapsed_ms)

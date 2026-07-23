@@ -110,8 +110,8 @@ fn DirFs @resolve(path str) Fs -> Result[Path, IoError] {
         return Err(IoError.new(ErrorKind.PermissionDenied, "read_file"))
     }
     ro joined = @root.join_path(rel)
-    ro croot = match canonicalize(@root)  { Ok(p) => p, Err(e) => return Err(e) }
-    ro cfull = match canonicalize(joined) { Ok(p) => p, Err(e) => return Err(e) }
+    ro croot = canonicalize(@root)?
+    ro cfull = canonicalize(joined)?
     match (croot.to_str(), cfull.to_str()) {
         (Some(r), Some(f)) =>
             if boundary_ok(r, f) { Ok(cfull) }
