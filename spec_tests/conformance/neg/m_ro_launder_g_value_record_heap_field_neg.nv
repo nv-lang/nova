@@ -1,0 +1,23 @@
+// [M-ro-launder-via-mut-binding] probe G — D246-амендмент 2026-07-23 (Plan 224).
+// Value-record С кучевым полем (Vec) — доказывает, что "value-тип ⇒
+// безопасно" ЛОЖНО (это и есть причина, по которой владелец отклонил
+// классовое послабление по типу хранения): отмывание через `mut r2 = r`
+// пишет в кучевое поле r2.items, видимое r.items (тот же handle).
+//
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+
+module neg.m_ro_launder_g_value_record_heap_field_neg
+
+import std.collections.vec.{Vec}
+
+type Basket value {
+    mut items Vec[int]
+}
+
+fn Basket.new() -> Basket => { items: Vec[int].of(1, 2, 3) }
+
+fn main() -> () {
+    ro r = Basket.new()
+    mut r2 = r
+    r2.items.push(99)
+}

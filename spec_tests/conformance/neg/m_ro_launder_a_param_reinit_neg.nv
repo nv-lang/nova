@@ -1,0 +1,18 @@
+// [M-ro-launder-via-mut-binding] probe A — D246-амендмент 2026-07-23 (Plan 224).
+// L1-ro параметр (по D176-дефолту, БЕЗ `mut`) отмывается через `mut w = v`
+// (без явной аннотации на `w`) — до амендмента компилировалось, запись через
+// `w` была видна вызывающему. Норма СТРОГАЯ: E_READONLY_COERCE на инициализации.
+//
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+
+module neg.m_ro_launder_a_param_reinit_neg
+
+fn f(v []int) {
+    mut w = v
+    w[0] = 99
+}
+
+fn main() -> () {
+    mut arr = [1, 2, 3]
+    f(arr)
+}

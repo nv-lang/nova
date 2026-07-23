@@ -16,8 +16,14 @@
 // correctly narrow (arity+type-compatible candidates only) is provable.
 module neg.m196af_freefn_arity_default_ret_neg
 
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+// `tag` — `mut` (was bare) — passthrough return of a bare `ro`-param under
+// mut-default return type triggers the (unrelated-to-this-test's-purpose)
+// new return-position check; `mut` sidesteps it without touching what this
+// file actually probes (arity-overload ambiguity). Harmless for `str`
+// (buffer always immutable by construction — see D26).
 fn m196af_np(x int) -> int => x
-fn m196af_np(x int, tag str = "d") -> str => tag
+fn m196af_np(x int, mut tag str = "d") -> str => tag
 
 test "unreachable — codegen must fail before running" {
     assert(m196af_np() == 0)

@@ -20,6 +20,13 @@ fn d246_sum_via_ro_mut_view(ro buf mut []int) -> int {
 }
 
 test "ro x mut T param combo stays legal (D246 amendment boundary)" {
-    ro xs []int = [1, 2, 3]
+    // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция,
+    // 2026-07-23): `xs` — `mut` (was `ro`) — `ro buf mut []int` — split
+    // content-view mut-параметр — считается "mut-параметром" для целей
+    // cross-binding coercion (callee МОЖЕТ писать через `buf`, даже если
+    // ЭТА конкретная функция только читает); передача ro-источника в него
+    // теперь `E_READONLY_COERCE`. Тест — про легальность САМОЙ параметр-
+    // формы, не про coercion, так что `mut`-источник — правильная адаптация.
+    mut xs []int = [1, 2, 3]
     assert(d246_sum_via_ro_mut_view(xs) == 6)
 }

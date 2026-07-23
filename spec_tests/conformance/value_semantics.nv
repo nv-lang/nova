@@ -23,7 +23,14 @@ test "explicit local copy inside fn does NOT leak (D326 Р11)" {
     assert(a[0] == 1)
 }
 
-fn mutate_local_copy(x [3]int) -> () {
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 migration, 2026-07-23):
+// `x` is `mut` (was bare/ro-default) — the STRICT norm forbids an `ro`-bound
+// param source flowing into a `mut` local UNCONDITIONALLY (no value-type
+// exemption). The fact under test — a fresh `mut y = x` copy does NOT leak
+// back to the caller — is unaffected: per D228 revised (Р10), a plain
+// binding-copy (`mut y = x`) is independent regardless of `x`'s own
+// mutability; only `mut`-PARAM passing became in-out, not binding-copy.
+fn mutate_local_copy(mut x [3]int) -> () {
     mut y = x
     y[0] = 888
 }

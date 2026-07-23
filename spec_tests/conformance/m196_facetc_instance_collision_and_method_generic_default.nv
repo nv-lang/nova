@@ -57,7 +57,10 @@ test "cross-type instance-method name collision + default-arg resolves per-recei
 
 type M196Box[T] { slot T }
 fn M196Box[T].new(v T) -> M196Box[T] => { slot: v }
-fn M196Box[T] @wrap[U](tag U, note str = "n") -> str => note
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+// `mut note` — passthrough return; `str`'s буфер always-ro anyway (D26), `mut`
+// harmless.
+fn M196Box[T] @wrap[U](tag U, mut note str = "n") -> str => note
 
 test "method-level generic U (D119) + default-arg on the same method, U inferred without turbofish (Plan 196 Facet C)" {
     ro pb = M196Box[int].new(9)

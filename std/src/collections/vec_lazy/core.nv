@@ -75,8 +75,14 @@ export fn BoxIter[T] mut @next() -> Option[T] => (@step)()
 
 /// Bridge a `VecIter[T]` into a `BoxIter[T]` (free constructor, capturing the
 /// cursor). The entry point `Vec[T] @lazy()` routes through here.
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+// `.clone()` (D230), НЕ `mut`-параметр — closure нужна ПРИВАТНАЯ, независимо
+// продвигающаяся копия курсора (advancement НЕ должен быть виден caller'у,
+// иначе in-out param'а вернул бы неверную семантику: caller's `it` "прыгнул"
+// бы синхронно с closure). VecIter's `@clone()` — дешёвая shallow-копия
+// (тот же buffer pointer, независимый `idx`).
 export fn box_iter[T](it VecIter[T]) -> BoxIter[T] {
-    mut src = it
+    mut src = it.clone()
     { step: || src.next() }
 }
 
@@ -512,7 +518,10 @@ export fn BoxIter[T Hash] mut @collect_set() -> Set[T] {
 }
 
 /// Left fold: thread `init` through `f(acc, x)` over every element.
-export fn BoxIter[T] mut @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+// `init` — `mut` (in-out; D326-ревизия §Р3) — генерик `Acc` не статически
+// value-safe.
+export fn BoxIter[T] mut @fold[Acc](mut init Acc, f fn(Acc, T) -> Acc) -> Acc {
     mut acc = init
     while true {
         match @next() {
@@ -554,7 +563,9 @@ export fn BoxIter[T] mut @count() -> int {
 /// Sum the remaining elements starting from `zero` (the additive identity for
 /// `T`, e.g. `0` / `0.0`). Allocation-free; `zero` makes the element type and
 /// the empty-iterator result explicit without a numeric protocol.
-export fn BoxIter[T] mut @sum(zero T) -> T {
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+// `zero` — `mut` (in-out; D326-ревизия §Р3) — `T` не статически value-safe.
+export fn BoxIter[T] mut @sum(mut zero T) -> T {
     mut acc = zero
     while true {
         match @next() {

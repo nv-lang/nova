@@ -11,7 +11,10 @@
 
 module spec_tests.conformance
 
-priv(file) fn[T SignedInts] pf_dispatch(x T) -> T => x
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+// `mut x` — `SignedInts` bound не признаётся чекером за scalar-safe
+// доказательство (нет bound-aware анализа в Ф.1).
+priv(file) fn[T SignedInts] pf_dispatch(mut x T) -> T => x
 
 test "D307 §5.3 co-exist: own-file generic priv(file) pf_dispatch mono's correctly" {
     assert(pf_dispatch(41) == 41)

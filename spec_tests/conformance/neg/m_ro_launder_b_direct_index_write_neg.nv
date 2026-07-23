@@ -1,0 +1,18 @@
+// [M-ro-launder-via-mut-binding] regression pin B (D246-амендмент 2026-07-23,
+// Plan 224) — pre-existing enforcement (ORACLE F3, Plan 147 Ф.7), MUST STAY
+// GREEN: a direct index-write through a non-`mut` param (D176-дефолт, P7
+// freeze) is `E_READONLY_CONTENT` — a DIFFERENT code from the new
+// `E_READONLY_COERCE` (this is a direct write, not a cross-binding coerce).
+//
+// EXPECT_COMPILE_ERROR E_READONLY_CONTENT
+
+module neg.m_ro_launder_b_direct_index_write_neg
+
+fn f(v []int) {
+    v[0] = 99
+}
+
+fn main() -> () {
+    mut arr = [1, 2, 3]
+    f(arr)
+}

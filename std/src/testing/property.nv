@@ -310,10 +310,15 @@ fn run_once[T](body fn(T) Fail[PropertyFailed] -> (), value T) -> RunResult {
 // параметра) → bounded generic `[G Generator[T], T]` — см. ArrayGen выше
 // (D53: у протокольных ЗНАЧЕНИЙ нет runtime-диспетча; bounded generic =
 // статический диспетч через мономорфизацию по конкретному G).
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+// `initial`/`initial_failure` — `mut` (in-out; D326-ревизия §Р3) — `T`
+// генерик не статически value-safe, `PropertyFailed` — heap record; тело
+// делает `mut current = initial` затем чисто reassign (`current = candidate`),
+// требуя mut-content-view источника.
 fn shrink_loop[G Generator[T], T](gen G,
                   body fn(T) Fail[PropertyFailed] -> (),
-                  initial T,
-                  initial_failure PropertyFailed,
+                  mut initial T,
+                  mut initial_failure PropertyFailed,
                   max_steps int) -> (T, PropertyFailed) {
     mut current = initial
     mut current_failure = initial_failure
@@ -373,10 +378,13 @@ export fn property_with[G Generator[T], T](gen G,
                             body fn(T) Fail[PropertyFailed] -> (),
                             cfg PropertyConfig) Random Fail[PropertyFailed] -> () {
     for i in 0..cfg.num_tests {
-        ro value = gen.generate()
+        // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция,
+        // 2026-07-23): `value`/`e` — `mut`, чтобы дойти до shrink_loop'а
+        // теперь-mut параметров без coercion-ошибки (in-out, D326-ревизия §Р3).
+        mut value = gen.generate()
         match run_once(body, value) {
             Pass => ()
-            Fail(e) => {
+            Fail(mut e) => {
                 ro (minimal, final_failure) = shrink_loop(
                     gen, body, value, e, cfg.max_shrink_steps,
                 )

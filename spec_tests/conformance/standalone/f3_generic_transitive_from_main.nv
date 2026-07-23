@@ -11,7 +11,10 @@
 
 module standalone.f3_generic_transitive_from_main
 // Generic free fn — emitted lazily per instantiation by the monomorphizer.
-fn box_it[T](x T) -> T => x
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+// `mut x` — generic `T`, plus `a`/`b` below stay bare `int` — scalar-exempt,
+// so the call-argument position is unaffected.
+fn box_it[T](mut x T) -> T => x
 
 // Monomorphic free fn reachable from main; it is the ONLY caller of box_it.
 // box_it is therefore reachable only transitively (main → wrap → box_it[int]).

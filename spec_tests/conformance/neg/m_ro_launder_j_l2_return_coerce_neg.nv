@@ -1,0 +1,15 @@
+// [M-ro-launder-via-mut-binding] regression pin J (D246-амендмент 2026-07-23,
+// Plan 224) — pre-existing enforcement (P8 L2 axis, unchanged by this
+// amendment), MUST STAY GREEN: `-> ro []int` coerced into a `mut b []int`
+// annotated binding is `E_READONLY_COERCE` (L2 type-modifier axis — this
+// amendment only ADDED the L1 axis check alongside it).
+//
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+
+module neg.m_ro_launder_j_l2_return_coerce_neg
+
+fn make_ro() -> ro []int => [1, 2, 3]
+
+fn main() -> () {
+    mut b []int = make_ro()
+}

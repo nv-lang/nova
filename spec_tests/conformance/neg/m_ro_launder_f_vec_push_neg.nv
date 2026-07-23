@@ -1,0 +1,20 @@
+// [M-ro-launder-via-mut-binding] probe F — D246-амендмент 2026-07-23 (Plan 224).
+// `Vec[int]` param (L1-ro, D176-дефолт) отмывается через `mut w = v; w.push(..)`
+// — до амендмента caller's Vec безопасно рос через отмытую копию (тот же
+// heap-handle). Норма СТРОГАЯ.
+//
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+
+module neg.m_ro_launder_f_vec_push_neg
+
+import std.collections.vec.{Vec}
+
+fn f(v Vec[int]) {
+    mut w = v
+    w.push(99)
+}
+
+fn main() -> () {
+    mut orig = Vec[int].of(1, 2, 3)
+    f(orig)
+}

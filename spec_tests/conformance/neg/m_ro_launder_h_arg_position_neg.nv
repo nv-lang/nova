@@ -1,0 +1,21 @@
+// [M-ro-launder-via-mut-binding] probe H — D246-амендмент 2026-07-23 (Plan 224).
+// Отмывание в позиции АРГУМЕНТА, без промежуточного `mut`-биндинга: `outer`'s
+// L1-ro параметр `v` передаётся напрямую в `fill`'s `mut`-параметр. До
+// амендмента ЭТО ПРОХОДИЛО (readonly_locals не покрывал L1-ro параметры).
+//
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+
+module neg.m_ro_launder_h_arg_position_neg
+
+fn fill(mut v []int) {
+    v[0] = 1
+}
+
+fn outer(v []int) {
+    fill(v)
+}
+
+fn main() -> () {
+    mut arr = [1, 2, 3]
+    outer(arr)
+}

@@ -29,7 +29,11 @@ fn Speaker @greet() -> int => @base + helper_for_greet()
 fn helper_for_greet() -> int => 1
 
 fn main() {
-    ro sp = Speaker { base: 41 }
+    // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 migration): `sp` is
+    // `mut` (was `ro`) — protocol-box coercion into a `mut` binding now
+    // requires a `mut` source (STRICT norm); unrelated to this file's DCE
+    // survival concern.
+    mut sp = Speaker { base: 41 }
     mut g Greeter = sp        // box into protocol → emits vtable for (Greeter, Speaker)
     if g.greet() == 42 {      // dynamic dispatch through the thunk
         println("dispatch ok")

@@ -4,7 +4,9 @@
 // only to TypeDecl names, not to generic parameter names.
 
 module spec_tests.conformance
-priv(file) fn[T] identity(x T) -> T {
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+// `mut x` — unbounded generic `T` — не value-safe.
+priv(file) fn[T] identity(mut x T) -> T {
     x
 }
 

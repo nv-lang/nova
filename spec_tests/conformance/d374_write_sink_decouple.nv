@@ -51,7 +51,13 @@ test "StringBuilder satisfies Write — same @display body driven by an explicit
     // explicitly-constructed sink instead of the implicit interpolation one, yields
     // identical output.
     consume sb = StringBuilder.new()
-    ro fmt_ctx = FmtCtx.bare(sb, 0, false)
+    // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция,
+    // 2026-07-23): `fmt_ctx` — `mut` (was `ro`) — `@display(mut w Fmt)`
+    // genuinely writes through the sink (that IS the point of a Write/Fmt
+    // sink); passing an `ro`-bound source into it is EXACTLY the hole this
+    // amendment closes (H-form: argument position). `mut` reflects the true
+    // intent — the caller WANTS the underlying `sb` written.
+    mut fmt_ctx = FmtCtx.bare(sb, 0, false)
     p.display(fmt_ctx)
     ro got = sb.into_str()
     // Identical to the interpolation result above ⇒ sink-agnostic body.

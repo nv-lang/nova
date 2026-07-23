@@ -6,12 +6,14 @@ module collections.priority_queue_test
 import std.collections.priority_queue.{PriorityQueue}
 
 test "empty queue" {
-    ro pq = PriorityQueue[int].new()
+    // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+    // `pq` mut с самого начала — не переиспользуется как `ro` где-либо в
+    // тесте, промежуточный `mut pq2 = pq` был чистым отмыванием L1-ro в mut.
+    mut pq = PriorityQueue[int].new()
     assert(pq.is_empty())
     assert(pq.peek() == None)
     // pop из пустой — None
-    mut pq2 = pq
-    assert(pq2.pop() == None)
+    assert(pq.pop() == None)
 }
 
 test "push / pop порядок" {
