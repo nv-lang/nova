@@ -1,0 +1,75 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for [M-cancel-loop-accept-swallowed-residual] (221.1 bug-sweep
+// #15, 2026-07-23 — residual of the already-merged [M-nv-cancel-loop-accept-
+// swallowed] listener-refcount fix). Root cause, confirmed by direct
+// instrumentation of `nova_fiber_yield`/`nova_scope_deliver_cancel`/sysmon
+// (compiler-codegen/nova_rt/fibers.h + runtime.c):
+//
+// Under armed M:N, the WORKER's own fiber-resume preamble repoints the TLS
+// `_nova_active_scope` to the worker's bookkeeping scope (`&w->scope`) for
+// the ENTIRE life of a worker-run fiber — see `nova_runtime_cancel_worker_
+// fibers`'s doc comment in runtime.c. `nova_scope_deliver_cancel` (fired by
+// `supervised(timeout:/deadline:)` on expiry) sets `cancel_requested` on the
+// USER-LEVEL supervised scope — a genuinely DIFFERENT `NovaFiberQueue` object
+// than `&w->scope`. `nova_fiber_yield`'s cooperative-cancellation check used
+// to read ONLY `_nova_active_scope->cancel_requested` — for a worker-run
+// fiber that never parks (a busy/CPU-bound loop with no blocking op at all,
+// or one whose every op returns an immediate non-parking `Err` post-cancel —
+// exactly a `while`-retry-loop's shape once the underlying resource's stage
+// has already flipped to CLOSING), this NEVER observed the real cancellation
+// — confirmed empirically: `nova_preempt_check` WAS correctly firing
+// `nova_fiber_yield` every ~10ms sysmon slice (preemption itself works
+// fine), but the cancel-check inside it was reading the WRONG scope's flag,
+// so the loop spun until the outer test/process timeout, not the
+// `supervised(timeout:)` deadline. Only genuinely-PARKED ops (net.c
+// read/write/accept, `Time.sleep`) were ever cancelled correctly — via the
+// entirely separate stop_cb fan-out in `nova_scope_deliver_cancel`/
+// `nova_runtime_cancel_worker_fibers`, which never touches
+// `_nova_active_scope` at all.
+//
+// Fix (`nova_fiber_yield`, fibers.h): when `_nova_active_scope` itself isn't
+// flagged, fall back to the fiber's OWN ctx (`NovaSpawnCtxBase.
+// _nova_parent_scope`, set exactly ONCE at spawn time to the REAL user-level
+// scope the fiber was spawned into, and never repointed afterward unlike
+// `_nova_active_scope`) and check ITS `cancel_requested` too.
+//
+// NARROWER-THAN-THE-FULL-SYMPTOM NOTE (found investigating this fixture):
+// wrapping the busy-loop in a `consume x = ...` binding with D432
+// auto-`@cleanup` (e.g. an accept-retry-loop over a `consume lst
+// TcpListener`) reintroduces an UNCANCELLABLE shape even with this fix —
+// `nv_consume_enter_shield`/`leave_shield` (Plan 110.2.1, D188 R3) is armed
+// for the WHOLE consume-scope body (not just the actual `@cleanup` dispatch,
+// per emit_c.rs's own "cancel-shield over body + cleanup" comment), which
+// makes `nova_fiber_yield`'s cancel-throw check permanently deferred
+// (`cancel_mask_count > 0`) for as long as ANY `consume`-bound resource with
+// auto-cleanup is alive in the fiber — confirmed via the SAME
+// instrumentation (`mask=1` throughout the loop). That is DELIBERATE,
+// documented design (not touched by this fix) and a materially bigger,
+// separate architectural question (every consume-scope in the codebase),
+// not a narrow net.c/scheduler bug — left as a follow-up decision for the
+// owner rather than silently changed here. This fixture therefore covers
+// ONLY the general busy-loop/scope-mismatch class (no consume-scope
+// involved), which the fix above fully resolves; the accept-loop-specific
+// symptom (`m222_7_cancel_loop_accept_swallowed.nv`, unbounded `continue`
+// variant) is a compound of BOTH factors and remains only partially fixed —
+// see the 221.1 registry entry for the shield follow-up marker.
+//
+// EXPECT_TIMEOUT_MS 20000
+
+module standalone.m2217_15_cancel_busyloop_scope_mismatch
+
+import std.time.duration
+
+test "supervised(timeout:) cancels a pure CPU-bound busy loop (no consume-scope shield) via cooperative preempt" {
+    with Fail[TimeoutError] = |_e| {} {
+        supervised(timeout: 300.to_millis()) {
+            spawn {
+                mut n = 0
+                while true {
+                    n = n + 1
+                }
+            }
+        }
+    }
+    assert(true)
+}

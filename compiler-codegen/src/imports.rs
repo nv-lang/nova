@@ -1774,12 +1774,47 @@ fn resolve_one(
     // all peers) to cache in visited map. Used by the dedup path above.
     let mut module_exports_cache: Vec<String> = Vec::new();
 
-    // Plan 42 Ф.2: parse все peer files в alphabetical order (правило B).
-    // Для each peer:
-    //   1. Parse to Module.
-    //   2. Recursively resolve its imports.
-    //   3. Append its items в merged_items.
-    // Peers share namespace через merge'нутый Module.items.
+    // [M-imports-multipeer-cycle-partial-exports] fix (221.1 Ф.2 #14,
+    // 2026-07-23 — residual gap of [M-imports-order-dependent-cycle]):
+    // parsing+export-seeding and recursion+merge used to happen in ONE
+    // combined pass over `resolved_paths` — per peer, seed THIS peer's
+    // exports into `visited[module_key]`, THEN immediately recurse into
+    // THIS peer's own imports. For a multi-peer folder-module, that meant
+    // a cyclic back-edge reached from an EARLY peer's recursion could see
+    // the provisional `visited[module_key]` cache with only the peers
+    // parsed SO FAR — any name declared only in a LATER (alphabetically
+    // greater) peer was still missing, and a legal D291 cross-module cycle
+    // closing at exactly that moment got a truncated `visible_acc` → false
+    // "undefined identifier" (live precedent: `server`(12 peers)↔`servernet`
+    // in nova-http, `serialize_response`). Fixed per D291's own stated
+    // "collect-signatures-first, lazy bodies" architecture: split into TWO
+    // passes over `resolved_paths` (same alphabetical order, Plan 42 rule
+    // B, both passes) —
+    //   PASS 1 (below): parse every peer AND seed `visited[module_key]`
+    //     with ALL of them (`exported_names_from_items` needs only parsed
+    //     items, no recursion) — so by the time PASS 2 starts, the
+    //     provisional export cache is COMPLETE for this module, not
+    //     partial-by-peer-order.
+    //   PASS 2 (further below): register each `PeerFile`, recurse into each
+    //     peer's own imports, and merge its items — any cyclic back-edge
+    //     hit during PASS 2's recursion now sees the full cache from PASS 1.
+    // `next_file_id` allocation stays in PASS 1, still walked in the same
+    // alphabetical `resolved_paths` order as before — this module's own
+    // peers get contiguous, ascending file_ids exactly as before (Sub-plan
+    // 42.4 §3's per-peer name-resolution invariant only needs peer files to
+    // each have their OWN stable id, not any particular interleaving with
+    // recursively-discovered modules' ids — PASS 2's recursion now simply
+    // allocates ids for transitively-imported modules AFTER all of THIS
+    // module's own peer ids, instead of interleaved between them).
+    struct ParsedPeer {
+        peer_path: PathBuf,
+        peer_canon: PathBuf,
+        peer_file_id: FileId,
+        peer_module: Module,
+    }
+    let mut parsed_peers: Vec<ParsedPeer> = Vec::with_capacity(resolved_paths.len());
+
+    // ─── PASS 1: parse every peer, seed the FULL provisional export cache ───
     for peer_path in &resolved_paths {
         let peer_canon = peer_path.canonicalize()
             .map_err(|e| anyhow!("canonicalize {}: {}", peer_path.display(), e))?;
@@ -1804,7 +1839,8 @@ fn resolve_one(
 
         // Plan 42.12 Ф.2: проверка module-level `#cfg(feature/target_os)`.
         // Если peer объявил inactive cfg — skip целиком (не merge items,
-        // не register peer_file, не recurse imports).
+        // не register peer_file, не recurse imports, НЕ участвует в
+        // export-seeding — неактивный peer не даёт экспортов).
         if !cfg_active(&peer_module) {
             continue;
         }
@@ -1822,36 +1858,52 @@ fn resolve_one(
         }
 
         // [M-imports-order-dependent-cycle] (2026-07-20, generalizes
-        // [M-imports-entry-folder-module-self-cycle-empty-exports]): seed/
-        // extend `visited[module_key]` with THIS peer's own export surface
-        // RIGHT NOW — `peer_module.items` is fully parsed already, no
-        // recursion needed to know it (`exported_names_from_items` reads
+        // [M-imports-entry-folder-module-self-cycle-empty-exports]), now
+        // completed by [M-imports-multipeer-cycle-partial-exports] above:
+        // seed/extend `visited[module_key]` with THIS peer's own export
+        // surface RIGHT NOW — `peer_module.items` is fully parsed already,
+        // no recursion needed to know it (`exported_names_from_items` reads
         // only items, per D291's stated "collect-signatures-first" design).
-        // Done BEFORE this peer's own imports are recursed into (below),
-        // so a cyclic back-edge reached from elsewhere in the DFS (e.g. a
-        // sibling top-level import of a module that mutually imports THIS
-        // one — the fmt_buf↔string_builder / Ф.4R Ш1 finding) sees these
-        // names via the `visited` check (ordered before the `in_progress`
-        // guard) instead of hitting the guard and getting an empty
-        // `visible_acc`. `module_key` is already in `in_progress` (inserted
-        // above, before this peer loop) — same "in both sets at once"
-        // precedent the entry-exports fix established; harmless no-op for
-        // any module never re-entered mid-resolve. Extends rather than
-        // overwrites: a multi-peer folder-module accumulates across peers
-        // as each is parsed (order within `resolved_paths` is Plan 42 rule
-        // B — alphabetical — same on every run, so accumulation order is
-        // deterministic even though it may still be PARTIAL if the cyclic
-        // back-edge fires before a later peer of this same module is
-        // reached — a monotonic, never-worse-than-before improvement, not
-        // a full fix for that narrower nested case). The final, complete
-        // `module_exports_cache` computed below (peer loop's end) replaces
-        // this provisional entry once the whole module finishes.
+        // Done for EVERY peer in PASS 1, BEFORE PASS 2 recurses into ANY of
+        // this module's peers' own imports — so a cyclic back-edge reached
+        // from elsewhere in the DFS (e.g. a sibling top-level import of a
+        // module that mutually imports THIS one — the fmt_buf↔
+        // string_builder / Ф.4R Ш1 finding, and the multi-peer
+        // server↔servernet finding) sees the COMPLETE name set via the
+        // `visited` check (ordered before the `in_progress` guard) instead
+        // of hitting the guard and getting an empty/partial `visible_acc`.
+        // `module_key` is already in `in_progress` (inserted above, before
+        // this peer loop) — same "in both sets at once" precedent the
+        // entry-exports fix established; harmless no-op for any module
+        // never re-entered mid-resolve. Extends rather than overwrites:
+        // accumulates across ALL peers of this module (PASS 1 order is
+        // Plan 42 rule B — alphabetical — deterministic on every run). The
+        // final, complete `module_exports_cache` computed in PASS 2 (peer
+        // loop's end) replaces this provisional entry once the whole
+        // module finishes — same content, just recomputed via the merge
+        // loop's identical `module_has_exports`/`is_export` filter.
         {
             let peer_export_names = exported_names_from_items(&peer_module.items);
             visited.entry(module_key.clone())
                 .or_insert_with(Vec::new)
                 .extend(peer_export_names);
         }
+
+        parsed_peers.push(ParsedPeer {
+            peer_path: peer_path.clone(),
+            peer_canon,
+            peer_file_id,
+            peer_module,
+        });
+    }
+
+    // ─── PASS 2: register PeerFiles, recurse into imports, merge items ───
+    // Peers share namespace через merge'нутый Module.items.
+    for parsed in parsed_peers {
+        let peer_path = &parsed.peer_path;
+        let peer_canon = parsed.peer_canon;
+        let peer_file_id = parsed.peer_file_id;
+        let peer_module = parsed.peer_module;
 
         // Регистрируем PeerFile (snapshot до recursive resolve + merge).
         // Plan 42.15: imported_item_names заполняется ниже после resolve.

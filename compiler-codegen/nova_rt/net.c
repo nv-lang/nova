@@ -726,6 +726,13 @@ void* net_tcp_accept(void* lstv, nova_int* out_err) {
 
     if (rc != 0) { if (out_err) *out_err = rc; result = NULL; goto out; }
     if (out_err) *out_err = 0;
+    /* [M-net2stream-close-refcount-uaf] fix: `st` (the freshly-accepted
+     * stream) is handed to the caller as a live `TcpStream` — same second,
+     * independent "user owns me" unit as net_tcp_connect's matching comment
+     * above (and net_tcp_listen's `[M-nv-cancel-loop-accept-swallowed]`
+     * fix). Bumps `st->refcount`, NOT `lst->refcount` (the listener is a
+     * separate object, released below as before). */
+    (void)nova_aint_inc(&st->refcount);
     result = st;
 
 out:
@@ -883,6 +890,20 @@ void* net_tcp_connect(const NovaNetAddr* addr, nova_int* out_err) {
 
     nova_aint_store(&s->stage, NN2_IDLE);
     if (out_err) *out_err = 0;
+    /* [M-net2stream-close-refcount-uaf] fix: from here on `s` is handed to
+     * the caller as a live `TcpStream` — bump the refcount to add a SECOND,
+     * independent release trigger for the Nova-level `consume` handle's own
+     * eventual close (`net_tcp_close`, called by `TcpStream consume
+     * @close()`/its D432 auto-`@cleanup`, exactly once — see net_tcp_close's
+     * matching release below). Mirrors net_tcp_listen's identical fix for
+     * `[M-nv-cancel-loop-accept-swallowed]`: without this, there is only ONE
+     * unit (the "existence" unit released by `_nn2_stream_close_cb`), so an
+     * internal supervised(timeout:)/(deadline:) cancellation auto-close
+     * frees `s` the moment the first cancelled read/write call returns —
+     * any retry loop that calls .read()/.write() again then dereferences an
+     * already-freed `NovaNet2Stream*` (`_nn2_stream_acquire` incrementing a
+     * freed refcount field). */
+    (void)nova_aint_inc(&s->refcount);
     result = s;
 
 out:
@@ -1227,7 +1248,14 @@ void net_tcp_mark_split(void* sv) {
 
 void net_tcp_close(void* sv) {
     NovaNet2Stream* s = (NovaNet2Stream*)sv;
-    /* Split streams: only the last half actually closes the handle. */
+    /* Split streams: only the last half actually closes the handle. Each
+     * half's own `consume @close()` (std/src/net/tcp.nv TcpReadHalf/
+     * TcpWriteHalf) calls this exactly once, but only ONE extra "user owns
+     * me" unit was ever acquired (once, at net_tcp_connect/net_tcp_accept
+     * success — splitting a stream does not re-acquire); the release below
+     * is placed AFTER this gate so it fires exactly once too, when the
+     * LAST half actually proceeds past it — never on the early return of
+     * the first half to close. */
     if (__atomic_load_n(&s->split_refcount, __ATOMIC_ACQUIRE) > 0) {
         int32_t left = __atomic_sub_fetch(&s->split_refcount, 1, __ATOMIC_ACQ_REL);
         if (left > 0) return;
@@ -1238,6 +1266,20 @@ void net_tcp_close(void* sv) {
         nova_loop_defer_close(s->loop, (uv_handle_t*)&s->handle,
                               _nn2_stream_close_cb);
     }
+    /* [M-net2stream-close-refcount-uaf] fix: release the Nova-level "user
+     * owns me" unit acquired once at net_tcp_connect/net_tcp_accept success
+     * — UNCONDITIONALLY, regardless of whether THIS call won the CAS above
+     * (ordinary user-driven close) or the stream was already cancelled/
+     * closed internally by `_nn2_stream_stop_cb` (the CAS lost the race,
+     * an internal supervised(timeout:)/(deadline:) auto-close already fired
+     * it). `TcpStream consume @close()`/its D432 auto-`@cleanup` (or, for a
+     * split stream, whichever half's close() drives split_refcount to 0
+     * above) calls this exactly once per underlying stream — mirrors
+     * net_listener_close's identical unconditional release. See
+     * net_tcp_connect's matching `nova_aint_inc` for the full root-cause
+     * note (same UAF class as the already-fixed
+     * `[M-nv-cancel-loop-accept-swallowed]` on TcpListener). */
+    _nn2_stream_release(s);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

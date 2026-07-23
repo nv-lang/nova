@@ -3319,14 +3319,59 @@ static inline void nova_fiber_yield(void) {
      * из bound token'а scope'а (если есть). Это позволяет supervised_run
      * (Ф.3) различать отмену от реальной ошибки и не пробрасывать наружу.
      *
+     * [M-cancel-loop-accept-swallowed-residual] fix (221.1 Ф.2 #15,
+     * 2026-07-23): under armed M:N, the WORKER's own resume preamble
+     * repoints the TLS `_nova_active_scope` to the worker's bookkeeping
+     * scope (`&w->scope`, see `nova_runtime_cancel_worker_fibers`'s doc
+     * comment) for the ENTIRE life of a worker-run fiber — that scope is
+     * never the one a user-level `supervised(timeout:/deadline:)` block
+     * cancels (`nova_scope_deliver_cancel` sets `cancel_requested` on the
+     * SUPERVISED scope, a genuinely different `NovaFiberQueue`). A fiber
+     * that never parks — e.g. a `while` retry-loop whose every op returns
+     * an immediate `Err` post-cancel, never actually blocking again (net.c
+     * `accept`/`read`/`write` all short-circuit once `stage>=CLOSING`) —
+     * has no registered stop_cb for `nova_runtime_cancel_worker_fibers` to
+     * dispatch either, so it never observed its OWN logical scope's
+     * cancellation here: confirmed by instrumentation — `nova_preempt_check`
+     * WAS firing `nova_fiber_yield` every ~10ms slice (sysmon works fine),
+     * but this check here never saw `cancel_requested` true because it was
+     * reading the wrong scope, so the loop spun until the outer test
+     * timeout, not the 300ms `supervised(timeout:)` deadline. Only
+     * genuinely-parked ops (net.c reads/writes/accepts, `Time.sleep`) were
+     * ever cancelled correctly — through the SEPARATE stop_cb fan-out in
+     * `nova_scope_deliver_cancel`/`nova_runtime_cancel_worker_fibers`, which
+     * never touches `_nova_active_scope` at all.
+     *
+     * Fix: fall back to the fiber's OWN ctx (`NovaSpawnCtxBase.
+     * _nova_parent_scope`, set exactly ONCE at spawn time to the REAL
+     * user-level scope the fiber was spawned into — see `emit_spawn`/
+     * `emit_detach` codegen — and never repointed afterward, unlike
+     * `_nova_active_scope`) when `_nova_active_scope` itself isn't flagged.
+     * `_nova_active_scope` is checked FIRST and unchanged for every case it
+     * already covered correctly (sequential/main-thread execution, where it
+     * directly IS the logical scope; a fiber's OWN nested `supervised{}`
+     * block, which codegen retargets `_nova_active_scope` to for its
+     * duration) — this only ADDS coverage for the armed-M:N gap above.
+     *
      * Plan 110.2.1.a (D188 R3): if a ConsumeScope shield is active
      * (cancel_mask_count > 0), defer the cancel-throw — the fiber is
      * currently running cleanup code that must complete (subject to
      * the exit_timeout enforced separately by suspend-entry checks).
      * Yield cooperatively без throw — cancel remains latched on scope. */
-    if (_nova_active_scope && nova_abool_load(&_nova_active_scope->cancel_requested)) {
+    NovaFiberQueue* _nv_cancel_scope = _nova_active_scope;
+    bool _nv_cancel_hit = _nv_cancel_scope && nova_abool_load(&_nv_cancel_scope->cancel_requested);
+    if (!_nv_cancel_hit) {
+        NovaSpawnCtxBase* _nv_yield_base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+        if (_nv_yield_base && _nv_yield_base->_nova_parent_scope
+            && _nv_yield_base->_nova_parent_scope != _nv_cancel_scope
+            && nova_abool_load(&_nv_yield_base->_nova_parent_scope->cancel_requested)) {
+            _nv_cancel_scope = _nv_yield_base->_nova_parent_scope;
+            _nv_cancel_hit = true;
+        }
+    }
+    if (_nv_cancel_hit) {
         if (nova_cancel_mask_load(co) == 0) {
-            void* reason = _nova_active_scope->cancel_reason_ptr;
+            void* reason = _nv_cancel_scope->cancel_reason_ptr;
             nova_throw_cancel_reason(
                 nova_str_from_cstr("scope cancelled"),
                 reason);

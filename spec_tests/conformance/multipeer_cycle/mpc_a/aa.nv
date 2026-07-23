@@ -1,0 +1,22 @@
+// [M-imports-multipeer-cycle-partial-exports] regression (221.1 Ф.2 #14),
+// peer AA (alphabetically FIRST of `mpc_a`'s three peers — see mm.nv/
+// zz_late.nv). This is the peer whose OWN import closes the cycle back to
+// `mpc_b` — mirroring order_dependent_cycle's odc_a/odc_b shape, except here
+// `mpc_a` is a MULTI-PEER folder-module (three co-equal files), not a single
+// file. Before the [M-imports-multipeer-cycle-partial-exports] fix
+// (`compiler-codegen/src/imports.rs::resolve_one`), `resolve_one`'s single
+// combined parse+recurse pass reached THIS peer's `import ../mpc_b` — and
+// therefore recursed into `mpc_b`'s own back-edge to `mpc_a` — before
+// `mm.nv`/`zz_late.nv` (this module's OTHER two peers) had even been parsed:
+// the provisional `visited[mpc_a_key]` cache at that point held ONLY this
+// peer's exports, so `mpc_b`'s `import ./mpc_a.{mpc_a_late_val}` (the name
+// declared ONLY in the alphabetically-LAST peer, zz_late.nv) resolved to
+// nothing — false "undefined identifier mpc_a_late_val". Fixed by splitting
+// `resolve_one`'s peer loop into two passes: parse+seed ALL peers' exports
+// FIRST, recurse+merge second (D291 "collect-signatures-first").
+module multipeer_cycle.mpc_a
+
+import ../mpc_b.{mpc_b_val}
+
+export fn mpc_a_aa_val() -> int => 1
+export fn mpc_a_aa_uses_b() -> int => mpc_b_val() + 100

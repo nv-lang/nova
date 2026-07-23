@@ -1,0 +1,82 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Split-half twin of [M-net2stream-close-refcount-uaf]
+// (m_net2stream_close_refcount_uaf.nv) — 221.1 bug-sweep #12. Covers the
+// "complication" called out in the followup: TcpStream.split() shares ONE
+// underlying NovaNet2Stream between TcpReadHalf/TcpWriteHalf via a C-side
+// `split_refcount` (net_tcp_mark_split/net_tcp_close in net.c), independent
+// of the [M-boehm-...] variant-(b) existence-refcount this fix adds. The two
+// schemes must compose: net_tcp_connect's ONE extra "user owns me" unit is
+// acquired ONCE (before split even happens), and net_tcp_close's matching
+// release must fire EXACTLY once — when the LAST half's close() drives
+// split_refcount to 0 — not on every half's close(), and not skipped
+// entirely by the split_refcount early-return.
+//
+// Repro shape: after `.split()`, the read half is retried in a
+// supervised(timeout:)-cancelled while-loop (same shape as the unsplit
+// fixture) — a UAF here would show up as a crash/hang on the SECOND or third
+// retried `.read()` on the half, or on either half's subsequent `.close()`.
+// Both halves are explicitly closed at the end, asserting the process
+// completes within budget with neither a double-free (both halves closing)
+// nor a leak (neither half's close ever running the real teardown).
+//
+// EXPECT_TIMEOUT_MS 30000
+
+module standalone.m_net2stream_split_close_refcount_uaf
+
+import std.net.{TcpStream, TcpListener, SocketAddr, real_net}
+import std.time.duration
+
+test "supervised(timeout:) cancels a while-loop-retried split-half read(), both halves close (no UAF/hang)" {
+    with Net = real_net() {
+        with Fail[TimeoutError] = |_e| {} {
+            ro ch = Channel.new(1)   // server port → client
+            supervised(timeout: 300.to_millis()) {
+                spawn {
+                    // Server: bind + accept, hold the connection open (a
+                    // long sleep — gets cancelled by the same timeout as
+                    // the client, which is fine here).
+                    consume lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                        Ok(consume l) => l
+                        Err(_) => panic("bind failed")
+                    }
+                    ch.tx.send(lst.local_port())
+                    consume srv = match lst.accept() {
+                        Ok(consume s) => s
+                        Err(_) => { lst.close(); panic("accept failed") }
+                    }
+                    (5000).to_millis().sleep()
+                    srv.close()
+                    lst.close()
+                }
+                spawn {
+                    ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
+                    consume conn = match TcpStream.connect(SocketAddr.loopback(port)) {
+                        Ok(consume s) => s
+                        Err(_) => panic("connect failed")
+                    }
+                    mut (cli_rd, cli_wr) = conn.split()
+
+                    mut buf []u8 = []u8.new()
+                    buf.resize(16, 0 as u8)
+                    mut running = true
+                    mut n = 0
+                    while running {
+                        match cli_rd.read(buf) {
+                            Ok(_) => {}
+                            Err(_) => {
+                                n = n + 1
+                                if n >= 3 { running = false }
+                            }
+                        }
+                    }
+                    // Both halves must close cleanly: neither a double-free
+                    // (split_refcount underflow) nor a leaked underlying
+                    // stream (real close never firing).
+                    cli_rd.close()
+                    cli_wr.close()
+                }
+            }
+        }
+    }
+    assert(true)
+}

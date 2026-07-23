@@ -1,0 +1,78 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for [M-detach-ctx-capture-after-ro-call-value-ptr-mismatch]
+// (221.1 bug-sweep #16, 2026-07-23 — residual variant of the already-merged
+// [M-nv-spawn-ctx-capture-mut-param-ptr-mismatch] fix). Live prod occurrence:
+// nova-http's `serve()` accept-loop capturing its `policy ServerPolicy`
+// parameter (8 fields) into `detach { ... }` (d:/Sources/nv-lang/
+// nova-http-p2227/src/servernet/serve.nv, worked around via `ro policy_local
+// = policy` rebinding — see that file's own note).
+//
+// Root cause (compiler-codegen/src/codegen/emit_c.rs, `emit_detach`'s
+// capture-populate loop): a captured name that is NOT itself an outer-fiber
+// capture is not necessarily a plain C value either — a large `ro`
+// value-struct parameter (free fn or method) gets passed BY POINTER in C for
+// efficiency (Plan 172.14 Ф.1: `free_fn_byref_flag`/`method_byref_flag`,
+// tracked in `self.ref_params`, populated once per enclosing fn). The
+// IDENTICAL bug for `mut T` in-out parameters was already fixed in
+// `emit_spawn`'s own capture loop ([M-nv-spawn-ctx-capture-mut-param-ptr-
+// mismatch]) by consulting `ref_params` — but `emit_detach`'s capture loop
+// (same shape, never touched by that fix) still assumed any non-outer-
+// capture name is a bare C value, so `ctx->field = cap;` (by-value capture)
+// assigned a `T*` into a `T` field: `CC-FAIL "assigning to 'NovaValue_X' from
+// incompatible type 'NovaValue_X *'"`.
+//
+// The "after an earlier ro-method-call" framing in the original bug report
+// was circumstantial, not causal — reproduced here identically WITHOUT any
+// earlier call on the parameter (see the isolated single-call test below);
+// what actually matters is parameter SIZE (multi-field value record ⇒
+// `free_fn_byref_flag` true ⇒ by-pointer C param), confirmed by a companion
+// single-field value type NOT reproducing regardless of an earlier call.
+//
+// Fix: `emit_detach`'s capture-populate loop now also consults
+// `self.ref_params`, mirroring `emit_spawn`'s existing check exactly (same
+// `(*{cap})` dereference on read).
+
+module standalone.m2217_16_detach_ctx_capture_value_ptr_mismatch
+
+type Widget value {
+    max_inflight int
+    reject_with_503 bool
+    max_requests_per_conn int
+    max_body_bytes int
+}
+
+fn Widget @max_inflight() -> int => @max_inflight
+fn Widget mut @max_inflight(n int) -> @ { @max_inflight = n }
+
+// Shape 1: an earlier ro-call on the parameter before the detach (the
+// original bug report's exact framing).
+fn use_it_after_call(policy Widget) Detach -> () {
+    ro n = policy.max_inflight()
+    if n > 0 {
+        detach {
+            ro _ = policy.max_inflight()
+        }
+    }
+}
+
+// Shape 2: NO earlier call at all — isolates that parameter SIZE (not the
+// earlier call) is the actual trigger.
+fn use_it_no_call(policy Widget) Detach -> () {
+    detach {
+        ro _ = policy.max_inflight()
+    }
+}
+
+test "detach{} capturing a bare multi-field value-record param compiles and runs (with earlier ro-call)" {
+    mut w = Widget { max_inflight: 5, reject_with_503: true, max_requests_per_conn: 10, max_body_bytes: 100 }
+    use_it_after_call(w)
+    runtime.drain_orphans()
+    assert(true)
+}
+
+test "detach{} capturing a bare multi-field value-record param compiles and runs (no earlier call)" {
+    mut w = Widget { max_inflight: 7, reject_with_503: false, max_requests_per_conn: 3, max_body_bytes: 200 }
+    use_it_no_call(w)
+    runtime.drain_orphans()
+    assert(true)
+}

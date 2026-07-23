@@ -14306,9 +14306,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 .map(|s| s.contains(cap)).unwrap_or(false);
             let outer_by_value = self.current_spawn_capture_by_value.as_ref()
                 .map(|s| s.contains(cap)).unwrap_or(false);
+            // [M-detach-ctx-capture-after-ro-call-value-ptr-mismatch] fix
+            // (221.1 Ф.2 #16, mirrors emit_spawn's identical
+            // [M-nv-spawn-ctx-capture-mut-param-ptr-mismatch] fix, same
+            // file's `emit_spawn` capture loop above): a captured name that
+            // is NOT itself an outer-fiber
+            // capture (`is_outer_cap` false) is not necessarily a plain C
+            // value either — a `mut T` in-out param (Plan 184 R10) OR a
+            // large `ro` value-struct param passed by-ref for efficiency
+            // (Plan 172.14 Ф.1, free fn or method) is ALREADY `T*` in C
+            // (`self.ref_params`, populated once per enclosing fn — see
+            // emit_fn's param-classification pass). This detach capture-
+            // populate loop only ever checked `is_outer_cap`, never
+            // `ref_params` — so capturing such a parameter into `detach {}`
+            // (with NO intervening spawn) fell through to the bare
+            // `cap.clone()` "ordinary local" arm, which assumes `cap`'s C
+            // storage IS the value: `ctx->field = cap;` (by_value) then
+            // assigned a `T*` into a `T` field (clang: "assigning to 'T'
+            // from incompatible type 'T *'"). Live repro: a bare (no `mut`/
+            // `consume`) multi-field value-record parameter (nova-http's
+            // `ServerPolicy`, 8 fields) captured into `detach { ... }` —
+            // reproduced independent of any earlier method call on it (the
+            // "after an earlier ro-call" framing was circumstantial: any
+            // multi-field value-struct param triggers `free_fn_byref_flag`/
+            // `method_byref_flag` and lands in `ref_params` regardless).
+            let outer_is_ref_param = self.ref_params.contains(cap);
             let access_outer = if is_outer_cap {
                 if outer_by_value { format!("_c->{}", cap) }
                 else { format!("(*_c->{})", cap) }
+            } else if outer_is_ref_param {
+                format!("(*{})", cap)
             } else { cap.clone() };
             if *by_value {
                 self.line(&format!("{ctx_var}->{cap} = {access_outer};"));
@@ -15010,6 +15037,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     Self::collect_bound_names_expr(init, out);
                     Self::collect_bound_names_block(body, out);
                 }
+                // [M-nv-defer-captured-var-in-detach-undeclared] fix (221.1
+                // Ф.2 #22): companion to the `collect_idents_stmt` fix above
+                // (same marker) — `defer(o ScopeOutcome) { … }`'s optional
+                // outcome-binding `o` is materialized FRESH per exit-path
+                // (`emit_defer_body_with_outcome`'s `#define`), never an
+                // outer capture; without this arm it fell through to `_ =>
+                // {}` same as the ident-collection gap, so a body reading
+                // `o` would have been misclassified as a free outer
+                // reference (spuriously "captured") once the ident-side gap
+                // above is fixed. Also scans the body itself for any of ITS
+                // OWN nested bindings (match arms, closures, …), same as
+                // every other arm's sub-expression scan.
+                Stmt::Defer { outcome_binding, body, .. } => {
+                    if let Some(name) = outcome_binding {
+                        out.insert(name.clone());
+                    }
+                    Self::collect_bound_names_expr(body, out);
+                }
                 _ => {}
             }
         }
@@ -15483,6 +15528,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     Self::collect_idents_expr(t, out);
                 }
             }
+            // [M-nv-defer-captured-var-in-detach-undeclared] fix (221.1 Ф.2
+            // #22): a bare `defer EXPR` statement's body was never scanned
+            // for free identifiers here — the ONLY caller of
+            // `collect_idents_stmt` (via `collect_idents_block`) that feeds
+            // `emit_spawn`/`emit_detach`'s capture-collection pass
+            // (`refs`/`captures`, see there). A variable referenced ONLY
+            // inside a `defer` statement (never anywhere else in the SAME
+            // spawn/detach body) was therefore invisible to that pass —
+            // no ctx-struct field ever got created for it, and the body's
+            // own emission (via `emit_defer_body_void`/`emit_expr`, which DOES
+            // correctly consult `current_spawn_captures` when a name IS a
+            // known capture) fell through to the bare-identifier case
+            // instead — `CC-FAIL "use of undeclared identifier '<name>'"`
+            // (the ctx struct genuinely has no such field; this isn't a
+            // capture-access rewrite bug like markers #9/#16, it's a
+            // capture-DISCOVERY bug one step upstream). Every OTHER
+            // reference to the same variable elsewhere in the block (e.g. a
+            // plain statement using it, or the checker's own D415 capture
+            // analysis) was already correctly discovered — only the
+            // `defer`-only-reference shape hit this gap, matching the "other
+            // uses of the same variable resolve correctly" observation in
+            // the original report. Mirrors `Stmt::ConsumeScope`'s identical
+            // "scan a statement-carried sub-expression for free idents"
+            // shape immediately above.
+            Stmt::Defer { body, .. } => Self::collect_idents_expr(body, out),
             _ => {}
         }
     }
@@ -23586,12 +23656,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // no return type, caller chain change requires массивный refactor).
         // Strict mode: record E7001 в strict_errors; emit_module finalization
         // fails build если non-empty. См. record_strict_error doc.
-        let param_c_tys: Vec<String> = fn_decl.params.iter()
-            .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|e|
-                self.record_strict_error(
-                    &format!("register_mono_instance `{}` param `{}`", fn_decl.name, p.name),
-                    &e,
-                )))
+        // [M-generic-static-method-value-arg-addr-mismatch] fix (221.1 Ф.2
+        // #26): same gap as `register_mono_method_instance`'s identical fix
+        // (this file) — this is the FREE-FUNCTION twin. Without consulting
+        // `free_fn_byref_flag` here, a mono'd GENERIC free fn with a large
+        // `ro` value-struct param (Plan 172.14) declared it BY VALUE while
+        // any call site passing that same value-struct to it (or, as in the
+        // live repro, a generic free fn forwarding its own by-value param
+        // straight into a flagged callee) produced a value/pointer mismatch.
+        let param_c_tys: Vec<String> = fn_decl.params.iter().enumerate()
+            .map(|(p_idx, p)| {
+                let mut ty_c = self.type_ref_to_c(&p.ty).unwrap_or_else(|e|
+                    self.record_strict_error(
+                        &format!("register_mono_instance `{}` param `{}`", fn_decl.name, p.name),
+                        &e,
+                    ));
+                if self.free_fn_byref_flag(&fn_decl.name, p_idx) {
+                    ty_c.push('*');
+                }
+                ty_c
+            })
             .collect();
         // Plan 70 PhaseB2 (session 2): cascade-blocked site (register_mono_instance).
         // Outer None = no return_type declared (void fn — legitimate unit).
@@ -23670,12 +23754,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let recv_c = self.receiver_c_type(recv_type, recv_mutable);
         // Plan 70 PhaseB1 (session 2): cascade-blocked site (register_mono_method_instance —
         // no return type). Strict mode: record E7001 в strict_errors.
-        let param_c_tys: Vec<String> = fn_decl.params.iter()
-            .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|e|
-                self.record_strict_error(
-                    &format!("register_mono_method_instance `{}.{}` param `{}`", recv_type, fn_decl.name, p.name),
-                    &e,
-                )))
+        // [M-generic-static-method-value-arg-addr-mismatch] fix (221.1 Ф.2
+        // #26): mirrors the identical fix in `emit_monomorphized_method_
+        // scoped_inner`'s own `param_c_tys` (same file, this instance's
+        // DEFINITION) — this is the FORWARD-DECL twin, and without this same
+        // `method_byref_flag` check the forward decl kept declaring the
+        // param BY VALUE even after the definition was fixed to `T*`,
+        // itself now a forward-decl/definition C conflict. See the
+        // definition-side comment for the full root-cause note.
+        let param_c_tys: Vec<String> = fn_decl.params.iter().enumerate()
+            .map(|(p_idx, p)| {
+                let mut ty_c = self.type_ref_to_c(&p.ty).unwrap_or_else(|e|
+                    self.record_strict_error(
+                        &format!("register_mono_method_instance `{}.{}` param `{}`", recv_type, fn_decl.name, p.name),
+                        &e,
+                    ));
+                if let Some(recv) = &fn_decl.receiver {
+                    if self.method_byref_flag(&recv.type_name, &fn_decl.name, p_idx) {
+                        ty_c.push('*');
+                    }
+                }
+                ty_c
+            })
             .collect();
         // Plan 70 PhaseB2 (session 2): cascade-blocked site (register_mono_method_instance).
         let ret_c = fn_decl.return_type.as_ref()
@@ -23848,12 +23948,44 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let recv_mutable = fn_decl.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
         let recv_c = self.receiver_c_type(recv_type, recv_mutable);
         // Plan 70 PhaseA3: strict — emit_monomorphized_method param/return.
-        let param_c_tys: Vec<String> = fn_decl.params.iter()
-            .map(|p| self.type_ref_to_c(&p.ty).map_err(|e| self.err_no_int_fallback(
-                &format!("mono'd method `{}.{}` param `{}`", recv_type, fn_decl.name, p.name),
-                &e,
-            )))
-            .collect::<Result<Vec<_>, _>>()?;
+        // [M-generic-static-method-value-arg-addr-mismatch] fix (221.1 Ф.2
+        // #26): this signature computation used to be a bare `type_ref_to_c`
+        // per param — unlike `params_c` (the non-generic method/free-fn
+        // signature path, ~L18819-18833), it NEVER consulted
+        // `method_byref_flag` (Plan 172.14: a large — >16B — `ro` value-
+        // struct param is auto-by-ref, `T*` in C). `build_method_byref_map`'s
+        // pre-pass registers the flag under the SOURCE-level (erased) type
+        // name (e.g. "Path"/"Wrap") from `fn_decl.receiver.type_name` — the
+        // SAME name this function already has via `fn_decl` — so the two
+        // paths were never actually looking at different keys; ONE of them
+        // (this one) simply never looked at all. Call-site codegen
+        // (`synthesize_method_byref_args`) DOES consult the same map at every
+        // static/instance method call and wraps a flagged arg in `&(...)` —
+        // so a generic static method's mono'd C signature declared the param
+        // BY VALUE while every call site passed a POINTER: CC-FAIL
+        // "passing 'T *' to parameter of incompatible type 'T'". Live repro:
+        // nova-http's `Path[T Deserialize].from_request(req ServerRequest)`
+        // (`ServerRequest` is an 8-field value record, past the 16B
+        // threshold) called as `Path[Concrete].from_request(req)` — reported
+        // by a downstream package worktree, blocking Plan 222.3 Ф.3
+        // extractors end-to-end. `mut`/in-out params intentionally NOT
+        // touched here (`param_is_inout_ptr`) — out of this marker's narrow
+        // scope, no live repro exercises it, and it would be a separate,
+        // unverified behavior change for generic-method mono instances.
+        let param_c_tys: Vec<String> = fn_decl.params.iter().enumerate()
+            .map(|(p_idx, p)| {
+                let mut ty_c = self.type_ref_to_c(&p.ty).map_err(|e| self.err_no_int_fallback(
+                    &format!("mono'd method `{}.{}` param `{}`", recv_type, fn_decl.name, p.name),
+                    &e,
+                ))?;
+                if let Some(recv) = &fn_decl.receiver {
+                    if self.method_byref_flag(&recv.type_name, &fn_decl.name, p_idx) {
+                        ty_c.push('*');
+                    }
+                }
+                Ok(ty_c)
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         let ret_c = match fn_decl.return_type.as_ref() {
             Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
                 &format!("mono'd method `{}.{}` return", recv_type, fn_decl.name),
@@ -25159,12 +25291,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         );
         // Compute concrete param types
         // Plan 70 PhaseA3: strict — emit_monomorphized_fn param translation.
-        let param_c_tys: Vec<String> = fn_decl.params.iter()
-            .map(|p| self.type_ref_to_c(&p.ty).map_err(|e| self.err_no_int_fallback(
-                &format!("mono'd fn `{}` param `{}`", fn_decl.name, p.name),
-                &e,
-            )))
-            .collect::<Result<Vec<_>, _>>()?;
+        // [M-generic-static-method-value-arg-addr-mismatch] fix (221.1 Ф.2
+        // #26): DEFINITION-side twin of `register_mono_instance`'s identical
+        // fix (this file) — see there for the full root-cause note.
+        let param_c_tys: Vec<String> = fn_decl.params.iter().enumerate()
+            .map(|(p_idx, p)| {
+                let mut ty_c = self.type_ref_to_c(&p.ty).map_err(|e| self.err_no_int_fallback(
+                    &format!("mono'd fn `{}` param `{}`", fn_decl.name, p.name),
+                    &e,
+                ))?;
+                if self.free_fn_byref_flag(&fn_decl.name, p_idx) {
+                    ty_c.push('*');
+                }
+                Ok(ty_c)
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         // Plan 70 PhaseB2 (session 2): strict — emit_monomorphized_fn ret_c.
         let ret_c = match fn_decl.return_type.as_ref() {
             Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
