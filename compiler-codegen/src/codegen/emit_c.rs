@@ -1211,6 +1211,21 @@ pub struct CEmitter {
     /// Maps local variable name → (param_c_types, return_c_type) for function-typed parameters.
     /// Used to emit proper function pointer calls for `body(args)` where body is a fn param.
     fn_param_sigs: HashMap<String, (Vec<String>, String)>,
+    /// [D52-амендмент, ОКНО-5 M-newtype-over-fn-type-unsupported / M-alias-of-
+    /// fn-type-not-callable] call-through: name of a declared `type X fn(A) ->
+    /// B` newtype OR `type X alias fn(A) -> B` (any alias chain resolving to
+    /// a fn-type) → the underlying `TypeRef::Func`. Populated ONCE up-front
+    /// in `emit_module` (scans `module.items` — cheap, independent of
+    /// `emit_type_decl`'s own ordering) so `resolve_fn_typeref` can treat a
+    /// PARAM/local of type `X` exactly like a bare `fn(A) -> B` value for the
+    /// `fn_param_sigs` call-dispatch mechanism below — `next(req)` on a
+    /// `Handler`-typed `next` forwards to the SAME `NOVA_CLOS_CALL_*` /
+    /// `NovaClosBase` codegen a plain fn-typed param already gets (§C-runtime,
+    /// D35), no new call-emission path needed. Newtype unwraps exactly ONE
+    /// level (mirrors D55 `single_wrap_candidates`'s single-wrap design —
+    /// the grammar only permits `type X fn(...)` directly, no chaining);
+    /// alias unwraps FULLY transparently (D52 alias-transparency, any depth).
+    fn_newtype_sigs: HashMap<String, TypeRef>,
     /// Plan 172.1 D402: unannotated ClosureLight let-bindings whose fn_param_sigs entry
     /// defaults to nova_int. Maps binding name → (param_names, body_expr). At call sites,
     /// we re-derive param/return types from the actual argument types + body inference
@@ -2334,6 +2349,7 @@ impl CEmitter {
             type_impl_protocols: HashMap::new(),
             type_set_members: HashMap::new(),
             fn_param_sigs: HashMap::new(),
+            fn_newtype_sigs: HashMap::new(),
             unanno_light_clos: HashMap::new(),
             array_param_fn_sigs: HashMap::new(),
             user_fn_sigs: HashMap::new(),
@@ -4670,6 +4686,67 @@ impl CEmitter {
         // (AllocKind::ValueHeapPromoted). Cheap: single AST walk; result
         // is empty (no allocations) если module has no value-records.
         self.escape_result = Some(crate::escape_analyze::analyze_module(module));
+
+        // [D52-амендмент, ОКНО-5] `fn_newtype_sigs` pre-scan: `type X fn(A)->B`
+        // (newtype, one level) / `type X alias fn(A)->B` (alias, transitive
+        // through any alias chain) → the underlying `Func` shape. Independent
+        // pre-pass over `module.items` (whole-CU merge, same source
+        // `all_fns` above reads) — cheap (name → TypeRef clone), no ordering
+        // dependency on `emit_type_decl`'s own emission loop, so every
+        // function body emitted below already sees the full map.
+        {
+            let mut newtype_raw: HashMap<String, TypeRef> = HashMap::new();
+            let mut alias_raw: HashMap<String, TypeRef> = HashMap::new();
+            for item in &module.items {
+                if let Item::Type(t) = item {
+                    match &t.kind {
+                        TypeDeclKind::Newtype(TypeRef::Func { .. }) => {
+                            if let TypeDeclKind::Newtype(inner) = &t.kind {
+                                newtype_raw.insert(t.name.clone(), inner.clone());
+                            }
+                        }
+                        TypeDeclKind::Alias(inner) => {
+                            alias_raw.insert(t.name.clone(), inner.clone());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            // Resolve alias chains transitively (D52 full transparency); a
+            // newtype-over-fn name reached at the END of an alias chain also
+            // counts (an alias of a newtype-over-fn is still call-through-able
+            // through the newtype, D52 §alias-transparency).
+            fn resolve_chain(
+                name: &str,
+                newtype_raw: &HashMap<String, TypeRef>,
+                alias_raw: &HashMap<String, TypeRef>,
+                depth: u32,
+            ) -> Option<TypeRef> {
+                if depth > 16 {
+                    return None; // cycle guard
+                }
+                if let Some(f) = newtype_raw.get(name) {
+                    return Some(f.clone());
+                }
+                if let Some(inner) = alias_raw.get(name) {
+                    match inner {
+                        TypeRef::Func { .. } => return Some(inner.clone()),
+                        TypeRef::Named { path, generics, .. } if generics.is_empty() => {
+                            if let Some(n2) = path.last() {
+                                return resolve_chain(n2, newtype_raw, alias_raw, depth + 1);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                None
+            }
+            for name in newtype_raw.keys().chain(alias_raw.keys()) {
+                if let Some(func_ty) = resolve_chain(name, &newtype_raw, &alias_raw, 0) {
+                    self.fn_newtype_sigs.insert(name.clone(), func_ty);
+                }
+            }
+        }
 
         // Plan 143.2 [M-opt-leaf-preempt-entry-elision]: whole-program
         // call-graph pre-pass computing which fns must KEEP their prologue
@@ -10779,6 +10856,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.resolved_type_to_c(&crate::types::ResolvedType::from_type_ref(ty))
     }
 
+    /// [D52-амендмент, ОКНО-5] call-through resolver: is `ty` — directly, or
+    /// through a newtype-over-fn / alias-of-fn name (`fn_newtype_sigs`,
+    /// pre-scanned in `emit_module`) — structurally a `fn(...) -> ...`
+    /// value? Returns an OWNED `TypeRef::Func{..}` clone so every
+    /// `fn_param_sigs`-population call site can destructure it exactly like
+    /// the literal-`Func` guard it replaces (see call sites below).
+    /// Readonly/Mut/Uninit wrappers are transparent (mirror `wrap_kind_of`'s
+    /// own peel loop for the same reason: `ro next Handler` params/locals).
+    fn resolve_fn_typeref(&self, ty: &TypeRef) -> Option<TypeRef> {
+        match ty {
+            TypeRef::Func { .. } => Some(ty.clone()),
+            TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
+                self.resolve_fn_typeref(inner)
+            }
+            TypeRef::Named { path, generics, .. } if generics.is_empty() => {
+                let name = path.last()?;
+                self.fn_newtype_sigs.get(name).cloned()
+            }
+            _ => None,
+        }
+    }
+
     fn return_type_c(&self, f: &FnDecl) -> Result<String, String> {
         match &f.return_type {
             Some(ty) => self.type_ref_to_c(ty),
@@ -15946,7 +16045,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // inner closure signature so ClosureLight call-site args can infer
             // their parameter types without explicit annotations.
             for (idx, p) in f.params.iter().enumerate() {
-                if let TypeRef::Func { params: fp, return_type, .. } = &p.ty {
+                if let Some(_ft) = self.resolve_fn_typeref(&p.ty) {
+                    let TypeRef::Func { params: fp, return_type, .. } = &_ft else { unreachable!() };
                     // Plan 70 PhaseA1.2: strict mode — HOF param signature (inner closure).
                     let inner_ptys: Vec<String> = fp.iter()
                         .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
@@ -19219,7 +19319,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // call infers `nova_int` by default and an `if pred(h)` body fails the strict-bool check.
         let saved_fn_sigs: Vec<(String, Option<(Vec<String>, String)>)> = f.params.iter()
             .filter_map(|p| {
-                if let TypeRef::Func { params: fp, return_type, .. } = &p.ty {
+                if let Some(_ft) = self.resolve_fn_typeref(&p.ty) {
+                    let TypeRef::Func { params: fp, return_type, .. } = &_ft else { unreachable!() };
                     let erase_unk = |c: String| -> String { self.debt_erase_unknown_nova_ptr(c) };
                     // Plan 70 Cat B (intentional erasure): erase_unk нормализует
                     // unknown→nova_int для consistent pointer-stomping в emit_generic_*
@@ -24161,7 +24262,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 70 PhaseA3: strict — mono'd fn-typed param signature.
         let mut saved_fn_sigs: Vec<(String, Option<(Vec<String>, String)>)> = Vec::new();
         for (p, _c_ty) in fn_decl.params.iter().zip(&param_c_tys) {
-            if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &p.ty {
+            if let Some(_ft) = self.resolve_fn_typeref(&p.ty) {
+                let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &_ft else { unreachable!() };
                 let inner_ptys: Vec<String> = fp.iter()
                     .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
                         &format!("mono'd fn-typed param `{}` element", p.name),
@@ -25443,7 +25545,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 70 PhaseA3: strict — mono'd fn-typed param signature.
         let mut saved_fn_sigs: Vec<(String, Option<(Vec<String>, String)>)> = Vec::new();
         for (p, _c_ty) in fn_decl.params.iter().zip(&param_c_tys) {
-            if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &p.ty {
+            if let Some(_ft) = self.resolve_fn_typeref(&p.ty) {
+                let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &_ft else { unreachable!() };
                 let inner_ptys: Vec<String> = fp.iter()
                     .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
                         &format!("mono'd fn-typed param `{}` element", p.name),
@@ -26165,7 +26268,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.var_types.insert(p.name.clone(), pc);
                     }
                 }
-                if let crate::ast::TypeRef::Func { params: fp, return_type: fn_ret, .. } = &p.ty {
+                if let Some(_ft) = self.resolve_fn_typeref(&p.ty) {
+                    let crate::ast::TypeRef::Func { params: fp, return_type: fn_ret, .. } = &_ft else { unreachable!() };
                     let param_c_tys: Vec<String> = fp.iter()
                         .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
                         .collect();
@@ -26331,7 +26435,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 self.var_types.insert(p.name.clone(), ty_c);
                 // Register function-typed params so body() calls emit proper function pointer calls
-                if let TypeRef::Func { params: fp, return_type, .. } = &p.ty {
+                // [D52-амендмент, ОКНО-5]: `resolve_fn_typeref` ALSO recognizes a
+                // newtype-over-fn (`Handler`)/alias-of-fn param here — this is the
+                // primary site `next(req)` call-through (222.4 §4а) hits for a
+                // plain top-level `fn`.
+                if let Some(_ft) = self.resolve_fn_typeref(&p.ty) {
+                    let TypeRef::Func { params: fp, return_type, .. } = &_ft else { unreachable!() };
                     // Erase unknown Nova pointer types (Nova_T*, Nova_U*, etc.) to nova_int.
                     // These appear in erased contexts like array extension methods (fn []T @map[U])
                     // where T and U are type params, not real Nova record/sum types.

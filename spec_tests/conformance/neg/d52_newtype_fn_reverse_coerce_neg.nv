@@ -1,0 +1,39 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// D52/D55 амендмент (ОКНО-5): `fn -> Handler` авто-коэрсия ОДНОНАПРАВЛЕННАЯ
+// (D55 «obvious single-wrapper coercion» — грамматика/single_wrap_candidates
+// ключуется ТОЛЬКО по `expected`-стороне, механизм всегда ОБОРАЧИВАЕТ вперёд,
+// никогда не разворачивает назад: обратной ветки «value is Named(X), X's
+// underlying matches expected — разверни X» не существует нигде в дизайне).
+// Прямое следствие видно уже на двух РАЗНЫХ newtype с ОДИНАКОВОЙ fn-сигнатурой:
+// nominal-типизация не растворяется — `D52NtHandler` и `D52NtMiddleware`
+// взаимно НЕ подставимы, хотя оба wrap'ают один и тот же `fn(D52NtReq) ->
+// D52NtResp`. (Честная попытка протестировать «Handler -> голый fn(...)»
+// напрямую наталкивается на ОТДЕЛЬНЫЙ, ПРЕДСУЩЕСТВОВАВШИЙ, не связанный с
+// newtype пробел чекера: `resolved_cat_of` для fn-типизированного `expected`
+// целиком коллапсирует в `Any` — bypass, НЕ проверяющий структуру ВООБЩЕ ни
+// для какого fn-значения, newtype или нет; см. backlog
+// [M-fn-type-expected-any-bypass] — заведено этим окном, отдельный, более
+// широкий класс, не в объёме этой задачи.)
+// docs/plans/222.3-extractors.md §5а + backlog-followups.md
+// [M-newtype-over-fn-type-unsupported].
+module neg.d52_newtype_fn_reverse_coerce_neg
+
+type D52NtReq value { path str }
+type D52NtResp value { body str }
+
+type D52NtHandler fn(D52NtReq) -> D52NtResp
+type D52NtMiddleware fn(D52NtReq) -> D52NtResp
+
+fn d52_nt_make_response(req D52NtReq) -> D52NtResp => { body: "hi" }
+
+fn d52_nt_accepts_middleware(m D52NtMiddleware) -> str => "ok"
+
+fn main() {
+    ro h D52NtHandler = d52_nt_make_response
+    // `h` incarne именованный тип `D52NtHandler` — авто-коэрсия работает
+    // ТОЛЬКО из голой fn, НЕ между двумя разными newtype-обёртками одной
+    // сигнатуры (nominal, не structural). Ожидаем E7301.
+    ro r = d52_nt_accepts_middleware(h)
+    print(r)
+}

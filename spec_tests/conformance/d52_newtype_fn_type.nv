@@ -1,0 +1,62 @@
+// D52/D55 амендмент (ОКНО-5, 2026-07-23) — newtype над fn-типом:
+// `type Handler fn(A) -> B` (D52 форма) + авто-коэрсия fn→Handler (D55
+// "obvious single-wrapper coercion", fn-типы в таблице «родов») + call-through
+// (значение newtype-over-fn вызывается напрямую, `next(req)`) + D52
+// alias-прозрачность распространена на fn-типы (алиас fn-типа тоже вызываем).
+// Обоснование форварда вызова (в отличие от int-newtype, который НЕ форвардит
+// `+`): вызов — единственная осмысленная операция над функцией (Go
+// `type HandlerFunc func(...)` — прецедент). См. docs/plans/222.3-extractors.md
+// §5а + docs/plans/222.4-middleware.md §4а + docs/plans/backlog-followups.md
+// [M-newtype-over-fn-type-unsupported] / [M-alias-of-fn-type-not-callable].
+// Spec: spec/decisions/02-types.md (D52), spec/decisions/… (D55 amend).
+module spec_tests.conformance
+
+type D52FnReq value { path str }
+type D52FnResp value { body str }
+
+// Кусок 1: newtype над fn-типом ПАРСИТСЯ (было: "expected identifier, got `(`").
+type D52Handler fn(D52FnReq) -> D52FnResp
+
+// Кусок 4: alias fn-типа — значение обязано вызываться (D52-прозрачность).
+type D52HandlerAlias alias fn(int) -> str
+
+fn d52_make_response(req D52FnReq) -> D52FnResp => { body: "hi" }
+
+// Кусок 2: авто-коэрсия `fn → Handler` на call-arg позиции (D55 «obvious
+// single-wrapper coercion» — fn-типы теперь в таблице родов).
+fn d52_accept_handler(h D52Handler) -> str => "accepted"
+
+// Кусок 3: call-through — значение newtype-over-fn вызывается НАПРЯМУЮ
+// (`next(req)`, НЕ `next.handle(req)` — 222.4 §4а канон).
+fn d52_call_through(h D52Handler, req D52FnReq) -> str => h(req).body
+
+fn d52_double_str(x int) -> str => "doubled"
+
+// Кусок 4 helper: alias-типизированный параметр вызывается напрямую.
+fn d52_wrap_alias(next D52HandlerAlias, x int) -> str => next(x)
+
+test "D52 кусок1: newtype-над-fn-типом парсится + различим от голого fn (D52)" {
+    // Если бы парсинг был сломан, файл вообще не скомпилировался бы —
+    // сам факт компиляции ЭТОГО теста подтверждает кусок 1.
+    ro req = D52FnReq { path: "/" }
+    ro resp = d52_make_response(req)
+    assert(resp.body == "hi")
+}
+
+test "D52 кусок2: авто-коэрсия fn -> Handler на call-arg позиции (D55 amend)" {
+    // `d52_make_response` — голая функция `fn(D52FnReq) -> D52FnResp`;
+    // `d52_accept_handler` ожидает `D52Handler` (newtype) — авто-подъём.
+    ro r = d52_accept_handler(d52_make_response)
+    assert(r == "accepted")
+}
+
+test "D52 кусок3: call-through — next(req) вызывает newtype-over-fn напрямую" {
+    ro req = D52FnReq { path: "/x" }
+    ro r = d52_call_through(d52_make_response, req)
+    assert(r == "hi")
+}
+
+test "D52 кусок4: alias fn-типа вызывается напрямую (D52-прозрачность, было E_CALL_NOT_CALLABLE)" {
+    ro r = d52_wrap_alias(d52_double_str, 5)
+    assert(r == "doubled")
+}

@@ -1,0 +1,37 @@
+// EXPECT_CC_ERROR redefinition
+//
+// D55 амендмент (ОКНО-5): «двусмысленный подъём» — ДВА newtype над ОДНИМ и
+// тем же fn-типом (`D55AmbHandler`/`D55AmbMiddleware`, оба
+// `fn(D55AmbReq) -> D55AmbResp`) в скоупе, плюс ДВА overload'а `process`,
+// различающихся ТОЛЬКО этим newtype-параметром. Голая fn-функция
+// (`d55_amb_make_response`) авто-коэрсится в ОБА candidate-типа одинаково
+// хорошо — чекер (Ф.0 проба, ОКНО-5) НЕ детектирует эту двусмысленность на
+// Nova-уровне (известный, ДОКУМЕНТИРОВАННЫЙ класс —
+// `[M-172.1-free-fn-multi-overload-ambiguous]` / «ЛОВУШКА» из
+// docs/plans/222.3-extractors.md §5: «резолв generic-overload по
+// арности+bound … [M-concrete-instance-arity-overload-mangle]»), НО падает
+// ЧЕСТНО на C-уровне: оба overload'а стирают fn-newtype параметр к
+// одинаковому `void*` (D52/D55 fn-erasure), поэтому мангл КОЛЛИДИРУЕТ
+// (`nova_fn_process` дважды) — clang report'ит `redefinition of
+// 'nova_fn_process'`. Честная диагностика (компиляция падает, НЕ тихий
+// miscompile молча выбирающий один overload) — просто на уровень C, а не
+// чистым Nova-diagnostic. Улучшение диагностики (детект на checker-уровне
+// ДО C) — вне объёма этого окна, см. backlog
+// [M-fn-newtype-overload-ambiguity-not-checker-caught].
+module neg.d55_fn_newtype_ambiguous_lift_neg
+
+type D55AmbReq value { path str }
+type D55AmbResp value { body str }
+
+type D55AmbHandler fn(D55AmbReq) -> D55AmbResp
+type D55AmbMiddleware fn(D55AmbReq) -> D55AmbResp
+
+fn process(h D55AmbHandler) -> str => "handler-path"
+fn process(m D55AmbMiddleware) -> str => "middleware-path"
+
+fn d55_amb_make_response(req D55AmbReq) -> D55AmbResp => { body: "hi" }
+
+fn main() {
+    ro r = process(d55_amb_make_response)
+    print(r)
+}

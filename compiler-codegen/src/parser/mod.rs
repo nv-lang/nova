@@ -4233,23 +4233,34 @@ impl Parser {
         // Note: bottom-тип `never` — встроенный примитив (Plan 76), не
         // объявляется через `type` — empty-sum здесь к нему не относится.
         {
-            let is_body_end = matches!(
-                self.peek().kind,
-                TokenKind::Newline
-                    | TokenKind::Eof
-                    | TokenKind::KwFn
-                    | TokenKind::KwType
-                    | TokenKind::KwConst
-                    | TokenKind::KwExport
-                    | TokenKind::KwImport
-                    | TokenKind::KwTest
-                    | TokenKind::KwModule
-                    // Plan 100.4.1 fix: outer doc-comment `///` начинает new
-                    // top-level item (attached to next decl). After bodyless
-                    // type, doc-comment следует к next type/fn — terminate
-                    // empty-sum body. Inner `//!` тоже attaches к enclosing.
-                    | TokenKind::DocComment { .. }
-            );
+            // [D52-амендмент, ОКНО-5] `type Handler fn(A) -> B` — newtype над
+            // fn-типом. Голый `KwFn` здесь неоднозначен: настоящий следующий
+            // top-level `fn name(...)` ВСЕГДА несёт identifier сразу после
+            // `fn` (top-level fn без имени не существует), тогда как
+            // fn-TYPE-body начинается `fn(` — сразу `(`, без имени
+            // (`parse_fn_type_signature` требует `fn` `(` подряд). Поэтому
+            // `KwFn` считаем концом (пустой sum, `fn` — следующая декларация)
+            // ТОЛЬКО когда следующий токен ПОСЛЕ `fn` НЕ `(` — иначе это
+            // fn-type body, продолжаем в общий `_ => parse_type()` arm ниже.
+            let kwfn_is_next_decl = matches!(self.peek().kind, TokenKind::KwFn)
+                && !matches!(self.peek_at(1).kind, TokenKind::LParen);
+            let is_body_end = kwfn_is_next_decl
+                || matches!(
+                    self.peek().kind,
+                    TokenKind::Newline
+                        | TokenKind::Eof
+                        | TokenKind::KwType
+                        | TokenKind::KwConst
+                        | TokenKind::KwExport
+                        | TokenKind::KwImport
+                        | TokenKind::KwTest
+                        | TokenKind::KwModule
+                        // Plan 100.4.1 fix: outer doc-comment `///` начинает new
+                        // top-level item (attached to next decl). After bodyless
+                        // type, doc-comment следует к next type/fn — terminate
+                        // empty-sum body. Inner `//!` тоже attaches к enclosing.
+                        | TokenKind::DocComment { .. }
+                );
             if is_body_end {
                 let last_span = self.tokens[self.pos.saturating_sub(1)].span;
                 let kind = TypeDeclKind::Sum(Vec::new());

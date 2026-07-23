@@ -20134,6 +20134,16 @@ struct BoundCtx<'a> {
     /// recognized inline. Heap records / protocols / typevars are absent here,
     /// so their `mut` params keep the handle ABI unconstrained (Р6).
     value_type_names: std::collections::HashSet<String>,
+    /// [D52-амендмент, ОКНО-5, M-newtype-over-fn-type-unsupported /
+    /// M-alias-of-fn-type-not-callable]: name of a declared `type X fn(A) ->
+    /// B` newtype (one level — the grammar itself disallows chaining) OR
+    /// `type X alias fn(A) -> B` (any alias chain, resolved fully
+    /// transitively — D52 alias-transparency) → the underlying `Func`
+    /// shape. Lets `check_call_callee_not_local_shadow` treat `X`-typed
+    /// locals as callable (call-through, 222.3 §5а). Mirrors codegen's own
+    /// independent `fn_newtype_sigs` pre-scan in `emit_c.rs` (same design,
+    /// no shared state — checker and codegen run as separate passes).
+    fn_type_names: HashMap<String, TypeRef>,
     /// [M-property-testing-rot] (Plan 172.13 батч 3): generic-param NAMES of the
     /// fn whose body is currently being walked. A nested call inside a bounded
     /// generic body forwards the enclosing fn's typevar (`property[G Generator[T], T]`
@@ -20203,6 +20213,64 @@ impl<'a> BoundCtx<'a> {
         value_scan(&module.items, &mut value_type_names);
         for pf in &module.peer_files {
             value_scan(&pf.items_here, &mut value_type_names);
+        }
+        // [D52-амендмент, ОКНО-5]: callable-fn-type names (newtype-over-fn /
+        // alias-of-fn) — see `fn_type_names` doc above.
+        let mut fn_type_names: HashMap<String, TypeRef> = HashMap::new();
+        {
+            let mut newtype_raw: HashMap<String, TypeRef> = HashMap::new();
+            let mut alias_raw: HashMap<String, TypeRef> = HashMap::new();
+            let fn_type_scan = |items: &[Item],
+                                 newtype_raw: &mut HashMap<String, TypeRef>,
+                                 alias_raw: &mut HashMap<String, TypeRef>| {
+                for item in items {
+                    if let Item::Type(t) = item {
+                        match &t.kind {
+                            TypeDeclKind::Newtype(inner @ TypeRef::Func { .. }) => {
+                                newtype_raw.insert(t.name.clone(), inner.clone());
+                            }
+                            TypeDeclKind::Alias(inner) => {
+                                alias_raw.insert(t.name.clone(), inner.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            };
+            fn_type_scan(&module.items, &mut newtype_raw, &mut alias_raw);
+            for pf in &module.peer_files {
+                fn_type_scan(&pf.items_here, &mut newtype_raw, &mut alias_raw);
+            }
+            fn resolve_fn_chain(
+                name: &str,
+                newtype_raw: &HashMap<String, TypeRef>,
+                alias_raw: &HashMap<String, TypeRef>,
+                depth: u32,
+            ) -> Option<TypeRef> {
+                if depth > 16 {
+                    return None; // cycle guard
+                }
+                if let Some(f) = newtype_raw.get(name) {
+                    return Some(f.clone());
+                }
+                if let Some(inner) = alias_raw.get(name) {
+                    match inner {
+                        TypeRef::Func { .. } => return Some(inner.clone()),
+                        TypeRef::Named { path, generics, .. } if generics.is_empty() => {
+                            if let Some(n2) = path.last() {
+                                return resolve_fn_chain(n2, newtype_raw, alias_raw, depth + 1);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                None
+            }
+            for name in newtype_raw.keys().chain(alias_raw.keys()) {
+                if let Some(f) = resolve_fn_chain(name, &newtype_raw, &alias_raw, 0) {
+                    fn_type_names.insert(name.clone(), f);
+                }
+            }
         }
         for item in &module.items {
             match item {
@@ -20307,7 +20375,7 @@ impl<'a> BoundCtx<'a> {
             }
         }
 
-        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map, type_sets, impl_protocol_types, value_type_names, current_fn_generic_names: std::cell::RefCell::new(std::collections::HashSet::new()) }
+        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map, type_sets, impl_protocol_types, value_type_names, fn_type_names, current_fn_generic_names: std::cell::RefCell::new(std::collections::HashSet::new()) }
     }
 
     /// Plan 162 Ф.3: returns true iff method_name on type type_name is inherent
@@ -20965,22 +21033,44 @@ impl<'a> BoundCtx<'a> {
         // (Bug fix: the bare `TypeRef::Func` guard mis-fired on `*unsafe fn(...)`
         // locals, which ARE callable via `fp(...)` — repro
         // spec_tests/conformance/d216_uninit_rename_174_5.nv:32.)
-        fn is_callable_local_ty(ty: &TypeRef) -> bool {
+        //
+        // [D52-амендмент, ОКНО-5, M-newtype-over-fn-type-unsupported /
+        // M-alias-of-fn-type-not-callable]: a NAMED type also counts as
+        // callable when it's a name registered in `self.fn_type_names` —
+        // (a) `type X fn(A) -> B` (D52 newtype над fn-типом) — call-through:
+        // the ONLY sensible operation on a function-shaped newtype is
+        // calling it (222.3 §5а «why fn-newtype форвардит вызов, а
+        // int-newtype — нет»); or (b) `type X alias fn(A) -> B` (any alias
+        // chain) — D52 alias-transparency requires `X` behave exactly like
+        // the aliased fn-type, INCLUDING being callable (`[M-alias-of-fn-
+        // type-not-callable]` fix). See `fn_type_names` doc (`BoundCtx`
+        // field) for the pre-scan that builds this set.
+        fn is_callable_local_ty(
+            ty: &TypeRef,
+            fn_type_names: &HashMap<String, TypeRef>,
+            depth: u32,
+        ) -> bool {
+            if depth > 16 {
+                return false; // cycle guard (mirrors wrap_kind_of's own depth guard)
+            }
             match ty {
                 TypeRef::Func { .. } => true,
                 TypeRef::Pointer(inner, _)
                 | TypeRef::Uninit(inner, _)
                 | TypeRef::Readonly(inner, _)
                 | TypeRef::Mut(inner, _)
-                | TypeRef::Ref(inner, _) => is_callable_local_ty(inner),
+                | TypeRef::Ref(inner, _) => is_callable_local_ty(inner, fn_type_names, depth + 1),
+                TypeRef::Named { path, generics, .. } if generics.is_empty() => {
+                    path.last().map(|n| fn_type_names.contains_key(n)).unwrap_or(false)
+                }
                 _ => false,
             }
         }
         let ExprKind::Call { func, .. } = &e.kind else { return; };
         let ExprKind::Ident(name) = &func.kind else { return; };
         let Some(ty) = scope.get(name) else { return; };
-        if is_callable_local_ty(ty) {
-            return; // callable local (closure / fn-typed param / fn-pointer).
+        if is_callable_local_ty(ty, &self.fn_type_names, 0) {
+            return; // callable local (closure / fn-typed param / fn-pointer / newtype-over-fn / alias-of-fn).
         }
         errors.push(Diagnostic::new(
             format!(
