@@ -1,0 +1,15 @@
+// [M-ro-launder-via-mut-binding] probe I — D246-амендмент 2026-07-23 (Plan 224).
+// Тот же класс, что probe H, но источник — bare `ro`-локал, не параметр.
+//
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+
+module neg.m_ro_launder_i_local_arg_position_neg
+
+fn fill(mut v []int) {
+    v[0] = 1
+}
+
+fn main() -> () {
+    ro a = [1, 2, 3]
+    fill(a)
+}

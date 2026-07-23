@@ -4,7 +4,13 @@ import std.collections.vec.{Vec}
 import std.prelude.collections.{Next}
 import std.collections.vec_iter.{FilterIter}
 
-fn[I Next[T]] I mut @bfold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 migration, 2026-07-23):
+// `init` is now `mut` — the accumulator is genuinely in-out (the internal
+// `mut acc = init` rebinding + reassignment needs a mutable-content-view
+// source; a generic `Acc` cannot be statically proven value-safe, and the
+// STRICT norm applies uniformly). Callers passing a fresh rvalue (as this
+// file's own test does — literal `0`) are unaffected.
+fn[I Next[T]] I mut @bfold[Acc](mut init Acc, f fn(Acc, T) -> Acc) -> Acc {
     mut acc = init
     while true {
         match @next() {

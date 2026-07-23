@@ -1,0 +1,14 @@
+// [M-ro-launder-via-mut-binding] probe D — D246-амендмент 2026-07-23 (Plan 224).
+// Bare `ro a = ...` local (P7 freeze) отмывается через `mut b = a` — до
+// амендмента ORACLE F1 обходился (freeze не переживал ре-биндинг). Норма
+// СТРОГАЯ, не параметро-специфична.
+//
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+
+module neg.m_ro_launder_d_local_reinit_neg
+
+fn main() -> () {
+    ro a = [1, 2, 3]
+    mut b = a
+    b[0] = 99
+}

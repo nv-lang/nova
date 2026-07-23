@@ -1,0 +1,22 @@
+// [M-ro-launder-via-mut-binding] probe E — D246-амендмент 2026-07-23 (Plan 224).
+// RECLASSIFIED pos→neg (владелец 2026-07-23): чистый value-record БЕЗ
+// кучевых полей — копия объективно независима (нет owned-графа для утечки),
+// но СТРОГАЯ норма без исключений по классу хранения запрещает перенос
+// L1-ro источника в mut-цель ДАЖЕ здесь (единообразие; дверь — `.clone()`,
+// хотя для чисто-значимого типа она тривиальна/дублирует то, что copy уже
+// делает бесплатно).
+//
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+
+module neg.m_ro_launder_e_pure_value_record_neg
+
+type Point value {
+    mut x int
+    mut y int
+}
+
+fn main() -> () {
+    ro r = Point { x: 1, y: 2 }
+    mut w = r
+    w.x = 99
+}

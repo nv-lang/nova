@@ -17,7 +17,11 @@ fn bump(mut c Counter) -> () {
 }
 
 test "P1-A — mut-параметр функции принимается парсером и мутирует поле" {
-    ro c = Counter { value: 0 }
+    // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 migration,
+    // 2026-07-23): `c` is `mut` (was `ro`) — passing an `ro`-bound source
+    // into a `mut`-param is now `E_READONLY_COERCE` (STRICT norm); the
+    // caller must opt in to the mutation this test demonstrates.
+    mut c = Counter { value: 0 }
     bump(c)
     bump(c)
     bump(c)

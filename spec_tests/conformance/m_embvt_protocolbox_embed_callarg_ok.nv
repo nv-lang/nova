@@ -47,7 +47,12 @@ test "embed-vtable: embedded method reachable through a call-argument protocol-b
 }
 
 test "embed-vtable: embedded method reachable through a let-binding protocol-box" {
-    ro sp = MEVSpeaker { base: 40 }
+    // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 migration): `sp`
+    // is `mut` (was `ro`) — an `ro`-bound heap record coerced into a `mut`
+    // protocol-box binding is now `E_READONLY_COERCE` (STRICT norm); this
+    // test is about vtable-completeness, not ro/mut semantics, so a `mut`
+    // source is the correct, unrelated-to-the-bug fix.
+    mut sp = MEVSpeaker { base: 40 }
     mut g MEVGreeter = sp
     assert(g.base_greet() == 41)
     assert(g.greet() == 42)

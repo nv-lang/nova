@@ -57,7 +57,14 @@ test "@-mut method receiver IS a pointer to the caller's slot; mutation visible 
 }
 
 test "binding copy is an independent value: mutating the copy leaves the original (D228)" {
-    ro a = D228Vec3.new(1.0, 2.0, 3.0)
+    // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 migration, 2026-07-23):
+    // `a` is `mut` (was `ro`) — the STRICT norm now forbids an `ro`-bound
+    // source flowing into a `mut` target UNCONDITIONALLY (no value-record
+    // class exemption; probe E reclassified pos→neg by owner decision). The
+    // fact under test here — value-copy independence on assignment — does
+    // NOT depend on `a`'s OWN binding modifier, only on `D228Vec3`'s value
+    // allocation kind, so `mut a` demonstrates the identical contract.
+    mut a = D228Vec3.new(1.0, 2.0, 3.0)
     mut b = a            // copy-on-assign: b is an independent stack value
     b.scale_inplace(5.0)
     // b changed; a is untouched (value semantics, no shared heap identity).
