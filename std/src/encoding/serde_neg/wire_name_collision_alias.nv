@@ -4,6 +4,7 @@
 // runtime surprise here).
 module serde_neg.wire_name_collision_alias
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
+
 #impl(Serialize + Deserialize)
 type Bad value {
     ro a int

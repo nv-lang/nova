@@ -275,6 +275,7 @@ fn Option[T Serialize] @serialize[S Serializer](mut s S) -> Result[(), SerError]
         Some(v) => v.serialize(s)
     }
 }
+
 #unstable
 fn Option[T Deserialize].deserialize[D Deserializer](mut d D) -> Result[Option[T], DeError] {
     if d.is_null()? {
@@ -308,6 +309,7 @@ fn[T Serialize] []T @serialize[S Serializer](mut s S) -> Result[(), SerError] {
     }
     s.end_seq()
 }
+
 #unstable
 fn[T Deserialize] []T.deserialize[D Deserializer](mut d D) -> Result[[]T, DeError] {
     ro n = d.seq_len()?
@@ -337,6 +339,7 @@ fn HashMap[str, V Serialize] @serialize[S Serializer](mut s S) -> Result[(), Ser
     }
     s.end_map()
 }
+
 #unstable
 fn HashMap[str, V Deserialize].deserialize[D Deserializer](mut d D) -> Result[HashMap[str, V], DeError] {
     ro keys = d.map_keys()?

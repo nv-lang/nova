@@ -4,6 +4,7 @@
 // std/encoding/json codegen in the same CU. Rejected at compile time.
 module serde_neg.untagged
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
+
 #serde(untagged)
 #impl(Serialize + Deserialize)
 type Any enum

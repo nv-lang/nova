@@ -690,6 +690,7 @@ fn int @display(mut f Fmt) -> () {
     int_display_spec(sb, @, 0, 10, false, false, false, false, Align.Left, ' ')
     f.write(sb.into_str().bytes())
 }
+
 #impl(Debug)
 fn int @debug(mut f Fmt) -> () {
     consume sb = StringBuilder.new()
@@ -703,6 +704,7 @@ fn f64 @display(mut f Fmt) -> () {
     f64_display_spec(sb, @, 0, false, -1, false, false, Align.Left, ' ')
     f.write(sb.into_str().bytes())
 }
+
 #impl(Debug)
 fn f64 @debug(mut f Fmt) -> () {
     consume sb = StringBuilder.new()
@@ -721,6 +723,7 @@ fn f32 @display(mut f Fmt) -> () {
     f32_display_spec(sb, @, 0, Align.Left, ' ')
     f.write(sb.into_str().bytes())
 }
+
 #impl(Debug)
 fn f32 @debug(mut f Fmt) -> () {
     consume sb = StringBuilder.new()
@@ -734,6 +737,7 @@ fn bool @display(mut f Fmt) -> () {
     bool_display_spec(sb, @, 0, Align.Left, ' ')
     f.write(sb.into_str().bytes())
 }
+
 #impl(Debug)
 fn bool @debug(mut f Fmt) -> () {
     consume sb = StringBuilder.new()
@@ -747,6 +751,7 @@ fn char @display(mut f Fmt) -> () {
     char_display_spec(sb, @, 0, Align.Left, ' ')
     f.write(sb.into_str().bytes())
 }
+
 #impl(Debug)
 fn char @debug(mut f Fmt) -> () {
     consume sb = StringBuilder.new()
@@ -756,6 +761,7 @@ fn char @debug(mut f Fmt) -> () {
 
 #impl(Display)
 fn str @display(mut f Fmt) -> () { f.write(@bytes()) }
+
 #impl(Debug)
 fn str @debug(mut f Fmt) -> () {
     consume sb = StringBuilder.new()
