@@ -1,0 +1,82 @@
+// EXPECT_TIMEOUT_MS 20000
+// [221.1 #38] repro38f: like repro38e, but the inner spawn now DOES
+// `stream.share()` + `.read_to_vec()` (a real Net-effect op) racing the
+// `supervised(deadline:)` — isolates whether `TcpStream.share()`+read
+// specifically (not just "having accepted a connection before") is the
+// trigger for the second-invocation-times-out-instantly bug.
+module scratch38.repro38f
+
+import std.net.{TcpListener, TcpStream, SocketAddr, real_net}
+import std.time.duration
+
+fn try_once(tag str, s mut TcpStream) Net Time {
+    ro (tx, rx) = Channel.new(1)
+    mut timed_out = false
+    ro t0 = Monotonic.now()
+    ro dl = t0 + 60.to_seconds()
+    with Fail[TimeoutError] = |_e| { timed_out = true } {
+        supervised(deadline: dl) {
+            spawn consume ws = s.share() {
+                match ws.read_to_vec(4096) {
+                    Ok(chunk) => { ro _ = tx.try_send(chunk) }
+                    Err(_)    => ()
+                }
+            }
+        }
+    }
+    ro elapsed = Monotonic.now().elapsed_since(t0).millis()
+    if timed_out {
+        print("ZZDBG ${tag} TimedOut elapsed_ms=${elapsed.to_str()}")
+    } else {
+        match rx.try_recv() {
+            Some(chunk) => print("ZZDBG ${tag} got-bytes len=${chunk.len().to_str()} elapsed_ms=${elapsed.to_str()}")
+            None        => print("ZZDBG ${tag} NO-VALUE-no-timeout(?!) elapsed_ms=${elapsed.to_str()}")
+        }
+    }
+}
+
+fn run_test(tag str) Net Time Detach {
+    with Net = real_net() {
+        ro (port_tx, port_rx) = Channel.new(1)
+        supervised {
+            spawn {
+                consume lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                    Ok(consume l) => l
+                    Err(_) => { ro _ = port_tx.try_send(0 as u16); return }
+                }
+                ro _ = port_tx.try_send(lst.local_port())
+                match lst.accept() {
+                    Ok(consume stream) => {
+                        detach consume stream {
+                            try_once(tag, stream)
+                            stream.close()
+                        }
+                    }
+                    Err(_) => ()
+                }
+                (300).to_millis().sleep()
+                lst.close()
+            }
+            spawn {
+                ro port = match port_rx.recv() { Some(p) => p, None => 0 as u16 }
+                match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(consume conn) => {
+                        consume cli = conn
+                        ro _ = cli.write_str("hi")
+                        (200).to_millis().sleep()
+                        cli.close()
+                    }
+                    Err(_) => ()
+                }
+            }
+        }
+    }
+}
+
+test "run A: real accept()+share()+read_to_vec racing supervised(deadline:)" {
+    run_test("A")
+}
+
+test "run B: second call, sequential, same process" {
+    run_test("B")
+}

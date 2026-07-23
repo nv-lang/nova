@@ -1,0 +1,28 @@
+// EXPECT_COMPILE_ERROR E_METHOD_VALUE_STATIC_UNSUPPORTED
+//
+// [221.1 #37 guard, M-method-value-static-ret-type-ice] D35 §Method values
+// specifies THREE forms: closure, unbound-instance `Type.@method`, and
+// static `Type.method`. The static form (this fixture — a bare `Account.
+// new` bound to a value, NOT immediately called) is NOT YET properly
+// supported end-to-end: the checker/codegen cannot annotate its fn-pointer
+// TYPE. Before this guard landed, this shape reached codegen's LET-decl
+// type inference, which silently degraded to an EMPTY C type — the
+// generated declaration came out untyped (`mk = Account_new;`), surfacing
+// as a confusing downstream C-compile error (or an ICE in other call
+// shapes) instead of an honest diagnostic at the actual source of the
+// problem. This is a GUARD, not a feature — `Account.new(...)` (an actual
+// call) and `Account.@method` (the unbound-instance form) remain fully
+// legal; only the bare static-form VALUE binding is rejected here.
+
+module neg.method_value_static_form_neg
+
+type Account value {
+    id int
+}
+
+fn Account.new(id int) -> Account => { id }
+
+fn bad() {
+    ro mk = Account.new
+    ro _acc = mk(5)
+}

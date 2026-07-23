@@ -9477,6 +9477,41 @@ impl Parser {
                     ));
                 }
             }
+            // [221.1 №24 / D-amend D27] `[](T1, T2, ...)` — a parenthesized
+            // TYPE form (tuple-type shape, D27 `[]T ≡ Vec[T]` alias)
+            // immediately after an empty `[]` in EXPRESSION position,
+            // followed by a genuine type-usage continuation (`.`/`{`) —
+            // desugars to `Vec[<type>]` (the identical `TurboFish` shape a
+            // spelled-out `Vec[(T1, T2)]` already produces — reuses 100%
+            // of that existing static-dispatch machinery, no new codegen/
+            // typecheck path). Grammatically free: calling an empty
+            // literal (`[](...)` as a CALL) was always a type error before
+            // this amendment, so repurposing the shape loses no legal
+            // program (spec/decisions/03-syntax.md D27).
+            // Speculative + rollback (mirrors `try_parse_turbofish_args`):
+            // if the parenthesized form doesn't parse as a type, or isn't
+            // followed by a real type-usage continuation, fall through
+            // unchanged to the empty-literal-then-call parse — preserves
+            // the original diagnostic on a genuinely malformed call.
+            if matches!(self.peek().kind, TokenKind::LParen) {
+                let saved_pos = self.pos;
+                if let Ok(ty) = self.parse_type() {
+                    if matches!(self.peek().kind, TokenKind::Dot | TokenKind::LBrace) {
+                        let ty_span = ty.span();
+                        return Ok(Expr::new(
+                            ExprKind::TurboFish {
+                                base: Box::new(Expr::new(
+                                    ExprKind::Ident("Vec".to_string()),
+                                    start,
+                                )),
+                                type_args: vec![ty],
+                            },
+                            start.merge(ty_span),
+                        ));
+                    }
+                }
+                self.pos = saved_pos;
+            }
             return Ok(Expr::new(ExprKind::ArrayLit(Vec::new()), start.merge(end)));
         }
 
