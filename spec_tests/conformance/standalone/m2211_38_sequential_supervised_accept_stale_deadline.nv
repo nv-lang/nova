@@ -1,0 +1,164 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_TIMEOUT_MS 30000
+// Regression for [M-sequential-serve-instances-stale-state] (221.1 bug-sweep
+// #38, 2026-07-23). Two sequential supervised-accept tests in ONE process:
+// test A's accept-loop undergoes a REAL supervised(timeout:) cancellation;
+// before the fix, test B's inner supervised(deadline: now+60s) then timed
+// out instantly (~10-14ms) with test A's byte-identical, long-expired
+// deadline_ns.
+//
+// Root cause (proven by live trace, docs/cases/sequential-serve-scope-leak-
+// 2026-07-23.md): the worker pool arms lazily on the FIRST `spawn` of the
+// process — inside test A's `supervised(timeout: 3s)` block. Each worker's
+// process-lifetime bookkeeping scope (`w->scope`, runtime.c) was initialized
+// with plain `nova_scope_init`, whose D349 ambient-deadline inheritance
+// (`q->deadline_ns = _nova_active_scope->deadline_ns`) baked test A's
+// absolute deadline into every worker scope FOREVER. Any later nested
+// supervised block on a worker-run fiber (ambient scope = `w->scope`)
+// inherited the stale point; `nova_deadline_combine` keeps the EARLIER
+// (expired) one → instant bogus TimeoutError in an unrelated later test.
+// `nova_runtime_reset()` between tests can't help: it resets the calling
+// thread's TLS, not the worker-scope STRUCTS.
+//
+// Fix: `nova_scope_init_container` (fibers.h) — hermetic init for runtime
+// container scopes (worker pool `w->scope`, orphan scope): no ambient
+// deadline inheritance, no captured `saved_active_scope`.
+module standalone.m2211_38_sequential_supervised_accept_stale_deadline
+
+import std.net.{TcpListener, TcpStream, SocketAddr, real_net}
+import std.time.duration
+
+type ReadAttempt enum
+    | Bytes([]u8)
+    | TimedOut
+    | Errored
+
+fn read_attempt(s mut TcpStream, deadline Monotonic) Net Time -> ReadAttempt {
+    ro (tx, rx) = Channel.new(1)
+    mut timed_out = false
+    with Fail[TimeoutError] = |_e| { timed_out = true } {
+        supervised(deadline: deadline) {
+            spawn consume ws = s.share() {
+                match ws.read_to_vec(4096) {
+                    Ok(chunk) => { ro _ = tx.try_send(chunk) }
+                    Err(_)    => ()
+                }
+            }
+        }
+    }
+    if timed_out {
+        ReadAttempt.TimedOut
+    } else {
+        match rx.try_recv() {
+            Some(chunk) => ReadAttempt.Bytes(chunk)
+            None        => ReadAttempt.Errored
+        }
+    }
+}
+
+fn handle_one(stream mut TcpStream) Net Time -> bool {
+    ro t0 = Monotonic.now()
+    ro idle_dl = t0 + 60.to_seconds()
+    ro result = read_attempt(stream, idle_dl)
+    match result {
+        ReadAttempt.Bytes(chunk) => {
+            ro _ = stream.write_str("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+            true
+        }
+        ReadAttempt.TimedOut => false
+        ReadAttempt.Errored => false
+    }
+}
+
+test "instance A: accept-loop cancelled by real supervised(timeout:) — poisons nothing" {
+    with Net = real_net() {
+        ro (port_tx, port_rx) = Channel.new(1)
+        ro (got_tx, got_rx) = Channel.new(1)
+        with Fail[TimeoutError] = |_e| {} {
+            supervised(timeout: 3.to_seconds()) {
+                spawn {
+                    consume lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                        Ok(consume l) => l
+                        Err(_) => { ro _ = port_tx.try_send(0 as u16); return }
+                    }
+                    ro _ = port_tx.try_send(lst.local_port())
+                    mut running = true
+                    while running {
+                        match lst.accept() {
+                            Ok(consume stream) => {
+                                detach consume stream {
+                                    ro _ = handle_one(stream)
+                                    stream.close()
+                                }
+                            }
+                            Err(_) => { (20).to_millis().sleep() }
+                        }
+                    }
+                    lst.close()
+                }
+                spawn {
+                    ro port = match port_rx.recv() { Some(p) => p, None => 0 as u16 }
+                    match TcpStream.connect(SocketAddr.loopback(port)) {
+                        Ok(consume conn) => {
+                            consume cli = conn
+                            ro _ = cli.write_str("GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+                            match cli.read_to_vec(4096) {
+                                Ok(chunk) => { ro _ = got_tx.try_send(chunk) }
+                                Err(_) => ()
+                            }
+                            cli.close()
+                        }
+                        Err(_) => ()
+                    }
+                }
+            }
+        }
+        got_tx.close()
+        ro got = got_rx.try_recv() ?? []u8.new()
+        ro s = unsafe { got.to_str_unchecked() }
+        assert(s.contains("200"))
+    }
+}
+
+test "instance B: later supervised(deadline:) in same process gets a FRESH deadline" {
+    with Net = real_net() {
+        ro (port_tx, port_rx) = Channel.new(1)
+        ro (got_tx, got_rx) = Channel.new(1)
+        supervised {
+            spawn {
+                consume lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                    Ok(consume l) => l
+                    Err(_) => { ro _ = port_tx.try_send(0 as u16); return }
+                }
+                ro _ = port_tx.try_send(lst.local_port())
+                match lst.accept() {
+                    Ok(consume stream) => {
+                        ro _ = handle_one(stream)
+                        stream.close()
+                    }
+                    Err(_) => ()
+                }
+                lst.close()
+            }
+            spawn {
+                ro port = match port_rx.recv() { Some(p) => p, None => 0 as u16 }
+                match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(consume conn) => {
+                        consume cli = conn
+                        ro _ = cli.write_str("GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+                        match cli.read_to_vec(4096) {
+                            Ok(chunk) => { ro _ = got_tx.try_send(chunk) }
+                            Err(_) => ()
+                        }
+                        cli.close()
+                    }
+                    Err(_) => ()
+                }
+            }
+        }
+        got_tx.close()
+        ro got = got_rx.try_recv() ?? []u8.new()
+        ro s = unsafe { got.to_str_unchecked() }
+        assert(s.contains("200"))
+    }
+}
