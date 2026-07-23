@@ -884,6 +884,32 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
      * Idle scope (count=0) = ~100 bytes на стеке. */
 }
 
+/* [221.1 #38 / M-sequential-serve-instances-stale-state] (2026-07-23):
+ * hermetic init for RUNTIME-CONTAINER scopes (per-worker `w->scope`, the
+ * orphan scope) — long-lived bookkeeping structs that are NOT semantic
+ * children of whatever user scope happens to be `_nova_active_scope` at
+ * their (lazy) creation. Plain nova_scope_init inherits the ambient D349
+ * deadline (fibers.h:~875) + captures `saved_active_scope` — both are
+ * snapshots of the ARMING call-site. The worker pool arms lazily on the
+ * FIRST `spawn` of the process; if that happens inside a
+ * `supervised(timeout:)` block, every worker's process-lifetime scope is
+ * born with that block's absolute deadline baked in. Any LATER nested
+ * `supervised{}`/`supervised(deadline:)` scope_init'd on a worker fiber
+ * (ambient = `w->scope`) then inherits the long-EXPIRED deadline →
+ * nova_deadline_combine keeps the earlier (stale) point → instant bogus
+ * TimeoutError in an unrelated later test/request. Proven by live trace on
+ * scratch38/repro38g2 (sequential serve instances, 221.1 #38).
+ * Deadline/cancel enforcement for real children goes through their
+ * `_nova_parent_scope` (deliver_cancel walk / pending_remote), never
+ * through the worker scope's own deadline — clearing these fields loses
+ * nothing. `saved_active_scope` is likewise cleared: it would otherwise
+ * dangle at the armer's C stack frame for the rest of the process. */
+static inline void nova_scope_init_container(NovaFiberQueue* q) {
+    nova_scope_init(q);
+    q->deadline_ns = 0;
+    q->saved_active_scope = NULL;
+}
+
 /* Plan 175 (owner TODO closure, 2026-07-10): virtual-clock registry helpers.
  * See the NovaVClockEntry comment block above for the full design. These
  * are deliberately simple/non-atomic (single-thread contract, see there). */

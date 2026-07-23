@@ -1835,7 +1835,10 @@ static void _materialize_pool(void) {
          * ([M-211-preempt-flag-plain-race]). */
         __atomic_store_n(&w->preempt_flag, 0, __ATOMIC_RELAXED);
         w->current_fiber_start = 0;
-        nova_scope_init(&w->scope);
+        /* [221.1 #38] container-init: НЕ наследовать ambient deadline /
+         * saved_active_scope арм-сайта в вечный worker-scope (см.
+         * nova_scope_init_container, fibers.h). */
+        nova_scope_init_container(&w->scope);
         /* Plan 83-go-cmn Ф.1: per-worker fixed ring (inline, cannot fail). */
         nova_runq_init(&w->runq);
         /* Plan 44.5 Layer 5 park/wake: pre-alloc scope arrays on main thread
@@ -2678,8 +2681,12 @@ static void _orphan_scope_ensure_init(void) {
     }
     nova_mutex_lock(&_nova_orphan_mu);
     if (!_nova_orphan_scope_inited) {
-        /* Plan 22 Ф.7 nova_scope_init: heap-init lazy arrays. */
-        nova_scope_init(&_nova_orphan_scope);
+        /* Plan 22 Ф.7 nova_scope_init: heap-init lazy arrays.
+         * [221.1 #38] container-init: orphan scope арм-ится лениво на первом
+         * detach — тот же класс порчи, что worker-scope (стейл ambient
+         * deadline навсегда в static-структуре); плюс detach семантически
+         * СЕВЕРИТ deadline родителя (D349/D50). */
+        nova_scope_init_container(&_nova_orphan_scope);
         _nova_orphan_scope_inited = true;
     }
     if (!_nova_orphan_atexit_registered) {
