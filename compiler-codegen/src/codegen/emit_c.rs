@@ -9645,8 +9645,105 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let r = self.emit_const_expr_typed(right, target_ty_c)?;
                 Ok(format!("(({}) {} ({}))", l, op_str, r))
             }
+            // [M-d200-assoc-const-composite-value]: record-литерал в const RHS —
+            // top-level struct-инициализатор (.rodata), не runtime alloc/statements
+            // (unlike `emit_record_lit`, used by module-level `ro`/lazy-init и
+            // ordinary expression position). `inferred_map_v: None` guard mirrors
+            // the runtime RecordLit arm — a D55 map-coercion literal never reaches
+            // here (desugared to a HashMap-builder call long before const codegen,
+            // which would fail check_const_constexpr_ex upstream anyway).
+            ExprKind::RecordLit { type_name, fields, inferred_map_v: None } => {
+                self.emit_const_record_lit(type_name.as_deref(), fields, target_ty_c)
+            }
             _ => self.emit_const_expr(expr),
         }
+    }
+
+    /// [M-d200-assoc-const-composite-value] (2026-07-23): D200 finalisation —
+    /// composite (record-literal) assoc-const value. Builds a plain C
+    /// aggregate initialiser `{ .field = <value>, ... }` for a `static const
+    /// T Type_NAME = ...;` (or module-level `const NAME T = ...;`) — a real
+    /// compile-time `.rodata` constant, NOT the runtime `emit_record_lit`
+    /// alloc+statements path. Recurses into nested record-literal fields
+    /// (each leaf must bottom out scalar-constexpr through
+    /// `emit_const_expr_typed`); a field naming ANOTHER assoc/module const
+    /// (`Ident`) is handled transparently by that same recursive call
+    /// (its `Ident` arm already resolves other top-level consts).
+    ///
+    /// **Honest scope cut:** `str` fields are REJECTED with a clear
+    /// diagnostic rather than mis-emitted — `nova_str` at file scope needs
+    /// its OWN addressable `.rodata` byte buffer (`{(const uint8_t*)"...",
+    /// len}` — see `emit_const_decl`'s dedicated top-level `nova_str` arm),
+    /// which this generic struct-field path does not build. Only
+    /// scalars + nested records-of-scalars are supported (task scope,
+    /// backlog `[M-d200-assoc-const-composite-value]`).
+    fn emit_const_record_lit(
+        &mut self,
+        type_name: Option<&[String]>,
+        fields: &[crate::ast::RecordLitField],
+        target_ty_c: Option<&str>,
+    ) -> Result<String, String> {
+        // Which record's field-schema governs this literal: an explicit
+        // `Type { .. }` name wins (mirrors `emit_record_lit`'s own
+        // precedence); otherwise fall back to the contextual target C-type
+        // (the const's own type annotation, or — on a recursive call — the
+        // enclosing field's declared C-type).
+        let struct_name = if let Some(p) = type_name {
+            p.last().cloned()
+        } else {
+            target_ty_c.and_then(Self::debt_struct_name_from_c_type)
+        }.ok_or_else(|| {
+            "record literal `{ .. }` in const initialiser needs a resolvable \
+             type — annotate the const (`const NAME Type = { .. }`) or the \
+             enclosing field's declared type \
+             [M-d200-assoc-const-composite-value]".to_string()
+        })?;
+        let schema = self.record_schemas.get(&struct_name).cloned().ok_or_else(|| {
+            format!(
+                "cannot resolve field types for `{}` in const initialiser \
+                 (record schema not registered) [M-d200-assoc-const-composite-value]",
+                struct_name
+            )
+        })?;
+        let mut parts: Vec<String> = Vec::new();
+        for f in fields {
+            if f.is_spread {
+                return Err(
+                    "[E_CONST_NOT_CONSTEXPR] spread `...` not allowed в const \
+                     record-literal initialiser (D200)".to_string(),
+                );
+            }
+            let field_ty_c = schema.get(&f.name).cloned().ok_or_else(|| {
+                format!(
+                    "unknown field `{}` on type `{}` in const record-literal initialiser",
+                    f.name, struct_name
+                )
+            })?;
+            let val_expr = f.value.as_ref().ok_or_else(|| {
+                format!(
+                    "field shorthand `{{ {} }}` not supported in const record-literal \
+                     initialiser — use explicit `{}: <value>` (D200)",
+                    f.name, f.name
+                )
+            })?;
+            // Honest cut (task scope): str fields need a separately-addressed
+            // `.rodata` byte buffer this path doesn't build — reject with a
+            // clear diagnostic instead of mis-emitting.
+            if field_ty_c == "nova_str"
+                || matches!(&val_expr.kind, ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. })
+            {
+                return Err(format!(
+                    "str fields in assoc const not yet supported (field `{}`) — \
+                     only scalar and nested-record-of-scalars fields are supported \
+                     [M-d200-assoc-const-composite-value]",
+                    f.name
+                ));
+            }
+            let mangled = Self::mangle_field_name(&f.name);
+            let val_c = self.emit_const_expr_typed(val_expr, Some(&field_ty_c))?;
+            parts.push(format!(".{} = {}", mangled, val_c));
+        }
+        Ok(format!("{{ {} }}", parts.join(", ")))
     }
 
     fn emit_const_expr(&mut self, expr: &Expr) -> Result<String, String> {
@@ -9743,6 +9840,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     .unwrap_or_else(|| name.clone());
                 Ok(mangled)
             }
+            // [M-d200-assoc-const-composite-value]: constructor-call RHS
+            // (`= StatusCode.mk(200)`) is NOT extended to constexpr — a call
+            // is a runtime dispatch regardless of purity; D200 composite
+            // support covers ONLY record-LITERAL values (see
+            // `emit_const_record_lit`). Explicit `E_CONST_NOT_CONSTEXPR`
+            // wording matches the module-level const checker's vocabulary
+            // (`types/mod.rs::check_const_constexpr_ex`, which does not walk
+            // assoc-const RHS today — this codegen-level fallback is the
+            // only enforcement point for assoc consts).
+            ExprKind::Call { .. } => Err(
+                "[E_CONST_NOT_CONSTEXPR] constructor/function call not allowed \
+                 в const initialiser — only literals, arithmetic, record \
+                 literals из constexpr fields, и references к other consts \
+                 are allowed (D200).".to_string()
+            ),
             _ => Err(format!("non-constant expression in const declaration: {:?}", expr.kind)),
         }
     }
@@ -16626,26 +16738,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             return Ok(());
         }
-        // Plan 114.4.1 (D200): emit associated constants как top-level
-        // `static const T Type_NAME = literal;` в .rodata. Generic
-        // T-dependent assoc consts (sizeof(T) etc) — followup Ф.3
-        // [M-114.4.1-generic-per-mono]; non-generic + T-independent
-        // обрабатываются здесь.
-        for ac in &t.assoc_consts {
-            let ty_c = if let Some(ty) = &ac.ty {
-                self.type_ref_to_c(ty)?
-            } else {
-                self.infer_expr_c_type(&ac.value)
-            };
-            let val = self.emit_const_expr_typed(&ac.value, Some(&ty_c))
-                .map_err(|e| format!(
-                    "assoc const `{}.{}` codegen failed: {}",
-                    t.name, ac.name, e
-                ))?;
-            let symbol = format!("{}_{}", t.name, ac.name);
-            self.line(&format!("{}const {} {} = {};", self.top_level_storage(), ty_c, symbol, val));
-            self.var_types.insert(symbol, ty_c);
-        }
         // [M-sync-crossmodule…] (D381): make the type's own defining file the
         // current context so field-type references to colliding types resolve
         // (byte-identical when no collision — `current_emit_file_id` only steers
@@ -16746,6 +16838,40 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         // [M-sync-crossmodule…] restore prior emission-file context.
         self.current_emit_file_id = saved_emit_file;
+        // Plan 114.4.1 (D200): emit associated constants как top-level
+        // `static const T Type_NAME = literal;` в .rodata. Generic
+        // T-dependent assoc consts (sizeof(T) etc) — followup Ф.3
+        // [M-114.4.1-generic-per-mono]; non-generic + T-independent
+        // обрабатываются здесь.
+        //
+        // [M-d200-assoc-const-composite-value] (2026-07-23): this loop MUST
+        // run AFTER the `match &t.kind { .. }` above (record/value-record
+        // struct body + `record_schemas`/`type_aliases` registration for
+        // THIS type) — a composite value referencing the type's OWN shape
+        // (`const OK StatusCode = { code: 200 }` inside `type StatusCode`)
+        // needs both (a) `record_schemas[t.name]` populated so
+        // `emit_const_record_lit` can resolve field C-types, and (b) the
+        // `NovaValue_<Name>`/`Nova_<Name>` struct typedef textually emitted
+        // BEFORE this `static const` initialiser references the complete
+        // type (a self-referential const emitted where the old scalar-only
+        // loop ran, ABOVE the struct body, would be an incomplete-type C
+        // error the moment a composite value was attempted). Scalar assoc
+        // consts are unaffected — they never depended on struct layout.
+        for ac in &t.assoc_consts {
+            let ty_c = if let Some(ty) = &ac.ty {
+                self.type_ref_to_c(ty)?
+            } else {
+                self.infer_expr_c_type(&ac.value)
+            };
+            let val = self.emit_const_expr_typed(&ac.value, Some(&ty_c))
+                .map_err(|e| format!(
+                    "assoc const `{}.{}` codegen failed: {}",
+                    t.name, ac.name, e
+                ))?;
+            let symbol = format!("{}_{}", t.name, ac.name);
+            self.line(&format!("{}const {} {} = {};", self.top_level_storage(), ty_c, symbol, val));
+            self.var_types.insert(symbol, ty_c);
+        }
         // Plan 124.8 [M-124.8-zero-on-move] (2026-06-03): emit per-type
         // `Nova_T_zero_storage` helper для types помеченных #zero_on_move.
         // V1: helper доступен явному вызову; auto-injection в consume-call
@@ -31915,6 +32041,35 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let symbol = format!("{}_{}", parts[0], parts[1]);
                     if self.var_types.contains_key(&symbol) {
                         return Ok(symbol);
+                    }
+                }
+                // [M-d200-assoc-const-composite-value]: `Type.NAME.field...` —
+                // field access on a COMPOSITE assoc-const value (e.g.
+                // `StatusCode.OK.code`, `Rect.UNIT.origin.x`). `parts[0..2]`
+                // is the `Type_NAME` C-symbol (registered in `var_types` by
+                // the assoc-const emission loop regardless of whether its
+                // value is scalar or a record-literal); remaining parts are
+                // plain field-member reads on that value. Synthesize an
+                // `Ident(symbol)` + Member-chain and delegate to the general
+                // Member-access codegen — mirrors the local-var-shadow
+                // Member-chain synthesis above (parts.len() >= 2 && var_types
+                // contains parts[0]), just rooted at the assoc-const symbol
+                // instead of a plain local. Uppercase-first gate excludes
+                // lowercase local vars whose OWN value happens to be a
+                // 2-segment prefix match (defensive, mirrors sibling gate).
+                if parts.len() > 2 {
+                    let symbol = format!("{}_{}", parts[0], parts[1]);
+                    if self.var_types.contains_key(&symbol)
+                        && parts[0].chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
+                    {
+                        let mut acc = Expr::new(ExprKind::Ident(symbol), expr.span);
+                        for p in &parts[2..] {
+                            acc = Expr::new(
+                                ExprKind::Member { obj: Box::new(acc), name: p.clone() },
+                                expr.span,
+                            );
+                        }
+                        return self.emit_expr(&acc);
                     }
                 }
                 // D109: qualified unit variant constructor: `Type.Variant`.

@@ -8094,6 +8094,46 @@ auto-derive `str.from(@)` pattern).
 > `StatusCode.OK`) — ОРТОГОНАЛЬНЫЙ codegen-пробел `[M-d200-assoc-const-composite-value]`,
 > с этой сменой поверхности не связан (нужен при любой форме).
 
+> **AMEND (финализация [M-d200-assoc-const-composite-value], 2026-07-23):**
+> codegen дореализован до составных (record-литерал) constexpr-значений —
+> «only scalar» драфт-оговорка СНЯТА в границах ниже.
+> ```nova
+> type StatusCode value {
+>     const OK StatusCode = { code: 200 }        // ✓ top-level struct-init в .rodata
+>     const NOT_FOUND StatusCode = { code: 404 }
+>     priv code int
+> }
+> StatusCode.OK.code                              // ✓ 200 — namespace + field read
+>
+> type Rect value {
+>     const UNIT Rect = { origin: { x: 0, y: 0 }, size: 1 }  // ✓ вложенная запись
+>     origin Point
+>     size int
+> }
+> Rect.UNIT.origin.x                              // ✓ 0 — рекурсивный field-chain
+> ```
+> **Границы (не расширено):**
+> - **Только скаляры + вложенные записи-из-скаляров.** `str`-поле внутри
+>   составного значения → честный отказ с диагностикой (`nova_str` на
+>   file-scope нуждается в отдельном адресуемом `.rodata`-буфере байт,
+>   которого этот путь не строит) — `[M-d200-assoc-const-composite-value]`
+>   в тексте ошибки. Скалярный `str` (не внутри записи) — работает, как и
+>   раньше (`const PROTOCOL str = "v2"` — отдельная ветка emit).
+> - **Конструктор-вызов НЕ constexpr.** `const OK StatusCode = StatusCode.mk(200)`
+>   → `E_CONST_NOT_CONSTEXPR` (runtime dispatch, не литерал) — не расширяется.
+> - Grammar/место объявления — БЕЗ ИЗМЕНЕНИЙ этим амендментом (то же
+>   in-body `const NAME [Тип] = <значение>`, что и скалярный случай, до
+>   миграции на out-of-body форму — см. AMEND выше).
+> **Codegen:** record-литерал эмитится designated-initializer'ом
+> (`{ .field = <value>, ... }`) поверх уже зарегистрированной
+> `record_schemas`/`type_aliases` схемы типа; рекурсия на вложенные поля
+> идёт через тот же constexpr-emitter (`emit_const_expr_typed`), так что
+> reference на другой top-level/assoc const в поле резолвится тем же путём,
+> что и скалярный RHS. Self-referential составное значение (константа
+> ссылается на СВОЙ ЖЕ тип) требует, чтобы struct-typedef типа был emit'нут
+> ДО const-инициализатора — assoc-const emission-loop поэтому эмитится
+> ПОСЛЕ struct/value-record body своего типа (было — до).
+
 ### Что
 
 > ⚠️ Ниже — исходный in-body текст, РЕТРАКТИРОВАН амендментом выше (форма

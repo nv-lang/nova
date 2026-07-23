@@ -1,0 +1,20 @@
+// D200 (Plan 114.4.1) NEG — [M-d200-assoc-const-composite-value]: honest scope
+// cut. A `str` field inside a composite assoc const is REJECTED with a clear
+// diagnostic rather than mis-emitted — `nova_str` at file scope needs its own
+// addressable `.rodata` byte buffer that the generic struct-field initialiser
+// path does not build. Only scalar + nested-record-of-scalars fields are
+// supported.
+
+// EXPECT_COMPILE_ERROR M-d200-assoc-const-composite-value
+
+module neg.d200_composite_str_field_neg
+
+type Config value {
+    const DEFAULT Config = { retries: 3, name: "x" }
+    retries int
+    name str
+}
+
+test "str field in composite assoc const — honest cut" {
+    assert(Config.DEFAULT.retries == 3)
+}

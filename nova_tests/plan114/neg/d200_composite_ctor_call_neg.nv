@@ -1,0 +1,23 @@
+// D200 (Plan 114.4.1) NEG — [M-d200-assoc-const-composite-value]:
+// constructor-call RHS is NOT extended to constexpr (pinned scope boundary,
+// not a design gap) — composite assoc-const support covers ONLY
+// record-literal values.
+
+// EXPECT_COMPILE_ERROR E_CONST_NOT_CONSTEXPR
+
+module neg.d200_composite_ctor_call_neg
+
+type StatusCode value {
+    priv code int
+}
+
+fn StatusCode.mk(c int) -> StatusCode => { code: c }
+
+type Wrap value {
+    const BAD StatusCode = StatusCode.mk(200)
+    x int
+}
+
+test "ctor-call assoc const rejected" {
+    assert(Wrap.BAD.code == 200)
+}

@@ -27,3 +27,47 @@ test "assoc const участвует в constexpr-арифметике на name
     ro doubled = D200Config.MAX_PEERS * 2
     assert(doubled == 2048)
 }
+
+// [M-d200-assoc-const-composite-value] финализация (2026-07-23): assoc const
+// со СОСТАВНЫМ (record-литерал) constexpr-значением — top-level C-символ
+// `Type_FieldName` со struct-инициализатором в .rodata (та же семантика
+// §«Семантика» п.2-3, расширенная с скаляров на записи). Скоуп: скаляры +
+// вложенные записи-из-скаляров. Конструктор-вызов (`= Type.mk(...)`) и
+// str-поля в композитной записи — НЕ расширены (см. neg-фикстуры
+// plan114/neg/d200_composite_ctor_call_neg.nv,
+// plan114/neg/d200_composite_str_field_neg.nv).
+
+type D200StatusCode value {
+    const OK D200StatusCode = { code: 200 }
+    const NOT_FOUND D200StatusCode = { code: 404 }
+    priv code int
+}
+
+type D200Point value {
+    x int
+    y int
+}
+
+type D200Rect value {
+    const UNIT D200Rect = { origin: { x: 0, y: 0 }, size: 1 }
+    origin D200Point
+    size int
+}
+
+test "assoc const композитное значение: namespace-доступ + чтение поля (D200 финализация)" {
+    assert(D200StatusCode.OK.code == 200)
+    assert(D200StatusCode.NOT_FOUND.code == 404)
+}
+
+test "assoc const композитное значение: вложенная запись (D200 финализация)" {
+    assert(D200Rect.UNIT.origin.x == 0)
+    assert(D200Rect.UNIT.origin.y == 0)
+    assert(D200Rect.UNIT.size == 1)
+}
+
+test "assoc const композитное значение: использование в выражении/сравнении (D200 финализация)" {
+    ro a = D200StatusCode.OK
+    ro b = D200StatusCode { code: 200 }
+    assert(a.code == b.code)
+    assert(D200StatusCode.OK.code + 1 == 201)
+}
