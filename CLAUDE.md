@@ -14,4 +14,4 @@
 - `git add` только по именам файлов; греп конфликт-маркеров ОДНОЙ командой с коммитом; без `git stash`; без AI-co-author-trailer'ов.
 - Синтаксис Nova не выдумывать — `spec/decisions/` + `examples/`.
 - `std/**` и `examples/**` обязаны собираться с `--strict-effects` (конвенция 2026-07-13).
-- Код M:N-рантайма (`nova_rt/**` concurrency: spawn/cancel/scope/driver/GC) — по нормам [docs/mn-coding-conventions.md](docs/mn-coding-conventions.md) (проактив: как писать без гонок; реактив — [docs/debugging-races.md](docs/debugging-races.md)).
+- Код **Vela** (M:N-рантайм, `nova_rt/**` concurrency: spawn/cancel/scope/driver/GC) — по нормам [docs/mn-coding-conventions.md](docs/mn-coding-conventions.md) (проактив: как писать без гонок; реактив — [docs/debugging-races.md](docs/debugging-races.md)). Имя: [naming-conventions.md](docs/naming-conventions.md) §1.2, план [224](docs/plans/224-vela-runtime-naming.md).
