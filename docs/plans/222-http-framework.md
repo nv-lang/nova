@@ -312,7 +312,44 @@ Roslyn-анализаторы ловят часть рассинхронов п�
 **Зависит:** 222.1 (Router) + 222.3 (extractors). **Зона:** компилятор (сбор метаданных) +
 nova-http. Крупный.
 
-### 222.9 — validation-derive (`#validate`) 🔴
+### 222.9 — validation-derive (`#validate`) ❌ ОТКЛОНЁН (владелец 2026-07-24)
+
+**РЕШЕНИЕ: #validate НЕ делаем — ни как компилятор-derive, ни как сахар.** Два изъяна (владелец
+нащупал оба): (1) derive с набором `min/max/len/regex` зашивает СПИСОК предикатов и их маппинг в
+функции ВНУТРЬ компилятора — свой валидатор без правки компилятора не добавить (та же http/domain-
+течь, что отклонённая route-верификация 222.8б); (2) протаскивание «на каком поле ошибка» делает
+синтез ещё более validation-специфичным. И это НЕ НУЖНО: в Nova валидация выражается ТИПОМ,
+валидным-по-построению (newtype `priv`+валидирующий `.new() -> Result`) — 0 строк компилятора,
+имя поля в ошибке появляется естественно, свой предикат = обычный .nv-код. FastAPI/Pydantic нужен
+`#validate` лишь потому, что в Python нет дешёвых типов-с-инвариантом; у нас есть.
+
+**КАНОН ВАЛИДАЦИИ (пример — как делать ПРАВИЛЬНО без #validate):**
+```nova
+// 1. Валидируемое поле — newtype с priv + валидирующий конструктор (тип валиден по построению):
+export type Age value { priv n int }
+export fn Age.new(v int) -> Result[Age, DeError] =>
+    if v >= 1 && v <= 120 { Ok(Age { n: v }) }
+    else { Err(DeError { kind: DeErrorKind.OutOfRange("age 1..120"), path: "age" }) }
+export fn Age @value() -> int => @n        // property-геттер (§4а-канон)
+
+export type Username value { priv s str }
+export fn Username.new(v str) -> Result[Username, DeError] =>
+    if v.len() >= 3 { Ok(Username { s: v }) }
+    else { Err(DeError { kind: DeErrorKind.TooShort("username >=3"), path: "username" }) }
+
+// 2. DTO складывается из валидируемых newtype — НИКАКОГО #validate:
+#impl(Deserialize)
+type CreateUser value { ro age Age, ro name Username }
+// serde-синтез .deserialize уже зовёт Age.deserialize/Username.deserialize (D435),
+// а те — через Age.new/Username.new: невалидный вход → typed DeError с path АВТОМАТИЧЕСКИ,
+// экстрактор Json[CreateUser] отдаёт 422 из DeError (nova-http, не компилятор).
+```
+Выигрыш против #validate: инвариант держится ВЕЗДЕ (не только на HTTP-границе — Age нельзя собрать
+невалидным нигде в программе); предикаты — обычный код (regex/кастом без грамматики атрибутов);
+компилятор не знает ни «validate», ни «min». Числовая грамматика атрибутов (`min=1`) — НЕ нужна
+для этого пути (была нужна только #validate). **Маркер сноса плана: 222.9 ретрактирован.**
+
+### 222.9-OLD — validation-derive (`#validate`) — историческая запись (отклонена, см. выше) 🔴
 **Дыра:** serde проверяет только ТИПЫ; «int» ≠ «int в 1..100». Pydantic даёт `min_length`/`regex`/
 `ge`/`le`/кастом → 422 с путями полей.
 **Идея:** `#validate(min=1, max=100)` рядом с `#serde`, синтез компилятором (та же машина
