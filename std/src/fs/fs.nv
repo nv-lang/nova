@@ -107,21 +107,27 @@ export fn OpenOptions.new() -> OpenOptions =>
 /// Open for reading.
 #stable(since = "0.1")
 export fn OpenOptions mut @read(v bool) -> @ { @rd = v }
+
 /// Open for writing.
 #stable(since = "0.1")
 export fn OpenOptions mut @write(v bool) -> @ { @wr = v }
+
 /// Append: every write goes to end-of-file (implies write).
 #stable(since = "0.1")
 export fn OpenOptions mut @append(v bool) -> @ { @ap = v }
+
 /// Truncate to zero length on open (requires write).
 #stable(since = "0.1")
 export fn OpenOptions mut @truncate(v bool) -> @ { @tr = v }
+
 /// Create the file if it does not exist.
 #stable(since = "0.1")
 export fn OpenOptions mut @create(v bool) -> @ { @cr = v }
+
 /// Create the file, failing if it already exists (`O_EXCL`, anti-TOCTOU).
 #stable(since = "0.1")
 export fn OpenOptions mut @create_new(v bool) -> @ { @cn = v }
+
 /// Unix create-mode escape hatch (`0o600`, …); ignored on Windows (Q12).
 #stable(since = "0.1")
 export fn OpenOptions mut @mode(v int) -> @ { @md = v }

@@ -2,6 +2,7 @@
 // Plan 180 Ф.6 (D382): `#serde(untagged)` cannot combine with tag/content.
 module serde_neg.conflict
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
+
 #serde(untagged)
 #serde(tag = "k")
 #impl(Serialize + Deserialize)

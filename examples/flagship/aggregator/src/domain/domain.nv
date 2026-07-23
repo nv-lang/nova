@@ -93,9 +93,11 @@ export type TaskResult value {
 #stable(since = "0.1")
 export fn TaskResult @is_done() -> bool =>
     match @status { Done(_) => true, Failed(_) => false, Cancelled => false }
+
 #stable(since = "0.1")
 export fn TaskResult @is_failed() -> bool =>
     match @status { Done(_) => false, Failed(_) => true, Cancelled => false }
+
 #stable(since = "0.1")
 export fn TaskResult @is_cancelled() -> bool =>
     match @status { Done(_) => false, Failed(_) => false, Cancelled => true }

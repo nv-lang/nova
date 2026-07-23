@@ -6,6 +6,7 @@
 // sum-type diagnostic that took over this file's old role).
 module serde_neg.bad_attr
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
+
 #serde(this_key_does_not_exist = "x")
 #impl(Serialize + Deserialize)
 type Bad enum

@@ -4,6 +4,7 @@
 // `#serde(...)`, not the type's.
 module serde_neg.attribute_misplaced_type_level
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
+
 #serde(rename = "x")
 #impl(Serialize + Deserialize)
 type Bad value { ro a int }

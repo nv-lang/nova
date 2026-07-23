@@ -4,6 +4,7 @@
 // last-field-wins overwrite would be a classic serde-adjacent footgun.
 module serde_neg.wire_name_collision_rename
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
+
 #impl(Serialize + Deserialize)
 type Bad value {
     #serde(rename = "x")

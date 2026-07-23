@@ -6,6 +6,7 @@
 // recognized grammar, but scoped away from sum types.)
 module serde_neg.rename_all_on_sum
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
+
 #serde(rename_all = "camelCase")
 #impl(Serialize + Deserialize)
 type Bad enum

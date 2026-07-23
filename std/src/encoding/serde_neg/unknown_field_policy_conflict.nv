@@ -4,6 +4,7 @@
 // on the same type is a self-contradiction, rejected at compile time.
 module serde_neg.unknown_field_policy_conflict
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
+
 #serde(allow_unknown, deny_unknown_fields)
 #impl(Serialize + Deserialize)
 type Bad value { ro a int }

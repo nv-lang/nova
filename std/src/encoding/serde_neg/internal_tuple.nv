@@ -2,6 +2,7 @@
 // Plan 180 Ф.6 (D382): internally-tagged requires unit/record variants only.
 module serde_neg.internal_tuple
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
+
 #serde(tag = "kind")
 #impl(Serialize + Deserialize)
 type Bad enum

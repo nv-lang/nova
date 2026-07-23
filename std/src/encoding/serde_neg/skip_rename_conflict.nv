@@ -4,6 +4,7 @@
 // no effect. Rejected at compile time rather than silently ignored.
 module serde_neg.skip_rename_conflict
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
+
 #impl(Serialize + Deserialize)
 type Bad value {
     ro a int
