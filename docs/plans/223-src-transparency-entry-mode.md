@@ -1,9 +1,13 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # План 223 — src-прозрачность в entry-режиме («src/ невидим всегда», D78 rev-5)
 
-**Статус:** 📋 УТВЕРЖДЁН; ПРИНЯТ В РАБОТУ 2026-07-23 (владелец: «что без вопросов — брать
-в работу») — СЛЕДУЮЩЕЕ компиляторное окно после «net2stream+imports» (та же зона
-imports.rs/резолвер — параллелить нельзя); далее в очереди окон: []-алиас-тип в expression (221.1 №24, решение владельца) → 214.1 (catch-panic-hook снят — реализуется композицией supervised+Stop в .nv, без рантайм-хука; пересмотр 2026-07-23).
+**Статус:** ✅ РЕАЛИЗОВАН 2026-07-23 (ОКНО-2, sonnet, ветка `p-okno2-derive-seed-223`) —
+Ф.0 (D78 rev-5 амендмент в 07-modules.md §Source root) + Ф.1 (`apply_src_transparency` +
+`expected_module_path_rev3`/`expected_module_path` bare-режим + `E_MODULE_DIR_SRC_RESERVED`
+в `compiler-codegen/src/manifest.rs`) + Ф.2 (10 файлов агрегатора мигрированы на
+`module {main,api,app,domain}`) + Ф.3 (4 фикстуры pos/neg в
+`spec_tests/conformance/d78_src_transparency/`, RED→GREEN). Таргетный гейт агента зелёный
+(см. §3); авторитетный гейт (conformance folder-CU целиком + флагман-CI) — за интегратором.
 **Приоритет:** P2, объём малый. **Очередь:** ДО тегов v0.1 — `module src.main` виден прямо в витрине-флагмане;
 язык-меняющее (резолюция модулей) → D-амендмент ОБЯЗАН ехать в слиянии реализации.
 
