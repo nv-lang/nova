@@ -614,6 +614,14 @@ impl<'a> Analyzer<'a> {
                     self.walk_expr(cur, recv, scope, x);
                 }
             }
+            // [E_COALESCE_RETURN_FALLBACK]: `X ?? return R` is always rejected
+            // by the checker before this pass runs — walked defensively, no
+            // allocation implied (structurally unreachable).
+            ExprKind::CoalesceReturnFallback(opt) => {
+                if let Some(x) = opt {
+                    self.walk_expr(cur, recv, scope, x);
+                }
+            }
             ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
                 // The success-unwrap path is non-allocating, but the typed-Err
                 // propagation path heap-boxes a value-type Err; the payload

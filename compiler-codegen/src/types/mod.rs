@@ -6829,6 +6829,14 @@ impl<'a> TypeCheckCtx<'a> {
                     self.walk_expr(e, gs, errors);
                 }
             }
+            // [E_COALESCE_RETURN_FALLBACK]: `X ?? return R` walked defensively
+            // here (generic-param usage scan runs regardless of the dedicated
+            // `check_coalesce_return_fallback` rejection elsewhere).
+            ExprKind::CoalesceReturnFallback(opt) => {
+                if let Some(e) = opt {
+                    self.walk_expr(e, gs, errors);
+                }
+            }
             ExprKind::With { body, .. } => self.walk_block(body, gs, errors),
             ExprKind::Forall { range, body, .. }
             | ExprKind::Exists { range, body, .. } => {
@@ -7471,6 +7479,51 @@ impl<'a> TypeCheckCtx<'a> {
             )),
             _ => {}
         }
+    }
+
+    /// [E_COALESCE_RETURN_FALLBACK] (D86 AMEND 2026-07-23, ретракция формы
+    /// `X ?? return R`): парсер принял форму в AST
+    /// (`ExprKind::CoalesceReturnFallback` — parse-then-diagnose, rustc-style),
+    /// эта функция ВСЕГДА отвергает её здесь, контекстной подсказкой по
+    /// (`тип X`, return-тип enclosing fn) — общая decision-функция
+    /// `coalesce_return_fallback_advice` переиспользуется линтом
+    /// `W_MANUAL_COALESCE` (Ф.3, `lints.rs`).
+    ///
+    /// В отличие от `check_try_carrier_match` (где совпавший носитель — OK,
+    /// молчим) — здесь диагностика срабатывает ВСЕГДА, форма отвергнута
+    /// целиком, не только carrier-mismatch.
+    fn check_coalesce_return_fallback(
+        &self,
+        a: &Expr,
+        ret_value: &Option<Box<Expr>>,
+        whole_span: Span,
+        gs: &HashSet<String>,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let op_ty = self.infer_expr_type(a, scope);
+        let ret_ty = self.current_fn_return_ty.borrow().clone();
+        let advice = coalesce_return_fallback_advice(op_ty.as_ref(), ret_ty.as_ref(), gs);
+        // Суффикс `?? return ...` целиком — от конца операнда `X` до конца
+        // всего выражения. Замена этого диапазона НЕ требует знания текста
+        // `X` (он остаётся нетронутым слева от span'а) — machine-applicable
+        // без source-map в чекере.
+        let suffix_span = Span::with_file(a.span.end, whole_span.end, a.span.file_id);
+        let ret_span = ret_value.as_ref().map(|v| v.span).unwrap_or(whole_span);
+        let (note, suggestion) = coalesce_advice_render(&advice, suffix_span);
+        let mut diag = Diagnostic::new(
+            "[E_COALESCE_RETURN_FALLBACK] `return` не может быть fallback'ом \
+             оператора `??` (D86, ретракция формы 2026-07-23). `??` подставляет \
+             значение и продолжает вычисление; ранний возврат — это поток \
+             управления, для него отдельные операторы."
+                .to_string(),
+            ret_span,
+        );
+        diag = diag.with_note(note);
+        if let Some(s) = suggestion {
+            diag = diag.with_suggestion(s);
+        }
+        errors.push(diag);
     }
 
     fn f1_expr(
@@ -9027,7 +9080,19 @@ impl<'a> TypeCheckCtx<'a> {
             }
             ExprKind::Coalesce(a, b) => {
                 self.f1_expr(a, gs, scope, errors);
-                self.f1_expr(b, gs, scope, errors);
+                // [E_COALESCE_RETURN_FALLBACK] (D86 AMEND 2026-07-23): `b` может
+                // быть `CoalesceReturnFallback` ТОЛЬКО как непосредственный правый
+                // операнд `??` (парсер гарантирует это, см. ast::mod.rs doc).
+                // Форма ВСЕГДА отвергается — не рекурсируем в f1_expr(b) (там нет
+                // самостоятельной семантики), а сразу строим контекстную
+                // диагностику.
+                if let ExprKind::CoalesceReturnFallback(ret_value) = &b.kind {
+                    self.check_coalesce_return_fallback(
+                        a, ret_value, e.span, gs, scope, errors,
+                    );
+                } else {
+                    self.f1_expr(b, gs, scope, errors);
+                }
                 // Plan 172.1 §0a (Coalesce): type = unwrapped inner of `a` ≡ type of `b`.
                 // `infer_expr_type` delegates to `b` as the canonical source.
                 // gs-gated: generic fallback stays on legacy.
@@ -9038,6 +9103,16 @@ impl<'a> TypeCheckCtx<'a> {
                             self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                         }
                     }
+                }
+            }
+            // [E_COALESCE_RETURN_FALLBACK]: reached only if `CoalesceReturnFallback`
+            // somehow appears OUTSIDE the immediate `??` RHS position (never
+            // constructed there by the parser) — defensive no-op walk of the
+            // optional payload, no diagnostic (the Coalesce arm above is the only
+            // legitimate detection point, since only it knows the LHS `X`).
+            ExprKind::CoalesceReturnFallback(opt) => {
+                if let Some(inner) = opt {
+                    self.f1_expr(inner, gs, scope, errors);
                 }
             }
             ExprKind::Member { obj, name } => {
@@ -19766,6 +19841,193 @@ fn typeref_mentions_any(ty: &TypeRef, names: &HashSet<String>) -> bool {
     }
 }
 
+/// Strip `ro`/`mut`/`uninit` wrappers and return `(последний сегмент пути,
+/// generics)` для `Named`-типа; `None` для остальных форм. Как
+/// `check_try_carrier_match`'s `typeref_named_base`, но свободная функция,
+/// дополнительно возвращающая generics (нужны для сравнения `E`-типа
+/// `Result[T,E]` в [`coalesce_return_fallback_advice`]).
+fn typeref_carrier_and_generics(t: &TypeRef) -> Option<(&str, &[TypeRef])> {
+    match t {
+        TypeRef::Named { path, generics, .. } => {
+            path.last().map(|s| (s.as_str(), generics.as_slice()))
+        }
+        TypeRef::Readonly(inner, _)
+        | TypeRef::Mut(inner, _)
+        | TypeRef::Uninit(inner, _) => typeref_carrier_and_generics(inner),
+        _ => None,
+    }
+}
+
+/// [E_COALESCE_RETURN_FALLBACK] / `W_MANUAL_COALESCE` (D86 AMEND 2026-07-23):
+/// какой канон предложить взамен `X ?? return R` (или зеркально, ручного
+/// `match X { Ok(v) => v, Err(_) => return R }`) — **одна decision-функция**,
+/// переиспользуемая и чекером (Ф.2, `check_coalesce_return_fallback`), и
+/// линтом (Ф.3, `W_MANUAL_COALESCE` в `lints.rs`). Чисто-функциональна: на
+/// входе только типы `X` и return-типа enclosing fn, никакого AST текста —
+/// сама подсказка (нужен ли embed произвольного under-`Err(..)` выражения)
+/// строится вызывающей стороной по `Suggestion`-политике (см. таблицу Ф.2 в
+/// брифе): первые три исхода не требуют embed'а исходного текста (голая
+/// замена суффикса `?? return ...` на фиксированную строку — machine-
+/// applicable), `MapErr`/`OkOr` требуют embed error-выражения, которого у
+/// чекера нет в виде текста (нет source-map в этом контексте) — эти два
+/// исхода получают `HasPlaceholders`, не `MachineApplicable` (честная
+/// applicability, а не бланкетная).
+pub(crate) enum CoalesceReturnAdvice {
+    /// `X?` — тот же носитель наружу (Option→Option, или Result→Result с
+    /// совпадающим `E`), D85.
+    SameCarrier,
+    /// `X.ok()?` — операнд `Result`, функция возвращает `Option`.
+    ResultToOptionFn,
+    /// `X.map_err(fn(_ E) -> F => <ошибка>)?` — Result→Result, но `E`
+    /// меняется на `F`. Closure-full параметр ОБЯЗАН быть типизирован (`_ E`,
+    /// не голый `_` — D22/closure-full grammar), поэтому носим оба имени:
+    /// `source_err_display` — читаемое имя `E` (операнда), `target_err_display`
+    /// — читаемое имя `F` (return-типа).
+    MapErr { source_err_display: String, target_err_display: String },
+    /// `X.ok_or(<ошибка>)?` — операнд `Option`, функция возвращает `Result`.
+    OkOr,
+    /// Оба типа известны и НИ один не `Option`/`Result` — обёртки для
+    /// проброса нет, explicit `match` законен (D86-остаток, `glob.nv`-класс).
+    NoBridgeKnown,
+    /// Тип операнда/return не выведен, либо несёт generic-параметр (`gs`) —
+    /// консервативное молчание (нет базы для конкретной подсказки).
+    Unknown,
+}
+
+pub(crate) fn coalesce_return_fallback_advice(
+    op_ty: Option<&TypeRef>,
+    ret_ty: Option<&TypeRef>,
+    gs: &HashSet<String>,
+) -> CoalesceReturnAdvice {
+    let (op_ty, ret_ty) = match (op_ty, ret_ty) {
+        (Some(a), Some(b)) => (a, b),
+        _ => return CoalesceReturnAdvice::Unknown,
+    };
+    if typeref_mentions_any(op_ty, gs) || typeref_mentions_any(ret_ty, gs) {
+        return CoalesceReturnAdvice::Unknown;
+    }
+    let op = match typeref_carrier_and_generics(op_ty) {
+        Some(v @ ("Option", _)) | Some(v @ ("Result", _)) => v,
+        Some(_) => return CoalesceReturnAdvice::NoBridgeKnown,
+        None => return CoalesceReturnAdvice::Unknown,
+    };
+    let ret = match typeref_carrier_and_generics(ret_ty) {
+        Some(v @ ("Option", _)) | Some(v @ ("Result", _)) => v,
+        Some(_) => return CoalesceReturnAdvice::NoBridgeKnown,
+        None => return CoalesceReturnAdvice::Unknown,
+    };
+    match (op.0, ret.0) {
+        ("Option", "Option") => CoalesceReturnAdvice::SameCarrier,
+        ("Result", "Result") => {
+            match (op.1.get(1), ret.1.get(1)) {
+                (Some(oe), Some(re)) if typeref_equal(oe, re) => CoalesceReturnAdvice::SameCarrier,
+                (Some(oe), Some(re)) => CoalesceReturnAdvice::MapErr {
+                    source_err_display: typeref_display(oe),
+                    target_err_display: typeref_display(re),
+                },
+                // E-тип одной из сторон не виден (malformed Result-generics) —
+                // не выведено, консервативное молчание.
+                _ => CoalesceReturnAdvice::Unknown,
+            }
+        }
+        ("Result", "Option") => CoalesceReturnAdvice::ResultToOptionFn,
+        ("Option", "Result") => CoalesceReturnAdvice::OkOr,
+        _ => unreachable!("op/ret restricted to Option|Result above"),
+    }
+}
+
+/// Общий рендер `CoalesceReturnAdvice` → (note-текст, опциональный
+/// `Suggestion`) — переиспользуется ОБОИМИ потребителями decision-функции:
+/// чекером (Ф.2, `check_coalesce_return_fallback`, `advice` из реального
+/// инференса) и линтом (Ф.3, `W_MANUAL_COALESCE` в `lints.rs`, `advice` из
+/// синтаксической эвристики над declared-типами — см. `lints.rs`
+/// doc-комментарий у вызывающей стороны). `suggestion_span` — куда положить
+/// `Suggestion` (у чекера это суффикс `?? return ...`; у линта — весь
+/// match-выражение, т.к. форма замены другая — линт переписывает match
+/// целиком, не суффикс).
+pub(crate) fn coalesce_advice_render(
+    advice: &CoalesceReturnAdvice,
+    suggestion_span: Span,
+) -> (String, Option<crate::diag::Suggestion>) {
+    use crate::diag::{Applicability, Suggestion};
+    match advice {
+        CoalesceReturnAdvice::SameCarrier => (
+            "`?` пробрасывает ту же обёртку наружу (D85) — тот же носитель что и \
+             return-тип функции."
+                .to_string(),
+            Some(Suggestion {
+                message: "замени на `X?`".to_string(),
+                span: suggestion_span,
+                replacement: "?".to_string(),
+                applicability: Applicability::MachineApplicable,
+            }),
+        ),
+        CoalesceReturnAdvice::ResultToOptionFn => (
+            "выражение даёт `Result`, функция возвращает `Option` — мост `.ok()` \
+             перед `?`."
+                .to_string(),
+            Some(Suggestion {
+                message: "замени на `X.ok()?`".to_string(),
+                span: suggestion_span,
+                replacement: ".ok()?".to_string(),
+                applicability: Applicability::MachineApplicable,
+            }),
+        ),
+        CoalesceReturnAdvice::MapErr { source_err_display, target_err_display } => (
+            format!(
+                "меняется тип ошибки (наружу `{}`) — канон `.map_err` (D85 отклонил \
+                 авто-`From` ради явности).",
+                target_err_display
+            ),
+            Some(Suggestion {
+                message: format!(
+                    "замени на `X.map_err(fn(_ {}) -> {} => <ошибка>)?` — впиши исходное \
+                     error-выражение вместо плейсхолдера (closure-full параметр типизирован \
+                     обязательно — голый `fn(_)` не парсится)",
+                    source_err_display, target_err_display
+                ),
+                span: suggestion_span,
+                replacement: format!(
+                    ".map_err(fn(_ {}) -> {} => /* исходное выражение ошибки */)?",
+                    source_err_display, target_err_display
+                ),
+                applicability: Applicability::HasPlaceholders,
+            }),
+        ),
+        CoalesceReturnAdvice::OkOr => (
+            "выражение даёт `Option`, функция возвращает `Result` — мост \
+             `.ok_or(<ошибка>)`."
+                .to_string(),
+            Some(Suggestion {
+                message: "замени на `X.ok_or(<ошибка>)?` — впиши исходное \
+                          error-выражение вместо плейсхолдера"
+                    .to_string(),
+                span: suggestion_span,
+                replacement: ".ok_or(/* исходное выражение ошибки */)?".to_string(),
+                applicability: Applicability::HasPlaceholders,
+            }),
+        ),
+        CoalesceReturnAdvice::NoBridgeKnown => (
+            "обёртки для проброса нет — здесь явный `match` законен и читается \
+             лучше: `match x { Some(v) => v, None => return None }` (или \
+             `Ok(v)`/`Err(_)` аналогично для `Result`) — например \
+             `std/src/path/glob.nv` (`return false` / `return (false, pi)` из \
+             `bool`/кортеж-функций, D86-остаток)."
+                .to_string(),
+            None,
+        ),
+        CoalesceReturnAdvice::Unknown => (
+            "тип операнда или return-тип функции не выведен (или несёт \
+             generic-параметр) — недостаточно контекста для конкретной \
+             подсказки; замени вручную по семантике: `?` / `.ok()?` / \
+             `.map_err(..)?` / `.ok_or(..)?`, либо явный `match`, если обёртки \
+             для проброса нет."
+                .to_string(),
+            None,
+        ),
+    }
+}
+
 /// **Plan 147 Ф.3 (D246, L3 pointee-capability):** given the type of a
 /// pointer-valued expression `p`, determine whether writing through it
 /// (`*p = v`) is allowed by the pointee capability (L3) — read FROM THE TYPE,
@@ -21084,6 +21346,11 @@ impl<'a> BoundCtx<'a> {
             }
             ExprKind::Throw(e) => self.walk_expr(e, scope, errors),
             ExprKind::Interrupt(opt) => {
+                if let Some(e) = opt { self.walk_expr(e, scope, errors); }
+            }
+            // [E_COALESCE_RETURN_FALLBACK]: checker-rejected in `f1_expr_inner`
+            // before this pass; walked defensively.
+            ExprKind::CoalesceReturnFallback(opt) => {
                 if let Some(e) = opt { self.walk_expr(e, scope, errors); }
             }
             ExprKind::With { body, .. } => self.walk_block(body, scope, errors),
@@ -23514,6 +23781,10 @@ impl<'a> CapabilityCtx<'a> {
             ExprKind::Interrupt(opt) => {
                 if let Some(e) = opt { self.walk_expr(e, state, errors); }
             }
+            // [E_COALESCE_RETURN_FALLBACK]: checker-rejected before this pass.
+            ExprKind::CoalesceReturnFallback(opt) => {
+                if let Some(e) = opt { self.walk_expr(e, state, errors); }
+            }
             // D.1.3: квантор — только в контрактах; обходим range и body.
             ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
                 self.walk_expr(range, state, errors);
@@ -24113,7 +24384,7 @@ fn pattern_capture_names_into(pat: &Pattern, out: &mut Vec<(String, bool, bool)>
 /// common expression/statement shapes; an unhandled shape is a (documented,
 /// conservative-direction) under-approximation — it can only cause a missed
 /// capture, never a false E_CONCURRENT_MUT_CAPTURE.
-fn capture_scan_block(b: &Block, shadow: &mut HashSet<String>, free: &mut HashSet<String>) {
+pub(crate) fn capture_scan_block(b: &Block, shadow: &mut HashSet<String>, free: &mut HashSet<String>) {
     for s in &b.stmts {
         capture_scan_stmt(s, shadow, free);
     }
@@ -24161,7 +24432,7 @@ fn capture_scan_stmt(s: &Stmt, shadow: &mut HashSet<String>, free: &mut HashSet<
     }
 }
 
-fn capture_scan_expr(e: &Expr, shadow: &mut HashSet<String>, free: &mut HashSet<String>) {
+pub(crate) fn capture_scan_expr(e: &Expr, shadow: &mut HashSet<String>, free: &mut HashSet<String>) {
     match &e.kind {
         ExprKind::Ident(name) => {
             if !shadow.contains(name) {
@@ -25397,6 +25668,10 @@ impl NameResCtx {
                 self.walk_block(body, file_id, scope, errors);
             }
             ExprKind::Throw(inner) => self.walk_expr(inner, file_id, scope, errors),
+            // [E_COALESCE_RETURN_FALLBACK]: checker-rejected before this pass.
+            ExprKind::CoalesceReturnFallback(opt) => {
+                if let Some(inner) = opt { self.walk_expr(inner, file_id, scope, errors); }
+            }
             // D.1.3: квантор — bound variable вводится в scope для body.
             ExprKind::Forall { var, range, body } | ExprKind::Exists { var, range, body } => {
                 self.walk_expr(range, file_id, scope, errors);
@@ -27341,10 +27616,12 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, i
         ExprKind::RecordLit { fields, .. } => {
             for f in fields { if let Some(v) = &f.value { walk_expr_for_handler_lits(v, never_ops, in_supervisor, errors); } }
         }
-        ExprKind::Throw(v) | ExprKind::Try(v) | ExprKind::Bang(v) | ExprKind::RefArg(v) | ExprKind::Interrupt(Some(v)) => {
+        ExprKind::Throw(v) | ExprKind::Try(v) | ExprKind::Bang(v) | ExprKind::RefArg(v) | ExprKind::Interrupt(Some(v))
+        // [E_COALESCE_RETURN_FALLBACK]: checker-rejected before this pass.
+        | ExprKind::CoalesceReturnFallback(Some(v)) => {
             walk_expr_for_handler_lits(v, never_ops, in_supervisor, errors);
         }
-        ExprKind::Interrupt(None) => {}
+        ExprKind::Interrupt(None) | ExprKind::CoalesceReturnFallback(None) => {}
         ExprKind::Lambda { body, .. } => walk_expr_for_handler_lits(body, never_ops, in_supervisor, errors),
         ExprKind::ClosureLight { body, .. } => match body {
             ClosureBody::Expr(e2) => walk_expr_for_handler_lits(e2, never_ops, in_supervisor, errors),
@@ -33503,6 +33780,10 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
         ExprKind::Interrupt(opt) => {
             if let Some(v) = opt { consume_walk_expr(ctx, v, errors); }
         }
+        // [E_COALESCE_RETURN_FALLBACK]: checker-rejected before this pass.
+        ExprKind::CoalesceReturnFallback(opt) => {
+            if let Some(v) = opt { consume_walk_expr(ctx, v, errors); }
+        }
         ExprKind::Range { start, end, .. } => {
             if let Some(s) = start { consume_walk_expr(ctx, s, errors); }
             if let Some(e) = end { consume_walk_expr(ctx, e, errors); }
@@ -35891,6 +36172,10 @@ impl MapLitCtx {
             ExprKind::Interrupt(opt) => {
                 if let Some(x) = opt { self.walk_expr(x, None, errors); }
             }
+            // [E_COALESCE_RETURN_FALLBACK]: checker-rejected before this pass.
+            ExprKind::CoalesceReturnFallback(opt) => {
+                if let Some(x) = opt { self.walk_expr(x, None, errors); }
+            }
             ExprKind::Range { start, end, .. } => {
                 if let Some(s) = start { self.walk_expr(s, None, errors); }
                 if let Some(e) = end { self.walk_expr(e, None, errors); }
@@ -37236,6 +37521,10 @@ impl MapLitAnnotator {
             ExprKind::Interrupt(opt) => {
                 if let Some(x) = opt { self.walk_expr(x, None); }
             }
+            // [E_COALESCE_RETURN_FALLBACK]: checker-rejected before this pass.
+            ExprKind::CoalesceReturnFallback(opt) => {
+                if let Some(x) = opt { self.walk_expr(x, None); }
+            }
             ExprKind::Range { start, end, .. } => {
                 if let Some(s) = start { self.walk_expr(s, None); }
                 if let Some(e) = end { self.walk_expr(e, None); }
@@ -38452,10 +38741,12 @@ fn walk_expr_for_handler_op_decls(
         ExprKind::RecordLit { fields, .. } => {
             for f in fields { if let Some(v) = &f.value { walk_expr_for_handler_op_decls(v, effect_decls, errors); } }
         }
-        ExprKind::Throw(v) | ExprKind::Try(v) | ExprKind::Bang(v) | ExprKind::RefArg(v) | ExprKind::Interrupt(Some(v)) => {
+        ExprKind::Throw(v) | ExprKind::Try(v) | ExprKind::Bang(v) | ExprKind::RefArg(v) | ExprKind::Interrupt(Some(v))
+        // [E_COALESCE_RETURN_FALLBACK]: checker-rejected before this pass.
+        | ExprKind::CoalesceReturnFallback(Some(v)) => {
             walk_expr_for_handler_op_decls(v, effect_decls, errors);
         }
-        ExprKind::Interrupt(None) => {}
+        ExprKind::Interrupt(None) | ExprKind::CoalesceReturnFallback(None) => {}
         ExprKind::Lambda { body, .. } => walk_expr_for_handler_op_decls(body, effect_decls, errors),
         ExprKind::ClosureLight { body, .. } => match body {
             ClosureBody::Expr(e2) => walk_expr_for_handler_op_decls(e2, effect_decls, errors),

@@ -8525,6 +8525,38 @@ impl Parser {
                 }
                 TokenKind::Question2 => {
                     self.bump();
+                    // [E_COALESCE_RETURN_FALLBACK] (D86 AMEND 2026-07-23,
+                    // ретракция формы `X ?? return R`): парсер ПРИНИМАЕТ
+                    // форму в AST (rustc-style parse-then-diagnose) — сам
+                    // парсер типов не знает, чем является `X` и что
+                    // возвращает объемлющая fn, поэтому подсказка (`?` /
+                    // `.ok()?` / `.map_err(..)?` / `.ok_or(..)?`) строится
+                    // контекстно в чекере (см. `check_coalesce_return_
+                    // fallback` в `types/mod.rs`), который ВСЕГДА отвергает
+                    // эту форму диагностикой `E_COALESCE_RETURN_FALLBACK`.
+                    // `return` принимается ТОЛЬКО здесь — непосредственно
+                    // справа от `??` — нигде больше в expression-position
+                    // `return` не валиден (см. `ExprKind::
+                    // CoalesceReturnFallback` doc-комментарий).
+                    if matches!(self.peek().kind, TokenKind::KwReturn) {
+                        let ret_start = self.bump().span; // `return`
+                        let value = if self.at_newline()
+                            || matches!(self.peek().kind, TokenKind::RBrace)
+                        {
+                            None
+                        } else {
+                            Some(Box::new(self.parse_unary()?))
+                        };
+                        let end = value.as_ref().map(|v| v.span).unwrap_or(ret_start);
+                        let ret_span = ret_start.merge(end);
+                        let right = Expr::new(ExprKind::CoalesceReturnFallback(value), ret_span);
+                        let span = expr.span.merge(right.span);
+                        expr = Expr::new(
+                            ExprKind::Coalesce(Box::new(expr), Box::new(right)),
+                            span,
+                        );
+                        continue;
+                    }
                     let right = self.parse_unary()?;
                     let span = expr.span.merge(right.span);
                     expr = Expr::new(

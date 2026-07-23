@@ -3380,6 +3380,9 @@ fn expr_contains_invalidating_call_for(
                 || expr_contains_invalidating_call_for(body, fname, ipa)
         }
         ExprKind::Interrupt(opt) => opt.as_ref().map_or(false, |e| expr_contains_invalidating_call_for(e, fname, ipa)),
+        // [E_COALESCE_RETURN_FALLBACK]: `X ?? return R` — checker-rejected before
+        // this pass; walked defensively.
+        ExprKind::CoalesceReturnFallback(opt) => opt.as_ref().map_or(false, |e| expr_contains_invalidating_call_for(e, fname, ipa)),
         ExprKind::TaggedTemplate { tag, args, .. } => {
             expr_contains_invalidating_call_for(tag, fname, ipa)
                 || args.iter().any(|a| expr_contains_invalidating_call_for(a, fname, ipa))
@@ -3581,6 +3584,8 @@ fn expr_contains_write_to(e: &Expr, fname: &str) -> bool {
             expr_contains_write_to(range, fname) || expr_contains_write_to(body, fname)
         }
         ExprKind::Interrupt(opt) => opt.as_ref().map_or(false, |e| expr_contains_write_to(e, fname)),
+        // [E_COALESCE_RETURN_FALLBACK]: checker-rejected before this pass.
+        ExprKind::CoalesceReturnFallback(opt) => opt.as_ref().map_or(false, |e| expr_contains_write_to(e, fname)),
         ExprKind::TaggedTemplate { tag, args, .. } => {
             expr_contains_write_to(tag, fname)
                 || args.iter().any(|a| expr_contains_write_to(a, fname))
@@ -3726,6 +3731,8 @@ fn expr_contains_call(e: &Expr) -> bool {
             expr_contains_call(range) || expr_contains_call(body)
         }
         ExprKind::Interrupt(opt) => opt.as_ref().map_or(false, |e| expr_contains_call(e)),
+        // [E_COALESCE_RETURN_FALLBACK]: checker-rejected before this pass.
+        ExprKind::CoalesceReturnFallback(opt) => opt.as_ref().map_or(false, |e| expr_contains_call(e)),
         ExprKind::TaggedTemplate { tag, args, .. } => {
             expr_contains_call(tag) || args.iter().any(expr_contains_call)
         }
@@ -4257,6 +4264,12 @@ fn analyze_expr_children(e: &Expr, fields: &HashMap<String, FieldKind>, a: &mut 
                 analyze_expr(e, fields, a);
             }
         }
+        // [E_COALESCE_RETURN_FALLBACK]: checker-rejected before this pass.
+        ExprKind::CoalesceReturnFallback(opt) => {
+            if let Some(e) = opt {
+                analyze_expr(e, fields, a);
+            }
+        }
         ExprKind::Forbid { body, .. } => analyze_block(body, fields, a),
         ExprKind::Realtime { body, .. } => analyze_block(body, fields, a),
         ExprKind::Range { start, end, .. } => {
@@ -4552,6 +4565,12 @@ fn scan_expr(e: &Expr, fields: &HashMap<String, FieldKind>, out: &mut HashSet<St
             scan_block(body, fields, out);
         }
         ExprKind::Interrupt(opt) => {
+            if let Some(e) = opt {
+                scan_expr(e, fields, out);
+            }
+        }
+        // [E_COALESCE_RETURN_FALLBACK]: checker-rejected before this pass.
+        ExprKind::CoalesceReturnFallback(opt) => {
             if let Some(e) = opt {
                 scan_expr(e, fields, out);
             }
@@ -5845,6 +5864,12 @@ fn rewrite_expr_children(e: &mut Expr, replace_map: &HashMap<String, String>) {
                 rewrite_expr(e, replace_map);
             }
         }
+        // [E_COALESCE_RETURN_FALLBACK]: checker-rejected before this pass.
+        ExprKind::CoalesceReturnFallback(opt) => {
+            if let Some(e) = opt {
+                rewrite_expr(e, replace_map);
+            }
+        }
         ExprKind::Forbid { body, .. } => rewrite_block(body, replace_map),
         ExprKind::Realtime { body, .. } => rewrite_block(body, replace_map),
         ExprKind::Range { start, end, .. } => {
@@ -6355,6 +6380,10 @@ fn licm_expr(
         ExprKind::Interrupt(opt) => {
             if let Some(e) = opt { licm_expr(e, fields, cfg, local_names, hoist_count, ipa); }
         }
+        // [E_COALESCE_RETURN_FALLBACK]: checker-rejected before this pass.
+        ExprKind::CoalesceReturnFallback(opt) => {
+            if let Some(e) = opt { licm_expr(e, fields, cfg, local_names, hoist_count, ipa); }
+        }
         ExprKind::Throw(e) => licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
         ExprKind::TaggedTemplate { tag, args, .. } => {
             licm_expr(tag, fields, cfg, local_names, hoist_count, ipa);
@@ -6832,6 +6861,8 @@ fn expr_contains_spawn(e: &Expr) -> bool {
             expr_contains_spawn(range) || expr_contains_spawn(body)
         }
         ExprKind::Interrupt(opt) => opt.as_ref().map_or(false, |e| expr_contains_spawn(e)),
+        // [E_COALESCE_RETURN_FALLBACK]: checker-rejected before this pass.
+        ExprKind::CoalesceReturnFallback(opt) => opt.as_ref().map_or(false, |e| expr_contains_spawn(e)),
         ExprKind::TaggedTemplate { tag, args, .. } => {
             expr_contains_spawn(tag) || args.iter().any(expr_contains_spawn)
         }

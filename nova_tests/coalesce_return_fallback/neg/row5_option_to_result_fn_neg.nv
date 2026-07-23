@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR замени на `X.ok_or(<ошибка>)?`
+//
+// D86 AMEND 2026-07-23 / E_COALESCE_RETURN_FALLBACK, таблица строка 5:
+// Option[T] -> fn возвращает Result[T,E], fallback `return Err(<expr>)` ->
+// мост `.ok_or(..)?`.
+
+module neg.row5_option_to_result_fn_neg
+
+type RowErr enum Bad
+
+fn find_opt(n int) -> Option[int] {
+    if n > 0 { Some(n) } else { None }
+}
+
+fn caller(n int) -> Result[int, RowErr] {
+    ro x = find_opt(n) ?? return Err(RowErr.Bad)
+    Ok(x + 1)
+}

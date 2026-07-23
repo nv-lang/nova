@@ -9100,3 +9100,57 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
   RED(до-фикс)→GREEN(фикс); m2217_15/15b δ0 (2/2 PASS); std/src/concurrency δ0 (4/4 PASS);
   4-way нагрузка фикстуры 32/32 чисто. Кейс-стади:
   `docs/cases/sequential-serve-scope-leak-2026-07-23.md` (раздел Resolution).
+
+## [M-coalesce-return-fallback-unparsed] CLOSED (2026-07-24, sonnet, worktree `nova-coalesce`, ветка `p-coalesce`)
+
+- **Решение владельца (2026-07-23):** форма `X ?? return R` РЕТРАКТИРОВАНА из D86 (не
+  чинили парсер под неё) — AMEND в `spec/decisions/04-effects.md` D86, с таблицей замен
+  (`X?` / `.ok()?` / `.map_err(fn(_ E) -> F => ..)?` / `.ok_or(..)?` / явный `match` для
+  `glob.nv`-класса без обёртки для проброса).
+- **Архитектура диагностики:** rustc-style parse-then-diagnose. Парсер принимает форму в AST
+  (новый `ExprKind::CoalesceReturnFallback`, конструируется ТОЛЬКО как непосредственный правый
+  операнд `??`), чекер ВСЕГДА отвергает `[E_COALESCE_RETURN_FALLBACK]` с контекстным
+  `Suggestion` — выбор канона строит decision-функция `coalesce_return_fallback_advice` +
+  рендер `coalesce_advice_render` (`types/mod.rs`), по (carrier операнда, carrier/E-тип
+  return-типа enclosing fn).
+  Новый AST-вариант потребовал арм в 32 exhaustive match'ах по всей кодовой базе
+  (alpha_rename/callnorm/desugar/embed_resolve/field_cache/interp/lints/number_exprs/
+  codegen::{emit_c,may_gc,preempt_keep}/types/verify::encode) — узел структурно НЕ может
+  появиться нигде, кроме RHS `??` (парсер это гарантирует), поэтому везде кроме
+  `check_coalesce_return_fallback` — defensive no-op walk (как `Throw`/`Interrupt`) либо
+  `unreachable!`-подобный отказ в codegen/interp/verify (чекер гарантированно отвергает
+  раньше).
+- **Фикстуры:** `nova_tests/coalesce_return_fallback/` — 1 pos регресс-пин (значение/`panic`/
+  `throw` fallback'ы, НЕ затронуты ретракцией) + `neg/` — по одному файлу на строку decision-
+  таблицы (6 файлов), каждый с `EXPECT_COMPILE_ERROR` на РЕАЛЬНЫЙ текст подсказки (не только
+  код ошибки). Все 7 PASS (`nova test --full`).
+
+## [M-manual-coalesce-lint-missing] CLOSED (2026-07-24, sonnet, worktree `nova-coalesce`/`nova-http-coal`, ветки `p-coalesce`/`p-coalesce-http`)
+
+- **Линт:** `W_MANUAL_COALESCE` (`compiler-codegen/src/lints.rs`, реестр `CONV_RULES`) —
+  ловит identity-match (рука успеха — РОВНО идентификатор, связанный в паттерне);
+  НЕ ловит `Ok(_) => bool` (is_ok/is_err), `Ok(v) => f(v)` (map-форма), разные имена
+  паттерн/рука, guard'ы. Подсказка переиспользует ТУ ЖЕ decision-функцию, что чекер
+  (Ф.2) — но синтезирует carrier/E-тип из СИНТАКСИСА (declared return-тип функции +
+  эвристика «`Err(e)` verbatim passthrough ⟹ тот же E», без реального инференса типов
+  — у `ConvRule.ast`-хуков его нет). Найден и закрыт по ходу миграции (не документо-
+  ревью — прямое подтверждение feedback-no-done-claims-on-documents): fallback,
+  ссылающийся на bound error-идентификатор (`Err(e) => { log(e); .. }`), не может быть
+  выражен `?? D` (`??` отбрасывает payload `Err` целиком) — добавлен free-var-guard
+  (`capture_scan_expr`/`capture_scan_block`, промо́ушен до `pub(crate)`), молчит вместо
+  ложной подсказки.
+- **Инвентарь брифа 2026-07-23 (69 сайтов) устарел** — фактический прогон линта дал
+  **161** находку (std 84, nova-http 71, examples 6) ДО миграции — 2.3× оценки.
+  Мигрированы (эта волна) сайты, ИМЕННО названные брифом: `nova-http/src/client/
+  wire.nv` (14), `nova-http/src/middleware/cors.nv` (1), `std/src/fs/{readfs,fs}.nv` (5),
+  `std/src/time/civil/{tz,format}.nv` (11), `examples/flagship/aggregator` (6) — 37 сайтов
+  итого. Остаток (std 66, nova-http 55 — 121 сайт) вынесен в новый floating-маркер
+  `[M-manual-coalesce-corpus-remainder]` (backlog-followups.md) — объём остатка вне
+  бюджета этой волны.
+- **Юниты:** 8 тестов в `lints.rs::tests` (3 pos: value/result/return-same-carrier;
+  5 neg: is_ok-wildcard, map-shape, разные имена, glob.nv-класс, fallback-references-
+  bound-err) — все PASS.
+- **Гейты:** `nova test std/src/fs std/src/time` (7 PASS/0 FAIL), полный nova-http suite
+  (26 PASS/0 FAIL), `examples/flagship/aggregator` `nova check` PASS на всех 4 изменённых
+  файлах. Мега-CU conformance и flagship `--strict-effects` НЕ гонялись (CPU-дисциплина,
+  интегратор).

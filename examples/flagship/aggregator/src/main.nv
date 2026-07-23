@@ -386,7 +386,7 @@ fn mode_of(req ServerRequest) -> str => req.query_param("mode") ?? "demo"
 
 fn seed_of(req ServerRequest) -> int {
     match req.query_param("seed") {
-        Some(s) => match s.to_int() { Ok(n) => n, Err(_) => 42 }
+        Some(s) => s.to_int() ?? 42
         None    => 42
     }
 }

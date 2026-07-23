@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR замени на `X?`
+//
+// D86 AMEND 2026-07-23 / E_COALESCE_RETURN_FALLBACK, таблица строка 2:
+// Result[T,E] -> fn возвращает Result[T,E] (тот же E), fallback
+// `return Err(e)` (verbatim passthrough того же `e`) -> `X?` (D85).
+
+module neg.row2_result_to_result_same_err_neg
+
+type RowErr enum Bad | Worse
+
+fn find_res(n int) -> Result[int, RowErr] {
+    if n > 0 { Ok(n) } else { Err(RowErr.Bad) }
+}
+
+fn caller(n int) -> Result[int, RowErr] {
+    ro x = find_res(n) ?? return Err(RowErr.Worse)
+    Ok(x + 1)
+}

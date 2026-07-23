@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR обёртки для проброса нет
+//
+// D86 AMEND 2026-07-23 / E_COALESCE_RETURN_FALLBACK, таблица строка 6
+// (glob.nv-класс): fn возвращает `bool` (не Option/Result) -> обёртки для
+// проброса нет; ошибка ВСЕ РАВНО срабатывает (`return` как fallback `??`
+// ретрактирован БЕЗУСЛОВНО), но без Suggestion — явный `match` законен.
+
+module neg.row6_no_bridge_neg
+
+fn find_opt(n int) -> Option[int] {
+    if n > 0 { Some(n) } else { None }
+}
+
+fn caller(n int) -> bool {
+    ro x = find_opt(n) ?? return false
+    x > 0
+}

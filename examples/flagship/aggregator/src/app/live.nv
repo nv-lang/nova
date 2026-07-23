@@ -204,10 +204,7 @@ fn live_lane_tcp(host str, shared_deadline Monotonic, idx int) Net Time Emit -> 
     ro status = if timed_out {
         TaskStatus.Cancelled
     } else {
-        match rx.try_recv() {
-            Some(st) => st
-            None     => TaskStatus.Cancelled
-        }
+        rx.try_recv() ?? TaskStatus.Cancelled
     }
     match status {
         Done(_)   => Emit.lane_done(host, elapsed_ms)
@@ -239,10 +236,7 @@ fn live_lane_weather(id str, lat f64, lon f64, shared_deadline Monotonic, idx in
     ro status = if timed_out {
         TaskStatus.Cancelled
     } else {
-        match rx.try_recv() {
-            Some(st) => st
-            None     => TaskStatus.Cancelled
-        }
+        rx.try_recv() ?? TaskStatus.Cancelled
     }
     match status {
         Done(_)   => Emit.lane_done(id, elapsed_ms)

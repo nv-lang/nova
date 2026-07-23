@@ -541,7 +541,7 @@ export fn remove_dir(path Path) Fs -> Result[(), IoError] =>
 /// followup — `[M-176-dir-scoped-ops]`.)
 #stable(since = "0.1")
 export fn remove_dir_all(path Path) Fs -> Result[(), IoError] {
-    ro entries = match read_dir(path) { Ok(es) => es, Err(e) => return Err(e) }
+    ro entries = read_dir(path)?
     for e in entries {
         ro child = path.join_path(e.file_name())
         if e.is_dir() {
@@ -621,7 +621,7 @@ fn temp_sibling(path Path) -> Path {
 }
 
 fn temp_name(path Path) -> str {
-    ro base = match path.file_name() { Some(n) => n, None => "out" }
+    ro base = path.file_name() ?? "out"
     ".${base}.novatmp"
 }
 
@@ -635,10 +635,7 @@ fn temp_name(path Path) -> str {
 #stable(since = "0.1")
 export fn write_atomic(path Path, data []u8) Fs -> Result[(), IoError] {
     ro tmp = temp_sibling(path)
-    mut f = match OpenOptions.new().write(true).create_new(true).open(tmp) {
-        Ok(x)  => x
-        Err(e) => return Err(e)
-    }
+    mut f = OpenOptions.new().write(true).create_new(true).open(tmp)?
     // (2) write all + (3) fsync — bail (removing temp) on any error.
     mut err Option[IoError] = None
     ro total = data.len()

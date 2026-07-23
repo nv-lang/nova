@@ -2759,6 +2759,18 @@ pub enum ExprKind {
     /// `(Nova_Fail_fail(msg), zero<T>)` — comma-expression, dummy после
     /// fail() недостижим.
     Throw(Box<Expr>),
+    /// `return ...` использованный как fallback `??` (`X ?? return R`).
+    ///
+    /// **[E_COALESCE_RETURN_FALLBACK]** (D86 AMEND 2026-07-23, ретракция
+    /// формы `return` как fallback'а `??`): парсер ПРИНИМАЕТ форму в AST
+    /// (rustc-style parse-then-diagnose — диагностика контекстна: нужен тип
+    /// операнда `X` и return-тип объемлющей функции, парсер типов не знает),
+    /// но чекер ВСЕГДА её отвергает контекстной `Suggestion` (см.
+    /// `types/mod.rs::check_coalesce_return_fallback`). Парсер конструирует
+    /// этот вариант ТОЛЬКО как непосредственный правый операнд
+    /// `ExprKind::Coalesce` (см. `Question2`-ветку `parse_postfix`) — в
+    /// валидном месте больше нигде появиться не может.
+    CoalesceReturnFallback(Option<Box<Expr>>),
 
     // Внутреннее: backtick-tagged template — для bootstrap'а: tag-функция
     // вызывается с (parts: []str, args: []SqlValue/...) — но в bootstrap

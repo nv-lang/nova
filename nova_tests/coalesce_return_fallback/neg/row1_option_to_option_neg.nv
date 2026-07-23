@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR замени на `X?`
+//
+// D86 AMEND 2026-07-23 / E_COALESCE_RETURN_FALLBACK, таблица строка 1:
+// Option[T] -> fn возвращает Option[T], fallback `return None` -> `X?`
+// (D85, тот же носитель наружу).
+
+module neg.row1_option_to_option_neg
+
+fn find_opt(n int) -> Option[int] {
+    if n > 0 { Some(n) } else { None }
+}
+
+fn caller(n int) -> Option[int] {
+    ro x = find_opt(n) ?? return None
+    Some(x + 1)
+}

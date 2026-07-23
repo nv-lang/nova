@@ -358,6 +358,9 @@ fn walk_children(e: &mut Expr, sigs: &Sigs) {
             normalize_block(body, sigs)
         }
         ExprKind::Throw(x) => normalize_expr(x, sigs),
+        ExprKind::CoalesceReturnFallback(opt) => {
+            if let Some(x) = opt { normalize_expr(x, sigs); }
+        }
         ExprKind::Interrupt(opt) => {
             if let Some(x) = opt { normalize_expr(x, sigs); }
         }
