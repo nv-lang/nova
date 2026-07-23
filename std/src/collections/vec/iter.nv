@@ -50,4 +50,4 @@ export fn VecIter[T] mut @next() -> Option[T] {
 /// (in-out via `mut`-param would be WRONG here — the whole point is that
 /// the clone must NOT propagate its advancement back to the source; see
 /// `vec_lazy.box_iter`, which seeds a deferred-iteration closure).
-export fn VecIter[T] @clone() -> Self => { @data, @idx, @len }
+export fn VecIter[T] @clone() -> VecIter[T] => { @data, @idx, @len }
