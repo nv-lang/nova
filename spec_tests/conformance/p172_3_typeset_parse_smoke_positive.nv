@@ -20,7 +20,9 @@ fn paint(c Color1) -> int {
 
 // Plan 172.3 Ф.2 — type-set used AS a generic bound; instantiated with a member
 // type (`int` ∈ SignedInt) → must pass membership (no E_TYPE_NOT_IN_SET).
-priv(file) fn[T SignedInts] pick(x T) -> T => x
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+// `mut x` — generic `T` не статически value-safe.
+priv(file) fn[T SignedInts] pick(mut x T) -> T => x
 
 test "p172_3_typeset_parse_smoke_positive smoke" {
     // exercise the sum so it is not DCE'd; type-sets are bound-only (no value).

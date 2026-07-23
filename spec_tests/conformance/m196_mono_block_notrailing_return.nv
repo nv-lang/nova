@@ -26,14 +26,16 @@ fn M196PickBox[T].new(v T) -> Self => { value: v }
 // Single-statement block-body: `return a` is the block's ONLY item, so
 // `block.trailing` is `None` (it's a `Stmt::Return`, not an implicit-return
 // expression) — the exact minimal shape that reproduced the bug.
-fn M196PickBox[T].pick(a T) -> T {
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+// `mut a`/`mut b` — passthrough returns of generic params.
+fn M196PickBox[T].pick(mut a T) -> T {
     return a
 }
 
 // Same shape, but the explicit return is reached only via an early exit —
 // confirms the fix covers a block whose LAST statement is a `return`
 // embedded inside a conditional, not just a single bare `return`.
-fn M196PickBox[T].pick_cond(a T, b T, use_a bool) -> T {
+fn M196PickBox[T].pick_cond(mut a T, mut b T, use_a bool) -> T {
     if use_a {
         return a
     }

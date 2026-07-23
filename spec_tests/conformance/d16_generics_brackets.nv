@@ -14,7 +14,9 @@ fn D16Box[T].wrap(val T) -> D16Box[T] => { val }
 
 fn D16Box[T] @get() -> T => @val
 
-fn d16_identity[T](x T) -> T => x
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+// `mut x` — generic `T` не статически value-safe.
+fn d16_identity[T](mut x T) -> T => x
 
 fn d16_first[T](xs []T) -> Option[T] =>
     if xs.len() > 0 { Some(xs[0]) } else { None }

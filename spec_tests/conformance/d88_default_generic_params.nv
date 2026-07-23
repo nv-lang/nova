@@ -12,7 +12,9 @@ type D88Pair[A = int, B = str] { first A, second B }
 
 fn D88Pair[A, B].make(first A, second B) -> D88Pair[A, B] => { first, second }
 
-fn d88_wrap[T = int](val T) -> T => val
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+// `mut val` — generic `T` не статически value-safe.
+fn d88_wrap[T = int](mut val T) -> T => val
 
 test "generic type default: omit T → inferred from args (D88)" {
     ro p = D88Pair[int, str].make(1, "hello")

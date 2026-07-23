@@ -9,7 +9,10 @@
 // Простой `[]int` (примитивный element) inference работает.
 
 module spec_tests.conformance
-fn first_or[T](items []T, default_v T) -> T {
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+// `mut default_v` — passthrough return (early-out path), generic `T` не
+// value-safe.
+fn first_or[T](items []T, mut default_v T) -> T {
     for x in items {
         return x
     }

@@ -1,0 +1,25 @@
+// [M-ro-launder-via-mut-binding] — THIRD position of the norm: RETURN
+// (D246-амендмент, Ф.1б, Plan 224, 2026-07-23). A function returning a bare
+// `ro`-bound param/local directly under a mut-default return type (D184 —
+// no `-> ro T`) launders the freeze: the caller may bind `mut w = f(...)`
+// and write through `w`, aliasing the callee's own frozen source.
+//
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+
+module neg.m_ro_launder_return_position_neg
+
+// `v` — L1-ro param (D176-дефолт); return type `[]int` — mut-default (D184).
+// Early-return hands back the SAME array the caller passed in.
+fn identity_or_default(v []int) -> []int {
+    if v.len() == 0 {
+        return v
+    }
+    v
+}
+
+fn main() -> () {
+    mut arr = [1, 2, 3]
+    mut got = identity_or_default(arr)
+    got[0] = 99
+    assert(arr[0] == 1)
+}

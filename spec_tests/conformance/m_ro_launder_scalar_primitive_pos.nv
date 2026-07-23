@@ -1,0 +1,50 @@
+// [M-ro-launder-via-mut-binding] — scalar-primitive exemption (D246-амендмент,
+// Plan 224, owner decision 2026-07-23, FINAL — "подтверждена доками+пробой").
+// A bare scalar primitive (int/i8..i64/u8..u64/f32/f64/bool/char/byte — types
+// WITHOUT any fields at all) copied from an L1-ro source into a mut target
+// is LEGAL: the copy is independent by construction (no owned-graph, nothing
+// to leak through — copying the bit-pattern IS the value). This is the ONE
+// exemption to the otherwise-strict norm — a value-record WITHOUT heap
+// fields (probe E) is NOT covered by this exemption and stays neg (see
+// neg/m_ro_launder_e_pure_value_record_neg.nv): a scalar has no fields to
+// recurse into (sidesteps probe G's recursive-fragility argument), a
+// value-record might.
+module spec_tests.conformance
+
+// Case 1: bare `ro` local (P7 freeze) → `mut` re-init, scalar type.
+fn scalar_local_reinit() -> int {
+    ro a = 41
+    mut b = a
+    b += 1
+    b
+}
+
+// Case 2: L1-ro parameter (D176-default) → `mut` re-init inside the callee.
+fn scalar_param_reinit(n int) -> int {
+    mut m = n
+    m += 1
+    m
+}
+
+// Case 3: L1-ro parameter → passed directly as an argument into a `mut`-param
+// of ANOTHER function (call-argument position, mirrors probe H but scalar).
+fn bump(mut x int) -> int {
+    x += 1
+    x
+}
+
+fn scalar_arg_position(n int) -> int {
+    bump(n)
+}
+
+test "scalar-primitive exemption: local re-init (D246-амендмент, scalar ≠ value-record)" {
+    assert(scalar_local_reinit() == 42)
+}
+
+test "scalar-primitive exemption: param re-init" {
+    assert(scalar_param_reinit(9) == 10)
+}
+
+test "scalar-primitive exemption: argument position (mirrors probe H, scalar-safe)" {
+    assert(scalar_arg_position(5) == 6)
+}
