@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for [M-nv-defer-captured-var-in-detach-undeclared] (221.1
+// bug-sweep #22, 2026-07-23). Live prod occurrence: nova-http's serve()
+// accept-loop wanted `defer inflight.release()` referencing a closure-
+// captured local directly inside a `detach { ... }` body (d:/Sources/nv-lang/
+// nova-http-p2227/src/servernet/serve.nv, worked around by routing the
+// semaphore release through an ordinary function where it's a plain
+// parameter instead — see that file's own note).
+//
+// Root cause (compiler-codegen/src/codegen/emit_c.rs): `emit_spawn`/
+// `emit_detach`'s capture-collection pass walks the body block via
+// `collect_idents_block`/`collect_idents_stmt` to discover every free
+// identifier that needs a ctx-struct field. `collect_idents_stmt`'s match
+// had NO arm for `Stmt::Defer` (fell to `_ => {}`) — so a variable
+// referenced ONLY inside a `defer EXPR` statement, and nowhere else in the
+// SAME spawn/detach body, was never discovered as needing capture: no
+// ctx-struct field was ever created for it. The defer body's own emission
+// (`emit_defer_body_void` → the ordinary `emit_expr` pipeline) correctly
+// consults the capture-rewrite mechanism (`current_spawn_captures`) for any
+// name that WAS registered as a capture — this is a capture-DISCOVERY gap
+// one step upstream, not a capture-access rewrite bug (a different class
+// than the already-fixed markers #9/#16 in this same file). Confirmed via
+// direct instrumentation: `current_spawn_captures` was `Some({})` (correctly
+// activated, but empty) at the exact point the defer body's identifier
+// resolved — the capture set itself never contained the variable.
+// `collect_bound_names_block` had the same gap for `defer(o ScopeOutcome)`'s
+// outcome-binding (would have been misclassified as a free/captured
+// reference once the ident-side gap above got fixed, since it's normally a
+// fresh per-exit-path binding, not an outer variable).
+//
+// Fix: add a `Stmt::Defer` arm to both `collect_idents_stmt` (scan the defer
+// body for free idents, mirroring `Stmt::ConsumeScope`'s identical "scan a
+// statement-carried sub-expression" shape) and `collect_bound_names_block`
+// (register the optional outcome-binding as bound, then scan the body for
+// its own nested bindings too).
+
+module standalone.m2217_22_defer_captured_var_in_detach_undeclared
+
+type Ctr {
+    n AtomicInt
+}
+
+fn Ctr.make() -> Ctr => { n: AtomicInt.new(0) }
+
+// Shape 1: plain `defer EXPR` inside `detach{}`, referencing a captured var
+// used NOWHERE ELSE in the detach body — the original report's exact shape.
+fn detach_plain_defer(mut c Ctr) Detach -> () {
+    detach {
+        defer c.n.fetch_add(1)
+    }
+}
+
+// Shape 2: plain `defer EXPR` inside `spawn{}` (not detach) — same capture-
+// discovery pass, different fiber-launch site.
+fn spawn_plain_defer(mut c Ctr) -> () {
+    supervised {
+        spawn {
+            defer c.n.fetch_add(1)
+        }
+    }
+}
+
+// Shape 3: `defer(o ScopeOutcome) { ... }` outcome-binding form, ALSO
+// referencing a captured var (not just the outcome binding itself) —
+// exercises the collect_bound_names_block companion fix too.
+fn detach_outcome_defer(mut c Ctr) Detach -> () {
+    detach {
+        defer(o ScopeOutcome) {
+            ro _ = o
+            c.n.fetch_add(1)
+        }
+    }
+}
+
+test "defer{} plain form referencing a captured var inside detach{} compiles and runs" {
+    mut c = Ctr.make()
+    detach_plain_defer(c)
+    runtime.drain_orphans()
+    assert(c.n.load() == 1)
+}
+
+test "defer plain form referencing a captured var inside spawn{} compiles and runs" {
+    mut c = Ctr.make()
+    spawn_plain_defer(c)
+    assert(c.n.load() == 1)
+}
+
+test "defer(o ScopeOutcome) form referencing a captured var inside detach{} compiles and runs" {
+    mut c = Ctr.make()
+    detach_outcome_defer(c)
+    runtime.drain_orphans()
+    assert(c.n.load() == 1)
+}

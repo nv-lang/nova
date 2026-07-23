@@ -15037,6 +15037,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     Self::collect_bound_names_expr(init, out);
                     Self::collect_bound_names_block(body, out);
                 }
+                // [M-nv-defer-captured-var-in-detach-undeclared] fix (221.1
+                // Ф.2 #22): companion to the `collect_idents_stmt` fix above
+                // (same marker) — `defer(o ScopeOutcome) { … }`'s optional
+                // outcome-binding `o` is materialized FRESH per exit-path
+                // (`emit_defer_body_with_outcome`'s `#define`), never an
+                // outer capture; without this arm it fell through to `_ =>
+                // {}` same as the ident-collection gap, so a body reading
+                // `o` would have been misclassified as a free outer
+                // reference (spuriously "captured") once the ident-side gap
+                // above is fixed. Also scans the body itself for any of ITS
+                // OWN nested bindings (match arms, closures, …), same as
+                // every other arm's sub-expression scan.
+                Stmt::Defer { outcome_binding, body, .. } => {
+                    if let Some(name) = outcome_binding {
+                        out.insert(name.clone());
+                    }
+                    Self::collect_bound_names_expr(body, out);
+                }
                 _ => {}
             }
         }
@@ -15510,6 +15528,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     Self::collect_idents_expr(t, out);
                 }
             }
+            // [M-nv-defer-captured-var-in-detach-undeclared] fix (221.1 Ф.2
+            // #22): a bare `defer EXPR` statement's body was never scanned
+            // for free identifiers here — the ONLY caller of
+            // `collect_idents_stmt` (via `collect_idents_block`) that feeds
+            // `emit_spawn`/`emit_detach`'s capture-collection pass
+            // (`refs`/`captures`, see there). A variable referenced ONLY
+            // inside a `defer` statement (never anywhere else in the SAME
+            // spawn/detach body) was therefore invisible to that pass —
+            // no ctx-struct field ever got created for it, and the body's
+            // own emission (via `emit_defer_body_void`/`emit_expr`, which DOES
+            // correctly consult `current_spawn_captures` when a name IS a
+            // known capture) fell through to the bare-identifier case
+            // instead — `CC-FAIL "use of undeclared identifier '<name>'"`
+            // (the ctx struct genuinely has no such field; this isn't a
+            // capture-access rewrite bug like markers #9/#16, it's a
+            // capture-DISCOVERY bug one step upstream). Every OTHER
+            // reference to the same variable elsewhere in the block (e.g. a
+            // plain statement using it, or the checker's own D415 capture
+            // analysis) was already correctly discovered — only the
+            // `defer`-only-reference shape hit this gap, matching the "other
+            // uses of the same variable resolve correctly" observation in
+            // the original report. Mirrors `Stmt::ConsumeScope`'s identical
+            // "scan a statement-carried sub-expression for free idents"
+            // shape immediately above.
+            Stmt::Defer { body, .. } => Self::collect_idents_expr(body, out),
             _ => {}
         }
     }
