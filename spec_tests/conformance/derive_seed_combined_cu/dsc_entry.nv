@@ -1,0 +1,28 @@
+// [M-autoderive-extension-import-seed-combined-cu] regression (221.1 №33)
+// — the combining peer. Imports `dsc_a` (HashMap-field `#impl(Serialize)`
+// type) AND `dsc_b` (drives the actual `@serialize` codegen via
+// `json_encode`, itself importing `std.encoding.serde` directly) AND the
+// unrelated `dsc_c_third` — but does NOT import `std.encoding.serde`
+// itself. Pre-fix, this file's own import list (`dsc_a`, `dsc_b`,
+// `dsc_c_third` — NOT `serde`) is exactly what
+// `check_extension_method_policy` consulted for the synthesized
+// `HashMap.serialize()` call inside `dsc_a`'s auto-derived `@serialize`
+// body (because that call's span carried `MAIN_FILE_ID`, i.e. THIS file,
+// instead of `dsc_a`'s own file_id) — false
+// `E_EXTENSION_METHOD_NEEDS_IMPORT`. Standalone repro (outside the
+// conformance mega-CU too): `nova build` on a 4-file package matching
+// this shape reproduces byte-identically; `nova check` stays clean both
+// ways (codegen-only class, like the closed `[M-180.1-synth-fndecl-span-
+// file-id]`).
+module derive_seed_combined_cu.dsc_entry
+
+import ./dsc_a.{DscRec}
+import ./dsc_b.{dsc_to_json}
+import ./dsc_c_third.{dsc_unrelated}
+
+test "auto-derive extension-method seeding survives a combined CU where neither the type-declaring nor the serde-importing module is the entry (221.1 №33)" {
+    ro j = dsc_to_json()
+    assert(j.contains("\"data\":"))
+    assert(j.contains("\"x\":1"))
+    assert(dsc_unrelated() == 42)
+}

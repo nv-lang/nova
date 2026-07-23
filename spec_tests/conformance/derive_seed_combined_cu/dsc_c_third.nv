@@ -1,0 +1,11 @@
+// [M-autoderive-extension-import-seed-combined-cu] regression (221.1 №33)
+// — third, UNRELATED peer that imports neither `dsc_a` nor serde at all
+// (mirrors http.servernet's other, non-serde-touching peers). Present
+// purely to make this a genuine ≥3-module combined CU, matching the real
+// http.server + http.servernet + (unrelated third module) shape — a
+// 2-module CU where one module IS the entry does not reproduce the bug
+// (see `dsc_entry.nv`'s doc comment for why a THIRD, separate entry is
+// load-bearing here).
+module derive_seed_combined_cu.dsc_c_third
+
+export fn dsc_unrelated() -> int => 42

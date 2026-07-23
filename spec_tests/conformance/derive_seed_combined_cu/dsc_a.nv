@@ -1,0 +1,36 @@
+// [M-autoderive-extension-import-seed-combined-cu] regression (221.1 №33,
+// P1 blocker found in 222.7's http.server + http.servernet combined CU;
+// live symptom: `nova build` on any nova-http rt/*_smoke.nv CODEGEN-FAILs
+// with "[E_EXTENSION_METHOD_NEEDS_IMPORT] extension method
+// `HashMap.serialize()` requires the defining module to be imported" at
+// span 1:1 — `nova check` clean, codegen-only).
+//
+// Root cause: auto-derive's synthesized `@serialize`/`.deserialize` bodies
+// dispatch a container/record field's OWN `.serialize(s)`/`.deserialize(x)`
+// (e.g. `HashMap[str,V]`'s, declared in `std.encoding.serde`, a DIFFERENT
+// module than `HashMap`'s own `collections.hashmap` — so from the
+// extension-method-policy's point of view it IS an extension method).
+// `auto_derive.rs` built those Call/Member nodes via the plain
+// `ex()`/`member_call()` helpers, which stamp `span_dummy()` ==
+// `MAIN_FILE_ID` (the COMPILATION UNIT's entry file) — NOT the file that
+// actually declared `#impl(Serialize)` and imported the extension module.
+// Whenever the CU's entry file happens to be a THIRD file that never
+// imports `std.encoding.serde` itself (the common multi-module-CU case:
+// the type-declaring module and the entry are different files), the
+// check fired falsely against the wrong file's import list.
+//
+// This peer (`dsc_a`) is the type-declaring module: HashMap-field record
+// under `#impl(Serialize)`, mirroring http.server's respond.nv role.
+module derive_seed_combined_cu.dsc_a
+
+import std.collections.hashmap.{HashMap}
+import std.encoding.serde.{Serialize}
+
+#impl(Serialize)
+type DscRec { ro data HashMap[str, int] }
+
+export fn dsc_make() -> DscRec {
+    mut m = HashMap[str, int].new()
+    m.insert("x", 1)
+    return DscRec { data: m }
+}
